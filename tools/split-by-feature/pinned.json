@@ -1,0 +1,46 @@
+[
+  {
+    "key": "POST \"/api/runs/:id/answer\"",
+    "reason": "would run after POST \"/api/runs/:id/\""
+  },
+  {
+    "key": "POST \"/api/runs/:id/plan/save\"",
+    "reason": "would run after POST \"/api/runs/:id/\""
+  },
+  {
+    "key": "POST \"/api/runs/:id/directions\"",
+    "reason": "would run after POST \"/api/runs/:id/\""
+  },
+  {
+    "key": "POST \"/api/runs/:id/overview\"",
+    "reason": "would run after POST \"/api/runs/:id/\""
+  },
+  {
+    "key": "POST \"/api/runs/bulk/labels\"",
+    "reason": "would run after POST \"/api/runs/:id/\""
+  },
+  {
+    "key": "POST \"/api/runs/:id/restore\"",
+    "reason": "would run after POST \"/api/runs/:id/\""
+  },
+  {
+    "key": "POST \"/api/runs/:id/discard-worktree\"",
+    "reason": "would run after POST \"/api/runs/:id/\""
+  },
+  {
+    "key": "POST \"/api/runs/:id/apply-retained\"",
+    "reason": "would run after POST \"/api/runs/:id/\""
+  },
+  {
+    "key": "POST \"/api/runs/:id/\"",
+    "reason": "would run after POST \"/api/runs/:id/terminal\""
+  },
+  {
+    "key": "POST \"/api/app/update\"",
+    "reason": "writes updateRequested"
+  },
+  {
+    "key": "POST \"/api/setup/apply\"",
+    "reason": "writes setupRunning"
+  }
+]

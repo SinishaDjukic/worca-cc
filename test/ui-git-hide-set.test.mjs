@@ -10,8 +10,8 @@ import { checkRows } from './helpers/rows.mjs';
 import { renderIndexHtml } from '../src/core/index-html.mjs';
 
 const trackDom = useDomRelease(afterEach);
-const html = readFileSync(fileURLToPath(new URL('../ui/public/index.html', import.meta.url)), 'utf8');
-const css = readFileSync(fileURLToPath(new URL('../ui/public/style.css', import.meta.url)), 'utf8');
+const html = readIndexHtml();
+const css = readStyleCss();
 const MARKUP = ['#branch-fields', '#proj-add-tab-clone', '#sync-settings-card', '#actions-settings-card', '#pr-settings-card',
   '.rd-base', '.rd-branch-copy', '.rd-sync', '.hist-merge', '.hd-pr',
   '.hd-publish', '.hd-pr-link', '.hd-push', '.hd-published', '.hd-base-check', '.hd-pr-repos', '.hd-base', '.hd-branch-copy',
@@ -249,6 +249,8 @@ test('hide set: the plugin install sheet while git is off', async () => {
 // Part 4 — gates the rows above leave unpinned (review cycle 1: each row fails with its gate deleted).
 import { makePanel } from './helpers/ask-panel-harness.mjs';
 import { stampFrames } from './helpers/ask-frames.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 test('hide set: chained tickets, a live flip on New run, the workspace Actions link, the Ask card project change', async () => {
   await checkRows([

@@ -19,7 +19,7 @@ useTempHome(after);
 
 test('exportGraphJson: the STORED row — no id/origin/timestamps, canvas kept, fixed key order', async () => {
   const tpl = await writeKeyGraph({ name: 'Share Me', keys: ['planner'] });
-  await writeGraphWorkflow({ ...tpl, canvas: { zoom: 1.5, x: 10 } });
+  await writeGraphWorkflow({ ...tpl, canvas: { x: 10, y: 0, zoom: 1.5 } });
   const j = await exportGraphJson(tpl.id);
   assert.deepEqual(Object.keys(j), ['version', 'name', 'domain', 'nodes', 'wires', 'canvas']);
   assert.equal(j.version, 2);
@@ -27,13 +27,13 @@ test('exportGraphJson: the STORED row — no id/origin/timestamps, canvas kept, 
   assert.equal(j.domain, 'coding');
   assert.deepEqual(j.nodes, tpl.nodes);
   assert.deepEqual(j.wires, tpl.wires);
-  assert.deepEqual(j.canvas, { zoom: 1.5, x: 10 });
+  assert.deepEqual(j.canvas, { x: 10, y: 0, zoom: 1.5 });
   for (const k of ['id', 'origin', 'createdAt', 'updatedAt', 'archivedAt', '_worca']) assert.equal(k in j, false, `${k} must not leak`);
 });
 
 test('importGraphWorkflow mints an id and ignores the file\'s id/origin; canvas survives', async () => {
   const src = await exportGraphJson('wf_default');
-  const r = await importGraphWorkflow({ ...src, id: 'wf_default', origin: 'plugin:x', name: 'Imported Default', canvas: { zoom: 2 } });
+  const r = await importGraphWorkflow({ ...src, id: 'wf_default', origin: 'plugin:x', name: 'Imported Default', canvas: { x: 0, y: 0, zoom: 2 } });
   assert.ok(r.workflow.id.startsWith('wf_') && r.workflow.id !== 'wf_default', r.workflow.id);
   assert.equal(r.workflow.origin, null, 'a file origin is never trusted');
   assert.equal(r.renamed, false);
@@ -41,7 +41,7 @@ test('importGraphWorkflow mints an id and ignores the file\'s id/origin; canvas 
   const row = await readWorkflow(r.workflow.id);
   assert.equal(row.name, 'Imported Default');
   assert.deepEqual(row.nodes, src.nodes);
-  assert.deepEqual(row.canvas, { zoom: 2 });
+  assert.deepEqual(row.canvas, { x: 0, y: 0, zoom: 2 });
   // The default itself is untouched.
   assert.equal((await readWorkflow('wf_default')).name, 'Default');
 });

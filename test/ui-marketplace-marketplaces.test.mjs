@@ -8,9 +8,10 @@ import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { lastToast } from './helpers/feedback.mjs';
 import { OFFICIAL, EXAMPLE, LOCAL, NOTE0, row } from './helpers/mk-marketplaces-fixtures.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
 const trackDom = useDomRelease(afterEach);
-const html = readFileSync(fileURLToPath(new URL('../ui/public/index.html', import.meta.url)), 'utf8');
+const html = readIndexHtml();
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 class WSStub {
   constructor() { this.readyState = 1; WSStub.last = this; this._l = {}; }

@@ -1,0 +1,5 @@
+
+/* One border level per card (review B2): inside a chat card the nested boxes drop their border and take a tint. It stays LAST in the file: at (0,2,0) it only beats earlier rules of the same weight, and a
+   later state rule resetting the border shorthand would draw the box again. Outside cards the base rules keep theirs. */
+:is(.ask-card,.chat-rc,.shape-feature) :is(.qpanel,.qblock,.af-choice,.af-form,.issue-detail,.opt-row,.shape-plan-notes,
+  .outline-slice,.shape-plan-outline-change,.chat-rc-result,.shape-card){border:0;background:var(--field);}

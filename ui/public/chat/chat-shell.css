@@ -1,0 +1,149 @@
+/* ===== Chat P1: shell ===== */
+/* worca Chat P1 (ask-panel.mjs): the composer's add-on lead row (worca Chat CONTRACT §2) — chips other plans mount;
+   empty, it takes no room. */
+.chat-composer-lead{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:2px 4px 0;}
+.chat-composer-lead:empty{display:none;}
+/* The page (worca Chat P1): it fills the content column — .main stops scrolling and gives up its gutter, the section
+   takes the rest, and the page is a row: history column · conversation · run panel slot (P4 sets its width). */
+body.view-chat .main{display:flex;flex-direction:column;overflow:hidden;padding:0;}
+.view[data-view="chat"]{flex:1 1 auto;min-height:0;position:relative;}
+.chat-page{position:absolute;inset:0;display:flex;min-width:0;min-height:0;overflow:hidden;background:var(--panel);--chat-text-max:760px;}
+.chat-page[data-history="closed"] .chat-history{display:none;}
+/* The conversation column: the cap tokens the transcript column, the composer box and the jump pill read. */
+.chat-convo{position:relative;flex:1 1 auto;min-width:0;min-height:0;display:flex;flex-direction:column;overflow:hidden;--ask-col-max:var(--chat-text-max);--ask-col-inset:max(16px,calc(50% - var(--ask-col-max) / 2));--ask-box-top:103px;--chat-dock-fade:32px;}
+.chat-head{flex:none;display:flex;align-items:center;gap:8px;height:52px;padding:0 14px;box-sizing:border-box;border-bottom:1px solid var(--line);}
+.chat-head .ask-title{font-size:var(--fs-body);}
+.chat-head-spacer{flex:1 1 auto;}
+.chat-head-btn{flex:none;}
+/* History: the menu toggle's 32px square (.side-toggle) with a page-of-text glyph; the open column keeps the wash. */
+.chat-head-btn.chat-history-toggle{width:32px;height:32px;border-radius:var(--r-sm);}
+.chat-history-toggle > svg{width:20px;height:20px;flex:none;}
+.chat-history-toggle[aria-pressed="true"]{background:var(--field);color:var(--ink);}
+.chat-page[data-view="home"] .chat-head [data-ask-new-btn]{visibility:hidden;}
+.chat-home{flex:1 1 auto;min-height:0;overflow-y:auto;display:flex;flex-direction:column;align-items:center;padding:clamp(32px,10vh,96px) 16px 32px;}
+.chat-hero-slot{width:100%;max-width:var(--chat-text-max);}
+.chat-hero-slot .ask-composer{padding:0;--ask-col-inset:0px;}
+.chat-page[data-view="thread"] .chat-home{display:none;}
+.chat-page[data-view="home"] .ask-transcript,.chat-page[data-view="home"] .chat-dock{display:none;}
+/* The dock floats over the transcript (worca Chat mockup 2026-10-10): the transcript keeps the dock's height
+   (ask-panel.mjs mirrors it into --chat-dock-h) plus the dock's fade band as bottom clearance. Only the composer's own
+   parts take the pointer, so the transcript beside the box stays usable. No z-index: a stacking context here would
+   trap a Getting started ring (.guide-target) under the guide scrim. */
+.chat-dock{position:absolute;left:0;right:0;bottom:0;pointer-events:none;}
+/* #959: the dock is opaque from its top edge down, after a --chat-dock-fade band in which the transcript fades out:
+   nothing reads under the composer. Jump to latest rides that band, right above the dock, never over a line you
+   read (the transcript's bottom clearance includes the band). No z-index (a Getting started ring must escape). */
+.chat-dock::before{content:"";position:absolute;left:0;right:0;bottom:0;top:calc(-1 * var(--chat-dock-fade));background:linear-gradient(to bottom,color-mix(in srgb,var(--panel) 0%,transparent),var(--panel) var(--chat-dock-fade));pointer-events:none;}
+.chat-dock > .ask-composer{pointer-events:none;}
+.chat-dock > .ask-jump,.chat-dock > .ask-composer > *{pointer-events:auto;}
+/* The jump pill rides the dock's top edge (ask-panel.mjs puts it in the dock): it never covers a draft that grew. */
+.chat-dock > .ask-jump{bottom:100%;}
+/* #959: ONE width rule for every chat card: the text column. .ask-transcript-col caps the column at --ask-col-max
+   (= --chat-text-max) and every card, stub and build card fills it, so text and cards share one left edge; no card
+   kind sets a width. No part of a card leaves the column, a graph well included. The transcript is its own stacking
+   context, so a card's raised parts scroll under the dock, not over it. It reserves its scrollbar gutter on both
+   edges, so the column, the composer and Jump to latest share one centre with classic and overlay scrollbars alike;
+   its bottom clearance is the dock's height plus the dock's fade band. */
+.chat-convo .ask-transcript{container-type:inline-size;isolation:isolate;scrollbar-gutter:stable both-edges;padding-bottom:calc(var(--chat-dock-h,120px) + var(--chat-dock-fade));}
+/* The composer is frosted glass (mockup .cp-pill): a translucent fill that blurs what scrolls under it, a hairline and
+   a soft float. A Getting started step that rings a control in it drops the blur: a backdrop filter makes a stacking
+   context, and the ring (.guide-target, z 45) must reach above the guide scrim (z 44). */
+.chat-page .ask-composer-box{border-color:var(--glass-line);border-radius:var(--r-lg);background:var(--glass);-webkit-backdrop-filter:blur(18px) saturate(1.5);backdrop-filter:blur(18px) saturate(1.5);}
+.chat-hero-slot .ask-composer-box{border-radius:var(--r-lg);}
+.chat-page .ask-composer-box:has(.guide-target){-webkit-backdrop-filter:none;backdrop-filter:none;}
+/* The composer's popovers ride the composer (ask-panel.mjs openPopover): above the box in the dock, under it on
+   home, and never sized against the composer's own height. On home the cap is 100vh less .chat-home's 10vh top padding. */
+.chat-page .ask-composer{--ask-box-top:calc(100% - 10px);}
+.chat-page .ask-composer > .ask-pop{max-height:min(420px,calc(100vh - 240px));}
+.chat-page[data-view="home"] .ask-composer > .ask-pop{bottom:auto;top:calc(100% + 6px);max-height:min(420px,calc(90vh - 230px));}
+.chat-panel{flex:none;min-width:0;min-height:0;display:flex;flex-direction:column;border-left:1px solid var(--line);background:var(--panel);}
+.chat-panel[hidden]{display:none;}
+/* Ask worca beside the page: the same chat page in the side column (app.js moves it, ask-panel.mjs setHost). The Chat
+   page keeps its head, home, History column and run panel; the column shows its own head, an empty state and the
+   History column as a dropdown under its head. */
+.chat-page:not([data-host="dock"]) :is(.ask-side-thread,.ask-side-btn,.chat-history-foot,.ask-side-empty){display:none;}
+.chat-page[data-host="dock"] :is(.chat-history-toggle,.chat-head > .ask-title,.chat-head-spacer,.chat-new-plus,.chat-head-meter,.chat-home,.chat-panel){display:none;}
+.chat-page[data-host="dock"] .chat-head{height:46px;gap:2px;padding:0 8px 0 6px;}
+.chat-page[data-host="dock"] .chat-convo{container:chat-convo / inline-size;}
+.ask-side-thread{display:inline-flex;align-items:center;gap:4px;min-width:0;max-width:100%;height:32px;margin-right:auto;padding:0 8px;border:0;
+  border-radius:var(--r-sm);background:transparent;color:var(--ink);font:inherit;font-size:var(--fs-body);font-weight:600;cursor:pointer;}
+.ask-side-thread:hover,.ask-side-thread[aria-expanded="true"]{background:var(--hover);}
+.ask-side-thread:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+.ask-side-thread-t{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.ask-side-thread svg{flex:none;color:var(--ink-3);}
+.chat-page[data-host="dock"][data-view="home"] .chat-dock{display:block;}
+.chat-page[data-host="dock"][data-view="thread"] .ask-side-empty{display:none;}
+.chat-page[data-host="dock"][data-view="home"] .ask-composer > .ask-pop{top:auto;bottom:calc(var(--ask-box-top) + 6px);max-height:min(420px,calc(100vh - 240px));}
+.ask-side-empty{flex:1 1 auto;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:14px;
+  padding:28px 18px calc(var(--chat-dock-h,120px) + 10px);box-sizing:border-box;}
+.ask-side-empty-h{margin:0;font-size:15px;font-weight:600;color:var(--ink);}
+.ask-side-suggest{display:flex;flex-direction:column;align-items:flex-start;gap:6px;}
+.ask-side-opt{display:inline-flex;align-items:center;max-width:100%;min-height:32px;box-sizing:border-box;padding:5px 12px;border:1px solid var(--line);border-radius:var(--r-md);background:var(--panel);color:var(--ink);
+  font:inherit;font-size:var(--fs-body);text-align:left;cursor:pointer;}
+.ask-side-opt:hover{background:var(--hover);}
+.ask-side-opt:focus-visible{outline:2px solid var(--ink);outline-offset:1px;}
+.ask-side-recent{display:flex;flex-direction:column;align-items:flex-start;gap:4px;}
+.ask-side-recent[hidden]{display:none;}
+.ask-side-recent-cap{font-size:var(--fs-caption);color:var(--ink-3);}
+.ask-side-recent-list{display:flex;flex-direction:column;align-self:stretch;}
+.ask-side-recent-row{display:flex;flex-direction:column;gap:2px;width:100%;padding:6px 8px;border:0;border-radius:var(--r-sm);background:transparent;
+  color:var(--ink);font:inherit;text-align:left;cursor:pointer;}
+.ask-side-recent-row:hover{background:var(--hover);}
+.ask-side-recent-t{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--fs-body);}
+.ask-side-recent-meter{font-family:var(--mono);font-size:11px;color:var(--ink-3);}
+.ask-side-recent-when{font-weight:700;color:var(--ink);white-space:nowrap;}
+.ask-side-recent-topics{color:var(--ink-2);}
+.ask-side-recent-fill.is-ctx-warn{color:var(--amber-ink);}
+.ask-side-recent-fill.is-ctx-high{color:var(--red-ink);font-weight:600;}
+.chat-page[data-host="dock"] .chat-scrim:not([hidden]){display:block;position:absolute;inset:0;z-index:5;background:transparent;}
+.chat-history-foot{flex:none;display:flex;padding:6px;border-top:1px solid var(--line);}
+.chat-history-in-chat{flex:1;justify-content:flex-start;}
+/* The Chat row's unread dot (a .nav-count, so the rail parks it in the square's corner) and the logo links. */
+.nav-count.nav-dot{width:8px;height:8px;padding:0;border-radius:50%;background:var(--slate);}
+.sidebar.collapsed .nav-count.nav-dot{top:6px;right:8px;}
+.brand a.logo:focus-visible,.brand a.logo-mark:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:var(--r-sm);}
+/* Toasts clear the docked composer (the shared --ask-dock-clearance is 96px; the dock's box starts ~103-120px up). */
+body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
+/* The composer row never pushes Send out of the box: a pinned scope's long name gives way first (its label
+   ellipsizes), the buttons keep their size, the model label stays on one line. Phones also drop the least needed parts. */
+.chat-page .ask-composer-row > .ask-scope-btn{flex:0 1 auto;min-width:0;}
+.chat-page .ask-scope-btn > svg{flex:none;}
+.chat-page .ask-composer-row > :is(.btn,.ask-meter,.ask-model-btn,.ask-voice):not(.ask-scope-btn){flex:none;}
+.chat-page .ask-model-btn{white-space:nowrap;}
+@media (max-width:480px){
+  .chat-page .ask-meter-cost,.chat-page .ask-voice-caret,.chat-page .ask-model-btn-effort{display:none;}
+}
+/* The model button's engine name goes too (also in the extension's sidebar, which cuts this section): at 290px the row
+   scrolled sideways, and the sidebar's scope label shrank to nothing. The model menu's section heading names the engine. */
+@media (max-width:480px){
+  .chat-page .ask-model-btn-engine{display:none;}
+}
+@media (max-width:360px){
+  .chat-page .ask-composer-row{gap:4px;}
+  .chat-page .ask-composer-row > .ask-meter{display:none;}
+}
+/* History (ask-panel.mjs buildHistory): the Chats column's host, a push column; below 1100px an overlay over the page
+   with a scrim. */
+.chat-history{flex:0 0 264px;width:264px;min-width:0;min-height:0;display:flex;flex-direction:column;box-sizing:border-box;border-right:1px solid var(--line);background:var(--panel);}
+.chat-history:focus{outline:none;}
+.chat-scrim{display:none;}
+@media (max-width:1099px){
+  .chat-history{position:absolute;top:0;bottom:0;left:0;z-index:6;width:min(300px,86vw);box-shadow:var(--shadow-sheet);}
+  .chat-scrim:not([hidden]){display:block;position:absolute;inset:0;z-index:5;background:var(--scrim-soft);}
+}
+/* Chats column (#948 s2): the Runs list anatomy in the History aside; width from runs-resize.mjs. */
+.chat-page[data-chats="on"] .chat-history{position:relative;flex:0 0 var(--chats-list-w,clamp(280px,340px,min(50%,640px)));width:var(--chats-list-w,clamp(280px,340px,min(50%,640px)));}
+.chat-page[data-chats="on"] .chat-history .runs-list{padding-inline:8px;}
+.chat-page.is-resizing{cursor:col-resize;user-select:none;}
+.chat-page.is-resizing .runs-resize::before{content:"";position:absolute;top:0;bottom:0;left:2px;width:2px;background:var(--line-2);}
+.btn.chat-head-meter{display:block;text-align:left;line-height:26px;margin-left:auto;min-width:0;flex:0 1 auto;overflow:hidden;text-overflow:ellipsis;font-family:var(--mono);font-size:11px;color:var(--ink-3);white-space:nowrap;}
+.chat-page[data-chats="on"] .chat-new-plus{flex:none;}
+.chat-page[data-chats="on"] [data-ask-meter]{display:none;}
+@media (max-width:1099px){.chat-page[data-chats="on"] .chat-history{position:absolute;width:min(340px,86vw);}.chat-page[data-chats="on"] .runs-resize{display:none;}}
+/* Ask worca beside the page: in the side column the Chats column is a dropdown under its head (after the rules above,
+   which it ties), with no resize handle; the composer's meter stands in for the head meter the column hides. */
+.chat-page[data-host="dock"] .chat-history{position:absolute;top:46px;right:8px;bottom:auto;left:8px;z-index:6;width:auto;
+  max-height:min(520px,calc(100% - 140px));border:1px solid var(--line);border-radius:var(--r-md);box-shadow:var(--shadow-pop);}
+.chat-page[data-host="dock"] .runs-resize{display:none;}
+.chat-page[data-host="dock"] [data-ask-meter]{display:flex;}
+

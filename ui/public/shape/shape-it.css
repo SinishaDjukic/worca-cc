@@ -1,0 +1,235 @@
+/* ---------- Shape it first (spec §3.3–§3.5): the plan ask, the shaping Clarify, the Chat proposal/tile/run card ---------- */
+.plan-body{display:flex;flex-direction:column;gap:10px;padding-top:10px;font-size:var(--fs-body);}
+.plan-meta{font-family:var(--mono);font-size:var(--fs-meta);color:var(--ink-2);}
+.plan-perspectives{display:flex;flex-wrap:wrap;align-items:center;gap:8px;}
+.plan-perspectives-ro{font-size:12px;color:var(--ink-2);}
+.plan-check{display:flex;flex-wrap:wrap;gap:6px;}
+.plan-check-ok{padding:3px 9px;border-radius:var(--r-sm);background:var(--green-bg);color:var(--green-ink);font-size:var(--fs-meta);font-weight:500;}
+/* Wraps on a narrow card: the detail's basis sends it to its own line rather than shrinking it to nothing under Fix. */
+.plan-check-bad{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;width:100%;padding:6px 10px;border-radius:var(--r-ctrl);background:var(--red-bg);color:var(--red-ink);}
+.plan-check-label{font-weight:600;}
+.plan-check-detail{flex:1 1 12em;min-width:0;color:var(--ink-2);}
+.plan-md{position:relative;padding:10px 12px;border:1px solid var(--line);border-radius:var(--r-ctrl);background:var(--panel);overflow-wrap:anywhere;}
+.plan-md.collapsed{max-height:40vh;overflow:hidden;}
+.plan-md.collapsed::after{content:'';position:absolute;inset:auto 0 0;height:48px;background:linear-gradient(transparent,var(--panel));pointer-events:none;}
+.plan-md pre{white-space:pre-wrap;margin:0;}
+.plan-tag{margin-left:8px;padding:2px 8px;border-radius:var(--r-xs);background:var(--hover);color:var(--ink-2);font-size:var(--fs-caption);font-weight:600;vertical-align:middle;}
+.plan-ground{margin-left:6px;font-size:var(--fs-caption);font-weight:600;}
+.plan-ground.found{color:var(--green-ink);}
+.plan-ground.new{color:var(--ink-3);}
+.plan-ground.missing{color:var(--red-ink);}
+.plan-versions{display:flex;flex-direction:column;gap:6px;}
+.plan-version summary{cursor:pointer;color:var(--ink-2);font-size:12px;}
+.plan-version .plan-md{margin-top:6px;}
+.plan-err{color:var(--red-ink);font-size:12px;}
+.plan-err.ok{color:var(--green-ink);}
+.plan-err[hidden]{display:none;}
+/* Run 4 (D8): the changes field is the shared field; Cancel and Send changes sit under it. */
+.plan-typed{display:flex;flex-direction:column;align-items:stretch;gap:8px;}
+.plan-typed textarea{min-height:64px;min-width:0;padding:6px 12px;border:1px solid var(--line-2);border-radius:var(--r-sm);
+  background:var(--field);color:var(--ink);font:400 var(--fs-body)/var(--lh-body) var(--sans);resize:vertical;}
+.plan-typed textarea:focus-visible{outline:none;}   /* the shared :focus ink border is the focus state (no 2px ring) */
+.plan-typed-acts{display:flex;justify-content:flex-end;gap:8px;}
+.plan-typed[hidden]{display:none;}
+.plan-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px;}
+.plan-actions .plan-stop{margin-left:auto;}
+.shape-chips{display:flex;flex-wrap:wrap;gap:6px;}
+.shape-chip{padding:4px 10px;border:1px solid var(--line);border-radius:var(--r-xs);background:var(--panel);color:var(--ink-2);font:500 var(--fs-caption)/var(--lh-body) var(--sans);cursor:pointer;}
+.shape-chip.on{border-color:var(--ink);background:var(--ink);color:var(--on-ink);}
+.shape-chip:disabled{cursor:not-allowed;opacity:.5;}
+.shape-chip-more{padding:4px 8px;border:0;background:none;color:var(--ink-2);font:500 var(--fs-caption)/var(--lh-body) var(--sans);cursor:pointer;}
+.shape-card,.ask-card-shape{display:flex;flex-direction:column;gap:8px;padding:10px 12px;border:1px solid var(--amber-line);border-radius:var(--r-ctrl);background:var(--amber-wash);}
+.shape-nudge-head{font-weight:600;color:var(--amber-ink);}
+.shape-nudge-list{margin:0;padding-left:18px;color:var(--ink-2);font-size:12px;}
+.shape-choices{display:flex;flex-wrap:wrap;gap:8px;}
+.shape-choice{display:flex;flex-direction:column;align-items:flex-start;gap:2px;}
+.shape-choice.primary{border-color:var(--amber);}
+.shape-est{font-size:11px;color:var(--ink-3);font-weight:400;}
+.clarify-defaults{margin-right:8px;}
+.clarify-defaults-err{margin-top:8px;color:var(--red-ink);font-size:12px;}
+.clarify-defaults-err[hidden]{display:none;}
+/* D30–D34: the decision card. Amber stays on the heading's disc only; rows and chips are neutral. */
+.plan-sub{color:var(--ink-2);font-size:12px;}
+.plan-summary{margin:0;color:var(--ink);font-size:13px;line-height:1.5;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;}
+.plan-fold{display:inline-flex;align-items:center;gap:6px;align-self:flex-start;height:auto;padding:2px 0;border:0;background:none;color:var(--ink-2);font:500 12px/1.4 var(--sans);cursor:pointer;}
+.plan-chev{display:inline-block;transition:transform .15s;}
+.plan-fold[aria-expanded="true"] .plan-chev{transform:rotate(90deg);}
+.plan-checks{display:flex;flex-direction:column;gap:2px;padding-left:4px;}
+.plan-check-row{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 8px;padding:3px 0;color:var(--ink);}
+.plan-check-mark{flex:none;width:1em;font-weight:700;color:var(--ink-3);}
+.plan-check-row:not(.ok) .plan-check-mark{color:var(--ink);}
+.plan-fix-all{align-self:flex-start;margin-top:4px;}
+/* Slice 4: role review rows: Show unfolds the findings; a 2px severity chip (D14) */
+.plan-check-show{margin-left:auto;}
+.plan-findings{list-style:none;margin:0 0 4px;padding:0 0 0 calc(1em + 8px);display:flex;flex-direction:column;}
+.plan-finding{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 8px;min-width:0;padding:4px 0;border-top:1px solid var(--line);font-size:12px;color:var(--ink);}
+.plan-finding-fix{flex:1 1 12em;min-width:0;overflow-wrap:anywhere;}
+.plan-finding-section,.plan-finding-status{color:var(--ink-2);}
+.plan-sev{flex:none;padding:0 6px;border-radius:var(--r-xs);font-size:11px;font-weight:600;}
+.plan-sev-critical{background:var(--red-bg);color:var(--red-ink-strong);}
+.plan-sev-major{background:var(--amber-bg);color:var(--amber-ink-strong);}
+.plan-sev-minor,.plan-sev-suggestion{background:var(--line);color:var(--ink-2);}
+.plan-persp-line{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px;color:var(--ink-2);font-size:12px;}
+.plan-persp-edit{height:auto;padding:0;border:0;background:none;color:var(--ink);font:inherit;text-decoration:underline;cursor:pointer;}
+.plan-full-view{display:flex;flex-direction:column;gap:8px;}
+.plan-actions .plan-more{margin-left:auto;}
+.plan-unmet{color:var(--ink-2);font-size:12px;}
+/* D31: a shaped run's bar — the three controls live in the ⋯ menu */
+.rd-bar[data-shaped] .rd-bar-end > :is(.rd-night-wrap,.rd-after,.term-opener){display:none;}
+.rd-bar-more{flex:none;}   /* ⋯ is .btn .btn-quiet .btn-icon in markup */
+/* Run 3 (D13): the bar is the primary action, Run after, Stop and ⋯ on every run page; ⋯ drives the controls hidden here.
+   Run after stays a quick button beside the Resume split and Stop (folded only on a shaped run's bar, above). */
+.rd-bar .rd-bar-end > :is(.rd-night-wrap,.term-opener){display:none;}
+.hd-bar .rd-bar-end > :is(.hd-save-preset,.term-opener){display:none;}
+/* At 290px the bar shrinks by rule: the primary label ellipsizes, Stop and the icon buttons keep their size. */
+.rd-bar-end,.gpage-actions{min-width:0;flex:0 1 auto;}
+:is(.rd-actions,.gpage-actions) .btn-primary{min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.rd-bar :is(.btn-danger,.btn-icon){flex:none;}
+/* One control size on both bars: the model's made .btn-sm actions (syncActions; the chat run card keeps them small)
+   and the Resume split come up to .btn's 32px and body size; the primary keeps its 600 weight, as everywhere (the
+   button audit's rule). Child selectors only: the chat panel's Open full page / Close (.crp-bar-btns) keep their square. */
+:is(.rd-bar,.hd-bar) .rd-bar-end > .btn,
+:is(.rd-bar,.hd-bar) .rd-bar-end > :is(.rd-actions,.btn-split) > .btn{height:32px;padding:0 12px;gap:6px;font-size:var(--fs-body);}
+:is(.rd-bar,.hd-bar) .rd-bar-end > .btn.btn-icon,
+:is(.rd-bar,.hd-bar) .rd-bar-end > :is(.rd-actions,.btn-split) > .btn.btn-icon{width:32px;padding:0;}
+/* ⋯ is .btn-quiet in markup; on the bar it wears its neighbours' border and fill. */
+:is(.rd-bar,.hd-bar) .rd-bar-end > :is(.rd-bar-more,.hd-bar-more){background:var(--panel);border-color:var(--line-2);color:var(--ink);}
+:is(.rd-bar,.hd-bar) .rd-bar-end > :is(.rd-bar-more,.hd-bar-more):hover:not(:disabled){background-color:var(--btn-hover);}
+/* Run 3 (D6): the breadcrumb at the bar's left (split layout only). */
+.rd-crumbs{display:flex;align-items:center;gap:4px;min-width:0;font-size:var(--fs-meta);color:var(--ink-2);}
+.rd-crumbs[hidden]{display:none;}
+.rd-crumb{min-width:0;max-width:24ch;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:inherit;text-decoration:none;}
+a.rd-crumb:hover{color:var(--ink);text-decoration:underline;}
+.rd-crumb[aria-current="page"]{color:var(--ink);}
+.rd-crumb-sep{display:inline-flex;flex:none;color:var(--ink-3);}
+/* Run 3 (D8): the facts block — 12px labels in one column, 13px values; label over value in a narrow card. */
+.rd-kv{container:rd-kv / inline-size;margin:0;display:flex;flex-direction:column;}
+.rd-kv-row{display:grid;grid-template-columns:96px minmax(0,1fr);gap:12px;align-items:baseline;padding:8px 0;}
+/* Divided rows: a line above every shown row but the first shown one (a hidden first row takes no line with it). */
+.rd-kv-row:not([hidden]) ~ .rd-kv-row{border-top:1px solid var(--line);}
+.rd-kv-row[hidden]{display:none;}
+.rd-kv-k{font-size:var(--fs-meta);line-height:var(--lh-body);color:var(--ink-2);white-space:nowrap;}   /* one line, always */
+.rd-kv-v{margin:0;min-width:0;font-size:var(--fs-body);line-height:var(--lh-body);color:var(--ink);display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;overflow-wrap:anywhere;}
+/* A quiet button that leads a value (Add to group…, the branch chip) pulls back by its padding and border, so its text
+   sits on the value column like Project's; its hover fill still shows. Trailing Add/Edit buttons keep their place. */
+.rd-kv-v > .btn-sm.btn-quiet:first-child{margin-inline-start:-11px;}
+@container rd-kv (max-width:420px){.rd-kv-row{grid-template-columns:minmax(0,1fr);gap:2px;}}
+.rd-kv:not(:has(> .rd-kv-row:not([hidden]))){display:none;}
+/* D30, run 4 D1: while a shaped run waits on the person (Clarify or the plan), the question card is the page: the status
+   card (status block, facts, labels, Results) and the graph hide until it is answered. Keyed on the glance, not on
+   .rd-questions, because the Chat panel moves the question out of the glance. */
+.rd-glance[data-shaper-wait] > :is(.rd-sheet,.rd-live){display:none;}
+.chat-rc-shaped{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;margin-top:8px;font-size:12px;color:var(--ink-2);}
+.chat-rc-shaped:empty{display:none;}
+.chat-rc-shaped-stages{color:var(--green-ink);font-weight:500;}
+.chat-rc-shaped-plan,.chat-rc-shaped-saved{font-family:var(--mono);font-size:var(--fs-meta);overflow-wrap:anywhere;}
+/* Shaper s2: the feature card's status line, group bar, step log and member rows — divided rows, no boxes */
+.chat-rc-fstatus{margin-top:2px;}
+.chat-rc-dot-ic{width:16px;height:16px;margin-top:0;}
+.chat-rc-chain{margin-top:8px;}
+.chat-rc-log,.chat-rc-members{list-style:none;margin:8px 0 0;padding:0;border-top:1px solid var(--line);}
+/* Fix 1 (spec §3.4): the chat card's member list is the group page's table; a card under 480px drops the cost. */
+.chat-rc-members{container:chat-rc-members / inline-size;}
+.chat-rc-log-row,.chat-rc-member{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:5px 0;border-bottom:1px solid var(--line);font-size:12px;color:var(--ink-2);}
+.chat-rc-log-check{width:16px;height:16px;}
+.chat-rc-log-run{color:var(--ink-3);}
+.chat-rc-log-run::after{content:" \00B7";}
+.chat-rc-log-show{margin-left:auto;background:none;border:0;padding:0 2px;color:var(--ink-2);font:inherit;cursor:pointer;text-decoration:underline;}
+.chat-rc-log-detail{flex-basis:100%;list-style:none;margin:2px 0 0 22px;padding:0;color:var(--ink-3);}
+.chat-rc-member-open{display:flex;width:100%;gap:4px;background:none;border:0;padding:0;font:inherit;color:inherit;text-align:left;cursor:pointer;}
+.chat-rc-member-open:disabled{cursor:default;opacity:.7;}
+.chat-rc-member-open:focus-visible,.chat-rc-log-show:focus-visible{outline:2px solid currentColor;outline-offset:2px;}
+/* QA 1: the Shaper pin's badge sits inline after the label, sized and coloured like the feature-flag chip
+   (.flag-chip: 18px, violet for Labs). Never truncated. */
+.chat-home-act-badge{flex:none;box-sizing:border-box;display:inline-flex;align-items:center;height:18px;padding:0 6px;border-radius:var(--r-xs);background:var(--slate-bg);color:var(--slate-ink);font-size:var(--fs-caption);font-weight:500;line-height:1;white-space:nowrap;}
+.shape-checklists{margin:12px 0;display:flex;flex-direction:column;gap:6px;}
+.shape-cl-title{font-size:13px;margin:0;color:var(--ink-2);}
+.shape-cl-cycle{border:1px solid var(--line);border-radius:var(--r-ctrl);padding:6px 10px;background:var(--panel);
+  display:flex;flex-direction:column;align-items:flex-start;gap:6px;}
+.shape-cl-caption{margin:0;font-size:12px;font-weight:600;color:var(--ink-2);}
+.shape-cl-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px;align-self:stretch;}
+.shape-cl-item{display:flex;flex-wrap:wrap;gap:6px;align-items:baseline;font-size:12px;}
+.shape-cl-status{font-weight:600;min-width:84px;}
+.shape-cl-item.st-met .shape-cl-status{color:var(--green-ink);}
+.shape-cl-item.st-unmet .shape-cl-status,.shape-cl-item.st-missing .shape-cl-status{color:var(--red-ink);}
+.shape-cl-item.st-na .shape-cl-status{color:var(--ink-3);}
+.shape-cl-id{font-family:var(--mono);}
+.shape-cl-evidence{flex-basis:100%;padding-left:90px;color:var(--ink-2);overflow-wrap:anywhere;}
+.shape-cl-toggle{font-size:12px;display:inline-flex;align-items:center;gap:4px;}
+.shape-cl-toggle .chev{display:inline-block;transition:transform .2s;text-decoration:none;}
+.shape-cl-toggle[aria-expanded="true"] .chev{transform:rotate(180deg);}
+.shape-cl-earlier{display:flex;flex-direction:column;gap:6px;align-self:stretch;}
+@media (max-width:480px){.shape-cl-evidence{padding-left:0;}}
+@media (prefers-reduced-motion:reduce){.shape-cl-toggle .chev{transition:none;}}
+.chat-rc-checklist{font-size:12px;color:var(--green-ink);margin:4px 0;}
+.chat-rc-checklist.is-open{color:var(--red-ink);}
+/* s3: the score is a text button; it unfolds the run page's Perspective checklists in place. */
+.chat-rc-checklist-btn{background:none;border:0;padding:0;color:inherit;font:inherit;cursor:pointer;text-decoration:underline;}
+.chat-rc-checklist-btn:focus-visible{outline:2px solid currentColor;outline-offset:2px;}
+.chat-rc-checklist-groups{margin-top:6px;color:var(--ink);}
+.chat-rc-checklist-groups[hidden]{display:none;}
+.outline-why{margin:0;color:var(--ink-2);}
+.outline-why[hidden]{display:none;}
+.outline-slices{display:flex;flex-direction:column;gap:8px;margin:0;padding:0;list-style:none;counter-reset:outline;}
+.outline-slice{counter-increment:outline;display:flex;flex-direction:column;gap:4px;padding:8px 12px;border:1px solid var(--line);border-radius:var(--r-ctrl);background:var(--panel);}
+.outline-slice-head{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;}
+.outline-slice-title::before{content:counter(outline) '. ';color:var(--ink-3);font-weight:500;}
+.outline-goal{color:var(--ink-2);overflow-wrap:anywhere;}
+.outline-acceptance{margin:0;padding-left:18px;color:var(--ink-2);font-size:12px;overflow-wrap:anywhere;}
+.outline-slice-tools{display:flex;flex-wrap:wrap;gap:6px;margin-top:2px;}
+.outline-approve-each{display:flex;align-items:center;gap:6px;color:var(--ink-2);cursor:pointer;}
+.outline-undo{align-self:flex-start;}
+.outline-undo[hidden]{display:none;}
+/* D30–D32: the slice outline as a decision card (outline-body.mjs renderCard); plan-card classes do the rest. */
+.plan-card .outline-slices{gap:4px;}
+.plan-card .outline-slice{gap:2px;padding:6px 10px;}
+.plan-card .outline-goal{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.outline-under{display:flex;flex-wrap:wrap;align-items:center;gap:6px 16px;font-size:12px;}
+.outline-under .outline-approve-each{font-size:12px;}
+.outline-under .outline-edit{font-size:12px;}
+/* Shaper step cards (shaper-cards spec §2.2): the metrics card head, inside a question panel. */
+.qpanel .step-head{height:auto;min-height:24px;flex-wrap:wrap;margin-bottom:8px;}
+.qpanel .step-head .ask-mcard-title{white-space:normal;min-width:0;flex:1 1 auto;overflow-wrap:anywhere;}
+.outline-row-more{margin-left:auto;}
+.shape-feature{display:flex;flex-direction:column;gap:8px;padding:10px 12px;border:1px solid var(--line);border-radius:var(--r-ctrl);background:var(--panel);font-size:13px;}
+/* s3: the feature's head-less view (Plans tab, group page Overview): the run model owns the head and status. */
+.shape-feature-replanned{color:var(--ink-3);font-size:12px;}
+.shape-feature-log{margin-top:0;}
+.shape-feature-actions{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;}
+.shape-feature-actions[hidden]{display:none;}
+.shape-feature-err{flex-basis:100%;padding:6px 8px;border-radius:var(--r-ctrl);background:var(--red-bg);color:var(--red-ink);overflow-wrap:anywhere;}
+.shape-feature-err[hidden]{display:none;}
+/* Run 3 (D1): the group page's host in the Runs pane (#group-detail); .gpage pads itself like the run page. Its loading,
+   gone and error lines sit under the bar's Back with the run page's gutter. */
+.feature-page{padding:0;}
+.feature-page > :is(.feature-page-loading,.feature-page-gone,.feature-page-error){margin:0;padding:28px 32px;}
+@media (max-width:640px){.main{padding:16px 16px 32px;}.feature-page > :is(.feature-page-loading,.feature-page-gone,.feature-page-error){padding:16px;}}
+.feature-page-gone,.feature-page-loading{color:var(--ink-3);}
+/* §5a.2: the group page could not load (server unreachable): the error and a Try again on one line. */
+.feature-page-error{color:var(--red-ink);}
+.feature-page-error .btn{margin-left:8px;}
+.feature-page .shape-feature{width:100%;box-sizing:border-box;font-size:var(--fs-body);border:0;}
+/* Run 4 (D14): on the group page the Ship card is a section of the Overview, under one divider — no box in a box. */
+.feature-page .shape-feature > .ask-shipcard{padding:16px 0 0;border:0;border-top:1px solid var(--line);border-radius:0;background:none;}
+/* In Chat › Plans the row is the frame: the feature view draws no border, so its Ship card keeps the one border (D16). */
+.chat-home-plan .shape-feature{border:0;}
+.shape-feature-order{color:var(--ink-3);font-size:12px;}
+/* D19: why a later slice's plan stopped. */
+.shape-plan-outline-change{padding:8px 10px;border-radius:var(--r-ctrl);background:var(--amber-wash);border:1px solid var(--amber-line);}
+.shape-plan-outline-change-head{font-weight:600;color:var(--amber-ink);}
+.shape-plan-outline-change-text{margin:4px 0 0;white-space:pre-wrap;overflow-wrap:anywhere;}
+.shipit-slice-note[hidden]{display:none;}
+.chat-home-plans{display:flex;flex-direction:column;gap:6px;margin:0;padding:0;list-style:none;}
+.chat-home-plan{display:flex;flex-direction:column;gap:4px;}
+.chat-home-plan-open{display:flex;align-items:center;gap:10px;width:100%;padding:9px 10px;border:0;border-radius:var(--r-sm);background:none;color:var(--ink);font:inherit;text-align:left;cursor:pointer;}
+.chat-home-plan-open:hover{background:var(--hover);}
+.chat-home-plan-col{display:flex;flex:1;flex-direction:column;gap:2px;min-width:0;}
+.chat-home-plan-t{font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.chat-home-plan-m{color:var(--ink-2);font-size:var(--fs-meta);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.chat-home-plan-state{flex:none;padding:1px 8px;border-radius:var(--r-xs);background:var(--line);color:var(--ink-3);font-size:var(--fs-caption);font-weight:600;}
+.chat-home-plan-state.is-done{background:var(--green-bg);color:var(--green-ink);}
+.chat-home-plan-state.is-stopped{background:var(--red-bg);color:var(--red-ink);}
+.chat-home-plan-state.is-waiting,.chat-home-plan-state.is-paused{background:var(--amber-bg);color:var(--amber-ink);}
+.chat-home-plan-feature{margin:0 10px 4px;color:var(--ink-2);font-size:12px;}
+.chat-home-plan-feature>summary{cursor:pointer;}
+.chat-home-plan-feature-body{margin-top:6px;}

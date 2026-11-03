@@ -1,18 +1,17 @@
 // test/ui-sidebar-counts.test.mjs
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join } from 'node:path';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const htmlPath = join(__dirname, '../ui/public/index.html');
 const appPath = join(__dirname, '../ui/public/app.js');
 
 // Inbound-frame WS stub: captures the socket so a test can deliver a server broadcast
@@ -30,7 +29,7 @@ function makeWsStub(wsBox) {
 async function boot({ counts = { pipelines: 0, projects: 0, workspaces: 0 }, hash = '' } = {}) {
   const calls = [];
   const box = { counts };                                 // mutable so a test can change the server's reply
-  const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: `http://localhost:4321/#${hash}` }));
+  const dom = trackDom(new JSDOM(readIndexHtml(), { url: `http://localhost:4321/#${hash}` }));
   const { window } = dom;
   const wsBox = {};
   window.Element.prototype.scrollIntoView = function () {};

@@ -94,3 +94,27 @@ test('real path: system/init surfaces {type:"session", sessionId}', POSIX_SHIM, 
   await runClaude({ bin, prompt: 'hi', cwd: dir, onEvent: (e) => events.push(e) });
   assert.equal(events.find((e) => e.type === 'session')?.sessionId, 'sess-real-1');
 });
+
+// ── Session groups, Task 39: a host turn reads the runner's RAW envelopes (its demux routes them) ──
+test('rawEvents: the raw envelopes reach onEvent unchanged; without it, only the normalized vocabulary', POSIX_SHIM, async () => {
+  const dir = await makeTmpDir();
+  const bin = await fakeBin(dir, { code: 0, stdout:
+    '{"type":"system","subtype":"init","session_id":"sess-raw-1","model":"claude-haiku-4-5"}\n'
+    + '{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","id":"T1","name":"Agent","input":{"subagent_type":"worca-x-n_a-1-a1"}}]}}\n'
+    + '{"type":"result","subtype":"success","result":"DONE","total_cost_usd":0.5}' });
+  const raw = [];
+  const out = await runClaude({ bin, prompt: 'hi', cwd: dir, rawEvents: true, onEvent: (e) => raw.push(e) });
+  assert.equal(out.text, 'DONE');
+  assert.deepEqual(raw.map((e) => e.type), ['session', 'system', 'assistant', 'result']);
+  assert.equal(raw[1].raw.session_id, 'sess-raw-1');
+  assert.equal(raw[2].raw.message.content[0].name, 'Agent');
+  assert.equal(raw[3].costUsd, 0.5);
+  const norm = [];
+  await runClaude({ bin, prompt: 'hi', cwd: dir, onEvent: (e) => norm.push(e) });
+  assert.equal(norm.some((e) => e.type === 'system' || e.type === 'assistant'), false, 'an ungrouped spawn still sees only normalized events');
+  assert.ok(norm.some((e) => e.type === 'tool' || e.type === 'subagent'));
+  const { defaultTransport } = await import('../src/core/session-host.mjs');
+  const viaHost = [];
+  await defaultTransport({ bin, prompt: 'hi', cwd: dir, onEvent: (e) => viaHost.push(e) });
+  assert.deepEqual(viaHost.map((e) => e.type), ['session', 'system', 'assistant', 'result'], 'a real host turn asks for the raw envelopes');
+});

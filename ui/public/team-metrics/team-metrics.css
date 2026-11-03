@@ -1,0 +1,291 @@
+/* ---------- Team metrics page (boards 1–3) ---------- */
+/* style.css has no global [hidden]{display:none} (see its own notes at :324 / :677): an author
+   display:flex beats the UA [hidden] rule, so every hidden-toggled flex container needs this.
+   .tm-enable-err is a .hint, and .hint{display:block} beats the UA [hidden] rule too, so without
+   it the empty error line is always visible in the Enable dialog. */
+#tm-custom[hidden],#tm-sync[hidden],#tm-filters[hidden],#tm-range[hidden],#tm-body[hidden],#tm-timeline[hidden],.ws-home[hidden],#stats-tm-hint[hidden],
+.tm-enable-err[hidden],#wiz-metrics-pre[hidden]{display:none;}
+.tm-sync-error{white-space:pre-wrap;margin:0;}
+section[data-view="team-metrics"] .topbar{align-items:flex-start;}
+.sync-chip{margin-left:auto;display:flex;align-items:center;}
+.sync-chip-inner{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;padding:8px 12px;border:1px solid var(--line-2);border-radius:var(--r-card);background:var(--surface);font-size:var(--fs-meta);max-width:520px;}
+.sync-chip-inner .dot.green{background:var(--green);} .sync-chip-inner .dot.amber{background:var(--amber);} .sync-chip-inner .dot.red{background:var(--red);}
+.sync-chip-inner .tm-sync-error{flex-basis:100%;color:var(--red-ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.tm-filter{display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin-bottom:18px;}
+.tm-scope-wrap .select{min-width:240px;}
+.tm-group{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--ink-2);margin-left:auto;}
+.tm-custom{display:flex;flex-wrap:wrap;align-items:center;gap:6px;} .tm-custom .input{width:150px;max-width:100%;}
+.tm-active-filters{display:flex;gap:8px;margin:-8px 0 14px;}
+.tm-home-hint{display:block;margin:-8px 0 14px;}
+.tm-stats-hint{margin-left:auto;align-self:center;}
+#tm-body.is-loading{opacity:.6;}
+/* Loading affordances (docs/team-metrics.md "Loading"): a shimmer bar for skeleton cells — the
+   Ask panel's sweep, on a block — and the History Refresh spinner recipe on the chip's button. */
+.skel{display:inline-block;height:11px;width:60%;border-radius:var(--r-sm);vertical-align:middle;
+  background:linear-gradient(90deg,var(--field) 25%,var(--line) 50%,var(--field) 75%);background-size:220% 100%;
+  animation:ask-shimmer 1.6s linear infinite;}
+.skel.w25{width:25%;}.skel.w40{width:40%;}.skel.w60{width:60%;}.skel.w70{width:70%;}
+.skel.skel-lg{height:22px;margin:6px 0;}
+.skel.skel-block{display:block;width:100%;height:150px;border-radius:var(--r-sm);margin-top:10px;}
+.skel-row{display:flex;gap:14px;padding:9px 0;border-bottom:1px solid var(--line);}
+.skel-row:last-child{border-bottom:0;}
+.tm-skeleton .card-head{margin-bottom:6px;}
+.tm-skeleton .stat-sub .skel{margin-top:6px;}
+.tm-busy-spin{width:12px;height:12px;flex:0 0 auto;border-radius:50%;border:2px solid var(--line-2);border-top-color:var(--ink);animation:ws-spin .9s linear infinite;}
+.sync-chip-inner .tm-checking{color:var(--ink-2);}
+.tm-refresh.busy{position:relative;color:transparent;pointer-events:none;}
+.tm-refresh.busy::after{content:"";position:absolute;inset:0;margin:auto;width:12px;height:12px;border-radius:50%;
+  border:2px solid var(--line-2);border-top-color:var(--ink);animation:ws-spin .9s linear infinite;}
+/* Workspace card while /scopes is out: the same table, shimmer cells, and a "checking metrics…" summary. */
+.ws-sum-pending{background:linear-gradient(90deg,var(--ink-3) 0%,var(--ink) 50%,var(--ink-3) 100%);background-size:220% 100%;
+  -webkit-background-clip:text;background-clip:text;color:transparent;animation:ask-shimmer 2.4s linear infinite;}
+.ws-home-inner.is-pending .ws-projects-tbl td{padding-top:9px;padding-bottom:9px;}
+.tm-tbl{width:100%;border-collapse:collapse;}
+/* Team metrics' tables are the shared .table, which owns the cell padding; Team policy and the bridge keep these. */
+.tm-tbl:not(.table) th{text-align:left;font:600 var(--fs-meta)/var(--lh-title) var(--sans);color:var(--ink-2);padding:8px 10px;border-bottom:1px solid var(--line);white-space:nowrap;}
+.tm-tbl th[data-sort]{cursor:pointer;} .tm-tbl th.num,.tm-tbl td.num{text-align:right;}
+.tm-tbl:not(.table) td{padding:9px 10px;border-bottom:1px solid var(--line);}
+.tm-tbl tbody tr[data-filter-dim]{cursor:pointer;} .tm-tbl tbody tr[data-filter-dim]:hover,.tm-tbl tbody tr.on{background:var(--hover);}
+.tm-tbl tr.dim td{color:var(--ink-2);}
+.tm-run-tbl .badge.red{color:var(--red-ink-strong);}   /* 11px red on --red-bg needs the strong ink for 4.5:1 */
+.tm-tbl td.tm-saved.pos{color:var(--green-ink);} .tm-tbl td.tm-saved.neg{color:var(--red-ink);}
+.tm-runs-foot{display:flex;align-items:center;gap:12px;margin-top:8px;}
+.tm-share{display:inline-block;width:90px;height:6px;border-radius:var(--r-xs);background:var(--field);vertical-align:middle;}
+.tm-share-fill{display:block;height:100%;border-radius:var(--r-xs);background:var(--blue);}
+.tm-runs{margin-top:18px;} .tm-runs-head{display:flex;align-items:center;justify-content:space-between;}
+.tm-run-tbl .tm-title{max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+/* Actor and Started never wrap: with the Saved column in, Title (ellipsis) and Workflow give way first. */
+.tm-run-tbl td:nth-last-child(-n+2){white-space:nowrap;}
+.badge.grey{background:var(--field);color:var(--ink-2);}
+.badge.slate{background:var(--slate-bg);color:var(--slate-ink);}
+/* The Copilot card's "read the notice first" pill is a button: it opens the notice (bridge-view.mjs). */
+/* With the credential broker, a provider pill for a missing key links to the key page. */
+.mv-broker-pill{text-decoration:none;cursor:pointer;}
+.mv-broker-pill:hover{text-decoration:underline;}
+.tm-empty{display:grid;grid-template-columns:1fr 1fr;gap:14px;} .tm-empty .card{padding:var(--pad-card);}
+.tm-step{font-size:11px;font-weight:700;color:var(--ink-2);}
+.tm-empty-foot{display:block;margin-top:14px;}
+/* New light-theme text must clear 4.5:1 (the contrast proof's baseline shrinks, never grows):
+   the empty state's hints and the muted history line use --ink-2, not --ink-3, and the inline
+   link is a darker blue than --blue-ink (3.8:1 on white). */
+.tm-empty .hint,.tm-empty-foot{color:var(--ink-2);}
+.linkish{background:none;border:0;padding:0;color:var(--blue-ink-strong);font:inherit;cursor:pointer;text-decoration:underline;}
+@media (max-width:1080px){ .tm-empty{grid-template-columns:1fr;} .tm-group{margin-left:0;} }
+
+/* Team metrics — Overview | Timeline tabs, and the Timeline (docs/team-metrics.md "Timeline").
+   Bars are positioned in px by team-metrics-timeline.mjs; the label column is sticky so the
+   calendar scrolls under it. Colour comes from one tone per status (--tl-c/--tl-bg/--tl-ink). */
+.tl{display:flex;flex-direction:column;gap:18px;}
+.tl-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px;}
+.tl-tile{text-align:left;font:inherit;color:inherit;display:flex;flex-direction:column;border:1px solid var(--line);}
+button.tl-tile{cursor:pointer;}
+button.tl-tile:hover{border-color:var(--hover-outline);}
+button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
+.tl-tile .stat-value{margin-top:6px;}
+.tl-note{display:block;color:var(--ink-2);line-height:1.5;}
+.tl-note code{font-family:var(--mono);font-size:12px;background:var(--field);padding:1px 5px;border-radius:var(--r-sm);}
+.tl-card{padding:16px 0 10px;display:flex;flex-direction:column;gap:12px;min-width:0;}
+.tl-controls{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px;padding:0 20px;}
+.tl-nav,.tl-opts{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.tl-step{min-width:36px;}
+.tl-crumbs{display:flex;align-items:center;gap:2px;font-size:15px;font-weight:600;margin-left:6px;flex-wrap:wrap;}
+.tl-crumb{border:0;background:none;font:inherit;font-weight:500;color:var(--ink-3);padding:4px 6px;border-radius:var(--r-sm);cursor:pointer;}
+.tl-crumb:hover{background:var(--hover);color:var(--ink);}
+.tl-crumb-cur{padding:4px 6px;}
+.tl-sep{color:var(--ink-3);}
+
+.tl-card{--tl-lab:300px;}
+.tl-scroll{overflow-x:auto;overscroll-behavior-x:contain;}
+.tl-grid{position:relative;}
+.tl-row{display:flex;min-height:50px;border-top:1px solid var(--line);}
+.tl-lab{position:sticky;left:0;z-index:3;width:var(--tl-lab);flex:none;background:var(--panel);padding:7px 14px 7px 20px;
+  display:flex;flex-direction:column;justify-content:center;min-width:0;border-right:1px solid var(--line);}
+.tl-track{position:relative;flex:none;overflow:hidden;z-index:1;}
+.tl-title{display:flex;align-items:center;gap:8px;font-weight:500;font-size:13px;min-width:0;}
+.tl-title-text{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.tl-meta{font-size:11px;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-left:16px;}
+.tl-st{color:var(--tl-ink);}
+.tl-dot{width:8px;height:8px;border-radius:50%;flex:none;display:inline-block;background:var(--tl-c,var(--ink-3));}
+.tl-group{min-height:38px;background:var(--canvas-2);}
+.tl-group .tl-lab{background:var(--canvas-2);flex-direction:row;align-items:center;justify-content:flex-start;gap:9px;font-size:13px;}
+.tl-group .tl-lab b{font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.tl-group .tl-lab small{color:var(--ink-3);font-size:12px;white-space:nowrap;flex:none;}
+.tl-ava{width:22px;height:22px;border-radius:50%;background:var(--field);border:1px solid var(--line-2);display:grid;place-items:center;
+  font-size:11px;font-weight:600;color:var(--ink-2);flex:none;}
+.tl-proj{width:10px;height:10px;border-radius:var(--r-xs);background:var(--ink-3);flex:none;}
+
+.tl-hrow{border-top:0;}
+.tl-hrow .tl-lab{justify-content:flex-end;font-size:11px;color:var(--ink-3);padding-bottom:8px;}
+.tl-h-weeks{min-height:30px;} .tl-h-days{min-height:52px;} .tl-z-week .tl-h-days{min-height:58px;} .tl-h-hours{min-height:40px;}
+.tl-hcell{position:absolute;top:0;bottom:0;border:0;border-left:1px solid var(--line);background:none;padding:0;font:inherit;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;font-size:11px;color:var(--ink-3);cursor:pointer;}
+.tl-hcell:hover{background:var(--hover);color:var(--ink);}
+.tl-hcell .tl-dn{font-size:13px;color:var(--ink);font-weight:500;font-variant-numeric:tabular-nums;}
+.tl-hcell.is-today .tl-dn{background:var(--ink);color:var(--on-ink);border-radius:var(--r-sm);padding:0 5px;}
+.tl-week{flex-direction:row;justify-content:flex-start;padding-left:8px;font-weight:500;color:var(--ink-2);}
+.tl-pips{display:flex;gap:2px;height:6px;align-items:center;}
+.tl-pips i{width:5px;height:5px;border-radius:var(--r-xs);background:var(--green);transform:rotate(45deg);}
+.tl-pips em{font-style:normal;font-size:11px;font-weight:600;color:var(--green-ink);line-height:1;margin-left:1px;}
+.tl-hour{position:absolute;top:0;bottom:0;border-left:1px solid var(--line);font-size:11px;color:var(--ink-3);padding:14px 0 0 5px;font-family:var(--mono);}
+
+.tl-body{position:relative;}
+.tl-cols{position:absolute;top:0;bottom:0;left:var(--tl-lab);pointer-events:none;z-index:0;}
+.tl-col{position:absolute;top:0;bottom:0;border-left:1px solid var(--line);}
+.tl-col.is-weekend{background:var(--canvas-2);}
+.tl-future{position:absolute;top:0;bottom:0;right:0;background:var(--bg);opacity:.45;}
+.tl-now{position:absolute;top:0;bottom:0;width:0;border-left:2px solid var(--peach);}
+.tl-now-tag{position:absolute;top:2px;transform:translateX(-50%);font-size:11px;font-weight:600;color:var(--on-status);background:var(--peach);
+  padding:1px 6px;border-radius:var(--r-sm);z-index:4;pointer-events:none;}
+
+.tl-t-green{--tl-c:var(--green);--tl-bg:var(--green-bg);--tl-ink:var(--green-ink);}
+.tl-t-blue{--tl-c:var(--blue);--tl-bg:var(--blue-bg);--tl-ink:var(--blue-ink);}
+.tl-t-red{--tl-c:var(--red);--tl-bg:var(--red-bg);--tl-ink:var(--red-ink);}
+.tl-t-violet{--tl-c:var(--slate);--tl-bg:var(--slate-bg);--tl-ink:var(--slate-ink);}
+.tl-t-slate{--tl-c:var(--slate);--tl-bg:var(--slate-bg);--tl-ink:var(--slate-ink);}
+.tl-hit{position:absolute;top:0;bottom:0;border:0;background:none;padding:0;cursor:pointer;min-width:14px;}
+.tl-hit:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;border-radius:var(--r-sm);}
+.tl-hit:hover .tl-run{box-shadow:0 0 0 2px var(--panel),0 0 0 3px var(--ink-3);}
+.tl-span,.tl-run{position:absolute;top:50%;height:18px;margin-top:-9px;}
+.tl-span{border-radius:var(--r-sm);background:var(--tl-bg);}
+.tl-run{box-sizing:border-box;border-radius:var(--r-xs);min-width:3px;font-size:11px;color:var(--on-status);display:flex;align-items:center;padding:0;
+  white-space:nowrap;overflow:hidden;font-family:var(--mono);font-style:normal;background:var(--tl-c);}
+.tl-z-day .tl-run{padding:0 6px;border-radius:var(--r-sm);}
+.tl-run.is-failed{background:var(--red);}
+.tl-run.is-stopped{background:var(--slate);}
+.tl-z-day .tl-span,.tl-z-day .tl-run{height:24px;margin-top:-12px;}
+.tl-tail{position:absolute;top:50%;height:0;border-top:2px dashed var(--ink-3);}
+.tl-mark{position:absolute;top:50%;width:12px;height:12px;margin:-6px 0 0 -6px;}
+.tl-mark.is-merged{background:var(--green-ink);transform:rotate(45deg);border-radius:var(--r-xs);box-shadow:0 0 0 2px var(--panel);}
+.tl-mark.is-open{border:2.5px solid var(--blue-ink);border-radius:50%;background:var(--panel);}
+/* icon: x */
+.tl-mark.is-closed::before{content:"";mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M7 7l10 10M17 7 7 17'/%3E%3C/svg%3E") center/10px no-repeat;background:currentColor;position:absolute;inset:-4px 0 0;text-align:center;font-size:15px;font-weight:600;line-height:1;color:var(--slate-ink);font-style:normal;}
+.tl-empty{padding:36px 20px;text-align:center;border-top:1px solid var(--line);}
+/* A pull request with no Worca run: the PR's life is the bar (solid, in its tone), opened at a hollow dot. */
+.tl-pr-start{position:absolute;top:50%;left:0;width:9px;height:9px;margin-top:-4.5px;border-radius:50%;border:2px solid var(--tl-c);background:var(--panel);box-sizing:border-box;z-index:1;}
+.is-outside .tl-tail,.tl-lg .tl-pr-start + .tl-tail{border-top:3px solid var(--tl-c);margin-top:-1px;}
+.tl-lg .tl-pr-start{margin-top:-4.5px;}
+.tl-outside{flex:none;font-size:11px;font-weight:600;letter-spacing:.02em;color:var(--ink-3);border:1px solid var(--line-2);border-radius:var(--r-sm);padding:0 6px;line-height:15px;}
+.tl-toggle{display:inline-flex;align-items:center;gap:6px;font-size:var(--fs-body);color:var(--ink-2);cursor:pointer;margin-right:6px;}
+.tl-toggle input{margin:0;}
+.tl-pop-note{margin:0;color:var(--ink-2);font-size:12px;}
+
+.tl-legend{display:flex;flex-wrap:wrap;gap:8px 18px;padding:6px 20px 4px;font-size:12px;color:var(--ink-2);border-top:1px solid var(--line);}
+.tl-lg{display:inline-flex;align-items:center;gap:7px;padding-top:6px;}
+.tl-lg-sw{position:relative;display:inline-block;width:30px;height:14px;}
+.tl-lg-sw .tl-span,.tl-lg-sw .tl-run{height:12px;margin-top:-6px;}
+.tl-foot{display:block;color:var(--ink-2);}
+
+.tl-pop{position:fixed;z-index:60;width:340px;max-width:calc(100vw - 32px);background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);
+  box-shadow:var(--shadow-sheet);padding:16px 18px;display:flex;flex-direction:column;gap:10px;}
+.tl-pop h3{margin:0;font-size:15px;font-weight:600;line-height:1.3;text-wrap:balance;}
+.tl-pop-top{display:flex;align-items:center;justify-content:space-between;gap:8px;}
+.tl-pop-kicker{font-size:11px;color:var(--ink-3);}
+.tl-pill{display:inline-flex;align-items:center;font-size:11px;font-weight:600;padding:3px 10px;border-radius:var(--r-xs);background:var(--tl-bg);color:var(--tl-ink);}
+.tl-reason{margin:0;font-size:12px;color:var(--red-ink);background:var(--red-bg);padding:7px 10px;border-radius:var(--r-sm);}
+.tl-pop dl{display:grid;grid-template-columns:auto 1fr;gap:5px 14px;margin:0;font-size:12px;}
+.tl-pop dt{color:var(--ink-3);}
+.tl-pop dd{margin:0;text-align:right;font-variant-numeric:tabular-nums;}
+.tl-pop a{color:var(--blue-ink-strong);}
+.tl-attempts{display:flex;flex-direction:column;gap:4px;border-top:1px solid var(--line);padding-top:10px;}
+.tl-attempts-h{font-size:12px;color:var(--ink-2);font-weight:600;}
+.tl-att{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--ink-2);}
+.tl-att-dot{width:8px;height:8px;border-radius:50%;flex:none;background:var(--green);}
+.tl-att-dot.is-failed{background:var(--red);} .tl-att-dot.is-stopped{background:var(--slate);}
+.tl-att-r{margin-left:auto;}
+@media (max-width:720px){
+  .tl-card{--tl-lab:176px;}
+  .tl-lab{padding-left:12px;}
+  .tl-pop{left:16px !important;right:16px;width:auto;top:auto !important;bottom:16px;}
+}
+.hd-tm.st-ok{color:var(--green-ink)} .hd-tm.st-warn{color:var(--amber-ink)} .hd-tm.st-err{color:var(--red-ink)} .hd-tm.st-muted{color:var(--ink-2)}
+
+/* Team metrics — Projects cell (board 4) */
+
+/* border-left + padding-left are board 4's divider between the project row and the cell
+   (mockup `.tm-cell{border-left:1px solid var(--line);padding-left:18px;min-width:420px}`);
+   the 420px sizing lives on .tm-slot above so the cell itself can still wrap. */
+/* Two fixed rows (title / status) in column 1, the control column spanning both
+   rows in column 2, and any hint on a full-width third row. A grid, not a
+   wrapping flex line: the control used to fall under the status text whenever
+   the 420px slot got tight, reading as detached from the "Team metrics" title. */
+.tm-cell{display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-rows:auto auto;
+  column-gap:14px;row-gap:3px;align-items:center;font-size:var(--fs-meta);
+  padding-left:18px;border-left:1px solid var(--line);}
+.tm-cell .tm-line{grid-column:1;grid-row:2;display:flex;align-items:center;gap:8px;min-width:0;}
+/* One line, always: the dot never shrinks and a long status ellipsizes rather than
+   wrapping under itself (the row's two-line shape is the whole point of the grid). */
+.tm-cell .tm-line .tm-dot{flex:0 0 auto;}
+.tm-cell .tm-status{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.tm-cell .muted,.ws-home .muted{color:var(--ink-3);}   /* scoped: a global .muted would recolour .agents-summary.muted (:599) */
+.tm-cell .tm-label{grid-column:1;grid-row:1;font-weight:600;color:var(--ink-2);}
+/* board 8 aligns "Metrics home" and "Members" on one column (mockup `.ws-home .lbl{width:96px}`) */
+.ws-home .tm-label{width:96px;flex:0 0 auto;font-size:11px;font-weight:600;color:var(--ink-3);}
+.tm-cell .tm-hint{grid-column:1 / -1;grid-row:3;color:var(--ink-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+/* The home note is explanatory, not a raw stderr line: let it wrap instead of truncating. */
+.tm-cell .tm-home-for{white-space:normal;line-height:1.4;}
+.tm-cell .tm-actions{grid-column:2;grid-row:1 / span 2;display:flex;align-items:center;gap:10px;justify-self:end;}
+.tm-dot.green{background:var(--green);} .tm-dot.amber{background:var(--amber);} .tm-dot.red{background:var(--red);} .tm-dot.grey{background:var(--ink-3);}
+.tm-dot.muted{background:transparent;box-shadow:inset 0 0 0 1.5px var(--line-2);}   /* not available: a hollow dot keeps the column */
+/* Enable dialog (boards 5/6) */
+/* `.field > label` (display:block, margin-bottom) would otherwise beat this and stack the radio above the title */
+.radio-card,.field > label.radio-card{display:flex;gap:12px;align-items:flex-start;padding:12px 14px;border:1.5px solid var(--line-2);border-radius:var(--r-card);margin:8px 0 0;cursor:pointer;font-weight:500;font-size:13px;}
+.radio-card input[type="radio"]{flex:0 0 auto;margin:2px 0 0;}
+/* :has(), not a render-time .on class: changing the Attribution radio does not re-render the body */
+.radio-card:has(> input:checked){border-color:var(--ink);background:var(--field);}
+.radio-card.disabled{opacity:.55;cursor:not-allowed;}
+.radio-card-text{display:flex;flex-direction:column;gap:4px;}
+.tm-warn{margin-top:14px;padding:10px 12px;border-radius:var(--r-sm);background:var(--amber-bg);color:var(--amber-ink);}
+.tm-delegate-wrap{margin-top:8px;}
+/* Wizard (board 7) */
+.wiz-list{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:var(--r-ctrl);}
+.wiz-row{display:flex;align-items:center;gap:14px;padding:12px 14px;border-top:1px solid var(--line);}
+/* The metrics-home picker's radio + slug: the label had no rule, so the radio touched the text. */
+.wiz-row-pick{display:flex;align-items:center;gap:10px;min-width:0;cursor:pointer;}
+.wiz-row-pick input[type="radio"]{flex:0 0 auto;margin:0;}
+/* In the 600px sheet the slug must not break mid-word, and a wrapped status keeps its dot on
+   the first line instead of floating between the two. */
+.tm-home-list .wiz-row-pick{flex:1 1 auto;}
+.tm-home-list .wiz-row-name{white-space:nowrap;}
+/* fixed column: "On · since …" lines up across rows whether or not a second line follows */
+.tm-home-list .wiz-row-status{flex:0 0 200px;width:200px;align-items:flex-start;line-height:1.4;}
+.tm-home-list .wiz-row-status .tm-dot{flex:0 0 auto;margin-top:5px;}
+.wiz-row-status-lines{display:flex;flex-direction:column;min-width:0;}
+.wiz-row-status-sub{color:var(--ink-3);}
+.wiz-row:first-child{border-top:0;} .wiz-row.off{opacity:.55;}
+.wiz-row-status{display:flex;align-items:center;gap:8px;color:var(--ink-2);font-size:12px;margin-left:auto;}
+.wiz-metrics-actions{display:flex;align-items:center;gap:10px;}
+/* Workspace card (board 8): one projects table with the metrics home marked by the Team metrics icon */
+.ws-home{padding:12px 0 0;font-size:12px;}
+.ws-home[hidden]{display:none;}
+.ws-tbl-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+.ws-tbl-actions{margin-left:auto;display:flex;align-items:center;gap:8px;}
+.ws-members-summary{color:var(--ink-3);font-size:12px;}
+.ws-projects-tbl{width:100%;border-collapse:collapse;margin-top:8px;font-size:12px;}
+.ws-projects-tbl th{text-align:left;font-weight:600;font-size:var(--fs-meta);color:var(--ink-2);padding:6px 14px 6px 0;border-bottom:1px solid var(--line);}
+.ws-projects-tbl td{padding:7px 14px 7px 0;border-bottom:1px solid var(--line);vertical-align:top;color:var(--ink-2);line-height:1.5;}
+.ws-projects-tbl tr:last-child td{border-bottom:0;}
+.ws-projects-tbl tr[hidden]{display:none;}
+.ws-col-project{white-space:nowrap;color:var(--ink);}
+.tm-home-mark{display:inline-flex;align-items:center;vertical-align:-3px;}
+.ws-col-branch{white-space:normal;overflow-wrap:anywhere;}
+/* fixed proportions so the centred runs column sits between branch and status, not against status */
+.ws-projects-tbl{table-layout:fixed;}
+.ws-projects-tbl th:nth-child(1){width:31%;} .ws-projects-tbl th:nth-child(2){width:26%;} .ws-projects-tbl th:nth-child(3){width:27%;} .ws-projects-tbl th:nth-child(4){width:16%;}
+.ws-col-runs{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;}
+.ws-projects-tbl th.ws-col-runs{text-align:right;}
+.ws-col-status{white-space:nowrap;}
+.ws-metric{display:flex;align-items:center;gap:7px;line-height:1.5;}
+.ws-mark{width:14px;height:14px;flex:0 0 auto;}
+.ws-mark.ok{color:var(--green);} .ws-mark.bad{color:var(--red-ink);}
+.ws-metric.bad{color:var(--red-ink);}
+.ws-member.home td{color:var(--ink);}
+.ws-members-more{margin-top:8px;}
+.ws-home-hint{display:flex;align-items:center;gap:6px;margin-top:8px;font-size:12px;color:var(--ink-3);line-height:1.45;}
+.ws-home-hint.warn{color:var(--amber-ink);}
+.ws-home-hint .tm-dot{flex:0 0 auto;}
+/* Group by, now in the Spend per week card head: compact, right-aligned by .card-head's space-between. */
+.chart-card .card-head .tm-group{margin:0;}
+.chart-card .card-head .select-sm{padding-left:10px;padding-right:30px;font-size:12px;line-height:1.3;}
+.tm-route-list{list-style:none;padding:0;margin:8px 0 0;} .tm-route-list li.failed{color:var(--red-ink);}
+.tm-route-list .tm-stderr{white-space:pre-wrap;margin:4px 0 0;}
+

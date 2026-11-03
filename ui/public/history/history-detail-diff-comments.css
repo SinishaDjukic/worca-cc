@@ -1,0 +1,79 @@
+/* ---------- History detail: diff comments ---------- */
+/* A comment block is a REAL grid row spanning all three tracks — `.hd-dl-row` is
+   display:contents, so a thread can never live inside a row (same rule as
+   `.hd-dl-hunk` and `.hd-dl-more` above). The block is a quiet strip on the
+   canvas tone; every comment on it is one raised surface card. */
+.hd-cmt-block,.hd-cmt-detached{grid-column:1/-1;display:flex;flex-direction:column;gap:14px;
+  padding:14px 18px 16px;background:var(--canvas-2);border-top:1px solid var(--line);border-bottom:1px solid var(--line);
+  font:400 12px var(--sans);}
+.hd-cmt-detached{border-top:1px solid var(--line-2);}
+.hd-cmt-detached-head{color:var(--ink-2);font-weight:600;font-size:12px;}
+
+/* A thread is a plain stack — the root card, then the indented reply column —
+   and never a card itself. The rail sits at x=20px of the thread box and each
+   reply row draws its own elbow, exactly like `.nav-child` under Running. */
+.hd-cmt-thread{position:relative;display:flex;flex-direction:column;max-width:720px;
+  animation:wr-rise .18s cubic-bezier(.2,.7,.3,1) both;}
+.hd-cmt-card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-card);}
+.hd-cmt-block>.hd-cmt-card{max-width:720px;}
+.hd-cmt-head{display:flex;align-items:center;flex-wrap:wrap;gap:6px 8px;min-height:20px;
+  padding:12px 14px 0;font-size:11px;color:var(--ink-2);}
+.hd-cmt-author{font:600 12px var(--sans);color:var(--ink);}
+.hd-cmt-time{color:var(--ink-2);font-size:11px;}
+.hd-cmt-time::before{content:'·';margin-right:8px;color:var(--line-2);}
+.hd-cmt-tag{padding:2px 8px;border-radius:var(--r-xs);background:var(--green-bg);color:var(--green-ink);font:600 var(--fs-caption) var(--sans);}
+.hd-cmt-sent{padding:2px 8px;border-radius:var(--r-xs);background:var(--field);color:var(--ink-2);font:500 var(--fs-caption) var(--mono);}
+.hd-cmt-where{padding:6px 14px 0;font-size:11px;color:var(--ink-2);}
+.hd-cmt-quote{margin:6px 14px 0;padding:6px 10px;border-radius:var(--r-sm);background:var(--field);color:var(--ink-2);
+  font:400 var(--fs-meta) var(--mono);white-space:pre-wrap;word-break:break-word;}
+.hd-cmt-body{padding:6px 14px 12px;color:var(--ink);font:400 13px/1.5 var(--sans);white-space:pre-wrap;word-break:break-word;}
+.hd-cmt-body.ask-md{font:400 13px/1.5 var(--sans);white-space:normal;}
+.hd-cmt-body.ask-md>:first-child{margin-top:0;}
+.hd-cmt-body.ask-md>:last-child{margin-bottom:0;}
+.hd-cmt-thread.resolved .hd-cmt-body{color:var(--ink-2);}
+.hd-cmt-foot{display:flex;align-items:center;justify-content:space-between;gap:10px;
+  padding:8px 14px;border-top:1px solid var(--line);}
+.hd-cmt-actions{display:flex;align-items:center;gap:2px;margin-right:-4px;}
+
+/* The Worca mark: inline in the head, left of the name, on every card Worca
+   wrote (root or reply). Tinted var(--ink): black on light, white on dark. */
+.hd-cmt-mark{width:16px;height:16px;flex:0 0 auto;background:var(--ink);
+  -webkit-mask:url(/assets/worca-mark-mask.png) center/contain no-repeat;-webkit-mask-mode:luminance;
+  mask:url(/assets/worca-mark-mask.png) center/contain no-repeat;mask-mode:luminance;}
+
+.hd-cmt-btn{height:28px;padding:0 9px;border:0;border-radius:var(--r-sm);background:transparent;color:var(--ink-2);
+  font:500 12px var(--sans);line-height:26px;cursor:pointer;transition:background .15s,color .15s,border-color .15s;}
+.hd-cmt-btn:hover{background:var(--hover);color:var(--ink);}
+.hd-cmt-btn:focus-visible{outline:2px solid var(--ink);outline-offset:1px;}
+.hd-cmt-btn:disabled{opacity:.5;cursor:default;}
+.hd-cmt-delete:hover{color:var(--red-ink);background:var(--red-bg);}
+.hd-cmt-toggle{display:inline-flex;align-items:center;gap:7px;margin-left:-9px;}
+.hd-cmt-btn.hd-cmt-reply{display:inline-flex;align-items:center;gap:7px;height:28px;padding:0 12px;line-height:1;
+  border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--surface);color:var(--ink);}
+.hd-cmt-btn.hd-cmt-reply:hover{border-color:var(--hover-outline);color:var(--ink);}
+.hd-cmt-save{height:28px;padding:0 14px;border-radius:var(--r-sm);background:var(--ink);color:var(--on-ink);
+  font-weight:600;line-height:28px;}
+.hd-cmt-save:hover{background:var(--ink);color:var(--on-ink);box-shadow:inset 0 0 0 999px var(--solid-hover);}
+.hd-cmt-err{padding:0 14px;color:var(--red-ink);font-size:var(--fs-meta);}
+.hd-cmt-err:empty{display:none;}
+
+/* The reply column. Row geometry: the card's head line centre is 21px below the row
+   top (1px border + 12px padding + half of the 15px name line), so the elbow is
+   31px tall counting the 10px column gap it starts in, and the spine picks up
+   again at that same 21px. Every row — the user's, Worca's, the composer — reaches
+   the card edge; nothing sits on the rail. */
+.hd-cmt-replies{display:flex;flex-direction:column;gap:10px;margin-top:10px;}
+.hd-cmt-thread.collapsed .hd-cmt-replies{display:none;}
+.hd-cmt-replies>.hd-cmt-reply-row{position:relative;display:block;padding:0 0 0 52px;}
+.hd-cmt-replies>.hd-cmt-reply-row::before{content:"";position:absolute;left:20px;top:-10px;width:30px;height:31px;
+  border-left:1.5px solid var(--line-2);border-bottom:1.5px solid var(--line-2);
+  border-bottom-left-radius:var(--r-sm);pointer-events:none;}
+.hd-cmt-replies>.hd-cmt-reply-row:not(:last-child)::after{content:"";position:absolute;left:20px;top:21px;bottom:-10px;
+  width:1.5px;background:var(--line-2);pointer-events:none;}
+
+/* The composer is the same surface card with the focus ring moved onto the
+   card, so the borderless textarea inside reads as part of it. */
+.hd-cmt-composer{display:flex;flex-direction:column;transition:border-color .15s,box-shadow .15s;}
+.hd-cmt-composer:focus-within{border-color:var(--ink);box-shadow:0 0 0 3px var(--selection);}
+.hd-cmt-composer-title{display:flex;align-items:center;justify-content:space-between;gap:10px;
+  padding:12px 14px;border-bottom:1px solid var(--line);font:600 13px var(--sans);color:var(--ink);}

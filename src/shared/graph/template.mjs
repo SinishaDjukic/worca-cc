@@ -2,7 +2,7 @@
 // The editable v2 template: normalize/serialize, the node/wire factory and the
 // drop-legality check the composer runs on the POINTER PATH (so it must stay a
 // Map lookup plus a type check — never a Tarjan walk).
-import { TEMPLATE_VERSION, KEYED_KINDS } from './constants.mjs';
+import { TEMPLATE_VERSION, KEYED_KINDS, SESSION_ID_RE } from './constants.mjs';
 import { portsOf, findPort, resolveOrOutType, inboundWires } from './ports.mjs';
 
 const isObject = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
@@ -22,17 +22,48 @@ export function normalizeTemplate(raw) {
     nodes: (Array.isArray(t.nodes) ? t.nodes : []).filter(isObject).map(normalizeNode),
     wires: (Array.isArray(t.wires) ? t.wires : []).filter(isObject).map(normalizeWire),
   };
-  const canvas = normalizeCanvas(t.canvas);
-  if (canvas) template.canvas = canvas;     // view state, engine-ignored — but it round-trips
-  // A workflow whose agents never query a code graph opts out of the per-run build (see
-  // RunHarness._buildWorktreeGraph). Only `false` is stored: absent means the default, build it.
-  if (t.codeGraph === false) template.codeGraph = false;
+  // The top-level extras — the viewport, the code-graph opt-out, the session settings — through the ONE picker every
+  // copy site uses (spec §4), so none of them can be dropped by a hand-written copy again.
+  Object.assign(template, pickTemplateExtras(t, template.nodes));
   return template;
 }
 
 /** The POST body: normalized, stable key order, stripped of anything JSON cannot carry. */
 export function serializeTemplate(template) {
   return JSON.parse(JSON.stringify(normalizeTemplate(template)));
+}
+
+/** The template's top-level extras besides nodes and wires, in output order. */
+export const TEMPLATE_EXTRAS = Object.freeze(['canvas', 'codeGraph', 'sessions']);
+
+/** The sparse session settings map (spec §4): an entry survives only for a well-formed sid that some AGENT card names
+ *  in `config.session`, and only when it holds a key (an empty entry IS the default). Sids sorted, for a stable
+ *  savedHash; unknown keys inside an entry are PRESERVED (V17 warns and ignores them, like node config). null when
+ *  nothing is left: absent means every session at its defaults. */
+export function normalizeSessions(raw, nodes) {
+  if (!isObject(raw)) return null;
+  const named = new Set();
+  for (const n of Array.isArray(nodes) ? nodes : []) {
+    if (isObject(n) && n.kind === 'agent' && isObject(n.config) && typeof n.config.session === 'string') named.add(n.config.session);
+  }
+  const kept = Object.keys(raw).sort()
+    .filter((sid) => SESSION_ID_RE.test(sid) && named.has(sid) && isObject(raw[sid]) && Object.keys(raw[sid]).length)
+    .map((sid) => [sid, { ...raw[sid] }]);
+  return kept.length ? Object.fromEntries(kept) : null;
+}
+
+/** `src`'s extras, each only when present and well formed: canvas all-or-nothing (a half-written canvas is worse than
+ *  none), codeGraph only when `false` (absent = build the per-run code graph), sessions per normalizeSessions against
+ *  `nodes`. Every copy site spreads THIS — never a hand list (the two codeGraph drops were hand lists). */
+export function pickTemplateExtras(src, nodes = src?.nodes) {
+  if (!isObject(src)) return {};
+  const canvas = normalizeCanvas(src.canvas);
+  const sessions = normalizeSessions(src.sessions, nodes);
+  return {
+    ...(canvas ? { canvas } : {}),
+    ...(src.codeGraph === false ? { codeGraph: false } : {}),
+    ...(sessions ? { sessions } : {}),
+  };
 }
 
 function normalizeNode(node) {

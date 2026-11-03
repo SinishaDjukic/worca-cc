@@ -5,6 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const sheetPath = fileURLToPath(new URL('../ui/public/schedule-sheet.mjs', import.meta.url));
 const tick = (n = 1) => new Promise((r) => setTimeout(r, n));
@@ -66,7 +67,7 @@ test('Edit reopens a stored step rule in hours with its time range', async () =>
 
 test('the "Only between" row wraps so From/To keep a readable width', async () => {
   const { readFileSync } = await import('node:fs');
-  const css = readFileSync(fileURLToPath(new URL('../ui/public/style.css', import.meta.url)), 'utf8');
+  const css = readStyleCss();
   const rule = (sel) => (css.match(new RegExp(sel.replace(/[.*+?^${}()|[\]\\>]/g, '\\$&') + '\\{([^}]*)\\}')) || [])[1] || '';
   assert.match(rule('.sched-range'), /flex-wrap:wrap/);
   assert.match(rule('.sched-range > .sched-between'), /flex:1 0 100%/); // the label takes its own line

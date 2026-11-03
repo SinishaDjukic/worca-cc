@@ -3,15 +3,14 @@
 // (rows + one saved detail), Ask, answers, resume, stop and archive, and records what was posted; `url`
 // deep-links the boot. Same shape as test/helpers/run-page-boot.mjs (the house boot).
 import { afterEach } from 'node:test';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './jsdom-release.mjs';
 import { KEY, ROW, DETAIL, TABS_DETAIL, PAUSED_DETAIL } from './history-detail-boot.mjs';
+import { readIndexHtml } from '../../src/core/read-index-html.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
-const htmlPath = fileURLToPath(new URL('../../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../../ui/public/app.js', import.meta.url));
 
 export { KEY, ROW, DETAIL, TABS_DETAIL, PAUSED_DETAIL };
@@ -24,7 +23,7 @@ export const fail = (status, body) => Promise.resolve({ ok: false, status, json:
 // `local`: localStorage items set before app.js loads (a remembered choice, e.g. the side column left open).
 // `innerWidth`: the window's width before app.js loads (jsdom's is 1024).
 export async function bootChat({ rows = [], detail = DETAIL, url = 'http://localhost:4317/', arms = null, matchMedia = null, local = null, innerWidth = null } = {}) {
-  const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url }));
+  const dom = trackDom(new JSDOM(readIndexHtml(), { url }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
   if (matchMedia) window.matchMedia = matchMedia;

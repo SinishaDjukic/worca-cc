@@ -1,0 +1,122 @@
+/* ── Actions (issue #529): run checkouts, project actions, the running-services surfaces ── */
+.tab-dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-left:6px;vertical-align:middle}
+.act-card{display:grid;gap:12px}
+.act-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.act-row .act-sep{width:1px;align-self:stretch;background:var(--line)}
+.act-head{display:flex;align-items:center;gap:12px;min-width:0}
+.act-head .act-name{margin:0;min-width:0;overflow-wrap:anywhere}
+.act-head .act-state{margin-left:auto;flex:none}
+/* Branch / Folder: labelled rows, so each mono string says what it is (long values keep both ends, full on hover) */
+.act-meta{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:4px 16px;margin:0;font-size:13px;align-items:center}
+.act-meta dt{color:var(--ink-2)}
+.act-meta dd{margin:0;display:flex;align-items:center;gap:4px;min-width:0}
+.act-meta code{font-family:var(--mono);font-size:12px;color:var(--ink);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.act-later{color:var(--ink-2)}
+.act-notes{display:grid;gap:4px}
+.act-notes .hint,.act-card > p.hint{margin:0}
+/* Settings › Runs › Actions: Editor / Terminal = command line + Choose… + Try, and one note (detected / Try / warning) */
+.act-launcher-row{display:flex;gap:8px;align-items:center}
+.act-launcher-row .input{flex:1 1 auto;min-width:0}
+.act-launcher .input::placeholder{color:var(--ink-2)}   /* says what blank means (detected, or none found): readable, not decorative */
+.act-choose-wrap{flex:0 0 170px}
+.act-hint.ok{color:var(--green-ink)}
+.act-hint.warn{color:var(--amber-ink)}
+.act-hint.err{color:var(--red-ink)}
+.info-bubble code{font-family:var(--mono);font-size:.92em}
+@media (max-width:560px){.act-launcher-row{flex-wrap:wrap}.act-launcher-row .input{flex-basis:100%}.act-choose-wrap{flex:1 1 auto}}
+.act-meta .badge.act-linked{background:var(--blue-bg);color:var(--blue-ink-strong);margin-left:4px}   /* a linked folder: the person's own */
+.act-copy{flex:none;}   /* layout only: the copy button's own inline-flex lays out the tick and its Copied caption */
+.act-copy:focus-visible{outline:2px solid var(--blue-ink-strong);outline-offset:1px}
+.act-log{max-height:280px;overflow:auto;background:var(--field);border:1px solid var(--line);border-radius:var(--r-ctrl);padding:8px 10px;font:12px/1.5 var(--mono);color:var(--ink)}
+.act-log .err{color:var(--red-ink)}
+.act-log .sys{color:var(--ink-3)}
+.act-strip{display:flex;align-items:center;gap:10px;padding:8px 12px;border:1px solid var(--line);border-radius:var(--r-ctrl);background:var(--field)}
+.act-strip[hidden],.act-strip:empty{display:none}
+.act-steps{display:grid;gap:6px;counter-reset:actstep}
+/* A new surface: --ink-3 hints, badges and placeholders fail light contrast (see the .mv-* note). */
+.act-card .hint,.act-hint{color:var(--ink-2)}
+/* #555 D2a: a status tone beats every scoped grey .hint rule above. */
+.tm-empty .hint.err,.hd-diff-body.hint.err,.hd-diff-pane .hint.err,.hd-diff-list .hint.err,.hd-tree .hint.err,.away-body .hint.err,.mcp-usedby .hint.err,.act-card .hint.err{color:var(--red-ink);}
+.tm-empty .hint.warn,.hd-diff-body.hint.warn,.hd-diff-pane .hint.warn,.hd-diff-list .hint.warn,.hd-tree .hint.warn,.away-body .hint.warn,.mcp-usedby .hint.warn,.act-card .hint.warn{color:var(--amber-ink);}
+.tm-empty .hint.ok,.hd-diff-body.hint.ok,.hd-diff-pane .hint.ok,.hd-diff-list .hint.ok,.hd-tree .hint.ok,.away-body .hint.ok,.mcp-usedby .hint.ok,.act-card .hint.ok{color:var(--green-ink);}
+.act-card .act-state.badge{background:var(--field);color:var(--ink-2)}
+.actions-config .input::placeholder{color:var(--ink-2)}
+/* Stacked panels: the editor's cards and a run's per-member cards keep the house 18px gap. */
+.actions-config,.act-view{display:flex;flex-direction:column;gap:18px}
+/* Config editors (actions-config-view.mjs): label over control over hint, rows of compact fields. */
+.ac-card{display:flex;flex-direction:column;gap:12px}
+.ac-card-title{font-size:18px;font-weight:700;letter-spacing:-.015em;margin:0}
+.ac-field-hint,.ac-card-sub,.actions-config .muted,.ac-placeholders{color:var(--ink-2)}
+.ac-card-sub{margin:-6px 0 0;font-size:12px}
+.ac-field{display:flex;flex-direction:column;gap:6px;min-width:0}
+.ac-field[hidden]{display:none}
+.ac-field-label{font-weight:600;font-size:13px;color:var(--ink)}
+.ac-field-hint{font-size:12px;line-height:1.45}
+.actions-config .input{padding:0 12px;font-size:13px}
+.ac-action-list,.ac-stack-list,.ac-step-list,.ac-env-list,.ac-step-env-list{display:flex;flex-direction:column;gap:10px}
+.ac-action-list:empty,.ac-stack-list:empty,.ac-step-list:empty,.ac-env-list:empty,.ac-step-env-list:empty{display:none}
+.ac-action,.ac-stack{display:flex;flex-direction:column;gap:12px;padding:16px;border:1px solid var(--line);border-radius:var(--r-ctrl)}
+.ac-action-head,.ac-stack-head{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end}
+.ac-action-head .ac-field,.ac-stack-head .ac-field{flex:1 1 140px}
+.ac-env-head{font-weight:600;font-size:13px;color:var(--ink)}
+.ac-env-row,.ac-step-env-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.ac-env-row .ac-env-name,.ac-step-env-row .ac-step-env-name{flex:0 1 180px;min-width:0}
+.ac-env-row .ac-env-type{flex:0 0 100px;width:auto}
+.ac-env-row .ac-env-value,.ac-step-env-row .ac-step-env-value{flex:1 1 200px;min-width:0}
+.ac-env-row .field-err{flex-basis:100%;font-size:12px;color:var(--red-ink)}
+.ac-env-row .field-err[hidden]{display:none}
+.ac-ready{display:flex;flex-wrap:wrap;gap:12px}
+.ac-ready[hidden]{display:none}
+.ac-ready .ac-field{flex:1 1 160px}
+.ac-placeholders{margin:0;font-size:12px}
+.ac-card > .btn,.ac-action > .btn,.ac-stack > .btn{align-self:flex-start}
+.ac-builtin{display:flex;align-items:center;gap:10px;padding:6px 0;cursor:pointer}
+.ac-builtin-label{font-weight:500;color:var(--ink)}
+.ac-builtin-note{margin-left:auto;font-size:var(--fs-meta);color:var(--ink-2)}
+.ac-step{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end}
+.ac-step .ac-field{flex:1 1 180px}
+.ac-step-num{font-weight:600;color:var(--ink-2);align-self:center}
+.ac-step .ac-step-env-list{flex-basis:100%}
+.ac-member-list{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px}
+.ac-foot{display:flex;justify-content:flex-end;gap:8px}
+.act-exit.ok{color:var(--green-ink)} .act-exit.fail{color:var(--red-ink)}
+.act-notice{margin:0 0 4px;font-size:13px;line-height:1.5;color:var(--ink-2)}
+.act-notice.err{background:var(--red-bg);color:var(--ink);border-radius:var(--r-ctrl);padding:10px 14px}
+.act-notice.ok{color:var(--green-ink)}
+.act-page-link{color:var(--blue-ink-strong);text-decoration:underline;text-underline-offset:2px;white-space:nowrap;}   /* a page an Actions message names (appendWithPageLinks) */
+/* Running actions in the sidebar foot (issue #529), compact: one 26px row per running service —
+   a green dot, "<run title> · <label :port>" cut with an ellipsis, a square Stop. No card and no
+   header; the uptime is the row's title. Spacing comes from .side-foot's gap; no margin. */
+#side-actions[hidden]{display:none}
+.act-rows{display:flex;flex-direction:column;gap:1px}
+.side-actions-rows .act-rows{max-height:107px;overflow-y:auto;scrollbar-width:thin}
+.act-srow{display:flex;flex:none;align-items:center;gap:8px;height:26px;padding:0 2px 0 9px;border-radius:var(--r-sm);font-size:12px;color:var(--ink-2)}
+.act-srow:hover{background:var(--field);color:var(--ink)}
+.act-srow .pdot,.act-tile .pdot{flex:none;width:7px;height:7px;border-radius:50%;background:var(--green)}
+.act-srow-name{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:0;border:0;background:none;font:inherit;color:inherit;text-align:left}
+button.act-srow-name{cursor:pointer}
+.act-stop{display:grid;place-items:center;flex:none;width:22px;height:22px;padding:0;border:0;border-radius:var(--r-sm);background:transparent;color:var(--ink-2);cursor:pointer}
+.act-stop:hover{background:var(--red-bg);color:var(--red-ink)}
+.act-stop:focus-visible,.act-srow-name:focus-visible,.act-tile:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+/* Inside a row the ring is drawn inside the control: the rows' scroll box (and the flyout card's)
+   would clip a ring drawn outside it. */
+.act-srow .act-stop:focus-visible,.act-srow .act-srow-name:focus-visible{outline-offset:-2px}
+/* The rail keeps one 40x34 tile — a green dot and the count — that opens the same rows, Stop
+   included, in a side flyout (side-flyout.mjs; the card is .nav-fly), so a running service stays
+   stoppable on the rail too. */
+.act-tile{display:none}
+.sidebar.collapsed .side-actions-rows{display:none}
+.sidebar.collapsed .act-tile{display:flex;align-items:center;justify-content:center;gap:5px;width:40px;height:32px;padding:0;border:0;border-radius:var(--r-sm);
+  background:transparent;color:var(--ink-2);font-family:var(--mono);font-size:11px;font-weight:500;cursor:pointer}
+.sidebar.collapsed .act-tile:hover,.sidebar.collapsed .act-tile[aria-expanded="true"]{background:var(--field);color:var(--ink)}
+/* The card never runs past the window (placeFlyout keeps it 8px inside every edge); its rows scroll. */
+.act-fly{width:236px;max-height:calc(100vh - 16px);overflow-y:auto}
+.act-pill{border:none;font:inherit;cursor:pointer}
+.act-pill-slot:empty{display:none}
+.hist-actions-badges{display:inline-flex;gap:6px}
+.hist-actions-badges:empty{display:none}
+.badge.act-running{background:var(--green-bg);color:var(--green-ink)}
+.badge.act-kept{background:var(--blue-bg);color:var(--blue-ink)}
+.shipit-try{display:flex;gap:8px;align-items:center;margin:10px 0}
+.shipit-try[hidden]{display:none}
+.act-port-range .drow-control .input{width:110px}

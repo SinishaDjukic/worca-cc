@@ -1,0 +1,27 @@
+/* ---------- shared code editor (scripts workbench §W16) ---------- */
+/* Two layers, one box: the <pre> paints the colours, the textarea above it is
+   transparent ink with a visible caret. Both must share EVERY metric that moves
+   a glyph — font, size, line-height, padding, white-space, tab-size — or the two
+   layers drift apart as the text grows. */
+.code-editor{position:relative;border:1px solid var(--line-2);border-radius:var(--r-ctrl);background:var(--field);overflow:hidden;}
+.code-editor:focus-within{background:var(--field-focus);border-color:var(--ink);}
+.code-editor .code-editor-hl,.code-editor .code-editor-ta{
+  margin:0;padding:12px 14px;font-family:var(--mono);font-size:12px;line-height:1.55;
+  white-space:pre;tab-size:2;border:0;letter-spacing:normal;}
+.code-editor .code-editor-hl{position:absolute;inset:0;overflow:auto;pointer-events:none;color:var(--ink);background:transparent;}
+.code-editor .code-editor-hl code{font:inherit;color:inherit;background:none;padding:0;}
+.code-editor .code-editor-ta{position:relative;display:block;width:100%;min-height:0;resize:vertical;
+  overflow:auto;background:transparent;color:transparent;caret-color:var(--ink);outline:none;}
+.code-editor .code-editor-ta::selection{background:var(--selection);}
+.code-editor.ro{background:var(--field);}
+.code-editor.ro .code-editor-ta{cursor:default;caret-color:transparent;}
+.code-editor :is(.hljs-comment,.hljs-quote,.hljs-punctuation){color:var(--hd-syntax-comment);}
+.code-editor :is(.hljs-keyword,.hljs-operator,.hljs-meta,.hljs-deletion){color:var(--hd-syntax-keyword);}
+.code-editor :is(.hljs-type,.hljs-built_in,.hljs-attr,.hljs-attribute,
+  .hljs-selector-class,.hljs-selector-id,.hljs-selector-tag){color:var(--hd-syntax-type);}
+.code-editor :is(.hljs-string,.hljs-regexp,.hljs-addition){color:var(--hd-syntax-string);}
+.code-editor :is(.hljs-number,.hljs-literal,.hljs-symbol,.hljs-bullet,
+  .hljs-variable,.hljs-template-variable){color:var(--hd-syntax-literal);}
+.code-editor :is(.hljs-title,.hljs-section,.hljs-name){color:var(--hd-syntax-title);}
+.code-editor :is(.hljs-comment,.hljs-quote){font-style:italic;}
+

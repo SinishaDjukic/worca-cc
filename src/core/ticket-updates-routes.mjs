@@ -81,7 +81,7 @@ function legacyOf(answer, source) {
 }
 
 /**
- * Mount the four routes. Deps from ui/server.mjs: requirePlugin(req, res) → name | null (it answers the 404), readManifest(name)
+ * Mount the four routes. Deps from ui/routes/marketplace/plugins.mjs: requirePlugin(req, res) → name | null (it answers the 404), readManifest(name)
  * → manifest | null, onChanged() after a save (the `plugins-changed` frame); callSource for tests.
  */
 export function registerTicketUpdatesRoutes(app, { requirePlugin, readManifest, onChanged = () => {}, callSource = shimCallSource } = {}) {

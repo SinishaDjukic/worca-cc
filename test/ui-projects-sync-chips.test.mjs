@@ -5,17 +5,17 @@
 // test/ui-history-shipit.test.mjs does.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { useAppTimers } from './helpers/app-timers.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
 
-const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 
 const PROJECTS = [
@@ -34,7 +34,7 @@ const reply = (status, body) => Promise.resolve({ ok: status >= 200 && status < 
 
 async function boot({ projects = PROJECTS, workspaces = WORKSPACES, git = 'on', chips = () => ({ projects: { k1: blk('dev', { state: 'behind', behind: 3 }), k2: blk('main') } }),
   all = () => ({ projects: { k1: blk('dev'), k2: blk('main') } }), post = () => ({ sync: blk('dev') }), gitInit = null } = {}) {
-  const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4321/' }));
+  const dom = trackDom(new JSDOM(readIndexHtml(), { url: 'http://localhost:4321/' }));
   const { window } = dom;
   // P0's gitOn() reads <html data-git>; the server renders it, so set it before app.js loads.
   if (git === 'off') window.document.documentElement.dataset.git = 'off';
@@ -453,7 +453,7 @@ test('Folder rows: a Folder chip, a No git box where the branch bar goes, a Fold
     assert.equal(row('k3').querySelector('.proj-nogit-act').textContent, 'Use git');
     assert.equal(row('k1').querySelector('.proj-nogit-act'), null, 'a Git row has no Use git');
     assert.ok(row('k3').querySelector('.pl-sync').hasAttribute('data-needs-git'), 'gated with the column (P0)');
-    assert.match(readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8'),
+    assert.match(readStyleCss(),
       /#projects-list \.pl-sync:not\(:has\(> \.proj-sync:not\(\[hidden\]\), > \.proj-nogit\)\)\{display:none;\}/, 'the No git box keeps its column (jsdom has no cascade)');
     assert.deepEqual([...ctx.doc.querySelectorAll('.proj-filters .filter-chip')].map((c) => c.textContent), ['All 3', 'Behind 1', 'Up to date 1', 'Folder 1']);
     click(ctx.window, ctx.doc.querySelector('.filter-chip[data-filter="folder"]'));

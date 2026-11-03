@@ -28,7 +28,9 @@ export function awayTotalText(b, fmtUsd) {
 /** Rows: Agents, one per booked aux line (with its call count), a hairline, Total, then — apart and
  *  never summed — the reviews stopped before their result and the agent turns a pause, stop or crash
  *  cut off, each as a lower bound. `agentsUnknown`: the run's engine reports no cost (Cursor) — the Agents row reads
- *  "cost unknown" and the Total is worca's own calls only, never a $0.00 for the agents. */
+ *  "cost unknown" and the Total is worca's own calls only, never a $0.00 for the agents. The Session hand-offs row
+ *  (session groups, Task 61; the mock's tile) is the main agent's own share: priced by the run's engine, so on an engine
+ *  without cost it reads "—" with its count, never $0.00. */
 export function costBreakdownEl(doc, b, { fmtUsd, agentsUnknown = false }) {
   const box = doc.createElement('div');
   box.className = 'cost-bd';
@@ -44,7 +46,9 @@ export function costBreakdownEl(doc, b, { fmtUsd, agentsUnknown = false }) {
   };
   row('', 'agents', 'Agents', agentsUnknown ? 'cost unknown' : fmtUsd(b.agents), '');
   for (const l of b.lines) {
-    if (l.calls > 0 || l.usd > 0) row('', l.kind, l.label, fmtUsd(l.usd), fmtAuxCalls(l.kind, l.calls));
+    if (!(l.calls > 0 || l.usd > 0)) continue;
+    if (l.kind === 'session') row('', l.kind, l.label, agentsUnknown ? '—' : fmtUsd(l.usd), `${fmtAuxCalls(l.kind, l.calls)} · main agent's own share`);
+    else row('', l.kind, l.label, fmtUsd(l.usd), fmtAuxCalls(l.kind, l.calls));
   }
   const hr = doc.createElement('hr');
   hr.className = 'cost-bd-hr';

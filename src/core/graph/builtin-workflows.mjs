@@ -21,7 +21,9 @@ export function deepFreeze(value) {
 }
 
 /** wf_default as a version-2 graph. w5 (refine self-loop) and w9 (review -> fix)
- *  are the loop wires; w10 lands the clean review on the End node. */
+ *  are the loop wires; w10 lands the clean review on the End node. Refine runs ONE light
+ *  cycle: a refine that still blocks (or asks for its re-check) continues with the open
+ *  issues recorded instead of looping, and the code review catches what is left. */
 export const GRAPH_DEFAULT_WORKFLOW = deepFreeze({
   id: 'wf_default',
   name: 'Default',
@@ -43,11 +45,48 @@ export const GRAPH_DEFAULT_WORKFLOW = deepFreeze({
     { id: 'w2', from: { node: 'n_task', port: 'task' }, to: { node: 'n_plan', port: 'task' } },
     { id: 'w3', from: { node: 'n_clarify', port: 'answers' }, to: { node: 'n_plan', port: 'answers' } },
     { id: 'w4', from: { node: 'n_plan', port: 'plan' }, to: { node: 'n_refine', port: 'plan' } },
-    { id: 'w5', from: { node: 'n_refine', port: 'revise' }, to: { node: 'n_refine', port: 'revise' }, config: { maxCycles: 3 } },
+    { id: 'w5', from: { node: 'n_refine', port: 'revise' }, to: { node: 'n_refine', port: 'revise' }, config: { maxCycles: 1, onExhausted: 'clean' } },
     { id: 'w6', from: { node: 'n_refine', port: 'plan' }, to: { node: 'n_impl', port: 'plan' } },
     { id: 'w7', from: { node: 'n_refine', port: 'plan' }, to: { node: 'n_review', port: 'plan' } },
     { id: 'w8', from: { node: 'n_impl', port: 'done' }, to: { node: 'n_review', port: 'done' } },
     { id: 'w9', from: { node: 'n_review', port: 'review' }, to: { node: 'n_impl', port: 'fix' }, config: { maxCycles: 3 } },
+    { id: 'w10', from: { node: 'n_review', port: 'pass' }, to: { node: 'n_end', port: 'result' } },
+  ],
+});
+
+/** The Lean built-in: Clarify -> a design-level Plan -> Implement -> an adversarial Review -> ONE
+ *  fix pass (w9 maxCycles 2: review, fix, re-review, then the person decides). No Refine: the
+ *  implementer proves the plan by building it, and the review's severity floors catch what refine
+ *  used to. The planner's research lanes run on Sonnet because the planner re-reads what it builds
+ *  on; the reviewer keeps the auto pick for its severity calls. Wire ids follow Default's (per-project
+ *  loop budgets are keyed by wire id). Reserved like wf_memory_defrag: never a row, listed after
+ *  Default, opened read-only in the composer. The id has an underscore so no NAME can slug onto it
+ *  (a saved "Lean" stays wf_lean). It is NOT the fallback default (yet). */
+export const LEAN_WORKFLOW_ID = 'wf_lean_build';
+export const LEAN_WORKFLOW_NAME = 'Lean';
+export const GRAPH_LEAN_WORKFLOW = deepFreeze({
+  id: LEAN_WORKFLOW_ID,
+  name: LEAN_WORKFLOW_NAME,
+  version: 2,
+  domain: 'coding',
+  createdAt: '1970-01-01T00:00:00.000Z',
+  updatedAt: '1970-01-01T00:00:00.000Z',
+  nodes: [
+    { id: 'n_task', kind: 'task', x: 40, y: 200, config: {} },
+    { id: 'n_clarify', kind: 'agent', key: 'clarify', x: 320, y: 200, config: {} },
+    { id: 'n_plan', kind: 'agent', key: 'planner', x: 600, y: 200, config: { subagentModel: 'sonnet' } },
+    { id: 'n_impl', kind: 'agent', key: 'implementer', x: 880, y: 200, config: {} },
+    { id: 'n_review', kind: 'agent', key: 'reviewer', x: 1160, y: 200, config: {} },
+    { id: 'n_end', kind: 'end', x: 1440, y: 200, config: {} },
+  ],
+  wires: [
+    { id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_clarify', port: 'task' } },
+    { id: 'w2', from: { node: 'n_task', port: 'task' }, to: { node: 'n_plan', port: 'task' } },
+    { id: 'w3', from: { node: 'n_clarify', port: 'answers' }, to: { node: 'n_plan', port: 'answers' } },
+    { id: 'w6', from: { node: 'n_plan', port: 'plan' }, to: { node: 'n_impl', port: 'plan' } },
+    { id: 'w7', from: { node: 'n_plan', port: 'plan' }, to: { node: 'n_review', port: 'plan' } },
+    { id: 'w8', from: { node: 'n_impl', port: 'done' }, to: { node: 'n_review', port: 'done' } },
+    { id: 'w9', from: { node: 'n_review', port: 'review' }, to: { node: 'n_impl', port: 'fix' }, config: { maxCycles: 2 } },
     { id: 'w10', from: { node: 'n_review', port: 'pass' }, to: { node: 'n_end', port: 'result' } },
   ],
 });
@@ -326,8 +365,8 @@ export const GRAPH_SHAPE_UX_WORKFLOW = deepFreeze({
  *  DELETE refuses them. wf_workspace_scan and wf_pr_fix are reserved but never listed anywhere;
  *  wf_shape is listed only while the Shape it first gate is on, and wf_shape_ux is never listed. Order is NOT
  *  significant — GET /api/workflows and the Ask catalog list the graph built-ins in their own
- *  fixed order (Default, then Memory defragment).
+ *  fixed order (Default, Lean, then Memory defragment).
  *  NOTE: `ui/public/graph/composer.mjs` keeps a twin of this list as a `Set` (`.has`), not an
  *  Array (`.includes`) — the two are not interchangeable. */
-export const RESERVED_WORKFLOW_IDS = Object.freeze([GRAPH_DEFAULT_WORKFLOW.id, AUTO_WORKFLOW_ID, MEMORY_DEFRAG_WORKFLOW_ID, WORKSPACE_SCAN_WORKFLOW_ID, PR_FIX_WORKFLOW_ID, SHAPE_WORKFLOW_ID, SHAPE_UX_WORKFLOW_ID, WORKSPACE_RESYNTH_WORKFLOW_ID]);
+export const RESERVED_WORKFLOW_IDS = Object.freeze([GRAPH_DEFAULT_WORKFLOW.id, LEAN_WORKFLOW_ID, AUTO_WORKFLOW_ID, MEMORY_DEFRAG_WORKFLOW_ID, WORKSPACE_SCAN_WORKFLOW_ID, PR_FIX_WORKFLOW_ID, SHAPE_WORKFLOW_ID, SHAPE_UX_WORKFLOW_ID, WORKSPACE_RESYNTH_WORKFLOW_ID]);
 export function isReservedWorkflowId(id) { return RESERVED_WORKFLOW_IDS.includes(id); }

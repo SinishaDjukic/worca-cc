@@ -3,6 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { validateMcpDefinition, canonicalJson, sha256Hex, SET_ID_RE, SERVER_ID_RE, MEMBERSHIP_KEY_RE } from '../src/core/mcp/definitions.mjs';
+import { loadBudget } from './helpers/load-budget.mjs';
 
 const plain = (v) => JSON.parse(JSON.stringify(v));
 const SENTRY = {
@@ -192,7 +193,7 @@ test('url checks stay linear in the number of field refs (a manifest, a policy e
     const out = errorsOf(raw);
     const ms = performance.now() - t0;
     assert.match(out, re);
-    assert.ok(ms < 2000, `took ${Math.round(ms)} ms`);
+    assert.ok(ms < loadBudget(2000), `took ${Math.round(ms)} ms`);
   }
 });
 

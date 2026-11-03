@@ -10,11 +10,11 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
 
-const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 
 const TID = 'ask_00000001';
@@ -46,7 +46,7 @@ function askArms(url, opts) {
 }
 
 async function boot({ url = 'http://localhost:4317/' } = {}) {
-  const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url }));
+  const dom = trackDom(new JSDOM(readIndexHtml(), { url }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
 
@@ -131,6 +131,7 @@ test('ui-ask-integration: the boot opens Chat with the panel inside its section;
       assert.equal(section.classList.contains('hidden'), false);
       assert.ok(section.querySelector(':scope > .chat-page[data-chat-page]'), 'the panel root is mounted into the Chat section');
       assert.equal(doc.querySelector('.ask-dock, .ask-pill, .ask-tip, .ask-sheet, [data-ask-sheet]'), null);
+      await settle(window);   // its queued work (the #chat hashchange's MCP preview) lands now, not on the next boot's fetch
     } },
     { name: 'a boot on #new: zero /api/ask fetches — the panel loads when Chat first shows', run: async () => {
       const { calls } = await boot({ url: 'http://localhost:4317/#new' });

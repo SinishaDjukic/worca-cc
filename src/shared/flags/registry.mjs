@@ -100,6 +100,18 @@ export const FLAGS = Object.freeze([
     docs: 'docs/git-automations.md',
   }),
   entry({
+    key: 'sessionGroups',
+    title: 'One session',
+    description: 'Mark 2–4 consecutive steps as one session. Where the engine supports it they run as sub-agents of one main agent; otherwise as separate sessions. The run page shows each session\'s turns and cost.',
+    stage: 'experimental',
+    default: false,
+    owner: 'Bulibas',
+    since: '1.15.0',
+    added: '2026-10-28',
+    reviewBy: '2027-01-26',
+    docs: 'docs/sessions.md',
+  }),
+  entry({
     key: 'ticketUpdates',
     title: 'Ticket updates',
     description: 'Marketplace › Installed › a tracker plugin › Settings gets Ticket updates: the projects you work on, and per project what a finished run does to its tickets (Don\'t move, Any Done status, or one of that project\'s statuses). New run and the Requirements export list only those projects. Off: each plugin\'s old setting applies.',
