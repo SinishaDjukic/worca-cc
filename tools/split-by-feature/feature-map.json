@@ -680,10 +680,22 @@
           ".wfv",
           "#wfv-",
           "input.wfv-",
+          ".badge.wfv-",
           ".wfl"
         ],
         "feature": "workflows",
         "name": "workflow-canvas"
+      },
+      {
+        "section": "^Actions",
+        "selectors": [
+          ".wft",
+          "input.wft-",
+          ".badge.wft-",
+          ".mk-dialog-body > .wft-"
+        ],
+        "feature": "workflows",
+        "name": "workflow-tests"
       },
       {
         "section": "^Actions",
