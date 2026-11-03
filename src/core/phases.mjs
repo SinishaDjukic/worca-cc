@@ -76,6 +76,39 @@ export function effectiveAllowedTools(base, declared, fanOut = false) {
 }
 
 /**
+ * The built-in tools a pipeline spawn is offered (`--tools`): the built-in names of its allow-list (a rule's
+ * `(specifier)` dropped; MCP grants are the MCP flags' business) plus ToolSearch, which reaches deferred MCP tools,
+ * and WebFetch: without an allow rule it reaches only Claude Code's pre-approved documentation sites, which agents
+ * read API docs on, for about 500 tokens. Everything else Claude Code ships (Artifact, Workflow, Cron, SendMessage, …) stays out of the tool schemas sent
+ * with every call of the agent and of its sub-agents, which inherit the list. Pure + exported for testing.
+ * @param {string[]} allowed  the spawn's effective allow-list (effectiveAllowedTools)
+ * @returns {string[]}
+ */
+export function builtinToolsFor(allowed) {
+  const out = [];
+  for (const t of [...(Array.isArray(allowed) ? allowed : []), 'WebFetch', 'ToolSearch']) {
+    const name = String(t || '').replace(/\(.*$/s, '').trim();
+    if (name && !name.startsWith('mcp__') && !out.includes(name)) out.push(name);
+  }
+  return out;
+}
+
+/**
+ * Whether a node runs under `--strict-mcp-config` (only the run's mcp.json loads, no user-scope, plugin or claude.ai
+ * connector server). Only on a detached run (a legacy run has no mcp.json: its servers all load natively), and only
+ * when mcp.json holds every server the run grants (the approved servers of the checkout's committed .mcp.json are in
+ * it too, run-context.mjs attachCommittedMcp; one a drop kept out of it loads from the checkout only) and every
+ * server the agent's frontmatter names (e.g. a plugin's Playwright). Pure + exported for testing.
+ */
+export function strictMcpFor(ctx) {
+  if (!isDetachedRun(ctx)) return false;
+  const inConfig = new Set(Array.isArray(ctx.mcpConfigServers) ? ctx.mcpConfigServers : []);
+  const named = [...(ctx.mcpServerGrants || []), ...(ctx.node?.tools || [])]
+    .map((t) => /^mcp__(.+?)(?:__|$)/.exec(String(t || '').trim())?.[1]).filter(Boolean);
+  return named.every((s) => inConfig.has(s));
+}
+
+/**
  * Whether this run may fan out (spawn Task/Agent sub-agents). For a DISPATCHED
  * node the decision is the node's own `fanOut` (resolved by resolveWorkflow from
  * config > role > sidecar). The clarify pre-step has NO node (it runs off
@@ -826,6 +859,7 @@ export function runOpts(ctx, { role, prompt, systemPrompt, allowedTools }) {
   // P3: in a run without a project, an agent's own git never walks up from work/ into a repository that holds worcaHome.
   const ceilEnv = ctx.workMode === 'none' && ctx.projectDir ? { GIT_CEILING_DIRECTORIES: dirname(ctx.projectDir) } : null;
   const excluded = bridgedModelInfo(c.model)?.excludeTools;
+  const allowed = effectiveAllowedTools(allowedTools, ctx.node?.tools, ctxFanOut(ctx));
   return {
     cwd: ctx.projectDir,
     systemPrompt,
@@ -837,7 +871,14 @@ export function runOpts(ctx, { role, prompt, systemPrompt, allowedTools }) {
     // for every dispatched node (orchestrator._nodeCtx); the clarify pre-step has
     // no node, so this falls back to the base list. Fixes "Browser permission not
     // granted" for the Manual Web UI Testing agent and makes future MCP agents work.
-    allowedTools: effectiveAllowedTools(allowedTools, ctx.node?.tools, ctxFanOut(ctx)),
+    allowedTools: allowed,
+    // Fixed context (#943): every call of an agent and its sub-agents carries the tool schemas it is offered. Only
+    // the built-ins it is allowed, and on a detached run only the run's own MCP servers (strictMcpFor), are offered.
+    tools: builtinToolsFor(allowed),
+    ...(strictMcpFor(ctx) ? { strictMcpConfig: true } : {}),
+    // Claude Code's auto-memory is the user's own notes for the project the checkout belongs to (a run checkout is a
+    // worktree of it); a pipeline agent works from the run's memory mount instead, so it is neither read nor written.
+    extraSettings: { autoMemoryEnabled: false },
     // §5.5/§5.3 detached-run context: the generated merged MCP config and one
     // `mcp__<server>` grant per merged server. Both are undefined/[] on legacy runs,
     // so the argv is byte-identical there. The grants are unioned inside the runner
