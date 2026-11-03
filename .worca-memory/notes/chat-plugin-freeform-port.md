@@ -2,7 +2,7 @@
 name: chat-plugin-freeform-port
 description: Porting Discord's freeform chat (interactive controls, threads, reactions) to another chat plugin worker — where the contract is tested and which traps cost a c
 paths: plugins/*-chat/**, test/*-chat-worker.test.mjs
-updated: 2026-11-03T19:26:57.623Z
+updated: 2026-11-03T21:01:11.531Z
 author: Bulibas
 ---
 
@@ -48,3 +48,10 @@ Porting freeform chat to slack-chat (2026-11-03) showed where the worker-host co
   busy). A worker keeps its own `interactionId -> {chatId, userId}` map; on Slack cycle 1 (2026-11-03), dropping that
   map's write in the `view_submission` branch left the whole worker test green. Every test must call
   `replyInteraction` on a click id AND on a modal-submit id, and assert the platform call each one makes.
+- **A new inbound field never leaves the worker unless the child copies it.** `channel-worker-child.mjs` `emitMessage`
+  rebuilds the frame as `{chatId, userId, text, meta}`, so an extra top-level field (chat context: `replyTo`, `history`,
+  `attachments`) is silently dropped even when `isValidIncoming` accepts it. A worker unit test with a fake `ctx` cannot
+  see this; pin it through the real child (`test/channel-host.test.mjs` fixture worker + `onInbound`). Also: an extra
+  bound-chat argument on the server's `deps.ask.startTurn` breaks the source pin in `test/chat-freeform-e2e.test.mjs`
+  ("bridge startTurn calls askCredentialGate…"), which `indexOf`s the literal signature (found replaying the chat-context
+  plan, 2026-11-03).
