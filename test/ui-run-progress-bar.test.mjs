@@ -2,10 +2,10 @@
 // idempotent painters over a host element, so the fill node survives repaints and its width glides.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { paintProgressBar, paintChainBar, renderRowLine } from '../ui/public/run-progress-bar.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const { window } = new JSDOM('<!doctype html><body></body>');
 const doc = window.document;
@@ -186,7 +186,7 @@ test('renderRowLine', async () => {
 
 // Layout guards (no layout engine in jsdom): the bars must not share a flex row with the Live view switch,
 // which squeezed them to ~128px so the four stage labels overlapped.
-const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+const css = readStyleCss();
 const rule = (sel) => (css.match(new RegExp(`^${sel.replace(/[.>]/g, '\\$&')}\\s*\\{([^}]*)\\}`, 'm')) || [])[1] || '';
 
 test('neutral bar CSS: ink steps 40/60/80/100%, --line-2 upcoming, no tone colours, pulse edge off under reduced motion', () => {

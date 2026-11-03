@@ -118,6 +118,12 @@ jobs:
               - 'test/wsmap-detectors-p4-registry.test.mjs'
               - 'test/wsmap-http-client-shapes-slow.test.mjs'
               - 'test/wsmap-graphql-client-copy-slow.test.mjs'
+              - 'tools/parity/**'
+              - 'test/parity-launch.test.mjs'
+              - 'test/parity-routes.test.mjs'
+              - 'test/split-by-feature.test.mjs'
+              - 'tools/split-by-feature.mjs'
+              - 'tools/split-by-feature/**'
 
   test-fast:
     # tools/test.mjs balances the shards by test/timings.json (longest first); each shard has
@@ -225,7 +231,7 @@ jobs:
     # even if two ever ran on one machine.
     name: headless-Chrome UI proofs (${{ matrix.group }})
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
@@ -279,6 +285,21 @@ jobs:
             exit 1
           fi
 
+      # #919 parity harness (docs/parity-harness.md): routes, signed-out pass, flows and
+      # visuals of this tree against itself. Timings are reported, not gated, on shared runners.
+      - name: Parity (dev against itself)
+        if: matrix.group != 'theme'
+        env:
+          CHROME_NO_SANDBOX: "1"
+        run: npm run parity -- run --a tree:. --b tree:. --out "$RUNNER_TEMP/parity" --no-timing-gate
+
+      - if: failure() && matrix.group != 'theme'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: parity-cdp-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/parity
+          if-no-files-found: ignore
+
   # The browser extension (docs/browser-extension.md): build the three browser
   # targets and their store zips, lint the Firefox build and smoke it in Firefox.
   extension:
@@ -330,7 +351,7 @@ jobs:
   docker:
     name: container image
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 

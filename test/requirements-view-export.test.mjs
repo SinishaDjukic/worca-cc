@@ -3,7 +3,7 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { readFileSync } from 'node:fs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const { window } = new JSDOM('<!doctype html><body></body>', { url: 'http://localhost:4317/#requirements' });
 for (const k of ['document', 'location', 'Event', 'KeyboardEvent', 'HTMLElement', 'window']) {
@@ -227,7 +227,7 @@ test('setup: an answer for a connection no longer chosen is dropped; a failure s
 });
 
 test('CSS: the A6 rules sit inside the Requirements block and use tokens only', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   const start = css.indexOf('/* Requirements page (plans/requirements-design.md section 6). Tokens only. */');
   const end = css.indexOf('/* ── marketplace P3 ── */');
   const block = css.slice(start, end);
@@ -362,7 +362,7 @@ test('setup: Shift+Tab from the title wraps to the last control; Escape while co
 });
 
 test('CSS (board 26): the label field shares the chips row, the buttons sit under a rule, a radio row is 28 px', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   const rule = (sel) => { const at = css.indexOf(`${sel}{`); return at < 0 ? '' : css.slice(at, css.indexOf('}', at)); };
   assert.match(rule('.req-export-labin'), /flex:1 1 120px/);
   assert.match(rule('.req-dialog.req-export .req-dlg-btns'), /padding-top:14px;border-top:1px solid var\(--line\)/);
@@ -810,7 +810,7 @@ test('live regions: the status and alert lines of the preview stay the same node
 });
 
 test('CSS: the preview and again rules sit in the Requirements block (tokens only) and the picked choice is an ink border, not a fill', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   const start = css.indexOf('/* Requirements page (plans/requirements-design.md section 6). Tokens only. */');
   const end = css.indexOf('/* ── marketplace P3 ── */');
   for (const sel of ['.req-export-grid', '.req-export-desc', '.req-export-mode', '.req-export-changes', 'a.chip.req-export-chip', '.req-export-done', '.req-history-list']) {
@@ -901,7 +901,7 @@ test('a11y: the description and comment previews are named regions', async () =>
 });
 
 test('CSS (boards 28, 29): the edited alert borders with --amber-line; the chip reads as a link; "Created SHOP-123" is green ink, never a fill', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   const rule = (sel) => { const at = css.indexOf(`${sel}{`); return at < 0 ? '' : css.slice(at, css.indexOf('}', at)); };
   assert.match(rule('.req-export-alert.is-warn'), /border:1px solid var\(--amber-line\)/);
   assert.match(rule('a.chip.req-export-chip'), /color:var\(--blue-ink-strong\)/);
@@ -1089,7 +1089,7 @@ test('D15: without a ticket the start sends no reportBack', async () => {
 });
 
 test('CSS (board 29 (6)): the Report back rows sit in the Requirements block, tokens only', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   const end = css.indexOf('/* ── marketplace P3 ── */');
   const at = css.indexOf('.req-report{');
   assert.ok(at > 0 && at < end);
@@ -1278,7 +1278,7 @@ test('D20 (phone): a change of feature, or the list, closes the sheet and frees 
 });
 
 test('CSS (board 31): at 900 px and narrower an export dialog is a sheet of the viewport size; its body scrolls, its buttons stay at the bottom; 44 px hit areas; Back only there', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+  const css = readStyleCss().replace(/\r\n/g, '\n');
   const start = css.indexOf('/* Requirements page (plans/requirements-design.md section 6). Tokens only. */');
   const end = css.indexOf('/* ── marketplace P3 ── */');
   const at = css.indexOf('.req-dlg-wrap.req-dlg-sheet .card.req-dialog.req-export{');

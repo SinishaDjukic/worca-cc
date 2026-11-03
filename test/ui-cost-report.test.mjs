@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { createCostReport, loadViews, saveView, COST_STATE_KEY, COST_VIEWS_KEY } from '../ui/public/cost-report.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const mem = () => { const m = new Map(); return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)), m }; };
 const fact = (id, usd, tags, extra = {}) => ({ id, usd, hours: 2, inCohort: true, status: 'finished', pr: null,
@@ -135,7 +136,7 @@ test('Allocated reads 0% (not —) when every run in view is Unallocated', () =>
 });
 
 test('style.css: a negative cell stays red in Unallocated and Ask Worca rows', async () => {
-  const css = (await import('node:fs')).readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   const kind = css.indexOf('.cr-table tr.cr-kind-none td');
   const neg = css.indexOf('.cr-table tr td.is-neg');
   assert.ok(kind > 0 && neg > kind, 'the is-neg rule matches the kind rule\'s specificity and comes after it');

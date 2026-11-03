@@ -3,7 +3,6 @@
 // Settings › Labs lists / toggles / locks / resets at every level, and the chip links to the row.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
@@ -11,10 +10,12 @@ import { checkRows } from './helpers/rows.mjs';
 import { renderIndexHtml } from '../src/core/index-html.mjs';
 import { applyFlags, flagOn, onFlagChange, chip, decorateFlagChips } from '../ui/public/flags.mjs';
 import { createFlagsView, bindFlagSwitch } from '../ui/public/flags-view.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const trackDom = useDomRelease(afterEach);
-const html = readFileSync(fileURLToPath(new URL('../ui/public/index.html', import.meta.url)), 'utf8');
-const css = readFileSync(fileURLToPath(new URL('../ui/public/style.css', import.meta.url)), 'utf8');
+const html = readIndexHtml();
+const css = readStyleCss();
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 // The three level-gate selectors (ui-levels.test.mjs pins them); jsdom never loads style.css.
 const LEVEL_GATES = [...css.matchAll(/:root\[data-level="\w+"\] \[data-min-level="\w+"\]:not\(\[data-level-keep\]\)/g)].map((m) => m[0]);

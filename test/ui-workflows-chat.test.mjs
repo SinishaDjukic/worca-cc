@@ -2,6 +2,7 @@
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const imp = (p) => import(new URL(`../ui/public/workflows/${p}`, import.meta.url).href);
 const memStore = () => { const m = new Map(); return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)), removeItem: (k) => m.delete(k) }; };
@@ -1010,7 +1011,7 @@ test('the input grows with its text only while open: empty or collapsed it keeps
 
 test('the dock\'s textarea opts out of the house textarea box (min-height 120px, focus fill and ring)', async () => {
   const { readFileSync } = await import('node:fs');
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   assert.match(css, /\.wfc-input\{[^}]*min-height:30px;[^}]*max-height:104px;/);
   assert.match(css, /\.wfc-input:focus,\.wfc-input:focus-visible\{outline:none;background:transparent;\}/);
   assert.match(css, /\.wfc-shell:not\(\[data-open="true"\]\) \.wfc-input\{height:30px;overflow:hidden;white-space:nowrap;cursor:text;\}/);
@@ -1019,7 +1020,7 @@ test('the dock\'s textarea opts out of the house textarea box (min-height 120px,
 
 test('a chat card button in flight (aria-disabled, never `disabled`) looks inactive', async () => {
   const { readFileSync } = await import('node:fs');
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   assert.match(css, /\.wfc :is\(\.btn,\.wfc-link\)\[aria-disabled="true"\]\{opacity:\.55;cursor:default;\}/);
 });
 
@@ -1544,7 +1545,7 @@ test('the chips make the open chat taller: the bars above it re-lift at once', a
 
 test('the attachment UI restates what the house rules would change (focus rings, the drop overlay, collapsed chips)', async () => {
   const { readFileSync } = await import('node:fs');
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   assert.match(css, /\.wfc-drop\{[^}]*position:absolute;[^}]*pointer-events:none;/);
   assert.match(css, /\.wfc-shell:not\(\[data-open="true"\]\) :is\(\.wfc-files,\.wfc-note\)\{display:none;\}/);
   assert.match(css, /\n\.wfc-file-x\{flex:none;\}/, 'the × is the shared .btn-icon (its ring is .btn\'s); only its flex stays');

@@ -4,11 +4,10 @@
 // outside the token blocks.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import { checkRows } from './helpers/rows.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
-const css = readFileSync(fileURLToPath(new URL('../ui/public/style.css', import.meta.url)), 'utf8');
+const css = readStyleCss();
 const bare = css.replace(/\/\*[\s\S]*?\*\//g, '');            // comments stripped
 
 /** The declarations of the FIRST block opened by `selector` (the house ruleBody idiom). */
