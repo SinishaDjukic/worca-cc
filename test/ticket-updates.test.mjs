@@ -6,7 +6,7 @@ import { useTempHome } from './helpers/temp-home.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { writeTicketUpdates } from '../src/core/plugin-config.mjs';
 import {
-  toMove, moveFor, validateTicketUpdates, projectFilter, filterProjects, describeMove, TU_LIMITS, TicketUpdatesError,
+  toMove, moveFor, validateTicketUpdates, projectFilter, filterProjects, describeMove, TU_LIMITS, TicketUpdatesError, isProjectKey,
 } from '../src/core/ticket-updates.mjs';
 
 useTempHome(after, 'worca-tu-rules-');
@@ -84,10 +84,14 @@ test('validateTicketUpdates: the limits and shapes of §4; the clean record, All
       refused({ projects: [{ value: 'X'.repeat(201) }], rules: [NONE_ALL] }, /200 characters/);
       refused({ projects: [], rules: [NONE_ALL, RULE('SHOP', 'n'.repeat(201), { kind: 'none' })] }, /200 characters/);
     } },
-    { name: 'a rule project is a key: not an object, null or a boolean; project values and rule projects refuse a/b', run: () => {
+    { name: 'a rule project is a key: not an object, null or a boolean; owner/repo is a key, any other slash is not (PR 2, decision 1)', run: () => {
       for (const project of [{}, null, true, ['SHOP']]) refused({ projects: [], rules: [NONE_ALL, { ...RULE('x', '', { kind: 'none' }), project }] }, /project must be a project key/);
-      refused({ projects: [{ value: 'a/b' }], rules: [NONE_ALL] }, /is not a project key/);
-      refused({ projects: [], rules: [NONE_ALL, RULE('a/b', '', { kind: 'none' })] }, /is not a project key/);
+      for (const bad of ['a/b/c', '/a', 'a/', 'a//b', 'a/..', './a']) {
+        refused({ projects: [{ value: bad }], rules: [NONE_ALL] }, /is not a project key/);
+        refused({ projects: [], rules: [NONE_ALL, RULE(bad, '', { kind: 'none' })] }, /is not a project key/);
+      }
+      const ok = validateTicketUpdates({ projects: [{ value: 'Acme/API', label: 'API' }], rules: [NONE_ALL, RULE('Acme/API', 'API', { kind: 'none' })] });
+      assert.deepEqual([ok.projects, ok.rules[1].project], [[{ value: 'Acme/API', label: 'API' }], 'Acme/API']);
     } },
     { name: 'one rule per project and moment', run: () => refused({ projects: [], rules: [NONE_ALL, RULE('SHOP', '', { kind: 'none' }), RULE('SHOP', '', { kind: 'none' })] }, /SHOP has more than one rule/) },
     { name: 'exactly one All projects rule', run: () => {
@@ -106,6 +110,16 @@ test('validateTicketUpdates: the limits and shapes of §4; the clean record, All
       refused({ projects: [], rules: [ALL({ kind: 'close' })] }, /needs a move/);
     } },
   ]);
+});
+
+test('isProjectKey (PR 2, decision 1): at most one slash between two parts (owner/repo); never a dot part, %, \\, ?, # or a control character', () => {
+  for (const ok of ['SHOP', 'My Project', 'Acme/API', 'acme/web.site', `${'o'.repeat(39)}/${'r'.repeat(100)}`, 'X'.repeat(100)]) {
+    assert.equal(isProjectKey(ok), true, ok);
+  }
+  for (const bad of ['', '.', '..', 'a/b/c', '/a', 'a/', 'a//b', 'a/..', './a', 'a/.', 'X'.repeat(101), `a/${'r'.repeat(101)}`, 'a%2eb',
+    'a\\b', 'a?b', 'a#b', 'a\u0001b', null, 7]) {
+    assert.equal(isProjectKey(bad), false, String(bad));
+  }
 });
 
 test('projectFilter and filterProjects (D9): only with the flag on and projects picked; a kept value stays', () => {

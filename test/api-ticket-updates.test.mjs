@@ -139,7 +139,7 @@ test('projects and statuses: through the saved profile, unfiltered; a missing pr
   assert.equal((await call('GET', `${TU}/statuses${Q('acme')}`)).status, 400);
   // %252e%252e arrives as "%2e%2e" (Express decodes the query once), which a URL parser reads as "..": a key never has "%"
   // or a control character.
-  for (const bad of ['..', '.', 'A/B', 'A%5CB', 'A%3FB', 'X'.repeat(101), '%252e%252e', '.%252e', 'A%01B', 'A%7FB']) {
+  for (const bad of ['..', '.', 'A/B/C', 'A/..', '/A', 'A%5CB', 'A%3FB', 'X'.repeat(101), '%252e%252e', '.%252e', 'A%01B', 'A%7FB']) {
     assert.deepEqual(await call('GET', `${TU}/statuses${Q('acme', `&project=${bad}`)}`).then((x) => [x.status, x.json]),
       [400, { error: 'project is not a project key' }], `project=${bad} never reaches another Jira endpoint`);
   }

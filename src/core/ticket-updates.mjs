@@ -9,11 +9,13 @@ export const TU_CATEGORIES = Object.freeze(['todo', 'in_progress', 'done', 'canc
 export const TU_MOMENTS = Object.freeze(['finished']);
 export const TU_LIMITS = Object.freeze({ projects: 200, rules: 200, text: 200 });
 
-/** A project key as a tracker names it: 1 to 100 characters, never "." or "..", no slash, backslash, "?", "#", "%" or control
- *  character (it lands in a URL path in the plugin, where "%2e%2e" or ".%2e" reads as ".."; Jira keys are [A-Z][A-Z0-9_]*).
- *  jira-source checks the same in statusesOf. */
-export const isProjectKey = (v) => typeof v === 'string' && v.length > 0 && v.length <= 100 && !/^\.+$/.test(v)
-  && !/[/\\?#%\u0000-\u001f\u007f]/.test(v);
+/** A project key as a tracker names it: no backslash, "?", "#", "%" or control character, and at most one "/" between two parts
+ *  of 1 to 100 characters, neither "." nor ".." (it lands in a URL path in the plugin, where "%2e%2e" or ".%2e" reads as "..").
+ *  The whole key stays within 200 characters (text() caps it first). Jira keys are [A-Z][A-Z0-9_]*; GitHub keys a repository as
+ *  owner/repo (plans/ticket-updates-pr2-plan.md decision 1). Each plugin checks its own shape too: jira-source and
+ *  azure-boards-source refuse any slash, github-source wants owner/repo. */
+export const isProjectKey = (v) => typeof v === 'string' && !/[\\?#%\u0000-\u001f\u007f]/.test(v)
+  && v.split('/').length <= 2 && v.split('/').every((part) => part.length > 0 && part.length <= 100 && !/^\.+$/.test(part));
 
 /** A save §4 refuses; the route answers 400 with its message. */
 export class TicketUpdatesError extends Error {
