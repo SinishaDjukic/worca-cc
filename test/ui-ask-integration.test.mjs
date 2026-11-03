@@ -131,6 +131,7 @@ test('ui-ask-integration: the boot opens Chat with the panel inside its section;
       assert.equal(section.classList.contains('hidden'), false);
       assert.ok(section.querySelector(':scope > .chat-page[data-chat-page]'), 'the panel root is mounted into the Chat section');
       assert.equal(doc.querySelector('.ask-dock, .ask-pill, .ask-tip, .ask-sheet, [data-ask-sheet]'), null);
+      await settle(window);   // its queued work (the #chat hashchange's MCP preview) lands now, not on the next boot's fetch
     } },
     { name: 'a boot on #new: zero /api/ask fetches — the panel loads when Chat first shows', run: async () => {
       const { calls } = await boot({ url: 'http://localhost:4317/#new' });
