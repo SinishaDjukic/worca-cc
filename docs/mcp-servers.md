@@ -144,6 +144,40 @@ taken too it is skipped). In a pipeline, a deny rule on `mcp__linear__…` reach
 - Problems at start (`failed`, `needs-auth`, disabled by your Claude Code settings, blocked by
   managed policy) become run warnings or a muted line in the chat.
 
+## Per-agent servers and tools
+
+An agent's editor has an **MCP servers** section and a **Skills** section ([skills.md](skills.md#per-agent-skills)). Choosing there limits what that agent can use in a run; the choice is saved with the agent and applies to every workflow that uses it, from its next run.
+
+- **Selection model.** Servers and skills are chosen per agent. An empty category means everything the run provides, exactly as before, so an agent with no choice behaves as it always did. Tick one server and the agent gets that server (plus any the team requires); the other servers of the run are denied to it.
+- **All tools, a list, or exclusions.** A ticked server starts on **All tools**: every tool it has now and any it gains later. **Selected tools** keeps an explicit list; unticking a tool under All tools stores it as an exclusion (`excludedTools`). A tool the server gains later flows in under All tools and is flagged **New — needs review** until you **Keep** it (or **Keep all new**) or untick it. A server whose tools are not listed yet shows "Tools not loaded yet — run Test in MCP settings" and can only be All tools.
+- **Required by team.** Servers and skills the team policy requires are always received, are ticked and locked in the picker, and are shown with a **Required by team** badge.
+- **Unavailable.** A server, tool or skill that has been removed is kept in the saved choice and shown in the editor as **Unavailable** with the reason (Remove drops it). A run warns about it at start, and it comes back as a normal row when it reappears.
+- **`.mcp.json` and local-scope servers.** A server in the project's `.mcp.json` (group **Project**) or in the project's local scope of `~/.claude.json` (group **Personal**) can be chosen; its id is `native:<name>`. Only the whole server is chosen: its tools cannot be listed here. Top-level (user-scope) servers of `~/.claude.json` are never provided by a run, so they are not choosable. A server from the committed `.mcp.json`, or a local-scope server that is identical to the committed copy, must be approved in Claude Code before it can be chosen (in a Folder project every `.mcp.json` server counts as committed). An untracked or locally edited server is always choosable, because the run provides it. A server the picker could not list is never denied.
+- **Engines.** Enforcement is on the Claude engine only. On another engine the selection is recorded with `enforced: false`, the run applies the run-wide lists unchanged and shows a warning.
+- **Empty selection.** No servers ticked means everything the run provides. Ticking a server and then unticking all tools leaves the server with no tools; the run card shows "No tools".
+- **Library flag vs editor.** The library's "new tools to review" chip reads the last ok **Test** of the server, from any project. The editor reads the fingerprint-current tools of the chosen project. The editor is authoritative; the chip is a hint.
+- **How it is enforced.** For a restricted agent, worca grants the ticked servers with a server wildcard and denies the unticked ones and the excluded or unticked tools by name (`--allowedTools mcp__srv --disallowedTools mcp__srv__b`), so a new tool under All tools needs no change to the grant. Under `bypassPermissions`, a tool of a chosen server that was never listed is not blocked; the run card says so.
+- **Auto runs.** A run started with the Auto workflow has no start-time warning, because its workflow is only chosen after the start. Its warnings appear in the run details only.
+- **The run's `CLAUDE.md` roster.** The MCP roster in the run's `CLAUDE.md` still lists every server of the run, so a restricted agent is told about servers it cannot call. Enforcement is by the grants and denies above, not by the roster.
+- **Where it shows.** Run start: a one-line warning when a chosen item is unavailable. Run details: an **Agent capabilities** card per agent (servers with their tools, skills, what was not available, and "Enforced via Claude permissions"). Library and inspector: a **MCP servers · Skills** line per agent. All at Advanced level ([ui-levels.md](ui-levels.md)).
+
+### Real-CLI smoke
+
+The grant and deny shapes above were run against a real `claude` (2.1.314, model `haiku`, `claude -p --permission-mode acceptEdits --strict-mcp-config`) with a throw-away stdio MCP server `srv` that exposes tools `a` and `b`, and a second server `other` of the same shape. Each run asked the model to call one tool and report the result.
+
+| # | Shape | Tool tried | Result |
+|---|---|---|---|
+| 1 | `--allowedTools mcp__srv__a` | `a` | works |
+| 1 | same | `b` | refused (permission not granted) |
+| 2 | `--allowedTools mcp__srv --disallowedTools mcp__srv__b` | `a` | works |
+| 2 | same | `b` | refused (tool not available) |
+| 3 | `--allowedTools mcp__other --disallowedTools mcp__srv` | `srv` `a`, `srv` `b` | both refused |
+| 3 | same | `other` `a` | works |
+| 4 | shape 2 with `tools: Read, mcp__srv` in the agent's frontmatter (`--agent`) and an allow rule for `mcp__srv` and `mcp__srv__b` | `a` | works |
+| 4 | same | `b` | refused despite the allow rule |
+
+Shape 2 holds, so the All-tools-keeps-flowing guarantee stands. Shape 4 used an allow rule passed with `--settings` rather than one written into the real `~/.claude/settings.json`; it is the same permission layer, but not the user-scope file itself. The skill shape (5) is recorded in [skills.md](skills.md#per-agent-skills).
+
 ## Limits and costs
 
 - At most 12 copies per Ask message and 24 per pipeline agent; project sets are kept first, then

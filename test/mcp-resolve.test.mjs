@@ -119,7 +119,7 @@ test('§5.8 Ask turn: pinned billing + worktree shop — six copies, refs only i
   assert.deepEqual(r.copies.find((c) => c.name === 'jira').projects, [], 'General is nobody\'s in Ask');
   assert.deepEqual(r.copies.find((c) => c.name === 'sentry_billing'), { name: 'sentry_billing', copy: 'sentry_billing', setId: 'billing',
     setName: 'Billing', serverId: 'plugin:acme-tools/sentry', projects: [BILLING], description: 'Sentry issues and events',
-    renamedFrom: null, provisional: false, untested: true });
+    renamedFrom: null, provisional: false, untested: true, tools: null });
   assert.equal(skipMessage(r.skipped[0], EXAMPLE.catalog), 'jira in Billing skipped: API token not set');
   assert.equal(skipReasonText(r.skipped[0], EXAMPLE.catalog), 'API token not set');
   assert.deepEqual(r.disallowedTools, []);
@@ -138,7 +138,7 @@ test('§5.8 workspace pipeline run on checkout: Shop\'s postgres-ro opted out, `
   assert.deepEqual(r.servers.jira_w.args.slice(0, 3), [LAUNCH, '--copy', 'jira_w']);
   assert.equal(r.servers.jira_w.env.MCPCHILD_JIRA_TOKEN, '${MCPSECRET_A41C6F76}');
   assert.deepEqual(r.copies[0], { name: 'jira_w', copy: 'jira', setId: 'general', setName: 'General', serverId: 'plugin:acme-tools/jira',
-    projects: [SHOP], description: 'Search and read Jira issues', renamedFrom: 'jira', provisional: false, untested: true });
+    projects: [SHOP], description: 'Search and read Jira issues', renamedFrom: 'jira', provisional: false, untested: true, tools: null });
   assert.deepEqual(r.copies.find((c) => c.name === 'sentry_shop').projects, [SHOP]);
   assert.deepEqual(reasons(r), ['billing|plugin:acme-tools/jira:missing:token', 'shop|manual:postgres-ro:opted-out',
     'team-acme-platform-9333|policy:acme/platform/github:missing:token']);
@@ -347,6 +347,7 @@ test('tool names: untested only under the 64 limit; an over-long tool is withhel
   const r = run(64, good);
   assert.deepEqual(names(r), ['srv']);
   assert.deepEqual([r.copies[0].untested, run(128, null).copies[0].untested, run(128, { ...good, fingerprint: 'stale' }).copies[0].untested], [false, true, true]);
+  assert.deepEqual([r.copies[0].tools, run(128, null).copies[0].tools, run(128, { ...good, fingerprint: 'stale' }).copies[0].tools], [['get', long], null, null], 'tools only when the Test is current');
   const full = `mcp__srv__${long.replace(/[.!]/g, '_')}`;
   assert.ok(full.length > 64 && full.length <= 128);
   assert.deepEqual(r.disallowedTools, [full]);

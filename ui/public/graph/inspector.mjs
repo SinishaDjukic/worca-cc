@@ -6,6 +6,7 @@
 // BOOLEANS: a new agent's sidecar drives its panel with no UI change.
 import { resolveOrOutType } from '../../../src/shared/graph/ports.mjs';
 import { harnessesOf, modelGroups, modelSourceSuffix } from '../../../src/shared/connections.mjs';
+import { accessSummary } from '../../../src/shared/agent-access.mjs';
 import { engineLabel } from '../../../src/shared/engine-switch.mjs';
 import { DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS, wirableParams, hasParamsPort } from '../../../src/shared/graph/script-meta.mjs';
 // The DOM primitives and the two script forms live in ../script-forms.mjs so the
@@ -114,6 +115,16 @@ export function renderNodeInspector(node, { template, portsFn, meta = null, mode
     }
     body.appendChild(lv(toggle(doc, 'ins-awaitall', 'awaitAll', 'Await all inputs', 'gate until every wire fires',
       { checked: node.config.awaitAll === true }), 'expert', node.config.awaitAll === true));
+    // What the agent may use: read-only (it is edited on the agent, never per card).
+    const summary = accessSummary(meta);
+    if (summary) {
+      const names = [...(meta.mcpAccess ?? []).map((e) => e.name || e.server), ...(meta.skillAccess ?? []).map((e) => e.name || e.skill)];
+      const access = h(doc, 'div', 'ins-access');
+      const row = h(doc, 'div', 'ins-chiprow');
+      row.append(...names.map((n) => h(doc, 'span', 'chip', n)));
+      access.append(h(doc, 'div', 'ins-zone', 'MCP servers · Skills'), h(doc, 'div', 'ins-sub', summary), row);
+      body.appendChild(access);
+    }
   } else if (node.kind === 'script') {
     root.appendChild(head(doc, (meta && meta.displayName) || node.key || node.id, `${node.key} · ${node.id}`));
     const chips = h(doc, 'div', 'ins-chiprow');

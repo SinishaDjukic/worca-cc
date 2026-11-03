@@ -985,6 +985,56 @@ function claudeJsonProject(doc, projectDir) {
   return entry && typeof entry === 'object' && !Array.isArray(entry) ? entry : null;
 }
 
+/** The LOCAL-scope MCP servers Claude Code keeps for `projectDir` (`~/.claude.json` → `projects[<key>].mcpServers`), as
+ *  { rawName: definition } (object-valued entries only, keys sorted). The same lookup `mergeMcpConfigs` does per member (:849): the plain
+ *  path when the member's `workMode` is not 'git', else the git root first and the plain path as the fallback. Parity tests keep the two
+ *  together. Never throws. */
+export async function localScopeServers(projectDir, homeDir, workMode) {
+  const text = await readTextMaybe(join(homeDir || '', '.claude.json'), () => {});
+  let projects = null;
+  try { projects = text === null ? null : JSON.parse(text)?.projects; } catch { /* invalid JSON: none */ }
+  if (!projects || typeof projects !== 'object' || Array.isArray(projects)) return {};
+  const key = workMode && workMode !== 'git' ? resolve(projectDir) : (gitOut(projectDir, ['rev-parse', '--show-toplevel']) || resolve(projectDir));
+  const servers = (projects[key] ?? projects[resolve(projectDir)])?.mcpServers;
+  if (!servers || typeof servers !== 'object' || Array.isArray(servers)) return {};
+  return Object.fromEntries(Object.entries(servers).filter(([, v]) => v && typeof v === 'object' && !Array.isArray(v)).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+}
+
+/** Stand-in for `mergeMcpConfigs` + `attachCommittedMcp` (single mode, Claude): the member servers the run will NOT load, per scope,
+ *  as { project: Map<rawName, 'unapproved'|'disabled'>, personal: Map<…> }. Approval is asked ONLY for a server (either scope, like
+ *  `src.cls === 'member'` at :876) whose definition is byte-identical to the committed copy — the run's `nativeOnly`; an untracked file, a
+ *  locally edited server or a directory with no committed copy is always provided and never in the maps.
+ *  The committed copy, in order (cycle-4 m1):
+ *    1. `committedDir/.mcp.json` read as a FILE — exactly what mergeMcpConfigs reads (:780); the harness passes `this.workDirs.get(key)`;
+ *    2. before a run, a non-'git' (Folder) member: the real-dir `.mcp.json` itself — the run's folder COPY of it, so every server matches;
+ *    3. before a run, a git member: `git show HEAD:./.mcp.json` (the worktree is cut from HEAD; `gitOut` is sync, trims, null on failure).
+ *  `workMode` also gives the `git` flag `attachCommittedMcp` passes (`noGitDirs`, :1434). `managed`: test seam of mcpjsonApproval. Never throws. */
+export async function heldCommittedMcp(projectDir, homeDir, { workMode, committedDir, managed } = {}) {
+  const held = { project: new Map(), personal: new Map() };
+  const folder = !!(workMode && workMode !== 'git');
+  const project = (await readMcpFile(join(projectDir, '.mcp.json'))).servers || {};
+  let cs = null;
+  if (committedDir) cs = (await readMcpFile(join(committedDir, '.mcp.json'))).servers;
+  else if (folder) cs = project;
+  else {
+    const text = gitOut(projectDir, ['show', 'HEAD:./.mcp.json']);                                  // null: untracked, no commit, not a git dir
+    try { const d = text && JSON.parse(text); cs = d && typeof d === 'object' && !Array.isArray(d) ? (d.mcpServers ?? d) : null; } catch { cs = null; }
+  }
+  if (!cs || typeof cs !== 'object' || Array.isArray(cs)) return held;
+  const committed = new Map(Object.entries(cs).filter(([, v]) => v && typeof v === 'object' && !Array.isArray(v)).map(([k, v]) => [normalizeServerName(k), stableStringify(v)]));
+  if (!committed.size) return held;
+  const verdict = await mcpjsonApproval(projectDir, homeDir, () => {}, { ...(managed ? { managed } : {}), git: !folder });
+  const scopes = { project, personal: await localScopeServers(projectDir, homeDir, workMode) };
+  for (const [scope, servers] of Object.entries(scopes)) {
+    for (const [raw, def] of Object.entries(servers)) {
+      if (committed.get(normalizeServerName(raw)) !== stableStringify(def)) continue;               // differs from the committed copy: provided, approval moot
+      const v = verdict(raw);
+      if (v !== 'approved') held[scope].set(raw, v);
+    }
+  }
+  return held;
+}
+
 /**
  * Whether Claude Code runs a `.mcp.json` server of `projectDir` without asking, by its approval keys
  * (`enabledMcpjsonServers`, `enableAllProjectMcpServers`, `disabledMcpjsonServers`) in the settings it reads.

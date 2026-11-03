@@ -120,6 +120,14 @@ At most 24 skills per pipeline spawn and 12 per Ask turn (a skill in two sets co
 first, then Team, then General.
 Each mounted skill's description enters the agent's prompt, so a long list costs tokens on every spawn.
 
+## Per-agent skills
+
+An agent's editor has a **Skills** section beside its MCP servers ([mcp-servers.md](mcp-servers.md#per-agent-servers-and-tools)). It works the same way: an empty choice means every skill the run provides, ticked skills are the only skill-set skills that agent receives, and skills the team requires are always received (**Required by team**). A skill that has since been removed shows as **Unavailable**, and the run warns at start.
+
+The picker chooses only skills **from skill sets**. Skills from `.claude/skills`, `~/.claude/skills` and installed plugins are **not hidden in v1**: they stay available to every agent, and the picker says so. A restricted agent gets its own mount holding only the skill-set skills it was given; enforcement is on the Claude engine only.
+
+Smoke shape 5 (real `claude` 2.1.314, `haiku`): with a native skill `.claude/skills/demo/SKILL.md` present, an agent asked to run `demo` through the `Skill` tool ran it. With `--disallowedTools "Skill(demo)"` the `Skill` tool answered "Skill execution blocked by permission rules" and the skill did not run. So a deny rule does stop a native skill, and hiding native skills per agent can be added later; v1 does not do it.
+
 ## Team policy
 
 A team policy can require plugin skills (`skills.required`, [team-policy.md](team-policy.md)): each developer

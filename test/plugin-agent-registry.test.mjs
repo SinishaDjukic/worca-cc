@@ -66,6 +66,18 @@ test('a plugin agent joins the registry with origin plugin:<name> and agentPath 
     'agentPath resolves THROUGH the current/ symlink, never a versions/ path');
 });
 
+test('a v2 plugin agent keeps its mcpAccess / skillAccess through the registry scan', () => {
+  const builtin = tmp('worca-cc-pbuiltin-');
+  writeAgent(builtin, 'alpha', { order: 1 });
+  const access = { mcpAccess: [{ server: 'plugin:demo:srv', tools: 'all' }], skillAccess: [{ skill: 'skill:plugin:demo:s' }] };
+  installFakePlugin('access-source', [['accessAgent', { order: 41, ...access }]]);
+  const reg = loadAgentRegistry(builtin, { userAgentsDir: null });
+  assert.deepEqual(reg.accessAgent.mcpAccess, access.mcpAccess);
+  assert.deepEqual(reg.accessAgent.skillAccess, access.skillAccess);
+  // A v1 plugin sidecar never reaches normalizeMeta's whitelist (it is refused
+  // earlier, see the "not meta v2" test), so it cannot carry a selection.
+});
+
 test('plugin key precedence: builtin > user > plugin (skip with warning); among plugins the lexicographically first name wins', async () => {
   const builtin = tmp('worca-cc-pbuiltin-');
   writeAgent(builtin, 'sharedKey', { order: 1, displayName: 'Builtin Wins' });

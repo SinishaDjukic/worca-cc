@@ -36,3 +36,17 @@ test('an endpoint model both harnesses reach is listed once, under its provider,
   assert.deepEqual([...sel.querySelectorAll('optgroup')].map((g) => g.label), ['Claude sign-in', 'ChatGPT sign-in', 'OpenAI-compatible']);
   assert.deepEqual([...sel.querySelectorAll('optgroup[label="OpenAI-compatible"] option')].map((o) => o.textContent), ['GPT-5.5 (API) · Claude, Codex']);
 });
+
+test('the agent inspector shows the capability selection read-only: summary and names, no inputs, no review flag', () => {
+  const meta = { key: 'planner', displayName: 'Plan', reviewTools: 3,
+    mcpAccess: [{ server: 'manual:jira', name: 'Jira', tools: 'all' }], skillAccess: [{ skill: 'skill:library:lint', name: 'Lint' }] };
+  const el = renderNodeInspector({ id: 'n_agent', kind: 'agent', key: 'planner', config: {} }, { ...opts([MODELS[0]]), meta });
+  const block = el.querySelector('.ins-access');
+  assert.match(block.textContent, /MCP servers · Skills/);
+  assert.match(block.textContent, /1 server · all tools · 1 skill/);
+  assert.deepEqual([...block.querySelectorAll('.ins-chiprow .chip')].map((c) => c.textContent), ['Jira', 'Lint']);
+  assert.equal(block.querySelector('input, select, button'), null);
+  assert.doesNotMatch(el.textContent, /review/i);
+  const bare = renderNodeInspector({ id: 'n_agent', kind: 'agent', key: 'planner', config: {} }, opts([MODELS[0]]));
+  assert.equal(bare.querySelector('.ins-access'), null, 'no selection, no block');
+});

@@ -459,7 +459,8 @@ async function plantInjected({ runRoot, worktreeDir, key, pipelineId, realSkillD
 function plantAfterAssembly(orch, build) {
   let planted = null;
   orch.on('state', (s) => {
-    if (planted || !orch.runContext || !s.branch?.worktreeDir || !existsSync(s.branch.worktreeDir)) return;
+    // agentCapabilities: _planAgentCaps has finished its own run.json write (FEAT-1); planting earlier would race it.
+    if (planted || !orch.runContext || !s.agentCapabilities || !s.branch?.worktreeDir || !existsSync(s.branch.worktreeDir)) return;
     planted = build(s);
   });
   return () => planted;

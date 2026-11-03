@@ -166,6 +166,19 @@ test('normalizeMeta exposes requiresSkills (defaulting to []) and filters junk',
   );
 });
 
+test('normalizeMeta keeps mcpAccess / skillAccess on a v2 sidecar and emits no key when absent', async () => {
+  const { normalizeMeta } = await import('../src/core/agent-registry.mjs');
+  const v2 = { metaVersion: 2, key: 'acc', runnerType: 'producer', order: 1,
+    inputs: [{ id: 'plan', type: 'md' }], outputs: [{ id: 'out', type: 'md', filename: 'o.md' }] };
+  const none = normalizeMeta(v2);
+  assert.equal('mcpAccess' in none, false);
+  assert.equal('skillAccess' in none, false);
+  const access = { mcpAccess: [{ server: 'policy:p', tools: 'all' }], skillAccess: [{ skill: 'skill:library:l' }] };
+  const got = normalizeMeta({ ...v2, ...access });
+  assert.deepEqual(got.mcpAccess, access.mcpAccess);
+  assert.deepEqual(got.skillAccess, access.skillAccess);
+});
+
 test('M4: workspace scanner and reviewer are paired and workspace-only (registry and on disk)', async () => {
   await checkRows([
     { name: 'M4: the scanner and the reviewer are paired (md + sidecar) and scope:"workspace-only"', run: async () => {

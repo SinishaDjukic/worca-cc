@@ -12,6 +12,7 @@ import { classifyLoops } from '../../../src/shared/graph/loops.mjs';
 import { DND_TYPE, FLOW_CARDS } from './shell.mjs';
 import { toggleMenu } from './menu.mjs';
 import { iconSvg } from '../icons.mjs';
+import { accessSummary } from '../../../src/shared/agent-access.mjs';
 
 /** The sections, in the selector's order. */
 export const TOPS = Object.freeze(['agents', 'scripts', 'workflows']);
@@ -393,7 +394,7 @@ export function createLibrary({ doc, host, actions }) {
     const txt = h('span', 'wfl-txt');
     const l1 = h('span', 'wfl-l1');
     l1.appendChild(h('span', 'wfl-name', name));
-    for (const c of chips) l1.appendChild(h('span', `wfl-qchip${c.mono ? ' mono' : ''}`, c.text));
+    for (const c of chips) { const chip = h('span', `wfl-qchip${c.mono ? ' mono' : ''}${c.cls ? ` ${c.cls}` : ''}`, c.text); if (c.title) chip.title = c.title; l1.appendChild(chip); }
     txt.append(l1, h('span', 'wfl-l2 mono', sub));
     whereTag(txt, at);
     main.append(tile(fam, glyph, viewBox), txt);
@@ -428,6 +429,9 @@ export function createLibrary({ doc, host, actions }) {
     if (pluginOf(a)) chips.push({ text: pluginOf(a), mono: true });
     if (wsOnly) chips.push({ text: 'workspace only' });
     else if (!placeable) chips.push({ text: 'not placeable' });
+    const access = accessSummary(a);
+    if (access) chips.push({ text: access });
+    if (a.reviewTools) chips.push({ text: 'new tools to review', cls: 'is-review', title: `${a.reviewTools} new tool${a.reviewTools === 1 ? '' : 's'}` });
     const id = `agent:${a.key}`;
     return itemRow({ id, kind: 'agent', key: a.key, name: a.displayName || a.key, sub: portLineOf(a), chips, at,
       fam: a.color || 'blue', glyph: safeAgentIcon(a) || '', viewBox: '0 0 24 24', draggable: placeable,
@@ -439,6 +443,7 @@ export function createLibrary({ doc, host, actions }) {
         if (a.fanOut) caps.appendChild(h('span', 'wfl-qchip', 'Research fan-out'));
         if (a.asksQuestions) caps.appendChild(h('span', 'wfl-qchip', 'Asks questions'));
         if (caps.childNodes.length) d.appendChild(caps);
+        if (access) d.append(h('div', 'wfl-k', 'MCP servers · Skills'), h('div', 'wfl-meta mono', access));
         const list = [];
         if (placeable) list.push(['Add to canvas', () => act('addToCanvas', { kind: 'agent', key: a.key }), true]);
         if (user) list.push(['Edit', () => act('editAgent', a.key)], ['Delete', () => act('deleteAgent', a)]);

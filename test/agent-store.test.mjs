@@ -160,6 +160,26 @@ test('updateAgent applies the same gate, and a clean v2 meta still round-trips',
   assert.equal(upd.meta.metaVersion, 2);
 });
 
+test('mcpAccess / skillAccess round-trip, a v2 PUT without them clears them, junk is dropped, stale ids are kept', async () => {
+  const access = {
+    mcpAccess: [
+      { server: 'plugin:ghost-server', name: 'Ghost', tools: 'all', reviewedTools: ['a', 'b'], excludedTools: ['b'] },
+      { server: 'native:Bash', tools: ['x'] },
+    ],
+    skillAccess: [{ skill: 'skill:library:gone', name: 'Gone' }],
+  };
+  const on = await updateAgent('docsWriter', { meta: { ...META, ...access } });
+  assert.deepEqual(on.meta.mcpAccess, access.mcpAccess, 'a server that is in no catalog is KEPT');
+  assert.deepEqual((await readAgent('docsWriter')).meta.skillAccess, access.skillAccess);
+  const off = await updateAgent('docsWriter', { meta: { ...META } });
+  assert.equal('mcpAccess' in off.meta, false, 'mcpAccess can be cleared');
+  assert.equal('skillAccess' in off.meta, false, 'skillAccess can be cleared');
+  const bad = await updateAgent('docsWriter', { meta: { ...META, mcpAccess: 'x' } });
+  assert.equal('mcpAccess' in bad.meta, false, 'a malformed value is dropped, not a 400');
+  const made = await createAgent({ meta: { ...META, displayName: 'Access Agent', ...access }, markdown: MD });
+  assert.deepEqual(made.meta.mcpAccess, access.mcpAccess);
+});
+
 test('a complete v2 PUT CLEARS the optional capability surface', async () => {
   // agent-store merges {...existing, ...raw}, so without the V2_CLEARABLE delete
   // every one of these is a ONE-WAY switch: the editor omits a capability when

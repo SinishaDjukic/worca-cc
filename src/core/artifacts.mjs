@@ -3050,6 +3050,7 @@ export async function readPipelineByKey(key, id) {
   // File-name literals inlined (not imported from results.mjs) to avoid a load-order
   // cycle: results.mjs imports recordArtifact/resolvePipelineId from this module.
   const dir = await runDirForRow(row);
+  const runJson = await readJsonFile(join(dir, 'run.json'));
   const state = rowToState(row);
   // A resume runs out of the run dir (its session + stepper state live there). Restore
   // clears a reclaimed run's resume_point (pipeline-delete.mjs), but a dir wiped by hand
@@ -3072,7 +3073,9 @@ export async function readPipelineByKey(key, id) {
     memory: await readMemoryLedger(dir),
     // Skills registry §6 board 9: the set skills the run got — run.json's durable copy in the run dir
     // (detached runs, once torn down); null otherwise.
-    skillMount: (await readJsonFile(join(dir, 'run.json')))?.skillMount ?? null,
+    skillMount: runJson?.skillMount ?? null,
+    // FEAT-1: what each agent was given (servers, tools, skills, missing items) — the same durable copy in run.json.
+    agentCapabilities: runJson?.agentCapabilities ?? null,
     ...readPipelineExtras(row.id),
   };
 }
