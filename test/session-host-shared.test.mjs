@@ -1,5 +1,4 @@
 // test/session-host-shared.test.mjs — "one conversation": every step a turn of the same session, opt-in only (Task 65).
-import './helpers/leak-dump.mjs';
 import { test, after, before, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';

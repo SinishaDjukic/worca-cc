@@ -821,14 +821,19 @@ function timeLimitGuard({ wallMs, idleMs }, outer, nodeId) {
       { code, errorClass: 'time_limit' });
     ac.abort(guard.error);
   };
-  const wall = setTimeout(() => hit('NODE_TIME_LIMIT', `ran past its ${fmtMinutes(wallMs)} time limit`), wallMs);
+  // Both timers are unref'd: a watchdog guards a spawn and never keeps the process alive by itself (the spawn's child
+  // and pipes do while it runs). A spawn whose promise never settles never reaches stop(), and a session host can emit a
+  // member event after the turn ended: either way a ref'd timer held a finished process open for up to 90 minutes.
+  const wall = setTimeout(() => hit('NODE_TIME_LIMIT', `ran past its ${fmtMinutes(wallMs)} time limit`), wallMs).unref();
   let idle = null;
+  let stopped = false;
   guard.touch = () => {
+    if (stopped) return;   // an event after the spawn ended re-arms nothing
     if (idle) clearTimeout(idle);
-    idle = setTimeout(() => hit('NODE_IDLE_LIMIT', `no output for ${fmtMinutes(idleMs)} (idle limit)`), idleMs);
+    idle = setTimeout(() => hit('NODE_IDLE_LIMIT', `no output for ${fmtMinutes(idleMs)} (idle limit)`), idleMs).unref();
   };
   guard.touch();
-  guard.stop = () => { clearTimeout(wall); if (idle) clearTimeout(idle); };
+  guard.stop = () => { stopped = true; clearTimeout(wall); if (idle) clearTimeout(idle); };
   return guard;
 }
 

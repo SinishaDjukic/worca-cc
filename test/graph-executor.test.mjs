@@ -698,15 +698,37 @@ test('19 decompositionProblems: unique safe ids, positive integer ordinals, file
   assert.equal((await readDecomposition(fenced)).phases.length, 2);
 });
 
+test('#1067 E4: the time-limit watchdog never holds the process open — a spawn that never settles, an event after the turn', async () => {
+  // Linux CI on Node 22 hung three session-group files for 300 s: a session member's spawn left pending (its 90 min wall
+  // timer) and a host event after the turn (a re-armed 20 min idle timer) kept the test process alive after its tests passed.
+  const timers = () => process.getActiveResourcesInfo().filter((k) => k === 'Timeout').length;
+  const base = timers();
+  let pending = null;
+  let late = null;
+  _testing.runClaude = (opts) => {
+    if (!pending) { pending = true; return new Promise(() => {}); }                  // never settles: stop() never runs
+    late = opts.onEvent; return Promise.resolve({ text: 'ok' });
+  };
+  try {
+    void runAgentExecution(ctx8({ signal: new AbortController().signal })).catch(() => {});
+    while (!pending) await new Promise((r) => setImmediate(r));
+    assert.equal(timers(), base, 'a pending spawn\'s watchdog holds nothing open');
+    await runAgentExecution(ctx8({ signal: new AbortController().signal })).catch(() => {});   // its outputs check is not the point
+    late({ type: 'text', text: 'after the turn' });                                   // a session host's trailing event
+    assert.equal(timers(), base, 'an event after the spawn ended re-arms no timer');
+  } finally { _testing.runClaude = null; }
+});
+
 test('E4: an agent node that runs past its wall-clock or goes silent past its idle limit stops with a time_limit error', async () => {
   const { nodeTimeLimits } = await import('../src/core/graph/executor.mjs');
   // Defaults: generous enough for normal nodes; per node, then per workflow, override them.
   assert.deepEqual(nodeTimeLimits({ node: { config: {} } }), { wallMs: 90 * 60000, idleMs: 20 * 60000 });
   assert.deepEqual(nodeTimeLimits({ node: { config: { timeLimitMinutes: 5 } }, template: { limits: { idleLimitMinutes: 2, timeLimitMinutes: 9 } } }),
     { wallMs: 5 * 60000, idleMs: 2 * 60000 });
+  // A hung agent is a live child: its pipes keep the process up (the unref'd watchdog does not), modelled by an interval.
   const hang = (emitEvery) => async (opts) => new Promise((resolve, reject) => {
-    const t = emitEvery ? setInterval(() => opts.onEvent({ type: 'text', text: 'still here' }), emitEvery) : null;
-    opts.signal.addEventListener('abort', () => { if (t) clearInterval(t); reject(Object.assign(new Error('aborted'), { name: 'AbortError' })); }, { once: true });
+    const t = setInterval(() => { if (emitEvery) opts.onEvent({ type: 'text', text: 'still here' }); }, emitEvery || 1000);
+    opts.signal.addEventListener('abort', () => { clearInterval(t); reject(Object.assign(new Error('aborted'), { name: 'AbortError' })); }, { once: true });
   });
   const run = async (config, emitEvery) => {
     const c = ctx8({ node: { id: 'n_c', kind: 'agent', key: 'custom', config, agentPrompt: 'x', tools: [] }, signal: new AbortController().signal });

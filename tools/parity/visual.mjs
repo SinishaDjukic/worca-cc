@@ -50,20 +50,11 @@ export async function steady(page) {
 /** 9 pages × 2 themes; theme set through the app's setting (D16). Runs before the flows, on the clean seed. */
 export async function capture(page, t, seed, dir, log = () => {}) {
   const shots = [];
-  const frames = [];   // TEMPORARY (#1067 diagnostic): the held run's frames per page
-  page.on('websocket', (ws) => ws.on('framereceived', (f) => { try { const m = JSON.parse(f.payload); if (m.type === 'hello') frames.push(`hello(${(m.runs || []).map((r) => `${r.runId === seed.heldRunId ? 'held' : 'x'}:${r.status}:${r.pendingQuestion?.kind ?? '-'}`).join(',')})`); else if (m.runId === seed.heldRunId) frames.push(`${m.type}${m.type === 'state' ? `[${(m.steps || []).map((r) => `${String(r.executionId).split(':')[1]}/${r.status}`).join(',')}]` : ''}`); } catch {} }));
-  page.on('websocket', (ws) => ws.on('framesent', (f) => { if (!String(f.payload).includes('ping')) frames.push(`sent ${String(f.payload).slice(0, 80)}`); }));
   for (const theme of THEMES) {
     await fetch(`${t.base}/api/settings`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ theme }) });
     for (const p of PAGES) {
       await go(page, p.hash(seed), p.view, p.sub);
       await steady(page);
-      if (p.name === 'runs') {   // TEMPORARY (#1067 diagnostic)
-        const dom = await page.evaluate(() => [...document.querySelectorAll('.runs-item')].map((e) => `${e.dataset.rowKey}=${e.querySelector('.run-prog-sec[data-stage=plan] .run-prog-fill')?.style.width ?? '-'} ${e.querySelector('a')?.dataset.line ?? ''}`).join(' ; '));
-        log(`diag runs/${theme}: ${dom}`);
-        log(`diag frames: ${frames.slice(-14).join(' ')}`);
-      }
-      frames.length = 0;
       const file = join(dir, `${p.name}-${theme}.png`);
       await page.screenshot({ path: file, animations: 'disabled', caret: 'hide',
         mask: [...(MASKS[p.name] || []).map((s) => page.locator(s)), ...idMasks(page, seed)], maskColor: '#ff00ff' });
