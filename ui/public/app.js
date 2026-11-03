@@ -1952,7 +1952,8 @@ function handleServerMessage(msg) {
   // A plugin or marketplace changed — another tab, the CLI, or this page's own action (CONTRACT §1.7): re-read while
   // the page is open; never a refresh (SM6). Off the page, the next entry loads anyway.
   if (msg.type === 'plugins-changed') {
-    topnavPluginsStale = true;                      // the top bar search reads the lists again on its next open
+    requirementsView.importChanged();               // what can import (and its connections) is asked again
+    topnavPluginsStale = true;                     // the top bar search reads the lists again on its next open
     if (currentView() === 'marketplace') void marketplacePage.load({ background: true });
     return;
   }
@@ -7173,6 +7174,7 @@ async function mountPluginSourcePane(src) {
         const r = await pluginApi('PUT', '/api/source-bindings',
           { ...resolved.ref, plugin: src.plugin, sourceId: src.sourceId, profile });
         if (!r.ok) return notify({ tone: 'err', title: 'Could not save the profile binding', detail: r.data.error || '', key: 'profile-binding' });
+        requirementsView.importChanged();   // a binding moves the import's default connection; no frame is sent for it
         mountPluginSourcePane(src);
       },
     }));
@@ -7195,6 +7197,7 @@ async function mountPluginSourcePane(src) {
       const r = await pluginApi('PUT', '/api/source-bindings',
         { ...ref, plugin: src.plugin, sourceId: src.sourceId, profile });
       if (!r.ok) return notify({ tone: 'err', title: 'Could not save the profile binding', detail: r.data.error || '', key: 'profile-binding' });
+      requirementsView.importChanged();
       mountPluginSourcePane(src);
     },
   }) : null;

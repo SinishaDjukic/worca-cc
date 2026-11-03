@@ -262,3 +262,57 @@ test('the pick dialog on All projects: a failed project list shows its error and
   assert.equal(started(calls, 'POST', `${IMP}/search`), 1);
   m.view.destroy();
 });
+
+// ---- stale answers: a superseded read or an older paint never overwrites a newer one; a plugin change drops the import answer ----
+test('a projects read that was superseded by a change frame does not overwrite the newer list when it answers late', async () => {
+  const held = gate();
+  let n = 0;
+  fakeApi({ 'GET /api/projects': async () => {
+    n += 1;
+    if (n === 1) { await held.p; return { projects: [{ key: 'old-1', name: 'old project' }] }; }
+    return { projects: [{ key: 'new-1', name: 'new project' }] };
+  }, 'GET /api/workspaces': { workspaces: [] }, 'GET /api/requirements': LIST });
+  const m = make();
+  void m.view.show('');          // read 1, held
+  await settle();
+  m.view.targetsChanged();       // a projects-changed frame
+  await m.view.changed(undefined, undefined);   // paint 2: read 2 answers at once
+  await settle();
+  held.release();                // read 1 answers late
+  await settle();
+  await m.view.show('new');
+  await settle();
+  const opts = [...m.host.querySelectorAll('#req-new-target option')].map((o) => o.textContent);
+  assert.deepEqual(opts, ['new project']);
+  m.view.destroy();
+});
+
+test('an older paint that finishes after a newer one does not overwrite it', async () => {
+  const held = gate();
+  fakeApi({ 'GET /api/projects': PROJECTS, 'GET /api/workspaces': { workspaces: [] }, 'GET /api/requirements': { hold: held, value: LIST } });
+  const m = make();
+  void m.view.show('new');       // draws the form, then waits for the held list
+  await settle();
+  assert.ok(m.host.querySelector('#req-new-title'));
+  const shown = m.view.show('');  // the list screen: its own call is held too, then released with the first
+  held.release();
+  await shown;
+  await settle();
+  assert.equal(m.host.querySelector('#req-new-title'), null, 'the list screen stays');
+  assert.equal(m.host.querySelector('.req-new-model'), null, 'no interview line injected into it');
+  m.view.destroy();
+});
+
+test('importChanged (a plugins-changed frame) drops the kept answer: the next visit and the dialog ask again', async () => {
+  const calls = fakeApi(IMPORT_ROUTES());
+  const m = make();
+  await m.view.show('new');
+  await settle();
+  assert.equal(started(calls, 'GET', IMP), 1);
+  m.view.importChanged();
+  await m.view.show('');
+  await m.view.show('new');
+  await settle();
+  assert.equal(started(calls, 'GET', IMP), 2, 'asked again');
+  m.view.destroy();
+});

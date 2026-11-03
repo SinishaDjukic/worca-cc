@@ -360,8 +360,9 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const gen = targetsGen;
     let whole = true;
     const [p, w] = await Promise.all([api('GET', '/api/projects').catch(() => { whole = false; return {}; }), api('GET', '/api/workspaces').catch(() => { whole = false; return {}; })]);
+    if (gen !== targetsGen) return;   // a change frame came while this read was out: a newer read owns `targets`
     targets = { projects: p.projects || [], workspaces: w.workspaces || [] };
-    if (whole && gen === targetsGen) targetsAt = Date.now();
+    if (whole) targetsAt = Date.now();
   }
   const targetsFresh = () => targetsAt > 0 && Date.now() - targetsAt < TARGETS_TTL_MS;
   function ensureTargets() {
@@ -451,7 +452,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         // The list call carries the code-look cost for the hint, who interviews (A1.1) and the briefs (A7 board 13).
         // The form renders without it, as soon as the projects are known; what needs the list is filled in when it arrives.
         let settled = false;
-        const listP = api('GET', '/api/requirements').then((d) => d, () => null).then((d) => { settled = true; return d; });
+        let listVal = null;   // the answer, taken in the same step that sets `settled`, so no await sits between the guard and the draw
+        const listP = api('GET', '/api/requirements').then((d) => d, () => null).then((d) => { listVal = d; settled = true; return d; });
         // From a ticket… needs a target to ask about: the first one, when the projects are already known (else paintNew asks, as
         // soon as they are, with the list still on its way)
         const early = targetsFresh() ? firstTarget() : null;
@@ -465,7 +467,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
           estimates: list && list.readEstimates && typeof list.readEstimates === 'object' ? list.readEstimates : {},
         });
         // already here (the usual case): the form is drawn whole; else drawn bare and filled in below
-        const first = settled ? take(await listP) : take(null);
+        const first = settled ? take(listVal) : take(null);
         const fill = paintNew(first.look, first.interview, first.briefs, first.estimates);
         paintedKey = key;
         if (!settled) {
@@ -4299,6 +4301,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     }, () => { if (importInfos.get(id) === e) importInfos.delete(id); });
     return e.p;
   }
+  /** A plugin was installed, removed, enabled, disabled or configured, or a source binding changed: what can import is asked again. */
+  const importChanged = () => { importInfos.clear(); };
   /** The answer for a target when one is in hand and fresh, else null. */
   const importInfoCached = (s) => { const e = importInfos.get(scopeId(s)); return importInfoFresh(e) ? e.info : null; };
   /** The target New feature opens on (the form's first option), or null before the projects are known. */
@@ -4775,7 +4779,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     releaseExport();
     syncSheetInert();   // the view is hidden by now: the sheet's inert page is put back
   };
-  return { show, changed, leave, targetsChanged, destroy: () => {
+  return { show, changed, leave, targetsChanged, importChanged, destroy: () => {
     paintNo += 1; closeDialog(false); offGit(); document.removeEventListener('click', onDocClick, true);
     if (sheetMq && typeof sheetMq.removeEventListener === 'function') sheetMq.removeEventListener('change', syncSheetInert);
     host.replaceChildren(); syncSheetInert();
