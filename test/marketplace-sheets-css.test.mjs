@@ -2,16 +2,16 @@
 // shared ones included), [hidden] panels stay hidden, the block sits right after P5's (SM56/SM69), tokens only.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { newCard } from '../ui/public/marketplace/update-model.mjs';
 import { renderUpdateCard, renderUpdateFoot } from '../ui/public/marketplace/update-view.mjs';
 import { renderManageHead, renderHealth, renderAdds, renderSource, renderRemoveRow, renderTestResult } from '../ui/public/marketplace/manage-view.mjs';
 import { SRC_ROW as ROW, SRC_PREVIEW as PREVIEW } from './helpers/marketplace-update-fixtures.mjs';
 import { DETAIL } from './helpers/marketplace-manage-fixtures.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
-const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+const css = readStyleCss();
 // JS / test hooks that need no rule of their own.
 const HOOKS = new Set(['mk-include', 'mk-reviewed', 'mk-upd-err', 'mk-disc-n', 'mk-upd-meta', 'mk-upd-only', 'mk-upd-go',
   'mk-manage-enable', 'mk-review-update', 'mk-health-run', 'mk-remove', 'mk-upd-when', 'mk-head-err', 'mk-sec-err', 'mk-src-sha']);

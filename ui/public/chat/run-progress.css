@@ -1,0 +1,173 @@
+/* ---------- run progress card (ui/public/ask-run-card.mjs; the live view of a pipeline run in the transcript) ----------
+   Stateless: every value is repainted from the app's run store or GET /api/ask/runs/:id. Tokens only.
+   The run-state ornaments are restated for THIS host: the run-monitor block is scoped to its own host class
+   (pinned by test/ui-run-hosts.test.mjs), and keyframes are name-resolved — referenced here, declared once there.
+   Reduced motion: the dock blanket (.ask-dock *{animation:none !important;}) covers every ELEMENT below — never a
+   pseudo-element (they do not inherit `animation`), so nothing here animates a ::before/::after (D25; pinned). Pips scale with
+   --gv-scale (geometry.mjs) because the flow card is drawn at 0.65 while the world transform stays identity.
+   Every rule that restates a v2-canvas base rule carries .gv-world: the base lives LATER in this file, so a
+   two-class .ask-rc-graph .wbadge would tie on specificity and lose to the later base rule. Pinned by the cascade test in test/ui-ask-style.test.mjs. */
+.ask-card.ask-rc{gap:0;padding:16px 18px;border-width:1px;animation:wr-rise .2s cubic-bezier(.2,.7,.3,1) both;}
+.ask-rc>*{min-width:0;}
+.ask-rc-head{display:flex;align-items:center;gap:8px;height:28px;}
+.ask-rc-kicker{display:inline-flex;align-items:center;height:20px;padding:0 8px;border-radius:var(--r-xs);font-family:var(--mono);font-size:12px;background:var(--slate-bg);color:var(--slate-ink);white-space:nowrap;font-weight:600;}
+.ask-rc-pill{display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 9px;border-radius:var(--r-xs);font-family:var(--mono);font-size:11px;font-weight:700;white-space:nowrap;}
+.ask-rc-dot{width:8px;height:8px;border-radius:50%;background:currentColor;flex:0 0 auto;}
+.ask-rc.is-live .ask-rc-dot{animation:dotpulse 1.3s ease-in-out infinite;}
+.ask-rc-pill.st-peach{background:var(--peach-bg);color:var(--h-peach-ink);}
+.ask-rc-pill.st-blue{background:var(--blue-bg);color:var(--h-blue-ink);}
+.ask-rc-pill.st-violet{background:var(--slate-bg);color:var(--slate-ink);}
+.ask-rc-pill.st-green{background:var(--green-bg);color:var(--h-green-ink);}
+.ask-rc-pill.st-red{background:var(--red-bg);color:var(--red-ink);}
+.ask-rc-pill.st-amber{background:var(--amber-bg);color:var(--amber-ink);}
+.ask-rc-spacer{flex:1 1 auto;}
+.ask-rc-open{display:inline-flex;align-items:center;height:28px;padding:0 12px;border-radius:var(--r-sm);background:var(--ink);color:var(--panel);font-weight:600;font-size:12px;text-decoration:none;white-space:nowrap;transition:.15s;}
+.ask-rc-open:hover{box-shadow:inset 0 0 0 999px var(--solid-hover);}
+.ask-rc-open:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.ask-rc-title{margin-top:12px;font-weight:600;font-size:15px;line-height:1.35;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+/* #959 card-head anatomy (design-system › Card head): a head that carries its title is one row centred on the title's
+   line box. The title takes no margin there, so the dot, the chip and Open centre on its line: no nudge. */
+.ask-rc-head > .ask-rc-title{margin-top:0;min-width:0;}
+.ask-rc-sub{margin-top:4px;font-family:var(--mono);font-size:11px;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.ask-rc-stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:14px;}
+.ask-rc-stat{display:flex;flex-direction:column;gap:3px;padding:9px 11px;border:0;border-radius:var(--r-ctrl);background:var(--field);}   /* tinted, not boxed, inside the card (B2) */
+.ask-rc-stat-k{font-family:var(--mono);font-size:12px;color:var(--ink-2);font-weight:600;}
+.ask-rc-stat-v{font-family:var(--mono);font-size:13px;font-weight:700;color:var(--ink);font-variant-numeric:tabular-nums;}
+.ask-rc-active{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;}
+.ask-rc-active[hidden]{display:none;}
+.ask-rc-agent{--c:var(--ink-3);display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 9px 0 7px;border-radius:var(--r-xs);border:1px solid color-mix(in srgb, var(--c) 45%, var(--line));background:color-mix(in srgb, var(--c) 12%, var(--panel));color:var(--ink);font-size:11px;font-weight:600;white-space:nowrap;}
+.ask-rc-agent-dot{width:7px;height:7px;border-radius:50%;background:var(--c);flex:0 0 auto;animation:dotpulse 1.3s ease-in-out infinite;}
+.ask-rc-banner{margin-top:12px;padding:9px 12px;border-radius:var(--r-sm);font-size:12px;font-weight:600;color:var(--amber-ink);background:var(--amber-wash);border:1px solid var(--amber-line);}
+.ask-rc-banner[hidden]{display:none;}
+.ask-rc-reason{margin-top:10px;font-size:12px;color:var(--red-ink);}
+.ask-rc-reason[hidden]{display:none;}
+
+/* Ask agent mode (issue 574): one command Ask ran (ask-command-card.mjs). Tokens only, so light and dark both work. */
+.ask-card.ask-cmd{gap:8px;padding:12px 15px;border-width:1px;animation:wr-rise .2s cubic-bezier(.2,.7,.3,1) both;}
+.ask-cmd>*{min-width:0;}
+.ask-cmd-head{display:flex;align-items:center;gap:8px;min-height:28px;}
+.ask-cmd-kicker{display:inline-flex;align-items:center;height:20px;padding:0 8px;border-radius:var(--r-xs);font-family:var(--mono);font-size:12px;background:var(--slate-bg);color:var(--slate-ink);white-space:nowrap;font-weight:600;}
+.ask-cmd-pill{padding:0 6px;}
+.ask-cmd-pill.st-peach{background:var(--peach-bg);color:var(--h-peach-ink);}
+.ask-cmd-pill.st-green{background:var(--green-bg);color:var(--green-ink-strong);}
+.ask-cmd-pill.st-red{background:var(--red-bg);color:var(--red-ink-strong);}
+.ask-cmd-pill.st-amber{background:var(--amber-bg);color:var(--amber-ink);}
+.ask-cmd.is-live .ask-cmd-pill{animation:dotpulse 1.3s ease-in-out infinite;}
+.ask-cmd-folder{min-width:0;padding:0;border:0;background:none;color:var(--ink-2);font:inherit;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;}
+.ask-cmd-folder:hover:not(:disabled){color:var(--ink);text-decoration:underline;}
+.ask-cmd-folder:disabled{color:var(--ink-3);cursor:default;}   /* its shell closed: the reason is the tooltip */
+.ask-cmd-folder:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.ask-cmd-stop{white-space:nowrap;}
+.ask-cmd-stop[hidden]{display:none;}
+/* A long command is clamped to 3 lines; .ask-cmd-more opens it. */
+.ask-cmd-line{font-family:var(--mono);font-size:12px;color:var(--ink);white-space:pre-wrap;overflow-wrap:anywhere;
+  display:-webkit-box;-webkit-line-clamp:3;line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;}
+.ask-cmd-line.is-open{display:block;-webkit-line-clamp:unset;line-clamp:none;overflow:visible;}
+.ask-cmd-more{align-self:flex-start;}
+.ask-cmd-more[hidden]{display:none;}
+.ask-cmd-warning{padding:7px 10px;border:1px solid var(--amber-line);border-radius:var(--r-sm);background:var(--field);color:var(--ink);font-size:12px;}
+.ask-cmd-warning[hidden]{display:none;}
+/* The output is folded behind this toggle (no output, no toggle); the chevron turns down when it is open. */
+.ask-cmd-toggle{display:inline-flex;align-items:center;gap:6px;align-self:flex-start;padding:0;border:0;border-radius:var(--r-sm);background:none;
+  color:var(--ink-2);font:inherit;font-size:12px;cursor:pointer;}
+.ask-cmd-toggle:hover{color:var(--ink);}
+.ask-cmd-toggle:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.ask-cmd-chev{display:inline-block;font-size:13px;line-height:1;transition:transform .15s;}
+.ask-cmd-toggle[aria-expanded="true"] .ask-cmd-chev{transform:rotate(90deg);}
+.ask-cmd-out{margin:0;max-height:16em;overflow:auto;padding:8px 10px;border:1px solid var(--line);border-radius:var(--r-ctrl);background:var(--field);color:var(--ink);font-family:var(--mono);font-size:11px;line-height:1.45;white-space:pre-wrap;overflow-wrap:anywhere;}
+.ask-cmd-out[hidden]{display:none;}
+/* Command summaries (#911): one row per command with the runs status dot; a group holds its rows in one card. */
+.ask-card.ask-cmd.is-sum{gap:0;padding:0;}
+.ask-cmd-row{display:flex;align-items:center;gap:8px;min-height:28px;padding:0 14px;cursor:pointer;}
+.ask-cmd-row:hover{background:var(--hover);}
+.ask-cmd-row-btn{display:flex;align-items:center;gap:10px;flex:1 1 auto;min-width:0;padding:0;border:0;background:none;color:var(--ink);font:inherit;text-align:left;cursor:pointer;}
+.ask-cmd-row-btn:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+/* An 8px dot sits in the 12px slot of a symbol dot (failed "!"), so every row's text starts at one line. */
+.ask-cmd-row-btn > .status-dot:not(.has-sym){margin:0 2px;}
+.ask-cmd-sum{flex:1 1 auto;min-width:0;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.ask-cmd-sum.is-raw{font-family:var(--mono);font-size:12px;font-weight:400;color:var(--ink-2);}
+.ask-cmd-meta{flex:none;color:var(--ink-2);font-size:12px;font-variant-numeric:tabular-nums;white-space:nowrap;}
+.ask-cmd.is-sum .ask-cmd-chev{flex:none;color:var(--ink-2);transition:transform .15s;}
+.ask-cmd.is-sum.is-open > .ask-cmd-row .ask-cmd-chev{transform:rotate(90deg);}
+.ask-cmd.is-failed .ask-cmd-meta{color:var(--red-ink);}
+/* The opened row (#911): the whole command, its folder and Show in terminal, the output panel. One fold. */
+.ask-cmd-detail{display:flex;flex-direction:column;gap:10px;padding:2px 14px 14px 32px;}
+.ask-cmd-detail[hidden]{display:none;}
+.ask-cmd-cmd{position:relative;padding:9px 40px 9px 12px;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--field);}
+.ask-cmd-code{display:block;font-family:var(--mono);font-size:12px;line-height:1.6;color:var(--ink);white-space:pre-wrap;overflow-wrap:anywhere;}
+.ask-cmd-dollar{color:var(--ink-3);user-select:none;}
+.ask-cmd-tk-cmd{color:var(--hd-syntax-title);}
+.ask-cmd-tk-op{color:var(--hd-syntax-keyword);}
+.ask-cmd-tk-flag{color:var(--ink-2);}
+.ask-cmd-tk-str{color:var(--hd-syntax-string);}
+.ask-cmd-cmd > .ask-cmd-copy{position:absolute;top:5px;right:5px;}
+/* It floats over the command: while the caption widens it, the box's own fill keeps the words under it from showing through. */
+.ask-cmd-cmd > .ask-cmd-copy:is(.copied,.copy-miss){background-color:var(--field);}
+.ask-cmd-ctx{display:flex;align-items:center;gap:8px;min-width:0;}
+.ask-cmd-dir{min-width:0;padding:1px 6px;border:1px solid var(--line);border-radius:var(--r-xs);background:var(--field);color:var(--ink-2);
+  font-family:var(--mono);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.ask-cmd-dir[hidden]{display:none;}
+.ask-cmd-show{flex:none;gap:6px;color:var(--ink-2);}
+.ask-cmd-outbox{border:1px solid var(--line);border-radius:var(--r-sm);background:var(--field);overflow:hidden;}
+.ask-cmd-outbox[hidden]{display:none;}
+.ask-cmd-outhead{display:flex;align-items:center;gap:8px;min-height:36px;padding:0 4px 0 12px;border-bottom:1px solid var(--line);color:var(--ink-2);font-size:12px;}
+.ask-cmd-outhead .ask-cmd-copy{gap:6px;}
+/* min(400px, half the chat pane): no block-size container here (the transcript is inline-size), so 50vh (D7). */
+.ask-cmd-outbox .ask-cmd-out{max-height:min(400px,50vh);padding:10px 12px;border:0;border-radius:0;font-size:12px;line-height:1.6;}
+.ask-cmd.is-sum > .ask-cmd-warning{margin:0 14px 12px;}
+/* A group (#911): one quiet disclosure head over ONE card; the panel moves the rows in; --line between them. */
+.ask-cmd-group{display:flex;flex-direction:column;gap:6px;min-width:0;margin-top:2px;}
+.ask-cmd-gtop{display:flex;align-items:center;gap:8px;min-width:0;}
+.ask-cmd-ghead{display:inline-flex;align-items:center;gap:6px;align-self:flex-start;max-width:100%;min-height:28px;padding:0 8px;margin-left:-8px;
+  border:0;border-radius:var(--r-sm);background:none;color:var(--ink-2);font:inherit;font-size:13px;cursor:pointer;}
+.ask-cmd-ghead:hover{background:var(--hover);}
+.ask-cmd-ghead:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.ask-cmd-gwords{min-width:0;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.ask-cmd-gfail{color:var(--red-ink);}
+.ask-cmd-ghead .ask-cmd-chev{flex:none;transition:transform .15s;}
+.ask-cmd-ghead[aria-expanded="true"] .ask-cmd-chev{transform:rotate(90deg);}
+.ask-cmd-gbody{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:var(--r-card);background:var(--panel);overflow:hidden;}
+.ask-cmd-gbody[hidden]{display:none;}
+.ask-cmd-gbody > .ask-card.ask-cmd.is-sum{margin:0;border:0;border-radius:0;background:none;animation:none;}
+.ask-cmd-gbody > .ask-card.ask-cmd.is-sum + .ask-card.ask-cmd.is-sum{border-top:1px solid var(--line);}
+/* A lone command (#911) is a line like the group head (no card, no dot): its summary · time ›; opening it shows the detail. */
+.ask-card.ask-cmd.is-sum:not(.ask-cmd-gbody > *){border:0;border-radius:0;background:none;}
+.ask-cmd.is-sum:not(.ask-cmd-gbody > *) > .ask-cmd-row{display:inline-flex;align-self:flex-start;gap:6px;max-width:100%;padding:0 8px 0 0;
+  border-radius:var(--r-sm);color:var(--ink-2);font-size:13px;}
+.ask-cmd.is-sum:not(.ask-cmd-gbody > *) .ask-cmd-row-btn{flex:0 1 auto;gap:0;color:var(--ink-2);}
+.ask-cmd.is-sum:not(.ask-cmd-gbody > *) .ask-cmd-row-btn > .status-dot{display:none;}
+.ask-cmd.is-sum:not(.ask-cmd-gbody > *) .ask-cmd-sum{font-weight:400;}
+.ask-cmd.is-sum:not(.ask-cmd-gbody > *) .ask-cmd-meta{font-size:13px;}
+.ask-cmd.is-sum:not(.ask-cmd-gbody > *) .ask-cmd-meta:not(:empty)::before{content:"\00a0·\00a0";color:var(--ink-2);}
+.ask-cmd.is-sum:not(.ask-cmd-gbody > *) .ask-cmd-stop{order:1;margin-left:2px;}   /* after the chevron, as beside a group head */
+.ask-cmd.is-sum:not(.ask-cmd-gbody > *) > .ask-cmd-detail{padding:6px 0 4px;}
+.ask-cmd.is-sum:not(.ask-cmd-gbody > *) > .ask-cmd-warning{margin:6px 0 0;}
+.ask-rc-graph{position:relative;margin-top:14px;min-height:120px;overflow:hidden;border:1px solid var(--line);border-radius:var(--r-sm);cursor:pointer;
+  background:var(--canvas-2) radial-gradient(circle,var(--line-2) 1.1px,transparent 1.1px);background-size:22px 22px;transition:height .24s cubic-bezier(.2,.7,.3,1);}
+.ask-rc-graph[hidden]{display:none;}
+.ask-rc-graph .gv-world .node.is-active{box-shadow:0 0 0 1.5px color-mix(in srgb, var(--c) 55%, var(--line-2));animation:nodeGlow 2.2s ease-in-out infinite;}
+.ask-rc-graph .gv-world .node.is-paused{box-shadow:0 0 0 1.5px var(--amber-ring);animation:nodeGlowAmber 2.2s ease-in-out infinite;}
+.ask-rc-graph .gv-world .node.is-stopped,.ask-rc-graph .gv-world .node.is-error{box-shadow:0 0 0 1.5px var(--red-ring),0 0 0 4px var(--red-tint);}
+.ask-rc-graph .gv-world .node.is-skipped{opacity:.35;box-shadow:none;outline:1.5px dashed var(--line-2);outline-offset:-1.5px;}
+.ask-rc-graph .gv-world .node.is-done::after,.ask-rc-graph .gv-world .node.is-paused::after,.ask-rc-graph .gv-world .node.is-stopped::after,.ask-rc-graph .gv-world .node.is-error::after{content:"";position:absolute;top:calc(-8px * var(--gv-scale));right:calc(-8px * var(--gv-scale));width:calc(21px * var(--gv-scale));height:calc(21px * var(--gv-scale));border-radius:var(--r-sm);z-index:3;color:var(--on-status);font:800 calc(12px * var(--gv-scale))/calc(21px * var(--gv-scale)) var(--sans);text-align:center;}
+/* icons: check, pause, x */
+.ask-rc-graph .gv-world .node.is-done::after{mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12.5l4.5 4.5L19 7.5'/%3E%3C/svg%3E") center/12px no-repeat;background:var(--green);}
+.ask-rc-graph .gv-world .node.is-paused::after{mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M9 5v14M15 5v14'/%3E%3C/svg%3E") center/12px no-repeat;background:var(--amber);}
+.ask-rc-graph .gv-world .node.is-stopped::after,.ask-rc-graph .gv-world .node.is-error::after{mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M7 7l10 10M17 7 7 17'/%3E%3C/svg%3E") center/12px no-repeat;background:var(--red);}
+.ask-rc-graph .gv-world .node:has(> .ngate)::after{content:none;}
+.ask-rc-graph .gv-world .ngate{animation:dotpulse 1.3s ease-in-out infinite;}
+.ask-rc-graph .gv-wires path.wire-live{stroke-dasharray:6 6;stroke-width:2.4;animation:wireDash .6s linear infinite;}
+
+/* ---------- Ask Worca dock clearance ---------- */
+/* The dock is a fixed overlay -- .ask-dock above: 26px dock padding-bottom plus the
+   ~47px pill occludes a ~73px strip at the bottom of every scrollport, while the page
+   gutters reserve only 40px. One late override lifts the BOTTOM padding of the scroll
+   gutters to --ask-dock-clearance: 96px = 73px strip + breathing room. Source order is
+   load-bearing -- this must follow the .main, .runs-list, .rd-body, .hd-body and
+   .proj-screen/.pd-body base rules and precede the reduced-motion block below. The
+   -list screen classes are targeted, NOT the -detail scrollports, which keep padding:0
+   for their sticky tab bars and take clearance via .rd-body/.hd-body/.pd-body instead;
+   body.view-runs/.view-projects .main keep padding:0 by specificity. */
+.main,.runs-list,.proj-screen-list,.rd-body,.hd-body,.pd-body{padding-bottom:var(--ask-dock-clearance);}
+.ws-screen-list{padding-bottom:var(--ask-dock-clearance);}   /* the Workspaces track's list gutter, the same clearance */
+

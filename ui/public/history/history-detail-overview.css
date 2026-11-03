@@ -1,0 +1,54 @@
+/* ---------- History detail: Overview tab ---------- */
+.hd-ov{display:flex;flex-direction:column;gap:18px;}
+.hd-ov-verdict{display:flex;align-items:center;gap:12px;padding:16px 20px;background:var(--panel);
+  border:1px solid var(--line);border-radius:var(--r-card);font:500 var(--fs-body) var(--sans);}
+.hd-ov-verdict.clean{color:var(--green-ink);}
+.hd-ov-verdict.warn{color:var(--amber-ink);}
+.hd-ov-verdict.none{color:var(--ink-2);}   /* the class the results-less arm emits */
+.hd-ov-chip{padding:5px 12px;border-radius:var(--r-xs);font:600 var(--fs-caption) var(--sans);}
+.hd-ov-chip.clean,.hd-ov-chip.st-done{background:var(--green-bg);color:var(--green-ink);}
+.hd-ov-chip.warn,.hd-ov-chip.st-paused{background:var(--amber-bg);color:var(--amber-ink);}
+.hd-ov-chip.st-stopped,.hd-ov-chip.st-error{background:var(--red-bg);color:var(--red-ink);}
+.hd-ov-grid,.pd-ov-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:18px;}
+/* The worktree: one full-width line (label · state · shortened copyable path), spanning
+   the stat grid on the Running Overview and sitting under it on History's. */
+.hd-ov-wt{grid-column:1/-1;display:flex;align-items:center;gap:12px;min-width:0;padding:12px 20px;
+  background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);}
+.hd-ov-wt .hd-ov-label{margin:0;color:var(--ink-2);}   /* new text: --ink-2, never --ink-3 (contrast) */
+.hd-ov-wt-state{font:600 13px var(--mono);color:var(--ink);white-space:nowrap;}
+.hd-ov-wt-note{font-size:13px;color:var(--ink-2);min-width:0;}
+.hd-ov-wt-path{margin-left:auto;max-width:60%;}
+@media (max-width:640px){ .hd-ov-wt{flex-wrap:wrap;} .hd-ov-wt-path{margin-left:0;max-width:100%;} }
+.hd-ov-card,.pd-ov-card{padding:var(--pad-card);background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);}
+/* Agent memory (agent-memory-design.md §6): what this run wrote into worca's memory. */
+.hd-ov-mem{padding:16px 20px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);display:flex;flex-direction:column;gap:8px;}
+.hd-ov-mem .mono{font-family:var(--mono);}
+.hd-mem-row{display:flex;flex-wrap:wrap;align-items:center;gap:6px;}
+.hd-mem-node{color:var(--ink-3);min-width:90px;}
+/* A linked chip is a real <button> (B6): reset the UA look so it reads as the span next to it. The
+   kind colour rules below are compound (.hd-mem-chip.hd-mem-*, 0,2,0) so they outrank
+   button.hd-mem-chip's color reset (0,1,1) — source order alone would not. */
+.hd-mem-chip{padding:2px 8px;border-radius:var(--r-xs);border:1px solid var(--line);font-size:12px;}
+button.hd-mem-chip{background:transparent;font:inherit;font-family:var(--mono);font-size:12px;line-height:inherit;color:inherit;cursor:pointer;}
+button.hd-mem-chip:hover{background:var(--hover);}
+button.hd-mem-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.hd-mem-chip.hd-mem-add{color:var(--green-ink);}
+.hd-mem-chip.hd-mem-mod{color:var(--blue-ink);}
+.hd-mem-chip.hd-mem-del{color:var(--ink-3);text-decoration:line-through;}
+.hd-mem-chip.hd-mem-rej{color:var(--red-ink);}
+.hd-ov-label{font:600 var(--fs-caption) var(--sans);color:var(--ink-3);}
+.pd-ov-label{font:500 var(--fs-meta)/var(--lh-body) var(--sans);color:var(--ink-2);}
+.hd-ov-value,.pd-ov-value{margin-top:10px;font-size:22px;color:var(--ink);}
+.hd-ov-sub,.pd-ov-sub{margin-top:6px;font-size:var(--fs-meta);color:var(--ink-3);overflow-wrap:anywhere;}
+/* The stat cards' sub line is sans (no .mono); --ink-3 there is 2.8:1 on the card (AA needs 4.5). */
+.hd-ov-card .hd-ov-sub{color:var(--ink-2);}
+.hd-ov-task{padding:var(--pad-card);background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);}
+.hd-ov-task-h{font:600 13px var(--sans);}
+/* overflow-wrap:anywhere like its sibling .hd-ov-sub — prompts routinely carry
+   absolute paths and URLs, and `.hist-screen-detail{overflow-x:hidden}` would silently
+   CLIP an unbroken token rather than let it scroll. */
+.hd-ov-task p{margin:10px 0 0;max-width:74ch;font:400 var(--fs-body)/var(--lh-body) var(--sans);color:var(--ink-2);
+  white-space:pre-wrap;overflow-wrap:anywhere;}
+.hd-ov-more{margin-top:8px;border:none;background:none;color:var(--blue-ink);font:500 var(--fs-meta) var(--sans);cursor:pointer;padding:0;}
+.hd-ov-chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px;}
+.hd-ov-tag{padding:6px 12px;border:1px solid var(--line);border-radius:var(--r-xs);font-size:var(--fs-caption);color:var(--ink-2);}

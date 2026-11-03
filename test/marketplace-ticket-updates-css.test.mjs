@@ -3,14 +3,14 @@
 // (after P6, before P7); tokens only; board 6's phone rules.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { sheetHarness, settle } from './helpers/marketplace-sheet-harness.mjs';
 import { createTicketUpdates } from '../ui/public/marketplace/ticket-updates-section.mjs';
 import { tuGet, tuRoutes, ALL_DONE, LEGACY } from './helpers/ticket-updates-fixtures.mjs';
 
 const trackDom = useDomRelease(afterEach);
-const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+const css = readStyleCss();   // the served /style.css: the parts in ui/public/parts.json order (the #919 split)
 const at = css.indexOf('/* ── marketplace ticket updates ── */');
 const block = css.slice(at, css.indexOf('/* ── marketplace P7 ── */'));
 // JS and test hooks with no rule of their own.

@@ -1,11 +1,11 @@
 // test/marketplace-page.test.mjs — the Marketplace page controller (marketplace P3, CONTRACT §3.5, §4, §5).
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { OFF, ROWS, pageHarness } from './helpers/marketplace-fixtures.mjs';
 import { tabFromParam, tabHash, targetFromParam, updatesChip } from '../ui/public/marketplace/page.mjs';
 import { createSheet } from '../ui/public/marketplace/layers.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const trackDom = useDomRelease(afterEach);
 const tick = () => new Promise((r) => setTimeout(r, 0));
@@ -305,7 +305,7 @@ test('setFilters before the first load only stores the patch', () => {
 });
 
 test('style.css: the tab strip keeps one height, an empty header slot and an empty message line take no room; a sha version is mono', () => {
-  const CSS = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const CSS = readStyleCss();
   for (const re of [/\.mk-tabs\{flex:1 1 auto;padding-top:4px;\}/, /\.mk-head-actions:empty\{display:none;\}/,
     /\[data-view="marketplace"\] > \.form-msg:empty\{margin:0;min-height:0;\}/, /\.mk-ver\.mk-sha\{font-family:var\(--mono\);/]) assert.match(CSS, re);
 });

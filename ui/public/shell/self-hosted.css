@@ -1,0 +1,196 @@
+/* worca-cc UI — "Refined" design system. Warm off-white, white panels. No framework, no build step. */
+
+/* The hidden ATTRIBUTE always wins over an author `display:` (test/ui-functional-css.test.mjs). */
+[hidden]:not([hidden="until-found"]) { display: none !important; }
+
+/* ---------- self-hosted webfonts ---------- */
+@font-face{font-family:'Poppins';font-style:normal;font-weight:300;font-display:swap;src:url('/fonts/poppins-latin-300-normal.woff2') format('woff2');}
+@font-face{font-family:'Poppins';font-style:normal;font-weight:400;font-display:swap;src:url('/fonts/poppins-latin-400-normal.woff2') format('woff2');}
+@font-face{font-family:'Poppins';font-style:normal;font-weight:500;font-display:swap;src:url('/fonts/poppins-latin-500-normal.woff2') format('woff2');}
+@font-face{font-family:'Poppins';font-style:normal;font-weight:600;font-display:swap;src:url('/fonts/poppins-latin-600-normal.woff2') format('woff2');}
+@font-face{font-family:'Poppins';font-style:normal;font-weight:700;font-display:swap;src:url('/fonts/poppins-latin-700-normal.woff2') format('woff2');}
+@font-face{font-family:'JetBrains Mono';font-style:normal;font-weight:400;font-display:swap;src:url('/fonts/jetbrains-mono-latin-400-normal.woff2') format('woff2');}
+
+:root{
+  /* Theme (spec 2026-09-04 §4.1): every colour token is light-dark(<light>, <dark>).
+     The light arm is the "Refined" palette exactly as it always was; the dark arm is
+     the warm-charcoal palette of spec §3. The MODE is the color-scheme property:
+     `light dark` here follows the OS; the two [data-theme] rules after this block
+     force one. The six status bases have equal arms and stay plain (D13).
+     Never restate a token's hex anywhere else — several tests count occurrences. */
+  color-scheme:light dark;
+
+  --bg:light-dark(#F1F1EF,#161614);
+  --canvas-2:light-dark(#FBFBF9,#1B1B19);
+  --panel:light-dark(#FFFFFF,#222220);
+  --side-bg:light-dark(#FAFAFA,#222220);
+  --side-ink:light-dark(#737373,#B4B4AE);
+  --side-sel-ink:light-dark(#171717,#ECECE8);
+  --side-sel-bg:light-dark(#EFEFEF,#353531);
+  --surface:light-dark(#FFFFFF,#34342F);
+  --field:light-dark(#F6F6F4,#2C2C29);
+  /* The selected Runs row: a translucent ink step, so it darkens (light) or lightens (dark) whatever it sits on and still
+     shows over the Needs-you amber tint (--field there was 1.01:1). 1.17:1 on the panel light, 1.24:1 dark; --ink-2 on it
+     stays at 5.2:1 or more, the tint included; its PR chips take the -ink-strong shades (4.5:1 or more, .runs-pr).
+     --row-open is half of it, so the two keep their step. */
+  --row-selected:color-mix(in srgb,var(--ink) 8%,transparent);
+  --row-open:color-mix(in srgb,var(--row-selected) 50%,transparent);
+  --field-focus:light-dark(#FFFFFF,#2E2E2B);
+  --ink:light-dark(#19191B,#ECECE8);
+  --ink-2:light-dark(#5C5C63,#B4B4AE);
+  --ink-3:light-dark(#9A9AA1,#9E9E98);
+  --on-ink:light-dark(#FFFFFF,#161614);
+  --on-status:light-dark(#FFFFFF,#161614);
+  --on-signal:light-dark(#19191B,#19191B);   /* the '?' / '!' glyph on the flat --amber / --red: 7.3:1 / 5.5:1 */
+  --line:light-dark(#ECECEA,#30302D);
+  --line-2:light-dark(#E3E3E0,#494944);
+  /* Hover grammar. Outlined things (buttons, pills, tabs, cards) strengthen their
+     outline to --hover-outline and keep their fill; borderless things (sidebar items,
+     rows, menu items) take the --hover fill, one grey that reads on white and on grey
+     (--hover-on-field is its alias). Solid buttons take the --solid-hover wash and lift;
+     tinted semantic buttons outline in their own colour; links change colour. No blue
+     fills, no brightness() (near-black x 1.08 is still near-black; a grey fill turns
+     white on a white card). */
+  /* One hover grey, on white and on grey alike: clearly past --field, yet light enough that
+     the secondary text on a hovered row keeps its contrast (dark: 4.5:1 for --ink-3). */
+  --hover:light-dark(#EBEBE8,#353531);
+  --hover-on-field:var(--hover);
+  --hover-outline:var(--ink-3);
+
+  --green-bg:light-dark(#E2F3DF,#1C2F1D);  --green:#5BAE5B;  --green-ink:light-dark(#2F7A38,#8FD48F);
+  --green-ink-strong:light-dark(#2C7535,#8FD48F);  /* sidebar Saved figure: 4.79:1 on --line (the spend card's hover fill); --green-ink is 4.48:1 */
+  --peach-bg:light-dark(#FCEEDA,#33261A);  --peach:#EFA63C;  --peach-ink:light-dark(#B5751A,#F2B96A);
+  --red-bg:light-dark(#FBE3E0,#34201D);    --red:#E76A5A;    --red-ink:light-dark(#C5483A,#F08C7E);
+  --red-ink-strong:light-dark(#B23F33,#F08C7E);   /* red text on a --field panel (the account menu's spend card): 5.3:1 (--red-ink is 4.45:1) */
+  --blue-bg:light-dark(#DEEFF7,#1A2A33);   --blue:#5BA6CC;   --blue-ink:light-dark(#3782A8,#86C4E3);
+  --blue-ink-strong:light-dark(#2B6A8C,#86C4E3);   /* inline link text at small sizes: 5.9:1 on white (--blue-ink is 3.8:1) */
+  --violet-bg:light-dark(#EAE6F8,#262336); --violet:#8C7FD6; --violet-ink:light-dark(#6353B8,#B3A8EE);
+  --violet-ink-strong:light-dark(#5B4BB0,#B3A8EE);   /* glyph on --violet-bg at tile size: 5.6:1 */
+  --amber-bg:light-dark(#FCE8C8,#332715);  --amber:#E6962A;  --amber-ink:light-dark(#A66510,#F0B45A);
+  --amber-ink-strong:light-dark(#8E550B,#F0B45A);
+  /* Script, agent and Marketplace kind families (script-wizard plan S10; marketplace P3): the same lightness as the six above, both themes. */
+  --teal-bg:light-dark(#DDF2EF,#1A2E2B);   --teal:#4FB3A9;   --teal-ink:light-dark(#2A8A80,#86D3CA);   --teal-ink-strong:light-dark(#1F6B63,#9FE0D8);   /* teal text on --teal-bg at chip size: 5.4:1 light, 9.6:1 dark (--teal-ink is 3.6:1) */
+  --pink-bg:light-dark(#FBE4EE,#33202A);   --pink:#E27BA8;   --pink-ink:light-dark(#B84A7C,#F0A2C3);
+  --pink-ink-strong:light-dark(#A63E6E,#F0A2C3);   /* glyph on --pink-bg at tile size: 4.9:1 */
+  --indigo-bg:light-dark(#E3E7F9,#232739); --indigo:#6A7FD8; --indigo-ink:light-dark(#4457B5,#A3B0EE);
+  --lime-bg:light-dark(#EEF4D5,#262E15);   --lime:#A3BF3A;   --lime-ink:light-dark(#6E8A14,#C7DB6E);
+  --lime-ink-strong:light-dark(#56700E,#C7DB6E);   /* glyph on --lime-bg at tile size: 5.0:1 */
+  --cocoa-bg:light-dark(#F1E7DB,#2F2620);  --cocoa:#B08A5E;  --cocoa-ink:light-dark(#7E5D33,#D2B08A);
+  --slate-bg:light-dark(#E8ECF0,#262A2E);  --slate:#8A96A3;  --slate-ink:light-dark(#58646F,#B3BEC8);
+  --slate-ink-strong:light-dark(#4A5661,#B3BEC8);   /* glyph on --slate-bg at tile size: 6.3:1 */
+  --seq:light-dark(#B7B7BC,#8E8E92);   /* text role too (.ask-thinking-meter): 4.85:1 on panel */
+  --t-md:light-dark(#5B8DEF,#7FA6F5);
+  --t-md-bg:light-dark(#E4ECFD,#1E2A44);
+  --t-json:light-dark(#9B7BEA,#B39BF2);
+  --t-json-bg:light-dark(#EEE8FC,#2A2342);
+  --t-void:light-dark(#A2A2A8,#8A8A92);
+  --w-md:light-dark(#9DBBF5,#4E6FAF);
+  --w-json:light-dark(#C3AEF3,#6E5BA8);
+  --w-void:light-dark(#C4C4C8,#55555C);
+  --card-glass:light-dark(rgba(255,255,255,.52),rgba(34,34,32,.5));
+  --card-glass-line:light-dark(rgba(24,24,27,.10),rgba(255,255,255,.09));
+  --glass:light-dark(rgba(255,255,255,.55),rgba(34,34,32,.55));
+  --glass-line:light-dark(rgba(24,24,27,.08),rgba(255,255,255,.08));
+  /* worca Chat (mockup 2026-10-10): a card's lift off the white page, and the glass composer's float. */
+
+  /* Question/ask amber wash (design §9, C3). --amber-bg is the SOLID amber; this
+     is the pale field it sits on, with its line and the radio ring. */
+  --amber-wash:light-dark(#FEF7EC,#322816);
+  --amber-wash-2:light-dark(#FEFAF3,#2B2314); --amber-line:light-dark(#F5D9A8,#6A5228); --radio-ring:light-dark(#D6D6D2,#4A4A45);
+  /* The Projects sync bar's tints (design 2026-10-01): blue when behind, peach with uncommitted
+     changes (amber, diverged, uses the two above). */
+  --blue-wash:light-dark(#F3F9FC,#1D272D); --blue-line:light-dark(#C9E2EF,#2E4858);
+  --peach-wash:light-dark(#FEF6EC,#2A2219); --peach-line:light-dark(#F1DCBD,#504029);
+  /* Ask Worca run card head wash (mockup 2026-09-06): Worca-authored, same hue as the Auto tag. */
+  --violet-wash:light-dark(#F6F4FC,#211E2E);
+  /* The top bar search's open pill (the chat-first canvas, 2026-10-09): a coral line and a soft halo. */
+  --search-line:light-dark(rgba(221,107,77,.45),rgba(240,154,124,.45));
+
+  /* Semantic tokens introduced by the theme work (spec §3.2). Each light arm is
+     the literal it replaced, so the light theme did not move. */
+  --on-ink-wash:light-dark(rgba(255,255,255,.18),rgba(22,22,20,.18));
+  /* A solid button's hover: drawn over its fill as an inset wash (box-shadow), so it
+     reads on ink, red or any colour, in both themes. */
+  --solid-hover:light-dark(rgba(255,255,255,.14),rgba(22,22,20,.14));
+  --on-ink-wash-2:light-dark(rgba(255,255,255,.22),rgba(22,22,20,.22));
+  --on-ink-code:light-dark(rgba(255,255,255,.14),rgba(22,22,20,.14));
+  --panel-wash:light-dark(rgba(255,255,255,.7),rgba(236,236,232,.12));
+  --knob:light-dark(#FFFFFF,#ECECE8);
+  --scrim:light-dark(rgba(25,25,27,.42),rgba(0,0,0,.62));
+  --scrim-soft:light-dark(rgba(25,25,27,.34),rgba(0,0,0,.55));
+  --selection:light-dark(rgba(25,25,27,.16),rgba(236,236,232,.22));
+  --ava-a:light-dark(#CFCFCA,#4A4A46); --ava-b:light-dark(#A8A8A2,#6A6A64);
+  --h-blue-ink:light-dark(#2E6E8E,#9FD3EE); --h-green-ink:light-dark(#3B7C3B,#9BD69B); --h-peach-ink:light-dark(#8A5A16,#F2C27A);
+  --drop-ring:light-dark(#D8EFD6,#2A4A2C);
+  --trunc-ink:light-dark(#994466,#E39BBE);
+  --chip-ink:light-dark(#555555,#B4B4AE);
+
+  --r-xs:4px;               /* chips, badges, tags, inner segments, bar ends */
+  --r-sm:6px;               /* controls: buttons, inputs, selects, segment containers, menu items, tooltips */
+  --r-md:8px;               /* cards, panels, dialogs, menus, popovers */
+  --r-lg:12px;              /* the chat composer shell only */
+  --r-pill:999px;           /* switch tracks only */
+  --r-card:var(--r-md);
+  --r-ctrl:var(--r-sm);
+  /* Type scale (docs/design-system.md › Type): one scale, no half sizes. 11 is the floor. */
+  --fs-caption:11px;--fs-meta:12px;--fs-body:13px;--fs-section:15px;--fs-subpage:18px;--fs-page:22px;--fs-stat:22px;--fs-hero:32px;
+  --lh-body:1.5;--lh-title:1.25;
+  --shadow-pop:0 6px 28px light-dark(rgba(25,25,27,.10),rgba(0,0,0,.55)),0 1px 2px light-dark(rgba(25,25,27,.06),rgba(0,0,0,.4));
+  --shadow-sheet:0 18px 60px light-dark(rgba(25,25,27,.14),rgba(0,0,0,.65)),0 2px 6px light-dark(rgba(25,25,27,.06),rgba(0,0,0,.4));
+  --shadow-menu:0 12px 34px light-dark(rgba(25,25,27,.12),rgba(0,0,0,.6));
+  --shadow-dock:0 -8px 24px light-dark(rgba(25,25,27,.08),rgba(0,0,0,.45));   /* a panel docked at the bottom (step log drawer) */
+  --knob-shadow:0 1px 3px light-dark(rgba(0,0,0,.18),rgba(0,0,0,.6));
+  /* Spacing (docs/design-system.md › Spacing): one card padding, one compact padding for tiles and list cards. */
+  --pad-card:24px;--pad-tile:16px;
+  /* Named color-mix recipes (› Colour): a recipe used twice is a token. Per-element ones (var(--c), currentColor) stay inline. */
+  --btn-hover:color-mix(in srgb,var(--ink) 7%,var(--panel));
+  --quiet-hover:color-mix(in srgb,var(--ink) 7%,transparent);
+  --danger-hover:color-mix(in srgb,var(--ink) 7%,var(--red-bg));
+  --danger-solid-hover:color-mix(in srgb,var(--ink) 12%,var(--red-ink-strong));
+  --amber-ring:color-mix(in srgb,var(--amber) 55%,var(--line-2));
+  --red-ring:color-mix(in srgb,var(--red) 50%,var(--line-2));
+  --red-tint:color-mix(in srgb,var(--red) 13%,transparent);
+  --blue-glow:color-mix(in srgb,var(--blue) 30%,transparent);
+  --blue-glow-strong:color-mix(in srgb,var(--blue) 70%,transparent);
+  --blue-ring:color-mix(in srgb,var(--blue) 55%,transparent);
+  --blue-sheen:color-mix(in srgb,var(--blue) 24%,transparent);
+  --blue-clear:color-mix(in srgb,var(--blue) 0%,transparent);
+  --panel-veil:color-mix(in srgb,var(--panel) 88%,transparent);
+  --red-ink-soft:color-mix(in srgb,var(--red-ink) 85%,var(--ink));
+  /* Diff counts and syntax (moved from .rd-stats,.hd-diff and .hd-diff-pane,.ask-md,.code-editor,.apv). */
+  --hd-count-add:light-dark(#176B4D,#6CCB93);--hd-count-del:light-dark(#B31D28,#F0868E);
+  --hd-syntax-comment:light-dark(#5B6167,#8B949E);--hd-syntax-keyword:light-dark(#B31D28,#FF7B72);
+  --hd-syntax-type:light-dark(#9A3E00,#FFA657);--hd-syntax-string:light-dark(#176B4D,#7EE787);
+  --hd-syntax-literal:light-dark(#713BB8,#D2A8FF);--hd-syntax-title:light-dark(#075C82,#79C0FF);
+  /* The one switch (› Switch): ink when on, a muted track with a visible knob when locked. */
+  --switch-off:light-dark(#8A8A85,#6B6B66);--switch-on:var(--ink);--switch-knob-on:var(--on-ink);
+  --switch-off-locked:var(--field);--switch-on-locked:var(--ink-3);--switch-knob-locked:var(--ink-3);
+  --ask-dock-clearance:96px;
+
+  --sans:'Poppins',system-ui,-apple-system,BlinkMacSystemFont,sans-serif;
+  --mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+:root[data-theme="light"]{color-scheme:light;}
+:root[data-theme="dark"]{color-scheme:dark;}
+/* Paper is white: a forced dark scheme would print light ink on it. (@media print
+   is a medium query, not a scheme query — D5 holds.) */
+@media print{:root{color-scheme:light;}}
+
+/* ---------- base reset ---------- */
+*{box-sizing:border-box;}
+html,body{margin:0;padding:0;height:100%;overflow:hidden;}
+body{
+  background:var(--bg);
+  color:var(--ink);
+  font-family:var(--sans);
+  font-size:var(--fs-body);
+  line-height:var(--lh-body);
+  -webkit-font-smoothing:antialiased;
+}
+/* A bare button takes its parent's step, not the browser's 13.33px (docs/design-system.md › Type). */
+button{font:inherit;}
+.hidden{display:none !important;}
+
+/* ---------- App shell ---------- */
+.app{display:flex;height:100vh;}
+

@@ -1,0 +1,156 @@
+name: Parity (CI image)
+
+# #919 parity harness (docs/parity-harness.md), in the CI image: the image built from this branch (A) against the same
+# Dockerfile's image built from the split tree of the same commit (B), and this tree against its own npm pack.
+# Like with like: A and B run in the same container environment, so any difference is the split's. The host tree is
+# never compared with a container (host and container differ in onboarding state, a pty, fonts and paths, none of which
+# is the split's), so that pair could never be equal.
+# A required check: it runs on every pull request into dev (incl. one retargeted to dev) and every push to dev, with NO
+# paths filter, so a docs-only PR reports it too (a required check that never runs stays pending forever; see ci.yml's
+# header). The job's display name is that required check's name, so it keeps its historical wording.
+# Routes, the signed-out pass, the 6 flows and visuals (0 px: both sides in one environment) are gated for the docker
+# pair; the package pair gates them too. Timings are not gated on shared runners (--no-timing-gate).
+on:
+  push:
+    branches: [dev]
+  pull_request:
+    branches: [dev]
+    # edited: a stacked PR retargeted to dev changes its base without a push
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: parity-docker-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  parity-docker:
+    name: parity (tree against the CI image)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0   # readiness split clones HEAD with git clone --shared
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Same step as ci.yml's cdp job "Locate Chrome": keep the two in sync.
+      - name: Locate Chrome
+        run: |
+          CHROME="$(command -v google-chrome || command -v google-chrome-stable || true)"
+          if [ -z "$CHROME" ]; then
+            echo "::error::no Google Chrome on the runner — set CHROME_BIN"
+            exit 1
+          fi
+          echo "chrome: $CHROME ($("$CHROME" --version 2>/dev/null || echo 'version unavailable'))"
+
+      # The Pack step below is ci.yml's docker job Pack step byte for byte (test/parity.test.mjs pins it), so this job
+      # builds the same CI image and reads the same gha cache entry.
+      - name: Pack @worca/app
+        id: pack
+        run: |
+          mkdir -p docker/.pack
+          npm pack --silent --pack-destination docker/.pack
+          echo "tarball=$(ls docker/.pack/worca-app-*.tgz)" >> "$GITHUB_OUTPUT"
+          echo "claude_code=$(cat docker/CLAUDE_CODE_VERSION)" >> "$GITHUB_OUTPUT"
+          # Debian's own publish stamps: rebuilds the cached apt layer exactly when
+          # bookworm or bookworm-security changes, so new security fixes land (the
+          # layer text never changes, so the gha cache kept it forever). A UTC-date
+          # key was too coarse: a fix published at 17:39 UTC failed every PR's scan
+          # until midnight because an earlier run had cached that day's layer.
+          # Falls back to the UTC date when the mirrors are unreachable.
+          apt_refresh=
+          for d in debian-security/dists/bookworm-security debian/dists/bookworm; do
+            rel=$(curl -fsSL --max-time 20 "https://deb.debian.org/$d/InRelease") \
+              && stamp=$(grep -m1 '^Date:' <<<"$rel") \
+              && apt_refresh+="$stamp;" \
+              || { apt_refresh=$(date -u +%F); break; }
+          done
+          echo "apt_refresh=$apt_refresh" | tee -a "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      # Same step as firefox-e2e.yml's "Build the split tree". Only while the branch is not split yet (it carries the
+      # splitter and has no ui/routes/): after the freeze the branch IS the split tree, there is no B to build, and the
+      # image builds and the docker pair below are skipped.
+      - name: Build the split tree
+        id: split
+        run: |
+          if [ -f tools/split-by-feature.mjs ] && [ ! -d ui/routes ]; then
+            node --disable-warning=ExperimentalWarning tools/readiness.mjs split --rev HEAD --splitter-rev HEAD --out "$RUNNER_TEMP/split"
+            echo "tree=$RUNNER_TEMP/split/tree" >> "$GITHUB_OUTPUT"
+          else
+            echo "already split (or no splitter): no split image to compare, the docker pair is skipped"
+          fi
+
+      # Both tarballs are worca-app-<version>.tgz: pack into a temp dir, then move it into the build context under a name
+      # .dockerignore lets in (docker/.pack/worca-app-*.tgz).
+      - name: Pack the split tree
+        if: steps.split.outputs.tree != ''
+        working-directory: ${{ steps.split.outputs.tree }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/split-pack"
+          npm pack --silent --pack-destination "$RUNNER_TEMP/split-pack"
+          mv "$RUNNER_TEMP"/split-pack/worca-app-*.tgz "$GITHUB_WORKSPACE/docker/.pack/worca-app-split.tgz"
+
+      - name: Build the CI image A, the branch (slim, amd64)
+        if: steps.split.outputs.tree != ''
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: docker/Dockerfile
+          load: true
+          tags: ghcr.io/sinishadjukic/worca:ci
+          build-args: |
+            WORCA_TARBALL=${{ steps.pack.outputs.tarball }}
+            CLAUDE_CODE_VERSION=${{ steps.pack.outputs.claude_code }}
+            VARIANT=slim
+            APT_REFRESH=${{ steps.pack.outputs.apt_refresh }}
+          cache-from: type=gha,scope=ci-slim   # read only: ci.yml's docker job writes this scope
+
+      # The same Dockerfile, context and build args as A; only the tarball is the split tree's.
+      - name: Build the CI image B, the split tree (slim, amd64)
+        if: steps.split.outputs.tree != ''
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: docker/Dockerfile
+          load: true
+          tags: ghcr.io/sinishadjukic/worca:ci-split
+          build-args: |
+            WORCA_TARBALL=docker/.pack/worca-app-split.tgz
+            CLAUDE_CODE_VERSION=${{ steps.pack.outputs.claude_code }}
+            VARIANT=slim
+            APT_REFRESH=${{ steps.pack.outputs.apt_refresh }}
+          cache-from: type=gha,scope=ci-slim   # read only: ci.yml's docker job writes this scope
+
+      - name: Parity (image A against image B)
+        if: steps.split.outputs.tree != ''
+        env:
+          CHROME_NO_SANDBOX: "1"
+        run: npm run parity -- run --a docker:ghcr.io/sinishadjukic/worca:ci --b docker:ghcr.io/sinishadjukic/worca:ci-split --out "$RUNNER_TEMP/parity-docker" --no-timing-gate
+
+      - name: Parity (tree against the package)
+        if: ${{ !cancelled() }}
+        env:
+          CHROME_NO_SANDBOX: "1"
+        run: npm run parity -- run --a tree:. --b package:. --out "$RUNNER_TEMP/parity-pkg" --no-timing-gate
+
+      - if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: parity-docker-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/parity-docker
+            ${{ runner.temp }}/parity-pkg
+          if-no-files-found: ignore

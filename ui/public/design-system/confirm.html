@@ -1,0 +1,26 @@
+    <!-- ===== Reusable confirmation modal ===== -->
+    <div id="confirm-modal" class="viewer-modal confirm-modal hidden" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+      <div class="card dlg">
+        <div class="dlg-head">
+          <div class="card-head">
+            <h2 id="confirm-title">Confirm</h2>
+          </div>
+        </div>
+        <div class="dlg-body">
+          <p id="confirm-message" class="confirm-message"></p>
+          <!-- promptModal fills this with .confirm-field rows; empty for a plain confirm -->
+          <div id="confirm-fields"></div>
+          <label id="confirm-checkbox-wrap" class="confirm-checkbox hidden">
+            <input type="checkbox" id="confirm-checkbox" />
+            <span id="confirm-checkbox-label"></span>
+          </label>
+        </div>
+        <div class="dlg-foot">
+          <div class="confirm-actions">
+            <button type="button" id="confirm-cancel" class="btn">Cancel</button>
+            <button type="button" id="confirm-ok" class="btn btn-primary">Confirm</button>
+          </div>
+        </div>
+      </div>
+    </div>
+

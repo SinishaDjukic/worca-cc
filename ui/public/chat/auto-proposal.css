@@ -1,0 +1,52 @@
+/* ---------- Auto proposal body (ui/public/auto-proposal.mjs) — one body, two hosts (mockup §D/§F) ----------
+   Rhythm top→bottom: name → 8 → reasoning → 16 → chips → 8 → fingerprint → 16 → graph → 12 → loops → 16 → match → 8 → meta.
+   Per-child margins so every host keeps the same gaps. */
+.ask-wfcard-body{display:flex;flex-direction:column;min-width:0;}
+.ask-wfcard-body>*{margin:0;min-width:0;}
+.ask-wfcard-namerow{display:flex;align-items:baseline;gap:10px;}
+.ask-wfcard-namewrap+*{margin-top:8px;}
+/* The name leads the CARD order (no predecessor, no margin) but sits mid-list in the
+   question panel (reason → signals → fingerprint → name → graph), where it would butt
+   against the 11px mono fingerprint line. The `*+` guard keeps the card's first child flush. */
+.ask-wfcard-body>*+.ask-wfcard-namewrap{margin-top:12px;}
+.ask-wfcard-name{flex:0 1 auto;min-width:0;font-weight:600;font-size:15px;line-height:1.35;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.ask-wfcard-edit{flex:0 0 auto;border:0;background:transparent;padding:0;color:var(--ink-3);font-family:var(--sans);font-size:11px;line-height:1.35;white-space:nowrap;cursor:pointer;border-radius:var(--r-sm);}
+.ask-wfcard-edit svg{width:11px;height:11px;margin-right:4px;vertical-align:-1px;stroke:currentColor;fill:none;stroke-width:2;}
+.ask-wfcard-edit:hover{color:var(--ink);}
+.ask-wfcard-edit:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.ask-wfcard-nameedit[hidden],.ask-wfcard-namerow[hidden]{display:none;}
+.ask-wfcard-field{display:block;width:100%;height:36px;padding:0 12px;border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--field);color:var(--ink);font-family:var(--sans);font-size:13px;font-weight:500;outline:none;}
+.ask-wfcard-field:focus{border-color:var(--ink);background:var(--field-focus);}
+.ask-wfcard-fieldhint{margin-top:8px;font-size:11px;line-height:1.35;color:var(--ink-3);}
+.ask-wfcard-reason{font-size:13px;line-height:1.55;color:var(--ink-2);max-width:62ch;}
+.ask-wfcard-signals{display:flex;flex-wrap:wrap;gap:6px;margin-top:16px;}
+.ask-wfcard-sig{display:inline-flex;align-items:center;height:22px;padding:0 10px;border-radius:var(--r-xs);font-family:var(--mono);font-size:11px;line-height:1;background:var(--field);color:var(--ink-2);white-space:nowrap;}
+.ask-wfcard-sig.kind{background:transparent;border:1px solid var(--ink);color:var(--ink);font-weight:700;}
+.ask-wfcard-sig.size{background:var(--slate-bg);color:var(--slate-ink);}
+.ask-wfcard-fp{margin-top:8px;font-family:var(--mono);font-size:11px;line-height:1.5;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.ask-wfcard-fp .k{margin-right:8px;}
+.ask-wfcard-graph{position:relative;margin-top:16px;min-height:120px;overflow:hidden;border:1px solid var(--line);border-radius:var(--r-sm);
+  background:var(--canvas-2) radial-gradient(circle,var(--line-2) 1.1px,transparent 1.1px);background-size:22px 22px;transition:height .24s cubic-bezier(.2,.7,.3,1);}
+.ask-wfcard-loops{display:flex;flex-direction:column;gap:6px;margin-top:12px;padding:0;list-style:none;}
+.ask-wfcard-loop{position:relative;padding-left:22px;font-family:var(--mono);font-size:11px;line-height:1.5;color:var(--ink-2);}
+/* icon: refresh */
+.ask-wfcard-loop::before{content:"";position:absolute;left:0;top:1px;width:14px;height:14px;color:var(--amber);background:currentColor;mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7'/%3E%3C/svg%3E") center/12px no-repeat;}
+.ask-wfcard-loop b{font-weight:700;color:var(--amber-ink);}
+.ask-wfcard-match{position:relative;margin-top:16px;padding-left:24px;font-size:13px;line-height:1.55;color:var(--ink-2);}
+.ask-wfcard-match svg{position:absolute;left:0;top:3px;width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:2;}
+.ask-wfcard-match b{font-weight:600;color:var(--ink);}
+.ask-wfcard-match.is-hit{color:var(--green-ink);}
+.ask-wfcard-warnings{display:flex;flex-direction:column;gap:8px;margin-top:12px;}
+.ask-wfcard-warn{font-size:13px;line-height:1.5;color:var(--amber-ink);background:var(--amber-wash);border:1px solid var(--amber-line);border-radius:var(--r-sm);padding:8px 12px;}
+.ask-wfcard-meta{margin-top:8px;font-family:var(--mono);font-size:11px;line-height:1.5;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums;}
+@media (prefers-reduced-motion: reduce){.ask-wfcard-graph{transition:none;}}
+/* ---------- the canvas well (ui/public/graph/proposal-host.mjs): a chat card's graph as the Workflows canvas draws it ---------- */
+/* The nav never prevents pointerdown (a press must still click a chip), so a drag-pan would select card text: like .gv-canvas. */
+.gv-well{user-select:none;-webkit-user-select:none;}
+.gv-well .gv-stage,.gv-well .gv-world .node{cursor:grab;}
+.gv-well .gv-stage.panning,.gv-well .gv-stage.panning *{cursor:grabbing !important;}
+.gv-well > .gv-nav{right:12px;bottom:12px;}
+/* A chat card sits on the text column and so does every part of it: a graph well (.gv-well: the build card's, the
+   Auto card's, the run card's) is as wide as its card, and its host fits the graph into it (run-hosts `card`,
+   proposal-host). No rule widens it. */
+

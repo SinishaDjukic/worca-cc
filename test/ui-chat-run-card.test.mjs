@@ -19,6 +19,7 @@ import { noteAnswer, namedAnswer, forgetAnswer } from '../ui/public/shape/step-r
 import { applyFlags } from '../ui/public/flags.mjs';
 import { ICONS } from '../ui/public/icons.mjs';
 import { statusText } from '../ui/public/run-status-card.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 /** The icons.mjs glyph a control leads with (its first child, an .ic span); '' when none. */
 const glyphOf = (el) => { const svg = el && el.firstElementChild && el.firstElementChild.matches('.ic') ? el.firstElementChild.querySelector('svg') : null; return svg ? Object.keys(ICONS).find((k) => ICONS[k] === svg.innerHTML) || '' : ''; };
 
@@ -608,7 +609,7 @@ test('chat run card result region: words, churn, top files → Diff, artifact ch
 });
 
 test('card wells: the footer accordion, rows and result link take no pointer (nothing is bound in a card)', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   assert.ok(css.includes('.gv-wrap-card .run-flow.gv-host .gv-world .xtoggle,.gv-wrap-card .run-flow.gv-host .gv-world .xrow,'
     + '.gv-wrap-card .run-flow.gv-host .gv-world .xresult a{pointer-events:none;cursor:inherit;}'));
 });
@@ -781,7 +782,7 @@ test('chat run card controls: the second click of a double-click never undoes th
 });
 
 test('chat run card CSS: the Runs page ask card in one column (the run side panel\'s overrides), its amber line in one rule; a narrow card wraps the result head and the answer buttons', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   const p3 = css.slice(css.indexOf('/* ===== Chat P3: run card ===== */'));
   for (const rule of [
     '.chat-rc-q-head{margin-bottom:10px;font-size:15px;}',
@@ -818,7 +819,7 @@ test('chat run card CSS: the Runs page ask card in one column (the run side pane
 // ---- The question's styles, replayed over style.css. jsdom computes no cascade, so (as test/ui-functional-css.test.mjs
 // does for `display`) the winning declaration is picked by hand: importance, then specificity, then source order. Top-level
 // rules only: the Runs page's narrow @media block is not the card's.
-const CSS_TEXT = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+const CSS_TEXT = readStyleCss();
 let cssRulesMemo = null;
 const cssRules = () => (cssRulesMemo ??= [...new JSDOM(`<style>${CSS_TEXT}</style>`).window.document.styleSheets[0].cssRules]
   .filter((r) => typeof r.selectorText === 'string'));
@@ -1078,7 +1079,7 @@ test('chat run card: one flagged thing reads "Ready to review · 1 thing to chec
 });
 
 test('chat run card CSS: an answer label wider than the whole row wraps inside its button, never out of the card', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   const p3 = css.slice(css.indexOf('/* ===== Chat P3: run card ===== */'));
   // Chrome, 360 px: under `white-space:nowrap` the gate's "Don't approve another cycle and continue" (330 px wide)
   // sat at x -26..304 in a 20..340 card and read "n't approve …". flex-wrap already moves WHOLE buttons to the next row.
@@ -1087,7 +1088,7 @@ test('chat run card CSS: an answer label wider than the whole row wraps inside i
 });
 
 test('step card CSS: inside a question panel the head title wraps (375 px) and never overflows the card', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   const rule = (sel) => { const m = css.match(new RegExp(`${sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\{([^}]*)\\}`)); return m ? m[1] : ''; };
   assert.match(rule('.qpanel .step-head .ask-mcard-title'), /white-space:normal/);
   assert.match(rule('.qpanel .step-head .ask-mcard-title'), /min-width:0/);
@@ -1097,7 +1098,7 @@ test('step card CSS: inside a question panel the head title wraps (375 px) and n
 });
 
 test('member rows CSS: the narrow grid areas are the page table\'s only, so the chat card\'s plain rows keep their columns (375 px)', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   // Chrome, 375 px: an unscoped `.run-member-title{grid-area:title}` put the chat card's title and line in one implicit
   // cell, drawn over each other at the right edge (the plain list has no grid-template-areas).
   const rules = [...css.matchAll(/([^{}]+)\{grid-area:[a-z]+\}/g)].map((m) => m[1].trim()).filter((s) => /\.run-member/.test(s));
@@ -1106,7 +1107,7 @@ test('member rows CSS: the narrow grid areas are the page table\'s only, so the 
 });
 
 test('chat run card CSS: the result counts and error, a hovered file row or Stop, the "K of N answered" lead, the agent model label and the Auto well\'s words reach 4.5:1 in both themes', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   const p3 = css.slice(css.indexOf('/* ===== Chat P3: run card ===== */'));
   const root = css.slice(css.indexOf(':root{'), css.indexOf('}', css.indexOf(':root{')));
   const pair = (name) => {
@@ -1161,7 +1162,7 @@ test('chat run card CSS: the result counts and error, a hovered file row or Stop
 });
 
 test('chat run card CSS: an agent chip never runs out of a narrow card (a long model id ellipsizes first, the cycle label never shrinks)', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   const p3 = css.slice(css.indexOf('/* ===== Chat P3: run card ===== */'));
   // Chrome, 390 px, Expert: "Review Implementation claude-sonnet-4-5-20250929 cycle 3" (a REST card's raw model id) spanned
   // x 39..439 in a 20..370 card under P1's `.ask-rc-agent{white-space:nowrap}`.
@@ -1670,7 +1671,7 @@ test('chat run card, a folder run: no Apply to folder when nothing changed or th
   card.update(done(EX, { workMode: 'folder', archived: true, changes: { state: 'pending', counts: { added: 2 } } }));
   assert.equal($('.chat-rc-apply'), null, 'an archived run has no copy');
   // Apply keeps its own look; Create PR and View PR are the shared .btn (no rule of their own).
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   assert.match(css, /(^|\})\.chat-rc-apply\{/m);
   assert.doesNotMatch(css, /\.chat-rc-(?:create|view)-pr[^{}]*\{/);
 });
@@ -1713,7 +1714,7 @@ test('chat run card: a run without a project lists each file as a name, its size
   // The NoProjectRun board: one bordered list of rows, a file icon first on each.
   assert.equal(list.querySelectorAll('.chat-rc-art-rows > .chat-rc-art-row').length, 2);
   for (const row of list.querySelectorAll('.chat-rc-art-row')) assert.equal(row.firstElementChild.tagName.toLowerCase(), 'svg');
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   // Runs redesign design language: a sentence-case caption (no uppercase tracked micro-label) and token radii.
   for (const rule of ['.chat-rc-arts-list .cap{font-size:12px;font-weight:600;color:var(--ink-2);}',
     '.chat-rc-art-rows{border:1px solid var(--line);border-radius:var(--r-card);overflow:hidden;background:var(--panel);}',
