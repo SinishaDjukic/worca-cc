@@ -132,12 +132,13 @@
     "acorn": "8.19.0",
     "esbuild": "^0.28.2",
     "eslint-scope": "8.4.0",
+    "express4": "npm:express@4.22.3",
     "jsdom": "^29.1.1",
     "web-ext": "^10.8.0"
   },
   "overrides": {
     "addons-scanner-utils": {
-      "express": "^4.19.2"
+      "express": "$express"
     }
   },
   "optionalDependencies": {
