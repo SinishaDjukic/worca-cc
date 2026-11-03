@@ -1,6 +1,31 @@
 /* Pulse: the hub's layer on top of Worca's style.css and rail.css (spec: plans/rail/pulse.md). One rail: a 20px column
    for the dot (or the tick box), a 12px gap, then the text edge every heading, row and sentence starts on. */
 
+/* The Rail look (docs/design-system.md › The Rail look), shown on Pulse ahead of the app: one surface, one cool neutral
+   family, running (lemon) and needs-you (orange) apart, a floating surface a step lighter in dark with a hairline.
+   Inter is not bundled yet: the system face stands in for it, as in the refined mocks. */
+:root{
+  --sans:Inter,-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;
+  --bg:light-dark(#FFFFFF,#141416); --panel:light-dark(#FFFFFF,#141416);   /* ds-ok: the Rail look's table */
+  --canvas-2:light-dark(#FAFAFA,#18181B); --side-bg:light-dark(#FAFAFA,#18181B);   /* ds-ok: the Rail look's table */
+  --field:light-dark(#F4F4F5,#1F1F23); --surface:light-dark(#F4F4F5,#1F1F23);   /* ds-ok: the Rail look's table */
+  --hover:light-dark(#F0F0F2,#222227); --side-sel-bg:light-dark(#F0F0F2,#26262B);   /* ds-ok: the Rail look's table */
+  --ink:light-dark(#18181B,#EDEDEF); --ink-2:light-dark(#63636B,#A1A1A9); --ink-3:light-dark(#A1A1A9,#6E6E76);   /* ds-ok: the Rail look's table */
+  --line:light-dark(#EEEEF0,#26262B); --line-2:light-dark(#E2E2E6,#35353B);   /* ds-ok: the Rail look's table */
+  --float:light-dark(#FFFFFF,#1D1D21); --float-line:light-dark(#EEEEF0,#323238);   /* ds-ok: the Rail look's table */
+  --peach:light-dark(#B39A0E,#ECD86A); --amber:light-dark(#E07A1F,#EE8A2C);   /* ds-ok: the Rail look's table */
+  /* Motion (docs/design-system.md › Motion): three timings on one curve */
+  --motion-quick:150ms; --motion-change:200ms; --motion-flash:1.2s; --ease:cubic-bezier(.2,0,0,1);
+}
+.pz-title,.pz-nr-h{letter-spacing:-.02em;}
+.pz-app .btn{font-weight:500;}
+/* A floating surface (menus, the Pulse panel, the account menu, a Dialog's card): --float with its hairline. */
+.pz-app :is(.menu,.pz-popover,.viewer-modal > .card){background:var(--float);border-color:var(--float-line);}
+/* A menu, panel or Dialog fades in over quick when it opens, and closes at once; nothing slides. */
+.is-in{animation:pz-in var(--motion-quick) var(--ease);}
+@keyframes pz-in{from{opacity:0;}}
+@media (prefers-reduced-motion: reduce){.is-in{animation:none;}}
+
 /* The shell: a small Worca window (sidebar, top bar, page) on the board. */
 .pz-app{--rail:20px;--gap:12px;--edge:calc(var(--rail) + var(--gap));position:relative;display:flex;min-height:620px;
   border:1px solid var(--line);border-radius:var(--r-card);background:var(--bg);font:400 var(--fs-body)/var(--lh-body) var(--sans);}
@@ -29,23 +54,24 @@
   background:none;color:var(--ink);font-family:inherit;text-align:left;cursor:pointer;}
 .pz-acct:hover,.pz-acct[aria-expanded="true"]{background:var(--field);}
 .pz-acct:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
-.pz-ava-wrap{position:relative;display:grid;place-items:center;width:44px;height:44px;flex:none;}
-.pz-ava{position:relative;display:grid;place-items:center;width:22px;height:22px;border-radius:50%;background:var(--line-2);color:var(--ink);font:600 var(--fs-caption)/1 var(--sans);}
+.pz-ava-wrap{position:relative;display:grid;place-items:center;width:38px;height:38px;flex:none;}
+.pz-ava{position:relative;display:grid;place-items:center;width:24px;height:24px;border-radius:50%;background:var(--line-2);color:var(--ink);font:600 var(--fs-caption)/1 var(--sans);}
 .pz-acct-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--fs-meta);color:var(--ink-2);}
 .pz-updown{flex:none;color:var(--ink-3);}
 
 /* A ring that shades along its arc: --ink-2 at the start, --amber at the warning line (--w), --red at the limit; it
    shows the first --p percent. Used up: full and solid red. The track is --line-2. Never violet, never green. */
-.pz-gring{--s:18px;--t:2px;position:relative;display:inline-block;flex:none;width:var(--s);height:var(--s);border-radius:50%;background:var(--line-2);
+.pz-gring{--s:18px;--t:1.5px;position:relative;display:inline-block;flex:none;width:var(--s);height:var(--s);border-radius:50%;background:var(--line-2);
   -webkit-mask:radial-gradient(farthest-side,transparent calc(100% - var(--t) - .5px),#000 calc(100% - var(--t)));
   mask:radial-gradient(farthest-side,transparent calc(100% - var(--t) - .5px),#000 calc(100% - var(--t)));}
 .pz-gring::before{content:"";position:absolute;inset:0;border-radius:50%;
   background:conic-gradient(var(--ink-2) 0%,var(--amber) calc(var(--w) * 1%),var(--red) 100%);
   -webkit-mask:conic-gradient(#000 calc(var(--p) * 1%),transparent 0);mask:conic-gradient(#000 calc(var(--p) * 1%),transparent 0);}
 .pz-gring.is-over::before{background:var(--red);}
-.pz-ava-wrap .pz-gring{--t:1.5px;position:absolute;inset:0;margin:auto;}
-.pz-ring-0{--s:44px;} .pz-ring-1{--s:37px;} .pz-ring-2{--s:30px;}
-.pz-mi-ring{--s:16px;--t:1.5px;}
+.pz-ava-wrap .pz-gring{--t:1px;position:absolute;inset:0;margin:auto;}
+/* The rings hug the avatar: 1px lines with 1.5px between them and the avatar, outside in: session, long window, spend. */
+.pz-ring-0{--s:38px;} .pz-ring-1{--s:33px;} .pz-ring-2{--s:28px;}
+.pz-mi-ring{--s:16px;--t:1.25px;}
 
 /* The account menu is Worca's own (#acct-menu, style.css › .acct-menu); here it sits in the mock window, not the viewport.
    Its side menus open beside it, bottom-aligned; on a narrow screen in its place, with a row back. */
@@ -54,6 +80,9 @@
 .pz-fly{left:calc(8px + 258px + 4px);bottom:64px;width:296px;max-height:none;gap:0;padding:6px;}
 .pz-fly.lvl-menu{width:236px;gap:1px;}
 .pz-subback{display:none;}
+/* Appearance sits in the first section with Interface mode (both are how Worca looks), as a row of its own. */
+.acct-menu .msect > .theme-sect{display:flex;align-items:center;gap:10px;height:32px;padding:0 4px 0 9px;}
+.acct-menu .msect > .theme-sect .theme-k{flex:1;}
 .pz-fly .nav-fly-k{color:var(--ink-2);}
 /* The spend card's title is its link to Statistics (a text link: --blue-ink-strong, 600), in place of Details. */
 .pz-mc-link{flex:none;padding:0;border:0;background:none;text-align:left;cursor:pointer;color:var(--blue-ink-strong);}
@@ -76,8 +105,10 @@
 .pz-ur{color:var(--ink-2);font-variant-numeric:tabular-nums;white-space:nowrap;}
 .pz-unote{margin:0;font-size:var(--fs-meta);color:var(--ink-2);}
 
-/* New run: the task, the sentence that picks the harness, and the advice when that harness is near its limit, on the rail. */
-.pz-newrun{width:min(420px,calc(100% - 16px));max-height:none;}
+/* New run is a Dialog (Worca's .viewer-modal and its card), here inside the mock window: the sentence that frames the
+   step, the task Field, the note when the run will not fit, then Cancel and the start button. */
+.pz-app .viewer-modal{position:absolute;z-index:47;border-radius:var(--r-card);padding:16px;}
+.pz-app .viewer-modal > .card.pz-newrun{width:min(460px,100%);max-height:none;padding:0;overflow:visible;display:flex;flex-direction:column;box-shadow:var(--shadow-pop);}
 .pz-nr{display:flex;flex-direction:column;gap:12px;padding:16px 16px 12px 4px;}
 .pz-nr > :not(.pz-advice){margin-left:var(--edge);}
 .pz-nr-h{margin:0;font:600 var(--fs-section)/1.3 var(--sans);color:var(--ink);}
@@ -95,7 +126,7 @@
 .pz-ptabs{min-width:0;box-shadow:none;}
 .pz-popover .pz-bar{margin-top:4px;}
 .pz-pbody{flex:1 1 auto;min-height:0;overflow-y:auto;padding:4px 16px 8px;}
-.pz-pfoot{flex:none;display:flex;justify-content:space-between;gap:8px;padding:8px;border-top:1px solid var(--line);}
+.pz-pfoot{flex:none;display:flex;justify-content:flex-end;gap:8px;padding:8px 12px;border-top:1px solid var(--line);}
 .pz-popover .pz-sec{margin-top:12px;}
 
 /* The page head: title, the metadata line, tabs, all on the text edge. */
@@ -161,6 +192,9 @@
 .pz-sk{font-weight:600;color:var(--ink);line-height:28px;}
 .pz-sv{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start;gap:4px 12px;min-width:0;}
 .pz-sv > .pz-sentence:only-child{grid-column:1 / -1;}
+/* A row that is only on or off: the Switch, then its words. */
+.pz-swline{display:flex;align-items:center;gap:10px;min-width:0;min-height:28px;}
+.pz-swline .switch{flex:none;padding:0;border:0;cursor:pointer;}
 .pz-grow > .pz-srow{border-top:1px solid var(--line);}
 .pz-events{display:flex;flex-direction:column;margin:0 0 8px calc(var(--edge) + 120px + var(--gap));}
 .pz-erow{display:flex;flex-wrap:wrap;align-items:center;gap:0 12px;min-height:36px;border-top:1px solid var(--line);}

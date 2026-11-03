@@ -38,7 +38,9 @@
 
   // Anything a run can spend against: a harness's own sign-in (Claude Code, Codex, Copilot, Cursor) or a provider
   // through the bridge (Gemini, OpenRouter's free models). `runs`: it can be picked as where a run runs.
-  // `src`: who reports the figures. Windows: a short one (session) and a long one (week, day or month).
+  // `src`: who reports the figures. Windows: a short one (session) and a long one (week, day or month). A plan may have
+  // only the long one: Claude's Ultra (was Max 20x) has no 5-hour session once the account is verified (30 Oct 2026);
+  // its week stays.
   const PROVIDER = {
     claude: { name: 'Claude Code', vendor: 'Claude', runs: true, src: 'Reported by Claude Code' },
     codex: { name: 'Codex', vendor: 'OpenAI', runs: true, src: 'Reported by Codex' },
@@ -69,7 +71,8 @@
       running: [run('Fix flaky login test', 'web-app', 'Build · step 3 of 5', '12 min'), run('Rename settings keys', 'worca-cc', 'Review · checks running', '4 min')],
       scheduled: [run('Nightly dependency bump', 'web-app', 'Every day at 03:00', '03:00')],
       usage: [
-        { p: 'claude', plan: 'Max', asOf: '14:28', win: [{ k: 'session', pct: 48, resets: '16:40' }, { k: 'week', pct: 31, resets: 'Mon 09:00' }] },
+        { p: 'claude', plan: 'Ultra', asOf: '14:28', win: [{ k: 'week', pct: 31, resets: 'Mon 09:00' }],
+          note: { text: 'No session limit on Ultra', tip: 'Anthropic removed the 5-hour session from verified Ultra accounts on 30 Oct 2026; the weekly limit stays' } },
         { p: 'codex', plan: 'Plus', asOf: '13:52', win: [{ k: 'session', pct: 12, resets: '15:10' }, { k: 'week', pct: 40, resets: 'Sun 22:00' }] },
         { p: 'copilot', plan: 'Business', asOf: '14:05', win: [{ k: 'month', pct: 71, used: 212, of: 300, resets: 'Nov 1' }] },
         { p: 'openrouter', plan: 'Free', asOf: '13:30', win: [{ k: 'day', pct: 64, used: 32, of: 50, resets: '02:00' }] }],
@@ -80,7 +83,7 @@
         { id: 'u3', g: 'prs', sev: 'info', title: 'Fix published · #962 Retry on 502', meta: 'web-app · watched PR · checks green', time: '13:10', day: 'Today', unread: true, to: 'the fix run' },
         { id: 'u4', g: 'schedules', sev: 'problem', title: 'Start missed · Nightly dependency bump', meta: 'web-app · Worca was not running at 03:00', time: '09:02', day: 'Today', unread: true, to: 'Schedules, with its sheet open' },
         { id: 'u5', g: 'runs', sev: 'info', title: 'Run finished · Tidy the settings page', meta: 'worca-cc · 18 min · $1.42', time: '08:40', day: 'Today', unread: false, to: 'the run page' },
-        { id: 'u6', g: 'usage', sev: 'info', title: 'Claude Code session reset · 1 run resumed', meta: 'Claude · Max · Session', time: '17:05', day: 'Yesterday', unread: false, to: 'the resumed run' },
+        { id: 'u6', g: 'usage', sev: 'info', title: 'Codex session reset · 1 run resumed', meta: 'OpenAI · Plus · Session', time: '17:05', day: 'Yesterday', unread: false, to: 'the resumed run' },
         { id: 'u7', g: 'runs', sev: 'needs', resolved: true, title: 'Needs you · Split the auth module', meta: 'worca-cc · answered at 11:20', time: '11:02', day: 'Yesterday', unread: false, to: 'the run page' },
         { id: 'u8', g: 'projects', sev: 'info', title: 'Clone finished · acme/design-tokens', meta: 'Projects · 2.1 MB', time: '10:15', day: 'Yesterday', unread: false, to: 'the project page' }] },
     { id: 'near', label: 'Session near its limit', desktop: 'on', task: { title: 'Add rate limiting to the public API', size: 'large' },

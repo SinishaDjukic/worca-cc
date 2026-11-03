@@ -69,7 +69,7 @@ Three sections, one rail. Every choice is a **picker in its sentence** (Rail: ne
 **How Worca reaches you** (the channels)
 | Row | Sentence | Notes |
 |---|---|---|
-| Desktop | `Desktop notifications are [on ▾] in this browser` · Send test | permission is per browser; when blocked, the row says so and how to allow it |
+| Desktop | Switch · `Desktop notifications in this browser` · Send test | only on or off, so a Switch (a settings tab); permission is per browser; when blocked, the row says so and how to allow it |
 | Badge | `The tab title shows [what needs you ▾]` | choices: what needs you, what needs you and problems, nothing |
 | Chat | `Sent to 2 channels: Telegram, Slack` · Manage | channels stay in Settings › Chat |
 
@@ -111,13 +111,17 @@ a month where that is the only one).
 
 | Harness or provider | Short window | Long window | Where Worca reads it |
 |---|---|---|---|
-| Claude Code (Claude) | 5-hour session | week (all models; Opus week when the plan has one) | the rate-limit figures Claude Code reports with each turn |
+| Claude Code (Claude) | 5-hour session; **none on Ultra** once the account is verified (Anthropic, 30 Oct 2026) | week (all models; Opus week when the plan has one); Ultra keeps it | the rate-limit figures Claude Code reports with each turn |
 | Codex (OpenAI) | 5-hour | week | the rate-limit figures Codex reports with each turn |
 | Copilot (GitHub) | none | month: premium requests | the requests Worca counts (it already pins them *Free* and counts them) |
 | Cursor | none | month: requests, where the plan has a cap | not reported today: "Not reported by Cursor" |
 | Gemini (Google, through the bridge) | none | day: requests on a free tier | the requests Worca counts against the tier's daily quota |
 | OpenRouter free models | none | day: free requests | the count the spend card shows today ("Free requests today") |
 | An API key (any vendor) | none | none: billed per token | the spend and its budget are its limit |
+
+Plans are named as their vendor names them: Claude's Pro, Max (was Max 5x) and Ultra (was Max 20x). A plan with no
+short window shows only its long one, and its block says why in one line (`No session limit on Ultra`); the session
+ring then shows the tightest harness that has one, or is not drawn.
 
 To check before building: which harness versions report the figures (Claude Code, Codex), and each quota Worca has to
 count itself. Where nothing is reported, the side menu says so and draws no ring (never a made-up figure). Figures are
@@ -127,6 +131,8 @@ as fresh as the last turn that used the harness (`as of 14:28`). A harness no ru
 ### 4.2 The rings on the avatar
 - The account corner keeps its place (sidebar foot; the rail shows the avatar alone). Around the avatar, concentric
   rings, outside in: **Session**, the **long window**, **Spend** (only when a budget has a limit). At most three.
+- The rings hug the avatar: 1px lines, 1.5px apart, the innermost 1.5px off the 24px avatar (38px in all). In the menu
+  row and the side menu the small ring is 1.25px and 1.5px.
 - Each ring shows its **tightest harness** (the highest share): with Claude Code at 48% and Codex at 12%, the session
   ring shows 48%.
 - **Each ring shades along its arc**: `--ink-2` at the start, `--amber` at the warning line, `--red` at the limit. It
@@ -138,9 +144,14 @@ as fresh as the last turn that used the harness (`as of 14:28`). A harness no ru
   `Session 86% · Claude Code · resets 16:40` / `Day 84% · Gemini · resets 02:00` / `Spend $92 of $100 in October`.
 
 ### 4.3 The account menu and its Usage and costs side menu
-The account menu stays as it is today (`#acct-menu`: Interface mode, Settings, Away, Keep awake, Appearance). Only its
-spend card changes: it becomes one row, the way Interface mode is one row, and that row is the **last** in the menu,
-under Appearance (the corner it opens from is right below it).
+The account menu keeps today's rows (`#acct-menu`) and becomes a panel in the Rail sense (it opens over any page from
+its corner). Its rows are grouped by what they are about and ordered by how often they are used, rarest at the top,
+since the menu opens up from the avatar and the bottom is nearest the hand:
+1. **Worca**: Interface mode ›, Appearance (System, Light, Dark), Settings. How Worca looks, and the door to
+   everything else; changed rarely. Appearance moves up beside Interface mode (both are how Worca looks).
+2. **You**: Away, Keep awake. Flipped daily, when you step away.
+3. **Usage**: Usage and costs ›, right above the avatar whose rings it explains: the rings and their figures are one
+   move apart. The spend card becomes this one row.
 - **Usage and costs ›**: the small ring of the tightest window, the label, its share as the value (`86%`, or `Reached`;
   the spend when no limit is reported), the chevron. Tooltip: `Closest to its limit: Session 86% · Claude Code · resets 16:40`.
 - It opens a **side menu** beside the menu, as Interface mode does (`side-flyout.mjs`, mode `beside`). On a narrow
@@ -187,9 +198,10 @@ with room is one where the run fits.
 the most room first. Each agent runs the same tier on it (`model-tiers.mjs`), so the switch keeps the run's shape.
 With none, the only offer is the reset.
 
-**You start it** (New run, Resume). Two sentences under the task: `A [large ▾] task · about 12% of Claude Code's
-session, 52% left` (the figures only while it fits; the note says them when it does not, one place per fact), and
-`Runs on [Claude Code ▾]`, each choice showing its windows and what this run adds: `session 86% +28, week 52% +7`.
+**You start it** (New run, Resume). New run is a Dialog (a form): it opens with the one sentence that frames the step,
+`A [large ▾] task on [Claude Code ▾] in web-app · about 12% of its session, 52% left` (the figures only while it fits;
+the note says them when it does not, one place per fact), then the task Field. The harness picker shows each choice's
+windows and what this run adds: `session 86% +28, week 52% +7`.
 When it fits, nothing more (quiet until needed). When it does not, on the rail with an amber dot, one note, by the
 setting:
 - *suggest one with room* (default): `This run needs about 28% of Claude Code's session; 14% is left until 16:40. It

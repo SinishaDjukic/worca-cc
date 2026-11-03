@@ -24,6 +24,7 @@ const ICON = {
   monitor: P('M4 4.5h16a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1z') + P('M8.5 19.5h7M12 15.5v4'),
   sun: '<circle cx="12" cy="12" r="4"></circle>' + P('M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4'),
   moon: P('M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9z'),
+  contrast: '<circle cx="12" cy="12" r="8"></circle>' + '<path d="M12 4a8 8 0 0 1 0 16z" fill="currentColor" stroke="none"></path>',
 };
 const svg = (name, size, cls) => `<svg${cls ? ` class="${cls}"` : ''} width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[name]}</svg>`;
 
@@ -36,6 +37,9 @@ function freshSettings(c) {
 const fresh = (caseId) => ({ caseId, page: 'runs', pop: false, popTab: 'now', acct: false, sub: '', nr: null, menu: '', show: 'unread', from: 'all',
   sel: [], read: [], cleared: [], custom: '', confirm: '', toast: '', flash: '', level: 'expert', away: false, keep: true, s: freshSettings(caseOf(caseId)) });
 let ui = fresh('afternoon');
+// What opened with this click: only that fades in (a repaint of what was already open does not fade again).
+let opening = '';
+const inCls = (k) => (opening === k ? ' is-in' : '');
 // Appearance is the viewer's, not the case's: it outlives a case change.
 let appearance = 'system';
 function applyAppearance(m) {
@@ -56,7 +60,7 @@ const plural = (n, one, many) => `${n} ${n === 1 ? one : many || one + 's'}`;
 // One compact menu (Rail › Menu): one line per item, a leading check for a choice, the help in the tooltip.
 function menu(id, items, align) {
   if (ui.menu !== id) return '';
-  return `<div class="menu pz-menu${align === 'right' ? ' is-right' : ''}" role="menu">${items.map((it) => {
+  return `<div class="menu pz-menu${align === 'right' ? ' is-right' : ''}${inCls('menu')}" role="menu">${items.map((it) => {
     if (it.sep) return '<div class="menu-sep" role="separator"></div>';
     const role = it.checked === undefined ? 'menuitem' : 'menuitemradio';
     return `<button type="button" class="menu-item${it.danger ? ' is-danger' : ''}" role="${role}"${it.checked === undefined ? '' : ` aria-checked="${!!it.checked}"`} data-pick="${esc(id)}|${esc(it.id)}"${it.help ? ` title="${esc(it.help)}"` : ''}><span class="mi-l">${esc(it.text)}</span>${it.hint ? `<span class="mi-hint">${esc(it.hint)}</span>` : ''}</button>`;
@@ -158,7 +162,7 @@ function popover() {
     { id: 'allread', text: 'Mark all read', help: un.length ? 'Marks every unread update read; nothing is cleared' : 'Nothing is unread' },
     { id: 'clearread', text: 'Clear read', help: 'Moves every read update in this view to Cleared' }, { sep: true },
     { id: 'settings', text: 'Notification settings', help: 'Settings › Notifications: what reaches you and what a start does near a limit' }], 'right')}</span>`;
-  return `<div class="pz-popover" role="dialog" aria-label="Pulse">
+  return `<div class="pz-popover${inCls('pop')}" role="dialog" aria-label="Pulse">
     <div class="pz-phead"><div class="tabs pz-ptabs" role="tablist">${[['now', 'Now', nowCount()], ['updates', 'Updates', un.length]].map(([id, t, n]) => `<button type="button" class="tab" role="tab" aria-selected="${ui.popTab === id}" data-ptab="${id}" title="${id === 'now' ? 'What is true right now: it changes by itself and cannot be cleared' : 'What happened: read, select and clear, like runs'}">${t}${n ? ` <span class="n">${n}</span>` : ''}</button>`).join('')}</div>${more}</div>
     <div class="pz-pbody">${ui.popTab === 'now' ? nowSections() : updatesPanel()}</div>
   </div>`;
@@ -173,17 +177,19 @@ function acctMenu() {
   const val = top ? (top.pct >= 100 ? 'Reached' : `${top.pct}%`) : c.budget ? M.usd(c.budget.spent) : '';
   const lvl = LEVELS_UI.find((l) => l[0] === ui.level);
   const sub = (id) => `data-sub="${id}" aria-haspopup="menu" aria-expanded="${ui.sub === id}"`;
-  return `<div class="menu nav-fly acct-menu${ui.sub ? ' has-sub' : ''}" role="menu" aria-label="Account">
-    <div class="msect" role="group">
+  // Top to bottom, rarest to most used, since the menu opens up from the avatar: how Worca looks and the door to
+  // Settings; you today (Away, Keep awake); what the rings say, right above the avatar that wears them.
+  return `<div class="menu nav-fly acct-menu${ui.sub ? ' has-sub' : ''}${inCls('acct')}" role="menu" aria-label="Account">
+    <div class="msect" role="group" aria-label="Worca">
       <button type="button" class="mi menu-item" role="menuitem" ${sub('lvl')} title="How much of Worca you see">${svg('sliders', 16, 'mi-ic')}<span class="mi-lbl">Interface mode</span><span class="mi-val">${lvl[1]}</span>${svg('chevR', 14, 'mi-chev')}</button>
+      <div class="theme-sect" role="group" aria-labelledby="pz-theme-k">${svg('contrast', 16, 'mi-ic')}<span class="theme-k" id="pz-theme-k">Appearance</span><div class="theme-seg">${[['system', 'monitor'], ['light', 'sun'], ['dark', 'moon']].map(([m, ic]) => `<button type="button" class="theme-ic${appearance === m ? ' on' : ''}" role="menuitemradio" aria-checked="${appearance === m}" data-appearance="${m}" aria-label="${cap(m)}" title="${cap(m)}">${svg(ic, 14, 'mi-ic')}</button>`).join('')}</div></div>
       <button type="button" class="mi menu-item" role="menuitem" data-go="settings" title="Settings › Notifications (the only settings page in this prototype)">${svg('gear', 16, 'mi-ic')}<span class="mi-lbl">Settings</span></button>
     </div>
-    <div class="msect" role="group" aria-label="Switches">
+    <div class="msect" role="group" aria-label="You">
       <button type="button" class="mi menu-item away-item sw-item" role="menuitemcheckbox" aria-checked="${ui.away}" data-state="${ui.away ? 'away' : 'here'}" data-sw="away" title="worca answers waiting run questions for you while you're away.">${svg('away', 16, 'mi-ic')}<span class="mi-lbl">Away</span><span class="switch" aria-hidden="true"></span></button>
       <button type="button" class="mi menu-item sw-item" role="menuitemcheckbox" aria-checked="${ui.keep}" data-sw="keep" title="Keeps the computer awake while runs are working. The display may still turn off.">${svg('cup', 16, 'mi-ic')}<span class="mi-lbl">Keep awake</span><span class="switch" aria-hidden="true"></span></button>
     </div>
-    <div class="msect theme-sect" role="group" aria-labelledby="pz-theme-k"><span class="theme-k" id="pz-theme-k">Appearance</span><div class="theme-seg">${[['system', 'monitor'], ['light', 'sun'], ['dark', 'moon']].map(([m, ic]) => `<button type="button" class="theme-ic${appearance === m ? ' on' : ''}" role="menuitemradio" aria-checked="${appearance === m}" data-appearance="${m}" aria-label="${cap(m)}" title="${cap(m)}">${svg(ic, 14, 'mi-ic')}</button>`).join('')}</div></div>
-    <div class="msect" role="group">
+    <div class="msect" role="group" aria-label="Usage">
       <button type="button" class="mi menu-item" role="menuitem" ${sub('usage')} title="${esc(top ? `Closest to its limit: ${top.line}` : 'Limits per harness and the spend')}">${top ? gring(top.pct, 'pz-mi-ring', top.tone) : svg('signal', 16, 'mi-ic')}<span class="mi-lbl">Usage and costs</span><span class="mi-val">${esc(val)}</span>${svg('chevR', 14, 'mi-chev')}</button>
     </div>
   </div>${usageFly()}${lvlFly()}`;
@@ -199,9 +205,10 @@ function usageFly() {
       const t = M.tone(x.pct, w);
       return `<div class="pz-urow" title="${esc(`${M.winWord(x.k)} ${x.pct}% · ${pr.src} at ${u.asOf}`)}">${mini(x.pct, t)}<span class="pz-uk">${M.winWord(x.k)}</span><span class="pz-uv${t ? ' is-' + t : ''}">${x.pct >= 100 ? 'Reached' : M.fig(x)}</span><span class="pz-ur">resets ${esc(x.resets)}</span></div>`;
     }).join('') : '<p class="pz-unote" title="An API key is billed per token: the spend below is its limit">Billed per token: no session or weekly limit</p>';
-    return `<div class="pz-ublock"><div class="pz-uhead"><span class="pz-uname">${esc(pr.name)}</span><span class="pz-uplan" title="${esc(`${pr.vendor} · ${u.plan}`)}">${esc(pr.vendor)} · ${esc(u.plan)}</span><span class="pz-uas" title="As fresh as the last turn that used ${esc(pr.name)}">as of ${esc(u.asOf)}</span></div>${rows}</div>`;
+    const noSession = u.note ? `<p class="pz-unote" title="${esc(u.note.tip)}">${esc(u.note.text)}</p>` : '';
+    return `<div class="pz-ublock"><div class="pz-uhead"><span class="pz-uname">${esc(pr.name)}</span><span class="pz-uplan" title="${esc(`${pr.vendor} · ${u.plan}`)}">${esc(pr.vendor)} · ${esc(u.plan)}</span><span class="pz-uas" title="As fresh as the last turn that used ${esc(pr.name)}">as of ${esc(u.asOf)}</span></div>${rows}${noSession}</div>`;
   };
-  return `<div class="menu nav-fly pz-fly" role="menu" aria-label="Usage and costs">${back}
+  return `<div class="menu nav-fly pz-fly${inCls('sub')}" role="menu" aria-label="Usage and costs">${back}
     <span class="nav-fly-k" title="What can stop a run, per harness: the rings around your avatar show the closest of each">Limits</span>
     <div class="pz-ublocks">${c.usage.map(block).join('')}</div>${spendCard(c)}
     <div class="msect" role="group"><button type="button" class="mi menu-item" role="menuitem" data-go="settings" title="The warning line, what reaches you, and what Worca does when a limit is near">${svg('gear', 16, 'mi-ic')}<span class="mi-lbl">Limit settings</span></button></div>
@@ -216,7 +223,7 @@ function spendCard(c) {
 }
 function lvlFly() {
   if (ui.sub !== 'lvl') return '';
-  return `<div class="menu nav-fly lvl-menu pz-fly" role="menu" aria-label="Interface mode">${back}<span class="nav-fly-k">Interface mode</span>${LEVELS_UI.map(([id, t, h]) => `<button type="button" class="menu-item" role="menuitemradio" aria-checked="${ui.level === id}" data-level="${id}" title="${esc(h)}"><span class="mi-l">${t}</span></button>`).join('')}</div>`;
+  return `<div class="menu nav-fly lvl-menu pz-fly${inCls('sub')}" role="menu" aria-label="Interface mode">${back}<span class="nav-fly-k">Interface mode</span>${LEVELS_UI.map(([id, t, h]) => `<button type="button" class="menu-item" role="menuitemradio" aria-checked="${ui.level === id}" data-level="${id}" title="${esc(h)}"><span class="mi-l">${t}</span></button>`).join('')}</div>`;
 }
 
 // ---- New run: where a limit is about to be spent, the one place it warns before starting ----
@@ -248,7 +255,7 @@ function newRun() {
   // instead when the run does not fit (one place per fact)
   const e = M.est(h, sz), u = c.usage.find((x) => x.p === h);
   const tight = e && u.win.filter((x) => e[x.k] != null).sort((a, b) => b.pct + e[b.k] - (a.pct + e[a.k]))[0];
-  const need = lim && !ui.nr.moved ? '' : tight ? ` · about ${e[tight.k]}% of ${pname(h)}'s ${M.WHAT[tight.k]}, ${Math.max(0, 100 - tight.pct)}% left` : u.win.length ? ` · ${pname(h)} has too few runs of this size to estimate` : '';
+  const need = lim && !ui.nr.moved ? '' : tight ? ` · about ${e[tight.k]}% of its ${M.WHAT[tight.k]}, ${Math.max(0, 100 - tight.pct)}% left` : u.win.length ? ` · too few runs this size to estimate` : '';
   const sizeTip = tight ? `The median of ${M.N[sz]} done runs this size with the same agents, last 60 days. Shaper sized the task; change it if it is wrong` : 'Shaper sized the task; change it if it is wrong';
   let advice = '';
   if (ui.nr.moved) advice = note('', `${ui.nr.moved}.`);
@@ -263,14 +270,13 @@ function newRun() {
     else advice = note('is-amber', say + (rm.length ? ` ${pname(rm[0])} has room.` : ' No other harness has room.'), other + `<button type="button" class="btn btn-sm btn-quiet" data-nr-wait title="Schedules it for when the limit resets">Start at ${esc(lim.resets)}</button>`);
   }
   const start = waits ? `Start at ${lim.resets}` : 'Start run';
-  return `<div class="pz-popover pz-newrun" role="dialog" aria-label="New run">
+  return `<div class="viewer-modal${inCls('nr')}"><div class="card pz-newrun" role="dialog" aria-modal="true" aria-label="New run">
     <div class="pz-nr"><h2 class="pz-nr-h">New run</h2>
+      <p class="pz-sentence">A ${picker('nr-size', sz, M.SIZES.map((x) => ({ id: x, text: x, checked: x === sz, help: SIZE_HELP[x] })), sizeTip)} task on ${picker('nr-on', pname(h), items, 'Which harness runs it: each shows how much of its limits is used, and +what this run needs')} in web-app${esc(need)}</p>
       <div class="pz-nr-task" title="The task (filled in for this prototype)">${esc(c.task.title)}</div>
-      <p class="pz-sentence">A ${picker('nr-size', sz, M.SIZES.map((x) => ({ id: x, text: x, checked: x === sz, help: SIZE_HELP[x] })), sizeTip)} task${esc(need)}</p>
-      <p class="pz-sentence">Runs on ${picker('nr-on', pname(h), items, 'Which harness runs it: each shows how much of its limits is used, and +what this run needs')} in web-app</p>
       ${advice}</div>
     <div class="pz-pfoot"><button type="button" class="btn btn-sm btn-quiet" data-nr-cancel title="Closes without starting">Cancel</button><button type="button" class="btn btn-sm btn-primary" data-nr-start title="${waits ? `Schedules it for ${esc(lim.resets)}` : `Starts it now on ${esc(pname(h))}`}">${esc(start)}</button></div>
-  </div>`;
+  </div></div>`;
 }
 
 // ---- Updates in the Pulse panel ----
@@ -314,7 +320,7 @@ function settingsPage() {
   const s = ui.s;
   const desk = s.desktop === 'blocked'
     ? `<span class="pz-sentence">Desktop notifications are <b class="pz-strong">blocked in this browser</b></span><button type="button" class="btn btn-sm" data-how title="Allow notifications for this site in the browser's site settings, then come back">How to allow</button>`
-    : `<span class="pz-sentence">Desktop notifications are ${picker('desktop', s.desktop, [{ id: 'on', text: 'on', checked: s.desktop === 'on', help: 'What a group sends to desktop shows as a notification' }, { id: 'off', text: 'off', checked: s.desktop === 'off', help: 'No desktop notifications from any group' }], 'Desktop notifications in this browser')} in this browser</span><button type="button" class="btn btn-sm" data-test${s.desktop === 'on' ? '' : ' disabled'} title="${s.desktop === 'on' ? 'Sends one test notification' : 'Turn desktop notifications on to send a test'}">Send test</button>`;
+    : `<span class="pz-swline"><button type="button" class="switch" role="switch" aria-checked="${s.desktop === 'on'}" data-desk aria-label="Desktop notifications in this browser" title="${s.desktop === 'on' ? 'On: what a group sends to desktop shows as a notification' : 'Off: no desktop notifications from any group'}"></button><span class="pz-sentence">Desktop notifications in this browser</span></span><button type="button" class="btn btn-sm" data-test${s.desktop === 'on' ? '' : ' disabled'} title="${s.desktop === 'on' ? 'Sends one test notification' : 'Turn desktop notifications on to send a test'}">Send test</button>`;
   const BADGE = [{ id: 'needs', text: 'what needs you', help: 'The tab title reads (2) Worca while 2 runs wait for you' }, { id: 'problems', text: 'what needs you and problems', help: 'Also unread problems: a failed run, a missed start, a limit' }, { id: 'none', text: 'nothing', help: 'The tab title never shows a count' }];
   const channels = `<div class="pz-srow"><span class="pz-sk">Desktop</span><span class="pz-sv">${desk}</span></div>
     <div class="pz-srow"><span class="pz-sk">Badge</span><span class="pz-sv"><span class="pz-sentence">The tab title counts ${picker('badge', BADGE.find((b) => b.id === s.badge).text, BADGE.map((b) => ({ ...b, checked: b.id === s.badge })), 'What the count in the tab title counts')}</span></span></div>
@@ -351,6 +357,7 @@ function render() {
   document.getElementById('app').innerHTML = `<div class="pz-app">${sidebar()}<div class="pz-main">${topbar()}<main class="pz-page">${ui.page === 'settings' ? settingsPage() : runsPage()}</main></div>${popover()}${newRun()}${acctMenu()}</div>`;
   const t = document.querySelector('.rc-toast'); t.innerHTML = ui.toast ? esc(ui.toast) + (undoIds ? '<button type="button" class="pz-undo" data-undo title="Puts them back in the list">Undo</button>' : '') : ''; t.classList.toggle('is-on', !!ui.toast);
   fitMenus();
+  opening = '';
   if (scroller.scrollTop !== keepY) scroller.scrollTop = keepY;   // nothing moves by itself: a repaint never scrolls the page
 }
 // A menu opens under its picker; one that would leave the window opens to the left instead.
@@ -377,7 +384,6 @@ function pick(id, v) {
     else if (v === 'allread') { const n = unread().length; ui.read = ui.read.concat(unread().map((u) => u.id)); toast(n ? `Marked ${plural(n, 'update')} read` : 'Nothing is unread'); }
     else { const ids = shown().filter((u) => !isUnread(u)).map((u) => u.id); ui.cleared = ui.cleared.concat(ids); ui.sel = []; toast(ids.length ? `Cleared ${plural(ids.length, 'read update')}` : 'Nothing read to clear', ids); }
   }
-  else if (id === 'desktop') { s.desktop = v; toast(v === 'on' ? 'Desktop notifications on' : 'Desktop notifications off'); }
   else if (id === 'badge') s.badge = v;
   else if (id === 'mine') s.mine = v;
   else if (id === 'auto') s.auto = v;
@@ -401,18 +407,19 @@ document.addEventListener('click', (e) => {
   let el;
   if ((el = tg('[aria-disabled="true"]'))) { toast(el.title); render(); return; }
   if ((el = tg('[data-pick]'))) { const [id, v] = el.dataset.pick.split('|'); pick(id, v); render(); return; }
-  if ((el = tg('[data-menu]'))) { ui.menu = ui.menu === el.dataset.menu ? '' : el.dataset.menu; render(); return; }
+  if ((el = tg('[data-menu]'))) { ui.menu = ui.menu === el.dataset.menu ? '' : el.dataset.menu; if (ui.menu) opening = 'menu'; render(); return; }
   if (!tg('.pz-pick')) ui.menu = '';
   // an open popover or account menu closes on a click outside it, and that click does nothing else
-  if ((ui.pop || ui.acct || ui.nr) && !tg('.pz-popover, .nav-fly, [data-pop], [data-acct], [data-newrun]')) { ui.pop = false; ui.acct = false; ui.sub = ''; ui.nr = null; render(); return; }
-  if ((el = tg('[data-pop]'))) { ui.pop = !ui.pop; ui.acct = false; ui.nr = null; render(); return; }
-  if ((el = tg('[data-acct]'))) { ui.acct = !ui.acct; ui.sub = ''; ui.pop = false; ui.nr = null; render(); return; }
-  if ((el = tg('[data-sub]'))) { const v = el.dataset.sub; ui.sub = v && ui.sub !== v ? v : ''; render(); return; }
+  if ((ui.pop || ui.acct || ui.nr) && !tg('.pz-popover, .nav-fly, .pz-newrun, [data-pop], [data-acct], [data-newrun]')) { ui.pop = false; ui.acct = false; ui.sub = ''; ui.nr = null; render(); return; }
+  if ((el = tg('[data-pop]'))) { ui.pop = !ui.pop; ui.acct = false; ui.nr = null; if (ui.pop) opening = 'pop'; render(); return; }
+  if ((el = tg('[data-acct]'))) { ui.acct = !ui.acct; ui.sub = ''; ui.pop = false; ui.nr = null; if (ui.acct) opening = 'acct'; render(); return; }
+  if ((el = tg('[data-sub]'))) { const v = el.dataset.sub; ui.sub = v && ui.sub !== v ? v : ''; if (ui.sub) opening = 'sub'; render(); return; }
+  if ((el = tg('[data-desk]'))) { ui.s.desktop = ui.s.desktop === 'on' ? 'off' : 'on'; toast(ui.s.desktop === 'on' ? 'Desktop notifications on' : 'Desktop notifications off'); render(); return; }
   if ((el = tg('[data-level]'))) { ui.level = el.dataset.level; ui.sub = ''; toast(`Interface mode: ${cap(ui.level)}`); render(); return; }
   if ((el = tg('[data-sw]'))) { const k = el.dataset.sw; ui[k] = !ui[k]; render(); return; }
   if ((el = tg('[data-appearance]'))) { applyAppearance(el.dataset.appearance); render(); return; }
   if ((el = tg('[data-details]'))) { toast('Opens Statistics (not in this prototype)'); render(); return; }
-  if ((el = tg('[data-newrun]'))) { if (ui.nr) ui.nr = null; else openNewRun(); ui.pop = false; ui.acct = false; render(); return; }
+  if ((el = tg('[data-newrun]'))) { if (ui.nr) ui.nr = null; else { openNewRun(); opening = 'nr'; } ui.pop = false; ui.acct = false; render(); return; }
   if ((el = tg('[data-nr-use]'))) { ui.nr = { ...ui.nr, on: el.dataset.nrUse, wait: false, moved: '' }; render(); return; }
   if ((el = tg('[data-nr-wait]'))) { ui.nr.wait = true; render(); return; }
   if ((el = tg('[data-nr-now]'))) { ui.nr.wait = false; render(); return; }

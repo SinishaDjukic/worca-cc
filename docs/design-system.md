@@ -38,7 +38,8 @@ The type scale below, named by what it does on a Rail page.
 ### The Rail look
 Calm and state-first: the look refines the current one and never adds a character of its own (no display faces, no
 drawn rails, no new hues). Mocks: `plans/rail/mocks/visual-language-refined-*.png`. The prototype and the app keep
-today's look until the Rail ships; these values replace it then.
+today's look until the Rail ships; these values replace it then. The Pulse prototype (`pulse.html`) already shows
+the Rail look, so it can be judged in use.
 - **Type:** Inter, bundled (400, 500, 600), in place of Poppins; JetBrains Mono stays for code, branches and ids. No
   700: titles and the state word are 600 with −0.02em tracking, buttons 500.
 - **One surface:** the page and the card share one background (`--bg` = `--panel`); the card keeps its 1px `--line`.
