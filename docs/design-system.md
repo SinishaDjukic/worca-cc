@@ -149,6 +149,15 @@ what it belongs to.
 - **A list of what a run produced groups by what each item is** (Code, Tests, Not in the code), not by folder;
   largest first, the folder after the name, each group's head with its count.
 
+**What opens, and what does not** (mocks: `plans/rail/mocks/run-expand-rules-*.png`):
+- **A row opens its own detail, in place:** the ask's parts, a file's diff, a step's rounds. Its › points right while
+  closed and down while open; focus stays on the row.
+- **What has a problem opens by itself** (a failing test, a part of the ask not done); what went fine stays one line.
+- **A fact that has a home elsewhere links there instead of opening a copy:** the evidence line goes to Activity.
+- **Sections never collapse:** a section or group is always drawn; one that is too long shows less, it does not fold.
+- **Opening never moves what is above it.** Several rows may be open at once, except one detail of a kind at a time
+  (one diff).
+
 **Where an action goes** (on every page):
 | Kind of action | Slot |
 |---|---|
