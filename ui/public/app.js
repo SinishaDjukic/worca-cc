@@ -1905,6 +1905,7 @@ function handleServerMessage(msg) {
     return;
   }
   if (msg.type === 'projects-changed') {
+    requirementsView.targetsChanged();   // its projects and workspaces are read again at the next paint
     askPanel?.optionsChanged();
     scheduleOnboardingRefresh();
     refreshAllCounts();
@@ -1914,6 +1915,7 @@ function handleServerMessage(msg) {
     return;
   }
   if (msg.type === 'workspaces-changed') {
+    requirementsView.targetsChanged();
     askPanel?.optionsChanged();
     // The automatic re-scan after a member change (server afterMembersChanged) ends here.
     if (msg.workspaceId && WS_RESCAN_ENDS[msg.action]) endWsRescan(msg.workspaceId, WS_RESCAN_ENDS[msg.action], msg.runId || null);

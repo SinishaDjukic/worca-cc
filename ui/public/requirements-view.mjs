@@ -350,10 +350,29 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     msgEl.replaceChildren(`Started build v${version}. `, h('a', { class: 'req-msg-link', href: `#running/${runId}` }, 'Open the run'));
   };
 
+  // The projects and workspaces the page names. Kept between paints (a live frame repaints often, and /api/projects can be slow):
+  // asked again after TARGETS_TTL_MS or after a projects-changed / workspaces-changed frame (targetsChanged).
+  const TARGETS_TTL_MS = 30_000;
+  let targetsAt = 0;          // when `targets` was last read whole; 0 = ask again
+  let targetsGen = 0;         // bumped by targetsChanged: a read that started before it is not kept
+  let targetsLoading = null;  // the read in flight, shared by the paints that need it
   async function loadTargets() {
-    const [p, w] = await Promise.all([api('GET', '/api/projects').catch(() => ({})), api('GET', '/api/workspaces').catch(() => ({}))]);
+    const gen = targetsGen;
+    let whole = true;
+    const [p, w] = await Promise.all([api('GET', '/api/projects').catch(() => { whole = false; return {}; }), api('GET', '/api/workspaces').catch(() => { whole = false; return {}; })]);
     targets = { projects: p.projects || [], workspaces: w.workspaces || [] };
+    if (whole && gen === targetsGen) targetsAt = Date.now();
   }
+  const targetsFresh = () => targetsAt > 0 && Date.now() - targetsAt < TARGETS_TTL_MS;
+  function ensureTargets() {
+    if (targetsFresh()) return Promise.resolve();
+    if (!targetsLoading) {
+      const p = loadTargets().finally(() => { if (targetsLoading === p) targetsLoading = null; });
+      targetsLoading = p;
+    }
+    return targetsLoading;
+  }
+  const targetsChanged = () => { targetsGen += 1; targetsAt = 0; targetsLoading = null; };
   const targetName = (f) => (f.scopeType === 'workspace'
     ? targets.workspaces.find((w) => w.id === f.scopeKey)?.name
     : targets.projects.find((p) => p.key === f.scopeKey)?.name) || f.scopeKey;
@@ -421,25 +440,38 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const mine = ++paintNo;
     const key = param === 'new' ? 'new' : seqShown != null ? `feature/${seqShown}` : briefShown ? `brief/${scopeId(briefShown)}` : 'list';
     try {
-      await loadTargets();
+      // The projects and workspaces and the screen's own call go out together; the screen needs both before it renders.
+      const targetsDone = ensureTargets();
       if (briefShown) {
-        const data = await api('GET', `/api/requirements/${briefPath(briefShown.scopeType, briefShown.scopeKey)}`);
+        const [, data] = await Promise.all([targetsDone, api('GET', `/api/requirements/${briefPath(briefShown.scopeType, briefShown.scopeKey)}`)]);
         if (mine === paintNo) { paintBrief(data); paintedKey = key; }
         return;
       }
       if (key === 'new') {
-        // The list call carries the code-look cost for the hint, who interviews (A1.1) and the briefs (A7 board 13);
-        // the form renders without it.
-        const list = await api('GET', '/api/requirements').then((d) => d, () => null);
-        const look = list && list.lookCostUsd;
-        const interview = list && list.interview && typeof list.interview === 'object' ? list.interview : null;
-        const briefs = list && Array.isArray(list.briefs) ? list.briefs : [];
-        const estimates = list && list.readEstimates && typeof list.readEstimates === 'object' ? list.readEstimates : {};
-        if (mine === paintNo) { paintNew(typeof look === 'number' ? look : null, interview, briefs, estimates); paintedKey = key; }
+        // The list call carries the code-look cost for the hint, who interviews (A1.1) and the briefs (A7 board 13).
+        // The form renders without it, as soon as the projects are known; what needs the list is filled in when it arrives.
+        let settled = false;
+        const listP = api('GET', '/api/requirements').then((d) => d, () => null).then((d) => { settled = true; return d; });
+        await targetsDone;
+        if (mine !== paintNo) return;
+        const take = (list) => ({
+          look: list && typeof list.lookCostUsd === 'number' ? list.lookCostUsd : null,
+          interview: list && list.interview && typeof list.interview === 'object' ? list.interview : null,
+          briefs: list && Array.isArray(list.briefs) ? list.briefs : [],
+          estimates: list && list.readEstimates && typeof list.readEstimates === 'object' ? list.readEstimates : {},
+        });
+        // already here (the usual case): the form is drawn whole; else drawn bare and filled in below
+        const first = settled ? take(await listP) : take(null);
+        const fill = paintNew(first.look, first.interview, first.briefs, first.estimates);
+        paintedKey = key;
+        if (!settled) {
+          const late = take(await listP);
+          if (mine === paintNo) fill(late);
+        }
         return;
       }
       if (seqShown != null) {
-        const data = await api('GET', `/api/requirements/${seqShown}`);
+        const [, data] = await Promise.all([targetsDone, api('GET', `/api/requirements/${seqShown}`)]);
         // A3: the chat too while the panel is open, or when it has messages (their drafts fill the question card, D6). A chat that
         // cannot be read keeps the one last shown (show() empties it on another feature): never the first-open text and its
         // starters, each a paid call, over a chat that has messages, and the drafts stay in the question card.
@@ -450,7 +482,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         if (mine === paintNo) { if (!chatFailed) takeChat(chatBody); paintFeature(data.feature, data.turns || []); paintedKey = key; }
         return;
       }
-      const data = await api('GET', `/api/requirements${filter === 'archived' ? '?archived=1' : ''}`);
+      const [, data] = await Promise.all([targetsDone, api('GET', `/api/requirements${filter === 'archived' ? '?archived=1' : ''}`)]);
       if (mine === paintNo) { paintList(data); paintedKey = key; }
     } catch (err) {
       if (mine !== paintNo) return;
@@ -762,8 +794,11 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       api('GET', importUrl(scopeNow())).then((r) => { if (mine === paintNo && r && Array.isArray(r.sources) && r.sources.length) fromBtn.hidden = false; }, () => {});
     }
     // A brief is usable once made (D10), also while it is being refreshed.
-    const usable = new Map(briefs.filter((b) => b && b.scopeType && b.scopeKey && b.madeAt).map((b) => [scopeId(b), b]));
-    const cost = costHint(lookCost, interview, estimates);
+    const usableOf = (list) => new Map(list.filter((b) => b && b.scopeType && b.scopeKey && b.madeAt).map((b) => [scopeId(b), b]));
+    let usable = usableOf(briefs);
+    let cost = costHint(lookCost, interview, estimates);
+    let noLookNow = false;   // what sayLook last told the cost line, and the file kinds sync last told it: carried to a rebuilt line
+    let kindsNow = [];
     let lookHint = h('span', { class: 'hint req-new-look' });
     const sayLook = () => {
       const [scopeType, ...rest] = select.value.split(':');
@@ -780,7 +815,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       if (lookHint.parentNode) lookHint.replaceWith(next);
       lookHint = next;
       // with a brief, or without git, the code look's cost is not said: only the words after the dot change (A7 §6 / §9)
-      cost.brief(!!b || !git);
+      noLookNow = !!b || !git;
+      cost.brief(noLookNow);
     };
     select.addEventListener('change', sayLook);
     sayLook();
@@ -804,7 +840,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
           icoBtn('remove', `Remove ${file.name}`, () => removePicked(file), { cls: 'req-new-chip-x' }));
       }));
       note.hidden = !picked.length && !ticketFiles().length;
-      cost.files([...ticketFiles().map((x) => x.kind), ...picked.map((p) => kindOfName(p.name))]);
+      kindsNow = [...ticketFiles().map((x) => x.kind), ...picked.map((p) => kindOfName(p.name))];
+      cost.files(kindsNow);
       if (cost.el && cost.el.parentNode !== actions) actions.prepend(cost.el);   // A2's line appears with the first file
     };
     // A removed chip hands the focus to the next chip's ×, else the previous one's, else Choose files.
@@ -909,6 +946,21 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         createFail,
         actions),
       note));
+    // What the feature list tells (drawn bare, the list arrived after the form): the interview line and its cost, the privacy note's
+    // model and the briefs. Only these change; what was typed or picked stays.
+    return ({ look, interview: who, briefs: bs, estimates: est }) => {
+      const prev = cost;
+      const next = costHint(look, who, est);
+      next.brief(noLookNow);
+      next.files(kindsNow);
+      if (prev.el && prev.el.parentNode === actions) { if (next.el) prev.el.replaceWith(next.el); else prev.el.remove(); }
+      else if (next.el) actions.prepend(next.el);
+      cost = next;
+      const privacy = host.querySelector('#req-new-files-privacy');
+      if (privacy) privacy.replaceWith(privacyNote(who, 'req-new-files-privacy'));
+      usable = usableOf(bs);
+      sayLook();
+    };
   }
 
   // ---- the Product brief page (A7 §6; board BriefEmpty.dc.html): the header, Give Worca a head start while
@@ -4683,7 +4735,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     releaseExport();
     syncSheetInert();   // the view is hidden by now: the sheet's inert page is put back
   };
-  return { show, changed, leave, destroy: () => {
+  return { show, changed, leave, targetsChanged, destroy: () => {
     paintNo += 1; closeDialog(false); offGit(); document.removeEventListener('click', onDocClick, true);
     if (sheetMq && typeof sheetMq.removeEventListener === 'function') sheetMq.removeEventListener('change', syncSheetInert);
     host.replaceChildren(); syncSheetInert();
