@@ -452,6 +452,10 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         // The form renders without it, as soon as the projects are known; what needs the list is filled in when it arrives.
         let settled = false;
         const listP = api('GET', '/api/requirements').then((d) => d, () => null).then((d) => { settled = true; return d; });
+        // From a ticket… needs a target to ask about: the first one, when the projects are already known (else paintNew asks, as
+        // soon as they are, with the list still on its way)
+        const early = targetsFresh() ? firstTarget() : null;
+        if (early) importInfoFor(early).catch(() => {});
         await targetsDone;
         if (mine !== paintNo) return;
         const take = (list) => ({
@@ -791,7 +795,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     };
     if (select.value) {
       const mine = paintNo;
-      api('GET', importUrl(scopeNow())).then((r) => { if (mine === paintNo && r && Array.isArray(r.sources) && r.sources.length) fromBtn.hidden = false; }, () => {});
+      importInfoFor(scopeNow()).then((r) => { if (mine === paintNo && r && Array.isArray(r.sources) && r.sources.length) fromBtn.hidden = false; }, () => {});
     }
     // A brief is usable once made (D10), also while it is being refreshed.
     const usableOf = (list) => new Map(list.filter((b) => b && b.scopeType && b.scopeKey && b.madeAt).map((b) => [scopeId(b), b]));
@@ -4277,6 +4281,29 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   // search's own number drops one a newer search superseded. Ticket text is set with textContent only, never as HTML. ----
   let importPrefs = null;   // D3: the connection and project last used, for the page session: { conn, project }
   const importUrl = (s, path = '') => `/api/requirements/import/${s.scopeType}/${encodeURIComponent(s.scopeKey)}${path}`;
+  // What can import for a target (GET import/:scopeType/:scopeKey): asked for when New feature starts to paint, kept for IMPORT_INFO_TTL_MS
+  // and handed to the dialog, so neither the button nor the dialog waits on a request of its own. An answer without a source, or a
+  // failed one, is not kept: a connection added meanwhile shows at the next visit.
+  const IMPORT_INFO_TTL_MS = 5 * 60_000;
+  const importInfos = new Map();   // scopeId → { at, p, info }
+  const importInfoFresh = (e) => !!e && Date.now() - e.at < IMPORT_INFO_TTL_MS;
+  function importInfoFor(s) {
+    const id = scopeId(s);
+    const hit = importInfos.get(id);
+    if (importInfoFresh(hit)) return hit.p;
+    const e = { at: Date.now(), p: null, info: null };
+    e.p = api('GET', importUrl(s));
+    importInfos.set(id, e);
+    e.p.then((info) => {
+      if (info && Array.isArray(info.sources) && info.sources.length) e.info = info; else if (importInfos.get(id) === e) importInfos.delete(id);
+    }, () => { if (importInfos.get(id) === e) importInfos.delete(id); });
+    return e.p;
+  }
+  /** The answer for a target when one is in hand and fresh, else null. */
+  const importInfoCached = (s) => { const e = importInfos.get(scopeId(s)); return importInfoFresh(e) ? e.info : null; };
+  /** The target New feature opens on (the form's first option), or null before the projects are known. */
+  const firstTarget = () => (targets.projects.length ? { scopeType: 'project', scopeKey: targets.projects[0].key }
+    : targets.workspaces.length ? { scopeType: 'workspace', scopeKey: targets.workspaces[0].id } : null);
   const SEARCH_MS = 300;
   const pastedKeyOf = (v) => {
     const s = String(v || '').trim();
@@ -4300,7 +4327,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   function openPick(ctx, keep = null) {
     closeDialog(false);
     const s = ctx.scope();
-    const st = keep || { info: null, conn: null, project: '', projects: [], search: '', searched: '', tickets: [], cursor: null, chosen: null, seq: 0, projSeq: 0 };
+    const st = keep || { info: importInfoCached(s), conn: null, project: '', projects: [], search: '', searched: '', tickets: [], cursor: null, chosen: null, seq: 0, projSeq: 0 };
     let timer = null;
     const title = h('h2', { id: 'req-pick-title', tabindex: '-1', text: 'Start from a ticket' });
     const lead = h('p', { class: 'req-dlg-lead', id: 'req-pick-desc' });

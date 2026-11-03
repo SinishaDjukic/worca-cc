@@ -116,3 +116,101 @@ test('a live repaint keeps the projects and workspaces it has; a project change 
   assert.equal(started(calls, 'GET', '/api/projects'), 2, 'asked again after a projects-changed frame');
   m.view.destroy();
 });
+
+// ---- From a ticket…: the sources answer is asked for with the form, and the dialog reuses it ----
+const IMP = '/api/requirements/import/project/shop-1';
+const CONN = { plugin: 'jira-source', sourceId: 'jira', profile: 'acme' };
+const SOURCES = { sources: [{ plugin: 'jira-source', sourceId: 'jira', name: 'Jira', profiles: [{ id: 'acme', label: 'acme.atlassian.net (Cloud)' }] }], defaultConnection: CONN, defaultProject: null };
+const NONE = { sources: [], defaultConnection: null, defaultProject: null };
+const IMPORT_ROUTES = (over = {}) => ({ 'GET /api/projects': PROJECTS, 'GET /api/workspaces': { workspaces: [] }, 'GET /api/requirements': LIST,
+  [`GET ${IMP}`]: SOURCES, [`POST ${IMP}/options`]: { projects: [{ value: 'SHOP', label: 'SHOP' }] }, [`POST ${IMP}/search`]: { tickets: [] }, ...over });
+
+test('From a ticket…: the sources answer is asked for while the feature list is still on its way, not after the form is drawn', async () => {
+  const held = gate();
+  const calls = fakeApi(IMPORT_ROUTES({ 'GET /api/requirements': { hold: held, value: LIST } }));
+  const m = make();
+  void m.view.show('new');
+  await settle();
+  assert.equal(started(calls, 'GET', IMP), 1, 'asked with the list held');
+  assert.equal(m.host.querySelector('[data-ui="import-open"]').hidden, false, 'the button is there with the form');
+  held.release();
+  await settle();
+  assert.equal(started(calls, 'GET', IMP), 1);
+  m.view.destroy();
+});
+
+test('From a ticket…: with the projects already known it is asked for at the start of the paint, with the list, before the form is drawn', async () => {
+  const calls = fakeApi(IMPORT_ROUTES());
+  const m = make();
+  await m.view.show('');         // the list screen read the projects; New feature has not asked about tickets yet
+  await settle();
+  calls.length = 0;
+  void m.view.show('new');       // no tick yet: only what the paint starts before its first wait
+  assert.deepEqual(calls.map((c) => `${c.method} ${c.url}`).sort(), [`GET ${IMP}`, 'GET /api/requirements'].sort());
+  await settle();
+  m.view.destroy();
+});
+
+test('From a ticket…: the dialog uses the answer the form had and does not ask for the sources again', async () => {
+  const calls = fakeApi(IMPORT_ROUTES());
+  const m = make();
+  await m.view.show('new');
+  await settle();
+  m.host.querySelector('[data-ui="import-open"]').click();
+  await settle();
+  assert.ok(document.querySelector('[data-ui="pick-search"]'), 'the dialog is open');
+  assert.equal(started(calls, 'GET', IMP), 1, 'one request for the sources in all');
+  assert.equal(started(calls, 'POST', `${IMP}/search`), 1);
+  m.view.destroy();
+});
+
+test('From a ticket…: the answer stands for 5 minutes, then it is asked for again', async () => {
+  const calls = fakeApi(IMPORT_ROUTES());
+  const m = make();
+  await m.view.show('new');
+  await settle();
+  await m.view.show('');
+  await m.view.show('new');
+  await settle();
+  assert.equal(started(calls, 'GET', IMP), 1, 'a second visit within 5 minutes asks nothing');
+  const now = Date.now;
+  Date.now = () => now() + 5 * 60_000 + 1000;
+  try {
+    await m.view.show('');
+    await m.view.show('new');
+    await settle();
+  } finally { Date.now = now; }
+  assert.equal(started(calls, 'GET', IMP), 2, 'asked again after the TTL');
+  m.view.destroy();
+});
+
+test('From a ticket…: an answer with no source is not kept, so a connection added meanwhile shows the button at the next visit', async () => {
+  let answer = NONE;
+  const calls = fakeApi(IMPORT_ROUTES({ [`GET ${IMP}`]: () => answer }));
+  const m = make();
+  await m.view.show('new');
+  await settle();
+  assert.equal(m.host.querySelector('[data-ui="import-open"]').hidden, true);
+  answer = SOURCES;
+  await m.view.show('');
+  await m.view.show('new');
+  await settle();
+  assert.equal(started(calls, 'GET', IMP), 2);
+  assert.equal(m.host.querySelector('[data-ui="import-open"]').hidden, false);
+  m.view.destroy();
+});
+
+test('From a ticket…: a failed sources call is not kept either', async () => {
+  let n = 0;
+  const calls = fakeApi(IMPORT_ROUTES({ [`GET ${IMP}`]: () => { n += 1; return n === 1 ? undefined : SOURCES; } }));
+  const m = make();
+  await m.view.show('new');
+  await settle();
+  assert.equal(m.host.querySelector('[data-ui="import-open"]').hidden, true);
+  await m.view.show('');
+  await m.view.show('new');
+  await settle();
+  assert.equal(started(calls, 'GET', IMP), 2);
+  assert.equal(m.host.querySelector('[data-ui="import-open"]').hidden, false);
+  m.view.destroy();
+});
