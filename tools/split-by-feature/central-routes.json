@@ -1,0 +1,18 @@
+[
+  { "method": "POST", "path": "/api/ingress/teams/:plugin/:channelId/:token", "reason": "Teams ingress: the one deliberate exemption from the loopback guard, so it must be mounted before the guard" },
+  { "method": "POST", "path": "/api/ingress/github", "reason": "GitHub webhook ingress: exempt from the loopback guard, mounted before it with its own raw body limit" },
+  { "method": "POST", "path": "/api/ingress/azure", "reason": "Azure DevOps service hooks: exempt from the loopback guard, mounted before it with its own raw body limit" },
+  { "method": "POST", "path": "/api/ask/threads/:id/messages", "reason": "body limit: Ask attachments need a larger JSON window, registered before the global 8mb parser" },
+  { "method": "POST", "path": "/api/run", "reason": "body limit: a run's extra files ride base64, registered before the global 8mb parser" },
+  { "method": "PUT", "path": "/api/scripts/:key/cases", "reason": "body limit: a script's saved cases need 64mb, registered before the global 8mb parser" },
+  { "method": "POST", "path": "p", "reason": "body limit: the requirements upload routes (REQUIREMENTS_UPLOAD_ROUTES) get the flag gate, upload slots and a larger parser before the global 8mb parser" },
+  { "method": "?", "path": "route", "reason": "guard: GIT_ONLY_ROUTES answer 409 GIT_MISSING while git is missing, registered before their handlers" },
+  { "method": "GET", "path": "/vendor/hljs/core.min.js", "reason": "vendor asset: highlight.js served from node_modules before the /vendor 404 tail" },
+  { "method": "GET", "path": "/vendor/hljs/languages/:file", "reason": "vendor asset: highlight.js languages on an allow-list, before the /vendor 404 tail" },
+  { "method": "GET", "path": "/vendor/marked/marked.esm.js", "reason": "vendor asset: marked served from node_modules before the /vendor 404 tail" },
+  { "method": "GET", "path": "/vendor/dompurify/purify.es.mjs", "reason": "vendor asset: DOMPurify served from node_modules before the /vendor 404 tail" },
+  { "method": "GET", "path": "`${prefix}${name}`", "reason": "vendor asset: the voice files (VOICE_VENDOR) on an allow-list, before the /vendor 404 tail" },
+  { "method": "GET", "path": "route", "reason": "vendor asset: the terminal pane's xterm files (terminalVendorFiles), before the /vendor 404 tail" },
+  { "method": "GET", "path": "/vendor/speech/lib/:name", "reason": "vendor asset: the speech runtime from the asset store, before the /vendor 404 tail" },
+  { "method": "GET", "path": "/^\\/vendor\\/speech\\/hf\\/([^/]+\\/[^/]+)\\/resolve\\/[^/]+\\/(.+)$/", "reason": "vendor asset: the speech models from the asset store, before the /vendor 404 tail" }
+]

@@ -263,14 +263,18 @@ Pass: step 5's diff lists only P's own files, `npm test` has 0 failures outside 
 ## After the split
 
 On the split tree (`ui/public/parts.json` exists), `node tools/split-by-feature.mjs --check` and its test
-(`test/split-by-feature-plan.test.mjs`) catch two old-layout changes that otherwise merge cleanly
+(`test/split-by-feature-plan.test.mjs`) catch three old-layout changes that otherwise merge cleanly
 (`tools/split-by-feature/after-split.mjs`):
 
 - **A movable route left in `ui/server.mjs`.** Between the parts-aware static mount (`servePublic`) and the SPA fallback,
   the rules that moved routes at the split (`tools/split-by-feature/routes.mjs`) still apply. A route they would move, and
   whose key is not in `tools/split-by-feature/pinned.json`, fails with
-  `route GET /api/x (ui/server.mjs:N) belongs in ui/routes/FEATURE/ — run npm run split:catch-up -- BRANCH`. Routes above
-  the static mount (ingress, `/vendor`, body parsers) were never in the move region and are not checked.
+  `route GET /api/x (ui/server.mjs:N) belongs in ui/routes/FEATURE/ — run npm run split:catch-up -- BRANCH`.
+- **A route above the static mount.** The top of `ui/server.mjs` is for central sign-in and guards only: any
+  `app.get|post|put|patch|delete|all` call before `servePublic` whose method and path are not in
+  `tools/split-by-feature/central-routes.json` (today's ingress, body-limit, git guard and `/vendor` routes, each with
+  its reason) fails with the same message plus `(top of ui/server.mjs is for central sign-in and guards only)`. The
+  repo's `CLAUDE.md` states the placement rule for agents: move the code, never add an exception.
 - **A kept monolith.** `ui/public/style.css` or `ui/public/index.html` next to `ui/public/parts.json`, typically a
   modify/delete conflict resolved by keeping the PR's copy, is not served: the app builds `/style.css` and the page from
   the parts. `--check` and `test/public-assets.test.mjs` fail and name the catch-up command.

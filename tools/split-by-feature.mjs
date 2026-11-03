@@ -2,7 +2,8 @@
 // tools/split-by-feature.mjs — #919: split ui/server.mjs routes, ui/public/style.css and ui/public/index.html
 // into per-feature files. Pure planner + writer; same input → same output (no clocks, sorted output).
 //   --check [--stats [--tree]] plan only; exit 1 on any problem (unmapped, new pin, over cap, bad name, missing part, gate;
-//                              on a split tree: a movable route left in ui/server.mjs or a monolith kept next to ui/public/parts.json);
+//                              on a split tree: a movable route left in ui/server.mjs, a route above its static mount
+//                              not in central-routes.json, or a monolith kept next to ui/public/parts.json);
 //                              --tree prints every generated file with its line count
 //   --apply                    write the split into --root (default: cwd) on a clean checkout; a split tree: 0 files changed
 //   --dry-run [--json F] [--tests safety|none]
@@ -23,11 +24,12 @@ import { splitCss, lineCount } from './split-by-feature/css.mjs';
 import { splitHtml } from './split-by-feature/html.mjs';
 import { readPartsManifest } from '../src/core/public-assets.mjs';
 import { compareTrees, childEnv } from './split-by-feature/equivalence.mjs';
-import { catchUpCommand, residualRouteProblems, keptMonolithProblems } from './split-by-feature/after-split.mjs';
+import { catchUpCommand, residualRouteProblems, topZoneRouteProblems, keptMonolithProblems } from './split-by-feature/after-split.mjs';
 
 export const MIGRATION_VERSION = 1;
 export const SPIKE_GATE = Object.freeze({ movedShare: 0.95 });   // and ui/server.mjs within its ceiling in size-caps.json
 const PINNED_REL = 'tools/split-by-feature/pinned.json';
+const CENTRAL_REL = 'tools/split-by-feature/central-routes.json';
 const MAP_REL = 'tools/split-by-feature/feature-map.json';
 const CAPS_REL = 'tools/split-by-feature/size-caps.json';
 
@@ -41,8 +43,10 @@ function afterSplitProblems(root, mapText) {
   let map;
   try { map = loadMap(root, mapText); } catch (err) { return err.problems ?? [err.message]; }
   const pinned = new Set(JSON.parse(readFileSync(join(root, PINNED_REL), 'utf8')).map((p) => p.key));
+  const central = new Set(JSON.parse(readFileSync(join(root, CENTRAL_REL), 'utf8')).map((r) => `${r.method} ${r.path}`));
   const cmd = catchUpCommand(root);
-  return [...residualRouteProblems(readFileSync(join(root, 'ui/server.mjs'), 'utf8'), map, pinned, cmd),
+  const serverSrc = readFileSync(join(root, 'ui/server.mjs'), 'utf8');
+  return [...topZoneRouteProblems(serverSrc, map, central, cmd), ...residualRouteProblems(serverSrc, map, pinned, cmd),
     ...keptMonolithProblems(join(root, 'ui/public'), cmd)];
 }
 
