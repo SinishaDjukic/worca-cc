@@ -115,6 +115,35 @@ export default function createTaskSource(ctx, deps = {}) {
   /** The token's repositories, the 100 most recently updated (as the Repository input has always listed them). */
   const repoList = async () => (await ghFetch(gh, '/user/repos?per_page=100&sort=updated')).json;
 
+  // ---- Ticket updates: one move, before the comment (D11) ----
+  /** GitHub's own words for a refusal, without a trailing full stop; "GitHub gave no reason" when it sends none. */
+  const githubSaid = (e) => (String(e?.detail || '').trim() || 'GitHub gave no reason').replace(/\.+$/, '');
+  /** PR 1's rule for a refused move (its Deviation 3), in GitHub's terms: a 4xx other than 401 (auth) and 429, and not a
+   *  secondary rate limit (a 403 that says so), is a line; a 5xx, network error, timeout, refused token or rate limit throws,
+   *  so the write-back fails and can be retried. */
+  const refusedMove = (e) => !!e && e.kind === 'plugin' && e.status >= 400 && e.status < 500 && e.status !== 429
+    && !/rate limit/i.test(e.detail || '');
+  /** Answers { note, moved }. Any Done status closes as completed an issue that is open; a closed one (as not planned too)
+   *  stays as it is. A status move sets that status: open reopens, completed and not_planned close with that reason. Reading
+   *  the issue throws (decision 9). */
+  async function applyMove(repo, number, move) {
+    const none = { note: '', moved: null };
+    const want = move.category === 'done' ? 'completed' : (typeof move.status === 'string' ? move.status.trim() : '');
+    if (move.none === true || !want) return none;
+    const now = statusOf((await ghFetch(gh, `/repos/${repo}/issues/${number}`)).json);
+    if (move.category === 'done' ? now.value !== 'open' : now.value === want) return { ...none, note: `Already in ${now.label}.` };
+    const to = STATUSES.find((s) => s.value === want);
+    if (!to) return { ...none, note: `Not moved: ${repo} has no status named ${move.name || want} any more.` };
+    try {
+      await ghFetch(gh, `/repos/${repo}/issues/${number}`, { method: 'PATCH',
+        body: to.value === 'open' ? { state: 'open' } : { state: 'closed', state_reason: to.value } });
+    } catch (e) {
+      if (refusedMove(e)) return { ...none, note: `Not moved: GitHub refused the move to ${to.label}: ${githubSaid(e)}.` };
+      throw e;
+    }
+    return { note: `Moved to ${to.label}.`, moved: { from: now.label, to: to.label } };
+  }
+
   return {
     async validateConfig() {
       try {
@@ -216,12 +245,20 @@ export default function createTaskSource(ctx, deps = {}) {
       };
     },
 
-    async reportResult(id, { status, summary, links = [] }) {
+    async reportResult(id, { status, summary, links = [], move } = {}) {
       const { repo, number } = parseId(id);
       let body = summary || `worca-cc run finished: ${status}`;
       if (links.length) {
         body += '\n\n';
         for (const l of links) body += `- [${l.title}](${l.url})\n`;
+      }
+      if (move && typeof move === 'object') {
+        // Ticket updates (D11): Worca decided the move; the issue changes first, then one comment: the run summary, its links,
+        // then the outcome line last. Without a move (nothing saved in Worca) the old path below runs unchanged (D4).
+        const out = await applyMove(repo, number, move);
+        await ghFetch(gh, `/repos/${repo}/issues/${number}/comments`, { method: 'POST',
+          body: { body: out.note ? `${body.replace(/\s+$/, '')}\n\n${out.note}` : body } });
+        return { commented: true, moved: out.moved, note: out.note };
       }
       await ghFetch(gh, `/repos/${repo}/issues/${number}/comments`, { method: 'POST', body: { body } });
       if (status === 'completed' && closeOnComplete) {
