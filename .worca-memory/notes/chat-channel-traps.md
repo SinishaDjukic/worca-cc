@@ -2,7 +2,7 @@
 name: chat-channel-traps
 description: Traps in the chat-channel stack (Discord worker filters, parser/rate-limiter APIs, Ask turn echo races) worth reading before planning or building chat-plugin fe
 paths: plugins/*-chat/**, src/core/chat/**
-updated: 2026-11-03T00:57:59.278Z
+updated: 2026-11-03T22:39:24.846Z
 author: Bulibas
 ---
 
@@ -74,3 +74,10 @@ Each of these sank a reviewed plan once (freeform Discord chat plan, cycles 1-2,
   first one's binding. One guard per invariant: an outer post-ack guard makes an inner catch that does the same thing
   an equivalent mutant, so drop it; keep an inner catch only where its outcome differs (runTurn's posts in the
   thread, the start guard posts in the parent channel; a failed reply check keeps ⏳ instead of ❌).
+- **Inbound chat context vs the typed card answer** (chat-context review, 2026-11-03). The bridge skips the
+  text-question card shortcut whenever a message carries `replyTo` or files (`answerOrTurn`). A platform Reply to
+  the BOT's own message inside its bound thread is the natural way to answer a question card. So a worker must not
+  attach `replyTo` there: that message is already in the Ask transcript. Otherwise the answer becomes a paid turn,
+  the card stays open, and the bot's own text is quoted back as "untrusted". Every plugin that adopts `replyTo`
+  (Slack `thread_ts` parent, Telegram `reply_to_message`) needs this, plus a row where a reply to the bot answers
+  an open text question.
