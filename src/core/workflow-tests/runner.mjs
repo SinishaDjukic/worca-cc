@@ -14,6 +14,7 @@ import { REASON, REASON_CODES } from '../failure-policy.mjs';
 import { setupFailedText } from '../../shared/workflow-tests/project-text.mjs';
 import { TRY_SETUP_STAGE } from './shell-step.mjs';
 import { WORKTREE_STAGE } from '../setup-stages.mjs';
+import { releaseCopy } from './project-copy.mjs';
 
 export const MAX_PARALLEL = 3;   // D36. Library script checks stay one at a time (result.mjs), inside runBenchOnce's limit of 2.
 export const COST_POLL_MS = 2000;
@@ -326,6 +327,7 @@ export function createTestRunner(deps) {
       if (example.project) {
         rec.phase = 'preparing';
         rec.project = await deps.prepareProject(example);   // NOT_READY: the catch stops the test as refused
+        if (rec.project) rec.copyKey = example.project.key;   // U-T1 (F1): it holds the copy until cleanUp releases it
         if (st.stopping) { store.updateTry(t.id, { status: 'waiting', startedAt: null }); return; }
       }
       rec.phase = 'working';
@@ -413,13 +415,16 @@ export function createTestRunner(deps) {
   }
 
   /** D61: a project try's checkout, branch and run folder go once its run has settled. Never throws: the boot sweep
-   *  takes whatever a failure leaves. */
+   *  takes whatever a failure leaves. U-T1 (F1): then the copy the try held (ensureStartCommit) is released, however the
+   *  cleanup went; a try that never got its copy (no copyKey) releases nothing. */
   async function cleanUp(rec) {
     try {
       if (rec.runKey) { const l = deps.liveRun(rec.runKey); if (l && l.launch) await Promise.resolve(l.launch).catch(() => {}); }
       const o = rec.outcome || (rec.pipelineId ? await deps.outcomeOf(rec.pipelineId, {}) : null);
       if (o && o.project && deps.cleanupTry) await deps.cleanupTry(o);
-    } catch { /* boot sweep */ }
+    } catch { /* boot sweep */ } finally {
+      if (rec.copyKey) { releaseCopy(rec.copyKey); rec.copyKey = null; }
+    }
   }
 
   /** The free quick check: one mock try of the first example per version still to try ("every step is connected"). */
@@ -436,6 +441,7 @@ export function createTestRunner(deps) {
       try {
         const project = example.project ? await deps.prepareProject(example) : null;   // 3a: the quick check runs in the copy too
         rec.project = project;
+        if (project) rec.copyKey = example.project.key;   // U-T1 (F1): held until cleanUp
         const out = await deps.startRun(tryRunBody(example, store.readExampleFiles(example.id), { workflowId: run.workflowId, tryNo: 0, quick: true,
           ...(project ? { project } : {}) }), {
           startedBy: run.startedBy,

@@ -15,6 +15,7 @@ import { exampleReadiness, testTargetOf } from '../src/core/workflow-tests/try-b
 import { fmtGb, diskRow, diskRefusalText, diskRefusalOnceText, leftOutText, folderMissingText, folderProjectText } from '../src/shared/workflow-tests/project-text.mjs';
 import { diskPlanOf, projectStateOf, readinessText, DISK_MARGIN } from '../src/core/workflow-tests/service.mjs';
 import { WORKTREE_STAGE } from '../src/core/run-harness.mjs';
+import { holdCopy, releaseCopy, _testing as copyTesting } from '../src/core/workflow-tests/project-copy.mjs';
 
 const WF = 'wf_prun';
 const homes = [];
@@ -296,4 +297,25 @@ test('final review: the runner takes WORKTREE_STAGE from a leaf module, not the 
   assert.doesNotMatch(src, /from '\.\.\/run-harness\.mjs'/);
   const leaf = await import('../src/core/setup-stages.mjs');
   assert.equal(leaf.WORKTREE_STAGE, WORKTREE_STAGE, 'the harness re-exports the same constant');
+});
+
+// U-T1 (F1): a try holds Worca's copy from its start (ensureStartCommit) until its cleanup; one that never got it holds nothing.
+test('a try and the quick check release the copy they held once cleaned up; a try that never got its copy releases nothing', async () => {
+  const ex = example();
+  const h = harness();
+  const prepareProject = async (e) => { holdCopy(e.project.key); return h.deps.prepareProject(e); };   // as ensureStartCommit does
+  const runner = createTestRunner({ ...h.deps, prepareProject });
+  const run = await runner.start({ workflowId: WF, kind: 'once', b: 'draft', exampleIds: [ex.id], tries: 2, quickCheck: true });
+  await runner.idle(run.id);
+  assert.equal(store.readTestRun(run.id).quick.status, 'passed');
+  assert.equal(h.prepared.length, 3, 'the quick check and two tries got the copy');
+  assert.equal(copyTesting.copyBusy(pin.key), false, 'every hold was released');
+
+  holdCopy(pin.key);   // another try of the project is live
+  try {
+    const refused = createTestRunner({ ...h.deps, prepareProject: async () => { throw Object.assign(new Error('The project folder is missing'), { code: 'NOT_READY' }); } });
+    const r2 = await refused.start({ workflowId: WF, kind: 'once', b: 'draft', exampleIds: [example().id], tries: 1 });
+    await refused.idle(r2.id);
+    assert.equal(copyTesting.copyBusy(pin.key), true, 'the refused try released nothing: the live one still holds the copy');
+  } finally { releaseCopy(pin.key); }
 });

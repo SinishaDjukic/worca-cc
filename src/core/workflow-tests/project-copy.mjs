@@ -52,12 +52,34 @@ async function git(cwd, args, { env = null } = {}) {
  * a copy whose .git is missing or broken must fail, never act on an enclosing repository (a worcaHome inside a repo).
  */
 function copyGit(dir, args, { env = null } = {}) {
+  if (gitSeam) { const r = gitSeam(dir, args); if (r) return Promise.resolve(r); }   // tests only (_testing.seamGit)
   const e = { ...(env || process.env) };
   if (!env) for (const k of GIT_DIR_ENV) delete e[k];
   e.GIT_CEILING_DIRECTORIES = resolve(testCopiesRoot());
   // Final review I2: the copy's config is written by tries (a setup, an agent), so Worca's own git here runs none of its
   // hooks or fsmonitor and carries the try guard's env (no token, no sign-in).
   return git(dir, withSafeGitArgs(args), { env: tryGitEnv({ env: e }) });
+}
+/** A test seam: (dir, args) → a git result to use instead of running git, or null to run it. */
+let gitSeam = null;
+
+/** U-T1 (F1): git's words when another process holds the copy's config (Windows: a reader has it open, or a lock file). */
+const CONFIG_LOCKED = /Permission denied|could not lock config file|Unable to create '.*\.lock'|File exists/i;
+/**
+ * U-T1 (F1): a write of the copy's config (`fn`, a copyGit call), tried again when the config is busy, as renameRetry does:
+ * on Windows a try's own git reading the shared config makes the replace fail. Up to 5 attempts, 100 ms × attempt apart;
+ * any other failure is returned at once. Returns the last result.
+ */
+async function retryLocked(dir, fn, attempts = 5) {
+  for (let i = 1; ; i += 1) {
+    const r = await fn();
+    if (r.ok) {
+      if (i > 1) console.warn(`workflow tests: .git/config was busy in ${dir}; written on attempt ${i}`);
+      return r;
+    }
+    if (i >= attempts || !CONFIG_LOCKED.test(r.stderr)) return r;
+    await new Promise((res) => setTimeout(res, 100 * i));
+  }
 }
 
 const samePath = (a, b) => {
@@ -123,7 +145,7 @@ async function resetCopyConfig(dir, key) {
     const next = join(gitDir, `config.worca-${process.pid}-${Math.random().toString(36).slice(2, 8)}`);
     try {
       for (const [k, v] of keep) {
-        const w = await copyGit(dir, ['config', '--file', next, k, v]);
+        const w = await retryLocked(dir, () => copyGit(dir, ['config', '--file', next, k, v]));
         if (!w.ok) throw testError(`Worca could not set up its copy of the project: ${firstLine(w.stderr)}`, 'NOT_READY');
       }
       await renameRetry(next, join(gitDir, 'config'));
@@ -215,14 +237,30 @@ async function resetInfo(info, probeInfo) {
  * stopped, error or failed, and not archived) or is still being checked (its try row is running). Then no checkout
  * registration is touched and nothing is reset. No path is compared: git records real paths (junctions, links, short
  * names), so only the database says what runs. When it cannot be read, the copy counts as busy.
+ * U-T1 (F1): a try is live from the moment it got its copy (holdCopy), before its pipelines row is written.
  */
 function copyBusy(key) {
+  if ((liveTries.get(key) || 0) > 0) return true;
   try {
     getDb();
     return !!prepare(`SELECT 1 FROM pipelines p WHERE p.project_key = ? AND p.is_test IS NOT NULL AND p.archived_at IS NULL
       AND (p.status IS NULL OR p.status NOT IN ('done', 'stopped', 'error', 'failed', 'interrupted')
         OR EXISTS (SELECT 1 FROM wf_test_tries t WHERE t.pipeline_id = p.id AND t.status = 'running')) LIMIT 1`).get(key);
   } catch { return true; }
+}
+
+/**
+ * U-T1 (F1): the tries of each copy that got their copy and have not been cleaned up yet (key → count). A try's pipelines
+ * row is written only just before its checkout is made, so without this a try that has just left the key lock is
+ * invisible to copyBusy, and another try's start could reset the copy under it. ensureStartCommit holds; the runner
+ * releases once the try is cleaned up.
+ */
+const liveTries = new Map();
+export function holdCopy(key) { liveTries.set(key, (liveTries.get(key) || 0) + 1); }
+/** Never counts below zero. */
+export function releaseCopy(key) {
+  const n = (liveTries.get(key) || 0) - 1;
+  if (n > 0) liveTries.set(key, n); else liveTries.delete(key);
 }
 
 const fold = (p) => (process.platform === 'win32' ? p.toLowerCase() : p);
@@ -316,11 +354,22 @@ async function ensureTestCopyLocked(key, { projectDir, reset = true }) {
   if (await ownRepo(dir)) {
     try {
       await restoreAsideAlternates(dir);
-      // D54: every remote removed and COPY_SETTINGS set again, always (live tries share the copy).
+      // D54: every remote removed and COPY_SETTINGS set again (live tries share the copy).
+      // U-T1 (F1): only what differs is written: every write replaces .git/config, and on Windows that races the live
+      // tries' own git reading it. A copy already set up gets no write at all; a write that meets a lock is tried again.
       const rem = await copyGit(dir, ['remote']);
       if (!rem.ok) throw testError(`Worca could not read its copy of the project: ${firstLine(rem.stderr)}`, 'NOT_READY');
       const remotes = rem.stdout.split(/\r?\n/).map((n) => n.trim()).filter(Boolean);
-      await setUp(dir, [...remotes.map((n) => ['remote', 'remove', '--', n]), ...COPY_SETTINGS.map(([k, v]) => ['config', k, v])]);
+      const cur = await configEntries(dir, join(dir, '.git', 'config'));   // null when unreadable: every setting is written
+      const differs = ([k, v]) => {
+        if (!cur) return true;
+        const vals = cur.filter(([ck]) => ck === k).map(([, cv]) => cv);
+        return vals.length !== 1 || vals[0] !== v;
+      };
+      for (const args of [...remotes.map((n) => ['remote', 'remove', '--', n]), ...COPY_SETTINGS.filter(differs).map(([k, v]) => ['config', k, v])]) {
+        const r = await retryLocked(dir, () => copyGit(dir, args));
+        if (!r.ok) throw testError(`Worca could not set up its copy of the project: ${firstLine(r.stderr)}`, 'NOT_READY');
+      }
       // Round 3 and 4 (P39): the full reset (config from its allowlist, hooks, .git/info, per-checkout config, replace refs,
       // alternates) only when no checkout of the copy is live: tries running at the same time share the copy's git
       // settings, and a reset would change a running try. Never on a pin (`reset: false`).
@@ -475,28 +524,36 @@ export async function pinStart({ key, name = key, projectDir, ref = null, sha = 
   });
 }
 
-/** Before a try: the example's start commit is in the copy; a copy removed meanwhile is made again (same SHA, D53). */
+/**
+ * Before a try: the example's start commit is in the copy; a copy removed meanwhile is made again (same SHA, D53).
+ * U-T1 (F1): on success the try holds the copy (holdCopy, inside the key lock, once its own checks are done, so it never
+ * blocks its own reset or remake); the caller releases it (releaseCopy) once the try is cleaned up. A start that failed
+ * holds nothing.
+ */
 export async function ensureStartCommit({ key, projectDir, project, changes = null }) {
   return withKeyLock(key, async () => {
     let { dir } = await ensureTestCopyLocked(key, { projectDir });
     // Rounds 5 and 6: a copy that has the start commit but not every object of it is damaged: made again once no test of
     // the project is running, keeping the pinned start commits that were still whole. A check that failed for another
     // reason is no damage: logged, and the try goes on.
-    if ((await copyGit(dir, ['cat-file', '-e', `${project.startCommit}^{commit}`])).ok) {
+    let have = (await copyGit(dir, ['cat-file', '-e', `${project.startCommit}^{commit}`])).ok;
+    if (have) {
       const whole = await commitWhole(dir, project.startCommit);
       if (whole === 'unknown') console.warn(`workflow tests: could not check the start commit in ${dir}; going on`);
       if (whole === 'damaged') {
         if (copyBusy(key)) throw testError("Worca's copy of the project is damaged. It is made again once no test of this project is running.", 'NOT_READY');
         dir = await remakeCopy(key, dir, projectDir);
+        have = (await copyGit(dir, ['cat-file', '-e', `${project.startCommit}^{commit}`])).ok;
       }
     }
-    if (!(await copyGit(dir, ['cat-file', '-e', `${project.startCommit}^{commit}`])).ok) {
+    if (!have) {
       await fetchInto(dir, projectDir, project.startSha);
       const again = changes ? await commitChanges(dir, project.startSha, changes, project.startAt) : project.startSha;
       if (again !== project.startCommit) throw testError(START_GONE_TEXT, 'NOT_READY');
     }
     if (project.startSha && project.startSha !== project.startCommit) await pinRef(dir, project.startSha);   // D53: both
     await pinRef(dir, project.startCommit);
+    holdCopy(key);
     return { copyDir: dir, startCommit: project.startCommit };
   });
 }
@@ -614,7 +671,7 @@ export async function removeTree(dir, { rmImpl = rm, attempts = 5, waitMs = 500 
  * the checkout first (it never follows a junction, as the test proves); `git worktree prune` then drops the registration.
  * This rm-then-prune intentionally replaces `git worktree remove --force`, whose own walk is not proved junction-safe.
  * The checkout folder goes first, outside the lock (a long removal never holds up another try's start); only the copy
- * writes (prune, branch -D) take its key's lock. A copy that is not a repository of its own is skipped and reported.
+ * writes (prune, the branch delete) take its key's lock. A copy that is not a repository of its own is skipped and reported.
  * Takes the key's lock, and is not re-entrant: never call it from inside withKeyLock for the same key.
  */
 export async function removeTryCheckout({ copyDir, worktreeDir = null, branch = null, runRoot = null, pipelineId = null, rmImpl } = {}) {
@@ -632,8 +689,14 @@ export async function removeTryCheckout({ copyDir, worktreeDir = null, branch = 
   const inCopy = async () => {
     if (!(await ownRepo(copyDir))) { errors.push(notACopy(copyDir)); return; }
     await copyGit(copyDir, ['worktree', 'prune']);
-    if (branch && /^[^-]/.test(branch) && (await copyGit(copyDir, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`])).ok) {
-      const d = await copyGit(copyDir, ['branch', '-D', branch]);
+    if (branch && /^[^-]/.test(branch)) {
+      // U-T1 (F1): `update-ref -d`, not `branch -D`, which rewrites .git/config (its branch.<name> section) while other tries
+      // read it. Like `branch -D`, a branch a checkout still uses is never deleted. A branch that is gone deletes as a no-op.
+      // A listing that failed deletes nothing: Worca cannot tell whether a checkout uses the branch.
+      const wl = await copyGit(copyDir, ['worktree', 'list', '--porcelain']);
+      const user = wl.ok ? checkoutOf(wl.stdout, branch) : null;
+      const d = !wl.ok ? wl : user ? { ok: false, stderr: `cannot delete branch '${branch}' used by worktree at '${user}'` }
+        : await copyGit(copyDir, ['update-ref', '-d', `refs/heads/${branch}`]);
       if (!d.ok) errors.push(`Worca could not delete the branch ${branch} in its copy of the project: ${firstLine(d.stderr)}`);
     }
   };
@@ -647,6 +710,16 @@ export async function removeTryCheckout({ copyDir, worktreeDir = null, branch = 
     if (!r.removed && existsSync(runRoot)) errors.push(r.reason || 'the run folder stayed');
   }
   return { removed: !errors.length, error: errors[0] || null };
+}
+
+/** The checkout that has `branch` checked out, from `git worktree list --porcelain`; null when none does. */
+function checkoutOf(porcelain, branch) {
+  let at = null;
+  for (const line of String(porcelain || '').split(/\r?\n/)) {
+    if (line.startsWith('worktree ')) at = line.slice('worktree '.length);
+    else if (line === `branch refs/heads/${branch}`) return at || '?';
+  }
+  return null;
 }
 
 /** `dir` is inside <worcaHome>/runs/<pipelineId> (or <worcaHome>/runs without one): by path, and by realpath when both exist. */
@@ -685,10 +758,12 @@ export async function sweepTestCopies({ log = () => {} } = {}) {
       if (!copyBusy(name)) await clearCheckouts(dir); else await copyGit(dir, ['worktree', 'prune']);
       const held = new Set((await copyGit(dir, ['worktree', 'list', '--porcelain'])).stdout.split('\n')
         .filter((l) => l.startsWith('branch refs/heads/')).map((l) => l.slice('branch refs/heads/'.length)));
-      const r = await copyGit(dir, ['for-each-ref', '--format=%(refname:short)', 'refs/heads/worca-cc/']);
-      for (const b of r.stdout.split('\n').filter(Boolean)) {
+      const r = await copyGit(dir, ['for-each-ref', '--format=%(refname)', 'refs/heads/worca-cc/']);
+      for (const ref of r.stdout.split(/\r?\n/).filter((x) => x.startsWith('refs/heads/'))) {
+        const b = ref.slice('refs/heads/'.length);
         if (held.has(b)) continue;
-        if ((await copyGit(dir, ['branch', '-D', b])).ok) out.branches += 1;
+        // U-T1 (F1): update-ref, never `branch -D`: it leaves .git/config alone.
+        if ((await copyGit(dir, ['update-ref', '-d', ref])).ok) out.branches += 1;
         else log('warn', `workflow tests: could not delete the leftover branch ${b} in ${dir}`);
       }
     });
@@ -729,4 +804,8 @@ export async function commitDate(projectDir, sha) {
 }
 
 /** Test seams. */
-export const _testing = Object.freeze({ commitWhole, copyBusy, isDamage, remakeCopy });
+export const _testing = Object.freeze({
+  commitWhole, copyBusy, isDamage, remakeCopy,
+  /** Use `fn(dir, args)` before every git call in the copy; its non-null result stands for the call. Returns the undo. */
+  seamGit(fn) { gitSeam = fn; return () => { gitSeam = null; }; },
+});

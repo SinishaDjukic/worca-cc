@@ -4,7 +4,7 @@
 import { test, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { _resetForTests, getDb } from '../src/core/db.mjs';
@@ -14,6 +14,7 @@ import { projectKey } from '../src/core/store.mjs';
 import { worcaHome } from '../src/core/projects.mjs';
 import { uncommittedPatch } from '../src/core/git-info.mjs';
 import * as copy from '../src/core/workflow-tests/project-copy.mjs';
+import { guardedGitEnv } from '../src/core/git-guard.mjs';
 
 const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
 const commit = (cwd, msg) => git(cwd, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '-am', msg);
@@ -416,6 +417,7 @@ test('round 4 (P39): a live sibling checkout keeps the shared settings; with non
   git(wt, 'config', 'filter.nb.clean', 'nbstripout');   // and a filter it relies on
   writeFileSync(join(dir, '.git', 'info', 'attributes'), '* filter=lfs\n');
   await copy.ensureStartCommit({ key, projectDir: real, project });   // a second try of the same example starts
+  copy.releaseCopy(key);   // U-T1: the runner releases a try's hold once it is cleaned up
   assert.equal(git(dir, 'config', 'core.hooksPath'), '.husky/_', 'the live try keeps its hooks path');
   assert.equal(git(dir, 'config', 'filter.nb.clean'), 'nbstripout', 'and its filter');
   assert.ok(existsSync(join(dir, '.git', 'info', 'attributes')), 'nothing is reset while a checkout is live');
@@ -516,6 +518,7 @@ test('round 5: an existing copy that still borrows objects is repacked, then its
   const at = new Date(Date.parse(git(person, 'show', '-s', '--format=%cI', sha))).toISOString();
   const project = { key: k, startSha: sha, startCommit: sha, startAt: at };
   await copy.ensureStartCommit({ key: k, projectDir: person, project });
+  copy.releaseCopy(k);   // U-T1: that try was cleaned up
   assert.equal(existsSync(join(dir, '.git', 'objects', 'info', 'alternates')), false, 'repacked, then its alternates removed');
   assert.ok(fsckOk(dir), 'and nothing is missing');
   const wt = join(wh, 'runs', 'r5000002', 'repos', k);
@@ -554,6 +557,7 @@ test('round 5: a locked try checkout and a checkout added outside the run folder
   git(dir, 'worktree', 'add', '-q', '--detach', outside, p.startCommit);
   git(dir, 'config', 'filter.x.clean', 'evil');
   await copy.ensureStartCommit({ key, projectDir: real, project });
+  copy.releaseCopy(key);   // U-T1: that try was cleaned up (the sweep below sees no try)
   assert.throws(() => git(dir, 'config', '--get', 'filter.x.clean'), undefined, 'the reset ran');
   assert.equal(git(dir, 'worktree', 'list', '--porcelain').split(/\r?\n/).filter((l) => l.startsWith('worktree ')).length, 1, 'only the copy itself is registered');
   assert.ok(existsSync(join(outside, 'README.md')), 'a folder outside Worca\'s run folders is never removed');
@@ -635,6 +639,7 @@ test('round 6: an agent\'s own worktree inside a running try survives; locked an
   git(dir, 'worktree', 'lock', outside);
   git(dir, 'config', 'filter.z.clean', 'kept');
   await copy.ensureStartCommit({ key, projectDir: real, project: startOf(p) });   // another try starts: the copy is busy
+  copy.releaseCopy(key);   // U-T1: the second try was cleaned up; the first still runs (its row)
   assert.ok(existsSync(join(nested, 'README.md')), 'the nested worktree is kept');
   assert.equal(registered(dir), 4, 'no registration is touched while a try runs');
   assert.equal(git(dir, 'config', 'filter.z.clean'), 'kept', 'and no reset');
@@ -670,6 +675,7 @@ test('round 6: an alternates file a crash left aside is put back; a repack that 
   rmSync(alt);
   writeFileSync(join(dir, '.git', 'worca-repack-failed'), new Date().toISOString());   // and a repack failed today
   await copy.ensureStartCommit({ key: k, projectDir: person, project });
+  copy.releaseCopy(k);   // U-T1: that try was cleaned up
   assert.ok(existsSync(alt), 'the alternates file is back');
   assert.equal(existsSync(`${alt}.worca-off`), false);
   assert.ok(fsckOk(dir), 'the copy is whole');
@@ -701,6 +707,7 @@ test('round 6: a damaged copy made again keeps the pinned start commits that wer
   assert.throws(() => git(person, 'cat-file', '-e', `${x}^{commit}`), undefined, 'the project no longer has X');
   const at = (sha, from) => new Date(Date.parse(git(from, 'show', '-s', '--format=%cI', sha))).toISOString();
   await copy.ensureStartCommit({ key: k, projectDir: person, project: { key: k, startSha: y, startCommit: y, startAt: at(y, person) } });
+  copy.releaseCopy(k);   // U-T1: that try was cleaned up
   assert.ok(fsckOk(dir), 'made again, whole');
   assert.equal(git(dir, 'rev-parse', `refs/worca-tests/${x}`), x, 'X was carried over from the damaged copy');
   const r = await copy.ensureStartCommit({ key: k, projectDir: person, project: { key: k, startSha: x, startCommit: x, startAt: '2026-10-28T09:00:00.000Z' } });
@@ -733,6 +740,7 @@ test('round 7: with an 8.3 short-name home, the copy is never made again under a
   git(dir, 'worktree', 'add', '-q', '-b', 'worca-cc/try-r7000001', '--', wt, p.startCommit);
   runRow('r7000001', key);
   await copy.ensureStartCommit({ key, projectDir: real, project: startOf(p) });
+  copy.releaseCopy(key);   // U-T1: that try was cleaned up
   assert.ok(existsSync(join(dir, '.git', 'worca-was-here')), 'the copy was kept, not made again');
   assert.equal(git(wt, 'status', '--porcelain'), '', 'the running try\'s checkout still works');
   const { testCopyKeyOf } = await import('../src/core/store.mjs');
@@ -767,3 +775,132 @@ test('round 7: a remake whose new clone fails puts the old copy back, with its p
   assert.equal(git(dir, 'rev-parse', `refs/worca-tests/${p.startCommit}`), p.startCommit, 'the old copy and its pins are back');
   assert.deepEqual(readdirSync(join(wh, 'workflow-tests', 'repos')).filter((n) => n.startsWith('.clone-')), [], 'nothing left aside');
 });
+
+// ── U-T1 (F1): on Windows, parallel tries raced on the copy's shared .git/config. Worca writes it only when a value differs,
+// retries a write that meets a lock, deletes a try branch without touching it, and holds the copy busy from a try's start. ──
+const cfgId = (dir) => { const s = statSync(join(dir, '.git', 'config')); return [s.ino, s.mtimeMs]; };
+const isConfigWrite = (args) => (args[0] === 'config' && !args.includes('--list') && !args.includes('--get')) || (args[0] === 'remote' && args[1] === 'remove');
+
+test('U-T1 (F1): a second try\'s start writes nothing to a copy already set up; a copy with core.longpaths false gets one write', async () => {
+  const p = await copy.pinStart({ key, name: 'real', projectDir: real });
+  const dir = join(wh, 'workflow-tests', 'repos', key);
+  await copy.ensureStartCommit({ key, projectDir: real, project: startOf(p) });   // the first try: none live, so the reset runs; then it holds the copy
+  try {
+    const was = cfgId(dir);
+    await copy.ensureStartCommit({ key, projectDir: real, project: startOf(p) });   // a second try starts while the first runs
+    copy.releaseCopy(key);
+    assert.deepEqual(cfgId(dir), was, '.git/config is the same file, not written again');
+  } finally { copy.releaseCopy(key); }
+
+  runRow('ut1a0001', key);   // a try is live: no reset, only the repair
+  git(dir, 'config', 'core.longpaths', 'false');
+  const writes = [];
+  const restore = copy._testing.seamGit((_d, args) => { if (isConfigWrite(args)) writes.push(args.join(' ')); return null; });
+  try { await copy.ensureStartCommit({ key, projectDir: real, project: startOf(p) }); }
+  finally { restore(); copy.releaseCopy(key); }
+  assert.deepEqual(writes, ['config core.longpaths true'], 'only the value that differs is written');
+  assert.equal(git(dir, 'config', 'core.longpaths'), 'true');
+});
+
+test('U-T1 (F1): removing a try deletes its branch and leaves .git/config alone; so does the boot sweep', async () => {
+  const p = await copy.pinStart({ key, name: 'real', projectDir: real });
+  const dir = join(wh, 'workflow-tests', 'repos', key);
+  const runRoot = join(wh, 'runs', 'ut1b0001');
+  const wt = join(runRoot, 'repos', key);
+  mkdirSync(dirname(wt), { recursive: true });
+  git(dir, 'worktree', 'add', '-q', '-b', 'worca-cc/try-ut1b0001', '--', wt, p.startCommit);
+  const was = cfgId(dir);
+  const r = await copy.removeTryCheckout({ copyDir: dir, worktreeDir: wt, branch: 'worca-cc/try-ut1b0001', runRoot, pipelineId: 'ut1b0001' });
+  assert.deepEqual(r, { removed: true, error: null });
+  assert.throws(() => git(dir, 'rev-parse', '--verify', '--quiet', 'refs/heads/worca-cc/try-ut1b0001'), undefined, 'the branch went');
+  assert.deepEqual(cfgId(dir), was, '.git/config is the same file');
+
+  const wt2 = join(wh, 'runs', 'ut1b0002', 'repos', key);
+  mkdirSync(dirname(wt2), { recursive: true });
+  git(dir, 'worktree', 'add', '-q', '-b', 'worca-cc/left-ut1b0002', '--', wt2, p.startCommit);
+  rmSync(join(wh, 'runs'), { recursive: true, force: true });
+  const was2 = cfgId(dir);
+  assert.deepEqual(await copy.sweepTestCopies(), { copies: 1, branches: 1 });
+  assert.throws(() => git(dir, 'rev-parse', '--verify', '--quiet', 'refs/heads/worca-cc/left-ut1b0002'));
+  assert.deepEqual(cfgId(dir), was2, 'the sweep leaves .git/config alone too');
+});
+
+test('U-T1 (F1): a config write that meets a Windows lock is tried again, and the try still gets its copy; any other error is not', async () => {
+  const p = await copy.pinStart({ key, name: 'real', projectDir: real });
+  const dir = join(wh, 'workflow-tests', 'repos', key);
+  runRow('ut1c0001', key);   // a try is live: the repair writes, no reset
+  git(dir, 'config', 'core.longpaths', 'false');
+  let failed = 0;
+  const warned = [];
+  const restore = copy._testing.seamGit((_d, args) => {
+    if (args[0] === 'config' && args[1] === 'core.longpaths' && !failed) {
+      failed += 1;
+      return { ok: false, code: 255, stdout: '', stderr: 'error: could not write config file .git/config: Permission denied' };
+    }
+    return null;
+  });
+  const warn = console.warn;
+  console.warn = (...a) => { warned.push(a.join(' ')); };
+  let r;
+  try { r = await copy.ensureStartCommit({ key, projectDir: real, project: startOf(p) }); }
+  finally { restore(); console.warn = warn; copy.releaseCopy(key); }
+  assert.equal(r.startCommit, p.startCommit, 'no NOT_READY');
+  assert.equal(failed, 1);
+  assert.equal(git(dir, 'config', 'core.longpaths'), 'true', 'written on the second attempt');
+  assert.ok(warned.includes(`workflow tests: .git/config was busy in ${dir}; written on attempt 2`), warned.join('\n'));
+
+  git(dir, 'config', 'core.longpaths', 'false');
+  let calls = 0;
+  const restore2 = copy._testing.seamGit((_d, args) => {
+    if (args[0] === 'config' && args[1] === 'core.longpaths') { calls += 1; return { ok: false, code: 1, stdout: '', stderr: 'error: invalid key: core.longpaths' }; }
+    return null;
+  });
+  try { await assert.rejects(copy.ensureStartCommit({ key, projectDir: real, project: startOf(p) }), { code: 'NOT_READY' }); }
+  finally { restore2(); }
+  assert.equal(calls, 1, 'an error that is not a lock is not tried again');
+  assert.equal(copy._testing.copyBusy(key), true, 'the live row still counts');
+  getDb().prepare("UPDATE pipelines SET status = 'done' WHERE id = 'ut1c0001'").run();
+  assert.equal(copy._testing.copyBusy(key), false, 'a start that failed holds nothing');
+});
+
+test('U-T1 (F1): a try that has its copy but no pipelines row yet keeps the copy busy; released, it is not', async () => {
+  const p = await copy.pinStart({ key, name: 'real', projectDir: real });
+  const dir = join(wh, 'workflow-tests', 'repos', key);
+  const wt = join(wh, 'runs', 'ut1d0001', 'repos', key);
+  mkdirSync(dirname(wt), { recursive: true });
+  git(dir, 'worktree', 'add', '-q', '-b', 'worca-cc/try-ut1d0001', '--', wt, p.startCommit);   // its checkout, no row yet
+  git(dir, 'config', 'filter.d.clean', 'kept');
+  copy.holdCopy(key);
+  try {
+    assert.equal(copy._testing.copyBusy(key), true);
+    assert.deepEqual(await copy.ensureTestCopy(key, { projectDir: real }), { dir, created: false });
+    assert.equal(registered(dir), 2, 'no registration is cleared (clearCheckouts did not run)');
+    assert.equal(git(dir, 'config', 'filter.d.clean'), 'kept', 'and no reset');
+  } finally { copy.releaseCopy(key); }
+  assert.equal(copy._testing.copyBusy(key), false);
+  copy.releaseCopy(key);   // one release too many never counts below zero
+  copy.holdCopy(key);
+  assert.equal(copy._testing.copyBusy(key), true);
+  copy.releaseCopy(key);
+  await copy.ensureTestCopy(key, { projectDir: real });
+  assert.equal(registered(dir), 1, 'released: the reset runs again');
+  assert.throws(() => git(dir, 'config', '--get', 'filter.d.clean'));
+});
+
+test('U-T1 (F1): Windows stress: three tries start at once while the others read the config, 20 rounds, no failure',
+  { skip: process.platform !== 'win32' ? 'Windows only: there an open reader makes a config replace fail' : false, timeout: 1_800_000 }, async () => {
+    const p = await copy.pinStart({ key, name: 'real', projectDir: real });
+    const dir = join(wh, 'workflow-tests', 'repos', key);
+    const wts = [1, 2, 3].map((i) => join(wh, 'runs', `ut1e000${i}`, 'repos', key));
+    for (const wt of wts) { mkdirSync(dirname(wt), { recursive: true }); git(dir, 'worktree', 'add', '-q', '--detach', '--', wt, p.startCommit); }
+    copy.holdCopy(key);   // a try is live throughout
+    try {
+      for (let round = 0; round < 20; round += 1) {
+        await Promise.all(wts.map(async (wt) => {
+          const r = await copy.ensureStartCommit({ key, projectDir: real, project: startOf(p) });
+          try { await guardedGitEnv(wt); } finally { copy.releaseCopy(key); }
+          assert.equal(r.startCommit, p.startCommit);
+        }));
+      }
+    } finally { copy.releaseCopy(key); }
+  });
