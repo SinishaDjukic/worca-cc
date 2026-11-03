@@ -2,7 +2,7 @@
 
 [![npm](https://img.shields.io/npm/v/@worca/app)](https://www.npmjs.com/package/@worca/app)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
-[![node](https://img.shields.io/badge/node-%3E%3D22.13-brightgreen)](.nvmrc)
+[![node](https://img.shields.io/badge/node-%3E%3D22.19-brightgreen)](.nvmrc)
 
 Worca turns a task into **reviewed, merge-ready work**. It is a
 **deterministic multi-agent pipeline**: you point it at a project, describe the
@@ -866,7 +866,7 @@ install). `protobufjs`'s script only prints a version warning. See
 
 Requirements:
 
-- **Node.js >= 22.13.0** — the store is the built-in `node:sqlite`; on an older
+- **Node.js >= 22.19.0** — the store is the built-in `node:sqlite`; on an older
   Node the CLI says so and exits.
 - **git** — pull requests, Check out, Sync, Clone from URL and **Use git** need it
   (on Windows, Git for Windows' `git.exe` on `PATH`). Without git — on macOS,
