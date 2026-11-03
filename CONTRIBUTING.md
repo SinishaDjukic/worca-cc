@@ -26,7 +26,7 @@ don't cherry-pick commits, skills, or docs across them.
 
 Requirements:
 
-- **Node.js >= 22.13.0** — required by the built-in `node:sqlite` store. Run
+- **Node.js >= 22.19.0** — required by the built-in `node:sqlite` store and undici 8. Run
   `nvm use` to pick up the bundled `.nvmrc`.
 - The **`claude` CLI** on your `PATH` — only for real (non-mock) pipeline runs.
   Everything else, including the full test suite, works without it.

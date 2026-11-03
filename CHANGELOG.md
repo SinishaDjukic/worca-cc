@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Node 22.19 or newer
+
+- Worca now needs Node 22.19.0 or newer (was 22.13.0): undici 8, which routes fetch() through `HTTP(S)_PROXY`, needs it. On an older Node the CLI says so and exits; `nvm use` picks up the bundled `.nvmrc`.
+
 ### "Push as me" covers clones and fetches too
 
 - With `WORCA_GH_AS_PERSON`, worca's GitHub reads (a clone, a fetch, a pull request's status) also use the acting person's own GitHub when they connected it on the key page, so a person can clone and open pull requests on what their own account reaches (pull request status shown to everyone still needs the deployment's credential), even when the deployment has no GitHub credential. Without a connected GitHub (or with no one behind the call) reads use the deployment's credential, also under `required`, which only refuses writes. Their token is kept in memory for up to a minute for reads. Only reads on a project for that person opt in (clone, fetch, finding their own pull request when they open one); pull request status, checks and chips, the watcher, automations, plugin and skill installs, the git-free API and metrics keep the deployment's credential. A repository cloned with a person's token is visible to everyone on that worca, and the clone card and key page say so.
