@@ -23,7 +23,7 @@ export function pipelineIdOf(dir) {
 /** worcaHome() of src/core/projects.mjs: WORCA_HOME (or the home dir) + .worca-cc; the settings.json root tier is not read. */
 export const dbPath = (env = process.env) => join(resolve(env.WORCA_HOME?.trim() || homedir()), '.worca-cc', 'worca-cc.db');
 
-export function attach({ dir, kind, sub = 'proof-919', files, db = new DatabaseSync(dbPath()), now = () => new Date().toISOString() }) {
+export function attach({ dir, kind, sub = 'split-proof', files, db = new DatabaseSync(dbPath()), now = () => new Date().toISOString() }) {
   if (!KIND_RE.test(kind)) throw new Error(`bad kind ${kind}`);
   const id = pipelineIdOf(dir);
   db.exec('PRAGMA busy_timeout = 5000');

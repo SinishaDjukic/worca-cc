@@ -17,11 +17,12 @@ const TARGET = { kind: 'PR', number: 1049, title: 'chore(deps): bump express fro
 const CRAWL = { pass: true, control: true, a: { spec: 'tree:base', tree: SHA }, bs: [{ spec: 'tree:mig', tree: SHA }], masks: [], minutes: 1,
   comparisons: [{ label: 'migrated', pass: true, diffs: [] }],
   coverage: { screens: 3, routes: { registered: 2, visited: 2, unvisited: [], unfillable: [] }, elements: { found: 5, exercised: 4, skipped: 1, byReason: {} } } };
+const FP = { css: 'c', html: 'h', routes: 'r', routeCount: 1 };
 const RAISES = [{ file: 'ui/server.mjs', from: 9972, to: 10085, why: "dev's own growth" }];
 // a Playwright JSON report for e2e:extension: `afterStatus` on the migrated tree, 'unexpected' on the base (dev's darwin baselines)
 const pwReport = (st) => ({ suites: [{ title: 'visual.spec.mjs', specs: [{ title: 'sidebar light', tests: [{ projectName: '', status: st }] }] }] });
 
-function fakeDeps({ failOpenPrs = false, noAuth = false, badSha = false, gateFailed = false, splitterMissing = false, e2eFail = null, targets = [TARGET], gone = [], afterStatus = 'unexpected', calls = [], crawl = CRAWL } = {}) {
+function fakeDeps({ failOpenPrs = false, noAuth = false, badSha = false, gateFailed = false, splitterMissing = false, e2eFail = null, targets = [TARGET], gone = [], afterStatus = 'unexpected', calls = [], crawl = CRAWL, parityPass = true } = {}) {
   const run = (cmd, args) => {
     if (cmd === 'git' && args.includes('rev-parse')) return { code: 0, stdout: `${badSha ? 'nope' : SHA}\n`, stderr: '' };
     if (cmd === 'git' && args.includes('get-url')) return { code: 0, stdout: 'git@github.com:SinishaDjukic/worca-cc.git\n', stderr: '' };
@@ -33,7 +34,7 @@ function fakeDeps({ failOpenPrs = false, noAuth = false, badSha = false, gateFai
     const json = o.env?.PLAYWRIGHT_JSON_OUTPUT_NAME;
     if (json) writeFileSync(json, JSON.stringify(pwReport(o.cwd?.endsWith('migrated') ? afterStatus : 'unexpected')));
     const i = args.indexOf('--out');
-    if (i >= 0) { mkdirSync(args[i + 1], { recursive: true }); writeFileSync(join(args[i + 1], 'report.json'), JSON.stringify(args.includes('crawl') ? crawl : PARITY)); writeFileSync(join(args[i + 1], 'report.md'), 'PASS\n'); }
+    if (i >= 0) { mkdirSync(args[i + 1], { recursive: true }); writeFileSync(join(args[i + 1], 'report.json'), JSON.stringify(args.includes('crawl') ? crawl : { ...PARITY, pass: parityPass })); writeFileSync(join(args[i + 1], 'report.md'), 'PASS\n'); }
     const stats = gateFailed ? '9980 lines — spike gate FAILED (ui/server.mjs 9980 lines > ceiling 9972)' : '9972 lines — spike gate passed (>= 95% moved, ceiling 9972 lines)';
     const text = args.includes('tools/test.mjs') ? '✔ x\nℹ pass 1\nℹ fail 0\n'
       : args.includes('--stats') ? `moved 430/441 route statements (98%), ui/server.mjs after the split: ${stats}\n` : 'ok\n';
@@ -51,7 +52,7 @@ function fakeDeps({ failOpenPrs = false, noAuth = false, badSha = false, gateFai
     },
     npmCi: () => {},
     hasSplitter: () => !splitterMissing,
-    applySplit: async () => ({ plan: { files: new Map([['ui/routes/chat.mjs', 'a\n']]), stats: { serverLinesAfter: 9972, pinnedRoutes: 11 } }, ceiling: 9972, changed: ['ui/routes/chat.mjs'] }),
+    applySplit: async () => ({ plan: { files: new Map([['ui/routes/chat/ask.mjs', 'a\n']]), stats: { serverLinesAfter: 9972, pinnedRoutes: 11 } }, ceiling: 9972, changed: ['ui/routes/chat/ask.mjs'] }),
     sliceOneEquivalence: async () => ({ equal: true, problems: [], probes: 40, routes: 523, acceptedDeltas: [{ note: '/style.css: ETag value is a body hash instead of size-mtime' }] }),
     treeHash: () => 'f'.repeat(40), resetTree: () => {}, commitMigration: () => 'b'.repeat(40),
     rehearseRollback: () => ({ ok: true, reverted: 'c'.repeat(40), diff: '', status: '', cleaned: '' }),
@@ -60,7 +61,8 @@ function fakeDeps({ failOpenPrs = false, noAuth = false, badSha = false, gateFai
     listTargets: () => { if (failOpenPrs || noAuth) throw new Error('gh pr list failed: HTTP 401'); return targets; },
     fetchHeads: () => gone, mergeCheck: () => ({ conflict: false, files: [] }), listRoutes: () => [],
     authStatus: () => (noAuth ? { ok: false, detail: 'gh auth status failed: run gh auth login' } : { ok: true, detail: 'gh is signed in to github.com as someone' }),
-    codeFiles: () => [], deadCode: () => [], largestFiles: () => [], featureNames: () => ['chat'], movedByFeature: () => [{ feature: 'chat', files: [{ path: 'ui/routes/chat.mjs', lines: 1 }], lines: 1 }],
+    codeFiles: () => [], deadCode: () => [], largestFiles: () => [], featureNames: () => ['chat'], movedByFeature: () => [{ feature: 'chat', files: [{ path: 'ui/routes/chat/ask.mjs', lines: 1 }], lines: 1 }],
+    servedFingerprint: async () => FP,
     catchUpAll: async ({ targets: ts }) => { calls.push('catchUpAll'); return ts.map((t) => ({ key: keyOf(t), verdict: 'works', reasons: [] })); },
   };
 }
@@ -185,7 +187,7 @@ test('splitAt clones both revisions as marked scratch trees, splits with the spl
       : { code: 0, stdout: `${args.at(-1).startsWith('M^') ? 'b' : 'a'}${'0'.repeat(39)}\n`, stderr: '' }) : { code: 0, stdout: '', stderr: '' }),
     runLogged: () => ({ code: 0, text: '' }), npmCi: () => {},
     cloneAt: (_r, _root, sha, dir) => { (seen.clones ??= []).push([sha[0], dir]); return dir; },
-    applySplit: async (_r, dir, { splitter }) => { seen.split = [dir, splitter]; return { changed: ['ui/routes/chat.mjs'] }; },
+    applySplit: async (_r, dir, { splitter }) => { seen.split = [dir, splitter]; return { changed: ['ui/routes/chat/ask.mjs'] }; },
     commitMigration: () => 'c'.repeat(40),
   };
   const r = await splitAt({ root: '.', rev: 'HEAD', splitterRev: 'M^', out, deps });
@@ -334,10 +336,54 @@ test('--crawl-from is reused only when its A and first B trees are the base and 
   const calls = [];
   const { report, out } = await go(fakeDeps({ calls }), { crawlFrom: dir(SHA) });
   assert.ok(!calls.some((c) => / crawl /.test(c)), calls.join('\n'));
-  assert.match(report.checks.find((c) => c.id === 'parity').detail, /\(verify:919 row h, same trees\)/);
+  assert.match(report.checks.find((c) => c.id === 'parity').detail, /\(split:verify row h, same trees\)/);
   assert.equal(readFileSync(join(out, 'crawl/report.md'), 'utf8'), 'reused\n');
   assert.ok(!existsSync(join(out, 'crawl/a1')) && !existsSync(join(out, 'crawl/records.ndjson')));
   const calls2 = [];
   await go(fakeDeps({ calls: calls2 }), { crawlFrom: dir('9'.repeat(40)) });
   assert.ok(calls2.some((c) => / crawl /.test(c)));
+});
+
+test('--waive-crawl: the parity row is waived, no crawl is spawned, the verdict stays go', async () => {
+  assert.deepEqual(parseArgs(['run', '--waive-crawl', 'Emil Angelov:row h waived']).waiveCrawl, { owner: 'Emil Angelov', reason: 'row h waived' });
+  assert.equal('waiveCrawl' in parseArgs(['run']), false, 'no key without the flag (the deepEqual pins at :71 and :270 stay)');
+  assert.throws(() => parseArgs(['run', '--waive-crawl', 'no-colon']), /--waive-crawl needs OWNER:REASON/);
+  assert.throws(() => parseArgs(['run', '--waive-crawl', 'A:b', '--crawl-from', 'c']), /--waive-crawl and --crawl-from/);
+  const calls = [];
+  const { report, out } = await go(fakeDeps({ calls }), { waiveCrawl: { owner: 'Emil Angelov', reason: 'row h waived' } });
+  assert.ok(!calls.some((c) => / crawl /.test(c)), calls.join('\n'));
+  assert.equal(report.checks.length, 10);
+  const row = report.checks.find((c) => c.id === 'parity');
+  assert.equal(row.status, 'waived');
+  assert.deepEqual(row.waived, { owner: 'Emil Angelov', reason: 'row h waived' });
+  assert.match(row.detail, /; crawl WAIVED by Emil Angelov: row h waived$/);
+  assert.ok(row.evidence.some((e) => e.href === 'evidence/crawl-waived.txt'));
+  assert.ok(!row.evidence.some((e) => e.href === 'crawl/report.md'));
+  assert.ok(existsSync(join(out, 'evidence/crawl-waived.txt')));
+  assert.equal(report.verdict.value, 'go');
+  assert.deepEqual(report.inputs.waiveCrawl, { owner: 'Emil Angelov', reason: 'row h waived' });
+  assert.match(readFileSync(join(out, 'report.md'), 'utf8'), /\| parity \| ⚠ waived \|/);
+});
+
+test('--waive-crawl: a failing parity still fails the row', async () => {
+  const { report } = await go(fakeDeps({ parityPass: false }), { waiveCrawl: { owner: 'E', reason: 'r' } });
+  assert.equal(report.checks.find((c) => c.id === 'parity').status, 'fail');
+  assert.equal(report.verdict.value, 'no-go');
+});
+
+test('post refuses a report with a waived row', async () => {
+  const { out } = await go(fakeDeps({}), { waiveCrawl: { owner: 'E', reason: 'r' } });
+  assert.throws(() => postFrom({ root: '.', out, run: () => ({ code: 0, stdout: '', stderr: '' }), log: () => {} }),
+    /refusing to post: a waived row \(parity\) needs the owner's own post/);
+});
+
+test('--crawl-from with other trees is reused under the crawl reuse rule (same dev, same served output); another dev re-crawls', async () => {
+  const dir = (dev) => { const d = mkdtempSync(join(tmpdir(), 'readiness-crawl-')); writeFileSync(join(d, 'report.json'), JSON.stringify({ ...CRAWL, dev, a: { spec: 'x', tree: '1'.repeat(40), served: FP }, bs: [{ spec: 'y', tree: '2'.repeat(40), served: FP }] })); writeFileSync(join(d, 'report.md'), 'reused\n'); return d; };
+  const calls = [];
+  const { report } = await go(fakeDeps({ calls }), { crawlFrom: dir(SHA) });
+  assert.ok(!calls.some((c) => / crawl /.test(c)), calls.join('\n'));
+  assert.match(report.checks.find((c) => c.id === 'parity').detail, /\(split:verify row h, reuse rule\)/);
+  const calls2 = [];
+  await go(fakeDeps({ calls: calls2 }), { crawlFrom: dir('9'.repeat(40)) });
+  assert.ok(calls2.some((c) => / crawl .*--dev /.test(c)), calls2.join('\n'));
 });

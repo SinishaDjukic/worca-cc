@@ -101,7 +101,8 @@ export async function servedEquivalence(baseDir, migDir, list) {
     firstDiff: routes ? null : { index: firstDiff, a: a[firstDiff] ?? null, b: b[firstDiff] ?? null } };
 }
 
-const MOVED = /^ui\/(?:routes\/[a-z0-9-]+\.mjs|public\/[a-z0-9-]+\/[a-z0-9-]+\.(?:css|html))$/;
+// the feature index.mjs files are wiring, like ui/routes/index.mjs: no feature-files.md line
+const MOVED = /^ui\/(?:routes\/[a-z0-9-]+\/(?!index\.mjs$)[a-z0-9-]+\.mjs|public\/[a-z0-9-]+\/[a-z0-9-]+\.(?:css|html))$/;
 /** The migration's own doc and package edits: design-system.md names the :root part, feature-files.md lists every moved
  *  file, and npm pack lists ui/routes/ and every ui/public feature folder. */
 export function docsAndPackage(run, migDir, plan) {

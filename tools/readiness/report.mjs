@@ -39,7 +39,7 @@ export function verdictCause(checks) {
 }
 
 export function buildReport({ repo, sha, ref = 'origin/dev', generatedAt, toolCommit, checks, openPrs = [], baseline = {}, moved = { features: [], largest: {} }, risks = NO_RISKS, inputs = {}, notLocal }) {
-  const failing = checks.filter((c) => c.status !== 'pass').map((c) => c.id);
+  const failing = checks.filter((c) => c.status === 'fail').map((c) => c.id);
   return {
     schema: SCHEMA, generatedAt, toolCommit, repo,
     verdict: { value: failing.length ? 'no-go' : 'go', failing, cause: verdictCause(checks), evidence: [{ label: 'summary', href: 'evidence/summary.txt' }] },
@@ -61,7 +61,9 @@ export function validateReport(r) {
   for (const id of Object.keys(CHECKS)) if (!r.checks.some((c) => c.id === id)) p.push(`missing check ${id}`);
   for (const c of r.checks) {
     if (!(c.id in CHECKS)) p.push(`unknown check ${c.id}`);
-    if (!['pass', 'fail'].includes(c.status)) p.push(`${c.id}: status must be pass or fail, not ${c.status}`);
+    // `waived` only on the parity row, under readiness --waive-crawl (docs/split-by-feature.md, The readiness command)
+    if (!['pass', 'fail', 'waived'].includes(c.status) || (c.status === 'waived' && c.id !== 'parity')) p.push(`${c.id}: status must be pass or fail, not ${c.status}`);
+    if (c.status === 'waived' && !(c.waived?.owner && c.waived?.reason)) p.push(`${c.id}: a waived row names its owner and reason`);
     if (!c.evidence?.length || c.evidence.some((e) => !e.href)) p.push(`${c.id}: no evidence link`);
   }
   for (const t of r.openPrs) if (typeof t.dev?.conflict !== 'boolean' || typeof t.split?.conflict !== 'boolean' || !t.action) p.push(`open PR ${t.number != null ? `#${t.number}` : 'branch'}: needs both conflict flags and one action`);
@@ -82,7 +84,7 @@ export function missingEvidence(r, exists) {
 const links = (ev) => ev.map((e) => `[${cell(e.label)}](${e.href})`).join(' · ');
 /** A row detail; a thrown step's `error: …` carries git/gh stderr, so that part is a code span (no live mention or link). */
 const detailCell = (d) => (/^error: /.test(d ?? '') ? `error: ${code(d.slice(7))}` : cell(d));
-const rowLine = (c) => `| ${c.id} | ${c.status === 'pass' ? '✔ pass' : '✖ fail'} | ${detailCell(c.detail)} | ${links(c.evidence)} |`;
+const rowLine = (c) => `| ${c.id} | ${c.status === 'pass' ? '✔ pass' : c.status === 'waived' ? '⚠ waived' : '✖ fail'} | ${detailCell(c.detail)} | ${links(c.evidence)} |`;
 const yesNo = (b) => (b ? 'yes' : 'no');
 const n = (x) => Number(x).toLocaleString('en-US');
 const cu = (t) => (!t.catchUp || t.catchUp.verdict === 'not run' ? 'not run' : t.catchUp.verdict === 'works' ? 'works'
@@ -96,9 +98,11 @@ export function renderMarkdown(r) {
   for (const s of r.sections) {
     out.push(`## ${s.n}. ${s.title}`, '');
     if (s.id === 'verdict') {
-      out.push(`**${r.verdict.value}**${r.verdict.failing.length ? '' : ' — every check passes'} · ${links(r.verdict.evidence)}`, '');
+      const waivedRows = r.checks.filter((x) => x.status === 'waived');
+      out.push(`**${r.verdict.value}**${r.verdict.failing.length || waivedRows.length ? '' : ' — every check passes'} · ${links(r.verdict.evidence)}`, '');
       for (const id of r.verdict.failing) out.push(`- ${id}: ${detailCell(r.checks.find((c) => c.id === id)?.detail)}`);
-      if (r.verdict.failing.length) out.push('');
+      for (const c of waivedRows) out.push(`- ${c.id}: waived by ${cell(c.waived.owner)}: ${cell(c.waived.reason)}`);
+      if (r.verdict.failing.length || waivedRows.length) out.push('');
       if (r.verdict.cause === 'splitter-missing') out.push(SPLITTER_NOTE, '');
       else if (r.verdict.cause === 'spike-gate') out.push(`The rollback rehearsal proves the revert ${GATE_NOTE}.`, '');
     }

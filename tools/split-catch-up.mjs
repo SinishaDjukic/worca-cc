@@ -1,9 +1,10 @@
 #!/usr/bin/env node
-// tools/catch-up-919.mjs — #919: the runbook's PR catch-up recipe (docs/split-by-feature.md) as one command. Never pushes and
+// tools/split-catch-up.mjs — #919: the runbook's PR catch-up recipe (docs/split-by-feature.md) as one command. Never pushes and
 // never touches a branch: every step runs in marked scratch clones under OUT, and the caught-up commit stays there.
-//   npm run catch-up:919 -- BRANCH [--out DIR] [--m SHA] [--tests related|none] [--parity quick|none]
-//   npm run catch-up:919 -- --all [--out DIR] [--m SHA]     every open PR and dependabot branch: split, 3-way apply, related tests
-//   npm run catch-up:919 -- --fixture [--out DIR]           the fixture "old" PR (a route, a CSS rule, a markup line), quick parity
+//   npm run split:catch-up -- BRANCH [--out DIR] [--m SHA] [--tests related|none] [--parity quick|none]
+//     without --m, M is the tag feature-split/after and M^ the tag feature-split/before (docs/split-by-feature.md, D1 and D7)
+//   npm run split:catch-up -- --all [--out DIR] [--m SHA]     every open PR and dependabot branch: split, 3-way apply, related tests
+//   npm run split:catch-up -- --fixture [--out DIR]           the fixture "old" PR (a route, a CSS rule, a markup line), quick parity
 // Exit 0 works (every target), 1 needs a hand fix, 2 bad arguments, 3 could not start.
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, realpathSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
@@ -16,18 +17,21 @@ import { REPO } from './readiness/gh.mjs';
 import { code } from './readiness/report.mjs';
 import { relatedTests } from './test-related.mjs';
 import { unlistedFailures, parseFailures } from './flaky-register.mjs';
-import { makeFixturePr, checkFixture } from './catch-up-919/fixture.mjs';
+import { makeFixturePr, checkFixture } from './split-catch-up/fixture.mjs';
 
 const TOOL_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const NODE = [process.execPath, '--disable-warning=ExperimentalWarning'];
 export const M_SUBJECT = /^Split large files by feature \(#919\)/;
+export const TAG_BEFORE = 'feature-split/before';   // dev before the migration commit: M^
+export const TAG_AFTER = 'feature-split/after';     // dev after it: M
 const IDENT = ['-c', 'user.name=worca catch-up', '-c', 'user.email=catch-up@worca.invalid'];
-const USAGE = 'usage: npm run catch-up:919 -- BRANCH | --all | --fixture [--out DIR] [--m SHA] [--tests related|none] [--parity quick|none]';
+const USAGE = 'usage: npm run split:catch-up -- BRANCH | --all | --fixture [--out DIR] [--m SHA] [--tests related|none] [--parity quick|none]'
+  + ` (without --m: M = tag ${TAG_AFTER}, M^ = tag ${TAG_BEFORE})`;
 const fatal = (msg) => Object.assign(new Error(msg), { fatal: true });
 const slug = (s) => String(s).replace(/[^\w.-]+/g, '-').slice(0, 60);
 const must = (r, what) => { if (r.code !== 0) throw new Error(`${what}: exit ${r.code}: ${r.stderr.trim().split('\n')[0]}`); return r.stdout; };
 // The monoliths and where the split puts their pieces (tools/readiness/trees.mjs MOVED).
-const SPLIT_HOME = { 'ui/server.mjs': /^ui\/routes\/[a-z0-9-]+\.mjs$/, 'ui/public/style.css': /^ui\/public\/[a-z0-9-]+\/[a-z0-9-]+\.css$/,
+const SPLIT_HOME = { 'ui/server.mjs': /^ui\/routes\/[a-z0-9-]+\/(?!index\.mjs$)[a-z0-9-]+\.mjs$/, 'ui/public/style.css': /^ui\/public\/[a-z0-9-]+\/[a-z0-9-]+\.css$/,
   'ui/public/index.html': /^ui\/public\/[a-z0-9-]+\/[a-z0-9-]+\.html$/ };
 
 export const defaultDeps = {
@@ -37,7 +41,7 @@ export const defaultDeps = {
     const f = join(o, 'report.json');
     return { code: r.code, rep: existsSync(f) ? JSON.parse(readFileSync(f, 'utf8')) : null };
   },
-  register: (dir) => JSON.parse(readFileSync(join(dir, 'test/flaky-register.json'), 'utf8')),   // no exported loader; as verify-919.mjs
+  register: (dir) => JSON.parse(readFileSync(join(dir, 'test/flaky-register.json'), 'utf8')),   // no exported loader; as split-verify.mjs
 };
 
 export function parseArgs(argv) {
@@ -83,14 +87,16 @@ export function ownRoutes(patch) {
 }
 
 /**
- * M, M^ and "latest dev". A given or found M is real (dev = origin/dev). With none, this is a rehearsal: M^ = HEAD (it must
+ * M, M^ and "latest dev". Without --m, M is the tag feature-split/after (else the newest freeze-day subject on origin/dev)
+ * and M^ the tag feature-split/before (else M's parent). A given or found M is real (dev = origin/dev). With none, this is a rehearsal: M^ = HEAD (it must
  * carry the splitter), M = HEAD's split under OUT/m, and that tree is also the splitter, latest dev and the parity A side.
- * Callers that already hold a split (verify:919, readiness) pass `ctx` instead.
+ * Callers that already hold a split (split:verify, readiness) pass `ctx` instead.
  */
 export async function resolveContext({ root, out, m, d }) {
   const sha = (x) => { const r = d.run('git', ['-C', root, 'rev-parse', '--verify', '--quiet', '--end-of-options', `${x}^{commit}`]); if (r.code) throw fatal(`unknown revision ${x}`); return r.stdout.trim(); };
-  const found = m ? sha(m) : findMigration(d.run, root);
-  if (found) return { rehearsal: false, m: found, mParent: sha(`${found}^`), mRepo: root, devRepo: root, devRef: sha('origin/dev'), splitter: null, devTree: null };
+  const tag = (t) => { const r = d.run('git', ['-C', root, 'rev-parse', '--verify', '--quiet', '--end-of-options', `refs/tags/${t}^{commit}`]); return r.code ? null : r.stdout.trim(); };
+  const found = m ? sha(m) : tag(TAG_AFTER) ?? findMigration(d.run, root);
+  if (found) return { rehearsal: false, m: found, mParent: (!m && tag(TAG_BEFORE)) || sha(`${found}^`), mRepo: root, devRepo: root, devRef: sha('origin/dev'), splitter: null, devTree: null };
   const head = sha('HEAD');
   if (d.run('git', ['-C', root, 'cat-file', '-e', `${head}:tools/split-by-feature.mjs`]).code !== 0) throw fatal('no migration commit on origin/dev, and HEAD has no splitter to rehearse with');
   const mDir = d.cloneAt(d.run, root, head, join(out, 'm'));
@@ -242,8 +248,8 @@ export async function main(argv = process.argv.slice(2), { log = console.log, er
     }
     return rows.every((r) => r.verdict === 'works') ? 0 : 1;
   } catch (e) {
-    if (e.fatal) { err(`catch-up:919: cannot start: ${e.message}`); return 3; }
-    err(`catch-up:919: ${e.message}`); return 1;
+    if (e.fatal) { err(`split:catch-up: cannot start: ${e.message}`); return 3; }
+    err(`split:catch-up: ${e.message}`); return 1;
   }
 }
 

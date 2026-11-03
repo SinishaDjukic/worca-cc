@@ -7,7 +7,7 @@ import { JSDOM } from 'jsdom';
 import { enumerateIn, serializeDom, actionsFor, CRAWL_TEXT } from '../tools/parity/crawl-page.mjs';
 import { normalizeLine, deriveMasks, compareCrawls, coverage, mutated, loadCalls, crawlSummary, renderCrawlReport, UNEXPLAINED } from '../tools/parity/crawl-compare.mjs';
 import { tabListsOf, catalogue, TAB_ROUTES } from '../tools/parity/crawl-routes.mjs';
-import { VARIANTS, FLAG_PASSES } from '../tools/parity/crawl.mjs';
+import { VARIANTS, FLAG_PASSES, crawlSides } from '../tools/parity/crawl.mjs';
 
 const dom = (html) => new JSDOM(`<body>${html}</body>`).window;
 const all = { visible: () => true };
@@ -240,4 +240,13 @@ test('freePortRun: N consecutive free ports, never the host app port, skipping a
   assert.equal(run.length, 3);
   assert.ok(!run.includes(taken) && !run.includes(4317), JSON.stringify(run));
   assert.deepEqual(run, [run[0], run[0] + 1, run[0] + 2]);
+});
+
+test('crawlSides: spec, level and tree as before, plus dev and a served fingerprint on tree sides only', async () => {
+  const fp = { css: 'c', html: 'h', routes: 'r', routeCount: 1 };
+  const a = { kind: 'tree', root: '/x/a', label: 'tree:.' };
+  const bs = [{ kind: 'tree', root: '/x/b', label: 'tree:/x/b', level: 'full' }, { kind: 'package', root: undefined, label: 'package:.', level: 'screen' }];
+  const s = await crawlSides({ a, bs, dev: 'd1', tree: (t) => (t.kind === 'tree' ? `T(${t.root})` : null), fingerprint: async () => fp });
+  assert.deepEqual(s, { dev: 'd1', a: { spec: 'tree:.', tree: 'T(/x/a)', served: fp },
+    bs: [{ spec: 'tree:/x/b', level: 'full', tree: 'T(/x/b)', served: fp }, { spec: 'package:.', level: 'screen', tree: null, served: null }] });
 });

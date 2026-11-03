@@ -1,4 +1,4 @@
-// tools/catch-up-919/fixture.mjs — a fixture "old" PR for catch-up:919: a route, a CSS rule and a markup line, written
+// tools/split-catch-up/fixture.mjs — a fixture "old" PR for split:catch-up: a route, a CSS rule and a markup line, written
 // at anchors inside mapped feature regions (so the coverage guard stays green), committed in a scratch clone.
 import { readFileSync, writeFileSync, readdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';

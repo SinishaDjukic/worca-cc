@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { readPartsManifest, isPublicPart, publicRelPath, assemble } from '../src/core/public-assets.mjs';
 import { readStyleCss, readStyleCssEntry } from '../src/core/read-style-css.mjs';
 import { readIndexHtml } from '../src/core/read-index-html.mjs';
+import { readServerSource } from '../src/core/read-server-source.mjs';
 import { catchUpHint } from '../tools/split-by-feature.mjs';
 
 const PUBLIC_DIR = fileURLToPath(new URL('../ui/public/', import.meta.url));
@@ -158,15 +159,16 @@ const ALLOW = new Map([
   ['tools/split-by-feature.mjs', 'the migration tool itself'],
   ['test/house-brief.test.mjs', "writes a fixture project's own ui/public/style.css and ui/server.mjs"],
   ['test/parity.test.mjs', "edits a copied tree's ui/server.mjs and style.css to prove the parity gates catch a change"],
+  ['test/parity-reuse.test.mjs', "writes fixture trees' own ui/public/style.css and index.html to fingerprint them"],
   ['e2e/extension/fixtures.mjs', "spawns ui/server.mjs; its only reads (openSync, readFileSync) are of the server's own log file"],
 ]);
 const ALLOW_PREFIX = ['tools/split-by-feature/', 'test/split-by-feature',   // the tool and its fixture strings
   'tools/readiness/', 'test/readiness',   // the readiness dry run compares a scratch tree's monoliths with its split
-  'tools/catch-up-919', 'test/catch-up-919'];   // the catch-up fixture edits a scratch clone's monoliths
+  'tools/split-catch-up', 'test/split-catch-up'];   // the catch-up fixture edits a scratch clone's monoliths
 test('no test or tool reaches style.css, index.html or ui/server.mjs on disk directly', () => {
   const root = new URL('../', import.meta.url);
   const offenders = [];
-  for (const d of ['test', 'tools', 'e2e']) {   // e2e: the Playwright specs run on the split tree too (verify:919 row h)
+  for (const d of ['test', 'tools', 'e2e']) {   // e2e: the Playwright specs run on the split tree too (split:verify row h)
     for (const f of readdirSync(new URL(d + '/', root), { recursive: true })) {
       const rel = `${d}/${String(f).split('\\').join('/')}`;
       if (!/\.(mjs|js|cjs)$/.test(rel) || ALLOW.has(rel) || ALLOW_PREFIX.some((p) => rel.startsWith(p))) continue;
@@ -175,7 +177,7 @@ test('no test or tool reaches style.css, index.html or ui/server.mjs on disk dir
     }
   }
   const msg = `use readStyleCss / readIndexHtml / readServerSource from src/core/read-style-css.mjs, read-index-html.mjs, read-server-source.mjs; ${catchUpHint(fileURLToPath(root))}`;
-  assert.match(msg, /; if this branch started before the #919 split: run npm run catch-up:919 -- \S+$/);
+  assert.match(msg, /; if this branch started before the #919 split: run npm run split:catch-up -- \S+$/);
   assert.deepEqual(offenders, [], msg);
 });
 
@@ -186,4 +188,16 @@ test('rollback B step 2: assemble is exported and gives the served bytes on both
   if (existsSync(join(PUBLIC_DIR, 'parts.json'))) return;
   assert.equal(assemble('css', 'style.css', PUBLIC_DIR).text, readFileSync(join(PUBLIC_DIR, 'style.css'), 'utf8'));
   assert.equal(assemble('html', 'index.html', PUBLIC_DIR).text, readFileSync(join(PUBLIC_DIR, 'index.html'), 'utf8'));
+});
+
+test('readServerSource on a split tree: the server, then every area file in index order, feature indexes followed', () => {
+  const ui = mkdtempSync(join(tmpdir(), 'pa-src-'));
+  mkdirSync(join(ui, 'routes/chat'), { recursive: true });
+  writeFileSync(join(ui, 'server.mjs'), '// server\n');
+  writeFileSync(join(ui, 'routes/index.mjs'), "import * as m_chat from './chat/index.mjs';\nexport const ROUTE_SEGMENTS = [m_chat.SEGMENTS[0]];\n");
+  writeFileSync(join(ui, 'routes/chat/index.mjs'), "import * as m_chat_ask from './ask.mjs';\nimport * as m_chat_search_index from './search-index.mjs';\n");
+  writeFileSync(join(ui, 'routes/chat/ask.mjs'), '// ask\n');
+  writeFileSync(join(ui, 'routes/chat/search-index.mjs'), '// search-index: an area, not an index\n');
+  assert.equal(readServerSource(ui), '// server\n\n// ask\n\n// search-index: an area, not an index\n');
+  rmSync(ui, { recursive: true, force: true });
 });

@@ -28,16 +28,36 @@ export function loadMap(root, text = readFileSync(join(root, MAP_REL), 'utf8'), 
     if (!seen.has(k)) problems.push(`docless entry ${k} names no feature (${MAP_REL}:${lineOf(text, `"${k}":`)})`);
     if (typeof why !== 'string' || !why.trim()) problems.push(`docless entry ${k} needs a reason (${MAP_REL}:${lineOf(text, `"${k}":`)})`);
   }
+  // the naming block (tools/split-by-feature/file-names.mjs): types only
+  if (map.naming !== undefined) {
+    const n = map.naming; const at = `${MAP_REL}:${lineOf(text, '"naming"')}`;
+    const obj = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
+    const strs = (v) => Array.isArray(v) && v.every((x) => typeof x === 'string');
+    if (!obj(n)) problems.push(`naming must be an object (${at})`);
+    else {
+      if (n.minLines !== undefined && !Number.isInteger(n.minLines)) problems.push(`naming.minLines must be a whole number (${at})`);
+      if (n.areaMinLines !== undefined && !Number.isInteger(n.areaMinLines)) problems.push(`naming.areaMinLines must be a whole number (${at})`);
+      for (const k of ['stopwords', 'generic']) if (n[k] !== undefined && !strs(n[k])) problems.push(`naming.${k} must be a list of strings (${at})`);
+      for (const k of ['cssPrefixes', 'areas', 'views', 'rename']) if (n[k] !== undefined && !obj(n[k])) problems.push(`naming.${k} must be an object (${at})`);
+      if (n.cssBlocks !== undefined && !(Array.isArray(n.cssBlocks) && n.cssBlocks.every((b) => obj(b) && typeof b.section === 'string'
+        && strs(b.selectors) && b.selectors.length && typeof b.feature === 'string' && typeof b.name === 'string'))) {
+        problems.push(`naming.cssBlocks must be a list of { section, selectors, feature, name } (${at})`);
+      }
+    }
+  }
   if (problems.length) throw Object.assign(new Error(problems.join('\n')), { problems });
   return map;
 }
 
 /** The feature whose longest route prefix matches `prefix`, or null. */
-export function featureForRoute(map, prefix) {
+export const featureForRoute = (map, prefix) => routeOwner(map, prefix)?.feature ?? null;
+
+/** The longest route prefix that matches `prefix` and its feature: { feature, prefix }, or null. */
+export function routeOwner(map, prefix) {
   let best = null; let len = -1;
   for (const f of map.features) for (const p of f.routes) {
     const hit = prefix === p || prefix.startsWith(p.endsWith('/') ? p : p + '/');
-    if (hit && p.length > len) { best = f.name; len = p.length; }
+    if (hit && p.length > len) { best = { feature: f.name, prefix: p }; len = p.length; }
   }
   return best;
 }

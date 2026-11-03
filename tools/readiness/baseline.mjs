@@ -10,11 +10,15 @@ export function conflictShare(rows, key) {
 }
 export const fmtShare = (s) => `${s.conflicted}/${s.total} (${s.pct}%)`;
 
-/** ui/server.mjs plus ui/routes/*.mjs of one tree, as { path, text }. */
+/** ui/server.mjs plus every ui/routes/**.mjs of one tree (the indexes too), as { path, text }. */
 export function codeFiles(dir) {
   const files = [{ path: 'ui/server.mjs', text: readFileSync(join(dir, 'ui/server.mjs'), 'utf8') }];
   const routes = join(dir, 'ui/routes');
-  if (existsSync(routes)) for (const f of readdirSync(routes).filter((n) => n.endsWith('.mjs')).sort()) files.push({ path: `ui/routes/${f}`, text: readFileSync(join(routes, f), 'utf8') });
+  if (existsSync(routes)) {
+    for (const f of readdirSync(routes, { recursive: true }).map((n) => String(n).split('\\').join('/')).filter((n) => n.endsWith('.mjs')).sort()) {
+      files.push({ path: `ui/routes/${f}`, text: readFileSync(join(routes, f), 'utf8') });
+    }
+  }
   return files;
 }
 
@@ -36,15 +40,17 @@ export function parityTimings(report) {
     pages: Object.fromEntries(Object.entries(report.timings.pages).map(([p, t]) => [p, row(t)])) };
 }
 
-/** The feature names a split plan writes files for: ui/routes/NAME(-n).mjs and ui/public/NAME/…, without the index. */
+// A generated area file or part: the feature is its folder (ui/routes/FEATURE/AREA.mjs, ui/public/FEATURE/PART.css|html).
+const OWNED = /^ui\/(?:routes\/([a-z0-9-]+)\/(?!index\.mjs$)[a-z0-9-]+\.mjs|public\/([a-z0-9-]+)\/[a-z0-9-]+\.(?:css|html))$/;
+
+/** The feature names a split plan writes files for, from their folders; the route indexes are wiring, not a feature's. */
 export function featureNames(files) {
   const names = new Set();
   for (const [p, t] of files) {
     if (t === null) continue;
-    const m = p.match(/^ui\/(?:routes\/([a-z0-9-]+?)(?:-\d+)?\.mjs|public\/([a-z0-9-]+)\/[a-z0-9-]+\.(?:css|html))$/);
+    const m = p.match(OWNED);
     if (m) names.add(m[1] ?? m[2]);
   }
-  names.delete('index');
   return [...names].sort();
 }
 
@@ -52,8 +58,7 @@ export function featureNames(files) {
 export function movedByFeature(files, names) {
   const rows = [];
   for (const f of names) {
-    const re = new RegExp(`^ui/(?:routes/${f}(?:-\\d+)?\\.mjs|public/${f}/[a-z0-9-]+\\.(?:css|html))$`);
-    const mine = [...files].filter(([p, t]) => t !== null && re.test(p)).map(([p, t]) => ({ path: p, lines: lineCount(t) })).sort((a, b) => (a.path < b.path ? -1 : 1));
+    const mine = [...files].filter(([p, t]) => { const m = t !== null && p.match(OWNED); return !!m && (m[1] ?? m[2]) === f; }).map(([p, t]) => ({ path: p, lines: lineCount(t) })).sort((a, b) => (a.path < b.path ? -1 : 1));
     if (mine.length) rows.push({ feature: f, files: mine, lines: mine.reduce((s, x) => s + x.lines, 0) });
   }
   return rows;

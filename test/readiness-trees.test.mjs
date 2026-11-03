@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { run } from '../tools/readiness/proc.mjs';
 import { assemble } from '../src/core/public-assets.mjs';
-import { MARKER, cloneAt, hasSplitter, assertScratch, applySplit, treeHash, resetTree, commitMigration, rehearseRollback, servedEquivalence } from '../tools/readiness/trees.mjs';
+import { MARKER, cloneAt, hasSplitter, assertScratch, applySplit, treeHash, resetTree, commitMigration, rehearseRollback, servedEquivalence, docsAndPackage } from '../tools/readiness/trees.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const HEAD = run('git', ['-C', ROOT, 'rev-parse', 'HEAD']).stdout.trim();
@@ -58,7 +58,7 @@ test('two builds on the same commit give the same tree hash; the revert gives ba
   assert.equal(treeHash(run, mig), h1);                           // splits it exactly like its own copy
 });
 
-test('commitMigration commits what applySplit wrote, with no treeHash in between (readiness split, verify:919)', async (t) => {
+test('commitMigration commits what applySplit wrote, with no treeHash in between (readiness split, split:verify)', async (t) => {
   const mig = scratch(t, 'commit-direct');
   if (SPLIT) return assert.rejects(applySplit(run, mig), /is already split/);
   await applySplit(run, mig);
@@ -95,4 +95,16 @@ test('hasSplitter: true with tools/split-by-feature.mjs, false without it', () =
   assert.equal(hasSplitter(d), false);
   mkdirSync(join(d, 'tools'), { recursive: true }); writeFileSync(join(d, 'tools/split-by-feature.mjs'), '');
   assert.equal(hasSplitter(d), true);
+});
+
+test('docsAndPackage: nested route files need a feature-files.md line, the feature index.mjs files do not; npm pack must list the folders', () => {
+  const d = mkdtempSync(join(tmp, 'dp-')); mkdirSync(join(d, 'docs'));
+  writeFileSync(join(d, 'docs/design-system.md'), 'Every colour is a token in `:root` of `ui/public/shell/self-hosted.css` (served as `/style.css`)\n');
+  writeFileSync(join(d, 'docs/feature-files.md'), '| `ui/routes/chat/ask.mjs` | 2 |\n| `ui/public/chat/chat-shell.css` | 1 |\n');
+  const plan = { files: new Map([['ui/routes/index.mjs', 'i'], ['ui/routes/chat/index.mjs', 'i'], ['ui/routes/chat/ask.mjs', 'a'], ['ui/public/chat/chat-shell.css', 'c'], ['ui/public/style.css', null]]) };
+  const pack = (files) => () => ({ code: 0, stdout: JSON.stringify([{ files: files.map((path) => ({ path })) }]), stderr: '' });
+  const ok = docsAndPackage(pack(['ui/routes/index.mjs', 'ui/routes/chat/ask.mjs', 'ui/public/chat/chat-shell.css']), d, plan);
+  assert.deepEqual([ok.ok, ok.notListed, ok.notPacked, ok.dirs], [true, [], [], ['ui/public/chat/']]);
+  writeFileSync(join(d, 'docs/feature-files.md'), '| `ui/public/chat/chat-shell.css` | 1 |\n');
+  assert.deepEqual(docsAndPackage(pack(['ui/routes/chat/ask.mjs']), d, plan).notListed, ['ui/routes/chat/ask.mjs']);
 });

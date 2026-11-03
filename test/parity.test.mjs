@@ -39,6 +39,8 @@ test('parseArgs crawl: --b repeats, docker is refused, --b is required', () => {
   const o = parseArgs(['crawl', '--a', 'tree:.', '--b', 'tree:x', '--b', 'package:.', '--out', 'o']);
   assert.deepEqual([o.cmd, o.a, o.bs, o.workers, o.control, o.keep], ['crawl', 'tree:.', [{ t: 'tree:x', level: 'full' }, { t: 'package:.', level: 'full' }], 4, true, false]);
   assert.equal(parseArgs(['crawl', '--a', 'tree:.', '--b', 'tree:x', '--out', 'o', '--no-control', '--workers', '8']).control, false);
+  assert.equal(parseArgs(['crawl', '--a', 'tree:.', '--b', 'tree:x', '--out', 'o', '--dev', 'abc']).dev, 'abc', 'crawl --dev SHA: the reuse rule\'s dev');
+  assert.equal(parseArgs(['crawl', '--a', 'tree:.', '--b', 'tree:x', '--out', 'o']).dev, null);
   assert.throws(() => parseArgs(['crawl', '--a', 'tree:.', '--b', 'docker:img', '--out', 'o']), /crawl supports tree: and package: targets/);
   assert.throws(() => parseArgs(['crawl', '--a', 'tree:.', '--out', 'o']), /crawl needs --b/);
 });

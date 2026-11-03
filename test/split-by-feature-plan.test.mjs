@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { loadMap, featureForRoute } from '../tools/split-by-feature/plan.mjs';
 import { planSplit, main, nextCaps, spikeGate, serverCeiling, writeFiles, codeLineCounts, SPIKE_GATE, catchUpHint } from '../tools/split-by-feature.mjs';
+import * as NAMES from '../tools/split-by-feature/file-names.mjs';
 
 const ROOT = new URL('../', import.meta.url).pathname;
 // After the freeze-day migration this checkout is itself split: the tests that split the real tree then check the
@@ -25,6 +26,14 @@ test('longest prefix wins and a sibling prefix does not match', () => {
 
 test('a catch-all prefix is refused', () => {
   assert.throws(() => loadMap(ROOT, map([F('x', ['/api/'])], { x: 't' })), /too broad/);
+});
+
+test('the naming block is type-checked: areas, generic and cssBlocks', () => {
+  const m = (naming) => JSON.stringify({ ...JSON.parse(MINI), naming });
+  loadMap(ROOT, m({ areas: { runs: { pause: 'control' } }, generic: ['misc'], cssBlocks: [{ section: '^x$', selectors: ['.a'], feature: 'runs', name: 'a' }] }));
+  assert.throws(() => loadMap(ROOT, m({ areas: [] })), /naming\.areas must be an object/);
+  assert.throws(() => loadMap(ROOT, m({ generic: 'misc' })), /naming\.generic must be a list of strings/);
+  assert.throws(() => loadMap(ROOT, m({ cssBlocks: [{ section: '^x$', selectors: [], feature: 'runs', name: 'a' }] })), /naming\.cssBlocks must be a list/);
 });
 
 test('feature names: docs basename, ui/public folder, shell or docless — nothing else', () => {
@@ -208,12 +217,12 @@ test('--apply refuses a failed spike gate and writes nothing', async (t) => {
   assert.ok(!existsSync(join(d, 'ui/public/parts.json'))); assert.ok(existsSync(join(d, 'ui/public/style.css')));
 });
 
-const HINT = /^if this branch started before the #919 split: run npm run catch-up:919 -- \S+$/;
+const HINT = /^if this branch started before the #919 split: run npm run split:catch-up -- \S+$/;
 
 test('catchUpHint names the current branch, or the placeholder outside a branch', () => {
   assert.match(catchUpHint(ROOT), HINT);
   const d = mkdtempSync(join(tmpdir(), 'sbf-hint-'));
-  assert.equal(catchUpHint(d), 'if this branch started before the #919 split: run npm run catch-up:919 -- <branch>');
+  assert.equal(catchUpHint(d), 'if this branch started before the #919 split: run npm run split:catch-up -- <branch>');
   rmSync(d, { recursive: true, force: true });
 });
 
@@ -246,4 +255,47 @@ test('size-caps-raises.json: the last raise of ui/server.mjs is the cap in size-
   assert.equal(raises.filter((r) => r.file === 'ui/server.mjs').at(-1).to, caps['ui/server.mjs']);
   for (const r of raises) { assert.ok(r.from < r.to, JSON.stringify(r)); assert.ok(typeof r.why === 'string' && r.why.trim(), JSON.stringify(r)); }
   for (const r of raises) assert.match(String(r.commit ?? ''), /^[0-9a-f]{9,40}$/, `every raise names the dev commit behind it: ${JSON.stringify(r)}`);
+});
+
+test('the real plan: pins in the baseline, mechanical names only, every file within the cap, the same file list twice', { skip: UNSPLIT_ONLY }, () => {
+  const { nameProblems } = NAMES;
+  const r = planSplit({ root: ROOT });
+  const baseline = new Set(JSON.parse(readFileSync(join(ROOT, 'tools/split-by-feature/pinned.json'), 'utf8')).map((p) => p.key));
+  for (const p of r.pins) assert.ok(baseline.has(p.key), p.key);
+  const generated = [...r.files].filter(([p, t]) => t !== null && /^ui\/(routes|public)\//.test(p) && !/^ui\/public\/(style\.css|index\.html)$/.test(p) && p !== 'ui/server.mjs');
+  for (const [p] of generated) assert.match(p, /^ui\/(routes\/[a-z0-9-]+\/[a-z0-9-]+\.mjs|routes\/index\.mjs|public\/[a-z0-9-]+\/[a-z0-9-]+\.(css|html)|public\/parts\.json)$/, p);
+  assert.deepEqual(nameProblems(generated.map(([p]) => p).filter((p) => !/\/index\.mjs$/.test(p) || p === 'ui/routes/index.mjs')), []);
+  for (const [p, t] of generated) assert.ok(t.split('\n').length - (t.endsWith('\n') ? 1 : 0) <= 1000, `${p} over the cap`);
+  assert.ok(!generated.some(([p]) => /-\d+\.(mjs|css|html)$/.test(p)), 'no numbered file');
+  assert.deepEqual([...planSplit({ root: ROOT }).files.keys()], [...r.files.keys()]);
+});
+
+test('the migration\'s doc and package edits: ui/routes/ once in package.json, the :root part in the new form, feature-files.md lists every file', { skip: UNSPLIT_ONLY }, () => {
+  const r = planSplit({ root: ROOT });
+  const pkg = r.files.get('package.json');
+  assert.equal(pkg.split('"ui/routes/"').length - 1, 1);
+  const rootPart = r.css.find((p) => /^:root\s*\{/m.test(p.text));
+  assert.equal(rootPart.file, 'shell/self-hosted.css');
+  assert.match(r.files.get('docs/design-system.md'), /Every colour is a token in `:root` of `ui\/public\/shell\/self-hosted\.css` \(served as `\/style\.css`\)/);
+  const ff = r.files.get('docs/feature-files.md');
+  const owned = [...r.routeFiles.map((f) => [f.file, f.feature]), ...[...r.css, ...r.html].map((p) => [`ui/public/${p.file}`, p.feature])];
+  for (const [p, feature] of owned) {
+    const at = ff.indexOf(`| \`${p}\` |`);
+    assert.ok(at > 0, `${p} listed`);
+    const heading = ff.slice(0, at).match(/^## ([a-z0-9-]+)/gm).at(-1);
+    assert.equal(heading, `## ${feature}`, p);
+  }
+});
+
+test('a route area over the cap with no sub-resource to split is an over-cap problem, and the error ends with the catch-up hint', async (t) => {
+  if (SPLIT) return t.skip(UNSPLIT_ONLY);
+  const d = plannerCopy(t);
+  const s = readFileSync(join(d, 'ui/server.mjs'), 'utf8');
+  const i = s.indexOf('// SPA fallback');
+  const big = `app.get('/api/runs/zz-big', (q, r) => {\n${'  r.locals.x = 1;\n'.repeat(1100)}  r.json({});\n});\n`;
+  writeFileSync(join(d, 'ui/server.mjs'), `${s.slice(0, i)}${big}${s.slice(i)}`);
+  const errs = [];
+  assert.equal(await main(['--check', '--root', d], { out: () => {}, err: (m) => errs.push(m) }), 1);
+  assert.ok(errs.some((e) => /^over cap: ui\/routes\/runs\/[a-z0-9-]+\.mjs \(\d+ lines, no sub-resource to split\)/.test(e)), errs.join('\n'));
+  assert.match(errs.at(-1), HINT);
 });

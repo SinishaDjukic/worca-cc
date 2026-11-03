@@ -2,7 +2,7 @@ name: Firefox e2e
 
 # #919 final round: the Firefox e2e suite (e2e:firefox-smoke, tools/firefox-smoke.mjs) in Playwright's own Firefox
 # build, on Linux. Playwright's Firefox hangs headless on the macOS dev machine (sandbox_extension_issue_file_to_process
-# … Operation not permitted), so verify:919 --firefox-in-ci marks this suite "CI job firefox-e2e, not run locally" and
+# … Operation not permitted), so split:verify --firefox-in-ci marks this suite "CI job firefox-e2e, not run locally" and
 # this job is where it runs. Meant as a required check: every PR into dev (incl. one retargeted to dev) and every push
 # to dev, with NO paths filter (a required check that never runs stays pending forever; see ci.yml's header).
 # The `extension` job in ci.yml keeps smoking the runner's stock Firefox.

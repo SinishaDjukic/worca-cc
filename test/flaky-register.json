@@ -56,5 +56,7 @@
   {"file": "test/engine-spawn.test.mjs", "test": "Claude synthetic usage-limit frame terminates a lingering CLI …", "symptom": "~2.6 s under load; 12/12 alone", "alone": "passes alone"},
   {"file": "test/egress-policy.test.mjs", "test": "corporate proxy end to end: a child process fetch with the child env reaches the NTLM upstream", "symptom": "fails from an agent run, on the untouched checkpoint too", "alone": "fails alone too"},
   {"file": "test/qwen-gemini-ask-adapter.test.mjs", "test": "Gemini chat spawn: the chat folder", "symptom": "cwd is /private/var/folders/… vs /var/folders/… (macOS tmp realpath); untouched checkpoint too", "alone": "fails alone too"},
-  {"file": "test/api-attribution-audit.test.mjs", "test": "PR created and run archived are audited with who did it", "symptom": "500 ENOTEMPTY rmdir of a temp store pipelines dir under full-suite load (verify:919 iteration 2, split tree); 3/3 green alone", "alone": "passes alone"}
+  {"file": "test/api-attribution-audit.test.mjs", "test": "PR created and run archived are audited with who did it", "symptom": "500 ENOTEMPTY rmdir of a temp store pipelines dir under full-suite load (split:verify iteration 2, split tree); 3/3 green alone", "alone": "passes alone"},
+  {"file": "test/orchestrator-workspace-scan.test.mjs", "test": "v3 end to end (detached): read-only scan maps the npm dependency …", "symptom": "run-root/worktree class under load; 46/46 alone on split tree", "alone": "passes alone"},
+  {"file": "test/run-root-teardown.test.mjs", "test": "detached + keep on-success: a finished run keeps its checkout …", "symptom": "run-root/worktree class under load; 46/46 alone on split tree", "alone": "passes alone"}
 ]

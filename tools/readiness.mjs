@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // tools/readiness.mjs — #919 slice 3: readiness dry run of the split on the latest origin/dev.
-//   run   [--out DIR] [--keep] [--dev-ref REF] [--crawl-from DIR] [--catch-up-from FILE]
+//   run   [--out DIR] [--keep] [--dev-ref REF] [--crawl-from DIR | --waive-crawl OWNER:REASON] [--catch-up-from FILE]
 //                                       fetch origin/dev (or rehearse on REF), build + check the migrated tree, rehearse the rollback,
 //                                       check open PRs, write DIR/report.md + DIR/report.json (exit 0 go, 1 no-go)
 //   post  --out DIR                     post DIR's report on #919 after gh auth + secret scan (exit 0 posted)
@@ -22,7 +22,8 @@ import { scanSecrets } from '../src/core/secret-scan.mjs';
 import { parseFailures, unlistedFailures } from './flaky-register.mjs';
 import { listRoutes } from './parity/routes.mjs';
 import { crawlSummary } from './parity/crawl-compare.mjs';
-import { catchUpAll, defaultDeps as catchUpDeps } from './catch-up-919.mjs';
+import { servedFingerprint, reuseVerdict } from './parity/reuse.mjs';
+import { catchUpAll, defaultDeps as catchUpDeps } from './split-catch-up.mjs';
 
 const TOOL_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const ev = (label, href) => ({ label, href });
@@ -34,7 +35,7 @@ export function parseArgs(argv) {
   const [cmd, ...rest] = argv;
   const arg = (k) => { const i = rest.indexOf(k); return i >= 0 ? rest[i + 1] : undefined; };
   if (cmd === 'run') {
-    const VALUED = ['--out', '--dev-ref', '--crawl-from', '--catch-up-from'];
+    const VALUED = ['--out', '--dev-ref', '--crawl-from', '--catch-up-from', '--waive-crawl'];
     for (let i = 0; i < rest.length; i += 1) {
       if (VALUED.includes(rest[i])) i += 1;
       else if (rest[i] !== '--keep') throw new Error(`run: unknown argument ${rest[i]}`);
@@ -42,8 +43,15 @@ export function parseArgs(argv) {
     const devRef = arg('--dev-ref');
     if (rest.includes('--dev-ref') && (!devRef || devRef.startsWith('--'))) throw new Error('run --dev-ref needs REF');
     const path = (k) => { const v = arg(k); if (rest.includes(k) && (!v || v.startsWith('--'))) throw new Error(`run ${k} needs a path`); return v ? resolve(v) : null; };
+    let waiveCrawl = null;
+    if (rest.includes('--waive-crawl')) {
+      const m = /^([^:]+):(.+)$/s.exec(arg('--waive-crawl') ?? '');
+      if (!m) throw new Error('run --waive-crawl needs OWNER:REASON');
+      if (rest.includes('--crawl-from')) throw new Error('run: --waive-crawl and --crawl-from exclude each other');
+      waiveCrawl = { owner: m[1].trim(), reason: m[2].trim() };
+    }
     return { cmd, out: arg('--out'), keep: rest.includes('--keep'),
-      crawlFrom: path('--crawl-from'), catchUpFrom: path('--catch-up-from'), ...(devRef ? { devRef } : {}) };
+      crawlFrom: path('--crawl-from'), catchUpFrom: path('--catch-up-from'), ...(devRef ? { devRef } : {}), ...(waiveCrawl ? { waiveCrawl } : {}) };
   }
   if (cmd === 'post') { const out = arg('--out'); if (!out) throw new Error('post needs --out DIR'); return { cmd, out }; }
   if (cmd === 'split') {
@@ -51,7 +59,7 @@ export function parseArgs(argv) {
     if (!s.rev || !s.splitterRev || !s.out) throw new Error('split needs --rev REV --splitter-rev REV --out DIR');
     return s;
   }
-  throw new Error('usage: readiness.mjs run [--out DIR] [--keep] [--dev-ref REF] [--crawl-from DIR] [--catch-up-from FILE] | post --out DIR | split --rev REV --splitter-rev REV --out DIR');
+  throw new Error('usage: readiness.mjs run [--out DIR] [--keep] [--dev-ref REF] [--crawl-from DIR] [--waive-crawl OWNER:REASON] [--catch-up-from FILE] | post --out DIR | split --rev REV --splitter-rev REV --out DIR');
 }
 
 /** The runbook's Inputs table (docs/split-by-feature.md): the go/no-go owner and the freeze window; an empty cell is null. */
@@ -87,9 +95,9 @@ export async function splitAt({ root = process.cwd(), rev, splitterRev, out, dep
   }
 }
 
-export async function runReadiness({ root = process.cwd(), out, keep = false, devRef = null, crawlFrom = null, catchUpFrom = null, now = () => new Date(), log = console.log, deps = {} } = {}) {
+export async function runReadiness({ root = process.cwd(), out, keep = false, devRef = null, crawlFrom = null, catchUpFrom = null, waiveCrawl = null, now = () => new Date(), log = console.log, deps = {} } = {}) {
   const d = { run, runLogged, cloneAt, npmCi, hasSplitter, applySplit, sliceOneEquivalence, treeHash, resetTree, commitMigration, rehearseRollback, servedEquivalence,
-    docsAndPackage, listTargets, fetchHeads, mergeCheck, listRoutes, authStatus,
+    docsAndPackage, listTargets, fetchHeads, mergeCheck, listRoutes, authStatus, servedFingerprint,
     codeFiles, deadCode, largestFiles, featureNames, movedByFeature,
     scripts: (dir) => JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')).scripts,
     catchUpAll: (o) => catchUpAll({ d: catchUpDeps, ...o }), ...deps };
@@ -108,6 +116,8 @@ export async function runReadiness({ root = process.cwd(), out, keep = false, de
     const shaRun = d.run('git', ['-C', root, 'rev-parse', '--verify', '--quiet', '--end-of-options', `${ref}^{commit}`]);
     if (shaRun.code !== 0) throw fatal(devRef ? `unknown --dev-ref ${ref}` : 'origin/dev does not resolve to a commit');
     const sha = shaRun.stdout.trim();
+    // the crawl reuse rule is about origin/dev itself, even when the run rehearses on --dev-ref
+    const originDev = devRef ? d.run('git', ['-C', root, 'rev-parse', '--verify', '--quiet', '--end-of-options', 'origin/dev^{commit}']).stdout.trim() : sha;
     const toolCommit = d.run('git', ['-C', root, 'rev-parse', 'HEAD']).stdout.trim();
     const remoteUrl = d.run('git', ['-C', root, 'remote', 'get-url', 'origin']).stdout.trim();
 
@@ -116,8 +126,9 @@ export async function runReadiness({ root = process.cwd(), out, keep = false, de
       say(`[${n}/11] ${title}…`);
       try {
         const r = await fn();
-        checks.push({ id, title, status: r.ok ? 'pass' : 'fail', detail: r.detail, evidence: r.evidence });
-        say(`${r.ok ? '✔' : '✖'} ${id} — ${r.detail}`);
+        const status = r.status ?? (r.ok ? 'pass' : 'fail');
+        checks.push({ id, title, status, ...(status === 'waived' ? { waived: r.waived } : {}), detail: r.detail, evidence: r.evidence });
+        say(`${status === 'pass' ? '✔' : status === 'waived' ? '⚠' : '✖'} ${id} — ${r.detail}`);
         return r;
       } catch (e) {
         writeFileSync(E(`${id}.log`), `${e.stack ?? e.message}\n`, { flag: 'a' });
@@ -199,20 +210,31 @@ export async function runReadiness({ root = process.cwd(), out, keep = false, de
       needMigration(); const s = suite(mig, 'suite-migrated'); flaky.push(...Array(s.fails - s.unlisted.length).fill('suite-migrated')); return s;
     });
     const treeOf = (dir, rev = 'HEAD') => d.run('git', ['-C', dir, 'rev-parse', `${rev}^{tree}`]).stdout.trim();
-    // the differential crawl, dev vs migrated; verify:919 row h's crawl is reused only when its A and first B are these trees
-    const crawl = () => {
+    // the differential crawl, dev vs migrated; split:verify row h's crawl is reused only when its A and first B are these trees
+    // or when the crawl reuse rule holds (tools/parity/reuse.mjs): the same origin/dev and byte-identical served output
+    const fpOrNull = async (dir) => { try { return await d.servedFingerprint(dir); } catch { return null; } };   // unreadable → re-crawl, never a failed row
+    const crawl = async () => {
       const rep = crawlFrom && existsSync(join(crawlFrom, 'report.json')) ? JSON.parse(readFileSync(join(crawlFrom, 'report.json'), 'utf8')) : null;
-      const usable = rep && rep.a?.tree === treeOf(base) && rep.bs?.[0]?.tree === treeOf(mig);
-      if (usable) cpSync(crawlFrom, join(out, 'crawl'), { recursive: true, filter: (src) => !/[\\/](records\.ndjson|dom|png|a1|a2|b\d+)([\\/]|$)/.test(src.slice(crawlFrom.length)) });
-      else d.runLogged(process.execPath, ['--disable-warning=ExperimentalWarning', join(TOOL_ROOT, 'tools/parity.mjs'), 'crawl', '--a', `tree:${base}`, '--b', `tree:${mig}`, '--out', join(out, 'crawl')], E('crawl.log'));
+      const same = !!rep && rep.a?.tree === treeOf(base) && rep.bs?.[0]?.tree === treeOf(mig);
+      // the rule can only hold when dev is unchanged: no fingerprint is computed otherwise
+      const rule = !!rep && !same && rep.dev === originDev && reuseVerdict({ dev: rep.dev, a: rep.a?.served, b: rep.bs?.[0]?.served },
+        { dev: originDev, a: await fpOrNull(base), b: await fpOrNull(mig) }).valid;
+      const reused = same ? 'same trees' : rule ? 'reuse rule' : null;
+      if (reused) cpSync(crawlFrom, join(out, 'crawl'), { recursive: true, filter: (src) => !/[\\/](records\.ndjson|dom|png|a1|a2|b\d+)([\\/]|$)/.test(src.slice(crawlFrom.length)) });
+      else d.runLogged(process.execPath, ['--disable-warning=ExperimentalWarning', join(TOOL_ROOT, 'tools/parity.mjs'), 'crawl', '--a', `tree:${base}`, '--b', `tree:${mig}`, '--dev', originDev, '--out', join(out, 'crawl')], E('crawl.log'));
       const r = JSON.parse(readFileSync(join(out, 'crawl', 'report.json'), 'utf8'));
-      return { ok: r.pass === true, reused: !!usable, r };
+      return { ok: r.pass === true, reused, r };
     };
-    await step(7, 'parity', 'parity and the differential crawl: dev vs the migrated tree', () => {
+    await step(7, 'parity', 'parity and the differential crawl: dev vs the migrated tree', async () => {
       needMigration(); const p = parity(base, mig, 'parity'); parityRep = p.rep;
-      const c = crawl();
       const pd = p.ok ? 'PASS: 0 route, visual and flow differences, timings within 10%' : `FAIL: ${p.rep.routeDiffs.length} route diffs, ${p.rep.visualDiffs?.length ?? 0} visual, ${p.rep.failedFlows.length} flows`;
-      return { ok: p.ok && c.ok, detail: `${pd}; crawl ${c.ok ? 'PASS' : 'FAIL'}: ${crawlSummary(c.r)}${c.reused ? ' (verify:919 row h, same trees)' : ''}`,
+      if (waiveCrawl) {   // the owner's waiver: no crawl is spawned or copied (docs/split-by-feature.md, The readiness command)
+        writeFileSync(E('crawl-waived.txt'), `crawl WAIVED by ${waiveCrawl.owner}: ${waiveCrawl.reason}\nno crawl was spawned or reused\n`);
+        return { ok: p.ok, status: p.ok ? 'waived' : 'fail', waived: waiveCrawl, detail: `${pd}; crawl WAIVED by ${waiveCrawl.owner}: ${waiveCrawl.reason}`,
+          evidence: [...p.evidence, ev('crawl-waived.txt', 'evidence/crawl-waived.txt')] };
+      }
+      const c = await crawl();
+      return { ok: p.ok && c.ok, detail: `${pd}; crawl ${c.ok ? 'PASS' : 'FAIL'}: ${crawlSummary(c.r)}${c.reused ? ` (split:verify row h, ${c.reused})` : ''}`,
         evidence: [...p.evidence, ev('crawl/report.md', 'crawl/report.md'), ...(c.reused ? [] : [ev('crawl.log', 'evidence/crawl.log')])] };
     });
     await step(8, 'open-prs', 'open PRs and dependabot branches against dev and the migrated tree; the catch-up dry run', async () => {
@@ -223,7 +245,7 @@ export async function runReadiness({ root = process.cwd(), out, keep = false, de
       const vanished = gone.size ? `; ${gone.size} gone before the fetch: ${[...gone].join(', ')}` : '';
       for (const t of targets) { const dev = d.mergeCheck(d.run, mig, sha, t.ref); const split = d.mergeCheck(d.run, mig, migration, t.ref); openRows.push({ ...t, dev, split, action: actionFor(t, { dev, split }) }); }
       const problems = openPrsProblems(targets, openRows);
-      // the catch-up dry run per target (verify:919 row j's is reused when its M^ and M tree are this run's)
+      // the catch-up dry run per target (split:verify row j's is reused when its M^ and M tree are this run's)
       const reused = catchUpFrom && existsSync(catchUpFrom) ? JSON.parse(readFileSync(catchUpFrom, 'utf8')) : null;
       const usable = reused && reused.mParent === sha && reused.mTree === treeOf(mig, migration);
       const caught = usable ? reused.rows : await d.catchUpAll({ root, out: join(trees, 'catch-up'), targets, headsRepo: mig,
@@ -235,10 +257,10 @@ export async function runReadiness({ root = process.cwd(), out, keep = false, de
       if (noExpress) say(`note: no open express 5 PR in the table (#1049 closed or merged?)`);
       writeFileSync(E('open-prs.json'), JSON.stringify({ targets: targets.length, gone: [...gone], problems, rows: openRows }, null, 2));
       const works = openRows.filter((t) => t.catchUp.verdict === 'works').length;
-      return { ok: problems.length === 0, detail: problems.length ? problems[0] : `${openRows.length} PRs and branches, ${openRows.filter((t) => t.split.conflict).length} conflict after the split; catch-up: ${works} work, ${openRows.length - works} need a hand fix or did not run${usable ? ' (verify:919 row j, same trees)' : ''}${vanished}${noExpress}`,
+      return { ok: problems.length === 0, detail: problems.length ? problems[0] : `${openRows.length} PRs and branches, ${openRows.filter((t) => t.split.conflict).length} conflict after the split; catch-up: ${works} work, ${openRows.length - works} need a hand fix or did not run${usable ? ' (split:verify row j, same trees)' : ''}${vanished}${noExpress}`,
         evidence: [ev('open-prs.json', 'evidence/open-prs.json'), ev('catch-up.json', 'evidence/catch-up.json')] };
     });
-    // D9: with an empty diff the reverted tree is dev's own, so the suite and a quick parity suffice (no e2e: verify:919
+    // D9: with an empty diff the reverted tree is dev's own, so the suite and a quick parity suffice (no e2e: split:verify
     // row i and the CI job firefox-e2e run those)
     await step(9, 'rollback', 'revert the migration; the diff, the suite and a quick parity again', () => {
       needMigration();
@@ -278,7 +300,7 @@ export async function runReadiness({ root = process.cwd(), out, keep = false, de
       ...(acceptedDeltas ? {} : { note: 'accepted deltas not measured (the equivalence row failed)' }) } : undefined;
     const report = buildReport({ repo: REPO, sha, ref, generatedAt, toolCommit, checks, openPrs: openRows, baseline: { rows: baselineRows },
       moved: { features, largest }, risks,
-      inputs: { ...runbookInputs(existsSync(join(TOOL_ROOT, 'docs/split-by-feature.md')) ? readFileSync(join(TOOL_ROOT, 'docs/split-by-feature.md'), 'utf8') : ''), flaky } });
+      inputs: { ...runbookInputs(existsSync(join(TOOL_ROOT, 'docs/split-by-feature.md')) ? readFileSync(join(TOOL_ROOT, 'docs/split-by-feature.md'), 'utf8') : ''), flaky, ...(waiveCrawl ? { waiveCrawl } : {}) } });
     const problems = [...validateReport(report), ...missingEvidence(report, (href) => existsSync(join(out, href)))];
     if (problems.length) throw fatal(`report invalid:\n${problems.join('\n')}`);
     writeFileSync(join(out, 'report.json'), JSON.stringify(report, null, 2) + '\n');
@@ -293,6 +315,8 @@ export async function runReadiness({ root = process.cwd(), out, keep = false, de
 export function postFrom({ root = process.cwd(), out, run: r = run, log = console.log }) {
   out = resolve(out);
   const report = JSON.parse(readFileSync(join(out, 'report.json'), 'utf8'));
+  const waived = report.checks.filter((c) => c.status === 'waived').map((c) => c.id);
+  if (waived.length) throw new Error(`refusing to post: a waived row (${waived.join(', ')}) needs the owner's own post`);
   if ((report.devCommit.ref ?? 'origin/dev') !== 'origin/dev') throw new Error(`refusing to post: the report is a rehearsal on ${report.devCommit.ref}, not origin/dev`);
   const md = readFileSync(join(out, 'report.md'), 'utf8');
   const pairs = [[out, '$OUT'], [realpathSync(out), '$OUT'], [resolve(root), '$REPO'], [realpathSync(root), '$REPO'], [homedir(), '~']];
@@ -310,7 +334,7 @@ export async function main(argv = process.argv.slice(2), { log = console.log, er
   let a;
   try { a = parseArgs(argv); } catch (e) { err(e.message); return 2; }
   try {
-    if (a.cmd === 'run') return (await runReadiness({ out: a.out, keep: a.keep, devRef: a.devRef, crawlFrom: a.crawlFrom, catchUpFrom: a.catchUpFrom, log })).report.verdict.value === 'go' ? 0 : 1;
+    if (a.cmd === 'run') return (await runReadiness({ out: a.out, keep: a.keep, devRef: a.devRef, crawlFrom: a.crawlFrom, catchUpFrom: a.catchUpFrom, waiveCrawl: a.waiveCrawl, log })).report.verdict.value === 'go' ? 0 : 1;
     if (a.cmd === 'post') { postFrom({ out: a.out, log }); return 0; }
     const { tree, commit, changed } = await splitAt({ rev: a.rev, splitterRev: a.splitterRev, out: a.out });
     log(`readiness: split ${changed.length} files; ${tree} is at ${commit}`); return 0;

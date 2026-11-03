@@ -1,10 +1,10 @@
-// test/catch-up-919-fixture.test.mjs — the fixture "old" PR: three edits at mapped anchors, and where they must land.
+// test/split-catch-up-fixture.test.mjs — the fixture "old" PR: three edits at mapped anchors, and where they must land.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
-import { fixtureEdits, checkFixture, FIXTURE_ROUTE, FIXTURE_CSS, FIXTURE_HTML } from '../tools/catch-up-919/fixture.mjs';
+import { fixtureEdits, checkFixture, FIXTURE_ROUTE, FIXTURE_CSS, FIXTURE_HTML } from '../tools/split-catch-up/fixture.mjs';
 
 const SRC = { server: "const app = x;\napp.get('/api/settings', async (req, res) => {\n  res.json({});\n});\n",
   css: '.x{}\n/* ---------- Settings cards ---------- */\n.settings-card{max-width:760px;}\n/* ---------- Last ---------- */\n.z{}\n',
@@ -33,10 +33,10 @@ test('the real monoliths carry all three anchors, each exactly once', { skip: SP
 test('checkFixture: each edit in exactly one split file, none left in the residual server', () => {
   const dir = mkdtempSync(join(tmpdir(), 'cu-fix-'));
   const put = (p, s) => { mkdirSync(dirname(join(dir, p)), { recursive: true }); writeFileSync(join(dir, p), s); };
-  put('ui/server.mjs', 'residual\n'); put('ui/routes/settings.mjs', FIXTURE_ROUTE);
-  put('ui/public/shell/shell.css', FIXTURE_CSS); put('ui/public/shell/main.html', FIXTURE_HTML);
+  put('ui/server.mjs', 'residual\n'); put('ui/routes/settings/config.mjs', FIXTURE_ROUTE);
+  put('ui/public/shell/sidebar.css', FIXTURE_CSS); put('ui/public/shell/main.html', FIXTURE_HTML);
   const ok = checkFixture(dir);
-  assert.deepEqual([ok.ok, ok.routes, ok.css, ok.html], [true, ['ui/routes/settings.mjs'], ['ui/public/shell/shell.css'], ['ui/public/shell/main.html']]);
+  assert.deepEqual([ok.ok, ok.routes, ok.css, ok.html], [true, ['ui/routes/settings/config.mjs'], ['ui/public/shell/sidebar.css'], ['ui/public/shell/main.html']]);
   put('ui/server.mjs', FIXTURE_ROUTE);
   assert.match(checkFixture(dir).problems.join('\n'), /stayed in ui\/server\.mjs/);
 });

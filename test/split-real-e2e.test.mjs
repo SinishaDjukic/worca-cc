@@ -1,8 +1,8 @@
-// test/real-e2e-919.test.mjs — the T2 driver's pure parts: flow judging, the server env and the auto answers. The driver
+// test/split-real-e2e.test.mjs — the T2 driver's pure parts: flow judging, the server env and the auto answers. The driver
 // itself needs a real claude login and never runs in npm test.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { judgeFlow, realEnv, FLOWS, answerFor, SETTLED } from '../tools/real-e2e-919.mjs';
+import { judgeFlow, realEnv, FLOWS, answerFor, SETTLED } from '../tools/split-real-e2e.mjs';
 
 const side = (o = {}) => ({ ok: true, status: 'done', structure: { view: ['runs'], headings: ['h2:Runs'], tabs: [], buttons: 12 }, console: [], ...o });
 

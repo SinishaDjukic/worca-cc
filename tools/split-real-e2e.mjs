@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-// tools/real-e2e-919.mjs — #919 T2: the same steps on two REAL instances side by side (no mock; the real claude CLI through
+// tools/split-real-e2e.mjs — #919 T2: the same steps on two REAL instances side by side (no mock; the real claude CLI through
 // the login keychain; claude-haiku-5-5): A the unsplit branch, B its split tree. Never posts, never pushes, stops only the
 // servers it started. Writes OUT/report.json, OUT/report.md and OUT/shots/*.png (A | B in one image).
-//   node tools/real-e2e-919.mjs --a DIR --b DIR --out DIR [--model claude-haiku-5-5]
+//   node tools/split-real-e2e.mjs --a DIR --b DIR --out DIR [--model claude-haiku-5-5]
 import { spawn, execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, symlinkSync, openSync, readFileSync, writeFileSync, realpathSync, existsSync, readdirSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -68,7 +68,7 @@ async function api(base, path, body, method = body === undefined ? 'GET' : 'POST
 
 /** One real server on `tree`: temp HOME with the login keychain linked (sandbox-home-real-claude-chat rule), a free port. */
 export async function startReal(tree, { out, name }) {
-  const home = mkdtempSync(join(tmpdir(), `real919-${name}-`));
+  const home = mkdtempSync(join(tmpdir(), `split-real-e2e-${name}-`));
   mkdirSync(join(home, 'Library'), { recursive: true });
   symlinkSync(join(homedir(), 'Library', 'Keychains'), join(home, 'Library', 'Keychains'));
   const port = await freePort(); const logFile = join(out, `${name}-server.log`); const fd = openLog(logFile);
@@ -127,7 +127,7 @@ export async function waitRun(s, runId, project, { timeoutMs = 30 * 60_000, ever
 export async function runSide(s, { browser, project, model, shots }) {
   await api(s.base, '/api/onboarding', { welcomeSeen: true });
   await api(s.base, '/api/settings', { uiLevel: 'expert', askModels: { claude: { model, effort: 'medium' } } });
-  await api(s.base, '/api/projects', { name: 'e2e-919', path: project });
+  await api(s.base, '/api/projects', { name: 'split-e2e', path: project });
   const res = {};
   const withPage = async (vp, fn) => {
     const ctx = await browser.newContext({ viewport: { width: vp.width, height: vp.height } }); const page = await ctx.newPage();
@@ -224,15 +224,15 @@ export async function runSide(s, { browser, project, model, shots }) {
   return res;
 }
 
-const GIT_ENV = { GIT_CONFIG_GLOBAL: devNull, GIT_CONFIG_NOSYSTEM: '1', GIT_AUTHOR_NAME: 'e2e-919', GIT_AUTHOR_EMAIL: 'e2e-919@example.invalid',
-  GIT_COMMITTER_NAME: 'e2e-919', GIT_COMMITTER_EMAIL: 'e2e-919@example.invalid', GIT_AUTHOR_DATE: '2026-11-01T00:00:00Z', GIT_COMMITTER_DATE: '2026-11-01T00:00:00Z' };
+const GIT_ENV = { GIT_CONFIG_GLOBAL: devNull, GIT_CONFIG_NOSYSTEM: '1', GIT_AUTHOR_NAME: 'split-e2e', GIT_AUTHOR_EMAIL: 'split-e2e@example.invalid',
+  GIT_COMMITTER_NAME: 'split-e2e', GIT_COMMITTER_EMAIL: 'split-e2e@example.invalid', GIT_AUTHOR_DATE: '2026-11-01T00:00:00Z', GIT_COMMITTER_DATE: '2026-11-01T00:00:00Z' };
 
 /** The throwaway project, rebuilt byte-identical before each side (same path, same HEAD SHA). */
 export function makeProject(dir) {
   rmSync(dir, { recursive: true, force: true }); mkdirSync(dir, { recursive: true });
   const git = (...a) => execFileSync('git', ['-c', 'commit.gpgsign=false', '-c', `core.hooksPath=${devNull}`, ...a], { cwd: dir, env: { ...process.env, ...GIT_ENV }, encoding: 'utf8' });
   git('init', '-q', '-b', 'main');
-  writeFileSync(join(dir, 'README.md'), '# e2e-919\n\nA throwaway project for the #919 real-instance check.\n');
+  writeFileSync(join(dir, 'README.md'), '# split-e2e\n\nA throwaway project for the #919 real-instance check.\n');
   git('add', 'README.md'); git('commit', '-q', '-m', 'init');
   return git('rev-parse', 'HEAD').trim();
 }
@@ -260,9 +260,9 @@ export function renderReport(r) {
 export async function main(argv = process.argv.slice(2), { log = console.log } = {}) {
   const arg = (k) => { const i = argv.indexOf(k); return i >= 0 ? argv[i + 1] : undefined; };
   const a = arg('--a'); const b = arg('--b'); const outArg = arg('--out'); const model = arg('--model') ?? 'claude-haiku-5-5';
-  if (!a || !b || !outArg) { log('usage: node tools/real-e2e-919.mjs --a DIR --b DIR --out DIR [--model claude-haiku-5-5]'); return 2; }
+  if (!a || !b || !outArg) { log('usage: node tools/split-real-e2e.mjs --a DIR --b DIR --out DIR [--model claude-haiku-5-5]'); return 2; }
   const out = resolve(outArg); const shots = join(out, 'shots'); mkdirSync(join(shots, 'side-by-side'), { recursive: true });
-  const project = join(mkdtempSync(join(tmpdir(), 'real919-project-')), 'e2e-919');
+  const project = join(mkdtempSync(join(tmpdir(), 'split-real-e2e-project-')), 'split-e2e');
   const browser = await chromium.launch({ executablePath: chromePath(), headless: true });
   const servers = []; const sides = {}; const heads = {};
   try {
@@ -284,7 +284,7 @@ export async function main(argv = process.argv.slice(2), { log = console.log } =
     const report = { model, a: { tree: realpathSync(a), projectHead: heads.A }, b: { tree: realpathSync(b), projectHead: heads.B }, flows, pass: flows.every((f) => f.ok) };
     writeFileSync(join(out, 'report.json'), JSON.stringify({ ...report, sides }, null, 2));
     writeFileSync(join(out, 'report.md'), renderReport(report));
-    log(`real-e2e-919: ${report.pass ? 'PASS' : 'FAIL'} (${join(out, 'report.md')})`);
+    log(`split-real-e2e: ${report.pass ? 'PASS' : 'FAIL'} (${join(out, 'report.md')})`);
     return report.pass ? 0 : 1;
   } finally {
     for (const s of servers) await s.stop();

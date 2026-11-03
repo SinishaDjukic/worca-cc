@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // tools/split-by-feature.mjs — #919: split ui/server.mjs routes, ui/public/style.css and ui/public/index.html
 // into per-feature files. Pure planner + writer; same input → same output (no clocks, sorted output).
-//   --check [--stats]          plan only; exit 1 on any problem (unmapped, new pin, over cap, missing part, gate)
+//   --check [--stats [--tree]] plan only; exit 1 on any problem (unmapped, new pin, over cap, bad name, missing part, gate);
+//                              --tree prints every generated file with its line count
 //   --apply                    write the split into --root (default: cwd) on a clean checkout; a split tree: 0 files changed
 //   --dry-run [--json F] [--tests safety|none]
 //                              git archive HEAD → temp dirs, apply in one, tree hash, second apply, equivalence, tests
@@ -14,8 +15,9 @@ import { join, dirname } from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
-import { loadMap } from './split-by-feature/plan.mjs';
-import { planRoutes, emitRouteFile, orderFlips, leadStart, CAP, FALLBACK_ANCHOR } from './split-by-feature/routes.mjs';
+import { loadMap, routeOwner } from './split-by-feature/plan.mjs';
+import { planRoutes, emitRouteFile, orderFlips, leadStart, stmtText, CAP, FALLBACK_ANCHOR } from './split-by-feature/routes.mjs';
+import { NAMING_DEFAULTS, NameError, routeFiles, routeKeys, pathOf, nameProblems } from './split-by-feature/file-names.mjs';
 import { splitCss, lineCount } from './split-by-feature/css.mjs';
 import { splitHtml } from './split-by-feature/html.mjs';
 import { readPartsManifest } from '../src/core/public-assets.mjs';
@@ -24,6 +26,7 @@ import { compareTrees, childEnv } from './split-by-feature/equivalence.mjs';
 export const MIGRATION_VERSION = 1;
 export const SPIKE_GATE = Object.freeze({ movedShare: 0.95 });   // and ui/server.mjs within its ceiling in size-caps.json
 const PINNED_REL = 'tools/split-by-feature/pinned.json';
+const MAP_REL = 'tools/split-by-feature/feature-map.json';
 const CAPS_REL = 'tools/split-by-feature/size-caps.json';
 
 export function assertExpress4(root) {
@@ -51,34 +54,42 @@ export function planSplit({ root, serverSrc, css, html, mapText } = {}) {
 
   const forced = new Map();                                // order pins (D6); each round only adds to it
   const keepCentral = new Set();                           // shared helpers of a component too big for one file
-  let routes = planRoutes(serverSrc, map); let files;
-  for (let round = 0; ; round++) {
-    files = packFiles(routes, map);
-    const flips = orderFlips(routes, files);
-    const split = splitHelpers(routes, files.oversized);
-    if (!flips.size && !split.length) break;
-    if (round >= 50) throw new Error('split: order pins did not settle after 50 rounds');
-    for (const [i, why] of flips) forced.set(i, why);
-    for (const i of split) keepCentral.add(i);
-    routes = planRoutes(serverSrc, map, { forced, keepCentral });
+  let routes = planRoutes(serverSrc, map); let files; let c; let h;
+  try {                                                    // a name the rules cannot give is a problem, never a fallback
+    for (let round = 0; ; round++) {
+      files = packFiles(routes, map);
+      const flips = orderFlips(routes, files);
+      const split = splitHelpers(routes, files.oversized);
+      if (!flips.size && !split.length) break;
+      if (round >= 50) throw new Error('split: order pins did not settle after 50 rounds');
+      for (const [i, why] of flips) forced.set(i, why);
+      for (const i of split) keepCentral.add(i);
+      routes = planRoutes(serverSrc, map, { forced, keepCentral });
+    }
+    c = splitCss(css, map); h = splitHtml(html, map);
+  } catch (err) {
+    if (err instanceof NameError) return { problems: [...routes.problems, `${err.message} (${MAP_REL}:1)`], files: new Map() };
+    throw err;
   }
-  const c = splitCss(css, map); const h = splitHtml(html, map);
   const problems = [...routes.problems, ...c.problems, ...h.problems];
   if (mapText === undefined) {
     const baseline = new Set(JSON.parse(readFileSync(join(root, PINNED_REL), 'utf8')).map((p) => p.key));
     for (const p of routes.pins) if (!baseline.has(p.key)) problems.push(`new pin: ${p.key} — ${p.reason} (ui/server.mjs:${p.line})`);
   }
   const out = new Map();                                   // repo-relative path → text (null = delete)
-  const routeFiles = [];
+  const routeFileList = [];
   for (const f of files) {
     const doc = map.features.find((x) => x.name === f.feature).doc;
     const r = emitRouteFile({ name: f.name, feature: f.feature, doc, version: MIGRATION_VERSION, stmtIdx: f.stmtIdx, plan: routes });
-    if (lineCount(r.text) > CAP) problems.push(`over cap: ${r.file} would be ${lineCount(r.text)} lines (ui/server.mjs:${r.firstLine})`);
-    out.set(r.file, r.text); routeFiles.push({ ...f, fromServer: r.fromServer });
+    if (f.oversize) problems.push(`over cap: ${r.file} (${lineCount(r.text)} lines, no sub-resource to split) (ui/server.mjs:${r.firstLine})`);
+    else if (lineCount(r.text) > CAP) problems.push(`over cap: ${r.file} would be ${lineCount(r.text)} lines (ui/server.mjs:${r.firstLine})`);
+    out.set(r.file, r.text); routeFileList.push({ ...f, file: r.file, fromServer: r.fromServer });
   }
   for (const p of [...c.parts, ...h.parts]) {
     if (existsSync(ui(`public/${p.file}`))) problems.push(`part ${p.file} would overwrite an existing file (ui/public/${p.file}:1)`);
   }
+  // names are checked, never numbered (D11): before the feature index.mjs files are added
+  for (const n of nameProblems([...routeFileList.map((f) => f.file), ...[...c.parts, ...h.parts].map((p) => `ui/public/${p.file}`)])) problems.push(`${n} (${MAP_REL}:1)`);
   if (problems.length) return { problems, files: out, pins: routes.pins, routes, css: c.parts, html: h.parts };   // nothing to patch
   const existing = new Set(readdirSync(ui('public'), { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name));
   const parts = [...c.parts, ...h.parts];
@@ -86,15 +97,16 @@ export function planSplit({ root, serverSrc, css, html, mapText } = {}) {
   const dirs = [...new Set(parts.map((p) => p.feature))].filter((d) => !existing.has(d)).sort();
   out.set('ui/public/parts.json', JSON.stringify({ version: MIGRATION_VERSION, css: c.parts.map((p) => p.file), html: h.parts.map((p) => p.file), dirs }, null, 2) + '\n');
   out.set('ui/public/style.css', null); out.set('ui/public/index.html', null);
-  out.set('ui/routes/index.mjs', routeIndex(routeFiles, routes));
-  const server = patchServer(serverSrc, routes, routeFiles);  // removals, exports, imports, registration, assets
+  for (const [p, t] of routeIndex(routeFileList, routes)) out.set(p, t);
+  const server = patchServer(serverSrc, routes, routeFileList);  // removals, exports, imports, registration, assets
   out.set('ui/server.mjs', server);
-  for (const [p, t] of patchDocsAndPackage(root, c.parts, out, map)) out.set(p, t);  // package.json files, docs/design-system.md:10, docs/feature-files.md, size-caps.json
+  const owned = new Map([...routeFileList.map((f) => [f.file, f.feature]), ...parts.map((p) => [`ui/public/${p.file}`, p.feature])]);
+  for (const [p, t] of patchDocsAndPackage(root, c.parts, out, map, owned)) out.set(p, t);  // package.json files, docs/design-system.md:10, docs/feature-files.md, size-caps.json
   const regionRoutes = routes.routeInfo.size;
   const stats = { regionRoutes, movedRoutes: [...routes.routeInfo.keys()].filter((i) => routes.group.has(i)).length,
     pinnedRoutes: routes.pins.length, serverLinesAfter: lineCount(server) };
   stats.movedShare = regionRoutes ? stats.movedRoutes / regionRoutes : 1;
-  return { problems, files: out, pins: routes.pins, routes, css: c.parts, html: h.parts, stats };
+  return { problems, files: out, pins: routes.pins, routes, routeFiles: routeFileList, css: c.parts, html: h.parts, stats };
 }
 
 /**
@@ -113,12 +125,13 @@ export function splitHelpers(plan, oversized = []) {
 const HEAD_SLACK = 2;                                     // the real head names the feature and its doc: a little longer
 /**
  * Moved statements → route files. Statements of one group join into components through their declaration edges
- * (a helper always lands with every user), components pack in source order into files of at most CAP lines, and
- * a feature's files are named f, f-2, … in segment, then source order. Sorted by segment, then name: the
- * ROUTE_SEGMENTS order.
+ * (a helper always lands with every user). A component is one unit, keyed by its first route's path; the units of a
+ * feature are named and packed by routeFiles (file-names.mjs, D7) into ui/routes/FEATURE/AREA.mjs files of at most
+ * CAP lines. Returned in registrationOrder: the ROUTE_SEGMENTS order.
  */
 export function packFiles(plan, map) {
   const { group, uses, declStmt } = plan;
+  const naming = { ...NAMING_DEFAULTS, ...map.naming };
   const parent = new Map([...group.keys()].map((i) => [i, i]));
   const find = (i) => { while (parent.get(i) !== i) { parent.set(i, parent.get(parent.get(i))); i = parent.get(i); } return i; };
   for (const [i, g] of group) for (const v of uses[i]) {
@@ -131,57 +144,75 @@ export function packFiles(plan, map) {
     if (!comps.has(r)) comps.set(r, []);
     comps.get(r).push(i);
   }
-  const byGroup = new Map();                               // group → components in order of first statement
-  for (const c of [...comps.values()].sort((a, b) => a[0] - b[0])) {
-    const g = group.get(c[0]);
-    if (!byGroup.has(g)) byGroup.set(g, []);
-    byGroup.get(g).push(c);
-  }
   // The size of the file a statement list would emit: its statements plus its own import head.
   const fileLines = (stmtIdx) => lineCount(emitRouteFile({ name: 'x', feature: 'x', doc: null, version: MIGRATION_VERSION,
     stmtIdx: [...stmtIdx].sort((a, b) => a - b), plan }).text);
-  const chunks = [];                                       // { feature, segment, stmtIdx }
+  const units = new Map();                                 // feature → [{ segment, keys, full, lines, first, stmtIdx }] in source order
   const oversized = [];                                    // components over the cap on their own
-  for (const [g, list] of byGroup) {
-    const [feature, seg] = [g.slice(0, g.lastIndexOf('#')), Number(g.slice(g.lastIndexOf('#') + 1))];
-    let cur = null;
-    for (const c of list) {
-      if (fileLines(c) > CAP - HEAD_SLACK) oversized.push(c);
-      if (!cur || fileLines([...cur.stmtIdx, ...c]) > CAP - HEAD_SLACK) { cur = { feature, segment: seg, stmtIdx: [] }; chunks.push(cur); }
-      cur.stmtIdx.push(...c);
+  for (const c of [...comps.values()].sort((a, b) => a[0] - b[0])) {
+    const g = group.get(c[0]);
+    const [feature, segment] = [g.slice(0, g.lastIndexOf('#')), Number(g.slice(g.lastIndexOf('#') + 1))];
+    if (fileLines(c) > CAP - HEAD_SLACK) oversized.push(c);
+    const firstRoute = c.find((i) => plan.routeInfo.has(i));
+    const path = firstRoute === undefined ? '' : pathOf(plan.routeInfo.get(firstRoute).layers[0].path);
+    const keys = routeKeys(path, routeOwner(map, path)?.prefix); const full = routeKeys(path);
+    const lines = c.reduce((n, i) => n + lineCount(stmtText(plan.src, plan.body, i)), 0);
+    (units.get(feature) ?? units.set(feature, []).get(feature)).push({ segment, keys, full, lines, first: c[0], stmtIdx: c });
+  }
+  const files = [];
+  for (const [feature, us] of units) {
+    for (const f of routeFiles(feature, us, { ...naming, cap: CAP - HEAD_SLACK, measure: (xs) => fileLines(xs.flatMap((x) => x.stmtIdx)) })) {
+      files.push({ feature, segment: f.segment, name: `${feature}/${f.name}`, stmtIdx: f.units.flatMap((x) => x.stmtIdx).sort((a, b) => a - b), ...(f.oversize ? { oversize: true } : {}) });
     }
   }
-  const order = (a, b) => a.segment - b.segment || a.stmtIdx[0] - b.stmtIdx[0];
-  const count = new Map();
-  for (const f of map.features) count.set(f.name, 0);
-  for (const ch of chunks.sort(order)) {
-    const k = count.get(ch.feature) + 1; count.set(ch.feature, k);
-    ch.name = k > 1 ? `${ch.feature}-${k}` : ch.feature;
-    ch.stmtIdx.sort((a, b) => a - b);
-  }
-  const files = chunks.sort((a, b) => a.segment - b.segment || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-  return Object.assign(files, { oversized });
+  return Object.assign(registrationOrder(files), { oversized });
 }
 
-const modId = (name) => `m_${name.replace(/-/g, '_')}`;
+/**
+ * The order route files register in (D8): per segment, features by the first statement they own there, then a
+ * feature's files by their first statement. ui/routes/index.mjs and orderFlips both read this one order.
+ */
+export function registrationOrder(files) {
+  const rank = new Map();                                  // `${segment} ${feature}` → its earliest statement in the segment
+  for (const f of files) { const k = `${f.segment} ${f.feature}`; rank.set(k, Math.min(rank.get(k) ?? Infinity, f.stmtIdx[0])); }
+  return [...files].sort((a, b) => a.segment - b.segment || rank.get(`${a.segment} ${a.feature}`) - rank.get(`${b.segment} ${b.feature}`) || a.stmtIdx[0] - b.stmtIdx[0]);
+}
+
+const modId = (name) => `m_${name.replace(/[/-]/g, '_')}`;
 const firstLine = (src, body, i) => src.slice(body[i].start, src.indexOf('\n', body[i].start)).trim().slice(0, 60);
 const segmentLabel = (plan, k) => (k < plan.barriers.length ? `before ${firstLine(plan.src, plan.body, plan.barriers[k])}` : 'before the SPA fallback');
 
-/** ui/routes/index.mjs: one frozen list per segment, each sorted by file name. */
+/**
+ * ui/routes/FEATURE/index.mjs (SEGMENTS: the feature's areas per segment) and ui/routes/index.mjs (ROUTE_SEGMENTS: per
+ * segment, the features' lists in registration order). `files` come in registrationOrder. Returns path → text.
+ */
 export function routeIndex(files, plan) {
-  const lists = plan.ends.map(() => []);
-  for (const f of files) lists[f.segment].push(f.name);
-  const names = [...new Set(files.map((f) => f.name))].sort();
-  return [
-    `// ui/routes/index.mjs — generated by tools/split-by-feature.mjs v${MIGRATION_VERSION}. ui/server.mjs registers ROUTE_SEGMENTS[k] right`,
+  const out = new Map();
+  const features = [...new Set(files.map((f) => f.feature))].sort();
+  for (const feat of features) {
+    const mine = files.filter((f) => f.feature === feat);
+    out.set(`ui/routes/${feat}/index.mjs`, [
+      `// ui/routes/${feat}/index.mjs — generated by tools/split-by-feature.mjs v${MIGRATION_VERSION} (#919): the ${feat} route areas per segment of`,
+      "// ui/server.mjs, in source order. ui/routes/index.mjs registers each list at its segment's barrier.",
+      ...mine.map((f) => `import * as ${modId(f.name)} from './${f.name.slice(feat.length + 1)}.mjs';`),
+      'export const SEGMENTS = Object.freeze([',
+      ...plan.ends.map((_, k) => `  Object.freeze([${mine.filter((f) => f.segment === k).map((f) => modId(f.name)).join(', ')}]),   // ${segmentLabel(plan, k)}`),
+      ']);',
+      '',
+    ].join('\n'));
+  }
+  out.set('ui/routes/index.mjs', [
+    `// ui/routes/index.mjs — generated by tools/split-by-feature.mjs v${MIGRATION_VERSION} (#919). ui/server.mjs registers ROUTE_SEGMENTS[k] right`,
     '// before its k-th central app.use between the static mount and the SPA fallback, and the last list right before the',
-    "// fallback. Each list is sorted by file name. Add a new feature's file to the list of the segment it belongs in.",
-    ...names.map((n) => `import * as ${modId(n)} from './${n}.mjs';`),
+    '// fallback. Within a segment, features follow the order of their first route there; within a feature, areas follow',
+    "// source order. A new feature's file goes into its feature's index.mjs, in the list of the segment it belongs in.",
+    ...features.map((feat) => `import * as ${modId(feat)} from './${feat}/index.mjs';`),
     'export const ROUTE_SEGMENTS = Object.freeze([',
-    ...lists.map((l, k) => `  Object.freeze([${l.sort().map(modId).join(', ')}]),   // ${segmentLabel(plan, k)}`),
+    ...plan.ends.map((_, k) => `  Object.freeze([${[...new Set(files.filter((f) => f.segment === k).map((f) => f.feature))].map((feat) => `...${modId(feat)}.SEGMENTS[${k}]`).join(', ')}]),   // ${segmentLabel(plan, k)}`),
     ']);',
     '',
-  ].join('\n');
+  ].join('\n'));
+  return out;
 }
 
 const INDEX_DECL = "const INDEX_FILE = path.join(PUBLIC_DIR, 'index.html');\n";
@@ -328,8 +359,9 @@ export function writeCaps(root) {
 }
 
 const DESIGN_SENTENCE = 'Every colour is a token in `:root` of `ui/public/style.css`';
-/** package.json files, the :root sentence in docs/design-system.md, docs/feature-files.md and the size caps. */
-export function patchDocsAndPackage(root, cssParts, out, map) {
+/** package.json files, the :root sentence in docs/design-system.md, docs/feature-files.md and the size caps.
+ *  `owned`: generated path → its feature (route area files and parts; the index files are wiring and not listed). */
+export function patchDocsAndPackage(root, cssParts, out, map, owned = new Map()) {
   const res = new Map();
   const pkg = readFileSync(join(root, 'package.json'), 'utf8');
   const pkgLine = pkg.match(/^([ \t]*)"ui\/server\.mjs",\n/m);
@@ -342,9 +374,7 @@ export function patchDocsAndPackage(root, cssParts, out, map) {
   }
   const rows = [];
   for (const f of map.features) {
-    const mine = [...out].filter(([p, t]) => t !== null && (p.startsWith(`ui/routes/${f.name}.mjs`) || p.startsWith(`ui/routes/${f.name}-`)
-      ? new RegExp(`^ui/routes/${f.name}(?:-\\d+)?\\.mjs$`).test(p) : p.startsWith(`ui/public/${f.name}/${f.name}`)
-        && new RegExp(`^ui/public/${f.name}/${f.name}(?:-\\d+)?\\.(?:css|html)$`).test(p)));
+    const mine = [...owned].filter(([p, feat]) => feat === f.name && out.get(p) != null).map(([p]) => [p, out.get(p)]);
     if (!mine.length) continue;
     rows.push(`## ${f.name}${f.doc ? ` ([${f.doc.slice(5)}](${f.doc.slice(5)}))` : ''}`, '', '| File | Lines |', '|---|---|',
       ...mine.sort(([a], [b]) => (a < b ? -1 : 1)).map(([p, t]) => `| \`${p}\` | ${lineCount(t)} |`), '');
@@ -462,13 +492,29 @@ function dryRunMain(root, head, arg, { out, err }) {
 export function catchUpHint(root) {
   let b = '';
   try { b = execFileSync('git', ['-C', root, 'rev-parse', '--abbrev-ref', 'HEAD'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch {}
-  return `if this branch started before the #919 split: run npm run catch-up:919 -- ${b && b !== 'HEAD' ? b : '<branch>'}`;
+  return `if this branch started before the #919 split: run npm run split:catch-up -- ${b && b !== 'HEAD' ? b : '<branch>'}`;
 }
 
 /** Short HEAD for messages; 'no-git' for a fixture root that is not a repository (--check needs no git). */
 function gitHead(root) {
   try { return execFileSync('git', ['-C', root, 'rev-parse', '--short=9', 'HEAD'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); }
   catch { return 'no-git'; }
+}
+
+/** The generated tree, one line per folder: `ui/routes/runs/  a.mjs 983 · b.mjs 174`, routes in registration order,
+ *  parts in source order (the --tree output; docs/split-by-feature.md, Layout). */
+export function treeLines(plan) {
+  const lines = (p) => lineCount(plan.files.get(p));
+  const folders = new Map();
+  const add = (dir, p) => (folders.get(dir) ?? folders.set(dir, []).get(dir)).push(p);
+  for (const f of plan.routeFiles) add(dirname(f.file), f.file);
+  for (const p of [...plan.css, ...plan.html].sort((a, b) => (a.file.endsWith('.html') - b.file.endsWith('.html')) || 0)) add(`ui/public/${p.file.split('/')[0]}`, `ui/public/${p.file}`);
+  const routeDirs = [...folders.keys()].filter((d) => d.startsWith('ui/routes/'));
+  const publicDirs = [...folders.keys()].filter((d) => d.startsWith('ui/public/')).sort();
+  const width = Math.max(...[...folders.keys()].map((d) => d.length + 1));
+  const row = (d) => `${`${d}/`.padEnd(width)}  ${folders.get(d).map((p) => `${p.slice(d.length + 1)} ${lines(p)}`).join(' · ')}`;
+  return [`ui/routes/index.mjs ${lines('ui/routes/index.mjs')}`, ...routeDirs.map(row), '(each ui/routes folder also holds its index.mjs)',
+    `ui/public/parts.json ${lines('ui/public/parts.json')}`, ...publicDirs.map(row)];
 }
 
 export async function main(argv = process.argv.slice(2), { out = console.log, err = console.error } = {}) {
@@ -501,6 +547,7 @@ export async function main(argv = process.argv.slice(2), { out = console.log, er
       const g = spikeGate(plan.stats, serverCeiling(root));
       const why = g.pass ? `>= ${SPIKE_GATE.movedShare * 100}% moved, ceiling ${g.ceiling} lines` : g.reasons.join('; ');
       out(`moved ${plan.stats.movedRoutes}/${plan.stats.regionRoutes} route statements (${Math.round(plan.stats.movedShare * 100)}%), ui/server.mjs after the split: ${plan.stats.serverLinesAfter} lines — spike gate ${g.pass ? 'passed' : 'FAILED'} (${why})`);
+      if (argv.includes('--tree')) for (const l of treeLines(plan)) out(l);
       if (!g.pass) { err(catchUpHint(root)); return 1; }
     }
   }

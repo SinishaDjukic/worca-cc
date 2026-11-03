@@ -165,3 +165,18 @@ test('the open-PR table has a Catch-up column: works, needs hand fix with the re
   assert.deepEqual(validateReport(make(all(), rows)), []);
   assert.ok(validateReport(make(all(), [t({ verdict: 'maybe', reasons: [] }, 4)])).some((x) => /catch-up verdict/.test(x)));
 });
+
+test('a waived row: only parity may be waived, with an owner and reason; only fail rows count as failing', () => {
+  const W = { owner: 'Emil Angelov', reason: 'row h waived' };
+  const checks = all(); Object.assign(checks.find((c) => c.id === 'parity'), { status: 'waived', waived: W });
+  const r = make(checks);
+  assert.deepEqual(validateReport(r), []);
+  assert.deepEqual(r.verdict.failing, []); assert.equal(r.verdict.value, 'go');
+  const md = renderMarkdown(r);
+  assert.match(md, /^- parity: waived by Emil Angelov: row h waived$/m);
+  assert.ok(!md.includes('every check passes'));
+  const other = all(); Object.assign(other.find((c) => c.id === 'suite-migrated'), { status: 'waived', waived: W });
+  assert.ok(validateReport(make(other)).some((x) => /suite-migrated: status must be pass or fail, not waived/.test(x)));
+  const bare = all(); Object.assign(bare.find((c) => c.id === 'parity'), { status: 'waived' });
+  assert.ok(validateReport(make(bare)).some((x) => /parity: a waived row names its owner and reason/.test(x)));
+});

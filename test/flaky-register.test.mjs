@@ -58,3 +58,14 @@ test('a row with an empty title prefix is refused: it would cover every failure 
     assert.throws(() => unlistedFailures(SPEC_TAIL([['test/x.test.mjs', 'boom']]), [{ file: 'test/x.test.mjs', test: t }]), /empty title prefix/, JSON.stringify(t));
   }
 });
+
+test('the register covers verify row d\'s two run-root/worktree failures (round 5 T1, 46/46 alone on the split tree)', () => {
+  const log = SPEC_TAIL([
+    ['test/orchestrator-workspace-scan.test.mjs', 'v3 end to end (detached): read-only scan maps the npm dependency, saves the workspace (outcome created) on template-default models'],
+    ['test/run-root-teardown.test.mjs', 'detached + keep on-success: a finished run keeps its checkout, protected and recorded'],
+  ]);
+  assert.deepEqual(unlistedFailures(log, REG), []);
+  for (const f of ['test/orchestrator-workspace-scan.test.mjs', 'test/run-root-teardown.test.mjs']) {
+    assert.equal(REG.find((e) => e.file === f)?.symptom, 'run-root/worktree class under load; 46/46 alone on split tree');
+  }
+});

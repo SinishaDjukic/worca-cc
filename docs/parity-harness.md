@@ -154,12 +154,12 @@ failures reported but none parsed).
 
 ## Differential crawl
 
-`npm run parity -- crawl --a T --b T [--b T …] [--b-screens T …] --out DIR [--workers N] [--screens GLOB] [--no-control] [--keep]`
+`npm run parity -- crawl --a T --b T [--b T …] [--b-screens T …] --out DIR [--workers N] [--screens GLOB] [--no-control] [--keep] [--dev SHA]`
 (`tools/parity/crawl.mjs`) is the exhaustive before/after check: every registered hash route, every dialog, menu, popover,
 tooltip and collapsible, and every input, button and shortcut, enumerated from the DOM and compared A vs B (DOM, pixels,
 network, console). Targets are `tree:` and `package:` (no Docker). `--b-screens T` compares T at screen level: every
 route × variant × flag pass is visited and recorded, with no elements and no key probes, and only A1's screen records are
-compared with it. verify:919 row h runs it as dev against the split tree (full depth) and against `package:.` (screen
+compared with it. split:verify row h runs it as dev against the split tree (full depth) and against `package:.` (screen
 level: a package differs from its tree only in which files ship, and a missing file shows on the screen load); the
 readiness parity row runs it as dev against the migrated tree.
 
@@ -220,16 +220,21 @@ readiness parity row runs it as dev against the migrated tree.
   - `net`: "request in flight at record time (one control side only)";
   - `console`: "console error on one control side only".
 
-  Anything else is `unexplained`, and an unexplained mask fails verify:919 row h: fix the crawler (a wait, a
+  Anything else is `unexplained`, and an unexplained mask fails split:verify row h: fix the crawler (a wait, a
   normalisation, a seed), never wave it through. The report lists every mask with its Why and counts them per reason,
   and a record with more than 20 masks is called out. Anything else that differs between A1 and a B fails.
   `--no-control` skips A2 and the run cannot pass.
 - **Workers** (`--workers N`, default 4): each has its own fixed root, template, server and Chrome, and a deterministic
   shard of the routes (route i → worker i mod N). Worker K of A and worker K of B use the same root and template.
-- **Outputs**: `DIR/report.json` (`pass`, `control`, `a`/`bs` with their tree hashes and levels, `masks`, `comparisons`
+- **Outputs**: `DIR/report.json` (`pass`, `control`, `dev` (the origin/dev SHA given with `--dev SHA`, else null), `a`/`bs`
+  with their tree hashes, levels and `served` fingerprints (sha256 of the served CSS, the served `index.html` and the
+  sorted route table, with the route count; null on a package side), `masks`, `comparisons`
   with their `level`, `coverage`, `externalApps` `{ stubbed, canary }`, `minutes`), `DIR/report.md` (coverage with the
   unvisited and unfillable lists and the skipped elements by reason, External apps, every mask with its reason, and per
   B every difference with its diff image), `DIR/masks.json` (`{ aTree, masks }`) and `DIR/diffs/N.png`. `DIR/a1`, `a2` and `bN` hold the records.
+- **Reuse**: `dev` and `served` are the inputs of the crawl reuse rule (`tools/parity/reuse.mjs`; docs/split-by-feature.md,
+  Crawl reuse rule). A full crawl stays valid while dev is unchanged and the served output is byte-identical; a report
+  without `dev` never qualifies.
 
 Timing (measured on the 11-core dev Mac, 2026-11-01): a step records in a median 0.85 s (p90 1.7 s). One screen like
 `#workspace-create` (109 elements) takes about 6 min per side on one worker, across both exercise variants, all 12
@@ -254,7 +259,7 @@ git clone --shared --no-checkout . "$S"
 git -C "$S" checkout --detach HEAD
 ln -s "$PWD/node_modules" "$S/node_modules"
 node tools/split-by-feature.mjs --apply --root "$S"
-npm run parity -- run --a tree:. --b tree:"$S" --out /tmp/p-split
+npm run parity -- run --a tree:. --b tree:"$S" --out "$(mktemp -d)"
 ```
 
 `npm run readiness -- run` (see [split-by-feature.md](split-by-feature.md)) builds the split tree in a scratch clone and

@@ -72,7 +72,7 @@ export function judgeSameResults(before, after) {
 
 /**
  * Every e2e suite of `afterDir`; SAME_RESULTS suites also run in `beforeDir` and are judged against it. `memo` (a Map
- * the caller keeps) holds the "before" run per suite, so verify:919 rows i and k run the before suite once, not twice.
+ * the caller keeps) holds the "before" run per suite, so split:verify rows i and k run the before suite once, not twice.
  * `ciOnly` ({ suite: CI job }) names suites that are not run here: they are listed as `mode: 'ci'`, `ok: null`, never a
  * pass, and the row is decided by the suites that did run (at least one must).
  */

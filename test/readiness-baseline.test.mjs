@@ -4,12 +4,12 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { conflictShare, fmtShare, deadCode, parityTimings, featureNames, movedByFeature, largestFiles } from '../tools/readiness/baseline.mjs';
+import { conflictShare, fmtShare, deadCode, parityTimings, featureNames, movedByFeature, largestFiles, codeFiles } from '../tools/readiness/baseline.mjs';
 
 test('deadCode counts a top-level name used nowhere else, not one used in another file or as a call', () => {
   const files = [
     { path: 'ui/server.mjs', text: 'function used() {}\nfunction orphan() {}\nexport const moved = 1;\nused();\nx.orphan2;\nconst orphan2 = 2;\n' },
-    { path: 'ui/routes/chat.mjs', text: "import { moved } from '../server.mjs';\n" },
+    { path: 'ui/routes/chat/ask.mjs', text: "import { moved } from '../../server.mjs';\n" },
   ];
   assert.deepEqual(deadCode(files).map((d) => d.name), ['orphan', 'orphan2']);
 });
@@ -20,16 +20,23 @@ test('conflictShare returns conflicted/total and a one-decimal percentage; 0 row
   assert.equal(fmtShare(conflictShare([], 'dev')), '0/0 (0%)');
 });
 
-const FILES = new Map([['ui/routes/chat.mjs', 'a\nb\n'], ['ui/routes/chat-2.mjs', 'c\n'], ['ui/public/chat/chat.css', 'x\n'],
-  ['ui/public/runs/runs.html', 'r\n'], ['ui/public/style.css', null], ['ui/routes/index.mjs', 'i\n'], ['docs/feature-files.md', '#\n']]);
+const FILES = new Map([['ui/routes/chat/ask.mjs', 'a\nb\n'], ['ui/routes/chat/ask-threads.mjs', 'c\n'], ['ui/public/chat/chat-shell.css', 'x\n'],
+  ['ui/public/runs/runs.html', 'r\n'], ['ui/public/style.css', null], ['ui/routes/index.mjs', 'i\n'], ['ui/routes/chat/index.mjs', 'i\n'], ['docs/feature-files.md', '#\n']]);
 
-test('featureNames lists each feature once, sorted, without the route index, deletions or docs', () => {
+test('featureNames lists each feature once (from its folder), sorted, without the route indexes, deletions or docs', () => {
   assert.deepEqual(featureNames(FILES), ['chat', 'runs']);
 });
 
-test('movedByFeature groups route files and parts per feature with line counts, skipping deletions', () => {
+test('movedByFeature groups route files and parts per feature folder with line counts, skipping deletions and the indexes', () => {
   assert.deepEqual(movedByFeature(FILES, ['chat', 'settings']), [{ feature: 'chat', lines: 4, files: [
-    { path: 'ui/public/chat/chat.css', lines: 1 }, { path: 'ui/routes/chat-2.mjs', lines: 1 }, { path: 'ui/routes/chat.mjs', lines: 2 }] }]);
+    { path: 'ui/public/chat/chat-shell.css', lines: 1 }, { path: 'ui/routes/chat/ask-threads.mjs', lines: 1 }, { path: 'ui/routes/chat/ask.mjs', lines: 2 }] }]);
+});
+
+test('codeFiles lists ui/routes recursively: the area files and the indexes', () => {
+  const d = mkdtempSync(join(tmpdir(), 'rb-code-'));
+  const put = (p, s) => { mkdirSync(join(d, p, '..'), { recursive: true }); writeFileSync(join(d, p), s); };
+  put('ui/server.mjs', 's\n'); put('ui/routes/index.mjs', 'i\n'); put('ui/routes/chat/index.mjs', 'c\n'); put('ui/routes/chat/ask.mjs', 'a\n');
+  assert.deepEqual(codeFiles(d).map((f) => f.path), ['ui/server.mjs', 'ui/routes/chat/ask.mjs', 'ui/routes/chat/index.mjs', 'ui/routes/index.mjs']);
 });
 
 test('parityTimings maps a/b medians to dev/migrated', () => {

@@ -48,7 +48,7 @@ test('every parity run command names --a, --b and --out with a known target kind
 test('freeze day names the exact apply command, run twice, and no "revised --apply" placeholder is left', () => {
   assert.doesNotMatch(doc, /revised `?--apply/);
   const row = doc.split('\n').find((l) => l.startsWith('| 4. Freeze day |'));
-  assert.ok(row.includes('`git fetch origin dev && git switch -c split/919-migration origin/dev && node tools/split-by-feature.mjs --apply && node tools/split-by-feature.mjs --apply && git add -A && git commit -m "Split large files by feature (#919)"`'), row);
+  assert.ok(row.includes('`git fetch origin dev && git switch -c split/feature-migration origin/dev && node tools/split-by-feature.mjs --apply && node tools/split-by-feature.mjs --apply && git add -A && git commit -m "Split large files by feature (#919)"`'), row);
 });
 
 test('the migration checklist: phases A–E in order, owner and freeze, 🔒 on every owner-only step, the rollback rule', () => {
@@ -59,4 +59,20 @@ test('the migration checklist: phases A–E in order, owner and freeze, 🔒 on 
   for (const step of ['A2', 'A3', 'B3', 'C2', 'C3', 'D1', 'D6']) assert.ok(ids.includes(`${step} 🔒`), step);
   for (const l of s.split('\n').filter((x) => /^\| [A-E]\d/.test(x))) assert.equal(l.split('|').slice(1, -1).filter((c) => c.trim()).length, 5, l);
   assert.match(s, /Rollback: before D6 .*fix and repeat.*After D6, red means\s+`git revert M`.*Never reset or force-push\./s);
+});
+
+test('tags, backups and restore points: feature-split/before|after are annotated, D1 keeps a local branch and a verified bundle outside the repo', () => {
+  const s = section('## Migration checklist');
+  const row = (id) => s.split('\n').find((l) => l.startsWith(`| ${id}`));
+  for (const [id, tag, word] of [['D1', 'feature-split/before', 'before'], ['D7', 'feature-split/after', 'after']]) {
+    assert.ok(row(id).includes(`git tag -a ${tag} origin/dev -m "#919 split large files by feature: dev ${word} the migration commit, dev $(git rev-parse origin/dev), $(date +%F)"`), row(id));
+  }
+  assert.ok(row('D1').includes('`git branch backup/dev-before-feature-split feature-split/before`') && row('D1').includes('never pushed over'), row('D1'));
+  assert.ok(row('D1').includes('git bundle verify ~/Backups/worca/dev-before-feature-split.bundle'), row('D1'));
+  assert.doesNotMatch(doc, /pre-919|post-919|dev-pre-919/);
+  const r = section('## Rollback');
+  for (const [what, against] of [['The local branch', 'a remote force-push or deletion'], ['The protected remote branch', 'losing this machine'],
+    ['The bundle', 'a corrupted repo'], ['The annotated tags', 'named references for revert and catch-up']]) {
+    assert.match(r, new RegExp(`^\\| ${what} .*${against}`, 'm'), what);
+  }
 });

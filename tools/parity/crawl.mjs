@@ -1,6 +1,6 @@
 // tools/parity/crawl.mjs — #919 final round: the differential crawler. One template per worker (built with A), then A twice
 // (control), then each B; every screen in every variant × flag pass; full element exercise in the two exercise variants.
-//   node tools/parity.mjs crawl --a T --b T [--b T …] [--b-screens T …] --out DIR [--workers N] [--screens GLOB] [--no-control] [--keep]
+//   node tools/parity.mjs crawl --a T --b T [--b T …] [--b-screens T …] --out DIR [--workers N] [--screens GLOB] [--no-control] [--keep] [--dev SHA]
 import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, appendFileSync } from 'node:fs';
 import { gzipSync, gunzipSync } from 'node:zlib';
 import { createHash } from 'node:crypto';
@@ -21,6 +21,7 @@ import { enumerateIn, serializeDom, actionsFor } from './crawl-page.mjs';
 import { normalizeLine, deriveMasks, compareCrawls, coverage, mutated, loadCalls, renderCrawlReport } from './crawl-compare.mjs';
 import { catalogue } from './crawl-routes.mjs';
 import { appLines } from './stub-apps.mjs';
+import { servedFingerprint } from './reuse.mjs';
 
 export const VARIANTS = [
   { id: 'd-light-expert', width: 1280, height: 800, theme: 'light', level: 'expert', exercise: true },
@@ -398,6 +399,12 @@ const treeOf = (spec) => {
   } catch { return null; }
 };
 
+/** The report's sides, with the crawl reuse rule's inputs (tools/parity/reuse.mjs): `dev`, and a `served` fingerprint per tree side. */
+export async function crawlSides({ a, bs, dev = null, tree = treeOf, fingerprint = servedFingerprint }) {
+  const side = async (t, extra = {}) => ({ spec: t.label, ...extra, tree: tree(t), served: t.kind === 'tree' && t.root ? await fingerprint(t.root) : null });
+  return { dev, a: await side(a), bs: await Promise.all(bs.map((b) => side(b, { level: b.level ?? 'full' }))) };
+}
+
 /** The registered routes, read in a running app (D5): PAGE_TITLES, SETTING_ENTRIES, GROUP_TABS, marketplace TABS, app.js. */
 async function readCatalogue(spec, template, fixed, ids) {
   const t = await startLive(spec, { fixed, template, offline: true });
@@ -477,11 +484,11 @@ function controlMasks(a1, a2, st, png) {
 const withHash = (recs) => recs.map((r) => ({ ...r, net: [...r.net, `hash ${r.hash}`] }));
 
 /**
- * crawl({ a, bs, out, workers, screens, control, keep, log }): a and bs are resolved specs ({ kind, ref, root|appDir, label,
+ * crawl({ a, bs, out, workers, screens, control, keep, dev, log }): a and bs are resolved specs ({ kind, ref, root|appDir, label,
  * level? }); a B with level 'screen' is crawled and compared at screen level (D7).
  * Writes out/report.json, out/report.md and out/masks.json; returns the report.
  */
-export async function crawl({ a, bs, out, workers = 4, screens = null, control = true, keep = false, log = console.log }) {
+export async function crawl({ a, bs, out, workers = 4, screens = null, control = true, keep = false, dev = null, log = console.log }) {
   const t0 = Date.now();
   onSignals();
   mkdirSync(out, { recursive: true });
@@ -535,7 +542,7 @@ export async function crawl({ a, bs, out, workers = 4, screens = null, control =
     const cov = coverage({ registered, visits: [A1, A2, ...B].filter(Boolean).flatMap((x) => x.visits) });
     const report = {
       pass: !!A2 && comparisons.every((c) => c.pass) && !cov.unvisited.length && !catA.unfillable.length && !catalogueDiffs.length && !externalApps.canary.length,
-      control: !!A2, a: { spec: a.label, tree: treeOf(a) }, bs: bs.map((b) => ({ spec: b.label, level: b.level ?? 'full', tree: treeOf(b) })), masks, comparisons, catalogueDiffs, externalApps,
+      control: !!A2, ...(await crawlSides({ a, bs, dev })), masks, comparisons, catalogueDiffs, externalApps,
       coverage: { screens: A1.visits.length, routes: { registered: registered.length, visited: cov.visited, unvisited: cov.unvisited, unfillable: catA.unfillable },
         elements: A1.counts, discovered: A1.discovered.length },
       masksPerRecord: Object.entries(masks.reduce((o, m) => ({ ...o, [m.id]: (o[m.id] ?? 0) + 1 }), {})).filter(([, n]) => n > 20).map(([id, n]) => ({ id, n })),

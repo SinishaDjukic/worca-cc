@@ -1,11 +1,13 @@
 #!/usr/bin/env node
-// tools/verify-919.mjs — #919: THE check before Ship and on freeze day (docs/split-by-feature.md, top section).
+// tools/split-verify.mjs — #919: THE check before Ship and on freeze day (docs/split-by-feature.md, top section).
 // Runs rows a–l in order on this checkout's HEAD and its split; never stops early; prints one table
 // (check · pass/fail · number · evidence file) and exits 0 only when every row passes. Never posts, never pushes.
-//   Run: npm run verify:919 [-- --out DIR] [--keep] [--firefox-in-ci] [--only ROWS]   (many hours; OUT/verify-919.md grows row by row)
+//   Run: npm run split:verify [-- --out DIR] [--keep] [--firefox-in-ci] [--waive-crawl OWNER:REASON] [--only ROWS]   (many hours; OUT/split-verify.md grows row by row)
 // --firefox-in-ci: e2e:firefox-smoke is left to the CI job firefox-e2e (headless Playwright Firefox hangs on macOS); row
 // i and the table's tail name it "not run locally", which is not a pass.
 // --only a,b (with the --out of an earlier run whose head is HEAD or an ancestor): reruns those rows, carries the others.
+// --only into an empty or new --out: a fresh partial run; row a runs too, every other row is "not run".
+// --waive-crawl OWNER:REASON: the owner's waiver of row h; h reads WAIVED and spawns no crawl, row l passes it to readiness.
 import { appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -14,7 +16,7 @@ import { run, runLogged } from './readiness/proc.mjs';
 import { cloneAt, npmCi, applySplit, commitMigration, rehearseRollback } from './readiness/trees.mjs';
 import { e2eRow, CI_ONLY } from './readiness/e2e.mjs';
 import { crawlSummary } from './parity/crawl-compare.mjs';
-import { runFixture, catchUpAll, defaultDeps as catchUpDeps } from './catch-up-919.mjs';
+import { runFixture, catchUpAll, defaultDeps as catchUpDeps } from './split-catch-up.mjs';
 import { parseFailures, unlistedFailures, registerEntryFor } from './flaky-register.mjs';
 import { EXPECTED_SHOTS, FLOW_NAMES } from './parity/compare.mjs';
 
@@ -22,7 +24,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const NODE = [process.execPath, '--disable-warning=ExperimentalWarning'];
 export const ROWS = [['a', 'fetch'], ['b', 'gate'], ['c', 'dry-run-repeatable'], ['d', 'suite-split'], ['e', 'parity-quick'],
   ['f', 'parity-full'], ['g', 'parity-package'], ['h', 'crawl'], ['i', 'e2e-split'], ['j', 'catch-up'], ['k', 'rollback'], ['l', 'readiness']];
-const USAGE = 'usage: npm run verify:919 [-- --out DIR] [--keep] [--firefox-in-ci] [--only ROWS (with the --out of an earlier run)]';
+const USAGE = 'usage: npm run split:verify [-- --out DIR] [--keep] [--firefox-in-ci] [--waive-crawl OWNER:REASON] [--only ROWS (with the --out of an earlier run, or an empty --out for a fresh partial run)]';
 /** The outputs each row writes besides evidence/ID-*: moved to OUT/prev-N/ before an --only rerun of that row. */
 const ROW_DIRS = { e: ['parity-quick'], f: ['parity-full'], g: ['parity-package'], h: ['crawl'], j: ['catch-up'], k: ['parity-reverted'], l: ['readiness'] };
 const short = (s) => String(s ?? '').slice(0, 12);
@@ -67,12 +69,12 @@ export function renderTable(rows, ctx = {}) {
   // one line per head a carried row last ran on: a second --only rerun keeps each row's own head (D12)
   const heads = [...new Set(rows.filter((r) => r.carried).map((r) => r.ranOn))];
   const carried = heads.map((h) => `\nCarried rows ran on ${h} (rows ${rows.filter((r) => r.carried && r.ranOn === h).map((r) => r.id).join(', ')}); changed since: ${ctx.changedSince?.[h]?.length ? ctx.changedSince[h].join(', ') : '(nothing)'} (git diff --name-only)\n`).join('');
-  return `# verify:919${ctx.dev ? ` · origin/dev ${ctx.dev}` : ''}${ctx.head ? ` · HEAD ${ctx.head}` : ''}\n\n`
+  return `# split:verify${ctx.dev ? ` · origin/dev ${ctx.dev}` : ''}${ctx.head ? ` · HEAD ${ctx.head}` : ''}\n\n`
     + '| Check | Result | Number | Evidence |\n|---|---|---|---|\n'
-    + rows.map((r) => `| ${r.id}. ${r.check} | ${r.ok ? 'pass' : 'FAIL'}${r.carried ? ' (earlier)' : ''} | ${cell(r.number)} | ${cell(r.evidence)} |`).join('\n') + '\n' + carried + tail;
+    + rows.map((r) => `| ${r.id}. ${r.check} | ${r.notRun ? 'not run' : r.waived ? 'WAIVED' : r.ok ? 'pass' : 'FAIL'}${r.carried ? ' (earlier)' : ''} | ${cell(r.number)} | ${cell(r.evidence)} |`).join('\n') + '\n' + carried + tail;
 }
 
-export async function runVerify({ root = ROOT, out, keep = false, firefoxInCi = false, only = null, prev = null, log = console.log, deps = {} } = {}) {
+export async function runVerify({ root = ROOT, out, keep = false, firefoxInCi = false, only = null, prev = null, fresh = false, waiveCrawl = null, log = console.log, deps = {} } = {}) {
   const d = { run, runLogged, cloneAt, npmCi, applySplit, commitMigration, rehearseRollback,
     buildExtension: (file) => runLogged(NODE[0], [NODE[1], 'tools/build-extension.mjs', '--pack'], file, { cwd: root }),
     catchUpFixture: (o) => runFixture({ ...o, d: catchUpDeps }), catchUpAll: (o) => catchUpAll({ ...o, d: catchUpDeps }),
@@ -85,7 +87,9 @@ export async function runVerify({ root = ROOT, out, keep = false, firefoxInCi = 
   const e2eMemo = new Map();
   const ciOnly = firefoxInCi ? CI_ONLY : {};
   const rows = [];
-  if (only) {   // --only: move the rerun rows' outputs aside, carry the others (D12)
+  if (only) only = new Set(only);              // never mutate the caller's set
+  if (only && fresh) only.add('a');            // a fresh partial run resolves origin/dev itself (row a)
+  if (only && !fresh) {   // --only: move the rerun rows' outputs aside, carry the others (D12)
     const n = readdirSync(out).filter((x) => /^prev-\d+$/.test(x)).length + 1; const aside = join(out, `prev-${n}`);
     for (const id of only) {
       for (const dir of ROW_DIRS[id] ?? []) if (existsSync(join(out, dir))) { mkdirSync(aside, { recursive: true }); renameSync(join(out, dir), join(aside, dir)); }
@@ -95,14 +99,23 @@ export async function runVerify({ root = ROOT, out, keep = false, firefoxInCi = 
     const ranOn = new Set(prev.rows.filter((x) => !only.has(x.id)).map((x) => x.ranOn ?? prev.head));
     ctx.changedSince = Object.fromEntries([...ranOn].map((h) => [h, h === ctx.head ? [] : git('diff', '--name-only', h, ctx.head).stdout.split('\n').filter(Boolean)]));
     // carried rows keep their "not run locally" entries: without this a rerun that skips row i writes notLocal: [] into
-    // verify-919.json, and the go/no-go's firefox-e2e-on-ship gate fails for a tool reason
+    // split-verify.json, and the go/no-go's firefox-e2e-on-ship gate fails for a tool reason
     ctx.notLocal = (prev.notLocal ?? []).filter((x) => !only.has(x.row));
   }
   const row = async (id, check, fn) => {
+    if (id === 'h' && waiveCrawl) {            // the owner's waiver: no crawl is spawned, whether or not --only names h
+      writeFileSync(E('h-crawl-waived.txt'), `crawl WAIVED by ${waiveCrawl.owner}: ${waiveCrawl.reason}\nno crawl was spawned\n`);
+      rows.push({ id, check, ok: true, waived: waiveCrawl, number: `WAIVED by ${waiveCrawl.owner}: ${waiveCrawl.reason} (no crawl spawned)`, evidence: 'evidence/h-crawl-waived.txt', ranOn: ctx.head });
+      writeFileSync(join(out, 'split-verify.md'), renderTable(rows, ctx)); return;
+    }
+    if (only && !only.has(id) && fresh) {
+      rows.push({ id, check, ok: false, notRun: true, number: `not run (--only ${[...only].sort().join(',')})`, evidence: '—' });
+      writeFileSync(join(out, 'split-verify.md'), renderTable(rows, ctx)); return;
+    }
     if (only && !only.has(id)) {
       const p = prev.rows.find((x) => x.id === id);
       rows.push({ ...(p ?? { id, check, ok: false, number: 'not in the earlier run', evidence: '—' }), ranOn: p?.ranOn ?? prev.head, carried: true });
-      writeFileSync(join(out, 'verify-919.md'), renderTable(rows, ctx)); return;
+      writeFileSync(join(out, 'split-verify.md'), renderTable(rows, ctx)); return;
     }
     log(`[${id}] ${check} …`);
     let r;
@@ -111,7 +124,7 @@ export async function runVerify({ root = ROOT, out, keep = false, firefoxInCi = 
       r = { ok: false, number: `error: ${String(e?.message ?? e).split('\n')[0]}`, evidence: `evidence/${id}-${check}.log` };
     }
     rows.push({ id, check, ok: r.ok === true, number: String(r.number ?? ''), evidence: r.evidence, ranOn: ctx.head });
-    writeFileSync(join(out, 'verify-919.md'), renderTable(rows, ctx));
+    writeFileSync(join(out, 'split-verify.md'), renderTable(rows, ctx));
     log(`[${id}] ${check}: ${r.ok ? 'pass' : 'FAIL'} · ${r.number} · ${r.evidence}`);
   };
 
@@ -204,7 +217,7 @@ export async function runVerify({ root = ROOT, out, keep = false, firefoxInCi = 
       if (b.code !== 0) return { ok: false, number: 'build-extension --pack failed', evidence: 'evidence/h-build-extension.log' };
       cpSync(dist, sdist, { recursive: true });
       const o = join(out, 'crawl');
-      const r = d.runLogged(NODE[0], [NODE[1], 'tools/parity.mjs', 'crawl', '--a', 'tree:.', '--b', `tree:${split}`, '--b-screens', 'package:.', '--out', o], E('h-crawl.log'), { cwd: root });
+      const r = d.runLogged(NODE[0], [NODE[1], 'tools/parity.mjs', 'crawl', '--a', 'tree:.', '--b', `tree:${split}`, '--b-screens', 'package:.', '--out', o, ...(ctx.dev ? ['--dev', ctx.dev] : [])], E('h-crawl.log'), { cwd: root });
       const rep = readJson(join(o, 'report.json'));
       if (!rep) return { ok: false, number: `exit ${r.code}, no report`, evidence: 'evidence/h-crawl.log' };
       const gaps = crawlGaps(rep);
@@ -253,21 +266,24 @@ export async function runVerify({ root = ROOT, out, keep = false, firefoxInCi = 
   await row('l', 'readiness', () => {
     const o = join(out, 'readiness');
     const args = [NODE[1], 'tools/readiness.mjs', 'run', '--out', o, ...(ctx.dev && ctx.head !== ctx.dev ? ['--dev-ref', ctx.head] : []),
-      '--crawl-from', join(out, 'crawl'), '--catch-up-from', join(out, 'catch-up', 'all.json')];
+      ...(waiveCrawl ? ['--waive-crawl', `${waiveCrawl.owner}:${waiveCrawl.reason}`] : ['--crawl-from', join(out, 'crawl')]),
+      '--catch-up-from', join(out, 'catch-up', 'all.json')];
     const r = d.runLogged(NODE[0], args, E('l-readiness.log'), { cwd: root });
     const rep = readJson(join(o, 'report.json'));
     const both = !!rep && existsSync(join(o, 'report.md'));
+    const pw = rep?.checks?.find((c) => c.id === 'parity');   // rep is null when readiness wrote no report
+    const waivedPart = pw?.status === 'waived' ? `; parity ⚠ waived (crawl WAIVED by ${pw.waived?.owner})` : '';
     return { ok: r.code === 0 && both && rep.verdict?.value === 'go', evidence: both ? 'readiness/report.md' : 'evidence/l-readiness.log',
-      number: rep ? `verdict ${rep.verdict?.value}${rep.verdict?.failing?.length ? ` (${rep.verdict.failing.join(', ')})` : ''}` : `exit ${r.code}, no report` };
+      number: rep ? `verdict ${rep.verdict?.value}${waivedPart}${rep.verdict?.failing?.length ? ` (${rep.verdict.failing.join(', ')})` : ''}` : `exit ${r.code}, no report` };
   });
 
-  const pass = rows.length === ROWS.length && rows.every((x) => x.ok);
+  const pass = rows.length === ROWS.length && rows.every((x) => x.ok || x.notRun);
   const ci = [...new Set(ctx.notLocal.map((x) => x.ci))];
-  writeFileSync(join(out, 'verify-919.md'), renderTable(rows, ctx));
-  writeFileSync(join(out, 'verify-919.json'), JSON.stringify({ dev: ctx.dev, head: ctx.head, headTree: git('rev-parse', 'HEAD^{tree}').stdout.trim(),
-    rerun: only ? [...only] : null, pass, notLocal: ctx.notLocal, rows }, null, 2));
+  writeFileSync(join(out, 'split-verify.md'), renderTable(rows, ctx));
+  writeFileSync(join(out, 'split-verify.json'), JSON.stringify({ dev: ctx.dev, head: ctx.head, headTree: git('rev-parse', 'HEAD^{tree}').stdout.trim(),
+    rerun: only ? ROWS.map(([id]) => id).filter((id) => only.has(id)) : null, fresh, ...(waiveCrawl ? { waiveCrawl, crawl: 'waived' } : {}), pass, notLocal: ctx.notLocal, rows }, null, 2));
   if (!keep) rmSync(join(out, 'trees'), { recursive: true, force: true });
-  log(`\n${renderTable(rows, ctx)}\nverify:919 ${pass ? 'PASS' : 'FAIL'}${pass && ci.length ? `, except ${new Set(ctx.notLocal.map((x) => x.name)).size} suite left to CI (${ci.join(', ')})` : ''} (${join(out, 'verify-919.md')})`);
+  log(`\n${renderTable(rows, ctx)}\nsplit:verify ${pass ? 'PASS' : 'FAIL'}${pass && ci.length ? `, except ${new Set(ctx.notLocal.map((x) => x.name)).size} suite left to CI (${ci.join(', ')})` : ''} (${join(out, 'split-verify.md')})`);
   return { out, rows, pass };
 }
 
@@ -275,27 +291,35 @@ const gitHead = () => run('git', ['rev-parse', 'HEAD'], { cwd: ROOT }).stdout.tr
 const gitIsAncestor = (a, b) => run('git', ['merge-base', '--is-ancestor', a, b], { cwd: ROOT }).code === 0;
 
 export async function main(argv = process.argv.slice(2), { log = console.log, verify = runVerify, head = gitHead, isAncestor = gitIsAncestor } = {}) {
-  let out = null; let keep = false; let firefoxInCi = false; let only = null;
+  let out = null; let keep = false; let firefoxInCi = false; let only = null; let waiveCrawl = null;
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--out' && argv[i + 1]) out = resolve(argv[++i]);
     else if (argv[i] === '--keep') keep = true;
     else if (argv[i] === '--firefox-in-ci') firefoxInCi = true;
+    else if (argv[i] === '--waive-crawl' && argv[i + 1]) {
+      const m = /^([^:]+):(.+)$/s.exec(argv[++i]);
+      if (!m) { log(`split-verify: --waive-crawl needs OWNER:REASON\n${USAGE}`); return 2; }
+      waiveCrawl = { owner: m[1].trim(), reason: m[2].trim() };
+    }
     else if (argv[i] === '--only' && argv[i + 1]) only = new Set(argv[++i].split(',').map((x) => x.trim()).filter(Boolean));
-    else { log(`verify-919: unknown argument ${argv[i]}\n${USAGE}`); return 2; }
+    else { log(`split-verify: unknown argument ${argv[i]}\n${USAGE}`); return 2; }
   }
   if (only) {
     const bad = [...only].filter((id) => !ROWS.some(([r]) => r === id));
-    if (bad.length || !only.size) { log(`verify-919: --only: unknown row ${bad.join(', ') || '(none)'} (rows ${ROWS.map(([r]) => r).join('')})\n${USAGE}`); return 2; }
-    if (!out) { log(`verify-919: --only needs the --out of an earlier run\n${USAGE}`); return 2; }
-    const prev = readJson(join(out, 'verify-919.json'));
-    if (!prev) { log(`verify-919: ${out} holds no verify-919.json: rerun all rows`); return 3; }
+    if (bad.length || !only.size) { log(`split-verify: --only: unknown row ${bad.join(', ') || '(none)'} (rows ${ROWS.map(([r]) => r).join('')})\n${USAGE}`); return 2; }
+    if (!out) { log(`split-verify: --only needs the --out of an earlier run, or an empty --out\n${USAGE}`); return 2; }
+    const prev = readJson(join(out, 'split-verify.json'));
+    if (!prev) {
+      if (existsSync(out) && readdirSync(out).length) { log(`split-verify: ${out} holds no split-verify.json and is not empty: give an empty --out for a fresh partial run`); return 3; }
+      return (await verify({ out, keep, firefoxInCi, only, fresh: true, waiveCrawl, log })).pass ? 0 : 1;
+    }
     const h = head();
-    if (prev.head !== h && !isAncestor(prev.head, h)) { log(`verify-919: the earlier run's head ${prev.head} is not an ancestor of HEAD ${h}: rerun all rows`); return 3; }
-    return (await verify({ out, keep, firefoxInCi, only, prev, log })).pass ? 0 : 1;
+    if (prev.head !== h && !isAncestor(prev.head, h)) { log(`split-verify: the earlier run's head ${prev.head} is not an ancestor of HEAD ${h}: rerun all rows`); return 3; }
+    return (await verify({ out, keep, firefoxInCi, only, prev, waiveCrawl, log })).pass ? 0 : 1;
   }
-  if (out && existsSync(out) && readdirSync(out).length) { log(`verify-919: ${out} is not empty`); return 3; }
-  out ??= mkdtempSync(join(tmpdir(), 'worca-verify-919-'));
-  return (await verify({ out, keep, firefoxInCi, log })).pass ? 0 : 1;
+  if (out && existsSync(out) && readdirSync(out).length) { log(`split-verify: ${out} is not empty`); return 3; }
+  out ??= mkdtempSync(join(tmpdir(), 'worca-split-verify-'));
+  return (await verify({ out, keep, firefoxInCi, waiveCrawl, log })).pass ? 0 : 1;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) process.exitCode = await main();
