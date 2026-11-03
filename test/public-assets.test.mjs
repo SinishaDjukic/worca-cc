@@ -10,6 +10,7 @@ import { readStyleCss, readStyleCssEntry } from '../src/core/read-style-css.mjs'
 import { readIndexHtml } from '../src/core/read-index-html.mjs';
 import { readServerSource } from '../src/core/read-server-source.mjs';
 import { catchUpHint } from '../tools/split-by-feature.mjs';
+import { keptMonolithProblems, catchUpCommand } from '../tools/split-by-feature/after-split.mjs';
 
 const PUBLIC_DIR = fileURLToPath(new URL('../ui/public/', import.meta.url));
 
@@ -179,6 +180,10 @@ test('no test or tool reaches style.css, index.html or ui/server.mjs on disk dir
   const msg = `use readStyleCss / readIndexHtml / readServerSource from src/core/read-style-css.mjs, read-index-html.mjs, read-server-source.mjs; ${catchUpHint(fileURLToPath(root))}`;
   assert.match(msg, /; if this branch started before the #919 split: run npm run split:catch-up -- \S+$/);
   assert.deepEqual(offenders, [], msg);
+});
+
+test('no monolith is kept next to ui/public/parts.json: the app builds /style.css and the page from the parts', () => {
+  assert.deepEqual(keptMonolithProblems(PUBLIC_DIR, catchUpCommand(fileURLToPath(new URL('..', import.meta.url)))), []);
 });
 
 test('rollback B step 2: assemble is exported and gives the served bytes on both layouts', () => {

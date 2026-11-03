@@ -6,6 +6,7 @@ import { readFileSync, mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { routesFromStack, fillPath, judgeSignedOut, classOf, request, listRoutes, ROUTE_CLASSES } from '../tools/parity/routes.mjs';
+import { withCatchUpHint } from '../tools/split-by-feature.mjs';
 
 const layer = (path, methods) => ({ route: { path, methods } });
 const listen = (handler) => new Promise((ok) => { const s = createServer(handler).listen(0, '127.0.0.1', () => ok(s)); });
@@ -74,7 +75,8 @@ test('request() reports a dropped connection as crashed, not a throw', async () 
 test('route classes: every real route is classified, no stale keys, skips carry a reason', () => {
   const real = listRoutes({ kind: 'tree', root: new URL('..', import.meta.url).pathname }).map((r) => `${r.method} ${r.path}`);
   const keys = Object.keys(ROUTE_CLASSES);
-  assert.deepEqual(real.filter((k) => !(k in ROUTE_CLASSES)), [], 'unclassified routes');
+  const unclassified = real.filter((k) => !(k in ROUTE_CLASSES));
+  assert.deepEqual(unclassified, [], withCatchUpHint(`unclassified routes: ${unclassified.join(', ')}`, new URL('..', import.meta.url).pathname));
   assert.deepEqual(keys.filter((k) => !real.includes(k)), [], 'stale route-classes.json rows');
   for (const k of keys) {
     assert.match(ROUTE_CLASSES[k].class, /^(probe|skip)$/, k);

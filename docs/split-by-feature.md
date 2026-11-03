@@ -145,7 +145,8 @@ is a hand edit in a reviewed PR, and a raise is recorded in `tools/split-by-feat
 (`{file, from, to, why}`; a test pins `size-caps.json` to the last raise). The readiness Risks list every raise for the
 owner's sign-off.
 
-Every guard failure (coverage, size cap, the spike gate, the direct-read guard in `test/public-assets.test.mjs`) ends
+Every guard failure (coverage, size cap, the spike gate, unclassified routes in `test/parity-routes.test.mjs`, the
+direct-read guard in `test/public-assets.test.mjs`, and the two checks in After the split) ends
 with `if this branch started before the #919 split: run npm run split:catch-up -- BRANCH`. On a branch that started after
 M, the fix is a feature-map edit instead.
 
@@ -243,7 +244,8 @@ BRANCH-caught-up FETCH_HEAD` takes it). `--all` dry-runs every open PR and depen
 related tests; a fork PR's code is not run), `--fixture` the fixture "old" PR with quick parity. `--m SHA` names M; by
 default M is the tag `feature-split/after` and M^ the tag `feature-split/before` (D7, D1), else M is the newest
 first-parent commit on origin/dev whose subject starts with `Split large files by feature (#919)`. With none (before the freeze), the tool rehearses: M^ is HEAD and M is HEAD's own split, built under `OUT/m`.
-Exit 0 every target works, 1 a hand fix, 2 bad arguments, 3 could not start. The manual steps:
+Exit 0 every target works (a single BRANCH also when quick parity only warns: `works (review parity warning)`), 1 a
+hand fix, 2 bad arguments, 3 could not start. The manual steps:
 
 This runs the splitter from dev at `M^`, never P's own copy of it, and the tool makes both scratch clones itself.
 M below is the migration commit's full SHA (the tag `feature-split/after`; M^ is `feature-split/before`).
@@ -257,6 +259,29 @@ M below is the migration commit's full SHA (the tag `feature-split/after`; M^ is
    same for a `--keep` readiness tree.
 
 Pass: step 5's diff lists only P's own files, `npm test` has 0 failures outside `test/flaky-register.json`, and parity has 0 route and flow differences outside P's own routes.
+
+## After the split
+
+On the split tree (`ui/public/parts.json` exists), `node tools/split-by-feature.mjs --check` and its test
+(`test/split-by-feature-plan.test.mjs`) catch two old-layout changes that otherwise merge cleanly
+(`tools/split-by-feature/after-split.mjs`):
+
+- **A movable route left in `ui/server.mjs`.** Between the parts-aware static mount (`servePublic`) and the SPA fallback,
+  the rules that moved routes at the split (`tools/split-by-feature/routes.mjs`) still apply. A route they would move, and
+  whose key is not in `tools/split-by-feature/pinned.json`, fails with
+  `route GET /api/x (ui/server.mjs:N) belongs in ui/routes/FEATURE/ — run npm run split:catch-up -- BRANCH`. Routes above
+  the static mount (ingress, `/vendor`, body parsers) were never in the move region and are not checked.
+- **A kept monolith.** `ui/public/style.css` or `ui/public/index.html` next to `ui/public/parts.json`, typically a
+  modify/delete conflict resolved by keeping the PR's copy, is not served: the app builds `/style.css` and the page from
+  the parts. `--check` and `test/public-assets.test.mjs` fail and name the catch-up command.
+
+**Reading a catch-up parity warning.** `npm run split:catch-up -- BRANCH` compares dev with the caught-up tree in quick
+parity. When the 3-way apply is clean and the related tests pass, it exits 0 and prints the `To take it:` line. Route,
+flow or signed-out differences outside the routes the patch adds are printed as
+`warning: parity: these routes differ from dev; check they are your PR's own changes: …`, and the verdict reads
+`works (review parity warning)`. A PR that changes API behaviour on purpose lists its own routes here. Check that each
+one is your change, then take the result. A difference you did not make is a hand fix. `--fixture` (split:verify row j)
+still counts parity differences as a hand fix, and `--all` and the readiness row run no parity, as before.
 
 ## The readiness command
 
