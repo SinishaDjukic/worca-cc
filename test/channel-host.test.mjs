@@ -688,6 +688,7 @@ const INTERACTIVE_WORKER = [
   "      return { ok: true, messageIds: ['M1'], echo: { options, controls: message.controls || null } };",
   '    },',
   "    async replyInteraction(id, text) { if (id !== 'i1') { const e = new Error('interaction expired'); e.kind = 'plugin'; throw e; } seen.push(text); return { ok: true }; },",
+  "    async react(chatId, messageId, emoji, on) { if (messageId === 'GONE') { const e = new Error('message not found (GONE)'); e.kind = 'plugin'; e.permanent = true; throw e; } if (messageId === 'BUSY') { const e = new Error('slow down'); e.kind = 'rate-limit'; e.retryAfterMs = 700; throw e; } ctx.log('info', 'react ' + JSON.stringify([chatId, messageId, emoji, on])); return { ok: true }; },",
   '  };',
   '}',
 ].join('\n');
@@ -733,5 +734,42 @@ test('non-interactive channel: options refused, executable controls dropped, lin
   await new Promise((res) => setTimeout(res, 200));
   assert.equal(seenI.length, 0, 'interaction frames from a non-interactive channel are dropped');
   await assert.rejects(host.replyInteraction({ plugin: NAME, channelId: 'main', interactionId: 'i1', text: 'x' }), /not interactive/);
+  await host.stop();
+});
+
+test('react: reaches an interactive worker; refusals keep permanent / retryAfterMs; a worker without react is unsupported; a plain channel is refused', async () => {
+  const interactive = () => {
+    const cur = pluginCurrentDir(NAME);
+    const manifest = JSON.parse(readFileSync(join(cur, 'worca-cc-plugin.json'), 'utf8'));
+    manifest.chatChannels[0].capabilities = { inbound: true, outbound: true, interactive: true };
+    writeFileSync(join(cur, 'worca-cc-plugin.json'), JSON.stringify(manifest));
+  };
+  const target = { plugin: NAME, channelId: 'main', chatId: 'T1', messageId: 'M7', emoji: '⏳', on: true };
+  installFixture({ worker: INTERACTIVE_WORKER });
+  interactive();
+  const logs = [];
+  let host = createChannelHost({ logger: (level, msg) => logs.push(msg) });
+  host.start();
+  after(() => host.stop());
+  await waitFor(() => host.status()[0]?.state === 'connected', { label: 'worker connected' });
+  assert.deepEqual(await host.react(target), { ok: true });
+  await waitFor(() => logs.some((m) => m.includes('react ["T1","M7","⏳",true]')), { label: 'the worker saw the call' });
+  await assert.rejects(host.react({ ...target, messageId: 'GONE' }), (e) => e instanceof PluginOpError && e.permanent === true && /not found/.test(e.message));
+  await assert.rejects(host.react({ ...target, messageId: 'BUSY' }), (e) => e.kind === 'rate-limit' && e.retryAfterMs === 700 && e.permanent !== true);
+  await host.stop();
+
+  installFixture();            // the plain fixture worker has no react()
+  interactive();
+  host = createChannelHost({ logger: () => {} });
+  host.start();
+  await waitFor(() => host.status()[0]?.state === 'connected', { label: 'worker connected' });
+  await assert.rejects(host.react(target), (e) => e.permanent === true && /cannot add reactions/.test(e.message));
+  await host.stop();
+
+  installFixture();            // not interactive
+  host = createChannelHost({ logger: () => {} });
+  host.start();
+  await waitFor(() => host.status()[0]?.state === 'connected', { label: 'worker connected' });
+  await assert.rejects(host.react(target), (e) => e.permanent === true && /not interactive/.test(e.message));
   await host.stop();
 });

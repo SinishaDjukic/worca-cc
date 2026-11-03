@@ -395,6 +395,20 @@ export function renderShapeSection() {
   ].join('\n');
 }
 
+/** Freeform chat: a thread mirrored to a chat-app thread (a chat_conversations binding). What the person can act on
+ *  THERE, so the model never names a button that platform does not show. The run-card rule mirrors
+ *  src/core/chat/card-render.mjs NATIVE_RUN_EXCLUDES (test/chat-card-render.test.mjs pins it): change both. */
+export function renderChatChannelSection({ platform = null } = {}) {
+  const where = platform === 'discord' ? 'a Discord thread' : 'a chat-app thread';
+  return [
+    '## Chat channel',
+    `This chat is also shown in ${where}: the user may be reading and answering there, where cards show only some buttons.`,
+    '- A propose_run card shows Start run, Not now and Request changes there, also when it carries `source` (a tracker task). A card with presetId, a schedule (when, every or after), a shape or attachmentIds shows no Start button there: it is started in worca. ask_question and propose_scope_switch cards can be answered there; every other card is decided in worca.',
+    '- Never tell the user to press a button the card does not show there. Name the real one ("Start run" on the card), or say the card must be opened in worca.',
+    '- A typed "ok", "yes" or "go" is a message, not an approval: nothing starts from text. Point to Start run on the card (or worca), and never say a run started until the context shows the card started.',
+  ].join('\n');
+}
+
 /** Agent mode (#574): the command tools' section, only for a turn that has them. */
 export function renderCommandsSection() {
   return [
@@ -417,9 +431,10 @@ export function renderCommandsSection() {
  *  Memory is NOT in the prompt (native-rules revision): the files load from the turn's --add-dir
  *  mount, so the prefix-cached prompt never changes with the store. `scripts` (W20) and `web`
  *  (docs/guardrails.md "Web access") are the host-dependent parts: null keeps the prompt byte-identical to a chat
- *  without script or web tools. `shape` (Shape it first, spec D9) adds its section after mcp. `commands` (agent mode,
+ *  without script or web tools. `shape` (Shape it first, spec D9) adds its section after mcp. `chat` ({platform}: the
+ *  thread is mirrored to a chat app, freeform chat) adds the chat channel section after it. `commands` (agent mode,
  *  #574) appends the commands section last. */
-export function buildSystemPrompt(catalog, { scripts = null, deployment = 'local', web = null, mcp = null, commands = false, engine = 'claude', shape = false, git = true } = {}) {
+export function buildSystemPrompt(catalog, { scripts = null, deployment = 'local', web = null, mcp = null, commands = false, engine = 'claude', shape = false, git = true, chat = null } = {}) {
   const own = engineSystemRules(engine);
   const hosted = deployment === 'container' || deployment === 'hosted' ? `${own}\n${ASK_HOSTING_RULE}` : own;
   // `git` (P0): false = this machine has no git — the rules then name no git-only tool (noGitSystemRules).
@@ -429,7 +444,8 @@ export function buildSystemPrompt(catalog, { scripts = null, deployment = 'local
   const withWeb = web && web.enabled === true ? `${withScripts}\n\n${renderWebSection(web, { engine })}` : withScripts;
   const withMcp = mcp && mcp.copies.length ? `${withWeb}\n\n${renderMcpSection(mcp)}` : withWeb;
   const withShape = shape ? `${withMcp}\n\n${renderShapeSection()}` : withMcp;
-  return commands ? `${withShape}\n\n${renderCommandsSection()}` : withShape;
+  const withChat = chat ? `${withShape}\n\n${renderChatChannelSection(chat)}` : withShape;
+  return commands ? `${withChat}\n\n${renderCommandsSection()}` : withChat;
 }
 
 /** Composer rule 12's image/PDF sentence; buildComposerSystemPrompt swaps it for its Codex form (D16). */

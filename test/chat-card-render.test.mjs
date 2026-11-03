@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { isNativeRunCard, runBodyFromCard, renderCardPost, renderMessageParts, cardTarget, scopeSelectOptions, SELECT_MAX_OPTIONS } from '../src/core/chat/card-render.mjs';
+import { isNativeRunCard, runBodyFromCard, renderCardPost, renderMessageParts, cardTarget, scopeSelectOptions, SELECT_MAX_OPTIONS,
+  NATIVE_RUN_EXCLUDES, NO_LINK_HINT, needsWorcaReason } from '../src/core/chat/card-render.mjs';
+import { runSourceOf } from '../src/core/ask/source-spec.mjs';
 import { isValidMessage } from '../src/core/chat/channel-protocol.mjs';
 
 const issued = [];
@@ -28,7 +30,8 @@ test('matrix: plain run proposals of every target get Start; excluded fields fal
   assert.equal(cardTarget({ target: 'bogus', projectKey: 'k' }), null);
   for (const c of [RUN, NONE, SAME, WS]) assert.equal(isNativeRunCard(c), true, c.target);
   assert.equal(isNativeRunCard({ ...RUN, projectKey: null }), false, 'project target without its key');
-  for (const k of ['preset', 'shape', 'schedule', 'source']) assert.equal(isNativeRunCard({ ...RUN, [k]: {} }), false, k);
+  for (const k of ['preset', 'shape', 'schedule']) assert.equal(isNativeRunCard({ ...RUN, [k]: {} }), false, k);
+  assert.equal(isNativeRunCard({ ...RUN, source: {} }), false, 'a source without its ids');
   assert.equal(isNativeRunCard({ ...RUN, attachments: [{ id: 'a' }] }), false);
   assert.equal(isNativeRunCard({ type: 'metrics' }), false);
   for (const card of [RUN, NONE]) {
@@ -115,4 +118,61 @@ test('message parts: text then one part per card; every message is protocol-vali
   assert.match(renderMessageParts({ role: 'user', text: 'typed in worca', blocks: [] }, { issue, links, fromWorca: true })[0].message.body[0].value, /^\*\(from worca\)\*/);
   assert.equal(renderMessageParts({ role: 'assistant', status: 'stopped', text: '', blocks: [] }, { issue, links })[0].message.body[0].value, '_Stopped before any reply._');
   assert.match(renderMessageParts({ role: 'assistant', status: 'stopped', text: 'Half an answer', blocks: [] }, { issue, links })[0].message.body[0].value, /^Half an answer\n\n_Stopped\._$/);
+});
+
+// An issue-backed card exactly as validateRunSource + checkTask build it (src/core/ask/source-spec.mjs, proposal.mjs:441-449):
+// no brief, the task's title as the card title, display fields on the source.
+const SRC = { ...RUN, brief: '', title: 'Fix the login redirect', featureBranchDerived: true,
+  source: { type: 'plugin', plugin: 'jira', sourceId: 'issues', taskId: 'PROJ-7', displayName: 'Jira issues', profile: 'cloud', profileVia: 'named',
+    inputs: { board: 'WEB' }, title: 'Fix the login redirect', url: 'https://jira.example/browse/PROJ-7' } };
+
+test('task-source cards start from chat with the browser\'s source body (ask-panel.mjs collectCardBody)', () => {
+  assert.deepEqual(NATIVE_RUN_EXCLUDES, ['preset', 'shape', 'schedule'], 'ask/prompt.mjs renderChatChannelSection names these: change both');
+  assert.equal(isNativeRunCard(SRC), true);
+  for (const bad of [{ ...SRC.source, type: 'url' }, { ...SRC.source, taskId: '' }, { ...SRC.source, plugin: 7 }, { ...SRC.source, inputs: [] }, { ...SRC.source, profile: 3 }, 'PROJ-7']) {
+    assert.equal(isNativeRunCard({ ...SRC, source: bad }), false, JSON.stringify(bad));
+  }
+  const body = runBodyFromCard(SRC, opts);
+  assert.equal('prompt' in body, false, 'source OR prompt, never both (POST /api/run)');
+  assert.deepEqual(body.source, runSourceOf(SRC.source));
+  assert.deepEqual(body, { workflowId: 'wf_default', guardrailsId: 'normal', title: 'Fix the login redirect', mock: false,
+    askThreadId: 'ask_0123abcd', askCardId: 'card_00000001',
+    source: { type: 'plugin', plugin: 'jira', sourceId: 'issues', taskId: 'PROJ-7', profile: 'cloud', inputs: { board: 'WEB' } },
+    featureBranch: 'fix/login', featureBranchSuggested: true, projectDir: '/p/demo', sourceBranch: 'dev' });
+  const bare = runBodyFromCard({ ...SRC, source: { type: 'plugin', plugin: 'mock-source', sourceId: 'mock', taskId: 'MOCK-1', displayName: 'Mock Tasks' } }, opts);
+  assert.deepEqual(bare.source, { type: 'plugin', plugin: 'mock-source', sourceId: 'mock', taskId: 'MOCK-1' }, 'no profile, no inputs: no keys');
+  const post = renderCardPost({ id: 'card_00000009', kind: 'card', state: 'proposed', card: { ...SRC, sourceWarning: 'could not reach Jira issues just now (network)' } }, { issue, links });
+  assert.deepEqual(post.controls.map((c) => c.label), ['Start run', 'Not now', 'Request changes', 'Open in worca']);
+  assert.match(post.text, /^\*\*Proposed run\*\* — Fix the login redirect\n/);
+  assert.match(post.text, /\nTask: Jira issues PROJ-7 · profile cloud · <https:\/\/jira\.example\/browse\/PROJ-7>/);
+  // The model may title the card itself (proposal.mjs prefers inp.title): the person still sees the task's own title.
+  const retitled = renderCardPost({ id: 'card_00000009', kind: 'card', state: 'proposed', card: { ...SRC, title: 'Login fix' } }, { issue, links });
+  assert.match(retitled.text, /^\*\*Proposed run\*\* — Login fix\n/);
+  assert.match(retitled.text, /\nTask: Jira issues PROJ-7 — Fix the login redirect · profile cloud · <https:/);
+  assert.match(post.text, /_could not reach Jira issues just now \(network\)_/);
+  assert.equal(isValidMessage({ title: null, severity: 'info', body: [{ kind: 'markdown', value: post.text }], controls: post.controls }), true);
+  const odd = renderCardPost({ id: 'card_00000009', kind: 'card', state: 'proposed', card: { ...SRC, source: { ...SRC.source, url: 'javascript:alert(1)' } } }, { issue, links });
+  assert.doesNotMatch(odd.text, /javascript:/, 'only an http(s) task link is shown');
+});
+
+test('a card chat cannot start says why; with no worca link it says how to reach worca', () => {
+  const noLink = { thread: null, run: null };
+  assert.equal(needsWorcaReason({ ...RUN, preset: { id: 'rp_1' } }), 'a run preset');
+  assert.equal(needsWorcaReason({ ...RUN, schedule: { when: '+2m' }, attachments: [{ id: 'a' }] }), 'a schedule, attachments');
+  assert.equal(needsWorcaReason({ ...RUN, shape: { perspectives: ['product'] } }), 'a planning shape');
+  assert.equal(needsWorcaReason({ ...SRC, source: { type: 'url' } }), 'a task source chat cannot read');
+  const linked = renderCardPost({ id: 'card_00000010', kind: 'card', state: 'proposed', card: { ...RUN, preset: { id: 'rp_1' } } }, { issue, links });
+  assert.deepEqual(linked.controls.map((c) => c.label), ['Open in worca']);
+  assert.match(linked.text, /needs worca to start: it uses a run preset, set there\. Nothing was started\._$/);
+  assert.doesNotMatch(linked.text, /Open worca in a browser/, 'a link is there: no navigation hint');
+  const bare = renderCardPost({ id: 'card_00000010', kind: 'card', state: 'proposed', card: { ...RUN, schedule: { when: '+2m' } } }, { issue, links: noLink });
+  assert.deepEqual(bare.controls, []);
+  assert.ok(bare.text.endsWith(`\n${NO_LINK_HINT}`), bare.text);
+  assert.match(NO_LINK_HINT, /Open worca in a browser and pick this conversation under Chat/);
+  assert.match(NO_LINK_HINT, /"Worca address for links"/, 'the discord-chat setting label');
+  const other = renderCardPost({ id: 'card_00000011', kind: 'card', state: 'proposed', card: { type: 'metrics' } }, { issue, links: noLink });
+  assert.match(other.text, /needs worca/);
+  assert.ok(other.text.endsWith(NO_LINK_HINT));
+  const otherLinked = renderCardPost({ id: 'card_00000011', kind: 'card', state: 'proposed', card: { type: 'metrics' } }, { issue, links });
+  assert.doesNotMatch(otherLinked.text, /Open worca in a browser/);
 });

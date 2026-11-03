@@ -23,7 +23,8 @@ project's working tree, so nothing is ever committed to your repo.
                                         a pending create's marker). Every export is also an `export` turn.
                                         Freeform chat (v84): chat_conversations (one row per platform thread bound
                                         to an Ask thread: plugin, channel, parent chat, owner user id, the worca
-                                        identity the operator mapped, header message id), chat_controls (opaque
+                                        identity the operator mapped, header message id, header_new_off since v85),
+                                        chat_controls (opaque
                                         button/select refs: action, card, issued state, expiry, used time),
                                         chat_deliveries (one row per delivered message part with the platform
                                         message id and the card state it shows) and chat_inbound_seen (handled

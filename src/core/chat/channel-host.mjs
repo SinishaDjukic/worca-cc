@@ -55,7 +55,7 @@ function mockMode() {
 
 // ── mock hooks (tests / offline smoke) ───────────────────────────────────────
 
-let _mockBehavior = null;   // key or '*' -> { send?(chatId, message), webhook?(req) }
+let _mockBehavior = null;   // key or '*' -> { send?(chatId, message), webhook?(req), react?(frame) }
 const _mockSent = [];       // every sendMessage seen in mock mode
 
 /** Tests: override mock worker behavior per "plugin/channelId" key ('*' = all). */
@@ -542,6 +542,28 @@ export function createChannelHost({ logger, onInbound, onInteraction, onStatus, 
       const res = await rpc(w, { type: 'interaction-reply', id: `r-${++rpcSeq}`, interactionId, text: body }, timeoutMs);
       if (res.ok) return { ok: true };
       throw new PluginOpError(res.error?.kind || 'plugin', w.redact(res.error?.message || 'reply failed'));
+    },
+
+    /** v2: add (`on`) or remove the bot's OWN reaction on one message (interactive channels). Resolves {ok:true} or
+     *  throws PluginOpError; a refusal that would fail again (no permission, deleted message, a worker without
+     *  react) is `permanent`. The default timeout outlasts the worker's own 429 ladder so a late reaction call cannot
+     *  land after the next one. Mock mode calls behavior.react(frame) when the test set one. */
+    async react({ plugin, channelId, chatId, messageId, emoji, on, timeoutMs = 60000 }) {
+      const w = workers.get(workerKey(plugin, channelId));
+      if (!w) throw new PluginOpError('plugin', `no such channel worker "${plugin}/${channelId}"`);
+      if (w.entry.capabilities.interactive !== true) throw refused(new PluginOpError('plugin', 'channel is not interactive'));
+      const frame = { chatId: String(chatId), messageId: String(messageId), emoji: String(emoji), on: on === true };
+      if (w.mock) {
+        const behavior = _mockBehavior?.[w.key] ?? _mockBehavior?.['*'];
+        if (behavior?.react) await behavior.react(frame);   // may throw {kind, permanent?}
+        return { ok: true };
+      }
+      if (w.state === 'unconfigured' || w.state === 'failed' || !w.proc) throw new PluginOpError('plugin', `channel worker is ${w.state}`);
+      const res = await rpc(w, { type: 'react', id: `x-${++rpcSeq}`, ...frame }, timeoutMs);
+      if (res.ok) return { ok: true };
+      const err = new PluginOpError(res.error?.kind || 'plugin', w.redact(res.error?.message || 'reaction failed'));
+      if (Number.isFinite(res.error?.retryAfterMs)) err.retryAfterMs = res.error.retryAfterMs;
+      throw res.error?.permanent === true ? refused(err) : err;
     },
 
     /** Tests: the interaction twin of injectInboundMessage. */

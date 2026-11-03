@@ -362,6 +362,7 @@ const RUNGS = [
   { v: 54, cols: [['ask_threads', 'mode', null], ['ask_threads', 'composer', null]] },
   { v: 84, tables: [['chat_conversations', ['idx_chat_conversations_thread']], ['chat_controls', ['idx_chat_controls_card']],
     ['chat_deliveries', []], ['chat_inbound_seen', ['idx_chat_inbound_seen_at']]] },
+  { v: 85, cols: [['chat_conversations', 'header_new_off', 0]] },
 ];
 
 // One row per host table, written before the removal: every one must survive the climb,
@@ -371,6 +372,7 @@ const HOST_ROWS = [
   ['pipeline_steps', 'status', 'done', "INSERT INTO pipeline_steps (pipeline_id, key, status) VALUES ('c0ffee01', '0:s0_0', 'done')"],
   ['workspaces', 'description', 'kept', "INSERT INTO workspaces (id, name, description, created_at, updated_at) VALUES ('wks-a-00000000', 'A', 'kept', 't', 't')"],
   ['ask_threads', 'title', 'kept', "INSERT INTO ask_threads (id, title, created_at, updated_at) VALUES ('ask_00000001', 'kept', 't', 't')"],
+  ['chat_conversations', 'status', 'active', "INSERT INTO chat_conversations (id, plugin, channel_id, platform, parent_chat_id, chat_id, owner_user_id, worca_identity, ask_thread_id, created_at, updated_at) VALUES ('chc_00000001', 'p', 'main', 'discord', 'C1', 'T1', 'U1', 'ada', 'ask_00000001', 't', 't')"],
   ['scheduled_runs', 'request', '{}', "INSERT INTO scheduled_runs (id, run_at, request, created_at, updated_at) VALUES ('tkt-00000001', 't', '{}', 't', 't')"],
   ['night_decisions', 'question_id', 'q_1', "INSERT INTO night_decisions (pipeline_id, question_id, kind, ts, record) VALUES ('c0ffee01', 'q_1', 'answer', 't', '{}')"],
 ];
@@ -435,7 +437,7 @@ test('ladder: each incremental addition, removed (rows kept), is restored by one
     name: `v${r.v} stamp ${stamp} (${rungLabel(r)})`,
     run: () => climbAndCheck(r, stamp, SCHEMA_VERSION),
   })));
-  assert.equal(rows.length, 22, 'eleven rungs >= 25, two arms each');
+  assert.equal(rows.length, 24, 'twelve rungs >= 25, two arms each');
   await checkRows(rows);
 });
 

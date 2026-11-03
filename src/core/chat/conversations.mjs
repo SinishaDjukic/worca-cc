@@ -1,4 +1,4 @@
-// src/core/chat/conversations.mjs — v84 freeform chat store: platform thread ↔ Ask thread bindings, opaque control
+// src/core/chat/conversations.mjs — v84/v85 freeform chat store: platform thread ↔ Ask thread bindings, opaque control
 // refs, delivered message parts, and handled platform event ids. Pure SQL over core/db.mjs; no network, no clock
 // beyond the injected `now`. Loads in the server and in the Ask MCP child (tool-deps reads conversationForThread).
 import { randomBytes } from 'node:crypto';
@@ -14,7 +14,7 @@ function rowToConversation(r) {
   return {
     id: r.id, plugin: r.plugin, channelId: r.channel_id, platform: r.platform, guildId: r.guild_id ?? null,
     parentChatId: r.parent_chat_id, chatId: r.chat_id, ownerUserId: r.owner_user_id, worcaIdentity: r.worca_identity,
-    askThreadId: r.ask_thread_id, headerMessageId: r.header_message_id ?? null, status: r.status,
+    askThreadId: r.ask_thread_id, headerMessageId: r.header_message_id ?? null, headerNewOff: r.header_new_off === 1, status: r.status,
     createdAt: r.created_at, updatedAt: r.updated_at,
   };
 }
@@ -71,6 +71,15 @@ export function rebindConversation(id, { askThreadId }, { now = Date.now() } = {
 export function setHeaderMessage(id, messageId) {
   getDb();
   prepare('UPDATE chat_conversations SET header_message_id = ? WHERE id = ?').run(messageId, id);
+}
+
+/** Any successful header scope pick (v85): the header never offers New conversation again for this conversation. Its
+ *  live refs are spent in the same transaction, so a click on an older header answers "no longer valid". Idempotent. */
+export function retireNewConversation(id, { now = Date.now() } = {}) {
+  return tx(() => {
+    prepare('UPDATE chat_conversations SET header_new_off = 1 WHERE id = ?').run(id);
+    prepare("UPDATE chat_controls SET used_at = ? WHERE conversation_id = ? AND action = 'header:new' AND used_at IS NULL").run(iso(now), id);
+  });
 }
 
 // ── controls ────────────────────────────────────────────────────────────────

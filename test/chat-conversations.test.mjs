@@ -94,3 +94,20 @@ test('deleting the Ask thread removes the binding (FK cascade)', () => {
   store.deleteThread(c.askThreadId);
   assert.equal(C.getConversation(c.id), null);
 });
+
+test('retireNewConversation: the flag sticks (rebind too) and only header:new refs are spent', () => {
+  const c = bind();
+  assert.equal(c.headerNewOff, false);
+  const neu = C.issueControl({ conversationId: c.id, action: 'header:new', ownerUserId: 'U1', singleUse: false });
+  const scope = C.issueControl({ conversationId: c.id, action: 'header:scope', ownerUserId: 'U1', singleUse: false });
+  const stop = C.issueControl({ conversationId: c.id, action: 'header:stop', ownerUserId: 'U1', singleUse: false });
+  C.retireNewConversation(c.id);
+  assert.equal(C.getConversation(c.id).headerNewOff, true);
+  assert.equal(C.claimControl(neu), false, 'an old New conversation ref is dead');
+  assert.equal(C.claimControl(scope), true, 'the other header refs stay live');
+  assert.equal(C.claimControl(stop), true);
+  const t2 = store.createThread({ createdBy: 'ada@example.com' });
+  assert.equal(C.rebindConversation(c.id, { askThreadId: t2.id }).headerNewOff, true);
+  C.retireNewConversation(c.id);   // idempotent
+  assert.equal(C.getConversation(c.id).headerNewOff, true);
+});

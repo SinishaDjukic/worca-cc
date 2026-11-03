@@ -540,3 +540,42 @@ test('replyInteraction refuses a token older than 14 minutes', async () => {
   try { await assert.rejects(w.replyInteraction('I8', 'late'), /interaction expired/); } finally { Date.now = realNow; }
   await w.stop();
 });
+
+test('worker react: PUT/DELETE only the bot\'s own reaction, emoji encoded; 429 waits retry_after; 403/404/400 permanent; 5xx network', async () => {
+  const { ctx } = workerCtx();
+  const calls = [];
+  let mode = 'ok';
+  let limited = 0;
+  const fetchFn = async (url, opts) => {
+    calls.push({ url, method: opts.method, body: opts.body });
+    if (mode === 'limit' && limited++ === 0) return json({ retry_after: 0.25 }, 429);
+    if (mode === 'long') return json({ retry_after: 30 }, 429);
+    if (/^\d{3}$/.test(mode)) return json({ message: 'x' }, Number(mode));
+    return { ok: true, status: 204, json: async () => { throw new Error('no body'); } };
+  };
+  const sleeps = [];
+  const w = createDiscordWorker(ctx, { fetchFn, WebSocketImpl: FakeWebSocket, _sleep: async (ms) => { sleeps.push(ms); } });
+  assert.deepEqual(await w.react('C1', 'M1', '⏹️', true), { ok: true });
+  assert.equal(calls[0].url, `https://discord.com/api/v10/channels/C1/messages/M1/reactions/${encodeURIComponent('⏹️')}/@me`);
+  assert.equal(calls[0].method, 'PUT');
+  assert.equal(calls[0].body, undefined);
+  await w.react('C1', 'M1', '⏳', false);
+  assert.equal(calls[1].method, 'DELETE');
+  assert.match(calls[1].url, /\/reactions\/[^/]+\/@me$/);
+  mode = 'limit'; calls.length = 0;
+  await w.react('C1', 'M1', '✅', true);
+  assert.equal(calls.length, 2);
+  assert.deepEqual(sleeps, [250]);
+  mode = 'long'; calls.length = 0;   // a long retry_after goes back to the host (its chain waits in order)
+  await assert.rejects(w.react('C1', 'M1', '✅', true), (e) => e.kind === 'rate-limit' && e.retryAfterMs === 30000 && e.permanent !== true);
+  assert.equal(calls.length, 1);
+  assert.deepEqual(sleeps, [250], 'the worker did not sleep');
+  mode = '403';
+  await assert.rejects(w.react('C1', 'M1', '✅', true), (e) => e.kind === 'plugin' && e.permanent === true && /Add Reactions/.test(e.message));
+  mode = '404';
+  await assert.rejects(w.react('C1', 'M1', '✅', true), (e) => e.kind === 'plugin' && e.permanent === true);
+  mode = '400';
+  await assert.rejects(w.react('C1', 'M1', '✅', true), (e) => e.kind === 'plugin' && e.permanent === true);
+  mode = '503';
+  await assert.rejects(w.react('C1', 'M1', '✅', true), (e) => e.kind === 'network' && e.permanent !== true);
+});

@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   isValidSegment, isValidMessage, isValidIncoming, isValidFrame,
-  encodeFrame, decodeFrame, MAX_FRAME_BYTES,
+  encodeFrame, decodeFrame, MAX_FRAME_BYTES, HOST_FRAMES,
 } from '../src/core/chat/channel-protocol.mjs';
 import { redactSecrets } from '../src/core/chat/redact.mjs';
 
@@ -126,4 +126,18 @@ test('send options and interaction frames', () => {
   assert.equal(isValidFrame({ type: 'interaction-reply', id: 'r1', interactionId: 'i1', text: 'Only the owner can act.' }), true);
   assert.equal(isValidFrame({ type: 'send', id: 's1', chatId: 'C', message: CMSG(undefined), options: { edit: { messageId: 'm1' } } }), true);
   assert.equal(isValidFrame({ type: 'send', id: 's1', chatId: 'C', message: CMSG(undefined), options: { edit: {} } }), false);
+});
+
+test('react frame: chat, message, emoji and on/off are required and bounded', () => {
+  const ok = { type: 'react', id: 'x1', chatId: 'C1', messageId: '1234567890', emoji: '⏳', on: true };
+  assert.ok(HOST_FRAMES.includes('react'));
+  assert.equal(isValidFrame(ok), true);
+  assert.equal(isValidFrame({ ...ok, on: false }), true);
+  assert.equal(isValidFrame({ ...ok, on: 'yes' }), false);
+  assert.equal(isValidFrame({ ...ok, messageId: '' }), false);
+  assert.equal(isValidFrame({ ...ok, messageId: 'x'.repeat(65) }), false);
+  assert.equal(isValidFrame({ ...ok, chatId: '' }), false);
+  assert.equal(isValidFrame({ ...ok, emoji: '' }), false);
+  assert.equal(isValidFrame({ ...ok, emoji: 'x'.repeat(33) }), false);
+  assert.equal(isValidFrame({ ...ok, id: 7 }), false);
 });

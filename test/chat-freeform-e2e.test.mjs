@@ -13,6 +13,8 @@ import { writePluginConfig } from '../src/core/plugin-config.mjs';
 import { setMockChannelBehavior, mockInteractionReplies, clearMockInteractionReplies } from '../src/core/chat/channel-host.mjs';
 import { findConversation, conversationForThread } from '../src/core/chat/conversations.mjs';
 import { getDb, _resetForTests as closeDbForTests } from '../src/core/db.mjs';
+import { MARK } from '../src/core/chat/receipts.mjs';
+import { SAY } from '../src/core/chat/conversation-bridge.mjs';
 
 process.env.WORCA_MOCK = '1';
 useTempHome(after);
@@ -38,13 +40,21 @@ let nextId = 0;
 let threadIdFor = () => 'TH1';
 let sendHook = null;
 const posts = [];
-const behavior = { send: async (chatId, message, options) => {
-  if (sendHook) { const r = await sendHook(chatId, message, options); if (r !== undefined) return r; }
-  posts.push({ chatId, message, options: options || null });
-  if (options?.thread) return { ok: true, detail: { threadId: threadIdFor(), messageIds: [`M${++nextId}`] } };
-  if (options?.edit) return { ok: true, detail: { messageIds: [options.edit.messageId] } };
-  return { ok: true, detail: { messageIds: [`M${++nextId}`] } };
-} };
+let reactHook = null;
+const rxLog = [];   // every own-reaction call the mock worker accepted, with the post count at that moment
+const behavior = {
+  send: async (chatId, message, options) => {
+    if (sendHook) { const r = await sendHook(chatId, message, options); if (r !== undefined) return r; }
+    posts.push({ chatId, message, options: options || null });
+    if (options?.thread) return { ok: true, detail: { threadId: threadIdFor(), messageIds: [`M${++nextId}`] } };
+    if (options?.edit) return { ok: true, detail: { messageIds: [options.edit.messageId] } };
+    return { ok: true, detail: { messageIds: [`M${++nextId}`] } };
+  },
+  react: async (r) => {
+    if (reactHook) await reactHook(r);
+    rxLog.push({ ...r, at: posts.length });
+  },
+};
 
 before(async () => {
   cwdSandbox = mkdtempSync(join(tmpdir(), 'worca-cc-ff-cwd-'));
@@ -71,7 +81,11 @@ before(async () => {
   }));
   writeFileSync(join(cur2, 'channel', 'worker.mjs'), 'export function createChannelWorker() { return { start() {}, stop() {}, send() {} }; }');
   const lockRow = { repoUrl: 'https://example.test/f.git', subdir: '', pinnedSha: 'a'.repeat(40), version: null, enabled: true, installedAt: '2026-08-12T00:00:00.000Z' };
-  writePluginsLock({ [NAME]: lockRow, [NAME2]: { ...lockRow, repoUrl: 'https://example.test/g.git' } });
+  // Case 31: the in-tree task-source fixture (mock mode serves its getTask without spawning it; ask-schedules does the same).
+  const curSrc = pluginCurrentDir('mock-source');
+  mkdirSync(curSrc, { recursive: true });
+  writeFileSync(join(curSrc, 'worca-cc-plugin.json'), readFileSync(new URL('./fixtures/plugins/mock-source/worca-cc-plugin.json', import.meta.url)));
+  writePluginsLock({ [NAME]: lockRow, [NAME2]: { ...lockRow, repoUrl: 'https://example.test/g.git' }, 'mock-source': { ...lockRow, repoUrl: 'https://example.test/s.git' } });
   writePluginConfig(NAME, SCHEMA, CFG);
   writePluginConfig(NAME2, SCHEMA, { ...CFG, allowedChatIds: 'P1' });
   setMockChannelBehavior({ '*': behavior });
@@ -130,9 +144,14 @@ const binding = (chatId = 'TH1') => findConversation({ plugin: NAME, channelId: 
 const ask = async () => import('../src/core/ask/store.mjs');
 const idle = (threadId) => waitFor(() => !_testing.askJobs.get(threadId) || _testing.askJobs.get(threadId).status !== 'running');
 const writeCfg = (patch) => writePluginConfig(NAME, SCHEMA, { ...CFG, ...patch });
+/** The bot's reactions now on a message (replays its PUT/DELETE calls in order). */
+const marksOn = (messageId) => { const s = new Set(); for (const r of rxLog) if (r.messageId === messageId) { if (r.on) s.add(r.emoji); else s.delete(r.emoji); } return [...s].sort(); };
+const opsOn = (messageId) => rxLog.filter((r) => r.messageId === messageId).map((r) => `${r.on ? '+' : '-'}${r.emoji}`);
+const opAt = (messageId, emoji) => rxLog.find((r) => r.messageId === messageId && r.on && r.emoji === emoji)?.at ?? -1;
 
 export const H = { NAME, SCHEMA, CFG, posts, say, click, textOf, fromWorcaPosts, refOf, replies, binding, ask, idle, waitFor, settle, writeCfg,
   get mod() { return mod; }, get t() { return _testing; }, get projectKey() { return projectKey; }, get projectDir() { return projectDir; }, get base() { return base; },
+  rxLog, setReactHook: (fn) => { reactHook = fn; },
   setThreadId: (fn) => { threadIdFor = fn; }, setSendHook: (fn) => { sendHook = fn; }, clearMockInteractionReplies, conversationForThread, getDb };
 
 // 1: plain chatter in an allowed channel starts nothing; a slash command still answers.
@@ -196,13 +215,13 @@ test('2c. thread-creation failures are never throttled', async () => {
   H.setSendHook(async (_chatId, _message, options) => { if (options?.thread) throw { kind: 'forbidden' }; return undefined; });
   try {
     const before = posts.length;
-    say('<@BOT1> first try', { chatId: 'C1', mention: true });
-    say('<@BOT1> second try', { chatId: 'C1', mention: true });
+    const tries = [say('<@BOT1> first try', { chatId: 'C1', mention: true }), say('<@BOT1> second try', { chatId: 'C1', mention: true })];
     await waitFor(() => posts.slice(before).filter((p) => p.chatId === 'C1').length >= 2);
     await settle(50);
     const warns = posts.slice(before).filter((p) => p.chatId === 'C1');
     assert.equal(warns.length, 2);
     for (const w of warns) assert.match(w.message.body[0].value, /^That did not work:/);
+    for (const id of tries) { await waitFor(() => marksOn(id).includes(MARK.fail)); assert.deepEqual(opsOn(id), [`+${MARK.work}`, `-${MARK.work}`, `+${MARK.fail}`]); }
     assert.equal(countOf('ask_threads'), threads0);
     assert.equal(countOf('chat_conversations'), convs0);
   } finally { H.setSendHook(null); }
@@ -826,6 +845,12 @@ test('14. stop and new conversation', async () => {
     assert.ok(textOf(p).endsWith('_Stopped._') || textOf(p) === '_Stopped before any reply._', textOf(p));
   } finally { delete process.env.WORCA_MOCK_SLOW_MS; }
   // the open text card of the old thread would otherwise swallow later messages: it is in the OLD thread after rebind
+  // TH1 switched scope in cases 6 and 13: New conversation is gone (case 22 pins the rules). Turn it back on in the
+  // store only so this case can still pin the rebind on TH1, which every later case relies on.
+  const hdr0 = posts.filter((p) => p.options?.edit?.messageId === b.headerMessageId).at(-1);
+  assert.ok(!controlsOf(hdr0).includes('New conversation'), controlsOf(hdr0).join());
+  getDb().prepare('UPDATE chat_conversations SET header_new_off = 0 WHERE id = ?').run(b.id);
+  await _testing.chatBridge.refreshHeader(binding());
   const oldThread = b.askThreadId;
   let n = replies().length;
   click(latestRefIn('New conversation'));
@@ -1166,4 +1191,377 @@ test('bridge startTurn calls askCredentialGate and chatTurnIdentity', () => {
   assert.match(block, /await askCredentialGate\(chatActorReq\(actor\), mv\.model\)/);
   assert.match(block, /\.\.\.chatTurnIdentity\(fresh, actor\)/);
   assert.doesNotMatch(block, /askViewer\(|askSignedIn\(/);
+});
+
+// 22: header rules on a fresh thread (TH7): a failed scope switch leaves the header as it was; ANY successful pick (here
+// a re-pick of the current scope) removes New conversation for good, its old ref answers stale and starts nothing, and
+// later refreshes never bring it back.
+test('22. header: a failed switch keeps New conversation; a successful pick removes it for good', async () => {
+  _testing.chatBridge.resetRateLimits();
+  const b = await openConversation('TH7');
+  const header = () => posts.filter((p) => p.options?.edit?.messageId === b.headerMessageId).at(-1);
+  assert.ok(controlsOf(header()).includes('New conversation'));
+  const oldNew = latestRefIn('New conversation', 'TH7');
+  const usedAt = (ref) => { const r = getDb().prepare('SELECT used_at FROM chat_controls WHERE ref = ?').get(ref); return r ? r.used_at : 'gone'; };
+  let n = replies().length;
+  click(latestRefIn('Scope', 'TH7'), { chatId: 'TH7', kind: 'select', values: ['p:gone'] });
+  assert.equal(await replyAfter(n), 'That did not work: unknown scope');
+  assert.equal(latestRefIn('New conversation', 'TH7'), oldNew, 'a failed switch re-issues nothing');
+  assert.equal(usedAt(oldNew), null, 'and the old New conversation ref still works');
+  const cur = askStore.getThread(b.askThreadId).context;
+  const same = cur?.projectKey ? `p:${cur.projectKey}` : cur?.workspaceId ? `w:${cur.workspaceId}` : 'none';
+  n = replies().length;
+  click(latestRefIn('Scope', 'TH7'), { chatId: 'TH7', kind: 'select', values: [same] });
+  assert.match(await replyAfter(n), /^Scope: /);
+  assert.ok(!controlsOf(header()).includes('New conversation'), controlsOf(header()).join());
+  assert.match(textOf(header()), /change scope or stop a reply/);
+  assert.notEqual(usedAt(oldNew), null);
+  n = replies().length;
+  click(oldNew, { chatId: 'TH7' });
+  assert.match(await replyAfter(n), /no longer valid/);
+  assert.equal(binding('TH7').askThreadId, b.askThreadId, 'no new conversation was started');
+  n = replies().length;
+  click(latestRefIn('Scope', 'TH7'), { chatId: 'TH7', kind: 'select', values: [`p:${projectKey}`] });
+  assert.equal(await replyAfter(n), 'Scope: demo');
+  await _testing.chatBridge.refreshHeader(binding('TH7'));   // a later refresh (reconnect, restart) keeps it off
+  const kinds = controlsOf(header()).map((k) => (k.startsWith('Scope') ? 'Scope' : k));
+  assert.deepEqual(kinds, ['Scope', 'Stop', 'Open in worca']);
+});
+
+// 23: a thread reply gets ⏳ when accepted and ✅ only after its reply was posted.
+test('23. reactions: ⏳ on an accepted reply, ✅ only after its answer is posted', async () => {
+  _testing.chatBridge.resetRateLimits();
+  const b = binding();
+  await idle(b.askThreadId);
+  const id = say('react to me');
+  await waitFor(() => marksOn(id).includes(MARK.ok));
+  const reply = posts.findIndex((p) => p.chatId === 'TH1' && textOf(p).includes('[mock] react to me'));
+  assert.ok(reply >= 0);
+  assert.ok(opAt(id, MARK.ok) > reply, 'the ✅ lands after the reply post');
+  assert.deepEqual(opsOn(id), [`+${MARK.work}`, `-${MARK.work}`, `+${MARK.ok}`]);
+  assert.ok(rxLog.filter((r) => r.messageId === id).every((r) => r.chatId === 'TH1'));
+});
+
+// 24: the mention that opens a thread is marked in the PARENT channel; a bare mention ends ✅ once the header is up.
+test('24. reactions: a bare mention ends ✅ once its thread header is up', async () => {
+  _testing.chatBridge.resetRateLimits();
+  H.setThreadId(() => 'TH8');
+  let id;
+  try { id = say('<@BOT1>', { chatId: 'C1', mention: true }); await waitFor(() => binding('TH8')); }
+  finally { await settle(30); H.setThreadId(() => 'TH1'); }
+  await waitFor(() => marksOn(id).includes(MARK.ok));
+  assert.deepEqual(opsOn(id), [`+${MARK.work}`, `-${MARK.work}`, `+${MARK.ok}`]);
+  assert.ok(rxLog.filter((r) => r.messageId === id).every((r) => r.chatId === 'C1'));
+  const opened = posts.findIndex((p) => p.options?.thread?.fromMessageId === id);
+  assert.ok(opened >= 0 && opAt(id, MARK.ok) > opened);
+});
+
+// 25: refusals clear ⏳ and add nothing; a stopped reply ends ⏹️; a failed turn ends ❌.
+test('25. reactions: busy and budget refusals clear ⏳; Stop ends ⏹️; a failed turn ends ❌', async () => {
+  _testing.chatBridge.resetRateLimits();
+  const b = binding();
+  await idle(b.askThreadId);
+  process.env.WORCA_MOCK_SLOW_MS = '300';
+  try {
+    const prevT = _testing.askJobs.get(b.askThreadId)?.turn;
+    const slowId = say('MOCK_SLOW reacting slowly');
+    await newTurn(b.askThreadId, prevT);
+    await waitFor(() => marksOn(slowId).includes(MARK.work));
+    const n = newPostsIn().length;
+    const busyId = say('are you there?');
+    await waitFor(() => newPostsIn().slice(n).some((p) => textOf(p) === SAY.busy));
+    await waitFor(() => opsOn(busyId).length === 2);
+    assert.deepEqual(opsOn(busyId), [`+${MARK.work}`, `-${MARK.work}`]);
+    assert.deepEqual(marksOn(slowId), [MARK.work], 'the running message keeps its ⏳');
+    const r = replies().length;
+    click(latestRefIn('Stop'));
+    await replyAfter(r);
+    await idle(b.askThreadId);
+    await waitFor(() => marksOn(slowId).includes(MARK.stop));
+    assert.deepEqual(marksOn(slowId), [MARK.stop]);
+  } finally { delete process.env.WORCA_MOCK_SLOW_MS; }
+  const failId = say('please MOCK_FAIL now');
+  await waitFor(() => marksOn(failId).includes(MARK.fail));
+  assert.deepEqual(marksOn(failId), [MARK.fail]);
+  await idle(b.askThreadId);
+  await blockBudget();
+  try {
+    const budgetId = say('hi again');
+    await waitFor(() => opsOn(budgetId).length === 2);
+    await settle(100);
+    assert.deepEqual(opsOn(budgetId), [`+${MARK.work}`, `-${MARK.work}`]);
+  } finally { await unblockBudget(); }
+});
+
+// 26: a reply refused for good ends ❌, never ✅; a transient delivery failure keeps ⏳ until a later pass delivers it.
+test('26. reactions: a refused reply ends ❌; a transient failure keeps ⏳ until the retry delivers it', async () => {
+  _testing.chatBridge.resetRateLimits();
+  const b = binding();
+  await idle(b.askThreadId);
+  H.setSendHook(async (chatId, message) => {
+    if (chatId === 'TH1' && JSON.stringify(message.body).includes('[mock] refuse me')) throw Object.assign(new Error('Missing Access'), { kind: 'plugin', permanent: true });
+    return undefined;
+  });
+  try {
+    const id = say('refuse me');
+    await waitFor(() => marksOn(id).includes(MARK.fail));
+    assert.deepEqual(marksOn(id), [MARK.fail]);
+  } finally { H.setSendHook(null); }
+  await idle(b.askThreadId);
+  let thrown = 0;
+  H.setSendHook(async (chatId, message) => {
+    if (chatId === 'TH1' && thrown === 0 && JSON.stringify(message.body).includes('[mock] flaky once')) { thrown += 1; throw { kind: 'network' }; }
+    return undefined;
+  });
+  try {
+    const id = say('flaky once');
+    await waitFor(() => thrown === 1);
+    await idle(b.askThreadId);
+    await settle(150);
+    assert.deepEqual(marksOn(id), [MARK.work], 'still processing: the reply is not delivered yet');
+    await _testing.chatBridge.reconcile(binding());   // the next trigger (a frame, a reconnect) retries the part
+    await waitFor(() => marksOn(id).includes(MARK.ok));
+    assert.deepEqual(marksOn(id), [MARK.ok]);
+    assert.equal(posts.filter((p) => textOf(p).includes('[mock] flaky once')).length, 1);
+  } finally { H.setSendHook(null); }
+});
+
+// 27: a reply carrying an approval card or a question completes its message; a typed answer ends ✅ with the
+// follow-up reply, or ❌ when the follow-up could not start (clarify answer).
+test('27. reactions: cards complete their message; a typed answer waits for its follow-up', async () => {
+  _testing.chatBridge.resetRateLimits();
+  const b = binding();
+  await idle(b.askThreadId);
+  const pId = say('propose a run to fix the reaction bug');
+  await waitFor(() => marksOn(pId).includes(MARK.ok));
+  assert.equal(lastCard(b.askThreadId, (x) => x.card && x.card.type === undefined).state, 'proposed', 'the run still waits for Start');
+  await idle(b.askThreadId);
+  const qId = say('MOCK_TEXT_Q');
+  await waitFor(() => marksOn(qId).includes(MARK.ok));
+  await idle(b.askThreadId);
+  const aId = say('tabs please');
+  await waitFor(() => marksOn(aId).includes(MARK.ok));
+  const follow = posts.findIndex((p) => p.chatId === 'TH1' && textOf(p).includes('Got it: text "tabs please"'));
+  assert.ok(follow >= 0 && opAt(aId, MARK.ok) > follow, 'the ✅ waits for the follow-up reply');
+  await idle(b.askThreadId);
+  const before = cardBlocks(b.askThreadId).length;
+  say('MOCK_TEXT_Q');
+  await waitFor(() => cardBlocks(b.askThreadId).length > before);
+  await idle(b.askThreadId);
+  await blockBudget();
+  try {
+    const lId = say('later then');
+    await waitFor(() => marksOn(lId).includes(MARK.fail));
+    assert.deepEqual(opsOn(lId), [`+${MARK.work}`, `-${MARK.work}`, `+${MARK.fail}`]);
+  } finally { await unblockBudget(); }
+});
+
+// 28: commands are marked once the router accepted them; unknown commands, filtered chats, chatter, non-owners and
+// replayed events get no mark and no second action.
+test('28. reactions: commands marked after acceptance; ignored and replayed messages get none', async () => {
+  _testing.chatBridge.resetRateLimits();
+  const before = posts.length;
+  const ok = say('/help', { chatId: 'C1' });          // info reply: always ✅ (/status here answers a warning, cases 6-13 left runs)
+  await waitFor(() => marksOn(ok).includes(MARK.ok));
+  assert.deepEqual(opsOn(ok), [`+${MARK.work}`, `-${MARK.work}`, `+${MARK.ok}`]);
+  assert.ok(opAt(ok, MARK.ok) > before, 'after the reply');
+  // A command typed in the bound thread is routed for the PARENT chat, but its mark belongs on the thread message:
+  // marksOn filters by message id only, so the chat id is asserted on every call.
+  const inThread = say('/help');
+  await waitFor(() => marksOn(inThread).includes(MARK.ok));
+  assert.deepEqual(opsOn(inThread), [`+${MARK.work}`, `-${MARK.work}`, `+${MARK.ok}`]);
+  assert.ok(rxLog.filter((r) => r.messageId === inThread).every((r) => r.chatId === 'TH1'), 'marked in the thread, never on C1');
+  const warned = say('/status zzzzzz', { chatId: 'C1' });   // the router's own refusal (a warning): ⏳ removed, no final mark
+  await waitFor(() => opsOn(warned).length === 2);
+  await settle(50);
+  assert.deepEqual(opsOn(warned), [`+${MARK.work}`, `-${MARK.work}`]);
+  H.setSendHook(async (chatId, message) => { if (chatId === 'C1' && JSON.stringify(message.body).includes('Worca chat commands')) throw Object.assign(new Error('Missing Access'), { kind: 'plugin', permanent: true }); return undefined; });
+  try {
+    const lost = say('/help', { chatId: 'C1' });   // the answer could not be posted: ❌
+    await waitFor(() => marksOn(lost).includes(MARK.fail));
+    assert.deepEqual(opsOn(lost), [`+${MARK.work}`, `-${MARK.work}`, `+${MARK.fail}`]);
+  } finally { H.setSendHook(null); }
+  const unknown = say('/frobnicate', { chatId: 'C1' });
+  await waitFor(() => posts.slice(before).some((p) => /Unknown command/.test(textOf(p))));
+  const n = posts.length;
+  say('/help', { chatId: 'C1', id: ok });            // a gateway replay of the same message
+  const chatter = say('hello again all', { chatId: 'C1' });
+  const offList = say('/status', { chatId: 'C9' });
+  const notOwner = say('me too', { userId: 'U2' });
+  await settle(300);
+  assert.equal(posts.length, n, 'the replay and the ignored messages post nothing');
+  for (const id of [unknown, chatter, offList, notOwner]) assert.deepEqual(opsOn(id), [], id);
+  assert.equal(opsOn(ok).length, 3, 'the replay adds no marks');
+  const b = binding();
+  await idle(b.askThreadId);
+  const u0 = userRowCount(b.askThreadId);
+  const d = say('dup react', { id: 'dup-react-1' });
+  say('dup react', { id: 'dup-react-1' });
+  await waitFor(() => marksOn(d).includes(MARK.ok));
+  await settle(100);
+  assert.deepEqual(opsOn(d), [`+${MARK.work}`, `-${MARK.work}`, `+${MARK.ok}`]);
+  assert.equal(userRowCount(b.askThreadId), u0 + 1, 'one paid turn');
+});
+
+// 29: a reaction call the platform refuses never blocks the reply, never repeats the turn, and is not retried.
+test('29. reactions: a refused reaction call changes nothing else', async () => {
+  _testing.chatBridge.resetRateLimits();
+  const b = binding();
+  await idle(b.askThreadId);
+  let calls = 0;
+  H.setReactHook(async () => { calls += 1; throw Object.assign(new Error('Missing Permissions'), { kind: 'plugin', permanent: true }); });
+  try {
+    const u0 = userRowCount(b.askThreadId);
+    const id = say('no reactions allowed');
+    await waitFor(() => posts.some((p) => p.chatId === 'TH1' && textOf(p).includes('[mock] no reactions allowed')));
+    await idle(b.askThreadId);
+    await waitFor(() => calls >= 3);   // ⏳ add, ⏳ remove, ✅ add: one try each
+    await settle(150);
+    assert.equal(calls, 3);
+    assert.equal(userRowCount(b.askThreadId), u0 + 1);
+    assert.deepEqual(opsOn(id), []);
+  } finally { H.setReactHook(null); }
+});
+
+// 30: New conversation while a reply is pending: that reply never reaches the rebound thread, so its ⏳ is removed and
+// no final mark is added (dropWaits).
+test('30. reactions: New conversation drops a pending reply\'s ⏳ without a mark', async () => {
+  _testing.chatBridge.resetRateLimits();
+  const b = binding();
+  await idle(b.askThreadId);
+  process.env.WORCA_MOCK_SLOW_MS = '300';
+  try {
+    const prevT = _testing.askJobs.get(b.askThreadId)?.turn;
+    const id = say('MOCK_SLOW still thinking');
+    await newTurn(b.askThreadId, prevT);
+    await waitFor(() => marksOn(id).includes(MARK.work));
+    const n = replies().length;
+    click(latestRefIn('New conversation'));
+    assert.equal(await replyAfter(n), 'Started a new conversation.');
+    await waitFor(() => opsOn(id).length === 2);
+    await idle(b.askThreadId);
+    await settle(150);
+    assert.deepEqual(opsOn(id), [`+${MARK.work}`, `-${MARK.work}`]);
+  } finally { delete process.env.WORCA_MOCK_SLOW_MS; }
+});
+
+// 31: an issue-backed proposal (a task source, no brief) gets the native buttons and starts from chat with the browser's
+// source body, through the same run-start service; a typed "ok" is not approval; the bound thread's prompt says what
+// Discord shows; a non-owner, a replayed interaction and a second click on the spent ref start nothing.
+test('31. task-source proposal: Start run from chat starts the issue run; "ok" starts nothing', async () => {
+  _testing.chatBridge.resetRateLimits();
+  const b = binding();
+  await idle(b.askThreadId);
+  const { cardId, v } = await seedCard(b, { projectKey, workflowId: 'wf_default', guardrailsId: 'normal', source: { plugin: 'mock-source', sourceId: 'mock', taskId: 'MOCK-31' } });
+  assert.equal(v.card.brief, '', 'the issue is the task: no copy of it in a brief');
+  assert.deepEqual({ plugin: v.card.source.plugin, sourceId: v.card.source.sourceId, taskId: v.card.source.taskId }, { plugin: 'mock-source', sourceId: 'mock', taskId: 'MOCK-31' });
+  const cp = cardPost(cardId);
+  assert.deepEqual(controlsOf(cp), ['Start run', 'Not now', 'Request changes', 'Open in worca']);
+  assert.match(textOf(cp), /\nTask: Mock Tasks MOCK-31/);
+  const ref = refOnPost(cp, 'Start run');
+  const n = mod.runs.size;
+  say('ok');
+  await waitFor(() => posts.some((p) => p.chatId === 'TH1' && textOf(p).includes('[mock] ok')));
+  await idle(b.askThreadId);
+  assert.equal((await cardOf(b.askThreadId, cardId)).state, 'proposed', 'a typed ok starts nothing');
+  assert.equal(mod.runs.size, n);
+  assert.match(_testing.askJobs.get(b.askThreadId).turn.systemPrompt, /\n## Chat channel\nThis chat is also shown in a Discord thread/);
+  const iX = click(ref, { userId: 'U2' });
+  assert.equal((await replyTo(iX)).text, SAY.notOwner('U1'));
+  assert.equal((await cardOf(b.askThreadId, cardId)).state, 'proposed');
+  const i1 = click(ref);
+  assert.match((await replyTo(i1)).text, /^Done/);
+  const c = await cardOf(b.askThreadId, cardId);
+  assert.equal(c.state, 'started');
+  assert.equal(mod.runs.size, n + 1);
+  const pid = await waitFor(() => mod.runs.get(c.runId)?.pipelineId);
+  const row = await waitFor(() => { const r = getDb().prepare('SELECT source_type, source_ref, started_by FROM pipelines WHERE id = ?').get(pid); return r && r.source_type === 'plugin' ? r : null; });
+  const ref0 = JSON.parse(row.source_ref);
+  assert.deepEqual({ plugin: ref0.plugin, sourceId: ref0.sourceId, taskId: ref0.taskId }, { plugin: 'mock-source', sourceId: 'mock', taskId: 'MOCK-31' });
+  assert.equal(row.started_by, 'ada@example.com', 'the bound identity starts it');
+  click(ref, { id: i1 });                                  // a replayed interaction
+  const i2 = click(ref);                                   // a second click on the spent ref
+  assert.equal((await replyTo(i2)).text, SAY.stale);
+  await settle(150);
+  assert.equal(replies().filter((r) => r.interactionId === i1).length, 1);
+  assert.equal(mod.runs.size, n + 1, 'one run');
+  try { mod.runs.get(c.runId)?.orch?.stop?.(); } catch { /* reap */ }
+});
+
+// 32: a typed answer that arrives while another reply runs: its follow-up is queued (turn {deferred:true}). The ✅
+// waits for THAT follow-up, which the server names when the queue starts it; a queued follow-up that cannot start ends
+// ❌ (clarify answer). Nothing is matched by row order.
+test('32. reactions: a queued answer settles on its own follow-up, or ❌ when it cannot start', async () => {
+  _testing.chatBridge.resetRateLimits();
+  const b = binding();
+  await idle(b.askThreadId);
+  const busyElsewhere = async (text) => {
+    const prevT = _testing.askJobs.get(b.askThreadId)?.turn;
+    const r = await fetch(`${base}/api/ask/threads/${b.askThreadId}/messages`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text, model: 'claude-opus-5-5', effort: 'high' }) });
+    assert.equal(r.status, 202, await r.text());
+    await newTurn(b.askThreadId, prevT);
+  };
+  const openQuestion = async () => {
+    const before = cardBlocks(b.askThreadId).length;
+    say('MOCK_TEXT_Q');
+    await waitFor(() => cardBlocks(b.askThreadId).length > before);
+    await idle(b.askThreadId);
+    return lastCard(b.askThreadId, (x) => x.card?.type === 'question' && x.card.answer === 'text');
+  };
+  process.env.WORCA_MOCK_SLOW_MS = '300';
+  try {
+    const q1 = await openQuestion();
+    await busyElsewhere('MOCK_SLOW a browser turn is running');
+    const aId = say('queued answer');
+    await waitFor(() => askStore.findCard(b.askThreadId, q1.id).block.state === 'answered');
+    assert.deepEqual(marksOn(aId), [MARK.work], 'queued: still processing');
+    await waitFor(() => marksOn(aId).includes(MARK.ok));
+    const follow = posts.findIndex((p) => p.chatId === 'TH1' && textOf(p).includes('Got it: text "queued answer"'));
+    assert.ok(follow >= 0 && opAt(aId, MARK.ok) > follow, 'the ✅ waits for the queued follow-up reply');
+    assert.deepEqual(opsOn(aId), [`+${MARK.work}`, `-${MARK.work}`, `+${MARK.ok}`]);
+    await idle(b.askThreadId);
+    const q2 = await openQuestion();
+    await busyElsewhere('MOCK_SLOW another browser turn');
+    const lId = say('answer that cannot continue');
+    await waitFor(() => askStore.findCard(b.askThreadId, q2.id).block.state === 'answered');
+    const notices = () => newPostsIn().filter((p) => textOf(p).includes('Chat could not reply to an event:')).length;
+    const n0 = notices();
+    await blockBudget();   // the queued follow-up starts after the running turn and is refused
+    try {
+      await waitFor(() => marksOn(lId).includes(MARK.fail));
+      assert.deepEqual(opsOn(lId), [`+${MARK.work}`, `-${MARK.work}`, `+${MARK.fail}`]);
+      await waitFor(() => notices() > n0);
+    } finally { await unblockBudget(); }
+  } finally { delete process.env.WORCA_MOCK_SLOW_MS; }
+  await idle(b.askThreadId);
+});
+
+// 33: New conversation clicked while a mention's first turn is starting (the mention runs on the parent channel's
+// queue, the click on the thread's): the turn's reply goes to the old Ask thread and never reaches this thread, so the
+// mention ends with ⏳ removed and no mark, as in case 30, never a ⏳ left for good.
+test('33. reactions: New conversation during a mention\'s turn start drops its ⏳ without a mark', async () => {
+  _testing.chatBridge.resetRateLimits();
+  H.setThreadId(() => 'TH9');
+  let clicked = null;
+  let first = null;
+  H.setSendHook(async (chatId, message, options) => {
+    if (clicked || chatId !== 'TH9' || !options?.edit) return undefined;
+    const ref = (message.controls || []).find((k) => k.label === 'New conversation')?.ref;
+    if (!ref) return undefined;
+    first = binding('TH9').askThreadId;   // the Ask thread the mention's turn is about to start on
+    const n = replies().length;
+    clicked = click(ref, { chatId: 'TH9' });
+    assert.equal(await replyAfter(n), 'Started a new conversation.');   // rebound before the mention's turn starts
+    return undefined;
+  });
+  let id;
+  try {
+    id = say('<@BOT1> race the header', { chatId: 'C1', mention: true });
+    await waitFor(() => clicked && binding('TH9').askThreadId !== first);
+  } finally { await settle(30); H.setSendHook(null); H.setThreadId(() => 'TH1'); }
+  await waitFor(() => opsOn(id).length >= 2);
+  await idle(first);
+  await idle(binding('TH9').askThreadId);
+  await settle(150);
+  assert.deepEqual(opsOn(id), [`+${MARK.work}`, `-${MARK.work}`]);
 });

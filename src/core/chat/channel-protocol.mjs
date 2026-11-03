@@ -29,7 +29,7 @@ export const MAX_FRAME_BYTES = 1024 * 1024;
 /** Op/send error kinds — same vocabulary as PluginOpError (plugin spec §11). */
 export const ERROR_KINDS = ['auth', 'rate-limit', 'network', 'plugin', 'timeout', 'protocol'];
 
-export const HOST_FRAMES = ['hello', 'send', 'webhook', 'config', 'ping', 'shutdown', 'interaction-reply'];
+export const HOST_FRAMES = ['hello', 'send', 'webhook', 'config', 'ping', 'shutdown', 'interaction-reply', 'react'];
 export const WORKER_FRAMES = ['ready', 'status', 'inbound', 'send-result', 'webhook-result', 'state-delta', 'pong', 'log', 'interaction'];
 
 /** Native controls (interactive channels only). Executable controls carry a host-issued opaque `ref`; the platform
@@ -145,6 +145,12 @@ export function isValidFrame(frame) {
     case 'interaction-reply':
       return typeof frame.id === 'string' && typeof frame.interactionId === 'string' && frame.interactionId !== ''
         && typeof frame.text === 'string' && frame.text.length >= 1 && frame.text.length <= CONTROL_LIMITS.replyText;
+    case 'react':   // v2 interactive: add/remove the bot's OWN reaction on one message
+      return typeof frame.id === 'string'
+        && typeof frame.chatId === 'string' && frame.chatId !== '' && frame.chatId.length <= 64
+        && typeof frame.messageId === 'string' && frame.messageId !== '' && frame.messageId.length <= 64
+        && typeof frame.emoji === 'string' && frame.emoji !== '' && frame.emoji.length <= 32
+        && typeof frame.on === 'boolean';
     case 'interaction':
       return isValidInteraction(frame.evt);
     case 'webhook':

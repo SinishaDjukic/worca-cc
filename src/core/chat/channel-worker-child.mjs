@@ -10,7 +10,8 @@
 //
 // The plugin module must export:
 //   createChannelWorker(ctx) -> { start(), stop(), send(chatId, msg, options),
-//                                 handleWebhook?(req), onConfig?(config), replyInteraction?(interactionId, text) }
+//                                 handleWebhook?(req), onConfig?(config), replyInteraction?(interactionId, text),
+//                                 react?(chatId, messageId, emoji, on) }
 //   validateConfig?(config)  -> {ok:true, identity?} | {ok:false, errors:[...]}
 // ctx = { apiVersion, platform, mock, config, state:{get,set}, log,
 //         emitMessage, emitInteraction, setStatus, shutdownSignal }
@@ -188,6 +189,26 @@ async function main() {
             writeFrame({ type: 'send-result', id: frame.id, ok: true });
           } catch (err) {
             writeFrame({ type: 'send-result', id: frame.id, ok: false, error: { kind: errKind(err), message: err?.message || String(err) } });
+          }
+        })();
+        break;
+      }
+      case 'react': {
+        (async () => {
+          try {
+            // Optional: a worker without it answers a permanent refusal (the host never retries it).
+            if (typeof worker.react !== 'function') throw Object.assign(new Error('worker cannot add reactions'), { kind: 'plugin', permanent: true });
+            await worker.react(frame.chatId, frame.messageId, frame.emoji, frame.on);
+            writeFrame({ type: 'send-result', id: frame.id, ok: true });
+          } catch (err) {
+            writeFrame({
+              type: 'send-result', id: frame.id, ok: false,
+              error: {
+                kind: errKind(err), message: err?.message || String(err),
+                ...(Number.isFinite(err?.retryAfterMs) ? { retryAfterMs: err.retryAfterMs } : {}),
+                ...(err?.permanent === true ? { permanent: true } : {}),
+              },
+            });
           }
         })();
         break;

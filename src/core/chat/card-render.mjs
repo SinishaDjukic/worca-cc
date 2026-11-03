@@ -1,7 +1,14 @@
 // src/core/chat/card-render.mjs — freeform chat (D4/D10): what a chat conversation shows for one Ask message, built
 // from persisted data only. Executable controls come from this table and the card's own fields, never from model
 // prose. Pure: ids for refs come from the injected `issue(action, cardId, state)`.
-export const NATIVE_RUN_EXCLUDES = ['preset', 'shape', 'schedule', 'source'];
+import { runSourceOf } from '../ask/source-spec.mjs';
+
+/** Run-card fields only worca can start. A task source (`source`, an issue-backed proposal) is NOT one: chat sends its
+ *  reference exactly as the browser does (runBodyFromCard). src/core/ask/prompt.mjs renderChatChannelSection tells the
+ *  model the same list: change both. */
+export const NATIVE_RUN_EXCLUDES = ['preset', 'shape', 'schedule'];
+/** Shown when chat has no Open in worca link (no worcaUrl configured): how to get there anyway, and how to add one. */
+export const NO_LINK_HINT = 'Open worca in a browser and pick this conversation under Chat. (A worca operator can add a link here: the chat plugin\'s "Worca address for links" setting.)';
 /** Discord's select menu holds at most 25 options (D12). */
 export const SELECT_MAX_OPTIONS = 25;
 /** A select option's value is at most 100 characters (channel-protocol CONTROL_LIMITS.optionValue). */
@@ -22,11 +29,33 @@ export function isNativeRunCard(card) {
   if (!card || typeof card !== 'object' || card.type !== undefined) return false;
   if (NATIVE_RUN_EXCLUDES.some((k) => card[k] !== undefined && card[k] !== null)) return false;
   if (Array.isArray(card.attachments) && card.attachments.length) return false;
+  if (card.source !== undefined && card.source !== null && !startableSource(card.source)) return false;
   const t = cardTarget(card);
   if (t === 'none') return true;
   if (t === 'workspace') return typeof card.workspaceId === 'string' && !!card.workspaceId;
   if (t === 'project') return typeof card.projectKey === 'string' && !!card.projectKey;
   return false;
+}
+
+/** A card's task reference that POST /api/run accepts as sent (validateRunSource's shape: a plugin source with its
+ *  ids, inputs an object when present). Anything else stays a worca-only card. */
+function startableSource(s) {
+  if (!s || typeof s !== 'object' || s.type !== 'plugin') return false;
+  if (!['plugin', 'sourceId', 'taskId'].every((k) => typeof s[k] === 'string' && s[k].trim() !== '')) return false;
+  if (s.profile !== undefined && s.profile !== null && typeof s.profile !== 'string') return false;
+  return s.inputs === undefined || s.inputs === null || (typeof s.inputs === 'object' && !Array.isArray(s.inputs));
+}
+
+/** Why a proposed run card has no Start button in chat, in words (the card text says it). */
+export function needsWorcaReason(card) {
+  const c = card && typeof card === 'object' ? card : {};
+  const why = [];
+  if (c.preset !== undefined && c.preset !== null) why.push('a run preset');
+  if (c.schedule !== undefined && c.schedule !== null) why.push('a schedule');
+  if (c.shape !== undefined && c.shape !== null) why.push('a planning shape');
+  if (Array.isArray(c.attachments) && c.attachments.length) why.push('attachments');
+  if (c.source !== undefined && c.source !== null && !startableSource(c.source)) why.push('a task source chat cannot read');
+  return why.length ? why.join(', ') : 'a target chat cannot resolve';
 }
 
 /** The browser's Start body for an UNTOUCHED card (ask-panel.mjs collectCardBody + proposalOverlay with the lane not
@@ -43,6 +72,10 @@ export function runBodyFromCard(card, { projectDirOf, threadId, cardId }) {
   if (card.memoryScope && body.workflowId === 'wf_memory_defrag') body.memoryScope = card.memoryScope;
   if (Array.isArray(card.tags) && card.tags.length) body.tags = card.tags;
   if (card.engine) body.engine = card.engine;
+  // ask-panel.mjs collectCardBody: a tracker task is sent as its reference, never as a prompt (POST /api/run takes
+  // source OR prompt). runSourceOf keeps type/plugin/sourceId/taskId/profile/inputs; the display fields (displayName,
+  // title, url, profileVia) stay on the card. The run fetches the task itself when it starts.
+  if (card.source) { delete body.prompt; body.source = runSourceOf(card.source); }
   const nodes = {};
   // Parity with ask-panel.mjs:3824: the proposed per-agent picks apply only to the workflow they were proposed for.
   if (card.workflowId === body.workflowId && card.nodes && typeof card.nodes === 'object' && !Array.isArray(card.nodes)) {
@@ -100,6 +133,16 @@ function runCardText(block) {
   const lines = [`**Proposed run** — ${clip(c.title || c.brief || 'run', 120)}`,
     `${where} · workflow ${c.workflowName || c.workflowId || 'wf_default'} · guardrails ${c.guardrailsId || 'default'}${branch}`];
   if (c.brief) lines.push(`> ${clip(c.brief, 600).replace(/\n/g, '\n> ')}`);
+  // An issue-backed card has no brief: show which task the run reads, as the browser card does. The card's title can be
+  // the model's own (proposal.mjs prefers inp.title), so the task's title is shown when it differs; so is the profile.
+  const s = c.source && typeof c.source === 'object' ? c.source : null;
+  if (s) {
+    const url = typeof s.url === 'string' && /^https?:\/\/\S+$/.test(s.url) && s.url.length <= 500 ? ` · <${s.url}>` : '';
+    const own = typeof s.title === 'string' && s.title.trim() && s.title.trim() !== String(c.title || '').trim() ? ` — ${clip(s.title, 120)}` : '';
+    const profile = typeof s.profile === 'string' && s.profile ? ` · profile ${clip(s.profile, 40)}` : '';
+    lines.push(`Task: ${clip(s.displayName || s.plugin || 'task source', 60)} ${clip(s.taskId, 80)}${own}${profile}${url}`);
+  }
+  if (typeof c.sourceWarning === 'string' && c.sourceWarning) lines.push(`_${clip(c.sourceWarning, 200)}_`);
   return lines.join('\n');
 }
 
@@ -117,7 +160,7 @@ export function renderCardPost(block, { issue, links }) {
           modal: { title: 'Request changes', fields: [{ id: 'text', label: 'What should change?', style: 'paragraph', required: true, maxLength: 2000 }] } },
         ...open] };
     }
-    const tail = state === 'proposed' ? '\n_This run needs worca to start (presets, schedules, shapes, task sources and attachments are set there)._'
+    const tail = state === 'proposed' ? `\n_This run needs worca to start: it uses ${needsWorcaReason(c)}, set there. Nothing was started._${open.length ? '' : `\n${NO_LINK_HINT}`}`
       : state === 'started' ? `\nRun started${block.runId ? ` · ${block.runId.slice(0, 8)}` : ''}.`
       : `\n_${state}_`;
     const runLink = state === 'started' && links.run && block.runId ? [{ kind: 'link', label: 'Open run', url: links.run(block.runId) }] : [];
@@ -150,7 +193,7 @@ export function renderCardPost(block, { issue, links }) {
   }
   // Every other card (D4 last rows): visible, pending in worca, nothing executable here.
   const label = c.type === 'receipt' ? 'Change applied' : `${c.type} card`;
-  const pending = state === 'proposed' ? ' — **needs worca**: open it there to review and decide.' : ` — _${state}_`;
+  const pending = state === 'proposed' ? ` — **needs worca**: open it there to review and decide.${open.length ? '' : `\n${NO_LINK_HINT}`}` : ` — _${state}_`;
   return { state, text: `**${clip(label, 60)}**${c.note ? `: ${clip(c.note, 200)}` : ''}${pending}`, controls: open };
 }
 

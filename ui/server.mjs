@@ -333,6 +333,7 @@ import { actionsEventPrompt, actionsNoticeText } from '../src/core/ask/actions-p
 import { applyActionsChange } from '../src/core/ask/actions-deps.mjs';
 import { webEventPrompt, webNoticeText, chatWebHosts } from '../src/core/ask/web-proposal.mjs';
 import { createConversationBridge } from '../src/core/chat/conversation-bridge.mjs';
+import { createReceipts, commandOutcome } from '../src/core/chat/receipts.mjs';
 import { conversationForThread, listActiveConversations } from '../src/core/chat/conversations.mjs';
 import { scopeSelectOptions } from '../src/core/chat/card-render.mjs';
 import { EventEmitter } from 'node:events';
@@ -4797,8 +4798,9 @@ function enqueueChatWork(key, fn) {
 async function handleChatInbound({ plugin, channelId, platform, msg }) {
   const entry = channelHost.list().find((e) => e.plugin === plugin && e.channelId === channelId);
   if (!entry) return;
+  const interactive = entry.capabilities.interactive === true;
   let routed = msg;
-  if (entry.capabilities.interactive === true) {
+  if (interactive) {
     try {
       if (await chatBridge.handleMessage({ plugin, channelId, platform, msg })) return;
       // A command typed in a bound thread acts for the thread's PARENT channel (allowlist, /use context).
@@ -4806,23 +4808,40 @@ async function handleChatInbound({ plugin, channelId, platform, msg }) {
       if (parent !== msg.chatId) routed = { ...msg, chatId: parent };
     } catch (err) { console.error(`[worca-ui] chat freeform failed: ${err && err.message ? err.message : err}`); return; }
   }
+  // A command gets the same receipt as a freeform message (interactive channels only), and only once the router has
+  // accepted it (allowed chat, allowed sender, known command): never for chatter, refusals or unknown commands. The
+  // mark lives on the message itself, so it uses msg.chatId (a thread), never the routed parent.
+  const meta = msg.meta && typeof msg.meta === 'object' ? msg.meta : {};
+  const mark = interactive && meta.messageId ? { plugin, channelId, chatId: String(msg.chatId), messageId: String(meta.messageId) } : null;
+  let accepted = false;
   let replyMsg;
   try {
-    replyMsg = await chatRouter.handleIncoming({ plugin, channelId, platform, channelConfig: readPluginConfig(plugin, entry.configSchema), msg: routed });
+    replyMsg = await chatRouter.handleIncoming({ plugin, channelId, platform, channelConfig: readPluginConfig(plugin, entry.configSchema), msg: routed,
+      onAccepted: () => { accepted = true; chatReceipts.ack(mark); } });
   } catch (err) {
     console.error(`[worca-ui] chat inbound failed: ${err && err.message ? err.message : err}`);
+    if (accepted) chatReceipts.settle(mark, 'fail');
     return;
   }
-  if (!replyMsg) return;
+  if (!replyMsg) { if (accepted) chatReceipts.settle(mark, 'ok'); return; }
   try {
     await channelHost.sendMessage({ plugin, channelId, chatId: msg.chatId, message: replyMsg });
+    if (accepted) chatReceipts.settle(mark, commandOutcome(replyMsg));
   } catch (err) {
     console.error(`[worca-ui] chat reply delivery failed: ${err && err.message ? err.message : err}`);
+    if (accepted) chatReceipts.settle(mark, 'fail');
   }
 }
 
+/** The bot's own reaction on each accepted inbound message (⏳ → ✅ / ❌ / ⏹️ / none), interactive channels only.
+ *  Memory only: a restart mid-turn can leave a stale ⏳ (plugins/discord-chat/README.md). */
+const chatReceipts = createReceipts({
+  react: (a) => channelHost.react(a),
+  log: (level, msg) => console.error(`[worca-ui] chat ${level}: ${msg}`),
+});
 const chatBridge = createConversationBridge({
   host: { sendMessage: (a) => channelHost.sendMessage(a), replyInteraction: (a) => channelHost.replyInteraction(a) },
+  receipts: chatReceipts,
   readConfig: (plugin, channelId) => { const e = channelHost.list().find((x) => x.plugin === plugin && x.channelId === channelId); return e ? readPluginConfig(plugin, e.configSchema) : null; },
   linksFor: (threadId) => chatLinksFor(threadId),
   now: () => Date.now(),
@@ -4862,6 +4881,7 @@ const chatBridge = createConversationBridge({
         ...chatTurnIdentity(fresh, actor), onUserRow });
     },
     applyCard: (a) => invokeAskCard(a),
+    takeDeferredReply: (cardId) => { const v = askDeferredReplies.get(cardId) || null; if (v) askDeferredReplies.delete(cardId); return v; },
     startRun: ({ body, actor }) => invokeStartRun(body, null, { startedBy: actor }),
     switchScope: async ({ threadId, value }) => {
       const scope = await chatScopeFromValue(value);
@@ -14651,6 +14671,10 @@ const askDeleting = new Set();
 const askFollowers = new Map(); // threadId -> Set<{detach}>
 const ASK_JOB_MAX_BUFFER = 5000; // same arithmetic as MAX_BUFFER: deltas dominate; eviction ⇒ client seq-gap re-sync
 const askDeferred = new Map();  // threadId → Array<() => Promise>: workflow-card event turns that arrived while a turn was running (PD5/PD26), FIFO
+// Freeform chat receipts: what a question answer's QUEUED follow-up became, by card id — {assistantMessageId} or
+// {error} — taken once by the chat bridge (deps.ask.takeDeferredReply). Bounded: a browser answer is never taken.
+const askDeferredReplies = new Map();
+const ASK_DEFERRED_REPLIES_MAX = 200;
 
 /** A `role:'system'` notice row + its broadcast — the shape attachAskFollower posts. */
 function postAskSystemNotice(threadId, text) {
@@ -15399,10 +15423,10 @@ function askWebAccessFor(threadId, ctx) {
  *  (`edits`) — with the runtimes this host actually has (the python probe, cached 60 s); plus the web section when `web`
  *  (askWebAccess() for this turn) is on, and the MCP servers section when the turn has registry copies (`mcp`,
  *  askMcpPromptInput()). Memory is mounted, not rendered. */
-async function askSystemPromptFor(catalog, { web = null, mcp = null, commands = false, engine = 'claude' } = {}) {
+async function askSystemPromptFor(catalog, { web = null, mcp = null, commands = false, engine = 'claude', chat = null } = {}) {
   const scripts = { ...(await askScriptPromptInput({ enabled: true })), edits: scriptToolsEnabled() };
   return askBuildSystemPrompt(catalog, { scripts, deployment: DEPLOYMENT, web, mcp, commands, git: gitAvailable(),
-    ...(engine !== 'claude' ? { engine } : {}), shape: true });
+    ...(engine !== 'claude' ? { engine } : {}), shape: true, ...(chat ? { chat } : {}) });
 }
 
 /** The Workflows chat's system prompt (D10): composer rules + catalog + scripts/web — no MCP, no commands, no hosting rule. */
@@ -15757,7 +15781,9 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
   if (askRunningCount() >= ASK_LIMITS.turnsGlobal) {
     return { ok: false, status: 429, error: `at most ${ASK_LIMITS.turnsGlobal} turns may run at once` };
   }
-  const chatBound = !!conversationForThread(id);
+  // Freeform chat: a thread mirrored to a chat app (its platform names what that thread can act on, in the prompt).
+  const chatConv = conversationForThread(id);
+  const chatBound = !!chatConv;
   const prev = askJobs.get(id);
   if (prev && prev.graceTimer) clearTimeout(prev.graceTimer); // atomic replace of a grace entry (§8.3)
   const job = {
@@ -15855,7 +15881,8 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
     const agentOn = !composerMode && chatAgentModeFor(id, chatBound);
     const systemPrompt = composerMode
       ? await askComposerSystemPromptFor(catalog, { web, engine })
-      : await askSystemPromptFor(catalog, { web, mcp: await askMcpPromptInput(mcp), commands: agentOn, engine });
+      : await askSystemPromptFor(catalog, { web, mcp: await askMcpPromptInput(mcp), commands: agentOn, engine,
+        chat: chatConv ? { platform: chatConv.platform } : null });
     // Shared terminal: what the user ran in this chat's Ask tabs since its last user turn (their commands never wake
     // the chat; an event turn leaves them for the next user turn).
     if (!synthetic && !chatBound && askCommandsEnabled()) headerCtx.personCommands = askCommands.takePersonCommands(id);
@@ -16999,7 +17026,7 @@ function askScopeCardUserText(threadId, cardMessage) {
 /** P4 (CONTRACT §4): switch the chat (when `scope` is given) and start the event turn that continues the user's
  *  message — or queue both while a reply runs (PD5/PD26), so the scope never changes under a running turn. The
  *  switch and the turn's reservation have no I/O between them. P2's create card uses it too (U7). */
-async function startScopeEventTurn(threadId, { scope = null, text, notice }) {
+async function startScopeEventTurn(threadId, { scope = null, text, notice, onDeferredStart = null }) {
   const thread = askGetThread(threadId);
   if (!thread) return null;
   const mv = await askEventPick(threadId, thread);
@@ -17016,7 +17043,14 @@ async function startScopeEventTurn(threadId, { scope = null, text, notice }) {
   };
   if (askInFlight(threadId)) {
     if (!askDeferred.has(threadId)) askDeferred.set(threadId, []);
-    askDeferred.get(threadId).push(start);
+    // A caller that must know what its queued turn became (a chat answer's receipt) hears it when the drain runs it.
+    const run = onDeferredStart ? async () => {
+      let r;
+      try { r = await start(); } catch (e) { r = { ok: false, error: e && e.message ? e.message : String(e) }; }
+      try { onDeferredStart(r); } catch { /* an observer never stops the drain */ }
+      return r;
+    } : start;
+    askDeferred.get(threadId).push(run);
     return { deferred: true };
   }
   const r = await start();
@@ -17127,7 +17161,11 @@ async function askCardHandler(req, res) {
         const block = flipCard(id, cardId, { state: 'answered', card: ans.patch });
         if (!block) return res.status(409).json({ error: 'card vanished' });
         const text = questionEventPrompt({ cardId, card: found.block.card, answerText: ans.answerText, choice: ans.patch.choice ?? null });
-        const turn = await startScopeEventTurn(id, { scope: null, text, notice: questionNoticeText({ card: found.block.card, answerText: ans.answerText }) });
+        const turn = await startScopeEventTurn(id, { scope: null, text, notice: questionNoticeText({ card: found.block.card, answerText: ans.answerText }),
+          onDeferredStart: (r) => {
+            if (askDeferredReplies.size >= ASK_DEFERRED_REPLIES_MAX) askDeferredReplies.delete(askDeferredReplies.keys().next().value);
+            askDeferredReplies.set(cardId, r && r.ok ? { assistantMessageId: r.assistantMessageId } : { error: (r && r.error) || 'unknown error' });
+          } });
         return res.json({ block, turn });
       } finally { askCardBusy.delete(cardId); }
     }

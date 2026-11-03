@@ -5,7 +5,7 @@ import { parseCommand } from './parser.mjs';
 import { createAllowlistGuard, parseIdList, parseChatMembers } from './allowlist.mjs';
 import { TokenBucket } from './rate-limiter.mjs';
 import * as conv from './conversations.mjs';
-import { renderMessageParts, runBodyFromCard, isNativeRunCard } from './card-render.mjs';
+import { renderMessageParts, runBodyFromCard, isNativeRunCard, NO_LINK_HINT } from './card-render.mjs';
 
 const { HEADER_CONTROL_TTL_MS } = conv;
 export const FREEFORM_RATE_PER_MIN = 6;
@@ -25,7 +25,8 @@ export const SAY = {
   rate: 'Slow down a little: too many messages in a minute. Nothing was sent to the model.',
   budget: 'Total cost limit reached — nothing was sent to the model. Raise the limit in worca Settings.',
   off: 'Freeform chat is turned off for this channel.',
-  confirmInWorca: 'This needs a confirmation in worca (branch sync, team policy or engine consent). Open in worca to confirm — nothing was started.',
+  /** `url` = the conversation's Open in worca link (null when no worcaUrl is configured: say how to get there). */
+  confirmInWorca: (url) => `This needs a confirmation in worca (branch sync, team policy or engine consent) — nothing was started. ${url ? `Confirm it in worca: ${url}` : NO_LINK_HINT}`,
   failed: (e) => `That did not work: ${String(e || 'unknown error').slice(0, 300)}`,
   gate: (e) => `${String(e || 'This chat cannot start here.').slice(0, 400)} Open in worca to switch the chat engine or add your key — nothing was sent to the model.`,
   answeredNoReply: (e) => `Answer saved, but the reply could not start: ${String(e || 'unknown error').slice(0, 300)}`,
@@ -41,22 +42,28 @@ export function stripBotMention(text, botId) {
   return t.trim();
 }
 
-/** A run-start / card refusal → the one line the person sees. */
-export function refusalText(r) {
+/** A run-start / card refusal → the one line the person sees, and whether it is a real failure (❌ on the message) or
+ *  a refusal whose text is the answer (no mark): busy, a credential/engine gate, a browser confirmation. `links` is
+ *  deps.linksFor(threadId): a browser confirmation names the conversation's Open in worca link when there is one. */
+export function cardRefusal(r, links = null) {
   const b = (r && r.body) || {};
-  if (r && r.status === 409 && /turn in flight/.test(b.error || '')) return SAY.busy;
-  if (b.code === 'engine-broker' || b.code === 'credential-missing') return SAY.gate(b.error);
-  if (BROWSER_CONFIRM_CODES.has(b.code) || b.needsPolicyAck === true) return SAY.confirmInWorca;
-  return SAY.failed(b.error);
+  if (r && r.status === 409 && /turn in flight/.test(b.error || '')) return { text: SAY.busy, failed: false };
+  if (b.code === 'engine-broker' || b.code === 'credential-missing') return { text: SAY.gate(b.error), failed: false };
+  if (BROWSER_CONFIRM_CODES.has(b.code) || b.needsPolicyAck === true) return { text: SAY.confirmInWorca((links && links.thread) || null), failed: false };
+  return { text: SAY.failed(b.error), failed: true };
 }
+export function refusalText(r, links = null) { return cardRefusal(r, links).text; }
 
-/** A turn-start refusal (startAskTurn or the extracted send-route gates) → the one line the person sees (D14). */
-export function turnRefusalText(r) {
-  if (r && (r.code === 'engine-broker' || r.code === 'credential-missing')) return SAY.gate(r.error);
-  if (r && r.status === 403 && /cost limit/i.test(r.error || '')) return SAY.budget;
-  if (r && r.status === 409 && /in flight/.test(r.error || '')) return SAY.busy;
-  return SAY.failed(r && r.error);
+/** A turn-start refusal (startAskTurn or the extracted send-route gates) → its line (D14) and kind, as cardRefusal.
+ *  The global turn cap (429) is a rate limit: a refusal, not a failure. */
+export function turnRefusal(r) {
+  if (r && (r.code === 'engine-broker' || r.code === 'credential-missing')) return { text: SAY.gate(r.error), failed: false };
+  if (r && r.status === 403 && /cost limit/i.test(r.error || '')) return { text: SAY.budget, failed: false };
+  if (r && r.status === 409 && /in flight/.test(r.error || '')) return { text: SAY.busy, failed: false };
+  if (r && r.status === 429) return { text: SAY.failed(r.error), failed: false };
+  return { text: SAY.failed(r && r.error), failed: true };
 }
+export function turnRefusalText(r) { return turnRefusal(r).text; }
 
 /** A successful card apply whose event turn failed (D10, review m9): the cards route answers 200 with
  *  `turn: {error, status}` (failedEventTurn). null when the follow-up started, was deferred, or there was none. */
@@ -67,10 +74,15 @@ export function followUpError(r) {
 
 /** deps: { host: {sendMessage, replyInteraction}, ask: {createThread, deleteThread, getThread, listMessages, findCard,
  *  initialScope (async), threadScope, scopeLabel (async), scopeOptions (async → {options, hidden}), refreshProjects (async), projectDirOf,
- *  startTurn, applyCard, startRun,
+ *  startTurn, applyCard, takeDeferredReply, startRun,
  *  switchScope, stopTurn}, readConfig(plugin, channelId), linksFor(threadId), watch(threadId), now(), log(level,msg),
- *  ratePerMin? } */
+ *  ratePerMin?, receipts?: {ack(target), settle(target, outcome)} (createReceipts; absent = no reactions) } */
 const NOT_FOUND = /not found/i;
+/** A ref minter that mints nothing: parts are rendered to learn their names (reconcile, receipts). */
+const DRY_ISSUE = () => 'x'.repeat(24);
+const NO_RECEIPTS = { ack() {}, settle() {} };
+/** The inbound message a reaction belongs to, or null when the platform gave no id. */
+const markOf = (plugin, channelId, chatId, messageId) => (messageId ? { plugin, channelId, chatId: String(chatId), messageId: String(messageId) } : null);
 
 export function createConversationBridge(deps) {
   const buckets = new Map();
@@ -81,6 +93,11 @@ export function createConversationBridge(deps) {
     return b;
   };
   const log = deps.log || (() => {});
+  const receipts = deps.receipts || NO_RECEIPTS;
+  // Accepted messages still waiting for their reply, per conversation (memory only, clarify answer): each settles once
+  // the assistant row it waits for is finished and fully delivered (checkReceipts, run after every reconcile pass).
+  // A typed answer whose follow-up was queued has no row yet: it waits by card id (takeDeferredReply).
+  const waiting = new Map();   // conversationId -> [{ mark, assistantId|null, cardId|null }]
   // review m5: refusals are throttled per (chat, user, reason); the map holds the last post time.
   const noticed = new Map();
   function noticeDue(chatId, userId, reason) {
@@ -111,14 +128,18 @@ export function createConversationBridge(deps) {
 
   // ── inbound messages ────────────────────────────────────────────────────
 
-  /** true = handled (the router must not see it). Commands and unrelated chatter return false (D13). */
+  /** true = handled (the router must not see it), including a replayed command (dropped here); commands and unrelated
+   *  chatter return false (D13). */
   async function handleMessage({ plugin, channelId, platform, msg }) {
-    if (parseCommand(msg.text)) return false;
     const meta = msg.meta && typeof msg.meta === 'object' ? msg.meta : {};
+    const eventId = meta.messageId ? `m:${meta.messageId}` : '';
+    // Commands go to the router (D13). A replay of one (a gateway resume) is dropped here, so it runs and is
+    // acknowledged once; chatter is never recorded.
+    if (parseCommand(msg.text)) return !conv.markSeen({ plugin, channelId, eventId }, { now: deps.now() });
     const bound = conv.findConversation({ plugin, channelId, chatId: msg.chatId });
     const p = policy(plugin, channelId);
     if (!bound && !(p.on && meta.mentionsBot === true && p.guard.isAllowed({ platform, chatId: msg.chatId }))) return false;
-    if (!conv.markSeen({ plugin, channelId, eventId: meta.messageId ? `m:${meta.messageId}` : '' }, { now: deps.now() })) return true;
+    if (!conv.markSeen({ plugin, channelId, eventId }, { now: deps.now() })) return true;
     const text = stripBotMention(msg.text, meta.botId);
     if (bound) return continueConversation(bound, p, msg, text);
     return startConversation({ plugin, channelId, platform, msg, meta, p, text });
@@ -141,21 +162,39 @@ export function createConversationBridge(deps) {
     if (!identity) { await reply(SAY.notMember, 'not-member'); return true; }
     if (!meta.messageId) { log('warn', 'freeform start without a message id: cannot open a thread'); return true; }
     if (!bucketFor(msg.userId).tryConsume()) { await reply(SAY.rate, 'rate'); return true; }
-    const thread = deps.ask.createThread({ createdBy: identity, scope: await deps.ask.initialScope(platform, msg.chatId) });
+    // Accepted: the mention (in the PARENT channel) shows ⏳ until its thread is up, or until the first reply when it
+    // carried text. Every exit below settles it.
+    const mark = markOf(plugin, channelId, msg.chatId, meta.messageId);
+    receipts.ack(mark);
+    const fail = async (what, err) => {
+      const why = typeof err === 'string' ? err : err?.message;   // a thrown {kind} object has no message: "unknown error"
+      log('warn', `freeform ${what} failed: ${why || err}`);
+      receipts.settle(mark, 'fail');
+      await post(SAY.failed(why));
+      return true;
+    };
+    // Plan decision 9: any throw after the ack (a store or dependency call) fails this message here, so it never
+    // reaches the server's log-only catch with ⏳ left on it.
+    try { return await openConversation({ plugin, channelId, platform, msg, meta, identity, text, mark, fail }); }
+    catch (err) { return fail('chat', err); }
+  }
+
+  async function openConversation({ plugin, channelId, platform, msg, meta, identity, text, mark, fail }) {
+    let thread;
+    try { thread = deps.ask.createThread({ createdBy: identity, scope: await deps.ask.initialScope(platform, msg.chatId) }); }
+    catch (err) { return fail('chat creation', err); }
     let header;
     try {
       header = await deps.host.sendMessage({ plugin, channelId, chatId: msg.chatId,
         message: headerMessage({ scopeLabel: await deps.ask.scopeLabel(thread.id), controls: [] }),
         options: { thread: { fromMessageId: String(meta.messageId), name: threadName(text) } } });
     } catch (err) {
-      log('warn', `freeform thread creation failed: ${err?.message || err}`);
       deps.ask.deleteThread(thread.id);
-      await post(SAY.failed(err?.message));
-      return true;
+      return fail('thread creation', err);
     }
     const threadChatId = header?.detail?.threadId || header?.threadId;
     const headerId = (header?.detail?.messageIds || header?.messageIds || [])[0] || null;
-    if (!threadChatId) { deps.ask.deleteThread(thread.id); await post(SAY.failed('the platform returned no thread')); return true; }
+    if (!threadChatId) { deps.ask.deleteThread(thread.id); return fail('thread creation', 'the platform returned no thread'); }
     let c;
     try {
       c = conv.createConversation({ plugin, channelId, platform, guildId: meta.guildId ?? null, parentChatId: msg.chatId,
@@ -164,15 +203,13 @@ export function createConversationBridge(deps) {
     } catch (err) {
       // refine cycle 2: a binding write that fails (a thread id already bound, a busy database) must not leave an
       // orphan Ask thread or fail silently — the same handling as a thread-creation failure above.
-      log('warn', `freeform binding failed: ${err?.message || err}`);
       deps.ask.deleteThread(thread.id);
-      await post(SAY.failed(err?.message));
-      return true;
+      return fail('binding', err);
     }
     deps.watch(thread.id);
-    await refreshHeader(c);
-    if (!text) return true;          // a bare mention opens the thread and waits for the first real message
-    return runTurn(c, text);
+    await refreshHeader(c).catch((err) => log('warn', `header update failed: ${err?.message || err}`));
+    if (!text) { receipts.settle(mark, 'ok'); return true; }   // a bare mention: the thread and its header ARE the answer
+    return runTurn(c, text, mark);
   }
 
   async function continueConversation(c, p, msg, text) {
@@ -188,16 +225,44 @@ export function createConversationBridge(deps) {
       if (noticeDue(c.chatId, msg.userId, 'rate')) await send(c, warn(SAY.rate)).catch(() => {});
       return true;
     }
+    const meta = msg.meta && typeof msg.meta === 'object' ? msg.meta : {};
+    const mark = markOf(c.plugin, c.channelId, msg.chatId, meta.messageId);
+    receipts.ack(mark);
+    // Plan decision 9: any throw after the ack fails this message with the usual post, never leaving ⏳ behind.
+    try { return await answerOrTurn(c, text, mark); }
+    catch (err) {
+      const why = err?.message || String(err);
+      log('warn', `freeform reply failed: ${why}`);
+      receipts.settle(mark, 'fail');
+      await send(c, warn(SAY.failed(why))).catch(() => {});
+      return true;
+    }
+  }
+
+  async function answerOrTurn(c, text, mark) {
     // D5 text-reply rule: the newest card is an open text question → this message answers it (its event turn's user
     // row is synthetic, so nothing is echoed).
     const open = newestOpenTextQuestion(c.askThreadId);
     if (open) {
       const r = await deps.ask.applyCard({ threadId: c.askThreadId, cardId: open.id, body: { text }, actor: c.worcaIdentity });
-      if (r.status >= 400) await send(c, warn(refusalText(r))).catch(() => {});
-      else if (followUpError(r)) await send(c, warn(SAY.answeredNoReply(followUpError(r)))).catch(() => {});
+      if (r.status >= 400) {
+        const k = cardRefusal(r, deps.linksFor(c.askThreadId));
+        await send(c, warn(k.text)).catch(() => {});
+        receipts.settle(mark, k.failed ? 'fail' : null);
+        return true;
+      }
+      const lost = followUpError(r);
+      if (lost) {                             // clarify answer: saved, but its follow-up could not start → ❌
+        await send(c, warn(SAY.answeredNoReply(lost))).catch(() => {});
+        receipts.settle(mark, 'fail');
+        return true;
+      }
+      const turn = r.body && typeof r.body.turn === 'object' ? r.body.turn : null;
+      if (turn && (turn.assistantMessageId || turn.deferred)) awaitReply(c, mark, { assistantId: turn.assistantMessageId || null, cardId: turn.assistantMessageId ? null : open.id });
+      else receipts.settle(mark, 'ok');      // answered, and no follow-up reply will come
       return true;
     }
-    return runTurn(c, text);
+    return runTurn(c, text, mark);
   }
 
   function refusal(c, p, userId) {
@@ -218,10 +283,77 @@ export function createConversationBridge(deps) {
     return deps.ask.startTurn({ threadId: c.askThreadId, text, actor: c.worcaIdentity, onUserRow: (m) => markFromChat(c, m && m.id) });
   }
 
-  async function runTurn(c, text) {
-    const r = await startTurn(c, text);
-    if (!r.ok) await send(c, warn(turnRefusalText(r))).catch(() => {});
+  async function runTurn(c, text, mark = null) {
+    let r;
+    try { r = await startTurn(c, text); }
+    catch (err) { r = { ok: false, status: 500, error: err?.message || String(err) }; }
+    if (!r.ok) {
+      const k = turnRefusal(r);
+      await send(c, warn(k.text)).catch(() => {});
+      receipts.settle(mark, k.failed ? 'fail' : null);
+      return true;
+    }
+    awaitReply(c, mark, { assistantId: r.assistantMessageId || null });
     return true;
+  }
+
+  // ── receipts (reactions on the inbound message) ─────────────────────────
+
+  function awaitReply(c, mark, { assistantId = null, cardId = null }) {
+    if (!mark) return;
+    if (!assistantId && !cardId) { receipts.settle(mark, null); return; }   // nothing to wait for: never a false mark
+    // New conversation was clicked while this turn started (a mention's first turn starts on the PARENT channel's queue,
+    // the click runs on the thread's): its reply will never reach this platform thread, as in dropWaits.
+    if (conv.getConversation(c.id)?.askThreadId !== c.askThreadId) { receipts.settle(mark, null); return; }
+    const list = waiting.get(c.id) || [];
+    list.push({ mark, assistantId, cardId });
+    waiting.set(c.id, list);
+    // The reply may be delivered already: the first message's reconcile runs on the thread's queue. A failed check
+    // keeps the wait (and ⏳): the turn is running, and the reconcile pass that delivers its reply checks again.
+    try { checkReceipts(c); } catch (err) { log('warn', `reply check failed: ${err?.message || err}`); }
+  }
+
+  /** Settle every wait of this conversation whose reply is finished and delivered. A typed answer whose follow-up was
+   *  queued behind another reply learns from the server which reply that became, or that it could not start (❌,
+   *  clarify answer) — never by guessing from row order, so another queued event's reply can never settle it. */
+  function checkReceipts(c) {
+    const list = waiting.get(c.id);
+    if (!list) return;
+    const msgs = deps.ask.listMessages(c.askThreadId);
+    const links = deps.linksFor(c.askThreadId);
+    for (const w of list.slice()) {
+      if (!w.assistantId) {
+        const d = deps.ask.takeDeferredReply(w.cardId);
+        if (!d) continue;                                      // still queued behind the running reply
+        if (!d.assistantMessageId) { list.splice(list.indexOf(w), 1); receipts.settle(w.mark, 'fail'); continue; }
+        w.assistantId = d.assistantMessageId;
+      }
+      const m = msgs.find((x) => x.id === w.assistantId);
+      const outcome = m ? replyOutcome(c, m, links) : null;
+      if (!outcome) continue;
+      list.splice(list.indexOf(w), 1);
+      receipts.settle(w.mark, outcome);
+    }
+    if (!list.length) waiting.delete(c.id);
+  }
+
+  /** null while the reply is streaming or not fully delivered; else ✅ ok, ❌ fail (an error reply, or a part the
+   *  platform refused for good — skipPart records it without a message id), ⏹️ stop. */
+  function replyOutcome(c, m, links) {
+    if (m.role !== 'assistant' || !m.status || m.status === 'streaming') return null;
+    const parts = renderMessageParts(m, { issue: DRY_ISSUE, links, fromWorca: false });
+    const have = new Map(conv.deliveredParts(c.id, m.id).map((d) => [d.part, d]));
+    if (!parts.every((p) => have.has(p.part))) return null;
+    if (m.status === 'error' || parts.some((p) => !have.get(p.part).platformMessageId)) return 'fail';
+    return m.status === 'stopped' ? 'stop' : 'ok';
+  }
+
+  /** New conversation: the old thread's pending replies will never reach this platform thread. */
+  function dropWaits(c) {
+    const list = waiting.get(c.id);
+    if (!list) return;
+    waiting.delete(c.id);
+    for (const w of list) receipts.settle(w.mark, null);
   }
 
   // ── interactions ────────────────────────────────────────────────────────
@@ -248,7 +380,7 @@ export function createConversationBridge(deps) {
     catch (err) { r = { status: 500, body: { error: err?.message || String(err) } }; }
     if (r.status >= 400) {
       conv.releaseControl(evt.ref);          // no-op for reusable refs
-      return ephemeral(refusalText(r));
+      return ephemeral(refusalText(r, deps.linksFor(c.askThreadId)));
     }
     if (REUSABLE_CARD_ACTIONS.has(ctl.action)) return ephemeral(SAY.changesSent);   // M6: the proposal and its buttons stay
     conv.retireCardControls(c.id, ctl.cardId, { now: deps.now() });
@@ -285,6 +417,7 @@ export function createConversationBridge(deps) {
   async function handleHeader(c, ctl, evt, ephemeral) {
     if (ctl.action === 'header:stop') { deps.ask.stopTurn(c.askThreadId); return ephemeral('Stopping the reply.'); }
     if (ctl.action === 'header:new') {
+      dropWaits(c);
       const t = deps.ask.createThread({ createdBy: c.worcaIdentity, scope: deps.ask.threadScope(c.askThreadId) });
       const next = conv.rebindConversation(c.id, { askThreadId: t.id }, { now: deps.now() });
       deps.watch(t.id);
@@ -294,7 +427,11 @@ export function createConversationBridge(deps) {
     }
     if (ctl.action === 'header:scope' && evt.kind === 'select') {
       const r = await deps.ask.switchScope({ threadId: c.askThreadId, value: (evt.values || [])[0] });
+      // A failed switch changes nothing: the header and every ref on it stay usable.
       if (!r.ok) return ephemeral(r.status === 409 ? SAY.busy : SAY.failed(r.error));
+      // Any successful pick (clarify answer) ends New conversation for good: its refs are spent first, so a click on
+      // the old header can never start one, even if the header edit below fails.
+      conv.retireNewConversation(c.id, { now: deps.now() });
       await refreshHeader(c);
       return ephemeral(`Scope: ${await deps.ask.scopeLabel(c.askThreadId)}`);
     }
@@ -303,9 +440,11 @@ export function createConversationBridge(deps) {
 
   // ── header ──────────────────────────────────────────────────────────────
 
-  /** Re-issue the header's three reusable refs (older header refs are spent first) and edit the header in place. */
+  /** Re-issue the header's reusable refs (older header refs are spent first) and edit the header in place. The New
+   *  conversation flag is read from the store: callers may hold a row from before a scope pick. */
   async function refreshHeader(c) {
     if (!c.headerMessageId) return;
+    const startOver = conv.getConversation(c.id)?.headerNewOff !== true;
     const label = await deps.ask.scopeLabel(c.askThreadId);
     const { options, hidden } = await deps.ask.scopeOptions();
     conv.retireHeaderControls(c.id, { now: deps.now() });
@@ -313,11 +452,11 @@ export function createConversationBridge(deps) {
     const links = deps.linksFor(c.askThreadId);
     const controls = [
       { kind: 'select', ref: mint('header:scope'), placeholder: `Scope: ${label}`.slice(0, 100), options },
-      { kind: 'button', ref: mint('header:new'), label: 'New conversation', style: 'secondary' },
+      ...(startOver ? [{ kind: 'button', ref: mint('header:new'), label: 'New conversation', style: 'secondary' }] : []),
       { kind: 'button', ref: mint('header:stop'), label: 'Stop', style: 'danger' },
       ...(links.thread ? [{ kind: 'link', label: 'Open in worca', url: links.thread }] : []),
     ];
-    await send(c, headerMessage({ scopeLabel: label, controls, hiddenScopes: hidden }), { edit: { messageId: c.headerMessageId } })
+    await send(c, headerMessage({ scopeLabel: label, controls, hiddenScopes: hidden, startOver }), { edit: { messageId: c.headerMessageId } })
       .catch((err) => log('warn', `header update failed: ${err?.message || err}`));
   }
 
@@ -338,8 +477,15 @@ export function createConversationBridge(deps) {
   }
 
   async function reconcileOnce(c) {
+    try { await deliverAll(c); }
+    // Also after a pass a transient error ended: a reply delivered before it settles now, not at the next trigger.
+    // replyOutcome checks each row's own delivery records, so an undelivered part still keeps its ⏳.
+    finally { checkReceipts(c); }
+  }
+
+  async function deliverAll(c) {
     const links = deps.linksFor(c.askThreadId);
-    const DRY = () => 'x'.repeat(24);
+    const DRY = DRY_ISSUE;
     const realIssue = (action, cardId, state) => conv.issueControl({ conversationId: c.id, cardId, action, issuedState: state,
       ownerUserId: c.ownerUserId, singleUse: !REUSABLE_CARD_ACTIONS.has(action) }, { now: deps.now() });
     for (const m of deps.ask.listMessages(c.askThreadId)) {
@@ -420,9 +566,10 @@ export function isSyntheticUserRow(m) {
 
 const warn = (text) => ({ title: null, severity: 'warning', body: [{ kind: 'markdown', value: text }] });
 const threadName = (text) => (text ? `worca: ${text.split('\n')[0]}`.slice(0, 90) : 'worca chat');
-function headerMessage({ scopeLabel, controls, hiddenScopes = 0 }) {
+function headerMessage({ scopeLabel, controls, hiddenScopes = 0, startOver = true }) {
   const more = hiddenScopes > 0 ? `\n${hiddenScopes} more scope${hiddenScopes === 1 ? '' : 's'}: pick ${hiddenScopes === 1 ? 'it' : 'them'} in worca.` : '';
+  const what = startOver ? 'change scope, start over or stop a reply' : 'change scope or stop a reply';
   return { title: null, severity: 'info',
-    body: [{ kind: 'markdown', value: `**worca chat** · scope: **${scopeLabel}**\nReply in this thread to continue. Use the controls to change scope, start over or stop a reply.${more}` }],
+    body: [{ kind: 'markdown', value: `**worca chat** · scope: **${scopeLabel}**\nReply in this thread to continue. Use the controls to ${what}.${more}` }],
     ...(controls.length ? { controls } : {}) };
 }

@@ -15,6 +15,10 @@ import { createGatewayClient } from './gateway.mjs';
 
 const DISCORD_API = 'https://discord.com/api/v10';
 const MAX_MESSAGE_CHARS = 2000;
+const REACT_TIMEOUT_MS = 10 * 1000;   // one reaction request; the 429 ladder adds its own waits
+/** The longest 429 wait react() sits out itself; a longer one is thrown back to the host. Worst case 3 × 5 s waits +
+ *  4 × 10 s requests = 55 s, under channel-host's 60 s react timeout, so a late call never lands after the next one. */
+const REACT_MAX_WAIT_MS = 5 * 1000;
 
 export function renderToMarkdown(msg) {
   return renderSegments(msg, DISCORD_STYLE);
@@ -277,6 +281,35 @@ export function createDiscordWorker(ctx, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ content: String(text).slice(0, MAX_MESSAGE_CHARS), flags: 64, allowed_mentions: { parse: [] } }) });
       if (!res.ok) throw sendError(res.status === 429 ? 'rate-limit' : 'plugin', `interaction reply failed: HTTP ${res.status}`);
+      return { ok: true };
+    },
+
+    /** Add (PUT) or remove (DELETE) THIS bot's own reaction (`@me`) — other people's reactions are never touched.
+     *  Needs Add Reactions + Read Message History in the channel; refusals are `permanent`, 5xx/network are not. */
+    async react(chatId, messageId, emoji, on) {
+      const url = `${DISCORD_API}/channels/${encodeURIComponent(chatId)}/messages/${encodeURIComponent(messageId)}/reactions/${encodeURIComponent(emoji)}/@me`;
+      await withRetryLadder(async () => {
+        let res;
+        try { res = await fetchFn(url, { method: on ? 'PUT' : 'DELETE', headers: authHeaders, signal: AbortSignal.timeout(REACT_TIMEOUT_MS) }); }
+        catch (err) { throw sendError('network', err?.message || String(err)); }
+        if (res.status === 429) {
+          const d = await res.json().catch(() => ({}));
+          const ms = Math.ceil((d.retry_after ?? 1) * 1000);
+          // A long wait goes back to the host: its per-message chain sits it out in order (receipts.mjs).
+          if (ms > REACT_MAX_WAIT_MS) throw sendError('rate-limit', `Discord rate limit: retry in ${ms} ms`, ms);
+          return { retryAfterMs: ms };
+        }
+        if (res.status === 401) throw sendError('auth', 'Discord rejected the bot token');
+        if (res.status === 403) throw refusal(sendError('plugin', 'missing access: invite the bot with Add Reactions and Read Message History in this channel'));
+        if (res.status === 404) throw refusal(sendError('plugin', `message not found (${messageId})`));
+        if (res.status >= 500) throw sendError('network', `Discord is unavailable (HTTP ${res.status})`);
+        if (!res.ok) {
+          const d = await res.json().catch(() => ({}));
+          const e = sendError('plugin', `reaction failed: ${d.message || `HTTP ${res.status}`}`);
+          throw res.status === 400 ? refusal(e) : e;
+        }
+        return undefined;
+      }, _sleep);
       return { ok: true };
     },
   };

@@ -17,7 +17,7 @@ no public URL, no interactions endpoint, no tunnel. Zero npm dependencies
    single-user bot won't be). Without it, messages arrive with empty content —
    the worker logs a hint.
 3. **Invite the bot**: OAuth2 → URL Generator → scope `bot`, permissions
-   *View Channels*, *Send Messages*, *Read Message History* → open the URL,
+   *View Channels*, *Send Messages*, *Read Message History*, *Add Reactions* → open the URL,
    pick your server.
 4. **Channel IDs**: Settings → Advanced → Developer Mode on, then right-click a
    channel → *Copy Channel ID*.
@@ -42,28 +42,30 @@ server channel — the bot has no DM intent.
 With **Freeform chat** set to `on`, mentioning the bot in an Allowed channel opens a Discord thread off your message and
 binds it to a worca Ask chat. The thread is one conversation: the same history, model session and cost accounting as a
 chat in the browser, and it shows up in the owner's worca chat list. A header message at the top of the thread names the
-active scope (No project, a project or a workspace) and carries three controls: a **Scope** select, **New conversation**
-and **Stop**. Replies are rendered as markdown.
+active scope (No project, a project or a workspace) and carries a **Scope** select, **New conversation** and **Stop**.
+New conversation disappears for good once a scope is picked (a failed pick changes nothing). Replies are rendered as
+markdown.
 
 Native controls come only from the structured cards worca stores for the chat, never from the model's prose:
 
 | Card | In Discord |
 |---|---|
-| Run proposal for a project, a workspace or No project (including "on the source branch") | **Start run**, **Not now**, **Request changes** (a text box, then a normal reply; the proposal stays pending), Open in worca |
+| Run proposal for a project, a workspace or No project (including "on the source branch" and an issue-backed proposal from a task source, which shows its task) | **Start run**, **Not now**, **Request changes** (a text box, then a normal reply; the proposal stays pending), Open in worca |
 | Project ask | A select menu of the candidates plus "Continue without project" |
 | Question with a bounded choice | A select menu |
 | Question with a free-text answer | An **Answer** button that opens a text box, or just reply in the thread |
 | Run progress, receipts | A summary and Open in worca |
-| Everything else (presets, schedules, shapes, attachments, workflows, forms, diffs, scripts, Actions, clone, proxy, ...) | A "needs worca" line and Open in worca. The card **stays pending** in worca; Discord never accepts or drops it |
+| Everything else (presets, schedules, shapes, attachments, workflows, forms, diffs, scripts, Actions, clone, proxy, ...) | A "needs worca" line that names what needs worca, and Open in worca (without a **Worca address for links**, a line on how to open worca instead). The card **stays pending** in worca; Discord never accepts or drops it |
 
 A Start run that needs a confirmation the browser would ask for (a sync choice, a team policy reason or cap, an
-unguarded-engine consent) is not answered from Discord: it says "Open in worca to confirm" and the card stays pending.
+unguarded-engine consent) is not answered from Discord: it links this conversation in worca (or says how to open it) and
+the card stays pending. A typed "ok" is a message, not a Start: only the button starts a run.
 Run status arrives as messages in the thread (started, questions, finished, failed, paused).
 
 ### Setup
 
-1. Developer Portal, OAuth2 URL generator: add the permissions **Create Public Threads** and **Send Messages in
-   Threads** to the invite URL (re-invite the bot if it was added without them).
+1. Developer Portal, OAuth2 URL generator: add the permissions **Create Public Threads**, **Send Messages in
+   Threads** and **Add Reactions** to the invite URL (re-invite the bot if it was added without them).
 2. In worca set **Freeform chat** to `on`, fill **Freeform chat members** and, if you want links, **Worca address for
    links**. The channel must be listed in **Allowed channel IDs**.
 3. No Interactions Endpoint URL is needed: buttons and selects arrive over the Gateway. If one is set in the Developer
@@ -101,6 +103,19 @@ Run status arrives as messages in the thread (started, questions, finished, fail
 - A command (`/status`, ...) typed inside a freeform thread acts for the parent channel and answers in the thread.
 - A freeform conversation opened in worca's browser chat runs without agent mode (no shell commands, no shared
   terminal), the same rule as in Discord. Start a separate worca chat for that.
+- **Reactions.** The bot marks each message it accepted with its own reaction: ⏳ while worca works on it, then ✅ once
+  the reply (or the command's answer, or the new thread's header for a bare mention) was posted, ❌ when it failed,
+  ⏹️ when it was stopped (also a reply cut off by a turn or budget limit). A reply that asks a question or proposes a run counts as posted; the run itself still waits
+  for Start. A refusal (busy, rate limit, cost limit, sign-in or engine gate, a command refused with a warning) only
+  removes ⏳: its posted explanation is the answer (a `/pause` or `/stop` that worked still gets ✅). Messages from
+  other people in your thread, other bots, chatter, unknown commands and replayed events get no reaction. Only the
+  bot's own reactions are added or removed.
+- The bot needs **Add Reactions** and **Read Message History** for this. Without them messages are handled exactly
+  as before and worca logs the refusal once (once per channel for missing permissions).
+- Reactions are remembered in memory only: if worca restarts, or the chat is deleted in worca, while a reply is in
+  progress, that message can keep ⏳. So can a worker or Discord outage that outlasts the reaction retries (about
+  12 seconds): a message can then keep ⏳, or show ⏳ beside its final mark.
+  A message answering a question whose follow-up is queued behind another reply keeps ⏳ until that follow-up arrives.
 
 ## Security
 
