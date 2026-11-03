@@ -144,6 +144,10 @@ what it belongs to.
 - **About the thing as a whole** (files, decisions, activity): its own tab, its count a caption on the tab; a Figure
   may open it (Changes).
 - Never both: a list in the focus section has no tab, and a tab's list is not repeated in the card.
+- **A tab reports by exception:** what needs the person is drawn in full; what went fine is one line with › to its
+  detail, and opens by itself only when something in it did not pass.
+- **A list of what a run produced groups by what each item is** (Code, Tests, Not in the code), not by folder;
+  largest first, the folder after the name, each group's head with its count.
 
 **Where an action goes** (on every page):
 | Kind of action | Slot |

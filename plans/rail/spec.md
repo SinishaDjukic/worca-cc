@@ -18,7 +18,19 @@ history is `plans/rail/review.md`; the way to ship it is `plans/rail/enrollment.
 | Figures | Time (start in its tooltip) · Cost of budget (opens the breakdown) · Changes (opens the tab) | — |
 | Tabs | Overview · Changes · Activity · Decisions (a group: Overview · Activity · Decisions) | A second list of a group's runs |
 
-## Where an action goes
+## The tabs: each fact once
+
+Each tab owns one kind of fact; the others link to it, never repeat it. Mocks:
+`mocks/run-output-each-fact-once-*.png`.
+
+| Tab | Holds | Never holds |
+|---|---|---|
+| Overview | By exception. First the focus in full: on a run that is ready, **Before you ship**, each item with why it is there (a decision Worca made while you were away, a change you did not ask for, the file most worth a look) and its one way to act (`Change it`, `Open it`). Then one line each for what went fine: the ask (`Did all 3 parts you asked, plus 96 new tests ›`) and the evidence (`Tests pass · Review passed on round 3 · Manual test passed ›`); › opens the detail, and a line opens by itself when something in it did not pass | File lists, artifacts, a list of what it did in prose |
+| Changes | Everything the run produced, grouped by what it is: **Code**, **Tests**, then **Not in the code** (documents its steps wrote, which stay with the run and are not in the PR). Each group's head has its count and lines; files run largest first, the folder after the name; the tab count says both (`5 · 3 docs`) | — |
+| Activity | How it got there: stages and steps, rounds, models, cost, logs; under a step, `Wrote plan.md` links to it in Changes | The documents themselves |
+| Decisions | Every question and answer, who answered and when | — |
+
+
 
 | Kind | Place |
 |---|---|
