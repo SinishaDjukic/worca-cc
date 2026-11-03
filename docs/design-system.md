@@ -105,6 +105,15 @@ for a tool or an agent, is `docs/design-system-catalog.json`; this section and t
 | Figures | Its numbers; each opens its own detail: its tab when it has one (Changes), else a breakdown under it (Cost) | Chips, lists |
 | Tabs | Sections of the thing; each tab's content starts on the tab text edge | A second list of what the page already lists |
 
+**Where a list goes on a thing's page** (checks, a plan's steps, files, decisions): each list has one home, chosen by
+what it belongs to.
+- **Part of a step** (the checks of the PR stage, the plan of the Plan stage): its StepRow says it in one line, a count
+  and the names that matter (`2 failed · unit, e2e`); the whole list is Overview's first section, the state's focus,
+  named by what it is (`What broke`, `The plan`, `To check`), and the card's action lands there.
+- **About the thing as a whole** (files, decisions, activity): its own tab, its count a caption on the tab; a Figure
+  may open it (Changes).
+- Never both: a list in the focus section has no tab, and a tab's list is not repeated in the card.
+
 **Where an action goes** (on every page):
 | Kind of action | Slot |
 |---|---|
