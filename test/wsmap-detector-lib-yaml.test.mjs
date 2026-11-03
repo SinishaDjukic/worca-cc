@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { loadToml } from '../src/core/workspace-map/detectors/lib/toml.mjs';
 import { loadYaml, nodeAt, keyLine, walkScalars } from '../src/core/workspace-map/detectors/lib/yaml.mjs';
 import { classifyValue, isPlaceholder, splitAuthority, shellTarget, unresolvedValue } from '../src/core/workspace-map/detectors/lib/urls.mjs';
+import { loadBudget } from './helpers/load-budget.mjs';
 
 test('yaml: multi-doc, merge keys, key/value lines, JSON with trailing commas, errors never throw', () => {
   const y = loadYaml('base: &b\n  A: 1\nsvc:\n  <<: *b\n  B: 2\n---\nk: v\n');
@@ -38,7 +39,7 @@ test('yaml: alias resolution is indexed — linear, not a whole-document walk pe
   const ms = performance.now() - t0;
   assert.equal(y.docs[0].js.length, 40000);
   assert.ok(y.docs[0].js.every((v) => v === 'x'));
-  assert.ok(ms < 5000, `took ${ms.toFixed(0)} ms (a whole-document walk per alias: ~30 s)`);
+  assert.ok(ms < loadBudget(5000), `took ${ms.toFixed(0)} ms (a whole-document walk per alias: ~30 s)`);
   const redefined = loadYaml('a: &x 1\nb: *x\nc: &x 2\nd: *x\n').docs[0].js;
   assert.deepEqual(redefined, { a: 1, b: 1, c: 2, d: 2 }, 'an alias takes the closest preceding anchor');
 });

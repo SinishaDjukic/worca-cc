@@ -233,12 +233,12 @@ button.af-gal-card:focus-visible{outline:2px solid var(--ink);outline-offset:2px
 .issue-head{display:flex;align-items:center;gap:8px;margin-bottom:4px;}
 .issue-sev{padding:2px 8px;}
 .sev-critical .issue-sev{background:var(--red-bg);color:var(--red-ink);}
-.sev-major .issue-sev{background:var(--peach-bg);color:var(--peach-ink);}
+.sev-major .issue-sev{background:var(--peach-bg);color:var(--peach-ink-strong);}
 .sev-minor .issue-sev{background:var(--amber-bg);color:var(--amber-ink);}
 .sev-suggestion .issue-sev{background:var(--blue-bg);color:var(--blue-ink);}
 .issue-title{font-weight:600;font-size:13px;}
 .issue-detail{font-size:var(--fs-meta);color:var(--ink-2);margin:2px 0 0;}
-.issue-loc{font-family:var(--mono);font-size:11px;color:var(--ink-3);margin-top:4px;}
+.issue-loc{font-family:var(--mono);font-size:11px;color:var(--ink-2);margin-top:4px;}
 .gate-actions{display:flex;gap:10px;flex-wrap:wrap;}
 .gate-actions .btn{flex:1 1 auto;}
 

@@ -170,3 +170,20 @@ test('runOnboarded: a run without a project always is; a workspace run needs its
     await rm(dropped, { recursive: true, force: true });
   }
 });
+
+test('E2/2.3: open issues and End-not-reached survive the row: rowToState and the History list both carry them', async () => {
+  const open = [{ nodeId: 'n_review', wireId: 'w', executionId: 'x', count: 2, critical: 1, major: 1, titles: ['a', 'b'] },
+    { nodeId: 'n_refine', wireId: 'w2', executionId: 'y', count: 1, critical: 0, major: 1, titles: ['c'] }];
+  const forced = await seedPipeline(projectDir, { title: 'forced', status: 'done', engine: 2, endReached: true, openIssues: open });
+  const quiet = await seedPipeline(projectDir, { title: 'quiet', status: 'done', engine: 2, endReached: false });
+  const clean = await seedPipeline(projectDir, { title: 'clean', status: 'done', engine: 2, endReached: true });
+  const { state: st } = await readPipelineByKey(key, forced.id);
+  assert.deepEqual(st.openIssues, open);
+  const list = await listAllPipelines({ lite: true });
+  const by = (id) => list.find((r) => r.id === id);
+  assert.equal(by(forced.id).openIssueCount, 3);
+  assert.equal(by(forced.id).endReached, true);
+  assert.equal(by(quiet.id).endReached, false);
+  assert.equal(by(quiet.id).openIssueCount, undefined);
+  assert.equal(by(clean.id).openIssueCount, undefined);
+});

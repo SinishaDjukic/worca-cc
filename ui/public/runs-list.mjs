@@ -728,6 +728,24 @@ const SHOW_EMPTY = Object.freeze({ needs: 'Nothing needs you.', running: 'No run
 export const RUNS_LOADING = 'Loading runs…';
 export const RUNS_OFFLINE = "The runs show here once Worca's server is reachable again.";
 
+/** Repaint every staged row's four-section block IN PLACE from `model` (its fill, marks and breakdown). The list rebuilds
+ *  a row only when its signature changes (app.js runsRowSig: stage and label), and the fill is not in it: a row first
+ *  painted from hello (a stepper, no steps yet) otherwise kept 0% after the replayed state began its stage (#1067). */
+export function paintStageBlocks(host, model) {
+  const byKey = new Map();
+  for (const s of model.sections) {
+    if (s.collapsed) continue;
+    for (const r of s.rows) {
+      byKey.set(r.key, r);
+      if (r.kind === 'chain') for (const m of r.members || []) byKey.set(m.key, m);
+    }
+  }
+  for (const block of host.querySelectorAll('.runs-item > a.runs-row > .runs-stage')) {
+    const r = byKey.get(block.closest('.runs-item').dataset.rowKey);
+    if (r && r.model && r.model.progress && r.model.progress.mode === 'stages') paintProgressBar(block, r.model.progress, { pulse: r.model.pulse });
+  }
+}
+
 export function renderRunsList(doc, model, { checked = new Set(), selecting = false, lineFrom = null, emptyText = 'No runs yet.', note = '',
   loading = false, offline = false, retry = false, emptyByShow = SHOW_EMPTY, loadingText = RUNS_LOADING,
   offlineText = RUNS_OFFLINE } = {}) {

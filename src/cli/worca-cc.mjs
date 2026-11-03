@@ -34,6 +34,7 @@ import { projectKey, isNoProjectKey, noProjectWorkDir, isNoProjectWorkDir } from
 import { NO_PROJECT_ERRORS } from '../shared/no-project.mjs';
 import { normaliseTags } from '../shared/run-tags.mjs';
 import { formatExecLine, formatGateHeader, formatRunSummary, formatWorkflowProposal, formatResumeHints } from './render.mjs';
+import { formatSessionHostLine, manifestLabelOf } from './render.mjs';
 // Ask forms (spec §8): the prompt FORMATTING lives in render.mjs too (a second import
 // statement, not a longer first one); the field-by-field asker lives in forms.mjs.
 import { formatFormErrors, FORM_REPROMPT_MAX } from './render.mjs';
@@ -48,6 +49,7 @@ import { applyTagRules } from '../core/tag-dimensions.mjs';
 import { inheritedTagsAtCreation } from '../core/scheduler.mjs';
 import { cmdRuns } from './runs.mjs';
 import { cmdLogs } from './logs.mjs';
+import { cmdSessions } from './sessions.mjs';
 import { cmdControl } from './control.mjs';
 import { cmdModels } from './models.mjs';
 import { cmdContainer } from './container.mjs';
@@ -143,6 +145,7 @@ function parseArgs(argv) {
     featureBranch: undefined,
     onSourceBranch: false,
     memoryScope: undefined,
+    noMemory: false,        // --no-memory (#943): the run loads no memory notes and proposes none
     after: undefined,
     afterAny: false,
     sourceFromPrevious: false,
@@ -229,6 +232,7 @@ function parseArgs(argv) {
     if (arg === '--after-any') { out.afterAny = true; continue; }
     if (arg === '--source-from-previous') { out.sourceFromPrevious = true; continue; }
     if (arg === '--on-source-branch') { out.onSourceBranch = true; continue; }
+    if (arg === '--no-memory') { out.noMemory = true; continue; }
     if (arg === '--force') { out.force = true; continue; }
 
     let inlineValue;
@@ -322,6 +326,7 @@ Subcommands:
                               (any unique prefix; --json for machines). See: worca runs help
   logs <id> [-f]              Tail a run's live log (--tail N, --component, --level,
                               --json). -f follows; Ctrl-C detaches, the run continues. See: worca logs help
+  sessions <id> [--json]      A run's sessions: host, turns, the cost split and its reconcile. See: worca sessions help
   stop <id>                   Stop a live or paused run (any unique prefix). See: worca stop help
   pause <id>                  Gracefully pause a live run; resume with: worca resume <id>
   doctor                      Reconcile crashed runs, sweep leftover run roots, check node-pty's spawn-helper.
@@ -377,6 +382,7 @@ Options:
   --no-human               Auto workflow only: no proposal, no clarify, no agent questions (loop-budget, recovery, cost and error pauses still apply)
   --memory-scope <s>       Memory defragment workflow only: global | project — the scope the
                            run restructures (--workflow wf_memory_defrag needs it; no --prompt needed)
+  --no-memory              Run without worca memory: no notes load and none are proposed (to measure what memory is worth)
   --source-branch <name>   Branch to fork the per-run worktree from (default: current HEAD)
   --branch <name>          Feature branch name (default: claude proposes one)
   --on-source-branch       Commit onto the source branch itself: the run works on a hidden branch and
@@ -700,6 +706,14 @@ async function attachAndDrive(orch, flags, start) {
       }
     }
     const line = formatExecLine(e, orch.state && orch.state.stepper, { color: c, engine: orch.claude?.engine || null });
+    if (line) out(line);
+  });
+
+  // Session groups (Task 55): one line per transition that matters (open, degrade, dispatch, rotate, restart, resume,
+  // a failed dispatch, close); formatSessionHostLine gives null for the rest.
+  orch.on('sessionHost', (ev) => {
+    if (answering) return; // avoid interleaving with an open question prompt
+    const line = formatSessionHostLine(ev, { labelOf: manifestLabelOf(orch.state && orch.state.stepper), color: c });
     if (line) out(line);
   });
 
@@ -2580,9 +2594,9 @@ async function cmdWorkflow(argv) {
   try {
     switch (verb) {
       case 'list': {
-        // The built-ins (Default, Memory defragment) are not in the user store, so
+        // The built-ins (Default, Lean, Memory defragment) are not in the user store, so
         // prepend them — mirrors the server/UI, which always show them first.
-        const items = [wf.GRAPH_DEFAULT_WORKFLOW, wf.GRAPH_MEMORY_DEFRAG_WORKFLOW, wf.GRAPH_SHAPE_WORKFLOW, ...(await wf.listWorkflows())];
+        const items = [wf.GRAPH_DEFAULT_WORKFLOW, wf.GRAPH_LEAN_WORKFLOW, wf.GRAPH_MEMORY_DEFRAG_WORKFLOW, wf.GRAPH_SHAPE_WORKFLOW, ...(await wf.listWorkflows())];
         for (const w of items) out(`${w.id}\t${w.name}\t${(w.domain || 'general')}`);
         return 0;
       }
@@ -3357,6 +3371,11 @@ async function drainTeamPushes() {
 
 const MEMORY_HELP = `worca memory — agent memory
 
+  worca memory proposals [--json]                       The notes pipeline agents proposed, waiting for you (a run never
+                                                        writes memory itself; it starts with the notes as they were)
+  worca memory proposals show <id>                      One proposal's text, and the note it replaces
+  worca memory proposals approve <id>                   Write it to memory (shared with the team when team memory is on)
+  worca memory proposals reject <id>                    Drop it
   worca memory team status [--project <path>] [--json]  The team layer: on/off, the branch, every note's state
   worca memory team on [--team-only] [--project <path>]
                                                         Share this project's NEW and CHANGED notes on its worca-memory branch;
@@ -3378,9 +3397,43 @@ Share existing notes from the project's Memory tab (Team view) in the web UI.
 Exit codes: 0 ok · 1 failure · 2 usage.
 `;
 
+/** `worca memory proposals [show|approve|reject <id>]` (#943): the same store calls as the web UI's routes. */
+async function cmdMemoryProposals(verb, rest) {
+  const { listProposals, approveProposal, rejectProposal } = await import('../core/memory-proposals.mjs');
+  const { memoryRoot } = await import('../core/memory-store.mjs');
+  const root = memoryRoot();
+  const all = await listProposals(root);
+  if (!verb || verb === '--json') {
+    if (verb === '--json' || rest.includes('--json')) { out(JSON.stringify(all.map(({ current: _c, ...p }) => p), null, 2)); return 0; }
+    if (!all.length) { out('no proposed memory notes'); return 0; }
+    for (const p of all) out(`${p.id}  ${p.kind === 'delete' ? 'remove' : p.baseHash ? 'update' : 'add   '}  ${p.scope}/${p.name}.md  run ${p.runId}${p.agentKey ? ` (${p.agentKey})` : ''}${p.stale ? c('yellow', '  changed since the run started') : ''}`);
+    return 0;
+  }
+  if (!['show', 'approve', 'reject'].includes(verb) || !rest[0]) { process.stderr.write(MEMORY_HELP); return 2; }
+  const item = all.find((p) => p.id === rest[0]);
+  if (!item) { process.stderr.write(`worca memory proposals ${verb}: no proposal ${rest[0]}\n`); return 1; }
+  if (verb === 'show') {
+    out(c('bold', `${item.kind === 'delete' ? 'remove' : 'write'} ${item.scope}/${item.name}.md — proposed by run ${item.runId}${item.agentKey ? ` (${item.agentKey})` : ''}`));
+    if (item.text) out(item.text.trimEnd());
+    if (item.current) { out(c('gray', '--- the note in memory now ---')); out(c('gray', item.current.trimEnd())); }
+    return 0;
+  }
+  if (verb === 'reject') { await rejectProposal(root, item.id); out(`rejected ${item.scope}/${item.name}.md`); return 0; }
+  const { memoryCaps } = await import('../core/settings.mjs');
+  await import('../core/settings-cascade.mjs');
+  const project = item.scope.startsWith('projects/') ? (await listProjects()).find((p) => p.key === item.scope.slice('projects/'.length)) : null;
+  if (item.scope !== 'global' && !project) { process.stderr.write(`worca memory proposals approve: the project of ${item.id} is no longer registered\n`); return 1; }
+  const team = await import('../core/memory-team.mjs');
+  await approveProposal(root, item.id, { caps: memoryCaps(project ? { projectDir: project.path } : null), prepare: team.teamClientText });
+  if (project) await team.queueTeamChanges(project.key, [item.name], { source: `run:${item.runId}` }).catch(() => {});
+  out(`${item.kind === 'delete' ? 'removed' : 'wrote'} ${item.scope}/${item.name}.md`);
+  return 0;
+}
+
 async function cmdMemory(argv) {
   const [group, verb, ...rest] = argv;
   if (!group || group === 'help' || (group === 'team' && (!verb || verb === 'help'))) { process.stdout.write(MEMORY_HELP); return 0; }
+  if (group === 'proposals') return cmdMemoryProposals(verb, rest);
   if (group !== 'team' || !['status', 'on', 'off', 'sync', 'rm', 'resolve'].includes(verb)) { process.stderr.write(MEMORY_HELP); return 2; }
   const team = await import('../core/memory-team.mjs');
   const { writeProjectSettings } = await import('../core/settings-cascade.mjs');
@@ -3485,7 +3538,7 @@ async function resolveTeamNote(team, { key, project, name, a }) {
 
 // ── main ──────────────────────────────────────────────────────────────────────────
 
-const SUBCOMMANDS = new Set(['add', 'list', 'remove', 'resume', 'run', 'runs', 'logs', 'stop', 'pause', 'doctor', 'plugin', 'marketplace', 'config', 'flags', 'ui', 'workflow', 'metrics', 'script', 'policy', 'schedule', 'models', 'container', 'broker', 'extension', 'proxy', 'memory', 'setup']);
+const SUBCOMMANDS = new Set(['add', 'list', 'remove', 'resume', 'run', 'runs', 'logs', 'stop', 'pause', 'doctor', 'plugin', 'marketplace', 'config', 'flags', 'ui', 'workflow', 'metrics', 'script', 'policy', 'schedule', 'models', 'container', 'broker', 'extension', 'proxy', 'memory', 'setup', 'sessions']);
 
 /** Levenshtein distance, two-row. Only ever called on short argv tokens. */
 function editDistance(a, b) {
@@ -3608,6 +3661,7 @@ async function main() {
     if (sub === 'run') return cmdRun(rest, { out, c, fail });
     if (sub === 'runs') return cmdRuns(rest, { out, c, fail });
     if (sub === 'logs') return cmdLogs(rest, { out, c, fail });
+    if (sub === 'sessions') return flushed(cmdSessions(rest, { out, c, fail }));   // --json can pass 64 KiB on a pipe
     if (sub === 'stop' || sub === 'pause') return cmdControl(sub, rest, { out, c, fail });
     if (sub === 'doctor') return cmdDoctor();
     if (sub === 'plugin') return cmdPlugin(rest);
@@ -3764,6 +3818,7 @@ async function main() {
     const { validateMemoryScope } = await import('../core/memory-sync.mjs');
     const reason = validateMemoryScope({ workflowId: flags.workflow || 'wf_default', memoryScope: flags.memoryScope, isWorkspace: false });
     if (reason) fail(reason);
+    if (flags.noMemory && flags.memoryScope) fail('--no-memory cannot be set on a Memory defragment run');
   }
   // Enforced tags (D14): project-only, no identity (no last-used source); the server's message, exit 2.
   // A Run after with no --tag checks the tags the chain will inherit and stores none (D9a, like tagGate).
@@ -3798,6 +3853,7 @@ async function main() {
     workflowId: flags.workflow || undefined,
     template: row,
     memoryScope: flags.memoryScope || undefined,
+    ...(flags.noMemory ? { noMemory: true } : {}),
     ...(flags.guardrailsId ? { guardrailsId: flags.guardrailsId } : {}),
     branch: { source: flags.sourceBranch, feature: flags.featureBranch, ...(flags.onSourceBranch ? { sameAsSource: true } : {}) },
     claude: {
