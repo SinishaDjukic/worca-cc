@@ -1,11 +1,40 @@
 // plugins/github-source/connector/index.mjs
 // GitHub Issues task source (worca-cc plugin API v1). REST only, injected fetch,
 // zero dependencies. Task ids round-trip opaquely as "owner/repo#123".
+// Ticket updates (plans/ticket-updates-design.md §3, plans/ticket-updates-pr2-plan.md): a repository is a project ("owner/repo");
+// Worca decides what happens to an issue when a run finishes and passes it as reportResult's `move`; this plugin maps an issue's
+// state onto Worca's four categories (D1), says what its old closeOnComplete setting means (legacyMove, D4), and without a
+// `move` behaves exactly as before. Projects (v2) status fields are not read (decision 2).
 
 import { ghFetch } from './github-api.mjs';
 import { ghAuthToken } from './gh-cli.mjs';
 
 const PER_PAGE = 30;
+
+/** D1: GitHub Issues' statuses: open is to do, closed as completed done, closed as not planned cancelled; nothing is in
+ *  progress. The values are the API's own (`state`, `state_reason`). */
+export const STATUSES = Object.freeze([
+  Object.freeze({ value: 'open', label: 'Open', category: 'todo' }),
+  Object.freeze({ value: 'completed', label: 'Closed', category: 'done' }),
+  Object.freeze({ value: 'not_planned', label: 'Closed as not planned', category: 'cancelled' }),
+]);
+const DUPLICATE = Object.freeze({ value: 'duplicate', label: 'Closed as duplicate', category: 'cancelled' });
+/** An issue's status: reopened is open, a close without a reason (older issues) completed, a duplicate cancelled. */
+export function statusOf(issue) {
+  if (issue?.state !== 'closed') return STATUSES[0];
+  if (issue.state_reason === 'not_planned') return STATUSES[2];
+  if (issue.state_reason === 'duplicate') return DUPLICATE;
+  return STATUSES[1];
+}
+/** A repository as Worca keys it (decision 1): owner/repo in GitHub's own characters (an owner of 1 to 39 letters, digits or
+ *  inner hyphens; a repo of 1 to 100 letters, digits, ".", "_" or "-", never "." or ".."), so it is never another path. */
+const REPO_KEY = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/(?!\.\.?$)[A-Za-z0-9._-]{1,100}$/;
+function repoKeyOf(project) {
+  const key = String(project ?? '').trim();
+  if (!key) throw Object.assign(new Error('a project is required'), { kind: 'plugin' });
+  if (!REPO_KEY.test(key)) throw Object.assign(new Error('a project is a repository: owner/repo'), { kind: 'plugin' });
+  return key;
+}
 
 /** 'owner/repo#123' -> { repo: 'owner/repo', number: 123 } */
 function parseId(id) {
@@ -83,6 +112,9 @@ export default function createTaskSource(ctx, deps = {}) {
     return json.login;
   }
 
+  /** The token's repositories, the 100 most recently updated (as the Repository input has always listed them). */
+  const repoList = async () => (await ghFetch(gh, '/user/repos?per_page=100&sort=updated')).json;
+
   return {
     async validateConfig() {
       try {
@@ -95,10 +127,15 @@ export default function createTaskSource(ctx, deps = {}) {
       }
     },
 
-    /** inputs[].optionsFrom: "listRepos" */
+    /** The Repository input's options before Ticket updates; kept for any caller that still names it. */
     async listRepos() {
-      const { json } = await ghFetch(gh, '/user/repos?per_page=100&sort=updated');
-      return json.map((r) => ({ value: r.full_name, label: r.full_name }));
+      return (await repoList()).map((r) => ({ value: r.full_name, label: r.full_name }));
+    },
+
+    /** inputs[].optionsFrom: "listProjects" (Ticket updates, D9: a repository is a project, so New run's list is filtered by
+     *  the projects you work on); `name` is the repository's name alone, for the chips (D5). */
+    async listProjects() {
+      return (await repoList()).map((r) => ({ value: r.full_name, label: r.full_name, name: r.name }));
     },
 
     async listTasks({ inputs = {}, search, cursor } = {}) {
@@ -170,6 +207,8 @@ export default function createTaskSource(ctx, deps = {}) {
         body, // ALWAYS markdown (GitHub bodies already are)
         meta: {
           repo,
+          // Ticket updates (D6): the issue's repository as listProjects names it (GitHub's case), whatever case the id was typed in
+          project: /\/repos\/([^/]+\/[^/]+)$/.exec(String(issue.repository_url || ''))?.[1] || repo,
           number,
           labels: (issue.labels || []).map((l) => (typeof l === 'string' ? l : l.name)).filter(Boolean),
           assignee: issue.assignee?.login || null,
@@ -194,7 +233,17 @@ export default function createTaskSource(ctx, deps = {}) {
     },
 
     capabilities() {
-      return { writeBack: true, incrementalSync: false };
+      return { writeBack: true, incrementalSync: false, ticketUpdates: true };
+    },
+
+    // ---- Ticket updates (plans/ticket-updates-design.md §3) ----
+    /** GitHub Issues has the same three statuses in every repository: nothing is asked. */
+    async listStatuses({ project } = {}) {
+      repoKeyOf(project);
+      return STATUSES.map((s) => ({ ...s }));
+    },
+    legacyMove() {
+      return { field: 'closeOnComplete', target: closeOnComplete ? { category: 'done' } : null };
     },
   };
 }

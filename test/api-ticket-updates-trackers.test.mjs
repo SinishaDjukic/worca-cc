@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { linkPlugin } from '../src/core/plugin-store.mjs';
-import { readTicketUpdates } from '../src/core/plugin-config.mjs';
+import { readTicketUpdates, writeTicketUpdates } from '../src/core/plugin-config.mjs';
 import { setMockSourceResponses } from '../src/core/plugin-shim.mjs';
 
 useTempHome(after, 'worca-tu-trackers-');
@@ -57,4 +57,15 @@ test('decision 1: a project may be owner/repo: its statuses, a save and the GET 
       [400, { error: 'project is not a project key' }], bad);
   }
   assert.equal((await call('PUT', TU, { sourceId: 'github', projects: [{ value: 'a/b/c' }], rules: [NONE_ALL] })).status, 400);
+});
+
+test('D9: the Repository input lists projects, filtered by the projects you work on; listRepos is no longer a browser op', async () => {
+  setMockSourceResponses({ listProjects: [{ value: 'Acme/API', label: 'Acme/API', name: 'API' }, { value: 'Acme/Web', label: 'Acme/Web', name: 'Web' }] });
+  try {
+    writeTicketUpdates('github-source', 'default', 'github', { projects: [{ value: 'Acme/API', label: 'API' }], rules: [NONE_ALL] });
+    const r = await call('POST', '/api/sources/call', { plugin: 'github-source', sourceId: 'github', op: 'listProjects' });
+    assert.deepEqual([r.status, r.json], [200, { ok: true, result: [{ value: 'Acme/API', label: 'Acme/API', name: 'API' }] }]);
+    const old = await call('POST', '/api/sources/call', { plugin: 'github-source', sourceId: 'github', op: 'listRepos' });
+    assert.deepEqual([old.status, old.json], [400, { error: 'op "listRepos" is not allowed for this source' }]);
+  } finally { setMockSourceResponses(null); }
 });
