@@ -190,6 +190,8 @@ and pinned routes). See [split-by-feature.md](split-by-feature.md).
 | `ui/public/workflows/workflow-tests.css` | 406 |
 | `ui/public/workflows/workflows.html` | 190 |
 | `ui/routes/workflows/agents.mjs` | 125 |
+| `ui/routes/workflows/versions.mjs` | 8 |
+| `ui/routes/workflows/workflow-tests.mjs` | 53 |
 | `ui/routes/workflows/workflows.mjs` | 331 |
 
 ## scripts ([scripts.md](scripts.md))

@@ -11,7 +11,7 @@ import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 
 useTempHome(after);
-let homeDir, prevHome, srv, base, runs, store, service, routesMod, _testing, settingsMod, getDb;
+let homeDir, prevHome, srv, base, runs, store, service, routesMod, settingsMod, getDb;
 const JSONH = { 'Content-Type': 'application/json' };
 const WF = '/api/workflows/wf_api_t/tests';
 const call = async (method, p, body) => {
@@ -49,7 +49,6 @@ before(async () => {
   process.env.WORCA_FLAGS = 'workflowTests';
   const mod = await import('../ui/server.mjs');
   runs = mod.runs;
-  _testing = mod._testing;
   store = await import('../src/core/workflow-tests/store.mjs');
   service = await import('../src/core/workflow-tests/service.mjs');
   routesMod = await import('../src/core/workflow-tests/routes.mjs');
@@ -156,7 +155,7 @@ test('errors: unknown workflow, a bad example, an unknown example; a workflow th
 });
 
 test("the server's liveRun carries a paused try's reason: a drain-paused try stops the test as a drain", async () => {
-  const deps = _testing.workflowTestDeps;
+  const deps = (await import('../ui/routes/workflows/workflow-tests.mjs')).workflowTestDeps;   // the route file since #919
   const key = 'wft-drain-paused';
   runs.set(key, { id: key, status: 'paused', pauseReason: 'drain', pauseDetail: null, pipelineId: null, orch: { state: { totalCostUsd: 0 } }, isTest: true, settled: true });
   try {
@@ -174,7 +173,7 @@ test("the server's liveRun carries a paused try's reason: a drain-paused try sto
 });
 
 test('the dialog notes (D35): the file servers a try without a project loads, and steps on another engine', async () => {
-  const deps = _testing.workflowTestDeps;
+  const deps = (await import('../ui/routes/workflows/workflow-tests.mjs')).workflowTestDeps;   // the route file since #919
   const root = settingsMod.getProjectsRoot();
   await mkdir(root, { recursive: true });
   await writeFile(join(root, '.mcp.json'), JSON.stringify({ mcpServers: { shared__db: { command: 'node', args: ['x.js'] } } }));

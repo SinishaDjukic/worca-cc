@@ -344,12 +344,8 @@ import { sweepV1Runs, V1_RUN_RETIRED, getDb } from '../src/core/db.mjs';
 import {
   registerRequirementsRoutes, requirementsChangeNotifier, REQUIREMENTS_UPLOAD_ROUTES, REQUIREMENTS_UPLOAD_JSON_LIMIT, requirementsUploadSlots,
 } from '../src/core/requirements/routes.mjs';
-import { registerWorkflowVersionRoutes } from '../src/core/workflow-versions-routes.mjs';
 import { CONNECTOR_MODES, recoverInterruptedTestRuns } from '../src/core/workflow-tests/store.mjs';
 import { sweepTestCopies } from '../src/core/workflow-tests/project-copy.mjs';
-import { registerWorkflowTestRoutes } from '../src/core/workflow-tests/routes.mjs';
-import { TRY_ANSWERED_BY } from '../src/core/workflow-tests/answers.mjs';
-import { pretendCopies } from '../src/core/workflow-tests/connectors.mjs';
 import { SETUP_TIMEOUT_MS } from '../src/core/workflow-tests/shell-step.mjs';
 import { TRY_NEVER_SHIPS_TEXT, TRY_STAYS_IN_COPY_TEXT, TRY_NEEDS_GIT_TEXT } from '../src/shared/workflow-tests/project-text.mjs';
 import { createRunEventHook } from '../src/core/requirements/start.mjs';
@@ -3560,7 +3556,7 @@ const startRunHandler = async (req, res) => {
 // a target's set skills. Namespaced imports (ES imports are hoisted), kept beside their only users so no
 // other region's imports can collide with these names.
 import * as runSkillResolve from '../src/core/skills-registry/resolve.mjs';
-import { previewSetSkillNames, readMcpFile, normalizeServerName } from '../src/core/run-context.mjs';
+import { previewSetSkillNames } from '../src/core/run-context.mjs';
 import * as runSkillHost from '../src/core/skills-registry/host.mjs';
 import * as runSkillTexts from '../src/core/skills-registry/texts.mjs';
 import * as runSkillPolicy from '../src/core/policy/effective.mjs';
@@ -8075,48 +8071,6 @@ async function applySettingsPatch(body, { person = null } = {}) {
 // first, then plugin — resolveModelEnv's precedence.
 const modelTestsInFlight = new Set();
 
-// Workflow versions + history (plans/workflow-tests-plan.md Part 1; #721 workflow part). Flag workflowTests.
-registerWorkflowVersionRoutes(app, { agentsDir: AGENTS_DIR });
-
-// Workflow tests (plans/workflow-tests-part2-plan.md). Flag workflowTests. A try is a no-project run started through the
-// run handler (invokeStartRun's workflowTest), hidden from every list (D21); the runner answers its questions itself.
-const workflowTestDeps = {
-  startRun: (body, opts) => invokeStartRun(body, null, opts),
-  // pauseReason/pauseDetail (set on 'done', wireRun): the runner tells a drain, a cost cap or a step error apart by them.
-  liveRun: (runKey) => {
-    const e = runs.get(runKey);
-    return e ? { orch: e.orch, status: String(e.status || ''), launch: e.launch || null, pipelineId: e.pipelineId || null,
-      pauseReason: e.pauseReason ?? null, pauseDetail: e.pauseDetail ?? null } : null;
-  },
-  stopRun: (runKey) => Promise.resolve().then(() => stopRun(runKey, TRY_ANSWERED_BY)).catch(() => {}),
-  answer: (runKey, id, payload) => {
-    const e = runs.get(runKey);
-    if (!e || !e.orch) return false;
-    const ok = e.orch.answer(id, payload, TRY_ANSWERED_BY);   // answerRun cannot say whether it was taken
-    if (ok) resolvePending(e, { id, reason: 'answered' });
-    return ok;
-  },
-  mockMode: serverMockMode,
-  // D35, board 30 (3a: board 34): what a try would load, for the Test a version dialog's notes. A registry copy is
-  // `untested` when a pretend try gives it no stand-in (pretendCopies: a current, passing Test with tools). Without a
-  // project: the registry's no-project scope, and the servers of the projects root's `.mcp.json` (the root layer a run
-  // without a project merges) are the file servers. On one project: that project's scope and the `.mcp.json` of its
-  // folder (read only).
-  connectorsPreview: async (scope = null) => {
-    const target = scope && scope.key ? { kind: 'project', key: scope.key, name: scope.name || scope.key, rank: 0 }
-      : { kind: 'project', key: NO_PROJECT_KEY, name: NO_PROJECT_NAME, rank: 0 };
-    const [{ result }, mcpStore] = await Promise.all([mcpRunPreview(target), readMcpStore()]);
-    const standIns = new Set(pretendCopies(result.copies, (mcpStore && mcpStore.tests) || {}).map((c) => c.name));
-    const root = scope && scope.projectDir ? scope.projectDir : getProjectsRoot();
-    const file = root ? (await readMcpFile(path.join(root, '.mcp.json'))).servers : null;
-    return {
-      copies: result.copies.map((c) => ({ name: c.name, untested: !standIns.has(c.name) })),
-      fileServers: [...new Set(Object.keys(file || {}).map(normalizeServerName))].sort(),
-    };
-  },
-};
-registerWorkflowTestRoutes(app, { broadcast, deps: workflowTestDeps });
-
 // ---------------------------------------------------------------------------
 // Run presets (docs/run-presets.md, #712): named New run setups in SQLite (run_presets). Per person on a
 // shared deployment (askViewer): another owner's preset answers 404, as Ask threads do. A saved setup is full picks — snapshotFor resolves the
@@ -10255,7 +10209,7 @@ if (isMain) {
 }
 
 export { app, server, runs };
-export { AGENTS_DIR, APP_INFO, APP_REPO_URL, ASK_SCOPE_BUSY, ASK_TEXT_PREVIEW_MAX, BRANCH_SETTLED, BUGS_SLUG, CLONE_JOBS, HOST, MARKETPLACE_ID_RE, MARKET_JOBS, NO_PR_HOST, PKG_VERSION, PLAN_TEXT_MAX, PLUGIN_NAME_RE, PORT, PROJECT_ROOT, PR_TITLE_MAX, REMOTE_MODE, RUNNING_VERSION, ResumeError, SETTLED_RUN, SETUP_AGENT_TEXT, SETUP_JOBS, SKILLS_DIR, SKILL_FOLDER_IMPORTS, SKILL_MD_UNREACHABLE, STORE_ERROR_CODES, actions, actionsEnabledHere, activeActionSnaps, adoWebhookSecret, afterMembersChanged, afterProjectRegistered, agentErrorStatus, agentMayBeCaller, answerRun, applyProjectSettingsPatch, applySettingsPatch, askBusyReason, askChatActions, askChatEngine, askCommandBridges, askCommands, askCommandsEnabled, askContextTokens, askDeferred, askDeleting, askEngineSwitchText, askEventPick, askFilesRunDir, askFilesStoreDir, askFollowers, askGroupFor, askGroupThreads, askIdParam, askInFlight, askLiveRun, askProxyBridges, askRefResolver, askRelays, askRunFromPipelineRow, askRunningCount, askSwitchTranscript, askThreadVisible, askTrackingCount, askTurnEngine, askValidateScope, askViewer, askWebAccessFor, askWorktreesEnvelope, autoDetectedBuiltins, automationWorkspaceMembers, automations, awayPersonOf, badRequest, bareWorkspaceKey, bearerMatches, broadcast, broadcastFeature, brokerStartRefusal, builtins, busyActionRunIds, channelHost, chatGroupError, chatNotifier, chatRefusals, checkoutRecOf, commentIdParam, commentsCreate, commentsDelete, commentsFail, commentsList, commentsPatch, commentsReply, createRunPr, crosslinkMemberPrs, currentUpdateEligibility, defaultPrRemotes, deleteAskThreadFully, detectSystemProxyImpl, detectTeamMemorySoon, drainServer, effectiveUiLevel, egressNow, emitAskWorktrees, emitChanged, emitMemoryChanged, emitPluginsChanged, ensureSetup, extensionPairing, factDeps, failedEventTurn, findScheduleItem, flipCard, followCloneCard, forkPrRefusal, fsAllowedRoots, fsLimitedHere, gitMissing, isFinishingRun, isFreshInstall, isLiveRun, isPlainObject, isPrStoreKey, isTruthy, kickAutomations, kickPrWatch, labelsOn, lastUpdateResult, liveAutoRescan, liveDefragRun, liveDiffOf, livePr, liveProbe, liveRunEntry, liveRunIds, liveSliceOf, marketJobFailure, mcpRunPreview, mcpTargetOf, memberFor, memoryError, modelTestsInFlight, namingBucket, namingCatalog, namingOn, namingPick, noRawCommand, notifReader, openMemberPr, ownsWorkspaceTarget, parseMcpOptOut, pauseRun, pickPrRemotes, pinUiLevel, postAskSystemNotice, postDirection, prTargetFor, prWatchFrame, prWatcher, presetCheckCtx, presetScopeOf, primaryMemberOf, projectAutomationRepo, projectDirForKey, projectSettingsState, proxyHost, pruneMarketJobs, prunedNote, publicCloneJob, readInstalledManifest, refuseAgentCaller, refuseSignedOutClaude, registeredProjectForDir, rejectRawTerminalFields, removeRecommendation, requireActions, requireFsAllowed, requireTerminal, resolvePrPipeline, resolveProjectDir, resolveRunScope, resumeEngineOpts, resumeRun, resumeTargetDirs, runGroupIds, runSourceIssue, scanModelsFor, scanRequest, scheduleVerb, sendArtifactRaw, sendCheckoutError, sendMetricsError, sendPolicyError, sendPresetError, serveAskFile, serverMockMode, settleShipped, setupJobs, setupProbesOverride, shipChainNow, shipCtxOf, shipFeatureNow, skillRunPreview, snapshotFor, sockets, stackStates, stackTokens, startAgentGen, startAskTurn, startCloneJob, startMetricsEventTurn, startOrQueue, startRunAs, startRunHandler, startScopeEventTurn, startScriptBench, stopCheckoutServices, stopMemberServices, stopPausedPipeline, stopRun, switchThreadScope, syncMode, syncProjectAction, syncRoute, teamOriginOk, teamWarn, terminalCallerOk, terminalEnabledHere, terminalError, terminalSameOrigin, terminals, tmProject, uiControl, unsyncableBlock, updateChecker, updatePort, updatePreview, validateResumeTarget, versionLister, versionPayload, webhookSecret, withAfter, workspaceMembersBusy };
+export { AGENTS_DIR, APP_INFO, APP_REPO_URL, ASK_SCOPE_BUSY, ASK_TEXT_PREVIEW_MAX, BRANCH_SETTLED, BUGS_SLUG, CLONE_JOBS, HOST, MARKETPLACE_ID_RE, MARKET_JOBS, NO_PR_HOST, PKG_VERSION, PLAN_TEXT_MAX, PLUGIN_NAME_RE, PORT, PROJECT_ROOT, PR_TITLE_MAX, REMOTE_MODE, RUNNING_VERSION, ResumeError, SETTLED_RUN, SETUP_AGENT_TEXT, SETUP_JOBS, SKILLS_DIR, SKILL_FOLDER_IMPORTS, SKILL_MD_UNREACHABLE, STORE_ERROR_CODES, actions, actionsEnabledHere, activeActionSnaps, adoWebhookSecret, afterMembersChanged, afterProjectRegistered, agentErrorStatus, agentMayBeCaller, answerRun, applyProjectSettingsPatch, applySettingsPatch, askBusyReason, askChatActions, askChatEngine, askCommandBridges, askCommands, askCommandsEnabled, askContextTokens, askDeferred, askDeleting, askEngineSwitchText, askEventPick, askFilesRunDir, askFilesStoreDir, askFollowers, askGroupFor, askGroupThreads, askIdParam, askInFlight, askLiveRun, askProxyBridges, askRefResolver, askRelays, askRunFromPipelineRow, askRunningCount, askSwitchTranscript, askThreadVisible, askTrackingCount, askTurnEngine, askValidateScope, askViewer, askWebAccessFor, askWorktreesEnvelope, autoDetectedBuiltins, automationWorkspaceMembers, automations, awayPersonOf, badRequest, bareWorkspaceKey, bearerMatches, broadcast, broadcastFeature, brokerStartRefusal, builtins, busyActionRunIds, channelHost, chatGroupError, chatNotifier, chatRefusals, checkoutRecOf, commentIdParam, commentsCreate, commentsDelete, commentsFail, commentsList, commentsPatch, commentsReply, createRunPr, crosslinkMemberPrs, currentUpdateEligibility, defaultPrRemotes, deleteAskThreadFully, detectSystemProxyImpl, detectTeamMemorySoon, drainServer, effectiveUiLevel, egressNow, emitAskWorktrees, emitChanged, emitMemoryChanged, emitPluginsChanged, ensureSetup, extensionPairing, factDeps, failedEventTurn, findScheduleItem, flipCard, followCloneCard, forkPrRefusal, fsAllowedRoots, fsLimitedHere, gitMissing, invokeStartRun, isFinishingRun, isFreshInstall, isLiveRun, isPlainObject, isPrStoreKey, isTruthy, kickAutomations, kickPrWatch, labelsOn, lastUpdateResult, liveAutoRescan, liveDefragRun, liveDiffOf, livePr, liveProbe, liveRunEntry, liveRunIds, liveSliceOf, marketJobFailure, mcpRunPreview, mcpTargetOf, memberFor, memoryError, modelTestsInFlight, namingBucket, namingCatalog, namingOn, namingPick, noRawCommand, notifReader, openMemberPr, ownsWorkspaceTarget, parseMcpOptOut, pauseRun, pickPrRemotes, pinUiLevel, postAskSystemNotice, postDirection, prTargetFor, prWatchFrame, prWatcher, presetCheckCtx, presetScopeOf, primaryMemberOf, projectAutomationRepo, projectDirForKey, projectSettingsState, proxyHost, pruneMarketJobs, prunedNote, publicCloneJob, readInstalledManifest, refuseAgentCaller, refuseSignedOutClaude, registeredProjectForDir, rejectRawTerminalFields, removeRecommendation, requireActions, requireFsAllowed, requireTerminal, resolvePending, resolvePrPipeline, resolveProjectDir, resolveRunScope, resumeEngineOpts, resumeRun, resumeTargetDirs, runGroupIds, runSourceIssue, scanModelsFor, scanRequest, scheduleVerb, sendArtifactRaw, sendCheckoutError, sendMetricsError, sendPolicyError, sendPresetError, serveAskFile, serverMockMode, settleShipped, setupJobs, setupProbesOverride, shipChainNow, shipCtxOf, shipFeatureNow, skillRunPreview, snapshotFor, sockets, stackStates, stackTokens, startAgentGen, startAskTurn, startCloneJob, startMetricsEventTurn, startOrQueue, startRunAs, startRunHandler, startScopeEventTurn, startScriptBench, stopCheckoutServices, stopMemberServices, stopPausedPipeline, stopRun, switchThreadScope, syncMode, syncProjectAction, syncRoute, teamOriginOk, teamWarn, terminalCallerOk, terminalEnabledHere, terminalError, terminalSameOrigin, terminals, tmProject, uiControl, unsyncableBlock, updateChecker, updatePort, updatePreview, validateResumeTarget, versionLister, versionPayload, webhookSecret, withAfter, workspaceMembersBusy };
 export const _testing = {
   settleStaleParkedEntries,
   updateChecker,
@@ -10284,7 +10238,6 @@ export const _testing = {
   askTrackRun, liveRunEntry, liveDefragRun, askRefResolver, requirementsRunSummary, invokeStartRun, memoryScopeKey, startRunHandler, emitMemoryChanged, askSystemPromptFor, askMemoryMutation,
   uiControl, bearerMatches, uiToken: () => UI_TOKEN,
   broadcast, sockets, askFilesRunDir,
-  workflowTestDeps,
   validateResumeTarget, resumeTargetDirs, maybeScheduleLimitResume, resumeTargetOf, fireResumeTicket, cancelScheduledResumes, stopPausedPipeline,
   trackHeartbeat, heartbeatTick, BOOT_ID, drainServer, autoResumeOnBoot, DRAIN, collectPlatformHeartbeat, closeAtTokenExpiry, settleShutdownSteps,
   askCommandBridge, askProxyBridge, askCommands, askCommandsEnabled, askCommandTarget, drainAskDeferred, startScopeEventTurn, startTerminalEventTurn, terminals, prWatcher, automations, automationHost, automationDraftPr, liveRunOnBranch, terminalResolveOnBranch, prWatchMergeBase, prWatchOrigin, prWatchFrame,
