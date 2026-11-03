@@ -1,0 +1,72 @@
+name: Firefox e2e
+
+# #919 final round: the Firefox e2e suite (e2e:firefox-smoke, tools/firefox-smoke.mjs) in Playwright's own Firefox
+# build, on Linux. Playwright's Firefox hangs headless on the macOS dev machine (sandbox_extension_issue_file_to_process
+# … Operation not permitted), so split:verify --firefox-in-ci marks this suite "CI job firefox-e2e, not run locally" and
+# this job is where it runs. Meant as a required check: every PR into dev (incl. one retargeted to dev) and every push
+# to dev, with NO paths filter (a required check that never runs stays pending forever; see ci.yml's header).
+# The `extension` job in ci.yml keeps smoking the runner's stock Firefox.
+on:
+  push:
+    branches: [dev]
+  pull_request:
+    branches: [dev]
+    # edited: a stacked PR retargeted to dev changes its base without a push
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: firefox-e2e-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  firefox-e2e:
+    name: Firefox e2e (Playwright Firefox, branch and split tree)
+    # Pinned, not ubuntu-latest: ubuntu-latest is 26.04, and Playwright 1.56 (devDependencies["@playwright/test"])
+    # has no Firefox build for it ("Playwright does not support firefox on ubuntu26.04-x64"). Back to ubuntu-latest
+    # once the pinned Playwright supports ubuntu 26.04.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0   # readiness split clones HEAD with git clone --shared
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with: { node-version: 22, cache: npm }
+
+      - run: npm ci
+
+      # == devDependencies["@playwright/test"]: the same Firefox revision the lockfile pins.
+      - name: Install Playwright Firefox with its system deps
+        run: npx playwright install --with-deps firefox
+
+      - name: Point FIREFOX_BIN at Playwright's Firefox
+        run: |
+          echo "FIREFOX_BIN=$(node -e "import('playwright-core').then((m) => console.log(m.firefox.executablePath()))")" >> "$GITHUB_ENV"
+
+      - name: e2e:firefox-smoke on the branch
+        run: |
+          "$FIREFOX_BIN" --version
+          npm run e2e:firefox-smoke
+        env: { CI: "true" }
+
+      # Only while the branch is not split yet (it carries the splitter and has no ui/routes/): after the freeze the
+      # branch IS the split tree, and the step above already covers it.
+      - name: Build the split tree
+        id: split
+        run: |
+          if [ -f tools/split-by-feature.mjs ] && [ ! -d ui/routes ]; then
+            node --disable-warning=ExperimentalWarning tools/readiness.mjs split --rev HEAD --splitter-rev HEAD --out "$RUNNER_TEMP/split"
+            echo "tree=$RUNNER_TEMP/split/tree" >> "$GITHUB_OUTPUT"
+          else
+            echo "already split (or no splitter): the branch run above is the split tree"
+          fi
+
+      - name: e2e:firefox-smoke on the split tree
+        if: steps.split.outputs.tree != ''
+        working-directory: ${{ steps.split.outputs.tree }}
+        run: npm run e2e:firefox-smoke
+        env: { CI: "true" }

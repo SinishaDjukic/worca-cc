@@ -1,11 +1,12 @@
 // test/ui-workflows-markup.test.mjs — the Workflows view's static shell (index.html) and its CSS hooks.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
-const html = readFileSync(new URL('../ui/public/index.html', import.meta.url), 'utf8');
-const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+const html = readIndexHtml();
+const css = readStyleCss();
 const doc = new JSDOM(html).window.document;
 
 test('one workflows view; the composer, agents, scripts and agent-create views are gone', () => {

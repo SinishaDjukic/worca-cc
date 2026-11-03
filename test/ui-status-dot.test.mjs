@@ -1,11 +1,11 @@
 // test/ui-status-dot.test.mjs — the one status-dot renderer (spec §2.1): Needs you and Failed are 12px symbols, never dots.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { renderStatusDot, paintStatusDot } from '../ui/public/status-dot.mjs';
 import { RUN_STATES } from '../src/shared/run-model.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
 const model = (state) => ({ state, ...RUN_STATES[state] });
@@ -47,7 +47,7 @@ test('repainting the same element from a symbol to a dot drops the symbol and it
 });
 
 test('status-dot CSS: 8px dot, 12px symbol, pulse off under reduced motion', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   assert.match(css, /\.status-dot\{[^}]*width:8px;height:8px;[^}]*border-radius:50%/);
   assert.match(css, /\.status-dot\.has-sym\{[^}]*width:12px;height:12px/);
   assert.match(css, /prefers-reduced-motion: reduce\)\{[^@]*\.status-dot\.is-pulse\{animation:none;\}/);
@@ -100,6 +100,6 @@ test('Following a run draws the run line icon in the Following colour, pulsing; 
   assert.deepEqual([...el.classList].sort(), ['has-ic', 'is-peach', 'is-pulse', 'status-dot']);
   assert.equal(el.querySelectorAll('svg.status-ic').length, 1);
   assert.equal(el.getAttribute('aria-label'), 'Follows a run');
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   assert.match(css, /\.status-dot\.has-ic\.is-peach\{color:var\(--peach-ink\);\}/, 'the icon reads in the Following colour, not ink-2');
 });

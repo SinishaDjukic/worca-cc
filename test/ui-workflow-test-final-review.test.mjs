@@ -6,6 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 import { openTestVersionDialog, openFromRunDialog } from '../ui/public/workflows/test-dialogs.mjs';
 import { renderTestProgress } from '../ui/public/workflows/test-progress.mjs';
 import { renderTestsPage } from '../ui/public/workflows/tests-view.mjs';
@@ -72,7 +73,7 @@ test('M3: a pick-project example says what it has: files, no request, or the req
 });
 
 test('M4: the setup input, the command box and the from-run setup input are monospace over the field font rule', () => {
-  const css = read('../ui/public/style.css');
+  const css = readStyleCss();
   const rule = css.split('\n').find((l) => l.includes('input.wft-mono[type="text"]'));
   assert.ok(rule && rule.includes('font-family:var(--mono)'), 'a rule more specific than input[type="text"] sets the mono font');
 });

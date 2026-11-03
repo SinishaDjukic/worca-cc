@@ -1,7 +1,6 @@
 // test/ask-panel-card.test.mjs — the Start-run card (spec §9, §10.5, D1-D3).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 
 import { makePanel } from './helpers/ask-panel-harness.mjs';
 import { stampFrames } from './helpers/ask-frames.mjs';
@@ -1794,6 +1793,7 @@ test('ask-panel-card: run tags show as chips and ride Start and Open in New run'
 
 // ── Ask Worca's composer cards: drafted agents / scripts and the graph card (ask-composer-cards.mjs) ──
 import { buildGraphManifest } from '../src/shared/graph/manifest.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const DRAFT_META = { metaVersion: 2, key: 'releaseNotes', displayName: 'Release Notes', description: 'Writes release notes.', color: 'blue', runnerType: 'producer',
   domain: 'general', order: 99, inputs: [{ id: 'plan', type: 'md' }], outputs: [{ id: 'notes', type: 'md', filename: 'notes.md' }] };
@@ -2337,7 +2337,7 @@ test('ask-panel-card: switching a project card to No project drops the project; 
   cardEl.querySelector('[data-ask-card-seg="none"]').click();
   await ctx.tick();
   assert.equal(cardEl.querySelector('.ask-card-needs-repo').textContent, 'Some steps expect a code repository.');
-  assert.ok(readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8').includes('.ask-card-needs-repo{margin:0;color:var(--ink-2);font-size:12px;line-height:1.45;}'),
+  assert.ok(readStyleCss().includes('.ask-card-needs-repo{margin:0;color:var(--ink-2);font-size:12px;line-height:1.45;}'),
     'one quiet line, as New run\'s .hint (no browser-default paragraph margins)');
   assert.equal(cardEl.querySelector('[data-ask-card-start]').disabled, false);
   const wf = cardEl.querySelector('.ask-card-workflow'); wf.value = 'wf_review'; wf.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));

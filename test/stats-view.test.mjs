@@ -11,6 +11,7 @@ import {
   renderSpendChart, renderPeopleCard, renderShapingCard,
 } from '../ui/public/stats-view.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
 
@@ -306,7 +307,7 @@ test('renderGroupsCard: the Requirements row is muted like the Chat row and has 
   assert.ok(tr.classList.contains('groups-row-requirements'));
   assert.equal(tr.cells[0].textContent, 'Requirements');
   for (const i of [3, 4, 5, 6, 7]) assert.equal(tr.cells[i].textContent, '—');
-  assert.match(readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8'), /\.groups-table tr\.groups-row-requirements td/);
+  assert.match(readStyleCss(), /\.groups-table tr\.groups-row-requirements td/);
 });
 
 test('renderKpiRow: the Naming line shows under Chat only when there is naming spend', () => {

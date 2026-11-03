@@ -4,14 +4,13 @@
 // the chat, and the Escape that closes the search never steps a run's detail back.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
 const trackDom = useDomRelease(afterEach);
-const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 const AGO = (ms) => new Date(Date.now() - ms).toISOString();
 
@@ -28,7 +27,7 @@ const ARMS = [
 // `flags`: data-flags on the shell's html element, as the server renders it. `threads`: the /api/ask/threads?q= answer.
 // `holds`: path → a promise the answer waits for (a test may add one after boot, and lift `down` entries too).
 async function boot({ down = {}, flags = '', threads = [], arms = [], holds = {} } = {}) {
-  const raw = readFileSync(htmlPath, 'utf8');
+  const raw = readIndexHtml();
   const dom = trackDom(new JSDOM(flags ? raw.replace('<html lang="en"', `<html lang="en" data-flags="${flags}"`) : raw, { url: 'http://localhost:4317/' }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};

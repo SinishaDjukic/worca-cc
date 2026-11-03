@@ -12,6 +12,7 @@ import {
 } from '../ui/public/setup-assistant.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { backdropClick, pressEscape, discardPrompt, keepEditing } from './helpers/popups.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const read = (p) => readFileSync(new URL(`../${p}`, import.meta.url), 'utf8');
 const UNREACHABLE = 'Worca could not be reached. Check that it is still running.';
@@ -1053,7 +1054,7 @@ test('credential broker: no key input, no Copilot sign-in, the key page link onl
 // ── source checks ──
 
 test('CSS: 290px layout, --ink-2 scoping and no ink-3 under .setup- (AC-4.7, fit-1-1)', () => {
-  const css = read('ui/public/style.css');
+  const css = readStyleCss();
   assert.match(css, /\.setup-card \.sa-row\{[^}]*flex-wrap:wrap[^}]*min-width:0[^}]*\}/);
   assert.ok(css.includes('.setup-card .sa-pair{display:flex;flex-wrap:wrap;gap:8px;}'));
   assert.ok(css.includes('.setup-card .sa-pair > *{flex:1 1 100px;min-width:0;}'));

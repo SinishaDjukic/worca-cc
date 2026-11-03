@@ -9,10 +9,12 @@ import { join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { cssRules as rules } from './helpers/css-rules.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 // Comments blanked but newlines kept, so a rule's line number is its real line.
-const css = readFileSync(join(ROOT, 'ui/public/style.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '));
+const css = readStyleCss().replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '));
 
 /** Split on top-level commas only: commas inside color-mix(…), var(…) or :is(…) stay. */
 function splitTop(v) {
@@ -244,7 +246,7 @@ test('the removed-selector scan flags a reappearance (self-test)', () => {
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 test('the Runs header holds no search field or filter row (spec §3.1, Known bug 10 layout)', () => {
-  const doc = new JSDOM(readFileSync(join(ROOT, 'ui/public/index.html'), 'utf8')).window.document;
+  const doc = new JSDOM(readIndexHtml()).window.document;
   const head = doc.querySelector('.runs-head');
   assert.ok(head, 'the Runs header exists');
   // Slice 3's select-all checkbox (input.runs-check.runs-all, ui/public/index.html:671) belongs there; any other
@@ -395,7 +397,7 @@ test('run bars are neutral: no blue fill on a progress bar (A1, spec §2.3)', ()
 
 test('a flag chip in a tab strip sits inside its tab label (A4)', async () => {
   const { decorateFlagChips } = await import('../ui/public/flags.mjs');
-  const doc = new JSDOM(readFileSync(join(ROOT, 'ui/public/index.html'), 'utf8')).window.document;
+  const doc = new JSDOM(readIndexHtml()).window.document;
   decorateFlagChips(doc);
   for (const strip of doc.querySelectorAll('.tabs, .seg, [role="tablist"]')) {
     assert.deepEqual([...strip.children].filter((c) => c.matches('.flag-chip, a')).map((c) => c.outerHTML.slice(0, 60)), []);

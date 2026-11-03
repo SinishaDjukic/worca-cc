@@ -215,8 +215,8 @@ test('the focus stays on the page (inside the canvas-keys fence): after Hide, an
 
 // Browser check H1: at 390px the result columns were cut off. On a phone each row stacks and each result names its column.
 test('the examples table: each result cell names its column, for the stacked phone layout (H1)', async () => {
-  const { readFileSync } = await import('node:fs');
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const { readStyleCss } = await import('../src/core/read-style-css.mjs');
+  const css = readStyleCss();
   assert.ok(/@media \(max-width:700px\)\{[^\n]*\.wft-row\{[^}]*min-width:0/.test(css), 'no fixed table width on a phone');
   assert.ok(/\.wft-row \[data-label\]::before\{content:attr\(data-label\)/.test(css));
   assert.ok(/\.wft-crow2 \[data-label\]::before\{content:attr\(data-label\)/.test(css), 'Compare By example too');

@@ -5,14 +5,14 @@
 // here as-is (the CLI's only line channel) and is NOT changed by this task.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, basename } from 'node:path';
 
 import { useTempHome } from './helpers/temp-home.mjs';
 import { userScriptsDir } from '../src/core/script-registry.mjs';
 import { resolveBenchCwd, runBenchOnce } from '../src/core/script-bench.mjs';
+import { readServerSource } from '../src/core/read-server-source.mjs';
 
 useTempHome(after);
 const scratch = [];
@@ -79,7 +79,7 @@ test('runBenchOnce: allowDirCwd routes the run into that folder; P1c onLine stil
 });
 
 test('the server never passes allowDirCwd (source pin)', () => {
-  const src = readFileSync(fileURLToPath(new URL('../ui/server.mjs', import.meta.url)), 'utf8');
+  const src = readServerSource();
   assert.doesNotMatch(src, /allowDirCwd/, 'a browser must never point a bench run at an arbitrary folder');
   assert.match(src, /createBench\(request\)/, 'the bench route builds its bench with NO deps');
 });

@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 import { renderTestProgress } from '../ui/public/workflows/test-progress.mjs';
 import { PAUSE_REFUSED_TEXT, PAUSE_REFUSED_OTHER } from '../src/core/workflow-tests/runner.mjs';
 
@@ -230,6 +231,6 @@ test('app.js (Task 13 review): frames repaint only the shown Tests page, re-entr
 });
 
 test('style.css: the stopped page\'s cost limit sits inline beside Finish the rest, at the board\'s width (M2)', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   assert.ok(/\.wft-acts \.wft-cap\{[^}]*width:96px/.test(css), 'beats input[type="text"]{width:100%}');
 });

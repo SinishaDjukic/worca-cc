@@ -1,10 +1,12 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { buildGraph, changedFiles, relatedTests, FULL_SUITE } from '../tools/test-related.mjs';
+import { buildGraph, changedFiles, referencesOf, relatedTests, FULL_SUITE } from '../tools/test-related.mjs';
+import { SERVER_MJS } from '../src/core/read-server-source.mjs';
+import { STYLE_CSS } from '../src/core/read-style-css.mjs';
 
 const roots = [];
 after(() => { for (const r of roots) rmSync(r, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }); });
@@ -103,4 +105,25 @@ test('changedFiles: tracked changes against the base, plus untracked files', () 
   writeFileSync(join(root, 'src/new.mjs'), 'export {};\n');
   assert.deepEqual(changedFiles(root), ['src/b.mjs', 'src/new.mjs']);
   assert.deepEqual(changedFiles(root, first), ['src/a.mjs', 'src/b.mjs', 'src/new.mjs']);
+});
+
+// #919: tests read the shell sources through one reader module per file (read-style-css.mjs, read-index-html.mjs,
+// read-server-source.mjs); each names its own file, so the edges stay one per source.
+const REPO = new URL('../', import.meta.url).pathname;
+test('a change to ui/public/style.css does not select the readers of index.html or ui/server.mjs', () => {
+  const { tests } = relatedTests(REPO, [STYLE_CSS]);
+  assert.ok(!tests.includes('test/script-bench-dir-cwd.test.mjs'));
+  assert.ok(!tests.includes('test/index-html.test.mjs'));
+});
+test('a change to ui/public/style.css still selects a test that reads it through public-assets', () => {
+  assert.ok(relatedTests(REPO, [STYLE_CSS]).tests.includes('test/stats-view.test.mjs'));
+});
+test('a change to ui/server.mjs still selects a test that reads it with readServerSource()', () => {
+  assert.ok(relatedTests(REPO, [SERVER_MJS]).tests.includes('test/git-capability-api.test.mjs'));
+});
+test('the shell monoliths keep their reader edges when the file is gone (a split tree)', (t) => {
+  const d = mkdtempSync(join(tmpdir(), 'trel-')); t.after(() => rmSync(d, { recursive: true, force: true }));
+  mkdirSync(join(d, 'src/core'), { recursive: true }); mkdirSync(join(d, 'test'), { recursive: true });
+  writeFileSync(join(d, 'src/core/read-style-css.mjs'), `export const STYLE_CSS = new URL('../../${STYLE_CSS}', import.meta.url);\n`);
+  assert.ok(referencesOf(d, 'src/core/read-style-css.mjs', readFileSync(join(d, 'src/core/read-style-css.mjs'), 'utf8')).has(STYLE_CSS));
 });

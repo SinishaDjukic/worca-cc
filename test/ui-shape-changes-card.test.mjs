@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { renderChangesCard } from '../ui/public/shape/changes-card.mjs';
 import { changesCard } from '../src/core/shape/changes.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const RUN = { pipelineId: 'aaaa0002', title: 'Add a chart', label: 'Run 2', projectDir: '/p', finished: true,
   branch: { source: 'dev', feature: 'worca/charts-2' }, pr: { number: 41, url: 'https://x/pull/41', state: 'OPEN' }, rounds: 1 };
@@ -46,7 +47,7 @@ test('applied round names the PR to update; a 409 shows the error and unlocks', 
 
 test('a long Changes or Route title ellipsizes instead of overflowing the card', async () => {
   const { readFileSync } = await import('node:fs');
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   const rule = css.split('\n').find((l) => l.includes('.ask-shipcard .ask-mcard-title') && l.includes('text-overflow:ellipsis'));
   assert.ok(rule, 'the shared title fix-up rule exists');
   for (const sel of ['.ask-changescard .ask-mcard-title', '.ask-routecard .ask-mcard-title']) assert.ok(rule.includes(sel), sel);

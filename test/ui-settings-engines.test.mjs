@@ -3,16 +3,15 @@
 // keys (titleModel, autoWorkflowModel, prDescriptionModel, memoryDefrag); Save posts runEngine / stepModels / utilityModels.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { renderEngineSection, renderAskEngineSection, enginePatchToSettingsBody, ENGINE_EFFORTS, utilityId, renderRolesSection } from '../ui/public/engine-settings-view.mjs';
 import { EFFORTS, CODEX_EFFORTS } from '../src/core/model-env.mjs';
 import { applyFlags } from '../ui/public/flags.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
 const trackDom = useDomRelease(afterEach);
-const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 const CATALOG = [
   { id: 'claude-opus-5-5', label: 'Opus 5.5', engine: 'claude', efforts: ['medium', 'high', 'xhigh', 'max'], custom: false },
@@ -113,7 +112,7 @@ test('renderAskEngineSection offers no Cursor engine', () => {
 });
 
 async function boot(settings = {}, { hash = 'settings', engines = null, flags = '', steps = STEPS, catalog = CATALOG, configStatus = 200, postReply = null } = {}) {
-  const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4317/' }));
+  const dom = trackDom(new JSDOM(readIndexHtml(), { url: 'http://localhost:4317/' }));
   const { window } = dom;
   if (flags) window.document.documentElement.dataset.flags = flags;
   window.Element.prototype.scrollIntoView = function () {};

@@ -283,8 +283,8 @@ test('a limit Basic: the box and "times" go together, beside the switch, and sta
 });
 
 test('style.css: the Basics boxes keep their width and the switch keeps its label beside it at phone width (M5)', async () => {
-  const { readFileSync } = await import('node:fs');
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const { readStyleCss } = await import('../src/core/read-style-css.mjs');
+  const css = readStyleCss();
   assert.ok(/\.wft-basic \.wft-num\{[^}]*width:84px/.test(css), 'beats input[type="text"]{width:100%}');
   assert.ok(/\.wft-basic > \.wft-chk\{[^}]*flex-wrap:nowrap/.test(css), 'the label never drops under the switch');
   assert.ok(/\.wft-basic-val\{[^}]*white-space:nowrap/.test(css), 'the box and "times" stay together');

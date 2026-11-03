@@ -2,9 +2,9 @@
 // callbacks, the gone badge, and a name holding HTML rendering as text.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { renderPresetsList, presetScopeLabel, PRESETS_EMPTY_TEXT } from '../ui/public/run-presets-view.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const NOW = Date.parse('2026-10-16T12:00:00Z');
 const preset = (over = {}) => ({ id: 'rp_aaaaaaaaaaaa', name: 'Quick fix', scope: { kind: 'global', ref: null },
@@ -66,7 +66,7 @@ test('the meta line names the workflow and engine: Auto workflow, a muted Workfl
 });
 
 test('style.css dims a muted workflow label on the card meta line', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   assert.match(css, /\.preset-meta \.preset-wf\.muted\{color:var\(--ink-3\);\}/);
 });
 

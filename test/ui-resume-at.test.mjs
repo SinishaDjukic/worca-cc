@@ -9,15 +9,14 @@
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { readFileSync } from 'node:fs';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
 
-const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 const PROJECT = '/tmp/proj-resume-at';
 const KEY = 'proj-resume-at-abcd1234';
@@ -29,7 +28,7 @@ const ok = (body, status = 200) => Promise.resolve({ ok: status >= 200 && status
 
 async function boot({ fetchHandler, level } = {}) {
   // `level`: the server-rendered interface mode (docs/ui-levels.md); null = no attribute (gates nothing).
-  let html = readFileSync(htmlPath, 'utf8');
+  let html = readIndexHtml();
   if (level) html = html.replace('<html lang="en" data-theme="system">',
     `<html lang="en" data-theme="system" data-level="${level}">`);
   const dom = trackDom(new JSDOM(html, { url: 'http://localhost:4317/' }));

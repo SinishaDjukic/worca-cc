@@ -9,6 +9,7 @@ import {
   previewKindFor, parseDelimited, midTruncate, formatBytes, baseName, displayPath, CSV_MAX_ROWS,
 } from '../ui/public/artifacts/common.mjs';
 import { renderPreview } from '../ui/public/artifacts/preview.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const mountIn = () => new JSDOM('<!doctype html><body><div class="artifact-view" id="m"></div></body>',
   { url: 'http://localhost:4317/' }).window.document.getElementById('m');
@@ -509,7 +510,7 @@ test('a slow answer for the file left behind never changes the file shown now: a
 
 test('the --hd-syntax-* tokens are in the :root token block, so highlighted code is coloured wherever it sits', async () => {
   const { readFileSync } = await import('node:fs');
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   assert.match(css.slice(css.indexOf(':root{'), css.indexOf('/* ---------- base reset')), /--hd-syntax-comment:/);
 });
 
