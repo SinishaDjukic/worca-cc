@@ -330,7 +330,7 @@
   "POST /api/memory/global/history/:id/restore": {"class": "probe", "reason": "unknown snapshot id: ENAME/ENOSCOPE 4xx, caught by scoped"},
   "POST /api/memory/projects/:key/defragment": {"class": "probe", "reason": "defragRequest 404 project not found"},
   "POST /api/memory/projects/:key/history/:id/restore": {"class": "probe", "reason": "resolveMemoryScope 404 project not found"},
-  "POST /api/memory/proposals/:id/:action(approve|reject)": {"class": "probe", "reason": "404 for an unknown proposal id"},
+  "POST /api/memory/proposals/:id/:action": {"class": "probe", "reason": "placeholder action is not approve or reject, so 404"},
   "POST /api/memory/team/:key/available/dismiss": {"class": "probe", "reason": "teamProject 404 (or 403 origin) first"},
   "POST /api/memory/team/:key/resolve": {"class": "probe", "reason": "teamProject 404 (or 403 origin) first"},
   "POST /api/memory/team/:key/seed": {"class": "probe", "reason": "teamProject 404 (or 403 origin) first"},
