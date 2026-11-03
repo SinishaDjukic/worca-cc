@@ -341,6 +341,7 @@ import {
   registerRequirementsRoutes, requirementsChangeNotifier, REQUIREMENTS_UPLOAD_ROUTES, REQUIREMENTS_UPLOAD_JSON_LIMIT, requirementsUploadSlots,
 } from '../src/core/requirements/routes.mjs';
 import { createRunEventHook } from '../src/core/requirements/start.mjs';
+import { warmTrackerProbe } from '../src/core/requirements/trackers.mjs';
 import { recoverInterrupted as recoverRequirements, requirementsModel, DEFAULT_INTERVIEW_EFFORT } from '../src/core/requirements/interview.mjs';
 import { recoverBriefs } from '../src/core/requirements/brief-job.mjs';
 import { recoverAttachmentReads, sweepReadFolders, sweepTempBodies, withStagedRunFiles } from '../src/core/requirements/attachment-job.mjs';
@@ -19966,6 +19967,9 @@ if (isMain) {
     } catch (err) { console.warn(`[worca-ui] team memory background: ${err?.message || err}`); }
     try { startProjectSyncBackground({ log: (m) => console.warn(m) }); }
     catch (err) { console.warn(`[worca-ui] project sync background: ${err?.message || err}`); }
+    // Requirements: the first tracker capabilities probe (a plugin spawn) runs now, not when the first page asks. Not awaited.
+    try { warmTrackerProbe({ enabled: flagEnabled('requirements') }); }
+    catch (err) { console.warn(`[worca-ui] requirements tracker probe: ${err?.message || err}`); }
     // Watch PR (#619): its stop is awaited by shutdown's settleShutdownSteps.
     try { prWatcher.runner.start(); }
     catch (err) { console.warn(`[worca-ui] PR watch: ${err?.message || err}`); }

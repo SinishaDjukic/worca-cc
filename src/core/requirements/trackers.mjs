@@ -27,7 +27,7 @@ const capCache = new Map();
 const capFailed = new Map();   // `${plugin}/${sourceId}/${profile}` → when the probe failed
 const capInflight = new Map();
 /** Tests (through export.mjs's _resetExportCaches): forget every probe answer and failure. */
-export function _resetTrackerCaches() { capCache.clear(); capFailed.clear(); capInflight.clear(); listCache.clear(); }
+export function _resetTrackerCaches() { capCache.clear(); capFailed.clear(); capInflight.clear(); listCache.clear(); warmLogged = false; }
 
 /** How long a connection's project list stands: it pages through every project of the tracker (seconds on a big Jira). */
 export const LIST_TTL_MS = 10 * 60_000;
@@ -105,7 +105,19 @@ export async function trackersWith(cap, d = {}) {
   return found.filter(Boolean);
 }
 
-export const bindingsOf = (scope) => { try { return listBindingsForScope(scope.scopeType, scope.scopeKey); } catch { return []; } };
+let warmLogged = false;
+/**
+ * The server calls this once after it listens, with the `requirements` flag on: the first capabilities probe (a plugin child spawn,
+ * a few hundred ms) then runs before anyone opens New feature. Fire-and-forget: it returns the probe's promise for a test, the
+ * caller never awaits it, and it never throws or rejects; a failure is logged once, first line only. `enabled` false does nothing.
+ */
+export function warmTrackerProbe({ enabled = true, d = {}, log = console.warn } = {}) {
+  if (!enabled) return null;
+  const fail = (err) => { if (!warmLogged) { warmLogged = true; try { log(`requirements: warming the tracker probe failed: ${firstLine(err)}`); } catch { /* best effort */ } } };
+  try { return trackersWith('import', d).then(() => undefined, fail); } catch (err) { fail(err); return Promise.resolve(); }
+}
+
+export const bindingsOf =(scope) => { try { return listBindingsForScope(scope.scopeType, scope.scopeKey); } catch { return []; } };
 
 /** D2: where a new setup's Connection starts: the scope's profile from resolveProfile (a bound tracker first), else the
  *  first tracker's first connection; null without a tracker. */

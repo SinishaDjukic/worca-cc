@@ -12,7 +12,7 @@ import { readPluginsLock, writePluginsLock } from '../src/core/plugins-lock.mjs'
 import { setBinding } from '../src/core/source-bindings.mjs';
 import { PluginOpError } from '../src/core/plugin-shim.mjs';
 import { EXPORT_TIMEOUT_MS, exportTrackers, _resetExportCaches } from '../src/core/requirements/export.mjs';
-import { PROBE_TIMEOUT_MS, PROBE_RETRY_MS, trackersWith, defaultConnection, reachReason, reachSentence } from '../src/core/requirements/trackers.mjs';
+import { PROBE_TIMEOUT_MS, PROBE_RETRY_MS, trackersWith, warmTrackerProbe, defaultConnection, reachReason, reachSentence } from '../src/core/requirements/trackers.mjs';
 
 useTempHome(after, 'worca-req-export-trackers-');
 const JIRA_DIR = fileURLToPath(new URL('../plugins/jira-source', import.meta.url));
@@ -194,4 +194,38 @@ test('A6.1: import follows what is installed too: a link that adds import is ask
   assert.deepEqual((await exportTrackers({ callSource })).map((x) => x.plugin), ['jira-source'], 'export reads the same answer');
   assert.equal(asked(), 2, 'one probe per install answers export and import');
   writePluginsLock(lock);
+});
+
+// ---- the server warms the probe at start (ui/server.mjs, after listen, flag requirements) ----
+test('warmTrackerProbe: off asks nothing; on starts the probe without waiting for it, and the first view finds the answer cached', async () => {
+  createProfile('jira-source', 'acme', 'acme.atlassian.net (Cloud)');
+  _resetExportCaches();
+  const callSource = fakeCall({ 'jira-source': { export: true, import: true }, 'mock-source': { writeBack: true } });
+  assert.equal(warmTrackerProbe({ enabled: false, d: { callSource } }), null);
+  assert.equal(callSource.calls.length, 0);
+  let release;
+  const held = new Promise((r) => { release = r; });
+  const slow = fakeCall({ 'jira-source': async () => { await held; return { export: true, import: true }; }, 'mock-source': { writeBack: true } });
+  const warm = warmTrackerProbe({ enabled: true, d: { callSource: slow } });
+  assert.ok(warm && typeof warm.then === 'function');
+  assert.ok(slow.calls.some((c) => c.op === 'capabilities'), 'the probe was started synchronously and the caller was not made to wait');
+  release();
+  await warm;
+  const after = await trackersWith('import', { callSource: slow });
+  assert.deepEqual(after.map((t) => t.plugin), ['jira-source']);
+  assert.equal(slow.calls.filter((c) => c.plugin === 'jira-source').length, 1, 'the view did not probe again');
+});
+
+test('warmTrackerProbe never throws or rejects; a failure is logged once, with its first line only', async () => {
+  _resetExportCaches();
+  const logged = [];
+  const boom = { callSource: async () => { throw new Error('first line\nsecond line with a secret'); } };
+  // trackersWith swallows a probe failure itself; a throw from the listing is the only way out, so force one
+  const bad = { callSource: boom.callSource, now: () => { throw new Error('clock\nsecret'); } };
+  const p1 = warmTrackerProbe({ enabled: true, d: bad, log: (m) => logged.push(m) });
+  await p1;
+  const p2 = warmTrackerProbe({ enabled: true, d: bad, log: (m) => logged.push(m) });
+  await p2;
+  assert.ok(logged.length <= 1, 'logged at most once');
+  assert.ok(logged.every((m) => !/secret/.test(m)));
 });
