@@ -3,7 +3,7 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { readFileSync } from 'node:fs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const { window } = new JSDOM('<!doctype html><body></body>', { url: 'http://localhost:4317/#requirements/new' });
 for (const k of ['document', 'location', 'Event', 'KeyboardEvent', 'HTMLElement', 'window']) {
@@ -172,7 +172,7 @@ test('a search that fails says why with Try again; Try again searches again', as
 });
 
 test('CSS: the pick\'s rules sit inside the Requirements block, use tokens only, and a picked ticket row is an ink border', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   const start = css.indexOf('/* Requirements page (plans/requirements-design.md section 6). Tokens only. */');
   const end = css.indexOf('/* ── marketplace P3 ── */');
   for (const sel of ['.req-import-labrow', '.req-import-search', '.req-import-ticket', '.req-import-results']) {
@@ -295,7 +295,7 @@ test('Show more on the last page moves the focus to the first ticket it added', 
 });
 
 test('CSS: the Describe it label row matches the other field labels (8px below, weight 600 at the body size)', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   const rule = (sel) => { const m = new RegExp(`(?:^|\\n)${sel.replace(/[.*+?^${}()|[\]\\>]/g, '\\$&')}\\{([^}]*)\\}`).exec(css); return m ? m[1] : null; };
   assert.match(css, /\.field > label,\.field \.label\{display:block;font-weight:600;font-size:13px;margin-bottom:8px;\}/, 'the shared rule it matches');
   assert.match(rule('.req-import-labrow') || '', /(?:^|;)margin-bottom:8px(?:;|$)/);
@@ -374,7 +374,7 @@ test('D1, D5: Use this ticket only fills the form: the title and the description
 });
 
 test("CSS: the preview's rules sit inside the Requirements block", () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   const start = css.indexOf('/* Requirements page (plans/requirements-design.md section 6). Tokens only. */');
   const end = css.indexOf('/* ── marketplace P3 ── */');
   for (const sel of ['.req-import-cols', '.req-import-check', '.req-import-why', '.req-import-linked']) {
@@ -683,7 +683,7 @@ test('board 36 (phone): past three comments the rest fold behind "Show all 6 com
 });
 
 test('CSS (board 36): at 900 px and narrower one column, author and date only, the fold, 44 px hit areas without min-height on a button', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   const at = css.indexOf('/* A6.1 (board 36, D19)');
   assert.ok(at > 0 && at < css.indexOf('/* ── marketplace P3 ── */'));
   const block = css.slice(at, css.indexOf('/* ── marketplace P3 ── */'));
@@ -860,7 +860,7 @@ const dropFiles = (m, files) => {
 };
 const mkFile = (name, body = 'x') => new window.File([body], name, { type: 'text/markdown' });
 const formCss = () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   return css.slice(css.indexOf('/* A6.1 (board 32): the form a ticket filled'), css.indexOf('/* ── marketplace P3 ── */'));
 };
 
@@ -986,7 +986,7 @@ test('the criteria list is named by its label, which is styled as a field label'
 });
 
 test("CSS: the strip has the form's 18px rhythm; the 28 px buttons get 44 px tap areas at 900 px; a ticket file's × too (no literal 44)", () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   assert.match(css, /\.field\{margin-bottom:18px;\}/);
   const b = formCss();
   assert.match(b, /\.req-import-strip\{[^}]*margin-bottom:18px/);
