@@ -107,7 +107,7 @@ import { outcomeNote } from './run-outcome.mjs';
 import { CREATE_PR_LABEL, CREATE_PR_FAILED, CREATING_PR, PR_CREATED, VIEW_PR_LABEL, VIEW_PRS_LABEL, createPrLabel, doneStatusWord } from './ship-words.mjs';
 import { worktreeNoticeModel, worktreeRowState, retainedCommands, recoveryPatchKind, uncommittedPatchName, applyConfirmMessage, applyOutcome, checkoutRowValue, memberLabel } from './worktree-notice.mjs';
 import { limitNotice, resumeTicketOf, countdownText } from './limit-notice.mjs';
-import { buildRunsModel, countNeedsYou, isRowSelected, isMemberOpen, renderRunsList, RECENT_PAGE, groupRow, memberPrsOf, prChip, memberCostUsd, whenLabel, isFolded, setFolded } from './runs-list.mjs';
+import { buildRunsModel, countNeedsYou, isRowSelected, isMemberOpen, renderRunsList, paintStageBlocks, RECENT_PAGE, groupRow, memberPrsOf, prChip, memberCostUsd, whenLabel, isFolded, setFolded } from './runs-list.mjs';
 import { paintRunStatus, syncActions, pauseResumeOwn } from './run-status-card.mjs';
 import { buildGroupPage, paintGroupPage, runReceipts, groupPrList } from './group-page.mjs';
 import { paintGroupShip, resetGroupShip } from './ship-group-dialog.mjs';
@@ -33980,9 +33980,10 @@ function paintRunsList() {
   }
   paintLanded(host, runsUi);   // Add to group: the moved row keeps its brief fill across repaints (list-dom.mjs)
 }
-/** P2/P7: move every group line to its fraction IN PLACE — a rebuild would restart the glide. Group rows and their open members only: a
- *  top-level single row's four-section stage block is painted whole by paintProgressBar in renderItem. */
+/** P2/P7: move every group line to its fraction IN PLACE — a rebuild would restart the glide. A staged row's four-section block
+ *  is repainted in place too (paintStageBlocks): its fill is not in the row signature, so no rebuild would carry it (#1067). */
 function paintRunsProgress(host, model) {
+  paintStageBlocks(host, model);
   // #955: an open group's live members draw the same 3px line as their group row.
   const rows = model.sections.flatMap((s) => (s.collapsed ? [] : s.rows))
     .flatMap((r) => (r.kind === 'chain' ? [r, ...(r.open ? r.members || [] : [])] : []))
