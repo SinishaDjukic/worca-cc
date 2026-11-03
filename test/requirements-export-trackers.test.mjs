@@ -226,6 +226,7 @@ test('warmTrackerProbe never throws or rejects; a failure is logged once, with i
   await p1;
   const p2 = warmTrackerProbe({ enabled: true, d: bad, log: (m) => logged.push(m) });
   await p2;
-  assert.ok(logged.length <= 1, 'logged at most once');
+  assert.equal(logged.length, 1, 'logged once, not twice');
+  assert.match(logged[0], /clock/);
   assert.ok(logged.every((m) => !/secret/.test(m)));
 });

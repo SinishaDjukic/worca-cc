@@ -42,6 +42,7 @@ export function keptList(conn, kind, load, d = {}) {
   const now = msOf(d);
   const hit = listCache.get(key);
   if (hit && now - hit.at < LIST_TTL_MS) return hit.p;
+  for (const [k, e] of listCache) if (now - e.at >= LIST_TTL_MS) listCache.delete(k);   // expired lists (an older install or config) go
   const entry = { at: now, p: null };
   entry.p = load();
   listCache.set(key, entry);
@@ -117,7 +118,7 @@ export function warmTrackerProbe({ enabled = true, d = {}, log = console.warn } 
   try { return trackersWith('import', d).then(() => undefined, fail); } catch (err) { fail(err); return Promise.resolve(); }
 }
 
-export const bindingsOf =(scope) => { try { return listBindingsForScope(scope.scopeType, scope.scopeKey); } catch { return []; } };
+export const bindingsOf = (scope) => { try { return listBindingsForScope(scope.scopeType, scope.scopeKey); } catch { return []; } };
 
 /** D2: where a new setup's Connection starts: the scope's profile from resolveProfile (a bound tracker first), else the
  *  first tracker's first connection; null without a tracker. */
