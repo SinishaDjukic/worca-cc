@@ -88,6 +88,35 @@ test('abort rejects with AbortError and runs cleanup once', POSIX, async () => {
   assert.equal(cleaned, 1);
 });
 
+const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+const waitDead = async (pid, ms = 3000) => { const t = Date.now(); while (alive(pid) && Date.now() - t < ms) await new Promise((r) => setTimeout(r, 25)); return !alive(pid); };
+
+test('E3: a stop kills the agent\'s whole process group — a background job dies with it', POSIX, async () => {
+  const d = tmp();
+  const pidFile = join(d, 'bg.pid');
+  // A background job that outlives a plain SIGTERM to the parent (the run_in_background test suite).
+  const file = script(`sleep 30 & echo $! > ${pidFile}; echo started; wait`);
+  const ac = new AbortController();
+  const p = superviseSpawn(base({ file, args: [], signal: ac.signal, onStdoutLine: (l) => { if (l === 'started') ac.abort(); } }))
+    .then(() => null, (e) => e);
+  const err = await p;
+  assert.equal(err.name, 'AbortError');
+  const { readFileSync } = await import('node:fs');
+  const bg = Number(readFileSync(pidFile, 'utf8'));
+  assert.ok(await waitDead(bg), `background job ${bg} was killed with the group`);
+});
+
+test('E3: background jobs an agent left behind are reaped when it exits normally', POSIX, async () => {
+  const d = tmp();
+  const pidFile = join(d, 'bg.pid');
+  const file = script(`(trap '' HUP; exec sleep 30) > /dev/null 2>&1 & echo $! > ${pidFile}; exit 0`);
+  const r = await superviseSpawn(base({ file, args: [] }));
+  assert.deepEqual(r, { code: 0 });
+  const { readFileSync } = await import('node:fs');
+  const bg = Number(readFileSync(pidFile, 'utf8'));
+  assert.ok(await waitDead(bg), `leftover job ${bg} was reaped`);
+});
+
 test('stdin is written when given', POSIX, async () => {
   const seen = [];
   const file = script('cat');

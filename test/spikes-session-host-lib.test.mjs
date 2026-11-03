@@ -1,0 +1,443 @@
+// test/spikes-session-host-lib.test.mjs — the spike library's pure half, and every spike's --dry path. No real
+// harness is spawned: child_process is mocked to throw inside dryRun, and the only real spawns are `node` itself.
+import { test, mock } from 'node:test';
+import assert from 'node:assert/strict';
+import cp from 'node:child_process';
+import http from 'node:http';
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { summarize, strip, runTurn, requestFacts, bigPrompt, toolResult, hostAgentCalls, assistantMessages, sumUsage,
+  dryLine, runJsonl, recordingProxy, defaultUpstream, spikeContext, verdict } from '../tools/spikes/session-host/lib.mjs';
+import { main as s1 } from '../tools/spikes/session-host/s1-agents-per-resume.mjs';
+import { main as s2, definitionFacts as s2Facts, mcpGrantFact } from '../tools/spikes/session-host/s2-definition-fields.mjs';
+import { main as s3, denyFacts } from '../tools/spikes/session-host/s3-child-permissions.mjs';
+import { main as s4 } from '../tools/spikes/session-host/s4-cost.mjs';
+import { main as s6, scanCli } from '../tools/spikes/session-host/s6-depth-and-cap.mjs';
+import { main as s7, BRIEF_DIVIDER, replacesDefaultFrom } from '../tools/spikes/session-host/s7-prompt-and-quality.mjs';
+import { sum } from '../tools/spikes/session-host/fixtures/s7-repo/src/sum.mjs';
+import { slug } from '../tools/spikes/session-host/fixtures/s7-repo/src/slug.mjs';
+import { main as s8b } from '../tools/spikes/session-host/s8b-continue-child.mjs';
+import { main as s9 } from '../tools/spikes/session-host/s9-forwarding.mjs';
+import { main as s10 } from '../tools/spikes/session-host/s10-other-engines.mjs';
+
+const F = [
+  { type: 'system', subtype: 'init', session_id: 'S', model: 'claude-haiku-4-5', tools: ['Agent', 'Bash'] },
+  { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'T1', name: 'Agent', input: { subagent_type: 'spike-a', prompt: 'go', model: 'opus' } }] } },
+  { type: 'system', subtype: 'init', parent_tool_use_id: 'T1', model: 'claude-haiku-4-5', tools: ['Read'] },
+  { type: 'assistant', parent_tool_use_id: 'T1', message: { content: [{ type: 'tool_use', id: 'I1', name: 'Agent', input: { subagent_type: 'worca-investigator' } }] } },
+  { type: 'assistant', parent_tool_use_id: 'I1', message: { content: [{ type: 'text', text: 'secret' }] } },
+  { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'T1', content: 'ALPHA' }] }, tool_use_result: { resolvedModel: 'claude-haiku-4-5', usage: { input_tokens: 5 }, agentId: 'ag1' } },
+  { type: 'result', session_id: 'S', total_cost_usd: 0.0123, usage: { input_tokens: 9 } },
+];
+
+test('summarize: agent calls with their parent and input keys, child inits, results, cumulative cost', () => {
+  const s = summarize(F);
+  assert.deepEqual(s.agentCalls, [{ id: 'T1', type: 'spike-a', parent: null, inputKeys: ['model', 'prompt', 'subagent_type'] },
+    { id: 'I1', type: 'worca-investigator', parent: 'T1', inputKeys: ['subagent_type'] }]);
+  assert.equal(s.childFrames, 3);
+  assert.deepEqual(s.parentIds, ['I1', 'T1']);
+  assert.deepEqual(s.inits, [{ parent: null, model: 'claude-haiku-4-5', tools: ['Agent', 'Bash'] }, { parent: 'T1', model: 'claude-haiku-4-5', tools: ['Read'] }]);
+  assert.equal(s.toolResults[0].meta.resolvedModel, 'claude-haiku-4-5');
+  assert.equal(s.toolResults[0].meta.agentId, 'ag1');
+  assert.equal(s.cumulativeUsd, 0.0123);
+});
+
+test('strip: no text, input or content survives', () => {
+  const out = JSON.stringify(F.map(strip));
+  assert.ok(!out.includes('secret') && !out.includes('ALPHA') && !out.includes('"go"'), out);
+  assert.ok(out.includes('"T1"') && out.includes('"I1"'), 'ids survive');
+});
+
+test('requestFacts: sizes and marker hits only, never the text', () => {
+  const body = { model: 'claude-haiku-4-5', system: [{ type: 'text', text: 'You are Claude Code. Use TodoWrite. MARK-CLAUDEMD' }],
+    messages: [{ role: 'user', content: [{ type: 'text', text: 'gitStatus: clean' }] }] };
+  const f = requestFacts(body, ['TodoWrite', 'MARK-CLAUDEMD', 'gitStatus', 'absent']);
+  assert.deepEqual(f, { model: 'claude-haiku-4-5', systemBytes: 49, markersInSystem: ['TodoWrite', 'MARK-CLAUDEMD'], markersInMessages: ['gitStatus'] });
+  assert.ok(!JSON.stringify(f).includes('You are'));
+});
+
+test('bigPrompt and runTurn dry: the argv the spike would spawn', async () => {
+  const p = bigPrompt(65536, 'END-MARK');
+  assert.ok(Buffer.byteLength(p) >= 65536 && p.endsWith('END-MARK'));
+  const r = await runTurn({ bin: 'claude', cwd: '/tmp', prompt: 'p', resume: 'S', agentsFile: '/tmp/a.json', extraArgs: ['--max-turns', '4'], dry: true });
+  assert.deepEqual(r.argv, ['-p', 'p', '--output-format', 'stream-json', '--verbose', '--resume', 'S', '--agents', '/tmp/a.json', '--max-turns', '4']);
+});
+
+// ---- beyond revision 3 (D1–D5) --------------------------------------------------------------------------------
+
+test('toolResult, hostAgentCalls, assistantMessages, sumUsage: the per-call views the spikes read', () => {
+  assert.deepEqual(toolResult(F, 'T1'), { isError: false, text: 'ALPHA', meta: F[5].tool_use_result });
+  assert.equal(toolResult(F, 'nope'), null);
+  assert.deepEqual(hostAgentCalls(F).map((c) => c.id), ['T1']);
+  assert.equal(assistantMessages(F, 'T1').length, 1);
+  assert.deepEqual(sumUsage([{ input_tokens: 5 }, { input_tokens: 4, output_tokens: 1 }]),
+    { input_tokens: 9, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 });
+});
+
+test('strip: absolute paths and stderr do not survive either (the S9 fixture is committed)', () => {
+  const out = JSON.stringify(strip({ type: 'system', subtype: 'init', cwd: '/Users/someone/repo', tools: ['Read'],
+    message: { content: [{ type: 'tool_use', id: 'R1', name: 'Read', input: { file_path: '/Users/someone/repo/a.txt' } }] },
+    tool_use_result: { stderr: 'boom', filePath: '/Users/someone/repo/a.txt' } }));
+  assert.ok(!out.includes('/Users/someone') && !out.includes('boom'), out);
+  assert.ok(out.includes('"R1"') && out.includes('"Read"'));
+  // Review M1: worca's `cat` sub-agent hook puts its whole payload in hook_response.output; init carries memory paths;
+  // Glob's filenames and tool errors carry absolute paths; any other string is backstopped by root replacement.
+  const home = homedir();
+  const tmp = realpathSync(tmpdir());
+  const run = join(tmp, 'worca-spikes', 'S9', 'work-local');
+  const dashed = (p) => p.replace(/[^A-Za-z0-9]/g, '-');
+  const frames = [
+    { type: 'system', subtype: 'init', session_id: 'S9', model: 'claude-haiku-4-5', tools: ['Agent', 'mcp__corp-srv__query'], cwd: run,
+      memory_paths: { auto: `${home}/.claude/projects/${dashed(run)}/memory/` }, scratchpad_path: `${tmp}/scratch`,
+      // Cycle-2 review m1: the owner's installed inventory and other free text.
+      skills: ['owner-skill'], slash_commands: ['owner-cmd'], agents: ['owner-agent'],
+      plugins: [{ name: 'owner-plugin', source: 'owner-market' }], mcp_servers: [{ name: 'corp-srv', status: 'connected' }],
+      plugin_errors: [{ message: 'owner-plugin-error' }] },
+    { type: 'assistant', parent_tool_use_id: 'T9', task_description: 'owner brief', error: 'owner error', needs_action: 'owner action',
+      message: { content: [{ type: 'thinking', thinking: 'x', signature: 'owner-signature' }] } },
+    { type: 'stream_event', event: { delta: { type: 'input_json_delta', partial_json: '{"prompt":"owner partial' } } },
+    { type: 'user', message: { content: [] }, tool_use_result: { outputFile: `${tmp}/tasks/owner.output` } },
+    { type: 'system', subtype: 'hook_response', hook_id: 'H1', hook_name: 'PostToolUse:Agent', hook_event: 'PostToolUse',
+      output: JSON.stringify({ transcript_path: `${home}/.claude/projects/${dashed(run)}/S9.jsonl`, cwd: run,
+        tool_use_id: 'T9', tool_input: { prompt: 'brief' }, tool_response: { content: [{ type: 'text', text: 'child reply' }] } }) },
+    { type: 'user', parent_tool_use_id: 'T9', message: { content: [{ type: 'tool_result', tool_use_id: 'G1', content: 'x' }] },
+      tool_use_result: { filenames: [join(run, 'a.txt'), join(tmpdir(), 'b.txt')], numFiles: 2, durationMs: 3 } },
+    { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'B1', is_error: true, content: 'x' }] },
+      tool_use_result: `Error: cwd ${process.cwd()} is not ${home}/repo` },
+    { type: 'system', subtype: 'task_notification', tool_use_id: 'T9', output_file: `${tmp}/tasks/a.output`, summary: 'child reply',
+      usage: { total_tokens: 20 } },
+    { type: 'system', subtype: 'files_persisted', files: [{ filename: join(run, 'c.txt') }, { filename: join(home, 'd.txt') }],
+      note: `${home}/.claude/projects/${dashed(home)}-x` },
+  ];
+  const stripped = JSON.stringify(frames.map(strip));
+  for (const leak of [home, tmp, tmpdir(), process.cwd(), dashed(home), dashed(tmp), '/Users/', 'child reply', 'brief', 'owner', 'corp-srv']) {
+    assert.ok(!stripped.includes(leak), `${leak} survived: ${stripped}`);
+  }
+  for (const kept of ['"S9"', '"H1"', '"PostToolUse:Agent"', '"T9"', '"G1"', '"B1"', '"numFiles":2', '"total_tokens":20',
+    '"claude-haiku-4-5"', '/TMP/worca-spikes/S9/work-local/c.txt', '/HOME/d.txt']) assert.ok(stripped.includes(kept), `${kept} lost: ${stripped}`);
+});
+
+test('dryLine: one line; long or multi-line args become a byte count; env and placeholders print bare', () => {
+  const l = dryLine('turn 1', { bin: 'claude', env: { ANTHROPIC_BASE_URL: 'http://127.0.0.1:<port>' },
+    argv: ['-p', 'a b', '--append-system-prompt', 'x\ny', '--settings', '{"deny":["Bash(x*)"]}', '--resume', '<session-1>'] });
+  assert.equal(l, `dry turn 1: ANTHROPIC_BASE_URL=http://127.0.0.1:<port> claude -p 'a b' --append-system-prompt <3 bytes> --settings '{"deny":["Bash(x*)"]}' --resume <session-1>`);
+});
+
+test('runJsonl: JSONL frames, non-JSON lines kept in stderr, stdin closed, a bad exit or a missing binary never throws', async () => {
+  const code = "process.stdin.resume();process.stdin.on('end',()=>{console.log(JSON.stringify({type:'system',subtype:'init',session_id:'S',ctx:process.env.NODE_TEST_CONTEXT??null}));"
+    + "console.log('not json');console.log(JSON.stringify({type:'result',total_cost_usd:0.5}));process.exit(4)})";
+  const r = await runJsonl({ bin: [process.execPath], argv: ['-e', code], cwd: process.cwd() });
+  assert.deepEqual(r.frames.map((f) => f.type), ['system', 'result']);
+  assert.equal(r.frames[0].ctx, null, 'a spike child never inherits NODE_TEST_CONTEXT');
+  assert.match(r.stderr, /not json/);
+  assert.equal(r.exitCode, 4);
+  const missing = await runJsonl({ bin: ['/nonexistent/worca-spike-bin'], argv: [], cwd: process.cwd() });
+  assert.equal(missing.exitCode, -1);
+  assert.match(missing.stderr, /ENOENT/);
+});
+
+test('recordingProxy: drops the client Host, forwards body and auth, streams the reply, records facts only', async () => {
+  let seen = null;
+  const up = http.createServer((req, res) => {
+    let b = '';
+    req.on('data', (c) => { b += c; }).on('end', () => {
+      seen = { host: req.headers.host, key: req.headers['x-api-key'], body: b };
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      res.end('event: done\ndata: {}\n\n');
+    });
+  });
+  await new Promise((ok) => up.listen(0, '127.0.0.1', ok));
+  const upstream = `http://127.0.0.1:${up.address().port}`;
+  const proxy = await recordingProxy({ upstream, markers: ['MARK'] });
+  try {
+    const body = JSON.stringify({ model: 'claude-haiku-4-5', system: 'sys MARK', messages: [{ role: 'user', content: 'hi' }] });
+    const r = await fetch(`${proxy.url}/v1/messages?beta=true`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': 'k' }, body });
+    assert.equal(r.status, 200);
+    assert.equal(await r.text(), 'event: done\ndata: {}\n\n');
+    assert.deepEqual(seen, { host: upstream.slice('http://'.length), key: 'k', body });
+    assert.deepEqual(proxy.requests().map((q) => [q.path, q.model, q.systemBytes, q.markersInSystem, q.thinking]),
+      [['/v1/messages', 'claude-haiku-4-5', 8, ['MARK'], null]]);
+    assert.ok(!JSON.stringify(proxy.requests()).includes('sys MARK'));
+    assert.equal(defaultUpstream({}), 'https://api.anthropic.com');
+    assert.equal(defaultUpstream({ ANTHROPIC_BASE_URL: 'https://gw.example/anthropic/' }), 'https://gw.example/anthropic');
+  } finally {
+    await proxy.close();
+    up.closeAllConnections();
+    await new Promise((ok) => up.close(ok));
+  }
+});
+
+test('spikeContext: a live run is refused without WORCA_ALLOW_LIVE_CLAUDE=1; --dry writes nothing', () => {
+  const saved = process.env.WORCA_ALLOW_LIVE_CLAUDE;
+  delete process.env.WORCA_ALLOW_LIVE_CLAUDE;
+  try {
+    assert.throws(() => spikeContext('SX', []), /WORCA_ALLOW_LIVE_CLAUDE=1/);
+    const ctx = spikeContext('SX', ['--dry'], { log: () => {} });
+    assert.equal(ctx.dry, true);
+    assert.match(ctx.agents({ a: {} }), /agents-1\.json$/);
+    assert.match(ctx.agents({ b: {} }), /agents-2\.json$/);
+    assert.equal(existsSync(ctx.out), false, '--dry writes nothing');
+  } finally { if (saved !== undefined) process.env.WORCA_ALLOW_LIVE_CLAUDE = saved; }
+});
+
+test('verdict: one JSON line; pass:null leaves the exit code alone', () => {
+  const saved = process.exitCode;
+  const lines = [];
+  try {
+    verdict('S10-codex', null, { skipped: 'not installed' }, { log: (l) => lines.push(l) });
+    assert.equal(process.exitCode, saved);
+  } finally { process.exitCode = saved; }
+  assert.deepEqual(JSON.parse(lines[0]), { spike: 'S10-codex', pass: null, facts: { skipped: 'not installed' } });
+});
+
+// ---- the --dry harness used by Tasks 2–10 -------------------------------------------------------------------------
+
+const SPAWNERS = ['spawn', 'spawnSync', 'exec', 'execSync', 'execFile', 'execFileSync', 'fork'];
+
+/** Run a spike's main(['--dry']) in-process with every child_process entry point mocked to throw. */
+async function dryRun(main, env = {}) {
+  const lines = [];
+  const saved = {};
+  for (const [k, v] of Object.entries(env)) { saved[k] = process.env[k]; process.env[k] = v; }
+  const mocks = SPAWNERS.map((m) => mock.method(cp, m, () => { throw new Error(`--dry must not call child_process.${m}`); }));
+  try {
+    await main(['--dry'], { log: (l) => lines.push(String(l)) });
+    for (const m of mocks) assert.equal(m.mock.callCount(), 0, 'a --dry run spawned a process');
+  } finally {
+    for (const m of mocks) m.mock.restore();
+    for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+  }
+  return {
+    argv: lines.filter((l) => l.startsWith('dry ')),
+    notes: lines.filter((l) => l.startsWith('# ')),
+    verdicts: lines.filter((l) => l.startsWith('{')).map((l) => JSON.parse(l)),
+  };
+}
+
+test('S1 --dry: five turns; turns 2–5 resume; turns 2, 3 and 5 carry agents-2.json; turn 4 a never-existing id', async () => {
+  const { argv } = await dryRun(s1);
+  assert.equal(argv.length, 5, argv.join('\n'));
+  for (const l of argv) assert.match(l, /claude -p .* --output-format stream-json --verbose /);
+  assert.match(argv[0], /--agents \S*agents-1\.json/);
+  assert.doesNotMatch(argv[0], /--resume/);
+  for (const i of [1, 2, 4]) assert.match(argv[i], /--resume <session-1> --agents \S*agents-2\.json/);
+  assert.match(argv[3], /--resume 00000000-0000-4000-8000-000000000000/);
+  assert.doesNotMatch(argv[3], /--agents/);
+});
+
+test('S2 --dry: per CLI one control and four definition turns (10 lines), each definition with --agents', async () => {
+  const { argv } = await dryRun(s2, { WORCA_EFFORT_FLAG: '' });
+  assert.equal(argv.length, 10, argv.join('\n'));
+  assert.equal(argv.filter((l) => / --agents /.test(l)).length, 8);
+  assert.equal(argv.filter((l) => l.includes(' npx -y @anthropic-ai/claude-code@2.1.294 ')).length, 5);
+  const control = argv.filter((l) => / control: /.test(l));
+  assert.equal(control.length, 2);
+  for (const l of control) { assert.doesNotMatch(l, /--agents|--model/); assert.match(l, /--allowedTools Read /); }
+  for (const l of argv.filter((x) => / s2bare: /.test(x))) assert.match(l, /ANTHROPIC_BASE_URL=http:\/\/127\.0\.0\.1:<port> .*--model claude-haiku-4-5 --effort low/);
+  for (const l of argv.filter((x) => / s2: /.test(x))) assert.match(l, /--model claude-sonnet-4-5 --allowedTools Agent,Read,Bash/);
+  for (const l of argv.filter((x) => / s2m: /.test(x))) assert.match(l, /--mcp-config \S*mcp\.json/);
+});
+
+test('S2 definitionFacts: null without child evidence; a child holding Bash or running past maxTurns reads false', () => {
+  const host = { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'A1', name: 'Agent', input: { subagent_type: 's2' } }] } };
+  const msg = (id, block) => ({ type: 'assistant', parent_tool_use_id: 'A1', message: { id, content: [block] } });
+  const read = (id) => ({ type: 'tool_use', id, name: 'Read', input: {} });
+  const none = { toolsRestrict: null, maxTurnsHonoured: null, childToolsWithList: null };
+  assert.deepEqual(s2Facts([]), none, 'no Agent call');
+  assert.deepEqual(s2Facts([host]), none, 'the child left no frame');
+  // Cycle-2 review M1: sub-agents emit no init, so a child that did tool work of its own and never tried Bash (told to
+  // run it first) is the positive evidence (D20).
+  assert.deepEqual(s2Facts([host, msg('m1', read('R1')), msg('m2', read('R2'))]),
+    { toolsRestrict: true, maxTurnsHonoured: true, childToolsWithList: null }, 'cut after 2 messages with work left; no init, no Bash try');
+  assert.equal(s2Facts([host, msg('m1', { type: 'text', text: 'I have no Bash tool.' })]).toolsRestrict, null,
+    'a child that made no tool call tested nothing');
+  assert.equal(s2Facts([host, msg('m1', read('R1')), msg('m2', { type: 'text', text: 'x' })]).maxTurnsHonoured, null,
+    'a child that stopped by itself after 2 messages tested nothing');
+  assert.equal(s2Facts([host, msg('m1', read('R1'))]).maxTurnsHonoured, null, 'one message tested nothing');
+  assert.deepEqual(s2Facts([host, { type: 'system', subtype: 'init', parent_tool_use_id: 'A1', tools: ['Read', 'Bash'] },
+    ...['m1', 'm2', 'm3', 'm4'].map((id, i) => msg(id, read(`R${i}`)))]),
+  { toolsRestrict: false, maxTurnsHonoured: false, childToolsWithList: ['Read', 'Bash'] });
+  const bash = [host, msg('m1', { type: 'tool_use', id: 'B1', name: 'Bash', input: {} }),
+    { type: 'user', parent_tool_use_id: 'A1', message: { content: [{ type: 'tool_result', tool_use_id: 'B1', content: 's2' }] } }];
+  assert.equal(s2Facts(bash).toolsRestrict, false, 'a Bash call that ran');
+  // Review M3: a child that emitted a Bash tool_use held Bash; only an unknown-tool error shows `tools` removed it.
+  const refused = (text) => [host, msg('m1', { type: 'tool_use', id: 'B1', name: 'Bash', input: {} }), { type: 'user',
+    parent_tool_use_id: 'A1', message: { content: [{ type: 'tool_result', tool_use_id: 'B1', is_error: true, content: text }] } }];
+  assert.equal(s2Facts(refused('This command requires approval')).toolsRestrict, false,
+    'a permission refusal (`claude -p`, no grant) is not the definition restricting tools');
+  assert.equal(s2Facts(refused('<tool_use_error>Error: No such tool available: Bash</tool_use_error>')).toolsRestrict, true,
+    'the CLI did not know the tool');
+  assert.equal(s2Facts(refused('<tool_use_error>Error: No such tool available: Bash. Bash is not among the tools available here. '
+    + 'Continue with the tools you have.</tool_use_error>')).toolsRestrict, true, 'with the suffix newer CLIs add');
+  assert.equal(s2Facts([host, { type: 'system', subtype: 'init', parent_tool_use_id: 'A1', tools: ['Read'] }]).toolsRestrict, true,
+    'the child init lists no Bash');
+});
+
+test('S2 mcpGrantFact: null unless the spike server connected and the child ran; then whether it held the MCP tool', () => {
+  const init = (status) => ({ type: 'system', subtype: 'init', session_id: 'S', mcp_servers: [{ name: 'spike', status }] });
+  const host = { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'A1', name: 'Agent', input: { subagent_type: 's2m' } }] } };
+  const child = (name) => ({ type: 'assistant', parent_tool_use_id: 'A1', message: { id: 'm1', content: [{ type: 'tool_use', id: 'E1', name, input: {} }] } });
+  const result = (isError) => ({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'A1', is_error: isError, content: 'DONE' }] } });
+  assert.equal(mcpGrantFact([init('connected'), host, result(false)]), null, 'an Agent call but no child frame');
+  assert.equal(mcpGrantFact([init('connected'), host, child('mcp__spike__echo'), result(true)]), null, 'the Agent call failed');
+  assert.equal(mcpGrantFact([init('failed'), host, child('mcp__spike__echo'), result(false)]), null, 'the server never connected');
+  assert.equal(mcpGrantFact([init('connected'), host, child('mcp__spike__echo'), result(false)]), true);
+  assert.equal(mcpGrantFact([init('connected'), host, child('Read'), result(false)]), false, 'the child ran without the MCP tool');
+});
+
+test('S3 --dry: five turns per CLI; c carries worca\'s deny settings, d the guard env, e the key-logging hook', async () => {
+  const { argv } = await dryRun(s3, { WORCA_HOST_GUARD: '1' });
+  assert.equal(argv.length, 10, argv.join('\n'));
+  const turn = (t) => argv.filter((l) => new RegExp(`^dry \\S+ ${t}: `).test(l));
+  for (const t of ['a', 'b', 'c', 'd', 'e']) assert.equal(turn(t).length, 2, t);
+  for (const l of turn('a')) assert.match(l, /--allowedTools Agent --max-turns/);
+  for (const l of turn('b')) assert.match(l, /--tools Agent --allowedTools Agent,Bash,Write /);
+  for (const l of turn('c')) { assert.ok(l.includes('"deny":["Bash(echo s3-denied*)"]'), l); assert.match(l, /host-guard\.mjs/); }
+  for (const l of turn('d')) { assert.match(l, /WORCA_HOST_GUARD=1 WORCA_HOST_PID=\d+ /); assert.ok(l.includes('"deny":["Bash(echo s3-denied*)"]')); }
+  for (const l of turn('e')) assert.match(l, /S3E_KEYS=\S+s3e\.keys .*--settings .*"matcher":"\*"/);
+});
+
+test('S3 denyFacts: true only when the child is refused in the host\'s deny wording; a no-grant refusal is null', () => {
+  const use = (id, command, parent) => ({ type: 'assistant', ...(parent && { parent_tool_use_id: parent }),
+    message: { content: [{ type: 'tool_use', id, name: 'Bash', input: { command } }] } });
+  const res = (id, text, isError, parent) => ({ type: 'user', ...(parent && { parent_tool_use_id: parent }),
+    message: { content: [{ type: 'tool_result', tool_use_id: id, is_error: isError, content: text }] } });
+  const agent = { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'A1', name: 'Agent', input: { subagent_type: 's3c' } }] } };
+  const HOST = 'echo s3-denied > s3c-host.txt';
+  const CHILD = 'echo s3-denied > s3c.txt';
+  const DENIED = (cmd) => `Permission to use Bash with command ${cmd} has been denied.`;
+  const NO_GRANT = 'This command requires approval';                 // `claude -p`, Bash with no grant (CLI 2.1.293–2.1.308)
+  const turn = (text, isError = true) => [use('H1', HOST), res('H1', DENIED(HOST), true), agent, use('C1', CHILD, 'A1'), res('C1', text, isError, 'A1')];
+  const absent = { hostWrote: false, childWrote: false };
+  assert.deepEqual(denyFacts(turn(DENIED(CHILD)), absent), { denyMatchesHost: true, denyReachesChildren: true });
+  for (const text of [NO_GRANT, 'Claude requested permissions to use Bash, but you haven\'t granted it yet.',
+    'PreToolUse:Bash hook error: ["node" "hook.cjs"]: blocked', 'Exit code 1\nzsh: read-only file system: s3c.txt']) {
+    assert.deepEqual(denyFacts(turn(text), absent), { denyMatchesHost: true, denyReachesChildren: null }, `not the rule: ${text}`);
+  }
+  assert.equal(denyFacts(turn(`Permission to use Bash with command ${CHILD} has been denied. IMPORTANT: retry`), absent).denyReachesChildren,
+    null, 'not the host\'s refusal wording');
+  assert.deepEqual(denyFacts(turn('', false), { hostWrote: false, childWrote: true }), { denyMatchesHost: true, denyReachesChildren: false },
+    'the child wrote the file');
+  // Cycle-2 review m2: the rule refused the child's Bash; a file it then made with Write is not the Bash rule failing.
+  assert.equal(denyFacts(turn(DENIED(CHILD)), { hostWrote: false, childWrote: true }).denyReachesChildren, true,
+    'refused in the host\'s wording, then wrote the file another way');
+  // Cycle-2 review s1: the CLI embeds command.trim(), so a command with trailing whitespace is masked trimmed too.
+  assert.equal(denyFacts([use('H1', HOST), res('H1', DENIED(HOST), true), agent, use('C1', `${CHILD}\n`, 'A1'),
+    res('C1', DENIED(CHILD), true, 'A1')], absent).denyReachesChildren, true, 'a trailing newline in the child\'s command');
+  assert.deepEqual(denyFacts([use('H1', HOST), res('H1', '', false)], { hostWrote: true, childWrote: false }),
+    { denyMatchesHost: false, denyReachesChildren: null }, 'the rule missed the host');
+  assert.equal(denyFacts([use('H1', HOST), res('H1', NO_GRANT, true)], absent).denyMatchesHost, null, 'a no-grant refusal is not the rule');
+  assert.equal(denyFacts([use('H1', HOST), res('H1', 'Exit code 1', true)], absent).denyMatchesHost, null, 'a failed command is not the rule');
+  assert.deepEqual(denyFacts([agent], absent), { denyMatchesHost: null, denyReachesChildren: null }, 'the host never tried');
+});
+
+test('S4 --dry: six turns; the third and fourth carry --max-budget-usd', async () => {
+  const { argv } = await dryRun(s4);
+  assert.equal(argv.length, 6, argv.join('\n'));
+  assert.deepEqual(argv.map((l) => l.includes('--max-budget-usd')), [false, false, true, true, false, false]);
+  assert.match(argv[1], /--resume <session-1> /);
+  assert.match(argv[2], /--resume <session-1> .*--max-budget-usd <C2\/2>/);
+  assert.match(argv[3], /--max-budget-usd 0\.02/);
+  assert.doesNotMatch(argv[3], /--resume/);
+  assert.match(argv[5], /--resume <session-5> /);
+});
+
+test('S6 --dry: five turns; (b0) and the three (b) turns carry the per-session cap env; (c) is a note', async () => {
+  const { argv, notes } = await dryRun(s6);
+  assert.equal(argv.length, 5, argv.join('\n'));
+  assert.deepEqual(argv.map((l) => l.includes('CLAUDE_CODE_MAX_SUBAGENTS_PER_SESSION=2 ')), [false, true, true, true, true]);
+  assert.doesNotMatch(argv[2], /--resume/);
+  for (const i of [3, 4]) assert.match(argv[i], /--resume <session-b1> /);
+  assert.ok(notes.some((n) => n.includes('(c)')));
+});
+
+test('S6 scanCli: the cap default and the concurrent-cap literal from a CLI file, no spawn', () => {
+  const dir = mkdtempSync(join(tmpdir(), 's6-scan-'));
+  try {
+    const f = join(dir, 'cli.js');
+    writeFileSync(f, 'x=a.CLAUDE_CODE_MAX_SUBAGENTS_PER_SESSION ?? 200;y="Concurrent subagent limit reached. You can run "+n+" subagents at once."');
+    assert.deepEqual(scanCli(f), { capDefault: 200, concurrentCapText: 'Concurrent subagent limit reached. You can run ' });
+    assert.deepEqual(scanCli(null), { capDefault: null, concurrentCapText: null });
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('S7a --dry: two probe turns through the proxy, then three process and three sub-agent trials', async () => {
+  const { argv } = await dryRun(s7);
+  assert.equal(argv.length, 8, argv.join('\n'));
+  for (const l of argv.slice(0, 2)) assert.match(l, /ANTHROPIC_BASE_URL=http:\/\/127\.0\.0\.1:<port> /);
+  assert.match(argv[0], /--agents \S*agents-1\.json/);
+  assert.match(argv[1], /-p 'Reply OK\.' .*--append-system-prompt <\d+ bytes>/);
+  const trials = argv.slice(2);
+  for (const l of trials) assert.doesNotMatch(l, /ANTHROPIC_BASE_URL/);
+  assert.equal(trials.filter((l) => /--append-system-prompt <\d+ bytes> --permission-mode acceptEdits --allowedTools Read,Write,Edit,Bash,Grep,Glob --model claude-sonnet-4-5$/.test(l)).length, 3);
+  assert.equal(trials.filter((l) => /--agents \S*agents-\d+\.json .*--allowedTools Agent,Read,Write,Edit,Bash,Grep,Glob /.test(l)).length, 3);
+  assert.equal(BRIEF_DIVIDER, '\n\n<!-- worca: step brief -->\n\n', 'C4; Task 31 must export the same value');
+});
+
+test('S7a replacesDefaultFrom: only markers the definition does not carry; null without a default in the control', () => {
+  const req = (...m) => ({ markersInSystem: m });
+  assert.equal(replacesDefaultFrom(req('worca: step brief'), req('You are Claude Code', 'TodoWrite'), 'impl'), true);
+  assert.equal(replacesDefaultFrom(req('TodoWrite'), req('TodoWrite'), 'impl'), false);
+  assert.equal(replacesDefaultFrom(req('TodoWrite'), req('You are Claude Code', 'TodoWrite'), 'mentions TodoWrite'), true,
+    'a marker the definition carries itself proves nothing');
+  assert.equal(replacesDefaultFrom(req(), req(), 'impl'), null, 'the control shows no default');
+  assert.equal(replacesDefaultFrom(null, req('TodoWrite'), 'impl'), null, 'no child request');
+});
+
+test('s7-repo fixture: task A starts red (the off-by-one), task B green; CLAUDE.md carries the marker; no nested .git', () => {
+  assert.equal(sum([1, 2, 3]), 5);                 // the bug PLAN-A.md asks to fix
+  assert.equal(slug('  Hello   World '), 'hello-world');
+  const at = (p) => new URL(`../tools/spikes/session-host/fixtures/s7-repo/${p}`, import.meta.url);
+  assert.match(readFileSync(at('CLAUDE.md'), 'utf8'), /^Project rule MARK-CLAUDEMD-7: tests live in test\/\.$/m);
+  assert.equal(JSON.parse(readFileSync(at('package.json'), 'utf8')).scripts.test, 'node --test');
+  for (const f of ['PLAN-A.md', 'PLAN-B.md', 'test/sum.test.mjs', 'test/slug.test.mjs']) assert.ok(existsSync(at(f)), f);
+  assert.equal(existsSync(at('.git')), false);
+});
+
+test('S8b --dry: two turns; the second resumes and names the first child', async () => {
+  const { argv } = await dryRun(s8b);
+  assert.equal(argv.length, 2, argv.join('\n'));
+  assert.doesNotMatch(argv[0], /--resume/);
+  assert.match(argv[1], /--resume <session-1> /);
+  assert.match(argv[1], /agent id <agent-id>/);
+});
+
+test('S9 --dry: with and without --forward-subagent-text per CLI; worca\'s sub-agent hook settings on all four', async () => {
+  const { argv, notes } = await dryRun(s9);
+  assert.equal(argv.length, 4, argv.join('\n'));
+  assert.deepEqual(argv.map((l) => l.includes('--forward-subagent-text')), [true, false, true, false]);
+  for (const l of argv) assert.match(l, /--include-hook-events --settings .*"PostToolUse"/);
+  assert.equal(argv.filter((l) => l.includes(' npx -y @anthropic-ai/claude-code@2.1.294 ')).length, 2);
+  assert.equal(notes.length, 2, 'flagInHelp is a live-only probe per CLI');
+});
+
+test('S10 --dry: installed engines print their two turns through the adapters\' builders; a missing one a skipped verdict', async () => {
+  const bin = mkdtempSync(join(tmpdir(), 's10-path-'));
+  try {
+    for (const e of ['codex', 'opencode']) writeFileSync(join(bin, e), '#!/bin/sh\nexit 99\n', { mode: 0o755 });   // never run: --dry only looks them up
+    const { argv, verdicts } = await dryRun(s10, { PATH: bin });
+    assert.equal(argv.length, 4, argv.join('\n'));
+    assert.match(argv[0], /^dry codex turn 1: codex exec --json --skip-git-repo-check --ignore-user-config --sandbox workspace-write .*agents\.s10a\.config_file=.*agents\.s10b\.config_file=.* -m \S+ -$/);
+    assert.doesNotMatch(argv[0], /s10c/);
+    assert.match(argv[1], /^dry codex turn 2: codex exec resume <session-1> .*agents\.s10c\.config_file=.* -$/);
+    assert.match(argv[2], /^dry opencode turn 1: OPENCODE_CONFIG_CONTENT=.*"prompt":"\{file:[^"]*s10b\.md\}".* opencode run --format json .*--agent worca-node -m \S+$/);
+    assert.doesNotMatch(argv[2], /s10c/);
+    assert.match(argv[3], /^dry opencode turn 2: .*s10c\.md.* -s <session-1>$/);
+    assert.deepEqual(verdicts.map((v) => [v.spike, v.pass, v.facts.skipped]), [['S10-copilot', null, 'not installed']]);
+  } finally { rmSync(bin, { recursive: true, force: true }); }
+});
+
+test('RESULTS.md: every spike row present; the Decisions block is the first fenced JSON block, parses, and is self-consistent', () => {
+  const md = readFileSync(new URL('../tools/spikes/session-host/RESULTS.md', import.meta.url), 'utf8');
+  for (const row of ['S1', 'S2', 'S3', 'S4', 'S6', 'S7a', 'S7b', 'S8b', 'S9', 'S10-codex', 'S10-copilot', 'S10-opencode']) {
+    assert.match(md, new RegExp(`^\\| ${row} \\| [^|\\s][^|]* \\|`, 'm'), row);         // a non-empty Pass cell
+  }
+  const FENCE = String.fromCharCode(96).repeat(3);
+  const D = JSON.parse(md.split(FENCE + 'json')[1].split(FENCE)[0]);
+  assert.ok(!D.phase0Go || (D.S3.denyReachesChildren && D.S3.hostGuardReachesChildren), 'phase0Go needs S3 (C40)');
+  assert.ok(!D.claudeGo || (D.phase0Go && D.S7b.pass), 'claudeGo needs phase0Go and S7b');
+  assert.doesNotThrow(() => new RegExp(D.SUBAGENT_CAP_RE, 'i'));
+  assert.doesNotThrow(() => new RegExp(D.VANISHED_RE, 'i'));
+  for (const e of ['codex', 'copilot', 'opencode']) assert.equal(typeof D.engines[e], 'boolean', e);
+});

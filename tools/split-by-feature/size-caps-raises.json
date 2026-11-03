@@ -4,5 +4,7 @@
   { "file": "ui/server.mjs", "from": 10085, "to": 10118, "commit": "b76706df6",
     "why": "dev's own growth: in-place Chat engine switching (#982, dev b76706df6) added 33 lines to the residual ui/server.mjs (imports and the ask-turn engine switch, outside the route regions); measured with --check --stats on this branch merged with that dev" },
   { "file": "ui/server.mjs", "from": 10118, "to": 10119, "commit": "405db5a4d",
-    "why": "dev's own growth: Settings › My credentials, GitHub account in its own group (405db5a4d, in dev bf92e1579) added 1 line to the residual ui/server.mjs (outside the route regions); measured with --check --stats on this branch merged with that dev" }
+    "why": "dev's own growth: Settings › My credentials, GitHub account in its own group (405db5a4d, in dev bf92e1579) added 1 line to the residual ui/server.mjs (outside the route regions); measured with --check --stats on this branch merged with that dev" },
+  { "file": "ui/server.mjs", "from": 10119, "to": 10174, "commit": "55d1f062a",
+    "why": "the #943 fix PRs and session groups on bench/combined-943-sg (#1067) added 55 lines to the residual ui/server.mjs, all outside the route regions: run retention scheduling and runLimits (#1060), the finished-run cap in the runs Map (#1062), noMemory on run start (#1061), and the sessionHost event and session imports (#1055); measured with wc -l after split:catch-up onto dev 9ec0693cc" }
 ]

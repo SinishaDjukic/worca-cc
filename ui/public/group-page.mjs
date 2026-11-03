@@ -208,7 +208,8 @@ export function runReceipts(run) {
     const n = node(id);
     if (!n || !f) continue;
     const b = Number(f.blocking) || 0;
-    out.push(`${n.label || n.key || id} · pass ${Number(f.pass) || 1} · ${b ? `${b} blocking, sent back` : 'passed'}`);
+    const fx = Number(f.fixed) || 0;   // blockers a refiner fixed in this pass
+    out.push(`${n.label || n.key || id} · pass ${Number(f.pass) || 1} · ${b ? `${b} blocking, sent back` : 'passed'}${fx ? `, ${fx} fixed` : ''}`);
   }
   return out;
 }

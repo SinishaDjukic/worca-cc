@@ -163,6 +163,7 @@ be skipped by forgetting it.
 | Task source (Markdown), source and feature branch; "Run on the source branch" toggle | A |
 | "Not sure what to build yet? Try Shaper" under the Markdown source (Shaper, gated) | A |
 | Engine dropdown beside the workflow (greyed-out engines the credential broker refuses) | A — stays visible at every level while a non-Claude engine is picked (rule 2) |
+| Session notice under the Engine dropdown: one line per session of the chosen workflow, how it will run (One session, Labs) | A — stays visible with the Engine dropdown while a non-Claude engine is picked |
 | Advanced disclosure: guardrails, human in the loop, per-agent model and effort | A |
 | Per-agent fan-out, sub-agent model, questions; feedback-loop max cycles; "Save as defaults"; memory scope | E |
 
@@ -327,6 +328,7 @@ inside the view.
 | General: root folders; Runs tab: Scheduled runs defaults, Workspaces (scan models), chat notifications; Chat tab (limits, tools, web access, chat history) | A |
 | Runs tab: Actions (keep policy, port range, editor/terminal, cap) | A |
 | Runs tab: Wait for the network | A |
+| Runs tab: Machine load (runs at once, test workers per run, archive finished runs after) | A |
 | Guardrails tab (list, details); Memory tab (files) | A |
 | Presets tab (every preset: Use, Rename, Duplicate, Edit scope, Delete) | A |
 | Automations tab (flag gitAutomations: the overview — delivery, the projects and workspaces that automate something with Open, Waiting across them with Start now and Remove, Recent across them with Approve and Open run) | A |
