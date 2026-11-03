@@ -2,7 +2,7 @@
 name: chat-channel-traps
 description: Traps in the chat-channel stack (Discord worker filters, parser/rate-limiter APIs, Ask turn echo races) worth reading before planning or building chat-plugin fe
 paths: plugins/*-chat/**, src/core/chat/**
-updated: 2026-11-03T00:16:08.357Z
+updated: 2026-11-03T00:43:30.765Z
 author: Bulibas
 ---
 
@@ -61,3 +61,10 @@ Each of these sank a reviewed plan once (freeform Discord chat plan, cycles 1-2,
   `await`s its `replyAfter(n)` holds that code path until the other queue's work is done. The click's own sends
   re-enter the hook: guard with a `fired` flag. Read any "before" state (an Ask thread id) INSIDE the hook, not by
   polling `waitFor` afterwards: the click finishes before the 15 ms poll tick.
+- **Per-message reactions: two blind spots in the freeform e2e** (implementation review, 2026-11-03). (1) A command
+  typed in a bound thread is routed with the PARENT `chatId`, but its reaction belongs on `msg.chatId` (the thread).
+  Every e2e command case was sent on `C1`, where both ids are equal, so a target built from `routed.chatId` stayed
+  green. Pin it with a command sent on the thread (`TH1`), and assert the rxLog `chatId`: `marksOn` filters by
+  message id only. (2) Any throw after `receipts.ack(mark)` that escapes to the server's catch leaves ⏳ for good.
+  The real-deps e2e cannot throw from `startTurn`/`applyCard`, so removing those catches stayed green. Each post-ack
+  catch needs a stub-deps or hook test.
