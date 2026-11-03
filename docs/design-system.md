@@ -7,7 +7,7 @@ the same commit.
 ## Foundations
 
 ### Colour (checked)
-Every colour is a token in `:root` of `ui/public/style.css`, written as `light-dark(light, dark)`. Never restate a hex;
+Every colour is a token in `:root` of `ui/public/shell/self-hosted.css` (served as `/style.css`), written as `light-dark(light, dark)`. Never restate a hex;
 a `color-mix()` recipe used twice is a named token (`--btn-hover`, `--red-tint`, …).
 | Colour | Tokens | Means | Never |
 |---|---|---|---|

@@ -1,0 +1,112 @@
+
+/* ========================================================================== */
+/* Run monitor v2 — hosts + decor over the shared renderer (P6).              */
+/* Appended at the END of the file — a deliberate deviation from the spec's   */
+/* "after the v1 run-flow block" (A32): the v1 run-flow rules are 3–4-class    */
+/* selectors that TIE P5's `.gv-world` block on specificity, so only source   */
+/* order can decide; here every rule wins its tie, and the block survives      */
+/* P8's deletion of the v1 block (now done). P5's `.xfoot/.xtoggle/.xrow/      */
+/* .xresult/.ngate/.nrun/.fan/.wfired` STRUCTURE rules are the base and are    */
+/* NOT re-declared — only the states and ornaments P5 lacks live here. The     */
+/* three neutralisers below are inert since P8 deleted the v1 rules they       */
+/* cancelled; they are kept so the v2 box model is stated in ONE place.        */
+/* ========================================================================== */
+/* Host: the v1 flex column becomes an absolute box the .gv-stage (inset:0)
+   fills, so the stage rect === the wrap's padding box. A static host may be
+   widened inline (native horizontal scroll, D5); monitor wraps never scroll. */
+.run-flow.gv-host{position:absolute;top:0;left:0;bottom:0;width:auto;min-width:100%;padding:0;margin:0;display:block;gap:0;}
+/* The Auto deciding placeholder (spec §7.3). The host never gets gv-host/gv-wrap-static
+   (mountRunGraph adds those), so it supplies its own box; (0,2,0) beats the base .run-flow. */
+.run-flow.auto-deciding-host{display:flex;align-items:center;justify-content:center;min-height:120px;padding:24px;width:auto;}
+.auto-deciding{gap:12px;}
+.auto-deciding .auto-deciding-label{font-size:13px;}
+.run-flow-wrap.gv-wrap{user-select:none;-webkit-user-select:none;}
+.run-flow-wrap.gv-wrap-monitor{overflow:hidden;height:var(--run-host-h,360px);}
+.run-flow.gv-host .gv-world .node{cursor:default;}
+/* v1 descendant rules that out-rank P5's .gv-world block (3-4 classes) — one neutraliser each */
+.run-flow.gv-host .gv-world .xfoot>.fan{flex:none;flex-wrap:nowrap;margin:0;border-top:0;}
+.run-flow.gv-host .gv-world .xfoot .fl{margin-left:auto;font:700 11px/1.4 var(--mono);color:var(--ink-3);}
+.run-flow.gv-host .gv-world .nrun{margin-top:0;}
+/* two states the v1 block has no vocabulary for */
+.run-flow.gv-host .gv-world .node.is-error{box-shadow:0 0 0 1.5px var(--red-ring),0 0 0 4px var(--red-tint);}
+.run-flow.gv-host .gv-world .node.is-skipped{opacity:.35;box-shadow:none;outline:1.5px dashed var(--line-2);outline-offset:-1.5px;}
+/* settled pips (v1's .nstat, as pseudo-elements: the view creates no pip DOM) */
+.run-flow.gv-host .gv-world .node.is-done::after,.run-flow.gv-host .gv-world .node.is-paused::after,.run-flow.gv-host .gv-world .node.is-stopped::after,.run-flow.gv-host .gv-world .node.is-error::after{content:"";position:absolute;top:-8px;right:-8px;width:21px;height:21px;border-radius:var(--r-sm);z-index:3;color:var(--on-status);font:800 12px/21px var(--sans);text-align:center;}
+/* icons: check, pause, x */
+.run-flow.gv-host .gv-world .node.is-done::after{mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12.5l4.5 4.5L19 7.5'/%3E%3C/svg%3E") center/12px no-repeat;background:var(--green);}
+.run-flow.gv-host .gv-world .node.is-paused::after{mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M9 5v14M15 5v14'/%3E%3C/svg%3E") center/12px no-repeat;background:var(--amber);}
+.run-flow.gv-host .gv-world .node.is-stopped::after,.run-flow.gv-host .gv-world .node.is-error::after{mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M7 7l10 10M17 7 7 17'/%3E%3C/svg%3E") center/12px no-repeat;background:var(--red);}
+.run-flow.gv-host .gv-world .node:has(> .ngate)::after{content:none;}   /* the gate pip owns the corner */
+.run-flow.gv-host .gv-world .ngate{cursor:pointer;animation:dotpulse 1.3s ease-in-out infinite;}
+/* footer leds: paused/stopped colours + the pulse P5 leaves to the run block.
+   `xqPulse` has sqPulse's body; sqPulse itself may attach ONLY to the v1 fan
+   square (test/ui-run-flow-css.test.mjs pins that), so the v2 leds get their own. */
+@keyframes xqPulse{0%,100%{opacity:1;}50%{opacity:.38;}}
+.run-flow.gv-host .gv-world .xfoot .xq.is-paused,.run-flow.gv-host .gv-world .xfoot .xrow.is-paused .led{background:var(--amber);}
+.run-flow.gv-host .gv-world .xfoot .xq.is-stopped,.run-flow.gv-host .gv-world .xfoot .xrow.is-stopped .led{background:var(--red);}
+.run-flow.gv-host .gv-world .xfoot .xq.is-active,.run-flow.gv-host .gv-world .xfoot .xrow.is-active .led{animation:xqPulse 1.5s ease-in-out infinite;}
+.run-flow.gv-host .gv-world .xrow,.run-flow.gv-host .gv-world .xresult a{cursor:pointer;}
+.run-flow.gv-host .gv-world .xrow:hover,.run-flow.gv-host .gv-world .xtoggle:hover{background:var(--hover);}
+.run-flow.gv-host .gv-world .xresult a{color:var(--blue-ink);text-decoration:none;}
+.run-flow.gv-host .gv-world .xresult a:hover{text-decoration:underline;}
+/* ants on v2 wires (the v1 rule targets svg.wires; a dashoffset animation needs a dash).
+   The animation lives ON THE PATH — never on :root. The old design animated a
+   registered inherited <length> on :root as a shared clock, which forced a
+   whole-document style recalc every frame on every view (GB-scale renderer
+   memory churn; the 2026-08-31 run-detail freeze). Phase parity across wires —
+   the one thing the :root clock bought — now comes from setWireLive (view.mjs)
+   stamping a negative animation-delay from the shared document timeline. One
+   iteration travels exactly one 6+6 dash period (-12px), so the loop boundary
+   AND any restart when wire-live flips on are seamless; the retired snapping
+   keyframe travelled -18px — 1.5 periods — and visibly jumped every iteration.
+   -12px per .6s keeps 20px/s. */
+@keyframes wireDash{to{stroke-dashoffset:-12px;}}
+.run-flow.gv-host .gv-wires path.wire-live{stroke-dasharray:6 6;stroke-width:2.4;animation:wireDash .6s linear infinite;}
+.rd-graph.settled .run-flow.gv-host .gv-wires path.wire-live{animation:none;stroke-dashoffset:0;}
+/* History: node click drives the Logs tab */
+.hd-graph.linked .gv-world .node[data-node-id]{cursor:pointer;}
+/* Running: a card that has run opens its live log (mountRunGraph nodeClicks) */
+/* (an attribute, not a class: the contrast baselines key on a node's class list) */
+.run-flow.gv-host .gv-world .node[role="link"]{cursor:pointer;}
+.run-flow.gv-host .gv-world .node[role="link"]:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+/* quiescence banner (.rd-banners / .hd-banners / History Overview note) */
+.run-warn{margin:0;padding:11px 15px;border-radius:var(--r-card);background:var(--amber-bg);color:var(--amber-ink);font-size:var(--fs-body);font-weight:600;border:1px solid color-mix(in srgb, var(--amber) 45%, transparent);align-self:stretch;}
+.run-warn[hidden]{display:none;}
+/* gesture hint chip (D10) */
+.rg-hint{position:absolute;left:12px;bottom:10px;padding:4px 9px;border-radius:var(--r-xs);background:color-mix(in srgb, var(--ink) 72%, transparent);color:var(--on-ink);font-size:var(--fs-caption);font-weight:600;pointer-events:none;opacity:0;transition:opacity .15s;z-index:5;}
+.run-flow-wrap.gv-wrap-monitor:hover > .rg-hint{opacity:1;}
+/* The whole monitor canvas is a pan surface (drag from a card, a wire or the
+   void), so the stage AND the card body advertise `grab`. Everything is scoped
+   to .gv-wrap-monitor (D19): `gv-host` is on the Running LIST CARD's host too,
+   and that preview has no gestures at all. `cursor` is inherited only by
+   children that declare none, and the cards do — :4346 default, :4360/:4368
+   pointer, :4391 History's pointer — so a live pan says `grabbing` through the
+   house blanket idiom (`X, X *{… !important}`) rather than a specificity arms
+   race. Measured in Chrome 152: without the blanket the cursor under a dragged
+   card reads `default` while the stage reads `grabbing`. The clickable rows,
+   gate and link keep `pointer` at rest — they are later at equal specificity. */
+.gv-wrap-monitor .run-flow.gv-host .gv-world .node{cursor:grab;}
+.gv-wrap-monitor .run-flow.gv-host .gv-stage{cursor:grab;}
+.gv-wrap-monitor .run-flow.gv-host .gv-stage.panning,.gv-wrap-monitor .run-flow.gv-host .gv-stage.panning *{cursor:grabbing !important;}
+/* The composer's own `.gv-nav` is rail-aware (right:352px). A run wrap has no
+   inspector rail, so the cluster hugs the corner; the hint chip sits bottom-LEFT
+   so the two never overlap. Later in the file AND more specific — either wins. */
+.run-flow-wrap.gv-wrap-monitor > .gv-nav{right:12px;bottom:12px;}
+@media (prefers-reduced-motion:reduce){
+  .run-flow.gv-host .gv-wires path.wire-live,.run-flow.gv-host .gv-world .ngate,
+  .run-flow.gv-host .gv-world .xfoot .xq.is-active,.run-flow.gv-host .gv-world .xfoot .xrow.is-active .led{animation:none;}
+  /* the first selector above already stops the path's own dash animation; pin the phase */
+  .run-flow.gv-host .gv-wires path.wire-live{stroke-dashoffset:0;}
+}
+
+/* Legacy (v1) run strip — frozen runs only; no wires, no executions footer. */
+.run-strip{display:flex;flex-wrap:wrap;gap:8px;padding:14px 16px;}
+.run-strip .rchip{--c:var(--line-2);font-size:11px;font-weight:600;color:var(--ink-2);
+  background:var(--field);border:1px solid var(--line);
+  border-radius:var(--r-sm);padding:5px 10px;white-space:nowrap;}
+.run-strip .rchip.is-pending{opacity:.5;}
+.run-strip .rchip.is-done{color:var(--green-ink);}
+.run-strip .rchip.is-active{color:var(--c);}
+.run-strip .rchip.is-paused{color:var(--amber-ink);}
+.run-strip .rchip.is-error,.run-strip .rchip.is-stopped{color:var(--red-ink);}
+

@@ -1,0 +1,112 @@
+/* ===== Scripts view (scripts-workbench §5.1) ===== */
+.scripts-host{display:block;}
+.scripts-tools{display:flex;align-items:center;gap:10px;margin-left:auto;}
+.scripts-tools .script-filter{width:220px;padding:9px 13px;font-size:13px;}
+.script-card{display:flex;align-items:center;gap:14px;}
+.script-card .script-card-main{flex:1;min-width:0;}
+.script-card .script-card-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.script-card .script-name{font-size:13px;}
+.script-card .script-origin.badge{background:var(--field);color:var(--ink-2);}
+.script-card .script-runtime{font-family:var(--mono);font-size:11px;padding:2px 9px;}
+.script-card .script-warn{background:var(--amber-bg);color:var(--amber-ink);font-size:11px;padding:2px 9px;}
+.script-card .script-desc{display:block;margin-top:5px;color:var(--ink-2);}
+.script-card .script-meta{display:flex;align-items:center;gap:8px;margin-top:7px;min-width:0;}
+.script-card .script-ports{font-size:11px;color:var(--ink-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.script-card .script-cases{font-size:11px;padding:2px 9px;}
+/* The list card's case dot AND the bench's case rows (spec §5.3) — one rule for both. */
+.script-dot{width:8px;height:8px;border-radius:50%;border:1.5px solid var(--line-2);background:transparent;flex:0 0 auto;}
+.script-dot[data-state="pass"]{background:var(--green);border-color:var(--green);}
+.script-dot[data-state="fail"]{background:var(--red);border-color:var(--red);}
+.script-dot[data-state="ran"]{background:var(--seq);border-color:var(--seq);}
+.script-card .script-actions{display:flex;gap:8px;flex:0 0 auto;}
+.scripts-empty{font-size:12px;color:var(--ink-3);padding:6px 0 4px;}
+/* ---------- Scripts detail (scripts-workbench §5.2) ---------- */
+.script-detail .script-dirty{background:var(--amber-bg);color:var(--amber-ink);font-size:11px;padding:2px 9px;}
+.script-form{max-width:760px;}
+.script-form .ins-f{margin-bottom:14px;}
+.script-form .ins-label{display:block;font-weight:600;font-size:12px;margin-bottom:6px;color:var(--ink-2);}
+.script-form .ins-number,.script-form .ins-select{width:100%;padding:9px 12px;font-size:13px;border:1px solid var(--line-2);
+  border-radius:var(--r-sm);background:var(--field);color:var(--ink);}
+.script-form .ins-number:focus,.script-form .ins-select:focus{background:var(--field-focus);border-color:var(--ink);outline:none;}
+.script-zone{font-size:12px;font-weight:600;color:var(--ink-2);margin:20px 0 8px;}
+.script-path-row{display:flex;align-items:center;gap:10px;margin-top:16px;}
+.script-path{font-family:var(--mono);font-size:11px;color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;}
+.script-source{display:flex;flex-direction:column;gap:10px;align-items:flex-start;}
+.script-source .script-editor-mount{width:100%;}
+.script-source [hidden]{display:none;}
+/* ---------- Test bench (scripts-workbench §5.3) ---------- */
+/* The bench is stacked under the editor now (script-wizard plan S12): the bar, the setup, the cases strip, the result. */
+.bench{display:flex;flex-direction:column;gap:14px;}
+.bench-col{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);padding:16px;min-width:0;}
+.bench-col-head{font-size:12px;font-weight:600;color:var(--ink-2);margin-bottom:10px;}
+.bench-case-list{display:flex;flex-direction:column;gap:4px;margin-bottom:10px;}
+.bench-case-row{display:flex;align-items:center;gap:4px;min-width:0;}
+.bench-case{display:flex;align-items:center;gap:7px;flex:1;min-width:0;text-align:left;font-family:inherit;font-size:12px;
+  color:var(--ink);background:transparent;border:1px solid transparent;border-radius:var(--r-sm);padding:6px 8px;cursor:pointer;}
+.bench-case:hover{background:var(--hover);}
+.bench-case.on{background:var(--field);border-color:var(--line-2);}
+.bench-case .bench-case-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.bench-case-row .bench-lock{font-size:11px;padding:1px 7px;flex:0 0 auto;}
+/* The per-row actions stay small and only appear on hover or while the row is
+   selected, so a list of eight cases still reads as a list. */
+/* visibility, NOT opacity: an invisible control must not still be clickable. */
+.bench-case-row .bench-case-rename,.bench-case-row .bench-case-delete{flex:0 0 auto;padding:3px 7px;font-size:11px;visibility:hidden;}
+.bench-case-row:hover .bench-case-rename,.bench-case-row:hover .bench-case-delete,
+.bench-case-row:focus-within .bench-case-rename,.bench-case-row:focus-within .bench-case-delete{visibility:visible;}
+/* Setup edited since the case was selected: Run sends what is on screen, not the stored case. */
+.bench-case-row[data-edited="true"] .bench-case-name{font-style:italic;}
+.bench-case-rename-input{flex:1;min-width:0;padding:4px 7px;font-size:12px;}
+input.bench-case-name{width:100%;padding:9px 12px;font-size:13px;}
+.bench-case-actions{display:flex;flex-direction:column;gap:4px;margin-top:8px;}
+.bench-cases > .btn,.bench-case-actions .btn{width:100%;margin-top:4px;}
+.bench-zone{font-size:12px;font-weight:600;color:var(--ink-2);margin:16px 0 8px;}
+/* The shared params form's one caption is styled for .ins-panel only; the bench hosts it too. */
+.bench-setup .ins-caption{display:block;margin:-7px 0 12px;color:var(--ink-3);font-size:11px;}
+.bench-setup .ins-f{margin-bottom:14px;}
+.bench-setup .ins-label{display:block;font-weight:600;font-size:12px;margin-bottom:6px;color:var(--ink-2);}
+.bench-setup .ins-select,.bench-setup .ins-number,.bench-setup .ins-textarea{width:100%;padding:9px 12px;font-size:13px;
+  border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--field);color:var(--ink);}
+.bench-port{border:1px solid var(--line);border-radius:var(--r-sm);padding:10px 12px;margin-bottom:8px;}
+.bench-bind{display:flex;align-items:center;gap:7px;font-size:12px;cursor:pointer;}
+.bench-port-id{font-family:var(--mono);}
+.bench-port-type{font-size:11px;padding:1px 7px;}
+.bench-void-fired{margin-left:24px;font-size:11px;color:var(--ink-3);}
+.bench-src{margin:8px 0 6px;}
+.bench-text{width:100%;min-height:0;font-family:var(--mono);font-size:12px;padding:8px 10px;border:1px solid var(--line-2);
+  border-radius:var(--r-sm);background:var(--field);color:var(--ink);resize:vertical;}
+.bench-actions{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;}
+.bench-expect-row{margin-top:4px;}
+.bench-expect-head{display:flex;align-items:center;gap:8px;}
+.bench-expect-head .ins-select{flex:1;min-width:0;}
+.bench-expect-head .bench-expect-from-result{flex:0 0 auto;}
+.bench-expect-detail{margin-top:8px;}
+.bench-expect-chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;}
+.bench-expect-chip{display:inline-flex;align-items:center;gap:5px;font-size:11px;border:1px solid var(--line);
+  border-radius:var(--r-xs);padding:3px 10px;cursor:pointer;}
+.bench-expect-chip:has(input:checked){background:var(--field);color:var(--ink);box-shadow:inset 0 0 0 1px var(--ink);}
+.bench-status{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.bench-status-text{font-weight:600;font-size:13px;}
+.bench-dot{width:9px;height:9px;border-radius:50%;background:var(--seq);}
+.bench-dot[data-status="clean"]{background:var(--green);}
+.bench-dot[data-status="blocking"]{background:var(--amber);}
+.bench-dot[data-status="error"],.bench-dot[data-status="timeout"]{background:var(--red);}
+.bench-dot[data-status="running"]{background:var(--peach);}
+.bench-status .chip{font-size:11px;padding:2px 9px;}
+.bench-draft{background:var(--slate-bg);color:var(--slate-ink);}
+.bench-status [hidden]{display:none;}
+.bench-summary{margin-top:8px;font-size:12px;color:var(--ink-2);}
+.bench-fired{display:flex;flex-wrap:wrap;gap:6px;}
+.bench-fired-chip{font-size:11px;padding:2px 9px;}
+.bench-expect{margin-top:8px;font-size:12px;}
+.bench-expect-state.pass{color:var(--green-ink);}
+.bench-expect-state.fail{color:var(--red-ink);}
+.bench-expect-diff{color:var(--ink-2);margin-top:3px;}
+.bench-error{margin-top:8px;color:var(--red-ink);font-size:12px;}
+.bench-error-tail,.bench-warn{margin-top:4px;font-family:var(--mono);font-size:11px;color:var(--ink-3);white-space:pre-wrap;}
+.bench-tabs{margin:12px 0 10px;flex-wrap:wrap;}
+.bench-pane[hidden]{display:none;}
+.bench-pane .bench-log,.bench-pane .bench-json,.bench-pane .bench-rawtext{margin:0;max-height:360px;overflow:auto;
+  font-family:var(--mono);font-size:11px;line-height:1.5;white-space:pre-wrap;color:var(--ink);}
+.bench-pane .bench-raw{margin-bottom:8px;}
+.bench-open-full{display:inline-block;margin-top:8px;font-size:12px;color:var(--blue-ink-strong);}
+.bench-msg{min-height:0;}

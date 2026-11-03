@@ -1,0 +1,9 @@
+
+/* Run 4 (D21): the Chat run card is one box of divided sections (docs/design-system.md › Cards versus divided rows):
+   stats, the graph, the question, the result and the footer each sit under one --line, with no fill, border or corner
+   of their own. At (0,3,0) and up these beat the in-card override below, which stays last. */
+.ask-card.chat-rc > :is(.ask-rc-stats,.chat-rc-q,.chat-rc-result,.chat-rc-foot){margin-top:12px;padding-top:12px;border-top:1px solid var(--line);}
+.ask-card.chat-rc .ask-rc-stats > .ask-rc-stat{padding:0;border-radius:0;background:none;}
+.ask-card.chat-rc > .chat-rc-result{padding:12px 0 0;border:0;border-top:1px solid var(--line);border-radius:0;background:none;}
+.ask-card.chat-rc > .chat-rc-q :is(.qpanel,.qblock,.af-form){padding-left:0;padding-right:0;border-radius:0;background:none;}
+.ask-card.chat-rc .chat-rc-art-rows{border:0;border-radius:0;}

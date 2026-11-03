@@ -1,0 +1,107 @@
+/* ── Ask worca beside the page: the header toggle (#topnav-ask) and the side column (aside#ask-side, ask-side.mjs)
+   that docks the ONE Chat page beside main.main. Above 1080px it pushes the page (the toasts move with it); 761-1080px
+   it covers the main column; up to 760px it is full width under the 48px bar. The button drops its label up to 1200px
+   and beside the terminal pane, where the label would squeeze the page's title in the bar. Tokens only; the tier
+   blocks stay below the base rules. HOUSE RULE: no comment inside a rule body and no closing brace in a comment. ── */
+.topnav-ask{flex:none;white-space:nowrap;position:relative;}
+.topnav-ask[hidden]{display:none;}
+.topnav-ask[aria-expanded="true"]{background:var(--hover);color:var(--ink);}
+.topnav-ask svg{width:14px;height:14px;flex:none;color:var(--ink-2);}
+.topnav-ask-dot{position:absolute;top:6px;right:6px;width:6px;height:6px;border-radius:50%;background:var(--slate);}
+.topnav-ask-dot[hidden]{display:none;}
+.ask-side{flex:none;position:relative;display:flex;flex-direction:column;width:var(--ask-side-w,440px);min-width:0;max-width:100%;height:100%;
+  overflow:hidden;background:var(--panel);border-left:1px solid var(--line);}
+.ask-side[hidden]{display:none;}
+.ask-side-in{position:relative;flex:1;min-height:0;display:flex;flex-direction:column;}
+.ask-side-grip{position:absolute;z-index:7;top:0;bottom:0;left:0;width:6px;cursor:col-resize;touch-action:none;}
+.ask-side-grip:is(:hover,:focus-visible)::after{content:"";position:absolute;top:0;bottom:0;left:0;width:2px;background:var(--ink);}
+.ask-side-grip:focus-visible{outline:none;}
+.ask-side.is-resizing{user-select:none;}
+body.ask-side-rail .side-toggle{display:none;}
+@keyframes askSideIn{from{width:0;}}
+@keyframes askSideInner{from{opacity:0;transform:translateX(24px);}}
+.ask-side.is-entering{animation:askSideIn .32s cubic-bezier(.2,.8,.2,1);}
+.ask-side.is-entering .ask-side-in{animation:askSideInner .24s cubic-bezier(.2,.8,.2,1) .08s both;}
+.ask-side.is-leaving{animation:askSideIn .32s cubic-bezier(.2,.8,.2,1) reverse both;}
+.ask-side.is-leaving .ask-side-in{animation:askSideInner .24s cubic-bezier(.2,.8,.2,1) reverse both;}
+@media (prefers-reduced-motion:reduce){.ask-side,.ask-side-in{animation:none !important;}}
+@media (min-width:1081px){
+  body.ask-side-open .toasts{right:calc(var(--ask-side-w,440px) + 20px);}
+  body.ask-side-open.term-open .toasts{right:calc(var(--ask-side-w,440px) + var(--term-w,460px) + 20px);}
+}
+@media (max-width:1200px){
+  .topnav-ask{min-width:32px;padding:0 8px;justify-content:center;}
+  .topnav-ask-label{display:none;}
+  .topnav-ask-dot{top:4px;right:4px;}
+}
+body.term-open .topnav-ask{min-width:32px;padding:0 8px;justify-content:center;}
+body.term-open .topnav-ask-label{display:none;}
+body.term-open .topnav-ask-dot{top:4px;right:4px;}
+@media (max-width:1080px){
+  .ask-side{position:absolute;inset:0 0 0 auto;z-index:38;width:100%;border-left:0;}
+  .ask-side-grip{display:none;}
+  body.ask-side-open .toasts{bottom:calc(var(--ask-side-dock-h,240px) + 12px + env(safe-area-inset-bottom,0px));}
+}
+@media (max-width:760px){
+  .ask-side{position:fixed;top:48px;right:0;bottom:0;left:auto;height:auto;}
+}
+
+.ask-title{font-weight:600;font-size:13px;color:var(--ink);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.ask-composer-spacer,.ask-card-actions-spacer{flex:1 1 auto;}
+.ask-scope-btn{display:inline-flex;align-items:center;gap:5px;max-width:180px;flex:none;}
+.ask-scope-btn:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.ask-scope-btn.is-pinned{color:var(--ink);}
+.ask-scope-label{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.ask-scope-btn.is-compact > .ask-scope-label{display:none;}
+.ask-mcp-btn[hidden]{display:none;}
+
+/* `overflow-anchor:auto` is the UA default, stated here on purpose: it is the
+   only thing that keeps the text being read still while the activity block above
+   it grows a tool row mid-turn, and a later `overflow-anchor:none` anywhere up
+   the chain would silently switch it off. */
+.ask-transcript{position:relative;flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain;
+  padding:18px 20px 8px;overflow-anchor:auto;}
+/* .ask-transcript is only the scrollport; every message lands in this column
+   (ask-panel.mjs renderTranscript), which carries the stack + gap and the cap. */
+.ask-transcript-col{width:100%;max-width:var(--ask-col-max);margin-inline:auto;display:flex;flex-direction:column;gap:16px;}
+.ask-msg{display:flex;flex-direction:column;gap:6px;}
+/* The entry rise is OPT-IN, per message. A live row is patched in place, but a
+   structural flush (ask-start, ask-done, a new message) still rebuilds the whole
+   column — so an `animation` on the bare `.ask-msg` replayed the 10px rise and
+   the fade on every message already on screen. ask-panel.mjs stamps the
+   attribute from its ledger of rows the transcript has shown before, and on
+   nothing else. */
+.ask-msg[data-ask-enter]{animation:wr-rise .2s cubic-bezier(.2,.7,.3,1) both;}
+/* #959: in the conversation the ROW rises (data-ask-enter, ask-panel.mjs's ledger), never the card in it: a card's
+   own rise replayed on every rebuild, a switch back included. */
+.chat-convo .ask-msg .ask-card{animation:none;}
+.ask-user-bubble{align-self:flex-end;max-width:78%;padding:10px 14px;border-radius:var(--r-card) var(--r-card) var(--r-sm) var(--r-card);
+  background:var(--field);color:var(--ink);font-size:13px;line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere;}
+/* Shaper (D21): the intent chip above the person's bubble — the lead itself went to the model only. */
+.ask-user-intent{align-self:flex-end;display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 9px;border-radius:var(--r-xs);background:var(--slate-bg);color:var(--slate-ink);font:500 11px/1 var(--sans);}
+.ask-user-pills{justify-content:flex-end;margin-top:0;}
+.ask-user-where{align-self:flex-end;display:inline-flex;align-items:center;gap:5px;font-size:var(--fs-caption);color:var(--ink-3);}
+.ask-attachment-pill{padding-right:12px;}
+.ask-attachment-thumb-link{display:inline-block;line-height:0;}
+.ask-attachment-thumb{max-width:180px;max-height:130px;border-radius:var(--r-sm);border:1px solid var(--line);display:block;}
+
+.ask-activity{display:flex;flex-direction:column;align-items:flex-start;gap:8px;min-width:0;}
+/* One line, `Done · 7.4s · 19.8k ctx · $0.05`, the chevron last when there are rows to open: a button then
+   (a div when there is nothing to open), so the UA's button look is reset here. */
+.ask-activity-head{display:inline-block;max-width:100%;padding:0;border:0;border-radius:var(--r-sm);background:none;
+  font:inherit;font-size:12px;line-height:1.5;color:var(--ink-3);text-align:left;}
+button.ask-activity-head{cursor:pointer;}
+button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hover .ask-activity-chev{color:var(--ink);}
+.ask-activity-head:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.ask-activity-chev{display:inline-block;margin-left:6px;font-size:13px;line-height:1;color:var(--ink-2);transition:transform .15s;}
+.ask-activity-head[aria-expanded="true"] .ask-activity-chev{transform:rotate(90deg);}
+/* The open body: a rounded inset panel holding the tool rows, then the sub-agents. */
+.ask-activity-body{align-self:stretch;display:flex;flex-direction:column;gap:6px;min-width:0;padding:10px 14px;
+  border-radius:var(--r-sm);background:var(--field);}
+.ask-dot{width:6px;height:6px;flex:0 0 6px;border-radius:50%;background:var(--seq);}
+.ask-dot-run{background:var(--slate);animation:wr-pulse 1.6s ease-in-out infinite;}
+.ask-dot-done{background:var(--green);animation:none;}
+.ask-dot-live{background:var(--green);}
+.ask-activity-label{font-weight:500;color:var(--ink-2);white-space:nowrap;}
+.ask-activity-elapsed,.ask-activity-meter{font-variant-numeric:tabular-nums;white-space:nowrap;}
+
