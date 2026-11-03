@@ -11,7 +11,8 @@ export const TU_LIMITS = Object.freeze({ projects: 200, rules: 200, text: 200 })
 
 /** A project key as a tracker names it: no backslash, "?", "#", "%" or control character, and at most one "/" between two parts
  *  of 1 to 100 characters, neither "." nor ".." (it lands in a URL path in the plugin, where "%2e%2e" or ".%2e" reads as "..").
- *  The whole key stays within 200 characters (text() caps it first). Jira keys are [A-Z][A-Z0-9_]*; GitHub keys a repository as
+ *  So the whole key is at most 201 characters. A save caps each value at 200 (text()); the statuses route has no cap of its
+ *  own, so a 201-character "100/100" key passes it. Jira keys are [A-Z][A-Z0-9_]*; GitHub keys a repository as
  *  owner/repo (plans/ticket-updates-pr2-plan.md decision 1). Each plugin checks its own shape too: jira-source and
  *  azure-boards-source refuse any slash, github-source wants owner/repo. */
 export const isProjectKey = (v) => typeof v === 'string' && !/[\\?#%\u0000-\u001f\u007f]/.test(v)
