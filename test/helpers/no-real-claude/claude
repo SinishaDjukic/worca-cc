@@ -19,6 +19,8 @@ case "$1" in
     echo "Usage: claude [options] [command] [prompt]   [worca test guard]"
     echo "  --mcp-config <configs...>  Load MCP servers from JSON files or strings"
     echo "  --plugin-dir <path>        Load a plugin from a directory for this session only"
+    echo "  --agents <json|file>       Custom agents: inline JSON or the path of a JSON file"
+    echo "  --forward-subagent-text    Forward sub-agent text to the output stream"
     exit 0 ;;
   auth)
     if [ "$2" = "status" ]; then echo '{"loggedIn": true, "authMethod": "worca-test-guard"}'; exit 0; fi ;;

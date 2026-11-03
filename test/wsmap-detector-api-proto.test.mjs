@@ -2,6 +2,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { makeWorkspace, runDetector, keysOf, assertEvidence } from './helpers/wsmap-fixtures.mjs';
 import detector from '../src/core/workspace-map/detectors/api-proto.mjs';
+import { loadBudget } from './helpers/load-budget.mjs';
 
 const PROTO = `syntax = "proto3";
 // service Commented { rpc Nope(A) returns (B); }
@@ -386,5 +387,5 @@ test('api-proto: the qualifier pick matches an import path against the package d
   const out = detector.finish(ctx);
   const ms = performance.now() - t0;
   assert.deepEqual([out.facts.filter((f) => f.dir === 'consumes').map((f) => f.key), out.unresolved.map((u) => u.reason)], [['acme.billing.v2.BillingService/Getv2'], []]);
-  assert.ok(ms < 2000, `api-proto took ${ms.toFixed(0)} ms (a join per import suffix per hint: ~12 s)`);
+  assert.ok(ms < loadBudget(2000), `api-proto took ${ms.toFixed(0)} ms (a join per import suffix per hint: ~12 s)`);
 });

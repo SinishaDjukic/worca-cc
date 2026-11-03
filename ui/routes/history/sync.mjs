@@ -32,7 +32,8 @@ app.post('/api/sync', syncRoute(async (req, res) => {
 
 app.get('/api/sync/projects', syncRoute(async (_req, res) => {
   const ps = (await listProjects()).filter((p) => p.exists);
-  const blocks = await mapWithCap(ps, fanoutCap(), (p) => projectSyncBlock({ dir: p.path, projectKey: p.key, mode: 'status' }));
+  // The Projects list paints every chip: no project counts as opened by it (project-sync.mjs QUIET_AFTER_MS).
+  const blocks = await mapWithCap(ps, fanoutCap(), (p) => projectSyncBlock({ dir: p.path, projectKey: p.key, mode: 'status', opened: false }));
   res.json({ projects: Object.fromEntries(ps.map((p, i) => [p.key, blocks[i]])) });
 }));
 app.post('/api/sync/all', syncRoute(async (req, res) => {

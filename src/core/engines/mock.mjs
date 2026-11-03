@@ -182,7 +182,7 @@ async function emitMockSubAgents(role, onEvent, signal) {
 // ── Ask Worca mock role (ask-worca-design.md §6.7) ───────────────────────────
 
 /** Emit a raw stream-json frame through the SAME envelope runClaudeProcess uses (the rl 'line' handler above). */
-function emitRaw(onEvent, raw) {
+export function emitRaw(onEvent, raw) {
   const cost = extractResultCost(raw);
   const text = extractText(raw);
   safeEmit(onEvent, { type: raw.type, raw, text: text || undefined, ...(cost != null ? { costUsd: cost } : {}) });
@@ -679,6 +679,12 @@ async function mockGenericProducer(m, onEvent) {
   await ensureDir(out);
   await writeFile(out, body, 'utf8');
   safeEmit(onEvent, { type: 'tool_use', text: `wrote ${out}`, raw: { mock: true, file: out } });
+  // The node's other declared outputs (MOCK_OUTS, '|'-separated): a real agent writes them all.
+  for (const extra of String(m.MOCK_OUTS || '').split('|').filter(Boolean)) {
+    await ensureDir(extra);
+    await writeFile(extra, extra.endsWith('.json') ? JSON.stringify({ mock: true, note: 'generic artifact' }, null, 2) + '\n'
+      : '# Mock artifact\n\nDeterministic generic producer output.\n', 'utf8');
+  }
   return `[mock] generic artifact written to ${out}`;
 }
 
