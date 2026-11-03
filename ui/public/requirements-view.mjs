@@ -3569,6 +3569,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         await api('PUT', setupUrl(f), { ...st.conn, project: st.project, projectName: nameIn(st.projects, st.project), issueType: st.type,
           issueTypeName: nameIn(st.types, st.type), labels: st.labels, priority: st.prio, priorityName: st.prio ? nameIn(st.prios, st.prio) : null,
           criteria: st.crit });
+        importChanged();   // the saved setup is where the import dialog starts (its connection and project)
         if (!live(g)) return;
         st.busy = false;
         if (then) { then(); return; }   // the next dialog takes over (it closes this one)

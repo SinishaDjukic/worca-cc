@@ -287,19 +287,24 @@ test('a projects read that was superseded by a change frame does not overwrite t
   m.view.destroy();
 });
 
-test('an older paint that finishes after a newer one does not overwrite it', async () => {
+test("an older New feature paint whose list answers last does not overwrite the newer paint's interview line", async () => {
   const held = gate();
-  fakeApi({ 'GET /api/projects': PROJECTS, 'GET /api/workspaces': { workspaces: [] }, 'GET /api/requirements': { hold: held, value: LIST } });
+  let n = 0;
+  fakeApi({ 'GET /api/projects': PROJECTS, 'GET /api/workspaces': { workspaces: [] }, 'GET /api/requirements': async () => {
+    n += 1;
+    if (n === 1) { await held.p; return { ...LIST, interview: { label: 'Old model', effort: 'low' } }; }
+    return { ...LIST, interview: { label: 'New model', effort: 'high' } };
+  } });
   const m = make();
-  void m.view.show('new');       // draws the form, then waits for the held list
+  void m.view.show('new');       // paint 1: the form is drawn, its list (Old model) is held
   await settle();
-  assert.ok(m.host.querySelector('#req-new-title'));
-  const shown = m.view.show('');  // the list screen: its own call is held too, then released with the first
-  held.release();
-  await shown;
+  await m.view.show('new');      // paint 2: its list (New model) answers at once
   await settle();
-  assert.equal(m.host.querySelector('#req-new-title'), null, 'the list screen stays');
-  assert.equal(m.host.querySelector('.req-new-model'), null, 'no interview line injected into it');
+  assert.match(m.host.querySelector('#req-new-files-privacy').textContent, /New model/);
+  held.release();                // paint 1's list answers last
+  await settle();
+  assert.match(m.host.querySelector('#req-new-files-privacy').textContent, /New model/, 'the late answer did not overwrite');
+  assert.doesNotMatch(m.host.textContent, /Old model/);
   m.view.destroy();
 });
 
