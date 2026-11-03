@@ -240,9 +240,9 @@ test('an ALL-CUSTOM graph completes offline through the generic chain alone', { 
 // ── 3. the verdict half of the chain: what a mock that writes NO verdict costs ──
 // A verifier that exits 0 without writing its JSON is indistinguishable from an
 // approval, and on every shipped seed the clean side is wired straight to End.
-// Parity keeps it a pass; MAJ-10 makes it a LOUD one — the warning rides the
-// execution result and the scheduler folds it into state.warnings + the run log.
-test('a verifier whose mock writes no verdict passes, but the run warns and names it', { timeout: 60000 }, async () => {
+// Silence is not approval (E1): the execution fails with VERDICT_MISSING (the orchestrator's
+// failure policy pauses on it). `config.verdictOptional` keeps the v1 pass, loudly.
+test('a verifier whose mock writes no verdict fails the node; verdictOptional keeps the loud v1 pass', { timeout: 60000 }, async () => {
   const SILENT = {
     maker: {
       displayName: 'Maker', runnerType: 'producer', promptHints: '',
@@ -281,11 +281,18 @@ test('a verifier whose mock writes no verdict passes, but the run warns and name
       { id: 'w3', from: { node: 'n_sil', port: 'pass' }, to: { node: 'n_end', port: 'result' } },
     ],
   };
+  const strict = await runGraphOffline({
+    template: tpl, portsFn: silentPorts, registry: SILENT,
+    projectDir: tmp('worca-silent-proj-'), pipelineDir: tmp('worca-silent-pipe-'),
+  });
+  assert.equal(strict.result, 'error');
+  assert.equal(strict.state.endReached, false, 'the clean side never fires on silence');
+  tpl.nodes = tpl.nodes.map((n) => (n.id === 'n_sil' ? { ...n, config: { verdictOptional: true } } : n));
   const r = await runGraphOffline({
     template: tpl, portsFn: silentPorts, registry: SILENT,
     projectDir: tmp('worca-silent-proj-'), pipelineDir: tmp('worca-silent-pipe-'),
   });
   assert.equal(r.result, 'done');
-  assert.equal(r.state.endReached, true, 'the CLEAN side still fires — v1 parity');
+  assert.equal(r.state.endReached, true, 'the CLEAN side still fires — v1 parity, by opt-in');
   assert.deepEqual(r.state.warnings, ['verdict file missing: n_sil silent-verdict-c1.json — treated as clean']);
 });

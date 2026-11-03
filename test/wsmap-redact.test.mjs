@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { redactSecrets, redactLines } from '../src/shared/workspace-map/redact.mjs';
+import { loadBudget } from './helpers/load-budget.mjs';
 
 const GH = 'ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8';
 const CASES = [
@@ -285,7 +286,7 @@ test('redactSecrets and redactLines stay linear on long single-line input (ReDoS
     redactSecrets(s);
     redactLines([s]);
     const ms = performance.now() - t0;
-    assert.ok(ms < 3000, `${JSON.stringify(s.slice(0, 16))}… (${s.length} chars) took ${Math.round(ms)} ms`);
+    assert.ok(ms < loadBudget(3000), `${JSON.stringify(s.slice(0, 16))}… (${s.length} chars) took ${Math.round(ms)} ms`);
   }
   assert.equal(redactSecrets('spring.cloud.config.server.git.repos.team-a.password=hunter2'),
     'spring.cloud.config.server.git.repos.team-a.password=***', 'a long dotted key is still a key');

@@ -17,6 +17,7 @@ import { constants as FS, existsSync, statSync, openSync, readSync, closeSync, m
 import { gitAvailable } from './git-available.mjs';
 import { guardedGitEnvSync } from './git-guard.mjs';
 import { withNoGitPath } from './nogit-stub.mjs';
+import { cmpVersions } from './preflight-node.mjs';
 
 const _probeChildren = new Set();
 /** Test seam: kill the probes still running (each resolves null), so a stopped run's preflight cannot hold a test process open. */
@@ -248,8 +249,8 @@ export function worktreeGraphInstruction() {
  * Run `graphify update <dir>` headlessly to build/refresh an AST graph at
  * <dir>/graphify-out/. Spawned with cwd=cwd so graphify's stray cwd-relative
  * manifest write lands inside the same worktree, never the main repo. Bounded
- * by timeoutMs (macOS has no timeout(1)); on overrun the child is SIGKILLed.
- * Never throws. Resolves { ok, code, timedOut, stderr }.
+ * by timeoutMs (macOS has no timeout(1)); on overrun the child is SIGKILLed,
+ * and so it is when `signal` aborts. Never throws. Resolves { ok, code, timedOut, stderr }.
  *
  * Before the build, <dir>/graphify-out/.gitignore = `*` makes the output ignore
  * itself (the memory mount's sentinel, memory-sync.mjs mountMemory): a target
@@ -259,7 +260,7 @@ export function worktreeGraphInstruction() {
  * tracks files under graphify-out/ gets no sentinel (it commits its graph on
  * purpose). A failed write is not fatal: the build runs as before.
  */
-export function runGraphifyUpdate({ dir, cwd, timeoutMs = 120000 } = {}) {
+export function runGraphifyUpdate({ dir, cwd, timeoutMs = 120000, signal } = {}) {
   try {
     if (!existsSync(dir)) throw new Error('no dir');
     // A repo that commits its graph keeps doing so: hiding only the NEW files would commit half a graph.
@@ -284,17 +285,24 @@ export function runGraphifyUpdate({ dir, cwd, timeoutMs = 120000 } = {}) {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
       resolveP(val);
     };
-    const timer = setTimeout(() => {
-      timedOut = true;
+    const kill = () => {
       try {
         child.kill('SIGKILL');
       } catch {
         /* ignore */
       }
+    };
+    const timer = setTimeout(() => {
+      timedOut = true;
+      kill();
       done({ ok: false, code: -1, timedOut: true, stderr: 'graphify update timed out' });
     }, timeoutMs);
+    // signal: the caller stops the build (a run's teardown); resolves once the process has exited.
+    const onAbort = () => kill();
+    if (signal?.aborted) kill(); else signal?.addEventListener('abort', onAbort, { once: true });
     child.stdout?.on('data', () => {});
     child.stderr?.on('data', (d) => {
       stderr += d.toString();
@@ -515,7 +523,12 @@ export async function probeClaudeCapabilities(bin = 'claude') {
   const raw = await execSafe(exe, ['--version'], { timeout: 8000 });
   const version = raw ? (/(\d+\.\d+\.\d+)/.exec(raw)?.[1] ?? raw.split(/\s+/)[0] ?? null) : null;
   // pluginDir (skills registry §4.1): a set's skills reach a spawn only through --plugin-dir.
-  return { mcpConfig: !!help && help.includes('--mcp-config'), pluginDir: !!help && help.includes('--plugin-dir'), version };
+  // Session groups (Task 29): a host spawn needs --forward-subagent-text (by --help) and `--agents <file>` (by version,
+  // 2.1.281). Never probe --max-turns or --append-subagent-system-prompt by --help: both are hidden there on 2.1.308 but
+  // accepted by the binary (verify suggestion 9).
+  return { mcpConfig: !!help && help.includes('--mcp-config'), pluginDir: !!help && help.includes('--plugin-dir'), version,
+    forwardSubagentText: !!help && help.includes('--forward-subagent-text'),
+    agentsFile: !!version && cmpVersions(version, '2.1.281') >= 0 };
 }
 
 // ── Is the Claude Code CLI signed in? ─────────────────────────────────────────

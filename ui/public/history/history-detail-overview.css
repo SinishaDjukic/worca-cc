@@ -7,7 +7,7 @@
 .hd-ov-verdict.none{color:var(--ink-2);}   /* the class the results-less arm emits */
 .hd-ov-chip{padding:5px 12px;border-radius:var(--r-xs);font:600 var(--fs-caption) var(--sans);}
 .hd-ov-chip.clean,.hd-ov-chip.st-done{background:var(--green-bg);color:var(--green-ink);}
-.hd-ov-chip.warn,.hd-ov-chip.st-paused{background:var(--amber-bg);color:var(--amber-ink);}
+.hd-ov-chip.warn,.hd-ov-chip.st-paused{background:var(--amber-bg);color:var(--amber-ink-strong);}
 .hd-ov-chip.st-stopped,.hd-ov-chip.st-error{background:var(--red-bg);color:var(--red-ink);}
 .hd-ov-grid,.pd-ov-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:18px;}
 /* The worktree: one full-width line (label · state · shortened copyable path), spanning

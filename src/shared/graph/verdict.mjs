@@ -13,19 +13,41 @@ export const SEVERITIES = ['critical', 'major', 'minor', 'suggestion'];
 
 export const BLOCKING = new Set(['critical', 'major']);
 
-/** Normalize an arbitrary value to one of SEVERITIES (default "minor"). */
-export function normalizeSeverity(value) {
-  if (typeof value !== 'string') return 'minor';
+/** Words agents and other engines write for the four severities. */
+const SEVERITY_ALIASES = Object.freeze({
+  blocker: 'critical', p0: 'critical', severe: 'critical', fatal: 'critical',
+  high: 'major', p1: 'major', important: 'major',
+  low: 'minor', p3: 'minor', nit: 'minor', nitpick: 'minor', trivial: 'minor',
+  info: 'suggestion', suggest: 'suggestion', optional: 'suggestion',
+});
+
+const severityOf = (value) => {
+  if (typeof value !== 'string') return null;
   const v = value.trim().toLowerCase();
-  return SEVERITIES.includes(v) ? v : 'minor';
+  return SEVERITIES.includes(v) ? v : (SEVERITY_ALIASES[v] || null);
+};
+
+/** True for one of SEVERITIES or a known alias (case and spacing ignored). */
+export function isKnownSeverity(value) {
+  return severityOf(value) !== null;
 }
 
 /**
- * True if a review contains any critical or major issue.
+ * Normalize an arbitrary value to one of SEVERITIES. Anything unrecognised —
+ * a misspelling, a new word, a missing severity — is "major", i.e. blocking:
+ * silence is not approval, and a wrong guess costs one bounded fix cycle.
+ */
+export function normalizeSeverity(value) {
+  return severityOf(value) || 'major';
+}
+
+/**
+ * True if a review contains any critical or major issue, or asks for a re-check (withRecheck).
  * @param {{issues: Array}} review
  * @returns {boolean}
  */
 export function hasBlocking(review) {
+  if (review?.recheck === true) return true;
   if (!review || !Array.isArray(review.issues)) return false;
   return review.issues.some((i) => BLOCKING.has(normalizeSeverity(i?.severity)));
 }
@@ -38,4 +60,16 @@ export function hasBlocking(review) {
 export function blockingIssues(review) {
   if (!review || !Array.isArray(review.issues)) return [];
   return review.issues.filter((i) => BLOCKING.has(normalizeSeverity(i?.severity)));
+}
+
+/**
+ * A loop's first verdict that lists critical or major items under `fixed` (the plan refiner's, which judges the
+ * plan it wrote itself) routes as blocking once, so a second cycle re-reads those fixes; later cycles gate on
+ * `issues` alone. The added `recheck` flag is what hasBlocking reads; blockingIssues stays the open issues.
+ * @param {{issues: Array, fixed?: Array}|null} review
+ * @param {number} ordinal  the execution's 1-based ordinal on its node
+ */
+export function withRecheck(review, ordinal) {
+  if (!review || ordinal !== 1 || !Array.isArray(review.fixed)) return review;
+  return review.fixed.some((i) => BLOCKING.has(normalizeSeverity(i?.severity))) ? { ...review, recheck: true } : review;
 }

@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import {
   rowTime, whenLabel, liveRowState, histRowState, schedRowState, countNeedsYou, needsYouItems,
-  buildRunsModel, isRowSelected, isMemberOpen, renderRunsList, dateBucket, DATE_BUCKETS, DAY_BUCKETS, dayBucket, isFolded, setFolded, listLine, groupRow, groupCostUsd, costTitle, memberCostUsd, memberLine,
+  buildRunsModel, isRowSelected, isMemberOpen, renderRunsList, paintStageBlocks, dateBucket, DATE_BUCKETS, DAY_BUCKETS, dayBucket, isFolded, setFolded, listLine, groupRow, groupCostUsd, costTitle, memberCostUsd, memberLine,
 } from '../ui/public/runs-list.mjs';
 import { RUN_STATES } from '../src/shared/run-model.mjs';
 import { checkRows } from './helpers/rows.mjs';
@@ -763,4 +763,22 @@ test('#955 a chat inside a one-project topic group does not repeat the project; 
   assert.equal(sub('a'), '$0.40 · 11:00');
   assert.equal(sub('b'), '');
   assert.equal(sub('c'), 'worka-cc · 10:00');
+});
+
+test('#1067 a staged row\'s fill moves in place: the state replay after a first paint from hello alone reaches the bar', () => {
+  // The Runs list rebuilds a row only when its signature (app.js runsRowSig: stage and label, not the fill) changes, so a
+  // row first painted from hello (stepper, no steps: Plan not begun) kept 0% after the replayed state began Plan.
+  const graph = { nodes: [{ id: 'n_clarify', kind: 'agent', progressStage: 'plan' }, { id: 'n_impl', kind: 'agent', progressStage: 'build' }] };
+  const stepper = { version: 2, graph };
+  const pq = { kind: 'clarify', questions: [{ id: 'q1', question: 'Which?' }] };
+  const model = (run) => buildRunsModel({ live: [liveIt('r1', { pipelineId: 'p1', ask: { kind: 'clarify', step: '' }, run })], now: NOW });
+  const before = model({ status: 'running', stepper, steps: [], pendingQuestion: pq });
+  const after = model({ status: 'running', stepper, pendingQuestion: pq,
+    steps: [{ executionId: 'x:n_clarify:1', nodeId: 'n_clarify', status: 'start' }] });
+  const host = doc.createElement('div');
+  host.append(...renderRunsList(doc, before));
+  const fill = () => host.querySelector('.runs-item[data-row-key="live:r1"] .run-prog-sec[data-stage="plan"] .run-prog-fill').style.width;
+  assert.equal(fill(), '0%', 'not begun from hello alone');
+  paintStageBlocks(host, after);
+  assert.equal(fill(), '10%', 'START_SHARE once the clarify row exists');
 });

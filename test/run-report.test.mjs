@@ -495,13 +495,13 @@ test('a run whose dir was deleted still builds; files is null, nothing throws', 
 });
 
 // ── pure helpers ──────────────────────────────────────────────────────────────
-test('pure helpers: countIssues folds unknown severities to minor; cyclesByNode takes the max cycle per node', async () => {
+test('pure helpers: countIssues folds unknown severities to major; cyclesByNode takes the max cycle per node', async () => {
   await checkRows([
-    { name: 'countIssues tallies the four severities and folds unknowns to minor', run: () => {
+    { name: 'countIssues tallies the four severities and folds unknowns to major', run: () => {
       assert.deepEqual(
         countIssues([{ issues: [{ severity: 'critical' }, { severity: 'WAT' }, { severity: 'major' }] }]),
-        { critical: 1, major: 1, minor: 1, suggestion: 0 },
-        'an unknown severity is folded to minor by normalizeSeverity, never dropped');
+        { critical: 1, major: 2, minor: 0, suggestion: 0 },
+        'an unknown severity is folded to major (blocking) by normalizeSeverity, never dropped');
       assert.deepEqual(countIssues(null), { critical: 0, major: 0, minor: 0, suggestion: 0 });
     } },
     { name: 'cyclesByNode takes the max cycle per node and ignores untagged steps', run: () => {
