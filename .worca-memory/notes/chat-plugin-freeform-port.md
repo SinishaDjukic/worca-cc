@@ -2,7 +2,7 @@
 name: chat-plugin-freeform-port
 description: Porting Discord's freeform chat (interactive controls, threads, reactions) to another chat plugin worker — where the contract is tested and which traps cost a c
 paths: plugins/*-chat/**, test/*-chat-worker.test.mjs
-updated: 2026-11-03T14:33:17.848Z
+updated: 2026-11-03T14:56:54.712Z
 author: Bulibas
 ---
 
@@ -22,6 +22,11 @@ Porting freeform chat to slack-chat (2026-11-03) showed where the worker-host co
   no row, so that place is dead: commands are dropped and mentions cannot start. Telegram review cycle 2 (2026-11-03)
   found this for an EXISTING forum topic, persisted before the header post. Test it with a refused thread send
   followed by a later message, which must arrive with the plain chat id.
+  A `catch` around the post does NOT cover the host timeout. The worker's 429 ladder waits `retry_after` inline
+  (`maxWaitMs` defaults to `Infinity`). So a 20 s wait outlives the host's 15 s `sendMessage` RPC, and then it
+  SUCCEEDS: no throw, the binding stays, and the bridge has already given up (Telegram review cycle 3). Bound the
+  thread-start post's total wait below 15 s, so that a long 429 throws inside the `try`. Test it with a recording
+  `_sleep`: the fake `async () => {}` hides the wait.
 - **Receipt marks are Unicode** (`receipts.mjs` `MARK`, `⏹️` = U+23F9 U+FE0F). A platform that reacts by name needs a
   map; build its keys with `String.fromCodePoint(...)` (map both with and without U+FE0F): the Write tool turns
   backslash-u escapes into raw characters, and a lost U+FE0F is invisible.
