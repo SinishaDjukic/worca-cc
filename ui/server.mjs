@@ -827,6 +827,9 @@ const MAX_BUFFER = 5000;
 // ---------------------------------------------------------------------------
 const app = express();
 const server = http.createServer(app);
+// Node's 5 s keep-alive default closes an idle connection the browser is about to reuse; headersTimeout stays above it.
+server.keepAliveTimeout = 65_000;
+server.headersTimeout = 66_000;
 
 // Settings › About manual update (issue #841). The version list (npm packument, cached 12 h like the
 // check above), who may update, and the handoff record's last result. Never at boot, never under mock
