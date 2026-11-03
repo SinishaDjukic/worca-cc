@@ -41,6 +41,7 @@ import { CHATS_PAGE } from './chats-list.mjs';
 import { chatPageKeyAction, keyHint, isMac, LIST_FIELD } from './list-keys.mjs';
 import { openKeysSheet } from './keys-sheet.mjs';
 import { gitOn } from './git-gate.mjs';
+import { originMark } from './chat-origin.mjs';
 import { NO_PROJECT_KEY, NO_PROJECT_NAME, NEEDS_REPO_NOTE } from '../../src/shared/no-project.mjs';
 import { createTagInput, fetchTagVocabulary, createTagRulesLine } from './tag-input.mjs';
 import { INTENTS, splitIntentLead } from './chat/intent.mjs';
@@ -1952,7 +1953,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       const b = make('button', 'ask-side-recent-row');
       b.type = 'button';
       b.dataset.threadId = t.id;
-      b.appendChild(make('span', 'ask-side-recent-t', t.title || 'New chat'));
+      const title = make('span', 'ask-side-recent-t', t.title || 'New chat');
+      const mark = originMark(doc, t.origin);
+      if (mark) title.prepend(mark);
+      b.appendChild(title);
       b.appendChild(threadMeter(t));
       b.addEventListener('click', () => { showThread(t.id); route(t.id); focusComposer(); });   // the row leaves with the empty state
       return b;

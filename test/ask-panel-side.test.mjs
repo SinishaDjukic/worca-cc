@@ -486,6 +486,20 @@ test('the column lists the 3 newest chats under the suggestions; a row opens tha
   ctx.panel.destroy();
 });
 
+test('a recent chat a chat integration opened wears its platform mark first in its title; an app chat none', async () => {
+  const discord = { ...listRow('ask_00000002', 'From Discord'), origin: { plugin: 'discord-chat', channelId: 'main', platform: 'discord', label: 'Discord' } };
+  const state = { snap: snapOf([userRow('askm_u0000001', 1, 'hi')]), list: [listRow(TID, 'Deck chat'), discord] };
+  const ctx = makePanel({ fetchHandler: api(state) });
+  ctx.panel.setHost('dock');
+  ctx.panel.open();
+  await ticks(ctx, 4);
+  const titles = [...ctx.doc.querySelectorAll('.ask-side-recent-row .ask-side-recent-t')];
+  assert.deepEqual(titles.map((t) => t.textContent), ['Deck chat', 'From Discord'], 'the mark adds no text');
+  assert.equal(titles[0].querySelector('.chat-origin'), null);
+  assert.equal(titles[1].firstChild.getAttribute('aria-label'), 'From Discord');
+  ctx.panel.destroy();
+});
+
 test('a route that brings the column back leaves the focus on the page; the button focuses the composer', async () => {
   const ctx = makePanel({ fetchHandler: api({}) });
   ctx.panel.setHost('dock');

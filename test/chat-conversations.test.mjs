@@ -111,3 +111,19 @@ test('retireNewConversation: the flag sticks (rebind too) and only header:new re
   C.retireNewConversation(c.id);   // idempotent
   assert.equal(C.getConversation(c.id).headerNewOff, true);
 });
+
+test('chatOrigins: a bound thread names its plugin and platform; an app chat has none; a rebound thread keeps it', () => {
+  const c = bind({ plugin: 'slack-chat', platform: 'slack', guildId: null });
+  const app = store.createThread({ createdBy: 'ada@example.com' });
+  const old = store.appendMessage(c.askThreadId, { role: 'user', text: 'hi from slack' });
+  C.recordDelivery({ conversationId: c.id, askMessageId: old.id, part: 'chat' });
+  const t2 = store.createThread({ createdBy: 'ada@example.com' });
+  C.rebindConversation(c.id, { askThreadId: t2.id });
+  const o = C.chatOrigins([c.askThreadId, t2.id, app.id, 'ask_ffffffff']);
+  const want = { plugin: 'slack-chat', channelId: 'main', platform: 'slack' };
+  assert.deepEqual(o.get(t2.id), want, 'the current binding');
+  assert.deepEqual(o.get(c.askThreadId), want, 'the thread a New conversation left behind still shows where it came from');
+  assert.equal(o.has(app.id), false);
+  assert.equal(o.has('ask_ffffffff'), false);
+  assert.equal(C.chatOrigins([]).size, 0);
+});
