@@ -171,6 +171,39 @@ test('gitAvailable, gitState, onGitChange, GIT_MISSING, the git-off helper', asy
       assert.deepEqual([gitAvailable(), seen], [false, [false]], 'the flip still fires onGitChange');
       off();
     } },
+    { name: 'one probe timeout keeps available; two in a row (or a real failure) report missing', run: async () => {
+      const TIMED_OUT = { available: false, path: '/g', version: null, reason: 'probe-failed', timedOut: true };
+      const OK_ANSWER = { available: true, path: '/g', version: '2.0', reason: 'ok' };
+      const answers = []; _testing.reset();
+      _testing.useProbe(async () => ({ ...answers.shift(), checkedAt: Date.now() }));
+      const seen = []; const off = onGitChange((s) => seen.push(s.available));
+      answers.push(OK_ANSWER); await gitState({ fresh: true });
+      answers.push(TIMED_OUT);
+      const one = await gitState({ fresh: true });
+      assert.deepEqual([one.available, one.reason, one.version, 'timedOut' in one], [true, 'ok', '2.0', false], 'one timeout: unchanged');
+      assert.deepEqual([gitAvailable(), seen], [true, [true]]);
+      answers.push(OK_ANSWER); await gitState({ fresh: true });          // a good probe resets the count
+      answers.push(TIMED_OUT); await gitState({ fresh: true });
+      assert.equal(gitAvailable(), true, 'timeout, ok, timeout: still one in a row');
+      answers.push(TIMED_OUT);
+      const two = await gitState({ fresh: true });
+      assert.deepEqual([two.available, two.reason, 'timedOut' in two, gitAvailable(), seen], [false, 'probe-failed', false, false, [true, false]]);
+      answers.push(OK_ANSWER); await gitState({ fresh: true });
+      answers.push({ available: false, path: null, version: null, reason: 'not-on-path' });
+      assert.equal((await gitState({ fresh: true })).reason, 'not-on-path', 'a non-timeout failure flips at once');
+      off();
+    } },
+    { name: 'a timeout while git was already missing reports probe-failed', run: async () => {
+      _testing.reset();
+      _testing.useProbe(async () => ({ available: false, path: '/g', version: null, reason: 'probe-failed', timedOut: true, checkedAt: Date.now() }));
+      const s = await gitState();
+      assert.deepEqual([s.available, s.reason, 'timedOut' in s], [false, 'probe-failed', false]);
+    } },
+    { name: 'probeGit marks a timed-out --version with timedOut, a plain failure without', run: async () => {
+      const mk = (ans) => probeGit({ env: { PATH: '/usr/bin' }, platform: 'linux', exists: only(['/usr/bin/git']), exec: async () => ans });
+      assert.equal((await mk({ code: -1, stdout: '', timedOut: true })).timedOut, true);
+      assert.equal('timedOut' in await mk({ code: 1, stdout: '', timedOut: false }), false);
+    } },
     { name: 'onGitChange fires once per flip (set and probe both), unsubscribe stops it', run: async () => {
       _testing.reset();
       const seen = []; const off = onGitChange((s) => seen.push(s.available));

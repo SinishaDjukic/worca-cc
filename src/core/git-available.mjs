@@ -49,11 +49,13 @@ export async function probeGit({ env = process.env, platform = process.platform,
   }
   const v = await exec(hit, ['--version'], { env, timeoutMs: GIT_PROBE_TIMEOUT_MS });
   const m = v.code === 0 ? /^git version (\S+)/.exec(v.stdout.trim()) : null;
-  return m ? done('ok', { available: true, version: m[1] }) : done('probe-failed');
+  // timedOut is a probe-time signal, not part of the stored state (settle() strips it): a slow machine is not a missing git.
+  return m ? done('ok', { available: true, version: m[1] }) : done('probe-failed', v.timedOut ? { timedOut: true } : {});
 }
 
 let state = NOT_PROBED;
 let inflight = null;
+let timeouts = 0;                // probes in a row that timed out; one never flips an ok answer, two do
 let probeImpl = () => probeGit();
 const listeners = new Set();
 function commit(next) {
@@ -61,6 +63,12 @@ function commit(next) {
   state = Object.freeze({ ...next });
   if (state.available !== prev.available) for (const fn of [...listeners]) { try { fn(state); } catch { /* a listener never breaks the flip */ } }
   return state;
+}
+function settle(result) {
+  const { timedOut, ...next } = result;
+  const first = timedOut && state.available && timeouts === 0;
+  timeouts = timedOut ? timeouts + 1 : 0;
+  return commit(first ? { ...state, checkedAt: next.checkedAt } : next);
 }
 const envForced = () => forced(process.env, Date.now());
 export function gitAvailable() {
@@ -75,7 +83,7 @@ export function gitState({ maxAgeMs = 60_000, fresh = false } = {}) {
   const known = state.reason !== 'not-probed';
   if (!known || fresh || Date.now() - state.checkedAt >= maxAgeMs) {
     inflight ??= Promise.resolve().then(probeImpl)
-      .then(commit, () => commit({ ...NOT_PROBED, reason: 'probe-failed', checkedAt: Date.now() }))
+      .then(settle, () => commit({ ...NOT_PROBED, reason: 'probe-failed', checkedAt: Date.now() }))
       .finally(() => { inflight = null; });
     if (!known || fresh) return inflight.then((s) => ({ ...s }));
   }
@@ -88,6 +96,6 @@ export const _testing = {
   set(partial = {}) {
     return commit({ ...NOT_PROBED, reason: partial.available === true ? 'forced-on' : 'forced-off', checkedAt: Date.now(), ...partial, available: partial.available === true });
   },
-  reset() { state = NOT_PROBED; inflight = null; probeImpl = () => probeGit(); },
+  reset() { state = NOT_PROBED; inflight = null; timeouts = 0; probeImpl = () => probeGit(); },
   useProbe(fn) { probeImpl = fn || (() => probeGit()); },
 };
