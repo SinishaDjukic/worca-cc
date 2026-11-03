@@ -254,15 +254,18 @@ test('a failed spike gate (--check --stats and --apply) ends with the catch-up h
 
 const SPLIT_ONLY = !SPLIT && 'this checkout is not split yet: there is no residual ui/server.mjs to guard';
 
-test('on the split tree, --check fails on a movable route left in ui/server.mjs and on a kept monolith, each naming the catch-up command', { skip: SPLIT_ONLY }, async (t) => {
+test('on the split tree, --check fails on a movable route left in ui/server.mjs (above or below its static mount) and on a kept monolith, each naming the catch-up command', { skip: SPLIT_ONLY }, async (t) => {
   const d = plannerCopy(t);
   const s = readFileSync(join(d, 'ui/server.mjs'), 'utf8');
+  const j = s.indexOf('app.use(function servePublic(');
+  const top = s.slice(0, j).split('\n').length;
   const i = s.indexOf('// SPA fallback:');
-  const line = s.slice(0, i).split('\n').length;
-  writeFileSync(join(d, 'ui/server.mjs'), `${s.slice(0, i)}app.get('/api/settings/zz-residual', (q, r) => r.json({}));\n${s.slice(i)}`);
+  const line = s.slice(0, i).split('\n').length + 1;
+  writeFileSync(join(d, 'ui/server.mjs'), `${s.slice(0, j)}app.get('/api/settings/zz-top', (q, r) => r.json({}));\n${s.slice(j, i)}app.get('/api/settings/zz-residual', (q, r) => r.json({}));\n${s.slice(i)}`);
   writeFileSync(join(d, 'ui/public/style.css'), ':root{}\n');
   const errs = [];
   assert.equal(await main(['--check', '--root', d], { out: () => {}, err: (m) => errs.push(m) }), 1);
+  assert.ok(errs.includes(`route GET /api/settings/zz-top (ui/server.mjs:${top}) belongs in ui/routes/settings/ — run npm run split:catch-up -- <branch> (top of ui/server.mjs is for central sign-in and guards only)`), errs.join('\n'));
   assert.ok(errs.includes(`route GET /api/settings/zz-residual (ui/server.mjs:${line}) belongs in ui/routes/settings/ — run npm run split:catch-up -- <branch>`), errs.join('\n'));
   assert.ok(errs.some((e) => /^ui\/public\/style\.css next to ui\/public\/parts\.json is not served: .* — run npm run split:catch-up -- <branch>$/.test(e)), errs.join('\n'));
   assert.match(errs.at(-1), HINT);

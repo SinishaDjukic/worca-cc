@@ -1,11 +1,12 @@
 // test/split-by-feature-after-split.test.mjs — the post-split guards (#919): a movable route left in the residual
-// ui/server.mjs and a monolith kept next to ui/public/parts.json both fail, naming the catch-up command.
+// ui/server.mjs, a route above its static mount that is not central, and a monolith kept next to ui/public/parts.json
+// all fail, naming the catch-up command.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { residualRouteProblems, keptMonolithProblems, catchUpCommand } from '../tools/split-by-feature/after-split.mjs';
+import { residualRouteProblems, topZoneRouteProblems, keptMonolithProblems, catchUpCommand } from '../tools/split-by-feature/after-split.mjs';
 
 const CMD = 'npm run split:catch-up -- feat/old';
 const MAP = { features: [{ name: 'settings', routes: ['/api/settings'] }, { name: 'runs', routes: ['/api/runs'] }] };
@@ -31,9 +32,21 @@ test('a route the split rules keep central (it writes a central binding) is not 
   assert.deepEqual(residualRouteProblems(src, MAP, new Set(), CMD), []);
 });
 
-test('a route above the static mount is outside the old move region and is not flagged', () => {
+test('a route above the static mount is outside the old move region and is not flagged by the residual guard', () => {
   const src = server('', "app.get('/api/settings/x', (q, r) => r.json({}));\n");
   assert.deepEqual(residualRouteProblems(src, MAP, new Set(), CMD), []);
+});
+
+test('a route above the static mount fails the top-zone guard, naming its feature folder and the catch-up command', () => {
+  const src = server('', "app.post('/api/settings/x', (q, r) => r.json({}));\n");
+  assert.deepEqual(topZoneRouteProblems(src, MAP, new Set(), CMD),
+    ['route POST /api/settings/x (ui/server.mjs:4) belongs in ui/routes/settings/ — run npm run split:catch-up -- feat/old'
+      + ' (top of ui/server.mjs is for central sign-in and guards only)']);
+});
+
+test('a central top-zone route in central-routes.json passes the top-zone guard', () => {
+  const src = server('', "app.post('/api/run', express.json({ limit: '64mb' }));\nfor (const p of PATHS) app.post(p, gate);\n");
+  assert.deepEqual(topZoneRouteProblems(src, MAP, new Set(['POST /api/run', 'POST p']), CMD), []);
 });
 
 test('an unmapped route in the region keeps the coverage message', () => {
