@@ -2,20 +2,20 @@
 // branches that started before the split are still on 4, and the split, catch-up and parity tools read both: they read
 // a tree's app only through recordMounts + routeTable, and compare paths only in normalizePath's spelling.
 import { createRequire } from 'node:module';
-import { join } from 'node:path';
+import { resolve } from 'node:path';
 
 export const EXPRESS_MAJORS = Object.freeze([4, 5]);
 
 /** The express major the tree at `root` loads (its own node_modules, never the tool's); throws for anything but 4 or 5. */
 export function expressMajor(root) {
-  const v = createRequire(join(root, 'package.json'))('express/package.json').version;
+  const v = createRequire(resolve(root, 'package.json'))('express/package.json').version;
   const major = Number(String(v).split('.')[0]);
   if (!EXPRESS_MAJORS.includes(major)) throw new Error(`the route tools read Express 4 or 5 apps; found express ${v}`);
   return major;
 }
 
 /** A require() rooted in the express package the tree at `root` loads: what recordMounts takes. */
-export const expressRequire = (root) => createRequire(createRequire(join(root, 'package.json')).resolve('express/package.json'));
+export const expressRequire = (root) => createRequire(createRequire(resolve(root, 'package.json')).resolve('express/package.json'));
 
 /**
  * Records each middleware layer's mount path as it is registered, on the router prototype the tree's express uses
