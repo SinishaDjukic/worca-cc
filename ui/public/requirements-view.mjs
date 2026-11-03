@@ -4494,6 +4494,19 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
           syncSelect(projSel, [{ value: '', label: 'All projects' }, ...st.projects], st.project);
           render();
         }
+        if (!keep && !st.project) {
+          // All projects: the search does not need the list, so both go out together. A failed list supersedes the search (as when
+          // the list came first: its error and Try again, no tickets under them).
+          const [listed, searched] = await Promise.allSettled([loadProjects(), run()]);
+          if (!live(g)) return;
+          if (listed.status === 'rejected') {
+            st.seq += 1; st.tickets = []; st.cursor = null; st.searched = ''; st.chosen = null;   // whatever the search got is dropped
+            render();
+            throw listed.reason;
+          }
+          if (searched.status === 'rejected') throw searched.reason;
+          return;
+        }
         await loadProjects();
         if (!live(g)) return;
         if (keep) render(); else await run();   // the kept pick again, with the projects as they came back

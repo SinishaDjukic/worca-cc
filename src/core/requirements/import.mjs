@@ -9,7 +9,7 @@ import { tx } from '../db.mjs';
 import { redactAskText } from '../ask/redact.mjs';
 import { RequirementsError, LIMITS, clip } from './spec.mjs';
 import { getExportSetup, linkByTicket, createFeature, saveExportLink, appendTurn, listAttachments } from './store.mjs';
-import { trackersWith, defaultConnection, connectionLabel, sameConn, reachSentence, firstLine } from './trackers.mjs';
+import { trackersWith, keptList, defaultConnection, connectionLabel, sameConn, reachSentence, firstLine } from './trackers.mjs';
 import { exportDate } from './ticket.mjs';
 import { IMPORT_LIMITS, processTicket, pickDefaults, commentsFileName, commentsMarkdown } from './ticket-import.mjs';
 import { REQ_ATTACH_LIMITS, checkNewFiles, displayName } from './attachments.mjs';
@@ -74,7 +74,8 @@ const options = (v) => (Array.isArray(v) ? v.filter((x) => x && x.value != null)
 /** POST …/options (D3): the connection's projects. */
 export async function importOptions(scope, body = {}, d = {}) {
   const { conn, t } = await sourceFor(body, d);
-  const r = (await trackerCall(d, t.name, conn, 'importOptions', {})) || {};
+  // kept per connection for 10 minutes (keptList): the tracker pages through all its projects, and the dialog asks on every open
+  const r = (await keptList(conn, 'importOptions', () => trackerCall(d, t.name, conn, 'importOptions', {}), d)) || {};
   return { projects: options(r.projects) };
 }
 

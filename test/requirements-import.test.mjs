@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { linkPlugin } from '../src/core/plugin-store.mjs';
-import { createProfile } from '../src/core/plugin-config.mjs';
+import { createProfile, writePluginConfig } from '../src/core/plugin-config.mjs';
 import { callSource, setMockSourceResponses, PluginOpError } from '../src/core/plugin-shim.mjs';
 import { createFeature, saveExportLink, listFeatures } from '../src/core/requirements/store.mjs';
 import { saveSetup, _resetExportCaches } from '../src/core/requirements/export.mjs';
@@ -151,4 +151,57 @@ test('final review M4: at Start a criterion is redacted before it is clipped, so
     assert.equal(/Q/.test(c.text), false, `no part of the secret: ${c.text.slice(480)}`);
   }
   assert.ok(plan.criteria[0].text.startsWith('a'.repeat(485)));
+});
+
+// ---- the connection's project list is kept for 10 minutes (importOptions pages through every project of the tracker) ----
+const optionCalls = () => seen.filter((c) => c.op === 'importOptions').length;
+const clocked = (t) => ({ callSource: (o) => { seen.push(o); return callSource(o); }, now: () => t.at });
+
+test('importOptions keeps the project list per connection for 10 minutes, then asks the tracker again', async () => {
+  reset();
+  _resetExportCaches();
+  const t = { at: 1_000_000 };
+  const dd = clocked(t);
+  const first = await importOptions(SCOPE, ACME, dd);
+  assert.deepEqual((await importOptions(SCOPE, ACME, dd)).projects, first.projects);
+  assert.equal(optionCalls(), 1, 'the second ask is answered from memory');
+  await importOptions(SCOPE, { ...ACME, profile: 'beta' }, dd);
+  assert.equal(optionCalls(), 2, 'another profile is another connection');
+  t.at += 10 * 60_000 - 1;
+  await importOptions(SCOPE, ACME, dd);
+  assert.equal(optionCalls(), 2, 'still inside the 10 minutes');
+  t.at += 2;
+  await importOptions(SCOPE, ACME, dd);
+  assert.equal(optionCalls(), 3, 'after the 10 minutes');
+});
+
+test('importOptions: a change to the connection\'s settings, or to the plugin\'s install, drops the kept list', async () => {
+  reset();
+  _resetExportCaches();
+  const t = { at: 5_000_000 };
+  const dd = clocked(t);
+  await importOptions(SCOPE, ACME, dd);
+  writePluginConfig('jira-source', [{ key: 'baseUrl' }], { baseUrl: 'https://other.atlassian.net' }, 'acme');
+  await importOptions(SCOPE, ACME, dd);
+  assert.equal(optionCalls(), 2, 'the profile\'s configuration changed');
+  await importOptions(SCOPE, ACME, dd);
+  assert.equal(optionCalls(), 2);
+  await linkPlugin('jira-source', fileURLToPath(new URL('../plugins/jira-source', import.meta.url)));
+  await importOptions(SCOPE, ACME, dd);
+  assert.equal(optionCalls(), 3, 'the plugin was linked again');
+});
+
+test('importOptions: a failure is not kept, and calls at the same moment share one tracker call', async () => {
+  reset();
+  _resetExportCaches();
+  const logged = console.error;
+  console.error = () => {};
+  try {
+    let n = 0;
+    const dd = { callSource: async (o) => { seen.push(o); if (o.op !== 'importOptions') return callSource(o); n += 1; await new Promise((r) => setTimeout(r, 20)); if (n === 1) throw new PluginOpError('network', 'Jira unreachable: fetch failed.'); return callSource(o); } };
+    await assert.rejects(importOptions(SCOPE, ACME, dd), (e) => e.code === 'TRACKER');
+    const [a, b] = await Promise.all([importOptions(SCOPE, ACME, dd), importOptions(SCOPE, ACME, dd)]);
+    assert.deepEqual(a, b);
+    assert.equal(optionCalls(), 2, 'one failed call, then one shared call for the two askers');
+  } finally { console.error = logged; }
 });

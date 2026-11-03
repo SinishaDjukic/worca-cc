@@ -214,3 +214,51 @@ test('From a ticket…: a failed sources call is not kept either', async () => {
   assert.equal(m.host.querySelector('[data-ui="import-open"]').hidden, false);
   m.view.destroy();
 });
+
+// ---- the pick dialog: with All projects the search does not wait for the project list ----
+const T1 = { key: 'SHOP-1', title: 'First', url: 'https://acme.test/browse/SHOP-1', type: 'Story', status: 'To do', updatedOn: '25 Oct', linkedTo: null };
+const openPick = async (routes) => {
+  const calls = fakeApi(routes);
+  const m = make();
+  await m.view.show('new');
+  await settle();
+  m.host.querySelector('[data-ui="import-open"]').click();
+  await settle();
+  return { calls, m };
+};
+
+test('the pick dialog on All projects starts the search with the project list, not after it', async () => {
+  const held = gate();
+  const { calls, m } = await openPick(IMPORT_ROUTES({ [`POST ${IMP}/options`]: { hold: held, value: { projects: [{ value: 'SHOP', label: 'SHOP' }] } },
+    [`POST ${IMP}/search`]: { tickets: [T1] } }));
+  assert.equal(started(calls, 'POST', `${IMP}/options`), 1);
+  assert.equal(started(calls, 'POST', `${IMP}/search`), 1, 'the search started while the project list was held');
+  assert.ok(document.querySelector('[data-ui="pick-SHOP-1"]'), 'its tickets are on screen before the project list');
+  held.release();
+  await settle();
+  const sel = document.querySelector('[data-ui="pick-project"]');
+  assert.deepEqual([...sel.options].map((o) => o.value), ['', 'SHOP']);
+  assert.equal(started(calls, 'POST', `${IMP}/search`), 1, 'no second search');
+  m.view.destroy();
+});
+
+test('the pick dialog with a project already chosen still reads the project list first (the project must be one of them)', async () => {
+  const held = gate();
+  const { calls, m } = await openPick(IMPORT_ROUTES({ [`GET ${IMP}`]: { ...SOURCES, defaultProject: 'SHOP' },
+    [`POST ${IMP}/options`]: { hold: held, value: { projects: [{ value: 'SHOP', label: 'SHOP' }] } }, [`POST ${IMP}/search`]: { tickets: [T1] } }));
+  assert.equal(started(calls, 'POST', `${IMP}/search`), 0, 'not yet');
+  held.release();
+  await settle();
+  assert.equal(started(calls, 'POST', `${IMP}/search`), 1);
+  assert.equal(calls.find((c) => c.url === `${IMP}/search`).body.project, 'SHOP');
+  m.view.destroy();
+});
+
+test('the pick dialog on All projects: a failed project list shows its error and Try again, and no tickets', async () => {
+  const { calls, m } = await openPick(IMPORT_ROUTES({ [`POST ${IMP}/options`]: () => undefined, [`POST ${IMP}/search`]: { tickets: [T1] } }));
+  assert.equal(document.querySelector('[data-ui="pick-SHOP-1"]'), null, 'no tickets under the error');
+  assert.equal(document.querySelector('[data-ui="pick-retry"]').hidden, false);
+  assert.ok(document.querySelector('.req-export-alert').textContent.length > 0);
+  assert.equal(started(calls, 'POST', `${IMP}/search`), 1);
+  m.view.destroy();
+});

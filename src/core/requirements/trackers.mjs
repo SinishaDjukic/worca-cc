@@ -6,7 +6,7 @@
 import { callSource as shimCallSource } from '../plugin-shim.mjs';
 import { listTaskSources } from '../sources.mjs';
 import { readPluginsLock } from '../plugins-lock.mjs';
-import { listProfiles } from '../plugin-config.mjs';
+import { listProfiles, configStamp } from '../plugin-config.mjs';
 import { resolveProfile, listBindingsForScope } from '../source-bindings.mjs';
 
 /** A capability probe's time limit (D3): it runs inside every feature view, so a slow connector must not hold the page. */
@@ -27,7 +27,28 @@ const capCache = new Map();
 const capFailed = new Map();   // `${plugin}/${sourceId}/${profile}` → when the probe failed
 const capInflight = new Map();
 /** Tests (through export.mjs's _resetExportCaches): forget every probe answer and failure. */
-export function _resetTrackerCaches() { capCache.clear(); capFailed.clear(); capInflight.clear(); }
+export function _resetTrackerCaches() { capCache.clear(); capFailed.clear(); capInflight.clear(); listCache.clear(); }
+
+/** How long a connection's project list stands: it pages through every project of the tracker (seconds on a big Jira). */
+export const LIST_TTL_MS = 10 * 60_000;
+const listCache = new Map();   // `${plugin}/${sourceId}/${profile}@${installOf}#${configStamp}` → { at, p } (p: the list, or the call in flight)
+/**
+ * A connection's list from `load()`, kept for LIST_TTL_MS and shared by callers at the same moment. The key holds what is installed
+ * for the plugin and a stamp of its saved profiles, configuration and secrets, so an update, a link, or a change to the connection
+ * (another site, another token) asks the tracker again. A failure is not kept. `kind` separates lists of one connection.
+ */
+export function keptList(conn, kind, load, d = {}) {
+  const key = `${kind}:${conn.plugin}/${conn.sourceId}/${conn.profile || ''}@${installOf(conn.plugin)}#${stampOf(conn.plugin)}`;
+  const now = msOf(d);
+  const hit = listCache.get(key);
+  if (hit && now - hit.at < LIST_TTL_MS) return hit.p;
+  const entry = { at: now, p: null };
+  entry.p = load();
+  listCache.set(key, entry);
+  entry.p.catch(() => { if (listCache.get(key) === entry) listCache.delete(key); });
+  return entry.p;
+}
+const stampOf = (plugin) => { try { return configStamp(plugin); } catch { return ''; } };
 
 /** What is installed for a plugin, from its lock entry: the version alone misses an update to a new commit (pinnedSha) and
  *  a link (linked; the lock keeps no linked path, but every link writes a new installedAt), since neither need change it. */
