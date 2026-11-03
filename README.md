@@ -931,7 +931,7 @@ the `tools/railway/worca-railway.mjs` tool and this repository's
 worca ui            # start it (worca --ui does the same)
 ```
 
-Open the printed URL (default `http://localhost:4317`), add a project
+Open the printed URL (default `http://127.0.0.1:4317`), add a project
 (**Projects › Add project**: **New** by name, any **Folder**, or **Clone from URL**), and
 click **New pipeline**: describe the task, pick a workflow and press
 **Start run** — turn on **Mock mode** beside it to try a run offline, with no
