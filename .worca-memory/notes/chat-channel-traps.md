@@ -2,7 +2,7 @@
 name: chat-channel-traps
 description: Traps in the chat-channel stack (Discord worker filters, parser/rate-limiter APIs, Ask turn echo races) worth reading before planning or building chat-plugin fe
 paths: plugins/*-chat/**, src/core/chat/**
-updated: 2026-11-03T00:43:30.765Z
+updated: 2026-11-03T00:57:59.278Z
 author: Bulibas
 ---
 
@@ -68,3 +68,9 @@ Each of these sank a reviewed plan once (freeform Discord chat plan, cycles 1-2,
   message id only. (2) Any throw after `receipts.ack(mark)` that escapes to the server's catch leaves ⏳ for good.
   The real-deps e2e cannot throw from `startTurn`/`applyCard`, so removing those catches stayed green. Each post-ack
   catch needs a stub-deps or hook test.
+  Recipe that worked (fix cycle, 2026-11-03): `stubBridge()` in `test/chat-conversation-bridge.test.mjs` builds
+  `createConversationBridge` over stub deps and a `useTempHome` store; `ask.createThread` must create a REAL Ask
+  thread (`chat_conversations.ask_thread_id` is a foreign key). A second stub bridge with throwing deps reads the
+  first one's binding. One guard per invariant: an outer post-ack guard makes an inner catch that does the same thing
+  an equivalent mutant, so drop it; keep an inner catch only where its outcome differs (runTurn's posts in the
+  thread, the start guard posts in the parent channel; a failed reply check keeps ⏳ instead of ❌).
