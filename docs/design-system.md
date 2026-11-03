@@ -90,9 +90,9 @@ propose one here before building it.
 **Building a page from a spec.** 1. Pick the page's pattern below. 2. For each thing the person must see or do, find
 its need in the lookup and its slot in the pattern. 3. Write its words by the rules (Small rules, Steps that change
 state, and Patterns further down: labels of 1–3 words, plain words, the status line); a state's dot and colour are
-Status dot and symbols. 4. Draw every state: empty, loading, could not load, a failed step, an unexpected break, a lost
-connection, and 375px. 5. Pass the gate. The catalog of needs, components and patterns, as data for a tool or an
-agent, is `docs/design-system-catalog.json`; this section and the lookup win when the two differ.
+Status dot and symbols. 4. Draw every state: empty, loading, could not load, a failed step, an unexpected break, a
+lost connection, and 375px (Narrow screens). 5. Pass the gate. The catalog of needs, components and patterns, as data
+for a tool or an agent, is `docs/design-system-catalog.json`; this section and the lookup win when the two differ.
 
 **A thing's page** (a run, a group; the pattern for any page about one thing with a state), top to bottom:
 | Slot | Holds | Never holds |
@@ -200,6 +200,26 @@ The prototype's Break picker plays each case.
   (with no estimate, at the warning line).
 - Pulse is the panel under its top-bar button, with no page of its own. Every notification setting lives in one
   Settings tab, Notifications.
+
+### Narrow screens
+A narrow page holds everything the wide one does: things move, they are never dropped. Two widths decide it, and the
+prototype does both at 375px.
+- **760px of window and below:** the trail becomes one link, `‹ Parent`; the sidebar becomes its rail of icons and the
+  avatar; a panel or Dialog takes the window's width; a menu stays 16px inside it.
+- **520px of content and below** (the card or panel's own width): side by side becomes one above the other, on the
+  same text edge:
+  - the StatusLine's action slot moves under the state word and its detail; the main step and its ▾ stay whole, and
+    the action slot's other buttons (Pause, Run after) fold into ⋯ as items of their own;
+  - a settings row's name goes above its sentence, and the row's button under the sentence;
+  - a ListRow keeps its mark on the rail, its title and its time or figure at the right; its other columns wrap to a
+    second line under the title;
+  - Figures and a section head's actions wrap to the next line; Tabs keep one line and scroll sideways inside their
+    strip, the page never does.
+- **480px of window and below:** a top-bar button with a label keeps only its icon, and its tooltip names it.
+- **One line or wrap:** a name (the title, a branch, a stage label, a row's meta) keeps one line and ends in an
+  ellipsis, with the whole text in its tooltip; a sentence wraps.
+- **Touch:** what shows on hover is there from the start (a list's tick boxes); what needs a pointer moves to its
+  editor (a tag's ×).
 
 ### The gate
 Every Rail page passes its gate (`plans/rail/prototype/sweep.mjs` for the run page, `pulse-sweep.mjs` for Pulse) in every case, at 900 and 375px, in both themes: no sideways
