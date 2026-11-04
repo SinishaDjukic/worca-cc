@@ -36,7 +36,7 @@ function freshSettings(c) {
   return { desktop: c.desktop, badge: 'needs', warnAt: 80, mine: 'suggest', auto: 'move', resume: 'auto', groups: Object.fromEntries(M.GROUPS.map((g) => [g.id, { level: g.level, where: g.where, ex: {} }])) };
 }
 // a case starts fresh: nothing from the case before it carries over
-const fresh = (caseId) => ({ caseId, page: 'runs', pop: false, popTab: 'now', acct: false, sub: '', nr: null, menu: '', show: 'unread', from: 'all',
+const fresh = (caseId) => ({ caseId, page: 'runs', pop: false, popTab: 'now', acct: false, sub: '', nr: null, menu: '', show: 'unread', from: 'all', nowShow: 'all', nowFrom: 'all',
   sel: [], selecting: false, anchor: '', read: [], cleared: [], custom: '', confirm: '', toast: '', flash: '', level: 'expert', away: false, keep: true, s: freshSettings(caseOf(caseId)), sset: '', sv: SV.fresh() });
 let ui = fresh('afternoon');
 // What opened with this click: only that fades in (a repaint of what was already open does not fade again).
@@ -55,7 +55,18 @@ const isUnread = (u) => u.unread && !ui.read.includes(u.id);
 const live = () => C().updates.filter((u) => !ui.cleared.includes(u.id));
 const unread = () => live().filter(isUnread);
 const limitsNow = () => M.limits(C(), ui.s.warnAt);
-const nowCount = () => C().needs.length + limitsNow().length + C().running.length + C().scheduled.length;
+// Now's sections, and what its sentence keeps of them: a run by its project; a limit belongs to a harness, so it ignores
+// the project and goes only with its own choice.
+const NOW_SHOWS = [{ id: 'all', text: 'everything', help: 'Every section: what needs you, limits, what is running and what is scheduled' },
+  { id: 'needs', text: 'needs you', help: 'Runs waiting for you: questions, gates, cost caps' }, { id: 'running', text: 'running', help: 'Runs working now' },
+  { id: 'scheduled', text: 'scheduled', help: 'Starts coming up: slices, queued and scheduled runs' }, { id: 'limits', text: 'limits', help: 'Usage and spend at or over the warning line, per harness' }];
+function nowShown(show = ui.nowShow, from = ui.nowFrom) {
+  const c = C(), runs = (k) => (show === 'all' || show === k ? c[k].filter((r) => from === 'all' || r.project === from) : []);
+  return { needs: runs('needs'), limits: show === 'all' || show === 'limits' ? limitsNow() : [], running: runs('running'), scheduled: runs('scheduled') };
+}
+const nowN = (v) => v.needs.length + v.limits.length + v.running.length + v.scheduled.length;
+const nowProjects = () => [...new Set(['needs', 'running', 'scheduled'].flatMap((k) => C()[k].map((r) => r.project)))];
+const nowCount = () => nowN(nowShown());
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many || one + 's'}`;
 
 // ---- shared pieces ----
@@ -125,13 +136,15 @@ function updateRow(u, withCheck) {
     unreadDot: isUnread(u), resolved: u.resolved, flash: ui.flash === u.id, tip: `Opens ${u.to}${isUnread(u) ? ' and marks it read' : ''}` });
 }
 function nowSections() {
-  const c = C(), lim = limitsNow();
+  const c = nowShown(), lim = c.limits;
+  const bar = `<div class="pz-bar"><span class="pz-rail"></span><span class="pz-sentence">Showing ${picker('nowShow', NOW_SHOWS.find((x) => x.id === ui.nowShow).text, NOW_SHOWS.map((x) => ({ ...x, checked: x.id === ui.nowShow, hint: String(nowN(nowShown(x.id, ui.nowFrom))) })), 'Which of Now\'s sections the panel shows')} from ${picker('nowFrom', ui.nowFrom === 'all' ? 'all projects' : ui.nowFrom, [{ id: 'all', text: 'all projects', checked: ui.nowFrom === 'all', hint: String(nowN(nowShown(ui.nowShow, 'all'))) }, { sep: true }].concat(nowProjects().map((p) => ({ id: p, text: p, checked: ui.nowFrom === p, hint: String(nowN(nowShown(ui.nowShow, p))) }))), 'Which project\'s runs it shows; limits belong to a harness and show for every project')}</span></div>`;
   const sec = (h, n, rows) => (n ? `<section class="pz-sec"><h3 class="pz-h">${h} <span class="n">${n}</span></h3><div class="pz-list">${rows}</div></section>` : '');
   const out = sec('Needs you', c.needs.length, c.needs.map((r, i) => row({ dot: 'is-amber', title: r.title, meta: `${r.project} · ${r.detail}`, time: r.time, key: 'need' + i, tip: 'Opens the run page at what it asks' })).join(''))
     + sec('Limits', lim.length, lim.map((l, i) => row({ dot: l.tone === 'over' ? 'is-red' : 'is-amber', title: l.title, meta: l.detail, time: l.time, key: 'lim' + i, tip: `${l.tip} · opens the usage card` })).join(''))
     + sec('Running', c.running.length, c.running.map((r, i) => row({ dot: 'is-peach', title: r.title, meta: `${r.project} · ${r.detail}`, time: r.time, key: 'run' + i, tip: 'Opens the live run' })).join(''))
     + sec('Scheduled', c.scheduled.length, c.scheduled.map((r, i) => row({ dot: 'is-grey-ring', title: r.title, meta: `${r.project} · ${r.on ? startDetail(r) : r.detail}`, time: r.time, key: 'sch' + i, tip: r.slice ? 'Opens the feature: its slices and where each runs' : r.queued ? 'Opens the run: it waits for a free slot' : 'Opens Schedules with its sheet open' })).join(''));
-  return out || '<p class="pz-empty">Nothing needs you. Nothing is running.</p>';
+  const all = ui.nowShow === 'all' && ui.nowFrom === 'all';
+  return bar + (out || `<p class="pz-empty">${all ? 'Nothing needs you. Nothing is running.' : 'Nothing here right now.'}</p>`);
 }
 
 // A start with nobody there to ask (a slice, a queued or scheduled run) is checked against its own estimate when its turn
@@ -423,6 +436,8 @@ function toast(text, undo) {
 function pick(id, v) {
   const s = ui.s;
   if (id === 'show') { ui.show = v; ui.sel = []; }
+  else if (id === 'nowShow') ui.nowShow = v;
+  else if (id === 'nowFrom') ui.nowFrom = v;
   else if (id === 'from') { ui.from = v; ui.sel = []; }
   else if (id === 'more') {
     if (v === 'settings') { ui.page = 'settings'; ui.sset = 'notifications'; ui.pop = false; }

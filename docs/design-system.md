@@ -240,7 +240,7 @@ its one target, so a fact in the row is text, never a second link. The row's own
 no rows is not drawn; the page's spec names the sections. A long section is never folded: it shows its newest rows,
 then one quiet row, `Show 21 more`, opens the rest in place (Older shows 3). What the list shows is a sentence above it (`Showing [unread ▾] from [all groups ▾]`), not a
 filter button; grouping is one more word in it (`by [day ▾]`), each choice in its menu with its count. Every
-list (Runs, Chats, Pulse, Schedules) uses this one sentence, so a list is narrowed the same way everywhere. Selecting works the same in every list (Runs, Chats, Pulse). You start it from the list's menu
+list (Runs, Chats, Pulse's Now and Updates, Schedules) uses this one sentence, so a list is narrowed the same way everywhere. Selecting is only for a list whose rows a person can act on together (Runs, Chats, Pulse's Updates); a list of states that leave by themselves (Pulse's Now) has the sentence and no selection. Selecting works the same in every list that has it. You start it from the list's menu
 (`Select`), with ⌘ or Ctrl-click, with Shift-click for a range, with Space or ⌘A, or with a long-press on touch.
 `Select all` joins the head and the sentence stays. The selection bar (`.runs-bulk`) sits at the list's foot:
 `2 selected · Archive 2 · Cancel`. Each action shows how many rows it applies to and is disabled at 0. Cancel or Esc
