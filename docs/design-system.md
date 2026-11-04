@@ -277,7 +277,10 @@ a failure opens itself), a graph in its well.
 mode, Appearance and going away live in the profile menu only). Opening it turns the sidebar into its menu, its content
 fading over `change` while the page changes at once: `‹ Back to Worca`, then the sections under four group heads
 (Worca: General, Notifications, Team policy, Labs · Work: Runs, Presets, Labels, Automations · AI: Models, Providers,
-Chat, Guardrails, Memory · Add-ons: Marketplace, Connectors). On a narrow screen Worca's sidebar stays, Settings opens
+Chat, Guardrails, Memory · Add-ons: Plugins, Connectors). **A setting or a place:** a setting is a choice about how
+Worca behaves, set rarely, taking effect at once; a place is where you do work and come back to. So the Marketplace
+*store* is a place in the sidebar, while what you installed (Plugins), Connectors, Models, Providers and Team policy are
+settings. On a narrow screen Worca's sidebar stays, Settings opens
 on its menu as a list, and a section has `‹ Settings` above its title. The top bar's search finds every row, folded
 row and record by its name or its words, and lands on it with the flash, opening its Customise. Mocks:
 `plans/rail/mocks/settings-*.png`, `settings-open-light.gif`.

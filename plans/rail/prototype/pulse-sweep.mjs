@@ -9,6 +9,9 @@ const URL = process.argv[2];
 const b = await chromium.launch({ channel: 'chrome' });
 const issues = new Map(); const add = (k, where) => { if (!issues.has(k)) issues.set(k, []); if (issues.get(k).length < 4) issues.get(k).push(where); };
 const click = (p, sel) => p.evaluate((s) => document.querySelector(s)?.click(), sel);
+// every Settings section the model holds (but Notifications, swept above): read from settings-model.js, never listed by hand
+global.window = {}; await import('./settings-model.js');
+const SECTION_IDS = window.SettingsModel.GROUPS.flatMap((g) => g.items).filter((id) => id !== 'notifications');
 const VIEWS = {
   now: async () => {},
   popNow: async (p) => click(p, '[data-pop]'),
@@ -22,7 +25,7 @@ const VIEWS = {
   newrunSmall: async (p) => { await click(p, '[data-newrun]'); await click(p, '[data-menu="nr-size"]'); await click(p, '[data-pick="nr-size|small"]'); },
   settings: async (p) => { await click(p, '[data-acct]'); await click(p, '[data-go="settings"]'); await click(p, '[data-sset="notifications"]'); await click(p, '[data-custom="usage"]'); },
   // every other Settings section: their rows are the same components, each with its own pickers, switches and buttons
-  ...Object.fromEntries(['general', 'experimental', 'runs', 'presets', 'tags', 'automations', 'ask', 'guardrails', 'memory', 'marketplace', 'connectors', 'models', 'providers']
+  ...Object.fromEntries(SECTION_IDS
     .map((id) => ['settings-' + id, async (p) => { await click(p, '[data-acct]'); await click(p, '[data-go="settings"]'); await click(p, `[data-sset="${id}"]`); }])),
   settingsWait: async (p) => { await click(p, '[data-acct]'); await click(p, '[data-go="settings"]'); await click(p, '[data-sset="notifications"]'); await click(p, '[data-menu="auto"]'); await click(p, '[data-pick="auto|wait"]'); await click(p, '[data-menu="mine"]'); await click(p, '[data-pick="mine|wait"]'); await click(p, '[data-newrun]'); },
 };

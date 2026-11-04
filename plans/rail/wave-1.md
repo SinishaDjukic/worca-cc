@@ -101,3 +101,6 @@ Rail follows the app's file layout (`docs/split-by-feature.md`, #919) like any o
 - The old design leaves in one PR: a scoped Rail layer, one flag check per surface, the retire list and its freeze test
   (4 Nov).
 - The library and the Rail CSS follow the split's layout and names; the gates run in the app's test suite (4 Nov).
+- A setting or a place: the Marketplace store stays a place in the sidebar; installed plugins, Connectors, Models,
+  Providers and Team policy are Settings. The sidebar keeps the places: Chat, Runs, Schedules, Statistics, Team
+  metrics · Build: Workflows, Requirements, Marketplace · Manage: Projects, Workspaces (4 Nov).

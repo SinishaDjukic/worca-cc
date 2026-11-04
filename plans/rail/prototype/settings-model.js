@@ -248,8 +248,8 @@
       ] },
     ] },
 
-    marketplace: { min: 'advanced', title: 'Marketplace', meta: 'Plugins that add task sources, chat channels, servers, models and skills.', sections: [
-      { title: 'Installed', action: { label: 'Browse plugins' }, list: [
+    plugins: { min: 'advanced', title: 'Plugins', meta: 'What you installed from the Marketplace, and where Worca looks for more.', sections: [
+      { title: 'Installed', action: { label: 'Open Marketplace', say: 'Opens the Marketplace, the store in the sidebar' }, list: [
         { title: 'Jira', meta: 'A task source · worca-official · 1 update', mark: 'is-amber', sw: { key: 'pJira', on: true }, menu: ['Update', 'Settings', 'Uninstall'] },
         { title: 'Telegram', meta: 'A chat channel · bot token set', sw: { key: 'pTg', on: true }, menu: ['Settings', 'Uninstall'] },
         { title: 'Slack', meta: 'A chat channel · needs a bot token', sw: { key: 'pSlack', on: false }, menu: ['Set up…', 'Uninstall'] },
@@ -279,7 +279,7 @@
     { title: 'Worca', items: ['general', 'notifications', 'team', 'experimental'] },
     { title: 'Work', items: ['runs', 'presets', 'labels', 'automations'] },
     { title: 'AI', items: ['models', 'providers', 'ask', 'guardrails', 'memory'] },
-    { title: 'Add-ons', items: ['marketplace', 'connectors'] },
+    { title: 'Add-ons', items: ['plugins', 'connectors'] },
   ];
   const NOTIFICATIONS = { title: 'Notifications', meta: 'Pulse keeps everything; these choices say what else reaches you, and what a start does near a limit.' };
   window.SettingsModel = {
