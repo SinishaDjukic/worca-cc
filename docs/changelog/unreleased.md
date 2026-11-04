@@ -36,7 +36,9 @@ Why: independent reviewers and a model per reviewer were Shaper-only; they are n
 
 **The implementer can push back.** When the implementer of a Shaper run finds that the approved plan would work but its design is wrong, it says so instead of building that part. The plan approval comes back with its concern above the buttons: Ask for changes sends the plan back to the planner with the concern, Approve has it build the plan as written. Under `--yes` the concern is overridden and the audit log says so; Away mode waits for you.
 
-Chips: role reviews · a model per role · node config · dropped-pick warning · per-reviewer rows · Devil's advocate · finding dispositions · conflict decisions · code role reviews · diff target · plan concerns
+**Review quality per role.** `GET /api/stats/review-quality` sums each role's raised, fixed, disputed and open findings over finished runs, for plan and code reviews apart. It reads only the counts each run records, never the findings' text. Runs finished before this change have no data.
+
+Chips: role reviews · a model per role · node config · dropped-pick warning · per-reviewer rows · Devil's advocate · finding dispositions · conflict decisions · code role reviews · diff target · plan concerns · review quality API
 
 Read it: [Per-role models](../models.md#per-role-models)
 

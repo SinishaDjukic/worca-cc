@@ -216,6 +216,7 @@
   "GET /api/sources": {"class": "probe", "reason": "lists builtin/plugin task sources, try/catch"},
   "GET /api/speech": {"class": "probe", "reason": "local speech state, guarded"},
   "GET /api/stats": {"class": "probe", "reason": "DB stats query, try/catch"},
+  "GET /api/stats/review-quality": {"class": "probe", "reason": "DB stats query, try/catch"},
   "GET /api/sync": {"class": "probe", "reason": "400 without projectDir; status mode no network"},
   "GET /api/sync/projects": {"class": "probe", "reason": "status mode only, no network; no remotes"},
   "GET /api/tag-dimensions": {"class": "probe", "reason": "machine-wide union without projectDir, try/catch"},

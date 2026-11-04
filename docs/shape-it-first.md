@@ -80,6 +80,7 @@ items.
 role has one row with its counts, for example `Security · 2 fixed · 1 disputed · 1 open`, and
 **Show** lists its findings. Refine Plan answers every finding: **fixed**, or **disputed** with a
 one-line reason that Show prints under it. A finding it does not answer stays **open**.
+The totals per role over finished runs are in the [review quality API](statistics.md#review-quality).
 
 **Decisions.** When two roles ask for opposite changes to the same section, Refine Plan leaves
 it to you: the card shows one decision card per pair ("Security and UX disagree on Rollout")
