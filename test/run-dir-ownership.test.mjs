@@ -22,6 +22,8 @@ const ENV = {
   WORCA_AGENT_RUN_GIDS: 'worca-agent-01:1101,worca-agent-02:1102',
 };
 const POSIX = { skip: process.platform === 'win32' ? 'POSIX modes' : false };
+// claimExtrasDir lists extras/ through /proc/self/fd (agent isolation runs only on Linux): no such path elsewhere.
+const LINUX = { skip: process.platform !== 'linux' ? '/proc/self/fd (Linux only)' : false };
 
 test('pool: each pool user carries its own run group; the shared user and a pool without groups do not', () => {
   const file = join(dir, 'agent-pool.json');
@@ -151,7 +153,7 @@ test('claimExtraFile: the run group (pool) or the shared agent group, 0640; noth
   assert.throws(() => claimExtraFile(file, { user: 'worca-agent', gid: own }, { uid: process.getuid() + 1 }), /not worca/);
 });
 
-test('claimExtrasDir: the folder gets the group and 2750; each file is claimed; a planted link is reported, not followed', POSIX, () => {
+test('claimExtrasDir: the folder gets the group and 2750; each file is claimed; a planted link is reported, not followed', LINUX, () => {
   const own = process.getgid();
   const id = { user: 'worca-agent-01', gid: own, runGid: own };
   const extras = mkdtempSync(join(dir, 'extras-'));
@@ -172,7 +174,7 @@ test('claimExtrasDir: the folder gets the group and 2750; each file is claimed; 
   assert.throws(() => claimExtrasDir(join(extras, 'a.md'), id), /ENOTDIR|directory/);
 });
 
-test('claimExtrasDir: an agent swapping the folder for a link mid-claim cannot redirect the claim to worca\'s own files', POSIX, () => {
+test('claimExtrasDir: an agent swapping the folder for a link mid-claim cannot redirect the claim to worca\'s own files', LINUX, () => {
   const own = process.getgid();
   const id = { user: 'worca-agent-01', gid: own, runGid: own };
   const base = mkdtempSync(join(dir, 'swap-'));
@@ -224,7 +226,7 @@ async function createWithExtras(env) {
   return { extras: join(p.dir, 'extras'), file: join(p.dir, 'extras', 'BENCHMARK-REPORT.md') };
 }
 
-test('createPipeline extras: a pool run\'s attachment is in the run group, 0640, in a traversable folder', POSIX, async () => {
+test('createPipeline extras: a pool run\'s attachment is in the run group, 0640, in a traversable folder', LINUX, async () => {
   const own = process.getgid();
   const { extras, file } = await createWithExtras({
     ...ENV, WORCA_AGENT_HOME: join(dir, 'agent-home'), WORCA_AGENT_GID: String(own), WORCA_AGENT_RUN_GIDS: `worca-agent-01:${own},worca-agent-02:${own}`,
@@ -235,7 +237,7 @@ test('createPipeline extras: a pool run\'s attachment is in the run group, 0640,
   assert.equal(statSync(extras).gid, own);
 });
 
-test('createPipeline extras: with one shared agent user the attachment is in the shared group, 0640', POSIX, async () => {
+test('createPipeline extras: with one shared agent user the attachment is in the shared group, 0640', LINUX, async () => {
   const own = process.getgid();
   const { extras, file } = await createWithExtras({
     WORCA_AGENT_USER: 'worca-agent', WORCA_AGENT_HOME: join(dir, 'agent-home'), WORCA_AGENT_GID: String(own),
@@ -282,7 +284,7 @@ test('shareFailureReason: the string code, else UNKNOWN, never the message', asy
   assert.equal(shareFailureReason(undefined), 'UNKNOWN');
 });
 
-test('_collectExtras repairs a run created before the fix: group and 0640, list kept, a planted link is logged', POSIX, async () => {
+test('_collectExtras repairs a run created before the fix: group and 0640, list kept, a planted link is logged', LINUX, async () => {
   const { RunHarness } = await import('../src/core/run-harness.mjs');
   const own = process.getgid();
   const pipelineDir = mkdtempSync(join(dir, 'pipeline-'));
