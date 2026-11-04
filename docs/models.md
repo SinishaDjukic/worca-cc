@@ -127,7 +127,7 @@ Chat's `change_setting` sets the same values as `models.<harness>.roles.<role>`.
 The **Providers** card has a page of its own, **Providers** (Expert level). A
 provider is account-level state that every model bridged through it shares.
 
-**GitHub Copilot.** *Sign in…* reads you the notice below, then shows an
+**GitHub Copilot.** *Sign in…* shows an
 8-character device code: enter it at github.com/login/device and the card
 flips to *connected as @you*. Worca stores the GitHub token in
 `~/.worca-cc/settings.json` (or reads it from your shell as `${VAR}`) and
@@ -148,8 +148,7 @@ LM Studio, a LAN vLLM — needs no key: leave it empty and the bridge sends no
 same shortcut, and carries its base URL into the dialog.
 
 **Max concurrent requests** is per provider. Requests over the cap wait; they
-never fail. For Copilot it is the one knob that lowers the abuse-detection risk
-described below, so it ships at 4.
+never fail. For Copilot it ships at 4; keep it low.
 
 **Speech.** The same tab has a **Speech** card for Chat's voice mode:
 speech-to-text and text-to-speech each run in the browser (Whisper, Kokoro — the
@@ -157,22 +156,6 @@ default) or on a server you run (whisper.cpp, Kokoro-FastAPI, Piper), reached
 through the OpenAI audio API. It is not a model
 provider — nothing on it joins the catalog, the bridge or `/api/models`. See
 [docs/speech.md](speech.md).
-
-### The Copilot notice
-
-Worca talks to Copilot through the same API GitHub's editor extensions use,
-identifying itself as an editor client. GitHub's terms allow Copilot only
-through supported clients, and GitHub has suspended Copilot access for
-automated or unsupported use. Pipelines are automated, high-volume use.
-
-- Your GitHub account, not Worca, carries this risk.
-- Worca caps concurrent requests and never signs in without you.
-- Premium-request quotas apply per your plan; Worca shows usage but cannot
-  enforce it.
-
-You acknowledge this once per machine (the date shows on the card, *Re-read
-notice* shows it again), and again if the wording changes. `worca models login
-copilot --accept-terms` records it non-interactively.
 
 ## What the bridge does
 
@@ -218,7 +201,7 @@ copilot --accept-terms` records it non-interactively.
 
 Each card shows a `bridged: <provider>` badge and, for translated models, a
 line naming the degradations. A model whose provider is not usable — not
-signed in, notice not acknowledged, key unset — shows **needs sign-in** and
+signed in, key unset — shows **needs sign-in** and
 leaves every picker until it is; a run that already names it fails at its next
 spawn with the fix in the message rather than with an opaque 401.
 
@@ -483,7 +466,7 @@ model reports that, switch the model to chat completions in the editor.
 ```
 worca models list                       # catalog with bridge facts
 worca models providers                  # provider state, never a token
-worca models login copilot [--accept-terms]
+worca models login copilot
 worca models logout copilot
 worca models import copilot [--all | --pick id,id] [--yes]
 worca models import openai [--base-url <url>] [--all | --pick id,id] [--yes]
@@ -571,7 +554,7 @@ What an Ask chat on Codex can do, and what it cannot do:
 
 ## GitHub Copilot CLI
 
-worca can run pipelines and chats on GitHub's own Copilot CLI (`copilot`). This is a separate engine from the Copilot *provider* above. The provider routes Claude Code's requests to Copilot's API through worca's bridge, as an editor client. The engine runs GitHub's own supported CLI as the agent, so the notice above does not apply to it. Your plan's AI-credit (premium request) allowance still does.
+worca can run pipelines and chats on GitHub's own Copilot CLI (`copilot`). This is a separate engine from the Copilot *provider* above. The provider routes Claude Code's requests to Copilot's API through worca's bridge, as an editor client. The engine runs GitHub's own supported CLI as the agent, without worca's bridge in between. Your plan's AI-credit (premium request) allowance still does.
 
 1. Install the CLI (`npm i -g @github/copilot`, version 1.0.92 or later) and make sure worca finds it: on `PATH`, or `WORCA_COPILOT_BIN=/path/to/copilot` in worca's environment.
 2. Sign in once in a terminal: `copilot login`. Or put a fine-grained token with the "Copilot Requests" permission in `COPILOT_GITHUB_TOKEN`. worca never hands `GH_TOKEN` or `GITHUB_TOKEN` to an agent, so Copilot does not pick those up.
@@ -855,7 +838,7 @@ click Apply.
 | Tool | What it does | How |
 | --- | --- | --- |
 | `list_models` | Every catalog model: source (built-in, user, plugin, team policy), connection (CLI default, env, provider), efforts, its picking facts (vendor, price tier, list price, free, prompt window — see [Per-agent models for one run](#per-agent-models-for-one-run)), and for a bridged model its provider, API, upstream id, limits and readiness. A user entry adds its env, upstream and pricing — credential values masked, `${VAR}` references readable | read |
-| `get_providers` | The Providers card's state: Copilot sign-in and notice, each key-based provider's base URL, whether a key is set (and from where), whether it is optional | read |
+| `get_providers` | The Providers card's state: Copilot sign-in, each key-based provider's base URL, whether a key is set (and from where), whether it is optional | read |
 | `test_provider` | *Test connection* for one provider | read (contacts it) |
 | `list_copilot_models` | What *Import models…* would list | read (contacts GitHub) |
 | `list_endpoint_models` | What an OpenAI-compatible server of yours, Gemini or Qwen serves, with the window each model really gets; a hosted API's key is passed as a `${VAR}` | read (contacts it) |
@@ -876,7 +859,7 @@ click Apply.
   variable in Worca's environment or nothing — a literal key, an env value that
   looks like a token, or an auth header is refused, and Chat tells you to
   paste it on the Providers page instead.
-- Signing in to Copilot and acknowledging its notice stay on the Providers card;
+- Signing in to Copilot stays on the Providers card;
   built-in, plugin and team-policy models are read-only (a user entry with the
   same id overrides a built-in).
 - The chat re-validates every proposal in the server over the real settings (the

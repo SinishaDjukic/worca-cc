@@ -658,7 +658,7 @@ export function resolveModelEnv(modelId, { tag } = {}) {
   // carry `upstream` too but ride the same lookup (registry.findBridgedEntry).
   const bridged = findBridgedEntry(id);
   if (bridged) {
-    // Fail fast (§8.5): a provider that is not signed in / not acknowledged
+    // Fail fast (§8.5): a provider that is not signed in (or has no key)
     // would otherwise surface as an opaque 401 mid-run. This is the ONE case
     // in which this resolver throws; every dispatch site already routes a
     // runClaude failure to its error path, and the Test button's hint keys on

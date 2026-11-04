@@ -58,7 +58,6 @@ section[data-view="team-metrics"] .topbar{align-items:flex-start;}
 .tm-run-tbl td:nth-last-child(-n+2){white-space:nowrap;}
 .badge.grey{background:var(--field);color:var(--ink-2);}
 .badge.slate{background:var(--slate-bg);color:var(--slate-ink);}
-/* The Copilot card's "read the notice first" pill is a button: it opens the notice (bridge-view.mjs). */
 /* With the credential broker, a provider pill for a missing key links to the key page. */
 .mv-broker-pill{text-decoration:none;cursor:pointer;}
 .mv-broker-pill:hover{text-decoration:underline;}
