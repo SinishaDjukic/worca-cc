@@ -338,7 +338,7 @@ test('the claude adapter never resumes another engine\'s session', POSIX, async 
   assert.ok(cursorEvents.some((e) => e.type === 'stderr' && /belongs to another engine/.test(e.text)));
 });
 
-test('runOpts names the directories a node writes its outputs to', () => {
+test('runOpts names the directories a node writes its outputs to (and reads its bound inputs from)', () => {
   const ctx = {
     projectDir: '/p', claudeOpts: { engine: 'codex' },
     outputs: { plan: { path: '/store/plans/x.md' }, answers: { path: '/pipe/clarify.json' }, done: { path: null } },
@@ -350,6 +350,9 @@ test('runOpts names the directories a node writes its outputs to', () => {
   // A review handle names two files; the clarify step writes into the pipeline dir itself.
   const review = { projectDir: '/p', claudeOpts: {}, pipelineDir: '/pipe', outputs: { review: { kind: 'review', mdPath: '/store/reviews/r.md', jsonPath: '/pipe/r.json' } }, questionsFile: '/pipe/q.json' };
   assert.deepEqual(runOpts(review, { role: 'r', prompt: 'P', systemPrompt: 'S', allowedTools: [] }).writableDirs, ['/store/reviews', '/pipe']);
+  // An implementer or fixer step with no outputs in plans/ still receives its bound input dirs so Copilot/Gemini can read them.
+  const impl = { projectDir: '/p', claudeOpts: { engine: 'copilot' }, pipelineDir: '/pipe', outputs: {}, bindings: { plan: { path: '/store/plans/x.md' }, findings: { mdPath: '/store/reviews/r.md', jsonPath: '/pipe/r.json' } } };
+  assert.deepEqual(runOpts(impl, { role: 'r', prompt: 'P', systemPrompt: 'S', allowedTools: [] }).writableDirs, ['/store/plans', '/store/reviews', '/pipe']);
 });
 
 test('a codex run\'s own writable roots pass the Worca-home check: they live in the run store and the run\'s folder', async () => {

@@ -208,7 +208,7 @@ import {
 import {
   renderProvidersCard, collectProviderRow, collectSpeechRow, formatSpeechBytes, renderImportSheet, renderEndpointSheet, collectImportSheet, applyImportSelectAll,
   applyProviderPreset, endpointRowMatches, ENDPOINT_PRESETS,
-  setModelUpstream, COPILOT_TERMS,
+  setModelUpstream,
 } from './bridge-view.mjs';
 import {
   renderSourcePane, collectSourcePane, renderProfileGate, renderProfileBar,
@@ -19438,27 +19438,10 @@ async function reloadProviders() {
   } catch { /* keep what we have */ }
 }
 
-/** The blocking notice (§8.2). Resolves true once acknowledged (now or before). */
-async function ensureCopilotTerms({ force = false } = {}) {
-  if (!force && mvState.providers?.copilot?.termsCurrent) return true;
-  const r = await confirmModal({
-    title: COPILOT_TERMS.title, message: COPILOT_TERMS.body,
-    checkbox: { label: COPILOT_TERMS.checkbox }, confirmLabel: COPILOT_TERMS.confirm, cancelLabel: 'Cancel',
-  });
-  const ok = !!(r && r.ok && r.checked);
-  if (!ok) return false;
-  const res = await fetch('/api/providers/copilot/acknowledge', { method: 'POST' });
-  const data = await safeJson(res);
-  if (!res.ok) { setProviderMsg('copilot', data.error || `HTTP ${res.status}`, true, 'Notice not acknowledged'); return false; }
-  mvState.providers = data;
-  return true;
-}
-
 let copilotPollTimer = null;
 function stopCopilotPoll() { if (copilotPollTimer) { clearTimeout(copilotPollTimer); copilotPollTimer = null; } }
 
 async function copilotSignInFlow() {
-  if (!(await ensureCopilotTerms())) { repaintProviders(); return; }
   try {
     const res = await fetch('/api/providers/copilot/login', { method: 'POST' });
     const flow = await safeJson(res);
@@ -20009,7 +19992,6 @@ if (el.providersList) {
     if (t.classList.contains('mv-cp-signin')) copilotSignInFlow();
     else if (t.classList.contains('mv-cp-cancel')) { stopCopilotPoll(); mvState.signIn = null; renderProvidersViewBody(); }
     else if (t.classList.contains('mv-cp-signout')) copilotSignOutFlow();
-    else if (t.classList.contains('mv-cp-terms')) ensureCopilotTerms({ force: true }).then(() => renderProvidersViewBody());
     else if (t.classList.contains('mv-cp-fetch-models')) openImportDialog({ source: 'copilot' });
     else if (t.classList.contains('mv-cp-quota-refresh')) refreshCopilotQuotaFlow(t);
     else if (t.classList.contains('mv-pv-save')) {
@@ -25253,6 +25235,19 @@ function paintPushBtn(btn, record, push) {
   setCtaContent(btn, 'arrow-up', pushLabel(push));
   btn.title = pushTip(record.sourceBranch, push);
 }
+/** POST /api/push for a run on its source branch -> { ok, remote, branch }; throws the server's message. The Details
+ *  header's Push (pushSourceFlow) and the chat run card's Push (chatRunControls.pushSource) share it. */
+async function postPushSource(record) {
+  const res = await fetch('/api/push', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    // The ship-it modal's own payload shape (:18052). projectKey/projectDir come from listAllPipelines'
+    // project tag (artifacts.mjs:2108), not rowToHistoryEntry.
+    body: JSON.stringify({ projectKey: record.projectKey, projectDir: record.projectDir || null, id: record.id }),
+  });
+  const dd = await safeJson(res);
+  if (!res.ok) throw new Error((dd && dd.error) || `HTTP ${res.status}`);
+  return dd;
+}
 /** Push (POST /api/push) the run's source branch to its remote; `btn` shows the busy state and the outcome. The Details
  *  header's .hd-push and the card head's Push (slice 3, .hd-g-push) share it, and both show the outcome. */
 async function pushSourceFlow(btn, record) {
@@ -25261,14 +25256,7 @@ async function pushSourceFlow(btn, record) {
   const tip = pushTip(record.sourceBranch);
   for (const b of peers) { b.disabled = true; setCtaContent(b, 'arrow-up', 'Pushing…'); b.title = tip; }
   try {
-    const res = await fetch('/api/push', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      // The ship-it modal's own payload shape (:18052). projectKey/projectDir come from listAllPipelines'
-      // project tag (artifacts.mjs:2108), not rowToHistoryEntry.
-      body: JSON.stringify({ projectKey: record.projectKey, projectDir: record.projectDir || null, id: record.id }),
-    });
-    const dd = await safeJson(res);
-    if (!res.ok) throw new Error((dd && dd.error) || `HTTP ${res.status}`);
+    const dd = await postPushSource(record);
     for (const b of peers) paintPushBtn(b, record, { state: 'pushed', remote: dd.remote || 'the remote' });
   } catch (err) {
     // A short label; the error (often long) is in the tooltip and a toast, and a click retries.
@@ -31797,6 +31785,11 @@ const chatRunControls = {
   },
   confirm: (o) => confirmModal(o),
   prHost: () => prHostAvailable(),
+  /** The run card's Push (a run on its source branch): the run page's POST /api/push -> { ok, remote } | { ok:false, error }. */
+  pushSource(ref) {
+    return postPushSource({ projectKey: ref && ref.projectKey, projectDir: ref && ref.projectDir, id: ref && ref.pipelineId })
+      .then((dd) => ({ ok: true, remote: dd.remote || 'the remote' }), (err) => ({ ok: false, error: err && err.message ? err.message : String(err) }));
+  },
   openApply(ref, opener) { const pid = ref && ref.pipelineId; return pid ? folderApplyFlow({ pipelineId: pid, ...(opener ? { opener } : {}) }) : Promise.resolve(null); },
   openShipIt(ref, link) {
     // P2 Task 9: chatDeps.openShipIt = openShipItFor → Promise<{opened, url?, error?}>, settling when the dialog closes.

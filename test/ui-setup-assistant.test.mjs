@@ -8,7 +8,7 @@ import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import {
   SETUP_STEPS, TEST_PASS_MS, LOGIN_RETRY_STEPS, proxyKey, initialAnswers, rolePatch, diffRows, buildApplyBody, nextGate,
-  stepOfField, setupStepForSignIn, safeHttpUrl, openSetupAssistant, teamNotice,
+  stepOfField, setupStepForSignIn, safeHttpUrl, openSetupAssistant, teamNotice, askEngineOf,
 } from '../ui/public/setup-assistant.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { backdropClick, pressEscape, discardPrompt, keepEditing } from './helpers/popups.mjs';
@@ -19,10 +19,10 @@ const UNREACHABLE = 'Worca could not be reached. Check that it is still running.
 
 // ── fixtures ──
 const SETTINGS = { uiLevel: 'simple', pipelineCostLimitUsd: 5, totalCostLimitUsd: null, costLimitResetPeriod: 'monthly',
-  autoGeneratePrDescription: true, smartNaming: { suggestTitle: true, suggestBranch: true }, runEngine: null, modelRoles: {} };
+  autoGeneratePrDescription: true, smartNaming: { suggestTitle: true, suggestBranch: true }, runEngine: null, modelRoles: {}, askEngine: null, askModels: {} };
 const PROXY_OFF = { settings: { enabled: false }, login: null, state: 'off' };
 const PROXY_ON = { settings: { enabled: true, upstream: 'http://proxy.acme.example:8080', auth: 'auto', noProxy: [] }, login: { domain: 'ACME', user: 'jdoe' }, state: 'ready' };
-const PROVIDERS = { copilot: { connected: false, termsCurrent: false, accountType: 'individual', login: null },
+const PROVIDERS = { copilot: { connected: false, accountType: 'individual', login: null },
   openai: { configured: false, baseUrl: '' }, anthropic: { configured: false, baseUrl: '' }, broker: { enabled: false } };
 const CATALOG = [{ id: 'claude-opus-5-5', label: 'Opus 5.5' }, { id: 'claude-haiku-5-5', label: 'Haiku 5.5' }];
 const check = (id, state, extra = {}) => ({ id, label: id, state, line: `${id} line`, ...extra });
@@ -145,18 +145,16 @@ function netServer({ proxy = PROXY_OFF } = {}) {
   return { st, routes, done };
 }
 
-/** Model access: Copilot on, notice accepted, device flow through to "connected". `pollAnswers`: one per poll. */
+/** Model access: Copilot on, device flow through to "connected" (no notice: sign-in is enabled at once). `pollAnswers`: one per poll. */
 async function signInCopilot(h, { pollAnswers = [reply({ ok: true, login: 'jdoe' })] } = {}) {
   if (!h.$('.sa-src-copilot').checked) await h.toggle('.sa-src-copilot');
-  assert.equal(h.$('.sa-cp-signin').disabled, true, 'Sign in waits for the notice');
-  await h.toggle('.sa-cp-ack');
-  assert.equal(h.$('.sa-cp-signin').disabled, false);
+  assert.equal(h.$('.sa-cp-ack'), null, 'no notice switch');
+  assert.equal(h.$('.sa-cp-signin').disabled, false, 'Sign in is ready straight away');
   await h.click('.sa-cp-signin');
   assert.equal(h.$('.mv-cp-code').textContent, 'ABCD-1234');
   for (let i = 0; i < pollAnswers.length; i++) await h.flush();
 }
 const COPILOT_ROUTES = (pollAnswers = [reply({ ok: true, login: 'jdoe' })]) => ({
-  '/api/providers/copilot/acknowledge': reply({}),
   '/api/providers/copilot/login': reply({ deviceCode: 'd1', userCode: 'ABCD-1234', interval: 0 }),
   '/api/providers/copilot/login/': (_o, n) => { const a = pollAnswers[Math.min(n, pollAnswers.length) - 1]; if (a === 'throw') throw new Error('down'); return a; },
   '/api/providers/copilot/models': reply({ models: [{ id: 'claude-opus-5-5', name: 'Claude Opus 5.5', catalogId: 'copilot-claude-opus-5-5', inCatalog: false }] }),
@@ -217,15 +215,26 @@ test('pure helpers: proxyKey, initialAnswers, buildApplyBody, rolePatch, diffRow
       const f = nextGate('review', a, { saved: s, entry: 'first' });
       assert.equal(f.ok, true); assert.equal(f.finish, true);
     } },
-    { name: 'nextGate(access): consent first even when connected; acknowledgeTerms rides only as true from the switch', run: () => {
+    { name: 'nextGate(access): a connected Copilot passes with no consent step; the apply body never carries acknowledgeTerms', run: () => {
       const s = saved({ providers: { ...PROVIDERS, copilot: { ...PROVIDERS.copilot, connected: true } } });
       const a = initialAnswers({ saved: s, entry: 'rerun' });
-      assert.equal(a.access.copilot, true); assert.equal(a.access.copilotAck, false);
-      assert.deepEqual(nextGate('access', a, { saved: s }), { ok: false, reason: 'Accept the GitHub Copilot notice to continue' });
+      assert.equal(a.access.copilot, true); assert.equal('copilotAck' in a.access, false);
+      assert.deepEqual(nextGate('access', a, { saved: s }), { ok: true, reason: '' });
       a.access.copilotAccount = 'business';
       assert.equal('acknowledgeTerms' in buildApplyBody(s, a).access.copilot, false);
-      a.access.copilotAck = true;
-      assert.equal(buildApplyBody(s, a).access.copilot.acknowledgeTerms, true);
+    } },
+    { name: 'Chat model: answers start from askModels[askEngine]; unchanged → no models group; a pick or a clear rides as models.askModels', run: () => {
+      assert.equal(askEngineOf({}), 'claude'); assert.equal(askEngineOf({ askEngine: 'codex' }), 'codex'); assert.equal(askEngineOf({ askEngine: 'nope' }), 'claude');
+      const s = saved({ settings: { ...SETTINGS, askEngine: 'codex', askModels: { codex: { model: 'gpt-5.5', effort: 'high' } } } });
+      const a = initialAnswers({ saved: s, entry: 'rerun' });
+      assert.deepEqual(a.models.askModel, { model: 'gpt-5.5', effort: 'high' });
+      assert.equal(buildApplyBody(s, a).models, undefined);
+      a.models.askModel = null;
+      assert.deepEqual(buildApplyBody(s, a).models, { askModels: { codex: null } });
+      a.models.askModel = { model: 'gpt-5.5-mini' };
+      assert.deepEqual(buildApplyBody(s, a).models, { askModels: { codex: { model: 'gpt-5.5-mini' } } });
+      const none = saved();
+      assert.equal(initialAnswers({ saved: none, entry: 'rerun' }).models.askModel, null);
     } },
     { name: 'safeHttpUrl: http(s) only', run: () => {
       assert.equal(safeHttpUrl('https://keys.acme.example/'), 'https://keys.acme.example/');
@@ -246,7 +255,7 @@ test('pure helpers: proxyKey, initialAnswers, buildApplyBody, rolePatch, diffRow
 
 // ── 2. the dialog ──
 
-test('corporate Copilot path: proxy test → Next applies the network → notice → device sign-in → roles → Apply, in one dialog (AC-4.2, AC-4.3)', async () => {
+test('corporate Copilot path: proxy test → Next applies the network → device sign-in → roles → Apply, in one dialog (AC-4.2, AC-4.3)', async () => {
   const net = netServer();
   const h = await open({ detect: DETECT_PROXY, routes: { ...COPILOT_ROUTES(), ...net.routes } });
   try {
@@ -295,13 +304,13 @@ test('corporate Copilot path: proxy test → Next applies the network → notice
     assert.equal(h.next().textContent, 'Apply');
     await h.click('.sa-next');
     const urls = h.log.map((r) => r.url);
-    assert.ok(urls.indexOf('/api/providers/copilot/acknowledge') < urls.indexOf('/api/providers/copilot/login'), 'acknowledge first');
-    assert.ok(h.log.indexOf(h.applies()[0]) < urls.indexOf('/api/providers/copilot/acknowledge'), 'the network applied before the Copilot calls');
+    assert.equal(urls.includes('/api/providers/copilot/acknowledge'), false, 'no acknowledge call');
+    assert.ok(h.log.indexOf(h.applies()[0]) < urls.indexOf('/api/providers/copilot/login'), 'the network applied before the Copilot calls');
     assert.equal(h.log.some((r) => r.url === '/api/settings' && r.method === 'POST'), false, 'no POST /api/settings');
     assert.equal(h.doc.documentElement.dataset.level, 'simple');
     const body = h.applies()[1].body;
     assert.equal(body.access.copilot.signIn, true);
-    assert.equal(body.access.copilot.acknowledgeTerms, true);
+    assert.equal('acknowledgeTerms' in body.access.copilot, false);
     assert.ok(body.access.copilot.importModels.includes('claude-opus-5-5'));
     assert.equal(body.work?.uiLevel, undefined);
     assert.equal(body.network, undefined, 'the final Apply sends no network group');
@@ -845,7 +854,7 @@ test('a first start with nothing to apply ends on Finish, without a POST (A23)',
 test('the head: Step N of 7, the title and the subtitle on every step (ux-1-3)', async () => {
   const titles = ['Let’s set up Worca', 'How does this machine reach the internet?', 'Where should Worca get its models?', 'Which models should do the work?', 'How do you want to work?', 'Check and apply'];
   const subs = { first: ['Worca checks this machine, then asks only what it could not find.', 'Worca’s agents use this route for every model call.',
-    'Turn on every source you can use. You need at least one.', 'Each role sets the model for every job that has none of its own.', 'You can change all of these later in Settings.',
+    'Turn on every source you can use. You need at least one.', 'Each role sets the model for every job that has none of its own. Chat can have a model of its own.', 'You can change all of these later in Settings.',
     'Worca will save these settings, sign in, import the models and test each one.'] };
   subs.rerun = [...subs.first]; subs.rerun[0] = 'Status of your local setup.'; subs.rerun[5] = 'Only the rows marked Changed will be written.';
   for (const entry of ['first', 'rerun']) {
@@ -901,7 +910,7 @@ test('the role-test switch sits on Review, only with changed roles, and its valu
 });
 
 test('Models step: Copilot models still to import group under GitHub Copilot; old snapshots are left out; a repeated name shows its id', async () => {
-  const copilot = { connected: true, termsCurrent: true, accountType: 'individual', login: 'jdoe' };
+  const copilot = { connected: true, accountType: 'individual', login: 'jdoe' };
   const models = [
     { id: 'gpt-6-sol', name: 'GPT-6 Sol', api: 'responses', catalogId: 'copilot-gpt-6-sol', inCatalog: false, pickerEnabled: true },
     { id: 'gpt-4o-2024-05-13', name: 'GPT-4o', api: 'chat', catalogId: 'copilot-gpt-4o-2024-05-13', inCatalog: false, pickerEnabled: false },
@@ -945,8 +954,50 @@ test('Model access › Claude: Sign in again shows the terminal steps; Check aga
   } finally { h.close(); }
 });
 
+test('Models step: Default model for Chat shows what Chat uses now (Everyday), posts model + effort for Chat\'s engine, no role-test switch', async () => {
+  const settings = { ...SETTINGS, modelRoles: { claude: { everyday: { model: 'claude-haiku-5-5' } } } };
+  const h = await open({ entry: 'rerun', settings, routes: { '/api/setup/apply': reply({ id: 'stp_1', steps: STEPS3 }, 202) } });
+  try {
+    await h.goTo('models');
+    const sel = () => h.$('.inherit-field[data-setting="models.claude.ask"] .inherit-model');
+    assert.ok(sel(), 'the Chat field renders for the saved Chat engine');
+    assert.equal(sel().value, '', 'nothing stored: it follows the role');
+    assert.equal(sel().options[0].textContent, 'Same as Everyday coding · Haiku 5.5');
+    assert.equal(sel().dataset.saField, 'models.askModels.claude');
+    await h.pick(sel(), 'claude-opus-5-5');
+    await h.pick(h.$('.inherit-field[data-setting="models.claude.ask"] .inherit-effort'), 'high');
+    await h.goTo('review');
+    assert.equal(h.$('.sa-test-roles'), null, 'a Chat-only change runs no role tests');
+    const lines = [...h.$$('.sa-review tr[data-group="models"] .sa-review-lines li')].map((li) => li.textContent);
+    assert.ok(lines.some((l) => /^Chat.*Opus 5\.5$/.test(l)), lines.join(' | '));
+    await h.click('.sa-next');
+    assert.deepEqual(h.applies()[0].body.models, { askModels: { claude: { model: 'claude-opus-5-5', effort: 'high' } } });
+  } finally { h.close(); }
+});
+
+test('Models step: the Chat empty choice tracks the Everyday pick live; a Copilot model to import picked for Chat is imported', async () => {
+  const copilot = { connected: true, accountType: 'individual', login: 'jdoe' };
+  const h = await open({ entry: 'rerun', providers: { ...PROVIDERS, copilot },
+    routes: { ...COPILOT_ROUTES(), '/api/setup/apply': reply({ id: 'stp_1', steps: STEPS3 }, 202) } });
+  try {
+    await h.goTo('access');
+    await h.goTo('models');
+    await h.flush();
+    const chat = () => h.$('.inherit-field[data-setting="models.claude.ask"] .inherit-model');
+    assert.equal(chat().options[0].textContent, 'Same as Everyday coding');
+    await h.pick(h.$('.inherit-field[data-setting="models.claude.roles.everyday"] .inherit-model'), 'claude-haiku-5-5');
+    assert.equal(chat().options[0].textContent, 'Same as Everyday coding · Haiku 5.5');
+    await h.pick(chat(), 'copilot-claude-opus-5-5');
+    await h.goTo('review');
+    await h.click('.sa-next');
+    const body = h.applies().at(-1).body;
+    assert.ok(body.access.copilot.importModels.includes('claude-opus-5-5'));
+    assert.equal(body.models.askModels.claude.model, 'copilot-claude-opus-5-5');
+  } finally { h.close(); }
+});
+
 test('Model access › Copilot: Use another account asks first, signs out, then runs the device sign-in here', async () => {
-  const providers = { ...PROVIDERS, copilot: { connected: true, termsCurrent: true, accountType: 'individual', login: 'jdoe' } };
+  const providers = { ...PROVIDERS, copilot: { connected: true, accountType: 'individual', login: 'jdoe' } };
   const h = await open({ entry: 'rerun', providers, routes: { ...COPILOT_ROUTES([reply({ ok: true, login: 'acme-dev' })]), '/api/providers/copilot/logout': reply({ ok: true }) } });
   try {
     await h.goTo('access');

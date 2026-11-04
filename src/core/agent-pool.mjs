@@ -13,7 +13,7 @@
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { isAbsolute, join } from 'node:path';
-import { agentIdentity, claimForAgent } from './agent-user.mjs';
+import { agentIdentity, claimExtrasDir, claimForAgent } from './agent-user.mjs';
 import { currentOwner } from './billing.mjs';
 import { worcaHome } from './projects.mjs';
 
@@ -90,4 +90,17 @@ export function agentIdentityFor(person, env = process.env, { file = null } = {}
  *  folder another user made first (1.1): the run must not go on in it. */
 export function claimRunDir(dir, { owner = currentOwner(), env = process.env, file = null } = {}) {
   claimForAgent(dir, agentIdentityFor(owner, env, { file }));
+}
+
+/** A log-safe reason for a failed share: the error's string `code`, else 'UNKNOWN'. Never the message, which can carry
+ *  internal paths (/proc/self/fd/…) and uid/gid details. */
+export function shareFailureReason(error) {
+  return typeof error?.code === 'string' && error.code ? error.code : 'UNKNOWN';
+}
+
+/** A run's attached files (`<pipeline>/extras/`) for the agent claimRunDir gave the run folder to: the folder and each
+ *  file in its group, fd-safe (agent-user.mjs claimExtrasDir). Throws when the folder is a link or not worca's; returns
+ *  the files it could not claim. */
+export function claimRunExtras(dir, { owner = currentOwner(), env = process.env, poolFile = null, ...opts } = {}) {
+  return claimExtrasDir(dir, agentIdentityFor(owner, env, { file: poolFile }), opts);
 }

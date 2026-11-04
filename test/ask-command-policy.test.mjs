@@ -100,3 +100,48 @@ test('$WORCA_ASK_OUT: the variable form passes; the spelled-out .worca-cc path i
   assert.equal(checkAskCommand('npx playwright screenshot http://localhost:3000 "$WORCA_ASK_OUT/home.png"', ctx), null);
   assert.match(checkAskCommand('npx playwright screenshot http://localhost:3000 ~/.worca-cc/ask/ask_00000001/out/home.png', ctx), /names a protected path/);
 });
+
+const W = { cwd: 'C:\\Users\\me\\proj', home: 'C:\\Users\\me\\.worca-cc', userHome: 'C:\\Users\\me', hostPid: 4242, serverPort: 4317 };
+
+test('Windows: the session folder in every form (C:\\, C:/, /c/, any case, quoted) is the folder', () => {
+  for (const cwd of [W.cwd, 'C:/Users/me/proj']) {
+    for (const c of ['rm -rf C:\\Users\\me\\proj\\dist', 'rm -rf C:/Users/me/proj/dist', 'rm -rf /c/Users/me/proj/dist',
+      'rm -rf /C/users/ME/proj/dist', 'cd /c/Users/me/proj && rm -rf build', 'rm -rf .\\dist build\\', 'npm test', 'rm.exe -rf node_modules',
+      'rm -rf "C:\\Users\\me\\proj\\dist"', "rm -rf 'C:\\Users\\me\\proj\\dist'"])
+      assert.equal(checkAskCommand(c, { ...W, cwd }), null, `${cwd}: ${c}`);
+  }
+});
+
+test('Windows: rm -r outside the folder, in any form, is refused (unknown = outside)', () => {
+  for (const c of ['rm -rf C:/Users/me/other', 'rm -rf /c/Users/me', 'rm -rf /c/Users/me/proj2', 'rm -rf ..\\other', 'rm -rf /tmp/x',
+    'rm -rf /Users/me/proj/dist', 'cd /tmp && rm -rf x', 'cd /c/Users && rm -rf me/proj-old', 'rm -rf D:\\data', 'rm -rf D:/c/Users/me/proj',
+    'C:\\Git\\usr\\bin\\rm.exe -rf C:\\x', 'rm -rf /', 'rm -rf "C:\\Users\\me\\other"', 'bash -c "rm -rf \\"C:\\Users\\me\\other\\""'])
+    assert.match(checkAskCommand(c, W), /rm -r outside/, c);
+});
+
+test('Windows: protected paths with backslashes, MSYS form and any case', () => {
+  for (const c of ['cat C:\\Users\\me\\.ssh\\id_rsa', 'cat C:\\Users\\me\\.SSH\\id_rsa', 'type .config\\gh\\hosts.yml', 'cat sub\\.env',
+    'cat /c/Users/me/.worca-cc/settings.json', 'ls C:\\Users\\me\\.claude', 'ls /c/users/me/.docker', 'cat C:/Users/me/.npmrc',
+    'cd ~ && type .kube\\config'])
+    assert.match(checkAskCommand(c, W), /protected/, c);
+  const custom = { ...W, home: 'D:\\wh' };
+  for (const c of ['cat /d/wh/settings.json', 'cat D:/WH/x', 'cat d:\\wh\\x']) assert.match(checkAskCommand(c, custom), /protected/, c);
+  assert.equal(checkAskCommand('cat .claude\\rules\\x.md', W), null, 'a project\'s own .claude is an ordinary folder');
+});
+
+test('Windows: a run folder under the worca home passes; its sibling does not', () => {
+  const run = { ...W, cwd: 'C:\\Users\\me\\.worca-cc\\runs\\abc\\repos\\p' };
+  for (const c of ['ls /c/Users/me/.worca-cc/runs/abc/repos/p/src', 'rm -rf C:/Users/me/.worca-cc/runs/abc/repos/p/dist', 'npm test'])
+    assert.equal(checkAskCommand(c, run), null, c);
+  assert.match(checkAskCommand('ls C:/Users/me/.worca-cc/runs/abc/repos/p-other', run), /protected/);
+});
+
+test('platform: an explicit platform wins over the paths', () => {
+  assert.equal(checkAskCommand('cat C:\\Users\\me\\.SSH\\x', { ...ctx, platform: 'linux' }), null, 'POSIX rules: \\ is no separator, case matters');
+});
+
+test('askCommandEnv on Windows keeps the system variables Git Bash needs', () => {
+  const base = { PATH: 'C:\\bin', SystemRoot: 'C:\\Windows', USERPROFILE: 'C:\\Users\\me', TEMP: 'C:\\t', ComSpec: 'cmd', GITHUB_TOKEN: 'g' };
+  assert.deepEqual(askCommandEnv(base, 'win32'), { PATH: 'C:\\bin', SystemRoot: 'C:\\Windows', USERPROFILE: 'C:\\Users\\me', TEMP: 'C:\\t', ComSpec: 'cmd' });
+  assert.deepEqual(askCommandEnv(base, 'linux'), { PATH: 'C:\\bin' });
+});

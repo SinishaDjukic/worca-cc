@@ -329,7 +329,7 @@ Subcommands:
   sessions <id> [--json]      A run's sessions: host, turns, the cost split and its reconcile. See: worca sessions help
   stop <id>                   Stop a live or paused run (any unique prefix). See: worca stop help
   pause <id>                  Gracefully pause a live run; resume with: worca resume <id>
-  doctor                      Reconcile crashed runs, sweep leftover run roots, check node-pty's spawn-helper.
+  doctor                      Reconcile crashed runs, sweep leftover run roots, check node-pty's spawn-helper and the terminal shell.
   plugin <cmd> [...]          Manage plugins: add|install|list|update|remove|purge|enable|
                               disable|doctor|link|reimport|init|validate|exec. See: worca plugin help
   marketplace <cmd> [...]     Manage plugin marketplaces: add|list|refresh|remove. See: worca marketplace help
@@ -337,7 +337,7 @@ Subcommands:
   config [get|set|unset]      Budget & cost-limit settings
   flags [list|on|off|reset]   Labs features: on/off <key>, reset [<key>]
   ui [start|stop|restart|status]
-                              Run the web UI (default http://localhost:4317). See: worca ui help
+                              Run the web UI (default http://127.0.0.1:4317). See: worca ui help
   workflow <cmd> [...]        Export a workflow (Claude Code skill, JSON, or plugin) / import JSON: list|export|import. See: worca workflow help
   metrics push [--project <path>]   Push pending team-metrics run records (headless flush)
   metrics pr-workflow [--project <path>]   Add the GitHub Action that records PR merges for the Timeline
@@ -951,7 +951,7 @@ async function attachAndDrive(orch, flags, start) {
 const UI_HELP = `worca ui — the web UI server
 
 Usage:
-  worca ui [start] [--port <n>] [--open] [--mock]   Start the UI (default http://localhost:${DEFAULT_UI_PORT})
+  worca ui [start] [--port <n>] [--open] [--mock]   Start the UI (default http://127.0.0.1:${DEFAULT_UI_PORT})
   worca ui stop [--port <n>]                        Stop the running UI gracefully
   worca ui restart [--port <n>] [--open] [--mock]   Stop it if running, then start it again
   worca ui status [--port <n>]                      Report whether it is running (exit 0 = running, 1 = not)
@@ -1339,6 +1339,13 @@ async function cmdDoctor() {
     }
   } catch (err) {
     process.stderr.write(`worca doctor: spawn-helper check failed: ${err?.message || err}\n`);
+  }
+  try {
+    const { pickShell, shellDoctorLine } = await import('../core/terminal/shell.mjs');
+    const line = shellDoctorLine(pickShell());
+    out(/no command blocks/.test(line) ? c('yellow', line) : line);
+  } catch (err) {
+    process.stderr.write(`worca doctor: terminal shell check failed: ${err?.message || err}\n`);
   }
   try {
     // A TOTAL no-op while the effective mode is `legacy`: those paths hold every live

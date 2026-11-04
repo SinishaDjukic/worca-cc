@@ -348,7 +348,7 @@ Settings tabs once, pages of their own now. The old addresses (`#settings/plugin
 | Models page: the Roles card (Deep thinking, Everyday coding, Quick jobs per harness; its Claude / Codex switch is E). The Models nav entry is E, so below Expert the card opens from the `#models` address until the setup assistant adds a Simple-level way in | S |
 | Models page: the catalog toolbar (search, filter chips, folding groups), the editor dialog's Connection section, the Import-models dialog (Copilot and OpenAI-compatible sources) | E |
 | Providers page: Providers card (Copilot sign-in, account type, concurrency cap, key rows) and its Import-models shortcuts | E |
-| The Copilot notice modal; a card's "needs sign-in" pill and button; the New pipeline caption's "needs sign-in" note | all (rule 1 — they block a run) |
+| A card's "needs sign-in" pill and button; the New pipeline caption's "needs sign-in" note | all (rule 1 — they block a run) |
 
 ### Requirements (behind the `requirements` flag)
 

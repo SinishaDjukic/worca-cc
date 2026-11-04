@@ -243,7 +243,7 @@ import { getSession as getTerminalSession, listBlocks as listTerminalBlocks, cou
   listAudit as listTerminalAudit, listBranchWorktrees, findBranchWorktree, markInterruptedSessions, listRecentBlocks as listRecentTerminalBlocks } from '../src/core/terminal/store.mjs';
 import { createAskCommands, terminalEventPrompt, terminalNoticeText } from '../src/core/ask/commands.mjs';
 import { openBranchWorktree, removeBranchWorktree, releaseBranchWorktree, enforceBranchWorktreeCap, sweepBranchWorktrees } from '../src/core/terminal/worktrees.mjs';
-import { pidAlive, killDescendants } from '../src/core/terminal/pty.mjs';
+import { pidAlive, terminalReapOptions } from '../src/core/terminal/pty.mjs';
 import { createTerminalFanout } from '../src/core/terminal/fanout.mjs';
 import { detectBuiltins, builtinLaunch, revealLaunch, copyCommandText, findOnPath } from '../src/core/actions/builtins.mjs';
 import { buildLauncherCommand, launchAndWatch, installedLaunchers, launcherExamples, launcherWarning, lineForPickedApp } from '../src/core/actions/launcher.mjs';
@@ -286,9 +286,10 @@ import { engineReadiness, engineLocks } from '../src/core/engines/readiness.mjs'
 import { chatDescriptor, chatEngineGate } from '../src/core/engines/chat.mjs';   // #943: the switch route runs the turn's gate
 import { chatModelRates } from '../src/core/ask/chat-price.mjs';
 import { providerReadiness } from '../src/core/bridge/registry.mjs';
+import { canonicaliseModelIds, checkAskModelsPatch } from '../src/core/setup/slot-checks.mjs';
 import { startBridge } from '../src/core/bridge/server.mjs';
 import {
-  providersState, patchProvider, acknowledgeTerms, beginCopilotLogin, pollCopilotLogin, copilotLogout,
+  providersState, patchProvider, beginCopilotLogin, pollCopilotLogin, copilotLogout,
   copilotModelsForImport, importCopilotModels, testProviderConnection,
   endpointModelsForImport, importEndpointModels, patchSpeech,
 } from '../src/core/bridge/provider-ops.mjs';
@@ -300,7 +301,7 @@ import { detectSetup, defaultProbes } from '../src/core/setup/detect.mjs';
 import { teamSetupState, buildTeamSetup, SHARE_SETTING_KEYS } from '../src/core/setup/team-file.mjs';
 import { planSetupApply, commitSetupPlan, runSetupSteps, SetupFieldError, SetupConflictError } from '../src/core/setup/apply.mjs';
 import {
-  DEFAULT_UI_PORT, UI_HEALTH_NAME, UI_TOKEN_HEADER, newUiToken, writeUiInstance, removeUiInstance, uiUrl,
+  DEFAULT_UI_PORT, UI_HEALTH_NAME, UI_TOKEN_HEADER, newUiToken, writeUiInstance, removeUiInstance, uiUrl, keepIdleConnections,
 } from '../src/core/ui-instance.mjs';
 import { validateGuardrails } from '../src/core/guardrails.mjs';
 import {
@@ -844,7 +845,7 @@ function settleRunEntry(entry) {
 // WebSocket plumbing
 // ---------------------------------------------------------------------------
 const app = express();
-const server = http.createServer(app);
+const server = keepIdleConnections(http.createServer(app));
 
 // Settings › About manual update (issue #841). The version list (npm packument, cached 12 h like the
 // check above), who may update, and the handoff record's last result. Never at boot, never under mock
@@ -3099,7 +3100,7 @@ const startRunHandler = async (req, res) => {
       // creation, where createWorkspace enforced isGitRepo) is rejected the same
       // way, so the client gets a clean 400 instead of a mid-run worktree error.
       const projects = [];
-      await gitState();                                   // U4: refresh the cached git answer (≤ 1 min old) memberWorkMode reads
+      await gitState();                                   // U4: a stale "missing" re-probes before this returns (a stale "available" is served, then refreshed); memberWorkMode reads it
       for (const dir of ws.projectPaths) {
         if (!fs.existsSync(dir)) {
           return badRequest(res, 'workspace member path is missing');
@@ -7756,17 +7757,7 @@ async function checkModelRolesPatch(patch, { pending = [] } = {}) {
   // Model and harness only: the role effort is mapped when used (effortOn), never refused here (A7).
   for (const [engine, roles] of Object.entries(patch)) for (const [role, value] of Object.entries(roles)) if (value) items.push({ id: `modelRoles.${engine}.${role}`, engine, value: { model: value.model } });
   await assertSlotModels(items, { pending });
-  // Store the catalog's canonical id (A8), so every consumer matches the same spelling; a pending id keeps the
-  // spelling its import will write.
-  if (items.length) {
-    const models = await listModels('');
-    for (const roles of Object.values(patch)) for (const value of Object.values(roles)) {
-      if (!value) continue;
-      const lc = value.model.toLowerCase();
-      const hit = models.find((m) => m?.id?.toLowerCase() === lc) || pending.find((p) => p.id.toLowerCase() === lc);
-      if (hit) value.model = hit.id;
-    }
-  }
+  await canonicaliseModelIds(Object.values(patch).flatMap((roles) => Object.values(roles)), pending);
   return patch;
 }
 
@@ -8158,6 +8149,7 @@ function setupDeps() {
     applyProxy: (np, beforeFixed) => proxyHost.applyWritten(np, beforeFixed),
     reloadLogin: () => egressNow()?.reloadLogin?.(),
     checkModelRoles: (patch, o) => checkModelRolesPatch(patch, o),
+    checkAskModels: (patch, o) => checkAskModelsPatch(patch, o),
     testModel: async (id) => {
       const key = String(id).toLowerCase();
       if (modelTestsInFlight.has(key)) return { ok: false, message: 'test already running for this model' };
@@ -9724,8 +9716,9 @@ export async function bootMaintenance({ log } = {}) {
   // interrupted, and sweep the branch worktrees under the keep policy and cap. Before Actions: its keep
   // policy and checkout cap read the terminal pid file, which must not still hold the last server's rows.
   try {
-    const orphans = await reapOrphans({ pidFile: terminalPidFileNow(),
-      kill: (pid) => { killDescendants(pid); try { process.kill(-pid, 'SIGKILL'); } catch { /* gone */ } } });
+    const termPidFile = terminalPidFileNow();
+    // Windows checks each pid is still its recorded shell; the rows are read before reapOrphans rewrites the file.
+    const orphans = await reapOrphans({ pidFile: termPidFile, ...terminalReapOptions(termPidFile) });
     // reapOrphans keeps rows stamped with this pid; a restarted container reuses the old server's pid, so
     // such rows would keep their runs "busy" for ever. Nothing is live here yet: rewrite the file.
     terminals.writePidFile();
