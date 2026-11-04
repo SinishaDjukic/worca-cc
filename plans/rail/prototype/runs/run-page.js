@@ -269,14 +269,14 @@ function render() {
   // One metadata line: what it is, where the code lives, then the tag group (mark, labels, cost tags).
   const facts = `<span class="rc-placeset">${placeLine}</span>${placeLine ? '<span class="rc-sep" aria-hidden="true">·</span>' : ''}${tagGroupHtml()}`;
   // Where you are: Runs › place › group, the page itself never a crumb; on a narrow card only the parent, as ‹ Parent.
-  const crumbs = `<nav class="rc-crumbs" aria-label="Breadcrumb"><ol>${v.crumbs.map((c, i) => `<li${i === v.crumbs.length - 1 ? ' class="is-parent"' : ''}>${c.go ? `<button type="button" class="rc-crumb" data-crumb="${i}" data-key="crumb:${i}" title="${esc(c.t)}">${esc(c.t)}</button>` : `<a class="rc-crumb" href="#" data-key="crumb:${i}" data-say="Goes to ${esc(i ? (c.group ? 'the ' + c.t + ' group' : c.t + ' runs') : 'the Runs list')}" title="${esc(c.t)}">${esc(c.t)}</a>`}</li>`).join('')}</ol></nav>`;
+  const crumbs = R.trail({ items: v.crumbs.map((c, i) => (c.go ? { label: c.t, button: true, attrs: { 'data-crumb': i, 'data-key': 'crumb:' + i } }
+    : { label: c.t, attrs: { 'data-key': 'crumb:' + i, 'data-say': 'Goes to ' + (i ? (c.group ? 'the ' + c.t + ' group' : c.t + ' runs') : 'the Runs list') } })) });
   // A run in a group steps to its siblings; a run that has not started has no page yet.
   const pg = v.pager;
   const left = svg('chevron', 14).replace('M6 9.5l6 6 6-6', 'M14.5 6l-6 6 6 6');
   const right = svg('chevron', 14).replace('M6 9.5l6 6 6-6', 'M9.5 6l6 6-6 6');
-  const sib = (x, dir, icon) => R.button({ label: (dir === 'prev' ? 'Previous' : 'Next') + ' run', kind: 'quiet', iconOnly: true, icon, title: x && !x.ok ? `Run ${x.index + 1} hasn’t started` : false,
-    attrs: { 'data-sib': x ? x.index : '', 'data-key': 'sib:' + dir, disabled: !(x && x.ok) } });
-  const pager = pg ? `<span class="rc-pager" role="group" aria-label="Runs in this group">${sib(pg.prev, 'prev', left)}<span class="rc-pager-n">${pg.index + 1} of ${pg.n}</span>${sib(pg.next, 'next', right)}</span>` : '';
+  const sib = (x, dir) => (x ? { ok: !!x.ok, why: `Run ${x.index + 1} hasn’t started`, attrs: { 'data-sib': x.index, 'data-key': 'sib:' + dir } } : { ok: false, attrs: { 'data-sib': '', 'data-key': 'sib:' + dir } });
+  const pager = pg ? R.pager({ label: 'Runs in this group', index: pg.index, n: pg.n, noun: 'run', prev: sib(pg.prev, 'prev'), next: sib(pg.next, 'next'), icons: { prev: left, next: right } }) : '';
   const scope = v.bar.scope ? ` title="Applies to the whole ${esc(v.bar.scope)}: the running run and the ones after it"` : '';
 
   const track = v.stages.map((st) => `<div class="sc-seg">${st.cells.map((c) => `<span class="sc-cell ${c}"></span>`).join('')}</div>`).join('');

@@ -104,3 +104,5 @@ Rail follows the app's file layout (`docs/split-by-feature.md`, #919) like any o
 - A setting or a place: the Marketplace store stays a place in the sidebar; installed plugins, Connectors, Models,
   Providers and Team policy are Settings. The sidebar keeps the places: Chat, Runs, Schedules, Statistics, Team
   metrics · Build: Workflows, Requirements, Marketplace · Manage: Projects, Workspaces (4 Nov).
+- Navigation: one model in the design system; a thing opens as a full page, never beside its list; the trail is the one
+  way back on screen, the browser's back returns from a jump (4 Nov).

@@ -305,3 +305,17 @@ test('land and dialog hooks: the target lights once and comes into view; a Dialo
   assert.equal(d.querySelector('[data-dialog="yes"]').dataset.pd, 'ok');
   assert.equal(d.querySelector('[data-dialog="cancel"]').dataset.pd, 'cancel');
 });
+
+test('trail and pager: one depth up, never the page itself, the parent marked for narrow screens; siblings, one that cannot open says why', () => {
+  const t = dom(C.trail({ items: [{ label: 'Runs', attrs: { 'data-key': 'crumb:0' } }, { label: 'worca-cc', button: true, attrs: { 'data-crumb': 1 } }] }));
+  assert.equal(t.getAttribute('aria-label'), 'Breadcrumb');
+  assert.deepEqual([...t.querySelectorAll('.rc-crumb')].map((x) => [x.tagName, x.textContent, x.title]), [['A', 'Runs', 'Runs'], ['BUTTON', 'worca-cc', 'worca-cc']]);
+  assert.ok(t.querySelector('li:last-child').classList.contains('is-parent'));
+  const p = dom(C.pager({ label: 'Runs in this group', index: 1, n: 3, noun: 'run', prev: { ok: true, attrs: { 'data-sib': 0 } }, next: { ok: false, why: 'Run 3 hasn’t started' }, icons: { prev: '<svg></svg>', next: '<svg></svg>' } }));
+  const [a, b] = p.querySelectorAll('button');
+  assert.equal(p.querySelector('.rc-pager-n').textContent, '2 of 3');
+  assert.equal(a.getAttribute('aria-label'), 'Previous run');
+  assert.equal(a.disabled, false);
+  assert.ok(b.disabled);
+  assert.equal(b.title, 'Run 3 hasn’t started');
+});

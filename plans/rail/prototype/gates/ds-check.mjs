@@ -72,7 +72,7 @@ const OWN = {
   Tabs: /class="(tabs|tab)[ "]/, Segmented: /class="seg"/, Figures: /class="(rc-figs|rc-fig-link)[ "]/, Toast: /class="(rc-toast|toasts)[ "]/,
   EmptyState: /class="empty-line[ "]/, 'Text link': /class="dc-link"/,
   SettingsRow: /class="(set-row|set-rows|set-foot)[ "]/, SettingsSection: /class="set-sec[ "]/, SentencePicker: /class="spick[ "]/, Switch: /class="switch[ "]/,
-  ListRow: /class="(list-row|list|lr-main)[ "]/, Dialog: /class="viewer-modal[ "]/, Field: /class="fld[ "]/, SideMenu: /class="side-menu/, Search: /class="rl-search/, BackLink: /class="rl-back"/,
+  ListRow: /class="(list-row|list|lr-main)[ "]/, Dialog: /class="viewer-modal[ "]/, Field: /class="fld[ "]/, SideMenu: /class="side-menu/, Search: /class="rl-search/, BackLink: /class="rl-back"/, Trail: /class="rc-crumbs"/, Pager: /class="rc-pager"/,
 };
 for (const name of BUILT) {
   readFileSync(here(name), 'utf8').split('\n').forEach((line, i) => {

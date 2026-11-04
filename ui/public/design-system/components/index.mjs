@@ -15,5 +15,6 @@ export { morph, land } from './motion.mjs';
 export { sentencePicker, switchButton, settingsRow, settingsSection } from './settings-row.mjs';
 export { listRow, list, moreMenu } from './list.mjs';
 export { sideMenu, search, searchResults, backLink } from './side-menu.mjs';
+export { trail, pager } from './navigation.mjs';
 export { dialog } from './dialog.mjs';
 export { field, tooltip } from './field.mjs';

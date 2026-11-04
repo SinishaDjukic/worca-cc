@@ -81,6 +81,8 @@
       ['On a narrow screen, as a list', `<div style="width:320px">${R.sideMenu({ label: 'Settings', list: true, chevron: P('M9 6l6 6-6 6'), groups: [{ title: 'Worca', items: [{ label: 'General' }, { label: 'Notifications' }] }, { title: 'Work', items: [{ label: 'Runs' }] }] })}</div>`]],
     Search: [['What it finds, with where each lives', `<div style="min-height:150px">${R.search({ value: 'pro', results: R.searchResults([{ id: 'a', text: 'Proxy', where: 'Runs › Network' }, { id: 'b', text: 'Providers', where: 'Settings › AI' }, { id: 'c', text: 'Projects', where: 'Notifications' }]) })}</div>`]],
     BackLink: [['One step up', R.backLink({ label: 'Settings', icon: P('M15 6l-6 6 6 6') })]],
+    Trail: [['A run in a group: its place, then its group', R.trail({ items: [{ label: 'Runs' }, { label: 'worca-cc' }, { label: 'Unified page navigation' }] })]],
+    Pager: [['A run among its group\'s', R.pager({ label: 'Runs in this group', index: 1, n: 3, noun: 'run', prev: { ok: true }, next: { ok: false, why: 'Run 3 hasn’t started' }, icons: { prev: P('M14.5 6l-6 6 6 6'), next: P('M9.5 6l6 6-6 6') } })]],
     Dialog: [['A step that needs fields first', R.dialog({ title: 'Move the Worca folder', close: X, status: 'Runs pause while it moves', yes: 'Move it', body: R.field({ id: 'g-d1', label: 'New folder', value: '~/work/.worca', hint: 'Runs, history and settings move here' }) })]],
   };
   const g = document.getElementById('gallery');

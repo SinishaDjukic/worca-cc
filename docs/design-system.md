@@ -307,6 +307,37 @@ the ways out as buttons. The start button names what will happen (`Start at 16:4
 A setup of several steps is one Dialog with the Stepper at its head, one step per screen, Back and Next in its foot.
 A view that only shows (a workflow graph at full size) is a Dialog without a form: its head, the view, Close.
 
+### Navigation: one model
+How you move through Worca, the same everywhere. Mocks: `plans/rail/mocks/nav-*.png`.
+
+**Four depths, always in this order.** A **place** (Chat, Runs, Schedules, Statistics…: the sidebar) holds **things** (a
+run, a group, a schedule, a chat: its list's rows); a thing has **parts** (its tabs: Overview, Changes, Activity); a
+part holds **facts** (a file, a decision, a question, a setting). Everything else lays over a page without changing
+where you are: a panel (Pulse, the profile menu), a side column (Ask worca), a Dialog, the ConfirmStrip.
+
+**Five ways to move, each with one job.**
+| Way | Goes | Component |
+|---|---|---|
+| The sidebar | to a place | the sidebar; a place with its own sections (Settings) turns it into its SideMenu |
+| A row | to a thing, as a full page: a thing takes the page, never a pane beside its list (the run page needs its width) | ListRow |
+| The trail | one depth up: a thing to its place, a run to its group | Trail, in the top bar |
+| The pager | sideways, to a sibling: the next run in a group | Pager, at the top bar's right |
+| A link, a search result, a Pulse row, a notification | straight to a fact, in any place | Text link, Search, ListRow; `land()` |
+
+**One way back on screen.** The trail is it: never a second `‹ Back to …` beside it. Where you came from is the
+browser's back, which always works, after a jump too (a Pulse row from Settings: the trail goes up to Runs, the
+browser's back returns to Settings). On a narrow screen the trail is its parent alone, `‹ Parent`.
+
+**Where you land.** A thing opens on its state (the status line), never scrolled; a part opens at its top; a fact
+comes into view, lights once over `flash` and takes the focus (`land()`). Coming back to a place restores what you
+left there: its scroll, the list's sentence, the selection.
+
+**The address is the page.** The place, the thing, its part and the fact are in the URL (`#runs/r-412/changes/file:3`),
+so a link, a notification or a bookmark lands exactly there, and the browser's back walks the same steps.
+
+**The words.** A link names where it goes (`Open Models`, `Runs`, `‹ worca-cc`), never `Click here` or a bare `More`;
+a link that leaves Worca says so (`View PR ↗`). A page changes at once (Motion: no page transition).
+
 ### Violet, kept apart
 Violet has two meanings that never meet: the merged status dot (a state), and Worca writing for you inside a field
 (the sparkle, the Suggested chip, the shimmer). A dot never means AI, and a suggestion is never a dot or a badge.
