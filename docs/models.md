@@ -83,6 +83,45 @@ box (id, label or upstream id) and filter chips — *All*, *Yours*, *Built-in*,
 *Plugin*, *Team*, *Needs setup*, plus *Just imported* right after an import.
 Each group folds, with the count in its header; built-in models start folded.
 
+## Model roles
+
+Every model slot that has no value of its own falls back to one of three
+roles. The Roles card on the Models page (above the Engines card) sets them:
+
+| Role | Setting key | What it covers |
+|---|---|---|
+| Deep thinking | `deep` | Plans and reviews: the Plan, Plan review, Refine plan, Review implementation, Deck review and Bug Root Cause steps, and Away mode's decider (`nightMode.deciderModel`) |
+| Everyday coding | `everyday` | Every other step, Chat (`askModels`), Agent generation (`agentGenModel`), the Requirements interview (`requirementsInterview`) and Claude's Auto classifier (`autoWorkflowModel`) |
+| Quick jobs | `quick` | Titles (`titleModel`), Run naming (`namingModel`), Command summaries (`commandSummaryModel`), PR description (`prDescriptionModel`), Memory defragment (`memoryDefrag`, including its step), Workspace scan (`workspaceScan`, the scan model only) and every `utilityModels.<engine>.*` job, Codex's Auto classifier included |
+
+Where a slot looks, in order:
+
+- **Steps:** the node's own pick, the project's step model, your or the team's
+  step model, the workflow template's own model, then the role. A run started
+  with its own model (`--model`) uses that model for every unset step instead
+  of the role, and an Auto run skips the role, as it skips your step models.
+- **Helper jobs:** the job's own setting, then the role, then today's
+  fallback (for titles: the run's model, then the built-in Haiku).
+
+Roles are kept per harness (`modelRoles.claude`, `modelRoles.codex`): a Claude
+run never reads the Codex roles, and a harness with no roles keeps today's
+fallbacks. With no `modelRoles` at all, every slot resolves exactly as it did
+before roles existed.
+
+A role names a catalog model that runs on its harness; the server refuses any
+other and stores the catalog's own spelling of the id (`Claude-Opus-5-5` is
+saved as `claude-opus-5-5`). The effort is any reasoning level; when a job
+uses the role, the effort is mapped to the nearest one the harness takes (on
+Claude, `low` runs as `medium`).
+
+```sh
+curl -X POST http://localhost:4317/api/settings -H 'Content-Type: application/json' \
+  -d '{ "modelRoles": { "claude": { "quick": { "model": "claude-haiku-5-5", "effort": "low" } } } }'
+```
+
+`null` clears a role (`{ "modelRoles": { "claude": { "quick": null } } }`).
+Chat's `change_setting` sets the same values as `models.<harness>.roles.<role>`.
+
 ## Providers
 
 The **Providers** card has a page of its own, **Providers** (Expert level). A
@@ -524,7 +563,7 @@ What an Ask chat on Codex can do, and what it cannot do:
 
 - It reads files only through worca's `read_file`, `grep` and `glob`, inside the chat's worktrees, attachments and memory, under the same protected-file rules as a Claude chat. It has no shell, no image viewer and no Codex web search; web access goes through worca's web tools as in any chat.
 - Codex keeps its sub-agent tools; no Codex setting removes them. A sub-agent gets the same locked-down tools, and the chat stops with an error as soon as one starts.
-- A chat keeps the engine it started on. To switch, start a new chat.
+- A chat can move to another engine from its model picker (see [Switching a chat's engine](#switching-a-chats-engine)).
 - Images are sent with the message that carries them, and `read_attachment` returns any image attachment again (in Codex's `exec`, `image()` shows it). A Codex chat cannot view PDFs. Your sets' MCP servers start with the chat when they are local (stdio) servers (see [Chat](#chat)).
 - Skills from your sets work as in a Claude chat, and the Sets picker lists them. Codex does not load them itself: each message copies them into the chat's folder, the chat is told each skill's name, description and `SKILL.md` path, and `read_file` can open that message's copy for that message only. A skill keeps its own name; when two sets have a skill of the same name, each is called `<set>-<name>`.
 - The per-turn cost cap needs a model worca can price; on Codex the cap is checked when a reply ends.
@@ -558,6 +597,8 @@ There is no sign-in status command, so worca checks only that the binary runs be
 
 **Guardrails on Copilot.**
 
+- Tool approval is an allow list. worca approves the shell, the file tools, URLs in shell commands and each MCP server it attached (`--allow-tool=shell`, `--allow-tool=write`, `--allow-tool=<server>`, `--allow-all-urls`), never `--allow-all-tools`. Read-only tools, `task` and Copilot's own `sql` and `skill` tools need no approval. Copilot denies anything else without asking, such as an MCP server worca did not attach. A helper job or a chat approves only the MCP servers it was handed. The deny rules below win over every allow rule, and they travel on the command line, out of the agent's reach. Checked on Copilot CLI 1.0.100.
+- worca removes `COPILOT_ALLOW_ALL` and `COPILOT_ASSISTED_APPROVAL` from Copilot's environment. Either would approve tools beyond that list. `COPILOT_ALLOW_ALL=true` would also trust the run checkout, so its hooks and MCP servers would load.
 - These deny rules hold fully:
   - a bare `Bash` (the shell is denied);
   - `WebSearch` (the tool is removed);
@@ -589,7 +630,7 @@ What a chat on Copilot can do, and what it cannot do:
 - It reads files only through worca's `read_file`, `grep` and `glob`, inside the chat's worktrees, attachments and memory, under the same protected-file rules as a Claude chat. Web access goes through worca's web tools as in any chat.
 - Copilot's built-in GitHub MCP server, your `~/.copilot` MCP servers and custom instructions (`AGENTS.md`, `~/.copilot` instructions) are off. Worca's environment is scrubbed; worca's MCP server inherits what is left.
 - If the chat calls a shell or any tool that is not worca's, worca stops the turn with an error.
-- A chat keeps the engine it started on. To switch, start a new chat.
+- A chat can move to another engine from its model picker (see [Switching a chat's engine](#switching-a-chats-engine)).
 - A Copilot chat views an image when its model declares vision, and a PDF on a model Copilot calls through the Responses or Anthropic API (see [Chat](#chat)); for any other model Copilot drops it, and the chat says so. Your sets' MCP servers (local and remote) and skills work as in any chat.
 - Copilot reports no dollar cost: worca prices the chat's tokens with the model's price on the Models page, and a per-turn cost cap refuses a model with none. The next-prompt suggestion runs on GPT-5 Mini, an included model (no premium request on a paid plan; one on the free plan).
 - If Copilot is not installed, the chat says "Copilot isn't ready" with the reason. A signed-out Copilot fails the turn with an auth error. It never falls back to Claude.
@@ -617,6 +658,7 @@ worca can run pipelines on Cursor's headless CLI agent. Chat does not run on Cur
 - No per-role tool restriction, effort, sub-agents, hook telemetry, native skills or turn cap. The run log lists each one at start. Research fan-out runs serially. Skills, skills from sets included, are mounted as files at `.agents/skills`, and the agent is told to read them. A set skill's hooks do not run.
 - Guardrails: worca writes the deny rules it can express into the run checkout's `.cursor/cli.json`. A command rule with one word (`Bash(curl)`) becomes `Shell(curl)`, a bare `Bash` becomes `Shell(*)`, `Read(…)` stays `Read(…)`, and `Edit(…)`/`Write(…)` become `Write(…)`. worca has not verified how Cursor matches them, and the agent's shell can still read a file a `Read` rule names or rewrite the file itself. So **every** rule counts as held only in part, and any set other than Permissive needs **Allow unguarded** (`--allow-unguarded-engine`). Multi-word command rules (`Bash(git push:*)`), `WebFetch`, `WebSearch` and MCP tool rules are not held at all.
 - The Normal and Secure sets' rules for worca's own state in `~/.worca-cc` (the database, `settings.json`, the MCP registry, plugin secrets, and the plugins, scripts, agents, workflows and policy folders) go into `.cursor/cli.json` like the rest, as `Read(…)` and `Write(…)` rules held only in part. Unlike Codex and Copilot, Cursor has no sandbox that limits where it writes, so worca cannot refuse to start it the way it does for those two: a Cursor run with **Allow unguarded** can read and change those files through its shell. Container mode is the containment.
+- Tool approval is deny-list only. worca runs Cursor with `--force`, so every command and file change that no deny rule matches runs without asking. The deny rules sit in the run checkout, where the agent can edit them. When a step ends, worca checks `.cursor/cli.json` and `.cursor/mcp.json` against what it wrote and puts its own copy back if the agent changed, replaced or deleted either one; the run log says so. The next step, a retry and a resume all start on worca's rules. During the step itself an edit may still loosen the rules: whether Cursor rereads the file mid-run is unverified, and no flag is known that makes Cursor read its rules from outside the checkout.
 - Your own Cursor settings still apply: permissions in `~/.cursor/cli-config.json` and MCP servers in `~/.cursor/mcp.json` are read by Cursor, and when worca attaches MCP servers it passes `--approve-mcps`, which may approve your own servers too. No Cursor flag is known that turns them off.
 - MCP servers: worca writes the run's servers into the checkout's `.cursor/mcp.json`, with secrets as `${env:NAME}` references whose values reach Cursor through its environment, never the file.
 - The servers in the checkout's own `.mcp.json` join them only when Claude Code would run them without asking, as on Codex: named in `enabledMcpjsonServers`, or all of them with `enableAllProjectMcpServers: true`, minus those in `disabledMcpjsonServers`. The run names the ones it leaves out for want of approval.
@@ -679,7 +721,7 @@ What a chat on Gemini CLI or Qwen Code can do, and what it cannot do:
 - It reads files only through worca's `read_file`, `grep` and `glob`, inside the chat's worktrees, attachments and memory, under the same protected-file rules as a Claude chat. Web access goes through worca's web tools as in any chat.
 - Your context files (`~/.gemini/GEMINI.md`, `~/.qwen/QWEN.md`) still reach the model as text, as do the descriptions of skills; they add no tool. Neither CLI has a setting that leaves them out: a different `context.fileName` only adds a name, and moving the CLI's home (`GEMINI_CLI_HOME`, `QWEN_HOME`) would move your sign-in and settings with it.
 - If the chat calls a shell or any tool that is not worca's, worca stops the turn with an error, as on Codex and Copilot.
-- A chat keeps the engine it started on. To switch, start a new chat.
+- A chat can move to another engine from its model picker (see [Switching a chat's engine](#switching-a-chats-engine)).
 - Images and PDFs are sent through `read_attachment` (Qwen Code only to a model that takes them). Your sets' MCP servers and skills work as in any chat. Effort is the model's thinking (Gemini CLI) or `model.reasoningEffort` (Qwen Code).
 - Neither CLI reports a cost: worca prices the chat's tokens with the model's price on the Models page, and a per-turn cost cap refuses a model with none. The title, the next-prompt suggestion and the Auto-workflow classifier run on the chat's own engine, locked down like the chat.
 - A Gemini CLI chat runs in a folder of its own under worca's temp folder, the same every turn, because Gemini CLI keeps its sessions per folder.
@@ -840,6 +882,35 @@ click Apply.
 - The chat re-validates every proposal in the server over the real settings (the
   same setters the Models view calls, as a dry run), and applying runs them for
   real.
+
+### Switching a chat's engine
+
+A chat is not tied to the engine it started on. The model picker lists the models of the chat's engine, marked
+*this chat*, and one row for each other engine that has models. Open an engine's row to see its models, and pick one to
+move the chat there:
+
+- worca first shows what changes: the tools the new engine has, images or PDFs it cannot view, whether it reports a
+  cost, both models' context windows, the MCP servers from your sets it cannot start, the attachments it gets only by
+  name, and how many of the oldest turns it will not see when the conversation is larger than half the model's context
+  (at most 400,000 characters; a character outside ASCII, such as CJK text, counts as four). Confirm to switch.
+- You can switch only between replies: while one runs, the other engines' models are disabled. A switch never changes
+  the engine of a reply in progress.
+- worca checks the new engine before it asks you to confirm, and again when you confirm (credential broker, sign-in,
+  the per-turn cost cap, the engine's lockdown and self-test). If a check fails, the chat stays on its engine and says
+  why, with a link to the engine's setup page when the engine is not ready.
+- The chat keeps its id, messages, attachments, cards, runs, worktrees and memory. A "Switched from … to …" line marks
+  the boundary.
+- The new engine starts a fresh session. Its first message carries the conversation as text, plus one short line for
+  each earlier tool call, card, run and attachment. It never gets a tool's output, and nothing runs again. Switching
+  back also starts a fresh session from the current conversation.
+- Each reply records its engine, model and effort. The chat's cost is the sum over all of them. The context meter
+  starts over at the switch, since the new session has no context yet.
+- Event turns (a card you answered, a finished command) run on the engine the chat is on when they start.
+- When more than one engine is set up, the model button names the engine the chat runs on, in Chat and in the browser
+  extension.
+- Your browser remembers the last model and effort you used on each engine; another engine's list shows that model
+  first, tagged *last used*. The Workflows chat and the browser extension do not switch: the extension shows the chat's engine and lists
+  its models only.
 
 ### Per-agent models for one run
 

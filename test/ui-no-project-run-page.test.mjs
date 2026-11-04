@@ -19,7 +19,7 @@ const arms = (url) => {
   return null;
 };
 
-test('a saved run without a project offers Artifacts at Simple level, with no git chrome; the page opens on Summary', async () => {
+test('a saved run without a project opens Details on Artifacts, at Simple level, with no git chrome', async () => {
   const ctx = await boot({ fetchHandler: (u) => arms(u) || ok({}) });
   ctx.window.document.documentElement.dataset.level = 'simple';
   go(ctx.window, `history/${NP_KEY}/abcd1234/details`);
@@ -28,9 +28,7 @@ test('a saved run without a project offers Artifacts at Simple level, with no gi
   const keys = [...doc.querySelectorAll('#hist-detail .hd-tab')].map((b) => b.dataset.sec);
   assert.ok(keys.includes('artifacts'));
   for (const k of ['diff', 'actions', 'changes']) assert.equal(keys.includes(k), false, k);
-  // The old …/details address is the page itself: Summary (docs/design-system.md Navigation).
-  assert.equal(doc.querySelector('#hist-detail .hd-tab.active').dataset.sec, 'overview');
-  assert.equal(doc.querySelector('#hist-detail .hd-tab[data-sec="artifacts"]').dataset.minLevel, 'simple', 'Artifacts at Simple');
+  assert.equal(doc.querySelector('#hist-detail .hd-tab.active').dataset.sec, 'artifacts');
   assert.equal(doc.querySelector('#hist-detail .rd-page-meta .kind-chip.kind-none').textContent, 'No project');
   assert.doesNotMatch(doc.querySelector('#hist-detail .rd-page-meta').firstChild.data, /work/);
   assert.equal(doc.querySelector('#hist-detail .rd-route .rd-route-copy'), null, 'no project, no git chrome: no branch to copy');
@@ -47,7 +45,7 @@ test('a finished run without a project: its Overview never says it did not compl
   click(ctx.window, doc.querySelector('#hist-detail .hd-tab[data-sec="overview"]'));
   await settle(ctx.window, 4);
   const sec = secOf(doc, 'overview');
-  assert.ok(sec && sec.querySelector('.hd-ov'), 'the Summary painted');
+  assert.ok(sec && sec.querySelector('.hd-ov-grid'), 'the Overview painted');
   assert.equal(sec.querySelector('.hd-ov-verdict'), null, 'no results.json: its files are the result, no verdict line');
   assert.doesNotMatch(sec.textContent, /did not complete/);
   assert.equal(doc.querySelector('#hist-detail .rd-sheet .run-status').dataset.text, 'Finished', 'never Ready to ship');
@@ -85,7 +83,7 @@ test('the Runs list groups it under No project with the No project chip', async 
   assert.equal(head.querySelector('.kind-chip.kind-none').textContent, 'No project');
 });
 
-test('a live run without a project: Artifacts at Simple, no Diff; its saved data reads the reserved key', async () => {
+test('a live run without a project: Artifacts first; its saved data reads the reserved key', async () => {
   const seen = [];
   // No History row yet: a finished run that has one opens as History (#history/<key>/<id>), never on the run page.
   const ctx = await bootApp({ fetchHandler: (u) => { seen.push(u); return u.endsWith('/api/history') ? ok({ pipelines: [], ghAvailable: false }) : (arms(u) || ok({})); } });
@@ -94,8 +92,7 @@ test('a live run without a project: Artifacts at Simple, no Diff; its saved data
   go(ctx.window, 'running/r-np/details');
   await settle(ctx.window, 6);
   const doc = ctx.window.document;
-  assert.equal(doc.querySelector('#run-detail .rd-tab.active').dataset.sec, 'overview', 'the page opens on Summary');
-  assert.equal(doc.querySelector('#run-detail .rd-tab[data-sec="artifacts"]').dataset.minLevel, 'simple');
+  assert.equal(doc.querySelector('#run-detail .rd-tab.active').dataset.sec, 'artifacts');
   assert.equal([...doc.querySelectorAll('#run-detail .rd-tab')].some((b) => b.dataset.sec === 'diff'), false);
   assert.equal(doc.querySelector('#run-detail .rd-after').hidden, true, 'no Run after on the live page either');
   assert.ok(seen.some((u) => u.endsWith(`/api/history/${NP_KEY}/abcd1234`)), seen.join('\n'));
@@ -106,7 +103,7 @@ test('a live run without a project: Artifacts at Simple, no Diff; its saved data
   assert.ok(tags.includes('No project') && !tags.includes('work'), tags.join(' | '));
 });
 
-test('a live run first seen as a git run, then found to have no project, rebuilds its strip without Diff and stays on Summary', async () => {
+test('a live run first seen as a git run, then found to have no project, reopens on Artifacts (the rebuild drops the auto-opened Overview)', async () => {
   const ctx = await bootApp({ fetchHandler: (u) => (u.endsWith('/api/history') ? ok({ pipelines: [], ghAvailable: false }) : (arms(u) || ok({}))) });
   ctx.window.document.documentElement.dataset.level = 'simple';
   helloRun(ctx, { runId: 'r-np2', status: 'running' });
@@ -116,8 +113,7 @@ test('a live run first seen as a git run, then found to have no project, rebuild
   assert.equal(doc.querySelector('#run-detail .rd-tab.active').dataset.sec, 'overview', 'built as a git run first');
   ctx.dispatch({ type: 'state', runId: 'r-np2', pipelineId: 'abcd1234', workMode: 'none', projectDir: NP_DIR, status: 'running' });
   await settle(ctx.window, 6);
-  assert.equal(doc.querySelector('#run-detail .rd-tab.active').dataset.sec, 'overview', 'the address names Summary');
-  assert.equal(doc.querySelector('#run-detail .rd-tab[data-sec="artifacts"]').dataset.minLevel, 'simple');
+  assert.equal(doc.querySelector('#run-detail .rd-tab.active').dataset.sec, 'artifacts');
   assert.equal([...doc.querySelectorAll('#run-detail .rd-tab')].some((b) => b.dataset.sec === 'diff'), false);
 });
 

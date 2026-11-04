@@ -557,3 +557,44 @@ test('a composer chat (Workflows view) takes attachments as an Ask chat does: st
   assert.equal(snap.thread.composer.sessionId, 'cs_ab12cd34', 'the canvas is still stored before the turn');
   ws.close();
 });
+
+// Ask worca beside the page (Task 2): the page a message was sent from rides its user row as a `where` block.
+const settled = async (id) => {
+  for (let i = 0; i < 600; i++) { const s = await snapshot(id); if (!s.inFlight) return s; await new Promise((r) => setTimeout(r, 15)); }
+  throw new Error('the turn never settled');
+};
+const RUN_UUID = '0f0f0f0f-0000-4000-8000-000000000001';
+
+test('a message sent from a page stores where it was sent, first in the user row blocks, and the echo carries it', async () => {
+  const t = await newThread();
+  const { ws, msgs, opened } = openWs(`?threadId=${t.id}`);
+  await opened;
+  const r = await post(`/api/ask/threads/${t.id}/messages`, { text: 'why?', ...MODEL, context: { view: 'running', runPage: 'diff', runId: RUN_UUID, pinned: false } });
+  assert.equal(r.status, 202, await r.clone().text());
+  const echo = await waitFor(() => msgs.find((m) => m.type === 'ask-message' && m.threadId === t.id && m.message && m.message.role === 'user'));
+  assert.deepEqual(echo.message.blocks, [{ kind: 'where', label: 'Run · Diff', icon: 'diff' }]);
+  const snap = await settled(t.id);
+  assert.deepEqual(snap.messages.find((m) => m.role === 'user').blocks, [{ kind: 'where', label: 'Run · Diff', icon: 'diff' }]);
+  ws.close();
+});
+
+test('a Chat-page message stores no where block', async () => {
+  const t = await newThread();
+  const r = await post(`/api/ask/threads/${t.id}/messages`, { text: 'hi', ...MODEL, context: { view: 'chat', pinned: false } });
+  assert.equal(r.status, 202, await r.clone().text());
+  const snap = await settled(t.id);
+  assert.deepEqual(snap.messages.find((m) => m.role === 'user').blocks || [], []);
+});
+
+test('an attachment keeps the where block in front of the attachment blocks', async () => {
+  const t = await newThread();
+  const r = await post(`/api/ask/threads/${t.id}/messages`, {
+    text: 'read this', ...MODEL, context: { view: 'projects', pinned: false },
+    attachments: [{ name: 'a.md', dataBase64: Buffer.from('hi').toString('base64') }],
+  });
+  assert.equal(r.status, 202, await r.clone().text());
+  const snap = await settled(t.id);
+  const blocks = snap.messages.find((m) => m.role === 'user').blocks;
+  assert.deepEqual(blocks.map((b) => b.kind), ['where', 'attachment']);
+  assert.deepEqual(blocks[0], { kind: 'where', label: 'Projects', icon: 'project' });
+});

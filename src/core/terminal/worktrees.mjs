@@ -11,11 +11,12 @@ import { existsSync } from 'node:fs';
 import { mkdir, realpath } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { worcaHome } from '../projects.mjs';
-import { createDetachedWorktree, removeWorktree, worktreePathForBranch, listLocalBranches } from '../worktree.mjs';
+import { createDetachedWorktree, removeWorktree, worktreePathForBranch, listLocalBranches, worktreeAdd } from '../worktree.mjs';
 import { isSafeBranchName } from '../git-sync.mjs';
 import { branchWorktreeRoot } from './paths.mjs';
 import * as store from './store.mjs';
 import { gitAvailable, gitMissingError, GIT_MISSING } from '../git-available.mjs';
+import { guardedGitEnv } from '../git-guard.mjs';
 
 const codeError = (code, message) => Object.assign(new Error(message), { code });
 // `busyDirs` may be a Set or a getter (() => Set): a getter is read again right before git removes the
@@ -30,7 +31,13 @@ export function branchCheckoutName(branch) {
   return `${slug}-${createHash('sha1').update(String(branch)).digest('hex').slice(0, 6)}`;
 }
 
-const execFileP = promisify(execFile); const run = (cmd, args, o) => (cmd === 'git' && !gitAvailable() ? Promise.reject(gitMissingError()) : execFileP(cmd, args, o));
+const execFileP = promisify(execFile);
+// git gets git-guard's env for the checkout it names with -C (G2); `worktree add` goes through worktreeAdd.
+const run = async (cmd, args, o = {}) => {
+  if (cmd !== 'git') return execFileP(cmd, args, o);
+  if (!gitAvailable()) throw gitMissingError();
+  return execFileP(cmd, args, { ...o, env: await guardedGitEnv(args[0] === '-C' ? args[1] : o.cwd, { env: o.env || process.env }) });
+};
 const detachedWarning = (branch, holder) => `Branch "${branch}" is checked out ${holder ? `in ${holder}` : 'elsewhere'}, so this folder is a detached copy of its latest commit. Commits made here are not on the branch.`;
 
 /**
@@ -39,7 +46,8 @@ const detachedWarning = (branch, holder) => `Branch "${branch}" is checked out $
  */
 async function attachWorktree(projectDir, dir, branch) {
   await run('git', ['-C', projectDir, 'worktree', 'prune']).catch(() => {});
-  await run('git', ['-C', projectDir, 'worktree', 'add', '--', dir, branch]);
+  const r = await worktreeAdd(projectDir, dir, branch);
+  if (!r.ok) throw Object.assign(new Error(r.stderr.trim() || `git worktree add failed (exit ${r.code})`), { stderr: r.stderr });
 }
 
 export async function openBranchWorktree({ projectKey, projectDir, branch, by = 'local', now = Date.now() }) {

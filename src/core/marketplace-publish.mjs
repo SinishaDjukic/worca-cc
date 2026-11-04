@@ -23,6 +23,7 @@ import { parseRemoteUrl, forgeOf, remoteRepoSlug, FORGE_LABEL } from './forge.mj
 import { gitEnvFor, stripHostCredentials, isTrackerTokenKey } from './host-credentials.mjs';
 import { readAzureCredentials, AZURE_DEVOPS_CREDENTIAL_KEYS } from './azure-credentials.mjs';
 import { GITHUB_CREDENTIAL_KEYS } from './github-credentials.mjs';
+import { BITBUCKET_CREDENTIAL_KEYS, readBitbucketCredentials } from './bitbucket-credentials.mjs';
 import { parseCloneAllow, cloneAllowed } from './clone-project.mjs';
 import { hasTokenShape } from './mcp-secrets.mjs';
 import { createPr, editPrBody, ghRepoAccess, ghForkRepo, prProviderFor } from './git-info.mjs';
@@ -47,15 +48,15 @@ export function derivePluginName(raw) {
 }
 
 /**
- * The PR target of a marketplace entry, or null when it cannot take one: only github.com and Azure
- * DevOps remotes (a local folder, file://, GHE or another host has no PR API worca drives — D6).
+ * The PR target of a marketplace entry, or null when it cannot take one: only github.com and Azure DevOps remotes (a
+ * local folder, file://, GHE, Bitbucket or another host has no PR API worca drives here — D6).
  * `cloneUrl` is REBUILT from the parsed parts (D7). Pure.
  */
 export function publishTargetOf(entry) {
   if (!entry || typeof entry.url !== 'string') return null;
   const parsed = parseRemoteUrl(entry.url);
   const forge = forgeOf(parsed);
-  if (!forge) return null;
+  if (forge !== 'github' && forge !== 'azure') return null;
   const enc = encodeURIComponent;
   const cloneUrl = forge === 'github'
     ? `https://github.com/${parsed.owner}/${parsed.repo}.git`
@@ -74,6 +75,9 @@ export function publishTargetOf(entry) {
  * same rule a hosted project clone applies, clone-project.mjs). Pure.
  */
 export function publishRefusal(entry, { env = process.env } = {}) {
+  if (typeof entry?.url === 'string' && forgeOf(parseRemoteUrl(entry.url)) === 'bitbucket') {
+    return 'Bitbucket marketplaces are not supported yet: publish to a GitHub or Azure DevOps marketplace';
+  }
   const t = publishTargetOf(entry);
   if (!t) return 'not a GitHub or Azure DevOps repository';
   const { host, owner, repo } = t.parsed;                 // Azure: owner = "org/project", decoded
@@ -327,13 +331,14 @@ async function scrubbed(scrub, fn) {
 
 // D15: the token-VALUED credential variables (an App id, installation id or key-file path is not a secret
 // and would match ordinary numbers/paths). WORCA_GIT_TOKEN / GH_TOKEN carry a minted or push-as-me token.
-const TOKEN_ENV_KEYS = [...GITHUB_CREDENTIAL_KEYS, ...AZURE_DEVOPS_CREDENTIAL_KEYS, 'WORCA_ADO_BOARDS_TOKEN']
-  .filter((k) => !/_APP_ID$|_INSTALLATION_ID$|_KEY_FILE$/.test(k));
+const TOKEN_ENV_KEYS = [...GITHUB_CREDENTIAL_KEYS, ...AZURE_DEVOPS_CREDENTIAL_KEYS, 'WORCA_ADO_BOARDS_TOKEN', ...BITBUCKET_CREDENTIAL_KEYS]
+  .filter((k) => !/_APP_ID$|_INSTALLATION_ID$|_KEY_FILE$|^WORCA_BB_EMAIL$|^WORCA_BB_GIT_USER$/.test(k));
 /** D15: the credential VALUES this Worca holds (never logged; only compared). */
 function liveCredentialValues(...envs) {
   const az = readAzureCredentials();
+  const bb = readBitbucketCredentials();
   const trackers = (e) => Object.keys(e || {}).filter(isTrackerTokenKey).map((k) => e[k]);   // WORCA_JIRA_TOKEN(_*)
-  return [...[process.env, ...envs].flatMap((e) => [...TOKEN_ENV_KEYS.map((k) => e && e[k]), ...trackers(e)]), az.read, az.write]
+  return [...[process.env, ...envs].flatMap((e) => [...TOKEN_ENV_KEYS.map((k) => e && e[k]), ...trackers(e)]), az.read, az.write, bb.read, bb.write]
     .filter((v) => typeof v === 'string' && v);
 }
 

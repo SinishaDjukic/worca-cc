@@ -1,11 +1,11 @@
 // test/ui-running-routing.test.mjs
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
@@ -23,7 +23,6 @@ const trackDom = useDomRelease(afterEach);
 // test/ui-pipeline-tabs.test.mjs:31-33. No shared harness — the duplication is
 // the house convention.
 
-const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 
 const PROJECT = '/tmp/proj';
@@ -32,7 +31,7 @@ const OTHER = 'seo-pSEO';
 
 // `route(url)` may answer a request first (a Response-like object or a Promise); undefined falls through.
 async function boot({ url = 'http://localhost:4317/', storage = {}, route = null } = {}) {
-  const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url }));
+  const dom = trackDom(new JSDOM(readIndexHtml(), { url }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
 
@@ -148,14 +147,14 @@ test('#running/<id> opens the detail screen and paints its header', async () => 
   assert.equal(doc.querySelector('#run-detail .rd-stop').hidden, false);
 });
 
-test('slice 2: split layout: the Runs crumb shows the list itself; a second settle does not reopen the run (D6 restore skipped)', async () => {
+test('slice 2: split layout: Back shows the list itself; a second settle does not reopen the run (D6 restore skipped)', async () => {
   const { window } = await bootWithRuns();
   window.document.getElementById('runs-shell').dataset.layout = 'split';
   go(window, `running/${ID}`);
   await settle(window);
   const shell = window.document.querySelector('#run-shell');
   assert.ok(shell.classList.contains('detail-open'));
-  window.document.querySelector('#topnav-crumbs .nav-trail a[data-crumb="runs"]')
+  window.document.querySelector('#run-detail .rd-back')
     .dispatchEvent(new window.Event('click', { bubbles: true }));
   window.dispatchEvent(new window.Event('hashchange'));
   await settle(window);
@@ -165,7 +164,7 @@ test('slice 2: split layout: the Runs crumb shows the list itself; a second sett
   await settle(window);
   assert.equal(window.location.hash.replace(/^#/, ''), 'runs', 'the remembered run is not reopened');
   assert.equal(shell.classList.contains('detail-open'), false);
-  assert.equal(window.localStorage.getItem('worca-cc.runs.last'), null, 'going up forgets the run: a later bare #runs shows the list');
+  assert.equal(window.localStorage.getItem('worca-cc.runs.last'), null, 'Back forgets the run: a later bare #runs shows the list');
   go(window, 'chat/new');
   await settle(window);
   go(window, 'runs');
@@ -174,16 +173,16 @@ test('slice 2: split layout: the Runs crumb shows the list itself; a second sett
   assert.equal(shell.classList.contains('detail-open'), false, 'a return from Chat does not reopen the run');
 });
 
-test('slide layout: the up link returns to #runs, the closing detail stays mounted + inert until the guarded transitionend, and focus returns to the originating row', async () => {
+test('slide layout: Back returns to #runs, the closing detail stays mounted + inert until the guarded transitionend, and focus returns to the originating row', async () => {
   await checkRows([
-    { name: 'slide layout: the top bar\'s up link returns to #runs and closes the screen', run: async () => {
+    { name: 'slide layout: the Back button returns to #runs and closes the screen', run: async () => {
       const { window } = await bootWithRuns();
       slide(window);
       go(window, `running/${ID}`);
       await settle(window);
       const shell = window.document.querySelector('#run-shell');
 
-      window.document.querySelector('#topnav-crumbs a.nav-up')
+      window.document.querySelector('#run-detail .rd-back')
         .dispatchEvent(new window.Event('click', { bubbles: true }));
       window.dispatchEvent(new window.Event('hashchange'));
       await settle(window);
@@ -206,7 +205,7 @@ test('slide layout: the up link returns to #runs, the closing detail stays mount
       await settle(window);
       assert.equal(window.document.querySelector('#runs-list-pane').hasAttribute('inert'), true,
         'the list slid away');
-      window.document.querySelector('#topnav-crumbs a.nav-up')
+      window.document.querySelector('#run-detail .rd-back')
         .dispatchEvent(new window.Event('click', { bubbles: true }));
       window.dispatchEvent(new window.Event('hashchange'));
       await settle(window);
@@ -225,7 +224,7 @@ test('slide layout: the up link returns to #runs, the closing detail stays mount
       const host = window.document.querySelector('#run-detail');
       const pane = window.document.querySelector('#runs-pane');
 
-      window.document.querySelector('#topnav-crumbs a.nav-up')
+      window.document.querySelector('#run-detail .rd-back')
         .dispatchEvent(new window.Event('click', { bubbles: true }));
       window.dispatchEvent(new window.Event('hashchange'));
       await settle(window);

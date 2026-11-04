@@ -311,7 +311,8 @@ export function createGooseNormalizer({ model = null, sessionName, mcpServers = 
       completed = true;
       usage = claudeStyleUsage(evt);
       if (Number.isFinite(evt.cost_usd)) costUsd = evt.cost_usd;
-      out.push({ type: 'usage', messageId: null, parentId: null, phase: 'message', model: model || null, usage });
+      // `total`: the session's sum, not one model call (Run telemetry reads it; everyone else ignores it).
+      out.push({ type: 'usage', messageId: null, parentId: null, phase: 'message', model: model || null, usage, total: true });
       return out;
     }
     if (evt.type === 'error') {
@@ -531,8 +532,10 @@ export async function runGooseProcess({
     }
     const { final } = out;
     const text = redactor ? redactor.text(final.text) : final.text;
+    // `inputIncludesCache`: goose's input_tokens already holds the cache read and write (checked on Gemini and on
+    // claude-code, goose 1.55), so input + cache would count it twice. Run telemetry reads it; nothing else does.
     safeEmit(onEvent, { type: 'result', text, isError: false, sessionId: GOOSE_SESSION_PREFIX + out.sessionName,
-      ...(final.usage ? { usage: final.usage } : {}), ...(final.costUsd != null ? { costUsd: final.costUsd } : {}) });
+      ...(final.usage ? { usage: final.usage, inputIncludesCache: true } : {}), ...(final.costUsd != null ? { costUsd: final.costUsd } : {}) });
     return { text, exitCode: out.exitCode };
   } catch (err) {
     throw redacted(err);

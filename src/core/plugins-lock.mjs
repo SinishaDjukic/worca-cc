@@ -25,6 +25,15 @@ export function pluginsRoot() { return join(worcaHome(), 'plugins'); }
 export function pluginDir(name) { return join(pluginsRoot(), safeName(name)); }
 export function pluginCurrentDir(name) { return join(pluginDir(name), 'current'); }
 export function pluginDataDir(name) { return join(pluginDir(name), 'data'); }
+/** `versions/<rev7>` of a plugin. The 7-char stem of a pin (a commit id, an
+ *  abbreviated one or a tag) names the dir: it must be one plain segment that
+ *  cannot climb out of versions/ (`..`, `/`) nor read as a git option (`-`). */
+const VERSION_STEM_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+export function pluginVersionDir(name, rev) {
+  const stem = String(rev ?? '').slice(0, 7);
+  if (!VERSION_STEM_RE.test(stem)) throw Object.assign(new Error(`invalid revision "${rev}"`), { code: 'BAD_REQUEST' });
+  return join(pluginDir(name), 'versions', stem);
+}
 export function pluginsLockFile() { return join(pluginsRoot(), 'plugins.lock.json'); }
 
 /** Read the lock; missing/corrupt/non-object -> {}. Entries are NOT normalized:

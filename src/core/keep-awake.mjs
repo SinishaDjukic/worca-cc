@@ -1,5 +1,5 @@
 // src/core/keep-awake.mjs — keep the machine from sleeping on its idle timer while pipeline runs
-// have agents working (docs/feature-flags.md, the keepAwake flag).
+// have agents working (the keepAwake setting, the account menu's Keep awake switch).
 //
 // createKeepAwake(...).update(workingCount)   0 → 1 starts ONE inhibitor child, 1 → 0 kills it
 // createKeepAwake(...).stop()                 kills the child; later updates do nothing

@@ -13,13 +13,7 @@ test('the feature page proof audits the group page at 290, 375 and 1440, light a
 });
 
 test('the feature page proof opens the group page in the Runs pane, beside the list (run 3, D1-D6)', () => {
-  for (const needle of ['#runs-pane', 'member-open', 'topnav-crumbs', 'PASS group page in the pane']) {
-    assert.ok(src.includes(needle), `the proof names ${needle}`);
-  }
-});
-
-test('the feature page proof scrolls the real list scroller and pins 300px across going up (R-qa-6)', () => {
-  for (const needle of ["getElementById('runs-list').scrollTop = 300", 'top0 === 300', 'upKept.top === 300']) {
+  for (const needle of ['#runs-pane', 'member-open', 'rd-crumbs', 'PASS group page in the pane']) {
     assert.ok(src.includes(needle), `the proof names ${needle}`);
   }
 });

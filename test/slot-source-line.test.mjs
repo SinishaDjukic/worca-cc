@@ -24,7 +24,7 @@ after(() => {
 
 test('a slot-sourced node model is named at run start with where it was set (review I5)', { timeout: 120000 }, async () => {
   await setStepModels({ codex: { planner: { model: 'gpt-5.5', effort: 'low' } } });
-  const orch = createOrchestrator({ projectDir: gitDir('codex-slot-source'), workflowId: 'wf_default', prompt: 'Add a settings page', auto: true, claude: { mock: true, engine: 'codex' } });
+  const orch = createOrchestrator({ projectDir: gitDir('codex-slot-source'), workflowId: 'wf_default', prompt: 'Add a settings page', auto: true, guardrailsId: 'permissive', claude: { mock: true, engine: 'codex' } });
   const logs = [];
   orch.on('log', (l) => logs.push(JSON.stringify(l)));
   const res = await orch.run();

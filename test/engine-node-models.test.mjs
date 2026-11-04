@@ -29,7 +29,7 @@ test('a codex run over Claude step picks spawns no Claude id and no Claude effor
   const dir = gitDir('eng-node-codex');
   await setStep(dir, 'planner', { model: 'claude-opus-5-5', effort: 'max' });
   const seen = [];
-  const orch = createOrchestrator({ projectDir: dir, workflowId: 'wf_default', prompt: 'demo', auto: true, claude: { mock: true, engine: 'codex' }, runners: recording(seen) });
+  const orch = createOrchestrator({ projectDir: dir, workflowId: 'wf_default', prompt: 'demo', auto: true, guardrailsId: 'permissive', claude: { mock: true, engine: 'codex' }, runners: recording(seen) });
   const res = await orch.run();
   assert.equal(res.status, 'done', res.error);
   assert.ok(seen.length > 0);
@@ -55,7 +55,7 @@ test('a codex run drops a legacy project custom model (Review Focus 9)', async (
   await addCustomModel(dir, { id: 'my-project-proxy' });
   await setStep(dir, 'planner', { model: 'my-project-proxy', effort: 'max' });
   const seen = [];
-  const orch = createOrchestrator({ projectDir: dir, workflowId: 'wf_default', prompt: 'demo', auto: true, claude: { mock: true, engine: 'codex' }, runners: recording(seen) });
+  const orch = createOrchestrator({ projectDir: dir, workflowId: 'wf_default', prompt: 'demo', auto: true, guardrailsId: 'permissive', claude: { mock: true, engine: 'codex' }, runners: recording(seen) });
   const res = await orch.run();
   assert.equal(res.status, 'done', res.error);
   assert.ok(seen.length > 0);

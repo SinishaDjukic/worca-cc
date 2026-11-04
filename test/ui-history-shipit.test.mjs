@@ -1,7 +1,6 @@
 // test/ui-history-shipit.test.mjs
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
@@ -9,6 +8,7 @@ import { cardAlertOf } from './helpers/feedback.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { ICONS } from '../ui/public/icons.mjs';
 import { backdropClick, pressEscape, discardPrompt, keepEditing, discardChanges } from './helpers/popups.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
@@ -25,13 +25,12 @@ const trackDom = useDomRelease(afterEach);
 // Each test gets a fresh DOM + a fresh module import (cache-busted) so module
 // top-level state (pendingShipIt, shipItClose, histDetailState) can't leak.
 
-const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 
 const PROJECT = '/tmp/proj';
 
 async function boot({ fetchHandler, url = 'http://localhost:4317/', hooks = null } = {}) {
-  const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url }));
+  const dom = trackDom(new JSDOM(readIndexHtml(), { url }));
   const { window } = dom;
   if (hooks) window.__worcaTestHooks = hooks;   // e.g. the real marked + DOMPurify for the Preview tab
 
@@ -1408,6 +1407,8 @@ test('base warning: shown when baseStatus.movedSinceRun > 0 on the chosen base r
 
 const AZ_BASE = { name: 'origin', slug: 'dev.azure.com/acme/Shop/api', owner: 'acme/Shop', forge: 'azure', prHost: 'Azure DevOps', prSupported: true };
 const AZ_FORK = { name: 'fork', slug: 'dev.azure.com/acme/Shop/api-fork', owner: 'acme/Shop', forge: 'azure', prHost: 'Azure DevOps', prSupported: true };
+const BB_BASE = { name: 'origin', slug: 'bitbucket.org/acme/api', owner: 'acme', forge: 'bitbucket', prHost: 'Bitbucket', prSupported: true };
+const BB_FORK = { name: 'fork', slug: 'bitbucket.org/me/api', owner: 'me', forge: 'bitbucket', prHost: 'Bitbucket', prSupported: true };
 const azRemotes = (list, defaults = { pushRemote: 'origin', baseRemote: 'origin' }) => ({ ...REMOTES, remotes: list, defaults });
 const baseLabelOf = (modal) => modal.querySelector('#shipit-into-label').textContent;
 const hintOf = (modal) => modal.querySelector('.shipit-remotes-hint').textContent;
@@ -1416,6 +1417,12 @@ test('(e) Create PR eligibility reads any PR host: an Azure DevOps token alone o
   await checkRows([
     { name: 'gh missing, Azure configured', run: async () => {
       const ctx = await bootShip({ gh: false, prHosts: { github: false, azure: true } });
+      await openDetail(ctx);
+      assert.equal(hdPr(ctx.window).hidden, false);
+      assert.equal(ctx.window.__np.histPrEligible(ROW), true);
+    } },
+    { name: 'gh missing, Bitbucket configured', run: async () => {
+      const ctx = await bootShip({ gh: false, prHosts: { github: false, azure: false, bitbucket: true } });
       await openDetail(ctx);
       assert.equal(hdPr(ctx.window).hidden, false);
       assert.equal(ctx.window.__np.histPrEligible(ROW), true);
@@ -1439,6 +1446,11 @@ test('(a)(b)(c)(g) the Ship-it modal names the base remote\'s PR host and says w
     { name: '(b) a fork push into an Azure base says forks are not supported, not Cross-repo', run: async () => {
       const modal = await openModal(await bootShip({ remotes: azRemotes([AZ_BASE, AZ_FORK], { pushRemote: 'fork', baseRemote: 'origin' }) }));
       assert.equal(hintOf(modal), 'Azure DevOps pull requests between repositories (forks) are not supported yet. Push to origin.');
+    } },
+    { name: '(b) a fork push into a Bitbucket base says forks are not supported; the label names Bitbucket', run: async () => {
+      const modal = await openModal(await bootShip({ remotes: azRemotes([BB_BASE, BB_FORK], { pushRemote: 'fork', baseRemote: 'origin' }) }));
+      assert.equal(baseLabelOf(modal), 'Into (Bitbucket)');
+      assert.equal(hintOf(modal), 'Bitbucket pull requests between repositories (forks) are not supported yet. Push to origin.');
     } },
     { name: '(c) a missing credential shows the server\'s reason', run: async () => {
       const prReason = 'Azure DevOps is not configured: set WORCA_ADO_TOKEN (a PAT with Code: Read & Write) where worca runs';
@@ -1469,6 +1481,7 @@ test('(d) Generate with AI sends forge:azure for an Azure base remote, and no fo
   };
   await checkRows([
     { name: 'Azure base remote', run: async () => assert.equal((await describeBody(azRemotes([AZ_BASE]))).forge, 'azure') },
+    { name: 'Bitbucket base remote', run: async () => assert.equal((await describeBody(azRemotes([BB_BASE]))).forge, 'bitbucket') },
     { name: 'GitHub base remote', run: async () => assert.equal('forge' in (await describeBody(REMOTES)), false) },
   ]);
 });
@@ -1730,7 +1743,7 @@ test('Overview: pr-watch-changed rereads only the exact PR', async () => {
 const SLICE_URL = `/api/shape/pipelines/${ROW.id}/slice`;
 const SLICE_INFO = { featureId: 'feat_1', title: 'Charts', index: 1, total: 3, sliceTitle: 'Store tags', state: 'done',
   next: { index: 2, title: 'Slice 2', state: 'planned' } };
-const gateOn = (ctx) => ctx.wsBox.ws.dispatch('message', { data: JSON.stringify({ type: 'hello', flags: { shapeFirst: true }, runs: [] }) });
+const hello = (ctx) => ctx.wsBox.ws.dispatch('message', { data: JSON.stringify({ type: 'hello', runs: [] }) });
 /** A slice endpoint stub; `hold` keeps the answer until `release()`. */
 function sliceArm({ info = SLICE_INFO, hold = false } = {}) {
   const a = { calls: 0, release: null };
@@ -1743,30 +1756,30 @@ function sliceArm({ info = SLICE_INFO, hold = false } = {}) {
   return a;
 }
 
-// Runs redesign slice 4 (D18): the History glance's kind chip says where the run sits and links the group (it replaces the slice line).
+// Runs redesign slice 4 (D18): a slice's History glance has no group row and no kind chip; its breadcrumb links the group.
 const CHARTS = { groups: [{ id: 'feat_1', kind: 'feature', title: 'Charts', projectKey: null, planning: null, cost: { usd: 0, byPipeline: {} },
   members: [1, 2, 3].map((i) => ({ position: i, title: `Slice ${i}`, pipelineId: i === 1 ? ROW.id : null, ticketId: i === 1 ? null : `t${i}`,
     status: i === 1 ? 'done' : null, pr: null, ticket: i === 1 ? null : { id: `t${i}`, status: 'scheduled', runAt: null, after: true }, adhoc: false, after: i === 1 ? null : i - 1 })) }] };
 const groupsArm = (groups) => (url) => (url.startsWith('/api/run-groups') ? ok(groups) : null);
 
-test('a done slice\'s History page: its chip "Run 1 of 3" links the feature page, no group row; a repaint keeps one chip', async () => {
+test('a done slice\'s History page: the breadcrumb links the feature page, no group row, no chip; a repaint keeps it so', async () => {
   const ctx = await bootShip({ arms: groupsArm(CHARTS) });
-  gateOn(ctx);
+  hello(ctx);
   await openDetail(ctx);
   await settle(ctx.window, 4);
-  const line = ctx.window.document.querySelector('#hist-detail .hd-glance .rd-kv [data-fact="group"]');
-  assert.equal(line.hidden, true, 'no Feature row: the chip links the group');
-  const chip = ctx.window.document.querySelector('#hist-detail .rd-title-row .kind-chip');   // in the page head
-  assert.equal(chip.textContent, 'Run 1 of 3');
-  assert.equal(chip.getAttribute('href'), '#feature/feat_1');
-  assert.equal(ctx.window.document.querySelector('#hist-detail .rd-slice-line'), null, 'the chip replaces the slice line');
+  const doc = ctx.window.document;
+  assert.equal(doc.querySelector('#hist-detail .hd-glance .rd-kv [data-fact="group"]').hidden, true, 'no Feature row');
+  assert.equal(doc.querySelector('#hist-detail .hd-glance .rd-page-head .kind-chip'), null, 'no kind chip');
+  assert.equal(doc.querySelector('#hist-detail .hd-bar .rd-crumbs a.rd-crumb[href="#feature/feat_1"]').textContent, 'Charts');
+  assert.equal(doc.querySelector('#hist-detail .rd-slice-line'), null, 'no slice line either');
   await openDetail(ctx);                                 // the same detail again: painted in place
-  assert.equal(ctx.window.document.querySelectorAll('#hist-detail .rd-title-row .kind-chip').length, 1);
+  assert.equal(doc.querySelector('#hist-detail .hd-glance .rd-page-head .kind-chip'), null);
+  assert.equal(doc.querySelectorAll('#hist-detail .hd-bar .rd-crumbs .rd-crumb').length, 3);
 });
 
 test('a plain run (in no group) shows no group link; at Expert it offers "Add to group…"', async () => {
   const ctx = await bootShip({ arms: groupsArm({ groups: [] }) });
-  gateOn(ctx);
+  hello(ctx);
   await openDetail(ctx);
   await settle(ctx.window, 4);
   const line = ctx.window.document.querySelector('#hist-detail .hd-glance .rd-kv [data-fact="group"]');
@@ -1777,7 +1790,7 @@ test('a plain run (in no group) shows no group link; at Expert it offers "Add to
 test('Ship it for a slice with a next slice says to merge this PR first, on the first open; a plain run has no note', async () => {
   const s = sliceArm({ hold: true });
   const ctx = await bootShip({ arms: (url, opts) => s.arm(url, opts) });
-  gateOn(ctx);
+  hello(ctx);
   const modal = await openModal(ctx);
   const note = modal.querySelector('.shipit-slice-note');
   s.release?.();
@@ -1786,7 +1799,7 @@ test('Ship it for a slice with a next slice says to merge this PR first, on the 
   assert.equal(note.textContent, 'Slice 2 builds on this branch: merge this PR first.');
 
   const plain = await bootShip({ arms: sliceArm({ info: null }).arm });
-  gateOn(plain);
+  hello(plain);
   const m2 = await openModal(plain);
   await settle(plain.window, 4);
   assert.equal(m2.querySelector('.shipit-slice-note').hidden, true);
@@ -1795,7 +1808,7 @@ test('Ship it for a slice with a next slice says to merge this PR first, on the 
 test('the Ship it note waits for its own run: an answer that lands after the dialog moved on paints nothing', async () => {
   const s = sliceArm({ hold: true });
   const ctx = await bootShip({ arms: (url, opts) => s.arm(url, opts) });
-  gateOn(ctx);
+  hello(ctx);
   const modal = await openModal(ctx);
   modal.dataset.pipelineId = 'someone-else';            // what another run's open sets
   s.release?.();

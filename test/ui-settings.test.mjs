@@ -1,20 +1,20 @@
 // test/ui-settings.test.mjs
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { applyFlags } from '../ui/public/flags.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
 
-const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 
 async function boot({ fetchHandler } = {}) {
-  const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4317/' }));
+  const dom = trackDom(new JSDOM(readIndexHtml(), { url: 'http://localhost:4317/' }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
   window.WebSocket = class { constructor() { this.readyState = 1; } send() {} close() {} addEventListener() {} };
@@ -49,11 +49,11 @@ test('Settings sits in the account menu (not the page list), loads root, and sav
   });
   const { window } = ctx;
 
-  // (1) Settings left the page list for the account menu: after Interface mode, before the away row.
+  // (1) Settings left the page list for the account menu: after Interface mode (and the hidden team-setup row), before the away row.
   const doc = window.document;
   assert.equal(doc.querySelector('.nav [data-nav="settings"]'), null, 'not a sidebar page any more');
   const rows = [...doc.querySelectorAll('#acct-menu > .msect > button')].map((el) => el.id);
-  assert.deepEqual(rows, ['acct-lvl', 'acct-settings', 'acct-away', 'acct-keepawake'], 'Interface mode, Settings, then the two switches');
+  assert.deepEqual(rows, ['acct-team-setup', 'acct-lvl', 'acct-settings', 'acct-away', 'acct-keepawake'], 'the team-setup row, Interface mode, Settings, then the two switches');
   assert.equal(doc.getElementById('acct-settings').dataset.nav, 'settings');
 
   // (2) navigating to it loads the current root (default shown as placeholder).
@@ -80,7 +80,7 @@ test('Settings sits in the account menu (not the page list), loads root, and sav
 
 const okJson = (body) => Promise.resolve({ ok: true, status: 200, json: async () => body });
 const tick = () => new Promise((r) => setTimeout(r, 0));
-/** Boot with runTags on and open Settings › Tags. `settings` is the GET body; `team` the machine-wide lock. */
+/** Boot and open Settings › Tags. `settings` is the GET body; `team` the machine-wide lock. */
 async function openTags({ settings = {}, team = null, posts = [] } = {}) {
   const ctx = await boot({
     fetchHandler: (url, opts) => {
@@ -96,7 +96,6 @@ async function openTags({ settings = {}, team = null, posts = [] } = {}) {
     },
   });
   const { window } = ctx;
-  applyFlags({ runTags: true }, window.document);
   window.location.hash = 'settings/tags';
   window.dispatchEvent(new window.Event('hashchange'));
   for (let i = 0; i < 4; i++) await tick();
@@ -175,7 +174,7 @@ test('Settings › Tags: the switch is off by default; on with no tag ticked Man
   assert.equal(hint.hidden, true, 'a Mandatory tag: the hint goes');
 });
 
-async function openLabels({ flags = { runTags: true, runLabels: true }, labels = [], sent = [], answer = () => okJson({}) } = {}) {
+async function openLabels({ flags = { runLabels: true }, labels = [], sent = [], answer = () => okJson({}) } = {}) {
   const ctx = await boot({ fetchHandler: (url, opts) => {
     // as openTags: the Settings view reads its settings before painting the tags pane
     if (url.includes('/api/settings')) return okJson({ root: '', default: '/home/me', tagDimensions: [], enforceTags: false });
@@ -236,7 +235,7 @@ test('Settings › Labels & cost tags: a refused rename shows the server message
 });
 
 test('Settings › Labels & cost tags: with runLabels off the Labels section is gated and /api/labels is never read', async () => {
-  const { doc, sent } = await openLabels({ flags: { runTags: true } });
+  const { doc, sent } = await openLabels({ flags: { runLabels: false } });
   const card = doc.getElementById('labels-settings-card');
   assert.equal(card.dataset.flag, 'runLabels');
   assert.equal(card.querySelectorAll('.lbl-set-row').length, 0);
@@ -257,7 +256,7 @@ test('F-23: every successful Settings card save raises one "Saved" toast (dedupe
 });
 
 test('F-19: the Settings tab row is as wide and as centred as the content column', () => {
-  const css = readFileSync(fileURLToPath(new URL('../ui/public/style.css', import.meta.url)), 'utf8');
+  const css = readStyleCss();
   const tabs = css.match(/^\.settings-tabs\{([^}]*)\}/m)[1];
   assert.match(tabs, /max-width:760px/);
   assert.match(tabs, /margin:0 auto/);

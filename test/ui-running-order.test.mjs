@@ -4,22 +4,21 @@
 // redesign §3.1), so the live rows are read in list order across the sections.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
 
-const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath  = fileURLToPath(new URL('../ui/public/app.js',   import.meta.url));
 const PROJECT = '/tmp/proj';
 
 // `notifications`: alerts on, the page hidden, and a fake Notification whose `shown` list a test reads (ui-alerts).
 async function boot({ resumeReply = null, notifications = false } = {}) {
-  const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4317/' }));
+  const dom = trackDom(new JSDOM(readIndexHtml(), { url: 'http://localhost:4317/' }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};   // jsdom has no layout
   const shown = [];
@@ -295,18 +294,18 @@ test('a newer finished copy of a pipeline whose older copy the tab knew finished
 
 // #792 / Q4: a manual Resume moves the page to the new run (landOnResumedRun); a scheduled one must too, instead of
 // renderRunningView bouncing the dead id away from the run.
-test('a tab on the paused run\'s page follows its scheduled resume to the new run, on the same tab', async () => {
+test('a tab on the paused run\'s page follows its scheduled resume to the new run, in the same mode', async () => {
   const { window, np, recv, tick, go } = await boot();
   recv({ type: 'hello', bootId: 'b1', runs: [hrun('r1', 'p1', 'paused')] });
   await tick();
   go('running/r1/details');
   await settle(tick);
-  assert.equal(window.location.hash, '#running/r1', 'the old address is the page itself (Summary)');
+  assert.equal(window.location.hash, '#running/r1/details');
   recv({ type: 'run-created', runId: 'r2', title: 'T', projectDir: PROJECT, kind: 'run', status: 'starting' });
   np.onState(np.getRun('r2'), { status: 'running', id: 'p1' });   // the first state names the pipeline
   await settle(tick);
   assert.equal(np.getRun('r1'), undefined, 'the paused copy is superseded');
-  assert.equal(window.location.hash, '#running/r2', 'the page follows to the resumed run');
+  assert.equal(window.location.hash, '#running/r2/details', 'the page follows to the resumed run');
 });
 
 test('a scheduled resume never moves a tab that is not on the paused run\'s page', async () => {

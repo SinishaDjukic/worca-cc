@@ -6,6 +6,7 @@
 // (to stamp stream deltas).
 import { isNormalized } from './events.mjs';
 import { extractResultCost, isHookEvent } from './claude.mjs';
+import { flagEnabled } from '../flags.mjs';
 
 const AGENT_TOOLS = new Set(['Task', 'Agent']);
 const str = (v) => (typeof v === 'string' ? v : undefined);
@@ -14,7 +15,7 @@ const defined = (o) => Object.fromEntries(Object.entries(o).filter(([, v]) => v 
 const textOf = (content) => (typeof content === 'string' ? content
   : Array.isArray(content) ? content.filter((c) => c && c.type === 'text' && typeof c.text === 'string').map((c) => c.text).join('') : '');
 
-export function createClaudeNormalizer() {
+export function createClaudeNormalizer({ rootParentId = null } = {}) {
   const agents = new Set();
   const messageIds = new Map();
 
@@ -123,8 +124,13 @@ export function createClaudeNormalizer() {
     if (e.type === 'stderr') return [{ type: 'stderr', stream: 'err', text: e.text }];
     const raw = e.raw;
     if (!raw || typeof raw !== 'object') return e.text ? [{ type: 'text', text: e.text, parentId: null, from: 'assistant' }] : [];
+    const rawPid = raw.parent_tool_use_id ?? raw.message?.parent_tool_use_id ?? null;
+    // Session host re-root (consult R1, Task 30): this stream is ONE member's, the child of the host's Agent call
+    // `rootParentId`. The host's own frames (no parent), the child's result and its init (S9: the host forwards its
+    // session) never reach it; the member's frames become main-stream, so its own Agent calls are sub-agents.
+    if (rootParentId !== null && (rawPid === null || raw.type === 'result' || (raw.type === 'system' && raw.subtype === 'init'))) return [];
     if (raw.mock === true && raw.type !== 'result') return e.text ? [{ type: 'text', text: e.text, parentId: null, from: 'assistant' }] : [];
-    const parentId = raw.parent_tool_use_id ?? raw.message?.parent_tool_use_id ?? null;
+    const parentId = rootParentId !== null && rawPid === rootParentId ? null : rawPid;
     if (isHookEvent(raw)) return [{ type: 'hook', raw }];
     // Text on a frame this vocabulary has no shape for is still worth a log line;
     // `from:'other'` keeps it out of an Ask Worca answer.
@@ -140,7 +146,13 @@ export function createClaudeNormalizer() {
         }
         if (raw.subtype === 'task_notification' && typeof raw.tool_use_id === 'string') {
           const u = raw.usage && typeof raw.usage === 'object' && !Array.isArray(raw.usage) ? raw.usage : {};
-          return [defined({ type: 'subagent', event: raw.status === 'completed' ? 'finish' : 'error', toolUseId: raw.tool_use_id,
+          const event = raw.status === 'completed' ? 'finish' : 'error';
+          // A background Bash job sends the same notification as a background sub-agent (7.2): only a
+          // known Agent/Task call is a sub-agent; anything else is a background job, so counts stay true.
+          if (!agents.has(raw.tool_use_id)) {
+            return [defined({ type: 'background', event, toolUseId: raw.tool_use_id, durationMs: num(Number(u.duration_ms)) })];
+          }
+          return [defined({ type: 'subagent', event, toolUseId: raw.tool_use_id,
             durationMs: num(Number(u.duration_ms)), tokens: num(Number(u.total_tokens)), via: 'notification' })];
         }
         if (raw.subtype === 'api_retry') {
@@ -149,6 +161,14 @@ export function createClaudeNormalizer() {
           return [defined({ type: 'retry', parentId, attempt: num(raw.attempt), maxRetries: num(raw.max_retries),
             delayMs: num(raw.retry_delay_ms), httpStatus: Number.isFinite(raw.error_status) ? raw.error_status : null,
             reason: str(raw.error) || 'unknown', waitedMs: num(raw.no_response?.waited_ms) })];
+        }
+        // The CLI compacted the conversation: the context starts again from a summary. Its text (if any)
+        // stays a log line. `compact` exists for Run telemetry only, so it is emitted only while that Labs
+        // flag is on (read here, on this rare frame); off, the output is what it always was.
+        // compact_metadata: {trigger, pre_tokens}.
+        if (raw.subtype === 'compact_boundary' && flagEnabled('runTelemetry')) {
+          const m = raw.compact_metadata && typeof raw.compact_metadata === 'object' ? raw.compact_metadata : {};
+          return [...otherText(), defined({ type: 'compact', parentId, trigger: str(m.trigger), preTokens: num(m.pre_tokens) })];
         }
         return otherText();
       case 'assistant': return assistant(raw, parentId, e);

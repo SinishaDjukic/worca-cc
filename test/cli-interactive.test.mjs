@@ -255,7 +255,7 @@ test('gate arm: the header names the wire and its budget, and "another cycle" sp
 
   // Behavioural consequence: the approved cycle was actually taken.
   assert.match(r.stdout, /▶ Implementation #2 · fix ← Review Implementation/);
-  assert.match(r.stdout, /^10 executions · /m);
+  assert.match(r.stdout, /^9 executions · /m);   // Refine runs once: its blocking verdict continues
 });
 
 test('gate arm: "continue" spends no cycle — the loop body never re-runs', async () => {
@@ -278,7 +278,7 @@ test('gate arm: "continue" spends no cycle — the loop body never re-runs', asy
   // The decisive contrast with the test above: no second Implementation, two
   // fewer executions.
   assert.equal(/▶ Implementation #2/.test(r.stdout), false, r.stdout);
-  assert.match(r.stdout, /^8 executions · /m);
+  assert.match(r.stdout, /^7 executions · /m);
 });
 
 // ── recovery arm ───────────────────────────────────────────────────────────────

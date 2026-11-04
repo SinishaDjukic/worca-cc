@@ -1,0 +1,28 @@
+/* ---------- Run rows (.rc-*): the Schedules view's ticket and schedule rows ----------
+   Born on the retired Running list card; schedules-view.mjs builds its rows from them. */
+.rc-sic{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;
+  border-radius:var(--r-sm);flex:0 0 auto;align-self:center;}
+.rc-sic .sic[hidden]{display:none;}
+.rc-sic.st-blue{background:var(--blue-bg);color:var(--blue-ink);}
+.rc-sic.st-amber{background:var(--amber-bg);color:var(--amber-ink);}
+.rc-sic.st-green{background:var(--green-bg);color:var(--green-ink);}
+.rc-sic.st-red{background:var(--red-bg);color:var(--red-ink);}
+.rc-sic .sic-spin{animation:wr-spin 1.15s linear infinite;transform-origin:50% 50%;}
+.rc-body{flex:1;min-width:0;}
+.rc-title{display:block;font-weight:600;font-size:15px;letter-spacing:-.01em;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.rc-meta{display:flex;align-items:center;flex-wrap:wrap;gap:7px;margin-top:5px;
+  color:var(--ink-3);font-size:12px;}
+.rc-meta .rc-seg{display:inline-flex;align-items:center;gap:7px;}
+.rc-dot{font:700 15px/1 var(--mono);color:var(--ink);}
+.rc-status-word{font:600 12px var(--sans);display:inline-flex;align-items:center;gap:7px;}
+/* the 7px status accent dot before the word; currentColor = the family ink */
+.rc-meta .rc-status-word::before{content:'';width:7px;height:7px;border-radius:50%;
+  background:currentColor;flex:0 0 auto;}
+.rc-status-word.st-peach{color:var(--peach-ink);}
+.rc-status-word.st-blue{color:var(--blue-ink);}
+.rc-status-word.st-violet{color:var(--slate-ink);}
+.rc-status-word.st-amber{color:var(--amber-ink);}
+.rc-status-word.st-green{color:var(--green-ink);}
+.rc-status-word.st-red{color:var(--red-ink);}
+.rc-meta .run-time{font-weight:700;color:var(--ink);}

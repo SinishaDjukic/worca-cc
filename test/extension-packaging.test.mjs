@@ -8,6 +8,7 @@ import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { checkPackFiles, packJsonPaths } from '../tools/check-pack.mjs';
+import { FIREFOX_CI_JOB, CI_ONLY } from '../tools/readiness/e2e.mjs';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const PKG = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
@@ -69,12 +70,34 @@ test('the release workflow publishes with devDependencies (esbuild for prepack) 
   assert.match(yml, /node tools\/check-pack\.mjs --require-extension/);
   assert.match(yml, /npm run ext:zip/);
   for (const b of ['chrome', 'edge', 'firefox']) assert.match(yml, new RegExp(`worca-${b}-\\$VERSION\\.zip`));
+  assert.doesNotMatch(yml, /--notes-file/, 'the release body is the generated notes alone');
+  assert.match(yml, /--notes-start-tag "\$PREV"/, 'counted from the previous stable release, not the last RC');
 });
 
 test('the Playwright image tag in CI and in update-linux equals the pinned @playwright/test (v6)', () => {
   const v = PKG.devDependencies['@playwright/test'];
   assert.match(v, /^\d+\.\d+\.\d+$/, '@playwright/test is pinned exactly');
   const tag = `mcr.microsoft.com/playwright:v${v}-noble`;
-  assert.ok(readFileSync(join(ROOT, '.github/workflows/ci.yml'), 'utf8').includes(tag), 'ci.yml extension-e2e image');
+  const ci = readFileSync(join(ROOT, '.github/workflows/ci.yml'), 'utf8');
+  assert.ok(ci.includes(tag), 'ci.yml extension-e2e image');
+  // V22: a tag can be re-pushed; CI pulls the image by digest too (an @playwright/test bump fails the line above,
+  // so the tag and its digest move together, by hand: dependabot.yml's docker entry reads /docker only).
+  assert.match(ci, new RegExp(`image: ${tag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}@sha256:[0-9a-f]{64}\\s`), 'ci.yml pins the image by digest');
   assert.ok(PKG.scripts['e2e:extension:update-linux'].includes(tag), 'update-linux image');
+});
+
+// The Firefox e2e suite runs in CI on Linux (D13): a required check, so it has its own workflow with no paths filter
+// (as parity-docker.yml), Playwright's Firefox with deps, the branch and the split tree.
+test('firefox-e2e: Playwright Firefox on Linux runs e2e:firefox-smoke on the branch and on the split tree', () => {
+  const wf = readFileSync(join(ROOT, '.github/workflows/firefox-e2e.yml'), 'utf8');
+  assert.equal(CI_ONLY['e2e:firefox-smoke'], FIREFOX_CI_JOB);
+  assert.match(wf, new RegExp(`^  ${FIREFOX_CI_JOB}:$`, 'm'), 'the job id rows i and k name');
+  assert.match(wf, /^on:\n {2}push:\n {4}branches: \[dev\]\n {2}pull_request:\n {4}branches: \[dev\]\n/m);
+  assert.doesNotMatch(wf, /^\s+paths(?:-ignore)?:/m, 'a required check is never skipped');
+  assert.match(wf, /npx playwright install --with-deps firefox/);
+  assert.match(wf, /FIREFOX_BIN=.*firefox\.executablePath\(\)/);
+  assert.equal(wf.match(/npm run e2e:firefox-smoke/g)?.length, 2, 'the branch, then the split tree');
+  assert.match(wf, /tools\/readiness\.mjs split --rev HEAD --splitter-rev HEAD --out "\$RUNNER_TEMP\/split"/);
+  assert.match(wf, /fetch-depth: 0/, 'readiness split clones HEAD with git clone --shared');
+  assert.doesNotMatch(wf, /continue-on-error/);
 });

@@ -182,7 +182,7 @@ async function emitMockSubAgents(role, onEvent, signal) {
 // ── Ask Worca mock role (ask-worca-design.md §6.7) ───────────────────────────
 
 /** Emit a raw stream-json frame through the SAME envelope runClaudeProcess uses (the rl 'line' handler above). */
-function emitRaw(onEvent, raw) {
+export function emitRaw(onEvent, raw) {
   const cost = extractResultCost(raw);
   const text = extractText(raw);
   safeEmit(onEvent, { type: raw.type, raw, text: text || undefined, ...(cost != null ? { costUsd: cost } : {}) });
@@ -191,6 +191,9 @@ function emitRaw(onEvent, raw) {
 const ASK_CONTEXT_BLOCK_RE = /\[worca context\][\s\S]*?\[\/worca context\]\s*/;
 // The Workflows chat's open canvas (canvas-summary.mjs; forged markers inside are rewritten, so the first end is its own).
 const COMPOSER_CANVAS_BLOCK_RE = /\[composer canvas\][\s\S]*?\[\/composer canvas\]\s*/;
+// #943: the transcript a fresh session gets after an engine switch (ask/prompt.mjs buildHandoffPrompt) leads the
+// prompt; the mock answers the turn's own message, so it skips the transcript and its fence.
+const ASK_HANDOFF_BLOCK_RE = /^Conversation so far in this chat\.[^\n]*\n(`{4,})text\n[\s\S]*?\n\1\n\n/;
 
 /** Test seam: holdFrame(frame, index) may return a promise that holds a MOCK_SLOW turn after that
  *  frame until it settles (or the turn is aborted). Unset = the real 300 ms per frame. */
@@ -217,7 +220,7 @@ function untilSettledOrAborted(p, signal) {
  * `result` frame and then REJECT exactly like the real CLI (exit 1, empty stderr).
  */
 async function mockAsk({ markers, prompt, cwd, onEvent, signal, resumeSessionId }) {
-  const userText = String(prompt ?? '').replace(ASK_CONTEXT_BLOCK_RE, '').replace(COMPOSER_CANVAS_BLOCK_RE, '');
+  const userText = String(prompt ?? '').replace(ASK_HANDOFF_BLOCK_RE, '').replace(ASK_CONTEXT_BLOCK_RE, '').replace(COMPOSER_CANVAS_BLOCK_RE, '');
   let card = {};
   try { card = markers.MOCK_ASK_CARD ? JSON.parse(markers.MOCK_ASK_CARD) : {}; } catch { card = {}; }
   if (!card || typeof card !== 'object' || Array.isArray(card)) card = {};
@@ -676,6 +679,12 @@ async function mockGenericProducer(m, onEvent) {
   await ensureDir(out);
   await writeFile(out, body, 'utf8');
   safeEmit(onEvent, { type: 'tool_use', text: `wrote ${out}`, raw: { mock: true, file: out } });
+  // The node's other declared outputs (MOCK_OUTS, '|'-separated): a real agent writes them all.
+  for (const extra of String(m.MOCK_OUTS || '').split('|').filter(Boolean)) {
+    await ensureDir(extra);
+    await writeFile(extra, extra.endsWith('.json') ? JSON.stringify({ mock: true, note: 'generic artifact' }, null, 2) + '\n'
+      : '# Mock artifact\n\nDeterministic generic producer output.\n', 'utf8');
+  }
   return `[mock] generic artifact written to ${out}`;
 }
 

@@ -8,11 +8,11 @@ const isObj = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
 
 export const PROXY_CHANGE_FIELDS = Object.freeze(['upstream', 'auth', 'noProxy', 'timeouts', 'fixedPort']);
 const SECRET_KEYS = ['password', 'user', 'domain', 'login', 'credentials', 'ntHash', 'hash'];
-export const PROXY_RESTART_NOTE = 'Restart Worca to apply.';
-export const PROXY_FLAG_OFF_TEXT = 'The corporate proxy is off (Labs flag "Corporate proxy", corporateProxy). Offer propose_corporate_proxy_on, a card the user applies (then Restart Worca), or point to Settings › Labs.';
+export const PROXY_LIVE_NOTE = 'New connections use it now.';
+export const PROXY_OFF_TEXT = 'The corporate proxy is off. Offer propose_corporate_proxy_on, a card the user applies, or point to Settings › Runs › Network proxy.';
 const LOGIN_TEXT = 'A proxy login never goes through the chat: the user logs in on Settings › Runs › Network proxy (Log in) or with `worca proxy login`.';
 
-const LABELS = { upstream: 'Proxy', auth: 'Login', noProxy: 'Hosts that go direct', fixedPort: 'Local proxy port',
+const LABELS = { enabled: 'Network proxy', upstream: 'Proxy', auth: 'Login', noProxy: 'Hosts that go direct', fixedPort: 'Local proxy port',
   'timeouts.connectMs': 'Connect timeout', 'timeouts.authMs': 'Login timeout', 'timeouts.idleMs': 'Idle timeout' };
 const AUTH_WORDS = { auto: 'NTLMv2', ntlm: 'NTLMv2', none: 'no login', basic: 'Basic, cleartext', digest: 'Digest' };
 const DEFAULTS = { upstream: 'none (HTTPS_PROXY / HTTP_PROXY at start, if set)', auth: 'default (NTLMv2 with a saved login, else none)',
@@ -20,6 +20,7 @@ const DEFAULTS = { upstream: 'none (HTTPS_PROXY / HTTP_PROXY at start, if set)',
   'timeouts.connectMs': 'default (30 s)', 'timeouts.authMs': 'default (15 s)', 'timeouts.idleMs': 'default (600 s)' };
 const hostPort = (u) => String(u).replace(/^http:\/\//, '');
 const show = (field, v) => {
+  if (field === 'enabled') return v === true ? 'On' : 'Off';
   if (v === undefined || v === null || v === '') return DEFAULTS[field];
   if (field === 'upstream') return hostPort(v);
   if (field === 'auth') return AUTH_WORDS[v] || String(v);
@@ -27,17 +28,17 @@ const show = (field, v) => {
   if (field.startsWith('timeouts.')) return `${v} ms`;
   return String(v);
 };
-const flat = (np = {}) => ({ upstream: np.upstream, auth: np.auth, noProxy: np.noProxy, fixedPort: np.fixedPort,
+const flat = (np = {}) => ({ enabled: np.enabled, upstream: np.upstream, auth: np.auth, noProxy: np.noProxy, fixedPort: np.fixedPort,
   'timeouts.connectMs': np.timeouts?.connectMs, 'timeouts.authMs': np.timeouts?.authMs, 'timeouts.idleMs': np.timeouts?.idleMs });
 const same = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
 
 /**
- * @param {{ flagOn: () => boolean, current: () => object, preview: (patch: object) => object }} r
+ * @param {{ current: () => object, preview: (patch: object) => object }} r
  *   preview: settings.mjs previewNetworkProxy (assert + merge, the PUT /api/proxy/settings code); it throws the field error.
+ *   Works with the proxy off too: the values are saved, and used once it is turned on.
  */
-export function createProxyChangeValidator({ flagOn, current, preview }) {
+export function createProxyChangeValidator({ current, preview }) {
   return async function validateProxyChange(input = {}) {
-    if (!flagOn()) return { ok: false, errors: [PROXY_FLAG_OFF_TEXT] };
     const inp = isObj(input) ? input : {};
     if (SECRET_KEYS.some((k) => k in inp)) return { ok: false, errors: [LOGIN_TEXT] };
     const unknown = Object.keys(inp).filter((k) => !PROXY_CHANGE_FIELDS.includes(k) && k !== 'note');
@@ -55,19 +56,18 @@ export function createProxyChangeValidator({ flagOn, current, preview }) {
     const note = clip(typeof inp.note === 'string' ? inp.note.trim() : '', 200);
     return { ok: true, card: { type: 'proxy', kind: 'settings', patch, changes,
       summary: clip(changes.map((c) => `${c.label}: ${c.after}`).join('; '), 300),
-      upstreamChanged: !same(before.upstream, after.upstream), restartNote: PROXY_RESTART_NOTE, note } };
+      upstreamChanged: !same(before.upstream, after.upstream), restartNote: PROXY_LIVE_NOTE, note } };
   };
 }
 
-/** @param {{ flagOn: () => boolean, checkFlags: (patch: object) => any }} r  checkFlags: flags.mjs (validate only, no write). */
-export function createProxyFlagValidator({ flagOn, checkFlags }) {
+/** propose_corporate_proxy_on: the card that sets networkProxy.enabled: true. @param {{ enabledNow: () => boolean }} r */
+export function createProxyFlagValidator({ enabledNow }) {
   return async function validateProxyFlagOn(input = {}) {
-    if (flagOn()) return { ok: false, errors: ['the corporate proxy (corporateProxy) is already on; call get_network_proxy'] };
-    try { checkFlags({ corporateProxy: true }); } catch (err) { return { ok: false, errors: [clip(err && err.message ? err.message : err, 300)] }; }
+    if (enabledNow()) return { ok: false, errors: ['the corporate proxy (networkProxy.enabled) is already on; call get_network_proxy'] };
     const note = clip(isObj(input) && typeof input.note === 'string' ? input.note.trim() : '', 200);
-    return { ok: true, card: { type: 'proxy', kind: 'flag', set: { corporateProxy: true },
-      changes: [{ field: 'corporateProxy', label: 'Corporate proxy (Labs)', before: 'Off', after: 'On' }],
-      summary: 'Corporate proxy (Labs): On', restartNote: PROXY_RESTART_NOTE, note } };
+    return { ok: true, card: { type: 'proxy', kind: 'enable', patch: { enabled: true },
+      changes: [{ field: 'enabled', label: LABELS.enabled, before: 'Off', after: 'On' }],
+      summary: `${LABELS.enabled}: On`, restartNote: PROXY_LIVE_NOTE, note } };
   };
 }
 

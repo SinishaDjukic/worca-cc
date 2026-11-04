@@ -35,20 +35,19 @@ test('normalizePins rejects a non-list, a non-string id and more than the cap', 
 });
 
 test('a deleted workflow simply does not show; order follows the pins, not the list', () => {
-  const v = visiblePins({ pins: ['wf_gone', 'wf_post', 'wf_pay'], workflows: WF, flags: {} });
+  const v = visiblePins({ pins: ['wf_gone', 'wf_post', 'wf_pay'], workflows: WF });
   assert.deepEqual(v.map((p) => p.id), ['wf_post', 'wf_pay']);
   assert.deepEqual(v[0], { id: 'wf_post', name: 'Social post', shaper: false });
 });
 
-test('Shaper shows only while its flag is on — listed or not — and other pins need the list', () => {
-  assert.deepEqual(visiblePins({ pins: [SHAPER_PIN_ID], workflows: WF, flags: { shapeFirst: false } }), []);
-  assert.deepEqual(visiblePins({ pins: [SHAPER_PIN_ID], workflows: null, flags: { shapeFirst: true } }),
-    [{ id: 'wf_shape', name: 'Shaper', shaper: true }]);
-  assert.deepEqual(visiblePins({ pins: ['wf_pay'], workflows: null, flags: { shapeFirst: true } }), [], 'list not loaded yet');
+test('Shaper always shows — listed or not — and other pins need the list', () => {
+  assert.deepEqual(visiblePins({ pins: [SHAPER_PIN_ID], workflows: WF }), [{ id: 'wf_shape', name: 'Shaper', shaper: true }]);
+  assert.deepEqual(visiblePins({ pins: [SHAPER_PIN_ID], workflows: null }), [{ id: 'wf_shape', name: 'Shaper', shaper: true }]);
+  assert.deepEqual(visiblePins({ pins: ['wf_pay'], workflows: null }), [], 'list not loaded yet');
 });
 
 test('splitPins: one inline slot, the rest overflow in order', () => {
-  const v = visiblePins({ pins: ['wf_shape', 'wf_pay', 'wf_post'], workflows: WF, flags: { shapeFirst: true } });
+  const v = visiblePins({ pins: ['wf_shape', 'wf_pay', 'wf_post'], workflows: WF });
   const { inline, overflow } = splitPins(v);
   assert.deepEqual(inline.map((p) => p.id), ['wf_shape']);
   assert.deepEqual(overflow.map((p) => p.id), ['wf_pay', 'wf_post']);

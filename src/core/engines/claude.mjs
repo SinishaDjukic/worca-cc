@@ -10,6 +10,7 @@ import { bridgeEvents } from '../bridge/telemetry.mjs';
 import { explainUnspawnableClaude, resolveClaudeBin } from '../preflight.mjs';
 import { hostGuardEnabled, hostGuardHookEntry, hostGuardSystemPrompt } from '../host-guard.mjs';
 import { memoryUsageHookEntry } from '../memory-usage.mjs';
+import { readGuardHookEntry, readGuardDecisions } from '../file-read-guard.mjs';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -55,8 +56,10 @@ function extraSettingsOf(extraSettings) {
  *  which the guard does not need). `extraSettings` (skills registry §4.1) merges in
  *  first, so the runner's own `hooks` / `permissions` always win. `memoryLoadLog` (memory usage, U3: set by the
  *  harness only when the mounted rules hold a note with `paths:`) adds the `InstructionsLoaded` counting hook the
- *  same way — never into the user's settings files. */
-export function buildSettingsPayload(permissionRules, { hostGuard = false, extraSettings = null, memoryLoadLog = null } = {}) {
+ *  same way — never into the user's settings files. `readGuard` (Requirements A8: the one file a read may open) adds
+ *  the file-read guard (file-read-guard.mjs) on every tool, with `disableAllHooks: false`, logging each decision to
+ *  `readGuardLog` (stageClaudeInvocation names it); absent (null/undefined), nothing changes. */
+export function buildSettingsPayload(permissionRules, { hostGuard = false, extraSettings = null, memoryLoadLog = null, readGuard = null, readGuardLog = null, mainThreadGuard = null } = {}) {
   const hook = buildHookSettings();
   const extra = extraSettingsOf(extraSettings);
   const guard = hostGuard && hostGuardEnabled() ? hostGuardHookEntry() : null;
@@ -71,16 +74,33 @@ export function buildSettingsPayload(permissionRules, { hostGuard = false, extra
       && Object.values(permissionRules).some((a) => a != null && !Array.isArray(a))) {
     console.warn('[worca] guardrails: permissionRules is malformed (deny/allow/ask must be arrays of strings) — ignoring it; this spawn carries NO permission rules');
   }
-  if (!hook && !hasRules && !guard && !extra && !usage) return null;
+  // A8: a Requirements file read's guard (file-read-guard.mjs): every tool, fail-closed; the user settings cannot turn it off.
+  // Any value but null/undefined goes to readGuardHookEntry, which throws unless it is an absolute path: never a silent no-guard.
+  const read = readGuard != null ? readGuardHookEntry(readGuard, { log: readGuardLog }) : null;
+  // Session groups C40: a session host's main-thread guard (session-host-guard.mjs, Task 41). Its PreToolUse entries are
+  // the runner's own, like the host guard's; extraSettings never carries hooks (RUNNER_SETTINGS_KEYS), so it has its own key.
+  const hostOnly = Array.isArray(mainThreadGuard?.hooks?.PreToolUse) && mainThreadGuard.hooks.PreToolUse.length
+    ? mainThreadGuard.hooks.PreToolUse : null;
+  if (!hook && !hasRules && !guard && !extra && !usage && !read && !hostOnly) return null;
   const settings = { ...(extra ?? {}) };
   if (hook) settings.hooks = { ...hook.hooks };
   if (guard) {
     settings.hooks = settings.hooks ?? {};
     settings.hooks.PreToolUse = [...(settings.hooks.PreToolUse ?? []), guard];
   }
+  if (hostOnly) {
+    settings.hooks = settings.hooks ?? {};
+    settings.hooks.PreToolUse = [...(settings.hooks.PreToolUse ?? []), ...hostOnly];
+    settings.disableAllHooks = false;              // v3: like the read guard, a user's settings cannot switch it off
+  }
   if (usage) {
     settings.hooks = settings.hooks ?? {};
     settings.hooks.InstructionsLoaded = [...(settings.hooks.InstructionsLoaded ?? []), usage];
+  }
+  if (read) {
+    settings.hooks = settings.hooks ?? {};
+    settings.hooks.PreToolUse = [...(settings.hooks.PreToolUse ?? []), read];
+    settings.disableAllHooks = false;
   }
   if (hasRules) settings.permissions = permissionRules;
   return { hook: !!hook, settings };
@@ -276,12 +296,13 @@ export function isHookEvent(evt) {
  * [] when there is nothing to say, so the baseline argv is byte-identical.
  * @param {{deny?:string[],allow?:string[],ask?:string[]}|null|undefined} permissionRules
  * @param {string|null} [settingsFile] staged path (GH #380): `--settings <path>` carries the same JSON
- * @param {{hostGuard?:boolean, extraSettings?:object|null}} [opts] host-process guard (runClaudeProcess sets it; see
- *   buildSettingsPayload) and extra settings merged into the same payload (skills registry §4.1)
+ * @param {{hostGuard?:boolean, extraSettings?:object|null, readGuard?:string|null, readGuardLog?:string|null}} [opts]
+ *   host-process guard (runClaudeProcess sets it; see buildSettingsPayload), extra settings merged into the same payload
+ *   (skills registry §4.1), the A8 file-read guard's one allowed file and its decision log
  * @returns {string[]}
  */
-export function buildSettingsArgs(permissionRules, settingsFile = null, { hostGuard = false, extraSettings = null, memoryLoadLog = null } = {}) {
-  const payload = buildSettingsPayload(permissionRules, { hostGuard, extraSettings, memoryLoadLog });
+export function buildSettingsArgs(permissionRules, settingsFile = null, { hostGuard = false, extraSettings = null, memoryLoadLog = null, readGuard = null, readGuardLog = null, mainThreadGuard = null } = {}) {
+  const payload = buildSettingsPayload(permissionRules, { hostGuard, extraSettings, memoryLoadLog, readGuard, readGuardLog, mainThreadGuard });
   if (!payload) return [];
   const args = [];
   if (payload.hook) args.push('--include-hook-events');
@@ -304,8 +325,9 @@ export function buildHookArgs() {
  *  argv stays byte-identical):
  *   - mcpConfigPath   -> `--mcp-config <file>` (E5: config servers connect and their
  *                        tools are callable in headless -p; it MERGES with `.mcp.json`,
- *                        user scope, and plugin servers, so `--strict-mcp-config` is
- *                        deliberately never passed — E11).
+ *                        user scope, and plugin servers — E11). A pipeline node adds
+ *                        `--strict-mcp-config` only when mcp.json holds every server it
+ *                        needs (phases.mjs strictMcpFor).
  *   - mcpServerGrants -> unioned into `--allowedTools`. The server-WILDCARD shape
  *                        (`mcp__<server>`) is what Phase-0 gate V1 verified as
  *                        callable under `--permission-mode acceptEdits`
@@ -324,11 +346,16 @@ export function buildClaudeArgs({
   // --allowedTools union).
   tools: builtinTools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages,
   maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, hostGuard, addDirs, disallowedTools, agents,
-  pluginDirs, extraSettings, memoryLoadLog,
+  pluginDirs, extraSettings, memoryLoadLog, readGuard, readGuardLog,
+  // Session groups (Task 29): a session host spawn only. Absent ⇒ argv byte-identical.
+  forwardSubagentText, agentsFile, mainThreadGuard,
   // Requirements A1.1: 'replace' swaps Claude Code's own system prompt for ours
   // (--system-prompt / --system-prompt-file). Anything else, absent included, is
   // today's --append-system-prompt(-file), so every other argv stays byte-identical.
   systemPromptMode,
+  // Requirements A8: true ⇒ --no-session-persistence (-p only): Claude Code keeps no session transcript of this call,
+  // so a read of the product owner's file leaves no copy of it in Claude Code's own logs. Anything else ⇒ nothing.
+  noSessionPersistence,
 }, delivery = {}) {
   // delivery (GH #380, set only by planClaudeInvocation's staged branch):
   //   promptViaStdin   -> bare `-p`; the prompt is written to the child's stdin
@@ -352,7 +379,7 @@ export function buildClaudeArgs({
   // SINGLE inline JSON (two --settings flags would be last-wins at the CLI). [] when
   // there is neither, so the baseline argv is unchanged; a CLI that rejects these
   // flags would only ever fail when the operator opted in.
-  for (const a of buildSettingsArgs(permissionRules, settingsFile, { hostGuard, extraSettings, memoryLoadLog })) args.push(a);
+  for (const a of buildSettingsArgs(permissionRules, settingsFile, { hostGuard, extraSettings, memoryLoadLog, readGuard, readGuardLog, mainThreadGuard })) args.push(a);
   if (mcpConfigPath) args.push('--mcp-config', mcpConfigPath);
   const tools = Array.isArray(allowedTools) ? allowedTools.slice() : [];
   for (const s of (Array.isArray(mcpServerGrants) ? mcpServerGrants : [])) {
@@ -388,6 +415,7 @@ export function buildClaudeArgs({
     args.push('--setting-sources', sources.join(','));
   }
   if (disableSlashCommands === true) args.push('--disable-slash-commands');
+  if (noSessionPersistence === true) args.push('--no-session-persistence');
   if (includePartialMessages === true) args.push('--include-partial-messages');
   if (Number.isSafeInteger(maxTurns) && maxTurns > 0) args.push('--max-turns', String(maxTurns));
   if (typeof maxBudgetUsd === 'number' && Number.isFinite(maxBudgetUsd) && maxBudgetUsd > 0) {
@@ -396,11 +424,17 @@ export function buildClaudeArgs({
   if (typeof appendSubagentSystemPrompt === 'string' && appendSubagentSystemPrompt) {
     args.push('--append-subagent-system-prompt', appendSubagentSystemPrompt);
   }
-  // Run-scoped sub-agent definitions (the pinned investigator, phases.mjs investigatorAgents).
-  // ALWAYS inline JSON, on the staged branch too: Claude Code reads `--agents <file>` only from
-  // 2.1.281, and docker/CLAUDE_CODE_VERSION pins 2.1.278 (a path there fails at spawn with
-  // "Invalid --agents configuration"). The definition is ~600 chars. Before --add-dir (LAST).
-  if (agents && typeof agents === 'object' && Object.keys(agents).length) {
+  // --forward-subagent-text (session host spawns, M-11): the member's text reaches the host's stream, where the demux
+  // re-roots it onto the member's row. Absent/false ⇒ nothing, so every other argv stays byte-identical.
+  if (forwardSubagentText === true) args.push('--forward-subagent-text');
+  // Sub-agent definitions. Ungrouped spawns (the pinned investigator, phases.mjs investigatorAgents) pass them as inline
+  // JSON on BOTH branches: Claude Code reads `--agents <file>` only from 2.1.281, and a user's own CLI may be older
+  // (docker/CLAUDE_CODE_VERSION pins 2.1.294, which reads both). A session host spawn (agentsViaFile, floor-checked by
+  // chooseSessionMode) passes `agentsFile`, the agents.json planClaudeInvocation writes into the spawn's own staging
+  // dir (C3); the file wins. The investigator definition is ~600 chars. Before --add-dir (LAST).
+  if (typeof agentsFile === 'string' && agentsFile) {
+    args.push('--agents', agentsFile);
+  } else if (agents && typeof agents === 'object' && Object.keys(agents).length) {
     args.push('--agents', JSON.stringify(agents));
   }
   // Native-rules revision (2026-09-13): Ask Worca's memory mount. LAST, so every earlier argv
@@ -420,6 +454,8 @@ export function buildClaudeArgs({
  *    model sees the exact text, unlike a "read this file" instruction), the
  *    system prompt and the settings JSON become files under `dir`, and no
  *    argument carries free text any more, so the argv is short by construction.
+ *  - agentsViaFile (session host spawns, C3): `files` holds `<dir>/agents.json` on BOTH branches, `--agents` names it,
+ *    and `dir` is taken even when the argv is short. `staged` still means only "argv over the limit".
  * @param {object} opts  the buildClaudeArgs options
  * @param {{bin?:string, dir?:string|(() => string), limit?:number}} [o]  `dir` may be a
  *   factory, called only when staging is actually needed (so the caller creates
@@ -427,12 +463,23 @@ export function buildClaudeArgs({
  * @returns {{args:string[], stdin:string|null, files:{path:string,content:string}[], staged:boolean, inlineLength:number}}
  */
 export function planClaudeInvocation(opts, { bin = DEFAULT_BIN, dir = null, limit = ARGV_INLINE_LIMIT } = {}) {
+  // Session host spawns only (C3, critique C-2): the definitions ride agents.json in this spawn's OWN staging dir, which
+  // superviseSpawn shares with the agent user (stagedDir) and the cleanup removes. The dir is taken even when the argv
+  // is short. Ungrouped spawns never set agentsViaFile: their --agents stays inline JSON on both branches (M-12).
+  const agents = opts.agents && typeof opts.agents === 'object' && Object.keys(opts.agents).length ? opts.agents : null;
+  let agentsEntry = null;
+  if (opts.agentsViaFile === true && agents) {
+    if (!dir) throw new Error('planClaudeInvocation: a staging dir is required for agentsViaFile');
+    if (typeof dir === 'function') dir = dir();
+    agentsEntry = { path: join(dir, 'agents.json'), content: JSON.stringify(agents) };
+    opts = { ...opts, agents: undefined, agentsFile: agentsEntry.path };
+  }
   const inline = buildClaudeArgs(opts);
   const inlineLength = argvLength(bin, inline);
-  if (inlineLength <= limit) return { args: inline, stdin: null, files: [], staged: false, inlineLength };
+  if (inlineLength <= limit) return { args: inline, stdin: null, files: agentsEntry ? [agentsEntry] : [], staged: false, inlineLength };
   if (!dir) throw new Error('planClaudeInvocation: a staging dir is required when the argv is over the limit');
   if (typeof dir === 'function') dir = dir();
-  const files = [];
+  const files = agentsEntry ? [agentsEntry] : [];
   const prompt = typeof opts.prompt === 'string' ? opts.prompt : '';
   const promptViaStdin = prompt.length > 0;             // an empty prompt stays `-p ''` — nothing to pipe
   let systemPromptFile = null;
@@ -441,7 +488,7 @@ export function planClaudeInvocation(opts, { bin = DEFAULT_BIN, dir = null, limi
     files.push({ path: systemPromptFile, content: opts.systemPrompt });
   }
   let settingsFile = null;
-  const payload = buildSettingsPayload(opts.permissionRules, { hostGuard: opts.hostGuard, extraSettings: opts.extraSettings, memoryLoadLog: opts.memoryLoadLog });
+  const payload = buildSettingsPayload(opts.permissionRules, { hostGuard: opts.hostGuard, extraSettings: opts.extraSettings, memoryLoadLog: opts.memoryLoadLog, readGuard: opts.readGuard, readGuardLog: opts.readGuardLog, mainThreadGuard: opts.mainThreadGuard });
   if (payload) {
     settingsFile = join(dir, 'settings.json');
     files.push({ path: settingsFile, content: JSON.stringify(payload.settings) });
@@ -451,17 +498,28 @@ export function planClaudeInvocation(opts, { bin = DEFAULT_BIN, dir = null, limi
 }
 
 /** planClaudeInvocation + the I/O: a private temp dir is created and the files
- *  written ONLY on the staged branch (`dir` is null otherwise, so the caller has
- *  nothing to clean up). Synchronous on purpose — a few hundred KB once per
+ *  written ONLY on the staged branch, or when a session host spawn passes
+ *  `agentsViaFile` (C3) (`dir` is null otherwise, so the caller has nothing to
+ *  clean up). Synchronous on purpose — a few hundred KB once per
  *  spawn, and it keeps the spawn sequence in runClaudeProcess linear. */
 export function stageClaudeInvocation(opts, { bin = DEFAULT_BIN, limit = ARGV_INLINE_LIMIT } = {}) {
   let dir = null;
-  const plan = planClaudeInvocation(opts, { bin, limit, dir: () => (dir = mkdtempSync(join(tmpdir(), 'worca-claude-'))) });
-  for (const file of plan.files) writeFileSync(file.path, file.content, 'utf8');
-  return { ...plan, dir };
+  const makeDir = () => (dir ??= mkdtempSync(join(tmpdir(), 'worca-claude-')));
+  // A8: a guarded read logs every decision of its guard to a file in this private dir: the server's path, never a
+  // caller's, read back when the spawn ends (runClaudeProcess) and removed with the dir.
+  const o = opts.readGuard != null ? { ...opts, readGuardLog: join(makeDir(), 'read-guard.jsonl') } : opts;
+  let plan;
+  try {
+    plan = planClaudeInvocation(o, { bin, limit, dir: makeDir });
+    for (const file of plan.files) writeFileSync(file.path, file.content, 'utf8');
+  } catch (err) {
+    if (dir) rmSync(dir, { recursive: true, force: true });
+    throw err;
+  }
+  return { ...plan, dir, ...(o.readGuardLog ? { readGuardLog: o.readGuardLog } : {}) };
 }
 
-export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, permissionMode, model, effort, onEvent, signal, bin, resumeSessionId, mcpConfigPath, mcpServerGrants, permissionRules, envScrub, envAllowlist, modelEnv, spawnEnv: runSpawnEnv, redactValues, disallowedTools, tools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages, maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, addDirs, agents, pluginDirs, extraSettings, memoryLoadLog, argvInlineLimit, asAgent, systemPromptMode }) { // billTo/spawnKind/runId/threadId are consumed by runViaBroker
+export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, permissionMode, model, effort, onEvent, signal, bin, resumeSessionId, mcpConfigPath, mcpServerGrants, permissionRules, envScrub, envAllowlist, modelEnv, spawnEnv: runSpawnEnv, redactValues, disallowedTools, tools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages, maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, addDirs, agents, pluginDirs, extraSettings, memoryLoadLog, argvInlineLimit, asAgent, systemPromptMode, readGuard, noSessionPersistence, forwardSubagentText, agentsViaFile, mainThreadGuard }) { // billTo/spawnKind/runId/threadId are consumed by runViaBroker
   // MCP registry §5.5.3: with registry secrets in this spawn's env, every emit, the result text and the error
   // message leave redacted — wrapped once here, so the broker path (which calls runClaudeProcess) is covered too.
   const redactor = Array.isArray(redactValues) && redactValues.length ? createRedactor(redactValues) : null;
@@ -553,7 +611,8 @@ export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, perm
         mcpConfigPath, mcpServerGrants, permissionRules,
         tools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages,
         maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, addDirs, disallowedTools, agents,
-        pluginDirs, extraSettings, memoryLoadLog, systemPromptMode,
+        pluginDirs, extraSettings, memoryLoadLog, systemPromptMode, readGuard, noSessionPersistence,
+        forwardSubagentText, agentsViaFile, mainThreadGuard,
       }, { bin: resolved.bin, limit });
     } catch (err) {
       rejectP(new Error(`Failed to stage the claude prompt files: ${err.message}`));
@@ -647,7 +706,9 @@ export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, perm
       isBenignStderr: isBenignStderrLine,
       redactText: redactor ? redactor.text : null,
       spawnError: (err, prefix) => spawnFailure(bin, err, prefix),
-      onDone: (code) => ({ text: resultText || assistantText, exitCode: code }),
+      // A8: a guarded read also returns its guard's decisions (read before cleanup removes the log), so the caller can
+      // check that every tool call was decided (file-read-guard.mjs guardDecisionsCover).
+      onDone: (code) => ({ text: resultText || assistantText, exitCode: code, ...(plan.readGuardLog ? { readGuardDecisions: readGuardDecisions(plan.readGuardLog) } : {}) }),
       onStdoutLine: (trimmed) => {
         let evt;
         try {
@@ -830,11 +891,14 @@ async function runViaBroker(opts) {
   const isolated = opts.asAgent
     ? owner === billTo && !!agentIdentityFor(owner)?.dedicated
     : !!agentIdentity();
+  // A spawn with its own cost cap (an Ask turn's) gets the same cap as its token's budget: the
+  // CLI's --max-budget-usd is the agent's own bookkeeping, the broker's holds whatever it does.
+  const budgetUsd = typeof opts.maxBudgetUsd === 'number' && Number.isFinite(opts.maxBudgetUsd) && opts.maxBudgetUsd > 0 ? opts.maxBudgetUsd : undefined;
   let minted;
   try {
     minted = await mintSpawnToken({
       billTo: billTo || 'local', slots: [bridgeSlot || route.slot], kind, ttlSec: SPAWN_TTL_SEC[kind],
-      runId: opts.runId || null, threadId: opts.threadId || null, isolated,
+      runId: opts.runId || null, threadId: opts.threadId || null, isolated, budgetUsd,
     });
   } catch (err) {
     throw brokerSpawnError(`cannot get a token for this spawn: ${err.message}`, err.status === 401 ? 'auth' : 'network');

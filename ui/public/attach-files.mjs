@@ -5,9 +5,11 @@
 // Mirrors src/shared/artifact-kinds.mjs (the allowlists) + src/core/ask/limits.mjs (the caps, #398): text kinds are
 // UTF-8 and binary kinds (images + PDF) alike capped at 100 MB, 8 files and 100 MB per message. The server re-validates
 // everything; these are just early clear messages (test/attach-files.test.mjs pins the mirror).
+// The Requirements page passes its own limits and messages (REQ_ATTACH, reqLimits, reqTypeMessage); Ask's defaults are
+// unchanged.
 import { attachRefusal } from './ask-engine.mjs';
 
-export const ATTACH_TEXT_EXT = Object.freeze(['.md', '.markdown', '.txt', '.json', '.csv', '.log', '.html', '.htm']);
+export const ATTACH_TEXT_EXT = Object.freeze(['.md', '.markdown', '.txt', '.json', '.csv', '.log', '.html', '.htm', '.xml']);
 export const ATTACH_BINARY = Object.freeze({
   '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
   '.gif': 'image/gif', '.webp': 'image/webp', '.pdf': 'application/pdf',
@@ -18,6 +20,15 @@ export const ATTACH_MAX_MESSAGE_BYTES = 100 * 1024 * 1024;
 export const ATTACH_MAX_FILES = 8;
 /** The file picker's accept list: every allowed extension, then text/*. */
 export const ATTACH_ACCEPT = `${ATTACH_TEXT_EXT.join(',')},${Object.keys(ATTACH_BINARY).join(',')},text/*`;
+/** Ask's caps and messages: the defaults of checkAttachment. */
+const ASK_CHECK = Object.freeze({
+  maxFiles: ATTACH_MAX_FILES, maxTextBytes: ATTACH_MAX_TEXT_BYTES, maxBinaryBytes: ATTACH_MAX_BINARY_BYTES, maxTotalBytes: ATTACH_MAX_MESSAGE_BYTES,
+  dedupeByName: true,
+  tooBig: (name, cap) => `attachment over ${cap} bytes: ${name}`,
+  tooMany: (max) => `at most ${max} attachments per message`,
+  totalTooBig: (cap) => `attachments over ${cap} bytes per message`,
+});
+const askTypeMessage = (name) => `attachment type not allowed: ${name}`;
 
 /** The lower-cased extension WITH its dot, or '' when the name has no dot. */
 export function extOf(name) {
@@ -30,24 +41,50 @@ export function extOf(name) {
  * Ask's early checks for one file `{name, size}`, in Ask's order and with its messages, against the files already
  * pending for the message (`{name, bytes}`). A pending file of the same name is replaced (newest wins), so it counts
  * toward neither cap. `engine` is the engine the message will run on: a Codex chat refuses PDFs (D16).
+ * `limits` and `typeMessage` let another page use its own caps and messages (the Requirements page: reqLimits,
+ * reqTypeMessage); left out, they are Ask's.
  * @returns {{ok: true, name: string, ext: string, mime: string|null, attKind: 'text'|'image'|'binary', others: object[]}
  *   | {ok: false, error: string}}
  */
-export function checkAttachment(file, { pending = [], engine = null } = {}) {
+export function checkAttachment(file, { pending = [], engine = null, limits = ASK_CHECK, typeMessage = askTypeMessage } = {}) {
+  const L = { ...ASK_CHECK, ...limits };
   const name = String((file && file.name) || '');
   const ext = extOf(name);
   const binMime = ATTACH_BINARY[ext];
-  if (!ATTACH_TEXT_EXT.includes(ext) && !binMime) return { ok: false, error: `attachment type not allowed: ${name}` };
+  if (!ATTACH_TEXT_EXT.includes(ext) && !binMime) return { ok: false, error: typeMessage(name, ext) };
   const refused = attachRefusal({ ext, engine });
   if (refused) return { ok: false, error: `${refused}: ${name}` };
-  const cap = binMime ? ATTACH_MAX_BINARY_BYTES : ATTACH_MAX_TEXT_BYTES;
-  if (file.size > cap) return { ok: false, error: `attachment over ${cap} bytes: ${name}` };
-  const others = (Array.isArray(pending) ? pending : []).filter((p) => p.name !== name);   // dedupe by name, newest wins
-  if (others.length >= ATTACH_MAX_FILES) return { ok: false, error: `at most ${ATTACH_MAX_FILES} attachments per message` };
+  const cap = binMime ? L.maxBinaryBytes : L.maxTextBytes;
+  if (file.size > cap) return { ok: false, error: L.tooBig(name, cap) };
+  const all = Array.isArray(pending) ? pending : [];
+  const others = L.dedupeByName ? all.filter((p) => p.name !== name) : all;   // Ask: a same name replaces its pending one
+  if (others.length >= L.maxFiles) return { ok: false, error: L.tooMany(L.maxFiles, name) };
   const pendingBytes = others.reduce((n, p) => n + p.bytes, 0);
-  if (pendingBytes + file.size > ATTACH_MAX_MESSAGE_BYTES) return { ok: false, error: `attachments over ${ATTACH_MAX_MESSAGE_BYTES} bytes per message` };
+  if (pendingBytes + file.size > L.maxTotalBytes) return { ok: false, error: L.totalTooBig(L.maxTotalBytes, name) };
   const attKind = binMime ? (binMime.startsWith('image/') ? 'image' : 'binary') : 'text';
   return { ok: true, name, ext, mime: binMime || null, attKind, others };
+}
+
+/** The Requirements page's files (plans/requirements-a8-design.md D7): Ask's types, 10 files, 25 MB each, 100 MB per upload. */
+export const REQ_ATTACH = Object.freeze({ maxFiles: 10, maxBytes: 25 * 1024 * 1024, maxRequestBytes: 100 * 1024 * 1024, accept: ATTACH_ACCEPT });
+const REQ_OFFICE = Object.freeze(['.docx', '.xlsx', '.pptx']);
+const lastSegment = (name) => String(name || '').split(/[\\/]/).pop();
+
+/** The page's refusal of a type Worca does not read; Office files get the PDF hint (D7). */
+export function reqTypeMessage(name, ext) {
+  const n = lastSegment(name);
+  return REQ_OFFICE.includes(ext) ? `${n} was not added: Worca reads text, images and PDF. Save it as PDF to attach it here.` : `${n} was not added: Worca reads text, images and PDF.`;
+}
+
+/** checkAttachment's limits for a feature's files or a brief's documents; `create`: the New feature form (100 MB in all). */
+export function reqLimits({ owner = 'feature', create = false } = {}) {
+  return {
+    maxFiles: REQ_ATTACH.maxFiles, maxTextBytes: REQ_ATTACH.maxBytes, maxBinaryBytes: REQ_ATTACH.maxBytes,
+    maxTotalBytes: create ? REQ_ATTACH.maxRequestBytes : Infinity, dedupeByName: create,
+    tooBig: (name) => `${lastSegment(name)} was not added: it is over 25 MB.`,
+    tooMany: (_max, name) => `${lastSegment(name)} was not added: ${owner === 'brief' ? 'a brief takes up to 10 documents.' : 'a feature takes up to 10 files.'}`,
+    totalTooBig: (_cap, name) => `${lastSegment(name)} was not added: a new feature's files can be up to 100 MB in all; add more on the feature page.`,
+  };
 }
 
 /** Bytes (a Uint8Array view) → base64, 32 KB at a time (String.fromCharCode.apply caps its argument count). */

@@ -1599,13 +1599,65 @@ test('relay: the turn hands its web access to the relay, marks the spawn relayed
       const modes = [];
       const fs = { mkdir: async () => {}, writeFile: async (p, _d, o) => { if (/mcp-.*\.json$/.test(p)) modes.push(o.mode); }, unlink: async () => {} };
       const fail = async () => { throw Object.assign(new Error('claude exited with code 1: boom'), { errorClass: 'api' }); };
-      const relayedTurn = makeTurn(seed(), {}, { fs, agentRelay: () => ({ url: 'http://127.0.0.1:1/api/ask/relay', token: 't', dispose: () => {} }), runClaudeImpl: fail }).turn;
+      const claimed = [];
+      const relayedTurn = makeTurn(seed(), {}, { fs, claimAgentFile: (p) => claimed.push(p), agentRelay: () => ({ url: 'http://127.0.0.1:1/api/ask/relay', token: 't', dispose: () => {} }), runClaudeImpl: fail }).turn;
       await relayedTurn.run();
-      const plainTurn = makeTurn(seed(), {}, { fs, runClaudeImpl: fail }).turn;
+      const plainTurn = makeTurn(seed(), {}, { fs, claimAgentFile: (p) => claimed.push(p), runClaudeImpl: fail }).turn;
       await plainTurn.run();
       assert.deepEqual(modes, [0o640, 0o600]);
+      // V10: the relayed file goes to the turn's agent user's own group, never left to all of worca-share.
+      assert.equal(claimed.length, 1);
+      assert.match(claimed[0], /mcp-.*\.json$/);
     } },
   ]);
+});
+
+// 1.3: tmp/ask is sticky but group-writable for every pool user, and the message id shows under ask/<thread>/skills/
+// first, so another person's agent can make mcp-<id>.json before worca does. Worca then refuses: it never writes the
+// relay token into a file someone else made, nor through a link they left.
+test('1.3: a pre-made relay MCP config (a file or a link) is never written into, and the turn never spawns', { skip: process.platform === 'win32' ? 'POSIX links' : false }, async () => {
+  const { worcaHome } = await import('../src/core/projects.mjs');
+  const { mkdirSync, writeFileSync, symlinkSync } = await import('node:fs');
+  const scratch = join(worcaHome(), 'tmp', 'ask');
+  mkdirSync(scratch, { recursive: true });
+  for (const plant of ['file', 'link']) {
+    const s = seed();
+    const target = join(scratch, `mcp-${s.asst.id}.json`);
+    const aimed = join(scratch, `aimed-${s.asst.id}.json`);
+    writeFileSync(aimed, 'PLANTED');
+    if (plant === 'file') writeFileSync(target, 'PLANTED'); else symlinkSync(aimed, target);
+    let spawned = false; const claimed = [];
+    const { turn } = makeTurn(s, {}, {
+      claimAgentFile: (p) => claimed.push(p),
+      agentRelay: () => ({ url: 'http://127.0.0.1:1/api/ask/relay', token: 'RELAY-TOKEN', dispose: () => {} }),
+      runClaudeImpl: async () => { spawned = true; throw new Error('never'); },
+    });
+    await turn.run();
+    assert.equal(readFileSync(aimed, 'utf8'), 'PLANTED', `${plant}: the token never lands in it`);
+    assert.equal(spawned, false, `${plant}: no spawn`);
+    assert.deepEqual(claimed, [], `${plant}: nothing claimed`);
+    assert.equal(getMessage(s.asst.id).status, 'error');
+  }
+});
+
+// 1.4: the turn claims its thread's folder for its agent user before it mounts or spawns anything; a refused claim
+// (a planted folder) ends the turn without a spawn.
+test('1.4: the turn claims its thread folder first; a refused claim never spawns', async () => {
+  const s = seed();
+  const order = [];
+  await makeTurn(s, {}, {
+    claimThreadDir: (id) => order.push(`claim:${id}`),
+    runClaudeImpl: async () => { order.push('spawn'); throw Object.assign(new Error('claude exited with code 1: boom'), { errorClass: 'api' }); },
+  }).turn.run();
+  assert.deepEqual(order.slice(0, 2), [`claim:${s.thread.id}`, 'spawn']);
+  const s2 = seed();
+  let spawned = false;
+  await makeTurn(s2, {}, {
+    claimThreadDir: () => { throw new Error('ask/x belongs to uid 1, not worca'); },
+    runClaudeImpl: async () => { spawned = true; throw new Error('never'); },
+  }).turn.run();
+  assert.equal(spawned, false);
+  assert.equal(getMessage(s2.asst.id).status, 'error');
 });
 
 // set_away_now / set_run_away_mode: the child validated; the parent applies and the chat shows the line.

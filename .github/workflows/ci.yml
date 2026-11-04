@@ -55,10 +55,10 @@ jobs:
     outputs:
       engine: ${{ steps.filter.outputs.engine }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - id: filter
-        uses: dorny/paths-filter@v4
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         with:
           filters: |
             engine:
@@ -70,7 +70,7 @@ jobs:
               - 'skills/**'
               - 'scripts/**'
               - 'package.json'
-              - 'package-lock.json'
+              - 'npm-shrinkwrap.json'
               - 'test/helpers/**'
               - 'test/fixtures/**'
               - 'test/tiers.json'
@@ -118,26 +118,35 @@ jobs:
               - 'test/wsmap-detectors-p4-registry.test.mjs'
               - 'test/wsmap-http-client-shapes-slow.test.mjs'
               - 'test/wsmap-graphql-client-copy-slow.test.mjs'
+              - 'tools/parity/**'
+              - 'test/parity-launch.test.mjs'
+              - 'test/parity-routes.test.mjs'
+              - 'test/split-by-feature.test.mjs'
+              - 'tools/split-by-feature.mjs'
+              - 'tools/split-by-feature/**'
 
   test-fast:
     # tools/test.mjs balances the shards by test/timings.json (longest first); each shard has
     # its own runner, WORCA_HOME and real-claude guard log. Every test file that
     # test/tiers.json does not list as slow.
-    name: fast tests (${{ matrix.shard }}/4)
+    # Node 22 proves the floor (package.json engines: node >=22.19.0); Node 24 is the version
+    # release-npm-app.yml publishes with and the newest LTS, so a difference between the two
+    # (1.15.0-rc.1 failed on one) shows up on dev instead of on a burned release tag.
+    name: fast tests (Node ${{ matrix.node }}, ${{ matrix.shard }}/4)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
+        node: [22, 24]
         shard: [1, 2, 3, 4]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          # package.json engines: node >=22.13.0 — CI proves the floor.
-          node-version: 22
+          node-version: ${{ matrix.node }}
           cache: "npm"
 
       - name: Install dependencies
@@ -155,7 +164,20 @@ jobs:
       - name: Run fast tests
         env:
           WORCA_TEST_SHARD: ${{ matrix.shard }}/4
-        run: npm run test:fast
+        run: npm run test:fast -- --timings-out .test-timings/fast-${{ matrix.shard }}.json
+
+      # This shard's per-file seconds, measured on the runner that ran it. test/timings.json is
+      # refreshed from a green dev run's set (tools/test-timings-merge.mjs), so the shards are
+      # balanced by what files cost here, not on a developer's machine. Node 22's set only: one
+      # artifact per shard, and the two versions' runners cost the same.
+      - if: matrix.node == 22
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: test-timings-fast-${{ matrix.shard }}
+          path: .test-timings/
+          include-hidden-files: true   # upload-artifact skips dot-paths by default and would upload nothing
+          if-no-files-found: error
+          retention-days: 14
 
   test-slow:
     # The engine-driving files in test/tiers.json "slow". Always on a push to dev; on a pull
@@ -164,7 +186,10 @@ jobs:
     # skipped too unless its `if` calls a status function: hence !cancelled(), and `!= 'false'`
     # (not `== 'true'`) so a failed `changes` job runs the slow tier rather than skipping it.
     # The expression is wrapped in ${{ }} because a bare `if: !…` is a YAML tag, not a string.
-    name: slow tests (${{ matrix.shard }}/3)
+    # Two shards, not three: the tier is ~3.5 min of tests in all (test/timings.json), so two
+    # still finish well inside the fast tier's wall time, and a third runner only added its own
+    # checkout + npm ci.
+    name: slow tests (${{ matrix.shard }}/2)
     needs: changes
     if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.outputs.engine != 'false') }}
     runs-on: ubuntu-latest
@@ -172,12 +197,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]
+        shard: [1, 2]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
           cache: "npm"
@@ -187,31 +212,39 @@ jobs:
 
       - name: Run slow tests
         env:
-          WORCA_TEST_SHARD: ${{ matrix.shard }}/3
-        run: npm run test:slow
+          WORCA_TEST_SHARD: ${{ matrix.shard }}/2
+        run: npm run test:slow -- --timings-out .test-timings/slow-${{ matrix.shard }}.json
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: test-timings-slow-${{ matrix.shard }}
+          path: .test-timings/
+          include-hidden-files: true   # upload-artifact skips dot-paths by default and would upload nothing
+          if-no-files-found: error
+          retention-days: 14
 
   cdp:
-    # Three runners, ~1/3 of the proofs each. Each script mints its own WORCA_HOME, its own
-    # git project, an ephemeral server port and a distinct CDP port (9333-9343), so the
-    # groups share nothing even if two ever ran on one machine.
+    # Two runners: the theme proof alone (~5.5 min, the long pole), and every other proof
+    # together (~2.5 min in all on 2026-10-27). Three groups left two runners idle for most of
+    # the theme proof's run. Each script mints its own WORCA_HOME, its own git project, an
+    # ephemeral server port and a distinct CDP port (9333-9343), so the groups share nothing
+    # even if two ever ran on one machine.
     name: headless-Chrome UI proofs (${{ matrix.group }})
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
         include:
-          - group: composer + run-monitor
-            proofs: "verify:composer verify:run-monitor verify:feature-page"
-          - group: theme + memory + scripts
-            proofs: "verify:theme verify:memory verify:scripts"
-          - group: ask-forms + workspace-map + flags + requirements
-            proofs: "verify:ask-forms verify:workspace-map verify:flags verify:requirements"
+          - group: theme
+            proofs: "verify:theme"
+          - group: composer + run-monitor + the rest
+            proofs: "verify:composer verify:run-monitor verify:feature-page verify:memory verify:scripts verify:ask-forms verify:workspace-map verify:flags verify:requirements verify:chat-layout"
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
           cache: "npm"
@@ -234,17 +267,38 @@ jobs:
       # Each script mints its own WORCA_HOME, its own git project and its own
       # server on an ephemeral port, and runs the pipeline under WORCA_MOCK=1 —
       # nothing else has to be provisioned. --no-sandbox is required whenever
-      # headless Chrome runs as root. bash -e: the first failing proof stops the group.
+      # headless Chrome runs as root. Every proof in the group runs even after one fails
+      # (one group holds ten), and the step fails at the end naming each failed proof.
       - name: Headless-Chrome UI proofs
         env:
           CHROME_NO_SANDBOX: "1"
           PROOFS: ${{ matrix.proofs }}
         run: |
+          failed=
           for proof in $PROOFS; do
             echo "::group::npm run $proof"
-            npm run "$proof"
+            npm run "$proof" || failed="$failed $proof"
             echo "::endgroup::"
           done
+          if [ -n "$failed" ]; then
+            echo "::error::failed:$failed"
+            exit 1
+          fi
+
+      # #919 parity harness (docs/parity-harness.md): routes, signed-out pass, flows and
+      # visuals of this tree against itself. Timings are reported, not gated, on shared runners.
+      - name: Parity (dev against itself)
+        if: matrix.group != 'theme'
+        env:
+          CHROME_NO_SANDBOX: "1"
+        run: npm run parity -- run --a tree:. --b tree:. --out "$RUNNER_TEMP/parity" --no-timing-gate
+
+      - if: failure() && matrix.group != 'theme'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: parity-cdp-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/parity
+          if-no-files-found: ignore
 
   # The browser extension (docs/browser-extension.md): build the three browser
   # targets and their store zips, lint the Firefox build and smoke it in Firefox.
@@ -253,15 +307,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with: { node-version: 22, cache: npm }
       - run: npm ci
       - run: npm run ext:zip
       - run: npm run ext:lint:firefox
       - run: npm run e2e:firefox-smoke
         env: { CI: "true" }
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with: { name: worca-extension-zips, path: extension/dist/*.zip }
 
   # The Playwright E2E runs in the SAME image that renders the Linux baselines (e2e:extension:update-linux), so
@@ -273,17 +327,18 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     container:
-      image: mcr.microsoft.com/playwright:v1.56.0-noble   # == devDependencies["@playwright/test"] (pinned by a test)
+      # == devDependencies["@playwright/test"], by tag and digest (pinned by a test; move both together on a bump).
+      image: mcr.microsoft.com/playwright:v1.64.1-noble@sha256:2f05f8a734509a7b3f26a912639488ee08f58a7b292d14d62271bcff9038768f
       options: --ipc=host
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with: { node-version: 22, cache: npm }
       - run: npm ci
       - run: npm run e2e:extension
         env: { HOME: /root }
       - if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with: { name: extension-playwright-report, path: e2e/extension/playwright-report }
 
   # The container image (docs/docker.md): build it from this checkout's
@@ -296,12 +351,12 @@ jobs:
   docker:
     name: container image
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
           cache: "npm"
@@ -310,7 +365,7 @@ jobs:
         run: npm ci
 
       - name: Lint Dockerfile
-        uses: hadolint/hadolint-action@v3.5.0
+        uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387 # v3.5.0
         with:
           dockerfile: docker/Dockerfile
 
@@ -336,10 +391,10 @@ jobs:
           done
           echo "apt_refresh=$apt_refresh" | tee -a "$GITHUB_OUTPUT"
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Build image (slim, amd64)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: docker/Dockerfile
@@ -361,7 +416,7 @@ jobs:
       # fix and arrive with the weekly rebuild's newer base, so they are reported
       # (next step) but do not fail the PR.
       - name: Scan OS layer
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: ghcr.io/sinishadjukic/worca:ci
           scan-type: image
@@ -372,7 +427,7 @@ jobs:
           trivyignores: docker/.trivyignore
 
       - name: Report library findings (non-blocking)
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: ghcr.io/sinishadjukic/worca:ci
           scan-type: image

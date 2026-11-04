@@ -1,11 +1,11 @@
 // test/ui-history-routing.test.mjs
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
@@ -22,7 +22,6 @@ const trackDom = useDomRelease(afterEach);
 // Each test gets a fresh DOM + a fresh module import (cache-busted) so module
 // top-level state can't leak between cases.
 
-const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 
 const PROJECT = '/tmp/proj';
@@ -31,7 +30,7 @@ const PROJECT = '/tmp/proj';
 // with one change: `url` is a parameter so a deep-link case can boot straight
 // onto a detail hash.
 async function boot({ fetchHandler, url = 'http://localhost:4317/' } = {}) {
-  const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url }));
+  const dom = trackDom(new JSDOM(readIndexHtml(), { url }));
   const { window } = dom;
 
   // jsdom doesn't implement scrollIntoView; the viewer modal calls it on open.
@@ -180,7 +179,7 @@ test('#history/<key>/<id> opens the detail screen and fetches the keyed detail U
   assert.equal(window.document.querySelector('#hist-detail .hd-title').textContent, ROW.title);
 });
 
-test('back/the Runs crumb/Escape: side by side keeps the saved run, the slide layout returns to the list', async () => {
+test('back/Back button/Escape: side by side keeps the saved run, the slide layout returns to the list', async () => {
   const ctx = await boot({ fetchHandler: handler });
   // Each row starts side by side on a freshly opened saved run. Reopening right after a
   // slide-out is safe: its 600ms fallback clears the screen only while no run is open.
@@ -205,14 +204,13 @@ test('back/the Runs crumb/Escape: side by side keeps the saved run, the slide la
       // jsdom never fires `transitionend`, so the screen is emptied only by the 600ms
       // fallback timer.
     } },
-    { name: 'the top bar\'s Runs crumb returns to the list in both layouts', run: async () => {
+    { name: 'the Back button returns to the list in both layouts', run: async () => {
       split(ctx.window);
       let shell = await openDetail(ctx);
-      assert.equal(ctx.window.document.querySelector('#hist-detail .hd-back'), null, 'no Back in the page');
-      const back = ctx.window.document.querySelector('#topnav-crumbs .nav-trail a[data-crumb="runs"]');
-      assert.ok(back, 'the top bar carries the Runs crumb');
+      const back = ctx.window.document.querySelector('#hist-detail .hd-back');
+      assert.ok(back, 'the detail header carries a Back button');
 
-      // It asks for the list itself (backToRunsList), never the remembered run.
+      // Slice 2: split shows Back too; it asks for the list itself (goRunsList), never the remembered run.
       back.dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
       await settle(ctx.window);
       assert.equal(ctx.window.location.hash.replace(/^#/, ''), 'runs');
@@ -220,7 +218,7 @@ test('back/the Runs crumb/Escape: side by side keeps the saved run, the slide la
 
       slide(ctx.window);
       shell = await openDetail(ctx);
-      ctx.window.document.querySelector('#topnav-crumbs a.nav-up')
+      ctx.window.document.querySelector('#hist-detail .hd-back')
         .dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
       await settle(ctx.window);
       assert.equal(ctx.window.location.hash.replace(/^#/, ''), 'runs');
@@ -287,7 +285,7 @@ test('Escape is swallowed while ANY pop-up is up, not only the ones a list named
   ]);
 });
 
-test('unknown id renders the detail error state under the trail Runs, with no tab strip and a working up link', async () => {
+test('unknown id renders the detail error state with a working Back', async () => {
   const missing = (url) => {
     if (url.endsWith('/api/history/pr')) return ok({ ok: true });
     if (url.endsWith('/api/history')) return ok({ pipelines: [], ghAvailable: false });
@@ -305,12 +303,9 @@ test('unknown id renders the detail error state under the trail Runs, with no ta
   assert.equal(err.hidden, false, 'the error slot is revealed');
   assert.match(err.textContent, /Could not load run/);
 
-  assert.equal(window.document.querySelector('#hist-detail .ph-tabs [role="tab"]'), null, 'no tabs are built');
-  assert.equal(window.document.querySelector('#hist-detail .hd-back'), null);
-  assert.deepEqual([...window.document.querySelectorAll('#topnav-crumbs .nav-trail a')].map((a) => a.textContent), ['Runs']);
-  assert.equal(window.location.hash, `#history/${KEY}/nope1234`, 'the address stays as typed');
+  // Back is shown in the slide layout only (side by side the list is in view).
   slide(window);
-  window.document.querySelector('#topnav-crumbs a.nav-up').dispatchEvent(new window.Event('click', { bubbles: true }));
+  window.document.querySelector('#hist-detail .hd-back').dispatchEvent(new window.Event('click', { bubbles: true }));
   await settle(window);
   assert.equal(window.location.hash.replace(/^#/, ''), 'runs');
   assert.equal(window.document.querySelector('#hist-shell').classList.contains('detail-open'), false);

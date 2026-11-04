@@ -22,17 +22,18 @@ import { engineLabel } from '../shared/engine-switch.mjs';
 import { normaliseTags } from '../shared/run-tags.mjs';
 import { connectionOf, harnessesOf, runsOn, harnessesLabel, effortsOn } from '../shared/connections.mjs';
 import { bridgeBaseUrl, bridgeSecret } from './bridge/server.mjs';
-import { listGlobalModels, addGlobalModel, removeGlobalModel, hideBuiltinModels, readSettings, memoryDefragModel, setMemoryDefragModel } from './settings.mjs';
+import { listGlobalModels, addGlobalModel, removeGlobalModel, hideBuiltinModels, readSettings, memoryDefragModel, setMemoryDefragModel, modelRolesSetting } from './settings.mjs';
 /** Whether the developer stored the hide-built-ins flag (a team default applies only when not). */
 const readSettingsHideStored = () => { const s = readSettings(); return typeof s.hideBuiltinModels === 'boolean' || s.hideBuiltinModelsChosen === true; };
 import { listPluginModels, allPluginModels, flattenPluginModelEnv } from './plugin-models.mjs';
 import { brokerEnabled } from './broker-client.mjs';
 // Team policy defaults (team-policy design §6, §8): read from the discovery CACHE only (a leaf module).
-import { policyCatalogModels, teamDefault } from './policy/cache.mjs';
+import { policyCatalogModels, teamDefault, cachedFieldsFor } from './policy/cache.mjs';
 import { PREDEFINED_LIST_PRICES, CODEX_PRICES, codexCachedRate } from './list-prices.mjs';
 import { validateNightPatch } from './night/config.mjs';
 import { normalizeProjectActions, EMPTY_PROJECT_ACTIONS } from './actions/model.mjs';
 import { setCascadeModelOwnerReader, resolveSetting } from './settings-cascade.mjs';
+import { resolveRoleModel, roleOf, projectRoles, setRoleModelOwnerReader } from './model-roles.mjs';
 
 /**
  * Recompute the agent step list FRESH from the layered registry (repo agents/ +
@@ -573,7 +574,10 @@ export function resolveModelCost(modelId, cliCostUsd, usage, costCfg = undefined
 // APPROXIMATION ONLY: it feeds the chat footer's live "≈" estimate while a turn
 // streams (ask/events.mjs `estimatedCostUsd`). The CLI's result.total_cost_usd,
 // re-priced by resolveModelCost, stays the ONLY figure any message row, thread
-// total, ledger or budget ever books — nothing here is read by those paths.
+// total, ledger or budget ever books. The one ledger path that reads these rates is a
+// session turn (session groups, session-cost.mjs): it only DIVIDES the CLI's own
+// figure between the step and the main agent at these list rates (listCostRates), and
+// prices a turn cut before its result as an estimate (C9).
 // Ids missing here get no estimate (null), which is the pre-existing behaviour;
 // `[1m]` twins and dated ids resolve to their base row (the long-context premium
 // is not modelled). cacheWrite = 1.25× input (5-minute TTL), cacheWrite1h = 2×
@@ -598,6 +602,15 @@ export function liveCostRates(modelId) {
   try { cfg = modelCostConfig(id); } catch { cfg = null; }
   if (cfg && cfg.free === true) return FREE_RATES;
   if (cfg && cfg.perMtok && typeof cfg.perMtok === 'object') return cfg.perMtok;
+  return listCostRates(id);
+}
+
+/** The built-in list price of `modelId` ([1m] twins and dated ids at their base row), IGNORING any operator override:
+ *  the rates the CLI's own figure is priced at. A session turn's split takes the main agent's share out of that figure
+ *  at these rates, then re-prices each part with its override (session groups, Task 42). Null when no table knows it. */
+export function listCostRates(modelId) {
+  const id = typeof modelId === 'string' ? modelId.trim() : '';
+  if (!id) return null;
   const base = id.toLowerCase().replace(/\[1m\]$/, '').replace(/-\d{8}$/, '');
   if (PREDEFINED_LIST_PRICES[base]) return PREDEFINED_LIST_PRICES[base];
   const cx = CODEX_PRICES[id.toLowerCase()];
@@ -787,6 +800,8 @@ export function engineOfModel(modelId, { projectDir = null } = {}) {
 
 // The cascade drops a slot pick its engine cannot run (settings-cascade.mjs pairCheck): it reads the harness list.
 setCascadeModelOwnerReader((id, { projectDir = null } = {}) => enginesOfModel(id, { projectDir }));
+// Roles check their model with the same reader (a role on a model a failed import never created falls back, D3).
+setRoleModelOwnerReader((id) => enginesOfModel(id));
 
 /** Why a run-level model cannot run on `engine` (no harness of its connection is that engine), else null. */
 export function foreignRunModel(model, engine, projectDir = null) {
@@ -814,16 +829,20 @@ export function modelForEngine(modelId, engine = 'claude', { projectDir = null }
   return modelRunsOn(modelId, engine, { projectDir }) === false ? undefined : modelId;
 }
 
-export async function assertSlotModels(items, { projectDir = '' } = {}) {
+export async function assertSlotModels(items, { projectDir = '', pending = [] } = {}) {
   const list = (Array.isArray(items) ? items : []).filter((item) => item?.value?.model);
   if (!list.length) return;
   const models = await listModels(projectDir || '');
   for (const { id, engine, value } of list) {
     const bad = (message) => Object.assign(new Error(`${id}: ${message}`), { status: 400 });
-    const hit = models.find((model) => model?.id?.toLowerCase() === value.model.toLowerCase());
+    const lc = value.model.toLowerCase();
+    // `pending`: catalog rows a setup apply is about to import ({id, harnesses}); a slot may name one (setup D20).
+    const hit = models.find((model) => model?.id?.toLowerCase() === lc)
+      || (Array.isArray(pending) ? pending.find((p) => p?.id?.toLowerCase() === lc) : null);
     if (!hit) throw bad(`unknown model "${value.model}" — add it to the catalog first`);
     if (!runsOn(hit, engine)) throw bad(`"${hit.id}" runs on ${harnessesLabel(hit)} — this slot picks a model ${engineLabel(engine)} can run`);
-    if (value.effort && !effortsOn(hit, engine).includes(value.effort)) throw bad(`${hit.id} does not offer effort "${value.effort}" on ${engineLabel(engine)}`);
+    // A pending row has no efforts yet; only a catalog row is checked (role efforts never reach here, A7).
+    if (value.effort && models.includes(hit) && !effortsOn(hit, engine).includes(value.effort)) throw bad(`${hit.id} does not offer effort "${value.effort}" on ${engineLabel(engine)}`);
   }
 }
 
@@ -843,15 +862,51 @@ export function stepSlotDefaults(engine = 'claude', { projectDir = null, workspa
   }
   return out;
 }
+/**
+ * D15: the model roles for runs on `projectDir`, the person's own (settings.json) layered with the project's team
+ * `models.roles`. Reads only. preflight is imported lazily: only a project with team roles pays for the auth probe,
+ * and its state is kept for ROLE_AUTH_TTL_MS so one run's step and graph resolution probe once.
+ */
+export const ROLE_AUTH_TTL_MS = 60_000;
+let roleAuthMemo = null;   // { state, at }
+async function roleClaudeAuth(now = Date.now()) {
+  if (roleAuthMemo && now - roleAuthMemo.at < ROLE_AUTH_TTL_MS) return roleAuthMemo.state;
+  const state = (await import('./preflight.mjs').then((m) => m.probeClaudeAuth()).catch(() => ({ state: 'unknown' })))?.state || 'unknown';
+  roleAuthMemo = { state, at: now };
+  return state;
+}
+/** Test seam: forget the memoised auth state (qa-2-4). */
+export function _resetRoleAuthForTests() { roleAuthMemo = null; }
+export async function projectRolesFor(engine, projectDir, deps = {}) {
+  const user = deps.user ?? modelRolesSetting();
+  let team = deps.team !== undefined ? deps.team : (projectDir ? cachedFieldsFor(projectDir)['models.roles'] || null : null);
+  if (!team) return { roles: user, unmapped: [] };
+  // T8/T9: the policy home's roles pass the team setup reader's check, like a file. team-file.mjs is imported lazily
+  // so config.mjs gains no static edge to it.
+  const { checkTeamSetup } = await import('./setup/team-file.mjs');
+  const checked = checkTeamSetup({ schema: 1, fields: { 'models.roles': team } });
+  if (!checked.ok || !checked.doc.fields['models.roles']) {
+    (deps.log ?? console.warn)(`[policy] models.roles for ${projectDir || 'this run'} not applied: ${checked.ok ? 'the value is not valid' : checked.error}`);
+    return { roles: user, unmapped: [] };
+  }
+  team = checked.doc.fields['models.roles'];
+  const catalog = deps.catalog ?? await listModels(projectDir);
+  const claudeAuth = deps.claudeAuth ?? await roleClaudeAuth();
+  return projectRoles(engine, { user, team, catalog, claudeAuth });
+}
 export async function resolveStepModels(projectDir, fallbackModel, engine = 'claude') {
   const eng = MODEL_ENGINES.includes(engine) ? engine : 'claude'; const cfg = readRaw(projectDir);
   const slots = stepSlotDefaults(eng, { projectDir });
   const fallback = modelForEngine(fallbackModel || undefined, eng, { projectDir });
+  const { roles } = await projectRolesFor(eng, projectDir);
   const out = {};
-  for (const { key } of agentSteps()) {
+  for (const { key, label } of agentSteps()) {
     const own = eng === 'claude' ? (cfg.steps[key] || {}) : {};
     const sel = own.model || own.effort ? own : (slots[key] || {});
-    out[key] = { model: sel.model || fallback || undefined, effort: sel.effort || undefined };
+    // Model roles (D3, D15): after the slot's own value and the run's model, before "no --model"; team roles included.
+    const role = !sel.model && !sel.effort && !fallback ? resolveRoleModel(eng, roleOf(`steps.${key}`, { name: label }), { roles }) : null;
+    const roleModel = role ? modelForEngine(role.model, eng, { projectDir }) : undefined;
+    out[key] = { model: sel.model || fallback || roleModel || undefined, effort: sel.effort || (roleModel ? role.effort : undefined) };
   }
   return out;
 }

@@ -2,9 +2,9 @@
 // run the same function over every real view.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { auditButtons, auditSizes, auditStray, auditSurface, auditType, BUTTON_SPEC, SIZE_SPEC, STRAY_SPEC, SURFACE_SPEC, TYPE_SPEC } from '../tools/button-audit.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
 const OK = { borderTopLeftRadius: '6px', borderTopRightRadius: '6px', borderBottomRightRadius: '6px', borderBottomLeftRadius: '6px',
   backgroundImage: 'none', boxShadow: 'none' };
@@ -129,7 +129,7 @@ test('auditSurface: the passing fixture returns nothing', () => {
 // Static markup, without layout: every button in index.html, including the ones inside <template> (cloned at runtime,
 // and invisible to querySelectorAll on the document), is the one component or a D10 control.
 test('every button in ui/public/index.html is .btn or a control (D20, known bug 4)', () => {
-  const html = readFileSync(new URL('../ui/public/index.html', import.meta.url), 'utf8');
+  const html = readIndexHtml();
   const doc = new JSDOM(html).window.document;
   const roots = [];
   const collect = (root) => { roots.push(root); for (const t of root.querySelectorAll('template')) collect(t.content); };

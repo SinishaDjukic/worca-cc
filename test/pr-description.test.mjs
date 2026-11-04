@@ -54,6 +54,14 @@ test('prDescriptionSystemPrompt: GitHub keeps the prompt; Azure DevOps names its
   assert.match(azure, /## Summary/);
 });
 
+test('prDescriptionSystemPrompt: Bitbucket names its host and plain markdown, never GitHub', () => {
+  const bb = prDescriptionSystemPrompt('bitbucket');
+  assert.match(bb, /a Bitbucket pull request/);
+  assert.match(bb, /plain markdown/);
+  assert.doesNotMatch(bb, /GitHub/);
+  assert.match(bb, /## Summary/);
+});
+
 test('buildPrDescriptionPrompt: a patch above the cap keeps hunk headers only; a long prompt is capped', () => {
   const big = ['diff --git a/a b/a', '--- a/a', '+++ b/a', '@@ -1 +1 @@', `+${'x'.repeat(70_000)}`].join('\n');
   const p = buildPrDescriptionPrompt({ title: 't', prompt: 'p'.repeat(20_000), patch: big, results: null, reviews: [] });

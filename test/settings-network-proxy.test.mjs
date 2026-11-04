@@ -1,11 +1,13 @@
 // test/settings-network-proxy.test.mjs — Settings › Network proxy (settings.json networkProxy,
-// corporateProxy flag): the setter that PUT /api/proxy/settings uses.
+// networkProxy.enabled and its migration from the old Labs flag): the setter that PUT /api/proxy/settings uses.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
+import { writeFileSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { NETWORK_PROXY_AUTH, networkProxySettings, setNetworkProxy, assertNetworkProxyInput, readSettings, previewNetworkProxy, mergeNetworkProxy } from '../src/core/settings.mjs';
+import { NETWORK_PROXY_AUTH, networkProxySettings, setNetworkProxy, assertNetworkProxyInput, readSettings, previewNetworkProxy, mergeNetworkProxy,
+  migrateLegacyProxyFlag, migrateCorporateProxyFlag, networkProxyEnabled, settingsFile, watchSettingsFile, readSettingsStrict } from '../src/core/settings.mjs';
 import { AUTH_MODES, fixedPortOf } from '../src/core/upstream-proxy.mjs';
 
 let home; const prev = {};
@@ -73,4 +75,64 @@ test('previewNetworkProxy: same validation and merge as setNetworkProxy, never w
   assert.throws(() => previewNetworkProxy({ fixedPort: 80 }), /fixedPort must be a port from 1024 to 65535/);
   assert.deepEqual(previewNetworkProxy(null), {});
   assert.deepEqual(mergeNetworkProxy({ auth: 'ntlm' }, { auth: '' }), {});
+});
+
+test('AC-2.1: flags.corporateProxy true becomes networkProxy.enabled true and the flag key goes', async () => {
+  mkdirSync(join(home, '.worca-cc'), { recursive: true });
+  writeFileSync(settingsFile(), JSON.stringify({ flags: { corporateProxy: true, smartRunNaming: true }, networkProxy: { upstream: 'http://proxy.acme.example:8080' } }));
+  assert.equal(await migrateCorporateProxyFlag(), true);
+  const s = JSON.parse(readFileSync(settingsFile(), 'utf8'));
+  assert.deepEqual(s.flags, { smartRunNaming: true });
+  assert.deepEqual(s.networkProxy, { upstream: 'http://proxy.acme.example:8080', enabled: true });
+  assert.equal(networkProxyEnabled(s), true);
+  assert.equal(await migrateCorporateProxyFlag(), false, 'a second start changes nothing');
+  await setNetworkProxy(null);
+});
+
+test('AC-2.1: no flag, or the flag false, loads with the proxy off; a false flag key is dropped', () => {
+  assert.deepEqual(migrateLegacyProxyFlag({ networkProxy: { upstream: 'http://p:1' } }), { changed: false, settings: { networkProxy: { upstream: 'http://p:1' } } });
+  const r = migrateLegacyProxyFlag({ flags: { corporateProxy: false } });
+  assert.equal(r.changed, true);
+  assert.deepEqual(r.settings, {});
+  assert.equal(networkProxyEnabled({ networkProxy: { upstream: 'http://p:1' } }), false);
+  assert.equal(networkProxyEnabled({}), false);
+});
+
+test('an explicit networkProxy.enabled false wins over a leftover flag; an unwritable home still reads the flag', () => {
+  assert.deepEqual(migrateLegacyProxyFlag({ flags: { corporateProxy: true }, networkProxy: { enabled: false } }).settings, { networkProxy: { enabled: false } });
+  assert.equal(networkProxyEnabled({ flags: { corporateProxy: true } }), true);
+});
+
+test('networkProxy.enabled: a boolean only; false is stored, null drops it', async () => {
+  await setNetworkProxy(null);
+  assert.throws(() => assertNetworkProxyInput({ enabled: 'yes' }), /networkProxy\.enabled must be true or false/);
+  assert.deepEqual(await setNetworkProxy({ enabled: true, upstream: 'p.acme.example:3128' }), { enabled: true, upstream: 'http://p.acme.example:3128' });
+  assert.deepEqual(await setNetworkProxy({ enabled: false }), { enabled: false, upstream: 'http://p.acme.example:3128' });
+  assert.deepEqual(await setNetworkProxy({ enabled: null }), { upstream: 'http://p.acme.example:3128' });
+  await setNetworkProxy(null);
+});
+
+test('watchSettingsFile: a write is reported within one poll; nothing fires without a change', async () => {
+  let n = 0;
+  const stop = watchSettingsFile(() => { n += 1; }, { intervalMs: 50 });
+  try {
+    await new Promise((r) => setTimeout(r, 150));
+    assert.equal(n, 0);
+    await setNetworkProxy({ upstream: 'p.acme.example:1' });
+    const t0 = Date.now();
+    while (n === 0 && Date.now() - t0 < 2000) await new Promise((r) => setTimeout(r, 20));
+    assert.equal(n, 1);
+  } finally { stop(); await setNetworkProxy(null); }
+});
+
+test('readSettingsStrict: null for a missing file or a file that is not a JSON object', () => {
+  rmSync(settingsFile(), { force: true });
+  assert.equal(readSettingsStrict(), null);
+  writeFileSync(settingsFile(), '{not json');
+  assert.equal(readSettingsStrict(), null);
+  writeFileSync(settingsFile(), '[]');
+  assert.equal(readSettingsStrict(), null);
+  writeFileSync(settingsFile(), '{"networkProxy":{"enabled":true}}');
+  assert.deepEqual(readSettingsStrict(), { networkProxy: { enabled: true } });
+  rmSync(settingsFile(), { force: true });
 });

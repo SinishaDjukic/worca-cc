@@ -5,8 +5,9 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { sidebarCss, shadowCss, hasRuleFor } from '../tools/extension-css.mjs';
 import { SIDEBAR_CLASSES } from '../extension/src/sidebar/sidebar-view.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
-const style = readFileSync('ui/public/style.css', 'utf8');
+const style = readStyleCss();
 test('every class the sidebar markup uses has at least one rule in the generated sidebar CSS', () => {
   const css = sidebarCss(style, readFileSync('extension/src/sidebar/sidebar.css', 'utf8'));
   for (const c of SIDEBAR_CLASSES) assert.ok(hasRuleFor(css, c), c);

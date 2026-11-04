@@ -4,13 +4,14 @@
 // and Add skill; plus the booted app's deep link.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { parseMcpParam, mcpRoute, MCP_SKILLS_ROUTE, createMcpView, skillCountsText, SKILL_HOOKS_TEXT } from '../ui/public/mcp-view.mjs';
 import * as texts from '../src/core/skills-registry/texts.mjs';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
@@ -220,7 +221,7 @@ test('the counts line: files only when known, singular and plural', () => {
 });
 
 test('the sk- CSS is layout on theme tokens: no left-edge accent line, no literal colour (light and dark both hold)', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   const start = css.indexOf('/* Connectors › Skills');
   assert.ok(start > 0, 'the sk- block is in style.css');
   const block = css.slice(start, css.indexOf('\n\n', start));
@@ -235,7 +236,7 @@ test('the sk- CSS is layout on theme tokens: no left-edge accent line, no litera
 });
 
 // ── the booted app ───────────────────────────────────────────────────────────
-const html = readFileSync(fileURLToPath(new URL('../ui/public/index.html', import.meta.url)), 'utf8');
+const html = readIndexHtml();
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 class WSStub { constructor() { this.readyState = 1; WSStub.last = this; this._l = {}; } send() {} close() {}
   addEventListener(t, fn) { (this._l[t] = this._l[t] || []).push(fn); } _open() { (this._l.open || []).forEach((fn) => fn({})); } }

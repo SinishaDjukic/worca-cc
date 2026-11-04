@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { makePanel } from './helpers/ask-panel-harness.mjs';
 import { applyFlags } from '../ui/public/flags.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const NOW = new Date(2026, 9, 25, 12, 0, 0).getTime();
 const iso = (msAgo) => new Date(NOW - msAgo).toISOString();
@@ -10,7 +11,8 @@ const DAY = 86400e3;
 const T = (id, o = {}) => ({ id, title: `Chat ${id}`, createdAt: iso(30 * DAY), updatedAt: iso(3600e3), totals: { costUsd: 0.4 },
   scope: null, inFlight: false, waiting: false, tracking: false, trackingRuns: 0, commands: 0, archived: false, ...o });
 const LIST = [T('ask_0000000a', { pinnedAt: iso(20 * DAY), updatedAt: iso(20 * DAY) }), T('ask_00000001', { inFlight: true }), T('ask_00000002'),
-  ...Array.from({ length: 14 }, (_, i) => T(`ask_1000000${i.toString(16)}`, { updatedAt: iso((i + 1) * DAY) }))];
+  // 1–10 days ago fill Yesterday, Previous 7 days and Previous 30 days; the last 4 (40+ days) are Older.
+  ...Array.from({ length: 14 }, (_, i) => T(`ask_1000000${i.toString(16)}`, { updatedAt: iso((i < 10 ? i + 1 : i + 30) * DAY) }))];
 // The message row shape of test/ask-panel-page.test.mjs:13.
 const msg = (threadId) => ({ id: 'askm_u0000001', threadId, seq: 1, role: 'user', text: 'hi', blocks: [], status: null, reason: null,
   model: null, effort: null, usage: null, costUsd: null, durationMs: null, createdAt: iso(0) });
@@ -31,6 +33,9 @@ function api(rec, { list = LIST, failList = false, cursor = null, totals = null 
     if (url.startsWith('/api/ask/groups')) {
       const b = opts.body ? JSON.parse(opts.body) : undefined;
       rec.groupCalls.push(b === undefined ? [m, url] : [m, url, b]);
+      // Add to group: a test's onGroupCall moves the chats in its list (the next GET reads them); the answer carries Undo.
+      const out = rec.onGroupCall ? rec.onGroupCall(m, url, b) : undefined;
+      if (out) return { ok: true, status: 200, json: async () => out };
       return { ok: true, status: 200, json: async () => ({ group: { id: 'askg_00000009', name: b && b.name } }) };
     }
     if (url.startsWith('/api/ask/threads?')) {
@@ -50,7 +55,7 @@ function api(rec, { list = LIST, failList = false, cursor = null, totals = null 
   };
 }
 async function bootOn(opts = {}) {
-  const rec = { calls: [], patches: [], groupCalls: [], groups: opts.groups || [] };
+  const rec = { calls: [], patches: [], groupCalls: [], groups: opts.groups || [], onGroupCall: opts.onGroupCall || null };
   const ctx = makePanel({ innerWidth: 1600, now: () => NOW, platform: 'MacIntel', fetchHandler: api(rec, opts), deps: opts.deps,
     ...(opts.confirm ? { confirm: opts.confirm } : {}) });
   applyFlags({ ...(opts.flags || {}) }, ctx.doc);
@@ -63,13 +68,27 @@ const key = (doc, target, init) => target.dispatchEvent(new doc.defaultView.Keyb
 const toastTitles = (doc) => [...doc.querySelectorAll('.toast .tt')].map((n) => n.textContent);
 const listGets = (rec) => rec.calls.filter((c) => c.startsWith('GET /api/ask/threads?'));
 
-test('head is Chats + View; Pinned · Today · Recent · Older; Recent holds 10; no search, labelled New chat or trash', async () => {
+test('head is Chats + View; Pinned, then the Runs day sections; no search, labelled New chat or trash', async () => {
   const { col } = await bootOn();
   assert.deepEqual([...col.querySelector('.runs-head').children].map((n) => n.textContent.trim()), ['Chats', 'View']);
-  assert.deepEqual([...col.querySelectorAll('.runs-sec-head .runs-sec-title')].map((n) => n.textContent), ['Pinned', 'Today', 'Recent', 'Older']);
-  assert.equal(col.querySelectorAll('[data-section="recent"] .runs-item').length, 10);
+  assert.deepEqual([...col.querySelectorAll('.runs-sec-head .runs-sec-title')].map((n) => n.textContent),
+    ['Pinned', 'Today', 'Yesterday', 'Previous 7 days', 'Previous 30 days', 'Older']);
+  assert.deepEqual(['today', 'yesterday', 'week', 'month'].map((id) => col.querySelectorAll(`[data-section="${id}"] .runs-item`).length), [2, 1, 6, 3]);
   assert.equal(col.querySelector('[data-section="older"] .runs-sec-head').getAttribute('aria-expanded'), 'false');
   assert.equal(col.querySelectorAll('.chat-history-search-input, .chat-history-new, .ask-thread-trash').length, 0);
+});
+
+test('each row\'s state column draws what the chat did, named for assistive tech and as a tooltip', async () => {
+  const list = [T('ask_000000c1'), T('ask_000000c2', { hasWorkflowCard: true }), T('ask_000000c3', { trackedRuns: 1 }),
+    T('ask_000000c4', { startedRuns: 1, trackedRuns: 1 }), T('ask_000000c5', { waiting: true, startedRuns: 1 }),
+    T('ask_000000c6', { trackingRuns: 1, tracking: true, startedRuns: 1 })];
+  const { col } = await bootOn({ list });
+  const dot = (id) => col.querySelector(`.runs-item[data-row-key="chat:${id}"] .runs-pick .status-dot`);
+  const seen = list.map((t) => { const d = dot(t.id); return [d.dataset.symbol, d.getAttribute('aria-label'), d.title, d.classList.contains('is-pulse')]; });
+  assert.deepEqual(seen, [['ic:chat', 'Chat', 'Chat', false], ['ic:workflow', 'Proposed a workflow', 'Proposed a workflow', false],
+    ['ic:track', 'Follows a run', 'Follows a run', false], ['ic:run', 'Started a run', 'Started a run', false],
+    ['question', 'Run needs you', 'Run needs you', false], ['ic:run', 'Started a run', 'Started a run', true]]);
+  assert.ok(dot('ask_000000c6').classList.contains('is-peach'), 'Following keeps its colour');
 });
 
 test('loading, then offline with Try again; Try again re-fetches and paints the rows', async () => {
@@ -142,7 +161,7 @@ test('a busy chat: ⋯ › Archive is disabled with the reason; E toasts it; bul
 test('E on an idle row archives with Undo; Undo restores; the focus lands on the row that took its place', async () => {
   const list = LIST.filter((t) => t.id !== 'ask_00000001');
   const { doc, col, rec, ctx } = await bootOn({ list });
-  const rows = () => [...col.querySelectorAll('a.runs-row')];
+  const rows = () => [...col.querySelectorAll('[data-section="week"] a.runs-row')];   // inside one section: heads take focus too
   const second = rows()[1];
   const gone = second.dataset.rowKey.slice('chat:'.length);
   const third = rows()[2].dataset.rowKey;
@@ -162,7 +181,9 @@ test('the + after the list toggle carries data-ask-new-btn and starts a new chat
   const { ctx, doc } = await bootOn();
   const head = doc.querySelector('.chat-head');
   const plus = head.querySelector('[data-ask-new-btn]');
-  assert.equal(head.querySelectorAll('[data-ask-new-btn]').length, 1);
+  // Ask worca beside the page: the side column's own New chat (style.css shows it only there) is the head's other one.
+  assert.equal(head.querySelectorAll('[data-ask-new-btn]:not([data-ask-side-new])').length, 1);
+  assert.equal(head.querySelectorAll('[data-ask-new-btn]').length, 2);
   assert.equal(plus.previousElementSibling, head.querySelector('[data-ask-threads-btn]'));
   assert.match(plus.getAttribute('aria-label'), /^New chat /);
   assert.equal(head.querySelector('.chat-new-btn span'), null, 'no labelled New chat');
@@ -210,7 +231,7 @@ test('Chat page keys: ⌥⌘N starts a new chat through the +, ⌘\\ hides the l
 
 test('J moves to the next row and Enter opens it; exactly one Tab stop, inner controls out of the Tab order', async () => {
   const { ctx, doc, col } = await bootOn();
-  const rows = [...col.querySelectorAll('a.runs-row')];
+  const rows = [...col.querySelectorAll('[data-section="week"] a.runs-row')];   // inside one section: heads take focus too
   assert.equal([...col.querySelectorAll('a.runs-row, button.runs-sec-head')].filter((n) => n.tabIndex === 0).length, 1);
   for (const b of col.querySelectorAll('.runs-more, .runs-check')) assert.equal(b.tabIndex, -1);
   rows[0].focus();
@@ -317,7 +338,7 @@ test('ask-history-cleared: a full clear empties the column at once; a scoped cle
 
 test('the head meter is a block, start-aligned, so its ellipsis applies (a flex .btn clips both ends)', async () => {
   const { readFileSync } = await import('node:fs');
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   const rule = /\.btn\.chat-head-meter\{([^}]*)\}/.exec(css);
   assert.ok(rule, '.btn.chat-head-meter rule');
   assert.match(rule[1], /display:block;/);
@@ -337,7 +358,7 @@ test('the head meter reads "34% · $1.84 · 3 agents", opens the context popover
   assert.equal(doc.querySelectorAll('.ask-pop-ctx').length, 1);
   assert.equal(meter.getAttribute('aria-expanded'), 'true');
   assert.equal(doc.querySelector('[data-chat-page]').dataset.chats, 'on');
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   assert.ok(css.includes('.chat-page[data-chats="on"] [data-ask-meter]{display:none;}'));
 });
 
@@ -453,4 +474,146 @@ test('a group opened because a chat needed you stays open after the chat stops n
   await new Promise((r) => setTimeout(r, 300));
   await ticks(ctx);
   assert.ok(col.querySelector(`.runs-item[data-row-key="cgroup:${GID}"] .runs-members`));
+});
+
+const mclick = (doc, node, init = {}) => node.dispatchEvent(new doc.defaultView.MouseEvent('click', { bubbles: true, cancelable: true, button: 0, ...init }));
+const checkedKeys = (col) => [...col.querySelectorAll('.runs-item.is-checked')].map((n) => n.dataset.rowKey);
+const opened = (rec, from) => rec.calls.slice(from).some((c) => /^GET \/api\/ask\/threads\/ask_/.test(c));
+
+test('A11 in Chats: ⌘-click selects without opening; Shift-click adds the range; Ctrl-click toggles; Cancel drops the anchor', async () => {
+  const { col, doc, rec, ctx } = await bootOn();
+  const from = rec.calls.length;
+  assert.equal(mclick(doc, rowLink(col, 'ask_10000000'), { metaKey: true }), false, 'the browser never follows the link');
+  await ticks(ctx);
+  assert.deepEqual(checkedKeys(col), ['chat:ask_10000000']);
+  assert.ok(col.querySelector('#chats-list').classList.contains('is-selecting'));
+  assert.equal(col.querySelector('#chats-bulk').hidden, false);
+  mclick(doc, rowLink(col, 'ask_10000002'), { shiftKey: true });
+  await ticks(ctx);
+  assert.deepEqual(checkedKeys(col), ['chat:ask_10000000', 'chat:ask_10000001', 'chat:ask_10000002']);
+  mclick(doc, rowLink(col, 'ask_10000001'), { ctrlKey: true });
+  await ticks(ctx);
+  assert.deepEqual(checkedKeys(col), ['chat:ask_10000000', 'chat:ask_10000002']);
+  assert.equal(mclick(doc, rowLink(col, 'ask_10000005'), { metaKey: true, button: 1 }), true, 'a middle click is left to the browser');
+  assert.equal(opened(rec, from), false, 'no chat opened');
+  col.querySelector('#chats-bulk [data-bulk="cancel"]').click();
+  await ticks(ctx);
+  assert.deepEqual(checkedKeys(col), []);
+  mclick(doc, rowLink(col, 'ask_10000003'), { shiftKey: true });
+  await ticks(ctx);
+  assert.deepEqual(checkedKeys(col), ['chat:ask_10000003'], 'Cancel dropped the anchor: a Shift-click toggles one chat');
+});
+
+test('A11 in Chats: a touch long-press starts selecting and its click opens nothing', async () => {
+  const { col, doc, rec, ctx } = await bootOn();
+  rowLink(col, 'ask_00000002').dispatchEvent(new doc.defaultView.PointerEvent('pointerdown', { bubbles: true, pointerType: 'touch' }));
+  await new Promise((r) => setTimeout(r, 550));
+  await ticks(ctx);
+  assert.deepEqual(checkedKeys(col), ['chat:ask_00000002']);
+  const from = rec.calls.length;
+  assert.equal(mclick(doc, rowLink(col, 'ask_00000002')), false, 'the click after the press is swallowed');
+  await ticks(ctx);
+  assert.deepEqual(checkedKeys(col), ['chat:ask_00000002'], 'and does not toggle it back');
+  assert.equal(opened(rec, from), false);
+});
+
+test('A11 in Chats: ⌘-click on a topic group row selects it; the bar counts its chats', async () => {
+  const { col, doc, ctx } = await bootOn({ list: GROUPED, groups: [{ id: GID, name: 'Release prep', count: 2 }] });
+  const g = col.querySelector(`a.runs-row[data-row-key="cgroup:${GID}"]`);
+  assert.equal(mclick(doc, g, { metaKey: true }), false);
+  await ticks(ctx);
+  assert.deepEqual(checkedKeys(col), [`cgroup:${GID}`]);
+  assert.equal(col.querySelector('#chats-bulk [data-bulk="group"] .runs-bulk-c').textContent, '2');
+});
+
+test('View: Sort by and Group by are segmented rows; a segment pick repaints and keeps the menu open', async () => {
+  const { col, doc, ctx } = await bootOn({ list: GROUPED, groups: [{ id: GID, name: 'Release prep', count: 2 }] });
+  col.querySelector('#chats-view-btn').click();
+  assert.ok(doc.querySelector('.wfv-menu').classList.contains('wfv-view-menu'));
+  [...doc.querySelectorAll('.wfv-menu .wfv-seg [role="menuitemradio"]')].find((b) => b.textContent === 'Topic').click();
+  await ticks(ctx);
+  assert.ok(doc.querySelector('.wfv-menu'), 'the segment pick kept the menu open');
+  assert.deepEqual([...col.querySelectorAll('.runs-sec-head .runs-sec-title')].map((n) => n.textContent), ['Release prep', 'Ungrouped']);
+  assert.equal([...doc.querySelectorAll('.wfv-menu .wfv-menu-item')].find((b) => b.querySelector('.wfv-menu-l').textContent === 'Select')
+    .querySelector('.wfv-menu-hint').textContent, '⌘ click');
+});
+
+// ── Add to group (the shared picker, group-add.mjs): focus on the moved chat, Undo, G with a selection ──
+const pickerKey = (doc, k) => key(doc, doc.querySelector('.group-picker input.gp-search'), { key: k });
+const pickerType = (doc, v) => { const q = doc.querySelector('.group-picker input.gp-search'); q.value = v; q.dispatchEvent(new doc.defaultView.Event('input', { bubbles: true })); };
+
+test('Add to group: a pick from ⋯ lands the focus on the moved chat, inside its opened group, never on the next row', async () => {
+  const list = [...GROUPED];
+  const groups = [{ id: GID, name: 'Release prep', nameSource: 'user', createdAt: iso(5 * DAY), count: 2 }];
+  const { col, doc, ctx } = await bootOn({ list, groups, onGroupCall: (m, url, b) => {
+    if (m !== 'POST' || !url.endsWith('/threads')) return undefined;
+    for (const id of b.threadIds) { const i = list.findIndex((t) => t.id === id); list[i] = { ...list[i], groupId: GID }; }
+    groups[0].count = 3;
+    return { group: { id: GID, name: 'Release prep' }, undo: 'undo_x' };
+  } });
+  assert.equal(col.querySelector(`.runs-item[data-row-key="cgroup:${GID}"] .runs-members`), null, 'the group starts folded');
+  const keys = [...col.querySelectorAll('a.runs-row')].map((a) => a.dataset.rowKey);
+  const next = keys[keys.indexOf('chat:ask_00000002') + 1];
+  col.querySelector('.runs-item[data-row-key="chat:ask_00000002"] .runs-more').click();
+  [...doc.querySelectorAll('.wfv-menu [role="menuitem"]')].find((b) => b.querySelector('.wfv-menu-l').textContent === 'Add to group…').click();
+  pickerKey(doc, 'ArrowDown');   // New group…
+  pickerKey(doc, 'ArrowDown');   // Release prep
+  pickerKey(doc, 'Enter');
+  await ticks(ctx, 8);
+  const moved = col.querySelector(`.runs-item[data-row-key="cgroup:${GID}"] .runs-members a.runs-row[data-row-key="chat:ask_00000002"]`);
+  assert.ok(moved, 'the target group is open with the moved chat');
+  assert.equal(doc.activeElement, moved);
+  assert.ok(moved.classList.contains('is-landed'));
+  assert.notEqual(doc.activeElement, rowLink(col, next.slice('chat:'.length)), 'the row that slid up keeps no focus');
+  assert.ok(toastTitles(doc).includes('Added to Release prep'));
+});
+
+test('Add to group: ⌘-click two chats, G, Create; Undo on the toast calls the undo route and restores the selection', async () => {
+  const { col, doc, rec, ctx } = await bootOn({ onGroupCall: (m, url, b) => {
+    if (url === '/api/ask/groups/undo') return { ok: true };
+    if (m === 'POST' && url === '/api/ask/groups') return { group: { id: 'askg_00000009', name: b.name }, undo: 'undo_x' };
+    return undefined;
+  } });
+  doc.documentElement.dataset.level = 'advanced';
+  for (const id of ['ask_00000002', 'ask_10000000']) { mclick(doc, rowLink(col, id), { metaKey: true }); await ticks(ctx); }
+  assert.equal(col.querySelectorAll('.runs-item.is-checked').length, 2);
+  rowLink(col, 'ask_00000002').focus();
+  key(doc, rowLink(col, 'ask_00000002'), { key: 'g' });
+  assert.ok(doc.querySelector('.group-picker'), 'G with a selection opens the picker');
+  pickerType(doc, 'Login work');
+  pickerKey(doc, 'Enter');
+  await ticks(ctx, 8);
+  assert.deepEqual(rec.groupCalls.at(-1), ['POST', '/api/ask/groups', { name: 'Login work', nameSource: 'user', threadIds: ['ask_00000002', 'ask_10000000'] }]);
+  assert.equal(col.querySelectorAll('.runs-item.is-checked').length, 0);
+  assert.ok(toastTitles(doc).includes('Added to Login work'));
+  doc.querySelector('.toast .toast-act').click();
+  await ticks(ctx, 8);
+  assert.deepEqual(rec.groupCalls.at(-1), ['POST', '/api/ask/groups/undo', { token: 'undo_x' }]);
+  assert.equal(col.querySelectorAll('.runs-item.is-checked').length, 2, 'the selection is back');
+});
+
+test('⋯ › Add to group… on a selected chat adds the whole selection', async () => {
+  const { col, doc, rec, ctx } = await bootOn();
+  doc.documentElement.dataset.level = 'advanced';
+  for (const id of ['ask_00000002', 'ask_10000000']) { mclick(doc, rowLink(col, id), { metaKey: true }); await ticks(ctx); }
+  col.querySelector('.runs-item[data-row-key="chat:ask_10000000"] .runs-more').click();
+  [...doc.querySelectorAll('.wfv-menu [role="menuitem"]')].find((b) => b.querySelector('.wfv-menu-l').textContent === 'Add to group…').click();
+  pickerType(doc, 'Pair');
+  pickerKey(doc, 'Enter');
+  await ticks(ctx, 8);
+  assert.deepEqual(rec.groupCalls.at(-1)[2].threadIds, ['ask_00000002', 'ask_10000000']);
+});
+
+test('G with a selection opens the picker for the selection, anchored at the bar\'s Group button', async () => {
+  const { col, doc, rec, ctx } = await bootOn();
+  doc.documentElement.dataset.level = 'advanced';
+  for (const id of ['ask_00000002', 'ask_10000000']) col.querySelector(`.runs-item[data-row-key="chat:${id}"] .runs-check`).click();
+  rowLink(col, 'ask_00000002').focus();
+  key(doc, rowLink(col, 'ask_00000002'), { key: 'g' });
+  assert.ok(doc.querySelector('.group-picker'));
+  assert.equal(doc.querySelector('.wfv-menu'), null);
+  pickerType(doc, 'Pair');
+  pickerKey(doc, 'Enter');
+  await ticks(ctx, 8);
+  assert.deepEqual(rec.groupCalls.at(-1)[2].threadIds, ['ask_00000002', 'ask_10000000']);
 });

@@ -1,0 +1,43 @@
+    <!-- ===== Choose a scan model ===== -->
+    <!-- Opens when a re-scan (the header's Re-scan, or the auto re-scan after a member change)
+         targets a workspace whose saved scan model is missing or no longer usable (the server
+         answers SCAN_MODEL_REQUIRED), and from the header's "Scan model" control. Mirrors the
+         create wizard's Models column: the four picks are painted by paintScanModelPickers into
+         the sm- ids, and the API accepts exactly what readScanModelPickers reads back. -->
+    <div id="scan-model-modal" class="viewer-modal confirm-modal scan-model-modal hidden" role="dialog" aria-modal="true" aria-labelledby="scan-model-title">
+      <div class="card dlg">
+        <div class="dlg-head">
+          <div class="card-head">
+            <h2 id="scan-model-title">Choose a scan model</h2>
+          </div>
+        </div>
+        <div class="dlg-body">
+          <p id="scan-model-message" class="confirm-message"></p>
+          <div class="scan-model-fields">
+            <div class="field">
+              <div class="label-row"><label for="sm-scan-model">Scan agent</label></div>
+              <div class="wiz-model-pair">
+                <select id="sm-scan-model" class="select" aria-label="Scan agent model"></select>
+                <select id="sm-scan-effort" class="select" aria-label="Scan agent effort"></select>
+              </div>
+            </div>
+            <div class="field">
+              <div class="label-row"><label for="sm-agent-model">Project agents</label></div>
+              <div class="wiz-model-pair">
+                <select id="sm-agent-model" class="select" aria-label="Project agents model"></select>
+                <select id="sm-agent-effort" class="select" aria-label="Project agents effort"></select>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="dlg-foot">
+          <div class="confirm-actions">
+            <button type="button" id="scan-model-clear" class="btn hidden">Clear saved model</button>
+            <span class="pd-spacer"></span>
+            <button type="button" id="scan-model-cancel" class="btn">Cancel</button>
+            <button type="button" id="scan-model-ok" class="btn btn-primary">Save</button>
+          </div>
+        </div>
+      </div>
+    </div>
+

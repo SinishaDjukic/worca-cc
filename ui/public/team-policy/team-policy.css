@@ -1,0 +1,300 @@
+/* ---------- Team policy (team-policy design §11, boards 1–11) ---------- */
+/* A project / workspace / home NAME inside prose (team-policy-view.mjs ref()): bold and mono, so
+   "Follows gateway" reads as a name and a word, never two words. In a hint it keeps the hint's ink. */
+.ref{font-weight:600;color:var(--ink);font-size:.96em;}
+.hint .ref,small .ref{color:var(--ink-2);}
+/* Policy origin colour: slate (.badge.slate). Amber is built-in, violet is plugin, green is user. */
+/* Projects row: the policy cell sits UNDER the team-metrics cell in the same 420px column (board 2,
+   reworked): two cells side by side squeezed both to a truncated status at every laptop width, and
+   the row's name column must not move. A grid, so the name spans both rows and the chevron stays
+   centred; the cells keep their own left divider (.tm-cell) and are separated by a hairline. */
+/* The project / workspace page's Team tab: one panel per feature, the block inside wraps
+   (the list cell it came from had to keep to one line). */
+/* Every section that stacks panels keeps the grid gap between them: cards touching read as one. */
+.pd-sec-team,.wd-sec-overview{display:flex;flex-direction:column;gap:18px;}
+.pd-team-card .card-head{display:flex;align-items:baseline;flex-wrap:wrap;gap:6px 12px;margin-bottom:12px;}
+.pd-team-card .card-head b{font-size:13px;}
+.pd-team-body .tm-cell{grid-template-rows:auto;}
+.pd-team-body .tm-cell .tm-line{grid-row:1;}
+.pd-team-body .tm-cell .tm-actions{grid-row:1;}
+.pd-team-body .tm-cell .tm-hint{grid-row:2;white-space:normal;line-height:1.45;}
+.pd-team-body .tm-cell .tm-status{white-space:normal;}
+.pd-team-body .ws-home-inner{padding-top:0;}
+.pd-team-body .ws-policy{margin-top:0;}
+.pd-team-body .ws-policy > .ws-policy-inner > .tm-label{display:none;}   /* the panel head names it */
+.pd-ov-sub.pd-ov-attn{color:var(--amber-ink);}
+/* Overview, design proposal: the path lives in the header only (one line + copy); BRANCH(ES) is a
+   stat card with the lists' status and one action; an empty RUNS card spans two columns. */
+.pd-meta .pd-path{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.pd-path-copy{flex:none;}
+/* --blue is 2.7:1 on white */
+.pd-ov-card{display:flex;flex-direction:column;}
+.pd-ov-branch .pd-ov-value{display:flex;align-items:center;gap:8px;min-width:0;}
+.pd-ov-branch .pd-ov-value .mono{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.pd-ov-branch .pd-ov-value .ws-icon{color:var(--ink-3);}
+.pd-ov-value.tone-amber{color:var(--amber-ink);}
+.pd-ov-value.tone-blue{color:var(--blue-ink-strong);}
+.pd-ov-value.tone-ok{color:var(--green-ink);}
+.pd-ov-status{display:flex;align-items:center;gap:6px;margin-top:8px;font-size:13px;font-weight:600;color:var(--ink-2);}
+.pd-ov-status:empty{display:none;}
+.pd-ov-status.tone-blue .ws-tlabel{color:var(--blue-ink-strong);}
+.pd-ov-status.tone-amber .ws-tlabel{color:var(--amber-ink);}
+.pd-ov-status.tone-ink .ws-tlabel{color:var(--ink);}
+.pd-ov-status .ws-tlabel{font-weight:600;}
+.pd-ov-status .ws-icon svg{width:16px;height:16px;}
+.pd-ov-actrow{display:flex;justify-content:flex-end;margin-top:auto;padding-top:12px;}
+.pd-ov-actrow:empty{display:none;}
+.pd-ov-act{white-space:nowrap;}
+.pd-ov-card.pd-ov-wide{grid-column:span 2;flex-direction:row;flex-wrap:wrap;align-items:center;align-content:flex-start;column-gap:16px;}
+.pd-ov-wide > .pd-ov-label{flex-basis:100%;}
+.pd-ov-wide > .pd-ov-value{flex:1 1 auto;}
+.pd-ov-wide > .pd-ov-sub{flex-basis:100%;order:3;}
+.pd-ov-wide > .pd-ov-start{order:2;margin-top:10px;}
+@media (max-width:720px){ .pd-ov-card.pd-ov-wide{grid-column:auto;} }
+.pd-ov-card[data-kind="rejected"] .pd-ov-sub,.pd-ov-card[data-kind="delegate-invalid"] .pd-ov-sub,.pd-ov-card[data-kind="unsupported"] .pd-ov-sub{color:var(--red-ink);}
+.tm-cell .tp-warn{color:var(--amber-ink);white-space:normal;line-height:1.4;}
+/* hidden-toggled flex/grid containers (style.css has no global [hidden] rule, see :324) */
+#policyLine[hidden],#tp-sync[hidden],.ws-policy[hidden],.tp-json[hidden],.tp-onbreach[hidden],.tp-require[hidden]{display:none;}
+/* Team policy page: the published document (panel) above what this machine makes of it (cards). */
+.tp-head{display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:18px;}
+.tp-head-main{min-width:0;flex:1 1 420px;}
+.tp-head-kicker{font:600 var(--fs-meta) var(--sans);color:var(--ink-3);}
+.tp-head-title{margin:6px 0 0;font-size:18px;font-weight:700;letter-spacing:-.015em;}
+.tp-facts{display:grid;grid-template-columns:96px minmax(0,1fr);gap:8px 16px;margin:16px 0 0;font-size:12px;}
+.tp-facts dt{font:600 var(--fs-meta) var(--sans);color:var(--ink-3);padding-top:2px;}
+.tp-facts dd{margin:0;color:var(--ink-2);min-width:0;overflow-wrap:anywhere;}
+.tp-facts dd code{font-size:11px;}
+.tp-head-notes{white-space:pre-wrap;}
+.tp-head-actions{display:flex;flex-direction:column;align-items:flex-end;gap:6px;text-align:right;}
+.tp-head-actions .hint{max-width:230px;}
+.tp-sec-label{margin:22px 0 12px;font:600 var(--fs-meta) var(--sans);color:var(--ink-3);}
+.tp-ov-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:18px;}
+.tp-ov-card{padding:var(--pad-card);background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);}
+.tp-ov-label{font:600 var(--fs-meta) var(--sans);color:var(--ink-3);}
+.tp-ov-value{margin-top:10px;font-size:22px;font-weight:700;letter-spacing:-.02em;color:var(--ink);overflow-wrap:anywhere;}
+.tp-ov-sub{margin-top:6px;font-size:11px;color:var(--ink-3);overflow-wrap:anywhere;}
+.tp-ov-sub.is-warn{color:var(--amber-ink);}
+/* Tabs: the History / Project detail pills, one row per page section. */
+.tp-tabs{margin:26px 0 16px;}
+.tp-tab-badge{padding:0 6px;background:var(--field);color:var(--ink-2);}
+.tp-tab.active .tp-tab-badge{background:var(--line-2);color:var(--ink);}
+.tp-sec[hidden]{display:none;}
+.tp-sec-body{display:flex;flex-direction:column;gap:18px;}
+/* Plugins tab */
+.tp-plugins-hint{display:block;margin:-8px 0 12px;}
+.tp-plugins-tbl td.tp-plugin-act{text-align:right;white-space:nowrap;}
+.tp-plugins-tbl td.tp-key small{display:block;font-weight:400;color:var(--ink-3);font-size:11px;}
+.tp-blocked-list{display:flex;flex-direction:column;gap:10px;}
+.tp-blocked-row{display:flex;align-items:center;flex-wrap:wrap;gap:10px;font-size:12px;}
+/* Catalog tab */
+/* The catalog cards' heads: the title stays one word wide, the (long) hint takes the rest. */
+.tp-cat-card .card-head{display:flex;align-items:baseline;flex-wrap:wrap;gap:4px 14px;margin-bottom:12px;}
+.tp-cat-card .card-head h2{margin:0;white-space:nowrap;}
+.tp-cat-card .card-head .hint{flex:1 1 320px;min-width:0;margin:0;}
+.tp-catalogs{display:flex;flex-direction:column;gap:18px;}   /* the two catalog cards: the panel gap */
+.tp-cat-list{display:flex;flex-direction:column;gap:12px;}
+.tp-cat-row{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:12px 0;border-bottom:1px solid var(--line);}
+.tp-cat-row:last-child{border-bottom:0;}
+.tp-cat-main{min-width:0;font-size:13px;}
+.tp-cat-main small{display:block;margin-top:4px;}
+@media (max-width:760px){
+  .tp-facts{grid-template-columns:minmax(0,1fr);gap:2px 0;}
+  .tp-facts dd{margin-bottom:10px;}
+  .tp-head-actions{align-items:flex-start;text-align:left;}
+  .tp-cat-row{flex-direction:column;}
+}
+.tp-tbl th:first-child,.tp-tbl td:first-child{padding-left:0;}
+.tp-tbl tr.tp-group td{padding:16px 0 6px;font-size:12px;color:var(--ink-2);font-weight:600;border-bottom:0;}
+.tp-tbl td.tp-key{font-weight:600;color:var(--ink);}
+.tp-tbl td.tp-key small{display:block;font-weight:400;color:var(--ink-3);font-size:11px;}
+.tp-tbl td.tp-team small{display:block;color:var(--ink-3);font-size:11px;margin-top:2px;}
+.tp-tbl .muted{color:var(--ink-3);}
+.tp-kind{display:inline-flex;padding:0 6px;}
+.tp-kind.default{background:var(--field);color:var(--ink-2);}
+.tp-kind.soft{background:var(--blue-bg);color:var(--blue-ink);}
+.tp-kind.hard{background:var(--red-bg);color:var(--red-ink);}
+.tp-eff{font-family:var(--mono);font-size:12px;}
+.tp-eff.tight{color:var(--blue-ink-strong);font-weight:600;}
+.tp-eff.loose{color:var(--ink-3);text-decoration:line-through;}
+.tp-src{font-family:var(--sans);font-size:11px;color:var(--ink-3);font-weight:400;}
+.tp-foot{margin-top:14px;}
+/* editor (board 5) */
+.tp-editor{display:flex;flex-direction:column;gap:18px;}
+.tp-head + .tp-editor{margin-top:18px;}   /* the same gap the editor keeps between its own cards */
+/* The editor's tabs: the read view's pills, then one section each (the read view's gap between cards). */
+.tp-editor > .tp-edit-tabs{padding:0 0 4px;}
+.tp-edit-sections{display:flex;flex-direction:column;}
+.tp-edit-sec{display:flex;flex-direction:column;gap:18px;}
+.tp-edit-sec[hidden]{display:none;}
+/* The catalog editor: one bordered item per set / model, its fields on a grid. */
+.tp-cat-list{display:flex;flex-direction:column;gap:12px;}
+.tp-cat-list:empty::before{content:'None yet.';color:var(--ink-3);font-size:12px;}
+.tp-cat-item{display:flex;flex-direction:column;gap:12px;padding:14px 16px;border:1px solid var(--line);border-radius:var(--r-ctrl);background:var(--surface);}
+.tp-cat-item-head{display:flex;align-items:center;gap:10px;font-size:13px;}
+.tp-cat-item-head .tp-cat-rm{margin-left:auto;}
+.tp-cat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px 14px;}
+.tp-cat-field{display:flex;flex-direction:column;gap:6px;min-width:0;}
+.tp-cat-field > label{font:600 12px var(--sans);color:var(--ink-2);}
+.tp-cat-field .input{padding:0 12px;font-size:13px;border-radius:var(--r-sm);}
+.tp-cat-flags{flex-direction:row;flex-wrap:wrap;align-items:center;gap:6px 18px;}
+.tp-cat-flags > label:first-child{flex-basis:100%;}
+.tp-cat-effort-row{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:12px;}
+.tp-env-rows{display:flex;flex-direction:column;gap:6px;}
+.tp-env-row{display:flex;align-items:center;gap:6px;}
+.tp-env-row .tp-env-key{flex:0 1 240px;}
+.tp-env-row .tp-env-val{flex:1 1 200px;min-width:0;}
+.tp-cat-env .tp-env-add,.tp-cat-card > .tp-cat-add{align-self:flex-start;margin-top:4px;}
+.tp-editor > .tp-msg:empty,.tp-editor > .tp-json[hidden]{display:none;}
+.tp-editor > .tp-msg{margin:0;}
+/* Editing: Publish sits beside Cancel editing on the header; the count and links under them. */
+.tp-head-btns{display:flex;align-items:center;gap:8px;}
+.tp-head-status{font-size:12px;color:var(--ink-3);text-align:right;}
+.tp-head-status .linkish{font-size:12px;}
+.tp-editor .card.tp-group-card,.tp-editor details.card{padding:var(--pad-card);}
+.tp-editor details.card > summary{cursor:pointer;font-size:13px;list-style:none;}
+.tp-editor details.card > summary::-webkit-details-marker{display:none;}
+/* icons: chevron, chevron-down */
+.tp-editor details.card > summary::before{content:"";display:inline-block;width:12px;height:12px;margin-right:2px;vertical-align:-1px;color:var(--ink-3);background:currentColor;mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M9.5 6l6 6-6 6'/%3E%3C/svg%3E") center/12px no-repeat;}
+.tp-editor details.card[open] > summary::before{mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9.5l6 6 6-6'/%3E%3C/svg%3E") center/12px no-repeat;}
+.tp-editor details.card > summary .hint{display:inline;margin:0 0 0 6px;}
+.tp-edit-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.15fr) auto auto;gap:8px 14px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line);}
+.tp-edit-row > .tp-key{align-self:start;}
+.tp-row-unset{display:flex;align-items:center;}
+/* The second line: under the value and the kind, never beside them, so the first line keeps its
+   shape when Soft is picked. */
+.tp-edit-row > .tp-extra{grid-column:2 / -1;display:flex;flex-wrap:wrap;align-items:center;gap:8px 16px;font-size:11px;color:var(--ink-2);}
+.tp-edit-row > .tp-extra[hidden]{display:none;}
+.tp-edit-row:last-child{border-bottom:0;}
+.tp-edit-row .tp-key{font-weight:600;font-size:13px;line-height:1.45;}
+.tp-edit-row .tp-key small{display:block;font-weight:400;color:var(--ink-3);font-size:11px;}
+.tp-edit-row .input,.tp-edit-row .select{padding:0 13px;font-size:13px;border-radius:var(--r-sm);background:var(--surface);border-color:var(--line-2);}
+.tp-edit-row .select{padding-right:36px;}
+.tp-edit-row .seg button:disabled{opacity:.4;cursor:not-allowed;}
+.tp-control{display:flex;flex-direction:column;gap:8px;min-width:0;}
+.tp-control .check-row{margin-top:2px;}
+/* The Setup tab's roles and record rows (slice 5): labels on --ink-2, a new surface. */
+.tp-role-row .tp-role-label,.tp-rec-row .tp-rec-label{min-width:170px;color:var(--ink-2);font-size:12px;}
+.tp-control .tp-role-row + .tp-role-row,.tp-control .tp-rec-row + .tp-rec-row{margin-top:6px;}
+.tp-list{display:flex;flex-wrap:wrap;gap:6px;}
+.tp-chip{display:inline-flex;align-items:center;gap:2px;padding-block:0;padding-right:0;}
+.tp-list-empty{color:var(--ink-3);font-size:12px;}
+.tp-add-row{display:flex;gap:6px;flex-wrap:wrap;}
+.tp-add-row .input{flex:1 1 120px;min-width:0;}
+/* An input with a datalist behind it: pick from what the machine knows, or type. */
+.tp-editor .tp-pick{background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'><path d='M6 9l6 6 6-6'/></svg>");background-repeat:no-repeat;background-position:right 10px center;background-size:14px;padding-right:30px;}
+.tp-editor .tp-pick::-webkit-calendar-picker-indicator{opacity:0;}
+.tp-add-row .select-wrap{flex:0 0 120px;}
+.tp-extra .tp-src{flex-basis:100%;}
+.tp-onbreach{display:inline-flex;align-items:center;gap:6px;font-size:11px;color:var(--ink-2);}
+.tp-onbreach .select-wrap{display:inline-block;width:96px;}
+.tp-onbreach .select{padding:6px 30px 6px 10px;font-size:12px;border-radius:var(--r-sm);}
+/* The pure editor's bar (team-policy-view.mjs): the page dismantles it into the header. */
+.tp-publish-bar{display:flex;align-items:center;gap:12px;}
+.tp-publish-bar .grow{flex:1;font-size:12px;color:var(--ink-2);}
+.tp-json{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);padding:14px 16px;font-size:12px;line-height:1.5;overflow-x:auto;margin:0;}
+/* The Turn on skill dialog's SKILL.md (skills registry spec §6 board 10): the text, wrapped, scrolling inside the dialog. */
+.tp-skill-md{background:var(--field);border-radius:var(--r-sm);padding:12px 14px;margin:14px 0 0;font-size:11px;line-height:1.55;white-space:pre-wrap;overflow-wrap:anywhere;max-height:260px;overflow:auto;}
+.tp-msg{white-space:pre-wrap;}
+@media (max-width:900px){ .tp-edit-row{grid-template-columns:1fr;} }
+/* workspace card line (board 6) */
+/* Workspace page › Team › Team policy: the actions row (the metrics table head's twin), then a
+   facts list with the label column the Team policy page uses. */
+.ws-policy{font-size:12px;margin-top:12px;}
+.ws-policy-inner{display:flex;flex-direction:column;gap:4px;}
+.ws-policy .tm-label{display:none;}
+.ws-policy .ws-tbl-actions{margin-left:auto;display:flex;align-items:center;flex-wrap:wrap;gap:8px;}
+.ws-policy .tp-facts{margin-top:8px;grid-template-columns:118px minmax(0,1fr);}   /* WORKSPACE RUNS fits on one line */
+.ws-policy .tp-facts dd .tm-dot{display:inline-block;vertical-align:middle;margin-right:2px;}
+.ws-policy .tp-facts dd .muted{color:var(--ink-3);}
+.ws-policy .ws-home-hint,.ws-policy .ws-policy-results{margin-top:6px;}
+/* Settings readout + chip (board 7) */
+.team-readout{display:flex;flex-direction:column;gap:6px;margin:0 0 16px;padding:12px 14px;border-radius:var(--r-sm);background:var(--field);font-size:12px;color:var(--ink-2);}
+.team-readout b{color:var(--ink);font-weight:600;}
+.team-readout-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap;}
+/* A repository slug is a name, not a label: keep its case (the badge uppercases everything else). */
+.team-readout-row .badge.blue{text-transform:none;letter-spacing:0;font-family:var(--mono);font-weight:600;}
+.team-chip{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:600;color:var(--blue-ink);background:var(--blue-bg);padding:3px 9px;border-radius:var(--r-xs);margin-left:auto;}
+.team-chip .kind{opacity:.85;}
+/* New pipeline notes line (board 8) */
+.policy-line{display:flex;flex-direction:column;gap:8px;margin:14px 0 0;padding:12px 14px;border-radius:var(--r-sm);background:var(--field);font-size:12px;color:var(--ink-2);}
+.policy-line .pl-head-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.policy-line .pl-head-row .muted{color:var(--ink-3);}
+.policy-line .pl-note{display:flex;gap:8px;align-items:flex-start;line-height:1.45;}
+.policy-line .pl-note .tm-dot{margin-top:6px;}
+.policy-line .pl-note.warn{color:var(--amber-ink);}
+/* New Pipeline › MCP servers (MCP registry §6.2): a disclosure over the run's registry copies. */
+.mcp-runs > summary{list-style:none;}
+.mcp-runs > summary::-webkit-details-marker{display:none;}
+.mcp-runs-pop{margin-top:6px;padding:6px;border:1px solid var(--line);border-radius:var(--r-ctrl);background:var(--panel);}
+.mcp-runs-set,.mcp-runs-row{display:flex;align-items:center;gap:8px;padding:5px 8px;font-size:12px;}
+.mcp-runs-set{font-weight:600;}
+.mcp-runs-row{padding-left:30px;}
+.mcp-runs-row.is-skipped{color:var(--ink-3);}
+.mcp-runs-row.is-problem .hint{color:var(--amber-ink);}
+.mcp-runs-row .hint{margin-left:auto;}
+/* team-cap pause banner (board 9) */
+/* Team metrics KPI row: the policy tiles (Off-policy, Pooled budget) make 7–8 tiles, which leave a
+   hole in the 3-column row; four columns fill two rows for eight. Back to one column when narrow. */
+.stat-row.tm-kpis:has(> .stat-tile:nth-child(7)){grid-template-columns:repeat(4,minmax(0,1fr));}
+/* Statistics with the Requirements tile: eight tiles in two rows of four (seven, flag off, stay in threes). */
+.stat-row:not(.tm-kpis):has(> .stat-tile:nth-child(8)){grid-template-columns:repeat(4,minmax(0,1fr));}
+@media (max-width:1080px){ .stat-row.tm-kpis:has(> .stat-tile:nth-child(7)), .stat-row:not(.tm-kpis):has(> .stat-tile:nth-child(8)){grid-template-columns:repeat(2,minmax(0,1fr));} }
+/* One tile style (Stats, Cost, Team metrics, Timeline): one column on a phone. */
+@media (max-width:480px){.stat-row,.stat-row.tm-kpis,.stat-row.cr-kpis,.stat-row.tm-kpis:has(> .stat-tile:nth-child(7)),.stat-row:not(.tm-kpis):has(> .stat-tile:nth-child(8)){grid-template-columns:minmax(0,1fr);}}
+.cost-banner.cb-policy{background:var(--blue-bg);color:var(--blue-ink);}
+/* The policy home inside the sentence: bold like the figures, but inline (`.cost-banner b` is the block heading). */
+.cost-banner .cb-home{font-weight:600;color:var(--ink);}
+/* History meta segment (board 10) */
+.hd-policy.st-info{color:var(--blue-ink);}
+/* Plugins page strip + checklist (boards 10, 11) */
+/* Marketplace: what the team policy asks for, as one panel of compact rows (it scales to
+   however many plugins a policy names) with the mass action in the head. */
+.pl-required-card{margin:18px 0 14px;}
+.pl-required-card .card-head{display:flex;align-items:center;flex-wrap:wrap;gap:8px 10px;margin-bottom:6px;}
+.pl-required-card .card-head b{font-size:13px;}
+.pl-required-actions{display:flex;align-items:center;gap:8px;margin-left:auto;}
+.tp-plugins-actions{display:flex;align-items:center;gap:8px;margin-left:auto;}
+.pl-required-list{display:flex;flex-direction:column;}
+.pl-required{display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--line);font-size:12px;color:var(--ink-2);}
+.pl-required:last-child{border-bottom:0;}
+.pl-required .tm-dot{flex:0 0 auto;}
+.pl-required-text{flex:1 1 auto;min-width:0;display:flex;align-items:baseline;flex-wrap:wrap;gap:2px 8px;}
+.pl-required-text b{font-weight:600;color:var(--ink);}
+.pl-required-text .hint{margin-top:0;}
+.pl-required-state{flex:0 0 auto;white-space:nowrap;}
+.pl-required-act{flex:0 0 auto;min-width:0;display:flex;justify-content:flex-end;}
+.pl-required-act:empty{display:none;}
+@media (max-width:760px){.pl-required{flex-wrap:wrap;} .pl-required-act{width:100%;}}
+.tp-setup-list{display:flex;flex-direction:column;margin-top:12px;}
+.tp-setup-row{display:flex;align-items:center;gap:12px;padding:11px 0;border-bottom:1px solid var(--line);font-size:13px;}
+.tp-setup-row:last-child{border-bottom:0;}
+.tp-setup-row .tm-dot{flex:0 0 auto;}
+.tp-setup-text{flex:1;min-width:0;}
+.tp-setup-text .hint{margin-top:2px;}
+.tp-trust-row{margin-top:16px;align-items:flex-start;}
+.tp-trust-row .switch{margin-top:2px;}
+.tp-trust-row .txt .hint{margin-top:2px;}
+/* pooled-budget tile meter (board 10): warn from 80 %, over from 100 % */
+.stat-meter .stat-meter-fill.warn{background:var(--amber-ink);}
+.stat-meter .stat-meter-fill.over{background:var(--red-ink);}
+
+/* Attribution (shared deployments only): a neutral initials circle and the detail-header
+   person chip. Deliberately NOT a status pill and never coloured per person. */
+.person-ini{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;
+  width:18px;height:18px;border-radius:50%;background:var(--slate-bg);color:var(--slate-ink);
+  border:1px solid var(--line);font:600 11px/1 var(--sans);letter-spacing:.02em;
+  vertical-align:middle;}
+.rc-meta .sched-by .person-ini{margin-right:5px;}
+.person-chip{display:inline-flex;align-items:center;gap:7px;flex:0 0 auto;max-width:280px;
+  padding:4px 11px 4px 5px;border-radius:var(--r-xs);background:var(--panel);border:1px solid var(--line);
+  color:var(--ink-2);font-size:13px;font-weight:500;}
+.person-chip .person-ini{width:22px;height:22px;font-size:11px;}
+.person-chip-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.rd-row1 .person-chip{margin-left:auto;}
+
+.hd-row2 .person-chip{margin-left:auto;}
+.hist-pill-label{margin-left:8px;font-size:12px;color:var(--ink-3);}
+.hist-pill.person .person-ini{width:16px;height:16px;font-size:11px;}
+
+/* Team metrics: an actor may be a full email (attribution) — clip it to the column, full name in the tooltip. */
+.tm-person{display:inline-block;max-width:24ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom;}

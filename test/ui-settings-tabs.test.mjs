@@ -4,20 +4,18 @@
 // left for pages of their own (test/ui-addons-pages.test.mjs).
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { fieldErrorText, edit } from './helpers/feedback.mjs';
 import { checkRows } from './helpers/rows.mjs';
-import { applyFlags } from '../ui/public/flags.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
 
-const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
-const html = readFileSync(htmlPath, 'utf8');
+const html = readIndexHtml();
 
 const GSETS = [
   { id: 'permissive', name: 'Permissive', origin: 'builtin',
@@ -349,28 +347,20 @@ test('#555 Away: a server field nightMode.maxDecisions lands on the data-field i
   assert.equal(doc.getElementById('nightModeMsg'), null, 'no grey status line');
 });
 
-test('Settings › Tags: its own tab after General at every level while runTags is on; off, #settings/tags shows General', async () => {
+test('Settings › Tags: its own tab after General at every level', async () => {
   await checkRows([
-    { name: 'flag on: #settings/tags shows the Tags pane and nothing else', run: async () => {
+    { name: '#settings/tags shows the Tags pane and nothing else', run: async () => {
       const { window } = await boot();
-      applyFlags({ runTags: true }, window.document);
       await go(window, 'settings/tags');
       assert.equal(shown(window, 'tags'), true);
       assert.equal(shown(window, 'general'), false);
       assert.equal(window.document.querySelector('#settings-tabs button[data-tab="tags"]').getAttribute('aria-pressed'), 'true');
     } },
-    { name: 'flag off: #settings/tags falls back to General', run: async () => {
-      const { window } = await boot();
-      applyFlags({ runTags: false }, window.document);
-      await go(window, 'settings/tags');
-      assert.equal(shown(window, 'general'), true);
-      assert.equal(shown(window, 'tags'), false);
-    } },
-    { name: 'the chip is a Simple-level tab gated by the flag; the card carries the flag, the pane does not', run: async () => {
+    { name: 'the chip is a Simple-level tab with no flag gate; neither is the pane', run: async () => {
       const { window } = await boot();
       const chip = window.document.querySelector('#settings-tabs button[data-tab="tags"]');
       assert.equal(chip.dataset.minLevel, 'simple');
-      assert.equal(chip.dataset.flag, 'runTags');
+      assert.equal(chip.dataset.flag, undefined);
       assert.equal(chip.previousElementSibling.dataset.tab, 'general');
       assert.equal(paneOf(window, 'tags').dataset.flag, undefined);
       assert.equal(window.document.getElementById('tag-dims-settings-card').dataset.minLevel, 'simple');

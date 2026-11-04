@@ -1,0 +1,47 @@
+        <!-- ===== VIEW: MODELS (sidebar › Add-ons; a Settings tab before that) ===== -->
+        <section class="view hidden" data-view="models">
+            <div class="topbar">
+              <div>
+                <div class="sub page-intro">The model catalogue every project can pick from; sign-ins live on the Providers page.</div>
+              </div>
+              <div class="mv-head-actions">
+                <button type="button" id="model-share-btn" class="btn" style="white-space:nowrap">Share as plugin…</button>
+                <button type="button" id="model-import-btn" class="btn" style="white-space:nowrap">Import models…</button>
+                <button type="button" id="model-create-btn" class="btn btn-primary" style="white-space:nowrap">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
+                  Add model
+                </button>
+              </div>
+            </div>
+            <!-- Models › Roles (setup-assistant-design.md D1): the model each kind of work falls back to. -->
+            <section class="card" id="model-roles-card" data-min-level="simple">
+              <div class="card-head"><div class="label-row"><h2>Roles</h2></div></div>
+              <small class="hint">Every job without a model of its own uses its role's model.</small>
+              <small class="hint err" id="modelRolesCatalogMsg" hidden>Could not load the model list. Reload the page to try again.</small>
+              <div id="model-roles-root" class="drows"></div>
+              <div class="add-project-actions engine-save-row" style="margin-top:14px"><small class="hint" id="modelRolesMsg"></small><button type="button" id="modelRolesSave" class="btn btn-primary btn-sm">Save</button></div>
+            </section>
+            <section class="card" id="engine-settings-card" data-min-level="expert">
+              <div class="card-head"><div class="label-row"><h2>Engines</h2></div></div>
+              <div id="engine-settings-root" class="drows"></div>
+              <!-- One Save per card, bottom right; the line beside it counts the unsaved changes (or says Saved.). -->
+              <div class="add-project-actions engine-save-row" style="margin-top:14px"><small class="hint" id="engineSettingsMsg"></small><button type="button" id="engineSettingsSave" class="btn btn-primary btn-sm">Save</button></div>
+            </section>
+            <p id="models-msg" class="form-msg" aria-live="polite"></p>
+            <div class="run-list" id="models-list"></div>
+        </section>
+        <!-- /view models -->
+
+        <!-- ===== VIEW: PROVIDERS (model-bridge-design.md §8.1; sidebar › Add-ons) =====
+             Split out of Models: the card is account-level setup you touch rarely, and at
+             1000+px it buried the catalog it unlocks. Expert only, like Models. -->
+        <section class="view hidden" data-view="providers">
+            <div class="topbar">
+              <div>
+                <div class="sub page-intro">Sign-ins and keys for the models Worca runs through its own bridge; add the models themselves on the Models page.</div>
+              </div>
+            </div>
+            <p id="providers-msg" class="form-msg" aria-live="polite"></p>
+            <div class="run-list" id="providers-list"></div>
+        </section>
+        <!-- /view providers -->

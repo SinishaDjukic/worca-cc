@@ -1,0 +1,79 @@
+/* ---------- Design system: shared components (docs/design-system.md) ---------- */
+/* Headings and the one-line page intro (docs/design-system.md › Type). */
+.page-title{margin:0;font:700 var(--fs-page)/var(--lh-title) var(--sans);letter-spacing:-.02em;color:var(--ink);}
+.subpage-title{margin:0;font:600 var(--fs-subpage)/var(--lh-title) var(--sans);letter-spacing:-.015em;color:var(--ink);}
+.section-title{margin:0;font:600 var(--fs-section)/var(--lh-title) var(--sans);letter-spacing:-.01em;color:var(--ink);}
+.subsection-title{margin:0;font:600 var(--fs-body)/var(--lh-body) var(--sans);color:var(--ink);}
+.page-intro,.topbar .sub{margin:4px 0 0;font-size:var(--fs-body);line-height:var(--lh-body);color:var(--ink-2);max-width:72ch;}
+
+/* One filter chip: a control (28px, 6px corner); selected is a quiet tint, never solid ink. */
+.filter-chip{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border:1px solid var(--line-2);
+  border-radius:var(--r-sm);background:transparent;color:var(--ink-2);font:500 var(--fs-meta)/1 var(--sans);white-space:nowrap;cursor:pointer;}
+.filter-chip:hover{border-color:var(--hover-outline);color:var(--ink);}
+.filter-chip:is([aria-pressed="true"],.on){background:var(--field);border-color:var(--ink);color:var(--ink);}
+.filter-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.filter-chip .n{color:var(--ink-2);font-variant-numeric:tabular-nums;}
+
+/* Divided rows: label and help left, a 240px control right; stacked under 560px of container width. */
+.drows{container:drows / inline-size;}
+.drow{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:4px 24px;padding:12px 0;border-bottom:1px solid var(--line);}
+.drow:last-child{border-bottom:0;}
+.card.drows:empty{display:none;}   /* a list card (Marketplace, Providers) is not drawn while its list is empty */
+.drow-label{grid-column:1;font:500 var(--fs-body)/var(--lh-body) var(--sans);color:var(--ink);}
+.drow-help{grid-column:1;font-size:var(--fs-meta);line-height:var(--lh-body);color:var(--ink-2);}
+.drow-control{grid-column:2;grid-row:1 / span 2;display:flex;align-items:center;gap:8px;justify-self:end;}
+.drow-control :is(.input,.select,input[type="text"],input[type="number"],select){width:240px;max-width:100%;}
+@container drows (max-width:560px){
+  .drow{grid-template-columns:minmax(0,1fr);}
+  .drow-control{grid-column:1;grid-row:auto;justify-self:stretch;}
+  .drow-control :is(.input,.select,input[type="text"],input[type="number"],select){width:100%;}
+  .drow-control > .select-wrap{flex:1 1 auto;min-width:0;}
+}
+/* A field inside a divided row: the row owns the spacing, so the field's own margins go. */
+.field.drow{margin:0;}
+.drow :is(.label-row,.hint){margin:0;}
+.drow > .label-row > label{font-weight:500;}
+/* Wide control: label and help on top, the control under them at full width (textareas, tables, path rows). */
+.drow.drow-wide{grid-template-columns:minmax(0,1fr);}
+.drow.drow-wide > .drow-control{grid-column:1;grid-row:auto;justify-self:stretch;}
+.drow.drow-wide > .drow-control :is(.input,.select,input[type="text"],input[type="number"],select,textarea){width:100%;}
+.field.drow > label{margin:0;font-weight:500;}
+.drow > .field-error{grid-column:1 / -1;}
+.drow.drow-wide > .drow-control > :is(.path-row,.act-launcher-row,#tagDimsEditor){flex:1 1 auto;min-width:0;}
+/* Rich row: block content (a schedule, a preset, a guardrail) with the same divider and padding. */
+.drow.drow-stack{display:flex;flex-direction:column;align-items:stretch;gap:4px;}
+/* Stacked (phones): a switch stays right of its label; a segmented control keeps its own width. */
+@container drows (max-width:560px){
+  .drow.switch-drow{grid-template-columns:minmax(0,1fr) auto;}
+  .drow.switch-drow > .drow-control{grid-column:2;grid-row:1 / span 2;justify-self:end;}
+  .drow-control > .seg{flex:none;}
+}
+
+/* Empty state: one quiet line, optionally followed by one quiet action button. */
+.empty-line{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;margin:0;padding:12px 0;font-size:var(--fs-body);line-height:var(--lh-body);color:var(--ink-2);}
+
+/* One table: no box, one divider per row; stacks per row under 560px, never scrolls sideways. */
+.table-wrap{container:dtable / inline-size;}
+.table{width:100%;border-collapse:collapse;font-size:var(--fs-body);}
+.table th{padding:8px 12px 8px 0;text-align:left;font:600 var(--fs-meta)/var(--lh-title) var(--sans);color:var(--ink-2);border-bottom:1px solid var(--line);white-space:nowrap;}
+.table td{padding:8px 12px 8px 0;border-bottom:1px solid var(--line);vertical-align:middle;}
+.table :is(th,td):last-child{padding-right:0;}
+.table .num{text-align:right;font-variant-numeric:tabular-nums;}
+@container dtable (max-width:560px){
+  .table thead{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);}
+  .table,.table tbody,.table tr,.table td{display:block;width:100%;}
+  .table tr{padding:8px 0;border-bottom:1px solid var(--line);}
+  .table td{display:flex;justify-content:space-between;gap:12px;padding:2px 0;border:0;}
+  .table td[data-label]::before{content:attr(data-label);color:var(--ink-2);font-size:var(--fs-meta);}
+  .table td.table-main{display:block;font-weight:500;}
+  .table td.table-main::before{content:none;}
+}
+
+/* ---------- buttons ---------- */
+.actions{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-top:22px;}
+/* One kind/state chip (spec §1.3, review B9): filled, sans 11px, weight 500, 4px corners; own rules set colour, padding and layout only.
+   :is() takes its most specific argument (0,2,0), so it wins over the chips' own rules. */
+:is(.badge,.flag-chip,.issue-sev,.artifact-kind,.tp-kind,.sk-kind,.team-chip .kind,.hd-ov-file-kind,.ask-mcard-kind,.wf-log-live,.kind-chip,.tag-chip,.ps-pill,.ask-cmd-pill,.tp-tab-badge){
+  display:inline-flex;align-items:center;height:18px;padding-top:0;padding-bottom:0;
+  border-radius:var(--r-xs);font:500 11px/1 var(--sans);letter-spacing:0;text-transform:none;white-space:nowrap;}
+

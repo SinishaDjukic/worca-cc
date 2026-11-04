@@ -26,10 +26,10 @@ test('fails on a right edge 6px off (Known bug 5), a menu off-screen (Known bug 
 });
 
 test('group page: title, card, tabs and table share edges; the row chevrons line up', () => {
-  const doc = new JSDOM(`<!doctype html><body><div class="gpage"><header class="ph"><div class="ph-tabs"><nav class="gpage-tabs"></nav></div></header><section class="gpage-card"></section>
-    <div class="gpage-panel"><ol class="run-members is-table">
+  const doc = new JSDOM(`<!doctype html><body><div class="gpage"><header class="gpage-head"></header><section class="gpage-card"></section>
+    <nav class="gpage-tabs"></nav><div class="gpage-panel"><ol class="run-members is-table">
     <li class="run-member"><span class="run-member-go"></span></li><li class="run-member"><span class="run-member-go"></span></li></ol></div></div></body>`).window.document;
-  const rects = new Map([['.ph', R(20, 980, 0, 40)], ['.gpage-card', R(20, 980, 50, 200)], ['.gpage-tabs', R(20, 980, 210, 240)], ['.run-members', R(20, 980, 250, 330)]]);
+  const rects = new Map([['.gpage-head', R(20, 980, 0, 40)], ['.gpage-card', R(20, 980, 50, 200)], ['.gpage-tabs', R(20, 980, 210, 240)], ['.run-members', R(20, 980, 250, 330)]]);
   const opens = [R(920, 980, 260, 288), R(920, 980, 300, 328)];
   const openEls = [...doc.querySelectorAll('.run-member-go')];
   const env = { rect: (e) => (e.classList.contains('run-member-go') ? opens[openEls.indexOf(e)] : rects.get([...rects.keys()].find((k) => e.matches(k)))),
@@ -94,10 +94,12 @@ test('#955 member-height: a row inside a group is 26px, 40px on a coarse pointer
     <div class="runs-members">
       <div class="runs-item" data-level="member" id="m1"><a class="runs-row"><span class="runs-row-title">1 · A</span><span class="runs-row-right"></span><span class="runs-row-sub">Merged</span></a></div>
       <div class="runs-item" data-level="member" id="m2"><a class="runs-row"><span class="runs-row-title">2 · B</span><span class="runs-row-right"></span><span class="runs-row-sub">Build</span><span class="runs-row-prog"><i></i></span></a></div>
+      <div class="runs-item" data-level="member" id="m3"><a class="runs-row"><span class="runs-row-title">3 · C</span><span class="runs-row-right"></span><span class="runs-row-sub">Refine Plan</span><div class="run-prog runs-stage"></div></a></div>
     </div></div></div>`).window.document;
   const root = doc.getElementById('l');
+  // m3 (#1012): a staged live member's four-section block is exempt too.
   const run = (m1, coarse) => auditRunsLayout(root, { coarse, viewport: { width: 375, height: 800 },
-    rect: (n) => ({ g: R(0, 340, 0, 120), m1, m2: R(0, 340, 60, 93) })[n.id] || R(0, 0, 0, 0) }, doc).map((p) => p.rule);
+    rect: (n) => ({ g: R(0, 340, 0, 120), m1, m2: R(0, 340, 60, 93), m3: R(0, 340, 93, 153) })[n.id] || R(0, 0, 0, 0) }, doc).map((p) => p.rule);
   assert.deepEqual(run(R(0, 340, 34, 60), false), []);
   assert.deepEqual(run(R(0, 340, 34, 70), false), ['member-height']);
   assert.deepEqual(run(R(0, 340, 34, 74), true), []);

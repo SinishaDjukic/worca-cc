@@ -14,6 +14,9 @@ const TEXT_TYPES = Object.freeze({
   // the worca origin); its text/html mime is only a label read_attachment uses to offer the markup
   // as readable text. The viewer still renders it as 'html' — viewerKindFor keys on the extension.
   '.html': 'text/html', '.htm': 'text/html',
+  // XML is a TEXT kind too, on the same terms. Its mime is deliberately not text/html (read_attachment's conversion
+  // keys on that); the raw route sandboxes it like SVG, since XHTML-namespaced XML can carry <script>.
+  '.xml': 'application/xml',
 });
 const BINARY_TYPES = Object.freeze({
   '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',

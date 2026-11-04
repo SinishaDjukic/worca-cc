@@ -20,7 +20,7 @@ export const RUN_LOG_KIND = 'live-log';
  * Lifecycle: push() from construction (pre-bind lines are retained in the buffer);
  * bind(dir) once the pipeline dir exists; close() at run end (flushes + stops timer).
  */
-export function createRunLogWriter({ flushMs = 1000, maxBuffer = 256 } = {}) {
+export function createRunLogWriter({ flushMs = 1000, maxBuffer = 256, fileName = RUN_LOG_FILE } = {}) {
   let buf = [];
   let file = null;
   let timer = null;
@@ -37,10 +37,10 @@ export function createRunLogWriter({ flushMs = 1000, maxBuffer = 256 } = {}) {
   }
 
   return {
-    /** Point the writer at <dir>/live-log.ndjson and start the flush timer. Idempotent. */
+    /** Point the writer at <dir>/<fileName> (live-log.ndjson by default) and start the flush timer. Idempotent. */
     bind(dir) {
       if (file || !dir) return;
-      file = join(dir, RUN_LOG_FILE);
+      file = join(dir, fileName);
       timer = setInterval(() => { flush(); }, flushMs);
       if (timer && typeof timer.unref === 'function') timer.unref(); // never hold the CLI open
     },

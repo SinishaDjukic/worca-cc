@@ -14,6 +14,7 @@ import {
   forgeOfSlug, GH_BATCH, OPEN_TTL_MS, AZURE_MAX_PAGES, _testing,
 } from '../src/core/metrics/prs.mjs';
 import * as azurePr from '../src/core/pr/azure.mjs';
+import * as bitbucketPr from '../src/core/pr/bitbucket.mjs';
 
 useTempHome(after);
 afterEach(() => _testing.reset());
@@ -202,7 +203,8 @@ test('bad lookup rows are dropped, not fatal', async () => {
 const freshCache = () => rmSync(cachePath(), { force: true });
 const AZ = 'dev.azure.com/acme/shop/api';
 const COORDS = async () => ({ org: 'acme', project: 'shop', repo: 'api' });
-const NO_ADO = { WORCA_ADO_TOKEN: undefined, WORCA_ADO_READ_TOKEN: undefined, WORCA_ADO_WRITE_TOKEN: undefined, AZURE_DEVOPS_EXT_PAT: undefined };
+const NO_ADO = { WORCA_ADO_TOKEN: undefined, WORCA_ADO_READ_TOKEN: undefined, WORCA_ADO_WRITE_TOKEN: undefined, AZURE_DEVOPS_EXT_PAT: undefined,
+  WORCA_BB_TOKEN: undefined, WORCA_BB_READ_TOKEN: undefined, WORCA_BB_WRITE_TOKEN: undefined };
 const AZ_RUNS = [
   { id: 'r1', repos: [AZ], branch: 'worca/a', endedAt: '2026-09-20T09:00:00Z' },
   { id: 'r2', repos: [AZ], branch: 'worca/b', endedAt: '2026-09-22T09:00:00Z' },
@@ -344,9 +346,75 @@ test('parsePrUrl / forgeOfSlug know Azure', () => {
   assert.equal(forgeOfSlug('acme/api'), 'github');
   assert.equal(forgeOfSlug('dev.azure.com/acme/shop/api'), 'azure');
   assert.equal(forgeOfSlug('gitlab.com/g/api'), null);
+  assert.equal(forgeOfSlug('bitbucket.org/acme/api'), 'bitbucket');
+  assert.deepEqual(parsePrUrl('https://bitbucket.org/Acme/API/pull-requests/12/overview'), { repo: 'bitbucket.org/acme/api', number: 12 });
 });
 
 test('azureCoordsForSlug: without a local repo for the slug, the slug\'s own segments (D15)', async () => {
   assert.deepEqual(await azureCoordsForSlug('dev.azure.com/Acme/Shop/Api'), { org: 'acme', project: 'shop', repo: 'api' });
   assert.equal(await azureCoordsForSlug('acme/api'), null);
+});
+
+test('Bitbucket repos: one query per 10 branches, merge date from the merge commit, cached; status.bitbucket ok', async () => {
+  freshCache();
+  _testing.setNow(() => NOW);
+  const ghCalls = [];
+  _testing.setRunner(fakeGh({ calls: ghCalls }));
+  const urls = [];
+  const ok = (body) => ({ status: 200, ok: true, headers: { get: () => null }, json: async () => body });
+  bitbucketPr._testing.setFetch(async (url) => {
+    urls.push(String(url));
+    if (/\/commit\/abc1234$/.test(url)) return ok({ date: '2026-09-21T10:00:00+00:00' });
+    return ok({ values: [
+      { id: 7, state: 'MERGED', title: 'A', created_on: '2026-09-20T09:00:00+00:00', updated_on: '2026-09-25T09:00:00+00:00',
+        merge_commit: { hash: 'abc1234' }, source: { branch: { name: 'worca/a' }, repository: { full_name: 'acme/api' } }, destination: { branch: { name: 'main' } } },
+      { id: 8, state: 'DECLINED', source: { branch: { name: 'worca/b' }, repository: { full_name: 'acme/api' } }, destination: { branch: { name: 'main' } } },
+    ] });
+  });
+  const BB_RUNS = [
+    { id: 'b1', repos: ['bitbucket.org/acme/api'], branch: 'worca/a', endedAt: '2026-09-20T08:00:00Z' },
+    { id: 'b2', repos: ['bitbucket.org/acme/api'], branch: 'worca/b', endedAt: '2026-09-20T08:00:00Z' },
+  ];
+  try {
+    await withEnv({ ...NO_ADO, WORCA_BB_TOKEN: 'bbtok' }, async () => {
+      const first = await resolveRunPrs({ runs: BB_RUNS });
+      assert.equal(urls.filter((u) => u.includes('/pullrequests?')).length, 1, 'one query for both branches');
+      assert.match(decodeURIComponent(urls[0]), /source\.branch\.name="worca\/a" OR source\.branch\.name="worca\/b"/);
+      assert.equal(first.status.bitbucket, 'ok');
+      assert.deepEqual(first.status.unsupportedRepos, []);
+      assert.equal(ghCalls.length, 0, 'gh is never asked about a Bitbucket repo');
+      assert.deepEqual((({ state, number, url, mergedAt, head, base, via }) => ({ state, number, url, mergedAt, head, base, via }))(first.prs.b1[0]),
+        { state: 'MERGED', number: 7, url: 'https://bitbucket.org/acme/api/pull-requests/7', mergedAt: '2026-09-21T10:00:00+00:00',
+          head: 'worca/a', base: 'main', via: 'bitbucket' });
+      assert.equal(first.prs.b2[0].state, 'CLOSED');
+      const before = urls.length;
+      const second = await resolveRunPrs({ runs: BB_RUNS.slice(0, 1) });
+      assert.equal(urls.length, before, 'a merged PR is served from pr-cache.json');
+      assert.equal(second.prs.b1[0].via, 'bitbucket');
+    });
+    await withEnv({ ...NO_ADO }, async () => {
+      freshCache();
+      assert.equal((await resolveRunPrs({ runs: BB_RUNS })).status.bitbucket, 'missing');
+    });
+  } finally { bitbucketPr._testing.reset(); }
+});
+
+test('Bitbucket: a refused token is status unauthenticated; a listing cut off by its page cap leaves the branch unknown', async () => {
+  freshCache();
+  _testing.setNow(() => NOW);
+  const runs = [{ id: 'b3', repos: ['bitbucket.org/acme/api'], branch: 'worca/c', endedAt: '2026-09-20T08:00:00Z' }];
+  try {
+    bitbucketPr._testing.setFetch(async () => ({ status: 401, ok: false, headers: { get: () => null }, json: async () => ({}) }));
+    const refused = await withEnv({ ...NO_ADO, WORCA_BB_TOKEN: 'expired' }, () => resolveRunPrs({ runs }));
+    assert.equal(refused.status.bitbucket, 'unauthenticated');
+    assert.equal(refused.status.bitbucketError, null);
+    assert.equal(refused.prs.b3, null);
+    let n = 1;
+    bitbucketPr._testing.setFetch(async () => ({ status: 200, ok: true, headers: { get: () => null },
+      json: async () => ({ values: [], next: `https://api.bitbucket.org/2.0/repositories/acme/api/pullrequests?page=${++n}` }) }));
+    const cut = await withEnv({ ...NO_ADO, WORCA_BB_TOKEN: 'bbtok' }, () => resolveRunPrs({ runs }));
+    assert.equal(cut.status.bitbucket, 'ok');
+    assert.equal(cut.prs.b3, null, 'a cut-off listing proves nothing about the branch');
+    assert.equal(cut.status.checked, 0);
+  } finally { bitbucketPr._testing.reset(); }
 });

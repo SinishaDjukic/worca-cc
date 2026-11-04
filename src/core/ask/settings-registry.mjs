@@ -8,12 +8,13 @@
 import {
   assertThemeInput, assertUiLevelInput, assertDebugSpawnInput, assertUpdateCheckInput, assertAutoGeneratePrDescriptionInput, assertCostLimitInputs,
   assertHumanRateInput, assertAskLimitInputs, assertAskEngineInput, assertRunEngineInput, assertSyncSettingsInput,
-  assertScheduleDefaultsInput, assertWorkspaceScanInput, assertMemoryDefragModelInput, assertAgentGenModelInput, assertNamingModelInput, normalizeModelPair,
+  assertScheduleDefaultsInput, assertWorkspaceScanInput, assertMemoryDefragModelInput, assertAgentGenModelInput, assertNamingModelInput, normalizeModelPair, normalizeRolePair,
   SETTINGS_POST_KEYS, DEFAULT_SYNC_SETTINGS, DEFAULT_SCHEDULE_GRACE_MIN, DEFAULT_SCHEDULE_IF_MISSED,
   DEFAULT_SCHEDULE_MAX_FAILURES, DEFAULT_COST_RESET_PERIOD, DEFAULT_HUMAN_RATE_USD, DEFAULT_ASK_MAX_TURNS,
 } from '../settings.mjs';
 import { RUN_ENGINES, MODEL_ENGINES, ASK_ENGINES, EFFORTS, SUBAGENT_MODELS, effortsForEngine } from '../model-env.mjs';
 import { engineLabel } from '../../shared/engine-switch.mjs';
+import { MODEL_ROLES, ROLE_LABELS, ROLE_HARNESSES } from '../../shared/model-roles.mjs';
 import { receiptCard } from './receipt.mjs';
 
 /** What the chat never reads or changes, and why (list_settings returns `what`; a refused change names `why`). */
@@ -74,6 +75,7 @@ const PROJECT_ONLY = Object.freeze({
   contextMaxBytesTotal: { label: 'Context size in all', group: 'Runs', fmt: bytes, allowed: 'a whole number of bytes' },
   skillMount: { label: 'Skill mount', group: 'Runs', fmt: MOUNT.fmt, allowed: MOUNT.allowed },
   watchNewPrs: { label: 'Watch new pull requests', group: 'Runs', fmt: onOff, allowed: 'true | false' },
+  runUserClaudeSettings: { label: 'Runs load my Claude Code setup', group: 'Runs', fmt: onOff, allowed: 'true | false' },
   'memory.softBytesPerFile': { label: 'Memory: flag files above', group: 'Memory', fmt: bytes, allowed: 'a whole number of bytes' },
   'memory.maxBytesPerFile': { label: 'Memory: largest file', group: 'Memory', fmt: bytes, allowed: 'a whole number of bytes' },
   'memory.teamMaxFiles': { label: 'Memory: most team notes loaded', group: 'Memory', fmt: String, allowed: 'a whole number' },
@@ -90,6 +92,12 @@ const pairAllowed = (engine) => `{"model": a model from list_models that runs on
 const pairCheck = (engine) => async (v, ctx) => {
   const pair = normalizeModelPair(engine, v, ctx.def.id);
   if (pair) await ctx.slot([{ id: ctx.def.id, engine, value: pair }]);
+  return pair;
+};
+/** A model role: the model must exist and run on the harness; its effort is any reasoning level, mapped when used (A7). */
+const roleCheck = (engine) => async (v, ctx) => {
+  const pair = normalizeRolePair(v, ctx.def.id);
+  if (pair) await ctx.slot([{ id: ctx.def.id, engine, value: { model: pair.model } }]);
   return pair;
 };
 
@@ -178,6 +186,10 @@ function buildUserDefs(roles, scanDefaults) {
     ...MODEL_ENGINES.flatMap((e) => roles.map((r) => pairDef(`models.${e}.steps.${r.key}`, `${r.label || r.key} model (${engineLabel(e)})`, 'Models', e,
       (s) => (isObj(s.stepModels) && isObj(s.stepModels[e]) && isObj(s.stepModels[e][r.key]) ? s.stepModels[e][r.key] : null),
       (unit) => ({ stepModels: { [e]: { [r.key]: unit ?? null } } })))),
+    ...ROLE_HARNESSES.flatMap((e) => MODEL_ROLES.map((r) => userDef({ id: `models.${e}.roles.${r}`, label: `${ROLE_LABELS[r]} role (${engineLabel(e)})`, group: 'Models',
+      read: (s) => pickPair(isObj(s.modelRoles) && isObj(s.modelRoles[e]) && isObj(s.modelRoles[e][r]) ? s.modelRoles[e][r] : null),
+      body: (unit) => ({ modelRoles: { [e]: { [r]: unit ?? null } } }),
+      fmt: pairText, allowed: `a model ${engineLabel(e)} can run, with any effort`, check: roleCheck(e) }))),
     ...Object.entries(CLAUDE_HELPER_KEYS).map(([job, key]) => userDef({ id: `models.claude.utility.${job}`, label: `${JOBS[job]} (${engineLabel('claude')})`, group: 'Models',
       fmt: pairText, allowed: '{"model": a Claude model from list_models}',
       read: (s) => (typeof s[key] === 'string' && s[key].trim() ? { model: s[key].trim() } : null),

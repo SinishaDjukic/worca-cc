@@ -354,6 +354,7 @@ test('openSyncDialog: rows, commits as text, Escape/scrim close with focus retur
       const { openSyncDialog } = await import('../ui/public/branch-sync.mjs');
       const opener = w.document.getElementById('opener');
       const fb = w.document.getElementById('sync-pill');
+      w.document.getElementById('sync-row').hidden = false;   // a painted row: jsdom 30 never focuses inside a hidden one
       const done = openSyncDialog({ sync: block({ stale: true, fetchError: { kind: 'auth' } }), opener, fallbackFocus: () => fb });
       const d = w.document.querySelector('.sync-modal');
       assert.match(d.querySelector('.sync-note').textContent, /^Sign-in to origin failed/);

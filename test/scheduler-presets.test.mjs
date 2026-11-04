@@ -23,13 +23,13 @@ const DAY = () => new Date(Date.now() + 86400000).toISOString();
 before(async () => {
   sandboxHome = await mkdtemp(join(tmpdir(), 'worca-cc-presets-home-'));
   projectsRoot = await mkdtemp(join(tmpdir(), 'worca-cc-presets-proot-'));
-  for (const k of ['HOME', 'USERPROFILE', 'WORCA_TEST_ALLOW_HOME_FALLBACK', 'WORCA_PROJECTS_ROOT', 'WORCA_MOCK', 'WORCA_FLAGS', 'WORCA_IDENTITY_HEADER']) prevEnv[k] = process.env[k];
+  for (const k of ['HOME', 'USERPROFILE', 'WORCA_TEST_ALLOW_HOME_FALLBACK', 'WORCA_PROJECTS_ROOT', 'WORCA_MOCK', 'WORCA_IDENTITY_HEADER']) prevEnv[k] = process.env[k];
   process.env.HOME = sandboxHome; process.env.USERPROFILE = sandboxHome;
   process.env.WORCA_TEST_ALLOW_HOME_FALLBACK = '1';
   process.env.WORCA_PROJECTS_ROOT = projectsRoot;
   process.env.WORCA_MOCK = '1';
-  process.env.WORCA_FLAGS = 'runPresets';
   process.env.WORCA_IDENTITY_HEADER = H;   // a request without the header is the local install (sees every preset)
+  process.env.WORCA_IDENTITY_TRUSTED_PROXIES = '127.0.0.1,::1';   // X1: the in-process server's callers are loopback
   const mod = await import('../ui/server.mjs');
   srv = mod.server;
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
@@ -130,17 +130,6 @@ test('a deleted preset fails the ticket naming the preset; a repeating series fa
   assert.equal(row.presetGoneName, 'Gone soon');
 });
 
-test('with the flag off a ticket that follows a preset fails and says so', async () => {
-  const preset = await savePreset('Flagged', { guardrailsId: 'normal' });
-  const made = await scheduleFrom(preset);
-  process.env.WORCA_FLAGS = '-runPresets';
-  try {
-    const now = await runNow(made.runId);
-    assert.equal(now.status, 'failed');
-    assert.match(now.failReason, /follows the run preset "Flagged", and run presets are turned off/);
-  } finally { process.env.WORCA_FLAGS = 'runPresets'; }
-});
-
 // PR #769 review: the keys a start set apart from the preset are kept at fire time; the rest follow the preset.
 test('overriddenKeys names the keys a start changed; bodyFollowingPreset keeps exactly those', async () => {
   const { overriddenKeys, bodyFollowingPreset } = await import('../src/shared/run-presets.mjs');
@@ -175,14 +164,24 @@ test('a field changed in the form before scheduling stays as set when the preset
 });
 
 test('a ticket from an Ask card never fires on Permissive, whatever the preset resolves to', async () => {
-  const preset = await savePreset('Loose', {});   // no guardrailsId: a start reads it as Permissive
+  // No guardrailsId: a start reads it as the install default (V21), Permissive on an install from before v71.
+  const preset = await savePreset('Loose', {});
   const { createTicket } = await import('../src/core/scheduler.mjs');
-  // A ticket stored without presetOverrides (as one made before the fix): the card's Normal is not kept.
-  const t = createTicket({ title: 'nightly', projectDir: project.path, runAtMs: Date.now() + 86400000,
+  const { prepare, GUARDRAILS_DEFAULT_META_KEY } = await import('../src/core/db.mjs');
+  const ticket = () => createTicket({ title: 'nightly', projectDir: project.path, runAtMs: Date.now() + 86400000,
+    // A ticket stored without presetOverrides (as one made before the fix): the card's Normal is not kept.
     request: { projectDir: project.path, prompt: 'nightly', guardrailsId: 'normal', internal: { presetName: 'Loose' } },
     askThreadId: 'th_test', askCardId: 'card_test', presetId: preset.id });
-  const now = await runNow(t.id);
-  assert.equal(now.status, 'failed');
-  assert.match(now.failReason, /scheduled from Chat and the run preset "Loose" now resolves to Permissive guardrails/);
-  assert.equal(now.pipelineId ?? null, null, 'no run was started');
+  prepare("INSERT OR REPLACE INTO store_meta (key, kind, data) VALUES (?, 'setting', ?)").run(GUARDRAILS_DEFAULT_META_KEY, JSON.stringify('permissive'));
+  try {
+    const now = await runNow(ticket().id);
+    assert.equal(now.status, 'failed');
+    assert.match(now.failReason, /scheduled from Chat and the run preset "Loose" now resolves to Permissive guardrails/);
+    assert.equal(now.pipelineId ?? null, null, 'no run was started');
+  } finally {
+    prepare('DELETE FROM store_meta WHERE key = ?').run(GUARDRAILS_DEFAULT_META_KEY);
+  }
+  // A fresh install's default is Normal, so the same preset is no Permissive start.
+  const fresh = await runNow(ticket().id);
+  assert.doesNotMatch(String(fresh.failReason || ''), /resolves to Permissive/);
 });

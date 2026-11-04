@@ -8,11 +8,11 @@
 // timeline and machine state live in the DB (pipeline_events + the pipelines row),
 // which is the authoritative store (no more pipeline.md / state.json on disk).
 
-import { mkdir, writeFile, readFile, copyFile, readdir, access, stat, lstat, realpath } from 'node:fs/promises';
+import { mkdir, writeFile, readFile, copyFile, readdir, access, open as openFile } from 'node:fs/promises';
 import { NON_BROWSABLE_KIND_LIST } from '../shared/artifact-kinds.mjs';
-import { join, basename, resolve, isAbsolute, relative, sep } from 'node:path';
+import { join, basename, resolve, isAbsolute } from 'node:path';
 import { randomBytes } from 'node:crypto';
-import { realpathSync, existsSync, statSync, constants as fsConstants } from 'node:fs';
+import { realpathSync, existsSync, statSync, lstatSync, constants as fsConstants } from 'node:fs';
 import { hostname } from 'node:os';
 import { projectKey, projectKey as projectKeyOf, projectStorePath, canonicalProjectRoot, workspaceStorePath, isNoProjectKey, noProjectWorkDir, NO_PROJECT_KEY } from './store.mjs';
 import { NO_PROJECT_NAME } from '../shared/no-project.mjs';
@@ -21,7 +21,8 @@ import { rollupChanges } from './folder-members.mjs';
 import { harvestWork, WORK_ARTIFACT_KIND } from './no-project-work.mjs';
 import { updateRunManifest } from './run-manifest.mjs';
 import { listProjects, worcaHome, runOnboarded } from './projects.mjs';
-import { branchExists, diffShortstat, anyPrHost, findPrForBranch, commitsAhead } from './git-info.mjs';
+import { claimRunDir } from './agent-pool.mjs';
+import { branchExists, diffShortstat, anyPrHost, findPrForBranch, commitsAhead, withRefSnapshot } from './git-info.mjs';
 import { getDb, tx } from './db.mjs';
 import { rollupMemberPrs, workspaceMembers, changedFileCount } from './workspace-prs.mjs';
 import { RUN_LOG_FILE } from './run-log.mjs';
@@ -362,16 +363,15 @@ export async function listRunArtifacts(pipelineId, filter = {}) {
   const isWs = row.target === 'workspace' || !!row.workspace_key;
   const storeRoot = isWs ? workspaceStorePath(row.workspace_key) : projectStorePath(row.project_key);
   const runDir = await runDirForRow(row);
-  // isFile(), for the same reason resolveIndexedArtifactFileForRow requires it: a
-  // DIRECTORY at <runDir>/<rel> stats fine and would fix the base here, so the
-  // row would report a directory's inode size while the viewer reads the
-  // store-root file. The two must agree on which copy they mean.
+  // The same base rule as resolveIndexedArtifactFileForRow (artifactFileUnder): a
+  // DIRECTORY at <runDir>/<rel> would otherwise fix the base here, so the row
+  // would report a directory's inode size while the viewer reads the store-root
+  // file, and a planted link would report the size of a file the viewer refuses.
+  // The two must agree on which copy they mean.
   const sizeOf = (rel) => {
     for (const base of [runDir, storeRoot]) {
-      try {
-        const st = statSync(join(base, rel));
-        if (st.isFile()) return st.size;
-      } catch { /* try next base */ }
+      const st = artifactFileUnder(base, rel);
+      if (st) return st.size;
     }
     return 0;
   };
@@ -602,7 +602,7 @@ export function readReviewRow(pipelineId, kind, cycle) {
  * (readStepQuestions, chronological insert order). Always returns arrays (never
  * null) so callers render unconditionally.
  * @param {string} pipelineId
- * @returns {{clarify:{questions:Array, answers:Array}, reviews:Array<{kind:string,cycle:number,issues:Array,summary:string,checklist?:Array}>, stepQuestions:Array<{stepKey:string,round:number,nodeId:string,agentKey:string,questions:Array,answers:Array}>}}
+ * @returns {{clarify:{questions:Array, answers:Array}, reviews:Array<{kind:string,cycle:number,issues:Array,summary:string,fixed?:Array,checklist?:Array}>, stepQuestions:Array<{stepKey:string,round:number,nodeId:string,agentKey:string,questions:Array,answers:Array}>}}
  */
 export function readPipelineExtras(pipelineId) {
   const c = getDb().prepare('SELECT questions, answers FROM clarify WHERE pipeline_id = ?').get(pipelineId);
@@ -624,6 +624,7 @@ export function readPipelineExtras(pipelineId) {
       cycle: r.cycle,
       issues: Array.isArray(v.issues) ? v.issues : [],
       summary: typeof v.summary === 'string' ? v.summary : '',
+      ...(Array.isArray(v.fixed) && v.fixed.length ? { fixed: v.fixed } : {}),
       ...(Array.isArray(v.checklist) ? { checklist: v.checklist } : {}),
     };
   });
@@ -1223,6 +1224,7 @@ export async function createPipeline(projectDir, opts = {}) {
   const dirName = `${today()}-${slug}-${id}`;
   const dir = join(paths.pipelines, dirName);
   await mkdir(dir, { recursive: true });
+  claimRunDir(dir);   // G19: verdicts and outputs writable by this run's owner's agent only
 
   // Seed the prompt. If a markdown file was provided, copy it verbatim;
   // otherwise persist the inline text. Either way prompt.md is the source.
@@ -1472,7 +1474,8 @@ export async function writeState(pipelineDir, stateObj, { prWatchRunId = null, r
       // v2 rows: execution_id === key. v1 rows leave every exec_* column NULL, so
       // the readers below reproduce today's exact shape for a v1 pipeline.
       const hasMeta = st.taskId != null || st.parentExecutionId != null || st.title != null || st.phaseOrdinal != null
-        || st.nodeKey != null || st.runtime != null || st.exitCode != null || st.bridgeCalls != null || st.auxCosts != null || st.stoppedTurns != null || st.sessionCosts != null;
+        || st.nodeKey != null || st.runtime != null || st.exitCode != null || st.bridgeCalls != null || st.auxCosts != null || st.stoppedTurns != null || st.sessionCosts != null || st.memory != null
+        || st.session != null;
       const meta = hasMeta
         ? s({ taskId: st.taskId ?? null, parentExecutionId: st.parentExecutionId ?? null,
               title: st.title ?? null, phaseOrdinal: st.phaseOrdinal ?? null,
@@ -1487,7 +1490,11 @@ export async function writeState(pipelineDir, stateObj, { prWatchRunId = null, r
               // Agent turns cut before their `result`: a count and a lower bound, never in the cost.
               ...(st.stoppedTurns ? { stoppedTurns: st.stoppedTurns } : {}),
               // The CLI's last session total per session id: a resumed spawn books only what it adds.
-              ...(st.sessionCosts ? { sessionCosts: st.sessionCosts } : {}) })
+              ...(st.sessionCosts ? { sessionCosts: st.sessionCosts } : {}),
+              // The memory the step loaded (#943): { mode: 'frozen', set, files, roleNotes? } | { mode: 'off' }.
+              ...(st.memory ? { memory: st.memory } : {}),
+              // Session groups (C7): the turn, dispatch and host session a member step ran in — only on member rows.
+              ...(st.session ? { session: st.session } : {}) })
         : null;
       ins.run(
         id, st.key, st.nodeId ?? null, st.phase ?? null,
@@ -1991,9 +1998,13 @@ function toPipelineRow(o) {
           endReached: !!o.endReached,
           result: o.result ?? null,
           warnings: Array.isArray(o.warnings) ? o.warnings : [],
+          // E2: loops forced past their budget with blocking issues still open.
+          ...(Array.isArray(o.openIssues) && o.openIssues.length ? { openIssues: o.openIssues } : {}),
           wireDeliveries: o.wireDeliveries ?? {},
           tokens: o.tokens ?? {},
           ...(typeof o.runEngine === 'string' && o.runEngine && o.runEngine !== 'claude' ? { runEngine: o.runEngine } : {}),
+          // Session groups (C6): each session's summary — only on a run that has one, so other rows are unchanged.
+          ...(o.sessionHosts && typeof o.sessionHosts === 'object' && Object.keys(o.sessionHosts).length ? { sessionHosts: o.sessionHosts } : {}),
         })
       : null,
   };
@@ -2344,6 +2355,9 @@ async function rowToHistoryEntry(row, repoDir = null, opts = {}) {
     limitEngine: row.limit_engine ?? null,
     limitResetAt: row.limit_reset_at ?? null,
     runEngine: row.run_engine || 'claude',
+    // E2/2.3: the done-run caveat (open issues left by a forced loop, End not reached). Only on a v2 row.
+    ...(row.open_issue_count ? { openIssueCount: Number(row.open_issue_count) } : {}),
+    ...(row.end_reached === 0 ? { endReached: false } : row.end_reached === 1 ? { endReached: true } : {}),
     retainedWork: retainedWorkFor(row),
     checkout: checkoutRecordsFor(row),
     baseCheck: baseCheckSummaryFor(row),
@@ -2440,7 +2454,10 @@ async function runDirIndex(pipelinesDir) {
  * @param {string} [workspaceKey] route to the workspace store + filter on it
  * @returns {Promise<Array>}
  */
-export async function listPipelines(projectDir, opts = {}, workspaceKey) {
+export function listPipelines(projectDir, opts = {}, workspaceKey) {
+  return withRefSnapshot(() => listPipelinesNow(projectDir, opts, workspaceKey));
+}
+async function listPipelinesNow(projectDir, opts, workspaceKey) {
   const pipelinesDir = artifactPaths(projectDir, workspaceKey).pipelines;
   const dirById = await runDirIndex(pipelinesDir);
   const rows = getDb().prepare(`
@@ -2451,7 +2468,8 @@ export async function listPipelines(projectDir, opts = {}, workspaceKey) {
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.limitEngine') AS limit_engine,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.limitResetAt') AS limit_reset_at,
            resume_point IS NOT NULL AS has_resume_point,
-           ${RUN_ENGINE_SQL} AS run_engine
+           ${RUN_ENGINE_SQL} AS run_engine,
+           ${OUTCOME_NOTE_SQL}
     FROM pipelines
     WHERE ${workspaceKey ? 'workspace_key = ?' : 'project_key = ?'} AND archived_at IS NULL
     ORDER BY started_at DESC
@@ -2486,7 +2504,10 @@ export async function listPipelines(projectDir, opts = {}, workspaceKey) {
  *  active rows only, so existing callers see exactly what they saw before. Workspace
  *  rows also carry `members[]` (per-member facts, tri-state `pr`; omitted in `lite`)
  *  — see rowToHistoryEntry. */
-export async function listAllPipelines(opts = {}, { batchSize = 16 } = {}) {
+export function listAllPipelines(opts = {}, cfg = {}) {
+  return withRefSnapshot(() => listAllPipelinesNow(opts, cfg));
+}
+async function listAllPipelinesNow(opts, { batchSize = 16 } = {}) {
   const rows = getDb().prepare(`
     SELECT id, project_key, workspace_key, target, title, status, started_at, updated_at,
            total_cost_usd, total_active_ms, branch, workspace_meta, guardrails_id, started_by, pr_url, archived_at,
@@ -2495,7 +2516,8 @@ export async function listAllPipelines(opts = {}, { batchSize = 16 } = {}) {
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.limitEngine') AS limit_engine,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.limitResetAt') AS limit_reset_at,
            resume_point IS NOT NULL AS has_resume_point,
-           ${RUN_ENGINE_SQL} AS run_engine
+           ${RUN_ENGINE_SQL} AS run_engine,
+           ${OUTCOME_NOTE_SQL}
     FROM pipelines
     WHERE archived_at IS ${opts.archived ? 'NOT NULL' : 'NULL'} AND deleted_at IS NULL
     ORDER BY COALESCE(updated_at, started_at) DESC, project_key, id
@@ -2585,11 +2607,12 @@ export async function listAllPipelines(opts = {}, { batchSize = 16 } = {}) {
  * (all statuses). Backs the History sidebar count, so it must agree with what the
  * list reads show — archived rows are hidden there too. Cheap COUNT(*) — never
  * lists or loads rows. Sync (getDb().prepare(...).get()), matching this module's
- * idiom (it imports only getDb + tx, not a bare `prepare`).
+ * idiom (it imports only getDb + tx, not a bare `prepare`). `{ archived: true }` counts the
+ * archived rows instead (the Runs View menu's Show › Archived count).
  * @returns {number}
  */
-export function countPipelines() {
-  const row = getDb().prepare('SELECT COUNT(*) AS n FROM pipelines WHERE archived_at IS NULL').get();
+export function countPipelines({ archived = false } = {}) {
+  const row = getDb().prepare(`SELECT COUNT(*) AS n FROM pipelines WHERE archived_at IS ${archived ? 'NOT ' : ''}NULL`).get();
   return row ? Number(row.n) : 0;
 }
 
@@ -2694,6 +2717,8 @@ function stepRowToStep(r) {
     if (em.auxCosts && typeof em.auxCosts === 'object') step.auxCosts = em.auxCosts;
     if (em.stoppedTurns && typeof em.stoppedTurns === 'object') step.stoppedTurns = em.stoppedTurns;
     if (em.sessionCosts && typeof em.sessionCosts === 'object') step.sessionCosts = em.sessionCosts;
+    if (em.memory && typeof em.memory === 'object') step.memory = em.memory;
+    if (em.session && typeof em.session === 'object') step.session = em.session;
   }
   return step;
 }
@@ -2767,8 +2792,10 @@ function rowToState(row) {
     state.endReached = !!outcome.endReached;
     state.result = outcome.result ?? null;
     state.warnings = Array.isArray(outcome.warnings) ? outcome.warnings : [];
+    state.openIssues = Array.isArray(outcome.openIssues) ? outcome.openIssues : [];
     state.wireDeliveries = outcome.wireDeliveries ?? {};
     state.tokens = outcome.tokens ?? {};
+    if (outcome.sessionHosts && typeof outcome.sessionHosts === 'object') state.sessionHosts = outcome.sessionHosts;
     state.active = [];        // nothing is in flight in a rehydrated snapshot
     state.gate = null;
   }
@@ -2829,6 +2856,10 @@ function buildAuditMarkdown(row) {
 const RUN_ENGINE_SQL = `COALESCE(
              json_extract(CASE WHEN json_valid(outcome) THEN outcome END, '$.runEngine'),
              json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.claude.engine'))`;
+/** The done-run caveat columns for the History list: total open issues and whether End fired. */
+const OUTCOME_NOTE_SQL = `(SELECT SUM(json_extract(o.value, '$.count'))
+              FROM json_each(json_extract(CASE WHEN json_valid(outcome) THEN outcome END, '$.openIssues')) AS o) AS open_issue_count,
+           json_extract(CASE WHEN json_valid(outcome) THEN outcome END, '$.endReached') AS end_reached`;
 export function runEngineOfRow(row) {
   if (!row) return 'claude';
   const outcome = j(row.outcome, null);
@@ -3082,7 +3113,7 @@ export async function readPipelineByKey(key, id) {
 export async function readMemoryLedger(dir) {
   const ledger = await readJsonFile(join(dir, 'memory.json'));
   if (!ledger || !Array.isArray(ledger.changes)) return null;
-  return { mount: ledger.mount || null, changes: ledger.changes, totals: memoryTotals(ledger.changes) };
+  return { mount: ledger.mount || null, changes: ledger.changes, totals: memoryTotals(ledger.changes), loaded: ledger.loaded || null };
 }
 
 /** Local helper: read + JSON-parse a file, null on any failure. */
@@ -3169,10 +3200,14 @@ export async function resolveIndexedArtifactForRow(row, rel) {
   // the file can vanish between the stat and this read. Before the selection was
   // split out, a failed read simply fell through and the route answered 404;
   // letting it throw here turns that race into a 500.
+  const fh = await openArtifactUnder(f.base, f.rel);
+  if (!fh) return null;
   try {
-    return { rel: f.rel, text: await readFile(f.file, 'utf8') };
+    return { rel: f.rel, text: await fh.readFile('utf8') };
   } catch {
     return null;
+  } finally {
+    await fh.close().catch(() => {});
   }
 }
 
@@ -3205,8 +3240,7 @@ export async function resolveIndexedArtifactFileForRow(row, rel) {
     // EISDIR — a 500 — instead of falling through to the store-root copy that
     // actually holds the artifact.
     try {
-      if (!(await stat(file)).isFile()) continue;
-      if (hit.kind === WORK_ARTIFACT_KIND && !(await workFileInside(base, file))) continue;
+      if (!artifactFileUnder(base, hit.relPath)) continue;
       await access(file, fsConstants.R_OK);
       return { rel: hit.relPath, file, base };
     } catch { /* try the next base */ }
@@ -3215,16 +3249,40 @@ export async function resolveIndexedArtifactFileForRow(row, rel) {
 }
 
 /**
- * P3-D13 at serve time: a no-project run's work/ was an agent's cwd and can still be one after the move (a process
- * that outlived the run moved with it), so a `work` row is served only as a real file whose real path stays inside
- * <base>/work — never a link (or a linked parent folder) planted after the index.
+ * The one rule every artifact kind is served (and sized) by: `<base>/<rel>` must be a real FILE with no link anywhere
+ * between base and itself — its real path is exactly the base's real path joined with rel. The run dir and the store
+ * root are agent-writable (a no-project run's work/ was an agent's cwd and can still be one after the move, P3-D13), so
+ * a file or folder swapped for a link after the index would otherwise make the artifact routes serve any file the worca
+ * user can read (G11). Indexing never records a link (harvestWork skips them), so a legitimate artifact always passes.
+ * The base itself may sit behind a link (a linked HOME); only what lies below it is checked. Stats | null.
  */
-async function workFileInside(base, file) {
+function artifactFileUnder(base, rel) {
   try {
-    if (!(await lstat(file)).isFile()) return false;
-    const rel = relative(await realpath(join(base, 'work')), await realpath(file));
-    return !!rel && rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
-  } catch { return false; }
+    const file = join(base, rel);
+    const st = lstatSync(file);
+    if (!st.isFile()) return null;
+    return realpathSync(file) === join(realpathSync(base), rel) ? st : null;
+  } catch { return null; }
+}
+
+/**
+ * `<base>/<rel>` opened for reading, only when it passes artifactFileUnder AND the opened file is the one checked
+ * (same dev/ino): the check and a later read by path leave a window in which an agent swaps a folder or the file
+ * for a link (V9). Opened first, O_NOFOLLOW (a link as the last part never opens) and O_NONBLOCK (a FIFO never
+ * holds the request); checked after, so a swap back in between still fails the inode match. FileHandle | null;
+ * the caller closes it.
+ */
+export async function openArtifactUnder(base, rel) {
+  let fh;
+  try { fh = await openFile(join(base, rel), fsConstants.O_RDONLY | (fsConstants.O_NONBLOCK ?? 0) | (fsConstants.O_NOFOLLOW ?? 0)); }
+  catch { return null; }
+  try {
+    const checked = artifactFileUnder(base, rel);
+    const st = await fh.stat();
+    if (checked && st.isFile() && st.dev === checked.dev && st.ino === checked.ino) return fh;
+  } catch { /* refused below */ }
+  await fh.close().catch(() => {});
+  return null;
 }
 
 /** The keyed form (`/api/history/:key/:id`, workspace twin) over lookupPipelineRow. */

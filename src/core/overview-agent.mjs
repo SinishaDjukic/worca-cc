@@ -9,6 +9,7 @@ import { runClaude } from './claude-runner.mjs';
 import { normalizingOnEvent } from './engines/claude-events.mjs';
 import { resolveModelEnv, resolveModelCost, modelForEngine } from './config.mjs';
 import { utilityModelFor, scopeForRunKey } from './settings-cascade.mjs';
+import { withRole, jobSlot } from './model-roles.mjs';
 import { safeParseJson } from './protocol.mjs';
 import { helperEngineFor } from './model-env.mjs';
 import {
@@ -88,7 +89,8 @@ export async function generateOverview(key, id, { model, signal, force = false, 
   const dir = await runDirForRow(row);
   const engine = helperEngineFor(runEngineOfRow(row));   // a Cursor run's overview runs on Claude
   const onClaude = engine === 'claude';
-  const slot = utilityModelFor(engine, 'overview', scopeForRunKey(key));
+  // Model roles (D3): an unset overview slot takes the quick role.
+  const slot = withRole(utilityModelFor(engine, 'overview', scopeForRunKey(key)), engine, jobSlot(engine, 'overview'));
   // The caller's model, else the engine's overview slot; else none — a Claude overview keeps the
   // CLI default it always had (cascading-settings-design.md: a Claude run is unchanged).
   const runModel = modelForEngine(model, engine) || slot.model || undefined;

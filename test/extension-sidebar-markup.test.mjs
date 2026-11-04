@@ -83,7 +83,8 @@ test('the composer box keeps the Ask order: lead, chips, input, message, row; se
   const refBox = h.doc.querySelector('.ask-composer-box');
   const mine = buildComposer(h.doc, { placeholder: 'x', onInput() {}, onSend() {}, onStop() {} });
   const top = (box) => [...box.children].map((c) => [...c.classList].sort().join(' '));
-  assert.deepEqual(top(mine.el.querySelector('.ask-composer-box')), top(refBox));
+  // Ask worca beside the page: the page chips are the web app's (the page on screen); the extension's page is its own context.
+  assert.deepEqual(top(mine.el.querySelector('.ask-composer-box')), top(refBox).filter((c) => c !== 'ask-page-chips'));
   const askPanelSrc = readFileSync('ui/public/ask-panel.mjs', 'utf8');
   assert.equal(/\bsend: '([^']+)'/.exec(askPanelSrc)[1], SEND_ICON_PATH);
   for (const cls of ['ask-send', 'ask-stop']) assert.ok(refBox.querySelector(`.${cls}`) && mine.el.querySelector(`.${cls}`), cls);
@@ -126,4 +127,13 @@ test('the file chip and the drop overlay have Ask\'s skeleton', async () => {
   assert.ok(refDrop, 'the Ask panel rendered its drop overlay');
   assert.deepEqual(skeleton(buildDropOverlay(h.doc)), skeleton(refDrop));
   assert.equal(buildDropOverlay(h.doc).textContent, refDrop.textContent);
+});
+
+test('#943: an engine switch\'s row shows its "Switched from … to …" line, then the note', async () => {
+  const h = await loaded();
+  const row = { id: 'askm_s0000001', threadId: TID, seq: 4, role: 'system', text: 'Switched from Codex to Claude', blocks: [
+    { kind: 'divider', text: 'Switched from Codex to Claude', engineSwitch: { from: 'codex', to: 'claude', model: 'claude-opus-5-5', effort: 'high', droppedTurns: 0 } },
+    { kind: 'notice', text: 'Claude starts a fresh session with this chat\'s transcript as its context.' }], createdAt: 't' };
+  const lines = [...buildRow(h.doc, row, opts(row)).el.querySelectorAll('.ask-notice')].map((n) => n.textContent);
+  assert.deepEqual(lines, ['Switched from Codex to Claude', 'Claude starts a fresh session with this chat\'s transcript as its context.']);
 });

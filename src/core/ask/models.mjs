@@ -10,6 +10,7 @@ import { brokerEnabled, brokerEngineRefusal } from '../broker-client.mjs';
 import { effortlessModels as realEffortless } from '../bridge/upstream.mjs';
 import { effortsForEngine, ASK_ENGINES } from '../model-env.mjs';
 import { resolveSetting } from '../settings-cascade.mjs';
+import { withRole } from '../model-roles.mjs';
 import { chatDescriptor } from '../engines/chat.mjs';
 import { harnessesOf, runsOn, effortsOn } from '../../shared/connections.mjs';
 import { engineLabel } from '../../shared/engine-switch.mjs';
@@ -25,10 +26,12 @@ export function chatEngine(thread, { engineOf = realEngineOf } = {}) {
   const own = thread && typeof thread.model === 'string' ? engineOf(thread.model) : null;
   return ASK_ENGINES.includes(own) ? own : 'claude';
 }
-/** The user's Ask engine and per-engine slots (D17); a settings failure reads as today's defaults. */
-function defaultAskPrefs() {
+/** The user's Ask engine and per-engine slots (D17), an unset slot taking the everyday model role (D3); a settings
+ *  failure reads as today's defaults. */
+export function defaultAskPrefs() {
   try {
-    return { engine: resolveSetting('askEngine').value, slots: Object.fromEntries(ASK_ENGINES.map((e) => [e, resolveSetting(`models.${e}.ask`).value])) };
+    return { engine: resolveSetting('askEngine').value,
+      slots: Object.fromEntries(ASK_ENGINES.map((e) => [e, withRole(resolveSetting(`models.${e}.ask`).value, e, 'askModels')])) };
   } catch { return { engine: 'claude', slots: {} }; }
 }
 
@@ -196,9 +199,10 @@ export function createAskModels({
     const e = effort.trim();
     // A model on two harnesses keeps its own efforts; a chat on the other harness takes them mapped (effortsOn).
     if (!entry.efforts.includes(e) && !(engine && effortsOn(entry, engine).includes(e))) return { ok: false, error: `effort "${e}" is not available for model "${entry.id}"` };
-    // D12: inside a chat (engine given) only a model the chat's engine runs; switching engine means a new chat.
+    // D12 / #943: inside a chat (engine given) only a model its engine runs. Moving the chat to another engine is its own
+    // step (POST /api/ask/threads/:id/engine, after a confirm): a PATCH or a message never moves it.
     const own = entry.engine || 'claude';
-    if (engine && !runsOn(entry, engine)) return { ok: false, error: `this chat runs on ${ENGINE_LABEL[engine]}; start a new chat to use ${ENGINE_LABEL[own]}` };
+    if (engine && !runsOn(entry, engine)) return { ok: false, error: `this chat runs on ${ENGINE_LABEL[engine]}; switch it to ${ENGINE_LABEL[own]} from the Chat model picker first` };
     return { ok: true, model: entry.id, effort: e };
   }
 

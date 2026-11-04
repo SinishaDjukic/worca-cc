@@ -5,11 +5,12 @@
 // jsdom's CSSOM and replays the cascade for `display`: importance, then specificity, then order.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { checkRows } from './helpers/rows.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
-const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+const css = readStyleCss();
 const { document } = new JSDOM(`<style>${css}</style>`).window;
 // Every style rule in document order. jsdom gives a CSSStyleRule an EMPTY `cssRules` (nesting
 // support), so "recurse if r.cssRules, else collect" collects nothing: collect, then recurse.
@@ -116,7 +117,7 @@ test('[hidden] beats the author display rule on every element app.js hides by at
   await checkRows([
     ...ROWS.map(([sel, from]) => ({ name: `${sel} (${from})`, run: () => assertHiddenWins(sel) })),
     { name: 'every element index.html ships with `hidden` stays hidden (the cascade over every display rule that matches it)', run: () => {
-      const page = new JSDOM(readFileSync(new URL('../ui/public/index.html', import.meta.url), 'utf8')).window.document;
+      const page = new JSDOM(readIndexHtml()).window.document;
       const els = [page, ...[...page.querySelectorAll('template')].map((t) => t.content)].flatMap((r) => [...r.querySelectorAll('[hidden]')]);
       assert.ok(els.length > 100, `${els.length} hidden elements in index.html`);
       const rules = flat.map((r, i) => ({ r, i })).filter(({ r }) => r.style.display)
@@ -174,15 +175,36 @@ test('the chat card footer actions are a wrapping row with a gap between the but
 
 test('run 4 D21, D14: the Chat run card is divided sections, the group page Ship card sits under one divider, and the in-card override stays last', () => {
   const body = (sel) => (flat.find((r) => r.selectorText === sel) || {}).style;
-  const section = body('.ask-card.chat-rc > :is(.ask-rc-stats,.chat-rc-well,.chat-rc-q,.chat-rc-result,.chat-rc-foot)');
+  const section = body('.ask-card.chat-rc > :is(.ask-rc-stats,.chat-rc-q,.chat-rc-result,.chat-rc-foot)');
   assert.ok(section, 'the section rule exists');
   assert.equal(section.getPropertyValue('border-top'), '1px solid var(--line)');
   assert.equal(section.getPropertyValue('padding-top'), '12px');
+  assert.equal(flat.some((r) => /chat-rc-well/.test(r.selectorText) && r.style.getPropertyValue('border-top')), false, 'the graph well is a bordered well, not a divider (#959)');
   const ship = body('.feature-page .shape-feature > .ask-shipcard');
   assert.ok(ship, 'the group page Ship card rule exists');
   assert.equal(ship.getPropertyValue('border-top'), '1px solid var(--line)');
   assert.equal(ship.getPropertyValue('border-radius'), '0px');
   assert.match(flat.at(-1).selectorText, /^:is\(\.ask-card,\.chat-rc,\.shape-feature\) :is\(\.qpanel,/, 'the in-card override is the last rule');
+});
+
+test('slice 2: at split layout every Back keeps a display (no rule hides .rd-back, .hd-back or .gpage-back)', () => {
+  document.body.innerHTML = `<div class="runs-shell" data-layout="split"><div class="runs-pane">
+    <div class="run-shell detail-open"><div class="rd"><div class="rd-bar"><button class="btn btn-sm btn-quiet btn-icon rd-back"></button></div></div></div>
+    <div class="hist-shell detail-open"><div class="hd"><div class="hd-bar"><button class="btn btn-sm btn-quiet btn-icon hd-back"></button></div></div></div>
+    <div class="group-shell detail-open"><div class="gpage"><div class="gpage-bar rd-bar"><a class="btn btn-sm btn-quiet btn-icon gpage-back"></a></div></div></div>
+  </div></div>`;
+  for (const cls of ['rd-back', 'hd-back', 'gpage-back']) {
+    const el = document.querySelector(`.${cls}`);
+    // Every top-level rule (no @media / @container arm) that sets display on this element; the cascade's winner.
+    const hits = flat.map((r, i) => ({ r, i })).filter(({ r }) => topLevel(r) && r.style.getPropertyValue('display'))
+      .flatMap(({ r, i }) => sels(r).filter((s) => { try { return el.matches(s); } catch { return false; } })
+        .map((s) => ({ r, i, imp: important(r), spec: specificity(s) })));
+    hits.sort((x, y) => (x.imp - y.imp) || cmp(x.spec, y.spec) || (x.i - y.i));
+    const win = hits.at(-1);
+    assert.ok(win, `${cls}: some rule gives it a display`);
+    assert.notEqual(win.r.style.getPropertyValue('display'), 'none', `${cls} is hidden at split by "${win.r.selectorText}"`);
+  }
+  document.body.innerHTML = '';
 });
 
 test('slice 2: a disabled danger ⋯ item (the gated Archive) reads disabled, not red', () => {

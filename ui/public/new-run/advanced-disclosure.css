@@ -1,0 +1,23 @@
+/* ---------- Advanced disclosure (New pipeline) ---------- */
+.advanced{margin-top:18px;border-top:1px solid var(--line);padding-top:14px;}
+.advanced>summary{display:flex;align-items:center;gap:9px;cursor:pointer;list-style:none;
+  font-weight:600;font-size:13px;padding:2px 0;}
+.advanced>summary::-webkit-details-marker{display:none;}
+.advanced>summary:focus-visible{outline:2px solid var(--ink);outline-offset:3px;border-radius:var(--r-sm);}
+.adv-chev{width:0;height:0;border-left:5px solid var(--ink-3);
+  border-top:4px solid transparent;border-bottom:4px solid transparent;transition:transform .15s;}
+.advanced[open] .adv-chev{transform:rotate(90deg);}
+.advanced-body{padding-top:12px;}
+.advanced-body .switch-row{margin-top:4px;}
+/* `.switch-row{display:flex}` (:537) beats the UA [hidden] rule (this file's own footgun), so the
+   Auto row and its hint need explicit rules. The .sw-input bridge (:3370) requires `.switch` to be
+   the input's NEXT sibling — the markup keeps them adjacent. */
+#hitl-row[hidden]{display:none;}
+#hitl-row[hidden]+#hitlHint{display:none;}
+
+/* per-step model/effort controls (app.js: .step-config / .step-model / .step-effort / .step-current) */
+.step-config{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:8px;}
+.step-config select{width:auto;font-size:var(--fs-meta);padding:0 30px 0 11px;border-radius:var(--r-sm);background:var(--surface);border-color:var(--line-2);}
+.step-config select:disabled{opacity:.6;cursor:not-allowed;}
+.step-current{flex-basis:100%;width:100%;text-align:right;margin-top:2px;color:var(--ink-3);font-size:var(--fs-meta);}
+

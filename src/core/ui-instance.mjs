@@ -41,7 +41,11 @@ export function uiInstanceFile() {
   return join(worcaHome(), 'ui.json');
 }
 
-/** A fresh shutdown token (hex, 32 bytes of entropy). */
+/** The request header that carries the instance token on API calls (G1: under agent
+ *  isolation a caller on this machine needs it, see ui/server.mjs#agentMayBeCaller). */
+export const UI_TOKEN_HEADER = 'x-worca-ui-token';
+
+/** A fresh per-boot token (hex, 32 bytes of entropy): shutdown, and API calls from this box. */
 export function newUiToken() {
   return randomBytes(32).toString('hex');
 }

@@ -34,6 +34,7 @@ import { projectKey, isNoProjectKey, noProjectWorkDir, isNoProjectWorkDir } from
 import { NO_PROJECT_ERRORS } from '../shared/no-project.mjs';
 import { normaliseTags } from '../shared/run-tags.mjs';
 import { formatExecLine, formatGateHeader, formatRunSummary, formatWorkflowProposal, formatResumeHints } from './render.mjs';
+import { formatSessionHostLine, manifestLabelOf } from './render.mjs';
 // Ask forms (spec §8): the prompt FORMATTING lives in render.mjs too (a second import
 // statement, not a longer first one); the field-by-field asker lives in forms.mjs.
 import { formatFormErrors, FORM_REPROMPT_MAX } from './render.mjs';
@@ -42,23 +43,25 @@ import { createFormAsker } from './forms.mjs';
 import { kindLabel } from '../shared/away-mode/labels.mjs';
 import { pauseExitCode, describePauseReason, promptOptions, REASON } from '../core/failure-policy.mjs';
 import { sigtermGraceMs } from '../core/drain.mjs';
-import { effectiveDebugSpawn } from '../core/settings.mjs';
+import { effectiveDebugSpawn, migrateCorporateProxyFlag } from '../core/settings.mjs';
 import { SCHEDULE_VALUE_FLAGS, wantsSchedule, readScheduleFlags, createFromFlags, waitAndRun, cmdSchedule, resolveAfterId } from './schedule.mjs';
 import { applyTagRules } from '../core/tag-dimensions.mjs';
 import { inheritedTagsAtCreation } from '../core/scheduler.mjs';
 import { cmdRuns } from './runs.mjs';
 import { cmdLogs } from './logs.mjs';
+import { cmdSessions } from './sessions.mjs';
 import { cmdControl } from './control.mjs';
 import { cmdModels } from './models.mjs';
 import { cmdContainer } from './container.mjs';
 import { cmdExtension } from './extension.mjs';
 import { cmdProxy } from './proxy.mjs';
+import { cmdSetup } from './setup.mjs';
 import { cmdRun } from './run-preset.mjs';
 import {
   DEFAULT_UI_HOST, DEFAULT_UI_PORT, probeUi, stopUi, readUiInstance, uiUrl, waitForUiState,
 } from '../core/ui-instance.mjs';
-import { useEnvProxy, proxyNotice } from '../core/env-proxy.mjs';
-import { startEgressPolicy, egressNotice } from '../core/egress-policy.mjs';
+import { useEnvProxy, reinstallEnvProxy, proxyNotice } from '../core/env-proxy.mjs';
+import { startLiveEgress, egressNotice } from '../core/egress-policy.mjs';
 import { gitState, GIT_MISSING } from '../core/git-available.mjs';
 import { workModeOfRow, workModeForStart, effectiveWorkMode } from '../core/project-kind.mjs';
 // Static on purpose (issue #841): after `npm i -g` the files on disk are the new version's.
@@ -137,10 +140,12 @@ function parseArgs(argv) {
     pastTeamCap: false,     // team policy (design §12): start with the total-cap acknowledgement recorded
     reason: undefined,      // …and the reason the team sees for it
     install: null,
+    force: false,           // --force: with --install, overwrite files that already exist
     sourceBranch: undefined,
     featureBranch: undefined,
     onSourceBranch: false,
     memoryScope: undefined,
+    noMemory: false,        // --no-memory (#943): the run loads no memory notes and proposes none
     after: undefined,
     afterAny: false,
     sourceFromPrevious: false,
@@ -156,6 +161,7 @@ function parseArgs(argv) {
     '--tag',
     '--model',
     '--engine',
+    '--guardrails',
     '--permission-mode',
     '--workflow',
     '--install',
@@ -175,6 +181,7 @@ function parseArgs(argv) {
     '--tag': 'tags',
     '--model': 'model',
     '--engine': 'engine',
+    '--guardrails': 'guardrailsId',
     '--permission-mode': 'permissionMode',
     '--workflow': 'workflow',
     '--install': 'install',
@@ -225,6 +232,8 @@ function parseArgs(argv) {
     if (arg === '--after-any') { out.afterAny = true; continue; }
     if (arg === '--source-from-previous') { out.sourceFromPrevious = true; continue; }
     if (arg === '--on-source-branch') { out.onSourceBranch = true; continue; }
+    if (arg === '--no-memory') { out.noMemory = true; continue; }
+    if (arg === '--force') { out.force = true; continue; }
 
     let inlineValue;
     const eq = arg.indexOf('=');
@@ -317,9 +326,10 @@ Subcommands:
                               (any unique prefix; --json for machines). See: worca runs help
   logs <id> [-f]              Tail a run's live log (--tail N, --component, --level,
                               --json). -f follows; Ctrl-C detaches, the run continues. See: worca logs help
+  sessions <id> [--json]      A run's sessions: host, turns, the cost split and its reconcile. See: worca sessions help
   stop <id>                   Stop a live or paused run (any unique prefix). See: worca stop help
   pause <id>                  Gracefully pause a live run; resume with: worca resume <id>
-  doctor                      Reconcile crashed runs and sweep leftover run roots.
+  doctor                      Reconcile crashed runs, sweep leftover run roots, check node-pty's spawn-helper.
   plugin <cmd> [...]          Manage plugins: add|install|list|update|remove|purge|enable|
                               disable|doctor|link|reimport|init|validate|exec. See: worca plugin help
   marketplace <cmd> [...]     Manage plugin marketplaces: add|list|refresh|remove. See: worca marketplace help
@@ -344,6 +354,8 @@ Subcommands:
                               See: worca extension help (docs/browser-extension.md)
   proxy <cmd> [...]           Corporate proxy login: status|login|logout|test.
                               See: worca proxy help (docs/network-proxy.md)
+  setup --from FILE [--yes]   Apply a team setup file; asks only for what it leaves out.
+                              See: docs/setup-assistant.md
   broker [serve|secrets|revoke --person <email>]
                               The credential broker: holds model keys outside worca's container
                               (docs/credential-broker.md)
@@ -361,6 +373,8 @@ Options:
   --model <m>              Claude model id
   --engine <name>          Agent harness for the pipeline's agent nodes: claude (default) | codex (beta) | copilot (beta) | cursor (beta) | gemini (beta) | goose (beta) | opencode (beta) | qwen (beta)
   --allow-unguarded-engine Run on an engine that cannot fully enforce the guardrail set's permission rules
+  --guardrails <id>        Guardrail set the run uses: permissive | normal | secure (Strict) | a saved set's id
+                           (default: the install's default set, Normal on a new install)
   --permission-mode <m>    Claude permission mode: default | acceptEdits | plan |
                            bypassPermissions (default acceptEdits)
   --workflow <id>          Saved pipeline template to run (default: wf_default — the built-in graph)
@@ -368,6 +382,7 @@ Options:
   --no-human               Auto workflow only: no proposal, no clarify, no agent questions (loop-budget, recovery, cost and error pauses still apply)
   --memory-scope <s>       Memory defragment workflow only: global | project — the scope the
                            run restructures (--workflow wf_memory_defrag needs it; no --prompt needed)
+  --no-memory              Run without worca memory: no notes load and none are proposed (to measure what memory is worth)
   --source-branch <name>   Branch to fork the per-run worktree from (default: current HEAD)
   --branch <name>          Feature branch name (default: claude proposes one)
   --on-source-branch       Commit onto the source branch itself: the run works on a hidden branch and
@@ -389,6 +404,7 @@ Options:
                            waited 30 min. Configure in Settings > Away mode.
   --ui                     Same as "worca ui start" (accepts --port, --open, --mock)
   --install <targetDir>    Copy agents + /worca skill into <targetDir>/.claude
+  --force                  With --install: overwrite files that already exist
   -h, --help               Show this help
   -v, -V, --version        Print the version (worca <semver>) and exit
 `;
@@ -690,6 +706,14 @@ async function attachAndDrive(orch, flags, start) {
       }
     }
     const line = formatExecLine(e, orch.state && orch.state.stepper, { color: c, engine: orch.claude?.engine || null });
+    if (line) out(line);
+  });
+
+  // Session groups (Task 55): one line per transition that matters (open, degrade, dispatch, rotate, restart, resume,
+  // a failed dispatch, close); formatSessionHostLine gives null for the rest.
+  orch.on('sessionHost', (ev) => {
+    if (answering) return; // avoid interleaving with an open question prompt
+    const line = formatSessionHostLine(ev, { labelOf: manifestLabelOf(orch.state && orch.state.stepper), color: c });
     if (line) out(line);
   });
 
@@ -1299,6 +1323,22 @@ async function cmdDoctor() {
     out(`ask worktrees: removed ${res.removedDirs} orphan dir(s), dropped ${res.prunedRows} stale row(s), skipped ${res.failed}`);
   } catch (err) {
     process.stderr.write(`worca doctor: ask-worktree sweep failed: ${err?.message || err}\n`);
+  }
+  // node-pty powers only the web UI's terminal pane (and Ask Worca's commands in it).
+  // Report-only: the server fixes the exec bit itself on the first terminal open
+  // (pty.mjs#ensureSpawnHelper); doctor never chmods, it prints the exact fix.
+  // BEFORE the legacy block for the same reason as the ask-worktree sweep above.
+  try {
+    const { spawnHelperStatus, spawnHelperDoctorLine } = await import('../core/terminal/pty.mjs');
+    let ptyDir = null;
+    try { ptyDir = dirname(createRequire(import.meta.url).resolve('node-pty/package.json')); } catch { /* optional dependency not installed */ }
+    if (!ptyDir) out('node-pty: not installed (the web UI terminal uses plain pipes; docs/terminal.md)');
+    else {
+      const line = spawnHelperDoctorLine(spawnHelperStatus(ptyDir));
+      out(/NOT executable/.test(line) ? c('yellow', line) : line);
+    }
+  } catch (err) {
+    process.stderr.write(`worca doctor: spawn-helper check failed: ${err?.message || err}\n`);
   }
   try {
     // A TOTAL no-op while the effective mode is `legacy`: those paths hold every live
@@ -2554,10 +2594,9 @@ async function cmdWorkflow(argv) {
   try {
     switch (verb) {
       case 'list': {
-        // The built-ins (Default, Memory defragment) are not in the user store, so
+        // The built-ins (Default, Lean, Memory defragment) are not in the user store, so
         // prepend them — mirrors the server/UI, which always show them first.
-        const { shapeFirstEnabled } = await import('../core/shape/gate.mjs');
-        const items = [wf.GRAPH_DEFAULT_WORKFLOW, wf.GRAPH_MEMORY_DEFRAG_WORKFLOW, ...(shapeFirstEnabled() ? [wf.GRAPH_SHAPE_WORKFLOW] : []), ...(await wf.listWorkflows())];
+        const items = [wf.GRAPH_DEFAULT_WORKFLOW, wf.GRAPH_LEAN_WORKFLOW, wf.GRAPH_MEMORY_DEFRAG_WORKFLOW, wf.GRAPH_SHAPE_WORKFLOW, ...(await wf.listWorkflows())];
         for (const w of items) out(`${w.id}\t${w.name}\t${(w.domain || 'general')}`);
         return 0;
       }
@@ -3332,6 +3371,11 @@ async function drainTeamPushes() {
 
 const MEMORY_HELP = `worca memory — agent memory
 
+  worca memory proposals [--json]                       The notes pipeline agents proposed, waiting for you (a run never
+                                                        writes memory itself; it starts with the notes as they were)
+  worca memory proposals show <id>                      One proposal's text, and the note it replaces
+  worca memory proposals approve <id>                   Write it to memory (shared with the team when team memory is on)
+  worca memory proposals reject <id>                    Drop it
   worca memory team status [--project <path>] [--json]  The team layer: on/off, the branch, every note's state
   worca memory team on [--team-only] [--project <path>]
                                                         Share this project's NEW and CHANGED notes on its worca-memory branch;
@@ -3353,9 +3397,43 @@ Share existing notes from the project's Memory tab (Team view) in the web UI.
 Exit codes: 0 ok · 1 failure · 2 usage.
 `;
 
+/** `worca memory proposals [show|approve|reject <id>]` (#943): the same store calls as the web UI's routes. */
+async function cmdMemoryProposals(verb, rest) {
+  const { listProposals, approveProposal, rejectProposal } = await import('../core/memory-proposals.mjs');
+  const { memoryRoot } = await import('../core/memory-store.mjs');
+  const root = memoryRoot();
+  const all = await listProposals(root);
+  if (!verb || verb === '--json') {
+    if (verb === '--json' || rest.includes('--json')) { out(JSON.stringify(all.map(({ current: _c, ...p }) => p), null, 2)); return 0; }
+    if (!all.length) { out('no proposed memory notes'); return 0; }
+    for (const p of all) out(`${p.id}  ${p.kind === 'delete' ? 'remove' : p.baseHash ? 'update' : 'add   '}  ${p.scope}/${p.name}.md  run ${p.runId}${p.agentKey ? ` (${p.agentKey})` : ''}${p.stale ? c('yellow', '  changed since the run started') : ''}`);
+    return 0;
+  }
+  if (!['show', 'approve', 'reject'].includes(verb) || !rest[0]) { process.stderr.write(MEMORY_HELP); return 2; }
+  const item = all.find((p) => p.id === rest[0]);
+  if (!item) { process.stderr.write(`worca memory proposals ${verb}: no proposal ${rest[0]}\n`); return 1; }
+  if (verb === 'show') {
+    out(c('bold', `${item.kind === 'delete' ? 'remove' : 'write'} ${item.scope}/${item.name}.md — proposed by run ${item.runId}${item.agentKey ? ` (${item.agentKey})` : ''}`));
+    if (item.text) out(item.text.trimEnd());
+    if (item.current) { out(c('gray', '--- the note in memory now ---')); out(c('gray', item.current.trimEnd())); }
+    return 0;
+  }
+  if (verb === 'reject') { await rejectProposal(root, item.id); out(`rejected ${item.scope}/${item.name}.md`); return 0; }
+  const { memoryCaps } = await import('../core/settings.mjs');
+  await import('../core/settings-cascade.mjs');
+  const project = item.scope.startsWith('projects/') ? (await listProjects()).find((p) => p.key === item.scope.slice('projects/'.length)) : null;
+  if (item.scope !== 'global' && !project) { process.stderr.write(`worca memory proposals approve: the project of ${item.id} is no longer registered\n`); return 1; }
+  const team = await import('../core/memory-team.mjs');
+  await approveProposal(root, item.id, { caps: memoryCaps(project ? { projectDir: project.path } : null), prepare: team.teamClientText });
+  if (project) await team.queueTeamChanges(project.key, [item.name], { source: `run:${item.runId}` }).catch(() => {});
+  out(`${item.kind === 'delete' ? 'removed' : 'wrote'} ${item.scope}/${item.name}.md`);
+  return 0;
+}
+
 async function cmdMemory(argv) {
   const [group, verb, ...rest] = argv;
   if (!group || group === 'help' || (group === 'team' && (!verb || verb === 'help'))) { process.stdout.write(MEMORY_HELP); return 0; }
+  if (group === 'proposals') return cmdMemoryProposals(verb, rest);
   if (group !== 'team' || !['status', 'on', 'off', 'sync', 'rm', 'resolve'].includes(verb)) { process.stderr.write(MEMORY_HELP); return 2; }
   const team = await import('../core/memory-team.mjs');
   const { writeProjectSettings } = await import('../core/settings-cascade.mjs');
@@ -3460,7 +3538,7 @@ async function resolveTeamNote(team, { key, project, name, a }) {
 
 // ── main ──────────────────────────────────────────────────────────────────────────
 
-const SUBCOMMANDS = new Set(['add', 'list', 'remove', 'resume', 'run', 'runs', 'logs', 'stop', 'pause', 'doctor', 'plugin', 'marketplace', 'config', 'flags', 'ui', 'workflow', 'metrics', 'script', 'policy', 'schedule', 'models', 'container', 'broker', 'extension', 'proxy', 'memory']);
+const SUBCOMMANDS = new Set(['add', 'list', 'remove', 'resume', 'run', 'runs', 'logs', 'stop', 'pause', 'doctor', 'plugin', 'marketplace', 'config', 'flags', 'ui', 'workflow', 'metrics', 'script', 'policy', 'schedule', 'models', 'container', 'broker', 'extension', 'proxy', 'memory', 'setup', 'sessions']);
 
 /** Levenshtein distance, two-row. Only ever called on short argv tokens. */
 function editDistance(a, b) {
@@ -3502,15 +3580,60 @@ function nearestSubcommand(token) {
   return best;
 }
 
+/**
+ * Words people type in front of a top-level verb that has no group of its own. The
+ * README once listed add/list/remove as "projects (…)", so `worca projects list` is a
+ * real thing users type — and `projects` near-misses no subcommand, so it ran as a
+ * PROMPT. Exact keys only: these are ordinary English words, never fuzzy-matched.
+ */
+const SUBCOMMAND_GROUPS = new Map([
+  ['project', ['add', 'list', 'remove']],
+  ['projects', ['add', 'list', 'remove']],
+]);
+
+/**
+ * The fail() message when the bare positionals are a mistyped command, else null.
+ * (a) the first token near-misses a subcommand (MIN-51), or (b) the first is a group
+ * word and the rest is either at most one more token (`worca projects list` means
+ * `worca list`) or a real verb plus ONE argument (`projects add myproj`: `add` and
+ * `remove` each take a single positional). Anything longer, or a second token that is
+ * not one of the verbs (`projects need a cleanup`, `project add caching to the API`),
+ * stays a prompt.
+ * @param {string[]} tokens the bare positionals (flags._)
+ * @returns {string|null}
+ */
+function mistypedCommand(tokens) {
+  const [first, second] = tokens;
+  const meant = nearestSubcommand(first);
+  if (meant) {
+    if (meant === first) return `"${meant}" is a subcommand and must come first: worca ${meant} [args] (to run a prompt with that word, use --prompt "\u2026")`;
+    return `unknown subcommand "${first}" — did you mean "${meant}"? (to run a prompt, use --prompt "\u2026")`;
+  }
+  const verbs = SUBCOMMAND_GROUPS.get(first);
+  if (!verbs) return null;
+  // verb + its single argument is 3 tokens; with no verb, only the bare/2-token forms.
+  if (tokens.length > 3 || (tokens.length === 3 && !verbs.includes(second))) return null;
+  const pick = verbs.includes(second) ? second : 'list';
+  return `unknown subcommand "${tokens.join(' ')}" — did you mean "${pick}"? `
+    + `The ${first.replace(/s$/, '')} commands are top-level: worca ${verbs.join(' | ')} (to run a prompt, use --prompt "\u2026")`;
+}
+
 async function main() {
+  // D6: the old Labs flag becomes networkProxy.enabled, once, before the proxy reads it.
+  await migrateCorporateProxyFlag();
   // A hosting platform's outbound network policy (src/core/egress-policy.mjs). `worca ui` leaves
   // it to the server it starts; any other command (a pipeline started by hand in the container)
   // runs its own policy proxy, or reuses the one a parent worca put in the environment.
-  // `worca proxy` skips it too, so `proxy test` talks to the corporate proxy itself (D15).
-  if (process.argv[2] !== 'ui' && process.argv[2] !== 'proxy') {
+  // `worca proxy` skips it too, so `proxy test` talks to the corporate proxy itself (D15), and `worca setup`
+  // reads a local file and talks to no one.
+  // The settings watcher keeps a long run live: a saved networkProxy change swaps its upstream (AC-2.6).
+  let fetchProxy = null;
+  if (process.argv[2] !== 'ui' && process.argv[2] !== 'proxy' && process.argv[2] !== 'setup') {
     try {
-      const egress = await startEgressPolicy({ unref: true, log: (l) => process.stderr.write(`worca: egress: ${l}\n`) });
-      const egressLine = egressNotice(egress);
+      const egress = await startLiveEgress({ unref: true, log: (l) => process.stderr.write(`worca: egress: ${l}\n`),
+        // D8: a proxy turned on at runtime: this process's own fetch follows the new HTTPS_PROXY.
+        onEnvChange: () => { fetchProxy = reinstallEnvProxy(fetchProxy); } });
+      const egressLine = egressNotice(egress.current());
       // Printed once per process, and only by commands that start the proxy (not `ui`, not `proxy`).
       if (egressLine && (egressLine.level === 'warn' || egressLine.text.startsWith('Corporate proxy:'))) process.stderr.write(`worca: ${egressLine.text}\n`);
     } catch (err) {
@@ -3520,7 +3643,8 @@ async function main() {
   }
   // Outbound calls (pipelines, `worca broker`) honor HTTP(S)_PROXY / NO_PROXY (src/core/env-proxy.mjs).
   // Only problems are printed: stdout belongs to the subcommand (some emit JSON).
-  const proxyLine = proxyNotice(useEnvProxy());
+  fetchProxy = useEnvProxy();
+  const proxyLine = proxyNotice(fetchProxy);
   if (proxyLine?.level === 'warn') process.stderr.write(`worca: ${proxyLine.text}\n`);
   const argv2 = process.argv.slice(2); if (argv2[0] !== 'ui' && argv2[0] !== 'help' && !argv2.includes('--ui')) await gitState();
   const sub = process.argv[2];
@@ -3537,6 +3661,7 @@ async function main() {
     if (sub === 'run') return cmdRun(rest, { out, c, fail });
     if (sub === 'runs') return cmdRuns(rest, { out, c, fail });
     if (sub === 'logs') return cmdLogs(rest, { out, c, fail });
+    if (sub === 'sessions') return flushed(cmdSessions(rest, { out, c, fail }));   // --json can pass 64 KiB on a pipe
     if (sub === 'stop' || sub === 'pause') return cmdControl(sub, rest, { out, c, fail });
     if (sub === 'doctor') return cmdDoctor();
     if (sub === 'plugin') return cmdPlugin(rest);
@@ -3554,6 +3679,7 @@ async function main() {
     if (sub === 'container') return cmdContainer(rest, { out, c, fail });
     if (sub === 'extension') return cmdExtension(rest, { out, c, fail });
     if (sub === 'proxy') return cmdProxy(rest, { out, c, fail });
+    if (sub === 'setup') return cmdSetup(rest, { out });
     if (sub === 'broker') {
       // Loaded lazily: the broker is its own process and needs none of the core graph.
       const { runBrokerCli } = await import('../broker/main.mjs');
@@ -3577,11 +3703,9 @@ async function main() {
   }
 
   if (flags.install) {
-    // Forward --force (and any other extra tokens) to the installer.
-    const passthrough = [];
-    if (process.argv.includes('--force')) passthrough.push('--force');
-    return runInstall(flags.install, passthrough);
+    return runInstall(flags.install, flags.force ? ['--force'] : []);
   }
+  if (flags.force) fail('--force only applies to --install <targetDir>.');
 
   if (flags.mock) {
     process.env.WORCA_MOCK = '1';
@@ -3599,14 +3723,12 @@ async function main() {
   }
   if (!flags.prompt && !flags.file) {
     // Allow a bare positional prompt: `worca "do the thing"`. A lone token that
-    // near-misses a subcommand is a typo, not a task — refuse it here, before a
-    // pipeline row, a worktree or a feature branch exists.
+    // near-misses a subcommand, or a group word before a verb (`projects list`), is a
+    // typo, not a task — refuse it here, before a pipeline row, a worktree or a
+    // feature branch exists.
     if (flags._.length) {
-      const meant = nearestSubcommand(flags._[0]);
-      if (meant) {
-        if (meant === flags._[0]) fail(`"${meant}" is a subcommand and must come first: worca ${meant} [args] (to run a prompt with that word, use --prompt "\u2026")`);
-        fail(`unknown subcommand "${flags._[0]}" — did you mean "${meant}"? (to run a prompt, use --prompt "\u2026")`);
-      }
+      const mistyped = mistypedCommand(flags._);
+      if (mistyped) fail(mistyped);
       flags.prompt = flags._.join(' ');
     } else {
       fail('Provide a task with --prompt "<text>" or --file <markdown>. See --help.');
@@ -3687,10 +3809,16 @@ async function main() {
       fail(`workflow "${flags.workflow}" is started from the worca app (POST /api/run with shape), not the CLI`);
     }
   }
+  // --guardrails: an unknown set would silently run on Permissive (_resolveGuardrails' fallback).
+  if (flags.guardrailsId) {
+    const { readGuardrailSet } = await import('../core/guardrail-store.mjs');
+    if (!(await readGuardrailSet(flags.guardrailsId))) fail(`unknown guardrail set "${flags.guardrailsId}" (see the Guardrails view for the ids)`);
+  }
   {
     const { validateMemoryScope } = await import('../core/memory-sync.mjs');
     const reason = validateMemoryScope({ workflowId: flags.workflow || 'wf_default', memoryScope: flags.memoryScope, isWorkspace: false });
     if (reason) fail(reason);
+    if (flags.noMemory && flags.memoryScope) fail('--no-memory cannot be set on a Memory defragment run');
   }
   // Enforced tags (D14): project-only, no identity (no last-used source); the server's message, exit 2.
   // A Run after with no --tag checks the tags the chain will inherit and stores none (D9a, like tagGate).
@@ -3725,6 +3853,8 @@ async function main() {
     workflowId: flags.workflow || undefined,
     template: row,
     memoryScope: flags.memoryScope || undefined,
+    ...(flags.noMemory ? { noMemory: true } : {}),
+    ...(flags.guardrailsId ? { guardrailsId: flags.guardrailsId } : {}),
     branch: { source: flags.sourceBranch, feature: flags.featureBranch, ...(flags.onSourceBranch ? { sameAsSource: true } : {}) },
     claude: {
       permissionMode: flags.permissionMode,

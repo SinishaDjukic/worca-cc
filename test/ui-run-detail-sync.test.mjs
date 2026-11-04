@@ -5,23 +5,22 @@
 // boot() / settle() / go() are copied from test/ui-running-routing.test.mjs (house convention).
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
 
-const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 
 const PROJECT = '/tmp/proj';
 const ID = 'auth-fix';
 
 async function boot() {
-  const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4317/' }));
+  const dom = trackDom(new JSDOM(readIndexHtml(), { url: 'http://localhost:4317/' }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
   let lastWs = null;
@@ -112,5 +111,5 @@ test('clicking .rd-sync narrows the Live log to x:sync:1', async () => {
   const r = window.__np.getRun(ID);
   assert.equal(r.logFilter.execution, 'x:sync:1');
   assert.equal(r.logFilter.node, 'sync');
-  assert.equal(window.location.hash, `#running/${ID}/logs`, 'the Logs tab is opened');
+  assert.equal(window.location.hash, `#running/${ID}/details/logs`, 'Details › Live log is opened');
 });

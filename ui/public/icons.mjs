@@ -10,6 +10,7 @@ export const ICONS = Object.freeze({
   track: '<path d="M3 12h4l2.5-6 4 12 2.5-6H21"></path>',
   diff: '<path d="M12 4.5v7M8.5 8h7M8.5 17.5h7"></path>',
   script: '<path d="M8.5 8 4.5 12l4 4M15.5 8l4 4-4 4M13.5 5.5l-3 13"></path>',
+  terminal: '<path d="m5 17 5-5-5-5"></path><path d="M12 18h7"></path>',
   clone: '<path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M5 19.5h14"></path>',
   project: '<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path><path d="M12 11v6M9 14h6"></path>',
   more: '<circle cx="6" cy="12" r="1.5" fill="currentColor" stroke="none"></circle><circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"></circle><circle cx="18" cy="12" r="1.5" fill="currentColor" stroke="none"></circle>',

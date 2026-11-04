@@ -11,33 +11,28 @@ test('defaultProxyDeps: the bridge only with a loopback URL and a token; the tok
   assert.equal(defaultProxyDeps({ env: {} }).proxy.status, null);
   assert.equal(defaultProxyDeps({ env: { WORCA_ASK_PROXY: '{"url":"http://evil.test/api/ask/proxy"}', ASK_PROXY_TOKEN: 't' } }).proxy.status, null);
   const seen = [];
-  const fetchImpl = async (url, o) => { seen.push([url, o.headers['x-worca-ask-proxy'], JSON.parse(o.body)]); return { ok: true, json: async () => ({ result: { flag: true, state: 'ready' } }) }; };
+  const fetchImpl = async (url, o) => { seen.push([url, o.headers['x-worca-ask-proxy'], JSON.parse(o.body)]); return { ok: true, json: async () => ({ result: { enabled: true, state: 'ready' } }) }; };
   const d = defaultProxyDeps({ env: { WORCA_ASK_PROXY: '{"url":"http://127.0.0.1:4317/api/ask/proxy"}', ASK_PROXY_TOKEN: 'tok' }, fetchImpl });
-  assert.deepEqual(await d.proxy.status(), { flag: true, state: 'ready' });
+  assert.deepEqual(await d.proxy.status(), { enabled: true, state: 'ready' });
   assert.deepEqual(seen, [['http://127.0.0.1:4317/api/ask/proxy', 'tok', { op: 'status' }]]);
 });
 
-const proxy = (o = {}) => ({ flagOn: () => true, status: async () => ({ flag: true, state: 'ready' }), test: async () => ({ ok: true, results: [] }),
-  testOff: null, validateChange: async (i) => ({ ok: true, card: { type: 'proxy', kind: 'settings', patch: i } }), validateFlagOn: async () => ({ ok: true, card: { type: 'proxy', kind: 'flag' } }), ...o });
+const proxy = (o = {}) => ({ status: async () => ({ enabled: true, state: 'ready' }), test: async () => ({ ok: true, results: [] }),
+  testOff: null, validateChange: async (i) => ({ ok: true, card: { type: 'proxy', kind: 'settings', patch: i } }), validateFlagOn: async () => ({ ok: true, card: { type: 'proxy', kind: 'enable' } }), ...o });
 
-test('proxy tools: listed only with the bundle; flag off answers clearly; tests and proposals delegate', async () => {
+test('proxy tools: listed only with the bundle; the proxy off is read and tested like on; proposals delegate', async () => {
   const none = createAskTools({ limits: ASK_LIMITS }).list().map((t) => t.name);
   assert.ok(!none.includes('get_network_proxy'));
   const t = createAskTools({ limits: ASK_LIMITS, proxy: proxy() });
   const names = t.list().map((x) => x.name);
   for (const n of ['get_network_proxy', 'test_network_proxy', 'propose_network_proxy_change', 'propose_corporate_proxy_on']) assert.ok(names.includes(n), n);
-  assert.deepEqual(await t.call('get_network_proxy', {}), { flag: true, state: 'ready' });
+  assert.deepEqual(await t.call('get_network_proxy', {}), { enabled: true, state: 'ready' });
 
-  const off = createAskTools({ limits: ASK_LIMITS, proxy: proxy({ flagOn: () => false }) });
-  const g = await off.call('get_network_proxy', {});
-  assert.equal(g.flag, false);
-  assert.match(g.howToTurnOn, /propose_corporate_proxy_on/);
-  assert.match(g.howToTurnOn, /Settings › Labs/);
-  assert.equal((await off.call('test_network_proxy', {})).code, 'FLAG_OFF');
-  assert.equal((await off.call('propose_corporate_proxy_on', {})).ok, true, 'the flag card is the one proposal that works with the flag off');
-
-  const bridgeSaysOff = createAskTools({ limits: ASK_LIMITS, proxy: proxy({ status: async () => ({ flag: false }) }) });
-  assert.equal((await bridgeSaysOff.call('get_network_proxy', {})).flag, false, 'the server\'s flag answer wins');
+  const off = createAskTools({ limits: ASK_LIMITS, proxy: proxy({ status: async () => ({ enabled: false, state: 'off' }) }) });
+  assert.deepEqual(await off.call('get_network_proxy', {}), { enabled: false, state: 'off' });
+  assert.deepEqual(await off.call('test_network_proxy', {}), { ok: true, results: [] }, 'the saved values are tested with the proxy off too');
+  assert.equal((await off.call('propose_corporate_proxy_on', {})).ok, true);
+  for (const d of t.list().filter((x) => /proxy/.test(x.name))) assert.doesNotMatch(d.description, /Labs|Restart Worca|restarted|FLAG_OFF|RESTART_NEEDED/, d.name);
 
   const relay = createAskTools({ limits: ASK_LIMITS, proxy: proxy({ test: null, testOff: 'agent isolation text' }) });
   assert.deepEqual(await relay.call('test_network_proxy', {}), { ok: false, code: 'PROXY_AGENT_BLOCKED', error: 'agent isolation text' });
@@ -57,18 +52,39 @@ test('no tool takes a password: the schemas forbid it', () => {
   }
 });
 
-test('applyProxyChange: settings go through saveSettings (the PUT path); the flag through setFlags', async () => {
-  const saved = []; const flags = [];
-  const io = { saveSettings: async (p) => { saved.push(p); return { networkProxy: p, restartNeeded: true }; },
-    setFlags: async (p) => { flags.push(p); }, flagOn: () => false, validateChange: async () => ({ ok: true, card: { patch: { upstream: 'p.acme.test:3128' } } }),
-    validateFlagOn: async () => ({ ok: true }) };
+test('applyProxyChange: settings and the enable card go through saveSettings (the PUT path), live', async () => {
+  const saved = [];
+  const io = { saveSettings: async (p) => { saved.push(p); return { networkProxy: p, restartNeeded: false, pending: [] }; },
+    enabledNow: () => false, validateChange: async () => ({ ok: true, card: { patch: { upstream: 'p.acme.test:3128' } } }) };
   assert.deepEqual(await applyProxyChange({ type: 'proxy', kind: 'settings', patch: { upstream: 'p.acme.test:3128' } }, io),
-    { ok: true, detail: 'Saved. Restart Worca to apply.' });
+    { ok: true, detail: 'Saved. New connections use it now.' });
   assert.deepEqual(saved, [{ upstream: 'p.acme.test:3128' }]);
-  assert.equal((await applyProxyChange({ type: 'proxy', kind: 'flag', set: { corporateProxy: true } }, io)).detail,
-    'Corporate proxy is on. Restart Worca to start the local proxy.');
-  assert.deepEqual(flags, [{ corporateProxy: true }]);
-  assert.match((await applyProxyChange({ type: 'proxy', kind: 'flag', set: { corporateProxy: true } }, { ...io, flagOn: () => true })).detail, /already on/);
-  assert.equal(flags.length, 1, 'already on: no setFlags call');
+  assert.equal((await applyProxyChange({ type: 'proxy', kind: 'enable', patch: { enabled: true } }, io)).detail, 'Saved. New connections use it now.');
+  assert.deepEqual(saved.at(-1), { enabled: true });
+  assert.equal((await applyProxyChange({ type: 'proxy', kind: 'flag', set: { corporateProxy: true } }, io)).ok, true, 'a card proposed before the upgrade still applies');
+  assert.deepEqual(saved.at(-1), { enabled: true });
+  const n = saved.length;
+  assert.match((await applyProxyChange({ type: 'proxy', kind: 'enable' }, { ...io, enabledNow: () => true })).detail, /already on/);
+  assert.equal(saved.length, n, 'already on: nothing saved');
+  const port = { ...io, saveSettings: async () => ({ pending: ['fixedPort'] }) };
+  assert.equal((await applyProxyChange({ type: 'proxy', kind: 'settings', patch: { fixedPort: 3128 } }, port)).detail,
+    'Saved. New connections use it now. The local proxy port applies at the next start.');
   await assert.rejects(applyProxyChange({ type: 'proxy', kind: 'settings', patch: {} }, { ...io, validateChange: async () => ({ ok: false, errors: ['nothing would change'] }) }), /nothing would change/);
+});
+
+test('applyProxyChange: an untested upstream is tested first; a failed test saves nothing', async () => {
+  const UNTESTED = { refused: { status: 409, body: { code: 'UNTESTED', error: 'Test these proxy settings first' } } };
+  const card = { type: 'proxy', kind: 'settings', patch: { upstream: 'p2.acme.test:3128' } };
+  const base = { validateChange: async () => ({ ok: true, card: { patch: card.patch } }) };
+  const calls = [];
+  let saves = 0;
+  const pass = { ...base, saveSettings: async (p) => { calls.push(['save', p]); return ++saves === 1 ? UNTESTED : { pending: [] }; },
+    test: async (p) => { calls.push(['test', p]); return { status: 200, body: { ok: true } }; } };
+  assert.deepEqual(await applyProxyChange(card, pass), { ok: true, detail: 'Saved. New connections use it now.' });
+  assert.deepEqual(calls.map((c) => c[0]), ['save', 'test', 'save']);
+  const failSaves = [];
+  const fail = { ...base, saveSettings: async (p) => { failSaves.push(p); return UNTESTED; },
+    test: async () => ({ status: 200, body: { ok: false } }) };
+  await assert.rejects(applyProxyChange(card, fail), (err) => err.code === 'UNTESTED' && /the proxy test did not pass/.test(err.message));
+  assert.equal(failSaves.length, 1, 'only the refused attempt: nothing was written');
 });

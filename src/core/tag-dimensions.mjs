@@ -9,7 +9,6 @@ import { listProjects } from './projects.mjs';
 import { readProjectDefaultTags } from './config.mjs';
 import { lastUsedTags } from './run-tags-store.mjs';
 import { projectKey } from './store.mjs';
-import { flagEnabled } from './flags.mjs';
 import { normaliseDimensions, mergeDimensions, prefillTags, tagsProblemText } from '../shared/tag-dimensions.mjs';
 
 export const POLICY_FIELD = 'runs.tagDimensions';
@@ -71,12 +70,11 @@ export function prefillSources({ projectDir = null, person = null } = {}) {
 }
 
 /**
- * The run-start gate (D9–D11, D14): with runTags on and enforcement on for this target, pre-fill the tags,
+ * The run-start gate (D9–D11, D14): with enforcement on for this target, pre-fill the tags,
  * then report the problem left, if any. Otherwise the tags pass through untouched (enforced:false).
  */
 export async function applyTagRules({ projectDir = null, workspaceId = null, tags = [], person = null } = {}, io = {}) {
-  const { flagOn = () => flagEnabled('runTags'), rules = dimensionsForTarget, sources = prefillSources } = io;
-  if (!flagOn()) return { tags, error: null, enforced: false };
+  const { rules = dimensionsForTarget, sources = prefillSources } = io;
   const { dims, enforce } = await rules({ projectDir, workspaceId }, io);
   if (!enforce || !dims.length) return { tags, error: null, enforced: false };
   const filled = prefillTags(dims, tags, sources({ projectDir, person }));

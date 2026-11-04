@@ -2,6 +2,39 @@
 
 ## Unreleased
 
+### Node 22.19 or newer
+
+- Worca now needs Node 22.19.0 or newer (was 22.13.0): undici 8, which routes fetch() through `HTTP(S)_PROXY`, needs it. On an older Node the CLI says so and exits; `nvm use` picks up the bundled `.nvmrc`.
+
+### "Push as me" covers clones and fetches too
+
+- With `WORCA_GH_AS_PERSON`, worca's GitHub reads (a clone, a fetch, a pull request's status) also use the acting person's own GitHub when they connected it on the key page, so a person can clone and open pull requests on what their own account reaches (pull request status shown to everyone still needs the deployment's credential), even when the deployment has no GitHub credential. Without a connected GitHub (or with no one behind the call) reads use the deployment's credential, also under `required`, which only refuses writes. Their token is kept in memory for up to a minute for reads. Only reads on a project for that person opt in (clone, fetch, finding their own pull request when they open one); pull request status, checks and chips, the watcher, automations, plugin and skill installs, the git-free API and metrics keep the deployment's credential. A repository cloned with a person's token is visible to everyone on that worca, and the clone card and key page say so.
+- Settings › **My credentials** (was My model credentials) lists model keys and, with "push as me" on, your GitHub account in its own group with what connecting does; GitHub makes Manage keys the primary action only under `required`. The key page's hint sits on its own line above the button.
+- The clone card, Ask Worca's hosting rules (`githubAsPerson=` on the deployment line) and the key page's GitHub row say so, and the key page names the permissions a token needs.
+
+### Credential broker: "Push as me" with a pasted token, no GitHub App needed
+
+- In multi mode the broker's GitHub row is always on the key page. Without `WORCA_BROKER_GITHUB_CLIENT_ID` it is paste-only: each person pastes a fine-grained token (checked with GitHub, kept sealed) and Worca's pushes and pull requests with `WORCA_GH_AS_PERSON` go out as them. The client ID now only adds "Sign in with GitHub" (and, with the secret, the renewal of GitHub App user tokens). A sign-in's token due for renewal on a broker without a client ID counts as expired.
+- Worca warns at start about `WORCA_GH_AS_PERSON` only when the broker has no GitHub slot at all (single mode without a client ID), no longer for a multi-mode broker without one.
+
+### Security: worca's trust boundaries
+
+- Worca's own git calls in a project or run checkout never run a hook or config command an agent planted in the shared `.git`, including a filter behind a conditional include on `git worktree add` (runs, terminal branch folders, team metrics, policy and memory). Model-chosen code in the chat (`test_script` with a draft, a `command`/`code` param, or a built-in or plugin script) runs only behind an approval card that shows every value it runs. Under agent isolation, every caller on the box (all of 127.0.0.0/8 included) needs the instance token. `/answer`, `/approve`, `/retry`, `/abort` and `/cancel` follow the `/direct` rule in group chats. The credential broker gives the body budget back at a deadline and books paused readers, large JSON answers and every stream flag. Artifact routes read the file the link check passed. A relayed chat's MCP config is readable only by that person's agent user.
+- **Upgrade notes.**
+  - Schema v81. Existing installs keep Permissive guardrails through the `store_meta` row; new installs start on Normal. Unmerged branches that add a schema version must renumber.
+  - On Normal, a run on any engine but Claude is refused: the others cannot fully hold its rules. Pick another set (`worca --project … --prompt … --guardrails permissive`) or pass `--allow-unguarded-engine`.
+  - Broker: multi mode without agent users exits 78 unless `WORCA_AGENT_ISOLATION=0` is set. `WORCA_IDENTITY_HEADER` in multi mode needs `WORCA_IDENTITY_TRUSTED_PROXIES`. A Responses call with `background: true` is refused (its cost could not be booked). A request body must keep arriving and be complete within 120 s.
+  - UI server: `WORCA_IDENTITY_HEADER` is read only from `WORCA_IDENTITY_TRUSTED_PROXIES` (IPs or CIDRs), and worca does not start with the header set but no trusted proxy.
+  - With agents under their own users, worca does not start while `WORCA_BROKER_SECRET_FILE` is readable by its group or by others: make it `0600`, owned by the user worca runs as.
+  - Network: on bare metal with `WORCA_HOST=0.0.0.0` in local mode, LAN callers now get 403. A local proxy that rewrites Host while the browser's Origin keeps another port gets 403 too.
+  - Isolation: callers of the API from inside the box (curl scripts, the Railway probe) must send `X-Worca-UI-Token` from `ui.json`; the `worca` CLI does.
+  - Image: rebuild for the `worca-plugin` user (uid 1002). The entrypoint re-permissions `plugins/` on each boot and makes `tmp/ask` sticky.
+  - Chat: in a group chat `/direct` and the answer commands need a sender in `allowedUserIds`, or `directInGroups: anyone`. On Discord every chat is a group (the bot receives no direct messages).
+### Run telemetry (experimental, flag `runTelemetry`)
+
+- With the flag on, a run records every model call's context size, tokens, timing and tools, tool run times, retries, compactions and sub-agent calls, plus Worca's own state saves, live-update sizes and event loop delay, to `telemetry.ndjson` in the run folder. Recording only: runs behave the same, and with the flag off nothing is written.
+- The run page's Agents tab shows each agent's context peak against the model's window, calls, sessions, time split and a context-over-time chart, and a line of Worca's own figures. `GET /api/runs/:id/telemetry` answers the same as JSON. See [Run telemetry](docs/run-telemetry.md).
+
 ### Chat sidebar aligned with Runs + shared list keyboard
 
 - Shared list keyboard: Runs aligned + Keyboard shortcuts sheet: Cycle 2 fixes the web UI review's one major issue.

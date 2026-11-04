@@ -75,7 +75,10 @@ export function mockEnabled(opts) {
  * @param {string} [o.model]             optional model id
  * @param {string} [o.effort]            optional reasoning effort
  * @param {(e:{type:string})=>void} [o.onEvent]  receives the normalized event vocabulary
- *   (src/core/engines/events.mjs), never raw stream-json envelopes
+ *   (src/core/engines/events.mjs), never raw stream-json envelopes — unless `rawEvents`
+ * @param {boolean} [o.rawEvents]  true ⇒ onEvent gets the Claude runner's raw envelopes (`{type, raw, costUsd?}`,
+ *   `{type:'session'}`, `{type:'hook-event', raw}`, `{type:'log'}`, `{type:'stderr'}`) instead. A session host turn only
+ *   (session-host.mjs): its demux routes them. Absent on every other spawn, so their events are unchanged.
  * @param {AbortSignal} [o.signal]
  * @param {string} [o.resumeSessionId]   resume a previous claude session (--resume)
  * @param {string} [o.bin]               claude binary (default "claude")
@@ -114,6 +117,10 @@ export function mockEnabled(opts) {
  *   materializeSkillMount). Absent/empty/non-strings ⇒ nothing emitted.
  * @param {object} [o.extraSettings]  merged into the one --settings payload (skills registry §4.1: Ask's
  *   `disableSkillShellExecution`); never replaces `permissions` / `hooks`. Absent ⇒ unchanged.
+ * @param {string} [o.readGuard] A8: the one file a Requirements read may open (file-read-guard.mjs); absent ⇒ argv unchanged.
+ *   Claude only: any other engine throws rather than run unguarded. The result then carries `readGuardDecisions`.
+ * @param {boolean} [o.noSessionPersistence] A8: true ⇒ --no-session-persistence (Claude Code saves no session
+ *   transcript of the call; Requirements file reads, asks and the brief look). Claude only; absent ⇒ argv unchanged.
  * @param {Record<string,string>} [o.spawnEnv]  run-level spawn env (wsmap D9: runOpts sets
  *   CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY on every fan-out node, and CLAUDE_CODE_DISABLE_BACKGROUND_TASKS
  *   on the scan's two). Merged OVER the guardrail env and UNDER modelEnv (a catalog entry that sets the
@@ -171,8 +178,17 @@ export async function runClaude(o = {}) {
     askLockdown,
     images,
     agents,
+    // Session host spawn only (session groups): absent on every other spawn, so its argv stays byte-identical.
+    forwardSubagentText,
+    agentsViaFile,
+    mainThreadGuard,
+    rawEvents,
     pluginDirs,
     extraSettings,
+    // Requirements A8: the one file a read may open (file-read-guard.mjs). Claude only, like memoryLoadLog.
+    readGuard,
+    // Requirements A8: no Claude Code session transcript of a file read. Claude only.
+    noSessionPersistence,
     // Memory usage (memory-usage.mjs): this execution's hook file; set only when the mounted rules hold a note
     // with `paths:`. Claude only (the InstructionsLoaded hook); other engines ignore it. Never a spawn flag of its own.
     memoryLoadLog,
@@ -198,6 +214,11 @@ export async function runClaude(o = {}) {
     bin = DEFAULT_BIN,
   } = o;
 
+  // A8: the file-read guard is a Claude Code hook; another engine would run the read unguarded, so it never runs at all.
+  if (readGuard != null && (engineName || 'claude') !== 'claude') {
+    throw new Error(`runClaude: readGuard needs the claude engine, not ${JSON.stringify(engineName)}`);
+  }
+
   if (signal?.aborted) {
     const err = new Error('aborted');
     err.name = 'AbortError';
@@ -212,7 +233,8 @@ export async function runClaude(o = {}) {
     // named HERE too, or the mock implementer never sees it (this call is a gate, not
     // a pass-through; test/spawn-args.test.mjs asserts the forwarding end to end).
     // systemPromptMode is not named here on purpose: the mock has no Claude Code system
-    // prompt to replace, so it is a real-spawn-only option (the call below carries it).
+    // prompt to replace, so it is a real-spawn-only option (the call below carries it). readGuard is not named either:
+    // the mock spawns nothing, so there is no tool call to guard.
     return engine.run({ cwd, systemPrompt, prompt, onEvent, signal, resumeSessionId, workspaceWriteTargets, permissionMode });
   }
 
@@ -269,8 +291,14 @@ export async function runClaude(o = {}) {
     askLockdown,
     images,
     agents,
+    forwardSubagentText,
+    agentsViaFile,
+    mainThreadGuard,
+    rawEvents,
     pluginDirs,
     extraSettings: settings,
+    readGuard,
+    noSessionPersistence,
     memoryLoadLog,
     argvInlineLimit,
     asAgent,

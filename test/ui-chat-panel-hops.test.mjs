@@ -126,7 +126,7 @@ test('the live Overview Actions strip "Open tab ›" opens Actions inside the pa
   assert.equal(screenOf(ctx), screen);
 });
 
-test('Runs page: a glance row opens its tab as a NEW history entry (Back walks it back to Summary), live and saved', async () => {
+test('Runs page: a glance row opens Details as a NEW history entry (Back walks Details -> glance), live and saved', async () => {
   const ctx = await bootChat({ rows: [ROW] });
   hello(ctx, [liveRun({ status: 'done' }), liveRun({ runId: 'r5', pipelineId: 'p5', title: 'Going' })]);
   await ctx.settle(6);
@@ -134,22 +134,23 @@ test('Runs page: a glance row opens its tab as a NEW history entry (Back walks i
   await ctx.settle(8);
   const hd = ctx.window.document.querySelector('#hist-detail .hd');
   const before = ctx.window.history.length;
-  click(ctx, hd.querySelector('.hd-result [data-rd-tab="diff"]'));
+  click(ctx, hd.querySelector('.hd-result [data-rd-tab="overview"]'));
+  ctx.window.dispatchEvent(new ctx.window.Event('hashchange'));
   await ctx.settle(4);
-  assert.equal(ctx.window.location.hash, `#history/${KEY}/${ROW.id}/diff`);
+  assert.equal(ctx.window.location.hash, `#history/${KEY}/${ROW.id}/details/overview`);
   assert.equal(ctx.window.history.length, before + 1, 'saved: pushed, not replaced');
-  ctx.window.history.back();                                 // browser Back: Summary again
-  await ctx.settle(6);
+  click(ctx, hd.querySelector('.hd-to-run'));               // ‹ Run: back to the glance
+  ctx.window.dispatchEvent(new ctx.window.Event('hashchange'));
+  await ctx.settle(4);
   assert.equal(ctx.window.location.hash, `#history/${KEY}/${ROW.id}`);
-  assert.ok(hd.querySelector('.hd-tab[data-sec="overview"]').classList.contains('active'));
-  assert.equal(hd.querySelector('.hd-to-run'), null, 'no ‹ Run: the tabs are the way');
+  assert.equal(hd.dataset.mode, 'glance');
   ctx.go('running/r5');
   await ctx.settle(8);
   const rd = ctx.window.document.querySelector('#run-detail .rd');
   const before2 = ctx.window.history.length;
-  click(ctx, rd.querySelector('[data-rd-tab]:not([data-rd-tab="overview"])'));   // Summary is the page itself
+  click(ctx, rd.querySelector('.rd-nowlist [data-rd-tab], .rd-result [data-rd-tab]') || rd.querySelector('[data-rd-tab]'));
+  ctx.window.dispatchEvent(new ctx.window.Event('hashchange'));
   await ctx.settle(4);
-  assert.match(ctx.window.location.hash, /^#running\/r5\/[a-z]+$/);
-  assert.doesNotMatch(ctx.window.location.hash, /\/details\//);
+  assert.match(ctx.window.location.hash, /^#running\/r5\/details\//);
   assert.equal(ctx.window.history.length, before2 + 1, 'live: pushed, not replaced');
 });

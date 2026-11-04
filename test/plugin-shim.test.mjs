@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { writePluginsLock, pluginCurrentDir } from '../src/core/plugins-lock.mjs';
 import { writePluginConfig, writePluginState, readPluginState, createProfile, deleteProfile } from '../src/core/plugin-config.mjs';
-import { callSource, PluginOpError, setMockSourceResponses, _resetWithheldProxyNotice, scrubbedEnv } from '../src/core/plugin-shim.mjs';
+import { callSource, PluginOpError, setMockSourceResponses, _resetWithheldProxyNotice, scrubbedEnv, pluginChildSpawn } from '../src/core/plugin-shim.mjs';
 import { egressChildEnv } from '../src/core/egress-policy.mjs';
 import { startProxyNet, setProxyEnv, assertProxyRouting, NO_PROXY_HOST } from './helpers/proxy-net.mjs';
 import { importClosure } from './helpers/import-closure.mjs';
@@ -46,6 +46,41 @@ const CONNECTOR = [
   "    async boom() { const e = new Error('token expired'); e.kind = 'auth'; throw e; },",
   '    async never() { return new Promise(() => {}); },',
   "    async noisy() { console.log('junk before the frame'); return { fine: true }; },",
+  // Answers, then the process dies non-zero AFTER the frame is written: the
+  // platform-independent stand-in for Node 24 on Windows asserting in libuv
+  // during process.exit(0) (exit 0xC0000409). An exit listener runs after the
+  // runner's write callback; process.exitCode set there replaces the 0.
+  '    async answerThenCrash(args) {',
+  "      const fs = await import('node:fs');",
+  "      process.on('exit', () => { fs.writeSync(2, args.stderr || ''); process.exitCode = 7; });",
+  "      if (args.fail) { const e = new Error('token expired'); e.kind = 'auth'; throw e; }",
+  "      ctx.log('info', 'answered');",
+  '      return { answered: true };',
+  '    },',
+  // Answers but leaves a live handle (a ref'd 60 s timer): the child must
+  // still end promptly once the frame is written.
+  '    async lingers() { setTimeout(() => {}, 60000); return { lingered: true }; },',
+  // Answers, then the process is slow to end: an exit listener busy-waits
+  // args.ms, so the parent's kill timer fires AFTER the frame is out.
+  '    async answersThenStalls(args) {',
+  "      process.on('exit', () => { const end = Date.now() + args.ms; while (Date.now() < end); });",
+  '      return { stalled: true };',
+  '    },',
+  // Answers, then leftover work throws / rejects after the frame is out.
+  "    async throwsLate() { setTimeout(() => { throw new Error('late boom'); }, 100); return { threw: true }; },",
+  "    async rejectsLate() { setTimeout(() => { Promise.reject(new Error('late reject')); }, 100); return { rejected: true }; },",
+  // Throws BEFORE answering, from a timer (not the op promise): must still crash.
+  "    async throwsEarly() { setTimeout(() => { throw new Error('early boom'); }, 10); return new Promise(() => {}); },",
+  // Answers, but leaves process.exitCode set by stray connector code.
+  "    async answersWithExitCode() { process.exitCode = 1; return { coded: true }; },",
+  // Answers, then background work prints to stdout after the frame is out.
+  "    async printsLate() { setTimeout(() => console.log('late junk'), 50); return { early: true }; },",
+  // Writes args.out to stdout (no frame), then exits args.code before the
+  // runner can answer: garbage, a cut-off frame, JSON that is not a frame.
+  '    async writeThenExit(args) {',
+  '      await new Promise((r) => process.stdout.write(args.out, r));',
+  '      process.exit(args.code);',
+  '    },',
   '    async fetchAll(args) {',
   '      const out = [];',
   '      for (const url of args.urls) {',
@@ -245,6 +280,9 @@ const freePort = () => new Promise((r) => { const s = createServer().listen(0, '
 
 test('the UI server says it at boot, before any plugin spawn could spend it unseen', async () => {
   const home = mkdtempSync(join(tmpdir(), 'worca-proxy-boot-'));
+  // The corporate proxy turned off by hand: otherwise the login in HTTPS_PROXY starts it (egress-policy.mjs).
+  mkdirSync(join(home, '.worca-cc'), { recursive: true });
+  writeFileSync(join(home, '.worca-cc', 'settings.json'), JSON.stringify({ networkProxy: { enabled: false } }));
   const child = spawn(process.execPath, [SERVER], {
     // No egress policy: it would replace the proxy variables before the line is printed.
     env: { ...process.env, WORCA_MOCK: '1', WORCA_HOME: home, HOME: home, USERPROFILE: home, PORT: String(await freePort()),
@@ -259,7 +297,7 @@ test('the UI server says it at boot, before any plugin spawn could spend it unse
   await new Promise((r) => child.on('exit', r));
   clearTimeout(timer);
   rmSync(home, { recursive: true, force: true, maxRetries: 5 });
-  assert.match(out, /^\[worca-ui\] proxy: HTTP\(S\)_PROXY carries credentials, which plugin code never receives; .* go direct$/m, out);
+  assert.match(out, /^\[worca-ui\] proxy: HTTP\(S\)_PROXY carries credentials, which plugin code never receives, .* go direct$/m, out);
   assert.doesNotMatch(out, /s3cret/);
 });
 
@@ -293,6 +331,119 @@ test('stdout is protocol-reserved: console.log junk => PluginOpError protocol', 
   );
 });
 
+test('a child that crashes on exit AFTER writing its frame still answers; worca warns once', async () => {
+  // Node 24 on Windows can assert in libuv during process.exit(0) after one HTTPS
+  // fetch (exit 0xC0000409). The answer is already on stdout: keep it.
+  const logLines = [];
+  const result = await callSource({
+    plugin: NAME, sourceId: 'main', op: 'answerThenCrash',
+    args: { stderr: `first line
+Assertion failed: simulated crash on exit ${'x'.repeat(500)}
+
+` },
+    logger: (level, msg) => logLines.push(`${level}:${msg}`),
+  });
+  assert.deepEqual(result, { answered: true });
+  assert.ok(logLines.includes('info:answered'), 'the frame logs still route');
+  const warns = logLines.filter((l) => l.startsWith('warn:'));
+  assert.equal(warns.length, 1, `one warning: ${logLines.join(' | ')}`);
+  assert.match(warns[0], /plugin "mock-echo" op "answerThenCrash"/);
+  assert.match(warns[0], /crashed on exit after answering/);
+  assert.match(warns[0], /exit 7/);
+  assert.match(warns[0], /Assertion failed: simulated crash on exit/, 'the LAST non-empty stderr line is quoted');
+  assert.doesNotMatch(warns[0], /first line/, 'not the first line');
+  assert.ok(warns[0].length < 400, `the stderr line is capped: ${warns[0].length} chars`);
+});
+
+test('a token on the crash line of stderr never reaches the warning', async () => {
+  const ghp = `ghp_${'A1b2C3d4E5'.repeat(3)}`;
+  const jwt = ['eyJhbGciOiJIUzI1NiJ9', 'eyJzdWIiOiJ4eHh4eHh4eHgifQ', 'abcdefghijklmnopqrstuv'].join('.');
+  for (const line of [`Authorization: Bearer ${jwt}`, `push failed with ${ghp}`]) {
+    const logLines = [];
+    const result = await callSource({
+      plugin: NAME, sourceId: 'main', op: 'answerThenCrash', args: { stderr: `${line}
+` },
+      logger: (level, msg) => logLines.push(`${level}:${msg}`),
+    });
+    assert.deepEqual(result, { answered: true });
+    const warn = logLines.find((l) => l.startsWith('warn:'));
+    assert.match(warn, /crashed on exit after answering/);
+    assert.doesNotMatch(warn, /ghp_A1b2|eyJhbGci|abcdefghijklmnop/, warn);
+  }
+});
+
+test('a frame that arrived before the timeout is kept even if the child is killed while ending', async () => {
+  const logLines = [];
+  const result = await callSource({
+    plugin: NAME, sourceId: 'main', op: 'answersThenStalls', args: { ms: 1000 }, timeoutMs: 300,
+    logger: (level, msg) => logLines.push(`${level}:${msg}`),
+  });
+  assert.deepEqual(result, { stalled: true });
+  const warns = logLines.filter((l) => l.startsWith('warn:'));
+  assert.equal(warns.length, 1, logLines.join(' | '));
+  assert.match(warns[0], /killed after answering/);
+});
+
+test('a stray process.exitCode in the connector neither logs a crash nor loses the result', async () => {
+  const logLines = [];
+  const result = await callSource({
+    plugin: NAME, sourceId: 'main', op: 'answersWithExitCode',
+    logger: (level, msg) => logLines.push(`${level}:${msg}`),
+  });
+  assert.deepEqual(result, { coded: true });
+  assert.deepEqual(logLines, [], 'exit 0, so no warning');
+});
+
+test('a connector that leaves a live handle still answers promptly, with no warning', async () => {
+  const logLines = [];
+  const t0 = Date.now();
+  const result = await callSource({
+    plugin: NAME, sourceId: 'main', op: 'lingers', timeoutMs: 10000,
+    logger: (level, msg) => logLines.push(`${level}:${msg}`),
+  });
+  assert.deepEqual(result, { lingered: true });
+  assert.ok(Date.now() - t0 < 5000, `ended well before the 60 s handle: ${Date.now() - t0} ms`);
+  assert.deepEqual(logLines, [], 'a clean exit logs nothing');
+});
+
+test('output a connector prints after its frame never corrupts the frame', async () => {
+  assert.deepEqual(await callSource({ plugin: NAME, sourceId: 'main', op: 'printsLate', logger: () => {} }), { early: true });
+});
+
+test('a crash on exit after an error frame keeps the connector error, not protocol', async () => {
+  await rejectsKind(
+    callSource({ plugin: NAME, sourceId: 'main', op: 'answerThenCrash', args: { fail: true }, logger: () => {} }),
+    'auth', /token expired/,
+  );
+});
+
+test('errors from leftover work after the answer exit 0: no crash warning, answer kept', async () => {
+  for (const [op, expected] of [['throwsLate', { threw: true }], ['rejectsLate', { rejected: true }]]) {
+    const logLines = [];
+    const result = await callSource({
+      plugin: NAME, sourceId: 'main', op, logger: (level, msg) => logLines.push(`${level}:${msg}`),
+    });
+    assert.deepEqual(result, expected, op);
+    assert.deepEqual(logLines, [], `${op}: exit 0, so no warning`);
+  }
+});
+
+test('an uncaught error BEFORE the answer is still a crash (protocol error)', async () => {
+  await rejectsKind(
+    callSource({ plugin: NAME, sourceId: 'main', op: 'throwsEarly', logger: () => {} }),
+    'protocol', /child exited 1.*early boom/s,
+  );
+});
+
+test('a non-zero exit without a complete frame on stdout stays a protocol error', async () => {
+  for (const out of ['garbage', '{"ok":true,"result":', '{"result":1}', '42', 'null', '', '{"ok":true}', '{"ok":false,"error":{}}']) {
+    await rejectsKind(
+      callSource({ plugin: NAME, sourceId: 'main', op: 'writeThenExit', args: { out, code: 5 }, logger: () => {} }),
+      'protocol', /child exited 5/,
+    );
+  }
+});
+
 test('WORCA_MOCK=1 short-circuits without spawning (plugin need not exist)', async () => {
   process.env.WORCA_MOCK = '1';
   try {
@@ -310,6 +461,11 @@ test('WORCA_MOCK=1 short-circuits without spawning (plugin need not exist)', asy
     assert.equal(overridden.tasks[0].id, 'T-override');
     // …and an op with NO canned response mirrors the real child's kind
     // 'unimplemented' (the capabilities tolerant-default keys on it).
+    await rejectsKind(callSource({ plugin: 'x', sourceId: 'x', op: 'noSuchOp' }), 'unimplemented');
+    // A6: capabilities has a canned answer now: write-back stays on, and the mock source can export.
+    assert.deepEqual(await callSource({ plugin: 'x', sourceId: 'x', op: 'capabilities', args: { inputs: {} } }), { writeBack: true, export: true });
+    // A map entry set to undefined still means "no canned response" (writeback.test.mjs keeps the missing-op default that way).
+    setMockSourceResponses({ capabilities: undefined });
     await rejectsKind(callSource({ plugin: 'x', sourceId: 'x', op: 'capabilities' }), 'unimplemented');
     // Behavioral parity: when the plugin IS installed, the profile invariant
     // holds in mock mode too — a mock run must catch a missing profile exactly
@@ -318,6 +474,38 @@ test('WORCA_MOCK=1 short-circuits without spawning (plugin need not exist)', asy
       callSource({ plugin: NAME, sourceId: 'prof', op: 'listTasks' }),
       'plugin', /per-profile configuration/,
     );
+  } finally {
+    delete process.env.WORCA_MOCK;
+    setMockSourceResponses(null);
+  }
+});
+
+test('WORCA_MOCK=1: the export ops answer (A6 design §4): options, tickets numbered from 123, state follows the last write', async () => {
+  process.env.WORCA_MOCK = '1';
+  const call = (op, args) => callSource({ plugin: 'not-installed', sourceId: 'x', op, args });
+  try {
+    setMockSourceResponses(null);
+    const o = await call('exportOptions', {});
+    assert.deepEqual(o, { projects: [{ value: 'SHOP', label: 'SHOP — Shop web' }, { value: 'OPS', label: 'OPS — Operations' }], doneStatus: 'Done' });
+    assert.deepEqual((await call('exportOptions', { project: 'SHOP' })).issueTypes.map((t) => t.label), ['Story', 'Task', 'Bug']);
+    const both = await call('exportOptions', { project: 'SHOP', issueType: '10001' });
+    assert.deepEqual(both.priorities.map((p) => p.label), ['Highest', 'High', 'Medium', 'Low']);
+    assert.deepEqual(both.criteriaFields, [{ value: 'customfield_10070', label: 'Acceptance Criteria' }, { value: 'customfield_10071', label: 'Definition of Done' }]);
+    const made = await call('createTicket', { ticket: { project: 'SHOP', description: 'd1' } });
+    assert.deepEqual([made.key, made.url], ['SHOP-123', 'https://mock.test/browse/SHOP-123']);
+    assert.match(made.fingerprint, /^[0-9a-f]{64}$/);
+    assert.equal((await call('createTicket', { ticket: { project: 'OPS', description: 'd2' } })).key, 'OPS-124');
+    assert.deepEqual(await call('ticketState', { key: 'SHOP-123' }), { exists: true, url: 'https://mock.test/browse/SHOP-123', fingerprint: made.fingerprint });
+    const upd = await call('updateTicket', { key: 'SHOP-123', ticket: { description: 'd3' } });
+    assert.equal(upd.key, 'SHOP-123');
+    assert.notEqual(upd.fingerprint, made.fingerprint);
+    assert.equal((await call('ticketState', { key: 'SHOP-123' })).fingerprint, upd.fingerprint);
+    assert.deepEqual(await call('commentTicket', { key: 'SHOP-123', body: 'c' }), { ok: true });
+    assert.equal(await call('findTicket', { project: 'SHOP', label: 'worca-FEAT-1', marker: 'rexp_000000000000' }), null);
+    setMockSourceResponses({ ticketState: { exists: false } });   // a test override wins
+    assert.deepEqual(await call('ticketState', { key: 'SHOP-123' }), { exists: false });
+    setMockSourceResponses(null);
+    assert.equal((await call('createTicket', { ticket: { project: 'SHOP', description: 'x' } })).key, 'SHOP-123', 'a reset starts again at 123');
   } finally {
     delete process.env.WORCA_MOCK;
     setMockSourceResponses(null);
@@ -334,4 +522,51 @@ test('corporate proxy: the credential-free loopback URL reaches plugins, nothing
     assert.equal(env.NO_PROXY, '127.0.0.1,localhost,::1,intranet.example');
     assert.equal(scrubbedEnv('win32').HTTPS_PROXY, 'http://127.0.0.1:41234', 'same on Windows');
   } finally { restore(); }
+});
+
+// G12: every plugin child runs as worca's own user unless the container has a plugin user. There,
+// the child runs as that user with its own HOME, so it cannot open plugins/*/data (owner-only) or
+// worca's settings and database — its secrets arrive on stdin, nowhere else.
+test('pluginChildSpawn: node as worca, or under sudo as the container plugin user with its own HOME', () => {
+  const plain = pluginChildSpawn(['child.mjs'], { env: { PATH: '/bin', HOME: '/home/worca', WORCA_HOME: '/w' }, platform: 'linux' });
+  assert.equal(plain.file, process.execPath);
+  assert.deepEqual(plain.args, ['child.mjs']);
+  assert.deepEqual(plain.options.env, { PATH: '/bin', HOME: '/home/worca' }, 'scrubbed: no WORCA_*');
+  assert.equal(plain.options.detached, undefined);
+  assert.equal(plain.user, null);
+
+  const env = { PATH: '/bin', HOME: '/data/home', WORCA_HOME: '/data/worca', WORCA_PLUGIN_USER: 'worca-plugin',
+    WORCA_PLUGIN_HOME: '/data/plugin-home', WORCA_AGENT_GID: '1001' };
+  const iso = pluginChildSpawn(['child.mjs', '--check'], { env, platform: 'linux' });
+  assert.equal(iso.file, 'sudo');
+  assert.deepEqual(iso.args, ['-n', '-E', '-u', 'worca-plugin', '--', process.execPath, 'child.mjs', '--check']);
+  assert.deepEqual(iso.options.env, { PATH: '/bin', HOME: '/data/plugin-home', USER: 'worca-plugin', LOGNAME: 'worca-plugin' },
+    "the plugin user's HOME, never worca's, and still no WORCA_*");
+  assert.equal(iso.options.detached, true, 'its own process group, so a kill reaches the child behind sudo');
+  assert.equal(iso.user.user, 'worca-plugin');
+
+  assert.equal(pluginChildSpawn(['c'], { env: { ...env, WORCA_PLUGIN_HOME: 'relative' }, platform: 'linux' }).file, process.execPath,
+    'a malformed identity is no identity');
+  assert.equal(pluginChildSpawn(['c'], { env, platform: 'win32' }).file, process.execPath, 'no sudo on Windows');
+});
+
+test('killPluginChild: a live child under the plugin user goes down with its group through sudo; a gone one or worca\'s own does not', async () => {
+  const { killPluginChild } = await import('../src/core/plugin-shim.mjs');
+  const groups = [];
+  const child = (o = {}) => ({ pid: 4242, exitCode: null, signalCode: null, killed: [], kill(sig) { this.killed.push(sig); }, ...o });
+  const user = { user: 'worca-plugin', gid: 1002 };
+  const live = child();
+  killPluginChild(live, user, (pid, u) => groups.push([pid, u.user]));
+  assert.deepEqual([live.killed, groups], [['SIGKILL'], [[4242, 'worca-plugin']]]);
+  groups.length = 0;
+  killPluginChild(child({ exitCode: 0 }), user, (pid, u) => groups.push([pid, u.user]));
+  killPluginChild(child(), null, (pid, u) => groups.push([pid, u.user]));
+  assert.deepEqual(groups, [], 'an exited child or a child running as worca needs no group kill');
+});
+
+test('every plugin child kill in the channel host goes through killPluginChild (a plain SIGKILL misses the node behind sudo)', async () => {
+  const { readFileSync } = await import('node:fs');
+  const src = readFileSync(new URL('../src/core/chat/channel-host.mjs', import.meta.url), 'utf8');
+  assert.doesNotMatch(src, /\.kill\(\s*['"]SIG/, 'a direct signal to a plugin child');
+  assert.ok((src.match(/killPluginChild\(/g) || []).length >= 2, 'the worker stop and the check timeout');
 });

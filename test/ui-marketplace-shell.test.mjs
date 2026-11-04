@@ -2,14 +2,14 @@
 // entry, plugins-changed, the three tabs and the sheets and dialogs behind them.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
-import { OFF, BD, ROWS } from './helpers/marketplace-fixtures.mjs';
+import { OFF, EXAMPLE, ROWS } from './helpers/marketplace-fixtures.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
 const trackDom = useDomRelease(afterEach);
-const html = readFileSync(fileURLToPath(new URL('../ui/public/index.html', import.meta.url)), 'utf8');
+const html = readIndexHtml();
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 class WSStub { constructor() { this.readyState = 1; WSStub.last = this; this._l = {}; } send() {} close() {}
   addEventListener(t, fn) { (this._l[t] = this._l[t] || []).push(fn); } _open() { (this._l.open || []).forEach((fn) => fn({})); } }
@@ -17,7 +17,7 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
 const settle = async (n = 8) => { for (let i = 0; i < n; i++) await tick(); };
 const count = (calls, key) => calls.filter((c) => c === key).length;
 
-async function boot({ marketplaces = [OFF, BD], plugins = ROWS, routes = {} } = {}) {
+async function boot({ marketplaces = [OFF, EXAMPLE], plugins = ROWS, routes = {} } = {}) {
   const { window } = trackDom(new JSDOM(html, { url: 'http://localhost:4319/#runs' }));
   window.Element.prototype.scrollIntoView = function () {};
   window.WebSocket = WSStub;

@@ -8,6 +8,7 @@
 // the ONE innerHTML sink is svgIcon, fed by the fixed set, the ƒ glyph, or a
 // saved fragment that passed sanitizeIcon.
 import { icon } from './icons.mjs';
+import { copyButton } from './copy-button.mjs';
 import { h, text, textarea, number } from './script-forms.mjs';
 import { createCodeEditor, escapeHtml } from './code-editor.mjs';
 import { sanitizeIcon } from '../../src/shared/graph/manifest.mjs';
@@ -425,7 +426,7 @@ function wsHead(doc, meta, { readOnly, isNew, runtimes, sourcePath }) {
   bar.appendChild(dirty);
   if (readOnly) {
     const row = h(doc, 'span', 'script-path-row');
-    row.append(h(doc, 'code', 'script-path mono', sourcePath || meta.scriptPath || meta.commandResolved || ''), btn(doc, 'script-copy', 'Copy'));
+    row.append(h(doc, 'code', 'script-path mono', sourcePath || meta.scriptPath || meta.commandResolved || ''), copyButton(doc, { name: 'Copy path', cls: 'script-copy' }));
     bar.appendChild(row);
   }
   if (!isNew) bar.appendChild(btn(doc, 'script-duplicate', 'Duplicate'));

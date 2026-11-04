@@ -25,6 +25,7 @@ import { vcsAtUpgrade } from './project-kind.mjs';
 import { backfillHumanHours } from './human-backfill.mjs';
 import { SEED_TEMPLATES, NODE_ID_MAP, FB_WIRE_MAP } from './graph/seed-templates.mjs';
 import { AGENT_TUNABLES } from '../shared/graph/validate.mjs';
+import { pickTemplateExtras } from '../shared/graph/template.mjs';
 import { GRAPH_PRESENTATION_WORKFLOW, presentationGraphFingerprint, PRESENTATION_SHIPPED_FINGERPRINTS }
   from './graph/presentation-workflow.mjs';
 import { GRAPH_ARCHITECTURE_WORKFLOW, architectureGraphFingerprint, ARCHITECTURE_SHIPPED_FINGERPRINTS }
@@ -63,7 +64,10 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 76;
+export const SCHEMA_VERSION = 83;
+
+/** store_meta row holding the install's default guardrail set id (JSON string). */
+export const GUARDRAILS_DEFAULT_META_KEY = 'guardrails:default';
 
 /** Absolute path to the database file: <worcaHome>/worca-cc.db. */
 export function dbPath() {
@@ -836,7 +840,9 @@ ${STEP_QUESTIONS_DDL}
  * against the live schema so the gap can be healed regardless of the stamp.
  */
 const INCREMENTAL_COLUMNS = {
-  req_cost_ledger:        { brief_id: 'INTEGER' },   // v74: a brief look's spend (feature_seq is 0 then)
+  req_cost_ledger:        { brief_id: 'INTEGER', attachment_id: 'TEXT', helper_message_id: 'INTEGER' },   // v74: a brief look's spend (feature_seq is 0 then); v77: a file's read or ask; v78: a helper call (A3 D13)
+  req_starts:             { files_json: "TEXT NOT NULL DEFAULT '[]'" },   // v77: the files a start sent (A8 D14)
+  run_groups:             { name_source: "TEXT NOT NULL DEFAULT 'user'" },   // v79: 'suggested' | 'user' (Smart naming), as ask_chat_groups
   pipelines:              { resume_point: 'TEXT', owner_pid: 'INTEGER', owner_host: 'TEXT', heartbeat_at: 'TEXT',
                             source_type: "TEXT DEFAULT 'prompt'", source_ref: 'TEXT', guardrails_id: 'TEXT',
                             archived_at: 'TEXT', cost_cap_override: 'INTEGER NOT NULL DEFAULT 0',
@@ -873,6 +879,7 @@ const INCREMENTAL_COLUMNS = {
                             // v70: where a copy found under a run's or project's folder came from, for Show in folder's
                             // fallback once a run's worktree is gone; NULL = out folder, worktree or an older row
                             source_run_id: 'TEXT', source_project_key: 'TEXT', source_rel: 'TEXT' },
+  ask_messages:           { engine: 'TEXT' },        // v83 (#943): the engine a reply ran on; NULL = a user/system row or before v83
   project_config:         { human_in_loop: 'INTEGER NOT NULL DEFAULT 1' },   // v28: the Auto entry's human-in-the-loop switch
   diff_comments:          { parent_id: 'TEXT REFERENCES diff_comments(id) ON DELETE CASCADE',  // v29: reply threads; NULL = thread root
                             author_name: 'TEXT' },   // v37: who wrote it (identity.mjs actor); NULL = before attribution / Ask
@@ -1069,6 +1076,77 @@ CREATE TABLE IF NOT EXISTS pr_watch_runs (
   FOREIGN KEY (pipeline_id) REFERENCES pipelines(id) ON DELETE SET NULL
 );
 `;
+
+// v82 (#711): Git event automations. A rule starts a run when an issue or PR event in its project or workspace matches;
+// one automation_events row per (rule, subject) is the "never twice" guarantee and the Activity log; cursors hold
+// each project's poll position; deliveries drop webhook repeats. src/core/automations.mjs owns all four.
+const AUTOMATIONS_DDL = `
+CREATE TABLE IF NOT EXISTS automation_rules (
+  id            TEXT PRIMARY KEY,
+  project_key   TEXT NOT NULL,
+  project_dir   TEXT NOT NULL,
+  scope         TEXT NOT NULL DEFAULT 'project',     -- project | workspace
+  workspace_id  TEXT,                                -- the workspace a workspace rule watches; NULL = a project's
+  repo          TEXT,                                -- owner/name on GitHub, from the project's remote
+  event         TEXT NOT NULL,                       -- issue.opened | pr.opened
+  action        TEXT NOT NULL,                       -- run | propose | fix | review
+  workflow_id   TEXT,                                -- action run: the workflow it starts
+  filter        TEXT NOT NULL DEFAULT '{}',          -- JSON { labels, excludeLabels, triggerLabel, allowLogins }
+  limits        TEXT NOT NULL DEFAULT '{}',          -- JSON { dailyRuns, maxCostUsd, maxConcurrent }
+  guardrails_id TEXT NOT NULL DEFAULT 'secure',
+  origin        TEXT NOT NULL DEFAULT 'rule',        -- rule | auto-handle
+  enabled       INTEGER NOT NULL DEFAULT 1,
+  enabled_at    TEXT NOT NULL,                       -- nothing opened before it triggers the rule
+  created_by    TEXT,
+  created_at    TEXT NOT NULL,
+  updated_at    TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_automation_rules_project ON automation_rules (project_key);
+CREATE TABLE IF NOT EXISTS automation_events (
+  id          TEXT PRIMARY KEY,
+  rule_id     TEXT NOT NULL,
+  project_key TEXT NOT NULL,
+  repo        TEXT,
+  subject     TEXT NOT NULL,                         -- issue:o/r#42 | pr:o/r#7 | pr:o/r#7@<head sha> (review)
+  kind        TEXT NOT NULL,                         -- issue | pr
+  number      INTEGER,
+  url         TEXT,
+  title       TEXT,
+  author      TEXT,
+  head_sha    TEXT,
+  action      TEXT,
+  phase       TEXT,                                  -- propose: plan, then fix once approved
+  via         TEXT NOT NULL,                         -- poll | webhook
+  status      TEXT NOT NULL,                         -- skipped | queued | starting | running | awaiting-approval | done | failed
+  reason      TEXT,
+  run_id      TEXT,
+  pipeline_id TEXT,
+  pr_url      TEXT,
+  prs         TEXT,                                  -- JSON [{name, repo, url, closes}] a workspace fix opened, one per changed member; NULL = one PR (pr_url)
+  started_at  TEXT,                                  -- when its run started (the daily cap counts by it); NULL = not started
+  posted      INTEGER NOT NULL DEFAULT 0,
+  approved_by TEXT,
+  cost_usd    REAL,
+  created_at  TEXT NOT NULL,
+  updated_at  TEXT NOT NULL,
+  UNIQUE (rule_id, subject)
+);
+CREATE INDEX IF NOT EXISTS idx_automation_events_status ON automation_events (status);
+CREATE INDEX IF NOT EXISTS idx_automation_events_project ON automation_events (project_key, created_at);
+CREATE TABLE IF NOT EXISTS automation_cursors (
+  project_key TEXT NOT NULL,
+  stream      TEXT NOT NULL,                         -- issues | comments
+  since       TEXT,
+  etag        TEXT,
+  updated_at  TEXT NOT NULL,
+  PRIMARY KEY (project_key, stream)
+);
+CREATE TABLE IF NOT EXISTS automation_deliveries (
+  delivery_id TEXT PRIMARY KEY,
+  received_at TEXT NOT NULL
+);
+`;
+
 
 // v68 (labels slice 1): run labels — free words that organise runs. Never read by stats, metrics or policy.
 // Written only by the label routes; survive archive/restore; removed by hand on a hard delete (pipeline-delete.mjs).
@@ -1338,6 +1416,89 @@ CREATE TABLE IF NOT EXISTS ask_chat_groups (
   updated_at  TEXT NOT NULL
 );`;
 
+// v77 Requirements A8 (plans/requirements-a8-design.md §3): a feature's files and a made brief's documents. Bodies live
+// on disk (<worcaHome>/requirements/att/<id><ext>); the row holds what Worca took from each. Reconcile-safe: IF NOT
+// EXISTS + INCREMENTAL_TABLES; req_cost_ledger.attachment_id and req_starts.files_json live in INCREMENTAL_COLUMNS.
+const REQUIREMENTS_ATTACHMENTS_DDL = `
+CREATE TABLE IF NOT EXISTS req_attachments (
+  id             TEXT PRIMARY KEY,
+  owner_type     TEXT NOT NULL,
+  owner_id       INTEGER NOT NULL,
+  name           TEXT NOT NULL,
+  kind           TEXT NOT NULL,
+  mime           TEXT NOT NULL,
+  bytes          INTEGER NOT NULL,
+  sha256         TEXT NOT NULL,
+  status         TEXT NOT NULL,
+  error_json     TEXT,
+  summary        TEXT NOT NULL DEFAULT '',
+  summary_edited INTEGER NOT NULL DEFAULT 0,
+  asks_json      TEXT NOT NULL DEFAULT '[]',
+  history_json   TEXT NOT NULL DEFAULT '[]',
+  send_with_run  INTEGER NOT NULL DEFAULT 0,
+  cost_usd       REAL NOT NULL DEFAULT 0,
+  read_cost_usd  REAL,
+  read_model     TEXT, read_at TEXT,
+  created_by TEXT, created_at TEXT NOT NULL, updated_by TEXT, updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS req_attachments_owner ON req_attachments(owner_type, owner_id);
+CREATE UNIQUE INDEX IF NOT EXISTS req_attachments_sha ON req_attachments(owner_type, owner_id, sha256);
+`;
+
+// v78 Requirements A3 (plans/requirements-a3-design.md §3, D14): the Feature chat of a feature. A product owner's message
+// row is written before its call, Worca's row (text, drafts, proposals, cost, model, or an error) after it. Reconcile-safe:
+// IF NOT EXISTS + INCREMENTAL_TABLES; req_cost_ledger.helper_message_id lives in INCREMENTAL_COLUMNS.
+const REQUIREMENTS_HELPER_DDL = `
+CREATE TABLE IF NOT EXISTS req_helper_messages (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  feature_seq    INTEGER NOT NULL,
+  role           TEXT NOT NULL,
+  text           TEXT NOT NULL DEFAULT '',
+  focus_json     TEXT,
+  round_turn_id  INTEGER,
+  drafts_json    TEXT NOT NULL DEFAULT '[]',
+  proposals_json TEXT NOT NULL DEFAULT '[]',
+  error_json     TEXT,
+  cost_usd       REAL,
+  model          TEXT,
+  created_by TEXT, created_at TEXT NOT NULL, updated_by TEXT, updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS req_helper_messages_feature ON req_helper_messages(feature_seq, id);
+`;
+
+// v80 Requirements A6 (plans/requirements-a6-design.md §3): export to a tracker. The setup per project or workspace names
+// a connection (plugin, source id, profile; never a config value) and the tracker project, issue type, labels, priority and
+// where the criteria go; the link per feature is its current ticket, the spec and fields as last sent, the plugin's
+// fingerprint of the stored description, and a pending create's marker (D10). Reconcile-safe: IF NOT EXISTS + INCREMENTAL_TABLES.
+const REQUIREMENTS_EXPORT_DDL = `
+CREATE TABLE IF NOT EXISTS req_export_setups (
+  scope_type      TEXT NOT NULL,
+  scope_key       TEXT NOT NULL,
+  plugin          TEXT NOT NULL, source_id TEXT NOT NULL, profile TEXT,
+  tracker_project TEXT NOT NULL, tracker_project_name TEXT NOT NULL,
+  issue_type      TEXT NOT NULL, issue_type_name TEXT NOT NULL,
+  labels_json     TEXT NOT NULL DEFAULT '["worca"]',
+  priority        TEXT, priority_name TEXT,
+  criteria_json   TEXT NOT NULL DEFAULT '{"target":"description"}',
+  done_status     TEXT,
+  created_by TEXT, created_at TEXT NOT NULL, updated_by TEXT, updated_at TEXT NOT NULL,
+  PRIMARY KEY (scope_type, scope_key)
+);
+CREATE TABLE IF NOT EXISTS req_export_links (
+  feature_seq     INTEGER PRIMARY KEY,
+  plugin          TEXT NOT NULL, source_id TEXT NOT NULL, profile TEXT,
+  tracker_project TEXT NOT NULL,
+  ticket_key      TEXT, ticket_url TEXT,
+  created_at      TEXT,
+  exported_at     TEXT,
+  spec_json       TEXT,
+  fields_json     TEXT,
+  fingerprint     TEXT,
+  pending_marker  TEXT, pending_at TEXT,
+  updated_by TEXT, updated_at TEXT NOT NULL
+);
+`;
+
 const INCREMENTAL_TABLES = {
   config_workflow_wires: CONFIG_WORKFLOW_WIRES_DDL,
   step_questions:    STEP_QUESTIONS_DDL,
@@ -1370,6 +1531,10 @@ const INCREMENTAL_TABLES = {
   run_labels:     RUN_LABELS_DDL,
   utility_cost_ledger: UTILITY_COST_LEDGER_DDL,
   run_presets:    RUN_PRESETS_DDL,
+  automation_rules:      AUTOMATIONS_DDL,
+  automation_events:     AUTOMATIONS_DDL,
+  automation_cursors:    AUTOMATIONS_DDL,
+  automation_deliveries: AUTOMATIONS_DDL,
   run_groups:        RUN_GROUPS_DDL,
   run_group_members: RUN_GROUPS_DDL,
   ask_chat_groups:   ASK_CHAT_GROUPS_DDL,      // v76 (#948 s3)
@@ -1384,6 +1549,10 @@ const INCREMENTAL_TABLES = {
   req_cost_ledger:   REQUIREMENTS_DDL,
   req_starts:        REQUIREMENTS_STARTS_DDL,
   req_briefs:        REQUIREMENTS_BRIEFS_DDL,
+  req_attachments:   REQUIREMENTS_ATTACHMENTS_DDL,
+  req_helper_messages: REQUIREMENTS_HELPER_DDL,
+  req_export_setups: REQUIREMENTS_EXPORT_DDL,  // v80 (A6)
+  req_export_links:  REQUIREMENTS_EXPORT_DDL,  // v80 (A6)
 };
 
 /**
@@ -1905,6 +2074,26 @@ function refreshPromoVideoSeed(db) {
   refreshShippedSeed(db, GRAPH_PROMO_VIDEO_WORKFLOW, promoVideoGraphFingerprint, PROMO_VIDEO_SHIPPED_FINGERPRINTS);
 }
 
+/** The pure half of refreshShippedSeed: the shipped shape `t` with the user's settings carried over from the
+ *  `stored` row. Carried: the AGENT_TUNABLES and `config.session` on cards that are still agents (membership is
+ *  the user's setting; the fingerprint cannot see config, and a session is never topology the refresh owns), the
+ *  stored viewport VERBATIM, and the other template extras (codeGraph, the session settings). A session the new
+ *  structure leaves with one step, or non-consecutive, is kept on purpose: the composer shows its V26/V27 issue and
+ *  Split, never a silent drop. */
+export function mergeShippedSeed(stored, t) {
+  const storedNodes = new Map((stored?.nodes || []).filter((n) => n && n.id).map((n) => [n.id, n]));
+  const merged = t.nodes.map((n) => {
+    const prev = storedNodes.get(n.id);
+    if (!prev || !prev.config) return n;
+    const carry = (k) => AGENT_TUNABLES.includes(k) || (k === 'session' && n.kind === 'agent');
+    const kept = Object.fromEntries(Object.entries(prev.config).filter(([k]) => carry(k)));
+    return Object.keys(kept).length ? { ...n, config: { ...(n.config || {}), ...kept } } : n;
+  });
+  const extras = pickTemplateExtras(stored, merged);   // drops settings whose sid lost every member
+  delete extras.canvas;                                // the stored viewport is carried as it is, whatever its shape
+  return { nodes: merged, wires: t.wires, ...(stored?.canvas ? { canvas: stored.canvas } : {}), ...extras };
+}
+
 function refreshShippedSeed(db, t, fingerprint, shipped) {
   if (!presentationSeedable(db)) return;
   const graph = JSON.stringify({ nodes: t.nodes, wires: t.wires });
@@ -1941,17 +2130,10 @@ function refreshShippedSeed(db, t, fingerprint, shipped) {
   // precisely what this refresh exists to bring up to date (setWorkflowNodeDefaults
   // draws the same line). Node LAYOUT is left to the shipped shape too — the
   // refresh only fires when the structure changed, and stale positions against a
-  // new node overlap.
-  const storedNodes = new Map((stored.nodes || []).filter((n) => n && n.id).map((n) => [n.id, n]));
-  const merged = t.nodes.map((n) => {
-    const prev = storedNodes.get(n.id);
-    if (!prev || !prev.config) return n;
-    const kept = Object.fromEntries(Object.entries(prev.config).filter(([k]) => AGENT_TUNABLES.includes(k)));
-    return Object.keys(kept).length ? { ...n, config: { ...(n.config || {}), ...kept } } : n;
-  });
-  const carried = JSON.stringify({
-    nodes: merged, wires: t.wires, ...(stored.canvas ? { canvas: stored.canvas } : {}),
-  });
+  // new node overlap. `config.session` is carried too, onto cards that are still
+  // agents (membership is the user's setting), and so are the template extras
+  // (codeGraph, the session settings) — see mergeShippedSeed.
+  const carried = JSON.stringify(mergeShippedSeed(stored, t));
   db.prepare('UPDATE workflows SET graph = ?, updated_at = ? WHERE id = ?').run(carried, now, t.id);
 }
 
@@ -2046,6 +2228,15 @@ function applySchemaV69(db) {
     const set = db.prepare('UPDATE projects SET vcs = ? WHERE key = ? AND vcs IS NULL');
     for (const r of db.prepare('SELECT key, path FROM projects WHERE vcs IS NULL').all()) set.run(vcsAtUpgrade(r.path), r.key);
   } catch { /* never fail the migration on the backfill */ }
+}
+
+/** v81 (G13): a fresh install starts runs on Normal guardrails (guardrail-store.mjs
+ *  defaultGuardrailSetId). An install that existed before keeps today's default, so
+ *  it is recorded as Permissive here; a value already there is kept. */
+function applySchemaV81(db, { existing }) {
+  if (!existing || !hasSqliteTable(db, 'store_meta')) return;
+  db.prepare('INSERT OR IGNORE INTO store_meta (key, kind, data) VALUES (?, ?, ?)')
+    .run(GUARDRAILS_DEFAULT_META_KEY, 'setting', JSON.stringify('permissive'));
 }
 
 /** applySchemaV52's column guard (the presentationSeedable precedent). */
@@ -2523,6 +2714,19 @@ export function migrate(db) {
     if (current < 74) { db.exec(REQUIREMENTS_BRIEFS_DDL); repairSchemaGaps(db, schemaGaps(db)); }
     // v75 (#948 s2): ask_threads.archived_at / pinned_at — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
     if (current < 76) db.exec(ASK_CHAT_GROUPS_DDL);   // v76 (#948 s3) topic groups; ask_threads.group_id comes from INCREMENTAL_COLUMNS
+    // v77 requirements A8: req_attachments + ledger.attachment_id + starts.files_json. The repair runs again here, as at
+    // v74: a DB coming from below 72 / 73 creates the ledger and the starts table after the hoisted repair.
+    if (current < 77) { db.exec(REQUIREMENTS_ATTACHMENTS_DDL); repairSchemaGaps(db, schemaGaps(db)); }
+    // v78 requirements A3: req_helper_messages + ledger.helper_message_id. The repair runs again here, as at v74 and v77: a DB
+    // coming from below 72 creates the ledger after the hoisted repair.
+    if (current < 78) { db.exec(REQUIREMENTS_HELPER_DDL); repairSchemaGaps(db, schemaGaps(db)); }
+    // v79: run_groups.name_source — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
+    // v80 requirements A6: req_export_setups + req_export_links (first written as v79; dev took 79). New tables only, so no repair call:
+    // INCREMENTAL_TABLES creates them for a DB stamped past this rung without them.
+    if (current < 80) db.exec(REQUIREMENTS_EXPORT_DDL);
+    if (current < 81) applySchemaV81(db, { existing: current >= 1 });  // v81 (G13) guardrail default
+    if (current < 82) db.exec(AUTOMATIONS_DDL);   // v82 Git event automations (#711), project and workspace rules
+    // v83 (#943): ask_messages.engine — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

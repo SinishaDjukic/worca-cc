@@ -578,7 +578,7 @@ try {
       below:!!d&&d.getBoundingClientRect().top>=g.top,
       marked:[...document.querySelectorAll('${RD} .gv-world .node[aria-current="true"]')].map((n)=>n.dataset.nodeId)};})()`);
   check('9b', 'an .xrow click opens that execution in the drawer under the graph; the page stays on Workflow and the Logs filter is untouched',
-    drawer.open && drawer.title === 'Clarify' && drawer.hash === `#running/${runId}/workflow`
+    drawer.open && drawer.title === 'Clarify' && drawer.hash === `#running/${runId}/details/workflow`
     && drawer.target && drawer.target.execution === 'x:n_clarify:1' && drawer.target.node === 'n_clarify'
     && drawer.filter.execution === '' && drawer.below && drawer.marked.join() === 'n_clarify', drawer);
   await clickCentre('#run-detail .wf-log-drawer .wf-log-full', 'Open in Logs');

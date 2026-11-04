@@ -10,7 +10,6 @@ import {
 } from './helpers/history-detail-boot.mjs';
 import { lastToast } from './helpers/feedback.mjs';
 import { checkRows } from './helpers/rows.mjs';
-import { setShapeFirst } from './helpers/shape-gate.mjs';
 import { useAppTimers } from './helpers/app-timers.mjs';
 import { ICONS } from '../ui/public/icons.mjs';
 
@@ -47,18 +46,25 @@ async function openOverview(ctx) {
   return secOf(doc, 'overview');
 }
 
-test('Summary: the glance carries the state and the numbers, the tab the worktree, the task card; a non-done run says so once', async () => {
+test('Overview: clean verdict + stat cards + task card; a non-done run shows the status verdict line', async () => {
   await checkRows([
-    { name: 'Summary: no second verdict or stat cards under the glance; worktree row and task card', run: async () => {
+    { name: 'Overview: clean verdict + stat cards + task card', run: async () => {
       const ctx = await bootDetail({ detail: OV_DETAIL });
       const sec = await openOverview(ctx);
-      const doc = ctx.window.document;
 
-      // The page's Summary sits under the glance, which already shows the state and the numbers (say each fact once).
-      assert.equal(sec.querySelector('.hd-ov-verdict'), null, 'no verdict banner under the glance');
-      assert.equal(sec.querySelector('.hd-ov-grid'), null, 'no stat cards under the glance');
+      const verdict = sec.querySelector('.hd-ov-verdict');
+      assert.ok(verdict, 'the verdict banner renders');
+      assert.ok(verdict.classList.contains('clean'), 'an empty keyThingsToCheck is a clean verdict');
+      assert.match(verdict.textContent, /Clean: no blocking issues flagged\./);
       assert.equal(sec.querySelector('ul.issues'), null, 'nothing to list when there are no findings');
-      assert.match(doc.querySelector('#hist-detail .hd-glance .rd-facts').textContent, /\$153\.21/, 'the cost is the glance\'s');
+
+      const dur = sec.querySelector('.hd-ov-card-duration');
+      assert.match(dur.textContent, /1h 40m/);
+      assert.match(dur.querySelector('.hd-ov-sub').textContent, /\d+ steps? · \d+ cycles?/);
+
+      const cost = sec.querySelector('.hd-ov-card-cost');
+      assert.match(cost.textContent, /\$153\.21/);
+      assert.match(cost.querySelector('.hd-ov-value').title, /Estimated cost/);
 
       // The worktree is a one-line row under the cards: its path only while it is on disk.
       const wt = sec.querySelector('.hd-ov-wt');
@@ -77,8 +83,13 @@ test('Summary: the glance carries the state and the numbers, the tab the worktre
       // D6: the LLM "Generate overview" UI is gone from History for good.
       assert.equal(sec.querySelector('.results-overview-btn'), null,
         'D6: no Generate-overview button anywhere in the section');
+
+      // Carried over from the retired ui-history-diff-overview suite: the verdict
+      // line is a judgement, never a count restatement. `+A −R` belongs to the header
+      // meta (.hd-diffcounts) and to the Diff tab's file-list head — nowhere else.
+      assert.doesNotMatch(verdict.textContent, /[+−]/, 'the verdict carries no raw diff counts');
     } },
-    { name: 'Summary: a non-done run says its state once, on the glance', run: async () => {
+    { name: 'Overview: non-done run shows the status verdict line', run: async () => {
       const ctx = await bootDetail({
         rows: [{ ...ROW, status: 'stopped' }],
         detail: { ...OV_DETAIL, results: null, state: { ...OV_DETAIL.state, status: 'stopped' } },
@@ -86,9 +97,12 @@ test('Summary: the glance carries the state and the numbers, the tab the worktre
       await openDetail(ctx);
       const sec = await openOverview(ctx);
 
-      assert.equal(sec.querySelector('.hd-ov-verdict'), null, 'no second state line under the glance');
-      const st = ctx.window.document.querySelector('#hist-detail .hd-glance .rd-sheet .run-status');
-      assert.match(st.dataset.word, /Stopped/i);
+      const verdict = sec.querySelector('.hd-ov-verdict');
+      assert.ok(verdict.classList.contains('none'));
+      assert.match(verdict.textContent, /No review results captured\. The run did not complete\./);
+      const chip = sec.querySelector('.hd-ov-chip');
+      assert.ok(chip.classList.contains('st-stopped'), 'the chip wears the status family class');
+      assert.equal(chip.textContent, 'Stopped');
       assert.equal(sec.querySelector('ul.issues'), null);
     } },
   ]);
@@ -105,6 +119,11 @@ test('Overview findings: keyThingsToCheck render, workspace findings collected f
       };
       const ctx = await bootDetail({ detail: { ...OV_DETAIL, results } });
       const sec = await openOverview(ctx);
+
+      const verdict = sec.querySelector('.hd-ov-verdict');
+      assert.ok(verdict.classList.contains('warn'));
+      assert.match(verdict.textContent, /1 thing to check/);
+      assert.equal(sec.querySelector('.hd-ov-chip').textContent, '1');
 
       const list = sec.querySelector('ul.issues');
       assert.ok(list, 'the findings list renders beneath the verdict');
@@ -133,7 +152,9 @@ test('Overview findings: keyThingsToCheck render, workspace findings collected f
       const ctx = await bootDetail({ detail: { ...OV_DETAIL, results } });
       const sec = await openOverview(ctx);
 
-      assert.equal(sec.querySelectorAll('ul.issues li.issue').length, 1, 'a perProject finding is listed (not "Clean")');
+      const verdict = sec.querySelector('.hd-ov-verdict');
+      assert.ok(verdict.classList.contains('warn'), 'a perProject finding is not "Clean"');
+      assert.match(verdict.textContent, /1 thing to check/);
       assert.equal(sec.querySelector('.issue-loc').textContent, 'proj-a-00000001: x.js:2',
         'the location is prefixed with its project key');
     } },
@@ -677,7 +698,7 @@ test('Logs copy: huge logs tail-render but copy takes everything; a filtered-emp
       assert.equal(writes.length, 1);
       assert.equal(writes[0].split('\n').length, N, 'copy is the FULL filtered set, not the tail render');
     } },
-    { name: 'copy on a filtered-empty Logs pane flashes "nothing to copy" and leaves the clipboard alone', run: async () => {
+    { name: 'copy on a filtered-empty Logs pane shows the × and "Nothing to copy" and leaves the clipboard alone', run: async () => {
       const ctx = await bootDetail({ detail: LOGS_DETAIL, arms: logArm(LOG_NDJSON) });
       const sec = await openTab(ctx, 'logs');
       const writes = [];
@@ -694,10 +715,12 @@ test('Logs copy: huge logs tail-render but copy takes everything; a filtered-emp
         const copyBtn = sec.querySelector('.log-copy');
         click(ctx.window, copyBtn);
         await timers.settle();
-        assert.equal(copyBtn.textContent, 'nothing to copy');
+        assert.ok(copyBtn.classList.contains('copy-miss'), 'the × shows');
+        assert.equal(copyBtn.title, 'Nothing to copy');
         assert.deepEqual(writes, [], 'clipboard untouched');
-        await timers.advance(1300);   // > flashCopyBtn's 1200 ms
-        assert.equal(copyBtn.textContent, 'copy', 'label restored after the flash');
+        await timers.advance(1300);   // > the copy button's 1200 ms
+        assert.ok(!copyBtn.classList.contains('copy-miss'));
+        assert.equal(copyBtn.title, 'Copy the visible log lines', 'title restored after the flash');
       } finally {
         t.mock.timers.reset();
       }
@@ -803,27 +826,6 @@ test('the ⋯ bar menu opens/closes (outside press, Escape, choosing) and lists 
       click(ctx.window, more);
       await settle(ctx.window);
       assert.equal(hdMenu(doc), null, 'clicking again closes it');
-    } },
-    { name: 'at phone width ⋯ carries Run after (style.css hides the bar\'s button there); wider, it does not', run: async () => {
-      const ctx = await bootDetail();
-      await openDetail(ctx);
-      const { window: w } = ctx;
-      const doc = w.document;
-      const after = doc.querySelector('#hist-detail .hd-after');
-      assert.equal(after.hidden, false, 'a finished run offers Run after');
-      const label = after.querySelector('.hd-btn-label').textContent;
-      const real = [w.matchMedia, globalThis.matchMedia];
-      try {
-        for (const phone of [false, true]) {
-          const mm = (q) => ({ matches: phone && q === '(max-width: 640px)', media: q, addEventListener() {}, removeEventListener() {} });
-          w.matchMedia = mm; globalThis.matchMedia = mm;
-          click(w, hdMore(doc));
-          await settle(w);
-          assert.equal(!!hdItem(doc, label), phone, phone ? 'phone: in the menu' : 'wide: not in the menu');
-          click(w, hdMore(doc));
-          await settle(w);
-        }
-      } finally { [w.matchMedia, globalThis.matchMedia] = real; }
     } },
     { name: 'the menu closes on an outside press, on Escape, and on choosing an item', run: async () => {
       const ctx = await bootDetail();
@@ -1000,33 +1002,21 @@ const GLANCE_DETAIL = {
   results: { ...RESULTS, keyThingsToCheck: [{ id: 'c1', severity: 'major', title: 'Uploads fall back to IP' }] },
 };
 
-// #960: the page head moved the header (and its End chip, .hd-result) into the glance, above the Results section: a
-// run that reached End keeps its tab rows in the Results section, and the chip keeps its one word.
-test('a run that reached End: the End chip reads "completed" in the header meta; the tab rows stay in the Results section', async () => {
-  const ctx = await bootDetail({ detail: { ...GLANCE_DETAIL, state: { ...GLANCE_DETAIL.state, endReached: true, result: { type: 'void' } } } });
-  await openDetail(ctx, '');
-  await settle(ctx.window, 6);
-  const hd = ctx.window.document.querySelector('#hist-detail .hd');
-  assert.equal(hd.querySelector('.hd-meta .hd-result').textContent, 'completed');
-  assert.deepEqual([...hd.querySelectorAll('.hd-glance .rd-result.hd-result .rd-sgroup .rd-slabel')].map((l) => l.textContent), ['Results', 'How it ran']);
-  assert.equal(hd.querySelector('.hd-meta .rd-sgroup'), null, 'no tab rows in the header meta');
-});
-
-test('History opens on Summary: the glance (page title, status line, facts, the tab rows); every tab is a route', async () => {
+test('History opens on the glance: page title, status line, facts, the tab rows; Details is a route', async () => {
   const ctx = await bootDetail({ detail: GLANCE_DETAIL });
   await openDetail(ctx, '');
   await settle(ctx.window, 6);
   const doc = ctx.window.document;
   const hd = doc.querySelector('#hist-detail .hd');
-  assert.equal(hd.dataset.presentation, 'page');
-  assert.equal(hd.hasAttribute('data-mode'), false, 'a page has no Details mode');
-  assert.ok(doc.querySelector('#hist-detail .hd-tab[data-sec="overview"]').classList.contains('active'), 'Summary is open');
-  assert.match(doc.querySelector('#hist-detail .hd-tab[data-sec="overview"]').textContent, /Summary/);
+  assert.equal(hd.dataset.mode, 'glance');
   assert.equal(hd.querySelector('.hd-glance').hidden, false);
-  // The run's name is the page title (in the page head), with no status word and no Details button of its own.
+  assert.equal(hd.querySelector('.hd-details').hidden, true);
+  // The run's name is the page title; the bar repeats it (shown only once scrolled away),
+  // with no status word and no Details button of its own.
   const name = hd.querySelector('.hd-title').textContent;
   assert.ok(name, 'the run has a name');
-  assert.equal(hd.querySelector('.ph .rd-page-title').textContent, name);
+  assert.equal(hd.querySelector('.rd-page-title').textContent, name);
+  assert.equal(hd.querySelector('.hd-bar .rd-bar-title').textContent, name);
   assert.equal(hd.querySelector('.hd-bar-word'), null, 'the state lives in the status line, not the bar');
   assert.equal(hd.querySelector('.rd-to-details'), null, 'every tab is a row on the glance: no Details button');
   // A finished run: the state word alone (its own glyph), no trail, the facts as tiles.
@@ -1050,24 +1040,23 @@ test('History opens on Summary: the glance (page title, status line, facts, the 
   assert.ok([...hd.querySelectorAll('.hd-result .rd-srow-v')].every((v) => !v.classList.contains('mono')));
   assert.doesNotMatch(hd.querySelector('.hd-glance').textContent, /\b\d+ of \d+\b/);
 
-  // A row opens its tab with a pushed address; the graph moved into Workflow.
-  const before = ctx.window.history.length;
-  hd.querySelector('.hd-result [data-rd-tab="workflow"]').dispatchEvent(new ctx.window.MouseEvent('click', { bubbles: true }));
+  // A row deep-links into Details › that tab; the graph moved into Workflow.
+  hd.querySelector('.hd-result [data-rd-tab="overview"]').dispatchEvent(new ctx.window.MouseEvent('click', { bubbles: true }));
+  ctx.window.dispatchEvent(new ctx.window.Event('hashchange'));
   await settle(ctx.window, 4);
-  assert.equal(ctx.window.location.hash, `#${detailHash}/workflow`);
-  assert.equal(ctx.window.history.length, before + 1, 'a pushed address');
-  assert.ok(doc.querySelector('#hist-detail .hd-tab[data-sec="workflow"]').classList.contains('active'));
+  assert.equal(ctx.window.location.hash, `#${detailHash}/details/overview`);
+  assert.equal(hd.dataset.mode, 'details');
+  assert.ok(doc.querySelector('#hist-detail .hd-tab[data-sec="overview"]').classList.contains('active'));
+  doc.querySelector('#hist-detail .hd-tab[data-sec="workflow"]').dispatchEvent(new ctx.window.MouseEvent('click', { bubbles: true }));
   assert.ok(secOf(doc, 'workflow').querySelector('.hd-graph .run-flow'), 'the graph lives in Workflow');
-  doc.querySelector('#hist-detail .hd-tab[data-sec="overview"]').dispatchEvent(new ctx.window.MouseEvent('click', { bubbles: true }));
-  await settle(ctx.window, 4);
-  assert.equal(ctx.window.location.hash, `#${detailHash}`, 'a tab click pushes its address (Summary is the bare page)');
-  assert.equal(ctx.window.history.length, before + 2);
+  assert.equal(ctx.window.location.hash, `#${detailHash}/details/workflow`, 'a tab click rewrites the address');
 
-  // Escape side by side keeps the page (the list is in view); no way back inside the page.
+  // Escape: Details -> glance -> the list.
   doc.dispatchEvent(new ctx.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  ctx.window.dispatchEvent(new ctx.window.Event('hashchange'));
   await settle(ctx.window, 4);
   assert.equal(ctx.window.location.hash, `#${detailHash}`);
-  assert.equal(hd.querySelector('.hd-back, .hd-to-run, .rd-crumbs'), null, 'deleted, not hidden');
+  assert.equal(hd.dataset.mode, 'glance');
 });
 
 // The saved run's bar carries the Running bar's controls in its order (Run after, the
@@ -1148,8 +1137,11 @@ test('History bar of a live pipeline: Pause and Stop act on its live run', async
   assert.equal(stop.hidden, false, 'a live run can be stopped');
   assert.equal(end.querySelector('.hd-resume-split').hidden, true, 'nothing to resume while it runs');
   assert.equal(end.querySelector('.hd-after').title, 'Schedule a run after this');
+  const sic = doc.querySelector('#hist-detail .hd-sic');
+  assert.equal(sic.title, 'Running', 'the header pip reads the live run');
   click(ctx.window, pause);
   await settle(ctx.window);
+  assert.equal(sic.title, 'Pausing…', 'the header pip says Pausing… at the click, before the server status');
   const pauses = ctx.calls.filter((c) => c.url.endsWith('/api/pause'));
   assert.equal(pauses.length, 1);
   assert.deepEqual(JSON.parse(pauses[0].opts.body), { runId: 'r-live' });
@@ -1157,6 +1149,7 @@ test('History bar of a live pipeline: Pause and Stop act on its live run', async
   frame({ type: 'state', runId: 'r-live', id: ROW.id, status: 'running', ...STEPPING });
   await settle(ctx.window, 4);
   assert.equal(pause.disabled, true, 'the pause request still owns the button');
+  assert.equal(sic.title, 'Pausing…', 'a running frame sent before the pause keeps it');
   click(ctx.window, pause);
   await settle(ctx.window);
   assert.equal(ctx.calls.filter((c) => c.url.endsWith('/api/pause')).length, 1, 'no second POST');
@@ -1180,6 +1173,7 @@ test('History bar of a live pipeline: Pause and Stop act on its live run', async
   assert.equal(end.querySelector('.hd-resume-split').hidden, false, 'a paused run can be resumed');
   assert.equal(end.querySelector('.hd-resume').hidden, false);
   assert.equal(stop.hidden, false);
+  assert.equal(sic.title, 'Paused');
   // It ends: neither control is left.
   frame({ type: 'state', runId: 'r-live', id: ROW.id, status: 'stopped' });
   await settle(ctx.window, 6);
@@ -1278,6 +1272,35 @@ test('History bar of a resumed pipeline: Pause/Stop and the Resume split follow 
       assert.equal(ctx.window.location.hash.replace(/^#/, ''), 'running/r-9');
     } },
   ]);
+});
+
+// The header pip follows the parked copy's Resume as it follows Pause (paintHdLive reads hdPipelineRun).
+test('History detail header: Resume shows Resuming… on the pip until the server answers, and a failure puts Paused back', async () => {
+  let release;
+  const held = new Promise((r) => { release = r; });
+  const ctx = await bootDetail({
+    detail: { ...DETAIL, state: { ...DETAIL.state, status: 'running' } }, rows: [{ ...ROW, status: 'running' }],
+    arms: (url) => (url === '/api/resume' ? held : null),
+  });
+  const frame = (msg) => ctx.wsBox.ws.dispatch('message', { data: JSON.stringify(msg) });
+  frame({ type: 'hello', runs: [{ runId: 'r-live', title: ROW.title, projectDir: PROJECT, status: 'running', startedAt: '00:00:00', pipelineId: ROW.id }] });
+  frame({ type: 'state', runId: 'r-live', id: ROW.id, status: 'running', ...STEPPING });
+  await settle(ctx.window, 4);
+  await openDetail(ctx, '');
+  await settle(ctx.window, 6);
+  frame({ type: 'done', runId: 'r-live', status: 'paused' });
+  await settle(ctx.window, 6);
+  const doc = ctx.window.document;
+  const sic = doc.querySelector('#hist-detail .hd-sic');
+  assert.equal(sic.title, 'Paused');
+  click(ctx.window, doc.querySelector('#hist-detail .hd-resume'));
+  await settle(ctx.window, 3);
+  assert.equal(sic.title, 'Resuming…', 'the header pip says Resuming… at the click');
+  assert.equal(sic.getAttribute('aria-label'), 'Resuming…');
+  release(fail(500, { error: 'boom' }));
+  await settle(ctx.window, 6);
+  assert.equal(sic.title, 'Paused', 'the failure puts Paused back');
+  assert.equal(sic.getAttribute('aria-label'), 'Paused');
 });
 
 // The run page logs a failed pause into the run's log, which this page does not show: the
@@ -1816,7 +1839,7 @@ test('a deep link to a History Details tab opens it once the run loads', async (
   go(ctx.window, `${detailHash}/details/agents`);
   await settle(ctx.window, 8);
   const doc = ctx.window.document;
-  assert.equal(ctx.window.location.hash, `#${detailHash}/agents`, 'the old address is rewritten to the tab\'s');
+  assert.equal(doc.querySelector('#hist-detail .hd').dataset.mode, 'details');
   assert.ok(doc.querySelector('#hist-detail .hd-tab[data-sec="agents"]').classList.contains('active'));
 });
 
@@ -1871,7 +1894,7 @@ test('the Overview Actions strip on a finished run follows actions-changed witho
       const open = [...strip.querySelectorAll('button')].find((b) => b.textContent === 'Open tab ›');
       assert.ok(open);
       click(ctx.window, open);
-      assert.equal(ctx.window.location.hash, `#${detailHash}/actions`);
+      assert.equal(ctx.window.location.hash, `#${detailHash}/details/actions`);
     } },
     { name: 'the Overview strip follows actions-changed without the Actions tab ever opening', run: async () => {
       const running = { ...ACT_MODEL, members: [{ ...ACT_MODEL.members[0], checkout: { setup: { status: 'ok' } } }], instances: [ACT_RUNNING[0]] };
@@ -2092,7 +2115,7 @@ test('Escape in a sidebar popup on a run\'s Details closes only the popup: the p
   await openDetail(ctx, 'details/overview');
   const doc = ctx.window.document;
   const before = ctx.window.location.hash;
-  assert.equal(before, `#${detailHash}`, 'Summary: the old details/overview address is the bare page');
+  assert.match(before, /details\/overview$/);
   const acct = doc.getElementById('side-acct');
   acct.dispatchEvent(new ctx.window.MouseEvent('click', { bubbles: true, detail: 0 }));
   assert.equal(doc.getElementById('acct-menu').hidden, false);
@@ -2211,22 +2234,13 @@ test('Running actions: a row whose run loses its saved row keeps keyboard focus 
   assert.ok(doc.activeElement.classList.contains('act-stop'), 'on its Stop, so Enter cannot open another run');
 });
 
-test('History › Overview: the Perspective checklists group follows the Shape it first gate (spec D7)', async () => {
+test('History › Overview: the Perspective checklists group is on the saved run\'s Overview (spec D7)', async () => {
   const reviews = [{ kind: 'impl', cycle: 1, issues: [], summary: '',
     checklist: [{ id: 'R-qa-1', perspective: 'qa', text: 'Rejects empty input.', status: 'met', evidence: 'test passes' }] }];
-  const groupOf = async (features) => {
-    const ctx = await bootDetail({ detail: { ...DETAIL, reviews } });
-    ctx.wsBox.ws.dispatch('message', { data: JSON.stringify({ type: 'hello', ...(features ? { flags: features } : {}), runs: [] }) });
-    await openDetail(ctx, 'details/overview');
-    return secOf(ctx.window.document, 'overview').querySelector('.shape-checklists');
-  };
-  try {
-    setShapeFirst(false);
-    assert.equal(await groupOf(null), null, 'gate off: no group');
-    const on = await groupOf({ shapeFirst: true });
-    assert.ok(on, 'gate on: the group is on the saved run\'s Overview');
-    assert.match(on.textContent, /Review cycle 1 · 1 met · 0 unmet · 0 n\/a/);
-  } finally {
-    setShapeFirst(false);
-  }
+  const ctx = await bootDetail({ detail: { ...DETAIL, reviews } });
+  ctx.wsBox.ws.dispatch('message', { data: JSON.stringify({ type: 'hello', runs: [] }) });
+  await openDetail(ctx, 'details/overview');
+  const group = secOf(ctx.window.document, 'overview').querySelector('.shape-checklists');
+  assert.ok(group, 'the group is on the saved run\'s Overview');
+  assert.match(group.textContent, /Review cycle 1 · 1 met · 0 unmet · 0 n\/a/);
 });

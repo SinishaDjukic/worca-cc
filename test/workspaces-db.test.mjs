@@ -456,6 +456,93 @@ test('removeWorkspaceMember leaves a hand-edited description alone (D8), but sti
   assert.equal((await readWorkspaceMap(ws.id)).map.members.some((m) => m.key === key(c)), false);
 });
 
+async function withStoredGraph(label, body) {
+  const { readWorkspaceMap, saveWorkspaceScanResult } = await import('../src/core/workspaces.mjs');
+  const { workspaceStorePath } = await import('../src/core/store.mjs');
+  const { mkdirSync, writeFileSync } = await import('node:fs');
+  const fx = await threeMemberMapped(`Graph ${label}`);
+  const { ws, a, c, key } = fx;
+  const file = join(workspaceStorePath(ws.id), 'workspace-graph.json');
+  mkdirSync(workspaceStorePath(ws.id), { recursive: true });
+  writeFileSync(file, body ?? JSON.stringify({ directed: false, multigraph: false, graph: { members: ws.projectKeys },
+    nodes: ws.projectKeys.map((k) => ({ id: `${k}::n1`, repo: k, local_id: 'n1' })),
+    links: [{ source: `${key(a)}::n1`, target: `${key(c)}::n1`, relation: 'cross_repo_uses' }] }));
+  const cur = await readWorkspaceMap(ws.id);
+  await saveWorkspaceScanResult(ws.id, { map: { ...cur.map, graph: { mode: 'full', file, nodes: 3, bridges: 1 } }, synthesis: cur.synthesis });
+  return { ...fx, file };
+}
+
+test('removeWorkspaceMember filters the stored merged graph; an unreadable one is dropped with the description\'s graph line', async () => {
+  const { readWorkspaceMap } = await import('../src/core/workspaces.mjs');
+  const { readFileSync, existsSync } = await import('node:fs');
+  {
+    const { ws, c, key, file } = await withStoredGraph('readable');
+    assert.match((await readWorkspace(ws.id)).description, /Cross-project graph:/, 'the line is there before');
+    const up = await removeWorkspaceMember(ws.id, c);
+    assert.deepEqual((await readWorkspaceMap(ws.id)).map.graph, { mode: 'full', file, nodes: 2, bridges: 0 });
+    assert.equal(JSON.parse(readFileSync(file, 'utf8')).nodes.some((x) => x.repo === key(c)), false, 'the removed member\'s nodes are gone');
+    assert.match(up.description, /Cross-project graph:/, 'the graph line stays');
+  }
+  {
+    const { ws, c, file } = await withStoredGraph('garbage', '{nope');
+    const up = await removeWorkspaceMember(ws.id, c);
+    assert.deepEqual((await readWorkspaceMap(ws.id)).map.graph, { mode: 'none', file: null, nodes: 0, bridges: 0 });
+    assert.equal(existsSync(file), false, 'the unreadable graph is deleted');
+    assert.doesNotMatch(up.description, /Cross-project graph:/, 'the line is dropped');
+  }
+});
+
+test('removeWorkspaceMember drops (never adopts) a pruned graph when the map changed between the prune and the lock (m3)', async () => {
+  const { readWorkspaceMap, saveWorkspaceScanResult, _testing: wsTesting } = await import('../src/core/workspaces.mjs');
+  const { existsSync } = await import('node:fs');
+  const { ws, c, file } = await withStoredGraph('raced');
+  // The seam runs between the pre-lock prune and the transaction: a scan of the SAME set finalizes there.
+  // It changes the map's STAMP — workspaces.mjs mapStamp = [runId, scannedAt, resynthesizedAt]. When
+  // mapStamp gains or loses a field, change this save to match, or the race goes unseen.
+  wsTesting.beforeRemoveTx = async () => {
+    const cur = await readWorkspaceMap(ws.id);
+    await saveWorkspaceScanResult(ws.id, { map: { ...cur.map, runId: 'run99999', scannedAt: new Date().toISOString() }, synthesis: cur.synthesis });
+  };
+  try { await removeWorkspaceMember(ws.id, c); } finally { wsTesting.beforeRemoveTx = null; }
+  assert.deepEqual((await readWorkspaceMap(ws.id)).map.graph, { mode: 'none', file: null, nodes: 0, bridges: 0 }, 'a graph pruned from another scan is not adopted');
+  assert.equal(existsSync(file), false);
+});
+
+test('removeWorkspaceMember drops a graph a same-set scan saved between the prune and the lock when there was none before (v4)', async () => {
+  const { readWorkspaceMap, saveWorkspaceScanResult, _testing: wsTesting } = await import('../src/core/workspaces.mjs');
+  const { workspaceStorePath } = await import('../src/core/store.mjs');
+  const { mkdirSync, writeFileSync, existsSync } = await import('node:fs');
+  const { ws, c } = await threeMemberMapped('Graph late');
+  assert.equal((await readWorkspaceMap(ws.id)).map.graph.file ?? null, null, 'the fixture map starts with no stored graph');
+  const file = join(workspaceStorePath(ws.id), 'workspace-graph.json');
+  wsTesting.beforeRemoveTx = async () => {
+    mkdirSync(workspaceStorePath(ws.id), { recursive: true });
+    writeFileSync(file, JSON.stringify({ directed: false, multigraph: false, graph: { members: ws.projectKeys },
+      nodes: ws.projectKeys.map((k) => ({ id: `${k}::n1`, repo: k, local_id: 'n1' })), links: [] }));
+    const cur = await readWorkspaceMap(ws.id);
+    await saveWorkspaceScanResult(ws.id, { map: { ...cur.map, runId: 'run99998', graph: { mode: 'full', file, nodes: 3, bridges: 0 } }, synthesis: cur.synthesis });
+  };
+  try { await removeWorkspaceMember(ws.id, c); } finally { wsTesting.beforeRemoveTx = null; }
+  assert.deepEqual((await readWorkspaceMap(ws.id)).map.graph, { mode: 'none', file: null, nodes: 0, bridges: 0 }, 'an unpruned graph is never kept');
+  assert.equal(existsSync(file), false, 'the file still naming the removed member is deleted');
+});
+
+test('removeWorkspaceMember drops (never adopts) a pruned graph when another member was removed between the prune and the lock', async () => {
+  const { readWorkspaceMap, _testing: wsTesting } = await import('../src/core/workspaces.mjs');
+  const { existsSync } = await import('node:fs');
+  const { ws, b, c, file } = await withStoredGraph('two removals');
+  await addWorkspaceMembers(ws.id, [await freshRepo()]);   // four members, so both removals leave two
+  // A removal keeps the map's stamp (mapWithoutMember keeps runId/scannedAt/resynthesizedAt): only the
+  // member set tells that this prune (which still holds b) is stale.
+  wsTesting.beforeRemoveTx = async () => {
+    wsTesting.beforeRemoveTx = null;
+    await removeWorkspaceMember(ws.id, b);
+  };
+  try { await removeWorkspaceMember(ws.id, c); } finally { wsTesting.beforeRemoveTx = null; }
+  assert.deepEqual((await readWorkspaceMap(ws.id)).map.graph, { mode: 'none', file: null, nodes: 0, bridges: 0 }, 'a prune that still names b is not adopted');
+  assert.equal(existsSync(file), false);
+});
+
 test('addWorkspaceMembers keeps the stored map as it is (the new member has no edges until a re-scan)', async () => {
   const { readWorkspaceMap } = await import('../src/core/workspaces.mjs');
   const { ws } = await threeMemberMapped('Mapped Add');

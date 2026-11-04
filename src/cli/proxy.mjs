@@ -1,9 +1,8 @@
-// src/cli/proxy.mjs — `worca proxy status|login|logout|test` (docs/network-proxy.md). Behind the
-// corporateProxy flag. The password comes from a hidden prompt or stdin, never argv, and is
-// hashed at once (src/core/proxy-credentials.mjs).
+// src/cli/proxy.mjs — `worca proxy status|login|logout|test` (docs/network-proxy.md). Works with the
+// proxy on or off, so a login can be saved before turning it on. The password comes from a hidden
+// prompt or stdin, never argv, and is hashed at once (src/core/proxy-credentials.mjs).
 import { createInterface } from 'node:readline';
-import { flagEnabled } from '../core/flags.mjs';
-import { readSettings } from '../core/settings.mjs';
+import { readSettings, networkProxyEnabled } from '../core/settings.mjs';
 import { checkUpstream, resolveUpstream, fixedPortOf, localProxyUrl, PASSWORD_MODES } from '../core/upstream-proxy.mjs';
 import { parseAccount, saveProxyLogin, readProxyLogin, clearProxyLogin, markLoginRejected, proxyState,
   upstreamEnv, ProxyLoginError } from '../core/proxy-credentials.mjs';
@@ -18,7 +17,7 @@ export const PROXY_HELP = `Usage: worca proxy <command>
   logout                   Delete the saved login
   test [--json]            CONNECT to github.com and api.anthropic.com through the corporate proxy
 
-Needs the corporateProxy flag: worca flags on corporateProxy. See docs/network-proxy.md.
+Turn it on in Settings › Network proxy (or networkProxy.enabled: true in settings.json). See docs/network-proxy.md.
 `;
 const VERBS = new Set(['status', 'login', 'logout', 'test']);
 const MAX_INPUT = 64 * 1024;
@@ -77,7 +76,6 @@ export async function cmdProxy(argv, {
   out, c = (_n, s) => s, fail,
   err = (s) => process.stderr.write(`${s}\n`),
   env = process.env, input = process.stdin, prompt = process.stderr,
-  corporateProxy = () => flagEnabled('corporateProxy'),
   settings = readSettings, home, platform = process.platform, exec,
 } = {}) {
   const [verb, ...rest] = argv;
@@ -87,7 +85,6 @@ export async function cmdProxy(argv, {
     fail('worca proxy login never takes a password as an argument: it reads it from a hidden prompt or from stdin');
     return 2;
   }
-  if (!corporateProxy()) { err('worca: the corporate proxy is off. Turn it on with: worca flags on corporateProxy (docs/network-proxy.md)'); return 1; }
   const at = { ...(home !== undefined ? { home } : {}), platform, ...(exec ? { exec } : {}) };
   const networkProxy = () => { const s = settings(); return s && typeof s === 'object' ? s.networkProxy : undefined; };
   const json = rest.includes('--json');
@@ -96,9 +93,10 @@ export async function cmdProxy(argv, {
   if (verb === 'status') {
     const np = networkProxy();
     // D13: a CLI process cannot see the running server's free port; a fixed port is the only URL it can state.
-    const st = proxyState({ env: upEnv, networkProxy: np, login: readProxyLogin(at), localUrl: fixedPortOf(np) ? localProxyUrl(fixedPortOf(np)) : null });
+    const st = proxyState({ env: upEnv, networkProxy: np, login: readProxyLogin(at), enabled: networkProxyEnabled(settings()),
+      localUrl: fixedPortOf(np) ? localProxyUrl(fixedPortOf(np)) : null });
     if (json) out(JSON.stringify(st)); else printStatus(st, out);
-    return st.state === 'needs-login' ? 3 : (st.state === 'not-configured' || st.state === 'error') ? 1 : 0;
+    return st.state === 'needs-login' ? 3 : (st.state === 'not-configured' || st.state === 'error' || st.state === 'off') ? 1 : 0;
   }
 
   if (verb === 'logout') {

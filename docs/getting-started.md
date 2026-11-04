@@ -55,6 +55,13 @@ page after each interaction, so the guide can never desync. Labels are outcomes,
 never settings; the arc runs prerequisite → first object → see the loop → talk to
 it → know the workflows → real work → scale.
 
+## First start
+
+On a fresh install (the welcome not seen, no project and no run: `fresh` in `GET /api/onboarding`, derived and
+never stored), the setup assistant (`docs/setup-assistant.md`) opens before the welcome. **Set up later** closes
+it at once and goes straight to the welcome; finishing it ends on the welcome's three doors too. Settings ›
+General › Setup assistant › **Run setup** reopens it later with the saved values.
+
 ## Surfaces
 
 - **Page** (`#getting-started` view, `#getting-started-host`, painted by

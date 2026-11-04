@@ -27,6 +27,13 @@ const NUL = String.fromCharCode(0);
 const STACKED = '#confirm-modal:not(.hidden), #stop-modal:not(.hidden), dialog[open]';
 const OPEN = new WeakMap();                     // document -> the viewer open in it
 
+/** Close the popup open in `doc`, if any: an entry point that opens the chat beside the page (app.js openChat), where
+ *  the route to Chat used to close it. */
+export function closeOpenViewer(doc, opts) {
+  const open = OPEN.get(doc);
+  if (open) open.close(opts);
+}
+
 /** Where a popup is: the view (the first hash segment) and the run it belongs to — a run page's run (`#running/<id>…`,
  *  `#history/<key>/<id>…`, its Details suffix dropped), the run the Chat panel shows (`#chat/<thread>/run/<id>…`). */
 export function routeKeyOf(win) {

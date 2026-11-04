@@ -36,11 +36,6 @@ const KEY_RES = {
   chat: /^chat:(ask_[0-9a-f]{8})$/,
 };
 
-// The run pages' tab words in the address (ui/public/nav/routes.mjs ROUTES.running/history tabs, keys and aliases;
-// src/shared cannot import ui/public, so test/nav-routes.test.mjs pins this copy equal to the table).
-export const RUN_TAB_WORDS = Object.freeze(new Set(['summary', 'diff', 'changes', 'artifacts', 'actions', 'workflow',
-  'logs', 'agents', 'qa', 'overview', 'clarify']));
-
 const dec = (x) => { try { return decodeURIComponent(x); } catch { return null; } };
 const enc = encodeURIComponent;
 // An ADO project name, decoded: printable, at most 64 characters (Azure's own limit), never a path. (Char codes, not a
@@ -77,14 +72,11 @@ function hashRef(href) {
   if (!m) return null;
   const segs = m[2].split('/');
   if (m[1] === 'chat') return segs.length === 1 && CHAT_RE.test(segs[0]) ? { kind: 'chat', key: `chat:${segs[0]}`, id: segs[0], url: href } : null;
-  // #history/<projectKey>/<id>[/tab], #history/workspaces/<wsId>/<id>[/…], #running/<app run id>[/tab], and the old
-  // …/details[/tab] forms (they still open the same tab).
+  // #history/<projectKey>/<id>[/details/<tab>], #history/workspaces/<wsId>/<id>[/…], #running/<app run id>[/details/<tab>]
   const at = m[1] === 'running' ? 0 : segs[0] === 'workspaces' ? 2 : 1;
   const id = segs[at] || '';
   const tail = segs.slice(at + 1);
-  const okTail = !tail.length || (tail.length === 1 && RUN_TAB_WORDS.has(tail[0]))
-    || (tail[0] === 'details' && tail.length <= 2);
-  if (!okTail) return null;
+  if (tail.length && !(tail[0] === 'details' && tail.length <= 2)) return null;
   if (m[1] === 'running' ? !LIVE_RE.test(id) : !(PIPELINE_RE.test(id) && segs.slice(0, at).every(Boolean))) return null;
   return { kind: 'run', key: `run:${id}`, id, url: href };
 }

@@ -71,7 +71,7 @@ test('the home mounts in [data-chat-home]; the intent add-on is registered once 
   const home = doc.querySelector('[data-chat-page] [data-chat-home]');
   assert.ok(home, 'P1 page');
   assert.equal(home.querySelector('.chat-home-title').textContent, 'What should worca do?');
-  assert.equal(home.querySelectorAll('.chat-home-act').length, 8, 'the flags are off: the default Shaper pin is absent');
+  assert.equal(home.querySelectorAll('.chat-home-act').length, 9, 'the default Shaper pin is in the row');
   assert.equal(composerAddons().filter((a) => a.id === 'intent').length, 1);
   const lead = doc.querySelector('[data-chat-page] [data-chat-composer-lead]');
   assert.ok(lead, 'P1 lead row');
@@ -82,7 +82,7 @@ test('the home mounts in [data-chat-home]; the intent add-on is registered once 
   assert.equal(chip.querySelector('.chat-intent-l').textContent, 'New run');
   assert.equal(doc.querySelector('[data-chat-page] .ask-input').placeholder, 'Describe the task…');
   assert.equal(home.querySelector('.chat-home-act[data-intent="script"]').hidden, true, 'GET /api/settings chat.scriptTools:false');
-  assert.equal(home.querySelector('.chat-home-act[data-intent="shape"]'), null, 'Shaper pin: no hello turned the shapeFirst gate on');
+  assert.ok(home.querySelector('.chat-home-act[data-intent="shape"]'), 'Shaper pin: always on');
   assert.ok(ctx.calls.some((c) => c.url === '/api/sources'), 'task sources were asked once per visit');
 });
 
@@ -212,11 +212,11 @@ test('"N more" opens the Runs list, never the run the Runs page remembers', asyn
 // do (test/ui-history-workspace-pr.test.mjs). An interval created through the jsdom window is never unref'd, so the child
 // (and `npm test`, which waits for every test file to exit) would hang for ever.
 const CHILD = `
-import { readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 const root = process.cwd();
-const dom = new JSDOM(readFileSync(root + '/ui/public/index.html', 'utf8'), { url: 'http://localhost:4317/' });
+const { readIndexHtml } = await import(pathToFileURL(root + '/src/core/read-index-html.mjs').href);
+const dom = new JSDOM(readIndexHtml(), { url: 'http://localhost:4317/' });
 const { window } = dom;
 window.Element.prototype.scrollIntoView = function () {};
 window.WebSocket = class { constructor() { this.readyState = 1; } send() {} close() {} addEventListener() {} };

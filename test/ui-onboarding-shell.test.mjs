@@ -13,6 +13,8 @@ import { dirname, join } from 'node:path';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { backdropClick, dragOut } from './helpers/popups.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs). That
 // also clears the poll of a guide a failed assertion left mid-tour, so it cannot cascade.
@@ -20,7 +22,7 @@ const trackDom = useDomRelease(afterEach);
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const root = join(__dir, '..', 'ui', 'public');
-const html = readFileSync(join(root, 'index.html'), 'utf8');
+const html = readIndexHtml();
 const appPath = join(root, 'app.js');
 const tick = () => new Promise((r) => setTimeout(r, 0));
 const settle = async (n = 6) => { for (let i = 0; i < n; i++) await tick(); };
@@ -61,6 +63,10 @@ async function boot({ onboarding = status(['claude']), projects = [], level = nu
     // settingsError: the error POST /api/settings answers with (a mode switch the server refuses).
     if (settingsError && url.includes('/api/settings') && init.method === 'POST') return Promise.resolve({ ok: false, status: 500, json: async () => ({ error: settingsError }) });
     if (url.includes('/api/projects')) return json({ projects });
+    // The setup assistant's load (a fresh boot opens it): minimal answers, so it paints its Check step.
+    if (url.includes('/api/setup/detect')) return json({ checks: [{ id: 'claude', label: 'Claude Code', state: 'ok', line: 'Signed in.' }] });
+    if (url.includes('/api/proxy/status')) return json({ settings: { enabled: false }, login: null, state: 'off' });
+    if (url.includes('/api/providers')) return json({ copilot: { connected: false }, openai: { configured: false }, anthropic: { configured: false }, broker: { enabled: false } });
     return json({ config: { steps: {}, customModels: [] }, models: [], efforts: [], pipelines: 0, projects: 0, workspaces: 0 });
   };
   for (const k of ['window', 'document', 'location', 'localStorage', 'WebSocket', 'fetch', 'navigator']) {
@@ -147,7 +153,7 @@ test('welcome at 375px: the nav drawer is closed behind it (F-21)', async () => 
   assert.equal(doc.getElementById('welcome-modal').classList.contains('hidden'), false);
   assert.equal(doc.body.classList.contains('nav-open'), false);
   assert.equal(doc.querySelector('.main').hasAttribute('inert'), false);
-  const css = readFileSync(join(root, 'style.css'), 'utf8');
+  const css = readStyleCss();
   // The .dlg card selector beats `.viewer-modal .card`'s 86vh, so the phone allowance takes effect.
   assert.match(css, /@media \(max-width:760px\)\{\s*\.viewer-modal \.card\.dlg\.ob-welcome\{max-height:calc\(100dvh - 24px\)/);
 });
@@ -418,4 +424,26 @@ test('the project tour: the dialog opens on New (canvas AddNew), the guide rings
   assert.equal(doc.querySelector('.guide-text').textContent, 'Create it. The dialog closes and the project joins the list.');
   assert.doesNotMatch(readFileSync(appPath, 'utf8'), /Files on disk are never touched/);
   assert.doesNotMatch(readFileSync(appPath, 'utf8'), /give the dialog that opens its folder/);
+});
+
+test('first start: a fresh install opens the setup assistant before the welcome; Set up later shows the welcome (AC-4.1)', async () => {
+  await checkRows([
+    { name: 'fresh: #setup-modal up, #welcome-modal hidden; Set up later closes it at once and shows the welcome', run: async () => {
+      const { doc, window, posts } = await boot({ onboarding: status(['claude'], { fresh: true }) });
+      assert.ok(doc.getElementById('setup-modal'), 'the assistant is up');
+      assert.equal(doc.getElementById('welcome-modal').classList.contains('hidden'), true);
+      await until(() => doc.querySelector('#setup-modal .sa-check'));
+      click(window, doc.querySelector('#setup-modal .sa-later'));
+      await settle();
+      assert.equal(doc.getElementById('setup-modal'), null);
+      assert.equal(doc.querySelector('.discard-modal'), null, 'no Discard changes? question');
+      assert.equal(doc.getElementById('welcome-modal').classList.contains('hidden'), false, 'the welcome follows');
+      assert.deepEqual(posts, [], 'Set up later writes nothing');
+    } },
+    { name: 'a boot without fresh shows the welcome first, and no assistant', run: async () => {
+      const { doc } = await boot();
+      assert.equal(doc.getElementById('setup-modal'), null);
+      assert.equal(doc.getElementById('welcome-modal').classList.contains('hidden'), false);
+    } },
+  ]);
 });

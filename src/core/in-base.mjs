@@ -2,6 +2,7 @@
 // Local refs only (no fetch, clarify answer): one for-each-ref per call, and one merge-base --is-ancestor per new
 // (head sha, base sha) pair, cached for the process. A git error is "unknown" and is not cached.
 import { execFile } from 'node:child_process';
+import { scopedRefTips, parseRefTips } from './git-info.mjs';
 
 const CACHE_MAX = 2000;
 const cache = new Map();   // `${repoDir}\0${headSha}\0${baseSha}` → boolean
@@ -18,9 +19,17 @@ export async function workInBase({ repoDir, feature, source, startSha = null, re
   const base = String(source).startsWith(`${remote}/`) ? String(source).slice(remote.length + 1) : String(source);
   if (!base || base === feature) return null;
   const refs = [`refs/heads/${feature}`, `refs/heads/${base}`, `refs/remotes/${remote}/${base}`];
-  const r = await run(['for-each-ref', '--format=%(refname) %(objectname)', ...refs], repoDir);
-  if (!r.ok) return null;
-  const sha = new Map(r.stdout.split('\n').filter(Boolean).map((l) => l.split(' ')));
+  // Inside a history listing (withRefSnapshot): the listing's one read of every tip, not a for-each-ref per row.
+  const scoped = scopedRefTips(repoDir);
+  let sha;
+  if (scoped) {
+    sha = await scoped;
+    if (!sha) return null;
+  } else {
+    const r = await run(['for-each-ref', '--format=%(refname) %(objectname)', ...refs], repoDir);
+    if (!r.ok) return null;
+    sha = parseRefTips(r.stdout);
+  }
   const head = sha.get(refs[0]);
   if (!head || head === startSha) return null;                 // nothing of its own: never "Merged"
   for (const ref of refs.slice(1)) {

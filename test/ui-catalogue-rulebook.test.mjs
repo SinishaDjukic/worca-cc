@@ -11,10 +11,12 @@ import { renderRemoveDialog } from '../ui/public/marketplace/remove-view.mjs';
 import { renderProvidersCard } from '../ui/public/bridge-view.mjs';
 import { renderModelsList } from '../ui/public/models-view.mjs';
 import { renderPolicySyncChip } from '../ui/public/team-policy-view.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const read = (p) => readFileSync(new URL(`../${p}`, import.meta.url), 'utf8');
-const CSS = read('ui/public/style.css');
-const html = read('ui/public/index.html');
+const CSS = readStyleCss();
+const html = readIndexHtml();
 const page = new JSDOM(html).window.document;
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
 // Every rule body whose selector list is exactly `sel` (top level and inside @media), so a phone override is not missed.

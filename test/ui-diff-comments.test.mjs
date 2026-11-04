@@ -1,21 +1,20 @@
 // test/ui-diff-comments.test.mjs
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
-const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 
 const PROJECT = '/tmp/proj';
 
 async function boot({ fetchHandler, url = 'http://localhost:4317/', hljsLoader = null, markdown = null, hooks = null } = {}) {
-  const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url }));
+  const dom = trackDom(new JSDOM(readIndexHtml(), { url }));
   const { window } = dom;
 
   // jsdom doesn't implement scrollIntoView; the viewer modal calls it on open.
@@ -426,12 +425,11 @@ test('Cancel and Esc close the composer without POSTing or leaving Details; Esc 
       assert.ok(doc.querySelector('#hist-detail .hd-diff-body'), 'the diff is still rendered');
       assert.equal(ctx.cbox.calls.length, 0, 'Esc never POSTs');
     } },
-    { name: 'Esc with no composer open is the page\'s again (the guard is scoped)', run: async () => {
-      // In the slide layout the page's Escape goes up to its parent, the Runs list (side by side it does nothing).
-      window.document.getElementById('runs-shell').dataset.layout = 'slide';
+    { name: 'Esc with no composer open still steps back out of Details (the guard is scoped)', run: async () => {
       keydown(window, window.document.querySelector('#hist-detail .hd-diff-pane'), 'Escape');
       await settle(window);
-      assert.equal(window.location.hash.replace(/^#/, ''), 'runs', 'the page\'s own Escape ran');
+      // Details › Diff → the run's glance (one more Escape would reach the list).
+      assert.equal(window.location.hash.replace(/^#/, ''), `history/${KEY}/${ROW.id}`, 'the existing behaviour is untouched');
     } },
   ]);
 });
@@ -701,11 +699,13 @@ test('Ask in Chat on a card appends the exact reference (and the reply count) an
   const { window } = ctx;
   const doc = window.document;
   await checkRows([
-    { name: 'the card\'s Ask in Chat button opens Chat with the exact reference and sends nothing', run: async () => {
+    { name: 'the card\'s Ask in Chat button opens the chat beside the diff with the exact reference and sends nothing', run: async () => {
+      const at = window.location.hash;
       click(window, doc.querySelector('[data-comment-id="dc_00000001"] .hd-cmt-ask'));
       await settle(window, 6);
-      assert.equal(window.location.hash, '#chat', 'Ask in Chat opens the Chat page');
-      const ta = doc.querySelector('.ask-input');
+      assert.equal(window.location.hash, at, 'Ask worca beside the page (L7): the side column opens, the diff stays');
+      assert.equal(doc.getElementById('ask-side').hidden, false);
+      const ta = doc.querySelector('#ask-side .ask-input');
       assert.ok(ta, 'the Ask panel is mounted by the app boot');
       assert.equal(ta.value, '[diff comment dc_00000001 — src/a.js:2 (new), run fcec04e8] "please add a test"', 'the run rides along: Chat has no run of its own');
       await openDetail(ctx);                                            // back to the Diff tab for the next comment

@@ -68,7 +68,7 @@ test('browser proxy: flag on -> proxy.server is the local proxy URL; flag off ->
   t.after(() => fake.close());
 
   const on = { HTTPS_PROXY: fake.url(), NO_PROXY: 'intranet.acme.example' };
-  const r = await startEgressPolicy({ env: on, corporateProxy: () => true, settings: () => ({}), login: () => null });
+  const r = await startEgressPolicy({ env: on, proxyOn: () => true, settings: () => ({}), login: () => null });
   t.after(() => r.close());
   assert.equal(launchOptions('/x/chrome', on).proxy.server, r.url);
   assert.equal(chromeProxy(on).server, r.url);
@@ -79,7 +79,7 @@ test('browser proxy: flag on -> proxy.server is the local proxy URL; flag off ->
 
   // Flag off, even with the user's own loopback proxy in HTTPS_PROXY: launches stay exactly as today.
   const off = { HTTPS_PROXY: 'http://127.0.0.1:3128' };
-  await startEgressPolicy({ env: off, corporateProxy: () => false });
+  await startEgressPolicy({ env: off, proxyOn: () => false });
   assert.equal('proxy' in launchOptions('/x/chrome', off), false);
   assert.equal(chromeProxy(off), null);
   assert.ok(!chromeArgs({ dir: '/tmp/x', platform: 'linux', env: off }).some((a) => a.startsWith('--proxy-')));

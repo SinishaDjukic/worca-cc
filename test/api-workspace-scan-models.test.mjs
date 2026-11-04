@@ -129,7 +129,7 @@ test('a member-add auto-rescan of a pick-less workspace answers needsModel; the 
   // member-add auto-rescan resolves the workspace pick (NULL) — and must NOT fall to the default:
   // the members route answers { rescan: { needsModel: true } } and the page opens the window.
   const changed = await (await post(`/api/workspaces/${workspace.id}/members`, { add: [c] })).json();
-  assert.deepEqual(changed.rescan, { needsModel: true }, 'the member change stands but asks for a model');
+  assert.deepEqual(changed.rescan, { mode: 'full', needsModel: true }, 'the member change stands but asks for a model');
   assert.equal(changed.workspace.scanModels, null, 'nothing persisted by the pause');
   // The prompted flow: PUT the pick, then start the auto-tagged re-scan with it.
   assert.ok((await put(`/api/workspaces/${workspace.id}/scan-models`, { workspaceScan: PICK })).ok);

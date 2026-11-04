@@ -1,0 +1,9 @@
+/* ── Chat connectivity (chat-connectivity-design.md §4.8) ─────────────────── */
+.pl-channel-warn { color: var(--red); font-weight: 600; }
+.pl-config-h { font-weight: 600; margin: 14px 0 6px; font-size: 13px; }
+.chat-events, .chat-channels { margin: 8px 0; }
+.chat-event-row { cursor: pointer; }
+.chat-channel-row { display: flex; gap: 10px; align-items: center; margin: 6px 0; }
+.chat-channel-toggle { display: flex; gap: 8px; align-items: center; cursor: pointer; }
+.chat-state { text-transform: none; }
+

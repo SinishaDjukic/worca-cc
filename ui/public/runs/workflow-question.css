@@ -1,0 +1,70 @@
+/* ---------- the `workflow` question arm (spec §7.4): Auto's proposal in a qpanel ---------- */
+.qpanel-workflow .qpanel-head .qcount{font-family:var(--mono);font-weight:600;}
+.qbody{display:flex;flex-direction:column;margin-top:12px;}
+.qbody>*{min-width:0;}
+.qnote{margin:12px 0;padding:10px 12px;background:var(--amber-wash-2);border:1px solid var(--amber-line);border-radius:var(--r-sm);font-size:13px;line-height:1.5;color:var(--ink-2);}
+.qnote b{font-weight:600;color:var(--ink);}
+/* The revise echo already carries its own 12px bottom margin — one child-selector
+   deeper than the generic name margin below, so it wins wherever both match. */
+.ask-wfcard-body>.qnote+.ask-wfcard-namewrap{margin-top:0;}
+/* The agent table is one stacked card per agent (name, then model | effort, then the two switches, each
+   labelled), so it never depends on the panel being wide enough for five fixed columns. */
+.qtune{display:block;width:100%;font-size:13px;}
+.qtune thead{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);}
+.qtune tbody{display:block;}
+.qtune tr{display:grid;grid-template-columns:1fr 1fr;gap:10px 12px;padding:14px 0;border-bottom:1px solid var(--line);}
+.qtune tr:last-child{border-bottom:0;}
+.qtune td{display:block;min-width:0;padding:0;}
+.qtune td:first-child{grid-column:1 / -1;font-weight:600;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.qtune td[data-label]::before{content:attr(data-label);display:block;margin-bottom:4px;font-family:var(--mono);font-size:12px;color:var(--ink-2);font-weight:600;}
+.qtune .select-wrap{width:100%;}
+.qtune .select-wrap select{height:34px;padding:0 40px 0 12px;border-radius:var(--r-sm);}
+.qtune td.qtune-sw-cell{display:flex;align-items:center;min-height:24px;}
+.qtune-sw{display:inline-flex;align-items:center;gap:8px;position:relative;cursor:pointer;}
+.qtune-sw-t{font-size:var(--fs-body);color:var(--ink-2);}
+/* Disclosures on the workflow review panel: Why this? · Show graph · Customize agents */
+.wf-namelabel{flex:0 0 auto;font-weight:600;font-size:15px;line-height:1.35;color:var(--ink-3);}
+/* The preview: always visible, the whole card is one button that opens the large pan/zoom popup. */
+.wf-preview{display:block;position:relative;width:100%;margin:16px 0 0;padding:0;border:0;border-radius:var(--r-sm);background:transparent;font:inherit;text-align:left;cursor:zoom-in;}
+.wf-preview .ask-wfcard-graph{margin-top:0;transition:border-color .15s,height .24s cubic-bezier(.2,.7,.3,1);}
+.wf-preview:hover .ask-wfcard-graph{border-color:var(--hover-outline);}
+.wf-preview:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.wf-preview-hint{position:absolute;top:10px;right:10px;padding:3px 10px;border-radius:var(--r-xs);background:var(--panel);border:1px solid var(--line);color:var(--ink-2);font-size:var(--fs-meta);font-weight:600;opacity:0;transition:opacity .15s;pointer-events:none;}
+.wf-preview:hover .wf-preview-hint,.wf-preview:focus-visible .wf-preview-hint{opacity:1;}
+/* Why this? — three plain rows: label left, value right */
+.wf-facts{display:grid;grid-template-columns:max-content 1fr;gap:8px 20px;margin:0;font-size:13px;line-height:1.5;}
+.wf-facts dt{color:var(--ink-3);}
+.wf-facts dd{margin:0;color:var(--ink-2);min-width:0;}
+.wf-facts .ask-wfcard-match{margin:0;padding-left:0;}
+.wf-facts .ask-wfcard-match svg{display:none;}
+/* The large workflow popup */
+.wf-pop .wf-pop-card{width:min(1120px,100%);height:min(780px,88vh);max-height:none;display:flex;flex-direction:column;overflow:hidden;padding:0;}
+.wf-pop-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px 20px;border-bottom:1px solid var(--line);}
+.wf-pop-head h2{margin:0;font-size:var(--fs-section);font-weight:600;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.wf-pop-canvas{position:relative;flex:1 1 auto;min-height:0;overflow:hidden;background:var(--canvas-2) radial-gradient(circle,var(--line-2) 1.1px,transparent 1.1px);background-size:22px 22px;}
+.wf-pop-canvas .gv-stage.gv-flow{position:absolute;inset:0;width:auto;height:100% !important;cursor:grab;}   /* the view sets an inline height from its rows; the popup's stage always fills the canvas */
+.wf-pop-canvas .gv-stage.panning,.wf-pop-canvas .gv-stage.panning *{cursor:grabbing !important;}
+.wf-pop-canvas .gv-nav{right:16px;bottom:16px;}
+.wf-pop-hint{padding:10px 20px;border-top:1px solid var(--line);font-size:var(--fs-meta);color:var(--ink-3);}
+.wf-discs{display:flex;flex-direction:column;margin-top:16px;border-top:1px solid var(--line);}
+.wf-disc{border-bottom:1px solid var(--line);}
+.wf-disc>summary{display:flex;align-items:center;gap:8px;min-height:40px;cursor:pointer;list-style:none;font-size:13px;font-weight:600;color:var(--ink-2);}
+.wf-disc>summary::-webkit-details-marker{display:none;}
+.wf-disc>summary::before{content:"";width:6px;height:6px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:rotate(-45deg);transition:transform .15s;}
+.wf-disc[open]>summary::before{transform:rotate(45deg);}
+.wf-disc>summary:hover{color:var(--ink);}
+.wf-disc>summary:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:var(--r-sm);}
+.wf-disc-body{padding:0 0 16px;}
+.wf-disc-body>*{margin-top:0;}
+.wf-disc-body>*+*{margin-top:12px;}
+.wf-disc-body .ask-wfcard-graph{margin-top:0;}
+@media (prefers-reduced-motion: reduce){.wf-disc>summary::before{transition:none;}}
+.qfree-area{margin-top:12px;min-height:64px;resize:vertical;line-height:1.5;}
+.qfree-area[hidden]{display:none;}
+.qfree.qfree-err{border-color:var(--red);}
+.qcancel{margin-right:auto;height:36px;padding:0 8px;border:0;border-radius:var(--r-sm);background:transparent;color:var(--red-ink);font-family:inherit;font-weight:600;font-size:13px;cursor:pointer;}
+.qcancel:hover{background:var(--red-bg);}
+.qcancel:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.qopen[hidden]{display:none;}
+:is(.rd-questions,.chat-rc-q) .qanswered{font:600 var(--fs-body) var(--sans);color:var(--ink);}   /* the pill bar's lead, not a mono aside */
+

@@ -207,6 +207,15 @@ test('doctor runs the reconcile + sweep pair and exits 0 on an empty home', asyn
   assert.match(r.stdout, /legacy worktrees: skipped/, 'and the legacy sweep reports itself skipped');
 });
 
+test('doctor reports node-pty spawn-helper state (or that node-pty is absent) and still exits 0', async () => {
+  const home = await freshHome();
+  const r = await run(['doctor'], { home, extraEnv: { WORCA_RUN_ROOT: 'legacy' } });
+  assert.equal(r.code, 0, r.stderr);
+  // Under `legacy` the legacy block returns early — the check must already have run.
+  assert.match(r.stdout, /^(node-pty: not installed|node-pty spawn-helper: (ok|none for this platform|NOT executable — fix with: chmod \+x ))/m);
+  assert.doesNotMatch(r.stderr, /spawn-helper check failed/);
+});
+
 test('doctor reclaims a terminal run root and KEEPS an interrupted one (the keep-set, end to end)', async () => {
   const home = await freshHome();
   // Two run roots with hand-written manifests (no worktrees: the sweep tolerates
@@ -278,12 +287,12 @@ test('doctor prunes leftover legacy worktrees per registered project (detached) 
   assert.match(branches, /worca-cc\/clidone1/);
 });
 
-test('workflow list prepends the graph built-ins (Default, then Memory defragment) before the stored rows', async () => {
+test('workflow list prepends the graph built-ins (Default, Lean, then Memory defragment) before the stored rows', async () => {
   const home = await freshHome();
   const r = await run(['workflow', 'list'], { home });
   assert.equal(r.code, 0, r.stderr);
   const ids = r.stdout.trim().split('\n').filter(Boolean).map((l) => l.split('\t')[0]);
-  assert.deepEqual(ids.slice(0, 2), ['wf_default', 'wf_memory_defrag'], r.stdout);
+  assert.deepEqual(ids.slice(0, 3), ['wf_default', 'wf_lean_build', 'wf_memory_defrag'], r.stdout);
   assert.match(r.stdout, /wf_memory_defrag\tMemory defragment\tshared/);
 });
 

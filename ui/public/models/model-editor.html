@@ -1,0 +1,49 @@
+    <!-- ===== Model editor (configurable-models-design.md §4.10) =====
+         A task, not a page section: it used to render above the catalog, under a Providers card
+         taller than the viewport, so opening it looked like nothing happened. -->
+    <div id="model-editor-modal" class="viewer-modal hidden" role="dialog" aria-modal="true" aria-labelledby="mv-editor-heading">
+      <div id="mv-editor-host" class="mv-editor-host"></div>
+    </div>
+
+    <!-- ===== Import models (model-bridge-design.md §8.4) =====
+         One dialog for both sources: GitHub Copilot's catalog and any OpenAI-compatible server
+         you run. It lives with the CATALOG (the Models page), because what it produces is
+         catalog rows; the Providers page only links into it with its endpoint filled in. -->
+    <div id="model-import-modal" class="viewer-modal hidden" role="dialog" aria-modal="true" aria-labelledby="mimp-title">
+      <div class="card mimp">
+        <h3 id="mimp-title" class="mv-editor-title">Import models</h3>
+        <div class="mimp-src">
+          <label class="mv-field mimp-source-field">
+            <span class="mv-field-label">From</span>
+            <select id="mimp-source" class="select"></select>
+          </label>
+          <label class="mv-field mimp-base-field">
+            <span class="mv-field-label">Base URL</span>
+            <!-- The button sits ON the field's line: below the hint it read as unrelated to the URL. -->
+            <span class="mimp-base-row">
+              <input id="mimp-base" class="input" type="text" placeholder="http://127.0.0.1:11434/v1" />
+              <button type="button" id="mimp-list" class="btn">List models</button>
+            </span>
+            <small class="hint">llama.cpp, Ollama, LM Studio, vLLM or a gateway, on this machine or your network — or a hosted API:</small>
+            <span class="mimp-presets">
+              <button type="button" class="btn btn-sm btn-quiet mimp-preset" data-preset="gemini">Gemini</button>
+              <button type="button" class="btn btn-sm btn-quiet mimp-preset" data-preset="qwen">Qwen</button>
+            </span>
+          </label>
+          <label class="mv-field mimp-key-field">
+            <span class="mv-field-label">API key (optional)</span>
+            <input id="mimp-key" class="input" type="text" autocomplete="off" spellcheck="false" placeholder="${GEMINI_API_KEY}" />
+            <small class="hint">For an endpoint that is not the OpenAI-compatible provider's: stored on each imported model. A <code>${VAR}</code> keeps the key itself out of settings.json. The provider's own key is only ever sent to its own host.</small>
+          </label>
+        </div>
+        <p id="mimp-msg" class="form-msg" aria-live="polite"></p>
+        <!-- Copilot lists dozens of models; the filter narrows what is already listed, client-side. -->
+        <input id="mimp-filter" class="input mimp-filter hidden" type="search" data-dirty-ignore placeholder="Filter by model, id or vendor…" aria-label="Filter the listed models" />
+        <div id="mimp-body"></div>
+        <div class="mv-editor-btns mimp-btns">
+          <button type="button" id="mimp-go" class="btn btn-primary" disabled>Import selected</button>
+          <button type="button" id="mimp-cancel" class="btn">Cancel</button>
+        </div>
+      </div>
+    </div>
+

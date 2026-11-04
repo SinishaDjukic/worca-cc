@@ -4,11 +4,10 @@
 // outside the token blocks.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import { checkRows } from './helpers/rows.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
-const css = readFileSync(fileURLToPath(new URL('../ui/public/style.css', import.meta.url)), 'utf8');
+const css = readStyleCss();
 const bare = css.replace(/\/\*[\s\S]*?\*\//g, '');            // comments stripped
 
 /** The declarations of the FIRST block opened by `selector` (the house ruleBody idiom). */
@@ -98,6 +97,7 @@ const PAIRS = [
   ['--pink-ink-strong', '--pink-bg', 4.5],   // the Marketplace kind tiles' glyphs (.mk-t-chat / -skill / -wf / -mix)
   ['--teal-ink-strong', '--teal-bg', 4.5], ['--indigo-ink', '--indigo-bg', 4.5], ['--cocoa-ink', '--cocoa-bg', 4.5],   // and .mk-t-mcp / -model / -script
   ['--green-ink-strong', '--green-bg', 4.5], ['--amber-ink-strong', '--amber-bg', 4.5], ['--red-ink-strong', '--red-bg', 4.5],   // Marketplace status chips (L19)
+  ['--ink-2', '--sess-head', 4.5], ['--red-ink-strong', '--sess-head', 4.5],   // the session tray's header text, and its error text (.gv-sess-head, .gv-sess.bad)
   ['--ink-2', '--hover', 4.5],   // the Marketplace "off" chip (.mk-chip-off)
   ['--ink-2', '--line', 4.5],   // the Marketplace counts (.mk-count in the tabs and group heads, LC-P3-18)
   ['--slate-ink', '--slate-bg', 4.5],   // .badge.slate: the Official and policy badges

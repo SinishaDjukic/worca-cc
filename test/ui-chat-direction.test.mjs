@@ -9,6 +9,7 @@ import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { createDirectionAddon, registerDirectionAddon, followedRun, linksOf, DIRECTION_PLACEHOLDER, DIRECTION_MAX_CHARS, DIRECTION_ADDON_ID } from '../ui/public/chat/direction.mjs';
 import { composerAddons, _resetChatExtensions } from '../ui/public/chat/extensions.mjs';
 import { DIRECTION_MAX_CHARS as SERVER_MAX } from '../src/core/directions.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const trackDom = useDomRelease(afterEach);
 const snap = (over = {}) => ({ source: 'live', runId: 'run-uuid-1', pipelineId: 'abcd1234', title: 'Fix login', status: 'running', startedAt: '2026-10-11T10:00:00Z', pendingQuestion: null, ...over });
@@ -231,7 +232,7 @@ test('a send the network drops says "Not sent — network error", never the brow
 
 test('direction CSS: the direction placeholder stays on one line in a narrow composer (Chrome ignores text-overflow in ::placeholder)', async () => {
   const { readFileSync } = await import('node:fs');
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   const p3 = css.slice(css.indexOf('/* ===== Chat P3: run card ===== */'));
   assert.ok(p3.includes('.ask-composer.is-direction textarea.ask-input::placeholder{white-space:nowrap;overflow:hidden;}'));
   assert.doesNotMatch(p3, /::placeholder\{[^}]*text-overflow/);

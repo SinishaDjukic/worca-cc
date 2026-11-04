@@ -60,8 +60,8 @@ export function leakGuard(text, deny = defaultDeny()) {
 
 /* ---------------- browser ---------------- */
 
-/** Playwright launch options for the system Chrome: keychain-safe flags, the real HOME, and (corporateProxy
- *  flag) Worca's local proxy as proxy.server. */
+/** Playwright launch options for the system Chrome: keychain-safe flags, the real HOME, and (corporate
+ *  proxy on) Worca's local proxy as proxy.server. */
 export function launchOptions(exe, env = process.env) {
   const proxy = chromeProxy(env);
   return { executablePath: exe, headless: true, env: chromeEnv(env),

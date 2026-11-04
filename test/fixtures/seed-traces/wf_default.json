@@ -7,7 +7,6 @@
     "clarify",
     "planner",
     "refiner",
-    "refiner",
     "implementer",
     "reviewer",
     "implementer",
@@ -16,7 +15,7 @@
   "perKey": {
     "clarify": 1,
     "planner": 1,
-    "refiner": 2,
+    "refiner": 1,
     "implementer": 2,
     "reviewer": 2
   },
@@ -24,14 +23,13 @@
     "diff-patch:diff-patch.patch",
     "live-log:live-log.ndjson",
     "plan:plans/<DATE>-seed-trace-probe-v2.md",
-    "plan:plans/<DATE>-seed-trace-probe-v3.md",
     "plan:plans/<DATE>-seed-trace-probe.md",
     "prompt:prompt.md",
     "results:results.json",
     "review:reviews/<DATE>-seed-trace-probe-impl-review.md"
   ],
   "wireDeliveries": {
-    "w5": 1,
+    "w5": 0,
     "w9": 1
   },
   "gates": [],
@@ -51,7 +49,6 @@
       "reviewer": 1
     },
     "gates": [
-      "w5#1",
       "w9#1"
     ],
     "wireDeliveries": {

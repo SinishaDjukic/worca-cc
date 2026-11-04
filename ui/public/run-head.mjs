@@ -3,6 +3,7 @@
 // read the facts app.js builds (headFactsOf); renderHeadButtons / renderRoute draw over the host's ownerDocument, never
 // fetch.
 import { icon } from './icons.mjs';
+import { copyButton } from './copy-button.mjs';
 import { CREATE_PR_LABEL, VIEW_PRS_LABEL, viewPrLabel } from './ship-words.mjs';
 
 // Watch PR (#619), moved from app.js: the route and the Overview's PR rows read one wording.
@@ -197,8 +198,13 @@ const repos = (n) => `${n} ${n === 1 ? 'repository' : 'repositories'}`;
 
 /** "owner/repo#N" from a GitHub pull request URL; "#N" for any other host. */
 export function prRef(pr) {
-  const m = /github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/.exec(String((pr && pr.url) || ''));
-  return m ? `${m[1]}#${m[2]}` : `#${(pr && pr.number) || ''}`;
+  const url = String((pr && pr.url) || '');
+  const m = /github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/.exec(url);
+  if (m) return `${m[1]}#${m[2]}`;
+  // A PR opened in this session has no number yet (number: null until a reload); Azure DevOps (/pullrequest/N) and
+  // Bitbucket (/pull-requests/N) URLs carry it.
+  const n = (pr && pr.number) || (/\/pull(?:request|-requests)\/(\d+)(?:[/?#]|$)/.exec(url) || [])[1];
+  return `#${n || ''}`;
 }
 
 /** Where the run's work lands (D2): a run that builds on the run before it lands in its feature's or chain's base
@@ -479,7 +485,7 @@ function routeList(doc, model, h, labelId) {
     const place = doc.createElement('div');
     place.className = 'rd-route-place';
     r.place.forEach((p, j) => { if (j) place.append(' '); place.append(routePart(doc, p, h)); });
-    if (r.copy) place.append(copyButton(doc, r.copy, h));
+    if (r.copy) place.append(routeCopyButton(doc, r.copy, h));
     const second = doc.createElement('div');
     second.className = 'rd-route-second';
     for (const p of r.second) second.append(routePart(doc, p, h, i));   // focus keys watch-N / commit-N
@@ -498,15 +504,10 @@ function foldLine(doc, fold, h) {
   p.append(routeDot(doc, fold.kind, fold.state), tx);
   return p;
 }
-/** D15: copies through the page's branch copy (app.js copyBranchToClipboard: the copied tick, "Copied"). */
-function copyButton(doc, name, h) {
-  const b = doc.createElement('button');
-  b.type = 'button';
-  b.className = 'btn btn-sm btn-quiet rd-route-copy';
+/** D15: the one copy button (copy-button.mjs); the host's onCopy copies through copyFromButton (the tick, "Copied"). */
+function routeCopyButton(doc, name, h) {
+  const b = copyButton(doc, { name: `Copy branch name ${name}`, title: name, cls: 'rd-route-copy' });
   b.dataset.route = 'copy';
-  b.title = name;
-  b.setAttribute('aria-label', `Copy branch name ${name}`);
-  b.append(icon(doc, 'copy', 12, 'ic ico-copy'), icon(doc, 'check', 12, 'ic ico-check'));
   b.addEventListener('click', () => { if (h.onCopy) h.onCopy(b, name); });
   return b;
 }

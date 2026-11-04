@@ -42,6 +42,27 @@ export const ASK_DENY_RULES = Object.freeze([
  *  classifier read the run's checkout (under .worca-cc/runs) and its plans (in the store). */
 export const RUN_READ_DENY_RULES = Object.freeze(ASK_DENY_RULES.filter((r) => !/\.worca-cc\/(store|runs)\//.test(r)));
 
+// Every folder Worca makes under <home>/tmp except requirements/ (a read's one-file folder and a look's checkout). The
+// rule syntax has no "all but": `tmp/*` would match requirements/ too under gitignore folder semantics, so the others are
+// named; test/file-read-guard.test.mjs fails when the code makes a tmp folder this list does not name.
+const OTHER_TMP_DIRS = Object.freeze(['agent-gen', 'ask', 'chat-selftest', 'classifier', 'codex-roles', 'copilot', 'cursor-prompts', 'gemini',
+  'goose', 'night', 'opencode', 'pinpoint', 'qwen', 'skills']);
+
+/** Requirements reads and the product brief's look (plans/requirements-a8-design.md D3, D6, D15): Ask's denies with the
+ *  tmp one narrowed to every tmp folder but requirements/ (a read's one-file folder and a look's checkout live there),
+ *  plus the stored attachments, every Ask thread and more credential folders. The file-read guard is the enforcement;
+ *  these keep private files out should a read ever run without it. */
+export const REQUIREMENTS_READ_DENY_RULES = Object.freeze([
+  ...ASK_DENY_RULES.filter((r) => r !== 'Read(//**/.worca-cc/tmp/**)'),
+  ...OTHER_TMP_DIRS.map((d) => `Read(//**/.worca-cc/tmp/${d}/**)`),
+  'Read(//**/.worca-cc/requirements/**)',   // every attached file's stored body
+  'Read(//**/.worca-cc/ask/**)',            // every Ask thread: worktrees, attachments, output
+  'Read(~/.git-credentials)',
+  'Read(~/.config/**)',
+  'Read(~/.azure/**)',
+  'Read(~/AppData/**)',                     // Windows: browser profiles, credential caches, app tokens
+]);
+
 const READ_RULE = /^Read\((.+)\)$/;
 export const toPosix = (p) => String(p).replace(/\\/g, '/');
 

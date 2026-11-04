@@ -56,7 +56,7 @@ before(async () => {
   ghUrl = `http://127.0.0.1:${gh.address().port}`;
   const { config, errors } = readBrokerConfig({
     WORCA_BROKER_MODE: 'multi', WORCA_BROKER_SECRET: SECRET, WORCA_BROKER_HOST: '127.0.0.1', WORCA_BROKER_PORT: '0', WORCA_BROKER_UI_PORT: '1',
-    WORCA_BROKER_VAULT_KEY: randomBytes(32).toString('base64'), WORCA_BROKER_PUBLIC_URL: 'https://keys.example.com', WORCA_IDENTITY_HEADER: 'x-email',
+    WORCA_BROKER_VAULT_KEY: randomBytes(32).toString('base64'), WORCA_BROKER_PUBLIC_URL: 'https://keys.example.com', WORCA_IDENTITY_HEADER: 'x-email', WORCA_IDENTITY_TRUSTED_PROXIES: '127.0.0.1',
     WORCA_BROKER_GITHUB_CLIENT_ID: 'Iv23liTestClient', WORCA_BROKER_GITHUB_CLIENT_SECRET: 'cs-secret',
   });
   assert.deepEqual(errors, []);
@@ -156,8 +156,9 @@ test('an API key still goes as x-api-key and is priced', async () => {
   assert.equal(up.requests.at(-1).headers['anthropic-beta'], undefined);
 });
 
-test('the github slot exists only with a client id, and is never reachable through the proxy', async () => {
+test('the github slot exists with a client id (or in multi mode, paste-only), and is never reachable through the proxy', async () => {
   assert.ok(!builtinSlots().some((s) => s.id === 'github'));
+  assert.ok(builtinSlots({ multi: true }).some((s) => s.id === 'github' && s.auth === 'github-user' && !s.signIn));
   assert.ok(builtinSlots({ github: { clientId: 'Iv23liTestClient', scope: 'repo' } }).some((s) => s.id === 'github' && s.auth === 'github-user'));
   const r = await internal('POST', '/internal/tokens', { billTo: 'ada@acme.dev', slots: ['github'], spawnId: 'sp-gh', kind: 'phase', issuer: 'srv-test' });
   if (r.status === 200) {

@@ -5,18 +5,18 @@
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join } from 'node:path';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { auditRunsLayout } from '../tools/runs-layout-audit.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
 
 const __dir = dirname(fileURLToPath(import.meta.url));
-const htmlPath = join(__dir, '..', 'ui', 'public', 'index.html');
 const appPath = join(__dir, '..', 'ui', 'public', 'app.js');
 const PROJECT = '/tmp/proj';
 const KEY = 'proj-0000abcd';
@@ -57,7 +57,7 @@ function tick(window, node) {
 // The View menu: open it and pick an item by its label.
 async function pickView(window, doc, label) {
   click(window, doc.getElementById('runs-view-btn'));
-  const item = [...doc.querySelectorAll('.wfv-menu [role^="menuitem"]')].find((n) => n.querySelector('.wfv-menu-l').textContent === label);
+  const item = [...doc.querySelectorAll('.wfv-menu [role^="menuitem"]')].find((n) => (n.querySelector('.wfv-menu-l') || n).textContent === label);
   assert.ok(item, `the View menu lists ${label}`);
   click(window, item);
   await settle(window);
@@ -68,7 +68,7 @@ async function pickView(window, doc, label) {
 // /api/run-groups* (logged in `groupPosts`); `bulk(body)` answers POST /api/runs/bulk (bodies logged in `posts`).
 async function boot({ url = 'http://localhost:4317/', storage = {}, projects = [{ name: 'proj', path: PROJECT, exists: true }], history = HIST, archived = [ARCH], chains = [],
   runGroups = [], onGroupCall = () => {}, bulk = () => ({ ok: true, done: [], cancelled: [], skipped: [] }), setup, tickets = [], labels = [] } = {}) {
-  const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url }));
+  const dom = trackDom(new JSDOM(readIndexHtml(), { url }));
   const { window } = dom;
   windows.push(window);
   window.Element.prototype.scrollIntoView = function () {};
@@ -97,7 +97,7 @@ async function boot({ url = 'http://localhost:4317/', storage = {}, projects = [
       return ok({ runs: body.pipelineIds.map((id) => ({ id, labels: body.add || [], changed: true })), missing: [] });
     }
     if (s.endsWith('/api/history/pr') && method === 'POST') { prToken = body && body.token; return ok({}); }
-    if (s.includes('/api/run-groups') && method !== 'GET') { groupPosts.push({ method, url: s, body }); onGroupCall({ method, url: s, body }); return ok({ ok: true }); }
+    if (s.includes('/api/run-groups') && method !== 'GET') { groupPosts.push({ method, url: s, body }); return ok(onGroupCall({ method, url: s, body }) || { ok: true }); }
     if (s.endsWith('/api/run-groups')) return ok({ groups: runGroups });
     if (s.includes('/api/projects')) return ok({ projects });
     // `history` may be a function: a test that reloads History can answer differently each time.
@@ -273,7 +273,7 @@ test('a Needs-you question row for the run already open lands the pane on its qu
   window.Element.prototype.scrollIntoView = function () { scrolled += 1; };
   click(window, doc.querySelector('#runs-list .runs-sec[data-section="needs"] a.runs-row[data-run-id="q1"]')); await settle(window);
   assert.equal(window.location.hash, '#running/q1');
-  assert.equal(screen.querySelector('.rd-tab[data-sec="overview"]').getAttribute('aria-selected'), 'true', 'Summary, where the question is');
+  assert.equal(screen.dataset.mode, 'glance');
   assert.ok(scrolled > 0, 'scrolled to the question without waiting for a panel rebuild');
 });
 
@@ -315,8 +315,8 @@ test('the View menu: Show and Group by narrow and regroup the list, the chip res
       const chip = doc.getElementById('runs-view-chip');
       assert.equal(chip.hidden, true, 'no chip for the default view');
       click(window, doc.getElementById('runs-view-btn'));
-      const items = [...doc.querySelectorAll('.wfv-menu [role="menuitemradio"]')].map((n) => [n.querySelector('.wfv-menu-l').textContent, n.querySelector('.wfv-menu-hint')?.textContent || '']);
-      assert.deepEqual(items.slice(0, 6), [['All', '3'], ['Needs you', '0'], ['Running', '1'], ['Waiting', '0'], ['Finished', '2'], ['Archived', '']]);
+      const items = [...doc.querySelectorAll('.wfv-menu .wfv-menu-item[role="menuitemradio"]')].map((n) => [n.querySelector('.wfv-menu-l').textContent, n.querySelector('.wfv-menu-hint')?.textContent || '']);
+      assert.deepEqual(items.slice(0, 7), [['All', '3'], ['Needs you', '0'], ['Running', '1'], ['Waiting', '0'], ['Finished', '2'], ['Ready to ship', '0'], ['Archived', '']]);
       click(window, doc.querySelector('.wfv-menu [role="menuitemradio"]'));   // All again: closes it
       await settle(window);
       await pickView(window, doc, 'Finished');
@@ -348,14 +348,18 @@ test('the View menu: Show and Group by narrow and regroup the list, the chip res
       assert.equal(second.doc.querySelector(`#runs-list .runs-sec[data-section="project:${KEY}"] .runs-item`), null);
       await pickView(second.window, second.doc, 'Date');
       assert.ok(second.doc.querySelector('#runs-list .runs-sec[data-section^="date:"]'), 'date sections');
-      assert.equal(second.doc.querySelector('#runs-view-chip .runs-view-chip-t').textContent, 'By date');
+      assert.equal(second.doc.getElementById('runs-view-chip').hidden, true, 'grouping alone draws no chip');
     } },
     { name: 'the old filter / group-by keys migrate once into the one view record', run: async () => {
       const { window, doc } = await boot({ storage: { 'worca-cc.runs.filter': 'live', 'worca-cc.runs.groupBy': 'project' } });
       go(window, 'runs'); await settle(window);
       assert.deepEqual(JSON.parse(window.localStorage.getItem('worca-cc.runs.view')), { show: 'running', groupBy: 'project', person: '', labels: [] });
       assert.equal(window.localStorage.getItem('worca-cc.runs.filter'), null);
-      assert.equal(doc.querySelector('#runs-view-chip .runs-view-chip-t').textContent, 'Running · By project · 0 of 2 runs');
+      assert.equal(doc.querySelector('#runs-view-chip .runs-view-chip-t').textContent, 'Running · 0 of 2 runs', 'the chip names the filter, not the grouping');
+      click(window, doc.querySelector('#runs-view-chip .runs-view-reset'));
+      await settle(window);
+      assert.equal(doc.getElementById('runs-view-chip').hidden, true);
+      assert.deepEqual(JSON.parse(window.localStorage.getItem('worca-cc.runs.view')), { show: 'all', groupBy: 'project', person: '', labels: [] }, 'the × keeps the grouping');
     } },
   ]);
 });
@@ -523,26 +527,24 @@ test('a "Run after" chain is one group row with its bar; ⌄ closes and opens it
   assert.equal(g().querySelectorAll('.runs-members .runs-item').length, 2);
 });
 
-test('a plain Run-after chain lists all 3 members, open, with shapeFirst off and on (D29)', async () => {
-  for (const shapeFirst of [false, true]) {
-    // runChains shape: root running, two after-tickets, each after the one before (member.after = 1-based position).
-    const chains = [{ id: 'p:pc000001', title: 'Billing chain', members: [
-      { pipelineId: 'pc000001', ticketId: null, title: 'Step one', state: 'current', prUrl: null, historyKey: KEY, projectKey: KEY, after: null },
-      { pipelineId: null, ticketId: 'tc2', title: 'Step two', state: 'waiting', after: 1 },
-      { pipelineId: null, ticketId: 'tc3', title: 'Step three', state: 'waiting', after: 2 }] }];
-    const { window, doc, recv } = await boot({ chains });
-    recv({ type: 'hello', flags: { shapeFirst }, runs: [live('rc1', { pipelineId: 'pc000001', title: 'Step one' })] });
-    go(window, 'runs'); await settle(window);
-    const g = doc.querySelector('#runs-list .runs-item[data-row-key="chain:p:pc000001"]');
-    assert.ok(g, `one group row (shapeFirst ${shapeFirst})`);
-    assert.equal(g.closest('.runs-sec').dataset.section, 'running');
-    assert.equal(g.querySelector(':scope > .runs-row-tail .runs-expand').getAttribute('aria-expanded'), 'true');
-    const members = g.querySelectorAll(':scope > .runs-members > .runs-item');
-    assert.equal(members.length, 3, `3 member rows (shapeFirst ${shapeFirst})`);
-    assert.equal(members[1].querySelector('.runs-row-sub').textContent, 'Waiting · starts after run 1');
-    assert.equal(members[2].querySelector('.runs-row-sub').textContent, 'Waiting · starts after run 2');
-    window.close();
-  }
+test('a plain Run-after chain lists all 3 members, open (D29)', async () => {
+  // runChains shape: root running, two after-tickets, each after the one before (member.after = 1-based position).
+  const chains = [{ id: 'p:pc000001', title: 'Billing chain', members: [
+    { pipelineId: 'pc000001', ticketId: null, title: 'Step one', state: 'current', prUrl: null, historyKey: KEY, projectKey: KEY, after: null },
+    { pipelineId: null, ticketId: 'tc2', title: 'Step two', state: 'waiting', after: 1 },
+    { pipelineId: null, ticketId: 'tc3', title: 'Step three', state: 'waiting', after: 2 }] }];
+  const { window, doc, recv } = await boot({ chains });
+  recv({ type: 'hello', runs: [live('rc1', { pipelineId: 'pc000001', title: 'Step one' })] });
+  go(window, 'runs'); await settle(window);
+  const g = doc.querySelector('#runs-list .runs-item[data-row-key="chain:p:pc000001"]');
+  assert.ok(g, 'one group row');
+  assert.equal(g.closest('.runs-sec').dataset.section, 'running');
+  assert.equal(g.querySelector(':scope > .runs-row-tail .runs-expand').getAttribute('aria-expanded'), 'true');
+  const members = g.querySelectorAll(':scope > .runs-members > .runs-item');
+  assert.equal(members.length, 3, '3 member rows');
+  assert.equal(members[1].querySelector('.runs-row-sub').textContent, 'Waiting · starts after run 1');
+  assert.equal(members[2].querySelector('.runs-row-sub').textContent, 'Waiting · starts after run 2');
+  window.close();
 });
 
 test('a deep-linked feature page repaints when History answers late: its member reads its project and PR (QA)', async () => {
@@ -660,7 +662,7 @@ test('keyboard (§5a.4): Space toggles the focused row, ⌘A selects every visib
 });
 
 test('A11: no checkbox on hover; ⌘-click selects without navigating, Shift-click adds the range, Esc ends it', async () => {
-  const css = readFileSync(join(__dir, '..', 'ui', 'public', 'style.css'), 'utf8');
+  const css = readStyleCss();
   assert.doesNotMatch(css, /:has\(> \.runs-pick:hover/, 'checkboxes show only while selecting');
   const { window, doc, recv } = await boot();
   recv({ type: 'hello', runs: [live('r1'), live('r2'), live('r3'), live('r4')] });
@@ -688,6 +690,50 @@ test('A11: no checkbox on hover; ⌘-click selects without navigating, Shift-cli
   modClick(keys[3], { shiftKey: true });
   await settle(window);
   assert.deepEqual(checked(), [keys[3]], 'Esc dropped the anchor: a Shift-click toggles one row');
+  doc.body.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  await settle(window);
+  modClick(keys[1], {});
+  await settle(window);
+  assert.notEqual(window.location.hash, '#runs', 'a plain click still opens the run');
+  assert.deepEqual(checked(), []);
+});
+
+test('A11: a touch long-press starts selecting that run and swallows the click that follows', async () => {
+  const { window, doc, recv } = await boot();
+  recv({ type: 'hello', runs: [live('r1'), live('r2')] });
+  go(window, 'runs'); await settle(window);
+  const k = doc.querySelector('#runs-list .runs-item[data-level="top"]').dataset.rowKey;
+  const rowOf = () => doc.querySelector(`#runs-list .runs-item[data-row-key="${k}"]`);
+  rowOf().querySelector('a.runs-row').dispatchEvent(new window.PointerEvent('pointerdown', { bubbles: true, pointerType: 'touch' }));
+  await new Promise((r) => setTimeout(r, 550)); await settle(window);
+  assert.ok(rowOf().classList.contains('is-checked'));
+  assert.ok(doc.getElementById('runs-list').classList.contains('is-selecting'));
+  const notCancelled = rowOf().querySelector('a.runs-row').dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
+  assert.equal(notCancelled, false, 'the click after the press is swallowed');
+  await settle(window);
+  assert.equal(window.location.hash, '#runs');
+  assert.ok(rowOf().classList.contains('is-checked'), 'and does not toggle it back');
+});
+
+test('View › Show › Archived reads the server count before its feed loads; a 0 count is dimmed', async () => {
+  const { window, doc } = await boot();
+  let archivedFetches = 0;
+  const inner = window.fetch;
+  const wrapped = (u, init) => {
+    if (String(u).endsWith('/api/counts')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ pipelines: 2, projects: 1, workspaces: 0,
+      archivedPipelines: 12, schedules: { scheduled: 0, missed: 0, recurring: 0, unread: 0 } }) });
+    if (String(u).includes('/api/history?archived=1')) archivedFetches += 1;
+    return inner(u, init);
+  };
+  window.fetch = wrapped; globalThis.fetch = wrapped;
+  go(window, 'runs'); await settle(window);
+  click(window, doc.getElementById('runs-view-btn'));
+  const row = (label) => [...doc.querySelectorAll('.wfv-menu .wfv-menu-item[role="menuitemradio"]')].find((n) => n.querySelector('.wfv-menu-l').textContent === label);
+  assert.equal(row('Archived').querySelector('.wfv-menu-hint').textContent, '12');
+  assert.equal(archivedFetches, 0, 'the count needs no archived feed');
+  assert.ok(row('Needs you').querySelector('.wfv-menu-hint').classList.contains('is-zero'));
+  assert.ok(doc.querySelector('.wfv-menu').classList.contains('wfv-view-menu'));
+  assert.equal(doc.querySelector('.wfv-menu .wfv-seg').previousElementSibling.textContent, 'Group by');
 });
 
 test('A11: the row ⋯ menu offers Select, which enters selection with that row', async () => {
@@ -860,7 +906,7 @@ test('Add to group / Remove from group repaint the group with its new count and 
     members: [mb(1, 'aaaa0001', 'done'), mb(2, 'pw000001', 'running')] }];
   const { window, doc, recv, groupPosts } = await boot({ runGroups,
     onGroupCall: ({ method, url, body }) => {
-      if (method === 'POST') runGroups[0].members.push(mb(3, body.pipelineId, 'running'));
+      if (method === 'POST') runGroups[0].members.push(mb(3, body.pipelineIds[0], 'running'));
       else runGroups[0].members = runGroups[0].members.filter((m) => !url.endsWith(`/${m.pipelineId}`));
     } });
   recv({ type: 'hello', runs: [live('r1', { pipelineId: 'pw000001' }), live('r2', { pipelineId: 'pw000002' }),
@@ -878,7 +924,7 @@ test('Add to group / Remove from group repaint the group with its new count and 
   assert.ok(picker.querySelector('.gp-row[data-group-id="grp_000000000001"] .status-dot'));
   click(window, picker.querySelector('.gp-row[data-group-id="grp_000000000001"]'));
   await settle(window, 8);
-  assert.deepEqual(groupPosts.at(-1), { method: 'POST', url: '/api/run-groups/grp_000000000001/members', body: { pipelineId: 'pw000002' } });
+  assert.deepEqual(groupPosts.at(-1), { method: 'POST', url: '/api/run-groups/grp_000000000001/members', body: { pipelineIds: ['pw000002'] } });
   assert.equal(groupRowEl().querySelector('.runs-count').textContent, '1/3');
   assert.notEqual(width(), before, 'the group bar fraction changed');
   // ⋯ on the expanded ad-hoc member → Remove from group (an unfinished group is open by default, D29).
@@ -1309,7 +1355,7 @@ test('run 3: all four deep links render inside #runs-pane with Runs visible', as
   }
 });
 
-test('run 3: on a phone (slide layout) the group pane is full screen with the top bar\'s up link, in its page, gone and error states', async () => {
+test('run 3: on a phone (slide layout) the group pane is full screen with Back, in its page, gone and error states', async () => {
   const fail = (window) => {
     const f = window.fetch;
     window.fetch = globalThis.fetch = (u, init) => (String(u).endsWith('/api/run-groups')
@@ -1322,25 +1368,23 @@ test('run 3: on a phone (slide layout) the group pane is full screen with the to
     doc.getElementById('runs-shell').dataset.layout = 'slide';
     go(window, `feature/${id}`); await settle(window, 6);
     assert.equal(doc.getElementById('runs-list-pane').hasAttribute('inert'), true, `${id}: the list is inert`);
-    assert.equal(doc.querySelector('#group-detail .gpage-back'), null, `${id}: no Back in the pane`);
-    const up = doc.querySelector('#topnav-crumbs a.nav-up');
-    assert.ok(up, `${id}: the top bar carries the up link`);
-    assert.equal(up.textContent, 'Runs');
-    if (!text) assert.equal(doc.activeElement, doc.querySelector('#group-detail .gpage-title'), `${id}: focus lands on the h1`);
+    const back = doc.querySelector('#group-detail .gpage-back');
+    assert.ok(back, `${id}: the group pane carries Back`);
+    assert.equal(doc.activeElement, back, `${id}: focus lands on Back`);
     if (text) assert.match(doc.querySelector('#group-detail').textContent, text);
-    up.click(); await settle(window, 6);
-    assert.equal(window.location.hash, '#runs', `${id}: the up link returns to the list`);
+    back.click(); await settle(window, 6);
+    assert.equal(window.location.hash, '#runs', `${id}: Back returns to the list`);
     window.close();
   }
 });
-test('slice 2: side by side (split) the Runs crumb shows the list, with the group pane closed', async () => {
+test('slice 2: side by side (split) the group Back shows the list, with the group pane closed', async () => {
   const { window, doc } = await boot({ runGroups: [FEATURE_GROUP], history: [] });
   go(window, 'runs'); await settle(window);
   doc.getElementById('runs-shell').dataset.layout = 'split';
   go(window, `feature/${FEATURE_GROUP.id}`); await settle(window, 6);
   const shell = doc.getElementById('group-shell');
   assert.ok(shell.classList.contains('detail-open'));
-  doc.querySelector('#topnav-crumbs .nav-trail a[data-crumb="runs"]').click(); await settle(window, 6);
+  doc.querySelector('#group-detail .gpage-back').click(); await settle(window, 6);
   assert.equal(window.location.hash, '#runs');
   assert.equal(shell.classList.contains('detail-open'), false, 'the group page closed');
   window.dispatchEvent(new window.Event('hashchange')); await settle(window, 6);
@@ -1351,7 +1395,7 @@ test('slice 2: side by side (split) the Runs crumb shows the list, with the grou
 // Dividers (running rows lost their line?): jsdom drops `border-bottom:1px solid var(--line)` from getComputedStyle,
 // so the cascade's inputs are checked instead. Every style.css rule that declares a border (top-level or inside any
 // @media, so the 375px rules count too) is matched against the rendered row with el.matches().
-const STYLE_CSS = readFileSync(join(__dir, '..', 'ui', 'public', 'style.css'), 'utf8');
+const STYLE_CSS = readStyleCss();
 const BORDER_DECL = /(^|[;{\s])border(-bottom|-top)?(-(color|width|style))?\s*:/;
 function borderRules(doc) {
   const st = doc.createElement('style');
@@ -1602,7 +1646,9 @@ test('list keys: with a selection, E on the View button or the bar\'s Archive po
 test('list keys: E on the second of 3 finished rows leaves the focus on the row that was third', async () => {
   let hist = [...HIST, MORE];
   let late = false;   // after the archive, History answers a beat later, as it does over the network
-  const { window, doc, posts } = await boot({ history: () => (late ? new Promise((r) => setTimeout(() => r(hist), 30)) : hist), bulk: (body) => {
+  let release;        // held until the test lets it go, so a slow runner cannot answer before the focus check
+  const held = new Promise((r) => { release = r; });
+  const { window, doc, posts } = await boot({ history: () => (late ? held.then(() => hist) : hist), bulk: (body) => {
     const id = body.targets[0].pipelineId;
     hist = hist.filter((p) => p.id !== id);
     late = true;
@@ -1614,6 +1660,7 @@ test('list keys: E on the second of 3 finished rows leaves the focus on the row 
   second.focus();
   press(window, second, 'e'); await settle(window, 8);
   assert.equal(doc.activeElement, second, 'the row keeps the focus until History drops it');
+  release();
   await new Promise((r) => setTimeout(r, 60)); await settle(window);
   assert.equal(posts.length, 1);
   assert.equal(doc.querySelector(`#runs-list a.runs-row[data-row-key="${second.dataset.rowKey}"]`), null, 'the repaint dropped it');
@@ -1658,4 +1705,154 @@ test('list keys: ⇧↓ from the first row selects two rows and shows the bar', 
   assert.equal(doc.activeElement, rows(doc)[2]);
   press(window, doc.activeElement, 'ArrowUp', { shiftKey: true }); await settle(window);
   assert.equal(doc.activeElement, rows(doc)[1], '⇧↑ steps the focus back one row');
+});
+
+// ── Add to group (the shared picker, group-add.mjs): focus on the moved run, Group N, Undo, skipped slices ──
+const pickerKey = (window, doc, k) => doc.querySelector('.group-picker input.gp-search')
+  .dispatchEvent(new window.KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }));
+const pickerType = (window, doc, v) => { const q = doc.querySelector('.group-picker input.gp-search'); q.value = v; q.dispatchEvent(new window.Event('input', { bubbles: true })); };
+
+test('Add to group: the focus lands on the moved run inside its opened group, never on the row that slid up', async () => {
+  const mb = (position, pipelineId, status) => ({ position, title: pipelineId, pipelineId, ticketId: null, status, pr: null, ticket: null, adhoc: true });
+  const runGroups = [{ id: 'grp_000000000001', kind: 'user', title: 'Billing', projectKey: null, members: [mb(1, 'aaaa0001', 'done'), mb(2, 'pw000001', 'running')] }];
+  const { window, doc, recv, groupPosts } = await boot({ runGroups,
+    onGroupCall: ({ method, body }) => {
+      if (method !== 'POST') return undefined;
+      runGroups[0].members.push(mb(3, body.pipelineIds[0], 'running'));
+      return { ok: true, groupId: 'grp_000000000001', group: { id: 'grp_000000000001', title: 'Billing' }, added: body.pipelineIds, skipped: [], undo: 'undo_r' };
+    } });
+  recv({ type: 'hello', runs: [live('r1', { pipelineId: 'pw000001' }), live('r2', { pipelineId: 'pw000002' }), live('r3', { pipelineId: 'pw000003' })] });
+  go(window, 'runs'); await settle(window);
+  // Fold the group first: its members leave the list.
+  const exp = groupItem(doc, 'chain:grp_000000000001').querySelector(':scope > .runs-row-tail .runs-expand');
+  if (exp.getAttribute('aria-expanded') === 'true') { click(window, exp); await settle(window); }
+  assert.equal(groupItem(doc, 'chain:grp_000000000001').querySelector('.runs-members'), null, 'folded');
+  click(window, itemOf(doc, '[data-run-id="r2"]').querySelector(':scope > .runs-row-tail .runs-more'));
+  click(window, [...doc.querySelectorAll('.wfv-menu [role^="menuitem"]')].find((n) => n.textContent.includes('Add to group')));
+  await settle(window);
+  const timers = [];
+  const realTimeout = window.setTimeout;
+  window.setTimeout = (fn, ms, ...a) => { if (ms === 1500) timers.push(fn); return realTimeout.call(window, fn, ms, ...a); };
+  pickerKey(window, doc, 'ArrowDown');   // New group…
+  pickerKey(window, doc, 'ArrowDown');   // Billing
+  pickerKey(window, doc, 'Enter');
+  await settle(window, 10);
+  window.setTimeout = realTimeout;
+  assert.deepEqual(groupPosts.at(-1).body, { pipelineIds: ['pw000002'] });
+  const moved = doc.querySelector('#runs-list .runs-item[data-level="member"] > a.runs-row[data-pipeline-id="pw000002"]');
+  assert.ok(moved, 'the target group is open again');
+  assert.equal(doc.activeElement, moved);
+  assert.ok(moved.classList.contains('is-landed'));
+  assert.notEqual(doc.activeElement, rowEl(doc, '[data-run-id="r3"]'), 'the row that slid into the old place keeps no focus');
+  assert.equal(doc.querySelector('#toasts .toast .tt').textContent, 'Added to Billing');
+  assert.equal(doc.querySelector('#toasts .toast .td').textContent, 'r2');
+  // Once the time is up the fill goes.
+  const realNow = Date.now;
+  Date.now = () => realNow() + 2000;
+  try { for (const fn of timers) fn(); } finally { Date.now = realNow; }
+  assert.equal(doc.querySelectorAll('#runs-list .is-landed').length, 0);
+});
+
+/** Two ⌘-clicked live runs (no Select mode), the bar's Group N, then Create "Hotfixes" in the picker. */
+async function groupTwoFromBar({ answer }) {
+  const created = [];
+  const runGroups = [];
+  const ctx = await boot({ runGroups,
+    onGroupCall: ({ url, body }) => {
+      if (url.endsWith('/api/run-groups/undo')) return { ok: true };
+      created.push(body);
+      return answer(body);
+    } });
+  const { window, doc, recv } = ctx;
+  recv({ type: 'hello', runs: [live('r1', { pipelineId: 'pw000001' }), live('r2', { pipelineId: 'pw000002' }), live('r3', { pipelineId: 'pw000003' })] });
+  go(window, 'runs'); await settle(window);
+  for (const id of ['r1', 'r2']) {
+    rowEl(doc, `[data-run-id="${id}"]`).dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true, metaKey: true }));
+    await settle(window);
+  }
+  const btn = doc.querySelector('#runs-bulk [data-bulk="group"]');
+  assert.equal(btn.textContent.replace(/\s+/g, ' ').trim(), 'Group 2');
+  assert.equal(btn.disabled, false);
+  click(window, btn);
+  await settle(window);
+  assert.ok(doc.querySelector('.group-picker'), 'Group N opens the picker');
+  pickerType(window, doc, 'Hotfixes');
+  pickerKey(window, doc, 'Enter');
+  await settle(window, 10);
+  return { ...ctx, created };
+}
+
+test('Group N in the Runs bar: Create "Hotfixes" posts the selected runs with nameSource user', async () => {
+  const { created, doc } = await groupTwoFromBar({ answer: (b) => ({ group: { id: 'grp_h', title: b.title, nameSource: 'user' }, added: b.pipelineIds, skipped: [], undo: 'undo_h' }) });
+  assert.equal(created.length, 1);
+  assert.deepEqual({ ...created[0], pipelineIds: [...created[0].pipelineIds].sort() }, { title: 'Hotfixes', nameSource: 'user', pipelineIds: ['pw000001', 'pw000002'] });
+  assert.equal(doc.querySelector('#toasts .toast .tt').textContent, 'Added to Hotfixes');
+  assert.equal(doc.querySelector('#toasts .toast .td').textContent, '2 runs');
+  assert.equal(doc.getElementById('runs-bulk').hidden, true, 'the selection ends with the add');
+});
+
+test('Add to group: Undo on the toast posts the token and puts the selection back', async () => {
+  const { window, doc, groupPosts } = await groupTwoFromBar({ answer: (b) => ({ group: { id: 'grp_h', title: b.title }, added: b.pipelineIds, skipped: [], undo: 'undo_h' }) });
+  assert.equal(doc.querySelectorAll('#runs-list .runs-item.is-checked').length, 0);
+  click(window, doc.querySelector('#toasts .toast .toast-act'));
+  await settle(window, 10);
+  assert.deepEqual(groupPosts.at(-1), { method: 'POST', url: '/api/run-groups/undo', body: { token: 'undo_h' } });
+  assert.equal(doc.querySelectorAll('#runs-list .runs-item[data-level="top"].is-checked').length, 2);
+  assert.equal(doc.getElementById('runs-bulk').hidden, false);
+});
+
+test('Add to group: a Shaper slice in the selection is skipped and named in the toast', async () => {
+  const { doc } = await groupTwoFromBar({ answer: (b) => ({ group: { id: 'grp_h', title: b.title }, added: ['pw000001'],
+    skipped: [{ pipelineId: 'pw000002', reason: 'feature' }], undo: 'undo_h' }) });
+  assert.equal(doc.querySelector('#toasts .toast .td').textContent, 'r1 · Skipped 1: part of a Shaper feature');
+});
+
+test('⋯ › Add to group… on a selected row adds the whole selection', async () => {
+  const { window, doc, recv, groupPosts } = await boot();
+  recv({ type: 'hello', runs: [live('r1', { pipelineId: 'pw000001' }), live('r2', { pipelineId: 'pw000002' }), live('r3', { pipelineId: 'pw000003' })] });
+  go(window, 'runs'); await settle(window);
+  for (const id of ['r1', 'r2']) {
+    rowEl(doc, `[data-run-id="${id}"]`).dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true, metaKey: true }));
+    await settle(window);
+  }
+  click(window, itemOf(doc, '[data-run-id="r2"]').querySelector(':scope > .runs-row-tail .runs-more'));
+  click(window, [...doc.querySelectorAll('.wfv-menu [role^="menuitem"]')].find((n) => n.textContent.includes('Add to group')));
+  await settle(window);
+  pickerType(window, doc, 'Hotfixes');
+  pickerKey(window, doc, 'Enter');
+  await settle(window, 10);
+  assert.deepEqual([...groupPosts.at(-1).body.pipelineIds].sort(), ['pw000001', 'pw000002']);
+});
+
+test('⋯ › Add to group… on a row outside the selection adds only that row', async () => {
+  const { window, doc, recv, groupPosts } = await boot();
+  recv({ type: 'hello', runs: [live('r1', { pipelineId: 'pw000001' }), live('r2', { pipelineId: 'pw000002' }), live('r3', { pipelineId: 'pw000003' })] });
+  go(window, 'runs'); await settle(window);
+  for (const id of ['r1', 'r2']) {
+    rowEl(doc, `[data-run-id="${id}"]`).dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true, metaKey: true }));
+    await settle(window);
+  }
+  click(window, itemOf(doc, '[data-run-id="r3"]').querySelector(':scope > .runs-row-tail .runs-more'));
+  click(window, [...doc.querySelectorAll('.wfv-menu [role^="menuitem"]')].find((n) => n.textContent.includes('Add to group')));
+  await settle(window);
+  pickerType(window, doc, 'Hotfixes');
+  pickerKey(window, doc, 'Enter');
+  await settle(window, 10);
+  assert.deepEqual(groupPosts.at(-1).body.pipelineIds, ['pw000003']);
+});
+
+test('G with a selection opens the picker for the whole selection, not only the focused row', async () => {
+  const { window, doc, recv, groupPosts } = await boot();
+  recv({ type: 'hello', runs: [live('r1', { pipelineId: 'pw000001' }), live('r2', { pipelineId: 'pw000002' })] });
+  go(window, 'runs'); await settle(window);
+  for (const id of ['r1', 'r2']) {
+    rowEl(doc, `[data-run-id="${id}"]`).focus();
+    press(window, rowEl(doc, `[data-run-id="${id}"]`), ' '); await settle(window);
+  }
+  press(window, doc.activeElement, 'g'); await settle(window);
+  assert.ok(doc.querySelector('.group-picker'), 'G opens the picker');
+  pickerType(window, doc, 'Hotfixes');
+  pickerKey(window, doc, 'Enter');
+  await settle(window, 10);
+  assert.deepEqual([...groupPosts.at(-1).body.pipelineIds].sort(), ['pw000001', 'pw000002']);
 });

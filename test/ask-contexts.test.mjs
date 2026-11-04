@@ -183,3 +183,32 @@ test('mentionedRefs: other hashes and half links ignored, repeats collapse, at m
     } },
   ]);
 });
+
+// Ask worca beside the page (Task 2): list pages earn a page chip; the project / workspace page on screen is a topic.
+test('list pages earn a page chip; Chat, Workflows and the bare History list never do', () => {
+  for (const [v, l] of [['runs', 'Runs'], ['schedules', 'Schedules'], ['stats', 'Statistics'], ['projects', 'Projects'], ['workspaces', 'Workspaces']]) {
+    assert.deepEqual(contextEntries({ view: v }, { view: v }), [{ kind: 'page', id: v, label: l }]);
+  }
+  for (const v of ['chat', 'workflows', 'history']) assert.deepEqual(contextEntries({ view: v }, { view: v }), []);
+});
+
+test('the project or workspace on screen is a topic chip, never pinned, after the scope', () => {
+  assert.deepEqual(
+    contextEntries({ pinned: true, projectKey: 'aaa-00000001' }, { project: { key: 'aaa-00000001', name: 'A' }, pageProject: { key: 'bbb-00000002', name: 'B' } }),
+    [{ kind: 'project', id: 'aaa-00000001', label: 'A', pinned: true }, { kind: 'project', id: 'bbb-00000002', label: 'B' }],
+  );
+  assert.deepEqual(contextEntries({ pinned: true, pageWorkspaceId: 'wks-havn-649ebfe7' }, { pageWorkspace: { id: 'wks-havn-649ebfe7', name: 'Havn' } }),
+    [{ kind: 'workspace', id: 'wks-havn-649ebfe7', label: 'Havn' }]);
+});
+
+test("a workspace's own page is the workspace chip, never the Workspaces list page too", () => {
+  assert.deepEqual(
+    contextEntries({ view: 'workspaces', pageWorkspaceId: 'wks-havn-649ebfe7' }, { view: 'workspaces', pageWorkspace: { id: 'wks-havn-649ebfe7', name: 'Havn' } }),
+    [{ kind: 'workspace', id: 'wks-havn-649ebfe7', label: 'Havn' }],
+  );
+  assert.deepEqual(
+    contextEntries({ view: 'workspaces', pinned: true, workspaceId: 'wks-havn-649ebfe7', pageWorkspaceId: 'wks-havn-649ebfe7' }, { view: 'workspaces', workspace: { id: 'wks-havn-649ebfe7', name: 'Havn' } }),
+    [{ kind: 'workspace', id: 'wks-havn-649ebfe7', label: 'Havn', pinned: true }],
+    'the scope workspace on its own page: one chip',
+  );
+});

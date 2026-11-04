@@ -9,15 +9,14 @@
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { readFileSync } from 'node:fs';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
 
-const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 const PROJECT = '/tmp/proj-resume-at';
 const KEY = 'proj-resume-at-abcd1234';
@@ -29,7 +28,7 @@ const ok = (body, status = 200) => Promise.resolve({ ok: status >= 200 && status
 
 async function boot({ fetchHandler, level } = {}) {
   // `level`: the server-rendered interface mode (docs/ui-levels.md); null = no attribute (gates nothing).
-  let html = readFileSync(htmlPath, 'utf8');
+  let html = readIndexHtml();
   if (level) html = html.replace('<html lang="en" data-theme="system">',
     `<html lang="en" data-theme="system" data-level="${level}">`);
   const dom = trackDom(new JSDOM(html, { url: 'http://localhost:4317/' }));
@@ -234,12 +233,12 @@ const histFetch = (pauseReason = null) => (url) => {
 };
 
 test('History detail: the bar carries the Resume split (no card Resume); "Resume at…" opens the sheet and posts the pipeline id', async () => {
-  // One boot at advanced level: the detail opens as a page (Summary) with the split in its bar;
+  // One boot at advanced level: the detail opens in glance mode with the split in its bar;
   // each step's state is recorded as it happens, and the rows read the records.
   const ctx = await boot({ level: 'advanced', fetchHandler: histFetch() });
   ctx.go(`history/${KEY}/fcec04e8`);
   await ctx.settle(8);
-  const presentation = ctx.doc.querySelector('#hist-detail .hd').dataset.presentation;
+  const mode = ctx.doc.querySelector('#hist-detail .hd').dataset.mode;
   const split = ctx.doc.querySelector('.hd-resume-split');
   const barSplit = ctx.doc.querySelector('#hist-detail .hd-bar .rd-bar-end .hd-resume-split');
   const shown = { splitHidden: split?.hidden, barSplitHidden: barSplit?.hidden,
@@ -266,7 +265,7 @@ test('History detail: the bar carries the Resume split (no card Resume); "Resume
       assert.equal(JSON.parse(posts[0].opts.body).pipelineId, 'fcec04e8');
     } },
     { name: 'History glance: the bar carries the Resume split, whose "Resume at…" posts', run: () => {
-      assert.equal(presentation, 'page');
+      assert.equal(mode, 'glance');
       assert.ok(barSplit, 'the Resume split sits in the bar, shared by both modes');
       assert.equal(shown.barSplitHidden, false);
       assert.equal(shown.resumeHidden, false, 'Resume is its left half');

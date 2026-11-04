@@ -3,6 +3,8 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { readFileSync } from 'node:fs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const { window } = new JSDOM('<!doctype html><body></body>', { url: 'http://localhost:4317/#requirements' });
 for (const k of ['document', 'location', 'Event', 'HTMLElement', 'window']) Object.defineProperty(globalThis, k, { value: k === 'window' ? window : window[k], configurable: true, writable: true });
@@ -10,6 +12,8 @@ const clip = [];
 Object.defineProperty(globalThis, 'navigator', { value: { clipboard: { writeText: async (t) => { clip.push(t); } } }, configurable: true, writable: true });
 window.confirm = () => true;
 const tick = () => new Promise((r) => setTimeout(r, 0));
+/** n calendar days before today, at local noon: age() counts calendar days, so DST cannot shift it. */
+const daysAgo = (n) => { const d = new Date(); d.setHours(12, 0, 0, 0); d.setDate(d.getDate() - n); return d.toISOString(); };
 after(() => window.close());
 const { createRequirementsView } = await import('../ui/public/requirements-view.mjs');
 
@@ -403,19 +407,19 @@ test('new feature: back link, heading, field blocks, the For select with its gro
   const form = host.querySelector('.card.req-new');
   assert.ok(form);
   const fields = [...form.querySelectorAll('.field')];
-  assert.deepEqual(fields.map((f) => f.querySelector('label').firstChild.textContent.trim()), ['Title', 'Describe it', 'For']);
+  assert.deepEqual(fields.map((f) => f.querySelector('label').firstChild.textContent.trim()), ['Title', 'Describe it', 'Files', 'For']);
   assert.equal(fields[0].querySelector('#req-new-title').tagName, 'INPUT');
   assert.equal(fields[1].querySelector('#req-new-desc').tagName, 'TEXTAREA');
   assert.equal(fields[1].querySelector('label .opt').textContent, 'who needs it, what they want to do, and why');
-  const select = fields[2].querySelector('.select-wrap select#req-new-target');
+  const select = fields[3].querySelector('.select-wrap select#req-new-target');
   assert.ok(select);
   assert.deepEqual([...select.querySelectorAll('optgroup')].map((g) => g.label), ['Projects', 'Workspaces']);
   assert.deepEqual([...select.options].map((o) => o.value), ['project:shop-1', 'workspace:ws1']);
-  assert.equal(fields[2].querySelector('.hint').textContent, "Worca looks at this project's code once, read-only, to learn what already exists. Change that in Your notes for Worca.");
+  assert.equal(fields[3].querySelector('.hint').textContent, "Worca looks at this project's code once, read-only, to learn what already exists. Change that in Your notes for Worca.");
   select.value = 'workspace:ws1';
   select.dispatchEvent(new window.Event('change'));
-  assert.equal(fields[2].querySelector('.hint').textContent, "Worca looks at the code of this workspace's projects once, read-only, to learn what already exists. Change that in Your notes for Worca.");
-  assert.equal(fields[2].querySelector('.req-brief-line'), null, 'no brief, no green line');
+  assert.equal(fields[3].querySelector('.hint').textContent, "Worca looks at the code of this workspace's projects once, read-only, to learn what already exists. Change that in Your notes for Worca.");
+  assert.equal(fields[3].querySelector('.req-brief-line'), null, 'no brief, no green line');
   assert.deepEqual([...form.querySelectorAll('.btn, .btn-primary')].map((b) => b.textContent), ['Cancel', 'Start the interview']);
   assert.ok([...form.querySelectorAll('.btn-primary')].at(-1).textContent === 'Start the interview', 'the CDP proof clicks the last .req-new .btn-primary');
   assert.doesNotMatch(host.textContent, /null|false|undefined/);
@@ -577,7 +581,7 @@ test('Save: declining the overwrite confirm sends no second POST', async () => {
 });
 
 test('index.html: a Simple-level, flag-gated nav row and a page section', () => {
-  const html = readFileSync(new URL('../ui/public/index.html', import.meta.url), 'utf8');
+  const html = readIndexHtml();
   assert.match(html, /<button type="button" data-nav="requirements" data-min-level="simple" data-flag="requirements" data-flag-chip>/);
   assert.match(html, /<section class="view hidden" data-view="requirements">[\s\S]*id="requirements-host"/);
   const topnav = readFileSync(new URL('../ui/public/topnav.mjs', import.meta.url), 'utf8');
@@ -1349,7 +1353,7 @@ test('focus: a live update keeps the focus on an open menu\'s item; Escape still
 });
 
 test('style.css: the start-anyway link has a disabled look; the req- rules use tokens only', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   assert.match(css, /\.req-start-anyway:disabled\{[^}]*opacity/);
   const req = css.split('\n').filter((l) => /\.req-/.test(l));
   assert.ok(req.every((l) => !/#[0-9a-fA-F]{3,8}\b/.test(l)), 'no hex colour in a req- rule');
@@ -1720,11 +1724,10 @@ test('brief page: unsaved notes survive a live repaint; a workspace has the same
 });
 
 test('list: each group header names its brief: none yet with Create, being made, or its age; each links to the brief page', async () => {
-  const day = 86400000;
   fakeApi({ ...LIST_BASE, 'GET /api/workspaces': { workspaces: [{ id: 'ws:1', name: 'Storefront' }, { id: 'ws2', name: 'Mall' }] },
     'GET /api/requirements': listOf([row(), row({ seq: 3, scopeType: 'workspace', scopeKey: 'ws:1' }), row({ seq: 6, scopeType: 'workspace', scopeKey: 'ws2' })], {
       briefs: [{ scopeType: 'workspace', scopeKey: 'ws:1', status: 'making', madeAt: null, lookAtCode: true },
-        { scopeType: 'workspace', scopeKey: 'ws2', status: 'ready', madeAt: new Date(Date.now() - 3 * day).toISOString(), lookAtCode: true }] }) });
+        { scopeType: 'workspace', scopeKey: 'ws2', status: 'ready', madeAt: daysAgo(3), lookAtCode: true }] }) });
   const { host, view, routed } = make();
   await view.show('');
   assert.deepEqual([...host.querySelectorAll('.req-group h2')].map((x) => x.textContent), ['Project · shop', 'Workspace · Storefront', 'Workspace · Mall']);
@@ -1794,7 +1797,7 @@ test('changed: the brief key splits on its first ":"; who repaints on a brief fr
 });
 
 test('style.css: the req-brief rules use tokens only', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   const rules = css.split('\n').filter((l) => /\.req-brief|\.req-group-|\.req-knows/.test(l));
   assert.ok(rules.length > 0, 'the brief page has its rules');
   assert.ok(rules.every((l) => !/#[0-9a-fA-F]{3,8}\b|rgba?\(/.test(l)), 'no literal colour');
@@ -1810,7 +1813,6 @@ test('style.css: the req-brief rules use tokens only', () => {
 // ---- A7 Task 8: the brief page with a made brief (board 12): chips, the code-moved-on notice, the brief card and
 // its editors, the right column, Export and ⋯ ----
 
-const DAY = 86400000;
 const MADE_SECTIONS = {
   product: 'An online shop for home goods. Shoppers browse a catalog and follow their order.',
   users: [{ name: 'Shopper', can: 'browses, orders, pays.' }, { name: 'Support agent', can: 'sees every order.' }],
@@ -1824,7 +1826,7 @@ const MADE_SECTIONS = {
 };
 const madeRow = (over = {}) => briefRow({ status: 'ready', sections: MADE_SECTIONS, edited: { users: true },
   sources: [{ project: 'shop-1', branch: 'main', ref: 'refs/heads/main', sha: '3f9c2a1deadbeef00' }], files: ['README.md', 'src/orders.mjs', 'src/slip.mjs'],
-  model: 'claude-opus-5-5', costUsd: 1.42, madeBy: 'po', madeAt: new Date(Date.now() - 2 * DAY).toISOString(), ...over });
+  model: 'claude-opus-5-5', costUsd: 1.42, madeBy: 'po', madeAt: daysAgo(2), ...over });
 const STALE = { known: true, commits: 38, touching: 6, areas: ['Orders', 'Payments'], checked: true, partial: false,
   sources: [{ project: 'shop-1', branch: 'main', ref: 'refs/heads/main', sha: '3f9c2a1deadbeef00', known: true, commits: 38 }] };
 const madeBody = (over = {}) => briefBody({ brief: madeRow(), usedBy: [{ seq: 2, id: 'FEAT-2' }, { seq: 3, id: 'FEAT-3' }], staleness: STALE, ...over });
@@ -2295,9 +2297,9 @@ test('brief page, made: Copy Markdown that fails says so and copies nothing', as
 
 // ---- A7 Task 9: New feature with a brief (board 13); What Worca knows on the feature page (board 14); ⋯ ----
 
-const usableBrief = (over = {}) => ({ scopeType: 'project', scopeKey: 'shop-1', status: 'ready', madeAt: new Date(Date.now() - 2 * DAY).toISOString(), lookAtCode: true, ...over });
+const usableBrief = (over = {}) => ({ scopeType: 'project', scopeKey: 'shop-1', status: 'ready', madeAt: daysAgo(2), lookAtCode: true, ...over });
 const NEW_TARGETS = { 'GET /api/projects': { projects: [{ key: 'shop-1', name: 'shop' }, { key: 'blog', name: 'blog' }] }, 'GET /api/workspaces': { workspaces: [{ id: 'ws1', name: 'Storefront' }] } };
-const forField = (host) => [...host.querySelectorAll('.req-new .field')][2];
+const forField = (host) => [...host.querySelectorAll('.req-new .field')][3];   // Title, Describe it, Files (A8), For
 
 test('new feature: with a brief, the green line names it and links to it; the code-look cost is not shown; it follows the select', async () => {
   fakeApi({ ...NEW_TARGETS, 'GET /api/requirements': listOf([], { lookCostUsd: 0.25,
@@ -2366,7 +2368,7 @@ test('new feature with a brief (A1.1 merged): the model part stays; only the wor
   assert.doesNotMatch(host.textContent, /null|undefined/);
 });
 
-const briefOf = (over = {}) => ({ id: 3, status: 'ready', madeAt: new Date(Date.now() - 2 * DAY).toISOString(), sources: [], matches: ['Orders', 'Packing', 'Packing slip'], matchesMore: 0, lookAtCode: true, ...over });
+const briefOf = (over = {}) => ({ id: 3, status: 'ready', madeAt: daysAgo(2), sources: [], matches: ['Orders', 'Packing', 'Packing slip'], matchesMore: 0, lookAtCode: true, ...over });
 const SKIPPED = { summary: '', files: [], skipped: 'brief', briefMadeAt: '2026-10-20T10:00:00Z' };
 const knowsFeature = (over = {}) => feature({ brief: briefOf(), lookCostUsd: 0.25, orientation: SKIPPED, ...over });
 const knows = (host) => host.querySelector('.req-left > section.req-knows');
@@ -2521,7 +2523,7 @@ test('⋯ with a brief: Look closer while the look was skipped for the brief, Lo
 // the code carries data-needs-git, which style.css hides while <html data-git="off">; the rest of the page stays.
 test('git-only controls carry data-needs-git: the brief Create box and Refresh, Look closer and Look again; nothing else', async () => {
   const gated = (el) => !!el && !!el.closest('[data-needs-git]');
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   assert.match(css, /:root\[data-git="off"\] \[data-needs-git\]\{display:none !important;\}/, 'the gate rule exists');
   const none = await openBrief(briefBody());
   assert.ok(gated(createBtn(none.host)), 'Create the brief');
@@ -2610,7 +2612,7 @@ test('git missing: the list header offers Create only with git; the empty brief 
   const none = await openBrief(briefBody());
   const why = none.host.querySelector('.req-brief-nogit-create');
   assert.equal(text(why), 'A brief needs git to read the code, and git is not installed on this machine.');
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   assert.match(css, /:root:not\(\[data-git="off"\]\) \.req-brief-nogit-create\{display:none\}/);
 });
 
@@ -2679,7 +2681,7 @@ test('a staleness that cannot be told heads the notice "Worca cannot check this 
 });
 
 test('style: the phone menus open inside the screen, the faint ink is not used for text, the small-screen wraps', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   assert.match(css, /\.req-head-tools\{[^}]*margin-left:auto/);
   for (const sel of ['.req-group-head .req-group-brief', '.req-id', '.req-round-n', '.req-del']) {
     const esc = sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

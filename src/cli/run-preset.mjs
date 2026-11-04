@@ -4,7 +4,7 @@
 // what the preset contributes to New run's body (slice 1 proved that normalizes to the hand-made body).
 import http from 'node:http';
 import { resolve } from 'node:path';
-import { readUiInstance, probeUi, DEFAULT_UI_HOST, DEFAULT_UI_PORT } from '../core/ui-instance.mjs';
+import { readUiInstance, probeUi, DEFAULT_UI_HOST, DEFAULT_UI_PORT, UI_TOKEN_HEADER } from '../core/ui-instance.mjs';
 import { projectKey } from '../core/store.mjs';
 import { presetRunBody } from '../shared/run-presets.mjs';
 
@@ -58,11 +58,14 @@ export async function findUi() {
 }
 
 const HTTP_TIMEOUT_MS = 30_000;   // a server that accepts and then hangs must not hang the terminal
-/** JSON over http.request (agent:false, Connection: close — the ui-instance.mjs choice, never fetch). */
+/** JSON over http.request (agent:false, Connection: close — the ui-instance.mjs choice, never fetch). Sends the
+ *  instance file's token, which a server under agent isolation asks of every caller on its own box (G1). */
 function httpJson(method, url, body) {
   return new Promise((done, reject) => {
     const data = body === undefined ? null : Buffer.from(JSON.stringify(body));
+    const token = readUiInstance()?.token;
     const req = http.request(url, { method, agent: false, timeout: HTTP_TIMEOUT_MS, headers: { accept: 'application/json', connection: 'close',
+      ...(typeof token === 'string' && token ? { [UI_TOKEN_HEADER]: token } : {}),
       ...(data ? { 'content-type': 'application/json', 'content-length': data.length } : {}) } }, (res) => {
       const chunks = [];
       res.on('data', (c) => chunks.push(c));
@@ -108,7 +111,6 @@ export async function cmdRun(argv, { out = console.log, err = (s) => process.std
   const lost = (e) => { say(`lost the Worca server (${e && e.message})`); return null; };
   const listed = await httpJson('GET', `${base}/api/presets`).catch(lost);
   if (!listed) return 1;
-  if (listed.status === 404) { say('run presets are turned off — turn them on with: worca flags on runPresets (or Settings › Labs)'); return 1; }
   if (listed.status !== 200 || !Array.isArray(listed.json?.presets)) { say(listed.json?.error || `could not list presets (HTTP ${listed.status})`); return 1; }
 
   const target = flags.workspace ? { kind: 'workspace', ref: flags.workspace } : { kind: 'project', ref: projectKey(resolve(cwd, flags.project || '.')) };
