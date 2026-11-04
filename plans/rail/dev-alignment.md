@@ -13,7 +13,7 @@ or adopt the app's way (the rule changes).
 | # | App now | Rail rule | Question |
 |---|---|---|---|
 | 1 | Runs and Chats filter through a **View menu** button, Ready to ship among its options (#970, #1001) | "What the list shows is a sentence above it, not a filter button" | **Decided 4 Nov: the sentence, one shared way for every list.** When Runs and Chats move to Rail, the View menu's Show and Group by become words in the sentence, with counts; mock `mocks/runs-list-filter-*.png` |
-| 2 | **Day sections fold** by hand; Older starts folded (#1036, `runs-list.mjs`) | "Sections never collapse; one that is too long shows less" | Keep (Older shows its first rows, then Show more), or allow a folded Older? |
+| 2 | **Day sections fold** by hand; Older starts folded (#1036, `runs-list.mjs`) | "Sections never collapse; one that is too long shows less" | **Decided 4 Nov: show less, never fold.** Older shows its 3 newest, then `Show 21 more` opens the rest in place; mock `mocks/runs-list-sections-*.png` |
 | 3 | A **failed command group stays folded** in Chat, only a red `N failed` (#998) | "What has a problem opens by itself" | Keep (a failure opens itself once), or a Chat exception? |
 | 4 | The **side chat dock** slides in over .32s (#954) and chat cards rise 10px (#972) | Motion: fade, never slide; 150ms | Keep (fade over `quick`)? |
 | 5 | **Radio cards** in the rescan choice, `confirmModal` choices and Jira Export again (#733, #1010) | "A choice is never a full-width toggle or radio cards" | Keep (OptionList, or a picker in the confirm's sentence)? |

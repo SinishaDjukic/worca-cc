@@ -209,7 +209,8 @@ what it belongs to.
 dot, or a tick box while selecting), a title line, a meta line, its time or figure at the right; the whole row opens
 its one target, so a fact in the row is text, never a second link. The row's own actions are a ⋯ at its right end
 (the Runs list's row ⋯), the same CompactMenu as on its page. Rows sit in sections in a fixed order (by urgency, or by day), newest first in each; a section with
-no rows is not drawn; the page's spec names the sections. What the list shows is a sentence above it (`Showing [unread ▾] from [all groups ▾]`), not a
+no rows is not drawn; the page's spec names the sections. A long section is never folded: it shows its newest rows,
+then one quiet row, `Show 21 more`, opens the rest in place (Older shows 3). What the list shows is a sentence above it (`Showing [unread ▾] from [all groups ▾]`), not a
 filter button; grouping is one more word in it (`by [day ▾]`), each choice in its menu with its count. Every
 list (Runs, Chats, Pulse, Schedules) uses this one sentence, so a list is narrowed the same way everywhere. Selecting works the same in every list (Runs, Chats, Pulse). You start it from the list's menu
 (`Select`), with ⌘ or Ctrl-click, with Shift-click for a range, with Space or ⌘A, or with a long-press on touch.
