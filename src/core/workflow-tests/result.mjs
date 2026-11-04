@@ -234,15 +234,20 @@ export async function checkTry(example, outcome, { runScript = runScriptCheck, r
       if (text === null) { results[i] = { id: check.id, label, met: false, value: `No file named ${check.file}` }; continue; }
     }
     const scoped = SCOPE_KINDS.includes(check.kind);
-    // 3b (D73): a scope check counts the change list, not the copy. Worca lost that list: it could not count (U-T2), so a Worca problem.
-    if (scoped && outcome.project && !Array.isArray(outcome.project.touched)) {
-      results[i] = { id: check.id, label, met: false, value: 'Not run: the list of changed files is gone', worcaProblem: true };
-      continue;
-    }
-    const changes = outcome.project ? { touched: outcome.project.touched, total: Number(outcome.project.total || 0) } : null;
-    const r = runCheck(check, { text, files: outcome.files, changes });
     const scope = scoped
       ? { kind: check.kind, ...(check.kind === 'under' ? { dirs: check.dirs } : check.kind === 'unchanged' ? { patterns: check.patterns } : { max: check.max }) } : {};
+    let changes = outcome.project ? { touched: outcome.project.touched, total: Number(outcome.project.total || 0) } : null;
+    // 3b (D73): a scope check counts the change list, not the copy. With no list, the copy-is-gone path's order: a try that did not
+    // finish wrote no results.json because nothing changed (the harness skips it then), so it counts an empty list; a try that
+    // finished and has none means Worca lost it: it could not count (U-T2), so a Worca problem, never the workflow's.
+    if (scoped && changes && !Array.isArray(changes.touched)) {
+      if (outcome.facts.status === 'done') {
+        results[i] = { id: check.id, label, met: false, value: 'Not run: the list of changed files is gone', ...scope, worcaProblem: true };
+        continue;
+      }
+      changes = { touched: [], total: 0 };
+    }
+    const r = runCheck(check, { text, files: outcome.files, changes });
     results[i] = { id: check.id, label, met: r.met, value: r.value, ...scope };
   }
   const cwdDir = outcome.project ? outcome.project.checkoutDir : null;

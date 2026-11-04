@@ -110,7 +110,10 @@ test('a Pretend project try: no user settings on any spawn; the project\'s hooks
   assert.ok(!changes.touched.some((p) => p.startsWith('.claude/')), 'the change list has no .claude file');
   assert.equal(runCheck({ kind: 'unchanged', patterns: ['.claude/**'] }, { changes }).met, true);
   assert.equal(runCheck({ kind: 'under', dirs: ['src/', 'test/'] }, { changes }).met, true, JSON.stringify(changes.touched));
-  assert.equal(runCheck({ kind: 'max-files', max: changes.touched.length }, { changes }).met, true);
+  // The mock implementer writes exactly two files (src/feature.mjs, test/feature.test.mjs): two is Met, one is Not met.
+  assert.deepEqual(changes.touched, ['src/feature.mjs', 'test/feature.test.mjs']);
+  assert.deepEqual(runCheck({ kind: 'max-files', max: 2 }, { changes }), { met: true, value: '2 files' });
+  assert.deepEqual(runCheck({ kind: 'max-files', max: 1 }, { changes }), { met: false, value: '2 files' });
   assert.equal(git(copyDir, 'show', `${br.feature}:.claude/settings.json`), JSON.stringify(PROJECT_SETTINGS, null, 2), 'nor is it committed');
   assert.equal(repoSnapshot(real), was, 'nothing in the person\'s repository changed');
 });

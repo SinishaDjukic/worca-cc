@@ -31,10 +31,13 @@ export const MAX_FILES_LIMIT = 10_000;
 const VALUE_PATH_MAX = 100;
 /** A comma-separated text or an array, as trimmed non-empty strings. */
 const listOf = (v) => (Array.isArray(v) ? v : typeof v === 'string' ? v.split(',') : []).map((x) => String(x ?? '').trim()).filter(Boolean);
-/** A path a person typed, inside the project: forward slashes, no `./`, no repeated `/`; null when it leaves the project. */
+/** A path a person typed, inside the project: forward slashes, no `.` folder (`a/./b` is `a/b`), no repeated `/`; null when it
+ *  leaves the project. */
 function insidePath(raw) {
-  const p = String(raw).replace(/\\/g, '/').replace(/\/{2,}/g, '/').replace(/^(\.\/)+/, '');
-  if (!p || p === '.' || p.startsWith('/') || /^[A-Za-z]:/.test(p) || p.split('/').includes('..') || p.length > TEXT_MAX) return null;
+  const s = String(raw).replace(/\\/g, '/').replace(/\/{2,}/g, '/');
+  if (s.startsWith('/')) return null;
+  const p = s.split('/').filter((seg) => seg !== '.').join('/');
+  if (!p || /^[A-Za-z]:/.test(p) || p.split('/').includes('..') || p.length > TEXT_MAX) return null;
   return p;
 }
 /** G11: no cost limit until the person sets one. */
@@ -252,7 +255,8 @@ export function normaliseCheck(raw) {
     return done({ patterns });
   }
   if (kind === 'max-files') {
-    const n = raw.max === '' || raw.max == null || (typeof raw.max === 'string' && !/^\s*\d+\s*$/.test(raw.max)) ? Number.NaN : Number(raw.max);
+    // A whole number or a string of digits only: never `true` (1), `[5]` (5) or other values Number() would turn into one.
+    const n = typeof raw.max === 'number' ? raw.max : typeof raw.max === 'string' && /^\s*\d+\s*$/.test(raw.max) ? Number(raw.max) : Number.NaN;
     if (!Number.isInteger(n) || n < 0 || n > MAX_FILES_LIMIT) return { check: null, error: `the most files must be a whole number from 0 to ${MAX_FILES_LIMIT}` };
     return done({ max: n });
   }
@@ -317,19 +321,27 @@ function nameMatches(p, s) {
 }
 
 /**
- * D73: does a changed `path` (relative, forward slashes) match a person's `pattern`? `**` = any folders (also none), `*` and
- * `?` inside one name, a trailing `/` = everything under that folder, `dir/**` = everything inside `dir` (not a file named
- * `dir`), a pattern with no `/` = that name at any depth (as the file check and .gitignore). Case-sensitive, as git is.
+ * D73: does a changed `path` (relative, forward slashes) match a person's `pattern`? As .gitignore: `**` = any folders (also
+ * none, in the middle too), `*` and `?` inside one name; a pattern with no `/` (a trailing one aside) = that name at any depth;
+ * a trailing `/` or `/**` = everything inside that folder (not a file of that name); a pattern with no `*` or `?` = that path
+ * and everything inside it (`test/fixtures` covers `test/fixtures/a.json`). Case-sensitive, as git is.
  * Segment by segment over a set of positions: linear in the path for a fixed pattern.
  */
 export function pathMatches(pattern, path) {
-  let pat = String(pattern || '');
-  if (pat.endsWith('/')) pat = `${pat}**`;
-  if (!pat.includes('/')) pat = `**/${pat}`;
-  const ps = pat.split('/');
+  const raw = String(pattern || '');
+  let pat = raw.replace(/\/+$/, '');
+  if (!pat) return false;
+  const folder = pat !== raw;   // a trailing `/`: only what is inside
+  if (!pat.includes('/')) pat = `**/${pat}`;   // decided before the trailing `/` becomes `/**`, so `fixtures/` is at any depth too
+  let ps = pat.split('/');
+  // A trailing `**` stands for at least one name: `dir/**` is what is inside dir. It is dropped and asked for as "inside" below.
+  let end = ps.length;
+  while (end > 0 && ps[end - 1] === '**') end -= 1;
+  const insideOnly = folder || (end > 0 && end < ps.length);
+  if (end > 0) ps = ps.slice(0, end);
+  const orInside = insideOnly || !/[*?]/.test(raw);   // no glob: the path itself or what is inside it
   const xs = String(path || '').split('/');
   const n = ps.length;
-  if (n > 1 && ps[n - 1] === '**' && ps[n - 2] !== '**' && xs.length < n) return false;   // `dir/**` needs something inside dir
   const closure = (set) => {
     const out = new Set();
     const stack = [...set];
@@ -342,7 +354,8 @@ export function pathMatches(pattern, path) {
     return out;
   };
   let cur = closure([0]);
-  for (const x of xs) {
+  for (const [k, x] of xs.entries()) {
+    if (orInside && k > 0 && cur.has(n)) return true;   // the pattern matched a folder and this name is inside it
     const next = new Set();
     for (const i of cur) {
       if (i >= n) continue;
@@ -352,7 +365,7 @@ export function pathMatches(pattern, path) {
     cur = closure(next);
     if (!cur.size) return false;
   }
-  return cur.has(n);
+  return !insideOnly && cur.has(n);
 }
 
 const clipPath = (p) => (p.length > VALUE_PATH_MAX ? `${p.slice(0, VALUE_PATH_MAX - 1)}…` : p);
