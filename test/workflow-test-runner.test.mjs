@@ -15,6 +15,7 @@ import { progressOf, compareOf } from '../src/core/workflow-tests/service.mjs';
 import { compareModel } from '../src/shared/workflow-tests/compare.mjs';
 import { WORKTREE_STAGE } from '../src/core/setup-stages.mjs';
 import { TRY_SETUP_STAGE } from '../src/core/workflow-tests/shell-step.mjs';
+import { PLUGINS_OFF_STAGE } from '../src/core/workflow-tests/project-claude-settings.mjs';
 
 const homes = [];
 let home;
@@ -766,6 +767,24 @@ test('U-T2 (d): the quick check with a setup-stage error is made again once, the
     assert.ok(h.started.every((s) => s.mock));
     assert.equal(w.lines().length, 2, 'one server log line per set-aside try');
     assert.equal(w.all.length, 2);
+  } finally { w.restore(); }
+});
+
+test('U-T2 with 3b (D72): Worca could not switch off the project\'s hooks and plugins: its own setup, set aside as copy and made again', async () => {
+  const w = stubWarn();
+  try {
+    for (const k of Object.keys(fps)) delete fps[k];
+    const h = harness({ plan: (_b, _u, n) => (n === 1 ? { status: 'done', cost: 0.2, hold: true } : { status: 'done', cost: 0.5 }) });
+    const runner = createTestRunner(h.deps);
+    const ex = example({ tries: 1 });
+    const run = await runner.start({ workflowId: WF, kind: 'once', b: 'draft', exampleIds: [ex.id], tries: 1 });
+    await pauseInSetup(h, 1, PLUGINS_OFF_STAGE,
+      'Worca could not switch off the project\'s Claude Code hooks and plugins for this try: EPERM: operation not permitted, open \'x\'');
+    await runner.idle(run.id);
+    assert.deepEqual([store.readTestRun(run.id).status, statuses(run.id), h.started.length], ['done', ['b1:passed'], 2]);
+    assert.equal(progressOf(WF, run.id).madeAgain, 1);
+    assert.equal(w.lines().length, 1, 'one server log line');
+    assert.match(w.lines()[0], /\(copy\): Worca could not switch off the project's Claude Code hooks and plugins for this try: EPERM/);
   } finally { w.restore(); }
 });
 

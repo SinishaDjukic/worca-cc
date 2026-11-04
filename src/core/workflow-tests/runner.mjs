@@ -13,6 +13,7 @@ import { fmtUsd } from '../../shared/workflow-tests/checks.mjs';
 import { REASON, REASON_CODES } from '../failure-policy.mjs';
 import { setupFailedText, worcaTryText, worcaProblemText } from '../../shared/workflow-tests/project-text.mjs';
 import { TRY_SETUP_STAGE, firstLine } from './shell-step.mjs';
+import { PLUGINS_OFF_STAGE } from './project-claude-settings.mjs';
 import { WORKTREE_STAGE } from '../setup-stages.mjs';
 import { releaseCopy } from './project-copy.mjs';
 
@@ -633,7 +634,7 @@ export function createTestRunner(deps) {
       const l = deps.liveRun(rec.runKey);
       const stage = l && l.orch && l.orch.state ? l.orch.state.setupStage : null;
       if (stage === TRY_SETUP_STAGE) phase = 'setup';
-      else if (stage === WORKTREE_STAGE) phase = 'preparing';
+      else if (stage === WORKTREE_STAGE || stage === PLUGINS_OFF_STAGE) phase = 'preparing';   // 3b (D72): Worca's own
     }
     return { phase, checking: rec.checking, startedMs: rec.startedMs };
   }

@@ -139,6 +139,7 @@ import { loadCatalog } from './mcp/catalog.mjs';
 import { pretendServers, pretendLayer, noteSeenServers, CONNECTOR_CALLS_FILE } from './workflow-tests/connectors.mjs';
 import { runShellStep, tryShellEnv, writeTrySetup, TRY_SETUP_STAGE } from './workflow-tests/shell-step.mjs';
 import { claudeReadsStructuredDeny, tryGitEnv, withSafeGitArgs } from './workflow-tests/try-guard-env.mjs';
+import { stripProjectClaudeSettings, PLUGINS_OFF_STAGE } from './workflow-tests/project-claude-settings.mjs';
 import { setupFailedText } from '../shared/workflow-tests/project-text.mjs';
 import { MCP_STARTUP_MS } from './mcp/timeouts.mjs';
 import { keepListNames } from './mcp/keep-list.mjs';
@@ -1726,6 +1727,9 @@ export class RunHarness extends EventEmitter {
       this._checkAbort();
       // Workflow tests 3a (D55): a project try's "Before each try, run", in its checkout, before any step.
       if (this.opts.trySetup && this.workMode === 'git' && !this.isWorkspace) await this._runTrySetup();
+      // Workflow tests 3b (D72): a Pretend project try runs without the project's own Claude Code hooks and plugins (after its
+      // setup, which may write them; before any step).
+      if (this._testConnectors() === 'pretend' && this.workMode === 'git' && !this.isWorkspace) await this._pluginsOffInCheckout();
 
       // 3b') Auto workflow (spec §5.3): the run row and the run root exist, so the
       // engine may now DECIDE the graph (classifier call, proposal question, reuse
@@ -2945,6 +2949,30 @@ export class RunHarness extends EventEmitter {
     const all = r.stdout.split('\0').filter(Boolean).map((p) => p.replace(/\/$/, ''));
     if (all.length > 200) this._log('worktree', 'warn', `the setup made ${all.length} new paths; only the first 200 are kept out of the try's changes`);
     return all.slice(0, 200);
+  }
+
+  /** Workflow tests 3b (D72): in a Pretend try's checkout, the project's Claude Code settings lose their hooks and enabled
+   *  plugins; links are removed, never followed. The tracked files Worca changed or removed stay out of the try's commit and
+   *  diff (_excludePathspecs). Only tracked ones are named: an ignored path in an exclude pathspec fails `git add`. A failure
+   *  to write ends the try before any step: the promise of Pretend would not hold. It is Worca's own setup failing (U-T2):
+   *  under PLUGINS_OFF_STAGE, never the person's setup stage, and not marked terminal, so the setup site pauses it as an
+   *  error and the test runner sets the try aside as Worca's ('copy') instead of judging the workflow by it. */
+  async _pluginsOffInCheckout() {
+    const cwd = this.workDirs.get(this.members[0].projectKey) || null;
+    if (!cwd) return;
+    this._setupStage(PLUGINS_OFF_STAGE);
+    let r;
+    try { r = await stripProjectClaudeSettings(cwd); } catch (e) {
+      throw Object.assign(new Error(`Worca could not switch off the project's Claude Code hooks and plugins for this try: ${e && e.message ? e.message : e}`),
+        { code: 'TRY_PLUGINS_OFF_FAILED' });
+    }
+    const touched = [...r.changed, ...r.links];
+    if (!touched.length) return;
+    const ls = await this._git(['-c', 'core.quotePath=false', 'ls-files', '-z', '--', ...touched.map((p) => `:(literal)${p}`)], { cwd });
+    const tracked = new Set(ls.ok ? ls.stdout.split('\0').filter(Boolean) : []);
+    this._tryPluginPaths = touched.filter((p) => tracked.has(p));
+    for (const p of r.links) await this._recordRunWarning(`The project's ${p} is a link, so Worca left it out of this try.`);
+    await appendAudit(this.pipeline.dir, `Switched off the project's Claude Code hooks and plugins for this try (${touched.join(', ')}).`).catch(() => {});
   }
 
   // ── Folder runs (P1, CONTRACT §2), keyed by member (S23). Single project: the member record is state.branch. ──
@@ -7613,10 +7641,12 @@ export class RunHarness extends EventEmitter {
     // Workflow tests 3a (D55): what "Before each try, run" made is not the try's work. Absent on every other run.
     // `literal`: a `*`, `?` or `[` in a path the setup made is that character, never a pattern.
     const setup = Array.isArray(this._trySetupPaths) ? this._trySetupPaths.map((p) => `:(exclude,literal)${p}`) : [];
-    if ((!Array.isArray(entries) || !entries.length) && !setup.length) return [];
+    // Workflow tests 3b (D72): the project's Claude Code settings Worca switched off (tracked ones only). Absent elsewhere.
+    const plugins = Array.isArray(this._tryPluginPaths) ? this._tryPluginPaths.map((p) => `:(exclude,literal)${p}`) : [];
+    if ((!Array.isArray(entries) || !entries.length) && !setup.length && !plugins.length) return [];
     return [...(Array.isArray(entries) ? entries : [])
       .filter((e) => e && e.path && e.kind !== 'claudeMdSection' && e.kind !== 'engineConfig')
-      .map((e) => `:(exclude)${e.path}`), ...setup];
+      .map((e) => `:(exclude)${e.path}`), ...setup, ...plugins];
   }
 
   /**

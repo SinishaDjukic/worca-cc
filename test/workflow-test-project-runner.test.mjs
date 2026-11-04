@@ -15,6 +15,7 @@ import { exampleReadiness, testTargetOf } from '../src/core/workflow-tests/try-b
 import { fmtGb, diskRow, diskRefusalText, diskRefusalOnceText, leftOutText, folderMissingText, folderProjectText } from '../src/shared/workflow-tests/project-text.mjs';
 import { diskPlanOf, projectStateOf, readinessText, DISK_MARGIN } from '../src/core/workflow-tests/service.mjs';
 import { WORKTREE_STAGE } from '../src/core/run-harness.mjs';
+import { PLUGINS_OFF_STAGE } from '../src/core/workflow-tests/project-claude-settings.mjs';
 import { holdCopy, releaseCopy, _testing as copyTesting } from '../src/core/workflow-tests/project-copy.mjs';
 
 const WF = 'wf_prun';
@@ -237,6 +238,8 @@ test('phaseOf never says waiting: a try being prepared is preparing, and so is t
   release();
   const t = await waitFor(() => { const x = store.triesOfRun(run.id)[0]; return x.runKey ? x : null; });
   h.entries.get(t.runKey).orch.state.setupStage = WORKTREE_STAGE;
+  assert.equal(runner.phaseOf(run.id, t.id).phase, 'preparing');
+  h.entries.get(t.runKey).orch.state.setupStage = PLUGINS_OFF_STAGE;   // 3b (D72): switching the project's hooks off
   assert.equal(runner.phaseOf(run.id, t.id).phase, 'preparing');
   h.entries.get(t.runKey).orch.state.setupStage = null;
   assert.equal(runner.phaseOf(run.id, t.id).phase, 'working');
