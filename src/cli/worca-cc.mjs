@@ -337,7 +337,7 @@ Subcommands:
   config [get|set|unset]      Budget & cost-limit settings
   flags [list|on|off|reset]   Labs features: on/off <key>, reset [<key>]
   ui [start|stop|restart|status]
-                              Run the web UI (default http://localhost:4317). See: worca ui help
+                              Run the web UI (default http://127.0.0.1:4317). See: worca ui help
   workflow <cmd> [...]        Export a workflow (Claude Code skill, JSON, or plugin) / import JSON: list|export|import. See: worca workflow help
   metrics push [--project <path>]   Push pending team-metrics run records (headless flush)
   metrics pr-workflow [--project <path>]   Add the GitHub Action that records PR merges for the Timeline
@@ -951,7 +951,7 @@ async function attachAndDrive(orch, flags, start) {
 const UI_HELP = `worca ui — the web UI server
 
 Usage:
-  worca ui [start] [--port <n>] [--open] [--mock]   Start the UI (default http://localhost:${DEFAULT_UI_PORT})
+  worca ui [start] [--port <n>] [--open] [--mock]   Start the UI (default http://127.0.0.1:${DEFAULT_UI_PORT})
   worca ui stop [--port <n>]                        Stop the running UI gracefully
   worca ui restart [--port <n>] [--open] [--mock]   Stop it if running, then start it again
   worca ui status [--port <n>]                      Report whether it is running (exit 0 = running, 1 = not)

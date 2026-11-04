@@ -301,7 +301,7 @@ import { detectSetup, defaultProbes } from '../src/core/setup/detect.mjs';
 import { teamSetupState, buildTeamSetup, SHARE_SETTING_KEYS } from '../src/core/setup/team-file.mjs';
 import { planSetupApply, commitSetupPlan, runSetupSteps, SetupFieldError, SetupConflictError } from '../src/core/setup/apply.mjs';
 import {
-  DEFAULT_UI_PORT, UI_HEALTH_NAME, UI_TOKEN_HEADER, newUiToken, writeUiInstance, removeUiInstance, uiUrl,
+  DEFAULT_UI_PORT, UI_HEALTH_NAME, UI_TOKEN_HEADER, newUiToken, writeUiInstance, removeUiInstance, uiUrl, keepIdleConnections,
 } from '../src/core/ui-instance.mjs';
 import { validateGuardrails } from '../src/core/guardrails.mjs';
 import {
@@ -845,7 +845,7 @@ function settleRunEntry(entry) {
 // WebSocket plumbing
 // ---------------------------------------------------------------------------
 const app = express();
-const server = http.createServer(app);
+const server = keepIdleConnections(http.createServer(app));
 
 // Settings › About manual update (issue #841). The version list (npm packument, cached 12 h like the
 // check above), who may update, and the handoff record's last result. Never at boot, never under mock
@@ -3100,7 +3100,7 @@ const startRunHandler = async (req, res) => {
       // creation, where createWorkspace enforced isGitRepo) is rejected the same
       // way, so the client gets a clean 400 instead of a mid-run worktree error.
       const projects = [];
-      await gitState();                                   // U4: refresh the cached git answer (≤ 1 min old) memberWorkMode reads
+      await gitState();                                   // U4: a stale "missing" re-probes before this returns (a stale "available" is served, then refreshed); memberWorkMode reads it
       for (const dir of ws.projectPaths) {
         if (!fs.existsSync(dir)) {
           return badRequest(res, 'workspace member path is missing');
