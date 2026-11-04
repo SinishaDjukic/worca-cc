@@ -142,6 +142,17 @@ test('react frame: chat, message, emoji and on/off are required and bounded', ()
   assert.equal(isValidFrame({ ...ok, id: 7 }), false);
 });
 
+test('typing frame: one chat and on/off, nothing else required', () => {
+  const ok = { type: 'typing', id: 't1', chatId: '1234567890', on: true };
+  assert.ok(HOST_FRAMES.includes('typing'));
+  assert.equal(isValidFrame(ok), true);
+  assert.equal(isValidFrame({ ...ok, on: false }), true);
+  assert.equal(isValidFrame({ ...ok, on: 1 }), false);
+  assert.equal(isValidFrame({ ...ok, chatId: '' }), false);
+  assert.equal(isValidFrame({ ...ok, chatId: 'x'.repeat(65) }), false);
+  assert.equal(isValidFrame({ ...ok, id: 7 }), false);
+});
+
 test('inbound chat context: replyTo, history and attachments are optional, bounded and validated', async () => {
   const { INBOUND_LIMITS, isValidAttachmentRef, isValidQuotedMessage, isValidHistory, withoutInboundContext } = await import('../src/core/chat/channel-protocol.mjs');
   const att = { name: 'notes.md', contentType: 'text/markdown', size: 12, url: 'https://cdn.discordapp.com/attachments/1/2/notes.md' };

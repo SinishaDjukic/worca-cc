@@ -4841,8 +4841,11 @@ const chatReceipts = createReceipts({
   log: (level, msg) => console.error(`[worca-ui] chat ${level}: ${msg}`),
 });
 const chatBridge = createConversationBridge({
-  host: { sendMessage: (a) => channelHost.sendMessage(a), replyInteraction: (a) => channelHost.replyInteraction(a), history: (a) => channelHost.history(a) },
+  host: { sendMessage: (a) => channelHost.sendMessage(a), replyInteraction: (a) => channelHost.replyInteraction(a), history: (a) => channelHost.history(a),
+    typing: (a) => channelHost.typing(a) },
   receipts: chatReceipts,
+  // Live status messages (discord-chat 0.5.0): only a channel whose manifest declares capabilities.liveStatus.
+  liveStatus: (plugin, channelId) => channelHost.list().find((x) => x.plugin === plugin && x.channelId === channelId)?.capabilities?.liveStatus === true,
   readConfig: (plugin, channelId) => { const e = channelHost.list().find((x) => x.plugin === plugin && x.channelId === channelId); return e ? readPluginConfig(plugin, e.configSchema) : null; },
   linksFor: (threadId) => chatLinksFor(threadId),
   now: () => Date.now(),
@@ -4970,6 +4973,11 @@ function watchChatThread(threadId) {
   if (chatWatched.has(threadId)) return;
   chatWatched.add(threadId);
   askBus.on(threadId, (f) => {
+    // A running turn's tool rows and text: the live status message's activity (the bridge throttles its edits).
+    if (f.type === 'ask-block' || f.type === 'ask-delta') {
+      try { chatBridge.progress(conversationForThread(threadId), f); } catch { /* progress is best effort */ }
+      return;
+    }
     if (f.type !== 'ask-done' && f.type !== 'ask-error' && f.type !== 'ask-message') return;
     const c = conversationForThread(threadId);
     if (!c) return;

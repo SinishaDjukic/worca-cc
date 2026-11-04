@@ -15,6 +15,7 @@
 //                       hygiene, deliberate deviation from the old adapter.js)
 // v2 additive: optional `controls`, `send.options`, `interaction`/`interaction-reply` frames — only for `interactive` channels
 // v2 additive (chat context): optional inbound `attachments`, `replyTo`, `history` and the `history` host frame
+// v2 additive (live status): the `typing` host frame (start / stop the platform's typing indicator in one chat)
 
 export const MESSAGE_SEGMENT_KINDS = ['text', 'bold', 'code', 'code_block', 'link', 'markdown'];
 export const SEVERITY_LEVELS = ['info', 'success', 'warning', 'error'];
@@ -30,7 +31,7 @@ export const MAX_FRAME_BYTES = 1024 * 1024;
 /** Op/send error kinds — same vocabulary as PluginOpError (plugin spec §11). */
 export const ERROR_KINDS = ['auth', 'rate-limit', 'network', 'plugin', 'timeout', 'protocol'];
 
-export const HOST_FRAMES = ['hello', 'send', 'webhook', 'config', 'ping', 'shutdown', 'interaction-reply', 'react', 'history'];
+export const HOST_FRAMES = ['hello', 'send', 'webhook', 'config', 'ping', 'shutdown', 'interaction-reply', 'react', 'history', 'typing'];
 export const WORKER_FRAMES = ['ready', 'status', 'inbound', 'send-result', 'webhook-result', 'state-delta', 'pong', 'log', 'interaction'];
 
 /** Native controls (interactive channels only). Executable controls carry a host-issued opaque `ref`; the platform
@@ -202,6 +203,10 @@ export function isValidFrame(frame) {
         && typeof frame.chatId === 'string' && frame.chatId !== '' && frame.chatId.length <= 64
         && typeof frame.before === 'string' && frame.before !== '' && frame.before.length <= 64
         && Number.isInteger(frame.limit) && frame.limit >= 1 && frame.limit <= INBOUND_LIMITS.history;
+    case 'typing':   // v2 interactive (live status): start (`on`) or stop the typing indicator in one chat; the worker refreshes it
+      return typeof frame.id === 'string'
+        && typeof frame.chatId === 'string' && frame.chatId !== '' && frame.chatId.length <= 64
+        && typeof frame.on === 'boolean';
     case 'interaction':
       return isValidInteraction(frame.evt);
     case 'webhook':

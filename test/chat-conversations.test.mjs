@@ -111,3 +111,20 @@ test('retireNewConversation: the flag sticks (rebind too) and only header:new re
   C.retireNewConversation(c.id);   // idempotent
   assert.equal(C.getConversation(c.id).headerNewOff, true);
 });
+
+test('live status rows: recorded pending, bound to the reply, listed, cleared; never a delivered part', () => {
+  const c = bind();
+  const m = store.appendMessage(c.askThreadId, { role: 'assistant', text: '', status: 'streaming' });
+  C.recordStatus({ conversationId: c.id, platformMessageId: 'S1' }, { now: Date.parse('2026-11-04T10:00:00Z') });
+  C.recordStatus({ conversationId: c.id, platformMessageId: 'S2' }, { now: Date.parse('2026-11-04T10:00:01Z') });
+  assert.deepEqual(C.listStatuses(c.id), [
+    { platformMessageId: 'S1', askMessageId: null, startedAt: '2026-11-04T10:00:00.000Z' },
+    { platformMessageId: 'S2', askMessageId: null, startedAt: '2026-11-04T10:00:01.000Z' }]);
+  C.bindStatus(c.id, 'S1', m.id);
+  assert.deepEqual(C.listStatuses(c.id)[0], { platformMessageId: 'S1', askMessageId: m.id, startedAt: '2026-11-04T10:00:00.000Z' });
+  assert.deepEqual(C.deliveredParts(c.id, m.id), [], 'a status row is not a delivered part of the reply');
+  C.clearStatus(c.id, 'S1');
+  assert.deepEqual(C.listStatuses(c.id).map((s) => s.platformMessageId), ['S2']);
+  C.clearStatus(c.id, 'S2');
+  assert.deepEqual(C.listStatuses(c.id), []);
+});

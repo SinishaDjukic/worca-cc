@@ -95,6 +95,29 @@ Run status arrives as messages in the thread (started, questions, finished, fail
   History** — already in the invite above. Without it the reply or history is left out (and the log says why).
 - Everything quoted is treated as untrusted data: text that looks like an instruction is never followed.
 
+### Live status while worca works (0.5.0)
+
+A reply can take a while. As soon as a message starts a turn (the mention that opens a conversation with words, any
+later message in the thread, and a typed answer to an open question that starts a follow-up), the bot posts
+"⏳ Working on it… this message will update." in the thread and shows **is typing…** (refreshed every 8 seconds
+while the turn runs).
+
+- **While it runs** the same message is edited with the elapsed time and what worca is doing, in plain words:
+  "Reading files…", "Running a command…", "Looking at run 1234abcd…", "Writing the answer…". Tool arguments, paths and
+  text are never shown. At most one edit every 5 seconds, and only when the text changed; when Discord answers 429,
+  worca waits the `retry_after` it names.
+- **When the answer is ready** the status message becomes its first part, with its buttons if it has any. Further
+  parts and cards follow as new messages, as before, and your message's reaction still goes ✅. If the status message
+  was deleted or cannot be edited (permissions), the answer is posted as a new message instead, exactly once.
+- **Failure, Stop, busy or a cost-limit refusal**: the status message becomes the usual explanation ("That did not
+  work: …", "Stopped before any reply.", "Chat is still replying…"). It is never left saying "working".
+- **Restarts.** The status message is remembered with the conversation. After a worca restart or a worker
+  reconnect, one that is still marked working is edited to "⏹️ Interrupted — send your message again." (or into
+  the answer, if it finished just before the restart).
+- The manifest declares this as `capabilities.liveStatus`; a chat plugin without it keeps the old behaviour (no
+  status message, the answer arrives as new messages). It uses the permissions you already gave the bot (Send
+  Messages in Threads).
+
 ### Security
 
 - Only the person who started a thread controls it. Other members' messages in the thread are ignored (no paid turn);
@@ -117,7 +140,7 @@ Run status arrives as messages in the thread (started, questions, finished, fail
 
 ### Behavior notes
 
-- No DMs (unchanged), no attachments, and replies arrive when complete rather than streaming.
+- No DMs (unchanged). Replies arrive when complete rather than streaming; the live status message shows progress until then.
 - Delivery is at-least-once: after a crash a message part can repeat.
 - With the plugin's advanced **Channel allowlist** set, the bot still hears the threads it opened itself (it remembers
   them across restarts); other threads under an allowed channel stay filtered. It remembers the newest 500 threads.

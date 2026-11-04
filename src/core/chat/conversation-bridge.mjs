@@ -6,6 +6,7 @@ import { createAllowlistGuard, parseIdList, parseChatMembers } from './allowlist
 import { TokenBucket } from './rate-limiter.mjs';
 import * as conv from './conversations.mjs';
 import { renderMessageParts, runBodyFromCard, isNativeRunCard, NO_LINK_HINT } from './card-render.mjs';
+import { WORKING, INTERRUPTED, DONE_EMPTY, STATUS_TICK_MS, activityOf, statusText, statusMessage } from './live-status.mjs';
 
 const { HEADER_CONTROL_TTL_MS } = conv;
 export const FREEFORM_RATE_PER_MIN = 6;
@@ -32,6 +33,10 @@ export const SAY = {
   answeredNoReply: (e) => `Answer saved, but the reply could not start: ${String(e || 'unknown error').slice(0, 300)}`,
   done: 'Done — the message will update shortly.',
   changesSent: 'Sent your change request. The proposal stays open.',
+  /** Live status (discord-chat 0.5.0): what a "working" message becomes when no reply will be edited into it. */
+  answerSaved: '✅ Answer saved.',
+  answeredBelow: '✅ Answered below.',
+  statusMoved: '⏹️ This reply stays in worca: a new conversation started.',
 };
 
 /** Remove only THIS bot's mention tokens (`<@id>` / `<@!id>`). Other mentions, e-mail addresses, newlines and
@@ -96,13 +101,19 @@ export function followUpError(r) {
  *  initialScope (async), threadScope, scopeLabel (async), scopeOptions (async → {options, hidden}), refreshProjects (async), projectDirOf,
  *  startTurn, applyCard, takeDeferredReply, startRun,
  *  switchScope, stopTurn}, readConfig(plugin, channelId), linksFor(threadId), watch(threadId), now(), log(level,msg),
- *  ratePerMin?, receipts?: {ack(target), settle(target, outcome)} (createReceipts; absent = no reactions) } */
+ *  ratePerMin?, receipts?: {ack(target), settle(target, outcome)} (createReceipts; absent = no reactions),
+ *  liveStatus?(plugin, channelId) → true when the channel shows a live status message per turn (host.typing optional),
+ *  setInterval?/clearInterval? (tests) } */
 const NOT_FOUND = /not found/i;
 /** A ref minter that mints nothing: parts are rendered to learn their names (reconcile, receipts). */
 const DRY_ISSUE = () => 'x'.repeat(24);
 const NO_RECEIPTS = { ack() {}, settle() {} };
 /** The inbound message a reaction belongs to, or null when the platform gave no id. */
 const markOf = (plugin, channelId, chatId, messageId) => (messageId ? { plugin, channelId, chatId: String(chatId), messageId: String(messageId) } : null);
+/** sweepStreamingMessages' notice (src/core/ask/store.mjs): the reply a restart cut off. */
+const RESTART_NOTICE = 'interrupted by restart';
+const cutByRestart = (m) => m.status === 'error' && Array.isArray(m.blocks) && m.blocks.some((b) => b && b.kind === 'notice' && b.text === RESTART_NOTICE);
+const idsOf = (r) => r?.detail?.messageIds || r?.messageIds || [];
 
 export function createConversationBridge(deps) {
   const buckets = new Map();
@@ -128,6 +139,162 @@ export function createConversationBridge(deps) {
     noticed.set(key, t);
     if (noticed.size > 5000) for (const [k, v] of noticed) if (t - v >= NOTICE_EVERY_MS) noticed.delete(k);
     return true;
+  }
+
+  // ── live status messages (discord-chat 0.5.0) ───────────────────────────
+  // A turn's "⏳ Working on it…" message, edited with the elapsed time and the activity while the turn runs and edited
+  // into the reply's first part when it lands. One record per status message (several can be live: a busy refusal
+  // posts its own and ends it at once). phase: 'starting' (the turn is being started: delivery of a new reply waits, so
+  // the reply cannot land as a new message before the status knows its row), 'deferred' (a typed card answer whose
+  // follow-up is queued: waits by card id) or 'bound' (waits for assistantId). The row in chat_deliveries survives a
+  // restart; sweepStatuses finishes any it finds without a record here.
+  const statuses = new Map();   // platform message id -> status record
+  const setI = deps.setInterval || globalThis.setInterval;
+  const clearI = deps.clearInterval || globalThis.clearInterval;
+  const liveOn = (c) => { try { return deps.liveStatus?.(c.plugin, c.channelId) === true; } catch { return false; } };
+  const activeIn = (c) => [...statuses.values()].filter((st) => st.c.id === c.id);
+
+  function typing(c, on) {
+    if (typeof deps.host.typing !== 'function') return;
+    Promise.resolve().then(() => deps.host.typing({ plugin: c.plugin, channelId: c.channelId, chatId: c.chatId, on }))
+      .catch((err) => log('warn', `typing ${on ? 'start' : 'stop'} failed: ${err?.message || err}`));
+  }
+
+  /** Post the status message and start its ticker and the typing indicator; null when the channel has no live status
+   *  or the post failed (the turn then runs exactly as before). */
+  async function beginStatus(c) {
+    if (!liveOn(c)) return null;
+    let id;
+    try { id = idsOf(await send(c, statusMessage(WORKING))).at(-1); }
+    catch (err) { log('warn', `status message not posted: ${err?.message || err}`); return null; }
+    if (!id) return null;
+    const st = { c, id: String(id), phase: 'starting', assistantId: null, cardId: null, startedAt: deps.now(), activity: null,
+      shown: WORKING, done: false, lost: false, used: false, editing: false, pauseUntil: 0, chain: Promise.resolve(), timer: null };
+    try { conv.recordStatus({ conversationId: c.id, platformMessageId: st.id }, { now: deps.now() }); }
+    catch (err) { log('warn', `status message not recorded: ${err?.message || err}`); }
+    statuses.set(st.id, st);
+    typing(c, true);
+    st.timer = setI(() => tickStatus(st), STATUS_TICK_MS);
+    st.timer?.unref?.();
+    return st;
+  }
+
+  /** One progress edit: only when the text changed, never while one is in flight or a 429 asked to wait. */
+  function tickStatus(st) {
+    if (st.done || st.lost || st.editing || deps.now() < st.pauseUntil) return;
+    const text = statusText({ elapsedMs: deps.now() - st.startedAt, activity: st.activity });
+    if (text === st.shown) return;
+    st.editing = true;
+    st.chain = st.chain.then(async () => {
+      if (st.done) return;
+      try { await send(st.c, statusMessage(text), { edit: { messageId: st.id } }); st.shown = text; }
+      catch (err) {
+        if (Number.isFinite(err?.retryAfterMs)) st.pauseUntil = deps.now() + err.retryAfterMs;
+        else if (err?.permanent) st.lost = true;          // deleted or no access: no more progress; the reply posts anew
+        log('warn', `status update failed: ${err?.message || err}`);
+      }
+    }).finally(() => { st.editing = false; });
+  }
+
+  /** The Ask turn's live frames (ask-block, ask-delta), forwarded by the server: the activity the next tick shows. */
+  function progress(c, frame) {
+    const activity = activityOf(frame);
+    if (!activity || !c) return;
+    for (const st of activeIn(c)) if (!st.done && st.assistantId && st.assistantId === frame.messageId) st.activity = activity;
+  }
+
+  function bindStatus(st, assistantId) {
+    if (!st || st.done) return;
+    st.phase = 'bound';
+    st.assistantId = assistantId;
+    try { conv.bindStatus(st.c.id, st.id, assistantId); } catch (err) { log('warn', `status message not recorded: ${err?.message || err}`); }
+  }
+
+  /** No more progress: the ticker stops, typing stops once no other status of the conversation runs, and any edit in
+   *  flight has landed (so it can never overwrite the final text). */
+  async function quietStatus(st) {
+    if (!st.done) {
+      st.done = true;
+      if (st.timer) clearI(st.timer);
+      st.timer = null;
+      if (!activeIn(st.c).some((o) => o !== st && !o.done)) typing(st.c, false);
+    }
+    await st.chain;
+  }
+
+  function dropStatus(st) {
+    statuses.delete(st.id);
+    try { conv.clearStatus(st.c.id, st.id); } catch (err) { log('warn', `status message not cleared: ${err?.message || err}`); }
+  }
+
+  /** The status message becomes `message` (a refusal, a failure, a note). Without a status, or when its edit fails,
+   *  `message` is posted as a new message (as before live status) unless fallback is false. */
+  async function finishWith(c, st, message, { fallback = true } = {}) {
+    if (st) {
+      await quietStatus(st);
+      let shown = false;
+      if (!st.lost) {
+        try { await send(st.c, message, { edit: { messageId: st.id } }); shown = true; }
+        catch (err) { log('warn', `status message not updated: ${err?.message || err}`); }
+      }
+      dropStatus(st);
+      if (shown || !fallback) return;
+    }
+    await send(c, message).catch(() => {});
+  }
+
+  /** Deferred card answers: their follow-up's row id, learned once the queued reply started (shared with receipts:
+   *  takeDeferredReply hands each answer out once). */
+  const deferred = new Map();   // card id -> {assistantMessageId} | {error}
+  function takeDeferred(cardId) {
+    if (deferred.has(cardId)) return deferred.get(cardId);
+    const d = deps.ask.takeDeferredReply(cardId);
+    if (d) deferred.set(cardId, d);
+    return d || null;
+  }
+  function releaseDeferred(cardId) {
+    const waits = [...waiting.values()].some((l) => l.some((w) => w.cardId === cardId && !w.assistantId));
+    const live = [...statuses.values()].some((st) => st.phase === 'deferred' && st.cardId === cardId);
+    if (!waits && !live) deferred.delete(cardId);
+  }
+  async function resolveDeferredStatuses(c) {
+    for (const st of activeIn(c)) {
+      if (st.phase !== 'deferred' || st.done) continue;
+      const d = takeDeferred(st.cardId);
+      if (!d) continue;
+      if (d.assistantMessageId) bindStatus(st, d.assistantMessageId);
+      else await finishWith(c, st, warn(SAY.answeredNoReply(d.error)));
+      releaseDeferred(st.cardId);
+    }
+  }
+
+  /** After a restart (or a worker reconnect), a status row with no record here was left saying "working". A reply
+   *  that finished is still edited into it (deliverAll adopts it); otherwise it becomes "Interrupted". A transient
+   *  failure stops the sweep: the next pass (the worker's reconnect) retries. */
+  async function sweepStatuses(c) {
+    const rows = conv.listStatuses(c.id).filter((r) => !statuses.has(r.platformMessageId));
+    if (!rows.length) return;
+    const msgs = deps.ask.listMessages(c.askThreadId);
+    for (const row of rows) {
+      const m = row.askMessageId ? msgs.find((x) => x.id === row.askMessageId) : null;
+      if (m && m.role === 'assistant' && m.status && m.status !== 'streaming' && !cutByRestart(m)) {
+        statuses.set(row.platformMessageId, { c, id: row.platformMessageId, phase: 'bound', assistantId: m.id, cardId: null,
+          startedAt: deps.now(), activity: null, shown: WORKING, done: true, lost: false, used: false, editing: false, pauseUntil: 0,
+          chain: Promise.resolve(), timer: null });
+        continue;
+      }
+      try { await send(c, statusMessage(INTERRUPTED), { edit: { messageId: row.platformMessageId } }); }
+      catch (err) {
+        if (!err?.permanent) { log('warn', `interrupted status not updated yet: ${err?.message || err}`); return; }
+        log('warn', `interrupted status not updated: ${err?.message || err}`);
+      }
+      // A cut-off reply with nothing to show would only repeat "The reply failed": the Interrupted line stands for it.
+      if (m && cutByRestart(m) && !(typeof m.text === 'string' && m.text.trim()) && !conv.deliveredParts(c.id, m.id).length
+        && !(m.blocks || []).some((b) => b && b.kind === 'card')) {
+        conv.recordDelivery({ conversationId: c.id, askMessageId: m.id, part: 'text:0', platformMessageId: row.platformMessageId }, { now: deps.now() });
+      }
+      conv.clearStatus(c.id, row.platformMessageId);
+    }
   }
 
   function policy(plugin, channelId) {
@@ -275,18 +442,21 @@ export function createConversationBridge(deps) {
     const meta = msg.meta && typeof msg.meta === 'object' ? msg.meta : {};
     const mark = markOf(c.plugin, c.channelId, msg.chatId, meta.messageId);
     receipts.ack(mark);
+    let st = null;
     // Plan decision 9: any throw after the ack fails this message with the usual post, never leaving ⏳ behind.
-    try { return await answerOrTurn(c, text, mark, hasContext(extra) ? inboundFor(c, meta, extra) : null); }
-    catch (err) {
+    try {
+      st = await beginStatus(c);
+      return await answerOrTurn(c, text, mark, hasContext(extra) ? inboundFor(c, meta, extra) : null, st);
+    } catch (err) {
       const why = err?.message || String(err);
       log('warn', `freeform reply failed: ${why}`);
       receipts.settle(mark, 'fail');
-      await send(c, warn(SAY.failed(why))).catch(() => {});
+      await finishWith(c, st && statuses.has(st.id) ? st : null, warn(SAY.failed(why)));
       return true;
     }
   }
 
-  async function answerOrTurn(c, text, mark, inbound = null) {
+  async function answerOrTurn(c, text, mark, inbound = null, st = null) {
     // D5 text-reply rule: the newest card is an open text question → this message answers it (its event turn's user
     // row is synthetic, so nothing is echoed). A message carrying files or a reply is always a turn: a card answer takes
     // text only, and the files and the quoted message must reach the model.
@@ -295,22 +465,29 @@ export function createConversationBridge(deps) {
       const r = await deps.ask.applyCard({ threadId: c.askThreadId, cardId: open.id, body: { text }, actor: c.worcaIdentity });
       if (r.status >= 400) {
         const k = cardRefusal(r, deps.linksFor(c.askThreadId));
-        await send(c, warn(k.text)).catch(() => {});
+        await finishWith(c, st, warn(k.text));
         receipts.settle(mark, k.failed ? 'fail' : null);
         return true;
       }
       const lost = followUpError(r);
       if (lost) {                             // clarify answer: saved, but its follow-up could not start → ❌
-        await send(c, warn(SAY.answeredNoReply(lost))).catch(() => {});
+        await finishWith(c, st, warn(SAY.answeredNoReply(lost)));
         receipts.settle(mark, 'fail');
         return true;
       }
       const turn = r.body && typeof r.body.turn === 'object' ? r.body.turn : null;
-      if (turn && (turn.assistantMessageId || turn.deferred)) awaitReply(c, mark, { assistantId: turn.assistantMessageId || null, cardId: turn.assistantMessageId ? null : open.id });
-      else receipts.settle(mark, 'ok');      // answered, and no follow-up reply will come
+      if (turn && (turn.assistantMessageId || turn.deferred)) {
+        if (turn.assistantMessageId) bindStatus(st, turn.assistantMessageId);
+        else if (st) { st.phase = 'deferred'; st.cardId = open.id; }
+        awaitReply(c, mark, { assistantId: turn.assistantMessageId || null, cardId: turn.assistantMessageId ? null : open.id });
+        if (st) reconcile(c).catch((err) => log('warn', `post update failed: ${err?.message || err}`));
+      } else {
+        if (st) await finishWith(c, st, { title: null, severity: 'info', body: [{ kind: 'markdown', value: SAY.answerSaved }] }, { fallback: false });
+        receipts.settle(mark, 'ok');      // answered, and no follow-up reply will come
+      }
       return true;
     }
-    return runTurn(c, text, mark, inbound);
+    return runTurn(c, text, mark, inbound, st);
   }
 
   function refusal(c, p, userId) {
@@ -333,17 +510,25 @@ export function createConversationBridge(deps) {
       ...(inbound ? { inbound } : {}) });
   }
 
-  async function runTurn(c, text, mark = null, inbound = null) {
+  /** `st`: the status message a bound-thread message already posted; a conversation's first turn posts its own. */
+  async function runTurn(c, text, mark = null, inbound = null, st = undefined) {
+    if (st === undefined) st = await beginStatus(c);
     let r;
     try { r = await startTurn(c, text, inbound); }
     catch (err) { r = { ok: false, status: 500, error: err?.message || String(err) }; }
     if (!r.ok) {
       const k = turnRefusal(r);
-      await send(c, warn(k.text)).catch(() => {});
+      await finishWith(c, st, warn(k.text));
       receipts.settle(mark, k.failed ? 'fail' : null);
       return true;
     }
+    if (st) {
+      if (r.assistantMessageId) bindStatus(st, r.assistantMessageId);
+      else await finishWith(c, st, { title: null, severity: 'info', body: [{ kind: 'markdown', value: DONE_EMPTY }] }, { fallback: false });
+    }
     awaitReply(c, mark, { assistantId: r.assistantMessageId || null });
+    // The reply waited for its status to be bound: deliver it now if it already finished.
+    if (st) reconcile(c).catch((err) => log('warn', `post update failed: ${err?.message || err}`));
     return true;
   }
 
@@ -373,10 +558,11 @@ export function createConversationBridge(deps) {
     const links = deps.linksFor(c.askThreadId);
     for (const w of list.slice()) {
       if (!w.assistantId) {
-        const d = deps.ask.takeDeferredReply(w.cardId);
+        const d = takeDeferred(w.cardId);
         if (!d) continue;                                      // still queued behind the running reply
-        if (!d.assistantMessageId) { list.splice(list.indexOf(w), 1); receipts.settle(w.mark, 'fail'); continue; }
+        if (!d.assistantMessageId) { list.splice(list.indexOf(w), 1); releaseDeferred(w.cardId); receipts.settle(w.mark, 'fail'); continue; }
         w.assistantId = d.assistantMessageId;
+        releaseDeferred(w.cardId);
       }
       const m = msgs.find((x) => x.id === w.assistantId);
       const outcome = m ? replyOutcome(c, m, links) : null;
@@ -468,6 +654,7 @@ export function createConversationBridge(deps) {
     if (ctl.action === 'header:stop') { deps.ask.stopTurn(c.askThreadId); return ephemeral('Stopping the reply.'); }
     if (ctl.action === 'header:new') {
       dropWaits(c);
+      for (const st of activeIn(c)) await finishWith(c, st, { title: null, severity: 'info', body: [{ kind: 'markdown', value: SAY.statusMoved }] }, { fallback: false });
       const t = deps.ask.createThread({ createdBy: c.worcaIdentity, scope: deps.ask.threadScope(c.askThreadId) });
       const next = conv.rebindConversation(c.id, { askThreadId: t.id }, { now: deps.now() });
       deps.watch(t.id);
@@ -527,7 +714,12 @@ export function createConversationBridge(deps) {
   }
 
   async function reconcileOnce(c) {
-    try { await deliverAll(c); }
+    try {
+      // Status upkeep never blocks delivery: a failure here is logged and the replies still go out.
+      try { await sweepStatuses(c); await resolveDeferredStatuses(c); }
+      catch (err) { log('warn', `status messages not checked: ${err?.message || err}`); }
+      await deliverAll(c);
+    }
     // Also after a pass a transient error ended: a reply delivered before it settles now, not at the next trigger.
     // replyOutcome checks each row's own delivery records, so an undelivered part still keeps its ⏳.
     finally { checkReceipts(c); }
@@ -543,13 +735,35 @@ export function createConversationBridge(deps) {
       if (m.role === 'assistant' && m.status === 'streaming') continue;
       const have = new Map(conv.deliveredParts(c.id, m.id).map((d) => [d.part, d]));
       if (m.role === 'user' && have.has('chat')) continue;          // came from the platform
+      // A turn whose status message does not yet know its row: a new reply waits (runTurn reconciles once it is bound).
+      if (m.role === 'assistant' && !have.size && activeIn(c).some((st) => st.phase === 'starting')) continue;
       const fromWorca = m.role === 'user' && !isSyntheticUserRow(m);
-      for (const part of renderMessageParts(m, { issue: DRY, links, fromWorca })) {
+      const st = m.role === 'assistant' ? activeIn(c).find((x) => x.phase === 'bound' && x.assistantId === m.id && !x.used) : null;
+      const parts = renderMessageParts(m, { issue: DRY, links, fromWorca });
+      for (const part of parts) {
         const prev = have.get(part.part);
         if (prev && (!part.cardId || prev.shownState === part.state)) continue;   // delivered and current
         // Order matters: spend the card's older refs FIRST, then mint the ones this post will carry.
         if (part.cardId) conv.retireCardControls(c.id, part.cardId, { now: deps.now() });
         const real = renderCardOrPart(m, part.part, { issue: realIssue, links, fromWorca });
+        // The reply's first new part goes INTO the status message. A transient failure stops the pass (retried with the
+        // same edit: nothing is posted twice); a refusal (deleted message, no access) posts the part as a new message.
+        if (!prev && st && !st.used) {
+          st.used = true;
+          await quietStatus(st);
+          if (!st.lost) {
+            try {
+              await send(c, real.message, { edit: { messageId: st.id } });
+              conv.recordDelivery({ conversationId: c.id, askMessageId: m.id, part: part.part, platformMessageId: st.id, shownState: part.state ?? null }, { now: deps.now() });
+              dropStatus(st);
+              continue;
+            } catch (err) {
+              if (!err?.permanent) { st.used = false; throw err; }
+              log('warn', `status message not turned into the reply: ${err?.message || err}`);
+            }
+          }
+          dropStatus(st);
+        }
         let editFailed = false;
         if (prev && part.cardId && prev.platformMessageId) {
           try {
@@ -573,6 +787,12 @@ export function createConversationBridge(deps) {
           skipPart(c, m, part, err);
         }
       }
+      // The reply had no new part for it (nothing to show, or delivered before the status knew its row): never leave
+      // the status message saying "working".
+      if (st && !st.used) {
+        const note = parts.length ? SAY.answeredBelow : DONE_EMPTY;
+        await finishWith(c, st, { title: null, severity: 'info', body: [{ kind: 'markdown', value: note }] }, { fallback: false });
+      }
     }
   }
 
@@ -595,7 +815,7 @@ export function createConversationBridge(deps) {
     return null;
   }
 
-  return { handleMessage, handleInteraction, reconcile, refreshHeader, commandChatId, resetRateLimits: () => buckets.clear() };
+  return { handleMessage, handleInteraction, reconcile, refreshHeader, commandChatId, progress, resetRateLimits: () => buckets.clear() };
 }
 
 /** Render only the named part with real refs (a card part mints refs for that card alone). */

@@ -447,7 +447,13 @@ export function normalizeManifest(raw, { dir = '' } = {}) {
         // v2 additive (#freeform chat): native controls + message edits + threads. Present only when declared, so
         // every existing manifest normalizes byte-identically.
         ...(capsRaw.interactive === true ? { interactive: true } : {}),
+        // v2 additive (live status, discord-chat 0.5.0): the host posts a "working" message per turn and edits it into the
+        // answer, and drives the `typing` frame. Edits need the interactive capability; present only when declared.
+        ...(capsRaw.liveStatus === true && capsRaw.interactive === true ? { liveStatus: true } : {}),
       };
+      if (capsRaw.liveStatus === true && capsRaw.interactive !== true) {
+        warnings.push(`${at} ("${id}"): capabilities.liveStatus needs interactive — ignored`);
+      }
       if (!capabilities.inbound && !capabilities.outbound) {
         errors.push(`${at} ("${id}"): capabilities cannot disable both inbound and outbound`);
       }

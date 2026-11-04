@@ -21,6 +21,7 @@ useTempHome(after);
 
 const NAME = 'fixture-chat';
 const NAME2 = 'fixture-plain';
+const NAME3 = 'fixture-live';   // case 35: an interactive channel that declares capabilities.liveStatus
 const SCHEMA = ['botToken', 'allowedChatIds', 'allowedUserIds', 'freeformChat', 'chatMembers', 'worcaUrl', 'historyOnStart']
   .map((key) => ({ key, type: 'text', label: key, secret: key === 'botToken', required: key === 'botToken' }));
 const CFG = { botToken: 'sekret', allowedChatIds: 'C1', freeformChat: 'on', chatMembers: 'U1=ada@example.com', worcaUrl: 'https://worca.example' };
@@ -42,6 +43,7 @@ let sendHook = null;
 const posts = [];
 let reactHook = null;
 const rxLog = [];   // every own-reaction call the mock worker accepted, with the post count at that moment
+const typingLog = [];   // case 35: every typing start/stop the mock worker accepted
 const behavior = {
   send: async (chatId, message, options) => {
     if (sendHook) { const r = await sendHook(chatId, message, options); if (r !== undefined) return r; }
@@ -54,6 +56,7 @@ const behavior = {
     if (reactHook) await reactHook(r);
     rxLog.push({ ...r, at: posts.length });
   },
+  typing: async (t) => { typingLog.push({ ...t, at: posts.length }); },
 };
 
 before(async () => {
@@ -80,13 +83,23 @@ before(async () => {
       capabilities: { inbound: true, outbound: true } }],
   }));
   writeFileSync(join(cur2, 'channel', 'worker.mjs'), 'export function createChannelWorker() { return { start() {}, stop() {}, send() {} }; }');
+  const cur3 = pluginCurrentDir(NAME3);
+  mkdirSync(join(cur3, 'channel'), { recursive: true });
+  writeFileSync(join(cur3, 'worca-cc-plugin.json'), JSON.stringify({
+    name: NAME3, engines: { 'worca-cc-api': '>=2 <3' },
+    chatChannels: [{ id: 'main', platform: 'discord', module: './channel/worker.mjs', configSchema: SCHEMA,
+      capabilities: { inbound: true, outbound: true, interactive: true, liveStatus: true } }],
+  }));
+  writeFileSync(join(cur3, 'channel', 'worker.mjs'), 'export function createChannelWorker() { return { start() {}, stop() {}, send() {} }; }');
   const lockRow = { repoUrl: 'https://example.test/f.git', subdir: '', pinnedSha: 'a'.repeat(40), version: null, enabled: true, installedAt: '2026-08-12T00:00:00.000Z' };
   // Case 31: the in-tree task-source fixture (mock mode serves its getTask without spawning it; ask-schedules does the same).
   const curSrc = pluginCurrentDir('mock-source');
   mkdirSync(curSrc, { recursive: true });
   writeFileSync(join(curSrc, 'worca-cc-plugin.json'), readFileSync(new URL('./fixtures/plugins/mock-source/worca-cc-plugin.json', import.meta.url)));
-  writePluginsLock({ [NAME]: lockRow, [NAME2]: { ...lockRow, repoUrl: 'https://example.test/g.git' }, 'mock-source': { ...lockRow, repoUrl: 'https://example.test/s.git' } });
+  writePluginsLock({ [NAME]: lockRow, [NAME2]: { ...lockRow, repoUrl: 'https://example.test/g.git' }, [NAME3]: { ...lockRow, repoUrl: 'https://example.test/l.git' },
+    'mock-source': { ...lockRow, repoUrl: 'https://example.test/s.git' } });
   writePluginConfig(NAME, SCHEMA, CFG);
+  writePluginConfig(NAME3, SCHEMA, { ...CFG, allowedChatIds: 'L1' });
   writePluginConfig(NAME2, SCHEMA, { ...CFG, allowedChatIds: 'P1' });
   setMockChannelBehavior({ '*': behavior });
   mod = await import('../ui/server.mjs');
@@ -1626,4 +1639,51 @@ test('34. chat context: reply-to-start with a file, history on start, off-host f
     H.setThreadId(() => 'TH1');
   }
   await idle(binding('TH34').askThreadId);
+});
+
+// 35 (live status, discord-chat 0.5.0): on a channel that declares liveStatus, a slow turn posts "⏳ Working on it…" in
+// its new thread at once with the typing indicator on, the reply is edited INTO that message, typing stops, the
+// mention goes ✅, and the status row is gone. The other fixture channels (no liveStatus) never post one (cases 1-34).
+test('35. live status: a slow turn shows a working message that becomes the answer', async () => {
+  _testing.chatBridge.resetRateLimits();
+  const { listStatuses } = await import('../src/core/chat/conversations.mjs');
+  const askStore = await ask();
+  H.setThreadId(() => 'LTH1');
+  // Hold the turn after its first text delta past one status tick (5 s): the server forwards the turn's ask-delta to
+  // the bridge, so that tick's edit names the activity.
+  const mock = await import('../src/core/engines/mock.mjs');
+  let held = false;
+  mock._testing.holdFrame = (f) => {
+    if (held || f?.event?.delta?.type !== 'text_delta') return null;
+    held = true;
+    return new Promise((r) => setTimeout(r, 6500));
+  };
+  const before = posts.length;
+  try {
+    const mid = `lmsg${++nextId}`;
+    channelHost.injectInboundMessage(NAME3, 'main', { chatId: 'L1', userId: 'U1', text: '<@BOT1> MOCK_SLOW explain the plan',
+      meta: { platform: 'discord', messageId: mid, guildId: 'G1', isGroup: true, mentionsBot: true, botId: 'BOT1' } });
+    const b = await waitFor(() => findConversation({ plugin: NAME3, channelId: 'main', chatId: 'LTH1' }));
+    const st = await waitFor(() => listStatuses(b.id)[0]);
+    const statusPost = posts.slice(before).find((p) => p.chatId === 'LTH1' && !p.options && textOf(p) === '⏳ Working on it… this message will update.');
+    assert.ok(statusPost, 'the status message is posted in the thread');
+    await waitFor(() => typingLog.some((t) => t.chatId === 'LTH1' && t.on === true));
+    const job = await waitFor(() => _testing.askJobs.get(b.askThreadId)?.turn && _testing.askJobs.get(b.askThreadId));
+    assert.equal(job.status, 'running', 'the status is up while the turn still runs');
+    const progress = await waitFor(() => posts.slice(before).find((p) => p.options?.edit?.messageId === st.platformMessageId), 9000);
+    assert.match(textOf(progress), /^⏳ Working on it… · 5 s\nWriting the answer…$/, 'elapsed time and the activity, nothing of the text');
+    await idle(b.askThreadId);
+    const reply = askStore.listMessages(b.askThreadId).filter((m) => m.role === 'assistant').at(-1);
+    assert.equal(reply.status, 'done');
+    const edit = await waitFor(() => posts.slice(before).find((p) => p.options?.edit?.messageId === st.platformMessageId && textOf(p) === reply.text.trim()));
+    assert.equal(edit.chatId, 'LTH1');
+    assert.ok(!posts.slice(before).some((p) => !p.options && textOf(p) === reply.text.trim()), 'the answer is not posted a second time');
+    await waitFor(() => typingLog.some((t) => t.chatId === 'LTH1' && t.on === false));
+    await waitFor(() => marksOn(mid).includes(MARK.ok));
+    assert.deepEqual(listStatuses(b.id), []);
+    assert.equal(getDb().prepare("SELECT platform_message_id FROM chat_deliveries WHERE conversation_id = ? AND ask_message_id = ? AND part = 'text:0'").get(b.id, reply.id).platform_message_id, st.platformMessageId);
+  } finally {
+    mock._testing.holdFrame = null;
+    H.setThreadId(() => 'TH1');
+  }
 });

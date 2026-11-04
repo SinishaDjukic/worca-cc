@@ -55,7 +55,7 @@ function mockMode() {
 
 // ── mock hooks (tests / offline smoke) ───────────────────────────────────────
 
-let _mockBehavior = null;   // key or '*' -> { send?(chatId, message), webhook?(req), react?(frame), history?(frame) }
+let _mockBehavior = null;   // key or '*' -> { send?(chatId, message), webhook?(req), react?(frame), history?(frame), typing?(frame) }
 const _mockSent = [];       // every sendMessage seen in mock mode
 
 /** Tests: override mock worker behavior per "plugin/channelId" key ('*' = all). */
@@ -564,6 +564,27 @@ export function createChannelHost({ logger, onInbound, onInteraction, onStatus, 
       const res = await rpc(w, { type: 'react', id: `x-${++rpcSeq}`, ...frame }, timeoutMs);
       if (res.ok) return { ok: true };
       const err = new PluginOpError(res.error?.kind || 'plugin', w.redact(res.error?.message || 'reaction failed'));
+      if (Number.isFinite(res.error?.retryAfterMs)) err.retryAfterMs = res.error.retryAfterMs;
+      throw res.error?.permanent === true ? refused(err) : err;
+    },
+
+    /** v2 (live status): start (`on`) or stop the typing indicator in one chat (interactive channels). The worker keeps
+     *  it alive until it is stopped. Resolves {ok:true} or throws PluginOpError; a refusal that would fail again (no
+     *  access, a worker without typing) is `permanent`. Mock mode calls behavior.typing(frame) when the test set one. */
+    async typing({ plugin, channelId, chatId, on, timeoutMs = 15000 }) {
+      const w = workers.get(workerKey(plugin, channelId));
+      if (!w) throw new PluginOpError('plugin', `no such channel worker "${plugin}/${channelId}"`);
+      if (w.entry.capabilities.interactive !== true) throw refused(new PluginOpError('plugin', 'channel is not interactive'));
+      const frame = { chatId: String(chatId), on: on === true };
+      if (w.mock) {
+        const behavior = _mockBehavior?.[w.key] ?? _mockBehavior?.['*'];
+        if (behavior?.typing) await behavior.typing(frame);   // may throw {kind, permanent?}
+        return { ok: true };
+      }
+      if (w.state === 'unconfigured' || w.state === 'failed' || !w.proc) throw new PluginOpError('plugin', `channel worker is ${w.state}`);
+      const res = await rpc(w, { type: 'typing', id: `t-${++rpcSeq}`, ...frame }, timeoutMs);
+      if (res.ok) return { ok: true };
+      const err = new PluginOpError(res.error?.kind || 'plugin', w.redact(res.error?.message || 'typing failed'));
       if (Number.isFinite(res.error?.retryAfterMs)) err.retryAfterMs = res.error.retryAfterMs;
       throw res.error?.permanent === true ? refused(err) : err;
     },

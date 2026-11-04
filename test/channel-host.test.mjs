@@ -689,6 +689,7 @@ const INTERACTIVE_WORKER = [
   '    },',
   "    async replyInteraction(id, text) { if (id !== 'i1') { const e = new Error('interaction expired'); e.kind = 'plugin'; throw e; } seen.push(text); return { ok: true }; },",
   "    async react(chatId, messageId, emoji, on) { if (messageId === 'GONE') { const e = new Error('message not found (GONE)'); e.kind = 'plugin'; e.permanent = true; throw e; } if (messageId === 'BUSY') { const e = new Error('slow down'); e.kind = 'rate-limit'; e.retryAfterMs = 700; throw e; } ctx.log('info', 'react ' + JSON.stringify([chatId, messageId, emoji, on])); return { ok: true }; },",
+  "    async typing(chatId, on) { if (chatId === 'GONE') { const e = new Error('channel not found (GONE)'); e.kind = 'plugin'; e.permanent = true; throw e; } ctx.log('info', 'typing ' + JSON.stringify([chatId, on])); return { ok: true }; },",
   '  };',
   '}',
 ].join('\n');
@@ -771,6 +772,43 @@ test('react: reaches an interactive worker; refusals keep permanent / retryAfter
   host.start();
   await waitFor(() => host.status()[0]?.state === 'connected', { label: 'worker connected' });
   await assert.rejects(host.react(target), (e) => e.permanent === true && /not interactive/.test(e.message));
+  await host.stop();
+});
+
+test('typing: reaches an interactive worker; a refusal keeps permanent; a worker without typing is unsupported; a plain channel is refused', async () => {
+  const interactive = () => {
+    const cur = pluginCurrentDir(NAME);
+    const manifest = JSON.parse(readFileSync(join(cur, 'worca-cc-plugin.json'), 'utf8'));
+    manifest.chatChannels[0].capabilities = { inbound: true, outbound: true, interactive: true };
+    writeFileSync(join(cur, 'worca-cc-plugin.json'), JSON.stringify(manifest));
+  };
+  const target = { plugin: NAME, channelId: 'main', chatId: 'T1', on: true };
+  installFixture({ worker: INTERACTIVE_WORKER });
+  interactive();
+  const logs = [];
+  let host = createChannelHost({ logger: (level, msg) => logs.push(msg) });
+  host.start();
+  after(() => host.stop());
+  await waitFor(() => host.status()[0]?.state === 'connected', { label: 'worker connected' });
+  assert.deepEqual(await host.typing(target), { ok: true });
+  assert.deepEqual(await host.typing({ ...target, on: false }), { ok: true });
+  await waitFor(() => logs.some((m) => m.includes('typing ["T1",true]')) && logs.some((m) => m.includes('typing ["T1",false]')), { label: 'the worker saw both calls' });
+  await assert.rejects(host.typing({ ...target, chatId: 'GONE' }), (e) => e instanceof PluginOpError && e.permanent === true && /not found/.test(e.message));
+  await host.stop();
+
+  installFixture();            // the plain fixture worker has no typing()
+  interactive();
+  host = createChannelHost({ logger: () => {} });
+  host.start();
+  await waitFor(() => host.status()[0]?.state === 'connected', { label: 'worker connected' });
+  await assert.rejects(host.typing(target), (e) => e.permanent === true && /cannot show typing/.test(e.message));
+  await host.stop();
+
+  installFixture();            // not interactive
+  host = createChannelHost({ logger: () => {} });
+  host.start();
+  await waitFor(() => host.status()[0]?.state === 'connected', { label: 'worker connected' });
+  await assert.rejects(host.typing(target), (e) => e.permanent === true && /not interactive/.test(e.message));
   await host.stop();
 });
 

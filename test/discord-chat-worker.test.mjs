@@ -728,9 +728,76 @@ test('worker history(): oldest first, other bots skipped, worca kept, system row
   assert.ok(Buffer.byteLength(JSON.stringify(big)) <= 900 * 1024);
 });
 
-test('discord-chat 0.4.0 manifest: the history setting (off by default, not advanced) and the CDN hosts', () => {
+test('worker typing: POST /typing now, refreshed every 8 s until stopped; a 429 skips beats until retry_after; refusals stop it', async () => {
+  const { ctx, events } = workerCtx();
+  const calls = [];
+  let mode = 'ok';
+  const fetchFn = async (url, opts) => {
+    calls.push({ url, method: opts.method });
+    if (mode === 'limit') { mode = 'ok'; return json({ retry_after: 20 }, 429); }
+    if (/^\d{3}$/.test(mode)) return json({ message: 'x' }, Number(mode));
+    return { ok: true, status: 204, json: async () => { throw new Error('no body'); } };
+  };
+  let t = 1_000_000;
+  const timers = new Map();
+  let nextId = 0;
+  const _timers = { setInterval: (fn, ms) => { const id = ++nextId; timers.set(id, { fn, ms }); return id; }, clearInterval: (id) => { timers.delete(id); } };
+  const beat = async (ms) => { t += ms; for (const { fn } of [...timers.values()]) fn(); await new Promise((r) => setTimeout(r, 5)); };
+  const w = createDiscordWorker(ctx, { fetchFn, WebSocketImpl: FakeWebSocket, _sleep: async () => {}, _timers, _now: () => t });
+  assert.deepEqual(await w.typing('C1', true), { ok: true });
+  assert.deepEqual(calls, [{ url: 'https://discord.com/api/v10/channels/C1/typing', method: 'POST' }]);
+  assert.deepEqual([...timers.values()].map((x) => x.ms), [8000], 'one refresh every 8 s');
+  await beat(8000);
+  assert.equal(calls.length, 2);
+  mode = 'limit';
+  await beat(8000);                                          // 429 retry_after 20 s
+  assert.equal(calls.length, 3);
+  await beat(8000); await beat(8000);                        // 16 s later: still inside retry_after
+  assert.equal(calls.length, 3, 'no request while retry_after runs');
+  await beat(8000);                                          // 24 s after the 429
+  assert.equal(calls.length, 4);
+  mode = '503';                                              // a 5xx skips one beat; typing goes on
+  await beat(8000);
+  assert.equal(calls.length, 5);
+  mode = 'ok';
+  await beat(8000);
+  assert.equal(calls.length, 6, 'the next beat tries again after a 5xx');
+  assert.deepEqual(await w.typing('C1', true), { ok: true }, 'a second start restarts it');
+  assert.equal(timers.size, 1, 'one refresh per chat');
+  assert.deepEqual(await w.typing('C1', false), { ok: true });
+  assert.equal(timers.size, 0);
+  const n = calls.length;
+  await beat(8000);
+  assert.equal(calls.length, n, 'stopped: no more requests');
+  // A stop that never comes: the refresh ends on its own after 30 min.
+  await w.typing('C2', true);
+  await beat(31 * 60 * 1000);
+  assert.equal(timers.size, 0);
+  // Refusals: no access is permanent and starts no refresh; a refusal on a later beat stops it (logged only).
+  mode = '403';
+  await assert.rejects(w.typing('C3', true), (e) => e.kind === 'plugin' && e.permanent === true);
+  assert.equal(timers.size, 0);
+  mode = 'ok';
+  await w.typing('C4', true);
+  mode = '404';
+  await beat(8000);
+  assert.equal(timers.size, 0, 'a deleted thread stops the refresh');
+  assert.ok(events.logs.some((m) => /typing stopped/.test(m)));
+  mode = 'ok';
+  await w.typing('C5', true);
+  await w.stop();
+  assert.equal(timers.size, 0, 'stop() clears every refresh');
+  await assert.rejects(w.typing('bad id/../x', true), (e) => e.permanent === true);
+});
+
+test('discord-chat 0.5.0 manifest: live status declared on the interactive channel', () => {
   const m = JSON.parse(readFileSync(new URL('../plugins/discord-chat/worca-cc-plugin.json', import.meta.url), 'utf8'));
-  assert.equal(m.version, '0.4.0');
+  assert.equal(m.version, '0.5.0');
+  assert.deepEqual(m.chatChannels[0].capabilities, { inbound: true, outbound: true, interactive: true, liveStatus: true });
+});
+
+test('discord-chat manifest: the history setting (off by default, not advanced) and the CDN hosts', () => {
+  const m = JSON.parse(readFileSync(new URL('../plugins/discord-chat/worca-cc-plugin.json', import.meta.url), 'utf8'));
   const ch = m.chatChannels[0];
   assert.deepEqual(ch.attachmentHosts, ['cdn.discordapp.com', 'media.discordapp.net']);
   const f = ch.configSchema.find((x) => x.key === 'historyOnStart');

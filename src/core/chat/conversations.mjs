@@ -134,7 +134,7 @@ export function retireCardControls(conversationId, cardId, { now = Date.now() } 
 
 export function deliveredParts(conversationId, askMessageId) {
   getDb();
-  return prepare('SELECT part, platform_message_id, shown_state FROM chat_deliveries WHERE conversation_id = ? AND ask_message_id = ?')
+  return prepare("SELECT part, platform_message_id, shown_state FROM chat_deliveries WHERE conversation_id = ? AND ask_message_id = ? AND part <> 'status'")
     .all(conversationId, askMessageId)
     .map((r) => ({ part: r.part, platformMessageId: r.platform_message_id ?? null, shownState: r.shown_state ?? null }));
 }
@@ -145,6 +145,40 @@ export function recordDelivery({ conversationId, askMessageId, part, platformMes
     ON CONFLICT (conversation_id, ask_message_id, part) DO UPDATE SET platform_message_id = excluded.platform_message_id,
     shown_state = excluded.shown_state, delivered_at = excluded.delivered_at`)
     .run(conversationId, askMessageId, part, platformMessageId, shownState, iso(now));
+}
+
+// ── live status messages (discord-chat 0.5.0) ─────────────────────────────────
+// A turn's "working" message lives in chat_deliveries as part 'status' (no schema change): ask_message_id is
+// 'pending:<platform id>' until the turn's reply row is known, then that row's id. A row that is still here after a
+// restart is a status message left saying "working" (the bridge's sweep finishes it).
+
+const STATUS_PART = 'status';
+const PENDING = 'pending:';
+
+export function recordStatus({ conversationId, platformMessageId }, { now = Date.now() } = {}) {
+  getDb();
+  prepare(`INSERT OR REPLACE INTO chat_deliveries (conversation_id, ask_message_id, part, platform_message_id, shown_state, delivered_at)
+    VALUES (?, ?, ?, ?, 'working', ?)`).run(conversationId, PENDING + platformMessageId, STATUS_PART, platformMessageId, iso(now));
+}
+
+/** The status message now waits for this reply row. */
+export function bindStatus(conversationId, platformMessageId, askMessageId) {
+  getDb();
+  prepare('UPDATE chat_deliveries SET ask_message_id = ? WHERE conversation_id = ? AND part = ? AND platform_message_id = ?')
+    .run(askMessageId, conversationId, STATUS_PART, platformMessageId);
+}
+
+/** Every status message of a conversation still marked working, oldest first. */
+export function listStatuses(conversationId) {
+  getDb();
+  return prepare('SELECT ask_message_id, platform_message_id, delivered_at FROM chat_deliveries WHERE conversation_id = ? AND part = ? ORDER BY delivered_at, platform_message_id')
+    .all(conversationId, STATUS_PART)
+    .map((r) => ({ platformMessageId: r.platform_message_id, askMessageId: r.ask_message_id.startsWith(PENDING) ? null : r.ask_message_id, startedAt: r.delivered_at }));
+}
+
+export function clearStatus(conversationId, platformMessageId) {
+  getDb();
+  prepare('DELETE FROM chat_deliveries WHERE conversation_id = ? AND part = ? AND platform_message_id = ?').run(conversationId, STATUS_PART, platformMessageId);
 }
 
 // ── inbound dedup ───────────────────────────────────────────────────────────

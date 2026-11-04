@@ -19,6 +19,10 @@ const REACT_TIMEOUT_MS = 10 * 1000;   // one reaction request; the 429 ladder ad
 /** The longest 429 wait react() sits out itself; a longer one is thrown back to the host. Worst case 3 × 5 s waits +
  *  4 × 10 s requests = 55 s, under channel-host's 60 s react timeout, so a late call never lands after the next one. */
 const REACT_MAX_WAIT_MS = 5 * 1000;
+/** Live status (0.5.0): Discord shows "is typing…" for about 10 s per POST, so the worker refreshes it every 8 s until
+ *  the host stops it; one that is never stopped (a host that died) ends on its own. */
+const TYPING_REFRESH_MS = 8 * 1000;
+const TYPING_MAX_MS = 30 * 60 * 1000;
 
 export function renderToMarkdown(msg) {
   return renderSegments(msg, DISCORD_STYLE);
@@ -150,6 +154,8 @@ export function createDiscordWorker(ctx, {
   fetchFn = globalThis.fetch,
   WebSocketImpl = globalThis.WebSocket,
   _sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  _timers = { setInterval: (fn, ms) => setInterval(fn, ms), clearInterval: (id) => clearInterval(id) },
+  _now = () => Date.now(),
 } = {}) {
   const token = String(ctx.config.botToken || '');
   const channelFilter = String(ctx.config.channelAllowlist || '').split(',').map((s) => s.trim()).filter(Boolean);
@@ -164,6 +170,32 @@ export function createDiscordWorker(ctx, {
     || threads.has(channelId) || (parentId !== '' && channelFilter.includes(parentId));
   const guilds = new Map();          // channel id -> guild id of a server channel this worker saw a message in (history())
   const chains = new Map();          // channel id -> the delivery a reply's context read holds (keeps the channel's order)
+  const typingFor = new Map();       // channel id -> { since, pauseUntil, timer } while the host shows a turn working there
+  function stopTyping(ch, entry = typingFor.get(ch)) {
+    if (!entry || typingFor.get(ch) !== entry) return;
+    typingFor.delete(ch);
+    if (entry.timer != null) _timers.clearInterval(entry.timer);
+  }
+  /** One POST /typing. A 429 pauses the refresh for retry_after (never waited inline); a refusal (no access, a deleted
+   *  thread) or the time cap stops it. Returns the refusal, or null. */
+  async function typingBeat(ch, entry) {
+    if (typingFor.get(ch) !== entry) return null;
+    if (_now() - entry.since > TYPING_MAX_MS) { stopTyping(ch, entry); return null; }
+    if (_now() < entry.pauseUntil) return null;
+    let res;
+    try { res = await fetchFn(`${DISCORD_API}/channels/${ch}/typing`, { method: 'POST', headers: authHeaders, signal: AbortSignal.timeout(REACT_TIMEOUT_MS) }); }
+    catch (err) { ctx.log('warn', `typing not shown: ${err?.message || err}`); return null; }
+    if (res.status === 429) {
+      const d = await res.json().catch(() => ({}));
+      entry.pauseUntil = _now() + Math.ceil((d.retry_after ?? 1) * 1000);
+      return null;
+    }
+    if (res.ok || res.status >= 500) return null;   // a 5xx skips one beat; the next one tries again
+    stopTyping(ch, entry);
+    if (res.status === 401) return sendError('auth', 'Discord rejected the bot token');
+    return refusal(sendError('plugin', res.status === 403 ? 'missing access: the bot needs Send Messages in this channel to show typing'
+      : res.status === 404 ? `channel not found (${ch})` : `typing failed: HTTP ${res.status}`));
+  }
   const rememberGuild = (ch, g) => {
     guilds.delete(ch);
     guilds.set(ch, g);
@@ -334,6 +366,27 @@ export function createDiscordWorker(ctx, {
 
     async stop() {
       gateway?.stop();
+      for (const ch of [...typingFor.keys()]) stopTyping(ch);
+    },
+
+    /** v2 (live status): show (`on`) "is typing…" in one channel or thread, refreshed every 8 s until stopped. The first
+     *  POST is awaited: its refusal (403/404) is `permanent` and starts no refresh. A later refusal only stops it. */
+    async typing(chatId, on) {
+      const ch = String(chatId ?? '');
+      if (!ID_RE.test(ch)) throw refusal(sendError('plugin', 'typing needs a channel id'));
+      stopTyping(ch);
+      if (!on) return { ok: true };
+      const entry = { since: _now(), pauseUntil: 0, timer: null };
+      typingFor.set(ch, entry);
+      const refused = await typingBeat(ch, entry);
+      if (refused) throw refused;
+      if (typingFor.get(ch) === entry) {
+        entry.timer = _timers.setInterval(() => {
+          typingBeat(ch, entry).then((err) => { if (err) ctx.log('warn', `typing stopped: ${err.message}`); }, () => {});
+        }, TYPING_REFRESH_MS);
+        entry.timer?.unref?.();
+      }
+      return { ok: true };
     },
 
     async send(chatId, msg, options = {}) {

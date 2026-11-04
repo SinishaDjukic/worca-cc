@@ -370,6 +370,14 @@ test('chatChannels: rejections (id/platform/module/ingress, both capabilities of
       assert.deepEqual(inter.manifest.chatChannels[0].capabilities, { inbound: true, outbound: true, interactive: true });
       const notInter = normalizeManifest({ name: 'p', chatChannels: [CH({ capabilities: { interactive: 'yes' } })] });
       assert.deepEqual(notInter.manifest.chatChannels[0].capabilities, { inbound: true, outbound: true }, 'only a literal true');
+      // Live status messages (discord-chat 0.5.0): only a literal true, and only on an interactive channel (edits need it).
+      const live = normalizeManifest({ name: 'p', chatChannels: [CH({ capabilities: { interactive: true, liveStatus: true } })] });
+      assert.deepEqual(live.manifest.chatChannels[0].capabilities, { inbound: true, outbound: true, interactive: true, liveStatus: true });
+      const liveNotInter = normalizeManifest({ name: 'p', chatChannels: [CH({ capabilities: { liveStatus: true } })] });
+      assert.deepEqual(liveNotInter.manifest.chatChannels[0].capabilities, { inbound: true, outbound: true }, 'live status needs interactive');
+      assert.match(liveNotInter.warnings.join('\n'), /liveStatus needs interactive/);
+      const liveYes = normalizeManifest({ name: 'p', chatChannels: [CH({ capabilities: { interactive: true, liveStatus: 'yes' } })] });
+      assert.deepEqual(liveYes.manifest.chatChannels[0].capabilities, { inbound: true, outbound: true, interactive: true });
     } },
     { name: 'chatChannels: duplicate ids rejected; unknown fields warn (strict errors)', run: () => {
       const dup = normalizeManifest({ name: 'p', chatChannels: [CH(), CH()] });
