@@ -10,6 +10,10 @@ Worca Rail is the redesign of every Worca page, one page at a time, on the rules
 `plans/rail/` (one spec per page) and built first in the prototype (`plans/rail/prototype/`); until it ships, the app's
 current pages keep the rules further down. Where a Rail page and a current rule differ, the Rail page's spec says so.
 
+**When the app and Rail differ** (the app ships something Rail does not have, or does it another way), one rule
+decides, never case by case: 1. Rail is preferred. 2. If the app's way meets a real need, find how Rail takes it in.
+3. The result is Rail, upgraded where needed, written here. `plans/rail/dev-alignment.md` records each case.
+
 ### One Rail: the philosophy
 Every screen reads down one rail, and everything has one place on it.
 1. **One rail.** Everything aligns to a single 20px rail and one text edge (rail + 12px gap); a dot, a step, a member
@@ -94,6 +98,7 @@ curve; everything else is still. Mock: `plans/rail/mocks/motion-*.gif`.
 
 - **Never:** a transition between pages or tabs (they change at once), a slide, a spring, a bounce, a count-up, a
   spinner, a skeleton shimmer, a parallax, motion on scroll, or anything that runs without a state change.
+  The one named exception is the away screensaver: it starts after 5 idle minutes and is off under reduced motion.
 - **Reduced motion** (`prefers-reduced-motion`): every timing is 0; the breathing is a still colour, the shimmer a still
   wash, the flash a still outline that fades with the next click.
 - A live update never moves what you are reading: what arrives above it holds its place until you scroll there (Pulse
@@ -110,6 +115,7 @@ shows it; sizes, colours and spacing come with the component. Names are the Desi
 | A yes or no, or a one-line answer | ConfirmStrip, in place under the top bar | Merge #959 into dev?, Run after |
 | A step that needs fields first | Dialog, the only one for a form | Create PR |
 | Going to another page or place | Text link, or a ListRow you open | Changes +358 −144, a file, a step |
+| Copying text | CopyButton: a quiet 28px icon button; a tick for 1.2s and `Copied` in its tooltip and the live region; its width never changes | a branch, a command, an id |
 | **Choosing** | | |
 | A choice that changes a step | SentencePicker: a picker in the sentence it changes, opening a CompactMenu | `dev ▾`, `3 stacked PRs ▾` |
 | Answering Worca's question | OptionList: one line per answer, a radio dot, Worca's pick marked, your own answer under it | the asking step's answers |
@@ -119,9 +125,13 @@ shows it; sizes, colours and spacing come with the component. Names are the Desi
 | Sections of a page | Tabs | Overview, Changes, Decisions |
 | Narrowing a list | the list's sentence: SentencePicker words above the list, each choice with its count; never a filter button or a View menu | `Showing [ready to ship ▾] from [all projects ▾] by [day ▾]` |
 | Picking and adding names | ListEditor | labels and cost tags, groups |
+| A choice inside a confirm | OptionList inside the ConfirmStrip or the Dialog; never radio cards | Rescan now, Rescan after the next run |
+| One pick from a long list, or a new one | ListEditor, single pick: find or create, recent first | Add to group |
 | **Entering** | | |
 | Text, a number, a pick from a long list in a form | Field | Branch, Budget, Base branch |
 | Text Worca writes for you | SuggestionField | PR title and description, a drafted answer |
+| Finding anything | the top bar's search: runs, chats, settings, plugins; a result lands with the flash | Search or ask |
+| Context sent with a message | ListEditor's removable item, in the composer | This page × |
 | **Showing** | | |
 | What is happening | StatusLine: the status dot and the state word | Ready to merge, Paused |
 | How far along, and its steps | Stepper, then StepRow on the rail | Plan · Build · Review |
@@ -130,6 +140,7 @@ shows it; sizes, colours and spacing come with the component. Names are the Desi
 | A list of things | ListRow: divided rows on the rail, the whole row opens, never a box per item | runs, files, decisions |
 | A short fact: a stage, a source, a slot to set up | Chip | Beta, Official, No API key |
 | Why a control is off, a cut-off text, an id | Tooltip | Checks are still running on #959 |
+| The same figures across many rows | Table: divided rows, tabular figures, no box per row, the name first; on a narrow screen the least needed columns go to the row's detail | sessions, cost by step |
 | **Telling** | | |
 | Something done, nothing to answer | Toast | PR merged |
 | Something failed | where you acted: the strip, the dialog's alert, the field's error line, the suggestion's grey line; a Toast only when there is no such place | Could not merge #959 |
@@ -226,16 +237,28 @@ yet.` · New schedule).
 Its head holds Tabs with each count as a caption and ⋯ at the right; the body scrolls and the head stays. On a narrow
 screen it is the window's width.
 
+**A side column** (Ask worca, a Feature chat): a column beside the page, opened from its top-bar button. Above 1080px
+it pushes the page; from 761 to 1080px it covers the page's right side; at 760px and below it takes the window. Its
+width is dragged between 360 and 680px and kept. It opens with Motion's fade, the page narrowing with it, and closes
+at once. One side column at a time.
+
+**A conversation** (Chat, a side column): the person's messages on the right on `--field`, Worca's text on the page,
+its work as cards on a 760px text column under the shared card head: a run card, a command group (folded to its head;
+a failure opens itself), a graph in its well.
+
 **A settings tab**: the Settings title, then Tabs, then one meta line saying what the tab decides, then sections on
 one rail. A row is its name on the left and one sentence on the right, the choice a SentencePicker in it (`Tell me
 about [needs you ▾] on [desktop ▾]`) or a Switch when it is only on or off; it takes effect at once. More detail
 folds under the row behind Customise, and a row that differs from its group says Changed. A reset of many rows sits in
-its section's head and confirms in the strip; nothing else confirms.
+its section's head and confirms in the strip; nothing else confirms. A tab that also keeps records (rules, an event
+log, a queue) puts each as a list section after its rows, under its own head: a List with its sentence.
 
 **A form** (New run, Create PR): a Dialog. It opens with the one sentence that frames the step, its choices as
 SentencePickers (`A [large ▾] task`, `branch into dev ▾`), then its Fields. Text Worca can write is a SuggestionField.
 A problem with the choice shows before it is made, on the rail with an amber dot: one note, what it means, and
 the ways out as buttons. The start button names what will happen (`Start at 16:40`); Cancel is quiet, before it.
+A setup of several steps is one Dialog with the Stepper at its head, one step per screen, Back and Next in its foot.
+A view that only shows (a workflow graph at full size) is a Dialog without a form: its head, the view, Close.
 
 ### Violet, kept apart
 Violet has two meanings that never meet: the merged status dot (a state), and Worca writing for you inside a field
@@ -282,6 +305,10 @@ The prototype's Break picker plays each case.
 
 ### Small rules that hold everywhere
 - Hover is a tint, never a lift.
+- A row with no state to show (an idle chat) may show its kind's line icon in the dot's place, in `--ink-2`; a row with
+  a state shows its dot.
+- A row that asks the person something shows its one answer as a quiet button at its right (`Approve`); the rest is in
+  its ⋯.
 - A disabled control says why in its tooltip.
 - Progress cells stay neutral; colour sits only on the dot and the state word.
 - No emoji and no exclamation marks in the interface.
@@ -310,7 +337,8 @@ prototype does both at 375px.
     second line under the title;
   - Figures and a section head's actions wrap to the next line; Tabs keep one line and scroll sideways inside their
     strip, the page never does.
-- **480px of window and below:** a top-bar button with a label keeps only its icon, and its tooltip names it.
+- **480px of window and below,** or whenever the bar runs out of room (a side column takes the space): a top-bar
+  button with a label keeps only its icon, and its tooltip names it.
 - **One line or wrap:** a name (the title, a stage label, a row's meta) keeps one line and ends in an ellipsis, with
   the whole text in its tooltip; a sentence wraps.
 - **A branch or a path loses its middle,** never its end: its start and its last part stay (`feat/unifi…-breadcrumb`,
