@@ -1,20 +1,20 @@
-// Run: node plans/rail/prototype/ds-check.mjs
+// Run: node plans/rail/prototype/gates/ds-check.mjs
 // The design-system gate: a Rail page is built only from what the design system has. Reports, in the prototype's CSS,
 // a colour, type size, corner or shadow that is not a token, and a token that does not exist; and, on every case of
 // every page, an inline style that sets a look (not layout or data), a class no stylesheet styles, and a control that
 // is not one of the design system's. A line marked `ds-ok: <reason>` is a known exception.
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { chromium } from '/Users/emil.angelov/src/worka-cc/node_modules/playwright/index.mjs';
+import { chromium } from 'playwright';
 import { APP_CSS, writeAppCss } from './app-css.mjs';
 import { writeComponentsJs } from './components-js.mjs';
 import { ALIGN } from './align-check.mjs';
 writeAppCss();   // the app's CSS, assembled from its parts
 writeComponentsJs();   // the Rail components, bundled for file://
-const here = (f) => fileURLToPath(new URL(f, import.meta.url));
-const SHEETS = ['rail-look.css', 'rail.css', 'pulse.css'];
+const here = (f) => fileURLToPath(new URL('../' + f, import.meta.url));   // the prototype's root
+const SHEETS = ['design-system/rail-look.css', 'design-system/rail.css', 'pulse/pulse.css'];
 const ALL = [APP_CSS, ...SHEETS.map(here), here('index.html'), here('pulse.html')];
-const SCRIPTS = ['run-page.js', 'pulse.js', 'run-page-model.js', 'pulse-model.js'].map(here);
+const SCRIPTS = ['runs/run-page.js', 'pulse/pulse.js', 'runs/run-page-model.js', 'pulse/pulse-model.js', 'settings/settings.js', 'settings/settings-model.js'].map(here);
 const issues = new Map(); const add = (k, where) => { if (!issues.has(k)) issues.set(k, new Set()); issues.get(k).add(where); };
 
 // Every control a page may draw, by the design-system component it belongs to (docs/design-system.md › Which component).
@@ -66,7 +66,7 @@ for (const name of SHEETS) {
 // A page built from the components (ui/public/design-system/components/) writes none of their markup by hand: the
 // component brings it, so a fix or an upgrade reaches every page. BUILT lists the pages moved onto them; the others
 // move one at a time and join the list.
-const BUILT = ['run-page.js', 'settings.js'];
+const BUILT = ['runs/run-page.js', 'settings/settings.js'];
 const OWN = {
   Button: /class="btn[ "]/, CompactMenu: /class="menu"/, StatusLine: /class="status-dot[ "]/, ConfirmStrip: /class="rc-confirm"/,
   Tabs: /class="(tabs|tab)[ "]/, Segmented: /class="seg"/, Figures: /class="(rc-figs|rc-fig-link)[ "]/, Toast: /class="(rc-toast|toasts)[ "]/,

@@ -8,12 +8,12 @@ import { fileURLToPath } from 'node:url';
 import { buildSync } from 'esbuild';
 
 const here = (f) => fileURLToPath(new URL(f, import.meta.url));
-export const COMPONENTS_JS = here('components.js');
+export const COMPONENTS_JS = here('../components.js');
 
 export function writeComponentsJs() {
-  buildSync({ entryPoints: [here('../../../ui/public/design-system/components/index.mjs')], bundle: true, format: 'iife',
+  buildSync({ entryPoints: [here('../../../../ui/public/design-system/components/index.mjs')], bundle: true, format: 'iife',
     globalName: 'RailUI', outfile: COMPONENTS_JS, legalComments: 'none', logLevel: 'error' });
-  appendFileSync(COMPONENTS_JS, `window.RailCatalog = ${readFileSync(here('../../../docs/design-system-catalog.json'), 'utf8').trim()};\n`);
+  appendFileSync(COMPONENTS_JS, `window.RailCatalog = ${readFileSync(here('../../../../docs/design-system-catalog.json'), 'utf8').trim()};\n`);
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) writeComponentsJs();

@@ -11,13 +11,19 @@ Online: the [Design System](https://claude.ai/artifact/P38jGMS7jA9XQu2U2uP3HP) (
 |---|---|---|
 | Run and group page | `spec.md` (review `review.md`, shipping plan `enrollment.md`) | In the prototype |
 | Pulse: the notification hub, usage rings, limit notifications and what a start does near a limit | `pulse.md` | Concept, in the prototype (`pulse.html`) |
-| Settings: from the profile menu, the sidebar becomes its menu (four groups), one row per decision, records as Lists, search | `docs/design-system.md` › Settings, mocks `mocks/settings-menu-*.png` | In the prototype (`pulse.html` › Settings; content `settings-model.js`, renderer `settings.js`) |
+| Settings: from the profile menu, the sidebar becomes its menu (four groups), one row per decision, records as Lists, search | `docs/design-system.md` › Settings, mocks `mocks/settings-menu-*.png` | In the prototype (`pulse.html` › Settings; `settings/`) |
 
-- `prototype/`: the clickable prototype, every page in one place (`index.html`; the run page is `run-page-model.js`
-  and `run-page.js`, the shared styles `rail.css`). Pulse is `pulse.html`, `pulse-model.js`, `pulse.js` and `pulse.css`. The gates: `node plans/rail/prototype/sweep.mjs file://$PWD/plans/rail/prototype/index.html` and
-  `node plans/rail/prototype/pulse-sweep.mjs file://$PWD/plans/rail/prototype/pulse.html`; and for both pages,
-  `node plans/rail/prototype/ds-check.mjs`: everything on them comes from the design system, and every Settings section lines up (`align-check.mjs`; `align-proof.mjs` shows the check catches each fault). The pages draw on the app's CSS as `prototype/app.css`, assembled from `ui/public/parts.json` by
-  `node plans/rail/prototype/app-css.mjs` (the gates run it first; it is not committed).
+- `prototype/`: the clickable prototype, laid out like the app's files. The pages at its root (`index.html` the run
+  page, `pulse.html` Pulse and Settings, `components.html` the gallery); each feature in its folder: `runs/` (the run
+  page's model and renderer), `pulse/` (Pulse's model, renderer and CSS), `settings/` (Settings' content and renderer),
+  `design-system/` (the Rail look and the components' CSS); `gates/` holds the checks and the builds. The pages draw on
+  the app's CSS as `app.css`, assembled from `ui/public/parts.json`, and on the components as `components.js`, bundled
+  from `ui/public/design-system/components/` (both built by the gates, not committed).
+- The gates: `node plans/rail/prototype/gates/run-page-sweep.mjs file://$PWD/plans/rail/prototype/index.html`,
+  `node plans/rail/prototype/gates/pulse-sweep.mjs file://$PWD/plans/rail/prototype/pulse.html`, and
+  `node plans/rail/prototype/gates/ds-check.mjs` for both pages: everything comes from the design system, names and
+  heads follow their rules, every Settings section lines up (`gates/align-check.mjs`; `gates/align-proof.mjs` shows the
+  check catches each fault).
 - `mocks/`: PNG mocks of decisions, named by page.
 
 A new page gets a spec here, a row above, and its model and renderer in `prototype/`, built on `rail.css` and the

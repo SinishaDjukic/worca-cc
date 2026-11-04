@@ -4,13 +4,13 @@
 // write it before they run.
 import { writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { assemble } from '../../../src/core/public-assets.mjs';
+import { assemble } from '../../../../src/core/public-assets.mjs';
 
 const here = (f) => fileURLToPath(new URL(f, import.meta.url));
-export const APP_CSS = here('app.css');
+export const APP_CSS = here('../app.css');
 
 export function writeAppCss() {
-  const { text } = assemble('css', 'style.css', here('../../../ui/public'));
+  const { text } = assemble('css', 'style.css', here('../../../../ui/public'));
   writeFileSync(APP_CSS, text);
   return text;
 }

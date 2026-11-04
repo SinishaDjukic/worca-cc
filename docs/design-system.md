@@ -163,7 +163,7 @@ shows it; sizes, colours and spacing come with the component. Names are the Desi
 
 Building from it:
 - A page sets no look of its own: no colour, type size, corner or shadow that is not a token, no inline style but
-  layout and data, no control that is not in the table. `plans/rail/prototype/ds-check.mjs` checks it.
+  layout and data, no control that is not in the table. `plans/rail/prototype/gates/ds-check.mjs` checks it.
 - A spec names the need and the component (`the step's primary in the strip, destructive`), never a size or a colour.
 - When no row fits, stop and propose the addition here (a row, then its Design System page) before building it.
 - A choice is never a full-width toggle or radio cards, and a yes or no never covers the page.
@@ -400,11 +400,11 @@ prototype does both at 375px.
   editor (a tag's ×).
 
 ### The gate
-Every Rail page passes its gate (`plans/rail/prototype/sweep.mjs` for the run page, `pulse-sweep.mjs` for Pulse) in every case, at 900 and 375px, in both themes: no sideways
+Every Rail page passes its gate (`plans/rail/prototype/gates/run-page-sweep.mjs` for the run page, `gates/pulse-sweep.mjs` for Pulse) in every case, at 900 and 375px, in both themes: no sideways
 scroll, no clipped text without a tooltip, no overlaps, every section on the text edge, contrast 4.5:1, every menu and
 dialog inside the window, no page jump on any click, the top bar one row, one way back at a time (`‹ Settings` only
 while the side menu is hidden); and every control does something. Every Rail page also passes
-`plans/rail/prototype/ds-check.mjs`: everything on it comes from the design system. A settings tab also passes its
+`plans/rail/prototype/gates/ds-check.mjs`: everything on it comes from the design system. A settings tab also passes its
 alignment (`align-check.mjs`, in ds-check, at 900 and 400px): one left edge for every head, name and divider, one right
 edge where every row's end stops (a quiet button by its text), and each row's name, sentence and end on one baseline.
 The alignment is SettingsRow's and SettingsSection's, never a page's; `align-proof.mjs` shows the check catches each

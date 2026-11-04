@@ -10,7 +10,7 @@
     "Lay it out narrow by docs/design-system.md › Narrow screens: at 520px of content side by side stacks on the same text edge, the action slot moves under the state word and its extra buttons fold into ⋯; nothing is dropped; names keep one line with an ellipsis and a tooltip; a branch or path loses its middle and keeps its start and last part (feat/unifi…-breadcrumb).",
     "Name every page, menu item, section head and row by Small rules › Names: the thing, 1–3 words, one thing one name; ds-check reads them.",
     "What a page needed and the design system did not have is added to it first: the rule, the catalog entry, the component in code with its test and gallery example; the page joins ds-check's BUILT list.",
-    "Pass the gate: plans/rail/prototype/ds-check.mjs and the page's sweep."
+    "Pass the gate: plans/rail/prototype/gates/ds-check.mjs and the page's sweep."
   ],
   "components": [
     { "name": "StatusLine", "code": "ui/public/design-system/components/status-line.mjs#statusLine", "kind": "showing", "needs": ["what is happening", "the one next step of a state"], "parts": ["status dot", "state word", "detail line", "action slot: Button primary with ▾ for alternatives", "⋯ CompactMenu"], "example": "Ready to merge · Merge PR ▾ ⋯", "notFor": "a second primary; buttons for the page in the top bar" },

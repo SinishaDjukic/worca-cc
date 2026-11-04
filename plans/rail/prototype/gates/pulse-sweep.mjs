@@ -1,8 +1,8 @@
-// Run: node plans/rail/prototype/pulse-sweep.mjs file://$PWD/plans/rail/prototype/pulse.html
+// Run: node plans/rail/prototype/gates/pulse-sweep.mjs file://$PWD/plans/rail/prototype/pulse.html
 // The glitch gate for Pulse (as sweep.mjs for the run page): every case × view × width × system theme. Reports page
 // overflow, clipped text with no tooltip, overlaps, low contrast, menus or popovers outside the window, a click that
 // moves the page, and a control that does nothing.
-import { chromium } from '/Users/emil.angelov/src/worka-cc/node_modules/playwright/index.mjs';
+import { chromium } from 'playwright';
 import { writeAppCss } from './app-css.mjs';
 writeAppCss();   // the app's CSS, assembled from its parts
 const URL = process.argv[2];
@@ -10,7 +10,7 @@ const b = await chromium.launch({ channel: 'chrome' });
 const issues = new Map(); const add = (k, where) => { if (!issues.has(k)) issues.set(k, []); if (issues.get(k).length < 4) issues.get(k).push(where); };
 const click = (p, sel) => p.evaluate((s) => document.querySelector(s)?.click(), sel);
 // every Settings section the model holds (but Notifications, swept above): read from settings-model.js, never listed by hand
-global.window = {}; await import('./settings-model.js');
+global.window = {}; await import('../settings/settings-model.js');
 const SECTION_IDS = window.SettingsModel.GROUPS.flatMap((g) => g.items).filter((id) => id !== 'notifications');
 const VIEWS = {
   now: async () => {},
