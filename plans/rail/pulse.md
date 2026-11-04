@@ -42,8 +42,13 @@ two lists twice). On a narrow screen the panel is the window's width.
 - Head: tabs **Now** and **Updates**, each with its count as a caption (Rail: a count is a caption, never a chip), and
   ⋯ at the right: Mark all read, Clear read, Notification settings. The body scrolls; the head stays.
 - **Now**: the groups that have rows, in this order: Needs you (amber dot), Limits (amber or red), Running (peach,
-  pulses), Scheduled (hollow; a slice, queued or scheduled run says what it will do near a limit, §4.5). Empty:
-  "Nothing needs you. Nothing is running."
+  pulses), Scheduled (hollow; a slice, queued or scheduled run says what it will do near a limit, §4.5). Above them,
+  the same sentence as every list: `Showing [everything ▾] from [all projects ▾]`, each choice with its count. Shows:
+  Everything, Needs you, Running, Scheduled, Limits. From: all projects or one project; a limit belongs to a harness,
+  so it ignores the project and goes only with Everything or Limits. The Now tab's count follows the sentence; the
+  Pulse button's badge does not, so a filter never hides a run that waits. No selection: Now's rows are states and
+  leave by themselves, so there is nothing to mark read or clear. Empty: "Nothing needs you. Nothing is running.";
+  narrowed: "Nothing here right now."
 - **Updates**: a divided list grouped by day (Today, Yesterday, Earlier), on the 20px rail: the unread dot, a title
   line, a meta line (group · project · detail), the time at the right. A `needs` row still open has the amber dot; once
   answered it reads Resolved.
