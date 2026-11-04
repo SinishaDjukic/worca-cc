@@ -1,7 +1,7 @@
 ---
 name: review-baseline-and-suite-noise
 description: Read before reviewing a worca run's diff or proving new tests catch their fixes — the checkpoint may not be the base, and many guard removals stay green.
-updated: 2026-11-04T02:35:45.964Z
+updated: 2026-11-04T07:06:02.511Z
 author: Bulibas
 ---
 
@@ -56,6 +56,13 @@ route's `if (!check) return`), even when the tests are copied verbatim from a re
   so mutate the root predicate (`askTabsEnabled = () => true`), and delete the turn's `dispose()`, which ends the
   per-turn token. Plans' §13 mutation tables list only per-call guards. On tool panel slice 3 (2026-11-04) all of these
   stayed green, and so did app.js glue: model `onChange` → mirror PUT and `onPick` → composer. The precedent rows to
-  copy are test/ask-api-commands.test.mjs:102 and ask-turn ~1902-1934.
+  copy are test/ask-api-commands.test.mjs:102 and ask-turn ~1902-1934. The fix-cycle rows that killed them all are in
+  test/ask-api-agent-always.test.mjs (tab tools) and the "in the real app" rows of ui-tool-mirror / ui-tool-browser.
+- Trap for such rows: with `WORCA_AGENT_USER`/`WORCA_AGENT_HOME` set, the in-process server's global G1 gate answers
+  403 `AGENT_CALLER_BLOCKED` to EVERY loopback request (only `AGENT_OPEN_ROUTES` pass). A route-level 403 assertion
+  then passes with the route's own guard deleted. Send `'x-worca-ui-token': mod._testing.uiToken()` to reach the route,
+  and to post a chat message under isolation (the turn's prompt is then readable from `_testing.askJobs`).
+- The app.js boot `toolMirror.schedule()` is an equivalent mutant: the panel's boot `setPrefs` always saves the model
+  (it adds `max:false`), and `onChange` schedules the PUT anyway.
 
 Judging a red, cancelled or hung full suite: [[test-suite-known-failures]].
