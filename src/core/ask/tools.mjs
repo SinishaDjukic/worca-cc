@@ -1096,15 +1096,44 @@ export function createAskTools(deps) {
   const asCommentError = (tool, err) => (err && err.name === 'DiffCommentError'
     ? new AskToolError(`${tool}: ${err.message}`) : err);
 
+  // One sanitiser for every stored PR URL the model sees: a string without control characters, http(s) only, no
+  // userinfo, on a forge host worca supports (github.com, dev.azure.com, *.visualstudio.com, bitbucket.org), cut to
+  // origin + pathname (no query or fragment). Anything else is null; self-hosted forges are not supported by parsePrRef.
+  const PR_HOSTS = new Set(['github.com', 'www.github.com', 'dev.azure.com', 'bitbucket.org']);
+  function safePrUrl(value) {
+    if (value == null) return null;
+    // Leading/trailing whitespace and control characters are trimmed; any inside the URL (an injected line) rejects it.
+    const text = String(value).replace(/^[\s\u0000-\u001f\u007f-\u009f]+|[\s\u0000-\u001f\u007f-\u009f]+$/g, '');
+    // eslint-disable-next-line no-control-regex
+    if (/[\s\u0000-\u001f\u007f-\u009f]/.test(text)) return null;
+    let u;
+    try { u = new URL(text); } catch { return null; }
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
+    if (u.username || u.password) return null;
+    const host = u.hostname.toLowerCase();
+    if (!PR_HOSTS.has(host) && !host.endsWith('.visualstudio.com')) return null;
+    return deps.redact(u.origin + u.pathname);
+  }
+
   // PR facts for a list row / get_run: pr, prs (workspace members), or fixesPr (a Watch PR fix run), never two of them.
   function prFieldsOf(info) {
     if (!info) return {};
-    const R = deps.redact;
-    const norm = (p) => ({ url: R(String(p.url)), number: p.number ?? deps.parsePrRef?.(p.url)?.number ?? null, state: p.state ?? 'OPEN' });
-    if (info.fixesPrUrl) return { fixesPr: { url: R(String(info.fixesPrUrl)), number: deps.parsePrRef?.(info.fixesPrUrl)?.number ?? null } };
+    const norm = (p) => {
+      const url = safePrUrl(p.url);
+      if (!url) return null;
+      return { url, number: p.number ?? deps.parsePrRef?.(url)?.number ?? null, state: p.state ?? 'OPEN' };
+    };
+    if (info.fixesPrUrl) {
+      const url = safePrUrl(info.fixesPrUrl);
+      return { fixesPr: url ? { url, number: deps.parsePrRef?.(url)?.number ?? null } : null };
+    }
     const members = Object.entries(info.members || {}).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
-    if (members.length) return { prs: members.map(([projectKey, p]) => ({ projectKey, ...norm(p) })) };
-    return info.pr ? { pr: norm(info.pr) } : {};
+    if (members.length) {
+      const prs = members.map(([projectKey, p]) => [projectKey, norm(p)]).filter(([, n]) => n).map(([projectKey, n]) => ({ projectKey, ...n }));
+      return prs.length ? { prs } : {};
+    }
+    const pr = info.pr ? norm(info.pr) : null;
+    return pr ? { pr } : {};
   }
 
   function shapeRun(row) {
