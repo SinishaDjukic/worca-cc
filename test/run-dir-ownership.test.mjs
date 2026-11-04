@@ -268,6 +268,18 @@ test('createPipeline extras: a claim that fails is logged and the attachment is 
   } finally { console.warn = orig; }
   assert.ok(existsSync(made.file), 'pipeline creation went through and the file is copied');
   assert.ok(warns.some((w) => w.includes('not shared with the agent')), warns.join('\n'));
+  const line = warns.find((w) => w.includes('not shared with the agent'));
+  assert.ok(!line.includes(dir), 'the warning carries no path');
+  assert.ok(!/\b(uid|gid)\b|\/proc\//i.test(line), 'the warning carries no uid/gid or /proc detail');
+  assert.match(line, /: ([A-Z_]+)$/, 'the warning ends with a stable code');
+});
+
+test('shareFailureReason: the string code, else UNKNOWN, never the message', async () => {
+  const { shareFailureReason } = await import('../src/core/agent-pool.mjs');
+  assert.equal(shareFailureReason(Object.assign(new Error('/proc/self/fd/9 uid 1'), { code: 'EPERM' })), 'EPERM');
+  assert.equal(shareFailureReason(new Error('/proc/self/fd/9')), 'UNKNOWN');
+  assert.equal(shareFailureReason(Object.assign(new Error('x'), { code: 13 })), 'UNKNOWN');
+  assert.equal(shareFailureReason(undefined), 'UNKNOWN');
 });
 
 test('_collectExtras repairs a run created before the fix: group and 0640, list kept, a planted link is logged', POSIX, async () => {

@@ -107,7 +107,7 @@ import { isNormalized } from './engines/events.mjs';
 import { createClaudeNormalizer } from './engines/claude-events.mjs';
 import { cachedFreeDailyCounts } from './openrouter-free.mjs';
 import { withBillTo, currentBillTo } from './billing.mjs';
-import { claimRunDir, claimRunExtras } from './agent-pool.mjs';
+import { claimRunDir, claimRunExtras, shareFailureReason } from './agent-pool.mjs';
 import { brokerEnabled, brokerEngineRefusal, brokerInfo, personSlots } from './broker-client.mjs';
 import { mockEnabled } from './claude-runner.mjs';
 import { modelSlot, manifestModels, manifestNeedsModel, missingCredentials, describeMissing } from './broker-routing.mjs';
@@ -7066,7 +7066,7 @@ export class RunHarness extends EventEmitter {
     try {
       const dir = join(this.pipeline.dir, 'extras');
       try {
-        for (const f of claimRunExtras(dir)) this._log('orchestrator', 'warn', `extras/${f.name} not shared with the agent: ${f.error.message}`);
+        for (const f of claimRunExtras(dir)) this._log('orchestrator', 'warn', `extras/${f.name} not shared with the agent: ${shareFailureReason(f.error)}`);
       } catch { /* no extras folder, or not one worca owns: the agent reports what it cannot read */ }
       const names = (await readdir(dir)).sort();
       return names.map((name) => ({ name, path: join(dir, name) }));

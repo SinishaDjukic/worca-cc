@@ -21,7 +21,7 @@ import { rollupChanges } from './folder-members.mjs';
 import { harvestWork, WORK_ARTIFACT_KIND } from './no-project-work.mjs';
 import { updateRunManifest } from './run-manifest.mjs';
 import { listProjects, worcaHome, runOnboarded } from './projects.mjs';
-import { claimRunDir, claimRunExtras } from './agent-pool.mjs';
+import { claimRunDir, claimRunExtras, shareFailureReason } from './agent-pool.mjs';
 import { branchExists, diffShortstat, anyPrHost, findPrForBranch, commitsAhead, withRefSnapshot } from './git-info.mjs';
 import { getDb, tx } from './db.mjs';
 import { rollupMemberPrs, workspaceMembers, changedFileCount } from './workspace-prs.mjs';
@@ -1255,8 +1255,8 @@ export async function createPipeline(projectDir, opts = {}) {
     // the folder fd (an agent can swap `extras/` for a link between a per-file path claim and its target).
     const share = () => {
       try {
-        for (const f of claimRunExtras(extrasDir)) console.warn(`[artifacts] extras/${f.name} not shared with the agent: ${f.error.message}`);
-      } catch (err) { console.warn(`[artifacts] extras folder not shared with the agent: ${err.message}`); }
+        for (const f of claimRunExtras(extrasDir)) console.warn(`[artifacts] extras/${f.name} not shared with the agent: ${shareFailureReason(f.error)}`);
+      } catch (err) { console.warn(`[artifacts] extras folder not shared with the agent: ${shareFailureReason(err)}`); }
     };
     share();
     for (const ex of extras) {
