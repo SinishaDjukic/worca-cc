@@ -1,6 +1,8 @@
 // Run card v2 mock: renders RunCardModel.view() (run-page-model.js) with Worca's own classes, and keeps the
 // viewer's choices (case, open stage, added chips, ship mode, open menu) in `ui`.
 const M = window.RunCardModel;
+// The page is built from the Worca Rail components (ui/public/design-system/components/, bundled as components.js).
+const R = window.RailUI;
 const P = (d) => `<path d="${d}"></path>`;
 const ICON = {
   check: P('M5 12.5l4.5 4.5L19 7.5'),
@@ -23,35 +25,20 @@ const ICON = {
   folder: P('M3 7.5A1.5 1.5 0 0 1 4.5 6h4l2 2.2H19.5A1.5 1.5 0 0 1 21 9.7v8.3A1.5 1.5 0 0 1 19.5 19.5h-15A1.5 1.5 0 0 1 3 18z'),
 };
 const svg = (name, size) => (ICON[name] ? `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[name]}</svg>` : '');
-const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+const esc = R.esc;
 
 // a case starts fresh: nothing from the case before it carries over
 const fresh = (caseId) => ({ caseId, askOpen: false, land: '', open: null, chips: [], ship: '', menu: '', tab: '', focus: '', view: 'steps', parent: null, back: null, dialog: '', after: [], away: '', askEach: false, answer: null, file: null, actFilter: 'all', rounds: [], ticks: [], taskOpen: false, stackSt: null, busy: null, broken: false, crash: null, offline: false });
 let ui = fresh('working');
 
-function statusDot(v) {
-  if (v.sym) {
-    const g = v.sym === 'q' ? ICON.question : ICON.alert;
-    return `<span class="status-dot ${v.sym === 'q' ? 'is-amber' : 'is-red'} has-sym" aria-hidden="true"><svg class="status-sym" width="12" height="12" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="12" fill="currentColor" stroke="none"></circle><g fill="none" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">${g}</g></svg></span>`;
-  }
-  return `<span class="status-dot ${v.dot}" aria-hidden="true"></span>`;
-}
+const statusDot = (v) => R.statusDot({ tone: v.dot, sym: v.sym, glyph: v.sym === 'q' ? ICON.question : ICON.alert });
 // A menu: an optional line on what the main action does, then each item with its one-line help.
 // One compact menu everywhere, as the app's View menu: one line per item, a leading check for a choice, a hint on the
 // right (a count or a shortcut), the help in the tooltip; danger items come last, after a rule.
+const DANGER = /^(Discard|Stop|Stop the run|Archive|Cancel|Cancel the rest)$/;
 function menu(id, items) {
   if (ui.menu !== id) return '';
-  const danger = /^(Discard|Stop|Stop the run|Archive|Cancel|Cancel the rest)$/;
-  let ruled = false;
-  return `<div class="menu" role="menu">${items.map((it, i) => {
-    if (it.sep) return '<div class="menu-sep" role="separator"></div>';
-    if (it.header) return `<p class="menu-h">${esc(it.header)}</p>`;
-    const bad = danger.test(it.text);
-    const rule = bad && !ruled && i > 0 && !(items[i - 1] && items[i - 1].sep) ? '<div class="menu-sep" role="separator"></div>' : '';
-    if (bad) ruled = true;
-    const role = it.checked === undefined ? 'menuitem' : 'menuitemradio';
-    return `${rule}<button type="button" class="menu-item${bad ? ' is-danger' : ''}" role="${role}"${it.off ? ' aria-disabled="true"' : ''}${it.checked === undefined ? '' : ` aria-checked="${!!it.checked}"`} data-menu-pick="${esc(it.id || it.text)}"${it.help ? ` title="${esc(it.help)}"` : ''}><span class="mi-l">${esc(it.text)}</span>${it.hint ? `<span class="mi-hint">${esc(it.hint)}</span>` : ''}</button>`;
-  }).join('')}</div>`;
+  return R.compactMenu({ items: items.map((it) => (it.sep || it.header ? it : Object.assign({ danger: DANGER.test(it.text) }, it))) });
 }
 // Labels and cost tags are one group on the metadata line: a tag mark, then each name in a quiet outline (labels
 // first, then cost tags, which read as key: value), what does not fit folded into +N. The group is one button; it
@@ -108,10 +95,10 @@ function rowHtml(r, full) {
     : `<span class="rd-route-name sc-name" title="${esc(r.name)}"${r.akey ? ` tabindex="-1" data-key="act:${esc(r.akey)}"` : ''}>${esc(r.name)}</span>`;
   const loops = !r.loops ? '' : r.roundsKey ? `<button type="button" class="sc-loop is-btn" aria-expanded="${!!r.roundsOpen}" data-rounds="${esc(r.roundsKey)}" data-key="rounds:${esc(r.roundsKey)}" title="${r.roundsOpen ? 'Hide' : 'Show'} the ${r.loops} rounds">${svg('refresh', 11)}${r.loops}</button>`
     : `<span class="sc-loop" title="Ran ${r.loops} times">${svg('refresh', 11)}${r.loops}</span>`;
-  const log = full && !/is-next/.test(r.rowCls) && !r.evidence ? `<button type="button" class="btn btn-sm btn-quiet rtab-log" data-key="log:${esc(r.akey)}" data-say="Opens the log of ${esc(r.name)}">Log</button>` : '';
+  const log = full && !/is-next/.test(r.rowCls) && !r.evidence ? R.button({ label: 'Log', kind: 'quiet', cls: 'rtab-log', attrs: { 'data-key': 'log:' + r.akey, 'data-say': 'Opens the log of ' + r.name } }) : '';
   const rest = `<span class="sc-rest"><span class="sc-loops">${loops}</span>${full ? `<span class="sc-model">${esc(r.model || '')}</span><span class="sc-cost">${esc(r.cost || '')}</span><span class="sc-act">${log}</span>` : ''}</span>`;
   // A failed or blocked step shows what broke, its last lines and a way into the log, in Activity only.
-  const ev = r.evidence ? `<div class="rtab-ev"><p class="rtab-ev-t">${esc(r.evidence.title)}</p><pre class="rtab-ev-l">${r.evidence.lines.map(esc).join('\n')}</pre><button type="button" class="btn btn-sm" data-key="log:${esc(r.akey)}" data-say="${esc(r.evidence.log)}: opens the log there">${esc(r.evidence.log)}</button></div>` : '';
+  const ev = r.evidence ? `<div class="rtab-ev"><p class="rtab-ev-t">${esc(r.evidence.title)}</p><pre class="rtab-ev-l">${r.evidence.lines.map(esc).join('\n')}</pre>${R.button({ label: r.evidence.log, attrs: { 'data-key': 'log:' + r.akey, 'data-say': r.evidence.log + ': opens the log there' } })}</div>` : '';
   return `<li class="rd-route-row sc-row ${r.rowCls}${r.focus ? ' is-focus' : ''}"><span class="rd-route-dot ${r.dotCls}" role="img" aria-label="${esc(r.word)}">${svg(r.icon, 10)}</span>
     ${name}<span class="sc-time">${esc(r.time || '')}</span>${rest}
     ${r.live ? `<div class="rd-route-second sc-line" title="${esc(r.live)}">${esc(r.live)}${r.when ? `<span class="rc-when"> · ${esc(r.when)}</span>` : ''}</div>` : ''}${ev}</li>`;
@@ -142,14 +129,14 @@ function focusHtml(v) {
   }
   if (f.kind === 'broke') {
     return `<section class="rtab ov-focus" id="ov-focus"><h2 class="rtab-h">What broke</h2>
-      <div class="rtab-ev"><p class="rtab-ev-t">${esc(f.ev.title)}</p><pre class="rtab-ev-l">${f.ev.lines.map(esc).join('\n')}</pre><button type="button" class="btn btn-sm" data-key="ov-log" data-say="${esc(f.ev.log)}: opens the log there">${esc(f.ev.log)}</button></div>
+      <div class="rtab-ev"><p class="rtab-ev-t">${esc(f.ev.title)}</p><pre class="rtab-ev-l">${f.ev.lines.map(esc).join('\n')}</pre>${R.button({ label: f.ev.log, attrs: { 'data-key': 'ov-log', 'data-say': f.ev.log + ': opens the log there' } })}</div>
       ${f.next ? `<p class="rtab-dim rtab-p">${esc(f.next)} is the card’s action: ${esc((v.action || {}).help || '')}.</p>` : ''}</section>`;
   }
   const rows = f.items.map((x, i) => {
     const st = typeof x === 'string' ? (ui.ticks.includes(i) ? 'done' : 'next') : x.state;
     const t = typeof x === 'string' ? x : x.t;
     // A check says why it is here and, when there is one, its one way to act (to its home: Decisions, a file in Changes).
-    const why = x.why ? `<span class="ov-why">${esc(x.why)}${x.act ? ` · <button type="button" class="dc-link" data-go="${x.go}" data-key="go:${i}">${esc(x.act)}</button>` : ''}</span>` : '';
+    const why = x.why ? `<span class="ov-why">${esc(x.why)}${x.act ? ' · ' + R.textLink({ label: x.act, attrs: { 'data-go': x.go, 'data-key': 'go:' + i } }) : ''}</span>` : '';
     if (f.kind === 'check') return `<li><label class="ov-check"><input type="checkbox" data-tick="${i}" data-key="tick:${i}"${st === 'done' ? ' checked' : ''}><span>${esc(t)}${why}</span></label></li>`;
     return `<li class="rd-route-row is-${st}"><span class="rd-route-dot ${st === 'done' ? 'is-done' : st === 'now' ? 'is-working is-pulse' : 'is-future'}" role="img" aria-label="${st === 'done' ? 'Done' : st === 'now' ? 'In progress' : 'Not yet'}">${svg(st === 'done' ? 'check' : st === 'now' ? 'now' : '', 10)}</span><span class="rd-route-name">${esc(t)}</span></li>`;
   }).join('');
@@ -161,7 +148,7 @@ function focusHtml(v) {
 }
 function summaryPanel(v) {
   const o = v.over;
-  const after = ui.after.length ? `<section class="rtab"><h2 class="rtab-h">Runs after this <span class="n">${ui.after.length}</span></h2><ul class="ov-arts">${ui.after.map((x, i) => `<li><span class="ov-after-t" title="${esc(x.task)}">${esc(x.task)}</span><span class="rtab-dim">${esc(x.when)}</span><button type="button" class="btn btn-sm btn-quiet" data-unafter="${i}" data-key="unafter:${i}">Cancel</button></li>`).join('')}</ul></section>` : '';
+  const after = ui.after.length ? `<section class="rtab"><h2 class="rtab-h">Runs after this <span class="n">${ui.after.length}</span></h2><ul class="ov-arts">${ui.after.map((x, i) => `<li><span class="ov-after-t" title="${esc(x.task)}">${esc(x.task)}</span><span class="rtab-dim">${esc(x.when)}</span>${R.button({ label: 'Cancel', kind: 'quiet', attrs: { 'data-unafter': i, 'data-key': 'unafter:' + i } })}</li>`).join('')}</ul></section>` : '';
   // Before it is built, the ask is all there is to say about the outcome.
   if (!o.ask) return focusHtml(v) + after + `<section class="rtab"><h2 class="rtab-h">What you asked</h2><p class="rtab-p ov-task${ui.taskOpen ? ' is-open' : ''}">${esc(o.task)}</p></section>`;
   // What went fine, one line each (What opens): the ask opens its parts in place, its only home; the evidence goes to
@@ -185,23 +172,24 @@ function changesPanel(v) {
   const head = (name, n, a, dl) => `<li class="ch-dir ch-group"><span class="ch-gn">${name}</span><span class="rtab-dim">${n}</span>${a !== undefined ? `<span class="ct"><span class="add">+${a}</span><span class="del">−${dl}</span></span>` : ''}</li>`;
   const rows = kinds.map(([name, xs]) => head(name, `${xs.length} ${xs.length === 1 ? 'file' : 'files'}`, xs.reduce((s, x) => s + x.a, 0), xs.reduce((s, x) => s + x.dl, 0)) + xs.slice().sort((x, y) => (y.a + y.dl) - (x.a + x.dl)).map((r) => {
     const m = d.fileMeta[r.p] || { st: 'M' };
-    const diff = open === r.i ? `<div class="ch-diff"><p class="ch-at">${esc(d.hunk.at)}</p><pre>${d.hunk.lines.map(([k, t]) => `<span class="${k === '+' ? 'add' : k === '-' ? 'del' : ''}">${esc(k + ' ' + t)}</span>`).join('\n')}</pre><button type="button" class="btn btn-sm" data-key="file-full" data-say="Opens the whole diff of the file">Open the whole diff</button></div>` : '';
+    const diff = open === r.i ? `<div class="ch-diff"><p class="ch-at">${esc(d.hunk.at)}</p><pre>${d.hunk.lines.map(([k, t]) => `<span class="${k === '+' ? 'add' : k === '-' ? 'del' : ''}">${esc(k + ' ' + t)}</span>`).join('\n')}</pre>${R.button({ label: 'Open the whole diff', attrs: { 'data-key': 'file-full', 'data-say': 'Opens the whole diff of the file' } })}</div>` : '';
     return `<li class="ch-file${open === r.i ? ' is-open' : ''}${ui.land === 'file:' + r.i ? ' is-flash' : ''}"><button type="button" class="ch-row" aria-expanded="${open === r.i}" data-file="${r.i}" data-key="file:${r.i}"><span class="ch-st is-${m.st}" title="${m.st === 'A' ? 'Added' : 'Modified'}">${m.st}</span><span class="ch-name" title="${esc(r.p)}">${esc(r.name)}<span class="ch-path">${esc(r.dir)}</span></span>${m.notes ? `<span class="ch-notes" title="${m.notes} review comments">${m.notes}</span>` : '<span class="ch-notes"></span>'}<span class="ct"><span class="add">+${r.a}</span><span class="del">−${r.dl}</span></span><span class="ch-blocks" aria-hidden="true">${blocks(r.a, r.dl)}</span></button>${diff}</li>`;
   }).join('')).join('');
   // Documents its steps wrote: they stay with the run and are not in the PR. A name opens it; one download at the end.
   const arts = v.over.artifacts;
-  const docs = arts.length ? head('Not in the code', String(arts.length)) + `<li class="ch-gnote">Written by the run’s steps; they stay with the run and are not in the PR</li>` + arts.map(([doc, step], i) => `<li class="ch-file ch-doc${ui.land === 'doc:' + i ? ' is-flash' : ''}"><span class="ch-st" aria-hidden="true"></span><span class="ch-name"><button type="button" class="ov-art-name" data-key="art:${i}" data-say="Opens ${esc(doc)}" title="Open ${esc(doc)}"><code>${esc(doc)}</code></button><span class="ch-path">from ${esc(step)}</span></span><button type="button" class="btn btn-sm btn-quiet btn-icon" data-key="dl:${i}" data-say="Downloading ${esc(doc)}" aria-label="Download ${esc(doc)}" title="Download ${esc(doc)}">${svg('download', 14)}</button></li>`).join('') : '';
+  const docs = arts.length ? head('Not in the code', String(arts.length)) + `<li class="ch-gnote">Written by the run’s steps; they stay with the run and are not in the PR</li>` + arts.map(([doc, step], i) => `<li class="ch-file ch-doc${ui.land === 'doc:' + i ? ' is-flash' : ''}"><span class="ch-st" aria-hidden="true"></span><span class="ch-name"><button type="button" class="ov-art-name" data-key="art:${i}" data-say="Opens ${esc(doc)}" title="Open ${esc(doc)}"><code>${esc(doc)}</code></button><span class="ch-path">from ${esc(step)}</span></span>${R.button({ label: 'Download ' + doc, kind: 'quiet', iconOnly: true, icon: svg('download', 14), attrs: { 'data-key': 'dl:' + i, 'data-say': 'Downloading ' + doc } })}</li>`).join('') : '';
   const where = v.place.folder ? `In a copy of ${v.place.folder}; Apply writes them into the folder.` : v.place.branch ? `${v.place.branch} into ${v.place.base || 'dev'}` : '';
   // The code's own actions sit in the Changes head, as the card's action does: Check out, the rest in its ▾.
   const chItems = (v.bar.stop ? [{ id: 'ch:refresh', text: 'Refresh', help: 'Reload the diff from the worktree' }] : [])
     .concat([{ id: 'ch:patch', text: 'Download patch', help: 'Every change as one .patch file' }, { id: 'ch:copy', text: 'Copy git commands', help: 'git fetch and git switch to this branch' }]);
-  const tools = v.place.folder ? '' : `<div class="btn-split rc-pop is-right ch-act"><button type="button" class="btn btn-sm" data-key="ch:checkout" data-say="Checked out ${esc(v.place.branch || 'the branch')} on this machine" title="Check the branch out on this machine">Check out</button><button type="button" class="btn btn-sm btn-icon" aria-label="More for these changes" aria-haspopup="menu" aria-expanded="${ui.menu === 'ch'}" data-menu="ch" data-key="menu:ch">${svg('chevron', 14)}</button>${menu('ch', chItems)}</div>`;
+  const tools = v.place.folder ? '' : R.splitButton({ main: { label: 'Check out', title: 'Check the branch out on this machine', attrs: { 'data-key': 'ch:checkout', 'data-say': `Checked out ${v.place.branch || 'the branch'} on this machine` } },
+    moreLabel: 'More for these changes', chevron: svg('chevron', 14), open: ui.menu === 'ch', menuHtml: menu('ch', chItems), moreAttrs: { 'data-menu': 'ch', 'data-key': 'menu:ch' }, cls: 'rc-pop is-right ch-act' });
   return `<section class="rtab"><div class="ch-head"><div class="ch-sum"><h2 class="rtab-h">${f.length} files <span class="ct"><span class="add">+${add}</span><span class="del">−${del}</span></span></h2><span class="rtab-dim" title="${esc(where)}">${esc(where)}</span></div>${tools}</div>
     <ul class="ch-list">${rows}${docs}</ul></section>`;
 }
 function activityPanel(v) {
   const only = ui.actFilter === 'problems';
-  const seg = `<div class="seg" role="group" aria-label="Show"><button type="button" data-filter="all" data-key="filter:all" aria-pressed="${!only}">All steps</button><button type="button" data-filter="problems" data-key="filter:problems" aria-pressed="${only}">Problems and questions</button></div>`;
+  const seg = R.segmented({ label: 'Show', hook: 'filter', items: [{ id: 'all', label: 'All steps', pressed: !only }, { id: 'problems', label: 'Problems and questions', pressed: only }] });
   const total = v.activity.reduce((a, st) => a + (parseFloat(String(st.meta).replace(/[^0-9.]/g, '')) || 0), 0) || 1;
   // One list for the whole tab, stage headings as full-width rows, so every step on the tab shares the same columns.
   // A step that ran more than once opens its rounds: how long each took and why it went round again.
@@ -217,34 +205,36 @@ function activityPanel(v) {
       const row = rowHtml(Object.assign({}, r, { ref: '', akey: r.ref, roundsKey: rd && r.loops ? key : '', roundsOpen: isOpen }), true);
       const sub = isOpen ? rd.map(([t, why], i) => `<li class="rd-route-row sc-row is-round"><span class="ac-round-n" aria-hidden="true">${i + 1}</span><span class="sc-name ac-why">${esc(why)}</span><span class="sc-time">${esc(t)}</span><span class="sc-rest"></span></li>`).join('') : '';
       const di = v.over.artifacts.findIndex(([, step]) => step === r.name);
-      const wrote = di < 0 ? '' : `<li class="rd-route-row sc-row is-round is-wrote"><span class="ac-round-n" aria-hidden="true"></span><span class="sc-name ac-why">Wrote <button type="button" class="dc-link" data-go="doc:${di}" data-key="wrote:${di}" title="Open it in Changes">${esc(v.over.artifacts[di][0])}</button></span><span class="sc-time"></span><span class="sc-rest"></span></li>`;
+      const wrote = di < 0 ? '' : `<li class="rd-route-row sc-row is-round is-wrote"><span class="ac-round-n" aria-hidden="true"></span><span class="sc-name ac-why">Wrote ${R.textLink({ label: v.over.artifacts[di][0], attrs: { 'data-go': 'doc:' + di, 'data-key': 'wrote:' + di, title: 'Open it in Changes' } })}</span><span class="sc-time"></span><span class="sc-rest"></span></li>`;
       return row + sub + wrote;
     }).join('');
   }).join('');
-  return `<div class="rtab-bar">${seg}<button type="button" class="btn btn-sm btn-quiet" data-key="graph" data-say="Opens the run graph, centred on the live step">Open the graph</button></div><section class="rtab rtab-stage"><ol class="rd-route-list sc-subs is-full" aria-label="Steps">${rows || '<li class="sc-stage-row"><p class="rtab-dim rtab-p">No problems or questions in this run.</p></li>'}</ol></section>`;
+  return `<div class="rtab-bar">${seg}${R.button({ label: 'Open the graph', kind: 'quiet', attrs: { 'data-key': 'graph', 'data-say': 'Opens the run graph, centred on the live step' } })}</div><section class="rtab rtab-stage"><ol class="rd-route-list sc-subs is-full" aria-label="Steps">${rows || '<li class="sc-stage-row"><p class="rtab-dim rtab-p">No problems or questions in this run.</p></li>'}</ol></section>`;
 }
 function decisionsPanel(v) {
   const ds = v.tabData.decisions;
   const by = (w) => ds.filter((x) => x.who === w).length;
   const ask = v.ask;
   const sum = [by('you') ? by('you') + ' by you' : '', by('away') ? by('away') + ' by Away mode' : '', by('default') ? by('default') + ' by default' : ''].filter(Boolean).join(' · ');
-  const waiting = ask ? `<li class="rd-route-row is-ask"><span class="rd-route-dot is-problem" role="img" aria-label="Waiting for you">${svg('question', 10)}</span><div class="dc-body"><p class="rtab-q">${esc(ask.q)}</p><p class="rtab-dim">Waiting for you · <button type="button" class="dc-link" data-goanswer data-key="dc-answer">Answer it in the card</button></p></div></li>` : '';
+  const waiting = ask ? `<li class="rd-route-row is-ask"><span class="rd-route-dot is-problem" role="img" aria-label="Waiting for you">${svg('question', 10)}</span><div class="dc-body"><p class="rtab-q">${esc(ask.q)}</p><p class="rtab-dim">Waiting for you · ${R.textLink({ label: 'Answer it in the card', attrs: { 'data-goanswer': true, 'data-key': 'dc-answer' } })}</p></div></li>` : '';
   return `<section class="rtab"><div class="ch-head"><h2 class="rtab-h">${ds.length} decisions</h2><span class="rtab-dim">${esc(sum)}</span></div>
     <ol class="rd-route-list dc-list">${waiting}${ds.map((x) => `<li class="rd-route-row is-done"><span class="rd-route-dot dc-who is-${x.who}" role="img" aria-label="${esc(WHO[x.who])}"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON_WHO[x.who]}</svg></span><div class="dc-body"><p class="rtab-q">${esc(x.q)}</p><p class="dc-a">${esc(x.a)}</p><p class="rtab-dim">${esc([x.step, WHO[x.who], x.note, x.when].filter(Boolean).join(' · '))}</p></div></li>`).join('')}</ol></section>`;
 }
 function panelHtml(v) {
   const t = v.tabs.find((x) => x.sel) || v.tabs[0]; const id = t.id;
   // a part that cannot be drawn says so in its own place; the rest of the page keeps working
-  if (ui.broken) return `<div class="empty-line is-err" role="alert"><span class="el-t">Could not show the ${esc(t.l.toLowerCase())}</span><span>Something went wrong here. The rest of the page still works.</span><span class="el-acts"><button type="button" class="btn btn-sm" data-fixpart data-key="fix-part">Reload this part</button><button type="button" class="btn btn-sm btn-quiet" data-say="${esc(DETAILS)}" data-key="part-details">Details</button></span></div>`;
+  if (ui.broken) return R.emptyState({ title: `Could not show the ${t.l.toLowerCase()}`, text: 'Something went wrong here. The rest of the page still works.', error: true,
+    actions: R.button({ label: 'Reload this part', attrs: { 'data-fixpart': true, 'data-key': 'fix-part' } }) + R.button({ label: 'Details', kind: 'quiet', attrs: { 'data-say': DETAILS, 'data-key': 'part-details' } }) });
   return ({ summary: summaryPanel, changes: changesPanel, activity: activityPanel, decisions: decisionsPanel })[id](v);
 }
 function figHtml(f, v) {
   if (f.k === 'Cost' && v) {
     const rows = v.activity.filter((st) => st.meta).map((st) => `<li><span>${esc(st.label)}</span><span class="ct">${esc(st.meta)}</span></li>`).join('');
-    return `<span class="rc-pop"><button type="button" class="rc-fig-link" data-menu="cost" data-key="menu:cost" aria-haspopup="dialog" aria-expanded="${ui.menu === 'cost'}" title="${esc(f.title || '')}">${esc(f.k)} <b>${esc(f.v)}</b></button>${f.of ? `<span class="rc-of${f.warn ? ' is-warn' : ''}">${esc(f.of)}</span>` : ''}${ui.menu === 'cost' ? `<div class="menu rc-cost" role="dialog" aria-label="Cost by stage"><p class="menu-h">Cost by stage</p><ul>${rows}<li class="is-total"><span>Total</span><span class="ct">${esc(f.v)}</span></li></ul><p class="menu-help">${esc(f.title || '')}. Each step’s cost and model are in Activity.</p></div>` : ''}</span>`;
+    const html = `<div class="menu rc-cost" role="dialog" aria-label="Cost by stage"><p class="menu-h">Cost by stage</p><ul>${rows}<li class="is-total"><span>Total</span><span class="ct">${esc(f.v)}</span></li></ul><p class="menu-help">${esc(f.title || '')}. Each step’s cost and model are in Activity.</p></div>`;
+    return R.figure({ k: f.k, v: f.v, of: f.of, warn: f.warn, title: f.title || '', pop: { open: ui.menu === 'cost', html, attrs: { 'data-menu': 'cost', 'data-key': 'menu:cost' } } });
   }
-  if (f.tab) return `<button type="button" class="rc-fig-link" data-tab="${f.tab}" data-key="fig:${f.tab}" title="Open Changes"${ui.tab === f.tab ? ' aria-current="true"' : ''}>${esc(f.k)}<b>${esc(f.v)}</b></button>`;
-  return `<span${f.title ? ` title="${esc(f.title)}"` : ''}>${esc(f.k)} <b>${esc(f.v)}</b>${f.of ? `<span class="rc-of${f.warn ? ' is-warn' : ''}">${esc(f.of)}</span>` : ''}</span>`;
+  if (f.tab) return R.figure({ k: f.k, v: f.v, tab: f.tab, title: 'Open Changes', current: ui.tab === f.tab });
+  return R.figure({ k: f.k, v: f.v, of: f.of, warn: f.warn, title: f.title });
 }
 
 function render() {
@@ -253,8 +243,10 @@ function render() {
   const v = M.view(ui.caseId, ui);
   const a = v.action;
   // The run's controls sit together on the status line: its one action (with ▾), then ⋯ for everything else.
-  const split = a ? `<div class="btn-split rc-action rc-pop is-right"><button type="button" class="btn btn-sm ${a.primary ? 'btn-primary' : ''}" title="${esc(a.help)}" data-key="act-main" data-label="${esc(a.label)}">${svg(a.icon, 14)}${esc(a.label)}</button>${a.items.length ? `<button type="button" class="btn btn-sm btn-icon ${a.primary ? 'btn-primary' : ''}" aria-label="More actions" aria-haspopup="menu" aria-expanded="${ui.menu === 'act'}" data-menu="act" data-key="menu:act">${svg('chevron', 14)}</button>${menu('act', a.items)}` : ''}</div>` : '';
-  const action = `<div class="rc-side">${split}<span class="rc-pop is-right"><button type="button" class="btn btn-sm btn-icon" aria-label="More for this run" aria-haspopup="menu" aria-expanded="${ui.menu === 'more'}" data-menu="more" data-key="menu:more"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8"></circle><circle cx="12" cy="12" r="1.8"></circle><circle cx="19" cy="12" r="1.8"></circle></svg></button>${ui.menu === 'groups' ? groupEditorHtml() : menu('more', moreItems(v))}</span></div>`;
+  const split = a ? R.splitButton({ main: { label: a.label, kind: a.primary ? 'primary' : '', icon: svg(a.icon, 14), title: a.help, attrs: { 'data-key': 'act-main', 'data-label': a.label } },
+    moreLabel: a.items.length ? 'More actions' : '', chevron: svg('chevron', 14), open: ui.menu === 'act', menuHtml: menu('act', a.items), moreAttrs: { 'data-menu': 'act', 'data-key': 'menu:act' }, cls: 'rc-action rc-pop is-right' }) : '';
+  const dots = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8"></circle><circle cx="12" cy="12" r="1.8"></circle><circle cx="19" cy="12" r="1.8"></circle></svg>';
+  const action = `<div class="rc-side">${split}<span class="rc-pop is-right">${R.button({ label: 'More for this run', iconOnly: true, title: false, icon: dots, attrs: { 'aria-haspopup': 'menu', 'aria-expanded': String(ui.menu === 'more'), 'data-menu': 'more', 'data-key': 'menu:more' } })}${ui.menu === 'groups' ? groupEditorHtml() : menu('more', moreItems(v))}</span></div>`;
   // Many labels and tags, one group: a run already in a feature or chain, or a group page, joins none; a run you
   // grouped can leave it again from the same menu.
   // Where the code lives, said as a phrase that follows the run: "branch into dev", "#959 merges branch into dev",
@@ -281,7 +273,8 @@ function render() {
   const pg = v.pager;
   const left = svg('chevron', 14).replace('M6 9.5l6 6 6-6', 'M14.5 6l-6 6 6 6');
   const right = svg('chevron', 14).replace('M6 9.5l6 6 6-6', 'M9.5 6l6 6-6 6');
-  const sib = (x, dir, icon) => `<button type="button" class="btn btn-sm btn-quiet btn-icon" data-sib="${x ? x.index : ''}" data-key="sib:${dir}" aria-label="${dir === 'prev' ? 'Previous' : 'Next'} run"${x && x.ok ? '' : ` disabled${x ? ` title="Run ${x.index + 1} hasn’t started"` : ''}`}>${icon}</button>`;
+  const sib = (x, dir, icon) => R.button({ label: (dir === 'prev' ? 'Previous' : 'Next') + ' run', kind: 'quiet', iconOnly: true, icon, title: x && !x.ok ? `Run ${x.index + 1} hasn’t started` : false,
+    attrs: { 'data-sib': x ? x.index : '', 'data-key': 'sib:' + dir, disabled: !(x && x.ok) } });
   const pager = pg ? `<span class="rc-pager" role="group" aria-label="Runs in this group">${sib(pg.prev, 'prev', left)}<span class="rc-pager-n">${pg.index + 1} of ${pg.n}</span>${sib(pg.next, 'next', right)}</span>` : '';
   const scope = v.bar.scope ? ` title="Applies to the whole ${esc(v.bar.scope)}: the running run and the ones after it"` : '';
 
@@ -290,8 +283,8 @@ function render() {
   const stages = v.stages.map((st) => `<button type="button" class="sc-stage" role="tab" id="st-${st.key}" aria-controls="stage-panel" aria-selected="${st.selected}" tabindex="${st.selected ? 0 : -1}" data-stage="${st.key}" data-key="stage:${st.key}" aria-label="${esc(st.aria)}" title="${esc(st.aria)}"><span class="l">${esc(st.label)}</span><span class="m">${esc(st.meta)}</span></button>`).join('');
   const o = v.open;
   const enter = o.key !== lastOpen; lastOpen = o.key;   // the steps fade in only when another stage opens, never on a repaint
-  const head = o.isRun ? `<div class="sc-head"><span class="sc-run" title="${esc(o.title)}">${esc(o.title)}</span>${o.meta ? `<span class="rtab-dim sc-run-cost">${esc(o.meta)}</span>` : ''}${o.canOpen ? `<button type="button" class="btn btn-sm" data-open-run="${o.runIndex}" data-key="open-run">Open run</button>` : v.bar.stop ? `<button type="button" class="btn btn-sm" data-replan="${o.runIndex}" data-key="replan" title="The planner re-cuts this run and the ones after it">Re-plan from here</button>` : ''}</div>`
-    : v.planHead ? `<div class="sc-head"><span class="sc-run">How the work was cut into runs</span><button type="button" class="btn btn-sm" data-key="open-plan" data-say="Opens plan.md">Open the plan</button></div>` : '';
+  const head = o.isRun ? `<div class="sc-head"><span class="sc-run" title="${esc(o.title)}">${esc(o.title)}</span>${o.meta ? `<span class="rtab-dim sc-run-cost">${esc(o.meta)}</span>` : ''}${o.canOpen ? `${R.button({ label: 'Open run', attrs: { 'data-open-run': o.runIndex, 'data-key': 'open-run' } })}` : v.bar.stop ? R.button({ label: 'Re-plan from here', title: 'The planner re-cuts this run and the ones after it', attrs: { 'data-replan': o.runIndex, 'data-key': 'replan' } }) : ''}</div>`
+    : v.planHead ? `<div class="sc-head"><span class="sc-run">How the work was cut into runs</span>${R.button({ label: 'Open the plan', attrs: { 'data-key': 'open-plan', 'data-say': 'Opens plan.md' } })}</div>` : '';
   // the next run of a group, under the run it follows: starts by itself, or asks first
   const then = v.then ? `<div class="sc-then">Then <b title="${esc(v.then.title)}">Run ${v.then.n} · ${esc(v.then.title)}</b><span class="rc-pop pd-basepop"><button type="button" class="pd-base pd-ship" data-menu="then" data-key="menu:then" aria-haspopup="menu" aria-expanded="${ui.menu === 'then'}" title="When run ${v.then.n} starts">${ui.askEach ? 'asks me first' : 'starts by itself'}${svg('chevron', 12)}</button>${menu('then', [{ id: 'group:go', text: 'Starts by itself', checked: !ui.askEach, help: 'Each run starts when the one before it is ready' }, { id: 'group:ask', text: 'Asks me first', checked: !!ui.askEach, help: 'Stops for your OK before the next run starts' }])}</span></div>` : '';
   const ask = v.ask && o.rows.some((r) => /is-ask/.test(r.rowCls)) ? answerHtml(v.ask) : '';
@@ -301,20 +294,22 @@ function render() {
   const scroller = document.scrollingElement || document.documentElement; const keepY = scroller.scrollTop;
   document.getElementById('card').innerHTML = `
   <div class="rc">
-    <div class="rc-bar">${crumbs}${ui.offline ? `<span class="rc-conn" role="status" title="Worca lost its connection to the server; your runs keep going and it reconnects by itself"><span class="status-dot is-grey" aria-hidden="true"></span>Offline · retrying</span>` : ''}${pager}</div>
+    <div class="rc-bar">${crumbs}${ui.offline ? `<span class="rc-conn" role="status" title="Worca lost its connection to the server; your runs keep going and it reconnects by itself">${R.statusDot({ tone: 'is-grey' })}Offline · retrying</span>` : ''}${pager}</div>
     ${stripHtml(v)}
     <div class="rc-head"><div class="rc-title-row"><h1 class="rc-heading${ui.titleOpen ? ' is-open' : ''}" title="${esc(v.title)}" data-title>${esc(v.title)}</h1></div>${facts ? `<div class="rc-facts">${facts}</div>` : ''}</div>
     <section class="rc-card" aria-label="Run status">
-      <div class="rc-zone"><span class="rc-rail">${statusDot(v)}</span><span class="rc-main rc-word">${esc(v.word)}</span>${action}${v.detail ? `<span class="rc-detail" title="${esc(v.detail)}">${esc(v.detail)}</span>` : ''}</div>
+      ${R.statusLine({ dot: statusDot(v), word: v.word, action, detail: v.detail })}
       <div class="rc-zone"><div class="rc-span"><div class="sc-track" style="grid-template-columns:repeat(${v.stages.length},minmax(0,1fr))" aria-hidden="true">${track}</div><div class="sc-stages" style="grid-template-columns:repeat(${v.stages.length},minmax(0,1fr))" role="tablist" aria-label="Stages">${stages}</div></div></div>
       <div class="rc-zone is-ruled" role="tabpanel" id="stage-panel" aria-labelledby="st-${o.key}">${head}${panel}${then}</div>
-      <div class="rc-zone is-ruled"><div class="rc-figs">${v.figs.map((f) => figHtml(f, v)).join('')}</div></div>
+      <div class="rc-zone is-ruled">${R.figures(v.figs.map((f) => figHtml(f, v)))}</div>
     </section>
-    <div class="tabs rc-tabs" role="tablist" aria-label="Run detail">${v.tabs.map((t) => `<button type="button" class="tab" role="tab" id="tab-${t.id}" aria-controls="rtab-panel" aria-selected="${t.sel}" tabindex="${t.sel ? 0 : -1}" data-tab="${t.id}" data-key="tab:${t.id}">${esc(t.l)}${t.n ? `<span class="n">${esc(t.n)}</span>` : ''}</button>`).join('')}</div>
+    ${R.tabs({ label: 'Run detail', controls: 'rtab-panel', cls: 'rc-tabs', items: v.tabs.map((t) => ({ id: t.id, label: t.l, count: t.n, selected: t.sel })) })}
     ${prDialogHtml(v)}
-    <div class="rc-toast${ui.toast ? ' is-on' : ''}" role="status" aria-live="polite">${esc(ui.toast || '')}</div>
+    ${R.toast({ text: ui.toast || '' })}
     <div class="rtab-panel" role="tabpanel" id="rtab-panel" aria-labelledby="tab-${sel}" tabindex="0">${panelHtml(v)}</div>
-    ${ui.crash ? `<div class="toasts"><div class="toast err" role="alert"><span class="ti">${svg('alert', 15)}</span><span class="tb"><span class="tt">Something went wrong${ui.crash.n > 1 ? ` <span class="badge" title="It happened ${ui.crash.n} times">${ui.crash.n}</span>` : ''}</span><span class="td">Worca hit an error it did not expect. Your runs keep going.</span><span class="el-acts"><button type="button" class="btn btn-sm" data-crash="reload" data-key="crash-reload">Reload</button><button type="button" class="btn btn-sm btn-quiet" data-say="${esc(DETAILS)}" data-key="crash-details">Copy details</button></span></span><button type="button" class="btn btn-sm btn-quiet btn-icon" data-crash="close" data-key="crash-close" aria-label="Close">${svg('x', 14)}</button></div></div>` : ''}
+    ${ui.crash ? R.errorToast({ title: 'Something went wrong', text: 'Worca hit an error it did not expect. Your runs keep going.', icon: svg('alert', 15), count: ui.crash.n,
+    actions: R.button({ label: 'Reload', attrs: { 'data-crash': 'reload', 'data-key': 'crash-reload' } }) + R.button({ label: 'Copy details', kind: 'quiet', attrs: { 'data-say': DETAILS, 'data-key': 'crash-details' } }),
+    close: R.button({ label: 'Close', kind: 'quiet', iconOnly: true, title: false, icon: svg('x', 14), attrs: { 'data-crash': 'close', 'data-key': 'crash-close' } }) }) : ''}
   </div>`;
 
   if (scroller.scrollTop !== keepY) scroller.scrollTop = keepY;   // nothing moves by itself: a repaint never scrolls the page
@@ -485,22 +480,22 @@ function nextEvent() {
 // The page asks you something in one place, under the bar: confirm a step that cannot be taken back, schedule a run
 // after this one, or set up the PR before it opens.
 function stripHtml(v) {
-  const acts = (yes, cls, busy) => `<span class="rc-confirm-acts"><button type="button" class="btn btn-sm ${cls}" data-confirm="yes" data-key="confirm:yes"${busy ? ' disabled' : ''}>${esc(yes)}</button><button type="button" class="btn btn-sm btn-quiet" data-confirm="no" data-key="confirm:no">Cancel</button></span>`;
+  const acts = (yes) => R.confirmActions({ yes });
   if (ui.dialog === 'after') {
     const opts = v.finished ? ['Now, as a follow-up'] : ['When this run finishes'].concat(v.place.pr ? ['When its PR merges'] : []);
     return `<form class="rc-confirm is-form" role="dialog" aria-labelledby="rc-strip-t" data-form="after"><span class="rc-confirm-t" id="rc-strip-t">${esc(v.runAfter.label)}</span>
       <input class="input input-sm" id="after-task" type="text" placeholder="What should the next run do?" aria-label="Task for the next run" data-key="after-task" value="${esc(ui.afterDraft || '')}">
-      ${opts.length > 1 ? `<select class="select input-sm" id="after-when" aria-label="When it starts" data-key="after-when">${opts.map((o) => `<option>${esc(o)}</option>`).join('')}</select>` : `<span class="rtab-dim" id="after-when-t">${esc(opts[0])}</span>`}${acts(v.finished ? 'Start run' : 'Schedule', 'btn-primary')}</form>`;
+      ${opts.length > 1 ? `<select class="select input-sm" id="after-when" aria-label="When it starts" data-key="after-when">${opts.map((o) => `<option>${esc(o)}</option>`).join('')}</select>` : `<span class="rtab-dim" id="after-when-t">${esc(opts[0])}</span>`}${acts(v.finished ? 'Start run' : 'Schedule')}</form>`;
   }
   if (ui.dialog === 'changes') {
     return `<form class="rc-confirm is-form" role="dialog" aria-labelledby="rc-strip-t" data-form="changes"><span class="rc-confirm-t" id="rc-strip-t">Tell the planner what to change</span>
       <div class="pd-adorn${ui.changesDraft ? ' is-writing' : ''}" style="flex:1 0 100%"><textarea class="textarea" id="changes-text" rows="3" placeholder="${ui.changesDraft ? 'Drafting from the 2 open issues…' : 'What should the plan do differently?'}" data-key="changes-text"${ui.changesDraft ? ' readonly' : ''} style="width:100%;font-size:var(--fs-body)">${ui.changesDraft ? '' : esc(ui.changesText || '')}</textarea><span class="pd-act">${ui.changesDraft ? '<button type="button" class="pd-stop" data-stopdraft="changes" data-key="draft-stop" aria-label="Stop writing">' + svg('x', 12) + '</button>' : `<button type="button" class="pd-ai" data-draft="changes" data-key="draft-changes" title="${esc(draftTip('Draft it from the open issues'))}" aria-label="Draft it from the open issues"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"></path></svg></button>`}</span></div>
-      ${ui.changesErr ? draftFail('changes') : ''}${acts('Send to the planner', 'btn-primary')}</form>`;
+      ${ui.changesErr ? draftFail('changes') : ''}${acts('Send to the planner')}</form>`;
   }
   if (ui.confirm) {
     const c = ui.confirm; const busy = !!ui.busy && !ui.dialog;
-    const text = c.err ? `<span class="rc-confirm-t is-err" id="rc-strip-t" role="alert">${esc(c.err.title)}<span class="rc-confirm-why">${esc(c.err.detail)}${c.err.odd ? ` <button type="button" class="pd-retry" data-say="${esc(DETAILS)}" data-key="err-details">Details</button>` : ''}</span></span>` : `<span class="rc-confirm-t" id="rc-strip-t">${esc(c.text)}</span>`;
-    return `<div class="rc-confirm" role="alertdialog" aria-labelledby="rc-strip-t">${text}${acts(busy ? working(c.label) : c.err ? 'Try again' : c.yes, c.danger ? 'btn-danger' : 'btn-primary', busy)}</div>`;
+    const err = c.err && { title: c.err.title, detail: c.err.detail, extra: c.err.odd ? `<button type="button" class="pd-retry" data-say="${esc(DETAILS)}" data-key="err-details">Details</button>` : '' };
+    return R.confirmStrip({ text: c.text, yes: c.yes, danger: c.danger, busy: busy ? working(c.label) : '', err });
   }
   return '';
 }
@@ -545,9 +540,9 @@ function prDialogHtml(v) {
   const alert = pr.err ? `<div class="pd-alert" role="alert"><b>${esc(pr.err.title)}</b><span>${esc(pr.err.detail)}${pr.err.odd ? ` <button type="button" class="pd-retry" data-say="${esc(DETAILS)}" data-key="err-details">Details</button>` : ''}</span></div>` : '';
   const busy = !!ui.busy;
   return `<div class="viewer-modal" role="dialog" aria-modal="true" aria-labelledby="pd-h"><div class="pd2">
-    <div class="pd2-head"><h2 class="pd-h" id="pd-h">${esc(ui.dialogLabel)}</h2><button type="button" class="btn btn-sm btn-quiet btn-icon" data-pd="cancel" data-key="pd-close" aria-label="Close">${svg('x', 14)}</button></div>
+    <div class="pd2-head"><h2 class="pd-h" id="pd-h">${esc(ui.dialogLabel)}</h2>${R.button({ label: 'Close', kind: 'quiet', iconOnly: true, title: false, icon: svg('x', 14), attrs: { 'data-pd': 'cancel', 'data-key': 'pd-close' } })}</div>
     <div class="pd2-body">${into}${rowsHtml}${title}${opts}${alert}</div>
-    <div class="pd2-foot"><button type="button" class="btn btn-sm" data-pd="cancel" data-key="pd-cancel">Cancel</button><button type="button" class="btn btn-sm btn-primary" data-pd="ok" data-key="pd-ok"${busy ? ' disabled' : ''}>${esc(busy ? working(ui.dialogLabel) : ui.dialogLabel)}</button></div>
+    <div class="pd2-foot">${R.button({ label: 'Cancel', attrs: { 'data-pd': 'cancel', 'data-key': 'pd-cancel' } })}${R.button({ label: busy ? working(ui.dialogLabel) : ui.dialogLabel, kind: 'primary', attrs: { 'data-pd': 'ok', 'data-key': 'pd-ok', disabled: busy } })}</div>
   </div></div>`;
 }
 // Writing for you (the violet shimmer): the title quickly, the description from the run; Stop ends it.

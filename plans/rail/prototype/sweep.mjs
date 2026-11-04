@@ -3,7 +3,9 @@
 // overlapping siblings in rows, section edges off the text edge below the card, low-contrast text, mojibake.
 import { chromium } from '/Users/emil.angelov/src/worka-cc/node_modules/playwright/index.mjs';
 import { writeAppCss } from './app-css.mjs';
+import { writeComponentsJs } from './components-js.mjs';
 writeAppCss();   // the app's CSS, assembled from its parts
+writeComponentsJs();   // the Rail components, bundled for file://
 const URL = process.argv[2];
 const b = await chromium.launch({ channel: 'chrome' });
 const issues = new Map(); const add = (k, where) => { if (!issues.has(k)) issues.set(k, []); if (issues.get(k).length < 4) issues.get(k).push(where); };

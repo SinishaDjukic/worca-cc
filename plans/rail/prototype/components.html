@@ -1,0 +1,70 @@
+<meta charset="utf-8">
+<title>Worca Rail · Components</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="app.css">
+<link rel="stylesheet" href="rail-look.css">
+<link rel="stylesheet" href="rail.css">
+<style>
+  @font-face{font-family:'JetBrains Mono';font-weight:400;src:url('../../../ui/public/fonts/jetbrains-mono-latin-400-normal.woff2') format('woff2');}
+  @media (prefers-color-scheme: dark){:root:not([data-theme="light"]){color-scheme:dark;}}
+  :root[data-theme="dark"]{color-scheme:dark;}
+  html,body{background:var(--bg);color:var(--ink);}
+  .rc-board.mk-page{min-height:100%;padding-block:32px;padding-left:max(16px, env(safe-area-inset-left, 0px));padding-right:max(16px, env(safe-area-inset-right, 0px));}
+  .mk-wrap{max-width:720px;margin:0 auto;display:flex;flex-direction:column;gap:32px;}
+  .mk-intro{margin:0;font-size:var(--fs-meta);color:var(--ink-2);max-width:65ch;}
+  .gl{display:flex;flex-direction:column;gap:12px;padding-top:24px;border-top:1px solid var(--line);}
+  .gl-h{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 12px;margin:0;font:600 var(--fs-section)/var(--lh-title) var(--sans);}
+  .gl-h code{font:400 var(--fs-caption)/1 var(--mono);color:var(--ink-2);}
+  .gl-need,.gl-rules{margin:0;font-size:var(--fs-meta);color:var(--ink-2);}
+  .gl-rules{padding-left:18px;}
+  .gl-ex{display:flex;flex-direction:column;gap:6px;}
+  .gl-ex-l{font-size:var(--fs-caption);color:var(--ink-3);}
+  .gl-show{display:flex;flex-wrap:wrap;align-items:center;gap:8px;min-width:0;}
+  .gl-show > .menu{position:static;}
+  .gl-show .rc-toast{position:static;transform:none;opacity:1;}
+  .gl-show .toasts{position:static;}
+  .gl-show > .rc-card{flex:1 1 100%;}
+</style>
+<div class="rc-board mk-page">
+<div class="mk-wrap rc" id="gallery">
+  <p class="mk-intro">Every Worca Rail component built in code, drawn by the code itself (<code>ui/public/design-system/components/</code>) in its states, with what the catalog says it is for. The rules: <a href="https://claude.ai/artifact/P38jGMS7jA9XQu2U2uP3HP" style="color:var(--ink)">Worca Rail · Design System</a>. The pages built from them: <a href="index.html" style="color:var(--ink)">the run page</a>.</p>
+</div>
+</div>
+<script src="components.js"></script>
+<script>
+  // Each component's examples: what the code draws for each of its states.
+  const R = window.RailUI;
+  const P = (d) => `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${d}"></path></svg>`;
+  const CHEV = P('M6 9.5l6 6 6-6'); const X = P('M7 7l10 10M17 7 7 17'); const MERGE = P('M6 7.7v8.6M6 7.7c0 2.4 2.5 4.3 9.8 4.3');
+  const DOTS = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8"></circle><circle cx="12" cy="12" r="1.8"></circle><circle cx="19" cy="12" r="1.8"></circle></svg>';
+  const card = (html) => `<section class="rc-card">${html}</section>`;   // a StatusLine lives in a card
+  const more = R.button({ label: 'More for this run', iconOnly: true, title: false, icon: DOTS });
+  const EX = {
+    Button: [['Each role', R.button({ label: 'Merge', kind: 'primary' }) + R.button({ label: 'Check out' }) + R.button({ label: 'Open the graph', kind: 'quiet' }) + R.button({ label: 'Stop', kind: 'danger' })],
+      ['Icon only, with a split', R.button({ label: 'Close', kind: 'quiet', iconOnly: true, icon: X }) + R.splitButton({ main: { label: 'Merge PR', kind: 'primary', icon: MERGE }, moreLabel: 'More actions', chevron: CHEV })],
+      ['Disabled', R.button({ label: 'Merging…', kind: 'primary', attrs: { disabled: true } })]],
+    CompactMenu: [['Choices, steps, then danger after one rule', R.compactMenu({ items: [{ header: 'Away mode' }, { text: 'As set up', checked: true, help: 'Follows Settings' }, { text: 'Never', checked: false }, { sep: true }, { text: 'Terminal', hint: 'Ctrl+`' }, { text: 'Copy link' }, { text: 'Archive', danger: true }] })]],
+    StatusLine: [['Ready, its one step', card(R.statusLine({ dot: R.statusDot({ tone: 'is-green' }), word: 'Ready to merge', detail: 'Checks pass · a reviewer approved', action: `<div class="rc-side">${R.splitButton({ main: { label: 'Merge PR', kind: 'primary' }, moreLabel: 'More actions', chevron: CHEV })}${more}</div>` }))],
+      ['Needs you', card(R.statusLine({ dot: R.statusDot({ sym: 'q', glyph: '<path d="M9.2 9.2a2.9 2.9 0 1 1 4.2 2.6c-.9.5-1.4 1.1-1.4 2v.4"></path><path d="M12 17.6h.01"></path>' }), word: 'Needs your answer', detail: 'Review asks which breadcrumb to keep on phones', action: `<div class="rc-side">${R.button({ label: 'Send answer', kind: 'primary' })}${more}</div>` }))]],
+    ConfirmStrip: [['Asks', R.confirmStrip({ text: 'Merge #959 into dev?', yes: 'Merge' })], ['Working', R.confirmStrip({ text: 'Merge #959 into dev?', yes: 'Merge', busy: 'Merging…' })],
+      ['Failed: what, why, Try again', R.confirmStrip({ text: '', yes: 'Stop', danger: true, err: { title: 'Could not stop the run', detail: 'The run did not answer; it may have just finished. Nothing changed.' } })]],
+    Tabs: [['A count by exception', R.tabs({ label: 'Run detail', controls: 'x', items: [{ id: 'a', label: 'Overview', selected: true }, { id: 'b', label: 'Changes', count: '5 · 3 docs' }, { id: 'c', label: 'Activity' }, { id: 'd', label: 'Decisions', count: 7 }] })]],
+    Segmented: [['One pressed', R.segmented({ label: 'Show', items: [{ id: 'all', label: 'All steps', pressed: true }, { id: 'p', label: 'Problems and questions' }] })]],
+    Figures: [['Against its budget; one opens its home', R.figures([R.figure({ k: 'Time', v: '42m' }), R.figure({ k: 'Cost', v: '$84.10', of: 'of $120' }), R.figure({ k: 'Changes', v: '+358 −144', tab: 'changes' })])],
+      ['Near the limit', R.figures([R.figure({ k: 'Cost', v: '$112.40', of: 'of $120', warn: true })])]],
+    'Text link': [['Inside a sentence', `<span class="ov-why">Two reviewers disagreed · ${R.textLink({ label: 'See the decision' })}</span>`]],
+    Toast: [['Done', R.toast({ text: 'Merged #959 into dev' })],
+      ['A break nobody planned for, counted', R.errorToast({ title: 'Something went wrong', text: 'Worca hit an error it did not expect. Your runs keep going.', icon: P('M12 6.8v6.6M12 17.6h.01'), count: 2, actions: R.button({ label: 'Reload' }) + R.button({ label: 'Copy details', kind: 'quiet' }), close: R.button({ label: 'Close', kind: 'quiet', iconOnly: true, title: false, icon: X }) })]],
+    EmptyState: [['Empty', R.emptyState({ title: 'No runs yet', actions: R.button({ label: 'Start a run', kind: 'quiet' }) })],
+      ['A part that cannot be drawn', R.emptyState({ title: 'Could not show the changes', text: 'Something went wrong here. The rest of the page still works.', error: true, actions: R.button({ label: 'Reload this part' }) + R.button({ label: 'Details', kind: 'quiet' }) })]],
+  };
+  const g = document.getElementById('gallery');
+  const coded = window.RailCatalog.components.filter((c) => c.code && EX[c.name]);
+  g.insertAdjacentHTML('beforeend', coded.map((c) => `<section class="gl" id="${R.esc(c.name.replace(/\s/g, '-'))}">
+    <h2 class="gl-h">${R.esc(c.name)} <code>${R.esc(c.code)}</code></h2>
+    <p class="gl-need">For ${R.esc(c.needs.join('; '))}${c.notFor ? `. Not for ${R.esc(c.notFor)}` : ''}.</p>
+    ${c.rules ? `<ul class="gl-rules">${c.rules.map((x) => `<li>${R.esc(x)}</li>`).join('')}</ul>` : ''}
+    ${EX[c.name].map(([l, html]) => `<div class="gl-ex"><span class="gl-ex-l">${R.esc(l)}</span><div class="gl-show">${html}</div></div>`).join('')}</section>`).join(''));
+  const missing = window.RailCatalog.components.filter((c) => c.code && !EX[c.name]).map((c) => c.name);
+  if (missing.length) g.insertAdjacentHTML('beforeend', `<p class="mk-intro">Built in code, not drawn here yet: ${R.esc(missing.join(', '))}.</p>`);
+</script>

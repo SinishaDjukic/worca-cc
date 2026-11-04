@@ -739,7 +739,8 @@ html,body{height:auto;overflow:visible;margin:0;}
 /* When something breaks unexpectedly (docs/design-system.md): a part that cannot be drawn says so in its place, the
    background error is the shared error toast, a lost connection is a quiet line on the top bar. */
 .empty-line.is-err{flex-direction:column;align-items:flex-start;gap:2px;}
-.el-t{color:var(--red-ink-strong);font-weight:500;}
+.el-t{color:var(--ink);font-weight:500;}
+.empty-line.is-err .el-t{color:var(--red-ink-strong);}   /* red only when a part could not be drawn */
 .el-acts{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px;}
 .rc .toasts{bottom:calc(24px + env(safe-area-inset-bottom, 0px));}
 .rc-conn{display:inline-flex;align-items:center;gap:6px;margin-left:auto;font-size:var(--fs-meta);color:var(--ink-2);white-space:nowrap;}

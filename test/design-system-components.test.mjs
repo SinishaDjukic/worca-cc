@@ -1,0 +1,131 @@
+// test/design-system-components.test.mjs — the Worca Rail components (ui/public/design-system/components/): each
+// writes the markup its catalog entry promises, escapes what it is given, and carries its roles and states.
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { JSDOM } from 'jsdom';
+import * as C from '../ui/public/design-system/components/index.mjs';
+
+const dom = (html) => new JSDOM(`<body>${html}</body>`).window.document.body.firstElementChild;
+
+test('esc and attrs: text is escaped; true is bare, false and null are dropped', () => {
+  assert.equal(C.esc('<a href="x">&</a>'), '&lt;a href=&quot;x&quot;&gt;&amp;&lt;/a&gt;');
+  assert.equal(C.attrs({ 'data-key': 'a"b', disabled: true, hidden: false, title: null }), ' data-key="a&quot;b" disabled');
+});
+
+test('button: one class per role, an icon-only button names itself', () => {
+  assert.equal(C.button({ label: 'Merge', kind: 'primary', attrs: { 'data-key': 'm' } }),
+    '<button type="button" class="btn btn-sm btn-primary" data-key="m">Merge</button>');
+  const b = dom(C.button({ label: 'More for this run', icon: '<svg></svg>', iconOnly: true }));
+  assert.equal(b.className, 'btn btn-sm btn-icon');
+  assert.equal(b.getAttribute('aria-label'), 'More for this run');
+  assert.equal(b.title, 'More for this run');
+  assert.equal(b.textContent, '');
+  assert.throws(() => C.button({ label: 'x', kind: 'big' }), /unknown kind/);
+});
+
+test('splitButton: the ▾ takes the main kind and shows its menu only when open', () => {
+  const closed = dom(C.splitButton({ main: { label: 'Merge', kind: 'primary' }, moreLabel: 'More actions', chevron: '<svg></svg>', menuHtml: '<div class="menu"></div>' }));
+  const [main, more] = closed.querySelectorAll('button');
+  assert.equal(main.textContent, 'Merge');
+  assert.match(more.className, /btn-primary/);
+  assert.equal(more.getAttribute('aria-expanded'), 'false');
+  assert.equal(closed.querySelector('.menu'), null);
+  const open = dom(C.splitButton({ main: { label: 'Merge' }, moreLabel: 'More actions', chevron: '', open: true, menuHtml: '<div class="menu"></div>' }));
+  assert.ok(open.querySelector('.menu'));
+  assert.equal(dom(C.splitButton({ main: { label: 'Merge' } })).querySelectorAll('button').length, 1, 'no alternatives, no ▾');
+});
+
+test('compactMenu: choices are radios, danger comes after one rule, help is the tooltip', () => {
+  const m = dom(C.compactMenu({ items: [
+    { header: 'Away mode' }, { id: 'a', text: 'As set up', checked: true }, { id: 'b', text: 'Never', checked: false }, { sep: true },
+    { text: 'Copy link', hint: '⌘L', help: 'Paste it anywhere' }, { text: 'Archive', danger: true }, { text: 'Discard', danger: true, off: true },
+  ] }));
+  const items = [...m.querySelectorAll('.menu-item')];
+  assert.deepEqual(items.map((x) => x.getAttribute('role')), ['menuitemradio', 'menuitemradio', 'menuitem', 'menuitem', 'menuitem']);
+  assert.equal(items[0].getAttribute('aria-checked'), 'true');
+  assert.equal(items[2].title, 'Paste it anywhere');
+  assert.equal(items[2].querySelector('.mi-hint').textContent, '⌘L');
+  assert.equal(m.querySelectorAll('.menu-sep').length, 2, 'the separator, then one rule before the danger items');
+  assert.ok(items[3].previousElementSibling.matches('.menu-sep'));
+  assert.ok(items[4].previousElementSibling === items[3], 'one rule only');
+  assert.equal(items[4].getAttribute('aria-disabled'), 'true');
+  assert.equal(items[2].dataset.menuPick, 'Copy link', 'the text when no id');
+});
+
+test('statusLine: rail mark, the state word, the action slot, the detail with its tooltip', () => {
+  const z = dom(C.statusLine({ dot: C.statusDot({ tone: 'is-green' }), word: 'Ready to merge', action: '<div class="rc-side"></div>', detail: 'Checks pass <ok>' }));
+  assert.equal(z.className, 'rc-zone');
+  assert.ok(z.querySelector('.rc-rail > .status-dot.is-green'));
+  assert.equal(z.querySelector('.rc-word').textContent, 'Ready to merge');
+  assert.ok(z.querySelector('.rc-side'));
+  assert.equal(z.querySelector('.rc-detail').title, 'Checks pass <ok>');
+  assert.match(C.statusDot({ sym: 'q', glyph: '<path/>' }), /is-amber has-sym/);
+  assert.match(C.statusDot({ sym: '!' }), /is-red has-sym/);
+});
+
+test('confirmStrip: asks, works, then fails with the reason and Try again', () => {
+  const ask = dom(C.confirmStrip({ text: 'Merge #959 into dev?', yes: 'Merge' }));
+  assert.equal(ask.getAttribute('role'), 'alertdialog');
+  assert.equal(ask.getAttribute('aria-labelledby'), 'rc-strip-t');
+  assert.deepEqual([...ask.querySelectorAll('button')].map((b) => b.textContent), ['Merge', 'Cancel']);
+  assert.match(ask.querySelector('[data-confirm="yes"]').className, /btn-primary/);
+  const busy = dom(C.confirmStrip({ text: 'x', yes: 'Merge', busy: 'Merging…' }));
+  assert.equal(busy.querySelector('[data-confirm="yes"]').textContent, 'Merging…');
+  assert.ok(busy.querySelector('[data-confirm="yes"]').disabled);
+  const err = dom(C.confirmStrip({ text: 'x', yes: 'Stop', danger: true, err: { title: 'Could not stop', detail: 'It had just finished. Nothing changed.' } }));
+  assert.equal(err.querySelector('[role="alert"]').firstChild.textContent, 'Could not stop');
+  assert.equal(err.querySelector('.rc-confirm-why').textContent, 'It had just finished. Nothing changed.');
+  assert.equal(err.querySelector('[data-confirm="yes"]').textContent, 'Try again');
+  assert.match(err.querySelector('[data-confirm="yes"]').className, /btn-danger/);
+});
+
+test('tabs: one Tab stop, each tab names its panel, a count only when there is one', () => {
+  const t = dom(C.tabs({ label: 'Run detail', controls: 'p', items: [{ id: 'summary', label: 'Overview', selected: true }, { id: 'changes', label: 'Changes', count: '5 · 3 docs' }] }));
+  const [a, b] = t.querySelectorAll('[role="tab"]');
+  assert.equal(t.getAttribute('role'), 'tablist');
+  assert.equal(a.getAttribute('aria-selected'), 'true');
+  assert.equal(a.tabIndex, 0);
+  assert.equal(b.tabIndex, -1);
+  assert.equal(b.getAttribute('aria-controls'), 'p');
+  assert.equal(a.querySelector('.n'), null);
+  assert.equal(b.querySelector('.n').textContent, '5 · 3 docs');
+});
+
+test('segmented, figures, toast, emptyState, textLink', () => {
+  const s = dom(C.segmented({ label: 'Show', hook: 'filter', items: [{ id: 'all', label: 'All steps', pressed: true }, { id: 'problems', label: 'Problems' }] }));
+  assert.deepEqual([...s.querySelectorAll('button')].map((b) => [b.dataset.filter, b.getAttribute('aria-pressed')]), [['all', 'true'], ['problems', 'false']]);
+  const f = dom(C.figures([C.figure({ k: 'Cost', v: '$4.10', of: 'of $10', warn: true }), C.figure({ k: 'Changes', v: '+120', tab: 'changes', current: true })]));
+  assert.equal(f.querySelector('.rc-of.is-warn').textContent, 'of $10');
+  assert.equal(f.querySelector('.rc-fig-link').getAttribute('aria-current'), 'true');
+  const pop = (open) => dom(C.figure({ k: 'Cost', v: '$4', pop: { open, html: '<div class="menu"></div>', attrs: { 'data-menu': 'cost' } } }));
+  assert.equal(pop(false).querySelector('button').getAttribute('aria-expanded'), 'false');
+  assert.equal(pop(false).querySelector('.menu'), null);
+  assert.ok(pop(true).querySelector('.menu'), 'its detail opens in place');
+  assert.equal(dom(C.toast()).className, 'rc-toast');
+  assert.equal(dom(C.toast({ text: 'Merged' })).className, 'rc-toast is-on');
+  const e = dom(C.errorToast({ title: 'Something went wrong', text: 'Your runs keep going.', icon: '', count: 3 }));
+  assert.equal(e.querySelector('.badge').textContent, '3');
+  assert.equal(dom(C.errorToast({ title: 't', text: 'x', icon: '', count: 1 })).querySelector('.badge'), null, 'once is not a count');
+  const es = dom(C.emptyState({ title: 'Could not show the changes', text: 'The rest still works.', error: true }));
+  assert.equal(es.getAttribute('role'), 'alert');
+  assert.equal(dom(C.emptyState({ title: 'No runs yet' })).getAttribute('role'), null);
+  assert.equal(C.textLink({ label: 'Open it', attrs: { 'data-go': 'doc:0' } }), '<button type="button" class="dc-link" data-go="doc:0">Open it</button>');
+});
+
+test('toElement turns markup into an element for pages that build the DOM', () => {
+  const { document } = new JSDOM('').window;
+  const el = C.toElement(document, C.button({ label: 'Go' }));
+  assert.equal(el.tagName, 'BUTTON');
+});
+
+test('the catalog names a module for every component built in code, and each module exports it', async () => {
+  const cat = JSON.parse(readFileSync(new URL('../docs/design-system-catalog.json', import.meta.url), 'utf8'));
+  const coded = cat.components.filter((c) => c.code);
+  assert.ok(coded.length >= 9, 'the run page\'s components point at their code');
+  for (const c of coded) {
+    const [file, name] = c.code.split('#');
+    const mod = await import(new URL('../' + file, import.meta.url));
+    assert.equal(typeof mod[name], 'function', `${c.name}: ${c.code}`);
+  }
+});

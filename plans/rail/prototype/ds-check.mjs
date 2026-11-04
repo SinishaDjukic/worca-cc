@@ -7,7 +7,9 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { chromium } from '/Users/emil.angelov/src/worka-cc/node_modules/playwright/index.mjs';
 import { APP_CSS, writeAppCss } from './app-css.mjs';
+import { writeComponentsJs } from './components-js.mjs';
 writeAppCss();   // the app's CSS, assembled from its parts
+writeComponentsJs();   // the Rail components, bundled for file://
 const here = (f) => fileURLToPath(new URL(f, import.meta.url));
 const SHEETS = ['rail-look.css', 'rail.css', 'pulse.css'];
 const ALL = [APP_CSS, ...SHEETS.map(here), here('index.html'), here('pulse.html')];
@@ -55,6 +57,23 @@ for (const name of SHEETS) {
       if (p === 'box-shadow' && /\d+px \d+px [1-9]\d*px/.test(v) && !/var\(--shadow-/.test(v)) add('a shadow that is not a token', `${at}`);
     }
     for (const m of code.matchAll(/var\((--[a-z0-9-]+)/gi)) if (!tokens.has(m[1])) add('a token that does not exist', `${at} ${m[1]}`);
+  });
+}
+
+// --- the components ---
+// A page built from the components (ui/public/design-system/components/) writes none of their markup by hand: the
+// component brings it, so a fix or an upgrade reaches every page. BUILT lists the pages moved onto them; the others
+// move one at a time and join the list.
+const BUILT = ['run-page.js'];
+const OWN = {
+  Button: /class="btn[ "]/, CompactMenu: /class="menu"/, StatusLine: /class="status-dot[ "]/, ConfirmStrip: /class="rc-confirm"/,
+  Tabs: /class="(tabs|tab)[ "]/, Segmented: /class="seg"/, Figures: /class="(rc-figs|rc-fig-link)[ "]/, Toast: /class="(rc-toast|toasts)[ "]/,
+  EmptyState: /class="empty-line[ "]/, 'Text link': /class="dc-link"/,
+};
+for (const name of BUILT) {
+  readFileSync(here(name), 'utf8').split('\n').forEach((line, i) => {
+    if (/ds-ok:/.test(line)) return;
+    for (const [c, re] of Object.entries(OWN)) if (re.test(line)) add('markup a component builds, written by hand (use the component)', `${name}:${i + 1} ${c}`);
   });
 }
 
