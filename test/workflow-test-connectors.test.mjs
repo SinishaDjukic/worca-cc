@@ -252,7 +252,7 @@ test('a pretend try: only stand-ins in mcp.json, no secret anywhere in the spawn
   assert.deepEqual(m.mcpStatus, { [pg]: 'connected' });
 });
 
-test('a real try is a normal run: the real servers, no strict config', async () => {
+test('a real try is a normal run: the real servers, the strict config a normal run gets', async () => {
   const { dir, set } = await fixture();
   const seen = [];
   const orch = createOrchestrator({ projectDir: dir, prompt: 'x', auto: true, claude: { mock: true }, runners: runners(seen),
@@ -260,7 +260,12 @@ test('a real try is a normal run: the real servers, no strict config', async () 
   assert.equal((await orch.run()).status, 'done');
   assert.deepEqual(Object.keys(JSON.parse(seen[0].file).mcpServers).sort(), [`pg_${set.slug}`, `sentry_${set.slug}`]);
   assert.deepEqual([seen[0].ctx.testConnectors, seen[0].ctx.mcpStrict], ['real', false]);
-  assert.equal(runOpts(seen[0].ctx, { role: 'producer', prompt: 'p', systemPrompt: 's', allowedTools: [] }).strictMcpConfig, undefined);
+  // No pretend strictness: only the rule every detached run has (#943, strictMcpFor: strict when mcp.json holds every
+  // server the node names), the same as a normal run of the same project.
+  const normal = [];
+  assert.equal((await createOrchestrator({ projectDir: dir, prompt: 'x', auto: true, claude: { mock: true }, runners: runners(normal) }).run()).status, 'done');
+  const opts = { role: 'producer', prompt: 'p', systemPrompt: 's', allowedTools: [] };
+  assert.equal(runOpts(seen[0].ctx, opts).strictMcpConfig, runOpts(normal[0].ctx, opts).strictMcpConfig);
 });
 
 test('the early engine gates judge a pretend try by its stand-ins: codex is not refused for an http copy it never starts; a real try still is', async () => {

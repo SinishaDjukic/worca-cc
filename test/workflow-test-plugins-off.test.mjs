@@ -83,14 +83,17 @@ test('what is carried: the person\'s sign-in; nothing with the broker on or into
   assert.deepEqual(secretValuesOf({ CLAUDE_CODE_USE_VERTEX: '1', AWS_REGION: 'us-east-1', CLOUD_ML_REGION: 'europe-west4', NO_PROXY: 'localhost,127.0.0.1' }), []);
 });
 
-test('runOpts: a Pretend try\'s node gets the sources and pluginsOff; any other node neither', () => {
+test('runOpts: a Pretend try\'s node gets the sources and pluginsOff; any other node keeps the run\'s own sources', () => {
   const o = runOpts({ projectDir: '/p', claudeOpts: {}, pluginsOff: true }, OPTS);
   assert.deepEqual([o.settingSources, o.pluginsOff], [['project', 'local'], true]);
   assert.deepEqual(PLUGINS_OFF_SOURCES, ['project', 'local']);
+  // Any other node: the run's own sources (#943 C3: project-only unless the run opted in), and no pluginsOff.
   const n = runOpts({ projectDir: '/p', claudeOpts: {} }, OPTS);
-  assert.equal('settingSources' in n, false);
+  assert.deepEqual(n.settingSources, ['project']);
   assert.equal('pluginsOff' in n, false);
-  assert.equal('settingSources' in runOpts({ projectDir: '/p', claudeOpts: {}, pluginsOff: 'yes' }, OPTS), false, 'only true');
+  assert.equal('settingSources' in runOpts({ projectDir: '/p', claudeOpts: {}, claudeSettingSources: null }, OPTS), false);
+  const yes = runOpts({ projectDir: '/p', claudeOpts: {}, pluginsOff: 'yes' }, OPTS);
+  assert.deepEqual([yes.settingSources, 'pluginsOff' in yes], [['project'], false], 'only true');
 });
 
 test('the prompts promise no personal skills or agents when they are off; every other prompt is unchanged', () => {
