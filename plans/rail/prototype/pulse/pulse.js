@@ -1,9 +1,11 @@
+(function () {
 // Pulse mock: renders PulseModel (pulse-model.js) in a small Worca shell with Worca's own classes: the sidebar foot's
 // avatar with its usage rings and menu, the top bar's Pulse button and its panel (Pulse has no page of its own),
 // New run, and Settings › Notifications.
 // The viewer's choices live in `ui`; every click repaints #app, and a repaint never scrolls the page.
 const M = window.PulseModel;
-const R = window.RailUI;   // the Rail components (ui/public/design-system/components)
+const R = window.RailUI;
+const SHELL = window.RailShell || null;   // the one Worca: mount into today's shell instead of drawing a frame   // the Rail components (ui/public/design-system/components)
 const SM = window.SettingsModel, SV = window.SettingsView;   // Settings: its menu and every section but Notifications
 const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 const P = (d) => `<path d="${d}"></path>`;
@@ -185,7 +187,7 @@ function popover() {
 }
 
 // ---- the account menu: Worca's own menu (index.html #acct-menu); its spend card is now Usage and costs, the last row ----
-const LEVELS_UI = [['simple', 'Simple', 'The essentials: start runs, answer them, see what shipped'], ['standard', 'Standard', 'Also workflows, schedules and costs'], ['expert', 'Expert', 'Everything: agents, engines, Labs']];
+const LEVELS_UI = [['simple', 'Simple', 'The essentials: start runs, answer them, see what shipped'], ['advanced', 'Advanced', 'Also workflows, schedules and costs'], ['expert', 'Expert', 'Everything: agents, engines, Labs']];
 const cap = (w) => w[0].toUpperCase() + w.slice(1);
 function acctMenu() {
   if (!ui.acct) return '';
@@ -438,9 +440,41 @@ function land(e) {
 }
 document.addEventListener('input', (e) => { if (e.target.matches?.('[data-search]')) { ui.q = e.target.value; document.querySelector('[data-search-res]').innerHTML = searchResults(); } });
 
+// ---- in the one Worca: Pulse in Activity's place, the overlays above the shell, Settings in the page, its menu in the sidebar ----
+function pulseButton() {
+  const needs = C().needs.length, un = unread().length, run = C().running.length;
+  const badge = needs ? `<span class="topnav-badge" data-tone="need">${needs}</span>` : un ? `<span class="topnav-badge" data-tone="run">${un}</span>` : '';
+  const words = [needs && plural(needs, 'needs you', 'need you'), un && plural(un, 'unread'), run && `${run} running`].filter(Boolean).join(' · ') || 'Nothing new';
+  return `<button type="button" class="btn btn-quiet topnav-act pz-pulse-b" data-pop aria-haspopup="dialog" aria-expanded="${ui.pop}" title="Pulse: ${esc(words)}">${svg('signal', 16)}<span class="pz-pulse-l">Pulse</span>${badge}</button>`;
+}
+function renderInShell() {
+  const sideNow = ui.page === 'settings'; swapCls = sideWas !== null && sideWas !== sideNow ? ' is-swap' : ''; sideWas = sideNow;
+  const scroller = document.scrollingElement || document.documentElement; const keepY = scroller.scrollTop;
+  const keepP = document.querySelector('.pz-pbody')?.scrollTop || 0;
+  document.getElementById('rail-pulse-slot').innerHTML = pulseButton();
+  document.querySelector('#topnav-new')?.setAttribute('aria-expanded', String(!!ui.nr));
+  // Settings' menu takes the sidebar's place beside today's nav (shown instead of it on a wide screen; below 760px the
+  // sidebar stays Worca's, and Settings opens on its menu as a list in the page)
+  const side = document.querySelector('#side-rail'), nav = side.querySelector('nav.nav');
+  let sm = side.querySelector('.rail-side-settings');
+  if (sideNow) { if (!sm) { sm = document.createElement('div'); sm.className = 'rail-side-settings'; nav.after(sm); } sm.innerHTML = settingsMenu(); side.classList.add('is-settings'); }
+  else { sm?.remove(); side.classList.remove('is-settings'); }
+  document.querySelector('#side-rail .brand')?.classList.toggle('is-settings', sideNow);
+  if (sideNow) document.getElementById('route-settings').innerHTML = `<div class="pz-page">${settingsPage()}</div>`;
+  const res = document.querySelector('[data-search-res]'); if (res) res.innerHTML = searchResults();
+  document.getElementById('app').innerHTML = `${popover()}${newRun()}${acctMenu()}`;
+  const t = document.querySelector('.rc-toast'); t.innerHTML = ui.toast ? esc(ui.toast) + (undoIds ? '<button type="button" class="pz-undo" data-undo title="Puts them back in the list">Undo</button>' : '') : ''; t.classList.toggle('is-on', !!ui.toast);
+  for (const b of document.querySelectorAll('[data-mixed]')) b.indeterminate = true;
+  const pb = document.querySelector('.pz-pbody'); if (pb && !opening) pb.scrollTop = keepP;
+  fitMenus();
+  opening = '';
+  if (scroller.scrollTop !== keepY) scroller.scrollTop = keepY;
+}
+
 // ---- render ----
 let sideWas = null, swapCls = '';   // the sidebar's content fades only when it changes between Worca's and Settings'
 function render() {
+  if (SHELL) return renderInShell();
   const sideNow = ui.page === 'settings'; swapCls = sideWas !== null && sideWas !== sideNow ? ' is-swap' : ''; sideWas = sideNow;
   const scroller = document.scrollingElement || document.documentElement; const keepY = scroller.scrollTop;
   const keepP = document.querySelector('.pz-pbody')?.scrollTop || 0;
@@ -474,7 +508,7 @@ function pick(id, v) {
   else if (id === 'nowFrom') ui.nowFrom = v;
   else if (id === 'from') { ui.from = v; ui.sel = []; }
   else if (id === 'more') {
-    if (v === 'settings') { ui.page = 'settings'; ui.sset = 'notifications'; ui.pop = false; }
+    if (v === 'settings') { ui.pop = false; if (SHELL) { SHELL.go('settings/notifications'); return; } ui.page = 'settings'; ui.sset = 'notifications'; }
     else if (v === 'select') ui.selecting = true;
     else if (v === 'allread') { const n = unread().length; ui.read = ui.read.concat(unread().map((u) => u.id)); toast(n ? `Marked ${plural(n, 'update')} read` : 'Nothing is unread'); }
     else { const ids = shown().filter((u) => !isUnread(u)).map((u) => u.id); ui.cleared = ui.cleared.concat(ids); ui.sel = []; toast(ids.length ? `Cleared ${plural(ids.length, 'read update')}` : 'Nothing read to clear', ids); }
@@ -497,6 +531,7 @@ function pick(id, v) {
 }
 
 document.addEventListener('click', (e) => {
+  if (SHELL && !SHELL.owns('pulse', e.target)) return;
   const tg = (sel) => e.target.closest(sel);
   const hadMenu = ui.menu;
   let el;
@@ -527,6 +562,8 @@ document.addEventListener('click', (e) => {
   if ((el = tg('[data-nr-cancel]'))) { ui.nr = null; render(); return; }
   if ((el = tg('[data-nr-start]'))) { toast(`${el.textContent === 'Start run' ? `Started on ${pname(ui.nr.on)}` : `Scheduled: ${el.textContent.replace('Start at', 'starts at')}`} (not in this prototype)`); ui.nr = null; render(); return; }
   if ((el = tg('[data-ptab]'))) { ui.popTab = el.dataset.ptab; ui.sel = []; ui.selecting = false; render(); return; }
+  if (SHELL && (el = tg('[data-sset]'))) { SHELL.go('settings/' + el.dataset.sset); return; }
+  if (SHELL && (el = tg('[data-go]'))) { ui.pop = false; ui.acct = false; ui.sub = ''; SHELL.go(el.dataset.go === 'settings' ? 'settings/' + (el.dataset.to || '') : el.dataset.go); return; }
   if ((el = tg('[data-sset]'))) { ui.sset = el.dataset.sset; ui.sv.__confirm = null; ui.sv.__dialog = null; ui.sv.__open = ''; ui.menu = ''; ui.custom = ''; ui.confirm = ''; opening = 'section'; render(); scrollTo(0, 0); return; }
   if ((el = tg('[data-go]'))) { ui.page = el.dataset.go; ui.sset = el.dataset.to || ''; ui.pop = false; ui.acct = false; ui.sub = ''; render(); return; }
   if ((el = tg('[data-selall]'))) { const ids = shown().map((u) => u.id); ui.sel = el.checked ? ids : []; render(); return; }
@@ -559,6 +596,7 @@ document.addEventListener('click', (e) => {
 });
 const isUpdate = (id) => C().updates.some((u) => u.id === id);
 document.addEventListener('keydown', (e) => {
+  if (SHELL && SHELL.runActive() && !ui.pop && !ui.acct && !ui.nr && !ui.menu) return;   // the run page's keys
   // The Runs list's keys in Updates: ⌘A (Ctrl+A) ticks every update shown, Space ticks the focused one, Esc stops selecting.
   const inUpdates = ui.pop && ui.popTab === 'updates' && !ui.menu && !ui.acct && !ui.nr;
   if (inUpdates && (e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === 'a') { e.preventDefault(); ui.selecting = true; ui.sel = shown().map((u) => u.id); render(); return; }
@@ -579,8 +617,13 @@ document.addEventListener('pointerdown', (e) => {
 });
 for (const t of ['pointerup', 'pointercancel', 'pointermove']) document.addEventListener(t, () => { clearTimeout(press); press = null; });
 document.addEventListener('click', (e) => { if (pressed) { e.preventDefault(); e.stopPropagation(); pressed = ''; } }, true);
-const caseSel = document.getElementById('case');
+const caseSel = document.getElementById('pulse-case') || document.getElementById('case');
 caseSel.innerHTML = M.CASES.map((c) => `<option value="${c.id}">${esc(c.label)}</option>`).join('');
 caseSel.addEventListener('change', () => { ui = fresh(caseSel.value); render(); });
 document.querySelectorAll('[data-theme-pick]').forEach((b) => b.addEventListener('click', () => { applyAppearance(b.dataset.themePick); render(); }));
-render();
+window.RailPulse = {
+  show: (page, sset) => { ui.page = page === 'settings' ? 'settings' : 'runs'; ui.sset = page === 'settings' ? sset : ui.sset; ui.sv.__confirm = null; ui.sv.__dialog = null; ui.menu = ''; opening = 'section'; render(); },
+  say: (text) => { toast(text); render(); },
+};
+if (SHELL) SHELL.start(); else render();
+})();

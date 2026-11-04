@@ -1,8 +1,11 @@
+(function () {
 // Run card v2 mock: renders RunCardModel.view() (run-page-model.js) with Worca's own classes, and keeps the
 // viewer's choices (case, open stage, added chips, ship mode, open menu) in `ui`.
 const M = window.RunCardModel;
 // The page is built from the Worca Rail components (ui/public/design-system/components/, bundled as components.js).
 const R = window.RailUI;
+const SHELL = window.RailShell || null;   // the one Worca: the run page answers only inside #card and its tools
+
 const P = (d) => `<path d="${d}"></path>`;
 const ICON = {
   check: P('M5 12.5l4.5 4.5L19 7.5'),
@@ -338,6 +341,7 @@ function fitMenus() {
 }
 document.addEventListener('submit', (e) => e.preventDefault());
 document.addEventListener('input', (e) => {
+  if (SHELL && !SHELL.owns('run', e.target)) return;
   if (e.target.id === 'after-task') ui.afterDraft = e.target.value;
   if (e.target.id === 'changes-text') ui.changesText = e.target.value;
   if (e.target.id === 'answer-own') { ui.answerOwn = e.target.value; if (e.target.value && ui.answer !== -1) { ui.answer = -1; document.querySelectorAll('.sc-ans-opt').forEach((x) => { x.setAttribute('aria-checked', 'false'); x.tabIndex = -1; }); } }
@@ -345,6 +349,7 @@ document.addEventListener('input', (e) => {
   if (m) (m[2] === undefined ? ui.pr : ui.pr.prs[+m[2]])[m[1]] = e.target.value;
 });
 document.addEventListener('change', (e) => {
+  if (SHELL && !SHELL.owns('run', e.target)) return;
   if (e.target.id === 'break' && e.target.value && e.target.value !== 'step') { const k = e.target.value; e.target.value = ''; breakNow(k); return; }
   if (!ui.pr) return;
   if (e.target.id === 'pd-draft') ui.pr.draft = e.target.checked;
@@ -355,7 +360,7 @@ document.addEventListener('change', (e) => {
 const pick = document.getElementById('case');
 const groups = [...new Set(M.cases.map((c) => c.group))];
 pick.innerHTML = groups.map((g) => `<optgroup label="${g}">${M.cases.filter((c) => c.group === g).map((c) => `<option value="${c.id}"${c.id === ui.caseId ? ' selected' : ''}>${esc(c.label)}</option>`).join('')}</optgroup>`).join('');
-pick.addEventListener('change', () => { jump = true; ui = Object.assign(fresh(pick.value), { chips: (M.cases.find((c) => c.id === pick.value) || {}).chips || [] }); render(); });
+pick.addEventListener('change', () => { if (SHELL) history.replaceState(null, '', '#run/' + pick.value); jump = true; ui = Object.assign(fresh(pick.value), { chips: (M.cases.find((c) => c.id === pick.value) || {}).chips || [] }); render(); });
 // The prototype's flow (RunCardModel.flow): an action moves the run to its next case or does its job in place and
 // says so in the toast; a destructive or outward one (Stop, Discard, Merge, Apply) asks first in a confirm strip.
 const AWAY = [{ id: 'away:auto', text: 'As set up', help: 'Follows Settings and whether you marked this run' }, { id: 'away:on', text: 'Answer for me', help: 'Worca answers this run’s questions from now on, at any hour' }, { id: 'away:off', text: 'Never', help: 'Worca never answers on this run, whatever the settings' }];
@@ -378,6 +383,7 @@ let toastTimer = 0;
 // The toast fades out (Motion), then empties: its text stays while it fades.
 function toast(text) { ui.toast = text; clearTimeout(toastTimer); toastTimer = setTimeout(() => { ui.toast = ''; const el = document.querySelector('.rc-toast'); if (el) { el.classList.remove('is-on'); toastTimer = setTimeout(() => { if (!ui.toast) el.textContent = ''; }, 200); } }, 4000); }
 function goCase(id) {
+  if (SHELL) history.replaceState(null, '', '#run/' + id);
   Object.assign(ui, { caseId: id, open: null, ship: '', menu: '', tab: '', focus: '', parent: null, back: null, titleOpen: false, answer: null, file: null, rounds: [], ticks: [], actFilter: 'all', confirm: null, dialog: '' });
   pick.value = id; pendingFocus = 'act-main';
 }
@@ -592,6 +598,9 @@ function addTag(text) { const t = String(text).trim(); if (!t) return; addChip(t
 
 const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 document.addEventListener('click', (e) => {
+  if (SHELL && !SHELL.owns('run', e.target)) return;
+  // in the one Worca the trail's first step is the Runs list itself
+  if (SHELL && e.target.closest('#card [data-key="crumb:0"]')) { e.preventDefault(); SHELL.go('runs'); return; }
   const t = e.target.closest('button');
   if (t && t.id === 'next-event') { nextEvent(); return; }
   if (t && t.dataset.fixpart !== undefined) { ui.broken = false; pendingFocus = 'tab:' + ((M.view(ui.caseId, ui).tabs.find((x) => x.sel) || {}).id || ''); toast('Reloaded the part'); render(); return; }
@@ -700,6 +709,7 @@ document.addEventListener('click', (e) => {
 // Keys: tabs and stages move with arrows / Home / End and select as they move; the ship choice is a radio group;
 // menus take ↑ ↓ Home End, and Escape or Tab close them with focus back on their trigger.
 document.addEventListener('keydown', (e) => {
+  if (SHELL && !SHELL.runActive()) return;
   const t = e.target;
   if (t.id === 'group-input' && e.key === 'Enter') { e.preventDefault(); const g = t.value.trim(); if (g) { ui.chips = ui.chips.filter((c) => c.kind !== 'group').concat({ kind: 'group', text: g }); ui.menu = ''; pendingFocus = 'menu:more'; toast((KNOWN.group.some(([x]) => x === g) ? 'Moved to ' : 'Created and moved to ') + g); } render(); return; }
   if (t.id === 'tag-input' && e.key === 'Enter') { e.preventDefault(); addTag(t.value); render(); return; }
@@ -725,3 +735,4 @@ document.addEventListener('keydown', (e) => {
 });
 // A case named in the address (#question) opens on load, so a review sheet can show every state at once.
 { const h = location.hash.slice(1); if (M.cases.some((c) => c.id === h)) { pick.value = h; pick.dispatchEvent(new Event('change')); } else render(); }
+})();

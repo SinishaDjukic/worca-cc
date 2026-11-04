@@ -13,7 +13,7 @@ writeAppCss();   // the app's CSS, assembled from its parts
 writeComponentsJs();   // the Rail components, bundled for file://
 const here = (f) => fileURLToPath(new URL('../' + f, import.meta.url));   // the prototype's root
 const SHEETS = ['design-system/rail-look.css', 'design-system/rail.css', 'pulse/pulse.css'];
-const ALL = [APP_CSS, ...SHEETS.map(here), here('index.html'), here('pulse.html')];
+const ALL = [APP_CSS, ...SHEETS.map(here), here('run-page.html'), here('pulse.html')];
 const SCRIPTS = ['runs/run-page.js', 'pulse/pulse.js', 'runs/run-page-model.js', 'pulse/pulse-model.js', 'settings/settings.js', 'settings/settings-model.js'].map(here);
 const issues = new Map(); const add = (k, where) => { if (!issues.has(k)) issues.set(k, new Set()); issues.get(k).add(where); };
 
@@ -114,7 +114,7 @@ const HEADS = () => {
 // --- the pages ---
 const b = await chromium.launch({ channel: 'chrome' });
 const OPEN = ['break:part', 'break:background', 'break:offline', '[data-pop]', '[data-acct]', '[data-newrun]', '[data-key="act-main"]', '[data-menu]', '.rc-tabs .tab:nth-child(2)', '.rc-tabs .tab:nth-child(3)', '.rc-tabs .tab:nth-child(4)', '.rc-tabs .tab:nth-child(5)'];
-for (const page of ['index.html', 'pulse.html']) {
+for (const page of ['run-page.html', 'pulse.html']) {
   const p = await b.newPage({ viewport: { width: 900, height: 900 } });
   p.on('pageerror', (e) => add('script error', String(e)));
   await p.goto('file://' + here(page));

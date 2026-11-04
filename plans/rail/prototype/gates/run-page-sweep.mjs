@@ -1,4 +1,4 @@
-// Run: node plans/rail/prototype/gates/run-page-sweep.mjs file://$PWD/plans/rail/prototype/index.html
+// Run: node plans/rail/prototype/gates/run-page-sweep.mjs file://$PWD/plans/rail/prototype/run-page.html
 // The glitch gate: every case × tab × width × system theme. Reports page overflow, clipped text with no tooltip,
 // overlapping siblings in rows, section edges off the text edge below the card, low-contrast text, mojibake.
 import { chromium } from 'playwright';

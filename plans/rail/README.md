@@ -13,19 +13,20 @@ Online: the [Design System](https://claude.ai/artifact/P38jGMS7jA9XQu2U2uP3HP) (
 | Pulse: the notification hub, usage rings, limit notifications and what a start does near a limit | `pulse.md` | Concept, in the prototype (`pulse.html`) |
 | Settings: from the profile menu, the sidebar becomes its menu (four groups), one row per decision, records as Lists, search | `docs/design-system.md` › Settings, mocks `mocks/settings-menu-*.png` | In the prototype (`pulse.html` › Settings; `settings/`) |
 
-- `prototype/`: the clickable prototype, laid out like the app's files. The pages at its root (`index.html` the run
-  page, `pulse.html` Pulse and Settings, `components.html` the gallery); each feature in its folder: `runs/` (the run
-  page's model and renderer), `pulse/` (Pulse's model, renderer and CSS), `settings/` (Settings' content and renderer),
-  `design-system/` (the Rail look and the components' CSS); `today/` today's Worca, captured from the app in mock mode by
-  `gates/capture-today.mjs` (its shell and the pages outside Wave 1's scope, as they render); `gates/` holds the checks
-  and the builds. The pages draw on
-  the app's CSS as `app.css`, assembled from `ui/public/parts.json`, and on the components as `components.js`, bundled
-  from `ui/public/design-system/components/` (both built by the gates, not committed).
-- The gates: `node plans/rail/prototype/gates/run-page-sweep.mjs file://$PWD/plans/rail/prototype/index.html`,
-  `node plans/rail/prototype/gates/pulse-sweep.mjs file://$PWD/plans/rail/prototype/pulse.html`, and
-  `node plans/rail/prototype/gates/ds-check.mjs` for both pages: everything comes from the design system, names and
-  heads follow their rules, every Settings section lines up (`gates/align-check.mjs`; `gates/align-proof.mjs` shows the
-  check catches each fault).
+- `prototype/`: the clickable prototype, laid out like the app's files.
+  - `index.html` is **the one Worca**: today's shell and pages (`today/`, captured from the app in mock mode by
+    `gates/capture-today.mjs`) with Wave 1 in them, joined by `shell/` (the router and the decisions on today's
+    sidebar and top bar): a run row opens the Rail run page as a full page, Pulse sits in Activity's place, the profile
+    menu opens Settings, every other page keeps today's design in the Rail colours. The prototype's own controls fold
+    into its Prototype corner.
+  - `run-page.html` and `pulse.html` explore the run page's and Pulse's cases; `components.html` is the gallery.
+  - Each feature in its folder: `runs/`, `pulse/`, `settings/`, `design-system/` (the Rail look and the components'
+    CSS), `shell/`; `gates/` holds the checks and the builds (`app.css`, `components.js` and `today.js` are built, not
+    committed).
+- The gates: `node plans/rail/prototype/gates/worca-sweep.mjs` (the one Worca: every route at three widths in both
+  themes, and the journeys between its pieces), `gates/run-page-sweep.mjs file://…/run-page.html`,
+  `gates/pulse-sweep.mjs file://…/pulse.html`, and `gates/ds-check.mjs` (everything from the design system; names, heads
+  and alignment; `gates/align-proof.mjs` shows the alignment check catches each fault).
 - `mocks/`: PNG mocks of decisions, named by page.
 
 A new page gets a spec here, a row above, and its model and renderer in `prototype/`, built on `rail.css` and the
