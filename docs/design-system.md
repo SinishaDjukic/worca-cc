@@ -117,7 +117,7 @@ shows it; sizes, colours and spacing come with the component. Names are the Desi
 | Picking items from a list, an opt-out, a consent | Checkbox | the checklist, No cap, Draft |
 | Two or three views of the same thing | Segmented | Light and Dark, Summaries and Raw |
 | Sections of a page | Tabs | Overview, Changes, Decisions |
-| Narrowing a list | Chip › filter chip | Running 4 |
+| Narrowing a list | the list's sentence: SentencePicker words above the list, each choice with its count; never a filter button or a View menu | `Showing [ready to ship ▾] from [all projects ▾] by [day ▾]` |
 | Picking and adding names | ListEditor | labels and cost tags, groups |
 | **Entering** | | |
 | Text, a number, a pick from a long list in a form | Field | Branch, Budget, Base branch |
@@ -210,7 +210,8 @@ dot, or a tick box while selecting), a title line, a meta line, its time or figu
 its one target, so a fact in the row is text, never a second link. The row's own actions are a ⋯ at its right end
 (the Runs list's row ⋯), the same CompactMenu as on its page. Rows sit in sections in a fixed order (by urgency, or by day), newest first in each; a section with
 no rows is not drawn; the page's spec names the sections. What the list shows is a sentence above it (`Showing [unread ▾] from [all groups ▾]`), not a
-filter button. Selecting works the same in every list (Runs, Chats, Pulse). You start it from the list's menu
+filter button; grouping is one more word in it (`by [day ▾]`), each choice in its menu with its count. Every
+list (Runs, Chats, Pulse, Schedules) uses this one sentence, so a list is narrowed the same way everywhere. Selecting works the same in every list (Runs, Chats, Pulse). You start it from the list's menu
 (`Select`), with ⌘ or Ctrl-click, with Shift-click for a range, with Space or ⌘A, or with a long-press on touch.
 `Select all` joins the head and the sentence stays. The selection bar (`.runs-bulk`) sits at the list's foot:
 `2 selected · Archive 2 · Cancel`. Each action shows how many rows it applies to and is disabled at 0. Cancel or Esc
