@@ -92,3 +92,73 @@ test('run 4 D22: feed messages read as plain words; the raw detail is kept for t
   assert.deepEqual(plainFeedMessage('finished.'), { text: 'finished.', detail: '' });
   assert.deepEqual(plainFeedMessage('paused (something new): x'), { text: 'paused', detail: 'x' });
 });
+
+test('a resolved problem in the feed reads as resolved, says what happened next, opens its run, and counts nowhere', async () => {
+  const at = new Date(Date.now() - 3600_000).toISOString();
+  const row = (extra) => ({ scope: 'schedule', scheduleId: null, projectDir: '/p', createdAt: at, readAt: null, resolvedAt: null, ...extra });
+  const feed = [
+    row({ id: 3, kind: 'started', severity: 'info', ticketId: 't_res', pipelineId: 'p_run2', title: 'Run 2', message: 'started after all, when ‘Chat MCP’ finished.', unread: false }),
+    row({ id: 2, kind: 'missed', severity: 'problem', ticketId: 't_open', pipelineId: null, title: 'Still missed', message: 'was waiting for ‘A’, which was stopped.', unread: true }),
+    // `unread: true` on a resolved row: an older server, or a row marked unread again — the view still never counts it.
+    row({ id: 1, kind: 'missed', severity: 'problem', ticketId: 't_res', pipelineId: 'p_run2', title: 'Run 2', message: 'was waiting for ‘Chat MCP’, which was interrupted.', unread: true, resolvedAt: at }),
+  ];
+  globalThis.fetch = async (url) => {
+    const key = String(url).split('?')[0];
+    const body = key === '/api/schedules' ? { schedules: [], tickets: [ticketAt('t_open', -3600_000, { status: 'missed' })], counts: {} } : { notifications: feed, unread: 1 };
+    return { ok: true, status: 200, json: async () => body };
+  };
+  const opened = [];
+  const tabsHost = document.createElement('div');
+  for (const t of ['activity', 'once', 'repeating']) { const b = document.createElement('button'); b.dataset.tab = t; tabsHost.append(b); }
+  const hosts = { feedHost: document.createElement('div'), onceHost: document.createElement('div'), repeatingHost: document.createElement('div') };
+  document.body.replaceChildren(tabsHost, hosts.feedHost, hosts.onceHost, hosts.repeatingHost);
+  const view = createSchedulesView({ tabsHost, ...hosts, msgEl: document.createElement('p'),
+    deps: { confirmModal: async () => true, targetLabel: () => '', workflowLabel: () => '', openRun: (x) => opened.push(x) } });
+  try {
+    await view.load();
+    const item = (id) => hosts.feedHost.querySelector(`.sched-feed-item[data-id="${id}"]`);
+    const buttons = (id) => [...item(id).querySelectorAll('button')].map((b) => b.textContent);
+    const res = item(1);
+    assert.ok(res.classList.contains('resolved'));
+    assert.ok(!res.classList.contains('unread'), 'never painted as unread');
+    assert.equal(res.querySelector('.badge').className, 'badge grey', 'neutral, not amber');
+    assert.equal(res.querySelector('.sched-feed-resolved').textContent, 'Resolved · started after all, when ‘Chat MCP’ finished.');
+    assert.deepEqual(buttons(1), ['Open run']);
+    res.querySelector('.sched-feed-open').click();
+    assert.deepEqual(opened, [{ pipelineId: 'p_run2', projectDir: '/p' }]);
+    assert.equal(item(3).querySelector('.badge').textContent, 'Started');
+    // The open miss is still a problem: amber, unread, Run now + Mark read.
+    const open = item(2);
+    assert.ok(open.classList.contains('unread')); assert.ok(!open.classList.contains('resolved'));
+    assert.equal(open.querySelector('.badge').className, 'badge amber');
+    assert.equal(open.querySelector('.sched-feed-resolved'), null);
+    assert.deepEqual(buttons(2), ['Run now', 'Mark read']);
+    // Counts: only the open problem.
+    assert.equal(tabsHost.querySelector('[data-tab="activity"]').textContent, 'Activity · 1');
+    const seg = (label) => [...hosts.feedHost.querySelectorAll('.seg button')].find((b) => b.textContent.startsWith(label));
+    assert.equal(seg('Unread').textContent, 'Unread · 1');
+    seg('Problems').click();
+    assert.deepEqual([...hosts.feedHost.querySelectorAll('.sched-feed-item')].map((r) => r.dataset.id), ['2']);
+    seg('Unread').click();
+    assert.deepEqual([...hosts.feedHost.querySelectorAll('.sched-feed-item')].map((r) => r.dataset.id), ['2']);
+  } finally { view.destroy(); }
+});
+
+test('a resolved miss with no run says only Resolved; one whose run is known but has no started entry says it started', async () => {
+  const at = new Date(Date.now() - 3600_000).toISOString();
+  const feed = [
+    { id: 5, scope: 'schedule', kind: 'missed', severity: 'problem', ticketId: 't_a', scheduleId: null, pipelineId: null, projectDir: '/p', title: 'A', message: 'was due.', createdAt: at, unread: false, resolvedAt: at },
+    { id: 4, scope: 'schedule', kind: 'failed', severity: 'problem', ticketId: 't_b', scheduleId: null, pipelineId: 'p_b', projectDir: '/p', title: 'B', message: 'could not start: x.', createdAt: at, unread: false, resolvedAt: at },
+  ];
+  globalThis.fetch = async (url) => ({ ok: true, status: 200, json: async () => (String(url).startsWith('/api/schedules') ? { schedules: [], tickets: [], counts: {} } : { notifications: feed, unread: 0 }) });
+  const hosts = { feedHost: document.createElement('div'), onceHost: document.createElement('div'), repeatingHost: document.createElement('div') };
+  document.body.replaceChildren(hosts.feedHost, hosts.onceHost, hosts.repeatingHost);
+  const view = createSchedulesView({ ...hosts, msgEl: document.createElement('p'), deps: { confirmModal: async () => true, targetLabel: () => '', workflowLabel: () => '', openRun: () => {} } });
+  try {
+    await view.load();
+    const note = (id) => hosts.feedHost.querySelector(`.sched-feed-item[data-id="${id}"] .sched-feed-resolved`).textContent;
+    assert.equal(note(5), 'Resolved.');
+    assert.equal(note(4), 'Resolved · the run started after all.');
+    assert.equal(hosts.feedHost.querySelector('.sched-feed-item[data-id="5"] .sched-feed-open'), null, 'no run: no Open run');
+  } finally { view.destroy(); }
+});
