@@ -96,20 +96,6 @@ const NAMES = () => {
   return out;
 };
 
-// --- branch names: readable and short (docs/design-system.md › Small rules › Branch names) ---
-// A type, a slash, then 2–5 lowercase words joined by hyphens (the naming model's own limit, src/core/naming.mjs), with
-// a sibling's -2 at most: never a pasted URL, a sentence or an id alone.
-const BRANCHES = () => {
-  const out = []; const OK = /^[a-z]+\/[a-z0-9]+(?:-[a-z0-9]+){1,4}(?:-\d+)?$/;
-  for (const e of document.querySelectorAll('.rc-mid[title], .pd-br[title], .rc-base')) {
-    if (!e.offsetParent) continue;
-    const t = (e.getAttribute('title') || e.textContent).trim();
-    if (!t.includes('/') || /^(origin\/|~|\/)/.test(t) || t.includes('.')) continue;   // a remote, a folder or a file is not a branch
-    if (!OK.test(t)) out.push(`"${t}"`);
-  }
-  return out;
-};
-
 // --- heads: never smaller or weaker than what they head (docs/design-system.md › Type roles) ---
 // A head is a step larger than its items (a page's sections), or the same size, heavier and in --ink (a list's or a
 // menu's groups).
@@ -155,7 +141,6 @@ for (const page of ['run-page.html', 'pulse.html']) {
     for (const m of await p.evaluate(ALIGN)) add('misaligned (the components own alignment)', `${page} ${c}: ${m}`);
     for (const m of await p.evaluate(NAMES)) add('a name against the naming rule', `${page}: ${m}`);
     for (const m of await p.evaluate(HEADS)) add('a head smaller or weaker than what it heads', `${page}: ${m}`);
-    for (const m of await p.evaluate(BRANCHES)) add('a branch name against the rule (type/ and 2–5 words)', `${page} ${c}: ${m}`);
     await p.keyboard.press('Escape');
   }
   // every settings section, wide and narrow

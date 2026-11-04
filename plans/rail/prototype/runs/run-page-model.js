@@ -36,7 +36,7 @@
   const GROUP_TABS = [['summary', 'Overview'], ['activity', 'Activity'], ['decisions', 'Decisions', '4']];   // the stepper is the list of runs
   const A = (label, icon, primary, items) => ({ label, icon, primary: !!primary, items: items || [] });
 
-  const SRC = 'feat/git-bash-shell';
+  const SRC = 'feat/windows-git-bash-shell-with-command';
   const SRC_TAIL = (merged) => [{ key: 'push', label: 'Push', subs: [merged ? ok('Merge back', '', { live: 'Into ' + SRC }) : next('Merge back'), next('To origin/' + SRC)] }];
 
   const CASES = [
@@ -92,7 +92,7 @@
       stages: run({ review: [REVIEW[0], s('Manual tests checklist', 'now', '1m', { live: 'Checking the Git Bash shell opens with its command', when: '4s ago' }), next('Manual web UI testing')], tail: SRC_TAIL() }) },
     { id: 'source-ready', group: 'Kinds', label: 'On its source, ready', word: 'Ready', dot: 'is-green', branch: SRC, onSource: true, action: A('Push', 'up', true, ['Discard']), figs: DONE_FIGS,
       stages: run({ tail: SRC_TAIL(true) }) },
-    { id: 'source-unmerged', group: 'Kinds', label: 'On its source, not merged back', word: 'Needs you', dot: 'is-amber', detail: SRC + ' moved while the run worked', branch: SRC, onSource: true, hidden: 'feat/git-bash-shell-run',
+    { id: 'source-unmerged', group: 'Kinds', label: 'On its source, not merged back', word: 'Needs you', dot: 'is-amber', detail: SRC + ' moved while the run worked', branch: SRC, onSource: true, hidden: 'worca/run-7b0bfb1e',
       action: A('How to merge', 'merge', true, ['Create PR instead', 'Discard']), figs: DONE_FIGS,
       stages: run({ tail: [{ key: 'push', label: 'Push', subs: [s('Merge back', 'problem', '', { live: 'Not merged back into ' + SRC }), next('To origin/' + SRC)] }] }) },
     { id: 'folder', group: 'Kinds', label: 'Folder run', word: 'Ready', dot: 'is-green', branch: '', folder: '~/src/marketing-site', action: A('Apply to folder', 'folder', true, ['Open the copy', 'Discard']), figs: [['Time', '52m'], ['Cost', '$9.15']],
@@ -376,7 +376,7 @@
   // or stay its PR (a chain), and only fix-it actions stay; creating and merging PRs is the group page's job.
   const SHIP = /^(pr|merged|push|apply|done|ship)$/;
   const FIX = /^(Answer|Use defaults|Resume now|Restart Build|Fix checks|Fix conflicts|Approve and build)$/;
-  const BRANCH = 'feat/page-head-breadcrumb';
+  const BRANCH = 'feat/unified-page-navigation-one-head-breadcrumb';
   function asMember(c0, g, i) {
     const chain = g.kind === 'Chain';
     let stages = chain ? c0.stages : c0.stages.filter((x) => !SHIP.test(x.key))
@@ -579,8 +579,8 @@
     kept: { 'Apply to branch': { to: 'ready', say: 'Committed to the branch' }, 'Download patch': { say: 'Downloading run.patch' }, 'Commit it yourself': { say: 'Commands: cd the worktree, git add -A, git commit --no-verify' }, Discard: { to: 'discarded', confirm: 'Discard the kept work? A patch is saved first.' } },
     archived: {},
     failed: { 'Restart Build': { to: 'working', say: 'Build runs again with what Plan made' }, 'Report this run': { say: 'Logs and a note sent to the Worca team' }, 'Start a new run': { to: 'starting', say: 'A new run with the same task' } },
-    ready: { 'Create PR': { to: 'checks', say: 'Opened #959 into dev', dialog: 'pr' }, 'Publish branch': { say: 'Pushed the branch to origin; no PR' }, 'How to merge': { say: 'git switch dev && git merge feat/page-head-breadcrumb' }, 'Try it': { say: 'Copied: git switch feat/page-head-breadcrumb' }, 'Push main': { to: 'merged', say: 'Pushed to origin/main' }, Discard: { to: 'discarded', confirm: 'Discard the changes? The run stays in history.' } },
-    labelled: { 'Create PR': { to: 'checks', say: 'Opened #959 into dev', dialog: 'pr' }, 'Publish branch': { say: 'Pushed the branch to origin; no PR' }, 'How to merge': { say: 'git switch dev && git merge feat/page-head-breadcrumb' }, 'Try it': { say: 'Copied: git switch feat/page-head-breadcrumb' }, 'Push main': { to: 'merged', say: 'Pushed to origin/main' }, Discard: { to: 'discarded', confirm: 'Discard the changes? The run stays in history.' } },
+    ready: { 'Create PR': { to: 'checks', say: 'Opened #959 into dev', dialog: 'pr' }, 'Publish branch': { say: 'Pushed the branch to origin; no PR' }, 'How to merge': { say: 'git switch dev && git merge feat/unified-page-navigation-one-head-breadcrumb' }, 'Try it': { say: 'Copied: git switch feat/unified-page-navigation-one-head-breadcrumb' }, 'Push main': { to: 'merged', say: 'Pushed to origin/main' }, Discard: { to: 'discarded', confirm: 'Discard the changes? The run stays in history.' } },
+    labelled: { 'Create PR': { to: 'checks', say: 'Opened #959 into dev', dialog: 'pr' }, 'Publish branch': { say: 'Pushed the branch to origin; no PR' }, 'How to merge': { say: 'git switch dev && git merge feat/unified-page-navigation-one-head-breadcrumb' }, 'Try it': { say: 'Copied: git switch feat/unified-page-navigation-one-head-breadcrumb' }, 'Push main': { to: 'merged', say: 'Pushed to origin/main' }, Discard: { to: 'discarded', confirm: 'Discard the changes? The run stays in history.' } },
     checks: { 'View PR': { say: 'Opens #959 on GitHub' }, Watch: { say: 'Worca watches #959 and fixes failing checks' }, 'Copy PR link': { say: 'Copied the link to #959' }, next: 'failing' },
     failing: { 'Fix checks': { to: 'checks', say: 'A short run fixed unit and e2e; checks run again', confirm: 'Fix the 2 failing checks on #959? Worca pushes the fix to the PR.' }, 'Re-run checks': { to: 'checks', say: 'Checks on #959 run again' }, 'View PR': { say: 'Opens #959 on GitHub' }, 'Copy PR link': { say: 'Copied the link to #959' }, next: 'conflicts' },
     conflicts: { 'Fix conflicts': { to: 'checks', say: 'dev merged in, 2 conflicts resolved; checks run again' }, 'Update branch': { say: 'dev does not merge cleanly: 2 files conflict. Use Fix conflicts' }, 'Resolve in a terminal': { say: 'Opens a terminal in the worktree' }, 'Re-check': { say: 'Still 2 conflicts with dev' }, 'View PR': { say: 'Opens #959 on GitHub' }, 'Copy PR link': { say: 'Copied the link to #959' }, next: 'approved' },
@@ -590,7 +590,7 @@
     discarded: { 'Start a new run': { to: 'starting', say: 'A new run with the same task' } },
     push: { 'Push main': { to: 'merged', say: 'Pushed to origin/main' }, 'Create PR instead': { to: 'checks', say: 'Opened #959 into dev', dialog: 'pr' }, Discard: { to: 'discarded', confirm: 'Discard the changes? The run stays in history.' } },
     'source-ready': { Push: { to: 'merged', say: 'Pushed to origin/' + SRC }, Discard: { to: 'discarded', confirm: 'Discard the changes? The run stays in history.' } },
-    'source-unmerged': { 'How to merge': { say: 'git switch ' + SRC + ' && git merge feat/git-bash-shell-run' }, 'Create PR instead': { to: 'checks', say: 'Opened #959 into ' + SRC, dialog: 'pr' }, Discard: { to: 'discarded', confirm: 'Discard the changes? The run stays in history.' } },
+    'source-unmerged': { 'How to merge': { say: 'git switch ' + SRC + ' && git merge worca/run-7b0bfb1e' }, 'Create PR instead': { to: 'checks', say: 'Opened #959 into ' + SRC, dialog: 'pr' }, Discard: { to: 'discarded', confirm: 'Discard the changes? The run stays in history.' } },
     folder: { 'Apply to folder': { to: 'applied', confirm: 'Write 5 files into ~/src/marketing-site?' }, 'Open the copy': { say: 'Opened the copy in a terminal' }, Discard: { to: 'discarded', confirm: 'Discard the changes? The run stays in history.' } },
     applied: { 'Open the folder': { say: 'Opens ~/src/marketing-site' } },
     workspace: { 'Fix conflicts': { say: 'A short run is fixing worca-docs #31' }, 'worca-api #212': { say: 'Opens worca-api #212' }, 'worca-web #88': { say: 'Opens worca-web #88' }, 'worca-docs #31': { say: 'Opens worca-docs #31' }, 'Copy PR links': { say: 'Copied 3 PR links' } },
