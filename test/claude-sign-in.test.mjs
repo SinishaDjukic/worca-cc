@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { readUserSignIn, readUserSafety, SAFETY_DENY_MAX, SETTINGS_FILE_MAX, isSignInEnvKey, SIGN_IN_SETTINGS_KEYS, userSettingsFile } from '../src/core/engines/claude-sign-in.mjs';
+import { readUserSignIn, readUserSafety, sandboxProblem, SAFETY_DENY_MAX, SETTINGS_FILE_MAX, isSignInEnvKey, SIGN_IN_SETTINGS_KEYS, userSettingsFile } from '../src/core/engines/claude-sign-in.mjs';
 import { userClaudeSignIn } from '../src/core/requirements/interview.mjs';
 
 const dirs = [];
@@ -126,4 +126,67 @@ test('D81a: an unreadable or invalid project or local file adds nothing; no sand
   assert.deepEqual(readUserSafety({ env: {}, home: home({ sandbox: U }) }).sandbox, U, 'no checkout: the person\'s sandbox as it is');
   const noUser = readUserSafety({ env: {}, home: home({ permissions: { deny: ['Bash(x)'] } }), cwd: checkout({ sandbox: { enabled: true } }, { sandbox: { enabled: true } }) });
   assert.deepEqual(noUser, { deny: ['Bash(x)'], sandbox: null }, 'the project and local sandbox load by themselves');
+});
+
+// ── Task 5 (security review C1): a sandbox the CLI would reject never reaches Worca's --settings file ──────────────────────
+const safetyOf = (user, project, local) => readUserSafety({ env: {}, home: home({ sandbox: user }), cwd: checkout(project, local) });
+const NOT_CARRIED = (who, what) => `Worca did not carry ${who} sandbox settings: ${what} is not valid.`;
+
+test('C1: a person\'s sandbox with a wrong type or an unknown key carries no sandbox, and says which part', () => {
+  for (const [user, what] of [[{ enabled: 'yes' }, 'sandbox.enabled'], [{ excludedCommands: 5 }, 'sandbox.excludedCommands'],
+    [{ excludedCommands: 'docker' }, 'sandbox.excludedCommands'], [{ network: true }, 'sandbox.network'],
+    [{ network: { allowedDomains: 'example.com' } }, 'sandbox.network.allowedDomains'], [{ network: { httpProxyPort: '8080' } }, 'sandbox.network.httpProxyPort'],
+    [{ notAKey: 1, enabled: false }, 'sandbox.notAKey'], [{ filesystem: { allowWrite: [1] } }, 'sandbox.filesystem.allowWrite'],
+    [{ ripgrep: {} }, 'sandbox.ripgrep'], [{ ignoreViolations: { '*': 'x' } }, 'sandbox.ignoreViolations'],
+    [{ credentials: { files: [{ path: '/k', mode: 'mask', extract: 'no-group' }] } }, 'sandbox.credentials.files[0].extract'],
+    [{ credentials: { envVars: [{ name: 'BAD-NAME', mode: 'deny' }] } }, 'sandbox.credentials.envVars[0].name'],
+    [{ network: { allowMachLookup: ['com.*.x'] } }, 'sandbox.network.allowMachLookup']]) {
+    const s = readUserSafety({ env: {}, home: home({ sandbox: user, permissions: { deny: ['Bash(x)'] } }) });
+    assert.deepEqual(s, { deny: ['Bash(x)'], sandbox: null, warnings: [NOT_CARRIED('your', what)] }, what);
+  }
+});
+
+test('C1: a valid sandbox in every documented part is carried as it is, with no warning', () => {
+  const S = { enabled: true, failIfUnavailable: false, autoAllowBashIfSandboxed: false, allowUnsandboxedCommands: false, excludedCommands: ['docker:*'],
+    network: { allowedDomains: ['a.example'], deniedDomains: ['b.example'], strictAllowlist: true, allowUnixSockets: ['/s'], allowAllUnixSockets: false,
+      allowLocalBinding: true, allowMachLookup: ['com.apple.*'], httpProxyPort: 8080, socksProxyPort: 1080, tlsTerminate: { caCertPath: '/ca.pem' } },
+    filesystem: { allowWrite: ['/tmp'], denyWrite: ['/etc'], denyRead: ['~/.ssh'], allowRead: ['~/.ssh/known_hosts'], disabled: false },
+    credentials: { files: [{ path: '~/.netrc', mode: 'mask', extract: 'password (\S+)' }, { path: '~/.aws/', mode: 'deny' }],
+      envVars: [{ name: 'GH_TOKEN', mode: 'mask', injectHosts: ['api.github.com'] }], allowPlaintextInject: false,
+      awsPairs: [{ accessKeyIdVar: 'K1', secretAccessKeyVar: 'S1' }], sigv4: { streaming: 'deny' } },
+    ignoreViolations: { '*': ['/tmp/x'] }, enableWeakerNestedSandbox: false, enableWeakerNetworkIsolation: false, allowAppleEvents: false,
+    ripgrep: { command: 'rg', args: ['--hidden'] } };
+  assert.deepEqual(readUserSafety({ env: {}, home: home({ sandbox: S }) }), { deny: [], sandbox: S });
+});
+
+test('C1: a project or local sandbox that is not valid adds nothing; the person\'s is still carried, with one warning', () => {
+  const U = { enabled: true };
+  assert.deepEqual(safetyOf(U, { sandbox: { excludedCommands: 'docker' } }),
+    { deny: [], sandbox: U, warnings: [NOT_CARRIED('the project\'s .claude/settings.json', 'sandbox.excludedCommands')] });
+  assert.deepEqual(safetyOf({ network: { allowedDomains: ['a'] } }, { sandbox: { network: true } }),
+    { deny: [], sandbox: { network: { allowedDomains: ['a'] } }, warnings: [NOT_CARRIED('the project\'s .claude/settings.json', 'sandbox.network')] },
+    'a clash of shapes (an object under a yes/no) is the project layer\'s fault');
+  assert.deepEqual(safetyOf(U, undefined, { sandbox: { enabled: 'no' } }),
+    { deny: [], sandbox: U, warnings: [NOT_CARRIED('the project\'s .claude/settings.local.json', 'sandbox.enabled')] });
+  assert.deepEqual(safetyOf(U, { sandbox: { enabled: false, notAKey: true } }, { sandbox: { excludedCommands: ['x'] } }),
+    { deny: [], sandbox: { enabled: true, excludedCommands: ['x'] }, warnings: [NOT_CARRIED('the project\'s .claude/settings.json', 'sandbox.notAKey')] },
+    'a bad project layer does not stop the local one');
+});
+
+test('C1: layers that are each valid but clash once laid together carry no sandbox', () => {
+  const pair = (k, s) => ({ credentials: { awsPairs: [{ accessKeyIdVar: k, secretAccessKeyVar: s }] } });
+  assert.deepEqual(safetyOf(pair('K', 'S1'), { sandbox: pair('K', 'S2') }),
+    { deny: [], sandbox: null, warnings: [NOT_CARRIED('your', 'sandbox.credentials.awsPairs[1] (with the project\'s laid over it)')] });
+});
+
+test('C1: sandboxProblem names the first part the CLI would reject; null when valid', () => {
+  assert.equal(sandboxProblem({}), null);
+  assert.equal(sandboxProblem({ enabled: true, network: { allowedDomains: [] } }), null);
+  assert.equal(sandboxProblem([]), 'sandbox');
+  assert.equal(sandboxProblem(null), 'sandbox');
+  assert.equal(sandboxProblem({ network: null }), 'sandbox.network');
+  assert.equal(sandboxProblem({ credentials: { envVars: [{ name: 'T', mode: 'mask', decode: 'jwt', extract: '(x)' }] } }), 'sandbox.credentials.envVars[0].decode');
+  assert.equal(sandboxProblem({ credentials: { files: [{ path: '/d/', mode: 'mask' }] } }), 'sandbox.credentials.files[0].path');
+  assert.equal(sandboxProblem({ credentials: { files: [{ path: '/d', mode: 'mask', maskClaims: ['sub'] }] } }), 'sandbox.credentials.files[0].maskClaims');
+  assert.equal(sandboxProblem(JSON.parse('{"ignoreViolations":{"__proto__":["x"]}}')), 'sandbox.ignoreViolations');
 });

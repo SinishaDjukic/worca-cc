@@ -25,7 +25,7 @@ import { modelSlot } from '../broker-routing.mjs';
 import { pluginModelRoute, syncPluginSlots } from '../plugin-broker-slots.mjs';
 import { superviseSpawn, composeSpawnEnv, cleanRunEnv, safeEmit } from './spawn.mjs';
 import { CAPABILITY_KEYS } from './capabilities.mjs';
-import { readUserSignIn, readUserSafety, SIGN_IN_SETTINGS_KEYS } from './claude-sign-in.mjs';
+import { readUserSignIn, readUserSafety, sandboxProblem, SIGN_IN_SETTINGS_KEYS } from './claude-sign-in.mjs';
 
 export const DEFAULT_BIN = process.env.WORCA_CLAUDE_BIN || process.env.ORCH_CLAUDE_BIN || 'claude';
 
@@ -59,12 +59,25 @@ function signInSettingsOf(s) {
   return Object.keys(out).length ? out : null;
 }
 
-/** Workflow tests 3b (D81): the person's own deny rules and sandbox, or null when there are none. */
+/** Workflow tests 3b (D81): the person's own deny rules and sandbox, or null when there are none. C1: a sandbox the CLI
+ *  would reject (sandboxProblem) is never carried: it would make the CLI drop the whole settings file, Worca's guards with it. */
 function safetySettingsOf(s) {
   if (!s || typeof s !== 'object' || Array.isArray(s)) return null;
   const deny = Array.isArray(s.deny) ? s.deny.filter((x) => typeof x === 'string' && x.trim()) : [];
-  const sandbox = s.sandbox && typeof s.sandbox === 'object' && !Array.isArray(s.sandbox) ? s.sandbox : null;
+  const sandbox = s.sandbox && sandboxProblem(s.sandbox) === null ? s.sandbox : null;
   return deny.length || sandbox ? { deny, sandbox } : null;
+}
+
+/** M8 (security review): the permission rules as the payload carries them: only `allow` / `ask` / `deny`, each a list of
+ *  strings (other entries dropped), in their given order; null when nothing is left. A wrong-typed `permissions` value
+ *  would make the CLI drop the whole settings file, as C1's sandbox does. */
+function permissionListsOf(rules) {
+  if (!rules || typeof rules !== 'object' || Array.isArray(rules)) return null;
+  const out = {};
+  for (const [k, v] of Object.entries(rules)) {
+    if ((k === 'allow' || k === 'ask' || k === 'deny') && Array.isArray(v)) out[k] = v.filter((x) => typeof x === 'string');
+  }
+  return Object.keys(out).length ? out : null;
 }
 
 /** What `--settings` carries, or null when there is nothing to carry (no hook
@@ -95,9 +108,9 @@ export function buildSettingsPayload(permissionRules, { hostGuard = false, extra
   const rules0 = tg ? withTryDeny(permissionRules) : permissionRules;
   // D81: the person's own deny rules, after Worca's and the try guard's (deduplicated): they only add blocks.
   const safety = safetySettingsOf(safetySettings);
-  const rules = safety && safety.deny.length
+  const rules = permissionListsOf(safety && safety.deny.length
     ? { ...(rules0 && typeof rules0 === 'object' ? rules0 : {}), deny: [...new Set([...(rules0 && Array.isArray(rules0.deny) ? rules0.deny : []), ...safety.deny])] }
-    : rules0;
+    : rules0);
   const hasRules = !!rules && Object.values(rules).some((a) => Array.isArray(a) && a.length);
   // Present-but-malformed rules (e.g. `{deny: 'Bash(curl:*)'}`) make the object
   // truthy while hasRules stays false, so the whole policy would drop out of
@@ -597,16 +610,40 @@ export function signInCarry({ modelEnv = null, asAgent = false, read = readUserS
     // D81: the person's own deny rules and sandbox: carried in every case. The deny rules only add blocks; the sandbox keeps
     // Claude Code's order (D81a): the spawn's checkout (`cwd`) has its project, then local sandbox laid on top.
     let safety = null;
-    try { const g = readSafety({ env, cwd }); if (g && ((Array.isArray(g.deny) && g.deny.length) || g.sandbox)) safety = { deny: g.deny || [], sandbox: g.sandbox || null }; }
-    catch { safety = null; }
+    let warnings = [];
+    try {
+      const g = readSafety({ env, cwd });
+      if (g && ((Array.isArray(g.deny) && g.deny.length) || g.sandbox)) safety = { deny: g.deny || [], sandbox: g.sandbox || null };
+      if (g && Array.isArray(g.warnings)) warnings = g.warnings.filter((w) => typeof w === 'string' && w);
+    } catch { safety = null; }
     // D71: the sign-in never with the broker on, and never into a spawn that runs as another OS user.
     let isolated = false;
     if (asAgent) { try { isolated = !!agentUser(); } catch { isolated = false; } }
     const s = brokerEnabled() || isolated ? null : read({ env });
     const signIn = s && s.state === 'found' ? s : null;
-    if (!signIn && !safety) return null;
-    return { env: { ...(signIn ? signIn.env || {} : {}) }, settings: { ...(signIn ? signIn.settings || {} : {}) }, ...(safety ? { safety } : {}) };
+    if (!signIn && !safety && !warnings.length) return null;
+    return { env: { ...(signIn ? signIn.env || {} : {}) }, settings: { ...(signIn ? signIn.settings || {} : {}) }, ...(safety ? { safety } : {}),
+      ...(warnings.length ? { warnings } : {}) };
   } catch { return null; }
+}
+
+/** Task 5 (security review C1, L5): what the runner says about a Pretend try's carry, as a stderr line of the spawn. The run
+ *  harness records a warning once as a run warning, and a note once in the run log (carryLine). */
+export const CARRY_WARNING_PREFIX = '[worca] try carry warning: ';
+export const CARRY_NOTE_PREFIX = '[worca] try carry note: ';
+/** A carry line's kind and text, or null for any other line. */
+export function carryLine(text) {
+  const t = typeof text === 'string' ? text.trim() : '';
+  if (t.startsWith(CARRY_WARNING_PREFIX)) return { kind: 'warning', text: t.slice(CARRY_WARNING_PREFIX.length) };
+  if (t.startsWith(CARRY_NOTE_PREFIX)) return { kind: 'note', text: t.slice(CARRY_NOTE_PREFIX.length) };
+  return null;
+}
+/** The lines a carry gives: each sandbox warning (C1), then how many personal deny rules came along (L5). */
+function carryLines(carry) {
+  if (!carry) return [];
+  const n = carry.safety && Array.isArray(carry.safety.deny) ? carry.safety.deny.length : 0;
+  return [...(carry.warnings || []).map((w) => `${CARRY_WARNING_PREFIX}${w}`),
+    ...(n ? [`${CARRY_NOTE_PREFIX}This try also follows ${n} deny rule${n === 1 ? '' : 's'} from your own Claude Code settings.`] : [])];
 }
 
 const ROUTING_KEY_RE = /^(CLOUD_ML_REGION|AWS_REGION|AWS_PROFILE|ANTHROPIC_VERTEX_PROJECT_ID|HTTP_PROXY|HTTPS_PROXY|NO_PROXY)$/i;
@@ -644,6 +681,8 @@ export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, perm
       if (err && typeof err.stack === 'string') err.stack = redactor.text(err.stack);
       rejectRaw(err);
     } : rejectRaw;
+    // Task 5 (C1, L5): what the carry left out or brought along, said before anything can fail.
+    for (const text of carryLines(carry)) safeEmit(onEvent, { type: 'stderr', stream: 'err', text });
     // Per-model routing env (design §4.4), prepared BEFORE argv: reserved keys
     // are re-dropped here defensively — the write path already rejects them, so
     // a drop means a hand-edited settings file — and the surviving map is also

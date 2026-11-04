@@ -5,7 +5,8 @@ import assert from 'node:assert/strict';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { buildSettingsPayload, buildClaudeArgs, planClaudeInvocation, signInCarry, secretValuesOf } from '../src/core/engines/claude.mjs';
+import { buildSettingsPayload, buildClaudeArgs, planClaudeInvocation, signInCarry, secretValuesOf, runClaudeProcess, carryLine, CARRY_WARNING_PREFIX, CARRY_NOTE_PREFIX } from '../src/core/engines/claude.mjs';
+import { RunHarness } from '../src/core/run-harness.mjs';
 import { composeSpawnEnv } from '../src/core/engines/spawn.mjs';
 import { runOpts, taskHeader, fanOutDirective, PLUGINS_OFF_SOURCES } from '../src/core/phases.mjs';
 import { runClaude } from '../src/core/claude-runner.mjs';
@@ -192,4 +193,67 @@ test('D81a: the guards are read with the spawn\'s working directory, so the chec
   assert.equal(seen, '/try/checkout');
   signInCarry({ read: none, readSafety: (o) => { seen = o.cwd; return S; } });
   assert.equal(seen, null, 'no working directory: none passed');
+});
+
+// ── Task 5 (security review C1, M8): Worca's --settings payload carries only values the CLI accepts ─────────────────────────
+test('C1: buildSettingsPayload never carries a sandbox the CLI would reject; a valid one is kept', () => {
+  for (const sandbox of [{ enabled: 'yes' }, { excludedCommands: 'docker' }, { network: true }, { notAKey: 1 }]) {
+    const p = buildSettingsPayload({ deny: ['Bash(curl:*)'] }, { safetySettings: { deny: ['Bash(rm:*)'], sandbox } });
+    assert.equal('sandbox' in p.settings, false, JSON.stringify(sandbox));
+    assert.deepEqual(p.settings.permissions.deny, ['Bash(curl:*)', 'Bash(rm:*)'], 'the deny rules still go');
+  }
+  assert.equal(buildSettingsPayload(null, { safetySettings: { deny: [], sandbox: { enabled: 'yes' } } }), null, 'nothing valid left: no flag');
+  assert.deepEqual(buildSettingsPayload(null, { safetySettings: { deny: [], sandbox: { enabled: true } } }).settings.sandbox, { enabled: true });
+});
+
+test('M8: the permission rules in the payload are only allow / ask / deny lists of strings', () => {
+  const S = { deny: ['Bash(rm:*)'], sandbox: null };
+  const p = buildSettingsPayload({ allow: 'x', ask: [1, 'Bash(git push:*)'], deny: ['Read(.env*)', null], other: ['y'] }, { safetySettings: S });
+  assert.deepEqual(p.settings.permissions, { ask: ['Bash(git push:*)'], deny: ['Read(.env*)', 'Bash(rm:*)'] });
+  const tg = buildSettingsPayload({ allow: 'x' }, { tryGuard: { logFile: '/x/calls.ndjson' } });
+  assert.equal('allow' in tg.settings.permissions, false, 'the try guard\'s rules with a malformed allow');
+  assert.ok(Object.values(tg.settings.permissions).every((a) => Array.isArray(a) && a.every((x) => typeof x === 'string')));
+  const ok = { allow: ['Read'], deny: ['Bash(curl:*)'] };
+  assert.deepEqual(buildSettingsPayload(ok, {}).settings.permissions, ok, 'valid rules: unchanged');
+  assert.deepEqual(Object.keys(buildSettingsPayload({ deny: ['a'], allow: ['b'] }, {}).settings.permissions), ['deny', 'allow'], 'their order kept');
+});
+
+test('C1/L5: what the carry says reaches the run: the sandbox warnings, and how many personal deny rules were carried', async () => {
+  const none = () => ({ state: 'none', env: {}, settings: {} });
+  const W = 'Worca did not carry your sandbox settings: sandbox.enabled is not valid.';
+  assert.deepEqual(signInCarry({ read: none, readSafety: () => ({ deny: [], sandbox: null, warnings: [W] }) }), { env: {}, settings: {}, warnings: [W] },
+    'a warning alone is still said');
+  assert.deepEqual(signInCarry({ read: none, readSafety: () => ({ deny: ['Bash(x)'], sandbox: null, warnings: [W, 3] }) }),
+    { env: {}, settings: {}, safety: { deny: ['Bash(x)'], sandbox: null }, warnings: [W] });
+  assert.deepEqual(carryLine(`${CARRY_WARNING_PREFIX}${W}`), { kind: 'warning', text: W });
+  assert.deepEqual(carryLine(`${CARRY_NOTE_PREFIX}x`), { kind: 'note', text: 'x' });
+  assert.equal(carryLine('[worca] spawn-debug: x'), null);
+  // The runner says them before it spawns (a CLI that cannot start still leaves them in the run).
+  const cfg = tmp();
+  writeFileSync(join(cfg, 'settings.json'), JSON.stringify({ sandbox: { enabled: 'yes' }, permissions: { deny: ['Bash(rm:*)', 'Read(.env)'] } }));
+  const prev = { cfg: process.env.CLAUDE_CONFIG_DIR, mock: process.env.WORCA_MOCK };
+  process.env.CLAUDE_CONFIG_DIR = cfg;
+  delete process.env.WORCA_MOCK;
+  const events = [];
+  try {
+    await assert.rejects(runClaudeProcess({ cwd: tmp(), bin: join(cfg, 'no-such-claude.exe'), prompt: 'p', allowedTools: ['Read'], pluginsOff: true,
+      settingSources: ['project'], onEvent: (e) => events.push(e) }));
+  } finally {
+    if (prev.cfg === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = prev.cfg;
+    if (prev.mock !== undefined) process.env.WORCA_MOCK = prev.mock;
+  }
+  const said = events.filter((e) => e.type === 'stderr').map((e) => carryLine(e.text)).filter(Boolean);
+  assert.deepEqual(said, [{ kind: 'warning', text: W }, { kind: 'note', text: 'This try also follows 2 deny rules from your own Claude Code settings.' }]);
+});
+
+test('C1/L5: the run records a carry warning once as a run warning, a carry note once in its log; other stderr as before', async () => {
+  const logs = [];
+  const warnings = [];
+  const h = { _log: (...a) => logs.push(a), _recordRunWarning: async (t) => { warnings.push(t); } };
+  const say = (text) => RunHarness.prototype._onStderrEvent.call(h, 'implementer', { type: 'stderr', text }, { nodeId: 'n1' });
+  for (let i = 0; i < 3; i++) { say(`${CARRY_WARNING_PREFIX}W1`); say(`${CARRY_NOTE_PREFIX}N1`); }
+  say('plain stderr');
+  await new Promise((r) => setImmediate(r));
+  assert.deepEqual(warnings, ['W1']);
+  assert.deepEqual(logs, [['implementer', 'info', 'N1', { nodeId: 'n1' }], ['implementer', 'warn', 'plain stderr', { nodeId: 'n1', stream: 'err' }]]);
 });

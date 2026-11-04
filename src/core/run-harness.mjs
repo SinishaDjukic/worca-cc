@@ -110,7 +110,7 @@ import { withBillTo, currentBillTo } from './billing.mjs';
 import { claimRunDir } from './agent-pool.mjs';
 import { brokerEnabled, brokerEngineRefusal, brokerInfo, personSlots } from './broker-client.mjs';
 import { mockEnabled } from './claude-runner.mjs';
-import { DEFAULT_BIN as CLAUDE_DEFAULT_BIN } from './engines/claude.mjs';
+import { DEFAULT_BIN as CLAUDE_DEFAULT_BIN, carryLine } from './engines/claude.mjs';
 import { modelSlot, manifestModels, manifestNeedsModel, missingCredentials, describeMissing } from './broker-routing.mjs';
 import { syncPluginSlots } from './plugin-broker-slots.mjs';
 import { recoveryDelayMs, sleepAbortable } from './recovery-backoff.mjs';
@@ -8150,6 +8150,17 @@ export class RunHarness extends EventEmitter {
   // claude-runner.mjs — and are logged at `error` by the node failure handler.
   _onStderrEvent(role, e, attr) {
     const text = (e.text || '').trim();
+    // Workflow tests 3b, Task 5 (C1, L5): what a Pretend try's carry left out (a run warning) or brought along (a log line),
+    // once per run however many spawns say it.
+    const carried = carryLine(text);
+    if (carried) {
+      this._carrySaid ??= new Set();
+      if (this._carrySaid.has(carried.text)) return;
+      this._carrySaid.add(carried.text);
+      if (carried.kind === 'warning') this._recordRunWarning(carried.text).catch(() => {});
+      else this._log(role, 'info', carried.text, attr);
+      return;
+    }
     if (text) this._log(role, 'warn', text, { ...attr, stream: 'err' });
   }
 
