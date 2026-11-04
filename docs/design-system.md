@@ -106,7 +106,7 @@ shows it; sizes, colours and spacing come with the component. Names are the Desi
 |---|---|---|
 | **Acting** | | |
 | The one next step of a state | the split button in the StatusLine: Button primary, its ▾ the alternatives | Merge PR ▾, Resume now ▾ |
-| Supporting actions | ⋯ next to it, a CompactMenu, danger last after a rule | Terminal, Copy link, Archive |
+| Supporting actions | ⋯ next to it, a CompactMenu, danger last after a rule; the View menu alone also holds radio items with counts and one Segmented | Terminal, Copy link, Archive |
 | A yes or no, or a one-line answer | ConfirmStrip, in place under the top bar | Merge #959 into dev?, Run after |
 | A step that needs fields first | Dialog, the only one for a form | Create PR |
 | Going to another page or place | Text link, or a ListRow you open | Changes +358 −144, a file, a step |
@@ -117,7 +117,7 @@ shows it; sizes, colours and spacing come with the component. Names are the Desi
 | Picking items from a list, an opt-out, a consent | Checkbox | the checklist, No cap, Draft |
 | Two or three views of the same thing | Segmented | Light and Dark, Summaries and Raw |
 | Sections of a page | Tabs | Overview, Changes, Decisions |
-| Narrowing a list | Chip › filter chip | Running 4 |
+| Narrowing a list | the list's View menu, a CompactMenu at the right of the list's head: Show with each choice's count, then Group by as a Segmented; the filter that is on shows as a filter chip at the left, its × turns it off | `View ▾`, `Ready to ship ×` |
 | Picking and adding names | ListEditor | labels and cost tags, groups |
 | **Entering** | | |
 | Text, a number, a pick from a long list in a form | Field | Branch, Budget, Base branch |
@@ -209,8 +209,8 @@ what it belongs to.
 dot, or a tick box while selecting), a title line, a meta line, its time or figure at the right; the whole row opens
 its one target, so a fact in the row is text, never a second link. The row's own actions are a ⋯ at its right end
 (the Runs list's row ⋯), the same CompactMenu as on its page. Rows sit in sections in a fixed order (by urgency, or by day), newest first in each; a section with
-no rows is not drawn; the page's spec names the sections. What the list shows is a sentence above it (`Showing [unread ▾] from [all groups ▾]`), not a
-filter button. Selecting works the same in every list (Runs, Chats, Pulse). You start it from the list's menu
+no rows is not drawn; the page's spec names the sections. What the list shows is chosen in its View menu, at the right of the list's head (Show with counts, then Group
+by); a filter that is on shows as a filter chip at the left of the head, and its × turns it off. Selecting works the same in every list (Runs, Chats, Pulse). You start it from the list's menu
 (`Select`), with ⌘ or Ctrl-click, with Shift-click for a range, with Space or ⌘A, or with a long-press on touch.
 `Select all` joins the head and the sentence stays. The selection bar (`.runs-bulk`) sits at the list's foot:
 `2 selected · Archive 2 · Cancel`. Each action shows how many rows it applies to and is disabled at 0. Cancel or Esc
@@ -711,7 +711,7 @@ and hand the focus back to the opener.
   row's 3px line, then the 11px Plan / Build / Review / Ready with its stage bold); its status names no step, only a
   state its dot does not say (needs you, paused). A member dispatched but not started yet (Starting) draws no progress. Its ⋯ stays 28px, centred.
 - Search is the top bar's "Search or ask" only. A list filter is chosen there ("Runs labelled hotfix", `label:hotfix`),
-  not from a filter button in the list's header. The Marketplace's Browse search is the one exception
+  or in the list's View menu (Show, Group by), never from a separate filter button. The Marketplace's Browse search is the one exception
   (Marketplace exceptions).
 - Phones: one 16px gutter; nothing scrolls sideways at 290px.
 - Runs list order: Needs you (most urgent first), Running, Waiting, Recent. Each section is newest dispatch first (a

@@ -12,7 +12,7 @@ or adopt the app's way (the rule changes).
 
 | # | App now | Rail rule | Question |
 |---|---|---|---|
-| 1 | Runs and Chats filter through a **View menu** button, Ready to ship among its options (#970, #1001) | "What the list shows is a sentence above it, not a filter button" | Keep the sentence, or adopt the View menu? Settles the CompactMenu's segmented and count items too |
+| 1 | Runs and Chats filter through a **View menu** button, Ready to ship among its options (#970, #1001) | was: a sentence above the list | **Decided 4 Nov: adopt the View menu.** The rule, the lookup and CompactMenu follow it; mock `mocks/runs-list-filter-*.png` |
 | 2 | **Day sections fold** by hand; Older starts folded (#1036, `runs-list.mjs`) | "Sections never collapse; one that is too long shows less" | Keep (Older shows its first rows, then Show more), or allow a folded Older? |
 | 3 | A **failed command group stays folded** in Chat, only a red `N failed` (#998) | "What has a problem opens by itself" | Keep (a failure opens itself once), or a Chat exception? |
 | 4 | The **side chat dock** slides in over .32s (#954) and chat cards rise 10px (#972) | Motion: fade, never slide; 150ms | Keep (fade over `quick`)? |
