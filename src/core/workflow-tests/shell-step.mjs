@@ -59,3 +59,6 @@ export async function readTrySetup(pipelineDir) {
     return v && typeof v === 'object' ? v : null;
   } catch { return null; }
 }
+
+/** The first line of a message, trimmed and cut to 300 characters ('' when it is not a string): one line for a verdict or a log. */
+export const firstLine = (t) => (typeof t === 'string' ? t.trim().split(/\r?\n/)[0].slice(0, 300) : '');

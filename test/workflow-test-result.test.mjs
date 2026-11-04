@@ -97,7 +97,10 @@ test('a script check runs on a copy of the result folder, waits while the bench 
   const bad = await runScriptCheck({ kind: 'script', key: 'lint-md' }, { pipelineId: t.id, runBench: async () => ({ status: 'blocking', summary: 'Heading levels skip\nmore' }) });
   assert.deepEqual(bad, { met: false, value: 'Heading levels skip' });
   const gone = await runScriptCheck({ kind: 'script', key: 'nope' }, { pipelineId: t.id, runBench: async () => { throw Object.assign(new Error('script "nope" not found'), { code: 'NOT_FOUND' }); } });
-  assert.deepEqual(gone, { met: false, value: 'Not met', error: 'script "nope" not found', worcaProblem: true }, 'U-T2: the bench threw');
+  assert.deepEqual(gone, { met: false, value: 'The script is no longer in the Library.' }, 'U-T2: a deleted script is a normal Not met check, not a Worca problem');
+  assert.equal(gone.worcaProblem, undefined);
+  const threw = await runScriptCheck({ kind: 'script', key: 'x' }, { pipelineId: t.id, runBench: async () => { throw new Error('bench exploded'); } });
+  assert.equal(threw.worcaProblem, true, 'another bench throw stays a Worca problem');
 });
 
 test('a stuck script check times out, frees the queue, and still removes its copy once it settles', async () => {

@@ -15,7 +15,7 @@ import { runBenchOnce } from '../script-bench.mjs';
 import { readScript } from '../script-store.mjs';
 import { CONNECTOR_CALLS_FILE } from './connectors.mjs';
 import { scratchTryLog } from './try-guard-env.mjs';
-import { runShellStep, readTrySetup, tryShellEnv } from './shell-step.mjs';
+import { runShellStep, readTrySetup, tryShellEnv, firstLine } from './shell-step.mjs';
 import { DEFAULT_TIMEOUT_MS } from '../../shared/graph/script-meta.mjs';
 import { runCheck, judgeTry, wordCount, checkLabel, TEXT_KINDS, commandSummary } from '../../shared/workflow-tests/checks.mjs';
 
@@ -155,6 +155,8 @@ export function runScriptCheck(check, { pipelineId, cwdDir = null, logFile = nul
           return { met, value: met ? 'Met' : String((r && (r.summary || r.status)) || 'Not met').split('\n')[0].slice(0, 120) };
         } catch (err) {
           if (err && err.code === 'BUSY' && attempt < BUSY_RETRIES && !state.timedOut) { await wait(waitMs); continue; }
+          // The script was deleted from the Library: the person's doing, a normal Not met check (not Worca's problem).
+          if (err && err.code === 'NOT_FOUND') return { met: false, value: 'The script is no longer in the Library.' };
           return notRun(err && err.message ? err.message : String(err));
         }
       }
@@ -243,7 +245,7 @@ export async function checkTry(example, outcome, { runScript = runScriptCheck, r
       let r;
       // U-T2: the command runner itself threw (it never ran the command): a Worca problem; its first line for developers.
       try { r = await runCommand(check, { cwd: cwdDir, logFile: outcome.logFile }); } catch (e) {
-        r = { met: false, value: 'Ended with an error', error: String((e && e.message) || e).split(/\r?\n/)[0].slice(0, 300), worcaProblem: true };
+        r = { met: false, value: 'Ended with an error', error: firstLine(String((e && e.message) || e)), worcaProblem: true };
       }
       // Board 36: a command its time limit stopped says so in the side by side (timedOut), not "ended with an error".
       // Round 2 (M5): the kind and the command travel with the result, so the side by side sets it in code from data.

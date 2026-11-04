@@ -12,7 +12,7 @@ import { tryRunBody } from './try-body.mjs';
 import { fmtUsd } from '../../shared/workflow-tests/checks.mjs';
 import { REASON, REASON_CODES } from '../failure-policy.mjs';
 import { setupFailedText, worcaTryText, worcaProblemText } from '../../shared/workflow-tests/project-text.mjs';
-import { TRY_SETUP_STAGE } from './shell-step.mjs';
+import { TRY_SETUP_STAGE, firstLine } from './shell-step.mjs';
 import { WORKTREE_STAGE } from '../setup-stages.mjs';
 import { releaseCopy } from './project-copy.mjs';
 
@@ -61,10 +61,9 @@ export function pauseVerdict(reason, detail = null) {
   if (reason != null && reason !== REASON.ERROR && REASON_CODES.includes(reason)) {
     return { stop: 'refused', detail: PAUSE_REFUSED_TEXT[reason] || PAUSE_REFUSED_OTHER };
   }
-  const line = typeof detail === 'string' ? detail.trim().split(/\r?\n/)[0].slice(0, 300).replace(/[\s.]+$/, '') : '';
+  const line = firstLine(detail).replace(/[\s.]+$/, '');
   return { fail: true, detail: `a step failed: ${line || 'the try paused'}` };
 }
-const firstLine = (t) => (typeof t === 'string' ? t.trim().split(/\r?\n/)[0].slice(0, 300) : '');
 /**
  * U-T2 (D2): did Worca itself fail to run this try (never the workflow)? In order: an error pause while the run was still
  * in its own setup (state.setupStage set, and not the person's setup command, TRY_SETUP_STAGE, which stays D55); a
@@ -448,6 +447,8 @@ export function createTestRunner(deps) {
    * and released the same way (U-T1).
    */
   function setAside(run, st, t, problem, patch) {
+    // The raw first line (worcaProblemDetail) stays in the stored verdict and the server log only; showing it in the UI
+    // ("For developers") is deferred to a later UI task that will be designed first.
     logProblem(`try ${t.id} of test ${run.id}`, problem);
     const verdict = { worcaProblem: worcaTryText(problem.kind), ...(problem.detail ? { worcaProblemDetail: problem.detail } : {}) };
     const slot = `${t.exampleId}:${t.side}:${t.tryNo}`;

@@ -11,7 +11,7 @@ import { _resetForTests, getDb } from '../src/core/db.mjs';
 import * as store from '../src/core/workflow-tests/store.mjs';
 import { createTestRunner, MAX_PARALLEL, PAUSE_REFUSED_TEXT, PAUSE_REFUSED_OTHER, pauseVerdict, worcaProblemOf } from '../src/core/workflow-tests/runner.mjs';
 import { checkTry } from '../src/core/workflow-tests/result.mjs';
-import { progressOf } from '../src/core/workflow-tests/service.mjs';
+import { progressOf, compareOf } from '../src/core/workflow-tests/service.mjs';
 import { compareModel } from '../src/shared/workflow-tests/compare.mjs';
 import { WORKTREE_STAGE } from '../src/core/setup-stages.mjs';
 import { TRY_SETUP_STAGE } from '../src/core/workflow-tests/shell-step.mjs';
@@ -668,51 +668,70 @@ async function pauseInSetup(h, n, stage = WORKTREE_STAGE, detail = 'git config c
   e.end('paused');
 }
 
+/** Stub console.warn; `.lines()` is what the server log got for a set-aside try (restore it in a finally). */
+function stubWarn() {
+  const orig = console.warn; const all = [];
+  console.warn = (...a) => { all.push(a.join(' ')); };
+  return { restore: () => { console.warn = orig; }, all, lines: () => all.filter((l) => l.startsWith('[workflow-tests] Worca could not run ')) };
+}
+
 test('U-T2 (a): an error pause in the run\'s setup is not judged, is set aside and made again, and the comparison is unchanged', async () => {
-  for (const k of Object.keys(fps)) delete fps[k];
-  const h = harness({ plan: (_b, _u, n) => (n === 1 ? { status: 'done', cost: 0.2, hold: true } : { status: 'done', cost: 0.5 }) });
-  const runner = createTestRunner(h.deps);
-  const ex = example({ tries: 1 });
-  const run = await runner.start({ workflowId: WF, a: 1, b: 'draft', exampleIds: [ex.id], tries: 1 });
-  const first = store.triesOfRun(run.id).find((t) => t.side === 'a');
-  await pauseInSetup(h, 1);
-  await runner.idle(run.id);
-  const st = store.readTestRun(run.id);
-  assert.deepEqual([st.status, st.stopReason], ['done', null], 'the test goes on');
-  const old = store.readTry(first.id);
-  assert.equal(old.status, 'stopped');
-  assert.deepEqual(old.verdict, { worcaProblem: 'Worca could not run this try: it could not prepare its copy of the project.',
-    worcaProblemDetail: 'git config could not be read' }, 'not judged; the raw first line only for developers');
-  assert.equal(h.started.length, 3, 'a new try was made for the same slot');
-  assert.deepEqual(statuses(run.id).sort(), ['a1:passed', 'b1:passed']);
-  const again = store.triesOfRun(run.id).find((t) => t.side === 'a');
-  assert.notEqual(again.id, first.id);
-  assert.deepEqual([again.exampleId, again.tryNo, again.use], [ex.id, 1, 1], 'same example, side and try number');
-  assert.equal(store.spentOfRun(run.id), 1.2, 'the set-aside try stays in the test\'s cost');
-  const m = compareModel({ examples: [{ id: ex.id, name: ex.name }], a: { label: 'v1' }, b: { label: 'draft' }, tries: store.triesOfRun(run.id) });
-  assert.deepEqual([m.examples[0].a, m.examples[0].b], [{ passed: 1, total: 1 }, { passed: 1, total: 1 }], 'never counted');
-  assert.equal(progressOf(WF, run.id).madeAgain, 1);
+  const w = stubWarn();
+  try {
+    for (const k of Object.keys(fps)) delete fps[k];
+    const h = harness({ plan: (_b, _u, n) => (n === 1 ? { status: 'done', cost: 0.2, hold: true } : { status: 'done', cost: 0.5 }) });
+    const runner = createTestRunner(h.deps);
+    const ex = example({ tries: 1 });
+    const run = await runner.start({ workflowId: WF, a: 1, b: 'draft', exampleIds: [ex.id], tries: 1 });
+    const first = store.triesOfRun(run.id).find((t) => t.side === 'a');
+    await pauseInSetup(h, 1);
+    await runner.idle(run.id);
+    const st = store.readTestRun(run.id);
+    assert.deepEqual([st.status, st.stopReason], ['done', null], 'the test goes on');
+    const old = store.readTry(first.id);
+    assert.equal(old.status, 'stopped');
+    assert.deepEqual(old.verdict, { worcaProblem: 'Worca could not run this try: it could not prepare its copy of the project.',
+      worcaProblemDetail: 'git config could not be read' }, 'not judged; the raw first line only for developers');
+    assert.equal(h.started.length, 3, 'a new try was made for the same slot');
+    assert.deepEqual(statuses(run.id).sort(), ['a1:passed', 'b1:passed']);
+    const again = store.triesOfRun(run.id).find((t) => t.side === 'a');
+    assert.notEqual(again.id, first.id);
+    assert.deepEqual([again.exampleId, again.tryNo, again.use], [ex.id, 1, 1], 'same example, side and try number');
+    assert.equal(store.spentOfRun(run.id), 1.2, 'the set-aside try stays in the test\'s cost');
+    const m = compareModel({ examples: [{ id: ex.id, name: ex.name }], a: { label: 'v1' }, b: { label: 'draft' }, tries: store.triesOfRun(run.id) });
+    assert.deepEqual([m.examples[0].a, m.examples[0].b], [{ passed: 1, total: 1 }, { passed: 1, total: 1 }], 'never counted');
+    assert.equal(progressOf(WF, run.id).madeAgain, 1);
+    assert.equal((await compareOf(WF, run.id, { registry: {}, fingerprintOf: async () => null })).madeAgain, 1, 'the compare page gets it from the store too');
+    assert.equal(w.lines().length, 1, 'one server log line');
+    assert.match(w.lines()[0], /\(copy\): git config could not be read$/);
+    assert.equal(w.all.length, 1, 'no other warnings');
+  } finally { w.restore(); }
 });
 
 test('U-T2 (b): the same slot hits a Worca problem twice: the test stops as worca, and Finish the rest makes it again', async () => {
-  for (const k of Object.keys(fps)) delete fps[k];
-  const h = harness({ plan: (_b, _u, n) => (n <= 2 ? { status: 'done', cost: 0.1, hold: true } : { status: 'done', cost: 0.5 }) });
-  const runner = createTestRunner(h.deps);
-  const ex = example({ tries: 1 });
-  const run = await runner.start({ workflowId: WF, kind: 'once', b: 'draft', exampleIds: [ex.id], tries: 1 });
-  await pauseInSetup(h, 1);
-  await pauseInSetup(h, 2);
-  await runner.idle(run.id);
-  const st = store.readTestRun(run.id);
-  assert.deepEqual([st.status, st.stopReason, st.stopDetail], ['stopped', 'worca', 'it could not prepare its copy of the project']);
-  assert.equal(h.started.length, 2, 'made again once only');
-  const [t] = store.triesOfRun(run.id);
-  assert.equal(t.status, 'stopped');
-  assert.equal(t.verdict.worcaProblem, 'Worca could not run this try: it could not prepare its copy of the project.');
-  assert.equal(progressOf(WF, run.id).madeAgain, 1, 'the second one was set aside but not made again');
-  await runner.continueRun(run.id);
-  await runner.idle(run.id);
-  assert.deepEqual([store.readTestRun(run.id).status, statuses(run.id)], ['done', ['b1:passed']]);
+  const w = stubWarn();
+  try {
+    for (const k of Object.keys(fps)) delete fps[k];
+    const h = harness({ plan: (_b, _u, n) => (n <= 2 ? { status: 'done', cost: 0.1, hold: true } : { status: 'done', cost: 0.5 }) });
+    const runner = createTestRunner(h.deps);
+    const ex = example({ tries: 1 });
+    const run = await runner.start({ workflowId: WF, kind: 'once', b: 'draft', exampleIds: [ex.id], tries: 1 });
+    await pauseInSetup(h, 1);
+    await pauseInSetup(h, 2);
+    await runner.idle(run.id);
+    const st = store.readTestRun(run.id);
+    assert.deepEqual([st.status, st.stopReason, st.stopDetail], ['stopped', 'worca', 'it could not prepare its copy of the project']);
+    assert.equal(h.started.length, 2, 'made again once only');
+    const [t] = store.triesOfRun(run.id);
+    assert.equal(t.status, 'stopped');
+    assert.equal(t.verdict.worcaProblem, 'Worca could not run this try: it could not prepare its copy of the project.');
+    assert.equal(progressOf(WF, run.id).madeAgain, 1, 'the second one was set aside but not made again');
+    await runner.continueRun(run.id);
+    await runner.idle(run.id);
+    assert.deepEqual([store.readTestRun(run.id).status, statuses(run.id)], ['done', ['b1:passed']]);
+    assert.equal(w.lines().length, 2, 'one server log line per set-aside try');
+    assert.equal(w.all.length, 2);
+  } finally { w.restore(); }
 });
 
 test('U-T2 (c): a step error after the setup is still a failed try, and the try setup is the person\'s (D55)', async () => {
@@ -732,30 +751,41 @@ test('U-T2 (c): a step error after the setup is still a failed try, and the try 
 });
 
 test('U-T2 (d): the quick check with a setup-stage error is made again once, then stops as worca, not quick-check', async () => {
-  const h = harness({ plan: (body) => (body.mock ? { status: 'done', cost: 0, hold: true } : { status: 'done', cost: 0.5 }) });
-  const runner = createTestRunner(h.deps);
-  const ex = example({ tries: 1 });
-  const run = await runner.start({ workflowId: WF, a: 1, b: 'draft', exampleIds: [ex.id], tries: 1, quickCheck: true });
-  await pauseInSetup(h, 1);
-  await pauseInSetup(h, 2);
-  await runner.idle(run.id);
-  const st = store.readTestRun(run.id);
-  assert.deepEqual([st.status, st.stopReason, st.stopDetail, st.quick], ['stopped', 'worca', 'it could not prepare its copy of the project', { status: 'waiting' }]);
-  assert.equal(h.started.length, 2, 'nothing real is tried');
-  assert.ok(h.started.every((s) => s.mock));
+  const w = stubWarn();
+  try {
+    const h = harness({ plan: (body) => (body.mock ? { status: 'done', cost: 0, hold: true } : { status: 'done', cost: 0.5 }) });
+    const runner = createTestRunner(h.deps);
+    const ex = example({ tries: 1 });
+    const run = await runner.start({ workflowId: WF, a: 1, b: 'draft', exampleIds: [ex.id], tries: 1, quickCheck: true });
+    await pauseInSetup(h, 1);
+    await pauseInSetup(h, 2);
+    await runner.idle(run.id);
+    const st = store.readTestRun(run.id);
+    assert.deepEqual([st.status, st.stopReason, st.stopDetail, st.quick], ['stopped', 'worca', 'it could not prepare its copy of the project', { status: 'waiting' }]);
+    assert.equal(h.started.length, 2, 'nothing real is tried');
+    assert.ok(h.started.every((s) => s.mock));
+    assert.equal(w.lines().length, 2, 'one server log line per set-aside try');
+    assert.equal(w.all.length, 2);
+  } finally { w.restore(); }
 });
 
 test('U-T2: the answerer\'s own failure is a Worca problem: set aside and made again', async () => {
-  for (const k of Object.keys(fps)) delete fps[k];
-  const ask = { id: 'g-1', kind: 'gate' };
-  const h = harness({ plan: () => ({ status: 'done', cost: 0.2, ask }) });
-  const runner = createTestRunner({ ...h.deps,
-    answer: (k, id, p) => { if (k === 'run-1') throw new Error('invalid answer'); return h.deps.answer(k, id, p); } });
-  const ex = example({ tries: 1 });
-  const run = await runner.start({ workflowId: WF, kind: 'once', b: 'draft', exampleIds: [ex.id], tries: 1 });
-  await runner.idle(run.id);
-  assert.deepEqual([store.readTestRun(run.id).status, statuses(run.id), h.started.length], ['done', ['b1:passed'], 2]);
-  assert.equal(progressOf(WF, run.id).madeAgain, 1);
+  const w = stubWarn();
+  try {
+    for (const k of Object.keys(fps)) delete fps[k];
+    const ask = { id: 'g-1', kind: 'gate' };
+    const h = harness({ plan: () => ({ status: 'done', cost: 0.2, ask }) });
+    const runner = createTestRunner({ ...h.deps,
+      answer: (k, id, p) => { if (k === 'run-1') throw new Error('invalid answer'); return h.deps.answer(k, id, p); } });
+    const ex = example({ tries: 1 });
+    const run = await runner.start({ workflowId: WF, kind: 'once', b: 'draft', exampleIds: [ex.id], tries: 1 });
+    await runner.idle(run.id);
+    assert.deepEqual([store.readTestRun(run.id).status, statuses(run.id), h.started.length], ['done', ['b1:passed'], 2]);
+    assert.equal(progressOf(WF, run.id).madeAgain, 1);
+    assert.equal(w.lines().length, 1, 'one server log line');
+    assert.match(w.lines()[0], /\(answer\)/);
+    assert.equal(w.all.length, 1);
+  } finally { w.restore(); }
 });
 
 test('U-T2: worcaProblemOf names each kind, with the raw first line', () => {
