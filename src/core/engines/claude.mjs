@@ -630,7 +630,7 @@ export function secretValuesOf(env) {
 export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, permissionMode, model, effort, onEvent, signal, bin, resumeSessionId, mcpConfigPath, mcpServerGrants, permissionRules, envScrub, envAllowlist, modelEnv, spawnEnv: runSpawnEnv, redactValues, disallowedTools, tools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages, maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, addDirs, agents, pluginDirs, extraSettings, memoryLoadLog, argvInlineLimit, asAgent, systemPromptMode, readGuard, noSessionPersistence, tryGuard, pluginsOff, forwardSubagentText, agentsViaFile, mainThreadGuard }) { // billTo/spawnKind/runId/threadId are consumed by runViaBroker
   // MCP registry §5.5.3: with registry secrets in this spawn's env, every emit, the result text and the error
   // message leave redacted — wrapped once here, so the broker path (which calls runClaudeProcess) is covered too.
-  // Workflow tests 3b (D71): a Pretend try loads no user settings (runOpts sets --setting-sources project,local); only the
+  // Workflow tests 3b (D71): a Pretend try loads no user settings (runOpts: the run's sources minus user, D70a); only the
   // sign-in kept there (and the person's own guards, D81) is carried over, and its secret values are redacted like the
   // registry's. Absent on every other spawn: nothing is read and the redactor is as before.
   const carry = pluginsOff === true ? signInCarry({ modelEnv, asAgent, cwd: cwd || process.cwd() }) : null;

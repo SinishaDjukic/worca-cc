@@ -895,9 +895,16 @@ function nodeWritableDirs(ctx) {
  *  claude.ai connectors is checked against the real CLI in Task 15. */
 export const CLAUDE_AI_TOOLS = 'mcp__claude_ai_*';
 
-/** Workflow tests 3b (D70): the setting sources of a Pretend try's spawns: no user settings (the person's plugins, skills,
- *  agents and hooks); the project's and the local ones stay. */
+/** Workflow tests 3b (D70): the most a Pretend try's spawns load: never the user settings (the person's plugins, skills,
+ *  agents and hooks). D70a: a try loads the run's own sources within these, so it sees what a normal run of the same
+ *  project sees, minus the user's (a project-only run gives project only). */
 export const PLUGINS_OFF_SOURCES = Object.freeze(['project', 'local']);
+
+function pluginsOffSources(ctx) {
+  const run = ctx.claudeSettingSources === null ? PLUGINS_OFF_SOURCES
+    : Array.isArray(ctx.claudeSettingSources) ? ctx.claudeSettingSources : ['project'];
+  return PLUGINS_OFF_SOURCES.filter((s) => run.includes(s));
+}
 
 export function runOpts(ctx, { role, prompt, systemPrompt, allowedTools }) {
   const c = ctx.claudeOpts || {};
@@ -946,7 +953,7 @@ export function runOpts(ctx, { role, prompt, systemPrompt, allowedTools }) {
     ...(ctx.tryGuard ? { tryGuard: ctx.tryGuard } : {}),
     // Workflow tests 3b (D70, D71): a Pretend try loads no user settings, and the runner carries over only the sign-in kept
     // there. Absent on every other spawn, so its argv and env stay byte-identical.
-    ...(ctx.pluginsOff === true ? { settingSources: [...PLUGINS_OFF_SOURCES], pluginsOff: true } : {}),
+    ...(ctx.pluginsOff === true ? { settingSources: pluginsOffSources(ctx), pluginsOff: true } : {}),
     // Whose approvals decide the checkout's committed `.mcp.json` servers on Claude (claude-runner.mjs).
     mcpjsonProjectDir: ctx.mcpjsonProjectDir,
     // P1 (S31): a non-git run's spawn asks no git (approvals, Cursor's info/exclude). Absent on git runs.

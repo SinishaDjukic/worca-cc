@@ -85,8 +85,14 @@ test('what is carried: the person\'s sign-in; nothing with the broker on or into
 
 test('runOpts: a Pretend try\'s node gets the sources and pluginsOff; any other node keeps the run\'s own sources', () => {
   const o = runOpts({ projectDir: '/p', claudeOpts: {}, pluginsOff: true }, OPTS);
-  assert.deepEqual([o.settingSources, o.pluginsOff], [['project', 'local'], true]);
+  assert.deepEqual([o.settingSources, o.pluginsOff], [['project'], true]);
   assert.deepEqual(PLUGINS_OFF_SOURCES, ['project', 'local']);
+  // D70a: the run's own sources without the user's. A run that loads every source (opted in, or a sign-in in the user
+  // settings) gives its Pretend try the project and local ones; a project-only run gives project only.
+  const all = runOpts({ projectDir: '/p', claudeOpts: {}, pluginsOff: true, claudeSettingSources: null }, OPTS);
+  assert.deepEqual(all.settingSources, ['project', 'local']);
+  const proj = runOpts({ projectDir: '/p', claudeOpts: {}, pluginsOff: true, claudeSettingSources: ['project'] }, OPTS);
+  assert.deepEqual(proj.settingSources, ['project']);
   // Any other node: the run's own sources (#943 C3: project-only unless the run opted in), and no pluginsOff.
   const n = runOpts({ projectDir: '/p', claudeOpts: {} }, OPTS);
   assert.deepEqual(n.settingSources, ['project']);

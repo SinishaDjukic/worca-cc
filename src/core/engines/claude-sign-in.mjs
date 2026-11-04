@@ -1,6 +1,6 @@
 // src/core/engines/claude-sign-in.mjs
 // The Claude Code sign-in kept in the person's own user settings (workflow tests 3b, D71). A Pretend try spawns with
-// `--setting-sources project,local`, which drops that file; readUserSignIn reads only the sign-in out of it, so the try is
+// `--setting-sources project` (or `project,local`, D70a), which drops that file; readUserSignIn reads only the sign-in out of it, so the try is
 // still signed in and nothing else of the person's setup (hooks, plugins, permissions, other env) comes along. The key rule
 // is the requirements interview's (A1.1 D6), moved here unchanged.
 import { readFileSync, statSync } from 'node:fs';
