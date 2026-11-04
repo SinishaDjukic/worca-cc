@@ -188,7 +188,7 @@
 
 /* Settings (B): the sidebar becomes its menu; groups under small heads; ‹ Back to Worca at its top. */
 .pz-nav.is-app{display:none;}
-.cfg-index,.cfg-crumb{display:none;}
+.cfg-index,.cfg-section > .rl-back{display:none;}   /* ‹ Settings only where the side menu is hidden */
 .cfg-body{margin-left:var(--edge);}
 .cfg-body > .rc-confirm{margin-top:16px;}
 .cfg-body > .set-sec:first-child{margin-top:24px;}
@@ -198,8 +198,8 @@
   .pz-nav.is-app{display:flex;}
   .cfg-index{display:block;}
   .cfg-index .side-menu{margin-left:var(--edge);}
+  .cfg-section > .rl-back{display:inline-flex;margin-left:var(--edge);}
   .cfg-page:not(.is-index) .cfg-index,.cfg-page.is-index .cfg-section{display:none;}
-  .cfg-crumb{display:inline-flex;align-items:center;gap:2px;margin:0 0 8px var(--edge);padding:0;border:0;background:none;color:var(--ink-2);font:inherit;font-size:var(--fs-meta);cursor:pointer;}
 }
 /* The sidebar's content fades when it becomes Settings' menu, and back; the page changes at once (Motion). */
 .pz-side .is-swap{animation:rl-in var(--motion-change) var(--ease);}

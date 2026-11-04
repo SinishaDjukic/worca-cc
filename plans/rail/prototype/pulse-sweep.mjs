@@ -66,6 +66,11 @@ for (const scheme of ['dark', 'light']) for (const w of [375, 900]) {
       const page = app.querySelector('.pz-page');
       const edges = new Set([...page.querySelectorAll('.pz-title,.pz-h,.pz-row-t,.pz-sk')].filter((e) => e.offsetParent && !e.closest('.pz-events')).map((e) => Math.round(e.getBoundingClientRect().left)));
       if (edges.size > 1) out.push(['more than one text edge', [...edges].join(', ')]);
+      // the top bar is one row: everything in it stays inside its 48px
+      const bar = app.querySelector('.pz-top'); if (bar) { const b = bar.getBoundingClientRect(); for (const x of bar.querySelectorAll('button, input')) { if (!x.offsetParent) continue; const r = x.getBoundingClientRect(); if (r.top < b.top - 1 || r.bottom > b.bottom + 1) out.push(['the top bar is not one row', (x.getAttribute('aria-label') || x.textContent.trim() || x.className).slice(0, 30)]); } }
+      // one way back at a time: ‹ Settings only while the side menu is hidden (a narrow screen)
+      const side = app.querySelector('.pz-side .side-menu'), back = app.querySelector('.cfg-section > .rl-back');
+      if (side && side.offsetParent && back && back.offsetParent) out.push(['two ways back shown', '‹ Settings beside the side menu']);
       return out;
     });
     for (const [k, wh] of found) add(k, `${scheme}/${w}/${c}/${v}: ${wh}`);

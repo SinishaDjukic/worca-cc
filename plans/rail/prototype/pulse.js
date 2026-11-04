@@ -110,7 +110,7 @@ function topbar() {
   const needs = C().needs.length, un = unread().length, run = C().running.length;
   const badge = needs ? `<span class="topnav-badge" data-tone="need">${needs}</span>` : un ? `<span class="topnav-badge" data-tone="run">${un}</span>` : '';
   const words = [needs && plural(needs, 'needs you', 'need you'), un && plural(un, 'unread'), run && `${run} running`].filter(Boolean).join(' · ') || 'Nothing new';
-  return `<header class="pz-top"><div class="pz-top-l">${R.search({ value: ui.q || '', label: 'Search settings', results: searchResults() })}<div class="pz-top-r">
+  return `<header class="pz-top"><div class="pz-top-l">${R.search({ value: ui.q || '', label: 'Search settings', results: searchResults() })}</div><div class="pz-top-r">
     <button type="button" class="btn btn-sm btn-quiet topnav-act pz-pulse-b" data-pop aria-haspopup="dialog" aria-expanded="${ui.pop}" title="Pulse: ${esc(words)}">${svg('signal', 16)}<span class="pz-pulse-l">Pulse</span>${badge}</button>
     <button type="button" class="btn btn-sm btn-primary" data-newrun title="Start a run">${svg('plus', 14)}<span class="pz-new-l">New run</span></button>
   </div></header>`;
