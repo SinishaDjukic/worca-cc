@@ -63,10 +63,6 @@ test('reasonLine: wording per kind, single-line, ≤300 chars, keeps (+N more)',
       const r = reasonLine({ nodeId: 'd', step: 'Decompose', kind: 'partial-fanout', detail: '3 of 7 tasks' });
       assert.match(r, /Decompose completed only 3 of 7 tasks\./);
     } },
-    { name: 'review-blocking names "2 blocking issues"', run: () => {
-      const r = reasonLine({ nodeId: 'rev', step: 'Review', kind: 'review-blocking', detail: '2 blocking issues' });
-      assert.match(r, /2 blocking issues/);
-    } },
     { name: 'missing-output (absent) names the port', run: () => {
       const r = reasonLine({ nodeId: 'plan', step: 'Planning', kind: 'missing-output', detail: 'plan:absent' });
       assert.match(r, /Planning's required output \(plan\) was never written\./);

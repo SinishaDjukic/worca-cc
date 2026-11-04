@@ -7757,18 +7757,6 @@ export class RunHarness extends EventEmitter {
     return { nodeId: nodeId || '(graph)', step, kind: 'end-not-reached' };
   }
 
-  /** A review node whose latest recorded verdict still blocks (loop ran out still blocking). */
-  _reviewBlockingFacts() {
-    const reviews = this.state.progressFacts?.reviews || {};
-    const out = [];
-    for (const [nodeId, r] of Object.entries(reviews)) {
-      const n = Number(r?.blocking) || 0;
-      if (n > 0) out.push({ nodeId, step: this._labelForNode(nodeId), kind: 'review-blocking',
-        detail: `${n} blocking issue${n === 1 ? '' : 's'}` });
-    }
-    return out;
-  }
-
   /** Decide the run outcome from node-keyed facts + the run-level facts. Fails safe. */
   async _finalizeOutcome() {
     try {
@@ -7777,9 +7765,8 @@ export class RunHarness extends EventEmitter {
         const last = this.state.codeSteps[this.state.codeSteps.length - 1];
         unmet.push({ nodeId: last.nodeId, step: last.step, kind: 'no-code-change' });
       }
-      for (const f of this._reviewBlockingFacts()) {
-        if (!unmet.some((u) => u.nodeId === f.nodeId && u.kind === 'review-blocking')) unmet.push(f);
-      }
+      // A review loop forced past its cap with blocking issues is NOT an unmet expectation: dev's E2
+      // records it as state.openIssues and every surface shows "Done · N open issues" (a caveat, not a failure).
       if (!this.state.endReached) unmet.push(this._endNotReachedFact());
       const { successful, reason } = computeOutcome(unmet);
       this.state.unmet = unmet;            // persist the full list (finalize runs once per terminal done)

@@ -1,7 +1,7 @@
 // test/run-harness-outcome.test.mjs — the orchestrator/harness wiring of the S1
 // run-outcome net (not just the pure module): fact collection in _afterExecution,
 // the node-keyed replace, the fan-out tally through _onSchedulerEvent, and the
-// run-level finalize (no-code-change / review-blocking / end-not-reached).
+// run-level finalize (no-code-change / end-not-reached; an open review loop is dev's openIssues caveat).
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -163,23 +163,19 @@ test('_finalizeOutcome no-code-change: a no-git (folder) run with a code step is
   assert.equal(r.successful, true, 'null diff result never flags');
 });
 
-// ── _finalizeOutcome: review-blocking and end-not-reached ─────────────────────────
+// ── _finalizeOutcome: open review loops and end-not-reached ───────────────────────
 
-test('_finalizeOutcome review-blocking: blocking>0 ⇒ unsuccessful; blocking:0 ⇒ successful', async () => {
+test('_finalizeOutcome: a review loop forced past its cap stays successful (the openIssues caveat owns it)', async () => {
   const orch = createOrchestrator({ projectDir: '/tmp/proj-rev' });
   orch.workDirs = new Map();                      // no git member → no-code-change inert
   orch.state.endReached = true;
   orch._nodeLabels = { rev: 'Code review' };
   orch.state.progressFacts.reviews = { rev: { pass: 3, blocking: 2 } };
-  let r = await orch._finalizeOutcome();
-  assert.equal(r.successful, false);
-  assert.match(r.reason, /2 blocking issues/);
-  assert.match(r.reason, /Code review/);
-
-  orch.state.unmet = [];
-  orch.state.progressFacts.reviews = { rev: { pass: 4, blocking: 0 } };
-  r = await orch._finalizeOutcome();
+  orch.state.openIssues = [{ nodeId: 'rev', count: 2, critical: 0, major: 2, titles: ['a', 'b'] }];
+  const r = await orch._finalizeOutcome();
   assert.equal(r.successful, true);
+  assert.equal(r.reason, null);
+  assert.deepEqual(orch.state.unmet, []);
 });
 
 test('_finalizeOutcome end-not-reached: names the dead-end warning node, else the last ledger step', async () => {

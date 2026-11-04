@@ -4,14 +4,14 @@
 
 /** Unmet-expectation kinds, most-specific first — the head is the headline cause. */
 export const UNMET_ORDER = [
-  'no-code-change', 'missing-output', 'partial-fanout', 'review-blocking', 'missing-verdict', 'end-not-reached',
+  'no-code-change', 'missing-output', 'partial-fanout', 'missing-verdict', 'end-not-reached',
 ];
 
 /**
  * The unmet expectations ONE finished step raises. Conservative by construction:
  * only facts the clarify answers said count (unconditional always-outputs the graph
- * depended on, a declared verdict). no-code-change / partial-fanout / review-blocking /
- * end-not-reached are run-level and built in the harness finalize, not here.
+ * depended on, a declared verdict). no-code-change / partial-fanout / end-not-reached are
+ * run-level and built in the harness finalize, not here.
  * @param {{nodeId:string, step:string,
  *          requiredMissing?:Array<{port:string, empty:boolean}>,
  *          verdictMissing?:boolean}} f
@@ -49,7 +49,6 @@ export function reasonLine(primary, items = [primary]) {
       break;
     }
     case 'partial-fanout': head = `${step} completed only ${primary.detail}.`; break;
-    case 'review-blocking': head = `${step} still reported ${primary.detail} after its review loop ended.`; break;
     case 'missing-verdict': head = `${step} never produced its verdict.`; break;
     case 'end-not-reached':
     default:
