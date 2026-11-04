@@ -34,6 +34,7 @@ The type scale below, named by what it does on a Rail page.
 |---|---|---|---|
 | Headline | `--fs-page` 22 | 600, tracking −0.02em | the state word: what is read first |
 | Title | `--fs-subpage` 18 | 600, tracking −0.02em | the page title, one line with an ellipsis (a tap shows it whole); a page with no state word (a list, Settings) keeps it at `--fs-page` 22 |
+| Heading | `--fs-section` 15 | 600, tracking −0.01em | a section's head on a page (a settings section, a tab's section); a step above the rows it heads, never the same size |
 | Value | `--fs-section` 15 | 600 | figures: time, cost, changes |
 | Body | `--fs-body` 13 | 400 (the live or asking row 600) | rows, questions, text |
 | Meta | `--fs-meta` 12 | 400, `--ink-2` | the metadata line, times, figure labels, details |
@@ -264,7 +265,7 @@ a failure opens itself), a graph in its well.
 **Settings**: one place, opened from the profile menu (the sidebar holds places in Worca, never Settings; Interface
 mode, Appearance and going away live in the profile menu only). Opening it turns the sidebar into its menu, its content
 fading over `change` while the page changes at once: `‹ Back to Worca`, then the sections under four group heads
-(Worca: General, Notifications, Team policy, Labs · Runs: Runs, Presets, Labels, Automations · AI: Models, Providers,
+(Worca: General, Notifications, Team policy, Labs · Work: Runs, Presets, Labels, Automations · AI: Models, Providers,
 Chat, Guardrails, Memory · Add-ons: Marketplace, Connectors). On a narrow screen Worca's sidebar stays, Settings opens
 on its menu as a list, and a section has `‹ Settings` above its title. The top bar's search finds every row, folded
 row and record by its name or its words, and lands on it with the flash, opening its Customise. Mocks:
@@ -277,7 +278,10 @@ buttons; it takes effect at once. More detail
 folds under the row behind Customise, and a row that differs from its group says Changed. A reset of many rows sits in
 its section's head and confirms in the strip; nothing else confirms. **One row per decision a person makes**, saying the
 current state in words (`Runs pause at $1,000 a month; one run has no limit`); its fine-tuning folds under Customise,
-never a row of its own on the page. A value that is a path, a list or a text shows as words with `Change…`, which opens
+never a row of its own on the page. A folded row belongs to its row: it sits in the sentence's column, its name a small
+label (Meta size, `--ink`) over its sentence, never the page's name column again. A row's actions are quiet buttons,
+one besides Customise; a bordered or red button lives only in a Dialog or the ConfirmStrip (a step that cannot be
+taken back, such as deleting every chat, is the section head's action and asks first). A value that is a path, a list or a text shows as words with `Change…`, which opens
 a Dialog with its Fields. **A record is not a setting**: a tab that keeps records (presets, labels, models, plugins,
 rules, an event log) puts them as a List of ListRows after its rows, under its own head; the row opens the thing, its
 own actions are in its ⋯, never a SettingsRow per record.

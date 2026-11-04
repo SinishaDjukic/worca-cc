@@ -67,7 +67,7 @@
     const sec = SM.SECTIONS[id];
     if (!sec) return '';
     REG.clear();
-    const strip = sv.__confirm ? c.R.confirmStrip({ text: sv.__confirm.text, yes: sv.__confirm.yes }) : '';
+    const strip = sv.__confirm ? c.R.confirmStrip({ text: sv.__confirm.text, yes: sv.__confirm.yes, danger: !!sv.__confirm.done }) : '';
     return dialogHtml(sv, c) + strip + sec.sections.filter((s) => SM.shows(s.min, c.level)).map((s) => {
       const where = id + '/' + s.title;
       const head = s.action ? (s.action.confirm ? c.R.button({ label: s.action.label, kind: 'quiet', attrs: { 'data-svdo': 'confirm:' + id + ':' + s.title, title: s.action.help || null } }) : act(s.action, where, c)) : '';
@@ -90,7 +90,7 @@
   function doAct(sv, say) {
     if (say.startsWith('confirm:')) {
       const [, id, title] = say.split(':'), s = SM.SECTIONS[id].sections.find((x) => x.title === title);
-      sv.__confirm = { id, title, text: s.action.confirm, yes: s.action.label === 'Reset all' ? 'Reset all' : 'Reset' };
+      sv.__confirm = { id, title, text: s.action.confirm, yes: s.action.yes || (s.action.label === 'Reset all' ? 'Reset all' : 'Reset'), done: s.action.done };
       return '';
     }
     if (say.startsWith('more:')) { sv.__open = sv.__open === say ? '' : say; return ''; }
@@ -106,6 +106,7 @@
   function confirm(sv, yes) {
     const c = sv.__confirm; sv.__confirm = null;
     if (!yes || !c) return '';
+    if (c.done) return c.done;   // a step that is not a reset (Delete all chats)
     for (const r of flat(SM.SECTIONS[c.id].sections.find((x) => x.title === c.title).rows)) {
       for (const [k, p] of Object.entries(r.picks || {})) sv[k] = p.value;
       if (r.sw) sv[r.sw.key] = !!r.sw.on;

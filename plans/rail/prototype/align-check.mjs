@@ -19,7 +19,8 @@ export const ALIGN = () => {
     const rows = [...list.children].filter((e) => e.matches('.set-row') && e.offsetParent);
     if (!rows.length) continue;
     const box = rows[0].getBoundingClientRect(); const L = box.left, R = box.right;
-    const stacked = getComputedStyle(rows[0]).gridTemplateColumns.split(' ').length === 1;
+    const folded = !!list.closest('.set-detail');   // a folded row: its name over its sentence, its end at the right
+    const stacked = folded || getComputedStyle(rows[0]).gridTemplateColumns.split(' ').length === 1;
     const head = list.parentElement.matches('.set-sec') && list.parentElement.querySelector(':scope > .set-sec-head');
     const sec = list.parentElement.matches('.set-sec') ? list.parentElement.getBoundingClientRect() : null;
     if (sec && (!near(sec.left, L) || !near(sec.right, R))) out.push(`the section's line is off the rows' edges: ${list.parentElement.querySelector('.set-sec-h')?.textContent.slice(0, 30)}`);
@@ -35,10 +36,10 @@ export const ALIGN = () => {
       if (!near(textBox(name).left, L)) out.push(`a name off the left edge: ${label(row)}`);
       if (stacked && text.textContent.trim() && !near(textBox(text).left, L)) out.push(`a stacked sentence off the left edge: ${label(row)}`);
       const first = [...end.children].find((e) => e.offsetParent);
-      if (stacked && first) { const l = first.matches('.btn-quiet') ? textBox(first).left : first.getBoundingClientRect().left; if (!near(l, L)) out.push(`a stacked end starts ${Math.round(l - L)}px off the left edge: ${label(row)}`); }
+      if (stacked && !folded && first) { const l = first.matches('.btn-quiet') ? textBox(first).left : first.getBoundingClientRect().left; if (!near(l, L)) out.push(`a stacked end starts ${Math.round(l - L)}px off the left edge: ${label(row)}`); }
       const items = [...end.children].filter((e) => e.offsetParent);
       const last = items[items.length - 1];
-      if (last && !stacked) { const r = last.matches('.btn-quiet') ? textBox(last).right : last.getBoundingClientRect().right; if (!near(r, R)) out.push(`the end stops ${Math.round(R - r)}px off the right edge: ${label(row)}`); }
+      if (last && (!stacked || folded)) { const r = last.matches('.btn-quiet') ? textBox(last).right : last.getBoundingClientRect().right; if (!near(r, R)) out.push(`the end stops ${Math.round(R - r)}px off the right edge: ${label(row)}`); }
       if (!stacked) {
         const y = base(name);
         if (text.textContent.trim() && !near(base(text), y)) out.push(`the sentence is ${Math.round(base(text) - y)}px off the name's baseline: ${label(row)}`);

@@ -781,7 +781,7 @@ html,body{height:auto;overflow:visible;margin:0;}
 .set-sec{--btn-inset:11px;container-type:inline-size;min-width:0;margin-top:32px;}
 .set-sec + .set-sec{margin-top:24px;padding-top:24px;border-top:1px solid var(--line);}   /* a line where a section starts; rows divide by space */
 .set-sec-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;min-height:28px;}
-.set-sec-h{margin:0;font:600 var(--fs-body)/var(--lh-title) var(--sans);color:var(--ink);}
+.set-sec-h{margin:0;font:600 var(--fs-section)/var(--lh-title) var(--sans);letter-spacing:-.01em;color:var(--ink);}   /* Type roles › Heading */
 .set-sec-head > .btn-quiet{margin-right:calc(-1 * var(--btn-inset));}
 .set-sec-meta{margin:2px 0 0;font-size:var(--fs-meta);color:var(--ink-2);}
 .set-rows{display:flex;flex-direction:column;margin-top:4px;}
@@ -798,6 +798,12 @@ html,body{height:auto;overflow:visible;margin:0;}
 .set-end > .btn-quiet:last-child{margin-right:calc(-1 * var(--btn-inset));}
 .set-changed{font-size:var(--fs-caption);color:var(--ink-2);}
 .set-detail{grid-column:2 / -1;padding-top:8px;min-width:0;}
+/* A folded row belongs to its row: inside the sentence column, its name a small label over its sentence, its end at
+   the right. It never repeats the page's name column. */
+.set-detail .set-row{grid-template-columns:minmax(0,1fr) auto;row-gap:2px;padding:8px 0;}
+.set-detail .set-name{grid-column:1;grid-row:1;font-size:var(--fs-meta);color:var(--ink);}
+.set-detail .set-text{grid-column:1;grid-row:2;}
+.set-detail .set-end{grid-column:2;grid-row:1 / span 2;align-self:center;}
 .spick{position:relative;}
 .spick-b{display:inline;margin:0;padding:0;border:0;border-radius:var(--r-xs);background:none;font:inherit;font-weight:600;line-height:inherit;color:var(--ink);white-space:nowrap;cursor:pointer;transition:background-color 100ms var(--ease),box-shadow 100ms var(--ease);}
 .spick-b svg{margin-left:2px;vertical-align:-2px;color:var(--ink-2);}

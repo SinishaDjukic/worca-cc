@@ -21,10 +21,10 @@
   const ENGINES = O(['claude', 'Claude'], ['codex', 'Codex (beta)'], ['copilot', 'Copilot (beta)'], ['cursor', 'Cursor (beta)'], ['gemini', 'Gemini CLI (beta)'], ['goose', 'Goose (beta)'], ['opencode', 'OpenCode (beta)'], ['qwen', 'Qwen Code (beta)']);
 
   const SECTIONS = {
-    general: { title: 'General', meta: 'Setting Worca up, where it keeps things, and which version runs. Theme and interface mode are in your profile menu.', sections: [
+    general: { title: 'General', meta: 'Setup, storage, and which version of Worca runs.', sections: [
       { title: 'Setup', rows: [
-        { name: 'Setup assistant', say: 'Checks Claude, git and your projects, and fixes what is missing', acts: [{ label: 'Open assistant', kind: '' }] },
-        { name: 'Getting started', say: 'The first nine things to do, and the guided tour', acts: [{ label: 'Show checklist', kind: '' }] },
+        { name: 'Setup assistant', say: 'Checks Claude, git and your projects, and fixes what is missing', acts: [{ label: 'Open assistant' }] },
+        { name: 'Getting started', say: 'The first nine things to do, and the guided tour', acts: [{ label: 'Show checklist' }] },
       ] },
       { title: 'Storage', min: 'advanced', rows: [
         { name: 'Folders', say: 'Runs live in `~/.worca`; new projects are cloned into `~/src`', acts: [edit('Change the folders', [{ label: 'Worca folder', value: '~/.worca', hint: 'Runs, history and settings; runs pause while they move' }, { label: 'Projects folder', value: '~/src', hint: 'Where a new project is cloned' }], { done: 'Folders saved' })] },
@@ -35,13 +35,13 @@
         { name: 'GitHub', say: 'Signed in as **@emil-angelov**' },
       ] },
       { title: 'Browser extension', rows: [
-        { name: 'Install', say: 'Add Worca to {browser}', picks: { browser: P('chrome', O(['chrome', 'Chrome'], ['edge', 'Edge'], ['firefox', 'Firefox']), 'Which browser to install it in') }, acts: [{ label: 'Install', kind: '' }] },
+        { name: 'Install', say: 'Add Worca to {browser}', picks: { browser: P('chrome', O(['chrome', 'Chrome'], ['edge', 'Edge'], ['firefox', 'Firefox']), 'Which browser to install it in') }, acts: [{ label: 'Install' }] },
       ], list: [
         { title: 'MacBook · Chrome', meta: 'Paired 2 Oct · last used today', menu: ['Revoke'] },
         { title: 'Work PC · Edge', meta: 'Paired 14 Sep · not used yet', menu: ['Revoke'] },
       ] },
       { title: 'About', rows: [
-        { name: 'Version', say: 'Worca **1.17.0** · up to date', acts: [{ label: 'Check now', kind: '' }], more: [
+        { name: 'Version', say: 'Worca **1.17.0** · up to date', acts: [{ label: 'Check now' }], more: [
           { name: 'Updates', say: 'Look for new versions of Worca once a day', sw: { key: 'updates', on: true, why: 'Nothing installs by itself' } },
           { name: 'Release notes', say: 'Changes since 1.16.0', acts: [{ label: 'Open' }] },
         ] },
@@ -49,15 +49,15 @@
       ] },
     ] },
 
-    team: { min: 'advanced', title: 'Team policy', meta: 'What your team requires of every Worca that follows its policy. "From the team policy" elsewhere means from here.', sections: [
+    team: { min: 'advanced', title: 'Team policy', meta: 'What your team requires of every Worca that follows its policy.', sections: [
       { title: 'Policy', rows: [
         { name: 'Home', say: 'Follows **acme/worca-policy** · synced today', acts: [edit('Change the policy home', [{ label: 'Repository', value: 'acme/worca-policy', hint: 'The project whose marker branch carries the policy' }], { yes: 'Follow it', done: 'Now following acme/worca-policy' })] },
         { name: 'Consent', say: 'Accepted on 2 Oct; a change to it asks again', acts: [{ label: 'Review' }] },
-        { name: 'Editing', say: 'A change opens a pull request on `worca-policy`', acts: [{ label: 'Edit policy', kind: '' }] },
+        { name: 'Editing', say: 'A change opens a pull request on `worca-policy`', acts: [{ label: 'Edit policy' }] },
       ] },
       { title: 'Requirements', rows: [
         { name: 'Spending', say: 'Each run up to **$50**, all runs **$2,000 a month**; a run may go past', acts: [{ label: 'Open Runs', go: 'runs' }] },
-        { name: 'Plugins', say: 'Requires **Jira** and **Slack** · **1 missing here**', acts: [{ label: 'Install all…', kind: '' }] },
+        { name: 'Plugins', say: 'Requires **Jira** and **Slack** · **1 missing here**', acts: [{ label: 'Install all…' }] },
         { name: 'Blocked', say: 'An unknown MCP server is blocked; a run with one is marked off-policy' },
         { name: 'Guardrails', say: 'Ships the **Team policy** set, read-only here', acts: [{ label: 'Open', go: 'guardrails' }] },
         { name: 'Models', say: 'Ships **Opus via Acme gateway**', acts: [{ label: 'Open', go: 'models' }] },
@@ -76,7 +76,7 @@
       ] },
     ] },
 
-    runs: { title: 'Runs', meta: 'How runs spend, start and wait. Each row is one choice; Customise holds the rest.', sections: [
+    runs: { title: 'Runs', meta: 'How runs spend, start and wait.', sections: [
       { title: 'Spending', meta: 'Spent this month: $412 of $1,000.', rows: [
         { name: 'Budget', say: 'Runs pause at **$1,000 a month**; one run has no limit', acts: [{ label: 'Usage', help: 'What was spent, per harness: the profile menu\'s Usage and costs' }], more: [
           { name: 'Per run', say: 'A run pauses when it has spent {perRun}', picks: { perRun: P('none', O(['none', 'no limit'], ['5', '$5'], ['10', '$10'], ['25', '$25'], ['50', '$50'], ['100', '$100']), 'The most one run may spend before it pauses') } },
@@ -104,7 +104,8 @@
         { name: 'Pull requests', say: 'Draft the description with AI as the PR opens', sw: { key: 'prDraft', on: false } },
       ] },
       { title: 'Away mode', min: 'advanced', meta: 'Going away is the Away switch in your profile menu.', rows: [
-        { name: 'Hours', say: 'Worca answers your runs\' questions from **22:00 to 07:00**, Europe/Sofia', acts: [edit('Change the away hours', [{ label: 'From', value: '22:00' }, { label: 'To', value: '07:00' }, { label: 'Time zone', value: 'Europe/Sofia' }], { done: 'Away hours saved' })], more: [
+        { name: 'Hours', say: 'Worca answers your runs\' questions from **22:00 to 07:00**, Europe/Sofia', more: [
+          { name: 'Times', say: '**22:00–07:00**, Europe/Sofia', acts: [edit('Change the away hours', [{ label: 'From', value: '22:00' }, { label: 'To', value: '07:00' }, { label: 'Time zone', value: 'Europe/Sofia' }], { done: 'Away hours saved' })] },
           { name: 'Runs', say: 'Worca answers on {which}; a marked run is also answered by day after {byDay}', picks: { which: P('marked', O(['marked', 'runs you marked'], ['all', 'every run']), 'Which runs Worca answers on while you are away'), byDay: P('30', O(['never', 'never'], ['15', '15 minutes'], ['30', '30 minutes'], ['60', 'an hour']), 'How long a question waits by day before Worca answers it', true) } },
           { name: 'Decisions', say: 'It {method}, trusting the agent at {sure} sure with a lead of {lead}', picks: { method: P('mixed', O(['mixed', 'trusts a sure agent, else weighs', 'Trusts the agent when it is sure; otherwise weighs the options'], ['trust', 'always trusts the agent'], ['weigh', 'always weighs the options']), 'How Worca picks an answer'), sure: P('60', O(['50', '50%'], ['60', '60%'], ['70', '70%'], ['80', '80%']), 'How sure the agent must be'), lead: P('25', O(['15', '15 points'], ['25', '25 points'], ['40', '40 points']), 'How far its pick must lead the next one', true) } },
           { name: 'Priorities', say: 'Matches past decisions **3** · easy to undo **3** · changes least **2** · conventions **2** · cheapest **1**', acts: [edit('Change the priorities', [{ label: 'Matches past decisions', value: '3', hint: '0 ignores it, 10 decides' }, { label: 'Easy to undo', value: '3' }, { label: 'Changes the least', value: '2' }, { label: 'Follows the conventions', value: '2' }, { label: 'Costs the least', value: '1' }], { done: 'Priorities saved' })] },
@@ -125,7 +126,7 @@
           { name: 'Scans', say: 'Scan a workspace with {scan} at {se} effort; write project agents with {agent} at {ae} effort', picks: { scan: P('sonnet', MODEL, 'The model that scans a workspace'), se: P('medium', EFFORT, 'Its effort'), agent: P('sonnet', MODEL, 'The model that writes project agents'), ae: P('medium', EFFORT, 'Its effort', true) } },
         ] },
         { name: 'Network', say: 'A direct connection; a run waits up to **4 hours** offline', more: [
-          { name: 'Proxy', say: 'Through **proxy.corp.example:8080**, signing in with {auth}', picks: { auth: P('ntlm', O(['ntlm', 'NTLMv2'], ['basic', 'Basic'], ['digest', 'Digest'], ['none', 'no login']), 'How Worca signs in to the proxy') }, acts: [{ label: 'Test', kind: '' }, edit('Change the proxy', [{ label: 'Host', value: 'proxy.corp.example' }, { label: 'Port', value: '8080' }, { label: 'Domain', value: 'CORP' }, { label: 'User name', value: 'emil' }], { done: 'Proxy saved; tested and working' })], sw: { key: 'proxy', on: false, why: 'Off: Worca connects directly' } },
+          { name: 'Proxy', say: 'Through **proxy.corp.example:8080**, signing in with {auth}', picks: { auth: P('ntlm', O(['ntlm', 'NTLMv2'], ['basic', 'Basic'], ['digest', 'Digest'], ['none', 'no login']), 'How Worca signs in to the proxy') }, acts: [edit('Change the proxy', [{ label: 'Host', value: 'proxy.corp.example' }, { label: 'Port', value: '8080' }, { label: 'Domain', value: 'CORP' }, { label: 'User name', value: 'emil' }], { yes: 'Save and test', done: 'Proxy saved; tested and working' })], sw: { key: 'proxy', on: false, why: 'Off: Worca connects directly' } },
           { name: 'Bypass', say: 'These go direct: `localhost`, `*.corp.example`', acts: [edit('Change the bypass list', [{ label: 'Hosts', value: 'localhost, *.corp.example', hint: 'Comma-separated; * matches any part' }], { done: 'Bypass list saved' })] },
           { name: 'Timeouts', min: 'expert', say: 'Connect within {ct}, sign in within {lt}, drop idle after {it}', picks: { ct: P('60', O(['30', '30s'], ['60', '60s'], ['120', '120s']), 'Connect timeout'), lt: P('60', O(['30', '30s'], ['60', '60s'], ['120', '120s']), 'Login timeout'), it: P('300', O(['120', '2 minutes'], ['300', '5 minutes'], ['600', '10 minutes']), 'Idle timeout', true) } },
           { name: 'Offline', say: 'When the network drops, a run waits up to {wait}', picks: { wait: P('4h', O(['30m', '30 minutes'], ['1h', '1 hour'], ['4h', '4 hours'], ['12h', '12 hours'], ['24h', '24 hours']), 'How long it waits before it fails') }, sw: { key: 'netWait', on: true } },
@@ -145,7 +146,7 @@
       ] },
     ] },
 
-    labels: { title: 'Labels', meta: 'Free words you put on runs to find them again. With Labs › Run labels on.', sections: [
+    labels: { title: 'Labels', meta: 'Free words you put on runs to find them again.', sections: [
       { title: 'Labels', meta: 'The most used first.', list: [
         { title: 'frontend', meta: 'On 14 runs', menu: ['Rename', 'Remove'] },
         { title: 'needs demo', meta: 'On 6 runs', menu: ['Rename', 'Remove'] },
@@ -153,7 +154,7 @@
       ] },
     ] },
 
-    automations: { min: 'advanced', title: 'Automations', meta: 'What runs by itself across projects. A project\'s rules and switches are on its own Automations tab.', sections: [
+    automations: { min: 'advanced', title: 'Automations', meta: 'What runs by itself across projects; each project keeps its own rules.', sections: [
       { title: 'Projects', list: [
         { title: 'worca-cc', meta: 'Proposes a fix for new issues and reviews PRs · 3 rules' },
         { title: 'billing workspace', meta: 'Every member repository · reviews PRs · 1 rule' },
@@ -186,7 +187,7 @@
       ] },
       { title: 'Sources', rows: [
         { name: 'Built-in models', say: 'Show the built-in Anthropic models', sw: { key: 'builtIn', on: true, why: 'Turn off when you don\'t use a first-party Anthropic account' } },
-        { name: 'Import', say: 'Bring models in from Copilot or a provider', acts: [{ label: 'Import…', kind: '' }] },
+        { name: 'Import', say: 'Bring models in from Copilot or a provider', acts: [{ label: 'Import…' }] },
         { name: 'Sharing', say: 'Share your models with the team as a plugin', acts: [{ label: 'Share…' }] },
       ] },
     ] },
@@ -219,8 +220,8 @@
           { name: 'Search', min: 'expert', say: 'Searches with the built-in search', acts: [edit('Use your own search', [{ label: 'Endpoint', value: '' }, { label: 'Key variable', value: '' }, { label: 'Key header', value: '' }], { done: 'Search saved' })] },
         ] },
         { name: 'Connectors', say: 'Uses the **General** set: 3 servers, 2 skills', acts: [{ label: 'Open', go: 'connectors' }] },
-        { name: 'History', say: '38 chats kept on this machine', acts: [{ label: 'Delete all chats', kind: 'danger' }] },
       ] },
+      { title: 'History', meta: '38 chats kept on this machine.', action: { label: 'Delete all chats', confirm: 'Delete all 38 chats? They cannot be brought back.', yes: 'Delete all', done: 'All chats deleted (not in this prototype)', help: 'Asks first' } },
     ] },
 
     guardrails: { min: 'advanced', title: 'Guardrails', meta: 'What agents may not touch, as sets a project follows.', sections: [
@@ -233,7 +234,7 @@
 
     memory: { min: 'advanced', title: 'Memory', meta: 'What agents remember between runs, as notes Worca keeps tidy.', sections: [
       { title: 'Health', min: 'expert', rows: [
-        { name: 'Notes', say: '**Healthy** · 24 notes · tidied 3 days ago', acts: [{ label: 'Tidy now', kind: '' }] },
+        { name: 'Notes', say: '**Healthy** · 24 notes · tidied 3 days ago', acts: [{ label: 'Tidy now' }] },
       ] },
       { title: 'Proposals', meta: 'Changes runs suggest; nothing changes until you approve.', list: [
         { title: 'testing.md', meta: 'Update · from run #412 · 2h ago', mark: 'is-amber', menu: ['Approve', 'Reject'] },
@@ -247,7 +248,7 @@
       ] },
     ] },
 
-    marketplace: { min: 'advanced', title: 'Marketplace', meta: 'Plugins that add task sources, chat channels, MCP servers, models, agents and skills.', sections: [
+    marketplace: { min: 'advanced', title: 'Marketplace', meta: 'Plugins that add task sources, chat channels, servers, models and skills.', sections: [
       { title: 'Installed', action: { label: 'Browse plugins' }, list: [
         { title: 'Jira', meta: 'A task source · worca-official · 1 update', mark: 'is-amber', sw: { key: 'pJira', on: true }, menu: ['Update', 'Settings', 'Uninstall'] },
         { title: 'Telegram', meta: 'A chat channel · bot token set', sw: { key: 'pTg', on: true }, menu: ['Settings', 'Uninstall'] },
@@ -259,7 +260,7 @@
       ] },
     ] },
 
-    connectors: { min: 'advanced', title: 'Connectors', meta: 'MCP servers and skills that agents and Chat get, grouped in sets that projects follow.', sections: [
+    connectors: { min: 'advanced', title: 'Connectors', meta: 'MCP servers and skills, grouped in sets that projects follow.', sections: [
       { title: 'Sets', action: { label: 'New set', edit: { title: 'New set', yes: 'Create', fields: [{ label: 'Name', value: '' }], done: 'Set created' } }, list: [
         { title: 'General', meta: 'Built in · 3 servers · 2 skills · Chat and 5 projects', menu: ['Duplicate'] },
         { title: 'Frontend', meta: '2 servers · 1 skill · 2 projects', menu: ['Rename', 'Duplicate', 'Delete'] },
@@ -276,7 +277,7 @@
 
   const GROUPS = [
     { title: 'Worca', items: ['general', 'notifications', 'team', 'experimental'] },
-    { title: 'Runs', items: ['runs', 'presets', 'labels', 'automations'] },
+    { title: 'Work', items: ['runs', 'presets', 'labels', 'automations'] },
     { title: 'AI', items: ['models', 'providers', 'ask', 'guardrails', 'memory'] },
     { title: 'Add-ons', items: ['marketplace', 'connectors'] },
   ];
