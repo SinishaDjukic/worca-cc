@@ -21,7 +21,7 @@ import { rollupChanges } from './folder-members.mjs';
 import { harvestWork, WORK_ARTIFACT_KIND } from './no-project-work.mjs';
 import { updateRunManifest } from './run-manifest.mjs';
 import { listProjects, worcaHome, runOnboarded } from './projects.mjs';
-import { claimRunDir } from './agent-pool.mjs';
+import { claimRunDir, claimRunExtras } from './agent-pool.mjs';
 import { branchExists, diffShortstat, anyPrHost, findPrForBranch, commitsAhead, withRefSnapshot } from './git-info.mjs';
 import { getDb, tx } from './db.mjs';
 import { rollupMemberPrs, workspaceMembers, changedFileCount } from './workspace-prs.mjs';
@@ -1249,6 +1249,16 @@ export async function createPipeline(projectDir, opts = {}) {
   if (Array.isArray(extras) && extras.length) {
     const extrasDir = join(dir, 'extras');
     await mkdir(extrasDir, { recursive: true });
+    // Under agent isolation the agent must read what is attached: copyFile keeps the source's group and mode (a staged
+    // 0660 copy in worca's group), so the folder and each file are handed over explicitly, never left to setgid
+    // inheritance. The folder first, so the agent cannot write into it while worca fills it; the files once, through
+    // the folder fd (an agent can swap `extras/` for a link between a per-file path claim and its target).
+    const share = () => {
+      try {
+        for (const f of claimRunExtras(extrasDir)) console.warn(`[artifacts] extras/${f.name} not shared with the agent: ${f.error.message}`);
+      } catch (err) { console.warn(`[artifacts] extras folder not shared with the agent: ${err.message}`); }
+    };
+    share();
     for (const ex of extras) {
       if (!ex) continue;
       const src = resolveAgainst(projectDir, ex);
@@ -1259,6 +1269,7 @@ export async function createPipeline(projectDir, opts = {}) {
         // Skip unreadable extras; never fail pipeline creation on a bad path.
       }
     }
+    if (copiedExtras.length) share();
   }
 
   const startedAt = new Date().toISOString();

@@ -107,7 +107,7 @@ import { isNormalized } from './engines/events.mjs';
 import { createClaudeNormalizer } from './engines/claude-events.mjs';
 import { cachedFreeDailyCounts } from './openrouter-free.mjs';
 import { withBillTo, currentBillTo } from './billing.mjs';
-import { claimRunDir } from './agent-pool.mjs';
+import { claimRunDir, claimRunExtras } from './agent-pool.mjs';
 import { brokerEnabled, brokerEngineRefusal, brokerInfo, personSlots } from './broker-client.mjs';
 import { mockEnabled } from './claude-runner.mjs';
 import { modelSlot, manifestModels, manifestNeedsModel, missingCredentials, describeMissing } from './broker-routing.mjs';
@@ -7059,10 +7059,15 @@ export class RunHarness extends EventEmitter {
 
   /** List the user's attached files copied into <pipeline>/extras/ (basename + abs
    *  path), sorted for deterministic seeded-file content. Empty when none were
-   *  attached or the dir is absent. */
+   *  attached or the dir is absent. Under agent isolation they are handed to the
+   *  run owner's agent first (best effort), which also repairs a run whose files
+   *  createPipeline left unreadable. */
   async _collectExtras() {
     try {
       const dir = join(this.pipeline.dir, 'extras');
+      try {
+        for (const f of claimRunExtras(dir)) this._log('orchestrator', 'warn', `extras/${f.name} not shared with the agent: ${f.error.message}`);
+      } catch { /* no extras folder, or not one worca owns: the agent reports what it cannot read */ }
       const names = (await readdir(dir)).sort();
       return names.map((name) => ({ name, path: join(dir, name) }));
     } catch {
