@@ -1,7 +1,7 @@
 ---
 name: review-baseline-and-suite-noise
 description: Read before reviewing a worca run's diff or proving new tests catch their fixes — the checkpoint may not be the base, and many guard removals stay green.
-updated: 2026-10-26T18:53:09.600Z
+updated: 2026-11-04T02:35:45.964Z
 author: Bulibas
 ---
 
@@ -50,5 +50,12 @@ route's `if (!check) return`), even when the tests are copied verbatim from a re
   The fixture needs one item on each side (one dropped, one kept).
 - A test of a deadline or timeout fix must assert a `settled` flag one `setImmediate` after the fake-clock tick, not
   `await` the promise: reverted, an `await` hangs to the per-file timeout instead of failing (2026-10-18).
+
+- A new chat-tool bridge is often switched off in several layers at once: the `tabsOn` prompt flag, the bridge
+  factory returning null, the route's 403 and turn.mjs `!this.relay`. Removing any ONE layer is an equivalent mutant,
+  so mutate the root predicate (`askTabsEnabled = () => true`), and delete the turn's `dispose()`, which ends the
+  per-turn token. Plans' §13 mutation tables list only per-call guards. On tool panel slice 3 (2026-11-04) all of these
+  stayed green, and so did app.js glue: model `onChange` → mirror PUT and `onPick` → composer. The precedent rows to
+  copy are test/ask-api-commands.test.mjs:102 and ask-turn ~1902-1934.
 
 Judging a red, cancelled or hung full suite: [[test-suite-known-failures]].
