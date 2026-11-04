@@ -406,3 +406,14 @@ test('role reviews: the refiner renders the findings directive and MOCK_FINDINGS
   const plain = promptFor('refiner');
   assert.doesNotMatch(plain, /## Role reviews|MOCK_FINDINGS/);
 });
+
+test('#990 s5 the implementer gets the plan-concern block and marker only when ctx.planConcern names a file', () => {
+  const file = '/abs/n_impl-plan-concern-c1.json';
+  const on = buildAgentPrompt({ ...ctxFor('implementer'), planConcern: { file } });
+  assert.match(on, /^## Plan concern$/m);
+  assert.match(on, /^MOCK_PLAN_CONCERN: \/abs\/n_impl-plan-concern-c1\.json$/m);
+  assert.equal(buildAgentPrompt({ ...ctxFor('implementer'), planConcern: null }), promptFor('implementer'), 'none offered: byte-identical');
+  const over = buildAgentPrompt({ ...ctxFor('implementer'), planConcernOverride: { title: 'Use the DB' } });
+  assert.match(over, /## Plan concern overridden/);
+  assert.doesNotMatch(over, /MOCK_PLAN_CONCERN/);
+});

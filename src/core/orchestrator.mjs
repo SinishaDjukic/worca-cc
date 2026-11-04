@@ -10,8 +10,8 @@
 // an ordinary execution, `x:<nodeId>:<ordinal>:<taskId>` for a composite slice.
 // state.steps[] IS the execution ledger: one row per execution, key ===
 // executionId. There is no separate executions[] array.
-import { join, isAbsolute, extname, dirname, basename } from 'node:path';
-import { rm, readFile, readdir, access, stat, writeFile, mkdir } from 'node:fs/promises';
+import { join, isAbsolute, extname, dirname, basename, sep } from 'node:path';
+import { rm, readFile, readdir, access, stat, writeFile, mkdir, realpath } from 'node:fs/promises';
 import { readDirections, pendingDirections } from './directions.mjs';
 import { runsOn } from '../shared/connections.mjs';
 
@@ -39,6 +39,7 @@ import { PLAN_ASK_KIND, validatePlanAnswer, validateOutlineAnswer, renderPlanFee
 import { createSliceFeature, retireFeaturesOf, earlierSliceChanges, featureApprovesEach, featureClarify, featureNotes } from './shape/features.mjs';
 import { checkSlices, applyOutlineEdits, normalizeOutline, OUTLINE_FILE, OUTLINE_CHANGE_FILE, OUTLINE_ROUNDS_MAX } from '../shared/shape/slices.mjs';
 import { DEFAULT_PERSPECTIVES } from '../shared/shape/perspectives.mjs';
+import { normalizePlanConcern, planConcernFileName, concernFeedbackSection } from '../shared/review/plan-concern.mjs';
 import { ensureHouseBrief } from './house-brief.mjs';
 import { extractChecklist } from '../shared/shape/checklist.mjs';
 import { applyChecklist, checklistFindingsMarkdown, mergeReportedChecklists } from '../shared/shape/review-checklist.mjs';
@@ -88,6 +89,9 @@ const MAX_QUESTION_ROUNDS = 3;
 /** A gate answer: exactly `{decision: 'another' | 'continue'}`, else null (the question stays open). */
 export const gateAnswer = (raw) => (raw && (raw.decision === 'another' || raw.decision === 'continue') ? { decision: raw.decision } : null);
 
+/** #990 s5: the plan concern ask of one implementer execution. */
+const planConcernAskId = (ctx) => `plan-concern-${ctx.nodeId}-c${ctx.ordinal}`;
+
 function abortError(msg = 'aborted') {
   const e = new Error(msg);
   e.name = 'AbortError';
@@ -119,6 +123,9 @@ export class GraphOrchestrator extends RunHarness {
     this._graphError = null;     // first genuine execution error (identity preserved)
     this._planVersion = 0;       // {vsuffix} ticks, carried across a resume
     this._planRevise = null;     // {id, path}: a revise answered just before a pause (F19), carried across a resume
+    this._planConcernAnswer = null; // {id, payload}: a plan concern answered just before a pause (#990 s5), carried across a resume
+    this._planConcernSeen = {};     // {[id]: 'raised' | 'decided'}: audited once per concern across resumes (#990 s5)
+    this._planConcernHeld = null;   // {id, concern}: the parsed concern, carried across a resume (the agent need not rewrite it)
     this._slicingDone = false;   // L2: the Planner's slicing offer is over (no outline, or one decided); carried across a resume
     this._outlineRevise = null;  // the feedback of an outline revise answered before a pause, carried across a resume
     this._sliceScopeCache = null;
@@ -1091,6 +1098,9 @@ export class GraphOrchestrator extends RunHarness {
       })),
       planVersion: this._planVersion,
       ...(this._planRevise ? { planRevise: { ...this._planRevise } } : {}),
+      ...(this._planConcernAnswer ? { planConcernAnswer: { ...this._planConcernAnswer } } : {}),
+      ...(Object.keys(this._planConcernSeen).length ? { planConcernSeen: { ...this._planConcernSeen } } : {}),
+      ...(this._planConcernHeld ? { planConcernHeld: jsonClone(this._planConcernHeld) } : {}),
       ...(this.state.roleReviews ? { roleReviews: jsonClone(this.state.roleReviews) } : {}),
       ...(this._slicingDone ? { slicingDone: true } : {}),
       ...(this._outlineRevise ? { outlineRevise: this._outlineRevise } : {}),
@@ -1628,6 +1638,103 @@ export class GraphOrchestrator extends RunHarness {
     }
   }
 
+  /** #990 s5 (D1): an implementer below a plan approval stop — a code side-effect node whose `plan` input is wired from a
+   *  node with an `approve` plan config, in a run whose approval stops are armed. Slices, role slices and fix-mode
+   *  executions never raise one. */
+  _planConcernCtx(nc, ctx) {
+    if (!this.runShape || nc.meta?.sideEffect !== 'code' || ctx.slice || ctx.role || ctx.bindings?.fix) return null;
+    const tpl = this.resolved?.template || {};
+    const wire = (tpl.wires || []).find((w) => w.to?.node === ctx.nodeId && w.to?.port === 'plan');
+    const src = wire && (tpl.nodes || []).find((n) => n.id === wire.from.node);
+    if (src?.config?.approve?.kind !== PLAN_ASK_KIND) return null;
+    return { file: join(this.pipeline.dir, planConcernFileName(ctx.nodeId, ctx.ordinal)), approvalNodeId: src.id };
+  }
+
+  /** True when concern `id` was already decided as Approve (by a person or --yes): its execution is the override re-run. */
+  _planConcernOverridden(id) {
+    return this._planConcernSeen[id] === 'decided' && this._planConcernHeld?.id === id
+      && (this.auto || (this._planConcernAnswer?.id === id && this._planConcernAnswer.payload?.decision === 'approve'));
+  }
+
+  /** D8: { none, stale? } | { concern } | { error }. Containment first (a symlink is resolved before anything is
+   *  trusted), then freshness of the REAL file, then the contract. */
+  async _readPlanConcern(file, sinceMs) {
+    const real = await realpath(file).catch(() => null);
+    if (!real) return { none: true };                           // not written (or a dangling link)
+    const root = await realpath(this.pipeline.dir).catch(() => null);
+    if (!root || !real.startsWith(root + sep)) return { error: 'outside the pipeline dir' };
+    const st = await stat(real).catch(() => null);
+    if (!st || (Number.isFinite(sinceMs) && st.mtimeMs < sinceMs)) return { none: true, stale: Boolean(st) };
+    let raw;
+    try { raw = JSON.parse(await readFile(real, 'utf8')); } catch (err) { return { error: `unreadable: ${err?.message || err}` }; }
+    const n = normalizePlanConcern(raw);
+    return n.ok ? { concern: n.concern } : { error: n.error };
+  }
+
+  /** #990 s5: the implementer said the plan's design is wrong. Re-raise the plan approval (kind 'plan', a `concern`
+   *  field): Ask for changes (revise) rewinds to the Planner (D4); Approve builds as written (D5). A concern always
+   *  stops (D7); only --yes overrides it without a person (D6). */
+  async _planConcernLoop(nc, ctx, result) {
+    const pc = ctx.planConcern;
+    if (!pc || result?.paused || result?.error) return result;
+    const label = nc.meta?.displayName || nc.key || ctx.nodeId;
+    const id = planConcernAskId(ctx);
+    const read = await this._readPlanConcern(pc.file, ctx.startedMs);
+    // A resumed execution gets a new startedMs and its resumed session need not write the file again: the concern
+    // read before the pause is carried in the resume point (D9).
+    const held = read.none && this._planConcernHeld?.id === id ? this._planConcernHeld.concern : null;
+    if (read.none && !held) {
+      if (read.stale) this._log('orchestrator', 'info', `${label}: ${pc.file} predates this execution — not read`);
+      return result;
+    }
+    if (!held && !read.concern) {
+      await appendAudit(this.pipeline.dir, `${label}: plan-concern.json ignored (${read.error}).`).catch(() => {});
+      return result;
+    }
+    const concern = held || read.concern;
+    this._planConcernHeld = { id, concern };         // before any await: the pause window (graph-ask-kind-traps)
+    const planFile = ctx.bindings?.plan?.path ?? null;
+    const round = this._graphSnapshot?.approvalRounds?.[pc.approvalNodeId] || 1;
+    if (!this._planConcernSeen[id]) {                // a resumed execution raises the same id again: audit it once
+      this._planConcernSeen[id] = 'raised';
+      await appendAudit(this.pipeline.dir, `${label} raised a plan concern: "${concern.title}".`).catch(() => {});
+    }
+    const decided = this._planConcernSeen[id] === 'decided';
+    let payload;
+    if (this.auto) {
+      payload = { decision: 'approve' };
+      if (!decided) await appendAudit(this.pipeline.dir,
+        `Plan concern overridden automatically (--yes): "${concern.title}". ${label} builds the plan as written.`).catch(() => {});
+    } else if (this._planConcernAnswer?.id === id) {
+      payload = this._planConcernAnswer.payload;     // answered just before a pause (D9): replay, never re-ask
+      this._log('orchestrator', 'info', `plan concern ${id}: ${payload?.decision} replayed after a pause`);
+    } else {
+      this._planConcernAnswer = null;               // a different id: the stash is stale
+      const perspectives = this._shapePerspectives();
+      payload = await this._enqueueAsk(() => this._ask({
+        id, kind: PLAN_ASK_KIND, nodeId: ctx.nodeId, executionId: ctx.executionId, concern,
+        plan: { nodeId: pc.approvalNodeId, port: 'plan', file: planFile, round, revisable: true, perspectives },
+        validate: (raw) => validatePlanAnswer(raw, { revisable: true, perspectives }),
+      }));
+      this._planConcernAnswer = { id, payload };     // before any await: the pause window (graph-ask-kind-traps)
+    }
+    this._checkAbort();
+    const d = payload?.decision;
+    if (d === 'withdrawn' || !d) return result;
+    if (d === 'stop') { this.stop(this.answeredBy(id)); this._checkAbort(); return result; }
+    this._planConcernSeen[id] = 'decided';
+    if (d === 'revise') {
+      const path = join(this.pipeline.dir, `plan-concern-feedback-c${ctx.ordinal}.md`);
+      await writeFile(path, renderPlanFeedback(payload.feedback, planFile) + concernFeedbackSection(concern), 'utf8');
+      return { ...result, reviseApproval: { path } };
+    }
+    ctx.planConcern = null;                          // the re-run cannot raise a second concern (D5)
+    ctx.planConcernOverride = concern;
+    const step = this.state.steps.find((s) => s.key === ctx.executionId);
+    if (step?.sessionId) ctx.resumeSessionId = step.sessionId;
+    return this._runNodeAttempts(nc, ctx);
+  }
+
   /** L5: a feature created before a crash, for an outline that was then offered again and not approved. */
   _retireOrphanFeature() {
     try {
@@ -1848,6 +1955,11 @@ export class GraphOrchestrator extends RunHarness {
       await this._primeDirections(ctx);
       if (this.runShape && nc.key === CHECKLIST_REVIEWER_KEY) ctx.checklistItems = await this._reviewChecklistItems(ctx);
       if (this.runShape && SLICE_SCOPE_AGENT_KEYS.has(nc.key)) Object.assign(ctx, await this._shapeSliceCtx(nc, ctx));
+      ctx.planConcern = this._planConcernCtx(nc, ctx);
+      if (ctx.planConcern && this._planConcernOverridden(planConcernAskId(ctx))) {
+        ctx.planConcernOverride = this._planConcernHeld.concern;   // paused during the override re-run (D9): resume as it
+        ctx.planConcern = null;
+      }
       if (this.runShape?.slice?.index > 1 && nc.runnerType === 'clarifier') {
         // D19: slices 2…N plan once: Clarify publishes the feature's answers instead of asking again.
         ctx.carriedClarify = this._featureClarify();
@@ -1858,6 +1970,7 @@ export class GraphOrchestrator extends RunHarness {
       // A role slice reports the plan's items too, but they are judged once, on the merged verdict (_finishRoleReview).
       if (!ctx.role) result = await this._applyReviewChecklist(ctx, result);
       result = await this._applyRoleReviewVerdict(ctx, result);
+      result = await this._planConcernLoop(nc, ctx, result);
       // C5: the verdict the routing reads, as counts, on the execution's latest host dispatch (none when it ran plain).
       this._sessions?.noteVerdict(ctx.executionId, verdictSummary(result?.verdict));
       await this._afterExecution(nc, ctx, result);
@@ -3216,6 +3329,15 @@ export class GraphOrchestrator extends RunHarness {
     this._planVersion = Number.isFinite(rp.planVersion) ? rp.planVersion : 0;
     const pr = rp.planRevise;
     this._planRevise = pr && typeof pr.id === 'string' && typeof pr.path === 'string' ? { id: pr.id, path: pr.path } : null;
+    const pca = rp.planConcernAnswer;
+    this._planConcernAnswer = pca && typeof pca.id === 'string' && pca.payload && typeof pca.payload === 'object'
+      ? { id: pca.id, payload: { ...pca.payload } } : null;
+    const seen = rp.planConcernSeen;
+    this._planConcernSeen = Object.fromEntries(Object.entries(seen && typeof seen === 'object' ? seen : {})
+      .filter(([, v]) => v === 'raised' || v === 'decided'));
+    const held = rp.planConcernHeld;
+    const heldConcern = held && typeof held.id === 'string' ? normalizePlanConcern(held.concern) : null;
+    this._planConcernHeld = heldConcern?.ok ? { id: held.id, concern: heldConcern.concern } : null;
     this.state.roleReviews = rp.roleReviews && Array.isArray(rp.roleReviews.rounds) ? rp.roleReviews : undefined;
     this._slicingDone = rp.slicingDone === true;
     this._outlineRevise = typeof rp.outlineRevise === 'string' ? rp.outlineRevise : null;

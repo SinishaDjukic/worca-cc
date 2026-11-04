@@ -70,6 +70,19 @@ export function renderPlanBody(panel, pq, deps) {
   // the summary comes from the plan text, which only the gated route serves
   if (deps.extras) { summary = h('p', 'plan-summary'); summary.hidden = true; body.appendChild(summary); }
 
+  // #990 s5: the implementer's plan concern — why an approved plan is asked again. Shown once; the buttons stay.
+  if (pq.concern && pq.concern.title) {
+    const c = pq.concern;
+    const note = h('div', 'shape-plan-outline-change plan-concern');
+    note.append(h('div', 'shape-plan-outline-change-head', 'The implementer has a concern about this plan:'),
+      h('p', 'shape-plan-outline-change-text plan-concern-title', String(c.title)));
+    if (c.detail) note.appendChild(h('p', 'shape-plan-outline-change-text', String(c.detail)));
+    if (c.section) note.appendChild(h('p', 'shape-plan-outline-change-text', `Section: ${c.section}`));
+    note.appendChild(h('p', 'shape-plan-outline-change-text plan-concern-what',
+      'Approve overrides the concern and builds the plan as written. Ask for changes accepts it and sends the plan back to the planner with this concern.'));
+    body.appendChild(note);
+  }
+
   // D19: a later run's planner said the run can't be built as outlined: that is why this plan stopped
   if (plan.outlineChange) {
     const note = h('div', 'shape-plan-outline-change');

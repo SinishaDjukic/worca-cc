@@ -1083,6 +1083,15 @@ async function mockImplementer(m, cwd, onEvent, workspaceWriteTargets) {
   await emitLog(onEvent, '[mock] implementer applying plan via TDD (red-green-refactor)');
   // A role review's implementer sink: its first bound input (`fix`) is the findings file.
   if (m.MOCK_IN) await mockDispositions(await readFile(m.MOCK_IN, 'utf8').catch(() => ''));
+  // #990 s5: a test raises a plan concern with WORCA_MOCK_PLAN_CONCERN; only a prompt that offers one writes it.
+  if (m.MOCK_PLAN_CONCERN) {
+    let concern = null;
+    try { concern = JSON.parse(process.env.WORCA_MOCK_PLAN_CONCERN || 'null'); } catch { concern = null; }
+    if (concern) {
+      await writeFile(m.MOCK_PLAN_CONCERN, JSON.stringify(concern, null, 2) + '\n', 'utf8');
+      await emitLog(onEvent, '[mock] implementer raised a plan concern');
+    }
+  }
   const targets = Array.isArray(workspaceWriteTargets) && workspaceWriteTargets.length
     ? workspaceWriteTargets
     : [cwd];

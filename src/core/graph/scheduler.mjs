@@ -630,6 +630,7 @@ export function createScheduler(opts) {
       ...(node.kind === 'end' ? { result: boundResult(entry) } : null),
       ...(res?.verdict ? { verdict: { hasBlocking: hasBlocking(res.verdict), ...(res.verdict.missing ? { missing: true } : {}) } } : null),
     });
+    if (res?.reviseApproval && rewindToApproval(node, res.reviseApproval, entry.executionId)) { snap(); wake(); return; }
     publish(node, entry, res);
     snap();
   }
@@ -921,6 +922,54 @@ export function createScheduler(opts) {
     return null;
   }
 
+  /** Drop a node's latched loop-input tokens and refill each loop wire's budget (R16; shared by both rewinds). */
+  function resetLoops(id) {
+    const n = nodeById.get(id);
+    for (const inp of (n && portsOfNode(n).inputs) || []) {
+      if (!isLoopPort(id, inp)) continue;
+      tokens.delete(`${id}.${inp.id}`);
+      const wireId = wiredIn.get(id)?.get(inp.id);
+      const st = wireId ? wireState.get(wireId) : null;
+      if (st) { st.deliveries = 0; st.allowance = initialAllowance(wireId); }
+    }
+  }
+
+  /** A new shaping round at an approval node: reset its loops (and its role node's), queue the feedback on the Planner. */
+  function reopenApproval(nodeId, reviseTo, path, sourceExecutionId) {
+    resetLoops(nodeId);
+    for (const wireId of wiredIn.get(nodeId)?.values() || []) {
+      const src = nodeById.get(wireById.get(wireId)?.from.node);
+      if (src && isRoleReview(src)) resetLoops(src.id);
+    }
+    tokens.set(`${reviseTo.node}.${reviseTo.port}`, makeToken({ type: 'md', path, sourceExecutionId }));
+  }
+
+  /** #990 s5: the approval node feeding `node` (its plan's source), if any. */
+  function approvalUpstreamOf(node) {
+    for (const inp of portsOfNode(node).inputs || []) {
+      if (inp.id === AWAIT_ID || isLoopPort(node.id, inp)) continue;
+      const w = wireById.get(wiredIn.get(node.id)?.get(inp.id));
+      const src = w ? nodeById.get(w.from.node) : null;
+      if (src && approveOf(src)) return src;
+    }
+    return null;
+  }
+
+  /** #990 s5: an accepted plan concern. Nothing is published; the node's own loops reset (no stale `fix`).
+   *  Known gap: loop budgets into a node upstream of `node` (wf_shape_ux's `n_or`) are not refilled. A concern is only
+   *  offered outside fix mode, before any review delivery of its round, so those budgets are still full. */
+  function rewindToApproval(node, req, executionId) {
+    const approver = approvalStops ? approvalUpstreamOf(node) : null;
+    const reviseTo = approver ? reviseTargetOf(approver) : null;
+    if (!reviseTo || typeof req?.path !== 'string') {
+      log(`${node.id}: reviseApproval has no approval stop upstream — published as usual`);
+      return false;
+    }
+    resetLoops(node.id);
+    reopenApproval(approver.id, reviseTo, req.path, executionId);
+    return true;
+  }
+
   function holdForApproval(node, port, token, executionId) {
     if (approvals.has(node.id)) {                 // one open stop per node
       log(`${node.id}: a newer ${port.id} arrived while its approval is open — kept the first`);
@@ -978,25 +1027,9 @@ export function createScheduler(opts) {
       // The person's revise starts a new shaping round: each loop into this node gets its full budget back. `holds`
       // stays, so later gate ask ids remain unique.
       // A role node feeding this one (spec §3) gets the same reset: the revise opens a new pass of role reviews.
-      const resetLoops = (id) => {
-        const n = nodeById.get(id);
-        for (const inp of (n && portsOfNode(n).inputs) || []) {
-          if (!isLoopPort(id, inp)) continue;
-          tokens.delete(`${id}.${inp.id}`);
-          const wireId = wiredIn.get(id)?.get(inp.id);
-          const st = wireId ? wireState.get(wireId) : null;
-          if (st) { st.deliveries = 0; st.allowance = initialAllowance(wireId); }
-        }
-      };
-      resetLoops(nodeId);
-      for (const wireId of wiredIn.get(nodeId)?.values() || []) {
-        const src = nodeById.get(wireById.get(wireId)?.from.node);
-        if (src && isRoleReview(src)) resetLoops(src.id);
-      }
       // Re-queue the producer with the feedback on its loop input; it re-fires (any-fresh), its new plan re-fires
       // this node via the non-loop wire and the stop is raised again as round N+1.
-      tokens.set(`${entry.reviseTo.node}.${entry.reviseTo.port}`,
-        makeToken({ type: 'md', path: answer.path, sourceExecutionId: entry.executionId }));
+      reopenApproval(nodeId, entry.reviseTo, answer.path, entry.executionId);
     } else {
       log(`${nodeId}: approval ${entry.askId} ended the run (${decision ?? 'no answer'})`);
       abortRequested = true;

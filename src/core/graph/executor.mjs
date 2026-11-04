@@ -56,6 +56,7 @@ import { perspectivesBlock } from '../../shared/shape/perspectives.mjs';
 import { roleReviewOf, roleChecklistOf, genericRoleBrief, roleTargetOf } from '../../shared/graph/role-review-step.mjs';
 import { reviewChecklistBlock } from '../../shared/shape/review-checklist.mjs';
 import { slicingBlock, outlineFeedbackBlock, FLAT_NOTE, sliceScopeBlock } from '../../shared/shape/slices.mjs';
+import { planConcernBlock, planConcernOverrideBlock } from '../../shared/review/plan-concern.mjs';
 import { runScriptExecution } from './script-runner.mjs';
 // Skills registry §4.1: the CLI's refusal of `--plugin-dir` under managed `disableSideloadFlags` (P3's one regex).
 import { SIDELOAD_REFUSAL_RE as SIDELOAD_REFUSED_RE } from '../skills-registry/host.mjs';
@@ -529,7 +530,7 @@ function decompositionContractBlock(expandsPort, runCtx) {
 /** The MOCK marker set for this execution, per the resolution chain. Only markers
  *  `runMock` reads are emitted (MOCK_ROLE, MOCK_CYCLE, MOCK_BASE, MOCK_OUT, MOCK_JSON,
  *  MOCK_IN, MOCK_PRIOR, MOCK_TASKS_DIR). */
-function markersFor({ role, ordinal, runCtx, outputs, verdict, bindings, ports, expandsPort, priorCount, perspective, planText, roleSpec }) {
+function markersFor({ role, ordinal, runCtx, outputs, verdict, bindings, ports, expandsPort, priorCount, perspective, planText, roleSpec, planConcernFile }) {
   const markers = { MOCK_ROLE: role, MOCK_CYCLE: ordinal, MOCK_BASE: runCtx.baseName };
   if (role === MOCK_ROLE_CLARIFY) {
     markers.MOCK_OUT = outputs[answersPortOf(ports)?.id]?.path;
@@ -555,6 +556,8 @@ function markersFor({ role, ordinal, runCtx, outputs, verdict, bindings, ports, 
   markers.MOCK_PERSPECTIVE = perspective || '';
   markers.MOCK_CHECKLIST = perspective ? (roleChecklistOf(roleSpec)?.items(perspective, planText || '') || []).join(',') : '';
   markers.MOCK_FINDINGS = bindings.findings?.path || '';
+  // #990 s5: the implementer's plan-concern file, only when one is offered, so every other prompt is unchanged.
+  if (planConcernFile) markers.MOCK_PLAN_CONCERN = planConcernFile;
   return markers;
 }
 
@@ -609,6 +612,10 @@ export function buildAgentPrompt(ctx) {
   // Spec D7: the approved plan's R-… items, set by the orchestrator for a shaped run's reviewer only. Driven by the
   // list, never by ctx.shape, so every unshaped and shaped-without-items prompt stays byte-identical.
   const checklist = reviewChecklistBlock(ctx.checklistItems);
+  // #990 s5: set by the orchestrator only for an implementer below a plan approval stop, so every other prompt stays
+  // byte-identical.
+  const concernFile = ctx.planConcern?.file || '';
+  const concern = planConcernBlock(concernFile) + planConcernOverrideBlock(ctx.planConcernOverride);
   const title = meta.displayName || node?.key || node?.id || 'agent';
   // Spec §3: a role reviewer's prompt carries ITS role brief only (ctx.role is set per composite slice); a provider's
   // brief carries the house brief for the role that wants it.
@@ -629,6 +636,7 @@ export function buildAgentPrompt(ctx) {
     roleBrief +
     sliceScope +
     slicing +
+    concern +
     modeBlock(selectMode({ ports, bindings, freshPorts: trigger.freshPorts })) +
     fanOutDirective(ctxFanOut(ctx), { omitProjectAgents: relative, subagentModel: ctxSubagentModel(ctx), endpointRouted: routed, investigator: !!ctxSubagentEffort(ctx), engine: node?.engine }) +
     workspaceFanOutDirective(meta.workspaceStrategy, ctx.workspace, { relative, endpointRouted: routed, serial: node?.noSubagents === true }) +
@@ -643,6 +651,7 @@ export function buildAgentPrompt(ctx) {
       expandsPort,
       priorCount: (ctx.priorAnswers || []).length,
       perspective: ctx.role || null, planText: ctx.rolePlanText, roleSpec: ctx.role ? roleSpecOf(ctx) : null,
+      planConcernFile: concernFile,
     }))
   );
 }

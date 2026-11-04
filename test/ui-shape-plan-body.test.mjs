@@ -558,3 +558,29 @@ test('run 4 D8: Ask for changes swaps for the field, Cancel swaps back', () => {
   assert.equal(doc.activeElement, ask);
   panel.remove();
 });
+
+test('#990 s5 the approval card shows the implementer\'s concern once, above the approve button', async () => {
+  const pq = ask();
+  pq.concern = { title: 'Store export jobs in the DB, not in memory', detail: 'A restart loses queued exports.', section: 'Decisions' };
+  const { panel, $, $$ } = setup({ pq });
+  await flush();
+  assert.equal($$('.plan-concern').length, 1);
+  assert.equal(panel.textContent.split(pq.concern.title).length - 1, 1, 'the title is shown once');
+  assert.ok($('.plan-sub').compareDocumentPosition($('.plan-concern')) & 4, 'the note comes after the sub line');
+  assert.ok($('.plan-concern').compareDocumentPosition($('.plan-approve')) & 4, 'the note comes before Approve');
+  assert.equal($('.plan-concern .shape-plan-outline-change-head').textContent, 'The implementer has a concern about this plan:');
+  assert.ok($('.plan-concern').textContent.includes('Section: Decisions'));
+  assert.equal($('.plan-concern-what').textContent,
+    'Approve overrides the concern and builds the plan as written. Ask for changes accepts it and sends the plan back to the planner with this concern.');
+  assert.equal($('.plan-ask-changes').textContent, 'Ask for changes');
+});
+
+test('#990 s5 no concern, no concern note; markup in a concern stays text', async () => {
+  assert.equal(setup({ pq: ask() }).$('.plan-concern'), null);
+  const pq = ask();
+  pq.concern = { title: '<img src=x onerror=alert(1)>' };
+  const { $ } = setup({ pq });
+  await flush();
+  assert.equal($('.plan-concern img'), null);
+  assert.equal($('.plan-concern-title').textContent, '<img src=x onerror=alert(1)>');
+});

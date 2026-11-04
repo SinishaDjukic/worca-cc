@@ -117,6 +117,24 @@ review cycle: the newest open, older ones folded. On a finished shaped run the C
 card carries the tally ("Checklist: 3 met · 1 unmet · 1 n/a"), and the pull request
 description gets a section with the same items.
 
+## Plan concerns
+
+The implementer of a Shaper run can say that the approved plan would work but its design is wrong. It then writes a
+plan concern (`{ "title", "detail", "section" }`, one file per implementer step in the run's folder, called
+`plan-concern.json` in the audit) instead of building the part it disagrees with, and builds the rest. Bugs and
+missing details stay deviations, as before.
+
+- The plan approval is asked again, for the same plan round, with the concern above the Approve button.
+- **Ask for changes** (with your own text) accepts the concern: the plan goes back to the planner with your text and
+  the concern. The planner runs again and the plan approval comes back as the next round.
+- **Approve** overrides the concern: the implementer runs once more, builds the held-back part as the plan says, and
+  the run goes on. It cannot raise a second concern in that step.
+- Under `--yes` no one is asked: the concern is overridden, and the audit log reads
+  "Plan concern overridden automatically (--yes)".
+- Away mode waits for you: a concern is a plan approval, and Away mode never decides one.
+- A concern stops the run even when "Approve each slice's plan" is off.
+- Only workflows with a plan approval stop offer a concern. Default's implementer is never offered one.
+
 ## Plan in slices
 
 A large task is easier to review as a short chain of small changes than as one
