@@ -1974,7 +1974,7 @@ const requirementsUploadSlot = requirementsUploadSlots();
 for (const p of REQUIREMENTS_UPLOAD_ROUTES) {
   app.post(p, requireFlag('requirements'), requirementsUploadSlot, express.json({ limit: REQUIREMENTS_UPLOAD_JSON_LIMIT }));
 }
-app.use(express.json({ limit: '8mb' }));
+app.use(express.json({ limit: '8mb' }), (req, _res, next) => { req.body ??= {}; next(); });   // Express 5 leaves req.body undefined when nothing was parsed; the routes read it as Express 4's {}
 
 // Credential broker billing (src/core/billing.mjs): every claude spawn a request causes —
 // a run it starts, an Ask turn, a model Test — is billed to the person behind the request.
@@ -2005,7 +2005,7 @@ if (HLJS_ASSETS) {
   const sendHljsModule = (file) => (_req, res, next) => {
     res.type('text/javascript');
     res.set('X-Content-Type-Options', 'nosniff');
-    res.sendFile(file, (err) => {
+    res.sendFile(path.basename(file), { root: path.dirname(file) }, (err) => {   // root: Express 5 404s a dot folder anywhere in an absolute path (~/.nvm); Express 4 checked the name only
       if (!err) return;
       if (res.headersSent) return next(err);
       next();
@@ -2030,7 +2030,7 @@ if (HLJS_ASSETS) {
 const sendEsmModule = (file) => (_req, res, next) => {
   res.type('text/javascript');
   res.set('X-Content-Type-Options', 'nosniff');
-  res.sendFile(file, (err) => {
+  res.sendFile(path.basename(file), { root: path.dirname(file) }, (err) => {
     if (!err) return;
     if (res.headersSent) return next(err);
     next();
@@ -2051,7 +2051,7 @@ for (const { prefix, dir, files } of VOICE_VENDOR) {
       res.type(type);
       res.set('X-Content-Type-Options', 'nosniff');
       res.set('Cache-Control', 'public, max-age=86400');
-      res.sendFile(file, (err) => { if (!err) return; if (res.headersSent) return next(err); next(); });
+      res.sendFile(path.basename(file), { root: path.dirname(file) }, (err) => { if (!err) return; if (res.headersSent) return next(err); next(); });
     });
   }
 }
@@ -2075,7 +2075,7 @@ for (const [route, file, type] of terminalVendorFiles()) {
     res.type(type);
     res.set('X-Content-Type-Options', 'nosniff');
     res.set('Cache-Control', 'public, max-age=86400');
-    res.sendFile(file, (err) => { if (!err) return; if (res.headersSent) return next(err); next(); });
+    res.sendFile(path.basename(file), { root: path.dirname(file) }, (err) => { if (!err) return; if (res.headersSent) return next(err); next(); });
   });
 }
 
@@ -2089,7 +2089,7 @@ const sendSpeechAsset = (res, next, cache = 'no-store') => ({ file, type }) => {
   res.type(type);
   res.set('X-Content-Type-Options', 'nosniff');
   res.set('Cache-Control', cache);
-  res.sendFile(file, (err) => { if (err && !res.headersSent) next(err); });
+  res.sendFile(path.basename(file), { root: path.dirname(file) }, (err) => { if (err && !res.headersSent) next(err); });
 };
 const streamSpeechAsset = (res) => ({ type, length, body }) => {
   res.type(type);

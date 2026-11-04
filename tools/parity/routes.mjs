@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { shapeKey } from './shape.mjs';
 import { buildEnv, SIGNED_OUT_HOST } from './launch.mjs';
+import { recordMounts, routeTable, normalizePath } from '../express-routes.mjs';
 
 const json = (f) => JSON.parse(readFileSync(new URL(f, import.meta.url), 'utf8'));
 export const PUBLIC_ROUTES = json('./public-routes.json');
@@ -14,21 +15,20 @@ export const PLACEHOLDER = 'parity-missing';
 export const classOf = (key) => ROUTE_CLASSES[key]?.class ?? 'unclassified';
 const REDUCED_HEALTH = '{"name":"string","version":"string"}';
 
-/** Express 4 mount regexp (`^\/api\/x\/?(?=\/|$)`, or fast_slash for '/') → its literal prefix; null when it is not literal. */
+/** A router's recorded mount path (tools/express-routes.mjs) → its literal prefix ('' for '/'); null when it is not literal. */
 export function mountPrefix(mount) {
-  if (!mount || mount.fastSlash) return '';
-  const m = /^\^(.*)\\\/\?\(\?=\\\/\|\$\)$/.exec(mount.source);
-  if (!m) return null;
-  const lit = m[1].replace(/\\\//g, '/');
-  return /[\\^$.*+?()[\]{}|]/.test(lit) ? null : lit;
+  if (mount === '/') return '';
+  if (typeof mount !== 'string' || /[:*?+()[\]{}\\]/.test(mount)) return null;
+  return mount.replace(/\/+$/, '');
 }
 
+/** The route list of a routeTable (Express 4 or 5): every /api METHOD path, in normalizePath's spelling, sorted. */
 export function routesFromStack(stack, prefix = '', seen = new Map()) {
   for (const l of stack) {
-    if (l.handle?.stack) {   // a nested router (app.use(path, router)): resolve it with its mount prefix (D6)
+    if (l.stack) {   // a nested router (app.use(path, router)): resolve it with its mount prefix (D6)
       const p = mountPrefix(l.mount);
-      if (p === null) throw new Error(`route list: cannot read the mount path of router "${l.name}" (${l.mount?.source})`);
-      routesFromStack(l.handle.stack, prefix + p, seen);
+      if (p === null) throw new Error(`route list: cannot read the mount path of router "${l.name}" (${JSON.stringify(l.mount)})`);
+      routesFromStack(l.stack, prefix + p, seen);
       continue;
     }
     if (!l.route) continue;
@@ -37,7 +37,7 @@ export function routesFromStack(stack, prefix = '', seen = new Map()) {
         if (/api/.test(prefix + String(raw?.source ?? raw))) throw new Error(`route list: /api path ${raw?.source ?? raw} is not a string`);
         continue;
       }
-      const path = prefix + raw;
+      const path = normalizePath(prefix + raw);
       if (!path.startsWith('/api')) continue;
       for (const m of Object.keys(l.route.methods)) seen.set(`${m.toUpperCase()} ${path}`, { method: m.toUpperCase(), path });
     }
@@ -45,16 +45,16 @@ export function routesFromStack(stack, prefix = '', seen = new Map()) {
   return prefix ? [] : [...seen.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([, r]) => r);
 }
 
-/** Runs inside the target's own node: imports its server (no listen: isMain is false) and prints the stack, nested routers included. */
+/** Runs inside the target's own node, Express 4 or 5 (an image or tree from before the Express 5 bump lists too): records
+ *  mounts, imports its server (no listen: isMain is false) and prints its routeTable, nested routers included. */
 export const LIST_ROUTES_SCRIPT = `
 const { pathToFileURL } = await import('node:url');
+const { createRequire } = await import('node:module');
+let req; try { req = createRequire(createRequire(process.env.PARITY_SERVER).resolve('express/package.json')); } catch {}   // none: the load error says why
+if (req) (${recordMounts})(req);
 const { app } = await import(pathToFileURL(process.env.PARITY_SERVER).href);
-const ser = (stack) => stack.map((l) => ({ name: l.name,
-  mount: l.regexp ? { source: l.regexp.source, fastSlash: !!l.regexp.fast_slash } : undefined,
-  handle: l.handle && Array.isArray(l.handle.stack) ? { stack: ser(l.handle.stack) } : undefined,
-  route: l.route ? { path: l.route.path instanceof RegExp ? { source: l.route.path.source } : l.route.path, methods: l.route.methods } : undefined }));
 // exit only once the pipe has drained: a piped stdout is async, and an early exit cuts the line at 64 KB
-process.stdout.write('PARITY_ROUTES ' + JSON.stringify(ser(app._router.stack)) + '\\n', () => process.exit(0));`;
+process.stdout.write('PARITY_ROUTES ' + JSON.stringify((${routeTable})(app)) + '\\n', () => process.exit(0));`;
 
 /** execFileSync with stderr captured: a server that throws at load is one short error with its stderr tail, not the whole command. */
 function runLister(what, file, args, opts) {

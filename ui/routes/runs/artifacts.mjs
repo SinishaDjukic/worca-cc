@@ -100,11 +100,11 @@ app.get('/api/runs/:id/ask-files/:askId/:index', async (req, res) => {
   }
 });
 
-app.get('/api/runs/:id/artifact-raw/*', async (req, res) => {
+app.get('/api/runs/:id/artifact-raw/*splat', async (req, res) => {
   try {
     const row = findPipelineRowById(req.params.id);
     if (!row) return res.status(404).json({ error: 'pipeline not found' });
-    await sendArtifactRaw(res, row, req.params[0], { download: req.query.download === '1' });
+    await sendArtifactRaw(res, row, req.params.splat.join('/'), { download: req.query.download === '1' });
   } catch (err) { res.status(500).json({ error: err && err.message ? err.message : String(err) }); }
 });
 app.get('/api/runs/:id/live-diff', async (req, res) => {

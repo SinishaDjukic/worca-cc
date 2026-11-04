@@ -10,12 +10,11 @@
 //                              git archive HEAD → temp dirs, apply in one, tree hash, second apply, equivalence, tests
 //   --write-caps               rewrite tools/split-by-feature/size-caps.json (only lowers, drops or adds)
 //   --root D                   the repo root to read, feature map, pin baseline and size caps included (default: cwd)
-// Every mode checks Express 4 first (it reads app._router) and exits 1 otherwise.
+// Every mode checks that the tree loads Express 4 or 5 first (tools/express-routes.mjs reads both) and exits 1 otherwise.
 import { readFileSync, writeFileSync, mkdirSync, rmSync, existsSync, readdirSync, realpathSync, mkdtempSync, symlinkSync, renameSync } from 'node:fs';
 import { tmpdir, devNull } from 'node:os';
 import { join, dirname } from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import { loadMap, routeOwner } from './split-by-feature/plan.mjs';
 import { planRoutes, emitRouteFile, orderFlips, leadStart, stmtText, CAP, FALLBACK_ANCHOR } from './split-by-feature/routes.mjs';
@@ -24,7 +23,8 @@ import { splitCss, lineCount } from './split-by-feature/css.mjs';
 import { splitHtml } from './split-by-feature/html.mjs';
 import { readPartsManifest } from '../src/core/public-assets.mjs';
 import { compareTrees, childEnv } from './split-by-feature/equivalence.mjs';
-import { catchUpCommand, residualRouteProblems, topZoneRouteProblems, keptMonolithProblems } from './split-by-feature/after-split.mjs';
+import { catchUpCommand, residualRouteProblems, topZoneRouteProblems, keptMonolithProblems, express4SyntaxProblems } from './split-by-feature/after-split.mjs';
+import { expressMajor } from './express-routes.mjs';
 
 export const MIGRATION_VERSION = 1;
 export const SPIKE_GATE = Object.freeze({ movedShare: 0.95 });   // and ui/server.mjs within its ceiling in size-caps.json
@@ -33,9 +33,9 @@ const CENTRAL_REL = 'tools/split-by-feature/central-routes.json';
 const MAP_REL = 'tools/split-by-feature/feature-map.json';
 const CAPS_REL = 'tools/split-by-feature/size-caps.json';
 
-export function assertExpress4(root) {
-  const v = createRequire(join(root, 'package.json'))('express/package.json').version;
-  if (!v.startsWith('4.')) throw new Error(`split-by-feature v${MIGRATION_VERSION} reads app._router (Express 4); found express ${v}`);
+/** The tree at `root` loads Express 4 or 5: pre-split PR branches stay on 4 while dev is on 5, and both are split and caught up. */
+export function assertExpress(root) {
+  try { return expressMajor(root); } catch (e) { throw new Error(`split-by-feature v${MIGRATION_VERSION}: ${e.message}`); }
 }
 
 /** On a split tree: what an old-layout PR could still slip in (docs/split-by-feature.md, After the split). */
@@ -47,7 +47,7 @@ function afterSplitProblems(root, mapText) {
   const cmd = catchUpCommand(root);
   const serverSrc = readFileSync(join(root, 'ui/server.mjs'), 'utf8');
   return [...topZoneRouteProblems(serverSrc, map, central, cmd), ...residualRouteProblems(serverSrc, map, pinned, cmd),
-    ...keptMonolithProblems(join(root, 'ui/public'), cmd)];
+    ...keptMonolithProblems(join(root, 'ui/public'), cmd), ...(expressMajor(root) === 5 ? express4SyntaxProblems(root) : [])];
 }
 
 /** Everything --apply would write, plus problems and stats. No I/O beyond reading the inputs. */
@@ -436,7 +436,7 @@ const SAFETY_TESTS = ['test/public-assets.test.mjs', 'test/extension-css.test.mj
 export const gitArchive = (repo) => (dir) => execFileSync('sh', ['-c', 'git -C "$1" archive --format=tar HEAD | tar -x -C "$2"', 'sh', repo, dir]);
 
 export function dryRun({ repo = process.cwd(), json, tests = 'safety', exportTree = gitArchive(repo) } = {}) {
-  assertExpress4(repo);
+  assertExpress(repo);
   const head = execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
   const dirty = gitDirty(repo);
   const tmp = (p) => mkdtempSync(join(tmpdir(), p));
@@ -538,7 +538,7 @@ export function treeLines(plan) {
 export async function main(argv = process.argv.slice(2), { out = console.log, err = console.error } = {}) {
   const arg = (k) => { const i = argv.indexOf(k); return i >= 0 ? argv[i + 1] : undefined; };
   const root = arg('--root') ?? process.cwd();
-  try { assertExpress4(root); } catch (e) { err(e.message); return 1; }
+  try { assertExpress(root); } catch (e) { err(e.message); return 1; }
   const head = gitHead(root);
   if (argv.includes('--dry-run')) return dryRunMain(root, head, arg, { out, err });
   if (argv.includes('--write-caps')) { writeCaps(root); return 0; }
