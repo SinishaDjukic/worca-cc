@@ -329,7 +329,7 @@ Subcommands:
   sessions <id> [--json]      A run's sessions: host, turns, the cost split and its reconcile. See: worca sessions help
   stop <id>                   Stop a live or paused run (any unique prefix). See: worca stop help
   pause <id>                  Gracefully pause a live run; resume with: worca resume <id>
-  doctor                      Reconcile crashed runs, sweep leftover run roots, check node-pty's spawn-helper.
+  doctor                      Reconcile crashed runs, sweep leftover run roots, check node-pty's spawn-helper and the terminal shell.
   plugin <cmd> [...]          Manage plugins: add|install|list|update|remove|purge|enable|
                               disable|doctor|link|reimport|init|validate|exec. See: worca plugin help
   marketplace <cmd> [...]     Manage plugin marketplaces: add|list|refresh|remove. See: worca marketplace help
@@ -1339,6 +1339,13 @@ async function cmdDoctor() {
     }
   } catch (err) {
     process.stderr.write(`worca doctor: spawn-helper check failed: ${err?.message || err}\n`);
+  }
+  try {
+    const { pickShell, shellDoctorLine } = await import('../core/terminal/shell.mjs');
+    const line = shellDoctorLine(pickShell());
+    out(/no command blocks/.test(line) ? c('yellow', line) : line);
+  } catch (err) {
+    process.stderr.write(`worca doctor: terminal shell check failed: ${err?.message || err}\n`);
   }
   try {
     // A TOTAL no-op while the effective mode is `legacy`: those paths hold every live

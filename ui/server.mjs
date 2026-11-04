@@ -243,7 +243,7 @@ import { getSession as getTerminalSession, listBlocks as listTerminalBlocks, cou
   listAudit as listTerminalAudit, listBranchWorktrees, findBranchWorktree, markInterruptedSessions, listRecentBlocks as listRecentTerminalBlocks } from '../src/core/terminal/store.mjs';
 import { createAskCommands, terminalEventPrompt, terminalNoticeText } from '../src/core/ask/commands.mjs';
 import { openBranchWorktree, removeBranchWorktree, releaseBranchWorktree, enforceBranchWorktreeCap, sweepBranchWorktrees } from '../src/core/terminal/worktrees.mjs';
-import { pidAlive, killDescendants } from '../src/core/terminal/pty.mjs';
+import { pidAlive, terminalReapOptions } from '../src/core/terminal/pty.mjs';
 import { createTerminalFanout } from '../src/core/terminal/fanout.mjs';
 import { detectBuiltins, builtinLaunch, revealLaunch, copyCommandText, findOnPath } from '../src/core/actions/builtins.mjs';
 import { buildLauncherCommand, launchAndWatch, installedLaunchers, launcherExamples, launcherWarning, lineForPickedApp } from '../src/core/actions/launcher.mjs';
@@ -9716,8 +9716,9 @@ export async function bootMaintenance({ log } = {}) {
   // interrupted, and sweep the branch worktrees under the keep policy and cap. Before Actions: its keep
   // policy and checkout cap read the terminal pid file, which must not still hold the last server's rows.
   try {
-    const orphans = await reapOrphans({ pidFile: terminalPidFileNow(),
-      kill: (pid) => { killDescendants(pid); try { process.kill(-pid, 'SIGKILL'); } catch { /* gone */ } } });
+    const termPidFile = terminalPidFileNow();
+    // Windows checks each pid is still its recorded shell; the rows are read before reapOrphans rewrites the file.
+    const orphans = await reapOrphans({ pidFile: termPidFile, ...terminalReapOptions(termPidFile) });
     // reapOrphans keeps rows stamped with this pid; a restarted container reuses the old server's pid, so
     // such rows would keep their runs "busy" for ever. Nothing is live here yet: rewrite the file.
     terminals.writePidFile();
