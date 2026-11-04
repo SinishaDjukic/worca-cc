@@ -37,5 +37,5 @@ export function compactMenu({ items, role = 'menu', label, cls = '' }) {
       'aria-checked': choice ? String(!!it.checked) : null, 'data-menu-pick': it.id || it.text, title: it.help || null,
     })}><span class="mi-l">${esc(it.text)}</span>${it.hint ? `<span class="mi-hint">${esc(it.hint)}</span>` : ''}</button>`;
   }).join('');
-  return `<div class="menu${cls ? ' ' + cls : ''}"${attrs({ role, 'aria-label': label })}>${body}</div>`;
+  return `<div class="menu${cls ? ' ' + cls : ''}"${attrs({ role, 'aria-label': label, 'data-motion': 'in' })}>${body}</div>`;
 }

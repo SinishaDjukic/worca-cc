@@ -24,5 +24,5 @@ export function statusDot({ tone = '', sym, glyph = '' } = {}) {
  * @param {string} [o.detail] the line under the word (up to two lines, then its tooltip)
  */
 export function statusLine({ dot, word, action = '', detail = '' }) {
-  return `<div class="rc-zone"><span class="rc-rail">${dot}</span><span class="rc-main rc-word">${esc(word)}</span>${action}${detail ? `<span class="rc-detail"${attrs({ title: detail })}>${esc(detail)}</span>` : ''}</div>`;
+  return `<div class="rc-zone"><span class="rc-rail" data-motion="change">${dot}</span><span class="rc-main rc-word" data-motion="change">${esc(word)}</span>${action}${detail ? `<span class="rc-detail"${attrs({ title: detail })}>${esc(detail)}</span>` : ''}</div>`;
 }

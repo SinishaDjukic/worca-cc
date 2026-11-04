@@ -129,3 +129,42 @@ test('the catalog names a module for every component built in code, and each mod
     assert.equal(typeof mod[name], 'function', `${c.name}: ${c.code}`);
   }
 });
+
+test('morph keeps what stays, adds what is new, drops what left, and draws the same DOM as innerHTML', () => {
+  const { document } = new JSDOM('<div id="t"></div>').window;
+  const t = document.getElementById('t');
+  C.morph(t, '<p class="a">one</p><ul><li data-key="x">x</li><li data-key="y">y</li></ul>');
+  const p = t.querySelector('p'), y = t.querySelector('[data-key="y"]');
+  const html = '<div class="strip">ask</div><p class="a is-on">two</p><ul><li data-key="y">y!</li></ul><input value="v">';
+  const r = C.morph(t, html);
+  assert.equal(t.querySelector('p'), p, 'the same element, so its transitions run');
+  assert.equal(t.querySelector('[data-key="y"]'), y, 'a keyed row is found after one left before it');
+  assert.equal(t.querySelector('[data-key="x"]'), null);
+  assert.deepEqual(r.entered.map((e) => e.className || e.tagName), ['strip', 'INPUT']);
+  const ref = document.createElement('div'); ref.innerHTML = html;
+  assert.equal(t.innerHTML, ref.innerHTML);
+  assert.equal(t.querySelector('input').value, 'v');
+});
+
+test('morph plays data-motion: in and open when they appear, change and swap when they change; never on a jump or under reduced motion', () => {
+  const run = ({ reduced = false, motion = true } = {}) => {
+    const { window } = new JSDOM('<div id="t"></div>');
+    const calls = [];
+    window.matchMedia = () => ({ matches: reduced });
+    window.Element.prototype.animate = function (k, o) { calls.push([this.getAttribute('data-motion'), o.duration]); };
+    const t = window.document.getElementById('t');
+    C.morph(t, '<span data-motion="change">Ready</span><button data-motion="swap">Merge</button><span class="m"></span>');
+    C.morph(t, '<span data-motion="change">Merged</span><button data-motion="swap">Merge</button><span class="m"><div data-motion="in"></div></span><div data-motion="open"></div>', { motion });
+    return calls;
+  };
+  assert.deepEqual(run().sort(), [['change', 200], ['in', 150], ['open', 150]], 'swap did not change, so it stays still');
+  assert.deepEqual(run({ reduced: true }), []);
+  assert.deepEqual(run({ motion: false }), []);
+});
+
+test('the components say how they move', () => {
+  assert.match(C.compactMenu({ items: [] }), /data-motion="in"/);
+  assert.match(C.confirmStrip({ text: 'x', yes: 'Merge' }), /class="rc-confirm"[^>]*data-motion="open"/);
+  assert.match(C.confirmStrip({ text: 'x', yes: 'Merge' }), /data-confirm="yes"[^>]*data-motion="swap"/);
+  assert.equal((C.statusLine({ dot: '', word: 'Ready' }).match(/data-motion="change"/g) || []).length, 2, 'the mark and the word');
+});

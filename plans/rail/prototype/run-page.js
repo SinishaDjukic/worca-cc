@@ -60,7 +60,7 @@ function listEditorHtml({ label, inputId, placeholder, sections, hint }) {
   const on = (k, t) => ui.chips.some((c) => c.kind === k && c.text === t);
   const rows = ({ kind, many }) => KNOWN[kind].concat(ui.chips.filter((c) => c.kind === kind && !KNOWN[kind].some(([t]) => t === c.text)).map((c) => [c.text, 1]))
     .map(([t, n]) => `<button type="button" class="menu-item" role="${many ? 'menuitemcheckbox' : 'menuitemradio'}" aria-checked="${on(kind, t)}" data-listtoggle="${kind}|${esc(t)}" data-key="lst:${kind}:${esc(t)}"><span class="mi-l">${esc(t)}</span><span class="mi-hint">${n}</span></button>`).join('');
-  return `<div class="menu rc-list-ed" role="dialog" aria-label="${esc(label)}">
+  return `<div class="menu rc-list-ed" role="dialog" data-motion="in" aria-label="${esc(label)}">
     <input class="input input-sm" id="${inputId}" type="text" placeholder="${esc(placeholder)}" aria-label="${esc(placeholder)}" data-key="${inputId}">
     ${sections.map((sec, i) => (i ? '<div class="menu-sep" role="separator"></div>' : '') + `<p class="menu-h">${esc(sec.title)}</p>` + rows(sec)).join('')}
     <p class="menu-help">${esc(hint)}</p></div>`;
@@ -155,7 +155,7 @@ function summaryPanel(v) {
   // Activity, where the rounds and the steps live.
   const ok = `<span class="rd-route-dot is-done" role="img" aria-label="Done">${svg('check', 10)}</span>`;
   const open = !!ui.askOpen;
-  const parts = open ? `<div class="ov-line-more"><p class="ov-quote">“${esc(o.task)}”</p><ul class="ov-parts">${o.ask.parts.map(([part, how]) => `<li>${ok}<span><span class="ov-part">${esc(part)}</span><span class="ov-why">${esc(how)}</span></span></li>`).join('')}</ul><p class="ov-why">Not asked: ${esc(o.ask.unasked[0])} in <code>${esc(o.ask.unasked[1])}</code></p></div>` : '';
+  const parts = open ? `<div class="ov-line-more" data-motion="open"><p class="ov-quote">“${esc(o.task)}”</p><ul class="ov-parts">${o.ask.parts.map(([part, how]) => `<li>${ok}<span><span class="ov-part">${esc(part)}</span><span class="ov-why">${esc(how)}</span></span></li>`).join('')}</ul><p class="ov-why">Not asked: ${esc(o.ask.unasked[0])} in <code>${esc(o.ask.unasked[1])}</code></p></div>` : '';
   const askLine = `<li class="rd-route-row ov-line${open ? ' is-open' : ''}">${ok}<button type="button" class="row-btn ov-line-btn" data-askopen aria-expanded="${open}" data-key="ask-open"><span>Did all ${o.ask.parts.length} parts you asked, plus ${esc(o.ask.unasked[0])}</span>${svg('chevron', 14)}</button>${parts}</li>`;
   const evLine = o.evidence ? `<li class="rd-route-row ov-line">${ok}<button type="button" class="row-btn ov-line-btn is-link" data-tab="activity" data-key="ov-evidence" title="Opens Activity: the tests, the review's rounds and the manual test"><span>${esc(o.evidence)}</span>${svg('chevron', 14)}</button></li>` : '';
   return focusHtml(v) + after + `<section class="rtab"><ol class="rd-route-list ov-lines">${askLine}${evLine}</ol></section>`;
@@ -230,13 +230,14 @@ function panelHtml(v) {
 function figHtml(f, v) {
   if (f.k === 'Cost' && v) {
     const rows = v.activity.filter((st) => st.meta).map((st) => `<li><span>${esc(st.label)}</span><span class="ct">${esc(st.meta)}</span></li>`).join('');
-    const html = `<div class="menu rc-cost" role="dialog" aria-label="Cost by stage"><p class="menu-h">Cost by stage</p><ul>${rows}<li class="is-total"><span>Total</span><span class="ct">${esc(f.v)}</span></li></ul><p class="menu-help">${esc(f.title || '')}. Each step’s cost and model are in Activity.</p></div>`;
+    const html = `<div class="menu rc-cost" role="dialog" data-motion="in" aria-label="Cost by stage"><p class="menu-h">Cost by stage</p><ul>${rows}<li class="is-total"><span>Total</span><span class="ct">${esc(f.v)}</span></li></ul><p class="menu-help">${esc(f.title || '')}. Each step’s cost and model are in Activity.</p></div>`;
     return R.figure({ k: f.k, v: f.v, of: f.of, warn: f.warn, title: f.title || '', pop: { open: ui.menu === 'cost', html, attrs: { 'data-menu': 'cost', 'data-key': 'menu:cost' } } });
   }
   if (f.tab) return R.figure({ k: f.k, v: f.v, tab: f.tab, title: 'Open Changes', current: ui.tab === f.tab });
   return R.figure({ k: f.k, v: f.v, of: f.of, warn: f.warn, title: f.title });
 }
 
+let jump = true;   // the first draw, or another case picked: another page, drawn at once (Motion: never a transition between pages)
 function render() {
   const keep = pendingFocus || document.activeElement?.dataset?.key || '';
   pendingFocus = '';
@@ -292,7 +293,7 @@ function render() {
   const sel = (v.tabs.find((t) => t.sel) || v.tabs[0]).id;
 
   const scroller = document.scrollingElement || document.documentElement; const keepY = scroller.scrollTop;
-  document.getElementById('card').innerHTML = `
+  R.morph(document.getElementById('card'), `
   <div class="rc">
     <div class="rc-bar">${crumbs}${ui.offline ? `<span class="rc-conn" role="status" title="Worca lost its connection to the server; your runs keep going and it reconnects by itself">${R.statusDot({ tone: 'is-grey' })}Offline · retrying</span>` : ''}${pager}</div>
     ${stripHtml(v)}
@@ -310,7 +311,8 @@ function render() {
     ${ui.crash ? R.errorToast({ title: 'Something went wrong', text: 'Worca hit an error it did not expect. Your runs keep going.', icon: svg('alert', 15), count: ui.crash.n,
     actions: R.button({ label: 'Reload', attrs: { 'data-crash': 'reload', 'data-key': 'crash-reload' } }) + R.button({ label: 'Copy details', kind: 'quiet', attrs: { 'data-say': DETAILS, 'data-key': 'crash-details' } }),
     close: R.button({ label: 'Close', kind: 'quiet', iconOnly: true, title: false, icon: svg('x', 14), attrs: { 'data-crash': 'close', 'data-key': 'crash-close' } }) }) : ''}
-  </div>`;
+  </div>`, { motion: !jump });
+  jump = false;
 
   if (scroller.scrollTop !== keepY) scroller.scrollTop = keepY;   // nothing moves by itself: a repaint never scrolls the page
   fitTags();
@@ -353,7 +355,7 @@ document.addEventListener('change', (e) => {
 const pick = document.getElementById('case');
 const groups = [...new Set(M.cases.map((c) => c.group))];
 pick.innerHTML = groups.map((g) => `<optgroup label="${g}">${M.cases.filter((c) => c.group === g).map((c) => `<option value="${c.id}"${c.id === ui.caseId ? ' selected' : ''}>${esc(c.label)}</option>`).join('')}</optgroup>`).join('');
-pick.addEventListener('change', () => { ui = Object.assign(fresh(pick.value), { chips: (M.cases.find((c) => c.id === pick.value) || {}).chips || [] }); render(); });
+pick.addEventListener('change', () => { jump = true; ui = Object.assign(fresh(pick.value), { chips: (M.cases.find((c) => c.id === pick.value) || {}).chips || [] }); render(); });
 // The prototype's flow (RunCardModel.flow): an action moves the run to its next case or does its job in place and
 // says so in the toast; a destructive or outward one (Stop, Discard, Merge, Apply) asks first in a confirm strip.
 const AWAY = [{ id: 'away:auto', text: 'As set up', help: 'Follows Settings and whether you marked this run' }, { id: 'away:on', text: 'Answer for me', help: 'Worca answers this run’s questions from now on, at any hour' }, { id: 'away:off', text: 'Never', help: 'Worca never answers on this run, whatever the settings' }];
@@ -373,7 +375,8 @@ const CH_SAY = { 'ch:refresh': () => 'Diff refreshed from the worktree', 'ch:pat
 const MORE_SAY = { 'more:link': 'Copied the link to this run', 'more:preset': 'Saved as preset “Unified page navigation”', 'more:terminal': 'Terminal opened in the worktree', 'more:report': 'Report sent with the logs',
 };
 let toastTimer = 0;
-function toast(text) { ui.toast = text; clearTimeout(toastTimer); toastTimer = setTimeout(() => { ui.toast = ''; const el = document.querySelector('.rc-toast'); if (el) { el.classList.remove('is-on'); el.textContent = ''; } }, 4000); }
+// The toast fades out (Motion), then empties: its text stays while it fades.
+function toast(text) { ui.toast = text; clearTimeout(toastTimer); toastTimer = setTimeout(() => { ui.toast = ''; const el = document.querySelector('.rc-toast'); if (el) { el.classList.remove('is-on'); toastTimer = setTimeout(() => { if (!ui.toast) el.textContent = ''; }, 200); } }, 4000); }
 function goCase(id) {
   Object.assign(ui, { caseId: id, open: null, ship: '', menu: '', tab: '', focus: '', parent: null, back: null, titleOpen: false, answer: null, file: null, rounds: [], ticks: [], actFilter: 'all', confirm: null, dialog: '' });
   pick.value = id; pendingFocus = 'act-main';
@@ -483,12 +486,12 @@ function stripHtml(v) {
   const acts = (yes) => R.confirmActions({ yes });
   if (ui.dialog === 'after') {
     const opts = v.finished ? ['Now, as a follow-up'] : ['When this run finishes'].concat(v.place.pr ? ['When its PR merges'] : []);
-    return `<form class="rc-confirm is-form" role="dialog" aria-labelledby="rc-strip-t" data-form="after"><span class="rc-confirm-t" id="rc-strip-t">${esc(v.runAfter.label)}</span>
+    return `<form class="rc-confirm is-form" role="dialog" data-motion="open" aria-labelledby="rc-strip-t" data-form="after"><span class="rc-confirm-t" id="rc-strip-t">${esc(v.runAfter.label)}</span>
       <input class="input input-sm" id="after-task" type="text" placeholder="What should the next run do?" aria-label="Task for the next run" data-key="after-task" value="${esc(ui.afterDraft || '')}">
       ${opts.length > 1 ? `<select class="select input-sm" id="after-when" aria-label="When it starts" data-key="after-when">${opts.map((o) => `<option>${esc(o)}</option>`).join('')}</select>` : `<span class="rtab-dim" id="after-when-t">${esc(opts[0])}</span>`}${acts(v.finished ? 'Start run' : 'Schedule')}</form>`;
   }
   if (ui.dialog === 'changes') {
-    return `<form class="rc-confirm is-form" role="dialog" aria-labelledby="rc-strip-t" data-form="changes"><span class="rc-confirm-t" id="rc-strip-t">Tell the planner what to change</span>
+    return `<form class="rc-confirm is-form" role="dialog" data-motion="open" aria-labelledby="rc-strip-t" data-form="changes"><span class="rc-confirm-t" id="rc-strip-t">Tell the planner what to change</span>
       <div class="pd-adorn${ui.changesDraft ? ' is-writing' : ''}" style="flex:1 0 100%"><textarea class="textarea" id="changes-text" rows="3" placeholder="${ui.changesDraft ? 'Drafting from the 2 open issues…' : 'What should the plan do differently?'}" data-key="changes-text"${ui.changesDraft ? ' readonly' : ''} style="width:100%;font-size:var(--fs-body)">${ui.changesDraft ? '' : esc(ui.changesText || '')}</textarea><span class="pd-act">${ui.changesDraft ? '<button type="button" class="pd-stop" data-stopdraft="changes" data-key="draft-stop" aria-label="Stop writing">' + svg('x', 12) + '</button>' : `<button type="button" class="pd-ai" data-draft="changes" data-key="draft-changes" title="${esc(draftTip('Draft it from the open issues'))}" aria-label="Draft it from the open issues"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"></path></svg></button>`}</span></div>
       ${ui.changesErr ? draftFail('changes') : ''}${acts('Send to the planner')}</form>`;
   }
@@ -539,7 +542,7 @@ function prDialogHtml(v) {
   const opts = `<div class="pd-opts"><label class="pd-check"><input type="checkbox" id="pd-draft" data-key="pd-draft"${pr.draft ? ' checked' : ''}> Draft</label><label class="pd-check"><input type="checkbox" id="pd-watch" data-key="pd-watch"${pr.watch ? ' checked' : ''}> Watch: fix failing checks</label><span class="pd-hint pd-closes">${stacked ? 'The last PR closes ' : 'Closes '}${esc(v.tabData.issue)}</span></div>`;
   const alert = pr.err ? `<div class="pd-alert" role="alert"><b>${esc(pr.err.title)}</b><span>${esc(pr.err.detail)}${pr.err.odd ? ` <button type="button" class="pd-retry" data-say="${esc(DETAILS)}" data-key="err-details">Details</button>` : ''}</span></div>` : '';
   const busy = !!ui.busy;
-  return `<div class="viewer-modal" role="dialog" aria-modal="true" aria-labelledby="pd-h"><div class="pd2">
+  return `<div class="viewer-modal" role="dialog" data-motion="in" aria-modal="true" aria-labelledby="pd-h"><div class="pd2">
     <div class="pd2-head"><h2 class="pd-h" id="pd-h">${esc(ui.dialogLabel)}</h2>${R.button({ label: 'Close', kind: 'quiet', iconOnly: true, title: false, icon: svg('x', 14), attrs: { 'data-pd': 'cancel', 'data-key': 'pd-close' } })}</div>
     <div class="pd2-body">${into}${rowsHtml}${title}${opts}${alert}</div>
     <div class="pd2-foot">${R.button({ label: 'Cancel', attrs: { 'data-pd': 'cancel', 'data-key': 'pd-cancel' } })}${R.button({ label: busy ? working(ui.dialogLabel) : ui.dialogLabel, kind: 'primary', attrs: { 'data-pd': 'ok', 'data-key': 'pd-ok', disabled: busy } })}</div>

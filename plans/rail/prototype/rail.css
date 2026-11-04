@@ -448,8 +448,9 @@ html,body{height:auto;overflow:visible;margin:0;}
 .rc-confirm-t{color:var(--ink);font-weight:500;}
 .rc-confirm-acts{display:flex;gap:8px;}
 .rc-toast{position:fixed;left:50%;bottom:24px;z-index:50;transform:translate(-50%,0);max-width:calc(100vw - 32px);padding:8px 14px;border-radius:var(--r-md);
-  background:var(--ink);color:var(--bg);font-size:var(--fs-meta);box-shadow:var(--shadow-pop);opacity:0;pointer-events:none;transition:opacity var(--motion-quick) var(--ease);}
-.rc-toast.is-on{opacity:1;transform:translate(-50%,0);}
+  background:var(--ink);color:var(--bg);font-size:var(--fs-meta);box-shadow:var(--shadow-pop);opacity:0;pointer-events:none;transition:opacity var(--motion-change) var(--ease);}   /* out over change */
+.rc-toast.is-on{opacity:1;transform:translate(-50%,0);transition-duration:var(--motion-quick);}   /* in over quick */
+@starting-style{.rc-toast.is-on{opacity:0;}}
 .rc-toast:empty{display:none;}
 @media (prefers-reduced-motion: reduce){.rc-toast{transition:none;}}
 .menu-item[data-narrow]{display:none;}
@@ -759,14 +760,14 @@ html,body{height:auto;overflow:visible;margin:0;}
 .ov-line-btn > svg{flex:none;color:var(--ink-3);transform:rotate(-90deg);transition:transform var(--motion-quick) var(--ease);}
 .ov-line.is-open .ov-line-btn > svg{transform:none;}
 .ov-line-btn:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:var(--r-xs);}
-.ov-line-more{grid-column:2;display:flex;flex-direction:column;gap:6px;padding:2px 0 10px;animation:rl-in var(--motion-quick) var(--ease);}
+.ov-line-more{grid-column:2;display:flex;flex-direction:column;gap:6px;padding:2px 0 10px;}   /* opens with data-motion="open" */
 .ov-quote{margin:0;font-size:var(--fs-meta);color:var(--ink-2);}
 .ov-parts{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px;}
 .ov-parts li{display:grid;grid-template-columns:20px minmax(0,1fr);column-gap:10px;align-items:start;}
 .ov-parts .rd-route-dot{transform:scale(.8);transform-origin:center top;}
 .ov-part{display:block;color:var(--ink);}
 .ov-line-more code{font-size:var(--fs-meta);}
-@media (prefers-reduced-motion: reduce){.ov-line-more{animation:none;}.ov-line-btn > svg{transition:none;}}
+@media (prefers-reduced-motion: reduce){.ov-line-btn > svg{transition:none;}}
 
 /* Changes, grouped by what it is: a group's head with its count and lines; the folder trails the file's name; the
    documents its steps wrote follow under Not in the code. */
