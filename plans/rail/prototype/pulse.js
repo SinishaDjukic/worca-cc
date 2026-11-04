@@ -285,17 +285,18 @@ const SHOWS = [
   { id: 'unread', text: 'unread', help: 'Updates you have not opened or marked read' }, { id: 'all', text: 'all', help: 'Every update that is not cleared' },
   { id: 'needs', text: 'needs you', help: 'Questions, gates and cost caps, open or resolved' }, { id: 'problems', text: 'problems', help: 'What went wrong while nobody was waiting' },
   { id: 'cleared', text: 'cleared', help: 'Updates you cleared; kept for 90 days' }];
-function shown() {
+// What the list shows for a choice of the sentence; each choice in its menu carries its count (the list's sentence).
+function shown(show = ui.show, from = ui.from) {
   const all = C().updates;
-  const by = ui.show === 'cleared' ? all.filter((u) => ui.cleared.includes(u.id)) : live().filter((u) => ui.show === 'all' || (ui.show === 'unread' && isUnread(u)) || (ui.show === 'needs' && u.sev === 'needs') || (ui.show === 'problems' && u.sev === 'problem'));
-  return by.filter((u) => ui.from === 'all' || u.g === ui.from);
+  const by = show === 'cleared' ? all.filter((u) => ui.cleared.includes(u.id)) : live().filter((u) => show === 'all' || (show === 'unread' && isUnread(u)) || (show === 'needs' && u.sev === 'needs') || (show === 'problems' && u.sev === 'problem'));
+  return by.filter((u) => from === 'all' || u.g === from);
 }
 function updatesPanel() {
   const list = shown();
   const n = ui.sel.filter((id) => list.some((u) => u.id === id)).length;
   // While selecting, Select all sits at the sentence's right, as in the Runs list's head
   const all = ui.selecting && list.length ? `<label class="runs-all-wrap"><input type="checkbox" class="runs-check runs-all" data-selall${n === list.length ? ' checked' : n ? ' data-mixed' : ''} aria-label="Select all shown"> Select all</label>` : '';
-  const bar = `<div class="pz-bar"><span class="pz-rail"></span><span class="pz-sentence">Showing ${picker('show', SHOWS.find((s) => s.id === ui.show).text, SHOWS.map((s) => ({ ...s, checked: s.id === ui.show })), 'Which updates the list shows')} from ${picker('from', ui.from === 'all' ? 'all groups' : groupOf(ui.from).name, [{ id: 'all', text: 'all groups', checked: ui.from === 'all' }, { sep: true }].concat(M.GROUPS.map((g) => ({ id: g.id, text: g.name, checked: ui.from === g.id }))), 'Which group the updates come from')}</span>${all}</div>`;
+  const bar = `<div class="pz-bar"><span class="pz-rail"></span><span class="pz-sentence">Showing ${picker('show', SHOWS.find((s) => s.id === ui.show).text, SHOWS.map((s) => ({ ...s, checked: s.id === ui.show, hint: String(shown(s.id, ui.from).length) })), 'Which updates the list shows')} from ${picker('from', ui.from === 'all' ? 'all groups' : groupOf(ui.from).name, [{ id: 'all', text: 'all groups', checked: ui.from === 'all', hint: String(shown(ui.show, 'all').length) }, { sep: true }].concat(M.GROUPS.map((g) => ({ id: g.id, text: g.name, checked: ui.from === g.id, hint: String(shown(ui.show, g.id).length) }))), 'Which group the updates come from')}</span>${all}</div>`;
   if (!list.length) return bar + `<p class="pz-empty">${ui.show === 'unread' ? 'You are up to date.' : ui.show === 'cleared' ? 'Nothing cleared.' : 'No updates here.'}</p>`;
   const days = [...new Set(list.map((u) => u.day))];
   return bar + days.map((d) => `<section class="pz-sec"><h3 class="pz-h pz-day">${d}</h3><div class="pz-list${ui.selecting ? ' is-selecting' : ''}">${list.filter((u) => u.day === d).map((u) => updateRow(u, true)).join('')}</div></section>`).join('');

@@ -17,7 +17,7 @@ html,body{height:auto;overflow:visible;margin:0;}
 /* Title block: the title on one line with an ellipsis (its tooltip, a tap and the Summary task give the full text),
    the group's kind after it, then the place line: where the code lives and goes, the PR, labels and tags, and +. */
 .rc-head{display:flex;flex-direction:column;gap:6px;min-width:0;}
-.rc-heading{margin:0;font:700 var(--fs-page)/var(--lh-title) var(--sans);letter-spacing:-.02em;
+.rc-heading{margin:0;font:600 var(--fs-subpage)/var(--lh-title) var(--sans);letter-spacing:-.02em;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .rc-heading.is-open{white-space:normal;}
 .rc-title-row{display:flex;align-items:center;gap:12px;min-width:0;}
@@ -27,11 +27,11 @@ html,body{height:auto;overflow:visible;margin:0;}
 .rc-facts > *{flex:none;max-width:100%;}
 .rc-facts .rc-place{flex:0 1 auto;min-width:0;display:inline-flex;align-items:center;gap:4px;}
 .rc-place .btn{margin-block:-6px;flex:none;}
-.rc-mid{display:inline-flex;min-width:0;font-family:var(--mono);}   /* loses its middle, keeps its end */
+.rc-mid{display:inline-flex;min-width:0;font-family:var(--mono);color:var(--ink-2);}   /* loses its middle, keeps its end */
 .rc-mid-a{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;}
 .rc-mid-b{flex:none;}
 .rc-to{color:var(--ink-3);}
-.rc-base{flex:none;font-family:var(--mono);}
+.rc-base{flex:none;font-family:var(--mono);color:var(--ink-2);}
 .rc-pr{color:var(--ink);text-decoration:none;font-weight:500;font-variant-numeric:tabular-nums;}
 .rc-pr:hover{text-decoration:underline;text-underline-offset:3px;}
 .rc-sep{color:var(--ink-3);}
@@ -41,6 +41,7 @@ html,body{height:auto;overflow:visible;margin:0;}
   display:flex;flex-direction:column;gap:16px;min-width:0;}
 .rc-zone{display:grid;grid-template-columns:var(--rail) minmax(0,1fr) auto;column-gap:var(--gap);row-gap:2px;align-items:center;min-width:0;}
 .rc-zone.is-ruled{padding-top:16px;border-top:1px solid var(--line);}
+.rc-card > .rc-zone.is-ruled:not(:last-child){padding-top:4px;border-top-color:transparent;}   /* one divider: above the Figures */
 .rc-rail{grid-column:1;display:flex;justify-content:center;align-items:center;}
 .rc-main{grid-column:2;min-width:0;}
 .rc-side{grid-column:3;grid-row:1 / span 2;justify-self:end;align-self:center;display:flex;gap:8px;}
@@ -94,9 +95,9 @@ html,body{height:auto;overflow:visible;margin:0;}
    made of its sub-steps; the selected stage opens its sub-steps underneath on the route rail (.rd-route-*). */
 
 .sc-track{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:4px;}
-.sc-seg{display:flex;gap:2px;height:6px;}
-.sc-cell{flex:1 1 0;min-width:0;border-radius:var(--r-xs);background:var(--line-2);transition:background-color .3s ease;}
-.sc-cell.is-done{background:var(--seq);}   /* finished steps step back; the live cell leads */
+.sc-seg{display:flex;gap:2px;height:4px;}   /* quiet: only the live cell has colour */
+.sc-cell{flex:1 1 0;min-width:0;border-radius:var(--r-xs);background:var(--line);transition:background-color var(--motion-change) var(--ease);}
+.sc-cell.is-done{background:var(--step-done);}   /* finished steps step back; the live cell leads */
 .sc-cell.is-now{background:var(--peach);animation:sc-breathe 1.6s ease-in-out infinite;}
 .sc-cell.is-ask,.sc-cell.is-problem{background:var(--amber);}
 .sc-cell.is-failed{background:var(--red);}
@@ -107,7 +108,7 @@ html,body{height:auto;overflow:visible;margin:0;}
 /* Stage tabs under the track: same 5 columns, so each label sits under its segment. */
 .sc-stages{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:4px;margin-top:6px;}
 .sc-stage{display:flex;flex-direction:column;align-items:flex-start;gap:0;min-width:0;padding:4px 0 0;border:0;background:none;
-  color:var(--ink-2);font:inherit;text-align:left;cursor:pointer;border-top:2px solid transparent;transition:color .15s ease,border-color .15s ease;}
+  color:var(--ink-2);font:inherit;text-align:left;cursor:pointer;border-top:2px solid transparent;transition:color var(--motion-quick) var(--ease),border-color var(--motion-quick) var(--ease);}
 .sc-stage:hover{color:var(--ink);}
 .sc-stage:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:var(--r-xs);}
 .sc-stage[aria-selected="true"]{color:var(--ink);border-top-color:var(--ink);}
@@ -117,8 +118,7 @@ html,body{height:auto;overflow:visible;margin:0;}
 
 /* The open stage's sub-steps: route rows, fading in when a stage opens. */
 .sc-subs{grid-column:1 / -1;}
-.sc-subs.is-enter,.sk.is-enter{animation:sc-in .18s ease-out;}
-@keyframes sc-in{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+.sc-subs.is-enter,.sk.is-enter{animation:rl-in var(--motion-quick) var(--ease);}   /* fade, never slide (Motion) */
 @media (prefers-reduced-motion: reduce){.sc-subs.is-enter,.sk.is-enter{animation:none;}}
 .sc-subs .rd-route-name{font-family:var(--sans);}
 .sc-subs .rd-route-row.is-next .rd-route-name{color:var(--ink-2);}
@@ -447,15 +447,15 @@ html,body{height:auto;overflow:visible;margin:0;}
 .rc-confirm{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px 16px;padding:10px 12px;border:1px solid var(--line-2);border-radius:var(--r-md);background:var(--panel);font-size:var(--fs-body);}
 .rc-confirm-t{color:var(--ink);font-weight:500;}
 .rc-confirm-acts{display:flex;gap:8px;}
-.rc-toast{position:fixed;left:50%;bottom:24px;z-index:50;transform:translate(-50%,8px);max-width:calc(100vw - 32px);padding:8px 14px;border-radius:var(--r-md);
-  background:var(--ink);color:var(--bg);font-size:var(--fs-meta);box-shadow:var(--shadow-pop);opacity:0;pointer-events:none;transition:opacity .15s,transform .15s;}
+.rc-toast{position:fixed;left:50%;bottom:24px;z-index:50;transform:translate(-50%,0);max-width:calc(100vw - 32px);padding:8px 14px;border-radius:var(--r-md);
+  background:var(--ink);color:var(--bg);font-size:var(--fs-meta);box-shadow:var(--shadow-pop);opacity:0;pointer-events:none;transition:opacity var(--motion-quick) var(--ease);}
 .rc-toast.is-on{opacity:1;transform:translate(-50%,0);}
 .rc-toast:empty{display:none;}
 @media (prefers-reduced-motion: reduce){.rc-toast{transition:none;}}
 .menu-item[data-narrow]{display:none;}
 @container (max-width: 520px){ .menu-item[data-narrow]{display:flex;} }
 /* The card's Answer lands here: the block marks itself once, so the eye follows the jump. */
-.ov-focus.is-flash{animation:ov-flash 1.2s ease-out;}
+.ov-focus.is-flash{animation:ov-flash var(--motion-flash) ease-out;}
 @keyframes ov-flash{from{box-shadow:0 0 0 6px var(--row-selected);background:var(--row-selected);}to{box-shadow:0 0 0 6px transparent;background:transparent;}}
 @media (prefers-reduced-motion: reduce){.ov-focus.is-flash{animation:none;outline:2px solid var(--line-2);outline-offset:6px;}}
 
@@ -587,7 +587,7 @@ html,body{height:auto;overflow:visible;margin:0;}
 .ov-arts .btn-icon{justify-self:end;}
 
 /* Decisions' "Answer it in the card" lands here: the block marks itself once. */
-.sc-answer.is-flash{animation:ov-flash 1.2s ease-out;border-radius:var(--r-sm);}
+.sc-answer.is-flash{animation:ov-flash var(--motion-flash) ease-out;border-radius:var(--r-sm);}
 @media (prefers-reduced-motion: reduce){.sc-answer.is-flash{animation:none;outline:2px solid var(--line-2);outline-offset:4px;}}
 /* The tag group: a mark, then labels and cost tags in quiet outlines; one line, the rest folds into +N. */
 .rc-facts{flex-wrap:nowrap !important;}
@@ -668,9 +668,9 @@ html,body{height:auto;overflow:visible;margin:0;}
 .pd-check input{margin:0;accent-color:var(--ink);}
 .pd-closes{margin-left:auto;}
 
-/* Type roles (spec): Page 22 · Headline 18 · Value 15 · Body 13 · Meta 12 · Caption 11. Two greys: --ink-2 for what
-   supports, --ink-3 only for marks and separators. Numbers lead their labels. */
-.rc-word{font-size:var(--fs-subpage);}
+/* Type roles (The Rail look): Headline 22 (the state word leads) · Title 18 · Value 15 · Body 13 · Meta 12 · Caption 11.
+   Two greys: --ink-2 for what supports, --ink-3 only for marks and separators. Numbers lead their labels. */
+.rc-word{font-size:var(--fs-page);letter-spacing:-.02em;}
 .rc-figs{align-items:baseline;row-gap:8px;}
 .rc-figs b{font-size:var(--fs-section);}
 .sc-subs .rd-route-name{font-size:var(--fs-body);font-weight:400;color:var(--ink);}
@@ -744,3 +744,39 @@ html,body{height:auto;overflow:visible;margin:0;}
 .rc .toasts{bottom:calc(24px + env(safe-area-inset-bottom, 0px));}
 .rc-conn{display:inline-flex;align-items:center;gap:6px;margin-left:auto;font-size:var(--fs-meta);color:var(--ink-2);white-space:nowrap;}
 .rc-conn + .rc-pager{margin-left:12px;}
+
+/* Overview by exception (spec › The tabs): a check says why it is here and its one way to act; what went fine is one
+   line each, on the rail, its detail behind a › that turns down when open. */
+.ov-why{display:block;margin-top:2px;font-size:var(--fs-meta);color:var(--ink-2);}
+.ov-check:has(input:checked) .ov-why{text-decoration:none;}
+.ov-lines .rd-route-row::before{display:none;}
+.ov-line{align-items:start;padding-bottom:2px;}
+.ov-line > .rd-route-dot{margin-top:4px;}
+.ov-line-btn{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;min-width:0;min-height:28px;padding:0;border:0;
+  background:none;color:var(--ink);font:inherit;font-size:var(--fs-body);text-align:left;cursor:pointer;}
+.ov-line-btn > span{min-width:0;}
+.ov-line-btn > svg{flex:none;color:var(--ink-3);transform:rotate(-90deg);transition:transform var(--motion-quick) var(--ease);}
+.ov-line.is-open .ov-line-btn > svg{transform:none;}
+.ov-line-btn:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:var(--r-xs);}
+.ov-line-more{grid-column:2;display:flex;flex-direction:column;gap:6px;padding:2px 0 10px;animation:rl-in var(--motion-quick) var(--ease);}
+.ov-quote{margin:0;font-size:var(--fs-meta);color:var(--ink-2);}
+.ov-parts{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px;}
+.ov-parts li{display:grid;grid-template-columns:20px minmax(0,1fr);column-gap:10px;align-items:start;}
+.ov-parts .rd-route-dot{transform:scale(.8);transform-origin:center top;}
+.ov-part{display:block;color:var(--ink);}
+.ov-line-more code{font-size:var(--fs-meta);}
+@media (prefers-reduced-motion: reduce){.ov-line-more{animation:none;}.ov-line-btn > svg{transition:none;}}
+
+/* Changes, grouped by what it is: a group's head with its count and lines; the folder trails the file's name; the
+   documents its steps wrote follow under Not in the code. */
+.ch-group{padding-top:16px;}
+.ch-group:first-child{padding-top:0;}
+.ch-gn{font:600 var(--fs-body)/var(--lh-title) var(--sans);color:var(--ink);}
+.ch-group .ct{display:inline-flex;gap:6px;font:400 var(--fs-meta)/1 var(--mono);}
+.ch-path{margin-left:8px;font:400 var(--fs-meta)/var(--lh-title) var(--sans);color:var(--ink-2);}
+.ch-gnote{padding:0 0 4px;font-size:var(--fs-meta);color:var(--ink-2);list-style:none;}
+.ch-doc{display:grid;grid-template-columns:20px minmax(0,1fr) auto;align-items:center;column-gap:12px;min-height:36px;}
+.ch-doc .ch-name{display:flex;align-items:baseline;min-width:0;}
+.ch-gnote + .ch-doc{border-top:0;}
+.ch-file.is-flash{animation:ov-flash var(--motion-flash) ease-out;border-radius:var(--r-sm);}
+@media (prefers-reduced-motion: reduce){.ch-file.is-flash{animation:none;outline:2px solid var(--line-2);outline-offset:4px;}}

@@ -33,7 +33,7 @@ The type scale below, named by what it does on a Rail page.
 | Role | Token | Weight | For |
 |---|---|---|---|
 | Headline | `--fs-page` 22 | 600, tracking −0.02em | the state word: what is read first |
-| Title | `--fs-subpage` 18 | 600, tracking −0.02em | the page title, one line with an ellipsis (a tap shows it whole) |
+| Title | `--fs-subpage` 18 | 600, tracking −0.02em | the page title, one line with an ellipsis (a tap shows it whole); a page with no state word (a list, Settings) keeps it at `--fs-page` 22 |
 | Value | `--fs-section` 15 | 600 | figures: time, cost, changes |
 | Body | `--fs-body` 13 | 400 (the live or asking row 600) | rows, questions, text |
 | Meta | `--fs-meta` 12 | 400, `--ink-2` | the metadata line, times, figure labels, details |

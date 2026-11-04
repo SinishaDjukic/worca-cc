@@ -9,7 +9,7 @@ import { chromium } from '/Users/emil.angelov/src/worka-cc/node_modules/playwrig
 import { APP_CSS, writeAppCss } from './app-css.mjs';
 writeAppCss();   // the app's CSS, assembled from its parts
 const here = (f) => fileURLToPath(new URL(f, import.meta.url));
-const SHEETS = ['rail.css', 'pulse.css'];
+const SHEETS = ['rail-look.css', 'rail.css', 'pulse.css'];
 const ALL = [APP_CSS, ...SHEETS.map(here), here('index.html'), here('pulse.html')];
 const SCRIPTS = ['run-page.js', 'pulse.js', 'run-page-model.js', 'pulse-model.js'].map(here);
 const issues = new Map(); const add = (k, where) => { if (!issues.has(k)) issues.set(k, new Set()); issues.get(k).add(where); };

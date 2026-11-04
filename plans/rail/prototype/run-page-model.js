@@ -51,7 +51,7 @@
     { id: 'ready', group: 'Run', label: 'Ready', word: 'Ready', dot: 'is-green', action: A('Create PR', 'prc', true, ['Publish branch', 'How to merge', 'Push main', 'Discard']), figs: DONE_FIGS, stages: run({}) },
     { id: 'checks', group: 'Run', label: 'Checks running', word: 'In review', dot: 'is-peach is-pulse', action: A('View PR', 'pr', false, ['Watch', 'Copy PR link']), figs: DONE_FIGS,
       stages: run({ pr: PR_OPEN(s('Checks', 'now', '', { live: '3 of 7 passed', when: 'running' }), next('Approval')) }) },
-    { id: 'failing', group: 'Run', label: 'Checks failing', word: 'Needs you', dot: 'is-amber', action: A('Fix checks', 'refresh', true, ['View PR', 'Copy PR link']), figs: DONE_FIGS,
+    { id: 'failing', group: 'Run', label: 'Checks failing', word: 'Needs you', dot: 'is-amber', action: A('Fix checks', 'refresh', true, ['Re-run checks', 'View PR', 'Copy PR link']), figs: DONE_FIGS,
       stages: run({ pr: PR_OPEN(s('Checks', 'problem', '', { live: '2 failed · unit, e2e' }), next('Approval')) }) },
     { id: 'conflicts', group: 'Run', label: 'Conflicts', word: 'Needs you', dot: 'is-amber', action: A('Fix conflicts', 'refresh', true, ['Update branch', 'Resolve in a terminal', 'Re-check', 'View PR', 'Copy PR link']), figs: DONE_FIGS,
       stages: run({ pr: PR_OPEN(ok('Checks', '', { live: '7 of 7 passed' }), s('Up to date with dev', 'problem', '', { live: 'Conflicts in 2 files' })) }) },
@@ -177,7 +177,15 @@
   const COST_OF = { Clarify: '$0.76', Plan: '$14.65', 'Refine plan': '$18.29', 'Plan review': '$7.82', Implementation: '$31.18', 'Review implementation': '$9.95', 'Manual tests checklist': '$0.80', 'Manual web UI testing': '$0.65' };
   const DETAIL = {
     task: 'One head for the run and group pages: Back, the breadcrumb and the run’s actions in the top bar, and the page title once.',
-    check: ['The breadcrumb hides under 600px: try it on a phone', 'Back on a group page now goes to Runs, not the group list'],
+    // Before you ship: what needs your eyes, each with why it is there and its one way to act.
+    check: [{ t: 'On phones under 600px only Back shows, not the breadcrumb: try it on a phone', why: 'Worca decided this while you were away', act: 'Change it', go: 'tab:decisions' },
+      { t: 'Back on a group page now goes to Runs, not the group list', why: 'A change you did not ask for' },
+      { t: 'run-head.mjs is new and has 2 review notes', why: 'The largest change', act: 'Open it', go: 'file:0' }],
+    // The ask, part by part, with what was done; and what it did unasked.
+    ask: [['One head for the run and group pages', 'The breadcrumb, the title and the actions share one row'],
+      ['Back, the breadcrumb and the actions in the top bar', 'Back became the breadcrumb: it goes up a level'],
+      ['The page title once', 'The title row holds it; the bar no longer repeats it']],
+    unasked: ['96 new tests', 'test/ui-run-head.test.mjs'],
     artifacts: [['plan.md', 'Plan'], ['review-3.md', 'Review implementation'], ['checklist.md', 'Manual tests checklist']],
     files: [['ui/public/run-head.mjs', 182, 64], ['ui/public/style.css', 41, 58], ['ui/public/app.js', 27, 19], ['ui/public/nav/routes.mjs', 12, 3], ['test/ui-run-head.test.mjs', 96, 0]],
     // Per file: added or modified, review comments, and the first hunk shown when the file opens.
@@ -260,6 +268,7 @@
     'Watch': 'Worca follows the PR and fixes failing checks for you',
     'Copy PR link': 'Copies the PR’s address',
     'Fix checks': 'Starts a short run that fixes the failing checks',
+    'Re-run checks': 'Runs the checks on #959 again; nothing in the code changes',
     'Fix conflicts': 'Starts a short run that merges dev in and resolves the conflicts',
     'Merge PR': 'Merges the PR into dev on GitHub',
     'Merge #959': 'Merges #959 into dev; #960 then points at dev',
@@ -308,12 +317,13 @@
     ['Send answer', 'A question is answered under its step in the card; today the answer panel sits apart, above the steps.'],
     ['Pause after this step', 'Lets the current step finish before pausing; today Pause stops at once.'],
     ['Fix checks', 'Starts a short run that fixes failing checks, like Fix conflicts does today for conflicts.'],
+    ['Re-run checks', 'Runs a PR\'s checks again from Worca; today that is on GitHub.'],
     ['Merge PR', 'Merges from Worca, one PR at a time in stack order, and moves the next PR onto dev; today you merge on GitHub and nothing moves the next PR.'],
     ['Restart Build', 'Runs one stage again with what earlier stages made; today a failed run resumes or starts over.'],
     ['Raise the cap', 'Sets a new cost cap and goes on; today the choices are Continue without cap or Settings.'],
     ['Copy link', 'Copies a link to the run from ⋯, for Chat or an issue.'],
   ];
-  const NEW = new Set(['Merge PR', 'Merge #959', 'Fix checks', 'Fix checks on #961', 'Restart Build', 'Raise the cap', 'Pause after this step', 'Send answer', 'Copy link']);
+  const NEW = new Set(['Merge PR', 'Merge #959', 'Fix checks', 'Re-run checks', 'Fix checks on #961', 'Restart Build', 'Raise the cap', 'Pause after this step', 'Send answer', 'Copy link']);
   const LIVE = { now: 1, ask: 1, problem: 1, failed: 1, paused: 1, review: 1 };
   const isDone = (x) => x.state === 'done' || x.state === 'merged';
   // Each sub-step state: the rail circle, its icon, the word a screen reader hears, the bar cell.
@@ -387,9 +397,10 @@
       : x.subs.reduce((b, y) => b + (y.state === 'next' ? 0 : money(COST_OF[y.name] || 0)), 0) * (c.scale || 1)), 0);
     return { mins, cost };
   }
-  // Overview leads with what this state needs from you: an answer, a plan to approve, what broke, or what to check;
-  // a running run shows its plan's progress. The rest (what it did, what you asked, where it changed, artifacts)
-  // follows, each only once there is something to say.
+  // Overview reports by exception: it leads with what this state needs from you (an answer, a plan to approve, what
+  // broke, or what to check); a running run shows its plan's progress. What went fine is one line each once it is
+  // built: the ask, and the evidence (left out when the focus is what broke: that is the evidence). Files and documents
+  // are Changes'.
   function overview(c, live) {
     const built = c.stages.some((x) => x.key === 'build' && x.subs.some(isDone));
     const planDone = c.stages.some((x) => x.key === 'plan' && x.subs.every(isDone));
@@ -405,7 +416,11 @@
     const areas = {};
     if (built && !NO_DIFF[c.id]) DETAIL.files.forEach(([f, a, d]) => { const k = f.slice(0, f.lastIndexOf('/') + 1); const x = areas[k] || (areas[k] = { dir: k, n: 0, add: 0, del: 0 }); x.n++; x.add += a; x.del += d; });
     const max = Math.max(1, ...Object.values(areas).map((x) => x.add + x.del));
-    return { focus, outcome: built && !live ? DETAIL.outcome : [], task: DETAIL.task,   // what it did, once it is done
+    const rounds = DETAIL.rounds['Review implementation'].length;
+    const done = built && !live;
+    return { focus, outcome: done ? DETAIL.outcome : [], task: DETAIL.task,   // what it did, once it is done
+      ask: done ? { parts: DETAIL.ask, unasked: DETAIL.unasked } : null,
+      evidence: done && (!focus || focus.kind !== 'broke') ? `Tests pass · Review passed on round ${rounds} · Manual test passed` : '',
       areas: Object.values(areas).map((x) => Object.assign(x, { pct: Math.round(((x.add + x.del) / max) * 100) })),
       artifacts: planDone || built ? DETAIL.artifacts : DETAIL.artifacts.slice(0, 0) };
   }
@@ -512,7 +527,7 @@
         const pct = Math.round((money(cost) / budget) * 100);
         return { k, v: cost, of: 'of $' + budget, warn: pct >= 80, title: pct + '% of the ' + (runStages.length ? c.kind.toLowerCase() : 'run') + '’s budget' };
       }).concat(NO_DIFF[c.id] ? [] : [{ k: 'Changes', v: c.diff || '+358 −144', tab: (c.tabs || RUN_TABS).some((x) => x[0] === 'changes') ? 'changes' : '' }]),   // links only where a Changes tab exists
-      tabs: (c.tabs || RUN_TABS).map(([id, l], i, all) => ({ id, l, n: id === 'runs' ? String(runStages.length) : id === 'changes' ? String(DETAIL.files.length) : id === 'decisions' ? String(DETAIL.decisions.length) : '',
+      tabs: (c.tabs || RUN_TABS).map(([id, l], i, all) => ({ id, l, n: id === 'runs' ? String(runStages.length) : id === 'changes' ? String(DETAIL.files.length) + (overview(c, live).artifacts.length ? ' · ' + overview(c, live).artifacts.length + ' docs' : '') : id === 'decisions' ? String(DETAIL.decisions.length) : '',
         sel: id === (all.some((x) => x[0] === ui.tab) ? ui.tab : all[0][0]) })),
       activity: c.stages.map((x) => {
         const cost = x.run ? (x.member ? totals(resolve(x.member)).cost : 0) : x.subs.reduce((a, y) => a + (y.state === 'next' ? 0 : money(COST_OF[y.name] || 0)), 0) * (c.scale || 1);
@@ -553,7 +568,7 @@
     ready: { 'Create PR': { to: 'checks', say: 'Opened #959 into dev', dialog: 'pr' }, 'Publish branch': { say: 'Pushed the branch to origin; no PR' }, 'How to merge': { say: 'git switch dev && git merge feat/unified-page-navigation-one-head-breadcrumb' }, 'Try it': { say: 'Copied: git switch feat/unified-page-navigation-one-head-breadcrumb' }, 'Push main': { to: 'merged', say: 'Pushed to origin/main' }, Discard: { to: 'discarded', confirm: 'Discard the changes? The run stays in history.' } },
     labelled: { 'Create PR': { to: 'checks', say: 'Opened #959 into dev', dialog: 'pr' }, 'Publish branch': { say: 'Pushed the branch to origin; no PR' }, 'How to merge': { say: 'git switch dev && git merge feat/unified-page-navigation-one-head-breadcrumb' }, 'Try it': { say: 'Copied: git switch feat/unified-page-navigation-one-head-breadcrumb' }, 'Push main': { to: 'merged', say: 'Pushed to origin/main' }, Discard: { to: 'discarded', confirm: 'Discard the changes? The run stays in history.' } },
     checks: { 'View PR': { say: 'Opens #959 on GitHub' }, Watch: { say: 'Worca watches #959 and fixes failing checks' }, 'Copy PR link': { say: 'Copied the link to #959' }, next: 'failing' },
-    failing: { 'Fix checks': { to: 'checks', say: 'A short run fixed unit and e2e; checks run again' }, 'View PR': { say: 'Opens #959 on GitHub' }, 'Copy PR link': { say: 'Copied the link to #959' }, next: 'conflicts' },
+    failing: { 'Fix checks': { to: 'checks', say: 'A short run fixed unit and e2e; checks run again', confirm: 'Fix the 2 failing checks on #959? Worca pushes the fix to the PR.' }, 'Re-run checks': { to: 'checks', say: 'Checks on #959 run again' }, 'View PR': { say: 'Opens #959 on GitHub' }, 'Copy PR link': { say: 'Copied the link to #959' }, next: 'conflicts' },
     conflicts: { 'Fix conflicts': { to: 'checks', say: 'dev merged in, 2 conflicts resolved; checks run again' }, 'Update branch': { say: 'dev does not merge cleanly: 2 files conflict. Use Fix conflicts' }, 'Resolve in a terminal': { say: 'Opens a terminal in the worktree' }, 'Re-check': { say: 'Still 2 conflicts with dev' }, 'View PR': { say: 'Opens #959 on GitHub' }, 'Copy PR link': { say: 'Copied the link to #959' }, next: 'approved' },
     approved: { 'Merge PR': { to: 'merged', confirm: 'Merge #959 into dev?' }, 'View PR': { say: 'Opens #959 on GitHub' }, Watch: { say: 'Worca watches #959' }, 'Copy PR link': { say: 'Copied the link to #959' } },
     merged: { 'View PR': { say: 'Opens the merged #959 on GitHub' } },
@@ -570,7 +585,7 @@
     featureready: { 'Create 3 PRs': { to: 'chain', say: 'Opened #959, #960 and #961, each into the one before', dialog: 'pr' }, 'Create PR': { to: 'checks', say: 'Opened #959 for all 3 runs', dialog: 'pr' }, 'Try it': { say: 'Copied: git switch feat/unified-page-navigation' }, Discard: { to: 'discarded', confirm: 'Discard all 3 runs’ changes?' } },
     featureone: { 'Create PR': { to: 'checks', say: 'Opened #959 for both runs', dialog: 'pr' }, 'Create 2 PRs': { to: 'chain', say: 'Opened #959 and #960', dialog: 'pr' }, 'Try it': { say: 'Copied: git switch feat/unified-page-navigation' }, Discard: { to: 'discarded', confirm: 'Discard both runs’ changes?' } },
     featureblocked: { 'Create 3 PRs': { to: 'chain', say: 'Opened #959, #960 and #961, each into the one before', dialog: 'pr' }, 'Try it': { say: 'Copied: git switch feat/unified-page-navigation' }, Discard: { to: 'discarded', confirm: 'Discard all 3 runs’ changes?' } },
-    chain: { 'Fix checks on #961': { say: 'A short run is fixing #961’s checks' }, 'Merge #959': { say: 'Merged #959 into dev; #960 now points at dev', confirm: 'Merge #959 into dev?' }, 'View PRs': { say: 'Opens #959, #960 and #961 on GitHub' }, 'Watch PRs': { say: 'Worca watches all three PRs' }, 'Copy PR links': { say: 'Copied 3 PR links' } },
+    chain: { 'Fix checks on #961': { say: 'A short run is fixing #961’s checks', confirm: 'Fix the failing checks on #961? Worca pushes the fix to the PR.' }, 'Merge #959': { say: 'Merged #959 into dev; #960 now points at dev', confirm: 'Merge #959 into dev?' }, 'View PRs': { say: 'Opens #959, #960 and #961 on GitHub' }, 'Watch PRs': { say: 'Worca watches all three PRs' }, 'Copy PR links': { say: 'Copied 3 PR links' } },
   };
   // Run-wide controls: what Pause, Stop and ⋯ lead to, from any live run.
   const RUN_FLOW = { pauseNow: { to: 'paused', say: 'Paused; Resume goes on from Implementation' }, pauseAfter: { to: 'paused', say: 'Pauses after the current step finishes' },

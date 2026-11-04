@@ -1,0 +1,25 @@
+/* The Rail look (docs/design-system.md › The Rail look) and Motion, for every Rail page ahead of the app: one surface,
+   one cool neutral family, running (lemon) and needs-you (orange) apart, a quiet step bar, a floating surface a step
+   lighter in dark with a hairline. Inter is not bundled yet: the system face stands in for it, as in the refined mocks. */
+:root{
+  --sans:Inter,-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;
+  --bg:light-dark(#FFFFFF,#141416); --panel:light-dark(#FFFFFF,#141416);   /* ds-ok: the Rail look's table */
+  --canvas-2:light-dark(#FAFAFA,#18181B); --side-bg:light-dark(#FAFAFA,#18181B);   /* ds-ok: the Rail look's table */
+  --field:light-dark(#F4F4F5,#1F1F23); --surface:light-dark(#F4F4F5,#1F1F23);   /* ds-ok: the Rail look's table */
+  --hover:light-dark(#F0F0F2,#222227); --side-sel-bg:light-dark(#F0F0F2,#26262B);   /* ds-ok: the Rail look's table */
+  --ink:light-dark(#18181B,#EDEDEF); --ink-2:light-dark(#63636B,#A1A1A9); --ink-3:light-dark(#A1A1A9,#6E6E76);   /* ds-ok: the Rail look's table */
+  --line:light-dark(#EEEEF0,#26262B); --line-2:light-dark(#E2E2E6,#35353B);   /* ds-ok: the Rail look's table */
+  --float:light-dark(#FFFFFF,#1D1D21); --float-line:light-dark(#EEEEF0,#323238);   /* ds-ok: the Rail look's table */
+  --peach:light-dark(#B39A0E,#ECD86A); --amber:light-dark(#E07A1F,#EE8A2C);   /* ds-ok: the Rail look's table */
+  --step-done:light-dark(#C9C9CF,#4A4A52);   /* ds-ok: the Rail look's table: a finished step, quiet */
+  /* Motion (docs/design-system.md › Motion): three timings on one curve */
+  --motion-quick:150ms; --motion-change:200ms; --motion-flash:1.2s; --ease:cubic-bezier(.2,0,0,1);
+}
+body{-webkit-font-smoothing:antialiased;}
+:is(.rc-board,.pz-app) .btn{font-weight:500;}
+/* A floating surface (menus, the Pulse panel, the account menu, a Dialog's card): --float with its hairline. */
+:is(.rc-board,.pz-app) :is(.menu,.pz-popover,.viewer-modal > .card){background:var(--float);border-color:var(--float-line);}
+/* A menu, panel or Dialog fades in over quick when it opens, and closes at once; nothing slides. */
+.is-in{animation:rl-in var(--motion-quick) var(--ease);}
+@keyframes rl-in{from{opacity:0;}}
+@media (prefers-reduced-motion: reduce){.is-in{animation:none;}}

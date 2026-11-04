@@ -26,7 +26,7 @@ const svg = (name, size) => (ICON[name] ? `<svg width="${size}" height="${size}"
 const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
 // a case starts fresh: nothing from the case before it carries over
-const fresh = (caseId) => ({ caseId, open: null, chips: [], ship: '', menu: '', tab: '', focus: '', view: 'steps', parent: null, back: null, dialog: '', after: [], away: '', askEach: false, answer: null, file: null, actFilter: 'all', rounds: [], ticks: [], taskOpen: false, stackSt: null, busy: null, broken: false, crash: null, offline: false });
+const fresh = (caseId) => ({ caseId, askOpen: false, land: '', open: null, chips: [], ship: '', menu: '', tab: '', focus: '', view: 'steps', parent: null, back: null, dialog: '', after: [], away: '', askEach: false, answer: null, file: null, actFilter: 'all', rounds: [], ticks: [], taskOpen: false, stackSt: null, busy: null, broken: false, crash: null, offline: false });
 let ui = fresh('working');
 
 function statusDot(v) {
@@ -125,9 +125,10 @@ function stackHtml(k) {
   return `<div class="sk${k.enter ? ' is-enter' : ''}"><div class="sk-head"><span class="rc-label">${esc(k.title)}</span>${seg}</div>${choice}<ol class="rd-route-list sk-list" aria-label="${esc(k.title)}">${rows}</ol></div>`;
 }
 
-// The tabs under the card: one question each, each fact in one place. Overview leads with what this state needs from
-// you; Changes is the diff by folder; Activity is every step with its rounds, model, cost and log; Decisions is who
-// decided what. Time, cost against the budget and the diff size stay the card's figures.
+// The tabs under the card: one question each, each fact in one place (spec › The tabs). Overview reports by exception:
+// what this state needs from you in full, what went fine one line each; Changes is everything the run produced,
+// grouped by what it is; Activity is every step with its rounds, model, cost and log, and what each step wrote;
+// Decisions is who decided what. Time, cost against the budget and the diff size stay the card's figures.
 const ICON_WHO = { you: P('M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8z') + P('M4.5 20a7.5 7.5 0 0 1 15 0'), away: P('M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z'), default: P('M12 3v4M12 17v4M3 12h4M17 12h4') };
 const WHO = { you: 'You', away: 'Answered for you · Away mode', default: 'Worca’s default' };
 function focusHtml(v) {
@@ -147,7 +148,9 @@ function focusHtml(v) {
   const rows = f.items.map((x, i) => {
     const st = typeof x === 'string' ? (ui.ticks.includes(i) ? 'done' : 'next') : x.state;
     const t = typeof x === 'string' ? x : x.t;
-    if (f.kind === 'check') return `<li><label class="ov-check"><input type="checkbox" data-tick="${i}" data-key="tick:${i}"${st === 'done' ? ' checked' : ''}><span>${esc(t)}</span></label></li>`;
+    // A check says why it is here and, when there is one, its one way to act (to its home: Decisions, a file in Changes).
+    const why = x.why ? `<span class="ov-why">${esc(x.why)}${x.act ? ` · <button type="button" class="dc-link" data-go="${x.go}" data-key="go:${i}">${esc(x.act)}</button>` : ''}</span>` : '';
+    if (f.kind === 'check') return `<li><label class="ov-check"><input type="checkbox" data-tick="${i}" data-key="tick:${i}"${st === 'done' ? ' checked' : ''}><span>${esc(t)}${why}</span></label></li>`;
     return `<li class="rd-route-row is-${st}"><span class="rd-route-dot ${st === 'done' ? 'is-done' : st === 'now' ? 'is-working is-pulse' : 'is-future'}" role="img" aria-label="${st === 'done' ? 'Done' : st === 'now' ? 'In progress' : 'Not yet'}">${svg(st === 'done' ? 'check' : st === 'now' ? 'now' : '', 10)}</span><span class="rd-route-name">${esc(t)}</span></li>`;
   }).join('');
   if (f.kind === 'check') {
@@ -158,34 +161,43 @@ function focusHtml(v) {
 }
 function summaryPanel(v) {
   const o = v.over;
-  const did = o.outcome.length ? `<section class="rtab"><h2 class="rtab-h">What it did</h2><ul class="ov-did">${o.outcome.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></section>` : '';
-  const asked = `<section class="rtab"><h2 class="rtab-h">What you asked</h2><p class="rtab-p ov-task${ui.taskOpen ? ' is-open' : ''}">${esc(o.task)}</p></section>`;
-  const where = o.areas.length ? `<section class="rtab"><h2 class="rtab-h">Where it changed <button type="button" class="btn btn-sm btn-quiet ov-more" data-tab="changes" data-key="ov-changes">All ${v.tabData.files.length} files</button></h2>
-    <ul class="ov-areas">${o.areas.map((x) => `<li><code>${esc(x.dir)}</code><span class="rtab-dim">${x.n} ${x.n === 1 ? 'file' : 'files'}</span><span class="ov-bar" aria-hidden="true"><i class="add" style="width:${Math.round(x.pct * x.add / (x.add + x.del))}%"></i><i class="del" style="width:${Math.round(x.pct * x.del / (x.add + x.del))}%"></i></span><span class="ct"><span class="add">+${x.add}</span><span class="del">−${x.del}</span></span></li>`).join('')}</ul></section>` : '';
-  // An artifact's name opens it (as a file in Changes opens its diff); one download icon at the row's end.
-  const arts = o.artifacts.length ? `<section class="rtab"><h2 class="rtab-h">Artifacts <span class="n">${o.artifacts.length}</span></h2><ul class="ov-arts">${o.artifacts.map(([f, step], i) => `<li><button type="button" class="ov-art-name" data-key="art:${i}" data-say="Opens ${esc(f)}" title="Open ${esc(f)}"><code>${esc(f)}</code></button><span class="rtab-dim">from ${esc(step)}</span><button type="button" class="btn btn-sm btn-quiet btn-icon" data-key="dl:${i}" data-say="Downloading ${esc(f)}" aria-label="Download ${esc(f)}" title="Download ${esc(f)}">${svg('download', 14)}</button></li>`).join('')}</ul></section>` : '';
   const after = ui.after.length ? `<section class="rtab"><h2 class="rtab-h">Runs after this <span class="n">${ui.after.length}</span></h2><ul class="ov-arts">${ui.after.map((x, i) => `<li><span class="ov-after-t" title="${esc(x.task)}">${esc(x.task)}</span><span class="rtab-dim">${esc(x.when)}</span><button type="button" class="btn btn-sm btn-quiet" data-unafter="${i}" data-key="unafter:${i}">Cancel</button></li>`).join('')}</ul></section>` : '';
-  return focusHtml(v) + after + did + asked + where + arts;
+  // Before it is built, the ask is all there is to say about the outcome.
+  if (!o.ask) return focusHtml(v) + after + `<section class="rtab"><h2 class="rtab-h">What you asked</h2><p class="rtab-p ov-task${ui.taskOpen ? ' is-open' : ''}">${esc(o.task)}</p></section>`;
+  // What went fine, one line each (What opens): the ask opens its parts in place, its only home; the evidence goes to
+  // Activity, where the rounds and the steps live.
+  const ok = `<span class="rd-route-dot is-done" role="img" aria-label="Done">${svg('check', 10)}</span>`;
+  const open = !!ui.askOpen;
+  const parts = open ? `<div class="ov-line-more"><p class="ov-quote">“${esc(o.task)}”</p><ul class="ov-parts">${o.ask.parts.map(([part, how]) => `<li>${ok}<span><span class="ov-part">${esc(part)}</span><span class="ov-why">${esc(how)}</span></span></li>`).join('')}</ul><p class="ov-why">Not asked: ${esc(o.ask.unasked[0])} in <code>${esc(o.ask.unasked[1])}</code></p></div>` : '';
+  const askLine = `<li class="rd-route-row ov-line${open ? ' is-open' : ''}">${ok}<button type="button" class="row-btn ov-line-btn" data-askopen aria-expanded="${open}" data-key="ask-open"><span>Did all ${o.ask.parts.length} parts you asked, plus ${esc(o.ask.unasked[0])}</span>${svg('chevron', 14)}</button>${parts}</li>`;
+  const evLine = o.evidence ? `<li class="rd-route-row ov-line">${ok}<button type="button" class="row-btn ov-line-btn is-link" data-tab="activity" data-key="ov-evidence" title="Opens Activity: the tests, the review's rounds and the manual test"><span>${esc(o.evidence)}</span>${svg('chevron', 14)}</button></li>` : '';
+  return focusHtml(v) + after + `<section class="rtab"><ol class="rd-route-list ov-lines">${askLine}${evLine}</ol></section>`;
 }
 function changesPanel(v) {
   const d = v.tabData; const f = d.files;
   const add = f.reduce((a, x) => a + x[1], 0); const del = f.reduce((a, x) => a + x[2], 0);
-  const groups = [];
-  f.forEach(([p, a, dl], i) => { const dir = p.slice(0, p.lastIndexOf('/') + 1); let g = groups.find((x) => x.dir === dir); if (!g) groups.push(g = { dir, rows: [] }); g.rows.push({ p, name: p.slice(dir.length), a, dl, i }); });
+  // Grouped by what each file is (spec › The tabs): Code, Tests, then what is not in the code; largest first in each,
+  // the folder after the name.
   const blocks = (a, dl) => { const n = Math.min(5, Math.max(1, Math.round((a + dl) / 40))); const ga = Math.round(n * a / (a + dl || 1)); return Array.from({ length: 5 }, (_, k) => `<i class="${k < ga ? 'add' : k < n ? 'del' : ''}"></i>`).join(''); };
   const open = ui.file === undefined || ui.file === null ? -1 : ui.file;
-  const rows = groups.map((g) => `<li class="ch-dir"><code>${esc(g.dir)}</code><span class="rtab-dim">${g.rows.length}</span></li>` + g.rows.map((r) => {
+  const files = f.map(([p, a, dl], i) => ({ p, a, dl, i, dir: p.slice(0, p.lastIndexOf('/') + 1), name: p.slice(p.lastIndexOf('/') + 1) }));
+  const kinds = [['Code', files.filter((x) => !/^test\//.test(x.p))], ['Tests', files.filter((x) => /^test\//.test(x.p))]].filter(([, xs]) => xs.length);
+  const head = (name, n, a, dl) => `<li class="ch-dir ch-group"><span class="ch-gn">${name}</span><span class="rtab-dim">${n}</span>${a !== undefined ? `<span class="ct"><span class="add">+${a}</span><span class="del">−${dl}</span></span>` : ''}</li>`;
+  const rows = kinds.map(([name, xs]) => head(name, `${xs.length} ${xs.length === 1 ? 'file' : 'files'}`, xs.reduce((s, x) => s + x.a, 0), xs.reduce((s, x) => s + x.dl, 0)) + xs.slice().sort((x, y) => (y.a + y.dl) - (x.a + x.dl)).map((r) => {
     const m = d.fileMeta[r.p] || { st: 'M' };
     const diff = open === r.i ? `<div class="ch-diff"><p class="ch-at">${esc(d.hunk.at)}</p><pre>${d.hunk.lines.map(([k, t]) => `<span class="${k === '+' ? 'add' : k === '-' ? 'del' : ''}">${esc(k + ' ' + t)}</span>`).join('\n')}</pre><button type="button" class="btn btn-sm" data-key="file-full" data-say="Opens the whole diff of the file">Open the whole diff</button></div>` : '';
-    return `<li class="ch-file${open === r.i ? ' is-open' : ''}"><button type="button" class="ch-row" aria-expanded="${open === r.i}" data-file="${r.i}" data-key="file:${r.i}"><span class="ch-st is-${m.st}" title="${m.st === 'A' ? 'Added' : 'Modified'}">${m.st}</span><span class="ch-name" title="${esc(r.p)}">${esc(r.name)}</span>${m.notes ? `<span class="ch-notes" title="${m.notes} review comments">${m.notes}</span>` : '<span class="ch-notes"></span>'}<span class="ct"><span class="add">+${r.a}</span><span class="del">−${r.dl}</span></span><span class="ch-blocks" aria-hidden="true">${blocks(r.a, r.dl)}</span></button>${diff}</li>`;
+    return `<li class="ch-file${open === r.i ? ' is-open' : ''}${ui.land === 'file:' + r.i ? ' is-flash' : ''}"><button type="button" class="ch-row" aria-expanded="${open === r.i}" data-file="${r.i}" data-key="file:${r.i}"><span class="ch-st is-${m.st}" title="${m.st === 'A' ? 'Added' : 'Modified'}">${m.st}</span><span class="ch-name" title="${esc(r.p)}">${esc(r.name)}<span class="ch-path">${esc(r.dir)}</span></span>${m.notes ? `<span class="ch-notes" title="${m.notes} review comments">${m.notes}</span>` : '<span class="ch-notes"></span>'}<span class="ct"><span class="add">+${r.a}</span><span class="del">−${r.dl}</span></span><span class="ch-blocks" aria-hidden="true">${blocks(r.a, r.dl)}</span></button>${diff}</li>`;
   }).join('')).join('');
+  // Documents its steps wrote: they stay with the run and are not in the PR. A name opens it; one download at the end.
+  const arts = v.over.artifacts;
+  const docs = arts.length ? head('Not in the code', String(arts.length)) + `<li class="ch-gnote">Written by the run’s steps; they stay with the run and are not in the PR</li>` + arts.map(([doc, step], i) => `<li class="ch-file ch-doc${ui.land === 'doc:' + i ? ' is-flash' : ''}"><span class="ch-st" aria-hidden="true"></span><span class="ch-name"><button type="button" class="ov-art-name" data-key="art:${i}" data-say="Opens ${esc(doc)}" title="Open ${esc(doc)}"><code>${esc(doc)}</code></button><span class="ch-path">from ${esc(step)}</span></span><button type="button" class="btn btn-sm btn-quiet btn-icon" data-key="dl:${i}" data-say="Downloading ${esc(doc)}" aria-label="Download ${esc(doc)}" title="Download ${esc(doc)}">${svg('download', 14)}</button></li>`).join('') : '';
   const where = v.place.folder ? `In a copy of ${v.place.folder}; Apply writes them into the folder.` : v.place.branch ? `${v.place.branch} into ${v.place.base || 'dev'}` : '';
   // The code's own actions sit in the Changes head, as the card's action does: Check out, the rest in its ▾.
   const chItems = (v.bar.stop ? [{ id: 'ch:refresh', text: 'Refresh', help: 'Reload the diff from the worktree' }] : [])
     .concat([{ id: 'ch:patch', text: 'Download patch', help: 'Every change as one .patch file' }, { id: 'ch:copy', text: 'Copy git commands', help: 'git fetch and git switch to this branch' }]);
   const tools = v.place.folder ? '' : `<div class="btn-split rc-pop is-right ch-act"><button type="button" class="btn btn-sm" data-key="ch:checkout" data-say="Checked out ${esc(v.place.branch || 'the branch')} on this machine" title="Check the branch out on this machine">Check out</button><button type="button" class="btn btn-sm btn-icon" aria-label="More for these changes" aria-haspopup="menu" aria-expanded="${ui.menu === 'ch'}" data-menu="ch" data-key="menu:ch">${svg('chevron', 14)}</button>${menu('ch', chItems)}</div>`;
   return `<section class="rtab"><div class="ch-head"><div class="ch-sum"><h2 class="rtab-h">${f.length} files <span class="ct"><span class="add">+${add}</span><span class="del">−${del}</span></span></h2><span class="rtab-dim" title="${esc(where)}">${esc(where)}</span></div>${tools}</div>
-    <ul class="ch-list">${rows}</ul></section>`;
+    <ul class="ch-list">${rows}${docs}</ul></section>`;
 }
 function activityPanel(v) {
   const only = ui.actFilter === 'problems';
@@ -204,7 +216,9 @@ function activityPanel(v) {
       const isOpen = rd && ui.rounds.includes(key);
       const row = rowHtml(Object.assign({}, r, { ref: '', akey: r.ref, roundsKey: rd && r.loops ? key : '', roundsOpen: isOpen }), true);
       const sub = isOpen ? rd.map(([t, why], i) => `<li class="rd-route-row sc-row is-round"><span class="ac-round-n" aria-hidden="true">${i + 1}</span><span class="sc-name ac-why">${esc(why)}</span><span class="sc-time">${esc(t)}</span><span class="sc-rest"></span></li>`).join('') : '';
-      return row + sub;
+      const di = v.over.artifacts.findIndex(([, step]) => step === r.name);
+      const wrote = di < 0 ? '' : `<li class="rd-route-row sc-row is-round is-wrote"><span class="ac-round-n" aria-hidden="true"></span><span class="sc-name ac-why">Wrote <button type="button" class="dc-link" data-go="doc:${di}" data-key="wrote:${di}" title="Open it in Changes">${esc(v.over.artifacts[di][0])}</button></span><span class="sc-time"></span><span class="sc-rest"></span></li>`;
+      return row + sub + wrote;
     }).join('');
   }).join('');
   return `<div class="rtab-bar">${seg}<button type="button" class="btn btn-sm btn-quiet" data-key="graph" data-say="Opens the run graph, centred on the live step">Open the graph</button></div><section class="rtab rtab-stage"><ol class="rd-route-list sc-subs is-full" aria-label="Steps">${rows || '<li class="sc-stage-row"><p class="rtab-dim rtab-p">No problems or questions in this run.</p></li>'}</ol></section>`;
@@ -401,7 +415,7 @@ function done(f, label) {
   else if (f.to) { goCase(f.to); toast(f.say || 'Now: ' + M.view(f.to, {}).word); } else { toast(f.say); pendingFocus = pendingFocus || 'act-main'; }
 }
 // What a step's button says while it works, and why it can fail; a failure keeps the state as it was.
-const WORKING = { Merge: 'Merging…', Create: 'Creating…', Stop: 'Stopping…', Discard: 'Discarding…', Archive: 'Archiving…', Cancel: 'Cancelling…', 'Re-plan': 'Re-planning…', Continue: 'Continuing…', Delete: 'Deleting…' };
+const WORKING = { Fix: 'Fixing…', Merge: 'Merging…', Create: 'Creating…', Stop: 'Stopping…', Discard: 'Discarding…', Archive: 'Archiving…', Cancel: 'Cancelling…', 'Re-plan': 'Re-planning…', Continue: 'Continuing…', Delete: 'Deleting…' };
 const working = (label) => WORKING[label.split(' ')[0]] || 'Working…';
 const REASON = { Merge: 'GitHub says the branch is behind dev; update it and try again', Create: 'git push was rejected: the remote branch moved', Stop: 'the run did not answer; it may have just finished',
   Archive: 'a terminal still has the worktree open', Discard: 'a terminal still has the worktree open', Cancel: 'run 3 had just started', 'Re-plan': 'the planner did not answer in time', Continue: 'the budget settings could not be saved' };
@@ -667,6 +681,14 @@ document.addEventListener('click', (e) => {
   else if (d.tab) { ui.tab = d.tab; ui.focus = ''; if (t.classList.contains('rc-fig-link')) pendingFocus = 'tab:' + d.tab; }
   else if (d.ref) { ui.tab = 'activity'; ui.view = 'steps'; ui.focus = d.ref; pendingFocus = 'act:' + d.ref; render(); document.querySelector('.is-focus')?.scrollIntoView({ block: 'center', behavior: reduced() ? 'auto' : 'smooth' }); return; }
   else if (d.view) ui.view = d.view;
+  else if (d.go) {
+    const [kind, n] = d.go.split(':');
+    if (kind === 'tab') ui.tab = n;
+    else { ui.tab = 'changes'; if (kind === 'file') ui.file = +n; ui.land = d.go; pendingFocus = kind === 'file' ? 'file:' + n : 'art:' + n; }
+    render(); ui.land = '';
+    document.querySelector('.ch-file.is-flash')?.scrollIntoView({ block: 'center', behavior: reduced() ? 'auto' : 'smooth' }); return;
+  }
+  else if ('askopen' in d) { ui.askOpen = !ui.askOpen; pendingFocus = 'ask-open'; }
   else if ('goanswer' in d) { pendingFocus = 'answer:' + (ui.answer ?? v0().ask.pick); ui.flashAnswer = true; render(); ui.flashAnswer = false; document.querySelector('.sc-answer')?.scrollIntoView({ block: 'center', behavior: reduced() ? 'auto' : 'smooth' }); return; }
   else if (d.unafter !== undefined) { ui.after = ui.after.filter((_, i) => i !== +d.unafter); toast('Scheduled run cancelled'); pendingFocus = 'menu:more'; }
   else if (d.answer !== undefined) { ui.answer = +d.answer; pendingFocus = 'answer:' + d.answer; }

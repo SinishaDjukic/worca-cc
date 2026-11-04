@@ -1,30 +1,7 @@
 /* Pulse: the hub's layer on top of Worca's style.css and rail.css (spec: plans/rail/pulse.md). One rail: a 20px column
    for the dot (or the tick box), a 12px gap, then the text edge every heading, row and sentence starts on. */
 
-/* The Rail look (docs/design-system.md › The Rail look), shown on Pulse ahead of the app: one surface, one cool neutral
-   family, running (lemon) and needs-you (orange) apart, a floating surface a step lighter in dark with a hairline.
-   Inter is not bundled yet: the system face stands in for it, as in the refined mocks. */
-:root{
-  --sans:Inter,-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;
-  --bg:light-dark(#FFFFFF,#141416); --panel:light-dark(#FFFFFF,#141416);   /* ds-ok: the Rail look's table */
-  --canvas-2:light-dark(#FAFAFA,#18181B); --side-bg:light-dark(#FAFAFA,#18181B);   /* ds-ok: the Rail look's table */
-  --field:light-dark(#F4F4F5,#1F1F23); --surface:light-dark(#F4F4F5,#1F1F23);   /* ds-ok: the Rail look's table */
-  --hover:light-dark(#F0F0F2,#222227); --side-sel-bg:light-dark(#F0F0F2,#26262B);   /* ds-ok: the Rail look's table */
-  --ink:light-dark(#18181B,#EDEDEF); --ink-2:light-dark(#63636B,#A1A1A9); --ink-3:light-dark(#A1A1A9,#6E6E76);   /* ds-ok: the Rail look's table */
-  --line:light-dark(#EEEEF0,#26262B); --line-2:light-dark(#E2E2E6,#35353B);   /* ds-ok: the Rail look's table */
-  --float:light-dark(#FFFFFF,#1D1D21); --float-line:light-dark(#EEEEF0,#323238);   /* ds-ok: the Rail look's table */
-  --peach:light-dark(#B39A0E,#ECD86A); --amber:light-dark(#E07A1F,#EE8A2C);   /* ds-ok: the Rail look's table */
-  /* Motion (docs/design-system.md › Motion): three timings on one curve */
-  --motion-quick:150ms; --motion-change:200ms; --motion-flash:1.2s; --ease:cubic-bezier(.2,0,0,1);
-}
 .pz-title,.pz-nr-h{letter-spacing:-.02em;}
-.pz-app .btn{font-weight:500;}
-/* A floating surface (menus, the Pulse panel, the account menu, a Dialog's card): --float with its hairline. */
-.pz-app :is(.menu,.pz-popover,.viewer-modal > .card){background:var(--float);border-color:var(--float-line);}
-/* A menu, panel or Dialog fades in over quick when it opens, and closes at once; nothing slides. */
-.is-in{animation:pz-in var(--motion-quick) var(--ease);}
-@keyframes pz-in{from{opacity:0;}}
-@media (prefers-reduced-motion: reduce){.is-in{animation:none;}}
 
 /* The shell: a small Worca window (sidebar, top bar, page) on the board. */
 .pz-app{--rail:20px;--gap:12px;--edge:calc(var(--rail) + var(--gap));position:relative;display:flex;min-height:620px;
@@ -131,7 +108,7 @@
 
 /* The page head: title, the metadata line, tabs, all on the text edge. */
 .pz-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-left:var(--edge);min-width:0;}
-.pz-title{margin:0;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:700 var(--fs-page)/1.3 var(--sans);color:var(--ink);}
+.pz-title{margin:0;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:600 var(--fs-page)/1.3 var(--sans);color:var(--ink);}
 .pz-acts{display:flex;align-items:center;gap:8px;flex:none;}
 .pz-meta{display:flex;flex-wrap:wrap;gap:0 8px;margin:4px 0 0 var(--edge);font-size:var(--fs-meta);color:var(--ink-2);}
 .pz-dotsep{color:var(--ink-3);}

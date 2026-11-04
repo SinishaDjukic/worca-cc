@@ -50,10 +50,12 @@ for (const scheme of ['dark', 'light']) for (const w of [375, 900]) {
         }
         // below the card, every section's first text starts on the tab text edge
         const firstText = (el) => { const tw = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, { acceptNode: (n) => (n.textContent.trim() && n.parentElement.offsetParent ? 1 : 3) }); const n = tw.nextNode(); if (!n) return null; const r = document.createRange(); r.selectNodeContents(n); return r.getBoundingClientRect().left; };
-        const edge = firstText(document.querySelector('.rc-tabs .tab'));
+        const strip = document.querySelector('.rc-tabs');   // a strip wider than the screen scrolls to the open tab: measure as unscrolled
+        const edge = firstText(document.querySelector('.rc-tabs .tab')) + (strip ? strip.scrollLeft : 0);
         const panel = document.querySelector('.rtab-panel');
         for (const sec of panel ? panel.children : []) {
-          if (sec.matches('.rtab-dec.is-runs, .rtab-stage') || !sec.offsetParent) continue;
+          // a section that starts with a rail list keeps its marks on the rail (on the edge at 375px), as Activity's steps do
+          if (sec.matches('.rtab-dec.is-runs, .rtab-stage, .rtab:has(> .rd-route-list:first-child)') || !sec.offsetParent) continue;
           const h = sec.querySelector('.rtab-h, .seg button, .btn, .ch-head') || sec;
           const boxed = h.matches('.seg button') ? h.closest('.seg') : h.matches('.btn:not(.btn-quiet)') ? h : null;   // a control with its own box lines up by the box
           const x = boxed ? boxed.getBoundingClientRect().left : firstText(h); if (x !== null && edge !== null && Math.abs(x - edge) > 1.5) out.push(['off the text edge by ' + Math.round(x - edge) + 'px', sec.className]);
