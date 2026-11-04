@@ -65,6 +65,8 @@ async function boot(hash, { withSync = false, runReply = null, seedProject = '',
     if (u.includes('/api/schedules/after/g1')) return json({ kind: 'pipeline', id: 'g1', title: 'Restored', status: 'done', projectDir: '/a/svc-iam', workspaceId: null, branchGone: true });
     if (u.includes('/api/schedules/after/g2')) return json({ kind: 'pipeline', id: 'g2', title: 'Restored ws', status: 'done', projectDir: null, workspaceId: 'ws_1', branchGone: true });
     if (u.includes('/api/schedules/after/e1')) return json({ kind: 'pipeline', id: 'e1', title: 'Broken', status: 'error', projectDir: '/a/svc-iam', workspaceId: null });
+    if (u.includes('/api/schedules/after/i1')) return json({ kind: 'pipeline', id: 'i1', title: 'Slice 1', status: 'interrupted', resumable: true, projectDir: '/a/svc-iam', workspaceId: null });
+    if (u.includes('/api/schedules/after/i2')) return json({ kind: 'pipeline', id: 'i2', title: 'Swept', status: 'interrupted', resumable: false, projectDir: '/a/svc-iam', workspaceId: null });
     if (u.includes('/api/schedules/after/w2')) return json({ kind: 'pipeline', id: 'w2', title: 'Empty run', status: 'done', projectDir: null, workspaceId: 'ws_2' });
     if (u.includes('/api/schedules/after/w3')) return json({ kind: 'pipeline', id: 'w3', title: 'Folders run', status: 'done', projectDir: null, workspaceId: 'ws_3' });
     if (u.includes('/api/schedules/after/w4')) return json({ kind: 'pipeline', id: 'w4', title: 'Mixed run', status: 'done', projectDir: null, workspaceId: 'ws_4' });
@@ -266,6 +268,22 @@ test('#new/after/e1: a predecessor that already ended badly is picked with the a
   doc.getElementById('start-btn').click();
   await tick(3);
   assert.equal(runBodies[0].afterPolicy, 'any', 'resolveAfterRef would refuse done for an errored run');
+});
+
+test('#new/after/i1|i2: an interrupted predecessor that can resume is waited for under done; one that cannot is picked with any', async () => {
+  await checkRows([
+    { name: 'i1 (resumable): done — it has not ended, it waits for a Resume', hash: '#new/after/i1', policy: 'done', text: 'Starts when ‘Slice 1’ finishes' },
+    { name: 'i2 (no resume point): any — it ended, done would be refused', hash: '#new/after/i2', policy: 'any', text: 'Starts when ‘Swept’ finishes' },
+  ].map(({ name, hash, policy, text }) => ({ name, run: async () => {
+    const { window, runBodies } = await boot(hash);
+    const doc = window.document;
+    await branchesReady(doc);
+    assert.equal(doc.getElementById('new-sched-text').textContent, text);
+    doc.getElementById('prompt').value = 'Next slice';
+    doc.getElementById('start-btn').click();
+    await tick(3);
+    assert.equal(runBodies[0].afterPolicy, policy);
+  } })));
 });
 
 test('P5: "Branch off the run before it" needs git and a Git member — an all-Folder workspace, or git off, keeps the switch off and posts no sourceFromPrevious', async () => {

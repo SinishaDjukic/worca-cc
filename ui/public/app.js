@@ -15588,6 +15588,8 @@ async function fetchAfterCandidates() {
 
 /** #new/after/<pipelineId> | #new/after/t:<ticketId>: pick the predecessor first, then describe the task. */
 const ENDED_BADLY = ['error', 'stopped', 'interrupted'];
+// An interrupted run that can still resume has not ended (scheduler pipelineGate waits for it): no `any` preset.
+const endedBadly = (r) => ENDED_BADLY.includes(r.status) && !(r.status === 'interrupted' && r.resumable === true);
 // A TICKET that ended this way can never be waited for (resolveAfterRef refuses it under either policy —
 // scheduler.mjs BAD_TICKET_REASON, same words); say so here rather than at Start.
 const ENDED_TICKET = { missed: 'was missed', canceled: 'was canceled', failed: 'could not start', skipped: 'was skipped' };
@@ -15626,7 +15628,7 @@ async function openAfterForNew(ref) {
   // (resolveAfterRef refuses it under done) — preset the switch the sheet would need.
   // branchGone: the predecessor finished but its feature branch no longer resolves (an archived
   // or restored run) — syncPreviousBranchOption then leaves "Branch of the run before it" out.
-  setPendingSchedule({ after: { kind: r.kind, id: r.id, title: r.title || null, branchGone: !!r.branchGone }, afterPolicy: ENDED_BADLY.includes(r.status) ? 'any' : 'done' });
+  setPendingSchedule({ after: { kind: r.kind, id: r.id, title: r.title || null, branchGone: !!r.branchGone }, afterPolicy: endedBadly(r) ? 'any' : 'done' });
   try { el.prompt?.focus(); } catch { /* jsdom */ }
 }
 function closeStartMenu() {

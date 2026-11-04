@@ -19,9 +19,12 @@ export const MAX_AHEAD_MS = 366 * 86_400_000;
 export const SCHEDULE_CHANGE_ACTIONS = Object.freeze(['run_now', 'move', 'edit', 'cancel', 'delete']);
 
 /** Run chains: a predecessor that already ended, by its row's status — the words core's predecessorState
- *  uses (BAD_TICKET_REASON / BAD_PIPELINE_REASON), so the pinned sentence reads the same from Ask. */
+ *  uses (BAD_TICKET_REASON / BAD_PIPELINE_REASON), so the pinned sentence reads the same from Ask. An
+ *  interrupted pipeline has ended only when it cannot resume (afterRefOf's `resumable: false`); one that can
+ *  resume is still going, as in core's pipelineGate. */
 const ENDED_TICKET = Object.freeze({ canceled: 'was canceled', missed: 'was missed', failed: 'could not start', skipped: 'was skipped' });
 const ENDED_PIPELINE = Object.freeze({ error: 'ended with an error', stopped: 'was stopped', interrupted: 'was interrupted' });
+const pipelineEnded = (ref) => (ref.status === 'interrupted' && ref.resumable === true ? null : ENDED_PIPELINE[ref.status]);
 
 const str = (v) => (typeof v === 'string' ? v.trim() : '');
 // eslint-disable-next-line no-control-regex
@@ -103,7 +106,7 @@ export function resolveScheduleSpec(input = {}, { nowMs, timeZone = null, defaul
     // The outcome, from the row's status alone (no DB here): a ticket that already ended can never be waited
     // for; a pipeline that ended badly only under `any`. A fired ticket whose pipeline ended badly is not
     // visible here (its status is `fired`) — POST /api/run's resolveAfterRef is the final gate for that one.
-    const ended = ref.kind === 'ticket' ? ENDED_TICKET[ref.status] : (policy === 'any' ? null : ENDED_PIPELINE[ref.status]);
+    const ended = ref.kind === 'ticket' ? ENDED_TICKET[ref.status] : (policy === 'any' ? null : pipelineEnded(ref));
     if (ended) return { ok: false, errors: [`after: ${name} ${ended} — nothing to wait for`] };
     return { ok: true, schedule: { kind: 'after', after: { kind: ref.kind, id: ref.id, title: ref.title || null, status: ref.status || null }, policy,
       sourceFromPrevious: inp.sourceFromPrevious === true, text: `After ${name} finishes` } };

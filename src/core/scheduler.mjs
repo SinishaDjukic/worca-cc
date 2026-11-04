@@ -436,9 +436,15 @@ export function setTicketPipeline(id, pipelineId, { now = Date.now() } = {}) {
 
 /** Pipeline statuses that mean "still going" for a predecessor (LIVE_PIPELINE + a parked run). */
 const OPEN_PIPELINE = [...LIVE_PIPELINE, 'paused'];
-const PIPELINE_REF_SQL = 'SELECT id, title, status, target, project_key, workspace_key, branch, workspace_meta, updated_at, archived_at FROM pipelines WHERE id = ?';
+// `resumable` = the row still has a resume point (see resumableInterrupted).
+const PIPELINE_REF_SQL = 'SELECT id, title, status, target, project_key, workspace_key, branch, workspace_meta, updated_at, archived_at, resume_point IS NOT NULL AS resumable FROM pipelines WHERE id = ?';
 const BAD_TICKET_REASON = { canceled: 'was canceled', missed: 'was missed', failed: 'could not start', skipped: 'was skipped' };
 const BAD_PIPELINE_REASON = { error: 'ended with an error', stopped: 'was stopped', interrupted: 'was interrupted' };
+/** An interrupted run that kept its resume point is parked, not ended: a Resume (by hand, at boot, or a resume
+ *  ticket) takes it on, so it counts as still going — like `paused`, under either policy. Without a point
+ *  (sweepV1Runs, a restored archive, a crash before the first snapshot) it can never resume: it ended, and
+ *  BAD_PIPELINE_REASON answers for it. Read off PIPELINE_REF_SQL / CHAIN_PIPELINE_SQL's `resumable` column. */
+const resumableInterrupted = (row) => row.status === 'interrupted' && !!row.resumable;
 
 function pipelineRefRow(id) {
   return getDb().prepare(PIPELINE_REF_SQL).get(String(id)) || null;
@@ -452,7 +458,9 @@ export function afterRefOf(id) {
   const p = pipelineRefRow(id);
   if (!p) return null;
   return { kind: 'pipeline', id: p.id, title: p.title, status: p.status, pipelineId: p.id,
-    projectKey: p.target === 'project' ? p.project_key : null, workspaceId: p.workspace_key || null, scheduleId: null };
+    projectKey: p.target === 'project' ? p.project_key : null, workspaceId: p.workspace_key || null, scheduleId: null,
+    // Only an interrupted run needs it (Ask's schedule spec, the #new/after deep link): every other shape stays as it was.
+    ...(p.status === 'interrupted' ? { resumable: !!p.resumable } : {}) };
 }
 
 // Run on the source branch (branch.sameAsSource): the work lands on the source in teardown, AFTER the row
@@ -482,7 +490,7 @@ function pipelineGate(row, { policy, isLive, now = Date.now() }) {
   // a `done` row whose branch is gone must strand its dependents as missed (the pinned Archive note), not
   // start them — or fail them on a vanished ref. Archive refuses a live run, so this sits above isLive.
   if (row.archived_at) return { state: 'gone', reason: 'was archived', ...base };
-  if ((isLive && isLive({ id: row.id, pipelineId: row.id })) || OPEN_PIPELINE.includes(row.status)) return { state: 'waiting', ...base };
+  if ((isLive && isLive({ id: row.id, pipelineId: row.id })) || OPEN_PIPELINE.includes(row.status) || resumableInterrupted(row)) return { state: 'waiting', ...base };
   // A run on its source branch is not finished until its merge back is: a dependent started now would
   // branch off the source before that run's work lands on it.
   if (mergeBackPending(row, now)) return { state: 'waiting', ...base };
@@ -680,7 +688,7 @@ export function stackedPrBaseOf(pipelineId, chain) {
 // ── run progress: chains (spec 2026-10-14 run-progress P8) ───────────────────
 
 const CHAIN_TICKET_SQL = 'SELECT id, title, status, after_kind, after_id, pipeline_id, resume_pipeline_id, source_from_previous, project_key, project_dir, workspace_id, created_at FROM scheduled_runs';
-const CHAIN_PIPELINE_SQL = 'SELECT id, title, status, target, project_key, workspace_key, branch, pr_url, pr_state, archived_at, started_at, updated_at FROM pipelines WHERE id = ?';
+const CHAIN_PIPELINE_SQL = 'SELECT id, title, status, target, project_key, workspace_key, branch, pr_url, pr_state, archived_at, started_at, updated_at, resume_point IS NOT NULL AS resumable FROM pipelines WHERE id = ?';
 const WAITING_TICKET = new Set(['scheduled', 'firing']);
 const PR_URL_RE = /^https:\/\/\S+$/i;   // the expander makes it a link: never a javascript:/data: href
 
@@ -753,7 +761,7 @@ export function runChains({ isLive = null, keepDone = false, now = Date.now() } 
     if (t && t.resume_pipeline_id && t.status !== 'fired' && t.status !== 'skipped') state = WAITING_TICKET.has(t.status) ? 'waiting' : 'failed';
     else if (n.pipelineId) {
       if (!row) state = 'failed';
-      else if ((isLive && isLive({ id: t ? t.id : row.id, pipelineId: row.id })) || OPEN_PIPELINE.includes(row.status)) state = 'current';
+      else if ((isLive && isLive({ id: t ? t.id : row.id, pipelineId: row.id })) || OPEN_PIPELINE.includes(row.status) || resumableInterrupted(row)) state = 'current';
       else if (row.status === 'done') state = 'done';
       else if (BAD_PIPELINE_REASON[row.status]) state = 'failed';
       else state = 'current';                      // an unknown status: still going (pipelineGate's reading)
@@ -803,7 +811,8 @@ export function runChains({ isLive = null, keepDone = false, now = Date.now() } 
 
 /**
  * The ONE validator for a predecessor reference (server, CLI, Ask parent — spec §3.4).
- * `after.kind` is advisory: the row decides. Accepts a predecessor that is waiting or done.
+ * `after.kind` is advisory: the row decides. Accepts a predecessor that is waiting (live, paused, or
+ * interrupted with a resume point) or done.
  */
 export function resolveAfterRef(after, { projectDir = null, workspaceId = null, policy = 'done', selfId = null, isLive = null } = {}) {
   const id = after && typeof after === 'object' && typeof after.id === 'string' ? after.id.trim() : '';
