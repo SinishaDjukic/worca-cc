@@ -96,6 +96,13 @@ export function removeUiInstance({ ifPid } = {}) {
   }
 }
 
+/** Node's 5 s keep-alive default closes an idle connection the browser is about to reuse; headersTimeout stays above it. */
+export function keepIdleConnections(server) {
+  server.keepAliveTimeout = 65_000;
+  server.headersTimeout = 66_000;
+  return server;
+}
+
 /** Host as it appears inside a URL (IPv6 literals need brackets). */
 export function urlHost(host) {
   if (!host) return 'localhost';
