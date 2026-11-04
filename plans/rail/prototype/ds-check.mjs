@@ -30,7 +30,7 @@ const CONTROLS = {
   Switch: '.switch, .sw-item',
   TagGroup: '.rc-tags-mark, .rc-tag-x',
   OptionList: '.sc-ans-opt',
-  ListRow: '.cfg-li, .row-btn, .sc-step, .ch-row, .st-head, .pz-nav-i, .pz-acct, .sc-loop.is-btn',
+  ListRow: '.lr-main, .cfg-li, .row-btn, .sc-step, .ch-row, .st-head, .pz-nav-i, .pz-acct, .sc-loop.is-btn',
   'Text link': '.rc-fig-link, .rc-crumb, .rc-branch, .dc-link, .ov-art-name, .cfg-crumb',
 };
 const CONTROL_SEL = Object.values(CONTROLS).join(', ');
@@ -78,9 +78,24 @@ for (const name of BUILT) {
   });
 }
 
+// --- names: a page, a menu item, a section head, a settings row (docs/design-system.md › Small rules › Names) ---
+const NAMES = () => {
+  const out = [];
+  const sel = '.pz-title, .cfg-menu .pz-nav-l, .cfg-li > span:first-child, .set-sec-h, .set-name, .list-h, .dlg-title, .rc-tabs .tab';
+  for (const e of document.querySelectorAll(sel)) {
+    if (!e.offsetParent) continue;
+    const t = (e.childNodes[0]?.textContent || e.textContent).trim();
+    if (!t) continue;
+    const why = /&| and /.test(t) ? 'joins two things' : /^(Your|My|This) /.test(t) ? 'starts with Your, My or This'
+      : /\?$/.test(t) ? 'is a question' : /^(What|How|When|Where|Which|Up) /.test(t) ? 'is a phrase, not a name' : t.split(/\s+/).length > 3 && !e.matches('.dlg-title') ? 'is more than 3 words' : '';
+    if (why) out.push(`"${t}" ${why}`);
+  }
+  return out;
+};
+
 // --- the pages ---
 const b = await chromium.launch({ channel: 'chrome' });
-const OPEN = ['break:part', 'break:background', 'break:offline', '[data-pop]', '[data-acct]', '[data-newrun]', '[data-go="settings"]', '[data-key="act-main"]', '[data-menu]', '.rc-tabs .tab:nth-child(2)', '.rc-tabs .tab:nth-child(3)', '.rc-tabs .tab:nth-child(4)', '.rc-tabs .tab:nth-child(5)'];
+const OPEN = ['break:part', 'break:background', 'break:offline', '[data-pop]', '[data-acct]', '[data-newrun]', '[data-key="act-main"]', '[data-menu]', '.rc-tabs .tab:nth-child(2)', '.rc-tabs .tab:nth-child(3)', '.rc-tabs .tab:nth-child(4)', '.rc-tabs .tab:nth-child(5)'];
 for (const page of ['index.html', 'pulse.html']) {
   const p = await b.newPage({ viewport: { width: 900, height: 900 } });
   p.on('pageerror', (e) => add('script error', String(e)));
@@ -106,17 +121,19 @@ for (const page of ['index.html', 'pulse.html']) {
     }, [CONTROL_SEL, [...classes]]);
     for (const [k, wh] of found) add(k, `${page}: ${wh}`);
     for (const m of await p.evaluate(ALIGN)) add('misaligned (the components own alignment)', `${page} ${c}: ${m}`);
+    for (const m of await p.evaluate(NAMES)) add('a name against the naming rule', `${page}: ${m}`);
     await p.keyboard.press('Escape');
   }
   // every settings section, wide and narrow
-  if (await p.$('[data-go="settings"]')) {
+  if (await p.$('[data-acct]')) {   // Settings opens from the profile menu
     for (const w of [900, 400]) {
       await p.setViewportSize({ width: w, height: 900 });
-      await p.evaluate(() => document.querySelector('[data-go="settings"]').click());
+      await p.evaluate(() => { document.querySelector('[data-acct]').click(); document.querySelector('[data-go="settings"]').click(); });
       const ids = await p.evaluate(() => [...document.querySelectorAll('[data-sset]')].map((e) => e.dataset.sset));
       for (const id of [...new Set(ids)]) {
         await p.evaluate((id) => document.querySelector(`[data-sset="${id}"]`)?.click(), id);
         for (const m of await p.evaluate(ALIGN)) add('misaligned (the components own alignment)', `${page} settings/${id} at ${w}px: ${m}`);
+        for (const m of await p.evaluate(NAMES)) add('a name against the naming rule', `${page} settings/${id}: ${m}`);
       }
     }
   }

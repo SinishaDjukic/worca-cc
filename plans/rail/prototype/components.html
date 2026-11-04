@@ -27,6 +27,10 @@
   .gl-show .rc-toast{position:static;transform:none;opacity:1;}
   .gl-show .toasts{position:static;}
   .gl-show > .rc-card{flex:1 1 100%;}
+  .gl-show > .set-sec,.gl-show > .list,.gl-show > .set-row{flex:1 1 100%;}
+  .gl-show > .list{padding-left:32px;}   /* the rail hangs left of the text edge */
+  .gl-show > .viewer-modal{position:static;inset:auto;display:block;padding:0;background:none;flex:1 1 100%;}
+  .gl-show .fld{flex:1 1 100%;max-width:360px;}
 </style>
 <div class="rc-board mk-page">
 <div class="mk-wrap rc" id="gallery">
@@ -60,6 +64,19 @@
       ['A break nobody planned for, counted', R.errorToast({ title: 'Something went wrong', text: 'Worca hit an error it did not expect. Your runs keep going.', icon: P('M12 6.8v6.6M12 17.6h.01'), count: 2, actions: R.button({ label: 'Reload' }) + R.button({ label: 'Copy details', kind: 'quiet' }), close: R.button({ label: 'Close', kind: 'quiet', iconOnly: true, title: false, icon: X }) })]],
     EmptyState: [['Empty', R.emptyState({ title: 'No runs yet', actions: R.button({ label: 'Start a run', kind: 'quiet' }) })],
       ['A part that cannot be drawn', R.emptyState({ title: 'Could not show the changes', text: 'Something went wrong here. The rest of the page still works.', error: true, actions: R.button({ label: 'Reload this part' }) + R.button({ label: 'Details', kind: 'quiet' }) })]],
+    SentencePicker: [['In its sentence', `<span class="set-text">The tab title counts ${R.sentencePicker({ id: 'g1', text: 'what needs you', chevron: CHEV, items: [] })}</span>`],
+      ['Open', `<span class="set-text" style="display:block;min-height:150px">Runs pause at ${R.sentencePicker({ id: 'g2', text: '$1,000', chevron: CHEV, open: true, items: [{ id: 'none', text: 'no limit' }, { id: '500', text: '$500' }, { id: '1000', text: '$1,000', checked: true }, { id: '2500', text: '$2,500' }] })} a month</span>`]],
+    Switch: [['On and off', R.switchButton({ on: true, label: 'Updates' }) + R.switchButton({ on: false, label: 'Run id' })]],
+    SettingsSection: [['A head, its one action, its rows', R.settingsSection({ title: 'Spending', meta: 'Spent this month: $412 of $1,000.', action: R.button({ label: 'Reset to defaults', kind: 'quiet' }), rows: R.settingsRow({ name: 'Budget', sentence: 'Runs pause at <b>$1,000 a month</b>', end: R.button({ label: 'Customise', kind: 'quiet' }) }) + R.settingsRow({ name: 'Pull requests', sentence: 'Draft the description with AI as the PR opens', end: R.switchButton({ on: false, label: 'Pull requests' }) }) })]],
+    SettingsRow: [['One decision, its state in words; its knobs under Customise', R.settingsSection({ title: 'Starting a run', rows: R.settingsRow({ name: 'Naming', sentence: 'Suggest a title and a branch name as you type', end: R.switchButton({ on: true, label: 'Naming' }) + R.button({ label: 'Done', kind: 'quiet' }), detail: `<div class="set-rows">${R.settingsRow({ name: 'Run id', sentence: 'Add the run id to the branch name', end: R.switchButton({ on: false, label: 'Run id' }) })}${R.settingsRow({ name: 'Branch', sentence: 'Branches are named <code>{type}/{slug}</code>', end: R.button({ label: 'Change…', kind: 'quiet' }) })}</div>` }) })]],
+    ListRow: [['Things in a list, grouped', R.list({ groups: [
+      { title: 'Needs you', count: 1, rows: [R.listRow({ title: 'Add CSV export to billing', meta: 'billing-api · Plan asks 2 questions', mark: R.statusDot({ tone: 'is-amber' }), endText: '14:32', open: { title: 'Open the run' } })] },
+      { title: 'Presets', count: 2, rows: [R.listRow({ title: 'Bug fix', meta: 'Any project · Fix workflow · updated 3 Oct', open: { title: 'Open Bug fix' }, end: R.button({ label: 'More for Bug fix', kind: 'quiet', iconOnly: true, title: false, icon: DOTS }) }), R.listRow({ title: 'Docs pass', meta: 'Only worca-cc · Docs workflow', open: { title: 'Open Docs pass' }, end: R.button({ label: 'More for Docs pass', kind: 'quiet', iconOnly: true, title: false, icon: DOTS }) })] },
+    ] })]],
+    Field: [['With its hint', R.field({ id: 'g-f1', label: 'Worca folder', value: '~/.worca', hint: 'Runs, history and settings live here' })],
+      ['With its error', R.field({ id: 'g-f2', label: 'Worca folder', value: '/system', error: 'Worca cannot write to this folder' })]],
+    Tooltip: [['Why a control is off (hover it)', R.tooltip({ text: 'Checks are still running on #959', off: true, html: R.button({ label: 'Merge PR', kind: 'primary', attrs: { disabled: true } }) })]],
+    Dialog: [['A step that needs fields first', R.dialog({ title: 'Move the Worca folder', close: X, status: 'Runs pause while it moves', yes: 'Move it', body: R.field({ id: 'g-d1', label: 'New folder', value: '~/work/.worca', hint: 'Runs, history and settings move here' }) })]],
   };
   const g = document.getElementById('gallery');
   const coded = window.RailCatalog.components.filter((c) => c.code && EX[c.name]);

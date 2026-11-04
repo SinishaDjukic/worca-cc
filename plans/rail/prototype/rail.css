@@ -815,3 +815,44 @@ html,body{height:auto;overflow:visible;margin:0;}
   .spick-b{white-space:normal;}
   .spick-menu.is-right{left:-4px;right:auto;}   /* a stacked row: every menu opens under its words */   /* a long choice wraps on a narrow screen, its ▾ with its last word */
 }
+
+/* ListRow and List (ui/public/design-system/components/list.mjs): one thing per row, its mark on the rail hanging left
+   of the text edge, so every title starts on the page's text edge; the whole row opens its one target. Rows split by
+   space; a line where each group after the first starts, from the text edge. */
+.list{min-width:0;}
+.list-sentence{margin:0 0 4px;color:var(--ink-2);line-height:28px;}
+.list-group + .list-group{margin-top:12px;padding-top:12px;border-top:1px solid var(--line);}
+.list-h{margin:0 0 4px;display:flex;align-items:baseline;gap:8px;font:600 var(--fs-body)/var(--lh-title) var(--sans);color:var(--ink);}
+.list-h .n{font-size:var(--fs-caption);font-weight:500;color:var(--ink-2);font-variant-numeric:tabular-nums;}
+.list-rows{display:flex;flex-direction:column;}
+.list-row{--lr-rail:var(--rail,20px);--lr-gap:var(--gap,12px);display:grid;grid-template-columns:var(--lr-rail) minmax(0,1fr) auto;column-gap:var(--lr-gap);align-items:start;margin-left:calc(-1 * (var(--lr-rail) + var(--lr-gap)));padding:2px 0;}
+.lr-rail{display:grid;place-items:center;width:var(--lr-rail);height:40px;}
+.lr-main{display:flex;flex-direction:column;gap:1px;min-width:0;margin:0 0 0 -6px;padding:5px 6px;border:0;border-radius:var(--r-sm);background:none;color:inherit;font:inherit;text-align:left;}
+button.lr-main{cursor:pointer;transition:background-color 100ms var(--ease);}
+button.lr-main:hover{background:var(--hover);}
+button.lr-main:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+.lr-t{min-width:0;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.lr-m{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--fs-meta);color:var(--ink-2);}
+.lr-end{display:flex;align-items:center;gap:8px;padding-top:4px;}
+.lr-fig{font-size:var(--fs-meta);color:var(--ink-2);white-space:nowrap;font-variant-numeric:tabular-nums;}
+.list-more{margin-top:4px;}
+
+/* Field: the label above, the hint or the error one line under it. */
+.fld{display:flex;flex-direction:column;gap:4px;min-width:0;}
+.fld + .fld{margin-top:12px;}
+.fld-l{font-size:var(--fs-meta);font-weight:500;color:var(--ink);}
+.fld-hint{font-size:var(--fs-caption);color:var(--ink-2);}
+.fld-err{font-size:var(--fs-caption);color:var(--red-ink-strong);}
+.fld .input[aria-invalid="true"],.fld .textarea[aria-invalid="true"]{border-color:var(--red);}
+/* Tooltip: a disabled control's wrapper carries its words. */
+.tip-wrap{display:inline-flex;}
+/* Dialog: the app's anatomy (.viewer-modal > .card.dlg); the title and the foot's two sides. */
+.viewer-modal .card.rl-dialog{width:min(560px, 100%);max-height:min(720px, calc(100vh - 48px));}
+.rl-dialog .dlg-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding-bottom:4px;}
+.rl-dialog .dlg-head .dlg-title{margin:0;font:600 var(--fs-section)/var(--lh-title) var(--sans);color:var(--ink);letter-spacing:-.01em;}
+.rl-dialog .dlg-foot{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;}
+.dlg-status{font-size:var(--fs-meta);color:var(--ink-2);min-width:0;}
+.dlg-acts{display:flex;gap:8px;margin-left:auto;}
+/* A search result lands on its row: it lights once and fades over flash (Motion). */
+.set-row.is-flash,.list-row.is-flash{animation:ov-flash var(--motion-flash) ease-out;border-radius:var(--r-sm);}
+@media (prefers-reduced-motion: reduce){.set-row.is-flash,.list-row.is-flash{animation:none;outline:2px solid var(--line-2);outline-offset:4px;}}

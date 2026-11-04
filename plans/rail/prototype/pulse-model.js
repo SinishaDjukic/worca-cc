@@ -11,7 +11,7 @@
       ['schedule.self_paused', 'Series paused itself', 'problem'], ['schedule.ended', 'Series ended', 'info'], ['schedule.completed', 'Scheduled run finished', 'info']] },
     { id: 'prs', name: 'Pull requests', level: 'needs', where: 'both', events: [
       ['pr.needs_person', 'Watched PR needs a person', 'needs'], ['pr.fix_started', 'Fix started', 'info'], ['pr.published', 'Fix published', 'info']] },
-    { id: 'usage', name: 'Usage and spend', level: 'problems', where: 'both', events: [
+    { id: 'usage', name: 'Usage', level: 'problems', where: 'both', events: [
       ['usage.near', 'Near the warning line', 'problem'], ['usage.reached', 'Limit reached', 'problem'], ['usage.reset', 'Limit reset', 'info'],
       ['usage.moved', 'Start moved to a harness with room', 'info'], ['usage.held', 'Start held until a reset', 'problem'],
       ['budget.threshold', 'Spend near its budget', 'problem'], ['budget.exceeded', 'Budget used up', 'problem']] },

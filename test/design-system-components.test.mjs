@@ -198,3 +198,56 @@ test('switchButton, settingsRow and settingsSection: the row owns its parts, the
   assert.equal(sec.querySelector('.set-sec-meta').textContent, 'one line');
   assert.equal(sec.querySelectorAll('.set-rows > .set-row').length, 1);
 });
+
+test('listRow: the mark on the rail, title and meta, a figure and the ⋯ at the right; the whole row opens its target', () => {
+  const r = dom(C.listRow({ title: 'Bug fix <x>', meta: 'Any project · Fix workflow', mark: C.statusDot({ tone: 'is-green' }), endText: '14:32', end: '<button class="btn">⋯</button>', open: { 'data-open': 'p1', title: 'Open Bug fix' } }));
+  assert.equal(r.className, 'list-row');
+  assert.ok(r.querySelector('.lr-rail > .status-dot.is-green'));
+  const main = r.querySelector('button.lr-main');
+  assert.equal(main.dataset.open, 'p1');
+  assert.equal(r.querySelector('.lr-t').textContent, 'Bug fix <x>');
+  assert.equal(r.querySelector('.lr-m').textContent, 'Any project · Fix workflow');
+  assert.equal(r.querySelector('.lr-fig').textContent, '14:32');
+  assert.equal(dom(C.listRow({ title: 'Only shows' })).querySelector('button'), null, 'no target, no button');
+});
+
+test('list: its sentence, groups in order, an empty group not drawn, Show N more, the empty state when nothing is left', () => {
+  const l = dom(C.list({ sentence: 'Showing <b>everything</b>', groups: [
+    { title: 'Needs you', count: 2, rows: [C.listRow({ title: 'a' }), C.listRow({ title: 'b' })] },
+    { title: 'Running', count: 0, rows: [] },
+    { title: 'Older', rows: [C.listRow({ title: 'c' })], more: { n: 21, attrs: { 'data-more': 'older' } } },
+  ] }));
+  assert.equal(l.querySelector('.list-sentence b').textContent, 'everything');
+  assert.deepEqual([...l.querySelectorAll('.list-h')].map((h) => h.firstChild.textContent.trim()), ['Needs you', 'Older']);
+  assert.equal(l.querySelector('.list-more').textContent, 'Show 21 more');
+  assert.equal(dom(C.list({ groups: [{ rows: [] }], empty: C.emptyState({ title: 'No presets yet' }) })).querySelector('.empty-line .el-t').textContent, 'No presets yet');
+});
+
+test('dialog: head, the one scrolling body, a foot with its status, Cancel and the step; busy says so', () => {
+  const d = dom(C.dialog({ title: 'Change the Worca folder', body: '<p>x</p>', yes: 'Move it', status: 'Runs pause while it moves' }));
+  assert.equal(d.getAttribute('role'), 'dialog');
+  assert.equal(d.getAttribute('aria-modal'), 'true');
+  assert.equal(d.dataset.motion, 'in');
+  assert.ok(d.querySelector('.card.dlg > .dlg-head > h2#dlg-t'));
+  assert.ok(d.querySelector('.dlg-body > p'));
+  assert.deepEqual([...d.querySelectorAll('.dlg-acts button')].map((b) => b.textContent), ['Cancel', 'Move it']);
+  const busy = dom(C.dialog({ title: 't', body: '', yes: 'Move it', busy: true, busyLabel: 'Moving…' }));
+  assert.equal(busy.querySelector('[data-dialog="yes"]').textContent, 'Moving…');
+  assert.ok(busy.querySelector('[data-dialog="yes"]').disabled);
+});
+
+test('field and tooltip: a label for its input, the error replaces the hint; a disabled control keeps its tooltip', () => {
+  const f = dom(C.field({ id: 'root', label: 'Worca folder', value: '~/.worca', hint: 'Runs and history live here' }));
+  assert.equal(f.querySelector('label').htmlFor, 'root');
+  assert.equal(f.querySelector('input').value, '~/.worca');
+  assert.equal(f.querySelector('input').getAttribute('aria-describedby'), 'root-note');
+  const e = dom(C.field({ id: 'root', label: 'Worca folder', hint: 'h', error: 'This folder cannot be written' }));
+  assert.equal(e.querySelector('[role="alert"]').textContent, 'This folder cannot be written');
+  assert.equal(e.querySelector('input').getAttribute('aria-invalid'), 'true');
+  assert.equal(e.querySelector('.fld-hint'), null);
+  assert.ok(dom(C.field({ id: 'n', label: 'Note', multiline: true })).querySelector('textarea.textarea'));
+  const t = dom(C.tooltip({ text: 'Checks are still running', html: '<button class="btn" disabled>Merge</button>', off: true }));
+  assert.equal(t.className, 'tip-wrap');
+  assert.equal(t.title, 'Checks are still running');
+  assert.equal(dom(C.tooltip({ text: 'Copy the link', html: '<button class="btn">Copy</button>' })).title, 'Copy the link');
+});

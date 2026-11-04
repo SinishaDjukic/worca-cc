@@ -100,10 +100,9 @@ const navGo = (id, ic, t, tip) => `<button type="button" class="pz-nav-i${ui.pag
 function sidebar() {
   const rs = M.rings(C(), ui.s.warnAt);
   return `<aside class="pz-side">
-    <div class="pz-brand"><span class="pz-word">${ui.page === 'settings' ? 'Settings' : 'Worca'}</span></div>
+    <div class="pz-brand"><span class="pz-word${swapCls}">${ui.page === 'settings' ? 'Settings' : 'Worca'}</span></div>
     ${ui.page === 'settings' ? settingsMenu() : ''}
-    <nav class="pz-nav${ui.page === 'settings' ? ' is-app' : ''}">${NAV.map(([ic, t]) => ic === 'runs' ? navGo('runs', ic, t, 'Runs: the page behind Pulse in this prototype') : `<button type="button" class="pz-nav-i" aria-disabled="true" title="${t} is not in this prototype">${svg(ic, 16)}<span class="pz-nav-l">${t}</span></button>`).join('')}
-      ${navGo('settings', 'gear', 'Settings', 'Settings: how Worca behaves everywhere')}</nav>
+    <nav class="pz-nav${ui.page === 'settings' ? ' is-app' : ''}${swapCls}">${NAV.map(([ic, t]) => ic === 'runs' ? navGo('runs', ic, t, 'Runs: the page behind Pulse in this prototype') : `<button type="button" class="pz-nav-i" aria-disabled="true" title="${t} is not in this prototype">${svg(ic, 16)}<span class="pz-nav-l">${t}</span></button>`).join('')}</nav>
     <div class="pz-foot"><button type="button" class="pz-acct${ui.acct ? ' is-open' : ''}" data-acct aria-haspopup="menu" aria-expanded="${ui.acct}" aria-label="Account and usage: ${esc(rs.map((r) => r.line).join('; ') || 'no usage reported yet')}">${avatar()}<span class="pz-acct-name">Emil Angelov</span>${svg('updown', 14, 'pz-updown')}</button></div>
   </aside>`;
 }
@@ -111,7 +110,7 @@ function topbar() {
   const needs = C().needs.length, un = unread().length, run = C().running.length;
   const badge = needs ? `<span class="topnav-badge" data-tone="need">${needs}</span>` : un ? `<span class="topnav-badge" data-tone="run">${un}</span>` : '';
   const words = [needs && plural(needs, 'needs you', 'need you'), un && plural(un, 'unread'), run && `${run} running`].filter(Boolean).join(' · ') || 'Nothing new';
-  return `<header class="pz-top"><div class="pz-top-l"></div><div class="pz-top-r">
+  return `<header class="pz-top"><div class="pz-top-l"><div class="pz-search spick"><input class="input input-sm" data-search type="search" placeholder="Search or ask" aria-label="Search settings" value="${esc(ui.q || '')}" data-key="search" autocomplete="off"><div data-search-res>${searchResults()}</div></div></div><div class="pz-top-r">
     <button type="button" class="btn btn-sm btn-quiet topnav-act pz-pulse-b" data-pop aria-haspopup="dialog" aria-expanded="${ui.pop}" title="Pulse: ${esc(words)}">${svg('signal', 16)}<span class="pz-pulse-l">Pulse</span>${badge}</button>
     <button type="button" class="btn btn-sm btn-primary" data-newrun title="Start a run">${svg('plus', 14)}<span class="pz-new-l">New run</span></button>
   </div></header>`;
@@ -353,7 +352,7 @@ const sp = (id, text, items, tip, right) => R.sentencePicker({ id, text, items, 
 const sectionId = () => ui.sset || SM.FIRST;
 function settingsMenu() {
   const on = sectionId();
-  return `<nav class="pz-nav cfg-menu" aria-label="Settings">
+  return `<nav class="pz-nav cfg-menu${swapCls}" aria-label="Settings">
     <button type="button" class="pz-nav-i cfg-back" data-go="runs" title="Back to the page you came from">${svg('chevL', 14)}<span class="pz-nav-l">Back to Worca</span></button>
     ${SM.GROUPS.map((g) => `<p class="cfg-g">${esc(g.title)}</p>${g.items.filter((id) => SM.shows(SM.min(id), ui.level)).map((id) => `<button type="button" class="pz-nav-i${id === on ? ' is-on" aria-current="page' : ''}" data-sset="${id}"><span class="pz-nav-l">${esc(SM.title(id))}</span></button>`).join('')}`).join('')}
   </nav>`;
@@ -387,14 +386,14 @@ function notifications() {
       end: quiet(open ? 'Done' : 'Customise', { 'data-custom': g.id, 'aria-expanded': String(open), title: open ? 'Close the events' : 'Choose per event: ' + g.events.map((e) => e[1]).join(', ') }) });
   }).join('');
   const RESUME = [{ id: 'auto', text: 'resumes after the reset', help: 'Worca schedules its resume for 5 minutes after the limit resets' }, { id: 'me', text: 'waits for you', help: 'It stays paused until you resume it' }];
-  const limits = R.settingsRow({ name: 'You start it', sentence: `New run and Resume near a limit ${sp('mine', MINE.find((m) => m.id === s.mine).text, MINE.map((m) => ({ ...m, checked: m.id === s.mine })), 'What New run and Resume do when the harness is near its limit')}` })
-    + R.settingsRow({ name: 'Worca starts it', sentence: `A slice or scheduled run near a limit ${sp('auto', AUTO.find((m) => m.id === s.auto).text, AUTO.map((m) => ({ ...m, checked: m.id === s.auto })), 'What a start with nobody there to ask does near a limit. One that waits never holds up the line: the next start that fits goes ahead')}` })
-    + R.settingsRow({ name: 'After a pause', sentence: `A run paused at a limit ${sp('resume', RESUME.find((m) => m.id === s.resume).text, RESUME.map((m) => ({ ...m, checked: m.id === s.resume })), 'What a run paused at a usage limit does when the limit resets')}` });
+  const limits = R.settingsRow({ name: 'Manual starts', sentence: `New run and Resume near a limit ${sp('mine', MINE.find((m) => m.id === s.mine).text, MINE.map((m) => ({ ...m, checked: m.id === s.mine })), 'What New run and Resume do when the harness is near its limit')}` })
+    + R.settingsRow({ name: 'Automatic starts', sentence: `A slice or scheduled run near a limit ${sp('auto', AUTO.find((m) => m.id === s.auto).text, AUTO.map((m) => ({ ...m, checked: m.id === s.auto })), 'What a start with nobody there to ask does near a limit. One that waits never holds up the line: the next start that fits goes ahead')}` })
+    + R.settingsRow({ name: 'Paused runs', sentence: `A run paused at a limit ${sp('resume', RESUME.find((m) => m.id === s.resume).text, RESUME.map((m) => ({ ...m, checked: m.id === s.resume })), 'What a run paused at a usage limit does when the limit resets')}` });
   const confirm = ui.confirm === 'reset' ? R.confirmStrip({ text: 'Reset every group to its defaults? Your channels stay as they are.', yes: 'Reset' }) : '';
   return confirm
-    + R.settingsSection({ title: 'How Worca reaches you', rows: channels })
-    + R.settingsSection({ title: 'What reaches you', rows: groups, action: quiet('Reset to defaults', { 'data-reset': '', title: 'Every group back to its defaults; asks first' }) })
-    + R.settingsSection({ title: 'When a limit is near', meta: `Near: the run's estimate does not fit in what is left of a window; with no estimate, at the warning line (${s.warnAt}%).`, rows: limits });
+    + R.settingsSection({ title: 'Channels', rows: channels })
+    + R.settingsSection({ title: 'Updates', meta: 'What each kind of update sends beyond Pulse.', rows: groups, action: quiet('Reset to defaults', { 'data-reset': '', title: 'Every group back to its defaults; asks first' }) })
+    + R.settingsSection({ title: 'Limits', meta: `Near: the run's estimate does not fit in what is left of a window; with no estimate, at the warning line (${s.warnAt}%).`, rows: limits });
 }
 function settingsPage() {
   const id = sectionId();
@@ -406,8 +405,48 @@ function settingsPage() {
     <div class="cfg-body">${body}</div></div></div>`;
 }
 
+// ---- search: every setting by its name or its words; a pick goes there and the row lights once (Motion: flash) ----
+const NOTIF_ROWS = ['Desktop', 'Badge', 'Chat', 'Runs', 'Schedules', 'Pull requests', 'Usage', 'Away mode', 'Projects', 'Manual starts', 'Automatic starts', 'Paused runs'];
+function SEARCH() {
+  const out = [{ label: SM.title('notifications'), sset: 'notifications', where: 'Settings' }, ...NOTIF_ROWS.map((n) => ({ label: n, sset: 'notifications', where: 'Notifications' }))];
+  for (const g of SM.GROUPS) for (const id of g.items) {
+    const sec = SM.SECTIONS[id]; if (!sec || !SM.shows(sec.min, ui.level)) continue;
+    out.push({ label: sec.title, sset: id, where: 'Settings › ' + g.title });
+    for (const s of sec.sections) {
+      if (!SM.shows(s.min, ui.level)) continue;
+      for (const r of s.rows || []) {
+        if (!SM.shows(r.min, ui.level)) continue;
+        out.push({ label: r.name, words: r.say, sset: id, where: `${sec.title} › ${s.title}` });
+        const open = 'more:' + id + '/' + s.title + '/' + r.name;
+        for (const m of r.more || []) if (SM.shows(m.min, ui.level)) out.push({ label: m.name, words: m.say, sset: id, open, where: `${sec.title} › ${r.name}` });
+        for (const it of r.moreList || []) out.push({ label: it.title, words: it.meta, sset: id, open, list: true, where: `${sec.title} › ${r.name}` });
+      }
+      for (const it of s.list || []) out.push({ label: it.title, words: it.meta, sset: id, list: true, where: `${sec.title} › ${s.title}` });
+    }
+  }
+  return out;
+}
+const plain = (t) => String(t || '').replace(/[*`{}]/g, '').toLowerCase();
+function searchResults() {
+  const q = plain(ui.q).trim(); if (!q) return '';
+  const all = SEARCH(), hits = all.map((e, i) => [e, i]).filter(([e]) => plain(e.label).includes(q) || plain(e.words).includes(q))
+    .sort(([a], [b]) => (plain(b.label).startsWith(q) - plain(a.label).startsWith(q)) || (plain(b.label).includes(q) - plain(a.label).includes(q))).slice(0, 8);
+  return R.compactMenu({ cls: 'spick-menu pz-search-menu', label: 'Settings found', items: hits.length ? hits.map(([e, i]) => ({ id: 'srch|' + i, text: e.label, hint: e.where })) : [{ id: 'srch|none', text: 'No setting matches', off: true }] });
+}
+function land(e) {
+  if (!e) return;
+  ui.page = 'settings'; ui.sset = e.sset; ui.sv.__open = e.open || ''; ui.sv.__confirm = null; ui.sv.__dialog = null; ui.q = ''; ui.menu = ''; ui.pop = false; ui.acct = false;
+  render();
+  const row = [...document.querySelectorAll(e.list ? '.list-row' : '.set-row')].find((x) => (x.querySelector(e.list ? '.lr-t' : '.set-name')?.textContent || '') === e.label);
+  if (row) { row.classList.add('is-flash'); row.scrollIntoView({ block: 'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' }); setTimeout(() => row.classList.remove('is-flash'), 1300); }
+  else scrollTo(0, 0);
+}
+document.addEventListener('input', (e) => { if (e.target.matches?.('[data-search]')) { ui.q = e.target.value; document.querySelector('[data-search-res]').innerHTML = searchResults(); } });
+
 // ---- render ----
+let sideWas = null, swapCls = '';   // the sidebar's content fades only when it changes between Worca's and Settings'
 function render() {
+  const sideNow = ui.page === 'settings'; swapCls = sideWas !== null && sideWas !== sideNow ? ' is-swap' : ''; sideWas = sideNow;
   const scroller = document.scrollingElement || document.documentElement; const keepY = scroller.scrollTop;
   const keepP = document.querySelector('.pz-pbody')?.scrollTop || 0;
   document.getElementById('app').innerHTML = `<div class="pz-app">${sidebar()}<div class="pz-main">${topbar()}<main class="pz-page">${ui.page === 'settings' ? settingsPage() : runsPage()}</main></div>${popover()}${newRun()}${acctMenu()}</div>`;
@@ -468,11 +507,14 @@ document.addEventListener('click', (e) => {
   let el;
   if ((el = tg('[aria-disabled="true"]'))) { toast(el.title); render(); return; }
   if ((el = tg('[data-pick]'))) { const [id, v] = el.dataset.pick.split('|'); pick(id, v); render(); return; }
-  if ((el = tg('[data-menu-pick]'))) { const v = el.dataset.menuPick, i = v.indexOf('|'), id = v.slice(0, i); if (id.startsWith('sv:')) { const say = SV.pick(ui.sv, id, v.slice(i + 1)); ui.menu = ''; if (say) toast(say); } else pick(id, v.slice(i + 1)); render(); return; }
+  if ((el = tg('[data-menu-pick^="srch|"]'))) { if (!el.matches('[aria-disabled="true"]')) land(SEARCH()[+el.dataset.menuPick.slice(5)]); return; }
+  if ((el = tg('[data-menu-pick]'))) { const v = el.dataset.menuPick, i = v.indexOf('|'), id = v.slice(0, i); if (/^svm?:/.test(id)) { const say = SV.pick(ui.sv, id, v.slice(i + 1)); ui.menu = ''; if (say) toast(say); } else pick(id, v.slice(i + 1)); render(); return; }
+  if ((el = tg('[data-dialog]')) && ui.sv.__dialog) { const say = SV.dialog(ui.sv, el.dataset.dialog); if (say) toast(say); render(); return; }
   if ((el = tg('[data-svsw]'))) { const say = SV.toggle(ui.sv, el.dataset.svsw); if (say) toast(say); render(); return; }
   if ((el = tg('[data-svdo]'))) { const say = SV.act(ui.sv, el.dataset.svdo); if (say) toast(say); render(); return; }
   if ((el = tg('[data-menu]'))) { ui.menu = ui.menu === el.dataset.menu ? '' : el.dataset.menu; if (ui.menu) opening = 'menu'; render(); return; }
   if (!tg('.pz-pick, .spick')) ui.menu = '';
+  if (ui.q && !tg('.pz-search')) { ui.q = ''; const r = document.querySelector('[data-search-res]'); if (r) r.innerHTML = ''; }
   // an open popover or account menu closes on a click outside it, and that click does nothing else
   if ((ui.pop || ui.acct || ui.nr) && !tg('.pz-popover, .nav-fly, .pz-newrun, [data-pop], [data-acct], [data-newrun]')) { ui.pop = false; ui.acct = false; ui.sub = ''; ui.nr = null; render(); return; }
   if ((el = tg('[data-pop]'))) { ui.pop = !ui.pop; ui.acct = false; ui.nr = null; if (ui.pop) opening = 'pop'; render(); return; }
@@ -490,7 +532,7 @@ document.addEventListener('click', (e) => {
   if ((el = tg('[data-nr-cancel]'))) { ui.nr = null; render(); return; }
   if ((el = tg('[data-nr-start]'))) { toast(`${el.textContent === 'Start run' ? `Started on ${pname(ui.nr.on)}` : `Scheduled: ${el.textContent.replace('Start at', 'starts at')}`} (not in this prototype)`); ui.nr = null; render(); return; }
   if ((el = tg('[data-ptab]'))) { ui.popTab = el.dataset.ptab; ui.sel = []; ui.selecting = false; render(); return; }
-  if ((el = tg('[data-sset]'))) { ui.sset = el.dataset.sset; ui.sv.__confirm = null; ui.menu = ''; ui.custom = ''; ui.confirm = ''; opening = 'section'; render(); scrollTo(0, 0); return; }
+  if ((el = tg('[data-sset]'))) { ui.sset = el.dataset.sset; ui.sv.__confirm = null; ui.sv.__dialog = null; ui.sv.__open = ''; ui.menu = ''; ui.custom = ''; ui.confirm = ''; opening = 'section'; render(); scrollTo(0, 0); return; }
   if ((el = tg('[data-go]'))) { ui.page = el.dataset.go; ui.sset = el.dataset.to || ''; ui.pop = false; ui.acct = false; ui.sub = ''; render(); return; }
   if ((el = tg('[data-selall]'))) { const ids = shown().map((u) => u.id); ui.sel = el.checked ? ids : []; render(); return; }
   if ((el = tg('[data-sel]'))) { tick(el.dataset.sel, e.shiftKey); render(); return; }
@@ -531,7 +573,7 @@ document.addEventListener('keydown', (e) => {
     document.querySelector(`.pz-popover [data-open="${CSS.escape(id)}"]`)?.focus(); return;
   }
   if (e.key !== 'Escape') return;
-  if (ui.menu) ui.menu = ''; else if (ui.sv.__confirm) ui.sv.__confirm = null; else if (ui.sub) ui.sub = ''; else if (ui.pop && ui.selecting) { ui.sel = []; ui.selecting = false; } else if (ui.pop || ui.acct || ui.nr) { ui.pop = false; ui.acct = false; ui.nr = null; } else if (ui.confirm) ui.confirm = ''; else return;
+  if (ui.q) { ui.q = ''; } else if (ui.menu) ui.menu = ''; else if (ui.sv.__dialog) ui.sv.__dialog = null; else if (ui.sv.__confirm) ui.sv.__confirm = null; else if (ui.sub) ui.sub = ''; else if (ui.pop && ui.selecting) { ui.sel = []; ui.selecting = false; } else if (ui.pop || ui.acct || ui.nr) { ui.pop = false; ui.acct = false; ui.nr = null; } else if (ui.confirm) ui.confirm = ''; else return;
   render();
 });
 // Touch: a long-press on an update starts selecting, as on the Runs list; the click that follows is swallowed.

@@ -48,6 +48,12 @@ export const ALIGN = () => {
     const sl = rows.filter((r) => !stacked && r.querySelector('.set-text').textContent.trim()).map((r) => textBox(r.querySelector('.set-text')).left);
     if (sl.some((x) => !near(x, sl[0]))) out.push(`the sentences start on ${new Set(sl.map(Math.round)).size} edges: ${label(rows[0])}…`);
   }
+  // a record's title starts on its section's text edge: its mark hangs left of it
+  for (const sec of document.querySelectorAll('.set-sec')) {
+    const h = sec.querySelector(':scope > .set-sec-head .set-sec-h'); if (!h || !h.offsetParent) continue;
+    const L = textBox(h).left;
+    for (const t of sec.querySelectorAll(':scope > .set-rows > .list .lr-t')) if (t.offsetParent && !near(textBox(t).left, L)) out.push(`a record's title is ${Math.round(textBox(t).left - L)}px off the text edge: ${t.textContent.slice(0, 30)}`);
+  }
   return out;
 };
 

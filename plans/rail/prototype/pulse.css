@@ -85,6 +85,9 @@
 /* New run is a Dialog (Worca's .viewer-modal and its card), here inside the mock window: the sentence that frames the
    step, the task Field, the note when the run will not fit, then Cancel and the start button. */
 .pz-app .viewer-modal{position:absolute;z-index:47;border-radius:var(--r-card);padding:16px;}
+/* A Dialog on a long page (Settings) stays in view: it sits near the top of the window as the page scrolls. */
+.pz-app .viewer-modal:has(> .rl-dialog){place-items:start center;}
+.pz-app .viewer-modal > .rl-dialog{position:sticky;top:64px;}
 .pz-app .viewer-modal > .card.pz-newrun{width:min(460px,100%);max-height:none;padding:0;overflow:visible;display:flex;flex-direction:column;box-shadow:var(--shadow-pop);}
 .pz-nr{display:flex;flex-direction:column;gap:12px;padding:16px 16px 12px 4px;}
 .pz-nr > :not(.pz-advice){margin-left:var(--edge);}
@@ -208,3 +211,10 @@
   .cfg-li svg{color:var(--ink-3);}
   .cfg-crumb{display:inline-flex;align-items:center;gap:2px;margin:0 0 8px var(--edge);padding:0;border:0;background:none;color:var(--ink-2);font:inherit;font-size:var(--fs-meta);cursor:pointer;}
 }
+/* The sidebar's content fades when it becomes Settings' menu, and back; the page changes at once (Motion). */
+.pz-side .is-swap{animation:rl-in var(--motion-change) var(--ease);}
+@media (prefers-reduced-motion: reduce){.pz-side .is-swap{animation:none;}}
+/* The top bar's search: results under the field, each with where it lives. */
+.pz-search{display:block;width:min(320px, 40vw);}
+.pz-search .input{width:100%;}
+.pz-search-menu{min-width:100%;width:max-content;max-width:min(480px, 80vw);}

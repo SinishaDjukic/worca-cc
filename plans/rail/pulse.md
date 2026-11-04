@@ -96,11 +96,11 @@ Three sections, one rail. Every choice is a **picker in its sentence** (Rail: ne
 | Runs | needs_you, cost_cap, failed, paused, done, resumed | Needs you and problems | Desktop and chat |
 | Schedules | missed, late, skipped, self_paused, ended, completed | Needs you and problems | Desktop and chat |
 | Pull requests | fix_started, published, needs_person (watched PRs) | Needs you | Desktop and chat |
-| **Usage and spend** (new) | usage.near, usage.reached, usage.reset, usage.moved, usage.held, budget.threshold, budget.exceeded | Needs you and problems | Desktop and chat |
+| **Usage** (new; usage limits and spend) | usage.near, usage.reached, usage.reset, usage.moved, usage.held, budget.threshold, budget.exceeded | Needs you and problems | Desktop and chat |
 | Away mode | started, ended | Everything | Chat |
 | Projects | clone, sync, scan | Needs you and problems | Pulse only |
 
-- Usage and spend has one more picker in its sentence: `warn at [80% ▾]` (70, 80, 90%). It sets the line for the
+- Usage has one more picker in its sentence: `warn at [80% ▾]` (70, 80, 90%). It sets the line for the
   rings' amber, the Limits row in Now, the `usage.near` update and what "near" means below.
 
 **When a limit is near** (the last section): what a start does when the run will not fit in what is left (§4.5).
@@ -255,7 +255,7 @@ against its own estimate when its turn comes, follows the setting, and says what
 - Name: **Pulse** (from Pulse Center), not Hub (30 Oct).
 - Gemini's daily window sits in the **Week** ring (the long window); the ring carries no label of its own, and the
   avatar's tooltip and the usage card call it **Day** (`Day 84% · Gemini · resets 02:00`) (30 Oct).
-- One warning line for all providers: the `warn at [80% ▾]` picker in Usage and spend, not one per provider (30 Oct).
+- One warning line for all providers: the `warn at [80% ▾]` picker in Usage, not one per provider (30 Oct).
 - No Pulse page: the panel under the button is all of Pulse (30 Oct).
 - Settings › Notifications is a tab of its own, after General; Alerts and resume after a limit move into it (30 Oct).
 - A start near a limit is judged by its estimate (size and history), not the share alone; a start that waits lets the

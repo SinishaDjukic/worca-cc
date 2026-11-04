@@ -261,19 +261,26 @@ at once. One side column at a time.
 its work as cards on a 760px text column under the shared card head: a run card, a command group (folded to its head;
 a failure opens itself), a graph in its well.
 
-**Settings**: opening Settings turns the sidebar into its menu: `‹ Back to Worca`, then the sections under four small
-group heads (Worca: General, Notifications, Labs · Runs: Runs, Presets, Labels & cost tags, Automations · Agents: Chat,
-Guardrails, Memory · Add-ons: Marketplace, Connectors, Models, Providers); the content keeps the full width. On a narrow
-screen Worca's sidebar stays, Settings opens on its menu as a list, and a section has `‹ Settings` above its title.
-Mocks: `plans/rail/mocks/settings-menu-*.png`.
+**Settings**: one place, opened from the profile menu (the sidebar holds places in Worca, never Settings; Interface
+mode, Appearance and going away live in the profile menu only). Opening it turns the sidebar into its menu, its content
+fading over `change` while the page changes at once: `‹ Back to Worca`, then the sections under four group heads
+(Worca: General, Notifications, Team policy, Labs · Runs: Runs, Presets, Labels, Automations · AI: Models, Providers,
+Chat, Guardrails, Memory · Add-ons: Marketplace, Connectors). On a narrow screen Worca's sidebar stays, Settings opens
+on its menu as a list, and a section has `‹ Settings` above its title. The top bar's search finds every row, folded
+row and record by its name or its words, and lands on it with the flash, opening its Customise. Mocks:
+`plans/rail/mocks/settings-*.png`, `settings-open-light.gif`.
 
 **A settings tab** (a section of Settings): its title, then one meta line saying what it decides, then its sections
 (SettingsSection). A row (SettingsRow) is its name on the left and one sentence beside it, the choice a SentencePicker in
 it (`Tell me about [needs you ▾] on [desktop ▾]`), and at its right end a Switch when it is only on or off, then its
 buttons; it takes effect at once. More detail
 folds under the row behind Customise, and a row that differs from its group says Changed. A reset of many rows sits in
-its section's head and confirms in the strip; nothing else confirms. A tab that also keeps records (rules, an event
-log, a queue) puts each as a list section after its rows, under its own head: a List with its sentence.
+its section's head and confirms in the strip; nothing else confirms. **One row per decision a person makes**, saying the
+current state in words (`Runs pause at $1,000 a month; one run has no limit`); its fine-tuning folds under Customise,
+never a row of its own on the page. A value that is a path, a list or a text shows as words with `Change…`, which opens
+a Dialog with its Fields. **A record is not a setting**: a tab that keeps records (presets, labels, models, plugins,
+rules, an event log) puts them as a List of ListRows after its rows, under its own head; the row opens the thing, its
+own actions are in its ⋯, never a SettingsRow per record.
 
 **A form** (New run, Create PR): a Dialog. It opens with the one sentence that frames the step, its choices as
 SentencePickers (`A [large ▾] task`, `branch into dev ▾`), then its Fields. Text Worca can write is a SuggestionField.
@@ -326,6 +333,11 @@ runs execute on their own, and the words say so.
 The prototype's Break picker plays each case.
 
 ### Small rules that hold everywhere
+- **Names** (a page, a menu item, a section head, a settings row): the thing itself, as the people who use it call it,
+  in 1–3 words, a plain noun first (`Budget`, `Labels`, `Away mode`, `Team policy`). One thing, one name: never two
+  things joined by `&` or `and` (two things get two names); never `Your …`, `My …` or `This …`; never a phrase or a
+  question (`What it may do`, `Up to date`); never a word made up for the screen. The same thing keeps its name
+  everywhere: a menu item's name is its page's title. `ds-check` reads every name on a Rail page by this rule.
 - Hover is a tint, never a lift.
 - A row with no state to show (an idle chat) may show its kind's line icon in the dot's place, in `--ink-2`; a row with
   a state shows its dot.

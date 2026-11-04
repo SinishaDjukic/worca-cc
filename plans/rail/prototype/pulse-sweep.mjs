@@ -20,11 +20,11 @@ const VIEWS = {
   popMore: async (p) => { await click(p, '[data-pop]'); await click(p, '[data-ptab="updates"]'); await click(p, '[data-menu="more"]'); },
   newrun: async (p) => click(p, '[data-newrun]'),
   newrunSmall: async (p) => { await click(p, '[data-newrun]'); await click(p, '[data-menu="nr-size"]'); await click(p, '[data-pick="nr-size|small"]'); },
-  settings: async (p) => { await click(p, '[data-go="settings"]'); await click(p, '[data-sset="notifications"]'); await click(p, '[data-custom="usage"]'); },
+  settings: async (p) => { await click(p, '[data-acct]'); await click(p, '[data-go="settings"]'); await click(p, '[data-sset="notifications"]'); await click(p, '[data-custom="usage"]'); },
   // every other Settings section: their rows are the same components, each with its own pickers, switches and buttons
   ...Object.fromEntries(['general', 'experimental', 'runs', 'presets', 'tags', 'automations', 'ask', 'guardrails', 'memory', 'marketplace', 'connectors', 'models', 'providers']
-    .map((id) => ['settings-' + id, async (p) => { await click(p, '[data-go="settings"]'); await click(p, `[data-sset="${id}"]`); }])),
-  settingsWait: async (p) => { await click(p, '[data-go="settings"]'); await click(p, '[data-sset="notifications"]'); await click(p, '[data-menu="auto"]'); await click(p, '[data-pick="auto|wait"]'); await click(p, '[data-menu="mine"]'); await click(p, '[data-pick="mine|wait"]'); await click(p, '[data-newrun]'); },
+    .map((id) => ['settings-' + id, async (p) => { await click(p, '[data-acct]'); await click(p, '[data-go="settings"]'); await click(p, `[data-sset="${id}"]`); }])),
+  settingsWait: async (p) => { await click(p, '[data-acct]'); await click(p, '[data-go="settings"]'); await click(p, '[data-sset="notifications"]'); await click(p, '[data-menu="auto"]'); await click(p, '[data-pick="auto|wait"]'); await click(p, '[data-menu="mine"]'); await click(p, '[data-pick="mine|wait"]'); await click(p, '[data-newrun]'); },
 };
 let clicks = 0;
 for (const scheme of ['dark', 'light']) for (const w of [375, 900]) {
