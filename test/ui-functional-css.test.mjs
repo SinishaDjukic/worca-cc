@@ -5,11 +5,12 @@
 // jsdom's CSSOM and replays the cascade for `display`: importance, then specificity, then order.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { checkRows } from './helpers/rows.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
-const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+const css = readStyleCss();
 const { document } = new JSDOM(`<style>${css}</style>`).window;
 // Every style rule in document order. jsdom gives a CSSStyleRule an EMPTY `cssRules` (nesting
 // support), so "recurse if r.cssRules, else collect" collects nothing: collect, then recurse.
@@ -116,7 +117,7 @@ test('[hidden] beats the author display rule on every element app.js hides by at
   await checkRows([
     ...ROWS.map(([sel, from]) => ({ name: `${sel} (${from})`, run: () => assertHiddenWins(sel) })),
     { name: 'every element index.html ships with `hidden` stays hidden (the cascade over every display rule that matches it)', run: () => {
-      const page = new JSDOM(readFileSync(new URL('../ui/public/index.html', import.meta.url), 'utf8')).window.document;
+      const page = new JSDOM(readIndexHtml()).window.document;
       const els = [page, ...[...page.querySelectorAll('template')].map((t) => t.content)].flatMap((r) => [...r.querySelectorAll('[hidden]')]);
       assert.ok(els.length > 100, `${els.length} hidden elements in index.html`);
       const rules = flat.map((r, i) => ({ r, i })).filter(({ r }) => r.style.display)

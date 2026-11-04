@@ -1,0 +1,58 @@
+
+/* Selector lists that used to pair the retired run-card tree with the History
+   detail's Agents tab. `.subs-stat` is only ever styled here, so a bare appended
+   `.subs-stat.stop{…}` would tie on specificity and still lose to this rule's
+   ancestor scope — extend in place, never duplicate. Same for `.st`,
+   `.agent-type-pill` and the full-row `.subs-skills` rule below. */
+.rd-ag-head .subs-stat,.hd-ag-head .subs-stat{font-size:var(--fs-caption);font-weight:700;padding:3px 9px;border-radius:var(--r-xs);letter-spacing:.02em;}
+.rd-ag-head .subs-stat.run,.hd-ag-head .subs-stat.run{background:var(--blue-bg);color:var(--blue-ink);}
+.rd-ag-head .subs-stat.done,.hd-ag-head .subs-stat.done{background:var(--green-bg);color:var(--green-ink);}
+.rd-ag-head .subs-stat.stop,.hd-ag-head .subs-stat.stop{background:var(--red-bg);color:var(--red-ink);}
+.hd-ag-row .st{margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:var(--fs-caption);font-weight:500;padding:2px 8px;border-radius:var(--r-sm);white-space:nowrap;}
+.hd-ag-row .st.done{background:var(--green-bg);color:var(--green-ink);}
+.hd-ag-row .st.run{background:var(--blue-bg);color:var(--blue-ink);}
+.hd-ag-row .st.stop{background:var(--red-bg);color:var(--red-ink);}
+
+/* Skill / MCP pills — main-agent group header + per sub-agent row. Flex-wrap so
+   pills reflow onto multiple lines as the window shrinks (cf. .agent-chips, .fan). */
+.subs-skills{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;}
+/* The BASE .subs-skills rule above is unscoped and reaches the Agents tab on its
+   own; this FULL-ROW rule is not, and buildHdAgents emits skillPillsHtml into
+   BOTH the group head and every row. Without the extension the pills stay inline
+   — and in the head they land to the right of `.hd-ag-meta{margin-left:auto}`,
+   jammed against the card edge. */
+.hd-ag-head .subs-skills,.rd-ag-head .subs-skills,.hd-ag-row .subs-skills{flex:0 0 100%;margin-top:6px;}  /* own full row, aligned under the name cell */
+.skill-pill{font-size:var(--fs-caption);font-weight:700;letter-spacing:.01em;padding:2px 9px;border-radius:var(--r-xs);white-space:nowrap;}
+.skill-pill.is-skill{background:var(--blue-bg);color:var(--blue-ink);}
+.skill-pill.is-mcp{background:var(--green-bg);color:var(--green-ink);box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--green-ink) 18%, transparent);}
+/* Three-part MCP label `mcp:<server>:<tool>` (§7.4). A VARIANT of .is-mcp — the
+   green background/ink come from the base rule (class list is "is-mcp is-mcp-tool");
+   this only adds monospace (the tool token is an identifier, not prose) and denser
+   padding, since "<server> · <tool>" is roughly twice as wide as a server alone. */
+.skill-pill.is-mcp-tool{font-family:var(--mono);font-size:var(--fs-caption);font-weight:600;padding:2px 7px;}
+/* §7.1's overflow sentinel: "+N more" when the per-agent pill cap binds. Muted on
+   purpose — it is a count of what is NOT shown, so it must not read as a label
+   (blue/green) or a status (red/amber/violet). */
+.skill-pill.is-overflow{background:var(--field);color:var(--ink-3);font-weight:600;box-shadow:inset 0 0 0 1px var(--line);cursor:help;}
+/* Sub-agent type pill — the raw Task/Agent subagent_type, inline next to the row
+   name (cf. skill pills). Uses the shared violet token (defined :root, l.24) so it
+   reads as agent metadata, distinct from the skill (blue) / MCP (green) pills. */
+.rd-ag-name .agent-type-pill,.hd-ag-row .agent-type-pill{font-size:var(--fs-caption);font-weight:700;letter-spacing:.01em;padding:2px 9px;border-radius:var(--r-xs);white-space:nowrap;background:var(--slate-bg);color:var(--slate-ink);}
+/* Sub-agent run model (neutral outline) — the model a spawned child actually ran on.
+   Deliberately the QUIETEST pill on the row: it is present on every sub-agent once a
+   run records one, so a filled colour would out-shout the type + graphify badges that
+   only some rows carry. Sits right after the violet type pill. The head scopes carry
+   the SAME pill for the main agent's configured model · effort (stepModelPillHtml). */
+.rd-ag-name .sub-model-pill,.hd-ag-row .sub-model-pill,.rd-ag-head .sub-model-pill,.hd-ag-head .sub-model-pill{display:inline-block;font-size:var(--fs-caption);font-weight:600;letter-spacing:.01em;padding:1px 8px;border-radius:var(--r-xs);white-space:nowrap;background:transparent;color:var(--ink-2);border:1px solid var(--line-2);}
+/* graphify-use count badge (amber) — how many times an agent / sub-agent invoked the
+   graphify CLI. Rendered INLINE: in the phase/node header next to the status, and on a
+   sub-agent row right after the violet type pill. inline-block + parent flex `gap` size
+   it to its text; amber keeps it distinct from skill (blue) / MCP (green) / type (violet). */
+.graphify-pill{display:inline-block;font-size:var(--fs-caption);font-weight:700;letter-spacing:.01em;padding:2px 9px;border-radius:var(--r-xs);white-space:nowrap;background:var(--amber-bg);color:var(--amber-ink);}
+
+@media (prefers-reduced-motion: reduce){
+  .run-flow .node.is-active,.run-flow .node.is-paused,.run-flow.gv-host .gv-world .node.is-active,.run-flow.gv-host .gv-world .node.is-paused{animation:none;box-shadow:0 0 0 1.5px color-mix(in srgb, var(--c) 55%, var(--line-2)),0 0 0 4px color-mix(in srgb, var(--c) 16%, transparent);}
+  .run-flow .node.is-paused,.run-flow.gv-host .gv-world .node.is-paused{box-shadow:0 0 0 1.5px var(--amber-ring),0 0 0 4px color-mix(in srgb, var(--amber) 18%, transparent);}
+  .run-flow .node .fan .sq.on{animation:none;}
+}
+

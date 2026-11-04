@@ -1,5 +1,5 @@
 // test/credentials-view.test.mjs
-// Settings › My model credentials (ui/public/credentials-view.mjs): status only,
+// Settings › My credentials (ui/public/credentials-view.mjs): status only,
 // a link to the key page, never a key.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -26,6 +26,38 @@ test('credentials view in multi, single, no-person and broker-error states', asy
       assert.equal(a.href, 'https://keys.example.com/');
       assert.equal(a.target, '_blank');
       assert.match(a.className, /btn-primary/, 'a missing key makes Manage keys the primary action');
+      // The hint is its own line, above the button.
+      const acts = el.querySelector('.cred-actions');
+      assert.deepEqual([...acts.children].map((c) => c.tagName), ['SMALL', 'A']);
+      assert.match(acts.firstElementChild.textContent, /Opens the key page in a new tab/);
+      // Without "push as me", no GitHub group and no group titles.
+      assert.equal(el.querySelector('.cred-group-title'), null);
+    } },
+    { name: 'push as me: GitHub in its own group with what connecting does; it never counts as a model key', run: () => {
+      const slots = [
+        { id: 'anthropic', label: 'Anthropic API key', state: 'set', suffix: '1a2b' },
+        { id: 'github', label: 'GitHub (push as me)', protocol: 'github', state: 'missing' },
+      ];
+      const off = renderCredentials({ enabled: true, mode: 'multi', keyPage: 'https://keys.example.com', person: 'ada@acme.dev', slots, githubAsPerson: null }, doc);
+      assert.deepEqual([...off.querySelectorAll('.cred-row')].map((r) => r.textContent), ['Anthropic API keySet ••••1a2b'], 'off: no GitHub row');
+      assert.doesNotMatch(off.querySelector('a').className, /btn-primary/);
+
+      const prefer = renderCredentials({ enabled: true, mode: 'multi', keyPage: 'https://keys.example.com', person: 'ada@acme.dev', slots, githubAsPerson: 'prefer' }, doc);
+      assert.deepEqual([...prefer.querySelectorAll('.cred-group-title')].map((t) => t.textContent), ['Models', 'GitHub']);
+      assert.deepEqual([...prefer.querySelectorAll('.cred-row')].map((r) => r.textContent), ['Anthropic API keySet ••••1a2b', 'Your GitHub accountNot connected']);
+      assert.match(prefer.textContent, /clones, pushes and creates PRs as you.*Until you connect it, Worca uses its own GitHub credential/);
+      assert.doesNotMatch(prefer.querySelector('a').className, /btn-primary/, 'optional under prefer');
+
+      const required = renderCredentials({ enabled: true, mode: 'multi', keyPage: 'https://keys.example.com', person: 'ada@acme.dev', slots, githubAsPerson: 'required' }, doc);
+      assert.match(required.textContent, /your pushes and pull requests fail/);
+      assert.match(required.querySelector('a').className, /btn-primary/, 'required: connecting is needed');
+
+      const connected = renderCredentials({ enabled: true, mode: 'multi', keyPage: 'https://keys.example.com', person: 'ada@acme.dev', slots: [slots[0], { ...slots[1], state: 'set', suffix: '9z9z' }], githubAsPerson: 'required' }, doc);
+      assert.match(connected.textContent, /Your GitHub accountConnected ••••9z9z/);
+      assert.doesNotMatch(connected.querySelector('a').className, /btn-primary/);
+
+      const noSlot = renderCredentials({ enabled: true, mode: 'multi', keyPage: 'https://keys.example.com', person: 'ada@acme.dev', slots: [slots[0]], githubAsPerson: 'prefer' }, doc);
+      assert.match(noSlot.textContent, /no GitHub row to connect one/);
     } },
     { name: 'credentials view: single mode, no person and broker error states', run: async () => {
       await checkRows([

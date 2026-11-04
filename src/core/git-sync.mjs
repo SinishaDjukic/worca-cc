@@ -207,13 +207,14 @@ async function remoteFetchedMs(dir, key, urls) {
 async function shownFetchedMs(dir, key, urls) {
   return (await remoteFetchedMs(dir, key, urls)) ?? lastGood.get(key) ?? null;
 }
-async function lastFetchedMs(dir, remote) {
-  const info = await remoteInfo(dir, remote);
+async function lastFetchedMs(dir, remote, info = null) {
+  if (!info?.ok || info.name !== remote) info = await remoteInfo(dir, remote);
   return info.ok ? shownFetchedMs(dir, await repoKey(dir, remote), info.fetchUrls) : null;
 }
-/** ISO time `remote` was last fetched into `dir` (any process, or a person), or null. No network. */
-export async function lastFetchedAt(dir, { remote = 'origin' } = {}) {
-  return dir && isSafeRemoteName(remote) ? iso(await lastFetchedMs(dir, remote)) : null;
+/** ISO time `remote` was last fetched into `dir` (any process, or a person), or null. No network.
+ *  `info` is remoteInfo's answer for that remote when the caller already has it (one git call fewer). */
+export async function lastFetchedAt(dir, { remote = 'origin', info = null } = {}) {
+  return dir && isSafeRemoteName(remote) ? iso(await lastFetchedMs(dir, remote, info)) : null;
 }
 /** { sha, at } of a ref's tip commit, or null. */
 export async function commitInfo(dir, ref) {
@@ -285,7 +286,7 @@ export async function remoteInfo(dir, remote = 'origin') {
 /** worca's server-side READ credential for the remote's host (App mode mints per call); other hosts: this machine's git. */
 async function readCred(info) {
   if (info.githubRepo) {
-    const r = await githubEnv('read', { repo: info.githubRepo });
+    const r = await githubEnv('read', { repo: info.githubRepo, readAsPerson: true });
     return { ...r, env: stripBitbucketCredentials(r.env) };
   }
   if (info.azure) return { env: stripBitbucketCredentials(azureEnv('read')), error: null };
@@ -358,6 +359,30 @@ export async function fetchRemote(dir, { remote = 'origin', timeoutMs = INTERACT
     return inflight.get(key) || startFetch(key, dir, info, timeoutMs);
   }
   return shared;
+}
+
+/**
+ * Fetch a pull request's head into the remote-tracking ref `refs/remotes/<remote>/worca-pr-<n>`, so a run can start
+ * from `<remote>/worca-pr-<n>` (#711's PR review). GitHub serves every PR (a fork's too) at `refs/pull/<n>/head`;
+ * Azure DevOps has no such ref, so its caller names the PR's source `branch` instead.
+ * → { ok:true, ref, sha } | { ok:false, kind, error }
+ */
+export async function fetchPullHead(dir, { remote = 'origin', number, branch = null, timeoutMs = RUN_TIMEOUT_MS } = {}) {
+  const n = Number(number);
+  if (!dir || !Number.isSafeInteger(n) || n <= 0) return { ok: false, kind: 'failed', error: 'a project and a pull request number are required' };
+  if (!isSafeRemoteName(remote)) return { ok: false, kind: 'failed', error: `invalid remote ${remote}` };
+  if (branch !== null && !isSafeBranchName(branch)) return { ok: false, kind: 'failed', error: `invalid branch ${branch}` };
+  const info = await remoteInfo(dir, remote);
+  if (!info.ok) return info;
+  const cred = await readCred(info);
+  const local = `refs/remotes/${remote}/worca-pr-${n}`;
+  const r = await _run(['fetch', '--no-tags', info.name, `+${branch ? `refs/heads/${branch}` : `refs/pull/${n}/head`}:${local}`], { cwd: dir, env: cred.env, timeoutMs });
+  if (!r.ok) {
+    return { ok: false, kind: r.timedOut ? 'timeout' : classifyFetchError(r.stderr),
+      error: scrubGitText(r.stderr) || (r.timedOut ? `git fetch timed out after ${timeoutMs} ms` : `git fetch exited ${r.code}`) };
+  }
+  const sha = await _run(['rev-parse', '--verify', `${local}^{commit}`], { cwd: dir });
+  return { ok: true, ref: `${remote}/worca-pr-${n}`, sha: sha.ok ? String(sha.stdout || '').trim() : null };
 }
 
 /** No network. The last failed fetch of `remote` when it is newer than its last good one (the

@@ -126,13 +126,14 @@ export async function refreshAskMemoryMount({ projectKey = null, projectName = n
     // What the project loads (team-memory-load-choice.md): every local note, or — team notes only — the ones that are
     // team notes. One plan for both halves of the mount.
     const plans = await memoryLoadPlans(dirs);
-    const { files } = await refreshMount({ root: memoryRoot(), mount: rules, dirs: loadFilteredDirs(dirs, plans), onError, ...MOUNT_MODES });
+    // Notes kept for pipeline roles (`roles: reviewer`, #943) stay out of the chat; `roles: ask` ones load here only.
+    const { files } = await refreshMount({ root: memoryRoot(), mount: rules, dirs: loadFilteredDirs(dirs, plans), onError, ...MOUNT_MODES, role: 'ask' });
     // Team memory (phase 1a): the project's team folder (rules/team/), shadowed by same-named local notes; an opted-out
     // project's folder is emptied. The fetch runs in the background — a turn never waits on the network. A team-layer
     // failure never costs the turn its local memory: thrown from here, the turn's catch would drop the whole mount.
     if (projectKey) refreshTeamLayerSoon(projectKey);
     let team = 0;
-    try { team = (await mountTeamLayer({ rules, dirs, plans, modes: MOUNT_MODES })).reduce((n, t) => n + t.count, 0); }
+    try { team = (await mountTeamLayer({ rules, dirs, plans, modes: MOUNT_MODES, role: 'ask' })).reduce((n, t) => n + t.count, 0); }
     catch (err) { console.warn(`[worca-ask] team memory: team notes not mounted (${err?.message || err}); local memory is served this turn`); }
     return files + team ? base : null;
   });

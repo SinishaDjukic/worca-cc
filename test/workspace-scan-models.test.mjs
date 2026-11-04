@@ -39,7 +39,7 @@ const SONNET_ONLY_CATALOG = [
   { id: 'local-llm', efforts: [] },
 ];
 const NO_DEFAULT_CATALOG = [
-  { id: 'discretestack-stable', efforts: ['medium', 'high', 'max'] },
+  { id: 'example-stable', efforts: ['medium', 'high', 'max'] },
   { id: 'local-llm', efforts: [] },
 ];
 const WS_PICK = { scanModel: 'claude-sonnet-5', scanEffort: 'high', agentModel: 'fable', agentEffort: 'max' };

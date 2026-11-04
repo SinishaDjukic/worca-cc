@@ -25,6 +25,7 @@ import { vcsAtUpgrade } from './project-kind.mjs';
 import { backfillHumanHours } from './human-backfill.mjs';
 import { SEED_TEMPLATES, NODE_ID_MAP, FB_WIRE_MAP } from './graph/seed-templates.mjs';
 import { AGENT_TUNABLES } from '../shared/graph/validate.mjs';
+import { pickTemplateExtras } from '../shared/graph/template.mjs';
 import { GRAPH_PRESENTATION_WORKFLOW, presentationGraphFingerprint, PRESENTATION_SHIPPED_FINGERPRINTS }
   from './graph/presentation-workflow.mjs';
 import { GRAPH_ARCHITECTURE_WORKFLOW, architectureGraphFingerprint, ARCHITECTURE_SHIPPED_FINGERPRINTS }
@@ -63,7 +64,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 81;
+export const SCHEMA_VERSION = 83;
 
 /** store_meta row holding the install's default guardrail set id (JSON string). */
 export const GUARDRAILS_DEFAULT_META_KEY = 'guardrails:default';
@@ -878,6 +879,7 @@ const INCREMENTAL_COLUMNS = {
                             // v70: where a copy found under a run's or project's folder came from, for Show in folder's
                             // fallback once a run's worktree is gone; NULL = out folder, worktree or an older row
                             source_run_id: 'TEXT', source_project_key: 'TEXT', source_rel: 'TEXT' },
+  ask_messages:           { engine: 'TEXT' },        // v83 (#943): the engine a reply ran on; NULL = a user/system row or before v83
   project_config:         { human_in_loop: 'INTEGER NOT NULL DEFAULT 1' },   // v28: the Auto entry's human-in-the-loop switch
   diff_comments:          { parent_id: 'TEXT REFERENCES diff_comments(id) ON DELETE CASCADE',  // v29: reply threads; NULL = thread root
                             author_name: 'TEXT' },   // v37: who wrote it (identity.mjs actor); NULL = before attribution / Ask
@@ -1074,6 +1076,77 @@ CREATE TABLE IF NOT EXISTS pr_watch_runs (
   FOREIGN KEY (pipeline_id) REFERENCES pipelines(id) ON DELETE SET NULL
 );
 `;
+
+// v82 (#711): Git event automations. A rule starts a run when an issue or PR event in its project or workspace matches;
+// one automation_events row per (rule, subject) is the "never twice" guarantee and the Activity log; cursors hold
+// each project's poll position; deliveries drop webhook repeats. src/core/automations.mjs owns all four.
+const AUTOMATIONS_DDL = `
+CREATE TABLE IF NOT EXISTS automation_rules (
+  id            TEXT PRIMARY KEY,
+  project_key   TEXT NOT NULL,
+  project_dir   TEXT NOT NULL,
+  scope         TEXT NOT NULL DEFAULT 'project',     -- project | workspace
+  workspace_id  TEXT,                                -- the workspace a workspace rule watches; NULL = a project's
+  repo          TEXT,                                -- owner/name on GitHub, from the project's remote
+  event         TEXT NOT NULL,                       -- issue.opened | pr.opened
+  action        TEXT NOT NULL,                       -- run | propose | fix | review
+  workflow_id   TEXT,                                -- action run: the workflow it starts
+  filter        TEXT NOT NULL DEFAULT '{}',          -- JSON { labels, excludeLabels, triggerLabel, allowLogins }
+  limits        TEXT NOT NULL DEFAULT '{}',          -- JSON { dailyRuns, maxCostUsd, maxConcurrent }
+  guardrails_id TEXT NOT NULL DEFAULT 'secure',
+  origin        TEXT NOT NULL DEFAULT 'rule',        -- rule | auto-handle
+  enabled       INTEGER NOT NULL DEFAULT 1,
+  enabled_at    TEXT NOT NULL,                       -- nothing opened before it triggers the rule
+  created_by    TEXT,
+  created_at    TEXT NOT NULL,
+  updated_at    TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_automation_rules_project ON automation_rules (project_key);
+CREATE TABLE IF NOT EXISTS automation_events (
+  id          TEXT PRIMARY KEY,
+  rule_id     TEXT NOT NULL,
+  project_key TEXT NOT NULL,
+  repo        TEXT,
+  subject     TEXT NOT NULL,                         -- issue:o/r#42 | pr:o/r#7 | pr:o/r#7@<head sha> (review)
+  kind        TEXT NOT NULL,                         -- issue | pr
+  number      INTEGER,
+  url         TEXT,
+  title       TEXT,
+  author      TEXT,
+  head_sha    TEXT,
+  action      TEXT,
+  phase       TEXT,                                  -- propose: plan, then fix once approved
+  via         TEXT NOT NULL,                         -- poll | webhook
+  status      TEXT NOT NULL,                         -- skipped | queued | starting | running | awaiting-approval | done | failed
+  reason      TEXT,
+  run_id      TEXT,
+  pipeline_id TEXT,
+  pr_url      TEXT,
+  prs         TEXT,                                  -- JSON [{name, repo, url, closes}] a workspace fix opened, one per changed member; NULL = one PR (pr_url)
+  started_at  TEXT,                                  -- when its run started (the daily cap counts by it); NULL = not started
+  posted      INTEGER NOT NULL DEFAULT 0,
+  approved_by TEXT,
+  cost_usd    REAL,
+  created_at  TEXT NOT NULL,
+  updated_at  TEXT NOT NULL,
+  UNIQUE (rule_id, subject)
+);
+CREATE INDEX IF NOT EXISTS idx_automation_events_status ON automation_events (status);
+CREATE INDEX IF NOT EXISTS idx_automation_events_project ON automation_events (project_key, created_at);
+CREATE TABLE IF NOT EXISTS automation_cursors (
+  project_key TEXT NOT NULL,
+  stream      TEXT NOT NULL,                         -- issues | comments
+  since       TEXT,
+  etag        TEXT,
+  updated_at  TEXT NOT NULL,
+  PRIMARY KEY (project_key, stream)
+);
+CREATE TABLE IF NOT EXISTS automation_deliveries (
+  delivery_id TEXT PRIMARY KEY,
+  received_at TEXT NOT NULL
+);
+`;
+
 
 // v68 (labels slice 1): run labels — free words that organise runs. Never read by stats, metrics or policy.
 // Written only by the label routes; survive archive/restore; removed by hand on a hard delete (pipeline-delete.mjs).
@@ -1458,6 +1531,10 @@ const INCREMENTAL_TABLES = {
   run_labels:     RUN_LABELS_DDL,
   utility_cost_ledger: UTILITY_COST_LEDGER_DDL,
   run_presets:    RUN_PRESETS_DDL,
+  automation_rules:      AUTOMATIONS_DDL,
+  automation_events:     AUTOMATIONS_DDL,
+  automation_cursors:    AUTOMATIONS_DDL,
+  automation_deliveries: AUTOMATIONS_DDL,
   run_groups:        RUN_GROUPS_DDL,
   run_group_members: RUN_GROUPS_DDL,
   ask_chat_groups:   ASK_CHAT_GROUPS_DDL,      // v76 (#948 s3)
@@ -1997,6 +2074,26 @@ function refreshPromoVideoSeed(db) {
   refreshShippedSeed(db, GRAPH_PROMO_VIDEO_WORKFLOW, promoVideoGraphFingerprint, PROMO_VIDEO_SHIPPED_FINGERPRINTS);
 }
 
+/** The pure half of refreshShippedSeed: the shipped shape `t` with the user's settings carried over from the
+ *  `stored` row. Carried: the AGENT_TUNABLES and `config.session` on cards that are still agents (membership is
+ *  the user's setting; the fingerprint cannot see config, and a session is never topology the refresh owns), the
+ *  stored viewport VERBATIM, and the other template extras (codeGraph, the session settings). A session the new
+ *  structure leaves with one step, or non-consecutive, is kept on purpose: the composer shows its V26/V27 issue and
+ *  Split, never a silent drop. */
+export function mergeShippedSeed(stored, t) {
+  const storedNodes = new Map((stored?.nodes || []).filter((n) => n && n.id).map((n) => [n.id, n]));
+  const merged = t.nodes.map((n) => {
+    const prev = storedNodes.get(n.id);
+    if (!prev || !prev.config) return n;
+    const carry = (k) => AGENT_TUNABLES.includes(k) || (k === 'session' && n.kind === 'agent');
+    const kept = Object.fromEntries(Object.entries(prev.config).filter(([k]) => carry(k)));
+    return Object.keys(kept).length ? { ...n, config: { ...(n.config || {}), ...kept } } : n;
+  });
+  const extras = pickTemplateExtras(stored, merged);   // drops settings whose sid lost every member
+  delete extras.canvas;                                // the stored viewport is carried as it is, whatever its shape
+  return { nodes: merged, wires: t.wires, ...(stored?.canvas ? { canvas: stored.canvas } : {}), ...extras };
+}
+
 function refreshShippedSeed(db, t, fingerprint, shipped) {
   if (!presentationSeedable(db)) return;
   const graph = JSON.stringify({ nodes: t.nodes, wires: t.wires });
@@ -2033,17 +2130,10 @@ function refreshShippedSeed(db, t, fingerprint, shipped) {
   // precisely what this refresh exists to bring up to date (setWorkflowNodeDefaults
   // draws the same line). Node LAYOUT is left to the shipped shape too — the
   // refresh only fires when the structure changed, and stale positions against a
-  // new node overlap.
-  const storedNodes = new Map((stored.nodes || []).filter((n) => n && n.id).map((n) => [n.id, n]));
-  const merged = t.nodes.map((n) => {
-    const prev = storedNodes.get(n.id);
-    if (!prev || !prev.config) return n;
-    const kept = Object.fromEntries(Object.entries(prev.config).filter(([k]) => AGENT_TUNABLES.includes(k)));
-    return Object.keys(kept).length ? { ...n, config: { ...(n.config || {}), ...kept } } : n;
-  });
-  const carried = JSON.stringify({
-    nodes: merged, wires: t.wires, ...(stored.canvas ? { canvas: stored.canvas } : {}),
-  });
+  // new node overlap. `config.session` is carried too, onto cards that are still
+  // agents (membership is the user's setting), and so are the template extras
+  // (codeGraph, the session settings) — see mergeShippedSeed.
+  const carried = JSON.stringify(mergeShippedSeed(stored, t));
   db.prepare('UPDATE workflows SET graph = ?, updated_at = ? WHERE id = ?').run(carried, now, t.id);
 }
 
@@ -2635,6 +2725,8 @@ export function migrate(db) {
     // INCREMENTAL_TABLES creates them for a DB stamped past this rung without them.
     if (current < 80) db.exec(REQUIREMENTS_EXPORT_DDL);
     if (current < 81) applySchemaV81(db, { existing: current >= 1 });  // v81 (G13) guardrail default
+    if (current < 82) db.exec(AUTOMATIONS_DDL);   // v82 Git event automations (#711), project and workspace rules
+    // v83 (#943): ask_messages.engine — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

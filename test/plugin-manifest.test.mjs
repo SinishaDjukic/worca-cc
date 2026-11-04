@@ -402,7 +402,7 @@ test('validatePluginDir: chatChannels module must exist on disk', () => {
 // ── models + modelSecrets (design §9.1) ──────────────────────────────────────
 
 const MODEL = (over = {}) => ({
-  id: 'discretestack-stable', label: 'DS Stable', efforts: ['medium', 'high'],
+  id: 'example-stable', label: 'DS Stable', efforts: ['medium', 'high'],
   env: { ANTHROPIC_BASE_URL: 'https://api.ds.example', ANTHROPIC_AUTH_TOKEN: { secret: 'ds-token' } },
   ...over,
 });
@@ -428,7 +428,7 @@ test('models: normalization (defaults, effort order, secret refs) + reserved env
     { name: 'models: reserved env keys are dropped with a warning, not a rejection (back-compat)', run: () => {
       const r = normalizeManifest({
         name: 'p', modelSecrets: SECRETS,
-        models: [MODEL({ env: { ...MODEL().env, CLAUDE_CODE_SUBAGENT_MODEL: 'discretestack-stable', WORCA_MOCK: '1' } })],
+        models: [MODEL({ env: { ...MODEL().env, CLAUDE_CODE_SUBAGENT_MODEL: 'example-stable', WORCA_MOCK: '1' } })],
       });
       assert.equal(r.ok, true, r.ok ? '' : r.errors.join('\n'));
       const [m] = r.manifest.models;
@@ -437,7 +437,7 @@ test('models: normalization (defaults, effort order, secret refs) + reserved env
       assert.equal(m.env.ANTHROPIC_BASE_URL, 'https://api.ds.example', 'legal keys kept');
       assert.deepEqual(m.env.ANTHROPIC_AUTH_TOKEN, { secret: 'ds-token' }, 'secret refs kept');
       const w = r.warnings.join('\n');
-      assert.match(w, /models\[0\] \("discretestack-stable"\): env key "CLAUDE_CODE_SUBAGENT_MODEL" is reserved — ignored/);
+      assert.match(w, /models\[0\] \("example-stable"\): env key "CLAUDE_CODE_SUBAGENT_MODEL" is reserved — ignored/);
       assert.match(w, /env key "WORCA_MOCK" is reserved — ignored/);
     } },
     { name: 'models: MCP registry env names (MCPSECRET_*, MCPCHILD_*, any case) are dropped with a warning', run: () => {
@@ -458,7 +458,7 @@ test('models/modelSecrets: rejections and unknown-field warnings', async () => {
   };
   await checkRows([
     { name: 'models: rejections — dup id, unknown effort, dangling secret, bad value', run: () => {
-      fail([MODEL({}), MODEL({ label: 'Twin', id: 'Discretestack-Stable' })], SECRETS, /duplicate models id/);
+      fail([MODEL({}), MODEL({ label: 'Twin', id: 'Example-Stable' })], SECRETS, /duplicate models id/);
       fail([MODEL({ efforts: ['low'] })], SECRETS, /unknown effort "low"/);
       fail([MODEL()], undefined, /undeclared modelSecrets key "ds-token"/);
       fail([MODEL({ env: { X: '' } })], SECRETS, /must be a non-empty string or \{"secret"/);

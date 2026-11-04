@@ -23,6 +23,7 @@
   "files": {},
   "envAdded": {
     "CLAUDE_CODE_FORK_SUBAGENT": "0",
-    "WORCA_HOST_PID": "<PID>"
+    "WORCA_HOST_PID": "<PID>",
+    "WORCA_TEST_CONCURRENCY": "<N>"
   }
 }

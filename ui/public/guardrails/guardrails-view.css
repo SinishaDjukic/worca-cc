@@ -1,0 +1,40 @@
+/* ---- Guardrails view ---- */
+.badge.violet{background:var(--slate-bg);color:var(--slate-ink);}
+.drow.drow-stack.grv-card{flex-direction:row;align-items:center;gap:14px;}
+.grv-body{flex:1 1 auto;min-width:0;}
+.grv-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+.grv-name{font-size:15px;}
+.grv-name-input{flex:1 1 auto;min-width:0;}
+.grv-summary{display:block;margin:6px 0 0;}
+.grv-actions{display:flex;gap:8px;margin-top:4px;}
+/* Details button on the card's right edge — opens the read-only view (built-ins) or the editor (user sets). */
+.grv-details{flex:0 0 auto;}
+.grv-editor{padding:18px 22px;}
+.grv-editor .grv-head{margin-bottom:16px;}
+.grv-editor .switch-row{margin-top:12px;}
+.grv-editor .gr-list .mono,.grv-refs409 .mono{font-family:var(--mono);font-size:12px;}
+.grv-editor-actions{justify-content:flex-end;margin-top:14px;}
+/* ---- Guardrail wizard (Step 1 + read-only view) ---- */
+.grv-wizard .grv-source-list{display:grid;gap:8px;margin:12px 0;max-height:46vh;overflow-y:auto;}
+.grv-source-row{display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--line);border-radius:var(--r-sm);cursor:pointer;}
+.grv-source-row:hover{background:var(--hover);}
+.grv-source-name{flex:1 1 auto;font-size:13px;}
+.grv-wizard-actions{justify-content:flex-end;margin-top:14px;}
+.grv-editor .switch.disabled{pointer-events:none;}
+/* The editor renders as a .card, so inside #plugin-modal it re-matches the
+   `#plugin-modal .card` rule above (640px + its own overflow:auto/max-height).
+   That pinned it to 640px inside the 900px body AND made it a nested scroll
+   container whose scrollbar clipped the right edge of every row/button. Strip
+   the card chrome AND the width/scroll so it fills the body and the OUTER
+   .card stays the single scroll container. */
+#plugin-modal-body .grv-editor.card{border:none;box-shadow:none;background:none;padding:0;
+  width:auto;max-width:none;max-height:none;overflow:visible;}
+/* Hide the empty plugin-modal footer for the wizard (it keeps a margin-top otherwise). */
+#plugin-modal-actions:empty{display:none;}
+/* The wizard needs more room than the default plugin modal (640px): the editor's
+   labeled fields with inline "+ add" rows and the two-button footer overflow 640.
+   Scoped via :has() so other #plugin-modal consumers (install/settings/doctor/409)
+   keep their 640px width. 960 = 640 * 1.5. */
+#plugin-modal .card:has(.grv-wizard),
+#plugin-modal .card:has(.grv-editor){max-width:960px;width:min(94vw,960px);}
+

@@ -4,16 +4,16 @@
 // The New run boot is test/ui-engine-default-prefill.test.mjs's; the run pages use the shared helpers.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { bootApp, helloRun } from './helpers/run-page-boot.mjs';
 import { bootDetail, openDetail, deliverRows, settle, click, ok as okRes, fail, ROW, DETAIL } from './helpers/history-detail-boot.mjs';
 import { applyFlags } from '../ui/public/flags.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const trackDom = useDomRelease(afterEach);
-const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 const PROJECTS = [{ name: 'web', path: '/a/web', exists: true }, { name: 'api', path: '/a/api', exists: true }];
 const ok = (body, status = 200) => ({ ok: status < 400, status, json: async () => body });
@@ -21,7 +21,7 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
 const flagsOn = (window) => applyFlags({ runLabels: true }, window.document);
 
 async function bootForm({ tagsFor = () => [], dims = null, runResponse = null } = {}) {
-  const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4317/' }));
+  const dom = trackDom(new JSDOM(readIndexHtml(), { url: 'http://localhost:4317/' }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
   let lastWs = null;
@@ -470,7 +470,7 @@ test('New run: a cleared slot stays empty after a round trip, and an untouched p
   assert.equal(slot('cc').value, '4410', 'the untouched slot takes this project\'s fill again');
 });
 test('style.css: the Cost tags row wraps; the old in-tile rules are gone', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   assert.match(css, /\.rd-cost-row\{display:flex;flex-wrap:wrap;/);
   assert.doesNotMatch(css, /\.rd-cost-tags\b/);
 });

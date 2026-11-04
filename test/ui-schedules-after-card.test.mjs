@@ -9,6 +9,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
@@ -98,10 +100,9 @@ test('Cancel: the dependents read holds the button, so a double-click sends ONE 
 // The run page's button, the History-detail button and the Archive note, driven through window.__np —
 // the app's own jsdom hooks (the test/ui-running-resume.test.mjs harness). Task 7's
 // dependents route is stubbed; nothing else in this file boots app.js.
-const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 async function bootLive(dependents = []) {
-  const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4317/' }));
+  const dom = trackDom(new JSDOM(readIndexHtml(), { url: 'http://localhost:4317/' }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
   window.WebSocket = class { constructor() { this.readyState = 1; } send() {} close() {} addEventListener() {} };
@@ -157,7 +158,7 @@ test('Run page: the after button appears once the pipeline id is known, deep-lin
 // Run after is a quick button on both run pages' bars, beside the Resume split and Stop: no rule folds it into ⋯ on
 // an unshaped bar (a shaped run's bar still does, D31), and ⋯ does not repeat it there.
 test('Run after sits on the bar, not in ⋯: no rule hides it on an unshaped bar, and the run page\'s ⋯ leaves it out', async () => {
-  const css = readFileSync(fileURLToPath(new URL('../ui/public/style.css', import.meta.url)), 'utf8');
+  const css = readStyleCss();
   const { document: cssDoc } = new JSDOM(`<style>${css}</style>`).window;
   const folds = [];
   (function walk(list) {

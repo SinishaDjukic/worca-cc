@@ -7,16 +7,16 @@
 // test/ui-budget-indicator.test.mjs; the away row is test/ui-night-mode.test.mjs.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { minLevelFor } from '../ui/public/ui-level.mjs';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
-const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
-const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+const css = readStyleCss();
 const trackDom = useDomRelease(afterEach);
 const DAY = 86400000;
 const tick = () => new Promise((r) => setTimeout(r, 0));
@@ -30,7 +30,7 @@ const FREE = { enabled: true, known: true, limit: 50, remaining: 4, resetAt: new
 // budget: false makes GET /api/budget fail (no snapshot ever arrives). keepAwake: the setting GET /api/settings reports;
 // keepAwakeSave: 'ok', or the { status, error } the server answers a {keepAwake} save with.
 async function boot({ whoami = { name: 'ada.lovelace@acme.dev', source: 'access', shared: true }, free = FREE, width = null, hover = false, budget = true, levelSave = 'ok', keepAwake = true, keepAwakeSave = 'ok' } = {}) {
-  const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4317/', pretendToBeVisual: true }));
+  const dom = trackDom(new JSDOM(readIndexHtml(), { url: 'http://localhost:4317/', pretendToBeVisual: true }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
   if (width || hover) {

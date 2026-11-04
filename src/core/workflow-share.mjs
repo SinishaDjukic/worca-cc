@@ -6,7 +6,7 @@
 // so the CLI and the server can never disagree about what a legal graph is.
 //
 // Public surface:
-//   exportGraphJson(id)                -> { version:2, name, domain, nodes, wires, canvas? }
+//   exportGraphJson(id)                -> { version:2, name, domain, nodes, wires, canvas?, codeGraph?, sessions? }
 //   saveGraphWorkflow(body, opts)      -> composer semantics: keeps a legal `id`, 409 on a minted collision (opts.origin; opts.confirmScripts = Ask's graph card, D18's rule over the list it showed)
 //   importGraphWorkflow(body, opts)    -> import semantics: id/origin ignored, name suffixed on collision
 //   listScriptNodes(graph, scripts)    -> the command/code values an import must show first (D18)
@@ -25,6 +25,7 @@ import { loadScriptRegistry } from './script-registry.mjs';
 import { registryPortsFn } from './graph/registry-ports.mjs';
 import { validateGraph, AGENT_TUNABLES } from '../shared/graph/validate.mjs';
 import { effectiveScriptParams, CONFIRM_PARAM_TYPES } from '../shared/graph/script-meta.mjs';
+import { pickTemplateExtras } from '../shared/graph/template.mjs';
 import { readWorkflow, writeGraphWorkflow } from './workflows.mjs';
 
 /** How many `Name (n)` retries an import makes before giving up. */
@@ -129,8 +130,7 @@ export async function exportGraphJson(id) {
     nodes: Array.isArray(tpl.nodes) ? tpl.nodes : [],
     wires: Array.isArray(tpl.wires) ? tpl.wires : [],
   };
-  if (tpl.canvas && typeof tpl.canvas === 'object') out.canvas = tpl.canvas;
-  if (tpl.codeGraph === false) out.codeGraph = false;
+  Object.assign(out, pickTemplateExtras(tpl, out.nodes));
   return out;
 }
 
@@ -172,8 +172,7 @@ function prepareGraph(body, { keepId, name }) {
     domain: typeof body.domain === 'string' ? body.domain : undefined,
     nodes: Array.isArray(body.nodes) ? body.nodes : [],
     wires: Array.isArray(body.wires) ? body.wires : [],
-    ...(body.canvas && typeof body.canvas === 'object' ? { canvas: body.canvas } : {}),
-    ...(body.codeGraph === false ? { codeGraph: false } : {}),
+    ...pickTemplateExtras(body, Array.isArray(body.nodes) ? body.nodes : []),
   };
   if (!graph.name) throw err('name is required', 'BAD_REQUEST');
   return graph;

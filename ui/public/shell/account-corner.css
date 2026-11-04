@@ -1,0 +1,127 @@
+/* ---------- The account corner and its menu (account-menu.mjs) ---------- */
+/* The corner closes the foot band: the avatar in its spend ring, the name, an up-down glyph.
+   The ring shows only under a total limit (data-spend ok | warn | over) and is never hidden
+   while blocked; an ink dot with a panel-coloured walking person (icons.mjs stepped-out, the
+   switch's on pairing) says "away" (data-presence). On the rail only the avatar, its ring and
+   its dot show. */
+.acct{display:flex;align-items:center;gap:9px;width:100%;height:46px;padding:0 8px 0 4px;border:0;border-radius:var(--r-sm);
+  background:transparent;color:var(--ink);font-family:inherit;text-align:left;cursor:pointer;}
+.acct:hover,.acct[aria-expanded="true"]{background:var(--field);}
+.acct:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.acct-ring-wrap{position:relative;display:grid;place-items:center;width:38px;height:38px;flex:none;}
+.acct-ring{position:absolute;inset:0;width:38px;height:38px;transform:rotate(-90deg);display:none;}
+.acct[data-spend="ok"] .acct-ring,.acct[data-spend="warn"] .acct-ring,.acct[data-spend="over"] .acct-ring{display:block;}
+.acct-ring circle{fill:none;stroke-width:2.5;}
+.acct-ring .trk{stroke:var(--line-2);}
+.acct-ring .arc{stroke:var(--ink-2);stroke-linecap:round;transition:stroke-dasharray .4s ease;}
+.acct[data-spend="warn"] .acct-ring .arc{stroke:var(--amber);}
+.acct[data-spend="over"] .acct-ring .arc{stroke:var(--red);stroke-linecap:butt;}
+.acct-ava{display:grid;place-items:center;width:30px;height:30px;border-radius:50%;
+  background:var(--line-2);color:var(--ink);font:600 11px/1 var(--sans);letter-spacing:.02em;}
+.acct-dot{position:absolute;right:1px;bottom:1px;width:11px;height:11px;border-radius:50%;
+  background:var(--slate);color:var(--panel);box-shadow:0 0 0 2px var(--panel);display:none;}
+.acct[data-presence="away"] .acct-dot{display:grid;place-items:center;}
+.acct-dot svg{stroke-width:3;}
+.acct-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:400 12px/1.2 var(--sans);color:var(--ink-2);}
+.acct:hover .acct-name,.acct[aria-expanded="true"] .acct-name{color:var(--ink);}
+.acct-updown{width:14px;height:14px;flex:none;fill:none;stroke:var(--ink-3);stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;}
+.sidebar.collapsed .acct{width:auto;padding:0 2px;}
+.sidebar.collapsed .acct-name,.sidebar.collapsed .acct-updown{display:none;}
+/* #841: "Update available" in the sidebar foot, only while outdated (the [hidden] rule hides it otherwise). */
+.side-update{display:flex;align-items:center;gap:8px;padding:4px 8px;border-radius:var(--r-sm);font-size:12px;font-weight:600;color:var(--amber-ink-strong);text-decoration:none;}
+.side-update:hover{background:var(--field);}
+.side-update-dot{flex:none;width:8px;height:8px;border-radius:50%;background:var(--amber);}
+.sidebar.collapsed .side-update{justify-content:center;padding:6px 0;}
+.sidebar.collapsed .side-update-label{display:none;}
+
+/* The menu opens upward from the corner, Interface mode's side menu beside it: two .nav-fly
+   popups (side-flyout.mjs keeps them inside the viewport). The menu is one white sheet (the
+   popups' --panel, so it stands off the grey sidebar) with 12px corners and 6px of padding
+   round its sections. The spend card and the identity card are inset --field panels with 10px
+   corners; each .msect run of rows sits on the sheet, its 32px rows led by a 16px --ink-2 icon.
+   Between each shown section and the next: 4px, a 1px --line hairline that stops 6px short of
+   the content on both sides, 4px (a card straight after the spend card gets a 6px gap instead).
+   Appearance is one row: its label left, a compact segmented control right. The menu scrolls
+   on a short window. Small grey text is --ink-2; amber and red figures on a card take the
+   -strong inks (--amber-ink and --red-ink fall under 4.5:1 on --field); a row's hover is --hover. */
+.nav-fly.acct-menu{width:258px;max-height:calc(100vh - 16px);overflow-y:auto;gap:0;padding:6px;}
+.acct-menu > :not([hidden]) ~ :not([hidden]){position:relative;margin-top:9px;}
+.acct-menu > :not([hidden]) ~ :not([hidden])::before{content:"";position:absolute;top:-5px;left:6px;right:6px;height:1px;background:var(--line);}
+.acct-menu > .acct-spend:not([hidden]) + .id-card:not([hidden]){margin-top:6px;}
+.acct-menu > .acct-spend:not([hidden]) + .id-card:not([hidden])::before{content:none;}
+.nav-fly.lvl-menu{width:236px;max-height:calc(100vh - 16px);overflow-y:auto;}
+.mcard{display:flex;flex-direction:column;padding:10px 12px;border-radius:var(--r-sm);background:var(--field);}
+.mc-head{display:flex;align-items:center;gap:8px;min-height:24px;margin-bottom:8px;}
+.mini-ring{width:18px;height:18px;flex:none;transform:rotate(-90deg);}
+.mini-ring circle{fill:none;stroke-width:2.6;}
+.mini-ring .trk{stroke:var(--line-2);}
+.mini-ring .arc{stroke:var(--ink);stroke-linecap:round;}
+.spend-card[data-spend="warn"] .mini-ring .arc{stroke:var(--amber);}
+.spend-card[data-spend="over"] .mini-ring .arc{stroke:var(--red);stroke-linecap:butt;}
+.mc-title{flex:1;min-width:0;font:600 12px/1.2 var(--sans);color:var(--ink);}
+.mc-btn{flex:none;}
+.mc-rows{margin:0;display:grid;grid-template-columns:1fr auto;gap:0 12px;}
+.mc-rows dt{font:400 12px/22px var(--sans);color:var(--ink-2);}
+.mc-rows dd{margin:0;text-align:right;font:600 13px/22px var(--sans);color:var(--ink);font-variant-numeric:tabular-nums;white-space:nowrap;}
+.mc-rows dd.warn{color:var(--amber-ink-strong);}
+.mc-rows dd.over{color:var(--red-ink-strong);}
+.mc-note{margin:8px 0 0;font:400 11px/1.35 var(--sans);color:var(--red-ink-strong);}
+.mc-k{margin-bottom:4px;font:400 11px/1.3 var(--sans);color:var(--ink-2);}
+.id-card b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:600 12px/1.3 var(--sans);color:var(--ink);}
+.id-card small{font:400 11px/1.35 var(--sans);color:var(--ink-2);}
+.msect{display:flex;flex:none;flex-direction:column;}
+.mi{flex:none;font:400 var(--fs-body)/1 var(--sans);white-space:nowrap;}
+.mi[aria-expanded="true"]{background:var(--hover);}
+.mi[aria-current="page"]{font-weight:500;}
+.mi[aria-disabled="true"]{cursor:default;color:var(--ink-2);}
+/* line-height:1.4 keeps g, p and y inside the label: its overflow:hidden (the ellipsis) would
+   clip them at the row's line-height:1 (the .nav label rule does the same). */
+.mi-lbl{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;line-height:1.4;}
+.mi-val{flex:none;font:400 12px/1 var(--sans);color:var(--ink-2);}
+.mi-chev{width:14px;height:14px;flex:none;margin-left:2px;fill:none;stroke:var(--ink-2);stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;}
+.mi-ic{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;}
+.mi .mi-ic{color:var(--ink-2);}
+.mi-hint{flex:none;font:400 11px/1 var(--sans);color:var(--ink-2);}
+.away-item[data-state="away"] .mi-ic,.away-item[data-state="away"] .mi-hint{color:var(--slate-ink);}
+/* The switch rows (Away, Keep awake): a .mi row whose whole box is the control (menuitemcheckbox); the
+   .switch at its right edge only shows aria-checked, so it takes no pointer of its own. The label's
+   flex:1 pushes the hint and the switch right; the hint sits 10px (the row gap) before the switch. */
+.sw-item .switch{pointer-events:none;}
+/* Appearance at the foot of the menu, one 40px row: the label in the icons' column, then three
+   30px icon segments (System · Light · Dark) on a compact --field track, the picked one raised. */
+.msect.theme-sect{flex-direction:row;align-items:center;justify-content:space-between;gap:10px;height:40px;padding:0 4px 0 9px;}
+.theme-k{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:400 13px/1.4 var(--sans);color:var(--ink);}
+.theme-seg{display:flex;flex:none;padding:2px;border-radius:var(--r-sm);background:var(--field);}
+.theme-ic{display:flex;flex:none;align-items:center;justify-content:center;width:30px;height:26px;padding:0;border:0;border-radius:var(--r-sm);
+  background:transparent;color:var(--ink-2);cursor:pointer;}
+.theme-ic .mi-ic{width:14px;height:14px;}
+.theme-ic:hover{color:var(--ink);}
+.theme-ic.on{background:var(--surface);color:var(--ink);box-shadow:var(--knob-shadow);}
+.theme-ic:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+/* The free-request row closes the spend card: a --line-2 rule (--line fades on the --field panel),
+   then the label and the count in the Spent row's type. Alone in the card it needs no rule. */
+.mc-free{height:auto;margin-top:8px;padding:8px 0 0;border-top:1px solid var(--line-2);border-radius:0;}
+.mc-free:first-child{margin-top:0;padding-top:0;border-top:0;}
+.mc-free:hover{background:transparent;}
+.mc-free .mi-lbl{font-size:12px;color:var(--ink-2);}
+.mc-free:hover .mi-lbl{color:var(--ink);}
+.mc-free .mi-val{font:600 13px/1.3 var(--sans);color:var(--ink);font-variant-numeric:tabular-nums;}
+.mc-free[data-tone="warn"] .mi-val{color:var(--amber-ink-strong);}
+.mc-free[data-tone="over"] .mi-val{color:var(--red-ink-strong);}
+.lv-opt{display:grid;grid-template-columns:18px 1fr 16px;gap:2px 9px;align-items:start;width:100%;padding:8px 9px;border:0;border-radius:var(--r-sm);
+  background:transparent;color:var(--ink-2);font-family:inherit;text-align:left;cursor:pointer;}
+.lv-bars{width:12px;height:12px;margin-top:2px;justify-self:center;}
+.lv-bars rect{fill:var(--line-2);}
+.lv-bars rect.on{fill:currentColor;}
+.lv-opt-name{font:500 12px/1.3 var(--sans);color:var(--ink);}
+.lv-opt-desc{grid-column:2;font:400 11px/1.35 var(--sans);color:var(--ink-2);}
+.lv-check{grid-row:1;grid-column:3;width:16px;height:16px;margin-top:1px;fill:none;stroke:var(--ink);stroke-width:2;
+  stroke-linecap:round;stroke-linejoin:round;visibility:hidden;}
+.lv-opt[aria-checked="true"]{color:var(--ink);}
+.lv-opt[aria-checked="true"] .lv-check{visibility:visible;}
+@media (prefers-reduced-motion: reduce){.acct-ring .arc{transition:none;}}
+
+/* The Settings budget readout's meter (renderBudgetReadout: meterEl names the fill "<class>-fill"). */
+.spend-ind-meter{display:block;height:6px;border-radius:var(--r-sm);background:var(--blue-bg);margin-top:8px;overflow:hidden;}
+.spend-ind-meter-fill{display:block;height:100%;border-radius:var(--r-sm);background:var(--blue-ink);}
+

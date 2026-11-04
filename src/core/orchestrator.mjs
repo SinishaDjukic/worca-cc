@@ -29,7 +29,8 @@ import { DEFAULT_MAX_CYCLES, KEYED_KINDS } from '../shared/graph/constants.mjs';
 import { scriptNodeCtx, pythonMissingSentence } from '../shared/graph/script-meta.mjs';
 import { probePython } from './graph/python-probe.mjs';
 import { mediaToolProblems } from './graph/media-preflight.mjs';
-import { mockEnabled } from './claude-runner.mjs';
+import { mockEnabled, runClaude } from './claude-runner.mjs';
+import { createSessionHosts } from './session-host.mjs';
 import { registryPortsFn } from './graph/registry-ports.mjs';
 import { checkPlan } from './shape/check.mjs';
 import { clarifyCounts, shapeScoreOf } from './shape/stats.mjs';
@@ -42,7 +43,8 @@ import { extractChecklist } from '../shared/shape/checklist.mjs';
 import { applyChecklist, checklistFindingsMarkdown } from '../shared/shape/review-checklist.mjs';
 import { rolesForRound, roleTaskId, roleItems, roleRecord, findingsMarkdown, refinerVerdict, applyAddressed } from '../shared/shape/role-review.mjs';
 import { createScheduler, sliceExecutionId, QUIESCENCE_WARNING } from './graph/scheduler.mjs';
-import { runExecution, allocateOutputs, allocateVerdict, readDecomposition, CHECKLIST_REVIEWER_KEY, SLICE_PLANNER_KEY, SLICE_SCOPE_AGENT_KEYS } from './graph/executor.mjs';
+import { sigkillGraceMs } from './engines/spawn.mjs';
+import { runExecution, allocateOutputs, allocateVerdict, readDecomposition, decompositionProblems, CHECKLIST_REVIEWER_KEY, SLICE_PLANNER_KEY, SLICE_SCOPE_AGENT_KEYS, _testing as executorTesting } from './graph/executor.mjs';
 import { serialQueue, measureCodeCursor, collectStepEvidence } from './graph/human-evidence.mjs';
 import { estimateStepHours, resolveConstants, sumStepHours } from '../shared/human-estimate.mjs';
 import { diffNumstat } from './git-info.mjs';
@@ -74,10 +76,14 @@ import { prepareFormAsk, formAnswerValidator, downgradeQuestion, redactSecrets }
 import { classifyError } from './recoverable-error.mjs';
 import { withRecoveryRetry, RETRYABLE_CLASSES, HELPER_RETRY_ATTEMPTS } from './recovery-backoff.mjs';
 import { resolveFailure, markTerminal, isTerminal } from './failure-policy.mjs';
-import { byActor } from './identity.mjs';
+import { byActor, actorLabel } from './identity.mjs';
+import { NIGHT_ACTOR } from './night/config.mjs';
 
 /** Max ask-then-resume question rounds per execution (mirrors v1's constant). */
 const MAX_QUESTION_ROUNDS = 3;
+
+/** A gate answer: exactly `{decision: 'another' | 'continue'}`, else null (the question stays open). */
+export const gateAnswer = (raw) => (raw && (raw.decision === 'another' || raw.decision === 'continue') ? { decision: raw.decision } : null);
 
 function abortError(msg = 'aborted') {
   const e = new Error(msg);
@@ -136,6 +142,7 @@ export class GraphOrchestrator extends RunHarness {
       engine: 2,
       active: [],                // [{nodeId, executionId}]
       endReached: false,
+      openIssues: [],
       result: null,              // {type, path?, value?} | null
       warnings: [],
       wireDeliveries: {},        // {[wireId]: n}
@@ -876,8 +883,12 @@ export class GraphOrchestrator extends RunHarness {
     // An Auto run that paused BEFORE deciding was re-decided by resume() (before the
     // setup replay, so the skills gate saw the adopted agents); its point holds the
     // bootstrap manifest and no snapshot, so it starts from scratch like a fresh run.
+    const resuming = resume != null;
     if (resume?.manifest?.auto?.status === 'deciding') resume = null;
     if (resume) await this._restoreFromResumePoint(resume);   // Task 6 (hook-4 companion)
+    // Session groups (C19): a resumed run resolves its sessions here, once its graph is back (the resume site's engine
+    // gate runs before the restore); a fresh run did it beside the engine gate. Either way, once.
+    if (resuming) for (const line of await this._sessionGate()) await appendAudit(this.pipeline.dir, line);
     const { ports, loops } = this.resolved;
     this.extrasFiles = await this._collectExtras();
     // The task document is pre-rendered ONCE: the Task card publishes it and
@@ -887,6 +898,11 @@ export class GraphOrchestrator extends RunHarness {
     // A Memory defragment run appends the scope's health (run-harness.mjs _defragBrief — '' on
     // every other run, so their document stays byte-identical).
     this._taskArtifact = { text: renderPromptArtifact(this.pipeline.promptText, this.extrasFiles) + await this._defragBrief() };
+    // Session groups (Task 45): one SessionHost per session the gate resolved; the kill switch builds nothing (C36).
+    this._sessions = !this._sessionsDisabled && this._sessionSpecs?.length
+      ? createSessionHosts({ specs: this._sessionSpecs, decisions: this._sessionDecisions, port: this._sessionPort(),
+        plainRun: (o) => (executorTesting.runClaude || runClaude)(o), restore: this._sessionRestore ?? null })
+      : null;
 
     const sched = createScheduler({
       template: this._schedulerTemplate(),
@@ -902,9 +918,12 @@ export class GraphOrchestrator extends RunHarness {
         this._graphSnapshot = snap;
         // Keep a resumable point on the row at all times: a crash-reconciled
         // ('interrupted') v2 run is then resumable from its last clean snapshot.
-        // The base clears it on done and on stop. (No extra _persist — the next
-        // _execStep writes it.)
+        // The base clears it on done and on stop. Persisted HERE (3.2): the step row
+        // already says `done`, and waiting for the next _execStep left the point one
+        // completion behind — a crash in between re-ran a finished node, and nothing
+        // starts next while a gate is held.
         this.state.resumePoint = this._buildResumePoint(snap);
+        void this._persist();
       },
       // P3 contract: onGate is the state.gate NOTIFIER ({wireId, fromNode, toNode,
       // askId} | null); onAsk is the ONE ask channel (gates today).
@@ -914,6 +933,8 @@ export class GraphOrchestrator extends RunHarness {
       log: (line, attrs = null) => this._log('orchestrator', 'warn', String(line), attrs),
       // Shape it first (spec D2/D12): node approval stops are armed only for a run that carries `shape`.
       approvalStops: Boolean(this.runShape),
+      // 4.1: a failure or stop waits for siblings to take their SIGTERM→SIGKILL before teardown.
+      settleGraceMs: sigkillGraceMs() + 2000,
     });
     this._scheduler = sched;
     if (resume && this._resumeSnapshot) {
@@ -922,12 +943,22 @@ export class GraphOrchestrator extends RunHarness {
     }
 
     let outcome;
+    let runErr = null;
     try {
       outcome = await sched.run();
+    } catch (err) {
+      runErr = err;
+      throw err;
     } finally {
       this._scheduler = null;
       this.state.active = [];
       this._syncSchedulerState(sched);
+      // After the scheduler returned (on Stop or a failure it does not wait for running steps; close() lets a turn in
+      // flight settle first) and before a pause builds its resume point, so the snapshot already says 'paused'.
+      if (this._sessions) await this._closeSessions(outcome, runErr);
+      // C36 + C9 (Task 47): the kill switch's counterpart of close(): the held cuts ride on in this run's points, and only a
+      // run that ends un-paused books them.
+      else if (this._sessionsDisabled && this._sessionRestore && this._sessionOutcome(outcome, runErr) !== 'paused') this._bookHeldCuts();
     }
 
     if (outcome === 'error') {
@@ -955,6 +986,49 @@ export class GraphOrchestrator extends RunHarness {
       await appendAudit(this.pipeline.dir, `Run **${QUIESCENCE_WARNING}**.`).catch(() => {});
     }
     return 'done';
+  }
+
+  /** Session groups (Task 47; C36, C9): under the kill switch no host carries a held cut, so a run that ends un-paused books
+   *  each one as an estimate on its own row (on the engine it was spent on). A paused run keeps them in its points instead: a
+   *  later resume with sessions on resumes the host whose cumulative holds them, and its next Δ carries them. The snapshots
+   *  without the cuts reach the point before the bookings persist the rows, so the two never disagree (the crash seam).
+   *  Writes no trace and builds no host; never throws (it runs in _engineRun's `finally`). */
+  _bookHeldCuts() {
+    const held = [];
+    const out = {};
+    for (const [sid, S] of Object.entries(this._sessionRestore)) {
+      const c = S && typeof S === 'object' && S.openCut && typeof S.openCut === 'object' ? S.openCut : null;
+      for (const p of c ? (Array.isArray(c.parts) ? c.parts : [c]) : []) {
+        if (!p || typeof p !== 'object' || !Number.isFinite(p.cutUsd)) continue;
+        held.push({ sid, hostEpoch: S.hostEpoch ?? null, hostSessionId: S.hostSessionId ?? null, turnId: p.turnId ?? null,
+          dispatchId: p.dispatchId ?? null, stepKey: p.executionId, nodeId: p.nodeId ?? null, cutEstimateUsd: p.cutUsd, cutEngine: S.engine ?? null });
+      }
+      out[sid] = c ? { ...S, openCut: null } : S;
+    }
+    this._sessionRestore = out;
+    if (this.state.resumePoint) this.state.resumePoint = { ...this.state.resumePoint, sessionHosts: out };
+    for (const b of held) {
+      try { this._bookSessionTurn(b); } catch (err) {
+        this._log('orchestrator', 'warn', `session ${b.sid}: booking ${b.turnId} failed: ${err?.message || err}`, { session: b.sid });
+      }
+    }
+  }
+
+  /** Session groups (Task 45): close every SessionHost once, with how the run ended. */
+  async _closeSessions(outcome, err = null) {
+    await this._sessions.close(this._sessionOutcome(outcome, err));
+    // _pauseForFailure reuses the last snapshot point: it must carry the hosts as they closed (Task 46).
+    if (this.state.resumePoint) this.state.resumePoint = { ...this.state.resumePoint, sessionHosts: this._sessions.snapshot() };
+  }
+
+  /** How the run ended, for its SessionHosts' close (Task 45). A requested pause is 'paused' even when the scheduler said
+   *  'done' (D17); Stop is 'stopped'; only a terminal failure is 'error': any other failure is 'paused' too, because the
+   *  base catch ends that run paused (_pauseForFailure), and its held cut must wait for the resumed turn (C9). */
+  _sessionOutcome(outcome, err = null) {
+    if (this.abort.signal.aborted) return 'stopped';
+    if (outcome === 'paused' || this.pauseRequested) return 'paused';
+    if (outcome === 'done') return 'done';
+    return isTerminal(err || this._graphError) ? 'error' : 'paused';
   }
 
   /** Stamp the CURRENT decision state on the row as the setup-incomplete point every Auto
@@ -1026,6 +1100,7 @@ export class GraphOrchestrator extends RunHarness {
       guardrailsId: this.guardrailsId,
       ...(this.mcpOptOut?.length ? { mcpOptOut: [...this.mcpOptOut] } : {}),   // MCP registry §6.2: resume re-resolves minus it
       memoryScope: this.memoryScope || null,   // agent memory §7.3: a paused defrag resumes with ONE scope (B10)
+      ...(this.memoryOff ? { noMemory: true } : {}),   // #943: a run started without memory resumes without it
       ...(this.runShape ? { shape: this.runShape } : {}),
       ...(this.state.shaping ? { shaping: jsonClone(this.state.shaping) } : {}),
       checkpointRef: this.checkpointRef || null,
@@ -1044,6 +1119,9 @@ export class GraphOrchestrator extends RunHarness {
       toolInstruction: this.toolInstruction ?? '',
       pipelineDir: this.pipeline.dir,
       pausedAt: new Date().toISOString(),
+      // Session groups (C2, C28): each host's snapshot, which the resumed run's SessionHost restores (Task 47). A resumed run
+      // that built no host (the kill switch) keeps the snapshots it restored, so a later run with sessions continues them.
+      ...(this._sessions ? { sessionHosts: this._sessions.snapshot() } : this._sessionRestore ? { sessionHosts: this._sessionRestore } : {}),
     };
   }
 
@@ -1074,6 +1152,14 @@ export class GraphOrchestrator extends RunHarness {
     }));
   }
 
+  /** Who answered a gate, for its audit line (6.3): Away mode, a named person, the --yes run, or the user. */
+  _gateChooser(askId) {
+    const by = askId ? this.answeredBy(askId) : null;
+    if (by === NIGHT_ACTOR) return 'Away mode';
+    if (by) return actorLabel(by) || 'the user';
+    return this.auto ? 'the unattended run (--yes)' : 'the user';
+  }
+
   /** Mirror the scheduler's derived counters onto state (the scheduler is the
    *  authority for deliveries/latches/gate; state is the transport). Defensive:
    *  a partially-built scheduler state degrades to the previous values. */
@@ -1085,6 +1171,7 @@ export class GraphOrchestrator extends RunHarness {
     if (Array.isArray(s.active)) this.state.active = s.active.map((a) => ({ nodeId: a.nodeId, executionId: a.executionId }));
     if (s.wireDeliveries && typeof s.wireDeliveries === 'object') this.state.wireDeliveries = { ...s.wireDeliveries };
     if (Array.isArray(s.warnings)) this.state.warnings = [...s.warnings];
+    if (Array.isArray(s.openIssues)) this.state.openIssues = s.openIssues.map((o) => ({ ...o }));
     if (s.endReached === true) { this.state.endReached = true; if (s.result) this.state.result = { ...s.result }; }
     if (s.tokens) {
       const t = {};
@@ -1121,7 +1208,7 @@ export class GraphOrchestrator extends RunHarness {
       } else if (payload.status !== 'held' && this.pipeline) {
         appendAudit(
           this.pipeline.dir,
-          `Loop gate on wire ${payload.wireId} (${payload.nodeId}): the user chose **${payload.status}**.`,
+          `Loop gate on wire ${payload.wireId} (${payload.nodeId}): ${this._gateChooser(payload.askId)} chose **${payload.status}**.`,
         ).catch(() => {});
       }
       return;
@@ -1149,10 +1236,13 @@ export class GraphOrchestrator extends RunHarness {
         });
       }
     }
+    // Session groups (Task 45): a member's events name its session; a ×N slice (kind 'task') runs outside it (D2).
+    const sid = this._sessions && payload.kind !== 'task' ? this._sessions.sidOf(payload.nodeId) : null;
     this._emit('exec', {
       ...payload, costUsd: step ? (step.costUsd || 0) : 0,
       ...(step && step.runtime != null ? { runtime: step.runtime } : {}),
       ...(step && step.exitCode != null ? { exitCode: step.exitCode } : {}),
+      ...(sid ? { sid, sessionMode: this._sessions.modeOf(payload.nodeId) } : {}),
     });
   }
 
@@ -1173,9 +1263,12 @@ export class GraphOrchestrator extends RunHarness {
    */
   _schedulerAsk(q) {
     if (q.kind === PLAN_ASK_KIND) return this._planAsk(q);
-    return this._enqueueAsk(() => this._ask(q)).then(
+    // A gate takes exactly "another" or "continue" (2.1): anything else leaves the question open
+    // (answer() refuses it), so a typo or a wrapper object can never continue past open issues.
+    const ask = q.kind === 'gate' ? { ...q, validate: gateAnswer } : q;
+    return this._enqueueAsk(() => this._ask(ask)).then(
       (payload) => {
-        if (q.kind === 'gate') return payload?.decision === 'another' ? 'another' : 'continue';
+        if (q.kind === 'gate') return gateAnswer(payload)?.decision ?? null;   // null: the scheduler fails the run
         return payload;
       },
       (err) => {
@@ -1670,6 +1763,8 @@ export class GraphOrchestrator extends RunHarness {
     } catch (err) {
       return this._settleUnstarted(nc, node, args, err);   // allocation failed: no row to mark
     }
+    // E10: the CLI version the execution manifest records (Claude's probe, already run at start; null elsewhere).
+    if (nc.kind === 'agent' && this._capsProbe) ctx.cliVersion = (await Promise.resolve(this._capsProbe).catch(() => null))?.version ?? null;
     // A role slice's brief lists the plan's own items for its role: read the plan this round reviews.
     if (ctx.role) {
       const plan = this._rolePlanBinding(args);
@@ -1717,6 +1812,8 @@ export class GraphOrchestrator extends RunHarness {
       result = await this._outlineLoop(nc, ctx, result);
       result = await this._applyReviewChecklist(ctx, result);
       result = await this._applyRoleReviewVerdict(ctx, result);
+      // C5: the verdict the routing reads, as counts, on the execution's latest host dispatch (none when it ran plain).
+      this._sessions?.noteVerdict(ctx.executionId, verdictSummary(result?.verdict));
       await this._afterExecution(nc, ctx, result);
       await this._reconcileDirections(ctx);
       return result;
@@ -1855,6 +1952,7 @@ export class GraphOrchestrator extends RunHarness {
     const engineOpts = this._engineNodeOpts(nc);
     // P1 (v3, defence in depth): a Folder run's nodes never start on the REAL folder, whatever reattach path left runCwd unset.
     if (this.workMode === 'folder' && !this.runCwd) throw new Error('a Folder run has no copy to work on');
+    const { resumeSessionId, coldRedispatch } = this._reattachFor(executionId, node.id);
     return {
       // When this execution began. _indexExtraFiles compares it against each
       // candidate's mtime to tell the files this execution WROTE from the ones it
@@ -1871,6 +1969,7 @@ export class GraphOrchestrator extends RunHarness {
       runRoot: this.runRoot,
       mcpConfigPath: this.mcpConfigPath,
       mcpServerGrants: this.mcpServerGrants,
+      mcpConfigServers: this.mcpConfigServers,
       // MCP registry (design §6.1): the copies' secret env, the values to redact and the tools
       // withheld for the run's tool-name limit. Never persisted anywhere.
       mcpEnv: this.mcpLayer?.env,
@@ -1886,7 +1985,12 @@ export class GraphOrchestrator extends RunHarness {
       taskPrompt: this.pipeline.promptText,
       toolInstruction: this.toolInstruction,
       shape: this.runShape,
-      memoryBlock: this.memoryBlock || '',              // §4.3: the pointer block, rendered once per mount (names the WRITABLE dirs)
+      claudeSettingSources: this._claudeSettingSources(),   // #943 C3: ['project'], or null = every source (opt-in / sign-in)
+      // #943: the memory this step loads, for the per-execution manifest: 'frozen' | 'off' | null (a defragment run, a
+      // failed mount), and the frozen set ({ set, files }: memory-sync.mjs frozenManifest; role notes carry `roles`).
+      memoryMode: this.memoryOff ? 'off' : (this.memory?.manifest ? 'frozen' : null),
+      memoryManifest: this.memory?.manifest || null,
+      memoryBlock: this._memoryBlockFor(nc.key),        // §4.3: the pointer block, rendered once per mount (names the WRITABLE dirs), + this role's notes (#943)
       memoryMount: this.memory?.mount || null,          // the WRITABLE copy: <pipeline.dir>/memory (agents, the defrag mock and tests write here; runOpts passes it as --add-dir)
       memoryRules: this.memory?.rules || null,          // the read-only rules copy inside the cwd (tests read it; agents never write it)
       memoryLoadLog: this._memoryLoadLogFor(executionId),   // memory usage: this execution's InstructionsLoaded hook file, or null
@@ -1947,7 +2051,9 @@ export class GraphOrchestrator extends RunHarness {
         ? { meta: nc.meta, runtime: nc.runtime, file: nc.file, command: nc.command, params: nc.params, paramsPort: nc.paramsPort === true, timeoutMs: nc.timeoutMs, mock: nc.mock }
         : undefined,
       runners: this._runners,             // P3's injection seam (runExecution reads ctx.runners)
-      resumeSessionId: this._takeResumeSession(executionId),
+      resumeSessionId,
+      ...(coldRedispatch ? { coldRedispatch: true } : {}),
+      ...this._sessionCtx(node.id, slice),
       ask: (q) => this._enqueueAsk(() => this._ask(q)).then((payload) => {
         // D28: the legacy Clarify questions ask (the one maxQuestions caps); a form ask has no question list
         if (this._shapeRec && q?.kind === 'clarify') {
@@ -1979,6 +2085,14 @@ export class GraphOrchestrator extends RunHarness {
     };
   }
 
+  /** Session groups (Task 45): a member's host and its mode for `_execCtx`, on a run that has sessions only (an ungrouped
+   *  ctx is unchanged). A ×N slice and a role-review slice never go through a host (D2). */
+  _sessionCtx(nodeId, slice) {
+    if (!this._sessions) return {};
+    const sessionHost = this._sessions.hostFor(nodeId, { slice, role: slice?.role ?? null }) ?? null;
+    return { sessionHost, sessionMode: sessionHost?.mode ?? null };
+  }
+
   /** The allocation context of one execution. `_execCtx` and `_finishRoleReview` share it, so a role reviewer's
    *  verdict is read back from exactly the path its slice was handed. */
   _runCtx(nc, sliceId) {
@@ -2001,6 +2115,28 @@ export class GraphOrchestrator extends RunHarness {
       // from projectKey(projectDir) (a key registered while git worked, P3's NO_PROJECT_KEY). Git runs: unchanged.
       ...(this.workMode !== 'git' && !this.isWorkspace ? { storeKey: this.members[0].projectKey } : {}),
     };
+  }
+
+  /**
+   * C42 (critique M-13): the one-shot re-attach for `_execCtx`, aware of session hosts. A paused row whose session id is a
+   * host transcript (its `step.session.hostSessionId`, or a host id the restored snapshots name: read even under the
+   * kill switch) re-attaches only when its session's host is live in a session mode on this run. Otherwise it starts
+   * fresh and cold (`coldRedispatch` → COLD_REDISPATCH_HEADER), never `--resume <host>` as a plain spawn. A degraded
+   * member's own plain session stays its own (C30: its plain run may resume it). Every other row re-attaches as today.
+   * @returns {{ resumeSessionId: string|undefined, coldRedispatch: boolean }}
+   */
+  _reattachFor(executionId, nodeId) {
+    const resumeSessionId = this._takeResumeSession(executionId);
+    if (!resumeSessionId) return { resumeSessionId, coldRedispatch: false };
+    const row = (this.resumeOpts?.steps || []).find((s) => s.key === executionId) || null;
+    const hostIds = new Set(Object.values(this._sessionRestore || {}).map((h) => h?.hostSessionId).filter(Boolean));
+    const host = this._sessions?.hostFor(nodeId) ?? null;
+    if (row?.session?.hostSessionId !== resumeSessionId && !hostIds.has(resumeSessionId)) {
+      if (host?.mode === 'separate') host.keepPlainSession(resumeSessionId);   // a member that only ran plain has no step.session
+      return { resumeSessionId, coldRedispatch: false };
+    }
+    if (host && (host.mode === 'subagents' || host.mode === 'shared')) return { resumeSessionId, coldRedispatch: false };
+    return { resumeSessionId: undefined, coldRedispatch: true };
   }
 
   /** ONE-SHOT session re-attach: an executionId is consumed the first time it is
@@ -2044,6 +2180,8 @@ export class GraphOrchestrator extends RunHarness {
         cycle: ctx.ordinal,                 // legacy alias the whole UI reads
         agentKey: ctx.node?.kind === 'agent' ? (ctx.node.key ?? null) : null,   // agents only (D17: it must not lie)
         nodeKey: ctx.node?.key ?? null,                                          // every keyed kind
+        // #943: the memory this step loaded (the run's frozen set, by sha256), on agent steps only.
+        ...(ctx.node?.kind === 'agent' && this._memoryStepRecord(ctx.node.key) ? { memory: this._memoryStepRecord(ctx.node.key) } : {}),
         phase: ctx.node?.key ?? ctx.uiPhase, // legacy column
         stepIndex: null,                    // a graph has executions, not step indexes
         status,
@@ -2213,10 +2351,17 @@ export class GraphOrchestrator extends RunHarness {
    *  injected runners as the seam), plus the vanished-session fresh re-run
    *  fallback (a dead `--resume` session must not fail the run). */
   async _runOnce(nc, ctx) {
+    // C29: the fallback re-runs fresh an attempt that --resumed a session that is gone, decided BEFORE it runs: never a hosted
+    // one (a host that degrades during the attempt still owned it), and a degraded session's plain run only when it resumes the
+    // member's own plain session (C30): a host id it was handed is dropped by the plain run, so nothing was resumed.
+    const h = ctx.sessionHost;
+    const resumes = !h || (h.mode === 'separate' && h.resumesPlain?.(ctx.resumeSessionId) === true);
     try {
       return await runExecution(ctx, { runners: this._runners });
     } catch (err) {
-      if (ctx.resumeSessionId && !isAbort(err) && !isPause(err) && !this.pauseRequested) {
+      // C29 (critique C-1): never for a hosted execution. The SessionHost owns a vanished host (C20); any other failure of
+      // a re-dispatch goes to _recover like any failure, keeping resumeSessionId (and so the cold header) for its retry.
+      if (ctx.resumeSessionId && resumes && !isAbort(err) && !isPause(err) && !this.pauseRequested) {
         this._log(nc.key || ctx.nodeId, 'warn',
           `session resume failed (${err?.message || err}); re-running the execution fresh`,
           { nodeId: ctx.nodeId, executionId: ctx.executionId, cycle: ctx.ordinal, ...(err?.stream ? { stream: err.stream } : {}) });
@@ -2256,9 +2401,11 @@ export class GraphOrchestrator extends RunHarness {
     // nobody reviewed, so the row is SKIPPED; the run log + state.warnings carry it.
     if (this.pipeline && ctx.verdict?.path && result?.verdict && !result.verdict.missing) {
       await writeReview(this.pipeline.id, this._verdictKind(nc, ctx), ctx.ordinal, result.verdict);
-      // Run progress (P5): the latest pass's blocking count — "Review · 2nd pass, fixing 2 issues".
+      // Run progress (P5): the latest pass's blocking count — "Review · 2nd pass, fixing 2 issues" — and the
+      // blockers a refiner fixed in that pass (its `fixed` list), so a pass that fixed them never reads as zero findings.
       this.state.progressFacts ||= { tasks: {}, reviews: {} };
-      this.state.progressFacts.reviews[ctx.nodeId] = { pass: ctx.ordinal || 1, blocking: blockingIssues(result.verdict).length };
+      const fixed = blockingIssues({ issues: result.verdict.fixed }).length;
+      this.state.progressFacts.reviews[ctx.nodeId] = { pass: ctx.ordinal || 1, blocking: blockingIssues(result.verdict).length, ...(fixed ? { fixed } : {}) };
     }
     const seen = new Set();
     for (const port of ctx.ports?.outputs || []) {
@@ -2699,8 +2846,15 @@ export class GraphOrchestrator extends RunHarness {
    */
   async _expandDecomposition(node, args) {
     const token = (args.bindings || {})[args.expandsPort];
-    const { phases } = await readDecomposition(token?.path);
+    const doc = await readDecomposition(token?.path);
+    const { phases } = doc;
     const attr = { nodeId: node.id, executionId: args.executionId, cycle: args.ordinal || 1 };
+    // Ids collide, escape the pipeline dir or fan out without bound: refuse, never run it half-right.
+    const problems = decompositionProblems(doc.raw, this.pipeline.dir);
+    if (problems.length) {
+      throw Object.assign(new Error(`${node.id}: the decomposition on "${args.expandsPort}" cannot be fanned out — ${problems.join('; ')}`),
+        { code: 'BAD_DECOMPOSITION', errorClass: null });
+    }
     if (!phases.length) {
       this._log(node.id, 'warn',
         `no runnable phases in the decomposition bound to "${args.expandsPort}"`
@@ -2885,6 +3039,9 @@ export class GraphOrchestrator extends RunHarness {
   async _restoreFromResumePoint(rp) {
     this._resumeSnapshot = rp.snapshot || null;
     this._graphSnapshot = rp.snapshot || null;
+    // Session groups (Task 46): the hosts' snapshots for createSessionHosts' restore (Task 47) and the re-attach rule (C42).
+    // Before any preflight: a re-preflight that pauses again builds its point from these fields (_engineLastPoint).
+    this._sessionRestore = rp.sessionHosts && typeof rp.sessionHosts === 'object' ? rp.sessionHosts : null;
     this._planVersion = Number.isFinite(rp.planVersion) ? rp.planVersion : 0;
     const pr = rp.planRevise;
     this._planRevise = pr && typeof pr.id === 'string' && typeof pr.path === 'string' ? { id: pr.id, path: pr.path } : null;
@@ -2924,6 +3081,11 @@ export class GraphOrchestrator extends RunHarness {
         .map((s) => [s.key, s.sessionId]),
     );
   }
+}
+
+/** C5: a verdict as the session trace keeps it, counts only. A step without a verdict file reads 'none'. */
+export function verdictSummary(v) {
+  return { verdict: v ? (blockingIssues(v).length ? 'blocking' : 'clean') : 'none', issues: Array.isArray(v?.issues) ? v.issues.length : 0 };
 }
 
 /**

@@ -12,7 +12,7 @@ import http from 'node:http';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { addGlobalModel, updateProvider, acknowledgeCopilotTerms } from '../src/core/settings.mjs';
+import { addGlobalModel, updateProvider } from '../src/core/settings.mjs';
 import { startBridge, stopBridge, bridgeSecret, bridgeBaseUrl } from '../src/core/bridge/server.mjs';
 import { bridgeEvents, bridgeCallsFor, _resetBridgeTelemetry } from '../src/core/bridge/telemetry.mjs';
 import { _resetCopilotCache } from '../src/core/bridge/providers/copilot.mjs';
@@ -84,7 +84,6 @@ before(async () => {
 
   await updateProvider('openai', { apiKey: '${MY_KEY}', baseUrl: `http://127.0.0.1:${port}/v1` });
   await updateProvider('copilot', { githubToken: 'gho_test' });
-  await acknowledgeCopilotTerms();
   await addGlobalModel({ id: 'oa-resp', upstream: { provider: 'openai', api: 'openai-responses', model: 'gpt-r', capabilities: { reasoning: true, reasoningEfforts: ['low', 'medium', 'high', 'xhigh'] } } });
   await addGlobalModel({ id: 'oa-chat-legacy', upstream: { provider: 'openai', api: 'openai-chat', model: 'gpt-r' } });
   await addGlobalModel({ id: 'copilot-gpt-r', upstream: { provider: 'copilot', api: 'openai-responses', model: 'gpt-r', capabilities: { reasoning: true } } });

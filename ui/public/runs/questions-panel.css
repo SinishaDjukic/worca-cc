@@ -1,0 +1,59 @@
+/* ---------- Questions panel (run card + run detail) ---------- */
+/* The CARD is the base (design §4.3: 19px number circles, 12.5px options); the
+   detail screen scales up through `.rd-questions .qpanel …` (§5.4), which wins on
+   SPECIFICITY, so this block's position in the file does not matter.
+   The legacy `q-`-prefixed twin selectors that used to share every rule here had
+   ZERO emitters left in ui/ and test/ and are dropped with this rewrite. They are
+   deliberately NOT spelled out below, even though the suite's sweep strips comments
+   first — keeping the prose free of them means a future sweep that forgets to
+   strip still passes. */
+.qpanel{margin-top:18px;padding:14px 16px 13px;background:var(--amber-wash);
+  border:1px solid var(--amber-bg);border-radius:var(--r-ctrl);}
+.qpanel-head{display:flex;align-items:center;gap:11px;}
+.qpanel-head svg{stroke:var(--amber-ink);flex:0 0 auto;}
+.qpanel-head b{flex:1;min-width:0;font-weight:600;font-size:var(--fs-body);color:var(--amber-ink);}
+.qpanel-head .qcount{margin-left:auto;flex:0 0 auto;background:var(--amber-bg);color:var(--amber-ink);
+  font-weight:700;font-size:var(--fs-caption);padding:4px 10px;border-radius:var(--r-xs);}
+.qblock{padding:13px 0 0;}
+.qtext{font-weight:500;font-size:13px;margin:0 0 9px;display:flex;align-items:flex-start;
+  gap:9px;line-height:1.45;}
+.qtext .qn{flex:0 0 auto;min-width:12px;font:600 var(--fs-body)/var(--lh-body) var(--sans);color:var(--ink-2);margin-top:0;}
+/* the option column and the free-text field line up under the number */
+.qopts{display:flex;flex-direction:column;align-items:stretch;gap:0;margin:0 0 8px;padding-left:24px;}
+/* Run 4 (D6): divided rows — one --line between options, no box each. A picked row takes the --field fill and the 6px
+   corner and drops the lines around it (docs/design-system.md › Corners: a highlighted list row). */
+.qopt{display:flex;align-items:center;gap:12px;min-height:40px;font-family:inherit;font-weight:500;font-size:var(--fs-body);
+  color:var(--ink);background:none;border:0;border-top:1px solid var(--line);border-radius:0;
+  padding:8px 12px 8px 8px;cursor:pointer;text-align:left;width:100%;}
+.qopt:first-child{border-top-color:transparent;}
+/* The mark: an empty 16px square, drawn entirely in CSS (no letter; the key stays in data-key). Picked, it fills ink and
+   the check is a HOLE masked out of it, so it shows the row's own colour in both themes — no painted glyph colour to
+   go wrong in dark. */
+.qopt::before{content:'';flex:0 0 auto;box-sizing:border-box;width:16px;height:16px;border-radius:var(--r-xs);
+  border:1px solid var(--line-2);background:none;}
+.qopt.sel::before{content:'';background:var(--ink);border-color:var(--ink);
+  -webkit-mask:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'><mask id='k'><rect width='20' height='20' fill='white'/><path d='M7.1 10.2l1.8 1.9 4-4' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/></mask><rect width='20' height='20' mask='url(%23k)'/></svg>") center/100% 100% no-repeat;mask:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'><mask id='k'><rect width='20' height='20' fill='white'/><path d='M7.1 10.2l1.8 1.9 4-4' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/></mask><rect width='20' height='20' mask='url(%23k)'/></svg>") center/100% 100% no-repeat;}
+/* Night mode (Step 14): the agent's recommendation chip and per-option confidence figure. */
+.qopt .qrec{display:inline-flex;align-items:center;height:18px;margin-left:8px;padding:0 6px;border-radius:var(--r-xs);
+  font-size:var(--fs-caption);font-weight:500;background:var(--line);color:var(--ink-2);}
+.qopt .qopt-txt,.qopt > span:not(.qrec):not(.qconf){min-width:0;overflow-wrap:anywhere;}
+.qopt .qconf{margin-left:auto;flex:none;font-size:var(--fs-meta);font-weight:400;color:var(--ink-2);font-variant-numeric:tabular-nums;}   /* --ink-3 on --panel / --field misses AA at 12px (verify:theme) */
+.qopt:hover{background:var(--hover);}
+.qopt.sel{background:var(--field);color:var(--ink);border-radius:var(--r-sm);border-top-color:transparent;}
+.qopt.sel + .qopt{border-top-color:transparent;}
+.qopt:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+.qfree{width:100%;font-family:inherit;font-size:var(--fs-body);color:var(--ink);background:var(--field);
+  border:1px solid var(--line-2);border-radius:var(--r-sm);padding:6px 12px;transition:.14s;}
+.qfree::placeholder{color:var(--ink-3);}
+/* `.has` is toggled by renderClarifyBody's own input handler the moment the field
+   holds a non-empty, non-option value — the ink border IS that state, as on a picked option. */
+.qfree:focus{outline:none;background:var(--panel);border-color:var(--ink);}
+.qfree.has{background:var(--panel);border-color:var(--ink);}
+.qblock > .qfree{margin-left:24px;width:calc(100% - 24px);}
+.qpanel-foot{display:flex;align-items:center;justify-content:flex-end;gap:10px;margin-top:14px;}
+/* secondary "Open run" — card only (§4.3) */
+.qopen{padding:9px 16px;border:1.5px solid var(--line-2);border-radius:var(--r-sm);background:var(--panel);
+  font-family:inherit;font-weight:600;font-size:12px;color:var(--ink);cursor:pointer;transition:.14s;}
+.qopen:hover{background:var(--hover);}
+.qopen:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+

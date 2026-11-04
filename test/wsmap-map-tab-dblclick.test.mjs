@@ -8,18 +8,17 @@
 // working, and a second Enter never sends the opposite verdict.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { edgeId, manualEdgeId } from '../src/shared/workspace-map/ids.mjs';
 import { effectiveEdges, setEdgeState } from '../src/shared/workspace-map/overrides.mjs';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
 
-const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 
 const ID = 'wks-shop-00000001';
@@ -105,7 +104,7 @@ function serverRoute(u, opts, s, { renderFails = false, addFails = false } = {})
 
 async function boot({ payload, routeOpts = {} }) {
   const server = { payload, calls: [] };
-  const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4317/' }));
+  const dom = trackDom(new JSDOM(readIndexHtml(), { url: 'http://localhost:4317/' }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
   window.WebSocket = WSStub;

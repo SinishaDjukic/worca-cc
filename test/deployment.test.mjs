@@ -41,3 +41,11 @@ test('deploymentFacts: azureDevOps names the Azure DevOps mode, and is absent wi
   assert.ok(!JSON.stringify(deploymentFacts({ WORCA_CONTAINER: '1', WORCA_ADO_TOKEN: 'ado_secret' })).includes('ado_secret'));
   assert.equal('azureDevOps' in deploymentFacts({ WORCA_CONTAINER: '1', GH_TOKEN: 'ghp_secret' }, { remoteMode: true }), false);
 });
+
+test('deploymentFacts: githubAsPerson only with "push as me" on and a broker', () => {
+  const on = deploymentFacts({ WORCA_CONTAINER: '1', WORCA_GH_AS_PERSON: 'prefer', WORCA_BROKER_URL: 'http://broker:8080' });
+  assert.equal(on.githubAsPerson, 'prefer');
+  assert.equal(on.github, 'none');
+  assert.equal(deploymentFacts({ WORCA_CONTAINER: '1', WORCA_GH_AS_PERSON: 'prefer' }).githubAsPerson, undefined);
+  assert.equal(deploymentFacts({ WORCA_CONTAINER: '1', WORCA_BROKER_URL: 'http://broker:8080' }).githubAsPerson, undefined);
+});

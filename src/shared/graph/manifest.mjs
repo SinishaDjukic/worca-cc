@@ -18,6 +18,7 @@ import { TEMPLATE_VERSION, AWAIT_PORT, DEFAULT_MAX_CYCLES, FLOW_LABEL, KEYED_KIN
 import { portsFnFor, portsOf, resolveOrOutType } from './ports.mjs';
 import { classifyLoops } from './loops.mjs';
 import { rankNodes } from './layout.mjs';
+import { pickTemplateExtras, normalizeSessions } from './template.mjs';
 
 /** Agent key -> the UI stepper bucket. The only copy: the v1 original left
  *  workflows.mjs with the topology helpers. */
@@ -206,6 +207,10 @@ export function buildGraphManifest(tpl, agentsByKey, opts = {}) {
       })),
   }));
 
+  // The extras the engine reads from the manifest (a resumed run has no other copy): codeGraph and the session
+  // settings. The viewport is composer-only and never rides a run.
+  const extras = pickTemplateExtras(tpl, Array.isArray(tpl?.nodes) ? tpl.nodes : []);
+  delete extras.canvas;
   return {
     version: 2,
     template: { id: tpl?.id ?? '', name: tpl?.name ?? '' },
@@ -218,7 +223,7 @@ export function buildGraphManifest(tpl, agentsByKey, opts = {}) {
     ],
     feedbacks: manifestWires.filter((w) => w.loop)
       .map((w) => ({ id: w.id, from: w.from.node, to: w.to.node, maxCycles: w.maxCycles })),
-    ...(tpl?.codeGraph === false ? { codeGraph: false } : {}),
+    ...extras,
   };
 }
 
@@ -253,24 +258,27 @@ export function manifestPortsFn(manifest) {
 
 /** The renderable template inside a manifest (id/kind/x/y/config + wires). */
 export function manifestTemplate(manifest) {
+  const nodes = (manifest?.graph?.nodes || []).map((n) => {
+    // `config` is restored VERBATIM from the cell — no per-key rebuild. The
+    // old `{arity, awaitAll}` reconstruction silently dropped everything else
+    // (`planStoreSeed` on the Task card of `wf_provided-plan`, for one).
+    const node = { id: n.id, kind: n.kind, x: n.x, y: n.y, config: { ...(n.config || {}) } };
+    if (KEYED_KINDS.includes(n.kind)) node.key = n.key;
+    return node;
+  });
+  const sessions = normalizeSessions(manifest?.sessions, nodes);
   return {
     id: manifest?.template?.id ?? '',
     name: manifest?.template?.name ?? '',
     version: TEMPLATE_VERSION,
     domain: '',
-    nodes: (manifest?.graph?.nodes || []).map((n) => {
-      // `config` is restored VERBATIM from the cell — no per-key rebuild. The
-      // old `{arity, awaitAll}` reconstruction silently dropped everything else
-      // (`planStoreSeed` on the Task card of `wf_provided-plan`, for one).
-      const node = { id: n.id, kind: n.kind, x: n.x, y: n.y, config: { ...(n.config || {}) } };
-      if (KEYED_KINDS.includes(n.kind)) node.key = n.key;
-      return node;
-    }),
+    nodes,
     wires: (manifest?.graph?.wires || []).map((w) => {
       const wire = { id: w.id, from: { ...w.from }, to: { ...w.to } };
       if (w.loop && w.maxCycles !== undefined) wire.config = { maxCycles: w.maxCycles };
       if (w.loop && w.onExhausted !== undefined) wire.config = { ...(wire.config || {}), onExhausted: w.onExhausted };
       return wire;
     }),
+    ...(sessions ? { sessions } : {}),
   };
 }

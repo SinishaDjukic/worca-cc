@@ -3,7 +3,6 @@
 // Save and test; plus the booted app's deep links.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import {
@@ -11,6 +10,7 @@ import {
 } from '../ui/public/mcp-view.mjs';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
@@ -417,6 +417,13 @@ test('a malformed %-escape in the set hash never throws out of show(): it reads 
   assert.equal(host.querySelector('.form-msg.err').textContent, 'set not found');
 });
 
+test('parseMcpParam: servers/<id> is the Servers view naming one server (a top bar search pick); bare servers keeps its shape', () => {
+  assert.deepEqual(parseMcpParam('servers/manual%3Alinear'), { view: 'servers', setId: null, server: 'manual:linear' });
+  assert.deepEqual(parseMcpParam('servers'), { view: 'servers', setId: null });
+  assert.deepEqual(parseMcpParam('servers/%E0%A4%A'), { view: 'servers', setId: null, server: '%E0%A4%A' }, 'a malformed escape reads as typed');
+  assert.deepEqual(parseMcpParam('servers/'), { view: 'sets', setId: 'general' });
+});
+
 test('a value a repaint restored still saves when the user leaves the field; a change and its focusout save once', async () => {
   const { host, ctl, writes } = mount();
   await ctl.show('sets/billing');
@@ -452,9 +459,8 @@ test('a value a repaint restored still saves when the user leaves the field; a c
 });
 
 // ── the booted app ───────────────────────────────────────────────────────────
-const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
-const html = readFileSync(htmlPath, 'utf8');
+const html = readIndexHtml();
 class WSStub { constructor() { this.readyState = 1; WSStub.last = this; this._l = {}; } send() {} close() {}
   addEventListener(t, fn) { (this._l[t] = this._l[t] || []).push(fn); } _open() { (this._l.open || []).forEach((fn) => fn({})); } }
 async function boot(url) {

@@ -1,14 +1,14 @@
 // test/ui-new-run-folder.test.mjs — Projects, any way (P1b): New run for a Folder project.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { fieldErrorText, cardAlertOf } from './helpers/feedback.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const trackDom = useDomRelease(afterEach);
-const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 const PROJECTS = [
   { name: 'proj', path: '/a/proj', exists: true, vcs: 'git', workMode: 'git', key: 'proj-00000001' },
@@ -19,7 +19,7 @@ const TOO_BIG = { error: 'Tax papers 2026 is 6.5 GB. The limit is 1 GB.', code: 
   limit: { files: 50000, bytes: 1000000000 }, limitBytes: 1000000000, over: 'bytes' };   // Task 3's default limits and sizeLabel
 
 async function boot({ runReply = null, hash = '' } = {}) {
-  const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: `http://localhost:4317/${hash ? `#${hash}` : ''}` }));
+  const dom = trackDom(new JSDOM(readIndexHtml(), { url: `http://localhost:4317/${hash ? `#${hash}` : ''}` }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
   const box = { ws: null };
@@ -129,6 +129,6 @@ test("worca's own folder is refused under Project too", async () => {
 });
 
 test('New run CSS: a Folder target hides the Branches block and every git-only control in the form', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   assert.match(css, /#run-form:is\(\[data-work-mode="folder"\],\[data-work-mode="none"\]\) :is\(#branch-fields,\[data-needs-git\]\)\{display:none!important;\}/);
 });

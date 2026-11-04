@@ -1,14 +1,14 @@
 // test/ui-project-add.test.mjs — the Add project dialog: New · Folder · Clone from URL, Use git, the live checks.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { PROBE_DEBOUNCE_MS, defaultAddMode, filesLabel, detectModel } from '../ui/public/project-add.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const trackDom = useDomRelease(afterEach);
-const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 class WSStub { constructor() { WSStub.last = this; this.readyState = 0; this._listeners = {}; } send() {} close() {}
   addEventListener(t, fn) { (this._listeners[t] = this._listeners[t] || []).push(fn); }
@@ -19,7 +19,7 @@ const DEFAULT_PROJECTS = [{ name: 'alpha', path: '/data/projects/alpha', exists:
 // gitOff boots the shell with <html … data-git="off"> (what git-gate.mjs#gitOn reads; P0's git-app-boot does the same).
 async function boot({ picker = false, pick, gitOff = false, create, probe, clone, projects = DEFAULT_PROJECTS, storage = {} } = {}) {
   let list = projects; const setProjects = (p) => { list = p; }; const calls = [];
-  const shell = readFileSync(htmlPath, 'utf8');
+  const shell = readIndexHtml();
   const html = gitOff ? shell.replace('<html lang="en" data-theme="system">', '<html lang="en" data-theme="system" data-git="off">') : shell;
   if (gitOff) assert.notEqual(html, shell, 'the shell anchor moved');
   const { window } = trackDom(new JSDOM(html, { url: 'http://localhost:4321/' }));
@@ -197,7 +197,7 @@ test('Folder pane (AddFolder board): Folder · No git · 214 files + Use git; Gi
   await at('/x/repo/docs');
   assert.deepEqual(chips(doc), ['Git', 'Part of worca-cc']);
   assert.ok($(doc, '#proj-add-detect .pad-chip.warn .ws-icon svg'), 'the AddFolder board\'s warning triangle');
-  assert.match(readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8'), /#proj-add-path\{font-family:var\(--mono\);\}/, 'the folder path is mono, as on the board');
+  assert.match(readStyleCss(), /#proj-add-path\{font-family:var\(--mono\);\}/, 'the folder path is mono, as on the board');
   assert.equal($(doc, '#proj-add-save').disabled, true);
   assert.equal($(doc, '#proj-add-save').getAttribute('aria-describedby'), 'proj-add-detect');
   assert.equal($(doc, '#proj-add-git-row').hidden, true);
@@ -515,13 +515,13 @@ test('Use git turned on in New is off again on Folder: an existing folder is git
 });
 
 test('the AddNew board\'s Location box holds a folder icon; the AddFolder path takes its own row', () => {
-  const doc = new JSDOM(readFileSync(htmlPath, 'utf8')).window.document;
+  const doc = new JSDOM(readIndexHtml()).window.document;
   const loc = doc.getElementById('proj-add-location');
   assert.ok(loc.parentElement.matches('#proj-add-new-pane .field > .proj-add-loc'), 'Location is wrapped by .proj-add-loc');
   const ico = loc.parentElement.querySelector(':scope > svg[aria-hidden="true"]');
   assert.ok(ico, 'a decorative icon');
   assert.match(ico.innerHTML, /M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z/, 'the board\'s folder path');
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   assert.match(css, /\.proj-add-loc > #proj-add-location\{padding-left:40px;\}/);
   assert.match(css, /#proj-add-folder-pane \.path-row\{flex-wrap:wrap;\}/);
   assert.match(css, /#proj-add-folder-pane \.path-row > input\{flex:1 1 100%;\}/);

@@ -163,6 +163,7 @@ be skipped by forgetting it.
 | Task source (Markdown), source and feature branch; "Run on the source branch" toggle | A |
 | "Not sure what to build yet? Try Shaper" under the Markdown source (Shaper, gated) | A |
 | Engine dropdown beside the workflow (greyed-out engines the credential broker refuses) | A — stays visible at every level while a non-Claude engine is picked (rule 2) |
+| Session notice under the Engine dropdown: one line per session of the chosen workflow, how it will run (One session, Labs) | A — stays visible with the Engine dropdown while a non-Claude engine is picked |
 | Advanced disclosure: guardrails, human in the loop, per-agent model and effort | A |
 | Per-agent fan-out, sub-agent model, questions; feedback-loop max cycles; "Save as defaults"; memory scope | E |
 
@@ -305,10 +306,12 @@ inside the view.
 | Project Memory tab › Team view (Local · Team · Both choice, note states, share existing notes, Compare, Undo seeding); project Settings › Team memory | A |
 | Project page Overview › "Your team shares memory for this repository" (Turn on, Not now); the "team memory available" mark in the Projects list and the workspace wizard's import list | A |
 | Project page Actions tab | A |
+| Project page Automations tab (flag gitAutomations: Auto-handle switches with what each does and its limits, your own rules with Add / Turn off / Delete, each switch's and rule's limits with Edit limits, Waiting (the queue, in order, with Start now and Remove), Recent with Approve and Open run, Check now; a note naming the workspace whose rules take this repository's events over) | A — "Approve" waits on a person, but a `/worca approve` comment on GitHub or Azure DevOps answers it too |
 | Workspaces list, create wizard (with its Add… / paste-box import), workspace page Overview (projects, the Remove confirm's re-scan choice and recommendation, description, re-scan, delete) | A |
 | Workspace header "Scan model" control (view / change / clear the saved re-scan model); the choose-a-model window a re-scan opens when the workspace has no usable pick — it unblocks the re-scan, so it shows at any level | A |
 | Workspace page Map tab (coverage, graph, edges, confirm / reject / clear, add / delete manual edges, Regenerate description) | A |
 | Workspace page Actions tab | A |
+| Workspace page Automations tab (flag gitAutomations: the project tab's switches, rules and Recent over every member's repository, the repositories watched, View PR, or View PRs ▾ listing each changed repository's PR) | A — as the project page's |
 | Memory health, Defragment, snapshot restore | E — the health card stays visible when overdue or failing |
 | Projects-row team chips; project page Team tab and its TEAM METRICS / TEAM POLICY cards; KEY card | E |
 | Workspace page Team tab (members table, metrics home, policy home) and its METRICS HOME / POLICY HOME cards | E |
@@ -325,8 +328,10 @@ inside the view.
 | General: root folders; Runs tab: Scheduled runs defaults, Workspaces (scan models), chat notifications; Chat tab (limits, tools, web access, chat history) | A |
 | Runs tab: Actions (keep policy, port range, editor/terminal, cap) | A |
 | Runs tab: Wait for the network | A |
+| Runs tab: Machine load (runs at once, test workers per run, archive finished runs after) | A |
 | Guardrails tab (list, details); Memory tab (files) | A |
 | Presets tab (every preset: Use, Rename, Duplicate, Edit scope, Delete) | A |
+| Automations tab (flag gitAutomations: the overview — delivery, the projects and workspaces that automate something with Open, Waiting across them with Start now and Remove, Recent across them with Approve and Open run) | A |
 | General: spawn diagnostics; Memory tab: the line linking to Helper jobs | E |
 | Guardrails create / delete | E |
 
@@ -343,7 +348,7 @@ Settings tabs once, pages of their own now. The old addresses (`#settings/plugin
 | Models page: the Roles card (Deep thinking, Everyday coding, Quick jobs per harness; its Claude / Codex switch is E). The Models nav entry is E, so below Expert the card opens from the `#models` address until the setup assistant adds a Simple-level way in | S |
 | Models page: the catalog toolbar (search, filter chips, folding groups), the editor dialog's Connection section, the Import-models dialog (Copilot and OpenAI-compatible sources) | E |
 | Providers page: Providers card (Copilot sign-in, account type, concurrency cap, key rows) and its Import-models shortcuts | E |
-| The Copilot notice modal; a card's "needs sign-in" pill and button; the New pipeline caption's "needs sign-in" note | all (rule 1 — they block a run) |
+| A card's "needs sign-in" pill and button; the New pipeline caption's "needs sign-in" note | all (rule 1 — they block a run) |
 
 ### Requirements (behind the `requirements` flag)
 

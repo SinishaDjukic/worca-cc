@@ -4,16 +4,15 @@
 // Run under `timeout 60` while red: app.js timers keep the process alive.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
 const trackDom = useDomRelease(afterEach);
 
-const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
-const html = readFileSync(htmlPath, 'utf8');
+const html = readIndexHtml();
 
 const INSTALL = {
   remoteMode: false, version: '1.12.0', releaseUrl: 'https://github.com/acme/worca/releases/tag/worca-app-v1.12.0', buildCommand: 'npm run ext:build',
@@ -72,5 +71,7 @@ test('Settings shows the Install block; a tab switch and Copy path work', async 
   t.doc.querySelector('#xi-panel-firefox [data-copy-path]').click();
   await until(() => t.copied.length === 1, 'the clipboard write');
   assert.equal(t.copied[0], '/opt/worca/extension/dist/firefox');
-  await until(() => t.doc.querySelector('#xi-panel-firefox [data-copy-path]').textContent === 'Copied', 'the Copied flash');
+  const copyBtn = t.doc.querySelector('#xi-panel-firefox [data-copy-path]');
+  await until(() => copyBtn.classList.contains('copied') && copyBtn.title === 'Copied', 'the copied tick');
+  assert.equal(copyBtn.querySelector('.copy-btn-msg').textContent, 'Copied', 'the tick and its Copied caption');
 });

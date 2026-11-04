@@ -127,7 +127,7 @@ Chat's `change_setting` sets the same values as `models.<harness>.roles.<role>`.
 The **Providers** card has a page of its own, **Providers** (Expert level). A
 provider is account-level state that every model bridged through it shares.
 
-**GitHub Copilot.** *Sign in…* reads you the notice below, then shows an
+**GitHub Copilot.** *Sign in…* shows an
 8-character device code: enter it at github.com/login/device and the card
 flips to *connected as @you*. Worca stores the GitHub token in
 `~/.worca-cc/settings.json` (or reads it from your shell as `${VAR}`) and
@@ -148,8 +148,7 @@ LM Studio, a LAN vLLM — needs no key: leave it empty and the bridge sends no
 same shortcut, and carries its base URL into the dialog.
 
 **Max concurrent requests** is per provider. Requests over the cap wait; they
-never fail. For Copilot it is the one knob that lowers the abuse-detection risk
-described below, so it ships at 4.
+never fail. For Copilot it ships at 4; keep it low.
 
 **Speech.** The same tab has a **Speech** card for Chat's voice mode:
 speech-to-text and text-to-speech each run in the browser (Whisper, Kokoro — the
@@ -157,22 +156,6 @@ default) or on a server you run (whisper.cpp, Kokoro-FastAPI, Piper), reached
 through the OpenAI audio API. It is not a model
 provider — nothing on it joins the catalog, the bridge or `/api/models`. See
 [docs/speech.md](speech.md).
-
-### The Copilot notice
-
-Worca talks to Copilot through the same API GitHub's editor extensions use,
-identifying itself as an editor client. GitHub's terms allow Copilot only
-through supported clients, and GitHub has suspended Copilot access for
-automated or unsupported use. Pipelines are automated, high-volume use.
-
-- Your GitHub account, not Worca, carries this risk.
-- Worca caps concurrent requests and never signs in without you.
-- Premium-request quotas apply per your plan; Worca shows usage but cannot
-  enforce it.
-
-You acknowledge this once per machine (the date shows on the card, *Re-read
-notice* shows it again), and again if the wording changes. `worca models login
-copilot --accept-terms` records it non-interactively.
 
 ## What the bridge does
 
@@ -218,7 +201,7 @@ copilot --accept-terms` records it non-interactively.
 
 Each card shows a `bridged: <provider>` badge and, for translated models, a
 line naming the degradations. A model whose provider is not usable — not
-signed in, notice not acknowledged, key unset — shows **needs sign-in** and
+signed in, key unset — shows **needs sign-in** and
 leaves every picker until it is; a run that already names it fails at its next
 spawn with the fix in the message rather than with an opaque 401.
 
@@ -483,7 +466,7 @@ model reports that, switch the model to chat completions in the editor.
 ```
 worca models list                       # catalog with bridge facts
 worca models providers                  # provider state, never a token
-worca models login copilot [--accept-terms]
+worca models login copilot
 worca models logout copilot
 worca models import copilot [--all | --pick id,id] [--yes]
 worca models import openai [--base-url <url>] [--all | --pick id,id] [--yes]
@@ -563,7 +546,7 @@ What an Ask chat on Codex can do, and what it cannot do:
 
 - It reads files only through worca's `read_file`, `grep` and `glob`, inside the chat's worktrees, attachments and memory, under the same protected-file rules as a Claude chat. It has no shell, no image viewer and no Codex web search; web access goes through worca's web tools as in any chat.
 - Codex keeps its sub-agent tools; no Codex setting removes them. A sub-agent gets the same locked-down tools, and the chat stops with an error as soon as one starts.
-- A chat keeps the engine it started on. To switch, start a new chat.
+- A chat can move to another engine from its model picker (see [Switching a chat's engine](#switching-a-chats-engine)).
 - Images are sent with the message that carries them, and `read_attachment` returns any image attachment again (in Codex's `exec`, `image()` shows it). A Codex chat cannot view PDFs. Your sets' MCP servers start with the chat when they are local (stdio) servers (see [Chat](#chat)).
 - Skills from your sets work as in a Claude chat, and the Sets picker lists them. Codex does not load them itself: each message copies them into the chat's folder, the chat is told each skill's name, description and `SKILL.md` path, and `read_file` can open that message's copy for that message only. A skill keeps its own name; when two sets have a skill of the same name, each is called `<set>-<name>`.
 - The per-turn cost cap needs a model worca can price; on Codex the cap is checked when a reply ends.
@@ -571,7 +554,7 @@ What an Ask chat on Codex can do, and what it cannot do:
 
 ## GitHub Copilot CLI
 
-worca can run pipelines and chats on GitHub's own Copilot CLI (`copilot`). This is a separate engine from the Copilot *provider* above. The provider routes Claude Code's requests to Copilot's API through worca's bridge, as an editor client. The engine runs GitHub's own supported CLI as the agent, so the notice above does not apply to it. Your plan's AI-credit (premium request) allowance still does.
+worca can run pipelines and chats on GitHub's own Copilot CLI (`copilot`). This is a separate engine from the Copilot *provider* above. The provider routes Claude Code's requests to Copilot's API through worca's bridge, as an editor client. The engine runs GitHub's own supported CLI as the agent, without worca's bridge in between. Your plan's AI-credit (premium request) allowance still does.
 
 1. Install the CLI (`npm i -g @github/copilot`, version 1.0.92 or later) and make sure worca finds it: on `PATH`, or `WORCA_COPILOT_BIN=/path/to/copilot` in worca's environment.
 2. Sign in once in a terminal: `copilot login`. Or put a fine-grained token with the "Copilot Requests" permission in `COPILOT_GITHUB_TOKEN`. worca never hands `GH_TOKEN` or `GITHUB_TOKEN` to an agent, so Copilot does not pick those up.
@@ -630,7 +613,7 @@ What a chat on Copilot can do, and what it cannot do:
 - It reads files only through worca's `read_file`, `grep` and `glob`, inside the chat's worktrees, attachments and memory, under the same protected-file rules as a Claude chat. Web access goes through worca's web tools as in any chat.
 - Copilot's built-in GitHub MCP server, your `~/.copilot` MCP servers and custom instructions (`AGENTS.md`, `~/.copilot` instructions) are off. Worca's environment is scrubbed; worca's MCP server inherits what is left.
 - If the chat calls a shell or any tool that is not worca's, worca stops the turn with an error.
-- A chat keeps the engine it started on. To switch, start a new chat.
+- A chat can move to another engine from its model picker (see [Switching a chat's engine](#switching-a-chats-engine)).
 - A Copilot chat views an image when its model declares vision, and a PDF on a model Copilot calls through the Responses or Anthropic API (see [Chat](#chat)); for any other model Copilot drops it, and the chat says so. Your sets' MCP servers (local and remote) and skills work as in any chat.
 - Copilot reports no dollar cost: worca prices the chat's tokens with the model's price on the Models page, and a per-turn cost cap refuses a model with none. The next-prompt suggestion runs on GPT-5 Mini, an included model (no premium request on a paid plan; one on the free plan).
 - If Copilot is not installed, the chat says "Copilot isn't ready" with the reason. A signed-out Copilot fails the turn with an auth error. It never falls back to Claude.
@@ -721,7 +704,7 @@ What a chat on Gemini CLI or Qwen Code can do, and what it cannot do:
 - It reads files only through worca's `read_file`, `grep` and `glob`, inside the chat's worktrees, attachments and memory, under the same protected-file rules as a Claude chat. Web access goes through worca's web tools as in any chat.
 - Your context files (`~/.gemini/GEMINI.md`, `~/.qwen/QWEN.md`) still reach the model as text, as do the descriptions of skills; they add no tool. Neither CLI has a setting that leaves them out: a different `context.fileName` only adds a name, and moving the CLI's home (`GEMINI_CLI_HOME`, `QWEN_HOME`) would move your sign-in and settings with it.
 - If the chat calls a shell or any tool that is not worca's, worca stops the turn with an error, as on Codex and Copilot.
-- A chat keeps the engine it started on. To switch, start a new chat.
+- A chat can move to another engine from its model picker (see [Switching a chat's engine](#switching-a-chats-engine)).
 - Images and PDFs are sent through `read_attachment` (Qwen Code only to a model that takes them). Your sets' MCP servers and skills work as in any chat. Effort is the model's thinking (Gemini CLI) or `model.reasoningEffort` (Qwen Code).
 - Neither CLI reports a cost: worca prices the chat's tokens with the model's price on the Models page, and a per-turn cost cap refuses a model with none. The title, the next-prompt suggestion and the Auto-workflow classifier run on the chat's own engine, locked down like the chat.
 - A Gemini CLI chat runs in a folder of its own under worca's temp folder, the same every turn, because Gemini CLI keeps its sessions per folder.
@@ -855,7 +838,7 @@ click Apply.
 | Tool | What it does | How |
 | --- | --- | --- |
 | `list_models` | Every catalog model: source (built-in, user, plugin, team policy), connection (CLI default, env, provider), efforts, its picking facts (vendor, price tier, list price, free, prompt window — see [Per-agent models for one run](#per-agent-models-for-one-run)), and for a bridged model its provider, API, upstream id, limits and readiness. A user entry adds its env, upstream and pricing — credential values masked, `${VAR}` references readable | read |
-| `get_providers` | The Providers card's state: Copilot sign-in and notice, each key-based provider's base URL, whether a key is set (and from where), whether it is optional | read |
+| `get_providers` | The Providers card's state: Copilot sign-in, each key-based provider's base URL, whether a key is set (and from where), whether it is optional | read |
 | `test_provider` | *Test connection* for one provider | read (contacts it) |
 | `list_copilot_models` | What *Import models…* would list | read (contacts GitHub) |
 | `list_endpoint_models` | What an OpenAI-compatible server of yours, Gemini or Qwen serves, with the window each model really gets; a hosted API's key is passed as a `${VAR}` | read (contacts it) |
@@ -876,12 +859,41 @@ click Apply.
   variable in Worca's environment or nothing — a literal key, an env value that
   looks like a token, or an auth header is refused, and Chat tells you to
   paste it on the Providers page instead.
-- Signing in to Copilot and acknowledging its notice stay on the Providers card;
+- Signing in to Copilot stays on the Providers card;
   built-in, plugin and team-policy models are read-only (a user entry with the
   same id overrides a built-in).
 - The chat re-validates every proposal in the server over the real settings (the
   same setters the Models view calls, as a dry run), and applying runs them for
   real.
+
+### Switching a chat's engine
+
+A chat is not tied to the engine it started on. The model picker lists the models of the chat's engine, marked
+*this chat*, and one row for each other engine that has models. Open an engine's row to see its models, and pick one to
+move the chat there:
+
+- worca first shows what changes: the tools the new engine has, images or PDFs it cannot view, whether it reports a
+  cost, both models' context windows, the MCP servers from your sets it cannot start, the attachments it gets only by
+  name, and how many of the oldest turns it will not see when the conversation is larger than half the model's context
+  (at most 400,000 characters; a character outside ASCII, such as CJK text, counts as four). Confirm to switch.
+- You can switch only between replies: while one runs, the other engines' models are disabled. A switch never changes
+  the engine of a reply in progress.
+- worca checks the new engine before it asks you to confirm, and again when you confirm (credential broker, sign-in,
+  the per-turn cost cap, the engine's lockdown and self-test). If a check fails, the chat stays on its engine and says
+  why, with a link to the engine's setup page when the engine is not ready.
+- The chat keeps its id, messages, attachments, cards, runs, worktrees and memory. A "Switched from … to …" line marks
+  the boundary.
+- The new engine starts a fresh session. Its first message carries the conversation as text, plus one short line for
+  each earlier tool call, card, run and attachment. It never gets a tool's output, and nothing runs again. Switching
+  back also starts a fresh session from the current conversation.
+- Each reply records its engine, model and effort. The chat's cost is the sum over all of them. The context meter
+  starts over at the switch, since the new session has no context yet.
+- Event turns (a card you answered, a finished command) run on the engine the chat is on when they start.
+- When more than one engine is set up, the model button names the engine the chat runs on, in Chat and in the browser
+  extension.
+- Your browser remembers the last model and effort you used on each engine; another engine's list shows that model
+  first, tagged *last used*. The Workflows chat and the browser extension do not switch: the extension shows the chat's engine and lists
+  its models only.
 
 ### Per-agent models for one run
 

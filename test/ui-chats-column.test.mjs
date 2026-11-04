@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { makePanel } from './helpers/ask-panel-harness.mjs';
 import { applyFlags } from '../ui/public/flags.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const NOW = new Date(2026, 9, 25, 12, 0, 0).getTime();
 const iso = (msAgo) => new Date(NOW - msAgo).toISOString();
@@ -75,6 +76,19 @@ test('head is Chats + View; Pinned, then the Runs day sections; no search, label
   assert.deepEqual(['today', 'yesterday', 'week', 'month'].map((id) => col.querySelectorAll(`[data-section="${id}"] .runs-item`).length), [2, 1, 6, 3]);
   assert.equal(col.querySelector('[data-section="older"] .runs-sec-head').getAttribute('aria-expanded'), 'false');
   assert.equal(col.querySelectorAll('.chat-history-search-input, .chat-history-new, .ask-thread-trash').length, 0);
+});
+
+test('each row\'s state column draws what the chat did, named for assistive tech and as a tooltip', async () => {
+  const list = [T('ask_000000c1'), T('ask_000000c2', { hasWorkflowCard: true }), T('ask_000000c3', { trackedRuns: 1 }),
+    T('ask_000000c4', { startedRuns: 1, trackedRuns: 1 }), T('ask_000000c5', { waiting: true, startedRuns: 1 }),
+    T('ask_000000c6', { trackingRuns: 1, tracking: true, startedRuns: 1 })];
+  const { col } = await bootOn({ list });
+  const dot = (id) => col.querySelector(`.runs-item[data-row-key="chat:${id}"] .runs-pick .status-dot`);
+  const seen = list.map((t) => { const d = dot(t.id); return [d.dataset.symbol, d.getAttribute('aria-label'), d.title, d.classList.contains('is-pulse')]; });
+  assert.deepEqual(seen, [['ic:chat', 'Chat', 'Chat', false], ['ic:workflow', 'Proposed a workflow', 'Proposed a workflow', false],
+    ['ic:track', 'Follows a run', 'Follows a run', false], ['ic:run', 'Started a run', 'Started a run', false],
+    ['question', 'Run needs you', 'Run needs you', false], ['ic:run', 'Started a run', 'Started a run', true]]);
+  assert.ok(dot('ask_000000c6').classList.contains('is-peach'), 'Following keeps its colour');
 });
 
 test('loading, then offline with Try again; Try again re-fetches and paints the rows', async () => {
@@ -324,7 +338,7 @@ test('ask-history-cleared: a full clear empties the column at once; a scoped cle
 
 test('the head meter is a block, start-aligned, so its ellipsis applies (a flex .btn clips both ends)', async () => {
   const { readFileSync } = await import('node:fs');
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   const rule = /\.btn\.chat-head-meter\{([^}]*)\}/.exec(css);
   assert.ok(rule, '.btn.chat-head-meter rule');
   assert.match(rule[1], /display:block;/);
@@ -344,7 +358,7 @@ test('the head meter reads "34% · $1.84 · 3 agents", opens the context popover
   assert.equal(doc.querySelectorAll('.ask-pop-ctx').length, 1);
   assert.equal(meter.getAttribute('aria-expanded'), 'true');
   assert.equal(doc.querySelector('[data-chat-page]').dataset.chats, 'on');
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   assert.ok(css.includes('.chat-page[data-chats="on"] [data-ask-meter]{display:none;}'));
 });
 

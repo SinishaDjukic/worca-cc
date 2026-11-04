@@ -184,10 +184,11 @@ export async function runNightAnalysis({ questions, cwd, task, planPaths, memory
     const c = up != null ? up : resolveModelCost(model, Number(e.costUsd), u);
     if (Number.isFinite(c)) { costUsd += c; priced = true; }
   });
+  const systemPrompt = nightDeciderSystemPrompt(engine, cwd);
+  const prompt = buildAnalysisPrompt({ questions, task, planPaths, memory, criteria: criteria || {}, context });
   try {
     const res = await run({
-      cwd, systemPrompt: nightDeciderSystemPrompt(engine, cwd),
-      prompt: buildAnalysisPrompt({ questions, task, planPaths, memory, criteria: criteria || {}, context }),
+      cwd, systemPrompt, prompt,
       // `model` / `effort` = the RESOLVED decider pair (night/decider-model.mjs): env and cost follow it.
       // `bridgeTag` names this call to worca's model bridge, so a bridged model's upstream-reported cost
       // can be read back below (the CLI prices an id it does not know at $0). No-op for other models.
@@ -205,7 +206,9 @@ export async function runNightAnalysis({ questions, cwd, task, planPaths, memory
         onFrame(e);
       },
     });
-    return { byId: normalizeAnalysis(safeParseJson(String(res?.text || ''))), costUsd, priced, usage, turnUsage: turnUsage(), turnModel, peakContextTokens };
+    // 6.3: the prompt and the raw reply ride the result, so the decision can be audited afterwards.
+    return { byId: normalizeAnalysis(safeParseJson(String(res?.text || ''))), costUsd, priced, usage, turnUsage: turnUsage(), turnModel, peakContextTokens,
+      systemPrompt, prompt, rawReply: String(res?.text || '') };
   } catch (err) {
     // A failed or aborted call was still billed for what it ran: hand the cost to the caller.
     // A bridged upstream may have billed turns that never reached a `result`: that figure is real (priced).
@@ -214,7 +217,7 @@ export async function runNightAnalysis({ questions, cwd, task, planPaths, memory
     // No frame at all and nothing priced (a missing binary, a broker error, a model env that would not
     // resolve, an abort before the CLI's first line): the call never reached the API — like a call that
     // never spawned, it is no review and costs nothing (notStarted).
-    if (err && typeof err === 'object') Object.assign(err, { costUsd, priced, usage, turnUsage: turnUsage(), turnModel, peakContextTokens, ...(sawFrame || priced ? {} : { notStarted: true }) });
+    if (err && typeof err === 'object') Object.assign(err, { costUsd, priced, usage, turnUsage: turnUsage(), turnModel, peakContextTokens, systemPrompt, prompt, ...(sawFrame || priced ? {} : { notStarted: true }) });
     throw err;
   } finally {
     clearTimeout(timer);
