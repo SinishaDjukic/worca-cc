@@ -3,10 +3,12 @@
 // the built-in automatic checks (counted exactly, without AI) and the verdict of one try. A Library script check is
 // only validated and labelled here; src/core/workflow-tests/result.mjs runs it on the script bench.
 
-export const CHECK_KINDS = Object.freeze(['words', 'sections', 'mentions', 'not-mentions', 'file', 'script', 'command']);
+export const CHECK_KINDS = Object.freeze(['words', 'sections', 'mentions', 'not-mentions', 'file', 'script', 'command', 'under', 'unchanged', 'max-files']);
 /** The kinds that read the main result's text (D25). */
 export const TEXT_KINDS = Object.freeze(['words', 'sections', 'mentions', 'not-mentions']);
-export const PROJECT_KINDS = Object.freeze(['command']);   // 3a D57: checks that run in the copy of the project (Task 6 added the kind)
+/** 3b (Q10, D73): the pure project checks; they read the try's change list. */
+export const SCOPE_KINDS = Object.freeze(['under', 'unchanged', 'max-files']);
+export const PROJECT_KINDS = Object.freeze(['command', ...SCOPE_KINDS]);   // 3a D57, 3b D73: only on an example with a project
 export const CHECK_KIND_LABELS = Object.freeze({
   words: 'Length in words',
   sections: 'Has these sections',
@@ -15,12 +17,26 @@ export const CHECK_KIND_LABELS = Object.freeze({
   file: 'A file with this name is in the result',
   script: 'A Library script',
   command: 'The command passes',
+  under: 'Changes only files under …',
+  unchanged: 'Leaves these files unchanged',
+  'max-files': 'Changes at most N files',
 });
 /** Board 33: the file check's name in an example with a project (D59: added, changed or renamed, never removed). */
 export const PROJECT_FILE_KIND_LABEL = 'A file with this name is added or changed';
 /** D57: "Stop the command after" (board 33), in minutes. */
 export const COMMAND_TIMEOUTS = Object.freeze([1, 5, 10, 30]);
 const CMD_MAX = 500;
+const PATHS_MAX = 20;
+export const MAX_FILES_LIMIT = 10_000;
+const VALUE_PATH_MAX = 100;
+/** A comma-separated text or an array, as trimmed non-empty strings. */
+const listOf = (v) => (Array.isArray(v) ? v : typeof v === 'string' ? v.split(',') : []).map((x) => String(x ?? '').trim()).filter(Boolean);
+/** A path a person typed, inside the project: forward slashes, no `./`, no repeated `/`; null when it leaves the project. */
+function insidePath(raw) {
+  const p = String(raw).replace(/\\/g, '/').replace(/\/{2,}/g, '/').replace(/^(\.\/)+/, '');
+  if (!p || p === '.' || p.startsWith('/') || /^[A-Za-z]:/.test(p) || p.split('/').includes('..') || p.length > TEXT_MAX) return null;
+  return p;
+}
 /** G11: no cost limit until the person sets one. */
 export const DEFAULT_BASICS = Object.freeze({ noError: true, noHelp: true, maxCostUsd: null, maxSentBack: null });
 
@@ -211,6 +227,35 @@ export function normaliseCheck(raw) {
     if (!COMMAND_TIMEOUTS.includes(t)) return { check: null, error: 'the time limit must be 1, 5, 10 or 30 minutes' };
     return done({ cmd, timeoutMin: t });
   }
+  if (kind === 'under') {
+    const dirs = [];
+    for (const raw1 of listOf(raw.dirs)) {
+      const p = insidePath(raw1);
+      if (!p || /[*?[\]]/.test(p)) return { check: null, error: 'give folders inside the project, such as src/' };
+      const d = `${p.replace(/\/+$/, '')}/`;
+      if (d === '/') return { check: null, error: 'give folders inside the project, such as src/' };
+      if (!dirs.includes(d)) dirs.push(d);
+    }
+    if (!dirs.length) return { check: null, error: 'name at least one folder' };
+    if (dirs.length > PATHS_MAX) return { check: null, error: `at most ${PATHS_MAX} folders` };
+    return done({ dirs });
+  }
+  if (kind === 'unchanged') {
+    const patterns = [];
+    for (const raw1 of listOf(raw.patterns)) {
+      const p = insidePath(raw1);
+      if (!p) return { check: null, error: 'give files or patterns inside the project, such as test/**' };
+      if (!patterns.includes(p)) patterns.push(p);
+    }
+    if (!patterns.length) return { check: null, error: 'name at least one file or pattern' };
+    if (patterns.length > PATHS_MAX) return { check: null, error: `at most ${PATHS_MAX} files or patterns` };
+    return done({ patterns });
+  }
+  if (kind === 'max-files') {
+    const n = raw.max === '' || raw.max == null || (typeof raw.max === 'string' && !/^\s*\d+\s*$/.test(raw.max)) ? Number.NaN : Number(raw.max);
+    if (!Number.isInteger(n) || n < 0 || n > MAX_FILES_LIMIT) return { check: null, error: `the most files must be a whole number from 0 to ${MAX_FILES_LIMIT}` };
+    return done({ max: n });
+  }
   const key = typeof raw.key === 'string' ? raw.key.trim() : '';
   if (!SCRIPT_KEY_RE.test(key)) return { check: null, error: 'pick a script from the Library' };
   const params = {};
@@ -242,6 +287,9 @@ export function checkLabel(check, { scriptName = null } = {}) {
   if (c.kind === 'file') return `Has a file named ${c.name}`;
   if (c.kind === 'script') return `The Library script "${scriptName || c.key}" passes`;
   if (c.kind === 'command') return `The command ${c.cmd} passes`;
+  if (c.kind === 'under') return `Changes only files under ${andList(c.dirs)}`;
+  if (c.kind === 'unchanged') return `Leaves these files unchanged: ${c.patterns.join(', ')}`;
+  if (c.kind === 'max-files') return `Changes at most ${c.max} ${c.max === 1 ? 'file' : 'files'}`;
   return 'Unknown check';
 }
 
@@ -251,12 +299,72 @@ const fileMatches = (want, rel) => {
   return r === w || r.split('/').pop() === w;
 };
 
+/** One name against one pattern segment: `*` any characters, `?` one. Greedy with one backtrack point, no regex (a try's
+ *  paths and a person's patterns must never be able to stall the server: final review I1's lesson). */
+function nameMatches(p, s) {
+  let i = 0;
+  let j = 0;
+  let star = -1;
+  let mark = 0;
+  while (j < s.length) {
+    if (i < p.length && (p[i] === '?' || p[i] === s[j])) { i += 1; j += 1; }
+    else if (i < p.length && p[i] === '*') { star = i; i += 1; mark = j; }
+    else if (star !== -1) { i = star + 1; mark += 1; j = mark; }
+    else return false;
+  }
+  while (i < p.length && p[i] === '*') i += 1;
+  return i === p.length;
+}
+
 /**
- * A built-in check on one try's result (D25). `text`: the main result (null when the try left none); `files`: the
+ * D73: does a changed `path` (relative, forward slashes) match a person's `pattern`? `**` = any folders (also none), `*` and
+ * `?` inside one name, a trailing `/` = everything under that folder, `dir/**` = everything inside `dir` (not a file named
+ * `dir`), a pattern with no `/` = that name at any depth (as the file check and .gitignore). Case-sensitive, as git is.
+ * Segment by segment over a set of positions: linear in the path for a fixed pattern.
+ */
+export function pathMatches(pattern, path) {
+  let pat = String(pattern || '');
+  if (pat.endsWith('/')) pat = `${pat}**`;
+  if (!pat.includes('/')) pat = `**/${pat}`;
+  const ps = pat.split('/');
+  const xs = String(path || '').split('/');
+  const n = ps.length;
+  if (n > 1 && ps[n - 1] === '**' && ps[n - 2] !== '**' && xs.length < n) return false;   // `dir/**` needs something inside dir
+  const closure = (set) => {
+    const out = new Set();
+    const stack = [...set];
+    while (stack.length) {
+      const i = stack.pop();
+      if (out.has(i)) continue;
+      out.add(i);
+      if (i < n && ps[i] === '**') stack.push(i + 1);
+    }
+    return out;
+  };
+  let cur = closure([0]);
+  for (const x of xs) {
+    const next = new Set();
+    for (const i of cur) {
+      if (i >= n) continue;
+      if (ps[i] === '**') next.add(i);
+      else if (nameMatches(ps[i], x)) next.add(i + 1);
+    }
+    cur = closure(next);
+    if (!cur.size) return false;
+  }
+  return cur.has(n);
+}
+
+const clipPath = (p) => (p.length > VALUE_PATH_MAX ? `${p.slice(0, VALUE_PATH_MAX - 1)}…` : p);
+const changedValue = (bad) => `Changed ${clipPath(bad[0])}${bad.length > 1 ? ` and ${bad.length - 1} more` : ''}`;
+const filesValue = (n) => (n === 0 ? 'No files' : n === 1 ? '1 file' : `${n} files`);
+
+/**
+ * A built-in check on one try's result (D25). `changes` (3b D73): the try's change list, `{ touched, total }`, null without a project. `text`: the main result (null when the try left none); `files`: the
  * result folder's paths (`work/…`). A script check is not run here: result.mjs runs it on the bench.
  * @returns {{met: boolean, value: string}}
  */
-export function runCheck(check, { text = null, files = [] } = {}) {
+export function runCheck(check, { text = null, files = [], changes = null } = {}) {
   if (TEXT_KINDS.includes(check.kind) && (typeof text !== 'string' || !text.trim())) return { met: false, value: 'No result' };
   if (check.kind === 'words') {
     const n = wordCount(text);
@@ -276,6 +384,17 @@ export function runCheck(check, { text = null, files = [] } = {}) {
   if (check.kind === 'file') {
     const met = (Array.isArray(files) ? files : []).some((f) => fileMatches(check.name, f));
     return { met, value: met ? 'Met' : 'Not met' };
+  }
+  if (SCOPE_KINDS.includes(check.kind)) {
+    if (!changes || !Array.isArray(changes.touched)) return { met: false, value: 'Not run: the example has no project' };
+    if (check.kind === 'max-files') {
+      const n = Number(changes.total || 0);
+      return { met: n <= check.max, value: filesValue(n) };
+    }
+    const bad = check.kind === 'under'
+      ? changes.touched.filter((p) => !check.dirs.some((d) => p.startsWith(d)))
+      : changes.touched.filter((p) => check.patterns.some((pat) => pathMatches(pat, p)));
+    return bad.length ? { met: false, value: changedValue(bad) } : { met: true, value: 'Met' };
   }
   throw new Error(`runCheck: "${check.kind}" is not a built-in check`);   // script and command: result.mjs runs them
 }

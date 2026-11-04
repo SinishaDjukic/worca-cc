@@ -74,8 +74,9 @@ export function normaliseExample(input = {}, { hasProject = false } = {}) {
   if (!Array.isArray(rawChecks) || rawChecks.length > CHECKS_MAX) errors.push(`at most ${CHECKS_MAX} automatic checks`);
   else {
     for (const raw of rawChecks) {
-      if (raw && PROJECT_KINDS.includes(raw.kind) && !hasProject) {   // 3a D57: it runs in the copy of the project
-        errors.push('the command check needs a project: pick one under Where it starts');
+      if (raw && PROJECT_KINDS.includes(raw.kind) && !hasProject) {   // 3a D57, 3b D73: it reads or runs in the copy of the project
+        errors.push(raw.kind === 'command' ? 'the command check needs a project: pick one under Where it starts'
+          : 'this check needs a project: pick one under Where it starts');
         break;
       }
       const { check, error } = normaliseCheck(raw);

@@ -61,8 +61,9 @@ test('what changed: board 36\'s counts; a rename is a change; the paths a file c
   assert.deepEqual([c.total, c.added, c.removed], [4, 22, 31]);
   assert.deepEqual(c.files.map((f) => [f.status, f.path]), [['removed', 'src/legacy-round.mjs'], ['added', 'src/money.mjs'], ['changed', 'src/round.mjs'], ['renamed', 'test/new.test.mjs']]);
   assert.deepEqual(c.paths, ['src/money.mjs', 'src/round.mjs', 'test/new.test.mjs']);
+  assert.deepEqual(c.touched, ['src/legacy-round.mjs', 'src/money.mjs', 'src/round.mjs', 'test/new.test.mjs', 'test/old.test.mjs'], 'touched: every path, a rename old path too (3b D73)');
   assert.equal(c.files.find((f) => f.status === 'renamed').from, 'test/old.test.mjs');
-  assert.deepEqual(projectChanges(null), { files: [], paths: [], total: 0, counts: { added: 0, changed: 0, removed: 0 }, added: 0, removed: 0 });
+  assert.deepEqual(projectChanges(null), { files: [], paths: [], total: 0, counts: { added: 0, changed: 0, removed: 0 }, touched: [], added: 0, removed: 0 });
   assert.equal(isProjectRow({ project_key: 'x-1a2b3c4d', branch: JSON.stringify({ baseSha: 'a'.repeat(40) }) }), true);
   assert.equal(isProjectRow({ project_key: 'x-1a2b3c4d', branch: null }), false, 'Part 2\'s seeded rows stay no-project');
 });

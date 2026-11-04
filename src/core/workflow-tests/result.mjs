@@ -17,7 +17,7 @@ import { CONNECTOR_CALLS_FILE } from './connectors.mjs';
 import { scratchTryLog } from './try-guard-env.mjs';
 import { runShellStep, readTrySetup, tryShellEnv, firstLine } from './shell-step.mjs';
 import { DEFAULT_TIMEOUT_MS } from '../../shared/graph/script-meta.mjs';
-import { runCheck, judgeTry, wordCount, checkLabel, TEXT_KINDS, commandSummary } from '../../shared/workflow-tests/checks.mjs';
+import { runCheck, judgeTry, wordCount, checkLabel, TEXT_KINDS, SCOPE_KINDS, commandSummary } from '../../shared/workflow-tests/checks.mjs';
 
 export const TEXT_EXTS = Object.freeze(new Set(['.md', '.markdown', '.txt', '.html', '.htm', '.csv', '.json', '.yaml', '.yml', '.xml']));
 export const RESULT_TEXT_MAX = 2 * 1024 * 1024;
@@ -51,6 +51,8 @@ export function projectChanges(results, { max = 50 } = {}) {
     removed: rows.filter((f) => f.status === 'removed').length };
   const s = r.summary && typeof r.summary === 'object' ? r.summary : {};
   return { files: rows.slice(0, max), paths: rows.filter((f) => f.status !== 'removed').map((f) => f.path), total: rows.length, counts,
+    // 3b (D73): every path the try touched, a rename's old path too (a copy's source is unchanged), for the scope checks.
+    touched: [...new Set(rows.flatMap((f) => (f.from && f.status === 'renamed' ? [f.from, f.path] : [f.path])))].sort(),
     added: Number(s.linesAdded || 0), removed: Number(s.linesRemoved || 0) };
 }
 
@@ -60,6 +62,8 @@ async function projectOutcome(row, dir) {
   const results = dir ? parseJson(await readFile(join(dir, RESULTS_FILE), 'utf8').catch(() => 'null')) : null;
   const wt = typeof br.worktreeDir === 'string' && br.worktreeDir && existsSync(br.worktreeDir) ? br.worktreeDir : null;
   return { key: row.project_key, base: br.baseSha || null, branch: br.feature || null, ...projectChanges(results),
+    // results.json unreadable: the change list is unknown, never "nothing changed" (the scope checks then say Worca could not count).
+    ...(results && typeof results === 'object' ? {} : { touched: null }),
     patchFile: dir && existsSync(join(dir, DIFF_PATCH_FILE)) ? join(dir, DIFF_PATCH_FILE) : null,
     checkoutDir: wt, runRoot: join(worcaHome(), 'runs', row.id) };
 }
@@ -229,8 +233,17 @@ export async function checkTry(example, outcome, { runScript = runScriptCheck, r
       text = await readText(outcome, check.file);
       if (text === null) { results[i] = { id: check.id, label, met: false, value: `No file named ${check.file}` }; continue; }
     }
-    const r = runCheck(check, { text, files: outcome.files });
-    results[i] = { id: check.id, label, met: r.met, value: r.value };
+    const scoped = SCOPE_KINDS.includes(check.kind);
+    // 3b (D73): a scope check counts the change list, not the copy. Worca lost that list: it could not count (U-T2), so a Worca problem.
+    if (scoped && outcome.project && !Array.isArray(outcome.project.touched)) {
+      results[i] = { id: check.id, label, met: false, value: 'Not run: the list of changed files is gone', worcaProblem: true };
+      continue;
+    }
+    const changes = outcome.project ? { touched: outcome.project.touched, total: Number(outcome.project.total || 0) } : null;
+    const r = runCheck(check, { text, files: outcome.files, changes });
+    const scope = scoped
+      ? { kind: check.kind, ...(check.kind === 'under' ? { dirs: check.dirs } : check.kind === 'unchanged' ? { patterns: check.patterns } : { max: check.max }) } : {};
+    results[i] = { id: check.id, label, met: r.met, value: r.value, ...scope };
   }
   const cwdDir = outcome.project ? outcome.project.checkoutDir : null;
   for (const i of later) {

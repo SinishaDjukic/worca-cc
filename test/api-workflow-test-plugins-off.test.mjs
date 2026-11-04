@@ -103,6 +103,14 @@ test('a Pretend project try: no user settings on any spawn; the project\'s hooks
   const paths = [...results.newFiles, ...results.changedFiles].map((f) => f.path);
   assert.ok(paths.includes('src/feature.mjs'), 'the mock implementer\'s work is the change');
   assert.ok(!paths.includes('.claude/settings.json'), 'Worca\'s switch-off is not');
+  // 3b Task 6 (D73): so the scope checks do not count it either.
+  const { projectChanges } = await import('../src/core/workflow-tests/result.mjs');
+  const { runCheck } = await import('../src/shared/workflow-tests/checks.mjs');
+  const changes = projectChanges(results);
+  assert.ok(!changes.touched.some((p) => p.startsWith('.claude/')), 'the change list has no .claude file');
+  assert.equal(runCheck({ kind: 'unchanged', patterns: ['.claude/**'] }, { changes }).met, true);
+  assert.equal(runCheck({ kind: 'under', dirs: ['src/', 'test/'] }, { changes }).met, true, JSON.stringify(changes.touched));
+  assert.equal(runCheck({ kind: 'max-files', max: changes.touched.length }, { changes }).met, true);
   assert.equal(git(copyDir, 'show', `${br.feature}:.claude/settings.json`), JSON.stringify(PROJECT_SETTINGS, null, 2), 'nor is it committed');
   assert.equal(repoSnapshot(real), was, 'nothing in the person\'s repository changed');
 });

@@ -6,7 +6,7 @@ import { el, btn, iconBtn, seg, field, card, testDialog, sentence, BUSY_HINT, st
 import { makeSwitch } from '../switch.mjs';
 import { icon } from '../icons.mjs';
 import {
-  CHECK_KINDS, CHECK_KIND_LABELS, DEFAULT_BASICS, PROJECT_FILE_KIND_LABEL, COMMAND_TIMEOUTS, checkLabel, normaliseCheck, normaliseBasics, fmtUsd, parseUsd,
+  CHECK_KINDS, SCOPE_KINDS, CHECK_KIND_LABELS, DEFAULT_BASICS, PROJECT_FILE_KIND_LABEL, COMMAND_TIMEOUTS, checkLabel, normaliseCheck, normaliseBasics, fmtUsd, parseUsd,
 } from '../../../src/shared/workflow-tests/checks.mjs';
 import {
   WHERE_TITLE, WHERE_HINT, START_HINT, START_LABEL, PROJECT_LABEL, CHANGE_BUTTON, behindText, LATEST_BUTTON, LATEST_HINT, CHANGES_LABEL,
@@ -95,7 +95,8 @@ export function openCheckDialog({ doc, win, check = null, scripts = [], project 
   kind.id = 'wft-ck-kind';
   const opt = (k, label = CHECK_KIND_LABELS[k]) => { const o = el(doc, 'option', '', label); o.value = k; return o; };
   // An edited script check keeps its kind, also when the Library lists none.
-  const resultKinds = CHECK_KINDS.filter((k) => k !== 'command' && !(k === 'script' && !scripts.length && !(check && check.kind === 'script')));
+  const resultKinds = CHECK_KINDS.filter((k) => k !== 'command' && !SCOPE_KINDS.includes(k) &&   // 3b Task 6: the scope checks get their dialog fields in Task 11
+     !(k === 'script' && !scripts.length && !(check && check.kind === 'script')));
   if (project) {
     const g1 = el(doc, 'optgroup'); g1.label = GROUP_RESULT;
     for (const k of resultKinds) g1.append(opt(k, k === 'file' ? PROJECT_FILE_KIND_LABEL : undefined));   // D59, board 33
