@@ -428,7 +428,7 @@ model {
           description 'Turns hidden decisions into up to 8 multiple-choice questions; asks none when the task is clear.'
         }
         planner = agent 'Plan' {
-          description 'Explores the codebase and writes an implementation plan with concrete code snippets.'
+          description 'Explores the codebase and writes a design-level implementation plan: contracts, invariants and a test list.'
         }
         refiner = agent 'Refine Plan' {
           #gate

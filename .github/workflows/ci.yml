@@ -129,16 +129,17 @@ jobs:
     # tools/test.mjs balances the shards by test/timings.json (longest first); each shard has
     # its own runner, WORCA_HOME and real-claude guard log. Every test file that
     # test/tiers.json does not list as slow.
-    # Node 22 proves the floor (package.json engines: node >=22.19.0); Node 24 is the version
-    # release-npm-app.yml publishes with and the newest LTS, so a difference between the two
-    # (1.15.0-rc.1 failed on one) shows up on dev instead of on a burned release tag.
+    # The supported range, both ends and the middle: the exact floor (package.json engines and
+    # MIN_NODE), .nvmrc's major (every other job, the release and the image run it) and the newest
+    # LTS, so a difference between them (1.15.0-rc.1 failed on one) shows up on dev instead of on a
+    # burned release tag. test/supply-chain.test.mjs keeps this list in step with both.
     name: fast tests (Node ${{ matrix.node }}, ${{ matrix.shard }}/4)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        node: [22, 24]
+        node: ['22.19.0', 24, 26]
         shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -168,9 +169,9 @@ jobs:
 
       # This shard's per-file seconds, measured on the runner that ran it. test/timings.json is
       # refreshed from a green dev run's set (tools/test-timings-merge.mjs), so the shards are
-      # balanced by what files cost here, not on a developer's machine. Node 22's set only: one
-      # artifact per shard, and the two versions' runners cost the same.
-      - if: matrix.node == 22
+      # balanced by what files cost here, not on a developer's machine. The .nvmrc version's set only:
+      # one artifact per shard, and the versions' runners cost the same.
+      - if: matrix.node == 24
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: test-timings-fast-${{ matrix.shard }}
@@ -204,7 +205,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 22
+          node-version-file: .nvmrc
           cache: "npm"
 
       - name: Install dependencies
@@ -246,7 +247,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 22
+          node-version-file: .nvmrc
           cache: "npm"
 
       - name: Install dependencies
@@ -309,7 +310,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with: { node-version: 22, cache: npm }
+        with: { node-version-file: .nvmrc, cache: npm }
       - run: npm ci
       - run: npm run ext:zip
       - run: npm run ext:lint:firefox
@@ -333,7 +334,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with: { node-version: 22, cache: npm }
+        with: { node-version-file: .nvmrc, cache: npm }
       - run: npm ci
       - run: npm run e2e:extension
         env: { HOME: /root }
@@ -358,7 +359,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 22
+          node-version-file: .nvmrc
           cache: "npm"
 
       - name: Install dependencies

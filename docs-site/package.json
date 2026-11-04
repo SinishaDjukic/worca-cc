@@ -10,9 +10,9 @@
     "deploy": "npm run build && npx wrangler deploy"
   },
   "engines": {
-    "node": ">=22.13.0"
+    "node": ">=22.19.0"
   },
   "devDependencies": {
-    "wrangler": "^4.95.0"
+    "wrangler": "^4.157.0"
   }
 }

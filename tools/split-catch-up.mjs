@@ -18,6 +18,7 @@ import { code } from './readiness/report.mjs';
 import { relatedTests } from './test-related.mjs';
 import { unlistedFailures, parseFailures } from './flaky-register.mjs';
 import { makeFixturePr, checkFixture } from './split-catch-up/fixture.mjs';
+import { express4SyntaxProblems } from './split-by-feature/after-split.mjs';
 
 const TOOL_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const NODE = [process.execPath, '--disable-warning=ExperimentalWarning'];
@@ -154,6 +155,11 @@ export async function catchUpOne({ root, t, ctx, out, tests = 'related', parity 
   row.caughtUp = must(d.run('git', ['-C', applied, 'rev-parse', 'HEAD']), 'rev-parse').trim(); row.appliedDir = applied;
   const carried = must(d.run('git', ['-C', applied, 'diff', '--name-only', ctx.devRef, 'HEAD']), 'git diff').trim().split('\n').filter(Boolean);
   row.moved = movedOf(original, carried);
+  // An Express 4 branch on Express 5 dev: its route paths in Express 4 syntax would throw when the server starts.
+  const pkg = join(applied, 'package.json');
+  if (existsSync(pkg) && /^\D*5\./.test(JSON.parse(readFileSync(pkg, 'utf8')).dependencies?.express ?? '')) {
+    for (const p of express4SyntaxProblems(applied)) hand(p);
+  }
   // 5. related tests (a fork's code is never run here)
   if (tests === 'related' && t.fork) row.tests = { ran: false, why: 'fork PR: its code is not run here' };
   else if (tests === 'related') {

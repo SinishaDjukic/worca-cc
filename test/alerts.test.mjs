@@ -23,7 +23,7 @@ const throwingStorage = () => ({ getItem() { throw new Error('SecurityError'); }
 function fakeNotification({ permission = 'granted', answer = 'granted' } = {}) {
   class N {
     constructor(title, opts = {}) {
-      this.title = title; this.body = opts.body; this.tag = opts.tag; this.closed = false; this.onclick = null;
+      this.title = title; this.body = opts.body; this.tag = opts.tag; this.icon = opts.icon; this.badge = opts.badge; this.closed = false; this.onclick = null;
       N.shown.push(this);
     }
     close() { this.closed = true; }
@@ -128,6 +128,8 @@ test('D5: no notification while the tab is visible and focused; one when it is h
   assert.equal(b.N.shown[0].title, 'Worca: Approval needed');
   assert.equal(b.N.shown[0].body, 'Fix the login bug');
   assert.equal(b.N.shown[0].tag, 'worca:r1:q1');
+  assert.equal(b.N.shown[0].icon, '/assets/worca-favicon.png', 'the Worca mark, not the browser\'s icon');
+  assert.equal(b.N.shown[0].badge, '/assets/worca-mark-mask.png', 'the one-colour mark for the status bar');
   const c = setup({ visible: true, focused: false });
   c.alerts.onQuestion(RUN, Q('q1'));
   assert.equal(c.N.shown.length, 1, 'visible but another window has focus');

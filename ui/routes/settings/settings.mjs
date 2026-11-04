@@ -11,20 +11,64 @@ import { asPersonMode } from '../../../src/core/github-credentials.mjs';
 import { WORKSPACE_SCAN_DEFAULT_MODELS } from '../../../src/core/graph/builtin-workflows.mjs';
 import { isSharedIdentity, resolveIdentity } from '../../../src/core/identity.mjs';
 import { defragDefaultModel } from '../../../src/core/memory-defrag-model.mjs';
+import { approveProposal, listProposals, rejectProposal } from '../../../src/core/memory-proposals.mjs';
+import { memoryRoot } from '../../../src/core/memory-store.mjs';
+import { queueTeamChanges, teamClientText } from '../../../src/core/memory-team.mjs';
 import { withRole } from '../../../src/core/model-roles.mjs';
 import { resolveNamingModel } from '../../../src/core/naming.mjs';
 import { resolveNightConfig } from '../../../src/core/night/config.mjs';
 import { syncPluginSlots } from '../../../src/core/plugin-broker-slots.mjs';
 import { resolvePrDescriptionModel } from '../../../src/core/pr-description.mjs';
-import { normalizeProjectPath } from '../../../src/core/projects.mjs';
+import { listProjects, normalizeProjectPath } from '../../../src/core/projects.mjs';
 import { DEFAULT_INTERVIEW_EFFORT, requirementsModel } from '../../../src/core/requirements/interview.mjs';
 import { settingsErrorReply } from '../../../src/core/settings-errors.mjs';
-import { actionsSettings, agentGenModel as storedAgentGenModel, askEngineSetting, askMaxBudgetUsd, askMaxTurns, askModelsSetting, askWeb, autoGeneratePrDescription, autoWorkflowModel as storedAutoWorkflowModel, chatPrefs, commandSummaryModel as storedCommandSummaryModel, costLimitResetPeriod, debugSpawnEnabled as storedDebugSpawnEnabled, defaultProjectsRoot, defaultRoot, effectiveDebugSpawn, getWorcaRoot, hideBuiltinModels, humanRateUsdPerHour, keepAwakeEnabled, memoryDefragModel, modelRolesSetting, namingModel as storedNamingModel, networkWaitSettings, nightModeSettings, nightModeToggle, nightModeToggleFor, pipelineCostLimitUsd, prDescriptionModel as storedPrDescriptionModel, rawProjectsRoot, requirementsInterviewSetting, resumeAfterUsageLimit, runEngineSetting, scheduleDefaults, smartNaming, stepModelsSetting, syncDefaults, theme as storedTheme, titleModel as storedTitleModel, totalCostLimitUsd, updateCheckEnabled, userEnforceTags, userTagDimensions, utilityModelsSetting, workspaceScanModels } from '../../../src/core/settings.mjs';
+import { actionsSettings, agentGenModel as storedAgentGenModel, askEngineSetting, askMaxBudgetUsd, askMaxTurns, askModelsSetting, askWeb, autoGeneratePrDescription, autoTestWorkers, autoWorkflowModel as storedAutoWorkflowModel, chatPrefs, commandSummaryModel as storedCommandSummaryModel, costLimitResetPeriod, debugSpawnEnabled as storedDebugSpawnEnabled, defaultProjectsRoot, defaultRoot, effectiveDebugSpawn, getWorcaRoot, hideBuiltinModels, humanRateUsdPerHour, keepAwakeEnabled, memoryCaps, memoryDefragModel, modelRolesSetting, namingModel as storedNamingModel, networkWaitSettings, nightModeSettings, nightModeToggle, nightModeToggleFor, pipelineCostLimitUsd, prDescriptionModel as storedPrDescriptionModel, rawProjectsRoot, requirementsInterviewSetting, resumeAfterUsageLimit, runEngineSetting, runLimits, scheduleDefaults, smartNaming, stepModelsSetting, syncDefaults, theme as storedTheme, titleModel as storedTitleModel, totalCostLimitUsd, updateCheckEnabled, userEnforceTags, userTagDimensions, utilityModelsSetting, workspaceScanModels } from '../../../src/core/settings.mjs';
 import { describeTitleModel } from '../../../src/core/title.mjs';
 import process from 'node:process';
-import { APP_INFO, REMOTE_MODE, actionsEnabledHere, agentMayBeCaller, applySettingsPatch, autoDetectedBuiltins, awayPersonOf, effectiveUiLevel, refuseAgentCaller, requireFsAllowed } from '../../server.mjs';
+import { APP_INFO, REMOTE_MODE, actionsEnabledHere, agentMayBeCaller, applySettingsPatch, autoDetectedBuiltins, awayPersonOf, effectiveUiLevel, emitMemoryChanged, liveDefragRun, memoryError, refuseAgentCaller, requireFsAllowed, teamOriginOk, teamWarn } from '../../server.mjs';
 
 export function register(app) {
+
+// #943: the notes pipeline agents proposed (memory-proposals.mjs). A run never writes the store; a person approves each
+// note here (Settings › Memory › Proposed notes) or with `worca memory proposals approve <id>`. Approving is the
+// person's consent, like a team share: same-origin pages only, never a possible agent (teamOriginOk).
+async function proposalProject(item) {
+  if (!String(item.scope).startsWith('projects/')) return null;
+  const key = item.scope.slice('projects/'.length);
+  return (await listProjects()).find((p) => p.key === key) || null;
+}
+app.get('/api/memory/proposals', async (req, res) => {
+  try {
+    const runId = typeof req.query.runId === 'string' && /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(req.query.runId) ? req.query.runId : null;
+    const projects = new Map((await listProjects()).map((p) => [p.key, p.name]));
+    const proposals = (await listProposals(memoryRoot(), { runId })).map((p) => ({
+      ...p, scopeLabel: p.scope === 'global' ? 'Global' : `Project ${projects.get(p.scope.slice('projects/'.length)) || p.scope.slice('projects/'.length)}`,
+    }));
+    res.json({ proposals });
+  } catch (err) { return memoryError(res, err); }
+});
+app.post('/api/memory/proposals/:id/:action', async (req, res, next) => {
+  if (req.params.action !== 'approve' && req.params.action !== 'reject') return next();   // any other action: no route, 404
+  try {
+    if (!teamOriginOk(req, res)) return;
+    const id = String(req.params.id || '');
+    const item = (await listProposals(memoryRoot())).find((p) => p.id === id);
+    if (!item) return res.status(404).json({ error: 'proposal not found' });
+    if (req.params.action === 'reject') {
+      await rejectProposal(memoryRoot(), id);
+      return res.json({ ok: true });
+    }
+    const live = liveDefragRun(item.scope);
+    if (live) return res.status(409).json({ error: 'a defragment run is live on this memory scope. Wait for it to finish', runId: live.id });
+    const project = await proposalProject(item);
+    if (item.scope !== 'global' && !project) return res.status(404).json({ error: 'the project of this proposal is no longer registered' });
+    const r = await approveProposal(memoryRoot(), id, { caps: memoryCaps(project ? { projectDir: project.path } : null), prepare: teamClientText });
+    if (!r) return res.status(404).json({ error: 'proposal not found' });
+    emitMemoryChanged(item.scope);
+    if (project) await queueTeamChanges(project.key, [item.name], { source: `run:${item.runId}` }).catch(teamWarn);
+    res.json({ ok: true, applied: r.applied });
+  } catch (err) { return memoryError(res, err); }
+});
 
 // ---------------------------------------------------------------------------
 // GET /api/settings  -> { root, projectsRoot, projectsRootDefault, default }
@@ -80,6 +124,8 @@ const settingsState = () => ({
   enforceTags: userEnforceTags(),                         // Settings › Tags (local; a team policy's runs.enforceTags wins)
   sync: syncDefaults(),                                   // sync before run (#527): instance defaults
   networkWait: networkWaitSettings(),                     // Settings › Runs › Wait for the network
+  runLimits: runLimits(),                                 // Settings › Runs › Machine load
+  testWorkersAuto: autoTestWorkers(),                     // what an unset runLimits.testWorkers means here
   uiLevel: effectiveUiLevel(),                            // simple | advanced | expert (docs/ui-levels.md)
   flags: allFlags(),                                      // { key: bool } resolved (docs/feature-flags.md)
   git: (({ available, version }) => ({ available, version }))(currentGitState()),   // is git usable here (CONTRACT §0)
@@ -183,7 +229,8 @@ app.post('/api/settings', async (req, res) => {
   const body = req.body || {};
   const has = (k) => Object.prototype.hasOwnProperty.call(body, k);
   // D4: actions.editor / actions.terminal are command paths the built-ins route spawns as the server user.
-  if (has('actions') && agentMayBeCaller(req)) return refuseAgentCaller(res);
+  // runLimits.keepRunsDays archives (deletes the files of) old runs: an agent never sets it either.
+  if ((has('actions') || has('runLimits')) && agentMayBeCaller(req)) return refuseAgentCaller(res);
   // Hosted with browsing limited: the Worca root and projects root move only within Worca's own
   // folders (both widen what can be browsed, and the setters probe the path). Clearing is fine.
   if (!(await requireFsAllowed(req, res, [has('root') ? normalizeProjectPath(body.root) : null,

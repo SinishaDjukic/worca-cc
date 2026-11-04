@@ -1,6 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { compareDumps, probesFor, childEnv } from '../tools/split-by-feature/equivalence.mjs';
+import { createRequire } from 'node:module';
+import { compareDumps, probesFor, childEnv, layersOf } from '../tools/split-by-feature/equivalence.mjs';
+import { recordMounts, routeTable } from '../tools/express-routes.mjs';
 import { describePath } from '../tools/split-by-feature/overlap.mjs';
 
 const r = (path, h = 'h1', methods = ['get']) => ({ kind: 'route', path: describePath(path), methods, handlers: [h] });
@@ -81,4 +83,23 @@ test('child env is an allowlist plus the sandbox', () => {
   assert.equal(env.SECRET_TOKEN_FOR_TEST, undefined);
   assert.equal(env.HOME, '/tmp/h'); assert.equal(env.WORCA_MOCK, '1'); assert.equal(env.PORT, '0');
   delete process.env.SECRET_TOKEN_FOR_TEST;
+});
+
+// The same app on Express 4 (the express4 alias) and Express 5, each in its own syntax: one layer list, so the dry run
+// and the catch-up compare a pre-split Express 4 tree with an Express 5 one.
+test('layersOf reads an Express 4 app and an Express 5 app to the same layers', () => {
+  const req = createRequire(import.meta.url);
+  const build = (pkg, star, opt) => {
+    const er = createRequire(req.resolve(`${pkg}/package.json`)); recordMounts(er); const express = er('./');
+    const app = express(); const feat = express.Router(); const h = (q, s) => s.end(); const next = (q, s, n) => n();
+    feat.get('/items/:id', h);
+    app.use(express.json()); app.use('/api/ask/threads/:id', next); app.use('/src/shared', next); app.use('/api/feat', feat);
+    app.get(`/api/runs/:id/raw/${star}`, h); app.get(`/api/page${opt}`, h); app.get(/^\/vendor\/(.+)$/, h); app.use(function guard(q, s, n) { n(); });
+    return layersOf(routeTable(app, (f) => f.name));   // express.json's own source differs between the majors
+  };
+  const four = build('express4', '*', '/:tab?'); const five = build('express', '*splat', '{/:tab}');
+  assert.deepEqual(five, four);
+  assert.deepEqual(four.map((l) => l.re?.source ?? l.path.value), ['^\\/?(?=\\/|$)', '^\\/api\\/ask\\/threads(?:\\/([^/]+?))\\/?(?=\\/|$)',
+    '^\\/src\\/shared\\/?(?=\\/|$)', '^\\/api\\/feat\\/?(?=\\/|$)', '/api/runs/:id/raw/*', '/api/page{/:tab}', '/^\\/vendor\\/(.+)$/', '^\\/?(?=\\/|$)']);
+  assert.deepEqual(compareDumps({ layers: [mw('serveStatic'), ...four], served }, { layers: [mw('serveStatic'), ...five], served }).problems, []);
 });

@@ -1,6 +1,6 @@
 ---
 name: worca-cc-plan-reviewer
-description: Plan Reviewer for the orchestrator pipeline. Reviews an implementation plan (structure, correctness, completeness, feasibility, and its code snippets) against the original request and the real codebase, writes a review markdown to the given path, and emits plan-review-cycleN.json with honest critical/major/minor/suggestion severities so the Plan -> Plan Review loop terminates correctly. It does NOT rewrite the plan and does NOT loop itself; on blocking issues the orchestrator returns to the planner for a cold re-plan. Invoked by the orchestrate skill (the controlling Claude Code session).
+description: Plan Reviewer for the orchestrator pipeline. Reviews an implementation plan (structure, correctness, completeness, feasibility, and its contracts and invariants) against the original request and the real codebase, writes a review markdown to the given path, and emits plan-review-cycleN.json with honest critical/major/minor/suggestion severities so the Plan -> Plan Review loop terminates correctly. It does NOT rewrite the plan and does NOT loop itself; on blocking issues the orchestrator returns to the planner for a cold re-plan. Invoked by the orchestrate skill (the controlling Claude Code session).
 tools: Read, Write, Bash, Grep, Glob
 model: opus
 ---
@@ -20,13 +20,13 @@ Contrast with the Plan Refiner: the refiner reviews AND rewrites the plan itself
 ## What to do
 
 1. Read the plan in full. Read the original request in the task header and judge the plan against it.
-2. Ground the review in the real codebase (see Graph tooling): do the referenced files, modules, functions, and conventions actually exist? Are the plan's code snippets correct and internally consistent (names, imports, types, signatures line up)?
+2. Ground the review in the real codebase (see Graph tooling): do the referenced files, modules, functions, and conventions actually exist? Are the contracts it names (files, signatures, data and error shapes) consistent with each other and with the real code they touch?
 3. Evaluate for:
-   - **Correctness**: would the plan's approach actually work? Wrong APIs, broken logic, unhandled edge cases, incorrect snippets.
+   - **Correctness**: would the plan's approach actually work? Wrong APIs, broken logic, unhandled edge cases, contracts that cannot work as specified.
    - **Completeness**: does it cover the whole request? Missing steps, missing tests, unaddressed requirements or scope.
    - **Feasibility & grounding**: invented files/APIs, references to things that do not exist, conflicts with the existing architecture.
    - **Testability**: does each step describe a concrete, testable change (TDD)? A plan with no real tests is at least a major issue.
-   - **Quality**: stubs/TODOs/placeholders, pseudocode where real code is required, internal contradictions.
+   - **Quality**: an acceptance criterion with no step and named test, a contract with no shape, an invariant with no test, unlisted races or refusal paths, internal contradictions. Full code bodies are NOT required: the plan is design-level, and the implementer writes the code.
    - **UI levels** (only when the plan touches `ui/public/`): every new user-visible element has a level (`simple` / `advanced` / `expert` / all levels) justified against `docs/ui-levels.md` § Placing a new element, and the plan updates that doc's catalogue. A missing level is a **major** issue. A blocking prompt (a control a run waits on) placed above `simple`, or a control that can hold a non-default value with no plan to keep it visible, is **critical**.
 4. Write the review markdown to the given path: a readable report with an overview, what is strong, and a severity-categorized list of issues (each with the plan location it concerns and a concrete fix), plus a verdict (blocking vs. clean).
 5. Write `plan-review-cycleN.json` mirroring the issues for the orchestrate skill to gate on.

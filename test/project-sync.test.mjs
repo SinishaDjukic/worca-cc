@@ -13,7 +13,7 @@ import { projectKey } from '../src/core/store.mjs';
 import { fetchRemote, _testing as gitSyncTesting } from '../src/core/git-sync.mjs';
 import {
   effectiveSyncSettings, projectSyncBlock, chipState, worstChipState,
-  startProjectSyncBackground, projectSyncEvents, _testing,
+  startProjectSyncBackground, projectSyncEvents, noteProjectActive, QUIET_AFTER_MS, _testing,
 } from '../src/core/project-sync.mjs';
 
 const home = useTempHome(after, 'worca-cc-project-sync-');
@@ -147,8 +147,9 @@ test('startProjectSyncBackground: changed fires once, again after a push once FE
   const events = [];
   const on = (e) => { if (e.projectKey === key) events.push(e); };
   projectSyncEvents.on('changed', on);
+  let skew = 0;   // the loop remembers when a project is next due: time has to pass for it too
   try {
-    const stop = startProjectSyncBackground({ tickMs: 20, log: () => {},
+    const stop = startProjectSyncBackground({ tickMs: 20, log: () => {}, now: () => Date.now() + skew,
       listProjectsFn: async () => [{ key, path: a, exists: true }] });
     stops.push(stop);
     await waitFor(() => events.length === 1);
@@ -158,6 +159,7 @@ test('startProjectSyncBackground: changed fires once, again after a push once FE
     await push('g.txt', 'two');
     await ageFetchHead(a, 11 * 60_000);
     gitSyncTesting.reset();   // this process's own-fetch memory must not count as fresh
+    skew = 11 * 60_000;
     await waitFor(() => events.length === 2);
     await stop();
     const after = events.length;
@@ -182,9 +184,13 @@ test('startProjectSyncBackground: a project that is not due runs no status, fetc
     const stop = startProjectSyncBackground({ tickMs: 20, log: () => {},
       listProjectsFn: async () => [{ key: projectKey(a), path: a, exists: true }] });
     stops.push(stop);
-    await waitFor(() => cmds.filter((c) => c[0] === 'remote').length >= 5);
+    await waitFor(() => cmds.filter((c) => c[0] === 'remote').length >= 1);
+    await new Promise((r) => setTimeout(r, 150));   // several more ticks
     await stop();
     assert.equal(events.length, 0);
+    // One due check, then nothing until FETCH_HEAD + refreshMinutes: no git at all on the later ticks.
+    assert.equal(cmds.filter((c) => c[0] === 'remote').length, 1, 'remote get-url once (none on later ticks)');
+    assert.equal(cmds.filter((c) => c[0] === 'rev-parse').length, 1, 'rev-parse --git-path once');
     for (const c of cmds) {
       assert.ok(!['status', 'fetch', 'rev-list', 'log', 'merge', 'update-ref'].includes(c[0]), c.join(' '));
       assert.ok((c[0] === 'remote' && c[1] === 'get-url') || (c[0] === 'rev-parse' && c[1] === '--git-path'), c.join(' '));
@@ -246,6 +252,41 @@ test('startProjectSyncBackground: a failed background fetch makes the next statu
   } finally {
     projectSyncEvents.off('changed', on);
   }
+});
+
+test('startProjectSyncBackground: a local-only project is looked at once per refreshMinutes, not every tick', async () => {
+  const dir = await mkdtemp(join(root, 'local-'));
+  g(dir, 'init', '-q');
+  const cmds = [];
+  gitSyncTesting.setRunner((args, opts) => { cmds.push(args); return gitSyncTesting.defaultRun(args, opts); });
+  const stop = startProjectSyncBackground({ tickMs: 20, log: () => {},
+    listProjectsFn: async () => [{ key: projectKey(dir), path: dir, exists: true }] });
+  stops.push(stop);
+  await waitFor(() => cmds.length >= 1);
+  await new Promise((r) => setTimeout(r, 150));
+  await stop();
+  assert.deepEqual(cmds.map((c) => c.join(' ')), ['remote get-url origin']);
+});
+
+test('startProjectSyncBackground: a project nobody opened for a day is fetched hourly; opening it brings refreshMinutes back', async (t) => {
+  const { a } = await world();
+  const key = projectKey(a);
+  assert.equal((await fetchRemote(a)).ok, true);
+  await ageFetchHead(a, 11 * 60_000);   // past refreshMinutes (10), inside QUIET_REFRESH_MINUTES (60)
+  gitSyncTesting.forgetProcess();
+  _testing.setBootAt(Date.now() - 2 * QUIET_AFTER_MS);
+  _testing.openedAt.delete(key);
+  t.after(() => _testing.setBootAt(Date.now()));
+  let fetches = 0;
+  gitSyncTesting.setRunner((args, opts) => { if (args[0] === 'fetch') fetches += 1; return gitSyncTesting.defaultRun(args, opts); });
+  const stop = startProjectSyncBackground({ tickMs: 20, log: () => {},
+    listProjectsFn: async () => [{ key, path: a, exists: true }] });
+  stops.push(stop);
+  await new Promise((r) => setTimeout(r, 150));
+  assert.equal(fetches, 0, 'quiet: an 11-minute-old fetch is fresh enough');
+  noteProjectActive(key);   // a person opened its chip or branches
+  await waitFor(() => fetches === 1);
+  await stop();
 });
 
 test('startProjectSyncBackground: WORCA_SYNC_BACKGROUND=0 disables it', async () => {

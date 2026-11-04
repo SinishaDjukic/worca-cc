@@ -27,7 +27,8 @@ don't cherry-pick commits, skills, or docs across them.
 Requirements:
 
 - **Node.js >= 22.19.0** — required by the built-in `node:sqlite` store and undici 8. Run
-  `nvm use` to pick up the bundled `.nvmrc`.
+  `nvm use` to pick up the bundled `.nvmrc` (Node 24): CI, the release and the Docker image all run
+  that major, and CI's fast tests also run the exact floor and the newest LTS.
 - The **`claude` CLI** on your `PATH` — only for real (non-mock) pipeline runs.
   Everything else, including the full test suite, works without it.
 
@@ -97,6 +98,15 @@ npm test
 
 This runs the full `node:test` suite (`test/*.mjs`) against an isolated
 `WORCA_HOME`. No network, no Claude, no API keys needed.
+
+One full suite runs at a time on a machine: a second `npm test` (another
+worktree, a Worca agent) waits for the first and says so; `WORCA_TEST_NO_LOCK=1`
+skips the wait. A suite is stopped after 60 minutes
+(`WORCA_TEST_SUITE_TIMEOUT_MIN`). Workers default to all cores but one;
+`--concurrency N` or `WORCA_TEST_CONCURRENCY` (Worca sets it in its agents'
+environment, Settings › Runs › Machine load) lowers that. Timing-budget tests
+stretch their budgets by the machine's load locally (`test/helpers/load-budget.mjs`);
+CI keeps them strict.
 
 CI runs on every pull request and every push to `dev`: the fast tier always,
 the slow tier when the change touches what it exercises (`test/tiers.json`;

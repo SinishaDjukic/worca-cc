@@ -13,7 +13,7 @@ pass() { printf 'PASS  %s\n' "$*"; }
 fail() { printf 'FAIL  %s\n' "$*"; fails=$((fails + 1)); }
 want() { if [ "$2" = "$3" ]; then pass "$1 ($2)"; else fail "$1: got $2, want $3"; fi; }
 code() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
-P=$(pgrep -u worca -o node)
+P=$(pgrep -u worca -o -x 'node|MainThread')   # Node 24+ names its main thread MainThread (the Linux process name)
 [ -n "$P" ] || { fail "no worca node process"; exit 1; }
 
 # 1. Bypassing Access
@@ -35,7 +35,7 @@ else
 fi
 
 # 2. Users and the agent boundary
-want "node processes run as" "$(ps -C node -o user= | sort -u | tr '\n' ' ' | sed 's/ $//')" worca
+want "node processes run as" "$(ps -C node,MainThread -o user= | sort -u | tr '\n' ' ' | sed 's/ $//')" worca
 if id worca-agent >/dev/null 2>&1; then
   want "sudo worca -> worca-agent" "$(su -s /bin/sh worca -c 'sudo -n -u worca-agent -- id -un' 2>&1)" worca-agent
   if su -s /bin/sh worca -c 'sudo -n -u root -- true' >/dev/null 2>&1; then fail "sudo worca -> root is allowed"; else pass "sudo worca -> root refused"; fi
@@ -44,7 +44,7 @@ printf 'info  perms %s\n' "$(stat -c '%a:%G:%n' /data/projects /data/worca/.worc
 
 cat > /tmp/worca-probe-claude <<'F'
 #!/bin/sh
-p=$(pgrep -u worca -o node)
+p=$(pgrep -u worca -o -x 'node|MainThread')
 r() { if cat "$1" >/dev/null 2>&1; then echo read; else echo denied; fi; }
 printf '{"type":"result","subtype":"success","is_error":false,"result":"user=%s environ=%s db=%s home=%s gh=%s app=%s broker=%s ado=%s"}\n' "$(id -un)" "$(r /proc/$p/environ)" "$(r /data/worca/.worca-cc/worca-cc.db)" "$(ls /data/home >/dev/null 2>&1 && echo read || echo denied)" "${GH_TOKEN:+set}" "${WORCA_GH_APP_KEY_B64:+set}" "${WORCA_BROKER_SECRET:+set}" "${WORCA_ADO_TOKEN:+set}${WORCA_ADO_READ_TOKEN:+set}${WORCA_ADO_WRITE_TOKEN:+set}${AZURE_DEVOPS_EXT_PAT:+set}"
 F
