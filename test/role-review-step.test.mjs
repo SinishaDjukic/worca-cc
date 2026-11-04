@@ -6,8 +6,9 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   LEGACY_ROLE_REVIEW, ROLE_CHECKLISTS, roleReviewOf, roleReviewIssues, runningRoles, rolesForRound, roleRecord,
-  findingsMarkdown, genericRoleBrief,
+  findingsMarkdown, genericRoleBrief, ROLE_REVIEW_SINKS,
 } from '../src/shared/graph/role-review-step.mjs';
+import { dispositionsBlock } from '../src/shared/review/findings.mjs';
 import { PERSPECTIVE_ROLE_CHECKLIST } from '../src/shared/shape/role-review.mjs';
 import { PERSPECTIVES } from '../src/shared/shape/perspectives.mjs';
 
@@ -34,7 +35,11 @@ test('roleReviewIssues: one named message per problem; none for absent, true or 
   const issues = (rr) => roleReviewIssues({ roleReview: rr });
   assert.deepEqual(issues({ ...SPEC, roles: [CS[0], { key: 'Sec-1', label: 'Security' }] }), ['roleReview.roles[1].key "Sec-1" must be 1–24 lowercase letters']);
   assert.deepEqual(issues({ ...SPEC, target: 'diff' }), ['roleReview.target "diff" is not supported yet (plan only)']);
-  assert.deepEqual(issues({ ...SPEC, sink: 'implementer' }), ['roleReview.sink "implementer" is not supported yet (refiner only)']);
+  assert.deepEqual(issues({ ...SPEC, sink: 'implementer' }), [], 'an implementer sink is accepted');
+  assert.deepEqual(issues({ ...SPEC, sink: 'planner' }), ['roleReview.sink "planner" is not supported yet (refiner or implementer)']);
+  assert.deepEqual(issues({ roles: CS, target: 'plan' }), ['roleReview.sink is required (refiner or implementer)']);
+  assert.deepEqual(ROLE_REVIEW_SINKS, ['refiner', 'implementer']);
+  assert.equal(roleReviewOf({ roleReview: { ...SPEC, sink: 'implementer' } }).sink, 'implementer');
   assert.deepEqual(issues({ ...SPEC, checklist: 'x' }), ['roleReview.checklist "x" is unknown (known: perspectives)']);
   assert.deepEqual(issues({ source: 'declared', target: 'plan', sink: 'refiner' }), ['roleReview.roles is required without a checklist provider']);
   assert.deepEqual(issues({ ...SPEC, roles: [CS[0], CS[0]] }), ['roleReview.roles[1].key "correctness" is declared twice']);
@@ -67,6 +72,10 @@ test('the moved rolesForRound / roleRecord work on roles that are not perspectiv
   const md = findingsMarkdown(1, '/p/plan.md', r1.roles);
   assert.match(md, /^## Correctness$/m);
   assert.match(md, /\*\*security-1-1\*\* \[critical\]/);
+  assert.doesNotMatch(md, /## Dispositions/, 'no path: no block');
+  const withPath = findingsMarkdown(1, '/p/plan.md', r1.roles, { dispositionsPath: '/p/x-role-findings-r1-dispositions.json' });
+  assert.ok(withPath.startsWith(md), 'each finding line is unchanged');
+  assert.ok(withPath.endsWith(dispositionsBlock('/p/x-role-findings-r1-dispositions.json')), 'it ends in the ## Dispositions block');
 });
 
 test('genericRoleBrief: this role only, no perspective text', () => {

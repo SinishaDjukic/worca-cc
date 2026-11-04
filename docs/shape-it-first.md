@@ -76,6 +76,17 @@ engine's role-review step (any workflow can declare one, see
 perspectives as its roles, runs the ones you picked, and judges each on its own checklist
 items.
 
+**Counts per role.** The card's folded line reads `Reviewed by 5 roles · 1 open`; unfolded, each
+role has one row with its counts, for example `Security · 2 fixed · 1 disputed · 1 open`, and
+**Show** lists its findings. Refine Plan answers every finding: **fixed**, or **disputed** with a
+one-line reason that Show prints under it. A finding it does not answer stays **open**.
+
+**Decisions.** When two roles ask for opposite changes to the same section, Refine Plan leaves
+it to you: the card shows one decision card per pair ("Security and UX disagree on Rollout")
+with the options to pick from. **Approve and build** asks you to answer each one first, and your
+pick is written into the plan's Clarifications. An approval without you (auto-approve) never
+waits on it.
+
 **A model per reviewer.** Product reviews on a different model (Opus 5.5) from the other
 reviewers (Sonnet 5.5) by default, so at least one reviewer judges the plan independently.
 On an engine that does not run it (Codex, for example), Product runs on the node's model

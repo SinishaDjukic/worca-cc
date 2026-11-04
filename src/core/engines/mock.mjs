@@ -1002,10 +1002,11 @@ async function mockRefiner(m, cycle, onEvent) {
             },
           ],
         };
-  // Role reviews (spec §3): the refiner fed the merged findings says which ids it fixed — here, every one listed.
+  // Role reviews (spec §3): the refiner fed the merged findings says which ids it fixed — here, every one listed (or,
+  // with a dispositions file, every one the knob leaves fixed).
   if (m.MOCK_FINDINGS) {
     const findings = await readFile(m.MOCK_FINDINGS, 'utf8').catch(() => '');
-    review.addressed = [...findings.matchAll(/\*\*([a-z]+-\d+-\d+)\*\*/g)].map((x) => x[1]);
+    review.addressed = (await mockDispositions(findings)) ?? [...findings.matchAll(FINDING_ID_RE)].map((x) => x[1]);
   }
 
   if (jsonPath) {
@@ -1051,8 +1052,32 @@ async function mockDecomposer(m, onEvent) {
  * runs and legacy workspace runs are byte-identical. `ctx.workspace` is NOT available
  * here by design; these absolute paths are the only channel.
  */
+const FINDING_ID_RE = /\*\*([a-z]+-\d+-\d+)\*\*/g;
+
+/** Role findings (#990 slice 3): the sink's answer, written to the path the findings text's `Dispositions file:` line
+ *  names. `WORCA_MOCK_DISPOSITIONS='{"ux-1-1":"disputed"}'` answers an id fixed | disputed | omit (default: fixed);
+ *  `WORCA_MOCK_CONFLICTS` is a JSON array passed through. Returns the ids left fixed; null without that line. */
+async function mockDispositions(findingsText) {
+  const path = /^Dispositions file: (.+)$/m.exec(findingsText || '')?.[1]?.trim();
+  if (!path) return null;
+  const knob = (name) => { try { return JSON.parse(process.env[name] || 'null'); } catch { return null; } };
+  const table = knob('WORCA_MOCK_DISPOSITIONS') || {};
+  const conflicts = knob('WORCA_MOCK_CONFLICTS');
+  const dispositions = [];
+  for (const [, id] of findingsText.matchAll(FINDING_ID_RE)) {
+    const status = table[id] || 'fixed';
+    if (status === 'omit') continue;
+    dispositions.push(status === 'disputed' ? { id, status, reason: 'mock: the plan already covers this' } : { id, status: 'fixed' });
+  }
+  await ensureDir(path);
+  await writeFile(path, JSON.stringify({ dispositions, ...(Array.isArray(conflicts) ? { conflicts } : {}) }, null, 2) + '\n', 'utf8');
+  return dispositions.filter((d) => d.status === 'fixed').map((d) => d.id);
+}
+
 async function mockImplementer(m, cwd, onEvent, workspaceWriteTargets) {
   await emitLog(onEvent, '[mock] implementer applying plan via TDD (red-green-refactor)');
+  // A role review's implementer sink: its first bound input (`fix`) is the findings file.
+  if (m.MOCK_IN) await mockDispositions(await readFile(m.MOCK_IN, 'utf8').catch(() => ''));
   const targets = Array.isArray(workspaceWriteTargets) && workspaceWriteTargets.length
     ? workspaceWriteTargets
     : [cwd];

@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { rolesForRound, roleBriefBlock, houseBriefBlock, roleRecord, roleItems, refinerVerdict, applyAddressed, openBlocking, findingsMarkdown,
-  currentPass, roleSummaries, reviewedLine, liveRoleRows, worstText }
+  currentPass, roleSummaries, reviewedLine, liveRoleRows, worstText, countsText }
   from '../src/shared/shape/role-review.mjs';
 
 // A recorded Shaper plan (real data): the 18 Oct "Shaper as chat cards" plan v2, copied verbatim.
@@ -93,12 +93,32 @@ test('recorded-run fixture: ids, statuses and round-2 skips are what slice 1 sto
 test('roleSummaries: one entry per role, earlier fixes kept, a superseded open finding dropped, ids once', () => {
   const s = roleSummaries(RR);
   assert.deepEqual(s.map((r) => [r.text, r.open]), [
-    ['Product · no findings', 0], ['Architect · 1 major fixed', 0], ['QA · 1 critical, 1 suggestion fixed', 0],
-    ['UX · 1 minor fixed', 0], ['Project fit · 1 major open', 1]]);
+    ['Product · no findings', 0], ['Architect · 1 fixed', 0], ['QA · 2 fixed', 0],
+    ['UX · 1 fixed', 0], ['Project fit · 1 open', 1]]);
+  assert.deepEqual(s.map((r) => r.counts.raised), [0, 1, 2, 1, 1], 'the counts are over exactly the listed findings');
   const ids = s.flatMap((r) => r.findings.map((f) => f.id));
   assert.equal(new Set(ids).size, ids.length);
   assert.ok(!ids.includes('fit-1-1'));
   assert.equal(s.reduce((n, r) => n + r.open, 0), openBlocking(RR));
+});
+
+test('roleSummaries: a disputed finding is not counted as fixed, and an earlier round\'s dispute is kept', () => {
+  const f = (id, status, extra = {}) => ({ id, severity: 'major', title: id, section: 'Rollout', fix: id, status, ...extra });
+  const rr = { rounds: [
+    { pass: 1, round: 1, plan: 'p', roles: [{ key: 'security', label: 'Security', skipped: false, checklist: [],
+      findings: [f('security-1-1', 'disputed', { reason: 'out of scope' }), f('security-1-2', 'open')] }] },
+    { pass: 1, round: 2, plan: 'p', roles: [{ key: 'security', label: 'Security', skipped: false, checklist: [],
+      findings: [f('security-2-1', 'fixed'), f('security-2-2', 'open')] }] },
+  ] };
+  const [row] = roleSummaries(rr);
+  assert.equal(row.text, 'Security · 1 fixed · 1 disputed · 1 open');
+  assert.deepEqual(row.counts, { raised: 3, fixed: 1, disputed: 1, open: 1 });
+  assert.deepEqual(row.findings.map((x) => x.id), ['security-1-1', 'security-2-1', 'security-2-2'], 'the superseded open one is dropped');
+  assert.equal(row.open, 1, 'a disputed finding is not open');
+  assert.equal(openBlocking(rr), 1);
+  assert.equal(countsText({ raised: 0, fixed: 0, disputed: 0, open: 0 }), 'no findings');
+  assert.equal(countsText({ raised: 4, fixed: 2, disputed: 1, open: 1 }), '2 fixed · 1 disputed · 1 open');
+  assert.equal(countsText({ raised: 2, fixed: 0, disputed: 2, open: 0 }), '2 disputed');
 });
 
 test('reviewedLine and currentPass: the last pass only; empty without rounds', () => {

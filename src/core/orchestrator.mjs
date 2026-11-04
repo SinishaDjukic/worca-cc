@@ -42,7 +42,9 @@ import { DEFAULT_PERSPECTIVES } from '../shared/shape/perspectives.mjs';
 import { ensureHouseBrief } from './house-brief.mjs';
 import { extractChecklist } from '../shared/shape/checklist.mjs';
 import { applyChecklist, checklistFindingsMarkdown } from '../shared/shape/review-checklist.mjs';
-import { REFINER_SINK, roleReviewOf, roleChecklistOf, runningRoles, rolesForRound, roleTaskId, roleRecord, findingsMarkdown, refinerVerdict, applyAddressed } from '../shared/graph/role-review-step.mjs';
+import { REFINER_SINK, roleReviewOf, roleChecklistOf, runningRoles, rolesForRound, roleTaskId, roleRecord, findingsMarkdown, refinerVerdict } from '../shared/graph/role-review-step.mjs';
+import { DISPOSITIONS_MAX_BYTES, applyDispositions, withCounts, normalizeConflicts, dispositionsPathFor, conflictClarifications, withClarifications } from '../shared/review/findings.mjs';
+import { currentPass } from '../shared/shape/role-review.mjs';
 import { createScheduler, sliceExecutionId, QUIESCENCE_WARNING } from './graph/scheduler.mjs';
 import { sigkillGraceMs } from './engines/spawn.mjs';
 import { runExecution, allocateOutputs, allocateVerdict, readDecomposition, decompositionProblems, CHECKLIST_REVIEWER_KEY, SLICE_PLANNER_KEY, SLICE_SCOPE_AGENT_KEYS, _testing as executorTesting } from './graph/executor.mjs';
@@ -1318,6 +1320,8 @@ export class GraphOrchestrator extends RunHarness {
     }
     this._planRevise = null;
     let check = null;
+    // #990 slice 3: the last round's conflicts; the person's picks for them ride any decision, and are never required.
+    const conflicts = currentPass(this.state.roleReviews)?.rounds.at(-1)?.conflicts || [];
     const asked = (async () => {
       check = await this._planCheck(q.plan?.file);
       this._shapingRound(q, check);
@@ -1341,7 +1345,7 @@ export class GraphOrchestrator extends RunHarness {
       return this._enqueueAsk(() => this._ask({
         id: q.id, kind: PLAN_ASK_KIND, nodeId: q.nodeId, executionId: q.executionId,
         plan: { ...q.plan, nodeId: q.nodeId, check, perspectives, ...(outlineChange ? { outlineChange } : {}), ...(notes.length ? { notes } : {}) },
-        validate: (raw) => validatePlanAnswer(raw, { revisable: q.plan?.revisable === true, perspectives }),
+        validate: (raw) => validatePlanAnswer(raw, { revisable: q.plan?.revisable === true, perspectives, conflicts }),
       }));
     })();
     return asked.then(
@@ -1360,7 +1364,9 @@ export class GraphOrchestrator extends RunHarness {
           // Persisted with the resume point; replayed only if a pause re-raises this same ask.
           this._planRevise = { id: q.id, path };
           // Keep the real cause: the run rethrows _graphError, else a generic 'a graph execution failed'.
-          try { await writeFile(path, renderPlanFeedback(payload.feedback, q.plan.file), 'utf8'); }
+          const picked = conflictClarifications(conflicts, payload.conflicts);
+          const feedback = picked.length ? `${payload.feedback}\n\nDecisions made so far:\n\n${picked.join('\n')}` : payload.feedback;
+          try { await writeFile(path, renderPlanFeedback(feedback, q.plan.file), 'utf8'); }
           catch (err) { this._planRevise = null; this._graphError ||= err; throw err; }
           this._shapeRec?.revises.push({ round: q.plan.round, by: payload.source === 'check' ? 'check' : 'person' });
           this._log('orchestrator', 'info', `plan approval ${q.id}: revise (${path})`);
@@ -1368,6 +1374,7 @@ export class GraphOrchestrator extends RunHarness {
         }
         // D28: the approved round's shape score
         if (payload?.decision === 'approve' && this._shapeRec) this._shapeRec.shapeScore = shapeScoreOf(check);
+        if (payload?.decision === 'approve') await this._recordConflictPicks(q, conflicts, payload.conflicts);
         return payload;                              // { decision:'approve' } | { decision:'withdrawn' }
       },
       (err) => {
@@ -1376,6 +1383,22 @@ export class GraphOrchestrator extends RunHarness {
         return new Promise(() => {});
       },
     );
+  }
+
+  /** #990 slice 3 (D9): the approved plan keeps the person's conflict picks in its Clarifications (idempotent across a
+   *  re-asked approval), one audit line per conflict. A failed write is audited and never blocks the approval. */
+  async _recordConflictPicks(q, conflicts, picks = []) {
+    if (!conflicts.length) return;
+    const lines = conflictClarifications(conflicts, picks);
+    if (lines.length && q.plan?.file) {
+      try { await writeFile(q.plan.file, withClarifications(await readFile(q.plan.file, 'utf8'), lines), 'utf8'); } catch (err) {
+        await appendAudit(this.pipeline.dir, `Plan approval: the decisions could not be written to the plan (${err.message}).`).catch(() => {});
+      }
+    }
+    for (const c of conflicts) {
+      const p = (picks || []).find((x) => x.id === c.id);
+      await appendAudit(this.pipeline.dir, p ? `Plan approval: ${c.id} decided: ${p.choice}.` : `${c.id} left undecided at approval`).catch(() => {});
+    }
   }
 
   _shapePerspectives() {
@@ -2976,10 +2999,12 @@ export class GraphOrchestrator extends RunHarness {
       }
       return { ...roleRecord(r, round, raw, provider ? provider.items(r.key, planText) : []), ...this._roleRecordPair(nc, r.key) };
     }));
-    this.state.roleReviews ||= { rounds: [] };
-    this.state.roleReviews.rounds.push({ pass, round, plan: planPath, roles });
     const out = allocateOutputs({ node, ports, executionId: args.executionId, ordinal, runCtx: this._runCtx(nc) });
-    await writeFile(out.findings.path, findingsMarkdown(round, planPath, roles));
+    // The sink answers each finding in this file (#990 slice 3); every round is born with counts (all open).
+    const dispositions = dispositionsPathFor(out.findings.path);
+    this.state.roleReviews ||= { rounds: [] };
+    this.state.roleReviews.rounds.push(withCounts({ pass, round, plan: planPath, roles, dispositions }));
+    await writeFile(out.findings.path, findingsMarkdown(round, planPath, roles, { dispositionsPath: dispositions }));
     const reviewed = roles.filter((r) => !r.skipped).length;
     return {
       summary: `Role reviews, round ${round}: ${reviewed} role(s) reviewed.`,
@@ -2995,23 +3020,51 @@ export class GraphOrchestrator extends RunHarness {
     return { ...(model ? { model } : {}), ...(effort ? { effort } : {}), ...(wanted ? { wanted } : {}) };
   }
 
-  /** The sink of the role review that produced this node's bound `findings` (read off the wire topology), or null. */
-  _findingsSink(nodeId) {
+  /** The wire that brings a role review's `findings` into this node (read off the wire topology, onto any input
+   *  port), with that review's sink; null for a node no role review feeds. */
+  _roleFindingsWire(nodeId) {
     const tpl = this.resolved?.template;
-    const wire = (tpl?.wires || []).find((w) => w?.to?.node === nodeId && w.to.port === 'findings');
-    const from = wire && (tpl.nodes || []).find((n) => n.id === wire.from?.node);
-    return from ? (roleReviewOf(from.config)?.sink ?? null) : null;
+    for (const w of tpl?.wires || []) {
+      if (w?.to?.node !== nodeId || w.from?.port !== 'findings') continue;
+      const spec = roleReviewOf((tpl.nodes || []).find((n) => n.id === w.from.node)?.config);
+      if (spec) return { port: w.to.port, sink: spec.sink };
+    }
+    return null;
   }
 
-  /** Spec §3 "Loop": a refiner fed role findings routes on THIS round's critical/major reviewer findings, never on its
-   *  own self-review; its `addressed` list (raw file — normalizeReview drops it) marks findings fixed in its version. */
+  /** The sink's answer in the round's dispositions file; {} when it is missing, too big or unparseable (audited). */
+  async _readDispositions(round) {
+    const at = `Role findings, round ${round.round}: the dispositions file ${round.dispositions}`;
+    const absent = async (why) => { await appendAudit(this.pipeline.dir, `${at} ${why}; its unanswered findings count as open.`).catch(() => {}); return {}; };
+    if (!round.dispositions) return {};
+    try {
+      if ((await stat(round.dispositions)).size > DISPOSITIONS_MAX_BYTES) return absent(`is over ${DISPOSITIONS_MAX_BYTES} bytes`);
+      const raw = JSON.parse(await readFile(round.dispositions, 'utf8'));
+      return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : absent('is not an object');
+    } catch (err) {
+      return absent(err.code === 'ENOENT' ? 'was not written' : `is unreadable (${err.message})`);
+    }
+  }
+
+  /** Spec §3 "Loop", for ANY sink fed role findings: its dispositions file (and a refiner's `addressed` list, raw file —
+   *  normalizeReview drops it) mark each finding fixed, disputed or open, and the round gets its counts and conflicts.
+   *  A refiner sink then routes on THIS round's critical/major reviewer findings, never on its own self-review. */
   async _applyRoleReviewVerdict(ctx, result) {
-    if (!ctx.bindings?.findings?.path || this._findingsSink(ctx.nodeId) !== REFINER_SINK) return result;
+    const wire = this._roleFindingsWire(ctx.nodeId);
+    if (!wire || !ctx.bindings?.[wire.port]?.path) return result;
     if (!this.state.roleReviews?.rounds?.length || !result || result.paused || result.error) return result;
     const round = this.state.roleReviews.rounds.at(-1);
-    let raw = null;
-    try { raw = ctx.verdict?.path ? JSON.parse(await readFile(ctx.verdict.path, 'utf8')) : null; } catch { raw = null; }
-    applyAddressed(round, raw?.addressed, this._planVersion);
+    const answer = await this._readDispositions(round);
+    let own = null;
+    try { own = ctx.verdict?.path ? JSON.parse(await readFile(ctx.verdict.path, 'utf8')) : null; } catch { own = null; }
+    const raw = { addressed: own?.addressed, dispositions: answer.dispositions, conflicts: answer.conflicts };
+    applyDispositions(round, raw, wire.sink === REFINER_SINK ? this._planVersion : null);
+    const conflicts = normalizeConflicts(raw, round);
+    if (conflicts.length) round.conflicts = conflicts; else delete round.conflicts;
+    const c = round.counts;
+    await appendAudit(this.pipeline.dir, `Role findings, round ${round.round}: ${c.raised} raised, ${c.fixed} fixed, `
+      + `${c.disputed} disputed, ${c.open} open; ${conflicts.length} conflict(s) for the person.`).catch(() => {});
+    if (wire.sink !== REFINER_SINK) return result;
     const { verdict, refinerIssues } = refinerVerdict(round, result.verdict);
     if (refinerIssues.length) round.refinerIssues = refinerIssues;
     // Keep `missing` (no verdict file): `_afterExecution` then skips the `reviews` row, as today.

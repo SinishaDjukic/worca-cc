@@ -19,6 +19,7 @@ import { buildGraphManifest } from '../src/shared/graph/manifest.mjs';
 import { loadAgentRegistry } from '../src/core/agent-registry.mjs';
 import { GRAPH_SHAPE_WORKFLOW, GRAPH_DEFAULT_WORKFLOW } from '../src/core/graph/builtin-workflows.mjs';
 import { DEFAULT_PERSPECTIVES } from '../src/shared/shape/perspectives.mjs';
+import { roundCounts } from '../src/shared/review/findings.mjs';
 
 useTempHome(after);
 
@@ -293,8 +294,11 @@ test('an old roleReview:true run resumes and reads its records', async () => {
   const cell = saved.resumePoint.manifest.graph.nodes.find((n) => n.id === 'n_roles');
   cell.config = { ...cell.config, roleReview: true };
   delete cell.roles;
-  for (const r of saved.resumePoint.roleReviews.rounds[0].roles) { delete r.model; delete r.effort; delete r.wanted; }
-  const old = JSON.parse(JSON.stringify(saved.resumePoint.roleReviews.rounds[0].roles));
+  // ...and before slice 3: no counts, no dispositions path, statuses that came from the refiner's `addressed` list.
+  const r1 = saved.resumePoint.roleReviews.rounds[0];
+  for (const r of r1.roles) { delete r.model; delete r.effort; delete r.wanted; delete r.counts; }
+  delete r1.counts; delete r1.dispositions;
+  const old = JSON.parse(JSON.stringify(r1.roles));
 
   const h2 = start({ projectDir: dir, resume: saved, shape: undefined });
   const res = await h2.done;
@@ -305,6 +309,28 @@ test('an old roleReview:true run resumes and reads its records', async () => {
   assert.deepEqual(rr.rounds[0].roles, old, 'the old records read unchanged');
   assert.deepEqual([rr.rounds[1].roles.find((r) => r.key === 'ux').model, rr.rounds[1].roles.find((r) => r.key === 'ux').effort],
     ['claude-sonnet-5-5', 'medium'], 'the new round records the node\'s pair');
+  assert.equal('counts' in rr.rounds[0], false, 'nothing rewrites the old round');
+  assert.deepEqual(roundCounts(rr.rounds[0]), { raised: 3, fixed: 3, disputed: 0, open: 0 }, 'an old resume point reads with derived counts');
+  assert.deepEqual(rr.rounds[1].counts, roundCounts(rr.rounds[1]), 'the new round stores its counts');
+});
+
+test('a refiner verdict carrying only `addressed`, with no dispositions file, marks those ids fixed', async () => {
+  // A refiner that follows its unchanged directive and ignores the findings' ## Dispositions section.
+  _testing.runClaude = async (o) => {
+    const out = await runClaude(o);
+    const findings = /^MOCK_FINDINGS: (.+)$/m.exec(o.prompt)?.[1];
+    if (/^MOCK_ROLE: refiner$/m.test(o.prompt) && findings) {
+      await rm(/^Dispositions file: (.+)$/m.exec(await readFile(findings, 'utf8'))[1], { force: true });
+    }
+    return out;
+  };
+  const h = start();
+  const res = await h.done;
+  assert.equal(res.status, 'done', res.error);
+  const round = h.orch.state.roleReviews.rounds[0];
+  assert.deepEqual(round.roles.flatMap((r) => r.findings.map((f) => f.status)), ['fixed', 'fixed', 'fixed']);
+  assert.deepEqual(round.counts, { raised: 3, fixed: 3, disputed: 0, open: 0 });
+  assert.ok(auditOf(h.orch).some((t) => /^Role findings, round 1: the dispositions file .* was not written/.test(t)));
 });
 
 test('10 an old manifest (refiner self-loop) resumes with its own topology', async () => {

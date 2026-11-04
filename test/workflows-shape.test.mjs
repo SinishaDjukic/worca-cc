@@ -21,7 +21,7 @@ import { loadScriptRegistry } from '../src/core/script-registry.mjs';
 import { validateGraph } from '../src/shared/graph/validate.mjs';
 import { registryPortsFn } from '../src/core/graph/registry-ports.mjs';
 import { mkdtemp, rm } from 'node:fs/promises';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execSync } from 'node:child_process';
@@ -29,6 +29,7 @@ import { gitDir } from './helpers/git-dir.mjs';
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
 import { _testing } from '../src/core/graph/executor.mjs';
 import { runClaude } from '../src/core/claude-runner.mjs';
+import { getDb } from '../src/core/db.mjs';
 import { RESERVED_WORKFLOW_IDS as COMPOSER_RESERVED } from '../ui/public/graph/composer.mjs';
 
 useTempHome(after);
@@ -247,6 +248,73 @@ test('validatePlanAnswer: revise takes an optional source; only check is carried
   assert.deepEqual(ok({ decision: 'revise', feedback: 'x', source: 'person' }).payload, { decision: 'revise', feedback: 'x' });
   assert.deepEqual(ok({ decision: 'revise', feedback: 'x', source: 'check' }).payload, { decision: 'revise', feedback: 'x', source: 'check' });
   assert.deepEqual(ok({ decision: 'revise', feedback: 'x', source: 'bot' }).errors, [{ path: 'source', code: 'invalid', message: 'source must be person or check' }]);
+});
+
+// ── conflict picks (#990 slice 3): optional on every decision, checked against the asked round's conflicts ──
+
+const CONFLICTS = [{ id: 'conflict-1', findings: ['ux-1-1', 'qa-1-1'], roles: ['ux', 'qa'], section: 'Testing', question: 'Modal or inline?', options: ['Modal', 'Inline'] }];
+
+test('validatePlanAnswer: valid picks pass on approve, revise and stop', () => {
+  const picks = [{ id: 'conflict-1', choice: 'Inline' }];
+  assert.deepEqual(validatePlanAnswer({ decision: 'approve', conflicts: picks }, { conflicts: CONFLICTS }),
+    { ok: true, payload: { decision: 'approve', conflicts: picks } });
+  assert.deepEqual(validatePlanAnswer({ decision: 'stop', conflicts: picks }, { conflicts: CONFLICTS }).payload, { decision: 'stop', conflicts: picks });
+  assert.deepEqual(validatePlanAnswer({ decision: 'revise', feedback: 'x', conflicts: picks }, { revisable: true, conflicts: CONFLICTS }).payload,
+    { decision: 'revise', feedback: 'x', conflicts: picks });
+});
+
+test('validatePlanAnswer: an unknown pick id is dropped; approve without picks is ok', () => {
+  assert.deepEqual(validatePlanAnswer({ decision: 'approve', conflicts: [{ id: 'conflict-9', choice: 'x' }] }, { conflicts: CONFLICTS }),
+    { ok: true, payload: { decision: 'approve', conflicts: [] } });
+  assert.deepEqual(validatePlanAnswer({ decision: 'approve' }, { conflicts: CONFLICTS }), { ok: true, payload: { decision: 'approve' } });
+});
+
+test('validatePlanAnswer: bad picks refuse with 422 errors', () => {
+  const r = validatePlanAnswer({ decision: 'approve', conflicts: [{ id: 'conflict-1', choice: 'x'.repeat(501) }] }, { conflicts: CONFLICTS });
+  assert.deepEqual(r, { ok: false, errors: [{ path: 'conflicts', code: 'invalid', message: 'a decision is over 500 characters' }] });
+});
+
+/** A mock wf_shape run whose UX and QA findings conflict on one section; `onPlan(q, orch)` answers the plan ask. */
+async function conflictRun(onPlan) {
+  const prev = process.env.WORCA_MOCK_CONFLICTS;
+  process.env.WORCA_MOCK_CONFLICTS = JSON.stringify([{ findings: ['ux-1-1', 'qa-1-1'], question: 'Modal or inline?', options: ['Modal', 'Inline'] }]);
+  try {
+    const orch = createOrchestrator({ projectDir: gitDir('conflicts'), workflowId: 'wf_shape', prompt: 'demo', claude: { mock: true }, shape: { perspectives: ['ux', 'qa'] } });
+    let plan = null;
+    orch.on('question', (q) => {
+      if (q.kind === 'plan') { plan = q; setImmediate(() => onPlan(q, orch)); } else if (q.kind === 'clarify' || q.kind === 'questions') setImmediate(() => orch.answer(q.id, { answers: [] }));
+    });
+    const res = await orch.run();
+    assert.equal(res.status, 'done', res.error);
+    const audit = getDb().prepare('SELECT text FROM pipeline_events WHERE pipeline_id = ?').all(orch.getState().id).map((r) => r.text);
+    return { orch, plan, audit, text: readFileSync(plan.plan.file, 'utf8') };
+  } finally {
+    if (prev === undefined) delete process.env.WORCA_MOCK_CONFLICTS; else process.env.WORCA_MOCK_CONFLICTS = prev;
+  }
+}
+const PICK_LINE = '- **conflict-1** — Modal or inline? → **Inline (decided at plan approval)**';
+
+test('approve with a pick: a refused answer first changes nothing; the pick lands in Clarifications once, with an audit line', async () => {
+  let before = null; let auditBefore = 0;
+  const { text, audit } = await conflictRun((q, orch) => {
+    before = readFileSync(q.plan.file, 'utf8');
+    auditBefore = getDb().prepare('SELECT count(*) AS n FROM pipeline_events WHERE pipeline_id = ?').get(orch.getState().id).n;
+    assert.throws(() => orch.answer(q.id, { decision: 'approve', conflicts: [{ id: 'conflict-1', choice: 'x'.repeat(501) }] }), (e) => e.code === 'INVALID_ANSWER'
+      && e.errors[0].path === 'conflicts');
+    assert.equal(readFileSync(q.plan.file, 'utf8'), before, 'no plan write');
+    assert.equal(getDb().prepare('SELECT count(*) AS n FROM pipeline_events WHERE pipeline_id = ?').get(orch.getState().id).n, auditBefore, 'no audit line');
+    orch.answer(q.id, { decision: 'approve', conflicts: [{ id: 'conflict-1', choice: 'Inline' }] });
+  });
+  assert.equal(text.split(PICK_LINE).length - 1, 1);
+  assert.match(text.slice(text.indexOf('## Clarifications (Q&A)')), new RegExp(PICK_LINE.replace(/[*?()]/g, '\\$&')));
+  assert.ok(audit.includes('Plan approval: conflict-1 decided: Inline.'), audit.join('\n'));
+});
+
+test('approve without a pick never blocks: the conflict is audited as left undecided and the plan is unchanged', async () => {
+  let before = null;
+  const { text, audit } = await conflictRun((q, orch) => { before = readFileSync(q.plan.file, 'utf8'); orch.answer(q.id, { decision: 'approve' }); });
+  assert.equal(text, before);
+  assert.ok(audit.includes('conflict-1 left undecided at approval'), audit.join('\n'));
 });
 
 // ── Project fit (slice 3): the house brief reaches the fit reviewer only ──

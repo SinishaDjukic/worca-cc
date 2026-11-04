@@ -8,6 +8,13 @@
     "roleReviews": {
       "rounds": [
         {
+          "counts": {
+            "disputed": 0,
+            "fixed": 3,
+            "open": 0,
+            "raised": 3
+          },
+          "dispositions": "$PIPE/demo-role-findings-r1-dispositions.json",
           "pass": 1,
           "plan": "$STORE/plans/$TS-demo.md",
           "refinerIssues": [
@@ -21,6 +28,12 @@
           "roles": [
             {
               "checklist": [],
+              "counts": {
+                "disputed": 0,
+                "fixed": 1,
+                "open": 0,
+                "raised": 1
+              },
               "findings": [
                 {
                   "fix": "Add the missing case.",
@@ -44,6 +57,12 @@
                   "status": "met"
                 }
               ],
+              "counts": {
+                "disputed": 0,
+                "fixed": 1,
+                "open": 0,
+                "raised": 1
+              },
               "findings": [
                 {
                   "fix": "Add the missing case.",
@@ -67,6 +86,12 @@
                   "status": "met"
                 }
               ],
+              "counts": {
+                "disputed": 0,
+                "fixed": 1,
+                "open": 0,
+                "raised": 1
+              },
               "findings": [
                 {
                   "fix": "Add the missing case.",
@@ -88,7 +113,7 @@
       ]
     },
     "findings": [
-      "# Role reviews — round 1\n\nPlan reviewed: $STORE/plans/$TS-demo.md\n\n## Product\n\n- **product-1-1** [minor] Testing: product: mock finding — fix: Add the missing case.\n\n## QA\n\n- **qa-1-1** [minor] Testing: qa: mock finding — fix: Add the missing case.\n\n## UX\n\n- **ux-1-1** [minor] Testing: ux: mock finding — fix: Add the missing case.\n"
+      "# Role reviews — round 1\n\nPlan reviewed: $STORE/plans/$TS-demo.md\n\n## Product\n\n- **product-1-1** [minor] Testing: product: mock finding — fix: Add the missing case.\n\n## QA\n\n- **qa-1-1** [minor] Testing: qa: mock finding — fix: Add the missing case.\n\n## UX\n\n- **ux-1-1** [minor] Testing: ux: mock finding — fix: Add the missing case.\n\n## Dispositions\n\nAnswer EVERY finding id above in a JSON file at the path on the last line: `{ \"dispositions\": [{ \"id\": \"ux-1-1\", \"status\": \"fixed\" }, { \"id\": \"qa-1-1\", \"status\": \"disputed\", \"reason\": \"one line: why\" }] }`. `fixed` means you changed what it asks; `disputed` needs a one-line `reason`. An id you leave out counts as open.\n\nWhen two findings ask for opposite changes to one section, mark both `disputed` with the reason \"conflict, left to the person\", and add `\"conflicts\": [{ \"findings\": [\"ux-1-1\", \"qa-1-1\"], \"question\": \"the choice to make\", \"options\": [\"one way\", \"the other way\"] }]` with 2–4 options.\n\nDispositions file: $PIPE/demo-role-findings-r1-dispositions.json\n"
     ],
     "refine": [
       {
@@ -110,6 +135,13 @@
     "roleReviews": {
       "rounds": [
         {
+          "counts": {
+            "disputed": 0,
+            "fixed": 3,
+            "open": 0,
+            "raised": 3
+          },
+          "dispositions": "$PIPE/demo-role-findings-r1-dispositions.json",
           "pass": 1,
           "plan": "$STORE/plans/$TS-demo.md",
           "refinerIssues": [
@@ -123,6 +155,12 @@
           "roles": [
             {
               "checklist": [],
+              "counts": {
+                "disputed": 0,
+                "fixed": 1,
+                "open": 0,
+                "raised": 1
+              },
               "findings": [
                 {
                   "fix": "Add the missing case.",
@@ -146,6 +184,12 @@
                   "status": "met"
                 }
               ],
+              "counts": {
+                "disputed": 0,
+                "fixed": 1,
+                "open": 0,
+                "raised": 1
+              },
               "findings": [
                 {
                   "fix": "Add the missing case.",
@@ -169,6 +213,12 @@
                   "status": "unmet"
                 }
               ],
+              "counts": {
+                "disputed": 0,
+                "fixed": 1,
+                "open": 0,
+                "raised": 1
+              },
               "findings": [
                 {
                   "fix": "Add the missing case.",
@@ -188,6 +238,13 @@
           "round": 1
         },
         {
+          "counts": {
+            "disputed": 0,
+            "fixed": 1,
+            "open": 0,
+            "raised": 1
+          },
+          "dispositions": "$PIPE/demo-role-findings-r2-dispositions.json",
           "pass": 1,
           "plan": "$STORE/plans/$TS-demo-v2.md",
           "roles": [
@@ -239,6 +296,12 @@
                   "status": "met"
                 }
               ],
+              "counts": {
+                "disputed": 0,
+                "fixed": 1,
+                "open": 0,
+                "raised": 1
+              },
               "findings": [
                 {
                   "fix": "Add the missing case.",
@@ -260,8 +323,8 @@
       ]
     },
     "findings": [
-      "# Role reviews — round 1\n\nPlan reviewed: $STORE/plans/$TS-demo.md\n\n## Product\n\n- **product-1-1** [minor] Testing: product: mock finding — fix: Add the missing case.\n\n## QA\n\n- **qa-1-1** [minor] Testing: qa: mock finding — fix: Add the missing case.\n\n## UX\n\n- **ux-1-1** [critical] Testing: ux: mock finding — fix: Add the missing case.\n- R-ux-1: unmet — mock\n",
-      "# Role reviews — round 2\n\nPlan reviewed: $STORE/plans/$TS-demo-v2.md\n\n## Product (skipped: clean last round)\n\n- **product-1-1** [minor] Testing: product: mock finding — fix: Add the missing case.\n\n## QA (skipped: clean last round)\n\n- **qa-1-1** [minor] Testing: qa: mock finding — fix: Add the missing case.\n\n## UX\n\n- **ux-2-1** [minor] Testing: ux: mock finding — fix: Add the missing case.\n"
+      "# Role reviews — round 1\n\nPlan reviewed: $STORE/plans/$TS-demo.md\n\n## Product\n\n- **product-1-1** [minor] Testing: product: mock finding — fix: Add the missing case.\n\n## QA\n\n- **qa-1-1** [minor] Testing: qa: mock finding — fix: Add the missing case.\n\n## UX\n\n- **ux-1-1** [critical] Testing: ux: mock finding — fix: Add the missing case.\n- R-ux-1: unmet — mock\n\n## Dispositions\n\nAnswer EVERY finding id above in a JSON file at the path on the last line: `{ \"dispositions\": [{ \"id\": \"ux-1-1\", \"status\": \"fixed\" }, { \"id\": \"qa-1-1\", \"status\": \"disputed\", \"reason\": \"one line: why\" }] }`. `fixed` means you changed what it asks; `disputed` needs a one-line `reason`. An id you leave out counts as open.\n\nWhen two findings ask for opposite changes to one section, mark both `disputed` with the reason \"conflict, left to the person\", and add `\"conflicts\": [{ \"findings\": [\"ux-1-1\", \"qa-1-1\"], \"question\": \"the choice to make\", \"options\": [\"one way\", \"the other way\"] }]` with 2–4 options.\n\nDispositions file: $PIPE/demo-role-findings-r1-dispositions.json\n",
+      "# Role reviews — round 2\n\nPlan reviewed: $STORE/plans/$TS-demo-v2.md\n\n## Product (skipped: clean last round)\n\n- **product-1-1** [minor] Testing: product: mock finding — fix: Add the missing case.\n\n## QA (skipped: clean last round)\n\n- **qa-1-1** [minor] Testing: qa: mock finding — fix: Add the missing case.\n\n## UX\n\n- **ux-2-1** [minor] Testing: ux: mock finding — fix: Add the missing case.\n\n## Dispositions\n\nAnswer EVERY finding id above in a JSON file at the path on the last line: `{ \"dispositions\": [{ \"id\": \"ux-1-1\", \"status\": \"fixed\" }, { \"id\": \"qa-1-1\", \"status\": \"disputed\", \"reason\": \"one line: why\" }] }`. `fixed` means you changed what it asks; `disputed` needs a one-line `reason`. An id you leave out counts as open.\n\nWhen two findings ask for opposite changes to one section, mark both `disputed` with the reason \"conflict, left to the person\", and add `\"conflicts\": [{ \"findings\": [\"ux-1-1\", \"qa-1-1\"], \"question\": \"the choice to make\", \"options\": [\"one way\", \"the other way\"] }]` with 2–4 options.\n\nDispositions file: $PIPE/demo-role-findings-r2-dispositions.json\n"
     ],
     "refine": [
       {

@@ -6,13 +6,14 @@
 import { buildPerspectiveChips } from './chips.mjs';
 import { planStats, perspectiveChangeFeedback, fixAllFeedback, sectionOwners, planSummary, unmetLine,
   planApproveLabel } from './plan-text.mjs';
-import { roleSummaries, reviewedLine, openBlocking } from '../../../src/shared/shape/role-review.mjs';
+import { openBlocking } from '../../../src/shared/shape/role-review.mjs';
 import { perspectiveByKey, PERSPECTIVES, chipsHiddenFor } from '../../../src/shared/shape/perspectives.mjs';
 import { levelAtLeast } from '../ui-level.mjs';
 import { toggleMenu } from '../workflows/menu.mjs';
 import { icon } from '../icons.mjs';
 import { fold, swapOpen, buildCheckFold } from './check-row.mjs';
 import { SEND_FAILED, stepHead, stepSender } from './step-card.mjs';
+import { buildRoleFold, buildConflictCards } from './role-rows.mjs';
 
 export { SEND_FAILED };
 
@@ -40,6 +41,11 @@ export function renderPlanBody(panel, pq, deps) {
   let planText = '';
   let meta = null;
   let summary = null;
+  let decisions = null;                           // #990 slice 3: the conflict cards; every answer carries their picks
+  const withPicks = (payload) => {
+    const picks = decisions ? decisions.picks() : [];
+    return picks.length ? { ...payload, conflicts: picks } : payload;
+  };
 
   const typedRow = () => {
     const typed = h('textarea', 'plan-feedback');
@@ -52,40 +58,12 @@ export function renderPlanBody(panel, pq, deps) {
       e.stopPropagation();
       const text = typed.value.trim();
       if (!text) { setErrors([{ path: 'feedback', message: 'Write what should change first' }]); return; }
-      send({ decision: 'revise', feedback: text });
+      send(withPicks({ decision: 'revise', feedback: text }));
     });
     const acts = h('div', 'plan-typed-acts'); acts.append(cancel, sendBtn);
     const row = h('div', 'plan-typed'); row.append(typed, acts);
     return { row, typed, cancel };
   };
-  // A role's findings: a 2px severity chip, the plan section, the one-line fix, and fixed in vN or open (D10).
-  const findingList = (findings) => {
-    const list = h('ul', 'plan-findings'); list.hidden = true;
-    for (const f of findings) {
-      const fixed = f.status === 'fixed';
-      const li = h('li', 'plan-finding');
-      li.append(h('span', `plan-sev plan-sev-${f.severity}`, f.severity),
-        h('span', 'plan-finding-section', f.section || 'Plan'),
-        h('span', 'plan-finding-fix', f.fix || f.title),
-        h('span', `plan-finding-status${fixed ? ' fixed' : ''}`, fixed ? (Number.isFinite(f.fixedIn) ? `fixed in v${f.fixedIn}` : 'fixed') : 'open'));
-      list.appendChild(li);
-    }
-    return list;
-  };
-  // D5: a role row is a check-row row; it gets `!` when an issue is open, and a Show folded over its findings.
-  const roleRow = (row, r) => {
-    if (r.open) {
-      const mark = row.querySelector('.plan-check-mark');
-      mark.textContent = '!'; mark.setAttribute('aria-label', 'open issues');
-    }
-    if (!r.findings.length) return;
-    const list = findingList(r.findings);
-    const show = fold(btn('plan-check-show', 'Show'), list);
-    show.addEventListener('click', (e) => { e.stopPropagation(); show.textContent = list.hidden ? 'Show' : 'Hide'; });
-    row.appendChild(show);
-    row.after(list);
-  };
-
   panel.appendChild(stepHead(doc, deps.title, deps.chip));
   const title = deps.run && deps.run.title && deps.run.title !== '(untitled)' ? String(deps.run.title) : '';
   body.appendChild(h('div', 'plan-sub', `${title ? `${title} · ` : ''}v${plan.round || 1}`));
@@ -113,16 +91,12 @@ export function renderPlanBody(panel, pq, deps) {
   // one check line, folded; neutral rows with ✓ / ✕ (D7); Fix all lives in ⋯ (D8)
   if (items.length) { const f = buildCheckFold(doc, check, 'Shape'); body.append(f.line, f.rows); }
 
-  // slice 4: one row per role, as check items in the same shape; Show unfolds that role's findings
-  const roles = roleSummaries(plan.roleReviews);
-  if (roles.length) {
-    const f = buildCheckFold(doc, { items: roles.map((r) => ({ id: r.key, label: r.text, pass: r.open === 0 })) });
-    f.line.classList.add('plan-role-line');
-    f.rows.classList.add('plan-roles');
-    f.line.querySelector('.plan-fold-text').textContent = reviewedLine(plan.roleReviews);
-    [...f.rows.children].forEach((row, i) => roleRow(row, roles[i]));
-    body.append(f.line, f.rows);
-  }
+  // slice 4: one row per role, as check items in the same shape; Show unfolds that role's findings (role-rows.mjs)
+  const roleFold = buildRoleFold(doc, plan.roleReviews);
+  if (roleFold) body.append(roleFold.line, roleFold.rows);
+  // #990 slice 3: one decision card per pair of contradicting findings; Approve carries the picks
+  decisions = buildConflictCards(doc, plan.roleReviews, { labelOf });
+  if (decisions) body.appendChild(decisions.el);
 
   // perspectives as a line; "edit" opens today's chips + Update plan in place (D31) — the gate on only
   const was = PERSPECTIVES.map((p) => p.key).filter((k) => k === 'product' || perspectives.includes(k));
@@ -138,7 +112,7 @@ export function renderPlanBody(panel, pq, deps) {
     update.addEventListener('click', (e) => {
       e.stopPropagation();
       const after = chips.value();
-      send({ decision: 'revise', feedback: perspectiveChangeFeedback(perspectives, after), perspectives: after });
+      send(withPicks({ decision: 'revise', feedback: perspectiveChangeFeedback(perspectives, after), perspectives: after }));
     });
     const row = h('div', 'plan-perspectives'); row.hidden = true; row.append(chips.el, update);
     pline.append(' · ', fold(btn('plan-persp-edit', 'edit'), row));
@@ -179,7 +153,12 @@ export function renderPlanBody(panel, pq, deps) {
   if (typed) foot.appendChild(swapOpen(btn('plan-ask-changes', 'Ask for changes'), typed.row, typed.cancel, () => typed.typed.focus()));
   foot.appendChild(fullButton());
   const approve = btn('btn-primary plan-approve', planApproveLabel(plan, openBlocking(plan.roleReviews)));
-  approve.addEventListener('click', (e) => { e.stopPropagation(); send({ decision: 'approve' }); });
+  approve.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const waiting = decisions && decisions.firstUnanswered();
+    if (waiting) { setErrors([{ path: 'conflicts', message: 'Answer each decision first' }]); waiting.focus(); return; }
+    send(withPicks({ decision: 'approve' }));
+  });
   foot.appendChild(approve);
   foot.appendChild(moreButton());
   body.append(err, foot);
@@ -206,7 +185,7 @@ export function renderPlanBody(panel, pq, deps) {
     more.setAttribute('aria-haspopup', 'menu');
     const ws = !!(deps.run && deps.run.workspaceId);
     more.addEventListener('click', (e) => { e.stopPropagation(); toggleMenu({ doc, anchor: more, align: 'end', label: 'More for this plan', items: [
-      ...(plan.revisable && items.some((it) => !it.pass) ? [{ label: 'Fix all', onSelect: () => send({ decision: 'revise', feedback: fixAllFeedback(items) }) }] : []),
+      ...(plan.revisable && items.some((it) => !it.pass) ? [{ label: 'Fix all', onSelect: () => send(withPicks({ decision: 'revise', feedback: fixAllFeedback(items) })) }] : []),
       ...(deps.extras && !ws ? [{ label: 'Save to plans/', onSelect: () => savePlan(false) }] : []),
       ...(deps.extras && !ws && levelAtLeast('advanced', doc) ? [{ label: 'Open in New run', onSelect: openInNewRun }] : []),
       { label: 'Stop', onSelect: stopRun },

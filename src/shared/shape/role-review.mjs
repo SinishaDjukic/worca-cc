@@ -3,6 +3,7 @@
 import { PERSPECTIVES, DEFAULT_PERSPECTIVES, perspectiveByKey, normalizePerspectives, FIT_KEY } from './perspectives.mjs';
 import { extractChecklist } from './checklist.mjs';
 import { rolesForRound as engineRolesForRound, roleRecord as engineRoleRecord, roleTaskId } from '../graph/role-review-step.mjs';
+import { roleCounts } from '../review/findings.mjs';
 
 // The generic round logic lives in the engine step (src/shared/graph/role-review-step.mjs); re-exported here for the
 // current importers.
@@ -93,17 +94,14 @@ export function currentPass(roleReviews) {
   return { rounds: rounds.filter((r) => r.pass === pass) };
 }
 
-function countText(findings) {
-  if (!findings.length) return 'no findings';
-  const part = (open) => {
-    const n = SEV_ORDER.map((s) => [s, findings.filter((f) => f.severity === s && (f.status === 'open') === open).length])
-      .filter(([, k]) => k);
-    return n.length ? `${n.map(([s, k]) => `${k} ${s}`).join(', ')} ${open ? 'open' : 'fixed'}` : '';
-  };
-  return [part(true), part(false)].filter(Boolean).join(' · ');
+/** "2 fixed · 1 disputed · 1 open", zero parts left out; "no findings" when nothing was raised (D10). */
+export function countsText(counts) {
+  if (!counts?.raised) return 'no findings';
+  return ['fixed', 'disputed', 'open'].filter((k) => counts[k]).map((k) => `${counts[k]} ${k}`).join(' · ');
 }
 
-/** Slice 4: one entry per role of the last round: its earlier fixed findings plus its last record, once each by id. */
+/** Slice 4: one entry per role of the last round: its earlier fixed and disputed findings plus its last record, once
+ *  each by id. `counts` are over exactly those findings (what the row's Show lists). */
 export function roleSummaries(roleReviews) {
   const rounds = currentPass(roleReviews)?.rounds || [];
   const last = rounds.at(-1);
@@ -113,12 +111,13 @@ export function roleSummaries(roleReviews) {
     const findings = [];
     const add = (f) => { if (f && !seen.has(f.id)) { seen.add(f.id); findings.push(f); } };
     for (const r of rounds.slice(0, -1)) {
-      for (const f of r.roles.find((x) => x.key === rec.key)?.findings || []) if (f.status === 'fixed') add(f);
+      for (const f of r.roles.find((x) => x.key === rec.key)?.findings || []) if (f.status === 'fixed' || f.status === 'disputed') add(f);
     }
     for (const f of rec.findings || []) add(f);
     findings.sort((a, b) => SEV_ORDER.indexOf(a.severity) - SEV_ORDER.indexOf(b.severity));
     const open = findings.filter((f) => f.status === 'open' && BLOCKING.has(f.severity)).length;
-    return { key: rec.key, label: rec.label, findings, open, text: `${rec.label} · ${countText(findings)}` };
+    const counts = roleCounts({ findings });
+    return { key: rec.key, label: rec.label, findings, open, counts, text: `${rec.label} · ${countsText(counts)}` };
   });
 }
 

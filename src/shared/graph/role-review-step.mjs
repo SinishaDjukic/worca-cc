@@ -2,6 +2,7 @@
 // fans out one independent reviewer slice per running role, merges their findings and hands them to its sink. Any
 // workflow may declare it; Shaper declares its perspectives as roles. Pure and browser-safe.
 import { PERSPECTIVE_ROLE_CHECKLIST } from '../shape/role-review.mjs';
+import { dispositionsBlock } from '../review/findings.mjs';
 
 const BLOCKING = new Set(['critical', 'major']);
 const SEVERITIES = new Set(['critical', 'major', 'minor', 'suggestion']);
@@ -18,8 +19,11 @@ const SOURCES = ['declared', 'picked'];
 /** The slice task id for one role; the executor prefixes that role's files with it. */
 export const roleTaskId = (key) => `role-${key}`;
 
-/** The sink that hands the plan and the merged findings to a refiner (the one sink this slice supports). */
+/** The sink that hands the plan and the merged findings to a refiner (the one sink whose verdict routes the loop). */
 export const REFINER_SINK = 'refiner';
+
+/** The sinks a role review may hand its findings to. Each answers them in the findings file's dispositions file. */
+export const ROLE_REVIEW_SINKS = Object.freeze([REFINER_SINK, 'implementer']);
 
 /** What a saved `roleReview: true` means, forever: Shaper's perspectives, picked per run, reviewing the plan for Refine. */
 export const LEGACY_ROLE_REVIEW = Object.freeze({ source: 'picked', target: 'plan', checklist: 'perspectives', sink: REFINER_SINK });
@@ -41,7 +45,10 @@ export function roleReviewIssues(config) {
   const out = [];
   for (const k of Object.keys(rr)) if (!SPEC_KEYS.has(k)) out.push(`roleReview.${String(k).slice(0, 32)} is unknown (known: ${[...SPEC_KEYS].join(', ')})`);
   if (rr.target !== 'plan') out.push(rr.target === undefined ? 'roleReview.target is required (plan)' : `roleReview.target ${quote(rr.target)} is not supported yet (plan only)`);
-  if (rr.sink !== REFINER_SINK) out.push(rr.sink === undefined ? 'roleReview.sink is required (refiner)' : `roleReview.sink ${quote(rr.sink)} is not supported yet (refiner only)`);
+  if (!ROLE_REVIEW_SINKS.includes(rr.sink)) {
+    const known = ROLE_REVIEW_SINKS.join(' or ');
+    out.push(rr.sink === undefined ? `roleReview.sink is required (${known})` : `roleReview.sink ${quote(rr.sink)} is not supported yet (${known})`);
+  }
   if (rr.source !== undefined && !SOURCES.includes(rr.source)) out.push(`roleReview.source ${quote(rr.source)} must be declared or picked`);
   if (rr.checklist !== undefined && !Object.hasOwn(ROLE_CHECKLISTS, rr.checklist)) {
     out.push(`roleReview.checklist ${quote(rr.checklist)} is unknown (known: ${Object.keys(ROLE_CHECKLISTS).join(', ')})`);
@@ -129,8 +136,9 @@ export function roleRecord(role, round, verdict, expectedIds = []) {
   return { key, label: label || key, skipped: false, findings, checklist };
 }
 
-/** The findings file the sink reads: one section per role, in running order. */
-export function findingsMarkdown(round, planPath, roles) {
+/** The findings file the sink reads: one section per role, in running order, then (given its path) the
+ *  `## Dispositions` contract the sink answers in. */
+export function findingsMarkdown(round, planPath, roles, { dispositionsPath } = {}) {
   const lines = [`# Role reviews — round ${round}`, '', `Plan reviewed: ${planPath}`, ''];
   for (const r of roles) {
     lines.push(`## ${r.label}${r.skipped ? ' (skipped: clean last round)' : ''}`, '');
@@ -139,6 +147,7 @@ export function findingsMarkdown(round, planPath, roles) {
     for (const c of r.checklist.filter((x) => x.status === 'unmet')) lines.push(`- ${c.id}: unmet — ${c.evidence}`);
     lines.push('');
   }
+  if (dispositionsPath) lines.push(dispositionsBlock(dispositionsPath));
   return lines.join('\n');
 }
 

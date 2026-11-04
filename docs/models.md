@@ -991,8 +991,24 @@ are an engine capability, not Shaper's alone).
                   "source": "declared", "target": "plan", "sink": "refiner" } }
 ```
 
-- **Keys** are 1–24 lowercase letters, at most 12 roles. `target` is `plan` and `sink` is
-  `refiner` for now; anything else fails the graph check (V31) before a run starts.
+- **Keys** are 1–24 lowercase letters, at most 12 roles. `target` is `plan` for now, and `sink`
+  is `refiner` or `implementer`; anything else fails the graph check (V31) before a run starts.
+- **The sink answers every finding.** The findings file ends with a `## Dispositions` section
+  naming a JSON file beside it (`…-role-findings-r1-dispositions.json`). The sink writes
+  `{ "dispositions": [{ "id": "security-1-1", "status": "fixed" }, { "id": "correctness-1-1",
+  "status": "disputed", "reason": "…" }] }` there: `fixed`, or `disputed` with a one-line reason.
+  An id it leaves out, a disputed one without a reason, or a file that is missing, unreadable or
+  over 256 KB counts as **open** (audited); no finding is ever dropped. A refiner's `addressed`
+  list still counts its ids as fixed. Every round records `counts: { raised, fixed, disputed,
+  open }`; an older run's rounds derive them from the finding statuses.
+- **An implementer sink** takes the findings on its existing `fix` input: wire the review's
+  `findings` to the implementer's `fix`, and its `plan` to the implementer's `plan`. The counts
+  are the same; only a refiner sink routes the refine loop on the open critical and major findings.
+- **Conflicts go to the person.** When two roles ask for opposite changes to one section, the
+  sink marks both disputed and adds a `conflicts` entry (`findings`, `question`, 2–4 `options`).
+  The plan card shows one decision card per pair; the pick is written into the plan's
+  `## Clarifications (Q&A)` at approval. Approving without a pick (auto-approve, `--yes`) is
+  never blocked: the conflict is audited as left undecided.
 - **Each role has its own model and effort.** A run overlay pick
   (`overlay.nodes.<nodeId>.roles.<key>`) beats the project's (`POST /api/config`
   `nodes.<nodeId>.roles`), which beats the template's (`roles[i].model` / `effort`). An effort
