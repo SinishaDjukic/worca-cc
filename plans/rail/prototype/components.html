@@ -31,6 +31,7 @@
   .gl-show > .list{padding-left:32px;}   /* the rail hangs left of the text edge */
   .gl-show > .viewer-modal{position:static;inset:auto;display:block;padding:0;background:none;flex:1 1 100%;}
   .gl-show .fld{flex:1 1 100%;max-width:360px;}
+  .gl-show .list{min-height:220px;}
 </style>
 <div class="rc-board mk-page">
 <div class="mk-wrap rc" id="gallery">
@@ -71,11 +72,15 @@
     SettingsRow: [['One decision, its state in words; its knobs under Customise', R.settingsSection({ title: 'Starting a run', rows: R.settingsRow({ name: 'Naming', sentence: 'Suggest a title and a branch name as you type', end: R.switchButton({ on: true, label: 'Naming' }) + R.button({ label: 'Done', kind: 'quiet' }), detail: `<div class="set-rows">${R.settingsRow({ name: 'Run id', sentence: 'Add the run id to the branch name', end: R.switchButton({ on: false, label: 'Run id' }) })}${R.settingsRow({ name: 'Branch', sentence: 'Branches are named <code>{type}/{slug}</code>', end: R.button({ label: 'Change…', kind: 'quiet' }) })}</div>` }) })]],
     ListRow: [['Things in a list, grouped', R.list({ groups: [
       { title: 'Needs you', count: 1, rows: [R.listRow({ title: 'Add CSV export to billing', meta: 'billing-api · Plan asks 2 questions', mark: R.statusDot({ tone: 'is-amber' }), endText: '14:32', open: { title: 'Open the run' } })] },
-      { title: 'Presets', count: 2, rows: [R.listRow({ title: 'Bug fix', meta: 'Any project · Fix workflow · updated 3 Oct', open: { title: 'Open Bug fix' }, end: R.button({ label: 'More for Bug fix', kind: 'quiet', iconOnly: true, title: false, icon: DOTS }) }), R.listRow({ title: 'Docs pass', meta: 'Only worca-cc · Docs workflow', open: { title: 'Open Docs pass' }, end: R.button({ label: 'More for Docs pass', kind: 'quiet', iconOnly: true, title: false, icon: DOTS }) })] },
+      { title: 'Presets', count: 2, rows: [R.listRow({ title: 'Bug fix', meta: 'Any project · Fix workflow · updated 3 Oct', open: { title: 'Open Bug fix' }, menu: { id: 'g-m1', label: 'More for Bug fix', icon: DOTS, items: ['Rename', 'Delete'], open: true } }), R.listRow({ title: 'Docs pass', meta: 'Only worca-cc · Docs workflow', open: { title: 'Open Docs pass' }, menu: { id: 'g-m2', label: 'More for Docs pass', icon: DOTS, items: ['Rename', 'Delete'] } })] },
     ] })]],
     Field: [['With its hint', R.field({ id: 'g-f1', label: 'Worca folder', value: '~/.worca', hint: 'Runs, history and settings live here' })],
       ['With its error', R.field({ id: 'g-f2', label: 'Worca folder', value: '/system', error: 'Worca cannot write to this folder' })]],
     Tooltip: [['Why a control is off (hover it)', R.tooltip({ text: 'Checks are still running on #959', off: true, html: R.button({ label: 'Merge PR', kind: 'primary', attrs: { disabled: true } }) })]],
+    SideMenu: [['In the sidebar, its current section marked', `<div style="width:224px;background:var(--side-bg);border:1px solid var(--line)">${R.sideMenu({ label: 'Settings', back: { label: 'Back to Worca', icon: P('M15 6l-6 6 6 6') }, groups: [{ title: 'Worca', items: [{ label: 'General', current: true }, { label: 'Notifications' }] }, { title: 'Work', items: [{ label: 'Runs' }, { label: 'Presets' }] }] })}</div>`],
+      ['On a narrow screen, as a list', `<div style="width:320px">${R.sideMenu({ label: 'Settings', list: true, chevron: P('M9 6l6 6-6 6'), groups: [{ title: 'Worca', items: [{ label: 'General' }, { label: 'Notifications' }] }, { title: 'Work', items: [{ label: 'Runs' }] }] })}</div>`]],
+    Search: [['What it finds, with where each lives', `<div style="min-height:150px">${R.search({ value: 'pro', results: R.searchResults([{ id: 'a', text: 'Proxy', where: 'Runs › Network' }, { id: 'b', text: 'Providers', where: 'Settings › AI' }, { id: 'c', text: 'Projects', where: 'Notifications' }]) })}</div>`]],
+    BackLink: [['One step up', R.backLink({ label: 'Settings', icon: P('M15 6l-6 6 6 6') })]],
     Dialog: [['A step that needs fields first', R.dialog({ title: 'Move the Worca folder', close: X, status: 'Runs pause while it moves', yes: 'Move it', body: R.field({ id: 'g-d1', label: 'New folder', value: '~/work/.worca', hint: 'Runs, history and settings move here' }) })]],
   };
   const g = document.getElementById('gallery');

@@ -542,11 +542,10 @@ function prDialogHtml(v) {
   const opts = `<div class="pd-opts"><label class="pd-check"><input type="checkbox" id="pd-draft" data-key="pd-draft"${pr.draft ? ' checked' : ''}> Draft</label><label class="pd-check"><input type="checkbox" id="pd-watch" data-key="pd-watch"${pr.watch ? ' checked' : ''}> Watch: fix failing checks</label><span class="pd-hint pd-closes">${stacked ? 'The last PR closes ' : 'Closes '}${esc(v.tabData.issue)}</span></div>`;
   const alert = pr.err ? `<div class="pd-alert" role="alert"><b>${esc(pr.err.title)}</b><span>${esc(pr.err.detail)}${pr.err.odd ? ` <button type="button" class="pd-retry" data-say="${esc(DETAILS)}" data-key="err-details">Details</button>` : ''}</span></div>` : '';
   const busy = !!ui.busy;
-  return `<div class="viewer-modal" role="dialog" data-motion="in" aria-modal="true" aria-labelledby="pd-h"><div class="pd2">
-    <div class="pd2-head"><h2 class="pd-h" id="pd-h">${esc(ui.dialogLabel)}</h2>${R.button({ label: 'Close', kind: 'quiet', iconOnly: true, title: false, icon: svg('x', 14), attrs: { 'data-pd': 'cancel', 'data-key': 'pd-close' } })}</div>
-    <div class="pd2-body">${into}${rowsHtml}${title}${opts}${alert}</div>
-    <div class="pd2-foot">${R.button({ label: 'Cancel', attrs: { 'data-pd': 'cancel', 'data-key': 'pd-cancel' } })}${R.button({ label: busy ? working(ui.dialogLabel) : ui.dialogLabel, kind: 'primary', attrs: { 'data-pd': 'ok', 'data-key': 'pd-ok', disabled: busy } })}</div>
-  </div></div>`;
+  // The Dialog component: its head (title, Close), the one scrolling body, its foot (Cancel, the step naming what happens).
+  return R.dialog({ title: ui.dialogLabel, id: 'pd-h', close: svg('x', 14), body: `${into}${rowsHtml}${title}${opts}${alert}`,
+    yes: ui.dialogLabel, busy, busyLabel: working(ui.dialogLabel),
+    hooks: { close: { 'data-pd': 'cancel', 'data-key': 'pd-close' }, cancel: { 'data-pd': 'cancel', 'data-key': 'pd-cancel' }, yes: { 'data-pd': 'ok', 'data-key': 'pd-ok' } } });
 }
 // Writing for you (the violet shimmer): the title quickly, the description from the run; Stop ends it.
 const live = (f) => ui.pr && (f === ui.pr || (ui.pr.prs || []).includes(f));

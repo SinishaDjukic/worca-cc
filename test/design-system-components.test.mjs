@@ -251,3 +251,57 @@ test('field and tooltip: a label for its input, the error replaces the hint; a d
   assert.equal(t.title, 'Checks are still running');
   assert.equal(dom(C.tooltip({ text: 'Copy the link', html: '<button class="btn">Copy</button>' })).title, 'Copy the link');
 });
+
+test('listRow menu: the row\'s own actions in its ⋯, the ones that cannot be taken back last after one rule', () => {
+  const r = dom(C.listRow({ title: 'Strict', menu: { id: 'm1', label: 'More for Strict', icon: '<svg></svg>', items: ['Delete', 'Edit', 'Duplicate'], open: true } }));
+  const b = r.querySelector('.lr-end .rc-pop > button');
+  assert.equal(b.dataset.menu, 'm1');
+  assert.equal(b.getAttribute('aria-label'), 'More for Strict');
+  assert.deepEqual([...r.querySelectorAll('[data-menu-pick]')].map((x) => x.dataset.menuPick), ['m1|Edit', 'm1|Duplicate', 'm1|Delete']);
+  assert.ok(r.querySelector('.menu-item.is-danger'));
+  assert.equal(dom(C.listRow({ title: 'x', menu: { id: 'm', label: 'l', icon: '', items: ['Edit'] } })).querySelector('.menu'), null, 'closed: no menu');
+});
+
+test('settingsRow fold: Customise opens its rows, a small label over each sentence, and its one foot action; Done closes', () => {
+  const closed = dom(C.settingsRow({ name: 'Network', sentence: 'A direct connection', fold: { open: false, attrs: { 'data-fold': 'net' } }, detailRows: C.settingsRow({ name: 'Proxy' }) }));
+  const btn = closed.querySelector('.set-end .btn-quiet');
+  assert.equal(btn.textContent, 'Customise');
+  assert.equal(btn.getAttribute('aria-expanded'), 'false');
+  assert.equal(btn.dataset.fold, 'net');
+  assert.equal(closed.querySelector('.set-detail'), null);
+  const open = dom(C.settingsRow({ name: 'Network', fold: { open: true }, detailRows: C.settingsRow({ name: 'Proxy' }), detailAction: '<button class="btn btn-quiet">Back to the group</button>' }));
+  assert.equal(open.querySelector('.set-end .btn-quiet').textContent, 'Done');
+  assert.ok(open.querySelector('.set-detail > .set-rows > .set-row'));
+  assert.ok(open.querySelector('.set-detail > .set-foot > .btn-quiet'));
+});
+
+test('sideMenu, backLink, search: the place\'s menu with its current section, its narrow list, one step up, what search finds', () => {
+  const groups = [{ title: 'Worca', items: [{ label: 'General', current: true, attrs: { 'data-sset': 'general' } }, { label: 'Labs', attrs: { 'data-sset': 'experimental' } }] }];
+  const m = dom(C.sideMenu({ label: 'Settings', back: { label: 'Back to Worca', attrs: { 'data-go': 'runs' } }, groups }));
+  assert.equal(m.getAttribute('aria-label'), 'Settings');
+  assert.equal(m.querySelector('.side-back').dataset.go, 'runs');
+  assert.equal(m.querySelector('[aria-current="page"]').textContent, 'General');
+  assert.equal(m.querySelector('.side-g').textContent, 'Worca');
+  const l = dom(C.sideMenu({ label: 'Settings', list: true, chevron: '<svg class="ch"></svg>', groups }));
+  assert.ok(l.classList.contains('is-list'));
+  assert.equal(l.querySelectorAll('.side-i svg.ch').length, 2);
+  assert.equal(dom(C.backLink({ label: 'Settings', attrs: { 'data-sset': '' } })).textContent, 'Settings');
+  const s = dom(C.search({ value: 'pro', label: 'Search settings', results: C.searchResults([{ id: 'srch|1', text: 'Proxy', where: 'Runs › Network' }]) }));
+  assert.equal(s.querySelector('input[data-search]').value, 'pro');
+  assert.equal(s.querySelector('[data-menu-pick="srch|1"] .mi-hint').textContent, 'Runs › Network');
+  assert.equal(dom(C.searchResults([], 'No setting matches')).querySelector('[aria-disabled="true"]').textContent, 'No setting matches');
+});
+
+test('land and dialog hooks: the target lights once and comes into view; a Dialog carries the page\'s hooks and class', () => {
+  const { window } = new JSDOM('<div id="t"></div>');
+  let scrolled = null; const t = window.document.getElementById('t');
+  t.scrollIntoView = (o) => { scrolled = o; };
+  window.matchMedia = () => ({ matches: false });
+  C.land(t);
+  assert.ok(t.hasAttribute('data-landed'));
+  assert.equal(scrolled.block, 'center');
+  const d = dom(C.dialog({ title: 'Create PR', body: '', yes: 'Create PR', cls: 'is-wide', hooks: { yes: { 'data-pd': 'ok' }, cancel: { 'data-pd': 'cancel' } } }));
+  assert.ok(d.querySelector('.card.dlg.rl-dialog.is-wide'));
+  assert.equal(d.querySelector('[data-dialog="yes"]').dataset.pd, 'ok');
+  assert.equal(d.querySelector('[data-dialog="cancel"]').dataset.pd, 'cancel');
+});

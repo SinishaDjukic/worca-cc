@@ -623,10 +623,6 @@ html,body{height:auto;overflow:visible;margin:0;}
 
 /* Create PR, simplified: title, description, where it merges, two switches. Suggestions as on the New run form:
    a sparkle inside the field, a "Suggested" chip, the violet shimmer while Worca writes. */
-.pd2{position:relative;width:min(560px,100%);max-height:min(86vh,760px);overflow:hidden;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-md);box-shadow:var(--shadow-menu);display:flex;flex-direction:column;}
-.pd2-head{display:flex;align-items:center;justify-content:space-between;padding:16px 20px 0;}
-.pd2-body{display:flex;flex-direction:column;gap:16px;padding:16px 20px 20px;min-height:0;overflow:auto;}   /* the body scrolls; title and buttons stay */
-.pd2-foot{display:flex;justify-content:flex-end;gap:8px;padding:14px 20px;border-top:1px solid var(--line);}
 .pd-f{display:flex;flex-direction:column;gap:6px;min-width:0;}
 .pd-lab{display:flex;align-items:center;gap:6px;font-size:var(--fs-meta);font-weight:600;color:var(--ink-2);}
 .pd-lab label{color:inherit;}
@@ -804,6 +800,8 @@ html,body{height:auto;overflow:visible;margin:0;}
 .set-detail .set-name{grid-column:1;grid-row:1;font-size:var(--fs-meta);color:var(--ink);}
 .set-detail .set-text{grid-column:1;grid-row:2;}
 .set-detail .set-end{grid-column:2;grid-row:1 / span 2;align-self:center;}
+.set-foot{padding-top:4px;}   /* the fold's one action under its rows (Back to the group) */
+.set-foot > .btn-quiet{margin-left:calc(-1 * var(--btn-inset));}
 .spick{position:relative;}
 .spick-b{display:inline;margin:0;padding:0;border:0;border-radius:var(--r-xs);background:none;font:inherit;font-weight:600;line-height:inherit;color:var(--ink);white-space:nowrap;cursor:pointer;transition:background-color 100ms var(--ease),box-shadow 100ms var(--ease);}
 .spick-b svg{margin-left:2px;vertical-align:-2px;color:var(--ink-2);}
@@ -857,8 +855,42 @@ button.lr-main:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
 .rl-dialog .dlg-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding-bottom:4px;}
 .rl-dialog .dlg-head .dlg-title{margin:0;font:600 var(--fs-section)/var(--lh-title) var(--sans);color:var(--ink);letter-spacing:-.01em;}
 .rl-dialog .dlg-foot{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;}
+.rl-dialog .dlg-body{display:flex;flex-direction:column;gap:16px;}   /* its parts, 16px apart */
 .dlg-status{font-size:var(--fs-meta);color:var(--ink-2);min-width:0;}
 .dlg-acts{display:flex;gap:8px;margin-left:auto;}
 /* A search result lands on its row: it lights once and fades over flash (Motion). */
 .set-row.is-flash,.list-row.is-flash{animation:ov-flash var(--motion-flash) ease-out;border-radius:var(--r-sm);}
 @media (prefers-reduced-motion: reduce){.set-row.is-flash,.list-row.is-flash{animation:none;outline:2px solid var(--line-2);outline-offset:4px;}}
+
+/* SideMenu (ui/public/design-system/components/side-menu.mjs): a place's own menu in the sidebar, ‹ back, then its
+   sections under small group heads; on a narrow screen the same menu as a list, 44px rows, a line where each group
+   after the first starts. */
+.side-menu{display:flex;flex-direction:column;gap:2px;padding:11px 10px;overflow:auto;}
+.side-group{display:flex;flex-direction:column;gap:2px;}
+.side-i{display:flex;align-items:center;gap:10px;height:32px;padding:0 9px;border:0;border-radius:var(--r-sm);background:none;color:var(--ink-2);font:500 var(--fs-body)/1 var(--sans);text-align:left;cursor:pointer;transition:background-color 100ms var(--ease),color 100ms var(--ease);}
+.side-i:hover{background:var(--hover);color:var(--ink);}
+.side-i[aria-current="page"]{background:var(--field);color:var(--ink);}
+.side-i:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+.side-l{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.side-back{margin-bottom:8px;}
+.side-g{margin:16px 0 4px;padding:0 9px;font-size:var(--fs-caption);font-weight:500;color:var(--ink-2);}
+.side-back + .side-group .side-g{margin-top:4px;}
+.side-menu.is-list{padding:0;gap:0;}
+.side-menu.is-list .side-group + .side-group{margin-top:12px;padding-top:12px;border-top:1px solid var(--line);}
+.side-menu.is-list .side-g{margin:0 0 4px;padding:0;}
+.side-menu.is-list .side-i{height:auto;min-height:44px;padding:0;justify-content:space-between;border-radius:0;color:var(--ink);font-weight:400;}
+.side-menu.is-list .side-i:hover{background:none;}
+.side-menu.is-list .side-i svg{color:var(--ink-3);flex:none;}
+
+/* Search: the top bar's field, what it finds under it with where each lives. */
+.rl-search{display:block;width:min(320px, 40vw);}
+.rl-search .input{width:100%;}
+.rl-search .menu.rl-search-res{position:absolute;top:calc(100% + 6px);left:0;z-index:46;min-width:100%;width:max-content;max-width:min(480px, 80vw);}
+
+/* land(): the thing a link or a search pointed at lights once over flash (Motion). */
+[data-landed]{animation:ov-flash var(--motion-flash) ease-out;border-radius:var(--r-sm);}
+@media (prefers-reduced-motion: reduce){[data-landed]{animation:none;outline:2px solid var(--line-2);outline-offset:4px;}}
+/* BackLink: ‹ the place one step up, above a page's title on a narrow screen. */
+.rl-back{display:inline-flex;align-items:center;gap:2px;margin:0 0 8px;padding:0;border:0;background:none;color:var(--ink-2);font:inherit;font-size:var(--fs-meta);cursor:pointer;}
+.rl-back:hover{color:var(--ink);}
+.rl-back:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:var(--r-xs);}

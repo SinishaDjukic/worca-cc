@@ -30,8 +30,9 @@ const CONTROLS = {
   Switch: '.switch, .sw-item',
   TagGroup: '.rc-tags-mark, .rc-tag-x',
   OptionList: '.sc-ans-opt',
-  ListRow: '.lr-main, .cfg-li, .row-btn, .sc-step, .ch-row, .st-head, .pz-nav-i, .pz-acct, .sc-loop.is-btn',
-  'Text link': '.rc-fig-link, .rc-crumb, .rc-branch, .dc-link, .ov-art-name, .cfg-crumb',
+  SideMenu: '.side-i',
+  ListRow: '.lr-main, .row-btn, .sc-step, .ch-row, .st-head, .pz-nav-i, .pz-acct, .sc-loop.is-btn',
+  'Text link': '.rc-fig-link, .rc-crumb, .rc-branch, .dc-link, .ov-art-name, .rl-back',
 };
 const CONTROL_SEL = Object.values(CONTROLS).join(', ');
 
@@ -65,11 +66,13 @@ for (const name of SHEETS) {
 // A page built from the components (ui/public/design-system/components/) writes none of their markup by hand: the
 // component brings it, so a fix or an upgrade reaches every page. BUILT lists the pages moved onto them; the others
 // move one at a time and join the list.
-const BUILT = ['run-page.js'];
+const BUILT = ['run-page.js', 'settings.js'];
 const OWN = {
   Button: /class="btn[ "]/, CompactMenu: /class="menu"/, StatusLine: /class="status-dot[ "]/, ConfirmStrip: /class="rc-confirm"/,
   Tabs: /class="(tabs|tab)[ "]/, Segmented: /class="seg"/, Figures: /class="(rc-figs|rc-fig-link)[ "]/, Toast: /class="(rc-toast|toasts)[ "]/,
   EmptyState: /class="empty-line[ "]/, 'Text link': /class="dc-link"/,
+  SettingsRow: /class="(set-row|set-rows|set-foot)[ "]/, SettingsSection: /class="set-sec[ "]/, SentencePicker: /class="spick[ "]/, Switch: /class="switch[ "]/,
+  ListRow: /class="(list-row|list|lr-main)[ "]/, Dialog: /class="viewer-modal[ "]/, Field: /class="fld[ "]/, SideMenu: /class="side-menu/, Search: /class="rl-search/, BackLink: /class="rl-back"/,
 };
 for (const name of BUILT) {
   readFileSync(here(name), 'utf8').split('\n').forEach((line, i) => {
@@ -81,7 +84,7 @@ for (const name of BUILT) {
 // --- names: a page, a menu item, a section head, a settings row (docs/design-system.md › Small rules › Names) ---
 const NAMES = () => {
   const out = [];
-  const sel = '.pz-title, .cfg-menu .pz-nav-l, .cfg-li > span:first-child, .set-sec-h, .set-name, .list-h, .dlg-title, .rc-tabs .tab';
+  const sel = '.pz-title, .side-menu .side-l, .set-sec-h, .set-name, .list-h, .dlg-title, .rc-tabs .tab';
   for (const e of document.querySelectorAll(sel)) {
     if (!e.offsetParent) continue;
     const t = (e.childNodes[0]?.textContent || e.textContent).trim();

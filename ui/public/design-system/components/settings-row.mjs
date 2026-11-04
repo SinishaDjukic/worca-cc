@@ -4,6 +4,7 @@
 // not its padding), and the name, the sentence and the actions share one baseline. Under 560px of width a row stacks.
 import { attrs, esc } from './html.mjs';
 import { compactMenu } from './compact-menu.mjs';
+import { button } from './button.mjs';
 
 /**
  * SentencePicker: the chosen words inside the sentence they change; a CompactMenu opens under them. It keeps the
@@ -44,11 +45,17 @@ export function switchButton({ on, label, why = '', disabled = false, attrs: a =
  * @param {string} [o.end]      markup at the right: a Switch, buttons
  * @param {boolean} [o.changed] differs from its group or default: says Changed
  * @param {string} [o.help]     the name's tooltip
- * @param {string} [o.detail]   markup that opens under the sentence (Customise)
+ * @param {string} [o.detailRows] SettingsRows that open under the sentence (the row's fine-tuning)
+ * @param {string} [o.detail]   other markup that opens after them (a List of records)
+ * @param {string} [o.detailAction] one quiet button under them, on the folded rows' edge ("Back to the group")
+ * @param {{open:boolean, attrs?:object, help?:string}} [o.fold]  the row's fine-tuning: Customise opens it, Done closes it
  * @param {object} [o.attrs]
  */
-export function settingsRow({ name, sentence = '', end = '', changed = false, help = '', detail = '', attrs: a = {} }) {
-  return `<div class="set-row"${attrs(a)}><span class="set-name"${attrs({ title: help || null })}>${esc(name)}</span><span class="set-text">${sentence}</span><span class="set-end">${changed ? '<span class="set-changed">Changed</span>' : ''}${end}</span>${detail ? `<div class="set-detail" data-motion="open">${detail}</div>` : ''}</div>`;
+export function settingsRow({ name, sentence = '', end = '', changed = false, help = '', detailRows = '', detail = '', detailAction = '', fold = null, attrs: a = {} }) {
+  const foldBtn = fold ? button({ label: fold.open ? 'Done' : 'Customise', kind: 'quiet', attrs: { 'aria-expanded': String(!!fold.open), title: fold.help || null, ...(fold.attrs || {}) } }) : '';
+  const all = (detailRows ? `<div class="set-rows">${detailRows}</div>` : '') + detail + (detailAction ? `<div class="set-foot">${detailAction}</div>` : '');
+  const shown = fold ? (fold.open ? all : '') : all;
+  return `<div class="set-row"${attrs(a)}><span class="set-name"${attrs({ title: help || null })}>${esc(name)}</span><span class="set-text">${sentence}</span><span class="set-end">${changed ? '<span class="set-changed">Changed</span>' : ''}${end}${foldBtn}</span>${shown ? `<div class="set-detail" data-motion="open">${shown}</div>` : ''}</div>`;
 }
 
 /**

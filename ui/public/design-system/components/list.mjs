@@ -4,6 +4,24 @@
 // one target. Rows are split by space; a list grouped by something draws one line where each group after the first
 // starts, from the text edge. Never a box per item.
 import { attrs, esc } from './html.mjs';
+import { button } from './button.mjs';
+import { compactMenu } from './compact-menu.mjs';
+
+/**
+ * The ⋯ that holds a thing's own actions: a quiet icon button and, when open, its CompactMenu at the right.
+ * A pick reports `data-menu-pick="<id>|<item>"`.
+ * @param {object} o
+ * @param {string} o.id        the menu's id (data-menu)
+ * @param {string} o.label     what it is for ("More for Bug fix")
+ * @param {string} o.icon      the ⋯ SVG
+ * @param {string[]} o.items   the actions; Remove, Revoke, Delete, Uninstall and Reject come last, after one rule
+ * @param {boolean} [o.open]
+ */
+export function moreMenu({ id, label, icon, items, open = false }) {
+  const DANGER = /^(Remove|Revoke|Delete|Uninstall|Reject)$/;
+  const its = [...items.filter((x) => !DANGER.test(x)), ...items.filter((x) => DANGER.test(x))].map((x) => ({ id: `${id}|${x}`, text: x, danger: DANGER.test(x) }));
+  return `<span class="rc-pop is-right">${button({ label, kind: 'quiet', iconOnly: true, title: false, icon, attrs: { 'data-menu': id, 'aria-haspopup': 'menu', 'aria-expanded': String(open) } })}${open ? compactMenu({ items: its }) : ''}</span>`;
+}
 
 /**
  * ListRow.
@@ -14,12 +32,14 @@ import { attrs, esc } from './html.mjs';
  * @param {string} [o.end]          at the right: a figure or time (text), then the row's ⋯ (markup)
  * @param {string} [o.endText]      a figure or time, as text
  * @param {object} [o.open]         the row's one target: attrs on its button (data-open, title); none, a row that only shows
+ * @param {object} [o.menu]         its own actions in a ⋯: moreMenu's options
  * @param {object} [o.attrs]        on the row
  */
-export function listRow({ title, meta = '', mark = '', end = '', endText = '', open = null, attrs: a = {} }) {
+export function listRow({ title, meta = '', mark = '', end = '', endText = '', open = null, menu = null, attrs: a = {} }) {
   const body = `<span class="lr-t">${esc(title)}</span>${meta ? `<span class="lr-m">${esc(meta)}</span>` : ''}`;
   const main = open ? `<button type="button" class="lr-main"${attrs(open)}>${body}</button>` : `<span class="lr-main">${body}</span>`;
-  const right = endText || end ? `<span class="lr-end">${endText ? `<span class="lr-fig">${esc(endText)}</span>` : ''}${end}</span>` : '';
+  const more = menu ? moreMenu(menu) : '';
+  const right = endText || end || more ? `<span class="lr-end">${endText ? `<span class="lr-fig">${esc(endText)}</span>` : ''}${end}${more}</span>` : '';
   return `<div class="list-row"${attrs(a)}><span class="lr-rail">${mark}</span>${main}${right}</div>`;
 }
 

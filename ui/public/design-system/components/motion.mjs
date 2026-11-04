@@ -97,3 +97,19 @@ export function morph(target, html, { motion = true } = {}) {
   for (const el of out.changed) fade(el, el.getAttribute('data-motion') === 'swap' ? quick : change);
   return out;
 }
+
+/**
+ * Lands on a thing a link or a search pointed at: it comes into view and lights once over --motion-flash (Motion:
+ * "A link lands on a fact's home"); under reduced motion it is outlined instead, and the page jumps.
+ * @param {Element} el
+ */
+export function land(el) {
+  if (!el) return;
+  const view = el.ownerDocument.defaultView;
+  const reduced = !!view?.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+  el.setAttribute('data-landed', '');
+  el.scrollIntoView?.({ block: 'center', behavior: reduced ? 'auto' : 'smooth' });
+  const css = view?.getComputedStyle ? view.getComputedStyle(el) : { getPropertyValue: () => '' };
+  view?.setTimeout?.(() => el.removeAttribute('data-landed'), ms(css, '--motion-flash', 1200) + 100);
+}
+

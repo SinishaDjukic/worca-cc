@@ -42,20 +42,20 @@
   function row(r, sv, c, where) {
     const key = 'more:' + where + '/' + r.name, open = sv.__open === key;
     const sw = r.sw ? c.R.switchButton({ on: sv[r.sw.key], label: r.name, why: r.sw.why || '', attrs: { 'data-svsw': r.sw.key } }) : '';
-    const fold = r.more || r.moreList ? c.R.button({ label: open ? 'Done' : 'Customise', kind: 'quiet', attrs: { 'data-svdo': key, 'aria-expanded': String(open) } }) : '';
-    const inner = (r.more || []).filter((m) => SM.shows(m.min, c.level)).map((m) => row(m, sv, c, where + '/' + r.name)).join('');
-    const detail = open ? (inner ? `<div class="set-rows">${inner}</div>` : '') + (r.moreList ? records(r.moreList, sv, c, where + '/' + r.name) : '') : '';
-    return c.R.settingsRow({ name: r.name, help: r.help || '', sentence: sentence(r, sv, c), end: (r.acts || []).map((a) => act(a, where + '/' + r.name, c)).join('') + sw + fold, detail });
+    const folds = !!(r.more || r.moreList);
+    const inner = open ? (r.more || []).filter((m) => SM.shows(m.min, c.level)).map((m) => row(m, sv, c, where + '/' + r.name)).join('') : '';
+    const detail = open && r.moreList ? records(r.moreList, sv, c, where + '/' + r.name) : '';
+    return c.R.settingsRow({ name: r.name, help: r.help || '', sentence: sentence(r, sv, c), end: (r.acts || []).map((a) => act(a, where + '/' + r.name, c)).join('') + sw, detailRows: inner, detail, fold: folds ? { open, attrs: { 'data-svdo': key } } : null });
   }
   // Records: a List of ListRows; the whole row opens the thing; its own actions in its ⋯.
   function records(items, sv, c, where) {
     return c.R.list({ groups: [{ rows: items.map((it) => {
       const k = where + '/' + it.title; REG.set(k + '/open', { label: 'Open', say: 'Opens ' + it.title });
-      const mid = 'svm:' + k, open = c.open === mid;
+      const mid = 'svm:' + k;
       (it.menu || []).forEach((m) => REG.set(k + '/' + m, { label: m, say: `${m}: ${it.title}` }));
-      const dots = it.menu ? `<span class="spick">${c.R.button({ label: 'More for ' + it.title, kind: 'quiet', iconOnly: true, title: false, icon: c.svg('more', 14), attrs: { 'data-menu': mid, 'aria-haspopup': 'menu', 'aria-expanded': String(open) } })}${open ? c.R.compactMenu({ cls: 'spick-menu is-right', items: it.menu.map((m) => ({ id: mid + '|' + m, text: m, danger: /^(Remove|Revoke|Delete|Reject)$/.test(m) })) }) : ''}</span>` : '';
       const sw = it.sw ? c.R.switchButton({ on: sv[it.sw.key], label: it.title, attrs: { 'data-svsw': it.sw.key } }) : '';
-      return c.R.listRow({ title: it.title, meta: it.meta || '', mark: it.mark ? c.R.statusDot({ tone: it.mark }) : '', endText: it.fig || '', end: sw + dots, open: { 'data-svdo': k + '/open', title: 'Open ' + it.title } });
+      return c.R.listRow({ title: it.title, meta: it.meta || '', mark: it.mark ? c.R.statusDot({ tone: it.mark }) : '', endText: it.fig || '', end: sw, open: { 'data-svdo': k + '/open', title: 'Open ' + it.title },
+        menu: it.menu ? { id: mid, label: 'More for ' + it.title, icon: c.svg('more', 14), items: it.menu, open: c.open === mid } : null });
     }) }] });
   }
   function dialogHtml(sv, c) {

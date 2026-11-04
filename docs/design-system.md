@@ -93,7 +93,8 @@ curve; everything else is still. Filmed from the run page: `plans/rail/mocks/mot
 | A tick box is ticked | the tick fades in over `quick` |
 | Hover and press | the tint over 100ms, never a lift or a size change |
 | A Toast | fades in over `quick`, out over `change` |
-| A link lands on a fact's home | the target lights once and fades over `flash`; focus moves to it |
+| A link or a search lands on a fact's home | the target comes into view, lights once and fades over `flash`; focus moves to it (`land()` in motion.mjs) |
+| The sidebar becomes another menu (Settings) | its content fades over `change`; the page changes at once |
 | Working | the live dot and the live cell breathe: the one thing that moves on its own, because it means work is happening |
 | Worca writes in a field | the violet shimmer, while it writes |
 
@@ -175,6 +176,12 @@ state, and Patterns further down: labels of 1–3 words, plain words, the status
 Status dot and symbols. 4. Draw every state: empty, loading, could not load, a failed step, an unexpected break, a
 lost connection, and 375px (Narrow screens). 5. Pass the gate. The catalog of needs, components and patterns, as data
 for a tool or an agent, is `docs/design-system-catalog.json`; this section and the lookup win when the two differ.
+
+**What a page teaches becomes the design system's.** A pattern, a level, a rule, a motion or a control that a page
+needed and the design system did not have is added to it before the page ships: the rule here, its catalog entry, and
+its component in `ui/public/design-system/components/` with its test and its gallery example. A page never keeps a
+hand-built version of something the design system should own; `ds-check` lists the pages built from the components
+(BUILT) and fails on component markup written by hand there.
 
 **The components in code.** A component with a `code` entry in the catalog is built in code, in
 `ui/public/design-system/components/` (`index.mjs` exports them all): call it, never write its markup. Each returns

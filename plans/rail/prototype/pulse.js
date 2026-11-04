@@ -110,7 +110,7 @@ function topbar() {
   const needs = C().needs.length, un = unread().length, run = C().running.length;
   const badge = needs ? `<span class="topnav-badge" data-tone="need">${needs}</span>` : un ? `<span class="topnav-badge" data-tone="run">${un}</span>` : '';
   const words = [needs && plural(needs, 'needs you', 'need you'), un && plural(un, 'unread'), run && `${run} running`].filter(Boolean).join(' · ') || 'Nothing new';
-  return `<header class="pz-top"><div class="pz-top-l"><div class="pz-search spick"><input class="input input-sm" data-search type="search" placeholder="Search or ask" aria-label="Search settings" value="${esc(ui.q || '')}" data-key="search" autocomplete="off"><div data-search-res>${searchResults()}</div></div></div><div class="pz-top-r">
+  return `<header class="pz-top"><div class="pz-top-l">${R.search({ value: ui.q || '', label: 'Search settings', results: searchResults() })}<div class="pz-top-r">
     <button type="button" class="btn btn-sm btn-quiet topnav-act pz-pulse-b" data-pop aria-haspopup="dialog" aria-expanded="${ui.pop}" title="Pulse: ${esc(words)}">${svg('signal', 16)}<span class="pz-pulse-l">Pulse</span>${badge}</button>
     <button type="button" class="btn btn-sm btn-primary" data-newrun title="Start a run">${svg('plus', 14)}<span class="pz-new-l">New run</span></button>
   </div></header>`;
@@ -350,15 +350,10 @@ function runsPage() {
 // from Pulse's model; every other section comes from settings-model.js through settings.js.
 const sp = (id, text, items, tip, right) => R.sentencePicker({ id, text, items, open: ui.menu === id, tip, chevron: svg('chevron', 12), right });
 const sectionId = () => ui.sset || SM.FIRST;
-function settingsMenu() {
-  const on = sectionId();
-  return `<nav class="pz-nav cfg-menu${swapCls}" aria-label="Settings">
-    <button type="button" class="pz-nav-i cfg-back" data-go="runs" title="Back to the page you came from">${svg('chevL', 14)}<span class="pz-nav-l">Back to Worca</span></button>
-    ${SM.GROUPS.map((g) => `<p class="cfg-g">${esc(g.title)}</p>${g.items.filter((id) => SM.shows(SM.min(id), ui.level)).map((id) => `<button type="button" class="pz-nav-i${id === on ? ' is-on" aria-current="page' : ''}" data-sset="${id}"><span class="pz-nav-l">${esc(SM.title(id))}</span></button>`).join('')}`).join('')}
-  </nav>`;
-}
-// The narrow screen's first view: the menu as a list in the page.
-const settingsIndex = () => `<div class="cfg-index"><div class="pz-head"><h1 class="pz-title">Settings</h1></div>${SM.GROUPS.map((g) => `<p class="cfg-g">${esc(g.title)}</p><div class="cfg-list">${g.items.filter((id) => SM.shows(SM.min(id), ui.level)).map((id) => `<button type="button" class="cfg-li" data-sset="${id}"><span>${esc(SM.title(id))}</span>${svg('chevR', 14)}</button>`).join('')}</div>`).join('')}</div>`;
+const menuGroups = () => SM.GROUPS.map((g) => ({ title: g.title, items: g.items.filter((id) => SM.shows(SM.min(id), ui.level)).map((id) => ({ label: SM.title(id), current: id === sectionId(), attrs: { 'data-sset': id } })) }));
+const settingsMenu = () => R.sideMenu({ label: 'Settings', cls: swapCls.trim(), back: { label: 'Back to Worca', icon: svg('chevL', 14), attrs: { 'data-go': 'runs', title: 'Back to the page you came from' } }, groups: menuGroups() });
+// The narrow screen's first view: the same menu as a list in the page.
+const settingsIndex = () => `<div class="cfg-index"><div class="pz-head"><h1 class="pz-title">Settings</h1></div>${R.sideMenu({ label: 'Settings', list: true, chevron: svg('chevR', 14), groups: menuGroups().map((g) => ({ ...g, items: g.items.map((x) => ({ ...x, current: false })) })) })}</div>`;
 
 const levelText = (id) => M.LEVELS.find((l) => l.id === id).text;
 const whereText = (id) => M.WHERE.find((w) => w.id === id).text;
@@ -377,13 +372,14 @@ function notifications() {
   const groups = M.GROUPS.map((g) => {
     const gs = s.groups[g.id], open = ui.custom === g.id, nEx = Object.keys(gs.ex).length;
     const warn = g.id === 'usage' ? ` · warn at ${sp('warn', s.warnAt + '%', [70, 80, 90].map((v) => ({ id: String(v), text: v + '%', checked: s.warnAt === v, help: `Rings turn amber, Now shows the limit and an update is sent at ${v}%` })), 'The warning line for usage and spend')}` : '';
-    const detail = open ? `<div class="set-rows">${g.events.map((ev) => {
+    const detailRows = open ? g.events.map((ev) => {
       const w = effWhere(g, ev);
       return R.settingsRow({ name: ev[1], help: `${ev[0]} · ${ev[2] === 'needs' ? 'needs you' : ev[2]}`, changed: !!gs.ex[ev[0]], sentence: `on ${sp('ev:' + ev[0], whereText(w), M.WHERE.map((x) => ({ ...x, checked: x.id === w })), `Where ${ev[1]} goes`)}` });
-    }).join('')}</div>${nEx ? `<div class="set-foot">${quiet('Back to the group', { 'data-backgroup': g.id, title: 'Every event follows the group again' })}</div>` : ''}` : '';
-    return R.settingsRow({ name: g.name, detail, changed: nEx > 0,
+    }).join('') : '';
+    const detailAction = open && nEx ? quiet('Back to the group', { 'data-backgroup': g.id, title: 'Every event follows the group again' }) : '';
+    return R.settingsRow({ name: g.name, detailRows, detailAction, changed: nEx > 0,
       sentence: `Tell me about ${sp('lvl:' + g.id, levelText(gs.level), M.LEVELS.map((l) => ({ ...l, checked: l.id === gs.level })), `How much of ${g.name} reaches you`)} on ${sp('whr:' + g.id, whereText(gs.where), M.WHERE.map((x) => ({ ...x, checked: x.id === gs.where })), `Where ${g.name} goes beyond Pulse`, true)}${warn}`,
-      end: quiet(open ? 'Done' : 'Customise', { 'data-custom': g.id, 'aria-expanded': String(open), title: open ? 'Close the events' : 'Choose per event: ' + g.events.map((e) => e[1]).join(', ') }) });
+      fold: { open, attrs: { 'data-custom': g.id }, help: open ? 'Close the events' : 'Choose per event: ' + g.events.map((e) => e[1]).join(', ') } });
   }).join('');
   const RESUME = [{ id: 'auto', text: 'resumes after the reset', help: 'Worca schedules its resume for 5 minutes after the limit resets' }, { id: 'me', text: 'waits for you', help: 'It stays paused until you resume it' }];
   const limits = R.settingsRow({ name: 'Manual starts', sentence: `New run and Resume near a limit ${sp('mine', MINE.find((m) => m.id === s.mine).text, MINE.map((m) => ({ ...m, checked: m.id === s.mine })), 'What New run and Resume do when the harness is near its limit')}` })
@@ -399,7 +395,7 @@ function settingsPage() {
   const id = sectionId();
   const body = id === 'notifications' ? notifications() : SV.section(id, ui.sv, { R, svg, open: ui.menu, esc, level: ui.level });
   return `<div class="cfg-page${ui.sset ? '' : ' is-index'}">${settingsIndex()}
-    <div class="cfg-section"><button type="button" class="cfg-crumb" data-sset="">${svg('chevL', 14)}Settings</button>
+    <div class="cfg-section">${R.backLink({ label: 'Settings', icon: svg('chevL', 14), attrs: { 'data-sset': '', class: null } })}
     <div class="pz-head"><h1 class="pz-title">${esc(SM.title(id))}</h1></div>
     <p class="pz-meta pz-tabmeta"><span>${esc(SM.meta(id))}</span></p>
     <div class="cfg-body">${body}</div></div></div>`;
@@ -431,15 +427,14 @@ function searchResults() {
   const q = plain(ui.q).trim(); if (!q) return '';
   const all = SEARCH(), hits = all.map((e, i) => [e, i]).filter(([e]) => plain(e.label).includes(q) || plain(e.words).includes(q))
     .sort(([a], [b]) => (plain(b.label).startsWith(q) - plain(a.label).startsWith(q)) || (plain(b.label).includes(q) - plain(a.label).includes(q))).slice(0, 8);
-  return R.compactMenu({ cls: 'spick-menu pz-search-menu', label: 'Settings found', items: hits.length ? hits.map(([e, i]) => ({ id: 'srch|' + i, text: e.label, hint: e.where })) : [{ id: 'srch|none', text: 'No setting matches', off: true }] });
+  return R.searchResults(hits.map(([e, i]) => ({ id: 'srch|' + i, text: e.label, where: e.where })), 'No setting matches');
 }
 function land(e) {
   if (!e) return;
   ui.page = 'settings'; ui.sset = e.sset; ui.sv.__open = e.open || ''; ui.sv.__confirm = null; ui.sv.__dialog = null; ui.q = ''; ui.menu = ''; ui.pop = false; ui.acct = false;
   render();
   const row = [...document.querySelectorAll(e.list ? '.list-row' : '.set-row')].find((x) => (x.querySelector(e.list ? '.lr-t' : '.set-name')?.textContent || '') === e.label);
-  if (row) { row.classList.add('is-flash'); row.scrollIntoView({ block: 'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' }); setTimeout(() => row.classList.remove('is-flash'), 1300); }
-  else scrollTo(0, 0);
+  if (row) R.land(row); else scrollTo(0, 0);
 }
 document.addEventListener('input', (e) => { if (e.target.matches?.('[data-search]')) { ui.q = e.target.value; document.querySelector('[data-search-res]').innerHTML = searchResults(); } });
 
@@ -514,7 +509,7 @@ document.addEventListener('click', (e) => {
   if ((el = tg('[data-svdo]'))) { const say = SV.act(ui.sv, el.dataset.svdo); if (say) toast(say); render(); return; }
   if ((el = tg('[data-menu]'))) { ui.menu = ui.menu === el.dataset.menu ? '' : el.dataset.menu; if (ui.menu) opening = 'menu'; render(); return; }
   if (!tg('.pz-pick, .spick')) ui.menu = '';
-  if (ui.q && !tg('.pz-search')) { ui.q = ''; const r = document.querySelector('[data-search-res]'); if (r) r.innerHTML = ''; }
+  if (ui.q && !tg('.rl-search')) { ui.q = ''; const r = document.querySelector('[data-search-res]'); if (r) r.innerHTML = ''; }
   // an open popover or account menu closes on a click outside it, and that click does nothing else
   if ((ui.pop || ui.acct || ui.nr) && !tg('.pz-popover, .nav-fly, .pz-newrun, [data-pop], [data-acct], [data-newrun]')) { ui.pop = false; ui.acct = false; ui.sub = ''; ui.nr = null; render(); return; }
   if ((el = tg('[data-pop]'))) { ui.pop = !ui.pop; ui.acct = false; ui.nr = null; if (ui.pop) opening = 'pop'; render(); return; }

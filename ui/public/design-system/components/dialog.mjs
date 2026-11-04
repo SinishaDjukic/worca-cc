@@ -15,10 +15,12 @@ import { button } from './button.mjs';
  * @param {string} [o.busyLabel]       ("Creating…")
  * @param {string} [o.close]           the Close icon's SVG
  * @param {string} [o.id]              the title's id
+ * @param {{close?:object, cancel?:object, yes?:object}} [o.hooks]  the page's attrs on each button (its handlers, keys)
+ * @param {string} [o.cls]             the page's class on the card (what its body holds)
  * @param {object} [o.attrs]           on the card
  */
-export function dialog({ title, body, yes, status = '', busy = false, busyLabel = '', close = '', id = 'dlg-t', attrs: a = {} }) {
-  const head = `<div class="dlg-head"><h2 class="dlg-title"${attrs({ id })}>${esc(title)}</h2>${close ? button({ label: 'Close', kind: 'quiet', iconOnly: true, icon: close, attrs: { 'data-dialog': 'close', 'data-key': 'dialog:close' } }) : ''}</div>`;
-  const foot = `<div class="dlg-foot"><span class="dlg-status" role="status">${status}</span><span class="dlg-acts">${button({ label: 'Cancel', kind: 'quiet', attrs: { 'data-dialog': 'cancel', 'data-key': 'dialog:cancel' } })}${button({ label: busy ? busyLabel || yes : yes, kind: 'primary', attrs: { 'data-dialog': 'yes', 'data-key': 'dialog:yes', 'data-motion': 'swap', disabled: busy } })}</span></div>`;
-  return `<div class="viewer-modal" role="dialog" aria-modal="true"${attrs({ 'aria-labelledby': id, 'data-motion': 'in' })}><div class="card dlg rl-dialog"${attrs(a)}>${head}<div class="dlg-body">${body}</div>${foot}</div></div>`;
+export function dialog({ title, body, yes, status = '', busy = false, busyLabel = '', close = '', id = 'dlg-t', hooks = {}, cls = '', attrs: a = {} }) {
+  const head = `<div class="dlg-head"><h2 class="dlg-title"${attrs({ id })}>${esc(title)}</h2>${close ? button({ label: 'Close', kind: 'quiet', iconOnly: true, title: false, icon: close, attrs: { 'data-dialog': 'close', 'data-key': 'dialog:close', ...(hooks.close || {}) } }) : ''}</div>`;
+  const foot = `<div class="dlg-foot"><span class="dlg-status" role="status">${status}</span><span class="dlg-acts">${button({ label: 'Cancel', kind: 'quiet', attrs: { 'data-dialog': 'cancel', 'data-key': 'dialog:cancel', ...(hooks.cancel || {}) } })}${button({ label: busy ? busyLabel || yes : yes, kind: 'primary', attrs: { 'data-dialog': 'yes', 'data-key': 'dialog:yes', 'data-motion': 'swap', disabled: busy, ...(hooks.yes || {}) } })}</span></div>`;
+  return `<div class="viewer-modal" role="dialog" aria-modal="true"${attrs({ 'aria-labelledby': id, 'data-motion': 'in' })}><div class="card dlg rl-dialog${cls ? ' ' + cls : ''}"${attrs(a)}>${head}<div class="dlg-body">${body}</div>${foot}</div></div>`;
 }
