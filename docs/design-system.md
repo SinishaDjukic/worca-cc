@@ -384,6 +384,7 @@ runs execute on their own, and the words say so.
 The prototype's Break picker plays each case.
 
 ### Small rules that hold everywhere
+- **Branch names** (in an example, a case, a mock, and what Worca suggests): a type, a slash, then 2–5 lowercase words joined by hyphens that say what the work is (`feat/page-head-breadcrumb`, `fix/git-bash-quoting`), with a sibling's `-2` at most: readable at a glance and short enough to show whole. Never a pasted URL, a sentence or an id alone (`feat/fix-pr-https-github-com-…`, `worca/run-7b0bfb1e`). `ds-check` reads every branch on a Rail page by this rule; where one must still shorten, its middle folds, never its end.
 - **Names** (a page, a menu item, a section head, a settings row): the thing itself, as the people who use it call it,
   in 1–3 words, a plain noun first (`Budget`, `Labels`, `Away mode`, `Team policy`). One thing, one name: never two
   things joined by `&` or `and` (two things get two names); never `Your …`, `My …` or `This …`; never a phrase or a
