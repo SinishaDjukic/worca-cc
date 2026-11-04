@@ -54,7 +54,7 @@
     { "kind": "a yes or no, or a one-line answer", "slot": "ConfirmStrip under the top bar" },
     { "kind": "a step that needs fields", "slot": "Dialog" },
     { "kind": "a choice that changes a step", "slot": "SentencePicker in the sentence it changes" },
-    { "kind": "a row's own detail (the ask's parts, a diff, a step's rounds)", "slot": "opens in place under the row, › right when closed and down when open; a problem opens by itself; a fact with a home elsewhere links there instead; sections never collapse" },
+    { "kind": "a row's own detail (the ask's parts, a diff, a step's rounds)", "slot": "opens in place under the row, › right when closed and down when open; a problem opens by itself, once (a failing test, a failed command in Chat with its output), and stays folded once the person folds it; a fact with a home elsewhere links there instead; sections never collapse" },
     { "kind": "a list on a thing's page that is part of a step (checks, a plan)", "slot": "one line on its StepRow (a count and the names that matter); the whole list in Overview's first section, the state's focus (What broke, The plan)" },
     { "kind": "a list about the thing as a whole (files, decisions, activity)", "slot": "its own tab, the count a caption on the tab; never also in the card" },
     { "kind": "a thing's own setting (a schedule's times, a run's budget)", "slot": "the fact itself where the page shows it, as a SentencePicker; settings that must change together: a Dialog from ⋯ (Edit schedule…); where it belongs (its group): ⋯" },

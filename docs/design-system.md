@@ -185,7 +185,9 @@ what it belongs to.
 **What opens, and what does not** (mocks: `plans/rail/mocks/run-expand-rules-*.png`):
 - **A row opens its own detail, in place:** the ask's parts, a file's diff, a step's rounds. Its › points right while
   closed and down while open; focus stays on the row.
-- **What has a problem opens by itself** (a failing test, a part of the ask not done); what went fine stays one line.
+- **What has a problem opens by itself** (a failing test, a part of the ask not done, a failed command in Chat: its
+  group and its row, with the output); what went fine stays one line. It opens once: folded by the person, it stays
+  folded.
 - **A fact that has a home elsewhere links there instead of opening a copy:** the evidence line goes to Activity.
 - **Sections never collapse:** a section or group is always drawn; one that is too long shows less, it does not fold.
 - **Opening never moves what is above it.** Several rows may be open at once, except one detail of a kind at a time
