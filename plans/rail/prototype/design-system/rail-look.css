@@ -10,6 +10,7 @@
   --ink:light-dark(#18181B,#EDEDEF); --ink-2:light-dark(#63636B,#A1A1A9); --ink-3:light-dark(#A1A1A9,#6E6E76);   /* ds-ok: the Rail look's table */
   --line:light-dark(#EEEEF0,#26262B); --line-2:light-dark(#E2E2E6,#35353B);   /* ds-ok: the Rail look's table */
   --float:light-dark(#FFFFFF,#1D1D21); --float-line:light-dark(#EEEEF0,#323238);   /* ds-ok: the Rail look's table */
+  --peach-bg:light-dark(#FBF2D2,#2E2914); --peach-ink:light-dark(#7F6408,#F2D27A); --h-peach-ink:light-dark(#6E5706,#F2D27A);   /* ds-ok: working's tints, Rail only */
   --peach:light-dark(#B39A0E,#ECD86A); --amber:light-dark(#E07A1F,#EE8A2C);   /* ds-ok: the Rail look's table */
   --step-done:light-dark(#C9C9CF,#4A4A52);   /* ds-ok: the Rail look's table: a finished step, quiet */
   /* Motion (docs/design-system.md › Motion): three timings on one curve */

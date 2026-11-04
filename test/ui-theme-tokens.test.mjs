@@ -48,7 +48,7 @@ function stripLightDark(value) {
   }
 }
 const COLOR_LITERAL = /#[0-9a-f]{3,8}\b|\brgba?\(|\bhsla?\(|(?<![-\w])(?:white|black)(?![-\w])/i;
-const EQUAL_ARMS = ['--green', '--red', '--blue', '--violet', '--amber',   // D13's allowlist (--peach left it: two arms keep it apart from --amber) …
+const EQUAL_ARMS = ['--green', '--peach', '--red', '--blue', '--violet', '--amber',   // D13's allowlist …
   '--teal', '--pink', '--indigo', '--lime', '--cocoa', '--slate'];                     // … + the six script-only bases (script-wizard plan S10)
 
 const rootBody = ruleBody(':root');
@@ -68,7 +68,7 @@ test('theme: every colour token is a light-dark() pair, both arms colours; the s
     if (a && !(COLOR_LITERAL.test(a[0]) && COLOR_LITERAL.test(a[1]))) bad.push(`${name}: an arm is not a colour: ${value}`);
   }
   assert.deepEqual(bad, []);
-  assert.deepEqual(EQUAL_ARMS.map((n) => tokens.get(n)), ['#5BAE5B', '#E76A5A', '#5BA6CC', '#8C7FD6', '#E6962A',
+  assert.deepEqual(EQUAL_ARMS.map((n) => tokens.get(n)), ['#5BAE5B', '#EFA63C', '#E76A5A', '#5BA6CC', '#8C7FD6', '#E6962A',
     '#4FB3A9', '#E27BA8', '#6A7FD8', '#A3BF3A', '#B08A5E', '#8A96A3']);
 });
 
@@ -120,30 +120,6 @@ test('theme: light and dark arms clear the spec minimums', async () => {
     }
     assert.deepEqual(fails, []);
   } })));
-});
-
-// ---- Status colours that must be told apart (design-system.md › Colour) ----------
-const oklab = (hex) => {
-  const lin = (c) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
-  const [r, g, b] = [1, 3, 5].map((i) => lin(parseInt(hex.slice(i, i + 2), 16) / 255));
-  const l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b);
-  const m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b);
-  const s = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b);
-  return [0.2104542553 * l + 0.7936177850 * m - 0.0040720468 * s, 1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s, 0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s];
-};
-const deltaE = (a, b) => Math.hypot(...oklab(a).map((v, i) => v - oklab(b)[i]));
-test('theme: working (peach) stays apart from needs you (amber), done (green) and failed (red)', () => {
-  const fails = [];
-  for (const which of ['light', 'dark']) {
-    const peach = arm('--peach', which);
-    for (const other of ['--amber', '--green', '--red']) {
-      const d = deltaE(peach, arm(other, which));
-      if (d < 0.1) fails.push(`--peach vs ${other} (${which}): ΔE ${d.toFixed(3)} < 0.1`);
-    }
-    const c = contrast(peach, arm('--panel', which));
-    if (c < 3) fails.push(`--peach on --panel (${which}): ${c.toFixed(2)} < 3`);
-  }
-  assert.deepEqual(fails, []);
 });
 
 test('theme: no colour literal outside the token blocks (spec §4.2; Task 2 codemod)', () => {

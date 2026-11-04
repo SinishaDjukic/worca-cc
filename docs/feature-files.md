@@ -16,7 +16,7 @@ and pinned routes). See [split-by-feature.md](split-by-feature.md).
 | `ui/public/shell/responsive-nav.css` | 52 |
 | `ui/public/shell/scrollbars.css` | 27 |
 | `ui/public/shell/search-and-shortcuts.css` | 43 |
-| `ui/public/shell/self-hosted.css` | 203 |
+| `ui/public/shell/self-hosted.css` | 201 |
 | `ui/public/shell/sidebar.css` | 128 |
 | `ui/public/shell/sidebar.html` | 208 |
 | `ui/public/shell/top-bar.css` | 85 |

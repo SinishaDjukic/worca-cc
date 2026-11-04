@@ -16,8 +16,7 @@
      The light arm is the "Refined" palette exactly as it always was; the dark arm is
      the warm-charcoal palette of spec §3. The MODE is the color-scheme property:
      `light dark` here follows the OS; the two [data-theme] rules after this block
-     force one. The status bases have equal arms and stay plain (D13), except --peach: working needs a
-     darker gold on light and a lighter yellow on dark to stay apart from --amber (needs you) in both.
+     force one. The six status bases have equal arms and stay plain (D13).
      Never restate a token's hex anywhere else — several tests count occurrences. */
   color-scheme:light dark;
 
@@ -64,8 +63,7 @@
 
   --green-bg:light-dark(#E2F3DF,#1C2F1D);  --green:#5BAE5B;  --green-ink:light-dark(#2F7A38,#8FD48F);
   --green-ink-strong:light-dark(#2C7535,#8FD48F);  /* sidebar Saved figure: 4.79:1 on --line (the spend card's hover fill); --green-ink is 4.48:1 */
-  /* Working: a warm yellow, ΔE ≥0.11 (OKLab) from --amber in both arms; the light dot is 3.3:1 on --panel. */
-  --peach-bg:light-dark(#FBF2D2,#2E2914);  --peach:light-dark(#A88A14,#F2C94C);  --peach-ink:light-dark(#7F6408,#F2D27A);
+  --peach-bg:light-dark(#FCEEDA,#33261A);  --peach:#EFA63C;  --peach-ink:light-dark(#B5751A,#F2B96A);
   --red-bg:light-dark(#FBE3E0,#34201D);    --red:#E76A5A;    --red-ink:light-dark(#C5483A,#F08C7E);
   --red-ink-strong:light-dark(#B23F33,#F08C7E);   /* red text on a --field panel (the account menu's spend card): 5.3:1 (--red-ink is 4.45:1) */
   --blue-bg:light-dark(#DEEFF7,#1A2A33);   --blue:#5BA6CC;   --blue-ink:light-dark(#3782A8,#86C4E3);
@@ -127,7 +125,7 @@
   --scrim-soft:light-dark(rgba(25,25,27,.34),rgba(0,0,0,.55));
   --selection:light-dark(rgba(25,25,27,.16),rgba(236,236,232,.22));
   --ava-a:light-dark(#CFCFCA,#4A4A46); --ava-b:light-dark(#A8A8A2,#6A6A64);
-  --h-blue-ink:light-dark(#2E6E8E,#9FD3EE); --h-green-ink:light-dark(#3B7C3B,#9BD69B); --h-peach-ink:light-dark(#6E5706,#F2D27A);
+  --h-blue-ink:light-dark(#2E6E8E,#9FD3EE); --h-green-ink:light-dark(#3B7C3B,#9BD69B); --h-peach-ink:light-dark(#8A5A16,#F2C27A);
   --drop-ring:light-dark(#D8EFD6,#2A4A2C);
   --trunc-ink:light-dark(#994466,#E39BBE);
   --chip-ink:light-dark(#555555,#B4B4AE);

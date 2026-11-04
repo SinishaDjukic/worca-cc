@@ -458,10 +458,8 @@ a `color-mix()` recipe used twice is a named token (`--btn-hover`, `--red-tint`,
 | violet | `--violet*` | Labs only (the merged status dot, the merged run orb and the run page route's merged circle `.rd-route-dot.is-merged` and merged words `.rd-fact-tx.is-merged` are the named exceptions; the Marketplace chat kind tile and dot follow its kind colours, › Marketplace exceptions) | sources, "Official", policy, a badge, a chart series |
 | slate | `--slate*` | neutral metadata: a source, "Official", policy (`.badge.slate`) | a state |
 Status-dot exceptions: peach = working (it pulses), violet = merged. They are the dots only, never a badge.
-Working and needs you must read as two states at dot size, so `--peach` is a warm yellow, not a second orange: a deep
-gold on light (`#A88A14`, 3.3:1 on `--panel`) and a sun yellow on dark (`#F2C94C`). It is the one status base with two
-arms; the others stay one plain hex in both themes. Colours that must be told apart differ by at least 0.1 in OKLab
-in both arms: peach against amber, green and red (checked by `test/ui-theme-tokens.test.mjs`).
+Working and needs you must read as two states at dot size. The Rail look makes `--peach` a warm yellow apart from
+`--amber` (› The Rail look); it arrives with Wave 1 behind the `rail` flag, and today's `--peach` stays one orange.
 Surfaces: `--panel` page, `--surface` raised, `--field` field and tint fill; `--line` dividers, `--line-2` control borders.
 `--row-selected` is `--ink` at 8% over transparent (no new hue): the selected Runs row, one ink step over whatever it
 sits on, so it reads on the panel and on the Needs-you amber tint alike. Its PR chips take the `-ink-strong` shades to
