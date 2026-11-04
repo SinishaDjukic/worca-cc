@@ -126,8 +126,8 @@ function askWord(ask) {
 }
 
 /** A finished run's word: exactly the glance headline (run-glance.mjs glanceCopy, done branch). */
-function doneWord({ pr = null, checks = null, files = null, changes = null } = {}) {
-  return glanceCopy({ status: 'done', steps: [] }, { pr, checks, files, changes }).lead;
+function doneWord({ pr = null, checks = null, files = null, changes = null, successful = null, outcomeReason = null } = {}) {
+  return glanceCopy({ status: 'done', steps: [] }, { pr, checks, files, changes, successful, outcomeReason }).lead;
 }
 
 /** A live run's row: { icon, word, detail }. Branch order mirrors app.js statusPill:
@@ -328,7 +328,7 @@ export const RUNS_SHOW = Object.freeze(['all', 'needs', 'running', 'waiting', 'f
 const isWaiting = (r) => r.model.state === 'waiting' && !(r.kind === 'sched' && (r.scheduleId || r.status === 'missed'));
 export const RUNS_GROUP_BY = Object.freeze(['none', 'project', 'date']);
 export const RECENT_PAGE = 20;
-const ENDED_STATES = new Set(['failed', 'stopped', 'ready', 'in-review', 'merged']);
+const ENDED_STATES = new Set(['failed', 'stopped', 'ready', 'in-review', 'merged', 'unsuccessful']);
 // Ready to ship: a finished git run (or group) with no open PR. A Folder or no-project run is 'ready' too, but its word
 // is Finished / Applied / Discarded (run-model.mjs finishedWords): nothing to ship, so it stays out.
 const isReadyToShip = (r) => r.model.state === 'ready' && r.model.word === 'Ready';
@@ -396,6 +396,7 @@ export function listLine(row, { section = '', time = '' } = {}) {
       case 'failed': return and(p ? `Failed at ${p.toLowerCase()}` : 'Failed', time);
       case 'stopped': return and(p ? `Stopped at ${p.toLowerCase()}` : 'Stopped', time);
       case 'ready': return and('Ready to ship', time);
+      case 'unsuccessful': return and('Done · unsuccessful', time);
       case 'in-review': return m.pr ? time : and(m.line, time);
       default: return m.pr ? time : and('Merged', time);
     }
@@ -408,6 +409,7 @@ export function listLine(row, { section = '', time = '' } = {}) {
   switch (m.state) {
     case 'failed': return and(w ? `Failed at ${w}` : 'Failed', time);
     case 'stopped': case 'ready': return and(m.line, time);
+    case 'unsuccessful': return and(m.line, m.reasonNote, time);   // "Done · unsuccessful · <the reason> · <the time>"
     case 'in-review': case 'merged': return m.pr && !m.pr.pending ? time : and(m.word, time);
     // A usage-limit pause keeps its reset / auto-resume note ("resets 18:00", liveRowState / histRowState detail).
     case 'paused': return and(m.line, row.detail);

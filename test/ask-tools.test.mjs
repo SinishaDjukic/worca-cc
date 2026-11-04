@@ -1318,6 +1318,45 @@ test('show_files: gated by deps.showFiles; validates counts; hands rows through 
   assert.match(calls[1], /show_files: run not found/);
 });
 
+// ── S1 — get_run / list_runs expose successful:false + outcomeReason ─────────────
+
+test('get_run / list_runs: an unsuccessful run carries successful:false + outcomeReason; a successful one does not', async () => {
+  const REASON = 'Implementation produced no changes to the worktree.';
+  const ROW_U = { ...ROW_P, id: 'dddddddd', title: 'Did nothing',
+    outcome: JSON.stringify({ endReached: false, successful: false, reason: REASON, unmet: [{ nodeId: 'impl', kind: 'no-code-change' }] }) };
+  const LITE_U = { id: 'dddddddd', title: 'Did nothing', status: 'done', startedAt: ROW_P.started_at,
+    branch: 'worca-cc/did-nothing-dddddddd', sourceBranch: 'main', guardrailsId: 'normal', totalCostUsd: 0, mtime: 1,
+    projectKey: 'demo-00000001', projectName: 'Demo', projectDir: '/p/demo', successful: false, outcomeReason: REASON };
+
+  const t = createAskTools({
+    ...fake,
+    findPipelineRowById: (id) => (id === 'dddddddd' ? ROW_U : [ROW_P, ROW_W, ROW_A, ROW_B, ROW_S].find((r) => r.id === id) ?? null),
+    listAllPipelines: async () => [LITE[1], LITE_U],
+  });
+
+  await checkRows([
+    { name: 'get_run (unsuccessful) returns successful:false + outcomeReason', run: async () => {
+      const r = await t.call('get_run', { id: 'dddddddd' });
+      assert.equal(r.successful, false);
+      assert.equal(r.outcomeReason, REASON);
+    } },
+    { name: 'get_run (successful) omits both keys (shape unchanged)', run: async () => {
+      const r = await t.call('get_run', { id: '4e1f2a9b', projectKey: 'demo-00000001' });
+      assert.equal('successful' in r, false, 'no successful key on a successful run');
+      assert.equal('outcomeReason' in r, false, 'no outcomeReason on a successful run');
+    } },
+    { name: 'list_runs lists the unsuccessful row with successful:false + outcomeReason; successful row omits them', run: async () => {
+      const rows = await t.call('list_runs', {});
+      const bad = rows.find((x) => x.id === 'dddddddd');
+      assert.equal(bad.successful, false);
+      assert.equal(bad.outcomeReason, REASON);
+      const good = rows.find((x) => x.id === '4e1f2a9b');
+      assert.equal('successful' in good, false);
+      assert.equal('outcomeReason' in good, false);
+    } },
+  ]);
+});
+
 test('defaultToolDeps: list_presets shows a preset naming no guardrails as the install default (V21 wiring)', async () => {
   const { prepare, GUARDRAILS_DEFAULT_META_KEY } = await import('../src/core/db.mjs');
   prepare('INSERT OR REPLACE INTO store_meta (key, kind, data) VALUES (?, ?, ?)').run(GUARDRAILS_DEFAULT_META_KEY, 'setting', JSON.stringify('secure'));

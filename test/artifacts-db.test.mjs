@@ -11,7 +11,7 @@ import { join } from 'node:path';
 import { _resetForTests, getDb } from '../src/core/db.mjs';
 import { readStoreMeta, writeStoreMeta, deleteStoreMeta } from '../src/core/artifacts.mjs';
 import { ensureArtifactDirs, writeState, appendAudit, createPipeline, updatePipelineTitle } from '../src/core/artifacts.mjs';
-import { recordArtifact, listArtifacts } from '../src/core/artifacts.mjs';
+import { recordArtifact, listArtifacts, listAllPipelines } from '../src/core/artifacts.mjs';
 import { writeReview, readReviewRow, readPipelineExtras, readPipelineByKey, writeClarify } from '../src/core/artifacts.mjs';
 import { readRunLogText } from '../src/core/artifacts.mjs';
 import { seedPipelineRow } from './helpers/db-seed.mjs';
@@ -529,4 +529,69 @@ test('createPipeline stores run tags; writeState, project defaults and lists lea
   assert.deepEqual(readProjectDefaultTags(projectKey(proj)), []);
   const bare = await createPipeline(proj, { prompt: 'y' });
   assert.deepEqual(readRunTags(bare.id), []);
+});
+
+// ── S1 — the run outcome round-trips through the `outcome` JSON column ───────────
+
+test('writeState → rowToState round-trips successful/outcomeReason/unmet/codeSteps', async () => {
+  const key = 'proj-00000001';
+  const unmet = [{ nodeId: 'impl', step: 'Implementation', kind: 'no-code-change' }];
+  const codeSteps = [{ nodeId: 'impl', step: 'Implementation' }];
+  await writeState('/d-dddd4444', fullState({
+    id: 'dddd4444', engine: 2, endReached: false, status: 'done',
+    successful: false, outcomeReason: 'Implementation produced no changes to the worktree.',
+    unmet, codeSteps,
+  }));
+  await mkdir(join(projectStorePath(key), 'pipelines', 'dddd4444'), { recursive: true });
+
+  // raw column carries the facts
+  const raw = getDb().prepare('SELECT outcome FROM pipelines WHERE id = ?').get('dddd4444');
+  const oc = JSON.parse(raw.outcome);
+  assert.equal(oc.successful, false);
+  assert.equal(oc.reason, 'Implementation produced no changes to the worktree.');
+  assert.deepEqual(oc.unmet, unmet);
+  assert.deepEqual(oc.codeSteps, codeSteps);
+
+  // rehydrated state matches
+  const { state } = await readPipelineByKey(key, 'dddd4444');
+  assert.equal(state.successful, false);
+  assert.equal(state.outcomeReason, 'Implementation produced no changes to the worktree.');
+  assert.deepEqual(state.unmet, unmet);
+  assert.deepEqual(state.codeSteps, codeSteps);
+
+  // the lite list projection surfaces successful:false + outcomeReason
+  const entry = (await listAllPipelines({ lite: true })).find((e) => e.id === 'dddd4444');
+  assert.equal(entry.successful, false);
+  assert.equal(entry.outcomeReason, 'Implementation produced no changes to the worktree.');
+});
+
+test('a successful done row: outcome.successful true, no false flag anywhere', async () => {
+  const key = 'proj-00000001';
+  await writeState('/d-eeee5555', fullState({
+    id: 'eeee5555', engine: 2, endReached: true, status: 'done',   // no successful set ⇒ defaults true
+  }));
+  await mkdir(join(projectStorePath(key), 'pipelines', 'eeee5555'), { recursive: true });
+  const oc = JSON.parse(getDb().prepare('SELECT outcome FROM pipelines WHERE id = ?').get('eeee5555').outcome);
+  assert.equal(oc.successful, true, 'absent successful defaults true');
+  assert.equal(oc.reason, null);
+  const { state } = await readPipelineByKey(key, 'eeee5555');
+  assert.equal(state.successful, true);
+  assert.equal(state.outcomeReason, null);
+  const entry = (await listAllPipelines({ lite: true })).find((e) => e.id === 'eeee5555');
+  assert.notEqual(entry.successful, false, 'a successful run is never flagged');
+});
+
+test('a v1 row (outcome NULL) rehydrates absent-safe (never flagged unsuccessful)', async () => {
+  const key = 'proj-00000001';
+  // No engine / endReached / runEngine ⇒ toPipelineRow writes outcome = NULL (a v1 run).
+  await writeState('/d-ffff6666', {
+    id: 'ffff6666', projectKey: key, projectName: 'P', status: 'done', runEngine: 'claude',
+  });
+  await mkdir(join(projectStorePath(key), 'pipelines', 'ffff6666'), { recursive: true });
+  assert.equal(getDb().prepare('SELECT outcome FROM pipelines WHERE id = ?').get('ffff6666').outcome, null);
+  const { state } = await readPipelineByKey(key, 'ffff6666');
+  assert.notEqual(state.successful, false, 'a legacy run is treated as successful (absent-safe)');
+  assert.ok(!state.outcomeReason, 'no outcomeReason on a legacy run');
+  const entry = (await listAllPipelines({ lite: true })).find((e) => e.id === 'ffff6666');
+  assert.notEqual(entry.successful, false);
 });

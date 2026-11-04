@@ -35,10 +35,12 @@ const SINGLE = [
   ['ready', R({ status: 'done', endReached: true, steps: [row('n_plan'), row('n_impl'), row('n_review')] }), 'green', false, 'Ready to ship', ['ship'], null],
   ['in-review', R({ status: 'done', endReached: true, pr: PR }), 'green', false, 'In review · PR #759', ['open-pr'], null],
   ['merged', R({ status: 'done', endReached: true, pr: { ...PR, state: 'MERGED' } }), 'violet', false, 'Merged', ['archive'], null],
+  ['unsuccessful', R({ status: 'done', endReached: true, successful: false, outcomeReason: 'Review Plan produced no changes to the worktree.' }),
+    'amber', false, 'Done · unsuccessful', ['report'], 'alert'],
 ];
 
 test('spec §2.1, single run: dot, pulse, status line, actions and symbol for every state', async () => {
-  assert.equal(SINGLE.length, 10);
+  assert.equal(SINGLE.length, 11);
   await checkRows(SINGLE.map(([state, run, dot, pulse, line, actions, symbol]) => ({ name: state, run: () => {
     const m = runModel(run, OPTS);
     assert.deepEqual({ state: m.state, dot: m.dot, pulse: m.pulse, line: m.line, actions: m.actions, symbol: m.symbol },
@@ -82,10 +84,32 @@ test('Projects, any way: Folder, no-project and git-missing runs word their fini
   } })));
 });
 
-test('symbol: question for Needs you, alert for Failed, null for the other 8, with their aria words', () => {
+test('symbol: question for Needs you, alert for Failed and Unsuccessful, null for the other 8, with their aria words', () => {
   const sym = Object.entries(RUN_STATES).filter(([, s]) => s.symbol);
-  assert.deepEqual(sym.map(([id, s]) => [id, s.symbol, s.word]), [['needs-you', 'question', 'Needs you'], ['failed', 'alert', 'Failed']]);
+  assert.deepEqual(sym.map(([id, s]) => [id, s.symbol, s.word]),
+    [['needs-you', 'question', 'Needs you'], ['failed', 'alert', 'Failed'], ['unsuccessful', 'alert', 'Unsuccessful']]);
   assert.equal(Object.values(RUN_STATES).filter((s) => s.symbol === null).length, 8);
+});
+
+test('a finished-unsuccessful run is its own state, no ship action', () => {
+  const m = runModel(FIN({ successful: false, outcomeReason: 'Review Plan produced no changes to the worktree.' }), OPTS);
+  assert.equal(m.state, 'unsuccessful');
+  assert.equal(m.word, 'Unsuccessful');
+  assert.equal(m.line, 'Done · unsuccessful');
+  assert.equal(m.reasonNote, 'Review Plan produced no changes to the worktree.');
+  assert.ok(!m.actions.includes('ship'));
+  assert.deepEqual(m.actions, ['report']);
+  assert.equal(runModel(FIN({ successful: true }), OPTS).line, 'Ready to ship');   // success unchanged
+  assert.equal(runModel(FIN({}), OPTS).line, 'Ready to ship');                     // absent ⇒ ok
+  assert.equal(runModel(FIN({ successful: true }), OPTS).reasonNote, null);
+});
+
+test('an unsuccessful done outranks a stopped Watch PR (stays unsuccessful, not needs-you)', () => {
+  // A genuinely stopped Watch PR (needs-person + a failing PR) would raise a success done to needs-you;
+  // the unsuccessful outcome outranks it.
+  const stopped = { status: 'done', outcomeReason: 'r', pr: ghPr({ checks: FAIL }), watch: { status: 'needs-person', reason: 'cap', fixRuns: 3 } };
+  assert.equal(runModel({ ...stopped, successful: true }).state, 'needs-you');
+  assert.equal(runModel({ ...stopped, successful: false }).state, 'unsuccessful');
 });
 
 const member = (run, extra = {}) => ({ ...run, ...extra });

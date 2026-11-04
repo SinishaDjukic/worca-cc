@@ -2,6 +2,7 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, existsSync } from 'node:fs';
+import { writeFile, chmod } from 'node:fs/promises';
 import { tmpdir, hostname } from 'node:os';
 import { join } from 'node:path';
 import { execSync } from 'node:child_process';
@@ -13,6 +14,8 @@ import { getDb } from '../src/core/db.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { NETWORK_ACTOR } from '../src/core/network-wait.mjs';
 import { limitResetAt } from '../src/core/recoverable-error.mjs';
+import { runOpts } from '../src/core/phases.mjs';
+import { RECOVERY_MAX_AUTO_ATTEMPTS } from '../src/core/failure-policy.mjs';
 
 useTempHome(after);
 process.env.WORCA_RECOVERY_BACKOFF_MS = '0'; // no real waiting in tests
@@ -757,3 +760,137 @@ test('interactive + endpoint reachable: today\'s prompt, no note, no self-answer
   assert.equal(res.status, 'paused');
   assert.equal(seen.recovery.network, undefined);
 }));
+
+// ── S3: a swallowed zero-exit is_error result rerouted through _recover (end-to-end, REAL engine) ──
+// An injected stub runner sits ABOVE claude.mjs and cannot exercise an engine-level swallow (the
+// existing throw→recover tests above already cover a thrown producer). The reroute must run through
+// the REAL engine: no injected producer, so the agent node falls through runExecution →
+// runAgentExecution → spawnAgent → runClaude, whose runOpts now carries rejectOnErrorResult:true.
+// The fake bin travels via claude:{bin} (the plan's blessed path): the orchestrator threads
+// this.claude.bin → claudeOpts.bin → runOpts' bin:c.bin for the agent spawn AND → _helperSpawn()'s
+// bin for the fire-and-forget title call, so NO spawn reaches the real `claude` (the suite's
+// real-claude guard, server-mock-mode.test.mjs). Because mockEnabled also reads ambient
+// WORCA_MOCK/ORCH_MOCK, each case clears and restores them.
+
+const S3_POSIX_SHIM = { skip: process.platform === 'win32' ? 'fake claude shim is a POSIX shell script' : false };
+async function fakeBin(dir, { stdout = '', stderr = '', code = 0 } = {}) {
+  const path = join(dir, 'fake-claude.sh');
+  const lines = ['#!/bin/sh'];
+  for (const l of stdout.split('\n').filter(Boolean)) lines.push(`printf '%s\\n' ${JSON.stringify(l)}`);
+  if (stderr) lines.push(`printf '%s\\n' ${JSON.stringify(stderr)} 1>&2`);
+  lines.push(`exit ${code}`);
+  await writeFile(path, lines.join('\n') + '\n', 'utf8');
+  await chmod(path, 0o755);
+  return path;
+}
+// Clear WORCA_MOCK/ORCH_MOCK so the real engine runs (mockEnabled honours ambient env), restore after.
+function withMockOff(fn) {
+  const prevMock = process.env.WORCA_MOCK, prevOrch = process.env.ORCH_MOCK;
+  delete process.env.WORCA_MOCK; delete process.env.ORCH_MOCK;
+  const restore = () => {
+    if (prevMock === undefined) delete process.env.WORCA_MOCK; else process.env.WORCA_MOCK = prevMock;
+    if (prevOrch === undefined) delete process.env.ORCH_MOCK; else process.env.ORCH_MOCK = prevOrch;
+  };
+  return Promise.resolve().then(fn).finally(restore);
+}
+
+// Unit: the node-runner options funnel opts in; no other caller does.
+test('S3: runOpts sets rejectOnErrorResult on the node path', () => {
+  const ctx = { claudeOpts: { bin: 'claude' } };
+  const o = runOpts(ctx, { role: 'producer', prompt: 'p', systemPrompt: 's', allowedTools: [] });
+  assert.equal(o.rejectOnErrorResult, true);
+});
+
+// S3: a REAL-engine zero-exit is_error result used to resolve, so the node finished and the run ended
+// 'done'. It must now throw and take _recover → pause. Unclassified detail → node '*' → pause(REASON.ERROR).
+test('S3: a real-engine zero-exit is_error result takes the _recover path and pauses (never done)', S3_POSIX_SHIM, async () => {
+  await withMockOff(async () => {
+    const dir = gitDir();
+    const bin = await fakeBin(dir, {
+      code: 0,
+      stdout:
+        '{"type":"system","subtype":"init","session_id":"s1"}\n' +
+        '{"type":"result","is_error":true,"result":"hit the turn limit"}', // classifyError → null → '*' → pause(ERROR)
+    });
+    const recovered = [];
+    const orch = createOrchestrator({ projectDir: dir, prompt: 'demo', auto: true, claude: { bin, mock: false }, runners: { verifier: okVerifier } });
+    const realRecover = orch._recover.bind(orch);
+    orch._recover = async (a) => { recovered.push(a.cls); return realRecover(a); };
+    const res = await orch.run();
+    assert.equal(res.status, 'paused', 'the swallowed failure now parks the run, not done');
+    assert.ok(recovered.length >= 1, 'the node went through _recover (recovery path taken)');
+    const saved = readPipelineForResume(orch.state.id);
+    assert.equal(saved.row.status, 'paused');
+    assert.equal(saved.resumePoint.pauseReason, 'error');
+    assert.match(saved.resumePoint.pauseDetail, /reported an error result/); // ux-1-2: the surfaced why
+  });
+});
+
+// Regression: a clean real-engine result is unaffected — the node finishes and the run ends 'done'.
+test('S3: a clean real-engine result finishes done (no reroute)', S3_POSIX_SHIM, async () => {
+  await withMockOff(async () => {
+    const dir = gitDir();
+    const bin = await fakeBin(dir, {
+      code: 0,
+      stdout: '{"type":"system","subtype":"init","session_id":"s1"}\n{"type":"result","result":"ok"}',
+    });
+    let recoverCalls = 0;
+    const orch = createOrchestrator({ projectDir: dir, prompt: 'demo', auto: true, claude: { bin, mock: false }, runners: { verifier: okVerifier } });
+    const realRecover = orch._recover.bind(orch);
+    orch._recover = async (a) => { recoverCalls++; return realRecover(a); };
+    const res = await orch.run();
+    assert.equal(res.status, 'done');
+    assert.equal(recoverCalls, 0, 'no failure → recovery path never entered');
+  });
+});
+
+// S3 (QA R-qa-6, the accepted paid-work risk): a rerouted rate_limit (429) on an AUTO run takes the
+// bounded retry(RECOVERY_MAX_AUTO_ATTEMPTS) then pauses RECOVERABLE. _backoff is stubbed to a no-op so
+// the retry delay does not slow the test (the delay is existing, unchanged machinery, run-harness.mjs:5630).
+test('S3: a real-engine 429 is_error result retries to the budget then pauses recoverable (auto)', S3_POSIX_SHIM, async () => {
+  await withMockOff(async () => {
+    const dir = gitDir();
+    const bin = await fakeBin(dir, {
+      code: 0,
+      stdout:
+        '{"type":"system","subtype":"init","session_id":"s1"}\n' +
+        '{"type":"result","is_error":true,"result":"API Error: Request rejected (429) · overloaded"}',
+    });
+    const recovered = [];
+    const orch = createOrchestrator({ projectDir: dir, prompt: 'demo', auto: true, claude: { bin, mock: false }, runners: { verifier: okVerifier } });
+    orch._backoff = async () => {};   // neutralise the retry delay (timing is unchanged machinery)
+    const realRecover = orch._recover.bind(orch);
+    orch._recover = async (a) => { recovered.push(a.cls); return realRecover(a); };
+    const res = await orch.run();
+    assert.equal(res.status, 'paused');
+    const saved = readPipelineForResume(orch.state.id);
+    assert.equal(saved.resumePoint.pauseReason, 'recoverable', 'a spent retry budget pauses RECOVERABLE');
+    assert.ok(
+      recovered.filter((c) => c === 'rate_limit').length >= RECOVERY_MAX_AUTO_ATTEMPTS,
+      'the 429 retried up to the budget before pausing',
+    );
+  });
+});
+
+// S3 (UX R-ux-3): an INTERACTIVE (auto:false) rerouted CLASSIFIED failure reaches the recovery prompt,
+// not a 'done' card. auth interactive cell = prompt(pause(REASON.ERROR)); '*' would NOT prompt (see note).
+// _promptRecovery must return a real resolveFailure verdict ({outcome, reason}), NOT {action:...} (qa-1-1).
+test('S3: an interactive real-engine auth is_error result reaches the recovery prompt then pauses (never done)', S3_POSIX_SHIM, async () => {
+  await withMockOff(async () => {
+    const dir = gitDir();
+    const bin = await fakeBin(dir, {
+      code: 0,
+      stdout:
+        '{"type":"system","subtype":"init","session_id":"s1"}\n' +
+        '{"type":"result","is_error":true,"result":"Not logged in · Please run /login"}', // → auth → prompt
+    });
+    let prompted = 0;
+    const orch = createOrchestrator({ projectDir: dir, prompt: 'demo', auto: false, claude: { bin, mock: false }, runners: { verifier: okVerifier } });
+    // The real _promptRecovery returns resolveFailure(...)'s verdict; the give-up answer resolves to
+    // pause(REASON.ERROR). _runNodeAttempts reads verdict.outcome/verdict.reason, so the stub must too.
+    orch._promptRecovery = async () => { prompted++; return { outcome: 'pause', reason: 'error' }; };
+    const res = await orch.run();
+    assert.ok(prompted >= 1, 'the interactive recovery prompt was reached, not a done finish');
+    assert.equal(res.status, 'paused', 'an interactive give-up pauses (REASON.ERROR), it does not finish done');
+  });
+});

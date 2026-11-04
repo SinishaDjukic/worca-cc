@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Flag Runs That Finish Without Doing Work
+
+- Catch a run that finished without doing the work and flag it done-unsuccessful: Cycle 2: Slice 1 is implemented faithfully and conservatively against the approved v5 plan.
+- Show 'done, unsuccessful' with its reason everywhere a run result appears: Clean cycle-2 implementation of slice 2.
+- Route swallowed step failures through _recover instead of ending done: Faithful, minimal implementation of plan v5.
+
 ### One Node: 24 for the image, CI and releases
 
 - The Docker image moves from Node 22 to Node 24 (`node:24-bookworm-slim`). `.nvmrc` names Node 24, and every CI job, the release build and the image follow it; CI's fast tests also run the exact floor (22.19.0) and the newest LTS (26). The supported range for an npm install is unchanged: Node 22.19.0 or newer.
@@ -34,6 +40,7 @@
   - Isolation: callers of the API from inside the box (curl scripts, the Railway probe) must send `X-Worca-UI-Token` from `ui.json`; the `worca` CLI does.
   - Image: rebuild for the `worca-plugin` user (uid 1002). The entrypoint re-permissions `plugins/` on each boot and makes `tmp/ask` sticky.
   - Chat: in a group chat `/direct` and the answer commands need a sender in `allowedUserIds`, or `directInGroups: anyone`. On Discord every chat is a group (the bot receives no direct messages).
+
 ### Run telemetry (experimental, flag `runTelemetry`)
 
 - With the flag on, a run records every model call's context size, tokens, timing and tools, tool run times, retries, compactions and sub-agent calls, plus Worca's own state saves, live-update sizes and event loop delay, to `telemetry.ndjson` in the run folder. Recording only: runs behave the same, and with the flag off nothing is written.

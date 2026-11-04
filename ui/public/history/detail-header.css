@@ -39,4 +39,5 @@
 .hist-sic.st-done{background:var(--green-bg);color:var(--green-ink);}
 .hist-sic.st-stopped,.hist-sic.st-error{background:var(--red-bg);color:var(--red-ink);}
 .hist-sic.st-paused{background:var(--amber-bg);color:var(--amber-ink);}
+.hist-sic.st-unsuccessful{background:var(--amber-bg);color:var(--amber);}   /* S2: a finished-unsuccessful run (amber, the alert glyph) */
 

@@ -126,6 +126,8 @@ export function resultWord(snap) {
     const step = failed ? nodeLabelOf(snap.stepper, failed) : '';
     return { key: 'failed', tone: 'red', glyph: 'stop', title: 'Failed', sub: step ? `Step: ${step} · see Logs for the error` : 'See Logs for the error' };
   }
+  // S2: an unsuccessful done outranks the folder/PR/results cascade below (and suppresses the green Create-PR affordance).
+  if (snap.successful === false) return { key: 'unsuccessful', tone: 'amber', glyph: 'alert', title: 'Unsuccessful', sub: snap.outcomeReason || 'Finished without delivering the work' };
   if (snap.workMode === 'folder') { const c = changesCounts(snap.changes); const w = folderDoneWords(snap.changes && snap.changes.state, c ? c.total : null); return { key: 'folder', tone: 'green', glyph: 'check', title: w.lead, sub: w.sub }; }
   const pr = snap.pr && snap.pr.url ? String(snap.pr.state || '').toUpperCase() : '';
   if (pr === 'MERGED') return { key: 'merged', tone: 'slate', glyph: 'merged', title: 'Merged', sub: '' };

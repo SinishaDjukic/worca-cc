@@ -54,6 +54,14 @@ test('done, question and error events fan out to outbound notifyChatIds with the
       assert.match(sent[0].message.body[0].value, /\*9999[\s\S]*completed/);
       assert.match(sent[0].message.body[0].value, /Notify me/, 'title read from the entry at send time');
     } },
+    { name: 'an unsuccessful done is a warning-tone message carrying the reason', run: async () => {
+      const { orch, sent, settle } = fixture();
+      orch.emit('done', { status: 'done', successful: false, reason: 'Implement produced no changes to the worktree.' });
+      await settle();
+      assert.equal(sent[0].message.severity, 'warning');
+      assert.match(sent[0].message.body[0].value, /finished unsuccessfully/);
+      assert.match(sent[0].message.body[0].value, /produced no changes/);
+    } },
     { name: 'question and error events render their specific messages', run: async () => {
       const { orch, sent, settle } = fixture();
       orch.emit('question', { id: 'gate-1', kind: 'gate', issues: [{ severity: 'major', summary: 'X' }] });

@@ -212,6 +212,9 @@ export async function runClaude(o = {}) {
     runId,
     threadId,
     bin = DEFAULT_BIN,
+    // S3: the node-runner path (phases.mjs#runOpts) sets this so a zero-exit is_error result
+    // rejects through _recover instead of finishing 'done'. Every other caller leaves it false.
+    rejectOnErrorResult = false,
   } = o;
 
   // A8: the file-read guard is a Claude Code hook; another engine would run the read unguarded, so it never runs at all.
@@ -306,5 +309,6 @@ export async function runClaude(o = {}) {
     spawnKind,
     runId,
     threadId,
+    rejectOnErrorResult,
   });
 }

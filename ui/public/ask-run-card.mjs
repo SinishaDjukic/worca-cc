@@ -86,10 +86,13 @@ export function snapshotFromState(state, { now = Date.now(), extras = null } = {
     archived: !!state.archivedAt,                    // archived: the run folder and its History row are gone
     ...(workModeOf(state) !== 'git' ? { workMode: workModeOf(state), changes: x && x.changes && typeof x.changes === 'object' ? x.changes : null } : {}),
     ...(state && state.shaping ? { shaping: state.shaping } : {}),
+    // S2: slice 1's outcome on the outer snapshot (runPill / resultWord read it) and on the nested run (the model does).
+    ...(state.successful === false ? { successful: false, outcomeReason: state.outcomeReason || null } : {}),
     // Runs redesign slice 4 (D9): the raw state runModel reads, so the card draws the same model as the list and the page.
     run: { stepper: state.stepper || null, status, steps: state.steps || [], active: state.active || [],
       endReached: !!state.endReached, tokens: state.tokens || {}, progressFacts: state.progressFacts || null,
       pendingQuestion: null, pauseReason: state.pauseReason || '', pr,
+      ...(state.successful === false ? { successful: false, outcomeReason: state.outcomeReason || null } : {}),
       // Tri-state: a live state carries no flag (it stays resumable); only the saved detail's `false` means never.
       ...(typeof state.resumable === 'boolean' ? { resumable: state.resumable } : {}),
       // D24: the round marker (branch.roundOf) and the Watch PR fact (extras.watch) pass through; the model words them.
@@ -110,6 +113,7 @@ export function runPill(snap) {
   if (s === 'interrupted') return { family: 'amber', text: 'Interrupted' };
   if (snap.pendingQuestion) return { family: 'amber', text: snap.pendingQuestion.kind === 'workflow' ? 'Waiting · your decision' : 'Waiting for your answer' };
   if (s === 'starting') return { family: 'peach', text: 'Starting' };
+  if (s === 'done' && snap.successful === false) return { family: 'amber', text: 'Done · unsuccessful' };   // S2: before the green done branch
   if (s === 'done') return { family: 'green', text: 'Done' };
   if (s === 'stopped') return { family: 'red', text: 'Stopped' };
   if (s === 'error') return { family: 'red', text: 'Error' };

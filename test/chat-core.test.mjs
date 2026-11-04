@@ -255,6 +255,20 @@ test('renderDone/renderError: severity per outcome, truncation, unread direction
       const long = `${'x'.repeat(133)}…${'y'.repeat(260)} THE CAUSE`;
       const tail = renderDone(META, { status: 'paused', reason: 'error', detail: long });
       assert.match(tail.body[0].value, /THE CAUSE/);
+
+      // S2: a done run slice 1 flagged unsuccessful is a WARNING carrying the reason.
+      const bad = renderDone(META, { status: 'done', successful: false, reason: 'Implement produced no changes to the worktree.' });
+      assert.equal(bad.severity, 'warning');
+      assert.match(bad.body[0].value, /\*\*Status:\*\* finished unsuccessfully/);
+      assert.match(bad.body[0].value, /\*\*Reason:\*\* Implement produced no changes to the worktree\./);
+      // No reason: the Reason line is omitted, but it is still a warning.
+      const badNoReason = renderDone(META, { status: 'done', successful: false });
+      assert.equal(badNoReason.severity, 'warning');
+      assert.doesNotMatch(badNoReason.body[0].value, /\*\*Reason:\*\*/);
+      assert.match(badNoReason.body[0].value, /finished unsuccessfully/);
+      // Absent-safe: a plain / successful done stays green "completed".
+      assert.equal(renderDone(META, { status: 'done', successful: true }).severity, 'success');
+      assert.match(renderDone(META, { status: 'done' }).body[0].value, /\*\*Status:\*\* completed/);
     } },
     { name: 'renderError truncates long messages', run: () => {
       const err = renderError(META, { message: 'x'.repeat(500) });
