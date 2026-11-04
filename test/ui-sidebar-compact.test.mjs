@@ -6,10 +6,12 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
-const read = (p) => readFileSync(new URL(`../ui/public/${p}`, import.meta.url), 'utf8');
-const html = read('index.html');
-const css = read('style.css');
+const appJs = () => readFileSync(new URL('../ui/public/app.js', import.meta.url), 'utf8');
+const html = readIndexHtml();
+const css = readStyleCss();
 const doc = new JSDOM(html).window.document;
 
 /** The body of the FIRST rule written exactly as `selector {…}` (house rule: no comment inside a rule body). */
@@ -93,7 +95,7 @@ test('the first group has no label: "Activity" is gone, Build, Add-ons and Manag
 test('New run has no sidebar row (the top bar\'s button opens it): no "+" tile, no nav-new, no nav-cta anywhere', () => {
   assert.equal(doc.querySelector('.nav [data-nav="new"], .nav-new, .nav-tile'), null);
   const themeTool = readFileSync(new URL('../tools/verify-theme-cdp.mjs', import.meta.url), 'utf8');
-  for (const [name, src] of [['index.html', html], ['style.css', css], ['app.js', read('app.js')], ['tools/verify-theme-cdp.mjs', themeTool]]) {
+  for (const [name, src] of [['index.html', html], ['style.css', css], ['app.js', appJs()], ['tools/verify-theme-cdp.mjs', themeTool]]) {
     assert.doesNotMatch(src, /\bnav-(?:cta|new|tile)\b/, `${name} still names the old row`);
   }
   assert.ok(themeTool.includes("'.topnav-new'"), 'verify:theme hovers New run in the top bar');
@@ -128,7 +130,7 @@ test('counts: a plain grey mono number, the amber needs-you count is the one pil
     assert.equal(el.hidden, true, `#${id} ships hidden (a zero)`);
     assert.equal(el.textContent, '0');
   }
-  for (const [name, src] of [['index.html', html], ['style.css', css], ['app.js', read('app.js')]]) {
+  for (const [name, src] of [['index.html', html], ['style.css', css], ['app.js', appJs()]]) {
     assert.doesNotMatch(src, /\bn-run\b/, `${name} still names the green n-run`);
   }
 });

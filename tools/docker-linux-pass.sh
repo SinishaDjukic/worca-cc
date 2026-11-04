@@ -36,7 +36,7 @@ until docker exec "$tag" curl -fsS -o /dev/null -H 'Host: localhost' http://127.
   i=$((i + 1)); if [ "$i" -gt 90 ]; then fail "the server never answered /api/health"; docker logs "$tag" 2>&1 | tail -20; exit 1; fi
   sleep 1
 done
-pid=$(docker exec "$tag" pgrep -u worca -o node)
+pid=$(docker exec "$tag" pgrep -u worca -o -x 'node|MainThread')   # Node 24+ renames its main thread
 iso=$(docker exec -u worca "$tag" sh -c "tr '\\0' '\\n' < /proc/$pid/environ | grep -c '^WORCA_AGENT_USER=worca-agent$'")
 want "the server runs with agent isolation on" "$iso" 1
 

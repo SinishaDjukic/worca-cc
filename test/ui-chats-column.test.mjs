@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { makePanel } from './helpers/ask-panel-harness.mjs';
 import { applyFlags } from '../ui/public/flags.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const NOW = new Date(2026, 9, 25, 12, 0, 0).getTime();
 const iso = (msAgo) => new Date(NOW - msAgo).toISOString();
@@ -337,7 +338,7 @@ test('ask-history-cleared: a full clear empties the column at once; a scoped cle
 
 test('the head meter is a block, start-aligned, so its ellipsis applies (a flex .btn clips both ends)', async () => {
   const { readFileSync } = await import('node:fs');
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   const rule = /\.btn\.chat-head-meter\{([^}]*)\}/.exec(css);
   assert.ok(rule, '.btn.chat-head-meter rule');
   assert.match(rule[1], /display:block;/);
@@ -357,7 +358,7 @@ test('the head meter reads "34% · $1.84 · 3 agents", opens the context popover
   assert.equal(doc.querySelectorAll('.ask-pop-ctx').length, 1);
   assert.equal(meter.getAttribute('aria-expanded'), 'true');
   assert.equal(doc.querySelector('[data-chat-page]').dataset.chats, 'on');
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   assert.ok(css.includes('.chat-page[data-chats="on"] [data-ask-meter]{display:none;}'));
 });
 

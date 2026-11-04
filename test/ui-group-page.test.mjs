@@ -72,6 +72,9 @@ test('runReceipts: plan and review receipts from the recorded run, no fetch; non
   assert.deepEqual(runReceipts(last), ['Plan accepted', 'Refine Plan · pass 2 · passed', 'Review Implementation · pass 2 · passed']);
   const sentBack = { ...last, progressFacts: { tasks: {}, reviews: { n_review: { pass: 1, blocking: 2 } } } };
   assert.equal(runReceipts(sentBack).at(-1), 'Review Implementation · pass 1 · 2 blocking, sent back');
+  // A refine pass that fixed its blockers says so instead of reading as a bare clean pass (#996's `fixed` list).
+  const refined = { ...last, progressFacts: { tasks: {}, reviews: { n_refine: { pass: 1, blocking: 0, fixed: 3 } } } };
+  assert.equal(runReceipts(refined).at(-1), 'Refine Plan · pass 1 · passed, 3 fixed');
   assert.deepEqual(runReceipts({ status: 'done', pr: null }), []);
 });
 

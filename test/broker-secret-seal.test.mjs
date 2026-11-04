@@ -7,13 +7,14 @@
 import { test, before, after, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { readFileSync, mkdtempSync, rmSync, writeFileSync, chmodSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { sealBrokerSecret, resetBrokerClient, brokerInfo, mintSpawnToken } from '../src/core/broker-client.mjs';
 import { checkBrokerAtBoot } from '../src/core/broker-boot.mjs';
 import { scriptBaseEnv } from '../src/core/graph/script-runner.mjs';
 import { MODEL_CREDENTIAL_ENV_KEYS } from '../src/core/broker-guard.mjs';
+import { readServerSource } from '../src/core/read-server-source.mjs';
 
 const SECRET = 's'.repeat(40);
 let server; let url; let mode = 'single'; let githubSlot = false;
@@ -82,7 +83,7 @@ test('seal: the first broker call seals it too, and a later value replaces the s
 });
 
 test('seal: the server seals before anything can spawn', () => {
-  const src = readFileSync(new URL('../ui/server.mjs', import.meta.url), 'utf8');
+  const src = readServerSource();
   const seal = src.indexOf('\nsealBrokerSecret();');
   assert.ok(seal > 0, 'ui/server.mjs calls sealBrokerSecret() at the top level');
   for (const first of ['\npreflightNode();', '\nawait gitState();']) assert.ok(seal < src.indexOf(first), `sealed before ${first.trim()}`);

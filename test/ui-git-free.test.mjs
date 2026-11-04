@@ -2,7 +2,6 @@
 // git-free surfaces still on screen without git (P6 Task 12).
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { renderEnableDialogBody } from '../ui/public/team-metrics-surfaces.mjs';
@@ -15,7 +14,6 @@ import { useDomRelease } from './helpers/jsdom-release.mjs';
 const trackDom = useDomRelease(afterEach);
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
 const settle = async () => { for (let i = 0; i < 6; i++) await new Promise((r) => setTimeout(r, 0)); };
-const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 const json = (body, status = 200) => Promise.resolve({ ok: status < 400, status, json: async () => body });
 
@@ -43,7 +41,7 @@ test('Marketplace card: Needs git in place of Refresh; the consent dialog names 
   const consent = renderInstallConsent({ repoUrl: 'https://gitlab.com/a/m', sha: 'a'.repeat(40) }, {}, { doc, needsGit: true });
   assert.equal(consent.querySelector('.pl-consent-src .pl-needs-git').textContent, 'Needs git');
   // The source line is .mono (an ancestor rule sets the monospace font): the chip keeps the UI font every badge has.
-  assert.ok(readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8').includes('\n.pl-consent-src .pl-needs-git{font-family:var(--sans);}\n'), 'style.css: .pl-consent-src .pl-needs-git{font-family:var(--sans);}');
+  assert.ok(readStyleCss().includes('\n.pl-consent-src .pl-needs-git{font-family:var(--sans);}\n'), 'style.css: .pl-consent-src .pl-needs-git{font-family:var(--sans);}');
 });
 
 test('Import skill: a 409 GIT_MISSING preview says Needs git inside the dialog; Git URL stays offered with data-git off', async () => {
@@ -67,7 +65,7 @@ test('Import skill: a 409 GIT_MISSING preview says Needs git inside the dialog; 
 });
 
 test('index.html: Marketplace, Team metrics and Team policy carry no data-needs-git (U2a)', () => {
-  const page = new JSDOM(readFileSync(htmlPath, 'utf8')).window.document;
+  const page = new JSDOM(readIndexHtml()).window.document;
   for (const sel of ['[data-view="marketplace"]', '#mk-root', '[data-view="team-metrics"]', '[data-view="team-policy"]']) {
     const node = page.querySelector(sel);
     assert.ok(node, sel);
@@ -76,7 +74,7 @@ test('index.html: Marketplace, Team metrics and Team policy carry no data-needs-
 });
 
 async function boot(handlers, { level = null } = {}) {
-  const html = readFileSync(htmlPath, 'utf8');
+  const html = readIndexHtml();
   const shell = level ? html.replace('<html lang="en" data-theme="system">', `<html lang="en" data-theme="system" data-level="${level}">`) : html;
   const dom = trackDom(new JSDOM(shell, { url: 'http://localhost:4319/' }));
   const { window } = dom;
@@ -167,6 +165,8 @@ test('app: Set up team metrics posts the typed repo; Needs git disables Create b
 
 // ---- Killers (refiner lane D): rules the six tests above leave unpinned ----
 import { createMcpView } from '../ui/public/mcp-view.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 test('Marketplace card: the chip takes the refresh slot (after Browse, before ⋯), as span.badge.waiting', () => {
   const card = renderMarketplaceCard(doc, { id: 'gl', url: 'https://gitlab.com/a/m', name: 'GL', plugins: [], lastSync: null, needsGit: true });

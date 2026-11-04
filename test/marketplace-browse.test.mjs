@@ -1,11 +1,11 @@
 // test/marketplace-browse.test.mjs — the Browse tab: rail, grouped tiles, header, empty states (marketplace P3, boards 1.1, 4.2).
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { OFF, EXAMPLE, ROWS, pageHarness } from './helpers/marketplace-fixtures.mjs';
 import { browseTab, browseAction, renderTile, renderNoMarketplaces } from '../ui/public/marketplace/browse.mjs';
 import { buildCatalog, shortDate } from '../ui/public/marketplace/catalog.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const trackDom = useDomRelease(afterEach);
 const tick = () => new Promise((r) => setTimeout(r, 0));
@@ -246,7 +246,7 @@ test('no marketplaces: a background render keeps the add form, its text and focu
 });
 
 test('style.css: tile footers line up, a long version ellipsises, Refresh turns while busy, a long marketplace name wraps in the rail', () => {
-  const CSS = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const CSS = readStyleCss();
   for (const re of [/\.mk-tile-foot\{[^}]*min-height:28px;/, /\.mk-tile-meta > \.mk-ver\{flex:none;max-width:60%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;\}/,
     /\.mk-refresh\[aria-busy="true"\] svg\{animation:ws-spin \.9s linear infinite;\}/, /\.mk-facet-label\{min-width:0;overflow-wrap:anywhere;\}/,
     /\.mk-empty-add > \.btn\{margin-top:2px;\}/]) assert.match(CSS, re);

@@ -1,0 +1,60 @@
+/* ---- the run page: gate and recovery as one ask card ---- */
+/* The decision on the left, its evidence (the open issues, the model's own message) on
+   the right, the buttons across the foot. With nothing to show on the right — a gate
+   with no issues, a recovery with no message — the decision takes the width. After the
+   .sev-* stripe rules above, so equal specificity lands on the neutral border. */
+:is(.rd-questions,.chat-rc-q) .qpanel:is([data-kind="gate"],[data-kind="recovery"]){display:grid;grid-template-columns:380px minmax(0,1fr);
+  column-gap:56px;align-items:start;}
+:is(.rd-questions,.chat-rc-q) .qpanel:is([data-kind="gate"],[data-kind="recovery"]):not(:has(> .issues,> .issue-detail)){grid-template-columns:minmax(0,1fr);}
+:is(.rd-questions,.chat-rc-q) .qpanel:is([data-kind="gate"],[data-kind="recovery"]) > .gate-intro{grid-column:1;margin:0;font-size:var(--fs-body);line-height:1.65;color:var(--ink);}
+:is(.rd-questions,.chat-rc-q) .qpanel:is([data-kind="gate"],[data-kind="recovery"]) > .gate-intro::before{content:'Decision';display:block;margin-bottom:10px;
+  font:600 12px var(--mono);color:var(--ink-2);}
+:is(.rd-questions,.chat-rc-q) .qpanel[data-kind="recovery"] > .gate-intro::before{content:'What to do';}
+:is(.rd-questions,.chat-rc-q) .qpanel:is([data-kind="gate"],[data-kind="recovery"]) > :is(.issues,.issue-detail){grid-column:2;}
+:is(.rd-questions,.chat-rc-q) .qpanel:is([data-kind="gate"],[data-kind="recovery"]) > .qpanel-foot{grid-column:1 / -1;}
+:is(.rd-questions,.chat-rc-q) .gate-actions .btn{flex:0 0 auto;}
+:is(.rd-questions,.chat-rc-q) .issues{margin:0;gap:8px;}
+:is(.rd-questions,.chat-rc-q) .qpanel[data-kind="gate"] > .issues::before{content:'What the reviewer still sees';
+  font-size:12px;font-weight:600;color:var(--ink-2);}
+/* an issue: its severity in a column of its own, the text beside it, no coloured stripe */
+:is(.rd-questions,.chat-rc-q) .issue{display:grid;grid-template-columns:92px minmax(0,1fr);column-gap:16px;row-gap:3px;padding:14px 16px;
+  border-color:var(--line);border-left-width:1px;border-radius:var(--r-sm);}
+:is(.rd-questions,.chat-rc-q) .issue-head{display:contents;}
+:is(.rd-questions,.chat-rc-q) .issue-sev{grid-column:1;grid-row:1;justify-self:start;padding:3px 9px;font-size:var(--fs-meta);font-weight:600;
+  letter-spacing:0;text-transform:capitalize;}
+:is(.rd-questions,.chat-rc-q) :is(.issue-title,.issue > .issue-detail,.issue-loc){grid-column:2;}
+:is(.rd-questions,.chat-rc-q) .issue-title{font-size:var(--fs-body);line-height:1.45;}
+:is(.rd-questions,.chat-rc-q) .issue > .issue-detail{margin:0;font-size:var(--fs-body);line-height:1.6;}
+:is(.rd-questions,.chat-rc-q) .issue-loc{margin-top:0;font-size:12px;color:var(--ink-2);}
+/* the model's own words, verbatim */
+:is(.rd-questions,.chat-rc-q) .qpanel[data-kind="recovery"] > .issue-detail{margin:0;padding:16px 18px;background:var(--field);
+  border:1px solid var(--line);border-radius:var(--r-sm);font:var(--fs-body)/var(--lh-body) var(--mono);color:var(--ink);white-space:pre-wrap;}
+/* narrow screens: the question (or the decision) over its answers */
+@media (max-width:1080px){
+  .rd-questions .qblock,.rd-questions .qpanel:is([data-kind="gate"],[data-kind="recovery"]){grid-template-columns:minmax(0,1fr);grid-template-rows:none;}
+  .rd-questions .qpanel:is([data-kind="gate"],[data-kind="recovery"]){row-gap:20px;}
+  .rd-questions .qtext{grid-row:auto;margin-bottom:6px;}   /* the options keep their own 8px rhythm below it */
+  .rd-questions .qopts,.rd-questions .qblock > .qfree,
+  .rd-questions .qpanel:is([data-kind="gate"],[data-kind="recovery"]) > :is(.issues,.issue-detail){grid-column:1;}
+}
+
+/* status badge — shared family colors (green/red/running/waiting/violet), used by
+   guardrails-view.mjs, models-view.mjs and the chat-connection state pill */
+.badge{display:inline-flex;align-items:center;padding:0 6px;flex:0 0 auto;white-space:nowrap;
+  background:var(--field);color:var(--ink-2);}
+.badge.green,.badge.done{background:var(--green-bg);color:var(--green-ink);}
+.badge.running{background:var(--peach-bg);color:var(--peach-ink);}
+.badge.red,.badge.error,.badge.stopped{background:var(--red-bg);color:var(--red-ink);}
+.badge.waiting{background:var(--amber-bg);color:var(--amber-ink);}
+.badge.amber{background:var(--amber-bg);color:var(--amber-ink);}
+/* An engine still in beta (src/shared/engine-switch.mjs BETA_ENGINES), beside its name. */
+.badge.beta-badge{margin-left:6px;vertical-align:middle;}
+.badge.paused{background:var(--amber-bg);color:var(--amber-ink);}
+/* The server's mock mode, in the logo row after the wordmark: its margin-right:auto keeps it
+   beside the wordmark (on the rail the row stacks and the pill sits under the mark). A solid chip: --amber-ink on --amber-bg is 3.9:1 in light,
+   below the 4.5:1 text floor. */
+.brand .side-mock-pill{margin-right:auto;padding:3px 7px;cursor:default;background:var(--amber-ink);color:var(--on-status);}
+.brand .side-mock-pill[hidden]{display:none;}
+
+.hist-empty{color:var(--ink-2);font-size:13px;padding:22px 4px;text-align:center;}
+

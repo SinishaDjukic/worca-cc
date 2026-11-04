@@ -4,9 +4,10 @@
 // orchestrator state, no settings reads — the harness passes caps and paths.
 import { mkdir, rm, cp, readFile, writeFile, stat, rename, unlink, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
+import { createHash } from 'node:crypto';
 import {
   GLOBAL_SCOPE, projectScope, scopeDir, listMemory, listMemoryDir, hashText,
-  parseMemoryFile, writeMemory, removeMemory, snapshotScope, MemoryError, TEAM_MARKER_KEY,
+  parseMemoryFile, writeMemory, removeMemory, snapshotScope, MemoryError, TEAM_MARKER_KEY, rolesOf,
 } from './memory-store.mjs';
 import { MEMORY_DEFRAG_WORKFLOW_ID } from './graph/builtin-workflows.mjs';
 import { isNoProjectKey } from '../shared/no-project.mjs';
@@ -147,13 +148,14 @@ export async function mountMemory({ root, mount, dirs, onError, gitIgnore = fals
  * `only` on a dir: as in mountMemory — the other notes are not written, and a copy of one already there is unlinked.
  * `dirMode` / `fileMode`: the modes new folders and files are made with (the Ask mount: never group-writable).
  */
-export async function refreshMount({ root, mount, dirs, onError, dirMode, fileMode }) {
+export async function refreshMount({ root, mount, dirs, onError, dirMode, fileMode, role = null }) {
   let files = 0;
   const failed = [];
   for (const d of dirs) {
     const dest = join(mount, d.rel);
     await mkdir(dest, { recursive: true, mode: dirMode });
-    const entries = (await listMemory(root, d.scope, { onError })).filter((e) => !d.only || d.only.has(e.name));
+    // `role` (#943): a note with `roles` that do not name it stays out (the Chat mounts with role 'ask').
+    const entries = (await listMemory(root, d.scope, { onError })).filter((e) => (!d.only || d.only.has(e.name)) && (!role || !e.roles.length || e.roles.includes(role)));
     // `keep` is built from what we actually WROTE or deliberately kept — an entry that vanished
     // between the listing and the read is not in it, so its stale mount copy is swept THIS call.
     const keep = new Set();
@@ -211,7 +213,7 @@ const storeHashOf = (v) => (isHash(v) ? v : ((typeof v === 'string' && v.split('
  *  get_run. `failed` = writes the agent attempted that never reached the mount (a refused tool call);
  *  a record written before the write split has no `failed` array and counts as 0. */
 export function memoryTotals(changes) {
-  const totals = { added: 0, modified: 0, deleted: 0, rejected: 0, failed: 0 };
+  const totals = { added: 0, modified: 0, deleted: 0, rejected: 0, failed: 0, proposed: 0 };   // proposed: #943, an ordinary run's notes waiting for approval
   for (const c of Array.isArray(changes) ? changes : []) for (const k of Object.keys(totals)) totals[k] += Array.isArray(c[k]) ? c[k].length : 0;
   return totals;
 }
@@ -332,4 +334,87 @@ async function syncBackUnlocked({ root, mount, dirs, baseline, source, now, caps
     }
   }
   return { baseline: next, added, modified, deleted, rejected, total: added.length + modified.length + deleted.length };
+}
+
+// ── the frozen set (memory frozen at run start, #943) ────────────────────────
+// An ordinary run loads ONE set of notes for its whole life: at its first mount the store's notes (and the team notes)
+// are copied once into `<pipeline.dir>/memory-loaded` (the FROZEN set); the rules copy, the writable copy and the role
+// notes are all derived from it, after every execution and on every resume. Nothing written mid-run (an agent's
+// proposal, a Chat remember, a teammate's push) reaches a later step of the same run.
+export const MEMORY_LOADED_REL = 'memory-loaded';
+/** `<pipelineDir>/memory-loaded` — the frozen set. */
+export function memoryLoadedPath(pipelineDir) { return join(pipelineDir, MEMORY_LOADED_REL); }
+const sha256 = (text) => createHash('sha256').update(text, 'utf8').digest('hex');
+
+/**
+ * Every note of a frozen set: `[{ path, rel, name, text, sha256, bytes, roles, alwaysOn }]` sorted by path. `path` is
+ * relative to the set (`project/foo.md`, `team/bar.md`, `projects/<key>/x.md`), `rel` its folder. A file that cannot be
+ * read is skipped (onError). Never throws for a missing set: [].
+ */
+export async function readFrozenSet(dir, { onError } = {}) {
+  const out = [];
+  const walk = async (rel) => {
+    let entries;
+    try { entries = await readdir(rel ? join(dir, ...rel.split('/')) : dir, { withFileTypes: true }); }
+    catch (err) { if (err?.code !== 'ENOENT') onError?.(join(dir, rel), err); return; }
+    for (const e of entries) {
+      const child = rel ? `${rel}/${e.name}` : e.name;
+      if (e.isDirectory()) { await walk(child); continue; }
+      if (!e.isFile() || !e.name.endsWith('.md') || !rel) continue;
+      const text = await readFile(join(dir, ...child.split('/')), 'utf8').catch((err) => { onError?.(join(dir, child), err); return null; });
+      if (text === null) continue;
+      const { meta } = parseMemoryFile(text);
+      const roles = rolesOf(meta);
+      out.push({ path: child, rel, name: e.name.slice(0, -3), text, sha256: sha256(text), bytes: Buffer.byteLength(text, 'utf8'),
+        roles, alwaysOn: !roles.length && !meta.paths.length });
+    }
+  };
+  await walk('');
+  return out.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+}
+
+/** What a run records about the set it loaded: `set` (sha256 over the sorted `path sha256` lines) and the files. */
+export function frozenManifest(entries) {
+  const files = (entries || []).map((e) => ({ path: e.path, sha256: e.sha256, bytes: e.bytes, ...(e.roles.length ? { roles: e.roles } : {}) }));
+  return { set: sha256(files.map((f) => `${f.path} ${f.sha256}\n`).join('')), files };
+}
+
+/**
+ * (Re)write the two copies a run's agents see from its frozen set: the WRITABLE copy (`mount`) holds the notes of `dirs`
+ * (every local note, role notes included: the writable copy is where an edit to one is proposed); the READ-ONLY rules copy
+ * (`rules`, `.gitignore` = `*` first, as mountMemory) holds every note WITHOUT roles, team folders included — Claude Code
+ * loads it natively, and a role note reaches only its roles' prompts. Both are removed first. Returns the writable copy's
+ * baseline `{ '<rel>/<name>.md': syncHash }`.
+ */
+export async function writeFrozenCopies({ entries, mount, rules, dirs }) {
+  const rels = new Set((dirs || []).map((d) => d.rel));
+  for (const target of [mount, rules].filter(Boolean)) {
+    await rm(target, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    await mkdir(target, { recursive: true });
+  }
+  if (rules) await writeFile(join(rules, '.gitignore'), '*\n', 'utf8');
+  // Every scope dir exists in both copies even when empty, as mountMemory makes them.
+  for (const d of dirs || []) for (const target of [mount, rules].filter(Boolean)) await mkdir(join(target, ...d.rel.split('/')), { recursive: true });
+  const baseline = {};
+  for (const e of entries || []) {
+    if (rels.has(e.rel)) {
+      await writeFile(join(mount, ...e.path.split('/')), e.text, 'utf8');
+      baseline[baselineKey(e.rel, e.name)] = syncHash(e.text);
+    }
+    if (rules && !e.roles.length) {
+      await mkdir(join(rules, ...e.rel.split('/')), { recursive: true });
+      await writeFile(join(rules, ...e.path.split('/')), e.text, 'utf8');
+    }
+  }
+  return baseline;
+}
+
+/** The `## Worca memory for this role` section: the bodies of the frozen notes whose `roles` name `role`, or ''. Rendered
+ *  apart from the pointer block (a blank line ends that block: memoryDirsFromPrompt). */
+export function renderRoleNotes(entries, role) {
+  const key = String(role || '').toLowerCase();
+  const mine = key ? (entries || []).filter((e) => e.roles.includes(key)) : [];
+  if (!mine.length) return '';
+  const parts = mine.map((e) => `### ${e.path}\n\n${String(parseMemoryFile(e.text).body || '').trim()}`);
+  return `## Worca memory for the ${key} role\n\nNotes kept for this role only (they are in the writable copy too, to edit).\n\n${parts.join('\n\n')}\n`;
 }

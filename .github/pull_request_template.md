@@ -19,3 +19,7 @@
 - [ ] New UI elements are listed in docs/ui-levels.md
 - [ ] New experimental UI is behind a flag (docs/feature-flags.md)
 - [ ] No secrets, keys or tokens in the code, logs or screenshots
+
+## Contributor terms
+
+By opening this pull request, you accept [DCO 1.1](https://github.com/SinishaDjukic/worca-cc/blob/dev/DCO) for this contribution, confirm that you have the right to submit it under the project's MIT license, and take responsibility for it, including any AI-generated content.

@@ -1,0 +1,118 @@
+
+/* Runs redesign slice 4: the kind chip (spec §1.3: the same small sans chip as state chips, 2px corners; its font and
+   corner come from the grouped chip rule above), the shared status block, member rows and the group page. */
+.kind-chip{display:inline-flex;align-items:center;height:18px;padding:0 6px;border:0;background:var(--field);color:var(--ink-2);white-space:nowrap;}
+.rd-title-row{display:flex;align-items:center;gap:8px;min-width:0;}
+/* the shared status block */
+.run-status{display:grid;gap:8px;min-width:0;}
+/* The status block's head (design system, Card head): the state word is the card's headline (15px/600, never
+   truncated, the dot centred on it); the detail under it says only what no row below says, 12px --ink-2, at most 2
+   lines (its title holds the whole text). */
+.run-status-head{display:grid;grid-template-columns:auto minmax(0,1fr);column-gap:8px;align-items:center;min-width:0;}
+.run-status-head > .status-dot{grid-area:1 / 1;}
+.run-status-word{grid-area:1 / 2;min-width:0;font-size:var(--fs-section);font-weight:600;line-height:var(--lh-title);color:var(--ink);overflow-wrap:anywhere;}
+.run-status-detail{grid-area:2 / 2;min-width:0;margin-top:2px;font-size:var(--fs-meta);line-height:var(--lh-body);color:var(--ink-2);
+  overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:2;line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
+.run-status-detail[hidden]{display:none;}   /* display:-webkit-box beats the UA [hidden] rule */
+/* A12: live role-review rows under the status line, divider rows, no box. */
+.run-status-roles{display:flex;flex-direction:column;}
+.run-role-row{display:flex;align-items:center;gap:8px;min-height:24px;font-size:12px;color:var(--ink-2);}
+.run-role-row + .run-role-row{border-top:1px solid var(--line);}
+.run-role-dot{flex:none;width:8px;height:8px;border-radius:50%;background:var(--ink-3);}
+.run-role-dot.is-live{animation:wr-pulse 1.6s ease-in-out infinite;}
+.run-role-name{color:var(--ink);font-weight:500;}
+.run-role-refine{min-height:24px;display:flex;align-items:center;font-size:12px;color:var(--ink-2);}
+@media (prefers-reduced-motion: reduce){.run-role-dot.is-live{animation:none;}}
+.chat-rc-status .run-status-head > .status-dot{display:none;}   /* the card's dot is the head's (D10) */
+.chat-rc-status .run-status-head{column-gap:0;}   /* the dot column is empty here: no gap before the word */
+.chat-rc-status .run-status-word{font-size:var(--fs-body);line-height:var(--lh-body);}
+.chat-rc-actions{display:flex;flex-wrap:wrap;gap:8px;}   /* the card's footer buttons (D4): its own and the made ones */
+.rd-actions{display:contents;}   /* the model's made buttons (D4) are bar items, with the bar's own gap */
+/* member rows: dividers, never boxes (§1.4); the page table is one grid, rows are subgrids so columns line up (§3.3a) */
+.run-members{list-style:none;margin:0;padding:0;}
+.run-member{display:grid;grid-template-columns:16px 12px minmax(0,1fr) minmax(0,1.4fr) max-content;align-items:center;gap:8px;
+  padding:6px 0;border-top:1px solid var(--line);}
+.run-members.is-table{display:grid;grid-template-columns:12px 20px minmax(0,1fr) max-content 64px 16px;column-gap:10px;}
+.run-members.is-table > .run-member{position:relative;grid-column:1 / -1;grid-template-columns:subgrid;padding:8px 0;}
+/* A13: title over its status line; the title link stretches over the row, so the whole row opens the run. */
+.run-members.is-table .run-member-main{display:flex;flex-direction:column;gap:2px;min-width:0;}
+.run-members.is-table .run-member-title{color:var(--ink);text-decoration:none;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.run-members.is-table .run-member-title::after{content:"";position:absolute;inset:0;}
+.run-members.is-table .run-member:hover .run-member-title{text-decoration:underline;}
+.run-members.is-table .run-member-line{font-size:12px;}
+.run-members.is-table .run-member-cost{font-variant-numeric:tabular-nums;}
+.run-members.is-table .run-member-go{color:var(--ink-3);opacity:0;}
+.run-members.is-table .run-member:hover .run-member-go{opacity:1;}
+.run-members.is-table .run-member-pr{position:relative;z-index:1;}   /* the PR chip stays its own link */
+/* QA 7: a member row's chip is its own link to the PR; it keeps the chip's tone colour (.runs-pr.is-*). */
+.run-members.is-table a.runs-pr{text-decoration:none;}
+.run-members.is-table a.runs-pr:hover .runs-pr-word{text-decoration:underline;}
+/* Bundle QA 2: a member row's chip keeps its icon and word on one line at every width; a cell too narrow cuts the
+   word with an ellipsis, it never wraps the icon above it. */
+.run-members.is-table .runs-pr{flex-wrap:nowrap;white-space:nowrap;max-width:100%;}
+.run-members.is-table .runs-pr > .ic{flex:none;}
+.run-members.is-table .runs-pr-word{min-width:0;overflow:hidden;text-overflow:ellipsis;}
+.run-member-num{font-size:12px;font-weight:500;color:var(--ink-2);text-align:right;}
+.run-member-line{color:var(--ink-2);font-size:var(--fs-meta);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.run-member-cost{text-align:right;color:var(--ink-2);}
+/* the group page: one column, so title, card, tabs and table share edges */
+.gpage{display:flex;flex-direction:column;gap:22px;margin:0 auto;padding:28px 32px var(--ask-dock-clearance);box-sizing:border-box;max-width:1216px;}
+.gpage > *{width:100%;box-sizing:border-box;}
+.gpage-bar{display:flex;align-items:center;gap:8px;}
+/* Run 3 (D15): the run page's spacing — the bar spans the pane like the run page's .rd-bar (its height and padding), and
+   the title sits as far under it as the run page's (the glance's 28px top padding, 20px on a phone; the page gap is 22px). */
+.gpage > .gpage-bar.rd-bar{width:auto;margin:-28px -32px 6px;}
+@media (max-width:640px){.gpage{padding:16px 16px var(--ask-dock-clearance);}.gpage > .gpage-bar.rd-bar{margin:-16px -16px -2px;}}
+.gpage-spacer{flex:1;}
+.gpage-actions{display:inline-flex;gap:6px;}
+.gpage-ship{margin:8px 0 0;font-size:13px;color:var(--ink-2);}
+.gpage-ship[hidden],.gpage-panel[hidden],.gpage-question[hidden]{display:none;}
+/* Before the phone block: same specificity, so on a ≤600px viewport its two-line areas win; cost stays hidden there. */
+@container chat-rc-members (max-width:480px){
+  .run-members.is-table{grid-template-columns:12px 20px minmax(0,1fr) max-content 16px;}
+  .run-members.is-table .run-member-cost{display:none;}
+}
+@media (max-width:600px){
+  .run-members.is-table{grid-template-columns:12px 20px minmax(0,1fr) max-content;}
+  .run-members.is-table > .run-member{grid-template-columns:subgrid;grid-template-areas:"dot num main go" ". . pr cost";}
+  .run-members.is-table .run-member-num{grid-area:num}
+  .run-members.is-table .run-member > .status-dot{grid-area:dot}
+  .run-members.is-table .run-member-main{grid-area:main}
+  .run-members.is-table .run-member-pr{grid-area:pr}
+  .run-members.is-table .run-member-cost{grid-area:cost}
+  .run-members.is-table .run-member-go{grid-area:go}
+}
+/* QA 8 + bundle QA 2: the group page can sit in a ~290px pane on a wide viewport: its table stacks by its own width.
+   Line 1 is the dot, the number and the title (up to 2 lines); the chip and the cost share line 2 under the title, and
+   the hover-only chevron steps aside (the title link already opens the run). */
+.gpage-runs{container:gpage-runs / inline-size;}
+@container gpage-runs (max-width:480px){
+  .run-members.is-table{grid-template-columns:12px 20px minmax(0,1fr) max-content;column-gap:8px;}
+  .run-members.is-table > .run-member{grid-template-columns:subgrid;grid-template-areas:"dot num main main" ". . pr cost";}
+  .run-members.is-table .run-member-num{grid-area:num}
+  .run-members.is-table .run-member > .status-dot{grid-area:dot}
+  .run-members.is-table .run-member-main{grid-area:main}
+  .run-members.is-table .run-member-pr{grid-area:pr}
+  .run-members.is-table .run-member-cost{grid-area:cost}
+  .run-members.is-table .run-member-go{display:none;}
+  .run-members.is-table .run-member-title{white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow-wrap:anywhere;}
+  .run-members.is-table .run-member-pr{min-width:0;max-width:100%;justify-self:start;}
+}
+/* Bundle QA 2: a chat card in a ~290px side pane stacks the same way. Its 480px block drops the cost from the one-line
+   row (§8); on two lines there is room, so the cost comes back beside the chip. */
+@container chat-rc-members (max-width:360px){
+  .run-members.is-table{grid-template-columns:12px 20px minmax(0,1fr) max-content;column-gap:8px;}
+  .run-members.is-table > .run-member{grid-template-columns:subgrid;grid-template-areas:"dot num main main" ". . pr cost";}
+  .run-members.is-table .run-member-num{grid-area:num}
+  .run-members.is-table .run-member > .status-dot{grid-area:dot}
+  .run-members.is-table .run-member-main{grid-area:main}
+  .run-members.is-table .run-member-pr{grid-area:pr}
+  .run-members.is-table .run-member-cost{grid-area:cost}
+  .run-members.is-table .run-member-cost{display:block;}
+  .run-members.is-table .run-member-go{display:none;}
+  .run-members.is-table .run-member-title{white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow-wrap:anywhere;}
+  .run-members.is-table .run-member-pr{min-width:0;max-width:100%;justify-self:start;}
+}
+/* QA 8: the group heading keeps a sane width (one line, cut with "…"); the kind chip wraps under it when there is no room. */
+.gpage .rd-title-row{flex-wrap:wrap;}
+.gpage .gpage-title{flex:1 1 160px;min-width:min(100%,160px);}

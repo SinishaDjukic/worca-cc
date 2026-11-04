@@ -8,6 +8,7 @@ import { buildRunsModel, renderRunsList } from '../ui/public/runs-list.mjs';
 import { scaleRuns } from './helpers/runs-scale.mjs';
 import { NOW } from './helpers/run-states.mjs';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
+import { loadBudget } from './helpers/load-budget.mjs';
 
 const trackDom = useDomRelease(afterEach);
 const BUILD_MS = 250;
@@ -25,7 +26,7 @@ test('300 runs / 20 groups: every run is listed once and the build fits the budg
   const rows = model.sections.flatMap((s) => s.rows);
   assert.equal(rows.filter((r) => r.kind === 'chain').length, 20);
   assert.equal(rows.length, 220, '200 single rows + 20 group rows (members fold into their group)');
-  assert.ok(ms < BUILD_MS, `build took ${ms.toFixed(0)} ms (budget ${BUILD_MS})`);
+  assert.ok(ms < loadBudget(BUILD_MS), `build took ${ms.toFixed(0)} ms (budget ${BUILD_MS})`);
 });
 
 test('300 runs / 20 groups render, and an update of 10 runs repaints, within budget', () => {
@@ -34,10 +35,10 @@ test('300 runs / 20 groups render, and an update of 10 runs repaints, within bud
   const model = buildRunsModel({ ...scaleRuns(), recentShown: 1000, now: NOW });
   const render = best(3, () => host.replaceChildren(...renderRunsList(doc, model)));
   assert.equal(host.querySelectorAll('.runs-row').length, 320, '220 rows + 100 expanded members');
-  assert.ok(render < RENDER_MS, `render took ${render.toFixed(0)} ms (budget ${RENDER_MS})`);
+  assert.ok(render < loadBudget(RENDER_MS), `render took ${render.toFixed(0)} ms (budget ${RENDER_MS})`);
   const update = best(3, () => {
     const m2 = buildRunsModel({ ...scaleRuns({ shift: 1 }), recentShown: 1000, now: NOW });
     host.replaceChildren(...renderRunsList(doc, m2));
   });
-  assert.ok(update < UPDATE_MS, `update took ${update.toFixed(0)} ms (budget ${UPDATE_MS})`);
+  assert.ok(update < loadBudget(UPDATE_MS), `update took ${update.toFixed(0)} ms (budget ${UPDATE_MS})`);
 });

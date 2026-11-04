@@ -130,3 +130,35 @@ test('carriedClarify: no spawn, no ask; the port file, the result and the clarif
     assert.deepEqual(readClarifyRow(ctx.pipelineId), row.carried, row.name);
   }
 });
+
+test('1.8: a fenced questions file still asks; a file that yields nothing warns; duplicate ids get their own answer', async () => {
+  const { _testing } = await import('../src/core/graph/executor.mjs');
+  const { writeFile } = await import('node:fs/promises');
+  try {
+    const seen = [];
+    const ctx = await ctxFor({ seen });
+    _testing.runClaude = async () => {
+      await writeFile(ctx.outputs.answers.path, 'Here are my questions:\n```json\n' + JSON.stringify({ questions: [
+        { id: 'q1', question: 'One?', options: ['A', 'B'] },
+        { id: 'q1', question: 'Two?', options: ['C', 'D'] },
+      ] }) + '\n```\n', 'utf8');
+      return { text: 'asked' };
+    };
+    const out = await runClarifierExecution(ctx);
+    assert.equal(seen.length, 1, 'the fenced file was not silently dropped');
+    assert.deepEqual(seen[0].questions.map((q) => q.id), ['q1', 'q1_2'], 'a duplicate id is renamed, not merged');
+    assert.equal(out.answers.length, 2);
+
+    const silent = [];
+    const ctx2 = await ctxFor({ seen: silent });
+    _testing.runClaude = async () => { await writeFile(ctx2.outputs.answers.path, 'I have no questions, but here is prose.', 'utf8'); return { text: '' }; };
+    const out2 = await runClarifierExecution(ctx2);
+    assert.equal(silent.length, 0);
+    assert.ok(out2.warnings.some((w) => /n_clarify/.test(w) && /no questions could be read/.test(w)), JSON.stringify(out2.warnings));
+
+    // A clarifier that wrote NO file chose not to ask: no warning.
+    const none = await ctxFor({ seen: [] });
+    _testing.runClaude = async () => ({ text: '' });
+    assert.deepEqual((await runClarifierExecution(none)).warnings, []);
+  } finally { _testing.runClaude = null; }
+});

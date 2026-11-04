@@ -4,7 +4,6 @@
 // detached DOM; painters write into a copy of the shell's markup.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { BUDGET_WARN_AT } from '../ui/public/stats-view.mjs';
 import {
@@ -16,6 +15,7 @@ import { createLevelController, levelMenuHtml, LEVEL_SHORT, LEVEL_INFO, UI_LEVEL
 import { freeDailyRow } from '../ui/public/openrouter-free-view.mjs';
 import { ICONS } from '../ui/public/icons.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
 // Local-calendar bounds, as costWindowStart/End build them, so the month reads the same in every zone.
@@ -299,7 +299,7 @@ test('paintIdentityCard: only a shared identity gets "Signed in as"', () => {
 });
 
 test('style.css: the away badge is the same 11px dot, slate with a panel-coloured walking person, shown only when away', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   const rule = (sel) => {
     const m = css.match(new RegExp(`(?:^|\\n)${sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\{([^}]*)\\}`));
     assert.ok(m, `${sel} has a rule`);
@@ -384,6 +384,7 @@ test('the level controller paints the menu row and the side menu; choosing there
   const checked = () => [...doc.querySelectorAll('#lvl-menu [aria-checked="true"]')].map((o) => o.dataset.levelChoice);
   assert.deepEqual(checked(), ['simple']);
   const expert = doc.querySelector('#lvl-menu [data-level-choice="expert"]');
+  doc.getElementById('lvl-menu').hidden = false;   // open, as when a person picks: jsdom 30 never focuses inside a hidden menu
   expert.focus();
   expert.click();
   assert.equal(doc.documentElement.dataset.level, 'expert', 'applies at once, before the save answers');

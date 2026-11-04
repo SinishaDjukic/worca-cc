@@ -1,0 +1,5 @@
+/* ---------- reduced motion for the Running redesign ---------- */
+/* MUST be the LAST block in the file: @media contributes no specificity, so a
+   (0,1,0) `animation:none` here would LOSE the source-order tie against any
+   `animation:wr-*` rule appended after it — exactly the trap documented at
+   :748-763 for the four legacy names and at :1927-1940 for the ship-it set. */

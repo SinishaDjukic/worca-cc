@@ -1,9 +1,9 @@
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { buildFilesCard, filesForViewer, fileViewerUrls, registerBuiltinFileRenderers } from '../ui/public/chat/files-card.mjs';
 import { _resetFileRenderers, registerFileRenderer } from '../ui/public/chat/file-renderers.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const windows = [];
 afterEach(() => { while (windows.length) windows.pop().close(); });
@@ -102,7 +102,7 @@ test('files card: its icon buttons are the one button component; the card adds n
   for (const ib of ibs) {
     assert.ok(['btn', 'btn-sm', 'btn-quiet', 'btn-icon'].every((c) => ib.classList.contains(c)), ib.className);
   }
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   const card = [...css.matchAll(/([^{}]*\.ask-filescard[^{}]*)\{([^}]*)\}/g)].map((m) => [m[1].trim(), m[2]]);
   assert.ok(card.length >= 10);
   for (const [sel, body] of card) {

@@ -1,0 +1,5 @@
+/* ---- Plugin provenance (results header, history cards) ---- */
+.src-badge{display:inline-flex;gap:6px;align-items:center;font-size:var(--fs-caption);background:var(--field);border-radius:var(--r-xs);padding:2px 10px;}
+.src-badge-plugin{font-weight:700;}
+.src-report-wrap{display:inline-flex;gap:8px;align-items:center;margin-left:10px;}
+

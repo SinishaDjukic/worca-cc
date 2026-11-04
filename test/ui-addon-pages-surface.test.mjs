@@ -7,9 +7,11 @@ import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { renderAllInstalled, renderLeftover } from '../ui/public/marketplace/installed-view.mjs';
 import { renderProvidersCard } from '../ui/public/bridge-view.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const read = (p) => readFileSync(new URL(`../${p}`, import.meta.url), 'utf8');
-const bare = read('ui/public/style.css').replace(/\/\*[\s\S]*?\*\//g, '');
+const bare = readStyleCss().replace(/\/\*[\s\S]*?\*\//g, '');
 const rules = [...bare.matchAll(/([^{}]+)\{([^}]*)\}/g)].map((m) => ({ sel: m[1].trim(), body: m[2] }));
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
 
@@ -45,7 +47,7 @@ test('no rule boxes a list row or restyles a list card: the .card and .drow prim
 });
 
 test('the Models Engines card is a page card, full width, not a flat Settings card', () => {
-  const page = new JSDOM(read('ui/public/index.html')).window.document;
+  const page = new JSDOM(readIndexHtml()).window.document;
   const card = page.getElementById('engine-settings-card');
   assert.ok(card.closest('[data-view="models"]'));
   assert.ok(card.classList.contains('card'));

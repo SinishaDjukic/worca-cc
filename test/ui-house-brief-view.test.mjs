@@ -2,9 +2,9 @@
 // 'Refresh now' as secondary; corners only --r-xs/--r-sm; pins PUT; refresh POSTs; empty and error states.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { mountHouseBrief } from '../ui/public/house-brief-view.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const tick = () => new Promise((r) => setTimeout(r, 0));
 const VIEW = {
@@ -99,7 +99,7 @@ test('a read failure shows a card alert', async () => {
 });
 
 test('CSS: no radius outside --r-xs/--r-sm/--r-card, tokens defined, dividers 1px, colours only tokens', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  const css = readStyleCss().replace(/\/\*[\s\S]*?\*\//g, '');
   // D11: defined once, in :root, with the UI/UX review's values (decided 2026-10-19: xs 4px, sm 6px).
   assert.equal((css.match(/--r-xs:\s*4px;/g) || []).length, 1);
   assert.equal((css.match(/--r-sm:\s*6px;/g) || []).length, 1);

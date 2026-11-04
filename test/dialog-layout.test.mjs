@@ -7,10 +7,12 @@ import { JSDOM } from 'jsdom';
 import { layoutDialog, syncDialogEdges, watchDialogEdges } from '../ui/public/dialog-layout.mjs';
 import { cardAlert } from '../ui/public/feedback.mjs';
 import { cssRules } from './helpers/css-rules.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const read = (p) => readFileSync(new URL(`../${p}`, import.meta.url), 'utf8');
-const css = read('ui/public/style.css');
-const page = new JSDOM(read('ui/public/index.html')).window.document;
+const css = readStyleCss();
+const page = new JSDOM(readIndexHtml()).window.document;
 const ALL = cssRules(css);
 const has = (sel, re) => ALL.some((r) => r.sel === sel && re.test(r.body));
 

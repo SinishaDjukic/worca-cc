@@ -51,6 +51,7 @@ import { SEED_TEMPLATES } from './graph/seed-templates.mjs';
 import { modelForEngine } from './config.mjs';
 import { describePauseReason } from './failure-policy.mjs';
 import { REPORT_REASON_IDS, reasonById, normalizeInclude } from '../shared/report-reasons.mjs';
+import { isMemberDispatch } from '../shared/graph/sessions.mjs';
 
 const require = createRequire(import.meta.url);
 const PKG = require('../../package.json');
@@ -346,7 +347,8 @@ async function guardrailFacts(guardrailsId) {
 
 function costEvidence({ row, steps, subAgents, workflow }) {
   const budget = budgetStatus(new Date(), { scope: row && !row.workspace_key && row.project_key ? { projectKey: row.project_key } : null });
-  const totals = subAgents.reduce((acc, s) => ({
+  // C8: a session member's own dispatch is the step itself (its row holds the cost), never a sub-agent of it.
+  const totals = subAgents.filter((s) => !isMemberDispatch(s)).reduce((acc, s) => ({
     count: acc.count + 1,
     tokens: acc.tokens + (Number(s.tokens) || 0),
     costUsd: Math.round((acc.costUsd + (Number(s.costUsd) || 0)) * 1e4) / 1e4,
@@ -611,7 +613,7 @@ export async function buildRunReport(pipelineId, opts = {}) {
   return payload;
 }
 
-export { reasonById };
+export { reasonById, costEvidence };
 
 // ── the GitHub issue body + URL ───────────────────────────────────────────────
 // TWO bodies, because there are two ways an issue gets filed:

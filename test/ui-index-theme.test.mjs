@@ -5,19 +5,17 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { mkdtemp, rm } from 'node:fs/promises';
-import { readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { renderIndexHtml, INDEX_THEME_ANCHOR } from '../src/core/index-html.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
-const indexPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 
 test('index.html carries the theme anchor once (+ color-scheme meta) and renderIndexHtml replaces only the anchor, throwing without it', async () => {
   await checkRows([
     { name: 'index.html carries the anchor exactly once, plus the color-scheme meta', run: () => {
-      const html = readFileSync(indexPath, 'utf8');
+      const html = readIndexHtml();
       assert.equal(html.split(INDEX_THEME_ANCHOR).length - 1, 1, 'exactly one anchor');
       assert.equal(INDEX_THEME_ANCHOR, '<html lang="en" data-theme="system">');
       assert.match(html, /<meta name="color-scheme" content="light dark" \/>/);
@@ -33,7 +31,7 @@ test('index.html carries the theme anchor once (+ color-scheme meta) and renderI
 });
 
 test('index.html runs no inline script, so the shell CSP needs no unsafe-inline (G23)', () => {
-  const html = readFileSync(indexPath, 'utf8');
+  const html = readIndexHtml();
   const scripts = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)];
   assert.ok(scripts.length > 0);
   for (const [, attrs, body] of scripts) {
