@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### One Node: 24 for the image, CI and releases
+
+- The Docker image moves from Node 22 to Node 24 (`node:24-bookworm-slim`). `.nvmrc` names Node 24, and every CI job, the release build and the image follow it; CI's fast tests also run the exact floor (22.19.0) and the newest LTS (26). The supported range for an npm install is unchanged: Node 22.19.0 or newer.
+
 ### Node 22.19 or newer
 
 - Worca now needs Node 22.19.0 or newer (was 22.13.0): undici 8, which routes fetch() through `HTTP(S)_PROXY`, needs it. On an older Node the CLI says so and exits; `nvm use` picks up the bundled `.nvmrc`.

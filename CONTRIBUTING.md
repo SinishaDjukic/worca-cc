@@ -27,8 +27,8 @@ don't cherry-pick commits, skills, or docs across them.
 Requirements:
 
 - **Node.js >= 22.19.0** — required by the built-in `node:sqlite` store and undici 8. Run
-  `nvm use` to pick up the bundled `.nvmrc`. The test suite needs Node 22.22.2 or newer on the
-  22 line (jsdom 30's floor); `.nvmrc`'s latest 22 LTS is enough.
+  `nvm use` to pick up the bundled `.nvmrc` (Node 24): CI, the release and the Docker image all run
+  that major, and CI's fast tests also run the exact floor and the newest LTS.
 - The **`claude` CLI** on your `PATH` — only for real (non-mock) pipeline runs.
   Everything else, including the full test suite, works without it.
 
