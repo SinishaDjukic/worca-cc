@@ -9,7 +9,7 @@ const SEVERITIES = new Set(['critical', 'major', 'minor', 'suggestion']);
 const STATUSES = new Set(['met', 'unmet', 'na']);
 const oneLine = (v) => String(v ?? '').replace(/\s+/g, ' ').trim();
 
-const ROLE_KEY_RE = /^[a-z]{1,24}$/;   // finding ids are `key-round-n`: letters only keep them parseable
+export const ROLE_KEY_RE = /^[a-z]{1,24}$/;   // finding ids are `key-round-n`: letters only keep them parseable
 const MAX_ROLES = 12;
 const LABEL_MAX = 60;
 const SPEC_KEYS = new Set(['roles', 'source', 'target', 'checklist', 'sink']);
@@ -193,18 +193,6 @@ export function refinerVerdict(round, refinerOwn) {
     verdict: { summary: refinerOwn?.summary || '', issues: [...reviewers, ...own.filter((i) => !BLOCKING.has(i?.severity))] },
     refinerIssues: own.filter((i) => BLOCKING.has(i?.severity)),
   };
-}
-
-/** Mark the round's findings fixed/open from the refiner's `addressed` list (mutates and returns the round). */
-export function applyAddressed(round, addressed, planVersion) {
-  const done = new Set(Array.isArray(addressed) ? addressed.map(String) : []);
-  for (const r of round.roles) {
-    if (r.skipped) continue;
-    for (const f of r.findings) {
-      if (done.has(f.id)) { f.status = 'fixed'; f.fixedIn = planVersion; } else f.status = 'open';
-    }
-  }
-  return round;
 }
 
 /** The brief of a role with no checklist provider (any workflow's own roles; never Shaper's). */

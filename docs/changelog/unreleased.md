@@ -45,6 +45,7 @@ Read it: [Per-role models](../models.md#per-role-models)
 Pull requests (add each number when it opens):
 
 - Independent reviewers, engine first (#990)
+- Cleanup: drop dead role-review paths (#990)
 
 ## Shaper, Run presets and Cost tags leave Labs
 

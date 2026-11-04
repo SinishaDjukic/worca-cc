@@ -36,6 +36,7 @@ import { worcaHome } from '../src/core/projects.mjs';
 import { projectKey } from '../src/core/store.mjs';
 import { runOpts, RESUME_HEADER, READ_WRITE_TOOLS, IMPLEMENTER_TOOLS } from '../src/core/phases.mjs';
 import { buildAgentPrompt, taskSourcedPorts, allocateOutputs, allocateVerdict } from '../src/core/graph/executor.mjs';
+import { roleReviewOf } from '../src/shared/graph/role-review-step.mjs';
 import {
   REGISTRY, TASK_PROMPT, ORDINAL, nodeId, BUILTIN_KEYS, PARITY_TPL,
   frontmatterTools, makeCtxFor, portsFn,
@@ -369,7 +370,7 @@ function roleSliceCtx(role, siblings) {
     ...base, node, ports, bindings: { plan: { seq: 1, type: 'md', path: '/abs/plan.md' } },
     outputs: allocateOutputs({ node, ports, executionId, ordinal: ORDINAL, runCtx: base.runCtx }),
     verdict: allocateVerdict({ node, ports, ordinal: ORDINAL, runCtx: base.runCtx }),
-    role, rolePlanText: RECORDED_PLAN,
+    role, roleSpec: roleReviewOf(node.config), rolePlanText: RECORDED_PLAN,
   };
 }
 

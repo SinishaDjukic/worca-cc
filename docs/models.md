@@ -967,6 +967,9 @@ A node can review as several independent reviewers at once: its config's `roleRe
 declares the roles, and the run starts one slice per role, in parallel, each seeing only its
 own role. Their findings are merged into one file for the refiner (#990: independent reviewers
 are an engine capability, not Shaper's alone).
+A node saved with the older `roleReview: true` still reads as Shaper's plan review (perspectives
+picked per run, findings to Refine). Every node and role pick is cleaned in one place,
+`src/shared/graph/role-slots.mjs`; `test/model-pick-cleaner-single.test.mjs` guards it.
 
 ```json
 { "roleReview": { "roles": [{ "key": "correctness", "label": "Correctness" },

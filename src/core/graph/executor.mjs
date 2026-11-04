@@ -53,7 +53,7 @@ import { SUBAGENT_MODELS } from '../model-env.mjs';
 import { AWAIT_PORT } from '../../shared/graph/constants.mjs';
 import { withRecheck } from '../../shared/graph/verdict.mjs';
 import { perspectivesBlock } from '../../shared/shape/perspectives.mjs';
-import { roleReviewOf, roleChecklistOf, genericRoleBrief, roleTargetOf } from '../../shared/graph/role-review-step.mjs';
+import { roleChecklistOf, genericRoleBrief, roleTargetOf } from '../../shared/graph/role-review-step.mjs';
 import { reviewChecklistBlock } from '../../shared/shape/review-checklist.mjs';
 import { slicingBlock, outlineFeedbackBlock, FLAT_NOTE, sliceScopeBlock } from '../../shared/shape/slices.mjs';
 import { planConcernBlock, planConcernOverrideBlock } from '../../shared/review/plan-concern.mjs';
@@ -561,12 +561,9 @@ function markersFor({ role, ordinal, runCtx, outputs, verdict, bindings, ports, 
   return markers;
 }
 
-/** A role slice's spec: the one the orchestrator set, else the legacy `true` (a ctx built without it). */
-const roleSpecOf = (ctx) => ctx.roleSpec || roleReviewOf(true);
-
 /** The brief of one role slice: its checklist provider's, else the generic one. */
 function roleBriefFor(ctx) {
-  const spec = roleSpecOf(ctx);
+  const spec = ctx.roleSpec;
   const provider = roleChecklistOf(spec);
   if (provider) return provider.brief(ctx.role, ctx.rolePlanText || '', { houseBrief: ctx.houseBrief });
   return genericRoleBrief(spec.roles.find((r) => r.key === ctx.role) || { key: ctx.role, label: ctx.role }, spec.target);
@@ -650,7 +647,7 @@ export function buildAgentPrompt(ctx) {
       ordinal, runCtx, outputs, verdict, bindings, ports,
       expandsPort,
       priorCount: (ctx.priorAnswers || []).length,
-      perspective: ctx.role || null, planText: ctx.rolePlanText, roleSpec: ctx.role ? roleSpecOf(ctx) : null,
+      perspective: ctx.role || null, planText: ctx.rolePlanText, roleSpec: ctx.role ? ctx.roleSpec : null,
       planConcernFile: concernFile,
     }))
   );
@@ -706,7 +703,7 @@ async function prepare(ctx) {
     ? ctx.expandsPort
     : (ctx.template && ctx.portsFn ? expandsOutputPort(ctx.template, ctx.portsFn, node.id) : null);
   // Every role slice is mocked as an independent role reviewer of its target, whatever agent key its node has.
-  const mockRole = ctx.role ? roleTargetOf(roleSpecOf(ctx)).mockRole : resolveMockRole({ meta, expandsPort });
+  const mockRole = ctx.role ? roleTargetOf(ctx.roleSpec).mockRole : resolveMockRole({ meta, expandsPort });
   const priorAnswers = Array.isArray(ctx.priorAnswers)
     ? ctx.priorAnswers
     : await readPriorAnswers(ports, ctx.bindings);

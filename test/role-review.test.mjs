@@ -1,9 +1,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { rolesForRound, roleBriefBlock, houseBriefBlock, roleRecord, roleItems, refinerVerdict, applyAddressed, openBlocking, findingsMarkdown,
+import { rolesForRound, roleBriefBlock, houseBriefBlock, roleItems, openBlocking,
   currentPass, roleSummaries, reviewedLine, liveRoleRows, worstText, countsText, attachRoleReviews }
   from '../src/shared/shape/role-review.mjs';
+import { findingsMarkdown, refinerVerdict, roleRecord } from '../src/shared/graph/role-review-step.mjs';
+import { applyDispositions } from '../src/shared/review/findings.mjs';
+import { perspectiveByKey } from '../src/shared/shape/perspectives.mjs';
+
+/** One reviewer's record by perspective key, through the engine's roleRecord. */
+const rec = (key, round, verdict, ids) => roleRecord({ key, label: perspectiveByKey(key)?.label || key }, round, verdict, ids);
 
 // A recorded Shaper plan (real data): the 18 Oct "Shaper as chat cards" plan v2, copied verbatim.
 const PLAN = readFileSync(new URL('./fixtures/role-review/recorded-plan.md', import.meta.url), 'utf8');
@@ -17,39 +23,39 @@ test('roleBriefBlock: the UX brief carries every R-ux item and no other role\'s'
 });
 
 test('roleRecord: a checklist id the reviewer left out is unmet', () => {
-  const r = roleRecord('qa', 1, { issues: [], checklist: [{ id: 'R-qa-1', status: 'met' }, { id: 'R-ux-1', status: 'met' }] },
+  const r = rec('qa', 1, { issues: [], checklist: [{ id: 'R-qa-1', status: 'met' }, { id: 'R-ux-1', status: 'met' }] },
     ['R-qa-1', 'R-qa-2']);
   assert.deepEqual(r.checklist.map((c) => [c.id, c.status]), [['R-qa-1', 'met'], ['R-qa-2', 'unmet']]);
 });
 
 test('rolesForRound: round 2 skips a clean, fully met role and keeps a blocked one', () => {
   const last = { roles: [
-    roleRecord('qa', 1, { issues: [], checklist: [{ id: 'R-qa-1', status: 'met' }] }, ['R-qa-1']),
-    roleRecord('ux', 1, { issues: [{ severity: 'major', title: 't', fix: 'f' }] }, []),
+    rec('qa', 1, { issues: [], checklist: [{ id: 'R-qa-1', status: 'met' }] }, ['R-qa-1']),
+    rec('ux', 1, { issues: [{ severity: 'major', title: 't', fix: 'f' }] }, []),
   ] };
   assert.deepEqual(rolesForRound(['qa', 'ux'], 2, last),
     [{ key: 'product', skip: false }, { key: 'qa', skip: true }, { key: 'ux', skip: false }]);
 });
 
 test('refinerVerdict: a critical reviewer finding blocks; minors and the refiner\'s own majors do not route', () => {
-  const r = { roles: [roleRecord('ux', 1, { issues: [{ severity: 'critical', title: 'x', fix: 'y' }] })] };
+  const r = { roles: [rec('ux', 1, { issues: [{ severity: 'critical', title: 'x', fix: 'y' }] })] };
   assert.equal(refinerVerdict(r, { issues: [] }).verdict.issues[0].severity, 'critical');
-  const m = { roles: [roleRecord('ux', 1, { issues: [{ severity: 'minor', title: 'x', fix: 'y' }] })] };
+  const m = { roles: [rec('ux', 1, { issues: [{ severity: 'minor', title: 'x', fix: 'y' }] })] };
   const out = refinerVerdict(m, { issues: [{ severity: 'major', title: 'own' }, { severity: 'minor', title: 'nit' }] });
   assert.deepEqual(out.verdict.issues.map((i) => i.severity), ['minor']);
   assert.equal(out.refinerIssues.length, 1);
 });
 
-test('applyAddressed: fixed findings carry the version, the rest stay open', () => {
-  const round = { roles: [roleRecord('ux', 1, { issues: [
+test('applyDispositions with only `addressed`: fixed findings carry the version, the rest stay open', () => {
+  const round = { roles: [rec('ux', 1, { issues: [
     { severity: 'major', title: 'a', fix: 'b' }, { severity: 'major', title: 'c', fix: 'd' }] })] };
-  applyAddressed(round, ['ux-1-1'], 2);
+  applyDispositions(round, { addressed: ['ux-1-1'] }, 2);
   assert.deepEqual(round.roles[0].findings.map((f) => [f.status, f.fixedIn]), [['fixed', 2], ['open', undefined]]);
   assert.equal(openBlocking({ rounds: [round] }), 1);
 });
 
 test('findingsMarkdown: one section per role, ids and unmet items listed', () => {
-  const md = findingsMarkdown(1, '/p/plan.md', [roleRecord('ux', 1, { issues: [{ severity: 'major', title: 't', fix: 'f' }] },
+  const md = findingsMarkdown(1, '/p/plan.md', [rec('ux', 1, { issues: [{ severity: 'major', title: 't', fix: 'f' }] },
     roleItems('ux', PLAN).map((i) => i.id))]);
   assert.match(md, /^## UX$/m);
   assert.match(md, /\*\*ux-1-1\*\* \[major\]/);
@@ -80,10 +86,10 @@ test('recorded-run fixture: ids, statuses and round-2 skips are what slice 1 sto
   for (const round of RR.rounds) {
     for (const role of round.roles.filter((r) => !r.skipped)) {
       const raw = { issues: role.findings.map((f) => ({ severity: f.severity, title: f.title, section: f.section, fix: f.fix })) };
-      const rec = roleRecord(role.key, round.round, raw, role.checklist.map((c) => c.id));
+      const record = rec(role.key, round.round, raw, role.checklist.map((c) => c.id));
       const fixed = role.findings.filter((f) => f.status === 'fixed');
-      applyAddressed({ roles: [rec] }, fixed.map((f) => f.id), fixed[0]?.fixedIn);
-      assert.deepEqual(rec.findings.map((f) => [f.id, f.status]), role.findings.map((f) => [f.id, f.status]), role.key);
+      applyDispositions({ roles: [record] }, { addressed: fixed.map((f) => f.id) }, fixed[0]?.fixedIn);
+      assert.deepEqual(record.findings.map((f) => [f.id, f.status]), role.findings.map((f) => [f.id, f.status]), role.key);
     }
   }
   const skips = rolesForRound(RUN.plan.perspectives, 2, RR.rounds[0]).map((r) => [r.key, r.skip]);
@@ -145,9 +151,9 @@ test('liveRoleRows: reviewing / reviewed while the round runs, round 2 reads its
     [['product', 'reviewing', true], ['architect', 'reviewed', false], ['ux', 'reviewing', false]]);
   assert.equal(liveRoleRows(r1, { stage: 'plan' }).rows[0].label, 'Product');
   const rec1 = { pass: 1, round: 1, roles: [
-    roleRecord('product', 1, { issues: [{ severity: 'major', title: 't', fix: 'f' }] }, []),
-    roleRecord('architect', 1, { issues: [], checklist: [] }, []),
-    roleRecord('ux', 1, { issues: [{ severity: 'critical', title: 't', fix: 'f' }] }, []),
+    rec('product', 1, { issues: [{ severity: 'major', title: 't', fix: 'f' }] }, []),
+    rec('architect', 1, { issues: [], checklist: [] }, []),
+    rec('ux', 1, { issues: [{ severity: 'critical', title: 't', fix: 'f' }] }, []),
   ] };
   const r2 = liveRun({ round: 2, rounds: [rec1], steps: [slice(1, 'product', 'done'), slice(1, 'ux', 'done'), slice(1, 'architect', 'done'),
     slice(2, 'product', 'done'), slice(2, 'ux', 'start')] });
@@ -156,18 +162,18 @@ test('liveRoleRows: reviewing / reviewed while the round runs, round 2 reads its
 });
 
 test('liveRoleRows: the landed record\'s states, the Refine line, and null outside a live Plan stage', () => {
-  const rec = { pass: 1, round: 1, roles: [
-    roleRecord('ux', 1, { issues: [{ severity: 'major', title: 'a', fix: 'f' }, { severity: 'critical', title: 'b', fix: 'f' }] }, []),
-    roleRecord('architect', 1, { issues: [{ severity: 'major', title: 'c', fix: 'f' }, { severity: 'minor', title: 'd', fix: 'f' }] }, []),
-    roleRecord('product', 1, { issues: [] }, []),
+  const landedRound = { pass: 1, round: 1, roles: [
+    rec('ux', 1, { issues: [{ severity: 'major', title: 'a', fix: 'f' }, { severity: 'critical', title: 'b', fix: 'f' }] }, []),
+    rec('architect', 1, { issues: [{ severity: 'major', title: 'c', fix: 'f' }, { severity: 'minor', title: 'd', fix: 'f' }] }, []),
+    rec('product', 1, { issues: [] }, []),
     { key: 'qa', label: 'QA', skipped: true, findings: [{ severity: 'major', status: 'open' }], checklist: [] },
   ] };
-  const landed = liveRun({ rounds: [rec], active: [] });
+  const landed = liveRun({ rounds: [landedRound], active: [] });
   assert.deepEqual(rows(liveRoleRows(landed, { stage: 'plan' })),
     [['ux', '1 critical', false], ['architect', '1 major', false], ['product', 'no findings', false], ['qa', 'skipped: nothing open', false]]);
-  const refining = liveRun({ rounds: [rec], active: [{ nodeId: 'refine', executionId: 'refine:1' }] });
+  const refining = liveRun({ rounds: [landedRound], active: [{ nodeId: 'refine', executionId: 'refine:1' }] });
   assert.deepEqual(liveRoleRows(refining, { stage: 'plan' }), { rows: [], refine: 'Fixing 3 findings from UX and Architect' });
-  const one = { pass: 1, round: 1, roles: [roleRecord('qa', 1, { issues: [{ severity: 'major', title: 'a', fix: 'f' }] }, [])] };
+  const one = { pass: 1, round: 1, roles: [rec('qa', 1, { issues: [{ severity: 'major', title: 'a', fix: 'f' }] }, [])] };
   assert.equal(liveRoleRows(liveRun({ rounds: [one], active: [{ nodeId: 'refine', executionId: 'refine:1' }] }), { stage: 'plan' }).refine,
     'Fixing 1 finding from QA');
   assert.equal(liveRoleRows({ ...landed, status: 'done' }, { stage: 'plan' }), null, 'a finished run');
@@ -180,7 +186,7 @@ test('liveRoleRows: the landed record\'s states, the Refine line, and null outsi
 });
 
 // #990 slice 4: plan rounds and Shaper's code rounds (n_review, target diff) share state.roleReviews.rounds.
-const codeRec = (key, label, issues) => ({ ...roleRecord(key, 1, { issues }, []), label });
+const codeRec = (key, label, issues) => ({ ...rec(key, 1, { issues }, []), label });
 const CODE_ROUND = { pass: 1, round: 1, node: 'n_review', target: 'diff', plan: 'p', roles: [
   codeRec('correctness', 'Correctness', [{ severity: 'major', title: 'race', fix: 'lock' }]),
   codeRec('security', 'Security', []),
@@ -205,7 +211,7 @@ test('currentPass and its readers: the plan pass by default, the diff pass by no
 });
 
 test('liveRoleRows at the review stage lists the code roles, never a plan role', () => {
-  const planRound = { pass: 1, round: 1, node: 'n_roles', target: 'plan', roles: [roleRecord('architect', 1, { issues: [] }, []), roleRecord('ux', 1, { issues: [] }, [])] };
+  const planRound = { pass: 1, round: 1, node: 'n_roles', target: 'plan', roles: [rec('architect', 1, { issues: [] }, []), rec('ux', 1, { issues: [] }, [])] };
   const codeSlice = (key, title, status) => ({ executionId: `n_review:1:role-${key}`, parentExecutionId: 'n_review:1', taskId: `role-${key}`, title, status });
   const reviewing = { status: 'running', shaping: { perspectives: ['architect', 'ux'] },
     progressFacts: { roleReview: { nodeId: 'n_review', round: 1 } }, roleReviews: { rounds: [planRound] },

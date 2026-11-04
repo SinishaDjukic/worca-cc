@@ -21,6 +21,7 @@ import { findBridgedEntry, providerReadiness } from './bridge/registry.mjs';
 import { engineLabel } from '../shared/engine-switch.mjs';
 import { normaliseTags } from '../shared/run-tags.mjs';
 import { cleanPick } from '../shared/graph/role-slots.mjs';
+import { ROLE_KEY_RE } from '../shared/graph/role-review-step.mjs';
 import { connectionOf, harnessesOf, runsOn, harnessesLabel, effortsOn } from '../shared/connections.mjs';
 import { bridgeBaseUrl, bridgeSecret } from './bridge/server.mjs';
 import { listGlobalModels, addGlobalModel, removeGlobalModel, hideBuiltinModels, readSettings, memoryDefragModel, setMemoryDefragModel, modelRolesSetting } from './settings.mjs';
@@ -1174,7 +1175,6 @@ function assertCatalogPick(model, effort, models) {
   }
 }
 
-const ROLE_KEY_RE = /^[a-z]{1,24}$/;
 const MAX_ROLE_PICKS = 12;
 
 /** `selection.roles` of setNodeModel, checked and cleaned: `{ key: { model?, effort? } }` (blank picks dropped). */

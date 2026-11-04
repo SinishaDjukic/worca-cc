@@ -1,13 +1,10 @@
 // src/shared/shape/role-review.mjs — role reviews (spec §3): one planReviewer per picked perspective.
-// Pure and browser-safe: the orchestrator, the executor's prompt and (slice 4) the Plan step card import it.
+// Pure and browser-safe: the engine's role-review step (Shaper's checklist provider), the orchestrator, run-model,
+// the server and the shape cards import it.
 import { PERSPECTIVES, DEFAULT_PERSPECTIVES, perspectiveByKey, normalizePerspectives, FIT_KEY } from './perspectives.mjs';
 import { extractChecklist } from './checklist.mjs';
-import { rolesForRound as engineRolesForRound, roleRecord as engineRoleRecord, roleTaskId } from '../graph/role-review-step.mjs';
+import { rolesForRound as engineRolesForRound, roleTaskId } from '../graph/role-review-step.mjs';
 import { roleCounts } from '../review/findings.mjs';
-
-// The generic round logic lives in the engine step (src/shared/graph/role-review-step.mjs); re-exported here for the
-// current importers.
-export { findingsMarkdown, refinerVerdict, applyAddressed, roleTaskId } from '../graph/role-review-step.mjs';
 
 export const ROLE_REVIEW_MAX_ROUNDS = 2;
 const BLOCKING = new Set(['critical', 'major']);
@@ -57,11 +54,6 @@ export function houseBriefBlock(key, brief) {
     ? 'Judge every `R-fit` item against this brief. When the plan adds a part the brief already lists, name that ' +
       'existing repo path in the finding\'s `title` and `fix`.\n\n' + text + '\n\n'
     : 'This project has no house brief yet: judge the `R-fit` items against the codebase alone.\n\n');
-}
-
-/** One reviewer's raw verdict JSON → the stored role record, by perspective key (the engine's roleRecord). */
-export function roleRecord(key, round, verdict, expectedIds = []) {
-  return engineRoleRecord(asRole(key), round, verdict, expectedIds);
 }
 
 /** Shaper's checklist provider for the engine's role-review step (`checklist: 'perspectives'`): the perspectives as

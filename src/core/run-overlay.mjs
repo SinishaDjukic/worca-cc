@@ -9,7 +9,8 @@ import { checkShapeModels } from './auto/classify.mjs';
 import { runsOn, harnessesLabel } from '../shared/connections.mjs';
 import { engineLabel } from '../shared/engine-switch.mjs';
 import { subagentModelIssue } from './model-env.mjs';
-import { roleReviewOf } from '../shared/graph/role-review-step.mjs';
+import { roleReviewOf, ROLE_KEY_RE } from '../shared/graph/role-review-step.mjs';
+import { cleanPick } from '../shared/graph/role-slots.mjs';
 
 /** The keys a run overlay's node entry may carry (resolveGraph reads exactly these from it). */
 export const OVERLAY_KEYS = Object.freeze(['model', 'effort', 'fanOut', 'askQuestions', 'subagentModel']);
@@ -20,7 +21,6 @@ export const OVERLAY_MAX_NODES = 64;
 export const OVERLAY_MAX_CYCLES = 100;
 /** A role-review node's per-role picks (`overlay.nodes[id].roles`): at most this many roles, keys as the spec's. */
 export const OVERLAY_MAX_ROLES = 12;
-const ROLE_KEY_RE = /^[a-z]{1,24}$/;
 
 const idText = (id) => JSON.stringify(String(id).slice(0, 64));
 const idPath = (id) => String(id).slice(0, 64);
@@ -72,16 +72,14 @@ function parseRolePicks(raw, what, id, errors) {
     if (!sel || typeof sel !== 'object' || Array.isArray(sel)) { errors.push(OVERLAY_ERRORS.roleEntry(what, id, k)); continue; }
     const extra = Object.keys(sel).filter((f) => f !== 'model' && f !== 'effort');
     if (extra.length) { errors.push(OVERLAY_ERRORS.roleField(what, id, k, extra[0])); continue; }
-    const pick = {};
     if (sel.model !== undefined) {
       if (typeof sel.model !== 'string' || sel.model.length > 200) { errors.push(OVERLAY_ERRORS.roleModel(what, id, k)); continue; }
-      if (sel.model.trim()) pick.model = sel.model.trim();
     }
     if (sel.effort !== undefined) {
       if (typeof sel.effort !== 'string' || sel.effort.length > 32) { errors.push(OVERLAY_ERRORS.roleEffort(what, id, k)); continue; }
-      if (sel.effort.trim()) pick.effort = sel.effort.trim();
     }
-    if (Object.keys(pick).length) out.set(k, pick);
+    const pick = cleanPick(sel);
+    if (pick) out.set(k, pick);
   }
   return out.size ? Object.fromEntries(out) : null;
 }
