@@ -2,7 +2,7 @@
 name: app-js-traps
 description: Read before editing ui/public/app.js or src/shared — imported helpers, makeRun's fixed fields, capture-phase Escape arms, the purity test's word scans.
 paths: ui/public/app.js, ui/public/*.mjs, ui/public/*.js, src/shared/**, test/ui-*.test.mjs, test/helpers/feedback.mjs, test/shared-graph-purity.test.mjs
-updated: 2026-11-04T00:48:29.743Z
+updated: 2026-11-04T23:00:38.420Z
 author: Bulibas
 ---
 
@@ -65,6 +65,12 @@ CSS, present in the DOM at Simple too) keeps the run in `mounted` and refetches.
 A checkout's setup state is fresher on History's row (`checkout.members[i].setup`, followed by `pipelines-changed`) than
 in the model. The server writes `ok`/`failed` after the setup instance's last `actions-changed`, so a model refetched on
 that frame can still show `setupQueued: true`. Read setup from the row. Read services and instances from the model.
+Since the Actions-tab progress change (2026-11-05) `ensureSetup` sends one more `actions-changed` (action
+`setup-done`) after its job left `setupJobs`: a model refetched on THAT frame is final. Anything new that waits for
+setup should key on it, not on the setup instance's `exited` frame (pinned in test/api-actions.test.mjs).
+The Actions controller's in-flight presses live in `st.busy` (`busyWhile(keys, fn, {showNow})`, keys
+`checkout:<pk>`, `discard:<pk>`, `start:<pk>:<id>`): a new button that posts should go through it, so a second
+press does nothing. Test second presses with `dispatchEvent(new Event('click'))`: jsdom's `click()` skips disabled buttons.
 
 **A flyout row's explicit `sideActionsFlyout?.close()` survives mutation in jsdom** when the action moves focus out
 (the Browser tab's address field): `side-flyout.mjs`'s `focusin` close hides the flyout anyway. Pin the explicit close
