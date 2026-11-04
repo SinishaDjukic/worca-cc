@@ -97,7 +97,7 @@ test('a script check runs on a copy of the result folder, waits while the bench 
   const bad = await runScriptCheck({ kind: 'script', key: 'lint-md' }, { pipelineId: t.id, runBench: async () => ({ status: 'blocking', summary: 'Heading levels skip\nmore' }) });
   assert.deepEqual(bad, { met: false, value: 'Heading levels skip' });
   const gone = await runScriptCheck({ kind: 'script', key: 'nope' }, { pipelineId: t.id, runBench: async () => { throw Object.assign(new Error('script "nope" not found'), { code: 'NOT_FOUND' }); } });
-  assert.deepEqual(gone, { met: false, value: 'Not met', error: 'script "nope" not found' });
+  assert.deepEqual(gone, { met: false, value: 'Not met', error: 'script "nope" not found', worcaProblem: true }, 'U-T2: the bench threw');
 });
 
 test('a stuck script check times out, frees the queue, and still removes its copy once it settles', async () => {
@@ -106,7 +106,7 @@ test('a stuck script check times out, frees the queue, and still removes its cop
   const stuck = (req) => { stuckDir = req.cwd.dir; return new Promise((r) => { release = r; }); };
   const first = runScriptCheck({ kind: 'script', key: 'a' }, { pipelineId: t.id, runBench: stuck, deadlineMs: 50 });
   const second = runScriptCheck({ kind: 'script', key: 'b' }, { pipelineId: t.id, runBench: async () => ({ status: 'clean', summary: '' }), deadlineMs: 50 });
-  assert.deepEqual(await first, { met: false, value: 'Not met', error: 'timed out' });
+  assert.deepEqual(await first, { met: false, value: 'Not met', error: 'timed out', worcaProblem: true }, 'U-T2: the backstop is Worca\'s');
   assert.deepEqual(await second, { met: true, value: 'Met' });
   assert.equal(existsSync(stuckDir), true, 'still there while the job is stuck');
   release({ status: 'clean' });
@@ -129,6 +129,29 @@ test('a setup error becomes a not-met check and checkTry keeps the other results
   assert.equal(v.checks.length, 2);
   assert.deepEqual(v.checks.map((c) => c.met), [false, true]);
   assert.ok(v.checks[0].error);
+});
+
+test('U-T2: a check Worca could not run is marked worcaProblem; a check that ran and missed is not', async () => {
+  const t = await seedTry({ work: { 'brief.md': BRIEF } });
+  const threw = await runScriptCheck({ kind: 'script', key: 'a' }, { pipelineId: t.id, runBench: async () => { throw new Error('spawn EPERM'); } });
+  assert.deepEqual(threw, { met: false, value: 'Not met', error: 'spawn EPERM', worcaProblem: true });
+  const missed = await runScriptCheck({ kind: 'script', key: 'a' }, { pipelineId: t.id, runBench: async () => ({ status: 'blocking', summary: 'Too long' }) });
+  assert.deepEqual(missed, { met: false, value: 'Too long' });
+  const example = { basics: {}, checks: [
+    { id: 's1', ...normaliseCheck({ kind: 'script', key: 'a' }).check },
+    { id: 'f1', ...normaliseCheck({ kind: 'file', name: 'brief.md' }).check },
+  ] };
+  const outcome = await readTryOutcome(t.id);
+  const v = await checkTry(example, outcome, { runScript: (c) => runScriptCheck(c, { pipelineId: t.id, runBench: async () => { throw new Error('spawn EPERM'); } }) });
+  assert.deepEqual([v.checks[0].worcaProblem, v.checks[1].worcaProblem], [true, undefined], 'the bench throw reaches the verdict');
+  const cmd = { basics: {}, checks: [{ id: 'c1', ...normaliseCheck({ kind: 'command', cmd: 'node x.mjs' }).check }] };
+  const project = { ...outcome, project: { checkoutDir: null } };
+  const gone = await checkTry(cmd, project);
+  assert.deepEqual([gone.checks[0].value, gone.checks[0].worcaProblem], ['Not run: the copy of the project is gone', true]);
+  const ranThrew = await checkTry(cmd, { ...outcome, project: { checkoutDir: projectDir } }, { runCommand: async () => { throw new Error('spawn ENOENT'); } });
+  assert.deepEqual([ranThrew.checks[0].value, ranThrew.checks[0].worcaProblem, ranThrew.checks[0].error], ['Ended with an error', true, 'spawn ENOENT']);
+  const ranFailed = await checkTry(cmd, { ...outcome, project: { checkoutDir: projectDir } }, { runCommand: async () => ({ met: false, value: '1 failed', output: 'x' }) });
+  assert.equal(ranFailed.checks[0].worcaProblem, undefined, 'a command that ran and failed is the workflow\'s');
 });
 
 test('the bench gets the script own timeout, the backstop deadline follows it, and a timed-out job stops retrying BUSY', async () => {

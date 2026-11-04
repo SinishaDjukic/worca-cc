@@ -690,6 +690,7 @@ export function progressOf(workflowId, runId, { costOf = null, phaseOf = null } 
     takenMs: takenMs(run, own),
     quick: run.quick,
     project,
+    madeAgain: store.madeAgainOf(run.id),   // U-T2: tries made again after a problem in Worca (never counted)
   };
 }
 
@@ -753,7 +754,8 @@ export async function compareOf(workflowId, runId, { registry = loadAgentRegistr
     else if (input.tries.some((t) => t.exampleId === id && t.exampleFp !== ex.fingerprint)) fair.push(`"${ex.name}" was edited after this test.`);
   }
   return { run, title: testTitle(run, ctx), labels: { a: input.a ? input.a.label : null, b: input.b.label },
-    examples: input.examples.length, costUsd: store.spentOfRun(run.id), model: compareModel(input), changes, fair };
+    examples: input.examples.length, costUsd: store.spentOfRun(run.id), model: compareModel(input), changes, fair,
+    madeAgain: store.madeAgainOf(run.id) };   // U-T2: the page adds it to the fair-comparison lines
 }
 
 /** Board 6 (G2: one column for Try it once now) and board 31 (what a pretend try would have sent). The cards show the

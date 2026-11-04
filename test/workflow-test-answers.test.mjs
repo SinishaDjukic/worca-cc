@@ -79,3 +79,28 @@ test('an answer the run did not take, or refused, fails the try', async () => {
   await tick();
   assert.deepEqual(fails, ["Worca's answer was not taken: the run no longer waited for it.", "Worca's answer was refused: invalid answer"]);
 });
+
+test('U-T2: the answerer\'s own failures say { worca: true }; the workflow\'s own stops do not', async () => {
+  const seen = [];
+  const onFail = (r, o) => seen.push([r, o]);
+  const refused = new EventEmitter();
+  attachAnswerer(refused, example, { answer: () => { throw new Error('invalid answer'); }, onFail });
+  refused.emit('question', { id: 'g1', kind: 'gate' });
+  await tick();
+  const untaken = new EventEmitter();
+  attachAnswerer(untaken, example, { answer: () => false, onFail });
+  untaken.emit('question', { id: 'g2', kind: 'gate' });
+  await tick();
+  const broken = new EventEmitter();
+  attachAnswerer(broken, example, { answer: () => true, onFail });
+  broken.emit('question', { id: 'q3', kind: 'questions', get questions() { throw new Error('bad payload'); } });
+  const plan = new EventEmitter();
+  attachAnswerer(plan, example, { answer: () => true, onFail });
+  plan.emit('question', { id: 'r4', kind: 'recovery', recovery: { message: 'boom' } });
+  assert.deepEqual(seen, [
+    ["Worca's answer was refused: invalid answer", { worca: true }],
+    ["Worca's answer was not taken: the run no longer waited for it.", { worca: true }],
+    ['Worca could not answer a question: bad payload', { worca: true }],
+    ['The try hit a problem it could not get past: boom', undefined],
+  ]);
+});

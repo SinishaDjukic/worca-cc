@@ -396,6 +396,15 @@ export function triesOfRun(runId) {
       WHERE l.run_id = ? ORDER BY l.side, t.example_id, t.try_no, t.id`).all(Number(runId)).map(tryOf);
 }
 
+/** U-T2: how many of a run's own tries were set aside after a Worca problem (verdict.worcaProblem) and made again (no
+ *  longer shown by the run: the runner, or Finish the rest, unlinked them for a fresh try). */
+export function madeAgainOf(runId) {
+  getDb();
+  return prepare(`SELECT t.verdict FROM wf_test_tries t WHERE t.run_id = ? AND t.verdict IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM wf_test_run_tries l WHERE l.run_id = t.run_id AND l.try_id = t.id)`).all(Number(runId))
+    .filter((r) => { const v = parse(r.verdict, null); return !!(v && v.worcaProblem); }).length;
+}
+
 /** What a run's own tries cost, stopped ones included (D27). Reused tries cost this run nothing. */
 export function spentOfRun(runId) {
   getDb();

@@ -13,7 +13,7 @@ import { splitPatchSections, parseFileSection } from '../diff-view.mjs';
 import { changesTitle, changeCountText, FILE_BADGE, READ_ALL_CHANGES, BOTH_STARTED_FROM, DEV_CAPTION, DEV_SBS_HINT, DEV_START_LEAD, DEV_SETUP_LEAD,
   changesLine, notMetFor, COMMAND_ENDED, COMMAND_TIMED_OUT, SEE_COMMAND_OUTPUT, NOTHING_PUSHED_TEXT, REAL_BLOCKED_TEXT, EACH_ANSWERED_TEXT,
   EACH_STOPPED_ANSWERED_TEXT, READING_CHANGES, inSentence,
-  NO_FILE_DIFF_TEXT, BINARY_FILE_TEXT, CHANGES_UNREAD_TEXT, DIFF_SHORTENED_TEXT, moreFilesText, NO_DIFF_TEXT } from '../../../src/shared/workflow-tests/project-text.mjs';
+  NO_FILE_DIFF_TEXT, BINARY_FILE_TEXT, CHANGES_UNREAD_TEXT, DIFF_SHORTENED_TEXT, moreFilesText, NO_DIFF_TEXT, madeAgainText } from '../../../src/shared/workflow-tests/project-text.mjs';
 
 const RESULT = { better: ['badge green', 'Better'], worse: ['badge red', 'Worse'], same: ['badge', 'Same'] };
 const usdOr = (n) => (typeof n === 'number' && Number.isFinite(n) ? fmtUsd(n) : '—');
@@ -273,7 +273,7 @@ export function renderCompare(root, c, actions, { doc, now = Date.now() }) {
   const fair = el(doc, 'p', 'hint wft-fair-head');
   fair.append(el(doc, 'b', '', 'A fair comparison.'), doc.createTextNode(` Both versions were tried on the same ${c.examples === 1 ? 'example' : `${c.examples} examples`} and checked the same way. If that changes, for example after an example is edited, Worca says so here.`));
   ch.append(fair);
-  for (const f of c.fair) {
+  for (const f of [...c.fair, ...(c.madeAgain > 0 ? [madeAgainText(c.madeAgain)] : [])]) {   // U-T2: one more fair-comparison line
     const p = el(doc, 'p', 'wft-fair');
     p.append(icon(doc, 'alert', 14), el(doc, 'span', '', f));
     ch.append(p);

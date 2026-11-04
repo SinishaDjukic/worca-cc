@@ -131,6 +131,8 @@ export function runScriptCheck(check, { pipelineId, cwdDir = null, logFile = nul
   // (the script bench applies it to the child's env), writing to the try's log, or a scratch one when that is not known.
   const tryGuard = { logFile: logFile || scratchTryLog() };
   const notMet = (error) => ({ met: false, value: 'Not met', error });
+  // U-T2: the bench threw, or the backstop timed out: Worca could not run the check, so it says nothing of the try.
+  const notRun = (error) => ({ ...notMet(error), worcaProblem: true });
   // Does the whole job, setup included, and always removes its copy once it settles (even after a timeout).
   const work = async (state, timeoutMs) => {
     let scratch = null;
@@ -153,11 +155,11 @@ export function runScriptCheck(check, { pipelineId, cwdDir = null, logFile = nul
           return { met, value: met ? 'Met' : String((r && (r.summary || r.status)) || 'Not met').split('\n')[0].slice(0, 120) };
         } catch (err) {
           if (err && err.code === 'BUSY' && attempt < BUSY_RETRIES && !state.timedOut) { await wait(waitMs); continue; }
-          return notMet(err && err.message ? err.message : String(err));
+          return notRun(err && err.message ? err.message : String(err));
         }
       }
     } catch (err) {
-      return notMet(err && err.message ? err.message : String(err));
+      return notRun(err && err.message ? err.message : String(err));
     } finally { if (scratch) await rm(scratch, { recursive: true, force: true }).catch(() => {}); }
   };
   const job = async () => {
@@ -165,7 +167,7 @@ export function runScriptCheck(check, { pipelineId, cwdDir = null, logFile = nul
     const timeoutMs = await timeoutOf(check.key);
     let timer;
     const deadline = new Promise((resolve) => {
-      timer = setTimeout(() => { state.timedOut = true; resolve(notMet('timed out')); }, deadlineMs ?? timeoutMs + SCRIPT_CHECK_MARGIN_MS);
+      timer = setTimeout(() => { state.timedOut = true; resolve(notRun('timed out')); }, deadlineMs ?? timeoutMs + SCRIPT_CHECK_MARGIN_MS);
     });
     return Promise.race([work(state, timeoutMs), deadline]).finally(() => clearTimeout(timer));
   };
@@ -232,21 +234,25 @@ export async function checkTry(example, outcome, { runScript = runScriptCheck, r
   for (const i of later) {
     const check = checks[i];
     const label = checkLabel(check, { scriptName: check.kind === 'script' ? scriptName(check.key) : null });
-    const not = (value) => { results[i] = { id: check.id, label, met: false, value }; };
+    const not = (value, extra = {}) => { results[i] = { id: check.id, label, met: false, value, ...extra }; };
     if (outcome.facts.status !== 'done') { not('Not run: the try did not finish'); continue; }
-    if (outcome.project && !cwdDir) { not('Not run: the copy of the project is gone'); continue; }
+    // U-T2: Worca lost the copy it made: a Worca problem (worcaProblem), never the workflow's.
+    if (outcome.project && !cwdDir) { not('Not run: the copy of the project is gone', { worcaProblem: true }); continue; }
     if (check.kind === 'command') {
       onCommand(check.cmd);
       let r;
-      try { r = await runCommand(check, { cwd: cwdDir, logFile: outcome.logFile }); } catch { r = { met: false, value: 'Ended with an error' }; }
+      // U-T2: the command runner itself threw (it never ran the command): a Worca problem; its first line for developers.
+      try { r = await runCommand(check, { cwd: cwdDir, logFile: outcome.logFile }); } catch (e) {
+        r = { met: false, value: 'Ended with an error', error: String((e && e.message) || e).split(/\r?\n/)[0].slice(0, 300), worcaProblem: true };
+      }
       // Board 36: a command its time limit stopped says so in the side by side (timedOut), not "ended with an error".
       // Round 2 (M5): the kind and the command travel with the result, so the side by side sets it in code from data.
       results[i] = { id: check.id, kind: 'command', cmd: check.cmd, label, met: !!r.met, value: r.value, ...(r.output ? { output: r.output } : {}),
-        ...(r.timedOut ? { timedOut: true } : {}) };
+        ...(r.timedOut ? { timedOut: true } : {}), ...(r.worcaProblem ? { error: r.error, worcaProblem: true } : {}) };
       continue;
     }
     const r = await runScript(check, { pipelineId: outcome.pipelineId, cwdDir, logFile: outcome.logFile });
-    results[i] = { id: check.id, label, met: !!r.met, value: r.value, ...(r.error ? { error: r.error } : {}) };
+    results[i] = { id: check.id, label, met: !!r.met, value: r.value, ...(r.error ? { error: r.error } : {}), ...(r.worcaProblem ? { worcaProblem: true } : {}) };
   }
   return judgeTry(example, outcome.facts, results,
     { name: outcome.name, source: outcome.source, words: typeof outcome.text === 'string' ? wordCount(outcome.text) : null });

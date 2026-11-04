@@ -6,7 +6,8 @@ import { fmtUsd, parseUsd } from '../../../src/shared/workflow-tests/checks.mjs'
 import { aboutUsd } from '../../../src/shared/workflow-tests/compare.mjs';
 import { icon } from '../icons.mjs';
 import { DISK_IN_USE, diskInUseSub, fmtGb, PHASES, PHASE_SUB, PHASES_TITLE, phasesShownFor, nowText, forMinutes, RUNNING_LEAD, FROM_LEAD,
-  SETUP_STOP_REST, SETUP_STOP_HINT, SEE_SETUP_OUTPUT, setupWhere, SETUP_FIX_HINT, SETUP_EDITED_HINT, START_NEW_TEST, SETUP_NO_OUTPUT, EDIT_EXAMPLE, TRY_AGAIN } from '../../../src/shared/workflow-tests/project-text.mjs';
+  SETUP_STOP_REST, SETUP_STOP_HINT, SEE_SETUP_OUTPUT, setupWhere, SETUP_FIX_HINT, SETUP_EDITED_HINT, START_NEW_TEST, SETUP_NO_OUTPUT, EDIT_EXAMPLE, TRY_AGAIN,
+  worcaStoppedText, madeAgainText } from '../../../src/shared/workflow-tests/project-text.mjs';
 
 const DOT = { passed: 'ok', failed: 'no', running: 'run' };
 /** A stored detail is one line with no full stop (runner.mjs pauseVerdict, quickCheck); a server refusal may have one. */
@@ -23,6 +24,7 @@ const STOPPED = {
   changed: (p) => p.run.stopDetail || 'Something this test uses changed: start a new test.',   // D27: the C18 sentence
   error: (p) => `Stopped: ${full(p.run.stopDetail || 'something went wrong')}`,
   setup: (p) => full(p.run.stopDetail || 'the setup step failed'),   // D55, board 35 (the box below says more)
+  worca: (p) => worcaStoppedText(p.run.stopDetail),   // U-T2: the same try failed in Worca twice; Finish the rest makes it again
 };
 const stoppedText = (p) => (STOPPED[p.run.stopReason] || STOPPED.error)(p);
 
@@ -285,8 +287,12 @@ export function renderTestProgress(root, p, actions, { doc, dateText = (s) => s 
     table.append(row);
   }
   page.append(table);
-  // Not after a setup stop (final review): no try was done, and the setup card says what to do.
-  if (st !== 'done' && p.run.stopReason !== 'setup') page.append(el(doc, 'p', 'hint', 'Stop testing keeps the tries that are done. You can finish the rest later without paying for them twice.'));
+  // Not after a setup stop (final review): no try was done, and the setup card says what to do. U-T2: the tries made again
+  // after a problem in Worca, in the same hint (its own once the test is done).
+  const hints = [];
+  if (st !== 'done' && p.run.stopReason !== 'setup') hints.push('Stop testing keeps the tries that are done. You can finish the rest later without paying for them twice.');
+  if (p.madeAgain > 0) hints.push(madeAgainText(p.madeAgain));
+  if (hints.length) page.append(el(doc, 'p', 'hint', hints.join(' ')));
   root.append(page, live);
   const said = stopped ? `${pillText}. ${stopped}` : pillText;
   if (live.textContent !== said) live.textContent = said;   // only a change is news

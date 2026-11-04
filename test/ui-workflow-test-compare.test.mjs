@@ -59,6 +59,15 @@ test('board 5: the title and meta, In short with Look at it, five tiles', () => 
   assert.equal(root.querySelector('.wft-tile-note'), null, 'every example compared: the tiles count the same tries');
 });
 
+test('U-T2: tries made again after a problem in Worca are one more line of the fair comparison', () => {
+  const one = boot(renderCompare, compare({ fair: ['Your draft changed after this test.'], madeAgain: 1 }));
+  assert.deepEqual(texts(one.root, '.wft-fair'), ['Your draft changed after this test.', '1 try was made again after a problem in Worca. It is not counted.']);
+  assert.ok(one.root.querySelectorAll('.wft-fair .ic').length === 2, 'with its alert icon, as every note');
+  const two = boot(renderCompare, compare({ madeAgain: 2 }));
+  assert.deepEqual(texts(two.root, '.wft-fair'), ['2 tries were made again after a problem in Worca. They are not counted.']);
+  assert.deepEqual(texts(boot(renderCompare, compare({ madeAgain: 0 })).root, '.wft-fair'), []);
+});
+
 test('board 5: by example (G9), why, might be luck with Try 3 more (G15), what you changed, a fair comparison', () => {
   const { root, calls } = boot(renderCompare, compare({ fair: ['Your draft changed after this test.'] }));
   assert.equal(root.querySelector('.wft-by-title').textContent, 'By example');

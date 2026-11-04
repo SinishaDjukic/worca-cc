@@ -64,9 +64,13 @@ export function planAnswer(q, { answers = [], otherwise = 'pick' } = {}) {
   return { kind: 'answer', payload: autoAnswerPayload(q), help: [] };
 }
 
+/** U-T2: what `onFail` gets with a failure of the answerer itself. */
+const WORCA = Object.freeze({ worca: true });
+
 /**
  * Answer every question `orch` asks during one try. `answer(id, payload)` returns false when the run no longer waits on
- * that question. `onHelp` fires per question the example had no answer for; `onFail` fires when the try must stop.
+ * that question. `onHelp` fires per question the example had no answer for; `onFail` fires when the try must stop, with
+ * `{ worca: true }` when the answerer itself failed (U-T2: a Worca problem, never counted against the workflow).
  * `question` is emitted BEFORE the harness installs pendingQuestion (run-harness.mjs _ask), so the answer goes out on
  * the next turn (`defer` = setImmediate), the pattern of test/orchestrator-questions.test.mjs:173.
  * @returns {() => void} detach
@@ -74,13 +78,13 @@ export function planAnswer(q, { answers = [], otherwise = 'pick' } = {}) {
 export function attachAnswerer(orch, example, { answer, onHelp = () => {}, onFail = () => {}, defer = setImmediate } = {}) {
   const handler = (q) => {
     let plan;
-    try { plan = planAnswer(q, example || {}); } catch (err) { onFail(`Worca could not answer a question: ${err && err.message ? err.message : err}`); return; }
+    try { plan = planAnswer(q, example || {}); } catch (err) { onFail(`Worca could not answer a question: ${err && err.message ? err.message : err}`, WORCA); return; }
     for (const h of plan.help) onHelp({ kind: q.kind, question: h.question });
     if (plan.kind === 'fail') { onFail(plan.reason); return; }
     defer(() => {
       let ok = false;
-      try { ok = answer(q.id, plan.payload) !== false; } catch (err) { onFail(`Worca's answer was refused: ${err && err.message ? err.message : err}`); return; }
-      if (!ok) onFail("Worca's answer was not taken: the run no longer waited for it.");
+      try { ok = answer(q.id, plan.payload) !== false; } catch (err) { onFail(`Worca's answer was refused: ${err && err.message ? err.message : err}`, WORCA); return; }
+      if (!ok) onFail("Worca's answer was not taken: the run no longer waited for it.", WORCA);
     });
   };
   orch.on('question', handler);

@@ -140,6 +140,25 @@ test('board 27: a stopped test\'s grey bar, and tries never made read as not tri
   assert.deepEqual([...st.root.querySelectorAll('.wft-tries')].map((t) => t.getAttribute('aria-label')), ['1 passed, 2 not tried', 'Not tried']);
 });
 
+test('U-T2: stopped as worca says Worca could not run a try, twice, and offers Finish the rest; tries made again are not counted', () => {
+  const reasons = ['it could not prepare its copy of the project', 'the try did not start', 'it could not answer a question for the try', 'it could not run a check'];
+  for (const r of reasons) {
+    assert.equal(stoppedLine('worca', r), `Stopped: Worca could not run a try, twice: ${r}. Nothing in your workflow failed, and these tries are not counted. Choose Finish the rest to try again.`);
+  }
+  const w = boot(progress({ madeAgain: 1, rows: [{ exampleId: 1, name: 'Bulk', label: null, dots: ['passed', 'stopped'], summary: 'Not finished · 1 of 2 tried' }] },
+    { status: 'stopped', stopReason: 'worca', stopDetail: reasons[0] }));
+  assert.ok([...w.root.querySelectorAll('.wft-acts button')].some((b) => b.textContent === 'Finish the rest'), 'Finish the rest, as after any other stop');
+  assert.deepEqual([...w.root.querySelectorAll('.wft-try-dot')].map((d) => d.className), ['wft-try-dot ok', 'wft-try-dot'], 'a set-aside try is the plain grey dot');
+  assert.equal(w.root.querySelector('.wft-page > .hint').textContent,
+    'Stop testing keeps the tries that are done. You can finish the rest later without paying for them twice. 1 try was made again after a problem in Worca. It is not counted.');
+  const many = boot(progress({ madeAgain: 3 }));
+  assert.equal(many.root.querySelector('.wft-page > .hint').textContent,
+    'Stop testing keeps the tries that are done. You can finish the rest later without paying for them twice. 3 tries were made again after a problem in Worca. They are not counted.');
+  const done = boot(progress({ madeAgain: 2, done: 18, minutesLeft: null }, { status: 'done' }));
+  assert.equal(done.root.querySelector('.wft-page > .hint').textContent, '2 tries were made again after a problem in Worca. They are not counted.');
+  assert.equal(boot(progress({ madeAgain: 0 }, { status: 'done' })).root.querySelector('.wft-page > .hint'), null, 'none: no line');
+});
+
 test('stopped by a change during the test (D27): the C18 sentence, and no Finish the rest', () => {
   const ch = boot(progress({}, { status: 'stopped', stopReason: 'changed', stopDetail: 'Your draft changed since this test started: start a new test.' }));
   assert.equal(ch.root.querySelector('.wft-stopped').textContent, 'Your draft changed since this test started: start a new test.');

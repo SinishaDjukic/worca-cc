@@ -11,7 +11,7 @@ import { attachAnswerer } from './answers.mjs';
 import { tryRunBody } from './try-body.mjs';
 import { fmtUsd } from '../../shared/workflow-tests/checks.mjs';
 import { REASON, REASON_CODES } from '../failure-policy.mjs';
-import { setupFailedText } from '../../shared/workflow-tests/project-text.mjs';
+import { setupFailedText, worcaTryText, worcaProblemText } from '../../shared/workflow-tests/project-text.mjs';
 import { TRY_SETUP_STAGE } from './shell-step.mjs';
 import { WORKTREE_STAGE } from '../setup-stages.mjs';
 import { releaseCopy } from './project-copy.mjs';
@@ -64,6 +64,29 @@ export function pauseVerdict(reason, detail = null) {
   const line = typeof detail === 'string' ? detail.trim().split(/\r?\n/)[0].slice(0, 300).replace(/[\s.]+$/, '') : '';
   return { fail: true, detail: `a step failed: ${line || 'the try paused'}` };
 }
+const firstLine = (t) => (typeof t === 'string' ? t.trim().split(/\r?\n/)[0].slice(0, 300) : '');
+/**
+ * U-T2 (D2): did Worca itself fail to run this try (never the workflow)? In order: an error pause while the run was still
+ * in its own setup (state.setupStage set, and not the person's setup command, TRY_SETUP_STAGE, which stays D55); a
+ * started try with no run row (readTryOutcome's "The try did not start."); the answerer's own failure (answers.mjs's
+ * `{ worca: true }`); a check Worca could not run (result.mjs's `worcaProblem`). A step error after the setup, the
+ * person's setup command and a check that ran and missed are the workflow's. `detail` is the raw first line: for the
+ * server log and the try's verdict (For developers), never the page's sentences.
+ * @param {{pause?: object|null, liveState?: {setupStage?: string|null}|null, outcome?: object|null,
+ *   failReason?: {reason: string|null, worca?: boolean}|null, checkErrors?: Array}} o
+ * @returns {{kind: 'copy'|'start'|'answer'|'check', detail: string} | null}
+ */
+export function worcaProblemOf({ pause = null, liveState = null, outcome = null, failReason = null, checkErrors = [] } = {}) {
+  const stage = liveState && typeof liveState.setupStage === 'string' && liveState.setupStage ? liveState.setupStage : null;
+  if (pause && pause.fail && stage && stage !== TRY_SETUP_STAGE) return { kind: 'copy', detail: firstLine(pause.raw) || stage };
+  if (outcome && !outcome.pipelineId) return { kind: 'start', detail: firstLine(outcome.facts && outcome.facts.failReason) || 'The try did not start.' };
+  if (failReason && failReason.worca && failReason.reason) return { kind: 'answer', detail: firstLine(failReason.reason) };
+  const bad = (Array.isArray(checkErrors) ? checkErrors : []).find((c) => c && c.worcaProblem);
+  if (bad) return { kind: 'check', detail: firstLine(bad.error || bad.value) };
+  return null;
+}
+/** The server log's line for a Worca problem (its raw detail goes nowhere else but the try's verdict). */
+const logProblem = (what, p) => { console.warn(`[workflow-tests] Worca could not run ${what} (${p.kind}): ${p.detail || 'no detail'}`); };
 /** A verdict detail as a try's fail reason: a sentence, like answers.mjs's. */
 const sentence = (t) => `${t.charAt(0).toUpperCase()}${t.slice(1)}${/[.!?]$/.test(t) ? '' : '.'}`;
 const nowIso = () => new Date().toISOString();
@@ -195,7 +218,8 @@ export function createTestRunner(deps) {
   }
 
   function drive(runId) {
-    const st = { stopping: null, detail: null, running: new Map(), done: null };
+    // madeAgain: the slots (example, side, try number) this drive made again after a Worca problem (U-T2: once each).
+    const st = { stopping: null, detail: null, running: new Map(), done: null, madeAgain: new Set() };
     live.set(runId, st);
     st.freeAtStart = null;   // D60, board 35's "Disk in use": free disk now minus free disk later
     if (deps.freeDisk) Promise.resolve().then(() => deps.freeDisk()).then((n) => { st.freeAtStart = n; }, () => {});
@@ -282,11 +306,13 @@ export function createTestRunner(deps) {
     if (l && l.launch) await Promise.resolve(l.launch).catch(() => {});
     l = deps.liveRun(rec.runKey);
     const pipelineId = out.body.pipelineId || (l && l.pipelineId) || null;
-    if (!(l && String(l.status) === 'paused')) return { refused: false, pipelineId, pause: null };
+    if (!(l && String(l.status) === 'paused')) return { refused: false, pipelineId, pause: null, liveState: null };
+    // U-T2: where the run was when it paused (its setup stage stays set until the setup ends), read before it is stopped.
+    const liveState = { setupStage: (l.orch && l.orch.state && l.orch.state.setupStage) || null };
     await Promise.resolve().then(() => deps.stopRun(rec.runKey)).catch(() => {});
-    const pause = pauseVerdict(l.pauseReason ?? null, l.pauseDetail ?? null);
+    const pause = { ...pauseVerdict(l.pauseReason ?? null, l.pauseDetail ?? null), raw: l.pauseDetail ?? null };
     if (pause.stop) requestStop(st, pause.stop, pause.detail);
-    return { refused: false, pipelineId, pause };
+    return { refused: false, pipelineId, pause, liveState };
   }
 
   async function runTry(run, st, t) {
@@ -318,9 +344,10 @@ export function createTestRunner(deps) {
       if (st.stopping) { store.updateTry(t.id, { status: 'waiting', startedAt: null }); return; }
       notify(run);
       // attachAnswerer may call this more than once (one per question): the first reason wins, the run is stopped once.
-      const fail = (reason) => {
+      const fail = (reason, o = null) => {
         if (rec.failReason) return;
         rec.failReason = reason;
+        rec.failWorca = !!(o && o.worca);   // U-T2: the answerer itself failed
         if (rec.runKey) stopQuietly(rec.runKey);
       };
       // 3a (D42): a project example's try runs in Worca's copy of the project, from the example's start commit.
@@ -378,12 +405,18 @@ export function createTestRunner(deps) {
         requestStop(st, 'setup', setupFailedText(outcome.setup.cmd));
         return;
       }
+      // U-T2: a try Worca itself could not run is never judged: it is set aside (and made again once).
+      const problem = unfinished || st.stopping ? null
+        : worcaProblemOf({ pause: s.pause, liveState: s.liveState, outcome, failReason: { reason: rec.failReason, worca: rec.failWorca } });
+      if (problem) { setAside(run, st, t, problem, { costUsd: outcome.facts.costUsd, ...facts }); return; }
       if ((unfinished || st.stopping) && !rec.failReason && outcome.facts.status !== 'done') {
         store.updateTry(t.id, { status: 'stopped', costUsd: outcome.facts.costUsd, finishedAt: nowIso(), ...facts });
         return;
       }
       rec.phase = 'checking';
       const verdict = await deps.judge(example, outcome, { onCommand: (cmd) => { rec.checking = cmd; } });
+      const checkProblem = worcaProblemOf({ checkErrors: verdict && verdict.checks });   // U-T2: a check Worca could not run
+      if (checkProblem) { setAside(run, st, t, checkProblem, { costUsd: outcome.facts.costUsd, ...facts }); return; }
       // D60: the checkout's size after its setup, measured once per example and start.
       const diskBytes = outcome.project && outcome.project.checkoutDir && deps.measureDisk && facts.startCommit
         && store.lastDiskBytes(example.id, facts.startCommit) === null ? await deps.measureDisk(outcome.project.checkoutDir) : null;
@@ -405,6 +438,30 @@ export function createTestRunner(deps) {
       st.running.delete(t.id);
       notify(run);
     }
+  }
+
+  /**
+   * U-T2 (D2): a try with a Worca problem is stored stopped with `verdict.worcaProblem` (never judged, never in a rate:
+   * compareModel counts only passed and failed). The first time on its slot (example, side, try number) in this drive
+   * it is made again at once, as continueRun does (unlinked, so its cost stays in the test's cost, not in its results);
+   * the second time the test stops as 'worca'. The fresh try goes through runTry like any other, so its copy is held
+   * and released the same way (U-T1).
+   */
+  function setAside(run, st, t, problem, patch) {
+    logProblem(`try ${t.id} of test ${run.id}`, problem);
+    const verdict = { worcaProblem: worcaTryText(problem.kind), ...(problem.detail ? { worcaProblemDetail: problem.detail } : {}) };
+    const slot = `${t.exampleId}:${t.side}:${t.tryNo}`;
+    const again = !st.stopping && !st.madeAgain.has(slot);
+    tx(() => {
+      store.updateTry(t.id, { status: 'stopped', verdict, finishedAt: nowIso(), ...patch });
+      if (!again) return;
+      store.unlinkTry(run.id, t.id);
+      const fresh = store.insertTry({ runId: run.id, workflowId: t.workflowId, exampleId: t.exampleId, use: t.use, fp: t.fp,
+        exampleFp: t.exampleFp, tryNo: t.tryNo, mock: t.mock, connectors: t.connectors });
+      store.linkTry(run.id, fresh.id, t.side);
+    });
+    if (again) st.madeAgain.add(slot);
+    else requestStop(st, 'worca', worcaProblemText(problem.kind));   // a no-op while the test is already stopping
   }
 
   /** What a project try stores on its row (D67): its start, its change list without the paths, its setup run. */
@@ -434,51 +491,67 @@ export function createTestRunner(deps) {
     const uses = [...new Map(store.triesOfRun(run.id).filter((t) => t.runId === run.id && t.status === 'waiting')
       .map((t) => [store.useRef(t.use), t.use])).values()];
     for (const use of uses) {
-      if (st.stopping) return { status: 'waiting' };
-      const rec = { runKey: null, pipelineId: null, failReason: null, detach: null, outcome: null, project: null };
-      const key = `quick:${store.useRef(use)}`;
-      st.running.set(key, rec);
-      try {
-        const project = example.project ? await deps.prepareProject(example) : null;   // 3a: the quick check runs in the copy too
-        rec.project = project;
-        if (project) rec.copyKey = example.project.key;   // U-T1 (F1): held until cleanUp
-        const out = await deps.startRun(tryRunBody(example, store.readExampleFiles(example.id), { workflowId: run.workflowId, tryNo: 0, quick: true,
-          ...(project ? { project } : {}) }), {
-          startedBy: run.startedBy,
-          workflowTest: {
-            use,
-            connectors: 'pretend',   // a mock run sends nothing either way
-            // No setup: a mock run needs no installed dependencies.
-            ...(example.project ? { project: { key: example.project.key, setupCmd: null } } : {}),
-            onOrch: (orch, { runKey }) => {
-              rec.runKey = runKey;
-              rec.detach = attachAnswerer(orch, { ...example, otherwise: 'pick' }, {
-                answer: (id, payload) => deps.answer(runKey, id, payload),
-                onFail: (r) => { if (!rec.failReason) { rec.failReason = r; stopQuietly(runKey); } },
-              });
-            },
-          },
-        });
-        // A refused start or a pause that is not a step error says nothing about the workflow: the check still waits.
-        const s = await settleRun(st, rec, out, 'the quick check did not start', (runKey, pipelineId) => { rec.pipelineId = pipelineId; });
-        if (s.refused || (s.pause && s.pause.stop)) return { status: 'waiting' };
-        if (s.pause && s.pause.fail) return { status: 'failed', detail: s.pause.detail };
-        if (rec.detach) { rec.detach(); rec.detach = null; }
-        const o = await deps.outcomeOf(s.pipelineId, { failReason: rec.failReason });
-        rec.outcome = o;
+      // U-T2 (D2): a Worca problem makes the quick check again once; the second time the test stops as 'worca'.
+      for (let attempt = 1; ; attempt += 1) {
         if (st.stopping) return { status: 'waiting' };
-        if (o.facts.status !== 'done' || o.facts.failReason) return { status: 'failed', detail: o.facts.failReason || `the quick check ended as ${o.facts.status}` };
-      } catch (e) {
-        if (rec.runKey) stopQuietly(rec.runKey);
-        requestStop(st, e && e.code === 'NOT_READY' ? 'refused' : 'error', msgOf(e));
-        return { status: 'waiting' };
-      } finally {
-        if (rec.detach) rec.detach();
-        if (rec.project) await cleanUp(rec);
-        st.running.delete(key);
+        const r = await quickOnce(run, st, example, use);
+        if (!r.worca) { if (r.status !== 'passed') return r; break; }
+        logProblem(`the quick check of test ${run.id}`, r.worca);
+        if (attempt >= 2) { requestStop(st, 'worca', worcaProblemText(r.worca.kind)); return { status: 'waiting' }; }
       }
     }
     return { status: 'passed' };
+  }
+
+  /** One mock try of the quick check on `use`: {status} as quickCheck's, or {worca} for a Worca problem (U-T2). */
+  async function quickOnce(run, st, example, use) {
+    const rec = { runKey: null, pipelineId: null, failReason: null, failWorca: false, detach: null, outcome: null, project: null };
+    const key = `quick:${store.useRef(use)}`;
+    st.running.set(key, rec);
+    try {
+      const project = example.project ? await deps.prepareProject(example) : null;   // 3a: the quick check runs in the copy too
+      rec.project = project;
+      if (project) rec.copyKey = example.project.key;   // U-T1 (F1): held until cleanUp
+      const out = await deps.startRun(tryRunBody(example, store.readExampleFiles(example.id), { workflowId: run.workflowId, tryNo: 0, quick: true,
+        ...(project ? { project } : {}) }), {
+        startedBy: run.startedBy,
+        workflowTest: {
+          use,
+          connectors: 'pretend',   // a mock run sends nothing either way
+          // No setup: a mock run needs no installed dependencies.
+          ...(example.project ? { project: { key: example.project.key, setupCmd: null } } : {}),
+          onOrch: (orch, { runKey }) => {
+            rec.runKey = runKey;
+            rec.detach = attachAnswerer(orch, { ...example, otherwise: 'pick' }, {
+              answer: (id, payload) => deps.answer(runKey, id, payload),
+              onFail: (r, o) => { if (!rec.failReason) { rec.failReason = r; rec.failWorca = !!(o && o.worca); stopQuietly(runKey); } },
+            });
+          },
+        },
+      });
+      // A refused start or a pause that is not a step error says nothing about the workflow: the check still waits.
+      const s = await settleRun(st, rec, out, 'the quick check did not start', (runKey, pipelineId) => { rec.pipelineId = pipelineId; });
+      if (s.refused || (s.pause && s.pause.stop)) return { status: 'waiting' };
+      const setupProblem = st.stopping ? null : worcaProblemOf({ pause: s.pause, liveState: s.liveState });
+      if (setupProblem) return { worca: setupProblem };
+      if (s.pause && s.pause.fail) return { status: 'failed', detail: s.pause.detail };
+      if (rec.detach) { rec.detach(); rec.detach = null; }
+      const o = await deps.outcomeOf(s.pipelineId, { failReason: rec.failReason });
+      rec.outcome = o;
+      if (st.stopping) return { status: 'waiting' };
+      const problem = worcaProblemOf({ outcome: o, failReason: { reason: rec.failReason, worca: rec.failWorca } });
+      if (problem) return { worca: problem };
+      if (o.facts.status !== 'done' || o.facts.failReason) return { status: 'failed', detail: o.facts.failReason || `the quick check ended as ${o.facts.status}` };
+      return { status: 'passed' };
+    } catch (e) {
+      if (rec.runKey) stopQuietly(rec.runKey);
+      requestStop(st, e && e.code === 'NOT_READY' ? 'refused' : 'error', msgOf(e));
+      return { status: 'waiting' };
+    } finally {
+      if (rec.detach) rec.detach();
+      if (rec.project) await cleanUp(rec);
+      st.running.delete(key);
+    }
   }
 
   /** Resolves once the loop has stopped every running try and the run row says why (D27). */

@@ -215,3 +215,21 @@ export const firstUseNoneText = (workflow, { needsProject }) => (needsProject
 export const pickerNoneText = (workflow, { needsProject }) => (needsProject
   ? `Worca found no runs of ${workflow} yet. Run the workflow once on a project, or write an example yourself.`
   : `Worca found no runs of ${workflow} yet. Run the workflow once, or write an example yourself.`);
+
+// ── U-T2 (D2): a try Worca itself could not run is set aside, made again once, and never counted ─────────────
+/** Why Worca could not run a try, by kind (runner.mjs worcaProblemOf). No full stop: the sentences below compose it. */
+export const WORCA_PROBLEM_TEXT = Object.freeze({
+  copy: 'it could not prepare its copy of the project',
+  start: 'the try did not start',
+  answer: 'it could not answer a question for the try',
+  check: 'it could not run a check',
+});
+export const worcaProblemText = (kind) => WORCA_PROBLEM_TEXT[kind] || WORCA_PROBLEM_TEXT.start;
+/** A set-aside try's verdict (D75's wording family). */
+export const worcaTryText = (kind) => `Worca could not run this try: ${worcaProblemText(kind)}.`;
+/** The progress page's stopped line (stopReason 'worca'); `reason` is the stored stopDetail. */
+export const worcaStoppedText = (reason) => `Stopped: Worca could not run a try, twice: ${reason || WORCA_PROBLEM_TEXT.start}. Nothing in your workflow failed, and these tries are not counted. Choose Finish the rest to try again.`;
+/** The progress hint and the compare page's fair-comparison line. */
+export const madeAgainText = (n) => (n === 1
+  ? '1 try was made again after a problem in Worca. It is not counted.'
+  : `${n} tries were made again after a problem in Worca. They are not counted.`);
