@@ -57,7 +57,7 @@ export function guardCall(e, { forgeOf = () => null } = {}) {
     const head = opt(argv, '--head', '-H', '--source-branch');
     const into = opt(argv, '--base', '-B', '--target-branch');
     const what = mr ? 'merge request' : 'pull request';
-    return row({ tool: `open a ${what}`, noun: what, preview: `Open a ${what}: ${clip(title, 80)}`,
+    return row({ tool: `create a ${what}`, noun: what, preview: `Create a ${what}: ${clip(title, 80)}`,
       cap: head && into ? `Full text · from ${head} into ${into}` : 'Full text', full: `Title: ${title}${body ? `\n${body}` : ''}` });
   }
   if (server === 'GitHub CLI' && sub === 'issue comment') {
