@@ -651,12 +651,12 @@ buttons stay 28px; the card keeps the shared 24px padding (checked by the theme 
 Dialog anatomy (`ui/public/dialog-layout.mjs`): a `.viewer-modal` card that can outgrow the window carries `.dlg` and
 three direct children. `.dlg-head` holds the hero, title and subtitle (and head actions such as Close); `.dlg-body` is
 the only scroller; `.dlg-foot` holds the status line and the action row. Head and foot never scroll away, and a 1px
-divider appears only while content sits under them. Static dialogs write the wrappers in `index.html`; a JS builder
-calls `layoutDialog(card, { head, foot })`. Keep the card's 24px padding (the regions bleed over it). Seams are the
-body's padding, `--dlg-gap-head` / `--dlg-gap-foot` (default 18px / 14px): set those, never a margin. Never add a sticky
-header with negative margins, and keep a nested scroller only for a bordered box (a list or a preview) that is bounded
-on purpose. Under 640px of height the head compacts (smaller hero, tighter gap) but stays. The Marketplace's
-`.mk-dialog` / `.mk-sheet` follow the same model with their own class names.
+divider appears only while content sits under them. Static dialogs write the wrappers in their feature's markup part
+(`ui/public/FEATURE/*.html`); a JS builder calls `layoutDialog(card, { head, foot })`. Keep the card's 24px padding
+(the regions bleed over it). Seams are the body's padding, `--dlg-gap-head` / `--dlg-gap-foot` (default 18px / 14px):
+set those, never a margin. Never add a sticky header with negative margins, and keep a nested scroller only for a
+bordered box (a list or a preview) that is bounded on purpose. Under 640px of height the head compacts (smaller hero,
+tighter gap) but stays. The Marketplace's `.mk-dialog` / `.mk-sheet` follow the same model with their own class names.
 
 Keyboard shortcuts sheet (`ui/public/keys-sheet.mjs`): the one sheet listing the list keys, opened by `?` on a list page
 or View › Keyboard shortcuts. A 760px `.card` dialog in the shared anatomy: two columns of divided rows (label left, key
