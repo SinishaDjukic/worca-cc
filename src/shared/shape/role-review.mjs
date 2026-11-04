@@ -1,33 +1,29 @@
 // src/shared/shape/role-review.mjs — role reviews (spec §3): one planReviewer per picked perspective.
 // Pure and browser-safe: the orchestrator, the executor's prompt and (slice 4) the Plan step card import it.
-import { perspectiveByKey, normalizePerspectives, FIT_KEY } from './perspectives.mjs';
+import { PERSPECTIVES, DEFAULT_PERSPECTIVES, perspectiveByKey, normalizePerspectives, FIT_KEY } from './perspectives.mjs';
 import { extractChecklist } from './checklist.mjs';
+import { rolesForRound as engineRolesForRound, roleRecord as engineRoleRecord, roleTaskId } from '../graph/role-review-step.mjs';
+
+// The generic round logic lives in the engine step (src/shared/graph/role-review-step.mjs); re-exported here for the
+// current importers.
+export { findingsMarkdown, refinerVerdict, applyAddressed, roleTaskId } from '../graph/role-review-step.mjs';
 
 export const ROLE_REVIEW_MAX_ROUNDS = 2;
 const BLOCKING = new Set(['critical', 'major']);
-const SEVERITIES = new Set(['critical', 'major', 'minor', 'suggestion']);
-const STATUSES = new Set(['met', 'unmet', 'na']);
 const oneLine = (v) => String(v ?? '').replace(/\s+/g, ' ').trim();
 
-/** The slice task id for one role; the executor prefixes that role's files with it. */
-export const roleTaskId = (key) => `role-${key}`;
+const asRole = (key) => ({ key, label: perspectiveByKey(key)?.label || key });
+
 
 /** This role's checklist items in the plan, `[{ id, perspective, text }]`. */
 export const roleItems = (key, planMarkdown) => extractChecklist(planMarkdown || '').filter((i) => i.perspective === key);
 
-/** The roles one round reviews. Round 1: every picked perspective. Round 2+: drop a role whose last review in the
- *  same pass was clean (no critical/major) and whose checklist is fully met/na (spec §3 "Cost"). */
+/** The roles one round reviews, by perspective key (the engine's rolesForRound over Shaper's picked perspectives).
+ *  Round 1: every picked perspective. Round 2+: drop a clean, fully met role (spec §3 "Cost"). */
 export function rolesForRound(perspectives, round, lastRound = null) {
   const n = normalizePerspectives(perspectives);
   const keys = n.ok ? n.perspectives : ['product'];
-  if (round <= 1 || !lastRound) return keys.map((key) => ({ key, skip: false }));
-  const last = new Map((lastRound.roles || []).map((r) => [r.key, r]));
-  return keys.map((key) => {
-    const r = last.get(key);
-    const clean = !!r && !(r.findings || []).some((f) => BLOCKING.has(f.severity))
-      && (r.checklist || []).every((c) => c.status === 'met' || c.status === 'na');
-    return { key, skip: clean };
-  });
+  return engineRolesForRound(keys.map(asRole), round, lastRound).map(({ key, skip }) => ({ key, skip }));
 }
 
 /** The role brief for one reviewer prompt: this role only (spec §3 "Each reviewer gets"). */
@@ -62,62 +58,24 @@ export function houseBriefBlock(key, brief) {
     : 'This project has no house brief yet: judge the `R-fit` items against the codebase alone.\n\n');
 }
 
-/** One reviewer's raw verdict JSON → the stored role record. Ids are `role-round-n` (`ux-1-2`). Every expected
- *  checklist id gets an entry; one the reviewer left out is `unmet`, so it can never earn a round-2 skip. */
+/** One reviewer's raw verdict JSON → the stored role record, by perspective key (the engine's roleRecord). */
 export function roleRecord(key, round, verdict, expectedIds = []) {
-  const issues = Array.isArray(verdict?.issues) ? verdict.issues : [];
-  const findings = issues.filter((i) => SEVERITIES.has(i?.severity)).map((i, n) => ({
-    id: `${key}-${round}-${n + 1}`,
-    severity: i.severity,
-    title: oneLine(i.title),
-    section: oneLine(i.section || i.location),
-    fix: oneLine(i.fix || i.detail),
-    status: 'open',
-  }));
-  const given = new Map((Array.isArray(verdict?.checklist) ? verdict.checklist : [])
-    .filter((c) => expectedIds.includes(String(c?.id)))
-    .map((c) => [c.id, { id: c.id, status: STATUSES.has(c.status) ? c.status : 'unmet', evidence: oneLine(c.evidence) }]));
-  const checklist = expectedIds.map((id) => given.get(id) || { id, status: 'unmet', evidence: 'no verdict given' });
-  return { key, label: perspectiveByKey(key)?.label || key, skipped: false, findings, checklist };
+  return engineRoleRecord(asRole(key), round, verdict, expectedIds);
 }
 
-/** The findings file the refiner reads: one section per role, in perspective order. */
-export function findingsMarkdown(round, planPath, roles) {
-  const lines = [`# Role reviews — round ${round}`, '', `Plan reviewed: ${planPath}`, ''];
-  for (const r of roles) {
-    lines.push(`## ${r.label}${r.skipped ? ' (skipped: clean last round)' : ''}`, '');
-    if (!r.findings.length) lines.push('- No findings.');
-    for (const f of r.findings) lines.push(`- **${f.id}** [${f.severity}] ${f.section ? `${f.section}: ` : ''}${f.title} — fix: ${f.fix}`);
-    for (const c of r.checklist.filter((x) => x.status === 'unmet')) lines.push(`- ${c.id}: unmet — ${c.evidence}`);
-    lines.push('');
-  }
-  return lines.join('\n');
-}
-
-/** Spec §3 "Loop": the refiner's ROUTED verdict — this round's critical/major reviewer findings plus the refiner's own
- *  minor/suggestion issues. The refiner's own critical/major issues are returned apart (stored, never routed). */
-export function refinerVerdict(round, refinerOwn) {
-  const own = Array.isArray(refinerOwn?.issues) ? refinerOwn.issues : [];
-  const reviewers = (round?.roles || []).filter((r) => !r.skipped).flatMap((r) => r.findings)
-    .filter((f) => BLOCKING.has(f.severity))
-    .map((f) => ({ severity: f.severity, title: `${f.id}: ${f.title}`, detail: f.fix, location: f.section }));
-  return {
-    verdict: { summary: refinerOwn?.summary || '', issues: [...reviewers, ...own.filter((i) => !BLOCKING.has(i?.severity))] },
-    refinerIssues: own.filter((i) => BLOCKING.has(i?.severity)),
-  };
-}
-
-/** Mark the round's findings fixed/open from the refiner's `addressed` list (mutates and returns the round). */
-export function applyAddressed(round, addressed, planVersion) {
-  const done = new Set(Array.isArray(addressed) ? addressed.map(String) : []);
-  for (const r of round.roles) {
-    if (r.skipped) continue;
-    for (const f of r.findings) {
-      if (done.has(f.id)) { f.status = 'fixed'; f.fixedIn = planVersion; } else f.status = 'open';
-    }
-  }
-  return round;
-}
+/** Shaper's checklist provider for the engine's role-review step (`checklist: 'perspectives'`): the perspectives as
+ *  roles, the run's picked list normalised, each role's R-items, its brief and the house brief for Project fit. */
+export const PERSPECTIVE_ROLE_CHECKLIST = Object.freeze({
+  roles: () => PERSPECTIVES.map(({ key, label }) => ({ key, label })),
+  normalizePicked(raw) {
+    if (raw === null || raw === undefined) return [...DEFAULT_PERSPECTIVES];
+    const n = normalizePerspectives(raw);
+    return n.ok ? n.perspectives : ['product'];
+  },
+  items: (key, planText) => roleItems(key, planText).map((i) => i.id),
+  brief: (key, planText, { houseBrief } = {}) => roleBriefBlock(key, planText) + houseBriefBlock(key, houseBrief),
+  wantsHouseBrief: (key) => key === FIT_KEY,
+});
 
 /** Open critical/major findings after the last round (slice 4's "Approve with N open issues"). */
 export function openBlocking(roleReviews) {

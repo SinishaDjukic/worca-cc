@@ -15,7 +15,7 @@ import {
   resolveShapeRequest, validatePlanAnswer, renderPlanFeedback, isShapeWorkflowId, PLAN_ASK_KIND, PLAN_FEEDBACK_MAX,
   initialShaping, planFileOf,
 } from '../src/core/shape/run.mjs';
-import { DEFAULT_PERSPECTIVES } from '../src/shared/shape/perspectives.mjs';
+import { DEFAULT_PERSPECTIVES, PERSPECTIVES } from '../src/shared/shape/perspectives.mjs';
 import { loadAgentRegistry } from '../src/core/agent-registry.mjs';
 import { loadScriptRegistry } from '../src/core/script-registry.mjs';
 import { validateGraph } from '../src/shared/graph/validate.mjs';
@@ -82,7 +82,10 @@ test('role reviews (spec §3): both shape graphs fan the plan out to n_roles and
   for (const wf of [GRAPH_SHAPE_WORKFLOW, GRAPH_SHAPE_UX_WORKFLOW]) {
     const roles = wf.nodes.find((n) => n.id === 'n_roles');
     assert.equal(roles.key, 'planReviewer', wf.id);
-    assert.deepEqual(roles.config, { roleReview: true, model: 'claude-sonnet-5-5', effort: 'medium' }, wf.id);
+    assert.deepEqual(roles.config, {
+      roleReview: { roles: PERSPECTIVES.map(({ key, label }) => ({ key, label })), source: 'picked', target: 'plan', checklist: 'perspectives', sink: 'refiner' },
+      model: 'claude-sonnet-5-5', effort: 'medium',
+    }, wf.id);
     assert.equal(wf.nodes.find((n) => n.id === 'n_refine').config.awaitAll, true, wf.id);
     assert.ok(!wf.wires.some((w) => edge(w) === 'n_refine.revise->n_refine.revise'), `${wf.id}: no refiner self-loop`);
     const w5 = wf.wires.find((w) => w.id === 'w5');

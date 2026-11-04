@@ -5,8 +5,9 @@
 import { test, before, after, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm, readFile } from 'node:fs/promises';
+import { mkdirSync, readFileSync, writeFileSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname, basename } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { gitDir } from './helpers/git-dir.mjs';
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
@@ -186,6 +187,121 @@ test('9 Ask for changes: the Planner re-runs, then a new pass reviews it at roun
   const lastDone = Math.max(...slices(h.execs, 'done').filter((e) => e.executionId.startsWith('x:n_roles:3:')).map(idx));
   assert.ok(idx(shells(h.execs, 'n_refine')[2]) > lastDone, 'Refine waits for the new pass');
   assert.deepEqual(h.orch.state.roleReviews.rounds.map((r) => [r.pass, r.round]), [[1, 1], [1, 2], [2, 1]]);
+});
+
+// Parity (engine role-review step): a no-picks Shaper run is recorded before the move and must not drift after it.
+// Regenerate deliberately with UPDATE_ROLE_PARITY=1 and review the diff.
+const PARITY_FILE = join(import.meta.dirname, 'fixtures', 'role-review', 'shaper-parity.json');
+const ADDITIVE = ['model', 'effort', 'wanted'];
+
+/** Every run-specific part of a string as a placeholder: the temp homes, the run id, the store key and the date. */
+function parityNormalizer(orch, dir) {
+  const pipeDir = orch.pipeline.dir;
+  const storeDir = dirname(dirname(pipeDir));
+  const pairs = [];
+  for (const [p, name] of [[pipeDir, '$PIPE'], [storeDir, '$STORE'], [process.env.WORCA_HOME, '$WH'], [dir, '$PROJ']]) {
+    for (const v of new Set([p, realpathSync(p)])) pairs.push([v, name]);
+  }
+  pairs.sort((a, b) => b[0].length - a[0].length);
+  const id = orch.getState().id;
+  const key = basename(storeDir);
+  return (s) => {
+    let t = String(s);
+    for (const [v, name] of pairs) t = t.split(v).join(name);
+    return t.split(id).join('$RUN').split(key).join('$KEY').replace(/\b\d\d-\d\d-\d\d-/g, '$TS-');
+  };
+}
+const sortKeys = (v) => (Array.isArray(v) ? v.map(sortKeys)
+  : v && typeof v === 'object' ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, sortKeys(v[k])])) : v);
+
+/** One no-picks Shaper mock run, captured: every n_roles slice prompt, the role reviews, each findings file, and each
+ *  Refine's plan/findings bindings and prompt. Additive record keys come back apart in `pairs`. */
+async function captureParity(table) {
+  if (table) severities(table); else delete process.env.WORCA_MOCK_ROLE_REVIEW;
+  const prompts = [];
+  _testing.runClaude = (o) => { prompts.push(o.prompt); return runClaude(o); };
+  const h = start();
+  const res = await h.done;
+  assert.equal(res.status, 'done', res.error);
+  const norm = parityNormalizer(h.orch, h.dir);
+  const marker = (p, k) => (new RegExp(`^${k}: (.*)$`, 'm').exec(p) || [])[1] || '';
+  const slicePrompts = prompts.filter((p) => marker(p, 'MOCK_PERSPECTIVE'))
+    .sort((a, b) => (marker(a, 'MOCK_CYCLE') + marker(a, 'MOCK_PERSPECTIVE')).localeCompare(marker(b, 'MOCK_CYCLE') + marker(b, 'MOCK_PERSPECTIVE')))
+    .map(norm);
+  const refinePrompts = prompts.filter((p) => marker(p, 'MOCK_ROLE') === 'refiner').map(norm);
+  const refines = h.orch._graphSnapshot.execs.filter((e) => e.nodeId === 'n_refine').sort((a, b) => a.ordinal - b.ordinal);
+  const pairs = [];
+  const rounds = h.orch.state.roleReviews.rounds.map((r) => ({
+    ...r,
+    roles: r.roles.map((rec) => {
+      const kept = { ...rec };
+      for (const k of ADDITIVE) delete kept[k];
+      pairs.push(Object.fromEntries(ADDITIVE.filter((k) => k in rec).map((k) => [k, rec[k]])));
+      return kept;
+    }),
+  }));
+  const capture = {
+    slicePrompts,
+    roleReviews: JSON.parse(norm(JSON.stringify(sortKeys({ rounds })))),
+    findings: await Promise.all(refines.map(async (e) => norm(await readFile(e.bindings.findings.path, 'utf8')))),
+    refine: refines.map((e) => ({ plan: norm(e.bindings.plan.path), findings: norm(e.bindings.findings.path) })),
+    refinePrompts,
+  };
+  return { capture, pairs };
+}
+
+test('parity: a no-picks Shaper mock run matches the recorded fixture', async () => {
+  const scenarios = { oneRound: null, twoRounds: { ux: { 1: 'critical' } } };
+  const actual = {};
+  const pairs = [];
+  for (const [name, table] of Object.entries(scenarios)) {
+    const a = await captureParity(table);
+    if (process.env.UPDATE_ROLE_PARITY === '1') {
+      // Two captures in a row must be byte-identical before the fixture is ever written.
+      const b = await captureParity(table);
+      assert.equal(JSON.stringify(b.capture), JSON.stringify(a.capture), `${name}: the capture is not deterministic`);
+    }
+    actual[name] = a.capture;
+    pairs.push(...a.pairs);
+  }
+  const text = `${JSON.stringify(actual, null, 2)}\n`;
+  if (process.env.UPDATE_ROLE_PARITY === '1') {
+    mkdirSync(dirname(PARITY_FILE), { recursive: true });
+    writeFileSync(PARITY_FILE, text, 'utf8');
+    return;
+  }
+  assert.deepEqual(actual, JSON.parse(readFileSync(PARITY_FILE, 'utf8')),
+    'drifted from test/fixtures/role-review/shaper-parity.json. If the change is deliberate, review the diff and regenerate with UPDATE_ROLE_PARITY=1.');
+  // The additive keys: every record names the pair its slice ran on (n_roles's own pair, no picks), none dropped.
+  const reviewed = pairs.filter((p) => Object.keys(p).length);
+  assert.ok(reviewed.length >= 4, 'every reviewed record carries its pair');
+  for (const p of reviewed) assert.deepEqual(p, { model: 'claude-sonnet-5-5', effort: 'medium' });
+});
+
+test('an old roleReview:true run resumes and reads its records', async () => {
+  severities({ ux: { 1: 'critical' } });
+  const dir = gitDir('roles-legacy');
+  const h = start({ projectDir: dir });
+  await waitFor(() => slices(h.execs).some((e) => e.executionId.startsWith('x:n_roles:2:')));
+  h.orch.pause();
+  assert.equal((await h.done).status, 'paused');
+  const saved = readPipelineForResume(h.orch.getState().id);
+  // As a run saved before the engine step: the legacy `true` on the cell, no per-role picks, records without a pair.
+  const cell = saved.resumePoint.manifest.graph.nodes.find((n) => n.id === 'n_roles');
+  cell.config = { ...cell.config, roleReview: true };
+  delete cell.roles;
+  for (const r of saved.resumePoint.roleReviews.rounds[0].roles) { delete r.model; delete r.effort; delete r.wanted; }
+  const old = JSON.parse(JSON.stringify(saved.resumePoint.roleReviews.rounds[0].roles));
+
+  const h2 = start({ projectDir: dir, resume: saved, shape: undefined });
+  const res = await h2.done;
+  assert.equal(res.status, 'done', res.error);
+  assert.deepEqual(slices(h2.execs).map((e) => e.title), ['UX'], 'it continues at round 2');
+  const rr = h2.orch.state.roleReviews;
+  assert.deepEqual(rr.rounds.map((r) => [r.pass, r.round]), [[1, 1], [1, 2]]);
+  assert.deepEqual(rr.rounds[0].roles, old, 'the old records read unchanged');
+  assert.deepEqual([rr.rounds[1].roles.find((r) => r.key === 'ux').model, rr.rounds[1].roles.find((r) => r.key === 'ux').effort],
+    ['claude-sonnet-5-5', 'medium'], 'the new round records the node\'s pair');
 });
 
 test('10 an old manifest (refiner self-loop) resumes with its own topology', async () => {

@@ -1,0 +1,1423 @@
+{
+  "agentKeys": [
+    "clarify",
+    "implementer",
+    "planner",
+    "refiner",
+    "reviewer"
+  ],
+  "agentsByKey": {
+    "clarify": {
+      "agentFile": "worca-cc-clarify.md",
+      "agentPath": "$REPO/agents/worca-cc-clarify.md",
+      "asksQuestions": true,
+      "color": "red",
+      "description": "Turns hidden decisions into questions before planning. Multiple-choice, so later steps never guess.",
+      "displayName": "Clarify",
+      "domain": "coding",
+      "fanOut": true,
+      "frontmatter": {
+        "description": "Clarify agent for the orchestrator pipeline. Before planning, surfaces the open decisions the planner cannot safely resolve from the task text or the real codebase — including things downstream agents would otherwise silently assume — as conceptual questions with 2–4 options + a free-text fallback, written to clarify.json. Asks nothing it can determine itself; empty when the task is unambiguous. Invoked by the deterministic orchestrator, never directly by a human.",
+        "fields": {
+          "description": "Clarify agent for the orchestrator pipeline. Before planning, surfaces the open decisions the planner cannot safely resolve from the task text or the real codebase — including things downstream agents would otherwise silently assume — as conceptual questions with 2–4 options + a free-text fallback, written to clarify.json. Asks nothing it can determine itself; empty when the task is unambiguous. Invoked by the deterministic orchestrator, never directly by a human.",
+          "model": "inherit",
+          "name": "worca-cc-clarify",
+          "tools": "Read, Write, Edit, Bash, Grep, Glob, Skill"
+        },
+        "model": "inherit",
+        "name": "worca-cc-clarify",
+        "tools": [
+          "Read",
+          "Write",
+          "Edit",
+          "Bash",
+          "Grep",
+          "Glob",
+          "Skill"
+        ]
+      },
+      "humanEffort": {
+        "hours": 0.25
+      },
+      "icon": "<circle cx=\"12\" cy=\"12\" r=\"9\"/><path d=\"M9.4 9.3a2.7 2.7 0 0 1 5.2 1c0 1.8-2.6 2.1-2.6 3.6\" stroke-linecap=\"round\" fill=\"none\"/><circle cx=\"12\" cy=\"17\" r=\"0.7\" fill=\"currentColor\" stroke=\"none\"/>",
+      "inputs": [
+        {
+          "as": "file",
+          "id": "task",
+          "required": true,
+          "type": "md"
+        }
+      ],
+      "key": "clarify",
+      "metaVersion": 2,
+      "mockRole": "clarify",
+      "order": 0,
+      "origin": "builtin",
+      "outputs": [
+        {
+          "artifactKind": "clarify",
+          "filename": "clarify.json",
+          "id": "answers",
+          "store": "run",
+          "type": "json",
+          "when": "always"
+        }
+      ],
+      "portSummary": "Reads task; produces answers.",
+      "progressStage": "plan",
+      "promptHints": "",
+      "questionsDefault": true,
+      "questionsLocked": true,
+      "requiresAssets": [],
+      "requiresSkills": [],
+      "runnerType": "clarifier",
+      "scope": "project"
+    },
+    "implementer": {
+      "agentFile": "worca-cc-implementer.md",
+      "agentPath": "$REPO/agents/worca-cc-implementer.md",
+      "asksQuestions": true,
+      "color": "peach",
+      "description": "Writes the code from the approved plan, strict TDD. In fix mode, addresses only the issues a review flagged.",
+      "displayName": "Implementation",
+      "domain": "coding",
+      "fanOut": true,
+      "frontmatter": {
+        "description": "Implementer for the orchestrator pipeline. Follows the latest approved plan's contracts with NO deviation and writes the function bodies itself, test-first (red-green-refactor) for every change that can plausibly break; deviates only when something does not work AT ALL, and records the deviation. In FIX mode, reads the referenced code review and fixes ONLY the flagged critical/major issues. Invoked by the deterministic orchestrator.",
+        "fields": {
+          "description": "Implementer for the orchestrator pipeline. Follows the latest approved plan's contracts with NO deviation and writes the function bodies itself, test-first (red-green-refactor) for every change that can plausibly break; deviates only when something does not work AT ALL, and records the deviation. In FIX mode, reads the referenced code review and fixes ONLY the flagged critical/major issues. Invoked by the deterministic orchestrator.",
+          "model": "inherit",
+          "name": "worca-cc-implementer",
+          "tools": "Read, Write, Edit, Bash, Grep, Glob, Skill"
+        },
+        "model": "inherit",
+        "name": "worca-cc-implementer",
+        "tools": [
+          "Read",
+          "Write",
+          "Edit",
+          "Bash",
+          "Grep",
+          "Glob",
+          "Skill"
+        ]
+      },
+      "icon": "<path d=\"M9 8l-4 4 4 4M15 8l4 4-4 4\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>",
+      "inputs": [
+        {
+          "as": "fix-review",
+          "directive": "Address EVERY critical and major issue in the review below, then run the tests that cover what you changed. Follow the plan; deviate only if something does not work at all.",
+          "id": "fix",
+          "loop": true,
+          "required": false,
+          "type": "md"
+        },
+        {
+          "as": "file",
+          "directive": "Implement the task below using TDD (red-green-refactor). The TASK file is a self-contained vertical slice and is AUTHORITATIVE — do exactly what it says and nothing outside its scope. The plan is reference/context only; you do NOT need to read the whole plan.",
+          "expands": true,
+          "id": "task",
+          "required": false,
+          "type": "json"
+        },
+        {
+          "as": "file",
+          "directive": "Implement the plan using TDD (red-green-refactor). Follow its contracts with NO deviation; deviate slightly only if a contract does not work at all.",
+          "id": "plan",
+          "required": true,
+          "type": "md"
+        }
+      ],
+      "key": "implementer",
+      "metaVersion": 2,
+      "mockRole": "implementer",
+      "order": 3,
+      "origin": "builtin",
+      "outputs": [
+        {
+          "id": "done",
+          "type": "void",
+          "when": "always"
+        }
+      ],
+      "portSummary": "Reads fix, task, plan; produces done.",
+      "progressStage": "build",
+      "promptHints": "Work inside the project directory (your cwd). Commit nothing; just edit files and tests.",
+      "questionsDefault": false,
+      "questionsLocked": false,
+      "requiresAssets": [],
+      "requiresSkills": [],
+      "runnerType": "producer",
+      "scope": "project",
+      "sideEffect": "code",
+      "workspaceFanOut": true,
+      "workspaceStrategy": "task"
+    },
+    "planner": {
+      "agentFile": "worca-cc-planner.md",
+      "agentPath": "$REPO/agents/worca-cc-planner.md",
+      "asksQuestions": true,
+      "color": "violet",
+      "description": "Explores the codebase and writes the implementation plan. Contracts, invariants, task breakdown and test list; can ask clarifying questions first.",
+      "displayName": "Plan",
+      "domain": "coding",
+      "fanOut": true,
+      "frontmatter": {
+        "description": "Planner for the orchestrator pipeline. Writes a design-level implementation plan markdown (contracts, invariants, file list and test list; no full code bodies), grounded in the real codebase, honoring any clarify answers passed in the prompt and ending with a Clarifications Q&A section; never asks the user questions. Has a REVISE-from-review variant. Invoked by the deterministic orchestrator, never directly by a human.",
+        "fields": {
+          "description": "Planner for the orchestrator pipeline. Writes a design-level implementation plan markdown (contracts, invariants, file list and test list; no full code bodies), grounded in the real codebase, honoring any clarify answers passed in the prompt and ending with a Clarifications Q&A section; never asks the user questions. Has a REVISE-from-review variant. Invoked by the deterministic orchestrator, never directly by a human.",
+          "model": "inherit",
+          "name": "worca-cc-planner",
+          "tools": "Read, Write, Edit, Bash, Grep, Glob, Skill"
+        },
+        "model": "inherit",
+        "name": "worca-cc-planner",
+        "tools": [
+          "Read",
+          "Write",
+          "Edit",
+          "Bash",
+          "Grep",
+          "Glob",
+          "Skill"
+        ]
+      },
+      "icon": "<path d=\"M8 6h11M8 12h11M8 18h8\" stroke-linecap=\"round\"/><circle cx=\"4\" cy=\"6\" r=\"1.1\"/><circle cx=\"4\" cy=\"12\" r=\"1.1\"/><circle cx=\"4\" cy=\"18\" r=\"1.1\"/>",
+      "inputs": [
+        {
+          "as": "file",
+          "id": "task",
+          "required": true,
+          "type": "md"
+        },
+        {
+          "as": "answers",
+          "id": "answers",
+          "required": false,
+          "type": "json"
+        },
+        {
+          "as": "file",
+          "directive": "## Revise to address the review\n\nA reviewer found issues with the previous plan. Re-plan from scratch (cold start) and address EVERY critical and major finding in the review below. Preserve the \"## Clarifications (Q&A)\" section.",
+          "id": "revise",
+          "loop": true,
+          "required": false,
+          "type": "md"
+        }
+      ],
+      "key": "planner",
+      "metaVersion": 2,
+      "mockRole": "planner-plan",
+      "order": 1,
+      "origin": "builtin",
+      "outputs": [
+        {
+          "artifactKind": "plan",
+          "filename": "{base}{vsuffix}.md",
+          "id": "plan",
+          "store": "project",
+          "type": "md",
+          "when": "always"
+        }
+      ],
+      "portSummary": "Reads task, answers, revise; produces plan.",
+      "progressStage": "plan",
+      "promptHints": "Write a complete, design-level implementation plan. It MUST name the contracts (files, signatures, data and error shapes), the invariants, the acceptance mapping and the tests, without full code bodies, and MUST end with a \"## Clarifications (Q&A)\" section reproducing the questions and the user answers below so the reviewer can see them.",
+      "questionsDefault": false,
+      "questionsLocked": false,
+      "requiresAssets": [],
+      "requiresSkills": [],
+      "runnerType": "producer",
+      "scope": "project",
+      "workspaceFanOut": true,
+      "workspaceStrategy": "explore"
+    },
+    "refiner": {
+      "agentFile": "worca-cc-plan-refiner.md",
+      "agentPath": "$REPO/agents/worca-cc-plan-refiner.md",
+      "asksQuestions": true,
+      "color": "green",
+      "description": "Rewrites the latest plan into a tighter version. Fixes structure, correctness, contracts and invariants in one read-only pass.",
+      "displayName": "Refine Plan",
+      "domain": "coding",
+      "fanOut": true,
+      "frontmatter": {
+        "description": "Plan Refiner for the orchestrator pipeline. Reads an input design-level plan, writes an improved -vN plan that fixes structure, correctness, contracts and invariants (no replay, no test runs, bounded growth), and emits review-cycleN.json with honest critical/major/minor/suggestion severities. Runs once per refine cycle until no blocking issues remain. Invoked by the deterministic orchestrator.",
+        "fields": {
+          "description": "Plan Refiner for the orchestrator pipeline. Reads an input design-level plan, writes an improved -vN plan that fixes structure, correctness, contracts and invariants (no replay, no test runs, bounded growth), and emits review-cycleN.json with honest critical/major/minor/suggestion severities. Runs once per refine cycle until no blocking issues remain. Invoked by the deterministic orchestrator.",
+          "model": "inherit",
+          "name": "worca-cc-plan-refiner",
+          "tools": "Read, Write, Edit, Bash, Grep, Glob, Skill"
+        },
+        "model": "inherit",
+        "name": "worca-cc-plan-refiner",
+        "tools": [
+          "Read",
+          "Write",
+          "Edit",
+          "Bash",
+          "Grep",
+          "Glob",
+          "Skill"
+        ]
+      },
+      "icon": "<path d=\"M12 3v3M12 18v3M4.5 7.5l2 1M17.5 15.5l2 1M4.5 16.5l2-1M17.5 8.5l2-1\" stroke-linecap=\"round\"/><path d=\"M12 8.2l1.2 2.6L16 12l-2.8 1.2L12 15.8l-1.2-2.6L8 12l2.8-1.2L12 8.2Z\" stroke-linejoin=\"round\"/>",
+      "inputs": [
+        {
+          "as": "file",
+          "id": "plan",
+          "required": true,
+          "type": "md"
+        },
+        {
+          "as": "file",
+          "id": "revise",
+          "loop": true,
+          "required": false,
+          "type": "md"
+        },
+        {
+          "as": "file",
+          "directive": "## Role reviews\n\nIndependent role reviewers checked the plan bound to your `plan` input; the findings file below lists what each role found. Write the next plan version from that plan, fixing every critical and major finding and every unmet checklist item; take minor findings and suggestions where they help. In your review JSON add `\"addressed\": [\"ux-1-1\", …]` listing the finding ids you fixed. Report only problems you could not fix as issues.",
+          "id": "findings",
+          "required": false,
+          "type": "md"
+        }
+      ],
+      "key": "refiner",
+      "metaVersion": 2,
+      "mockRole": "refiner",
+      "order": 2,
+      "origin": "builtin",
+      "outputs": [
+        {
+          "artifactKind": "plan",
+          "filename": "{base}{vsuffix}.md",
+          "id": "plan",
+          "store": "project",
+          "type": "md",
+          "when": "clean"
+        },
+        {
+          "artifactKind": "plan",
+          "filename": "{base}{vsuffix}.md",
+          "id": "revise",
+          "store": "project",
+          "type": "md",
+          "when": "blocking"
+        }
+      ],
+      "portSummary": "Reads plan, revise, findings; produces plan, revise.",
+      "progressStage": "plan",
+      "promptHints": "Read the current plan, critically review it INCLUDING its contracts, invariants and acceptance mapping (read-only: no replay, no test runs), then write an improved version at most 1.3× the input size and a machine-readable review.\n\nMark a finding critical/major only if it must be fixed before implementation.",
+      "questionsDefault": false,
+      "questionsLocked": false,
+      "requiresAssets": [],
+      "requiresSkills": [],
+      "runnerType": "producer",
+      "scope": "project",
+      "verdict": {
+        "filename": "refine-review-cycle{cycle}.json"
+      },
+      "wantsRequest": true,
+      "workspaceFanOut": true,
+      "workspaceStrategy": "explore"
+    },
+    "reviewer": {
+      "agentFile": "worca-cc-code-reviewer.md",
+      "agentPath": "$REPO/agents/worca-cc-code-reviewer.md",
+      "ask": {
+        "forms": {
+          "review-findings": {
+            "answer": {
+              "properties": {
+                "findings": {
+                  "items": {
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "note": {
+                        "maxLength": 2000,
+                        "type": "string"
+                      },
+                      "verdict": {
+                        "default": "keep",
+                        "enum": [
+                          "keep",
+                          "waive"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "verdict"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                },
+                "notes": {
+                  "maxLength": 4000,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "findings"
+              ],
+              "type": "object"
+            },
+            "data": {
+              "properties": {
+                "findings": {
+                  "items": {
+                    "properties": {
+                      "detail": {
+                        "maxLength": 2000,
+                        "type": "string"
+                      },
+                      "id": {
+                        "maxLength": 64,
+                        "type": "string"
+                      },
+                      "severity": {
+                        "enum": [
+                          "critical",
+                          "major",
+                          "minor",
+                          "suggestion"
+                        ],
+                        "type": "string"
+                      },
+                      "title": {
+                        "maxLength": 200,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "title"
+                    ],
+                    "type": "object"
+                  },
+                  "maxItems": 20,
+                  "type": "array"
+                },
+                "summary": {
+                  "maxLength": 4000,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "findings"
+              ],
+              "type": "object"
+            },
+            "example": {
+              "findings": [
+                {
+                  "detail": "The plan put it in the client. Was that intentional?",
+                  "id": "f1",
+                  "severity": "major",
+                  "title": "Plan deviation: the retry lives in the caller"
+                },
+                {
+                  "detail": "It is covered by the integration test only.",
+                  "id": "f2",
+                  "severity": "minor",
+                  "title": "No unit test for the empty-list branch"
+                }
+              ],
+              "summary": "Two findings I would waive if the deviation was intended."
+            },
+            "layout": [
+              {
+                "bind": "data.summary",
+                "widget": "markdown"
+              },
+              {
+                "bind": "data.findings",
+                "field": "findings",
+                "label": "Findings",
+                "widget": "review-list"
+              },
+              {
+                "field": "notes",
+                "label": "Notes",
+                "widget": "textarea"
+              }
+            ],
+            "title": "Confirm these findings",
+            "version": 1
+          }
+        }
+      },
+      "asksQuestions": true,
+      "color": "blue",
+      "description": "Reviews the implementation diff against the plan. Honest verdict; blocking findings loop back to the implementer.",
+      "displayName": "Review Implementation",
+      "domain": "coding",
+      "fanOut": true,
+      "frontmatter": {
+        "description": "Code Reviewer for the orchestrator pipeline. Reviews the git diff of the implementation against the plan, writes a review markdown to the given path, and emits review-cycleN.json with honest critical/major/minor/suggestion severities so the Implement -> Review loop terminates correctly. Invoked by the deterministic orchestrator.",
+        "fields": {
+          "description": "Code Reviewer for the orchestrator pipeline. Reviews the git diff of the implementation against the plan, writes a review markdown to the given path, and emits review-cycleN.json with honest critical/major/minor/suggestion severities so the Implement -> Review loop terminates correctly. Invoked by the deterministic orchestrator.",
+          "model": "inherit",
+          "name": "worca-cc-code-reviewer",
+          "tools": "Read, Write, Edit, Bash, Grep, Glob, Skill"
+        },
+        "model": "inherit",
+        "name": "worca-cc-code-reviewer",
+        "tools": [
+          "Read",
+          "Write",
+          "Edit",
+          "Bash",
+          "Grep",
+          "Glob",
+          "Skill"
+        ]
+      },
+      "icon": "<path d=\"M12 3l7 3v5c0 4.4-3 7.6-7 9-4-1.4-7-4.6-7-9V6l7-3Z\" stroke-linejoin=\"round\"/><path d=\"M9 12l2 2 4-4\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>",
+      "inputs": [
+        {
+          "as": "file",
+          "id": "plan",
+          "required": true,
+          "type": "md"
+        },
+        {
+          "as": "worktree",
+          "id": "done",
+          "required": false,
+          "type": "void"
+        }
+      ],
+      "key": "reviewer",
+      "metaVersion": 2,
+      "mockRole": "reviewer",
+      "needsRepo": true,
+      "order": 4,
+      "origin": "builtin",
+      "outputs": [
+        {
+          "artifactKind": "review",
+          "filename": "{base}-impl-review.md",
+          "id": "review",
+          "store": "project",
+          "type": "md",
+          "when": "blocking"
+        },
+        {
+          "id": "pass",
+          "type": "void",
+          "when": "clean"
+        }
+      ],
+      "portSummary": "Reads plan; produces review.",
+      "progressStage": "review",
+      "promptHints": "Review the git diff of what was implemented against the plan's contracts and invariants, with an adversarial pass and the severity floors.",
+      "questionsDefault": false,
+      "questionsLocked": false,
+      "requiresAssets": [],
+      "requiresSkills": [],
+      "runnerType": "verifier",
+      "scope": "project",
+      "verdict": {
+        "filename": "impl-review-cycle{cycle}.json"
+      },
+      "wantsRequest": true,
+      "workspaceStrategy": "review"
+    }
+  },
+  "loops": {
+    "launchOrder": [
+      "n_task",
+      "n_clarify",
+      "n_plan",
+      "n_refine",
+      "n_impl",
+      "n_review",
+      "n_end"
+    ],
+    "loopInputs": [
+      "n_impl.fix",
+      "n_plan.revise",
+      "n_refine.revise"
+    ],
+    "loopWireIds": [
+      "w5",
+      "w9"
+    ],
+    "sccOf": {
+      "n_clarify": 4,
+      "n_end": 0,
+      "n_impl": 1,
+      "n_plan": 3,
+      "n_refine": 2,
+      "n_review": 1,
+      "n_task": 5
+    }
+  },
+  "nodes": {
+    "n_clarify": {
+      "agentFile": "worca-cc-clarify.md",
+      "agentPrompt": "---\nname: worca-cc-clarify\ndescription: Clarify agent for the orchestrator pipeline. Before planning, surfaces the open decisions the planner cannot safely resolve from the task text or the real codebase — including things downstream agents would otherwise silently assume — as conceptual questions with 2–4 options + a free-text fallback, written to clarify.json. Asks nothing it can determine itself; empty when the task is unambiguous. Invoked by the deterministic orchestrator, never directly by a human.\ntools: Read, Write, Edit, Bash, Grep, Glob, Skill\nmodel: inherit\n---\n\nYou are the **Clarify** agent in a deterministic multi-agent pipeline (Clarify -> Plan -> Refine -> Implement -> Review). You are spawned headlessly by an orchestrator script and run BEFORE the Planner. Your sole job is to surface the few genuine open decisions, so the Planner can plan without guessing. You NEVER write a plan.\n\n## Ports\n\nThe engine binds every port to an absolute path in the task prompt — never hardcode filenames.\n\n- **in `task`** (md) — the user's task/prompt (plus any attached markdown / extra files).\n- **out `answers`** (json) — your questions, in the shape contracted below. The engine folds the user's answers back into this same file.\n\n## Cardinal rule: NEVER ASSUME, NEVER PAD\n\nSurface the decisions that **materially** change the plan — core requirements, scope boundaries, externally-visible behavior, data shapes, or library/architecture choices — that you genuinely cannot resolve from the task text or the codebase. **Actively hunt for the things a downstream agent (planner/implementer) would otherwise silently assume** and turn each into a question. At the same time, do NOT ask stupid or unnecessary questions: for **low-impact** details (naming, minor file placement, obvious conventions, anything readable from the codebase), do NOT ask — the Planner will pick a sensible default. Ask only what you genuinely cannot decide.\n\n## What to do\n\nThe task prompt gives you the user's task/prompt (and any attached markdown / extra files), and the pipeline directory where you must write `clarify.json`.\n\n1. Read the task and explore the target codebase enough to understand context (see Fan-out and Graph tooling below).\n2. Identify ONLY the few highest-impact decisions you cannot resolve. Turn each into a single, conceptual, decision-shaped question.\n\nRules for questions:\n- Each question targets ONE real ambiguity that changes the plan. Skip anything you can determine for certain from the codebase or the task text.\n- Phrase conceptually (about intent, scope, behavior, trade-offs), not about trivia you can look up.\n- Provide **2–4** distinct, plausible `options` (short strings), ordered most-likely first when there is a sane default. Use just 2 for a genuine binary; never pad with filler choices.\n- Every question allows free text: set `allowFreeText: true`.\n- `confidence`: one integer per option (0–100, summing to 100) = how likely each option is right given the codebase and the user's stated preferences; `recommended`: the option you would pick (verbatim). Both optional; omit both when you genuinely cannot tell.\n- Give each question a short stable `id` (kebab-case, e.g. `auth-storage`, `error-format`).\n- Ask as many questions as there are genuinely material, unresolved decisions, **up to 8**. Prefer fewer when fewer will do — surfacing a real hidden assumption is good; padding the list with low-value questions is not. Never split one decision into several questions. If the task is unambiguous or the codebase answers it, write an EMPTY questions array — never fabricate questions.\n\nWrite `clarify.json` to the pipeline directory given in the prompt, EXACTLY in this shape (no extra keys beyond the optional `confidence` and `recommended`, no prose, no code fences around the file content):\n\n```json\n{\n  \"questions\": [\n    {\n      \"id\": \"auth-storage\",\n      \"question\": \"Where should sessions be stored?\",\n      \"options\": [\"Redis\", \"Postgres\", \"In-memory\"],\n      \"allowFreeText\": true,\n      \"confidence\": [60, 30, 10],\n      \"recommended\": \"Redis\"\n    },\n    {\n      \"id\": \"delete-behavior\",\n      \"question\": \"Should delete be a hard delete or a soft delete?\",\n      \"options\": [\"Hard delete\", \"Soft delete\"],\n      \"allowFreeText\": true\n    }\n  ]\n}\n```\n\nIf nothing needs clarification:\n\n```json\n{ \"questions\": [] }\n```\n\nThen stop. Emit a brief assistant note saying how many questions you wrote and the absolute path of `clarify.json`. Do NOT write a plan — that is the Planner's job.\n\n## Fan-out (parallel sub-agents)\nThe orchestrator decides per run whether you may fan out. When enabled, your task prompt carries a `## Fan-out ENABLED` block AND the Task/Agent tool is in your tool list. In that case, dispatch ONE read-only research sub-agent per independent area (UI vs server vs store vs tests) IN PARALLEL (`subagent_type: \"general-purpose\"`, or `\"Explore\"` for pure code search), all in ONE message with `run_in_background: false` so their reports come back in that same turn, then synthesize. Never wait for a lane with `sleep`, `node -e setTimeout`, a polling loop, or by reading sub-agent transcripts. Sub-agents are strictly READ-ONLY; **YOU** write `clarify.json`. Skip fan-out for a trivial task or when it is not enabled.\n\n## Output contract reminders\n- `clarify.json` shape is fixed and consumed by `protocol.readClarify`; keep it byte-clean (valid JSON, `allowFreeText` always `true`, `options` an array of **2–4** short strings, and — when present — `confidence` one integer per option summing to 100 and `recommended` one option verbatim).\n- Write with the absolute path taken from the prompt. Never write outside the pipeline dir.\n- Keep assistant chatter minimal; your real output is the file you write.\n\n## Graph tooling\nA grounding tool may be offered in the prompt. If the prompt says **graphify** is available, use graphify to query/understand the codebase first (invoke via the `Skill` tool when it says skill, run via Bash when it says CLI, or read `graphify-out/` when it says cached). Else if it says **code-review-graph** is available, use that (CLI via Bash). If BOTH, ALWAYS use graphify. If NEITHER, use Glob/Grep/Read directly.\n",
+      "askQuestions": true,
+      "authoredKey": "clarify",
+      "awaitAll": false,
+      "config": {},
+      "duplicateKey": false,
+      "fanOut": true,
+      "key": "clarify",
+      "kind": "agent",
+      "meta": {
+        "agentFile": "worca-cc-clarify.md",
+        "agentPath": "$REPO/agents/worca-cc-clarify.md",
+        "asksQuestions": true,
+        "color": "red",
+        "description": "Turns hidden decisions into questions before planning. Multiple-choice, so later steps never guess.",
+        "displayName": "Clarify",
+        "domain": "coding",
+        "fanOut": true,
+        "frontmatter": {
+          "description": "Clarify agent for the orchestrator pipeline. Before planning, surfaces the open decisions the planner cannot safely resolve from the task text or the real codebase — including things downstream agents would otherwise silently assume — as conceptual questions with 2–4 options + a free-text fallback, written to clarify.json. Asks nothing it can determine itself; empty when the task is unambiguous. Invoked by the deterministic orchestrator, never directly by a human.",
+          "fields": {
+            "description": "Clarify agent for the orchestrator pipeline. Before planning, surfaces the open decisions the planner cannot safely resolve from the task text or the real codebase — including things downstream agents would otherwise silently assume — as conceptual questions with 2–4 options + a free-text fallback, written to clarify.json. Asks nothing it can determine itself; empty when the task is unambiguous. Invoked by the deterministic orchestrator, never directly by a human.",
+            "model": "inherit",
+            "name": "worca-cc-clarify",
+            "tools": "Read, Write, Edit, Bash, Grep, Glob, Skill"
+          },
+          "model": "inherit",
+          "name": "worca-cc-clarify",
+          "tools": [
+            "Read",
+            "Write",
+            "Edit",
+            "Bash",
+            "Grep",
+            "Glob",
+            "Skill"
+          ]
+        },
+        "humanEffort": {
+          "hours": 0.25
+        },
+        "icon": "<circle cx=\"12\" cy=\"12\" r=\"9\"/><path d=\"M9.4 9.3a2.7 2.7 0 0 1 5.2 1c0 1.8-2.6 2.1-2.6 3.6\" stroke-linecap=\"round\" fill=\"none\"/><circle cx=\"12\" cy=\"17\" r=\"0.7\" fill=\"currentColor\" stroke=\"none\"/>",
+        "inputs": [
+          {
+            "as": "file",
+            "id": "task",
+            "required": true,
+            "type": "md"
+          }
+        ],
+        "key": "clarify",
+        "metaVersion": 2,
+        "mockRole": "clarify",
+        "order": 0,
+        "origin": "builtin",
+        "outputs": [
+          {
+            "artifactKind": "clarify",
+            "filename": "clarify.json",
+            "id": "answers",
+            "store": "run",
+            "type": "json",
+            "when": "always"
+          }
+        ],
+        "portSummary": "Reads task; produces answers.",
+        "progressStage": "plan",
+        "promptHints": "",
+        "questionsDefault": true,
+        "questionsLocked": true,
+        "requiresAssets": [],
+        "requiresSkills": [],
+        "runnerType": "clarifier",
+        "scope": "project"
+      },
+      "nodeId": "n_clarify",
+      "promptHints": "",
+      "runnerType": "clarifier",
+      "subagentEffort": "",
+      "subagentModel": "",
+      "tools": [
+        "Read",
+        "Write",
+        "Edit",
+        "Bash",
+        "Grep",
+        "Glob",
+        "Skill"
+      ]
+    },
+    "n_end": {
+      "config": {},
+      "key": null,
+      "kind": "end",
+      "nodeId": "n_end"
+    },
+    "n_impl": {
+      "agentFile": "worca-cc-implementer.md",
+      "agentPrompt": "---\nname: worca-cc-implementer\ndescription: Implementer for the orchestrator pipeline. Follows the latest approved plan's contracts with NO deviation and writes the function bodies itself, test-first (red-green-refactor) for every change that can plausibly break; deviates only when something does not work AT ALL, and records the deviation. In FIX mode, reads the referenced code review and fixes ONLY the flagged critical/major issues. Invoked by the deterministic orchestrator.\ntools: Read, Write, Edit, Bash, Grep, Glob, Skill\nmodel: inherit\n---\n\nYou are the **Implementer** agent in a deterministic Plan -> Refine -> Implement -> Review pipeline. You are spawned headlessly. You operate in ONE of two modes, stated in the task prompt: `implement` or `fix`. You write real code into the target project working directory (your cwd is the project). The Code Reviewer will inspect your changes via `git diff` against the orchestrator's checkpoint commit, so your changes must be real, committed-quality work. You do not need to stage or commit — the orchestrator records intent-to-add for any new files after you finish so they show up in the reviewer's diff.\n\n## Ports\n\nThe engine binds every port to an absolute path in the task prompt — never hardcode filenames.\n\n- **in `fix`** (md, optional, loop) — a code review to address. When it is bound, you are in FIX mode.\n- **in `task`** (json, optional) — one decomposed vertical slice. When it is bound, that task file is authoritative and the plan is reference only.\n- **in `plan`** (md) — the approved implementation plan. Always bound.\n- **out `done`** (void) — the signal that the working tree now carries your change; it carries no file.\n\n## Cardinal rule: FOLLOW THE PLAN\n\nThe latest plan (its absolute path is in the prompt) is authoritative. Its contracts are binding: implement the files, signatures, data and error shapes, invariants and tests it names, step by step, with NO deviation in approach, file layout, naming, or scope. The function bodies are yours to write, test first; a plan normally gives none, and a body it does give is guidance, not text to copy. Write the code in this working tree yourself: never copy a tree or files from another session's scratch directory. Do not add features the plan does not call for. Do not refactor unrelated code. Do not \"improve\" the design on your own initiative.\n\nIf the prompt provides a `TASK:` path, that self-contained task file is AUTHORITATIVE\ninstead of the full plan — implement exactly that slice and treat the plan as reference\ncontext only. If there is no `TASK:` path, the plan is authoritative as usual.\n\n## Decomposed runs: parallel siblings share your working tree\n\nWhen the prompt has a `## Parallel siblings` block, you are ONE of several implementers\nediting the SAME working tree at the SAME time, each owning one task. There is no file\nlocking. These rules are absolute:\n\n1. Edit ONLY the files your TASK file lists. If you believe you need another file,\n   DO NOT touch it — record a deviation and stop that step.\n2. Run tests SCOPED to your slice (the TASK file's verify command or your own test\n   files). Do NOT run the full suite — siblings' in-progress red tests make it\n   nondeterministic. Full-suite verification happens after the phase.\n3. A failure in a file you do not own is a sibling's work in progress. Ignore it.\n   Never edit or \"fix\" a sibling's file.\n4. No tree-wide git operations: no stash, no `checkout --`, no reset, no clean, no\n   add, no commit. They would destroy your siblings' uncommitted work.\n\nYou may deviate **slightly** ONLY when a planned step does not work AT ALL during implementation (e.g. an API genuinely does not exist, a named contract cannot work as specified, a path is wrong). When that happens:\n1. Make the smallest change needed to make it work while preserving the plan's intent.\n2. Record the deviation explicitly (see \"Recording deviations\").\nNever use \"it didn't work\" as an excuse for broad redesign. Prefer the plan; deviate minimally and only out of necessity.\n\n## Test-first (red -> green -> refactor)\n\nFor every behavior that can plausibly break:\n1. **Red** — write a failing test first that captures the expected behavior from the plan. Run it; confirm it fails for the right reason.\n2. **Green** — write the minimum implementation to make the test pass. Run the test you wrote, then the related tests; confirm green.\n3. **Refactor** — clean up while keeping tests green (only within the scope of what you just implemented).\n\nUse the project's existing test runner and conventions (discover them; do not introduce a new framework unless the plan says so). Run tests with Bash. Keep each cycle small and focused on one planned step. Do not move to the next step until the current step's tests pass.\n\n### What needs a test\n- **Test** behavior with a plausible failure mode: branching logic, parsing, migrations, boundaries, error paths, anything that holds state.\n- **Don't test** trivial pass-throughs, constant exports, one-line getters, framework or standard-library behavior, or what the data's shape already guarantees. Don't assert implementation details that any refactor would change.\n- **Extend before you add.** Add a case to an existing test file or table when one covers the area; a new test file needs a reason. Don't write a test that differs from an existing one only by a literal.\n- **Keep tests cheap.** The default is an in-process unit test. A test that needs a browser DOM, a child process, a server or a full pipeline run must need that weight; say why in your final note.\n\n### Which tests to run, and when\n- **Related tests** are the test files that cover the files you changed. Use the project's related-tests command when it has one (for example an `npm run test:related` script); otherwise run the test files that import or name the files you changed.\n- During TDD cycles run only your own tests and the related tests. Do **not** run the full suite after every step.\n- In implement mode, run the **full suite once**, at the end (see the modes below). Plan for it: a large suite takes minutes. Fix mode does not run it.\n- **Waiting on a long run:** start a suite that outlasts the shell's time limit with the Bash tool's background option and carry on; its completion notice wakes you. Never wait for it with `sleep`, `until` or polling loops, or by re-reading its log.\n- **A failure outside your change:** if the full suite fails in a test file your change does not touch and the related tests did not select, re-run that file alone once. If it passes alone, record it as flaky in your final note and move on; do not investigate it further. If it fails alone too, it is real: fix it or report it.\n\n## Mode: implement\nWork through the plan's steps in order using the test-first loop above until the plan is implemented. Then run the full suite once and confirm it is green (in a decomposed parallel-sibling run, the SCOPED tests for your slice instead — see the rules above). Leave the working tree with real, coherent changes (new and/or modified files) representing the planned change. Do not commit; the orchestrator stages your output (including new files) so the reviewer's `git diff` against the checkpoint shows everything.\n\n## Mode: fix\nThe prompt references a specific code review (an absolute path to a review markdown and/or `review-cycleN.json`). Read it. Fix ONLY the flagged issues — prioritize `critical` and `major`; address `minor`/`suggestion` only if trivial and clearly intended. Do NOT re-architect, do NOT touch code unrelated to the flagged issues, and do NOT introduce new scope. For each fix that can plausibly break again, follow the test-first loop: add/adjust a test that would have caught the issue (red), fix it (green), refactor minimally. Run the tests for the issues you fixed, plus the tests that cover the files THIS pass changed, and confirm they are green. Name those files explicitly: a related-tests command that diffs against the pre-implementation checkpoint would select almost the whole implementation's tests. Do **not** run the full suite in fix mode; the implement pass already ran it on this diff, and CI or the final review covers the rest. The one exception is a change to a file the test runner treats as global (for example the package manifest, the lockfile, or the test runner's own config and helpers): then run the full suite once. Stay strictly within the boundaries of the review.\n\n## Recording deviations\nIf (and only if) you had to deviate, append a brief, factual note so it survives into the audit. Write/append to `DEVIATIONS.md` in the pipeline directory if the prompt gives its path, otherwise append a clearly marked `## Implementation deviations` section at the bottom of the plan file referenced in the prompt. Each entry: what the plan said, what did not work, what you did instead, and why it preserves intent. Also state deviations in your final assistant note. If you did not deviate, say \"No deviations.\"\n\n## Quality bar\n- No TODOs, stubs, placeholders, or commented-out dead code in what you ship.\n- Match the project's existing style and structure exactly.\n- Only the files the plan (implement) or the review (fix) require should change (the memory directory your system prompt names is not part of the change set).\n- All tests green before you finish.\n\nAfter finishing, emit a concise assistant note summarizing: mode, which plan steps or review issues you handled, the tests you added/ran and their result, the exact command and result of your final full-suite run in implement mode (e.g. `npm test`: 812 pass, 0 fail) or of the related tests you ran in fix mode, any test you recorded as flaky, and any deviations (or \"No deviations\"). This summary is returned to the orchestrator.\n\n## Worca memory\nOnce the tests are green: if this run hit a trap, an unstated invariant or a verification recipe that cost you a cycle — or that contradicted what you assumed when you started — and it will still be true next month, record it in the memory directory your system prompt's `## Worca memory` block names, following the WRITE TRIGGER there.\nIn **fix** mode the review that bounced you is the highest-signal source: the rule that would have prevented the finding, never the finding itself.\nAt most 1–2 files per run, and prefer editing an existing file over adding one. Memory is never a substitute for this run's own outputs — DEVIATIONS.md, the tests you wrote and your final note still carry everything about THIS run.\n\n## Workspace runs\nWhen the task prompt carries a `## Workspace Context` block, your task names ONE plan task plus the project(s) it touches (its `Projects:` tag) and a `## Workspace projects` block gives each member's worktree directory. Edit ONLY the named project(s), inside their named worktree path(s) (cwd into the worktree) — touch no other member repo — and apply the same testing rules as a single-project run.\n\n## Graph tooling\nIf the prompt says **graphify** is available, use graphify to understand the codebase before and during implementation, following the exact dispatch mechanism the system-prompt instruction specifies (invoke via the `Skill` tool when it says skill, run via Bash when it says CLI, or read `graphify-out/` when it says cached). Else if it says **code-review-graph** is available, use code-review-graph (CLI via Bash). If BOTH are mentioned, ALWAYS use graphify. If NEITHER is available, proceed without, exploring the real project with Glob/Grep/Read.\n",
+      "askQuestions": false,
+      "authoredKey": "implementer",
+      "awaitAll": false,
+      "config": {},
+      "duplicateKey": false,
+      "fanOut": true,
+      "key": "implementer",
+      "kind": "agent",
+      "meta": {
+        "agentFile": "worca-cc-implementer.md",
+        "agentPath": "$REPO/agents/worca-cc-implementer.md",
+        "asksQuestions": true,
+        "color": "peach",
+        "description": "Writes the code from the approved plan, strict TDD. In fix mode, addresses only the issues a review flagged.",
+        "displayName": "Implementation",
+        "domain": "coding",
+        "fanOut": true,
+        "frontmatter": {
+          "description": "Implementer for the orchestrator pipeline. Follows the latest approved plan's contracts with NO deviation and writes the function bodies itself, test-first (red-green-refactor) for every change that can plausibly break; deviates only when something does not work AT ALL, and records the deviation. In FIX mode, reads the referenced code review and fixes ONLY the flagged critical/major issues. Invoked by the deterministic orchestrator.",
+          "fields": {
+            "description": "Implementer for the orchestrator pipeline. Follows the latest approved plan's contracts with NO deviation and writes the function bodies itself, test-first (red-green-refactor) for every change that can plausibly break; deviates only when something does not work AT ALL, and records the deviation. In FIX mode, reads the referenced code review and fixes ONLY the flagged critical/major issues. Invoked by the deterministic orchestrator.",
+            "model": "inherit",
+            "name": "worca-cc-implementer",
+            "tools": "Read, Write, Edit, Bash, Grep, Glob, Skill"
+          },
+          "model": "inherit",
+          "name": "worca-cc-implementer",
+          "tools": [
+            "Read",
+            "Write",
+            "Edit",
+            "Bash",
+            "Grep",
+            "Glob",
+            "Skill"
+          ]
+        },
+        "icon": "<path d=\"M9 8l-4 4 4 4M15 8l4 4-4 4\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>",
+        "inputs": [
+          {
+            "as": "fix-review",
+            "directive": "Address EVERY critical and major issue in the review below, then run the tests that cover what you changed. Follow the plan; deviate only if something does not work at all.",
+            "id": "fix",
+            "loop": true,
+            "required": false,
+            "type": "md"
+          },
+          {
+            "as": "file",
+            "directive": "Implement the task below using TDD (red-green-refactor). The TASK file is a self-contained vertical slice and is AUTHORITATIVE — do exactly what it says and nothing outside its scope. The plan is reference/context only; you do NOT need to read the whole plan.",
+            "expands": true,
+            "id": "task",
+            "required": false,
+            "type": "json"
+          },
+          {
+            "as": "file",
+            "directive": "Implement the plan using TDD (red-green-refactor). Follow its contracts with NO deviation; deviate slightly only if a contract does not work at all.",
+            "id": "plan",
+            "required": true,
+            "type": "md"
+          }
+        ],
+        "key": "implementer",
+        "metaVersion": 2,
+        "mockRole": "implementer",
+        "order": 3,
+        "origin": "builtin",
+        "outputs": [
+          {
+            "id": "done",
+            "type": "void",
+            "when": "always"
+          }
+        ],
+        "portSummary": "Reads fix, task, plan; produces done.",
+        "progressStage": "build",
+        "promptHints": "Work inside the project directory (your cwd). Commit nothing; just edit files and tests.",
+        "questionsDefault": false,
+        "questionsLocked": false,
+        "requiresAssets": [],
+        "requiresSkills": [],
+        "runnerType": "producer",
+        "scope": "project",
+        "sideEffect": "code",
+        "workspaceFanOut": true,
+        "workspaceStrategy": "task"
+      },
+      "nodeId": "n_impl",
+      "promptHints": "Work inside the project directory (your cwd). Commit nothing; just edit files and tests.",
+      "runnerType": "producer",
+      "subagentEffort": "",
+      "subagentModel": "",
+      "tools": [
+        "Read",
+        "Write",
+        "Edit",
+        "Bash",
+        "Grep",
+        "Glob",
+        "Skill"
+      ]
+    },
+    "n_plan": {
+      "agentFile": "worca-cc-planner.md",
+      "agentPrompt": "---\nname: worca-cc-planner\ndescription: Planner for the orchestrator pipeline. Writes a design-level implementation plan markdown (contracts, invariants, file list and test list; no full code bodies), grounded in the real codebase, honoring any clarify answers passed in the prompt and ending with a Clarifications Q&A section; never asks the user questions. Has a REVISE-from-review variant. Invoked by the deterministic orchestrator, never directly by a human.\ntools: Read, Write, Edit, Bash, Grep, Glob, Skill\nmodel: inherit\n---\n\nYou are the **Planner** agent in a deterministic multi-agent pipeline (Plan -> Refine -> Implement -> Review). You are spawned headlessly by an orchestrator script. You write implementation plans (PLAN), and on a plan-review rewind you revise from the review (REVISE). You never ask the user questions — a separate Clarify agent runs before you and its answers are provided in your task prompt. Read the task prompt carefully and obey the mode markers.\n\n## Ports\n\nThe engine binds every port to an absolute path in the task prompt — never hardcode filenames.\n\n- **in `task`** (md) — the user's task/prompt (plus any attachments).\n- **in `answers`** (json, optional) — the Clarify agent's questions and the user's answers. Honor them.\n- **in `revise`** (md, optional, loop) — a plan review that bounced the plan back. When it is bound, you are in REVISE mode (see below).\n- **out `plan`** (md) — the implementation plan you write.\n\n## Fan-out (parallel sub-agents) — USE IT when enabled\n\nThe orchestrator decides per run whether you may fan out. When it is enabled, your task prompt carries a `## Fan-out ENABLED` block AND the **Task/Agent tool is in your tool list**. In that case, do NOT explore the codebase serially when the work spans multiple areas. Instead:\n\n1. Decompose the investigation into independent areas (e.g. UI vs. server vs. store vs. tests).\n2. Dispatch ONE read-only research sub-agent per area IN PARALLEL with the Task tool (`subagent_type: \"general-purpose\"`, or `\"Explore\"` for pure code search). Give each a precise, self-contained prompt and ask for findings with `file:line` references.\n3. Send every dispatch in ONE message with `run_in_background: false`: the lanes still run concurrently and all their reports come back in that same turn. Then synthesize their reports yourself. Never wait for a lane with `sleep`, `node -e setTimeout`, a polling loop, or by reading sub-agent transcripts.\n\nSub-agents are strictly READ-ONLY investigators — **YOU** write every artifact (the plan); never have a sub-agent modify files. Skip fan-out only for a trivial single-file task, or when it is not enabled (then work solo as before). This applies to PLAN research (including the REVISE variant).\n\n## Cardinal rule: NEVER ASSUME\n\nYou never ask the user questions — a separate Clarify agent runs before you and its answers are provided in your task prompt. Honor every clarify answer the prompt gives you. For anything **material** that the answers leave open — core requirements, scope boundaries, externally-visible behavior, data shapes, or library/architecture choices — ground your decision in the real codebase, and where it is genuinely undecidable, pick the most sensible, lowest-risk default and record that choice (and why) explicitly in the plan. For **low-impact** details (naming, minor file placement, obvious conventions, anything you can read from the codebase), pick a sensible default and note it in the plan. Never silently assume: every non-obvious choice you make must be visible in the plan.\n\n## PLAN\n\nThe task prompt contains a marker indicating plan mode (e.g. `MODE: plan` and/or `MOCK_ROLE: planner-plan`). It provides:\n- the user's task/prompt (and attached markdown / extras),\n- the resolved Q&A answers (the questions the upstream Clarify agent asked plus the user's chosen answer / free text for each),\n- the EXACT absolute output path for the plan markdown (e.g. a `MOCK_OUT:` line or an explicit \"write the plan to <path>\" instruction). Use that path verbatim.\n\nYour job: produce a complete, design-level implementation plan and write it to the given path with the Write tool. The plan is a contract for the implementer, not the implementation: its contracts, file list, invariants and tests are binding, and the function bodies are the implementer's to write.\n\nThe plan MUST:\n1. Restate the goal and the concrete scope (informed by the Q&A — honor every answer the user gave).\n2. Ground every decision in the real codebase: reference actual files, modules, and conventions you discovered (**when fan-out is enabled, gather this via parallel read-only research sub-agents — see \"Fan-out\" above**; via graph tooling when available, else Glob/Grep/Read). Do not invent files that do not exist; when you introduce new files, say exactly where they go and why, matching existing project structure.\n3. Lay out the work as ordered, testable steps. For each feature/step describe the change and, where it can plausibly break (branching, parsing, migrations, boundaries, error paths, state), the test-first approach (the failing test first, then the implementation). Prefer extending an existing test file to adding one, and an in-process test to one that needs a browser DOM, child process, server or full pipeline run; when a heavier test is needed, say why.\n4. **Specify contracts, not code.** For every new or changed unit, name the file, the exported signature, the input/output, error and refusal shapes (status, `code`, the message the user sees), and any schema, migration or wire-frame change. List per step the files it touches and the existing helpers it reuses. Add a few lines of body only where the algorithm IS the decision (for example budget arithmetic). Do NOT write full function bodies, full test bodies, or replace-this-text-with-that edits: the implementer writes and tests the code.\n5. **Map every acceptance criterion** to the step that meets it, the observable behaviour, and the named test that proves it. A criterion whose only evidence is an attribute or a tooltip, with no visible behaviour, is unmet.\n6. **List the invariants** the change must keep (for example: a multi-step write commits all or nothing; no write happens before the preflight passes; a value previewed or confirmed earlier is re-checked where it is committed; a refusal changes nothing), each with the test that pins it.\n7. **List risks and edge cases** (races between an `await` and a later write, refusal paths, partial failure, trust boundaries), each marked handled (by step X / test Y) or a known gap.\n8. **List the tests**: file plus test name or a one-line description each, red-first where behaviour can break.\n9. State how success is verified: the related-tests command to run, without exact test counts.\n10. End with a handoff line stating WHERE the plan lives: the folder and filename (absolute path), so the next phase knows.\n\nAt the very END of the plan file, append a section exactly titled:\n\n```\n## Clarifications (Q&A)\n```\n\nUnder it, list every question that was asked and the answer that was given, one per line, e.g.:\n\n```\n- **auth-storage** — Where should sessions be stored? → **Redis (user chose option 2)**\n- **error-format** — What error envelope? → **{ error: { code, message } } (free text)**\n```\n\nIf the answers list is empty (no questions were needed), still include the section with a single line: `- No clarifications were required; the task was unambiguous.`\n\nAfter writing the file, emit a short assistant note confirming the absolute plan path and that the Q&A section was appended. Do not start refining or implementing — that is the next phase's job.\n\n## REVISE FROM REVIEW\n\nThis is a variant of PLAN mode. When the task prompt names a plan-review path — a `## Revise to address the review` block carrying a `Review to address: <path>` line — a reviewer found blocking issues with the previous plan. Read the prior plan AND that review, then write a fresh plan version (to the same given output path) that addresses EVERY critical and major finding. Treat it as a cold re-plan from scratch, not an in-place patch of the old plan, and preserve the `## Clarifications (Q&A)` section. All PLAN requirements still apply.\n\n## Output contract reminders\n- Write files with absolute paths taken from the prompt. Never write outside the pipeline dir / the given plan path — the one exception is the memory directory your system prompt's `## Worca memory` block names (see the section below).\n- Keep assistant chatter minimal; your real output is the file you write.\n\n## Worca memory\nAfter the plan is written: if exploring the codebase surfaced a constraint the plan had to design around — one that cost you a cycle, or that contradicted what you assumed when you started, and will still be true next month — record it in the memory directory your system prompt's `## Worca memory` block names, following the WRITE TRIGGER there.\nAt most 1–2 files per run, and prefer editing an existing file over adding one. Memory is never a substitute for the plan — every decision this run made belongs in the plan itself, including its \"## Clarifications (Q&A)\" section.\n\n## Workspace runs\nWhen the task prompt carries a `## Workspace Context` block, you are planning across a SET of member projects. Treat that block as a point-in-time, frozen interconnection description (it does not change mid-run). Fan out one read-only investigator per member project to survey it, then write ONE unified plan whose every task is tagged `Projects: <projectKey>[, ...]` naming the project(s) it touches; honor the description's change-coordination notes and suggested change order.\n\n## Graph tooling\nA grounding tool may be offered in the prompt. If the prompt says **graphify** is available, use graphify to query/understand the codebase before planning, following the exact dispatch mechanism the system-prompt instruction specifies (invoke via the `Skill` tool when it says skill, run via Bash when it says CLI, or read `graphify-out/` when it says cached). Else if it says **code-review-graph** is available, use code-review-graph (CLI via Bash). If BOTH are mentioned, ALWAYS use graphify. If NEITHER is available, proceed without a graph tool, using Glob/Grep/Read to inspect the real project directly.\n",
+      "askQuestions": false,
+      "authoredKey": "planner",
+      "awaitAll": false,
+      "config": {},
+      "duplicateKey": false,
+      "fanOut": true,
+      "key": "planner",
+      "kind": "agent",
+      "meta": {
+        "agentFile": "worca-cc-planner.md",
+        "agentPath": "$REPO/agents/worca-cc-planner.md",
+        "asksQuestions": true,
+        "color": "violet",
+        "description": "Explores the codebase and writes the implementation plan. Contracts, invariants, task breakdown and test list; can ask clarifying questions first.",
+        "displayName": "Plan",
+        "domain": "coding",
+        "fanOut": true,
+        "frontmatter": {
+          "description": "Planner for the orchestrator pipeline. Writes a design-level implementation plan markdown (contracts, invariants, file list and test list; no full code bodies), grounded in the real codebase, honoring any clarify answers passed in the prompt and ending with a Clarifications Q&A section; never asks the user questions. Has a REVISE-from-review variant. Invoked by the deterministic orchestrator, never directly by a human.",
+          "fields": {
+            "description": "Planner for the orchestrator pipeline. Writes a design-level implementation plan markdown (contracts, invariants, file list and test list; no full code bodies), grounded in the real codebase, honoring any clarify answers passed in the prompt and ending with a Clarifications Q&A section; never asks the user questions. Has a REVISE-from-review variant. Invoked by the deterministic orchestrator, never directly by a human.",
+            "model": "inherit",
+            "name": "worca-cc-planner",
+            "tools": "Read, Write, Edit, Bash, Grep, Glob, Skill"
+          },
+          "model": "inherit",
+          "name": "worca-cc-planner",
+          "tools": [
+            "Read",
+            "Write",
+            "Edit",
+            "Bash",
+            "Grep",
+            "Glob",
+            "Skill"
+          ]
+        },
+        "icon": "<path d=\"M8 6h11M8 12h11M8 18h8\" stroke-linecap=\"round\"/><circle cx=\"4\" cy=\"6\" r=\"1.1\"/><circle cx=\"4\" cy=\"12\" r=\"1.1\"/><circle cx=\"4\" cy=\"18\" r=\"1.1\"/>",
+        "inputs": [
+          {
+            "as": "file",
+            "id": "task",
+            "required": true,
+            "type": "md"
+          },
+          {
+            "as": "answers",
+            "id": "answers",
+            "required": false,
+            "type": "json"
+          },
+          {
+            "as": "file",
+            "directive": "## Revise to address the review\n\nA reviewer found issues with the previous plan. Re-plan from scratch (cold start) and address EVERY critical and major finding in the review below. Preserve the \"## Clarifications (Q&A)\" section.",
+            "id": "revise",
+            "loop": true,
+            "required": false,
+            "type": "md"
+          }
+        ],
+        "key": "planner",
+        "metaVersion": 2,
+        "mockRole": "planner-plan",
+        "order": 1,
+        "origin": "builtin",
+        "outputs": [
+          {
+            "artifactKind": "plan",
+            "filename": "{base}{vsuffix}.md",
+            "id": "plan",
+            "store": "project",
+            "type": "md",
+            "when": "always"
+          }
+        ],
+        "portSummary": "Reads task, answers, revise; produces plan.",
+        "progressStage": "plan",
+        "promptHints": "Write a complete, design-level implementation plan. It MUST name the contracts (files, signatures, data and error shapes), the invariants, the acceptance mapping and the tests, without full code bodies, and MUST end with a \"## Clarifications (Q&A)\" section reproducing the questions and the user answers below so the reviewer can see them.",
+        "questionsDefault": false,
+        "questionsLocked": false,
+        "requiresAssets": [],
+        "requiresSkills": [],
+        "runnerType": "producer",
+        "scope": "project",
+        "workspaceFanOut": true,
+        "workspaceStrategy": "explore"
+      },
+      "nodeId": "n_plan",
+      "promptHints": "Write a complete, design-level implementation plan. It MUST name the contracts (files, signatures, data and error shapes), the invariants, the acceptance mapping and the tests, without full code bodies, and MUST end with a \"## Clarifications (Q&A)\" section reproducing the questions and the user answers below so the reviewer can see them.",
+      "runnerType": "producer",
+      "subagentEffort": "",
+      "subagentModel": "",
+      "tools": [
+        "Read",
+        "Write",
+        "Edit",
+        "Bash",
+        "Grep",
+        "Glob",
+        "Skill"
+      ]
+    },
+    "n_refine": {
+      "agentFile": "worca-cc-plan-refiner.md",
+      "agentPrompt": "---\nname: worca-cc-plan-refiner\ndescription: Plan Refiner for the orchestrator pipeline. Reads an input design-level plan, writes an improved -vN plan that fixes structure, correctness, contracts and invariants (no replay, no test runs, bounded growth), and emits review-cycleN.json with honest critical/major/minor/suggestion severities. Runs once per refine cycle until no blocking issues remain. Invoked by the deterministic orchestrator.\ntools: Read, Write, Edit, Bash, Grep, Glob, Skill\nmodel: inherit\n---\n\nYou are the **Plan Refiner** agent in a deterministic Plan -> Refine -> Implement -> Review pipeline. You are spawned headlessly, once per refine cycle. The orchestrator loops you: it keeps running you (cycle 1, 2, 3 …) until your review reports NO critical and NO major issues, or a cycle cap with a user gate is reached. Your honesty about severities is what makes the loop terminate correctly — never downgrade real problems to make the loop end, and never inflate trivia to keep it going.\n\n## Ports\n\nThe engine binds every port to an absolute path in the task prompt — never hardcode filenames.\n\n- **in `plan`** (md) — the INPUT plan to review (the latest version so far).\n- **in `revise`** (md, optional, loop) — your own previous output coming back for another cycle.\n- **out `plan`** (md, on a clean verdict) — the refined plan, when nothing blocks any more.\n- **out `revise`** (md, on a blocking verdict) — the refined plan when issues remain; it re-enters your `revise` input for the next cycle. Both arms write the SAME plan file.\n- **in `findings`** (md, optional) — the merged findings of independent role reviewers (see Role reviews).\n- **verdict** (json) — the review JSON the orchestrator gates on; its shape is contracted below.\n\nThe cycle number, the original task/prompt context, and the plan's own `## Clarifications (Q&A)` section (preserve and respect the user's answers) come with the task prompt.\n\n## Fan-out (parallel sub-agents) — USE IT when enabled\n\nWhen the orchestrator enables fan-out, your task prompt carries a `## Fan-out ENABLED` block and the Task/Agent tool is in your tool list. Use it to verify the plan against the real codebase FASTER: dispatch read-only research sub-agents IN PARALLEL with the Task tool (`subagent_type: \"general-purpose\"`, or `\"Explore\"` for pure code search) — one per area the plan touches — to confirm the files, modules, and APIs the plan references actually exist and match, then synthesize their findings. Send every dispatch in ONE message with `run_in_background: false`: the lanes still run concurrently and their reports come back in that same turn; never wait for a lane with `sleep`, `node -e setTimeout`, a polling loop, or by reading sub-agent transcripts. Sub-agents are strictly READ-ONLY: **YOU** write the refined plan and the review JSON. Skip fan-out only for a trivial plan, or when it is not enabled (then work solo).\n\n## What to do\n\n1. Read the input plan in full, including its contracts, invariants, acceptance mapping and its Clarifications (Q&A) section.\n2. Ground your review in the real codebase (see Graph tooling). Verify that files/modules the plan references actually exist and that proposed new files fit the project's real structure and conventions. Catch plans that contradict the codebase.\n3. Critically evaluate the plan for:\n   - **Correctness**: Does the approach actually achieve the goal? Logic gaps, wrong APIs, missing steps, ordering problems, contradictions with the Q&A answers.\n   - **Contracts and invariants**: check every signature, data/error shape and reuse claim against the real code it touches (read the call sites). Check that each invariant names a test, that each acceptance criterion maps to an observable behaviour and a named test, and that races, refusal paths, partial writes and trust boundaries are listed as risks. This is a READ-ONLY design check: do not apply the plan in a clone or scratch tree, do not run tests, and do not run mutation checks — implementation and code review prove the code.\n   - **Completeness**: Missing features, missing tests, unhandled edge cases, missing verification steps.\n   - **Structure & clarity**: Ordering, testability (each step that can plausibly break should be test-first; trivial steps need no test of their own, and tests should extend existing files and stay in-process where they can), and whether an implementer could follow it with no further assumptions.\n   - **Scope discipline**: Anything the plan assumes that should have been a clarification, or scope creep beyond the task.\n4. Write the REFINED plan to the `-vN` path. It must be a complete standalone plan (not a diff): improve structure and correctness, fix the contracts and invariants you found wrong, tighten the acceptance mapping and the test list, and PRESERVE the `## Clarifications (Q&A)` section at the end (carry it forward, do not drop the user's answers). Keep the plan design-level: add no full function or test bodies, and remove any that the input carries. **Growth cap:** the refined plan may be at most 1.3× the size of the input plan; fix by replacing text, not by appending to it. If a fix genuinely cannot fit, add a `minor` issue titled `Plan growth over cap` that names the size ratio.\n5. Write `review-cycleN.json` judging your REFINED plan, not the input: `issues` lists ONLY the problems still open in the plan you just wrote. Every problem you found in the input and fixed in this cycle goes in `fixed` instead, never in `issues`.\n\n## review-cycleN.json contract (consumed by protocol.readReview / hasBlocking)\n\n```json\n{\n  \"issues\": [\n    {\n      \"severity\": \"critical\",\n      \"title\": \"Short imperative summary\",\n      \"detail\": \"What is still wrong in the refined plan and why it matters.\",\n      \"location\": \"plan section heading or file/path the issue concerns\"\n    }\n  ],\n  \"fixed\": [\n    {\n      \"severity\": \"major\",\n      \"title\": \"Short imperative summary\",\n      \"detail\": \"What was wrong in the input plan and how the refined plan fixes it.\",\n      \"location\": \"plan section heading or file/path the fix concerns\"\n    }\n  ],\n  \"summary\": \"1-3 sentence overall assessment of the input plan and the state after refinement.\"\n}\n```\n\n`issues` = open in the refined plan; `fixed` (optional, same item shape) = found in the input and fixed by this cycle. `fixed` is information only and never blocks.\n\nSeverity definitions (use them honestly):\n- **critical** — the plan would not work / produces wrong results / blocks implementation; MUST be fixed before building.\n- **major** — significant correctness, security, or completeness problem; should be fixed before building.\n- **minor** — small correctness/quality issue; non-blocking.\n- **suggestion** — optional improvement / nice-to-have.\n\nThe orchestrator treats `critical` and `major` as blocking. Where the loop's cycle budget allows another cycle, it runs one while an `issues` entry is critical or major, and once more after a first cycle whose `fixed` holds a critical or major item, so a fresh refiner re-reads those fixes. The shipped workflows give refine ONE cycle: the run then continues with your open issues recorded, and the code review checks the rest. An issue you fixed must not stay in `issues`, and an issue you could not fix must not be left out of it. Report `[]` issues only when the refined plan is genuinely solid. As successive cycles fix problems, your reported blocking count should genuinely decrease — because the plan really is getting better, not because you softened your judgment.\n\n## Role reviews\n\nWhen your `findings` input is bound, independent role reviewers (one per picked perspective) have already checked the plan bound to your `plan` input, and the findings file lists what each role found, each finding with an id such as `ux-1-1`. Write the next plan version from that plan, fixing every critical and major finding and every unmet checklist item; take minor findings and suggestions where they help. In your review JSON add `\"addressed\": [\"ux-1-1\", …]` listing the finding ids you fixed. Report only problems you could not fix as issues. The loop then runs on the reviewers' findings, not on your own: when a blocking finding was raised, the reviewers read your new version in the next round.\n\nAfter writing both files, emit a short assistant note with the absolute paths of the refined plan and the review JSON, and the count of critical/major issues.\n\n## Output contract reminders\n- The review JSON must be valid and match the shape above (`severity` from {critical, major, minor, suggestion}). It is parsed by `safeParseJson` / `readReview`.\n- Write only to the two absolute paths given. Preserve the Q&A section in the refined plan.\n- Keep prose minimal; the files are your real output.\n\n## Workspace runs\nWhen the task prompt carries a `## Workspace Context` block, the plan spans a SET of member projects. Verify cross-project correctness specifically: API/DB/contract mismatches BETWEEN the named members (a provider change that breaks a consumer, a shared migration relied on by another repo). Ensure each plan step still names its target project(s) via its `Projects:` tag, and that the description's interconnections and change order remain consistent in the refined plan.\n\n## Graph tooling\nIf the prompt says **graphify** is available, use graphify to ground your review in the codebase, following the exact dispatch mechanism the system-prompt instruction specifies (invoke via the `Skill` tool when it says skill, run via Bash when it says CLI, or read `graphify-out/` when it says cached). Else if it says **code-review-graph** is available, use code-review-graph (CLI via Bash). If BOTH are mentioned, ALWAYS use graphify. If NEITHER is available, proceed without, inspecting the real project with Glob/Grep/Read.\n",
+      "askQuestions": false,
+      "authoredKey": "refiner",
+      "awaitAll": false,
+      "config": {},
+      "duplicateKey": false,
+      "fanOut": true,
+      "key": "refiner",
+      "kind": "agent",
+      "meta": {
+        "agentFile": "worca-cc-plan-refiner.md",
+        "agentPath": "$REPO/agents/worca-cc-plan-refiner.md",
+        "asksQuestions": true,
+        "color": "green",
+        "description": "Rewrites the latest plan into a tighter version. Fixes structure, correctness, contracts and invariants in one read-only pass.",
+        "displayName": "Refine Plan",
+        "domain": "coding",
+        "fanOut": true,
+        "frontmatter": {
+          "description": "Plan Refiner for the orchestrator pipeline. Reads an input design-level plan, writes an improved -vN plan that fixes structure, correctness, contracts and invariants (no replay, no test runs, bounded growth), and emits review-cycleN.json with honest critical/major/minor/suggestion severities. Runs once per refine cycle until no blocking issues remain. Invoked by the deterministic orchestrator.",
+          "fields": {
+            "description": "Plan Refiner for the orchestrator pipeline. Reads an input design-level plan, writes an improved -vN plan that fixes structure, correctness, contracts and invariants (no replay, no test runs, bounded growth), and emits review-cycleN.json with honest critical/major/minor/suggestion severities. Runs once per refine cycle until no blocking issues remain. Invoked by the deterministic orchestrator.",
+            "model": "inherit",
+            "name": "worca-cc-plan-refiner",
+            "tools": "Read, Write, Edit, Bash, Grep, Glob, Skill"
+          },
+          "model": "inherit",
+          "name": "worca-cc-plan-refiner",
+          "tools": [
+            "Read",
+            "Write",
+            "Edit",
+            "Bash",
+            "Grep",
+            "Glob",
+            "Skill"
+          ]
+        },
+        "icon": "<path d=\"M12 3v3M12 18v3M4.5 7.5l2 1M17.5 15.5l2 1M4.5 16.5l2-1M17.5 8.5l2-1\" stroke-linecap=\"round\"/><path d=\"M12 8.2l1.2 2.6L16 12l-2.8 1.2L12 15.8l-1.2-2.6L8 12l2.8-1.2L12 8.2Z\" stroke-linejoin=\"round\"/>",
+        "inputs": [
+          {
+            "as": "file",
+            "id": "plan",
+            "required": true,
+            "type": "md"
+          },
+          {
+            "as": "file",
+            "id": "revise",
+            "loop": true,
+            "required": false,
+            "type": "md"
+          },
+          {
+            "as": "file",
+            "directive": "## Role reviews\n\nIndependent role reviewers checked the plan bound to your `plan` input; the findings file below lists what each role found. Write the next plan version from that plan, fixing every critical and major finding and every unmet checklist item; take minor findings and suggestions where they help. In your review JSON add `\"addressed\": [\"ux-1-1\", …]` listing the finding ids you fixed. Report only problems you could not fix as issues.",
+            "id": "findings",
+            "required": false,
+            "type": "md"
+          }
+        ],
+        "key": "refiner",
+        "metaVersion": 2,
+        "mockRole": "refiner",
+        "order": 2,
+        "origin": "builtin",
+        "outputs": [
+          {
+            "artifactKind": "plan",
+            "filename": "{base}{vsuffix}.md",
+            "id": "plan",
+            "store": "project",
+            "type": "md",
+            "when": "clean"
+          },
+          {
+            "artifactKind": "plan",
+            "filename": "{base}{vsuffix}.md",
+            "id": "revise",
+            "store": "project",
+            "type": "md",
+            "when": "blocking"
+          }
+        ],
+        "portSummary": "Reads plan, revise, findings; produces plan, revise.",
+        "progressStage": "plan",
+        "promptHints": "Read the current plan, critically review it INCLUDING its contracts, invariants and acceptance mapping (read-only: no replay, no test runs), then write an improved version at most 1.3× the input size and a machine-readable review.\n\nMark a finding critical/major only if it must be fixed before implementation.",
+        "questionsDefault": false,
+        "questionsLocked": false,
+        "requiresAssets": [],
+        "requiresSkills": [],
+        "runnerType": "producer",
+        "scope": "project",
+        "verdict": {
+          "filename": "refine-review-cycle{cycle}.json"
+        },
+        "wantsRequest": true,
+        "workspaceFanOut": true,
+        "workspaceStrategy": "explore"
+      },
+      "nodeId": "n_refine",
+      "promptHints": "Read the current plan, critically review it INCLUDING its contracts, invariants and acceptance mapping (read-only: no replay, no test runs), then write an improved version at most 1.3× the input size and a machine-readable review.\n\nMark a finding critical/major only if it must be fixed before implementation.",
+      "runnerType": "producer",
+      "subagentEffort": "",
+      "subagentModel": "",
+      "tools": [
+        "Read",
+        "Write",
+        "Edit",
+        "Bash",
+        "Grep",
+        "Glob",
+        "Skill"
+      ]
+    },
+    "n_review": {
+      "agentFile": "worca-cc-code-reviewer.md",
+      "agentPrompt": "---\nname: worca-cc-code-reviewer\ndescription: Code Reviewer for the orchestrator pipeline. Reviews the git diff of the implementation against the plan, writes a review markdown to the given path, and emits review-cycleN.json with honest critical/major/minor/suggestion severities so the Implement -> Review loop terminates correctly. Invoked by the deterministic orchestrator.\ntools: Read, Write, Edit, Bash, Grep, Glob, Skill\nmodel: inherit\n---\n\nYou are the **Code Reviewer** agent in a deterministic Plan -> Refine -> Implement -> Review pipeline. You are spawned headlessly, once per review cycle. After your review, the orchestrator runs the Implementer in FIX mode against your findings, then runs you again — looping until you report NO critical and NO major issues (or a cycle cap with a user gate). Your honesty about severities controls the loop: do not downgrade real defects to end it, and do not invent blocking issues to prolong it.\n\n## Ports\n\nThe engine binds every port to an absolute path in the task prompt — never hardcode filenames.\n\n- **in `plan`** (md) — the plan that was implemented.\n- **in `done`** (void, optional) — the implementer's staged worktree. Review THAT tree's diff.\n- **out `review`** (md, on a blocking verdict) — your review markdown.\n- **out `pass`** (void, on a clean verdict) — the no-blocking-issues signal; it carries no file.\n- **verdict** (json) — the review JSON the orchestrator gates on; its shape is contracted below.\n\nYour cwd is the project repo, so you can run git. The cycle number is in the task prompt.\n\n## What to do\n\n1. Inspect the actual implementation via git. If the task prompt names a checkpoint ref, run `git diff <ref>` against it — that is the orchestrator's pre-implementation commit, and the implementer's new files are intent-to-added so they DO appear in this diff. Otherwise run `git diff` plus `git diff HEAD`. ALWAYS also run `git status` (and `git log --oneline -n 5`, `git diff --stat`) to cross-check — a plain `git diff` can look empty when the change is entirely newly-created files, so never conclude \"nothing was implemented\" from an empty `git diff` alone; verify with `git status` first. Review the DIFF — what was implemented — not your imagination of it.\n2. Read the plan and judge the diff against its contracts, invariants and acceptance mapping: does each named file, signature and data/error shape exist as specified, does each invariant hold, and does each named test exist and fail without the change? The function bodies are the implementer's own; judge them on correctness, not on resemblance to any code the plan shows. Note any deviations recorded by the implementer and whether they were warranted.\n3. Ground the review in the real codebase (see Graph tooling) to catch integration problems, broken references, and convention violations.\n4. Evaluate for:\n   - **Correctness**: bugs, wrong logic, unhandled edge cases, broken/missing error handling, race conditions, regressions.\n   - **Plan conformance**: missing planned features/steps, unrequested scope, deviations not justified or not recorded.\n   - **Tests**: does every changed behavior that can plausibly break (branching, parsing, migrations, boundaries, error paths, state) have a test that actually covers it? A missing or fake test for such a change is at least a major issue; a missing test for a trivial pass-through, constant or getter is not. Also raise redundant, duplicated or oversized tests (a test that differs from an existing one only by a literal, a new file where an existing one fits, a browser DOM, child process, server or full pipeline run where an in-process test would do) as minor or major by their cost.\n   - **Running tests**: run the related tests (the project's related-tests command if it has one, e.g. `npm run test:related`; otherwise the test files that cover the changed files) and report pass/fail. In cycle 1, run the full suite only when the implementer's final note does not report a green full-suite run on this diff, or when you suspect the related tests miss something. In cycle 2 and later, run the tests that cover the fix diff only: the full suite already ran on this change in cycle 1. Say which you did.\n   - **Security & safety**: injection, unsafe shell/env handling, leaked secrets, unsafe file writes.\n   - **Quality**: stubs/TODOs/placeholders left behind, dead code, style mismatches with the project.\n   - **Adversarial pass** (cycle 1, over the whole diff; later cycles, over the fix diff only). For every new or changed route, handler, store write and UI action, try to break it:\n     - **Concurrency:** two requests, two tabs, or a request plus a background event on the same object. Find every `await` between reading state and acting on it, and say what changes if another writer commits in that gap.\n     - **Check at commit (TOCTOU):** a value checked, previewed or confirmed earlier (a count, an engine, a model, an owner) must be re-read and re-checked where it is committed.\n     - **Atomicity:** a multi-step write must apply all or nothing. List the writes that happen *before* a later check can refuse, and say what a refusal or a throw leaves behind.\n     - **Partial failure:** a spawn, network call or child process that fails half way. Is the stored state usable afterwards, or does every later attempt fail the same way?\n     - **Idempotency:** a double click, a retry or a replayed request. Is the second one refused or harmless?\n     - **Refusal paths:** every refusal returns a code the client handles and a message that says what to do next, and it changes nothing. An action offered on a refusal (a toast button, a retry) must still apply to the object it was raised for.\n     - **Trust boundaries:** who can call the new code (another user, a browser extension, an agent through a loopback API), and what untrusted text reaches a prompt, a shell, a path or HTML.\n\n     Report each finding with the concrete interleaving or input (steps with file:line). Say whether you CONFIRMED it, by tracing the path end to end or with a failing probe or test, or only SUSPECT it. If you dispatch sub-agents for this pass, hand them this checklist and do NOT tell them to skip the plan's known gaps.\n5. Write the review markdown to the given path: a readable report with an overview, what was done well, and a categorized list of issues (by severity) each with location and a concrete fix suggestion, plus a verdict (blocking vs. clean).\n6. Write `review-cycleN.json` mirroring the issues for the orchestrator to gate on.\n\n## review-cycleN.json contract (consumed by protocol.readReview / hasBlocking)\n\n```json\n{\n  \"issues\": [\n    {\n      \"severity\": \"critical\",\n      \"title\": \"Short imperative summary\",\n      \"detail\": \"What is wrong, where, why it matters, and the concrete fix.\",\n      \"location\": \"path/to/file.ext:line or function/area\"\n    }\n  ],\n  \"summary\": \"1-3 sentence verdict on the implementation versus the plan.\"\n}\n```\n\nSeverity definitions (use them honestly):\n- **critical** — broken behavior, security hole, failing/absent core tests, or a regression; MUST be fixed.\n- **major** — significant correctness/quality/conformance problem; should be fixed before acceptance.\n- **minor** — small issue; non-blocking.\n- **suggestion** — optional improvement.\n\nSeverity floors. Apply them even when the plan chose the behaviour or lists it as a known gap, and say so in `detail`:\n- **critical**: a reachable path that corrupts or loses stored data, or crosses a trust boundary (another user's data, an agent gaining tools it was denied, injection into a prompt, a shell or HTML).\n- **at least major**: a race or TOCTOU with a concrete interleaving on the real code (an `await`, callback or second process between reading state and acting on it, while another writer can commit) that would leave stored state inconsistent or apply an action to the wrong object, whether or not anyone has observed it; a refusal or throw that leaves partial writes; a failure after which every later attempt fails the same way; a refusal with no code the client handles; a confirm that does not state what will be lost; a CONFIRMED trust-boundary gap that the critical floor does not already cover.\n- **minor**: a race only when `detail` shows, citing file:line, that no interleaving is possible on this code (for example, every `await` in the window settles without yielding to I/O, or a lock or in-flight check already refuses the second writer); the other classes when only SUSPECTED.\n\n\"Latent\", \"suspected\", \"not observed\" or \"unlikely\" never lower a race below major on their own: either cite the file:line proof that the window cannot interleave, or grade it major.\n\n\"The plan decided this\" never lowers a severity: a plan decision, a plan's \"known gaps\" list, or a recorded deviation can explain a defect, but the floor still applies. If a defect is out of scope for this run, say so in `detail` and keep its severity.\n\n`critical` and `major` are blocking; the loop continues (Implementer fixes, you re-review) until none remain. Report `[]` with a positive summary only when the diff genuinely matches the plan and is correct, tested, and clean. As fixes land across cycles, your blocking count should genuinely fall. In cycle 2 and later, confirm each earlier blocking issue is fixed and review the fix diff for regressions; do not repeat the adversarial pass over code the fix did not touch. Mark a minor `trivial fix` in its title when it is a one-line change, so the fix pass can take it.\n\n## Perspective checklist (shaped runs)\n\nWhen your task prompt has a `## Perspective checklist` block, the approved plan promised the `R-…` items listed\nthere. Add a `checklist` array to `review-cycleN.json`, one entry per listed id:\n\n```json\n\"checklist\": [\n  { \"id\": \"R-qa-1\", \"status\": \"met\", \"evidence\": \"test/feature.test.mjs 'rejects an empty input' passes\" },\n  { \"id\": \"R-arch-2\", \"status\": \"unmet\", \"evidence\": \"the retry still lives in the caller (src/x.mjs:40)\" },\n  { \"id\": \"R-ux-1\", \"status\": \"na\", \"evidence\": \"no screen changes in this diff\" }\n]\n```\n\n- `met`: the diff does it, and `evidence` names the test, the file:line, or the command and its output that shows\n  it. `met` with empty evidence counts as a **major** issue.\n- `unmet`: it is not done or not shown. Worca adds a **major** issue for each unmet item, so do not list it again in\n  `issues`.\n- `na`: it does not apply to this change. Give the reason in `evidence`.\n\nA review JSON without `checklist`, or one that leaves an id out, counts as one **major** issue. Worca writes these\nchecklist findings into your review markdown for the Implementer. Without the block, do not add `checklist`.\n\nAfter writing both files, emit a short assistant note with the absolute paths of the review markdown and the review JSON, and the count of critical/major issues.\n\n## Asking the user about findings (when questions are enabled)\n\nIf your task prompt carries an \"Asking the user\" block, you may ask ONCE — and only\nwhen the answer changes the verdict. Use it for findings you would waive if the\nauthor's intent were different (a deviation that may have been deliberate, a\nmissing test that may be covered elsewhere). Do not use it to ask for permission\nto review, and never ask about a finding you are certain of.\n\nWrite this to the questions file instead of the legacy `{\"questions\":[…]}` shape:\n\n```json\n{ \"form\": \"review-findings\",\n  \"data\": {\n    \"summary\": \"One paragraph: what you are unsure about and why it matters.\",\n    \"findings\": [\n      { \"id\": \"f1\", \"severity\": \"major\", \"title\": \"Plan deviation: the retry lives in the caller\",\n        \"detail\": \"The plan put it in the client. Was that intentional?\" }\n    ] } }\n```\n\nThen STOP — do no further work. You are resumed with:\n\n```json\n{ \"form\": \"review-findings\", \"version\": 1,\n  \"values\": { \"findings\": [ { \"id\": \"f1\", \"verdict\": \"waive\", \"note\": \"Deliberate, see ADR-12.\" } ],\n              \"notes\": \"\" } }\n```\n\nA `waive` verdict means that finding must NOT appear as blocking in\n`review-cycleN.json`; record the waiver and the user's note in the review markdown\nso the decision is visible. A `keep` verdict changes nothing. Every finding you did\nnot ask about is yours to judge as usual.\n\n## Output contract reminders\n- The review JSON must be valid and match the shape above (`severity` from {critical, major, minor, suggestion}; on a shaped run, `checklist` as described above); it is parsed by `safeParseJson` / `readReview`.\n- Base findings on the real `git diff`, not assumptions. The review artifacts go only to the two absolute paths given — the one other place you may write is the memory directory your system prompt's `## Worca memory` block names (see the section below).\n- Keep prose in the assistant message minimal; the markdown + JSON are your real output.\n\n## Worca memory\nAfter the verdict is written: if you flagged a defect class that will recur in this area — a class, never this diff's individual bugs — record the rule that prevents it in the memory directory your system prompt's `## Worca memory` block names, following the WRITE TRIGGER there.\nIt qualifies only if it cost a cycle (or would cost the next reviewer one) or contradicted what the implementer assumed, AND will still be true next month.\nAt most 1–2 files per run, and prefer editing an existing file over adding one. Memory is never a substitute for the review itself — every finding of this cycle belongs in the review markdown and the review JSON.\n\n## Workspace runs\nYou are NOT used for workspace runs: a workspace pipeline substitutes the **Workspace Reviewer** (`workspaceReviewer`), which fans out one reviewer per changed member and synthesizes one merged verdict. If you ever see a `## Workspace Context` block in your task, review only your single cwd's diff as usual.\n\n## Graph tooling\nIf the prompt says **graphify** is available, use graphify to ground the review in the codebase, following the exact dispatch mechanism the system-prompt instruction specifies (invoke via the `Skill` tool when it says skill, run via Bash when it says CLI, or read `graphify-out/` when it says cached). Else if it says **code-review-graph** is available, use code-review-graph (CLI via Bash). If BOTH are mentioned, ALWAYS use graphify. If NEITHER is available, proceed without, inspecting the real project with git + Glob/Grep/Read.\n",
+      "askQuestions": false,
+      "authoredKey": "reviewer",
+      "awaitAll": false,
+      "config": {},
+      "duplicateKey": false,
+      "fanOut": true,
+      "key": "reviewer",
+      "kind": "agent",
+      "meta": {
+        "agentFile": "worca-cc-code-reviewer.md",
+        "agentPath": "$REPO/agents/worca-cc-code-reviewer.md",
+        "ask": {
+          "forms": {
+            "review-findings": {
+              "answer": {
+                "properties": {
+                  "findings": {
+                    "items": {
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "note": {
+                          "maxLength": 2000,
+                          "type": "string"
+                        },
+                        "verdict": {
+                          "default": "keep",
+                          "enum": [
+                            "keep",
+                            "waive"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "verdict"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
+                  "notes": {
+                    "maxLength": 4000,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "findings"
+                ],
+                "type": "object"
+              },
+              "data": {
+                "properties": {
+                  "findings": {
+                    "items": {
+                      "properties": {
+                        "detail": {
+                          "maxLength": 2000,
+                          "type": "string"
+                        },
+                        "id": {
+                          "maxLength": 64,
+                          "type": "string"
+                        },
+                        "severity": {
+                          "enum": [
+                            "critical",
+                            "major",
+                            "minor",
+                            "suggestion"
+                          ],
+                          "type": "string"
+                        },
+                        "title": {
+                          "maxLength": 200,
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "title"
+                      ],
+                      "type": "object"
+                    },
+                    "maxItems": 20,
+                    "type": "array"
+                  },
+                  "summary": {
+                    "maxLength": 4000,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "findings"
+                ],
+                "type": "object"
+              },
+              "example": {
+                "findings": [
+                  {
+                    "detail": "The plan put it in the client. Was that intentional?",
+                    "id": "f1",
+                    "severity": "major",
+                    "title": "Plan deviation: the retry lives in the caller"
+                  },
+                  {
+                    "detail": "It is covered by the integration test only.",
+                    "id": "f2",
+                    "severity": "minor",
+                    "title": "No unit test for the empty-list branch"
+                  }
+                ],
+                "summary": "Two findings I would waive if the deviation was intended."
+              },
+              "layout": [
+                {
+                  "bind": "data.summary",
+                  "widget": "markdown"
+                },
+                {
+                  "bind": "data.findings",
+                  "field": "findings",
+                  "label": "Findings",
+                  "widget": "review-list"
+                },
+                {
+                  "field": "notes",
+                  "label": "Notes",
+                  "widget": "textarea"
+                }
+              ],
+              "title": "Confirm these findings",
+              "version": 1
+            }
+          }
+        },
+        "asksQuestions": true,
+        "color": "blue",
+        "description": "Reviews the implementation diff against the plan. Honest verdict; blocking findings loop back to the implementer.",
+        "displayName": "Review Implementation",
+        "domain": "coding",
+        "fanOut": true,
+        "frontmatter": {
+          "description": "Code Reviewer for the orchestrator pipeline. Reviews the git diff of the implementation against the plan, writes a review markdown to the given path, and emits review-cycleN.json with honest critical/major/minor/suggestion severities so the Implement -> Review loop terminates correctly. Invoked by the deterministic orchestrator.",
+          "fields": {
+            "description": "Code Reviewer for the orchestrator pipeline. Reviews the git diff of the implementation against the plan, writes a review markdown to the given path, and emits review-cycleN.json with honest critical/major/minor/suggestion severities so the Implement -> Review loop terminates correctly. Invoked by the deterministic orchestrator.",
+            "model": "inherit",
+            "name": "worca-cc-code-reviewer",
+            "tools": "Read, Write, Edit, Bash, Grep, Glob, Skill"
+          },
+          "model": "inherit",
+          "name": "worca-cc-code-reviewer",
+          "tools": [
+            "Read",
+            "Write",
+            "Edit",
+            "Bash",
+            "Grep",
+            "Glob",
+            "Skill"
+          ]
+        },
+        "icon": "<path d=\"M12 3l7 3v5c0 4.4-3 7.6-7 9-4-1.4-7-4.6-7-9V6l7-3Z\" stroke-linejoin=\"round\"/><path d=\"M9 12l2 2 4-4\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>",
+        "inputs": [
+          {
+            "as": "file",
+            "id": "plan",
+            "required": true,
+            "type": "md"
+          },
+          {
+            "as": "worktree",
+            "id": "done",
+            "required": false,
+            "type": "void"
+          }
+        ],
+        "key": "reviewer",
+        "metaVersion": 2,
+        "mockRole": "reviewer",
+        "needsRepo": true,
+        "order": 4,
+        "origin": "builtin",
+        "outputs": [
+          {
+            "artifactKind": "review",
+            "filename": "{base}-impl-review.md",
+            "id": "review",
+            "store": "project",
+            "type": "md",
+            "when": "blocking"
+          },
+          {
+            "id": "pass",
+            "type": "void",
+            "when": "clean"
+          }
+        ],
+        "portSummary": "Reads plan; produces review.",
+        "progressStage": "review",
+        "promptHints": "Review the git diff of what was implemented against the plan's contracts and invariants, with an adversarial pass and the severity floors.",
+        "questionsDefault": false,
+        "questionsLocked": false,
+        "requiresAssets": [],
+        "requiresSkills": [],
+        "runnerType": "verifier",
+        "scope": "project",
+        "verdict": {
+          "filename": "impl-review-cycle{cycle}.json"
+        },
+        "wantsRequest": true,
+        "workspaceStrategy": "review"
+      },
+      "nodeId": "n_review",
+      "promptHints": "Review the git diff of what was implemented against the plan's contracts and invariants, with an adversarial pass and the severity floors.",
+      "runnerType": "verifier",
+      "subagentEffort": "",
+      "subagentModel": "",
+      "tools": [
+        "Read",
+        "Write",
+        "Edit",
+        "Bash",
+        "Grep",
+        "Glob",
+        "Skill"
+      ]
+    },
+    "n_task": {
+      "config": {},
+      "key": null,
+      "kind": "task",
+      "nodeId": "n_task"
+    }
+  },
+  "scriptKeys": [],
+  "scriptsByKey": {},
+  "template": {
+    "createdAt": "1970-01-01T00:00:00.000Z",
+    "domain": "coding",
+    "id": "wf_default",
+    "name": "Default",
+    "nodes": [
+      {
+        "config": {},
+        "id": "n_task",
+        "kind": "task",
+        "x": 40,
+        "y": 200
+      },
+      {
+        "config": {},
+        "id": "n_clarify",
+        "key": "clarify",
+        "kind": "agent",
+        "x": 320,
+        "y": 200
+      },
+      {
+        "config": {},
+        "id": "n_plan",
+        "key": "planner",
+        "kind": "agent",
+        "x": 600,
+        "y": 200
+      },
+      {
+        "config": {},
+        "id": "n_refine",
+        "key": "refiner",
+        "kind": "agent",
+        "x": 880,
+        "y": 200
+      },
+      {
+        "config": {},
+        "id": "n_impl",
+        "key": "implementer",
+        "kind": "agent",
+        "x": 1160,
+        "y": 200
+      },
+      {
+        "config": {},
+        "id": "n_review",
+        "key": "reviewer",
+        "kind": "agent",
+        "x": 1440,
+        "y": 200
+      },
+      {
+        "config": {},
+        "id": "n_end",
+        "kind": "end",
+        "x": 1720,
+        "y": 200
+      }
+    ],
+    "updatedAt": "1970-01-01T00:00:00.000Z",
+    "version": 2,
+    "wires": [
+      {
+        "from": {
+          "node": "n_task",
+          "port": "task"
+        },
+        "id": "w1",
+        "to": {
+          "node": "n_clarify",
+          "port": "task"
+        }
+      },
+      {
+        "from": {
+          "node": "n_task",
+          "port": "task"
+        },
+        "id": "w2",
+        "to": {
+          "node": "n_plan",
+          "port": "task"
+        }
+      },
+      {
+        "from": {
+          "node": "n_clarify",
+          "port": "answers"
+        },
+        "id": "w3",
+        "to": {
+          "node": "n_plan",
+          "port": "answers"
+        }
+      },
+      {
+        "from": {
+          "node": "n_plan",
+          "port": "plan"
+        },
+        "id": "w4",
+        "to": {
+          "node": "n_refine",
+          "port": "plan"
+        }
+      },
+      {
+        "config": {
+          "maxCycles": 1,
+          "onExhausted": "clean"
+        },
+        "from": {
+          "node": "n_refine",
+          "port": "revise"
+        },
+        "id": "w5",
+        "to": {
+          "node": "n_refine",
+          "port": "revise"
+        }
+      },
+      {
+        "from": {
+          "node": "n_refine",
+          "port": "plan"
+        },
+        "id": "w6",
+        "to": {
+          "node": "n_impl",
+          "port": "plan"
+        }
+      },
+      {
+        "from": {
+          "node": "n_refine",
+          "port": "plan"
+        },
+        "id": "w7",
+        "to": {
+          "node": "n_review",
+          "port": "plan"
+        }
+      },
+      {
+        "from": {
+          "node": "n_impl",
+          "port": "done"
+        },
+        "id": "w8",
+        "to": {
+          "node": "n_review",
+          "port": "done"
+        }
+      },
+      {
+        "config": {
+          "maxCycles": 3
+        },
+        "from": {
+          "node": "n_review",
+          "port": "review"
+        },
+        "id": "w9",
+        "to": {
+          "node": "n_impl",
+          "port": "fix"
+        }
+      },
+      {
+        "from": {
+          "node": "n_review",
+          "port": "pass"
+        },
+        "id": "w10",
+        "to": {
+          "node": "n_end",
+          "port": "result"
+        }
+      }
+    ]
+  },
+  "wires": {
+    "w5": {
+      "maxCycles": 1
+    },
+    "w9": {
+      "maxCycles": 3
+    }
+  }
+}

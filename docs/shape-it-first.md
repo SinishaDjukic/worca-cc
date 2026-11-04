@@ -66,6 +66,13 @@ carries the plan to the New run page, and **Stop** ends the run.
 **Versions.** Every revision is kept as its own version of the plan; the card shows
 the newest and the earlier ones stay readable.
 
+**Role reviews.** Before you see the plan, one independent reviewer per picked perspective
+reads it, each as its own role only, and Refine Plan fixes what they found. This is the
+engine's role-review step (any workflow can declare one, see
+[Per-role models](models.md#per-role-models)): Shaper's Plan Review node declares the
+perspectives as its roles, runs the ones you picked, and judges each on its own checklist
+items.
+
 ## Checklists in review
 
 Each perspective's checklist ends the plan as `R-…` items. The code review marks

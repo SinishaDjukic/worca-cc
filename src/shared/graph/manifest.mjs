@@ -156,6 +156,8 @@ export function buildGraphManifest(tpl, agentsByKey, opts = {}) {
       // alone — the workflow row is never re-read after the run starts.
       cell.subagentModel = over.subagentModel ?? cfg.subagentModel ?? '';
       cell.subagentEffort = over.subagentEffort ?? cfg.subagentEffort ?? '';
+      // A role-review node's resolved per-role picks (role-slots.mjs), only when it has some: a resume dispatches on them.
+      if (over.roles && typeof over.roles === 'object' && Object.keys(over.roles).length) cell.roles = over.roles;
       // Run progress: the stage rides the manifest like color/icon, so a run (and a resume,
       // which rebuilds the manifest from the registry) never needs the live registry for it.
       if (meta?.progressStage) cell.progressStage = meta.progressStage;

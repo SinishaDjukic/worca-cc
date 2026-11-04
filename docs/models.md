@@ -978,6 +978,33 @@ agent step (`propose_run` `nodes`), from the models the run's engine runs:
   refused; any other top-level key is refused with *overlay takes nodes and wires only*. A
   [run preset](run-presets.md) sends its loop budgets this way.
 
+#### Per-role models
+
+A node can review as several independent reviewers at once: its config's `roleReview`
+declares the roles, and the run starts one slice per role, in parallel, each seeing only its
+own role. Their findings are merged into one file for the refiner (#990: independent reviewers
+are an engine capability, not Shaper's alone).
+
+```json
+{ "roleReview": { "roles": [{ "key": "correctness", "label": "Correctness" },
+                            { "key": "security", "label": "Security", "model": "claude-haiku-4-5", "effort": "high" }],
+                  "source": "declared", "target": "plan", "sink": "refiner" } }
+```
+
+- **Keys** are 1–24 lowercase letters, at most 12 roles. `target` is `plan` and `sink` is
+  `refiner` for now; anything else fails the graph check (V31) before a run starts.
+- **Each role has its own model and effort.** A run overlay pick
+  (`overlay.nodes.<nodeId>.roles.<key>`) beats the project's (`POST /api/config`
+  `nodes.<nodeId>.roles`), which beats the template's (`roles[i].model` / `effort`). An effort
+  travels with its model. A role nothing names runs on the node's model, and *Model for all*
+  runs every role on the run's model.
+- **The record names what ran:** each role's review records the model and effort its slice
+  ran on.
+- **Set in node config only** for now (template, project config, run overlay); no screen sets
+  them until the Shaper card's per-role picks and the dropped-pick warning land in the next
+  slice. Until then a pick the run's engine cannot run is dropped silently: the role runs on the
+  node's model and its record keeps the request as `wanted`.
+
 ## When the network drops
 
 A step whose error is network-class (a refused or reset connection, a DNS failure,

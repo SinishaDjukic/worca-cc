@@ -8,6 +8,7 @@
 import { AWAIT_PORT, PARAMS_PORT, FLOW_KINDS, gatePorts, TASK_PORTS, END_PORTS } from './constants.mjs';
 import { hasBlocking } from './verdict.mjs';
 import { readConfigPorts, hasParamsPort } from './script-meta.mjs';
+import { roleReviewOf } from './role-review-step.mjs';
 
 /** Engine flow-card ports. `undefined` for an unknown kind — V3's error. */
 export function flowPorts(node) {
@@ -64,7 +65,7 @@ export function portsFnFor(agentsByKey, scriptsByKey = {}) {
 
 function sidecarPorts(meta, node = null) {
   if (!meta) return undefined;
-  const own = node?.config?.roleReview === true ? ROLE_REVIEW_PORTS : meta;
+  const own = roleReviewOf(node?.config) !== null ? ROLE_REVIEW_PORTS : meta;
   if (!Array.isArray(own.inputs) || !Array.isArray(own.outputs)) {
     return { ...meta, known: true, ported: false, inputs: [], outputs: [] };
   }

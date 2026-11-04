@@ -53,7 +53,7 @@ import { SUBAGENT_MODELS } from '../model-env.mjs';
 import { AWAIT_PORT } from '../../shared/graph/constants.mjs';
 import { withRecheck } from '../../shared/graph/verdict.mjs';
 import { perspectivesBlock } from '../../shared/shape/perspectives.mjs';
-import { roleBriefBlock, roleItems, houseBriefBlock } from '../../shared/shape/role-review.mjs';
+import { roleReviewOf, roleChecklistOf, genericRoleBrief } from '../../shared/graph/role-review-step.mjs';
 import { reviewChecklistBlock } from '../../shared/shape/review-checklist.mjs';
 import { slicingBlock, outlineFeedbackBlock, FLAT_NOTE, sliceScopeBlock } from '../../shared/shape/slices.mjs';
 import { runScriptExecution } from './script-runner.mjs';
@@ -529,7 +529,7 @@ function decompositionContractBlock(expandsPort, runCtx) {
 /** The MOCK marker set for this execution, per the resolution chain. Only markers
  *  `runMock` reads are emitted (MOCK_ROLE, MOCK_CYCLE, MOCK_BASE, MOCK_OUT, MOCK_JSON,
  *  MOCK_IN, MOCK_PRIOR, MOCK_TASKS_DIR). */
-function markersFor({ role, ordinal, runCtx, outputs, verdict, bindings, ports, expandsPort, priorCount, perspective, planText }) {
+function markersFor({ role, ordinal, runCtx, outputs, verdict, bindings, ports, expandsPort, priorCount, perspective, planText, roleSpec }) {
   const markers = { MOCK_ROLE: role, MOCK_CYCLE: ordinal, MOCK_BASE: runCtx.baseName };
   if (role === MOCK_ROLE_CLARIFY) {
     markers.MOCK_OUT = outputs[answersPortOf(ports)?.id]?.path;
@@ -553,10 +553,24 @@ function markersFor({ role, ordinal, runCtx, outputs, verdict, bindings, ports, 
   // Role reviews (spec §3): the reviewer's role and its plan items; the refiner's merged findings. Empty values are
   // skipped by mockMarkers, so every other prompt is unchanged.
   markers.MOCK_PERSPECTIVE = perspective || '';
-  markers.MOCK_CHECKLIST = perspective ? roleItems(perspective, planText || '').map((i) => i.id).join(',') : '';
+  markers.MOCK_CHECKLIST = perspective ? (roleChecklistOf(roleSpec)?.items(perspective, planText || '') || []).join(',') : '';
   markers.MOCK_FINDINGS = bindings.findings?.path || '';
   return markers;
 }
+
+/** A role slice's spec: the one the orchestrator set, else the legacy `true` (a ctx built without it). */
+const roleSpecOf = (ctx) => ctx.roleSpec || roleReviewOf(true);
+
+/** The brief of one role slice: its checklist provider's, else the generic one. */
+function roleBriefFor(ctx) {
+  const spec = roleSpecOf(ctx);
+  const provider = roleChecklistOf(spec);
+  if (provider) return provider.brief(ctx.role, ctx.rolePlanText || '', { houseBrief: ctx.houseBrief });
+  return genericRoleBrief(spec.roles.find((r) => r.key === ctx.role) || { key: ctx.role, label: ctx.role }, spec.target);
+}
+
+/** Every role slice is mocked as an independent role reviewer, whatever agent key its node has. */
+const MOCK_ROLE_ROLE_REVIEW = 'plan-review';
 
 /**
  * Assemble the v2 task prompt. PURE (no IO, no spawn), so prompt behavior is
@@ -599,10 +613,9 @@ export function buildAgentPrompt(ctx) {
   // list, never by ctx.shape, so every unshaped and shaped-without-items prompt stays byte-identical.
   const checklist = reviewChecklistBlock(ctx.checklistItems);
   const title = meta.displayName || node?.key || node?.id || 'agent';
-  // Spec §3: a role reviewer's prompt carries ITS role brief only (ctx.role is set per composite slice).
-  const roleBrief = ctx.role ? roleBriefBlock(ctx.role, ctx.rolePlanText || '') : '';
-  // Slice 3: the house brief rides on the Project fit reviewer only (houseBriefBlock is '' for any other role).
-  const houseBrief = ctx.role ? houseBriefBlock(ctx.role, ctx.houseBrief) : '';
+  // Spec §3: a role reviewer's prompt carries ITS role brief only (ctx.role is set per composite slice); a provider's
+  // brief carries the house brief for the role that wants it.
+  const roleBrief = ctx.role ? roleBriefFor(ctx) : '';
   // The siblings block is for implementer tasks sharing a tree; other reviewers are not shown (spec §3).
   const siblings = ctx.slice && !ctx.role ? siblingsBlock(ctx.slice.siblings) : '';
   const answersBlock = (ports.inputs || []).some((p) => p?.as === 'answers')
@@ -617,7 +630,6 @@ export function buildAgentPrompt(ctx) {
     (hints ? hints + '\n\n' : '') +
     perspectives +
     roleBrief +
-    houseBrief +
     sliceScope +
     slicing +
     modeBlock(selectMode({ ports, bindings, freshPorts: trigger.freshPorts })) +
@@ -633,7 +645,7 @@ export function buildAgentPrompt(ctx) {
       ordinal, runCtx, outputs, verdict, bindings, ports,
       expandsPort,
       priorCount: (ctx.priorAnswers || []).length,
-      perspective: ctx.role || null, planText: ctx.rolePlanText,
+      perspective: ctx.role || null, planText: ctx.rolePlanText, roleSpec: ctx.role ? roleSpecOf(ctx) : null,
     }))
   );
 }
@@ -687,7 +699,7 @@ async function prepare(ctx) {
   const expandsPort = ctx.expandsPort !== undefined
     ? ctx.expandsPort
     : (ctx.template && ctx.portsFn ? expandsOutputPort(ctx.template, ctx.portsFn, node.id) : null);
-  const mockRole = resolveMockRole({ meta, expandsPort });
+  const mockRole = ctx.role ? MOCK_ROLE_ROLE_REVIEW : resolveMockRole({ meta, expandsPort });
   const priorAnswers = Array.isArray(ctx.priorAnswers)
     ? ctx.priorAnswers
     : await readPriorAnswers(ports, ctx.bindings);

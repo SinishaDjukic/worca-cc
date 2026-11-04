@@ -23,6 +23,7 @@ import { FLOW_KINDS, KEYED_KINDS, DEFAULT_MAX_CYCLES, AWAIT_PORT } from '../../s
 import { classifyLoops } from '../../shared/graph/loops.mjs';
 import { firedOutputs, resolveOrOutType } from '../../shared/graph/ports.mjs';
 import { blockingIssues, hasBlocking, normalizeSeverity } from '../../shared/graph/verdict.mjs';
+import { roleReviewOf } from '../../shared/graph/role-review-step.mjs';
 
 /** Execution statuses that need no re-invocation on restore. */
 const TERMINAL = new Set(['done', 'error', 'skipped']);
@@ -228,7 +229,7 @@ export function createScheduler(opts) {
   const portsOfNode = (node) => (typeof portsFn === 'function' ? portsFn(node) : null) || {};
   const isFlow = (node) => FLOW_KINDS.includes(node.kind);   // FLOW_KINDS is a frozen ARRAY (P1)
   /** Spec §3: a role-review node is composite on EVERY firing, the round-2 loop re-fire included. */
-  const isRoleReview = (node) => !isFlow(node) && node?.config?.roleReview === true;
+  const isRoleReview = (node) => !isFlow(node) && roleReviewOf(node?.config) !== null;
   const spentOf = (nodeId) => consumed.get(nodeId) || new Map();
 
   /** A port is a loop input when the classification says so OR its meta declares it.

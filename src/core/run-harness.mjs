@@ -3778,6 +3778,20 @@ export class RunHarness extends EventEmitter {
     return { model: this._engineModel(this.claude.model), effort: nc?.model ? undefined : nc?.effort };
   }
 
+  /** The pair a role-review slice runs on: "Model for all" wins; else the role's own pick (nc.roles, role-slots.mjs)
+   *  through this engine as _nodeModelPair takes the node's; a role naming only an effort runs the node's model on it;
+   *  else the node's pair. */
+  _rolePair(nc, key) {
+    if (this._modelForAll) return this._nodeModelPair(nc);
+    const pick = nc?.roles?.[key];
+    const engine = this.claude.engine || 'claude';
+    const own = pick?.model ? this._engineModel(pick.model) : undefined;
+    if (own) return { model: own, effort: pick.effort ? (effortOn(pick.effort, engine) || undefined) : undefined };
+    const node = this._nodeModelPair(nc);
+    if (!pick?.model && pick?.effort) return { ...node, effort: effortOn(pick.effort, engine) || undefined };
+    return node;
+  }
+
   _settingsScope() { return this.isWorkspace ? null : this.projectDir; }
 
   /** #943 C3: the Claude Code setting sources this run's nodes spawn with, read once per run segment. ['project'] (the

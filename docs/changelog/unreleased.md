@@ -20,6 +20,22 @@ Pull requests (add each number when it opens):
 - Requirements: Feature chat (#989)
 - Requirements: export to a tracker (#1010)
 
+## Independent reviewers for any workflow
+
+**Any workflow can review a plan with several independent reviewers, each on its own model.**
+
+A node's config can declare reviewer roles (for example Correctness and Security). The run starts one reviewer per role in parallel, each sees only its own role, and their findings go to the refiner in one file. Each role can run on its own model and effort, set in the workflow, the project's settings or for one run. Shaper's plan review now runs on this same step, unchanged for you.
+
+Why: independent reviewers and a model per reviewer were Shaper-only; they are now part of the engine (#990).
+
+Chips: role reviews · a model per role · node config
+
+Read it: [Per-role models](../models.md#per-role-models)
+
+Pull requests (add each number when it opens):
+
+- Independent reviewers, engine first (#990)
+
 ## Shaper, Run presets and Cost tags leave Labs
 
 **Three Labs features are now simply part of Worca.**

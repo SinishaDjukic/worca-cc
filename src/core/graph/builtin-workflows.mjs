@@ -4,9 +4,10 @@
 // test fixture. `fixtures.mjs` re-exports it as FIXTURE_DEFAULT so the engine
 // tests and the shipping default can never drift apart.
 //
-// Pure data + one pure helper — no IO, no dependency on the registry. The one import is the pure
-// role-review round cap, a shared shape constant.
+// Pure data + one pure helper — no IO, no dependency on the registry. The imports are pure shared shape constants:
+// the role-review round cap and the perspectives Shaper declares as its role reviews' roles.
 import { ROLE_REVIEW_MAX_ROUNDS } from '../../shared/shape/role-review.mjs';
+import { PERSPECTIVES } from '../../shared/shape/perspectives.mjs';
 
 /** Recursively freeze a value and everything reachable from it, returning the
  *  same reference. A shallow `Object.freeze` is NOT enough here: it passes
@@ -283,7 +284,12 @@ export const SHAPE_CLARIFY_HINTS = 'Shaping: ask at most 3 questions — only de
   + 'and that the repo can\'t answer. Give each question a recommended option.';
 const SHAPE_CLARIFY_CONFIG = { maxQuestions: 3, promptHints: SHAPE_CLARIFY_HINTS };
 const SHAPE_APPROVE_CONFIG = { approve: { kind: 'plan', port: 'plan' } };
-const SHAPE_ROLES_CONFIG = { roleReview: true, model: 'claude-sonnet-5-5', effort: 'medium' };   // spec decision 1
+/** Shaper's plan review is the engine role-review step, configured: the perspectives as roles, the run's picked ones
+ *  running, each judged on its own checklist items (the `perspectives` provider), the findings handed to Refine. */
+const SHAPE_ROLES_CONFIG = {
+  roleReview: { roles: PERSPECTIVES.map(({ key, label }) => ({ key, label })), source: 'picked', target: 'plan', checklist: 'perspectives', sink: 'refiner' },
+  model: 'claude-sonnet-5-5', effort: 'medium',   // spec decision 1
+};
 /** Refine waits for the reviewed plan AND its findings, both from n_roles (one publish), so it fires once per round. */
 const SHAPE_REFINE_CONFIG = { ...SHAPE_APPROVE_CONFIG, awaitAll: true };
 /** Spec §3: plan → role reviews → refine, one loop of at most 2 rounds that ends at the plan approval. Default's

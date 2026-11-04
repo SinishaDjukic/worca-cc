@@ -37,11 +37,11 @@ import { clarifyCounts, shapeScoreOf } from './shape/stats.mjs';
 import { PLAN_ASK_KIND, validatePlanAnswer, validateOutlineAnswer, renderPlanFeedback, SHAPING_FEEDBACK_PREVIEW } from './shape/run.mjs';
 import { createSliceFeature, retireFeaturesOf, earlierSliceChanges, featureApprovesEach, featureClarify, featureNotes } from './shape/features.mjs';
 import { checkSlices, applyOutlineEdits, normalizeOutline, OUTLINE_FILE, OUTLINE_CHANGE_FILE, OUTLINE_ROUNDS_MAX } from '../shared/shape/slices.mjs';
-import { DEFAULT_PERSPECTIVES, perspectiveByKey, FIT_KEY } from '../shared/shape/perspectives.mjs';
+import { DEFAULT_PERSPECTIVES } from '../shared/shape/perspectives.mjs';
 import { ensureHouseBrief } from './house-brief.mjs';
 import { extractChecklist } from '../shared/shape/checklist.mjs';
 import { applyChecklist, checklistFindingsMarkdown } from '../shared/shape/review-checklist.mjs';
-import { rolesForRound, roleTaskId, roleItems, roleRecord, findingsMarkdown, refinerVerdict, applyAddressed } from '../shared/shape/role-review.mjs';
+import { REFINER_SINK, roleReviewOf, roleChecklistOf, runningRoles, rolesForRound, roleTaskId, roleRecord, findingsMarkdown, refinerVerdict, applyAddressed } from '../shared/graph/role-review-step.mjs';
 import { createScheduler, sliceExecutionId, QUIESCENCE_WARNING } from './graph/scheduler.mjs';
 import { sigkillGraceMs } from './engines/spawn.mjs';
 import { runExecution, allocateOutputs, allocateVerdict, readDecomposition, decompositionProblems, CHECKLIST_REVIEWER_KEY, SLICE_PLANNER_KEY, SLICE_SCOPE_AGENT_KEYS, _testing as executorTesting } from './graph/executor.mjs';
@@ -1748,7 +1748,7 @@ export class GraphOrchestrator extends RunHarness {
     // row ends 'paused' either way and the whole fan-out re-runs on resume.
     if (args.composite) {
       try {
-        const role = node.config?.roleReview === true;
+        const role = roleReviewOf(node.config) !== null;
         if (args.composite === 'expand') return await (role ? this._expandRoleReview(node, args) : this._expandDecomposition(node, args));
         if (args.composite === 'phase') return role ? {} : this._compositePhase(args);   // no decomposition phase rows
         return await (role ? this._finishRoleReview(nc, node, args) : this._finishComposite(nc, args));
@@ -1767,9 +1767,10 @@ export class GraphOrchestrator extends RunHarness {
     if (nc.kind === 'agent' && this._capsProbe) ctx.cliVersion = (await Promise.resolve(this._capsProbe).catch(() => null))?.version ?? null;
     // A role slice's brief lists the plan's own items for its role: read the plan this round reviews.
     if (ctx.role) {
+      ctx.roleSpec = roleReviewOf(node.config);
       const plan = this._rolePlanBinding(args);
       ctx.rolePlanText = plan?.path ? await readFile(plan.path, 'utf8').catch(() => '') : '';
-      if (ctx.role === FIT_KEY) ctx.houseBrief = await this._fitHouseBrief();
+      if (roleChecklistOf(ctx.roleSpec)?.wantsHouseBrief(ctx.role)) ctx.houseBrief = await this._fitHouseBrief();
     }
     await this._humanCursorInit(ctx);
     this._execStep(ctx, 'start');
@@ -1931,6 +1932,8 @@ export class GraphOrchestrator extends RunHarness {
     const slice = args.slice || null;
     const ports = this.resolved.ports(node) || {};
     const runCtx = this._runCtx(nc, slice?.id);
+    // A role-review slice runs on its role's pick (role-slots.mjs), else the node's pair.
+    const modelPair = slice?.role ? this._rolePair(nc, slice.role) : null;
     const outputs = allocateOutputs({ node, ports, executionId, ordinal, runCtx });
     const verdict = allocateVerdict({ node, ports, ordinal, runCtx });
     // attr.stepKey IS the executionId: that single substitution is what re-keys
@@ -1947,7 +1950,7 @@ export class GraphOrchestrator extends RunHarness {
       // A script has no model: no per-model cost override, no cost-reliability observation.
       // The model the spawn gets (_engineModel drops a Claude model on another engine), so
       // a Claude model's cost override never prices another engine's tokens.
-      model: nc.kind === 'script' ? null : this._nodeModelPair(nc).model,
+      model: nc.kind === 'script' ? null : (modelPair || this._nodeModelPair(nc)).model,
     };
     const engineOpts = this._engineNodeOpts(nc);
     // P1 (v3, defence in depth): a Folder run's nodes never start on the REAL folder, whatever reattach path left runCwd unset.
@@ -2022,7 +2025,7 @@ export class GraphOrchestrator extends RunHarness {
         // model the spawn will actually use, global default included. Live
         // catalog on purpose — a resume re-resolves the env the same way. One
         // settings + plugins-lock read per dispatch; never call this per entry.
-        endpointRouted: nc.kind === 'agent' ? modelHasBaseUrlRouting(nc.model || this.claude.model) : false,
+        endpointRouted: nc.kind === 'agent' ? modelHasBaseUrlRouting((modelPair ? modelPair.model : nc.model) || this.claude.model) : false,
         agentPrompt: nc.agentPrompt,
         tools: nc.tools,               // frontmatter grants MUST be stamped
         promptHints: nc.promptHints || '',
@@ -2073,7 +2076,7 @@ export class GraphOrchestrator extends RunHarness {
         bin: this.claude.bin,
         engine: this.claude.engine,
         permissionMode: this.claude.permissionMode,
-        ...this._nodeModelPair(nc),
+        ...(modelPair || this._nodeModelPair(nc)),
         permissionRules: this._spawnPermissionRules(),
         envScrub: this.guardrails?.envScrub || undefined,
         // §5.5.1: a scrubbed spawn with a registry stdio copy keeps the launcher's keep-list.
@@ -2899,13 +2902,30 @@ export class GraphOrchestrator extends RunHarness {
     return (viaRevise && args.bindings?.revise) || args.bindings?.plan || null;
   }
 
-  /** Spec §3: one phase, one task per picked perspective; round 2+ drops the clean roles (no agent call). */
+  /** The run's picked role list (a `picked` role review's source): Shaper's perspectives are today's only producer. */
+  _runPickedRoles() {
+    return Array.isArray(this.runShape?.perspectives) ? [...this.runShape.perspectives] : null;
+  }
+
+  /** The roles a role-review node runs this run, from its spec. A picked list that names none of a provider-less
+   *  spec's roles falls back to its first declared role, and the audit says so. */
+  async _runningRoles(node) {
+    const spec = roleReviewOf(node.config);
+    const picked = this._runPickedRoles();
+    const roles = runningRoles(spec, picked);
+    if (spec.source === 'picked' && !roleChecklistOf(spec) && !spec.roles.some((r) => (picked || []).includes(r.key))) {
+      await appendAudit(this.pipeline.dir, `${node.id}: no picked role matches its roles; reviewing as ${roles[0]?.label}.`).catch(() => {});
+    }
+    return roles;
+  }
+
+  /** One phase, one task per running role; round 2+ drops the clean roles (no agent call). */
   async _expandRoleReview(node, args) {
     this.state.roleReviews ||= { rounds: [] };
     const { pass, round, last } = this._roleRound(args);
-    const roles = rolesForRound(this._shapePerspectives(), round, last);
+    const roles = rolesForRound(await this._runningRoles(node), round, last);
     const tasks = roles.filter((r) => !r.skip).map((r) => ({
-      id: roleTaskId(r.key), role: r.key, title: perspectiveByKey(r.key)?.label || r.key, file: null, path: null,
+      id: roleTaskId(r.key), role: r.key, title: r.label, file: null, path: null,
       nodeId: sliceExecutionId(args.executionId, roleTaskId(r.key)),
     }));
     this.state.progressFacts = { ...(this.state.progressFacts || {}), roleReview: { nodeId: node.id, round } };
@@ -2915,22 +2935,25 @@ export class GraphOrchestrator extends RunHarness {
     return { phases: tasks.length ? [{ ordinal: 1, tasks }] : [] };
   }
 
-  /** The ONE publish: read each reviewer's raw verdict, record the round, write the merged findings file, and pass the
-   *  reviewed plan on to Refine. A missing or malformed verdict is an empty review, logged; it never pauses the run. */
+  /** The ONE publish: read each reviewer's raw verdict, record the round (each record names the model and effort its
+   *  slice ran on), write the merged findings file, and pass the reviewed plan on to the sink. A missing or malformed
+   *  verdict is an empty review, logged; it never pauses the run. */
   async _finishRoleReview(nc, node, args) {
     const ordinal = args.ordinal || 1;
     const { pass, round, last } = this._roleRound(args);
     const ports = this.resolved.ports(node) || {};
     const planPath = this._rolePlanBinding(args)?.path || '';
     const planText = planPath ? await readFile(planPath, 'utf8').catch(() => '') : '';
-    const roles = await Promise.all(rolesForRound(this._shapePerspectives(), round, last).map(async (r) => {
+    const spec = roleReviewOf(node.config);
+    const provider = roleChecklistOf(spec);
+    const roles = await Promise.all(rolesForRound(runningRoles(spec, this._runPickedRoles()), round, last).map(async (r) => {
       if (r.skip) return { ...last.roles.find((x) => x.key === r.key), skipped: true };
       const v = allocateVerdict({ node, ports, ordinal, runCtx: this._runCtx(nc, roleTaskId(r.key)) });
       let raw = null;
       try { raw = v?.path ? JSON.parse(await readFile(v.path, 'utf8')) : null; } catch (err) {
         await appendAudit(this.pipeline.dir, `${node.id}: ${r.key} review unreadable (${err.message}); counted as empty.`).catch(() => {});
       }
-      return roleRecord(r.key, round, raw, roleItems(r.key, planText).map((i) => i.id));
+      return { ...roleRecord(r, round, raw, provider ? provider.items(r.key, planText) : []), ...this._roleRecordPair(nc, r.key) };
     }));
     this.state.roleReviews ||= { rounds: [] };
     this.state.roleReviews.rounds.push({ pass, round, plan: planPath, roles });
@@ -2944,10 +2967,26 @@ export class GraphOrchestrator extends RunHarness {
     };
   }
 
+  /** What a role record says ran: the pair its slice was dispatched on, plus the requested pick the engine dropped. */
+  _roleRecordPair(nc, key) {
+    const { model, effort } = this._rolePair(nc, key);
+    const wanted = nc.roles?.[key]?.wanted;
+    return { ...(model ? { model } : {}), ...(effort ? { effort } : {}), ...(wanted ? { wanted } : {}) };
+  }
+
+  /** The sink of the role review that produced this node's bound `findings` (read off the wire topology), or null. */
+  _findingsSink(nodeId) {
+    const tpl = this.resolved?.template;
+    const wire = (tpl?.wires || []).find((w) => w?.to?.node === nodeId && w.to.port === 'findings');
+    const from = wire && (tpl.nodes || []).find((n) => n.id === wire.from?.node);
+    return from ? (roleReviewOf(from.config)?.sink ?? null) : null;
+  }
+
   /** Spec §3 "Loop": a refiner fed role findings routes on THIS round's critical/major reviewer findings, never on its
    *  own self-review; its `addressed` list (raw file — normalizeReview drops it) marks findings fixed in its version. */
   async _applyRoleReviewVerdict(ctx, result) {
-    if (!ctx.bindings?.findings?.path || !this.state.roleReviews?.rounds?.length || !result || result.paused || result.error) return result;
+    if (!ctx.bindings?.findings?.path || this._findingsSink(ctx.nodeId) !== REFINER_SINK) return result;
+    if (!this.state.roleReviews?.rounds?.length || !result || result.paused || result.error) return result;
     const round = this.state.roleReviews.rounds.at(-1);
     let raw = null;
     try { raw = ctx.verdict?.path ? JSON.parse(await readFile(ctx.verdict.path, 'utf8')) : null; } catch { raw = null; }
@@ -3153,6 +3192,7 @@ export function resolvedFromManifest(manifest, registry, scripts = {}) {
       subagentEffort: mn.subagentEffort || '',
       askQuestions: !!mn.askQuestions,
       awaitAll: !!mn.awaitAll,
+      ...(mn.roles && typeof mn.roles === 'object' && Object.keys(mn.roles).length ? { roles: mn.roles } : {}),
       duplicateKey: false,
     };
   }
