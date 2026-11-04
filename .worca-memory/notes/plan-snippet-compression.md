@@ -1,7 +1,7 @@
 ---
 name: plan-snippet-compression
-description: Implementing or reviewing code a plan gives verbatim (whole-file blocks or diffs) — apply it by script and prove byte-identity; a hand "copy" can be a compresse
-updated: 2026-10-17T22:51:36.980Z
+description: Read before implementing or reviewing code a plan gives verbatim (whole-file blocks or diffs) — apply it by script and prove byte-identity.
+updated: 2026-11-04T21:15:39.186Z
 author: Bulibas
 ---
 
@@ -26,3 +26,12 @@ Implementer recipe (worked 2026-10-18 on the chat chips v5 plan: 7 new files and
   its extracted block, and `git apply --check -R <diff>` for each diff (it succeeds only while that diff is in the tree).
 - Reading the plan in python keeps backslash-u escape text intact; the Write tool would not
   (see [[write-tool-unicode-escape-trap]]).
+
+Refiner recipe (worked 2026-11-04, chat plugin admin v2: 22 blocks, every file byte-identical on round trip):
+- Replay the input plan into a checkpoint clone, fix it there (run red/green, mutation sweep), then GENERATE the vN
+  plan from that tree: a python template with `@@NEW:<path>@@` / `@@DIFF:<path>@@` placeholders, filled with the file
+  text and `git diff <checkpoint> -- <path>` (one diff per file; give each file to exactly one step). Never hand-copy
+  code into the plan.
+- Prove it: extract every block of the written vN into a fresh clone (new files written, diffs `git apply`), `cmp`
+  each file against the tree, and diff the two `git status --short` lists.
+- Trap: a "no placeholder left" check must match the placeholder names, not `@@`: every diff hunk header has `@@`.
