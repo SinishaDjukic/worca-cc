@@ -336,12 +336,12 @@ test('guardedGitEnv lists the config once more on Windows when the file was busy
     const fn = (cmd, args, opts, cb) => { calls.push([cmd, ...args]); const [err, out, errOut] = results[Math.min(calls.length - 1, results.length - 1)]; setImmediate(() => cb(err, out, errOut)); };
     return { fn, calls };
   };
-  const okOut = 'global\0user.name\nA\0';
+  const okOut = 'global\0file:/home/a/.gitconfig\0user.name\nA\0';   // the --show-origin form: scope, origin, key and value
   const denied = [busy, '', "fatal: unable to access '.git/config': Permission denied"];
   const a = fake([denied, [null, okOut, '']]);
   const env = await guardedGitEnv('/repo', { env: {}, execFile: a.fn, platform: 'win32' });
   assert.equal(a.calls.length, 2, 'listed again');
-  assert.deepEqual(a.calls[0], ['git', 'config', '--list', '--show-scope', '-z']);
+  assert.deepEqual(a.calls[0], ['git', 'config', '--list', '--show-scope', '--show-origin', '-z']);
   assert.ok(Number(env.GIT_CONFIG_COUNT) > 0);
 
   const b = fake([denied, denied]);
