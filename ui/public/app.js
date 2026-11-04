@@ -208,7 +208,7 @@ import {
 import {
   renderProvidersCard, collectProviderRow, collectSpeechRow, formatSpeechBytes, renderImportSheet, renderEndpointSheet, collectImportSheet, applyImportSelectAll,
   applyProviderPreset, endpointRowMatches, ENDPOINT_PRESETS,
-  setModelUpstream, COPILOT_TERMS,
+  setModelUpstream,
 } from './bridge-view.mjs';
 import {
   renderSourcePane, collectSourcePane, renderProfileGate, renderProfileBar,
@@ -19438,27 +19438,10 @@ async function reloadProviders() {
   } catch { /* keep what we have */ }
 }
 
-/** The blocking notice (§8.2). Resolves true once acknowledged (now or before). */
-async function ensureCopilotTerms({ force = false } = {}) {
-  if (!force && mvState.providers?.copilot?.termsCurrent) return true;
-  const r = await confirmModal({
-    title: COPILOT_TERMS.title, message: COPILOT_TERMS.body,
-    checkbox: { label: COPILOT_TERMS.checkbox }, confirmLabel: COPILOT_TERMS.confirm, cancelLabel: 'Cancel',
-  });
-  const ok = !!(r && r.ok && r.checked);
-  if (!ok) return false;
-  const res = await fetch('/api/providers/copilot/acknowledge', { method: 'POST' });
-  const data = await safeJson(res);
-  if (!res.ok) { setProviderMsg('copilot', data.error || `HTTP ${res.status}`, true, 'Notice not acknowledged'); return false; }
-  mvState.providers = data;
-  return true;
-}
-
 let copilotPollTimer = null;
 function stopCopilotPoll() { if (copilotPollTimer) { clearTimeout(copilotPollTimer); copilotPollTimer = null; } }
 
 async function copilotSignInFlow() {
-  if (!(await ensureCopilotTerms())) { repaintProviders(); return; }
   try {
     const res = await fetch('/api/providers/copilot/login', { method: 'POST' });
     const flow = await safeJson(res);
@@ -20009,7 +19992,6 @@ if (el.providersList) {
     if (t.classList.contains('mv-cp-signin')) copilotSignInFlow();
     else if (t.classList.contains('mv-cp-cancel')) { stopCopilotPoll(); mvState.signIn = null; renderProvidersViewBody(); }
     else if (t.classList.contains('mv-cp-signout')) copilotSignOutFlow();
-    else if (t.classList.contains('mv-cp-terms')) ensureCopilotTerms({ force: true }).then(() => renderProvidersViewBody());
     else if (t.classList.contains('mv-cp-fetch-models')) openImportDialog({ source: 'copilot' });
     else if (t.classList.contains('mv-cp-quota-refresh')) refreshCopilotQuotaFlow(t);
     else if (t.classList.contains('mv-pv-save')) {

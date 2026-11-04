@@ -78,8 +78,9 @@ test('Providers: one intro line, four divided rows, shared buttons', () => {
   assert.deepEqual(rules('.mv-pv-card'), [], '.drow.drow-stack sets the gap');
   // The three-column field grid stacks under 560px like every other .drows row.
   assert.match(CSS, /@container drows \(max-width:560px\)\{\s*\.mv-pv-card \.mv-pv-row:not\(\.mv-sp-row\) \.mv-pv-ctl\{grid-template-columns:minmax\(0,1fr\);\}/);
-  const pill = card.querySelector('.mv-cp-terms-pill');
-  assert.ok(pill && pill.tagName === 'BUTTON' && pill.classList.contains('btn') && !pill.classList.contains('badge'));
+  const pill = card.querySelector('.mv-pv-row[data-provider="copilot"] .mv-head .badge');
+  assert.ok(pill && pill.tagName === 'SPAN', 'the Copilot state is a plain badge (no notice pill)');
+  assert.equal(card.querySelector('.mv-cp-terms'), null);
   assert.ok(card.querySelector('.mv-pv-preset').classList.contains('btn'));
   assert.ok(renderProvidersCard({}, { doc }).querySelector('.mv-providers-hint'), 'the old in-Models card keeps its hint');
 });

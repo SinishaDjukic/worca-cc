@@ -54,7 +54,6 @@ export const CODEX_ENDPOINT_NETWORK_HINT = "endpoint unreachable — check this 
 export function bridgeHintFor(reason, provider = 'the provider') {
   switch (reason) {
     case 'not_signed_in': return `sign in to ${provider} on the Providers page (or \`worca models login ${provider}\`)`;
-    case 'terms': return 'acknowledge the GitHub Copilot notice on the Providers page first';
     case 'no_key': return `set an API key for ${provider} on the Providers page, or on this model's Connection`;
     default: return '';
   }
