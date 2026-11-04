@@ -1,6 +1,6 @@
 // The alignment check of a settings tab, shared by ds-check.mjs and its own test: run it in the page (page.evaluate).
 // --- alignment: a settings tab's rows line up because the components draw them; this proves it on the page ---
-// Every group of SettingsRows: one left edge for the rows' names and dividers (and the section head), one right edge
+// Every group of SettingsRows: one left edge for the rows' names, the rows and the section's line and head, one right edge
 // where every row's end stops (a quiet button by its text, not its padding), and the name, the sentence and the end's
 // first words on one baseline. Measured with a zero-size probe at the start of each text: its bottom is the baseline.
 export const ALIGN = () => {
@@ -21,6 +21,8 @@ export const ALIGN = () => {
     const box = rows[0].getBoundingClientRect(); const L = box.left, R = box.right;
     const stacked = getComputedStyle(rows[0]).gridTemplateColumns.split(' ').length === 1;
     const head = list.parentElement.matches('.set-sec') && list.parentElement.querySelector(':scope > .set-sec-head');
+    const sec = list.parentElement.matches('.set-sec') ? list.parentElement.getBoundingClientRect() : null;
+    if (sec && (!near(sec.left, L) || !near(sec.right, R))) out.push(`the section's line is off the rows' edges: ${list.parentElement.querySelector('.set-sec-h')?.textContent.slice(0, 30)}`);
     if (head) {
       const h = textBox(head.querySelector('.set-sec-h'));
       if (!near(h.left, L)) out.push(`the head starts ${Math.round(h.left - L)}px off its rows: ${head.textContent.trim().slice(0, 30)}`);
@@ -29,7 +31,7 @@ export const ALIGN = () => {
     }
     for (const row of rows) {
       const b = row.getBoundingClientRect(); const name = row.querySelector('.set-name'), text = row.querySelector('.set-text'), end = row.querySelector('.set-end');
-      if (!near(b.left, L) || !near(b.right, R)) out.push(`a divider off the edges: ${label(row)}`);
+      if (!near(b.left, L) || !near(b.right, R)) out.push(`a row off the edges: ${label(row)}`);
       if (!near(textBox(name).left, L)) out.push(`a name off the left edge: ${label(row)}`);
       if (stacked && text.textContent.trim() && !near(textBox(text).left, L)) out.push(`a stacked sentence off the left edge: ${label(row)}`);
       const first = [...end.children].find((e) => e.offsetParent);

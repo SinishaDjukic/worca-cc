@@ -73,11 +73,10 @@ html,body{height:auto;overflow:visible;margin:0;}
 .rc-ask{grid-column:2 / 4;font-size:var(--fs-body);color:var(--ink);
   display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
 
-/* Members of a group: divided one-line rows on the same rail. */
+/* Members of a group: one-line rows on the same rail. */
 .rc-members{grid-column:1 / -1;list-style:none;margin:0;padding:0;}
 .rc-member{display:grid;grid-template-columns:var(--rail) minmax(0,1fr) auto auto;column-gap:var(--gap);align-items:center;
-  min-height:32px;border-top:1px solid var(--line);}
-.rc-member:first-child{border-top:0;}
+  min-height:32px;}   /* a group's runs divide by space (Lists: a line only where a group starts) */
 .rc-member .rc-m-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .rc-member .rc-m-state{font-size:var(--fs-meta);color:var(--ink-2);white-space:nowrap;}
 .rc-member.is-open{background:var(--row-selected);border-radius:var(--r-sm);border-top-color:transparent;}
@@ -214,14 +213,11 @@ html,body{height:auto;overflow:visible;margin:0;}
 .rtab-p{margin:0;font-size:var(--fs-body);color:var(--ink-2);}
 .rtab-dim{font-size:var(--fs-meta);font-weight:400;color:var(--ink-2);}
 .rtab-list{list-style:none;margin:0;padding:0;}
-.rtab-list li{padding:8px 0;border-top:1px solid var(--line);font-size:var(--fs-body);}
-.rtab-list li:first-child{border-top:0;}
+.rtab-list li{padding:8px 0;font-size:var(--fs-body);}
 .rtab-list.is-plain li{display:flex;align-items:baseline;gap:12px;min-width:0;}
 .rtab-list code,.rtab-files code{font-family:var(--mono);font-size:var(--fs-meta);color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;}
 .table .num{text-align:right;font-variant-numeric:tabular-nums;}
 .rtab-files{list-style:none;margin:0;padding:0;}
-.rtab-files li{border-top:1px solid var(--line);}
-.rtab-files li:first-child{border-top:0;}
 .rtab-file{display:flex;align-items:center;gap:16px;width:100%;min-height:36px;padding:0 8px;margin:0 -8px;border:0;background:none;color:inherit;cursor:pointer;border-radius:var(--r-sm);text-align:left;box-sizing:content-box;}
 .rtab-file:hover{background:var(--hover);}
 .rtab-file .ct{flex:none;display:flex;gap:8px;font-family:var(--mono);font-size:var(--fs-meta);}
@@ -230,8 +226,7 @@ html,body{height:auto;overflow:visible;margin:0;}
 .rtab-stage .sc-subs .rtab-log{margin-block:-6px;flex:none;}
 .sc-subs .is-focus{background:var(--row-selected);box-shadow:0 0 0 6px var(--row-selected);border-radius:var(--r-xs);}
 .rtab-dec{list-style:none;margin:0;padding:0;}
-.rtab-dec li{display:grid;grid-template-columns:160px minmax(0,1fr);column-gap:16px;row-gap:2px;padding:10px 0;border-top:1px solid var(--line);font-size:var(--fs-body);}
-.rtab-dec li:first-child{border-top:0;}
+.rtab-dec li{display:grid;grid-template-columns:160px minmax(0,1fr);column-gap:16px;row-gap:2px;padding:10px 0;font-size:var(--fs-body);}
 .rtab-dec li > :first-child{grid-row:1 / span 3;}
 .rtab-dec li > :not(:first-child){grid-column:2;}
 .rtab-q{font-weight:500;color:var(--ink);}
@@ -358,14 +353,11 @@ html,body{height:auto;overflow:visible;margin:0;}
 .ov-focus .qopts{display:flex;flex-direction:column;gap:4px;}
 .ov-focus .input{max-width:420px;}
 .ov-plan{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;}
-.ov-plan li{display:grid;grid-template-columns:20px minmax(0,1fr);column-gap:12px;padding:6px 0;border-top:1px solid var(--line);font-size:var(--fs-body);}
-.ov-plan li:first-child{border-top:0;}
+.ov-plan li{display:grid;grid-template-columns:20px minmax(0,1fr);column-gap:12px;padding:6px 0;font-size:var(--fs-body);}
 .ov-n{font:500 var(--fs-meta)/inherit var(--sans);color:var(--ink-2);font-variant-numeric:tabular-nums;text-align:right;}
 .ov-sub{margin:4px 0 -4px;font:600 var(--fs-meta)/var(--lh-title) var(--sans);color:var(--ink-2);}
 .ov-sub.is-warn{color:var(--amber-ink-strong);}
 .ov-checks{list-style:none;margin:0;padding:0;}
-.ov-checks li{border-top:1px solid var(--line);}
-.ov-checks li:first-child{border-top:0;}
 .ov-check{display:grid;grid-template-columns:20px minmax(0,1fr);column-gap:12px;align-items:start;padding:8px 0;font-size:var(--fs-body);cursor:pointer;}
 .ov-check input{margin:3px 0 0;justify-self:center;accent-color:var(--ink);}
 .ov-check:has(input:checked) span{color:var(--ink-2);text-decoration:line-through;text-decoration-color:var(--ink-3);}
@@ -400,8 +392,7 @@ html,body{height:auto;overflow:visible;margin:0;}
 .ch-dir{display:flex;align-items:baseline;gap:8px;padding:12px 0 4px;}
 .ch-dir:first-child{padding-top:0;}
 .ch-dir code{font:500 var(--fs-meta)/var(--lh-title) var(--mono);color:var(--ink-2);}
-.ch-file{border-top:1px solid var(--line);}
-.ch-dir + .ch-file{border-top:0;}
+
 .ch-row{display:grid;grid-template-columns:20px minmax(0,1fr) 24px max-content max-content;align-items:center;column-gap:12px;width:100%;min-height:36px;
   padding:0;border:0;background:none;color:inherit;font:inherit;text-align:left;cursor:pointer;}
 .ch-row:hover .ch-name{text-decoration:underline;text-underline-offset:3px;}
@@ -772,6 +763,7 @@ html,body{height:auto;overflow:visible;margin:0;}
 /* Changes, grouped by what it is: a group's head with its count and lines; the folder trails the file's name; the
    documents its steps wrote follow under Not in the code. */
 .ch-group{padding-top:16px;}
+.ch-group:not(:first-child){margin-top:12px;border-top:1px solid var(--line);}   /* a line where a group starts; files divide by space */
 .ch-group:first-child{padding-top:0;}
 .ch-gn{font:600 var(--fs-body)/var(--lh-title) var(--sans);color:var(--ink);}
 .ch-group .ct{display:inline-flex;gap:6px;font:400 var(--fs-meta)/1 var(--mono);}
@@ -779,7 +771,6 @@ html,body{height:auto;overflow:visible;margin:0;}
 .ch-gnote{padding:0 0 4px;font-size:var(--fs-meta);color:var(--ink-2);list-style:none;}
 .ch-doc{display:grid;grid-template-columns:20px minmax(0,1fr) auto;align-items:center;column-gap:12px;min-height:36px;}
 .ch-doc .ch-name{display:flex;align-items:baseline;min-width:0;}
-.ch-gnote + .ch-doc{border-top:0;}
 .ch-file.is-flash{animation:ov-flash var(--motion-flash) ease-out;border-radius:var(--r-sm);}
 @media (prefers-reduced-motion: reduce){.ch-file.is-flash{animation:none;outline:2px solid var(--line-2);outline-offset:4px;}}
 
@@ -788,13 +779,13 @@ html,body{height:auto;overflow:visible;margin:0;}
    button's text, not its padding: --btn-inset), and the name, the sentence and the end on one baseline. A wrapped
    sentence keeps the body's line height: a picker adds no height. Under 560px of width a row stacks on the same edge. */
 .set-sec{--btn-inset:11px;container-type:inline-size;min-width:0;margin-top:32px;}
+.set-sec + .set-sec{margin-top:24px;padding-top:24px;border-top:1px solid var(--line);}   /* a line where a section starts; rows divide by space */
 .set-sec-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;min-height:28px;}
 .set-sec-h{margin:0;font:600 var(--fs-body)/var(--lh-title) var(--sans);color:var(--ink);}
 .set-sec-head > .btn-quiet{margin-right:calc(-1 * var(--btn-inset));}
 .set-sec-meta{margin:2px 0 0;font-size:var(--fs-meta);color:var(--ink-2);}
 .set-rows{display:flex;flex-direction:column;margin-top:4px;}
-.set-row{display:grid;grid-template-columns:168px minmax(0,1fr) auto;column-gap:16px;align-items:baseline;padding:12px 0;border-top:1px solid var(--line);line-height:var(--lh-body);}
-.set-rows > .set-row:first-child{border-top:0;}
+.set-row{display:grid;grid-template-columns:168px minmax(0,1fr) auto;column-gap:16px;align-items:baseline;padding:10px 0;line-height:var(--lh-body);}
 .set-name{min-width:0;font-weight:500;color:var(--ink);overflow-wrap:anywhere;}
 .set-text{min-width:0;color:var(--ink-2);}
 .set-text b,.set-text code{color:var(--ink);font-weight:600;}

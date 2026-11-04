@@ -143,7 +143,7 @@ shows it; sizes, colours and spacing come with the component. Names are the Desi
 | How far along, and its steps | Stepper, then StepRow on the rail | Plan · Build · Review |
 | Time, cost, changes | Figures | Cost $84.10 of $120 |
 | Labels and cost tags | TagGroup | ui, team: web, +2 |
-| A list of things | ListRow: divided rows on the rail, the whole row opens, never a box per item | runs, files, decisions |
+| A list of things | ListRow on the rail, the whole row opens, never a box per item. Rows are split by space; a list grouped by something (status, day, section) draws one `--line` where each group after the first starts, from the text edge, and none between rows. Mock `plans/rail/mocks/now-dividers-compare-*.png` (option 4) | runs, files, decisions, Pulse's Now, a settings tab |
 | A short fact: a stage, a source, a slot to set up | Chip | Beta, Official, No API key |
 | Why a control is off, a cut-off text, an id | Tooltip | Checks are still running on #959 |
 | The same figures across many rows | Table: divided rows, tabular figures, no box per row, the name first; on a narrow screen the least needed columns go to the row's detail | sessions, cost by step |
