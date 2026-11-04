@@ -873,7 +873,7 @@ button.lr-main:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
 .side-i:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
 .side-l{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .side-back{margin-bottom:8px;}
-.side-g{margin:16px 0 4px;padding:0 9px;font-size:var(--fs-caption);font-weight:500;color:var(--ink-2);}
+.side-g{margin:16px 0 4px;padding:0 9px;font:600 var(--fs-body)/var(--lh-title) var(--sans);color:var(--ink);}   /* a group head: its items' size, heavier, in ink (Type roles) */
 .side-back + .side-group .side-g{margin-top:4px;}
 .side-menu.is-list{padding:0;gap:0;}
 .side-menu.is-list .side-group + .side-group{margin-top:12px;padding-top:12px;border-top:1px solid var(--line);}

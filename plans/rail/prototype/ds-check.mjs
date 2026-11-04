@@ -96,6 +96,21 @@ const NAMES = () => {
   return out;
 };
 
+// --- heads: never smaller or weaker than what they head (docs/design-system.md › Type roles) ---
+// A head is a step larger than its items (a page's sections), or the same size, heavier and in --ink (a list's or a
+// menu's groups).
+const HEADS = () => {
+  const out = []; const PAIRS = [['.side-g', '.side-i'], ['.set-sec-h', '.set-name'], ['.set-sec-h', '.lr-t'], ['.list-h', '.lr-t'], ['.pz-h', '.pz-row-t']];
+  const st = (e) => { const c = getComputedStyle(e); return { size: parseFloat(c.fontSize), weight: parseFloat(c.fontWeight) }; };
+  for (const [h, i] of PAIRS) {
+    const head = [...document.querySelectorAll(h)].find((e) => e.offsetParent), item = [...document.querySelectorAll(i)].find((e) => e.offsetParent);
+    if (!head || !item) continue;
+    const a = st(head), b = st(item);
+    if (a.size < b.size || (a.size === b.size && a.weight <= b.weight)) out.push(`${h} (${a.size}px/${a.weight}) heads ${i} (${b.size}px/${b.weight})`);
+  }
+  return out;
+};
+
 // --- the pages ---
 const b = await chromium.launch({ channel: 'chrome' });
 const OPEN = ['break:part', 'break:background', 'break:offline', '[data-pop]', '[data-acct]', '[data-newrun]', '[data-key="act-main"]', '[data-menu]', '.rc-tabs .tab:nth-child(2)', '.rc-tabs .tab:nth-child(3)', '.rc-tabs .tab:nth-child(4)', '.rc-tabs .tab:nth-child(5)'];
@@ -125,6 +140,7 @@ for (const page of ['index.html', 'pulse.html']) {
     for (const [k, wh] of found) add(k, `${page}: ${wh}`);
     for (const m of await p.evaluate(ALIGN)) add('misaligned (the components own alignment)', `${page} ${c}: ${m}`);
     for (const m of await p.evaluate(NAMES)) add('a name against the naming rule', `${page}: ${m}`);
+    for (const m of await p.evaluate(HEADS)) add('a head smaller or weaker than what it heads', `${page}: ${m}`);
     await p.keyboard.press('Escape');
   }
   // every settings section, wide and narrow
@@ -137,6 +153,7 @@ for (const page of ['index.html', 'pulse.html']) {
         await p.evaluate((id) => document.querySelector(`[data-sset="${id}"]`)?.click(), id);
         for (const m of await p.evaluate(ALIGN)) add('misaligned (the components own alignment)', `${page} settings/${id} at ${w}px: ${m}`);
         for (const m of await p.evaluate(NAMES)) add('a name against the naming rule', `${page} settings/${id}: ${m}`);
+        for (const m of await p.evaluate(HEADS)) add('a head smaller or weaker than what it heads', `${page} settings/${id} at ${w}px: ${m}`);
       }
     }
   }
