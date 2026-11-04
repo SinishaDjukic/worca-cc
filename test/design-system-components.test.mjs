@@ -168,3 +168,33 @@ test('the components say how they move', () => {
   assert.match(C.confirmStrip({ text: 'x', yes: 'Merge' }), /data-confirm="yes"[^>]*data-motion="swap"/);
   assert.equal((C.statusLine({ dot: '', word: 'Ready' }).match(/data-motion="change"/g) || []).length, 2, 'the mark and the word');
 });
+
+test('sentencePicker: the words in the sentence, a CompactMenu only when open, each pick names the picker and the value', () => {
+  const items = [{ id: 'needs', text: 'what needs you', checked: true }, { sep: true }, { id: 'none', text: 'nothing', checked: false }];
+  const closed = dom(C.sentencePicker({ id: 'badge', text: 'what needs you', items, tip: 'What the count counts' }));
+  const b = closed.querySelector('.spick-b');
+  assert.equal(b.textContent, 'what needs you');
+  assert.equal(b.dataset.menu, 'badge');
+  assert.equal(b.getAttribute('aria-expanded'), 'false');
+  assert.equal(closed.querySelector('.menu'), null);
+  const open = dom(C.sentencePicker({ id: 'badge', text: 'x', items, open: true, right: true }));
+  assert.ok(open.querySelector('.menu.spick-menu.is-right'));
+  assert.deepEqual([...open.querySelectorAll('[data-menu-pick]')].map((x) => x.dataset.menuPick), ['badge|needs', 'badge|none']);
+});
+
+test('switchButton, settingsRow and settingsSection: the row owns its parts, the section its head and action', () => {
+  const sw = dom(C.switchButton({ on: true, label: 'Desktop notifications', why: 'On', attrs: { 'data-desk': '' } }));
+  assert.equal(sw.getAttribute('role'), 'switch');
+  assert.equal(sw.getAttribute('aria-checked'), 'true');
+  const row = dom(C.settingsRow({ name: 'Badge <b>', sentence: 'The tab title counts <x>', end: '<button class="btn"></button>', changed: true, detail: '<p>more</p>' }));
+  assert.equal(row.className, 'set-row');
+  assert.equal(row.querySelector('.set-name').textContent, 'Badge <b>', 'the name is escaped');
+  assert.ok(row.querySelector('.set-text x'), 'the sentence is markup, so it can hold pickers');
+  assert.equal(row.querySelector('.set-end .set-changed').textContent, 'Changed');
+  assert.equal(row.querySelector('.set-detail').dataset.motion, 'open');
+  const sec = dom(C.settingsSection({ title: 'What reaches you', action: '<button class="btn btn-quiet">Reset</button>', meta: 'one line', rows: C.settingsRow({ name: 'a' }) }));
+  assert.equal(sec.querySelector('h2.set-sec-h').textContent, 'What reaches you');
+  assert.ok(sec.querySelector('.set-sec-head > .btn-quiet'));
+  assert.equal(sec.querySelector('.set-sec-meta').textContent, 'one line');
+  assert.equal(sec.querySelectorAll('.set-rows > .set-row').length, 1);
+});

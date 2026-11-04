@@ -19,8 +19,11 @@ const VIEWS = {
   popMore: async (p) => { await click(p, '[data-pop]'); await click(p, '[data-ptab="updates"]'); await click(p, '[data-menu="more"]'); },
   newrun: async (p) => click(p, '[data-newrun]'),
   newrunSmall: async (p) => { await click(p, '[data-newrun]'); await click(p, '[data-menu="nr-size"]'); await click(p, '[data-pick="nr-size|small"]'); },
-  settings: async (p) => { await click(p, '[data-go="settings"]'); await click(p, '[data-custom="usage"]'); },
-  settingsWait: async (p) => { await click(p, '[data-go="settings"]'); await click(p, '[data-menu="auto"]'); await click(p, '[data-pick="auto|wait"]'); await click(p, '[data-menu="mine"]'); await click(p, '[data-pick="mine|wait"]'); await click(p, '[data-newrun]'); },
+  settings: async (p) => { await click(p, '[data-go="settings"]'); await click(p, '[data-sset="notifications"]'); await click(p, '[data-custom="usage"]'); },
+  // every other Settings section: their rows are the same components, each with its own pickers, switches and buttons
+  ...Object.fromEntries(['general', 'experimental', 'runs', 'presets', 'tags', 'automations', 'ask', 'guardrails', 'memory', 'marketplace', 'connectors', 'models', 'providers']
+    .map((id) => ['settings-' + id, async (p) => { await click(p, '[data-go="settings"]'); await click(p, `[data-sset="${id}"]`); }])),
+  settingsWait: async (p) => { await click(p, '[data-go="settings"]'); await click(p, '[data-sset="notifications"]'); await click(p, '[data-menu="auto"]'); await click(p, '[data-pick="auto|wait"]'); await click(p, '[data-menu="mine"]'); await click(p, '[data-pick="mine|wait"]'); await click(p, '[data-newrun]'); },
 };
 let clicks = 0;
 for (const scheme of ['dark', 'light']) for (const w of [375, 900]) {
@@ -57,7 +60,7 @@ for (const scheme of ['dark', 'light']) for (const w of [375, 900]) {
           if (a.width && d.width && a.left < d.right - 1 && d.left < a.right - 1 && a.top < d.bottom - 1 && d.top < a.bottom - 1) out.push(['overlap', row.className + ' > ' + kids[i].className + ' / ' + kids[j].className]);
         }
       }
-      for (const box of [...app.querySelectorAll('.pz-popover,.nav-fly,.pz-menu')].filter((x) => x.offsetParent)) { const r = box.getBoundingClientRect(); if (r.left < 15.5 || r.right > vw - 15.5) out.push(['popover or menu outside the window', box.className]); }
+      for (const box of [...app.querySelectorAll('.pz-popover,.nav-fly,.pz-menu,.spick-menu')].filter((x) => x.offsetParent)) { const r = box.getBoundingClientRect(); if (r.left < 15.5 || r.right > vw - 15.5) out.push(['popover or menu outside the window', box.className]); }
       // every heading, row text and sentence on the page starts on one text edge
       const page = app.querySelector('.pz-page');
       const edges = new Set([...page.querySelectorAll('.pz-title,.pz-h,.pz-row-t,.pz-sk')].filter((e) => e.offsetParent && !e.closest('.pz-events')).map((e) => Math.round(e.getBoundingClientRect().left)));
@@ -77,7 +80,8 @@ for (const scheme of ['dark', 'light']) for (const w of [375, 900]) {
         el.click();
         const after = document.getElementById('app').innerHTML.replace(/ data-k="k\d+"/g, '') + document.querySelector('.rc-toast').textContent;
         const maxY = document.documentElement.scrollHeight - window.innerHeight;   // a page that got shorter may have to give some back
-        return { label, moved: Math.abs(window.scrollY - Math.min(y, maxY)) > 1, dead: after === before.replace(/ data-k="k\d+"/g, ''), side: document.documentElement.scrollWidth > document.documentElement.clientWidth + 1 };
+        const goes = el.matches('[data-sset], [data-go]');   // to another page: it opens at its top
+        return { label, moved: !goes && Math.abs(window.scrollY - Math.min(y, maxY)) > 1, dead: after === before.replace(/ data-k="k\d+"/g, ''), side: document.documentElement.scrollWidth > document.documentElement.clientWidth + 1 };
       }, k);
       if (!r) continue; clicks++;
       if (r.moved) add('page moved on click', `${scheme}/${w}/${c}/${v}: ${r.label}`);

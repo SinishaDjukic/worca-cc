@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { chromium } from '/Users/emil.angelov/src/worka-cc/node_modules/playwright/index.mjs';
 import { APP_CSS, writeAppCss } from './app-css.mjs';
 import { writeComponentsJs } from './components-js.mjs';
+import { ALIGN } from './align-check.mjs';
 writeAppCss();   // the app's CSS, assembled from its parts
 writeComponentsJs();   // the Rail components, bundled for file://
 const here = (f) => fileURLToPath(new URL(f, import.meta.url));
@@ -24,13 +25,13 @@ const CONTROLS = {
   Stepper: '.sc-stage',
   Segmented: '.seg button, .theme-ic',                       // ds-ok: .theme-ic is the account menu's icon segmented control
   CompactMenu: '.menu-item',
-  SentencePicker: '.pd-base',
+  SentencePicker: '.pd-base, .spick-b',
   SuggestionField: '.pd-ai, .pd-stop, .pd-eye, .pd-retry',
   Switch: '.switch, .sw-item',
   TagGroup: '.rc-tags-mark, .rc-tag-x',
   OptionList: '.sc-ans-opt',
-  ListRow: '.row-btn, .sc-step, .ch-row, .st-head, .pz-nav-i, .pz-acct, .sc-loop.is-btn',
-  'Text link': '.rc-fig-link, .rc-crumb, .rc-branch, .dc-link, .ov-art-name',
+  ListRow: '.cfg-li, .row-btn, .sc-step, .ch-row, .st-head, .pz-nav-i, .pz-acct, .sc-loop.is-btn',
+  'Text link': '.rc-fig-link, .rc-crumb, .rc-branch, .dc-link, .ov-art-name, .cfg-crumb',
 };
 const CONTROL_SEL = Object.values(CONTROLS).join(', ');
 
@@ -104,7 +105,20 @@ for (const page of ['index.html', 'pulse.html']) {
       return out;
     }, [CONTROL_SEL, [...classes]]);
     for (const [k, wh] of found) add(k, `${page}: ${wh}`);
+    for (const m of await p.evaluate(ALIGN)) add('misaligned (the components own alignment)', `${page} ${c}: ${m}`);
     await p.keyboard.press('Escape');
+  }
+  // every settings section, wide and narrow
+  if (await p.$('[data-go="settings"]')) {
+    for (const w of [900, 400]) {
+      await p.setViewportSize({ width: w, height: 900 });
+      await p.evaluate(() => document.querySelector('[data-go="settings"]').click());
+      const ids = await p.evaluate(() => [...document.querySelectorAll('[data-sset]')].map((e) => e.dataset.sset));
+      for (const id of [...new Set(ids)]) {
+        await p.evaluate((id) => document.querySelector(`[data-sset="${id}"]`)?.click(), id);
+        for (const m of await p.evaluate(ALIGN)) add('misaligned (the components own alignment)', `${page} settings/${id} at ${w}px: ${m}`);
+      }
+    }
   }
   await p.close();
 }

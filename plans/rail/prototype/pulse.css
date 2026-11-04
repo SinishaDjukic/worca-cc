@@ -204,3 +204,29 @@
   .pz-pulse-l,.pz-new-l{display:none;}
   .pz-top .btn-primary{width:28px;padding:0;}
 }
+
+/* Settings (B): the sidebar becomes its menu; groups under small heads; ‹ Back to Worca at its top. */
+.cfg-menu{display:flex;flex-direction:column;gap:2px;padding:11px 10px;overflow:auto;}
+.pz-nav.is-app{display:none;}
+.cfg-back{color:var(--ink-2);margin-bottom:8px;}
+.cfg-g{margin:16px 0 4px;padding:0 9px;font-size:var(--fs-caption);font-weight:500;color:var(--ink-2);}
+.cfg-menu > .cfg-back + .cfg-g{margin-top:4px;}
+.cfg-index,.cfg-crumb{display:none;}
+.cfg-body{margin-left:var(--edge);}
+.cfg-body > .rc-confirm{margin-top:16px;}
+.cfg-body > .set-sec:first-child{margin-top:24px;}
+.set-foot{padding-top:4px;}
+.set-foot > .btn-quiet{margin-left:calc(-1 * var(--btn-inset));}
+/* Narrow: Worca's own sidebar stays; Settings opens on its menu as a list, and a section has ‹ Settings. */
+@media (max-width: 760px){
+  .cfg-menu{display:none;}
+  .pz-nav.is-app{display:flex;}
+  .cfg-index{display:block;}
+  .cfg-page:not(.is-index) .cfg-index,.cfg-page.is-index .cfg-section{display:none;}
+  .cfg-index .cfg-g{margin-left:var(--edge);padding:0;}
+  .cfg-list{display:flex;flex-direction:column;margin-left:var(--edge);}
+  .cfg-li{display:flex;align-items:center;justify-content:space-between;min-height:44px;padding:0;border:0;border-top:1px solid var(--line);background:none;color:var(--ink);font:inherit;text-align:left;cursor:pointer;}
+  .cfg-li:first-child{border-top:0;}
+  .cfg-li svg{color:var(--ink-3);}
+  .cfg-crumb{display:inline-flex;align-items:center;gap:2px;margin:0 0 8px var(--edge);padding:0;border:0;background:none;color:var(--ink-2);font:inherit;font-size:var(--fs-meta);cursor:pointer;}
+}

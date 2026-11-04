@@ -782,3 +782,45 @@ html,body{height:auto;overflow:visible;margin:0;}
 .ch-gnote + .ch-doc{border-top:0;}
 .ch-file.is-flash{animation:ov-flash var(--motion-flash) ease-out;border-radius:var(--r-sm);}
 @media (prefers-reduced-motion: reduce){.ch-file.is-flash{animation:none;outline:2px solid var(--line-2);outline-offset:4px;}}
+
+/* A settings tab: SettingsSection, SettingsRow, SentencePicker, Switch (ui/public/design-system/components/settings-row.mjs).
+   The alignment is the component's: one left edge for every text and divider, one right edge for every action (a quiet
+   button's text, not its padding: --btn-inset), and the name, the sentence and the end on one baseline. A wrapped
+   sentence keeps the body's line height: a picker adds no height. Under 560px of width a row stacks on the same edge. */
+.set-sec{--btn-inset:11px;container-type:inline-size;min-width:0;margin-top:32px;}
+.set-sec-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;min-height:28px;}
+.set-sec-h{margin:0;font:600 var(--fs-body)/var(--lh-title) var(--sans);color:var(--ink);}
+.set-sec-head > .btn-quiet{margin-right:calc(-1 * var(--btn-inset));}
+.set-sec-meta{margin:2px 0 0;font-size:var(--fs-meta);color:var(--ink-2);}
+.set-rows{display:flex;flex-direction:column;margin-top:4px;}
+.set-row{display:grid;grid-template-columns:168px minmax(0,1fr) auto;column-gap:16px;align-items:baseline;padding:12px 0;border-top:1px solid var(--line);line-height:var(--lh-body);}
+.set-rows > .set-row:first-child{border-top:0;}
+.set-name{min-width:0;font-weight:500;color:var(--ink);overflow-wrap:anywhere;}
+.set-text{min-width:0;color:var(--ink-2);}
+.set-text b,.set-text code{color:var(--ink);font-weight:600;}
+.set-text code{font:400 var(--fs-meta) var(--mono);}
+.set-end{display:flex;align-items:baseline;justify-content:flex-end;gap:12px;white-space:nowrap;}
+.set-end::before{content:"\200b";width:0;margin-right:-12px;}   /* a baseline even when the end holds only a Switch; it takes no gap */
+.set-end:empty::before,.set-end:not(:has(*)):empty{display:none;}
+.set-end > .switch{align-self:center;flex:none;}
+
+.set-end > .btn-quiet:last-child{margin-right:calc(-1 * var(--btn-inset));}
+.set-changed{font-size:var(--fs-caption);color:var(--ink-2);}
+.set-detail{grid-column:2 / -1;padding-top:8px;min-width:0;}
+.spick{position:relative;}
+.spick-b{display:inline;margin:0;padding:0;border:0;border-radius:var(--r-xs);background:none;font:inherit;font-weight:600;line-height:inherit;color:var(--ink);white-space:nowrap;cursor:pointer;transition:background-color 100ms var(--ease),box-shadow 100ms var(--ease);}
+.spick-b svg{margin-left:2px;vertical-align:-2px;color:var(--ink-2);}
+.spick-b:hover,.spick-b[aria-expanded="true"]{background:var(--hover);box-shadow:0 0 0 3px var(--hover);}
+.spick-b:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.spick-menu{position:absolute;top:calc(100% + 6px);left:-4px;z-index:46;min-width:200px;line-height:normal;white-space:normal;}
+.spick-menu.is-right{left:auto;right:-4px;}
+@container (max-width: 560px){
+  .set-row{grid-template-columns:minmax(0,1fr);row-gap:4px;}
+  .set-end{justify-content:flex-start;}
+  .set-end:not(:has(*)){display:none;}
+  .set-end > .btn-quiet:first-child{margin-left:calc(-1 * var(--btn-inset));}
+  .set-end > .btn-quiet:last-child{margin-right:0;}
+  .set-detail{grid-column:1;}
+  .spick-b{white-space:normal;}
+  .spick-menu.is-right{left:-4px;right:auto;}   /* a stacked row: every menu opens under its words */   /* a long choice wraps on a narrow screen, its ▾ with its last word */
+}

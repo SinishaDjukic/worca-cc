@@ -11,11 +11,12 @@ Online: the [Design System](https://claude.ai/artifact/P38jGMS7jA9XQu2U2uP3HP) (
 |---|---|---|
 | Run and group page | `spec.md` (review `review.md`, shipping plan `enrollment.md`) | In the prototype |
 | Pulse: the notification hub, usage rings, limit notifications and what a start does near a limit | `pulse.md` | Concept, in the prototype (`pulse.html`) |
+| Settings: the sidebar becomes its menu (four groups), every section as SettingsRows | `docs/design-system.md` › Settings, mocks `mocks/settings-menu-*.png` | In the prototype (`pulse.html` › Settings; content `settings-model.js`, renderer `settings.js`) |
 
 - `prototype/`: the clickable prototype, every page in one place (`index.html`; the run page is `run-page-model.js`
   and `run-page.js`, the shared styles `rail.css`). Pulse is `pulse.html`, `pulse-model.js`, `pulse.js` and `pulse.css`. The gates: `node plans/rail/prototype/sweep.mjs file://$PWD/plans/rail/prototype/index.html` and
   `node plans/rail/prototype/pulse-sweep.mjs file://$PWD/plans/rail/prototype/pulse.html`; and for both pages,
-  `node plans/rail/prototype/ds-check.mjs`: everything on them comes from the design system. The pages draw on the app's CSS as `prototype/app.css`, assembled from `ui/public/parts.json` by
+  `node plans/rail/prototype/ds-check.mjs`: everything on them comes from the design system, and every Settings section lines up (`align-check.mjs`; `align-proof.mjs` shows the check catches each fault). The pages draw on the app's CSS as `prototype/app.css`, assembled from `ui/public/parts.json` by
   `node plans/rail/prototype/app-css.mjs` (the gates run it first; it is not committed).
 - `mocks/`: PNG mocks of decisions, named by page.
 

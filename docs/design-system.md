@@ -261,9 +261,16 @@ at once. One side column at a time.
 its work as cards on a 760px text column under the shared card head: a run card, a command group (folded to its head;
 a failure opens itself), a graph in its well.
 
-**A settings tab**: the Settings title, then Tabs, then one meta line saying what the tab decides, then sections on
-one rail. A row is its name on the left and one sentence on the right, the choice a SentencePicker in it (`Tell me
-about [needs you ▾] on [desktop ▾]`) or a Switch when it is only on or off; it takes effect at once. More detail
+**Settings**: opening Settings turns the sidebar into its menu: `‹ Back to Worca`, then the sections under four small
+group heads (Worca: General, Notifications, Labs · Runs: Runs, Presets, Labels & cost tags, Automations · Agents: Chat,
+Guardrails, Memory · Add-ons: Marketplace, Connectors, Models, Providers); the content keeps the full width. On a narrow
+screen Worca's sidebar stays, Settings opens on its menu as a list, and a section has `‹ Settings` above its title.
+Mocks: `plans/rail/mocks/settings-menu-*.png`.
+
+**A settings tab** (a section of Settings): its title, then one meta line saying what it decides, then its sections
+(SettingsSection). A row (SettingsRow) is its name on the left and one sentence beside it, the choice a SentencePicker in
+it (`Tell me about [needs you ▾] on [desktop ▾]`), and at its right end a Switch when it is only on or off, then its
+buttons; it takes effect at once. More detail
 folds under the row behind Customise, and a row that differs from its group says Changed. A reset of many rows sits in
 its section's head and confirms in the strip; nothing else confirms. A tab that also keeps records (rules, an event
 log, a queue) puts each as a list section after its rows, under its own head: a List with its sentence.
@@ -366,7 +373,11 @@ prototype does both at 375px.
 Every Rail page passes its gate (`plans/rail/prototype/sweep.mjs` for the run page, `pulse-sweep.mjs` for Pulse) in every case, at 900 and 375px, in both themes: no sideways
 scroll, no clipped text without a tooltip, no overlaps, every section on the text edge, contrast 4.5:1, every menu and
 dialog inside the window, no page jump on any click; and every control does something. Every Rail page also passes
-`plans/rail/prototype/ds-check.mjs`: everything on it comes from the design system.
+`plans/rail/prototype/ds-check.mjs`: everything on it comes from the design system. A settings tab also passes its
+alignment (`align-check.mjs`, in ds-check, at 900 and 400px): one left edge for every head, name and divider, one right
+edge where every row's end stops (a quiet button by its text), and each row's name, sentence and end on one baseline.
+The alignment is SettingsRow's and SettingsSection's, never a page's; `align-proof.mjs` shows the check catches each
+fault.
 
 ## Foundations
 
