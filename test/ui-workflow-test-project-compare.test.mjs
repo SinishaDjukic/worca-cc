@@ -26,7 +26,7 @@ const B = { ...A, tryId: 12, status: 'failed',
   wouldHaveSent: [
     { guard: true, server: 'git', tool: 'push', noun: 'push', to: null, preview: 'Send the changes to the branch fix-ticket-482', cap: 'Not sent · stopped by Worca',
       full: 'This try tried to send its changes to the branch fix-ticket-482 on GitHub.', cmd: 'git push origin fix-ticket-482' },
-    { guard: true, server: 'GitHub CLI', tool: 'open a pull request', noun: 'pull request', to: null, preview: 'Open a pull request: Fix rounding in invoice totals',
+    { guard: true, server: 'GitHub CLI', tool: 'create a pull request', noun: 'pull request', to: null, preview: 'Create a pull request: Fix rounding in invoice totals',
       cap: 'Full text · from fix-ticket-482 into main', full: 'Title: Fix rounding in invoice totals', cmd: 'gh pr create --title "Fix rounding in invoice totals" --base main' }] };
 const side = (over = {}) => ({
   run: { id: 5, kind: 'compare' }, compareTitle: 'Your v3 draft compared with v2', example: { id: 1, name: 'Ticket 482: invoice totals round wrong' },
@@ -88,7 +88,7 @@ test('board 37: the lock note; what the guard stopped, per version; nothing for 
   assert.equal(a.querySelector('.wft-sent-foot').textContent, "Nothing would have been sent. The changes stayed in Worca's own copy of the project: nothing was pushed.");
   assert.equal(b.querySelector('.wft-sent-head .hint').textContent, '1 push, 1 pull request');
   assert.deepEqual(texts(b, '.wft-call-line'), ['git · push · Send the changes to the branch fix-ticket-482',
-    'GitHub CLI · open a pull request · Open a pull request: Fix rounding in invoice totals']);
+    'GitHub CLI · create a pull request · Create a pull request: Fix rounding in invoice totals']);
   const first = b.querySelector('.wft-call-full');
   assert.equal(first.querySelector('.wft-call-cap').textContent, 'Not sent · stopped by Worca');
   assert.equal(first.querySelector('.wft-call-cmd').textContent, 'git push origin fix-ticket-482');

@@ -23,11 +23,18 @@ beforeEach(async () => {
   home = await mkdtemp(join(tmpdir(), 'worca-cc-wftrun-'));
   homes.push(home); _resetForTests(); process.env.WORCA_HOME = home;
 });
+// A live run holds the event loop open in the server (its engine process, its sockets). The runner's cost poll is an
+// unref'd timer, so a fake run must hold the loop the same way: with every try held and only that timer pending, Node
+// 22 ended the event loop mid-test ('Promise resolution is still pending but the event loop has already resolved').
+const holders = new Set();
+const holdLoop = () => { const h = setInterval(() => {}, 60_000); holders.add(h); return () => { clearInterval(h); holders.delete(h); }; };
+after(() => { for (const h of holders) clearInterval(h); holders.clear(); });
 after(async () => { _resetForTests(); delete process.env.WORCA_HOME; await Promise.all(homes.map((d) => rm(d, { recursive: true, force: true }))); });
 
 const WF = 'wf_brief';
 const fps = {};
-/** A fake run handler: each try is an EventEmitter "orchestrator" that ends as `plan()` says. */
+/** A fake run handler: each try is an EventEmitter "orchestrator" that ends as `plan()` says; while it runs it holds
+ *  the event loop open, as a real run does. */
 function harness({ plan = () => ({ status: 'done', cost: 0.5 }), refuse = null } = {}) {
   const entries = new Map();
   const started = []; const stopped = [];
@@ -41,8 +48,9 @@ function harness({ plan = () => ({ status: 'done', cost: 0.5 }), refuse = null }
       const p = plan(body, workflowTest.use, n);
       let finish;
       const launch = new Promise((r) => { finish = r; });
+      const release = holdLoop();
       const e = { orch, launch, status: 'running', pipelineId, text: p.text ?? '# Result\n\nProblem solved here',
-        end(status) { if (e.status !== 'running') return; e.status = status; liveNow -= 1; finish(); } };
+        end(status) { if (e.status !== 'running') return; e.status = status; liveNow -= 1; release(); finish(); } };
       orch.answer = (id, payload) => { e.answered = [id, payload]; setImmediate(() => e.end(p.status)); return true; };
       entries.set(runKey, e); liveNow += 1; maxLive = Math.max(maxLive, liveNow);
       workflowTest.onOrch(orch, { runKey });

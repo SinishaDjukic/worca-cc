@@ -744,7 +744,7 @@ test('the stand-ins come first on PATH, answer "Not sent" and are recorded (gh p
   const [e] = readLog(log);
   assert.deepEqual([e.server, e.tool, e.guard], ['GitHub CLI', 'pr create', true]);
   const row = guardCall(e);
-  assert.deepEqual([row.tool, row.noun, row.preview, row.cap], ['open a pull request', 'pull request', 'Open a pull request: Fix rounding', 'Full text · from fix-482 into main']);
+  assert.deepEqual([row.tool, row.noun, row.preview, row.cap], ['create a pull request', 'pull request', 'Create a pull request: Fix rounding', 'Full text · from fix-482 into main']);
   assert.equal(row.full, 'Title: Fix rounding\nTotals round half up.');
 });
 

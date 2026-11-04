@@ -4460,8 +4460,9 @@ export class RunHarness extends EventEmitter {
   async _mountMemory({ resume = false } = {}) {
     if (!this.pipeline?.dir) return;
     // D19: a test try uses no memory. Nothing is mounted, so this.memory stays null and _syncMemory never writes back.
-    // The row check covers a resumed try (its opts no longer carry noMemory).
-    if (this.opts.noMemory === true || isTestPipeline(this.pipeline.id)) return;
+    // The row check covers a resumed try (its opts no longer carry workflowTest). A plain run started without memory
+    // (#943 `noMemory`) is not a try: it takes the memoryOff arm below, which writes the audit line once.
+    if (this.opts.workflowTest === true || isTestPipeline(this.pipeline.id)) return;
     if (this.memoryOff) {
       if (!resume) await appendAudit(this.pipeline.dir, 'Memory: off for this run (started without memory).').catch(() => {});
       this._log('memory', 'info', 'Memory: off for this run — its agents load no memory notes and write none');
