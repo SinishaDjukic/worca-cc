@@ -2076,6 +2076,26 @@ async function settleLandedMergeBack(mb, repoDir, feature, source) {
   return { merged: members.every((m) => m.merged === true), members };
 }
 
+/** The chat run card's ship facts for a single-project run on its source branch (branch.sameAsSource), the same
+ *  facts the History entry carries for the run page's Push: { sameAsSource: true, sourceBranch, mergeBack: { merged },
+ *  push? } (push = sourcePushStatus, refs only, only once merged back). null for every other run, a workspace run, or
+ *  a row without a repo. */
+export async function sourceShipFacts(row, repoDir) {
+  if (!row || row.target === 'workspace') return null;
+  const branchObj = j(row.branch, null);
+  const feature = branchObj?.feature ?? null;
+  const source = branchObj?.source ?? null;
+  const mergeBack = await settleLandedMergeBack(mergeBackFor(row), repoDir, feature, source);
+  if (!mergeBack) return null;
+  const out = { sameAsSource: true, sourceBranch: source, mergeBack: { merged: mergeBack.merged } };
+  if (mergeBack.merged === true && repoDir && source) {
+    const { sourcePushStatus } = await import('./project-sync.mjs');   // lazy: project-sync -> worktree -> artifacts
+    const push = await sourcePushStatus(repoDir, branchObj, row.project_key ?? null);
+    if (push) out.push = push;
+  }
+  return out;
+}
+
 /**
  * Return the still-live worktrees retained after a teardown commit failure.
  * The DB stores single-project metadata in `branch` and workspace metadata in
