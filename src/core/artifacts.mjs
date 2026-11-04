@@ -1656,6 +1656,22 @@ export function readMemberPrStates(pipelineId) {
   } catch { return {}; }
 }
 
+/** Every active run's recorded PR facts in two SELECTs: Map<pipelineId, { pr, members }> (empty Map on any error). */
+export function listRunPrIndex() {
+  const index = new Map();
+  try {
+    const db = getDb();
+    const entry = (id) => { if (!index.has(id)) index.set(id, { pr: null, members: {} }); return index.get(id); };
+    for (const r of db.prepare('SELECT id, pr_url, pr_number, pr_state FROM pipelines WHERE pr_url IS NOT NULL AND deleted_at IS NULL').all()) {
+      entry(r.id).pr = { url: r.pr_url, number: r.pr_number ?? null, state: r.pr_state ?? 'OPEN' };
+    }
+    for (const r of db.prepare('SELECT pipeline_id, member_key, pr_url, pr_number, pr_state FROM pipeline_member_prs ORDER BY pipeline_id, member_key').all()) {
+      entry(r.pipeline_id).members[r.member_key] = { url: r.pr_url, number: r.pr_number ?? null, state: r.pr_state || 'OPEN' };
+    }
+    return index;
+  } catch { return new Map(); }
+}
+
 /**
  * The status a stale (crashed/killed) run is reconciled to. Distinct from a user
  * 'stopped' and a real 'error': the owning process died before Orchestrator.run()'s
