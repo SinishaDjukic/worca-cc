@@ -2945,11 +2945,11 @@ function addNightDecisions(r, list) {
   r.nightDecisions = cur;
 }
 
-// Every status the server reports lands here (state frames, the hello, upserts, the end of a run). While this tab's
-// Pause is in flight, a 'running' sent before the server took it keeps the 'pausing' shown at the click; any other
-// status ends the wait.
+// Every status the server reports lands here. A Pause in flight keeps 'pausing' over a 'running' sent before the
+// server took it. A run never goes back to 'starting' (a start or resume mints a new runId): beginRun's late one,
+// after a start reply that trails the socket's frames (#1090), never replaces a status the server already sent.
 function applyServerStatus(r, status) {
-  if (!status || (r.pausePending && status === 'running')) return;
+  if (!status || (r.pausePending && status === 'running') || (status === 'starting' && r.status && r.status !== 'starting')) return;
   r.status = status;
   r.pausePending = false;
 }
