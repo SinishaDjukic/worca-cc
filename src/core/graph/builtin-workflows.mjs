@@ -286,8 +286,15 @@ const SHAPE_CLARIFY_CONFIG = { maxQuestions: 3, promptHints: SHAPE_CLARIFY_HINTS
 const SHAPE_APPROVE_CONFIG = { approve: { kind: 'plan', port: 'plan' } };
 /** Shaper's plan review is the engine role-review step, configured: the perspectives as roles, the run's picked ones
  *  running, each judged on its own checklist items (the `perspectives` provider), the findings handed to Refine. */
+/** The diversity default: Product (locked, so in every Shaper run) reviews on another model than the node's, so one
+ *  plan role always judges independently. A built-in default: dropped quietly (recorded as `wanted`) off Claude. */
+export const SHAPE_DIVERSE_ROLE = Object.freeze({ key: 'product', model: 'claude-opus-5-5', effort: 'medium' });
 const SHAPE_ROLES_CONFIG = {
-  roleReview: { roles: PERSPECTIVES.map(({ key, label }) => ({ key, label })), source: 'picked', target: 'plan', checklist: 'perspectives', sink: 'refiner' },
+  roleReview: {
+    roles: PERSPECTIVES.map(({ key, label }) => (key === SHAPE_DIVERSE_ROLE.key
+      ? { key, label, model: SHAPE_DIVERSE_ROLE.model, effort: SHAPE_DIVERSE_ROLE.effort } : { key, label })),
+    source: 'picked', target: 'plan', checklist: 'perspectives', sink: 'refiner',
+  },
   model: 'claude-sonnet-5-5', effort: 'medium',   // spec decision 1
 };
 /** Refine waits for the reviewed plan AND its findings, both from n_roles (one publish), so it fires once per round. */

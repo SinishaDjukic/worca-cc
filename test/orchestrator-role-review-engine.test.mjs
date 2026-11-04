@@ -146,3 +146,33 @@ test('a role that names only an effort runs on the node\'s model with the role\'
     assert.deepEqual([s.model, s.effort], [rec.model, rec.effort], 'the dispatched pair');
   }
 });
+
+// A usage limit during a role slice names the connection that ROLE ran on, not the node's (D8).
+const LIMIT_ERR = () => new Error("claude exited with code 1: You've hit your session limit · resets 6pm (Europe/Sofia)");
+async function limitedRun(limitedRole) {
+  const { addGlobalModel, listGlobalModels } = await import('../src/core/settings.mjs');
+  if (!listGlobalModels().some((m) => m.id === 'gw-role-limited')) await addGlobalModel({ id: 'gw-role-limited', upstream: { provider: 'openai', api: 'openai-chat', model: 'x', baseUrl: 'http://127.0.0.1:9/v1' } });
+  _testing.runClaude = (o) => { if (marker(o.prompt, 'MOCK_PERSPECTIVE') === limitedRole) throw LIMIT_ERR(); return runClaude(o); };
+  const orch = createOrchestrator({
+    projectDir: gitDir('role-limit'), workflowId, prompt: 'demo', claude: { mock: true },
+    overlay: { nodes: { n_reviewer: { roles: { security: { model: 'gw-role-limited' } } } } },
+  });
+  orch.on('question', (q) => setImmediate(() => orch.answer(q.id, q.kind === 'plan' ? { decision: 'approve' } : { answers: [] })));
+  return orch.run();
+}
+
+test('a usage limit on a role slice that runs on a provider model names that provider; the node stays on the sign-in', async () => {
+  const res = await limitedRun('security');
+  assert.equal(res.status, 'paused', res.error);
+  assert.equal(res.reason, 'usage_limit');
+  assert.match(res.detail, /^OpenAI-compatible limit — /);
+  assert.equal(res.limitEngine, null, 'another harness on the same provider would hit it too');
+});
+
+test('a usage limit on a role slice that runs on the node\'s model is the sign-in\'s', async () => {
+  const res = await limitedRun('correctness');
+  assert.equal(res.status, 'paused', res.error);
+  assert.equal(res.reason, 'usage_limit');
+  assert.equal(res.limitEngine, 'claude');
+  assert.doesNotMatch(res.detail, /limit — /);
+});

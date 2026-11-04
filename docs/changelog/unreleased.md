@@ -28,7 +28,9 @@ A node's config can declare reviewer roles (for example Correctness and Security
 
 Why: independent reviewers and a model per reviewer were Shaper-only; they are now part of the engine (#990).
 
-Chips: role reviews · a model per role · node config
+**No silent fallbacks.** A model the run's engine cannot run (a Claude model on a Codex run, for a node or a role) is now named in a warning on the run page, once, instead of being dropped quietly. The Chat run card lists one Agents row per reviewer (`Plan Review · Architect` …) with a model and an effort. Shaper's Product reviewer runs on a different model from the others by default, and a new **Devil's advocate** perspective can be picked as an extra reviewer.
+
+Chips: role reviews · a model per role · node config · dropped-pick warning · per-reviewer rows · Devil's advocate
 
 Read it: [Per-role models](../models.md#per-role-models)
 

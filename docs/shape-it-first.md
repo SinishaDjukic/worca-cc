@@ -39,7 +39,10 @@ on the run page.
 
 **Perspectives.** The chips choose who the plan is written for: Product (always on),
 Architect, QA, UX, Security, DevOps and infrastructure, and Release. Change them and
-choose **Update plan** to have the plan rewritten for the new set.
+choose **Update plan** to have the plan rewritten for the new set. **Devil's advocate**
+is a reviewer only: picked, it argues the strongest case that the plan's core approach is
+wrong and names the simpler alternative. It adds no plan section and no checklist, and it is
+not picked by default.
 
 **The shape check.** Eight deterministic checks run on the plan text:
 
@@ -72,6 +75,15 @@ engine's role-review step (any workflow can declare one, see
 [Per-role models](models.md#per-role-models)): Shaper's Plan Review node declares the
 perspectives as its roles, runs the ones you picked, and judges each on its own checklist
 items.
+
+**A model per reviewer.** Product reviews on a different model (Opus 5.5) from the other
+reviewers (Sonnet 5.5) by default, so at least one reviewer judges the plan independently.
+On an engine that does not run it (Codex, for example), Product runs on the node's model
+like the others; the run records the default it could not use, with no warning, since nobody
+picked it. In the Chat run card, Advanced › Agents lists one row per reviewer
+(`Plan Review · Architect` and so on), each with a model and an effort; a pick on a reviewer
+you did not tick is kept but never runs. A model you pick for the Plan Review node itself
+does not change Product's own pick.
 
 ## Checklists in review
 

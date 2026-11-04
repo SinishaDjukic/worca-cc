@@ -158,6 +158,8 @@ export function buildGraphManifest(tpl, agentsByKey, opts = {}) {
       cell.subagentEffort = over.subagentEffort ?? cfg.subagentEffort ?? '';
       // A role-review node's resolved per-role picks (role-slots.mjs), only when it has some: a resume dispatches on them.
       if (over.roles && typeof over.roles === 'object' && Object.keys(over.roles).length) cell.roles = over.roles;
+      // A pick the run's engine dropped (role-slots pickOrDrop): only when one exists, so a run without drops is unchanged.
+      if (over.wanted && typeof over.wanted === 'object') cell.wanted = over.wanted;
       // Run progress: the stage rides the manifest like color/icon, so a run (and a resume,
       // which rebuilds the manifest from the registry) never needs the live registry for it.
       if (meta?.progressStage) cell.progressStage = meta.progressStage;

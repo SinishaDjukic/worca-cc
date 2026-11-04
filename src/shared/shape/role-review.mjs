@@ -31,9 +31,9 @@ export function roleBriefBlock(key, planMarkdown) {
   const p = perspectiveByKey(key);
   if (!p) return '';
   const items = roleItems(key, planMarkdown);
-  const rule = p.checklist
+  const rule = p.roleRule || (p.checklist
     ? `Your checklist prefix is \`R-${p.checklist}\` (${p.checklistHint}).`
-    : 'Your role has no checklist: judge "Problem and goal" and "Out of scope".';
+    : 'Your role has no checklist: judge "Problem and goal" and "Out of scope".');
   return `## Your role: ${p.label}\n\n` +
     `You review this plan as **${p.label}** only. ${p.help} ${rule}\n\n` +
     (p.rules

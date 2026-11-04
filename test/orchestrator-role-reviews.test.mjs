@@ -18,6 +18,7 @@ import { runClaude } from '../src/core/claude-runner.mjs';
 import { buildGraphManifest } from '../src/shared/graph/manifest.mjs';
 import { loadAgentRegistry } from '../src/core/agent-registry.mjs';
 import { GRAPH_SHAPE_WORKFLOW, GRAPH_DEFAULT_WORKFLOW } from '../src/core/graph/builtin-workflows.mjs';
+import { DEFAULT_PERSPECTIVES } from '../src/shared/shape/perspectives.mjs';
 
 useTempHome(after);
 
@@ -236,7 +237,7 @@ async function captureParity(table) {
     roles: r.roles.map((rec) => {
       const kept = { ...rec };
       for (const k of ADDITIVE) delete kept[k];
-      pairs.push(Object.fromEntries(ADDITIVE.filter((k) => k in rec).map((k) => [k, rec[k]])));
+      pairs.push({ key: rec.key, pair: Object.fromEntries(ADDITIVE.filter((k) => k in rec).map((k) => [k, rec[k]])) });
       return kept;
     }),
   }));
@@ -272,10 +273,12 @@ test('parity: a no-picks Shaper mock run matches the recorded fixture', async ()
   }
   assert.deepEqual(actual, JSON.parse(readFileSync(PARITY_FILE, 'utf8')),
     'drifted from test/fixtures/role-review/shaper-parity.json. If the change is deliberate, review the diff and regenerate with UPDATE_ROLE_PARITY=1.');
-  // The additive keys: every record names the pair its slice ran on (n_roles's own pair, no picks), none dropped.
-  const reviewed = pairs.filter((p) => Object.keys(p).length);
+  // The additive keys: every record names the pair its slice ran on (n_roles's own pair, Product's diversity pick), none dropped.
+  const reviewed = pairs.filter((p) => Object.keys(p.pair).length);
   assert.ok(reviewed.length >= 4, 'every reviewed record carries its pair');
-  for (const p of reviewed) assert.deepEqual(p, { model: 'claude-sonnet-5-5', effort: 'medium' });
+  for (const p of reviewed) {
+    assert.deepEqual(p.pair, p.key === 'product' ? { model: 'claude-opus-5-5', effort: 'medium' } : { model: 'claude-sonnet-5-5', effort: 'medium' }, p.key);
+  }
 });
 
 test('an old roleReview:true run resumes and reads its records', async () => {
@@ -325,4 +328,35 @@ test('10 an old manifest (refiner self-loop) resumes with its own topology', asy
   assert.equal(res.status, 'done', res.error);
   assert.equal(h2.execs.filter((e) => e.nodeId === 'n_roles').length, 0);
   assert.equal(shells(h2.execs, 'n_refine').length, 2, 'the old self-loop: the mock refiner blocks once');
+});
+
+test('diversity default: a no-picks run on the default perspectives runs exactly one plan role (Product) on another model; no Devil\'s advocate', async () => {
+  const h = start({ shape: { perspectives: [...DEFAULT_PERSPECTIVES] } });
+  const res = await h.done;
+  assert.equal(res.status, 'done', res.error);
+  const roles = h.orch.state.roleReviews.rounds[0].roles;
+  assert.deepEqual(Object.fromEntries(roles.map((r) => [r.key, [r.model, r.effort]])), {
+    product: ['claude-opus-5-5', 'medium'], architect: ['claude-sonnet-5-5', 'medium'], qa: ['claude-sonnet-5-5', 'medium'],
+  });
+  assert.equal(roles.filter((r) => r.model !== h.orch.resolved.nodeCtx.n_roles.model).length, 1, 'exactly one role differs');
+  assert.equal(h.orch.state.roleReviews.rounds.flatMap((r) => r.roles).some((r) => r.key === 'devil'), false, 'no devil record');
+  assert.deepEqual(h.orch.getState().warnings.filter((w) => w.includes(' is not on ')), [], 'a Claude run drops nothing');
+});
+
+test('no silent fallbacks: a Codex run names a dropped Security pick once; the built-in template drops stay quiet', async () => {
+  const h = start({
+    claude: { mock: true, engine: 'codex' }, guardrailsId: 'permissive', shape: { perspectives: ['product', 'security'] },
+    overlay: { nodes: { n_roles: { roles: { security: { model: 'claude-opus-5-5' } } } } },
+  });
+  const res = await h.done;
+  assert.equal(res.status, 'done', res.error);
+  const line = "Plan Review · Security: claude-opus-5-5 is not on Codex, runs the node's model";
+  const warnings = h.orch.getState().warnings;
+  assert.equal(warnings.filter((w) => w === line).length, 1, warnings.join('\n'));
+  assert.deepEqual(warnings.filter((w) => w.startsWith('Plan Review')), [line], 'the node\'s sonnet and Product\'s opus are built-in defaults: recorded, not warned');
+  const roles = h.orch.resolved.nodeCtx.n_roles.roles;
+  assert.deepEqual(roles.security, { source: 'run', wanted: { model: 'claude-opus-5-5' } }, 'the role record keeps the pick');
+  assert.deepEqual(roles.product.wanted, { model: 'claude-opus-5-5', effort: 'medium' }, 'the diversity pick is recorded as wanted');
+  assert.deepEqual(h.orch.resolved.nodeCtx.n_roles.wanted, { model: 'claude-sonnet-5-5', effort: 'medium', source: 'template' });
+  assert.equal(auditOf(h.orch).filter((t) => t === `${line}.`).length, 1, 'one audit line');
 });

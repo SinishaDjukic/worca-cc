@@ -1449,7 +1449,7 @@ export class RunHarness extends EventEmitter {
     // continue there (engine-switch.mjs). On a provider or a custom endpoint it is that provider's (a spent
     // OpenRouter free allowance, a gateway's quota): another harness on the same provider would hit it too, so
     // none is offered; the pause names the provider, and a resume can pick another model.
-    const conn = reason === REASON.USAGE_LIMIT && ctx && !freeDaily ? this._limitConnection(nc) : null;
+    const conn = reason === REASON.USAGE_LIMIT && ctx && !freeDaily ? this._limitConnection(nc, ctx?.role ?? null) : null;
     const limitEngine = conn?.kind === 'signin' ? (this.claude.engine || 'claude') : null;
     const limitText = conn && conn.kind !== 'signin' && !detail ? `${connectionLabel({ connection: conn })} limit — ${text}` : text;
     // D3/D11: when the limit comes back, read from the RAW message (`text` may be the OpenRouter
@@ -3759,11 +3759,11 @@ export class RunHarness extends EventEmitter {
   }
 
   /** The connection of the model a node's step ran on (its own, else the run's; a step with neither is on the
-   *  harness's own sign-in). Never throws. */
-  _limitConnection(nc) {
+   *  harness's own sign-in); for a role-review slice, the model that role ran on (_rolePair). Never throws. */
+  _limitConnection(nc, role = null) {
     const engine = this.claude.engine || 'claude';
     let model = null;
-    try { model = nc ? this._nodeModelPair(nc).model : this._engineModel(this.claude.model); } catch { model = null; }
+    try { model = nc ? (role ? this._rolePair(nc, role) : this._nodeModelPair(nc)).model : this._engineModel(this.claude.model); } catch { model = null; }
     return (model && modelConnection(model, { projectDir: this.projectDir })) || { kind: 'signin', engine };
   }
 

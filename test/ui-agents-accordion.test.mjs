@@ -497,3 +497,23 @@ test('resolveNodeTunables is the ONE resolution rule shared by the v1 and v2 row
   assert.equal(bare.fanOut, true, 'meta fanOut is the last layer');
   assert.equal(bare.askQuestions, true, 'meta questionsDefault is the last layer');
 });
+
+test('buildRoleRows: one row per declared role of a role-review node, labelled by node and role; none on Default', async () => {
+  const { buildNodeConfigRows, buildRoleRows } = await import('../ui/public/node-tunables.mjs');
+  const { GRAPH_SHAPE_WORKFLOW, GRAPH_DEFAULT_WORKFLOW } = await import('../src/core/graph/builtin-workflows.mjs');
+  const { loadAgentRegistry } = await import('../src/core/agent-registry.mjs');
+  const { PERSPECTIVES } = await import('../src/shared/shape/perspectives.mjs');
+  const reg = loadAgentRegistry(undefined, { userAgentsDir: null });
+  const runConfig = { nodes: { n_roles: { roles: { security: { model: 'claude-haiku-4-5', effort: 'high' }, qa: { effort: 'max' } } } } };
+  const rows = buildRoleRows(GRAPH_SHAPE_WORKFLOW, buildNodeConfigRows(GRAPH_SHAPE_WORKFLOW, reg, runConfig), runConfig);
+  assert.equal(rows.length, PERSPECTIVES.length, 'every declared role, ticked or not');
+  assert.deepEqual(rows.map((r) => r.label), PERSPECTIVES.map((p) => `Plan Review · ${p.label}`));
+  assert.ok(rows.every((r) => r.nodeId === 'n_roles'));
+  const by = Object.fromEntries(rows.map((r) => [r.roleKey, r]));
+  assert.deepEqual(by.architect, { nodeId: 'n_roles', roleKey: 'architect', label: 'Plan Review · Architect', model: '', effort: '', def: { model: '', effort: '' } }, "'' = the node's setting");
+  assert.deepEqual(by.product.def, { model: 'claude-opus-5-5', effort: 'medium' }, 'the template role pick');
+  assert.deepEqual(by.security.def, { model: 'claude-haiku-4-5', effort: 'high' }, 'the project layer wins');
+  assert.deepEqual(by.qa.def, { model: '', effort: 'max' }, 'an effort-only project pick');
+  const def = buildRoleRows(GRAPH_DEFAULT_WORKFLOW, buildNodeConfigRows(GRAPH_DEFAULT_WORKFLOW, reg, { nodes: {} }), { nodes: {} });
+  assert.deepEqual(def, []);
+});

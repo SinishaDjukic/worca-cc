@@ -19,13 +19,14 @@ import {
   RunHarness, isAbort, isPause, pauseErr, firstLine, jsonClone,
   clipMiddle, sumStepActive, normalizeClarifyAnswer, findDisabledPluginFor,
 } from './run-harness.mjs';
-import { resolveGraph, loadAgentFile, GRAPH_DEFAULT_WORKFLOW, writeGraphWorkflow, readWorkflow } from './workflows.mjs';
+import { resolveGraph, loadAgentFile, GRAPH_DEFAULT_WORKFLOW, writeGraphWorkflow, readWorkflow, isReservedWorkflowId } from './workflows.mjs';
 import { loadScriptRegistry } from './script-registry.mjs';
 import { loadAgentRegistry } from './agent-registry.mjs';
 import { AUTO_WORKFLOW_ID, AUTO_WORKFLOW_NAME, SHAPE_WORKFLOW_ID, SHAPE_UX_WORKFLOW_ID } from './graph/builtin-workflows.mjs';
 import { classifyLoops } from '../shared/graph/loops.mjs';
 import { buildGraphManifest, manifestTemplate, manifestPortsFn } from '../shared/graph/manifest.mjs';
 import { DEFAULT_MAX_CYCLES, KEYED_KINDS } from '../shared/graph/constants.mjs';
+import { pickDropWarnings } from '../shared/graph/role-slots.mjs';
 import { scriptNodeCtx, pythonMissingSentence } from '../shared/graph/script-meta.mjs';
 import { probePython } from './graph/python-probe.mjs';
 import { mediaToolProblems } from './graph/media-preflight.mjs';
@@ -206,6 +207,11 @@ export class GraphOrchestrator extends RunHarness {
     const engineNow = this.claude.engine || 'claude';
     for (const line of slotSourceLines(engineNow, this.resolved.nodeCtx, stepSlotDefaults(engineNow, { projectDir: this.projectDir, workspace: this.isWorkspace }))) {
       this._log('orchestrator', 'info', line);
+      this._pendingAudits.push(`${line}.`);
+    }
+    // No silent fallbacks: name each pick the engine dropped (run log + audit, once, at start).
+    for (const line of this._notePickDrops()) {
+      this._log('orchestrator', 'warn', line);
       this._pendingAudits.push(`${line}.`);
     }
     // A setting that failed the catalog check degrades — and says what the run uses INSTEAD, read
@@ -767,6 +773,20 @@ export class GraphOrchestrator extends RunHarness {
     this.resolved = { ...resolved, nodeCtx: resolved.nodes };
   }
 
+  /** The run warnings for the picks this run's engine dropped (role-slots pickDropWarnings), kept in `_pickWarnings`
+   *  and put in front of `state.warnings`. A built-in workflow's own template defaults are recorded, never warned.
+   *  A resume passes the lines its point saved: the drops were judged on the engine the run started on, and a resume
+   *  may switch engine, so they are never reformatted for the new one.
+   *  @param {string[]} [saved] the resume point's lines
+   *  @returns {string[]} the lines */
+  _notePickDrops(saved) {
+    this._pickWarnings = saved ?? pickDropWarnings(this.resolved.nodeCtx, {
+      engine: this.claude.engine || 'claude', quietTemplate: isReservedWorkflowId(this.workflowId), roleLabel: declaredRoleLabel,
+    });
+    this.state.warnings = [...new Set([...this._pickWarnings, ...(this.state.warnings || [])])];
+    return this._pickWarnings;
+  }
+
   /**
    * The template the SCHEDULER runs: the resolved template with every loop wire's
    * EFFECTIVE budget folded into `wire.config.maxCycles`. The scheduler reads
@@ -1072,6 +1092,7 @@ export class GraphOrchestrator extends RunHarness {
       ...(this.state.roleReviews ? { roleReviews: jsonClone(this.state.roleReviews) } : {}),
       ...(this._slicingDone ? { slicingDone: true } : {}),
       ...(this._outlineRevise ? { outlineRevise: this._outlineRevise } : {}),
+      ...(this._pickWarnings?.length ? { pickWarnings: [...this._pickWarnings] } : {}),
       // money-saved §3.1: the cursor at the last completed terminal (paused executions never
       // advance it), so a resume credits the paused execution's pre-pause work at its terminal.
       humanCursor: this._humanCursorReady ? (this._humanCursor ?? { files: 0, insertions: 0, deletions: 0 }) : null,
@@ -1170,7 +1191,7 @@ export class GraphOrchestrator extends RunHarness {
     // endReached, result, warnings, gate, settled }.
     if (Array.isArray(s.active)) this.state.active = s.active.map((a) => ({ nodeId: a.nodeId, executionId: a.executionId }));
     if (s.wireDeliveries && typeof s.wireDeliveries === 'object') this.state.wireDeliveries = { ...s.wireDeliveries };
-    if (Array.isArray(s.warnings)) this.state.warnings = [...s.warnings];
+    if (Array.isArray(s.warnings)) this.state.warnings = [...new Set([...(this._pickWarnings || []), ...s.warnings])];
     if (Array.isArray(s.openIssues)) this.state.openIssues = s.openIssues.map((o) => ({ ...o }));
     if (s.endReached === true) { this.state.endReached = true; if (s.result) this.state.result = { ...s.result }; }
     if (s.tokens) {
@@ -3094,6 +3115,8 @@ export class GraphOrchestrator extends RunHarness {
     this.state.stepper = manifest;
     this.scriptRegistry = loadScriptRegistry({ scriptsDir: this.opts.scriptsDir, agentKeys: Object.keys(this.registry || {}) });
     this._adoptResolvedGraph(resolvedFromManifest(manifest, this.registry, this.scriptRegistry));
+    // Silently: the start already logged and audited them. A point without lines had no drop.
+    this._notePickDrops(Array.isArray(rp.pickWarnings) ? rp.pickWarnings.filter((w) => typeof w === 'string') : []);
     // §9.4, unchanged messages: the providing plugin may have been disabled or
     // uninstalled while this run sat paused. (Same place v1 re-preflights.)
     this._preflightAgentKeys(this.resolved.agentKeys);
@@ -3120,6 +3143,11 @@ export class GraphOrchestrator extends RunHarness {
         .map((s) => [s.key, s.sessionId]),
     );
   }
+}
+
+/** A role-review role's label as the node declares it; the key when it declares none. */
+function declaredRoleLabel(nc, key) {
+  return roleReviewOf(nc.config)?.roles?.find((r) => r.key === key)?.label || key;
 }
 
 /** C5: a verdict as the session trace keeps it, counts only. A step without a verdict file reads 'none'. */
@@ -3193,6 +3221,7 @@ export function resolvedFromManifest(manifest, registry, scripts = {}) {
       askQuestions: !!mn.askQuestions,
       awaitAll: !!mn.awaitAll,
       ...(mn.roles && typeof mn.roles === 'object' && Object.keys(mn.roles).length ? { roles: mn.roles } : {}),
+      ...(mn.wanted && typeof mn.wanted === 'object' ? { wanted: mn.wanted } : {}),
       duplicateKey: false,
     };
   }

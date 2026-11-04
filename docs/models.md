@@ -1000,10 +1000,26 @@ are an engine capability, not Shaper's alone).
   runs every role on the run's model.
 - **The record names what ran:** each role's review records the model and effort its slice
   ran on.
-- **Set in node config only** for now (template, project config, run overlay); no screen sets
-  them until the Shaper card's per-role picks and the dropped-pick warning land in the next
-  slice. Until then a pick the run's engine cannot run is dropped silently: the role runs on the
-  node's model and its record keeps the request as `wanted`.
+- **Set them in the Chat run card** (Advanced › Agents): a node that declares roles gets one row
+  per role, labelled like `Plan Review · Architect`, with a model select ("Node's model" = no
+  pick) and effort pills. An edited row rides that run only, or becomes the project's default
+  with *Save as project defaults*. A workflow, the project config and a run overlay set them too.
+- **A pick the run's engine cannot run is named, never dropped silently.** The node or role
+  runs on what the layers below give it, its record keeps the request as `wanted`, and the run
+  page shows one warning per drop, logged and audited once at start:
+  - a node pick: `Plan: claude-opus-5-5 is not on Codex, runs Codex's default model` (or the
+    model it does run, for example `runs gpt-5.5`);
+  - a role pick: `Plan Review · Security: claude-opus-5-5 is not on Codex, runs the node's model`;
+  - an effort-only pick: `effort max is not on Codex, runs the node's effort` (a role) or
+    `runs Codex's default effort` (a node).
+
+  Only the winning layer counts: a lower layer's pick that a higher one overrode never ran, so
+  it is not named. A built-in workflow's own defaults (Shaper's models, for example) are
+  recorded as `wanted` but never warned about: they are nobody's pick. A saved workflow's
+  models are, so they warn.
+- **A usage limit during a role names the role's connection.** If a role runs on a provider
+  model, the pause says that provider's limit (for example `OpenAI-compatible limit — …`),
+  even when the node itself runs on the sign-in.
 
 ## When the network drops
 

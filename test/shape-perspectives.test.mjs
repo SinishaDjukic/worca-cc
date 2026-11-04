@@ -6,12 +6,14 @@ import {
   FIT_KEY, FIT_RULES, perspectiveByKey, withProjectFit, chipsHiddenFor,
 } from '../src/shared/shape/perspectives.mjs';
 import { checkShape } from '../src/shared/shape/shape.mjs';
+import { DEFAULT_PERSPECTIVES } from '../src/shared/shape/perspectives.mjs';
+import { roleBriefBlock } from '../src/shared/shape/role-review.mjs';
 import { wellShapedPlan } from './helpers/shape-plan.mjs';
 
-test('every perspective has at least one section, and every section key is known', () => {
+test('every perspective but Devil\'s advocate has at least one section, and every section key is known', () => {
   const keys = new Set(SECTIONS.map((s) => s.key));
   for (const p of PERSPECTIVES) {
-    assert.ok(p.sections.length > 0, p.key);
+    assert.ok(p.sections.length > 0 || p.key === 'devil', p.key);
     for (const s of p.sections) assert.ok(keys.has(s), `${p.key} → ${s}`);
   }
 });
@@ -32,8 +34,8 @@ test('missingSections matches headings with or without numbers, case-insensitive
   assert.deepEqual(missingSections(md, ['product', 'security']), ['Threats']);
 });
 
-test('every perspective but Product has a unique checklist prefix', () => {
-  const prefixes = PERSPECTIVES.filter((p) => p.key !== 'product').map((p) => p.checklist);
+test('every perspective but Product and Devil\'s advocate has a unique checklist prefix', () => {
+  const prefixes = PERSPECTIVES.filter((p) => p.key !== 'product' && p.key !== 'devil').map((p) => p.checklist);
   assert.ok(prefixes.every((p) => /^[a-z]+$/.test(p)));
   assert.equal(new Set(prefixes).size, prefixes.length);
   assert.equal(PERSPECTIVES.find((p) => p.key === 'product').checklist, undefined);
@@ -51,8 +53,8 @@ test('ownersOf: Product owns Problem; Testing is QA only when picked', () => {
   assert.deepEqual(ownersOf('testing', ['qa']), ['qa']);
 });
 
-test('the eight perspectives keep their labels', () => {
-  assert.deepEqual(PERSPECTIVES.map((p) => p.label), ['Product', 'Architect', 'QA', 'UX', 'Security', 'DevOps and infrastructure', 'Release', 'Project fit']);
+test('the nine perspectives keep their labels', () => {
+  assert.deepEqual(PERSPECTIVES.map((p) => p.label), ['Product', 'Architect', 'QA', 'UX', 'Security', 'DevOps and infrastructure', 'Release', 'Project fit', "Devil's advocate"]);
 });
 
 test('fit: the Fit section and the five R-fit rules', () => {
@@ -131,4 +133,24 @@ test('perspectivesBlock: refiner appends the refiner line; an invalid list gives
   assert.match(perspectivesBlock(['product', 'qa'], { refiner: true }), /As the refiner, check the plan/);
   assert.equal(perspectivesBlock(['nope']), '');
   assert.equal(perspectivesBlock(null), '');
+});
+
+/** Product's brief before Devil's advocate existed (roleRule must not change it). */
+const PRODUCT_BRIEF = "## Your role: Product\n\nYou review this plan as **Product** only. Problem, goal, users, success criteria, out of scope. Your role has no checklist: judge \"Problem and goal\" and \"Out of scope\".\n\nFind what is wrong; do NOT rewrite the plan. You do not see the other roles' reviews.\n\nIn the review JSON, every issue carries `severity`, `title`, `section` (the plan section) and `fix` (one concrete change). Add `\"checklist\": [{ \"id\": \"R-\u2026\", \"status\": \"met\" | \"unmet\" | \"na\", \"evidence\": \"\u2026\" }]`, one entry per item above.\n\n";
+
+test('Devil\'s advocate: not a default; picked, it adds no plan section and no checklist; its brief carries its rule', () => {
+  assert.deepEqual([...DEFAULT_PERSPECTIVES], ['product', 'architect', 'qa']);
+  assert.deepEqual(normalizePerspectives(['devil']), { ok: true, perspectives: ['product', 'devil'] });
+  const headings = (b) => (b.match(/^##/gm) || []).length;
+  const prefixes = (b) => (b.match(/R-/g) || []).length;
+  const alone = perspectivesBlock(['product']);
+  const devil = perspectivesBlock(['product', 'devil']);
+  assert.equal(headings(devil), headings(alone), '0 more ## headings');
+  assert.equal(prefixes(devil), prefixes(alone), '0 more R- prefixes');
+  assert.deepEqual(sectionsFor(['devil']), sectionsFor([]));
+  const brief = roleBriefBlock('devil', '');
+  assert.match(brief, /^## Your role: Devil's advocate\n/);
+  assert.ok(brief.includes(perspectiveByKey('devil').roleRule), 'the brief carries roleRule');
+  assert.ok(!brief.includes('judge "Problem and goal"'), 'not Product\'s rule');
+  assert.equal(roleBriefBlock('product', ''), PRODUCT_BRIEF, 'Product\'s brief is byte-identical');
 });

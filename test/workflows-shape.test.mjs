@@ -83,7 +83,10 @@ test('role reviews (spec §3): both shape graphs fan the plan out to n_roles and
     const roles = wf.nodes.find((n) => n.id === 'n_roles');
     assert.equal(roles.key, 'planReviewer', wf.id);
     assert.deepEqual(roles.config, {
-      roleReview: { roles: PERSPECTIVES.map(({ key, label }) => ({ key, label })), source: 'picked', target: 'plan', checklist: 'perspectives', sink: 'refiner' },
+      roleReview: {
+        roles: PERSPECTIVES.map(({ key, label }) => (key === 'product' ? { key, label, model: 'claude-opus-5-5', effort: 'medium' } : { key, label })),
+        source: 'picked', target: 'plan', checklist: 'perspectives', sink: 'refiner',
+      },
       model: 'claude-sonnet-5-5', effort: 'medium',
     }, wf.id);
     assert.equal(wf.nodes.find((n) => n.id === 'n_refine').config.awaitAll, true, wf.id);

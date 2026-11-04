@@ -2563,3 +2563,83 @@ test('#959 run proposal: shared fields (.select/.input), the branch carries its 
   assert.equal(feat.title, 'worca/x', 'the tooltip follows the typed value');
   assert.ok(cardEl.querySelector('.ask-card-same-source').closest('.ask-rp-field').querySelector(':scope > .switch-row'), 'the switch field (style.css spans it)');
 });
+
+// Per-role picks (#990 slice 2): a role-review node's declared roles get one Agents row each — a model select and
+// effort pills only — and an edited row rides the run as overlay.nodes[id].roles[key].
+const { GRAPH_SHAPE_WORKFLOW } = await import('../src/core/graph/builtin-workflows.mjs');
+const { loadAgentRegistry } = await import('../src/core/agent-registry.mjs');
+const { PERSPECTIVES } = await import('../src/shared/shape/perspectives.mjs');
+const SHAPE_AGENTS = Object.entries(loadAgentRegistry(undefined, { userAgentsDir: null })).map(([key, m]) => ({ ...m, key }));
+const SONNET = { id: 'claude-sonnet-5-5', label: 'Sonnet 5.5', efforts: ['medium', 'high', 'xhigh', 'max'], custom: false };
+const shapeLane = (rec) => {
+  const base = shapeListed(rec);
+  Object.assign(rec, { agents: SHAPE_AGENTS, extraModels: [SONNET] });
+  return (url, opts) => (url.split('?')[0] === '/api/workflows/wf_shape'
+    ? { ok: true, status: 200, json: async () => structuredClone(GRAPH_SHAPE_WORKFLOW) } : base(url, opts));
+};
+const roleTile = (lane, key) => lane.querySelector(`.ask-rp-role[data-node-id="n_roles"][data-role="${key}"]`);
+const pickModel = (ctx, sel, id) => { sel.value = id; sel.dispatchEvent(new ctx.window.Event('change', { bubbles: true })); };
+const start = async (ctx) => { ctx.doc.querySelector('[data-ask-card-start]').click(); for (let i = 0; i < 6; i++) await ctx.tick(); };
+
+test('ask-panel-card: per-role Agents rows on a role-review node', async () => {
+  await checkRows([
+    shapeRow('a shaped card lists one row per declared role, each with exactly one select and one effort group', async () => {
+      const rec = {};
+      const ctx = await openWithCard(SHAPED_CARD, rec, { fetchHandler: shapeLane(rec) });
+      const lane = await laneOf(ctx);
+      const rows = [...lane.querySelectorAll('.ask-rp-role')];
+      assert.equal(rows.length, PERSPECTIVES.length, 'every declared role, ticked or not');
+      assert.deepEqual(rows.map((r) => r.querySelector('.ask-rp-name b').textContent), PERSPECTIVES.map((p) => `Plan Review · ${p.label}`));
+      for (const r of rows) {
+        assert.equal(r.querySelectorAll('select').length, 1, r.dataset.role);
+        assert.equal(r.querySelectorAll('[role=radiogroup]').length, 1, r.dataset.role);
+        assert.equal(r.querySelectorAll('input[type=checkbox], [role=switch], .ask-rp-tile-l2, button.ask-rp-mini').length, 0, 'no switch, no reset, no line 2');
+      }
+      const arch = roleTile(lane, 'architect');
+      assert.equal(arch.querySelector('.ask-rp-model').options[0].textContent, "Node's model");
+      assert.equal(arch.querySelector('.ask-rp-model').value, '');
+      assert.ok(arch.querySelectorAll('.ask-rp-eff button:not([disabled])').length > 0, "pills follow the node's model");
+      assert.equal(roleTile(lane, 'product').querySelector('.ask-rp-model').value, 'claude-opus-5-5', "the template's pick shows");
+    }),
+    shapeRow('Start posts an edited role pick as overlay.nodes.n_roles.roles; untouched rows post nothing; Reset clears it', async () => {
+      const rec = {};
+      const ctx = await openWithCard(SHAPED_CARD, rec, { fetchHandler: shapeLane(rec) });
+      const lane = await laneOf(ctx);
+      pickModel(ctx, roleTile(lane, 'security').querySelector('.ask-rp-model'), 'claude-haiku-4-5');
+      assert.ok(roleTile(lane, 'security').classList.contains('mod'));
+      lane.querySelector('.ask-rp-sec-head .ask-rp-mini').click();
+      assert.equal(roleTile(lane, 'security').querySelector('.ask-rp-model').value, '', 'Reset to proposal clears the role edit');
+      pickModel(ctx, roleTile(lane, 'security').querySelector('.ask-rp-model'), 'claude-haiku-4-5');
+      await start(ctx);
+      assert.deepEqual(rec.runBodies[0].overlay, { nodes: { n_roles: { roles: { security: { model: 'claude-haiku-4-5', effort: 'high' } } } } });
+    }),
+    shapeRow('an untouched shaped card posts no roles', async () => {
+      const rec = {};
+      const ctx = await openWithCard(SHAPED_CARD, rec, { fetchHandler: shapeLane(rec) });
+      await laneOf(ctx);
+      await start(ctx);
+      assert.equal('overlay' in rec.runBodies[0], false);
+    }),
+    shapeRow('Save as project defaults sends the role pick in the node PATCH', async () => {
+      const rec = {};
+      const ctx = await openWithCard(SHAPED_CARD, rec, { fetchHandler: shapeLane(rec) });
+      const lane = await laneOf(ctx);
+      pickModel(ctx, roleTile(lane, 'security').querySelector('.ask-rp-model'), 'claude-haiku-4-5');
+      const save = ctx.doc.querySelector('[data-ctl="saveDefaults"]');
+      save.checked = true; save.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
+      await start(ctx);
+      assert.deepEqual(rec.configWrites.map((w) => [w.method, Object.keys(w.body.nodes || {})]), [['PATCH', ['n_roles']]]);
+      assert.deepEqual(rec.configWrites[0].body.nodes.n_roles.roles, { security: { model: 'claude-haiku-4-5', effort: 'high' } });
+      assert.equal(rec.configWrites[0].body.nodes.n_roles.model, '', "the node's own pick is re-sent as it was (inherit)");
+      assert.equal('overlay' in rec.runBodies[0], false);
+    }),
+    shapeRow('a nudged card (Default\'s lane) has no role rows and posts no roles', async () => {
+      const rec = {};
+      const ctx = await openWithCard(NUDGED_CARD, rec);
+      const lane = await laneOf(ctx);
+      assert.equal(lane.querySelectorAll('.ask-rp-role').length, 0);
+      await start(ctx);
+      assert.equal(JSON.stringify(rec.runBodies[0].overlay || {}).includes('roles'), false);
+    }),
+  ]);
+});
