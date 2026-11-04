@@ -76,19 +76,31 @@ Rail follows the app's file layout (`docs/split-by-feature.md`, #919) like any o
   alignment checks on the Rail pages with the flag on; the freeze on retired parts; and the split's own checks
   (`node tools/split-by-feature.mjs --check`, `test/split-by-feature-file-names.test.mjs`, `test/public-assets.test.mjs`).
 
-## What has to exist before it is handed over
+## Handed over (4 Nov)
 
-1. **One prototype of Worca.** `index.html` and `pulse.html` become one app: one sidebar, top bar and profile menu;
-   Runs, a run page, a group page, Pulse, Usage and costs and Settings, navigated as in the app. The pages outside the
-   scope appear as a sketch of today's page in the Rail colours, so the whole of Worca can be judged. One sweep covers
-   it all.
-2. **The design system as the source.** The rules, the catalog, the components in code with their tests and gallery,
-   and the gates (`ds-check` with alignment, names and heads; the sweeps). The 8 catalog components not yet in code
-   (OptionList, Checkbox, Chip, ListEditor, SuggestionField, Stepper, TagGroup and one more found on the way) are
-   finished before the surfaces that use them.
-3. **The requirement.** `enrollment.md` rewritten for Wave 1: the slices in order, each with what it changes, its
-   acceptance criteria, its gate, and whether it carries a flag; and the inventory of the missing functionality, each
-   gap with the API, call or event it needs.
+The prototype of all of Worca (`plans/rail/prototype/index.html`) and the design system as the source (rules,
+catalog, the components in code with their tests and gallery, the gates) are on `feat/rail-components`. Wave 1 goes to
+Worca's Shaper from that branch as one Feature; Shaper writes the inventory of the missing functionality and the
+outline. The proposed slices, in order (the Planner may merge or reorder them; never more than 8):
+
+1. **Foundation:** the `rail` flag (Labs, off); the Rail tokens as a layer under `:root[data-rail]`;
+   `ui/public/design-system/rail-retires.json` with its freeze test; the gates (ds-check: controls, names, heads,
+   alignment) in the app's test suite with the flag on.
+2. **The library complete and in place:** the 7 catalog components not yet in code (OptionList, Checkbox, Chip,
+   ListEditor, SuggestionField, Stepper, TagGroup), each with its test and gallery example; the Rail CSS moved into
+   `ui/public/` parts by the split's rules (the map above), the prototype reading them through `app.css`.
+3. **Rail colours everywhere:** today's pages take the palette and the one surface for page and card, behind the flag.
+4. **The shell and navigation:** the sidebar holds places only; Settings opens from the profile menu; Pulse in the top
+   bar; the trail is the one way back; the address is the page (Navigation: one model).
+5. **Settings:** every section on SettingsSection, SettingsRow and SideMenu; its search lands on every row; Team policy,
+   Plugins, Connectors, Models and Providers move into it.
+6. **Pulse:** Now and Updates, the usage rings, Usage and costs, what a start does near a limit.
+7. **The run and group pages:** the Rail run page (status line, stepper, tabs by exception, Figures, Create PR, the place
+   line, including a run on its source branch).
+8. **The gaps:** each piece of missing functionality with its backend, after the surface that needs it (that surface
+   ships a clear stand-in until it lands).
+
+Each slice passes `npm test` and the gates, at 375 and 900px in both themes, with the flag on and off.
 
 ## Decided
 
