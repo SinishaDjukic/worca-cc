@@ -145,3 +145,15 @@ test('GET /api/ask/runs/:id, a run without a project: its work/ files first (wit
   assert.equal(extras.artifactsTotal, extras.artifacts.length);
   assert.equal(extras.moreArtifacts, false);
 });
+
+test('GET /api/ask/runs/:id carries extras.source for a run merged back onto its source branch, and omits it otherwise', async () => {
+  const dir = await makeProjectDir();
+  const onSource = await seedPipeline(dir, { title: 'On source', status: 'done', steps: [],
+    branch: { feature: 'worca/hidden', source: 'main', sameAsSource: true, mergeBack: { merged: true, kind: 'ff' } } });
+  const body = await (await fetch(`${base}/api/ask/runs/${onSource.id}`)).json();
+  assert.equal(body.extras.source.sameAsSource, true);
+  assert.equal(body.extras.source.sourceBranch, 'main');
+  assert.deepEqual(body.extras.source.mergeBack, { merged: true });
+  const plain = await seedPipeline(await makeProjectDir(), { title: 'Plain', status: 'done', steps: [], branch: { feature: 'f', source: 'main' } });
+  assert.equal((await (await fetch(`${base}/api/ask/runs/${plain.id}`)).json()).extras.source, undefined);
+});
