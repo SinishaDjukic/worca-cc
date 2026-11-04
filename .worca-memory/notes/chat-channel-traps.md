@@ -2,7 +2,7 @@
 name: chat-channel-traps
 description: Traps in the chat-channel stack (Discord worker filters, parser/rate-limiter APIs, Ask turn echo races) worth reading before planning or building chat-plugin fe
 paths: plugins/*-chat/**, src/core/chat/**
-updated: 2026-11-04T22:08:17.693Z
+updated: 2026-11-04T22:23:48.493Z
 author: Bulibas
 ---
 
@@ -89,6 +89,12 @@ Each of these sank a reviewed plan once (freeform Discord chat plan, cycles 1-2,
   assistant row (else a fast mock reply lands as a new message before the status knows its row); `runTurn`
   reconciles right after binding. Pin progress in the e2e with mock `_testing.holdFrame` (hold after the first
   `text_delta` past the real 5 s tick), not `WORCA_MOCK_SLOW_MS`.
+  The implementation review (cycle 1) found 3 status-lifecycle guards that each survived their own revert. Every new
+  status path needs its own row:
+  - Await the in-flight progress edit before the final edit. Otherwise a late progress edit overwrites the answer.
+  - Set `phase='deferred'` for a queued card follow-up. Otherwise the status stays `starting` and the conversation's
+    replies are held forever.
+  - Finish every live status on `header:new`.
 - **`test/discord-chat-worker.test.mjs` runs ~195 s** (tests finish in ~2 s; the process lingers, on the checkpoint
   too). A plain Bash call with the default 120 s timeout looks hung: give it `timeout: 300000`. For mutation sweeps,
   extract the one test (file head + `workerCtx` + the test) into a temp `test/zz-*.test.mjs` (~1 s per run).
