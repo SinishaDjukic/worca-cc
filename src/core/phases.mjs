@@ -794,16 +794,17 @@ export function workspaceWriteTargetsFor(ctx) {
 
 /** Map the orchestrator's claudeOpts into runClaude options shared by every role. */
 /**
- * The unique directories a node writes to, in first-seen order; [] when none: the dirs of
- * its allocated outputs (a review handle has mdPath + jsonPath), its verdict, its questions
- * file and a form-repair file, then the pipeline dir itself (the clarify step writes
- * clarify.json there), then — on a legacy workspace run, whose cwd is the primary member's
- * worktree — every member worktree (a detached workspace run's cwd, the run root, already
- * holds them at repos/<key>). PURE.
+ * The unique directories a node writes to (or reads its bound inputs from), in first-seen
+ * order; [] when none: the dirs of its allocated outputs (a review handle has mdPath + jsonPath)
+ * and bound inputs (ctx.bindings), its verdict, its questions file and a form-repair file, then
+ * the pipeline dir itself (the clarify step writes clarify.json there), then — on a legacy
+ * workspace run, whose cwd is the primary member's worktree — every member worktree (a detached
+ * workspace run's cwd, the run root, already holds them at repos/<key>). PURE.
  */
 function nodeWritableDirs(ctx) {
   const files = [
     ...Object.values(ctx.outputs || {}).flatMap((o) => [o?.path, o?.mdPath, o?.jsonPath]),
+    ...Object.values(ctx.bindings || {}).flatMap((b) => [b?.path, b?.mdPath, b?.jsonPath]),
     ctx.verdict?.path,
     ctx.questionsFile,
     ctx.formRepair?.file,
