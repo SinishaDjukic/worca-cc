@@ -278,7 +278,10 @@ test('a stack step on a member whose setup is pending runs that setup first (D29
   const branches = {};
   for (const [i, m] of members.entries()) {
     const feature = `worca-cc/ws${i}`;
-    git(m.projectDir, ['branch', feature]);
+    // A commit on the branch: Check out with no members takes only the projects the run changed.
+    git(m.projectDir, ['switch', '-q', '-c', feature]);
+    git(m.projectDir, ['commit', '-q', '--allow-empty', '-m', 'work']);
+    git(m.projectDir, ['switch', '-q', 'main']);
     branches[m.projectKey] = { source: 'main', feature, runRootMode: 'detached', worktreeRemoved: true, branchKept: true,
       worktreeDir: join(worcaHome(), 'runs', wsId, 'repos', m.projectKey) };
   }
@@ -344,7 +347,22 @@ test('GET /actions carries per-member change facts and a totals object', async (
   assert.deepEqual(r.totals, { members: 2, changed: 1, files: 3, added: 30, removed: 0 });
 });
 
-test('checkout refuses a member the run did not change (409), but not a stack or an all-members call', async () => {
+test('GET /actions totals: a count no changed member carries is null, not 0', async () => {
+  // A run still going: no git (live:false), so every member is unknown (counts as changed) with no counts.
+  const { seedWorkspacePipeline } = await import('./helpers/db-seed.mjs');
+  const branches = Object.fromEntries(factsMs.map((m, i) => [m.projectKey, { source: 'main', feature: `worca-cc/f${i}` }]));
+  const projects = factsMs.map((m) => ({ projectKey: m.projectKey, projectDir: m.projectDir, projectName: m.name }));
+  const going = await seedWorkspacePipeline(factsMs[0].projectDir, factsWs.id, { title: 'going', status: 'running',
+    projects, projectKeys: factsMs.map((m) => m.projectKey), branches, branch: {} }, projects);
+  const r = await getJson(`/api/runs/${going.id}/actions?workspaceId=${factsWs.id}`);
+  assert.deepEqual(r.totals, { members: 2, changed: 2, files: null, added: null, removed: null });
+  // and a check out on it is answered by the core's not-finished check, not by the change facts
+  const refused = await post(`/api/runs/${going.id}/checkout?workspaceId=${factsWs.id}`, { members: [factsMs[1].projectKey] });
+  assert.equal(refused.status, 409);
+  assert.equal((await refused.json()).code, 'NOT_FINISHED');
+});
+
+test('checkout refuses a member the run did not change (409), and an all-members call checks out only the changed ones', async () => {
   const scope = `workspaceId=${factsWs.id}`;
   const refused = await post(`/api/runs/${factsRun.id}/checkout?${scope}`, { members: [factsMs[1].projectKey] });
   assert.equal(refused.status, 409);
@@ -354,9 +372,32 @@ test('checkout refuses a member the run did not change (409), but not a stack or
   assert.deepEqual(body.members, [factsMs[1].projectKey]);
   // the changed member still checks out
   assert.equal((await post(`/api/runs/${factsRun.id}/checkout?${scope}`, { members: [factsMs[0].projectKey] })).status, 200);
-  // an all-members call is NOT guarded (Ship It's "Try it first" sends {})
-  assert.equal((await post(`/api/runs/${factsRun.id}/checkout?${scope}`, {})).status, 200);
   await fetch(`${base}/api/runs/${factsRun.id}/checkout?${scope}`, { method: 'DELETE', headers: JSONH, body: JSON.stringify({ force: true }) });
+  // an all-members call (Ship It's "Try it first", History's Try it send {}) means the changed members only
+  const all = await post(`/api/runs/${factsRun.id}/checkout?${scope}`, {});
+  assert.equal(all.status, 200);
+  assert.deepEqual((await all.json()).members.map((m) => m.projectKey), [factsMs[0].projectKey]);
+  const after = await getJson(`/api/runs/${factsRun.id}/actions?${scope}`);
+  assert.equal(after.members.find((m) => m.projectKey === factsMs[1].projectKey).checkout, null, 'no empty worktree for the unchanged one');
+  await fetch(`${base}/api/runs/${factsRun.id}/checkout?${scope}`, { method: 'DELETE', headers: JSONH, body: JSON.stringify({ force: true }) });
+});
+
+test('checkout with no members on a workspace run that changed nothing: 409 NOT_AFFECTED, no worktrees', async () => {
+  const { seedWorkspacePipeline } = await import('./helpers/db-seed.mjs');
+  const branches = Object.fromEntries(factsMs.map((m, i) => [m.projectKey, { source: 'main', feature: `worca-cc/f${i}`, runRootMode: 'detached', worktreeRemoved: true, branchKept: true }]));
+  const projects = factsMs.map((m) => ({ projectKey: m.projectKey, projectDir: m.projectDir, projectName: m.name }));
+  const idle = await seedWorkspacePipeline(factsMs[0].projectDir, factsWs.id, { title: 'idle', status: 'done',
+    projects, projectKeys: factsMs.map((m) => m.projectKey), branches, branch: {} }, projects);
+  const zero = { summary: { filesNew: 0, filesChanged: 0, filesDeleted: 0, linesAdded: 0, linesRemoved: 0 } };
+  await writeFile(join(idle.dir, 'results.json'), JSON.stringify({ summary: zero.summary,
+    perProject: Object.fromEntries(factsMs.map((m) => [m.projectKey, zero])) }));
+  const r = await post(`/api/runs/${idle.id}/checkout?workspaceId=${factsWs.id}`, {});
+  assert.equal(r.status, 409);
+  const body = await r.json();
+  assert.equal(body.code, 'NOT_AFFECTED');
+  assert.equal(body.error, 'No project changed in this run');
+  const model = await getJson(`/api/runs/${idle.id}/actions?workspaceId=${factsWs.id}`);
+  assert.ok(model.members.every((m) => m.checkout === null));
 });
 
 test('a stack step on a member the run did not change checks it out itself, so the 409 guard is not a dead end', async () => {

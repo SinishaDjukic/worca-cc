@@ -936,8 +936,8 @@ test('F-2: the Actions row, the Overview WORKTREE row and the Actions strip read
   assert.match(wt().querySelector('.hd-ov-wt-path').title, /\/tmp\/co/);
   assert.match(actionsValueOf(doc), /^Local copy open · since /);
   const strip = () => secOf(doc, 'overview').querySelector('.act-strip');
-  // The strip's button now counts what the run changed ("Check out 1 changed project") and opens the
-  // Actions tab, so match on the prefix rather than the old exact label.
+  // "Check out" on a single project; a workspace run's strip reads "Check out N changed projects" and
+  // opens the Actions tab instead, so match on the prefix.
   const offersCheckout = () => [...strip().querySelectorAll('button')].some((b) => b.textContent.startsWith('Check out'));
   assert.ok(!offersCheckout(), 'no Check out while checked out');
   // Discarded: the row, then both change events

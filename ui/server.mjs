@@ -45,7 +45,7 @@ import {
   folderApplyRetainFor,
   resolveIndexedArtifactFileForRow, openArtifactUnder, readPromptFile, runDirForRow, recordArtifact, appendAudit,
   persistMemberPrState, readMemberPrStates, readPipelineExtras,
-  checkoutRecordsFor, retainedWorkFor, runEngineOfRow, folderFacts, memberChangeFacts,
+  checkoutRecordsFor, retainedWorkFor, runEngineOfRow, folderFacts, readRunResultsForRow,
 } from '../src/core/artifacts.mjs';
 import { FolderApplyError, folderMemberTarget, readFolderChanges, planFolderApply, applyFolderChanges, discardFolderChanges, releaseFolderCopy } from '../src/core/folder-apply.mjs';
 import { releaseFolderMember } from '../src/core/folder-members.mjs';
@@ -6361,9 +6361,6 @@ async function askCommandTarget(threadId, { runId = null, member = null, project
     if (!m) throw new Error(member ? 'that project is not part of this run' : 'this run has several projects: pass member');
     if (!m.cwd) {
       throw new Error(m.state === 'needs-checkout'
-        // No folder ever comes from the model, so this waits for the person — and it names a way they can
-        // always take: the Actions tab offers no checkout for a project the run did not change, but opening
-        // a terminal on the run makes one for any member.
         ? 'this finished run has no checkout yet: ask the user to open a terminal on it (or check it out in Actions), then try again'
         : (m.reason || 'this run has no folder'));
     }
@@ -7516,8 +7513,7 @@ async function askPrCardFacts(row) {
     : parse(row.branch) || {};
   let summary = null;
   try {
-    const dir = await runDirForRow(row);
-    const res = dir ? JSON.parse(await fsp.readFile(path.join(dir, 'results.json'), 'utf8')) : null;
+    const res = await readRunResultsForRow(row);
     summary = res && res.summary && typeof res.summary === 'object' ? res.summary : null;
     // P5: a workspace run's Folder members ship in no pull request (their changes wait for Apply): count the Git members only
     const folder = isWs ? new Set(((parse(row.workspace_meta) || {}).projects || []).filter((p) => p && p.workMode === 'folder').map((p) => p.projectKey)) : null;

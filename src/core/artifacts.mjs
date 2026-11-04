@@ -2244,11 +2244,15 @@ async function readResultsJson(dir) {
   }
 }
 
-/** A finished run's results.json by pipeline id (null when the row, its dir or the file is missing). */
-export async function readRunResultsById(pipelineId) {
-  const row = getDb().prepare('SELECT * FROM pipelines WHERE id = ?').get(String(pipelineId));
+/** A finished run's results.json for a pipelines row in hand (null when its dir or the file is missing, or junk). */
+export async function readRunResultsForRow(row) {
   if (!row) return null;
   try { return await readResultsJson(await runDirForRow(row)); } catch { return null; }
+}
+
+/** A finished run's results.json by pipeline id (null when the row, its dir or the file is missing). */
+export async function readRunResultsById(pipelineId) {
+  return readRunResultsForRow(getDb().prepare('SELECT * FROM pipelines WHERE id = ?').get(String(pipelineId)));
 }
 
 /**
@@ -2284,9 +2288,9 @@ export async function memberChangeEvidence(m, { summary = null, counts = null, l
 }
 
 /**
- * Per-member change facts for the Actions route, keyed by `projectKey` — the key membersOfRow uses,
- * NOT workspaceMembers' `memberKey`. Feed it `membersOfRow(row)` so single-project and workspace rows
- * take the same path.
+ * Per-member change facts for the Actions route, keyed by `projectKey` (membersOfRow's name for what
+ * workspaceMembers calls `memberKey`: the same value, the results.json perProject key). Feed it
+ * `membersOfRow(row)`, or a subset of it, so single-project and workspace rows take the same path.
  * @param {object} row  the pipelines row (read for workspace_meta.projects[].workMode only)
  * @param {Array<{projectKey:string, projectDir:string|null, br:object|null}>} members
  * @param {object|null} results  the parsed results.json, or null

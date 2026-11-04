@@ -309,6 +309,27 @@ test('a long card collapses its checked-out rows to one line, and Show opens one
   assert.equal(open.querySelector('.act-wt-toggle').textContent, 'Hide');
 });
 
+test('the collapse starts at 10 rows (table + checkouts, unchanged checkouts included); a failed setup stays open', () => {
+  const co = (k, over = {}) => member({ projectKey: k, projectName: k, branch: `b/${k}`, checkout: { worktreeDir: `/w/${k}`, setup: { status: 'ok' } }, ...over });
+  const pend = (n) => Array.from({ length: n }, (_, i) => member({ projectKey: `p${i}`, projectName: `p${i}`, branch: `b/${i}` }));
+  const toggles = (el) => el.querySelectorAll('.act-wt-toggle').length;
+  // 9 rows: 7 in the table, 2 checked out. Nothing collapses, nothing to toggle.
+  const nine = renderActionsCard(wsModel([...pend(7), co('c0'), co('c1')]), { doc, picked: new Set() });
+  assert.equal(toggles(nine), 0);
+  assert.equal(nine.querySelectorAll('.act-wt-row .act-wt-acts').length, 2, 'both checked-out rows are open');
+  // 10 rows: 7 in the table, 3 checked out, one of them a member the run did not change (a stack step made
+  // it): that one counts toward the 10 too.
+  const failed = co('c2', { checkout: { worktreeDir: '/w/c2', setup: { status: 'failed', exitCode: 1 } } });
+  const ten = renderActionsCard(wsModel([...pend(7), co('c0'), failed, co('u', { affected: false, files: 0, added: 0, removed: 0 })]),
+    { doc, picked: new Set() });
+  assert.equal(rows(ten).length + ten.querySelectorAll('.act-wt-row').length, 10);
+  const row = (k) => ten.querySelector(`.act-wt-row[data-member="${k}"]`);
+  assert.equal(row('c0').querySelector('.act-wt-acts'), null, 'ten rows: an idle row collapses');
+  assert.equal(row('u').querySelector('.act-wt-acts'), null, 'so does the unchanged checkout');
+  assert.ok(row('c2').querySelector('.act-exit.fail'), 'a failed setup stays open and says so');
+  assert.equal(row('c2').querySelector('.act-wt-toggle'), null, 'with nothing to toggle');
+});
+
 test('a held branch is unticked by default and offers its folder; a Folder member never offers checkout', () => {
   const held = member({ projectKey: 'a', projectName: 'a', branch: 'b/a', heldBy: '/Users/ada/dev/a' });
   const copy = member({ projectKey: 'b', projectName: 'b', branch: null, state: 'no-branch', workMode: 'folder', affected: true, files: 2 });
@@ -349,7 +370,8 @@ test('single-project: an unchanged run says so and offers no Check out', () => {
 });
 
 test('the client and the server agree on which members count as changed', () => {
-  // ui/server.mjs's actions route uses the same predicate inline for totals.changed; this pins them together.
+  // The actions route (ui/routes/runs/checkout-and-actions.mjs) imports isChangedMember for totals.changed, so
+  // this pins the predicate itself: unknown counts as changed, and a Folder member needs no branch.
   const ms = [member({ projectKey: 'a', affected: true }), member({ projectKey: 'b', affected: false }),
     member({ projectKey: 'c', affected: null }), member({ projectKey: 'd', branch: null, state: 'no-branch', affected: false }),
     member({ projectKey: 'e', branch: null, state: 'no-branch', workMode: 'folder', affected: true })];
@@ -373,14 +395,17 @@ test('overview strip: Check out, then open link + Stop while a service runs; nul
   const calls = [];
   const handlers = { onCheckout: () => calls.push('checkout'), onStop: (m, a) => calls.push(['stop', m, a]), onOpenTab: () => calls.push('tab') };
   const a = renderOverviewStrip(model(member()), { doc, handlers });
-  assert.deepEqual(labelsOf(a), ['Check out 1 changed project', 'Open tab ›']);
-  a.querySelector('button').click();   // the strip links to the Actions tab now; it never checks out on the spot
+  assert.deepEqual(labelsOf(a), ['Check out', 'Open tab ›']);
+  a.querySelector('button').click();   // a single project has nothing to choose: it checks out on the spot
+  const ws = renderOverviewStrip(wsModel([member(), member({ projectKey: 'api-1', affected: false })]), { doc, handlers });
+  assert.deepEqual(labelsOf(ws), ['Check out 1 changed project', 'Open tab ›']);
+  ws.querySelector('button').click();  // a workspace run links to the Actions tab, where you pick the projects
   const run = { instanceId: 'i', member: 'app-0cea65fb', actionId: 'run', label: 'Run', kind: 'service', status: 'ready', ports: { PORT: 4417 }, url: 'http://localhost:4417' };
   const b = renderOverviewStrip(model(member({ checkout: { setup: { status: 'ok' } } }), [run]), { doc, handlers });
   assert.equal(b.querySelector('a.act-open').textContent, 'Open :4417');
   [...b.querySelectorAll('button')].find((x) => x.textContent === 'Stop').click();
   [...b.querySelectorAll('button')].find((x) => x.textContent === 'Open tab ›').click();
-  assert.deepEqual(calls, ['tab', ['stop', 'app-0cea65fb', 'run'], 'tab']);
+  assert.deepEqual(calls, ['checkout', 'tab', ['stop', 'app-0cea65fb', 'run'], 'tab']);
   assert.equal(renderOverviewStrip(model(member({ branch: null })), { doc, handlers }), null);
 });
 

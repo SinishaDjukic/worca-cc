@@ -5,12 +5,12 @@ import { launchAndWatch } from '../../../src/core/actions/launcher.mjs';
 import { SETUP_ACTION_ID, memberAliases } from '../../../src/core/actions/model.mjs';
 import { instanceIdFor } from '../../../src/core/actions/registry.mjs';
 import { runStack, stopStack } from '../../../src/core/actions/stack.mjs';
-import { appendAuditById, checkoutRecordsFor, findPipelineRowById, memberChangeFacts, readMemberPrStates, readPrState, runDirForRow, runEngineOfRow } from '../../../src/core/artifacts.mjs';
+import { appendAuditById, checkoutRecordsFor, findPipelineRowById, memberChangeFacts, readMemberPrStates, readPrState, readRunResultsForRow, runEngineOfRow } from '../../../src/core/artifacts.mjs';
 import { assertFinishedRow, assertNotResolving, baseMembersOfRow, checkRunBase, pickBaseMember, resolveMark, resolveTaskText, settleResolutions, toRecord, updateRunBranch } from '../../../src/core/base-conflicts.mjs';
 import { checkoutPathFor, checkoutRun, checkoutRunUnderLock, discardCheckout, enforceCheckoutCap, membersOfRow, updateBranchRecords, withRunLock } from '../../../src/core/checkout.mjs';
 import { readActionsMeta, readProjectActions } from '../../../src/core/config.mjs';
 import { attachmentDisposition } from '../../../src/core/download-filename.mjs';
-import { branchPushedTo, uncommittedPatch } from '../../../src/core/git-info.mjs';
+import { branchPushedTo, uncommittedPatch, withRefSnapshot } from '../../../src/core/git-info.mjs';
 import { INTERACTIVE_TTL_MS, branchCheckouts, checkBaseMerge, startConflictMerge } from '../../../src/core/git-sync.mjs';
 import { actorOf, byActor } from '../../../src/core/identity.mjs';
 import { FIX_WORKFLOW_ID, getWatch, watchActive } from '../../../src/core/pr-watch.mjs';
@@ -21,6 +21,7 @@ import { projectKey } from '../../../src/core/store.mjs';
 import { terminalTargets } from '../../../src/core/terminal/context.mjs';
 import { readWorkspaceStacks } from '../../../src/core/workspaces.mjs';
 import { sanitizeBranchName, worktreePathForBranch } from '../../../src/core/worktree.mjs';
+import { isChangedMember } from '../../public/actions-view.mjs';
 import { spawn } from 'node:child_process';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
@@ -83,29 +84,31 @@ app.post('/api/runs/:id/terminal', async (req, res) => {
   } catch (e) { terminalError(res, e); }
 });
 
-/** The run's frozen results.json, or null. The same read askPrCardFacts (:11797) and askRunCardExtras
- *  (:14290) each still do inline. */
-async function readRunResults(row) {
-  try {
-    const dir = await runDirForRow(row);
-    return dir ? JSON.parse(await fsp.readFile(path.join(dir, 'results.json'), 'utf8')) : null;
-  } catch { return null; }
-}
+const FINISHED = new Set(['done', 'stopped', 'error']);
 
 app.post('/api/runs/:id/checkout', async (req, res) => {
   const row = runRowForScope(req, res); if (!row) return;
-  const members = Array.isArray(req.body?.members) ? req.body.members.filter((x) => typeof x === 'string') : null;
+  let members = Array.isArray(req.body?.members) ? req.body.members.filter((x) => typeof x === 'string') : null;
   const useExisting = req.body?.useExisting === true;
-  // The tab only offers members the run changed, so an explicitly named unchanged member means the
-  // page is stale: refuse rather than make an empty worktree and run its setup. Guarded in the route and
-  // not in checkout.mjs on purpose — the server's own callers of the core must keep working, and one of
-  // them NEEDS an unchanged member: stack start checks a step's member out itself (resolveStep, the
-  // `/stacks/:stackId/start` route), as do resolve-terminal and Try it.
-  // `members: null` (check out everything, which Ship It sends) and useExisting are exempt too.
-  if (members?.length && !useExisting) {
-    const facts = await memberChangeFacts(row, membersOfRow(row), await readRunResults(row), { live: true });
-    const stale = members.filter((k) => facts.get(k)?.affected === false);
-    if (stale.length) return res.status(409).json({ error: 'No changes in this project', code: 'NOT_AFFECTED', members: stale });
+  // Check out offers only what the run changed, and this route is where that rule lives: on a workspace run
+  // `members: null` ("all of them": Ship It's "Try it first", History's Try it) means the CHANGED members, and
+  // a named unchanged member means the page is stale, so it is refused rather than given an empty worktree
+  // and a setup run. A single-project run's `members: null` is "this run" and stays as it was. Not in
+  // checkout.mjs on purpose: the server's own callers of the core need an unchanged member (a stack step and
+  // the terminal check theirs out themselves). Skipped for useExisting (a link, no new worktree) and for a
+  // run that is not finished, so the core's NOT_FINISHED answers that one. Unknown facts (affected: null)
+  // count as changed, so a legacy run keeps checking out everything.
+  if (!useExisting && FINISHED.has(row.status)) {
+    const all = membersOfRow(row);
+    const asked = members ? all.filter((m) => members.includes(m.projectKey)) : row.target === 'workspace' ? all : [];
+    const results = await readRunResultsForRow(row);
+    const facts = await withRefSnapshot(() => memberChangeFacts(row, asked, results, { live: true }));
+    const unchanged = asked.filter((m) => facts.get(m.projectKey)?.affected === false).map((m) => m.projectKey);
+    if (unchanged.length && (members || unchanged.length === asked.length)) {
+      const error = members ? 'No changes in this project' : 'No project changed in this run';
+      return res.status(409).json({ error, code: 'NOT_AFFECTED', members: unchanged });
+    }
+    if (unchanged.length) members = asked.map((m) => m.projectKey).filter((k) => !unchanged.includes(k));
   }
   try {
     // useExisting: the branch is already checked out in the person's own folder; link it (checkout.mjs).
@@ -232,6 +235,8 @@ app.post('/api/runs/:id/stacks/:stackId/start', async (req, res) => {
         if (co.members.some((x) => x.projectKey === st.member && x.state === 'no-branch')) {
           return { action, worktreeDir: null, error: `${nameOf[st.member]} has no branch from this run to check out` };
         }
+        // The checkout cap is left to the next normal checkout and the keep sweep, as the terminal's and
+        // resolve-terminal's own checkouts are: evicting here could stop a service an earlier step just started.
         emitChanged('pipelines-changed', 'updated');
         emitChanged('actions-changed', 'checkout');   // the Actions strips read their own cache (audit F-2)
       } catch (e) {
@@ -305,9 +310,15 @@ app.get('/api/runs/:id/actions', async (req, res) => {
     const finished = ['done', 'stopped', 'error'].includes(row.status);
     // Change facts, so the tab can offer only what the run touched. The frozen results.json answers
     // for a finished run with no git at all; `live:false` keeps a run still going from spawning
-    // rev-list per member (its counts are about to move anyway — it reports affected:null).
-    const facts = await memberChangeFacts(row, all, await readRunResults(row), { live: finished });
-    const totals = { members: all.length, changed: 0, files: 0, added: 0, removed: 0 };
+    // rev-list per member (its counts are about to move anyway — it reports affected:null). In a ref
+    // snapshot, a finished run with no frozen summary costs one for-each-ref per repository per refresh:
+    // rev-list and diff --shortstat run again only when a branch tip has moved (git-info.mjs).
+    const results = await readRunResultsForRow(row);
+    const facts = await withRefSnapshot(() => memberChangeFacts(row, all, results, { live: finished }));
+    // A count is null when no changed member carries it (a run still going, or the live-git path, which has
+    // lines but no file count), so the header leaves it out instead of saying "0 files".
+    const totals = { members: all.length, changed: 0, files: null, added: null, removed: null };
+    const addTo = (k, v) => { if (v != null) totals[k] = (totals[k] ?? 0) + (v | 0); };
     const members = await Promise.all(all.map(async (m) => {
       const cfg = readProjectActions(m.projectKey);
       const rec = checkoutRecordsFor(row)?.members.find((x) => x.projectKey === m.projectKey) || null;
@@ -320,10 +331,10 @@ app.get('/api/runs/:id/actions', async (req, res) => {
       const state = !m.br?.feature ? 'no-branch' : rec ? 'checked-out' : 'not-checked-out';
       const f = facts.get(m.projectKey) || { affected: null, files: null, added: null, removed: null, workMode: 'git' };
       // Offered for checkout = the run changed it. Unknown (null) counts as changed, so a legacy row
-      // keeps working. Mirrors isChangedMember() in ui/public/actions-view.mjs — keep the two in step.
-      if (f.affected !== false && (state !== 'no-branch' || f.workMode === 'folder')) {
+      // keeps working. The tab's own predicate, so the header count and the table cannot disagree.
+      if (isChangedMember({ affected: f.affected, state, workMode: f.workMode })) {
         totals.changed += 1;
-        totals.files += f.files | 0; totals.added += f.added | 0; totals.removed += f.removed | 0;
+        addTo('files', f.files); addTo('added', f.added); addTo('removed', f.removed);
       }
       return { projectKey: m.projectKey, projectName: m.projectName, projectDir: m.projectDir, state, branch: m.br?.feature || null,
         ...(held ? { heldBy: held } : {}),

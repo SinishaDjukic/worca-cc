@@ -385,7 +385,7 @@ function renderCheckoutTable(model, rows, { doc, handlers, pickable, picked, onP
     if (m.branch) {
       const br = h(doc, 'code', 'act-branch', middleClip(m.branch, 44));
       br.title = m.branch;
-      brTd.append(br, copyIconButton(doc, `Copy branch name of ${m.projectName || m.projectKey}`, () => handlers.onCopy?.(m.branch)));
+      brTd.append(br, copyAct(doc, handlers, `Copy branch name of ${m.projectName || m.projectKey}`, 'branch name', m.branch, { cls: 'act-copy' }));
     } else brTd.append(h(doc, 'span', 'act-later', 'no branch'));
     const files = h(doc, 'td', 'num', count(m.files));
     files.dataset.label = 'Files';
@@ -435,7 +435,7 @@ function checkedOutRow(model, m, state, { doc, handlers, logs, queued, collapsib
     const meta = h(doc, 'div', 'act-wt-meta');
     const p = h(doc, 'code', 'act-path', middleClip(dir, 64));
     p.title = dir;
-    meta.append(p, copyIconButton(doc, `Copy folder path of ${m.projectName || m.projectKey}`, () => handlers.onCopy?.(dir)));
+    meta.append(p, copyAct(doc, handlers, `Copy folder path of ${m.projectName || m.projectKey}`, 'folder path', dir, { cls: 'act-copy' }));
     if (m.checkout?.external) meta.append(h(doc, 'span', 'badge act-linked', 'Your folder'));
     top.append(meta);
   }
@@ -557,8 +557,8 @@ function renderCheckoutFoot(model, rows, { doc, handlers, pickable, picked }) {
   if (rows.length) {
     const copyable = rows.filter((m) => m.copyCommand);
     if (copyable.length) {
-      foot.append(btn(doc, 'Copy git commands', null, () => handlers.onCopy?.(copyable.map((m) => m.copyCommand).join('\n\n')),
-        'Copy the git commands that put these branches in your own clones'));
+      foot.append(copyAct(doc, handlers, 'Copy git commands', 'git commands', copyable.map((m) => m.copyCommand).join('\n\n'),
+        { action: true, title: 'Copy the git commands that put these branches in your own clones' }));
     }
   }
   // Said once for the whole card, not once per project.
@@ -593,8 +593,8 @@ export function renderActionsCard(model, { doc, handlers = {}, logs = null, queu
   const changed = members.filter(isChangedMember);
   const pending = changed.filter((m) => !m.checkout);
   // Every member that HAS a checkout keeps its row, changed or not: an unchanged one can still be checked
-  // out (Ship It's "Try it first" posts `{}`, which checks out all of them, and a stack step checks its own
-  // member out), and the folder path, Discard / Unlink, Download patch and the open-in buttons live nowhere
+  // out (a stack step and the terminal check their own member out, and a checkout from before this rule
+  // stays), and the folder path, Discard / Unlink, Download patch and the open-in buttons live nowhere
   // else. What is OFFERED is gated on `affected`; what EXISTS is not.
   const out = members.filter((m) => m.checkout);
   // One list behind the checkbox column, the select-all and the footer button, so they cannot disagree about
@@ -627,8 +627,8 @@ export function renderActionsCard(model, { doc, handlers = {}, logs = null, queu
     if (out.length) {
       const wt = h(doc, 'div', 'act-wt');
       // Counted over the rows the card really has, not over `changed`: a run that changed two members can
-      // still have a dozen checkouts (one `{}` post checks out every member), which is the long page this
-      // collapse exists for.
+      // still have a dozen checkouts (stack steps and terminals check out unchanged members too), which is
+      // the long page this collapse exists for.
       const collapsible = pending.length + out.length >= COLLAPSE_ROWS_AT;
       for (const m of out) {
         wt.append(checkedOutRow(model, m, memberViewState(m, model.instances || []), { doc, handlers, logs, queued,
@@ -681,10 +681,12 @@ export function renderOverviewStrip(model, { doc, handlers = {} } = {}) {
     const changed = members.filter(isChangedMember);
     row.append(h(doc, 'span', 'act-label', 'Try the result in a local checkout.'));
     if (model.finished !== false && changed.length) {
-      // Opens the Actions tab rather than checking out on the spot: the tab is where you choose which
-      // projects, and on a workspace run "Check out" used to mean all of them.
-      row.append(btn(doc, `Check out ${plural(changed.length, 'changed project')}`, 'btn-primary',
-        () => handlers.onOpenTab?.(), 'Open the run\'s Actions tab and choose what to check out'));
+      // A workspace run opens the Actions tab rather than checking out on the spot: the tab is where you
+      // choose which projects. A single project has nothing to choose, so it checks out right here.
+      row.append(model.workspace
+        ? btn(doc, `Check out ${plural(changed.length, 'changed project')}`, 'btn-primary',
+          () => handlers.onOpenTab?.(), 'Open the run\'s Actions tab and choose what to check out')
+        : btn(doc, 'Check out', 'btn-primary', () => handlers.onCheckout?.(), 'Put this run\'s branch in a folder of its own, to try it'));
     }
   }
   row.append(btn(doc, 'Open tab ›', null, () => handlers.onOpenTab?.(), 'Open the run\'s Actions tab'));
