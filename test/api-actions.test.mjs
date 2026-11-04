@@ -118,9 +118,12 @@ test('checkout runs setup once and streams action-* frames with replay', async (
   assert.equal(res.status, 200);
   await waitFor(() => msgs.some((m) => m.type === 'actions-changed'));   // the strips refetch (audit F-2)
   await waitFor(() => msgs.some((m) => m.type === 'action-status' && m.snapshot.actionId === '__setup' && m.snapshot.status === 'exited'));
-  await waitFor(async () => (await getJson(`/api/runs/${id}/actions?projectKey=${key}`)).members[0].checkout?.setup?.status === 'ok');
+  // The Actions tab follows actions-changed only: once setup has settled (its job gone), one more frame tells it,
+  // so the card leaves "Setting up" without a manual refresh.
+  await waitFor(() => msgs.some((m) => m.type === 'actions-changed' && m.action === 'setup-done'));
   const model = await getJson(`/api/runs/${id}/actions?projectKey=${key}`);
   assert.equal(model.members[0].checkout.setup.status, 'ok');
+  assert.equal(model.members[0].setupQueued, false, 'the frame comes after the setup job is gone');
   assert.equal(model.members[0].state, 'checked-out');
   // second checkout: idempotent, setup NOT re-run
   const before = msgs.filter((m) => m.type === 'action-status' && m.snapshot.actionId === '__setup').length;

@@ -6432,6 +6432,7 @@ function handleTerminalMessage(ws, msg) {
 function ensureSetup(runId, pk, { enabled, rerun = false }) {
   const key = `${runId}:${pk}`;
   if (setupJobs.has(key)) return setupJobs.get(key);
+  let settled = false;   // this job wrote a setup state (none / skipped / ok / failed)
   const job = (async () => {
     const rec = checkoutRecOf(runId, pk);
     if (!rec) return false;
@@ -6439,8 +6440,8 @@ function ensureSetup(runId, pk, { enabled, rerun = false }) {
     if (!rerun && ['ok', 'none', 'skipped'].includes(status)) return true;
     if (!rerun && status === 'failed') return false;
     const cfg = readProjectActions(pk);
-    if (!cfg.setup) { setSetupState(runId, pk, { status: 'none', at: new Date().toISOString() }); return true; }
-    if (!enabled) { setSetupState(runId, pk, { status: 'skipped', at: new Date().toISOString() }); return true; }
+    if (!cfg.setup) { setSetupState(runId, pk, { status: 'none', at: new Date().toISOString() }); settled = true; return true; }
+    if (!enabled) { setSetupState(runId, pk, { status: 'skipped', at: new Date().toISOString() }); settled = true; return true; }
     const t0 = Date.now();
     setSetupState(runId, pk, { status: 'running', at: new Date().toISOString() });
     emitChanged('pipelines-changed', 'updated');
@@ -6453,10 +6454,16 @@ function ensureSetup(runId, pk, { enabled, rerun = false }) {
     const ok = end?.status === 'exited' && end.exitCode === 0;
     const ms = Date.now() - t0;
     setSetupState(runId, pk, { status: ok ? 'ok' : 'failed', exitCode: end?.exitCode ?? null, at: new Date().toISOString(), ms });
+    settled = true;
     if (ok) writeActionsMeta(pk, { lastSetupMs: ms });
     emitChanged('pipelines-changed', 'updated');
     return ok;
-  })().catch(() => false).finally(() => setupJobs.delete(key));
+  })().catch(() => false).finally(() => {
+    setupJobs.delete(key);
+    // The Actions tab follows actions-changed only, and the setup instance's own last frame comes while this job
+    // still reads as queued: one frame after the job is gone lets the card leave "Setting up" by itself.
+    if (settled) emitChanged('actions-changed', 'setup-done');
+  });
   setupJobs.set(key, job);
   return job;
 }
