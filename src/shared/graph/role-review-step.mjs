@@ -25,6 +25,16 @@ export const REFINER_SINK = 'refiner';
 /** The sinks a role review may hand its findings to. Each answers them in the findings file's dispositions file. */
 export const ROLE_REVIEW_SINKS = Object.freeze([REFINER_SINK, 'implementer']);
 
+/** What each target reviews, as data: the port the findings leave on, the input whose fresh token continues the pass,
+ *  the mock role of its slices and its prompt words. The engine reads this table; it never compares a target. */
+export const ROLE_REVIEW_TARGETS = Object.freeze({
+  plan: Object.freeze({ findingsPort: 'findings', continuePort: 'revise', mockRole: 'plan-review', noun: 'plan', sectionHint: 'the plan section' }),
+  diff: Object.freeze({ findingsPort: 'review', continuePort: 'done', mockRole: 'code-review', noun: 'diff', sectionHint: 'the file and line' }),
+});
+
+/** A spec's target entry; a spec without a known target (a legacy round, an older manifest) reads as the plan. */
+export const roleTargetOf = (spec) => (Object.hasOwn(ROLE_REVIEW_TARGETS, String(spec?.target)) ? ROLE_REVIEW_TARGETS[spec.target] : ROLE_REVIEW_TARGETS.plan);
+
 /** What a saved `roleReview: true` means, forever: Shaper's perspectives, picked per run, reviewing the plan for Refine. */
 export const LEGACY_ROLE_REVIEW = Object.freeze({ source: 'picked', target: 'plan', checklist: 'perspectives', sink: REFINER_SINK });
 
@@ -44,7 +54,10 @@ export function roleReviewIssues(config) {
   if (!isObj(rr)) return ['roleReview must be true or an object'];
   const out = [];
   for (const k of Object.keys(rr)) if (!SPEC_KEYS.has(k)) out.push(`roleReview.${String(k).slice(0, 32)} is unknown (known: ${[...SPEC_KEYS].join(', ')})`);
-  if (rr.target !== 'plan') out.push(rr.target === undefined ? 'roleReview.target is required (plan)' : `roleReview.target ${quote(rr.target)} is not supported yet (plan only)`);
+  if (!Object.hasOwn(ROLE_REVIEW_TARGETS, String(rr.target))) {
+    const known = Object.keys(ROLE_REVIEW_TARGETS).join(' or ');
+    out.push(rr.target === undefined ? `roleReview.target is required (${known})` : `roleReview.target ${quote(rr.target)} is not supported yet (${known})`);
+  }
   if (!ROLE_REVIEW_SINKS.includes(rr.sink)) {
     const known = ROLE_REVIEW_SINKS.join(' or ');
     out.push(rr.sink === undefined ? `roleReview.sink is required (${known})` : `roleReview.sink ${quote(rr.sink)} is not supported yet (${known})`);
@@ -138,8 +151,9 @@ export function roleRecord(role, round, verdict, expectedIds = []) {
 
 /** The findings file the sink reads: one section per role, in running order, then (given its path) the
  *  `## Dispositions` contract the sink answers in. */
-export function findingsMarkdown(round, planPath, roles, { dispositionsPath } = {}) {
-  const lines = [`# Role reviews — round ${round}`, '', `Plan reviewed: ${planPath}`, ''];
+export function findingsMarkdown(round, planPath, roles, { dispositionsPath, target = 'plan' } = {}) {
+  const reviewed = target === 'diff' ? 'Diff reviewed against the plan' : 'Plan reviewed';
+  const lines = [`# Role reviews — round ${round}`, '', `${reviewed}: ${planPath}`, ''];
   for (const r of roles) {
     lines.push(`## ${r.label}${r.skipped ? ' (skipped: clean last round)' : ''}`, '');
     if (!r.findings.length) lines.push('- No findings.');
@@ -151,13 +165,30 @@ export function findingsMarkdown(round, planPath, roles, { dispositionsPath } = 
   return lines.join('\n');
 }
 
+/** The non-skipped roles' critical/major findings as verdict issues (`id: title`, the fix as detail, the section as
+ *  location): the ONE mapping of findings to issues. */
+export function roleBlockingIssues(roles) {
+  return (Array.isArray(roles) ? roles : []).filter((r) => !r.skipped).flatMap((r) => r.findings || [])
+    .filter((f) => BLOCKING.has(f.severity))
+    .map((f) => ({ severity: f.severity, title: `${f.id}: ${f.title}`, detail: f.fix, location: f.section }));
+}
+
+/** The verdict a role review routes on itself (a port set with blocking/clean outputs): its blocking findings. */
+export function roleRoutingVerdict(roles) {
+  const issues = roleBlockingIssues(roles);
+  const by = (Array.isArray(roles) ? roles : []).filter((r) => !r.skipped && (r.findings || []).some((f) => BLOCKING.has(f.severity)))
+    .map((r) => r.label || r.key);
+  return {
+    summary: issues.length ? `Role reviews: ${issues.length} blocking finding(s) from ${by.join(', ')}.` : 'Role reviews: no blocking findings.',
+    issues,
+  };
+}
+
 /** The refiner's ROUTED verdict — this round's critical/major reviewer findings plus the refiner's own
  *  minor/suggestion issues. The refiner's own critical/major issues are returned apart (stored, never routed). */
 export function refinerVerdict(round, refinerOwn) {
   const own = Array.isArray(refinerOwn?.issues) ? refinerOwn.issues : [];
-  const reviewers = (round?.roles || []).filter((r) => !r.skipped).flatMap((r) => r.findings)
-    .filter((f) => BLOCKING.has(f.severity))
-    .map((f) => ({ severity: f.severity, title: `${f.id}: ${f.title}`, detail: f.fix, location: f.section }));
+  const reviewers = roleBlockingIssues(round?.roles);
   return {
     verdict: { summary: refinerOwn?.summary || '', issues: [...reviewers, ...own.filter((i) => !BLOCKING.has(i?.severity))] },
     refinerIssues: own.filter((i) => BLOCKING.has(i?.severity)),
@@ -178,10 +209,11 @@ export function applyAddressed(round, addressed, planVersion) {
 
 /** The brief of a role with no checklist provider (any workflow's own roles; never Shaper's). */
 export function genericRoleBrief(role, target = 'plan') {
-  const what = target === 'plan' ? 'this plan' : `this ${target}`;
+  const t = roleTargetOf({ target });
+  const verb = t === ROLE_REVIEW_TARGETS.plan ? 'rewrite' : 'fix';
   return `## Your role: ${role.label}\n\n` +
-    `You review ${what} as **${role.label}** only. Find what is wrong; do NOT rewrite it. ` +
+    `You review this ${t.noun} as **${role.label}** only. Find what is wrong; do NOT ${verb} it. ` +
     'You do not see the other roles\' reviews.\n\n' +
-    'In the review JSON, every issue carries `severity`, `title`, `section` (the plan section) and `fix` ' +
+    `In the review JSON, every issue carries \`severity\`, \`title\`, \`section\` (${t.sectionHint}) and \`fix\` ` +
     '(one concrete change).\n\n';
 }

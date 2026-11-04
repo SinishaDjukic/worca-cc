@@ -2588,8 +2588,9 @@ test('ask-panel-card: per-role Agents rows on a role-review node', async () => {
       const ctx = await openWithCard(SHAPED_CARD, rec, { fetchHandler: shapeLane(rec) });
       const lane = await laneOf(ctx);
       const rows = [...lane.querySelectorAll('.ask-rp-role')];
-      assert.equal(rows.length, PERSPECTIVES.length, 'every declared role, ticked or not');
-      assert.deepEqual(rows.map((r) => r.querySelector('.ask-rp-name b').textContent), PERSPECTIVES.map((p) => `Plan Review · ${p.label}`));
+      assert.equal(rows.length, PERSPECTIVES.length + 3, 'every declared role, ticked or not, plus Review\'s three code roles (#990 slice 4)');
+      assert.deepEqual(rows.map((r) => r.querySelector('.ask-rp-name b').textContent), [...PERSPECTIVES.map((p) => `Plan Review · ${p.label}`),
+        'Review Implementation · Correctness', 'Review Implementation · Security', 'Review Implementation · Project fit']);
       for (const r of rows) {
         assert.equal(r.querySelectorAll('select').length, 1, r.dataset.role);
         assert.equal(r.querySelectorAll('[role=radiogroup]').length, 1, r.dataset.role);

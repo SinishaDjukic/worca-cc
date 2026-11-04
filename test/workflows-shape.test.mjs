@@ -10,6 +10,7 @@ import * as workflows from '../src/core/workflows.mjs';
 import {
   SHAPE_WORKFLOW_ID, SHAPE_UX_WORKFLOW_ID, SHAPE_WORKFLOW_NAME, SHAPE_CLARIFY_HINTS,
   GRAPH_SHAPE_WORKFLOW, GRAPH_SHAPE_UX_WORKFLOW, GRAPH_DEFAULT_WORKFLOW, RESERVED_WORKFLOW_IDS, isReservedWorkflowId,
+  SHAPE_CODE_ROLES_CONFIG,
 } from '../src/core/graph/builtin-workflows.mjs';
 import {
   resolveShapeRequest, validatePlanAnswer, renderPlanFeedback, isShapeWorkflowId, PLAN_ASK_KIND, PLAN_FEEDBACK_MAX,
@@ -101,6 +102,23 @@ test('role reviews (spec §3): both shape graphs fan the plan out to n_roles and
   }
   assert.ok(GRAPH_DEFAULT_WORKFLOW.wires.some((w) => w.id === 'w5' && edge(w) === 'n_refine.revise->n_refine.revise'), 'wf_default keeps its self-loop');
   assert.ok(!GRAPH_DEFAULT_WORKFLOW.nodes.some((n) => n.key === 'planReviewer'));
+});
+
+test('code role reviews (#990 slice 4): both shape graphs\' Review declares correctness, security and fit on the diff, wires unchanged', () => {
+  const spec = { roleReview: { roles: [{ key: 'correctness', label: 'Correctness' }, { key: 'security', label: 'Security' }, { key: 'fit', label: 'Project fit' }],
+    source: 'declared', target: 'diff', sink: 'implementer' } };
+  assert.deepEqual(SHAPE_CODE_ROLES_CONFIG, spec);
+  for (const wf of [GRAPH_SHAPE_WORKFLOW, GRAPH_SHAPE_UX_WORKFLOW]) {
+    const review = wf.nodes.find((n) => n.id === 'n_review');
+    assert.equal(review.key, 'reviewer', wf.id);
+    assert.deepEqual(review.config, spec, `${wf.id}: no node model, no diversity pick`);
+  }
+  const into = (wf) => wf.wires.filter((w) => w.from.node === 'n_review' || w.to.node === 'n_review').map((w) => `${w.id} ${edge(w)}`);
+  assert.deepEqual(into(GRAPH_SHAPE_WORKFLOW), ['w7 n_refine.plan->n_review.plan', 'w8 n_impl.done->n_review.done',
+    'w9 n_review.review->n_impl.fix', 'w10 n_review.pass->n_end.result']);
+  assert.deepEqual(into(GRAPH_SHAPE_UX_WORKFLOW), ['w7 n_refine.plan->n_review.plan', 'w8 n_impl.done->n_review.done',
+    'w9 n_review.review->n_or.in1', 'w12 n_review.pass->n_check.await']);
+  assert.deepEqual(GRAPH_DEFAULT_WORKFLOW.nodes.find((n) => n.id === 'n_review').config, {}, 'Default keeps its single reviewer');
 });
 
 test('both validate with zero errors and zero warnings', () => {

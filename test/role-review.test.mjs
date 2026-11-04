@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { rolesForRound, roleBriefBlock, houseBriefBlock, roleRecord, roleItems, refinerVerdict, applyAddressed, openBlocking, findingsMarkdown,
-  currentPass, roleSummaries, reviewedLine, liveRoleRows, worstText, countsText }
+  currentPass, roleSummaries, reviewedLine, liveRoleRows, worstText, countsText, attachRoleReviews }
   from '../src/shared/shape/role-review.mjs';
 
 // A recorded Shaper plan (real data): the 18 Oct "Shaper as chat cards" plan v2, copied verbatim.
@@ -177,4 +177,69 @@ test('liveRoleRows: the landed record\'s states, the Refine line, and null outsi
   assert.equal(liveRoleRows({ status: 'running' }, { stage: 'plan' }), null, 'no role review fact');
   assert.equal(worstText([]), 'no findings');
   assert.equal(worstText([{ severity: 'minor' }, { severity: 'minor' }]), '2 minor');
+});
+
+// #990 slice 4: plan rounds and Shaper's code rounds (n_review, target diff) share state.roleReviews.rounds.
+const codeRec = (key, label, issues) => ({ ...roleRecord(key, 1, { issues }, []), label });
+const CODE_ROUND = { pass: 1, round: 1, node: 'n_review', target: 'diff', plan: 'p', roles: [
+  codeRec('correctness', 'Correctness', [{ severity: 'major', title: 'race', fix: 'lock' }]),
+  codeRec('security', 'Security', []),
+  codeRec('fit', 'Project fit', [{ severity: 'minor', title: 'n', fix: 'f' }]),
+] };
+
+test('currentPass and its readers: the plan pass by default, the diff pass by node; a round without a target reads as plan', () => {
+  const legacy = RR.rounds.map(({ node, target, ...r }) => r);
+  const mixed = { rounds: [...legacy, CODE_ROUND] };
+  assert.deepEqual(currentPass(mixed), currentPass(RR), 'the code round never joins the plan pass');
+  assert.deepEqual(currentPass(mixed, { target: 'plan' }), currentPass(RR));
+  assert.deepEqual(currentPass(mixed, { node: 'n_review' }), { rounds: [CODE_ROUND] });
+  assert.deepEqual(currentPass(mixed, { target: 'diff' }), { rounds: [CODE_ROUND] });
+  assert.equal(reviewedLine(mixed), reviewedLine(RR));
+  assert.equal(reviewedLine(mixed, { node: 'n_review' }), 'Reviewed by 3 roles · 1 open');
+  assert.equal(openBlocking(mixed), openBlocking(RR));
+  assert.equal(openBlocking(mixed, { node: 'n_review' }), 1);
+  assert.deepEqual(roleSummaries(mixed, { node: 'n_review' }).map((r) => r.text), ['Correctness · 1 open', 'Security · no findings', 'Project fit · 1 open']);
+  const named = { rounds: [{ ...RR.rounds[0], node: 'n_roles', target: 'plan' }, CODE_ROUND] };
+  assert.equal(currentPass(named, { node: 'n_roles' }).rounds.length, 1);
+  assert.equal(currentPass(named).rounds[0].node, 'n_roles');
+});
+
+test('liveRoleRows at the review stage lists the code roles, never a plan role', () => {
+  const planRound = { pass: 1, round: 1, node: 'n_roles', target: 'plan', roles: [roleRecord('architect', 1, { issues: [] }, []), roleRecord('ux', 1, { issues: [] }, [])] };
+  const codeSlice = (key, title, status) => ({ executionId: `n_review:1:role-${key}`, parentExecutionId: 'n_review:1', taskId: `role-${key}`, title, status });
+  const reviewing = { status: 'running', shaping: { perspectives: ['architect', 'ux'] },
+    progressFacts: { roleReview: { nodeId: 'n_review', round: 1 } }, roleReviews: { rounds: [planRound] },
+    active: [{ nodeId: 'n_review', executionId: 'n_review:1' }],
+    steps: [codeSlice('correctness', 'Correctness', 'done'), codeSlice('security', 'Security', 'start'), codeSlice('fit', 'Project fit', 'start')] };
+  const live = liveRoleRows(reviewing, { stage: 'review' });
+  assert.deepEqual(live.rows.map((x) => [x.label, x.state]), [['Correctness', 'reviewed'], ['Security', 'reviewing'], ['Project fit', 'reviewing']]);
+  const landed = { ...reviewing, active: [], roleReviews: { rounds: [planRound, CODE_ROUND] } };
+  assert.deepEqual(rows(liveRoleRows(landed, { stage: 'review' })),
+    [['correctness', '1 major', false], ['security', 'no findings', false], ['fit', '1 minor', false]]);
+  assert.deepEqual(liveRoleRows(landed, { stage: 'review' }).rows.map((x) => x.label), ['Correctness', 'Security', 'Project fit']);
+  const fixing = { ...landed, active: [{ nodeId: 'n_impl', executionId: 'n_impl:2' }] };
+  assert.deepEqual(liveRoleRows(fixing, { stage: 'review' }), { rows: [], refine: 'Fixing 1 finding from Correctness' });
+  const round2 = { ...reviewing, progressFacts: { roleReview: { nodeId: 'n_review', round: 2 } }, roleReviews: { rounds: [planRound, CODE_ROUND] },
+    active: [{ nodeId: 'n_review', executionId: 'n_review:2' }],
+    steps: [{ ...codeSlice('correctness', 'Correctness', 'start'), executionId: 'n_review:2:role-correctness', parentExecutionId: 'n_review:2' }] };
+  assert.deepEqual(liveRoleRows(round2, { stage: 'review' }).rows.map((x) => [x.label, x.state]),
+    [['Correctness', 'reviewing'], ['Security', 'skipped: nothing open'], ['Project fit', 'skipped: nothing open']]);
+  assert.equal(liveRoleRows(landed, { stage: 'build' }), null);
+  assert.equal(liveRoleRows({ ...landed, status: 'done' }, { stage: 'review' }), null);
+  // A plan-stage fact still reads only the plan node's rounds.
+  const atPlan = { ...landed, progressFacts: { roleReview: { nodeId: 'n_roles', round: 1 } } };
+  assert.deepEqual(liveRoleRows(atPlan, { stage: 'plan' }).rows.map((x) => x.key), ['architect', 'ux']);
+});
+
+test('attachRoleReviews: a plan ask gets the plan pass, a gate its node\'s pass; an outline, a bare gate and other asks get nothing', () => {
+  const mixed = { rounds: [...RR.rounds, CODE_ROUND] };
+  assert.deepEqual(attachRoleReviews({ kind: 'plan', plan: { round: 1 } }, mixed).plan.roleReviews, currentPass(RR));
+  assert.deepEqual(attachRoleReviews({ kind: 'gate', nodeId: 'n_review' }, mixed).roleReviews, { rounds: [CODE_ROUND] });
+  for (const q of [{ kind: 'plan', plan: { outline: {} } }, { kind: 'gate', nodeId: 'n_impl' }, { kind: 'gate' }, { kind: 'clarify' }]) {
+    const before = JSON.stringify(q);
+    assert.equal(JSON.stringify(attachRoleReviews(q, mixed)), before, before);
+  }
+  const ev = { kind: 'gate', nodeId: 'n_review' };
+  assert.equal(attachRoleReviews(ev, undefined), ev, 'in place; no state, no change');
+  assert.equal('roleReviews' in ev, false);
 });

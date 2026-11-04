@@ -506,10 +506,11 @@ test('buildRoleRows: one row per declared role of a role-review node, labelled b
   const reg = loadAgentRegistry(undefined, { userAgentsDir: null });
   const runConfig = { nodes: { n_roles: { roles: { security: { model: 'claude-haiku-4-5', effort: 'high' }, qa: { effort: 'max' } } } } };
   const rows = buildRoleRows(GRAPH_SHAPE_WORKFLOW, buildNodeConfigRows(GRAPH_SHAPE_WORKFLOW, reg, runConfig), runConfig);
-  assert.equal(rows.length, PERSPECTIVES.length, 'every declared role, ticked or not');
-  assert.deepEqual(rows.map((r) => r.label), PERSPECTIVES.map((p) => `Plan Review · ${p.label}`));
-  assert.ok(rows.every((r) => r.nodeId === 'n_roles'));
-  const by = Object.fromEntries(rows.map((r) => [r.roleKey, r]));
+  assert.equal(rows.length, PERSPECTIVES.length + 3, 'every declared role, ticked or not, plus the three code roles (#990 slice 4)');
+  assert.deepEqual(rows.map((r) => r.label), [...PERSPECTIVES.map((p) => `Plan Review · ${p.label}`),
+    'Review Implementation · Correctness', 'Review Implementation · Security', 'Review Implementation · Project fit']);
+  assert.deepEqual(rows.map((r) => r.nodeId), [...PERSPECTIVES.map(() => 'n_roles'), 'n_review', 'n_review', 'n_review']);
+  const by = Object.fromEntries(rows.filter((r) => r.nodeId === 'n_roles').map((r) => [r.roleKey, r]));
   assert.deepEqual(by.architect, { nodeId: 'n_roles', roleKey: 'architect', label: 'Plan Review · Architect', model: '', effort: '', def: { model: '', effort: '' } }, "'' = the node's setting");
   assert.deepEqual(by.product.def, { model: 'claude-opus-5-5', effort: 'medium' }, 'the template role pick');
   assert.deepEqual(by.security.def, { model: 'claude-haiku-4-5', effort: 'high' }, 'the project layer wins');

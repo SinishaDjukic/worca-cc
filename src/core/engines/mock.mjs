@@ -101,7 +101,7 @@ async function emitLog(onEvent, text) {
  * switch and pins the lockstep.
  */
 export const MOCK_WRITER_ROLES = new Set([
-  'clarify', 'planner-plan', 'refiner', 'decomposer', 'implementer', 'reviewer', 'plan-review',
+  'clarify', 'planner-plan', 'refiner', 'decomposer', 'implementer', 'reviewer', 'plan-review', 'code-review',
   'workspace-scan', 'agent-gen', 'workspace-reviewer', 'manual-tests-checklist', 'manual-web-ui-testing', 'memory-defrag',
   'generic-producer', 'generic-verifier', 'deck-builder', 'deck-audit', 'deck-export',
   'workspace-usage', 'workspace-synth', 'c4-architect',
@@ -537,6 +537,11 @@ export async function runMock({ cwd, systemPrompt, prompt, onEvent, signal, resu
       break;
     case 'plan-review':
       text = await mockPlanReview(m, cycle, onEvent, prompt);
+      break;
+    case 'code-review':
+      // A code role slice: the role mode with no prompt, so the plan's house-brief duplicate check finds nothing. It
+      // reports the plan's checklist (spec D7) like the plain reviewer; the orchestrator judges it on the merged verdict.
+      text = await mockPlanReview(m, cycle, onEvent, '', { planChecklist: true });
       break;
     case 'workspace-scan':
       text = await mockWorkspaceSurvey(m, onEvent);
@@ -1128,6 +1133,18 @@ async function mockImplementer(m, cwd, onEvent, workspaceWriteTargets) {
     written.map((w) => w.srcFile).join(', ');
 }
 
+/** Shape it first (C10): the code reviewer's report on the plan's checklist (MOCK_IN), or null when it has none.
+ *  Cycle 1 leaves the first item unmet, so the checklist loops once; cycle 2 meets it and marks the last item n/a. */
+async function planChecklistReport(m, cycle) {
+  let items = [];
+  if (m.MOCK_IN) { try { items = extractChecklist(await readFile(m.MOCK_IN, 'utf8')); } catch { items = []; } }
+  if (!items.length) return null;
+  const met = (id) => ({ id, status: 'met', evidence: 'test/feature.test.mjs (mock)' });
+  return items.map((it, i) => (cycle <= 1
+    ? (i === 0 ? { id: it.id, status: 'unmet', evidence: 'mock: no test covers it yet' } : met(it.id))
+    : (i === items.length - 1 && items.length > 1 ? { id: it.id, status: 'na', evidence: 'mock: does not apply here' } : met(it.id))));
+}
+
 async function mockReviewer(m, cycle, onEvent) {
   const mdPath = m.MOCK_OUT;
   const jsonPath = m.MOCK_JSON;
@@ -1159,16 +1176,8 @@ async function mockReviewer(m, cycle, onEvent) {
           ],
         };
 
-  // Shape it first (C10): report the plan's checklist when it has one. Cycle 1 leaves the first item unmet, so the
-  // checklist loops once; cycle 2 meets it and marks the last item n/a.
-  let items = [];
-  if (m.MOCK_IN) { try { items = extractChecklist(await readFile(m.MOCK_IN, 'utf8')); } catch { items = []; } }
-  if (items.length) {
-    const met = (id) => ({ id, status: 'met', evidence: 'test/feature.test.mjs (mock)' });
-    review.checklist = items.map((it, i) => (cycle <= 1
-      ? (i === 0 ? { id: it.id, status: 'unmet', evidence: 'mock: no test covers it yet' } : met(it.id))
-      : (i === items.length - 1 && items.length > 1 ? { id: it.id, status: 'na', evidence: 'mock: does not apply here' } : met(it.id))));
-  }
+  const checklist = await planChecklistReport(m, cycle);
+  if (checklist) review.checklist = checklist;
 
   if (mdPath) {
     const md =
@@ -1225,7 +1234,7 @@ function roleSeverity(role, cycle) {
   return table?.[role]?.[String(cycle)] || 'minor';
 }
 
-async function mockPlanReview(m, cycle, onEvent, prompt = '') {
+async function mockPlanReview(m, cycle, onEvent, prompt = '', { planChecklist = false } = {}) {
   const role = m.MOCK_PERSPECTIVE || null;
   if (role) {
     const severity = roleSeverity(role, cycle);
@@ -1247,6 +1256,7 @@ async function mockPlanReview(m, cycle, onEvent, prompt = '') {
         issues: severity === 'none' ? [] : [{ severity, title: `${role}: mock finding`, section: 'Testing', fix: 'Add the missing case.', detail: 'mock' }],
         checklist: ids.map((id) => ({ id, status: blocking ? 'unmet' : 'met', evidence: 'mock' })),
       };
+    if (planChecklist) review.checklist = [...review.checklist, ...((await planChecklistReport(m, cycle)) || [])];
     await emitLog(onEvent, `[mock] ${role} role review (round ${cycle})`);
     if (m.MOCK_JSON) { await ensureDir(m.MOCK_JSON); await writeFile(m.MOCK_JSON, JSON.stringify(review, null, 2) + '\n', 'utf8'); }
     if (m.MOCK_OUT) { await ensureDir(m.MOCK_OUT); await writeFile(m.MOCK_OUT, `# ${role} findings (mock)\n`, 'utf8'); }

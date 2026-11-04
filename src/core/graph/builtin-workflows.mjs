@@ -297,6 +297,14 @@ const SHAPE_ROLES_CONFIG = {
   },
   model: 'claude-sonnet-5-5', effort: 'medium',   // spec decision 1
 };
+/** Shaper's code review is the same engine step on the diff: three declared roles, each an independent reviewer, their
+ *  merged findings handed to the implementer's fix. No node model and no diversity pick: the node keeps its default. */
+export const SHAPE_CODE_ROLES_CONFIG = deepFreeze({
+  roleReview: {
+    roles: [{ key: 'correctness', label: 'Correctness' }, { key: 'security', label: 'Security' }, { key: 'fit', label: 'Project fit' }],
+    source: 'declared', target: 'diff', sink: 'implementer',
+  },
+});
 /** Refine waits for the reviewed plan AND its findings, both from n_roles (one publish), so it fires once per round. */
 const SHAPE_REFINE_CONFIG = { ...SHAPE_APPROVE_CONFIG, awaitAll: true };
 /** Spec §3: plan → role reviews → refine, one loop of at most 2 rounds that ends at the plan approval. Default's
@@ -327,7 +335,7 @@ export const GRAPH_SHAPE_WORKFLOW = deepFreeze({
     { id: 'n_plan', kind: 'agent', key: 'planner', x: 600, y: 200, config: {} },
     { id: 'n_refine', kind: 'agent', key: 'refiner', x: 880, y: 200, config: { ...SHAPE_REFINE_CONFIG } },
     { id: 'n_impl', kind: 'agent', key: 'implementer', x: 1160, y: 200, config: {} },
-    { id: 'n_review', kind: 'agent', key: 'reviewer', x: 1440, y: 200, config: {} },
+    { id: 'n_review', kind: 'agent', key: 'reviewer', x: 1440, y: 200, config: { ...SHAPE_CODE_ROLES_CONFIG } },
     { id: 'n_end', kind: 'end', x: 1720, y: 200, config: {} },
     { ...SHAPE_ROLES_NODE, config: { ...SHAPE_ROLES_CONFIG } },
   ],
@@ -352,7 +360,7 @@ export const GRAPH_SHAPE_UX_WORKFLOW = deepFreeze({
     { id: 'n_plan', kind: 'agent', key: 'planner', x: 600, y: 200, config: {} },
     { id: 'n_refine', kind: 'agent', key: 'refiner', x: 880, y: 200, config: { ...SHAPE_REFINE_CONFIG } },
     { id: 'n_impl', kind: 'agent', key: 'implementer', x: 1160, y: 200, config: {} },
-    { id: 'n_review', kind: 'agent', key: 'reviewer', x: 1440, y: 200, config: {} },
+    { id: 'n_review', kind: 'agent', key: 'reviewer', x: 1440, y: 200, config: { ...SHAPE_CODE_ROLES_CONFIG } },
     { id: 'n_check', kind: 'agent', key: 'manualTestsChecklist', x: 1720, y: 200, config: {} },
     { id: 'n_webui', kind: 'agent', key: 'manualWebUiTesting', x: 2000, y: 200, config: {} },
     { id: 'n_end', kind: 'end', x: 2280, y: 200, config: {} },

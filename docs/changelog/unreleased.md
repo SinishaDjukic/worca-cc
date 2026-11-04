@@ -32,7 +32,9 @@ Why: independent reviewers and a model per reviewer were Shaper-only; they are n
 
 **No silent fallbacks.** A model the run's engine cannot run (a Claude model on a Codex run, for a node or a role) is now named in a warning on the run page, once, instead of being dropped quietly. The Chat run card lists one Agents row per reviewer (`Plan Review · Architect` …) with a model and an effort. Shaper's Product reviewer runs on a different model from the others by default, and a new **Devil's advocate** perspective can be picked as an extra reviewer.
 
-Chips: role reviews · a model per role · node config · dropped-pick warning · per-reviewer rows · Devil's advocate · finding dispositions · conflict decisions
+**Code role reviews.** Shaper's Review now reviews the diff as three independent roles, `correctness`, `security` and `fit` (Project fit), on the same engine step with the new `diff` target. Their merged findings go to the implementer's fix, and a clean role is skipped in later fix cycles. Any workflow's reviewer can opt in by node config, with its wires unchanged. Also added: the Chat Shaper card's Agents accordion lists three `Review Implementation · …` rows (a model per code role), and the run status card lists the code roles live while Review runs. The review loop's decision card lists the same role rows. The first review cycle runs 3 reviewer agents instead of 1. Rolling back to an older build in the middle of a run makes Review run as a single reviewer again, and an open plan question may then also count the code rounds.
+
+Chips: role reviews · a model per role · node config · dropped-pick warning · per-reviewer rows · Devil's advocate · finding dispositions · conflict decisions · code role reviews · diff target
 
 Read it: [Per-role models](../models.md#per-role-models)
 

@@ -286,3 +286,94 @@ test('an implementer sink records the same counts; its fix input carries the fin
   const hook = src.slice(src.indexOf('  async _applyRoleReviewVerdict('), src.indexOf('\n  }\n', src.indexOf('  async _applyRoleReviewVerdict(')));
   assert.doesNotMatch(hook, /implementer/, 'the hook has no implementer branch');
 });
+
+// ── the diff target (#990 slice 4): the same step reviews the implementation; a blocking round fires `review` ──
+
+const DIFF_REVIEW = { roles: ROLE_REVIEW.roles.map(({ key, label }) => ({ key, label })), source: 'declared', target: 'diff', sink: 'implementer' };
+const GRAPH_DIFF = {
+  name: 'Code role reviewers', domain: 'coding',
+  nodes: [{ id: 'n_task', kind: 'task', x: 0, y: 0, config: {} },
+    { id: 'n_plan', kind: 'agent', key: 'planner', x: 300, y: 0, config: {} },
+    { id: 'n_impl', kind: 'agent', key: 'implementer', x: 600, y: 0, config: {} },
+    { id: 'n_reviewer', kind: 'agent', key: 'reviewer', x: 900, y: 0, config: { roleReview: DIFF_REVIEW } },
+    { id: 'n_end', kind: 'end', x: 1200, y: 0, config: {} }],
+  wires: [{ id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_plan', port: 'task' } },
+    { id: 'w2', from: { node: 'n_plan', port: 'plan' }, to: { node: 'n_impl', port: 'plan' } },
+    { id: 'w3', from: { node: 'n_plan', port: 'plan' }, to: { node: 'n_reviewer', port: 'plan' } },
+    { id: 'w4', from: { node: 'n_impl', port: 'done' }, to: { node: 'n_reviewer', port: 'done' } },
+    { id: 'w5', from: { node: 'n_reviewer', port: 'review' }, to: { node: 'n_impl', port: 'fix' }, config: { maxCycles: 3 } },
+    { id: 'w6', from: { node: 'n_reviewer', port: 'pass' }, to: { node: 'n_end', port: 'result' } }],
+};
+
+test('a hand-built reviewer with target diff: 2 slices on the diff, a blocking round fires review into the implementer\'s fix, then pass reaches End', async () => {
+  const { id } = await writeGraphWorkflow(GRAPH_DIFF);
+  const atImpl = [];
+  const { orch, spawns } = await withKnobs({ ...NO_KNOBS, WORCA_MOCK_ROLE_REVIEW: '{"correctness":{"1":"major"}}' }, () => runWith({
+    id, dir: gitDir('role-engine-diff'),
+    onSpawn: (o, orch) => { if (marker(o.prompt, 'MOCK_ROLE') === 'implementer') atImpl.push(structuredClone(orch.state.roleReviews?.rounds.at(-1) ?? null)); },
+  }));
+  const rounds = orch.state.roleReviews.rounds;
+  // (a) round 1: both roles, against the diff, owned by the node
+  assert.deepEqual(rounds.map((r) => [r.pass, r.round, r.node, r.target]), [[1, 1, 'n_reviewer', 'diff'], [1, 2, 'n_reviewer', 'diff']]);
+  assert.deepEqual(rounds[0].roles.map((r) => r.key), ['correctness', 'security']);
+  // (b) every slice is a code review of the diff
+  const slicePrompts = spawns.filter((p) => marker(p, 'MOCK_PERSPECTIVE'));
+  assert.equal(slicePrompts.length, 3, '2 in round 1, correctness alone in round 2');
+  for (const p of slicePrompts) {
+    assert.equal(marker(p, 'MOCK_ROLE'), 'code-review');
+    assert.match(p, /You review this diff as \*\*(Correctness|Security)\*\* only/);
+    assert.match(p, /Inspect the diff with `git diff/);
+  }
+  // (c) the implementer fixes round 1's merged findings; the round is born with counts
+  const execs = orch._graphSnapshot.execs;
+  const impls = execs.filter((e) => e.nodeId === 'n_impl').sort((a, b) => a.ordinal - b.ordinal);
+  assert.equal(impls.length, 2);
+  const fixPath = impls[1].bindings.fix.path;
+  assert.match(fixPath, /-code-role-findings-r1\.md$/);
+  assert.deepEqual([...(await readFile(fixPath, 'utf8')).matchAll(/^## (.+)$/gm)].map((m) => m[1]), ['Correctness', 'Security', 'Dispositions']);
+  const fixPrompt = spawns.filter((p) => marker(p, 'MOCK_ROLE') === 'implementer')[1];
+  assert.equal(marker(fixPrompt, 'MOCK_IN'), fixPath);
+  assert.ok(isCounts(atImpl[1].counts) && atImpl[1].counts.raised === 2, JSON.stringify(atImpl[1].counts));
+  assert.equal(rounds[0].dispositions, fixPath.replace(/\.md$/, '-dispositions.json'));
+  // (d) round 2 reviews correctness only; the run ends through pass
+  assert.deepEqual(rounds[1].roles.map((r) => [r.key, r.skipped]), [['correctness', false], ['security', true]]);
+  assert.ok(orch._graphSnapshot.outputs['n_reviewer.pass'], 'pass fired');
+  assert.deepEqual(rounds[0].counts, { raised: 2, fixed: 2, disputed: 0, open: 0 }, 'the mock implementer answered both');
+  // (e) the review's progress and its reviews rows, as a plain reviewer records them
+  assert.equal(orch.state.progressFacts.reviews.n_reviewer.blocking, 0);
+  assert.equal(orch.state.progressFacts.reviews.n_reviewer.pass, 2);
+  const rows = getDb().prepare('SELECT kind, cycle FROM reviews WHERE pipeline_id = ? ORDER BY cycle').all(orch.getState().id);
+  const plain = rows.filter((r) => !r.kind.startsWith('role-'));
+  assert.deepEqual(plain.map((r) => r.cycle), [1, 2], JSON.stringify(rows));
+});
+
+test('a fix fed through an or by another review leaves the role round\'s counts untouched', async () => {
+  const graph = {
+    name: 'Code roles, then a second review, into one or', domain: 'coding',
+    nodes: [...GRAPH_DIFF.nodes.filter((n) => n.id !== 'n_end'),
+      { id: 'n_rev2', kind: 'agent', key: 'reviewer', x: 1200, y: 0, config: {} },
+      { id: 'n_or', kind: 'or', x: 1000, y: 300, config: { arity: 2 } },
+      { id: 'n_end', kind: 'end', x: 1500, y: 0, config: {} }],
+    wires: [...GRAPH_DIFF.wires.slice(0, 4),
+      { id: 'w5', from: { node: 'n_reviewer', port: 'review' }, to: { node: 'n_or', port: 'in1' }, config: { maxCycles: 3 } },
+      { id: 'w6', from: { node: 'n_reviewer', port: 'pass' }, to: { node: 'n_rev2', port: 'done' } },
+      { id: 'w7', from: { node: 'n_plan', port: 'plan' }, to: { node: 'n_rev2', port: 'plan' } },
+      { id: 'w8', from: { node: 'n_rev2', port: 'review' }, to: { node: 'n_or', port: 'in2' }, config: { maxCycles: 3 } },
+      { id: 'w9', from: { node: 'n_or', port: 'out' }, to: { node: 'n_impl', port: 'fix' } },
+      { id: 'w10', from: { node: 'n_rev2', port: 'pass' }, to: { node: 'n_end', port: 'result' } }],
+  };
+  const { id } = await writeGraphWorkflow(graph);
+  const { orch, spawns } = await withKnobs({ ...NO_KNOBS, WORCA_MOCK_ROLE_REVIEW: undefined }, () => runWith({ id, dir: gitDir('role-engine-or') }));
+  const impls = orch._graphSnapshot.execs.filter((e) => e.nodeId === 'n_impl').sort((a, b) => a.ordinal - b.ordinal);
+  assert.ok(impls.length >= 2, 'the second review sent a fix');
+  assert.doesNotMatch(impls[1].bindings.fix.path, /role-findings/, 'the fix is the other review\'s');
+  // A clean round ended its pass: the other review's fix opens a new pass, and every role reviews it.
+  assert.deepEqual(orch.state.roleReviews.rounds.slice(0, 2).map((r) => [r.pass, r.round]), [[1, 1], [2, 1]]);
+  assert.deepEqual(orch.state.roleReviews.rounds[1].roles.map((r) => [r.key, !!r.skipped]), [['correctness', false], ['security', false]]);
+  assert.ok(spawns.filter((p) => marker(p, 'MOCK_ROLE') === 'code-review').length >= 4, 'both roles ran on both firings');
+  const round = orch.state.roleReviews.rounds[0];
+  assert.equal(round.node, 'n_reviewer');
+  assert.ok(round.counts.raised > 0);
+  assert.equal(round.counts.open, round.counts.raised, 'no disposition marked a code finding');
+  assert.ok(round.roles.flatMap((r) => r.findings).every((f) => f.status === 'open'));
+});

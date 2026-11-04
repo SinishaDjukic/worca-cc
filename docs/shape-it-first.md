@@ -96,6 +96,17 @@ picked it. In the Chat run card, Advanced › Agents lists one row per reviewer
 you did not tick is kept but never runs. A model you pick for the Plan Review node itself
 does not change Product's own pick.
 
+**Code role reviews.** Review Implementation reviews the diff the same way, as three
+independent roles: `correctness`, `security` and `fit` (Project fit). It is the same engine step
+on the `diff` target, declared in Shaper's workflow config. Their merged findings go to Build's
+fix, and Build answers each one (fixed or disputed). While Review runs, the run status card
+lists one row per role (reviewing, then its worst finding, then "Fixing 2 findings from
+Correctness and Security" while Build fixes them). A role that was clean is skipped in the
+next fix cycle, so a fix cycle reviews only the roles still open. When the review loop runs
+out of cycles, its decision card lists the same role rows, and their **Show** lists the
+findings. Cost: the first review cycle runs 3 reviewer agents where it ran 1, so it costs
+about 3 times as much; each fix cycle runs 1 to 3.
+
 ## Checklists in review
 
 Each perspective's checklist ends the plan as `R-…` items. The code review marks

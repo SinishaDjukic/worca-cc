@@ -31,14 +31,16 @@ function findingList(doc, findings, sectionFallback) {
 }
 
 /** The folded role line (`Reviewed by N roles · K open`) and its rows; null without a review. A row gets `!` when a
- *  critical or major finding is open, and a Show folded over its findings. */
-export function buildRoleFold(doc, roleReviews, { sectionFallback = 'Plan' } = {}) {
-  const roles = roleSummaries(roleReviews);
+ *  critical or major finding is open, and a Show folded over its findings. `node` reads that node's rounds (a code
+ *  review's), else the plan's. */
+export function buildRoleFold(doc, roleReviews, { sectionFallback = 'Plan', node } = {}) {
+  const scope = node === undefined ? {} : { node };
+  const roles = roleSummaries(roleReviews, scope);
   if (!roles.length) return null;
   const f = buildCheckFold(doc, { items: roles.map((r) => ({ id: r.key, label: r.text, pass: r.open === 0 })) });
   f.line.classList.add('plan-role-line');
   f.rows.classList.add('plan-roles');
-  f.line.querySelector('.plan-fold-text').textContent = reviewedLine(roleReviews);
+  f.line.querySelector('.plan-fold-text').textContent = reviewedLine(roleReviews, scope);
   [...f.rows.children].forEach((row, i) => {
     const r = roles[i];
     if (r.open) {

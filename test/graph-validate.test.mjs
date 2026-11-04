@@ -636,8 +636,9 @@ test('V31 role-review spec: a malformed roleReview object fails; true and a vali
   const SPEC = { roles: [{ key: 'correctness', label: 'Correctness' }, { key: 'security', label: 'Security' }], source: 'declared', target: 'plan', sink: 'refiner' };
   assert.deepEqual(v31(true), []);
   assert.deepEqual(v31(SPEC), []);
-  assert.deepEqual(v31({ ...SPEC, target: 'diff' }), ['node \'n_rev\': roleReview.target "diff" is not supported yet (plan only)']);
+  assert.deepEqual(v31({ ...SPEC, target: 'diff', sink: 'implementer' }), [], 'a diff target (#990 slice 4)');
+  assert.deepEqual(v31({ ...SPEC, target: 'code' }), ['node \'n_rev\': roleReview.target "code" is not supported yet (plan or diff)']);
   assert.deepEqual(v31({ ...SPEC, roles: [{ key: 'Sec-1', label: 'Security' }] }), ['node \'n_rev\': roleReview.roles[0].key "Sec-1" must be 1–24 lowercase letters']);
   assert.deepEqual(v31({ ...SPEC, checklist: 'x' }), ['node \'n_rev\': roleReview.checklist "x" is unknown (known: perspectives)']);
-  assert.equal(V(withRole({ ...SPEC, target: 'diff' })).ok, false);
+  assert.equal(V(withRole({ ...SPEC, target: 'code' })).ok, false);
 });

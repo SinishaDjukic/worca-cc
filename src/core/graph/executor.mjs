@@ -53,7 +53,7 @@ import { SUBAGENT_MODELS } from '../model-env.mjs';
 import { AWAIT_PORT } from '../../shared/graph/constants.mjs';
 import { withRecheck } from '../../shared/graph/verdict.mjs';
 import { perspectivesBlock } from '../../shared/shape/perspectives.mjs';
-import { roleReviewOf, roleChecklistOf, genericRoleBrief } from '../../shared/graph/role-review-step.mjs';
+import { roleReviewOf, roleChecklistOf, genericRoleBrief, roleTargetOf } from '../../shared/graph/role-review-step.mjs';
 import { reviewChecklistBlock } from '../../shared/shape/review-checklist.mjs';
 import { slicingBlock, outlineFeedbackBlock, FLAT_NOTE, sliceScopeBlock } from '../../shared/shape/slices.mjs';
 import { runScriptExecution } from './script-runner.mjs';
@@ -569,9 +569,6 @@ function roleBriefFor(ctx) {
   return genericRoleBrief(spec.roles.find((r) => r.key === ctx.role) || { key: ctx.role, label: ctx.role }, spec.target);
 }
 
-/** Every role slice is mocked as an independent role reviewer, whatever agent key its node has. */
-const MOCK_ROLE_ROLE_REVIEW = 'plan-review';
-
 /**
  * Assemble the v2 task prompt. PURE (no IO, no spawn), so prompt behavior is
  * assertable on its own — `test/graph-prompt-parity.test.mjs` drives this directly
@@ -699,7 +696,8 @@ async function prepare(ctx) {
   const expandsPort = ctx.expandsPort !== undefined
     ? ctx.expandsPort
     : (ctx.template && ctx.portsFn ? expandsOutputPort(ctx.template, ctx.portsFn, node.id) : null);
-  const mockRole = ctx.role ? MOCK_ROLE_ROLE_REVIEW : resolveMockRole({ meta, expandsPort });
+  // Every role slice is mocked as an independent role reviewer of its target, whatever agent key its node has.
+  const mockRole = ctx.role ? roleTargetOf(roleSpecOf(ctx)).mockRole : resolveMockRole({ meta, expandsPort });
   const priorAnswers = Array.isArray(ctx.priorAnswers)
     ? ctx.priorAnswers
     : await readPriorAnswers(ports, ctx.bindings);

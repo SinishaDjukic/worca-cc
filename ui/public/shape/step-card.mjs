@@ -3,6 +3,7 @@
 // delegate is needed (the feature page has none) and none double-posts.
 import { askKindOf } from '../ask/registry.mjs';
 import { isShapingRun } from './plan-text.mjs';
+import { buildRoleFold } from './role-rows.mjs';
 
 export const SEND_FAILED = 'Could not send your answer. Try again.';
 const CHIP = { clarify: 'Clarify', plan: 'Plan', outline: 'Runs', gate: 'Gate', recovery: 'Recovery' };
@@ -171,7 +172,11 @@ export function renderGateCard(panel, pq, deps) {
     ? 'The agents reviewed their own work and still see problems. Let them try once more, or carry on with what they have?'
     : 'The agents have used the attempts they are allowed. Let them try once more, or carry on with what they have?';
   panel.append(intro, plain);
-  if (issues.length) panel.appendChild(issueList(doc, issues));
+  // A role-review loop (the code roles on Shaper's Review): one row per role, whose Show lists the findings, in place of
+  // the issue list that would repeat them.
+  const fold = pq.roleReviews?.rounds?.length ? buildRoleFold(doc, pq.roleReviews, { sectionFallback: 'Diff', node: pq.nodeId }) : null;
+  if (fold) panel.append(fold.line, fold.rows);
+  else if (issues.length) panel.appendChild(issueList(doc, issues));
   const err = errLine(doc);
   const send = stepSender(deps, err);
   const foot = doc.createElement('div');

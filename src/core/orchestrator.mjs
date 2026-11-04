@@ -41,8 +41,8 @@ import { checkSlices, applyOutlineEdits, normalizeOutline, OUTLINE_FILE, OUTLINE
 import { DEFAULT_PERSPECTIVES } from '../shared/shape/perspectives.mjs';
 import { ensureHouseBrief } from './house-brief.mjs';
 import { extractChecklist } from '../shared/shape/checklist.mjs';
-import { applyChecklist, checklistFindingsMarkdown } from '../shared/shape/review-checklist.mjs';
-import { REFINER_SINK, roleReviewOf, roleChecklistOf, runningRoles, rolesForRound, roleTaskId, roleRecord, findingsMarkdown, refinerVerdict } from '../shared/graph/role-review-step.mjs';
+import { applyChecklist, checklistFindingsMarkdown, mergeReportedChecklists } from '../shared/shape/review-checklist.mjs';
+import { REFINER_SINK, roleReviewOf, roleChecklistOf, runningRoles, rolesForRound, roleTaskId, roleRecord, findingsMarkdown, refinerVerdict, roleTargetOf, roleRoutingVerdict } from '../shared/graph/role-review-step.mjs';
 import { DISPOSITIONS_MAX_BYTES, applyDispositions, withCounts, normalizeConflicts, dispositionsPathFor, conflictClarifications, withClarifications } from '../shared/review/findings.mjs';
 import { currentPass } from '../shared/shape/role-review.mjs';
 import { createScheduler, sliceExecutionId, QUIESCENCE_WARNING } from './graph/scheduler.mjs';
@@ -1855,7 +1855,8 @@ export class GraphOrchestrator extends RunHarness {
       let result = await this._runNodeAttempts(nc, ctx);
       result = await this._questionsLoop(nc, ctx, result);
       result = await this._outlineLoop(nc, ctx, result);
-      result = await this._applyReviewChecklist(ctx, result);
+      // A role slice reports the plan's items too, but they are judged once, on the merged verdict (_finishRoleReview).
+      if (!ctx.role) result = await this._applyReviewChecklist(ctx, result);
       result = await this._applyRoleReviewVerdict(ctx, result);
       // C5: the verdict the routing reads, as counts, on the execution's latest host dispatch (none when it ran plain).
       this._sessions?.noteVerdict(ctx.executionId, verdictSummary(result?.verdict));
@@ -2447,12 +2448,7 @@ export class GraphOrchestrator extends RunHarness {
     // a zero-issue row makes History render a genuine-looking clean review of work
     // nobody reviewed, so the row is SKIPPED; the run log + state.warnings carry it.
     if (this.pipeline && ctx.verdict?.path && result?.verdict && !result.verdict.missing) {
-      await writeReview(this.pipeline.id, this._verdictKind(nc, ctx), ctx.ordinal, result.verdict);
-      // Run progress (P5): the latest pass's blocking count — "Review · 2nd pass, fixing 2 issues" — and the
-      // blockers a refiner fixed in that pass (its `fixed` list), so a pass that fixed them never reads as zero findings.
-      this.state.progressFacts ||= { tasks: {}, reviews: {} };
-      const fixed = blockingIssues({ issues: result.verdict.fixed }).length;
-      this.state.progressFacts.reviews[ctx.nodeId] = { pass: ctx.ordinal || 1, blocking: blockingIssues(result.verdict).length, ...(fixed ? { fixed } : {}) };
+      await this._recordReview(nc, { id: ctx.nodeId }, ctx.ordinal, result.verdict, this._verdictKind(nc, ctx));
     }
     const seen = new Set();
     for (const port of ctx.ports?.outputs || []) {
@@ -2631,6 +2627,22 @@ export class GraphOrchestrator extends RunHarness {
         });
       }
     }
+  }
+
+  /** The verdict's `reviews` row and the run progress (P5): the latest pass's blocking count — "Review · 2nd pass,
+   *  fixing 2 issues" — and the blockers a refiner fixed in that pass (its `fixed` list), so a pass that fixed them never
+   *  reads as zero findings. `kind` defaults to the one a plain execution of the node records. */
+  async _recordReview(nc, node, ordinal, verdict, kind = this._plainVerdictKind(nc, node, ordinal)) {
+    await writeReview(this.pipeline.id, kind, ordinal, verdict);
+    this.state.progressFacts ||= { tasks: {}, reviews: {} };
+    const fixed = blockingIssues({ issues: verdict.fixed }).length;
+    this.state.progressFacts.reviews[node.id] = { pass: ordinal || 1, blocking: blockingIssues(verdict).length, ...(fixed ? { fixed } : {}) };
+  }
+
+  /** The `reviews` kind of the node's own (not a slice's) verdict file. */
+  _plainVerdictKind(nc, node, ordinal) {
+    const verdict = allocateVerdict({ node, ports: this.resolved.ports(node) || {}, ordinal, runCtx: this._runCtx(nc) });
+    return this._verdictKind(nc, { verdict, ordinal });
   }
 
   /** reviews.kind, derived from the verdict FILENAME minus `-cycle{cycle}.json`
@@ -2929,13 +2941,22 @@ export class GraphOrchestrator extends RunHarness {
     return { phases: resolved };
   }
 
-  /** Spec §3 round and pass, from the role node's trigger (decision 15). A fresh `revise` is the next round of the
-   *  current pass; a fresh `plan` (first run, or the person's "Ask for changes") opens a new pass at round 1. */
-  _roleRound(args) {
-    const rounds = this.state.roleReviews?.rounds || [];
-    const last = rounds.at(-1) || null;
-    const viaRevise = (args.trigger?.freshPorts || []).includes('revise') && !!last;
-    return viaRevise
+  /** This role node's rounds. A round saved before rounds named their node reads as the plan target's. */
+  _nodeRounds(node, spec) {
+    const target = roleTargetOf(spec);
+    return (this.state.roleReviews?.rounds || []).filter((r) => (r.node === undefined ? roleTargetOf(r) === target : r.node === node.id));
+  }
+
+  /** Spec §3 round and pass, from the role node's trigger (decision 15). A fresh continue port (the plan's `revise`, the
+   *  diff's `done`) is the next round of the node's current pass; any other firing (first run, the person's "Ask for
+   *  changes") opens a new pass at round 1. So does a continue port after a round that left no role to re-review: that
+   *  round ended its pass, and the firing comes from someone else's fix (another review's, through an `or`). */
+  _roleRound(node, args) {
+    const spec = roleReviewOf(node.config);
+    const last = this._nodeRounds(node, spec).at(-1) || null;
+    const open = !!last && rolesForRound(last.roles, last.round + 1, last).some((r) => !r.skip);
+    const next = (args.trigger?.freshPorts || []).includes(roleTargetOf(spec).continuePort) && open;
+    return next
       ? { pass: last.pass, round: last.round + 1, last }
       : { pass: (last?.pass || 0) + 1, round: 1, last: null };
   }
@@ -2966,7 +2987,7 @@ export class GraphOrchestrator extends RunHarness {
   /** One phase, one task per running role; round 2+ drops the clean roles (no agent call). */
   async _expandRoleReview(node, args) {
     this.state.roleReviews ||= { rounds: [] };
-    const { pass, round, last } = this._roleRound(args);
+    const { pass, round, last } = this._roleRound(node, args);
     const roles = rolesForRound(await this._runningRoles(node), round, last);
     const tasks = roles.filter((r) => !r.skip).map((r) => ({
       id: roleTaskId(r.key), role: r.key, title: r.label, file: null, path: null,
@@ -2980,16 +3001,19 @@ export class GraphOrchestrator extends RunHarness {
   }
 
   /** The ONE publish: read each reviewer's raw verdict, record the round (each record names the model and effort its
-   *  slice ran on), write the merged findings file, and pass the reviewed plan on to the sink. A missing or malformed
-   *  verdict is an empty review, logged; it never pauses the run. */
+   *  slice ran on), write the merged findings file on the target's findings port, and pass the reviewed plan on when the
+   *  port set has one. A port set that routes (blocking/clean outputs) gets the blocking findings as its verdict, recorded
+   *  like a plain review's. A missing or malformed verdict is an empty review, logged; it never pauses the run. */
   async _finishRoleReview(nc, node, args) {
     const ordinal = args.ordinal || 1;
-    const { pass, round, last } = this._roleRound(args);
+    const { pass, round, last } = this._roleRound(node, args);
     const ports = this.resolved.ports(node) || {};
     const planPath = this._rolePlanBinding(args)?.path || '';
     const planText = planPath ? await readFile(planPath, 'utf8').catch(() => '') : '';
     const spec = roleReviewOf(node.config);
+    const { findingsPort } = roleTargetOf(spec);
     const provider = roleChecklistOf(spec);
+    const reported = [];
     const roles = await Promise.all(rolesForRound(runningRoles(spec, this._runPickedRoles()), round, last).map(async (r) => {
       if (r.skip) return { ...last.roles.find((x) => x.key === r.key), skipped: true };
       const v = allocateVerdict({ node, ports, ordinal, runCtx: this._runCtx(nc, roleTaskId(r.key)) });
@@ -2997,19 +3021,36 @@ export class GraphOrchestrator extends RunHarness {
       try { raw = v?.path ? JSON.parse(await readFile(v.path, 'utf8')) : null; } catch (err) {
         await appendAudit(this.pipeline.dir, `${node.id}: ${r.key} review unreadable (${err.message}); counted as empty.`).catch(() => {});
       }
+      reported.push(raw?.checklist);
       return { ...roleRecord(r, round, raw, provider ? provider.items(r.key, planText) : []), ...this._roleRecordPair(nc, r.key) };
     }));
     const out = allocateOutputs({ node, ports, executionId: args.executionId, ordinal, runCtx: this._runCtx(nc) });
+    const findings = out[findingsPort];
     // The sink answers each finding in this file (#990 slice 3); every round is born with counts (all open).
-    const dispositions = dispositionsPathFor(out.findings.path);
+    const dispositions = dispositionsPathFor(findings.path);
     this.state.roleReviews ||= { rounds: [] };
-    this.state.roleReviews.rounds.push(withCounts({ pass, round, plan: planPath, roles, dispositions }));
-    await writeFile(out.findings.path, findingsMarkdown(round, planPath, roles, { dispositionsPath: dispositions }));
+    this.state.roleReviews.rounds.push(withCounts({ pass, round, node: node.id, target: spec.target, plan: planPath, roles, dispositions }));
+    const outs = ports.outputs || [];
+    const routes = outs.some((p) => p.when === 'blocking' || p.when === 'clean');
+    let verdict = routes ? roleRoutingVerdict(roles) : null;
+    let checklistMd = '';
+    if (verdict && this.runShape && nc.key === CHECKLIST_REVIEWER_KEY) {
+      // Spec D7: the plan's items belong to the Review step as a whole, as they did for one reviewer.
+      const items = await this._reviewChecklistItems({ bindings: args.bindings });
+      if (items.length) {
+        const merged = applyChecklist({ ...verdict, checklist: mergeReportedChecklists(reported) }, items);
+        const added = merged.issues.slice(verdict.issues.length);
+        if (added.length) checklistMd = '\n' + checklistFindingsMarkdown(added);
+        verdict = merged;
+      }
+    }
+    await writeFile(findings.path, findingsMarkdown(round, planPath, roles, { dispositionsPath: dispositions, target: spec.target }) + checklistMd);
     const reviewed = roles.filter((r) => !r.skipped).length;
+    if (verdict && this.pipeline) await this._recordReview(nc, node, ordinal, verdict);
     return {
       summary: `Role reviews, round ${round}: ${reviewed} role(s) reviewed.`,
-      outputs: { findings: out.findings, plan: { path: planPath || null } },
-      verdict: null,
+      outputs: { [findingsPort]: findings, ...(outs.some((p) => p.id === 'plan') ? { plan: { path: planPath || null } } : {}) },
+      verdict,
     };
   }
 
@@ -3020,14 +3061,28 @@ export class GraphOrchestrator extends RunHarness {
     return { ...(model ? { model } : {}), ...(effort ? { effort } : {}), ...(wanted ? { wanted } : {}) };
   }
 
-  /** The wire that brings a role review's `findings` into this node (read off the wire topology, onto any input
-   *  port), with that review's sink; null for a node no role review feeds. */
+  /** The wire that brings a role review's findings port into this node (read off the wire topology, onto any input
+   *  port, back through `or` cards), with that review's sink and node; null for a node no role review feeds. */
   _roleFindingsWire(nodeId) {
     const tpl = this.resolved?.template;
-    for (const w of tpl?.wires || []) {
-      if (w?.to?.node !== nodeId || w.from?.port !== 'findings') continue;
-      const spec = roleReviewOf((tpl.nodes || []).find((n) => n.id === w.from.node)?.config);
-      if (spec) return { port: w.to.port, sink: spec.sink };
+    const wires = tpl?.wires || [];
+    const byId = new Map((tpl?.nodes || []).map((n) => [n.id, n]));
+    const seen = new Set();
+    const roleSource = (w) => {
+      const from = byId.get(w?.from?.node);
+      if (from?.kind === 'or') {
+        if (seen.has(from.id)) return null;
+        seen.add(from.id);
+        for (const inner of wires) if (inner?.to?.node === from.id) { const hit = roleSource(inner); if (hit) return hit; }
+        return null;
+      }
+      const spec = roleReviewOf(from?.config);
+      return spec && w.from.port === roleTargetOf(spec).findingsPort ? { sink: spec.sink, node: from.id } : null;
+    };
+    for (const w of wires) {
+      if (w?.to?.node !== nodeId) continue;
+      const hit = roleSource(w);
+      if (hit) return { port: w.to.port, ...hit };
     }
     return null;
   }
@@ -3051,9 +3106,12 @@ export class GraphOrchestrator extends RunHarness {
    *  A refiner sink then routes on THIS round's critical/major reviewer findings, never on its own self-review. */
   async _applyRoleReviewVerdict(ctx, result) {
     const wire = this._roleFindingsWire(ctx.nodeId);
-    if (!wire || !ctx.bindings?.[wire.port]?.path) return result;
-    if (!this.state.roleReviews?.rounds?.length || !result || result.paused || result.error) return result;
-    const round = this.state.roleReviews.rounds.at(-1);
+    const bound = wire && ctx.bindings?.[wire.port]?.path;
+    if (!bound || !result || result.paused || result.error) return result;
+    // Only the role node's last round, and only when ITS findings file fed this execution (an `or` may carry another review).
+    const roleNode = (this.resolved.template.nodes || []).find((n) => n.id === wire.node);
+    const round = this._nodeRounds(roleNode, roleReviewOf(roleNode.config)).at(-1);
+    if (!round || dispositionsPathFor(bound) !== round.dispositions) return result;
     const answer = await this._readDispositions(round);
     let own = null;
     try { own = ctx.verdict?.path ? JSON.parse(await readFile(ctx.verdict.path, 'utf8')) : null; } catch { own = null; }

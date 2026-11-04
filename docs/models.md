@@ -991,7 +991,7 @@ are an engine capability, not Shaper's alone).
                   "source": "declared", "target": "plan", "sink": "refiner" } }
 ```
 
-- **Keys** are 1–24 lowercase letters, at most 12 roles. `target` is `plan` for now, and `sink`
+- **Keys** are 1–24 lowercase letters, at most 12 roles. `target` is `plan` or `diff`, and `sink`
   is `refiner` or `implementer`; anything else fails the graph check (V31) before a run starts.
 - **The sink answers every finding.** The findings file ends with a `## Dispositions` section
   naming a JSON file beside it (`…-role-findings-r1-dispositions.json`). The sink writes
@@ -1004,6 +1004,25 @@ are an engine capability, not Shaper's alone).
 - **An implementer sink** takes the findings on its existing `fix` input: wire the review's
   `findings` to the implementer's `fix`, and its `plan` to the implementer's `plan`. The counts
   are the same; only a refiner sink routes the refine loop on the open critical and major findings.
+- **A `diff` target reviews the implementation.** The node keeps a reviewer's own ports:
+  inputs `plan` and `done` (the worktree, so each role inspects `git diff`), outputs `review`
+  (the merged findings, `…-code-role-findings-r1.md`, only when a role found a critical or
+  major issue) and `pass` (when none did). Use `"sink": "implementer"` and wire `review` to the
+  implementer's `fix`, as for a plain reviewer: a reviewer node opts in by config alone, with its
+  wires unchanged. Each fix cycle is the next round of the same pass, and a role that was clean
+  is skipped (its record is carried forward). The loop's cycle gate lists the roles' rows.
+  Shaper's Review ships this way, with `correctness`, `security` and `fit` (Project fit):
+
+  ```json
+  { "roleReview": { "roles": [{ "key": "correctness", "label": "Correctness" },
+                              { "key": "security", "label": "Security" },
+                              { "key": "fit", "label": "Project fit" }],
+                    "source": "declared", "target": "diff", "sink": "implementer" } }
+  ```
+
+  For your own reviewer, put the same block in its node config (for example only
+  `correctness` and `security`), and add `model` / `effort` to a role that should run on
+  another model.
 - **Conflicts go to the person.** When two roles ask for opposite changes to one section, the
   sink marks both disputed and adds a `conflicts` entry (`findings`, `question`, 2–4 `options`).
   The plan card shows one decision card per pair; the pick is written into the plan's

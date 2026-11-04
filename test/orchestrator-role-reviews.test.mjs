@@ -68,6 +68,8 @@ function start(opts = {}, onPlan = (q, orch) => orch.answer(q.id, { decision: 'a
 }
 const shells = (execs, nodeId, status = 'start') => execs.filter((e) => e.nodeId === nodeId && e.kind !== 'task' && e.status === status);
 const slices = (execs, status = 'start') => execs.filter((e) => e.nodeId === 'n_roles' && e.kind === 'task' && e.status === status);
+/** The plan role rounds (n_roles); Shaper's Review appends its own code rounds (n_review) since #990 slice 4. */
+const planRounds = (orch) => orch.state.roleReviews.rounds.filter((r) => r.node === 'n_roles');
 const auditOf = (orch) => getDb().prepare('SELECT text FROM pipeline_events WHERE pipeline_id = ?').all(orch.getState().id).map((r) => r.text);
 
 test('1-3 one round: 3 parallel reviewers, each with only its own brief; Refine runs once on all their findings', async () => {
@@ -110,8 +112,7 @@ test('1-3 one round: 3 parallel reviewers, each with only its own brief; Refine 
   assert.equal(h.plans.length, 1);
 
   // 7. state + reviews rows
-  const rr = h.orch.state.roleReviews;
-  assert.deepEqual(rr.rounds.map((r) => [r.pass, r.round]), [[1, 1]]);
+  assert.deepEqual(planRounds(h.orch).map((r) => [r.pass, r.round]), [[1, 1]]);
   const kinds = getDb().prepare('SELECT kind FROM reviews WHERE pipeline_id = ?').all(h.orch.getState().id).map((r) => r.kind);
   for (const k of ['role-product', 'role-ux', 'role-qa']) assert.ok(kinds.includes(k), `${k} in ${kinds}`);
 });
@@ -127,10 +128,10 @@ test('4-5 a round-1 critical earns round 2, which starts only the blocked role; 
   assert.deepEqual(round2.map((e) => e.title), ['UX'], 'product and qa make 0 agent calls in round 2');
   assert.equal(h.asks.filter((a) => a.kind === 'gate').length, 0);
   assert.equal(h.plans.length, 1);
-  const rr = h.orch.state.roleReviews;
-  assert.deepEqual(rr.rounds.map((r) => [r.pass, r.round]), [[1, 1], [1, 2]]);
-  assert.deepEqual(rr.rounds[1].roles.filter((r) => r.skipped).map((r) => r.key), ['product', 'qa']);
-  assert.equal(rr.rounds[0].roles.find((r) => r.key === 'ux').findings[0].status, 'fixed', 'the mock refiner addressed it');
+  const rounds = planRounds(h.orch);
+  assert.deepEqual(rounds.map((r) => [r.pass, r.round]), [[1, 1], [1, 2]]);
+  assert.deepEqual(rounds[1].roles.filter((r) => r.skipped).map((r) => r.key), ['product', 'qa']);
+  assert.equal(rounds[0].roles.find((r) => r.key === 'ux').findings[0].status, 'fixed', 'the mock refiner addressed it');
 });
 
 test('6 critical in both rounds: exactly 2 rounds, then the approval with a forced token and the open issues', async () => {
@@ -165,8 +166,7 @@ test('8 pause while round 2\'s slice runs: the resume keeps round 1 and re-runs 
   const res = await h2.done;
   assert.equal(res.status, 'done', res.error);
   assert.deepEqual(slices(h2.execs).map((e) => e.title), ['UX']);
-  const rr = h2.orch.state.roleReviews;
-  assert.deepEqual(rr.rounds.map((r) => [r.pass, r.round]), [[1, 1], [1, 2]]);
+  assert.deepEqual(planRounds(h2.orch).map((r) => [r.pass, r.round]), [[1, 1], [1, 2]]);
   assert.equal(h2.plans.length, 1);
 });
 
@@ -188,7 +188,7 @@ test('9 Ask for changes: the Planner re-runs, then a new pass reviews it at roun
   const idx = (e) => h.execs.indexOf(e);
   const lastDone = Math.max(...slices(h.execs, 'done').filter((e) => e.executionId.startsWith('x:n_roles:3:')).map(idx));
   assert.ok(idx(shells(h.execs, 'n_refine')[2]) > lastDone, 'Refine waits for the new pass');
-  assert.deepEqual(h.orch.state.roleReviews.rounds.map((r) => [r.pass, r.round]), [[1, 1], [1, 2], [2, 1]]);
+  assert.deepEqual(planRounds(h.orch).map((r) => [r.pass, r.round]), [[1, 1], [1, 2], [2, 1]]);
 });
 
 // Parity (engine role-review step): a no-picks Shaper run is recorded before the move and must not drift after it.
@@ -227,13 +227,14 @@ async function captureParity(table) {
   assert.equal(res.status, 'done', res.error);
   const norm = parityNormalizer(h.orch, h.dir);
   const marker = (p, k) => (new RegExp(`^${k}: (.*)$`, 'm').exec(p) || [])[1] || '';
-  const slicePrompts = prompts.filter((p) => marker(p, 'MOCK_PERSPECTIVE'))
+  // Scoped to n_roles: Shaper's Review (n_review) runs code role reviews on the diff since #990 slice 4.
+  const slicePrompts = prompts.filter((p) => marker(p, 'MOCK_PERSPECTIVE') && marker(p, 'MOCK_ROLE') === 'plan-review')
     .sort((a, b) => (marker(a, 'MOCK_CYCLE') + marker(a, 'MOCK_PERSPECTIVE')).localeCompare(marker(b, 'MOCK_CYCLE') + marker(b, 'MOCK_PERSPECTIVE')))
     .map(norm);
   const refinePrompts = prompts.filter((p) => marker(p, 'MOCK_ROLE') === 'refiner').map(norm);
   const refines = h.orch._graphSnapshot.execs.filter((e) => e.nodeId === 'n_refine').sort((a, b) => a.ordinal - b.ordinal);
   const pairs = [];
-  const rounds = h.orch.state.roleReviews.rounds.map((r) => ({
+  const rounds = h.orch.state.roleReviews.rounds.filter((r) => (r.node ?? 'n_roles') === 'n_roles').map(({ node, target, ...r }) => ({
     ...r,
     roles: r.roles.map((rec) => {
       const kept = { ...rec };
@@ -282,6 +283,34 @@ test('parity: a no-picks Shaper mock run matches the recorded fixture', async ()
   }
 });
 
+test('Shaper review: three code role records against the diff; the implementer\'s fix carries their merged findings', async () => {
+  severities({ security: { 1: 'major' } });
+  const prompts = [];
+  _testing.runClaude = (o) => { prompts.push(o.prompt); return runClaude(o); };
+  const h = start();
+  const res = await h.done;
+  assert.equal(res.status, 'done', res.error);
+  const code = h.orch.state.roleReviews.rounds.filter((r) => r.node === 'n_review');
+  assert.deepEqual(code.map((r) => [r.pass, r.round, r.target]), [[1, 1, 'diff'], [1, 2, 'diff']]);
+  assert.deepEqual(code[0].roles.map((r) => r.key), ['correctness', 'security', 'fit']);
+  assert.deepEqual(code[1].roles.map((r) => [r.key, r.skipped]), [['correctness', true], ['security', false], ['fit', true]], 'fix cycles review the open role only');
+  const plan = h.orch.state.roleReviews.rounds.filter((r) => r.node === 'n_roles');
+  assert.ok(plan.length >= 1 && plan.every((r) => r.target === 'plan'), 'the plan rounds keep their own node');
+  const fix = h.orch._graphSnapshot.execs.filter((e) => e.nodeId === 'n_impl' && e.bindings.fix).map((e) => e.bindings.fix.path);
+  assert.equal(fix.length, 1);
+  assert.equal(code[0].dispositions, fix[0].replace(/\.md$/, '-dispositions.json'), 'the fix is round 1\'s findings file');
+  const md = await readFile(fix[0], 'utf8');
+  // Spec D7: the plan's unmet R-item is judged once, on the merged verdict, and reaches the implementer here.
+  assert.deepEqual([...md.matchAll(/^## (.+)$/gm)].map((m) => m[1]),
+    ['Correctness', 'Security', 'Project fit', 'Dispositions', 'Perspective checklist (added by Worca)']);
+  assert.match(md, /^- \*\*\[major\]\*\* R-\w+-1 not met: /m);
+  assert.match(md, /^Diff reviewed against the plan: /m);
+  const codePrompts = prompts.filter((p) => /^MOCK_ROLE: code-review$/m.test(p));
+  assert.equal(codePrompts.length, 4, '3 roles in round 1, security alone in round 2');
+  for (const p of codePrompts) assert.doesNotMatch(p, /house brief|`R-fit/, 'no plan checklist or house brief for a code role');
+  assert.equal(h.orch.state.progressFacts.reviews.n_review.blocking, 0);
+});
+
 test('an old roleReview:true run resumes and reads its records', async () => {
   severities({ ux: { 1: 'critical' } });
   const dir = gitDir('roles-legacy');
@@ -294,10 +323,12 @@ test('an old roleReview:true run resumes and reads its records', async () => {
   const cell = saved.resumePoint.manifest.graph.nodes.find((n) => n.id === 'n_roles');
   cell.config = { ...cell.config, roleReview: true };
   delete cell.roles;
+  // ...and before slice 4: a plain Review, rounds that name no node or target.
+  saved.resumePoint.manifest.graph.nodes.find((n) => n.id === 'n_review').config = {};
   // ...and before slice 3: no counts, no dispositions path, statuses that came from the refiner's `addressed` list.
   const r1 = saved.resumePoint.roleReviews.rounds[0];
   for (const r of r1.roles) { delete r.model; delete r.effort; delete r.wanted; delete r.counts; }
-  delete r1.counts; delete r1.dispositions;
+  delete r1.counts; delete r1.dispositions; delete r1.node; delete r1.target;
   const old = JSON.parse(JSON.stringify(r1.roles));
 
   const h2 = start({ projectDir: dir, resume: saved, shape: undefined });
