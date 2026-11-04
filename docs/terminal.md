@@ -224,7 +224,9 @@ form a command may use (`C:\…`, `C:/…`, `/c/…`).
 
 Stop: under node-pty (ConPTY) it sends Ctrl+C. Over plain pipes Windows has no Ctrl+C for another
 process, so the command is ended 3 seconds later (`taskkill /T /F` on its processes); the shell keeps
-running. Closing a terminal ends Git Bash and everything it started.
+running. Closing a terminal ends Git Bash and everything it started. At boot, Worca lists a dead server's
+MSYS commands only through a Git Bash that its own configuration would pick; a shell path in the pid file outside
+that set gets only `taskkill /T` on the recorded pid, and a shell path containing `..` gets no MSYS listing.
 
 ## Troubleshooting
 

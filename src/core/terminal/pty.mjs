@@ -3,8 +3,9 @@
 // handle. Over pipes there is no tty: commands, markers and Stop work; full-screen programs do not.
 import { createRequire } from 'node:module';
 import { execFile, spawn, spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, statSync } from 'node:fs';
+import { chmodSync, existsSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, win32 } from 'node:path';
+import { windowsBashCandidates, isWslLauncher } from './shell.mjs';
 
 const require = createRequire(import.meta.url);
 const OFF = /^(0|false|no|off)$/i;
@@ -232,9 +233,15 @@ export async function winShellPid(pid, run = execFileStatus) {
   return shellPidOf(pid, ps, ps?.status === 0 && ps.stdout ? null : await run('wmic', wmicArgs(pid), LIST_OPTS));
 }
 
+/** A bash.exe path safe to derive an executable from: drive-absolute (no UNC, device or relative path), no `..` segment. */
+export function isSafeWinBashPath(file) {
+  return typeof file === 'string' && /^[A-Za-z]:[\\/]/.test(file) && !file.split(/[\\/]/).includes('..')
+    && win32.basename(file).toLowerCase() === 'bash.exe';
+}
+
 /** MSYS's ps.exe for a Git Bash / MSYS2 bash: usr\bin\ps.exe of the install, or the one next to the bash. */
 export function msysPsFor(shellFile, exists = existsSync) {
-  if (!shellFile) return null;
+  if (!isSafeWinBashPath(shellFile)) return null;
   const dir = win32.dirname(String(shellFile));
   return [win32.join(dir, 'ps.exe'), win32.join(win32.dirname(dir), 'usr', 'bin', 'ps.exe')].find((f) => exists(f)) || null;
 }
@@ -302,6 +309,36 @@ export function winReapable(pid, { shell, sinceMs, run = spawnSync } = {}) {
   if (!me || !me[2]) return false;
   const since = (sinceMs + 11644473600000) * 10000 + 1e7;       // the mtime as a FILETIME, +1 s for clock rounding
   return me[3].toLowerCase() === win32.basename(String(shell)).toLowerCase() && me[2] <= since;
+}
+
+/**
+ * Options for reapOrphans at boot. Windows has no process groups: before a taskkill /T, check each pid is still the shell
+ * its row recorded and started before the file was last written. reapOrphans rewrites the file, so this reads the rows
+ * and the mtime NOW. The pid file is not trusted for execution: ps.exe is run only for a shell worca itself would pick.
+ */
+export function terminalReapOptions(pidFile, {
+  platform = process.platform, env = process.env,
+  trustedShells = () => windowsBashCandidates(env),
+  readFile = (f) => readFileSync(f, 'utf8'),
+  statMtime = (f) => statSync(f).mtimeMs,
+  run = spawnSync, exists = existsSync,
+  killDescendantsImpl = killDescendants,
+  killGroup = (pid) => process.kill(-pid, 'SIGKILL'),
+} = {}) {
+  if (platform !== 'win32') {
+    return { kill: (pid) => { killDescendantsImpl(pid); try { killGroup(pid); } catch { /* gone */ } } };
+  }
+  let rows = []; let sinceMs = NaN;
+  try { sinceMs = statMtime(pidFile); rows = JSON.parse(readFile(pidFile)); } catch { rows = []; sinceMs = NaN; }
+  if (!Array.isArray(rows)) rows = [];
+  const shellOf = (pid) => rows.find((r) => r?.pid === pid)?.shell || null;
+  const norm = (f) => win32.normalize(f).toLowerCase();
+  const trustedSet = new Set(trustedShells().filter((f) => win32.isAbsolute(f) && !isWslLauncher(f, env)).map(norm));
+  const trusted = (s) => (isSafeWinBashPath(s) && trustedSet.has(norm(s)) ? s : null);
+  return {
+    isGroupLeader: async (pid) => winReapable(pid, { shell: shellOf(pid), sinceMs, run }),
+    kill: (pid) => { endWinTerminal(pid, trusted(shellOf(pid)), winShellPidSync(pid, run) || pid, { run, exists }); },
+  };
 }
 
 export function pidAlive(pid) {

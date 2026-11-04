@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadPty, _resetPtyForTests, spawnTerminal, descendantPids, killDescendants, pidAlive, ensureSpawnHelper, spawnHelperStatus, spawnHelperDoctorLine,
   parseWinRows, parseWmicRows, shellPidFrom, winShellPidSync, winShellPid, parseMsysPs, msysPsFor, msysCommandPids, killTree, killWinPids,
-  killWinCommands, endWinTerminal, winReapable, signalDescendants } from '../src/core/terminal/pty.mjs';
+  killWinCommands, endWinTerminal, winReapable, signalDescendants, isSafeWinBashPath, terminalReapOptions } from '../src/core/terminal/pty.mjs';
 
 afterEach(() => _resetPtyForTests());
 const scratch = mkdtempSync(join(tmpdir(), 'term-pty-'));
@@ -187,6 +187,12 @@ test('msysPsFor: usr\\bin\\ps.exe of the Git install, or next to an MSYS2 bash',
   assert.equal(msysPsFor('C:\\msys64\\usr\\bin\\bash.exe', has('C:\\msys64\\usr\\bin\\ps.exe')), 'C:\\msys64\\usr\\bin\\ps.exe');
   assert.equal(msysPsFor('C:\\Windows\\system32\\cmd.exe', () => false), null);
   assert.equal(msysPsFor(null, () => true), null);
+  for (const bad of ['\\\\evil\\share\\Git\\bin\\bash.exe', '\\\\?\\C:\\Git\\bin\\bash.exe', 'Git\\bin\\bash.exe',
+    'C:\\Git\\bin\\..\\..\\evil\\bash.exe', 'C:\\evil\\ps-launcher.exe', 'C:\\Git\\bin\\sh.exe', {}]) {
+    assert.equal(msysPsFor(bad, () => true), null, `msysPsFor refuses ${JSON.stringify(bad)}`);
+    assert.equal(isSafeWinBashPath(bad), false);
+  }
+  for (const ok of ['C:\\Program Files\\Git\\bin\\bash.exe', 'C:/Program Files/Git/bin/bash.exe', 'c:\\msys64\\usr\\bin\\BASH.EXE']) assert.equal(isSafeWinBashPath(ok), true);
 });
 
 test('killTree / killWinPids: one taskkill /PID <pid> /T /F per literal pid; a failed one is not counted', () => {
@@ -231,4 +237,57 @@ test('winReapable (boot reap): only the recorded shell, started before the pid f
 test('Windows: SIGINT and the POSIX killers stay no-ops on win32', () => {
   assert.equal(signalDescendants(10, 'SIGINT', 'win32', () => { throw new Error('never'); }), 0);
   assert.equal(killDescendants(10, 'win32', () => { throw new Error('never'); }), 0);
+});
+
+// ── terminalReapOptions: the boot-reap wiring, with ps.exe only from a shell worca itself would pick ──
+const TRUSTED = 'C:\\Program Files\\Git\\bin\\bash.exe';
+const reapHarness = (rows, over = {}) => {
+  const sinceMs = Date.UTC(2026, 9, 30, 12, 0, 0);
+  const ft = (ms) => (ms + 11644473600000) * 10000;
+  const calls = []; const reads = { read: 0, stat: 0 };
+  const run = (f, a) => {
+    calls.push([f, ...a]);
+    if (f === 'powershell.exe') return { status: 0, stdout: `600 1 ${ft(sinceMs - 60000)} cmd.exe\r\n19752 600 ${ft(sinceMs - 59000)} bash.exe\r\n` };
+    return f.endsWith('ps.exe') ? { status: 0, stdout: MSYS_PS } : { status: 0 };
+  };
+  const opts = terminalReapOptions('/pids.json', { platform: 'win32', env: {}, trustedShells: () => [TRUSTED], exists: () => true, run,
+    readFile: () => { reads.read++; if (rows instanceof Error) throw rows; return typeof rows === 'string' ? rows : JSON.stringify(rows); },
+    statMtime: () => { reads.stat++; return sinceMs; }, ...over });
+  return { opts, calls, reads };
+};
+
+test('terminalReapOptions (win32): ps.exe only from a trusted shell; a tampered pid-file shell still reaps the launcher but runs no ps.exe', () => {
+  const { opts, calls } = reapHarness([{ pid: 500, shell: 'D:\\evil\\bin\\bash.exe' }, { pid: 600, shell: 'C:/Program Files/Git/bin/BASH.EXE' }],
+    { exists: (f) => f === 'C:\\Program Files\\Git\\usr\\bin\\ps.exe' });
+  opts.kill(500);
+  assert.ok(!calls.some((c) => c[0].endsWith('ps.exe')), 'no ps.exe ran');
+  assert.ok(!calls.some((c) => c.join(' ').includes('D:\\evil')));
+  assert.equal(calls.at(-1).join(' '), 'taskkill /PID 500 /T /F');
+  calls.length = 0;
+  opts.kill(600);
+  assert.deepEqual(calls.slice(1).map((c) => c.join(' ')), ['C:\\Program Files\\Git\\usr\\bin\\ps.exe -a', 'taskkill /PID 7120 /T /F', 'taskkill /PID 36316 /T /F', 'taskkill /PID 600 /T /F']);
+});
+
+test('terminalReapOptions (win32): isGroupLeader is winReapable on the row\'s recorded shell and the file\'s mtime, read once before any callback', async () => {
+  const { opts, reads } = reapHarness([{ pid: 600, shell: TRUSTED }]);
+  assert.deepEqual(reads, { read: 1, stat: 1 });
+  assert.equal(await opts.isGroupLeader(600), false, 'CIM row for 600 is cmd.exe, not bash.exe');
+  assert.equal(await opts.isGroupLeader(700), false);
+  const h2 = reapHarness([{ pid: 19752, shell: TRUSTED }]);
+  assert.equal(await h2.opts.isGroupLeader(19752), true);
+  assert.deepEqual(h2.reads, { read: 1, stat: 1 });
+  for (const bad of [new Error('nope'), '{"a":1}', 'not json']) {
+    const h = reapHarness(bad);
+    assert.equal(await h.opts.isGroupLeader(600), false);
+  }
+});
+
+test('terminalReapOptions (posix): no isGroupLeader override; kill ends descendants then the group', () => {
+  const seen = [];
+  const boom = () => { throw new Error('never'); };
+  const opts = terminalReapOptions('/pids.json', { platform: 'linux', readFile: boom, statMtime: boom, trustedShells: boom,
+    killDescendantsImpl: (p) => seen.push(['d', p]), killGroup: (p) => { seen.push(['g', p]); throw new Error('gone'); } });
+  assert.equal('isGroupLeader' in opts, false);
+  opts.kill(42);
+  assert.deepEqual(seen, [['d', 42], ['g', 42]]);
 });
