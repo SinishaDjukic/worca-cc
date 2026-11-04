@@ -1,4 +1,7 @@
+<!doctype html>
+<html lang="en">
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Worca Rail · Components</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="stylesheet" href="app.css">
@@ -8,7 +11,7 @@
   @font-face{font-family:'JetBrains Mono';font-weight:400;src:url('../../../ui/public/fonts/jetbrains-mono-latin-400-normal.woff2') format('woff2');}
   @media (prefers-color-scheme: dark){:root:not([data-theme="light"]){color-scheme:dark;}}
   :root[data-theme="dark"]{color-scheme:dark;}
-  html,body{background:var(--bg);color:var(--ink);}
+  html,body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);}
   .rc-board.mk-page{min-height:100%;padding-block:32px;padding-left:max(16px, env(safe-area-inset-left, 0px));padding-right:max(16px, env(safe-area-inset-right, 0px));}
   .mk-wrap{max-width:720px;margin:0 auto;display:flex;flex-direction:column;gap:32px;}
   .mk-intro{margin:0;font-size:var(--fs-meta);color:var(--ink-2);max-width:65ch;}
