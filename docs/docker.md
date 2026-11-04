@@ -68,7 +68,7 @@ signature:
 
 | Tag | Holds |
 | --- | --- |
-| `latest`, `1`, `1.3`, `1.3.0` | the newest stable @worca/app, Node 22, git, `gh`, a pinned Claude Code |
+| `latest`, `1`, `1.3`, `1.3.0` | the newest stable @worca/app, Node 24, git, `gh`, a pinned Claude Code |
 | `rc`, `1.3.0-rc.1` | the newest release candidate |
 | `…-full` | the above plus Python 3, build tools and Chromium (the manual web-UI-testing agent, Python projects, native npm modules, the Architecture (C4) JPEG/PNG export and the Presentation PDF and audit) |
 | `1.3.0-20260921` | a weekly rebuild of that version with the newest Debian packages |
