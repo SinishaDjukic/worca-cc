@@ -1,7 +1,7 @@
 ---
 name: review-baseline-and-suite-noise
 description: Read before reviewing a worca run's diff or proving new tests catch their fixes — the checkpoint may not be the base, and many guard removals stay green.
-updated: 2026-11-04T07:06:02.511Z
+updated: 2026-11-04T19:11:57.624Z
 author: Bulibas
 ---
 
@@ -62,6 +62,10 @@ route's `if (!check) return`), even when the tests are copied verbatim from a re
   403 `AGENT_CALLER_BLOCKED` to EVERY loopback request (only `AGENT_OPEN_ROUTES` pass). A route-level 403 assertion
   then passes with the route's own guard deleted. Send `'x-worca-ui-token': mod._testing.uiToken()` to reach the route,
   and to post a chat message under isolation (the turn's prompt is then readable from `_testing.askJobs`).
+  EXCEPT a route guarded by `agentMayBeCaller(req)` (the cards route's actions / mcp branches, D4): it is
+  `thisBoxCaller && !hasUiToken`, so the token makes the caller a person and the request APPLIES (200). Such a guard
+  is unreachable in-process (G1 answers first without the token): an equivalent mutant; say so, do not demand a red
+  row (MCP card plan v3 R-sec-5, 2026-11-04).
 - The app.js boot `toolMirror.schedule()` is an equivalent mutant: the panel's boot `setPrefs` always saves the model
   (it adds `max:false`), and `onChange` schedules the PUT anyway.
 
