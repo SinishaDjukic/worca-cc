@@ -254,7 +254,7 @@ function render() {
   // Many labels and tags, one group: a run already in a feature or chain, or a group page, joins none; a run you
   // grouped can leave it again from the same menu.
   // Where the code lives, said as a phrase that follows the run: "branch into dev", "#959 merges branch into dev",
-  // "branch merged into dev", "main to origin/main", "into ~/folder". The branch name copies itself on click and loses
+  // "branch merged into dev", "main to origin/main", "on source then to origin", "into ~/folder". The branch name copies itself on click and loses
   // its middle, never its end, so sibling runs (-2, -3) stay apart.
   const pl = v.place;
   const mid = (t) => { const k = Math.max(t.lastIndexOf('-'), t.lastIndexOf('/')); const cut = k > 0 && t.length - k <= 16 ? k : Math.max(0, t.length - 12); return `<code class="rc-mid" title="${esc(t)}"><span class="rc-mid-a">${esc(t.slice(0, cut))}</span><span class="rc-mid-b">${esc(t.slice(cut))}</span></code>`; };
@@ -263,7 +263,11 @@ function render() {
   const pr = pl.pr ? `<a class="rc-pr" href="#" data-key="pr" data-say="Opens ${esc(pl.pr)} on GitHub" title="Open ${esc(pl.pr)} on GitHub">${esc(pl.pr)}</a>` : '';
   const where = pl.folder ? `<span class="rc-place">${word(pl.applied ? 'written into' : 'into')}${mid(pl.folder)}</span>`
     : !pl.branch ? ''
-    : pl.base === 'origin/main' ? `<span class="rc-place">${branchBtn(pl.branch)}${word('to')}<code class="rc-base">${esc(pl.base)}</code></span>`
+    // A run on its source branch: "on source then to origin" while it works (the branch is named once); once merged
+    // back, "source to origin" (the Push path); a failed merge back names the hidden copy the work is still on.
+    : pl.onSource && pl.hidden ? `<span class="rc-place">${branchBtn(pl.hidden)}${word('not merged into')}${mid(pl.branch)}</span>`
+    : pl.onSource && !v.finished ? `<span class="rc-place">${word('on')}${branchBtn(pl.branch)}${word('then to')}<code class="rc-base">${esc(pl.base)}</code></span>`
+    : pl.onSource || pl.base === 'origin/main' ? `<span class="rc-place">${branchBtn(pl.branch)}${word('to')}<code class="rc-base">${esc(pl.base)}</code></span>`
     : `<span class="rc-place">${pl.pr && !pl.merged ? pr + word('merges') : ''}${branchBtn(pl.branch)}${word(pl.merged ? 'merged into' : 'into')}<code class="rc-base">${esc(pl.base)}</code>${pl.pr && pl.merged ? word('by') + pr : ''}</span>`;
   const repos = pl.repos.length ? `<span>${pl.repos.length} repositories</span>` : '';
   // + stays at the end of the place line; labels and tags, once added, get their own wrapping row under it.

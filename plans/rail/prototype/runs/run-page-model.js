@@ -36,6 +36,9 @@
   const GROUP_TABS = [['summary', 'Overview'], ['activity', 'Activity'], ['decisions', 'Decisions', '4']];   // the stepper is the list of runs
   const A = (label, icon, primary, items) => ({ label, icon, primary: !!primary, items: items || [] });
 
+  const SRC = 'feat/windows-git-bash-shell-with-command';
+  const SRC_TAIL = (merged) => [{ key: 'push', label: 'Push', subs: [merged ? ok('Merge back', '', { live: 'Into ' + SRC }) : next('Merge back'), next('To origin/' + SRC)] }];
+
   const CASES = [
     // One run, start to merge
     { id: 'starting', group: 'Run', label: 'Starting', word: 'Starting', dot: 'is-peach is-pulse', figs: [['Time', '0m 12s'], ['Cost', '$0.00']],
@@ -82,6 +85,16 @@
     // Run kinds
     { id: 'push', group: 'Kinds', label: 'Push path', word: 'Ready', dot: 'is-green', branch: 'main', action: A('Push main', 'up', true, ['Create PR instead', 'Discard']), figs: [['Time', '38m'], ['Cost', '$6.40']],
       stages: run({ tail: [{ key: 'push', label: 'Push', subs: [next('To origin/main')] }] }) },
+    // Run on the source branch: the work lands on the source itself (the agents commit on a hidden copy that merges back
+    // when they finish), so from the start the place line names the source and its remote, never a PR; the hidden
+    // copy shows only when its merge back failed.
+    { id: 'source', group: 'Kinds', label: 'On its source, working', word: 'Working', dot: 'is-peach is-pulse', branch: SRC, onSource: true, figs: LIVE_FIGS,
+      stages: run({ review: [REVIEW[0], s('Manual tests checklist', 'now', '1m', { live: 'Checking the Git Bash shell opens with its command', when: '4s ago' }), next('Manual web UI testing')], tail: SRC_TAIL() }) },
+    { id: 'source-ready', group: 'Kinds', label: 'On its source, ready', word: 'Ready', dot: 'is-green', branch: SRC, onSource: true, action: A('Push', 'up', true, ['Discard']), figs: DONE_FIGS,
+      stages: run({ tail: SRC_TAIL(true) }) },
+    { id: 'source-unmerged', group: 'Kinds', label: 'On its source, not merged back', word: 'Needs you', dot: 'is-amber', detail: SRC + ' moved while the run worked', branch: SRC, onSource: true, hidden: 'worca/run-7b0bfb1e',
+      action: A('How to merge', 'merge', true, ['Create PR instead', 'Discard']), figs: DONE_FIGS,
+      stages: run({ tail: [{ key: 'push', label: 'Push', subs: [s('Merge back', 'problem', '', { live: 'Not merged back into ' + SRC }), next('To origin/' + SRC)] }] }) },
     { id: 'folder', group: 'Kinds', label: 'Folder run', word: 'Ready', dot: 'is-green', branch: '', folder: '~/src/marketing-site', action: A('Apply to folder', 'folder', true, ['Open the copy', 'Discard']), figs: [['Time', '52m'], ['Cost', '$9.15']],
       stages: run({ tail: [{ key: 'apply', label: 'Apply', subs: [next('Into the folder', { live: '5 files changed in a copy' })] }] }) },
     { id: 'applied', group: 'Kinds', label: 'Folder applied', word: 'Applied', dot: 'is-violet', branch: '', folder: '~/src/marketing-site', action: A('Open the folder', 'folder', false), figs: [['Time', '52m'], ['Cost', '$9.15']],
@@ -263,6 +276,7 @@
     'Check out the whole feature': 'Checks out the top of the stack, which holds every run',
     'Open the copy': 'Opens a terminal in the copy the run changed',
     'Push main': 'Pushes the commits straight to origin/main, no PR',
+    'Push': 'Pushes the source branch, with the run’s work merged back, to origin; no PR',
     'Discard': 'Throws the changes away; the run stays in history',
     'View PR': 'Opens the pull request on GitHub',
     'Watch': 'Worca follows the PR and fixes failing checks for you',
@@ -489,7 +503,7 @@
       kind: runStages.length && c.kind ? c.kind : '',   // the stepper already counts the runs
       crumbs, pager: g ? { index: par.index, n: g.stages.filter((x) => x.run).length, prev: sibling(par.index - 1), next: sibling(par.index + 1), group: g.id } : null,
       // The place line: where the code lives and where it goes, the PR once it exists. Each part once on the page.
-      place: { branch, copy: !!branch && branch !== 'main', base: c.base || (branch === 'main' ? 'origin/main' : branch ? 'dev' : ''),
+      place: { branch, copy: !!branch && branch !== 'main', base: c.base || (c.onSource ? 'origin' : branch === 'main' ? 'origin/main' : branch ? 'dev' : ''), onSource: !!c.onSource, hidden: c.hidden || '',
         pr: c.pr !== undefined && c.pr !== '' ? c.pr : prOpen(c) ? '#959' : '', folder: c.folder || '', repos: c.repos || [],
         merged: c.stages.some((x) => x.key === 'merged' && x.subs.length && x.subs.every((y) => y.state === 'merged')), applied: c.word === 'Applied' },
       chips: (ui.chips || []).filter((x) => x.kind !== 'group'), inGroup: !!g || runStages.length > 0, addedGroup: ((ui.chips || []).find((x) => x.kind === 'group') || {}).text || '',
@@ -575,6 +589,8 @@
     stopped: { 'Start a new run': { to: 'starting', say: 'A new run with the same task' }, 'Restart Build': { to: 'working', say: 'Build runs again from where it stopped' } },
     discarded: { 'Start a new run': { to: 'starting', say: 'A new run with the same task' } },
     push: { 'Push main': { to: 'merged', say: 'Pushed to origin/main' }, 'Create PR instead': { to: 'checks', say: 'Opened #959 into dev', dialog: 'pr' }, Discard: { to: 'discarded', confirm: 'Discard the changes? The run stays in history.' } },
+    'source-ready': { Push: { to: 'merged', say: 'Pushed to origin/' + SRC }, Discard: { to: 'discarded', confirm: 'Discard the changes? The run stays in history.' } },
+    'source-unmerged': { 'How to merge': { say: 'git switch ' + SRC + ' && git merge worca/run-7b0bfb1e' }, 'Create PR instead': { to: 'checks', say: 'Opened #959 into ' + SRC, dialog: 'pr' }, Discard: { to: 'discarded', confirm: 'Discard the changes? The run stays in history.' } },
     folder: { 'Apply to folder': { to: 'applied', confirm: 'Write 5 files into ~/src/marketing-site?' }, 'Open the copy': { say: 'Opened the copy in a terminal' }, Discard: { to: 'discarded', confirm: 'Discard the changes? The run stays in history.' } },
     applied: { 'Open the folder': { say: 'Opens ~/src/marketing-site' } },
     workspace: { 'Fix conflicts': { say: 'A short run is fixing worca-docs #31' }, 'worca-api #212': { say: 'Opens worca-api #212' }, 'worca-web #88': { say: 'Opens worca-web #88' }, 'worca-docs #31': { say: 'Opens worca-docs #31' }, 'Copy PR links': { say: 'Copied 3 PR links' } },
