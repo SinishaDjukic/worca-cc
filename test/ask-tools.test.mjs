@@ -15,7 +15,10 @@ import { seedPipeline, seedWorkspacePipeline } from './helpers/db-seed.mjs';
 import { createAskTools, AskToolError, splitUnifiedDiff, isProtectedBasename, sliceBytes, isByteArtifact } from '../src/core/ask/tools.mjs';
 import { viewerKindFor, BINARY_KINDS } from '../src/shared/artifact-kinds.mjs';
 import { defaultToolDeps } from '../src/core/ask/tool-deps.mjs';
-import { closeDb } from '../src/core/db.mjs';
+import { closeDb, getDb } from '../src/core/db.mjs';
+import { persistPrState, persistMemberPrState } from '../src/core/artifacts.mjs';
+import { setWatch } from '../src/core/pr-watch.mjs';
+import { parsePrRef, prRefMatches } from '../src/core/forge.mjs';
 import { addProject } from '../src/core/projects.mjs';
 import { createThread, appendMessage, addAttachment, updateThread } from '../src/core/ask/store.mjs';
 import { scopeRefusalText } from '../src/core/ask/scope.mjs';
@@ -851,6 +854,112 @@ test('get_run: carries memory only when the run has a ledger with changes', asyn
   assert.equal('memory' in b, false, 'no ledger ⇒ no key (the row-only shape is unchanged)');
 });
 
+// ── list_runs pr / get_run pr ────────────────────────────────────────────────
+const PR_URL = (o, r, n) => `https://github.com/${o}/${r}/pull/${n}`;
+function prTools({ prs = [], fixes = [], reads = {} } = {}) {
+  const log = { index: 0, reads: 0 };
+  const t = createAskTools({ ...fake, parsePrRef, prRefMatches,
+    listAllPipelines: async () => [
+      { id: 'cccccc01', title: 'A', status: 'done', projectKey: 'demo-00000001', mtime: 9 },
+      { id: 'cccccc02', title: 'B', status: 'done', projectKey: 'other-00000003', mtime: 8 },
+      { id: 'cccccc03', title: 'Fix', status: 'done', projectKey: 'demo-00000001', mtime: 7 },
+      { id: 'cccccc04', title: 'WS', status: 'done', projectKey: 'workspaces/wks-team-0000abcd', target: 'workspace', mtime: 6 },
+      { id: 'cccccc05', title: 'Plain', status: 'done', projectKey: 'demo-00000001', mtime: 5 },
+    ],
+    runPrIndex: () => { log.index += 1; return { prs: new Map(prs), fixes: new Map(fixes) }; },
+    readRunPrs: (row) => { log.reads += 1; return reads[row.id] ?? { pr: null, members: {}, fixesPrUrl: null }; },
+  });
+  return { t, log };
+}
+const open = (url, number = null) => ({ url, number, state: 'OPEN' });
+const PRS = [
+  ['cccccc01', { pr: open(PR_URL('o', 'r', 1069), 1069), members: {} }],
+  ['cccccc02', { pr: open(PR_URL('other', 'r2', 1069), null), members: {} }],
+  ['cccccc03', { pr: open(PR_URL('o', 'r', 1069), 1069), members: {} }],
+  ['cccccc04', { pr: open(PR_URL('t', 'lib', 7), 7), members: { 'lib-00000002': open(PR_URL('t', 'lib', 7), 7), 'app-00000001': open(PR_URL('t', 'app', 1069), 1069) } }],
+];
+const FIXES = [['cccccc03', PR_URL('o', 'r', 1069)]];
+
+test('list_runs pr: a URL matches its PR exactly (tail, case, query ignored)', async () => {
+  const { t } = prTools({ prs: PRS, fixes: FIXES });
+  const rows = await t.call('list_runs', { pr: 'https://GitHub.com/O/R/pull/1069/files?x=1' });
+  assert.deepEqual(rows.map((r) => r.id), ['cccccc01', 'cccccc03']);
+  assert.deepEqual(rows[0].pr, { url: PR_URL('o', 'r', 1069), number: 1069, state: 'OPEN' });
+});
+
+test('list_runs pr: a bare number matches in every project of the scope', async () => {
+  const { t, log } = prTools({ prs: PRS, fixes: FIXES });
+  assert.deepEqual((await t.call('list_runs', { pr: '1069' })).map((r) => r.id), ['cccccc01', 'cccccc02', 'cccccc04', 'cccccc03']);
+  assert.equal(log.index, 1, 'one index read per call, never per row');
+  assert.deepEqual((await t.call('list_runs', { pr: '#1069', projectKey: 'other-00000003' })).map((r) => r.id), ['cccccc02'], 'ANDs with the scope');
+});
+
+test('list_runs pr: owner/repo#N narrows to that repo', async () => {
+  const { t } = prTools({ prs: PRS, fixes: FIXES });
+  assert.deepEqual((await t.call('list_runs', { pr: 'other/r2#1069' })).map((r) => r.id), ['cccccc02']);
+});
+
+test('list_runs pr: no run recorded that PR → []', async () => {
+  const { t } = prTools({ prs: PRS, fixes: FIXES });
+  assert.deepEqual(await t.call('list_runs', { pr: '9999' }), []);
+});
+
+test('list_runs pr: unparseable refs are refused before any read', async () => {
+  const { t, log } = prTools({ prs: PRS });
+  for (const pr of ['https://gitlab.com/o/r/-/merge_requests/1', 'abc']) {
+    await assert.rejects(() => t.call('list_runs', { pr }), { message: /pr must be a pull request URL/ });
+  }
+  assert.equal(log.index, 0);
+  const noDep = createAskTools({ ...fake, listAllPipelines: async () => { throw new Error('read'); } });
+  await assert.rejects(() => noDep.call('list_runs', { pr: '1' }), { message: 'list_runs: PR lookup is not available' });
+});
+
+test('list_runs: a run without a PR keeps today\'s exact row; a run with one gains pr', async () => {
+  const { t } = prTools({ prs: PRS, fixes: FIXES });
+  const rows = await t.call('list_runs', {});
+  const plain = rows.find((r) => r.id === 'cccccc05');
+  assert.equal('pr' in plain || 'prs' in plain || 'fixesPr' in plain, false);
+  assert.equal(rows.find((r) => r.id === 'cccccc01').pr.number, 1069);
+  assert.equal(rows.find((r) => r.id === 'cccccc02').pr.number, 1069, 'a NULL pr_number falls back to the URL tail');
+});
+
+test('list_runs pr: a workspace run matches on any member and lists all member PRs', async () => {
+  const { t } = prTools({ prs: PRS });
+  const [ws] = await t.call('list_runs', { pr: 'https://github.com/t/app/pull/1069', workspaceId: 'wks-team-0000abcd' });
+  assert.equal(ws.id, 'cccccc04');
+  assert.equal('pr' in ws, false);
+  assert.deepEqual(ws.prs.map((p) => p.projectKey), ['app-00000001', 'lib-00000002']);
+  const legacy = prTools({ prs: [['cccccc04', { pr: open(PR_URL('t', 'app', 3)), members: {} }]] });
+  const [l] = await legacy.t.call('list_runs', { pr: '3' });
+  assert.deepEqual(l.pr, { url: PR_URL('t', 'app', 3), number: 3, state: 'OPEN' });
+});
+
+test('list_runs pr: a Watch PR fix run is never the creator (fixesPr, ordered last)', async () => {
+  const { t } = prTools({ prs: PRS, fixes: FIXES });
+  const rows = await t.call('list_runs', { pr: 'o/r#1069' });
+  assert.deepEqual(rows.map((r) => r.id), ['cccccc01', 'cccccc03']);
+  assert.equal('pr' in rows[1], false);
+  assert.deepEqual(rows[1].fixesPr, { url: PR_URL('o', 'r', 1069), number: 1069 });
+  assert.deepEqual((await t.call('list_runs', { pr: 'o/r#1069', limit: 1 })).map((r) => r.id), ['cccccc01']);
+});
+
+test('get_run: pr / prs / fixesPr only when present', async () => {
+  const reads = {
+    '4e1f2a9b': { pr: open(PR_URL('o', 'r', 5), 5), members: {}, fixesPrUrl: null },
+    '8c3d12ab': { pr: null, members: { 'app-00000001': open(PR_URL('t', 'app', 6), 6) }, fixesPrUrl: null },
+    aaaaaaaa: { pr: open(PR_URL('o', 'r', 5), 5), members: {}, fixesPrUrl: PR_URL('o', 'r', 5) },
+  };
+  const t = createAskTools({ ...fake, parsePrRef, readRunPrs: (row) => reads[row.id] ?? { pr: null, members: {}, fixesPrUrl: null } });
+  assert.deepEqual((await t.call('get_run', { id: '4e1f2a9b' })).pr, { url: PR_URL('o', 'r', 5), number: 5, state: 'OPEN' });
+  assert.deepEqual((await t.call('get_run', { id: '8c3d12ab' })).prs, [{ projectKey: 'app-00000001', url: PR_URL('t', 'app', 6), number: 6, state: 'OPEN' }]);
+  const fix = await t.call('get_run', { id: 'aaaaaaaa' });
+  assert.equal('pr' in fix, false);
+  assert.equal(fix.fixesPr.number, 5);
+  const base = await tools.call('get_run', { id: 'bbbbbbbb' });
+  const same = await t.call('get_run', { id: 'bbbbbbbb' });
+  assert.deepEqual(same, base, 'a run without a PR is byte-identical');
+});
+
 // ── real readers on a temp home ──────────────────────────────────────────────
 test('temp home: a seeded project run and a seeded workspace run round-trip through the real deps', async () => {
   const projectDir = mkdtempSync(join(tmpdir(), 'worca-ask-tools-proj-'));
@@ -1257,6 +1366,7 @@ test('propose_run: shape and assess exist only with the perspective keys', async
     { name: 'defaultToolDeps carries the perspective keys', run: () => {
       const d = defaultToolDeps({ threadId: null });
       assert.ok(Array.isArray(d.perspectiveKeys) && d.perspectiveKeys.length > 0);
+          assert.ok(Array.isArray(d.perspectiveKeys) && d.perspectiveKeys.length > 0);
       assert.deepEqual([...d.perspectiveKeys], [...PERSPECTIVE_KEYS]);
     } },
   ]);
@@ -1330,4 +1440,36 @@ test('defaultToolDeps: list_presets shows a preset naming no guardrails as the i
   } finally {
     prepare('DELETE FROM store_meta WHERE key = ?').run(GUARDRAILS_DEFAULT_META_KEY);
   }
+});
+
+test('temp home: list_runs pr and get_run read real pr_url, member PRs and pr_watch_runs', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'worca-ask-tools-pr-'));
+  await addProject({ name: 'prdemo', path: dir });
+  const creator = await seedPipeline(dir, { title: 'Creator', status: 'done' });
+  const fixer = await seedPipeline(dir, { title: 'Fixer', status: 'done' });
+  const url = PR_URL('acme', 'shop', 1069);
+  persistPrState(creator.id, { url, number: 1069, state: 'OPEN' });
+  persistPrState(fixer.id, { url, number: 1069, state: 'OPEN' });
+  setWatch({ prUrl: url, pipelineId: creator.id });
+  getDb().prepare('INSERT INTO pr_watch_runs (run_id, pr_url, pipeline_id, created_at) VALUES (?, ?, ?, ?)')
+    .run('fixrun-1', url, fixer.id, new Date().toISOString());
+  const wsDir = mkdtempSync(join(tmpdir(), 'worca-ask-tools-prws-'));
+  const members = [{ projectKey: 'team-00000009', projectDir: wsDir, projectName: 'team' }];
+  const ws = await seedWorkspacePipeline(wsDir, 'wks-pr-0000abcd',
+    { title: 'WS', status: 'done', workspaceId: 'wks-pr-0000abcd', workspaceName: 'PR', projectKeys: ['team-00000009'], projects: members }, members);
+  persistMemberPrState(ws.id, 'team-00000009', { url: PR_URL('acme', 'web', 77), number: 77, state: 'MERGED' });
+
+  const real = createAskTools(defaultToolDeps({ threadId: null }));
+  const rows = await real.call('list_runs', { pr: 'acme/shop#1069', projectKey: creator.key });
+  assert.deepEqual(rows.map((r) => r.id), [creator.id, fixer.id]);
+  assert.deepEqual(rows[0].pr, { url, number: 1069, state: 'OPEN' });
+  assert.equal('pr' in rows[1], false);
+  assert.equal(rows[1].fixesPr.url, url);
+  assert.deepEqual((await real.call('list_runs', { pr: 'acme/shop#1069', projectKey: creator.key, limit: 1 })).map((r) => r.id), [creator.id]);
+  const [wsRow] = await real.call('list_runs', { pr: '77' });
+  assert.equal(wsRow.id, ws.id);
+  assert.deepEqual(wsRow.prs, [{ projectKey: 'team-00000009', url: PR_URL('acme', 'web', 77), number: 77, state: 'MERGED' }]);
+  assert.deepEqual((await real.call('get_run', { id: creator.id })).pr, { url, number: 1069, state: 'OPEN' });
+  assert.equal((await real.call('get_run', { id: fixer.id })).fixesPr.number, 1069);
+  assert.equal((await real.call('get_run', { id: ws.id, workspaceId: 'wks-pr-0000abcd' })).prs[0].number, 77);
 });
