@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Agents left running by a killed server are stopped at the next start (#1144)
+
+- On Linux, macOS and WSL, a Claude, Codex or Copilot process (and anything it started) no longer keeps running after the Worca server or a CLI run is killed with SIGKILL, for example by the out-of-memory killer under WSL2. Each process records its agent process groups in `<worca home>/agent-groups/`, and the next server start stops the ones whose owner is gone, so they no longer hold memory and make the next kill more likely. Groups recorded before a reboot (`wsl --shutdown`) are never touched: their PIDs may belong to other processes by then.
+
 ### Shaper: shape the requirements first
 
 - Requirements stage and plan coverage (3-card UX, behind a Labs flag): Unchanged since cycle 2: fix cycle 2 edited no file (newest edit 10:43, before the cycle 2 review at 10:46; DEVIATIONS 14).
