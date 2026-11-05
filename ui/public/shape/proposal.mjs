@@ -1,8 +1,10 @@
 // ui/public/shape/proposal.mjs — the run card's Shape it first parts (spec §3.2): perspective chips on a shaped card;
-// the nudge (open decisions, both choices with estimates) on a nudged one. null when the card has neither.
+// the nudge (open decisions, both choices with estimates) on a nudged one; shapeRequirements on, the facts line and the
+// lead sentence on either. null when the card has neither.
 import { buildPerspectiveChips } from './chips.mjs';
 import { SHAPE_ATTENTION } from './plan-text.mjs';
 import { chipsHiddenFor, PERSPECTIVES } from '../../../src/shared/shape/perspectives.mjs';
+import { shapeRequirementsEligible } from '../../../src/shared/shape/requirements.mjs';
 import { ANSWERER_LEAD_KEYS } from '../../../src/shared/answerer.mjs';
 import { flagOn } from '../flags.mjs';
 import { loadAnswerer, saveAnswerer, leadLabel } from '../answerer.mjs';
@@ -34,19 +36,20 @@ const bodyOf = (card, perspectives, extra = {}) => ({ workflowId: 'wf_shape', sh
 let leadSeq = 0;
 const noop = () => {};
 
-/** shapeRequirements on, a nudged card: the facts line, then (medium or large) "You lead as [lead ▾], supported by
- *  [supporters ▾]." — SentencePicker triggers, each opening the live CompactMenu (toggleMenu). Small: the facts line and
- *  today's chips. `blocked()` is true until a lead is picked; `commit()` saves a lead the profile does not hold. */
+/** shapeRequirements on, a shaped or nudged card: the facts line, then (a run the server gives the requirements stage)
+ *  "You lead as [lead ▾], supported by [supporters ▾]." — SentencePicker triggers, each opening the live CompactMenu
+ *  (toggleMenu). Otherwise the facts line and today's chips, `chipsEl` for a host that places them apart. `blocked()` is
+ *  true until a lead is picked; `commit()` saves a lead the profile does not hold. */
 function requirementsCard(doc, card, h, fetchFn) {
-  const n = card.nudge;
+  const n = card.shape || card.nudge;
   const el = h('div', 'shape-card');
   el.appendChild(h('div', 'shape-nudge-head shape-facts', factsLine(n)));
   const picked = n.perspectives;
   const hidden = chipsHiddenFor(picked);
-  if (n.size !== 'medium' && n.size !== 'large') {
+  if (!shapeRequirementsEligible(n, true)) {
     const chips = buildPerspectiveChips(doc, { picked, hidden, collapsed: true });
     el.appendChild(chips.el);
-    return { el, requirements: false, blocked: () => false, commit: noop, body: () => bodyOf(card, chips.value()) };
+    return { el, chipsEl: chips.el, requirements: false, blocked: () => false, commit: noop, body: () => bodyOf(card, chips.value()) };
   }
 
   const offered = PERSPECTIVES.filter((p) => !hidden.includes(p.key)).map((p) => p.key);
@@ -114,7 +117,7 @@ function requirementsCard(doc, card, h, fetchFn) {
 export function shapeCardExtras(doc, card, { fetch: fetchFn } = {}) {
   if (!card || (!card.shape && !card.nudge)) return null;
   const h = (tag, cls, text) => { const e = doc.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
-  if (card.nudge && !card.shape && flagOn('shapeRequirements', doc)) return requirementsCard(doc, card, h, fetchFn);
+  if (flagOn('shapeRequirements', doc)) return requirementsCard(doc, card, h, fetchFn);
   const el = h('div', 'shape-card');
   const picked = card.shape ? card.shape.perspectives : card.nudge.perspectives;
   // UX picks wf_shape_ux at start; the server re-derives it (resolveShapeRequest), so every chip is free here.
