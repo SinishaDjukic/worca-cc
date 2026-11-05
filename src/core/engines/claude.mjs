@@ -747,7 +747,8 @@ const decoded = (s) => { try { return decodeURIComponent(s); } catch { return s;
  * The carried values a run must never show (D71, D71a): every string value of 8+ characters except the keys that are
  * safe to print (readable model-env keys and plain routing keys). A URL's username and password (4+ chars) are redacted
  * on their own, also on the printable keys (ANTHROPIC_BASE_URL, the proxies): as written, decoded, and as URL re-encodes
- * them (M9). M9: so are a URL's path (other than `/`) and query, which can carry a tenant key or a token.
+ * them (M9). M9, as corrected by the fix review (m7): so are the whole carried URL, its query, and those path segments that
+ * look like a token (16+ token characters); a plain path such as `/anthropic` is not, so it is not blanked out of every text.
  */
 export function secretValuesOf(env) {
   const out = [];
