@@ -1,7 +1,7 @@
 ---
 name: webui-step-playwright-denied
 description: Read when a Web UI review reports "critical: not tested" because Playwright MCP was refused, or when a reviewer needs a live UI walk in a headless run.
-updated: 2026-10-28T22:44:19.678Z
+updated: 2026-11-05T10:39:33.103Z
 author: Bulibas
 ---
 
@@ -16,6 +16,14 @@ Live check without the MCP, as the code reviewer (worked in about 1 minute):
   by absolute path, and call `chromium.launch({ executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: true, args: ['--use-mock-keychain'] })`.
   `launch()` refuses `--user-data-dir`; that flag needs `launchPersistentContext`.
 - Use `newContext({ colorScheme })` for light/dark and `setViewportSize` for 390 px. Selectors: `#tsearch-input`, `#tsearch-pop .tsearch-group`, `.tsearch-note`.
+
+Trap: pick the PORT with `lsof -nP -iTCP:<port> -sTCP:LISTEN` first (prints nothing = free). This Mac runs long-lived
+bench servers on 43xx ports (4391 = the #943 bench, HOME `~/dev/bench/worca-943-combined-sg/home`). A busy port makes
+the new server exit at once ("port … is already in use"), so a setup `POST /api/settings {uiLevel:'expert'}` sent right
+after lands on the OTHER server and rewrites its settings.json (2026-11-05; sibling bench homes hold `uiLevel: "simple"`).
+Before any write, also check the answering server is yours (`GET /api/settings` `projectsRootDefault` under your sandbox).
+The first-boot Welcome dialog (`#welcome-modal`) blocks clicks even after `onboarding.welcomeSeen`; remove the node in
+the walk (`document.getElementById('welcome-modal')?.remove()`).
 
 Trap: `(echo $$ > pid; exec env … node ui/server.mjs) > log` records the PARENT zsh's pid, because `$$` inside a subshell
 is still the parent's. Stopping that pid leaves node listening. Find the real pid with `lsof -nP -iTCP:<port> -sTCP:LISTEN`,
