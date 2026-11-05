@@ -22,7 +22,7 @@ import { buildClaudeArgs } from '../src/core/engines/claude.mjs';
 import { envForShell } from '../src/core/graph/script-runner.mjs';
 import {
   pretendServers, connectorNotes, humanizeTool, nounOf, sentCall, wouldHaveSent, noteSeenServers, seenClaudeAiServers,
-  userScopeServerNames, CONNECTOR_CALLS_FILE, stepEngines, scriptSteps, fileServerOffLine, engineNoteLine, pretendCopies,
+  userScopeServerNames, CONNECTOR_CALLS_FILE, readConnectorCalls, stepEngines, scriptSteps, fileServerOffLine, engineNoteLine, pretendCopies,
 } from '../src/core/workflow-tests/connectors.mjs';
 
 useTempHome(after);
@@ -289,4 +289,16 @@ test('connectorNotes: a Real test lists no pretend names; a pretend test still d
   assert.deepEqual(connectorNotes({ copies, mode: 'pretend' }).pretend, ['jira_team', 'slack_team']);
   assert.deepEqual(connectorNotes({ copies }).pretend, ['jira_team', 'slack_team']);
   assert.deepEqual(connectorNotes({ copies, mode: 'real' }).pretend, []);
+});
+
+// ── Workflow tests 3b, Task 5 (M13): the calls a try wrote down are shown redacted, like its transcript ──────────────────
+test('M13: readConnectorCalls redacts broker tokens in every entry, keys and nested values included; the arguments stay', async () => {
+  const home = await tmp();
+  const { id, dir } = await createPipeline(join(home, 'proj'), { prompt: 'p', title: 't', isTest: true });
+  const tok = `wbt_${'A'.repeat(24)}`;
+  await writeFile(join(dir, CONNECTOR_CALLS_FILE), `${JSON.stringify({ ts: 't', server: 'slack_team', tool: 'post_message',
+    arguments: { text: `token ${tok}`, nested: { [tok]: [tok] } }, readOnly: false })}\n`);
+  const [e] = await readConnectorCalls(id);
+  assert.deepEqual(e.arguments, { text: 'token wbt_[redacted]', nested: { 'wbt_[redacted]': ['wbt_[redacted]'] } });
+  assert.equal((await wouldHaveSent(id)).sent[0].preview, 'token wbt_[redacted]');
 });

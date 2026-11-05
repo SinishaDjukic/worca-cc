@@ -2,11 +2,11 @@
 // carry only the sign-in kept there, and every other spawn stays byte-identical.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildSettingsPayload, buildClaudeArgs, planClaudeInvocation, signInCarry, secretValuesOf, runClaudeProcess, carryLine, CARRY_WARNING_PREFIX, CARRY_NOTE_PREFIX,
-  carryRedactValues, carryOverModelEnv, sweepStaleStagingDirs, STAGING_PREFIX } from '../src/core/engines/claude.mjs';
+  carryRedactValues, carryOverModelEnv, sweepStaleStagingDirs, STAGING_PREFIX, redactTryLog } from '../src/core/engines/claude.mjs';
 import { createRedactor } from '../src/core/redact.mjs';
 import { RunHarness } from '../src/core/run-harness.mjs';
 import { composeSpawnEnv } from '../src/core/engines/spawn.mjs';
@@ -386,4 +386,35 @@ test('M11: the payload of a project-only run\'s Pretend spawn says autoAllowBash
     const on = signInCarry({ read: none, sources: ['project', 'local'], userLoaded: true });
     assert.deepEqual(buildSettingsPayload(null, { safetySettings: on.safety }).settings.sandbox, { enabled: true });
   } finally { if (prev === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = prev; }
+});
+
+// ── Task 5 (M13): the try's connector-calls.ndjson is redacted like the transcript when a spawn ends ─────────────────────
+test('M13: redactTryLog rewrites whole lines through the redactor; a torn last line, an unchanged file and a link are left as they are', () => {
+  const d = tmp();
+  const log = join(d, 'connector-calls.ndjson');
+  const line = (text) => JSON.stringify({ ts: 't', server: 's', tool: 'post', arguments: { text } });
+  writeFileSync(log, `${line('key sk-ant-secret-0001')}\n${line('plain')}\n{"torn sk-ant-secret-0001`);
+  const r = createRedactor(['sk-ant-secret-0001']);
+  assert.equal(redactTryLog(log, r), true);
+  assert.equal(readFileSync(log, 'utf8'), `${line('key [redacted]')}\n${line('plain')}\n{"torn sk-ant-secret-0001`);
+  assert.deepEqual(readdirSync(d), ['connector-calls.ndjson'], 'no temp file left');
+  assert.equal(redactTryLog(log, r), false, 'nothing to change: not rewritten');
+  assert.equal(redactTryLog(join(d, 'missing.ndjson'), r), false, 'no log: nothing');
+  const outside = join(tmp(), 'real.ndjson');
+  writeFileSync(outside, `${line('sk-ant-secret-0001')}\n`);
+  let linked = true;
+  try { symlinkSync(outside, join(d, 'linked.ndjson')); } catch { linked = false; }
+  if (linked) {
+    assert.equal(redactTryLog(join(d, 'linked.ndjson'), r), false);
+    assert.equal(readFileSync(outside, 'utf8'), `${line('sk-ant-secret-0001')}\n`, 'never through a link');
+  }
+});
+
+test('M13: a spawn with a redactor and a try guard redacts the try log when it ends', async () => {
+  const d = tmp();
+  const log = join(d, 'connector-calls.ndjson');
+  writeFileSync(log, `${JSON.stringify({ ts: 't', server: 's', tool: 'post', arguments: { text: 'sk-ant-secret-0002' } })}\n`);
+  await assert.rejects(runClaudeProcess({ cwd: d, bin: join(d, 'no-such-claude.exe'), prompt: 'p', allowedTools: ['Read'], tryGuard: { logFile: log },
+    redactValues: ['sk-ant-secret-0002'], onEvent: () => {} }));
+  assert.equal(JSON.parse(readFileSync(log, 'utf8')).arguments.text, '[redacted]');
 });

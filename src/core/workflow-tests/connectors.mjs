@@ -16,6 +16,12 @@ import { engineLabel } from '../../shared/engine-switch.mjs';
 import { CLAUDE_AI_RE, plainName, serverName } from '../../shared/workflow-tests/connector-name.mjs';
 import { selectRunEngine } from '../engines/index.mjs';
 import { guardCall } from './guard-calls.mjs';
+import { createRedactor } from '../redact.mjs';
+
+// Task 5 (M13): the stand-ins and the try guard write the calls raw (they hold no secret list); what Worca shows of them is
+// redacted like the transcript: broker tokens always, in keys and values at any depth (the spawn's own secrets are redacted
+// in the file when the spawn ends, claude.mjs redactTryLog). The arguments themselves stay: they are what board 31 shows.
+const brokerTokensOut = createRedactor([]).deep;
 
 export { CONNECTOR_MODES } from './store.mjs';
 export const CONNECTOR_CALLS_FILE = 'connector-calls.ndjson';
@@ -237,7 +243,7 @@ export async function readConnectorCalls(pipelineId) {
   const out = [];
   for (const line of text.split('\n')) {
     if (!line.trim() || out.length >= CALLS_MAX) continue;
-    try { const v = JSON.parse(line); if (v && typeof v.tool === 'string') out.push(v); } catch { /* a torn line */ }
+    try { const v = JSON.parse(line); if (v && typeof v.tool === 'string') out.push(brokerTokensOut(v)); } catch { /* a torn line */ }
   }
   return out;
 }
