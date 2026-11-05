@@ -6436,9 +6436,8 @@ function handleTerminalMessage(ws, msg) {
  * Taking a value, not `req`, lets the stack loop (which runs after its response) call it too.
  */
 function ensureSetup(runId, pk, { enabled, rerun = false }) {
-  const key = `${runId}:${pk}`;
+  const key = `${runId}:${pk}`; let settled = false;   // settled: this job wrote a setup state (none / skipped / ok / failed)
   if (setupJobs.has(key)) return setupJobs.get(key);
-  let settled = false;   // this job wrote a setup state (none / skipped / ok / failed)
   const job = (async () => {
     const rec = checkoutRecOf(runId, pk);
     if (!rec) return false;
@@ -6459,17 +6458,11 @@ function ensureSetup(runId, pk, { enabled, rerun = false }) {
     } catch { /* start failed or timed out → failed below */ }
     const ok = end?.status === 'exited' && end.exitCode === 0;
     const ms = Date.now() - t0;
-    setSetupState(runId, pk, { status: ok ? 'ok' : 'failed', exitCode: end?.exitCode ?? null, at: new Date().toISOString(), ms });
-    settled = true;
+    setSetupState(runId, pk, { status: ok ? 'ok' : 'failed', exitCode: end?.exitCode ?? null, at: new Date().toISOString(), ms }); settled = true;
     if (ok) writeActionsMeta(pk, { lastSetupMs: ms });
     emitChanged('pipelines-changed', 'updated');
     return ok;
-  })().catch(() => false).finally(() => {
-    setupJobs.delete(key);
-    // The Actions tab follows actions-changed only, and the setup instance's own last frame comes while this job
-    // still reads as queued: one frame after the job is gone lets the card leave "Setting up" by itself.
-    if (settled) emitChanged('actions-changed', 'setup-done');
-  });
+  })().catch(() => false).finally(() => { setupJobs.delete(key); if (settled) emitChanged('actions-changed', 'setup-done'); });   // the tab follows actions-changed only: a frame once the job is gone ends "Setting up"
   setupJobs.set(key, job);
   return job;
 }
