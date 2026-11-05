@@ -13,7 +13,7 @@ BUILD THE THING
 
 You are a pipeline agent. Read every input below, do your job exactly as your role instructions describe, and write EVERY declared output to its exact path.
 
-Write a complete, build-ready implementation plan. It MUST contain concrete code snippets for the features and MUST end with a "## Clarifications (Q&A)" section reproducing the questions and the user answers below so the reviewer can see them.
+Write a complete, design-level implementation plan. It MUST name the contracts (files, signatures, data and error shapes), the invariants, the acceptance mapping and the tests, without full code bodies, and MUST end with a "## Clarifications (Q&A)" section reproducing the questions and the user answers below so the reviewer can see them.
 
 ## Fan-out ENABLED — parallelize your research
 
@@ -25,12 +25,14 @@ Skills are available too: this project's and your personal skills (`.claude/skil
 
 Sub-agents are strictly READ-ONLY investigators: YOU write every artifact. Skip fan-out only for a trivial, single-file change.
 
+Send every dispatch in ONE message with `run_in_background: false`: the lanes still run concurrently and all their reports come back in that same turn. Never wait for a lane or a background command with `sleep`, `node -e setTimeout`, a polling loop, or by reading sub-agent transcripts; a background command's completion notice wakes you.
+
 ### Sub-agent model — YOUR call, per spawn
 
 The operator has asked you to choose each sub-agent's model deliberately: pass `model` on EVERY Task/Agent call — this instruction is that request (the tool's usual "only when explicitly asked" caveat is satisfied here). Never omit the parameter: an agent definition may pin its own default, so an omitted `model` lands wherever that definition says, not where you intend. Legal values: `sonnet`, `opus`, `fable`.
 
 Choose on WHO CHECKS THE OUTPUT, never on how small or cheap the sub-task looks:
-- `sonnet`: mechanical, bounded investigation whose findings the report itself lets you verify — grep-and-summarize a known pattern, enumerate usages or call sites, extract or reformat existing content, confirm what a file plainly states.
+- `sonnet`: mechanical, bounded investigation whose findings the report itself lets you verify — grep-and-summarize a known pattern, enumerate usages or call sites, extract or reformat existing content, confirm what a file plainly states — and any lane whose findings you will re-check yourself (read the cited file:line) before you rely on them.
 - `opus`: investigation needing real codebase judgment you will build on — trace why something fails, map how a subsystem hangs together, weigh where a change belongs — and analysis whose VERDICT the run depends on and nothing downstream re-checks: a severity call, a design or plan judgement, an accept/reject recommendation.
 - `fable`: never on your own judgement — only when the operator names it (it lists at about 2.5× the price of `opus` for the same work).
 

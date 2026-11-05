@@ -54,7 +54,7 @@ test('attention: updates, then needs setup, then problems — alphabetical insid
   const plugins = [
     row('slack-chat', { setup: SLACK_SETUP }),
     row('github-source', { version: '0.2.0', latest: L('0.3.0', [SECRET]) }),
-    row('discretestack-models'),
+    row('example-models'),
     row('atlassian-mcp', { latest: L('0.1.1') }),
     row('old', { broken: true, latest: L('2.0.0') }),
   ];
@@ -140,8 +140,8 @@ test('removeChanges: one row per MCP set and per skill set, naming what each los
 
 test('usedByRow / usedByNote: model selections as drawn (board 3.4); other references name what holds the contribution', () => {
   const sel = (id, count) => ({ kind: 'model-selection', contributionKind: 'models', contribution: id, label: id, count, href: '#models' });
-  assert.deepEqual(usedByRow(sel('discretestack-stable', 2)), { kind: 'models', title: 'discretestack-stable', meta: 'Model · 2 pipeline selections', href: '#models' });
-  assert.equal(usedByRow(sel('discretestack-stable-fast', 1)).meta, 'Model · 1 pipeline selection');
+  assert.deepEqual(usedByRow(sel('example-stable', 2)), { kind: 'models', title: 'example-stable', meta: 'Model · 2 pipeline selections', href: '#models' });
+  assert.equal(usedByRow(sel('example-stable-fast', 1)).meta, 'Model · 1 pipeline selection');
   // SM11: one row shape per kind (P1 pluginReferences, sorted by kind, label, contribution).
   assert.deepEqual(usedByRow({ kind: 'workflow', contributionKind: 'agents', contribution: 'triager', label: 'Docs Flow', count: 1, href: '#workflows/wf_docs' }),
     { kind: 'agents', title: 'triager', meta: 'Agent · in Docs Flow', href: '#workflows/wf_docs' });

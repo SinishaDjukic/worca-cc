@@ -121,6 +121,51 @@ test('placeFlyout: side / up / beside / down, each clamped to the viewport; un-h
   ]);
 });
 
+test('placeFlyout fit (down): below when it fits, above when only above has room, else below capped; never over the trigger', async () => {
+  /** A menu of height `h` for a 32 px trigger at `top` in a 1280×800 viewport (gap 4, margin 8): where it went. */
+  const place = (top, h, { fit = true, stale = '' } = {}) => {
+    const { window, $ } = setup();
+    viewport(window, 1280, 800);
+    box($('out'), { left: 1000, top, width: 100, height: 32 });
+    box($('menu'), { width: 300, height: h });
+    $('menu').style.maxHeight = stale;
+    placeFlyout($('menu'), $('out'), { mode: 'down', gap: 4, margin: 8, fit, win: window });
+    const y = parseFloat($('menu').style.top);
+    const cap = $('menu').style.maxHeight;
+    const shown = cap ? Math.min(h, parseFloat(cap)) : h;
+    return { top: $('menu').style.top, cap, overlaps: y < top + 32 && y + shown > top, inside: y >= 8 && y + shown <= 792 };
+  };
+  await checkRows([
+    { name: 'fits below: under the trigger, no cap', run: () => {
+      assert.deepEqual(place(100, 300), { top: '136px', cap: '', overlaps: false, inside: true });
+    } },
+    { name: 'a cap left by an earlier placement is cleared before measuring', run: () => {
+      assert.deepEqual(place(100, 300, { stale: '40px' }), { top: '136px', cap: '', overlaps: false, inside: true });
+    } },
+    { name: 'no room below, room above: flips above, its bottom the gap over the trigger', run: () => {
+      assert.deepEqual(place(600, 300), { top: '296px', cap: '', overlaps: false, inside: true });
+    } },
+    { name: 'flipped above but taller than the room there: capped to the room above', run: () => {
+      assert.deepEqual(place(600, 700), { top: '8px', cap: '588px', overlaps: false, inside: true });
+    } },
+    { name: 'no room either way, more below: stays below, capped to the room below, and scrolls', run: () => {
+      assert.deepEqual(place(300, 700), { top: '336px', cap: '456px', overlaps: false, inside: true });
+    } },
+    { name: 'without fit the clamp slides a tall popup up over its trigger (the pickers keep that)', run: () => {
+      assert.deepEqual(place(600, 300, { fit: false }), { top: '492px', cap: '', overlaps: true, inside: true });
+    } },
+    { name: 'fit is for down only: side keeps its clamp and never sets maxHeight', run: () => {
+      const { window, $ } = setup();
+      viewport(window, 1280, 800);
+      box($('aside'), { left: 0, top: 0, width: 220, height: 800 });
+      box($('trig'), { left: 10, top: 300, width: 200, height: 29 });
+      box($('menu'), { width: 172, height: 100 });
+      placeFlyout($('menu'), $('trig'), { fit: true, win: window });
+      assert.deepEqual([$('menu').style.left, $('menu').style.top, $('menu').style.maxHeight], ['226px', '270px', '']);
+    } },
+  ]);
+});
+
 test('createFlyout: a click opens, a second closes; aria-expanded and the hooks follow', () => {
   const { $, fly, calls, click } = setup();
   assert.equal(fly.isOpen(), false);

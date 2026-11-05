@@ -4,8 +4,8 @@
 // History "Live logs" panel. Extracted so the narrowing semantics are
 // unit-testable without booting app.js (mirrors log-line.mjs).
 //
-// A filter is { source, level, step, node, execution, cycle, search } where '' /
-// undefined means "all". Every axis composes with AND.
+// A filter is { source, level, step, node, execution, cycle, session, search } where
+// '' / undefined means "all". Every axis composes with AND.
 // - level: exact match; a record with no level counts as 'info' (the same
 //   default logLineClass applies when rendering).
 // - source: matches the role itself AND its fanned-out sub-agents — a child
@@ -20,6 +20,8 @@
 // - cycle: matches String(rec.cycle) — the feedback-loop rewind counter, which is
 //   orthogonal to step (a re-run keeps its stepIndex and bumps its cycle). Same
 //   attribution rule as step: cycle-less lines only show when no cycle is chosen.
+// - session: ONE session of a session-groups run (a sid): its main agent's lines
+//   (rec.session === sid) and its steps' own lines (rec.nodeId in `sessionMembers`).
 // - search: case-insensitive substring of rec.text, or of rec.desc (a Bash call's
 //   description, #911 slice 3) when present. Text only — the source column
 //   is already a dropdown, so matching it here would make that filter ambiguous.
@@ -43,6 +45,9 @@ export function compileLogFilter(filter) {
   const execution = hasExec ? String(filter.execution) : '';
   const hasCycle = filter.cycle !== undefined && filter.cycle !== '';
   const cycle = hasCycle ? String(filter.cycle) : '';
+  const hasSession = filter.session != null && filter.session !== '';
+  const session = hasSession ? String(filter.session) : '';
+  const members = hasSession && Array.isArray(filter.sessionMembers) ? new Set(filter.sessionMembers.map(String)) : null;
   const term = filter.search ? String(filter.search).toLowerCase() : '';
   return (rec) => {
     if (level && (rec.level || 'info') !== level) return false;
@@ -54,6 +59,7 @@ export function compileLogFilter(filter) {
     if (hasNode && (rec.nodeId == null || String(rec.nodeId) !== node)) return false;
     if (hasExec && (rec.executionId == null || String(rec.executionId) !== execution)) return false;
     if (hasCycle && (rec.cycle == null || String(rec.cycle) !== cycle)) return false;
+    if (hasSession && rec.session !== session && !(members && rec.nodeId != null && members.has(String(rec.nodeId)))) return false;
     if (term && !String(rec.text || '').toLowerCase().includes(term)
       && !String(rec.desc || '').toLowerCase().includes(term)) return false;
     return true;

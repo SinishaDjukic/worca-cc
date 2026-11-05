@@ -4,9 +4,10 @@
 // test fixture. `fixtures.mjs` re-exports it as FIXTURE_DEFAULT so the engine
 // tests and the shipping default can never drift apart.
 //
-// Pure data + one pure helper — no IO, no dependency on the registry. The one import is the pure
-// role-review round cap, a shared shape constant.
+// Pure data + one pure helper — no IO, no dependency on the registry. The imports are pure shared shape constants:
+// the role-review round cap and the perspectives Shaper declares as its role reviews' roles.
 import { ROLE_REVIEW_MAX_ROUNDS } from '../../shared/shape/role-review.mjs';
+import { PERSPECTIVES } from '../../shared/shape/perspectives.mjs';
 
 /** Recursively freeze a value and everything reachable from it, returning the
  *  same reference. A shallow `Object.freeze` is NOT enough here: it passes
@@ -21,7 +22,9 @@ export function deepFreeze(value) {
 }
 
 /** wf_default as a version-2 graph. w5 (refine self-loop) and w9 (review -> fix)
- *  are the loop wires; w10 lands the clean review on the End node. */
+ *  are the loop wires; w10 lands the clean review on the End node. Refine runs ONE light
+ *  cycle: a refine that still blocks (or asks for its re-check) continues with the open
+ *  issues recorded instead of looping, and the code review catches what is left. */
 export const GRAPH_DEFAULT_WORKFLOW = deepFreeze({
   id: 'wf_default',
   name: 'Default',
@@ -43,11 +46,48 @@ export const GRAPH_DEFAULT_WORKFLOW = deepFreeze({
     { id: 'w2', from: { node: 'n_task', port: 'task' }, to: { node: 'n_plan', port: 'task' } },
     { id: 'w3', from: { node: 'n_clarify', port: 'answers' }, to: { node: 'n_plan', port: 'answers' } },
     { id: 'w4', from: { node: 'n_plan', port: 'plan' }, to: { node: 'n_refine', port: 'plan' } },
-    { id: 'w5', from: { node: 'n_refine', port: 'revise' }, to: { node: 'n_refine', port: 'revise' }, config: { maxCycles: 3 } },
+    { id: 'w5', from: { node: 'n_refine', port: 'revise' }, to: { node: 'n_refine', port: 'revise' }, config: { maxCycles: 1, onExhausted: 'clean' } },
     { id: 'w6', from: { node: 'n_refine', port: 'plan' }, to: { node: 'n_impl', port: 'plan' } },
     { id: 'w7', from: { node: 'n_refine', port: 'plan' }, to: { node: 'n_review', port: 'plan' } },
     { id: 'w8', from: { node: 'n_impl', port: 'done' }, to: { node: 'n_review', port: 'done' } },
     { id: 'w9', from: { node: 'n_review', port: 'review' }, to: { node: 'n_impl', port: 'fix' }, config: { maxCycles: 3 } },
+    { id: 'w10', from: { node: 'n_review', port: 'pass' }, to: { node: 'n_end', port: 'result' } },
+  ],
+});
+
+/** The Lean built-in: Clarify -> a design-level Plan -> Implement -> an adversarial Review -> ONE
+ *  fix pass (w9 maxCycles 2: review, fix, re-review, then the person decides). No Refine: the
+ *  implementer proves the plan by building it, and the review's severity floors catch what refine
+ *  used to. The planner's research lanes run on Sonnet because the planner re-reads what it builds
+ *  on; the reviewer keeps the auto pick for its severity calls. Wire ids follow Default's (per-project
+ *  loop budgets are keyed by wire id). Reserved like wf_memory_defrag: never a row, listed after
+ *  Default, opened read-only in the composer. The id has an underscore so no NAME can slug onto it
+ *  (a saved "Lean" stays wf_lean). It is NOT the fallback default (yet). */
+export const LEAN_WORKFLOW_ID = 'wf_lean_build';
+export const LEAN_WORKFLOW_NAME = 'Lean';
+export const GRAPH_LEAN_WORKFLOW = deepFreeze({
+  id: LEAN_WORKFLOW_ID,
+  name: LEAN_WORKFLOW_NAME,
+  version: 2,
+  domain: 'coding',
+  createdAt: '1970-01-01T00:00:00.000Z',
+  updatedAt: '1970-01-01T00:00:00.000Z',
+  nodes: [
+    { id: 'n_task', kind: 'task', x: 40, y: 200, config: {} },
+    { id: 'n_clarify', kind: 'agent', key: 'clarify', x: 320, y: 200, config: {} },
+    { id: 'n_plan', kind: 'agent', key: 'planner', x: 600, y: 200, config: { subagentModel: 'sonnet' } },
+    { id: 'n_impl', kind: 'agent', key: 'implementer', x: 880, y: 200, config: {} },
+    { id: 'n_review', kind: 'agent', key: 'reviewer', x: 1160, y: 200, config: {} },
+    { id: 'n_end', kind: 'end', x: 1440, y: 200, config: {} },
+  ],
+  wires: [
+    { id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_clarify', port: 'task' } },
+    { id: 'w2', from: { node: 'n_task', port: 'task' }, to: { node: 'n_plan', port: 'task' } },
+    { id: 'w3', from: { node: 'n_clarify', port: 'answers' }, to: { node: 'n_plan', port: 'answers' } },
+    { id: 'w6', from: { node: 'n_plan', port: 'plan' }, to: { node: 'n_impl', port: 'plan' } },
+    { id: 'w7', from: { node: 'n_plan', port: 'plan' }, to: { node: 'n_review', port: 'plan' } },
+    { id: 'w8', from: { node: 'n_impl', port: 'done' }, to: { node: 'n_review', port: 'done' } },
+    { id: 'w9', from: { node: 'n_review', port: 'review' }, to: { node: 'n_impl', port: 'fix' }, config: { maxCycles: 2 } },
     { id: 'w10', from: { node: 'n_review', port: 'pass' }, to: { node: 'n_end', port: 'result' } },
   ],
 });
@@ -244,7 +284,27 @@ export const SHAPE_CLARIFY_HINTS = 'Shaping: ask at most 3 questions — only de
   + 'and that the repo can\'t answer. Give each question a recommended option.';
 const SHAPE_CLARIFY_CONFIG = { maxQuestions: 3, promptHints: SHAPE_CLARIFY_HINTS };
 const SHAPE_APPROVE_CONFIG = { approve: { kind: 'plan', port: 'plan' } };
-const SHAPE_ROLES_CONFIG = { roleReview: true, model: 'claude-sonnet-5-5', effort: 'medium' };   // spec decision 1
+/** Shaper's plan review is the engine role-review step, configured: the perspectives as roles, the run's picked ones
+ *  running, each judged on its own checklist items (the `perspectives` provider), the findings handed to Refine. */
+/** The diversity default: Product (locked, so in every Shaper run) reviews on another model than the node's, so one
+ *  plan role always judges independently. A built-in default: dropped quietly (recorded as `wanted`) off Claude. */
+export const SHAPE_DIVERSE_ROLE = Object.freeze({ key: 'product', model: 'claude-opus-5-5', effort: 'medium' });
+const SHAPE_ROLES_CONFIG = {
+  roleReview: {
+    roles: PERSPECTIVES.map(({ key, label }) => (key === SHAPE_DIVERSE_ROLE.key
+      ? { key, label, model: SHAPE_DIVERSE_ROLE.model, effort: SHAPE_DIVERSE_ROLE.effort } : { key, label })),
+    source: 'picked', target: 'plan', checklist: 'perspectives', sink: 'refiner',
+  },
+  model: 'claude-sonnet-5-5', effort: 'medium',   // spec decision 1
+};
+/** Shaper's code review is the same engine step on the diff: three declared roles, each an independent reviewer, their
+ *  merged findings handed to the implementer's fix. No node model and no diversity pick: the node keeps its default. */
+export const SHAPE_CODE_ROLES_CONFIG = deepFreeze({
+  roleReview: {
+    roles: [{ key: 'correctness', label: 'Correctness' }, { key: 'security', label: 'Security' }, { key: 'fit', label: 'Project fit' }],
+    source: 'declared', target: 'diff', sink: 'implementer',
+  },
+});
 /** Refine waits for the reviewed plan AND its findings, both from n_roles (one publish), so it fires once per round. */
 const SHAPE_REFINE_CONFIG = { ...SHAPE_APPROVE_CONFIG, awaitAll: true };
 /** Spec §3: plan → role reviews → refine, one loop of at most 2 rounds that ends at the plan approval. Default's
@@ -275,7 +335,7 @@ export const GRAPH_SHAPE_WORKFLOW = deepFreeze({
     { id: 'n_plan', kind: 'agent', key: 'planner', x: 600, y: 200, config: {} },
     { id: 'n_refine', kind: 'agent', key: 'refiner', x: 880, y: 200, config: { ...SHAPE_REFINE_CONFIG } },
     { id: 'n_impl', kind: 'agent', key: 'implementer', x: 1160, y: 200, config: {} },
-    { id: 'n_review', kind: 'agent', key: 'reviewer', x: 1440, y: 200, config: {} },
+    { id: 'n_review', kind: 'agent', key: 'reviewer', x: 1440, y: 200, config: { ...SHAPE_CODE_ROLES_CONFIG } },
     { id: 'n_end', kind: 'end', x: 1720, y: 200, config: {} },
     { ...SHAPE_ROLES_NODE, config: { ...SHAPE_ROLES_CONFIG } },
   ],
@@ -300,7 +360,7 @@ export const GRAPH_SHAPE_UX_WORKFLOW = deepFreeze({
     { id: 'n_plan', kind: 'agent', key: 'planner', x: 600, y: 200, config: {} },
     { id: 'n_refine', kind: 'agent', key: 'refiner', x: 880, y: 200, config: { ...SHAPE_REFINE_CONFIG } },
     { id: 'n_impl', kind: 'agent', key: 'implementer', x: 1160, y: 200, config: {} },
-    { id: 'n_review', kind: 'agent', key: 'reviewer', x: 1440, y: 200, config: {} },
+    { id: 'n_review', kind: 'agent', key: 'reviewer', x: 1440, y: 200, config: { ...SHAPE_CODE_ROLES_CONFIG } },
     { id: 'n_check', kind: 'agent', key: 'manualTestsChecklist', x: 1720, y: 200, config: {} },
     { id: 'n_webui', kind: 'agent', key: 'manualWebUiTesting', x: 2000, y: 200, config: {} },
     { id: 'n_end', kind: 'end', x: 2280, y: 200, config: {} },
@@ -326,8 +386,8 @@ export const GRAPH_SHAPE_UX_WORKFLOW = deepFreeze({
  *  DELETE refuses them. wf_workspace_scan and wf_pr_fix are reserved but never listed anywhere;
  *  wf_shape is listed only while the Shape it first gate is on, and wf_shape_ux is never listed. Order is NOT
  *  significant — GET /api/workflows and the Ask catalog list the graph built-ins in their own
- *  fixed order (Default, then Memory defragment).
+ *  fixed order (Default, Lean, then Memory defragment).
  *  NOTE: `ui/public/graph/composer.mjs` keeps a twin of this list as a `Set` (`.has`), not an
  *  Array (`.includes`) — the two are not interchangeable. */
-export const RESERVED_WORKFLOW_IDS = Object.freeze([GRAPH_DEFAULT_WORKFLOW.id, AUTO_WORKFLOW_ID, MEMORY_DEFRAG_WORKFLOW_ID, WORKSPACE_SCAN_WORKFLOW_ID, PR_FIX_WORKFLOW_ID, SHAPE_WORKFLOW_ID, SHAPE_UX_WORKFLOW_ID, WORKSPACE_RESYNTH_WORKFLOW_ID]);
+export const RESERVED_WORKFLOW_IDS = Object.freeze([GRAPH_DEFAULT_WORKFLOW.id, LEAN_WORKFLOW_ID, AUTO_WORKFLOW_ID, MEMORY_DEFRAG_WORKFLOW_ID, WORKSPACE_SCAN_WORKFLOW_ID, PR_FIX_WORKFLOW_ID, SHAPE_WORKFLOW_ID, SHAPE_UX_WORKFLOW_ID, WORKSPACE_RESYNTH_WORKFLOW_ID]);
 export function isReservedWorkflowId(id) { return RESERVED_WORKFLOW_IDS.includes(id); }

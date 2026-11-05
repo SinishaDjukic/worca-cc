@@ -27,8 +27,8 @@ const BOTH = ['cloud', 'datacenter'];
 
 test('capabilities: export is on; write-back still follows the run\'s input', async () => {
   const { src } = await site();
-  assert.deepEqual(src.capabilities({ inputs: { writeBack: 'yes' } }), { writeBack: true, incrementalSync: false, export: true });
-  assert.deepEqual(src.capabilities({}), { writeBack: false, incrementalSync: false, export: true });
+  assert.deepEqual(src.capabilities({ inputs: { writeBack: 'yes' } }), { writeBack: true, incrementalSync: false, export: true, ticketUpdates: true });
+  assert.deepEqual(src.capabilities({}), { writeBack: false, incrementalSync: false, export: true, ticketUpdates: true });
 });
 
 test('exportOptions: projects as "SHOP — Shop web"; issue types without sub-tasks; priorities; only multi-line text fields; doneStatus', async () => {

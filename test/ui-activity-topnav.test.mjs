@@ -4,14 +4,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
-const __dir = dirname(fileURLToPath(import.meta.url));
-const root = join(__dir, '..', 'ui', 'public');
-const html = readFileSync(join(root, 'index.html'), 'utf8');
-const css = readFileSync(join(root, 'style.css'), 'utf8');
+const html = readIndexHtml();
+const css = readStyleCss();
 
 /** The body of the FIRST rule written exactly as `selector {…}` (house rule: no comment inside a rule body). */
 function ruleBody(selector) {

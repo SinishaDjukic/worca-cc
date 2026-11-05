@@ -18,7 +18,7 @@ import { createRunProgressCard, snapshotFromState, PROGRESS_CARD_TYPE } from './
 import { createCommandCard, createCommandGroup, COMMAND_CARD_TYPE } from './ask-command-card.mjs';
 import { commandRuns } from './ask-command-group.mjs';
 import { buildTrace, scheduleTrace, playAssembly } from './auto-build.mjs';
-import { buildNodeConfigRows, pruneNodeSelection, modifiedFieldsOf, healForEngine } from './node-tunables.mjs';
+import { buildNodeConfigRows, buildRoleRows, pruneNodeSelection, modifiedFieldsOf, healForEngine } from './node-tunables.mjs';
 import { ENGINE_EFFORTS } from './engine-settings-view.mjs';
 import { ENGINE_NAMES, engineLabel, isBetaEngine } from '../../src/shared/engine-switch.mjs';
 import { lockEngineOptions } from './engine-locks.mjs';
@@ -28,7 +28,7 @@ import { classifyLoops } from '../../src/shared/graph/loops.mjs';
 import { portsFnFor } from '../../src/shared/graph/ports.mjs';
 import { parseMcpToolName } from '../../src/shared/mcp-tool-name.mjs';
 import { mcpSkipView, mcpCopyNote, skillSkipView } from './mcp-run-picker.mjs';
-import { engineOfEntry, chatEngineOf, pickerGroups, ASK_CHAT_ENGINES, isEngineSetupNotice } from './ask-engine.mjs';
+import { engineOfEntry, chatEngineOf, pickerGroups, ASK_CHAT_ENGINES, isEngineSetupNotice, engineSwitchConfirm, readEnginePicks, rememberEnginePick, engineLead, switchEffort, pickerEngineName } from './ask-engine.mjs';
 import { formatQuotedMessage, parseQuotedMessage } from './pinpoint-model.mjs';
 import { ATTACH_ACCEPT, ATTACH_MAX_MESSAGE_BYTES, bytesToBase64 as attachBase64, carriesFiles, checkAttachment, createPasteNamer, pastedFiles } from './attach-files.mjs';
 import { notify } from './feedback.mjs';
@@ -269,6 +269,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     pendingFiles: [],
     quote: null,          // Pinpoint (#669): {text, src?, code?} sent above the next message as a blockquote
     sending: false,
+    switching: false,
     subscribedFor: null,
     elapsedTimer: null,
     elapsedStart: null,
@@ -1614,8 +1615,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     modelBtn.type = 'button';
     modelBtn.setAttribute('data-ask-model-btn', '');
     modelBtn.dataset.minLevel = 'advanced';
+    el.modelBtnEngine = make('span', 'ask-model-btn-engine');   // #943: the engine, when the catalog offers more than one
+    el.modelBtnEngine.hidden = true;
     el.modelBtnLabel = make('span', 'ask-model-btn-label', st.picker.model);
     el.modelBtnEffort = make('span', 'ask-model-btn-effort', st.picker.effort);
+    modelBtn.appendChild(el.modelBtnEngine);
     modelBtn.appendChild(el.modelBtnLabel);
     modelBtn.appendChild(el.modelBtnEffort);
     modelBtn.appendChild(svgIcon(ICONS.chevronDown, 12, 2));
@@ -2295,13 +2299,13 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
 
   // ---- catalog + picker (D8) ------------------------------------------------
   function catalogEntry(id) { return st.catalog ? st.catalog.models.find((m) => m && m.id === id) || null : null; }
-  /** The engine this chat is locked to (D12), or null for a chat without a turn yet. */
-  function lockedEngine() {
+  /** The engine this chat runs on now (D12; #943 lets the person move it), or null for a chat without a turn yet. */
+  function activeEngine() {
     const thread = st.model && typeof st.model.thread === 'function' ? st.model.thread() : null;
     return chatEngineOf(st.model ? st.model.messages() : [], st.picker.model, st.catalog, thread && thread.engine);
   }
-  /** The engine the next message will run on: the lock, else the picked model's. */
-  function pickerEngine() { return lockedEngine() || engineOfEntry(catalogEntry(st.picker.model)); }
+  /** The engine the next message will run on: the chat's, else the picked model's. */
+  function pickerEngine() { return activeEngine() || engineOfEntry(catalogEntry(st.picker.model)); }
 
   function updatePickerButton() {
     if (!el.modelBtnLabel) return;
@@ -2313,6 +2317,14 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // A model that takes no reasoning effort shows none (the bridge leaves it out).
     el.modelBtnEffort.textContent = entry && entry.noEffort ? '' : st.picker.effort;
     el.modelBtnEffort.hidden = !!(entry && entry.noEffort);
+    // #943: the button names the engine the next message runs on, in text whenever the catalog offers more than one
+    // engine (the extension's button says the same).
+    const eng = pickerEngine();
+    const engName = pickerEngineName(st.catalog ? st.catalog.models : [], eng);
+    el.modelBtnEngine.textContent = engName;
+    el.modelBtnEngine.hidden = !engName;
+    const btn = el.modelBtnLabel.parentNode;
+    if (btn) { btn.dataset.engine = eng; btn.title = `${engineLabel(eng)} · ${entry ? entry.label : st.picker.model}`; }
   }
 
   function coerceEffort(entry, effort) {
@@ -2472,6 +2484,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     st.pickerFromThread = false;                    // the user's own pick now, not the thread's
     st.pickerExplicit = true;
     storeModel();
+    rememberEnginePick(storage, pickerEngine(), st.picker);   // #943: this browser's last pick on this engine
     persistThreadPick();
     updatePickerButton();
     scheduleMcpRefresh();                           // the model sets the §5.6 tool-name limit
@@ -2483,10 +2496,77 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     st.picker = { ...st.picker, effort };
     st.effortFromStore = true;                      // the effort only — the model slot is untouched (D11)
     storeModel();
+    rememberEnginePick(storage, pickerEngine(), st.picker);   // #943: this browser's last pick on this engine
     persistThreadPick();
     updatePickerButton();
     closePopover({ focusTrigger: false });
     focusComposer();
+  }
+
+  // ---- engine switch (#943) ---------------------------------------------------
+  /** A model row's click: a model of the chat's engine (or any, before its first reply) is a pick; another engine's
+   *  model moves the chat there, after the server's preview and the person's confirm. */
+  function pickModelRow(m, engine) {
+    const active = activeEngine();
+    if (!active || engine === active) { setPickerModel(m.id); return; }
+    closePopover({ focusTrigger: false });
+    void switchEngine(m, engine);
+  }
+
+  async function postEngine(id, body) {
+    const res = await fetch(`/api/ask/threads/${id}/engine`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      // The refusal's code and setup link ride along: the toast offers the next step (askEnginePreflight).
+      const { code = null, docsUrl = null, setupLabel = null } = data || {};
+      throw Object.assign(new Error((data && data.error) || `request failed (${res.status})`), { code, docsUrl, setupLabel });
+    }
+    return data;
+  }
+
+  async function switchEngine(m, engine) {
+    const id = st.threadId;
+    if (!id || st.switching) return;
+    // Never mid-reply: the server refuses it too (TURN_IN_FLIGHT). A row can be enabled still when the menu opened
+    // before the reply began, so say why nothing happens.
+    const busyNote = () => notify({ tone: 'err', title: `Could not switch this chat to ${engineLabel(engine)}`, detail: 'A reply is running. Switch engines when it finishes.', key: `ask-engine-${id}` }, { doc });
+    if (turnBusy()) { busyNote(); return; }
+    st.switching = true;
+    try {
+      const effort = switchEffort(m, engine, readEnginePicks(storage), st.catalog && st.catalog.defaults);
+      const plan = await postEngine(id, { engine, model: m.id, effort, dryRun: true });
+      if (st.threadId !== id || st.destroyed) return;
+      const ok = await confirm(engineSwitchConfirm(plan, m.label || m.id, { noEffort: !!m.noEffort }));
+      if (!ok || st.threadId !== id || st.destroyed) { focusComposer(); return; }
+      if (turnBusy()) { busyNote(); focusComposer(); return; }   // a reply began while the confirm was open: the server would refuse
+      const done = await postEngine(id, { engine, model: plan.model, effort: plan.effort, dropTurns: plan.transcript.droppedTurns });
+      rememberEnginePick(storage, engine, done.engineSwitch);
+      // The same frames the server broadcast, applied now: this tab need not wait for the socket (a repeat is a no-op).
+      pushServerFrame({ type: 'ask-message', threadId: id, message: done.message });
+      pushServerFrame({ type: 'ask-engine', threadId: id, ...done.engineSwitch, ...(done.thread && done.thread.totals ? { threadTotals: done.thread.totals } : {}) });
+      focusComposer();
+    } catch (e) {
+      // The next step, when there is one: a new preview (more turns now drop), or the engine's setup page.
+      const again = !!e && e.code === 'confirm-dropped-turns';
+      const action = again ? { label: 'Review again', run: () => { void switchEngine(m, engine); } }
+        : e && e.docsUrl ? { label: e.setupLabel || 'Set up', run: () => { try { win.open(e.docsUrl, '_blank', 'noopener'); } catch { /* blocked */ } } }
+          : null;
+      notify({ tone: 'err', title: `Could not switch this chat to ${engineLabel(engine)}`, detail: (e && e.message) || 'network error', action, key: `ask-engine-${id}` }, { doc });
+      focusComposer();
+    } finally {
+      st.switching = false;
+    }
+  }
+
+  /** The open chat moved to another engine (this tab's switch, or another tab's ask-engine frame): the picker shows the
+   *  new pair as the thread's own. */
+  function applyEnginePick(frame) {
+    if (frame.threadId !== st.threadId || typeof frame.model !== 'string' || typeof frame.effort !== 'string') return;
+    st.picker = { model: frame.model, effort: frame.effort };
+    st.pickerFromThread = true;
+    st.pickerExplicit = false;
+    updatePickerButton();
+    scheduleMcpRefresh();
   }
 
   function openModelPopover(trigger) {
@@ -2498,8 +2578,14 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       if (title) t.title = title;
       return t;
     };
-    const modelItem = (m) => {
-      const item = menuItem('ask-model-item', () => setPickerModel(m.id));
+    const modelItem = (m, engine) => {
+      const active = activeEngine();
+      const moves = !!active && !!engine && engine !== active;   // #943: this row moves the chat to another engine
+      const item = menuItem('ask-model-item', () => pickModelRow(m, engine || engineOfEntry(m)));
+      if (moves) {
+        item.dataset.engine = engine;
+        if (turnBusy() || st.switching) { item.disabled = true; item.title = 'Wait for this reply to finish before switching engines.'; }
+      }
       // The row carries NO provenance: a plugin name is arbitrary text and an origin
       // badge starved the label in a 292px panel. Where a model comes from is the
       // Models view's job; here the name is the thing being picked.
@@ -2516,10 +2602,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       if (m.needsSignIn) {
         item.appendChild(tag('needs sign-in', 'is-err', m.signInMessage || 'The provider behind this model is not usable yet. See the Providers page.'));
       }
+      if (moves && (readEnginePicks(storage)[engine] || {}).model === m.id) item.appendChild(tag('last used', null, 'The model you last used on this engine.'));
       // Credential broker: whether the signed-in person has the key this model spends from.
       const cb = credentialBadge(m.id);
       if (cb) item.appendChild(tag(cb.text, cb.missing ? 'is-err' : 'is-key', cb.title));
-      if (m.id === st.picker.model) item.appendChild(checkMark());
+      if (m.id === st.picker.model && !moves) item.appendChild(checkMark());   // #943: never on the same model in another engine's section
       return item;
     };
     // Inside an engine's section the models group by connection, like every model picker (modelGroups); a sub-heading
@@ -2528,8 +2615,28 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       const groups = modelGroups(models, { engine });
       for (const c of groups) {
         if (groups.length > 1) panel.appendChild(make('div', 'ask-pop-subgroup', c.label));
-        for (const m of c.models) panel.appendChild(modelItem(m));
+        for (const m of c.models) panel.appendChild(modelItem(m, engine));
       }
+    };
+    // #943: another engine's section leads with the model last used there (else its default), in BOTH panes, so the
+    // main/more split is the same and no model falls between them.
+    const sectionSplit = (g, active) => {
+      const lead = active && g.engine !== active ? engineLead(g.models, readEnginePicks(storage)[g.engine], ((st.catalog && st.catalog.defaults) || {})[g.engine]) : null;
+      return splitCatalog(lead ? [lead, ...g.models.filter((x) => x !== lead)] : g.models);
+    };
+    const sectionsNow = () => pickerGroups(st.catalog ? st.catalog.models : [], { active: activeEngine() });
+    // The engine the main pane lists: the chat's, else the picked model's, else the first with models.
+    const shownEngine = () => {
+      const sections = sectionsNow();
+      const want = pickerEngine();
+      return (sections.find((x) => x.engine === want) || sections[0] || {}).engine || null;
+    };
+    const moreModelsRow = (engine) => {
+      const moreRow = menuItem('ask-more-models', () => renderPane(`more:${engine}`));
+      moreRow.setAttribute('data-ask-more-models', '');
+      moreRow.appendChild(make('span', null, 'More models'));
+      moreRow.appendChild(make('span', 'ask-pop-row-chev', '›'));
+      return moreRow;
     };
     let shownPane = 'main';
     let effortPaneKey = '';   // the model + effort list the effort pane was painted from
@@ -2551,28 +2658,47 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
           if (eff === st.picker.effort) item.appendChild(checkMark());
           panel.appendChild(item);
         }
-      } else if (pane === 'more') {
-        const back = menuItem('ask-pane-back', () => renderPane('main'));
+      } else if (pane.startsWith('more:') || pane.startsWith('engine:')) {
+        // 'engine:<name>': another engine's main list, led by the model last used there (else its default), so a pick
+        // moves the chat after a confirm; 'more:<name>': that engine's more models, back to the list it came from.
+        const more = pane.startsWith('more:');
+        const engine = pane.slice(pane.indexOf(':') + 1);
+        const g = sectionsNow().find((x) => x.engine === engine);
+        const home = engine === shownEngine() ? 'main' : `engine:${engine}`;
+        const back = menuItem('ask-pane-back', () => renderPane(more ? home : 'main'));
         back.setAttribute('data-ask-pane-back', '');
-        back.appendChild(make('span', null, '‹ Models'));
+        back.appendChild(make('span', null, more && home === 'main' ? '‹ Models' : `‹ ${g ? g.label : 'Models'}`));
         panel.appendChild(back);
         panel.appendChild(make('div', 'ask-pop-divider'));
-        // Each engine's more models under its name, as in the main pane, when more than one engine has some.
-        const more = pickerGroups(st.catalog ? st.catalog.models : [], { lock: lockedEngine() })
-          .map((g) => ({ ...g, rest: splitCatalog(g.models).rest })).filter((g) => g.rest.length);
-        for (const g of more) {
-          if (more.length > 1) panel.appendChild(make('div', 'ask-pop-group', g.label));
-          appendByConnection(g.rest, g.engine);
+        if (g) {
+          const split = sectionSplit(g, activeEngine());
+          appendByConnection(more ? split.rest : split.primary, g.engine);
+          if (!more && split.rest.length) {
+            panel.appendChild(make('div', 'ask-pop-divider'));
+            panel.appendChild(moreModelsRow(engine));
+          }
         }
       } else {
-        // D12: a new chat shows each engine under its name; inside a chat only the chat's engine is offered.
-        const sections = pickerGroups(st.catalog ? st.catalog.models : [], { lock: lockedEngine() });
-        const rest = [];
-        for (const g of sections) {
+        // D12 / #943: the shown engine's models under its name (the chat's own is marked); every other engine is one
+        // row that opens its own list, so the menu stays short however many engines have models.
+        const sections = sectionsNow();
+        const shown = shownEngine();
+        const g = sections.find((x) => x.engine === shown);
+        let hasMore = false;
+        if (g) {
           if (sections.length > 1) panel.appendChild(make('div', 'ask-pop-group', g.label));
-          const split = splitCatalog(g.models);
+          const split = sectionSplit(g, activeEngine());
           appendByConnection(split.primary, g.engine);
-          rest.push(...split.rest);
+          hasMore = split.rest.length > 0;
+        }
+        const others = sections.filter((x) => x !== g);
+        if (others.length) panel.appendChild(make('div', 'ask-pop-divider'));
+        for (const o of others) {
+          const engineRow = menuItem('ask-engine-row', () => renderPane(`engine:${o.engine}`));
+          engineRow.setAttribute('data-ask-engine-group', o.engine);
+          engineRow.appendChild(make('span', null, o.label));
+          engineRow.appendChild(make('span', 'ask-pop-row-chev', '›'));
+          panel.appendChild(engineRow);
         }
         panel.appendChild(make('div', 'ask-pop-divider'));
         const noEffort = !!catalogEntry(st.picker.model)?.noEffort;
@@ -2589,13 +2715,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
           effortRow.appendChild(make('span', 'ask-pop-row-chev', '›'));
         }
         panel.appendChild(effortRow);
-        if (rest.length) {
-          const moreRow = menuItem('ask-more-models', () => renderPane('more'));
-          moreRow.setAttribute('data-ask-more-models', '');
-          moreRow.appendChild(make('span', null, 'More models'));
-          moreRow.appendChild(make('span', 'ask-pop-row-chev', '›'));
-          panel.appendChild(moreRow);
-        }
+        if (hasMore) panel.appendChild(moreModelsRow(shown));
       }
       focusFirst();
     };
@@ -3442,12 +3562,18 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   // centered between two hairlines. A project's Git/Folder chip comes from the cached /api/projects; No project and an
   // unknown project get none.
   function buildDivider(b) {
-    const s = scopeFromContext(b.scope);
     const text = String(b.text || '');
     const d = make('div', 'ask-divider');
     d.setAttribute('role', 'separator');
     d.setAttribute('aria-label', text);
     const inner = make('span', 'ask-divider-in');
+    if (b.engineSwitch) {   // #943: "Switched from Codex to Claude", between two hairlines
+      d.classList.add('ask-divider-engine');
+      inner.appendChild(make('span', 'ask-divider-t', text));
+      d.appendChild(inner);
+      return d;
+    }
+    const s = scopeFromContext(b.scope);
     inner.append(scopeIcon(doc, scopeKind(s), 13), make('span', 'ask-divider-t', text));
     if (s.workspaceId) inner.appendChild(kindChip(doc, 'ws'));
     else if (s.projectKey) {
@@ -3592,14 +3718,22 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // them as its defaults ("Save as project defaults", saveLaneEdits). `explicit`: a workspace card's rows are the
     // built-in defaults, not the run's baseline (laneOverlay names its picks outright). `proposal` / `proposed` /
     // `warnings`: Ask Worca's per-agent picks (card.nodes) once applyProposal lays them in as the lane's baseline.
-    return { wf, registry, runConfig, rows, edits: {}, editable: true, explicit: !projectDir, engine, defaultEngine, allModels, proposal: {}, proposed: {}, warnings: [],
+    // `reviewRoleRows`: a role-review node's declared roles (node-tunables buildRoleRows); their edits live apart from
+    // the node rows' in `reviewRoleEdits[nodeId][roleKey]` (`row.role` already names Default's legacy step role).
+    return { wf, registry, runConfig, rows, edits: {}, reviewRoleRows: buildRoleRows(wf, rows, runConfig), reviewRoleEdits: {},
+      editable: true, explicit: !projectDir, engine, defaultEngine, allModels, proposal: {}, proposed: {}, warnings: [],
       models, efforts: engine === 'claude' ? (Array.isArray(cfg.efforts) ? cfg.efforts : []) : [...(ENGINE_EFFORTS[engine] || [])],
       subagentModels: Array.isArray(cfg.subagentModels) ? cfg.subagentModels : [] };
   }
   const laneEffective = (lane, row) => ({ ...row, ...(lane.edits[row.nodeId] || {}) });
   const laneCaps = (row) => ({ asksQuestions: row.askQuestions !== null, questionsLocked: row.questionsLocked });
-  const laneEditedRows = (lane) => lane.rows.filter((r) => lane.edits[r.nodeId]);
-  const laneOverrideCount = (lane) => lane.rows.filter((r) => modifiedFieldsOf(laneEffective(lane, r), r.def, laneCaps(r)).length).length;
+  const laneReviewRoleEdit = (lane, rr) => (lane.reviewRoleEdits[rr.nodeId] || {})[rr.roleKey] || null;
+  const laneReviewRoleEffective = (lane, rr) => ({ ...rr, ...(laneReviewRoleEdit(lane, rr) || {}) });
+  const laneReviewRoleChanged = (lane, rr) => { const c = laneReviewRoleEffective(lane, rr); return (c.model || '') !== (rr.def.model || '') || (c.effort || '') !== (rr.def.effort || ''); };
+  const laneReviewRoleEdited = (lane) => (lane.reviewRoleRows || []).filter((rr) => laneReviewRoleEdit(lane, rr));
+  const laneEditedRows = (lane) => lane.rows.filter((r) => lane.edits[r.nodeId] || laneReviewRoleEdited(lane).some((rr) => rr.nodeId === r.nodeId));
+  const laneOverrideCount = (lane) => lane.rows.filter((r) => modifiedFieldsOf(laneEffective(lane, r), r.def, laneCaps(r)).length).length
+    + (lane.reviewRoleRows || []).filter((rr) => laneReviewRoleChanged(lane, rr)).length;
   const modelLabel = (lane, id) => { const m = lane.models.find((x) => x.id === id); return m ? (m.label || m.id).replace(' (1M)', '') : id; };
   function laneSummary(lane) {
     const counts = new Map();
@@ -3617,6 +3751,24 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const next = { ...(lane.edits[row.nodeId] || {}), ...patch };
     for (const k of Object.keys(next)) if (next[k] === row[k]) delete next[k];   // back to the proposal = no edit
     if (Object.keys(next).length) lane.edits[row.nodeId] = next; else delete lane.edits[row.nodeId];
+  }
+  /** laneSet for a review-role row: the same "back to the row = no edit" rule, keyed by node and role. */
+  function laneReviewRoleSet(lane, rr, patch) {
+    const byRole = { ...(lane.reviewRoleEdits[rr.nodeId] || {}) };
+    const next = { ...(byRole[rr.roleKey] || {}), ...patch };
+    for (const k of Object.keys(next)) if (next[k] === rr[k]) delete next[k];
+    if (Object.keys(next).length) byRole[rr.roleKey] = next; else delete byRole[rr.roleKey];
+    if (Object.keys(byRole).length) lane.reviewRoleEdits[rr.nodeId] = byRole; else delete lane.reviewRoleEdits[rr.nodeId];
+  }
+  /** What a review-role row runs as a pick `{ model?, effort? }`, or null for "the node's setting". "Node's model" over
+   *  a template or project pick names the node's own model, since a pick cannot be cleared by naming nothing. */
+  function laneReviewRolePick(lane, rr) {
+    const c = laneReviewRoleEffective(lane, rr);
+    const node = lane.rows.find((r) => r.nodeId === rr.nodeId);
+    const n = node ? laneEffective(lane, node) : {};
+    const pair = c.model ? { model: c.model, effort: c.effort } : (rr.def.model && n.model ? { model: n.model, effort: c.effort || n.effort } : { effort: c.effort });
+    const out = { ...(pair.model ? { model: pair.model } : {}), ...(pair.effort ? { effort: pair.effort } : {}) };
+    return Object.keys(out).length ? out : null;
   }
   // Ask Worca's per-agent picks (card.nodes) are the lane's BASELINE edits: "changed" means the user moved a row off
   // them; with no proposal that is exactly "the row has an edit", as before.
@@ -3690,6 +3842,14 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       if ((c.subagentModel || '') !== (row.subagentModel || '')) e.subagentModel = c.subagentModel || row.def.subagentModel || 'auto';
       if (Object.keys(e).length) nodes[row.nodeId] = e;
     }
+    // Edited review-role rows that differ from the project's (or template's) pick ride as `nodes[id].roles[key]`; a
+    // node entry may carry roles only.
+    for (const rr of laneReviewRoleEdited(lane)) {
+      if (!laneReviewRoleChanged(lane, rr)) continue;
+      const pick = laneReviewRolePick(lane, rr);
+      if (!pick) continue;
+      nodes[rr.nodeId] = { ...(nodes[rr.nodeId] || {}), roles: { ...((nodes[rr.nodeId] || {}).roles || {}), [rr.roleKey]: pick } };
+    }
     return { nodes };
   }
   /** Ask Worca's picks as proposed (card.nodes), for a Start whose lane has not loaded (still loading, or it could
@@ -3720,7 +3880,15 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (!lane || !lane.editable || !projectDir) return null;
     const workflowId = local.workflowId();
     for (const row of laneEditedRows(lane)) {
-      const patch = pruneNodeSelection(row, lane.edits[row.nodeId]);
+      const patch = pruneNodeSelection(row, lane.edits[row.nodeId] || {});
+      // The node's role picks are written whole (setNodeModel replaces the map): the stored ones, the edits over them.
+      const roleRows = (lane.reviewRoleRows || []).filter((rr) => rr.nodeId === row.nodeId);
+      if (roleRows.some((rr) => laneReviewRoleEdit(lane, rr))) {
+        const stored = (((lane.runConfig || {}).nodes || {})[row.nodeId] || {}).roles || {};
+        patch.roles = Object.fromEntries(roleRows
+          .map((rr) => [rr.roleKey, laneReviewRoleEdit(lane, rr) ? laneReviewRolePick(lane, rr) : (Object.hasOwn(stored, rr.roleKey) ? stored[rr.roleKey] : null)])
+          .filter(([, pick]) => pick));
+      }
       const body = row.role
         ? { projectDir, step: row.role, ...patch }
         : { projectDir, workflowId, nodes: { [row.nodeId]: patch } };
@@ -3782,7 +3950,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       return;
     }
     // "changed" = rows the user moved off the proposal (Ask Worca's picks are the baseline, not the user's edits).
-    const edited = lane.rows.filter((r) => laneDiverged(lane, r)).length;
+    const edited = lane.rows.filter((r) => laneDiverged(lane, r)).length + laneReviewRoleEdited(lane).length;
     const picked = laneProposedCount(lane);
     const over = laneOverrideCount(lane);
     const overText = `${over} override${over === 1 ? '' : 's'} of the workflow defaults`;
@@ -3791,7 +3959,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       : picked ? `Chat picked ${picked} agent${picked > 1 ? 's' : ''} for this run · ${overText}`
         : `proposed by Worca · ${overText}`;
     reset.hidden = !edited;
-    reset.addEventListener('click', () => { lane.edits = cloneEdits(lane.proposal); if (lane.dropped) lane.dropped.clear(); renderLane(laneSec, lane, lc); });
+    reset.addEventListener('click', () => { lane.edits = cloneEdits(lane.proposal); lane.reviewRoleEdits = {}; if (lane.dropped) lane.dropped.clear(); renderLane(laneSec, lane, lc); });
     // The lane shows at every mode while Ask Worca's picks are laid in (data-level-keep, set when the card is built);
     // healed away on another engine, or on another workflow, it is Expert-only again — and the team policy's word on
     // the picks (card.warnings, soft: the run still starts) goes with them.
@@ -3916,6 +4084,54 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       tile.appendChild(l2);
       box.appendChild(tile);
     });
+    // A role-review node's declared roles, below the node tiles: a model select and effort pills, nothing else.
+    for (const rr of lane.reviewRoleRows || []) {
+      const node = lane.rows.find((r) => r.nodeId === rr.nodeId);
+      const c = laneReviewRoleEffective(lane, rr);
+      const tile = make('div', `ask-rp-tile ask-rp-role${laneReviewRoleEdit(lane, rr) ? ' mod' : ''}`);
+      tile.dataset.nodeId = rr.nodeId;
+      tile.dataset.role = rr.roleKey;
+      const l1 = make('div', 'ask-rp-tile-l1');
+      l1.appendChild(make('span', `ask-rp-acc${node && RP_ACC.has(node.color) ? ` ${node.color}` : ''}`));
+      const name = make('div', 'ask-rp-name');
+      name.appendChild(make('b', null, rr.label));
+      l1.appendChild(name);
+      const sel = rpSelect('ask-rp-model', `Model for ${rr.label}`);
+      sel.appendChild(opt('', "Node's model"));
+      appendModelGroups(sel, lane.models.filter((m) => (!m.hidden && !m.needsSignIn) || m.id === c.model), {
+        engine: lane.engine, text: (m) => modelOptionText(m) + (m.needsSignIn ? ' (needs sign-in)' : '') });
+      sel.value = c.model || '';
+      sel.disabled = !lane.editable;
+      sel.addEventListener('change', () => {
+        const mid = sel.value;
+        const list = (lane.models.find((m) => m.id === mid) || {}).efforts || [];
+        const keep = list.includes(c.effort) ? c.effort : (list[1] || list[0] || '');
+        laneReviewRoleSet(lane, rr, { model: mid, effort: mid ? keep : '' });
+        renderLane(laneSec, lane, lc);
+      });
+      l1.appendChild(sel);
+      if (lane.efforts.length) {
+        // A role naming no model runs on the node's: its pills follow the node tile's model.
+        const runsOnModel = c.model || (node ? laneEffective(lane, node).model : '');
+        const eff = make('div', `ask-rp-eff${c.model ? '' : ' unset'}`);
+        eff.setAttribute('role', 'radiogroup');
+        eff.setAttribute('aria-label', `Effort for ${rr.label}`);
+        const offered = (lane.models.find((m) => m.id === runsOnModel) || {}).efforts || [];
+        for (const e of lane.efforts) {
+          const b = make('button', `ask-rp-effbtn${e === c.effort ? ' on' : ''}`, e);
+          b.type = 'button';
+          b.setAttribute('role', 'radio');
+          b.setAttribute('aria-checked', String(e === c.effort));
+          b.disabled = !lane.editable || !offered.includes(e);
+          if (!offered.includes(e) && runsOnModel) b.title = `Not offered by ${modelLabel(lane, runsOnModel)}`;
+          b.addEventListener('click', () => { laneReviewRoleSet(lane, rr, { effort: e }); renderLane(laneSec, lane, lc); });
+          eff.appendChild(b);
+        }
+        l1.appendChild(eff);
+      }
+      tile.appendChild(l1);
+      box.appendChild(tile);
+    }
     // A per-run lane: changes (and Ask Worca's picks) apply to THIS run only, unless the user saves them as the
     // project's defaults — a project target only (agent defaults are per project).
     const foot = make('div', 'ask-rp-agents-foot');
@@ -6875,6 +7091,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (switched) stopVoice();
     st.threadId = id;
     if (st.open && st.unread && st.unreadThread === id) setUnread(false);   // the dot's chat is on screen now
+    // #943: the engine this tab last knew. activeEngine, not thread.engine: a chat begun in this tab was loaded from
+    // the create answer, whose engine is null until a reload.
+    const wasEngine = !switched && st.model ? activeEngine() : null;
     st.model = createThreadModel({ threadId: id });
     st.model.load(snap);
     if (switched) { st.hist = { idx: -1, draft: '' }; st.suggestDismissed = null; }
@@ -6889,7 +7108,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     setContexts(snap.thread && snap.thread.contexts);
     // The picker follows the chat — on a SWITCH only: a resync of the same thread
     // would otherwise clobber a pick the user just made (its PATCH may not have landed).
-    if (switched) applyThreadPick(snap.thread);
+    // #943: and on a resync that finds the chat on another engine (moved in another tab while this one was offline):
+    // the old pick would only be refused.
+    const nowEngine = snap.thread && snap.thread.engine;
+    if (switched || (wasEngine && nowEngine && nowEngine !== wasEngine)) applyThreadPick(snap.thread);
     if (switched) st.mcp.off = mcpOffOf(snap.thread && snap.thread.mcpOff);   // §9.4: the chat's own choices
     scheduleMcpRefresh();
     renderTranscript();
@@ -7024,6 +7246,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     }
     else if (frame.type === 'ask-message' && frame.message && typeof frame.message.text === 'string'
       && /is waiting for your answer/.test(frame.message.text)) announce('run needs an answer');
+    if (frame.type === 'ask-engine') applyEnginePick(frame);   // #943
   }
 
   // Settings → "Delete all chat history" broadcast (seq-less, threadId-less): every

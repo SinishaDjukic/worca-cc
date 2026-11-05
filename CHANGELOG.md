@@ -2,6 +2,35 @@
 
 ## Unreleased
 
+### Independent review gates, engine-first (#990)
+
+- Engine role-review step, model per role, Shaper plan review moved onto it: Both cycle-1 blockers are fixed and tested.
+- No silent fallbacks, picks per role in the Shaper card, diversity default: The cycle 1 major issue is fixed.
+- Finding dispositions and structured review counts: The diff implements the plan's contracts and invariants.
+- Code role reviews on Shaper's review node, by configuration: The cycle-2 critical is fixed.
+- plan_concern pauses at the plan approval gate: The cycle-1 major is fixed.
+- Review-quality API from structured counts: The diff implements the plan as specified: a pure counts-only aggregation module, a COALESCE-kept pipelines.review_stats column with no version bump, the reviewQuality reader and the guarded route, the parity row, the docs, and a real mock-run seeded-defect test.
+- Cleanup: drop dead paths, keep old-data readers: The diff implements D1, D3-D8 exactly as planned and keeps every old-data reader (K1-K9).
+
+### One Node: 24 for the image, CI and releases
+
+- The Docker image moves from Node 22 to Node 24 (`node:24-bookworm-slim`). `.nvmrc` names Node 24, and every CI job, the release build and the image follow it; CI's fast tests also run the exact floor (22.19.0) and the newest LTS (26). The supported range for an npm install is unchanged: Node 22.19.0 or newer.
+
+### Node 22.19 or newer
+
+- Worca now needs Node 22.19.0 or newer (was 22.13.0): undici 8, which routes fetch() through `HTTP(S)_PROXY`, needs it. On an older Node the CLI says so and exits; `nvm use` picks up the bundled `.nvmrc`.
+
+### "Push as me" covers clones and fetches too
+
+- With `WORCA_GH_AS_PERSON`, worca's GitHub reads (a clone, a fetch, a pull request's status) also use the acting person's own GitHub when they connected it on the key page, so a person can clone and open pull requests on what their own account reaches (pull request status shown to everyone still needs the deployment's credential), even when the deployment has no GitHub credential. Without a connected GitHub (or with no one behind the call) reads use the deployment's credential, also under `required`, which only refuses writes. Their token is kept in memory for up to a minute for reads. Only reads on a project for that person opt in (clone, fetch, finding their own pull request when they open one); pull request status, checks and chips, the watcher, automations, plugin and skill installs, the git-free API and metrics keep the deployment's credential. A repository cloned with a person's token is visible to everyone on that worca, and the clone card and key page say so.
+- Settings › **My credentials** (was My model credentials) lists model keys and, with "push as me" on, your GitHub account in its own group with what connecting does; GitHub makes Manage keys the primary action only under `required`. The key page's hint sits on its own line above the button.
+- The clone card, Ask Worca's hosting rules (`githubAsPerson=` on the deployment line) and the key page's GitHub row say so, and the key page names the permissions a token needs.
+
+### Credential broker: "Push as me" with a pasted token, no GitHub App needed
+
+- In multi mode the broker's GitHub row is always on the key page. Without `WORCA_BROKER_GITHUB_CLIENT_ID` it is paste-only: each person pastes a fine-grained token (checked with GitHub, kept sealed) and Worca's pushes and pull requests with `WORCA_GH_AS_PERSON` go out as them. The client ID now only adds "Sign in with GitHub" (and, with the secret, the renewal of GitHub App user tokens). A sign-in's token due for renewal on a broker without a client ID counts as expired.
+- Worca warns at start about `WORCA_GH_AS_PERSON` only when the broker has no GitHub slot at all (single mode without a client ID), no longer for a multi-mode broker without one.
+
 ### Security: worca's trust boundaries
 
 - Worca's own git calls in a project or run checkout never run a hook or config command an agent planted in the shared `.git`, including a filter behind a conditional include on `git worktree add` (runs, terminal branch folders, team metrics, policy and memory). Model-chosen code in the chat (`test_script` with a draft, a `command`/`code` param, or a built-in or plugin script) runs only behind an approval card that shows every value it runs. Under agent isolation, every caller on the box (all of 127.0.0.0/8 included) needs the instance token. `/answer`, `/approve`, `/retry`, `/abort` and `/cancel` follow the `/direct` rule in group chats. The credential broker gives the body budget back at a deadline and books paused readers, large JSON answers and every stream flag. Artifact routes read the file the link check passed. A relayed chat's MCP config is readable only by that person's agent user.

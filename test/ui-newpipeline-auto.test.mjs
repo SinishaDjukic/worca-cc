@@ -4,16 +4,15 @@
 // suite), with a /api/config arm (that suite has none), a PATCH recorder and a run-body recorder.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
 
-const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 
 // jsdom windows are heavy (full DOM + timers). Close each after its test so the
@@ -23,7 +22,7 @@ afterEach(() => { for (const w of wins.splice(0)) { try { w.close(); } catch { /
 
 const WORKFLOWS = [{ id: 'wf_default', name: 'Default' }, { id: 'wf_a', name: 'A', version: 2 }];
 async function bootWith(configExtra = {}, { url = 'http://localhost:4317/', workflows = WORKFLOWS } = {}) {
-  const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url }));
+  const dom = trackDom(new JSDOM(readIndexHtml(), { url }));
   const { window } = dom;
   wins.push(window);
   window.Element.prototype.scrollIntoView = function () {};

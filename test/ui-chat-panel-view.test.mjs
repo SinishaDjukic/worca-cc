@@ -4,11 +4,9 @@
 // (U8); the style.css section sizes, sheets, pins, keeps the bar on one row and draws no edge lines.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import { bootChat, liveRun, hello, openPanel, panelOf, screenOf, click, ROW } from './helpers/chat-panel-boot.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
-const cssPath = fileURLToPath(new URL('../ui/public/style.css', import.meta.url));
 
 test('the facts row sits under the Details header; the glance stays hidden', async () => {
   const ctx = await bootChat();
@@ -69,7 +67,7 @@ test('U8: the only graph wells (dotted) are in the Workflow tab or the hidden gl
 });
 
 test('style.css "Chat P4: run panel": width, 900px sheet, pinned tabs, scrolling details, no dots, no edge lines, reduced motion', () => {
-  const css = readFileSync(cssPath, 'utf8');
+  const css = readStyleCss();
   const banner = '/* ===== Chat P4: run panel ===== */';
   const start = css.indexOf(banner);
   assert.ok(start >= 0, 'the P4 section exists');
@@ -219,7 +217,7 @@ test('below 900px the panel is a full-screen sheet: the page behind it is inert 
 });
 
 test('style.css "Chat P4: run panel": the Logs filter row wraps in the panel and its selects keep their width', () => {
-  const css = readFileSync(cssPath, 'utf8');
+  const css = readStyleCss();
   const start = css.indexOf('/* ===== Chat P4: run panel ===== */');
   assert.ok(start >= 0, 'the P4 section exists');
   const sec = css.slice(start);

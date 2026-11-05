@@ -77,6 +77,13 @@ export async function decideQuestion(q, cfg, { analyze } = {}) {
       : `the review picked "${String(a.choice).slice(0, 80)}", which is not an option; took the best-scored option. ${String(a.rationale || '')}`.trim();
     return { ...base, choice: pick, strategy: 'analysis', confidence: conf, scores, rationale, reversible: a.reversible === true, flagged: !valid };
   }
+  // Both sources agree (the analysis picked the option the clarifier recommended): take it, flagged, even under the
+  // confidence bar. A low confidence alone is no reason to swap an agreed answer for a different one.
+  if (valid && pick === q.recommended) {
+    return { ...base, choice: pick, strategy: 'analysis', confidence: conf, scores,
+      rationale: `the agent was not sure enough, but it picked the option the clarifier recommended. ${String(a.rationale || '')}`.trim(),
+      reversible: a.reversible === true, flagged: true };
+  }
   // User decision "never park": continue with the most reversible option, flagged.
   const rev = mostReversible(opts, scores, totals);
   return { ...base, choice: rev, strategy: 'analysis', confidence: conf, scores,
@@ -92,6 +99,7 @@ export function gateRule({ issues = [], extraUsed = 0 }, cfg) {
   const counts = SEVERITIES.filter((s) => BLOCKING.has(s)).map((s) => [sev.filter((x) => x === s).length, s]).filter(([c]) => c);
   const left = `${counts.map(([c, s]) => `${c} ${s}`).join(' and ')} issue${n === 1 ? '' : 's'} left`;
   if (extraUsed < cfg.maxExtraCycles) return { decision: 'another', flagged: false, reason: `${left}, one more fix round` };
+  if (!cfg.maxExtraCycles) return { decision: 'continue', flagged: true, reason: `${left}; Away mode adds no extra fix rounds, continuing` };
   return { decision: 'continue', flagged: true, reason: `${left} but the extra fix rounds are used up; continuing` };
 }
 

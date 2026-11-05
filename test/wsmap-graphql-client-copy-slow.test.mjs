@@ -3,6 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import detector from '../src/core/workspace-map/detectors/api-graphql.mjs';
+import { loadBudget } from './helpers/load-budget.mjs';
 
 const SCHEMA = 'type Query {\n  invoice(id: ID!): Invoice\n  invoices: [Invoice]\n}\ntype Mutation {\n  pay(id: ID!): Invoice\n}\ntype Invoice { id: ID! }\n';
 const ROOTS = ['Mutation.pay', 'Query.invoice', 'Query.invoices'];
@@ -26,7 +27,7 @@ test('the server-evidence scans stay linear on 1 MiB adversarial code and paths 
     detector.detect({ rel, text }, ctx);
     if (detector.finish) detector.finish(ctx);
     const ms = performance.now() - t0;
-    assert.ok(ms < 2000, `${rel} ${JSON.stringify(text.slice(4200, 4230))}: ${ms.toFixed(0)} ms`);
+    assert.ok(ms < loadBudget(2000), `${rel} ${JSON.stringify(text.slice(4200, 4230))}: ${ms.toFixed(0)} ms`);
   }
   // and the listing's server files, over paths of near misses (a schema to decide makes finish() read them)
   const files = [`${'app/GraphQL/'.repeat(87000)}x.rb`, `${'app/graphql/'.repeat(87000)}schema.r`, `${'x.gqlgen.y/'.repeat(95000)}`, 'schema.graphql'];
@@ -78,6 +79,6 @@ test('the other-language server-evidence scan stays linear on 1 MiB adversarial 
     detector.detect({ rel, text }, ctx);
     detector.finish(ctx);
     const ms = performance.now() - t0;
-    assert.ok(ms < 2000, `${rel}: ${ms.toFixed(0)} ms`);
+    assert.ok(ms < loadBudget(2000), `${rel}: ${ms.toFixed(0)} ms`);
   }
 });

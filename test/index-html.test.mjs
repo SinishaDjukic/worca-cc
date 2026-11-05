@@ -2,11 +2,11 @@
 // lists what is on, #flag-gates hides what is off, and omitting flags is today's output byte for byte.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { checkRows } from './helpers/rows.mjs';
 import { renderIndexHtml, INDEX_THEME_ANCHOR, FLAG_GATES_ANCHOR } from '../src/core/index-html.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
-const shell = readFileSync(new URL('../ui/public/index.html', import.meta.url), 'utf8');
+const shell = readIndexHtml();
 const mini = `<!DOCTYPE html>\n${INDEX_THEME_ANCHOR}<head>${FLAG_GATES_ANCHOR}</head><body>x</body></html>`;
 
 test('renderIndexHtml with flags', async () => {
@@ -16,14 +16,14 @@ test('renderIndexHtml with flags', async () => {
       assert.ok(shell.indexOf(FLAG_GATES_ANCHOR) > shell.indexOf('href="/style.css"'));
     } },
     { name: 'on: data-flags lists it, no gate rule for it', run: () => {
-      const out = renderIndexHtml(mini, 'dark', 'simple', { flagsDemo: true, commandSummaries: true, runLabels: true, smartRunNaming: true, requirements: true, runTelemetry: true });
-      assert.match(out, /<html lang="en" data-theme="dark" data-level="simple" data-flags="flagsDemo commandSummaries runLabels smartRunNaming requirements runTelemetry">/);
+      const out = renderIndexHtml(mini, 'dark', 'simple', { flagsDemo: true, commandSummaries: true, runLabels: true, smartRunNaming: true, requirements: true, runTelemetry: true, gitAutomations: true, sessionGroups: true, ticketUpdates: true });
+      assert.match(out, /<html lang="en" data-theme="dark" data-level="simple" data-flags="flagsDemo commandSummaries runLabels smartRunNaming requirements runTelemetry gitAutomations sessionGroups ticketUpdates">/);
       assert.match(out, /<style id="flag-gates"><\/style>/);
     } },
     { name: 'off: empty data-flags and one rule per off flag', run: () => {
-      const out = renderIndexHtml(mini, 'light', undefined, { flagsDemo: false, commandSummaries: false, runLabels: false, smartRunNaming: false, requirements: false, runTelemetry: false });
+      const out = renderIndexHtml(mini, 'light', undefined, { flagsDemo: false, commandSummaries: false, runLabels: false, smartRunNaming: false, requirements: false, runTelemetry: false, gitAutomations: false, sessionGroups: false, ticketUpdates: false });
       assert.match(out, /<html lang="en" data-theme="light" data-flags="">/);
-      assert.match(out, /<style id="flag-gates">\[data-flag~="flagsDemo"\]\{display:none!important\}\n\[data-flag~="commandSummaries"\]\{display:none!important\}\n\[data-flag~="runLabels"\]\{display:none!important\}\n\[data-flag~="smartRunNaming"\]\{display:none!important\}\n\[data-flag~="requirements"\]\{display:none!important\}\n\[data-flag~="runTelemetry"\]\{display:none!important\}<\/style>/);
+      assert.match(out, /<style id="flag-gates">\[data-flag~="flagsDemo"\]\{display:none!important\}\n\[data-flag~="commandSummaries"\]\{display:none!important\}\n\[data-flag~="runLabels"\]\{display:none!important\}\n\[data-flag~="smartRunNaming"\]\{display:none!important\}\n\[data-flag~="requirements"\]\{display:none!important\}\n\[data-flag~="runTelemetry"\]\{display:none!important\}\n\[data-flag~="gitAutomations"\]\{display:none!important\}\n\[data-flag~="sessionGroups"\]\{display:none!important\}\n\[data-flag~="ticketUpdates"\]\{display:none!important\}<\/style>/);
     } },
     { name: 'flags omitted ⇒ byte-for-byte what it rendered before', run: () => {
       assert.equal(renderIndexHtml(mini, 'system'), mini);

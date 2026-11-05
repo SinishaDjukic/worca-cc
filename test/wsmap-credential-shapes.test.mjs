@@ -26,6 +26,7 @@ import { finalizeWorkspaceScan, WORKSPACE_MAP_FILE } from '../src/core/workspace
 import httpClients from '../src/core/workspace-map/detectors/http-clients.mjs';
 // Read through the namespace: before cutQuery exists the file still loads and each case fails on its own.
 import * as keys from '../src/shared/workspace-map/keys.mjs';
+import { loadBudget } from './helpers/load-budget.mjs';
 
 const { normKey } = keys;
 
@@ -107,7 +108,7 @@ test('the new rules stay linear on 1 MiB adversarial input (a quadratic JWT rule
     redactSecrets(s);
     redactLines([s]);
     const ms = performance.now() - t0;
-    assert.ok(ms < 3000, `${JSON.stringify(s.slice(0, 16))}… (${s.length} chars) took ${Math.round(ms)} ms`);
+    assert.ok(ms < loadBudget(3000), `${JSON.stringify(s.slice(0, 16))}… (${s.length} chars) took ${Math.round(ms)} ms`);
   }
 });
 

@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 import { makePanel } from './helpers/ask-panel-harness.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { skillLayerText } from '../src/core/skills-registry/texts.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const TID = 'ask_00000001';
 const copy = (setId, setName, name, serverId) => ({ name, copy: name, setId, setName, serverId, projects: [], description: '', renamedFrom: null, provisional: false });
@@ -236,6 +237,6 @@ test('the activity label names the skill; the level-1 small line has its own sty
   assert.equal(labelForTool('Skill', { skill: 'billing:deploy-checklist' }), 'Using billing:deploy-checklist');
   assert.equal(labelForTool('Skill', {}), 'Using a skill');
   const { readFileSync } = await import('node:fs');
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   assert.match(css, /\n\.ask-pop-mcp \.ask-model-name small\{display:block;font-size:var\(--fs-caption\);font-weight:400;color:var\(--ink-3\);\}\n/);
 });

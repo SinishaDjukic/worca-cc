@@ -89,6 +89,19 @@ export function watchRun(runId) {
   return r ? { runId: r.run_id, prUrl: r.pr_url, pipelineId: r.pipeline_id, createdAt: r.created_at } : null;
 }
 
+/** Every Watch PR fix run's pipeline → the PR it fixes (empty Map on any error). */
+export function watchFixRuns() {
+  try {
+    return new Map(getDb().prepare('SELECT pipeline_id, pr_url FROM pr_watch_runs WHERE pipeline_id IS NOT NULL').all().map((r) => [r.pipeline_id, r.pr_url]));
+  } catch { return new Map(); }
+}
+
+/** The PR a pipeline's Watch PR fix run fixes, or null when it is not a fix run. */
+export function watchFixRunOf(pipelineId) {
+  if (!pipelineId) return null;
+  try { return getDb().prepare('SELECT pr_url FROM pr_watch_runs WHERE pipeline_id=?').get(pipelineId)?.pr_url ?? null; } catch { return null; }
+}
+
 export function updateWatch(prUrl, patch) {
   const allowed = { enabled: 'enabled', status: 'status', reason: 'reason', activeRunId: 'active_run_id',
     activePipelineId: 'active_pipeline_id', pending: 'pending', handled: 'handled', retryState: 'retry_state' };

@@ -1,0 +1,206 @@
+
+/* Workspaces list: the Projects list's shape (one card headed "Workspaces · N", a row per
+   workspace that IS the control), on its own ids. The page rides the pd- classes below. */
+#ws-list .saved-card{padding:0;overflow:hidden;}
+#ws-list .ws-item{border-bottom:1px solid var(--line);}
+#ws-list .ws-item:last-child{border-bottom:none;}
+#ws-list .ws-row{display:flex;align-items:center;gap:15px;padding:16px 20px;cursor:pointer;transition:background .12s;}
+#ws-list .ws-row:hover{background:var(--hover);}
+#ws-list .ws-row:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+#ws-list .ws-main{flex:1 1 auto;min-width:0;}
+#ws-list .ws-name{font-weight:600;font-size:var(--fs-body);letter-spacing:-.01em;color:var(--ink);}
+#ws-list .ws-name .ws-stale{margin-left:8px;vertical-align:middle;}
+/* Design board 1: collapsed rollup — a sentence, an icon strip, Sync all, and a table on demand. */
+#ws-list .ws-row{align-items:center;padding:18px 20px;}
+#ws-list .ws-main{display:flex;flex-direction:column;gap:6px;}
+.ws-head-line{display:flex;align-items:center;flex-wrap:wrap;gap:4px 14px;}
+#ws-list .ws-head-line .ws-name{font-size:15px;}
+.ws-rollup{display:inline-flex;align-items:center;gap:8px;font-size:13px;font-weight:500;}
+.ws-rollup-dot{width:8px;height:8px;border-radius:50%;background:currentColor;flex-shrink:0;}
+.ws-rollup.tone-ok{color:var(--green-ink);}
+.ws-rollup.tone-blue{color:var(--blue-ink-strong);}
+.ws-rollup.tone-amber{color:var(--amber-ink);}
+.ws-rollup.tone-muted{color:var(--ink-2);}
+.ws-strip{display:flex;align-items:center;flex-wrap:wrap;gap:4px 16px;min-width:0;font-size:12px;color:var(--ink-2);}
+.ws-strip-members{display:inline-flex;align-items:center;flex-wrap:wrap;gap:4px 16px;}
+.ws-strip-members:empty,.ws-strip-members:empty + .ws-strip-sep{display:none;}
+.ws-strip-member{display:inline-flex;align-items:center;gap:5px;}
+.ws-strip-name{color:var(--ink-2);}
+.ws-strip-sep{color:var(--ink-3);}
+#ws-list .ws-strip .ws-projects{display:inline;margin-top:0;font-size:12px;color:var(--ink-2);}
+.ws-icon{display:inline-flex;flex-shrink:0;}
+.ws-icon:empty{display:none;}
+.tone-ok > .ws-icon,.ws-strip-member.tone-ok .ws-icon,.ws-trow.tone-ok .ws-icon-cell > .ws-icon{color:var(--green-ink);}
+.tone-blue > .ws-icon,.ws-trow.tone-blue .ws-icon-cell > .ws-icon{color:var(--blue-ink-strong);}
+.tone-amber > .ws-icon,.ws-trow.tone-amber .ws-icon-cell > .ws-icon{color:var(--amber-ink);}
+.tone-red > .ws-icon,.ws-trow.tone-red .ws-icon-cell > .ws-icon{color:var(--red-ink);}
+.tone-ink > .ws-icon,.tone-muted > .ws-icon,.ws-trow:is(.tone-ink,.tone-muted) .ws-icon-cell > .ws-icon{color:var(--ink-2);}
+.ws-actions{display:flex;align-items:center;gap:10px;flex-shrink:0;}
+.ws-actions .ws-toggle{display:inline-flex;align-items:center;gap:6px;}
+.ws-actions .ws-toggle .ws-icon{display:inline-flex;}
+.ws-sync-all[hidden],.ws-table[hidden]{display:none;}
+.ws-table{margin:0 20px 18px;}
+.ws-members .ws-icon-cell{width:18px;}
+.ws-members .ws-tname{font-weight:500;color:var(--ink);overflow-wrap:anywhere;}
+.ws-tbranch{display:flex;align-items:center;gap:7px;min-width:0;color:var(--ink-2);}
+.ws-members .ws-tbranch{font-family:var(--mono);}
+.ws-tbranch > span:last-child{overflow-wrap:anywhere;}
+@container dtable (max-width:560px){.ws-members td.ws-icon-cell{display:none}}
+.ws-tstatus{display:flex;flex-direction:column;gap:1px;min-width:0;}
+.ws-tlabel{font-size:13px;font-weight:500;color:var(--ink-2);}
+.tone-ink .ws-tstatus .ws-tlabel{color:var(--ink);}
+.tone-blue .ws-tstatus .ws-tlabel{color:var(--blue-ink-strong);font-weight:600;}
+.tone-amber .ws-tstatus .ws-tlabel{color:var(--amber-ink);font-weight:600;}
+.ws-thint{font-size:12px;color:var(--ink-2);}
+.ws-tact{display:flex;justify-content:flex-end;}
+@media (max-width:820px){
+  #ws-list .ws-row{flex-wrap:wrap;}
+  .ws-actions{width:100%;justify-content:flex-end;}
+  .ws-table{margin:0 12px 14px;}
+}
+.ws-projects{display:block;margin-top:4px;font-size:12px;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.ws-projects .mono{font-size:12px;color:var(--ink-2);}
+.ws-projects .tm-home-mark{margin-right:5px;}
+.ws-sum-warn{color:var(--amber-ink);} .ws-sum-bad{color:var(--red-ink);}
+.tm-icon{width:14px;height:14px;color:var(--ink-2);flex:0 0 auto;}
+.ws-stale[hidden]{display:none;}
+/* Workspace page: the summary line under the title, the members list, the description panel. */
+.wd .pd-meta .ws-projects{margin-top:0;white-space:normal;font-size:12px;color:var(--ink-2);}
+/* The workspace header is two rows, not three: summary and actions share the second. */
+.wd-row2{display:flex;align-items:center;flex-wrap:wrap;gap:8px 16px;margin-top:8px;}
+.wd-row2 .pd-meta{margin-top:0;flex:1 1 320px;}
+.wd-row2 .pd-actions{margin-top:0;margin-left:auto;flex:0 0 auto;}
+.wd-row2 .pd-spacer{display:none;}
+.wd .pd-row1 .ws-stale{flex:0 0 auto;}
+.wd-member-list{display:flex;flex-direction:column;}
+.wd-member{display:flex;align-items:center;flex-wrap:wrap;gap:4px 14px;padding:11px 0;border-bottom:1px solid var(--line);
+  background:none;border-left:0;border-right:0;border-top:0;text-align:left;font:inherit;color:inherit;width:100%;}
+.wd-member-item{display:flex;align-items:center;gap:10px;border-bottom:1px solid var(--line);}
+.wd-member-item:last-child{border-bottom:0;}
+.wd-member-item .wd-member{border-bottom:0;flex:1 1 auto;min-width:0;width:auto;}
+.wd-member-remove{flex:0 0 auto;}
+.wd-members .card-head .wd-members-add{margin-left:auto;}
+/* The automatic re-scan after a member change: the wizard's loader (spinner, status, phase
+   track), compact and left-aligned inside the Projects card. */
+.wd-rescan{display:flex;align-items:flex-start;gap:14px;margin-top:14px;padding:14px 16px;border:1px solid var(--line);border-radius:var(--r-ctrl);background:var(--field);}
+.wd-rescan-lead{flex:0 0 auto;padding-top:1px;}
+.wd-rescan-spinner{width:22px;height:22px;border-width:2.5px;}
+.wd-rescan-mark{display:flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:var(--r-sm);font-size:12px;font-weight:700;}
+.wd-rescan.is-done .wd-rescan-mark,.wd-rescan.is-pruned .wd-rescan-mark{color:var(--green-ink);background:var(--green-bg);}
+.wd-rescan.is-failed .wd-rescan-mark{color:var(--red-ink);background:var(--red-bg);}
+.wd-rescan-body{display:flex;flex-direction:column;gap:4px;min-width:0;flex:1 1 auto;}
+.wd-rescan .status-label{font-size:13px;}
+.wd-rescan .status-sub{overflow-wrap:anywhere;}
+.wd-rescan.is-stopped .wd-rescan-mark,.wd-rescan.is-paused .wd-rescan-mark,.wd-rescan.is-skipped .wd-rescan-mark{color:var(--amber-ink);background:var(--amber-bg);}
+/* The scan run's own stages, as pills: done ones muted-strong, the running one inverted. */
+.wd-rescan-phases{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:6px 0 2px;}
+.wd-rescan-phases [data-phase]{font-size:11px;font-weight:700;color:var(--ink-3);background:var(--panel);border:1px solid var(--line);border-radius:var(--r-sm);padding:4px 10px;}
+.wd-rescan-phases [data-phase].done{color:var(--green-ink);background:var(--green-bg);border-color:transparent;}
+/* icon: check */
+.wd-rescan-phases [data-phase].done::before{content:"";display:inline-block;width:10px;height:10px;margin-right:3px;background:currentColor;mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12.5l4.5 4.5L19 7.5'/%3E%3C/svg%3E") center/10px no-repeat;}
+.wd-rescan-phases [data-phase].active{color:var(--on-ink);background:var(--ink);border-color:var(--ink);}
+.wd-rescan-open{font-size:12px;width:fit-content;}
+.wd-rescan-hint{margin-top:2px;}
+.wd-add-list{display:flex;flex-direction:column;gap:2px;max-height:50vh;overflow:auto;}
+.wd-add-row{display:flex;align-items:center;flex-wrap:wrap;gap:4px 10px;padding:8px 0;border-bottom:1px solid var(--line);cursor:pointer;}
+.wd-add-row:last-child{border-bottom:0;}
+.wd-add-row .proj-path{margin-top:0;flex:1 1 100%;min-width:0;}
+.wd-member-name{font-weight:600;font-size:13px;color:var(--ink);}
+.wd-member .proj-path{margin-top:0;flex:1 1 auto;min-width:0;}
+.wd-member-chev{display:flex;align-items:center;color:var(--ink-3);margin-left:auto;}
+button.wd-member{cursor:pointer;}
+button.wd-member:hover .wd-member-name{text-decoration:underline;}
+button.wd-member:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+.wd-desc .card-head .ws-edit{margin-left:auto;}
+.ws-desc .ws-desc-view{margin-top:0;}
+/* The wizard's project rows show each path as a sub-line (new on this branch): --ink-2 clears
+   4.5:1 on white, the generic .opt-sub --ink-3 does not. */
+.wiz-proj.opt-row .opt-sub{color:var(--ink-2);}   /* three classes: outranks the generic .opt-row .opt-sub declared later */
+.ws-desc-view{margin-top:8px;}
+.ws-desc-edit[hidden]{display:none;}
+.ws-desc-edit .md-tabs{margin-bottom:8px;}
+.ws-desc-preview[hidden]{display:none;}
+/* Workspace page › Map tab (workspace-map-view.mjs): coverage strip, layered graph, edge table,
+   add form. One colour family per edge kind, set as --wm-k on the element and read by the line,
+   the arrow, the swatch. */
+.wm{display:flex;flex-direction:column;gap:18px;}
+.wm-top{display:flex;align-items:center;flex-wrap:wrap;gap:8px 16px;}
+.wm-meta{font-size:12px;color:var(--ink-2);}
+.wm-top .wm-regen{margin-left:auto;}
+.wm-empty{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;}
+.wm .card-head{flex-wrap:wrap;gap:8px 12px;margin-bottom:12px;}
+.wm .card-head b{font-size:13px;}
+.wm-k-http{--wm-k:var(--blue);}
+.wm-k-grpc{--wm-k:var(--indigo);}
+.wm-k-graphql{--wm-k:var(--pink);}
+.wm-k-topic{--wm-k:var(--amber);}
+.wm-k-pkg{--wm-k:var(--slate);}
+.wm-k-db{--wm-k:var(--cocoa);}
+.wm-k-service{--wm-k:var(--teal);}
+.wm-k-other{--wm-k:var(--slate);}
+.wm-coverage{display:flex;flex-wrap:wrap;gap:8px;}
+.wm-chip{display:inline-flex;align-items:center;gap:6px;font:inherit;font-size:12px;color:var(--ink);background:var(--field);
+  border:1.5px solid transparent;border-radius:var(--r-xs);padding:5px 11px;cursor:pointer;}
+.wm-chip:hover{border-color:var(--hover-outline);}
+.wm-chip.is-active{border-color:var(--ink);background:var(--surface);}
+.wm-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.wm-chip-name{font-weight:600;}
+.wm-dot{width:8px;height:8px;border-radius:50%;flex:0 0 auto;background:var(--seq);}
+.wm-chip.lvl-rich .wm-dot{background:var(--green);}
+.wm-chip.lvl-partial .wm-dot{background:var(--amber);}
+.wm-chip.lvl-none .wm-dot{background:var(--red);}
+.wm-tag{font-size:11px;color:var(--ink-2);}
+.wm-tag.is-bad{color:var(--red-ink);}
+.wm-tag.is-off{color:var(--ink-3);}
+.wm-legend{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12px;color:var(--ink-2);}
+.wm-legend-item,.wm-kind{display:inline-flex;align-items:center;gap:6px;white-space:nowrap;}
+.wm-swatch{display:inline-block;width:14px;height:3px;border-radius:var(--r-xs);background:var(--wm-k);}
+/* The graph keeps its drawn size and scrolls inside its card on a narrow screen. */
+.wm-graph-scroll{overflow-x:auto;overflow-y:hidden;max-width:100%;}
+.wm-graph{display:block;max-width:none;}
+.wm-node{cursor:pointer;}
+.wm-node rect{fill:var(--surface);stroke:var(--line-2);stroke-width:1.5;}
+.wm-node.lvl-partial rect{stroke:var(--amber);}
+.wm-node.lvl-none rect{stroke:var(--red);stroke-dasharray:4 3;}
+.wm-node.is-selected rect{stroke:var(--ink);stroke-width:2;}
+.wm-node text{fill:var(--ink);font:600 12px var(--sans);pointer-events:none;}
+.wm-pair{cursor:pointer;outline:none;}
+.wm-hit{fill:none;stroke:transparent;stroke-width:14;pointer-events:stroke;}
+.wm-line{fill:none;stroke:var(--wm-k);stroke-width:1.8;pointer-events:none;}
+.wm-pair.is-dashed .wm-line{stroke-dasharray:6 4;}
+.wm-pair.is-confirmed .wm-line{stroke-width:3.2;}
+.wm-pair:hover .wm-hit,.wm-pair:focus-visible .wm-hit{stroke:var(--selection);}
+.wm-graph.has-focus .wm-pair.is-dim{opacity:.25;}
+.wm-arrow{fill:var(--wm-k);}
+.wm-filters{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:12px;}
+.wm-filters .select-wrap{flex:0 1 180px;min-width:140px;}
+.wm-add-form .select-wrap{flex:0 1 170px;min-width:130px;}
+.wm-filters .select,.wm-add-form .select{padding:0 34px 0 12px;font-size:12px;}
+.wm-filters .select-wrap::after,.wm-add-form .select-wrap::after{right:12px;}
+.wm-table-scroll{overflow-x:auto;}
+.wm-table{width:100%;border-collapse:collapse;font-size:12px;}
+.wm-table th{text-align:left;font-weight:600;font-size:var(--fs-meta);color:var(--ink-2);
+  padding:6px 10px 6px 0;border-bottom:1px solid var(--line);white-space:nowrap;}
+.wm-table td{padding:8px 10px 8px 0;border-bottom:1px solid var(--line);vertical-align:top;color:var(--ink);}
+.wm-table tr:last-child td{border-bottom:0;}
+.wm-row.is-rejected td{color:var(--ink-3);}
+.wm-row.is-rejected .badge,.wm-row.is-rejected .wm-kind{opacity:.6;}
+/* Collapsed borders: a dashed top would lose to the solid bottom of the row above (CSS 2.1 §17.6.2.1),
+   so a missing row dashes its bottom border, on the last row too: this selector (0,3,1) outranks
+   .wm-table tr:last-child td{border-bottom:0} (0,2,2). Longhands: jsdom drops a shorthand with var(). */
+.wm-table .wm-row.is-missing td{border-bottom-width:1px;border-bottom-style:dashed;border-bottom-color:var(--line-2);font-style:italic;}
+/* A stale review (a rejection whose edge a re-scan no longer finds): greyed like a rejected row, dashed like a missing one. */
+.wm-table .wm-row.is-stale td{color:var(--ink-3);border-bottom-width:1px;border-bottom-style:dashed;border-bottom-color:var(--line-2);font-style:italic;}
+.wm-disp .mono{word-break:break-all;}
+.wm-sub,.wm-ctx{display:block;color:var(--ink-3);font-size:11px;margin-top:2px;}
+.wm-ev + .wm-ev{margin-top:6px;}
+.wm-ev-side{display:inline-block;min-width:34px;font-size:11px;color:var(--ink-3);}
+.wm-ev-loc{font-size:11px;margin-right:8px;color:var(--ink-2);word-break:break-all;}
+.wm-actions{white-space:nowrap;}
+.wm-actions .btn + .btn{margin-left:6px;}
+.wm-none td,.wm-more td{color:var(--ink-3);}
+.wm-add-box{margin-top:16px;padding-top:14px;border-top:1px solid var(--line);}
+.wm-add-box > b{display:block;font-size:13px;margin-bottom:8px;}
+.wm-add-form{display:flex;flex-wrap:wrap;align-items:center;gap:8px;}
+.wm-add-form .input{flex:1 1 160px;width:auto;padding:0 12px;font-size:12px;}
+.wm-add-msg[hidden]{display:none;}

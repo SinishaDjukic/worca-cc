@@ -22,7 +22,8 @@
 import { FLOW_KINDS, KEYED_KINDS, DEFAULT_MAX_CYCLES, AWAIT_PORT } from '../../shared/graph/constants.mjs';
 import { classifyLoops } from '../../shared/graph/loops.mjs';
 import { firedOutputs, resolveOrOutType } from '../../shared/graph/ports.mjs';
-import { blockingIssues, hasBlocking } from '../../shared/graph/verdict.mjs';
+import { blockingIssues, hasBlocking, normalizeSeverity } from '../../shared/graph/verdict.mjs';
+import { roleReviewOf } from '../../shared/graph/role-review-step.mjs';
 
 /** Execution statuses that need no re-invocation on restore. */
 const TERMINAL = new Set(['done', 'error', 'skipped']);
@@ -120,6 +121,10 @@ export function createScheduler(opts) {
     maxParallelScripts = defaultMaxParallelScripts(),
     log = () => {},
     approvalStops = false,
+    // 4.1: how long a failure or a stop waits for still-running executions to settle before the
+    // run resolves (the harness tears the worktree down right after). The spawn's SIGTERM→SIGKILL
+    // grace plus a margin; an execution that ignores its signal is abandoned after it.
+    settleGraceMs = 7000,
   } = opts || {};
 
   const nodes = Array.isArray(template?.nodes) ? template.nodes : [];
@@ -152,6 +157,9 @@ export function createScheduler(opts) {
   const ordinals = new Map();     // nodeId -> executions started
   const wireState = new Map();    // loop wireId -> { deliveries, allowance }
   const deadEnds = new Set();     // '<nodeId>.<portId>' outputs that fired with no wire
+  // E2: loops that were forced past their budget with blocking issues still open, by source node.
+  // A later clean verdict from the same node closes its entry. Rides the snapshot and getState.
+  const openIssues = new Map();
   const execs = new Map();        // executionId -> ledger entry
   const held = new Map();         // wireId -> { wireId, nodeId, executionId, token, issues, askId }
   const outstanding = new Set();  // wireIds with an un-withdrawn ask in flight
@@ -221,7 +229,7 @@ export function createScheduler(opts) {
   const portsOfNode = (node) => (typeof portsFn === 'function' ? portsFn(node) : null) || {};
   const isFlow = (node) => FLOW_KINDS.includes(node.kind);   // FLOW_KINDS is a frozen ARRAY (P1)
   /** Spec §3: a role-review node is composite on EVERY firing, the round-2 loop re-fire included. */
-  const isRoleReview = (node) => !isFlow(node) && node?.config?.roleReview === true;
+  const isRoleReview = (node) => !isFlow(node) && roleReviewOf(node?.config) !== null;
   const spentOf = (nodeId) => consumed.get(nodeId) || new Map();
 
   /** A port is a loop input when the classification says so OR its meta declares it.
@@ -622,6 +630,7 @@ export function createScheduler(opts) {
       ...(node.kind === 'end' ? { result: boundResult(entry) } : null),
       ...(res?.verdict ? { verdict: { hasBlocking: hasBlocking(res.verdict), ...(res.verdict.missing ? { missing: true } : {}) } } : null),
     });
+    if (res?.reviseApproval && rewindToApproval(node, res.reviseApproval, entry.executionId)) { snap(); wake(); return; }
     publish(node, entry, res);
     snap();
   }
@@ -676,6 +685,7 @@ export function createScheduler(opts) {
       return;                                 // zero outputs — the publish step fires no token
     }
     const verdict = res?.verdict ?? null;
+    if (verdict && !hasBlocking(verdict)) openIssues.delete(node.id);
     for (const port of firedOutputs(portsOfNode(node).outputs || [], verdict)) {
       const token = makeToken({
         type: outTypeOf(node, port),
@@ -773,8 +783,17 @@ export function createScheduler(opts) {
       holdNo: entry.holdNo,
     })).then(
       (answer) => resolveGate(entry.wireId, answer),
-      () => resolveGate(entry.wireId, 'continue'),
+      // Never a silent continue (2.1): a failed gate ask fails the run, as a failed approval ask does.
+      (err) => failGate(entry, err instanceof Error ? err : new Error(String(err))),
     );
+  }
+
+  function failGate(entry, err) {
+    if (settled || failure) return;
+    failure = err;
+    log(`${entry.nodeId}: gate ask ${entry.askId} failed: ${err.message}`);
+    controller.abort();
+    wake();
   }
 
   /** Past the allowance: HOLD the token and ask the human. "Open issues" = the
@@ -825,7 +844,11 @@ export function createScheduler(opts) {
     held.delete(wireId);
     syncGate();
     if (!entry) return;
-    const decision = answer === 'another' ? 'another' : 'continue';
+    if (answer !== 'another' && answer !== 'continue') {
+      failGate(entry, new Error(`unrecognised gate answer ${JSON.stringify(answer ?? null)} — expected "another" or "continue"`));
+      return;
+    }
+    const decision = answer;
     onEvent('gate', {
       wireId, nodeId: entry.nodeId, executionId: entry.executionId,
       issues: entry.issues, askId: entry.askId,
@@ -853,6 +876,13 @@ export function createScheduler(opts) {
   function forceClean(entry) {
     const node = nodeById.get(entry.nodeId);
     if (!node) return;
+    const issues = entry.issues || [];
+    openIssues.set(node.id, {
+      nodeId: node.id, wireId: entry.wireId, executionId: entry.executionId, count: issues.length,
+      critical: issues.filter((i) => normalizeSeverity(i?.severity) === 'critical').length,
+      major: issues.filter((i) => normalizeSeverity(i?.severity) === 'major').length,
+      titles: issues.map((i) => String(i?.title || '')).slice(0, 20),
+    });
     for (const port of (portsOfNode(node).outputs || []).filter((o) => o.when === 'clean')) {
       const latched = outputs.get(`${node.id}.${port.id}`);
       const payload = port.type === entry.token.type
@@ -890,6 +920,54 @@ export function createScheduler(opts) {
       if (rev) return { node: src.id, port: rev.id };
     }
     return null;
+  }
+
+  /** Drop a node's latched loop-input tokens and refill each loop wire's budget (R16; shared by both rewinds). */
+  function resetLoops(id) {
+    const n = nodeById.get(id);
+    for (const inp of (n && portsOfNode(n).inputs) || []) {
+      if (!isLoopPort(id, inp)) continue;
+      tokens.delete(`${id}.${inp.id}`);
+      const wireId = wiredIn.get(id)?.get(inp.id);
+      const st = wireId ? wireState.get(wireId) : null;
+      if (st) { st.deliveries = 0; st.allowance = initialAllowance(wireId); }
+    }
+  }
+
+  /** A new shaping round at an approval node: reset its loops (and its role node's), queue the feedback on the Planner. */
+  function reopenApproval(nodeId, reviseTo, path, sourceExecutionId) {
+    resetLoops(nodeId);
+    for (const wireId of wiredIn.get(nodeId)?.values() || []) {
+      const src = nodeById.get(wireById.get(wireId)?.from.node);
+      if (src && isRoleReview(src)) resetLoops(src.id);
+    }
+    tokens.set(`${reviseTo.node}.${reviseTo.port}`, makeToken({ type: 'md', path, sourceExecutionId }));
+  }
+
+  /** #990 s5: the approval node feeding `node` (its plan's source), if any. */
+  function approvalUpstreamOf(node) {
+    for (const inp of portsOfNode(node).inputs || []) {
+      if (inp.id === AWAIT_ID || isLoopPort(node.id, inp)) continue;
+      const w = wireById.get(wiredIn.get(node.id)?.get(inp.id));
+      const src = w ? nodeById.get(w.from.node) : null;
+      if (src && approveOf(src)) return src;
+    }
+    return null;
+  }
+
+  /** #990 s5: an accepted plan concern. Nothing is published; the node's own loops reset (no stale `fix`).
+   *  Known gap: loop budgets into a node upstream of `node` (wf_shape_ux's `n_or`) are not refilled. A concern is only
+   *  offered outside fix mode, before any review delivery of its round, so those budgets are still full. */
+  function rewindToApproval(node, req, executionId) {
+    const approver = approvalStops ? approvalUpstreamOf(node) : null;
+    const reviseTo = approver ? reviseTargetOf(approver) : null;
+    if (!reviseTo || typeof req?.path !== 'string') {
+      log(`${node.id}: reviseApproval has no approval stop upstream — published as usual`);
+      return false;
+    }
+    resetLoops(node.id);
+    reopenApproval(approver.id, reviseTo, req.path, executionId);
+    return true;
   }
 
   function holdForApproval(node, port, token, executionId) {
@@ -949,25 +1027,9 @@ export function createScheduler(opts) {
       // The person's revise starts a new shaping round: each loop into this node gets its full budget back. `holds`
       // stays, so later gate ask ids remain unique.
       // A role node feeding this one (spec §3) gets the same reset: the revise opens a new pass of role reviews.
-      const resetLoops = (id) => {
-        const n = nodeById.get(id);
-        for (const inp of (n && portsOfNode(n).inputs) || []) {
-          if (!isLoopPort(id, inp)) continue;
-          tokens.delete(`${id}.${inp.id}`);
-          const wireId = wiredIn.get(id)?.get(inp.id);
-          const st = wireId ? wireState.get(wireId) : null;
-          if (st) { st.deliveries = 0; st.allowance = initialAllowance(wireId); }
-        }
-      };
-      resetLoops(nodeId);
-      for (const wireId of wiredIn.get(nodeId)?.values() || []) {
-        const src = nodeById.get(wireById.get(wireId)?.from.node);
-        if (src && isRoleReview(src)) resetLoops(src.id);
-      }
       // Re-queue the producer with the feedback on its loop input; it re-fires (any-fresh), its new plan re-fires
       // this node via the non-loop wire and the stop is raised again as round N+1.
-      tokens.set(`${entry.reviseTo.node}.${entry.reviseTo.port}`,
-        makeToken({ type: 'md', path: answer.path, sourceExecutionId: entry.executionId }));
+      reopenApproval(nodeId, entry.reviseTo, answer.path, entry.executionId);
     } else {
       log(`${nodeId}: approval ${entry.askId} ended the run (${decision ?? 'no answer'})`);
       abortRequested = true;
@@ -1014,6 +1076,7 @@ export function createScheduler(opts) {
       // Scheduler-local like `wires`: a run that paused AFTER an output dead-ended
       // and quiesces only after the resume must still be able to say WHY.
       deadEnds: [...deadEnds].sort(),
+      ...(openIssues.size ? { openIssues: [...openIssues.values()].map((o) => ({ ...o, titles: [...o.titles] })) } : {}),
       ended: ended ? { ...ended, result: { ...ended.result } } : null,
       // The FULL ledger entry is serialized (bindings + trigger included): reattach
       // re-invokes `execute` with the RECORDED args, and recomputing them from
@@ -1039,6 +1102,7 @@ export function createScheduler(opts) {
     for (const [id, n] of Object.entries(s.ordinals || {})) ordinals.set(id, n);
     for (const [id, st] of Object.entries(s.wires || {})) wireState.set(id, { ...st });
     for (const id of s.deadEnds || []) deadEnds.add(id);
+    for (const o of Array.isArray(s.openIssues) ? s.openIssues : []) if (o?.nodeId) openIssues.set(o.nodeId, { ...o });
     for (const e of s.execs || []) execs.set(e.executionId, { ...e });
     ended = s.ended ? { ...s.ended, result: { ...s.ended.result } } : null;
     // Every hold comes back (reattach re-asks all of them). A pre-plural resume point
@@ -1231,17 +1295,32 @@ export function createScheduler(opts) {
     return result;
   }
 
+  /** 4.1: on a failure or a stop, let the executions still running take their abort (the
+   *  controller is already aborted) and settle, bounded by settleGraceMs, so nothing is still
+   *  writing into the worktree while the harness commits and removes it. */
+  async function settleRunning() {
+    controller.abort();
+    const until = Date.now() + settleGraceMs;
+    for (;;) {
+      while (completions.length) { const c = completions.shift(); settle(c.h, c.res, c.err); }
+      if (running.size === 0) return;
+      const left = until - Date.now();
+      if (left <= 0) return;
+      let timer;
+      await Promise.race([waitForChange(), new Promise((r) => { timer = setTimeout(r, left); })]);
+      clearTimeout(timer);
+    }
+  }
+
   async function run() {
     for (;;) {
       while (completions.length) {
         const c = completions.shift();
         settle(c.h, c.res, c.err);
       }
-      if (failure) return finish('error');
-      if (abortRequested) return finish('error');
+      if (failure || abortRequested) { await settleRunning(); return finish('error'); }
       if (!halted()) await drainPasses();
-      if (failure) return finish('error');
-      if (abortRequested) return finish('error');
+      if (failure || abortRequested) { await settleRunning(); return finish('error'); }
       // Anything that landed while the pass ran — a completion, or a gate answer
       // that delivered its held token — gets its own pass before quiescence.
       if (completions.length || signalled) { signalled = false; continue; }
@@ -1272,6 +1351,7 @@ export function createScheduler(opts) {
         endReached: Boolean(ended),
         result: ended ? { ...ended.result } : null,
         warnings: [...warnings],
+        openIssues: [...openIssues.values()].map((o) => ({ ...o, titles: [...(o.titles || [])] })),
         gate: gate ? { ...gate } : null,
         settled,
       };

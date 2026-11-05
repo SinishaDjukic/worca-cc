@@ -596,19 +596,19 @@ test('chain ship: One on a forked chain answers 409 before the PR host is asked'
   assert.equal(seen.filter((c) => c[0] === 'gh' && c[1] === 'pr').length, 0);
 });
 
-test('chain ship: One on a chain whose run started from its own branch answers 409 before the PR host is asked', async () => {
+test('chain ship: a Run after that started from its own branch is no chain (#1096): ship answers 404 before the PR host is asked', async () => {
   const r1 = (await seedPipeline(betaRepo, { title: 'cl1', status: 'done', startedAt: '2026-06-02T00:00:00Z',
     branch: { source: 'dev', feature: 'worca-cc/cl1', branchKept: true } })).id;
   const r2 = (await seedPipeline(betaRepo, { title: 'cl2', status: 'done', startedAt: '2026-06-02T00:00:00Z',
     branch: { source: 'dev', feature: 'worca-cc/cl2', branchKept: true } })).id;
   const t = createTicket({ projectDir: betaRepo, title: 'next', request: { projectDir: betaRepo, prompt: 'next' },
-    after: { kind: 'pipeline', id: r1 } });               // Run after, but from its own branch: One would hold only run 2
+    after: { kind: 'pipeline', id: r1 } });               // Run after, but from its own branch: a timing-only wait, no chain
   markTicketFired(t.id, { pipelineId: r2 });
   const seen = [];
   stubForkRepo(seen);
   const r = await shipChain(`p:${r1}`, { mode: 'one' });
-  assert.equal(r.status, 409);
-  assert.match((await r.json()).error, /does not start from the previous run's branch/);
+  assert.equal(r.status, 404);
+  await r.body?.cancel();
   assert.equal(seen.filter((c) => c[0] === 'gh' && c[1] === 'pr').length, 0);
   assert.equal(readPrState(r1), null);
 });

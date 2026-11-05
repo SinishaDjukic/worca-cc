@@ -5,20 +5,23 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
+import { INDEX_HTML, readIndexHtml } from '../src/core/read-index-html.mjs';
+import { SERVER_MJS, readServerSource } from '../src/core/read-server-source.mjs';
 
-const read = (p) => readFileSync(new URL(`../${p}`, import.meta.url), 'utf8');
+const read = (p) => (p === INDEX_HTML ? readIndexHtml() : p === SERVER_MJS ? readServerSource()
+  : readFileSync(new URL(`../${p}`, import.meta.url), 'utf8'));
 const walk = (dir) => readdirSync(new URL(`../${dir}/`, import.meta.url), { withFileTypes: true })
   .flatMap((e) => e.isDirectory() ? walk(`${dir}/${e.name}`) : /\.(m?js)$/.test(e.name) ? [`${dir}/${e.name}`] : []);
 
 test('the Settings tab and the assistant\'s prompt say Chat', () => {
-  const doc = new JSDOM(read('ui/public/index.html')).window.document;
+  const doc = new JSDOM(readIndexHtml()).window.document;
   assert.equal(doc.querySelector('[data-tab="ask"]').textContent.trim(), 'Chat');
   assert.ok(read('src/core/ask/prompt.mjs').includes("'You are worca\\'s Chat assistant, built into worca-cc ("));
   assert.ok(read('extension/src/background.mjs').includes("title: 'Worca Chat: ask about selection'"));
 });
 
 test('no user-visible "Ask Worca", "Ask Chat" or "Ask on <engine>" is left in the UI, the server, src or the extension (comments aside)', () => {
-  const files = ['ui/public/index.html', 'ui/server.mjs', ...walk('ui/public'), ...walk('src'), ...walk('extension/src')];
+  const files = [INDEX_HTML, SERVER_MJS, ...walk('ui/public'), ...walk('src'), ...walk('extension/src')];
   assert.ok(files.length > 100, `${files.length} files`);
   // Same comment stripper as test/ui-new-run-copy.test.mjs (a comment starts a line or follows code and a space),
   // plus the SQL ` -- ` comments in db.mjs's schema text (elsewhere ` -- ` can sit inside a string).

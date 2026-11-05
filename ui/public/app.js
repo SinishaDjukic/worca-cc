@@ -84,6 +84,8 @@ const GROUP_PAGE = { host: null, route: '', id: '', tab: 'runs', featureId: '', 
 
 import { icon } from './icons.mjs';
 import { telemetrySlotHtml, paintTelemetry } from './run-telemetry-view.mjs';
+import { copyButton, copyFromButton, flashCopy, writeClipboard } from './copy-button.mjs';
+import { paintSessionsTab, sessionsTabVisible, sessionsBadge, sessionRowLine, sessionRowEl } from './run-sessions-view.mjs';
 import { logLineClass, logLineTime, serializeLog, cycleSeparatorBefore, newCycleState, projectLogRecord } from './log-line.mjs';
 import { readLogView, writeLogView, paintLogMsg, applyLogView, syncLogViewSeg } from './log-view.mjs';
 import { logLineVisible, logFacets, compileLogFilter } from './log-filter.mjs';
@@ -103,10 +105,11 @@ import { runProgress, progressWidth } from '../../src/shared/run-progress.mjs';
 import { stampBaseline, pickAccess, accessSummary } from '../../src/shared/agent-access.mjs';
 import { renderCapabilityPicker, renderRunAgentCapabilities } from './agent-capabilities-view.mjs';
 import { DEFAULT_HOME_PINS, isPinned, pinWorkflow, unpinWorkflow } from '../../src/shared/home-pins.mjs';
+import { outcomeNote } from './run-outcome.mjs';
 import { CREATE_PR_LABEL, CREATE_PR_FAILED, CREATING_PR, PR_CREATED, VIEW_PR_LABEL, VIEW_PRS_LABEL, createPrLabel, doneStatusWord } from './ship-words.mjs';
 import { worktreeNoticeModel, worktreeRowState, retainedCommands, recoveryPatchKind, uncommittedPatchName, applyConfirmMessage, applyOutcome, checkoutRowValue, memberLabel } from './worktree-notice.mjs';
 import { limitNotice, resumeTicketOf, countdownText } from './limit-notice.mjs';
-import { buildRunsModel, countNeedsYou, isRowSelected, isMemberOpen, renderRunsList, RECENT_PAGE, groupRow, memberPrsOf, prChip, memberCostUsd, whenLabel, isFolded, setFolded } from './runs-list.mjs';
+import { buildRunsModel, countNeedsYou, isRowSelected, isMemberOpen, renderRunsList, paintStageBlocks, RECENT_PAGE, groupRow, memberPrsOf, prChip, memberCostUsd, whenLabel, isFolded, setFolded } from './runs-list.mjs';
 import { paintRunStatus, syncActions, pauseResumeOwn } from './run-status-card.mjs';
 import { buildGroupPage, paintGroupPage, runReceipts, groupPrList } from './group-page.mjs';
 import { paintGroupShip, resetGroupShip } from './ship-group-dialog.mjs';
@@ -132,7 +135,7 @@ import { ACTION_LABEL, HEAD_ACTIONS, MENU_ACTIONS, groupModel, runModel } from '
 import { workflowPickerLabel, memoryChangesRows } from './results-view.mjs';
 // The memory view's history list is `renderMemoryHistory`: "History" alone names the saved runs here.
 import {
-  memoryRoute, renderHealthCard, renderFileList, renderEditor, collectEditor,
+  memoryRoute, renderHealthCard, renderFileList, renderEditor, collectEditor, renderProposals,
   renderMemoryHistory, MEMORY_NAME_HELP, formatWhen, parseSnapshotId, patchRunRefs,
   MEMORY_TEAM_SUB, renderMemoryViews, renderTeamCard, renderTeamNotes, renderSeedReview, renderClashCompare, teamLoadOf, teamLoadValue,
   collectSeedDecisions, seedSummary, seedableCount, renderTeamAvailableLine,
@@ -193,7 +196,7 @@ import { PORT_ID_RE, MAX_PORTS_PER_SIDE, PORT_TYPES, FLOW_LABEL, KEYED_KINDS, SY
 import { FORM_ID_RE, validateFormDef, normalizeAskBlock } from '../../src/shared/forms/form-def.mjs';
 import { ASK_LIMITS } from '../../src/shared/forms/catalog.mjs';
 import { WORKSPACE_MAX_PROJECTS, workspaceSizeLevel } from '../../src/shared/workspace-size.mjs';
-import { engineLabel, usageLimitSwitches, engineSwitchNote, engineReportsCost, ENGINE_NAMES, isBetaEngine, SIGN_IN_ENGINE_NAMES } from '../../src/shared/engine-switch.mjs';
+import { engineLabel, usageLimitSwitches, engineSwitchNote, engineReportsCost, ENGINE_NAMES, isBetaEngine, SIGN_IN_ENGINE_NAMES, SESSION_SUBAGENTS_VERIFIED } from '../../src/shared/engine-switch.mjs';
 import { runsOn, effortsOn, harnessesLabel, connectionKey, modelGroups, PROVIDER_LABELS } from '../../src/shared/connections.mjs';
 import {
   guardrailSummary, renderGuardrailList, renderGuardrailEditor, collectGuardrailEditor,
@@ -207,7 +210,7 @@ import {
 import {
   renderProvidersCard, collectProviderRow, collectSpeechRow, formatSpeechBytes, renderImportSheet, renderEndpointSheet, collectImportSheet, applyImportSelectAll,
   applyProviderPreset, endpointRowMatches, ENDPOINT_PRESETS,
-  setModelUpstream, COPILOT_TERMS,
+  setModelUpstream,
 } from './bridge-view.mjs';
 import {
   renderSourcePane, collectSourcePane, renderProfileGate, renderProfileBar,
@@ -232,6 +235,7 @@ import { renderAutoProposal, proposalBands } from './auto-proposal.mjs';
 import { portsFnFor } from '../../src/shared/graph/ports.mjs';
 import { indexByKey } from '../../src/shared/graph/agent-meta.mjs';
 import { classifyLoops } from '../../src/shared/graph/loops.mjs';
+import { SESSION_DEFAULT_LABEL, sessionStartNotices } from '../../src/shared/graph/sessions.mjs';
 import { isBrowsableKind } from '../../src/shared/artifact-kinds.mjs';
 // artifact-view-media.mjs re-exports artifact-view.mjs's whole surface and widens
 // dispatch to the byte kinds, so upstream's module stays byte-identical;
@@ -294,6 +298,7 @@ import { PROBE_DEBOUNCE_MS, defaultAddMode, detectModel } from './project-add.mj
 import { presetMenuGroups, presetHiddenItems, presetNodePick, renderBrokenCard, resetItem, saveDialogError, configWithPreset } from './run-presets-picker.mjs';
 import { runPresetScopeOptions, runPresetRequest, runPresetErrorText, RUN_PRESET_SAVED_NOTE } from './run-presets-save.mjs';
 import { renderPresetsList } from './run-presets-view.mjs';
+import { renderAutomations, renderAutomationsOverview } from './automations-view.mjs';
 import { presetSetupSummary, presetSavedNote, workflowNamesFrom } from './run-presets-names.mjs';
 import { setupFromBody } from '../../src/shared/run-presets.mjs';
 import { createTagInput, tagChip, fetchTagVocabulary, createDimensionSlots, createDimensionEditor, missingSlot } from './tag-input.mjs';
@@ -750,6 +755,7 @@ const el = {
   hitlRow: $('#hitl-row'),
   humanInLoop: $('#humanInLoop'),
   nightMode: $('#nightMode'),
+  noMemory: $('#noMemory'),
   memoryScopeRow: $('#memory-scope-row'),
   memoryScopeSeg: $('#memory-scope-seg'),
   engineSelect: $('#engineSelect'),
@@ -1786,6 +1792,16 @@ function handleServerMessage(msg) {
     return;
   }
 
+  if (msg.type === 'automations-changed') {
+    if (!flagOn('gitAutomations')) return;
+    if (currentView() === 'settings' && currentSettingsTab === 'automations') void loadAutomationsView();
+    const sec = projDetail && projDetail.screen.querySelector('.pd-sec-automations');
+    if (sec && sec.isConnected) void buildPdAutomations(sec, projDetail.key);
+    const wsec = wsDetail && wsDetail.screen && wsDetail.screen.querySelector('.pd-sec-automations');
+    if (wsec && wsec.isConnected) void buildWdAutomations(wsec, wsDetail.id);
+    return;
+  }
+
   if (msg.type === 'pr-watch-changed') {
     // Exact identity: the run's store key, its id and (a workspace's) member.
     refreshRdPrStatus(msg.projectKey, msg.pipelineId, msg.memberKey || '');
@@ -2113,6 +2129,10 @@ function handleServerMessage(msg) {
       break;
     case 'error':
       onError(r, msg);
+      break;
+    case 'sessionHost':
+      // A session trace record was written (session groups): the Sessions tab's report is stale (Task 58).
+      r.sessionSeq = (r.sessionSeq || 0) + 1;
       break;
     default:
       break;
@@ -2928,11 +2948,11 @@ function addNightDecisions(r, list) {
   r.nightDecisions = cur;
 }
 
-// Every status the server reports lands here (state frames, the hello, upserts, the end of a run). While this tab's
-// Pause is in flight, a 'running' sent before the server took it keeps the 'pausing' shown at the click; any other
-// status ends the wait.
+// Every status the server reports lands here. A Pause in flight keeps 'pausing' over a 'running' sent before the
+// server took it. A run never goes back to 'starting' (a start or resume mints a new runId): beginRun's late one,
+// after a start reply that trails the socket's frames (#1090), never replaces a status the server already sent.
 function applyServerStatus(r, status) {
-  if (!status || (r.pausePending && status === 'running')) return;
+  if (!status || (r.pausePending && status === 'running') || (status === 'starting' && r.status && r.status !== 'starting')) return;
   r.status = status;
   r.pausePending = false;
 }
@@ -2999,7 +3019,8 @@ function onState(r, msg) {
   r.subAgents = msg.subAgents || r.subAgents;
   // v2 run-level outcome fields (ignored by v1 runs, which never send them).
   // roleReviews: the role-review rounds runModel's live role rows read (review A12).
-  for (const k of ['active', 'endReached', 'result', 'warnings', 'wireDeliveries', 'tokens', 'gate', 'progressFacts', 'roleReviews']) {
+  // sessionHosts: each session's summary (session groups), read by the tray decor and the Sessions tab.
+  for (const k of ['active', 'endReached', 'result', 'warnings', 'wireDeliveries', 'tokens', 'gate', 'progressFacts', 'roleReviews', 'sessionHosts']) {
     if (msg[k] !== undefined) r[k] = msg[k];
   }
   // Skills registry §6 board 9: the run's set skills (run-harness state.skillMount) for its Overview.
@@ -4089,6 +4110,7 @@ if (typeof window !== 'undefined') {
     applyRunLogFilter,
     focusLogExecution,
     openStepLog,
+    openSessionLog,
     paintLogFilters,
     readLogFilterFrom,
     repaintFilteredLog,
@@ -4096,7 +4118,7 @@ if (typeof window !== 'undefined') {
     paintExecChip,
     wireExecChip,
     openRunArtifact,
-    paintQuiescenceBanner,
+    paintRunWarnings,
     progressText,
     histCountsLine,
     gateWireCopy,
@@ -4444,15 +4466,20 @@ async function loadGuardrailsInto(selectId) {
 // node row per node and a cycle input per feedback.
 async function renderWorkflowConfig(workflowId) {
   const isAuto = workflowId === AUTO_WORKFLOW_ID;
+  const notesGen = (state.sessionNotesGen = (state.sessionNotesGen || 0) + 1);   // only the newest call paints the notice
+  // A newly picked workflow's notice waits for its own fetch: the last one's never stands in for it meanwhile.
+  if (state.sessionNoteArgs && state.sessionNoteArgs.workflowId !== workflowId) paintSessionNotes(null);
   if (el.agentsConfig) el.agentsConfig.hidden = isAuto;
   if (el.hitlRow) el.hitlRow.hidden = !isAuto;
   // Memory defragment (agent memory §7.3 / B11): the ONE run option that workflow needs. Every
   // path that changes the picker ends here, so this single line covers them all.
   if (el.memoryScopeRow) el.memoryScopeRow.hidden = workflowId !== MEMORY_DEFRAG_WORKFLOW_ID;
+  for (const id of ['no-memory-row', 'noMemoryHint']) { const n = document.getElementById(id); if (n) n.hidden = workflowId === MEMORY_DEFRAG_WORKFLOW_ID; }
   // MCP registry (§6.1): a memory-defrag run starts no registry servers, so the control hides at
   // once; the policy-line repaint at the end refetches the preview for every other workflow.
   if (el.mcpRunsField) renderMcpRuns();
   if (isAuto) {
+    paintSessionNotes(null);   // Auto picks its workflow per run: no sessions to tell about yet
     // Auto picks the agents per run (spec §7.2 / D20): no accordion, one switch. On a project target
     // the switch is per PROJECT like the accordion's rows, read from the project config, and
     // saveHumanInLoop drops the write with no project selected — so disable it there instead of
@@ -4489,6 +4516,7 @@ async function renderWorkflowConfig(workflowId) {
   const wf = isDefault ? (fetchedWf || DEFAULT_WF_TOPOLOGY) : fetchedWf;
   const registry = isDefault ? defaultWorkflowRegistry(fetchedReg) : fetchedReg;
   if (!wf || !Object.keys(registry).length) {
+    if (notesGen === state.sessionNotesGen) paintSessionNotes(null);
     if (el.agentRows) el.agentRows.innerHTML = '<div class="hint">Could not load this workflow.</div>';
     if (el.wfFeedbackConfig) { el.wfFeedbackConfig.innerHTML = ''; el.wfFeedbackConfig.hidden = true; }
     setAgentsHeader(null, '');
@@ -4502,6 +4530,13 @@ async function renderWorkflowConfig(workflowId) {
   const rows = buildNodeConfigRows(wf, registry, runConfig,
     isDefault ? { legacySteps: state.config.steps || {} } : {});
   renderAgentRows(rows);
+  const wfNodes = Array.isArray(wf.nodes) ? wf.nodes : [];
+  // A slower fetch for a workflow picked earlier never paints over a newer pick (Auto included).
+  if (notesGen === state.sessionNotesGen) paintSessionNotes({ workflowId, wf, portsFn: panelPortsFn(registry, scripts), labelOf: (id) => {   // the Composer's card label
+    const n = wfNodes.find((x) => x && x.id === id);
+    const m = n && registry[n.key];
+    return (m && m.displayName) || (n && (n.key || n.id)) || id;
+  } });
   renderFeedbackRows(buildFeedbackRows(wf, registry, runConfig, scripts));
   // The cycle inputs write through a different endpoint shape per engine
   // (v1 `feedbacks:{…}` vs v2 `wires:{…}`); stamp which one this row set is.
@@ -4915,6 +4950,7 @@ function setRunEngine(engine) {
   if (el.engineSelect) el.engineSelect.value = state.engine;
   keepVisible(document.getElementById('engine-row'), state.engine !== 'claude');   // Simple shows a non-Claude engine
   paintEngineHints();
+  paintSessionNotes();
   showEngineRefusal(null);
   // D10: the agent rows offer the run engine's models only — repaint them for the new engine. The Sets
   // picker too: another engine names set skills as its .agents/skills mount would.
@@ -4933,6 +4969,22 @@ fetch('/api/engine-locks').then((r) => (r.ok ? r.json() : null)).catch(() => nul
 });
 
 function runSlotDefaults() { return state.runDefaults?.steps?.[state.engine] || null; }
+/** The run-start notice (session groups, Task 62; 05 §6.6): one line per session of the workflow the form shows, saying
+ *  how its steps run on the chosen engine. `next` = { workflowId, wf, portsFn, labelOf } from renderWorkflowConfig (null: none);
+ *  the engine, the Mock switch and the Labs flag repaint it with the last one. A mock run counts as verified (C13). */
+function paintSessionNotes(next) {
+  if (next !== undefined) state.sessionNoteArgs = next;
+  const box = document.getElementById('engine-session-notes');
+  if (!box) return;
+  const a = state.sessionNoteArgs || null;
+  const mock = !!(el.mock && el.mock.checked);
+  const notes = a ? sessionStartNotices(a.wf, a.portsFn, { engine: state.engine, labelOf: a.labelOf, flagOn: flagOn('sessionGroups', document),
+    verified: mock ? { [state.engine]: true } : SESSION_SUBAGENTS_VERIFIED }) : [];
+  box.replaceChildren(...notes.map((t) => Object.assign(document.createElement('p'), { className: 'rs-session-note', textContent: t })));
+  box.hidden = !notes.length;
+  keepVisible(box, state.engine !== 'claude' && notes.length > 0);   // Simple keeps a non-Claude engine on screen: and why its steps run apart
+}
+onFlagChange('sessionGroups', () => paintSessionNotes());
 function paintEngineHints() {
   if (el.engineHint) {
     el.engineHint.hidden = state.engine === 'claude';
@@ -5499,76 +5551,25 @@ function buildLogLine({ source, level, text, ts, sub, path, kind, desc }) {
 // Keystroke-to-repaint delay for the log search box.
 const LOG_SEARCH_DEBOUNCE_MS = 120;
 
-// Copy already-filtered log records to the clipboard and flash the button.
+// Copy already-filtered log records through the copy button (copy-button.mjs).
 //
 // Serializes from the MODEL, never from the DOM: a log line spaces its
 // ts/src/msg spans with a flex `gap` rather than whitespace, so a native
 // selection-copy would run them together ("12:34:56[planner]text").
-// navigator.clipboard needs a secure context — localhost qualifies — but a
-// hidden-textarea fallback keeps the button working anywhere.
-async function copyLogToClipboard(btn, recs) {
-  const text = serializeLog(recs);
-  if (!text) {
-    // A filtered-empty pane: silence looks like a dead button, and the STALE
-    // clipboard content would pass for the filtered log on the next paste.
-    flashCopyBtn(btn, 'nothing to copy');
-    return;
-  }
-  let ok = true;
-  try {
-    if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(text);
-    else ok = legacyCopy(text);
-  } catch {
-    ok = legacyCopy(text);
-  }
-  flashCopyBtn(btn, ok ? 'copied' : 'copy failed');
+// A filtered-empty pane copies nothing and says so: silence looks like a dead
+// button, and the STALE clipboard would pass for the filtered log on the next paste.
+function copyLogToClipboard(btn, recs) {
+  return copyFromButton(btn, serializeLog(recs));
 }
 
-// Save/flash/restore a copy button's label. `dataset.label` survives repeated
-// clicks so a flash can never become the button's permanent label.
-function flashCopyBtn(btn, msg) {
+// Save/flash/restore a text button's label (the report dialog's footer actions).
+// `dataset.label` survives repeated clicks so a flash can never become the label.
+function flashLabel(btn, msg) {
   const prev = btn.dataset.label || btn.textContent;
   btn.dataset.label = prev;
   btn.textContent = msg;
   clearTimeout(btn._copyTimer);
-  btn._copyTimer = setTimeout(() => { btn.textContent = btn.dataset.label || 'copy'; }, 1200);
-}
-
-// Copy a branch name from a history-card head. The button is icon-only, so
-// feedback is a brief copy→check icon swap (class-driven) instead of the text
-// flash flashCopyBtn does; the title mirrors it for hover/AT users.
-async function copyBranchToClipboard(btn, branch, restTitle = 'Copy branch name') {
-  let ok = true;
-  try {
-    if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(branch);
-    else ok = legacyCopy(branch);
-  } catch {
-    ok = legacyCopy(branch);
-  }
-  btn.classList.toggle('copied', ok);
-  btn.title = ok ? 'Copied' : 'Copy failed';
-  clearTimeout(btn._copyTimer);
-  btn._copyTimer = setTimeout(() => {
-    btn.classList.remove('copied');
-    btn.title = restTitle;
-  }, 1200);
-}
-
-function legacyCopy(text) {
-  try {
-    const ta = document.createElement('textarea');
-    ta.value = text;
-    ta.setAttribute('readonly', '');
-    ta.style.position = 'fixed';
-    ta.style.opacity = '0';
-    document.body.appendChild(ta);
-    ta.select();
-    const ok = document.execCommand('copy');
-    document.body.removeChild(ta);
-    return ok;
-  } catch {
-    return false;
-  }
+  btn._copyTimer = setTimeout(() => { btn.textContent = btn.dataset.label; }, 1200);
 }
 
 // A "── Cycle N ──" rule marking where a feedback loop rewound and re-ran the
@@ -5714,6 +5715,7 @@ function onLog(r, msg) {
     ...(msg.path != null ? { path: msg.path } : {}),
     ...(msg.kind != null ? { kind: msg.kind } : {}),
     ...(typeof msg.desc === 'string' && msg.desc ? { desc: msg.desc } : {}),
+    ...(typeof msg.session === 'string' && msg.session ? { session: msg.session } : {}),   // a session's main-agent line (Task 60)
   };
   r.logLines.push(rec);
   if (r.logLines.length > MAX_LOG_LINES) r.logLines.shift();
@@ -5784,6 +5786,7 @@ function paintLogFilters(r, root = r.el) {
     fillFilterSelect(selStep, 'all steps', facets.steps, r.logFilter.step, (i) => `step ${i + 1}`);
   }
   paintExecChip(r, root);
+  paintSessionChip(r, root);   // not reconciled below either: it reads back what this wrote, and has no facets
   // Cycles are the loop's own 1-based counter, so unlike steps they are NOT
   // shifted for display.
   fillFilterSelect(selCycle, 'all cycles', facets.cycles, r.logFilter.cycle, (c) => `cycle ${c}`);
@@ -5852,6 +5855,42 @@ function wireExecChip(bar, { read, write }) {
     if (!(e.target.closest && e.target.closest('.log-f-step, .log-f-cycle'))) return;
     if (!read().execution) return;
     write({ ...readLogFilterFrom(bar, read().search), execution: '' });
+  });
+}
+
+/** `Showing one session · Implementation + Review` (Task 60): the session's steps by their card labels. */
+function sessionChipText(r, members) {
+  const labelOf = nodeLabelLookup(r.stepper);
+  return `Showing one session · ${members.map((id) => labelOf(id)).join(' + ')}`;
+}
+
+/** Mirror r.logFilter.session (a sid) and its members into the session chip on one bar: the chip's dataset is what
+ *  readLogFilterFrom reads back, as the execution chip's is. */
+function paintSessionChip(r, root) {
+  const chip = root && root.querySelector('.log-f-session');
+  if (!chip) return;
+  const sid = r.logFilter.session || '';
+  const members = sid && Array.isArray(r.logFilter.sessionMembers) ? r.logFilter.sessionMembers.map(String) : [];
+  chip.hidden = !sid;
+  chip.dataset.sessionId = sid;
+  chip.dataset.members = members.join(' ');
+  if (sid) chip.querySelector('.lfe-text').textContent = sessionChipText(r, members);
+}
+
+/** The session chip's rules, bound ONCE per bar (as wireExecChip): a click on it clears the session axis, and so does a
+ *  manual node/step pick (another scope than the session's). */
+function wireSessionChip(bar, { read, write }) {
+  bar.addEventListener('click', (e) => {
+    if (!(e.target.closest && e.target.closest('.log-f-session'))) return;
+    e.stopPropagation();
+    const had = bar.ownerDocument.activeElement === e.target.closest('.log-f-session');
+    write({ session: '', sessionMembers: [] });
+    if (had) bar.querySelector('.log-search')?.focus();   // the chip hides: the focus moves on, not to the page
+  });
+  bar.addEventListener('change', (e) => {
+    if (!(e.target.closest && e.target.closest('.log-f-step'))) return;
+    if (!read().session) return;
+    write({ ...readLogFilterFrom(bar, read().search), session: '', sessionMembers: [] });
   });
 }
 
@@ -7308,6 +7347,7 @@ function paintMock(on) {
   el.mock.checked = on;
   mockSwitch.classList.toggle('on', on);
   mockSwitch.setAttribute('aria-checked', String(on));
+  paintSessionNotes();   // a mock run's sessions run as sub-agents (C13)
 }
 function toggleMock() {
   if (serverMock.on) return;                 // locked on: the server mocks every run anyway
@@ -9440,7 +9480,7 @@ if (el.wsList) {
 // editing — description, re-scan, delete, metrics home, policy home, routing, the map's overrides —
 // lives here.
 // ---------------------------------------------------------------------------
-const WS_TABS = ['overview', 'map', 'team', 'actions'];
+const WS_TABS = ['overview', 'map', 'team', 'actions', 'automations'];
 // workspaces-changed actions that can change the Map tab: an override (P5 routes) or a scan's save.
 const WD_MAP_ACTIONS = new Set(['map', 'scan-created', 'scan-updated', 'members']);   // members: a removal prunes the map
 function parseWsParam(param = '') {
@@ -9585,6 +9625,8 @@ const WD_TABS = [
   { key: 'map', label: 'Map', level: 'advanced', badge: () => null, visible: () => true, build: (sec, id) => buildWdMap(sec, id) },
   { key: 'team', label: 'Team', level: 'expert', badge: () => null, visible: () => true, build: (sec, id) => buildWdTeam(sec, id) },
   { key: 'actions', needsGit: true, label: 'Actions', level: 'advanced', badge: () => null, visible: () => true, build: (sec, id) => buildWdActions(sec, id) },
+  // Workspace Git event automations: every member's repository, shown while the gitAutomations flag is on.
+  { key: 'automations', needsGit: true, label: 'Automations', level: 'advanced', badge: () => null, visible: () => flagOn('gitAutomations'), build: (sec, id) => buildWdAutomations(sec, id) },
 ];
 function initWdTabs(screen, w) {
   initDetailTabs(screen, WD_TABS.map((t) => ({ ...t, icon: PD_TAB_ICONS[t.key] })), w, {
@@ -13203,7 +13245,7 @@ const capFirst = (t) => (t ? t[0].toUpperCase() + t.slice(1) : t);
 // (Memory tab), "<key>/memory/<enc name>" (that file open) or "<key>/away" (Away mode tab). Keys are `<slug>-<8hex>`
 // (store.mjs#projectKey) and never contain "/", so the first slash splits key from tab. An
 // unknown tab word reads as Overview (the hash is left alone, as History leaves an odd param alone).
-const PROJ_TABS = ['overview', 'team', 'memory', 'settings', 'away', 'mcp', 'actions'];
+const PROJ_TABS = ['overview', 'team', 'memory', 'settings', 'away', 'mcp', 'actions', 'automations'];
 function parseProjParam(param = '') {
   const s = String(param || '');
   if (!s) return null;
@@ -13218,7 +13260,7 @@ function parseProjParam(param = '') {
 }
 // The canonical param for a tab: Overview is plain '<key>', never '<key>/overview'.
 function projParamFor(key, tab = 'overview', sub = '') {
-  if (tab === 'team' || tab === 'settings' || tab === 'mcp' || tab === 'actions') return `${key}/${tab}`;
+  if (tab === 'team' || tab === 'settings' || tab === 'mcp' || tab === 'actions' || tab === 'automations') return `${key}/${tab}`;
   if (tab !== 'memory') return key;
   return sub ? `${key}/memory/${encodeURIComponent(sub)}` : `${key}/memory`;
 }
@@ -13304,18 +13346,7 @@ function paintProjHeader(screen, p) {
   const copy = screen.querySelector('.pd-path-copy');
   if (copy && !copy.dataset.wired) {
     copy.dataset.wired = '1';
-    copy.addEventListener('click', async () => {
-      const text = (projectByKey(projDetail && projDetail.key) || p).path;
-      let ok = true;
-      try {
-        if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(text);
-        else ok = legacyCopy(text);
-      } catch { ok = legacyCopy(text); }
-      copy.classList.toggle('copied', ok);
-      copy.setAttribute('aria-label', ok ? 'Path copied' : 'Copy failed');
-      clearTimeout(copy._t);
-      copy._t = setTimeout(() => { copy.classList.remove('copied'); copy.setAttribute('aria-label', 'Copy path'); }, 1200);
-    });
+    copy.addEventListener('click', () => copyFromButton(copy, (projectByKey(projDetail && projDetail.key) || p).path));
   }
   const fresh = screen.querySelector('.pd-new');
   fresh.disabled = !p.exists;
@@ -13460,6 +13491,7 @@ const PD_TAB_ICONS = {
   team: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.2"></circle><path d="M3.5 19c.6-3 2.8-4.6 5.5-4.6S13.9 16 14.5 19"></path><circle cx="17.5" cy="9.5" r="2.4"></circle><path d="M15.5 14.6c2.7 0 4.4 1.4 5 4.4"></path></svg>',
   mcp: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3v5M15 3v5"></path><path d="M6 8h12v3a6 6 0 0 1-12 0z"></path><path d="M12 17v4"></path></svg>',
   actions: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 5l11 7-11 7z"></path></svg>',
+  automations: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 3 5 14h6l-1 7 8-11h-6l1-7z"></path></svg>',
 };
 // Table-driven, like HD_TABS. `build(sec, key)` takes the KEY (buildArgs), never the project object.
 const PD_TABS = [
@@ -13469,6 +13501,8 @@ const PD_TABS = [
   { key: 'settings', label: 'Settings', level: 'advanced', badge: () => null, visible: () => true, build: (sec, key) => buildPdSettings(sec, key) },
   { key: 'mcp', label: 'Sets', level: 'advanced', badge: () => null, visible: () => true, build: (sec, key) => buildPdMcp(sec, key) },
   { key: 'actions', needsGit: true, label: 'Actions', level: 'advanced', badge: () => null, visible: () => true, build: (sec, key) => buildPdActions(sec, key) },
+  // Git event automations (#711): shown while the gitAutomations flag is on (read when the page opens).
+  { key: 'automations', needsGit: true, label: 'Automations', level: 'advanced', badge: () => null, visible: () => flagOn('gitAutomations'), build: (sec, key) => buildPdAutomations(sec, key) },
 ];
 function initPdTabs(screen, p) {
   initDetailTabs(screen, PD_TABS.map((t) => ({ ...t, icon: PD_TAB_ICONS[t.key] })), p, {
@@ -15173,6 +15207,8 @@ function buildRunBody() {
     memoryScope: isDefragRun ? state.memoryScope : undefined,
     // Night mode per-run opt-in: only when ticked, so every other run body stays byte-identical.
     nightMode: el.nightMode && el.nightMode.checked ? true : undefined,
+    // #943: only when ticked (and never on a defragment run, which IS memory), so every other body stays byte-identical.
+    noMemory: !isDefragRun && el.noMemory && el.noMemory.checked ? true : undefined,
     // Engine: only a non-default one is sent, and the consent only with it and only when
     // ticked, so a Claude run's body stays byte-identical.
     // The engine shown is the engine that runs: Claude goes unsent only when the default is KNOWN
@@ -15769,13 +15805,9 @@ function paintAbout(info) {
 let versionStatusSeq = 0;
 // Manual update (#841): the About card's Update row, the version picker / confirm modal and the
 // updating overlay (update-view.mjs). GET /api/app/update says who may update and to what.
-async function copyText(text) {
-  try { if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(text); return true; } return legacyCopy(text); }
-  catch { return legacyCopy(text); }
-}
 const updateGuards = new Map();
 const updateUi = createUpdateUi({
-  doc: document, fetchImpl: (...a) => fetch(...a), copyText,
+  doc: document, fetchImpl: (...a) => fetch(...a), copyFromButton,
   report: (msg, kind) => reportStatus(null, '', msg, kind),
   guardModal: (modal, opts) => { if (!updateGuards.has(modal)) updateGuards.set(modal, guardModal(modal)); updateGuards.get(modal).opened(opts); },
 });
@@ -15857,6 +15889,7 @@ async function loadSettings() {
     paintNightSettings(data);
     paintSyncSettings(data);
     paintNetworkWaitSettings(data);
+    paintRunLimitsSettings(data);
     paintSmartNamingSettings(data);
     paintActionsSettings(data);
     paintDebugSpawnSettings(data);
@@ -15878,7 +15911,7 @@ async function loadSettings() {
 
 // ── Chat notifications card (chat-connectivity-design.md §4.8) ────────────────
 
-// Settings › My model credentials (credential broker, docs/credential-broker.md): the card
+// Settings › My credentials (credential broker, docs/credential-broker.md): the card
 // stays hidden unless worca runs with a broker. Status only; keys live on the key page.
 async function paintCredentials() {
   const card = document.getElementById('credentials-card');
@@ -15912,11 +15945,8 @@ document.getElementById('extensionInstallHost')?.addEventListener('click', async
   }
   const copy = e.target.closest('[data-copy-path]');
   if (!copy) return;
-  const text = copy.dataset.copyPath;
-  let ok = false;
-  try { if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(text); ok = true; } else ok = legacyCopy(text); } catch { ok = legacyCopy(text); }
-  if (ok) flashCopyBtn(copy, 'Copied');
-  else reportStatus(null, '', 'Could not copy the path: select it and copy it by hand.', 'err');
+  const ok = await copyFromButton(copy, copy.dataset.copyPath);
+  if (!ok) reportStatus(null, '', 'Could not copy the path: select it and copy it by hand.', 'err');
 });
 
 // Settings → Browser extension (docs/browser-extension.md).
@@ -16751,6 +16781,40 @@ document.getElementById('networkWaitSave')?.addEventListener('click', (e) => pos
 document.getElementById('networkWaitReset')?.addEventListener('click', (e) => postNetworkWait(
   { networkWait: null }, { button: e.currentTarget, gate: false, busy: 'Resetting…', done: 'Reset' }));
 settingsCardDirty('networkWaitSave');
+
+// Settings › Runs › Machine load (runLimits: run-slots.mjs, the agents' WORCA_TEST_CONCURRENCY, run-retention.mjs).
+function paintRunLimitsSettings(data) {
+  const d = data && data.runLimits;
+  const sel = { maxConcurrentRuns: 'runLimitsMaxRuns', testWorkers: 'runLimitsTestWorkers', keepRunsDays: 'runLimitsKeepDays' };
+  if (!d || !document.getElementById(sel.maxConcurrentRuns)) return;
+  for (const [k, id] of Object.entries(sel)) {
+    const el = document.getElementById(id);
+    const v = d[k] == null ? '' : String(d[k]);
+    if (![...el.options].some((o) => o.value === v)) {
+      const opt = document.createElement('option');
+      opt.value = v; opt.textContent = k === 'keepRunsDays' ? `${v} days` : v;
+      el.append(opt);
+    }
+    el.value = v;
+  }
+  const auto = document.querySelector('#runLimitsTestWorkers option[value=""]');
+  if (auto && data.testWorkersAuto) auto.textContent = `Half the cores (${data.testWorkersAuto})`;
+  settingsCardPainted('runLimitsSave');
+}
+function postRunLimits(body, opts = {}) {
+  return postSettingsCard(body, { card: document.getElementById('run-limits-settings-card'), paint: paintRunLimitsSettings, dirty: settingsCardDirty('runLimitsSave'), ...opts });
+}
+document.getElementById('runLimitsSave')?.addEventListener('click', (e) => {
+  const num = (id) => { const v = document.getElementById(id).value; return v === '' ? null : Number(v); };
+  postRunLimits({ runLimits: {
+    maxConcurrentRuns: num('runLimitsMaxRuns'),
+    testWorkers: num('runLimitsTestWorkers'),
+    keepRunsDays: num('runLimitsKeepDays'),
+  } }, { button: e.currentTarget });
+});
+document.getElementById('runLimitsReset')?.addEventListener('click', (e) => postRunLimits(
+  { runLimits: null }, { button: e.currentTarget, gate: false, busy: 'Resetting…', done: 'Reset' }));
+settingsCardDirty('runLimitsSave');
 
 // Settings › Runs › Smart run naming (Labs, flag smartRunNaming). The rows stay editable while the flag is off (muted), so a
 // team can prepare them. The master switch is the flag itself (bindFlagSwitch, below).
@@ -17812,7 +17876,7 @@ function createMemoryController({ host, msgEl, scopeKey, hostProject = null, nav
   // a frame refresh (a draft is not a baseline), or the next frame reads the editor as clean and
   // refetches over the unsaved text. `flash` carries a success message across the reload a write
   // triggers: load() clears the message as its first act, so say() before it would never be seen.
-  const st = { report: null, selected: '', editor: null, isNew: false, snapshots: [], flash: null };
+  const st = { report: null, selected: '', editor: null, isNew: false, snapshots: [], proposals: [], flash: null };
   // Request token: a frame poke, a save and a route change can all be in flight at once, and the
   // LAST one issued must win however the responses land.
   let seq = 0;
@@ -17835,6 +17899,8 @@ function createMemoryController({ host, msgEl, scopeKey, hostProject = null, nav
     // A live defragment run owns the scope: Save / Delete / Restore resume when it finishes (B23).
     const locked = !!st.report.defragRunId;
     host.appendChild(renderHealthCard(st.report, { host: hostRef() }));
+    const proposals = renderProposals(st.proposals, { runInfo: memoryRunInfo, locked });
+    if (proposals) host.appendChild(proposals);
     host.appendChild(renderFileList(st.report.files, { selected: st.selected, runInfo: memoryRunInfo }));
     const right = document.createElement('div');
     right.className = 'mem-right';
@@ -17874,6 +17940,9 @@ function createMemoryController({ host, msgEl, scopeKey, hostProject = null, nav
     const report = r.data;
     const hist = await memoryApi('GET', `${base}/history`);
     if (my !== seq) return;
+    const props = await memoryApi('GET', '/api/memory/proposals');
+    if (my !== seq) return;
+    st.proposals = props.ok && Array.isArray(props.data.proposals) ? props.data.proposals.filter((p) => p.scope === scopeKey) : [];
     st.report = report;
     st.snapshots = hist.ok && Array.isArray(hist.data.snapshots) ? hist.data.snapshots : [];
     if ((fromFrame || keepDraft) && dirty) {
@@ -17958,6 +18027,19 @@ function createMemoryController({ host, msgEl, scopeKey, hostProject = null, nav
     await load('');
   }
 
+  /** #943: Approve writes a run's proposed note to this scope, Reject drops it. */
+  async function decide(id, action, button) {
+    const r = await withButton(button, async () => {
+      const res = await memoryApi('POST', `/api/memory/proposals/${encodeURIComponent(id)}/${action}`);
+      return res.ok ? res : { ok: false, error: res.data.error || `HTTP ${res.status}` };
+    });
+    if (r.skipped) return;
+    if (!r.ok) { say(r.error, 'err'); return; }
+    const p = st.proposals.find((x) => x.id === id);
+    st.flash = [`${action === 'approve' ? 'Approved' : 'Rejected'}${p ? ` ${p.name}.md` : ''}`, 'ok'];
+    await load(st.selected, { keepDraft: true });
+  }
+
   async function defragment(runId) {
     // ONE control (spec §10): while a run is live the same button opens it instead of starting a second.
     if (runId) { location.hash = `running/${runId}`; return; }
@@ -17986,6 +18068,8 @@ function createMemoryController({ host, msgEl, scopeKey, hostProject = null, nav
     if (hit('mem-delete')) { void remove(); return; }
     if (hit('mem-restore')) { void restore(hit('mem-restore').dataset.id); return; }
     if (hit('mem-defrag')) { void defragment(hit('mem-defrag').dataset.runId || ''); return; }
+    if (hit('mem-prop-approve')) { void decide(hit('mem-prop-approve').dataset.id, 'approve', hit('mem-prop-approve')); return; }
+    if (hit('mem-prop-reject')) { void decide(hit('mem-prop-reject').dataset.id, 'reject', hit('mem-prop-reject')); return; }
     const row = hit('mem-row');
     if (row) open(row.dataset.name);
   };
@@ -19416,27 +19500,10 @@ async function reloadProviders() {
   } catch { /* keep what we have */ }
 }
 
-/** The blocking notice (§8.2). Resolves true once acknowledged (now or before). */
-async function ensureCopilotTerms({ force = false } = {}) {
-  if (!force && mvState.providers?.copilot?.termsCurrent) return true;
-  const r = await confirmModal({
-    title: COPILOT_TERMS.title, message: COPILOT_TERMS.body,
-    checkbox: { label: COPILOT_TERMS.checkbox }, confirmLabel: COPILOT_TERMS.confirm, cancelLabel: 'Cancel',
-  });
-  const ok = !!(r && r.ok && r.checked);
-  if (!ok) return false;
-  const res = await fetch('/api/providers/copilot/acknowledge', { method: 'POST' });
-  const data = await safeJson(res);
-  if (!res.ok) { setProviderMsg('copilot', data.error || `HTTP ${res.status}`, true, 'Notice not acknowledged'); return false; }
-  mvState.providers = data;
-  return true;
-}
-
 let copilotPollTimer = null;
 function stopCopilotPoll() { if (copilotPollTimer) { clearTimeout(copilotPollTimer); copilotPollTimer = null; } }
 
 async function copilotSignInFlow() {
-  if (!(await ensureCopilotTerms())) { repaintProviders(); return; }
   try {
     const res = await fetch('/api/providers/copilot/login', { method: 'POST' });
     const flow = await safeJson(res);
@@ -19832,19 +19899,13 @@ async function copyModelEnvValue(btn) {
   const id = editor && editor.dataset.id;
   const key = row && row.dataset.key;
   if (!id || !key) return;
-  const flash = (name) => {
-    const prev = [...btn.childNodes];
-    btn.replaceChildren(icon(document, name, 14));
-    setTimeout(() => { btn.replaceChildren(...prev); }, 1200);
-  };
   try {
     const res = await fetch(`/api/models/${encodeURIComponent(id)}/env-value?key=${encodeURIComponent(key)}`);
     const data = await safeJson(res);
-    if (!res.ok) return flash('x');
-    await navigator.clipboard.writeText(data.value);
-    flash('check');
+    if (!res.ok) return flashCopy(btn, false, 'Could not read the value');
+    await copyFromButton(btn, data.value);
   } catch {
-    flash('x');
+    flashCopy(btn, false);
   }
 }
 
@@ -19993,7 +20054,6 @@ if (el.providersList) {
     if (t.classList.contains('mv-cp-signin')) copilotSignInFlow();
     else if (t.classList.contains('mv-cp-cancel')) { stopCopilotPoll(); mvState.signIn = null; renderProvidersViewBody(); }
     else if (t.classList.contains('mv-cp-signout')) copilotSignOutFlow();
-    else if (t.classList.contains('mv-cp-terms')) ensureCopilotTerms({ force: true }).then(() => renderProvidersViewBody());
     else if (t.classList.contains('mv-cp-fetch-models')) openImportDialog({ source: 'copilot' });
     else if (t.classList.contains('mv-cp-quota-refresh')) refreshCopilotQuotaFlow(t);
     else if (t.classList.contains('mv-pv-save')) {
@@ -20924,6 +20984,8 @@ function readLogFilterFrom(root, prevSearch = '') {
   const nodeAxis = stepSel && stepSel.dataset.axis === 'node';
   const stepVal = stepSel ? stepSel.value : '';
   const chip = root.querySelector('.log-f-exec');
+  const sChip = root.querySelector('.log-f-session');
+  const sid = sChip ? (sChip.dataset.sessionId || '') : '';
   return {
     source: root.querySelector('.log-f-source')?.value || '',
     level: root.querySelector('.log-f-level')?.value || '',
@@ -20931,6 +20993,8 @@ function readLogFilterFrom(root, prevSearch = '') {
     node: nodeAxis ? stepVal : '',
     execution: chip ? (chip.dataset.executionId || '') : '',
     cycle: root.querySelector('.log-f-cycle')?.value || '',
+    session: sid,
+    sessionMembers: sid ? (sChip.dataset.members || '').split(' ').filter(Boolean) : [],
     search: searchEl ? searchEl.value : prevSearch,
   };
 }
@@ -22718,7 +22782,7 @@ function onHistoryPr(msg) {
 // the fallback escapes the chars that would break `[attr="..."]`.
 function cssEscape(s) {
   s = String(s == null ? '' : s);
-  return (window.CSS && CSS.escape) ? CSS.escape(s) : s.replace(/["\\\]]/g, '\\$&');
+  return (window.CSS && window.CSS.escape) ? window.CSS.escape(s) : s.replace(/["\\\]]/g, '\\$&');
 }
 
 // Apply a batch item's per-member PRs onto a workspace row (by memberKey).
@@ -23548,9 +23612,11 @@ async function loadLiveLogs(panel, logUrl, st = null) {
         hStepSel.value = want;
       }
       paintExecChip(hist, bar);
+      paintSessionChip(hist, bar);
       paint();
     };
     wireExecChip(bar, { read: () => filter, write: (patch) => panel.__setLogFilter(patch) });
+    wireSessionChip(bar, { read: () => filter, write: (patch) => panel.__setLogFilter(patch) });
 
     paint();
 
@@ -23891,8 +23957,10 @@ async function loadHistDetailScreen(screen, record, parsed, ship = null) {
   // column painter, as a thunk.
   paintGraphFor(flow, st.stepper, isGraphManifest(st.stepper) ? Object.assign(
     decorFromState(st, { live: false, now: 0, subsOf: (id) => subAgentsForNode(st, id), modelLabel: graphModelLabel }),
-    { run: st, runId: parsed.id, mode: 'monitor', record: rec }) : null, st.steps);
-  if (isGraphManifest(st.stepper)) paintQuiescenceBanner(screen.querySelector('.hd-banners'), decorFromState(st, { live: false, now: 0 }));
+    // `logs`: the run saved a log (HD_TABS' Logs tab shows), so a tray header has a log to open; its cards link the same way.
+    { run: st, runId: parsed.id, mode: 'monitor', record: rec, logs: Array.isArray(data.artifacts) && data.artifacts.some((a) => a && a.kind === 'live-log') })
+    : null, st.steps);
+  if (isGraphManifest(st.stepper)) paintRunWarnings(screen.querySelector('.hd-banners'), decorFromState(st, { live: false, now: 0 }));
 
   paintHdHeaderMeta(screen, rec, data);
   setupHdActions(screen, rec, data);
@@ -23959,8 +24027,10 @@ function histStatusMeta(p) {
   const s = String((p && p.status) || '').toLowerCase();
   const family = HIST_STATUS_FAMILY[s]
     || ((p && p.live) || s === 'running' || s === 'starting' ? 'paused' : '');
+  const note = outcomeNote(p);
   const word = s === 'pausing' ? 'Pausing…'
     : p && p.resumePending ? 'Resuming…'   // a Resume in flight (the browser's flag)
+    : note ? `Done · ${note.text}`          // E2/2.3: the caveat rides the word
     : s ? s.charAt(0).toUpperCase() + s.slice(1) : 'Unknown';
   return { family: family || 'paused', word };
 }
@@ -25265,6 +25335,19 @@ function paintPushBtn(btn, record, push) {
   setCtaContent(btn, 'arrow-up', pushLabel(push));
   btn.title = pushTip(record.sourceBranch, push);
 }
+/** POST /api/push for a run on its source branch -> { ok, remote, branch }; throws the server's message. The Details
+ *  header's Push (pushSourceFlow) and the chat run card's Push (chatRunControls.pushSource) share it. */
+async function postPushSource(record) {
+  const res = await fetch('/api/push', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    // The ship-it modal's own payload shape (:18052). projectKey/projectDir come from listAllPipelines'
+    // project tag (artifacts.mjs:2108), not rowToHistoryEntry.
+    body: JSON.stringify({ projectKey: record.projectKey, projectDir: record.projectDir || null, id: record.id }),
+  });
+  const dd = await safeJson(res);
+  if (!res.ok) throw new Error((dd && dd.error) || `HTTP ${res.status}`);
+  return dd;
+}
 /** Push (POST /api/push) the run's source branch to its remote; `btn` shows the busy state and the outcome. The Details
  *  header's .hd-push and the card head's Push (slice 3, .hd-g-push) share it, and both show the outcome. */
 async function pushSourceFlow(btn, record) {
@@ -25273,14 +25356,7 @@ async function pushSourceFlow(btn, record) {
   const tip = pushTip(record.sourceBranch);
   for (const b of peers) { b.disabled = true; setCtaContent(b, 'arrow-up', 'Pushing…'); b.title = tip; }
   try {
-    const res = await fetch('/api/push', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      // The ship-it modal's own payload shape (:18052). projectKey/projectDir come from listAllPipelines'
-      // project tag (artifacts.mjs:2108), not rowToHistoryEntry.
-      body: JSON.stringify({ projectKey: record.projectKey, projectDir: record.projectDir || null, id: record.id }),
-    });
-    const dd = await safeJson(res);
-    if (!res.ok) throw new Error((dd && dd.error) || `HTTP ${res.status}`);
+    const dd = await postPushSource(record);
     for (const b of peers) paintPushBtn(b, record, { state: 'pushed', remote: dd.remote || 'the remote' });
   } catch (err) {
     // A short label; the error (often long) is in the tooltip and a toast, and a click retries.
@@ -26070,6 +26146,16 @@ function paintHdHeaderMeta(screen, record, data) {
   w.className = `hd-status-word st-${family}`;
   w.textContent = doneWord || word;
   meta.appendChild(w);
+  // E2/2.3: the run's caveat (open issues left by a forced loop, or End not reached) as a chip.
+  const note = outcomeNote(st);
+  if (note) {
+    const chip = document.createElement('span');
+    chip.className = 'hd-outcome-note';
+    chip.textContent = note.text;
+    chip.title = note.title;
+    meta.appendChild(hdDot());
+    meta.appendChild(chip);
+  }
   // The engine that runs the agents (a resume on another engine shows the new one): every run names it.
   const engine = ENGINE_NAMES.includes(st.runEngine) ? st.runEngine : 'claude';
   meta.appendChild(hdDot());
@@ -26210,7 +26296,7 @@ function paintHdHeaderMeta(screen, record, data) {
       // applied to a string instead of a record.
       copyBtn.addEventListener('click', () => {
         const name = screen.querySelector('.hd-branch-name').textContent || '';
-        if (name) copyBranchToClipboard(copyBtn, name);
+        if (name) copyFromButton(copyBtn, name);
       });
     }
   }
@@ -27256,6 +27342,8 @@ const HD_TAB_ICONS = {
   artifacts: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 8l9-4 9 4-9 4-9-4z" stroke-linejoin="round"/><path d="M3 8v8l9 4 9-4V8" stroke-linejoin="round"/><path d="M12 12v8" stroke-linecap="round"/></svg>',
   actions: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M7 5l11 7-11 7z"></path></svg>',
   changes: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M6 3h8l4 4v14H6z" stroke-linejoin="round"/><path d="M14 3v4h4" stroke-linejoin="round"/><path d="M12 11v6M9 14h6" stroke-linecap="round"/></svg>',
+  // Sessions (session groups): the tray's own glyph, a terminal prompt in a frame.
+  sessions: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="4.5" width="18" height="15" rx="2.5"/><path d="M7.5 10l3 2.5-3 2.5M12.5 15.5h4" stroke-linecap="round" stroke-linejoin="round"/></svg>',
 };
 
 // Per-screen tab state, keyed by the SCREEN element. The cells + activate() pair
@@ -27440,6 +27528,8 @@ const HD_TABS = [
   { key: 'logs', label: 'Logs', level: 'expert', badge: () => null,
     visible: (d) => Array.isArray(d.artifacts) && d.artifacts.some((a) => a && a.kind === 'live-log'),
     build: (...a) => buildHdLogs(...a) },
+  // Session groups (Task 58): only on a run that has a session (its summaries, or a session in its manifest).
+  { key: 'sessions', label: 'Sessions', level: 'advanced', badge: (d) => sessionsBadge(d.state), visible: (d) => sessionsTabVisible(d.state), build: (...a) => buildHdSessions(...a) },
   { key: 'agents', label: 'Agents', level: 'expert',
     badge: (d) => ((Array.isArray(d.state.subAgents) && d.state.subAgents.length) ? String(d.state.subAgents.length) : null),
     visible: () => true, build: (...a) => buildHdAgents(...a) },
@@ -27547,7 +27637,7 @@ function wireHdGraphLogLinks(screen) {
       // A v2 graph card drives the NODE axis (v2 lines carry nodeId, and one
       // agent key may back several nodes). Same park-or-apply contract as the
       // source path below; the drain lives beside __pendingLogSource's.
-      const patch = { node: node.dataset.nodeId };
+      const patch = { node: node.dataset.nodeId, execution: '', session: '', sessionMembers: [] };   // a card is one step: not a session, not one run of it
       if (typeof cell.sec.__setLogFilter === 'function') cell.sec.__setLogFilter(patch);
       else cell.sec.__pendingLogFilter = patch;
       tabs.activate('logs');
@@ -28924,17 +29014,8 @@ function hdWorktreeRow(word, dir) {
   }
   const segs = String(dir).split('/').filter(Boolean);
   const short = segs.length > 3 ? `…/${segs.slice(-3).join('/')}` : dir;
-  const btn = document.createElement('button');
-  btn.type = 'button';
-  btn.className = 'btn btn-sm btn-quiet mono hd-branch-copy hd-ov-wt-path';
-  btn.title = dir;
-  btn.setAttribute('aria-label', 'Copy worktree path');
-  const name = document.createElement('span'); name.className = 'hd-branch-name'; name.textContent = short;
-  btn.appendChild(name);
-  btn.insertAdjacentHTML('beforeend',
-    '<svg class="ico-copy" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="12" height="12" rx="2.5"></rect><path d="M5 15H4.5A1.5 1.5 0 0 1 3 13.5v-9A1.5 1.5 0 0 1 4.5 3h9A1.5 1.5 0 0 1 15 4.5V5" stroke-linecap="round"></path></svg>'
-    + '<svg class="ico-check" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M4 12.5l5.5 5.5L20 6.5" stroke-linecap="round" stroke-linejoin="round"></path></svg>');
-  btn.addEventListener('click', () => copyBranchToClipboard(btn, dir, dir));
+  const btn = copyButton(document, { name: 'Copy worktree path', label: short, title: dir, cls: 'hd-branch-copy hd-ov-wt-path' });
+  btn.addEventListener('click', () => copyFromButton(btn, dir));
   row.appendChild(btn);
   return row;
 }
@@ -29130,13 +29211,14 @@ function buildHdOverview(sec, record, data) {
         const linked = !!scopeKey && c.kind !== 'del' && c.kind !== 'fail';
         const chip = document.createElement(linked ? 'button' : 'span');
         // `fail` borrows the rejected colour: no new CSS class, no new light-contrast baseline signature.
-        chip.className = `hd-mem-chip hd-mem-${c.kind === 'fail' ? 'rej' : c.kind} mono`;
-        if (c.kind === 'fail') chip.dataset.kind = 'fail';
+        // `prop` (#943, a proposal waiting for approval) borrows the modified colour and opens the scope, where it waits.
+        chip.className = `hd-mem-chip hd-mem-${c.kind === 'fail' ? 'rej' : c.kind === 'prop' ? 'mod' : c.kind} mono`;
+        if (c.kind === 'fail' || c.kind === 'prop') chip.dataset.kind = c.kind;
         chip.textContent = c.text;
         if (c.title) chip.title = c.title;
         if (linked) {
           chip.type = 'button';
-          chip.addEventListener('click', () => { location.hash = memoryRoute(scopeKey, c.name); });
+          chip.addEventListener('click', () => { location.hash = memoryRoute(scopeKey, c.kind === 'prop' ? '' : c.name); });
         }
         line.appendChild(chip);
       }
@@ -29514,6 +29596,11 @@ const RD_TABS = [
     build: (sec, ctx) => buildRdLogs(sec, ctx),
   },
   {
+    key: 'sessions', label: 'Sessions', icon: HD_TAB_ICONS.sessions, level: 'advanced',
+    badge: (ctx) => sessionsBadge(ctx.run), visible: (ctx) => sessionsTabVisible(ctx.run),
+    build: (sec, ctx) => buildRdSessions(sec, ctx),
+  },
+  {
     key: 'agents', label: 'Agents', icon: HD_TAB_ICONS.agents, level: 'expert',
     badge: (ctx) => {
       const n = Array.isArray(ctx.run.subAgents) ? ctx.run.subAgents.length : 0;
@@ -29562,6 +29649,7 @@ function buildRdWorkflow(sec, ctx) {
     if (sec.__drawer && c.run.logDrawer) {
       sec.__drawer.setLive(!RD_TERMINAL.includes(c.run.status));
       markLogTarget(sec, c.run.logDrawer);   // a repaint may have rebuilt the cards
+      paintDrawerSessionLine(sec.__drawer, c.run.steps, c.run.sessionHosts, c.run.logDrawer);   // a member stamped mid-step
     }
   };
 }
@@ -29976,7 +30064,7 @@ function buildRdQa(sec, ctx) {
 function ensureRdTabs(screen, r) {
   if (!screen || !r) return;
   const mode = workModeOf(r);
-  const sig = `${mode}|${rdFolderMembers(r).map((m) => m.memberKey).join(',')}`;   // P5: Folder members learned later rebuild the tabs
+  const sig = `${mode}|${rdFolderMembers(r).map((m) => m.memberKey).join(',')}${sessionsTabVisible(r) ? '|sessions' : ''}`;   // P5: Folder members learned later rebuild the tabs; so does a session (its manifest can come after the first paint)
   const built = !!screen.querySelector('.rd-tab');
   if (built && screen.dataset.tabsMode === sig) return;
   if (built) {
@@ -30074,9 +30162,6 @@ function rdMaybePaintLogFilters(sec, r, rec) {
 
 // The four control listeners, bound once per section element (see buildRdLogs).
 function rdWireLogControls(sec, r) {
-  // The execution chip on THIS bar (applyRunLogFilter is the setter), bound on the bar so it fires before
-  // the section-level change handler below re-reads the (then consistent) DOM.
-  wireExecChip(sec.querySelector('.log-filters'), { read: () => r.logFilter, write: (patch) => applyRunLogFilter(r, patch) });
   sec.addEventListener('change', (e) => {
     if (!(e.target.closest && e.target.closest('select.log-f'))) return;
     r.logFilter = readLogFilterFrom(sec, r.logFilter.search || '');
@@ -30139,6 +30224,11 @@ function buildRdLogs(sec, ctx) {
   // visible bar matches the filter the hydration below actually applies.
   const searchBox = bar.querySelector('.log-search');
   if (searchBox) searchBox.value = r.logFilter.search || '';
+  // The execution and session chips (applyRunLogFilter is the setter), bound on THIS bar so they fire before the
+  // section-level change handler below re-reads the (then consistent) DOM. The bar is a new element on every build (a
+  // re-activated tab rebuilds it), so they bind here, not once per section with the handlers below.
+  wireExecChip(bar, { read: () => r.logFilter, write: (patch) => applyRunLogFilter(r, patch) });
+  wireSessionChip(bar, { read: () => r.logFilter, write: (patch) => applyRunLogFilter(r, patch) });
   syncAutoscrollSwitch(r, sec);
   rdRepaintLog(sec, r);
   rdPaintLogFilters(sec, r);
@@ -30368,6 +30458,10 @@ function rdStateCopy(r, stepName) {
   if (r.pauseReason === 'cost_total_policy') return 'Paused: team total cap reached.';
   if (r.pauseReason === 'night_guardrail') return r.pauseDetail || 'Paused: Away mode limit reached.';
   if (r.pauseReason === 'drain') return 'Paused while worca was stopping. Resume continues from here. The worktree and progress are kept.';
+  if (r.pauseReason === 'time_limit') {
+    const why = r.pauseDetail ? `: ${r.pauseDetail}` : '';
+    return `Paused at a node time limit${why}. Resume re-runs the step. The worktree and progress are kept.`;
+  }
   if (r.pauseReason === 'error') {
     const why = r.pauseDetail ? `: ${r.pauseDetail}` : '';
     return `Paused after an error${why}. Fix the cause, then Resume. The worktree and progress are kept.`;
@@ -30722,6 +30816,67 @@ function rdAgentsBody(sec, r) {
   hydrateRunArtifacts(r).then((added) => {
     if (added) attachNodeArtifactAffordances(cardsByNode, r.artifacts, r.pipelineId || r.id, sec);
   });
+}
+
+// ── Sessions tab (session groups, Task 58) ───────────────────────────────────
+// One card per session from GET /api/runs/:id/sessions (the pipeline id); a live run refetches after a sessionHost frame
+// (r.sessionSeq counts them), at most every 2 s. `seq` undefined (History, no frames): every open past 2 s asks again.
+const sessionsTabArgs = (st, runId, live, logLevel, seq, trays) => ({ runId, state: st, live, engine: st && st.runEngine, logLevel,
+  seq, trays, labelOf: st && st.stepper ? nodeLabelLookup(st.stepper) : (id) => id });
+
+/** The tab's buttons, delegated once per section: copy an id, a step's log, its sub-agent (the Agents tab). */
+function wireSessionsClicks(sec, ctxOf) {
+  if (sec.__sessionsWired) return;
+  sec.__sessionsWired = true;
+  sec.addEventListener('click', (e) => {
+    const b = e.target.closest && e.target.closest('button[data-copy], button[data-transcript], button[data-log-exec], button[data-subagent]');
+    if (!b || !sec.contains(b)) return;
+    const ctx = ctxOf();
+    if (b.dataset.copy || b.dataset.transcript) {
+      copyFromButton(b, b.dataset.copy || b.dataset.transcript);
+    } else if (b.dataset.logExec) {
+      focusLogExecution(ctx, b.dataset.logExec, b.dataset.nodeId || '');
+    } else if (b.dataset.subagent) {
+      openDetailsTab(ctx, 'agents');
+    }
+  });
+}
+
+/** A Details tab of the open run page (Running, or History when `ctx.record`), if the level shows it: its pill's own
+ *  click (the address follows), then the focus on the pill, as a click on it leaves it. */
+function openDetailsTab(ctx, key) {
+  const r = ctx && ctx.run;
+  if (!r) return;
+  const screen = ctx.record ? (histDetailState && histDetailState.screen) : (runDetailState.runId === r.runId ? runDetailState.screen : null);
+  const tabs = screen ? detailTabsOf(screen) : null;
+  const cell = tabs && tabs.cells.get(key);
+  if (!cell || !levelAtLeast(cell.tab.level || 'simple')) return;
+  cell.btn.click();
+  cell.btn.focus({ preventScroll: true });
+}
+
+function buildRdSessions(sec, ctx) {
+  const paint = (c) => {
+    const r = c.run;
+    // No id before the first state frame. The count is 0 before the first sessionHost frame: only a trace record is news,
+    // so a page that opened after the run's first frames (or a run without a host) does not poll on every frame.
+    // The trays are the run page's own decor (memoised per state frame): a card says what its tray says.
+    if (r && r.pipelineId) paintSessionsTab(sec, sessionsTabArgs(r, r.pipelineId, isLive(r), 'advanced', r.sessionSeq || 0, isGraphRun(r) ? runDecorFor(r).sessions : null));
+  };
+  wireSessionsClicks(sec, () => rdCtx(ctx.run));
+  paint(ctx);
+  sec.__update = paint;
+}
+
+function buildHdSessions(sec, record, data) {
+  wireSessionsClicks(sec, () => ({ run: data.state, record: hdCurrentRecord(record) }));
+  // History's Logs tab is Expert and exists only with a saved log. History gets no live frames: the report is the one
+  // fetched when the tab opened (a run still going shows it as live). A failed load un-stamps the tab (as History's Logs
+  // tab does, after initDetailTabs' stamp), so reopening the tab asks again, as its message says.
+  const logs = Array.isArray(data.artifacts) && data.artifacts.some((a) => a && a.kind === 'live-log');
+  const trays = data.state && isGraphManifest(data.state.stepper) ? decorFromState(data.state, { live: false, now: 0 }).sessions : null;   // History's graph decor
+  paintSessionsTab(sec, sessionsTabArgs(data.state, record.id, !isTerminalStatus(data.state && data.state.status), logs ? 'expert' : null, undefined, trays))
+    .then((report) => { if (!report) sec.dataset.loaded = ''; });
 }
 
 function buildRdAgents(sec, ctx) {
@@ -31099,14 +31254,8 @@ function closeReportModal() {
 const reportGuard = guardModal(el.reportModal, { kind: 'form', close: () => closeReportModal(), busy: () => reportState.filing });
 
 /** Best-effort clipboard write; returns whether it landed. Mirrors copyLogToClipboard. */
-async function reportCopyText() {
-  const text = el.reportPreview.textContent;
-  try {
-    if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(text); return true; }
-    return legacyCopy(text);
-  } catch {
-    return legacyCopy(text);
-  }
+function reportCopyText() {
+  return writeClipboard(window, el.reportPreview.textContent);
 }
 
 el.reportClose.addEventListener('click', () => reportGuard.cancel());
@@ -31132,8 +31281,8 @@ el.reportOptins.addEventListener('change', (e) => {
 });
 
 el.reportCopy.addEventListener('click', async (e) => {
-  if (!reportState.payload) return flashCopyBtn(e.currentTarget, 'nothing to copy');
-  flashCopyBtn(e.currentTarget, (await reportCopyText()) ? 'copied' : 'copy failed');
+  if (!reportState.payload) return flashLabel(e.currentTarget, 'Nothing to copy');
+  flashLabel(e.currentTarget, (await reportCopyText()) ? 'Copied' : 'Copy failed');
 });
 
 // D23: the issue body ASKS the reporter to paste the full JSON, so put it on the
@@ -31181,7 +31330,7 @@ function showFiledIssue(url) {
 el.reportCreate.addEventListener('click', async (e) => {
   const btn = e.currentTarget;
   // Same gate as the link's href (D24): never file a payload the preview is not showing.
-  if (!reportState.payload) return flashCopyBtn(btn, 'not ready yet');
+  if (!reportState.payload) return flashLabel(btn, 'Not ready yet');
 
   // Open the tab INSIDE the user gesture. A popup blocker only honours a synchronous
   // window.open, and filing is a network round-trip away; the tab is parked on blank
@@ -31190,7 +31339,7 @@ el.reportCreate.addEventListener('click', async (e) => {
   let tab = null;
   try { tab = window.open('', '_blank'); } catch { tab = null; }
 
-  // dataset.label is flashCopyBtn's convention: read it so a flash still in flight
+  // dataset.label is flashLabel's convention: read it so a flash still in flight
   // cannot become the restored label, and kill its timer so it cannot fire over us.
   const label = btn.dataset.label || btn.textContent;
   btn.dataset.label = label;
@@ -31474,21 +31623,25 @@ function runDecorFor(r, mode = 'monitor') {
   return bag;
 }
 
-/** The amber quiescence banner (spec §8), in .rd-banners / .hd-banners. Idempotent:
- *  one element per host, shown/hidden from the bag's `quiescent`. */
-function paintQuiescenceBanner(host, decor) {
+/** The run's warnings (decor.warnings: a dropped model pick, the scheduler's lines, the quiescence line of spec §8) as
+ *  amber banners in .rd-banners / .hd-banners: one `.run-warn` per distinct text, in order. Idempotent; an empty list
+ *  leaves none. */
+function paintRunWarnings(host, decor) {
   if (!host) return;
-  const show = !!(decor && decor.quiescent);
-  let el = host.querySelector(':scope > .run-warn');
-  if (!el) {
-    if (!show) return;
-    el = document.createElement('div');
-    el.className = 'run-warn';
-    el.setAttribute('role', 'status');
-    host.appendChild(el);
-  }
-  el.textContent = 'finished at quiescence — End not reached';
-  el.hidden = !show;
+  const texts = [...new Set((decor && Array.isArray(decor.warnings) ? decor.warnings : []).filter(Boolean))];
+  const els = [...host.querySelectorAll(':scope > .run-warn')];
+  texts.forEach((text, i) => {
+    let el = els[i];
+    if (!el) {
+      el = document.createElement('div');
+      el.className = 'run-warn';
+      el.setAttribute('role', 'status');
+      host.appendChild(el);
+    }
+    el.textContent = text;
+    el.hidden = false;
+  });
+  for (const el of els.slice(texts.length)) el.remove();
 }
 
 /** The P5 line ("Build · task 2 of 4"); supersedes the D15 "3/6 done" counter (spec 2026-10-14 P12). '' on a v1 run. */
@@ -31746,6 +31899,11 @@ const chatRunControls = {
   },
   confirm: (o) => confirmModal(o),
   prHost: () => prHostAvailable(),
+  /** The run card's Push (a run on its source branch): the run page's POST /api/push -> { ok, remote } | { ok:false, error }. */
+  pushSource(ref) {
+    return postPushSource({ projectKey: ref && ref.projectKey, projectDir: ref && ref.projectDir, id: ref && ref.pipelineId })
+      .then((dd) => ({ ok: true, remote: dd.remote || 'the remote' }), (err) => ({ ok: false, error: err && err.message ? err.message : String(err) }));
+  },
   openApply(ref, opener) { const pid = ref && ref.pipelineId; return pid ? folderApplyFlow({ pipelineId: pid, ...(opener ? { opener } : {}) }) : Promise.resolve(null); },
   openShipIt(ref, link) {
     // P2 Task 9: chatDeps.openShipIt = openShipItFor → Promise<{opened, url?, error?}>, settling when the dialog closes.
@@ -31861,6 +32019,7 @@ function statusPill(r) {
     if (r.pauseReason === 'cost_total_policy') return { family: 'amber', text: 'Paused · team total' };
     if (r.pauseReason === 'night_guardrail') return { family: 'amber', text: 'Paused · Away mode limit' };
     if (r.pauseReason === 'drain') return { family: 'amber', text: 'Paused · restart' };
+    if (r.pauseReason === 'time_limit') return { family: 'amber', text: 'Paused · time limit' };
     // An error pause is parked and resumable (never dead), so it stays in the amber family.
     if (r.pauseReason === 'error') return { family: 'amber', text: 'Paused · error' };
     if (r.pauseReason === 'recoverable') return { family: 'amber', text: 'Paused · recoverable' };
@@ -31872,7 +32031,11 @@ function statusPill(r) {
   if (r.status === 'interrupted') return { family: 'amber', text: 'Interrupted' };
   if (r.pendingQuestion != null) return { family: 'amber', text: r.pendingQuestion.kind === 'workflow' ? 'Paused · your decision' : 'Paused · awaiting answers' };
   if (r.status === 'starting') return { family: 'peach', text: 'Starting' };
-  if (r.status === 'done') return { family: 'green', text: 'Done' };
+  if (r.status === 'done') {
+    // E2/2.3: forced past open issues, or quiesced before End — not a plain success.
+    const note = outcomeNote(r);
+    return note ? { family: 'amber', text: `Done · ${note.text}` } : { family: 'green', text: 'Done' };
+  }
   if (r.status === 'stopped') return { family: 'red', text: 'Stopped' };
   if (r.status === 'error') return { family: 'red', text: 'Error' };
   // Running: the newest active agent names the pill. A run whose manifest has
@@ -32226,6 +32389,8 @@ function paintGraphFor(host, stepper, decor, legacySteps) {
       onGateClick: () => focusQuestionPanel(slot.ctx),
       onResultClick: (path) => openRunArtifact(slot.ctx, path),
       modelLabel: graphModelLabel,
+      // History without a saved log has nothing to open: its header stays inert like its cards (wireHdGraphLogLinks).
+      onSessionClick: decor.record && !decor.logs ? null : (sid) => openSessionLog(host, slot.ctx, sid),
     });
     GRAPH_MOUNTS.set(host, slot);
   }
@@ -32315,6 +32480,11 @@ function revealLogDrawer(sec) {
 }
 function newLogDrawer(sec, { onClose, onOpenInLogs }) {
   const d = createLogDrawer({ doc: document, win: window, storage: LOG_DRAWER_STORAGE, onClose, onOpenInLogs, tools: cloneLogViewSeg() });
+  // The session line's copy button (Task 59): the sub-agent id.
+  d.el.addEventListener('click', (e) => {
+    const b = e.target.closest && e.target.closest('.wf-log-sub button[data-copy]');
+    if (b) copyFromButton(b, b.dataset.copy);
+  });
   // Follow the tail only while the reader is at the bottom (one geometry read per scroll, not per line).
   d.body.addEventListener('scroll', () => {
     d.body.__pinned = d.body.scrollTop + d.body.clientHeight >= d.body.scrollHeight - 24;
@@ -32329,16 +32499,34 @@ function newLogDrawer(sec, { onClose, onOpenInLogs }) {
 function rdMountLogDrawer(sec, r) {
   newLogDrawer(sec, {
     onClose: () => { r.logDrawer = null; markLogTarget(sec, null); },
-    onOpenInLogs: () => { const t = r.logDrawer; if (t) focusLogExecution(rdCtx(r), t.execution, t.node); },
+    onOpenInLogs: () => {
+      const t = r.logDrawer;
+      if (t && t.session) focusLogSession(rdCtx(r), t);
+      else if (t) focusLogExecution(rdCtx(r), t.execution, t.node);
+    },
   });
   if (r.logDrawer) rdPaintLogDrawer(sec, r);
+}
+/** The drawer's "Inside session …" line (Task 59) for its target's row: the target execution's row, else the node's
+ *  newest. Rebuilt only when its words change, so a frame never takes the focus off its copy button. */
+function paintDrawerSessionLine(d, steps, sessionHosts, t) {
+  if (!d || typeof d.setSub !== 'function') return;
+  const rows = Array.isArray(steps) ? steps : [];
+  const row = !t || !t.node ? null
+    : (t.execution ? rows.find((x) => x && x.executionId === t.execution) : rows.filter((x) => x && x.nodeId === t.node).at(-1)) || null;
+  const line = row ? sessionRowLine(row, sessionHosts) : '';
+  const key = line ? `${line}|${row.session.memberAgentId || ''}` : '';
+  if (d.__subKey === key) return;
+  d.__subKey = key;
+  d.setSub(key ? sessionRowEl(document, row, sessionHosts) : null);
 }
 function rdPaintLogDrawer(sec, r, opener = null) {
   const d = sec.__drawer;
   const t = r.logDrawer;
   if (!d || !t) return;
   sec._drawerCycle = fillLogDrawerBody(d.body, r.logLines, t);
-  d.open({ label: stepLabel(r.stepper, t.node), isLive: !RD_TERMINAL.includes(r.status), opener });
+  d.open({ label: t.session ? t.label || SESSION_DEFAULT_LABEL : stepLabel(r.stepper, t.node), isLive: !RD_TERMINAL.includes(r.status), opener });
+  paintDrawerSessionLine(d, r.steps, r.sessionHosts, t);
   markLogTarget(sec, t);
   if (opener) revealLogDrawer(sec);   // a click, not a rebuild on tab re-activation
 }
@@ -32376,6 +32564,35 @@ function openStepLog(host, ctx, executionId, nodeId) {
   rdPaintLogDrawer(sec, r, logTargetCard(sec, r.logDrawer));
 }
 
+/** A session tray's header (Task 57; Task 60): the drawer filtered to the whole session — its main agent's lines
+ *  (source `session`) and every member's own, each cycle and ×N slice included (05 §6.5). Returns the drawer's target
+ *  `{ session, sessionMembers, label }`, or null when no member ran yet (the header is inert then). History opens it
+ *  under its graph; a page without the drawer opens the Logs tab with the session chip. */
+function openSessionLog(host, ctx, sid) {
+  const s = ctx && ctx.sessions && ctx.sessions[sid];
+  const r = ctx && ctx.run;
+  if (!s || !r) return null;
+  const mine = new Set(s.members);
+  if (!(Array.isArray(r.steps) ? r.steps : []).some((x) => x && x.executionId && mine.has(x.nodeId))) return null;
+  const labelOf = nodeLabelLookup(r.stepper);
+  const t = { session: sid, sessionMembers: [...s.members], label: `${s.label || SESSION_DEFAULT_LABEL} · ${s.members.map((id) => labelOf(id)).join(' + ')}` };
+  const toLogs = () => focusLogSession(ctx, t);
+  if (ctx.record) {
+    const screen = histDetailState && histDetailState.screen;
+    if (screen && host && host.closest('.hd-graph')) openHdStepLog(screen, t, toLogs);
+    else toLogs();
+    return t;
+  }
+  const screen = runDetailState.runId === r.runId ? runDetailState.screen : null;
+  const tabs = screen ? detailTabsOf(screen) : null;
+  const sec = host && host.closest('.rd-sec[data-sec="workflow"]');
+  if (!logsTabShown(tabs)) return t;   // below the Logs tab's level nothing opens, as for a card
+  if (!sec || !sec.__drawer) { toLogs(); return t; }
+  r.logDrawer = t;
+  rdPaintLogDrawer(sec, r, host.querySelector(`.gv-sess-head[data-session-id="${sid}"]`));
+  return t;
+}
+
 // History: the saved NDJSON log, fetched once per screen and shared by every drawer target.
 function hdLogRecs(screen) {
   if (!screen.__logRecs) {
@@ -32410,14 +32627,19 @@ function openHdStepLog(screen, target, openInLogs) {
   const graph = screen.querySelector('.hd-graph');
   const t = { ...target, openInLogs };
   sec.__logTarget = t;
-  d.open({ label: target.label || '', isLive: false, opener: logTargetCard(graph, target) });
+  // A session target has no card: focus returns to its tray header.
+  const opener = logTargetCard(graph, target) || (target.session && graph ? graph.querySelector(`.gv-sess-head[data-session-id="${target.session}"]`) : null);
+  d.open({ label: target.label || '', isLive: false, opener });
+  const st = histDetailState && histDetailState.data ? histDetailState.data.state : null;
+  paintDrawerSessionLine(d, st && st.steps, st && st.sessionHosts, target);
   markLogTarget(graph, target);
   revealLogDrawer(sec);
   d.body.textContent = 'Loading…';
   hdLogRecs(screen).then((recs) => {
     if (sec.__logTarget !== t) return;   // retargeted while the log loaded
     let filter;
-    if (target.node) filter = { node: target.node, execution: target.execution || '' };
+    if (target.session) filter = { session: target.session, sessionMembers: target.sessionMembers || [] };   // a tray header (Task 60)
+    else if (target.node) filter = { node: target.node, execution: target.execution || '' };
     else {
       const seen = new Set(recs.map((x) => x.source));
       filter = { source: target.sources.find((src) => seen.has(src)) || target.sources[0] };
@@ -32430,9 +32652,15 @@ function openHdStepLog(screen, target, openInLogs) {
  *  P6b lands the node/execution axes in log-filter.mjs and the History panel's
  *  `__setLogFilter`; until then the keys are carried, not applied. */
 function focusLogExecution(ctx, executionId, nodeId) {
+  focusLogFilter(ctx, { execution: executionId, node: nodeId, session: '', sessionMembers: [] });   // a step, not a session
+}
+/** A session tray's "Open in Logs" (Task 60): the Logs tab narrowed to the session, its chip shown. */
+function focusLogSession(ctx, t) {
+  focusLogFilter(ctx, { session: t.session, sessionMembers: [...(t.sessionMembers || [])], execution: '', node: '' });
+}
+function focusLogFilter(ctx, patch) {
   const r = ctx && ctx.run;
   if (!r) return;
-  const patch = { execution: executionId, node: nodeId };
   if (ctx.record) {
     // History: the Logs tab is lazily built — hand the patch to the panel when it
     // exists, else park it for the panel's first paint (mirrors __pendingLogSource).
@@ -33225,7 +33453,7 @@ const schedulesView = createSchedulesView({
     workflowLabel: (id) => {
       const opt = el.workflowSelect ? [...el.workflowSelect.options].find((o) => o.value === id) : null;
       if (opt) return opt.textContent.trim();
-      return { wf_default: 'Default', wf_auto: 'Auto', wf_memory_defrag: 'Memory defragment' }[id] || id;
+      return { wf_default: 'Default', wf_lean_build: 'Lean', wf_auto: 'Auto', wf_memory_defrag: 'Memory defragment' }[id] || id;
     },
     onCounts: (c) => paintScheduleCounts(c),
     // Who made / changed a schedule, under the same display rule as runs (shared sign-ins only).
@@ -33414,7 +33642,8 @@ function runsGroupItem({ id, groupKind, title, members, cost = null, planning = 
     // inBase). The raw live run carries no PR, so a finished member with failing checks read "Ready to ship".
     const run = r ? withChainPr(rdModelRun(r), m) : (m.pipelineId ? memberRun(m)
       : { ticket: { status: m.ticket ? m.ticket.status : 'scheduled', runAt: m.ticket && !m.ticket.after ? m.ticket.runAt : null,
-        after: m.after ? { index: m.after } : null } });
+        // #1096: a chain root that only waits for another run names that run ("starts after <title>").
+        after: m.after ? { index: m.after } : m.waitsFor && m.waitsFor.title ? { title: m.waitsFor.title } : null } });
     const pk = m.historyKey || m.projectKey || histPk(m.pipelineId);
     const href = r ? `#running/${r.runId}` : m.pipelineId && pk ? `#history/${pk}/${m.pipelineId}`
       : groupKind === 'feature' ? `#feature/${encodeURIComponent(id)}` : m.ticketId ? '#schedules/once' : '#runs';
@@ -33859,9 +34088,10 @@ function paintRunsList() {
   }
   paintLanded(host, runsUi);   // Add to group: the moved row keeps its brief fill across repaints (list-dom.mjs)
 }
-/** P2/P7: move every group line to its fraction IN PLACE — a rebuild would restart the glide. Group rows and their open members only: a
- *  top-level single row's four-section stage block is painted whole by paintProgressBar in renderItem. */
+/** P2/P7: move every group line to its fraction IN PLACE — a rebuild would restart the glide. A staged row's four-section block
+ *  is repainted in place too (paintStageBlocks): its fill is not in the row signature, so no rebuild would carry it (#1067). */
 function paintRunsProgress(host, model) {
+  paintStageBlocks(host, model);
   // #955: an open group's live members draw the same 3px line as their group row.
   const rows = model.sections.flatMap((s) => (s.collapsed ? [] : s.rows))
     .flatMap((r) => (r.kind === 'chain' ? [r, ...(r.open ? r.members || [] : [])] : []))
@@ -34870,7 +35100,7 @@ function openRunDetail(runId, { instant = false, host: where = 'page' } = {}) {
     // repaint that rewrites .rd-branch-name (same stale-capture class the History
     // header kills).
     const name = screen.querySelector('.rd-branch-name').textContent || '';
-    if (name) copyBranchToClipboard(screen.querySelector('.rd-branch-copy'), name);
+    if (name) copyFromButton(screen.querySelector('.rd-branch-copy'), name);
   });
   screen.querySelector('.rd-pause').addEventListener('click', (e) => {
     const btn = e.currentTarget;
@@ -35121,7 +35351,7 @@ function paintRunDetail(r) {
   ensureRdTabs(screen, r);   // builds the pill row + lazy panels exactly once
   paintRdHeader(screen, r);
   paintRdBanners(screen, r);
-  if (isGraphRun(r)) paintQuiescenceBanner(screen.querySelector('.rd-banners'), runDecorFor(r, 'monitor'));
+  if (isGraphRun(r)) paintRunWarnings(screen.querySelector('.rd-banners'), runDecorFor(r, 'monitor'));
   paintRdGraph(screen, r);
   paintRdQuestions(screen, r);
   paintShaperWait(screen, r);
@@ -36109,9 +36339,9 @@ function rdSrowValue(text) {
 // previews its content: `values[key]`, else the tab's own badge with a unit.
 const ACTIVITY_GROUPS = [
   ['Results', ['overview', 'diff', 'changes', 'artifacts', 'actions']],
-  ['How it ran', ['workflow', 'qa', 'clarify', 'logs', 'agents']],
+  ['How it ran', ['workflow', 'qa', 'clarify', 'logs', 'sessions', 'agents']],
 ];
-const ACTIVITY_UNITS = { diff: 'file', changes: 'file', qa: 'question', clarify: 'question', agents: 'agent' };
+const ACTIVITY_UNITS = { diff: 'file', changes: 'file', qa: 'question', clarify: 'question', sessions: 'session', agents: 'agent' };
 function rdActivityGroups(screen, values = {}) {
   const tabs = detailTabsOf(screen);
   if (!tabs) return [];
@@ -36548,7 +36778,7 @@ function paintRunHead(screen, f, h) {
   renderHeadButtons(screen.querySelector('.rd-head-acts'), head, slot, h);
   if (slot && slot._prMenuOpen) slot._prMenuOpen(f);
   // storage: app.js's guarded localStorage (reading window.localStorage throws with site data blocked).
-  renderRoute(screen.querySelector('.rd-route'), routeModel(f), { ...h, storage: localStorage, onCopy: (btn, name) => copyBranchToClipboard(btn, name, name) });
+  renderRoute(screen.querySelector('.rd-route'), routeModel(f), { ...h, storage: localStorage, onCopy: (btn, name) => copyFromButton(btn, name) });
   return head;
 }
 
@@ -38766,7 +38996,7 @@ document.addEventListener('worca:level', () => {
 // The tab is the Settings view's hash param; a guardrail deep link nests its id
 // behind it (#settings/guardrails/<id>). parseHash splits on the FIRST '/' only,
 // so that is view 'settings', param 'guardrails/<id>' — no parseHash change.
-const SETTINGS_TABS = ['general', 'tags', 'presets', 'runs', 'experimental', 'ask', 'guardrails', 'memory'];
+const SETTINGS_TABS = ['general', 'tags', 'presets', 'runs', 'automations', 'experimental', 'ask', 'guardrails', 'memory'];
 // Tabs whose cards are painted from GET /api/settings (loadSettings paints every card, wherever
 // it sits). The Models page loads it too: it holds the Engines card and the Claude helper pickers.
 const SETTINGS_FORM_TABS = ['general', 'tags', 'runs', 'ask'];
@@ -38796,6 +39026,7 @@ function parseSettingsParam(param = '') {
   const i = param.indexOf('/');
   const tab = i === -1 ? param : param.slice(0, i);
   const sub = i === -1 ? '' : param.slice(i + 1);
+  if (tab === 'automations' && !flagOn('gitAutomations')) return ['general', ''];
   return SETTINGS_TABS.includes(tab) ? [tab, sub] : ['general', ''];
 }
 // The canonical param for a tab: General is plain '#settings', never '#settings/general'; a link to one of its
@@ -39150,6 +39381,7 @@ function showSettingsTab(param = '') {
   }
   if (tab === 'tags') { void loadTagsTeam(); void loadLabelsSection(); }
   if (tab === 'presets') void loadPresetsView();
+  if (tab === 'automations') void loadAutomationsView();
   if (tab === 'ask') void paintAskMcpBlock(document.getElementById('ask-mcp-host'), { api: mcpApi });
   if (tab === 'guardrails') loadGuardrailsView(sub);
   if (tab === 'memory') loadMemoryTab(sub);
@@ -40256,6 +40488,140 @@ async function deletePreset(p) {
   return r;
 }
 const presetChangeError = (r) => notify({ tone: 'err', title: 'Could not change the preset', detail: (r.data && r.data.error) || `HTTP ${r.status}` });
+
+// Git event automations (automations-view.mjs, docs/git-automations.md). A project page's Automations tab holds the
+// project's switches and rules; Settings › Automations is the overview across projects.
+const automationsFail = (res, title) => { if (!res.ok) notify({ tone: 'err', title, detail: (res.data && res.data.error) || `HTTP ${res.status}` }); };
+const automationsErr = (r) => Object.assign(document.createElement('p'), { className: 'hint err', textContent: (r.data && r.data.error) || `HTTP ${r.status}` });
+/** Approve a waiting plan: the confirm, then the fix run. */
+async function approveAutomation(ev) {
+  if (!(await confirmModal({ title: 'Approve', message: `Start the fix for #${ev.number} with the proposed plan? Worca opens a draft pull request when it is done.`, confirmLabel: 'Start the fix' }))) return;
+  automationsFail(await mcpApi('POST', `/api/automations/events/${encodeURIComponent(ev.id)}/approve`, {}), 'The fix did not start');
+}
+/** A waiting event: start it now past its limits, or take it out of the queue. */
+async function startAutomationNow(ev) {
+  if (!(await confirmModal({ title: 'Start now', message: `Start #${ev.number} now? It skips the line and its rule's limits; it still counts toward today's runs.`, confirmLabel: 'Start now' }))) return;
+  automationsFail(await mcpApi('POST', `/api/automations/events/${encodeURIComponent(ev.id)}/start`, {}), 'It did not start');
+}
+async function removeAutomationQueued(ev) {
+  if (!(await confirmModal({ title: 'Remove from the queue', message: `Remove #${ev.number} from the queue? It will not start; open a run by hand if it still needs one.`, confirmLabel: 'Remove', danger: true }))) return;
+  automationsFail(await mcpApi('POST', `/api/automations/events/${encodeURIComponent(ev.id)}/remove`, {}), 'Could not remove it');
+}
+function openAutomationRun(ev, projectKey) {
+  if (ev.runId && runs.has(ev.runId)) { location.hash = `running/${ev.runId}`; return; }
+  location.hash = `history/${histDetailParam({ id: ev.pipelineId, projectKey })}`;
+}
+
+// Project page › Automations. `sec` is the tab's section; a reload repaints it in place.
+let pdAutomationsSeq = 0;
+async function buildPdAutomations(sec, key) {
+  sec.classList.add('pd-sec-automations');
+  const proj = projectByKey(key);
+  if (!proj || !flagOn('gitAutomations')) return;
+  const seq = ++pdAutomationsSeq;
+  await buildAutomationsTab(sec, { target: { projectDir: proj.path }, where: 'this project', stale: () => seq !== pdAutomationsSeq,
+    reload: () => buildPdAutomations(sec, key), openRun: (ev) => openAutomationRun(ev, key) });
+}
+// Workspace page › Automations: the same tab over every member's repository; an issue starts a workspace run.
+let wdAutomationsSeq = 0;
+async function buildWdAutomations(sec, id) {
+  sec.classList.add('pd-sec-automations');
+  if (!flagOn('gitAutomations')) return;
+  const seq = ++wdAutomationsSeq;
+  await buildAutomationsTab(sec, { target: { workspaceId: id }, where: 'this workspace', stale: () => seq !== wdAutomationsSeq,
+    reload: () => buildWdAutomations(sec, id),
+    // An issue's run is the workspace's; a PR's review ran in its member's project.
+    openRun: (ev, data) => openAutomationRun(ev, (ev.kind === 'pr' && (data.repos || []).find((m) => m.repo && m.repo.toLowerCase() === String(ev.repo || '').toLowerCase())?.projectKey)
+      || `workspaces/${id}`) });
+}
+/** One Automations tab: `target` is { projectDir } or { workspaceId }, the query and every write's body. */
+async function buildAutomationsTab(sec, { target, where, stale, reload, openRun }) {
+  const q = new URLSearchParams(target).toString();
+  const [r, wf] = await Promise.all([mcpApi('GET', `/api/automations?${q}`), mcpApi('GET', '/api/workflows')]);
+  if (stale() || !sec.isConnected) return;
+  if (!r.ok) { sec.replaceChildren(automationsErr(r)); return; }
+  const workflows = (wf.ok && Array.isArray(wf.data?.workflows) ? wf.data.workflows : []).map((w) => ({ id: w.id, name: w.name || w.id }));
+  const workflowNames = Object.fromEntries([['wf_default', 'Default'], ...workflows.map((w) => [w.id, w.name])]);
+  const fail = automationsFail;
+  const lim = r.data.defaultLimits || {};
+  sec.replaceChildren(renderAutomations(document, r.data, {
+    workflowNames,
+    onSwitch: async (key, on) => { const res = await mcpApi('PUT', '/api/automations/auto-handle', { ...target, key, on }); fail(res, 'Could not change Auto-handle'); await reload(); },
+    onCheckNow: async () => { fail(await mcpApi('POST', '/api/automations/poll', {}), 'Could not check GitHub'); await reload(); },
+    onToggleRule: async (rule, on) => { fail(await mcpApi('PATCH', `/api/automations/rules/${encodeURIComponent(rule.id)}`, { enabled: on }), 'Could not change the rule'); await reload(); },
+    onDeleteRule: async (rule) => {
+      if (!(await confirmModal({ title: 'Delete rule', message: 'Delete this rule? Runs it started are not affected.', confirmLabel: 'Delete rule', danger: true }))) return;
+      fail(await mcpApi('DELETE', `/api/automations/rules/${encodeURIComponent(rule.id)}`), 'Could not delete the rule');
+      await reload();
+    },
+    onEditLimits: async (rule) => {
+      const l = rule.limits || lim;
+      const v = await promptModal({ title: 'Edit limits', confirmLabel: 'Save limits', fields: [
+        { id: 'dailyRuns', label: 'Runs per day', value: String(l.dailyRuns), hint: '1 to 200. Past it, new events wait in the queue and start the next day (the count resets at midnight UTC).' },
+        { id: 'maxCostUsd', label: 'Cost cap per run (USD)', value: String(l.maxCostUsd), hint: '0.1 to 1000. A run that passes it is stopped.' },
+        { id: 'maxConcurrent', label: `Runs at a time in ${where}`, value: String(l.maxConcurrent), hint: '1 to 10. Past it, new events wait and start when a run ends.' }] });
+      if (!v) return;
+      fail(await mcpApi('PATCH', `/api/automations/rules/${encodeURIComponent(rule.id)}`,
+        { limits: { dailyRuns: v.dailyRuns, maxCostUsd: v.maxCostUsd, maxConcurrent: v.maxConcurrent } }), 'Could not change the limits');
+      await reload();
+    },
+    onApprove: async (ev) => { await approveAutomation(ev); await reload(); },
+    onStartNow: async (ev) => { await startAutomationNow(ev); await reload(); },
+    onRemoveQueued: async (ev) => { await removeAutomationQueued(ev); await reload(); },
+    onOpenRun: (ev) => openRun(ev, r.data),
+    onAddRule: async () => {
+      const v = await promptModal({ title: 'Add rule', confirmLabel: 'Add rule', fields: [
+        { id: 'when', label: 'When', value: 'issue.opened:propose', options: [
+          { value: 'issue.opened:propose', text: 'An issue is opened → triage, then propose a fix or a plan', group: 'Issues' },
+          { value: 'issue.opened:fix', text: 'An issue is opened → full fix, draft PR', group: 'Issues' },
+          { value: 'issue.opened:run', text: 'An issue is opened → run a workflow', group: 'Issues' },
+          { value: 'pr.opened:review', text: 'A PR is created or ready → review it', group: 'Pull requests' },
+          { value: 'pr.opened:run', text: 'A PR is created or ready → run a workflow', group: 'Pull requests' }] },
+        { id: 'workflowId', label: 'Workflow (for "run a workflow")', value: 'wf_default',
+          options: [{ value: 'wf_default', text: 'Default' }, ...workflows.filter((w) => w.id !== 'wf_default').map((w) => ({ value: w.id, text: w.name }))] },
+        { id: 'labels', label: 'Only with these labels', placeholder: 'bug, regression', hint: 'Comma separated; empty: any.' },
+        { id: 'triggerLabel', label: 'Trigger label', value: 'worca', hint: 'A maintainer adds it to let an outsider\'s issue start. Empty: outsiders never start one.' },
+        { id: 'allowLogins', label: 'Also trust these logins', placeholder: 'octocat' },
+        { id: 'dailyRuns', label: 'Runs per day', value: String(lim.dailyRuns ?? 10) },
+        { id: 'maxCostUsd', label: 'Cost cap per run (USD)', value: String(lim.maxCostUsd ?? 5) },
+        { id: 'maxConcurrent', label: `Runs at a time in ${where}`, value: String(lim.maxConcurrent ?? 1) }] });
+      if (!v) return;
+      const [event, action] = v.when.split(':');
+      const res = await mcpApi('POST', '/api/automations/rules', { ...target, event, action,
+        ...(action === 'run' ? { workflowId: v.workflowId } : {}),
+        filter: { labels: v.labels, triggerLabel: v.triggerLabel, allowLogins: v.allowLogins },
+        limits: { dailyRuns: v.dailyRuns, maxCostUsd: v.maxCostUsd, maxConcurrent: v.maxConcurrent } });
+      fail(res, 'Could not add the rule');
+      await reload();
+    },
+  }));
+}
+
+// Settings › Automations: the overview. Each project row opens that project's Automations tab.
+let automationsOverviewSeq = 0;
+async function loadAutomationsView() {
+  const host = document.getElementById('automations-body');
+  if (!host || !flagOn('gitAutomations')) return;
+  const seq = ++automationsOverviewSeq;
+  if (!(state.projects || []).length) await loadProjects();
+  const r = await mcpApi('GET', '/api/automations');
+  if (seq !== automationsOverviewSeq) return;
+  if (!r.ok) { host.replaceChildren(automationsErr(r)); return; }
+  if (!(state.workspaces || []).length) { try { await loadWorkspaces(); } catch { /* names only */ } }
+  if (seq !== automationsOverviewSeq) return;
+  // A workspace's rules are keyed workspaces/<id>: its row opens the workspace's Automations tab.
+  const owners = [...(state.projects || []).filter((p) => p && p.key),
+    ...(state.workspaces || []).filter((w) => w && w.id).map((w) => ({ key: `workspaces/${w.id}`, name: w.name || w.id }))];
+  host.replaceChildren(renderAutomationsOverview(document, r.data, owners, {
+    onOpenProject: (key) => {
+      location.hash = key.startsWith('workspaces/') ? `workspaces/${wsParamFor(key.slice('workspaces/'.length), 'automations')}` : `projects/${projParamFor(key, 'automations')}`;
+    },
+    onApprove: async (ev) => { await approveAutomation(ev); await loadAutomationsView(); },
+    onStartNow: async (ev) => { await startAutomationNow(ev); await loadAutomationsView(); },
+    onRemoveQueued: async (ev) => { await removeAutomationQueued(ev); await loadAutomationsView(); },
+    onOpenRun: (ev) => openAutomationRun(ev, ev.projectKey),
+  }));
+}
 
 // Settings › Presets (run-presets-view.mjs): Use / Rename / Duplicate / Edit scope / Delete.
 async function loadPresetsView() {

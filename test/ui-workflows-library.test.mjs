@@ -4,6 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const LIB_URL = new URL('../ui/public/workflows/library.mjs', import.meta.url).href;
 const { FLOW, ARCHIVED, workflowDomains } = await import(LIB_URL);
@@ -510,7 +511,7 @@ test('a placed Task / End: the focus its gone "+" or Add to canvas held goes to 
 
 test('the Library card is 380px wide, a min(380px, 100% − 16px) overlay at <= 760px, and app.js keeps the canvas fit clear of it while a 200px band stays', async () => {
   const { readFileSync } = await import('node:fs');
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   assert.match(css, /\n\.wfl\{flex:0 0 380px;width:380px;/);
   assert.match(css, /@media \(max-width:760px\)\{\.wfl\{position:absolute;top:8px;right:8px;bottom:8px;z-index:35;width:min\(380px,calc\(100% - 16px\)\);/);
   assert.match(css, /\n\.wfl\[data-open="false"\]\{width:0;flex-basis:0;/, 'the closed card still collapses');
@@ -520,7 +521,7 @@ test('the Library card is 380px wide, a min(380px, 100% − 16px) overlay at <= 
 
 test('roomy rows: 14px names, 12px second lines, 26px tiles, 32px folder rows (review A5) with a 24px glyph; detail, port chips and actions a notch up', async () => {
   const { readFileSync } = await import('node:fs');
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   const rule = (sel) => { const i = css.indexOf(`\n${sel}{`); assert.ok(i >= 0, `${sel} has a rule`); return css.slice(i + sel.length + 2, css.indexOf('}', i)); };
   assert.match(rule('.wfl-name'), /font-size:13px;/);
   assert.match(rule('.wfl-l2'), /font-size:12px;/);
@@ -536,7 +537,7 @@ test('roomy rows: 14px names, 12px second lines, 26px tiles, 32px folder rows (r
 
 test('the search box slides over the title (reduced motion: at once); folders and tabs show the house focus ring; the breadcrumb and back-row rules are gone', async () => {
   const { readFileSync } = await import('node:fs');
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   assert.match(css, /\n\.wfl-sbox\{position:absolute;[^}]*transition:left \.24s /);
   assert.match(css, /\n\.wfl-head\.is-searching \.wfl-sbox\{left:7px;\}/);
   assert.match(css, /\n\.wfl-filter-btn svg\{width:16px;height:16px;\}/, 'the search glyph matches the ✕ beside it');

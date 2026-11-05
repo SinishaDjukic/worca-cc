@@ -205,7 +205,8 @@ test('withStoreLock: two syncs on one root run one after the other, never interl
   assert.deepEqual(memoryTotals([
     { added: [1], modified: [], deleted: [1, 2], rejected: [] },
     { added: [], modified: [1], deleted: [], rejected: [1], failed: [1, 2, 3] },
-  ]), { added: 1, modified: 1, deleted: 2, rejected: 1, failed: 3 }, 'a pre-split record without `failed` counts as 0');
+    { added: [], modified: [], deleted: [], rejected: [], failed: [], proposed: [{ scope: 'global', name: 'a', kind: 'write' }, { scope: 'global', name: 'b', kind: 'delete' }] },
+  ]), { added: 1, modified: 1, deleted: 2, rejected: 1, failed: 3, proposed: 2 }, 'a pre-split record without `failed` counts as 0; a record without `proposed` (a defrag run) counts 0 proposals');
 });
 
 test('syncBack: a mount dir that no longer exists is skipped — never read as "every file deleted"', async () => {

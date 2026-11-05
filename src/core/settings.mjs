@@ -57,13 +57,13 @@ import { suggestModelHandle } from '../shared/connections.mjs';
 export { suggestModelHandle };
 import { readFileSync, existsSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { homedir } from 'node:os';
+import { homedir, availableParallelism } from 'node:os';
 import { randomBytes } from 'node:crypto';
 import {
   EFFORTS, CODEX_EFFORTS, effortsForEngine, MODEL_ENGINES, RUN_ENGINES, ASK_ENGINES, HELPER_ENGINES, OWN_SIGNIN_ENGINES, aModelOf, ownSignInNote, modelIdProblem, SUBAGENT_MODELS, isReservedModelEnvKey, assertModelCost, envFlag,
   assertModelUpstream, upstreamEnvConflict, modelEnvRef, codexUpstreamProblem,
   UPSTREAM_PROVIDERS, COPILOT_ACCOUNT_TYPES, DEFAULT_PROVIDER_CONCURRENCY, MAX_PROVIDER_CONCURRENCY,
-  COPILOT_TERMS_VERSION, isUpstreamBaseUrl, REASONING_EFFORT_LEVELS,
+  isUpstreamBaseUrl, REASONING_EFFORT_LEVELS,
 } from './model-env.mjs';
 import { MODEL_ROLES } from '../shared/model-roles.mjs';
 import { CODEX_PRICES, listPriceFor } from './list-prices.mjs';
@@ -580,6 +580,13 @@ export async function setWorkspaceScanModels(input, { models = null } = {}) {
   if (Object.keys(ws).length) settings.workspaces = ws; else delete settings.workspaces;
   await persistSettings(settings);
   return { workspaceScan: workspaceScanModels() };
+}
+
+/** #943: whether pipeline agents (Claude) also load the user's own Claude Code setup — `~/.claude` settings, hooks,
+ *  plugins and skills. Off by default: a node spawns with `--setting-sources project`. A project setting wins. */
+export function runUserClaudeSettings(scope) {
+  const p = projectOverride('runUserClaudeSettings', scope); if (typeof p === 'boolean') return p;
+  return readSettings().runUserClaudeSettings === true;
 }
 
 /** Skill delivery mechanism (§5.6): 'copy' (default, isolated) | 'symlink' (write-through). */
@@ -1280,6 +1287,7 @@ export const SETTINGS_POST_KEYS = Object.freeze([
   'nightModeToggle',                         // night mode live switch: auto | on | off
   'sync',                                    // sync before run (#527) { beforeRun, remote, refreshMinutes, onDiverged }
   'networkWait',                             // Settings › Runs › Wait for the network {enabled, maxWaitMin}
+  'runLimits',                               // Settings › Runs › Machine load { maxConcurrentRuns, testWorkers, keepRunsDays }
   'actions',                                 // Settings › Runs › Actions { keep, portLow, portHigh, editor, terminal, maxCheckouts }
   'runEngine', 'stepModels', 'utilityModels',
   'modelRoles',                              // Models › Roles: { <engine>: { deep|everyday|quick: { model, effort } } }
@@ -1314,7 +1322,7 @@ export function utilityModelsSetting() {
   const value = readSettings().utilityModels;
   return isObj(value) ? value : {};
 }
-/** Ask Worca's engine for NEW chats (cascading-settings-design.md D17): user-only; a chat keeps the engine it started on. */
+/** Ask Worca's engine for NEW chats (cascading-settings-design.md D17): user-only; a chat can move to another engine later (#943, POST /api/ask/threads/:id/engine). */
 export function askEngineSetting() {
   if (homeGuarded()) return undefined;
   const value = readSettings().askEngine;
@@ -1364,12 +1372,17 @@ export function assertAskModelsInput(input) {
   }
   return out;
 }
+/** setAskModels' merge, pure, over an ALREADY asserted patch (setup apply canonicalises ids in between). undefined = delete. */
+export function nextAskModels(current, patch) {
+  const all = isObj(current) ? { ...current } : {};
+  for (const [engine, pair] of Object.entries(patch)) { if (pair === null) delete all[engine]; else all[engine] = pair; }
+  return Object.keys(all).length ? all : undefined;
+}
 export async function setAskModels(input) {
   const patch = assertAskModelsInput(input);
   const settings = readSettings();
-  const all = isObj(settings.askModels) ? { ...settings.askModels } : {};
-  for (const [engine, pair] of Object.entries(patch)) { if (pair === null) delete all[engine]; else all[engine] = pair; }
-  if (Object.keys(all).length) settings.askModels = all; else delete settings.askModels;
+  const v = nextAskModels(settings.askModels, patch);
+  if (v === undefined) delete settings.askModels; else settings.askModels = v;
   await persistSettings(settings);
   return { askModels: askModelsSetting() };
 }
@@ -2379,11 +2392,12 @@ export async function removeGlobalModel(id) {
 // it in memory. Readers are loud-and-lenient; setters throw.
 //
 //   providers: {
-//     copilot:   { githubToken?, accountType?, acknowledgedTerms?, termsVersion?, maxConcurrent?, login? },
+//     copilot:   { githubToken?, accountType?, maxConcurrent?, login? },
 //     openai:    { baseUrl?, apiKey?, maxConcurrent? },
 //     anthropic: { baseUrl?, apiKey?, maxConcurrent? },
 //     speech:    { stt: {...}, tts: {...} },   // voice mode, NOT an upstream — see the Speech block below
 //   }
+//   (An older Worca also stored copilot.acknowledgedTerms / termsVersion; readers ignore them.)
 // ---------------------------------------------------------------------------
 
 const PROVIDER_SECRET_KEYS = Object.freeze({ copilot: ['githubToken'], openai: ['apiKey'], anthropic: ['apiKey'] });
@@ -2403,14 +2417,6 @@ function sanitizeProvider(name, raw) {
     if (r.accountType !== undefined) {
       if (COPILOT_ACCOUNT_TYPES.includes(r.accountType)) out.accountType = r.accountType;
       else warn('accountType', `must be one of ${COPILOT_ACCOUNT_TYPES.join(' | ')}`);
-    }
-    if (r.acknowledgedTerms !== undefined) {
-      if (typeof r.acknowledgedTerms === 'string' && !Number.isNaN(Date.parse(r.acknowledgedTerms))) out.acknowledgedTerms = r.acknowledgedTerms;
-      else warn('acknowledgedTerms', 'not an ISO timestamp');
-    }
-    if (r.termsVersion !== undefined) {
-      if (Number.isInteger(r.termsVersion) && r.termsVersion > 0) out.termsVersion = r.termsVersion;
-      else warn('termsVersion', 'not a positive integer');
     }
     if (r.login !== undefined) {
       if (typeof r.login === 'string' && r.login.trim()) out.login = r.login.trim();
@@ -2473,18 +2479,12 @@ export function resolveProviderSecret(value, sourceEnv = process.env) {
   return typeof v === 'string' ? v.trim() : '';
 }
 
-/** Whether the Copilot terms notice has been acknowledged at the CURRENT wording version. */
-export function copilotTermsAcknowledged() {
-  const c = providerConfig('copilot');
-  return !!c.acknowledgedTerms && (c.termsVersion || 0) >= COPILOT_TERMS_VERSION;
-}
-
 /** updateProvider's validation alone (it throws the same messages). */
 export function assertProviderPatch(name, patch) {
   if (!UPSTREAM_PROVIDERS.includes(name)) throw new Error(`unknown provider ${JSON.stringify(name)}`);
   if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error('provider patch must be an object');
   const allowed = new Set([...PROVIDER_SECRET_KEYS[name], 'maxConcurrent',
-    ...(name === 'copilot' ? ['accountType', 'acknowledgedTerms', 'termsVersion', 'login'] : ['baseUrl'])]);
+    ...(name === 'copilot' ? ['accountType', 'login'] : ['baseUrl'])]);
   for (const [k, v] of Object.entries(patch)) {
     if (!allowed.has(k)) throw new Error(`unknown provider field ${JSON.stringify(k)} for ${name}`);
     if (isClearInput(v)) continue;
@@ -2497,10 +2497,6 @@ export function assertProviderPatch(name, patch) {
     } else if (k === 'maxConcurrent') {
       const n = Number(v);
       if (!Number.isInteger(n) || n < 1 || n > MAX_PROVIDER_CONCURRENCY) throw new Error(`maxConcurrent must be an integer from 1 to ${MAX_PROVIDER_CONCURRENCY}`);
-    } else if (k === 'acknowledgedTerms') {
-      if (typeof v !== 'string' || Number.isNaN(Date.parse(v))) throw new Error('acknowledgedTerms must be an ISO timestamp');
-    } else if (k === 'termsVersion') {
-      if (!Number.isInteger(v) || v <= 0) throw new Error('termsVersion must be a positive integer');
     }
   }
 }
@@ -2642,12 +2638,7 @@ export async function updateSpeech(patch = {}) {
   return speechConfig();
 }
 
-/** Record the Copilot terms acknowledgement at the current wording version. */
-export async function acknowledgeCopilotTerms(now = new Date()) {
-  return updateProvider('copilot', { acknowledgedTerms: now.toISOString(), termsVersion: COPILOT_TERMS_VERSION });
-}
-
-/** Forget the Copilot sign-in (token + login); the acknowledgement stays. */
+/** Forget the Copilot sign-in (token + login). */
 export async function clearCopilotSignIn() {
   return updateProvider('copilot', { githubToken: null, login: null });
 }
@@ -2987,6 +2978,50 @@ export function effectiveNetworkWait(env = process.env) {
   const n = Number(raw);
   const maxWaitMs = raw != null && raw !== '' && Number.isFinite(n) && n >= 0 ? n : s.maxWaitMin * 60_000;
   return { enabled, maxWaitMs };
+}
+
+// ── Machine load (Settings › Runs › Machine load) ────────────────────────────
+// maxConcurrentRuns: runs past it wait for a free slot (run-slots.mjs, shared by every Worca process on this
+// machine). testWorkers: WORCA_TEST_CONCURRENCY in every agent's env, the worker cap a test runner that reads
+// it uses (null = half the cores). keepRunsDays: finished runs older than this are archived by the daily
+// sweep (run-retention.mjs; null = never). A stored key that is absent follows the default.
+export const DEFAULT_RUN_LIMITS = Object.freeze({ maxConcurrentRuns: 3, testWorkers: null, keepRunsDays: null });
+const RUN_LIMIT_RANGES = Object.freeze({ maxConcurrentRuns: [1, 20], testWorkers: [1, 64], keepRunsDays: [1, 3650] });
+const inRunLimit = (k, v) => Number.isInteger(v) && v >= RUN_LIMIT_RANGES[k][0] && v <= RUN_LIMIT_RANGES[k][1];
+
+export function runLimits() {
+  const stored = readSettings().runLimits;
+  const o = isObj(stored) ? stored : {};
+  return Object.fromEntries(Object.keys(DEFAULT_RUN_LIMITS).map((k) => [k, inRunLimit(k, o[k]) ? o[k] : DEFAULT_RUN_LIMITS[k]]));
+}
+
+/** @throws {Error} on anything but a partial, valid runLimits object (null / '' resets; a null key resets that key). */
+export function assertRunLimitsInput(patch) {
+  if (patch === null || patch === '') return;
+  if (!isObj(patch)) throw new Error('runLimits must be an object');
+  for (const [k, v] of Object.entries(patch)) {
+    if (!Object.hasOwn(DEFAULT_RUN_LIMITS, k)) throw new Error(`unknown runLimits setting: ${k}`);
+    const [lo, hi] = RUN_LIMIT_RANGES[k];
+    if (v !== null && !inRunLimit(k, v)) throw new Error(`runLimits.${k} must be a whole number from ${lo} to ${hi}`);
+  }
+}
+
+/** What an unset runLimits.testWorkers means on this machine: half the cores. */
+export const autoTestWorkers = () => Math.max(1, Math.floor(availableParallelism() / 2));
+
+/** The test-worker cap every agent gets as WORCA_TEST_CONCURRENCY: the setting, else autoTestWorkers(). */
+export function testWorkerCap() {
+  return runLimits().testWorkers ?? autoTestWorkers();
+}
+
+export async function setRunLimits(patch) {
+  assertRunLimitsInput(patch);
+  const settings = readSettings();
+  const next = patch === null || patch === '' ? {} : { ...(isObj(settings.runLimits) ? settings.runLimits : {}) };
+  if (isObj(patch)) for (const [k, v] of Object.entries(patch)) { if (v === null) delete next[k]; else next[k] = v; }
+  if (Object.keys(next).length) settings.runLimits = next; else delete settings.runLimits;
+  await persistSettings(settings);
+  return runLimits();
 }
 
 // Settings › Network proxy (networkProxy.enabled; applied live by egress-policy.mjs startLiveEgress).

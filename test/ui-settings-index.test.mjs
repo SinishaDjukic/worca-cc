@@ -2,14 +2,14 @@
 // every entry names a real tab/card in index.html with the same mode and Labs gate, and locks read the live state.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { TABS, CARDS, UNLISTED_CARDS, SETTING_ENTRIES, ADDON_ENTRIES, ADDON_PAGES, addonEntriesFrom, locksFor, lockNote } from '../ui/public/settings-index.mjs';
 import { tabFromParam } from '../ui/public/marketplace/page.mjs';
 import { parseMcpParam } from '../ui/public/mcp-view.mjs';
 import { PROVIDER_LABELS } from '../ui/public/bridge-view.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
-const doc = new JSDOM(readFileSync(new URL('../ui/public/index.html', import.meta.url), 'utf8')).window.document;
+const doc = new JSDOM(readIndexHtml()).window.document;
 const FORM_TABS = ['general', 'tags', 'runs', 'ask'];   // app.js SETTINGS_FORM_TABS: only these scroll to a card
 
 test('every catalogued tab exists with the same mode, flag and name as its button; no tab is missing', () => {

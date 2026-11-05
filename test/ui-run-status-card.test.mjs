@@ -3,12 +3,12 @@
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { readFileSync } from 'node:fs';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { runModel, groupModel } from '../src/shared/run-model.mjs';
 import { statusText, memberStatusText, kindLabel, paintRunStatus, syncActions, pauseResumeOwn, renderMemberRows, groupShipLine } from '../ui/public/run-status-card.mjs';
 import { RUN_STATE_ROWS, NOW, REPLAY_FRAMES } from './helpers/run-states.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const trackDom = useDomRelease(afterEach);
 const dom = () => trackDom(new JSDOM('<!doctype html><body></body>')).window.document;
@@ -122,7 +122,7 @@ test('paintRunStatus: live role rows under the status line, the Refine line, hid
   const g = groupModel({ kind: 'feature', title: 'F', members: [{ status: 'running' }, { ticket: { status: 'scheduled', after: { index: 1 } } }] }, { now: NOW });
   paintRunStatus(gh, { ...g, current: { ...g.current, roles } });
   assert.equal(gh.querySelectorAll('.run-role-row').length, 2);
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   assert.match(css, /prefers-reduced-motion: reduce\)\{[^@]*\.run-role-dot\.is-live\{animation:none;\}/, 'the live dot holds still under reduced motion');
 });
 

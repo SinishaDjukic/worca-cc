@@ -7,7 +7,7 @@
 // plugin connector and chat channel children) calls useEnvProxy() once at boot. A Node
 // with http.setGlobalProxyFromEnv uses it (fetch and the http(s) global agents); every
 // other supported Node (22.x, 24.x LTS today) gets undici's EnvHttpProxyAgent as fetch's
-// global dispatcher, which works from 22.13 on.
+// global dispatcher (undici 8: Node 22.19 on, the app's floor).
 //
 // Loopback always bypasses the proxy: the app calls itself (the model bridge, the UI
 // probe, the broker on this host), and a machine with HTTP_PROXY but no NO_PROXY would

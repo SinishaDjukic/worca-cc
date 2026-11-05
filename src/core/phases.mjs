@@ -76,6 +76,39 @@ export function effectiveAllowedTools(base, declared, fanOut = false) {
 }
 
 /**
+ * The built-in tools a pipeline spawn is offered (`--tools`): the built-in names of its allow-list (a rule's
+ * `(specifier)` dropped; MCP grants are the MCP flags' business) plus ToolSearch, which reaches deferred MCP tools,
+ * and WebFetch: without an allow rule it reaches only Claude Code's pre-approved documentation sites, which agents
+ * read API docs on, for about 500 tokens. Everything else Claude Code ships (Artifact, Workflow, Cron, SendMessage, …) stays out of the tool schemas sent
+ * with every call of the agent and of its sub-agents, which inherit the list. Pure + exported for testing.
+ * @param {string[]} allowed  the spawn's effective allow-list (effectiveAllowedTools)
+ * @returns {string[]}
+ */
+export function builtinToolsFor(allowed) {
+  const out = [];
+  for (const t of [...(Array.isArray(allowed) ? allowed : []), 'WebFetch', 'ToolSearch']) {
+    const name = String(t || '').replace(/\(.*$/s, '').trim();
+    if (name && !name.startsWith('mcp__') && !out.includes(name)) out.push(name);
+  }
+  return out;
+}
+
+/**
+ * Whether a node runs under `--strict-mcp-config` (only the run's mcp.json loads, no user-scope, plugin or claude.ai
+ * connector server). Only on a detached run (a legacy run has no mcp.json: its servers all load natively), and only
+ * when mcp.json holds every server the run grants (the approved servers of the checkout's committed .mcp.json are in
+ * it too, run-context.mjs attachCommittedMcp; one a drop kept out of it loads from the checkout only) and every
+ * server the agent's frontmatter names (e.g. a plugin's Playwright). Pure + exported for testing.
+ */
+export function strictMcpFor(ctx) {
+  if (!isDetachedRun(ctx)) return false;
+  const inConfig = new Set(Array.isArray(ctx.mcpConfigServers) ? ctx.mcpConfigServers : []);
+  const named = [...(ctx.mcpServerGrants || []), ...(ctx.node?.tools || [])]
+    .map((t) => /^mcp__(.+?)(?:__|$)/.exec(String(t || '').trim())?.[1]).filter(Boolean);
+  return named.every((s) => inConfig.has(s));
+}
+
+/**
  * Whether this run may fan out (spawn Task/Agent sub-agents). For a DISPATCHED
  * node the decision is the node's own `fanOut` (resolved by resolveWorkflow from
  * config > role > sidecar). The clarify pre-step has NO node (it runs off
@@ -221,7 +254,8 @@ export function subagentModelDirective(subagentModel) {
       'Choose on WHO CHECKS THE OUTPUT, never on how small or cheap the sub-task looks:\n' +
       '- `sonnet`: mechanical, bounded investigation whose findings the report itself lets you ' +
       'verify — grep-and-summarize a known pattern, enumerate usages or call sites, extract or ' +
-      'reformat existing content, confirm what a file plainly states.\n' +
+      'reformat existing content, confirm what a file plainly states — and any lane whose findings ' +
+      'you will re-check yourself (read the cited file:line) before you rely on them.\n' +
       '- `opus`: investigation needing real codebase judgment you will build on — trace why ' +
       'something fails, map how a subsystem hangs together, weigh where a change belongs — and ' +
       'analysis whose VERDICT the run depends on and nothing downstream re-checks: a severity call, ' +
@@ -365,6 +399,10 @@ export function fanOutDirective(fanOut, { omitProjectAgents = false, subagentMod
     'use any that fit (e.g. design, framework-pattern, knowledge-graph) instead of guessing conventions.\n\n' +
     'Sub-agents are strictly READ-ONLY investigators: YOU write every artifact. Skip fan-out only for a ' +
     'trivial, single-file change.\n\n' +
+    'Send every dispatch in ONE message with `run_in_background: false`: the lanes still run concurrently and ' +
+    'all their reports come back in that same turn. Never wait for a lane or a background command with ' +
+    '`sleep`, `node -e setTimeout`, a polling loop, or by reading sub-agent transcripts; a background ' +
+    'command\'s completion notice wakes you.\n\n' +
     (endpointRouted ? sameEndpointSubagentDirective() : subagentModelDirective(subagentModel))
   );
 }
@@ -667,6 +705,31 @@ export const RESUME_HEADER =
   'state of your previous work (files/artifacts you already wrote), then continue the\n' +
   'ORIGINAL task below to completion. Do not redo work that is already done.\n\n';
 
+export const COLD_REDISPATCH_HEADER =
+  '## Earlier attempt interrupted\n\n' +
+  'An earlier attempt of this step was interrupted before it finished. Its files may already\n' +
+  'exist: check them first, keep what is correct, then complete the ORIGINAL task below.\n' +
+  'Do not redo work that is already done.\n\n';
+
+export const COLD_FOLLOWUP_HEADER =
+  '## Earlier attempt asked for input\n\n' +
+  'An earlier attempt of this step stopped to ask for input; the answers are below. Its files may\n' +
+  'already exist: check them first, keep what is correct, then complete the ORIGINAL task below.\n' +
+  'Do not redo work that is already done.\n\n';
+
+/** Which header a prompt starts with (C38, C42). Pure; '' = none. A ctx with neither `sessionMode` nor
+ *  `coldRedispatch` (every ungrouped run) gets exactly today's `ctx.resumeSessionId ? RESUME_HEADER : ''`. */
+export function promptHeaderFor(ctx) {
+  const c = ctx || {};
+  if (c.sessionMode === 'subagents' && (c.resumeSessionId || c.coldRedispatch)) {
+    const followUp = c.questionsAnswered?.length || c.formAnswers?.length || c.formRepair || c.shapeOutlineNote;
+    return followUp ? COLD_FOLLOWUP_HEADER : COLD_REDISPATCH_HEADER;
+  }
+  if (c.coldRedispatch) return COLD_REDISPATCH_HEADER;
+  if (c.resumeSessionId) return RESUME_HEADER;
+  return '';
+}
+
 /**
  * The per-agent forms section (spec §4): every form the agent may ask with, its
  * data schema, its answer schema and its example. Returns '' for an agent that
@@ -794,16 +857,17 @@ export function workspaceWriteTargetsFor(ctx) {
 
 /** Map the orchestrator's claudeOpts into runClaude options shared by every role. */
 /**
- * The unique directories a node writes to, in first-seen order; [] when none: the dirs of
- * its allocated outputs (a review handle has mdPath + jsonPath), its verdict, its questions
- * file and a form-repair file, then the pipeline dir itself (the clarify step writes
- * clarify.json there), then — on a legacy workspace run, whose cwd is the primary member's
- * worktree — every member worktree (a detached workspace run's cwd, the run root, already
- * holds them at repos/<key>). PURE.
+ * The unique directories a node writes to (or reads its bound inputs from), in first-seen
+ * order; [] when none: the dirs of its allocated outputs (a review handle has mdPath + jsonPath)
+ * and bound inputs (ctx.bindings), its verdict, its questions file and a form-repair file, then
+ * the pipeline dir itself (the clarify step writes clarify.json there), then — on a legacy
+ * workspace run, whose cwd is the primary member's worktree — every member worktree (a detached
+ * workspace run's cwd, the run root, already holds them at repos/<key>). PURE.
  */
 function nodeWritableDirs(ctx) {
   const files = [
     ...Object.values(ctx.outputs || {}).flatMap((o) => [o?.path, o?.mdPath, o?.jsonPath]),
+    ...Object.values(ctx.bindings || {}).flatMap((b) => [b?.path, b?.mdPath, b?.jsonPath]),
     ctx.verdict?.path,
     ctx.questionsFile,
     ctx.formRepair?.file,
@@ -826,10 +890,11 @@ export function runOpts(ctx, { role, prompt, systemPrompt, allowedTools }) {
   // P3: in a run without a project, an agent's own git never walks up from work/ into a repository that holds worcaHome.
   const ceilEnv = ctx.workMode === 'none' && ctx.projectDir ? { GIT_CEILING_DIRECTORIES: dirname(ctx.projectDir) } : null;
   const excluded = bridgedModelInfo(c.model)?.excludeTools;
+  const allowed = effectiveAllowedTools(allowedTools, ctx.node?.tools, ctxFanOut(ctx));
   return {
     cwd: ctx.projectDir,
     systemPrompt,
-    prompt: (ctx.resumeSessionId ? RESUME_HEADER + prompt : prompt)
+    prompt: promptHeaderFor(ctx) + prompt
       + questionsPromptBlock(ctx) + formRepairBlock(ctx) + directionsPromptBlock(ctx),
     resumeSessionId: ctx.resumeSessionId,
     // Grant the role's baseline tools PLUS whatever the agent declared in its
@@ -837,7 +902,17 @@ export function runOpts(ctx, { role, prompt, systemPrompt, allowedTools }) {
     // for every dispatched node (orchestrator._nodeCtx); the clarify pre-step has
     // no node, so this falls back to the base list. Fixes "Browser permission not
     // granted" for the Manual Web UI Testing agent and makes future MCP agents work.
-    allowedTools: effectiveAllowedTools(allowedTools, ctx.node?.tools, ctxFanOut(ctx)),
+    allowedTools: allowed,
+    // Fixed context (#943): every call of an agent and its sub-agents carries the tool schemas it is offered. Only
+    // the built-ins it is allowed, and on a detached run only the run's own MCP servers (strictMcpFor), are offered.
+    tools: builtinToolsFor(allowed),
+    ...(strictMcpFor(ctx) ? { strictMcpConfig: true } : {}),
+    // Claude Code's auto-memory is the user's own notes for the project the checkout belongs to (a run checkout is a
+    // worktree of it); a pipeline agent works from the run's memory mount instead, so it is neither read nor written.
+    extraSettings: { autoMemoryEnabled: false },
+    // #943 C3: no ~/.claude settings, hooks, plugins or skills — read fresh at every spawn, recorded nowhere — unless the
+    // run opted in (ctx.claudeSettingSources null). A ctx that says nothing (tests, a direct unit) gets project-only too.
+    ...(ctx.claudeSettingSources === null ? {} : { settingSources: Array.isArray(ctx.claudeSettingSources) ? ctx.claudeSettingSources : ['project'] }),
     // §5.5/§5.3 detached-run context: the generated merged MCP config and one
     // `mcp__<server>` grant per merged server. Both are undefined/[] on legacy runs,
     // so the argv is byte-identical there. The grants are unioned inside the runner
@@ -1162,7 +1237,7 @@ export function implementerBody({ mode = 'implement', planPath, reviewPath, task
   if (mode === 'fix') {
     // VERBATIM from the original phases.mjs fix-mode body.
     return (
-      `Address EVERY critical and major issue in the review below, then re-run the tests. ` +
+      `Address EVERY critical and major issue in the review below, then run the tests that cover what you changed. ` +
       `Follow the plan; deviate only if something does not work at all.\n\n` +
       `Plan: ${planPath}\n` +
       `Review to fix: ${reviewPath}\n`
@@ -1181,8 +1256,8 @@ export function implementerBody({ mode = 'implement', planPath, reviewPath, task
   }
   // VERBATIM from the original phases.mjs implement-mode body.
   return (
-    `Implement the plan using TDD (red-green-refactor). Follow it with NO deviation; ` +
-    `deviate slightly only if a step does not work at all.\n\n` +
+    `Implement the plan using TDD (red-green-refactor). Follow its contracts with NO deviation; ` +
+    `deviate slightly only if a contract does not work at all.\n\n` +
     `Plan: ${planPath}\n`
   );
 }

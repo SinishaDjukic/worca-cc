@@ -18,7 +18,7 @@ import {
   createSliceFeature, retireFeaturesOf, sliceRequest, sliceTitle, featureView, currentFeatureId, featureOfPipeline,
   earlierSliceChanges, cancelRest, resumeFeature, rechainWaiting, replanRest, setApproveEach, featureApprovesEach,
   stackedPrBase, recordShapePlan, listShapePlans, featuresOfTickets, featureClarify, chainFeature, sliceOfPipeline, slicePrPreamble,
-  recordShip, recordSliceDraft, featureShipSuggestion, featureShipInput, ONE_PR_MAX_LINES,
+  recordShip, clearShip, recordSliceDraft, featureShipSuggestion, featureShipInput, ONE_PR_MAX_LINES,
   liveSliceFrom, shaperCard, featureThread,
   addFeatureNote, featureNotes, appendFeatureRun, featureBase, liveRoundOf,
 } from '../src/core/shape/features.mjs';
@@ -633,6 +633,30 @@ test('featureView ship: ready only once every slice is done; recordShip sets the
   assert.equal(shipped.ship.prUrl, 'https://github.com/o/r/pull/9');
   assert.equal(recordShip(f.id, { mode: 'stacked' }), false, 'no overwrite');
   assert.equal(featureView(f.id).ship.mode, 'one');
+});
+
+test('featureView ship: a ship whose PRs were all closed unmerged reads as not shipped; clearShip forgets it', () => {
+  const f = doneFeature(2);
+  const setPr = (pid, n, state) => getDb().prepare('UPDATE pipelines SET pr_url = ?, pr_state = ? WHERE id = ?')
+    .run(`https://github.com/o/r/pull/${n}`, state, pid);
+  setPr(f.pids[0], 1, 'OPEN'); setPr(f.pids[1], 2, 'OPEN');
+  recordShip(f.id, { mode: 'stacked', release: { version: 'v1.2.0', target: 'dev' } });
+  assert.equal(featureView(f.id).ship.mode, 'stacked', 'open PRs: shipped');
+  setPr(f.pids[0], 1, 'CLOSED');
+  assert.equal(featureView(f.id).ship.mode, 'stacked', 'one PR still open: shipped');
+  setPr(f.pids[1], 2, 'MERGED');
+  assert.equal(featureView(f.id).ship.mode, 'stacked', 'a merged PR: shipped');
+  setPr(f.pids[1], 2, 'CLOSED');
+  const v = featureView(f.id);
+  assert.deepEqual({ ready: v.ship.ready, mode: v.ship.mode, prUrl: v.ship.prUrl, release: v.ship.release, result: v.ship.result },
+    { ready: true, mode: null, prUrl: null, release: null, result: null }, 'every PR closed: ships again');
+  assert.equal(clearShip(f.id), true);
+  assert.equal(getDb().prepare('SELECT ship_mode, release_version FROM shape_features WHERE id = ?').get(f.id).ship_mode, null);
+  assert.equal(clearShip(f.id), false, 'nothing left to clear');
+  assert.equal(recordShip(f.id, { mode: 'one', prUrl: 'https://github.com/o/r/pull/9' }), true, 'records the new ship');
+  const fresh = doneFeature(2);
+  recordShip(fresh.id, { mode: 'one' });
+  assert.equal(featureView(fresh.id).ship.mode, 'one', 'no PR seen yet: still shipped');
 });
 
 test('pr.draft: true after recordSliceDraft with the recorded PR url; false for another url and once shipped', () => {

@@ -61,15 +61,17 @@ function clean(pts) {
  * @param {Array<{id:string,from:string,to:string,a:{x,y},b:{x,y},loop?:boolean,pill?:boolean}>} wires
  *   from/to = card ids, a = the output anchor, b = the input anchor; `loop` prefers the floor; `pill` places
  *   the wire's "≤N" pill on its lane run nearest its source (every other wire's mid is its arc midpoint).
- * @param {{scale?:number}} [opts]
+ * @param {{scale?:number, obstacles?:Array<{id:string,x:number,y:number,w:number,h:number}>}} [opts]
+ *   obstacles: boxes every lane clears like a card (a session's header strip), never a wire end
  * @returns {Map<string,{pts:Array<{x,y}>, d:string, mid:{x,y}}>}
  */
-export function routeLanes(cards, wires, { scale = 1 } = {}) {
+export function routeLanes(cards, wires, { scale = 1, obstacles = [] } = {}) {
   const s = Number(scale) > 0 ? Number(scale) : 1;
   const lane = LANE * s; const mCorr = M_CORR * s; const mRun = M_RUN * s; const gapMax = GAP_MAX * s;
   const slotMin = SLOT_MIN * s; const stub = MIN_STUB * s;
   const byId = new Map(cards.map((c) => [c.id, c]));
   const rects = cards.map((c) => ({ id: c.id, x: c.x, y: c.y - LABEL_H * s, r: c.x + c.w, b: c.y + c.h }));
+  for (const o of Array.isArray(obstacles) ? obstacles : []) rects.push({ id: `obstacle:${o.id}`, x: o.x, y: o.y, r: o.x + o.w, b: o.y + o.h, ob: true });
   const recs = [];
   for (const w of wires) {
     const src = byId.get(w.from); const dst = byId.get(w.to);
@@ -129,6 +131,9 @@ export function routeLanes(cards, wires, { scale = 1 } = {}) {
     const { a, b, src, dst } = u.m;
     const mid = (Math.min(a.y, b.y) + Math.max(a.y, b.y)) / 2;
     const list = [];
+    // "Above the cards" is judged on the cards alone: a band an obstacle closes from above is still the roof.
+    let roof = Infinity;
+    for (const r of rects) if (!r.ob && r.x < u.x1 - 1 && r.r > u.x0 + 1) roof = Math.min(roof, r.y - mCorr);
     for (const [top, bot] of freeBands(u.x0 + 1, u.x1 - 1)) {
       let base; let dir;
       if (top === -Infinity) { base = bot; dir = -1; } else if (bot === Infinity) { base = top; dir = 1; }
@@ -137,7 +142,7 @@ export function routeLanes(cards, wires, { scale = 1 } = {}) {
         + PORT_PENALTY * s * (between(wiredIn.get(dst.id), base, b.y) + between(wiredOut.get(src.id), base, a.y));
       cost += CROSS_PENALTY * s * directs.filter((R) => R.gap[0] < u.x1 && R.gap[1] > u.x0
         && base > Math.min(R.a.y, R.b.y) + 0.5 && base < Math.max(R.a.y, R.b.y) - 0.5).length;
-      if (u.loop && top === -Infinity) cost += LOOP_ROOF * s;
+      if (u.loop && bot <= roof) cost += LOOP_ROOF * s;     // without obstacles exactly `top === -Infinity`
       list.push({ top, bot, base, dir, cost });
     }
     return list.sort((p, q) => p.cost - q.cost || p.base - q.base);
@@ -355,10 +360,11 @@ export function countCrossings(routes, { scale = 1 } = {}) {
  * @param {(wire:object) => boolean} [o.pill]  every other wire that carries a pill
  * @param {boolean} [o.reorder]  hand OR / AND inputs out in the order with the fewest crossings
  * @param {Map<string,string>|null} [o.portMap]  a FROZEN assignment to draw with (a drag in progress)
+ * @param {Array<{id,x,y,w,h}>} [o.obstacles]  boxes every lane clears (session header strips)
  * @returns {{routes: Map<string,{pts,d,mid}>, portMap: Map<string,string>}}  portMap: wireId -> the input
  *   it is DRAWN into, for the wires drawn somewhere other than their own `to.port`.
  */
-export function routeGraph(tpl, { sizeOf, anchorOf, loopWireIds = new Set(), pill = null, reorder = true, portMap = null, scale = 1 } = {}) {
+export function routeGraph(tpl, { sizeOf, anchorOf, loopWireIds = new Set(), pill = null, reorder = true, portMap = null, scale = 1, obstacles = [] } = {}) {
   const nodes = (Array.isArray(tpl?.nodes) ? tpl.nodes : []).filter(isNode);
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const cards = nodes.map((n) => ({ id: n.id, x: Number(n.x) || 0, y: Number(n.y) || 0, ...sizeOf(n) }));
@@ -370,7 +376,7 @@ export function routeGraph(tpl, { sizeOf, anchorOf, loopWireIds = new Set(), pil
     b: anchorOf(byId.get(w.to.node), (map && map.get(w.id)) || w.to.port, 'in'),
     loop: loopWireIds.has(w.id), pill: loopWireIds.has(w.id) || Boolean(pill && pill(w)),
   }));
-  const route = (map) => routeLanes(cards, build(map), { scale });
+  const route = (map) => routeLanes(cards, build(map), { scale, obstacles });
   const map = portMap instanceof Map ? portMap : reorder ? mergePorts(nodes, wires, { outOf, anchorOf, route, scale }) : new Map();
   return { routes: route(map), portMap: map };
 }

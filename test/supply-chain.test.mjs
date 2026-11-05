@@ -35,7 +35,42 @@ test('Dockerfile: the node base image is pinned by digest', () => {
   const froms = d.split('\n').filter((l) => /^FROM\s/.test(l));
   assert.deepEqual(froms.length, 1);
   // Literal, not a build arg: Dependabot only reads image references written in FROM.
-  assert.match(froms[0], /^FROM node:22-bookworm-slim@sha256:[0-9a-f]{64}$/);
+  assert.match(froms[0], /^FROM node:\d+-bookworm-slim@sha256:[0-9a-f]{64}$/);
+});
+
+// One Node for everything this repo runs: .nvmrc names the major, the image and every single-version
+// workflow job follow it, and the fast-test matrix covers the supported range (the exact floor,
+// .nvmrc's major, the newest LTS). A Node bump is .nvmrc plus the image digest.
+test('one Node: the image and every single-version job use .nvmrc; the matrix spans floor to newest LTS', async () => {
+  const nvmrc = read('.nvmrc').trim();
+  assert.match(nvmrc, /^\d+$/, '.nvmrc names a major only (an exact pin would go stale)');
+  const from = read('docker/Dockerfile').split('\n').find((l) => /^FROM\s/.test(l));
+  assert.equal(from.match(/^FROM node:(\d+)-/)[1], nvmrc, "the image's Node major is .nvmrc's");
+
+  const dir = join(ROOT, '.github', 'workflows');
+  const setups = [];
+  for (const f of readdirSync(dir).filter((n) => /\.ya?ml$/.test(n))) {
+    for (const [id, job] of Object.entries(YAML.parse(read(`.github/workflows/${f}`)).jobs || {})) {
+      for (const step of job.steps || []) {
+        if (String(step.uses || '').startsWith('actions/setup-node@')) setups.push({ at: `${f} ${id}`, with: step.with || {}, matrix: job.strategy?.matrix });
+      }
+    }
+  }
+  assert.ok(setups.length > 5, 'setup-node steps found');
+  for (const s of setups) {
+    if (s.with['node-version'] === '${{ matrix.node }}') continue;
+    assert.equal(s.with['node-version-file'], '.nvmrc', `${s.at}: node-version-file .nvmrc`);
+    assert.equal(s.with['node-version'], undefined, `${s.at}: no literal node-version`);
+  }
+
+  const { MIN_NODE } = await import('../src/core/preflight-node.mjs');
+  const matrix = setups.filter((s) => s.with['node-version'] === '${{ matrix.node }}');
+  assert.equal(matrix.length, 1, 'one matrix job (ci.yml test-fast)');
+  const nodes = matrix[0].matrix.node.map(String);
+  assert.equal(nodes[0], MIN_NODE, 'the matrix starts at the exact floor');
+  assert.ok(nodes.includes(nvmrc), "the matrix runs .nvmrc's major");
+  assert.ok(Number(nodes.at(-1)) >= Number(nvmrc), 'the matrix ends at the newest LTS');
+  assert.equal(JSON.parse(read('package.json')).engines.node, `>=${MIN_NODE}`, 'engines is MIN_NODE');
 });
 
 test('workflows: every third-party action is pinned by full commit SHA, with its tag in a comment', () => {

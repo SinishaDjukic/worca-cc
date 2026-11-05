@@ -956,7 +956,7 @@ test('the page on screen validates as ids; bad shapes refuse', () => {
 });
 
 test('every Details tab of a run page is a valid runPage with its own header line (Changes and Actions too)', () => {
-  for (const [part, line] of [['changes', 'Details › Changes tab'], ['actions', 'Details › Actions tab'], ['diff', 'Details › Diff tab']]) {
+  for (const [part, line] of [['changes', 'Details › Changes tab'], ['actions', 'Details › Actions tab'], ['diff', 'Details › Diff tab'], ['sessions', 'Details › Sessions tab']]) {
     assert.deepEqual(validateClientContext({ view: 'running', runPage: part }), { ok: true, context: { view: 'running', runPage: part } }, part);
     assert.match(buildContextHeader({ view: 'running', runPage: part }), new RegExp(`^run page: ${line}$`, 'm'));
   }
@@ -970,4 +970,9 @@ test('the header names the page on screen apart from the scope, right after the 
   const w = buildContextHeader({ view: 'workspaces', pageWorkspace: { name: 'Havn', id: 'wks-havn-649ebfe7' } });
   assert.match(w, /^on screen: workspace Havn \(wks-havn-649ebfe7\), the page the user is looking at, not this chat's scope$/m);
   assert.doesNotMatch(buildContextHeader({ view: 'runs' }), /on screen:/);
+});
+
+test('rule 19 points PR lookups at list_runs pr', () => {
+  assert.ok(ASK_SYSTEM_RULES.includes('call list_runs with `pr`'));
+  assert.ok(ASK_SYSTEM_RULES.includes('`fixesPr` marks a Watch PR fix run'));
 });

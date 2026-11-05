@@ -10,6 +10,7 @@
 //   config.json  { "$format": "profiles/1", "profiles": { "<id>": { key: value } } }
 //   secrets.json { "$format": "profiles/1", "profiles": { "<id>": { … } } }   mode 0600
 //   state.json   { "$format": "profiles/1", "profiles": { "<id>": { … } } }
+//   ticket-updates.json { "$format": "profiles/1", "profiles": { "<id>": { "<sourceId>": { … } } } }   Worca's own
 //
 // Secrets: mode 0600, atomic temp+rename (settings.mjs:89-92 idiom),
 // {"$env":"VAR"} indirection resolved at READ time only — stored verbatim so the
@@ -96,6 +97,8 @@ function files(name) {
     secrets: join(dir, 'secrets.json'),
     state: join(dir, 'state.json'),
     profiles: join(dir, 'profiles.json'),
+    // Ticket updates (plans/ticket-updates-design.md §4): Worca's own record per profile and task source, never a connector's.
+    ticketUpdates: join(dir, 'ticket-updates.json'),
   };
 }
 
@@ -143,7 +146,7 @@ export function createProfile(name, id, label) {
 }
 
 /**
- * Delete a profile and everything stored under it (config, secrets, state).
+ * Delete a profile and everything stored under it (config, secrets, state, ticket updates).
  * Callers are responsible for the bindings that named it — see
  * source-bindings.mjs#clearBindingsForProfile.
  */
@@ -156,7 +159,7 @@ export function deleteProfile(name, id) {
   if (pid === DEFAULT_PROFILE) throw new Error(`profile id "${DEFAULT_PROFILE}" is reserved — its bucket backs every profile-less read`);
   const f = files(name);
   writeJsonAtomic(f.profiles, { profiles: listProfiles(name).filter((p) => p.id !== pid) });
-  for (const [file, opts] of [[f.config, undefined], [f.secrets, { mode: 0o600 }], [f.state, undefined]]) {
+  for (const [file, opts] of [[f.config, undefined], [f.secrets, { mode: 0o600 }], [f.state, undefined], [f.ticketUpdates, undefined]]) {
     const all = readBuckets(file);
     if (!(pid in all)) continue;
     delete all[pid];
@@ -239,4 +242,30 @@ export function writePluginState(name, patch = {}, profile) {
   const next = { ...readBucket(f.state, pid), ...(patch && typeof patch === 'object' ? patch : {}) };
   writeBucket(f.state, pid, next);
   return next;
+}
+
+// ── ticket updates ────────────────────────────────────────────────────────────
+// plans/ticket-updates-design.md D3, §4: the projects you work on and the rules for a finished run, per profile and task
+// source, in the same envelope as the files above: { "$format": "profiles/1", "profiles": { <profile>: { <sourceId>: record } } }.
+// Not in config.json (PUT /api/plugins/:name/config writes any key it is given) and not in state.json (connectors write it).
+// No secrets. deleteProfile drops a profile's bucket here too; uninstall keeps data/, purge removes it.
+
+/** One profile's record for one task source, or null when nothing is saved (the plugin's old setting applies, D4). */
+export function readTicketUpdates(name, profile, sourceId) {
+  const bucket = readBucket(files(name).ticketUpdates, profileId(profile));
+  const sid = String(sourceId ?? '');
+  // Own keys only: a source id such as "__proto__" must not read Object.prototype.
+  const rec = Object.hasOwn(bucket, sid) ? bucket[sid] : null;
+  return isBag(rec) ? rec : null;
+}
+
+/** Replace one profile's record for one task source; every other profile and source is left alone. Atomic. */
+export function writeTicketUpdates(name, profile, sourceId, record) {
+  const pid = profileId(profile);
+  const sid = String(sourceId ?? '');
+  if (!sid) throw new Error('a task source id is required');
+  if (!isBag(record)) throw new Error('a ticket updates record must be an object');
+  const file = files(name).ticketUpdates;
+  writeBucket(file, pid, { ...readBucket(file, pid), [sid]: record });
+  return { ok: true };
 }

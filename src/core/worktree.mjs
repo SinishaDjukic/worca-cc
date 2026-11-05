@@ -849,6 +849,25 @@ export async function sweepRunRoots({
       continue;
     }
 
+    // 3.7: `done` is persisted before the teardown commit, so a crash in between leaves a terminal row whose
+    // checkout holds the run's only copy of its work. A terminal root that is still here was never torn down:
+    // keep it while any member checkout has uncommitted changes (the next sweep reclaims it once clean).
+    if (status) {
+      const dirty = [];
+      for (const m of manifest?.members || []) {
+        if (!m?.worktreeDir || m.workMode === 'folder' || !existsSync(m.worktreeDir)) continue;
+        const st = await git(m.worktreeDir, ['status', '--porcelain'], { timeout: 15_000 });
+        if (!st.ok || String(st.stdout || '').trim()) dirty.push(m.worktreeDir);
+      }
+      if (dirty.length) {
+        const reason = `keep ${dir} (${status}): uncommitted work in ${dirty.join(', ')} — the run ended before its work was committed`;
+        out.keep.push(dir);
+        out.warnings.push(reason);
+        say('warn', reason);
+        continue;
+      }
+    }
+
     // status ∈ REMOVE, or the row is gone (deleted pipeline): reclaim.
     if (status) {
       // rescue-before-remove runs ONLY when a pipelines row exists (its artifact

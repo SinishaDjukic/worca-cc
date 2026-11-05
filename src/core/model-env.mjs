@@ -160,9 +160,10 @@ export function withProviderModesOff(env) {
 // itself (300s to first byte off first party, +1s per 32 KB of request); and
 // API_TIMEOUT_MS (default 600s), which caps the watchdog and is the only bound
 // left once Bun's timeout is lifted. A gateway that buffers the stream (Vertex
-// via the Bosch farm, 2026-09-28) sends nothing until a long xhigh turn is done,
-// so every retry died at the same wall. 30 min is the CLI's clamp ceiling for
-// the watchdogs; API_TIMEOUT_MS matches it so it never undercuts them.
+// behind a corporate gateway, 2026-09-28) sends nothing until a long xhigh
+// turn is done, so every retry died at the same wall. 30 min is the CLI's
+// clamp ceiling for the watchdogs; API_TIMEOUT_MS matches it so it never
+// undercuts them.
 export const STREAM_TIMEOUT_MS = '1800000';
 export const STREAM_TIMEOUT_ENV = Object.freeze({
   API_FORCE_IDLE_TIMEOUT: '0',
@@ -699,6 +700,3 @@ export function bridgeExcludedTools(upstream) {
 export const COPILOT_ACCOUNT_TYPES = Object.freeze(['individual', 'business', 'enterprise']);
 export const DEFAULT_PROVIDER_CONCURRENCY = Object.freeze({ copilot: 4, openai: 8, anthropic: 8 });
 export const MAX_PROVIDER_CONCURRENCY = 64;
-/** Bump when the Copilot terms notice wording changes materially — a stored
- *  acknowledgement of an older version is shown again (§8.2). */
-export const COPILOT_TERMS_VERSION = 1;

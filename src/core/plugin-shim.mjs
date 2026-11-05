@@ -16,6 +16,7 @@
 // never touches the store). WORCA_MOCK=1 short-circuits the spawn with canned
 // per-op responses so smoke/tests run offline with zero plugins installed.
 
+import { redactAskText } from './ask/redact.mjs';
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -71,6 +72,25 @@ const mockFingerprints = new Map();
 function resetMockTickets() { mockTicketNo = 123; mockFingerprints.clear(); }
 const mockFingerprint = (text) => createHash('sha256').update(String(text ?? '')).digest('hex');
 const mockUrl = (key) => `https://mock.test/browse/${key}`;
+// Ticket updates (plans/ticket-updates-design.md D17): board 3's projects, board 4's CRM workflow (SHOP adds Resolved), and a
+// reportResult that answers by its move, so the Marketplace section and its browser proof run offline.
+const MOCK_PROJECTS = [['SHOP', 'Shop'], ['CRM', 'Customer portal'], ['OPS', 'Operations'], ['SUP', 'Support desk'],
+  ['MKT', 'Marketing site'], ['DATA', 'Data platform']].map(([value, name]) => ({ value, label: `${name} (${value})`, name }));
+function mockStatuses(project) {
+  const done = [{ value: '10001', label: 'Done', category: 'done' }, { value: '10002', label: 'Released', category: 'done' },
+    ...(project === 'SHOP' ? [{ value: '10012', label: 'Resolved', category: 'done' }] : [])];
+  return [...done, { value: '3', label: 'In Progress', category: 'in_progress' },
+    { value: '10003', label: 'Waiting for customer', category: 'in_progress' }, { value: '1', label: 'Open', category: 'todo' },
+    { value: '10004', label: "Won't Fix", category: 'cancelled' }];
+}
+function mockReport(move) {
+  if (move && move.category === 'done') return { moved: { from: 'In Progress', to: 'Done' }, note: 'Moved to Done.' };
+  if (move && typeof move.status === 'string' && move.status) {
+    const to = move.name || move.status;
+    return { moved: { from: 'In Progress', to }, note: `Moved to ${to}.` };
+  }
+  return { moved: null, note: '' };
+}
 const MOCK_DEFAULTS = {
   listTasks: () => ({ tasks: MOCK_TASKS.map((t) => ({ ...t })) }),
   getTask: (args) => ({
@@ -79,10 +99,14 @@ const MOCK_DEFAULTS = {
     body: 'Mock task body.\n\n1. reproduce\n2. fix\n3. verify',
     meta: { mock: true },
   }),
-  reportResult: () => ({ ok: true }),
+  reportResult: (args = {}) => mockReport(args.move),
   validateConfig: () => ({ ok: true }),
-  // Write-back stays on (what a missing capabilities op defaulted to before A6), and the mock source can export.
-  capabilities: () => ({ writeBack: true, export: true }),
+  // Write-back stays on (what a missing capabilities op defaulted to before A6), the mock source can export, and it answers
+  // Ticket updates' ops (D17).
+  capabilities: () => ({ writeBack: true, export: true, ticketUpdates: true }),
+  listProjects: () => MOCK_PROJECTS.map((p) => ({ ...p })),
+  listStatuses: (args = {}) => mockStatuses(args.project),
+  legacyMove: () => ({ field: 'transitionOnComplete', target: null }),
   exportOptions: (args = {}) => ({
     projects: [{ value: 'SHOP', label: 'SHOP — Shop web' }, { value: 'OPS', label: 'OPS — Operations' }],
     ...(args.project ? { issueTypes: [{ value: '10001', label: 'Story' }, { value: '10002', label: 'Task' }, { value: '10003', label: 'Bug' }] } : {}),
@@ -242,10 +266,12 @@ export function killPluginChild(child, user, killGroup = killAgentGroup) {
  *  profile passes a presence check, silently runs against an EMPTY bucket
  *  (false "not configured" verdicts) and then persists state into a phantom
  *  bucket the DELETE route can never purge — so membership in the roster is
- *  checked here too. `allowLegacyDefault` is the ONE host-internal exception:
+ *  checked here too. `allowLegacyDefault` is the host-internal exception, used twice:
  *  write-back for a pipeline row that predates profiles targets the
  *  DEFAULT_PROFILE bucket, because that is where the pre-upgrade flat config
- *  migrated — i.e. the instance the task actually came from (sources.mjs). */
+ *  migrated — i.e. the instance the task actually came from (sources.mjs). The
+ *  Ticket updates GET also uses it to ask `capabilities` before the first profile
+ *  exists (ticket-updates-routes.mjs). */
 function assertProfileInvariant({ plugin, sourceId, source, profile, allowLegacyDefault }) {
   if (source.multiProfile === true) {
     if (!profile) {
@@ -267,12 +293,28 @@ function assertProfileInvariant({ plugin, sourceId, source, profile, allowLegacy
 }
 
 /**
+ * stdout parsed as one whole protocol frame, or null. A frame is what the child
+ * writes: an object with a boolean `ok` AND a `logs` array. `ok` alone is not
+ * enough: a connector that printed e.g. a Slack body `{"ok":true}` and crashed
+ * must stay a protocol error.
+ */
+function completeFrame(stdout) {
+  try {
+    const frame = JSON.parse(stdout);
+    return frame && typeof frame === 'object' && !Array.isArray(frame) && typeof frame.ok === 'boolean' && Array.isArray(frame.logs) ? frame : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Run ONE connector op in an ephemeral child. Resolves with the op result;
  * rejects with PluginOpError. `logger(level, msg)` is optional — connector
  * ctx.log lines route there (default: console.error, since stdout is the UI's).
- * `allowLegacyDefault` (host-internal, never surfaced to CLI/routes) lets the
- * legacy write-back path name DEFAULT_PROFILE on a multiProfile source — see
- * assertProfileInvariant.
+ * `allowLegacyDefault` (host-internal, never surfaced to CLI or a request) lets the
+ * legacy write-back path name DEFAULT_PROFILE on a multiProfile source, and lets the
+ * Ticket updates GET probe `capabilities` for a source whose roster is still empty
+ * (plans/ticket-updates-plan.md Deviation 2) — see assertProfileInvariant.
  * @returns {Promise<any>}
  */
 export async function callSource({ plugin, sourceId, op, args = {}, profile, timeoutMs = 30000, logger, allowLegacyDefault = false } = {}) {
@@ -330,20 +372,39 @@ export async function callSource({ plugin, sourceId, op, args = {}, profile, tim
     child.stdout.setEncoding('utf8').on('data', (c) => { stdout += c; });
     child.stderr.setEncoding('utf8').on('data', (c) => { stderr += c; });
     child.on('error', (err) => settle(rejectFrame, new PluginOpError('protocol', `plugin "${plugin}": spawn failed — ${err.message}`)));
-    child.on('close', (code) => {
+    child.on('close', (code, signal) => {
+      const answered = completeFrame(stdout);
       if (timedOut) {
+        // A frame written just before the deadline can still be followed by a
+        // slow exit (leftover handle, grace period): the answer wins. An op
+        // that never answers has no frame and still ends as a timeout.
+        if (answered) {
+          log('warn', `plugin "${plugin}" op "${op}": the child was killed after answering `
+            + `(timeout ${timeoutMs}ms); its answer is kept`);
+          return settle(resolveFrame, answered);
+        }
         return settle(rejectFrame, new PluginOpError('timeout', `plugin "${plugin}" op "${op}" exceeded ${timeoutMs}ms (child killed)`));
       }
       if (code !== 0) {
+        // The child can die AFTER its frame is fully written: Node 24 on Windows
+        // asserts in libuv during process.exit(0) once a connector made one HTTPS
+        // fetch (exit 0xC0000409). A complete frame on stdout is the answer; keep
+        // it and say so. Anything less is still "crashed before the frame".
+        if (answered) {
+          // The crash line is usually the last one, not the first. Connector
+          // stderr can carry credentials: only a redacted, capped line is logged.
+          const lines = stderr.split(/\r?\n/).filter((l) => l.trim());
+          const line = lines.length ? lines[lines.length - 1] : '';
+          log('warn', `plugin "${plugin}" op "${op}": the child crashed on exit after answering `
+            + `(exit ${code ?? signal})${line ? ` — ${redactAskText(line.trim().slice(0, 400)).slice(0, 160)}` : ''}; its answer is kept`);
+          return settle(resolveFrame, answered);
+        }
         return settle(rejectFrame, new PluginOpError('protocol',
-          `plugin "${plugin}" op "${op}": child exited ${code}${stderr ? ` — ${stderr.slice(0, 400)}` : ''}`));
+          `plugin "${plugin}" op "${op}": child exited ${code ?? signal}${stderr ? ` — ${stderr.slice(0, 400)}` : ''}`));
       }
-      try {
-        settle(resolveFrame, JSON.parse(stdout));
-      } catch {
-        settle(rejectFrame, new PluginOpError('protocol',
-          `plugin "${plugin}" op "${op}": non-JSON on stdout (stdout is protocol-reserved; use ctx.log) — got: ${stdout.slice(0, 200)}`));
-      }
+      if (answered) return settle(resolveFrame, answered);
+      settle(rejectFrame, new PluginOpError('protocol',
+        `plugin "${plugin}" op "${op}": non-JSON on stdout (stdout is protocol-reserved; use ctx.log) — got: ${stdout.slice(0, 200)}`));
     });
     child.stdin.end(payload); // config/secrets/state via stdin only
   });

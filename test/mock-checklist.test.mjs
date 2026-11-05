@@ -4,6 +4,7 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises';
+import { readdirSync, statSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runMock, mockChecklistPrefixes, mockPlanMarkdown } from '../src/core/engines/mock.mjs';
@@ -92,4 +93,73 @@ test('the refiner fed MOCK_FINDINGS lists that file\'s finding ids in `addressed
   assert.deepEqual(JSON.parse(await readFile(json, 'utf8')).addressed, ['ux-1-1', 'qa-1-1']);
   await run({});
   assert.equal('addressed' in JSON.parse(await readFile(json, 'utf8')), false);
+});
+
+// ── dispositions (#990 slice 3): the sink answers in the file the findings' `Dispositions file:` line names ──
+
+const FINDINGS = (disp) => '# Role reviews — round 1\n\n## UX\n\n- **ux-1-1** [critical] Rollout: x — fix: y\n\n## QA\n\n'
+  + '- **qa-1-1** [minor] Rollout: t — fix: f\n- **qa-1-2** [minor] t — fix: f\n\n## Dispositions\n\nAnswer every id.\n\n'
+  + `Dispositions file: ${disp}\n`;
+const withEnv = async (vars, fn) => {
+  const prev = Object.fromEntries(Object.keys(vars).map((k) => [k, process.env[k]]));
+  try {
+    for (const [k, v] of Object.entries(vars)) if (v === undefined) delete process.env[k]; else process.env[k] = v;
+    return await fn();
+  } finally {
+    for (const [k, v] of Object.entries(prev)) if (v === undefined) delete process.env[k]; else process.env[k] = v;
+  }
+};
+const NO_KNOBS = { WORCA_MOCK_DISPOSITIONS: undefined, WORCA_MOCK_CONFLICTS: undefined };
+
+test('the refiner writes the dispositions file next to `addressed`: every id fixed by default', async () => {
+  const dir = await tmp();
+  const disp = join(dir, 'x-role-findings-r1-dispositions.json');
+  const findings = join(dir, 'x-role-findings-r1.md');
+  await writeFile(findings, FINDINGS(disp));
+  const json = join(dir, 'refine.json');
+  await withEnv(NO_KNOBS, () => runMock({ cwd: dir, systemPrompt: '', onEvent: () => {},
+    prompt: markers({ MOCK_ROLE: 'refiner', MOCK_CYCLE: 1, MOCK_OUT: join(dir, 'plan-v2.md'), MOCK_JSON: json, MOCK_FINDINGS: findings }) }));
+  assert.deepEqual(JSON.parse(await readFile(disp, 'utf8')), { dispositions: ['ux-1-1', 'qa-1-1', 'qa-1-2'].map((id) => ({ id, status: 'fixed' })) });
+  assert.deepEqual(JSON.parse(await readFile(json, 'utf8')).addressed, ['ux-1-1', 'qa-1-1', 'qa-1-2']);
+});
+
+test('WORCA_MOCK_DISPOSITIONS: omit and disputed; `addressed` lists only the ids left fixed; WORCA_MOCK_CONFLICTS passes through', async () => {
+  const dir = await tmp();
+  const disp = join(dir, 'x-role-findings-r1-dispositions.json');
+  const findings = join(dir, 'x-role-findings-r1.md');
+  await writeFile(findings, FINDINGS(disp));
+  const json = join(dir, 'refine.json');
+  const conflicts = [{ findings: ['ux-1-1', 'qa-1-1'], question: 'Which way?', options: ['A', 'B'] }];
+  await withEnv({ WORCA_MOCK_DISPOSITIONS: '{"ux-1-1":"omit","qa-1-1":"disputed"}', WORCA_MOCK_CONFLICTS: JSON.stringify(conflicts) },
+    () => runMock({ cwd: dir, systemPrompt: '', onEvent: () => {},
+      prompt: markers({ MOCK_ROLE: 'refiner', MOCK_CYCLE: 1, MOCK_OUT: join(dir, 'plan-v2.md'), MOCK_JSON: json, MOCK_FINDINGS: findings }) }));
+  const d = JSON.parse(await readFile(disp, 'utf8'));
+  assert.deepEqual(d.dispositions.map((x) => [x.id, x.status]), [['qa-1-1', 'disputed'], ['qa-1-2', 'fixed']]);
+  assert.ok(d.dispositions[0].reason, 'a disputed answer carries a reason');
+  assert.deepEqual(d.conflicts, conflicts);
+  assert.deepEqual(JSON.parse(await readFile(json, 'utf8')).addressed, ['qa-1-2']);
+});
+
+test('the implementer writes the dispositions file only when its first input (fix) names one', async () => {
+  const dir = await tmp();
+  const disp = join(dir, 'x-role-findings-r1-dispositions.json');
+  const findings = join(dir, 'x-role-findings-r1.md');
+  await writeFile(findings, FINDINGS(disp));
+  const run = (extra) => withEnv(NO_KNOBS, () => runMock({ cwd: dir, systemPrompt: '', onEvent: () => {},
+    prompt: markers({ MOCK_ROLE: 'implementer', MOCK_CYCLE: 1, ...extra }) }));
+  await run({ MOCK_IN: findings });
+  assert.deepEqual(JSON.parse(await readFile(disp, 'utf8')).dispositions.map((x) => x.status), ['fixed', 'fixed', 'fixed']);
+  await rm(disp);
+  const plain = join(dir, 'plan.md');
+  await writeFile(plain, '# Plan\n\n- **ux-1-1** [major] not a findings file\n');
+  await run({ MOCK_IN: plain });
+  await assert.rejects(readFile(disp, 'utf8'), { code: 'ENOENT' });
+});
+
+test('needle: no file under src/ but the mock engine mentions the mock dispositions knobs', () => {
+  const root = new URL('../src/', import.meta.url).pathname;
+  const walk = (d) => readdirSync(d).flatMap((n) => { const p = join(d, n); return statSync(p).isDirectory() ? walk(p) : [p]; });
+  const hits = walk(root).filter((p) => /\.m?js$/.test(p) && /WORCA_MOCK_(DISPOSITIONS|CONFLICTS)/.test(readFileSync(p, 'utf8')))
+    .map((p) => p.slice(root.length));
+  assert.deepEqual(hits, ['core/engines/mock.mjs']);
 });

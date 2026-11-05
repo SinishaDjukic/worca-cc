@@ -171,3 +171,21 @@ test('a script card that opts in carries the engine params port after its own in
   assert.equal(typeCompatible('json', on.inputs[1].type), true);
   assert.equal(typeCompatible('md', on.inputs[1].type), false, 'only a json output can drive it');
 });
+
+test('a role-review reviewer: a diff spec keeps the reviewer\'s own port ids; a plan spec gets the plan port set', async () => {
+  const { ROLE_REVIEW_DIFF_PORTS, ROLE_REVIEW_PORTS, rolePortsOf } = await import('../src/shared/graph/ports.mjs');
+  const roles = [{ key: 'correctness', label: 'Correctness' }];
+  const node = (target, sink) => ({ ...agent('n_review', 'reviewer'), config: { roleReview: { roles, target, sink } } });
+  const ids = (p) => [p.inputs.map((i) => i.id), p.outputs.map((o) => o.id)];
+  const diff = portsFn(node('diff', 'implementer'));
+  assert.deepEqual(ids(diff), [['plan', 'done', 'await'], ['review', 'pass']]);
+  assert.deepEqual(diff.inputs[1], { id: 'done', type: 'void', required: false, as: 'worktree' });
+  assert.deepEqual(diff.outputs, [
+    { id: 'review', type: 'md', when: 'blocking', filename: '{base}-code-role-findings-r{cycle}.md', store: 'run' },
+    { id: 'pass', type: 'void', when: 'clean' }]);
+  assert.deepEqual(diff.verdict, { filename: 'r.json' }, 'the sidecar meta rides along');
+  assert.deepEqual(ids(portsFn(node('plan', 'refiner'))), [['plan', 'revise', 'await'], ['findings', 'plan']]);
+  assert.equal(rolePortsOf('diff'), ROLE_REVIEW_DIFF_PORTS);
+  for (const t of ['plan', undefined, 'code']) assert.equal(rolePortsOf(t), ROLE_REVIEW_PORTS);
+  assert.ok(Object.isFrozen(ROLE_REVIEW_DIFF_PORTS) && Object.isFrozen(ROLE_REVIEW_DIFF_PORTS.outputs[0]));
+});

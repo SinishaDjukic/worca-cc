@@ -3,6 +3,7 @@ import { isAbsolute } from 'node:path';
 import { SHAPE_WORKFLOW_ID, SHAPE_UX_WORKFLOW_ID } from '../graph/builtin-workflows.mjs';
 import { normalizePerspectives, DEFAULT_PERSPECTIVES } from '../../shared/shape/perspectives.mjs';
 import { normalizeOutline, normalizeEdits, applyOutlineEdits } from '../../shared/shape/slices.mjs';
+import { normalizePicks } from '../../shared/review/findings.mjs';
 
 export const PLAN_ASK_KIND = 'plan';
 export const PLAN_FEEDBACK_MAX = 8000;
@@ -66,12 +67,16 @@ export function resolveShapeRequest({ shape, workflowId }, { internal = false } 
   };
 }
 
-/** The `plan` ask's validator (RunHarness.answer → 422 on {ok:false}). */
-export function validatePlanAnswer(raw, { revisable = false, perspectives = null } = {}) {
+/** The `plan` ask's validator (RunHarness.answer → 422 on {ok:false}). `conflicts` are the asked round's conflicts:
+ *  an optional `raw.conflicts` holds the person's picks for them, on any decision. */
+export function validatePlanAnswer(raw, { revisable = false, perspectives = null, conflicts = [] } = {}) {
   const bad = (message) => ({ ok: false, errors: [{ path: 'decision', code: 'invalid', message }] });
   const d = raw && typeof raw === 'object' ? raw.decision : undefined;
-  if (d === 'approve' || d === 'stop') return { ok: true, payload: { decision: d } };
-  if (d !== 'revise') return bad('decision must be approve, revise or stop');
+  if (d !== 'approve' && d !== 'stop' && d !== 'revise') return bad('decision must be approve, revise or stop');
+  const picks = raw.conflicts === undefined ? null : normalizePicks(raw.conflicts, conflicts);
+  if (picks && !picks.ok) return { ok: false, errors: [{ path: 'conflicts', code: 'invalid', message: picks.error }] };
+  const withPicks = (payload) => (picks ? { ...payload, conflicts: picks.picks } : payload);
+  if (d === 'approve' || d === 'stop') return { ok: true, payload: withPicks({ decision: d }) };
   if (!revisable) return bad('this plan cannot be revised');
   const feedback = typeof raw.feedback === 'string' ? raw.feedback.trim() : '';
   if (!feedback) return { ok: false, errors: [{ path: 'feedback', code: 'required', message: 'revise needs feedback text' }] };
@@ -93,7 +98,7 @@ export function validatePlanAnswer(raw, { revisable = false, perspectives = null
     }
     payload.perspectives = p.perspectives;
   }
-  return { ok: true, payload };
+  return { ok: true, payload: withPicks(payload) };
 }
 
 /** The outline ask's validator (L4). `outline` is the one asked about; edits are re-applied to it, never trusted. */
