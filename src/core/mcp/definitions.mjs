@@ -302,3 +302,6 @@ export function canonicalJson(value) {
 export function sha256Hex(text) {
   return createHash('sha256').update(text).digest('hex');
 }
+
+/** The digest a chat card pins a stored definition by (docs/mcp-servers.md "Chat"): the card carries no stored literal. */
+export const defDigest = (def) => sha256Hex(canonicalJson(def));

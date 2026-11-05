@@ -29,6 +29,7 @@ import { keepListNames } from '../mcp/keep-list.mjs';
 import { ASK_DENY_RULES } from './deny-rules.mjs';
 import { chatDescriptor } from '../engines/chat.mjs';
 import { chatSignInEnv } from '../engines/chat-descriptor.mjs';
+import { homeConfigsAllowed } from '../mcp/discover.mjs';
 
 /** Absolute path of the worca MCP server script — the `serverPath` of buildMcpConfig (P2 never guesses it). */
 export const ASK_MCP_SERVER_PATH = fileURLToPath(new URL('./mcp-stdio.mjs', import.meta.url));
@@ -339,6 +340,8 @@ export function buildMcpConfig({ homeBase, threadId, execPath = process.execPath
     env: { WORCA_HOME: base, WORCA_ASK_THREAD_ID: thread, ...forwarded, ...authEnv(claudeAuth), ...(typeof reader === 'string' && reader ? { WORCA_ASK_READER: reader } : {}), ...webMcpEnv(web),
       // The parent's git answer (P0): the child's gitAvailable() reads it, so git-only tools follow this machine.
       ...(typeof git === 'boolean' ? { WORCA_GIT: git ? '1' : '0' } : {}),
+      // MCP discovery (mcp/discover.mjs): a container or hosted worca never lists its own user's tool configs.
+      ...(homeConfigsAllowed(env) ? {} : { WORCA_ASK_NO_HOME_CONFIGS: '1' }),
       // A locked-down chat's child adds read_file / grep / glob (file-deps.mjs) and classifies on its engine (D13, D8).
       ...(chatDescriptor(engine) ? { WORCA_ASK_ENGINE: engine, ...(typeof model === 'string' && model ? { WORCA_ASK_MODEL: model } : {}) } : {}),
       // Such a turn's set skills (#635): this message's mount, one more read-only root of read_file / grep / glob. The

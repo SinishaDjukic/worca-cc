@@ -1214,6 +1214,87 @@ test('typed cards (model, clone, web, workspace, actions): fields render as text
       await ctx.tick();
       assert.deepEqual(rec.cardPosts.at(-1), ['card_00000021', { state: 'declined' }]);
     } },
+    { name: 'mcp card: every definition row word for word, Add / Save / Remove (danger), applied link, failed alert, declined stub', run: async () => {
+      const rec = { cardPosts: [] };
+      const base = apiHandler(rec);
+      const ctx = await openWithCard(PROJECT_CARD, rec, { fetchHandler: (url, opts) => {
+        const m = /^\/api\/ask\/threads\/[^/]+\/cards\/(card_[0-9a-f]{8})$/.exec(url);
+        if (m && (opts.method || '').toUpperCase() === 'POST' && m[1] !== CARD_ID) { rec.cardPosts.push([m[1], JSON.parse(opts.body)]); return { ok: true, status: 200, json: async () => ({}) }; }
+        return base(url, opts);
+      } });
+      const push = (id, state, card, extra = {}, seq) => {
+        ctx.panel.pushServerFrame({ type: 'ask-card', block: { kind: 'card', id, state, card, ...extra }, threadId: TID, messageId: MID, seq });
+        ctx.flush();
+      };
+      const add = { type: 'mcp', kind: 'add', summary: 'Add MCP server github (stdio)', note: '<i>for issues</i>',
+        changes: [
+          { op: 'add', label: 'Type', after: 'stdio' }, { op: 'add', label: 'Command', after: 'npx' },
+          { op: 'add', label: 'Argument 1', after: '-y' }, { op: 'add', label: 'env GITHUB_TOKEN', after: '{GITHUB_TOKEN: secret, filled in each set}' },
+        ],
+        warnings: ['the value given for env GITHUB_TOKEN was left out'], effects: ['Applying saves the definition only.'], change: { name: 'github', def: {} } };
+      push('card_00000030', 'proposed', add, {}, 3);
+      const el = ctx.doc.querySelector('[data-ask-mcpcard="proposed"]');
+      assert.ok(el);
+      assert.equal(el.querySelector('.ask-mcard-title').textContent, 'Proposed MCP server change');
+      assert.equal(el.querySelector('.ask-mcard-kind').textContent, 'Add server');
+      const rows = [...el.querySelectorAll('.ask-acard-change')];
+      assert.equal(rows.length, 4);
+      assert.deepEqual(rows.map((r) => [r.querySelector('.ask-mcard-change-label').textContent, r.querySelector('.ask-mcard-after').textContent]),
+        add.changes.map((c) => [c.label, c.after]));
+      assert.match(el.querySelector('.ask-wscard-warn li').textContent, /was left out/);
+      assert.match(el.querySelector('.ask-wscard-effects li').textContent, /saves the definition only/);
+      assert.equal(el.querySelector('.ask-mcard-note i'), null, 'text, never markup');
+      const apply = el.querySelector('[data-ask-mcp-apply]');
+      assert.equal(apply.textContent, 'Add');
+      assert.ok(apply.classList.contains('btn-primary'));
+      apply.click();
+      await ctx.tick();
+      assert.deepEqual(rec.cardPosts.at(-1), ['card_00000030', { state: 'applied' }]);
+      push('card_00000030', 'applied', { ...add, result: { ok: true, detail: 'Added github. It is in no set yet' } }, {}, 4);
+      const done = ctx.doc.querySelector('[data-ask-mcpcard="applied"]');
+      assert.equal(done.querySelector('.ask-mcard-title').textContent, 'Applied MCP server change');
+      assert.equal(done.querySelector('.ask-mcard-detail').textContent, 'Added github. It is in no set yet');
+      const link = done.querySelector('a.ask-card-sched-link');
+      assert.equal(link.textContent, 'Manage in Connectors › MCP servers');
+      assert.equal(link.getAttribute('href'), '#connectors/servers');
+      assert.equal(done.querySelectorAll('button').length, 0);
+      assert.equal(done.querySelector('.ask-wscard-warn'), null, 'warnings belong to the proposal');
+      const rm = { ...add, kind: 'remove', summary: 'Remove MCP server gh', changes: [{ op: 'remove', label: 'Command', before: 'npx' }] };
+      push('card_00000031', 'proposed', rm, {}, 5);
+      const rmEl = ctx.doc.querySelector('[data-ask-mcpcard="proposed"]');
+      const rmBtn = rmEl.querySelector('[data-ask-mcp-apply]');
+      assert.equal(rmBtn.textContent, 'Remove');
+      assert.ok(rmBtn.classList.contains('btn-danger'));
+      assert.equal(rmBtn.classList.contains('btn-primary'), false);
+      rmEl.querySelector('[data-ask-mcp-decline]').click();
+      await ctx.tick();
+      assert.deepEqual(rec.cardPosts.at(-1), ['card_00000031', { state: 'declined' }]);
+      push('card_00000031', 'declined', rm, {}, 6);
+      assert.ok([...ctx.doc.querySelectorAll('.ask-card-stub')].some((x) => x.textContent === 'Declined: Remove MCP server gh'));
+      const ed = { ...add, kind: 'edit', summary: 'Edit MCP server gh', changes: [{ op: 'change', label: 'URL', before: 'https://a.test/', after: 'https://b.test/' }] };
+      push('card_00000032', 'proposed', ed, {}, 7);
+      const edEl = ctx.doc.querySelector('[data-ask-mcpcard="proposed"]');
+      assert.equal(edEl.querySelector('[data-ask-mcp-apply]').textContent, 'Save');
+      assert.deepEqual([...edEl.querySelectorAll('.ask-acard-tag')].map((x) => x.textContent), ['Now', 'New']);
+      push('card_00000032', 'failed', ed, { error: 'gh changed since this card was made — ask the chat again' }, 8);
+      const failed = ctx.doc.querySelector('[data-ask-mcpcard="failed"]');
+      assert.equal(failed.querySelector('.ask-mcard-title').textContent, 'MCP server change failed');
+      const alert = failed.querySelector('.ask-mcard-failed[role="alert"]');
+      assert.equal(alert.textContent, 'Could not apply: gh changed since this card was made — ask the chat again');
+      assert.equal(failed.querySelectorAll('button').length, 0);
+      assert.equal(failed.querySelector('a.ask-card-sched-link').getAttribute('href'), '#connectors/servers');
+      const imp = { type: 'mcp', kind: 'import', summary: 'Import MCP server: files',
+        changes: [{ op: 'add', label: 'files · From', after: 'Cursor · ~/.cursor/mcp.json' }, { op: 'add', label: 'files · Command', after: 'npx' }],
+        warnings: [], effects: [], alreadyPresent: [{ id: 'cursor:user:github', name: 'github', from: 'Cursor · ~/.cursor/mcp.json' }],
+        change: { servers: [{ name: 'files', def: {} }] } };
+      push('card_00000034', 'proposed', imp, {}, 9);
+      const impEl = ctx.doc.querySelector('[data-ask-mcpcard="proposed"]');
+      assert.equal(impEl.querySelector('.ask-mcard-kind').textContent, 'Import servers');
+      assert.equal(impEl.querySelector('[data-ask-mcp-apply]').textContent, 'Import');
+      assert.deepEqual([...impEl.querySelectorAll('.ask-mcard-present li')].map((li) => li.textContent), ['Already in worca: github (Cursor · ~/.cursor/mcp.json)']);
+      push('card_00000034', 'applied', { ...imp, result: { ok: true, detail: 'Added files.' } }, {}, 10);
+      assert.equal(ctx.doc.querySelector('[data-ask-mcpcard="applied"] .ask-mcard-present'), null, 'the list belongs to the proposal');
+    } },
   ]);
 });
 

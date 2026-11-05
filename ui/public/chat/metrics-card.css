@@ -50,6 +50,7 @@
 .mvi-ctx-unknown{color:var(--ink-3);font-size:11px;}
 /* model card (buildModelCard; docs/models.md "Chat"): the policy card's change list + what will still block the model */
 .ask-modcard-warn,.ask-wscard-warn{color:var(--amber-ink);}
+.ask-mcpcard .ask-card-sched-link{align-self:flex-start;margin-top:2px;}
 .ask-modcard .ask-card-sched-link{align-self:flex-start;margin-top:2px;}
 /* workspace removal card (buildWorkspaceCard): worca's recommended re-scan, its reason, and the three options */
 .ask-wscard-rescan{border:0;margin:10px 0 0;padding:0;min-width:0;}

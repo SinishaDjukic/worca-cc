@@ -4982,6 +4982,88 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     return { el: rootEl };
   }
 
+  // ---- MCP server card (propose_mcp_change): add, edit or remove a Manual server ------------------------------
+  // Every command, argument, URL, env and header name the card would save is shown word for word (docs/mcp-servers.md
+  // "Chat"). Applying saves a definition only; the user turns it on in a set on Connectors › MCP servers.
+  const MCP_KIND_LABEL = { add: 'Add server', edit: 'Edit definition', remove: 'Remove server', import: 'Import servers' };
+  const MCP_APPLY_LABEL = { add: 'Add', edit: 'Save', remove: 'Remove', import: 'Import' };
+  /** proposed → applied | failed, or declined. */
+  function buildMcpCard(block) {
+    const card = block.card || {};
+    const summary = card.summary || 'MCP server change';
+    if (block.state === 'declined') return { el: make('div', 'ask-card-stub', `Declined: ${summary}`) };
+    const rootEl = make('div', `ask-card ask-mcard ask-acard ask-mcpcard is-${block.state}`);
+    rootEl.setAttribute('data-ask-mcpcard', block.state);
+    const head = make('div', 'ask-mcard-head');
+    head.appendChild(make('span', 'ask-mcard-title', block.state === 'applied' ? 'Applied MCP server change' : block.state === 'failed' ? 'MCP server change failed' : 'Proposed MCP server change'));
+    head.appendChild(make('span', 'ask-mcard-kind', MCP_KIND_LABEL[card.kind] || card.kind || ''));
+    rootEl.appendChild(head);
+    const body = make('div', 'ask-mcard-body');
+    const sum = make('div', 'ask-mcard-summary');
+    if (block.state === 'applied') sum.appendChild(svgIcon(WF_ICO.check, 15, 2.4));
+    sum.appendChild(make('span', null, summary));
+    body.appendChild(sum);
+    if (card.note) body.appendChild(make('div', 'ask-mcard-note', card.note));
+    const ul = make('ul', 'ask-mcard-changes');
+    for (const c of Array.isArray(card.changes) ? card.changes : []) {
+      const li = make('li', 'ask-acard-change');
+      li.setAttribute('data-op', c.op || '');
+      li.appendChild(make('span', 'ask-mcard-change-label', c.label || ''));
+      const val = make('span', 'ask-mcard-change-val');
+      const both = c.before != null && c.after != null;
+      if (c.before != null && (block.state === 'proposed' || !both)) {
+        if (both) val.appendChild(make('span', 'ask-acard-tag', 'Now'));
+        val.appendChild(make('span', 'ask-mcard-before ask-acard-cmd', String(c.before)));
+      }
+      if (c.after != null) {
+        if (both && block.state === 'proposed') val.appendChild(make('span', 'ask-acard-tag', 'New'));
+        val.appendChild(make('span', 'ask-mcard-after ask-acard-cmd', String(c.after)));
+      }
+      li.appendChild(val);
+      ul.appendChild(li);
+    }
+    body.appendChild(ul);
+    if (block.state === 'proposed') {
+      for (const [items, cls] of [[card.warnings, 'ask-mcard-effects ask-wscard-warn'], [card.effects, 'ask-mcard-effects ask-wscard-effects']]) {
+        if (!Array.isArray(items) || !items.length) continue;
+        const list = make('ul', cls);
+        for (const w of items) list.appendChild(make('li', null, w));
+        body.appendChild(list);
+      }
+      // An import card: discovered servers worca already has (same name and command or URL); the card adds none of
+      // them. ask-mcard-present is a test hook only: the list takes the effects styling it rides on.
+      if (Array.isArray(card.alreadyPresent) && card.alreadyPresent.length) {
+        const have = make('ul', 'ask-mcard-effects ask-wscard-effects ask-mcard-present');
+        for (const p of card.alreadyPresent) have.appendChild(make('li', null, `Already in worca: ${p.name || ''} (${p.from || ''})`));
+        body.appendChild(have);
+      }
+    }
+    const result = card.result || null;
+    if (block.state === 'failed') {
+      const failed = make('div', 'ask-mcard-failed', `Could not apply: ${block.error || (result && result.error) || 'unknown error'}`);
+      failed.setAttribute('role', 'alert');
+      body.appendChild(failed);
+    } else if (block.state === 'applied' && result && result.detail) body.appendChild(make('div', 'ask-mcard-detail', result.detail));
+    if (block.state !== 'proposed') {
+      const open = make('a', 'ask-card-sched-link', 'Manage in Connectors › MCP servers');
+      open.href = '#connectors/servers';
+      body.appendChild(open);
+    }
+    rootEl.appendChild(body);
+    rootEl.appendChild(make('div', 'ask-card-err'));
+    if (block.state === 'proposed') {
+      const actions = make('div', 'ask-mcard-actions');
+      const btn = (cls, text, attr) => { const b = make('button', cls, text); b.type = 'button'; b.setAttribute(attr, ''); return b; };
+      const decline = btn('btn btn-sm btn-quiet ask-card-not-now', 'Decline', 'data-ask-mcp-decline');
+      decline.addEventListener('click', () => postCard(block, rootEl, { state: 'declined' }, decline));
+      const apply = btn(`btn btn-sm ${card.kind === 'remove' ? 'btn-danger' : 'btn-primary'}`, MCP_APPLY_LABEL[card.kind] || 'Apply', 'data-ask-mcp-apply');
+      apply.addEventListener('click', () => postCard(block, rootEl, { state: 'applied' }, apply));
+      actions.append(make('span', 'ask-card-actions-spacer'), decline, apply);
+      rootEl.appendChild(actions);
+    }
+    return { el: rootEl };
+  }
+
   /** The model · effort picker (mockup §C): the panel's popover chrome, anchored under the chip. Rows are menuitems (PD28). */
   function openChipPicker(chip, nodeId, card, wf, handle) {
     const node = card.nodes && card.nodes[nodeId];
@@ -6066,7 +6148,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (card.type === PROGRESS_CARD_TYPE) return true;
     if (card.type && chatCardBuilder(card.type)) return false;      // an extension type is never a run card, whatever its state
     if (ASK_COMPOSER_CARD_TYPES.includes(card.type)) return false;   // Ask's draft / graph cards are never run cards
-    if (card.type === COMMAND_CARD_TYPE || card.type === 'workflow' || card.type === 'metrics' || card.type === 'policy' || card.type === 'schedule' || card.type === 'model' || card.type === 'clone' || card.type === 'web' || card.type === 'workspace' || card.type === 'actions' || card.type === 'away' || card.type === 'project' || card.type === 'proxy' || card.type === SCRIPT_APPROVAL_TYPE) return false;
+    if (card.type === COMMAND_CARD_TYPE || card.type === 'workflow' || card.type === 'metrics' || card.type === 'policy' || card.type === 'schedule' || card.type === 'model' || card.type === 'clone' || card.type === 'web' || card.type === 'workspace' || card.type === 'actions' || card.type === 'mcp' || card.type === 'away' || card.type === 'project' || card.type === 'proxy' || card.type === SCRIPT_APPROVAL_TYPE) return false;
     return block.state === 'started' || (block.state === 'failed' && !!block.runId);
   }
   // #958: one build per card per reconcile. renderTranscript asks for a card twice (is it away? then the tail paint);
@@ -6113,6 +6195,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const isWorkspace = !!(block.card && block.card.type === 'workspace');
     const isWeb = !!(block.card && block.card.type === 'web');
     const isActions = !!(block.card && block.card.type === 'actions');
+    const isMcp = !!(block.card && block.card.type === 'mcp');
     const isAway = !!(block.card && block.card.type === 'away');
     const isProxy = !!(block.card && block.card.type === 'proxy');
     const isCommand = !!(block.card && block.card.type === COMMAND_CARD_TYPE);
@@ -6124,7 +6207,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // Ask's draft cards also change with the cards AROUND them (a newer draft of the key replaces one): rebuilt when
     // what they show changes, not only their state.
     const view = isComposer ? composerCards().view(block) : '';
-    if (cached && !sumStale && cached.state === block.state && (cached.view || '') === view && (isWorkflow || isMetrics || isSchedule || isModel || isClone || isProject || isWeb || isWorkspace || isActions || isAway || isProxy || isCommand || isComposer || isScriptApproval || isProgress || block.state === 'proposed')) return cached.el;
+    if (cached && !sumStale && cached.state === block.state && (cached.view || '') === view && (isWorkflow || isMetrics || isSchedule || isModel || isClone || isProject || isWeb || isWorkspace || isActions || isMcp || isAway || isProxy || isCommand || isComposer || isScriptApproval || isProgress || block.state === 'proposed')) return cached.el;
     if (cached) disposeCardEntry(cached);
     const built = isWorkflow ? buildWorkflowCard(block, cached)
       : isMetrics ? buildMetricsCard(block)
@@ -6135,6 +6218,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       : isWeb ? buildWebCard(block)
       : isWorkspace ? buildWorkspaceCard(block)
       : isActions ? buildActionsCard(block)
+      : isMcp ? buildMcpCard(block)
       : isAway ? buildAwayCard(block)
       : isProxy ? buildProxyCard(block)
       : isCommand ? buildCommandCard(block)
