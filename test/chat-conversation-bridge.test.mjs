@@ -719,3 +719,12 @@ test('live status: a failing status check never blocks delivery (head of line)',
   assert.ok(B.posts.some((p) => p.message.body[0].value === 'still delivered'));
   assert.ok(B.logs.some((m) => /status messages not checked: listMessages exploded/.test(m)));
 });
+
+test('SAY.notOwner: a mention where the platform renders <@id> (Discord, Slack), the plain sentence elsewhere', () => {
+  assert.equal(SAY.notOwner('U1'), 'Only <@U1> can act on this conversation.', 'Discord is the default');
+  assert.equal(SAY.notOwner('123', 'discord'), 'Only <@123> can act on this conversation.');
+  assert.equal(SAY.notOwner('U1', 'slack'), 'Only <@U1> can act on this conversation.');
+  for (const platform of ['telegram', 'teams']) {
+    assert.equal(SAY.notOwner('u-1', platform), 'Only the person who started this conversation can act on it.', platform);
+  }
+});

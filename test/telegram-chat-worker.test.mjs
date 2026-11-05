@@ -8,8 +8,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  createTelegramWorker, renderToHtml,
+  createTelegramWorker, renderToHtml, renderKeyboard, parseCallbackData, parseSurface, parseMessageKey,
+  REACTION_FOR, CALLBACK_ACK_MS,
 } from '../plugins/telegram-chat/channel/worker.mjs';
+import { MARK } from '../src/core/chat/receipts.mjs';
 import { splitText, withRetryLadder } from '../plugins/telegram-chat/lib/send-util.mjs';
 import { toTelegramHtml, toSlackMrkdwn } from '../plugins/telegram-chat/lib/markdown.mjs';
 import { checkRows } from './helpers/rows.mjs';
@@ -22,7 +24,7 @@ const json = (obj, status = 200) => ({
 
 function fakeCtx(config = { botToken: 'bot-token-1234' }) {
   const state = new Map();
-  const events = { inbound: [], status: [], logs: [] };
+  const events = { inbound: [], status: [], logs: [], interactions: [] };
   const ac = new AbortController();
   return {
     ctx: {
@@ -36,6 +38,7 @@ function fakeCtx(config = { botToken: 'bot-token-1234' }) {
       },
       log: (level, msg) => events.logs.push(`${level}:${msg}`),
       emitMessage: (m) => events.inbound.push(m),
+      emitInteraction: (e) => events.interactions.push(e),
       setStatus: (s, d) => events.status.push({ state: s, detail: d ?? null }),
       shutdownSignal: ac.signal,
     },
@@ -82,7 +85,7 @@ test('start: getMe identity; poll cycle emits normalized inbound + persists curs
 
   assert.deepEqual(events.inbound[0], {
     chatId: '42', userId: '9', text: '/status',
-    meta: { platform: 'telegram', messageId: 1, chatType: 'private', chatTitle: null, username: 'sam', isGroup: false },
+    meta: { platform: 'telegram', messageId: '42:1', chatType: 'private', chatTitle: null, username: 'sam', isGroup: false, mentionsBot: true, botId: null },
   });
   assert.equal(events.inbound.length, 2, 'edited_message and /cmd@other_bot dropped');
   assert.equal(events.inbound[1].text, '/pause now', '@worca_bot suffix stripped');
@@ -147,6 +150,7 @@ test('send: HTML render, 4096 split on line boundaries, ladder + kind mapping', 
       sent.push(body);
       if (mode === '429') return json({ parameters: { retry_after: 1 } }, 429);
       if (mode === '403') return json({}, 403);
+      if (mode === '400') return json({ ok: false, description: 'Bad Request: chat not found' }, 400);
       return json({ ok: true, result: {} });
     }
     return new Promise(() => {});
@@ -171,6 +175,8 @@ test('send: HTML render, 4096 split on line boundaries, ladder + kind mapping', 
   await assert.rejects(w.send('42', msg), (err) => err.kind === 'rate-limit' && err.retryAfterMs === 1000);
   mode = '403';
   await assert.rejects(w.send('42', msg), (err) => err.kind === 'plugin' && /blocked|start/.test(err.message));
+  mode = '400';   // a chat that is not found fails the same way again: the host must not retry it
+  await assert.rejects(w.send('42', msg), (e) => e.permanent === true && e.kind === 'plugin' && /chat not found/.test(e.message));
 });
 
 test('splitText/withRetryLadder/HTML escapes: line preference, never over the limit, never splits a surrogate pair', async () => {
@@ -315,7 +321,7 @@ test('legacy state without botId/cursorAt is kept, not reset', async () => {
   await w.stop();
 });
 
-test('polls ask for message + channel_post; a channel post command is emitted', async () => {
+test('polls ask for message, channel_post and callback_query; a channel post command is emitted', async () => {
   const { ctx, events } = fakeCtx();
   const polls = [];
   const fetchFn = async (url) => {
@@ -327,10 +333,454 @@ test('polls ask for message + channel_post; a channel post command is emitted', 
   const w = createTelegramWorker(ctx, { fetchFn, _sleep: async () => {} });
   await w.start();
   await waitFor(() => events.inbound.length === 1);
-  assert.match(decodeURIComponent(polls[0]), /allowed_updates=\["message","channel_post"\]/);
+  assert.match(decodeURIComponent(polls[0]), /allowed_updates=\["message","channel_post","callback_query"\]/);
   assert.deepEqual(events.inbound[0], {
     chatId: '-1009', userId: '-1009', text: '/approve *ab12',
-    meta: { platform: 'telegram', messageId: 4, chatType: 'channel', chatTitle: 'ops', username: null, isGroup: true },
+    meta: { platform: 'telegram', messageId: '-1009:4', chatType: 'channel', chatTitle: 'ops', username: null, isGroup: true, mentionsBot: false, botId: '1' },
   });
   await w.stop();
+});
+
+// ── interactive (v0.3): ids, keyboards, presses, typed answers, surfaces, edits, reactions ─────────────────────
+
+const REF = 'AbCdEfGhIjKlMnOpQrStUvWx';
+const REF2 = 'ZyXwVuTsRqPoNmLkJiHgFeDc';
+const REF3 = 'QyXwVuTsRqPoNmLkJiHgFeDc';
+const STALE = 'This control is no longer valid. Use the newest message.';
+
+/** A Bot API fake: records every POST as {method, body}; `reply(method, body)` may return a response, else ok.
+ *  sendMessage ids count up from 501; getUpdates hands out pushed updates and otherwise waits for the next push. */
+function botApi(reply = () => undefined, { me = { id: 77, username: 'worca_bot' } } = {}) {
+  const calls = [];
+  const queue = [];
+  let waiter = null;
+  let nextId = 500;
+  const fetchFn = async (url, init = {}) => {
+    const method = String(url).split('?')[0].split('/').pop();
+    if (method === 'getMe') return json({ ok: true, result: me });
+    if (method === 'getUpdates') {
+      if (queue.length) return json({ ok: true, result: queue.splice(0) });
+      return new Promise((resolve) => { waiter = () => resolve(json({ ok: true, result: queue.splice(0) })); });
+    }
+    const body = init.body ? JSON.parse(init.body) : {};
+    calls.push({ method, body });
+    const r = await reply(method, body);
+    if (r) return r;
+    if (method === 'sendMessage') return json({ ok: true, result: { message_id: ++nextId } });
+    if (method === 'createForumTopic') return json({ ok: true, result: { message_thread_id: 31, name: body.name } });
+    return json({ ok: true, result: true });
+  };
+  return {
+    calls, fetchFn,
+    push: (...updates) => { queue.push(...updates); const w = waiter; waiter = null; w?.(); },
+    of: (method) => calls.filter((c) => c.method === method),
+  };
+}
+const fakeTimers = () => {
+  const timers = [];
+  return { timers, setTimer: (fn, ms) => { const t = { fn, ms, cleared: false }; timers.push(t); return t; }, clearTimer: (t) => { t.cleared = true; } };
+};
+const md = (value) => ({ title: null, severity: 'info', body: [{ kind: 'markdown', value }] });
+
+test('ids: surfaces and message keys name their chat; anything else is refused', () => {
+  assert.deepEqual(parseSurface('42'), { chat: '42', topic: null, anchor: null });
+  assert.deepEqual(parseSurface('-1009:t7'), { chat: '-1009', topic: 7, anchor: null });
+  assert.deepEqual(parseSurface('-500:r505'), { chat: '-500', topic: null, anchor: 505 });
+  for (const bad of ['', 'abc', '-500:x1', '-500:t', '1:2', null]) assert.equal(parseSurface(bad), null, String(bad));
+  assert.deepEqual(parseMessageKey('-500:22'), { chat: '-500', id: 22 });
+  assert.deepEqual(parseMessageKey('22', '-500:r505'), { chat: '-500', id: 22 }, 'a bare id takes its chat from the surface');
+  for (const bad of ['', 'x', '-500:t7', '22']) assert.equal(parseMessageKey(bad), null, bad);
+});
+
+test('renderKeyboard: a select is a paged grid, buttons and links 2 per row, typed-answer buttons marked; callback_data ≤ 64 bytes', () => {
+  const options = Array.from({ length: 11 }, (_, i) => ({ value: `p:proj-${i}`, label: `Project ${i}` }));
+  const controls = [
+    { kind: 'select', ref: REF, placeholder: 'Scope: No project', options },
+    { kind: 'button', ref: REF2, label: 'New conversation', style: 'secondary' },
+    { kind: 'button', ref: REF3, label: 'Answer', style: 'primary',
+      modal: { title: 'Answer', fields: [{ id: 'text', label: 'Your answer', style: 'paragraph', required: true, maxLength: 2000 }] } },
+    { kind: 'link', label: 'Open in worca', url: 'https://w.example/#chat/ask_1' },
+  ];
+  const rows = renderKeyboard(controls);
+  assert.deepEqual(rows.map((r) => r.map((b) => b.text)), [
+    ['Project 0', 'Project 1'], ['Project 2', 'Project 3'], ['Project 4', 'Project 5'], ['Project 6', 'Project 7'],
+    ['More ▶'], ['New conversation', 'Answer'], ['Open in worca']]);
+  assert.equal(rows[0][1].callback_data, `s:${REF}:1`);
+  assert.equal(rows[4][0].callback_data, `p:${REF}:1`);
+  assert.equal(rows[5][0].callback_data, `b:${REF2}`);
+  assert.equal(rows[5][1].callback_data, `m:${REF3}`);
+  assert.deepEqual(rows[6][0], { text: 'Open in worca', url: 'https://w.example/#chat/ask_1' });
+  const page1 = renderKeyboard(controls, { pages: { [REF]: 1 } });
+  assert.deepEqual(page1.slice(0, 3).map((r) => r.map((b) => b.text)), [['Project 8', 'Project 9'], ['Project 10'], ['◀ Back']]);
+  assert.equal(page1[0][0].callback_data, `s:${REF}:8`);
+  assert.deepEqual(renderKeyboard(controls, { pages: { [REF]: 9 } }), page1, 'an out-of-range page shows the last one');
+  const long = 'L'.repeat(64);
+  const aliased = renderKeyboard([{ kind: 'select', ref: long, options }, { kind: 'button', ref: long, label: 'x', style: 'primary' }],
+    { alias: (r) => (r.length > 56 ? `~${'a'.repeat(20)}` : r) });
+  for (const b of aliased.flat()) assert.ok(Buffer.byteLength(b.callback_data) <= 64, b.callback_data);
+  for (const b of rows.flat()) if (b.callback_data) assert.ok(Buffer.byteLength(b.callback_data) <= 64, b.callback_data);
+  assert.deepEqual(renderKeyboard([]), []);
+});
+
+test('parseCallbackData: our four kinds only', () => {
+  assert.deepEqual(parseCallbackData(`b:${REF}`), { kind: 'button', ref: REF });
+  assert.deepEqual(parseCallbackData(`m:${REF}`), { kind: 'modal', ref: REF });
+  assert.deepEqual(parseCallbackData(`s:${REF}:10`), { kind: 'select', ref: REF, index: 10 });
+  assert.deepEqual(parseCallbackData(`p:~${'a'.repeat(20)}:1`), { kind: 'page', ref: `~${'a'.repeat(20)}`, page: 1 });
+  for (const bad of ['', 'x', 'b:short', `s:${REF}`, `b:${REF}:1`, 'other_bot:payload', `q:${REF}`, 'b:~short']) {
+    assert.equal(parseCallbackData(bad), null, bad);
+  }
+});
+
+test('inbound: the bot\'s own mention is flagged and cut; a DM always addresses the bot; other bots dropped, anonymous admins kept', async () => {
+  const api = botApi();
+  const { ctx, events } = fakeCtx();
+  const w = createTelegramWorker(ctx, { fetchFn: api.fetchFn, _sleep: async () => {} });
+  await w.start();
+  const g = { id: -500, type: 'group', title: 'devs' };
+  api.push(
+    { update_id: 1, message: { message_id: 10, chat: g, from: { id: 5 }, text: '@Worca_Bot what is up', entities: [{ type: 'mention', offset: 0, length: 10 }] } },
+    { update_id: 2, message: { message_id: 11, chat: g, from: { id: 5 }, text: 'hey @other_bot', entities: [{ type: 'mention', offset: 4, length: 10 }] } },
+    { update_id: 3, message: { message_id: 12, chat: g, from: { id: 5 }, text: 'ping Worca now', entities: [{ type: 'text_mention', offset: 5, length: 5, user: { id: 77 } }] } },
+    { update_id: 4, message: { message_id: 13, chat: g, from: { id: 9, is_bot: true }, text: '@worca_bot loop', entities: [{ type: 'mention', offset: 0, length: 10 }] } },
+    { update_id: 5, message: { message_id: 14, chat: g, from: { id: 1087968824, is_bot: true, username: 'GroupAnonymousBot' }, sender_chat: { id: -500 }, text: '/status' } },
+    { update_id: 6, message: { message_id: 0, chat: g, from: { id: 5 }, text: 'scheduled, no id yet' } },
+    { update_id: 7, message: { message_id: 3, chat: { id: 42, type: 'private' }, from: { id: 42 }, text: 'hello' } },
+  );
+  await waitFor(() => events.inbound.length === 6);
+  assert.deepEqual(events.inbound.map((m) => [m.chatId, m.text, m.meta.mentionsBot, m.meta.messageId]), [
+    ['-500', 'what is up', true, '-500:10'],
+    ['-500', 'hey @other_bot', false, '-500:11'],
+    ['-500', 'ping  now', true, '-500:12'],
+    ['-500', '/status', false, '-500:14'],
+    ['-500', 'scheduled, no id yet', false, null],
+    ['42', 'hello', true, '42:3'],
+  ]);
+  assert.equal(events.inbound[0].meta.botId, '77');
+  await w.stop();
+});
+
+test('presses: emitted at once with the conversation chat; the host reply becomes the toast, else the deadline answers empty and a late reply is posted', async () => {
+  const api = botApi();
+  const { ctx, events } = fakeCtx();
+  const t = fakeTimers();
+  const w = createTelegramWorker(ctx, { fetchFn: api.fetchFn, _sleep: async () => {}, setTimer: t.setTimer, clearTimer: t.clearTimer });
+  await w.start();
+  const sent = await w.send('42', { ...md('pick'), controls: [
+    { kind: 'select', ref: REF, placeholder: 'Pick one', options: [{ value: 'main', label: 'main' }, { value: 'dev', label: 'dev' }] },
+    { kind: 'button', ref: REF2, label: 'Stop', style: 'danger' }] });
+  assert.deepEqual(sent, { ok: true, chunks: 1, messageIds: ['42:501'] });
+  assert.match(api.of('sendMessage')[0].body.text, /<i>Pick one<\/i>$/);
+  const msg = { message_id: 501, chat: { id: 42, type: 'private' } };
+  api.push(
+    { update_id: 1, callback_query: { id: 'CQ1', from: { id: 42, username: 'sam' }, message: msg, data: `s:${REF}:1` } },
+    { update_id: 2, callback_query: { id: 'CQ2', from: { id: 42 }, message: msg, data: `b:${REF2}` } });
+  await waitFor(() => events.interactions.length === 2);
+  assert.deepEqual(events.interactions[0], { id: 'CQ1', chatId: '42', userId: '42', ref: REF, kind: 'select', values: ['dev'],
+    meta: { platform: 'telegram', messageId: '42:501', username: 'sam' } });
+  assert.deepEqual(events.interactions[1], { id: 'CQ2', chatId: '42', userId: '42', ref: REF2, kind: 'button',
+    meta: { platform: 'telegram', messageId: '42:501', username: null } });
+  assert.equal(api.of('answerCallbackQuery').length, 0, 'not answered before the host replies or the deadline');
+  assert.deepEqual(t.timers.map((x) => x.ms), [CALLBACK_ACK_MS, CALLBACK_ACK_MS]);
+  assert.deepEqual(await w.replyInteraction('CQ1', 'Done — the message will update shortly.'), { ok: true });
+  assert.deepEqual(api.of('answerCallbackQuery')[0].body, { callback_query_id: 'CQ1', text: 'Done — the message will update shortly.' });
+  assert.equal(t.timers[0].cleared, true);
+  t.timers[1].fn();   // CQ2's deadline: answered without text
+  await waitFor(() => api.of('answerCallbackQuery').length === 2);
+  assert.deepEqual(api.of('answerCallbackQuery')[1].body, { callback_query_id: 'CQ2' });
+  await w.replyInteraction('CQ2', 'Stopping the reply.');
+  const late = api.of('sendMessage').at(-1).body;
+  assert.equal(late.text, 'Stopping the reply.');
+  assert.deepEqual(late.reply_parameters, { message_id: 501, allow_sending_without_reply: true });
+  await assert.rejects(w.replyInteraction('nope', 'x'), /interaction expired/);
+  await w.stop();
+});
+
+test('presses: foreign data and bot pressers are answered empty, an unknown option or alias answers stale, a page press edits only the keyboard', async () => {
+  const api = botApi();
+  const { ctx, events } = fakeCtx();
+  const w = createTelegramWorker(ctx, { fetchFn: api.fetchFn, _sleep: async () => {} });
+  await w.start();
+  const options = Array.from({ length: 11 }, (_, i) => ({ value: `v${i}`, label: `Option ${i}` }));
+  const controls = [{ kind: 'select', ref: REF, placeholder: 'Pick one', options }];
+  await w.send('42', { ...md('pick'), controls });
+  const msg = { message_id: 501, chat: { id: 42, type: 'private' } };
+  const cq = (id, data, from = { id: 42 }) => ({ callback_query: { id, from, message: msg, data } });
+  api.push(
+    { update_id: 1, ...cq('A', 'other:payload') },
+    { update_id: 2, ...cq('B', `s:${REF}:20`) },
+    { update_id: 3, ...cq('C', `b:~${'z'.repeat(20)}`) },
+    { update_id: 4, ...cq('D', `p:${REF}:1`) },
+    { update_id: 5, ...cq('E', `b:${REF2}`, { id: 9, is_bot: true }) });
+  await waitFor(() => api.of('answerCallbackQuery').length === 5);
+  const answer = (id) => api.of('answerCallbackQuery').find((c) => c.body.callback_query_id === id).body;
+  assert.deepEqual(answer('A'), { callback_query_id: 'A' });
+  assert.deepEqual(answer('B'), { callback_query_id: 'B', text: STALE });
+  assert.deepEqual(answer('C'), { callback_query_id: 'C', text: STALE });
+  assert.deepEqual(answer('D'), { callback_query_id: 'D' });
+  assert.deepEqual(answer('E'), { callback_query_id: 'E' });
+  assert.deepEqual(api.of('editMessageReplyMarkup')[0].body,
+    { chat_id: '42', message_id: 501, reply_markup: { inline_keyboard: renderKeyboard(controls, { pages: { [REF]: 1 } }) } });
+  assert.equal(events.interactions.length, 0);
+  await w.stop();
+});
+
+test('typed answers: the press is answered at once and a ForceReply prompt names the presser; only their reply to it is the answer', async (t) => {
+  const api = botApi();
+  const { ctx, events, state } = fakeCtx();
+  const w = createTelegramWorker(ctx, { fetchFn: api.fetchFn, _sleep: async () => {} });
+  t.after(() => w.stop());   // a failed assertion must not leave the poll loop holding the file open
+  await w.start();
+  const g = { id: -500, type: 'group', title: 'devs' };
+  await w.send('-500', { ...md('**Proposed run**'), controls: [{ kind: 'button', ref: REF, label: 'Request changes', style: 'secondary',
+    modal: { title: 'Request changes', fields: [{ id: 'text', label: 'What should change?', style: 'paragraph', required: true, maxLength: 2000 }] } }] });
+  api.push({ update_id: 1, callback_query: { id: 'M1', from: { id: 5, first_name: 'Sam <&>' }, message: { message_id: 501, chat: g }, data: `m:${REF}` } });
+  await waitFor(() => api.of('sendMessage').length === 2);
+  const prompt = api.of('sendMessage')[1].body;
+  assert.deepEqual(prompt.reply_markup, { force_reply: true, selective: true, input_field_placeholder: 'What should change?' });
+  assert.match(prompt.text, /<a href="tg:\/\/user\?id=5">Sam &lt;&amp;&gt;<\/a>/, 'the presser\'s name is HTML-escaped');
+  assert.deepEqual(prompt.reply_parameters, { message_id: 501, allow_sending_without_reply: true });
+  assert.deepEqual(api.of('answerCallbackQuery')[0].body, { callback_query_id: 'M1' });
+  await waitFor(() => (state.get('freeformPrompts') || []).some(([k]) => k === '-500:502'));   // survives a restart
+  api.push(
+    { update_id: 2, message: { message_id: 600, chat: g, from: { id: 6 }, reply_to_message: { message_id: 502 }, text: 'not me' } },
+    { update_id: 3, message: { message_id: 601, chat: g, from: { id: 5 }, reply_to_message: { message_id: 502 }, text: '/status' } },
+    { update_id: 4, message: { message_id: 602, chat: g, from: { id: 5, username: 'sam' }, reply_to_message: { message_id: 502 }, text: 'smaller scope' } });
+  await waitFor(() => events.interactions.length === 1 && events.inbound.length === 2);
+  assert.deepEqual(events.interactions[0], { id: 'r-500_602', chatId: '-500', userId: '5', ref: REF, kind: 'modal', fields: { text: 'smaller scope' },
+    meta: { platform: 'telegram', messageId: '-500:602', username: 'sam' } });
+  assert.deepEqual(events.inbound.map((m) => m.text), ['not me', '/status']);
+  await w.replyInteraction('r-500_602', 'Sent your change request. The proposal stays open.');
+  assert.deepEqual(api.of('sendMessage').at(-1).body.reply_parameters, { message_id: 602, allow_sending_without_reply: true });
+  assert.equal(api.of('answerCallbackQuery').length, 1, 'a typed answer has no press to answer');
+});
+
+test('surfaces: a DM is its own conversation, a forum topic or a new topic, else a reply chain; later traffic maps to them, also after a restart', async () => {
+  const api = botApi();
+  const { ctx, events } = fakeCtx();
+  const w = createTelegramWorker(ctx, { fetchFn: api.fetchFn, _sleep: async () => {} });
+  await w.start();
+  const forum = { id: -1009, type: 'supergroup', title: 'ops', is_forum: true };
+  const g = { id: -500, type: 'group', title: 'devs' };
+  const mention = (t) => ({ text: `@worca_bot ${t}`, entities: [{ type: 'mention', offset: 0, length: 10 }] });
+  api.push(
+    { update_id: 1, message: { message_id: 20, chat: forum, from: { id: 5 }, message_thread_id: 7, is_topic_message: true, ...mention('in a topic') } },
+    { update_id: 2, message: { message_id: 21, chat: forum, from: { id: 5 }, ...mention('in general') } },
+    { update_id: 3, message: { message_id: 22, chat: g, from: { id: 5 }, ...mention('in a group') } });
+  await waitFor(() => events.inbound.length === 3);
+  assert.deepEqual(events.inbound.map((m) => m.chatId), ['-1009', '-1009', '-500'], 'unbound: the plain chat id');
+  const header = md('**worca chat**');
+  const bodies = () => api.of('sendMessage').map((c) => c.body);
+  assert.deepEqual(await w.send('42', header, { thread: { fromMessageId: '42:3', name: 'worca: hi' } }),
+    { ok: true, chunks: 1, messageIds: ['42:501'], threadId: '42' });
+  assert.deepEqual(bodies()[0].reply_parameters, { message_id: 3, allow_sending_without_reply: true });
+  assert.deepEqual(await w.send('-1009', header, { thread: { fromMessageId: '-1009:20', name: 'worca: in a topic' } }),
+    { ok: true, chunks: 1, messageIds: ['-1009:502'], threadId: '-1009:t7' });
+  assert.equal(bodies()[1].message_thread_id, 7);
+  assert.deepEqual(await w.send('-1009', header, { thread: { fromMessageId: '-1009:21', name: 'worca: in general' } }),
+    { ok: true, chunks: 1, messageIds: ['-1009:503'], threadId: '-1009:t31' });
+  assert.deepEqual(api.of('createForumTopic')[0].body, { chat_id: '-1009', name: 'worca: in general' });
+  assert.equal(bodies()[2].message_thread_id, 31);
+  assert.match(bodies()[3].text, /^Continuing in the topic <a href="https:\/\/t\.me\/c\/9\/31">worca: in general<\/a>\.$/);
+  assert.equal(bodies()[3].reply_parameters.message_id, 21);
+  assert.deepEqual(await w.send('-500', header, { thread: { fromMessageId: '-500:22', name: 'worca: in a group' } }),
+    { ok: true, chunks: 1, messageIds: ['-500:505'], threadId: '-500:r505' });
+  assert.equal(bodies()[4].reply_parameters.message_id, 22);
+  await w.send('-1009:t7', header);                       // 506
+  assert.equal(bodies()[5].message_thread_id, 7);
+  await w.send('-500:r505', header);                      // 507, replies to the chain's newest message (the header)
+  assert.equal(bodies()[6].reply_parameters.message_id, 505);
+  api.push(
+    { update_id: 4, message: { message_id: 30, chat: forum, from: { id: 5 }, message_thread_id: 7, is_topic_message: true, text: 'more' } },
+    { update_id: 5, message: { message_id: 31, chat: forum, from: { id: 5 }, message_thread_id: 8, is_topic_message: true, text: 'other topic' } },
+    { update_id: 6, message: { message_id: 32, chat: g, from: { id: 6 }, reply_to_message: { message_id: 507 }, text: 'reply to the bot' } },
+    { update_id: 7, message: { message_id: 33, chat: g, from: { id: 5 }, reply_to_message: { message_id: 32 }, text: 'reply to a reply' } },
+    { update_id: 8, message: { message_id: 34, chat: g, from: { id: 5 }, text: 'plain' } },
+    { update_id: 9, callback_query: { id: 'CQ9', from: { id: 5 }, message: { message_id: 505, chat: g }, data: `b:${REF}` } },
+    { update_id: 10, callback_query: { id: 'CQ10', from: { id: 5 }, message: { message_id: 502, chat: forum, message_thread_id: 7, is_topic_message: true }, data: `b:${REF}` } });
+  await waitFor(() => events.inbound.length === 8 && events.interactions.length === 2);
+  assert.deepEqual(events.inbound.slice(3).map((m) => m.chatId), ['-1009:t7', '-1009', '-500:r505', '-500:r505', '-500']);
+  assert.deepEqual(events.interactions.map((e) => e.chatId), ['-500:r505', '-1009:t7']);
+  await w.send('-500:r505', header);
+  assert.equal(bodies().at(-1).reply_parameters.message_id, 33, 'the chain answers its newest message');
+  await w.stop();
+  // A restarted worker still knows the topics and chains (ctx.state), but not the starting mentions.
+  const api2 = botApi();
+  const w2 = createTelegramWorker(ctx, { fetchFn: api2.fetchFn, _sleep: async () => {} });
+  await w2.start();
+  api2.push(
+    { update_id: 11, message: { message_id: 40, chat: forum, from: { id: 5 }, message_thread_id: 31, is_topic_message: true, text: 'still here' } },
+    { update_id: 12, message: { message_id: 41, chat: g, from: { id: 5 }, reply_to_message: { message_id: 505 }, text: 'still chained' } });
+  await waitFor(() => events.inbound.length === 10);
+  assert.deepEqual(events.inbound.slice(8).map((m) => m.chatId), ['-1009:t31', '-500:r505']);
+  await assert.rejects(w2.send('-500', header, { thread: { fromMessageId: '-500:22', name: 'x' } }),
+    (e) => e.permanent === true && /mention the bot again/.test(e.message));
+  await w2.stop();
+});
+
+test('a topic Telegram refuses to create is a permanent refusal naming the admin right', async () => {
+  const api = botApi((method) => (method === 'createForumTopic'
+    ? json({ ok: false, error_code: 400, description: 'Bad Request: not enough rights to create a topic' }, 400) : undefined));
+  const { ctx, events } = fakeCtx();
+  const w = createTelegramWorker(ctx, { fetchFn: api.fetchFn, _sleep: async () => {} });
+  await w.start();
+  api.push({ update_id: 1, message: { message_id: 21, chat: { id: -1009, type: 'supergroup', is_forum: true }, from: { id: 5 },
+    text: '@worca_bot hi', entities: [{ type: 'mention', offset: 0, length: 10 }] } });
+  await waitFor(() => events.inbound.length === 1);
+  await assert.rejects(w.send('-1009', md('h'), { thread: { fromMessageId: '-1009:21', name: 'worca: hi' } }),
+    (e) => e.permanent === true && e.kind === 'plugin' && /Manage topics/.test(e.message));
+  assert.equal(api.of('sendMessage').length, 0);
+  await w.stop();
+});
+
+test('edits: editMessageText with the keyboard; "not modified" is success; a deleted message is a permanent not-found; a refused URL button is dropped once', async () => {
+  let mode = 'ok';
+  const api = botApi((method, body) => {
+    if (method === 'editMessageText' && mode === 'same') return json({ ok: false, description: 'Bad Request: message is not modified: specified new message content and reply markup are exactly the same as a current content and reply markup of the message' }, 400);
+    if (method === 'editMessageText' && mode === 'gone') return json({ ok: false, description: 'Bad Request: message to edit not found' }, 400);
+    if (method === 'sendMessage' && (body.reply_markup?.inline_keyboard || []).flat().some((b) => b.url)) return json({ ok: false, description: 'Bad Request: BUTTON_URL_INVALID' }, 400);
+    return undefined;
+  });
+  const { ctx } = fakeCtx();
+  const w = createTelegramWorker(ctx, { fetchFn: api.fetchFn, _sleep: async () => {} });
+  const msg = { ...md('Run started'), controls: [{ kind: 'button', ref: REF, label: 'Stop', style: 'danger' },
+    { kind: 'link', label: 'Open in worca', url: 'http://localhost:4317/#chat/ask_1' }] };
+  assert.deepEqual(await w.send('-500:r505', msg, { edit: { messageId: '-500:507' } }), { ok: true, messageIds: ['-500:507'] });
+  const e = api.of('editMessageText')[0].body;
+  assert.deepEqual([e.chat_id, e.message_id, e.parse_mode], ['-500', 507, 'HTML']);
+  assert.deepEqual(e.reply_markup.inline_keyboard.flat().map((b) => b.text), ['Stop', 'Open in worca']);
+  assert.deepEqual((await w.send('42', md('no buttons'), { edit: { messageId: '42:9' } })).messageIds, ['42:9']);
+  assert.deepEqual(api.of('editMessageText')[1].body.reply_markup, { inline_keyboard: [] }, 'an edit without controls removes the keyboard');
+  mode = 'same';
+  assert.equal((await w.send('-500:r505', msg, { edit: { messageId: '-500:507' } })).ok, true);
+  mode = 'gone';
+  await assert.rejects(w.send('-500:r505', msg, { edit: { messageId: '-500:507' } }), (err) => err.permanent === true && /not found/.test(err.message));
+  mode = 'ok';
+  assert.equal((await w.send('-500', msg)).ok, true);
+  assert.deepEqual(api.of('sendMessage').map((c) => c.body.reply_markup.inline_keyboard.flat().map((b) => b.text)), [['Stop', 'Open in worca'], ['Stop']]);
+});
+
+test('react: worca marks map to Telegram reactions; an add replaces, a stale remove keeps the newer mark; 429 waits or goes back; refusals permanent; 5xx transient', async () => {
+  let mode = 'ok';
+  const sleeps = [];
+  const api = botApi((method) => {
+    if (method !== 'setMessageReaction') return undefined;
+    if (mode === '429') { mode = 'ok'; return json({ ok: false, parameters: { retry_after: 2 } }, 429); }
+    if (mode === '429long') return json({ ok: false, parameters: { retry_after: 30 } }, 429);
+    if (mode === 'invalid') return json({ ok: false, description: 'Bad Request: REACTION_INVALID' }, 400);
+    if (mode === 'gone') return json({ ok: false, description: 'Bad Request: message to react not found' }, 400);
+    if (mode === '502') return json({}, 502);
+    return undefined;
+  });
+  const w = createTelegramWorker(fakeCtx().ctx, { fetchFn: api.fetchFn, _sleep: async (ms) => { sleeps.push(ms); } });
+  const R = () => api.of('setMessageReaction').map((c) => c.body);
+  assert.deepEqual(REACTION_FOR, { '⏳': '👀', '✅': '👌', '❌': '👎', '⏹': '🙈' });
+  await w.react('-500:r505', '-500:22', MARK.work, true);
+  assert.deepEqual(R()[0], { chat_id: '-500', message_id: 22, reaction: [{ type: 'emoji', emoji: '👀' }] });
+  await w.react('-500:r505', '-500:22', MARK.work, false);
+  await w.react('-500:r505', '-500:22', MARK.ok, true);
+  assert.deepEqual(R().slice(1).map((b) => b.reaction), [[], [{ type: 'emoji', emoji: '👌' }]]);
+  await w.react('-500', '-500:22', MARK.work, false);   // ⏳ was replaced by 👌 already: no call, 👌 stays
+  assert.equal(R().length, 3);
+  for (const [mark, shown] of [[MARK.fail, '👎'], [MARK.stop, '🙈'], ['⏹', '🙈']]) {
+    await w.react('42', '42:9', mark, true);
+    assert.equal(R().at(-1).reaction[0].emoji, shown);
+  }
+  mode = '429';
+  await w.react('42', '42:9', MARK.work, true);
+  assert.deepEqual(sleeps, [2000]);
+  mode = '429long';
+  await assert.rejects(w.react('42', '42:9', MARK.work, true), (e) => e.kind === 'rate-limit' && e.retryAfterMs === 30000 && e.permanent !== true);
+  assert.deepEqual(sleeps, [2000], 'a long 429 goes back to the host at once, never waited out inline');
+  mode = 'invalid';
+  await assert.rejects(w.react('42', '42:9', MARK.ok, true), (e) => e.permanent === true && /REACTION_INVALID/.test(e.message));
+  mode = 'gone';
+  await assert.rejects(w.react('42', '42:9', MARK.ok, true), (e) => e.permanent === true && /not found/.test(e.message));
+  mode = '502';
+  await assert.rejects(w.react('42', '42:9', MARK.ok, true), (e) => e.kind === 'network' && e.permanent !== true);
+  await assert.rejects(w.react('42', 'nonsense', MARK.ok, true), (e) => e.permanent === true);
+});
+
+test('presses: a host reply longer than a toast answers the press empty and is posted whole', async (t) => {
+  const api = botApi();
+  const { ctx, events } = fakeCtx();
+  const timers = fakeTimers();
+  const w = createTelegramWorker(ctx, { fetchFn: api.fetchFn, _sleep: async () => {}, setTimer: timers.setTimer, clearTimer: timers.clearTimer });
+  t.after(() => w.stop());
+  await w.start();
+  await w.send('42', { ...md('pick'), controls: [{ kind: 'button', ref: REF, label: 'Stop', style: 'danger' }] });
+  api.push({ update_id: 1, callback_query: { id: 'CQ1', from: { id: 42 }, message: { message_id: 501, chat: { id: 42, type: 'private' } }, data: `b:${REF}` } });
+  await waitFor(() => events.interactions.length === 1);
+  const long = 'x'.repeat(201);
+  assert.deepEqual(await w.replyInteraction('CQ1', long), { ok: true });
+  assert.deepEqual(api.of('answerCallbackQuery').map((c) => c.body), [{ callback_query_id: 'CQ1' }]);
+  const posted = api.of('sendMessage').at(-1).body;
+  assert.equal(posted.text, long, 'all 201 characters are posted');
+  assert.deepEqual(posted.reply_parameters, { message_id: 501, allow_sending_without_reply: true });
+});
+
+test('topics: a failed conversation start leaves an existing topic unbound, so it routes as the plain chat again', async (t) => {
+  let fail = null;
+  const api = botApi((method, body) => {
+    if (method !== 'sendMessage' || body.message_thread_id !== 7 || !fail) return undefined;
+    if (fail === '400') return json({ ok: false, description: 'Bad Request: TOPIC_CLOSED' }, 400);
+    if (fail === '429') return json({ ok: false, parameters: { retry_after: 30 } }, 429);
+    // Group flood control: one 20 s wait that would succeed after the host's 15 s send timeout gave up.
+    if (fail === '429then') { fail = null; return json({ ok: false, parameters: { retry_after: 20 } }, 429); }
+    if (fail === '429x5s') return json({ ok: false, parameters: { retry_after: 5 } }, 429);
+    throw new Error('socket hang up');
+  });
+  const { ctx, events, state } = fakeCtx();
+  const sleeps = [];
+  const w = createTelegramWorker(ctx, { fetchFn: api.fetchFn, _sleep: async (ms) => { sleeps.push(ms); } });
+  t.after(() => w.stop());
+  await w.start();
+  const forum = { id: -1009, type: 'supergroup', title: 'ops', is_forum: true };
+  const inTopic = (id, extra) => ({ message_id: id, chat: forum, from: { id: 5 }, message_thread_id: 7, is_topic_message: true, ...extra });
+  const mention = { text: '@worca_bot hi', entities: [{ type: 'mention', offset: 0, length: 10 }] };
+  const bound = () => (state.get('freeformTopics') || []).some(([k]) => k === '-1009:t7');
+  let update = 0;
+  const receive = async (id, extra) => {
+    const before = events.inbound.length;
+    api.push({ update_id: ++update, message: inTopic(id, extra) });
+    await waitFor(() => events.inbound.length === before + 1);
+    return events.inbound.at(-1);
+  };
+  const start = (id) => w.send('-1009', md('h'), { thread: { fromMessageId: `-1009:${id}`, name: 'worca: hi' } });
+  let id = 20;
+  for (const [mode, check] of [['400', (e) => e.permanent === true && /TOPIC_CLOSED/.test(e.message)],
+    ['429', (e) => e.kind === 'rate-limit'], ['network', (e) => e.kind === 'network'],
+    ['429then', (e) => e.kind === 'rate-limit'], ['429x5s', (e) => e.kind === 'rate-limit']]) {
+    fail = mode;
+    sleeps.length = 0;
+    await receive(id, mention);
+    await assert.rejects(start(id), check, mode);
+    // The host gives up on a send after 15 s (channel-host sendMessage): a start must fail before that, never succeed late.
+    assert.ok(sleeps.reduce((a, b) => a + b, 0) < 15000, `${mode}: the start waited ${sleeps} ms in all, past the host's send timeout`);
+    assert.ok(!bound(), `${mode}: the topic is not persisted as bound`);
+    assert.equal((await receive(id + 1, { text: '/status' })).chatId, '-1009', `${mode}: a later message in the topic carries the plain chat id`);
+    id += 2;
+  }
+  fail = null;   // a topic bound by a successful start stays bound, even when a second start in it fails
+  await receive(40, mention);
+  assert.equal((await receive(41, mention)).chatId, '-1009', 'both mentions arrive before the topic is bound');
+  assert.equal((await start(40)).threadId, '-1009:t7');
+  fail = '400';
+  await assert.rejects(start(41), (e) => e.permanent === true);
+  fail = null;
+  assert.ok(bound(), 'a failed second start keeps the live conversation\'s topic bound');
+  assert.equal((await receive(42, { text: 'more' })).chatId, '-1009:t7');
+});
+
+test('topics: the pointer to a new topic escapes the thread name', async (t) => {
+  const api = botApi();
+  const { ctx, events } = fakeCtx();
+  const w = createTelegramWorker(ctx, { fetchFn: api.fetchFn, _sleep: async () => {} });
+  t.after(() => w.stop());
+  await w.start();
+  api.push({ update_id: 1, message: { message_id: 21, chat: { id: -1009, type: 'supergroup', is_forum: true }, from: { id: 5 },
+    text: '@worca_bot hi', entities: [{ type: 'mention', offset: 0, length: 10 }] } });
+  await waitFor(() => events.inbound.length === 1);
+  await w.send('-1009', md('h'), { thread: { fromMessageId: '-1009:21', name: 'a <b> & c' } });
+  assert.equal(api.of('sendMessage').at(-1).body.text, 'Continuing in the topic <a href="https://t.me/c/9/31">a &lt;b&gt; &amp; c</a>.');
 });
