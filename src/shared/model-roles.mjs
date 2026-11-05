@@ -1,5 +1,6 @@
 // Model roles (plans/setup-assistant-design.md D1–D5): three kinds of work every model slot falls back to.
 // Pure: shared by src/core (resolution) and ui/public (the Roles card and the Engines rows' "From …" text).
+import { MODEL_ENGINE_NAMES } from './engine-switch.mjs';
 
 export const MODEL_ROLES = Object.freeze(['deep', 'everyday', 'quick']);
 export const ROLE_LABELS = Object.freeze({ deep: 'Deep thinking', everyday: 'Everyday coding', quick: 'Quick jobs' });
@@ -8,20 +9,25 @@ export const ROLE_HINTS = Object.freeze({
   everyday: 'Writes the code and answers in Chat.',
   quick: 'Short, frequent helper calls. Cheap and fast.',
 });
-// The harnesses the Models page shows roles for (the helper engines, src/core/model-env.mjs HELPER_ENGINES).
-export const ROLE_HARNESSES = Object.freeze(['claude', 'codex']);
+// The harnesses that keep roles: every engine with catalog models. Steps (and Chat) run on all of them, so each one's
+// roles are its step fallback; helper jobs still run on Claude or Codex only (src/core/model-env.mjs HELPER_ENGINES).
+export const ROLE_HARNESSES = MODEL_ENGINE_NAMES;
+// The harnesses a team policy's models.roles (and a shared team setup) may name: their roles are upstream ids that map
+// to this machine's sources (src/core/model-roles.mjs mapUpstreamModel), checked on Claude's or Codex's effort scale.
+export const TEAM_ROLE_HARNESSES = Object.freeze(['claude', 'codex']);
 
 // D4 judgement steps by agent key; "Bug Root Cause" ships only in plugins, so it is matched by its display name.
 const DEEP_STEP_KEYS = new Set(['planner', 'planReviewer', 'refiner', 'reviewer', 'deckReviewer']);
 const DEEP_STEP_NAMES = new Set(['plan', 'plan review', 'refine plan', 'review implementation', 'bug root cause', 'deck review']);
 // D4 puts memoryDefrag under quick; its step is the defragment run's only agent.
 const QUICK_STEP_KEYS = new Set(['memoryDefragmenter']);
-// D4 by setting key. autoWorkflowModel (Claude's Auto classifier) is everyday; utilityModels.<engine>.* is quick.
+// D4 by setting key. autoWorkflowModel (Claude's Auto classifier) is everyday; utilityModels.<engine>.* is quick, except
+// the workspace scan: its agent surveys every member and writes the cross-project synthesis, so it is everyday.
 export const SLOT_ROLES = Object.freeze({
   'nightMode.deciderModel': 'deep',
   askModels: 'everyday', agentGenModel: 'everyday', requirementsInterview: 'everyday', autoWorkflowModel: 'everyday',
   titleModel: 'quick', namingModel: 'quick', commandSummaryModel: 'quick', prDescriptionModel: 'quick',
-  memoryDefrag: 'quick', workspaceScan: 'quick',
+  memoryDefrag: 'quick', workspaceScan: 'everyday',
 });
 
 /** The role a slot falls back to, or null for a slot without one.
@@ -36,6 +42,7 @@ export function roleOf(slot, { name = '' } = {}) {
   }
   // The Second-opinion reviewer has no role: from a role it would run on its step's model and undo the second opinion.
   if (id === 'secondOpinionModel' || id === 'utilityModels.secondOpinion') return null;
+  if (id === 'utilityModels.workspaceScan') return SLOT_ROLES.workspaceScan;
   if (id.startsWith('utilityModels.')) return 'quick';
   return Object.hasOwn(SLOT_ROLES, id) ? SLOT_ROLES[id] : null;
 }
@@ -70,12 +77,13 @@ export function roleOfSettingId(settingId, { name = '' } = {}) {
   return roleOfJob(engine, job);
 }
 
-// The sub-agent alias picker (src/core/model-env.mjs SUBAGENT_MODELS) shows these role names, never the bare model names.
-// LABELS ONLY: the stored values stay sonnet | opus | fable | auto | inherit. Haiku is not an alias, so no "Quick jobs" here.
+// The sub-agent alias picker (src/core/model-env.mjs SUBAGENT_MODELS): the model the alias names, with the kind of work it
+// suits in the setup assistant's words. An alias is always that Claude model: sub-agents do not follow the model roles,
+// so the label never names a role on its own. LABELS ONLY: the stored values stay sonnet | opus | fable | auto | inherit.
 export const SUBAGENT_ALIAS_LABELS = Object.freeze({
-  opus: ROLE_LABELS.deep,
-  sonnet: ROLE_LABELS.everyday,
-  fable: `${ROLE_LABELS.deep} · premium`,
+  opus: `Opus (${ROLE_LABELS.deep.toLowerCase()})`,
+  sonnet: `Sonnet (${ROLE_LABELS.everyday.toLowerCase()})`,
+  fable: 'Fable (premium)',
   auto: 'agent picks',
   inherit: 'inherit',
 });
@@ -85,7 +93,7 @@ const SUBAGENT_ALIAS_MODELS = Object.freeze({ opus: 'Opus', sonnet: 'Sonnet', fa
 export function subagentAliasLabel(v) {
   return Object.hasOwn(SUBAGENT_ALIAS_LABELS, v) ? SUBAGENT_ALIAS_LABELS[v] : v;
 }
-/** Tooltip naming the model behind an alias ("Runs on Opus"), or '' for auto / inherit / unknown. @param {string} v */
+/** Tooltip for an alias ("Always Claude's Opus: …"), or '' for auto / inherit / unknown. @param {string} v */
 export function subagentAliasTitle(v) {
-  return Object.hasOwn(SUBAGENT_ALIAS_MODELS, v) ? `Runs on ${SUBAGENT_ALIAS_MODELS[v]}` : '';
+  return Object.hasOwn(SUBAGENT_ALIAS_MODELS, v) ? `Always Claude's ${SUBAGENT_ALIAS_MODELS[v]}: sub-agents don't follow your model roles` : '';
 }

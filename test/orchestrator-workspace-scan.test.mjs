@@ -269,7 +269,7 @@ test('a stale stored pick runs on the defaults and says so in the run log (Revie
   orch.on('log', (e) => logs.push(e));
   assert.equal((await orch.run()).status, 'done');
   assert.ok(logs.some((e) => e.level === 'warn' && e.text === warning), 'the warning is in the run log');
-  assert.ok(logs.some((e) => e.text === 'Workspace scan models: scan agent claude-sonnet-5 · medium, project agents Everyday coding · medium (default)'));
+  assert.ok(logs.some((e) => e.text === 'Workspace scan models: scan agent claude-sonnet-5 · medium, project agents Sonnet (everyday coding) · medium (default)'));
 });
 
 // ── the hybrid map, end to end (wsmap P2) ────────────────────────────────────

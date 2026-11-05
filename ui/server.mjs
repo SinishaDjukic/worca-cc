@@ -7369,20 +7369,25 @@ function workspacePickUsable(pick, models) {
  *  'workspace' — captured at creation, reused by auto re-scans), else Settings › Runs › Workspaces,
  *  else the defaults (only when a known catalog offers the default) — checked against the primary
  *  member's catalog. Throws on a bad explicit pick (400) or when no model is available (D19).
- *  A RE-SCAN of a workspace with no usable stored pick — every legacy pre-v57 workspace, or one
- *  whose model left the catalog — is NOT silently resolved: scanModelsFor returns the marker
- *  { needsModel: true, models: <PRIMARY_CATALOG> } and the caller asks the user to pick a model
- *  (D20). An explicit body.models always wins (the prompted client sends one; API/CLI callers can
+ *  A RE-SCAN of a workspace with no usable stored pick — every legacy pre-v57 workspace, one created
+ *  without a pick, or one whose model left the catalog — runs silently only when the person's
+ *  Everyday coding role covers the scan (a model they chose in setup, in this catalog): on
+ *  Settings › Runs › Workspaces when that is set, else on the role. Without a usable role it is NOT
+ *  silently resolved: scanModelsFor returns the marker { needsModel: true, models: <PRIMARY_CATALOG> }
+ *  and the caller asks the user to pick a model (D20) — a Settings pick alone stays the window's
+ *  pre-fill. An explicit body.models always wins (the prompted client sends one; API/CLI callers can
  *  still force a pick). */
 async function scanModelsFor(body, projectPaths, workspace = null) {
   const models = await listModels(primaryMemberOf(projectPaths));
-  if (workspace && !(body && body.models) && !workspacePickUsable(workspace.scanModels, models)) {
+  if (workspace && !(body && body.models) && !workspacePickUsable(workspace.scanModels, models)
+    && !workspacePickUsable(withScanRole(null, WORKSPACE_SCAN_DEFAULT_MODELS), models)) {
     return { needsModel: true, models };
   }
   return resolveScanModels({
     explicit: body && body.models,
-    // Model roles (D3): with no stored pick, the quick role is the scan model.
+    // Model roles (D3): with no stored pick, the Everyday coding role is the scan model.
     stored: withScanRole(workspaceScanModels(), WORKSPACE_SCAN_DEFAULT_MODELS),
+    storedSource: workspaceScanModels() ? 'settings' : 'role',
     workspacePick: workspace && workspace.scanModels ? workspace.scanModels : null,
     models,
   });

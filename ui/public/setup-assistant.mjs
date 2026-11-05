@@ -712,6 +712,13 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
     if (closed) return;
     if (list.ok && Array.isArray(list.data?.models)) { S.copilotModels = list.data.models; if (S.step === 'models') paintBody(); }
   }
+  // The engines the Models step sets roles for: Claude always, every engine the machine check found ready, the run
+  // engine, and any engine that already has roles (so a saved one never hides).
+  function roleEngines() {
+    const ready = ((S.detect?.checks || []).find((c) => c.id === 'harnesses')?.facts?.engines || []).filter((e) => e.ready).map((e) => e.name);
+    const saved = Object.keys(S.answers.models.modelRoles || {}).filter((h) => Object.values(S.answers.models.modelRoles[h] || {}).some((v) => v && v.model));
+    return ['claude', ...ready, S.answers.work.runEngine || 'claude', ...saved];
+  }
   function paintModels() {
     const a = S.answers.access;
     if (a.copilot && a.copilotConnected && !S.copilotModels.length && !S.copilotModelsAsked && !S.saved.providers?.broker?.enabled) void loadCopilotModels();
@@ -749,7 +756,7 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
     chatHost.addEventListener('change', readChat);
     chatHost.addEventListener('click', (e) => { if (e.target.closest?.('.inherit-clear')) readChat(); });
     body.append(host);
-    renderRolesSection(host, { roles: m.modelRoles, catalog, engine: S.answers.work.runEngine || 'claude', onChange: (next) => {
+    renderRolesSection(host, { roles: m.modelRoles, catalog, engine: S.answers.work.runEngine || 'claude', engines: roleEngines(), switchLevel: null, onChange: (next) => {
       // A click that changes nothing (the harness switch) keeps the answers as they were.
       if (!Object.keys(rolePatch(m.modelRoles, next)).length) return;
       m.modelRoles = next;

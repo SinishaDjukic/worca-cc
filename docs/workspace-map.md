@@ -40,13 +40,20 @@ extracts facts and does all the matching; agents fill the gaps code leaves and c
   the overview is generated.
 - The scan agent model runs survey, usage and synth; the project agent model runs their
   investigators (Settings › Runs › Workspaces, or the scan's own Models pick).
-- A scan runs on the workspace's **saved scan model** — captured at creation, or set any time
-  (and cleared) with the **Scan model** control on the workspace header. A re-scan uses that
-  saved pick silently. A workspace without one (a legacy workspace, or a saved pick whose model
-  left the catalog) does not fall back to a default: the re-scan opens the pick-a-model window,
-  pre-filled from Settings › Runs › Workspaces — save your choice and the scan runs on it and
-  keeps it for later; close the window and the re-scan is skipped. A pick you never chose
-  (Settings or the built-in default) is never stored on the workspace.
+- With nothing chosen, the scan agent runs on your **Everyday coding** role (else Sonnet 5 ·
+  medium) and the project agents on `sonnet` · medium. Settings › Runs › Workspaces overrides that
+  for every workspace.
+- A workspace can also have its own **saved scan model**: chosen when you change the Models pick
+  while creating it, or set any time (and cleared) with the **Scan model** control on the
+  workspace header. A re-scan uses that saved pick silently. Create workspace saves a pick only
+  when you change one, or when you have no Everyday coding role; otherwise its re-scans follow
+  your role as it changes.
+- A workspace without a usable pick (a legacy workspace, one created without a pick, or a saved
+  pick whose model left the catalog) re-scans silently when your Everyday coding role covers the
+  scan: on Settings › Runs › Workspaces when that is set, else on the role. Without a role it does
+  not fall back to a default: the re-scan opens the pick-a-model window, pre-filled from Settings ›
+  Runs › Workspaces — save your choice and the scan runs on it and keeps it for later; close the
+  window and the re-scan is skipped. A pick you never chose is never stored on the workspace.
 - A scan changes no member: it never creates a repository and never commits. A Git member must be
   the top folder of its own git repository and have a commit; a scan or re-scan with any other
   Git member (a folder inside a monorepo, a repository with no commit) is refused and names it: add
