@@ -487,11 +487,43 @@ A plugin never ships a credential: a `copilot` entry resolves against each
 user's own sign-in, and an `apiKey` must be a `${VAR}` reference. A team policy
 may ship `upstream` models under the same rule.
 
+## Claude Code
+
+Claude Code is the default engine. Every run and every chat uses it unless you pick another engine. Real runs need
+it installed and signed in. Mock runs (`worca ui --mock`, or the Mock switch) need neither.
+
+**Install and sign in:**
+
+```bash
+npm install -g @anthropic-ai/claude-code   # puts `claude` on your PATH
+claude auth login                          # opens the browser; sign in with your Claude account
+claude auth status                         # check: it should say you are signed in
+```
+
+- **Sign in with an API key instead.** Use `claude auth login --console` (Anthropic Console, billed per token), or
+  set `ANTHROPIC_API_KEY` in worca's environment.
+- **Sign in on a server with no browser.** Run `claude setup-token` on a machine that has one. Then set the token it
+  prints as `CLAUDE_CODE_OAUTH_TOKEN` where worca runs.
+- **Another endpoint.** Bedrock, Vertex, a gateway or a provider through the bridge need no sign-in. See
+  [Three ways a model connects](#three-ways-a-model-connects).
+- **The desktop app's sign-in does not carry over.** The Claude desktop app and the `claude` CLI sign in separately.
+- **Signing in again** works from a terminal: `claude auth logout`, then `claude auth login`.
+
+**Make sure worca finds it.** worca runs the `claude` that is first on its `PATH`. Point it at another binary with
+`WORCA_CLAUDE_BIN=/path/to/claude`. On native Windows, Anthropic's
+[native installer](https://docs.anthropic.com/en/docs/claude-code/setup) (`claude.exe`) and the npm install both
+work. For an npm install worca runs the package's native `claude.exe` next to npm's `claude.cmd` shim.
+
+**How worca checks it.** Getting started's **Connect Claude Code** step and the setup assistant run
+`claude auth status` (see [getting-started.md](getting-started.md)). An API key, an OAuth token, a custom endpoint
+or the Bedrock / Vertex switch in worca's environment counts as signed in. When a chat turn or a model test fails
+because the CLI is signed out, worca says so instead of showing the bare error.
+
 ## Codex
 
 worca can run pipelines and chats on OpenAI's Codex CLI.
 
-1. Install the `codex` CLI (or use the one bundled with the ChatGPT desktop app) and make sure worca finds it: on `PATH`, or `WORCA_CODEX_BIN=/path/to/codex` in worca's environment.
+1. Install the `codex` CLI (or use the one bundled with the ChatGPT desktop app) and make sure worca finds it: on `PATH`, or `WORCA_CODEX_BIN=/path/to/codex` in worca's environment. On Windows an npm install needs no `WORCA_*_BIN`: worca runs the package's native `.exe` when it finds one next to npm's `.cmd` shim, else `node <entry script>` from the shim (never a shell), and the variable may point at a `.exe` or a `.cmd`.
 2. Sign in once in a terminal: `codex login`. `codex login status` must say you are logged in.
 3. Pick Codex per run on New pipeline, or as a default on the Models page (Engines). For Chat, Settings › Chat › Engine & models.
 
@@ -556,11 +588,33 @@ What an Ask chat on Codex can do, and what it cannot do:
 
 worca can run pipelines and chats on GitHub's own Copilot CLI (`copilot`). This is a separate engine from the Copilot *provider* above. The provider routes Claude Code's requests to Copilot's API through worca's bridge, as an editor client. The engine runs GitHub's own supported CLI as the agent, without worca's bridge in between. Your plan's AI-credit (premium request) allowance still does.
 
-1. Install the CLI (`npm i -g @github/copilot`, version 1.0.92 or later) and make sure worca finds it: on `PATH`, or `WORCA_COPILOT_BIN=/path/to/copilot` in worca's environment.
-2. Sign in once in a terminal: `copilot login`. Or put a fine-grained token with the "Copilot Requests" permission in `COPILOT_GITHUB_TOKEN`. worca never hands `GH_TOKEN` or `GITHUB_TOKEN` to an agent, so Copilot does not pick those up.
-3. Pick Copilot per run on New pipeline, run `worca --engine copilot …`, or set it as the default engine on the Models page (Engines) or in a project's Settings. For Chat, Settings › Chat › Engine & models.
+You need a GitHub account with Copilot access (any Copilot plan, including Free).
 
-There is no sign-in status command, so worca checks only that the binary runs before a run starts. A signed-out CLI fails at the first agent node with an auth error.
+**Install and sign in:**
+
+```bash
+npm install -g @github/copilot   # puts `copilot` on your PATH; needs 1.0.92 or later (Chat needs 1.0.100)
+copilot --version                # check the version
+copilot login                    # follow the prompts to sign in to GitHub
+```
+
+- **Sign in with a token instead.** Create a fine-grained GitHub token with the **Copilot Requests** permission.
+  Set it as `COPILOT_GITHUB_TOKEN` in worca's environment. worca never hands `GH_TOKEN` or `GITHUB_TOKEN` to an
+  agent, so Copilot does not pick those up.
+- **This is not the Copilot provider's sign-in.** The [Providers](#providers) page has its own GitHub sign-in, for
+  Claude Code runs on Copilot models. Signing in to one does not sign in the other.
+- **Check the sign-in yourself.** The CLI has no sign-in status command, so worca checks only that the binary runs.
+  A signed-out CLI fails at the first agent node with an auth error. When in doubt, run
+  `copilot login` again.
+
+**Make sure worca finds it.** worca runs the `copilot` that is first on its `PATH`. Point it at another binary with
+`WORCA_COPILOT_BIN=/path/to/copilot`. On Windows an npm install needs no `WORCA_*_BIN`: worca runs the package's
+native `.exe` when it finds one next to npm's `.cmd` shim, else `node <entry script>` from the shim (never a shell),
+and the variable may point at a `.exe` or a `.cmd`.
+
+**Use it.** Pick Copilot per run under **Engine** on New pipeline (Advanced), or run `worca --engine copilot …`. To
+make it the default, set it on the Models page (Engines) or in a project's Settings. For Chat, use Settings › Chat ›
+Engine & models.
 
 **Models.** The models `copilot --model` takes are built-in catalog entries on the Copilot sign-in, listed under *Copilot built-in models* on the Models page. Their catalog id is `copilot/<Copilot's id>`, such as `copilot/gpt-5.5` or `copilot/claude-sonnet-5.5`. Copilot's own ids clash with Codex's built-ins (`gpt-5.5`) and look like Claude's, and the catalog keeps one entry per id. Copilot is handed its own id. To add a model Copilot gained after this list, add a model with the Copilot sign-in.
 
@@ -626,7 +680,7 @@ worca can run pipelines on Cursor's headless CLI agent. Chat does not run on Cur
 > flags, the stream format, the permission and MCP files) is listed as unverified at the top of
 > `src/core/engines/cursor.mjs`. Try a short pipeline first, and report what differs.
 
-1. Install the Cursor CLI (`cursor-agent`) and make sure worca finds it: on `PATH`, or `WORCA_CURSOR_BIN=/path/to/cursor-agent` in worca's environment. The `cursor` command that opens the editor is not the agent.
+1. Install the Cursor CLI (`cursor-agent`) and make sure worca finds it: on `PATH`, or `WORCA_CURSOR_BIN=/path/to/cursor-agent` in worca's environment. On Windows a `.cmd`/`.bat` launcher on `PATH` is resolved too (never through a shell), and the variable may point at a `.exe` or a `.cmd`. The `cursor` command that opens the editor is not the agent.
 2. Sign in once in a terminal: `cursor-agent login`. `cursor-agent status` must say you are logged in. Or set `CURSOR_API_KEY` in worca's own environment; worca passes it to Cursor and stores nothing.
 3. Pick Cursor per run on New pipeline, or as a default on the Models page (Engines). Each engine card shows whether that engine is ready.
 
@@ -662,7 +716,7 @@ worca can run pipelines on Google's Gemini CLI (`gemini`) and on Qwen Code (`qwe
 
 Verified on Gemini CLI 0.63.0 and Qwen Code 0.25.0. The captured streams and every fact the adapters rely on are in `test/fixtures/gemini/README.md` and `test/fixtures/qwen/README.md`.
 
-1. Install the CLI (`npm i -g @google/gemini-cli` or `npm i -g @qwen-code/qwen-code`) and make sure worca finds it: on `PATH`, or `WORCA_GEMINI_BIN` / `WORCA_QWEN_BIN` in worca's environment.
+1. Install the CLI (`npm i -g @google/gemini-cli` or `npm i -g @qwen-code/qwen-code`) and make sure worca finds it: on `PATH`, or `WORCA_GEMINI_BIN` / `WORCA_QWEN_BIN` in worca's environment. On Windows an npm install needs no `WORCA_*_BIN`: worca runs the package's native `.exe` when it finds one next to npm's `.cmd` shim, else `node <entry script>` from the shim (never a shell), and the variable may point at a `.exe` or a `.cmd`.
 2. Sign in:
    - **Gemini CLI:** set `GEMINI_API_KEY` (or Vertex AI's variables) in worca's environment or in `~/.gemini/.env`, or run `gemini` once in a terminal and sign in with Google.
    - **Qwen Code:** run `qwen` once in a terminal and choose how it signs in, or set a whole provider in worca's environment or `~/.qwen/.env` (for example `OPENAI_API_KEY`, `OPENAI_BASE_URL` and `OPENAI_MODEL`). A key alone is not enough: Qwen Code then stops with "No auth type is selected".
@@ -714,7 +768,7 @@ What a chat on Gemini CLI or Qwen Code can do, and what it cannot do:
 
 worca can run pipelines on [Goose](https://github.com/aaif-goose/goose)'s headless CLI (`goose run`), checked against goose 1.54.0. Chat runs on Goose 1.56.0 or newer, locked down to worca's own tools (see the end of this section).
 
-1. Install the Goose CLI (`brew install block-goose-cli`) and make sure worca finds it: on `PATH`, or `WORCA_GOOSE_BIN=/path/to/goose` in worca's environment.
+1. Install the Goose CLI (`brew install block-goose-cli`) and make sure worca finds it: on `PATH`, or `WORCA_GOOSE_BIN=/path/to/goose` in worca's environment. On Windows a `.cmd`/`.bat` launcher on `PATH` is resolved too (never through a shell), and the variable may point at a `.exe` or a `.cmd`.
 2. Set up a provider once: `goose configure`, or put the provider's key (for example `GOOGLE_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`) in worca's own environment. worca stores no Goose key. With guardrails that scrub the environment, add the key's name to the project's allowlist; `GOOSE_` variables always pass.
 3. Pick Goose per run on New pipeline, or as a default on the Models page (Engines). The engine card only checks that `goose --version` runs: a missing provider key shows up when the first step fails.
 
@@ -745,7 +799,7 @@ worca can run pipelines on [Goose](https://github.com/aaif-goose/goose)'s headle
 
 worca can run pipelines on [OpenCode](https://opencode.ai) (`opencode run`). OpenCode is in beta in worca. Chat runs on OpenCode 1.19.4 or newer (1.x), locked down to worca's own tools (see the end of this section). Checked against opencode 1.18.23.
 
-1. Install OpenCode and make sure worca finds it: on `PATH`, or `WORCA_OPENCODE_BIN=/path/to/opencode` in worca's environment. worca runs OpenCode 1.x (npm `opencode-ai`). OpenCode 2 (npm `@opencode/cli`, and Homebrew's `opencode` formula) changed how `opencode run` works, so worca refuses it until it is supported.
+1. Install OpenCode and make sure worca finds it: on `PATH`, or `WORCA_OPENCODE_BIN=/path/to/opencode` in worca's environment. On Windows an npm install needs no `WORCA_*_BIN`: worca runs the package's native `.exe` when it finds one next to npm's `.cmd` shim, else `node <entry script>` from the shim (never a shell), and the variable may point at a `.exe` or a `.cmd`. worca runs OpenCode 1.x (npm `opencode-ai`). OpenCode 2 (npm `@opencode/cli`, and Homebrew's `opencode` formula) changed how `opencode run` works, so worca refuses it until it is supported.
 2. Connect a provider once in a terminal: `opencode auth login`, or set the provider's key (for example `ANTHROPIC_API_KEY`) in worca's own environment. `opencode providers list` shows what OpenCode sees. Without either, only OpenCode Zen's free models run, and they send the code to opencode.ai, so the engine card shows OpenCode as not ready and a run is refused, unless every step names its model or you opt in (below). worca checks the credentials in the environment the agent gets: under a set that scrubs the environment, a key only worca has does not count. For Google models, set `GOOGLE_GENERATIVE_AI_API_KEY`: OpenCode 1.18 lists a `GEMINI_API_KEY` under `providers list` but does not use it, so a run stops with "Google Generative AI API key is missing".
 3. Pick OpenCode per run on New pipeline, or as a default on the Models page (Engines).
 
@@ -961,6 +1015,87 @@ agent step (`propose_run` `nodes`), from the models the run's engine runs:
   refused; any other top-level key is refused with *overlay takes nodes and wires only*. A
   [run preset](run-presets.md) sends its loop budgets this way.
 
+#### Per-role models
+
+A node can review as several independent reviewers at once: its config's `roleReview`
+declares the roles, and the run starts one slice per role, in parallel, each seeing only its
+own role. Their findings are merged into one file for the refiner (#990: independent reviewers
+are an engine capability, not Shaper's alone).
+A node saved with the older `roleReview: true` still reads as Shaper's plan review (perspectives
+picked per run, findings to Refine). Every node and role pick is cleaned in one place,
+`src/shared/graph/role-slots.mjs`; `test/model-pick-cleaner-single.test.mjs` guards it.
+
+```json
+{ "roleReview": { "roles": [{ "key": "correctness", "label": "Correctness" },
+                            { "key": "security", "label": "Security", "model": "claude-haiku-4-5", "effort": "high" }],
+                  "source": "declared", "target": "plan", "sink": "refiner" } }
+```
+
+- **Keys** are 1–24 lowercase letters, at most 12 roles. `target` is `plan` or `diff`, and `sink`
+  is `refiner` or `implementer`; anything else fails the graph check (V31) before a run starts.
+- **The sink answers every finding.** The findings file ends with a `## Dispositions` section
+  naming a JSON file beside it (`…-role-findings-r1-dispositions.json`). The sink writes
+  `{ "dispositions": [{ "id": "security-1-1", "status": "fixed" }, { "id": "correctness-1-1",
+  "status": "disputed", "reason": "…" }] }` there: `fixed`, or `disputed` with a one-line reason.
+  An id it leaves out, a disputed one without a reason, or a file that is missing, unreadable or
+  over 256 KB counts as **open** (audited); no finding is ever dropped. A refiner's `addressed`
+  list still counts its ids as fixed. Every round records `counts: { raised, fixed, disputed,
+  open }`; an older run's rounds derive them from the finding statuses.
+- **An implementer sink** takes the findings on its existing `fix` input: wire the review's
+  `findings` to the implementer's `fix`, and its `plan` to the implementer's `plan`. The counts
+  are the same; only a refiner sink routes the refine loop on the open critical and major findings.
+- **A `diff` target reviews the implementation.** The node keeps a reviewer's own ports:
+  inputs `plan` and `done` (the worktree, so each role inspects `git diff`), outputs `review`
+  (the merged findings, `…-code-role-findings-r1.md`, only when a role found a critical or
+  major issue) and `pass` (when none did). Use `"sink": "implementer"` and wire `review` to the
+  implementer's `fix`, as for a plain reviewer: a reviewer node opts in by config alone, with its
+  wires unchanged. Each fix cycle is the next round of the same pass, and a role that was clean
+  is skipped (its record is carried forward). The loop's cycle gate lists the roles' rows.
+  Shaper's Review ships this way, with `correctness`, `security` and `fit` (Project fit):
+
+  ```json
+  { "roleReview": { "roles": [{ "key": "correctness", "label": "Correctness" },
+                              { "key": "security", "label": "Security" },
+                              { "key": "fit", "label": "Project fit" }],
+                    "source": "declared", "target": "diff", "sink": "implementer" } }
+  ```
+
+  For your own reviewer, put the same block in its node config (for example only
+  `correctness` and `security`), and add `model` / `effort` to a role that should run on
+  another model.
+- **Conflicts go to the person.** When two roles ask for opposite changes to one section, the
+  sink marks both disputed and adds a `conflicts` entry (`findings`, `question`, 2–4 `options`).
+  The plan card shows one decision card per pair; the pick is written into the plan's
+  `## Clarifications (Q&A)` at approval. Approving without a pick (auto-approve, `--yes`) is
+  never blocked: the conflict is audited as left undecided.
+- **Each role has its own model and effort.** A run overlay pick
+  (`overlay.nodes.<nodeId>.roles.<key>`) beats the project's (`POST /api/config`
+  `nodes.<nodeId>.roles`), which beats the template's (`roles[i].model` / `effort`). An effort
+  travels with its model. A role nothing names runs on the node's model, and *Model for all*
+  runs every role on the run's model.
+- **The record names what ran:** each role's review records the model and effort its slice
+  ran on.
+- **Set them in the Chat run card** (Advanced › Agents): a node that declares roles gets one row
+  per role, labelled like `Plan Review · Architect`, with a model select ("Node's model" = no
+  pick) and effort pills. An edited row rides that run only, or becomes the project's default
+  with *Save as project defaults*. A workflow, the project config and a run overlay set them too.
+- **A pick the run's engine cannot run is named, never dropped silently.** The node or role
+  runs on what the layers below give it, its record keeps the request as `wanted`, and the run
+  page shows one warning per drop, logged and audited once at start:
+  - a node pick: `Plan: claude-opus-5-5 is not on Codex, runs Codex's default model` (or the
+    model it does run, for example `runs gpt-5.5`);
+  - a role pick: `Plan Review · Security: claude-opus-5-5 is not on Codex, runs the node's model`;
+  - an effort-only pick: `effort max is not on Codex, runs the node's effort` (a role) or
+    `runs Codex's default effort` (a node).
+
+  Only the winning layer counts: a lower layer's pick that a higher one overrode never ran, so
+  it is not named. A built-in workflow's own defaults (Shaper's models, for example) are
+  recorded as `wanted` but never warned about: they are nobody's pick. A saved workflow's
+  models are, so they warn.
+- **A usage limit during a role names the role's connection.** If a role runs on a provider
+  model, the pause says that provider's limit (for example `OpenAI-compatible limit — …`),
+  even when the node itself runs on the sign-in.
+
 ## When the network drops
 
 A step whose error is network-class (a refused or reset connection, a DNS failure,
@@ -1015,6 +1150,7 @@ talks to answers at all.
 - **`engine cursor: cannot run cursor-agent (ENOENT)`** — install the Cursor CLI or set `WORCA_CURSOR_BIN`.
 - **`engine gemini: cannot run gemini (ENOENT)`** / **`engine qwen: cannot run qwen (ENOENT)`** — install the CLI or set `WORCA_GEMINI_BIN` / `WORCA_QWEN_BIN`.
 - **`engine goose: cannot run goose (ENOENT)`** — install the Goose CLI or set `WORCA_GOOSE_BIN`.
+- **`… resolves to a script shim (…)`** (Windows, any engine) — the only thing on `PATH` is npm's `.cmd` launcher and worca found neither a native `.exe` next to it nor a node entry script it names. The message says what was looked for; set the engine's `WORCA_*_BIN` to the full path of its `.exe`, or reinstall the package without `--ignore-scripts` / `--omit=optional`.
 - **A Goose step fails with "Ran into this error: … API key not valid"** — Goose reached the provider without a working key: run `goose configure`, or set the provider's key in worca's environment (and allowlist it under a scrubbing guardrail set).
 - **`engine opencode: cannot run opencode (ENOENT)`** — install OpenCode or set `WORCA_OPENCODE_BIN`.
 - **`engine opencode: a step of this run names no model`** or **`refusing to start OpenCode without a model`** — set a model for the run (or each step), or set `WORCA_OPENCODE_ALLOW_DEFAULT_MODEL=1` to let OpenCode pick its own default.

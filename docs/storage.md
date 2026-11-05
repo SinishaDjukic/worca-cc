@@ -150,6 +150,9 @@ project's working tree, so nothing is ever committed to your repo.
   plugins/                              installed plugin checkouts
     .cache/<slug>.tree/<sha>/            without git: a GitHub commit's plugin folders and marketplace file
                                          (the newest three and every installed pin kept; <sha>.meta.json beside it)
+    <name>/data/ticket-updates.json      Ticket updates (Labs): per profile and task source, the projects you work on
+                                         and the rules for a finished run; dropped with its profile, kept by uninstall,
+                                         removed by purge
   agents/                               installed agent registry checkouts
   workflows/                            saved workflow templates
   projects/                             New and Clone from URL projects (the default projects root). Removing a

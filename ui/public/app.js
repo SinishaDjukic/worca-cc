@@ -80,7 +80,7 @@ const state = {
 };
 // The group page host (runs redesign slice 4, D16). Up here, next to `state`: the boot's synchronous showView runs
 // mountGroupPage on a #feature/… reload, and a `const` declared below that call would still be in its TDZ.
-const GROUP_PAGE = { host: null, route: '', id: '', tab: 'runs', featureId: '', gone: false, failed: false, resolving: false, reentered: false, paintQueued: false };
+const GROUP_PAGE = { host: null, route: '', id: '', tab: 'runs', featureId: '', gone: false, failed: false, resolving: false, reentered: false, paintQueued: false, unmarked: 0 };
 
 import { icon } from './icons.mjs';
 import { telemetrySlotHtml, paintTelemetry } from './run-telemetry-view.mjs';
@@ -190,7 +190,7 @@ import { mountNetworkProxyCard } from './settings-network-proxy.mjs';
 import { openSetupAssistant, setupStepForSignIn, teamNotice, TEAM_SEEN_KEY } from './setup-assistant.mjs';
 import { loadCredentials, credentialSuffix } from './credential-badges.mjs';
 import { freeRequestsSuffix, typicalFreeRun, newRunFreeWarning, providerFreeLine } from './openrouter-free-view.mjs';
-import { PORT_ID_RE, MAX_PORTS_PER_SIDE, PORT_TYPES, FLOW_LABEL, KEYED_KINDS, SYNC_EXECUTION_ID } from '../../src/shared/graph/constants.mjs';
+import { PORT_ID_RE, MAX_PORTS_PER_SIDE, PORT_TYPES, SYNC_EXECUTION_ID } from '../../src/shared/graph/constants.mjs';
 import { FORM_ID_RE, validateFormDef, normalizeAskBlock } from '../../src/shared/forms/form-def.mjs';
 import { ASK_LIMITS } from '../../src/shared/forms/catalog.mjs';
 import { WORKSPACE_MAX_PROJECTS, workspaceSizeLevel } from '../../src/shared/workspace-size.mjs';
@@ -232,7 +232,6 @@ import { createThinkingOrb } from './thinking-orb.mjs';
 import { renderAutoProposal, proposalBands } from './auto-proposal.mjs';
 import { portsFnFor } from '../../src/shared/graph/ports.mjs';
 import { indexByKey } from '../../src/shared/graph/agent-meta.mjs';
-import { classifyLoops } from '../../src/shared/graph/loops.mjs';
 import { SESSION_DEFAULT_LABEL, sessionStartNotices } from '../../src/shared/graph/sessions.mjs';
 import { isBrowsableKind } from '../../src/shared/artifact-kinds.mjs';
 // artifact-view-media.mjs re-exports artifact-view.mjs's whole surface and widens
@@ -249,6 +248,7 @@ import { trayKey as pinpointTrayKey } from './pinpoint-model.mjs';
 import { createArtifactBrowser } from './artifacts/browser.mjs';
 import { baseName as artifactBaseName } from './artifacts/common.mjs';
 import { resolveNodeTunables, modifiedFieldsOf, pruneNodeSelection, buildGraphNodeRows as ntBuildGraphNodeRows, buildNodeConfigRows as ntBuildNodeConfigRows } from './node-tunables.mjs';
+import { buildFeedbackRows as ntBuildFeedbackRows } from './loop-rows.mjs';
 import { renderEngineSection, readEngineSection, enginePatchToSettingsBody, utilityId, renderAskEngineSection, readAskEngineSection, askPatchToSettingsBody, renderRolesSection, readRolesValues, rolesPatchToSettingsBody, paintRoleFallbacks } from './engine-settings-view.mjs';
 import { mountProjectSettings } from './project-settings-view.mjs';
 import { mountHouseBrief } from './house-brief-view.mjs';
@@ -271,6 +271,7 @@ import { renderTimeline, renderTimelinePopover, timelineWindow, shiftAnchor, TL_
 import {
   renderProjectTmCell, renderProjectTmChip, projectTmSummary, renderEnableDialogBody, renderMetricsHomePicker, renderWsMetricsRow, renderWsSummary, renderRouteResults, renderWsMetricsPending } from './team-metrics-surfaces.mjs';
 import { renderMapTab, emptyMapFilters } from './workspace-map-view.mjs';
+import { openWorkspaceGuide, shouldAutoOpenWorkspaceGuide } from './workspace-guide.mjs';
 import { paintAboutInto, paintVersionStatusInto, paintUpdateMarkerInto } from './about-links.mjs';
 import { createUpdateUi } from './update-view.mjs';
 import { renderReasonOptions, renderOptIns, previewText, reportBlobParts, REPORT_PREVIEW_DEBOUNCE_MS } from './report-run.mjs';
@@ -515,6 +516,7 @@ async function paintShapeFeature(host) {
   // F47: the route follows replaced_by, so f.id can be a newer feature than the host's id. Frames name f.id, and the
   // actions must reach it.
   host.__shapeShown = f.id;
+  noteGroupFeatureLock(f);                                   // Shaper requirements s3: the page header's Create PR lock
   // A rebuild drops the focus (rule: app-js-repaint-drops-focus): give it back to the same control. An action names
   // its control itself (F39: in Chromium the disabled button has already lost the focus); a WS repaint reads it.
   const act = host.__shapeFocus || featureFocusOf(document, host);
@@ -802,6 +804,7 @@ const el = {
 
   // Workspaces management view
   wsCreateBtn: $('#ws-create-btn'),
+  wsHowtoBtn: $('#ws-howto-btn'),
   wsMsg: $('#ws-msg'),
   wsList: $('#ws-list'),
   wsShell: $('#ws-shell'),
@@ -1871,6 +1874,7 @@ function handleServerMessage(msg) {
   if (msg.type === 'shape-feature') {
     SLICE_INFO.clear();
     refreshShapeFeatures(msg.id);
+    void refreshGroupFeatureLock(msg.id);
     refreshShaperCards();
     chatHome?.refreshPlans();
     return;
@@ -3923,102 +3927,11 @@ function agentsHeaderText(rows) {
   return n === 0 ? 'all defaults' : `${n} modified`;
 }
 
-// Flatten workflow.feedbacks into row data for the per-loop cycle-count inputs,
-// overlaying the run-config's saved maxCycles (default 3 when unset). Resolves each
-// loop's endpoints (node ids like "s2_0") to human agent names via the registry +
-// workflow.steps, and precomputes the directional `label`:
-//   - normal loop:  "<toName> ← <fromName>"   (feedback points to <- from)
-//   - self loop:    "<name> ↺ (self loop)"    (from === to)
-// A "(step N)" suffix (1-based) disambiguates an endpoint whose display name is shared
-// by more than one node in the workflow. Unknown ids fall back to the raw id.
-
-// v2: one row per LOOP wire (a plain wire has no budget — V13). Labels reuse the
-// v1 vocabulary: "<toName> ← <fromName>", "(step N)" only when a name repeats.
-function buildGraphWireRows(tpl, registry, runConfig, scripts) {
-  const reg = registry || {};
-  const scriptReg = scriptIndex(scripts);
-  const saved = (runConfig && runConfig.wires) || {};
-  const { loopWireIds, launchOrder } = classifyLoops(tpl, panelPortsFn(reg, scriptReg));
-  const byId = new Map(tpl.nodes.map((n) => [n.id, n]));
-  const rank = new Map(launchOrder.map((id, i) => [id, i]));
-  const nameCount = new Map();
-  const nameOf = (id) => {
-    const n = byId.get(id);
-    if (!n) return id;
-    // A flow card has no registry meta and no key: name it from the SHARED
-    // FLOW_LABEL table the manifest uses, never from its raw n_* id (MAJ-21).
-    if (!KEYED_KINDS.includes(n.kind)) return FLOW_LABEL[n.kind] || n.kind;
-    // A script card is keyed too: its name comes from the script registry the panel fetched, else its key.
-    const meta = reg[n.key] || scriptReg[n.key];
-    return (meta && meta.displayName) || n.key || n.id;
-  };
-  for (const n of tpl.nodes) nameCount.set(nameOf(n.id), (nameCount.get(nameOf(n.id)) || 0) + 1);
-  const labelFor = (id) => {
-    const nm = nameOf(id);
-    return (nameCount.get(nm) || 0) > 1 ? `${nm} (step ${(rank.get(id) || 0) + 1})` : nm;
-  };
-  return tpl.wires.filter((w) => loopWireIds.has(w.id)).map((w) => {
-    const rc = saved[w.id] || {};
-    const n = Number(rc.maxCycles);
-    const cfg = Number(w.config && w.config.maxCycles);
-    const fromLabel = labelFor(w.from.node);
-    const toLabel = labelFor(w.to.node);
-    const selfLoop = w.from.node === w.to.node;
-    return {
-      fbId: w.id, from: w.from.node, to: w.to.node, fromLabel, toLabel, selfLoop,
-      label: selfLoop ? `${toLabel} ↺ (self loop)` : `${toLabel} ← ${fromLabel}`,
-      maxCycles: Number.isFinite(n) && n >= 1 ? n : (Number.isFinite(cfg) && cfg >= 1 ? cfg : 3),
-    };
-  });
-}
-
+// Thin wrappers over loop-rows.mjs: this panel supplies its own scripts source and ports source
+// (panelPortsFn, which can fall back to the Composer index).
 function buildFeedbackRows(workflow, registry, runConfig, scripts) {
-  if (workflow && workflow.version === 2) return buildGraphWireRows(workflow, registry, runConfig, scripts);
-  const steps = Array.isArray(workflow && workflow.steps) ? workflow.steps : [];
-  const fbs = Array.isArray(workflow && workflow.feedbacks) ? workflow.feedbacks : [];
-  const reg = registry || {};
-  const saved = (runConfig && runConfig.feedbacks) || {};
-
-  // node id -> { name, step } (1-based) + a display-name frequency map so the
-  // "(step N)" suffix is added only when a name is non-unique.
-  const byId = new Map();
-  const nameCount = new Map();
-  steps.forEach((group, stepIndex) => {
-    (Array.isArray(group) ? group : []).forEach((node) => {
-      if (!node || !node.id) return;
-      const meta = reg[node.key] || null;
-      const name = (meta && meta.displayName) || node.key || node.id; // mirror buildNodeConfigRows
-      byId.set(node.id, { name, step: stepIndex + 1 });
-      nameCount.set(name, (nameCount.get(name) || 0) + 1);
-    });
-  });
-
-  // Endpoint label: display name, disambiguated with "(step N)" when that name is
-  // shared by >1 node. Ids absent from steps fall back to the raw id (never blank).
-  const labelFor = (nodeId) => {
-    const info = byId.get(nodeId);
-    if (!info) return nodeId;
-    return (nameCount.get(info.name) || 0) > 1 ? `${info.name} (step ${info.step})` : info.name;
-  };
-
-  return fbs.map((fb) => {
-    const rc = saved[fb.id] || {};
-    const n = Number(rc.maxCycles);
-    const fromLabel = labelFor(fb.from);
-    const toLabel = labelFor(fb.to);
-    const selfLoop = fb.from === fb.to;
-    const label = selfLoop ? `${toLabel} ↺ (self loop)` : `${toLabel} ← ${fromLabel}`;
-    return {
-      fbId: fb.id,
-      from: fb.from,
-      to: fb.to,
-      fromLabel,
-      toLabel,
-      selfLoop,
-      label,
-      maxCycles: Number.isFinite(n) && n >= 1 ? n : 3,
-    };
-  });
+  const scriptReg = scriptIndex(scripts);
+  return ntBuildFeedbackRows(workflow, registry, runConfig, scriptReg, panelPortsFn(registry || {}, scriptReg));
 }
 
 // First effort a model supports (used to seed a node's effort caption when none
@@ -4113,7 +4026,7 @@ if (typeof window !== 'undefined') {
     paintExecChip,
     wireExecChip,
     openRunArtifact,
-    paintQuiescenceBanner,
+    paintRunWarnings,
     progressText,
     histCountsLine,
     gateWireCopy,
@@ -10535,6 +10448,9 @@ async function deleteWorkspaceFromPage(id) {
     if (res.status === 409) { setWdError(screen, data.error || 'Workspace has a live run or scan.'); return; }
     if (!res.ok) { setWdError(screen, data.error || `HTTP ${res.status}`); return; }
     state.workspaces = state.workspaces.filter((x) => !(x && x.id === w.id));
+    // FEAT-7: the server clears workspaceGuideSeen when the last workspace goes (R-po-13);
+    // mirror it now, so a Create pressed before the onboarding refetch lands already sees it.
+    if (!state.workspaces.length && gs.status) gs.status = { ...gs.status, workspaceGuideSeen: false };
     if (state.selectedWorkspaceId === w.id) state.selectedWorkspaceId = '';
     if (localStorage.getItem(LAST_WORKSPACE_KEY) === w.id) localStorage.removeItem(LAST_WORKSPACE_KEY);
     const warnings = Array.isArray(data.warnings) ? data.warnings : [];
@@ -10549,7 +10465,52 @@ async function deleteWorkspaceFromPage(id) {
   }
 }
 
-if (el.wsCreateBtn) el.wsCreateBtn.addEventListener('click', () => { location.hash = 'workspace-create'; });
+// ---- How workspaces work (FEAT-7) -----------------------------------------------------------
+// The walkthrough opens OVER the list, before any route change, so nothing is ever entered or lost
+// behind it; only Finish/Skip from Create workspace routes on to the wizard. The `#workspace-create`
+// hash itself (deep links, Back/Forward) is never gated. "Seen" is the server's
+// onboarding flag (gs.status.workspaceGuideSeen; gs and loadOnboarding are the Getting-started block's,
+// read at click time only), set on every open and cleared by the server when the last workspace is
+// deleted.
+const wsGuide = { handle: null, checking: false };
+function knownWorkspaceGuideSeen() {
+  const v = gs.status && gs.status.workspaceGuideSeen;
+  return typeof v === 'boolean' ? v : null;
+}
+async function readWorkspaceGuideSeen() {
+  if (knownWorkspaceGuideSeen() === null) await loadOnboarding();
+  return knownWorkspaceGuideSeen();
+}
+async function markWorkspaceGuideSeen() {
+  if (gs.status) gs.status = { ...gs.status, workspaceGuideSeen: true };   // this tab knows at once
+  try {
+    const res = await fetch('/api/onboarding', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ workspaceGuideSeen: true }) });
+    const data = await safeJson(res);
+    if (res.ok && data && data.steps) { gs.status = data; paintOnboarding(); }
+  } catch { /* offline: this tab's copy says seen; the server is asked again on the next load */ }
+}
+function openWsGuide(mode) {
+  if (wsGuide.handle) return;
+  wsGuide.handle = openWorkspaceGuide({ doc: document, mode, onClose: (how) => {
+    wsGuide.handle = null;
+    if (mode === 'create' && (how === 'finish' || how === 'skip') && currentView() === 'workspaces') location.hash = 'workspace-create';
+  } });
+  void markWorkspaceGuideSeen();
+}
+async function onCreateWorkspace() {
+  if (wsGuide.handle || wsGuide.checking) return;         // a double click opens one walkthrough
+  wsGuide.checking = true;
+  try {
+    const seen = await readWorkspaceGuideSeen();
+    if (currentView() !== 'workspaces') return;            // the user moved on while we asked
+    if (shouldAutoOpenWorkspaceGuide({ seen, workspaceCount: state.workspaces.length })) openWsGuide('create');
+    else location.hash = 'workspace-create';
+  } finally {
+    wsGuide.checking = false;
+  }
+}
+if (el.wsCreateBtn) el.wsCreateBtn.addEventListener('click', () => { void onCreateWorkspace(); });
+if (el.wsHowtoBtn) el.wsHowtoBtn.addEventListener('click', () => openWsGuide('learn'));
 
 // ---- Workspace scan models (D15–D18): the scan agent (a catalog model + effort) and its project
 // agents (a sub-agent alias + effort). One painter for Create workspace and Settings › General.
@@ -23860,7 +23821,7 @@ async function loadHistDetailScreen(screen, record, parsed, ship = null) {
     // `logs`: the run saved a log (HD_TABS' Logs tab shows), so a tray header has a log to open; its cards link the same way.
     { run: st, runId: parsed.id, mode: 'monitor', record: rec, logs: Array.isArray(data.artifacts) && data.artifacts.some((a) => a && a.kind === 'live-log') })
     : null, st.steps);
-  if (isGraphManifest(st.stepper)) paintQuiescenceBanner(screen.querySelector('.hd-banners'), decorFromState(st, { live: false, now: 0 }));
+  if (isGraphManifest(st.stepper)) paintRunWarnings(screen.querySelector('.hd-banners'), decorFromState(st, { live: false, now: 0 }));
 
   paintHdHeaderMeta(screen, rec, data);
   setupHdActions(screen, rec, data);
@@ -31513,21 +31474,25 @@ function runDecorFor(r, mode = 'monitor') {
   return bag;
 }
 
-/** The amber quiescence banner (spec §8), in .rd-banners / .hd-banners. Idempotent:
- *  one element per host, shown/hidden from the bag's `quiescent`. */
-function paintQuiescenceBanner(host, decor) {
+/** The run's warnings (decor.warnings: a dropped model pick, the scheduler's lines, the quiescence line of spec §8) as
+ *  amber banners in .rd-banners / .hd-banners: one `.run-warn` per distinct text, in order. Idempotent; an empty list
+ *  leaves none. */
+function paintRunWarnings(host, decor) {
   if (!host) return;
-  const show = !!(decor && decor.quiescent);
-  let el = host.querySelector(':scope > .run-warn');
-  if (!el) {
-    if (!show) return;
-    el = document.createElement('div');
-    el.className = 'run-warn';
-    el.setAttribute('role', 'status');
-    host.appendChild(el);
-  }
-  el.textContent = 'finished at quiescence — End not reached';
-  el.hidden = !show;
+  const texts = [...new Set((decor && Array.isArray(decor.warnings) ? decor.warnings : []).filter(Boolean))];
+  const els = [...host.querySelectorAll(':scope > .run-warn')];
+  texts.forEach((text, i) => {
+    let el = els[i];
+    if (!el) {
+      el = document.createElement('div');
+      el.className = 'run-warn';
+      el.setAttribute('role', 'status');
+      host.appendChild(el);
+    }
+    el.textContent = text;
+    el.hidden = false;
+  });
+  for (const el of els.slice(texts.length)) el.remove();
 }
 
 /** The P5 line ("Build · task 2 of 4"); supersedes the D15 "3/6 done" counter (spec 2026-10-14 P12). '' on a v1 run. */
@@ -33372,7 +33337,8 @@ const requirementsView = createRequirementsView({
   subEl: $('#requirements-sub'),
   msgEl: $('#requirements-msg'),
   // who: the signed-in person on a shared deployment (the start-before-Ready dialog's "Recorded as"), else nobody
-  deps: { route: (p) => { location.hash = p ? `#requirements/${p}` : '#requirements'; }, who: () => viewer.name },
+  // openRun: a started run is where the person goes next (the run page, #running/<runId>)
+  deps: { route: (p) => { location.hash = p ? `#requirements/${p}` : '#requirements'; }, who: () => viewer.name, openRun: (runId) => { location.hash = `#running/${runId}`; } },
 });
 // Turning the flag off while the page is open leaves it for Chat (a hidden page must not stay up).
 onFlagChange('requirements', (on) => { if (!on && currentView() === 'requirements') showView('chat', ''); });
@@ -33528,7 +33494,8 @@ function runsGroupItem({ id, groupKind, title, members, cost = null, planning = 
     // inBase). The raw live run carries no PR, so a finished member with failing checks read "Ready to ship".
     const run = r ? withChainPr(rdModelRun(r), m) : (m.pipelineId ? memberRun(m)
       : { ticket: { status: m.ticket ? m.ticket.status : 'scheduled', runAt: m.ticket && !m.ticket.after ? m.ticket.runAt : null,
-        after: m.after ? { index: m.after } : null } });
+        // #1096: a chain root that only waits for another run names that run ("starts after <title>").
+        after: m.after ? { index: m.after } : m.waitsFor && m.waitsFor.title ? { title: m.waitsFor.title } : null } });
     const pk = m.historyKey || m.projectKey || histPk(m.pipelineId);
     const href = r ? `#running/${r.runId}` : m.pipelineId && pk ? `#history/${pk}/${m.pipelineId}`
       : groupKind === 'feature' ? `#feature/${encodeURIComponent(id)}` : m.ticketId ? '#schedules/once' : '#runs';
@@ -33620,7 +33587,7 @@ el.groupDetail?.addEventListener('click', (e) => {
 });
 async function mountGroupPage(host, { route, id, tab, reentered = false }) {
   const fresh = GROUP_PAGE.host !== host || GROUP_PAGE.route !== route || GROUP_PAGE.id !== id;
-  Object.assign(GROUP_PAGE, { host, route, id, tab, reentered, ...(fresh ? { featureId: '', gone: false, failed: false, resolving: false } : {}) });
+  Object.assign(GROUP_PAGE, { host, route, id, tab, reentered, ...(fresh ? { featureId: '', gone: false, failed: false, resolving: false, unmarked: 0 } : {}) });
   if (fresh) {
     groupMessage(host, 'feature-page-loading', 'Loading group…');
     host.__gp = null;
@@ -33643,7 +33610,7 @@ async function mountGroupPage(host, { route, id, tab, reentered = false }) {
       // A network error or a 5xx is not an answer; only a 404 means gone.
       GROUP_PAGE.failed = !res || (!res.ok && res.status !== 404);
       if (res && res.status === 404) GROUP_PAGE.gone = true;
-      else if (res && res.ok) GROUP_PAGE.featureId = ((await res.json().catch(() => ({}))).id) || id;
+      else if (res && res.ok) { const f = await res.json().catch(() => ({})); GROUP_PAGE.featureId = f.id || id; GROUP_PAGE.unmarked = unmarkedOf(f); }
     }
   }
   paintGroupPageNow();
@@ -33694,7 +33661,8 @@ function paintGroupPageNow() {
   // The run page's Logs tab is Expert-only, so the group page offers its Logs (links to those tabs) at Expert too.
   // Run 3 (D15): the group's Labels fact is the read-only union of its members' History labels.
   const labels = [...new Set(row.members.flatMap((mb) => (histOf(mb.pipelineId) || {}).labels || []))].sort();
-  paintGroupPage(host.__gp, { row, project: row.groupName || '', tab, overview: row.groupKind === 'feature', logs: levelAtLeast('expert'), labels }, {
+  paintGroupPage(host.__gp, { row, project: row.groupName || '', tab, overview: row.groupKind === 'feature', logs: levelAtLeast('expert'), labels,
+    unmarked: route === 'feature' ? GROUP_PAGE.unmarked : 0 }, {
     onAction: (aid, b) => groupAction(row, aid, b),
     onMore: (anchor) => openGroupMoreMenu(anchor, row),
     // One ship flow (D11): Create PR / View PR ▾ / View PRs ▾ on the status line, for every group kind.
@@ -33733,6 +33701,26 @@ function paintGroupPageNow() {
 }
 // Frames arrive in bursts: paint the group page once per microtask. The flag lives on GROUP_PAGE (declared at the
 // top) because History's cached paint can call this during boot, before a `let` down here is initialised.
+/** Shaper requirements s3: a feature's unmarked agreed requirements (0 without a ledger, or with the flag off: the
+ *  route then leaves ship.acceptance out). The page header's Create PR locks on it, as the Ship card does. */
+function unmarkedOf(f) { const a = f && f.ship && f.ship.acceptance; return a && !a.ready ? Math.max(0, (a.total || 0) - (a.marked || 0)) : 0; }
+/** The open feature page's lock from a fetched feature view; a change repaints the page header. */
+function noteGroupFeatureLock(f) {
+  if (GROUP_PAGE.route !== 'feature' || !f || f.id !== GROUP_PAGE.featureId) return;
+  const n = unmarkedOf(f);
+  if (n !== GROUP_PAGE.unmarked) { GROUP_PAGE.unmarked = n; scheduleGroupPagePaint(); }
+}
+/** A shape-feature frame (a mark saved here, in Chat or in another tab): re-read the open feature page's lock. A
+ *  mounted Overview view of the feature refetches it anyway (refreshShapeFeatures) and notes the lock itself. */
+async function refreshGroupFeatureLock(id) {
+  const fid = GROUP_PAGE.featureId;
+  if (GROUP_PAGE.route !== 'feature' || !fid || (id && id !== fid && id !== GROUP_PAGE.id)) return;
+  for (const [host, hid] of SHAPE_FEATURE_HOSTS) {
+    if (host.isConnected && !host.closest('.view.hidden') && (hid === fid || host.__shapeShown === fid)) return;
+  }
+  const res = await fetch(`/api/shape/features/${encodeURIComponent(fid)}`).catch(() => null);
+  noteGroupFeatureLock(res && res.ok ? await res.json().catch(() => null) : null);
+}
 function scheduleGroupPagePaint() {
   if (GROUP_PAGE.paintQueued) return;
   GROUP_PAGE.paintQueued = true;
@@ -35236,7 +35224,7 @@ function paintRunDetail(r) {
   ensureRdTabs(screen, r);   // builds the pill row + lazy panels exactly once
   paintRdHeader(screen, r);
   paintRdBanners(screen, r);
-  if (isGraphRun(r)) paintQuiescenceBanner(screen.querySelector('.rd-banners'), runDecorFor(r, 'monitor'));
+  if (isGraphRun(r)) paintRunWarnings(screen.querySelector('.rd-banners'), runDecorFor(r, 'monitor'));
   paintRdGraph(screen, r);
   paintRdQuestions(screen, r);
   paintShaperWait(screen, r);
@@ -36493,10 +36481,10 @@ const PR_CTA_LOOK = {
   view: { look: 'pr-view', icon: 'pull-request', label: VIEW_PR_LABEL },
   merged: { look: 'pr-merged', icon: 'merge', label: VIEW_PR_LABEL },
 };
-function paintPrCta(slot, { state = 'none', href = '', onClick = null, cls = '', label: own = '', title = '', disabled = false, menu = false, ws = false } = {}) {
+function paintPrCta(slot, { state = 'none', href = '', onClick = null, cls = '', label: own = '', title = '', disabled = false, menu = false, ws = false, quiet = false } = {}) {
   if (!slot) return;
   slot._prClick = onClick;                         // read at click time: a repaint re-binds it
-  const sig = `${state}|${href}|${cls}|${own}|${title}|${disabled}|${menu}|${ws}`;
+  const sig = `${state}|${href}|${cls}|${own}|${title}|${disabled}|${menu}|${ws}|${quiet}`;
   if (slot.dataset.sig === sig) return;
   const from = slot.dataset.state || 'none';
   slot.dataset.sig = sig;
@@ -36573,7 +36561,7 @@ function paintPrCta(slot, { state = 'none', href = '', onClick = null, cls = '',
     ctl.rel = 'noopener';
   }
   if (!menu || state === 'create' || state === 'push') {
-    ctl.className = ['btn', look ? '' : 'btn-primary', look, cls].filter(Boolean).join(' ');
+    ctl.className = ['btn', look || quiet ? '' : 'btn-primary', look, cls].filter(Boolean).join(' ');   // quiet: a locked Create PR
     ctl.setAttribute('data-rd-cta', '');
     if (title) ctl.title = title;
     if (disabled && ctl.tagName === 'BUTTON') ctl.disabled = true;

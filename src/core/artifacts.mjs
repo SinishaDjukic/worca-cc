@@ -28,6 +28,7 @@ import { rollupMemberPrs, workspaceMembers, changedFileCount } from './workspace
 import { RUN_LOG_FILE } from './run-log.mjs';
 import { readRunLedger } from './metrics/ledger.mjs';
 import { readPolicyState } from './policy/state.mjs';
+import { runReviewStats } from '../shared/review/quality.mjs';
 import { memoryTotals } from './memory-sync.mjs';
 import { actorLabel } from './identity.mjs';
 import { attachWatchPipeline, getWatch, watchActive } from './pr-watch.mjs';
@@ -1449,11 +1450,11 @@ export async function writeState(pipelineDir, stateObj, { prWatchRunId = null, r
       INSERT INTO pipelines (id, project_key, workspace_key, target, title, base_name,
         date_prefix, status, phase, cycle, started_at, updated_at, total_cost_usd,
         total_active_ms, prompt, branch, workspace_meta, stepper, tools, resume_point,
-        source_type, source_ref, guardrails_id, outcome, human_hours, started_by, shape_stats, run_size, run_setup)
+        source_type, source_ref, guardrails_id, outcome, human_hours, started_by, shape_stats, run_size, run_setup, review_stats)
       VALUES (@id,@project_key,@workspace_key,@target,@title,@base_name,@date_prefix,
         @status,@phase,@cycle,@started_at,@updated_at,@total_cost_usd,@total_active_ms,
         @prompt,@branch,@workspace_meta,@stepper,@tools,@resume_point,
-        @source_type,@source_ref,@guardrails_id,@outcome,@human_hours,@started_by,@shape_stats,@run_size,@run_setup)
+        @source_type,@source_ref,@guardrails_id,@outcome,@human_hours,@started_by,@shape_stats,@run_size,@run_setup,@review_stats)
       ON CONFLICT(id) DO UPDATE SET
         status=excluded.status, phase=excluded.phase, cycle=excluded.cycle,
         updated_at=excluded.updated_at, total_cost_usd=excluded.total_cost_usd,
@@ -1464,6 +1465,7 @@ export async function writeState(pipelineDir, stateObj, { prWatchRunId = null, r
         resume_point=excluded.resume_point,
         outcome=excluded.outcome,
         shape_stats=COALESCE(excluded.shape_stats, shape_stats),
+        review_stats=COALESCE(excluded.review_stats, review_stats),
         run_size=COALESCE(excluded.run_size, run_size),
         base_name=COALESCE(excluded.base_name, base_name),
         date_prefix=COALESCE(excluded.date_prefix, date_prefix)
@@ -2018,6 +2020,8 @@ function toPipelineRow(o) {
     // Shaper D28: a writer without them (an unshaped run, a pre-results persist) keeps the column (COALESCE)
     shape_stats: o.shapeStats ? s(o.shapeStats) : null,
     run_size: o.runSize ?? null,
+    // #990 s6: the run's per-role review counts, never finding prose; a persist without rounds keeps the column (COALESCE)
+    review_stats: (() => { const r = runReviewStats(o.roleReviews); return r ? s(r) : null; })(),
     // §5.9 outcome: the derived run-level v2 facts, so a rehydrated state matches
     // a live one. NULL for a v1 run (nothing to say), so v1 rows are unchanged.
     outcome: (o.engine === 2 || o.endReached !== undefined || (typeof o.runEngine === 'string' && o.runEngine !== 'claude'))

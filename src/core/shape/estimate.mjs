@@ -32,9 +32,10 @@ export function stepHistory({ sinceDays = ESTIMATE_HISTORY_DAYS, now = Date.now(
 const agentKeys = (wf) => (Array.isArray(wf?.nodes) ? wf.nodes : []).filter((n) => n && n.kind === 'agent' && n.key).map((n) => n.key);
 
 /** The planning agents (Clarify, Plan, the role reviewers, Refine): the nudge shows their share apart from the build (D28). */
-export const PLANNING_AGENTS = Object.freeze(['clarify', 'planner', 'planReviewer', 'refiner']);
+export const PLANNING_AGENTS = Object.freeze(['clarify', 'planner', 'planReviewer', 'refiner', 'requirementsDrafter', 'requirementsReviewer', 'requirementsRefiner']);
 /** Role reviews (spec §4a "Cost"): too little planReviewer history borrows the refiner's — same planning weight. */
-const FALLBACK = Object.freeze({ planReviewer: 'refiner' });
+const FALLBACK = Object.freeze({ planReviewer: 'refiner', requirementsDrafter: 'planner', requirementsReviewer: 'planReviewer', requirementsRefiner: 'refiner' });
+const FALLBACK_HOPS = Object.keys(FALLBACK).length;
 const PLANNING = new Set(PLANNING_AGENTS);
 const cents = (x) => Math.round(x * 100) / 100;
 
@@ -45,7 +46,10 @@ export function estimateGraph(wf, history) {
   let cost = 0; let planning = 0; let ms = 0; let samples = Infinity;
   for (const k of keys) {
     let h = history.get(k);
-    if ((!h || h.cost.length < ESTIMATE_MIN_SAMPLES) && FALLBACK[k]) h = history.get(FALLBACK[k]);
+    // Too little history borrows along the fallback chain (requirementsReviewer → planReviewer → refiner).
+    for (let f = FALLBACK[k], hops = 0; (!h || h.cost.length < ESTIMATE_MIN_SAMPLES) && f && hops < FALLBACK_HOPS; f = FALLBACK[f], hops += 1) {
+      h = history.get(f);
+    }
     if (!h || h.cost.length < ESTIMATE_MIN_SAMPLES) return null;
     const c = median(h.cost);
     cost += c; if (PLANNING.has(k)) planning += c;

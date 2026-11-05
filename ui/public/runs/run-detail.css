@@ -60,7 +60,7 @@
   align-self:center;margin-left:24px;padding:3px 10px;border-radius:var(--r-sm);background:var(--green-bg);color:var(--green-ink);
   font-size:var(--fs-meta);font-weight:600;line-height:1.4;letter-spacing:0;}
 :is(.rd-questions,.chat-rc-q) .qopts{grid-column:2;gap:0;margin:0;padding-left:0;}
-:is(.rd-questions,.chat-rc-q) .qopt{font-size:var(--fs-body);line-height:1.5;}
+:is(.rd-questions,.chat-rc-q,.plan-decisions) .qopt{font-size:var(--fs-body);line-height:1.5;}
 /* Run 4 (D7): "Write your own" is the shared field, after the options. */
 :is(.rd-questions,.chat-rc-q) .qblock > .qfree{grid-column:2;margin-left:0;margin-top:8px;width:100%;min-height:32px;padding:6px 12px;
   border:1px solid var(--line-2);border-radius:var(--r-sm);font-size:var(--fs-body);line-height:1.5;background:var(--field);}

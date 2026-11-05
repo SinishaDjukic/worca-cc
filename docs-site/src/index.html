@@ -99,6 +99,26 @@
     .install .c { color: var(--on-dark-2); }
     .install .p { color: var(--violet); user-select: none; }
 
+    .term { margin-top: 28px; }
+    .term-radio { position: absolute; opacity: 0; pointer-events: none; }
+    .term-tabs { display: flex; gap: 4px; padding: 6px 6px 0; background: var(--dark); border-radius: var(--r-md) var(--r-md) 0 0; }
+    .term-tabs label {
+      padding: 8px 16px; border-radius: var(--r-sm) var(--r-sm) 0 0; cursor: pointer;
+      font: 500 14px var(--sans); color: var(--on-dark-2);
+    }
+    .term-tabs label:hover { color: var(--on-dark); }
+    .term-beta { margin-left: 4px; font: 500 11px var(--mono); color: var(--violet); }
+    #eng-claude:checked ~ .term-tabs label[for="eng-claude"],
+    #eng-copilot:checked ~ .term-tabs label[for="eng-copilot"] { color: var(--on-dark); background: rgba(255,255,255,.08); }
+    #eng-claude:focus-visible ~ .term-tabs label[for="eng-claude"],
+    #eng-copilot:focus-visible ~ .term-tabs label[for="eng-copilot"] { outline: 2px solid var(--violet); outline-offset: -2px; }
+    .term .install { margin: 0; border-radius: 0 0 var(--r-md) var(--r-md); }
+    .term-panel, .term-more { display: none; }
+    #eng-claude:checked ~ .term-claude,
+    #eng-copilot:checked ~ .term-copilot { display: block; }
+    .term-more { margin: 12px 0 0; font-size: 14px; color: var(--ink-2); }
+    .term-more a { color: var(--violet-ink); text-decoration: underline; text-underline-offset: 3px; }
+
     /* cards */
     h2 { font-size: 14px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); margin: 44px 0 14px; font-family: var(--mono); }
     .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
@@ -138,7 +158,7 @@
   <div class="wrap">
     <header class="top">
       <a class="brand" href="https://worca.dev" aria-label="Worca">
-        <img src="/worca-logo.png" alt="Worca" width="512" height="190">
+        <img src="/worca-logo.svg" alt="Worca" width="512" height="190">
         <span>Docs</span>
       </a>
       <nav aria-label="Worca links">
@@ -167,12 +187,32 @@
             <span class="dot"></span>{{VERSION_LABEL}} <b>@worca/app {{VERSION}}</b>
           </a>
           <span class="fact">Node <b>&ge; 22.19</b></span>
-          <span class="fact">Requires <b>Claude Code</b> for real runs</span>
         </div>
-        <pre class="install"><span class="c"># install</span>
+        <!-- Install, one tab per engine. Radio inputs + CSS, so it works without JS. -->
+        <div class="term">
+          <input type="radio" name="engine" id="eng-claude" class="term-radio" checked>
+          <input type="radio" name="engine" id="eng-copilot" class="term-radio">
+          <div class="term-tabs">
+            <label for="eng-claude">Claude Code</label>
+            <label for="eng-copilot">Copilot CLI <span class="term-beta">beta</span></label>
+          </div>
+          <pre class="install term-panel term-claude"><span class="c"># 1. install Worca</span>
 <span class="p">$ </span>npm install -g @worca/app
-<span class="c"># start the web UI (default http://127.0.0.1:4317)</span>
+<span class="c"># 2. install Claude Code and sign in once</span>
+<span class="p">$ </span>npm install -g @anthropic-ai/claude-code
+<span class="p">$ </span>claude auth login
+<span class="c"># 3. start the web UI (default http://127.0.0.1:4317)</span>
 <span class="p">$ </span>worca ui</pre>
+          <pre class="install term-panel term-copilot"><span class="c"># 1. install Worca</span>
+<span class="p">$ </span>npm install -g @worca/app
+<span class="c"># 2. install the GitHub Copilot CLI and sign in once</span>
+<span class="p">$ </span>npm install -g @github/copilot
+<span class="p">$ </span>copilot login
+<span class="c"># 3. start the web UI, then pick Copilot under Engine on New pipeline</span>
+<span class="p">$ </span>worca ui</pre>
+          <p class="term-more term-claude">More: <a href="{{REPO_URL}}/blob/dev/docs/models.md#claude-code">Claude Code setup</a></p>
+          <p class="term-more term-copilot">More: <a href="{{REPO_URL}}/blob/dev/docs/models.md#github-copilot-cli">Copilot CLI setup</a></p>
+        </div>
       </section>
 
       <h2>Start here</h2>

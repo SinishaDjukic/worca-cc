@@ -878,7 +878,7 @@ async function until2(expr, tag, tries = 150) {
   throw new Error(`timeout waiting for ${tag}`);
 }
 const READY = `(async()=>{await document.fonts.ready;
-  await Promise.all(['/assets/worca-logo-mask.png','/assets/worca-mark-mask.png','/assets/worca-favicon.png'].map((src)=>new Promise((r)=>{const i=new Image();i.onload=i.onerror=r;i.src=src;})));return 1;})()`;
+  await Promise.all(['/assets/worca-logo.svg','/assets/worca-favicon.svg','/assets/worca-favicon.png'].map((src)=>new Promise((r)=>{const i=new Image();i.onload=i.onerror=r;i.src=src;})));return 1;})()`;
 const FREEZE_CSS = '*,*::before,*::after{transition:none!important;animation:none!important;caret-color:transparent!important}';
 async function freeze(tag) {
   await ev(`(()=>{let s=document.getElementById('shot-freeze');if(!s){s=document.createElement('style');s.id='shot-freeze';s.textContent=${JSON.stringify(FREEZE_CSS)};document.head.appendChild(s);}

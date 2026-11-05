@@ -28,6 +28,8 @@ import { readPluginsLock } from './plugins-lock.mjs';                 // a DISAB
 import { validateGraph, formatIssue, AGENT_TUNABLES } from '../shared/graph/validate.mjs';
 import { classifyLoops } from '../shared/graph/loops.mjs';
 import { KEYED_KINDS } from '../shared/graph/constants.mjs';
+import { pickOrDrop, cleanPick, resolveRolePicks } from '../shared/graph/role-slots.mjs';
+import { roleReviewOf } from '../shared/graph/role-review-step.mjs';
 import { pickTemplateExtras } from '../shared/graph/template.mjs';
 import { scriptNodeCtx } from '../shared/graph/script-meta.mjs';
 import {
@@ -36,6 +38,8 @@ import {
   GRAPH_MEMORY_DEFRAG_WORKFLOW, MEMORY_DEFRAG_WORKFLOW_ID, MEMORY_DEFRAG_WORKFLOW_NAME, isReservedWorkflowId,
   GRAPH_WORKSPACE_SCAN_WORKFLOW, WORKSPACE_SCAN_WORKFLOW_ID, GRAPH_PR_FIX_WORKFLOW, PR_FIX_WORKFLOW_ID,
   SHAPE_WORKFLOW_ID, SHAPE_UX_WORKFLOW_ID, SHAPE_WORKFLOW_NAME, GRAPH_SHAPE_WORKFLOW, GRAPH_SHAPE_UX_WORKFLOW,
+  SHAPE_REQ_WORKFLOW_ID, SHAPE_UX_REQ_WORKFLOW_ID, GRAPH_SHAPE_REQ_WORKFLOW, GRAPH_SHAPE_UX_REQ_WORKFLOW, SHAPE_REQ_WORKFLOW_IDS,
+  SHAPE_SLICE_REQ_WORKFLOW_ID, SHAPE_UX_SLICE_REQ_WORKFLOW_ID, GRAPH_SHAPE_SLICE_REQ_WORKFLOW, GRAPH_SHAPE_UX_SLICE_REQ_WORKFLOW, SHAPE_SLICE_REQ_WORKFLOW_IDS,
   GRAPH_WORKSPACE_RESYNTH_WORKFLOW, WORKSPACE_RESYNTH_WORKFLOW_ID,
 } from './graph/builtin-workflows.mjs';
 export { GRAPH_DEFAULT_WORKFLOW, GRAPH_LEAN_WORKFLOW, LEAN_WORKFLOW_ID, AUTO_WORKFLOW_ID, GRAPH_MEMORY_DEFRAG_WORKFLOW, GRAPH_SHAPE_WORKFLOW, MEMORY_DEFRAG_WORKFLOW_ID, WORKSPACE_SCAN_WORKFLOW_ID, GRAPH_WORKSPACE_RESYNTH_WORKFLOW, WORKSPACE_RESYNTH_WORKFLOW_ID, isReservedWorkflowId };
@@ -323,7 +327,7 @@ export async function writeGraphWorkflow(tpl, opts = {}) {
   if (reserved(id)) {
     const which = id === AUTO_WORKFLOW_ID ? AUTO_WORKFLOW_NAME
       : id === MEMORY_DEFRAG_WORKFLOW_ID ? MEMORY_DEFRAG_WORKFLOW_NAME
-      : id === SHAPE_WORKFLOW_ID ? SHAPE_WORKFLOW_NAME
+      : id === SHAPE_WORKFLOW_ID || SHAPE_REQ_WORKFLOW_IDS.includes(id) || SHAPE_SLICE_REQ_WORKFLOW_IDS.includes(id) ? SHAPE_WORKFLOW_NAME
       : GRAPH_DEFAULT_WORKFLOW.name;
     throw Object.assign(
       new Error(`the name "${which}" is reserved — choose another name`),
@@ -386,6 +390,11 @@ export async function readWorkflow(id, opts = {}) {
   // No gate check: resuming a held shaped run must never be stranded.
   if (id === SHAPE_WORKFLOW_ID) return GRAPH_SHAPE_WORKFLOW;
   if (id === SHAPE_UX_WORKFLOW_ID) return GRAPH_SHAPE_UX_WORKFLOW;
+  // No flag check either: a run frozen on a requirements id resumes after the flag is turned off.
+  if (id === SHAPE_REQ_WORKFLOW_ID) return GRAPH_SHAPE_REQ_WORKFLOW;
+  if (id === SHAPE_UX_REQ_WORKFLOW_ID) return GRAPH_SHAPE_UX_REQ_WORKFLOW;
+  if (id === SHAPE_SLICE_REQ_WORKFLOW_ID) return GRAPH_SHAPE_SLICE_REQ_WORKFLOW;
+  if (id === SHAPE_UX_SLICE_REQ_WORKFLOW_ID) return GRAPH_SHAPE_UX_SLICE_REQ_WORKFLOW;
   return readRaw(id, opts);
 }
 
@@ -555,7 +564,7 @@ export async function deleteWorkflow(id) {
   if (id === LEAN_WORKFLOW_ID) return false;    // a constant, never a row
   if (id === MEMORY_DEFRAG_WORKFLOW_ID) return false; // a constant, never a row
   if (id === PR_FIX_WORKFLOW_ID) return false;  // a constant, never a row
-  if (id === SHAPE_WORKFLOW_ID || id === SHAPE_UX_WORKFLOW_ID) return false; // constants, never rows
+  if (id === SHAPE_WORKFLOW_ID || id === SHAPE_UX_WORKFLOW_ID || SHAPE_REQ_WORKFLOW_IDS.includes(id) || SHAPE_SLICE_REQ_WORKFLOW_IDS.includes(id)) return false; // constants, never rows
   if (!isSafeWorkflowId(id)) return false;      // SECURITY: reject unsafe ids
   getDb();
   let changed = 0;
@@ -624,14 +633,25 @@ export function workspaceVariants(registry) {
  * @throws {Error} unknown workflow, a v1 row, an unknown/un-ported/unplaceable agent
  */
 function ownedPair(sel, engine, projectDir) {
-  if (!sel || typeof sel !== 'object') return {};
-  const model = typeof sel.model === 'string' && sel.model ? sel.model : undefined;
-  if (model && !modelForEngine(model, engine, { projectDir: projectDir || null })) return {};
-  // A model on two harnesses keeps its own engine's efforts: this harness takes the nearest one (effortOn).
-  const own = typeof sel.effort === 'string' && sel.effort ? sel.effort : undefined;
-  const effort = own && (engine === 'claude' || effortsForEngine(engine).includes(own)) ? own : (own && model ? (effortOn(own, engine) || undefined) : undefined);
-  return { ...(model ? { model } : {}), ...(effort ? { effort } : {}) };
+  return pickOrDrop(sel, engine, { runs: engineRuns(engine, projectDir), efforts: effortsForEngine(engine), effortOn });
 }
+
+const NO_PICK = Object.freeze({ pick: Object.freeze({}), dropped: null });
+
+/** The request the engine dropped, when it came from the WINNING raw layer (the first naming a model, else the first
+ *  naming an effort): `{ model?, effort?, source }`, else null. A dropped layer some higher layer overrode never ran.
+ *  @param {Array<[object|null|undefined, {dropped:object|null}, string|((field:string)=>string)]>} layers raw, owned, source */
+function wantedOf(layers) {
+  const named = layers.map(([raw, res, source]) => ({ pick: cleanPick(raw), res, source }));
+  const win = named.find((l) => l.pick?.model) || named.find((l) => l.pick?.effort);
+  if (!win || !win.res.dropped) return null;
+  const source = typeof win.source === 'function' ? win.source(win.pick.model ? 'model' : 'effort') : win.source;
+  return { ...win.res.dropped, source };
+}
+
+/** Whether the run's engine runs a model (the catalog's answer): the membership pickOrDrop is handed. */
+const engineRuns = (engine, projectDir) => (m) => !!modelForEngine(m, engine, { projectDir: projectDir || null });
+
 /** P3 (U13, S32): whether a graph holds an agent that expects a code repository (`needsRepo` in its sidecar).
  *  Pure. A template without nodes (wf_auto, a v1 row) is never a hint.
  *  @param {{nodes?: Array<{kind?: string, key?: string}>}|null} tpl @param {Record<string, object>} registry */
@@ -692,9 +712,9 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
   // D15: the project's team roles join the person's own; a workspace run keeps the person's roles only.
   const { roles: projectRoleSet } = ignore || runModel ? { roles: undefined } : await projectRolesFor(engine, isWorkspace ? null : projectDir);
   const roleFor = (authored, meta) => {
-    if (ignore || runModel) return {};
+    if (ignore || runModel) return NO_PICK;
     const hit = resolveRoleModel(engine, roleOf(`steps.${authored}`, { name: meta?.displayName || '' }), projectRoleSet ? { roles: projectRoleSet } : {});
-    return hit ? owned(hit) : {};
+    return hit ? { ...owned(hit), raw: hit } : NO_PICK;
   };
   // Memory defragment (Settings › Memory, memory-defrag-model.mjs): the run's model/effort PAIR —
   // named at start, else the global setting. The one layer that beats even the project's own node
@@ -754,16 +774,38 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
     // variant still inherits the user's model/effort for that role.
     const legacy = stepsCfg[authored] || {};
     const cfg = node.config && typeof node.config === 'object' ? node.config : {};
-    const selP = owned(sel);
-    const legacyP = engine === 'claude' ? owned(legacy) : {};
-    const cfgP = owned(cfg);
-    const team = (selP.model || selP.effort || legacyP.model || legacyP.effort) ? {} : owned(slotDefaults[authored]);
+    const selO = owned(sel);
+    const legacyO = engine === 'claude' ? owned(legacy) : NO_PICK;
+    const cfgO = owned(cfg);
+    const selP = selO.pick;
+    const legacyP = legacyO.pick;
+    const cfgP = cfgO.pick;
+    const teamSkipped = !!(selP.model || selP.effort || legacyP.model || legacyP.effort);
+    const teamO = teamSkipped ? NO_PICK : owned(slotDefaults[authored]);
+    const team = teamO.pick;
     const baseModel = firstDefined(selP.model, legacyP.model, team.model, cfgP.model);
     // An effort only travels with the model that advertises it: an override naming its own model must not
     // inherit a lower layer's effort — the legacy per-role effort included (a per-run overlay or a node pick
     // naming a model on wf_default).
     const baseEffort = selP.model ? selP.effort : firstDefined(selP.effort, legacyP.effort, team.effort, (legacyP.model || team.model) ? undefined : cfgP.effort);
-    const roleP = baseModel === undefined && baseEffort === undefined ? roleFor(authored, meta) : {};
+    const roleO = baseModel === undefined && baseEffort === undefined ? roleFor(authored, meta) : NO_PICK;
+    const roleP = roleO.pick;
+    // No silent fallbacks: the winning layer's request, when the engine dropped it (only layers that were consulted;
+    // the merged `sel` is the run overlay where it names the field itself, else the project). A pinned pair bypasses.
+    const ownSel = cleanPick(over.nodes?.[node.id]);
+    const wanted = pair ? null : wantedOf([
+      [sel, selO, (field) => (ownSel?.[field] ? 'run' : 'project')],
+      [engine === 'claude' ? legacy : null, legacyO, 'project'],
+      [teamSkipped ? null : slotDefaults[authored], teamO, 'slot'],
+      [cfg, cfgO, 'template'],
+      [roleO.raw, roleO, 'slot'],
+    ]);
+    // A role-review node's per-role picks (run overlay > project > template); a pinned agentPair runs every role on it.
+    const spec = pair ? null : roleReviewOf(cfg);
+    const rolePicks = spec ? resolveRolePicks({
+      roles: spec.roles, overlay: over.nodes?.[node.id]?.roles, project: runCfg.nodes?.[node.id]?.roles,
+      engine, runs: engineRuns(engine, projectDir), efforts: effortsForEngine(engine), effortOn,
+    }) : null;
     nodes[node.id] = {
       nodeId: node.id,
       kind: 'agent',
@@ -802,6 +844,8 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
           ? !!meta.questionsDefault
           : !!firstDefined(sel.askQuestions, legacy.askQuestions, cfg.askQuestions, meta.questionsDefault, false)),
       awaitAll: !!cfg.awaitAll,
+      ...(rolePicks && Object.keys(rolePicks).length ? { roles: rolePicks } : {}),
+      ...(wanted ? { wanted } : {}),
     };
     agentsByKey[key] = meta;
     agentKeys.add(key);

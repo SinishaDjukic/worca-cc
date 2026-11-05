@@ -7,6 +7,8 @@ import { createTicket, getTicket, cancelTicket, updateTicket, previousBranchesOf
 import { readPrState, readPipelineExtras, readRunResultsById, readClarifyRow } from '../artifacts.mjs';
 import { projectKey } from '../store.mjs';
 import { sliceBrief, replanBrief } from '../../shared/shape/slices.mjs';
+import { requirementsCheck } from '../../shared/review/requirements-coverage.mjs';
+import { acceptanceGate, ledgerCheck } from '../../shared/shape/acceptance.mjs';
 import { latestChecklist, checklistMarkdown } from '../../shared/shape/review-checklist.mjs';
 import { buildDecisionLog } from '../../shared/shape/feature-log.mjs';
 import { PLAN_ASK_KIND } from './run.mjs';
@@ -36,7 +38,8 @@ function requestOptions(base = {}, startedBy = null) {
 }
 
 /** A slice ticket's stored request (L6): what POST /api/run would take, plus `internal`. */
-export function sliceRequest({ feature, index, outline, perspectives, workflowId, base = {}, projectDir, startedBy = null, sourceBranch = null }) {
+export function sliceRequest({ feature, index, outline, perspectives, workflowId, base = {}, projectDir, startedBy = null, sourceBranch = null,
+  requirementsFirst = false }) {
   const total = outline.slices.length;
   const { top, internal } = requestOptions(base, startedBy);
   return {
@@ -46,7 +49,8 @@ export function sliceRequest({ feature, index, outline, perspectives, workflowId
     workflowId,
     ...top,
     ...(sourceBranch ? { sourceBranch } : {}),
-    shape: { perspectives: [...perspectives], slices: 'off', slice: { feature: feature.id, index, total, outline } },
+    shape: { perspectives: [...perspectives], slices: 'off', slice: { feature: feature.id, index, total, outline },
+      ...(requirementsFirst ? { requirementsFirst: true } : {}) },
     internal,
   };
 }
@@ -127,6 +131,32 @@ export function setApproveEach(id, on, { now = Date.now() } = {}) {
   return getDb().prepare('UPDATE shape_features SET approve_each = ?, updated_at = ? WHERE id = ?').run(on ? 1 : 0, iso(now), String(id)).changes > 0;
 }
 
+/** Shaper requirements s3 (D7): the acceptance ledger replaces `outline.acceptance` (entries already normalised). */
+export function setFeatureAcceptance(featureId, entries, { now = Date.now() } = {}) {
+  const f = featureRow(featureId);
+  if (!f) return false;
+  return getDb().prepare('UPDATE shape_features SET outline = ?, updated_at = ? WHERE id = ?')
+    .run(JSON.stringify({ ...f.outline, acceptance: entries }), iso(now), f.id).changes > 0;
+}
+
+/** The ledger on the ship block (D11): nothing pre-marked; a row the code review covered says so in its detail.
+ *  `agreed`, `entries` and `covered` let the ship card repaint its rows as the person marks them. */
+function shipAcceptance(f, slices) {
+  const covered = [...new Set(slices.flatMap((s) => (s.requirements?.check?.items || []).filter((i) => i.pass).map((i) => i.id)))];
+  const { items } = ledgerCheck(f.outline.agreed, f.outline.acceptance, covered);
+  const { ready, marked, total } = acceptanceGate(f.outline.agreed, f.outline.acceptance);
+  const agreed = f.outline.agreed.map(({ id, text }) => ({ id, text }));
+  return { items, ready, marked, total, agreed, entries: Array.isArray(f.outline.acceptance) ? f.outline.acceptance : [], covered };
+}
+
+/** The ship gate's refusal body (D8) while an agreed requirement is unmarked, else null. */
+export function acceptanceRefusal(view) {
+  const ledger = view?.ship?.acceptance;
+  if (!ledger || ledger.ready) return null;
+  const missing = ledger.items.filter((i) => !i.pass).map((i) => i.id);
+  return { error: `mark every requirement before you create the PR (${missing.length} left)`, code: 'ACCEPTANCE_INCOMPLETE', missing };
+}
+
 /** s2: what a Shaper run started without a predecessor carries from the feature's origin run: its cost tags and labels. */
 function originCarry(f) {
   const pid = f && f.origin_pipeline_id;
@@ -200,6 +230,14 @@ function featureLog(f, slices) {
   });
 }
 
+/** A slice's agreed ids and their check against its last code review (null before one ran). */
+function sliceRequirements(f, r) {
+  const ids = f.outline.slices[r.index - 1]?.requirements || [];
+  const last = r.pipelineId ? readPipelineExtras(r.pipelineId).reviews.filter((v) => v.kind === 'impl').sort((a, b) => a.cycle - b.cycle).at(-1) : null;
+  const texts = Object.fromEntries(f.outline.agreed.map((a) => [a.id, a.text]));
+  return { ids, check: last ? requirementsCheck(ids, texts, last.issues) : null };
+}
+
 export function featureView(id, { live = () => null } = {}) {
   const f = featureRow(id);
   if (!f) return null;
@@ -217,7 +255,8 @@ export function featureView(id, { live = () => null } = {}) {
     return { index: r.index, title: r.title, goal: s.goal || '', estimate: s.estimate || null, state,
       runId: l?.runId || null, pipelineId: r.pipelineId, ticketId: r.ticketId, pr,
       kind: r.kind || null, rounds: (r.pipelineId && rounds.get(r.pipelineId)) || [],
-      watch: pr && pr.url ? stoppedWatchFact(getWatch(pr.url)) : null };
+      watch: pr && pr.url ? stoppedWatchFact(getWatch(pr.url)) : null,
+      ...(f.outline.agreed?.length ? { requirements: sliceRequirements(f, r) } : {}) };
   });
   const roundLive = slices.some((s) => s.rounds.some((x) => LIVE_ROUND.has(x.status)));
   const ideas = getDb().prepare(`SELECT COUNT(*) AS n FROM shape_feature_notes WHERE feature_id = ? AND kind = 'idea'
@@ -229,13 +268,17 @@ export function featureView(id, { live = () => null } = {}) {
   // D24: Ship as once every slice is done, on a feature that is still active and not shipped. The suggestion is
   // async (featureShipSuggestion); the GET route merges it.
   const lastPrUrl = slices.length ? (slices[slices.length - 1].pr?.url || null) : null;
-  const release = f.release_version ? { version: f.release_version, url: f.release_url || null, error: f.release_error || null } : null;
-  const ship = { ready: slices.length > 0 && done === slices.length && f.status === 'active' && !f.ship_mode && !roundLive,
-    mode: f.ship_mode || null, prUrl: f.ship_pr_url || null, lastPrUrl, suggested: null, linesAdded: null,
+  // A ship whose PRs were all closed unmerged is withdrawn: the feature ships again (the ship route clears the record).
+  const shipPrs = slices.map((s) => s.pr).filter((p) => p && p.url);
+  const shipped = !!f.ship_mode && !(shipPrs.length && shipPrs.every((p) => p.state === 'CLOSED'));
+  const release = shipped && f.release_version ? { version: f.release_version, url: f.release_url || null, error: f.release_error || null } : null;
+  const ship = { ready: slices.length > 0 && done === slices.length && f.status === 'active' && !shipped && !roundLive,
+    mode: shipped ? f.ship_mode : null, prUrl: shipped ? f.ship_pr_url || null : null, lastPrUrl, suggested: null, linesAdded: null,
     linesRemoved: null, files: null, release,
     // s4: what the applied Ship card shows, wherever it renders (chat, group page, Plans).
-    result: f.ship_mode ? { mode: f.ship_mode, prUrl: f.ship_pr_url || lastPrUrl,
-      closed: f.ship_mode === 'one' ? (f.ship_closed ?? slices.filter((s) => s.pr && s.pr.state === 'CLOSED').length) : 0, release } : null };
+    result: shipped ? { mode: f.ship_mode, prUrl: f.ship_pr_url || lastPrUrl,
+      closed: f.ship_mode === 'one' ? (f.ship_closed ?? slices.filter((s) => s.pr && s.pr.state === 'CLOSED').length) : 0, release } : null,
+    ...(f.outline.agreed?.length ? { acceptance: shipAcceptance(f, slices) } : {}) };
   // The Re-plan the rest run (replanning/replanned): its ticket id is the run id it fires as (ui/server.mjs:2188).
   const rt = f.replan_ticket_id ? getTicket(f.replan_ticket_id) : null;
   const replan = rt ? { ticketId: rt.id, pipelineId: rt.pipelineId || null, runId: rt.pipelineId ? (live(rt.pipelineId)?.runId || null) : null } : null;
@@ -292,7 +335,7 @@ export function liveRoundOf(featureId) {
 }
 
 /** Shaper s5 (D13): run N+1 of the feature. 'extra' chains after the last run; 'follow-up' fires now from the base. */
-export function appendFeatureRun(featureId, { title, goal, kind, by = null, now = Date.now() }) {
+export function appendFeatureRun(featureId, { title, goal, kind, by = null, requirementsFirst = false, now = Date.now() }) {
   if (kind !== 'extra' && kind !== 'follow-up') throw new TypeError('kind must be extra or follow-up');
   const db = getDb();
   const f = featureRow(featureId);
@@ -310,7 +353,8 @@ export function appendFeatureRun(featureId, { title, goal, kind, by = null, now 
     const t = createTicket({
       title: sliceTitle(f.title, index, index, s), projectDir: f.project_dir,
       request: { ...sliceRequest({ feature, index, outline, perspectives: f.perspectives, workflowId: f.workflow_id, base: f.base,
-        projectDir: f.project_dir, startedBy: by, sourceBranch: kind === 'follow-up' ? f.source_branch : null }),
+        projectDir: f.project_dir, startedBy: by, sourceBranch: kind === 'follow-up' ? f.source_branch : null,
+        requirementsFirst: kind === 'follow-up' && requirementsFirst === true }),
       ...(kind === 'follow-up' ? originCarry(f) : {}) },   // s2: a chained `extra` inherits at fire instead
       ...(kind === 'extra' ? { after, afterPolicy: 'done', sourceFromPrevious: true } : { runAtMs: now }),
       createdBy: by, now,
@@ -342,6 +386,14 @@ export function recordShip(id, { mode, prUrl = null, closed = null, release = nu
     .changes > 0;
 }
 
+/** Forget a withdrawn ship (every PR closed unmerged) so the next ship records afresh. false = nothing recorded. */
+export function clearShip(id, { now = Date.now() } = {}) {
+  return getDb().prepare(`UPDATE shape_features SET ship_mode = NULL, ship_pr_url = NULL, ship_closed = NULL, shipped_at = NULL,
+      release_version = NULL, release_target = NULL, updated_at = ? WHERE id = ? AND ship_mode IS NOT NULL`)
+    .run(iso(now), String(id))
+    .changes > 0;
+}
+
 /** P17: the Ship as default from the slices' frozen line counts (results.json summary.linesAdded; unknown = 0). Async:
  *  the run dir lookup is async, so this cannot live in sync featureView. */
 export async function featureShipSuggestion(view) {
@@ -368,7 +420,8 @@ export async function featureShipInput(view) {
     const last = reviews.filter((v) => v.kind === 'impl' && v.summary).sort((a, b) => a.cycle - b.cycle).at(-1);
     const cl = latestChecklist(reviews);
     slices.push({ index: s.index, title: s.title, pipelineId: s.pipelineId, pr: s.pr,
-      summary: last ? last.summary.slice(0, 600) : '', checklistMd: cl ? checklistMarkdown(cl.checklist).trimEnd() : '' });
+      summary: last ? last.summary.slice(0, 600) : '', checklistMd: cl ? checklistMarkdown(cl.checklist).trimEnd() : '',
+      ...(s.requirements ? { requirements: s.requirements } : {}) });
   }
   return { id: view.id, title: view.title, slices };
 }
@@ -472,7 +525,8 @@ export function slicePrPreamble(pipelineId) {
     const pr = r.pipelineId ? readPrState(r.pipelineId) : null;
     return `- Slice ${r.index}, ${r.title}: ${pr?.url || 'not opened yet'}`;
   });
-  return `Part of ${f.title}: slice ${at.idx} of ${rows.length}\n\n${others.join('\n')}`;
+  const ids = f.outline?.slices?.[at.idx - 1]?.requirements || [];
+  return `Part of ${f.title}: slice ${at.idx} of ${rows.length}\n${ids.length ? `Satisfies: ${ids.join(', ')}\n` : ''}\n${others.join('\n')}`;
 }
 
 /** L6, D14: each done earlier slice's last review summary and changed files (results.json), oldest first. */
@@ -557,9 +611,12 @@ export function resumeFeature(id, { live = () => null, by = null, now = Date.now
   // F43: createTicket throws on {kind:'pipeline', id:null}. A previous slice with no pipeline has not run (e.g. this
   // slice was started early with Run now): nothing to chain after.
   if (prev && !prev.pipelineId) return { status: 409, error: `slice ${prev.index} has not run yet: start it first` };
+  // s3 (D12): a requirements-first follow-up restarts requirements first; the flag lives only in its old ticket's request.
+  const old = rows[h.index - 1]?.ticketId ? getTicket(rows[h.index - 1].ticketId, { withRequest: true }) : null;
   const request = { ...sliceRequest({ feature: { id, title: f.title }, index: h.index, outline: f.outline, perspectives: f.perspectives,
     workflowId: f.workflow_id, base: f.base, projectDir: f.project_dir, startedBy: by,
-    sourceBranch: prev ? null : f.source_branch || null }), ...(prev ? {} : originCarry(f)) };   // s2: chained restarts inherit at fire
+    sourceBranch: prev ? null : f.source_branch || null, requirementsFirst: old?.request?.shape?.requirementsFirst === true }),
+    ...(prev ? {} : originCarry(f)) };   // s2: chained restarts inherit at fire
   let ticketId = null;
   tx(() => {
     const t = createTicket({

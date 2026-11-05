@@ -96,3 +96,40 @@ test('D16: a plan approve with role-review rounds names the roles and the open i
   assert.match(got, /^Plan approved · \d+ roles? reviewed/);
   assert.equal(stepReceipt(PLAN({ round: 2, roleReviews: { rounds: [] } }), { decision: 'approve' }), 'Plan approved · after 1 round of changes');
 });
+
+// #990 slice 4: the Review loop's gate card lists the code roles through the ONE role-rows component (jsdom, in-process).
+const codeRound = () => {
+  const f = (id, severity, status) => ({ id, severity, title: id, section: 'src/a.mjs:4', fix: `fix ${id}`, status });
+  const role = (key, label, findings) => ({ key, label, skipped: false, checklist: [], findings });
+  return { pass: 1, round: 3, node: 'n_review', target: 'diff', plan: 'p', roles: [
+    role('correctness', 'Correctness', [f('correctness-3-1', 'major', 'open')]),
+    role('security', 'Security', []),
+    role('fit', 'Project fit', [f('fit-3-1', 'minor', 'open')])] };
+};
+async function gateCard(pq) {
+  const { JSDOM } = await import('jsdom');
+  const { renderGateCard } = await import('../ui/public/shape/step-card.mjs');
+  const doc = new JSDOM('<!doctype html><body></body>').window.document;
+  const panel = doc.createElement('div');
+  renderGateCard(panel, pq, { doc, title: 'Review needs a decision', chip: 'Gate', wireCopy: '', tagLevel: () => {}, submit: async () => true });
+  return panel;
+}
+const GATE_ISSUES = [{ severity: 'major', title: 'correctness-3-1: race', detail: 'lock it', location: 'src/a.mjs:4' }];
+
+test('Review gate card lists the code role rows through the role-rows component, with no second issue list', async () => {
+  const panel = await gateCard({ id: 'gate-n_review-3', kind: 'gate', nodeId: 'n_review', issues: GATE_ISSUES, roleReviews: { rounds: [codeRound()] } });
+  const rows = [...panel.querySelectorAll('.plan-roles .plan-check-row')];
+  assert.deepEqual(rows.map((r) => r.querySelector('.plan-check-label').textContent.split(' · ')[0]), ['Correctness', 'Security', 'Project fit']);
+  assert.equal(panel.querySelectorAll('.plan-role-line').length, 1);
+  assert.equal(panel.querySelector('.plan-role-line .plan-fold-text').textContent, 'Reviewed by 3 roles · 1 open');
+  assert.equal(panel.querySelectorAll('ul.issues').length, 0, 'the rows\' Show already lists the findings');
+  assert.equal(panel.querySelector('.plan-finding-section').textContent, 'src/a.mjs:4');
+  assert.ok(panel.querySelector('.gate-another') && panel.querySelector('.gate-continue'), 'the buttons are unchanged');
+  assert.match(panel.querySelector('.gate-intro').textContent, /with open issues/);
+});
+
+test('the gate card without roleReviews keeps its issue list', async () => {
+  const panel = await gateCard({ id: 'gate-n_review-3', kind: 'gate', nodeId: 'n_review', issues: GATE_ISSUES });
+  assert.equal(panel.querySelectorAll('ul.issues li').length, 1);
+  assert.equal(panel.querySelectorAll('.plan-roles').length, 0);
+});

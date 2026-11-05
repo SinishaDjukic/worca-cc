@@ -62,3 +62,24 @@ test('"plan this in 3 slices" writes the three-run outline (s2 depends on s1, s3
   assert.deepEqual(three.slices.map((s) => s.dependsOn), [[], ['s1'], ['s2']]);
   assert.equal((await write('plan this in slices')).slices.length, 2);
 });
+
+test('with MOCK_REQUIREMENTS the mock outline deals 4 + 3 ids (3 + 2 + 2 for 3 slices) and leaves R-ops-1 out with a reason', async () => {
+  const { MOCK_REQUIREMENTS_CRITERIA } = await import('../src/core/engines/mock.mjs');
+  const dir = await tmp();
+  const req = join(dir, 'requirements.md');
+  const { writeFile } = await import('node:fs/promises');
+  await writeFile(req, `# Requirements\n\n${MOCK_REQUIREMENTS_CRITERIA.map(([id, t]) => `- **${id}** ${t}`).join('\n')}\n`);
+  const write = async (phrase) => {
+    const slices = join(dir, `${phrase.length}.json`);
+    await runMock({ cwd: dir, systemPrompt: '', onEvent: () => {},
+      prompt: `${markers({ MOCK_ROLE: 'planner-plan', MOCK_BASE: 'demo', MOCK_OUT: join(dir, 'plan.md'), MOCK_SLICES: slices, MOCK_REQUIREMENTS: req })}\n${phrase}` });
+    return JSON.parse(await readFile(slices, 'utf8'));
+  };
+  const two = await write('plan this in slices');
+  assert.deepEqual(two.slices.map((s) => s.requirements), [['R-po-1', 'R-po-2', 'R-arch-1', 'R-ux-1'], ['R-qa-1', 'R-sec-1', 'R-sec-2']]);
+  assert.deepEqual(two.leftOut, [{ id: 'R-ops-1', reason: 'Moved to a later feature' }]);
+  const three = await write('Please plan this in 3 slices.');
+  assert.deepEqual(three.slices.map((s) => s.requirements), [['R-po-1', 'R-po-2', 'R-arch-1'], ['R-ux-1', 'R-qa-1'], ['R-sec-1', 'R-sec-2']]);
+  assert.deepEqual(three.leftOut, [{ id: 'R-ops-1', reason: 'Moved to a later feature' }]);
+  assert.deepEqual({ ...two, slices: two.slices.map(({ requirements, ...s }) => s), leftOut: undefined }, { ...MOCK_OUTLINE, leftOut: undefined });
+});

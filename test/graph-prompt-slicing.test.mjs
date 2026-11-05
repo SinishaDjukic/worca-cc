@@ -131,3 +131,14 @@ test('byte identity: the planner and refiner without the fields are unchanged', 
     );
   }
 });
+
+test('the slicing block asks for requirements and leftOut only when requirements is set', () => {
+  const plain = buildAgentPrompt({ ...ctxFor('planner'), shapeSlicing: { file: FILE } });
+  const req = buildAgentPrompt({ ...ctxFor('planner'), shapeSlicing: { file: FILE, requirements: true } });
+  assert.equal(plain.includes('"leftOut"'), false);
+  assert.equal(plain.includes('"requirements": ["R-po-1"]'), false);
+  assert.ok(req.includes('"requirements": ["R-po-1"]'));
+  assert.ok(req.includes('"leftOut": [{"id": "R-ops-1", "reason": "…"}]'));
+  assert.ok(req.includes('Cut the slices by the agreed requirements in your requirements input'));
+  assert.equal(buildAgentPrompt({ ...ctxFor('planner'), shapeSlicing: { file: FILE, requirements: false } }), plain);
+});

@@ -120,7 +120,7 @@ export function groupPrList(row) {
 
 /**
  * Paint (idempotent). `view`: { row (groupRow output), project, tab, overview:boolean, logs:boolean, labels: [] (the
- * members' labels) }.
+ * members' labels), unmarked?: number (a feature's unmarked requirements: its Create PR is locked) }.
  * `deps`: { onAction(id, btn), onTab(tab), onMore(anchor), mountQuestion(slot, member|null), answerLabel?(), mountOverview(host),
  * mountDecisions(host, row), logsHref(member), labelChip(doc, label), paintHead?(acts, slot, head) } — paintHead paints
  * groupHead's head (Create PR, View PR ▾, View PRs ▾) into the card head; without it the slot stays hidden.
@@ -166,7 +166,7 @@ export function paintGroupPage(root, view, deps) {
     disable: { 'ask-changes': "Ask for changes from the run's chat" }, labels: { answer: deps.answerLabel ? deps.answerLabel() : '' } });
   if (deps.paintHead) {
     deps.paintHead(root.querySelector('.gpage-card .rd-head-acts'), root.querySelector('.gpage-card .rd-pr-slot'),
-      groupHead({ state: m.state, prs: groupPrList(row) }));
+      groupHead({ state: m.state, prs: groupPrList(row), unmarked: view.unmarked || 0 }));
   }
   const offered = (id) => (id !== 'overview' || !!view.overview) && (id !== 'logs' || !!view.logs);
   const tab = GROUP_TABS.some(([id]) => id === view.tab) && offered(view.tab) ? view.tab : 'runs';

@@ -6,7 +6,7 @@ import {
   emptySpec, featureId, parseFeatureSeq, normalizeSection, RequirementsError, LIMITS,
 } from '../src/core/requirements/spec.mjs';
 import {
-  createFeature, getFeature, requireFeature, listFeatures, updateFeature, addFeatureCost,
+  createFeature, getFeature, requireFeature, listFeatures, updateFeature, addFeatureCost, setEarlyStartReason,
   appendTurn, listTurns, getContext, setContext,
   createStart, listStarts, latestStart, startByRunId, linkPipeline, recentLookCosts,
   getBrief, usableBrief, listBriefs, listMakingBriefs, beginBrief, saveBriefResult, failBrief, setBriefSections,
@@ -62,6 +62,18 @@ test('create, read, list, update; validation errors are BAD_REQUEST', () => {
     assert.throws(() => createFeature(bad), (e) => e.code === 'BAD_REQUEST', JSON.stringify(bad).slice(0, 60));
   }
   assert.throws(() => updateFeature(a.seq, { status: 'weird' }));
+});
+
+test('earlyStartReason: null by default, set and cleared without touching updatedAt/updatedBy', () => {
+  const f = createFeature({ scopeType: 'project', scopeKey: 'shop-1234abcd', title: 'Reason', description: 'd' }, { by: 'po' });
+  assert.equal(f.earlyStartReason, null);
+  setEarlyStartReason(f.seq, 'Demo on Friday');
+  const g = getFeature(f.seq);
+  assert.equal(g.earlyStartReason, 'Demo on Friday');
+  assert.equal(g.updatedAt, f.updatedAt);
+  assert.equal(g.updatedBy, 'po');
+  setEarlyStartReason(f.seq, null);
+  assert.equal(getFeature(f.seq).earlyStartReason, null);
 });
 
 test('turns are append-only and ordered', () => {

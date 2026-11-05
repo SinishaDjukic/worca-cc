@@ -70,8 +70,11 @@ export function featureCardModel({ own = null, card = null, snapOf = () => null 
   const watched = slices.find((s) => s.watch);
   const lastFix = watched ? [...(watched.rounds || [])].reverse().find((r) => r.by === 'watch') : null;
   const wText = watched ? watchStoppedText(watched.watch, lastFix ? lastFix.kinds : []) : null;
+  // The slice rows' Requirements folds: each reviewed slice's check, keyed as renderMemberRows keys a member.
+  const requirementChecks = Object.fromEntries(slices.filter((s) => s.requirements && s.requirements.check && (s.pipelineId || s.ticketId))
+    .map((s) => [s.pipelineId || s.ticketId, s.requirements.check]));
   return { phase: 'feature',
-    log: view.log || [], step, controls: controlsOf(view, cur, m),
+    log: view.log || [], step, controls: controlsOf(view, cur, m), requirementChecks,
     notesLine: ideas ? `${ideas} ${ideas === 1 ? 'idea' : 'ideas'} saved for the next checkpoint` : null,
     watch: wText ? { text: wText, prUrl: watched.watch.prUrl || null } : null };
 }

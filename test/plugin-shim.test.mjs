@@ -453,7 +453,7 @@ test('WORCA_MOCK=1 short-circuits without spawning (plugin need not exist)', asy
     const got = await callSource({ plugin: 'not-installed', sourceId: 'x', op: 'getTask', args: { id: 'T-42' } });
     assert.equal(got.id, 'T-42');
     assert.ok(typeof got.body === 'string' && got.body.length > 0);
-    assert.deepEqual(await callSource({ plugin: 'x', sourceId: 'x', op: 'reportResult', args: { id: 'T-42', status: 'completed', summary: 's' } }), { ok: true });
+    assert.deepEqual(await callSource({ plugin: 'x', sourceId: 'x', op: 'reportResult', args: { id: 'T-42', status: 'completed', summary: 's' } }), { moved: null, note: '' });
     assert.deepEqual(await callSource({ plugin: 'x', sourceId: 'x', op: 'validateConfig' }), { ok: true });
     // Test override wins over the default…
     setMockSourceResponses({ listTasks: { tasks: [{ id: 'T-override', title: 't', state: 'open', updatedAt: 'now' }] } });
@@ -462,8 +462,8 @@ test('WORCA_MOCK=1 short-circuits without spawning (plugin need not exist)', asy
     // …and an op with NO canned response mirrors the real child's kind
     // 'unimplemented' (the capabilities tolerant-default keys on it).
     await rejectsKind(callSource({ plugin: 'x', sourceId: 'x', op: 'noSuchOp' }), 'unimplemented');
-    // A6: capabilities has a canned answer now: write-back stays on, and the mock source can export.
-    assert.deepEqual(await callSource({ plugin: 'x', sourceId: 'x', op: 'capabilities', args: { inputs: {} } }), { writeBack: true, export: true });
+    // A6: capabilities has a canned answer now: write-back stays on, and the mock source can export; Ticket updates (D17) too.
+    assert.deepEqual(await callSource({ plugin: 'x', sourceId: 'x', op: 'capabilities', args: { inputs: {} } }), { writeBack: true, export: true, ticketUpdates: true });
     // A map entry set to undefined still means "no canned response" (writeback.test.mjs keeps the missing-op default that way).
     setMockSourceResponses({ capabilities: undefined });
     await rejectsKind(callSource({ plugin: 'x', sourceId: 'x', op: 'capabilities' }), 'unimplemented');
@@ -474,6 +474,37 @@ test('WORCA_MOCK=1 short-circuits without spawning (plugin need not exist)', asy
       callSource({ plugin: NAME, sourceId: 'prof', op: 'listTasks' }),
       'plugin', /per-profile configuration/,
     );
+  } finally {
+    delete process.env.WORCA_MOCK;
+    setMockSourceResponses(null);
+  }
+});
+
+test('WORCA_MOCK=1: the Ticket updates answers (plans/ticket-updates-design.md D17)', async () => {
+  process.env.WORCA_MOCK = '1';
+  const call = (op, args) => callSource({ plugin: 'not-installed', sourceId: 'x', op, args });
+  try {
+    setMockSourceResponses(null);
+    assert.deepEqual((await call('listProjects', {})).map((p) => [p.value, p.label, p.name]), [
+      ['SHOP', 'Shop (SHOP)', 'Shop'], ['CRM', 'Customer portal (CRM)', 'Customer portal'], ['OPS', 'Operations (OPS)', 'Operations'],
+      ['SUP', 'Support desk (SUP)', 'Support desk'], ['MKT', 'Marketing site (MKT)', 'Marketing site'], ['DATA', 'Data platform (DATA)', 'Data platform']]);
+    const crm = await call('listStatuses', { project: 'CRM' });
+    assert.deepEqual(crm.map((s) => [s.label, s.category]), [['Done', 'done'], ['Released', 'done'], ['In Progress', 'in_progress'],
+      ['Waiting for customer', 'in_progress'], ['Open', 'todo'], ["Won't Fix", 'cancelled']]);
+    assert.deepEqual((await call('listStatuses', { project: 'SHOP' })).map((s) => s.label).slice(0, 3), ['Done', 'Released', 'Resolved']);
+    assert.equal((await call('listStatuses', { project: 'SHOP' })).find((s) => s.label === 'Resolved').value, '10012');
+    assert.deepEqual(await call('legacyMove', {}), { field: 'transitionOnComplete', target: null });
+    assert.deepEqual(await call('reportResult', { id: 'SHOP-7', status: 'completed', move: { category: 'done' } }),
+      { moved: { from: 'In Progress', to: 'Done' }, note: 'Moved to Done.' });
+    assert.deepEqual(await call('reportResult', { id: 'SHOP-7', status: 'completed', move: { status: '10012', name: 'Resolved' } }),
+      { moved: { from: 'In Progress', to: 'Resolved' }, note: 'Moved to Resolved.' });
+    assert.deepEqual(await call('reportResult', { id: 'SHOP-7', status: 'completed', move: { status: 'Resolve' } }),
+      { moved: { from: 'In Progress', to: 'Resolve' }, note: 'Moved to Resolve.' }, 'typed: its own text');
+    assert.deepEqual(await call('reportResult', { id: 'SHOP-7', status: 'completed', move: { none: true } }), { moved: null, note: '' });
+    assert.deepEqual(await call('reportResult', { id: 'SHOP-7', status: 'completed' }), { moved: null, note: '' });
+    assert.deepEqual(JSON.parse(readPluginState('not-installed').lastReport).move, undefined, 'lastReport still records the args');
+    await call('reportResult', { id: 'SHOP-8', status: 'completed', move: { category: 'done' } });
+    assert.deepEqual(JSON.parse(readPluginState('not-installed').lastReport).move, { category: 'done' });
   } finally {
     delete process.env.WORCA_MOCK;
     setMockSourceResponses(null);

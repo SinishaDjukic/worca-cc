@@ -20,6 +20,8 @@ import { EFFORTS, CODEX_EFFORTS, ALL_EFFORTS, MODEL_ENGINES, COPILOT_MODEL_PREFI
 import { findBridgedEntry, providerReadiness } from './bridge/registry.mjs';
 import { engineLabel } from '../shared/engine-switch.mjs';
 import { normaliseTags } from '../shared/run-tags.mjs';
+import { cleanPick } from '../shared/graph/role-slots.mjs';
+import { ROLE_KEY_RE } from '../shared/graph/role-review-step.mjs';
 import { connectionOf, harnessesOf, runsOn, harnessesLabel, effortsOn } from '../shared/connections.mjs';
 import { bridgeBaseUrl, bridgeSecret } from './bridge/server.mjs';
 import { listGlobalModels, addGlobalModel, removeGlobalModel, hideBuiltinModels, readSettings, memoryDefragModel, setMemoryDefragModel, modelRolesSetting } from './settings.mjs';
@@ -1146,6 +1148,51 @@ function cleanNodeSel(selection) {
   };
 }
 
+/** A stored `roles` column as `{ key: { model?, effort? } }`, or null (none, unparseable JSON, nothing usable). */
+function storedRolePicks(text) {
+  if (typeof text !== 'string' || !text) return null;
+  let raw;
+  try { raw = JSON.parse(text); } catch { return null; }
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const out = {};
+  for (const [k, v] of Object.entries(raw)) {
+    const pick = ROLE_KEY_RE.test(k) ? cleanPick(v) : null;
+    if (pick) out[k] = pick;
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+/** A node or role pick checked against the effective catalog (setStep's rules). */
+function assertCatalogPick(model, effort, models) {
+  const entry = model ? models.find((m) => m.id === model) : null;
+  if (model && !entry) throw new Error(`unknown model "${model}"`);
+  if (effort) {
+    if (!ALL_EFFORTS.includes(effort)) throw new Error(`unknown effort "${effort}"`);
+    if (!entry) throw new Error('select a model before choosing an effort');
+    if (!entry.efforts.includes(effort)) {
+      throw new Error(`model "${model}" does not support effort "${effort}"`);
+    }
+  }
+}
+
+const MAX_ROLE_PICKS = 12;
+
+/** `selection.roles` of setNodeModel, checked and cleaned: `{ key: { model?, effort? } }` (blank picks dropped). */
+function cleanRolePicks(raw, models) {
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('roles must be an object keyed by role');
+  const keys = Object.keys(raw);
+  if (keys.length > MAX_ROLE_PICKS) throw new Error(`roles names more than ${MAX_ROLE_PICKS} roles`);
+  const out = {};
+  for (const k of keys) {
+    if (!ROLE_KEY_RE.test(k)) throw new Error(`role key ${JSON.stringify(k.slice(0, 64))} must be 1–24 lowercase letters`);
+    const pick = cleanPick(raw[k]);
+    if (!pick) continue;
+    assertCatalogPick(pick.model || '', pick.effort || '', models);
+    out[k] = pick;
+  }
+  return out;
+}
+
 /**
  * Rebuild the nested workflows map { [workflowId]: { nodes, feedbacks } } from the
  * normalized config_workflow_nodes + config_workflow_feedbacks rows for a project.
@@ -1166,7 +1213,7 @@ function readWorkflowsMap(key) {
     return workflows[wf];
   };
   for (const r of prepare(
-    'SELECT workflow_id, node_id, model, effort, fan_out, ask_questions, subagent_model FROM config_workflow_nodes WHERE project_key = ?'
+    'SELECT workflow_id, node_id, model, effort, fan_out, ask_questions, subagent_model, roles FROM config_workflow_nodes WHERE project_key = ?'
   ).all(key)) {
     const sel = {};
     if (r.model) sel.model = r.model;
@@ -1174,6 +1221,8 @@ function readWorkflowsMap(key) {
     if (isSubagentModelValue(r.subagent_model)) sel.subagentModel = r.subagent_model;
     if (r.fan_out !== null && r.fan_out !== undefined) sel.fanOut = !!r.fan_out;
     if (r.ask_questions !== null && r.ask_questions !== undefined) sel.askQuestions = !!r.ask_questions;
+    const roles = storedRolePicks(r.roles);
+    if (roles) sel.roles = roles;
     // Only attach a node entry that carries something (matches cleanNodeSel output).
     if (Object.keys(sel).length) ensure(r.workflow_id).nodes[r.node_id] = sel;
   }
@@ -1253,15 +1302,8 @@ export async function setNodeModel(projectDir, workflowId, nodeId, selection = {
   const model = typeof selection.model === 'string' ? selection.model.trim() : '';
   const effort = typeof selection.effort === 'string' ? selection.effort.trim() : '';
   const models = await listModels(projectDir);
-  const entry = model ? models.find((m) => m.id === model) : null;
-  if (model && !entry) throw new Error(`unknown model "${model}"`);
-  if (effort) {
-    if (!ALL_EFFORTS.includes(effort)) throw new Error(`unknown effort "${effort}"`);
-    if (!entry) throw new Error('select a model before choosing an effort');
-    if (!entry.efforts.includes(effort)) {
-      throw new Error(`model "${model}" does not support effort "${effort}"`);
-    }
-  }
+  assertCatalogPick(model, effort, models);
+  const roles = selection.roles === undefined ? undefined : cleanRolePicks(selection.roles, models);
 
   {
     const issue = subagentModelIssue(selection.subagentModel);
@@ -1271,7 +1313,7 @@ export async function setNodeModel(projectDir, workflowId, nodeId, selection = {
   const key = projectKey(projectDir);
   getDb();
   const prev = prepare(
-    'SELECT fan_out, ask_questions, subagent_model FROM config_workflow_nodes WHERE project_key = ? AND workflow_id = ? AND node_id = ?'
+    'SELECT fan_out, ask_questions, subagent_model, roles FROM config_workflow_nodes WHERE project_key = ? AND workflow_id = ? AND node_id = ?'
   ).get(key, workflowId, nodeId);
   const prevFanOut = prev && prev.fan_out !== null && prev.fan_out !== undefined ? !!prev.fan_out : undefined;
   const fanOut = inheritOr(selection.fanOut, prevFanOut);
@@ -1279,28 +1321,31 @@ export async function setNodeModel(projectDir, workflowId, nodeId, selection = {
   const askQuestions = inheritOr(selection.askQuestions, prevAsk);
   const subagentModel = inheritOrSubagentModel(selection.subagentModel, prev && prev.subagent_model);
   const sel = cleanNodeSel({ model: selection.model, effort: selection.effort, subagentModel, fanOut, askQuestions });
+  // Role picks are inherited when omitted; an empty map clears them. A row holding only role picks is kept.
+  const rolesJson = roles === undefined ? (prev?.roles ?? null) : (Object.keys(roles).length ? JSON.stringify(roles) : null);
 
   tx(() => {
-    if (!sel) {
+    if (!sel && !rolesJson) {
       prepare(
         'DELETE FROM config_workflow_nodes WHERE project_key = ? AND workflow_id = ? AND node_id = ?'
       ).run(key, workflowId, nodeId);
       return;
     }
     prepare(`
-      INSERT INTO config_workflow_nodes (project_key, workflow_id, node_id, model, effort, fan_out, ask_questions, subagent_model)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO config_workflow_nodes (project_key, workflow_id, node_id, model, effort, fan_out, ask_questions, subagent_model, roles)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(project_key, workflow_id, node_id)
       DO UPDATE SET model = excluded.model, effort = excluded.effort,
                     fan_out = excluded.fan_out, ask_questions = excluded.ask_questions,
-                    subagent_model = excluded.subagent_model
+                    subagent_model = excluded.subagent_model, roles = excluded.roles
     `).run(
       key, workflowId, nodeId,
-      sel.model ?? null,
-      sel.effort ?? null,
-      sel.fanOut === undefined ? null : (sel.fanOut ? 1 : 0),
-      sel.askQuestions === undefined ? null : (sel.askQuestions ? 1 : 0),
-      sel.subagentModel ?? null,
+      sel?.model ?? null,
+      sel?.effort ?? null,
+      sel?.fanOut === undefined ? null : (sel.fanOut ? 1 : 0),
+      sel?.askQuestions === undefined ? null : (sel.askQuestions ? 1 : 0),
+      sel?.subagentModel ?? null,
+      rolesJson,
     );
   });
 }
