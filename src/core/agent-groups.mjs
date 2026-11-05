@@ -123,3 +123,19 @@ export async function reapAgentGroups({ dir, ownerPid = process.pid, bootId = cu
   }
   return { reaped, files };
 }
+
+/**
+ * The server boot's step (bootMaintenance): reap, and say so when anything was stopped. Never throws.
+ * Kept here, not in ui/server.mjs, which holds its size-cap ceiling (tools/split-by-feature/size-caps.json).
+ * @param {{home: () => string, log?: (m:string) => void, error?: (m:string) => void}} o plus reapAgentGroups' options
+ */
+export async function reapAgentGroupsAtBoot({ home, log = console.log, error = console.error, ...opts }) {
+  try {
+    const r = await reapAgentGroups({ dir: agentGroupsDir(home()), ...opts });
+    if (r.reaped) log(`[worca-ui] stopped ${r.reaped} orphaned agent process group(s) left by a process that was killed`);
+    return r;
+  } catch (err) {
+    error(`[worca-ui] agent process-group sweep failed: ${err?.message || err}`);
+    return { reaped: 0, files: 0 };
+  }
+}

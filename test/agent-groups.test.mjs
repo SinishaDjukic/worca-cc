@@ -2,15 +2,32 @@
 // group is recorded in a per-owner file and the next server boot reaps the ones a dead owner left.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, readFileSync, existsSync, readdirSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { createGroupTracker, reapAgentGroups, agentGroupsDir, processStartTicks } from '../src/core/agent-groups.mjs';
+import { createGroupTracker, reapAgentGroups, reapAgentGroupsAtBoot, agentGroupsDir, processStartTicks } from '../src/core/agent-groups.mjs';
 
 const fresh = () => mkdtempSync(join(tmpdir(), 'agent-groups-'));
 const DEAD = 999999;
+
+test('reapAgentGroupsAtBoot logs one line when it stopped groups, nothing otherwise, and never throws', async () => {
+  const home = fresh();
+  const logs = [];
+  const errs = [];
+  const io = { log: (m) => logs.push(m), error: (m) => errs.push(m), isAlive: (pid) => pid !== DEAD, isGroupLeader: async () => true, kill: () => {} };
+  assert.deepEqual(await reapAgentGroupsAtBoot({ home: () => home, ...io }), { reaped: 0, files: 0 });
+  assert.deepEqual(logs, []);
+  const dir = agentGroupsDir(home);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, `${DEAD}.json`), JSON.stringify([{ pgid: 111, ownerPid: DEAD }, { pgid: 222, ownerPid: DEAD }]));
+  assert.deepEqual(await reapAgentGroupsAtBoot({ home: () => home, ...io }), { reaped: 2, files: 1 });
+  assert.deepEqual(logs, ['[worca-ui] stopped 2 orphaned agent process group(s) left by a process that was killed']);
+  const r = await reapAgentGroupsAtBoot({ home: () => { throw new Error('no home'); }, ...io });
+  assert.deepEqual(r, { reaped: 0, files: 0 });
+  assert.match(errs.join('\n'), /agent process-group sweep failed: no home/);
+});
 
 test('agentGroupsDir lives under the worca home, apart from the custom agents folder', () => {
   assert.equal(agentGroupsDir(join('h', 'home')), join('h', 'home', 'agent-groups'));
