@@ -119,7 +119,7 @@ and pinned routes). See [split-by-feature.md](split-by-feature.md).
 | `ui/public/runs/welcome.html` | 103 |
 | `ui/public/runs/workflow-question.css` | 70 |
 | `ui/routes/runs/artifacts.mjs` | 184 |
-| `ui/routes/runs/checkout-and-actions.mjs` | 479 |
+| `ui/routes/runs/checkout-and-actions.mjs` | 556 |
 | `ui/routes/runs/control.mjs` | 225 |
 | `ui/routes/runs/drain-and-budget.mjs` | 31 |
 | `ui/routes/runs/folder-apply.mjs` | 90 |
@@ -392,7 +392,8 @@ and pinned routes). See [split-by-feature.md](split-by-feature.md).
 
 | File | Lines |
 |---|---|
-| `ui/public/actions/actions-run.css` | 122 |
+| `ui/public/actions/actions-run.css` | 121 |
+| `ui/public/actions/actions-workspace.css` | 63 |
 | `ui/routes/actions/launchers.mjs` | 72 |
 
 ## run-presets ([run-presets.md](run-presets.md))
