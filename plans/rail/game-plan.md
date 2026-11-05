@@ -3,17 +3,21 @@
 Bundled 5 Nov 2026. The goal: the library, the tokens and the design system lead, and Worca is built from them. This
 file is the one place for where Rail stands and what comes next; the details live in the files it names.
 
-## 1. Two versions of everything: Accepted and Shaping
+## 1. Three steps for everything: Shaping, Agreed, Accepted
 
-| | Accepted | Shaping |
-|---|---|---|
-| Where | what is merged on `dev` | one long-lived branch, `docs/rail-shaping`, rebased on `dev` after every promotion |
-| Holds | only decided, validated work | every shape, like `dev` for ideas; each shape changes it |
-| Read by | Worca, the Shaper, the app's code, wave plans | shaping sessions |
+| | Shaping | Agreed | Accepted |
+|---|---|---|---|
+| Where | `docs/rail-shaping` | `docs/rail-agreed` | what is merged on `dev` |
+| Holds | ideas being shaped; every shape changes it | decided work waiting to be enrolled (handed to the Shaper) | built and merged work |
+| Read by | shaping sessions | the next enrollment | Worca, the Shaper, the app's code |
+
+An idea moves Shaping → Agreed when it is decided, and Agreed → Accepted when its Feature is built and merged. Shaping is
+always based on Agreed, and Agreed on `dev`; each is rebased after the step below it moves. Wave 1.5 is in Agreed, as it
+stands, to be enrolled as soon as Wave 1 completes.
 
 What lives where:
 
-| What | Accepted | Shaping |
+| What | Accepted | Shaping (and Agreed, once decided) |
 |---|---|---|
 | Rules (`docs/design-system.md`, later `docs/rail/`) | the rules that hold | proposed and changed rules, marked |
 | Catalog (`docs/design-system-catalog.json`) | what exists | proposed entries |
@@ -25,8 +29,8 @@ What lives where:
 | Mocks | only the mock that records a decision | every option, rejected ones too |
 | Artifacts | Prototype and Design System, generated from `dev` | Prototype · Shaping and Design System · Shaping, generated from the branch |
 
-- **Promotion:** one PR into `dev` per validated idea, carrying its page, rule, catalog entry, component and test, check,
-  plan and deciding mock together. Shaping is then rebased on `dev`.
+- **Promotion:** decided ideas move to Agreed; an enrolled Feature reaches `dev` as PRs, carrying its page, rule, catalog entry, component and test, check,
+  plan and deciding mock together. Agreed and Shaping are then rebased.
 - **Generated, never copied:** one publish script builds the four artifacts from their git refs.
 - **Setting it up** (after Wave 1, so nothing in it moves): the publish script; the two Shaping artifacts; the current
   Prototype and Design System artifacts regenerated from `dev` (cut back to what is merged).
@@ -48,7 +52,7 @@ The order and how every wave works are in `waves.md`. In short:
 | Wave | What |
 |---|---|
 | 1 | Run and group pages, Pulse, Settings, the shell (building) |
-| 1.5 | The design system holds: one concern one place (`docs/rail/`, rule ids, docs check); the row primitive (one rail, one end, the end-column rule); generated docs and artifacts; Accepted and Shaping set up; Wave 1's open decisions; the type (Inter) |
+| 1.5 | In Agreed, enrolled right after Wave 1. The design system holds: one concern one place (`docs/rail/`, rule ids, docs check); the row primitive (one rail, one end, the end-column rule); generated docs and artifacts; Accepted and Shaping set up; Wave 1's open decisions; the type (Inter) |
 | 2 | The daily loop: Runs list, New run, Chat and run cards, Ask worca, shaped toward Wave 6 so it is not redesigned twice |
 | 3 | Building blocks: Workflows, Requirements and features, Schedules, Projects, Workspaces |
 | 4 | Store and insight: Marketplace, Skills, Statistics, Team metrics, Usage and costs, C4 and graph, artifacts, diffs, terminal |
