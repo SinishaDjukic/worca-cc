@@ -2,6 +2,7 @@
 // (C §5: the run card's renderClarifyBody is run-bound). It uses the Runs page's ask-card grammar, which style.css
 // draws white under `:is(.rd-questions,.chat-rc-q)`: the heading outside the card with the `?` disc, one white
 // `.qblock` per question with keyed `.qopt` tiles, and the pill footer. Never an amber wash. Pure: DOM only through `doc`.
+import { wordsFor } from '../../../src/shared/answerer.mjs';
 
 const nonEmpty = (v) => typeof v === 'string' && v !== '';
 const isNode = (v) => !!v && typeof v === 'object' && typeof v.nodeType === 'number';
@@ -9,8 +10,9 @@ const isNode = (v) => !!v && typeof v === 'object' && typeof v.nodeType === 'num
 /** spec = { id, heading, questions: [{ id, text, why?, options: [{ value, label, chip?: Node, sub?: string }] }],
  *          submitLabel(picks: Map<qid,value>) -> string, onSubmit(picks: Map<qid,value>) -> void | Promise<void>,
  *          answered?: Map<qid,value> }   // answered: the card stays, its picks marked, nothing left to press (B9)
+ *  opts = { lead?, strip? }: the reader's lead perspective (src/shared/answerer.mjs wordsFor); none = the entry's words
  *  → { el, picks: () => Map, destroy: () => void } */
-export function buildChatQuestion(doc, spec) {
+export function buildChatQuestion(doc, spec, { lead = null, strip = false } = {}) {
   const h = (tag, cls, text) => {
     const n = doc.createElement(tag);
     if (cls) n.className = cls;
@@ -36,11 +38,12 @@ export function buildChatQuestion(doc, spec) {
     const block = h('div', 'qblock');
     block.dataset.q = q.id;
     const text = h('div', 'qtext');
-    text.append(h('span', 'qn', String(i + 1)), h('span', 'qtext-t', q.text));
+    const qText = wordsFor(q, 'text', lead, { strip });
+    text.append(h('span', 'qn', String(i + 1)), h('span', 'qtext-t', qText));
     if (nonEmpty(q.why)) text.appendChild(h('span', 'qwhy', q.why));
     const group = h('div', 'qopts');
     group.setAttribute('role', 'group');
-    group.setAttribute('aria-label', q.text);
+    group.setAttribute('aria-label', qText);
     const tiles = (Array.isArray(q.options) ? q.options : []).map((o, k) => {
       const btn = h('button', 'qopt');
       btn.type = 'button';
@@ -48,7 +51,7 @@ export function buildChatQuestion(doc, spec) {
       btn.dataset.value = o.value;
       btn.setAttribute('aria-pressed', 'false');
       const name = h('span', 'chat-q-opt-name');
-      name.appendChild(h('span', 'chat-q-opt-label', o.label));
+      name.appendChild(h('span', 'chat-q-opt-label', wordsFor(o, 'label', lead, { strip, n: k + 1 })));
       if (isNode(o.chip)) name.appendChild(o.chip);
       const txt = h('span', 'qopt-txt');
       txt.appendChild(name);

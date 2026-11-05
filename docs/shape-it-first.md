@@ -292,6 +292,65 @@ and is not retried.
 with their state. A sliced feature's row opens its card underneath. The tab shows
 only while Shaper is on.
 
+### Slices and code reviews carry the requirements
+
+Labs flag `shapeRequirements`. When a sliced run agreed its requirements first (the
+`R-po-1`, `R-ux-1`, … criteria), the outline cuts the runs by them:
+
+- **Satisfies.** Each run on the Split card lists the ids it delivers under its goal
+  (`Satisfies: R-po-1, R-ux-1`). The same line opens the run's task and its PR body,
+  under `Part of …`, and the one PR's body lists it under each run.
+- **Left out.** An id the Planner moved out of this feature shows on a `Left out:` line
+  with its reason. An id no run took fails the outline check's last row,
+  **Every agreed requirement is in one run or left out with a reason**. Approving anyway
+  is allowed: the id is then recorded as left out, "Not placed in a slice when the
+  outline was approved".
+- **The code review checks them.** The code review gains a **Requirements** role that
+  checks only that run's ids against the diff. An id the diff does not deliver is a
+  major finding (`R-ops-1 · not covered by the diff`), so the run goes back to the
+  implementer before you are asked to ship it. Once a run is reviewed, its row on the
+  feature card unfolds **Requirements 2/3 · 1 to fix**.
+
+Rollback: turn the flag off. Later runs of a feature then fire as plain Shaper runs;
+the Satisfies text in their task is only prose.
+
+### Requirement concerns
+
+Agreed requirements stay agreed. A plan reviewer that thinks one of them is itself wrong or cannot be met names it in
+its finding (`"requirement": "R-po-1"`). That finding does not send the plan back to the planner: no extra refine round
+runs for it. It rides the plan approval card as one note, **A reviewer says an agreed requirement is wrong or cannot be
+met:**, with one line per id and the role that raised it.
+
+- **Approve** keeps the requirement as agreed and builds the plan. The audit log reads
+  "Requirement concern overridden: R-po-1 kept as agreed."
+- **Ask for changes** sends your answer, with the concern, to the planner.
+- The concern stops the run even when "Approve each slice's plan" is off. Under `--yes` and in Away mode the plan is
+  approved and the requirement is kept.
+- Only a review of the plan raises a concern. A code review's or a requirements review's finding that names an id
+  blocks as before. Any workflow with a role review, a requirements input and a plan approval stop gets the same card.
+
+### Mark the requirements before the PR
+
+The Ship card lists every agreed requirement under **Requirements 3/4 · 1 to fix**, each with a **Met**, **Not met**
+and **Dropped** picker. Not met asks where it moved, Dropped asks why; a row counts as marked once its text is saved
+(Enter, or leaving the field). Nothing is marked for you: a row whose code review covered it says "covered by the
+diff". The chat card and the feature page save the same marks.
+
+While a row is unmarked, **Create PR** is not the main button and is disabled, and the card reads "Mark every
+requirement before you create the PR · 1 left". Worca checks the marks again when the PR is created, so a stale card
+is refused too. Once shipped, the card shows each requirement with its mark in words. A re-plan starts a new feature,
+and its marks start empty.
+
+### Changes after ship
+
+On a shipped feature with agreed requirements, **Ask for changes** updates the requirements first. The Changes card
+says so: "Requirements first: the 4 agreed requirements are updated before the plan." After Start, the run's first
+card is the requirements hold, with the agreed requirements and how each was marked; the plan approval comes after it.
+This holds for a round on the same PR and for a follow-up run after the PR merged.
+
+Rollback for all three: turn the flag off. Findings then block as before, the Ship card has no ledger and ships
+unmarked, and a Changes request runs as a plain round or follow-up. Saved marks stay stored, unread.
+
 ## Iterate in the chat (s5)
 
 Iterating is one action: say it in the chat. Every finished run card, finished feature card, Ship card (ready or

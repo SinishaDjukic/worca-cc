@@ -189,6 +189,15 @@ test('validatePlanAnswer: approve and stop are always ok', () => {
   assert.deepEqual(validatePlanAnswer({ decision: 'stop', feedback: 'ignored' }), { ok: true, payload: { decision: 'stop' } });
 });
 
+test('validatePlanAnswer: a failing criteria check refuses approve and admits revise and stop', () => {
+  const criteria = { ok: false, passed: 6, total: 8 };
+  assert.deepEqual(validatePlanAnswer({ decision: 'approve' }, { criteria, decisions: [] }),
+    { ok: false, errors: [{ path: 'decision', code: 'invalid', message: 'the requirements check has 2 to fix: ask for changes' }] });
+  assert.equal(validatePlanAnswer({ decision: 'stop' }, { criteria, decisions: [] }).ok, true);
+  assert.equal(validatePlanAnswer({ decision: 'revise', feedback: 'x' }, { revisable: true, criteria, decisions: [] }).ok, true);
+  assert.equal(validatePlanAnswer({ decision: 'approve' }, { criteria: { ok: true, passed: 8, total: 8 }, decisions: [] }).ok, true);
+});
+
 test('validatePlanAnswer: revise needs feedback and a revisable plan', () => {
   assert.equal(validatePlanAnswer({ decision: 'revise', feedback: 'x' }).ok, false, 'not revisable');
   const none = validatePlanAnswer({ decision: 'revise', feedback: '   ' }, { revisable: true });

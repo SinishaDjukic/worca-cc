@@ -354,3 +354,30 @@ test('run 4 D9: the approve-each switch is the shared switch', () => {
   const { $ } = setup();
   assert.equal($('.outline-approve-each input').getAttribute('role'), 'switch');
 });
+
+test('Satisfies line per slice, Left out line, the requirements check row; Merge unions, Remove moves ids to Left out', () => {
+  const agreed = ['R-po-1', 'R-ux-1', 'R-qa-1', 'R-ops-1', 'R-sec-1'].map((id) => ({ id, text: id }));
+  const outline = { ...OUTLINE, agreed,
+    slices: [slice('s1', { requirements: ['R-po-1', 'R-ux-1'] }), slice('s2', { dependsOn: ['s1'], requirements: ['R-qa-1'] }), slice('s3', { requirements: [] })],
+    leftOut: [{ id: 'R-sec-1', reason: 'Moved to a later feature' }, { id: 'R-ops-1', reason: '' }] };
+  const { $, $$ } = setup({ pq: ask({ outline }) });
+  const sat = () => $$('[data-kind="satisfies"]').map((n) => [n.closest('.outline-slice').dataset.slice, n.textContent, n.className]);
+  assert.deepEqual(sat(), [['s1', 'Satisfies: R-po-1, R-ux-1', 'outline-goal'], ['s2', 'Satisfies: R-qa-1', 'outline-goal']]);
+  const left = $('[data-kind="left-out"]');
+  assert.equal(left.className, 'outline-goal');
+  assert.equal(left.textContent, 'Left out: R-sec-1 — Moved to a later feature', 'an id not placed is the check row\'s');
+  const row = $$('.plan-check-row').at(-1);
+  assert.equal(row.classList.contains('ok'), false);
+  assert.equal(row.querySelector('.plan-check-detail').textContent, 'R-ops-1 is in no run');
+  assert.match($('.plan-check-line').textContent, /^Outline \d\/6 · \d to fix/);
+  rowMenu($$, 0).pick('Merge with next');
+  assert.deepEqual(sat(), [['s1', 'Satisfies: R-po-1, R-ux-1, R-qa-1', 'outline-goal']]);
+  rowMenu($$, 0).pick('Remove');
+  assert.deepEqual(sat(), []);
+  assert.equal($('[data-kind="left-out"]').textContent,
+    'Left out: R-sec-1 — Moved to a later feature; R-po-1 — Removed from the outline; R-ux-1 — Removed from the outline; R-qa-1 — Removed from the outline');
+  const plain = setup();
+  assert.equal(plain.$$('[data-kind="satisfies"]').length, 0);
+  assert.equal(plain.$('[data-kind="left-out"]').hidden, true);
+  assert.equal(plain.$$('.plan-check-row').length, 5);
+});

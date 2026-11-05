@@ -94,3 +94,23 @@ test('scan: the gate-another button is created only in ui/public/shape/step-card
   // D19: question-delegate.mjs keeps its DECISIONS map and Q_BUTTONS, which the run page's one delegate still uses.
   assert.deepEqual(hits(/(?<![.\w-])gate-another\b/), ['ui/public/question-delegate.mjs', 'ui/public/shape/step-card.mjs']);
 });
+
+// Shaper requirements s3 (D10): the ledger's item states. A marked item passes the count; not met keeps its ✕ and
+// dropped draws the `none` icon; an item's own ariaLabel names its mark.
+test('buildCheckRows: state dropped draws the none icon with aria-label dropped; not-met keeps the ✕; ariaLabel overrides', () => {
+  const ledger = { passed: 3, total: 4, items: [
+    { id: 'R-po-1', label: 'R-po-1 · Export', pass: true, ariaLabel: 'met' },
+    { id: 'R-sec-2', label: 'R-sec-2 · Sign · moved to Run 5', pass: true, state: 'not-met', ariaLabel: 'not met' },
+    { id: 'R-ux-1', label: 'R-ux-1 · Dark theme · out of budget', pass: true, state: 'dropped', ariaLabel: 'dropped' },
+    { id: 'R-ops-1', label: 'R-ops-1 · Alert', pass: false, ariaLabel: 'not marked', detail: 'covered by the diff' },
+  ] };
+  const rows = buildCheckRows(doc, ledger);
+  const mark = (r) => r.querySelector('.plan-check-mark');
+  assert.deepEqual(rows.map((r) => mark(r).getAttribute('aria-label')), ['met', 'not met', 'dropped', 'not marked']);
+  assert.deepEqual(rows.map((r) => r.classList.contains('ok')), [true, false, false, false]);
+  assert.equal(mark(rows[2]).innerHTML.includes('stroke-dasharray'), true, 'the none icon');
+  assert.equal(mark(rows[1]).innerHTML, mark(rows[3]).innerHTML, 'not met draws the same ✕ as unmarked');
+  assert.equal(rows[1].querySelector('.plan-check-detail'), null, 'a marked row carries no detail');
+  assert.equal(rows[3].querySelector('.plan-check-detail').textContent, 'covered by the diff');
+  assert.equal(buildCheckFold(doc, ledger, 'Requirements').line.textContent.replace('›', ''), 'Requirements 3/4 · 1 to fix');
+});

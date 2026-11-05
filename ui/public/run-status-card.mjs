@@ -9,6 +9,7 @@ import { fmtUsd } from './graph/run-decor.mjs';
 import { ACTION_LABEL } from '../../src/shared/run-model.mjs';
 import { icon } from './icons.mjs';
 import { CREATE_PR_LABEL } from './ship-words.mjs';
+import { buildCheckFold } from './shape/check-row.mjs';
 
 const BAR_STATES = new Set(['starting', 'working', 'needs-you', 'paused']);       // D20: the states the list draws a bar for
 const GROUP_ENDED = new Set(['ready', 'in-review', 'merged']);
@@ -215,8 +216,9 @@ export function memberStatusText(m) {
 
 /** D11, D13: a group's member rows (Planning first, unnumbered), the same table on the group page and the chat card
  *  (A13, spec §3.4): each row is title over status, then PR, cost and a quiet chevron, with the title link stretched
- *  over the row. */
-export function renderMemberRows(doc, row) {
+ *  over the row. `checks` (the chat card's feature) maps a member's key to its Requirements check: that row gets the
+ *  check's fold under its status line. */
+export function renderMemberRows(doc, row, { checks } = {}) {
   const ol = doc.createElement('ol');
   ol.className = 'run-members is-table';
   const items = [...(row.planning && row.planning.model ? [{ ...row.planning, isPlanning: true }] : []), ...(row.members || [])];
@@ -240,6 +242,8 @@ export function renderMemberRows(doc, row) {
     const num = textEl(doc, 'span', 'run-member-num', unnumbered ? '' : String(mb.position));
     const main = textEl(doc, 'span', 'run-member-main', '');
     main.append(title, line);
+    const check = checks && !mb.isPlanning ? checks[mb.pipelineId || mb.ticketId] : null;
+    if (check) { const f = buildCheckFold(doc, check, 'Requirements'); main.append(f.line, f.rows); }
     const go = doc.createElement('span');
     go.className = 'run-member-go';
     go.setAttribute('aria-hidden', 'true');

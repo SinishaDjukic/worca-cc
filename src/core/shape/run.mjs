@@ -1,14 +1,20 @@
 // src/core/shape/run.mjs — shaped-run helpers: the POST /api/run `shape` field and the plan answer (spec D2, D9).
 import { isAbsolute } from 'node:path';
-import { SHAPE_WORKFLOW_ID, SHAPE_UX_WORKFLOW_ID } from '../graph/builtin-workflows.mjs';
+import {
+  SHAPE_WORKFLOW_ID, SHAPE_UX_WORKFLOW_ID, SHAPE_REQ_WORKFLOW_ID, SHAPE_UX_REQ_WORKFLOW_ID, SHAPE_REQ_WORKFLOW_IDS,
+  SHAPE_SLICE_REQ_WORKFLOW_ID, SHAPE_UX_SLICE_REQ_WORKFLOW_ID, SHAPE_SLICE_REQ_WORKFLOW_IDS,
+} from '../graph/builtin-workflows.mjs';
+import { shapeRequirementsEligible } from '../../shared/shape/requirements.mjs';
+import { isAnswererLead, ANSWERER_LEAD_KEYS } from '../../shared/answerer.mjs';
 import { normalizePerspectives, DEFAULT_PERSPECTIVES } from '../../shared/shape/perspectives.mjs';
-import { normalizeOutline, normalizeEdits, applyOutlineEdits } from '../../shared/shape/slices.mjs';
+import { normalizeOutline, normalizeEdits, applyOutlineEdits, sliceRequirementIds } from '../../shared/shape/slices.mjs';
 import { normalizePicks } from '../../shared/review/findings.mjs';
+import { validateDecisionPicks } from '../../shared/review/decisions.mjs';
 
 export const PLAN_ASK_KIND = 'plan';
 export const PLAN_FEEDBACK_MAX = 8000;
-const SHAPE_FIELDS = new Set(['perspectives', 'slices', 'size']);
-const SHAPE_INTERNAL_FIELDS = new Set(['slice', 'replaces']);   // only a fired slice ticket / a re-plan run carries these
+const SHAPE_FIELDS = new Set(['perspectives', 'slices', 'size', 'lead']);
+const SHAPE_INTERNAL_FIELDS = new Set(['slice', 'replaces', 'requirementsFirst']);   // only a fired slice ticket / a re-plan run / a Changes follow-up carries these
 const SLICES_MODES = new Set(['auto', 'off']);
 const SIZES = new Set(['small', 'medium', 'large']);
 
@@ -22,15 +28,18 @@ function normalizeSliceRef(raw) {
   return { feature, index, total, outline: o.outline };
 }
 
-export const isShapeWorkflowId = (id) => id === SHAPE_WORKFLOW_ID || id === SHAPE_UX_WORKFLOW_ID;
+export const isShapeWorkflowId = (id) => id === SHAPE_WORKFLOW_ID || id === SHAPE_UX_WORKFLOW_ID || SHAPE_REQ_WORKFLOW_IDS.includes(id)
+  || SHAPE_SLICE_REQ_WORKFLOW_IDS.includes(id);
 
 /**
  * The `shape` field and workflow of a run request. A shaped run always runs wf_shape — wf_shape_ux when UX is a
- * perspective.
+ * perspective — or, with `requirementsOn` (Labs flag shapeRequirements) for a medium or large task that is not a slice
+ * ticket, its requirements variant. A request that names a requirements id it cannot take is refused, never downgraded.
+ * `shape.lead` is the person's lead perspective; it joins the perspectives when missing.
  * `internal` (a fired ticket) also admits the `slice` and `replaces` fields.
  * @returns {{ok:true, shape:null|{perspectives:string[], slices?:string, size?:string, slice?:object, replaces?:string}, workflowId:string|null}|{ok:false, error:string}}
  */
-export function resolveShapeRequest({ shape, workflowId }, { internal = false } = {}) {
+export function resolveShapeRequest({ shape, workflowId }, { internal = false, requirementsOn = false } = {}) {
   const named = typeof workflowId === 'string' && workflowId.trim() ? workflowId.trim() : null;
   if (shape === undefined && !isShapeWorkflowId(named)) return { ok: true, shape: null, workflowId: named };
   if (shape !== undefined && (shape === null || typeof shape !== 'object' || Array.isArray(shape))) {
@@ -42,7 +51,11 @@ export function resolveShapeRequest({ shape, workflowId }, { internal = false } 
   if (named && !isShapeWorkflowId(named)) {
     return { ok: false, error: `a shaped run uses the Shaper workflow (${SHAPE_WORKFLOW_ID}), not "${named}"` };
   }
-  const p = normalizePerspectives(shape?.perspectives ?? [...DEFAULT_PERSPECTIVES]);
+  if (shape?.lead !== undefined && !isAnswererLead(shape.lead)) {
+    return { ok: false, error: `shape.lead must be one of ${ANSWERER_LEAD_KEYS.join(', ')}` };
+  }
+  const askedP = shape?.perspectives ?? [...DEFAULT_PERSPECTIVES];
+  const p = normalizePerspectives(shape?.lead && Array.isArray(askedP) ? [...askedP, shape.lead] : askedP);
   if (!p.ok) return { ok: false, error: p.error };
   if (shape?.slices !== undefined && !SLICES_MODES.has(shape.slices)) return { ok: false, error: 'shape.slices must be "auto" or "off"' };
   if (shape?.size !== undefined && !SIZES.has(shape.size)) return { ok: false, error: 'shape.size must be small, medium or large' };
@@ -54,28 +67,59 @@ export function resolveShapeRequest({ shape, workflowId }, { internal = false } 
   if (shape?.replaces !== undefined && (typeof shape.replaces !== 'string' || !shape.replaces)) {
     return { ok: false, error: 'shape.replaces must be a feature id' };
   }
+  if (shape?.requirementsFirst !== undefined && shape.requirementsFirst !== true) {
+    return { ok: false, error: 'shape.requirementsFirst must be true' };
+  }
+  const resolved = {
+    perspectives: p.perspectives,
+    ...(shape?.slices !== undefined ? { slices: shape.slices } : {}),
+    ...(shape?.size !== undefined ? { size: shape.size } : {}),
+    ...(shape?.lead !== undefined ? { lead: shape.lead } : {}),
+    ...(slice ? { slice } : {}),
+    ...(shape?.replaces !== undefined ? { replaces: shape.replaces } : {}),
+    ...(shape?.requirementsFirst === true ? { requirementsFirst: true } : {}),
+  };
+  const ux = p.perspectives.includes('ux');
+  if (SHAPE_REQ_WORKFLOW_IDS.includes(named)) {
+    if (!requirementsOn) return { ok: false, error: 'the requirements stage is off (Labs flag shapeRequirements)' };
+    if (resolved.slice && !resolved.requirementsFirst) return { ok: false, error: `a slice ticket runs the Shaper workflow (${SHAPE_WORKFLOW_ID})` };
+    if (!shapeRequirementsEligible(resolved, true)) return { ok: false, error: 'the requirements stage needs a medium or large task' };
+  }
+  // A slice of a feature with agreed requirements runs the slice variant, chosen when its ticket fires: the flag off
+  // picks plain wf_shape (the rollback), whatever the stored request named.
+  const sliceIds = resolved.slice ? sliceRequirementIds(resolved.slice) : [];
+  if (SHAPE_SLICE_REQ_WORKFLOW_IDS.includes(named) && !sliceIds.length) {
+    return { ok: false, error: `${named} runs only as a slice of a feature with agreed requirements` };
+  }
+  const req = shapeRequirementsEligible(resolved, requirementsOn);
+  // s3 (D13): a requirements-first Changes run updates the requirements before it plans, a slice included.
+  const sliceReq = requirementsOn && sliceIds.length > 0 && !resolved.requirementsFirst;
   return {
     ok: true,
-    shape: {
-      perspectives: p.perspectives,
-      ...(shape?.slices !== undefined ? { slices: shape.slices } : {}),
-      ...(shape?.size !== undefined ? { size: shape.size } : {}),
-      ...(slice ? { slice } : {}),
-      ...(shape?.replaces !== undefined ? { replaces: shape.replaces } : {}),
-    },
-    workflowId: p.perspectives.includes('ux') ? SHAPE_UX_WORKFLOW_ID : SHAPE_WORKFLOW_ID,
+    shape: resolved,
+    workflowId: sliceReq ? (ux ? SHAPE_UX_SLICE_REQ_WORKFLOW_ID : SHAPE_SLICE_REQ_WORKFLOW_ID)
+      : req ? (ux ? SHAPE_UX_REQ_WORKFLOW_ID : SHAPE_REQ_WORKFLOW_ID) : (ux ? SHAPE_UX_WORKFLOW_ID : SHAPE_WORKFLOW_ID),
   };
 }
 
 /** The `plan` ask's validator (RunHarness.answer → 422 on {ok:false}). `conflicts` are the asked round's conflicts:
- *  an optional `raw.conflicts` holds the person's picks for them, on any decision. */
-export function validatePlanAnswer(raw, { revisable = false, perspectives = null, conflicts = [] } = {}) {
+ *  an optional `raw.conflicts` holds the person's picks for them, on any decision. `decisions` (a criteria hold) are
+ *  the hold's decisions: `raw.decisions` picks are checked against them and every decision gets a pick. `error` (an ask
+ *  whose files could not be read) admits `retry` and refuses approve. A failing `criteria` check refuses approve too. */
+export function validatePlanAnswer(raw, { revisable = false, perspectives = null, conflicts = [], decisions = null, error = false, criteria = null } = {}) {
   const bad = (message) => ({ ok: false, errors: [{ path: 'decision', code: 'invalid', message }] });
   const d = raw && typeof raw === 'object' ? raw.decision : undefined;
+  if (error && d === 'retry') return { ok: true, payload: { decision: 'retry' } };
   if (d !== 'approve' && d !== 'stop' && d !== 'revise') return bad('decision must be approve, revise or stop');
+  if (error && d === 'approve') return bad('nothing to approve: try again or ask for changes');
+  if (criteria && criteria.ok === false && d === 'approve') {
+    return bad(`the requirements check has ${criteria.total - criteria.passed} to fix: ask for changes`);
+  }
   const picks = raw.conflicts === undefined ? null : normalizePicks(raw.conflicts, conflicts);
   if (picks && !picks.ok) return { ok: false, errors: [{ path: 'conflicts', code: 'invalid', message: picks.error }] };
-  const withPicks = (payload) => (picks ? { ...payload, conflicts: picks.picks } : payload);
+  const chosen = Array.isArray(decisions) && d !== 'stop' ? validateDecisionPicks(raw.decisions, decisions) : null;
+  if (chosen && !chosen.ok) return { ok: false, errors: chosen.errors };
+  const withPicks = (payload) => ({ ...payload, ...(picks ? { conflicts: picks.picks } : {}), ...(chosen ? { decisions: chosen.picks } : {}) });
   if (d === 'approve' || d === 'stop') return { ok: true, payload: withPicks({ decision: d }) };
   if (!revisable) return bad('this plan cannot be revised');
   const feedback = typeof raw.feedback === 'string' ? raw.feedback.trim() : '';
