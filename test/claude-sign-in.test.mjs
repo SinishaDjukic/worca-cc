@@ -273,11 +273,12 @@ test('D81b: a project\'s allowUnsandboxedCommands: true is not carried (a person
     { allowUnsandboxedCommands: false }, 'a local false still applies');
 });
 
-test('D81b: with the person\'s network.strictAllowlist on, the project\'s domains, proxy ports and excluded commands are not carried', () => {
+test('D81b: with the person\'s network.strictAllowlist on, the project\'s domains and proxy ports are not carried; its excluded commands are', () => {
   const s = safetyOf({ network: { strictAllowlist: true, allowedDomains: ['u.example'] } },
     { sandbox: { network: { allowedDomains: ['p.example'], httpProxyPort: 1, socksProxyPort: 2, deniedDomains: ['d.example'] }, excludedCommands: ['docker'] } });
-  assert.deepEqual(s.sandbox, { network: { strictAllowlist: true, allowedDomains: ['u.example'], deniedDomains: ['d.example'] } });
-  assert.match(s.notes[0], /sandbox\.network\.allowedDomains, sandbox\.network\.httpProxyPort, sandbox\.network\.socksProxyPort, sandbox\.excludedCommands/);
+  assert.deepEqual(s.sandbox, { network: { strictAllowlist: true, allowedDomains: ['u.example'], deniedDomains: ['d.example'] }, excludedCommands: ['docker'] });
+  assert.match(s.notes[0], /sandbox\.network\.allowedDomains, sandbox\.network\.httpProxyPort, sandbox\.network\.socksProxyPort\. /);
+  assert.doesNotMatch(s.notes[0], /excludedCommands/, 'review m1: strictAllowlist says nothing of excludedCommands (the CLI\'s Nt rule)');
   assert.deepEqual(safetyOf({ network: { allowedDomains: ['u.example'] } }, { sandbox: { network: { allowedDomains: ['p.example'] } } }).sandbox,
     { network: { allowedDomains: ['u.example', 'p.example'] } }, 'without it: joined as before');
 });
@@ -296,6 +297,22 @@ test('D81b: a relative sandbox path keeps its meaning (the person\'s config fold
   assert.deepEqual(s.sandbox.network, { allowUnixSockets: ['/s'] });
   assert.deepEqual(s.notes, ['Worca did not carry these sandbox paths from your Claude Code settings, as it could not tell what they point at once moved: '
     + 'sandbox.ignoreViolations.*[1], sandbox.network.allowUnixSockets[1].']);
+});
+
+test('review m1: with the person\'s strictAllowlist and allowUnsandboxedCommands: false carried, the project\'s excludedCommands stay (a normal run keeps them)', () => {
+  // A flag-tier allowUnsandboxedCommands: false makes the CLI ignore a project-tier excludedCommands (Nt), which a user-tier
+  // false never does in a normal run: laid into Worca's file, the project's excluded commands keep working as they do there.
+  const s = safetyOf({ allowUnsandboxedCommands: false, network: { strictAllowlist: true } }, { sandbox: { excludedCommands: ['docker *'] } });
+  assert.deepEqual(s.sandbox, { allowUnsandboxedCommands: false, network: { strictAllowlist: true }, excludedCommands: ['docker *'] });
+  assert.equal('notes' in s, false, 'nothing left out, nothing said');
+});
+
+test('review m3: a project\'s allowNestedUserNamespaces: true is not carried; a project false is (false there still applies)', () => {
+  const s = safetyOf({ enabled: true }, { sandbox: { allowNestedUserNamespaces: true } });
+  assert.deepEqual(s.sandbox, { enabled: true });
+  assert.match(s.notes[0], /sandbox\.allowNestedUserNamespaces/);
+  assert.deepEqual(safetyOf({ allowNestedUserNamespaces: true }, { sandbox: { allowNestedUserNamespaces: false } }).sandbox, { allowNestedUserNamespaces: false },
+    'the project\'s false holds over the person\'s true, as in a normal run');
 });
 
 // ── Task 5 (security review M11): a run that loads no user settings gets no auto-approved sandboxed Bash from the person ──

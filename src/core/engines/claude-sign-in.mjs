@@ -226,12 +226,16 @@ export function anchoredDenyRule(rule, configDir) {
 // .claude/settings.local.json) are ignored", "Only honored from admin-controlled managed settings", "set in managed settings").
 export const PROJECT_IGNORED_SANDBOX_KEYS = Object.freeze(['network.strictAllowlist', 'network.tlsTerminate', 'network.allowManagedDomainsOnly',
   'filesystem.disabled', 'filesystem.allowManagedReadPathsOnly', 'credentials.allowPlaintextInject', 'credentials.awsPairs', 'credentials.sigv4',
-  'allowNestedUserNamespaces', 'allowAppleEvents', 'ripgrep', 'bwrapPath', 'socatPath']);
+  'allowAppleEvents', 'ripgrep', 'bwrapPath', 'socatPath']);
+/** D81b: keys whose `true` a normal run ignores in a project's settings, while a project `false` still applies ("true from
+ *  project settings … is ignored (false there still applies)"): only a project's true is left out, so its false holds. */
+export const PROJECT_TRUE_IGNORED_SANDBOX_KEYS = Object.freeze(['allowUnsandboxedCommands', 'allowNestedUserNamespaces']);
 /** D81b: while user (or managed, or --settings) settings set network.strictAllowlist, the CLI leaves these out of a
- *  project's settings ("values from project settings are ignored"; for allowedDomains in strictAllowlist's own text). */
-export const STRICT_ALLOWLIST_IGNORED_SANDBOX_KEYS = Object.freeze(['network.allowedDomains', 'network.httpProxyPort', 'network.socksProxyPort', 'excludedCommands']);
-/** A project layer without the keys the CLI would not take from it, and its `allowUnsandboxedCommands: true` ("a false in
- *  managed, --settings or user settings holds whatever project settings say (false there still applies)"). */
+ *  project's settings ("values from project settings are ignored"; for allowedDomains in strictAllowlist's own text, for the
+ *  proxy ports in their `$_` rule). Review m1: not excludedCommands, whose rule (`Nt`) does not name strictAllowlist. */
+export const STRICT_ALLOWLIST_IGNORED_SANDBOX_KEYS = Object.freeze(['network.allowedDomains', 'network.httpProxyPort', 'network.socksProxyPort']);
+/** A project layer without the keys the CLI would not take from it, and its `true` for PROJECT_TRUE_IGNORED_SANDBOX_KEYS
+ *  ("a false in managed, --settings or user settings holds whatever project settings say (false there still applies)"). */
 function projectLayer(sb, { strict }) {
   const drop = new Set([...PROJECT_IGNORED_SANDBOX_KEYS, ...(strict ? STRICT_ALLOWLIST_IGNORED_SANDBOX_KEYS : [])]);
   const dropped = [];
@@ -240,7 +244,7 @@ function projectLayer(sb, { strict }) {
     for (const [k, v] of Object.entries(o)) {
       if (k === '__proto__') continue;
       const path = prefix ? `${prefix}.${k}` : k;
-      if (drop.has(path) || (path === 'allowUnsandboxedCommands' && v === true)) { dropped.push(`sandbox.${path}`); continue; }
+      if (drop.has(path) || (PROJECT_TRUE_IGNORED_SANDBOX_KEYS.includes(path) && v === true)) { dropped.push(`sandbox.${path}`); continue; }
       if (isPlain(v) && [...drop].some((d) => d.startsWith(`${path}.`))) {
         const sub = walk(v, path);
         if (Object.keys(sub).length || !Object.keys(v).length) out[k] = sub;   // emptied by the drop: left out
