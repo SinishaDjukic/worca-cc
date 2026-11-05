@@ -38032,12 +38032,13 @@ let setupDialog = null;
 function openSetup({ entry = 'rerun', step = 'check', team = null, teamHash = null } = {}) {
   if (setupDialog) { setupDialog.goTo(step); return; }
   setMobileNavOpen(false);
-  setupDialog = openSetupAssistant({ doc: document, entry, step, team, onClose: (how) => {
+  setupDialog = openSetupAssistant({ doc: document, entry, step, team, onClose: (how, { applied = false } = {}) => {
     setupDialog = null;
-    // A7: a first start always continues to the welcome; a finished re-run ends on the doors; a fix-it
-    // run (entry 'fix') returns to the page it came from (product-1-2).
+    // A7: a first start always continues to the welcome; a finished re-run that applied something ends on the
+    // doors, and a Finish with nothing applied goes back to the page; a fix-it run (entry 'fix') returns to
+    // the page it came from (product-1-2).
     if (entry === 'first') showWelcome();
-    else if (entry === 'rerun' && how === 'done') showWelcome({ force: true });
+    else if (entry === 'rerun' && how === 'done' && applied) showWelcome({ force: true });
     // T15: Apply then Continue, or Finish when nothing differs. Set up later / Escape keep the notice.
     else if (entry === 'team' && how === 'done' && team && teamHash) { markTeamSeen(team, teamHash); void paintTeamNotice(); }
   } });
