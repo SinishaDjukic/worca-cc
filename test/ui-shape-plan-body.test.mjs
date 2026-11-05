@@ -651,7 +651,8 @@ test('R-ux-5: with a failing row Fix all is the foot\'s only primary and is not 
 test('U11: Fix all asks for the shape rows, then the raw uncovered rows', () => {
   const { $, calls } = setup({ pq: ask({ coverage: COVERAGE }) });
   $('.plan-fix-primary').click();
-  assert.deepEqual(calls.submit, [{ decision: 'revise', feedback: fixAllFeedback([...CHECK.items, UNCOVERED]) }]);
+  assert.deepEqual(calls.submit, [{ decision: 'revise', feedback: 'The shape check fails "Paths are real": 1 path not found. Fix the plan so this check passes.\n'
+    + 'The agreed requirement R-ops-1: Turning the flag off removes the export is not covered by any step. Fix the plan so a step delivers it.' }]);
 });
 
 test('R-ux-5: a failing shape row alone (coverage all covered) also makes Fix all the primary', () => {

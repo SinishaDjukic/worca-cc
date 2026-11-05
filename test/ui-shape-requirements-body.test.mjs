@@ -208,6 +208,49 @@ test('I4: with no plan.lead, no decision paints before the profile answers; then
   assert.match(r.$('.plan-sub').textContent, /as Product$/);
 });
 
+test('while the profile loads, Agree and plan says Loading your role… (note, title, describedby) and posts nothing', async () => {
+  _resetAnswerer({ timeoutMs: 50 });
+  globalThis.fetch = () => new Promise(() => {});
+  const r = setup({ pq: ask({ lead: undefined }) });
+  const agree = r.$('.plan-approve');
+  assert.equal(agree.getAttribute('aria-disabled'), 'true');
+  assert.equal(r.$('.qanswered').textContent, 'Loading your role…');
+  assert.equal(agree.title, 'Loading your role…');
+  assert.equal(agree.getAttribute('aria-describedby'), r.$('.qanswered').id);
+  agree.click();
+  await flush();
+  assert.equal(r.calls.submit.length, 0);
+  await new Promise((res) => setTimeout(res, 70));
+});
+
+test('a profile that times out or fails words the decisions plainly, with no \'as\', and unblocks Agree and plan', async () => {
+  for (const [name, arrange] of [
+    ['timeout', () => { _resetAnswerer({ timeoutMs: 20 }); globalThis.fetch = () => new Promise(() => {}); }],
+    ['failure', () => { _resetAnswerer(); globalThis.fetch = async () => { throw new Error('offline'); }; }],
+  ]) {
+    arrange();
+    const r = setup({ pq: ask({ lead: undefined }) });
+    await new Promise((res) => setTimeout(res, 40));
+    assert.equal(r.$$('.qblock').length, 3, `${name}: the decisions paint once`);
+    assert.doesNotMatch(text(r.panel), /project:read/, name);
+    assert.equal(r.$$('.qtext-t')[1].textContent, 'Who may export: everyone who can see the project?', name);
+    assert.doesNotMatch(r.$('.plan-sub').textContent, / as /, name);
+    const agree = r.$('.plan-approve');
+    assert.equal(agree.hasAttribute('aria-disabled'), false, name);
+    assert.equal(agree.hasAttribute('title'), false, name);
+    assert.equal(r.$('.qanswered').textContent, 'Worca\'s picks marked · change any', name);
+  }
+});
+
+test('0 agreed criteria with failing checks shows the ✕ rows, not the empty state, and blocks with \'N to fix\'', () => {
+  const bad = check({ ok: false, passed: 0, total: 1, items: [{ id: 'R-ops-1', label: 'R-ops-1 · listed twice', pass: false }], criteria: [] });
+  const { $, $$ } = setup({ pq: ask({ criteria: bad, decisions: [] }) });
+  assert.equal($('.empty-line'), null);
+  assert.equal($$('.plan-check-row:not(.ok)').length, 1);
+  assert.equal($('.plan-approve').getAttribute('aria-disabled'), 'true');
+  assert.equal($('.qanswered').textContent, '1 to fix: ask for changes');
+});
+
 test('the "why" line: two roles disagree, one role by its label, "your area" when it is the lead\'s', () => {
   const { $$ } = setup({ pq: ask({ lead: 'security' }) });
   assert.deepEqual($$('.qwhy').map((e) => e.textContent), ['Security and Design disagree', 'Security · your area']);
@@ -245,6 +288,21 @@ test('a 422 on decisions.d-2 shows its message in the requirements card\'s plan-
   assert.equal($('.plan-err').hidden, true);
 });
 
+test('a 422 through Agree and plan keeps the field message; a second click sends again', async () => {
+  // app.js postAnswer's 422 branch: paint the field errors through the plan renderer, then resolve false
+  const { $, calls } = setup({ submit: async (p, panel) => {
+    panel.__plan.setErrors([{ path: 'decisions.d-2', message: 'Pick one of the listed options' }]);
+    return false;
+  } });
+  $('.plan-approve').click();
+  await flush();
+  assert.equal($('.plan-err').hidden, false);
+  assert.equal($('.plan-err').textContent, 'Pick one of the listed options');
+  $('.plan-approve').click();
+  await flush();
+  assert.equal(calls.submit.length, 2, 'the busy guard released');
+});
+
 test('renderRequirementsBody announces itself like the plan card: step-primary on build, plan-answer on a send', async () => {
   const panel = doc.createElement('div');
   const seen = [];
@@ -262,8 +320,21 @@ test('a requirements ask that cannot be revised gives the blocked reason without
   assert.equal($('.plan-approve').title, 'Nothing to agree yet');
 });
 
+/** Every member of every selector list in `css` that fades aria-disabled on a bare .btn / .btn-primary. */
+const globalFades = (css) => css.replace(/\/\*[\s\S]*?\*\//g, '').split('{').slice(0, -1)
+  .flatMap((chunk) => chunk.slice(chunk.lastIndexOf('}') + 1).split(','))
+  .map((m) => m.trim())
+  .filter((m) => /^\.btn(-primary)?\[aria-disabled="true"\](:hover)?$/.test(m));
+
 test('the aria-disabled fade is scoped to the Shaper requirements buttons, not every .btn', () => {
   const css = readFileSync(new URL('../ui/public/design-system/buttons-component.css', import.meta.url), 'utf8');
-  assert.doesNotMatch(css, /^\.btn\[aria-disabled="true"\]\{/m);
+  assert.deepEqual(globalFades(css), []);
   assert.match(css, /\.shape-reqs \.btn\[aria-disabled="true"\]\{opacity:\.45/);
+  assert.deepEqual(globalFades('.x,.btn[aria-disabled="true"]{opacity:.45}'), ['.btn[aria-disabled="true"]'], 'the comma form is caught');
+});
+
+test('requirements-body does not import plan-body (no cycle)', () => {
+  const src = readFileSync(new URL('../ui/public/shape/requirements-body.mjs', import.meta.url), 'utf8');
+  assert.doesNotMatch(src, /from '\.\/plan-body\.mjs'/);
+  assert.match(src, /import \{ buildFeedbackRow \} from '\.\/feedback-row\.mjs'/);
 });

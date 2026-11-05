@@ -15,30 +15,11 @@ import { fold, swapOpen, buildCheckFold } from './check-row.mjs';
 import { SEND_FAILED, stepHead, stepSender, isRequirementsAsk } from './step-card.mjs';
 import { buildRoleFold, buildConflictCards } from './role-rows.mjs';
 import { renderRequirementsBody } from './requirements-body.mjs';
+import { buildFeedbackRow } from './feedback-row.mjs';
 
 export { SEND_FAILED };
 
 const labelOf = (k) => (perspectiveByKey(k) || {}).label || k;
-
-/** Ask for changes' typed row, shared by the plan card and the Requirements card: the field, Cancel and Send changes.
- *  `onSend(text)` gets the trimmed text (maybe empty: the caller says what to do then). */
-export function buildFeedbackRow(doc, { label, onSend }) {
-  const h = (tag, cls, text) => { const e = doc.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
-  const btn = (cls, text) => { const b = h('button', `btn btn-sm ${cls}`, text); b.type = 'button'; return b; };
-  const typed = h('textarea', 'plan-feedback');
-  typed.rows = 2;
-  typed.placeholder = 'Ask for changes in your own words…';
-  typed.setAttribute('aria-label', label);
-  const cancel = btn('btn-quiet plan-typed-cancel', 'Cancel');
-  const sendBtn = btn('plan-revise', 'Send changes');
-  sendBtn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    onSend(typed.value.trim());
-  });
-  const acts = h('div', 'plan-typed-acts'); acts.append(cancel, sendBtn);
-  const row = h('div', 'plan-typed'); row.append(typed, acts);
-  return { row, typed, cancel };
-}
 
 export function renderPlanBody(panel, pq, deps) {
   if (isRequirementsAsk(pq)) return renderRequirementsBody(panel, pq, deps);
@@ -192,7 +173,7 @@ export function renderPlanBody(panel, pq, deps) {
   // With a failing row Fix all is the primary (revisable) and Approve steps back to a plain button; not revisable: no primary
   if (failingRows && plan.revisable) {
     const fix = btn('btn-primary plan-fix-primary', 'Fix all');
-    fix.addEventListener('click', (e) => { e.stopPropagation(); send(withPicks({ decision: 'revise', feedback: fixAllFeedback([...items, ...uncovered]) })); });
+    fix.addEventListener('click', (e) => { e.stopPropagation(); send(withPicks({ decision: 'revise', feedback: fixAllFeedback(items, uncovered) })); });
     foot.appendChild(fix);
   }
   const approve = btn(`${failingRows ? '' : 'btn-primary '}plan-approve`, planApproveLabel(plan, openBlocking(plan.roleReviews)));
