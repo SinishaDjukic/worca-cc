@@ -49,8 +49,12 @@ export function planAgentCapabilities({ access = {}, mcp = {}, skills = {}, nati
       const held = new Set((mcp.skippedTools ?? []).filter((t) => t.name === c.name).map((t) => t.tool));
       if (req || pick.tools === 'all') {
         const excluded = req ? [] : pick.excludedTools ?? [];
-        grants.push(`mcp__${c.name}`);                                   // wildcard: tools added later flow in (A-1)
-        for (const t of excluded) disallowed.push(toolId(c.name, t));    // deny outranks the wildcard allow
+        const allowedKnown = (known ?? []).filter((t) => !held.has(t) && !excluded.includes(t));
+        for (const t of allowedKnown) grants.push(toolId(c.name, t));
+        for (const t of excluded) disallowed.push(toolId(c.name, t));
+        if (!known) {
+          plan.note = 'selected server has no listed tools; no server-wide wildcard grant is issued';
+        }
         plan.record.servers.push({ server: c.serverId, name: c.name, tools: 'all', excluded,
           toolNames: known && known.filter((t) => !held.has(t) && !excluded.includes(t)), required: req });
         continue;
