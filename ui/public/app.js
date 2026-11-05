@@ -33532,7 +33532,8 @@ function runsGroupItem({ id, groupKind, title, members, cost = null, planning = 
     // inBase). The raw live run carries no PR, so a finished member with failing checks read "Ready to ship".
     const run = r ? withChainPr(rdModelRun(r), m) : (m.pipelineId ? memberRun(m)
       : { ticket: { status: m.ticket ? m.ticket.status : 'scheduled', runAt: m.ticket && !m.ticket.after ? m.ticket.runAt : null,
-        after: m.after ? { index: m.after } : null } });
+        // #1096: a chain root that only waits for another run names that run ("starts after <title>").
+        after: m.after ? { index: m.after } : m.waitsFor && m.waitsFor.title ? { title: m.waitsFor.title } : null } });
     const pk = m.historyKey || m.projectKey || histPk(m.pipelineId);
     const href = r ? `#running/${r.runId}` : m.pipelineId && pk ? `#history/${pk}/${m.pipelineId}`
       : groupKind === 'feature' ? `#feature/${encodeURIComponent(id)}` : m.ticketId ? '#schedules/once' : '#runs';
