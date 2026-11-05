@@ -181,3 +181,59 @@ test('s2: threadWork hands readRunLabels to its fact deps, so a route or tool ca
   const work = threadWork([{ pipelineId: 'tw000001' }], deps);
   assert.deepEqual([work.run.tags, work.run.labels], [['client:acme'], ['hotfix']]);
 });
+
+// ── Shaper requirements s3 (D12, D14): Changes after ship on a feature with agreed requirements ───────────────────
+const AGREED = [{ id: 'R-po-1', text: 'Export the report' }, { id: 'R-sec-2', text: 'Sign every export' }];
+const shippedFeature = (merged, over = {}) => {
+  const pr = { number: 52, url: 'https://x/pull/52', state: merged ? 'MERGED' : 'OPEN' };
+  return { feature: { id: 'f1', title: 'Charts', base: 'dev', projectDir: '/p', shipPr: pr, shipped: true, agreed: AGREED,
+    acceptance: [{ id: 'R-po-1', mark: 'met' }], perspectives: ['product', 'qa'],
+    slices: [{ index: 1, state: 'done', pipelineId: 'p1', branch: { source: 'dev', feature: 'worca/c-1' }, pr, rounds: 1 }], ...over } };
+};
+
+test('requirements first: a round runs shaped (medium, no slices) and its prompt lists the agreed requirements as criteria', async () => {
+  const { criterionIds } = await import('../src/shared/review/coverage.mjs');
+  const card = changesCard({ text: 'make it blue', facts: shippedFeature(false), requirementsOn: true });
+  assert.equal(card.landing.kind, 'round');
+  assert.deepEqual(card.run.shape, { perspectives: ['product', 'qa'], size: 'medium', slices: 'off' });
+  assert.match(card.run.prompt, /^make it blue\n\n## Agreed requirements\n/);
+  assert.match(card.run.prompt, /^- \*\*R-po-1\*\* Export the report$/m);
+  assert.deepEqual(criterionIds(card.run.prompt), ['R-po-1', 'R-sec-2']);
+  assert.match(card.run.prompt, /Marked before the PR: R-po-1 met\./);
+  assert.equal(card.requirementsFirst.count, 2);
+  const started = [];
+  await applyChanges(card, { startRun: async (body, extra) => { started.push({ body, extra }); return { status: 202, body: { runId: 'r' } }; } });
+  assert.deepEqual(started[0].body.shape, card.run.shape);
+  assert.equal(started[0].extra._roundOf.request, 'make it blue');
+});
+
+test('requirements first: a follow-up appends its run with requirementsFirst and the agreed requirements in its goal', async () => {
+  const appended = [];
+  const card = changesCard({ text: 'add a pie', facts: shippedFeature(true), requirementsOn: true });
+  assert.equal(card.landing.kind, 'follow-up');
+  assert.equal('run' in card, false);
+  await applyChanges(card, { appendRun: (id, o) => { appended.push([id, o]); return { index: 2, ticketId: 't2' }; }, tick: () => {} });
+  assert.equal(appended[0][1].requirementsFirst, true);
+  assert.equal(appended[0][1].kind, 'follow-up');
+  assert.match(appended[0][1].goal, /^add a pie\n\n## Agreed requirements\n[\s\S]*^- \*\*R-sec-2\*\* Sign every export$/m);
+});
+
+test('requirements first is off: flag off, not shipped or no agreed requirements → today\'s round and follow-up', async () => {
+  for (const [facts, on] of [[shippedFeature(false), false], [shippedFeature(false, { shipped: false }), true], [shippedFeature(false, { agreed: [] }), true]]) {
+    const card = changesCard({ text: 'make it blue', facts, requirementsOn: on });
+    assert.equal('shape' in card.run, false);
+    assert.equal(card.run.prompt, 'make it blue');
+    assert.equal('requirementsFirst' in card, false);
+  }
+  const appended = [];
+  const off = changesCard({ text: 'add a pie', facts: shippedFeature(true) });
+  await applyChanges(off, { appendRun: (id, o) => { appended.push(o); return { index: 2 }; }, tick: () => {} });
+  assert.deepEqual(appended, [{ title: 'add a pie', goal: 'add a pie', kind: 'follow-up' }]);
+});
+
+test('requirements first through propose_changes: the parent\'s requirementsOn reaches the card', () => {
+  const work = { feature: { id: 'f1', title: 'Charts', status: 'done', slices: [{ index: 1, state: 'done' }] }, facts: shippedFeature(false), open: null };
+  const on = shapeToolFit('changes', { pipelineId: 'p1', request: 'make it blue' }, work, { requirementsOn: true });
+  assert.equal(on.card.requirementsFirst.count, 2);
+  assert.equal('requirementsFirst' in shapeToolFit('changes', { pipelineId: 'p1', request: 'make it blue' }, work).card, false);
+});

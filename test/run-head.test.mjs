@@ -242,6 +242,15 @@ test('groupHead (one ship flow): Create PR, View PR ▾, View PRs ▾; a partly 
   assert.equal(groupHead({ state: 'working', prs: [] }).cta, null);
 });
 
+test('groupHead: a feature with unmarked requirements locks every Create PR (disabled, not primary, "N left")', () => {
+  const pr = (n) => ({ key: `p${n}`, name: `Run ${n}`, number: n, url: `u${n}`, open: true, merged: false });
+  const why = 'Mark every requirement before you create the PR · 3 left';
+  assert.deepEqual(groupHead({ state: 'ready', prs: [], unmarked: 3 }).cta, { state: 'create', disabled: true, quiet: true, title: why });
+  assert.deepEqual(groupHead({ state: 'ready', prs: [pr(1)], unmarked: 3 }).after.map((b) => [b.id, !!b.primary, !!b.disabled, b.title]),
+    [['ship', false, true, why]]);
+  assert.deepEqual(groupHead({ state: 'ready', prs: [], unmarked: 0 }).cta, { state: 'create' }, 'every row marked: as before');
+});
+
 test('prMenuItems with onWatchAll / onCopyAll: each PR as today, then Watch PRs (Advanced) and Copy PR links', () => {
   const prs = [{ key: 'a', name: 'Run 1', number: 12, url: 'u1', open: true, watch: null },
     { key: 'b', name: 'Run 2', number: 13, url: 'u2', open: true, watch: null, conflicts: true }];

@@ -69,3 +69,9 @@ test('commandSummaries is a beta flag, on by default (#911)', () => {
   assert.deepEqual([f.stage, f.default], ['beta', true]);
   assert.equal(f.docs, 'docs/feature-flags.md');
 });
+
+test('shapeRequirements is an experimental Labs flag, off by default, documented with the Shaper', () => {
+  const f = FLAGS.find((x) => x.key === 'shapeRequirements');
+  assert.ok(f, 'shapeRequirements is registered');
+  assert.deepEqual([f.stage, f.default, f.added, f.reviewBy, f.docs], ['experimental', false, '2026-11-05', '2027-02-01', 'docs/shape-it-first.md']);
+});

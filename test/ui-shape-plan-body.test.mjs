@@ -584,3 +584,27 @@ test('#990 s5 no concern, no concern note; markup in a concern stays text', asyn
   assert.equal($('.plan-concern img'), null);
   assert.equal($('.plan-concern-title').textContent, '<img src=x onerror=alert(1)>');
 });
+
+// Shaper requirements s3 (3.A): a reviewer's requirement concern rides the same note with its own head and what line.
+test('a requirement concern: its head and what line, and each id once in the card for one concern and for two', async () => {
+  const { requirementConcernOf } = await import('../src/shared/review/plan-concern.mjs');
+  const finding = (id, title, fix) => ({ id: `qa-1-${id}`, severity: 'major', title, fix, requirement: id });
+  const roles = (findings) => [{ round: 1, roles: [{ key: 'qa', label: 'QA', findings }] }];
+  const one = requirementConcernOf(roles([finding('R-po-1', 'R-po-1: Export needs a server we do not have', 'drop the server export')]));
+  const two = requirementConcernOf(roles([finding('R-po-1', 'Export needs a server', 'drop it'), finding('R-sec-2', 'Signing is out of reach', 'sign later')]));
+  for (const [concern, ids, title] of [[one, ['R-po-1'], 'Export needs a server we do not have'], [two, ['R-po-1', 'R-sec-2'], '2 requirement concerns']]) {
+    const pq = ask();
+    pq.concern = concern;
+    const { panel, $, $$ } = setup({ pq });
+    await flush();
+    assert.equal($$('.plan-concern').length, 1);
+    assert.equal($('.plan-concern .shape-plan-outline-change-head').textContent, 'A reviewer says an agreed requirement is wrong or cannot be met:');
+    assert.equal($('.plan-concern-title').textContent, title, 'the title holds no id');
+    assert.equal($('.plan-concern-what').textContent,
+      'Approve keeps the requirement as agreed and builds the plan. Ask for changes sends your answer to the planner.');
+    for (const id of ids) assert.equal(panel.textContent.split(id).length - 1, 1, `${id} is shown once`);
+    const lines = [...$$('.plan-concern .shape-plan-outline-change-text')].map((p) => p.textContent).filter((t) => /^R-/.test(t));
+    assert.equal(lines.length, ids.length, 'one detail line per id');
+    assert.equal($('.plan-approve').textContent.includes('Approve'), true, 'the buttons do not change');
+  }
+});

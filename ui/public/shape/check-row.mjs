@@ -23,14 +23,16 @@ export function swapOpen(b, region, cancel, onOpen) {
   return b;
 }
 
-/** The rows of a check: one `.plan-check-row` per item, ✓ met / ✕ unmet with its detail. */
+/** The rows of a check: one `.plan-check-row` per item, ✓ met / ✕ unmet with its detail. An acceptance ledger item
+ *  (Shaper requirements s3) may carry `state` ('not-met' keeps the ✕, 'dropped' draws `none`) and its own `ariaLabel`. */
 export function buildCheckRows(doc, check) {
   const h = (tag, cls, text) => { const e = doc.createElement(tag); e.className = cls; if (text != null) e.textContent = text; return e; };
   return (check && Array.isArray(check.items) ? check.items : []).map((it) => {
-    const row = h('div', `plan-check-row${it.pass ? ' ok' : ''}`);
+    const met = it.pass && !it.state;
+    const row = h('div', `plan-check-row${met ? ' ok' : ''}`);
     const mark = h('span', 'plan-check-mark');
-    mark.append(icon(doc, it.pass ? 'check' : 'x', 12));
-    mark.setAttribute('aria-label', it.pass ? 'met' : 'unmet');
+    mark.append(icon(doc, it.state === 'dropped' ? 'none' : met ? 'check' : 'x', 12));
+    mark.setAttribute('aria-label', it.ariaLabel || (it.pass ? 'met' : 'unmet'));
     row.append(mark, h('span', 'plan-check-label', it.label));
     if (!it.pass && it.detail) row.appendChild(h('span', 'plan-check-detail', it.detail));
     return row;

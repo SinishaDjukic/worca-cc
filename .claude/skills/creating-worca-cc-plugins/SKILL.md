@@ -140,7 +140,7 @@ export default function createTaskSource(ctx) {
 | `commentTicket` | `({key, body})` — optional, export | `{ok:true}` \| `{gone:true}` |
 | `ticketState` | `({key})` — optional, export | `{exists:true, url, fingerprint}` \| `{exists:false}` |
 | `findTicket` | `({project, label, marker})` — optional, export | `{key, url, fingerprint, lastLine, marker, labels}` \| `null` |
-| `listProjects` | `({})` — the project input's `optionsFrom` | `[{value, label, name?}]`; `name` (optional) is the project's name alone, for Ticket updates' chips |
+| `listProjects` | `({})` — the project input's `optionsFrom` | `[{value, label, name?}]`; `name` (optional) is the project's name alone, for Ticket updates' chips; `value` is the project's key: at most one `/` (GitHub's `owner/repo`), each part 1 to 100 characters and never `.` or `..`; control characters, `\`, `?`, `#` and `%` are refused |
 | `listStatuses` | `({project})` — optional, Ticket updates | `[{value, label, category}]`, every status of the project once; `category` one of `todo`, `in_progress`, `done`, `cancelled` |
 | `legacyMove` | `({})` — optional, Ticket updates | `{field, target}`: your old "on completion" config key and what it means: `{category: 'done'}`, `{typed: '<text>'}` or `null` |
 | custom | `(args)` | whatever the widget needs |
