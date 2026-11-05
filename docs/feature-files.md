@@ -353,7 +353,7 @@ and pinned routes). See [split-by-feature.md](split-by-feature.md).
 
 | File | Lines |
 |---|---|
-| `ui/public/requirements/requirements.css` | 725 |
+| `ui/public/requirements/requirements.css` | 829 |
 | `ui/public/requirements/requirements.html` | 10 |
 
 ## shape ([shape-it-first.md](shape-it-first.md))
