@@ -92,7 +92,7 @@ and pinned routes). See [split-by-feature.md](split-by-feature.md).
 | `ui/public/runs/agent-pills.css` | 58 |
 | `ui/public/runs/ask-forms.css` | 244 |
 | `ui/public/runs/cost-pause.css` | 23 |
-| `ui/public/runs/group-page.css` | 118 |
+| `ui/public/runs/group-page.css` | 120 |
 | `ui/public/runs/header-badges.css` | 19 |
 | `ui/public/runs/live-log.css` | 31 |
 | `ui/public/runs/log-filters.css` | 47 |
@@ -112,7 +112,7 @@ and pinned routes). See [split-by-feature.md](split-by-feature.md).
 | `ui/public/runs/running-detail-question.css` | 63 |
 | `ui/public/runs/running-detail-tab.css` | 145 |
 | `ui/public/runs/running-redesign.css` | 193 |
-| `ui/public/runs/runs.html` | 395 |
+| `ui/public/runs/runs.html` | 398 |
 | `ui/public/runs/smart-naming.css` | 19 |
 | `ui/public/runs/step-log-drawer.css` | 42 |
 | `ui/public/runs/tags-and-labels.css` | 68 |
@@ -135,7 +135,7 @@ and pinned routes). See [split-by-feature.md](split-by-feature.md).
 | File | Lines |
 |---|---|
 | `ui/public/history/comment-composer.css` | 10 |
-| `ui/public/history/detail-header.css` | 42 |
+| `ui/public/history/detail-header.css` | 43 |
 | `ui/public/history/end-diff.css` | 95 |
 | `ui/public/history/history-detail-agents.css` | 48 |
 | `ui/public/history/history-detail-diff-comments.css` | 79 |

@@ -3,7 +3,7 @@
 // ownerDocument; app.js and group-page.mjs own the data.
 import { icon } from './icons.mjs';
 
-export const RUN_FACTS = Object.freeze([['project', 'Project'], ['branch', 'Branch'], ['labels', 'Labels'], ['tags', 'Cost tags'], ['group', 'Group']]);
+export const RUN_FACTS = Object.freeze([['project', 'Project'], ['branch', 'Branch'], ['outcome', 'Outcome'], ['labels', 'Labels'], ['tags', 'Cost tags'], ['group', 'Group']]);
 export const GROUP_FACTS = Object.freeze([['project', 'Project'], ['runs', 'Runs'], ['cost', 'Total cost'], ['labels', 'Labels']]);
 
 /** The group page's kind chip (clarify answer): the group's kind. */

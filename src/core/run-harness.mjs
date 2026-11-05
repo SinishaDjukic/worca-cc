@@ -37,6 +37,7 @@ import {
   retainedWorkPatchName, sizeOfChange,
 } from './results.mjs';
 import { reportedAuditLine, resolveTaskInput, retryWriteback, sourcePlaceholderTitle, ticketRunTitle } from './sources.mjs';
+import { computeOutcome } from './outcome.mjs';
 import { projectKey, projectStorePath, workspaceStorePath, noProjectWorkDir, isNoProjectWorkDir } from './store.mjs';
 import { NO_PROJECT_KEY, NO_PROJECT_NAME, NO_PROJECT_ERRORS, WORK_DIR_NAME, isNoProjectKey } from '../shared/no-project.mjs';
 import { harvestWork, ownWorkDir, WORK_ARTIFACT_KIND } from './no-project-work.mjs';
@@ -1829,13 +1830,18 @@ export class RunHarness extends EventEmitter {
       this.state.resumePoint = null; // finished rows are not resumable (clears the boundary trail)
       this._bookend('done', 'done');
       await this._finalizeDirections();
-      await this._persist();
+      const { successful, reason } = await this._finalizeOutcome();   // S1: endReached/worktree/reviews are final here
+      await this._persist();                                          // existing persist now carries the outcome
       await appendAudit(this.pipeline.dir, `Pipeline finished with status **done**.`);
+      if (!successful && !this.state._outcomeAudited) {               // S1: exactly one unsuccessful line
+        this.state._outcomeAudited = true;
+        await appendAudit(this.pipeline.dir, `Run finished **unsuccessful**: ${reason}`).catch(() => {});
+      }
       await this._buildResults();          // refs + worktree still live here
       await this._stampDefrag();           // AFTER the final sync inside _buildResults counted the defragmenter's writes
       await this._reportToSource();        // task-source write-back (never throws, spec §7.5)
       await this._recordRunMetrics('done');
-      this._emit('done', { status: 'done', pipelineDir: this.pipeline.dir });
+      this._emit('done', { status: 'done', successful, reason, detail: reason, pipelineDir: this.pipeline.dir });
       return { status: 'done', pipelineDir: this.pipeline.dir };
     } catch (err) {
       if ((isPause(err) || this.state.status === 'pausing') && this.state.status !== 'stopped') {
@@ -2171,13 +2177,18 @@ export class RunHarness extends EventEmitter {
       this.state.resumePoint = null; // finished rows are not resumable (clears the boundary trail)
       this._bookend('done', 'done');
       await this._finalizeDirections();
-      await this._persist();
+      const { successful, reason } = await this._finalizeOutcome();   // S1: endReached/worktree/reviews are final here
+      await this._persist();                                          // existing persist now carries the outcome
       await appendAudit(this.pipeline.dir, `Pipeline finished with status **done**.`);
+      if (!successful && !this.state._outcomeAudited) {               // S1: exactly one unsuccessful line
+        this.state._outcomeAudited = true;
+        await appendAudit(this.pipeline.dir, `Run finished **unsuccessful**: ${reason}`).catch(() => {});
+      }
       await this._buildResults();          // refs + worktree still live here
       await this._stampDefrag();           // AFTER the final sync inside _buildResults counted the defragmenter's writes
       await this._reportToSource();        // task-source write-back (never throws, spec §7.5)
       await this._recordRunMetrics('done');
-      this._emit('done', { status: 'done', pipelineDir: this.pipeline.dir });
+      this._emit('done', { status: 'done', successful, reason, detail: reason, pipelineDir: this.pipeline.dir });
       return { status: 'done', pipelineDir: this.pipeline.dir };
     } catch (err) {
       if ((isPause(err) || this.state.status === 'pausing') && this.state.status !== 'stopped') {
@@ -7726,6 +7737,77 @@ export class RunHarness extends EventEmitter {
     }
     this.state.updatedAt = new Date().toISOString();
     this._emit('state', this.getState());
+  }
+
+  // ── S1: run outcome (did the run deliver what its workflow declared?) ─────────────
+
+  /** Record (replace) a node's unmet facts so a later good re-run of the node supersedes them. */
+  _recordNodeUnmet(nodeId, items) {
+    this.state.unmet ||= [];
+    this.state.unmet = this.state.unmet.filter((u) => u.nodeId !== nodeId);
+    for (const it of items || []) this.state.unmet.push(it);
+  }
+
+  /** Base fallback: the orchestrator overrides this via its `_nodeLabels` map. */
+  _labelForNode(nodeId) { return this._nodeLabels?.[nodeId] || nodeId || 'A step'; }
+
+  /**
+   * Tri-state: true  = a git member's worktree differs from its checkpoint (committed OR staged);
+   *            false = every checked git member is confirmed unchanged (exit 0);
+   *            null  = could not determine (no git member, no checkpoint, or a git error).
+   * no-code-change flags ONLY on a confirmed false.
+   */
+  async _codeChangedVsCheckpoint() {
+    let sawConclusive = false;
+    for (const [key, dir] of this.workDirs.entries()) {
+      if (this._memberWorkMode(key) !== 'git') continue;
+      const base = this.checkpointRefs?.[key] || this.checkpointRef;
+      if (!base) continue;
+      // intent-to-add staging ran during execution, so untracked files show in the diff:
+      const res = await this._git(['diff', '--quiet', base], { cwd: dir, ignoreAbort: true });
+      if (res.code === 1) return true;          // --quiet exits 1 on differences
+      if (res.code === 0) sawConclusive = true; // this member is confirmed unchanged
+      // any other code (−1 / git error) leaves this member indeterminate
+    }
+    return sawConclusive ? false : null;
+  }
+
+  /** Name the dead-ended step: the scheduler's quiescence warning if present, else the last ledger node. */
+  _endNotReachedFact() {
+    const warn = (this.state.warnings || []).find((w) => typeof w === 'string' && w.startsWith('dead-ended output'));
+    let nodeId = null;
+    if (warn) { const m = warn.match(/dead-ended outputs?:\s*([^\s,]+)/); if (m) nodeId = m[1].split('.')[0]; }
+    if (!nodeId) {
+      const steps = Array.isArray(this.state.steps) ? this.state.steps : [];
+      const last = [...steps].reverse().find((s) => s && s.nodeId);
+      nodeId = last?.nodeId || null;
+    }
+    const step = nodeId ? this._labelForNode(nodeId) : 'The run';
+    return { nodeId: nodeId || '(graph)', step, kind: 'end-not-reached' };
+  }
+
+  /** Decide the run outcome from node-keyed facts + the run-level facts. Fails safe. */
+  async _finalizeOutcome() {
+    try {
+      const unmet = Array.isArray(this.state.unmet) ? [...this.state.unmet] : [];
+      if ((this.state.codeSteps || []).length > 0 && (await this._codeChangedVsCheckpoint()) === false) {
+        const last = this.state.codeSteps[this.state.codeSteps.length - 1];
+        unmet.push({ nodeId: last.nodeId, step: last.step, kind: 'no-code-change' });
+      }
+      // A review loop forced past its cap with blocking issues is NOT an unmet expectation: dev's E2
+      // records it as state.openIssues and every surface shows "Done · N open issues" (a caveat, not a failure).
+      if (!this.state.endReached) unmet.push(this._endNotReachedFact());
+      const { successful, reason } = computeOutcome(unmet);
+      this.state.unmet = unmet;            // persist the full list (finalize runs once per terminal done)
+      this.state.successful = successful;
+      this.state.outcomeReason = reason;
+      return { successful, reason };
+    } catch (err) {
+      this._log?.('outcome', 'warn', `finalize outcome failed: ${err?.message || err}`);
+      this.state.successful = true;        // fail safe: never break a done run on an outcome bug
+      this.state.outcomeReason = null;
+      return { successful: true, reason: null };
+    }
   }
 
   /** Public, non-blocking: append a user direction to the pipeline dir, index

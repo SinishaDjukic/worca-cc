@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Flag Runs That Finish Without Doing Work
+
+- Catch a run that finished without doing the work and flag it done-unsuccessful: Cycle 2: Slice 1 is implemented faithfully and conservatively against the approved v5 plan.
+- Show 'done, unsuccessful' with its reason everywhere a run result appears: Clean cycle-2 implementation of slice 2.
+- Route swallowed step failures through _recover instead of ending done: Faithful, minimal implementation of plan v5.
+
 ### Agents left running by a killed server are stopped at the next start (#1144)
 
 - On Linux, macOS and WSL, a Claude, Codex or Copilot process (and anything it started) no longer keeps running after the Worca server or a CLI run is killed with SIGKILL, for example by the out-of-memory killer under WSL2. Each process records its agent process groups in `<worca home>/agent-groups/`, and the next server start stops the ones whose owner is gone, so they no longer hold memory and make the next kill more likely. A PID that another process has taken since (after a reboot or `wsl --shutdown`, or in a restarted container, whose PIDs start again from 1) is never touched: each group is recorded with its boot id and start time.
@@ -55,6 +61,7 @@
   - Isolation: callers of the API from inside the box (curl scripts, the Railway probe) must send `X-Worca-UI-Token` from `ui.json`; the `worca` CLI does.
   - Image: rebuild for the `worca-plugin` user (uid 1002). The entrypoint re-permissions `plugins/` on each boot and makes `tmp/ask` sticky.
   - Chat: in a group chat `/direct` and the answer commands need a sender in `allowedUserIds`, or `directInGroups: anyone`. On Discord every chat is a group (the bot receives no direct messages).
+
 ### Run telemetry (experimental, flag `runTelemetry`)
 
 - With the flag on, a run records every model call's context size, tokens, timing and tools, tool run times, retries, compactions and sub-agent calls, plus Worca's own state saves, live-update sizes and event loop delay, to `telemetry.ndjson` in the run folder. Recording only: runs behave the same, and with the flag off nothing is written.

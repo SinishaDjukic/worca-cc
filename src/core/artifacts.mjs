@@ -2033,6 +2033,10 @@ function toPipelineRow(o) {
           ...(Array.isArray(o.openIssues) && o.openIssues.length ? { openIssues: o.openIssues } : {}),
           wireDeliveries: o.wireDeliveries ?? {},
           tokens: o.tokens ?? {},
+          successful: o.successful === false ? false : true,     // S1: absent-safe (missing ⇒ true)
+          reason: o.outcomeReason ?? null,                       // S1: the single-line unsuccessful reason
+          unmet: Array.isArray(o.unmet) ? o.unmet : [],          // S1: the collected unmet-expectation facts
+          codeSteps: Array.isArray(o.codeSteps) ? o.codeSteps : [],   // S1: sideEffect:code nodes that ran
           ...(typeof o.runEngine === 'string' && o.runEngine && o.runEngine !== 'claude' ? { runEngine: o.runEngine } : {}),
           // Session groups (C6): each session's summary — only on a run that has one, so other rows are unchanged.
           ...(o.sessionHosts && typeof o.sessionHosts === 'object' && Object.keys(o.sessionHosts).length ? { sessionHosts: o.sessionHosts } : {}),
@@ -2463,6 +2467,9 @@ async function rowToHistoryEntry(row, repoDir = null, opts = {}) {
     pauseDetail: row.pause_detail ?? null,
     limitEngine: row.limit_engine ?? null,
     limitResetAt: row.limit_reset_at ?? null,
+    // S1: SQLite returns JSON false→0, true→1, absent→null (null stays null = "unknown / legacy").
+    successful: row.successful == null ? null : (row.successful === 0 ? false : true),
+    outcomeReason: row.outcome_reason ?? null,
     runEngine: row.run_engine || 'claude',
     // E2/2.3: the done-run caveat (open issues left by a forced loop, End not reached). Only on a v2 row.
     ...(row.open_issue_count ? { openIssueCount: Number(row.open_issue_count) } : {}),
@@ -2577,6 +2584,8 @@ async function listPipelinesNow(projectDir, opts, workspaceKey) {
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.limitEngine') AS limit_engine,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.limitResetAt') AS limit_reset_at,
            resume_point IS NOT NULL AS has_resume_point,
+           json_extract(CASE WHEN json_valid(outcome) THEN outcome END, '$.successful') AS successful,
+           json_extract(CASE WHEN json_valid(outcome) THEN outcome END, '$.reason')     AS outcome_reason,
            ${RUN_ENGINE_SQL} AS run_engine,
            ${OUTCOME_NOTE_SQL}
     FROM pipelines
@@ -2625,6 +2634,8 @@ async function listAllPipelinesNow(opts, { batchSize = 16 } = {}) {
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.limitEngine') AS limit_engine,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.limitResetAt') AS limit_reset_at,
            resume_point IS NOT NULL AS has_resume_point,
+           json_extract(CASE WHEN json_valid(outcome) THEN outcome END, '$.successful') AS successful,
+           json_extract(CASE WHEN json_valid(outcome) THEN outcome END, '$.reason')     AS outcome_reason,
            ${RUN_ENGINE_SQL} AS run_engine,
            ${OUTCOME_NOTE_SQL}
     FROM pipelines
@@ -2905,6 +2916,10 @@ function rowToState(row) {
     state.wireDeliveries = outcome.wireDeliveries ?? {};
     state.tokens = outcome.tokens ?? {};
     if (outcome.sessionHosts && typeof outcome.sessionHosts === 'object') state.sessionHosts = outcome.sessionHosts;
+    state.successful = outcome.successful !== false;   // S1: absent-safe (missing/legacy ⇒ true)
+    state.outcomeReason = typeof outcome.reason === 'string' ? outcome.reason : null;
+    state.unmet = Array.isArray(outcome.unmet) ? outcome.unmet : [];
+    state.codeSteps = Array.isArray(outcome.codeSteps) ? outcome.codeSteps : [];
     state.active = [];        // nothing is in flight in a rehydrated snapshot
     state.gate = null;
   }

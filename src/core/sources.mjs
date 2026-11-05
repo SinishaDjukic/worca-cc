@@ -16,7 +16,11 @@ import { getDb } from './db.mjs';
 import { runDirForRow, readStoreMeta, readPromptFile } from './artifacts.mjs';
 import { RESULTS_FILE } from './results.mjs';
 import { anyPrHost, findPrForBranch } from './git-info.mjs';
+import { outcomeSuccessful } from './outcome.mjs';
 import { moveFor } from './ticket-updates.mjs';
+
+/** Parse the `outcome` JSON column to an object, or null. */
+const parseOutcome = (v) => { try { return v == null ? null : JSON.parse(v); } catch { return null; } };
 
 /** Profile roster for a plugin; never throws — the pane must render even when a
  *  plugin's data dir is unreadable (it degrades to "no profiles yet"). */
@@ -185,9 +189,10 @@ export async function resolveTaskInput(source, { projectDir } = {}) {
 
 // ── result write-back (spec §7.5) ──────────────────────────────────────────────
 
-/** Map a pipeline row status onto the connector reportResult vocabulary (§7.1). */
-function statusToResult(status) {
-  if (status === 'done') return 'completed';
+/** Map a pipeline row status onto the connector reportResult vocabulary (§7.1).
+ *  S1: a `done` run that finished unsuccessfully maps to 'failed', not 'completed'. */
+export function statusToResult(status, { successful = true } = {}) {
+  if (status === 'done') return successful ? 'completed' : 'failed';
   if (status === 'error' || status === 'stopped') return 'failed';
   return 'needs-human'; // paused | interrupted | anything non-terminal (manual retry path)
 }
@@ -301,7 +306,8 @@ export async function reportResultForPipeline(pipelineRow, resultsBundle) {
     // Ticket updates (D7): the move by the rule of the ticket's project (pinned at fetch, D6), else All projects; undefined with
     // the flag off or nothing saved for the row's profile and source (the plugin's old setting applies, D4). Decided before the
     // probe, so a failed probe cannot let the old setting run over a saved rule (S1).
-    const status = statusToResult(pipelineRow.status);
+    // S1: a done run that did not do the work reports (and moves its ticket) as failed.
+    const status = statusToResult(pipelineRow.status, { successful: outcomeSuccessful(parseOutcome(pipelineRow.outcome)) });
     const ruled = moveFor({ plugin: ref.plugin, sourceId: ref.sourceId, profile: callRef.profile || DEFAULT_PROFILE,
       project: typeof ref.project === 'string' ? ref.project : '', status });
 

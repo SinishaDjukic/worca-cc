@@ -203,6 +203,10 @@ export function signalTree(child, sig, { group = true, platform = process.platfo
  *   still streamed, but never classified and never the exit detail while other evidence exists
  * @param {(err:Error, prefix:string) => Error} o.spawnError
  * @param {(code:number) => any} o.onDone
+ * @param {(() => string|null)|null} [o.errorResultDetail] the detail text when the terminal result
+ *   signalled an error despite a ZERO exit (a swallowed failure the engine resolved instead of
+ *   throwing); null/'' means the result was clean. When it returns a non-empty detail the spawn
+ *   rejects through the same redact→cap→classify path the non-zero branch uses. Default null (resolve).
  */
 const notedResolutions = new Set();
 /** Log a shim substitution once per process: the same bin resolves on every spawn. */
@@ -216,7 +220,13 @@ function noteResolved(r) {
 
 export function superviseSpawn(o) {
   const { file, args, cli = GENERIC_CLI, displayBin, cwd, env, stdin, signal, asAgent, stagedDir, agentHome = null, cleanup, onEvent,
-    onStdoutLine, onStderrLine = null, stdoutErrorDetail, classify, isBenignStderr = () => false, redactText = null, spawnError, onDone } = o;
+    onStdoutLine, onStderrLine = null, stdoutErrorDetail, classify, isBenignStderr = () => false, redactText = null, spawnError, onDone,
+    // S3: optional. Returns the detail text when the TERMINAL result signalled an error despite a
+    // ZERO exit (the engine resolved a real failure instead of throwing); null/'' when the run's
+    // own result was clean. Lets that swallowed failure reject through the SAME path the non-zero
+    // branch uses. Only the Claude node-runner path provides it today (the one remaining swallow);
+    // it is a generic supervisor option any future engine can opt into with one line.
+    errorResultDetail = null } = o;
   return new Promise((resolveP, rejectP) => {
     let childEnv = env;
     // ENOENT/EINVAL on a Windows script shim: say why (the same text the preflight shows).
@@ -387,6 +397,21 @@ export function superviseSpawn(o) {
         // detail came from the stdout `result` envelope (the common case — see
         // the errorDetail comment above), which is not an stderr line.
         if (fromStderr) err.stream = 'err';
+        finish(rejectP, err);
+        return;
+      }
+      // zero exit
+      const resultErr = errorResultDetail ? errorResultDetail() : null;
+      if (resultErr) {
+        // Mirror the non-zero path above (redact BEFORE the tail cut — a cut-first could leave a
+        // fragment of a secret no value matches), classify on the FULL redacted detail, and leave
+        // err.stream undefined — this detail is stdout-borne, not an stderr line. stderrClass is
+        // intentionally NOT consulted: on a ZERO exit the process succeeded, so its stderr is benign
+        // retry/MCP chatter, not the cause — the stdout result detail is.
+        const raw = redactText ? redactText(resultErr) : resultErr;
+        const detail = raw.length > STDERR_DETAIL_MAX ? `… ${raw.slice(-STDERR_DETAIL_MAX)}` : raw;
+        const err = new Error(`${displayBin} reported an error result: ${detail}`);
+        err.errorClass = classify(raw);
         finish(rejectP, err);
         return;
       }
