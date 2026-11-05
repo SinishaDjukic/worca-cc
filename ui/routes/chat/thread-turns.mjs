@@ -17,31 +17,13 @@ import { mockEnabled } from '../../../src/core/claude-runner.mjs';
 import { budgetStatus } from '../../../src/core/cost-budget.mjs';
 import { DIRECTION_MAX_CHARS } from '../../../src/core/directions.mjs';
 import { chatDescriptor, chatEngineGate } from '../../../src/core/engines/chat.mjs';
-import { resolveIdentity } from '../../../src/core/identity.mjs';
 import { ASK_ENGINES } from '../../../src/core/model-env.mjs';
 import { CLAUDE_SIGNED_OUT_CODE, CLAUDE_SIGNED_OUT_MESSAGE } from '../../../src/core/preflight.mjs';
 import { changesCard, landingFacts, landingFactsOfFeature } from '../../../src/core/shape/changes.mjs';
 import { chatAttachRefusal, chatSwitchChanges, engineLabel } from '../../../src/shared/engine-switch.mjs';
-import { askChatEngine, askContextTokens, askDeleting, askEngineSwitchText, askIdParam, askInFlight, askRunningCount, askSwitchTranscript, askTurnEngine, askViewer, badRequest, broadcast, brokerStartRefusal, factDeps, liveRunEntry, postDirection, startAskTurn, switchThreadScope } from '../../server.mjs';
+import { askChatEngine, askChatEngineGate, askContextTokens, askCredentialGate, askDeleting, askEngineSwitchText, askIdParam, askInFlight, askRunningCount, askSignedIn, askSwitchTranscript, askTurnEngine, askViewer, badRequest, broadcast, brokerStartRefusal, factDeps, liveRunEntry, postDirection, startAskTurn, switchThreadScope } from '../../server.mjs';
 
 export function register(app) {
-
-/**
- * The ONE turn starter (spec §8.4): the typed-message route and the workflow-card event path both land here.
- * SYNCHRONOUS until the first write — the §6.2.2 guards + the slot reservation run before any await, so two callers
- * cannot interleave (the route's earlier checks are only the fast-path 4xx). Resolves {ok:false,status,error} for the
- * 403/409/429 cases the message route maps to HTTP; {ok:true,…} once the turn is running.
- * @param {{threadId:string, thread:object, ctx:object, model:string, effort:string, text:string,
- *          files?:Array, synthetic?:{notice:string, quiet?:boolean}|null}} o
- *   text      what the MODEL gets as the user message: the typed text, or the `[worca event] …` line (synthetic)
- *   synthetic the user row renders as a notice (never a bubble) and never titles the thread (PD6); quiet: the
- *             transcript shows nothing for it — the divider or the answered card already says it
- */
-/** The identity Ask Worca's header shows: resolved like every other attribution, absent for 'local'. */
-function askSignedIn(req) {
-  const who = resolveIdentity(req);
-  return who.source === 'local' ? null : who.name;
-}
 
 // ---------------------------------------------------------------------------
 // #943: an existing chat moves to another engine. Preview (dryRun) → the panel's confirm → commit. Both phases run the
@@ -178,15 +160,12 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
     if (!text.trim()) return badRequest(res, 'text is required');
     // The credential broker keeps Claude keys only: a Codex chat would spend codex's own sign-in, shared by everyone and
     // readable by the agent. Refused before the model check, which no longer lists Codex rows.
-    const chatEngine = askChatEngine(id, thread);
-    const engineRefusal = brokerEngineRefusal(chatEngine);
-    if (engineRefusal) return res.status(409).json({ error: `This chat runs on ${engineLabel(chatEngine)}: ${engineRefusal}. Switch it to Claude from the Chat model picker.`, code: 'engine-broker' });
-    const mv = await validateModelEffort(body.model, body.effort, { engine: chatEngine });
+    const engineGate = askChatEngineGate(id, thread);
+    if (engineGate) return res.status(engineGate.status).json({ error: engineGate.error, code: engineGate.code });
+    const mv = await validateModelEffort(body.model, body.effort, { engine: askChatEngine(id, thread) });
     if (!mv.ok) return badRequest(res, mv.error);
-    if (!mockEnabled({})) {
-      const refusal = await brokerStartRefusal(req, [String(body.model)]);
-      if (refusal) return res.status(409).json({ error: refusal, code: 'credential-missing' });
-    }
+    const credGate = await askCredentialGate(req, body.model);
+    if (credGate) return res.status(credGate.status).json({ error: credGate.error, code: credGate.code });
     const cv = validateClientContext(body.context);
     if (!cv.ok) return badRequest(res, cv.error);
     // MCP registry §9.4: the composer sends the picker's choices with every message; they decide this turn and are stored.

@@ -64,7 +64,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 84;
+export const SCHEMA_VERSION = 86;
 
 /** store_meta row holding the install's default guardrail set id (JSON string). */
 export const GUARDRAILS_DEFAULT_META_KEY = 'guardrails:default';
@@ -882,6 +882,7 @@ const INCREMENTAL_COLUMNS = {
                             // fallback once a run's worktree is gone; NULL = out folder, worktree or an older row
                             source_run_id: 'TEXT', source_project_key: 'TEXT', source_rel: 'TEXT' },
   ask_messages:           { engine: 'TEXT' },        // v83 (#943): the engine a reply ran on; NULL = a user/system row or before v83
+  chat_conversations:     { header_new_off: 'INTEGER NOT NULL DEFAULT 0' },   // v86: 1 = a scope pick retired the header's New conversation for good
   project_config:         { human_in_loop: 'INTEGER NOT NULL DEFAULT 1' },   // v28: the Auto entry's human-in-the-loop switch
   diff_comments:          { parent_id: 'TEXT REFERENCES diff_comments(id) ON DELETE CASCADE',  // v29: reply threads; NULL = thread root
                             author_name: 'TEXT' },   // v37: who wrote it (identity.mjs actor); NULL = before attribution / Ask
@@ -1082,6 +1083,60 @@ CREATE TABLE IF NOT EXISTS pr_watch_runs (
 // v82 (#711): Git event automations. A rule starts a run when an issue or PR event in its project or workspace matches;
 // one automation_events row per (rule, subject) is the "never twice" guarantee and the Activity log; cursors hold
 // each project's poll position; deliveries drop webhook repeats. src/core/automations.mjs owns all four.
+// v85 freeform chat (Discord first): one row per platform thread bound to an Ask thread, the opaque control refs it
+// was sent, every delivered message part, and the platform event ids already handled (dedup across reconnects).
+const CHAT_CONVERSATIONS_DDL = `
+CREATE TABLE IF NOT EXISTS chat_conversations (
+  id             TEXT PRIMARY KEY,
+  plugin         TEXT NOT NULL,
+  channel_id     TEXT NOT NULL,
+  platform       TEXT NOT NULL,
+  guild_id       TEXT,
+  parent_chat_id TEXT NOT NULL,
+  chat_id        TEXT NOT NULL,
+  owner_user_id  TEXT NOT NULL,
+  worca_identity TEXT NOT NULL,
+  ask_thread_id  TEXT NOT NULL REFERENCES ask_threads(id) ON DELETE CASCADE,
+  header_message_id TEXT,
+  header_new_off INTEGER NOT NULL DEFAULT 0,
+  status         TEXT NOT NULL DEFAULT 'active',
+  created_at     TEXT NOT NULL,
+  updated_at     TEXT NOT NULL,
+  UNIQUE (plugin, channel_id, chat_id)
+);
+CREATE INDEX IF NOT EXISTS idx_chat_conversations_thread ON chat_conversations(ask_thread_id);
+CREATE TABLE IF NOT EXISTS chat_controls (
+  ref             TEXT PRIMARY KEY,
+  conversation_id TEXT NOT NULL REFERENCES chat_conversations(id) ON DELETE CASCADE,
+  card_id         TEXT,
+  action          TEXT NOT NULL,
+  issued_state    TEXT,
+  owner_user_id   TEXT NOT NULL,
+  single_use      INTEGER NOT NULL DEFAULT 1,
+  expires_at      TEXT NOT NULL,
+  used_at         TEXT,
+  created_at      TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_chat_controls_card ON chat_controls(conversation_id, card_id);
+CREATE TABLE IF NOT EXISTS chat_deliveries (
+  conversation_id     TEXT NOT NULL REFERENCES chat_conversations(id) ON DELETE CASCADE,
+  ask_message_id      TEXT NOT NULL,
+  part                TEXT NOT NULL,
+  platform_message_id TEXT,
+  shown_state         TEXT,
+  delivered_at        TEXT NOT NULL,
+  PRIMARY KEY (conversation_id, ask_message_id, part)
+);
+CREATE TABLE IF NOT EXISTS chat_inbound_seen (
+  plugin     TEXT NOT NULL,
+  channel_id TEXT NOT NULL,
+  event_id   TEXT NOT NULL,
+  seen_at    TEXT NOT NULL,
+  PRIMARY KEY (plugin, channel_id, event_id)
+);
+CREATE INDEX IF NOT EXISTS idx_chat_inbound_seen_at ON chat_inbound_seen(seen_at);
+`;
+
 const AUTOMATIONS_DDL = `
 CREATE TABLE IF NOT EXISTS automation_rules (
   id            TEXT PRIMARY KEY,
@@ -1541,6 +1596,10 @@ const INCREMENTAL_TABLES = {
   run_group_members: RUN_GROUPS_DDL,
   ask_chat_groups:   ASK_CHAT_GROUPS_DDL,      // v76 (#948 s3)
   night_decisions:   NIGHT_DECISIONS_DDL,
+  chat_conversations: CHAT_CONVERSATIONS_DDL,
+  chat_controls: CHAT_CONVERSATIONS_DDL,
+  chat_deliveries: CHAT_CONVERSATIONS_DDL,
+  chat_inbound_seen: CHAT_CONVERSATIONS_DDL,
   terminal_sessions:  TERMINAL_DDL,
   terminal_blocks:    TERMINAL_DDL,
   terminal_audit:     TERMINAL_DDL,
@@ -2730,6 +2789,9 @@ export function migrate(db) {
     if (current < 82) db.exec(AUTOMATIONS_DDL);   // v82 Git event automations (#711), project and workspace rules
     // v83 (#943): ask_messages.engine — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
     // v84 (#990): config_workflow_nodes.roles — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
+    if (current < 85) db.exec(CHAT_CONVERSATIONS_DDL);   // v85 freeform chat conversations (first written as v84; dev took 84)
+    // v86: chat_conversations.header_new_off — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps (a v85 DB) or
+    // by the v85 DDL above (an older DB)
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

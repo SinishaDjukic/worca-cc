@@ -6,7 +6,7 @@
 // setMockSourceResponses.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { writePluginsLock, pluginCurrentDir } from '../src/core/plugins-lock.mjs';
@@ -51,6 +51,8 @@ const WORKER = [
   '    async stop() {},',
   '    async send(chatId, message) {',
   "      if (chatId === 'FAIL') { const e = new Error('slow down bot123456:AAHtokentokentokentokentoken'); e.kind = 'rate-limit'; e.retryAfterMs = 250; throw e; }",
+  "      if (chatId === 'REFUSED') { const e = new Error('channel or message not found'); e.kind = 'plugin'; e.permanent = true; throw e; }",
+  "      if (chatId === 'PLUGINERR') { const e = new Error('send failed'); e.kind = 'plugin'; throw e; }",
   "      if (chatId === 'CRASH') { process.exit(3); }",
   "      if (chatId === 'STATE') { await ctx.state.set('cursor', 41 + 1); return { ok: true }; }",
   "      if (chatId === 'EMIT') { ctx.emitMessage({ chatId: '77', userId: 'u9', text: '/status', meta: { platform: ctx.platform } }); return { ok: true }; }",
@@ -164,6 +166,13 @@ test('full worker lifecycle: hello -> ready -> send RPC -> errors -> state -> in
       return true;
     },
   );
+
+  // a platform refusal the worker marks permanent reaches the caller as permanent; an unmarked plugin error does not
+  // (a 5xx or a worker bug must be retried, never dropped), and a network error never is.
+  const asks = (chatId) => host.sendMessage({ plugin: NAME, channelId: 'main', chatId, message: { title: null, body: [], severity: 'info' } });
+  await assert.rejects(asks('REFUSED'), (err) => err.kind === 'plugin' && err.permanent === true);
+  await assert.rejects(asks('PLUGINERR'), (err) => err.kind === 'plugin' && err.permanent !== true);
+  await assert.rejects(asks('FAIL'), (err) => err.kind === 'rate-limit' && err.permanent !== true);
 
   // state-delta persisted host-side via writePluginState
   await host.sendMessage({ plugin: NAME, channelId: 'main', chatId: 'STATE', message: { title: null, body: [], severity: 'info' } });
@@ -664,4 +673,220 @@ test('workers and --check spawn as the container plugin user when there is one',
       if (k in saved) process.env[k] = saved[k]; else delete process.env[k];
     }
   }
+});
+
+// Freeform chat (v2 interactive): the real child forwards send options, returns the worker's detail,
+// emits interactions and answers interaction-reply; a non-interactive channel never sees options or controls.
+const INTERACTIVE_WORKER = [
+  'export function createChannelWorker(ctx) {',
+  '  const seen = [];',
+  '  return {',
+  "    async start() { return { identity: 'fixture-bot' }; },",
+  '    async stop() {},',
+  '    async send(chatId, message, options) {',
+  "      if (chatId === 'CLICK') { ctx.emitInteraction({ id: 'i1', chatId: 'T1', userId: 'U1', ref: 'AbCdEfGhIjKlMnOpQrStUvWx', kind: 'select', values: ['a'], meta: { platform: 'testchat' } }); return { ok: true }; }",
+  "      return { ok: true, messageIds: ['M1'], echo: { options, controls: message.controls || null } };",
+  '    },',
+  "    async replyInteraction(id, text) { if (id !== 'i1') { const e = new Error('interaction expired'); e.kind = 'plugin'; throw e; } seen.push(text); return { ok: true }; },",
+  "    async react(chatId, messageId, emoji, on) { if (messageId === 'GONE') { const e = new Error('message not found (GONE)'); e.kind = 'plugin'; e.permanent = true; throw e; } if (messageId === 'BUSY') { const e = new Error('slow down'); e.kind = 'rate-limit'; e.retryAfterMs = 700; throw e; } ctx.log('info', 'react ' + JSON.stringify([chatId, messageId, emoji, on])); return { ok: true }; },",
+  "    async typing(chatId, on) { if (chatId === 'GONE') { const e = new Error('channel not found (GONE)'); e.kind = 'plugin'; e.permanent = true; throw e; } ctx.log('info', 'typing ' + JSON.stringify([chatId, on])); return { ok: true }; },",
+  '  };',
+  '}',
+].join('\n');
+
+test('interactive channel: options + controls reach the worker, detail comes back, interactions round-trip', async () => {
+  installFixture({ worker: INTERACTIVE_WORKER });
+  const cur = pluginCurrentDir(NAME);
+  const manifest = JSON.parse(readFileSync(join(cur, 'worca-cc-plugin.json'), 'utf8'));
+  manifest.chatChannels[0].capabilities = { inbound: true, outbound: true, interactive: true };
+  writeFileSync(join(cur, 'worca-cc-plugin.json'), JSON.stringify(manifest));
+  const seenI = [];
+  const host = createChannelHost({ logger: () => {}, onInteraction: (ev) => seenI.push(ev) });
+  host.start();
+  after(() => host.stop());
+  await waitFor(() => host.status()[0]?.state === 'connected', { label: 'worker connected' });
+  const controls = [{ kind: 'button', ref: 'AbCdEfGhIjKlMnOpQrStUvWx', label: 'Start run', style: 'primary' }];
+  const r = await host.sendMessage({ plugin: NAME, channelId: 'main', chatId: 'T1',
+    message: { title: null, body: [{ kind: 'text', value: 'x' }], severity: 'info', controls }, options: { edit: { messageId: 'M1' } } });
+  assert.deepEqual(r, { ok: true, detail: { ok: true, messageIds: ['M1'], echo: { options: { edit: { messageId: 'M1' } }, controls } } });
+  await host.sendMessage({ plugin: NAME, channelId: 'main', chatId: 'CLICK', message: { title: null, body: [], severity: 'info' } });
+  const ev = await waitFor(() => seenI[0], { label: 'interaction' });
+  assert.deepEqual(ev, { plugin: NAME, channelId: 'main', platform: 'testchat',
+    evt: { id: 'i1', chatId: 'T1', userId: 'U1', ref: 'AbCdEfGhIjKlMnOpQrStUvWx', kind: 'select', values: ['a'], meta: { platform: 'testchat' } } });
+  assert.deepEqual(await host.replyInteraction({ plugin: NAME, channelId: 'main', interactionId: 'i1', text: 'Done' }), { ok: true });
+  await assert.rejects(host.replyInteraction({ plugin: NAME, channelId: 'main', interactionId: 'nope', text: 'x' }), /interaction expired/);
+  await host.stop();
+});
+
+test('non-interactive channel: options refused, executable controls dropped, links become text, interactions ignored', async () => {
+  installFixture({ worker: INTERACTIVE_WORKER });
+  const seenI = [];
+  const host = createChannelHost({ logger: () => {}, onInteraction: (ev) => seenI.push(ev) });
+  host.start();
+  after(() => host.stop());
+  await waitFor(() => host.status()[0]?.state === 'connected', { label: 'worker connected' });
+  const message = { title: null, body: [{ kind: 'text', value: 'x' }], severity: 'info', controls: [
+    { kind: 'button', ref: 'AbCdEfGhIjKlMnOpQrStUvWx', label: 'Start run', style: 'primary' },
+    { kind: 'link', label: 'Open in worca', url: 'https://w.example/#chat/ask_1' }] };
+  await assert.rejects(host.sendMessage({ plugin: NAME, channelId: 'main', chatId: 'T1', message, options: { edit: { messageId: 'M1' } } }), /not interactive/);
+  const r = await host.sendMessage({ plugin: NAME, channelId: 'main', chatId: 'T1', message });
+  assert.equal(r.detail.echo.controls, null, 'no controls cross to a non-interactive worker');
+  await host.sendMessage({ plugin: NAME, channelId: 'main', chatId: 'CLICK', message: { title: null, body: [], severity: 'info' } });
+  await new Promise((res) => setTimeout(res, 200));
+  assert.equal(seenI.length, 0, 'interaction frames from a non-interactive channel are dropped');
+  await assert.rejects(host.replyInteraction({ plugin: NAME, channelId: 'main', interactionId: 'i1', text: 'x' }), /not interactive/);
+  await host.stop();
+});
+
+test('react: reaches an interactive worker; refusals keep permanent / retryAfterMs; a worker without react is unsupported; a plain channel is refused', async () => {
+  const interactive = () => {
+    const cur = pluginCurrentDir(NAME);
+    const manifest = JSON.parse(readFileSync(join(cur, 'worca-cc-plugin.json'), 'utf8'));
+    manifest.chatChannels[0].capabilities = { inbound: true, outbound: true, interactive: true };
+    writeFileSync(join(cur, 'worca-cc-plugin.json'), JSON.stringify(manifest));
+  };
+  const target = { plugin: NAME, channelId: 'main', chatId: 'T1', messageId: 'M7', emoji: '⏳', on: true };
+  installFixture({ worker: INTERACTIVE_WORKER });
+  interactive();
+  const logs = [];
+  let host = createChannelHost({ logger: (level, msg) => logs.push(msg) });
+  host.start();
+  after(() => host.stop());
+  await waitFor(() => host.status()[0]?.state === 'connected', { label: 'worker connected' });
+  assert.deepEqual(await host.react(target), { ok: true });
+  await waitFor(() => logs.some((m) => m.includes('react ["T1","M7","⏳",true]')), { label: 'the worker saw the call' });
+  await assert.rejects(host.react({ ...target, messageId: 'GONE' }), (e) => e instanceof PluginOpError && e.permanent === true && /not found/.test(e.message));
+  await assert.rejects(host.react({ ...target, messageId: 'BUSY' }), (e) => e.kind === 'rate-limit' && e.retryAfterMs === 700 && e.permanent !== true);
+  await host.stop();
+
+  installFixture();            // the plain fixture worker has no react()
+  interactive();
+  host = createChannelHost({ logger: () => {} });
+  host.start();
+  await waitFor(() => host.status()[0]?.state === 'connected', { label: 'worker connected' });
+  await assert.rejects(host.react(target), (e) => e.permanent === true && /cannot add reactions/.test(e.message));
+  await host.stop();
+
+  installFixture();            // not interactive
+  host = createChannelHost({ logger: () => {} });
+  host.start();
+  await waitFor(() => host.status()[0]?.state === 'connected', { label: 'worker connected' });
+  await assert.rejects(host.react(target), (e) => e.permanent === true && /not interactive/.test(e.message));
+  await host.stop();
+});
+
+test('typing: reaches an interactive worker; a refusal keeps permanent; a worker without typing is unsupported; a plain channel is refused', async () => {
+  const interactive = () => {
+    const cur = pluginCurrentDir(NAME);
+    const manifest = JSON.parse(readFileSync(join(cur, 'worca-cc-plugin.json'), 'utf8'));
+    manifest.chatChannels[0].capabilities = { inbound: true, outbound: true, interactive: true };
+    writeFileSync(join(cur, 'worca-cc-plugin.json'), JSON.stringify(manifest));
+  };
+  const target = { plugin: NAME, channelId: 'main', chatId: 'T1', on: true };
+  installFixture({ worker: INTERACTIVE_WORKER });
+  interactive();
+  const logs = [];
+  let host = createChannelHost({ logger: (level, msg) => logs.push(msg) });
+  host.start();
+  after(() => host.stop());
+  await waitFor(() => host.status()[0]?.state === 'connected', { label: 'worker connected' });
+  assert.deepEqual(await host.typing(target), { ok: true });
+  assert.deepEqual(await host.typing({ ...target, on: false }), { ok: true });
+  await waitFor(() => logs.some((m) => m.includes('typing ["T1",true]')) && logs.some((m) => m.includes('typing ["T1",false]')), { label: 'the worker saw both calls' });
+  await assert.rejects(host.typing({ ...target, chatId: 'GONE' }), (e) => e instanceof PluginOpError && e.permanent === true && /not found/.test(e.message));
+  await host.stop();
+
+  installFixture();            // the plain fixture worker has no typing()
+  interactive();
+  host = createChannelHost({ logger: () => {} });
+  host.start();
+  await waitFor(() => host.status()[0]?.state === 'connected', { label: 'worker connected' });
+  await assert.rejects(host.typing(target), (e) => e.permanent === true && /cannot show typing/.test(e.message));
+  await host.stop();
+
+  installFixture();            // not interactive
+  host = createChannelHost({ logger: () => {} });
+  host.start();
+  await waitFor(() => host.status()[0]?.state === 'connected', { label: 'worker connected' });
+  await assert.rejects(host.typing(target), (e) => e.permanent === true && /not interactive/.test(e.message));
+  await host.stop();
+});
+
+// Chat context (discord-chat 0.4.0): the child copies replyTo/history/attachments, drops a refused or oversize context
+// but still delivers the message, and answers the host's history() RPC.
+const CONTEXT_WORKER = [
+  'export function createChannelWorker(ctx) {',
+  "  const q = { author: 'Alice', text: 'quoted', at: '2026-11-03T09:58:00.000Z', link: 'https://discord.com/channels/G1/C1/r1' };",
+  "  const file = (u) => ({ name: 'a.md', contentType: null, size: 3, url: 'https://cdn.example.com/' + u });",
+  '  return {',
+  "    async start() { return { identity: 'fixture-bot' }; },",
+  '    async stop() {},',
+  '    async send(chatId) {',
+  "      if (chatId === 'CTX') ctx.emitMessage({ chatId: 'C1', userId: 'U1', text: 'with context', meta: {}, replyTo: q, history: [q], attachments: [file('a.md')] });",
+  "      if (chatId === 'BADCTX') ctx.emitMessage({ chatId: 'C1', userId: 'U1', text: 'bad context', meta: {}, replyTo: { ...q, at: 'yesterday' } });",
+  "      if (chatId === 'HUGECTX') ctx.emitMessage({ chatId: 'C1', userId: 'U1', text: 'huge context', meta: {}, history: Array.from({ length: 50 }, () => ({ ...q, text: 'x'.repeat(4000), attachments: Array.from({ length: 10 }, () => file('a'.repeat(2000))) })) });",
+  '      return { ok: true };',
+  '    },',
+  "    async history(chatId, before, limit) { if (chatId === 'NOPE') { const e = new Error('missing access'); e.kind = 'plugin'; e.permanent = true; throw e; } if (chatId === 'JUNK') return [{ author: '' }]; ctx.log('info', 'history ' + JSON.stringify([chatId, before, limit])); return [q, { ...q, text: 'second' }]; },",
+  '  };',
+  '}',
+].join('\n');
+
+test('chat context: replyTo/history/attachments cross the child; a refused or oversize context keeps the message; history() RPC', async () => {
+  const interactive = (hosts) => {
+    const cur = pluginCurrentDir(NAME);
+    const manifest = JSON.parse(readFileSync(join(cur, 'worca-cc-plugin.json'), 'utf8'));
+    manifest.chatChannels[0].capabilities = { inbound: true, outbound: true, interactive: true };
+    if (hosts) manifest.chatChannels[0].attachmentHosts = hosts;
+    writeFileSync(join(cur, 'worca-cc-plugin.json'), JSON.stringify(manifest));
+  };
+  installFixture({ worker: CONTEXT_WORKER });
+  interactive(['cdn.example.com']);
+  const inbound = [];
+  const logs = [];
+  let host = createChannelHost({ logger: (level, msg) => logs.push(msg), onInbound: (ev) => inbound.push(ev.msg) });
+  host.start();
+  after(() => host.stop());
+  await waitFor(() => host.status()[0]?.state === 'connected', { label: 'worker connected' });
+  assert.deepEqual(host.list()[0].attachmentHosts, ['cdn.example.com']);
+  const send = (chatId) => host.sendMessage({ plugin: NAME, channelId: 'main', chatId, message: { title: null, body: [{ kind: 'text', value: 'x' }], severity: 'info' } });
+  await send('CTX');
+  await waitFor(() => inbound.length === 1, { label: 'the context message' });
+  assert.equal(inbound[0].replyTo.author, 'Alice');
+  assert.equal(inbound[0].history.length, 1);
+  assert.equal(inbound[0].attachments[0].url, 'https://cdn.example.com/a.md');
+  await send('BADCTX');
+  await waitFor(() => inbound.length === 2, { label: 'the refused-context message' });
+  assert.deepEqual(inbound[1], { chatId: 'C1', userId: 'U1', text: 'bad context', meta: {} });
+  await send('HUGECTX');
+  await waitFor(() => inbound.length === 3, { label: 'the oversize-context message' });
+  assert.deepEqual(Object.keys(inbound[2]).sort(), ['chatId', 'meta', 'text', 'userId']);
+  assert.ok(logs.some((m) => /invalid reply, history or attachments dropped/.test(m)));
+  assert.ok(logs.some((m) => /chat context over the frame cap dropped/.test(m)));
+
+  const h = await host.history({ plugin: NAME, channelId: 'main', chatId: 'C1', before: 'm1', limit: 1 });
+  assert.deepEqual(h.map((x) => x.text), ['second'], 'at most `limit`, the newest');
+  await waitFor(() => logs.some((m) => m.includes('history ["C1","m1",1]')), { label: 'the worker saw the call' });
+  await assert.rejects(host.history({ plugin: NAME, channelId: 'main', chatId: 'NOPE', before: 'm1', limit: 5 }),
+    (e) => e instanceof PluginOpError && e.permanent === true && /missing access/.test(e.message));
+  await assert.rejects(host.history({ plugin: NAME, channelId: 'main', chatId: 'JUNK', before: 'm1', limit: 5 }), (e) => e.kind === 'protocol');
+  await host.stop();
+
+  installFixture({ worker: INTERACTIVE_WORKER });   // interactive, but its worker has no history()
+  interactive(null);
+  host = createChannelHost({ logger: () => {} });
+  host.start();
+  await waitFor(() => host.status()[0]?.state === 'connected', { label: 'worker connected' });
+  assert.equal('attachmentHosts' in host.list()[0], false);
+  await assert.rejects(host.history({ plugin: NAME, channelId: 'main', chatId: 'C1', before: 'm1', limit: 5 }),
+    (e) => e.permanent === true && /cannot read channel history/.test(e.message));
+  await host.stop();
+
+  installFixture();                                  // not interactive
+  host = createChannelHost({ logger: () => {} });
+  host.start();
+  await waitFor(() => host.status()[0]?.state === 'connected', { label: 'worker connected' });
+  await assert.rejects(host.history({ plugin: NAME, channelId: 'main', chatId: 'C1', before: 'm1', limit: 5 }),
+    (e) => e.permanent === true && /not interactive/.test(e.message));
+  await host.stop();
 });
