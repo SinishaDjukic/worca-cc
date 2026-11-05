@@ -2969,6 +2969,10 @@ export class RunHarness extends EventEmitter {
       throw Object.assign(new Error(`Worca could not switch off the project's Claude Code hooks and plugins for this try: ${e && e.message ? e.message : e}`),
         { code: 'TRY_PLUGINS_OFF_FAILED' });
     }
+    // D72a (Task 5, I2): a skill, agent or command whose frontmatter Worca could not change safely is named, once each.
+    for (const p of r.unparsed || []) {
+      await this._recordRunWarning(`Worca could not safely remove the hooks from the project's ${p}, so any hooks in it may still run in this try.`);
+    }
     const touched = [...r.changed, ...r.links];
     if (!touched.length) return;
     const ls = await this._git(['-c', 'core.quotePath=false', 'ls-files', '-z', '--', ...touched.map((p) => `:(literal)${p}`)], { cwd });

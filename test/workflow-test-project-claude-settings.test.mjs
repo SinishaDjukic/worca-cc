@@ -2,11 +2,12 @@
 // plugins switched off in a Pretend try's checkout; links never followed.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, linkSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { strippedSettingsText, stripProjectClaudeSettings, PROJECT_SETTINGS_FILES, STRIPPED_SETTINGS_KEYS }
+import { strippedSettingsText, strippedFrontmatterText, isTryGuardEnvKey, stripProjectClaudeSettings, PROJECT_SETTINGS_FILES, STRIPPED_SETTINGS_KEYS }
   from '../src/core/workflow-tests/project-claude-settings.mjs';
+import { RunHarness } from '../src/core/run-harness.mjs';
 
 const dirs = [];
 after(() => { for (const d of dirs) rmSync(d, { recursive: true, force: true }); });
@@ -15,7 +16,7 @@ const canLinkFiles = (() => { try { const d = tmp(); writeFileSync(join(d, 't'),
 const FILE_LINKS = { skip: canLinkFiles ? false : 'this machine cannot make file symlinks (EPERM on Windows without developer mode)' };
 
 test('the text: hooks and enabledPlugins go, everything else stays; nothing to do is null', () => {
-  assert.deepEqual(STRIPPED_SETTINGS_KEYS, ['hooks', 'enabledPlugins']);
+  assert.deepEqual(STRIPPED_SETTINGS_KEYS, ['hooks', 'enabledPlugins', 'extraKnownMarketplaces']);
   assert.deepEqual(PROJECT_SETTINGS_FILES, ['.claude/settings.json', '.claude/settings.local.json']);
   const t = strippedSettingsText(JSON.stringify({ permissions: { allow: ['Bash(npm test:*)'] }, hooks: { SessionStart: [] }, enabledPlugins: { 'p@m': true }, env: { A: '1' } }));
   assert.deepEqual(JSON.parse(t), { permissions: { allow: ['Bash(npm test:*)'] }, env: { A: '1' } });
@@ -82,5 +83,99 @@ test('a file that cannot be written throws (the caller ends the try)', { skip: p
   mkdirSync(join(d, '.claude'));
   writeFileSync(join(d, '.claude', 'settings.json'), JSON.stringify({ hooks: {} }));
   chmodSync(join(d, '.claude', 'settings.json'), 0o444);
-  try { await assert.rejects(stripProjectClaudeSettings(d), /EACCES|EPERM/); } finally { chmodSync(join(d, '.claude', 'settings.json'), 0o644); }
+  // M6: the file is replaced by a rename, which a read-only file stops on Windows; on POSIX the folder must be read-only too.
+  if (process.platform !== 'win32') chmodSync(join(d, '.claude'), 0o555);
+  try { await assert.rejects(stripProjectClaudeSettings(d), /EACCES|EPERM/); } finally {
+    if (process.platform !== 'win32') chmodSync(join(d, '.claude'), 0o755);
+    chmodSync(join(d, '.claude', 'settings.json'), 0o644);
+  }
+});
+
+// ── Task 5 (security review M10): what else in the project's settings would undo a Pretend try ───────────────────────────
+test('M10: extraKnownMarketplaces goes, and the env keys that undo the try guard (the CLI applies settings env to its tools)', () => {
+  assert.ok(STRIPPED_SETTINGS_KEYS.includes('extraKnownMarketplaces'));
+  const env = { PATH: '/evil', Path: 'C:/evil', GIT_SSH_COMMAND: 'ssh', GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'credential.helper', GIT_CONFIG_GLOBAL: '/g',
+    GH_CONFIG_DIR: '/gh', GLAB_CONFIG_DIR: '/gl', AZURE_CONFIG_DIR: '/az', WORCA_TRY_GUARD_LOG: '/x', worca_home: '/h', GIT_TERMINAL_PROMPT: '1',
+    GCM_INTERACTIVE: 'always', WSLENV: 'X', GH_TOKEN: 'ghp_x', NPM_TOKEN: 'n', NODE_ENV: 'test', BASH_DEFAULT_TIMEOUT_MS: '1000' };
+  const t = strippedSettingsText(JSON.stringify({ env, extraKnownMarketplaces: { m: {} }, model: 'x' }));
+  assert.deepEqual(JSON.parse(t), { env: { NODE_ENV: 'test', BASH_DEFAULT_TIMEOUT_MS: '1000' }, model: 'x' });
+  assert.equal(strippedSettingsText(JSON.stringify({ env: { NODE_ENV: 'x' } })), null, 'nothing to strip: unchanged');
+  for (const k of ['PATH', 'Path', 'GIT_CONFIG_VALUE_3', 'WORCA_X', 'WSLENV', 'GH_TOKEN']) assert.ok(isTryGuardEnvKey(k), k);
+  for (const k of ['NODE_ENV', 'GITHUB_WORKSPACE', 'PATHEXT']) assert.equal(isTryGuardEnvKey(k), false, k);
+});
+
+// ── Task 5 (security review M6): never write through a hardlink ───────────────────────────────────────────────────────────
+test('M6: a settings file that is a hardlink to a file outside the checkout: the outside file is unchanged', async () => {
+  const d = tmp();
+  const outside = join(tmp(), 'outside.json');
+  writeFileSync(outside, JSON.stringify({ hooks: { PreToolUse: [] }, model: 'x' }));
+  mkdirSync(join(d, '.claude'));
+  linkSync(outside, join(d, '.claude', 'settings.json'));
+  assert.deepEqual(await stripProjectClaudeSettings(d), { changed: ['.claude/settings.json'], links: [] });
+  assert.deepEqual(JSON.parse(readFileSync(outside, 'utf8')), { hooks: { PreToolUse: [] }, model: 'x' }, 'the link target is untouched');
+  assert.deepEqual(JSON.parse(readFileSync(join(d, '.claude', 'settings.json'), 'utf8')), { model: 'x' });
+  assert.deepEqual(readdirSync(join(d, '.claude')), ['settings.json'], 'no temp file left');
+});
+
+// ── Task 5 (security review I2, decision D72a): hooks in the frontmatter of the project's skills, agents and commands ─────
+const FM = (hooksBlock, rest = 'description: d\n') => `---\nname: x\n${hooksBlock}${rest}---\nBody with hooks: in it.\n\n---\nnot frontmatter\n`;
+const BLOCK = 'hooks:\n  PreToolUse:\n    - matcher: "Bash"\n\n      hooks:\n        - type: command\n          command: "node mark.js"\n';
+
+test('D72a: the frontmatter loses its top-level hooks key and block; every other byte stays', () => {
+  assert.equal(strippedFrontmatterText(FM(BLOCK)).text, FM(''));
+  assert.equal(strippedFrontmatterText(FM('hooks: {}\n')).text, FM(''), 'an inline value');
+  assert.equal(strippedFrontmatterText(FM('hooks: { PreToolUse: [ { matcher: "Bash" } ] }  # c\n')).text, FM(''));
+  assert.equal(strippedFrontmatterText(FM('"hooks":\n  Stop: []\n')).text, FM(''), 'a quoted key');
+  assert.equal(strippedFrontmatterText(FM(BLOCK, '')).text, FM('', ''), 'the last key');
+  const crlf = `\uFEFF${FM(BLOCK)}`.replace(/\n/g, '\r\n');
+  assert.equal(strippedFrontmatterText(crlf).text, `\uFEFF${FM('')}`.replace(/\n/g, '\r\n'), 'BOM and CRLF kept');
+  for (const t of [FM(''), 'no frontmatter\nhooks: x\n', '', FM('', 'description: hooks: none\nnested:\n  hooks: kept\n')]) {
+    assert.equal(strippedFrontmatterText(t), null, JSON.stringify(t.slice(0, 40)));
+  }
+});
+
+test('D72a: a frontmatter Worca cannot change safely is left as it is and named', () => {
+  for (const [t, why] of [['---\nname: x\nhooks:\n  Stop: []\n', 'no closing line'], [FM('hooks: { PreToolUse: [\n  { matcher: "Bash" } ] }\n'), 'a flow value over lines'],
+    [FM('hooks:\n\tStop: []\n'), 'a tab'], [FM('hooks: &h\n  Stop: []\n', 'other: *h\n'), 'an anchor used elsewhere'], [FM('hooks: {}\nhooks: {}\n'), 'two hooks keys'],
+    [FM('hooks: "a\n  b"\n'), 'an open quote']]) {
+    assert.deepEqual(strippedFrontmatterText(t), { unsafe: true }, why);
+  }
+});
+
+test('D72a: in a checkout: skills\' SKILL.md, agents and commands lose their frontmatter hooks; links go, never followed; unsafe ones are named', async () => {
+  const d = tmp();
+  const w = (rel, text) => { mkdirSync(join(d, ...rel.split('/').slice(0, -1)), { recursive: true }); writeFileSync(join(d, ...rel.split('/')), text); };
+  w('.claude/skills/deploy/SKILL.md', FM(BLOCK));
+  w('.claude/skills/deploy/notes.md', FM(BLOCK));
+  w('.claude/skills/plain/SKILL.md', FM(''));
+  w('.claude/agents/team/reviewer.md', FM('hooks: {}\n'));
+  w('.claude/commands/ship.md', FM(BLOCK));
+  w('.claude/commands/broken.md', '---\nhooks:\n  Stop: []\n');
+  const outside = tmp();
+  mkdirSync(join(outside, 'evil'));
+  writeFileSync(join(outside, 'evil', 'SKILL.md'), FM(BLOCK));
+  symlinkSync(join(outside, 'evil'), join(d, '.claude', 'skills', 'evil'), 'junction');
+  const r = await stripProjectClaudeSettings(d);
+  assert.deepEqual(r, { changed: ['.claude/skills/deploy/SKILL.md', '.claude/agents/team/reviewer.md', '.claude/commands/ship.md'],
+    links: ['.claude/skills/evil'], unparsed: ['.claude/commands/broken.md'] });
+  assert.equal(readFileSync(join(d, '.claude', 'skills', 'deploy', 'SKILL.md'), 'utf8'), FM(''));
+  assert.equal(readFileSync(join(d, '.claude', 'skills', 'deploy', 'notes.md'), 'utf8'), FM(BLOCK), 'not a SKILL.md: not read by the CLI as a skill');
+  assert.equal(readFileSync(join(d, '.claude', 'commands', 'broken.md'), 'utf8'), '---\nhooks:\n  Stop: []\n');
+  assert.equal(existsSync(join(d, '.claude', 'skills', 'evil')), false);
+  assert.equal(readFileSync(join(outside, 'evil', 'SKILL.md'), 'utf8'), FM(BLOCK), 'the link target is untouched');
+  assert.deepEqual(await stripProjectClaudeSettings(d), { changed: [], links: [], unparsed: ['.claude/commands/broken.md'] }, 'a second pass');
+});
+
+test('D72a: the harness names an unsafe frontmatter in one run warning and keeps the changed tracked files out of the try', async () => {
+  const d = tmp();
+  mkdirSync(join(d, '.claude', 'skills', 's'), { recursive: true });
+  writeFileSync(join(d, '.claude', 'skills', 's', 'SKILL.md'), FM(BLOCK));
+  mkdirSync(join(d, '.claude', 'agents'), { recursive: true });
+  writeFileSync(join(d, '.claude', 'agents', 'a.md'), '---\nhooks: [\n');
+  const warnings = [];
+  const h = { workDirs: new Map([['k', d]]), members: [{ projectKey: 'k' }], pipeline: { dir: tmp() }, _setupStage() {},
+    _git: async () => ({ ok: true, stdout: '.claude/skills/s/SKILL.md\0' }), _recordRunWarning: async (t) => { warnings.push(t); } };
+  await RunHarness.prototype._pluginsOffInCheckout.call(h);
+  assert.deepEqual(h._tryPluginPaths, ['.claude/skills/s/SKILL.md']);
+  assert.deepEqual(warnings, ['Worca could not safely remove the hooks from the project\'s .claude/agents/a.md, so any hooks in it may still run in this try.']);
 });
