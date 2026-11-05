@@ -58,6 +58,18 @@ test('claudeReady (Windows): a .cmd shim alone is not ready (hint); a real claud
       assert.equal(r.ready, true);
       assert.equal(r.hint, null);
     } },
+    { name: 'claudeReady: Windows — the npm shim with the native claude.exe next to it is ready, at that path', run: () => {
+      const exists = (p) => /claude\.cmd$/.test(p) || /claude-code[\\/]bin[\\/]claude\.exe$/.test(p);
+      const r = claudeReady('claude', { platform: 'win32', pathEnv: 'C:\\npm', exists, isNativeExe: () => true });
+      assert.equal(r.ready, true);
+      assert.match(r.bin, /claude\.exe$/);
+      assert.equal(r.hint, null);
+    } },
+    { name: 'claudeReady: Windows — an explicit .cmd path resolves next to itself', run: () => {
+      const exists = (p) => /claude\.cmd$/.test(p) || /claude-code[\\/]bin[\\/]claude\.exe$/.test(p);
+      const r = claudeReady('C:\\npm\\claude.cmd', { platform: 'win32', pathEnv: '', exists, isNativeExe: () => true });
+      assert.equal(r.ready, true);
+    } },
   ]);
 });
 
@@ -108,15 +120,44 @@ test('derived ticks: project, run, realRun, ask, workflows, teamPolicy (one stor
 
 // ---- stored flags ----
 
-test('onboarding prefs: booleans only, unknown keys refused, both-false drops the key', async () => {
+test('onboarding prefs: booleans only, unknown keys refused, all-false drops the key', async () => {
   assert.throws(() => assertOnboardingPrefsInput({ hidden: 'yes' }), /true or false/);
+  assert.throws(() => assertOnboardingPrefsInput({ workspaceGuideSeen: 1 }), /onboarding\.workspaceGuideSeen must be true or false/);
   assert.throws(() => assertOnboardingPrefsInput({ nope: true }), /unknown onboarding key/);
   assert.throws(() => assertOnboardingPrefsInput(null), /object/);
-  assert.deepEqual(await setOnboardingPrefs({ hidden: true }), { hidden: true, welcomeSeen: false });
-  assert.deepEqual(await setOnboardingPrefs({ welcomeSeen: true }), { hidden: true, welcomeSeen: true });
-  assert.deepEqual(await setOnboardingPrefs({ hidden: false }), { hidden: false, welcomeSeen: true }, 'Show again keeps the welcome seen');
-  assert.deepEqual(await setOnboardingPrefs({ welcomeSeen: false }), { hidden: false, welcomeSeen: false });
-  assert.deepEqual(onboardingPrefs(), { hidden: false, welcomeSeen: false });
+  assert.deepEqual(await setOnboardingPrefs({ hidden: true }), { hidden: true, welcomeSeen: false, workspaceGuideSeen: false });
+  assert.deepEqual(await setOnboardingPrefs({ welcomeSeen: true }), { hidden: true, welcomeSeen: true, workspaceGuideSeen: false });
+  assert.deepEqual(await setOnboardingPrefs({ hidden: false }), { hidden: false, welcomeSeen: true, workspaceGuideSeen: false }, 'Show again keeps the welcome seen');
+  assert.deepEqual(await setOnboardingPrefs({ welcomeSeen: false }), { hidden: false, welcomeSeen: false, workspaceGuideSeen: false });
+  assert.deepEqual(await setOnboardingPrefs({ workspaceGuideSeen: true }), { hidden: false, welcomeSeen: false, workspaceGuideSeen: true }, 'the walkthrough flag alone keeps the key');
+  assert.equal((await onboardingStatus()).workspaceGuideSeen, true, 'GET /api/onboarding carries it');
+  assert.deepEqual(await setOnboardingPrefs({ workspaceGuideSeen: false }), { hidden: false, welcomeSeen: false, workspaceGuideSeen: false });
+  assert.deepEqual(onboardingPrefs(), { hidden: false, welcomeSeen: false, workspaceGuideSeen: false });
   const s = await onboardingStatus();
   assert.equal(s.hidden, false);
+});
+
+test('resetWorkspaceGuideIfNoWorkspaces: clears the flag only when it is set AND no workspace is left', async () => {
+  const { resetWorkspaceGuideIfNoWorkspaces } = await import('../src/core/onboarding.mjs');
+  const { getDb } = await import('../src/core/db.mjs');
+  const now = new Date().toISOString();
+  const seed = (id) => getDb().prepare("INSERT INTO workspaces (id, name, description, created_at, updated_at) VALUES (?, ?, '', ?, ?)").run(id, id, now, now);
+  const drop = (id) => getDb().prepare('DELETE FROM workspaces WHERE id = ?').run(id);
+  await checkRows([
+    { name: 'seen + a workspace left: unchanged, false', run: async () => {
+      await setOnboardingPrefs({ workspaceGuideSeen: true });
+      seed('wks-guide-0000000a');
+      assert.equal(await resetWorkspaceGuideIfNoWorkspaces(), false);
+      assert.equal(onboardingPrefs().workspaceGuideSeen, true);
+      drop('wks-guide-0000000a');
+    } },
+    { name: 'seen + none left: cleared, true', run: async () => {
+      assert.equal(await resetWorkspaceGuideIfNoWorkspaces(), true);
+      assert.equal(onboardingPrefs().workspaceGuideSeen, false);
+    } },
+    { name: 'not seen + none left: nothing to undo, false (no write)', run: async () => {
+      assert.equal(await resetWorkspaceGuideIfNoWorkspaces(), false);
+      assert.equal(onboardingPrefs().workspaceGuideSeen, false);
+    } },
+  ]);
 });

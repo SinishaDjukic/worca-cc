@@ -55,7 +55,8 @@ export async function ghFetch(gh, path, init = {}) {
     try { detail = (await res.json())?.message || ''; } catch { /* body is optional */ }
     throw Object.assign(
       err('plugin', `GitHub API ${res.status}${detail ? `: ${detail}` : ''} (${init.method || 'GET'} ${url})`),
-      { status: res.status },
+      // detail: GitHub's own message alone, for a Ticket updates line (index.mjs githubSaid)
+      { status: res.status, detail },
     );
   }
   return { status: res.status, headers: res.headers, json: await res.json() };

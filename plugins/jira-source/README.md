@@ -24,7 +24,7 @@ profile its tickets live in. Each profile has its own settings and token.
 | baseUrl | text | — | the site, e.g. `https://acme.atlassian.net` or `https://jira.example.com` |
 | email | text | — | **Jira Cloud**: the email of the account the API token belongs to. Leave blank on **Data Center / Server** |
 | token | secret text | — | a Jira Cloud API token, or a Data Center personal access token |
-| transitionOnComplete | text | — | optional: a transition or status name (e.g. `Done`) to move the issue to when a run that writes back finishes successfully |
+| transitionOnComplete | text | — | the old setting: once **Ticket updates** is saved for this connection (Labs flag `ticketUpdates`), Worca no longer uses it. Until then, optional: a transition or status name (e.g. `Done`) to move the issue to when a run that writes back finishes successfully |
 
 Authentication follows the email field: with an email the token is sent as
 Basic `email:token` (Jira Cloud API tokens), without one as a Bearer personal
@@ -124,6 +124,43 @@ a closing line saying what happened:
 If Jira refuses the transition itself (for example a required field on the
 transition screen), the write-back fails before anything is posted, so a retry
 from the results view posts the comment once.
+
+## Ticket updates
+
+With the Labs flag **Ticket updates** on, Worca decides what a finished run does to its ticket (Marketplace › Installed ›
+Jira › Settings › **Ticket updates**: the projects you work on and, per project, Don't move, Any Done status or one of that
+project's statuses). The plugin answers `capabilities()` with `ticketUpdates: true` and:
+
+- **listStatuses** — a project's statuses (`/rest/api/2/project/<key>/statuses`), each once, with Worca's category: Jira's
+  `new` is to do, `indeterminate` in progress, `done` done, except a done status named Won't Do, Won't Fix, Rejected,
+  Duplicate, Cancelled, Canceled, Declined, Invalid, Obsolete, Abandoned or Not planned, which is cancelled.
+- **legacyMove** — what **Transition on completion** means, so the section starts from it.
+- **reportResult with a move** — the transition first, then one comment: the run summary, its links, and a last line saying
+  what happened. **Any Done status** takes a transition to a done status, preferring Done, then Closed, Resolved, Complete,
+  Completed, and never a cancelled one: not a cancelled-named target, and not a transition whose name contains a cancelling
+  word (Won't Do, Reject, Cancel, Decline, Duplicate, Invalid, ... as in "Close as Duplicate") even when it leads to
+  Closed (of two transitions to one status, the one named Done, Close, Resolve and the like goes first; a typed or picked
+  status is reached the same way). A required Resolution is filled with the first allowed value named Done, Fixed,
+  Complete or Completed. Last lines:
+  - `Moved to Resolved.` / `Moved to Done, Resolution: Done.` / `Already in Closed.`
+  - `Not moved: from "In Review" only Won't Do and Duplicate lead to a Done status.` (one: `only Won't Do leads`)
+  - `Not moved: from "In Review" no transition leads to a Done status.`
+  - `Not moved: the move to Done needs a Resolution, and none is named Done, Fixed or Complete.`
+  - `Not moved: the move to Done asks for fields Worca does not fill (Fix versions).`
+  - `Not moved: CRM has no status named Shipped any more.`
+  - `Could not move to "Shipped" from "In Progress" (available: Start, Review).` — a status the ticket cannot reach from where it is.
+  - `Not moved: Jira refused the move to Done: <Jira's message>.` — Jira refused the transition (a 4xx other than 401 and 429).
+  - `Not moved: Jira did not let Worca read SHOP-12's transitions (<Jira's message>).` — Jira refused to show the ticket's
+    status or transitions (403 or 404).
+
+  When Jira sends no message, the line says `Jira gave no reason`. In every case above the comment is still posted. A refused
+  API token (401), a rate limit (429), a Jira server error (5xx), a network error or a timeout still fails the write-back,
+  so it can be tried again. A retry after a failed comment finds a ticket that already moved and reads `Already in …` for
+  **Any Done status** and for a rule that names one of the project's statuses. For a typed transition name carried over from
+  the old setting it does so only when that text is also the name of the ticket's current status (a transition "Resolve"
+  leading to "Resolved" is not recognised), so the retry reads `Could not move to …`.
+
+Until Ticket updates is saved for a connection, write-back works exactly as described above.
 
 ## Export
 

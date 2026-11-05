@@ -343,6 +343,7 @@ Settings tabs once, pages of their own now. The old addresses (`#settings/plugin
 | Element | Level |
 |---|---|
 | Marketplace page: the Browse, Installed and Marketplaces tabs, install, update, Add marketplace, Health (Check health), leftover data and Purge | A |
+| Marketplace page, behind the `ticketUpdates` flag: the installed plugin sheet's **Ticket updates** section (Projects you work on and its popover, the rules and their move select, Add a project rule, the states), and "Moved to Ticket updates." on the old setting | A — with the Marketplace page |
 | Connectors page: the Sets, Servers and Skills views | A |
 | Models page: the catalog, and the Engines card (Default engine, Models per engine: Step models and Helper jobs tables, including titles, Auto classifier, PR description, Memory defragment, Agent generation and, behind the `requirements` flag, Requirements interview) | E |
 | Models page: the Roles card (Deep thinking, Everyday coding, Quick jobs per harness; its Claude / Codex switch is E). The Models nav entry is E, so below Expert the card opens from the `#models` address until the setup assistant adds a Simple-level way in | S |

@@ -7,7 +7,8 @@ import { randomBytes } from 'node:crypto';
 import { callSource as shimCallSource } from '../plugin-shim.mjs';
 import { listTaskSources } from '../sources.mjs';
 import { readPluginsLock } from '../plugins-lock.mjs';
-import { listProfiles } from '../plugin-config.mjs';
+import { listProfiles, DEFAULT_PROFILE } from '../plugin-config.mjs';
+import { projectFilter, filterProjects, moveFor, describeMove } from '../ticket-updates.mjs';
 import { resolveProfile, listBindingsForScope } from '../source-bindings.mjs';
 import { actorLabel } from '../identity.mjs';
 import { tx } from '../db.mjs';
@@ -21,10 +22,13 @@ import { readiness } from './ready.mjs';
 import { pendingRound } from './round.mjs';
 import { isBusy } from './interview.mjs';
 import { REASON_MAX } from './start.mjs';
+import { reachReason, reachSentence } from '../source-reach.mjs';
 import { isStarting, STARTING_MESSAGE, markExporting, unmarkExporting, isExporting } from './starting.mjs';
 import { buildTicket, exportChanges, changeSummary, renderExportComment, ticketHash, exportDate, exportTime, exportLabel, normalizeLabels } from './ticket.mjs';
 
 export { isExporting };
+// D11's reach sentences live in src/core/source-reach.mjs (shared with Ticket updates); re-exported.
+export { reachReason, reachSentence };
 
 /** Every export op's time limit (D14): a create makes up to three tracker calls; exportOptions pages through projects. */
 export const EXPORT_TIMEOUT_MS = 60_000;
@@ -44,6 +48,8 @@ const msOf = (d) => (d && typeof d.now === 'function' ? Number(d.now()) : Date.n
 // A failed probe is remembered for PROBE_RETRY_MS per plugin, source id and profile (the source cannot export meanwhile),
 // then asked again. In-flight probes are shared, so several views at once ask once.
 const capCache = new Map();
+// Ticket updates (D14): capabilities().ticketUpdates per plugin, source id and install, from the same probe (no extra spawn)
+const capTicketUpdates = new Map();
 const capFailed = new Map();   // `${plugin}/${sourceId}/${profile}` → when the probe failed
 const capInflight = new Map();
 // exportOptions' last doneStatus per connection (saveSetup stores it on the setup).
@@ -51,7 +57,7 @@ const lastDone = new Map();
 /** The last failed create per feature, in memory: { marker, kind }. After a restart nothing is known (the search grace applies). */
 const createFailures = new Map();
 /** Tests: forget every probe answer, failure, done status and failed create. */
-export function _resetExportCaches() { capCache.clear(); capFailed.clear(); capInflight.clear(); lastDone.clear(); createFailures.clear(); }
+export function _resetExportCaches() { capCache.clear(); capTicketUpdates.clear(); capFailed.clear(); capInflight.clear(); lastDone.clear(); createFailures.clear(); }
 
 /** What is installed for a plugin, from its lock entry: the version alone misses an update to a new commit (pinnedSha) and
  *  a link (linked; the lock keeps no linked path, but every link writes a new installedAt), since neither need change it. */
@@ -68,10 +74,10 @@ async function probe(s, first, d) {
   try {
     const caps = await callOf(d)({ plugin: s.plugin, sourceId: s.sourceId, op: 'capabilities', args: { inputs: {} },
       profile: first.id || undefined, timeoutMs: PROBE_TIMEOUT_MS });
-    return { keep: true, ok: !!(caps && caps.export === true) };
+    return { keep: true, ok: !!(caps && caps.export === true), ticketUpdates: !!(caps && caps.ticketUpdates === true) };
   } catch (err) {
     // A connector without the op cannot export (kept); any other failure stands for PROBE_RETRY_MS (D3)
-    return { keep: (err && err.kind) === 'unimplemented', ok: false };
+    return { keep: (err && err.kind) === 'unimplemented', ok: false, ticketUpdates: false };
   }
 }
 
@@ -82,12 +88,16 @@ async function canExport(s, first, d) {
   if (capFailed.has(failKey) && msOf(d) - capFailed.get(failKey) < PROBE_RETRY_MS) return false;
   if (!capInflight.has(key)) {
     capInflight.set(key, probe(s, first, d).then((r) => {
-      if (r.keep) { capCache.set(key, r.ok); capFailed.delete(failKey); } else capFailed.set(failKey, msOf(d));
+      if (r.keep) { capCache.set(key, r.ok); capTicketUpdates.set(key, r.ticketUpdates); capFailed.delete(failKey); } else capFailed.set(failKey, msOf(d));
       return r.ok;
     }).finally(() => capInflight.delete(key)));
   }
   return capInflight.get(key);
 }
+
+/** D14: can this connection's connector hear a move? Only a kept probe answer that lacks ticketUpdates says no; an unknown
+ *  (a probe that failed) counts as yes, as write-back then passes the move anyway (S1). */
+const heardMove = (c) => capTicketUpdates.get(`${c.plugin}/${c.sourceId}@${installOf(c.plugin)}`) !== false;
 
 /** The sources that can export (D1, D3): enabled plugin task sources with a connection (a multi-profile source needs a
  *  profile; it is probed with its first, since it refuses a call without one) whose capabilities() say export: true, in
@@ -123,26 +133,6 @@ export function defaultConnection(scope, trackers, { memberKeys = [] } = {}) {
   const t = order[0];
   return { plugin: t.plugin, sourceId: t.sourceId, profile: t.profiles[0].id || null };
 }
-
-/** Kinds whose message is the connector's own sentence ("Jira unreachable: fetch failed.", "Jira refused the request: …"). */
-const SENTENCE_KINDS = new Set(['network', 'rate-limit', 'plugin']);
-/** Not product copy: more than one line, a stack frame, a path or URL scheme of a file, the shim's own words, a JS error. */
-const NOT_COPY = /[\r\n]|\bat\s+\S+\s+\(|\b(?:file|node):|[A-Za-z]:\\|(?:^|[\s'"(=])\/[\w.-]+\/|^plugin "|^\w*Error\b|^Cannot read propert|is not (?:a function|defined)/;
-const isSentence = (m) => typeof m === 'string' && !!m.trim() && m.length <= 300 && !NOT_COPY.test(m);
-
-/** D11: why a tracker could not be reached, in product words. A message that is not product copy (a connector that crashed,
- *  an answer the shim could not read, a kind the host does not know) becomes a fixed phrase; trackerCall logs the first line of the raw text. */
-export function reachReason(err, name) {
-  const kind = err && err.kind;
-  const message = err && err.message;
-  const plugin = name ? `the ${name} plugin` : "the tracker's plugin";
-  if (kind === 'auth') return 'the API token was refused';
-  if (kind === 'timeout') return 'it did not answer within a minute';
-  if (kind === 'protocol') return `${plugin} gave an answer Worca could not read`;
-  if (kind && !(SENTENCE_KINDS.has(kind) && isSentence(message))) return `${plugin} stopped unexpectedly`;
-  return String(message || 'it did not answer').trim().replace(/\.+$/, '');
-}
-export const reachSentence = (name, err) => `Worca could not reach ${name || 'the tracker'}: ${reachReason(err, name)}.`;
 
 // ---- the service: setup, preview, export, Forget the link, the feature's view ----
 
@@ -244,6 +234,9 @@ export async function exportOptions(scope, body = {}, d = {}) {
   };
   lastDone.set(connKey(conn), out.doneStatus);
   const setup = getExportSetup(scope.scopeType, scope.scopeKey);
+  // Ticket updates (D9): only the projects this connection works on; the setup's own project stays listed when it is this connection's
+  const keep = setup && sameConn(setup, conn) && setup.trackerProject ? [setup.trackerProject] : [];
+  out.projects = filterProjects(out.projects, projectFilter(conn.plugin, conn.sourceId, conn.profile || DEFAULT_PROFILE), keep);
   if (setup && sameConn(setup, conn) && setup.doneStatus !== out.doneStatus) setExportSetupDoneStatus(scope.scopeType, scope.scopeKey, out.doneStatus);
   return out;
 }
@@ -526,6 +519,10 @@ export async function exportView(f, turns = [], d = {}) {
       exporting: isExporting(f.seq),
       // Report back moves the ticket only to the status its own connection names (D15)
       doneStatus: link && setup && sameConn(setup, link) ? setup.doneStatus || null : null,
+      // Ticket updates (D14): what Report back will do, by the rule of the link's connection and tracker project (write-back's
+      // own moveFor), when its connector can hear a move; null with the flag off or nothing saved, and the hint keeps its two lines
+      move: link && heardMove(link) ? describeMove(moveFor({ plugin: link.plugin, sourceId: link.sourceId, profile: link.profile || DEFAULT_PROFILE,
+        project: link.trackerProject || '', status: 'completed' }), { project: link.trackerProject || '' }) : null,
       history: (turns || []).filter((t) => t && t.kind === 'export' && t.payload).map((t) => ({ action: t.payload.action, tracker: t.payload.tracker || null,
         key: t.payload.key || null, url: webUrl(t.payload.url), reason: t.payload.reason || null, when: exportTime(t.payload.at || t.at),
         by: actorLabel(t.by) || null }))   // 'local' (a single-user install) names nobody, as board 28
@@ -533,6 +530,6 @@ export async function exportView(f, turns = [], d = {}) {
     };
   } catch (err) {
     console.error(`requirements: the export view of feature ${f && f.seq} failed:`, err && err.message ? err.message : err);
-    return { tracker: null, canExport: false, hasSetup: false, link: null, exporting: false, doneStatus: null, history: [] };
+    return { tracker: null, canExport: false, hasSetup: false, link: null, exporting: false, doneStatus: null, move: null, history: [] };
   }
 }

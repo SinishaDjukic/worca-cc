@@ -2733,33 +2733,36 @@ export async function writeStoredFlags(map) {
 }
 
 // ── Getting started (onboarding) ─────────────────────────────────────────────
-// Two machine-wide flags, nothing more: which steps are DONE is derived from
+// Three machine-wide flags, nothing more: which steps are DONE is derived from
 // product state by src/core/onboarding.mjs and never stored. `hidden` is the
 // checklist's Hide (Settings › General › Getting started shows it again);
-// `welcomeSeen` is the one-time welcome dialog. Both absent = both false.
+// `welcomeSeen` is the one-time welcome dialog; `workspaceGuideSeen` is the
+// "How workspaces work" walkthrough (FEAT-7) — set on every open, cleared when
+// the last workspace is deleted. All absent = all false.
+const ONBOARDING_FLAGS = Object.freeze(['hidden', 'welcomeSeen', 'workspaceGuideSeen']);
+
 export function onboardingPrefs() {
   const o = readSettings().onboarding;
   const obj = o && typeof o === 'object' && !Array.isArray(o) ? o : {};
-  return { hidden: obj.hidden === true, welcomeSeen: obj.welcomeSeen === true };
+  return Object.fromEntries(ONBOARDING_FLAGS.map((k) => [k, obj[k] === true]));
 }
 
-/** @throws {Error} unless every present key is a boolean. Unknown keys are refused. */
+/** @throws {Error} unless every present key is a known flag holding a boolean. */
 export function assertOnboardingPrefsInput(patch) {
   if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error('onboarding prefs must be an object');
   for (const [k, v] of Object.entries(patch)) {
-    if (k !== 'hidden' && k !== 'welcomeSeen') throw new Error(`unknown onboarding key ${JSON.stringify(k)}`);
+    if (!ONBOARDING_FLAGS.includes(k)) throw new Error(`unknown onboarding key ${JSON.stringify(k)}`);
     if (typeof v !== 'boolean') throw new Error(`onboarding.${k} must be true or false`);
   }
 }
 
-/** Merge `patch` over the stored flags; a store with both flags false drops the key. */
+/** Merge `patch` over the stored flags; a store with every flag false drops the key. */
 export async function setOnboardingPrefs(patch = {}) {
   assertOnboardingPrefsInput(patch);
-  const settings = readSettings();
+  const { onboarding: _previous, ...rest } = readSettings();
   const next = { ...onboardingPrefs(), ...patch };
-  if (!next.hidden && !next.welcomeSeen) delete settings.onboarding;
-  else settings.onboarding = next;
-  await persistSettings(settings);
+  const allFalse = ONBOARDING_FLAGS.every((k) => !next[k]);
+  await persistSettings(allFalse ? rest : { ...rest, onboarding: next });
   return onboardingPrefs();
 }
 
