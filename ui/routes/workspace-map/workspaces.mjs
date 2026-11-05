@@ -2,6 +2,7 @@
 // the body of register() was moved verbatim from ui/server.mjs. Edit it here from now on.
 import { ActionConfigError, memberAliases, normalizeStacks } from '../../../src/core/actions/model.mjs';
 import { listModels, modelHasBaseUrlRouting, readProjectActions } from '../../../src/core/config.mjs';
+import { resetWorkspaceGuideIfNoWorkspaces } from '../../../src/core/onboarding.mjs';
 import { WORKSPACE_RESYNTH_WORKFLOW_ID } from '../../../src/core/graph/builtin-workflows.mjs';
 import { cancelForTarget } from '../../../src/core/scheduler.mjs';
 import { assertWorkspaceScanInput } from '../../../src/core/settings.mjs';
@@ -228,6 +229,10 @@ app.delete('/api/workspaces/:id', async (req, res) => {
     const report = await deleteWorkspace(id);
     try { if (cancelForTarget({ workspaceId: id })) emitChanged('schedules-changed', 'target-removed'); }
     catch (err) { console.error(`[worca-ui] schedule cleanup failed: ${err && err.message ? err.message : err}`); }
+    // FEAT-7: the last workspace gone → the next Create workspace shows the walkthrough again.
+    // Best effort: the workspace IS deleted, so a settings write failure never fails the DELETE.
+    try { if (await resetWorkspaceGuideIfNoWorkspaces()) emitChanged('onboarding-changed'); }
+    catch (err) { console.error(`[worca-ui] workspace walkthrough reset failed: ${err && err.message ? err.message : err}`); }
     emitChanged('workspaces-changed', 'deleted');
     res.json({ ok: true, warnings: (report && report.warnings) || [] });
   } catch (err) {
