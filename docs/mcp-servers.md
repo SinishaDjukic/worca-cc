@@ -189,6 +189,95 @@ environment; config files hold `${MCPSECRET_…}` references. Still:
 A registry server is a network path outside Ask web access and outside guardrail presets; which sets
 include it is the guard ([guardrails.md](guardrails.md)).
 
+## Chat
+
+The chat reads the registry and prepares changes to Manual servers; it never writes one itself.
+
+- **`list_mcp_servers`** returns every server in the registry: Manual, plugin and Team. For each
+  server it gives the id, name, origin (`Manual`, the plugin name, or `Team · <home>`), the type
+  (`stdio`, `http` or `sse`), the command and arguments or the URL, the env names or header names
+  with their text, the fields, the sets it is in, and which run engines can attach it (with the
+  reason for the others). For each set it gives whether the server is enabled there and each
+  secret's state: `set`, `not set`, or the `$MCP_…` variable it reads. No secret value is ever
+  returned. A literal that looks like a token, or that sits under a secret-named env or header name,
+  shows as `••••`.
+- **Scope** in worca means a server's origin (Manual, a plugin, Team) and the sets it is in, as
+  `list_mcp_servers` returns them. A server reaches chats and runs only as an enabled member of a set
+  (General, or a set assigned to a project).
+- **`propose_mcp_change`** (kind `add`, `edit` or `remove`) changes **Manual servers only**. It
+  returns a card that shows every command, argument, URL, env name and header name word for word,
+  with the warnings and what applying does. The user clicks **Add**, **Save** or **Remove**, or
+  **Decline**. Plugin and Team servers are read-only from chat: they change with their plugin or
+  their team's policy. An edit sends the whole new definition back, as `list_mcp_servers` returned it. A value it
+  shows as `••••` and sends back as `••••` keeps the stored value there; the card pins the stored
+  definition by a digest, so it never carries a stored value the chat cannot see.
+- **Apply saves the definition only.** An added server is in no set: turn it on in a set on
+  Connectors › Sets. An edit re-tests the sets the server is in; a remove takes it out of every set
+  with its values, secrets and test results.
+- **Secrets never pass through the chat.** An env or header given as `{"secret": true}`, a value
+  under a secret-looking name, and a whole-value `${VAR}` all become an empty secret field. The user
+  fills it in each set, by pasting the value or by picking an `MCP_` variable from worca's
+  environment. A value the model sends for such a name is dropped and the card says so. A
+  secret-looking literal anywhere else (an argument, a non-secret env name, the note) is refused,
+  and the error names the place, never the value.
+- **An edit card warns about kept secrets.** When the command line or the URL changes, the card adds
+  `secret <label> (stored in <sets>) will now be given to <command or host>` for each stored secret
+  field the new definition keeps. When only env or header entries are added or changed (for example
+  `NODE_OPTIONS`, `LD_PRELOAD` or a proxy variable), it adds `secret <label> (stored in <sets>) stays
+  while <rows> change: check them before applying`.
+- **A stale card fails.** An edit or remove card pins the definition it was made from. If the stored
+  definition changed meanwhile (on the Settings page, say), Apply fails with
+  `<name> changed since this card was made — ask the chat again`.
+- An isolated agent cannot apply a card; only a person's click can.
+
+When the user acts on a card, the chat gets one of:
+
+```
+[worca event] mcp card <id> applied; "<summary>"; <detail>
+[worca event] mcp card <id> declined; "<summary>"
+[worca event] mcp card <id> failed: <error>; "<summary>"
+```
+
+### Import from other tools
+
+`discover_mcp_servers` lists the MCP servers other tools define. It only reads: it never writes those
+files or watches them. User-level files are read only on a local worca (not in a container, not hosted);
+project files come from the chat's pinned project, or each member of its pinned workspace.
+
+| Tool | User-level file | Project file | Root key |
+|---|---|---|---|
+| Claude Code | `~/.claude.json` (`mcpServers`, and `projects["<project path>"].mcpServers` for the pinned project) | `.mcp.json` | `mcpServers` |
+| Claude Desktop | macOS `~/Library/Application Support/Claude/claude_desktop_config.json`, Windows `%APPDATA%\Claude\…`, Linux `~/.config/Claude/…` | none | `mcpServers` |
+| Cursor | `~/.cursor/mcp.json` | `.cursor/mcp.json` | `mcpServers` (transport in `type` or `transport`) |
+| VS Code | `mcp.json` in the user profile folder (`~/Library/Application Support/Code/User`, `%APPDATA%\Code\User`, `~/.config/Code/User`) | `.vscode/mcp.json` (comments allowed) | `servers` |
+| Codex | `~/.codex/config.toml` (or `$CODEX_HOME`) | `.codex/config.toml` | `[mcp_servers.<name>]` |
+| Gemini CLI | `~/.gemini/settings.json` | `.gemini/settings.json` | `mcpServers` (`httpUrl` is HTTP, `url` is SSE) |
+
+Each server shows its tool, source file, name, transport, and command and arguments or URL. It also shows
+whether worca already has it (the same name and the same command or URL), and why it cannot be imported, if it
+cannot. Every env and header value shows as `••••`. A missing file is listed as missing, and a malformed
+one as an error that names the line, never the content.
+
+`propose_mcp_change` kind `import` takes up to 10 of those ids and returns one card (**Import**). A
+secret, which is a `${VAR}`, `${env:VAR}`, `${input:…}` or `$VAR` reference, a value under a
+secret-looking name, or a token-shaped value, becomes an empty secret field. Its value is never copied:
+the user pastes it, or picks an `MCP_` variable, on Connectors › MCP servers. A server with a secret in an
+argument or in its URL, `${…}` inside a longer value, or a transport worca lacks (`ws`) is not imported,
+and the card says why. Applying adds the definitions as Manual servers in no set.
+
+A credential inside a longer value also counts as a secret: a URL login (`postgres://user:password@host`),
+a URL with a secret query parameter or fragment, a header line (`Authorization: Bearer …`) in an argument or
+env value, or a `NAME=value` argument under a secret-looking name (`docker -e API_KEY=…`, `--env=DB_PASSWORD=…`).
+Arguments of a shell wrapper (`sh -c '…'`) are shown as written and checked only for those shapes, and a short
+flag followed by a plain word (`-p hunter2`) is not recognised: the card shows every argument in full before
+you apply it. The chat lists at most 100 servers and says how many more there are.
+
+These file facts were not confirmed against each tool's documentation, so treat them as best effort: VS Code's
+user-profile `mcp.json` with root `servers`, Codex `bearer_token_env_var` and `env_http_headers`, and Codex
+reading a project `.codex/config.toml`. A wrong guess lists nothing for that file; it never fails. For the
+JSONC files (VS Code, Gemini CLI) the line and column of a parse error are approximate, because comments are
+stripped before parsing.
+
 ## One registry per worca
 
 The registry is per `WORCA_HOME`. On a shared instance every signed-in person edits the same sets

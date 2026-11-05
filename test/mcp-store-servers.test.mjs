@@ -7,7 +7,7 @@ import {
   readMcpStore, addManualServer, editManualServer, removeServerEverywhere, migrateServerFields, assignBases,
   setTeamState, putPolicyServer, forgetTeamState, putMember, deleteSet, duplicateSet,
 } from '../src/core/mcp/store.mjs';
-import { validateMcpDefinition } from '../src/core/mcp/definitions.mjs';
+import { validateMcpDefinition, defDigest } from '../src/core/mcp/definitions.mjs';
 
 freshHomes(after);
 const TEAM = 'team-acme-platform-9333';
@@ -95,6 +95,31 @@ test('removeServerEverywhere: memberships, Team state, secrets, tests, then the 
   await putPolicyServer('acme/platform/github', { def: validateMcpDefinition(PG_RAW, { name: 'github', source: 'policy' }).def, hash: 'h' });
   await removeServerEverywhere('policy:acme/platform/github');
   assert.deepEqual(plain((await readMcpStore()).policy), {});
+});
+
+test('editManualServer with a stale expect is refused under the lock', async () => {
+  await addManualServer('postgres-ro', PG_RAW);
+  const before = defDigest((await readMcpStore()).manual['postgres-ro']);
+  const first = { ...PG_RAW, description: 'first edit' };
+  await editManualServer('postgres-ro', first);
+  const next = { ...PG_RAW, description: 'second edit' };
+  await assert.rejects(editManualServer('postgres-ro', next, { expect: before }), { status: 409, message: /postgres-ro changed since this card was made/ });
+  assert.equal((await readMcpStore()).manual['postgres-ro'].description, 'first edit');
+  const current = defDigest((await readMcpStore()).manual['postgres-ro']);
+  await editManualServer('postgres-ro', next, { expect: current });
+  assert.equal((await readMcpStore()).manual['postgres-ro'].description, 'second edit');
+});
+
+test('removeServerEverywhere with a stale expect is refused', async () => {
+  await addManualServer('postgres-ro', PG_RAW);
+  const before = defDigest((await readMcpStore()).manual['postgres-ro']);
+  await editManualServer('postgres-ro', { ...PG_RAW, description: 'changed' });
+  await assert.rejects(removeServerEverywhere('manual:postgres-ro', { expect: before }), { status: 409, message: /postgres-ro changed since this card was made/ });
+  assert.ok((await readMcpStore()).manual['postgres-ro']);
+  await assert.rejects(removeServerEverywhere('plugin:p/x', { expect: 'x' }), { status: 404 });
+  const current = defDigest((await readMcpStore()).manual['postgres-ro']);
+  await removeServerEverywhere('manual:postgres-ro', { expect: current });
+  assert.equal((await readMcpStore()).manual['postgres-ro'], undefined);
 });
 
 test('assignBases persists only new names, in arrival order, and the Team records of the homes given', async () => {
