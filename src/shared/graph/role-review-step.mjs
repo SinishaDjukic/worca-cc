@@ -17,7 +17,7 @@ const blocks = (f) => BLOCKING.has(f.severity) && !isRequirementConcern(f);
 export const ROLE_KEY_RE = /^[a-z]{1,24}$/;   // finding ids are `key-round-n`: letters only keep them parseable
 const MAX_ROLES = 12;
 const LABEL_MAX = 60;
-const SPEC_KEYS = new Set(['roles', 'source', 'target', 'checklist', 'sink']);
+const SPEC_KEYS = new Set(['roles', 'source', 'target', 'checklist', 'sink', 'secondOpinion']);
 const ROLE_KEYS = new Set(['key', 'label', 'model', 'effort']);
 const SOURCES = ['declared', 'picked'];
 
@@ -78,8 +78,15 @@ export function roleReviewIssues(config) {
   if (rr.checklist !== undefined && !Object.hasOwn(ROLE_CHECKLISTS, rr.checklist)) {
     out.push(`roleReview.checklist ${quote(rr.checklist)} is unknown (known: ${Object.keys(ROLE_CHECKLISTS).join(', ')})`);
   }
+  // The one role that judges on another model than its step's (a role key of this review: declared, else the provider's).
+  const secondOpinion = (keys) => {
+    if (rr.secondOpinion !== undefined && !(typeof rr.secondOpinion === 'string' && keys.includes(rr.secondOpinion))) {
+      out.push(`roleReview.secondOpinion ${quote(rr.secondOpinion)} names no role of this review (roles: ${keys.join(', ')})`);
+    }
+  };
   if (rr.roles === undefined) {
     if (rr.checklist === undefined) out.push('roleReview.roles is required without a checklist provider');
+    else if (Object.hasOwn(ROLE_CHECKLISTS, rr.checklist)) secondOpinion(ROLE_CHECKLISTS[rr.checklist].roles().map((r) => r.key));
     return out;
   }
   if (!Array.isArray(rr.roles) || rr.roles.length < 1 || rr.roles.length > MAX_ROLES) {
@@ -100,6 +107,7 @@ export function roleReviewIssues(config) {
   if (rr.checklist === 'coverage' && !rr.roles.some((r) => isObj(r) && r.key === COVERAGE_ROLE.key)) {
     out.push(`roleReview.roles needs a role with key "${COVERAGE_ROLE.key}" for the coverage checklist`);
   }
+  secondOpinion(rr.roles.filter(isObj).map((r) => r.key));
   return out;
 }
 
@@ -113,7 +121,7 @@ export function roleReviewOf(config) {
   const roles = rr.roles
     ? rr.roles.map((r) => ({ key: r.key, label: r.label.trim(), ...(r.model ? { model: r.model } : {}), ...(r.effort ? { effort: r.effort } : {}) }))
     : provider.roles();
-  return { roles, source: rr.source || 'declared', target: rr.target, ...(rr.checklist ? { checklist: rr.checklist } : {}), sink: rr.sink };
+  return { roles, source: rr.source || 'declared', target: rr.target, ...(rr.checklist ? { checklist: rr.checklist } : {}), sink: rr.sink, ...(rr.secondOpinion ? { secondOpinion: rr.secondOpinion } : {}) };
 }
 
 /** The spec's checklist provider, or null. */

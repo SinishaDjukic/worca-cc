@@ -9,6 +9,7 @@
 import { ROLE_REVIEW_MAX_ROUNDS } from '../../shared/shape/role-review.mjs';
 import { PERSPECTIVES } from '../../shared/shape/perspectives.mjs';
 import { SHAPE_CODE_ROLES } from '../../shared/review/requirements-coverage.mjs';
+export { WORKSPACE_SCAN_DEFAULT_MODELS } from '../factory-models.mjs';
 
 /** Recursively freeze a value and everything reachable from it, returning the
  *  same reference. A shallow `Object.freeze` is NOT enough here: it passes
@@ -126,22 +127,15 @@ export const GRAPH_MEMORY_DEFRAG_WORKFLOW = deepFreeze({
   updatedAt: '1970-01-01T00:00:00.000Z',
   nodes: [
     { id: 'n_task', kind: 'task', x: 40, y: 200, config: {} },
-    // Sonnet 5 by default: a bounded restructure of a few markdown files. The template layer
-    // is the lowest (workflows.mjs resolveGraph), so a per-role or per-node pick still wins.
-    { id: 'n_defrag', kind: 'agent', key: 'memoryDefragmenter', x: 320, y: 200, config: { model: 'claude-sonnet-5' } },
+    // No model pin: Models › Helper jobs › Memory defragment, else Worca's factory default
+    // (factory-models.mjs), which resolveGraph applies at the template's position.
+    { id: 'n_defrag', kind: 'agent', key: 'memoryDefragmenter', x: 320, y: 200, config: {} },
     { id: 'n_end', kind: 'end', x: 600, y: 200, config: {} },
   ],
   wires: [
     { id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_defrag', port: 'task' } },
     { id: 'w2', from: { node: 'n_defrag', port: 'report' }, to: { node: 'n_end', port: 'result' } },
   ],
-});
-
-/** What a Workspace scan runs on when nothing else is named (D15/D16): the scan agent on Sonnet 5
- *  at medium effort, its per-project investigators on the `sonnet` alias at medium effort. The
- *  scan node's template config carries the same values, so every path agrees. */
-export const WORKSPACE_SCAN_DEFAULT_MODELS = deepFreeze({
-  scanModel: 'claude-sonnet-5', scanEffort: 'medium', agentModel: 'sonnet', agentEffort: 'medium',
 });
 
 /** The Workspace scan workflow — the hybrid interconnection map (wsmap spec D5, "v3" of the scan):
@@ -158,13 +152,8 @@ export const WORKSPACE_SCAN_DEFAULT_MODELS = deepFreeze({
  *  `version: 2` is the TEMPLATE FORMAT (resolveGraph runs version 2 only), not the scan's revision. */
 export const WORKSPACE_SCAN_WORKFLOW_ID = 'wf_workspace_scan';
 export const WORKSPACE_SCAN_WORKFLOW_NAME = 'Workspace scan';
-/** The model config of the scan's fan-out agents (survey, usage): the D15/D16 defaults. */
-const SCAN_FANOUT_CONFIG = {
-  model: WORKSPACE_SCAN_DEFAULT_MODELS.scanModel,
-  effort: WORKSPACE_SCAN_DEFAULT_MODELS.scanEffort,
-  subagentModel: WORKSPACE_SCAN_DEFAULT_MODELS.agentModel,
-  subagentEffort: WORKSPACE_SCAN_DEFAULT_MODELS.agentEffort,
-};
+// The scan's agent nodes pin no model: the D15/D16 defaults (WORKSPACE_SCAN_DEFAULT_MODELS, factory-models.mjs) are
+// Worca's factory default, applied by resolveGraph at the template's position.
 export const GRAPH_WORKSPACE_SCAN_WORKFLOW = deepFreeze({
   id: WORKSPACE_SCAN_WORKFLOW_ID,
   name: WORKSPACE_SCAN_WORKFLOW_NAME,
@@ -175,15 +164,12 @@ export const GRAPH_WORKSPACE_SCAN_WORKFLOW = deepFreeze({
   nodes: [
     { id: 'n_task', kind: 'task', x: 40, y: 200, config: {} },
     { id: 'n_extract', kind: 'script', key: 'workspaceMapExtract', x: 280, y: 200, config: {} },
-    { id: 'n_scan', kind: 'agent', key: 'workspaceScanner', x: 520, y: 80, config: { ...SCAN_FANOUT_CONFIG } },
+    { id: 'n_scan', kind: 'agent', key: 'workspaceScanner', x: 520, y: 80, config: {} },
     // The two-input stages wait for BOTH inputs (awaitAll): the V18 double-fire guard.
     { id: 'n_catalog', kind: 'script', key: 'workspaceMapCatalog', x: 760, y: 200, config: { awaitAll: true } },
-    { id: 'n_usage', kind: 'agent', key: 'workspaceUsageMapper', x: 1000, y: 80, config: { ...SCAN_FANOUT_CONFIG } },
+    { id: 'n_usage', kind: 'agent', key: 'workspaceUsageMapper', x: 1000, y: 80, config: {} },
     { id: 'n_join', kind: 'script', key: 'workspaceMapJoin', x: 1240, y: 200, config: { awaitAll: true } },
-    { id: 'n_synth', kind: 'agent', key: 'workspaceSynthesizer', x: 1480, y: 80, config: {
-      model: WORKSPACE_SCAN_DEFAULT_MODELS.scanModel,
-      effort: WORKSPACE_SCAN_DEFAULT_MODELS.scanEffort,
-    } },
+    { id: 'n_synth', kind: 'agent', key: 'workspaceSynthesizer', x: 1480, y: 80, config: {} },
     { id: 'n_render', kind: 'script', key: 'workspaceMapRender', x: 1720, y: 200, config: { awaitAll: true } },
     { id: 'n_end', kind: 'end', x: 1960, y: 200, config: {} },
   ],
@@ -221,10 +207,7 @@ export const GRAPH_WORKSPACE_RESYNTH_WORKFLOW = deepFreeze({
   nodes: [
     { id: 'n_task', kind: 'task', x: 40, y: 200, config: {} },
     { id: 'n_seed', kind: 'script', key: 'workspaceMapResynth', x: 280, y: 200, config: {} },
-    { id: 'n_synth', kind: 'agent', key: 'workspaceSynthesizer', x: 520, y: 80, config: {
-      model: WORKSPACE_SCAN_DEFAULT_MODELS.scanModel,
-      effort: WORKSPACE_SCAN_DEFAULT_MODELS.scanEffort,
-    } },
+    { id: 'n_synth', kind: 'agent', key: 'workspaceSynthesizer', x: 520, y: 80, config: {} },
     { id: 'n_render', kind: 'script', key: 'workspaceMapRender', x: 760, y: 200, config: { awaitAll: true } },
     { id: 'n_end', kind: 'end', x: 1000, y: 200, config: {} },
   ],
@@ -287,16 +270,15 @@ const SHAPE_CLARIFY_CONFIG = { maxQuestions: 3, promptHints: SHAPE_CLARIFY_HINTS
 const SHAPE_APPROVE_CONFIG = { approve: { kind: 'plan', port: 'plan' } };
 /** Shaper's plan review is the engine role-review step, configured: the perspectives as roles, the run's picked ones
  *  running, each judged on its own checklist items (the `perspectives` provider), the findings handed to Refine. */
-/** The diversity default: Product (locked, so in every Shaper run) reviews on another model than the node's, so one
- *  plan role always judges independently. A built-in default: dropped quietly (recorded as `wanted`) off Claude. */
-export const SHAPE_DIVERSE_ROLE = Object.freeze({ key: 'product', model: 'claude-opus-5-5', effort: 'medium' });
+/** The second opinion: Product (locked, so in every Shaper run) is the role review's `secondOpinion`, so it reviews on
+ *  another model than the node's (Models › Helper jobs › Second-opinion reviewer, else Worca's factory
+ *  default) and one plan role always judges independently. The node and the role pin no model. */
+export const SHAPE_DIVERSE_ROLE = Object.freeze({ key: 'product' });
 const SHAPE_ROLES_CONFIG = {
   roleReview: {
-    roles: PERSPECTIVES.map(({ key, label }) => (key === SHAPE_DIVERSE_ROLE.key
-      ? { key, label, model: SHAPE_DIVERSE_ROLE.model, effort: SHAPE_DIVERSE_ROLE.effort } : { key, label })),
-    source: 'picked', target: 'plan', checklist: 'perspectives', sink: 'refiner',
+    roles: PERSPECTIVES.map(({ key, label }) => ({ key, label })),
+    source: 'picked', target: 'plan', checklist: 'perspectives', sink: 'refiner', secondOpinion: SHAPE_DIVERSE_ROLE.key,
   },
-  model: 'claude-sonnet-5-5', effort: 'medium',   // spec decision 1
 };
 /** Shaper's code review is the same engine step on the diff: three declared roles, each an independent reviewer, their
  *  merged findings handed to the implementer's fix. No node model and no diversity pick: the node keeps its default. */
@@ -393,7 +375,6 @@ const SHAPE_REQ_NODES = [
   { id: 'n_req', kind: 'agent', key: 'requirementsDrafter', x: 320, y: 200, config: {} },
   { id: 'n_reqroles', kind: 'agent', key: 'requirementsReviewer', x: 320, y: 380, config: {
     roleReview: { source: 'picked', target: 'requirements', checklist: 'requirements', sink: 'refiner' },
-    model: SHAPE_ROLES_CONFIG.model, effort: SHAPE_ROLES_CONFIG.effort,
   } },
   { id: 'n_reqrefine', kind: 'agent', key: 'requirementsRefiner', x: 460, y: 200, config: {
     approve: { kind: 'plan', port: 'requirements', check: 'criteria', agreed: 'task', decisions: 'decisions' },

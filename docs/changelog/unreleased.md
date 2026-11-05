@@ -3,6 +3,20 @@
 Notes on merged features that have no release page yet. `/worca-changelog` folds
 them into the next page and empties this file.
 
+## Built-in workflow models live on the Models page
+
+**Shaper runs on a Copilot-only install that is not signed in to Claude Code.**
+
+The built-in workflows no longer pin first-party Claude models. Each model they used is now a factory default on the Models page: a new **Second-opinion reviewer** helper job for Shaper's Product reviewer (Opus 5.5 · medium) and Memory defragment (Sonnet 5) show theirs as "(default)", and the Plan Review and Requirements Review step rows name theirs in the hint (Sonnet 5.5 · medium, role reviews only). When Claude Code is signed out, a factory default that needs the sign-in is dropped: the step uses your role, the run's model or Claude's default, and the run log says so once per setting. When the second opinion has no other model, it runs at another effort. A model you set is never replaced: if it needs the sign-in while signed out, the start is refused, naming the setting and the model.
+
+Chips: Models page · factory defaults · Second-opinion reviewer · signed out · one warning per setting · refused, never replaced
+
+Read it: [Built-in workflows take their models from the Models page](../models.md#built-in-workflows-take-their-models-from-the-models-page)
+
+Pull requests (add each number when it opens):
+
+- Built-in workflow models live on the Models page
+
 ## Requirements (experimental)
 
 **Define a feature with Worca before anything is built.**
