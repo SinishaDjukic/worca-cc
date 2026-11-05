@@ -20,6 +20,7 @@ import { FIELD_LABELS } from '../../shared/away-mode/labels.mjs';
 import { normaliseDimension, MAX_DIMENSIONS } from '../../shared/tag-dimensions.mjs';
 import { MODEL_ROLES, TEAM_ROLE_HARNESSES } from '../../shared/model-roles.mjs';
 import { ENGINES } from '../../shared/engine-switch.mjs';
+import { PR_OPEN, PR_SLICES } from '../../shared/pr-auto.mjs';
 
 export const POLICY_SCHEMA = 1;
 export const KINDS = Object.freeze(['default', 'soft', 'hard']);
@@ -80,6 +81,8 @@ export const FIELDS = Object.freeze([
   { key: 'plugins.blocked', group: 'plugins', label: 'Blocked plugins', help: 'An enabled blocked plugin warns and is recorded; it is never disabled for you.', type: 'string[]', kinds: ['soft'] },
   { key: 'workflows.default', group: 'runs', label: 'Default workflow', help: 'A built-in (wf_*) or plugin (wfp_*) workflow id. Applies when the project has no active workflow.', type: 'string', kinds: ['default'] },
   { key: 'run.humanInLoop', group: 'runs', label: 'Human in the loop', help: 'Applies until the project sets its own switch.', type: 'bool', kinds: ['default'] },
+  { key: 'pr.open', group: 'runs', label: 'Open a PR when a run finishes', help: 'Applies until the project or workspace sets its own.', type: 'enum', values: PR_OPEN, kinds: ['default'] },
+  { key: 'pr.slices', group: 'runs', label: 'Shaper features: pull requests', help: 'each: a PR per slice, stacked. one: one PR when the feature is done. Applies until the project sets its own.', type: 'enum', values: PR_SLICES, kinds: ['default'], workspaceRuns: false },
   { key: 'metrics.record', group: 'runs', label: 'Record runs to team metrics', help: 'Expected on: the Projects cell hints when "Include my runs" is off.', type: 'bool', kinds: ['soft'] },
   { key: 'worca.minVersion', group: 'runs', label: 'Minimum Worca version', help: 'An older client shows a banner and logs a note.', type: 'semver', kinds: ['soft'] },
   { key: 'runs.tagDimensions', group: 'runs', label: 'Tag dimensions', help: 'Keys every run is asked for (like a cost centre), with allowed values and a default. Mandatory keys warn; with "Require mandatory tags" on they block a start.', type: 'tagDimensions', kinds: ['soft'] },

@@ -97,6 +97,7 @@ export function summarizeRequest(req) {
     mock: !!r.mock,
     extras: Array.isArray(r.internal?.extrasPaths) ? r.internal.extrasPaths.length : 0,
     ...(r.sameAsSource === true ? { sameAsSource: true } : {}),
+    ...(r.pr && typeof r.pr === 'object' ? { pr: { open: r.pr.open ?? null, slices: r.pr.slices ?? null } } : {}),
   };
 }
 

@@ -1167,6 +1167,7 @@ export async function readPromptFile(projectDir, promptFile) {
  * @param {object} [opts.sourceMeta]  { plugin, sourceId, taskId, url, title } | null
  * @param {string} [opts.guardrailsId] the run's selected guardrail set id (per-run)
  * @param {string|null} [opts.runSetup] JSON of the run's setup (pipelines.run_setup, v62); never on the state object
+ * @param {object|null} [opts.prAuto] the run's PR-when-done decision (pipelines.pr_auto, v86); same rule as runSetup
  * @param {string[]} [opts.extras]    paths to extra files copied into dir/extras
  * @param {string} [opts.title]       human title (defaults to derived text)
  * @param {string} [opts.workspaceKey]   opt-in: route to the workspace store
@@ -1180,7 +1181,7 @@ export async function createPipeline(projectDir, opts = {}) {
   const {
     prompt, promptFile, extras = [], title,
     promptText: precomputedPromptText = null, sourceType = null, sourceMeta = null,
-    guardrailsId = null, startedBy = null, prWatchRunId = null, tags = [], labels = [], runSetup = null,
+    guardrailsId = null, startedBy = null, prWatchRunId = null, tags = [], labels = [], runSetup = null, prAuto = null,
     workspaceKey = null, workspaceId = null, workspaceName = null,
     workspaceDescription = '', projects = null,
   } = opts;
@@ -1332,7 +1333,7 @@ export async function createPipeline(projectDir, opts = {}) {
   // no more state.json on disk. writeState also seeds the dir->id cache
   // (rememberDir) so appendAudit resolves this run without any call-site change
   // (A4). recordArtifact runs AFTER the row exists (FK -> pipelines).
-  await writeState(dir, state, { prWatchRunId, runSetup });
+  await writeState(dir, state, { prWatchRunId, runSetup, prAuto });
   // Run tags (#718): written once, after the row exists (FK) and after writeState's tx has
   // committed (tx cannot nest). writeState updates never touch them.
   insertRunTags(id, tags);
@@ -1440,7 +1441,7 @@ function rememberDir(dir, id) { if (dir && id) _dirIdCache.set(resolve(dir), id)
  * @param {object} stateObj
  * @returns {Promise<object>}
  */
-export async function writeState(pipelineDir, stateObj, { prWatchRunId = null, runSetup = null } = {}) {
+export async function writeState(pipelineDir, stateObj, { prWatchRunId = null, runSetup = null, prAuto = null } = {}) {
   const obj = { ...stateObj, updatedAt: new Date().toISOString() };
   const id = obj.id;
   if (!id) return obj; // pre-id state (constructor default): nothing to persist yet
@@ -1450,11 +1451,11 @@ export async function writeState(pipelineDir, stateObj, { prWatchRunId = null, r
       INSERT INTO pipelines (id, project_key, workspace_key, target, title, base_name,
         date_prefix, status, phase, cycle, started_at, updated_at, total_cost_usd,
         total_active_ms, prompt, branch, workspace_meta, stepper, tools, resume_point,
-        source_type, source_ref, guardrails_id, outcome, human_hours, started_by, shape_stats, run_size, run_setup, review_stats)
+        source_type, source_ref, guardrails_id, outcome, human_hours, started_by, shape_stats, run_size, run_setup, review_stats, pr_auto)
       VALUES (@id,@project_key,@workspace_key,@target,@title,@base_name,@date_prefix,
         @status,@phase,@cycle,@started_at,@updated_at,@total_cost_usd,@total_active_ms,
         @prompt,@branch,@workspace_meta,@stepper,@tools,@resume_point,
-        @source_type,@source_ref,@guardrails_id,@outcome,@human_hours,@started_by,@shape_stats,@run_size,@run_setup,@review_stats)
+        @source_type,@source_ref,@guardrails_id,@outcome,@human_hours,@started_by,@shape_stats,@run_size,@run_setup,@review_stats,@pr_auto)
       ON CONFLICT(id) DO UPDATE SET
         status=excluded.status, phase=excluded.phase, cycle=excluded.cycle,
         updated_at=excluded.updated_at, total_cost_usd=excluded.total_cost_usd,
@@ -1469,7 +1470,7 @@ export async function writeState(pipelineDir, stateObj, { prWatchRunId = null, r
         run_size=COALESCE(excluded.run_size, run_size),
         base_name=COALESCE(excluded.base_name, base_name),
         date_prefix=COALESCE(excluded.date_prefix, date_prefix)
-    `).run({ ...toPipelineRow(obj), run_setup: typeof runSetup === 'string' ? runSetup : null });
+    `).run({ ...toPipelineRow(obj), run_setup: typeof runSetup === 'string' ? runSetup : null, pr_auto: prAuto ? JSON.stringify(prAuto) : null });
 
     // A Watch PR fix run (#619): ownership lands in the same transaction that creates the row.
     if (prWatchRunId) attachWatchPipeline(prWatchRunId, id, obj.updatedAt);

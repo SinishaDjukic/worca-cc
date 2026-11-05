@@ -1606,6 +1606,7 @@ export class RunHarness extends EventEmitter {
         tags: this.opts.tags || [],
         labels: this.opts.labels || [],
         runSetup: typeof this.opts.runSetup === 'string' ? this.opts.runSetup : null,
+        prAuto: this.opts.prAuto ?? null,
         ...(this.workMode === 'none' ? { id: this.opts.pipelineId } : {}),
         ...(this.isWorkspace ? {} : { projectKey: this.members[0].projectKey, ...(this.workMode !== 'git' ? { workMode: this.workMode } : {}) }),
         ...(this.isWorkspace ? {

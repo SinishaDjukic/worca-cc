@@ -81,7 +81,7 @@ function apiHandler(recorder = {}) {
       if (recorder.configResponse) return recorder.configResponse;
       return { ok: true, status: 200, json: async () => ({ config: configBody().config }) };
     }
-    if (path === '/api/run-defaults') return { ok: true, status: 200, json: async () => ({ engine: { value: recorder.runEngine || 'claude', source: 'default' } }) };
+    if (path === '/api/run-defaults') return { ok: true, status: 200, json: async () => ({ engine: { value: recorder.runEngine || 'claude', source: 'default' }, ...(recorder.runPr ? { pr: recorder.runPr } : {}) }) };
     if (url === '/api/projects') return { ok: true, status: 200, json: async () => ({ projects: recorder.projects || [{ name: 'proj', path: '/repos/proj', exists: true }, { name: 'other', path: '/repos/other', exists: false }] }) };
     if (url === '/api/workflows') return { ok: true, status: 200, json: async () => ({ workflows: recorder.workflows || [{ id: 'wf_default', name: 'Default' }, { id: 'wf_review', name: 'Review only' }] }) };
     if (url === '/api/guardrails') return { ok: true, status: 200, json: async () => ({ guardrails: [{ id: 'permissive', name: 'Permissive' }, { id: 'normal', name: 'Normal' }, { id: 'strict', name: 'Strict' }] }) };
@@ -1284,6 +1284,46 @@ test('ask-panel-card: the Engine field — Default sends none, a proposed engine
       ctx.doc.querySelector('[data-ask-card-open-np]').click();
       for (let i = 0; i < 6; i++) await ctx.tick();
       assert.equal(handed[0].engine, 'codex');
+    } },
+  ]);
+});
+
+// Pull request when done: "Use the setting" sends nothing and names the project's value once the lane has read it;
+// a proposal's pr preselects its open value, and only an explicit pick (plus the proposal's slices on a project run) is sent.
+test('ask-panel-card: the Pull request field — Use the setting sends none; a proposed pr is preselected and sent', async () => {
+  await checkRows([
+    { name: 'ask-panel-card: Use the setting names the project value and its source; Start sends no pr', run: async () => {
+      const rec = { runPr: { scope: 'project', open: { value: 'draft', source: 'team' }, slices: { value: 'each', source: 'default' } } };
+      const ctx = await openWithCard(PROJECT_CARD, rec);
+      for (let i = 0; i < 10; i++) await ctx.tick();
+      const sel = ctx.doc.querySelector('.ask-card-pr');
+      assert.equal(sel.value, '');
+      assert.equal(sel.options[0].textContent, 'Use the setting: Open a draft PR (Team default)');
+      assert.deepEqual([...sel.options].slice(1).map((o) => o.value), ['none', 'draft', 'ready']);
+      assert.equal(sel.closest('.ask-rp-field').dataset.minLevel, 'advanced');
+      ctx.doc.querySelector('[data-ask-card-start]').click();
+      for (let i = 0; i < 6; i++) await ctx.tick();
+      assert.equal('pr' in rec.runBodies[0], false);
+    } },
+    { name: 'ask-panel-card: a proposed pr is preselected, stays visible at every mode and is sent with its slices mode', run: async () => {
+      const rec = {};
+      const ctx = await openWithCard({ ...PROJECT_CARD, pr: { open: 'ready', slices: 'one' } }, rec);
+      const sel = ctx.doc.querySelector('.ask-card-pr');
+      assert.equal(sel.value, 'ready');
+      assert.equal(sel.closest('.ask-rp-field').dataset.levelKeep, '1');
+      ctx.doc.querySelector('[data-ask-card-start]').click();
+      for (let i = 0; i < 6; i++) await ctx.tick();
+      assert.deepEqual(rec.runBodies[0].pr, { open: 'ready', slices: 'one' });
+    } },
+    { name: 'ask-panel-card: a pick on the card is sent as the run\'s own choice', run: async () => {
+      const rec = {};
+      const ctx = await openWithCard(PROJECT_CARD, rec);
+      const sel = ctx.doc.querySelector('.ask-card-pr');
+      sel.value = 'none';
+      sel.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
+      ctx.doc.querySelector('[data-ask-card-start]').click();
+      for (let i = 0; i < 6; i++) await ctx.tick();
+      assert.deepEqual(rec.runBodies[0].pr, { open: 'none' });
     } },
   ]);
 });

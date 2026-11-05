@@ -176,3 +176,34 @@ test('Team memory (memory.team): Local by default; Both saves true, Team "only";
   assert.deepEqual(calls.filter((c) => c.method === 'PATCH').at(-1).body, { 'memory.team': 'only' });
   assert.equal(field(host, 'memory.team').querySelector('.inherit-input').value, 'team');
 });
+
+test('Pull requests card: pr.open and pr.slices with Team default / Worca default, next to watchNewPrs', async () => {
+  const view = { ...VIEW, own: { 'pr.slices': 'one' }, layers: { ...VIEW.layers, 'pr.open': { team: 'draft', default: 'none' }, 'pr.slices': { project: 'one', default: 'each' }, watchNewPrs: { default: false } } };
+  const saved = { ...view, own: { 'pr.slices': 'one', 'pr.open': 'ready' }, layers: { ...view.layers, 'pr.open': { project: 'ready', team: 'draft', default: 'none' } } };
+  const { window, host, calls } = harness({ settings: () => ({ status: 200, body: view }), patch: (body) => ({ status: 200, body: body['pr.open'] === 'ready' ? saved : view }) });
+  for (let i = 0; i < 4; i++) await tick();
+  const card = host.querySelector('.pd-settings-card[data-card="pr"]');
+  assert.deepEqual([...card.querySelectorAll('.inherit-field')].map((f) => f.dataset.setting), ['pr.open', 'pr.slices', 'watchNewPrs']);
+  const open = field(host, 'pr.open');
+  assert.equal(open.querySelector('label').textContent, 'When a run finishes');
+  assert.deepEqual([...open.querySelector('.inherit-input').options].map((o) => [o.value, o.textContent]),
+    [['', 'Open a draft PR (team default)'], ['none', "Don't open a PR"], ['ready', 'Open a PR ready for review']], 'the team value is the empty choice, its twin is dropped');
+  const slices = field(host, 'pr.slices');
+  assert.equal(slices.querySelector('label').textContent, 'Shaper features');
+  assert.equal(slices.querySelector('.inherit-input').value, 'one');
+  assert.equal(slices.querySelector('.inherit-badge').hidden, false);
+  const select = open.querySelector('.inherit-input');
+  select.value = 'ready';
+  select.dispatchEvent(new window.Event('change', { bubbles: true }));
+  card.querySelector('.pd-settings-save').click();
+  for (let i = 0; i < 4; i++) await tick();
+  assert.deepEqual(calls.filter((c) => c.method === 'PATCH').at(-1).body, { 'pr.open': 'ready' });
+});
+
+test('Pull requests card: with no team value pr.open inherits "Worca default"', async () => {
+  const view = { ...VIEW, own: {}, layers: { ...VIEW.layers, 'pr.open': { default: 'none' }, 'pr.slices': { default: 'each' } } };
+  const { host } = harness({ settings: () => ({ status: 200, body: view }) });
+  for (let i = 0; i < 4; i++) await tick();
+  assert.equal(field(host, 'pr.open').querySelector('.inherit-input').options[0].textContent, "Don't open a PR (default)");
+  assert.equal(field(host, 'pr.slices').querySelector('.inherit-input').options[0].textContent, 'A PR per slice, stacked (default)');
+});
