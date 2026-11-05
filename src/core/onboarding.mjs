@@ -4,7 +4,7 @@
 // PATH — and never written by the client: finishing a step ticks it on its own,
 // Restart / Show again are trivially safe, and an established install meets a
 // checklist that already knows what it has done. The only stored flags are the
-// two in settings.mjs#onboardingPrefs (hidden, welcomeSeen).
+// flags in settings.mjs#onboardingPrefs (hidden, welcomeSeen, workspaceGuideSeen).
 import { getDb } from './db.mjs';
 import { countProjects } from './projects.mjs';
 import { countWorkspaces } from './workspaces.mjs';
@@ -14,7 +14,7 @@ import { listPolicyScopes } from './policy/sync.mjs';
 import { probeClaudeAuth } from './preflight.mjs';
 import { cliReady, configuredClaudeBin } from './cli-resolve.mjs';
 import { CLAUDE_CLI } from './engines/cli-specs.mjs';
-import { onboardingPrefs } from './settings.mjs';
+import { onboardingPrefs, setOnboardingPrefs } from './settings.mjs';
 
 /** Step ids in shelf order. The UI (ui/public/getting-started.mjs) carries the
  *  copy and artwork for each; this list is the contract between the two. */
@@ -55,7 +55,7 @@ export async function detectClaude({ recheck = false, ready = claudeReady, probe
  * @param {{recheck?:boolean}} [opts]
  * @returns {Promise<{steps:Record<string,boolean>, done:number, total:number,
  *   claude:{bin:string, hint:string|null, auth:'signed-in'|'signed-out'|'unknown'|null},
- *   hidden:boolean, welcomeSeen:boolean}>}
+ *   hidden:boolean, welcomeSeen:boolean, workspaceGuideSeen:boolean}>}
  */
 export async function onboardingStatus({ recheck = false } = {}) {
   const db = getDb();
@@ -85,4 +85,18 @@ export async function onboardingStatus({ recheck = false } = {}) {
   };
   const done = ONBOARDING_STEPS.filter((id) => steps[id]).length;
   return { steps, done, total: ONBOARDING_STEPS.length, claude: { bin: claude.bin, hint: claude.hint, auth: claude.auth }, ...onboardingPrefs() };
+}
+
+/**
+ * FEAT-7 (R-po-13): deleting the LAST workspace makes the next Create workspace a first time
+ * again. Writes only when there is something to undo — the flag is set and no workspace is
+ * left — so a delete that leaves workspaces, or an install that never opened the walkthrough,
+ * touches no file.
+ * @returns {Promise<boolean>} true when the flag was cleared
+ */
+export async function resetWorkspaceGuideIfNoWorkspaces() {
+  if (countWorkspaces() > 0) return false;
+  if (!onboardingPrefs().workspaceGuideSeen) return false;
+  await setOnboardingPrefs({ workspaceGuideSeen: false });
+  return true;
 }

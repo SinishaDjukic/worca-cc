@@ -149,13 +149,14 @@ for targets inside an open dialog.
 
 ## API and storage
 
-- `GET /api/onboarding[?recheck=1]` → `{ steps, done, total, claude: { bin, hint, auth }, hidden, welcomeSeen }` (`auth`: `signed-in` | `signed-out` | `unknown` | `null` when the binary is missing; `recheck` skips the remembered sign-in answer)
+- `GET /api/onboarding[?recheck=1]` → `{ steps, done, total, claude: { bin, hint, auth }, hidden, welcomeSeen, workspaceGuideSeen }` (`auth`: `signed-in` | `signed-out` | `unknown` | `null` when the binary is missing; `recheck` skips the remembered sign-in answer)
   (`src/core/onboarding.mjs`). Computed on every call from the store and the
   PATH; team metrics and team policy read the cached scope status only (no
   discovery).
-- `POST /api/onboarding` `{ hidden?, welcomeSeen? }` — booleans only, unknown
-  keys 400 — writes the two flags to `settings.json` (`onboarding: {...}`,
-  dropped when both are false) and broadcasts `onboarding-changed`.
+- `POST /api/onboarding` `{ hidden?, welcomeSeen?, workspaceGuideSeen? }` — booleans only, unknown
+  keys 400 — writes the flags to `settings.json` (`onboarding: {...}`,
+  dropped when all are false) and broadcasts `onboarding-changed`.
+  `workspaceGuideSeen` is the *How workspaces work* walkthrough; the server clears it when the last workspace is deleted.
 - The client refetches on `pipelines-changed`, `projects-changed`,
   `workspaces-changed`, `team-metrics-changed`, `team-policy-changed`,
   `onboarding-changed`, on a run

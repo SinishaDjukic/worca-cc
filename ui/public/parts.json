@@ -45,6 +45,7 @@
     "scripts/script-wizard.css",
     "projects/projects-management.css",
     "workspace-map/workspaces-shell.css",
+    "workspace-map/workspace-guide.css",
     "guardrails/guardrail-rows.css",
     "projects/confirm-add.css",
     "marketplace/plugins-view.css",

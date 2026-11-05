@@ -72,8 +72,8 @@ app.get('/api/away-mode', (req, res) => {
 // helpers are sync getDb().prepare(...).get() calls.
 // ---------------------------------------------------------------------------
 // Getting started (docs/getting-started.md). GET is the derived checklist —
-// eight ticks computed from the store + PATH, never stored — plus the two flags.
-// POST writes ONLY those flags ({hidden?, welcomeSeen?}; booleans; unknown keys
+// eight ticks computed from the store + PATH, never stored — plus the stored flags.
+// POST writes ONLY those flags ({hidden?, welcomeSeen?, workspaceGuideSeen?}; booleans; unknown keys
 // 400) and answers with the same full payload, so one round trip repaints.
 // ---------------------------------------------------------------------------
 // ?recheck=1 skips the remembered Claude sign-in answer (the dialog's Check again).

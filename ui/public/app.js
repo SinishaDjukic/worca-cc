@@ -271,6 +271,7 @@ import { renderTimeline, renderTimelinePopover, timelineWindow, shiftAnchor, TL_
 import {
   renderProjectTmCell, renderProjectTmChip, projectTmSummary, renderEnableDialogBody, renderMetricsHomePicker, renderWsMetricsRow, renderWsSummary, renderRouteResults, renderWsMetricsPending } from './team-metrics-surfaces.mjs';
 import { renderMapTab, emptyMapFilters } from './workspace-map-view.mjs';
+import { openWorkspaceGuide, shouldAutoOpenWorkspaceGuide } from './workspace-guide.mjs';
 import { paintAboutInto, paintVersionStatusInto, paintUpdateMarkerInto } from './about-links.mjs';
 import { createUpdateUi } from './update-view.mjs';
 import { renderReasonOptions, renderOptIns, previewText, reportBlobParts, REPORT_PREVIEW_DEBOUNCE_MS } from './report-run.mjs';
@@ -802,6 +803,7 @@ const el = {
 
   // Workspaces management view
   wsCreateBtn: $('#ws-create-btn'),
+  wsHowtoBtn: $('#ws-howto-btn'),
   wsMsg: $('#ws-msg'),
   wsList: $('#ws-list'),
   wsShell: $('#ws-shell'),
@@ -10535,6 +10537,9 @@ async function deleteWorkspaceFromPage(id) {
     if (res.status === 409) { setWdError(screen, data.error || 'Workspace has a live run or scan.'); return; }
     if (!res.ok) { setWdError(screen, data.error || `HTTP ${res.status}`); return; }
     state.workspaces = state.workspaces.filter((x) => !(x && x.id === w.id));
+    // FEAT-7: the server clears workspaceGuideSeen when the last workspace goes (R-po-13);
+    // mirror it now, so a Create pressed before the onboarding refetch lands already sees it.
+    if (!state.workspaces.length && gs.status) gs.status = { ...gs.status, workspaceGuideSeen: false };
     if (state.selectedWorkspaceId === w.id) state.selectedWorkspaceId = '';
     if (localStorage.getItem(LAST_WORKSPACE_KEY) === w.id) localStorage.removeItem(LAST_WORKSPACE_KEY);
     const warnings = Array.isArray(data.warnings) ? data.warnings : [];
@@ -10549,7 +10554,52 @@ async function deleteWorkspaceFromPage(id) {
   }
 }
 
-if (el.wsCreateBtn) el.wsCreateBtn.addEventListener('click', () => { location.hash = 'workspace-create'; });
+// ---- How workspaces work (FEAT-7) -----------------------------------------------------------
+// The walkthrough opens OVER the list, before any route change, so nothing is ever entered or lost
+// behind it; only Finish/Skip from Create workspace routes on to the wizard. The `#workspace-create`
+// hash itself (deep links, Back/Forward) is never gated. "Seen" is the server's
+// onboarding flag (gs.status.workspaceGuideSeen; gs and loadOnboarding are the Getting-started block's,
+// read at click time only), set on every open and cleared by the server when the last workspace is
+// deleted.
+const wsGuide = { handle: null, checking: false };
+function knownWorkspaceGuideSeen() {
+  const v = gs.status && gs.status.workspaceGuideSeen;
+  return typeof v === 'boolean' ? v : null;
+}
+async function readWorkspaceGuideSeen() {
+  if (knownWorkspaceGuideSeen() === null) await loadOnboarding();
+  return knownWorkspaceGuideSeen();
+}
+async function markWorkspaceGuideSeen() {
+  if (gs.status) gs.status = { ...gs.status, workspaceGuideSeen: true };   // this tab knows at once
+  try {
+    const res = await fetch('/api/onboarding', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ workspaceGuideSeen: true }) });
+    const data = await safeJson(res);
+    if (res.ok && data && data.steps) { gs.status = data; paintOnboarding(); }
+  } catch { /* offline: this tab's copy says seen; the server is asked again on the next load */ }
+}
+function openWsGuide(mode) {
+  if (wsGuide.handle) return;
+  wsGuide.handle = openWorkspaceGuide({ doc: document, mode, onClose: (how) => {
+    wsGuide.handle = null;
+    if (mode === 'create' && (how === 'finish' || how === 'skip') && currentView() === 'workspaces') location.hash = 'workspace-create';
+  } });
+  void markWorkspaceGuideSeen();
+}
+async function onCreateWorkspace() {
+  if (wsGuide.handle || wsGuide.checking) return;         // a double click opens one walkthrough
+  wsGuide.checking = true;
+  try {
+    const seen = await readWorkspaceGuideSeen();
+    if (currentView() !== 'workspaces') return;            // the user moved on while we asked
+    if (shouldAutoOpenWorkspaceGuide({ seen, workspaceCount: state.workspaces.length })) openWsGuide('create');
+    else location.hash = 'workspace-create';
+  } finally {
+    wsGuide.checking = false;
+  }
+}
+if (el.wsCreateBtn) el.wsCreateBtn.addEventListener('click', () => { void onCreateWorkspace(); });
+if (el.wsHowtoBtn) el.wsHowtoBtn.addEventListener('click', () => openWsGuide('learn'));
 
 // ---- Workspace scan models (D15–D18): the scan agent (a catalog model + effort) and its project
 // agents (a sub-agent alias + effort). One painter for Create workspace and Settings › General.
