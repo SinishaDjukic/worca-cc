@@ -7,7 +7,7 @@
 // The client id, the token-exchange endpoint and the editor headers are the
 // values every community bridge sends (ericc-ch/copilot-api, MIT — see
 // THIRD_PARTY_NOTICES.md). Worca identifies itself the same way because the
-// gateway serves no other client; the user acknowledges that once (§8.2).
+// gateway serves no other client.
 //
 // Every network call takes an injectable `fetch` so the whole module is
 // testable against a stub without touching github.com.

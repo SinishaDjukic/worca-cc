@@ -34,6 +34,33 @@ Pull requests (add each number when it opens):
 
 - Ticket updates (#1072)
 
+## Independent reviewers for any workflow
+
+**Any workflow can review a plan with several independent reviewers, each on its own model.**
+
+A node's config can declare reviewer roles (for example Correctness and Security). The run starts one reviewer per role in parallel, each sees only its own role, and their findings go to the refiner in one file. Each role can run on its own model and effort, set in the workflow, the project's settings or for one run. Shaper's plan review now runs on this same step, unchanged for you.
+
+**Every finding gets an answer.** The refiner (or an implementer, now also allowed as a reviewer's sink) marks each finding fixed, or disputed with a reason; one it does not answer stays open. Each round records how many findings were raised, fixed, disputed and open, and the plan card shows those counts per role. When two roles ask for opposite changes to one section, the plan card asks you to decide, and your pick goes into the plan's Clarifications.
+
+Why: independent reviewers and a model per reviewer were Shaper-only; they are now part of the engine (#990).
+
+**No silent fallbacks.** A model the run's engine cannot run (a Claude model on a Codex run, for a node or a role) is now named in a warning on the run page, once, instead of being dropped quietly. The Chat run card lists one Agents row per reviewer (`Plan Review · Architect` …) with a model and an effort. Shaper's Product reviewer runs on a different model from the others by default, and a new **Devil's advocate** perspective can be picked as an extra reviewer.
+
+**Code role reviews.** Shaper's Review now reviews the diff as three independent roles, `correctness`, `security` and `fit` (Project fit), on the same engine step with the new `diff` target. Their merged findings go to the implementer's fix, and a clean role is skipped in later fix cycles. Any workflow's reviewer can opt in by node config, with its wires unchanged. Also added: the Chat Shaper card's Agents accordion lists three `Review Implementation · …` rows (a model per code role), and the run status card lists the code roles live while Review runs. The review loop's decision card lists the same role rows. The first review cycle runs 3 reviewer agents instead of 1. Rolling back to an older build in the middle of a run makes Review run as a single reviewer again, and an open plan question may then also count the code rounds.
+
+**The implementer can push back.** When the implementer of a Shaper run finds that the approved plan would work but its design is wrong, it says so instead of building that part. The plan approval comes back with its concern above the buttons: Ask for changes sends the plan back to the planner with the concern, Approve has it build the plan as written. Under `--yes` the concern is overridden and the audit log says so; Away mode waits for you.
+
+**Review quality per role.** `GET /api/stats/review-quality` sums each role's raised, fixed, disputed and open findings over finished runs, for plan and code reviews apart. It reads only the counts each run records, never the findings' text. Runs finished before this change have no data.
+
+Chips: role reviews · a model per role · node config · dropped-pick warning · per-reviewer rows · Devil's advocate · finding dispositions · conflict decisions · code role reviews · diff target · plan concerns · review quality API
+
+Read it: [Per-role models](../models.md#per-role-models)
+
+Pull requests (add each number when it opens):
+
+- Independent reviewers, engine first (#990)
+- Cleanup: drop dead role-review paths (#990)
+
 ## Shaper, Run presets and Cost tags leave Labs
 
 **Three Labs features are now simply part of Worca.**

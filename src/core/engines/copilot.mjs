@@ -9,9 +9,11 @@
 // - With no -p, the prompt is read from stdin (no argv limit). A tool call that would prompt is denied, never asked.
 // - Tool approval is an allow list (G14, checked on 1.0.100 in BYOK mode against a scripted stand-in endpoint):
 //   `--allow-tool=shell` and `--allow-tool=write` approve the shell and the file tools, `--allow-tool=<server>` each MCP
-//   server worca attached, `--allow-all-urls` a URL in a shell command (without it `curl <url>` is denied). A read-only
-//   tool (view, rg, glob, a read-only shell command such as `cat`), `task`, `sql` and `skill` need no approval, and a
-//   sub-agent's shell runs under the parent's list. Anything else, such as an MCP server worca did not attach, is denied.
+//   server worca attached, `--allow-all-urls` a URL in a shell command (without it `curl <url>` is denied). Inside the
+//   cwd and `--add-dir` folders, a read-only tool (view, rg, glob, a read-only shell command such as `cat` or `cd`),
+//   `task`, `sql` and `skill` need no approval, and a sub-agent's shell runs under the parent's list; outside the cwd
+//   and `--add-dir`, Copilot asks for interactive directory approval even for reads and `cd`, which `--no-ask-user`
+//   denies. Anything else, such as an MCP server worca did not attach, is denied.
 //   `--allow-all-tools` (which --help still calls required) is not needed in -p mode. COPILOT_ALLOW_ALL in copilot's env
 //   would approve everything again (exactly "true" also trusts the folder, loading its hooks and MCP servers), and
 //   COPILOT_ASSISTED_APPROVAL hands unlisted tools to a judge, so the spawn drops both.
@@ -50,6 +52,7 @@ import { superviseSpawn, composeSpawnEnv, cleanRunEnv, safeEmit, writableRootsIn
 import { createRedactor } from '../redact.mjs';
 import { strongestClass } from '../recoverable-error.mjs';
 import { mcpResultText } from './codex.mjs';
+import { storeProjectDirs } from './gemini-family.mjs';
 import { makeChatDescriptor } from './chat-descriptor.mjs';
 import { copilotWireModel, COPILOT_EFFORTS as MODEL_ENV_COPILOT_EFFORTS } from '../model-env.mjs';
 
@@ -669,9 +672,11 @@ export async function runCopilotProcess({
   // Guardrails and the tool set: deny rules worca can express, the per-role tool list, read-only.
   const rules = copilotRulePlan(permissionRules);
   const tools = readOnly ? { deny: [], excluded: [] } : copilotToolPlan(allowedTools);
+  const includeDirs = readOnly ? [] : [...new Set([...(addDirs || []), ...(writableDirs || [])].filter((d) => typeof d === 'string' && d))];
+  for (const p of storeProjectDirs(includeDirs)) if (!includeDirs.includes(p)) includeDirs.push(p);
   const args = buildCopilotArgs({
     sessionId: session, resume, model, effort, agent: COPILOT_NODE_AGENT,
-    addDirs: [scratch, ...(readOnly ? [] : [...(addDirs || []), ...(writableDirs || [])])],
+    addDirs: [scratch, ...includeDirs],
     // Off: the user's own Copilot servers, and the project's `.mcp.json` servers Copilot would load itself in a trusted
     // folder, but never a server worca hands it (an approved one of the same name stays on).
     mcpConfigFile, disableMcp: [...new Set([...userCopilotMcpNames(env), ...projectCopilotMcpNames(cwd).filter((n) => !Object.hasOwn(mcpServers || {}, n))])],

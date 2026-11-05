@@ -36,8 +36,9 @@ Every server is a child process with an allowlisted env (`PATH`, `LANG`, `LC_*`,
 `HOME` = `WORCA_HOME`, `WORCA_MOCK=1`, `WORCA_NO_NATIVE_DIALOG=1` and a harness-picked `PORT` (never 4317, the host
 app). No token, SSH agent or host config of the operator reaches a target.
 
-1. **Route list.** The target's own node imports its `ui/server.mjs` (no listen) and prints `app._router.stack`,
-   nested routers included. Every `/api` route is listed (523 at this checkpoint).
+1. **Route list.** The target's own node imports its `ui/server.mjs` (no listen) and prints its route table
+   (`tools/express-routes.mjs`: Express 4 or 5, nested routers included, paths in one spelling: `*` for any wildcard,
+   `{/:p}` for an optional segment). Every `/api` route is listed (523 at this checkpoint).
 2. **Signed-in probes**, on their own seeded server. Every route classified `probe` in
    `tools/parity/route-classes.json` is called: GETs twice with the seeded ids, other methods once with
    `parity-missing` in every param and `{}` as the body. A response is kept as its status and its JSON *shape*

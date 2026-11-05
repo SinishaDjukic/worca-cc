@@ -208,7 +208,7 @@ import {
 import {
   renderProvidersCard, collectProviderRow, collectSpeechRow, formatSpeechBytes, renderImportSheet, renderEndpointSheet, collectImportSheet, applyImportSelectAll,
   applyProviderPreset, endpointRowMatches, ENDPOINT_PRESETS,
-  setModelUpstream, COPILOT_TERMS,
+  setModelUpstream,
 } from './bridge-view.mjs';
 import {
   renderSourcePane, collectSourcePane, renderProfileGate, renderProfileBar,
@@ -2945,11 +2945,11 @@ function addNightDecisions(r, list) {
   r.nightDecisions = cur;
 }
 
-// Every status the server reports lands here (state frames, the hello, upserts, the end of a run). While this tab's
-// Pause is in flight, a 'running' sent before the server took it keeps the 'pausing' shown at the click; any other
-// status ends the wait.
+// Every status the server reports lands here. A Pause in flight keeps 'pausing' over a 'running' sent before the
+// server took it. A run never goes back to 'starting' (a start or resume mints a new runId): beginRun's late one,
+// after a start reply that trails the socket's frames (#1090), never replaces a status the server already sent.
 function applyServerStatus(r, status) {
-  if (!status || (r.pausePending && status === 'running')) return;
+  if (!status || (r.pausePending && status === 'running') || (status === 'starting' && r.status && r.status !== 'starting')) return;
   r.status = status;
   r.pausePending = false;
 }
@@ -4113,7 +4113,7 @@ if (typeof window !== 'undefined') {
     paintExecChip,
     wireExecChip,
     openRunArtifact,
-    paintQuiescenceBanner,
+    paintRunWarnings,
     progressText,
     histCountsLine,
     gateWireCopy,
@@ -19438,27 +19438,10 @@ async function reloadProviders() {
   } catch { /* keep what we have */ }
 }
 
-/** The blocking notice (§8.2). Resolves true once acknowledged (now or before). */
-async function ensureCopilotTerms({ force = false } = {}) {
-  if (!force && mvState.providers?.copilot?.termsCurrent) return true;
-  const r = await confirmModal({
-    title: COPILOT_TERMS.title, message: COPILOT_TERMS.body,
-    checkbox: { label: COPILOT_TERMS.checkbox }, confirmLabel: COPILOT_TERMS.confirm, cancelLabel: 'Cancel',
-  });
-  const ok = !!(r && r.ok && r.checked);
-  if (!ok) return false;
-  const res = await fetch('/api/providers/copilot/acknowledge', { method: 'POST' });
-  const data = await safeJson(res);
-  if (!res.ok) { setProviderMsg('copilot', data.error || `HTTP ${res.status}`, true, 'Notice not acknowledged'); return false; }
-  mvState.providers = data;
-  return true;
-}
-
 let copilotPollTimer = null;
 function stopCopilotPoll() { if (copilotPollTimer) { clearTimeout(copilotPollTimer); copilotPollTimer = null; } }
 
 async function copilotSignInFlow() {
-  if (!(await ensureCopilotTerms())) { repaintProviders(); return; }
   try {
     const res = await fetch('/api/providers/copilot/login', { method: 'POST' });
     const flow = await safeJson(res);
@@ -20009,7 +19992,6 @@ if (el.providersList) {
     if (t.classList.contains('mv-cp-signin')) copilotSignInFlow();
     else if (t.classList.contains('mv-cp-cancel')) { stopCopilotPoll(); mvState.signIn = null; renderProvidersViewBody(); }
     else if (t.classList.contains('mv-cp-signout')) copilotSignOutFlow();
-    else if (t.classList.contains('mv-cp-terms')) ensureCopilotTerms({ force: true }).then(() => renderProvidersViewBody());
     else if (t.classList.contains('mv-cp-fetch-models')) openImportDialog({ source: 'copilot' });
     else if (t.classList.contains('mv-cp-quota-refresh')) refreshCopilotQuotaFlow(t);
     else if (t.classList.contains('mv-pv-save')) {
@@ -23878,7 +23860,7 @@ async function loadHistDetailScreen(screen, record, parsed, ship = null) {
     // `logs`: the run saved a log (HD_TABS' Logs tab shows), so a tray header has a log to open; its cards link the same way.
     { run: st, runId: parsed.id, mode: 'monitor', record: rec, logs: Array.isArray(data.artifacts) && data.artifacts.some((a) => a && a.kind === 'live-log') })
     : null, st.steps);
-  if (isGraphManifest(st.stepper)) paintQuiescenceBanner(screen.querySelector('.hd-banners'), decorFromState(st, { live: false, now: 0 }));
+  if (isGraphManifest(st.stepper)) paintRunWarnings(screen.querySelector('.hd-banners'), decorFromState(st, { live: false, now: 0 }));
 
   paintHdHeaderMeta(screen, rec, data);
   setupHdActions(screen, rec, data);
@@ -25253,6 +25235,19 @@ function paintPushBtn(btn, record, push) {
   setCtaContent(btn, 'arrow-up', pushLabel(push));
   btn.title = pushTip(record.sourceBranch, push);
 }
+/** POST /api/push for a run on its source branch -> { ok, remote, branch }; throws the server's message. The Details
+ *  header's Push (pushSourceFlow) and the chat run card's Push (chatRunControls.pushSource) share it. */
+async function postPushSource(record) {
+  const res = await fetch('/api/push', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    // The ship-it modal's own payload shape (:18052). projectKey/projectDir come from listAllPipelines'
+    // project tag (artifacts.mjs:2108), not rowToHistoryEntry.
+    body: JSON.stringify({ projectKey: record.projectKey, projectDir: record.projectDir || null, id: record.id }),
+  });
+  const dd = await safeJson(res);
+  if (!res.ok) throw new Error((dd && dd.error) || `HTTP ${res.status}`);
+  return dd;
+}
 /** Push (POST /api/push) the run's source branch to its remote; `btn` shows the busy state and the outcome. The Details
  *  header's .hd-push and the card head's Push (slice 3, .hd-g-push) share it, and both show the outcome. */
 async function pushSourceFlow(btn, record) {
@@ -25261,14 +25256,7 @@ async function pushSourceFlow(btn, record) {
   const tip = pushTip(record.sourceBranch);
   for (const b of peers) { b.disabled = true; setCtaContent(b, 'arrow-up', 'Pushing…'); b.title = tip; }
   try {
-    const res = await fetch('/api/push', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      // The ship-it modal's own payload shape (:18052). projectKey/projectDir come from listAllPipelines'
-      // project tag (artifacts.mjs:2108), not rowToHistoryEntry.
-      body: JSON.stringify({ projectKey: record.projectKey, projectDir: record.projectDir || null, id: record.id }),
-    });
-    const dd = await safeJson(res);
-    if (!res.ok) throw new Error((dd && dd.error) || `HTTP ${res.status}`);
+    const dd = await postPushSource(record);
     for (const b of peers) paintPushBtn(b, record, { state: 'pushed', remote: dd.remote || 'the remote' });
   } catch (err) {
     // A short label; the error (often long) is in the tooltip and a toast, and a click retries.
@@ -31525,21 +31513,25 @@ function runDecorFor(r, mode = 'monitor') {
   return bag;
 }
 
-/** The amber quiescence banner (spec §8), in .rd-banners / .hd-banners. Idempotent:
- *  one element per host, shown/hidden from the bag's `quiescent`. */
-function paintQuiescenceBanner(host, decor) {
+/** The run's warnings (decor.warnings: a dropped model pick, the scheduler's lines, the quiescence line of spec §8) as
+ *  amber banners in .rd-banners / .hd-banners: one `.run-warn` per distinct text, in order. Idempotent; an empty list
+ *  leaves none. */
+function paintRunWarnings(host, decor) {
   if (!host) return;
-  const show = !!(decor && decor.quiescent);
-  let el = host.querySelector(':scope > .run-warn');
-  if (!el) {
-    if (!show) return;
-    el = document.createElement('div');
-    el.className = 'run-warn';
-    el.setAttribute('role', 'status');
-    host.appendChild(el);
-  }
-  el.textContent = 'finished at quiescence — End not reached';
-  el.hidden = !show;
+  const texts = [...new Set((decor && Array.isArray(decor.warnings) ? decor.warnings : []).filter(Boolean))];
+  const els = [...host.querySelectorAll(':scope > .run-warn')];
+  texts.forEach((text, i) => {
+    let el = els[i];
+    if (!el) {
+      el = document.createElement('div');
+      el.className = 'run-warn';
+      el.setAttribute('role', 'status');
+      host.appendChild(el);
+    }
+    el.textContent = text;
+    el.hidden = false;
+  });
+  for (const el of els.slice(texts.length)) el.remove();
 }
 
 /** The P5 line ("Build · task 2 of 4"); supersedes the D15 "3/6 done" counter (spec 2026-10-14 P12). '' on a v1 run. */
@@ -31797,6 +31789,11 @@ const chatRunControls = {
   },
   confirm: (o) => confirmModal(o),
   prHost: () => prHostAvailable(),
+  /** The run card's Push (a run on its source branch): the run page's POST /api/push -> { ok, remote } | { ok:false, error }. */
+  pushSource(ref) {
+    return postPushSource({ projectKey: ref && ref.projectKey, projectDir: ref && ref.projectDir, id: ref && ref.pipelineId })
+      .then((dd) => ({ ok: true, remote: dd.remote || 'the remote' }), (err) => ({ ok: false, error: err && err.message ? err.message : String(err) }));
+  },
   openApply(ref, opener) { const pid = ref && ref.pipelineId; return pid ? folderApplyFlow({ pipelineId: pid, ...(opener ? { opener } : {}) }) : Promise.resolve(null); },
   openShipIt(ref, link) {
     // P2 Task 9: chatDeps.openShipIt = openShipItFor → Promise<{opened, url?, error?}>, settling when the dialog closes.
@@ -33535,7 +33532,8 @@ function runsGroupItem({ id, groupKind, title, members, cost = null, planning = 
     // inBase). The raw live run carries no PR, so a finished member with failing checks read "Ready to ship".
     const run = r ? withChainPr(rdModelRun(r), m) : (m.pipelineId ? memberRun(m)
       : { ticket: { status: m.ticket ? m.ticket.status : 'scheduled', runAt: m.ticket && !m.ticket.after ? m.ticket.runAt : null,
-        after: m.after ? { index: m.after } : null } });
+        // #1096: a chain root that only waits for another run names that run ("starts after <title>").
+        after: m.after ? { index: m.after } : m.waitsFor && m.waitsFor.title ? { title: m.waitsFor.title } : null } });
     const pk = m.historyKey || m.projectKey || histPk(m.pipelineId);
     const href = r ? `#running/${r.runId}` : m.pipelineId && pk ? `#history/${pk}/${m.pipelineId}`
       : groupKind === 'feature' ? `#feature/${encodeURIComponent(id)}` : m.ticketId ? '#schedules/once' : '#runs';
@@ -35243,7 +35241,7 @@ function paintRunDetail(r) {
   ensureRdTabs(screen, r);   // builds the pill row + lazy panels exactly once
   paintRdHeader(screen, r);
   paintRdBanners(screen, r);
-  if (isGraphRun(r)) paintQuiescenceBanner(screen.querySelector('.rd-banners'), runDecorFor(r, 'monitor'));
+  if (isGraphRun(r)) paintRunWarnings(screen.querySelector('.rd-banners'), runDecorFor(r, 'monitor'));
   paintRdGraph(screen, r);
   paintRdQuestions(screen, r);
   paintShaperWait(screen, r);

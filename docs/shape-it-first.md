@@ -39,7 +39,10 @@ on the run page.
 
 **Perspectives.** The chips choose who the plan is written for: Product (always on),
 Architect, QA, UX, Security, DevOps and infrastructure, and Release. Change them and
-choose **Update plan** to have the plan rewritten for the new set.
+choose **Update plan** to have the plan rewritten for the new set. **Devil's advocate**
+is a reviewer only: picked, it argues the strongest case that the plan's core approach is
+wrong and names the simpler alternative. It adds no plan section and no checklist, and it is
+not picked by default.
 
 **The shape check.** Eight deterministic checks run on the plan text:
 
@@ -66,6 +69,45 @@ carries the plan to the New run page, and **Stop** ends the run.
 **Versions.** Every revision is kept as its own version of the plan; the card shows
 the newest and the earlier ones stay readable.
 
+**Role reviews.** Before you see the plan, one independent reviewer per picked perspective
+reads it, each as its own role only, and Refine Plan fixes what they found. This is the
+engine's role-review step (any workflow can declare one, see
+[Per-role models](models.md#per-role-models)): Shaper's Plan Review node declares the
+perspectives as its roles, runs the ones you picked, and judges each on its own checklist
+items.
+
+**Counts per role.** The card's folded line reads `Reviewed by 5 roles · 1 open`; unfolded, each
+role has one row with its counts, for example `Security · 2 fixed · 1 disputed · 1 open`, and
+**Show** lists its findings. Refine Plan answers every finding: **fixed**, or **disputed** with a
+one-line reason that Show prints under it. A finding it does not answer stays **open**.
+The totals per role over finished runs are in the [review quality API](statistics.md#review-quality).
+
+**Decisions.** When two roles ask for opposite changes to the same section, Refine Plan leaves
+it to you: the card shows one decision card per pair ("Security and UX disagree on Rollout")
+with the options to pick from. **Approve and build** asks you to answer each one first, and your
+pick is written into the plan's Clarifications. An approval without you (auto-approve) never
+waits on it.
+
+**A model per reviewer.** Product reviews on a different model (Opus 5.5) from the other
+reviewers (Sonnet 5.5) by default, so at least one reviewer judges the plan independently.
+On an engine that does not run it (Codex, for example), Product runs on the node's model
+like the others; the run records the default it could not use, with no warning, since nobody
+picked it. In the Chat run card, Advanced › Agents lists one row per reviewer
+(`Plan Review · Architect` and so on), each with a model and an effort; a pick on a reviewer
+you did not tick is kept but never runs. A model you pick for the Plan Review node itself
+does not change Product's own pick.
+
+**Code role reviews.** Review Implementation reviews the diff the same way, as three
+independent roles: `correctness`, `security` and `fit` (Project fit). It is the same engine step
+on the `diff` target, declared in Shaper's workflow config. Their merged findings go to Build's
+fix, and Build answers each one (fixed or disputed). While Review runs, the run status card
+lists one row per role (reviewing, then its worst finding, then "Fixing 2 findings from
+Correctness and Security" while Build fixes them). A role that was clean is skipped in the
+next fix cycle, so a fix cycle reviews only the roles still open. When the review loop runs
+out of cycles, its decision card lists the same role rows, and their **Show** lists the
+findings. Cost: the first review cycle runs 3 reviewer agents where it ran 1, so it costs
+about 3 times as much; each fix cycle runs 1 to 3.
+
 ## Checklists in review
 
 Each perspective's checklist ends the plan as `R-…` items. The code review marks
@@ -75,6 +117,24 @@ On the run page Overview, the **Perspective checklists** group shows one section
 review cycle: the newest open, older ones folded. On a finished shaped run the Chat
 card carries the tally ("Checklist: 3 met · 1 unmet · 1 n/a"), and the pull request
 description gets a section with the same items.
+
+## Plan concerns
+
+The implementer of a Shaper run can say that the approved plan would work but its design is wrong. It then writes a
+plan concern (`{ "title", "detail", "section" }`, one file per implementer step in the run's folder, called
+`plan-concern.json` in the audit) instead of building the part it disagrees with, and builds the rest. Bugs and
+missing details stay deviations, as before.
+
+- The plan approval is asked again, for the same plan round, with the concern above the Approve button.
+- **Ask for changes** (with your own text) accepts the concern: the plan goes back to the planner with your text and
+  the concern. The planner runs again and the plan approval comes back as the next round.
+- **Approve** overrides the concern: the implementer runs once more, builds the held-back part as the plan says, and
+  the run goes on. It cannot raise a second concern in that step.
+- Under `--yes` no one is asked: the concern is overridden, and the audit log reads
+  "Plan concern overridden automatically (--yes)".
+- Away mode waits for you: a concern is a plan approval, and Away mode never decides one.
+- A concern stops the run even when "Approve each slice's plan" is off.
+- Only workflows with a plan approval stop offer a concern. Default's implementer is never offered one.
 
 ## Plan in slices
 

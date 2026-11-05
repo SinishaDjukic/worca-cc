@@ -8,7 +8,7 @@
 
 import { createInterface } from 'node:readline';
 import {
-  providersState, beginCopilotLogin, pollCopilotLogin, copilotLogout, acknowledgeTerms,
+  providersState, beginCopilotLogin, pollCopilotLogin, copilotLogout,
   copilotModelsForImport, importCopilotModels, testProviderConnection, patchProvider,
   endpointModelsForImport, importEndpointModels, OPENROUTER_BASE_URL,
 } from '../core/bridge/provider-ops.mjs';
@@ -20,8 +20,7 @@ export const MODELS_HELP = `worca models — the model catalog and its providers
 Usage:
   worca models list                       Catalog with provider / bridge facts
   worca models providers                  Provider state (never a token)
-  worca models login copilot [--accept-terms]
-                                          Sign in to GitHub Copilot (device flow)
+  worca models login copilot              Sign in to GitHub Copilot (device flow)
   worca models logout copilot             Forget the Copilot sign-in
   worca models import copilot [--all | --pick <id,id,…>] [--yes]
                                           Add Copilot models to the catalog
@@ -49,9 +48,6 @@ Notes:
   one concurrency cap. A model can still point elsewhere on its own Connection.
   --api-key gives an endpoint that is not the provider's its own key ('\${VAR}' or a literal), stored on
   each imported entry; the provider's key is only ever sent to the provider's own host.
-  Copilot: GitHub allows Copilot only through supported clients and has suspended
-  access for automated use. \`login\` prints the notice; --accept-terms records the
-  acknowledgement non-interactively. Pipelines are automated, high-volume use.
 `;
 
 /** `worca models import gemini|qwen`: the endpoint and the key reference each defaults to. */
@@ -59,18 +55,6 @@ const HOSTED_IMPORTS = Object.freeze({
   gemini: Object.freeze({ baseUrl: GEMINI_OPENAI_BASE_URL, apiKey: '${GEMINI_API_KEY}' }),
   qwen: Object.freeze({ baseUrl: QWEN_OPENAI_BASE_URL, apiKey: '${DASHSCOPE_API_KEY}' }),
 });
-
-/** The notice text, mirrored from ui/public/bridge-view.mjs COPILOT_TERMS (kept
- *  here too: the CLI must not import UI modules). */
-export const COPILOT_TERMS_TEXT = [
-  'Using GitHub Copilot from Worca',
-  '',
-  "Worca will talk to GitHub Copilot through the same API GitHub's editor extensions use, identifying itself as an editor client. GitHub's terms allow Copilot only through supported clients, and GitHub has suspended Copilot access for automated or unsupported use. Pipelines are automated, high-volume use.",
-  '',
-  '  • Your GitHub account, not Worca, carries this risk.',
-  '  • Worca caps concurrent requests (configurable) and never signs in without you.',
-  '  • Premium-request quotas apply per your plan; Worca shows usage but cannot enforce it.',
-].join('\n');
 
 /** Minimal flag parser for the subcommand (mirrors worca-cc.mjs pluginArgs). */
 export function modelsArgs(argv, valueFlags = [], boolFlags = [], fail = (m) => { throw new Error(m); }) {
@@ -102,7 +86,7 @@ export function formatModelLine(m) {
   if (m.bridged && m.engine === 'codex') bits.push(`endpoint: ${m.bridged}${m.upstreamModel ? ` → ${m.upstreamModel}` : ''}`);
   else if (m.bridged) bits.push(`bridged: ${m.bridged}${m.upstreamModel ? ` → ${m.upstreamModel}` : ''}${isTranslatedApi(m.upstreamApi) ? ' (translated)' : ''}`);
   else if (m.routed) bits.push('endpoint-routed');
-  if (m.needsSignIn) bits.push(`NEEDS ${m.signInReason === 'no_key' ? 'API KEY' : m.signInReason === 'terms' ? 'ACKNOWLEDGEMENT' : 'SIGN-IN'}`);
+  if (m.needsSignIn) bits.push(`NEEDS ${m.signInReason === 'no_key' ? 'API KEY' : 'SIGN-IN'}`);
   if (m.hidden) bits.push('hidden');
   return bits.join('  ');
 }
@@ -111,7 +95,7 @@ export function formatModelLine(m) {
 export function formatProviders(p) {
   const c = p.copilot || {};
   const lines = [
-    `copilot     ${c.connected ? `connected${c.login ? ` as @${c.login}` : ''}` : 'not connected'}  account=${c.accountType || 'individual'}  maxConcurrent=${c.maxConcurrent}  terms=${c.termsCurrent ? `acknowledged ${String(c.acknowledgedTerms || '').slice(0, 10)}` : 'not acknowledged'}${c.tokenSource === 'env' ? `  token=${c.tokenRef}` : ''}`,
+    `copilot     ${c.connected ? `connected${c.login ? ` as @${c.login}` : ''}` : 'not connected'}  account=${c.accountType || 'individual'}  maxConcurrent=${c.maxConcurrent}${c.tokenSource === 'env' ? `  token=${c.tokenRef}` : ''}`,
   ];
   if (c.quota) {
     lines.push(`            premium requests: ${c.quota.unlimited ? 'unlimited' : `${c.quota.used ?? '?'} / ${c.quota.entitlement ?? '?'}`}${c.quota.resetDate ? ` (resets ${c.quota.resetDate})` : ''}`);
@@ -145,7 +129,7 @@ const sleep = (ms) => new Promise((r) => { const t = setTimeout(r, ms); if (t.un
  * @returns {Promise<number>} exit code
  */
 export async function cmdModels(argv, { out, c, fail, sleep: wait = sleep }) {
-  const args = modelsArgs(argv, ['--pick', '--base-url', '--api-key', '--search', '--min-context'], ['--accept-terms', '--all', '--yes', '--free', '--tools', '-h', '--help'], fail);
+  const args = modelsArgs(argv, ['--pick', '--base-url', '--api-key', '--search', '--min-context'], ['--all', '--yes', '--free', '--tools', '-h', '--help'], fail);
   const [verb, ...rest] = args._;
   // `openrouter` is not a provider of its own: it is the openai provider at OpenRouter's URL, so
   // every verb below sees `openai` and a base URL that defaults to OpenRouter's.
@@ -173,14 +157,6 @@ export async function cmdModels(argv, { out, c, fail, sleep: wait = sleep }) {
   const provider = rest[0];
   if (verb === 'login') {
     if (provider !== 'copilot') return fail('only `worca models login copilot` is supported');
-    const state = await providersState();
-    if (!state.copilot.termsCurrent) {
-      out(COPILOT_TERMS_TEXT);
-      out('');
-      const ok = args['accept-terms'] || await confirm('I understand and want to continue', false, { c });
-      if (!ok) return fail('sign-in cancelled — pass --accept-terms to acknowledge non-interactively');
-      await acknowledgeTerms();
-    }
     const flow = await beginCopilotLogin();
     out(`Open ${c('bold', flow.verificationUri)} and enter the code ${c('bold', flow.userCode)}`);
     out(c('dim', `Waiting for approval (code valid ${Math.round(flow.expiresIn / 60)} min)…`));

@@ -79,12 +79,12 @@ app.get('/api/workspaces/:wid/runs/:id/ask-files/:askId/:index', async (req, res
   }
 });
 
-app.get('/api/workspaces/:id/runs/:runId/artifact-raw/*', async (req, res) => {
+app.get('/api/workspaces/:id/runs/:runId/artifact-raw/*splat', async (req, res) => {
   if (!WORKSPACE_KEY_RE.test(req.params.id)) return res.status(404).json({ error: 'pipeline not found' });
   try {
     const row = lookupPipelineRow(`workspaces/${req.params.id}`, req.params.runId);
     if (!row) return res.status(404).json({ error: 'artifact not found' });
-    await sendArtifactRaw(res, row, req.params[0], { download: req.query.download === '1' });
+    await sendArtifactRaw(res, row, req.params.splat.join('/'), { download: req.query.download === '1' });
   } catch (err) { res.status(500).json({ error: err && err.message ? err.message : String(err) }); }
 });
 }

@@ -36,6 +36,7 @@ import { worcaHome } from '../src/core/projects.mjs';
 import { projectKey } from '../src/core/store.mjs';
 import { runOpts, RESUME_HEADER, READ_WRITE_TOOLS, IMPLEMENTER_TOOLS } from '../src/core/phases.mjs';
 import { buildAgentPrompt, taskSourcedPorts, allocateOutputs, allocateVerdict } from '../src/core/graph/executor.mjs';
+import { roleReviewOf } from '../src/shared/graph/role-review-step.mjs';
 import {
   REGISTRY, TASK_PROMPT, ORDINAL, nodeId, BUILTIN_KEYS, PARITY_TPL,
   frontmatterTools, makeCtxFor, portsFn,
@@ -369,7 +370,7 @@ function roleSliceCtx(role, siblings) {
     ...base, node, ports, bindings: { plan: { seq: 1, type: 'md', path: '/abs/plan.md' } },
     outputs: allocateOutputs({ node, ports, executionId, ordinal: ORDINAL, runCtx: base.runCtx }),
     verdict: allocateVerdict({ node, ports, ordinal: ORDINAL, runCtx: base.runCtx }),
-    role, rolePlanText: RECORDED_PLAN,
+    role, roleSpec: roleReviewOf(node.config), rolePlanText: RECORDED_PLAN,
   };
 }
 
@@ -405,4 +406,15 @@ test('role reviews: the refiner renders the findings directive and MOCK_FINDINGS
   assert.match(bound, /^MOCK_FINDINGS: \/abs\/findings\.md$/m);
   const plain = promptFor('refiner');
   assert.doesNotMatch(plain, /## Role reviews|MOCK_FINDINGS/);
+});
+
+test('#990 s5 the implementer gets the plan-concern block and marker only when ctx.planConcern names a file', () => {
+  const file = '/abs/n_impl-plan-concern-c1.json';
+  const on = buildAgentPrompt({ ...ctxFor('implementer'), planConcern: { file } });
+  assert.match(on, /^## Plan concern$/m);
+  assert.match(on, /^MOCK_PLAN_CONCERN: \/abs\/n_impl-plan-concern-c1\.json$/m);
+  assert.equal(buildAgentPrompt({ ...ctxFor('implementer'), planConcern: null }), promptFor('implementer'), 'none offered: byte-identical');
+  const over = buildAgentPrompt({ ...ctxFor('implementer'), planConcernOverride: { title: 'Use the DB' } });
+  assert.match(over, /## Plan concern overridden/);
+  assert.doesNotMatch(over, /MOCK_PLAN_CONCERN/);
 });

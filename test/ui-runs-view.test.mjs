@@ -547,6 +547,31 @@ test('a plain Run-after chain lists all 3 members, open (D29)', async () => {
   window.close();
 });
 
+test('#1096: a chain rooted at a timing-only Run after is named by its own runs; the run it waits for stays its own row and the root names it', async () => {
+  // runChains shape after #1096: the unrelated run (pu000001) is no member; the root carries waitsFor.
+  const chains = [{ id: 't:ts1', title: 'Slice 1', members: [
+    { pipelineId: null, ticketId: 'ts1', title: 'Slice 1', state: 'waiting', after: null, waitsFor: { title: 'Freeform chat' } },
+    { pipelineId: null, ticketId: 'ts2', title: 'Slice 2', state: 'waiting', after: 1, stacks: true }] }];
+  const tk = (id, title, after) => ({ id, title, status: 'scheduled', runAt: '9999-12-31T00:00:00.000Z', createdAt: '2026-11-04T10:00:00Z',
+    projectDir: PROJECT, after });
+  const tickets = [tk('ts1', 'Slice 1', { kind: 'pipeline', id: 'pu000001', title: 'Freeform chat', pipelineId: 'pu000001' }),
+    tk('ts2', 'Slice 2', { kind: 'ticket', id: 'ts1', title: 'Slice 1' })];
+  const { window, doc, recv } = await boot({ chains, tickets });
+  recv({ type: 'hello', runs: [live('ru1', { pipelineId: 'pu000001', title: 'Freeform chat' })] });
+  go(window, 'runs'); await settle(window);
+  const g = doc.querySelector('#runs-list .runs-item[data-row-key="chain:t:ts1"]');
+  assert.ok(g, 'one group row');
+  assert.equal(g.querySelector(':scope > a.runs-row .runs-row-title').textContent, 'Slice 1', 'named by the runs that build on each other');
+  const members = g.querySelectorAll(':scope > .runs-members > .runs-item');
+  assert.deepEqual([...members].map((m) => m.querySelector('.runs-row-title').textContent), ['1 · Slice 1', '2 · Slice 2']);
+  assert.equal(members[0].querySelector('.runs-row-sub').textContent, 'Waiting · starts after Freeform chat');
+  assert.equal(members[1].querySelector('.runs-row-sub').textContent, 'Waiting · starts after run 1');
+  const own = [...doc.querySelectorAll('#runs-list .runs-item')].filter((r) => !r.closest('.runs-members')
+    && /Freeform chat/.test((r.querySelector(':scope > a.runs-row .runs-row-title') || {}).textContent || ''));
+  assert.equal(own.length, 1, 'the waited-for run is its own top-level row, outside the group');
+  window.close();
+});
+
 test('a deep-linked feature page repaints when History answers late: its member reads its project and PR (QA)', async () => {
   const group = { id: 'feat_000000000002', kind: 'feature', title: 'Done feature', projectKey: null, cost: { usd: 1, byPipeline: {} },
     members: [{ position: 1, title: 'Merged thing', pipelineId: 'aaaa0001', ticketId: null, status: 'done', pr: null, ticket: null, adhoc: false, after: null }] };

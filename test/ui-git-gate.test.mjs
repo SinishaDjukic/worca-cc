@@ -16,6 +16,13 @@ const trackDom = useDomRelease(afterEach);
 const html = readIndexHtml();
 const css = readStyleCss();
 const tick = () => new Promise((r) => setTimeout(r, 0));
+/** `fn()`'s first truthy answer, polled every 10 ms; its last answer after `ms`. */
+async function until(fn, ms = 5000) {
+  const end = Date.now() + ms;
+  let v = fn();
+  while (!v && Date.now() < end) { await new Promise((r) => setTimeout(r, 10)); v = fn(); }
+  return v;
+}
 const json = (status, body) => Promise.resolve({ ok: status < 300, status, json: async () => body });
 const bootApp = (o = {}) => bootGitApp({ trackDom, ...o });
 
@@ -67,10 +74,11 @@ test('git gate', async () => {
       const base = globalThis.fetch;   // alpha answers "no git remote" (the Local only chip), beta has no answer yet
       const fake = (url, o) => (String(url).startsWith('/api/sync/projects') ? json(200, { projects: { 'alpha-00000001': { remote: null } } }) : base(url, o));
       window.fetch = fake; globalThis.fetch = fake;
-      window.location.hash = 'projects'; await new Promise((r) => setTimeout(r, 400));
-      doc.querySelector('.filter-chip[data-filter="local"]').dispatchEvent(new window.Event('click', { bubbles: true }));
+      window.location.hash = 'projects';
+      const chip = await until(() => doc.querySelector('.filter-chip[data-filter="local"]'));   // a slow runner paints late
+      chip.dispatchEvent(new window.Event('click', { bubbles: true }));
       const beta = () => doc.querySelector('.pl-item[data-key="beta-00000002"]');
-      assert.equal(beta().hidden, true, 'precondition: Local only hides beta');
+      assert.equal(await until(() => beta()?.hidden), true, 'precondition: Local only hides beta');
       ws._msg({ type: 'git', git: { available: false, version: null } }); await tick();
       assert.equal(beta().hidden, false);
     } },

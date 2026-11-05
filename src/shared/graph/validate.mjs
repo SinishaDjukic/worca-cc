@@ -1,5 +1,5 @@
 // src/shared/graph/validate.mjs
-// THE authority on v2 graph legality (base spec §2, V1-V24, sessions V25-V30; V22 (script config)
+// THE authority on v2 graph legality (base spec §2, V1-V24, sessions V25-V30, role reviews V31; V22 (script config)
 // reuses the number the retired single-wire rule freed). Server save (422), plugin import, the composer's
 // live report, the run-time check and the seed drift guard all come through
 // here, so it is pure, never throws on a malformed template, and every lookup
@@ -9,6 +9,7 @@ import { KINDS, KEYED_KINDS, NODE_ID_RE, LIMITS, PARAMS_PORT, SESSION_ID_RE, SES
 import { portsOf, findPort, resolveOrOutType } from './ports.mjs';
 import { classifyLoops } from './loops.mjs';
 import { sessionsOf, consecutiveIssue } from './sessions.mjs';
+import { roleReviewOf, roleReviewIssues } from './role-review-step.mjs';
 import { paramValueError, mockErrors, MIN_TIMEOUT_MS, MAX_TIMEOUT_MS, pythonMissingSentence, wirableParams, WIRABLE_PARAM_TYPES } from './script-meta.mjs';
 
 const ARITY_SET = new Set(['and', 'or', 'combine']);
@@ -721,7 +722,7 @@ export const RULES = [
     for (const s of sessions) {
       if (s.members.length < SESSION_MIN_MEMBERS) continue;
       for (const m of s.members) {
-        const fans = inputsOf(m).some((p) => p?.expands === true && isWired(m, p.id)) || nodeById.get(m)?.config?.roleReview === true;
+        const fans = inputsOf(m).some((p) => p?.expands === true && isWired(m, p.id)) || roleReviewOf(nodeById.get(m)?.config) !== null;
         if (fans) add(`node '${m}' fans out ×N in session '${s.sid}' — its tasks run outside the session; fix rounds run inside`, { nodeId: m, sessionId: s.sid });
       }
     }
@@ -742,6 +743,14 @@ export const RULES = [
       for (const k of ['hostModel', 'hostEffort']) {
         if (set(k) && !(typeof raw[k] === 'string' && raw[k].trim())) add(`session '${s.sid}' ${k} must be a non-empty string`, at);
       }
+    }
+  } },
+
+  // The engine role-review step (role-review-step.mjs): a malformed config.roleReview refuses the graph before any run.
+  { code: 'V31', level: 'E', check({ nodes }, add) {
+    for (const n of nodes) {
+      if (n.kind !== 'agent') continue;
+      for (const issue of roleReviewIssues(n.config)) add(`node '${n.id}': ${issue}`, { nodeId: n.id });
     }
   } },
 ];
