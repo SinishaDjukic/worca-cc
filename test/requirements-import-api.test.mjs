@@ -5,6 +5,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { EventEmitter } from 'node:events';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
@@ -201,4 +202,30 @@ test('Try again on a failed download fetches it again (A8 read-again); Remove on
   // the released download of the removed file ends now: wait for it, so it never finishes after this test (or after useTempHome's cleanup)
   await waitFor(() => !isDownloading(txt.id));
   assert.deepEqual(getDirs(), [], 'its folder is gone');
+});
+
+test("the server's 'listening' starts the tracker probe once, with the flag on; with it off, nothing is asked", async () => {
+  let asked = 0;
+  setMockSourceResponses({ capabilities: () => { asked += 1; return { writeBack: true, export: true, import: true }; } });
+  try {
+    _resetExportCaches();
+    const on = new EventEmitter();
+    registerRequirementsRoutes(express(), { broadcast: () => {}, server: on });
+    assert.equal(on.listenerCount('listening'), 1);
+    assert.equal(asked, 0, 'nothing before the server listens');
+    on.emit('listening');
+    await waitFor(() => asked === 1);
+    assert.equal(on.listenerCount('listening'), 0, 'a one-time start');
+    _resetExportCaches();
+    process.env.WORCA_FLAGS = '-requirements';
+    const off = new EventEmitter();
+    registerRequirementsRoutes(express(), { broadcast: () => {}, server: off });
+    off.emit('listening');
+    await new Promise((r) => setTimeout(r, 50));
+    assert.equal(asked, 1, 'flag off: no probe');
+  } finally {
+    process.env.WORCA_FLAGS = 'requirements';
+    setMockSourceResponses(null);
+    _resetExportCaches();
+  }
 });

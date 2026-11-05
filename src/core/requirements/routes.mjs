@@ -35,6 +35,7 @@ import { readiness, displayState, changedSince, unaskedRejections, unaskedFiles 
 import { startFeature, startView } from './start.mjs';
 import { exportSetupView, exportOptions, saveSetup, previewExport, runExport, forgetLink, exportView } from './export.mjs';
 import { importView, importOptions, searchTickets, previewImport, prepareImport, createImported } from './import.mjs';
+import { warmTrackerProbe } from './trackers.mjs';
 import { budgetStatus, requirementsWindowedSpendUsd } from '../cost-budget.mjs';
 import { renderSpecMarkdown } from './markdown.mjs';
 import { saveSpecToCheckout, specFileName } from './save.mjs';
@@ -372,10 +373,14 @@ async function memberKeysOf(scopeType, scopeKey) {
 
 /**
  * @param {import('express').Express} app
- * @param {{ broadcast:(frame:object)=>void, deps?:object }} o  deps reach the interview runner (tests)
+ * @param {{ broadcast:(frame:object)=>void, server?:import('node:events').EventEmitter, deps?:object }} o  deps reach the interview
+ *   runner (tests); `server`, the UI's http server, starts the tracker probe when it listens
  */
-export function registerRequirementsRoutes(app, { broadcast, deps = {} } = {}) {
+export function registerRequirementsRoutes(app, { broadcast, server, deps = {} } = {}) {
   const gate = requireFlag('requirements');
+  // The first tracker capabilities probe (a plugin spawn) runs when the server starts listening, not when the first page
+  // asks, and only with the flag on. Not awaited; warmTrackerProbe never throws or rejects.
+  if (server && typeof server.once === 'function') server.once('listening', () => warmTrackerProbe({ enabled: flagEnabled('requirements') }));
   const onChange = requirementsChangeNotifier(broadcast);
   const onBriefChange = requirementsBriefNotifier(broadcast);
   // The file jobs notify both: a document a round re-queues (queueUnread) repaints the brief page too.

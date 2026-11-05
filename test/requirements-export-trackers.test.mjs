@@ -196,7 +196,7 @@ test('A6.1: import follows what is installed too: a link that adds import is ask
   writePluginsLock(lock);
 });
 
-// ---- the server warms the probe at start (ui/server.mjs, after listen, flag requirements) ----
+// ---- the server warms the probe at start (registerRequirementsRoutes' server, on 'listening', flag requirements) ----
 test('warmTrackerProbe: off asks nothing; on starts the probe without waiting for it, and the first view finds the answer cached', async () => {
   createProfile('jira-source', 'acme', 'acme.atlassian.net (Cloud)');
   _resetExportCaches();
