@@ -102,7 +102,9 @@ export async function testModel(id, { signal, bin, run = runClaude, signedOut = 
       modelEnv: onClaude ? resolveModelEnv(id) : undefined,
       // Codex and Copilot run it read-only. The sign-in engines have no read-only mode; the prompt is worca's own text.
       ...(onClaude ? {} : { engine, ...(engine === 'codex' || engine === 'copilot' ? { sandbox: 'read-only' } : {}) }),
-      effort: AUX_EFFORT,
+      // Copilot refuses --reasoning-effort on a model without reasoning (Claude Haiku 4.5: "does not support reasoning
+      // effort configuration"), and its built-in rows cannot tell which: the test names no effort there.
+      ...(engine === 'copilot' ? {} : { effort: AUX_EFFORT }),
       permissionMode: 'acceptEdits',
       allowedTools: [],          // empty → no --allowedTools flag; pure text gen
       ...(onClaude ? { tools: [], strictMcpConfig: true } : {}),   // and no tools at all: cwd is the server's own checkout

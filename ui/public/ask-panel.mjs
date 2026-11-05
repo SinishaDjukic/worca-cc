@@ -57,6 +57,7 @@ import { toElement } from './design-system/components/html.mjs';
 import { createAskComposerCards, ASK_COMPOSER_CARD_TYPES } from './ask-composer-cards.mjs';
 import { cardKit, scriptApprovalCardView } from './workflows/card-views.mjs';
 import { applyPresetStart } from '../../src/shared/run-presets.mjs';
+import { subagentAliasLabel, subagentAliasTitle } from '../../src/shared/model-roles.mjs';
 import {
   fmtTokens, CTX_COMPACT_BUFFER, CTX_WARN, CTX_HIGH, CTX_COST_HINT, kTok,
   fmtWindow, ctxTrigger, ctxLevel, ctxPercent, fmtCtx, ctxTitle, fmtShare, ctxBreakdown, fmtUsd,
@@ -4064,7 +4065,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       subWrap.appendChild(make('span', null, 'Sub-agents'));
       const subSel = rpSelect('ask-rp-subagent', `Sub-agent model for ${row.label}`);
       subSel.appendChild(opt('', 'subs: default (agent picks)'));
-      for (const v of lane.subagentModels) subSel.appendChild(opt(v, v === 'auto' ? 'subs: agent picks' : `subs: ${v}`));
+      for (const v of lane.subagentModels) { const o = opt(v, `subs: ${subagentAliasLabel(v)}`); const t = subagentAliasTitle(v); if (t) o.title = t; subSel.appendChild(o); }
       subSel.value = lane.subagentModels.includes(c.subagentModel) ? c.subagentModel : '';
       subSel.disabled = !lane.editable;
       subSel.title = 'Model for the sub-agents this node spawns (needs fan-out)';
@@ -5748,7 +5749,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         const unseen = lane ? null : proposalOverlay(card, workflowId);
         if (unseen) {
           laneSec.dataset.levelKeep = '1';
-          const list = Object.entries(unseen.nodes).map(([id, p]) => `${id} → ${p.model}${p.effort ? ` · ${p.effort}` : ''}${p.subagentModel ? ` · sub-agents ${p.subagentModel}` : ''}`);
+          const list = Object.entries(unseen.nodes).map(([id, p]) => `${id} → ${p.model}${p.effort ? ` · ${p.effort}` : ''}${p.subagentModel ? ` · sub-agents ${subagentAliasLabel(p.subagentModel)}` : ''}`);
           laneSec.appendChild(make('div', 'ask-rp-lane-msg', `Start runs Chat's picks as proposed (checked again at Start): ${list.join(', ')}`));
         } else if (!lane) delete laneSec.dataset.levelKeep;
       });

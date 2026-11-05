@@ -7561,20 +7561,19 @@ function workspacePickUsable(pick, models) {
  *  'workspace' — captured at creation, reused by auto re-scans), else Settings › Runs › Workspaces,
  *  else the defaults (only when a known catalog offers the default) — checked against the primary
  *  member's catalog. Throws on a bad explicit pick (400) or when no model is available (D19).
- *  A RE-SCAN of a workspace with no usable stored pick — every legacy pre-v57 workspace, or one
- *  whose model left the catalog — is NOT silently resolved: scanModelsFor returns the marker
- *  { needsModel: true, models: <PRIMARY_CATALOG> } and the caller asks the user to pick a model
- *  (D20). An explicit body.models always wins (the prompted client sends one; API/CLI callers can
+ *  A RE-SCAN with no usable stored pick (legacy, created pick-less, or its model left the catalog) runs
+ *  silently only when the Everyday coding role covers it; else the marker { needsModel: true, models }
+ *  asks the user (D20). An explicit body.models always wins (the prompted client sends one; API/CLI callers can
  *  still force a pick). */
 async function scanModelsFor(body, projectPaths, workspace = null) {
   const models = await listModels(primaryMemberOf(projectPaths));
-  if (workspace && !(body && body.models) && !workspacePickUsable(workspace.scanModels, models)) {
+  if (workspace && !(body && body.models) && !workspacePickUsable(workspace.scanModels, models) && !workspacePickUsable(withScanRole(null, WORKSPACE_SCAN_DEFAULT_MODELS), models)) {
     return { needsModel: true, models };
   }
   return resolveScanModels({
     explicit: body && body.models,
-    // Model roles (D3): with no stored pick, the quick role is the scan model.
-    stored: withScanRole(workspaceScanModels(), WORKSPACE_SCAN_DEFAULT_MODELS),
+    // Model roles (D3): with no stored pick, the Everyday coding role is the scan model.
+    stored: withScanRole(workspaceScanModels(), WORKSPACE_SCAN_DEFAULT_MODELS), storedSource: workspaceScanModels() ? 'settings' : 'role',
     workspacePick: workspace && workspace.scanModels ? workspace.scanModels : null,
     models,
   });
