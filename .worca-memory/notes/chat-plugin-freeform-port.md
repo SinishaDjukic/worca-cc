@@ -2,7 +2,7 @@
 name: chat-plugin-freeform-port
 description: Porting Discord's freeform chat (interactive controls, threads, reactions) to another chat plugin worker — where the contract is tested and which traps cost a c
 paths: plugins/*-chat/**, test/*-chat-worker.test.mjs
-updated: 2026-11-05T13:15:42.092Z
+updated: 2026-11-05T13:20:47.150Z
 author: Bulibas
 ---
 
@@ -60,7 +60,9 @@ Porting freeform chat to slack-chat (2026-11-03) showed where the worker-host co
   `renderMessageParts`, no length cut) into the status message and records it as delivered. An edit path that sends
   `splitText(text, LIMIT)[0]` (Discord, and the Slack/Telegram/Teams 0.4.0 ports) silently drops the tail of every long
   answer. The edit must post chunks 1..n and return every id. Pin it with a row whose text is over the platform limit
-  (review of run 16797c62, 2026-11-05).
+  (review of run 16797c62, 2026-11-05). Those tail posts must spend the edit's 429 budget. The fix's join-back rows did
+  not pin that: dropping `{ budget }` from the tail posts stayed green in all three plugins (cycle 2). Also answer each
+  tail post with a 429 and assert that the recorded sleeps sum to at most 10000.
 - **Files make empty-text messages count.** Once a worker emits attachments, a caption-less photo is no longer ignored
   (`conversation-bridge.mjs` `!text && !hasContext`). Telegram albums (N messages sharing `media_group_id`) then
   start a turn on the first message, and the rest get busy replies. Group album messages in the worker before emitting
