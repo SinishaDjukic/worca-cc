@@ -25,15 +25,16 @@ Pull requests (add each number when it opens):
 
 **Say what a finished run does to its ticket, per project.**
 
-In Marketplace › Installed › Jira › Settings, a saved connection gets **Ticket updates**: the projects you work on and, per project, Don't move, Any Done status or one of that project's own statuses. A run that writes back moves its ticket by that rule, and Worca's comment ends with a line saying what happened. Any Done status never closes a ticket as Won't Do or Duplicate, and Worca fills in a required Resolution. A move Jira refuses becomes a "Not moved" line and the comment still posts; a refused token, a rate limit, a Jira error or a timeout fails the write-back so it can be retried. New run and the Requirements export list only the projects you work on. Until you save, the old **Transition on completion** setting works as before. It needs the Jira plugin's 0.2.0 update, which also lets a Requirements feature start from a ticket.
+In Marketplace › Installed › Jira, Azure Boards or GitHub Issues › Settings, a saved connection gets **Ticket updates**: the projects you work on and, per project, Don't move, Any Done status or one of that project's own statuses. A run that writes back moves its ticket by that rule, and Worca's comment ends with a line saying what happened. In Jira, Any Done status never closes a ticket as Won't Do or Duplicate, and Worca fills in a required Resolution. A move the tracker refuses becomes a "Not moved" line and the comment still posts; a refused token, a rate limit, a server error or a timeout fails the write-back so it can be retried. Azure Boards moves a work item to its type's Completed state (Resolved is not done yet) or to a state you pick; GitHub Issues closes an issue as completed or as not planned, or reopens it, and a repository is a project. New run and the Requirements export list only the projects you work on. Until you save, each plugin's old setting (**Transition on completion**, **Close work item on completion**, **Close issue on completion**) works as before. Jira needs the plugin’s 0.2.0 update, which also lets a Requirements feature start from a ticket.
 
-Chips: Ticket updates · Jira · projects you work on · Any Done status · experimental: turn it on in Settings › Labs
+Chips: Ticket updates · Jira · Azure Boards · GitHub Issues · projects you work on · Any Done status · experimental: turn it on in Settings › Labs
 
 Read it: [Ticket updates](../ticket-updates.md)
 
 Pull requests (add each number when it opens):
 
 - Ticket updates (#1072)
+- Ticket updates: Azure Boards and GitHub Issues (#1133)
 
 ## Independent reviewers for any workflow
 

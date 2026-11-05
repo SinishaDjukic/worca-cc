@@ -167,7 +167,8 @@ export function registerTicketUpdatesRoutes(app, { requirePlugin, readManifest, 
     if (!ctx) return;
     const project = typeof req.query.project === 'string' ? req.query.project.trim() : '';
     if (!project) return res.status(400).json({ error: 'project is required' });
-    // A project is a key, never a path: "..", "." or a slash would let the plugin's URL reach another tracker endpoint.
+    // A project is a key, never a path: a "." or ".." part, a second slash, "%" or a backslash would let the plugin's URL reach
+    // another tracker endpoint. One slash is GitHub's owner/repo (PR 2, decision 1); each plugin checks its own shape again.
     if (!isProjectKey(project)) return res.status(400).json({ error: 'project is not a project key' });
     try {
       const r = await run(ctx, 'listStatuses', { project });

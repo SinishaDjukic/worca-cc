@@ -1,10 +1,11 @@
 // test/engine-spawn.test.mjs — the engine-agnostic spawn supervisor
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, chmodSync, rmSync, existsSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, chmodSync, rmSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { superviseSpawn, buildSpawnEnv, composeSpawnEnv } from '../src/core/engines/spawn.mjs';
+import { GENERIC_CLI } from '../src/core/cli-resolve.mjs';
 
 const POSIX = process.platform === 'win32' ? { skip: 'POSIX shell fixtures' } : {};
 const dirs = [];
@@ -235,4 +236,53 @@ test('Claude model text mentioning a session limit is not terminal', POSIX, asyn
   });
   assert.equal(out.exitCode, 0);
   assert.equal(out.text, 'done');
+});
+
+// ── a Windows npm .cmd shim is resolved by superviseSpawn itself ─────────────
+// process.platform is faked to win32 (as preflight-npm-claude-resolve does): the resolver then walks
+// PATH for the shim in a temp dir, and the "node.exe" it picks is process.execPath.
+async function onFakedWindows(dir, fn) {
+  const platformDesc = Object.getOwnPropertyDescriptor(process, 'platform');
+  const prevPath = process.env.PATH;
+  Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+  process.env.PATH = dir;
+  try { return await fn(); } finally {
+    Object.defineProperty(process, 'platform', platformDesc);
+    process.env.PATH = prevPath;
+  }
+}
+const NODE_SHIM = (target) => [
+  '@ECHO off', 'IF EXIST "%dp0%\\node.exe" (', '  SET "_prog=%dp0%\\node.exe"', ') ELSE (', '  SET "_prog=node"', ')',
+  `endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\\${target}" %*`,
+].join('\r\n');
+
+test('a node-launched .cmd shim spawns node + the entry script, args and stdin intact, no shell; the note logs once', async () => {
+  const dir = tmp();
+  const out = join(dir, 'out.json');
+  writeFileSync(join(dir, 'zz-spawn-shim.cmd'), NODE_SHIM('entry.js'));
+  writeFileSync(join(dir, 'entry.js'),
+    `let s=''; process.stdin.on('data',(d)=>{s+=d}); process.stdin.on('end',()=>{ require('node:fs').writeFileSync(${JSON.stringify(out)}, JSON.stringify({argv: process.argv.slice(2), stdin: s})); });`);
+  const warns = [];
+  const realWarn = console.warn;
+  console.warn = (m) => warns.push(String(m));
+  try {
+    await onFakedWindows(dir, async () => {
+      for (let i = 0; i < 2; i += 1) {
+        await superviseSpawn(base({ file: 'zz-spawn-shim', args: ['-p', 'a & b "c"'], stdin: 'hello', cli: GENERIC_CLI }));
+      }
+    });
+  } finally { console.warn = realWarn; }
+  assert.deepEqual(JSON.parse(readFileSync(out, 'utf8')), { argv: ['-p', 'a & b "c"'], stdin: 'hello' });
+  assert.equal(warns.filter((w) => w.includes('as node')).length, 1);
+});
+
+test('an unspawnable .cmd shim: the spawn error carries the resolver explanation', async () => {
+  const dir = tmp();
+  writeFileSync(join(dir, 'zz-spawn-noshim.cmd'), '@echo off\r\n');
+  const err = await onFakedWindows(dir, () => superviseSpawn(base({
+    file: 'zz-spawn-noshim', args: [], cli: GENERIC_CLI,
+    spawnError: (e, prefix) => Object.assign(new Error(`${prefix}: ${e.message}`), { errorClass: 'network' }),
+  })).then(() => null, (e) => e));
+  assert.match(err.message, /script shim/);
+  assert.equal(err.errorClass, 'network');
 });

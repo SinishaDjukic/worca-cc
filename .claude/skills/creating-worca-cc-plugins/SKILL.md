@@ -144,7 +144,7 @@ export default function createTaskSource(ctx) {
 | `searchTickets` | `({project?, search?, cursor?})` — optional, import | `{tickets:[{key,title,url,type,status,updatedAt}], cursor?}` — no search: most recently updated first; a pasted key or ticket link finds that ticket in any project |
 | `importTicket` | `({key, criteriaField?})` — optional, import | `{key, url, title, description, criteria, comments, commentsTotal, restrictedComments, attachments, meta, fingerprint}` \| `{gone:true}` |
 | `downloadAttachment` | `({key, id, maxBytes, dest})` — optional, import | the body written to `dest`, and `{name, mime, bytes}` \| `{tooLarge:true, bytes}` \| `{gone:true, forbidden?}` |
-| `listProjects` | `({})` — the project input's `optionsFrom` | `[{value, label, name?}]`; `name` (optional) is the project's name alone, for Ticket updates' chips |
+| `listProjects` | `({})` — the project input's `optionsFrom` | `[{value, label, name?}]`; `name` (optional) is the project's name alone, for Ticket updates' chips; `value` is the project's key: at most one `/` (GitHub's `owner/repo`), each part 1 to 100 characters and never `.` or `..`; control characters, `\`, `?`, `#` and `%` are refused |
 | `listStatuses` | `({project})` — optional, Ticket updates | `[{value, label, category}]`, every status of the project once; `category` one of `todo`, `in_progress`, `done`, `cancelled` |
 | `legacyMove` | `({})` — optional, Ticket updates | `{field, target}`: your old "on completion" config key and what it means: `{category: 'done'}`, `{typed: '<text>'}` or `null` |
 | custom | `(args)` | whatever the widget needs |
