@@ -2,17 +2,18 @@
 name: server-route-and-ws-traps
 description: Read before adding an HTTP route, /ws message, WebSocket channel or npm dependency to ui/server.mjs — origin port, single upgrade path, async crashes.
 paths: ui/server.mjs, src/core/remote-access.mjs, package.json, test/wsmap-deps.test.mjs
-updated: 2026-11-03T21:53:08.460Z
+updated: 2026-11-05T00:03:53.075Z
 author: Bulibas
 ---
 
-**The host guard ignores the port.** `createHostGuard` (`src/core/remote-access.mjs:101-114`, used as `isLocalRequest`)
-compares only the hostnames of `Host` and `Origin` against localhost, 127.0.0.1, ::1 and `WORCA_ALLOWED_HOSTS`. A page
-from `http://127.0.0.1:<any other port>` (another dev server, an Action on 4400-4499 running agent-written code) passes
-for every route and the `/ws` upgrade; so does a request with no `Origin`. There is no CSRF token and no
-`sec-fetch-site` check. Any route or WS message that executes something or hands out session ids and output needs an
-exact-origin check: when `Origin` is present, require `new URL(origin).host === req.headers.host` (case-insensitive), as
-`terminalSameOrigin(req)` does (`403 TERMINAL_CROSS_ORIGIN`, #573). Test with `http.request` and explicit `host` /
+**The host guard now checks the Origin PORT too** (checked 2026-11-05; older notes said it ignored it).
+`createHostGuard` (`src/core/remote-access.mjs` `originOk`) passes an `Origin` only when its `host` (with port) equals
+the request's `Host`, or its hostname is in `WORCA_ALLOWED_HOSTS`; a request with no `Origin` still passes. So a page from
+`http://127.0.0.1:<another port>` gets the global 403 `HOST_FORBIDDEN` ("forbidden: worca is a localhost-only tool")
+before any route runs. Route-level exact-origin checks (`terminalSameOrigin` / `terminalCallerOk`, `403
+TERMINAL_CROSS_ORIGIN`, #573) stay as defense in depth, but deleting one leaves every in-process test green: it is an
+equivalent mutant (tool panel Files raw route, M19). Do not demand a red row for it; never assert
+`TERMINAL_CROSS_ORIGIN` from a cross-port request (it reads `undefined`). Test with `http.request` and explicit `host` /
 `origin` headers (Node's `fetch` drops a caller-set Host), and a `ws` client with
 `{ host: '127.0.0.1:<port>', origin: 'http://127.0.0.1:4401' }`.
 
