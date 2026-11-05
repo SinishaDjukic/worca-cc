@@ -104,6 +104,12 @@ test('M10: extraKnownMarketplaces goes, and the env keys that undo the try guard
   for (const k of ['NODE_ENV', 'GITHUB_WORKSPACE', 'PATHEXT']) assert.equal(isTryGuardEnvKey(k), false, k);
 });
 
+test('concern 3: NODE_OPTIONS and NODE_PATH go too: the CLI hands settings env to Worca\'s own node hook (probe nodeopts-318)', () => {
+  const t = strippedSettingsText(JSON.stringify({ env: { NODE_OPTIONS: '--require ./x.js', node_path: './evil', NODE_ENV: 'test' } }));
+  assert.deepEqual(JSON.parse(t), { env: { NODE_ENV: 'test' } });
+  for (const k of ['NODE_OPTIONS', 'Node_Options', 'NODE_PATH']) assert.ok(isTryGuardEnvKey(k), k);
+});
+
 // ── Task 5 (security review M6): never write through a hardlink ───────────────────────────────────────────────────────────
 test('M6: a settings file that is a hardlink to a file outside the checkout: the outside file is unchanged', async () => {
   const d = tmp();

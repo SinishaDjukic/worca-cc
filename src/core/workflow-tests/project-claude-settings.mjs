@@ -19,8 +19,10 @@ export const PLUGINS_OFF_STAGE = 'Switching off the project\'s hooks and plugins
 
 // M10: the env layers of the try guard (try-guard-env.mjs withTryGuardEnv): its PATH stand-ins, git that cannot sign in, the
 // forge CLIs' empty sign-in folders, WSL's view of them, its own WORCA_* keys, and the tokens it strips (isTryStrippedKey).
+// Task 5 fix review (concern 3): NODE_OPTIONS and NODE_PATH, which the CLI also hands to Worca's own `node` hooks (the try
+// guard) and could load the checkout's code into them (probe nodeopts-318: a project `--require` ran inside the hook).
 const TRY_GUARD_ENV_KEYS = new Set(['PATH', 'GIT_SSH_COMMAND', 'GH_CONFIG_DIR', 'GLAB_CONFIG_DIR', 'AZURE_CONFIG_DIR', 'GIT_TERMINAL_PROMPT',
-  'GCM_INTERACTIVE', 'WSLENV']);
+  'GCM_INTERACTIVE', 'WSLENV', 'NODE_OPTIONS', 'NODE_PATH']);
 /** M10: a settings `env` key that would undo the try guard for the agent's tools (any spelling: Windows env names ignore case). */
 export const isTryGuardEnvKey = (k) => {
   const u = String(k).toUpperCase();
