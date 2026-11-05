@@ -37,14 +37,14 @@ test('roleReviewIssues: one named message per problem; none for absent, true or 
   const issues = (rr) => roleReviewIssues({ roleReview: rr });
   assert.deepEqual(issues({ ...SPEC, roles: [CS[0], { key: 'Sec-1', label: 'Security' }] }), ['roleReview.roles[1].key "Sec-1" must be 1–24 lowercase letters']);
   assert.deepEqual(issues({ ...SPEC, target: 'diff', sink: 'implementer' }), [], 'a diff target into the implementer is accepted');
-  assert.deepEqual(issues({ ...SPEC, target: 'code' }), ['roleReview.target "code" is not supported yet (plan or diff)']);
-  assert.deepEqual(issues({ roles: CS, sink: 'refiner' }), ['roleReview.target is required (plan or diff)']);
+  assert.deepEqual(issues({ ...SPEC, target: 'code' }), ['roleReview.target "code" is not supported yet (plan or diff or requirements)']);
+  assert.deepEqual(issues({ roles: CS, sink: 'refiner' }), ['roleReview.target is required (plan or diff or requirements)']);
   assert.deepEqual(issues({ ...SPEC, sink: 'implementer' }), [], 'an implementer sink is accepted');
   assert.deepEqual(issues({ ...SPEC, sink: 'planner' }), ['roleReview.sink "planner" is not supported yet (refiner or implementer)']);
   assert.deepEqual(issues({ roles: CS, target: 'plan' }), ['roleReview.sink is required (refiner or implementer)']);
   assert.deepEqual(ROLE_REVIEW_SINKS, ['refiner', 'implementer']);
   assert.equal(roleReviewOf({ roleReview: { ...SPEC, sink: 'implementer' } }).sink, 'implementer');
-  assert.deepEqual(issues({ ...SPEC, checklist: 'x' }), ['roleReview.checklist "x" is unknown (known: perspectives)']);
+  assert.deepEqual(issues({ ...SPEC, checklist: 'x' }), ['roleReview.checklist "x" is unknown (known: perspectives, requirements)']);
   assert.deepEqual(issues({ source: 'declared', target: 'plan', sink: 'refiner' }), ['roleReview.roles is required without a checklist provider']);
   assert.deepEqual(issues({ ...SPEC, roles: [CS[0], CS[0]] }), ['roleReview.roles[1].key "correctness" is declared twice']);
   assert.deepEqual(issues({ ...SPEC, roles: [{ key: 'qa', label: '' }] }), ['roleReview.roles[0].label must be 1–60 characters']);
@@ -89,10 +89,20 @@ test('genericRoleBrief: this role only, no perspective text', () => {
   assert.doesNotMatch(b, /R-|checklist|perspective/i);
 });
 
-test('the target table: plan and diff, frozen; an unknown or missing target reads as plan', () => {
-  assert.deepEqual(Object.keys(ROLE_REVIEW_TARGETS), ['plan', 'diff']);
+test('the target table: plan, diff and requirements, frozen; an unknown or missing target reads as plan', () => {
+  assert.deepEqual(Object.keys(ROLE_REVIEW_TARGETS), ['plan', 'diff', 'requirements']);
   assert.ok(Object.isFrozen(ROLE_REVIEW_TARGETS) && Object.isFrozen(ROLE_REVIEW_TARGETS.diff));
-  assert.deepEqual(ROLE_REVIEW_TARGETS.diff, { findingsPort: 'review', continuePort: 'done', mockRole: 'code-review', noun: 'diff', sectionHint: 'the file and line' });
+  assert.deepEqual(ROLE_REVIEW_TARGETS.diff, {
+    findingsPort: 'review', continuePort: 'done', mockRole: 'code-review', noun: 'diff', sectionHint: 'the file and line',
+    reviewedPort: 'plan', reviewedHead: 'Diff reviewed against the plan',
+  });
+  assert.deepEqual(ROLE_REVIEW_TARGETS.requirements, {
+    findingsPort: 'findings', continuePort: 'revise', mockRole: 'requirements-review', noun: 'requirements', sectionHint: 'the criterion id',
+    reviewedPort: 'requirements', reviewedHead: 'Requirements reviewed',
+  });
+  assert.equal(ROLE_REVIEW_TARGETS.plan.reviewedPort, 'plan');
+  assert.equal(ROLE_REVIEW_TARGETS.plan.reviewedHead, 'Plan reviewed');
+  assert.equal(roleTargetOf({ target: 'requirements' }), ROLE_REVIEW_TARGETS.requirements);
   assert.equal(roleTargetOf({ target: 'diff' }), ROLE_REVIEW_TARGETS.diff);
   for (const spec of [null, {}, { target: 'plan' }, { target: 'code' }]) assert.equal(roleTargetOf(spec), ROLE_REVIEW_TARGETS.plan);
 });
@@ -128,6 +138,37 @@ test('findingsMarkdown and genericRoleBrief for a diff: the diff header and the 
   assert.equal(genericRoleBrief(CS[0]), genericRoleBrief(CS[0], 'plan'));
   assert.match(genericRoleBrief(CS[0]), /You review this plan as \*\*Correctness\*\* only\. Find what is wrong; do NOT rewrite it\./);
   assert.match(genericRoleBrief(CS[0]), /`section` \(the plan section\)/);
+});
+
+test('findingsMarkdown names what each target reviewed with its reviewedHead', () => {
+  const roles = [roleRecord(CS[0], 1, { issues: [] }, [])];
+  for (const [target, t] of Object.entries(ROLE_REVIEW_TARGETS)) {
+    assert.ok(typeof t.reviewedPort === 'string' && t.reviewedPort, `${target} has a reviewedPort`);
+    const md = findingsMarkdown(1, '/p/x.md', roles, { target });
+    assert.equal(md.split('\n')[2], `${t.reviewedHead}: /p/x.md`, target);
+  }
+});
+
+test('the role-review bind, finish and revise-target bodies read the target table, never a literal plan or a target compare', () => {
+  const orch = readFileSync(new URL('../src/core/orchestrator.mjs', import.meta.url), 'utf8');
+  const sched = readFileSync(new URL('../src/core/graph/scheduler.mjs', import.meta.url), 'utf8');
+  const method = (src, re) => {
+    const m = re.exec(src);
+    assert.ok(m, `found ${re}`);
+    const rest = src.slice(m.index + m[0].length);
+    const next = /\n {2}(?:async )?_?[A-Za-z]\w*\(|\n {2}function \w+\(|\n {2}\/\*\*/.exec(rest);
+    return m[0] + rest.slice(0, next ? next.index : undefined);
+  };
+  const bodies = {
+    _rolePlanBinding: method(orch, /\n {2}_rolePlanBinding\(/),
+    _finishRoleReview: method(orch, /\n {2}async _finishRoleReview\(/),
+    reviseTargetOf: method(sched, /\n {2}function reviseTargetOf\(/),
+  };
+  for (const [name, b] of Object.entries(bodies)) {
+    assert.doesNotMatch(b, /target ===/, `${name}: no target compare`);
+    assert.doesNotMatch(b, /'plan'/, `${name}: no 'plan' literal`);
+    assert.match(b, /reviewedPort/, `${name} reads reviewedPort`);
+  }
 });
 
 test('no code-role twin in src/, and the orchestrator never compares a role review target', () => {

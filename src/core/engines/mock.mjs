@@ -105,6 +105,7 @@ export const MOCK_WRITER_ROLES = new Set([
   'workspace-scan', 'agent-gen', 'workspace-reviewer', 'manual-tests-checklist', 'manual-web-ui-testing', 'memory-defrag',
   'generic-producer', 'generic-verifier', 'deck-builder', 'deck-audit', 'deck-export',
   'workspace-usage', 'workspace-synth', 'c4-architect',
+  'requirements-draft', 'requirements-review', 'requirements-refine',
 ]);
 
 /** Named so the executor's mock-role chain and the switch cannot drift apart. */
@@ -587,6 +588,15 @@ export async function runMock({ cwd, systemPrompt, prompt, onEvent, signal, resu
     case 'c4-architect':
       text = await mockC4Architect(m, cwd, onEvent);
       break;
+    case 'requirements-draft':
+      text = await mockRequirementsDraft(m, onEvent);
+      break;
+    case 'requirements-review':
+      text = await mockPlanReview(m, cycle, onEvent, prompt);
+      break;
+    case 'requirements-refine':
+      text = await mockRequirementsRefine(m, cycle, onEvent);
+      break;
     default:
       await emitLog(onEvent, `[mock] no side effects for unknown role`);
       break;
@@ -910,7 +920,8 @@ async function mockPlannerPlan(m, onEvent, prompt = '') {
     return `[mock] planner-plan: outline at ${m.MOCK_SLICES}`;
   }
   if (!out) return '[mock] planner-plan: no MOCK_OUT given';
-  const md = mockPlanMarkdown(base, 1, mockChecklistPrefixes(prompt));
+  const delivers = m.MOCK_REQUIREMENTS ? mockDeliveryLines(await readFile(m.MOCK_REQUIREMENTS, 'utf8').catch(() => '')) : '';
+  const md = mockPlanMarkdown(base, 1, mockChecklistPrefixes(prompt)).replace('\n## Code Snippets', `${delivers}\n## Code Snippets`);
   await ensureDir(out);
   await writeFile(out, md, 'utf8');
   safeEmit(onEvent, { type: 'tool_use', text: `wrote ${out}`, raw: { mock: true, file: out } });
@@ -948,6 +959,78 @@ export function mockPlanMarkdown(base, version, prefixes = []) {
     `- **Q:** How should the feature handle invalid input?\n` +
     `  - **A:** Fail fast with a clear error\n`
   );
+}
+
+/** The requirements stage's mock criteria and decisions: 8 criteria over 6 prefixes and 3 decisions (one plain, one
+ *  scope-token label with a plain twin, one without). */
+export const MOCK_REQUIREMENTS_CRITERIA = Object.freeze([
+  ['R-po-1', 'A person can export their own runs as CSV'],
+  ['R-po-2', 'The export names every run by its title'],
+  ['R-arch-1', 'The export reads the stored runs only'],
+  ['R-ux-1', 'The export button says what it downloads'],
+  ['R-qa-1', 'A test proves the CSV columns'],
+  ['R-sec-1', 'The export never includes secrets'],
+  ['R-sec-2', 'Only project members can export'],
+  ['R-ops-1', 'Turning the flag off removes the export'],
+]);
+export const MOCK_REQUIREMENTS_DECISIONS = Object.freeze({ decisions: [
+  { text: 'Email in export', options: [{ value: 'leave-out', label: 'Leave them out' }, { value: 'include', label: 'Include them' }],
+    recommended: 'leave-out', criteria: ['R-sec-1'] },
+  { text: 'Who may export: everyone with project:read?', plain: 'Who may export: everyone who can see the project?',
+    options: [{ value: 'members', label: 'Require project:read', plain: 'Anyone who can see the project' }, { value: 'owner', label: 'Owner only' }],
+    recommended: 'members', criteria: ['R-sec-2'] },
+  { text: 'Gate the export on project:read or project:write',
+    options: [{ value: 'read', label: 'project:read' }, { value: 'write', label: 'project:write' }], recommended: 'read' },
+] });
+
+/** Agreed `- **R-po-N** …` lines of the task text (a Requirements spec start), kept unchanged. */
+const specCriteria = (text) => [...String(text || '').matchAll(/^- \*\*(R-po-\d+)\*\* (.+)$/gm)].map((x) => [x[1], x[2]]);
+
+function mockRequirementsMarkdown(spec = []) {
+  const have = new Set(spec.map(([id]) => id));
+  const rows = [...spec, ...MOCK_REQUIREMENTS_CRITERIA.filter(([id]) => !have.has(id))];
+  return `# Requirements\n\n${rows.map(([id, text]) => `- **${id}** ${text}`).join('\n')}\n`;
+}
+
+/** One `Delivers:` line per criterion of the bound requirements, except the ids in WORCA_MOCK_UNCOVERED. */
+function mockDeliveryLines(requirementsText) {
+  const skip = new Set(String(process.env.WORCA_MOCK_UNCOVERED || '').split(',').map((x) => x.trim()).filter(Boolean));
+  const ids = [...String(requirementsText).matchAll(/^- \*\*(R-[a-z]+-\d+)\*\*/gm)].map((x) => x[1]).filter((id) => !skip.has(id));
+  if (!ids.length) return '';
+  return `\n## Delivery\n\n${ids.map((id) => `- Step 1 · Delivers: ${id}`).join('\n')}\n`;
+}
+
+async function mockRequirementsDraft(m, onEvent) {
+  if (!m.MOCK_OUT) return '[mock] requirements-draft: no MOCK_OUT given';
+  const task = m.MOCK_IN ? await readFile(m.MOCK_IN, 'utf8').catch(() => '') : '';
+  await ensureDir(m.MOCK_OUT);
+  await writeFile(m.MOCK_OUT, mockRequirementsMarkdown(specCriteria(task)), 'utf8');
+  safeEmit(onEvent, { type: 'tool_use', text: `wrote ${m.MOCK_OUT}`, raw: { mock: true, file: m.MOCK_OUT } });
+  return `[mock] requirements drafted to ${m.MOCK_OUT}`;
+}
+
+/** The requirements refiner: the reviewed draft as the agreed file, the fixed decisions, every finding fixed. Its own
+ *  review is minor only, so the stage holds once for the person. */
+async function mockRequirementsRefine(m, cycle, onEvent) {
+  const [out, decisionsPath] = [m.MOCK_OUT, String(m.MOCK_OUTS || '').split('|')[0]];
+  const draft = m.MOCK_REQUIREMENTS ? await readFile(m.MOCK_REQUIREMENTS, 'utf8').catch(() => '') : '';
+  if (out) {
+    await ensureDir(out);
+    await writeFile(out, draft || mockRequirementsMarkdown(), 'utf8');
+    safeEmit(onEvent, { type: 'tool_use', text: `wrote ${out}`, raw: { mock: true, file: out } });
+  }
+  if (decisionsPath) {
+    await ensureDir(decisionsPath);
+    await writeFile(decisionsPath, JSON.stringify(MOCK_REQUIREMENTS_DECISIONS, null, 2) + '\n', 'utf8');
+  }
+  const review = { summary: `[mock] requirements agreed (cycle ${cycle})`, issues: [{ severity: 'minor', title: 'Wording', detail: 'mock', location: 'Requirements' }] };
+  if (m.MOCK_FINDINGS) {
+    const findings = await readFile(m.MOCK_FINDINGS, 'utf8').catch(() => '');
+    review.addressed = (await mockDispositions(findings)) ?? [...findings.matchAll(FINDING_ID_RE)].map((x) => x[1]);
+  }
+  if (m.MOCK_JSON) { await ensureDir(m.MOCK_JSON); await writeFile(m.MOCK_JSON, JSON.stringify(review, null, 2) + '\n', 'utf8'); }
+  await emitLog(onEvent, `[mock] requirements refiner wrote ${out || 'nothing'}`);
+  return JSON.stringify(review);
 }
 
 async function mockRefiner(m, cycle, onEvent) {

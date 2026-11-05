@@ -9,7 +9,7 @@ import { readWorkspace as realReadWorkspace, isGitRepo as realIsGitRepo, memberW
 import { readWorkflow as realReadWorkflow, assertRunnableWorkflow as realAssertRunnableWorkflow, GRAPH_MEMORY_DEFRAG_WORKFLOW } from '../workflows.mjs';
 import { readGuardrailSet as realReadGuardrailSet } from '../guardrail-store.mjs';
 import { validateMemoryScope } from '../memory-sync.mjs';
-import { isWorkspaceScanWorkflow, GRAPH_SHAPE_WORKFLOW, GRAPH_SHAPE_UX_WORKFLOW, AUTO_WORKFLOW_ID, SHAPE_UX_WORKFLOW_ID } from '../graph/builtin-workflows.mjs';
+import { isWorkspaceScanWorkflow, GRAPH_SHAPE_WORKFLOW, GRAPH_SHAPE_UX_WORKFLOW, GRAPH_SHAPE_REQ_WORKFLOW, GRAPH_SHAPE_UX_REQ_WORKFLOW, AUTO_WORKFLOW_ID, SHAPE_UX_WORKFLOW_ID } from '../graph/builtin-workflows.mjs';
 import { sanitizeBranchName } from '../worktree.mjs';
 import { deriveBranchName } from '../naming.mjs';
 import { flagEnabled } from '../flags.mjs';
@@ -41,6 +41,7 @@ import { listPriceFor } from '../list-prices.mjs';
 const OPUS_LIST_OUTPUT = (listPriceFor('claude-opus-5-5') || {}).output || 20;
 import { resolveShapeRequest, isShapeWorkflowId } from '../shape/run.mjs';
 import { nudgeFor } from '../shape/nudge.mjs';
+import { shapeRequirementsEligible } from '../../shared/shape/requirements.mjs';
 import { estimateChoices } from '../shape/estimate.mjs';
 import { DEFAULT_PERSPECTIVES, withProjectFit } from '../../shared/shape/perspectives.mjs';
 import { NO_PROJECT_ERRORS } from '../../shared/no-project.mjs';
@@ -543,7 +544,10 @@ export function createProposalValidator({
     if (nudgeBase && !errors.length) {
       let estimates = { asIs: null, shaped: null };
       // The shaped run would be wf_shape_ux when the nudge picks UX (resolveShapeRequest); it has the manual-test agents.
-      const shapedWf = nudgeBase.perspectives.includes('ux') ? GRAPH_SHAPE_UX_WORKFLOW : GRAPH_SHAPE_WORKFLOW;
+      // With the requirements stage on, a medium or large task runs its variant: its estimate counts those agents.
+      const req = shapeRequirementsEligible({ size: nudgeBase.size }, flagEnabled('shapeRequirements'));
+      const ux = nudgeBase.perspectives.includes('ux');
+      const shapedWf = req ? (ux ? GRAPH_SHAPE_UX_REQ_WORKFLOW : GRAPH_SHAPE_REQ_WORKFLOW) : (ux ? GRAPH_SHAPE_UX_WORKFLOW : GRAPH_SHAPE_WORKFLOW);
       if (typeof estimate === 'function') {
         try { estimates = (await estimate({ asIs: wf, shaped: shapedWf })) || estimates; } catch { /* no history here (MCP child): no numbers */ }
       }

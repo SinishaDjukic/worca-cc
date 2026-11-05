@@ -3,7 +3,7 @@
 import { loadAgentRegistry } from '../../../src/core/agent-registry.mjs';
 import { listModels } from '../../../src/core/config.mjs';
 import { gitAvailable } from '../../../src/core/git-available.mjs';
-import { GRAPH_SHAPE_WORKFLOW, PR_FIX_WORKFLOW_ID, SHAPE_UX_WORKFLOW_ID, SHAPE_WORKFLOW_ID } from '../../../src/core/graph/builtin-workflows.mjs';
+import { GRAPH_SHAPE_WORKFLOW, PR_FIX_WORKFLOW_ID, SHAPE_UX_WORKFLOW_ID, SHAPE_WORKFLOW_ID, SHAPE_REQ_WORKFLOW_IDS } from '../../../src/core/graph/builtin-workflows.mjs';
 import { startedByOf } from '../../../src/core/identity.mjs';
 import { exportWorkflowToMarketplace } from '../../../src/core/marketplace-publish.mjs';
 import { defragWorkflowView, resolveDefragModel } from '../../../src/core/memory-defrag-model.mjs';
@@ -202,7 +202,7 @@ app.delete('/api/workflows/:id', async (req, res) => {
   if (id === LEAN_WORKFLOW_ID) return badRequest(res, 'the Lean workflow cannot be deleted');
   if (id === MEMORY_DEFRAG_WORKFLOW_ID) return badRequest(res, 'the Memory defragment workflow cannot be deleted');
   if (id === PR_FIX_WORKFLOW_ID) return badRequest(res, 'the PR fix workflow cannot be deleted');
-  if (id === SHAPE_WORKFLOW_ID || id === SHAPE_UX_WORKFLOW_ID) return badRequest(res, 'the Shaper workflow cannot be deleted');
+  if (id === SHAPE_WORKFLOW_ID || id === SHAPE_UX_WORKFLOW_ID || SHAPE_REQ_WORKFLOW_IDS.includes(id)) return badRequest(res, 'the Shaper workflow cannot be deleted');
   try {
     const removed = await deleteWorkflow(id); // CONV-1: await
     if (!removed) return res.status(404).json({ error: 'workflow not found' });

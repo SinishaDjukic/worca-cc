@@ -46,6 +46,8 @@ import { applyChecklist, checklistFindingsMarkdown, mergeReportedChecklists } fr
 import { REFINER_SINK, roleReviewOf, roleChecklistOf, runningRoles, rolesForRound, roleTaskId, roleRecord, findingsMarkdown, refinerVerdict, roleTargetOf, roleRoutingVerdict } from '../shared/graph/role-review-step.mjs';
 import { DISPOSITIONS_MAX_BYTES, applyDispositions, withCounts, normalizeConflicts, dispositionsPathFor, conflictClarifications, withClarifications } from '../shared/review/findings.mjs';
 import { currentPass } from '../shared/shape/role-review.mjs';
+import { criteriaCheck, criteriaList, criterionIds, coverageOf } from '../shared/review/coverage.mjs';
+import { normalizeDecisions, conflictDecisions, validateDecisionPicks, decisionClarifications } from '../shared/review/decisions.mjs';
 import { createScheduler, sliceExecutionId, QUIESCENCE_WARNING } from './graph/scheduler.mjs';
 import { sigkillGraceMs } from './engines/spawn.mjs';
 import { runExecution, allocateOutputs, allocateVerdict, readDecomposition, decompositionProblems, CHECKLIST_REVIEWER_KEY, SLICE_PLANNER_KEY, SLICE_SCOPE_AGENT_KEYS, _testing as executorTesting } from './graph/executor.mjs';
@@ -1329,12 +1331,15 @@ export class GraphOrchestrator extends RunHarness {
       );
     }
     this._planRevise = null;
+    const spec = this._approveSpec(q.nodeId);
+    if (spec?.check === 'criteria') return this._criteriaAsk(q, spec);
     let check = null;
     // #990 slice 3: the last round's conflicts; the person's picks for them ride any decision, and are never required.
     const conflicts = currentPass(this.state.roleReviews)?.rounds.at(-1)?.conflicts || [];
     const asked = (async () => {
       check = await this._planCheck(q.plan?.file);
-      this._shapingRound(q, check);
+      const coverage = spec?.coverage ? await this._planCoverage(q, spec.coverage) : null;
+      this._shapingRound(q, check, coverage);
       const sl = this.runShape?.slice;
       const outlineChange = await this._outlineChangeText();
       // Shaper s5 (D12): notes from the chat force the stop, like outlineChange.
@@ -1354,7 +1359,7 @@ export class GraphOrchestrator extends RunHarness {
       const perspectives = this._shapePerspectives();
       return this._enqueueAsk(() => this._ask({
         id: q.id, kind: PLAN_ASK_KIND, nodeId: q.nodeId, executionId: q.executionId,
-        plan: { ...q.plan, nodeId: q.nodeId, check, perspectives, ...(outlineChange ? { outlineChange } : {}), ...(notes.length ? { notes } : {}) },
+        plan: { ...q.plan, nodeId: q.nodeId, check, perspectives, ...(coverage ? { coverage } : {}), ...(outlineChange ? { outlineChange } : {}), ...(notes.length ? { notes } : {}) },
         validate: (raw) => validatePlanAnswer(raw, { revisable: q.plan?.revisable === true, perspectives, conflicts }),
       }));
     })();
@@ -1386,6 +1391,124 @@ export class GraphOrchestrator extends RunHarness {
         if (payload?.decision === 'approve' && this._shapeRec) this._shapeRec.shapeScore = shapeScoreOf(check);
         if (payload?.decision === 'approve') await this._recordConflictPicks(q, conflicts, payload.conflicts);
         return payload;                              // { decision:'approve' } | { decision:'withdrawn' }
+      },
+      (err) => {
+        if (isPause(err) || this.pauseRequested) this._scheduler?.pause();
+        else this._scheduler?.abort();
+        return new Promise(() => {});
+      },
+    );
+  }
+
+  /** The node's `config.approve`, or null. */
+  _approveSpec(nodeId) {
+    return (this.resolved?.template?.nodes || []).find((n) => n.id === nodeId)?.config?.approve || null;
+  }
+
+  /** The file bound to an input of a held node: its execution's binding, else the token latched on the input. */
+  _heldInputPath(q, port) {
+    const snap = this._graphSnapshot;
+    const exec = (snap?.execs || []).find((e) => e.executionId === q.executionId);
+    return exec?.bindings?.[port]?.path || snap?.tokens?.[`${q.nodeId}.${port}`]?.path || null;
+  }
+
+  /** Which criteria of the held node's `port` input the held plan covers (coverage.mjs); null when either is unreadable. */
+  async _planCoverage(q, port) {
+    const path = this._heldInputPath(q, port);
+    if (!path || !q.plan?.file) return null;
+    try {
+      const list = criteriaList(await readFile(path, 'utf8'));
+      return coverageOf(list.map((c) => c.id), await readFile(q.plan.file, 'utf8'), { texts: Object.fromEntries(list.map((c) => [c.id, c.text])) });
+    } catch { return null; }
+  }
+
+  /** The held criteria document and its decisions: the criteria check (agreed ids must survive), the sink's decisions
+   *  plus the feeding role pass's conflicts (the lead's side recommended). `{ error }` when a file cannot be read. */
+  async _criteriaLoad(q, spec, conflicts, lead) {
+    try {
+      const held = await readFile(q.plan.file, 'utf8');
+      const agreedPath = spec.agreed ? this._heldInputPath(q, spec.agreed) : null;
+      const agreed = agreedPath ? criterionIds(await readFile(agreedPath, 'utf8')) : [];
+      let decisions = [];
+      if (spec.decisions) {
+        const path = this._graphSnapshot?.outputs?.[`${q.nodeId}.${spec.decisions}`]?.path;
+        if (!path) throw new Error('the decisions file was not written');
+        const text = await readFile(path, 'utf8');
+        let raw;
+        try { raw = text.trim() ? JSON.parse(text) : { decisions: [] }; } catch { throw new Error('the decisions file is not valid JSON'); }
+        const norm = normalizeDecisions(raw);
+        if (!norm.decisions.length && norm.errors.length) throw new Error(norm.errors[0]);   // every entry rejected
+        decisions = norm.decisions;
+      }
+      decisions = [...decisions, ...conflictDecisions(conflicts, { lead, after: decisions.length })];
+      return { criteria: criteriaCheck(held, { agreed }), decisions, agreed };
+    } catch (err) {
+      return { error: { message: String(err?.code === 'ENOENT' ? 'a file is missing' : err?.message || err) } };
+    }
+  }
+
+  /** An approval hold with `approve.check: 'criteria'`: the held document's criteria and decisions instead of the
+   *  plan's shape check. Approve writes the picks into its Clarifications first; revise carries them in the feedback;
+   *  `retry` (on an error ask only) reads the files again under a new ask id. Approve checks the document again (it
+   *  may have been edited during the hold) and asks again if that fails; a failed write asks again with an error, so
+   *  the picks are never lost silently. No shaping round is recorded. */
+  _criteriaAsk(q, spec) {
+    const roleNode = this._roleFindingsWire(q.nodeId)?.node;
+    const conflicts = (roleNode ? currentPass(this.state.roleReviews, { node: roleNode }) : null)?.rounds.at(-1)?.conflicts || [];
+    const lead = this.runShape?.lead || null;
+    const perspectives = this._shapePerspectives();
+    const ask = async (attempt, failed = null) => {
+      const got = failed ? { error: failed } : await this._criteriaLoad(q, spec, conflicts, lead);
+      const id = attempt ? `${q.id}-retry${attempt}` : q.id;
+      const plan = { ...q.plan, nodeId: q.nodeId, ...(got.error ? { error: got.error } : { criteria: got.criteria, decisions: got.decisions }),
+        ...(lead ? { lead } : {}) };
+      const payload = await this._enqueueAsk(() => this._ask({
+        id, kind: PLAN_ASK_KIND, nodeId: q.nodeId, executionId: q.executionId, plan,
+        validate: (raw) => validatePlanAnswer(raw, { revisable: q.plan?.revisable === true, perspectives,
+          ...(got.error ? { error: true } : { decisions: got.decisions, criteria: got.criteria }) }),
+      }));
+      if (payload?.decision === 'retry') return ask(attempt + 1);
+      const decisions = got.decisions || [];
+      const picks = payload?.decisions || validateDecisionPicks(undefined, decisions).picks;
+      if (payload?.decision === 'approve') {
+        // Before the approval resolves: the next node never reads the document without the picks.
+        let stale = false;
+        try {
+          const text = await readFile(q.plan.file, 'utf8');
+          stale = !criteriaCheck(text, { agreed: got.agreed }).ok;
+          if (!stale && decisions.length) await writeFile(q.plan.file, withClarifications(text, decisionClarifications(decisions, picks)), 'utf8');
+        } catch (err) {
+          await appendAudit(this.pipeline.dir, `Approval ${id}: the decisions could not be written (${err.message}); nothing approved.`).catch(() => {});
+          return ask(attempt + 1, { message: 'Could not save your picks. Nothing changed.' });
+        }
+        if (stale) {
+          await appendAudit(this.pipeline.dir, `Approval ${id}: the requirements changed during the hold and their check fails; asking again.`).catch(() => {});
+          return ask(attempt + 1);
+        }
+        if (decisions.length) await appendAudit(this.pipeline.dir, `Approval ${id}: ${decisions.length} decision(s) recorded.`).catch(() => {});
+      }
+      return { payload, decisions, picks, id };
+    };
+    return ask(0).then(
+      async ({ payload, decisions, picks, id }) => {
+        if (payload?.decision === 'stop') {
+          this._log('orchestrator', 'info', `approval ${q.id}: stop`);
+          this.stop(this.answeredBy(id));
+          this._scheduler?.abort();
+          return new Promise(() => {});
+        }
+        if (payload?.decision === 'revise') {
+          if (Array.isArray(payload.perspectives)) this._setShapePerspectives(payload.perspectives);
+          const path = join(this.pipeline.dir, `${q.nodeId}-feedback-${q.plan.round}.md`);
+          this._planRevise = { id: q.id, path };
+          const made = decisionClarifications(decisions, picks);
+          const feedback = made.length ? `${payload.feedback}\n\nDecisions made so far:\n\n${made.join('\n')}` : payload.feedback;
+          try { await writeFile(path, renderPlanFeedback(feedback, q.plan.file), 'utf8'); }
+          catch (err) { this._planRevise = null; this._graphError ||= err; throw err; }
+          this._log('orchestrator', 'info', `approval ${q.id}: revise (${path})`);
+          return { decision: 'revise', path };
+        }
+        return payload?.decision === 'approve' ? { decision: 'approve' } : payload;
       },
       (err) => {
         if (isPause(err) || this.pauseRequested) this._scheduler?.pause();
@@ -1430,12 +1553,12 @@ export class GraphOrchestrator extends RunHarness {
   }
 
   /** One version row per plan ask; a resume re-raises the same round, which replaces its row. */
-  _shapingRound(q, check) {
+  _shapingRound(q, check, coverage = null) {
     const s = this.state.shaping;
     if (!s) return;
     const row = { round: q.plan?.round ?? 0, file: q.plan?.file ?? null,
       passed: Number.isFinite(check?.passed) ? check.passed : null, total: Number.isFinite(check?.total) ? check.total : null,
-      decision: null };
+      decision: null, ...(coverage ? { coverage: { ok: coverage.ok, passed: coverage.passed, total: coverage.total } } : {}) };
     const i = s.rounds.findIndex((r) => r.round === row.round);
     if (i >= 0) s.rounds[i] = row; else s.rounds.push(row);
     // An approve answered just before a pause is not replayed: the resume re-asks the same round. Drop the stale
@@ -1919,8 +2042,11 @@ export class GraphOrchestrator extends RunHarness {
     // A role slice's brief lists the plan's own items for its role: read the plan this round reviews.
     if (ctx.role) {
       ctx.roleSpec = roleReviewOf(node.config);
-      const plan = this._rolePlanBinding(args);
+      const plan = this._rolePlanBinding(args, ctx.roleSpec);
       ctx.rolePlanText = plan?.path ? await readFile(plan.path, 'utf8').catch(() => '') : '';
+      const req = args.bindings?.requirements;
+      ctx.roleRequirementsText = req?.path ? await readFile(req.path, 'utf8').catch(() => '') : '';
+      ctx.roleShape = this.runShape || null;
       if (roleChecklistOf(ctx.roleSpec)?.wantsHouseBrief(ctx.role)) ctx.houseBrief = await this._fitHouseBrief();
     }
     await this._humanCursorInit(ctx);
@@ -3074,10 +3200,10 @@ export class GraphOrchestrator extends RunHarness {
       : { pass: (last?.pass || 0) + 1, round: 1, last: null };
   }
 
-  /** The plan this round reviews: the fresh revise (round 2+), else the plan. */
-  _rolePlanBinding(args) {
+  /** The file this round reviews: the fresh revise (round 2+), else the target's reviewed input. */
+  _rolePlanBinding(args, spec) {
     const viaRevise = (args.trigger?.freshPorts || []).includes('revise');
-    return (viaRevise && args.bindings?.revise) || args.bindings?.plan || null;
+    return (viaRevise && args.bindings?.revise) || args.bindings?.[roleTargetOf(spec).reviewedPort] || null;
   }
 
   /** The run's picked role list (a `picked` role review's source): Shaper's perspectives are today's only producer. */
@@ -3121,10 +3247,12 @@ export class GraphOrchestrator extends RunHarness {
     const ordinal = args.ordinal || 1;
     const { pass, round, last } = this._roleRound(node, args);
     const ports = this.resolved.ports(node) || {};
-    const planPath = this._rolePlanBinding(args)?.path || '';
-    const planText = planPath ? await readFile(planPath, 'utf8').catch(() => '') : '';
     const spec = roleReviewOf(node.config);
-    const { findingsPort } = roleTargetOf(spec);
+    const planPath = this._rolePlanBinding(args, spec)?.path || '';
+    const planText = planPath ? await readFile(planPath, 'utf8').catch(() => '') : '';
+    const reqPath = args.bindings?.requirements?.path;
+    const requirementsText = reqPath ? await readFile(reqPath, 'utf8').catch(() => '') : '';
+    const { findingsPort, reviewedPort } = roleTargetOf(spec);
     const provider = roleChecklistOf(spec);
     const reported = [];
     const roles = await Promise.all(rolesForRound(runningRoles(spec, this._runPickedRoles()), round, last).map(async (r) => {
@@ -3135,7 +3263,7 @@ export class GraphOrchestrator extends RunHarness {
         await appendAudit(this.pipeline.dir, `${node.id}: ${r.key} review unreadable (${err.message}); counted as empty.`).catch(() => {});
       }
       reported.push(raw?.checklist);
-      return { ...roleRecord(r, round, raw, provider ? provider.items(r.key, planText) : []), ...this._roleRecordPair(nc, r.key) };
+      return { ...roleRecord(r, round, raw, provider ? provider.items(r.key, planText, requirementsText) : []), ...this._roleRecordPair(nc, r.key) };
     }));
     const out = allocateOutputs({ node, ports, executionId: args.executionId, ordinal, runCtx: this._runCtx(nc) });
     const findings = out[findingsPort];
@@ -3162,7 +3290,7 @@ export class GraphOrchestrator extends RunHarness {
     if (verdict && this.pipeline) await this._recordReview(nc, node, ordinal, verdict);
     return {
       summary: `Role reviews, round ${round}: ${reviewed} role(s) reviewed.`,
-      outputs: { [findingsPort]: findings, ...(outs.some((p) => p.id === 'plan') ? { plan: { path: planPath || null } } : {}) },
+      outputs: { [findingsPort]: findings, ...(outs.some((p) => p.id === reviewedPort) ? { [reviewedPort]: { path: planPath || null } } : {}) },
       verdict,
     };
   }

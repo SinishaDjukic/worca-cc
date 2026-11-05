@@ -530,7 +530,7 @@ function decompositionContractBlock(expandsPort, runCtx) {
 /** The MOCK marker set for this execution, per the resolution chain. Only markers
  *  `runMock` reads are emitted (MOCK_ROLE, MOCK_CYCLE, MOCK_BASE, MOCK_OUT, MOCK_JSON,
  *  MOCK_IN, MOCK_PRIOR, MOCK_TASKS_DIR). */
-function markersFor({ role, ordinal, runCtx, outputs, verdict, bindings, ports, expandsPort, priorCount, perspective, planText, roleSpec, planConcernFile }) {
+function markersFor({ role, ordinal, runCtx, outputs, verdict, bindings, ports, expandsPort, priorCount, perspective, planText, requirementsText, roleSpec, planConcernFile }) {
   const markers = { MOCK_ROLE: role, MOCK_CYCLE: ordinal, MOCK_BASE: runCtx.baseName };
   if (role === MOCK_ROLE_CLARIFY) {
     markers.MOCK_OUT = outputs[answersPortOf(ports)?.id]?.path;
@@ -543,7 +543,7 @@ function markersFor({ role, ordinal, runCtx, outputs, verdict, bindings, ports, 
     markers.MOCK_OUT = paths[0];
     // The generic producer's further outputs (E8 requires each fired output to exist): '' for a
     // single-output node, which mockMarkers skips, so those prompts stay byte-identical.
-    if (role === 'generic-producer') markers.MOCK_OUTS = paths.slice(1).join('|');
+    if (role === 'generic-producer' || role === 'requirements-refine') markers.MOCK_OUTS = paths.slice(1).join('|');
   }
   if (verdict?.path) markers.MOCK_JSON = verdict.path;
   const primaryIn = (ports?.inputs || [])
@@ -554,8 +554,10 @@ function markersFor({ role, ordinal, runCtx, outputs, verdict, bindings, ports, 
   // Role reviews (spec §3): the reviewer's role and its plan items; the refiner's merged findings. Empty values are
   // skipped by mockMarkers, so every other prompt is unchanged.
   markers.MOCK_PERSPECTIVE = perspective || '';
-  markers.MOCK_CHECKLIST = perspective ? (roleChecklistOf(roleSpec)?.items(perspective, planText || '') || []).join(',') : '';
+  markers.MOCK_CHECKLIST = perspective ? (roleChecklistOf(roleSpec)?.items(perspective, planText || '', requirementsText || '') || []).join(',') : '';
   markers.MOCK_FINDINGS = bindings.findings?.path || '';
+  // An agreed requirements file (an extra `requirements` input): the mock planner writes a delivery line per criterion.
+  markers.MOCK_REQUIREMENTS = bindings.requirements?.path || '';
   // #990 s5: the implementer's plan-concern file, only when one is offered, so every other prompt is unchanged.
   if (planConcernFile) markers.MOCK_PLAN_CONCERN = planConcernFile;
   return markers;
@@ -565,7 +567,7 @@ function markersFor({ role, ordinal, runCtx, outputs, verdict, bindings, ports, 
 function roleBriefFor(ctx) {
   const spec = ctx.roleSpec;
   const provider = roleChecklistOf(spec);
-  if (provider) return provider.brief(ctx.role, ctx.rolePlanText || '', { houseBrief: ctx.houseBrief });
+  if (provider) return provider.brief(ctx.role, ctx.rolePlanText || '', { houseBrief: ctx.houseBrief, shape: ctx.roleShape || null });
   return genericRoleBrief(spec.roles.find((r) => r.key === ctx.role) || { key: ctx.role, label: ctx.role }, spec.target);
 }
 
@@ -647,7 +649,7 @@ export function buildAgentPrompt(ctx) {
       ordinal, runCtx, outputs, verdict, bindings, ports,
       expandsPort,
       priorCount: (ctx.priorAnswers || []).length,
-      perspective: ctx.role || null, planText: ctx.rolePlanText, roleSpec: ctx.role ? ctx.roleSpec : null,
+      perspective: ctx.role || null, planText: ctx.rolePlanText, requirementsText: ctx.roleRequirementsText, roleSpec: ctx.role ? ctx.roleSpec : null,
       planConcernFile: concernFile,
     }))
   );

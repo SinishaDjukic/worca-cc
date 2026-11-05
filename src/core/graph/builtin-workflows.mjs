@@ -382,6 +382,61 @@ export const GRAPH_SHAPE_UX_WORKFLOW = deepFreeze({
   ],
 });
 
+/** Shaper's requirements stage (Labs flag shapeRequirements): the same workflows with Clarify replaced by three nodes
+ *  that mirror the plan head (draft, role reviews, refine) and hold for the person on the agreed requirements. The
+ *  agreed file is an extra `requirements` input of Plan, its role reviews and Refine; Refine's hold shows coverage. */
+export const SHAPE_REQ_WORKFLOW_ID = 'wf_shape_req';
+export const SHAPE_UX_REQ_WORKFLOW_ID = 'wf_shape_ux_req';
+const REQUIREMENTS_INPUT = Object.freeze({ id: 'requirements', type: 'md' });
+const SHAPE_REQ_NODES = [
+  { id: 'n_req', kind: 'agent', key: 'requirementsDrafter', x: 320, y: 200, config: {} },
+  { id: 'n_reqroles', kind: 'agent', key: 'requirementsReviewer', x: 320, y: 380, config: {
+    roleReview: { source: 'picked', target: 'requirements', checklist: 'requirements', sink: 'refiner' },
+    model: SHAPE_ROLES_CONFIG.model, effort: SHAPE_ROLES_CONFIG.effort,
+  } },
+  { id: 'n_reqrefine', kind: 'agent', key: 'requirementsRefiner', x: 460, y: 200, config: {
+    approve: { kind: 'plan', port: 'requirements', check: 'criteria', agreed: 'task', decisions: 'decisions' },
+  } },
+];
+/** Mirrors SHAPE_HEAD_WIRES: draft → role reviews → refine, one loop of at most 2 rounds that ends at the hold. The
+ *  drafter's `revise` has no wire: the person's Ask for changes reaches it through the scheduler's revise target. The
+ *  refiner takes no awaitAll: its `task` fires once, so it could never re-fire; n_reqroles publishes its two inputs
+ *  in one completion, which fires it once per round. */
+const SHAPE_REQ_WIRES = [
+  { id: 'wr1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_req', port: 'task' } },
+  { id: 'wr2', from: { node: 'n_task', port: 'task' }, to: { node: 'n_reqrefine', port: 'task' } },
+  { id: 'wr3', from: { node: 'n_req', port: 'requirements' }, to: { node: 'n_reqroles', port: 'requirements' } },
+  { id: 'wr4', from: { node: 'n_reqroles', port: 'requirements' }, to: { node: 'n_reqrefine', port: 'requirements' } },
+  { id: 'wr5', from: { node: 'n_reqroles', port: 'findings' }, to: { node: 'n_reqrefine', port: 'findings' } },
+  { id: 'wr6', from: { node: 'n_reqrefine', port: 'revise' }, to: { node: 'n_reqroles', port: 'revise' },
+    config: { maxCycles: ROLE_REVIEW_MAX_ROUNDS, onExhausted: 'clean' } },
+  { id: 'wr7', from: { node: 'n_reqrefine', port: 'requirements' }, to: { node: 'n_plan', port: 'requirements' } },
+  { id: 'wr8', from: { node: 'n_reqrefine', port: 'requirements' }, to: { node: 'n_roles', port: 'requirements' } },
+  { id: 'wr9', from: { node: 'n_reqrefine', port: 'requirements' }, to: { node: 'n_refine', port: 'requirements' } },
+];
+const REQ_TAKERS = new Set(['n_plan', 'n_roles', 'n_refine']);
+
+/** A Shaper graph with the requirements stage in place of Clarify. Pure: every other node and wire keeps its id. */
+export function requirementsVariant(graph, id) {
+  const nodes = graph.nodes.filter((n) => n.id !== 'n_clarify').map((n) => {
+    if (!REQ_TAKERS.has(n.id)) return n;
+    const config = { ...n.config, extraInputs: [{ ...REQUIREMENTS_INPUT }] };
+    if (n.id === 'n_refine') config.approve = { ...n.config.approve, coverage: 'requirements' };
+    return { ...n, config };
+  });
+  return deepFreeze({
+    ...graph,
+    id,
+    nodes: [...nodes, ...SHAPE_REQ_NODES.map((n) => ({ ...n, config: structuredClone(n.config) }))],
+    wires: [...graph.wires.filter((w) => w.id !== 'w1' && w.id !== 'w3'), ...SHAPE_REQ_WIRES.map(copyWire)],
+  });
+}
+
+export const GRAPH_SHAPE_REQ_WORKFLOW = requirementsVariant(GRAPH_SHAPE_WORKFLOW, SHAPE_REQ_WORKFLOW_ID);
+export const GRAPH_SHAPE_UX_REQ_WORKFLOW = requirementsVariant(GRAPH_SHAPE_UX_WORKFLOW, SHAPE_UX_REQ_WORKFLOW_ID);
+/** Reserved apart from RESERVED_WORKFLOW_IDS (whose members are pinned): never listed, never saved over, never deleted. */
+export const SHAPE_REQ_WORKFLOW_IDS = Object.freeze([SHAPE_REQ_WORKFLOW_ID, SHAPE_UX_REQ_WORKFLOW_ID]);
+
 /** The ids no saved row may claim: writeGraphWorkflow re-mints them, listWorkflows hides them,
  *  DELETE refuses them. wf_workspace_scan and wf_pr_fix are reserved but never listed anywhere;
  *  wf_shape is listed only while the Shape it first gate is on, and wf_shape_ux is never listed. Order is NOT
@@ -390,4 +445,4 @@ export const GRAPH_SHAPE_UX_WORKFLOW = deepFreeze({
  *  NOTE: `ui/public/graph/composer.mjs` keeps a twin of this list as a `Set` (`.has`), not an
  *  Array (`.includes`) — the two are not interchangeable. */
 export const RESERVED_WORKFLOW_IDS = Object.freeze([GRAPH_DEFAULT_WORKFLOW.id, LEAN_WORKFLOW_ID, AUTO_WORKFLOW_ID, MEMORY_DEFRAG_WORKFLOW_ID, WORKSPACE_SCAN_WORKFLOW_ID, PR_FIX_WORKFLOW_ID, SHAPE_WORKFLOW_ID, SHAPE_UX_WORKFLOW_ID, WORKSPACE_RESYNTH_WORKFLOW_ID]);
-export function isReservedWorkflowId(id) { return RESERVED_WORKFLOW_IDS.includes(id); }
+export function isReservedWorkflowId(id) { return RESERVED_WORKFLOW_IDS.includes(id) || SHAPE_REQ_WORKFLOW_IDS.includes(id); }

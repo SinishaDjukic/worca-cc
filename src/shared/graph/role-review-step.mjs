@@ -2,6 +2,7 @@
 // fans out one independent reviewer slice per running role, merges their findings and hands them to its sink. Any
 // workflow may declare it; Shaper declares its perspectives as roles. Pure and browser-safe.
 import { PERSPECTIVE_ROLE_CHECKLIST } from '../shape/role-review.mjs';
+import { REQUIREMENTS_ROLE_CHECKLIST } from '../shape/requirements.mjs';
 import { dispositionsBlock } from '../review/findings.mjs';
 
 const BLOCKING = new Set(['critical', 'major']);
@@ -26,10 +27,15 @@ export const REFINER_SINK = 'refiner';
 export const ROLE_REVIEW_SINKS = Object.freeze([REFINER_SINK, 'implementer']);
 
 /** What each target reviews, as data: the port the findings leave on, the input whose fresh token continues the pass,
- *  the mock role of its slices and its prompt words. The engine reads this table; it never compares a target. */
+ *  the mock role of its slices, its prompt words, the input it reviews (`reviewedPort`, also the output that passes
+ *  the reviewed file on) and the findings file's head line. The engine reads this table; it never compares a target. */
 export const ROLE_REVIEW_TARGETS = Object.freeze({
-  plan: Object.freeze({ findingsPort: 'findings', continuePort: 'revise', mockRole: 'plan-review', noun: 'plan', sectionHint: 'the plan section' }),
-  diff: Object.freeze({ findingsPort: 'review', continuePort: 'done', mockRole: 'code-review', noun: 'diff', sectionHint: 'the file and line' }),
+  plan: Object.freeze({ findingsPort: 'findings', continuePort: 'revise', mockRole: 'plan-review', noun: 'plan', sectionHint: 'the plan section',
+    reviewedPort: 'plan', reviewedHead: 'Plan reviewed' }),
+  diff: Object.freeze({ findingsPort: 'review', continuePort: 'done', mockRole: 'code-review', noun: 'diff', sectionHint: 'the file and line',
+    reviewedPort: 'plan', reviewedHead: 'Diff reviewed against the plan' }),
+  requirements: Object.freeze({ findingsPort: 'findings', continuePort: 'revise', mockRole: 'requirements-review', noun: 'requirements',
+    sectionHint: 'the criterion id', reviewedPort: 'requirements', reviewedHead: 'Requirements reviewed' }),
 });
 
 /** A spec's target entry; a spec without a known target (a legacy round, an older manifest) reads as the plan. */
@@ -41,6 +47,7 @@ export const LEGACY_ROLE_REVIEW = Object.freeze({ source: 'picked', target: 'pla
 /** Checklist providers by the key a spec's `checklist` names. A getter: the provider's module imports this one. */
 export const ROLE_CHECKLISTS = Object.freeze({
   get perspectives() { return PERSPECTIVE_ROLE_CHECKLIST; },
+  get requirements() { return REQUIREMENTS_ROLE_CHECKLIST; },
 });
 
 const specOf = (config) => (config === true ? true : (config && typeof config === 'object' ? config.roleReview : undefined));
@@ -152,8 +159,7 @@ export function roleRecord(role, round, verdict, expectedIds = []) {
 /** The findings file the sink reads: one section per role, in running order, then (given its path) the
  *  `## Dispositions` contract the sink answers in. */
 export function findingsMarkdown(round, planPath, roles, { dispositionsPath, target = 'plan' } = {}) {
-  const reviewed = target === 'diff' ? 'Diff reviewed against the plan' : 'Plan reviewed';
-  const lines = [`# Role reviews — round ${round}`, '', `${reviewed}: ${planPath}`, ''];
+  const lines = [`# Role reviews — round ${round}`, '', `${roleTargetOf({ target }).reviewedHead}: ${planPath}`, ''];
   for (const r of roles) {
     lines.push(`## ${r.label}${r.skipped ? ' (skipped: clean last round)' : ''}`, '');
     if (!r.findings.length) lines.push('- No findings.');

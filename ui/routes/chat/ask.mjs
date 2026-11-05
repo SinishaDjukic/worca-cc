@@ -11,7 +11,7 @@ import { WORK_ARTIFACT_KIND } from '../../../src/core/no-project-work.mjs';
 import { getWatch, stoppedWatchFact } from '../../../src/core/pr-watch.mjs';
 import { PROXY_AGENT_TEXT } from '../../../src/core/proxy-host.mjs';
 import { isInContainer } from '../../../src/core/remote-access.mjs';
-import { chatHomePinsFor, setChatHomePinsFor } from '../../../src/core/settings.mjs';
+import { answererProfileFor, chatHomePinsFor, setAnswererProfileFor, setChatHomePinsFor } from '../../../src/core/settings.mjs';
 import { featureOfPipeline } from '../../../src/core/shape/features.mjs';
 import { roundsOf } from '../../../src/core/shape/rounds.mjs';
 import { isNoProjectKey } from '../../../src/core/store.mjs';
@@ -65,6 +65,18 @@ app.put('/api/chat-home/pins', async (req, res) => {
     res.json({ pins: await setChatHomePinsFor(askViewer(req), (req.body || {}).pins) });
   } catch (err) {
     if (err && err.code === 'BAD_HOME_PINS') return badRequest(res, err.message);
+    res.status(500).json({ error: String((err && err.message) || err) });
+  }
+});
+// The answerer profile (src/shared/answerer.mjs): the lead perspective this person shapes as, keyed like the pins.
+app.get('/api/answerer', (req, res) => {
+  res.json(answererProfileFor(askViewer(req)));
+});
+app.put('/api/answerer', async (req, res) => {
+  try {
+    res.json(await setAnswererProfileFor(askViewer(req), { lead: (req.body || {}).lead }));
+  } catch (err) {
+    if (err && err.code === 'BAD_LEAD') return res.status(400).json({ error: { code: 'BAD_LEAD', message: err.message } });
     res.status(500).json({ error: String((err && err.message) || err) });
   }
 });
