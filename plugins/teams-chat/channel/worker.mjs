@@ -448,8 +448,9 @@ export function createTeamsWorker(ctx, {
     if (!evt) return invokeReply(notice);
     prunePending();
     const text = await new Promise((resolve) => {
+      // Ref'd on purpose: the hold is bounded and cleared by the answer or stop(), and an unref'd timer would let the
+      // event loop drain while the invoke's HTTP answer is still pending.
       const timer = setTimeout(() => { const p = pending.get(evt.id); if (p) p.resolve = null; resolve(null); }, invokeHoldMs);
-      timer.unref?.();
       remember(pending, evt.id, { chatId: evt.chatId, at: now(), resolve: (t) => { clearTimeout(timer); resolve(t); } }, PENDING_MAX);
       ctx.emitInteraction(evt);
     });
