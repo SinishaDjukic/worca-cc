@@ -11,7 +11,7 @@ import { useTempHome } from './helpers/temp-home.mjs';
 import { emptySpec } from '../src/core/requirements/spec.mjs';
 import {
   createFeature, updateFeature, appendTurn, listTurns, listStarts, latestStart, getFeature, setContext, createStart,
-  beginBrief, saveBriefResult, deleteBrief, listAttachments, updateAttachment, getAttachment, saveExportLink,
+  beginBrief, saveBriefResult, deleteBrief, listAttachments, updateAttachment, getAttachment, saveExportLink, setEarlyStartReason,
 } from '../src/core/requirements/store.mjs';
 import { addAttachments, readsSettled, replaceAttachment, removeAttachment, attachmentFile } from '../src/core/requirements/attachment-job.mjs';
 import { startOrientation, settled, isBusy } from '../src/core/requirements/interview.mjs';
@@ -170,6 +170,85 @@ test('not Ready: refused without a reason (409 NOT_READY, failing keys); with on
   assert.deepEqual([s.ready, s.failing, s.reason], [false, ['interview', 'openQuestions', 'assumptions'], 'Demo on Friday']);
   assert.deepEqual(listTurns(f.seq).at(-1).payload, { version: 1, runId: s.runId, override: true });
   assert.equal(go.json.feature.starts[0].reason, 'Demo on Friday');
+});
+
+test('overlay: rides the run body verbatim; the rest of the body and the options are the same without it', async () => {
+  reset();
+  const f = readyFeature();
+  const overlay = { nodes: { n_plan: { model: 'claude-opus-5-5', effort: 'high' } }, wires: { w_1: { maxCycles: 3 } } };
+  assert.equal((await call('POST', `/api/requirements/${f.seq}/start`, { workflowId: 'wf_full', overlay })).status, 201);
+  assert.equal((await call('POST', `/api/requirements/${f.seq}/start`, { workflowId: 'wf_full' })).status, 201);
+  const [withO, without] = calls;
+  assert.deepEqual(withO.body.overlay, overlay);
+  assert.equal(withO.body.guardrailsId, 'normal');
+  for (const k of ['presetId', 'humanInLoop', 'engine']) assert.equal(k in withO.body, false, k);
+  assert.equal('overlay' in without.body, false);
+  const { overlay: _o, promptMarkdown: p1, ...restA } = withO.body;
+  const { promptMarkdown: p2, ...restB } = without.body;
+  assert.deepEqual(restA, restB);
+  assert.equal(p1.replace(/ v1:/, ' v2:'), p2);
+  assert.deepEqual(Object.keys(withO.opts).sort(), Object.keys(without.opts).sort());
+});
+
+test('overlay: with Auto it is refused before the run handler; a bad shape is a 400 and no call; null is absent', async () => {
+  reset();
+  const f = readyFeature();
+  const auto = await call('POST', `/api/requirements/${f.seq}/start`, { overlay: { nodes: {} } });
+  assert.equal(auto.status, 400);
+  assert.equal(auto.json.error, 'pick a workflow to set agents for this run');
+  const autoExplicit = await call('POST', `/api/requirements/${f.seq}/start`, { workflowId: 'wf_auto', overlay: { wires: {} } });
+  assert.equal(autoExplicit.status, 400);
+  for (const overlay of [[], 'x', 7, { nodes: {}, presetId: 'p' }, { other: {} }]) {
+    const r = await call('POST', `/api/requirements/${f.seq}/start`, { workflowId: 'wf_full', overlay });
+    assert.equal(r.status, 400, JSON.stringify(overlay));
+  }
+  assert.equal(calls.length, 0);
+  assert.equal(latestStart(f.seq), null);
+  const nul = await call('POST', `/api/requirements/${f.seq}/start`, { overlay: null });
+  assert.equal(nul.status, 201);
+  assert.equal('overlay' in calls[0].body, false);
+});
+
+test('overlay: an empty object is absent', async () => {
+  reset();
+  const f = readyFeature();
+  assert.equal((await call('POST', `/api/requirements/${f.seq}/start`, { workflowId: 'wf_full', overlay: {} })).status, 201);
+  assert.equal('overlay' in calls[0].body, false);
+});
+
+test("overlay: the run handler's 400 about it comes back as the start's 400 and nothing is stored", async () => {
+  reset();
+  const f = readyFeature();
+  runImpl = async () => ({ status: 400, body: { error: 'unknown agent n_zzz' } });
+  const r = await call('POST', `/api/requirements/${f.seq}/start`, { workflowId: 'wf_full', overlay: { nodes: { n_zzz: { model: 'm' } } } });
+  assert.equal(r.status, 400);
+  assert.equal(r.json.error, 'unknown agent n_zzz');
+  assert.equal(latestStart(f.seq), null);
+});
+
+test('the kept early-start reason: a successful start clears it (Ready, Auto, early); a refusal, NOT_READY or throw keeps it', async () => {
+  reset();
+  const f = readyFeature();
+  setEarlyStartReason(f.seq, 'Demo on Friday');
+  runImpl = async () => ({ status: 409, body: { error: 'engine refused' } });
+  assert.equal((await call('POST', `/api/requirements/${f.seq}/start`, {})).status, 409);
+  runImpl = async () => { throw new Error('boom'); };
+  assert.equal((await call('POST', `/api/requirements/${f.seq}/start`, {})).status, 500);
+  assert.equal((await call('POST', `/api/requirements/${f.seq}/start`, { workflowId: 'x;rm' })).status, 400);
+  assert.equal((await call('POST', `/api/requirements/${f.seq}/start`, { workflowId: 'wf_full', overlay: [] })).status, 400);
+  assert.equal(getFeature(f.seq).earlyStartReason, 'Demo on Friday');
+  runImpl = ok();
+  const go = await call('POST', `/api/requirements/${f.seq}/start`, { workflowId: 'wf_full' });
+  assert.equal(go.status, 201);
+  assert.equal(go.json.feature.earlyStartReason, null);
+  assert.equal(getFeature(f.seq).earlyStartReason, null);
+
+  const g = notReadyFeature();
+  setEarlyStartReason(g.seq, 'Kept');
+  assert.equal((await call('POST', `/api/requirements/${g.seq}/start`, {})).status, 409);
+  assert.equal(getFeature(g.seq).earlyStartReason, 'Kept');
+  assert.equal((await call('POST', `/api/requirements/${g.seq}/start`, { reason: 'Kept' })).status, 201);
+  assert.equal(getFeature(g.seq).earlyStartReason, null);
 });
 
 test('a Ready start ignores a reason', async () => {

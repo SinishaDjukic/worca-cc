@@ -370,8 +370,7 @@ Settings tabs once, pages of their own now. The old addresses (`#settings/plugin
 | A feature's spec card: the sections and their edits, Let Worca rewrite this, criteria add / remove, assumptions Confirm / Reject, the folded flow, edge cases, rules and out of scope | S |
 | Ready to start?: the six checks and what each misses, Start in Worca, "Start before it's Ready…" and its dialog (the failing checks, the required reason, "Recorded as") | S |
 | Decide the assumptions: Confirm / Reject, Show the other N, Confirm the N left, "Done, ask about A-n" | S |
-| Ready to build: what Start does, the Workflow and Branch from chips, Start in Worca | S — the chips show a non-default workflow or branch at every level (rule 2) |
-| Ready to build: Change (the Workflow and Branch from pickers) | A — like New pipeline's workflow list and branches |
+| Ready to build: what Start does, the Workflow and Branch from chips, Change (the Workflow and Branch from pickers), Start in Worca and its Set up this run overlay (a preset, each agent's model and effort, each loop's cycles) | S — a product owner picks the workflow and branch at every level |
 | A started feature: Runs from this feature (each run's pill, spec version, "started before Ready", cost and link; the total; Start again with v<n>), Changed since the run started and Undo my changes, the "v<n> draft / v<n> started" switch | S |
 | What Worca found in the code (a feature whose project or workspace has no product brief): the summary, how often Worca looked and what it cost, Look again | S |
 | What Worca found in the code: the files Worca read | A |

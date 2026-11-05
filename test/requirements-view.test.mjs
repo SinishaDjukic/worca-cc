@@ -53,9 +53,9 @@ function fakeApi(routes) {
 }
 const make = () => {
   const host = document.createElement('div'); const msgEl = document.createElement('p'); const subEl = document.createElement('div');
-  const routed = [];
-  const view = createRequirementsView({ host, subEl, msgEl, deps: { route: (p) => routed.push(p) } });
-  return { host, msgEl, view, routed };
+  const routed = []; const opened = [];
+  const view = createRequirementsView({ host, subEl, msgEl, deps: { route: (p) => routed.push(p), openRun: (id) => opened.push(id) } });
+  return { host, msgEl, view, routed, opened };
 };
 
 // One list row as GET /api/requirements carries it (A2 §4): the server's state, the Ready count, the latest run.
@@ -977,6 +977,7 @@ const BUILD = {
 };
 const chipsOf = (el) => [...el.querySelectorAll('.chip')].map((c) => c.textContent);
 const pick = (el, value) => { el.value = value; el.dispatchEvent(new window.Event('change', { bubbles: true })); };
+const change = pick;
 
 test('Ready to build: the sentence, the chips, Change reveals the workflow and branch selects; the choices are kept', async () => {
   const calls = fakeApi({ ...BASE, ...BUILD, 'GET /api/requirements/4': () => ({ feature: readyFeature(), turns: [] }) });
@@ -1033,10 +1034,47 @@ const startedFeature = (over = {}) => feature({ ...DONE, state: 'started', readi
   starts: [{ version: 1, runId: 'r9', ready: true, failing: [], reason: null, workflowId: 'wf_x', sourceBranch: 'dev',
     run: { status: 'running', phase: 'plan', costUsd: 0.1, href: '#running/r9' } }], ...over });
 
-test('Start: posts the choices once (the button waits for the answer), repaints as started, says so with a link', async () => {
+// What the run setup overlay loads for the workflow wf_x ("Careful"): two agents and one loop.
+const SETUP_AGENTS = [
+  { key: 'planner', displayName: 'Plan', inputs: [{ id: 'task', type: 'md', required: true }], outputs: [{ id: 'plan', type: 'md', when: 'always' }] },
+  { key: 'implementer', displayName: 'Implement', inputs: [{ id: 'fix', type: 'md', required: false, loop: true }, { id: 'plan', type: 'md', required: true }],
+    outputs: [{ id: 'done', type: 'void', when: 'always' }] },
+  { key: 'reviewer', displayName: 'Review', inputs: [{ id: 'plan', type: 'md', required: true }, { id: 'done', type: 'void', required: false }],
+    outputs: [{ id: 'review', type: 'md', when: 'blocking' }, { id: 'pass', type: 'void', when: 'clean' }] },
+];
+const SETUP_WF = { id: 'wf_x', name: 'Careful', version: 2,
+  nodes: [{ id: 'n_task', kind: 'task', config: {} }, { id: 'n_plan', kind: 'agent', key: 'planner', config: {} },
+    { id: 'n_impl', kind: 'agent', key: 'implementer', config: {} }, { id: 'n_review', kind: 'agent', key: 'reviewer', config: {} }, { id: 'n_end', kind: 'end', config: {} }],
+  wires: [{ id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_plan', port: 'task' } },
+    { id: 'w2', from: { node: 'n_plan', port: 'plan' }, to: { node: 'n_impl', port: 'plan' } },
+    { id: 'w3', from: { node: 'n_plan', port: 'plan' }, to: { node: 'n_review', port: 'plan' } },
+    { id: 'w4', from: { node: 'n_impl', port: 'done' }, to: { node: 'n_review', port: 'done' } },
+    { id: 'w5', from: { node: 'n_review', port: 'review' }, to: { node: 'n_impl', port: 'fix' }, config: { maxCycles: 4 } },
+    { id: 'w6', from: { node: 'n_review', port: 'pass' }, to: { node: 'n_end', port: 'result' } }] };
+const SETUP_MODELS = [{ id: 'claude-opus-5-5', label: 'Opus 5.5', efforts: ['medium', 'high'], connection: { kind: 'signin', engine: 'claude' } }];
+const SETUP = {
+  'GET /api/workflows/wf_x': SETUP_WF, 'GET /api/agents?all=1': { agents: SETUP_AGENTS }, 'GET /api/scripts': { scripts: [] },
+  'GET /api/config?projectDir=%2Fp%2Fshop': { config: {}, models: SETUP_MODELS },
+  'GET /api/run-defaults?projectDir=%2Fp%2Fshop': { engine: { value: 'claude' }, steps: { claude: {} } },
+  'GET /api/presets': { presets: [{ id: 'p1', name: 'Careful run', scope: { kind: 'global' },
+    setup: { workflowId: 'wf_x', overlay: { nodes: { n_plan: { model: 'claude-opus-5-5', effort: 'high' } }, wires: { w5: { maxCycles: 6 } } } } }] },
+};
+const setupDlg = () => document.querySelector('.req-runsetup');
+const setupGo = () => setupDlg().querySelector('[data-ui="runsetup-go"]');
+const EDITED_OVERLAY = { nodes: { n_plan: { model: 'claude-opus-5-5', effort: 'high' } }, wires: { w5: { maxCycles: 4 } } };
+/** The card's Change opened, wf_x and dev picked: the choices Start in Worca then uses. */
+async function chooseCareful(host) {
+  host.querySelector('[data-ui="build-change"]').click();
+  await tick(); await tick(); await tick();
+  pick(host.querySelector('[data-ui="build-workflow"]'), 'wf_x');
+  pick(host.querySelector('[data-ui="build-branch"]'), 'dev');
+}
+const startedReply = (over = {}) => ({ __status: 201, body: { runId: 'r9', version: 1, feature: startedFeature(), turns: [], ...over } });
+
+test('Start with a workflow: the setup overlay opens first (nothing posted), its confirm posts the choices and its overlay once, then the run opens', async () => {
   let release;
   const gate = new Promise((r) => { release = r; });
-  const calls = fakeApi({ ...BASE, ...BUILD, 'GET /api/requirements/4': () => ({ feature: readyFeature(), turns: [] }) });
+  const calls = fakeApi({ ...BASE, ...BUILD, ...SETUP, 'GET /api/requirements/4': () => ({ feature: readyFeature(), turns: [] }) });
   const inner = globalThis.fetch;
   globalThis.fetch = async (url, opts = {}) => {
     if (opts.method === 'POST' && url === '/api/requirements/4/start') {
@@ -1046,28 +1084,304 @@ test('Start: posts the choices once (the button waits for the answer), repaints 
     }
     return inner(url, opts);
   };
-  const { host, msgEl, view } = make();
+  const { host, view, opened } = make();
+  document.body.append(host);
   await view.show('feature/4');
-  host.querySelector('[data-ui="build-change"]').click();
-  await tick(); await tick(); await tick();
-  pick(host.querySelector('[data-ui="build-workflow"]'), 'wf_x');
-  pick(host.querySelector('[data-ui="build-branch"]'), 'dev');
-  const go = host.querySelector('[data-ui="start-go"]');
-  go.click();
-  go.click();
-  await tick();
-  assert.equal(host.querySelector('[data-ui="start-go"]').disabled, true, 'disabled while the start is in flight');
+  await chooseCareful(host);
+  assert.equal(host.querySelectorAll('[data-start]').length, 1, 'one Start button on the card');
   host.querySelector('[data-ui="start-go"]').click();
+  host.querySelector('[data-ui="start-go"]').click();
+  for (let i = 0; i < 6; i++) await tick();
+  assert.ok(setupDlg(), 'the overlay is open');
+  assert.equal(calls.filter((c) => c.method === 'POST').length, 0, 'nothing is posted before it is confirmed');
+  assert.equal(document.getElementById(setupDlg().getAttribute('aria-labelledby')).textContent, 'Set up this run');
+  assert.equal(setupDlg().querySelector('[data-ui="runsetup-workflow"]').textContent, 'Careful');
+  assert.equal(setupDlg().querySelector('select#req-build-wf'), null, 'the workflow is a label, not a select');
+  change(setupDlg().querySelector('[data-ui="model-n_plan"]'), 'claude-opus-5-5');
+  change(setupDlg().querySelector('[data-ui="effort-n_plan"]'), 'high');
+  setupGo().click();
+  await tick();
+  assert.equal(setupGo().disabled, true, 'the overlay waits for the answer');
+  assert.equal(host.querySelector('[data-ui="start-go"]').disabled, true, 'so does the card');
+  setupGo().click();
   release();
-  await tick(); await tick(); await tick();
+  for (let i = 0; i < 4; i++) await tick();
   const posts = calls.filter((c) => c.method === 'POST');
   assert.equal(posts.length, 1, 'one start, however often it was pressed');
-  assert.deepEqual(posts[0].body, { workflowId: 'wf_x', sourceBranch: 'dev' });
-  assert.equal(msgEl.textContent, 'Started build v1. Open the run');
-  assert.equal(msgEl.querySelector('a').getAttribute('href'), '#running/r9');
+  assert.deepEqual(posts[0].body, { workflowId: 'wf_x', sourceBranch: 'dev', overlay: EDITED_OVERLAY });
+  assert.deepEqual(opened, ['r9'], 'the run page opens');
+  assert.equal(setupDlg(), null, 'the overlay is gone');
   assert.ok(host.querySelector('.req-runs'), 'repainted from the answer: the feature is started');
-  assert.equal(host.querySelector('.req-build'), null);
   assert.equal(calls.filter((c) => c.url === '/api/requirements/4').length, 1, 'no refetch: the answer carries the feature');
+  assert.ok(!calls.some((c) => c.method === 'PUT' || c.method === 'PATCH'), 'no config or preset is written');
+  host.remove();
+});
+
+test('Start with a workflow: Cancel and Escape send nothing and leave the choices; a second open starts from the normal settings', async () => {
+  const calls = fakeApi({ ...BASE, ...BUILD, ...SETUP, 'GET /api/requirements/4': () => ({ feature: readyFeature(), turns: [] }) });
+  const { host, view, opened } = make();
+  document.body.append(host);
+  await view.show('feature/4');
+  await chooseCareful(host);
+  const go = () => host.querySelector('[data-ui="start-go"]');
+  go().click();
+  for (let i = 0; i < 6; i++) await tick();
+  change(setupDlg().querySelector('[data-ui="model-n_plan"]'), 'claude-opus-5-5');
+  setupDlg().querySelector('[data-ui="runsetup-cancel"]').click();
+  assert.equal(setupDlg(), null);
+  assert.equal(document.activeElement, go(), 'the focus goes back to Start');
+  go().click();
+  for (let i = 0; i < 6; i++) await tick();
+  assert.equal(setupDlg().querySelector('[data-ui="model-n_plan"]').value, '', 'the earlier edit is not kept');
+  document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  assert.equal(setupDlg(), null);
+  assert.equal(calls.filter((c) => c.method === 'POST').length, 0);
+  assert.deepEqual(opened, []);
+  assert.deepEqual(chipsOf(host.querySelector('.req-build')), ['Workflow · Careful', 'Branch from · dev'], 'the choices are untouched');
+  host.remove();
+});
+
+test('Start with a workflow: a refusal stays in the overlay, nothing opens, and the next confirm can go through', async () => {
+  let n = 0;
+  const calls = fakeApi({ ...BASE, ...BUILD, ...SETUP, 'GET /api/requirements/4': () => ({ feature: readyFeature(), turns: [] }),
+    'POST /api/requirements/4/start': () => { n += 1; return n === 1 ? { __status: 400, body: { error: 'node "n_plan": unknown model' } } : startedReply(); } });
+  const { host, view, opened } = make();
+  document.body.append(host);
+  await view.show('feature/4');
+  await chooseCareful(host);
+  host.querySelector('[data-ui="start-go"]').click();
+  for (let i = 0; i < 6; i++) await tick();
+  setupGo().click();
+  await tick(); await tick(); await tick();
+  assert.equal(setupDlg().querySelector('.req-runsetup-msg').textContent, 'node "n_plan": unknown model');
+  assert.equal(setupGo().disabled, false);
+  assert.deepEqual(opened, []);
+  setupGo().click();
+  await tick(); await tick(); await tick();
+  assert.deepEqual(opened, ['r9']);
+  assert.equal(calls.filter((c) => c.method === 'POST').length, 2);
+  host.remove();
+});
+
+test('Start with a workflow: the workflow list failing means Auto — the card says so, no overlay, the start has no overlay', async () => {
+  const calls = fakeApi({ ...BASE, 'GET /api/projects': BUILD['GET /api/projects'], 'GET /api/requirements/4': () => ({
+    feature: readyFeature({ starts: [{ version: 1, runId: 'r0', ready: true, failing: [], reason: null, workflowId: 'wf_x', sourceBranch: null, run: null }] }), turns: [] }),
+  'POST /api/requirements/4/start': startedReply() });
+  const { host, view, opened } = make();
+  await view.show('feature/4');
+  await tick(); await tick(); await tick();
+  assert.deepEqual(chipsOf(host.querySelector('.req-build')).slice(0, 1), ['Workflow · Auto']);
+  assert.match(host.querySelector('.req-build').textContent, /Could not load workflows; only Auto is offered\./);
+  host.querySelector('[data-ui="start-go"]').click();
+  await tick(); await tick(); await tick();
+  assert.equal(setupDlg(), null);
+  assert.deepEqual(calls.find((c) => c.method === 'POST').body, { workflowId: 'wf_auto' });
+  assert.deepEqual(opened, ['r9']);
+});
+
+test('Start with a workflow: a press while the list loads waits for it', async () => {
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  fakeApi({ ...BASE, ...BUILD, ...SETUP, 'GET /api/requirements/4': () => ({ feature: readyFeature({ starts: [{ version: 1, runId: 'r0', ready: true, failing: [],
+    reason: null, workflowId: 'wf_x', sourceBranch: null, run: null }] }), turns: [] }) });
+  const inner = globalThis.fetch;
+  globalThis.fetch = async (url, opts = {}) => { if (url === '/api/workflows') await gate; return inner(url, opts); };
+  const { host, view } = make();
+  document.body.append(host);
+  await view.show('feature/4');
+  host.querySelector('[data-ui="start-go"]').click();
+  await tick(); await tick();
+  assert.equal(setupDlg(), null, 'not yet');
+  release();
+  for (let i = 0; i < 8; i++) await tick();
+  assert.ok(setupDlg(), 'the overlay for the remembered workflow');
+  assert.equal(setupDlg().querySelector('[data-ui="runsetup-workflow"]').textContent, 'Careful');
+  setupDlg().querySelector('[data-ui="runsetup-cancel"]').click();
+  host.remove();
+});
+
+const careful = [{ version: 1, runId: 'r0', ready: true, failing: [], reason: null, workflowId: 'wf_x', sourceBranch: null, run: null }];
+const earlyFeature = (over = {}) => feature({ readiness: readiness({ overridable: true }),
+  ...(over.starts ? { changedSinceStart: [{ kind: 'goal', field: 'measure', before: '', after: 'Fewer calls' }] } : {}), ...over });
+const reasonDlg = () => document.querySelector('.req-dialog:not(.req-runsetup)');
+async function typeReason(text) {
+  const area = reasonDlg().querySelector('textarea');
+  area.value = text;
+  area.dispatchEvent(new window.Event('input'));
+}
+
+test('Start before it\'s Ready with a workflow: the reason first (Continue, saved at once), then the overlay, then one start with both', async () => {
+  const calls = fakeApi({ ...BASE, ...BUILD, ...SETUP, 'GET /api/requirements/4': () => ({ feature: earlyFeature({ starts: careful }), turns: [] }),
+    'PUT /api/requirements/4/early-start-reason': { earlyStartReason: 'Sprint today' }, 'POST /api/requirements/4/start': startedReply() });
+  const { host, view, opened } = make();
+  document.body.append(host);
+  await view.show('feature/4');
+  host.querySelector('[data-ui="start-anyway"]').click();
+  for (let i = 0; i < 6; i++) await tick();
+  assert.equal(reasonDlg().querySelector('.btn-primary').textContent, 'Continue');
+  assert.equal(setupDlg(), null, 'the reason comes before the overlay');
+  assert.ok(!calls.some((c) => c.method === 'PUT'), 'nothing is saved before it is given');
+  await typeReason('  Sprint today ');
+  reasonDlg().querySelector('.btn-primary').click();
+  for (let i = 0; i < 8; i++) await tick();
+  const put = calls.findIndex((c) => c.method === 'PUT');
+  assert.deepEqual(calls[put].body, { reason: 'Sprint today' });
+  assert.ok(setupDlg(), 'the overlay follows');
+  assert.equal(reasonDlg(), null);
+  assert.ok(calls.findIndex((c) => c.url === '/api/workflows/wf_x') > put, 'the overlay loads after the reason is saved');
+  assert.equal(calls.filter((c) => c.method === 'POST').length, 0);
+  setupGo().click();
+  await tick(); await tick(); await tick();
+  assert.deepEqual(calls.find((c) => c.method === 'POST').body, { reason: 'Sprint today', workflowId: 'wf_x', overlay: { wires: { w5: { maxCycles: 4 } } } });
+  assert.deepEqual(opened, ['r9']);
+  host.remove();
+});
+
+test('Start before it\'s Ready: Auto goes from the reason to the start (no overlay); the saved reason survives a cancel and a failed start, and prefills the next dialog', async () => {
+  let fail = true;
+  const calls = fakeApi({ ...BASE, 'GET /api/requirements/4': () => ({ feature: earlyFeature(), turns: [] }),
+    'PUT /api/requirements/4/early-start-reason': { earlyStartReason: 'Sprint today' },
+    'POST /api/requirements/4/start': () => (fail ? { __status: 409, body: { error: 'The budget for this month is used up.' } } : startedReply()) });
+  const { host, view, opened } = make();
+  document.body.append(host);
+  await view.show('feature/4');
+  const open = async () => { host.querySelector('[data-ui="start-anyway"]').click(); await tick(); await tick(); };
+  await open();
+  assert.equal(reasonDlg().querySelector('textarea').value, '');
+  assert.equal(reasonDlg().querySelector('.btn-primary').textContent, 'Start with 1 open', 'Auto keeps its labels');
+  await typeReason('Sprint today');
+  reasonDlg().querySelector('.btn-primary').click();
+  for (let i = 0; i < 4; i++) await tick();
+  assert.equal(reasonDlg().querySelector('.req-dlg-msg').textContent, 'The budget for this month is used up.', 'a failed start stays in the dialog');
+  assert.deepEqual(opened, []);
+  btn(reasonDlg(), 'Keep deciding').click();
+  await open();
+  assert.equal(reasonDlg().querySelector('textarea').value, 'Sprint today', 'the reason was kept');
+  assert.equal(setupDlg(), null, 'Auto has no overlay');
+  fail = false;
+  reasonDlg().querySelector('.btn-primary').click();
+  for (let i = 0; i < 4; i++) await tick();
+  assert.deepEqual(calls.filter((c) => c.method === 'POST').at(-1).body, { reason: 'Sprint today', workflowId: 'wf_auto' });
+  assert.deepEqual(opened, ['r9']);
+  host.remove();
+});
+
+test('Start before it\'s Ready: cancelling the overlay keeps the reason; a feature that carries one opens its dialog with it', async () => {
+  const calls = fakeApi({ ...BASE, ...BUILD, ...SETUP, 'GET /api/requirements/4': () => ({ feature: earlyFeature({ starts: careful, earlyStartReason: 'Kept note' }), turns: [] }),
+    'PUT /api/requirements/4/early-start-reason': { earlyStartReason: 'Kept note' } });
+  const { host, view } = make();
+  document.body.append(host);
+  await view.show('feature/4');
+  host.querySelector('[data-ui="start-anyway"]').click();
+  await tick(); await tick();
+  assert.equal(reasonDlg().querySelector('textarea').value, 'Kept note', 'prefilled from the feature');
+  assert.equal(reasonDlg().querySelector('.req-dlg-count').textContent, '9 / 500');
+  reasonDlg().querySelector('.btn-primary').click();
+  for (let i = 0; i < 8; i++) await tick();
+  setupDlg().querySelector('[data-ui="runsetup-cancel"]').click();
+  assert.equal(calls.filter((c) => c.method === 'POST').length, 0);
+  host.querySelector('[data-ui="start-anyway"]').click();
+  await tick(); await tick();
+  assert.equal(reasonDlg().querySelector('textarea').value, 'Kept note', 'still there after the cancel');
+  btn(reasonDlg(), 'Keep deciding').click();
+  host.remove();
+});
+
+test('Start with a workflow: a start refused as not Ready closes the overlay, asks for the reason, and sends the same confirmed overlay', async () => {
+  const calls = fakeApi({ ...BASE, ...BUILD, ...SETUP, 'GET /api/requirements/4': () => ({ feature: readyFeature({ starts: careful }), turns: [] }),
+    'PUT /api/requirements/4/early-start-reason': { earlyStartReason: 'Late reason' },
+    'POST /api/requirements/4/start': () => (calls.at(-1).body.reason ? startedReply()
+      : { __status: 409, body: { error: 'This feature is not Ready. Give a reason to start it anyway.', failing: ['assumptions'] } }) });
+  const { host, view, opened } = make();
+  document.body.append(host);
+  await view.show('feature/4');
+  host.querySelector('[data-ui="start-go"]').click();
+  for (let i = 0; i < 8; i++) await tick();
+  change(setupDlg().querySelector('[data-ui="model-n_plan"]'), 'claude-opus-5-5');
+  change(setupDlg().querySelector('[data-ui="effort-n_plan"]'), 'high');
+  setupGo().click();
+  for (let i = 0; i < 4; i++) await tick();
+  assert.equal(setupDlg(), null, 'the overlay is closed');
+  assert.ok(reasonDlg(), 'the reason is asked');
+  await typeReason('Late reason');
+  reasonDlg().querySelector('.btn-primary').click();
+  for (let i = 0; i < 6; i++) await tick();
+  assert.equal(setupDlg(), null, 'no second overlay');
+  const posts = calls.filter((c) => c.method === 'POST');
+  assert.equal(posts.length, 2);
+  assert.deepEqual(posts[1].body, { reason: 'Late reason', workflowId: 'wf_x', overlay: EDITED_OVERLAY });
+  assert.deepEqual(posts[0].body.overlay, EDITED_OVERLAY);
+  assert.deepEqual(opened, ['r9']);
+  host.remove();
+});
+
+test('Start with a workflow on a workspace feature: the overlay shows the primary project\'s saved settings, not the global ones (M1)', async () => {
+  const saved = { ...SETUP_MODELS[0] };
+  const wsFeature = (over = {}) => readyFeature({ scopeType: 'workspace', scopeKey: 'ws1', starts: careful, ...over });
+  const calls = fakeApi({ ...BASE, ...BUILD, ...SETUP, 'GET /api/workspaces': { workspaces: [{ id: 'ws1', name: 'Storefront', projectPaths: ['/p/shop', '/p/zed'] }] },
+    'GET /api/requirements/4': () => ({ feature: wsFeature(), turns: [] }),
+    'GET /api/config': { config: { workflows: { wf_x: { nodes: { n_plan: { model: 'wrong-global' } } } } }, models: [saved] },
+    'GET /api/config?projectDir=%2Fp%2Fshop': { config: { workflows: { wf_x: { nodes: { n_plan: { model: 'claude-opus-5-5', effort: 'high' } } } } }, models: [saved] },
+    'POST /api/requirements/4/start': startedReply() });
+  const { host, view } = make();
+  document.body.append(host);
+  await view.show('feature/4');
+  host.querySelector('[data-ui="start-go"]').click();
+  for (let i = 0; i < 8; i++) await tick();
+  assert.ok(calls.some((c) => c.url === '/api/config?projectDir=%2Fp%2Fshop'), 'the primary member\'s config is loaded');
+  assert.ok(!calls.some((c) => c.url === '/api/config'), 'not the global one');
+  assert.ok(calls.some((c) => c.url === '/api/run-defaults?projectDir=%2Fp%2Fshop'));
+  assert.equal(setupDlg().querySelector('[data-ui="model-n_plan"]').value, 'claude-opus-5-5', 'the saved model is what is shown');
+  setupGo().click();
+  await tick(); await tick(); await tick();
+  assert.deepEqual(calls.find((c) => c.method === 'POST').body.overlay.nodes.n_plan, { model: 'claude-opus-5-5', effort: 'high' });
+  host.remove();
+});
+
+test('Start before it\'s Ready (Auto): a live frame during the reason\'s save, then a refused start, leaves Start in Worca enabled (M2)', async () => {
+  const calls = fakeApi({ ...BASE, 'GET /api/requirements/4': () => ({ feature: earlyFeature(), turns: [] }),
+    'PUT /api/requirements/4/early-start-reason': { earlyStartReason: 'Sprint today' },
+    'POST /api/requirements/4/start': { __status: 409, body: { error: 'The budget for this month is used up.' } } });
+  const { host, view } = make();
+  document.body.append(host);
+  await view.show('feature/4');
+  host.querySelector('[data-ui="start-anyway"]').click();
+  await tick(); await tick();
+  await typeReason('Sprint today');
+  const inner = globalThis.fetch;
+  globalThis.fetch = async (url, opts = {}) => {
+    const res = await inner(url, opts);
+    if (opts.method === 'PUT') await view.changed(4);   // the PUT's own live frame lands while the start is still in flight
+    return res;
+  };
+  reasonDlg().querySelector('.btn-primary').click();
+  for (let i = 0; i < 8; i++) await tick();
+  assert.ok(calls.some((c) => c.method === 'POST'), 'the start was tried');
+  assert.equal(reasonDlg().querySelector('.req-dlg-msg').textContent, 'The budget for this month is used up.');
+  btn(reasonDlg(), 'Keep deciding').click();
+  assert.equal(host.querySelector('[data-ui="start-anyway"]').disabled, false, 'Start before it\'s Ready is enabled again');
+  host.remove();
+});
+
+test('Start with a workflow: a list that fails while the press waits does not start an Auto run, and a press for a feature left behind opens nothing (m3, m4)', async () => {
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const calls = fakeApi({ ...BASE, ...BUILD, ...SETUP, 'GET /api/requirements/4': () => ({ feature: readyFeature({ starts: careful }), turns: [] }),
+    'POST /api/requirements/4/start': startedReply() });
+  const inner = globalThis.fetch;
+  globalThis.fetch = async (url, opts = {}) => { if (url === '/api/workflows') { await gate; return { ok: true, status: 200, json: async () => null }; } return inner(url, opts); };
+  const { host, view, opened } = make();
+  document.body.append(host);
+  await view.show('feature/4');
+  host.querySelector('[data-ui="start-go"]').click();
+  await tick();
+  release();   // a null body: the list's own handler throws, which must still count as a failed list
+  for (let i = 0; i < 8; i++) await tick();
+  assert.equal(setupDlg(), null);
+  assert.equal(calls.filter((c) => c.method === 'POST').length, 0, 'no Auto run started behind the note');
+  assert.deepEqual(opened, []);
+  assert.match(host.querySelector('.req-build').textContent, /Could not load workflows; only Auto is offered\./);
+  host.remove();
 });
 
 test('Start: the defaults send only the workflow; an error other than NOT_READY is said, with no dialog', async () => {
@@ -1087,10 +1401,11 @@ test('NOT_READY opens the dialog: the failing checks, a required reason, sent wi
   const f = readyFeature();
   let calls = null;
   calls = fakeApi({ ...BASE, 'GET /api/requirements/4': () => ({ feature: f, turns: [] }),
+    'PUT /api/requirements/4/early-start-reason': { earlyStartReason: 'Sprint today' },
     'POST /api/requirements/4/start': () => (calls.at(-1).body.reason
       ? { __status: 201, body: { runId: 'r9', version: 1, feature: startedFeature(), turns: [] } }
       : { __status: 409, body: { error: 'This feature is not Ready. Give a reason to start it anyway.', failing: ['assumptions'] } }) });
-  const { host, msgEl, view } = make();
+  const { host, view, opened } = make();
   document.body.append(host);
   await view.show('feature/4');
   const go = () => host.querySelector('[data-ui="start-go"]');
@@ -1150,17 +1465,15 @@ test('NOT_READY opens the dialog: the failing checks, a required reason, sent wi
   await tick(); await tick(); await tick();
   assert.deepEqual(calls.filter((c) => c.method === 'POST').at(-1).body, { reason: 'Sprint today', workflowId: 'wf_auto' });
   assert.equal(dlg(), null, 'closed after the start');
-  assert.equal(msgEl.textContent, 'Started build v1. Open the run');
+  assert.deepEqual(opened, ['r9'], 'the run page opens');
   assert.ok(host.querySelector('.req-runs'));
-  assert.ok(host.querySelector('.req-runs').contains(document.activeElement), 'the focus goes to the runs card (the message is not on the page here)');
-  document.body.append(msgEl);
   host.remove();
-  msgEl.remove();
 });
 
 test("Start before it's Ready…: the dialog names every failing check with its hint, posts nothing until confirmed", async () => {
   const f = feature({ readiness: readiness({ overridable: true }) });
   const calls = fakeApi({ ...BASE, 'GET /api/requirements/4': () => ({ feature: f, turns: [] }),
+    'PUT /api/requirements/4/early-start-reason': { earlyStartReason: 'Demo' },
     'POST /api/requirements/4/start': { __status: 409, body: { error: 'Worca is still working on this feature.' } } });
   const { host, view } = make();
   document.body.append(host);
@@ -1205,9 +1518,10 @@ const twoStarts = (over = {}) => {
 
 test('Started: the runs card (newest first), the total, Start again with the next version', async () => {
   let f = twoStarts();
-  const calls = fakeApi({ ...BASE, 'GET /api/requirements/4': () => ({ feature: f, turns: [] }),
+  const calls = fakeApi({ ...BASE, ...BUILD, ...SETUP, 'GET /api/requirements/4': () => ({ feature: f, turns: [] }),
     'POST /api/requirements/4/start': { __status: 201, body: { runId: 'r3', version: 3, feature: twoStarts(), turns: [] } } });
-  const { host, msgEl, view } = make();
+  const { host, view, opened } = make();
+  document.body.append(host);
   await view.show('feature/4');
   const card = () => host.querySelector('.req-left .req-runs');
   assert.ok(card().classList.contains('card'));
@@ -1232,9 +1546,12 @@ test('Started: the runs card (newest first), the total, Start again with the nex
   assert.deepEqual([...host.querySelectorAll('button')].filter((b) => /^Start again/.test(b.textContent)).length, 1);
   assert.equal(again().disabled, false);
   again().click();
-  await tick(); await tick();
-  assert.deepEqual(calls.find((c) => c.method === 'POST').body, { workflowId: 'wf_x' }, 'the last start\'s workflow');
-  assert.equal(msgEl.textContent, 'Started build v3. Open the run');
+  for (let i = 0; i < 8; i++) await tick();
+  assert.equal(setupDlg().querySelector('[data-ui="runsetup-workflow"]').textContent, 'Careful', 'the last start\'s workflow, set up first');
+  setupGo().click();
+  await tick(); await tick(); await tick();
+  assert.deepEqual(calls.find((c) => c.method === 'POST').body, { workflowId: 'wf_x', overlay: { wires: { w5: { maxCycles: 4 } } } });
+  assert.deepEqual(opened, ['r3']);
   f = twoStarts({ changedSinceStart: [] });
   await view.changed(4);
   assert.equal(again().disabled, true, 'nothing changed: nothing to start again');
@@ -1242,6 +1559,7 @@ test('Started: the runs card (newest first), the total, Start again with the nex
   await view.changed(4);
   assert.equal(again().disabled, true, 'not Ready and not overridable');
   assert.doesNotMatch(host.textContent, /null|undefined|NaN/);
+  host.remove();
 });
 
 test('Started: the changed-since notice, one line per change; Undo my changes reverts after a confirm', async () => {
@@ -2564,14 +2882,13 @@ const withGit = async (on, fn) => {
   try { return await fn(); } finally { if (was === undefined) delete el.dataset.git; else el.dataset.git = was; }
 };
 
-test('UI levels (docs/ui-levels.md): Ready to build Change and the brief page What Worca read are Advanced; the chips and the rest stay', async () => {
+test('UI levels (docs/ui-levels.md): the brief page What Worca read is Advanced; Ready to build, with its Change, shows at every level', async () => {
   fakeApi({ ...BASE, ...BUILD, 'GET /api/requirements/4': () => ({ feature: readyFeature(), turns: [] }) });
   const { host, view } = make();
   await view.show('feature/4');
   const card = host.querySelector('.req-build');
-  assert.equal(card.querySelector('[data-ui="build-change"]').getAttribute('data-min-level'), 'advanced');
-  for (const el of [card, card.querySelector('.req-build-chips'), card.querySelector('[data-ui="start-go"]')]) {
-    assert.equal(el.closest('[data-min-level]'), null, 'the card, its chips and Start show at every level');
+    for (const el of [card, card.querySelector('.req-build-chips'), card.querySelector('[data-ui="build-change"]'), card.querySelector('[data-ui="start-go"]')]) {
+    assert.equal(el.closest('[data-min-level]'), null, 'the card, its chips, Change and Start show at every level');
   }
   const made = await openBrief(madeBody());
   assert.equal(made.host.querySelector('details.req-brief-read').getAttribute('data-min-level'), 'advanced');

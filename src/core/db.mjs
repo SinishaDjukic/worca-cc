@@ -64,7 +64,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 85;
+export const SCHEMA_VERSION = 86;
 
 /** store_meta row holding the install's default guardrail set id (JSON string). */
 export const GUARDRAILS_DEFAULT_META_KEY = 'guardrails:default';
@@ -841,10 +841,11 @@ ${STEP_QUESTIONS_DDL}
  */
 const INCREMENTAL_COLUMNS = {
   req_cost_ledger:        { brief_id: 'INTEGER', attachment_id: 'TEXT', helper_message_id: 'INTEGER' },   // v74: a brief look's spend (feature_seq is 0 then); v77: a file's read or ask; v78: a helper call (A3 D13)
+  req_features:           { early_start_reason: 'TEXT' },   // v85: the reason given for starting a feature before Ready, kept until a run starts; NULL = none
   req_starts:             { files_json: "TEXT NOT NULL DEFAULT '[]'" },   // v77: the files a start sent (A8 D14)
   run_groups:             { name_source: "TEXT NOT NULL DEFAULT 'user'" },   // v79: 'suggested' | 'user' (Smart naming), as ask_chat_groups
-  req_export_links:       { origin: "TEXT NOT NULL DEFAULT 'export'" },   // v85: where the link came from, 'export' | 'import' (A6.1 D11, D13)
-  req_attachments:        { fetch_json: 'TEXT' },   // v85: the tracker file a row comes from (A6.1 D10, D13); NULL for an upload
+  req_export_links:       { origin: "TEXT NOT NULL DEFAULT 'export'" },   // v86: where the link came from, 'export' | 'import' (A6.1 D11, D13)
+  req_attachments:        { fetch_json: 'TEXT' },   // v86: the tracker file a row comes from (A6.1 D10, D13); NULL for an upload
   pipelines:              { resume_point: 'TEXT', owner_pid: 'INTEGER', owner_host: 'TEXT', heartbeat_at: 'TEXT',
                             source_type: "TEXT DEFAULT 'prompt'", source_ref: 'TEXT', guardrails_id: 'TEXT',
                             archived_at: 'TEXT', cost_cap_override: 'INTEGER NOT NULL DEFAULT 0',
@@ -2732,10 +2733,11 @@ export function migrate(db) {
     if (current < 82) db.exec(AUTOMATIONS_DDL);   // v82 Git event automations (#711), project and workspace rules
     // v83 (#943): ask_messages.engine — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
     // v84 (#990): config_workflow_nodes.roles — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
-    // v85 requirements A6.1: req_export_links.origin + req_attachments.fetch_json (INCREMENTAL_COLUMNS; first written as v80, then v81,
-    // v82, then v84: A6 took 80, security #854 took 81, dev's automations #711 took 82, #943 took 83 and #990 took 84). The repair runs
-    // here, after the v77 and v80 rungs created those tables on a DB coming from below them.
-    if (current < 85) repairSchemaGaps(db, schemaGaps(db));
+    // v85 (#1145): req_features.early_start_reason — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
+    // v86 requirements A6.1: req_export_links.origin + req_attachments.fetch_json (INCREMENTAL_COLUMNS; first written as v80, then v81,
+    // v82, v84, then v85: A6 took 80, security #854 took 81, dev's automations #711 took 82, #943 took 83, #990 took 84 and #1145
+    // took 85). The repair runs here, after the v77 and v80 rungs created those tables on a DB coming from below them.
+    if (current < 86) repairSchemaGaps(db, schemaGaps(db));
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

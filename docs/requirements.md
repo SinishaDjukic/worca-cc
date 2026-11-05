@@ -244,6 +244,9 @@ Worca keeps the reason, your name and the checks that failed on the feature, and
 started before Ready. Open assumptions are then treated as confirmed. Worca refuses it without a reason, and
 always refuses a feature that is busy, archived or whose project or workspace is gone.
 
+The reason is saved on the feature as soon as you give it, so it survives a cancel or a start that fails,
+and the next time you start the feature the box opens with it. A run that starts clears it.
+
 ## Start in Worca
 
 **Start in Worca** starts a normal run from the feature:
@@ -251,8 +254,16 @@ always refuses a feature that is busy, archived or whose project or workspace is
 - The run's task is the spec, with the acceptance criteria (`R-po-1`, ...) as its definition of done. The
   run title is `FEAT-<n>: <title>`.
 - It uses the **Auto** workflow and the project's default branch, unless you change them under **Change** on the
-  Ready to build card. Auto picks a workflow for the task and, when the project asks for confirmation, shows
-  its pick on the run page for you to accept.
+  Ready to build card (at every interface level). Auto picks a workflow for the task and, when the project asks
+  for confirmation, shows its pick on the run page for you to accept. If the workflow list cannot be loaded, the
+  card says so and Auto is used.
+- With any other workflow, **Start in Worca** first opens **Set up this run**: the workflow (fixed here; cancel
+  and change it on the card to use another), a **Preset** menu with the run presets saved for that workflow, and
+  each agent's model and effort and each loop's cycle budget. Applying a preset fills in its agent and loop
+  settings only. What you change applies to this run alone: the project's settings and your presets are never
+  written. **Start run** starts it and opens the run page; **Cancel** (or Escape) starts nothing. The overlay
+  opens after the reason when you start before Ready. If the server refuses the picks, the reason is shown in
+  the overlay and you can fix it and try again.
 - The files and brief documents whose Send switch is on go with it as attached files ([Files](#files)).
 - Only runs started from Requirements are checked this way. **New run**, **Ask**, schedules and the CLI
   work as before and do not look at Requirements.

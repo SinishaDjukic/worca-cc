@@ -827,3 +827,18 @@ a.chip.req-export-chip:focus-visible{outline:2px solid var(--ink);outline-offset
 /* a file without its body yet is named in plain text, not link blue: there is nothing to open */
 span.req-file-name{color:var(--ink)}
 
+/* FEAT-9: the run setup overlay (run-setup-overlay.mjs), a .req-dialog card on the page's modal. Rows are a name and two selects. */
+.req-dlg-wrap .card.req-dialog.req-runsetup{width:min(680px,100%);max-height:calc(100vh - 80px);overflow:auto}
+.req-runsetup-wf{display:flex;gap:8px;align-items:baseline;font-size:13px}
+.req-runsetup-label{font-size:12px;font-weight:600;color:var(--ink-2)}
+.req-runsetup .hint,.req-runsetup h3{margin:0}
+.req-runsetup h3{font-size:13px;font-weight:700}
+.req-runsetup-body{display:flex;flex-direction:column;gap:14px}
+.req-runsetup-presets{display:flex;flex-direction:column;gap:6px}
+.req-runsetup-agents,.req-runsetup-loops{display:flex;flex-direction:column;gap:8px}
+.req-runsetup-row{display:grid;grid-template-columns:minmax(90px,1fr) minmax(0,2fr) minmax(0,1.2fr);gap:8px;align-items:center}
+.req-runsetup-loop{display:flex;gap:10px;align-items:center;justify-content:space-between}
+.req-runsetup-name{font-size:13px;font-weight:600;min-width:0;overflow-wrap:anywhere}
+.req-runsetup-cycles{width:72px;box-sizing:border-box}
+.req-runsetup-msg:empty{display:none}
+@media (max-width:600px){.req-runsetup-row{grid-template-columns:1fr}}

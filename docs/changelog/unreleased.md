@@ -11,6 +11,8 @@ A product owner describes a feature in a few sentences and Worca interviews them
 
 Chips: Requirements · interview · Ready · Start in Worca · product brief · Requirements interview model · files · Feature chat · export to Jira · start from a ticket · experimental: turn it on in Settings › Labs
 
+Before a build starts with a workflow, **Start in Worca** opens **Set up this run**: pick a saved run preset and change each agent's model, effort and loop budget for this run only, at any interface level. The reason for starting before Ready is saved the moment you give it, and a started run opens its run page.
+
 Read it: [Requirements](../requirements.md)
 
 Pull requests (add each number when it opens):
@@ -20,6 +22,7 @@ Pull requests (add each number when it opens):
 - Requirements: Feature chat (#989)
 - Requirements: export to a tracker (#1010)
 - Requirements: start from a ticket (#1041)
+- Requirements: set up a run before it starts (FEAT-9)
 
 ## Ticket updates (experimental)
 

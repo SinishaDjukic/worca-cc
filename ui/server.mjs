@@ -34,7 +34,7 @@ import { createUpdateChecker, fetchNpmLatest, isSourceBuild, parseVersion, relea
 import { UPDATE_EXIT_CODE, supervisorMatches, readUpdateRecord, writeUpdateRecord, startCommand } from '../src/core/ui-update.mjs';
 import { isSharedInstall, updateEligibility, probeNpmGlobal, UPDATE_MESSAGES } from '../src/core/update-eligibility.mjs';
 import { limitResumeDecision } from '../src/core/limit-resume.mjs';
-import { selectRunEngine } from '../src/core/engines/index.mjs';
+import { selectRunEngine, reapAgentGroupsAtBoot } from '../src/core/engines/index.mjs';
 import { mockSlowMs } from '../src/core/engines/mock.mjs';
 import { stopPausedRun, StopPausedError } from '../src/core/stop-paused.mjs';
 import {
@@ -9737,6 +9737,7 @@ export async function bootMaintenance({ log } = {}) {
     summary.terminal = { orphans: 0, interrupted: 0, removed: 0, evicted: 0 };
     console.error(`[worca-ui] terminal boot maintenance failed: ${err?.message || err}`);
   }
+  summary.agentGroups = await reapAgentGroupsAtBoot({ home: worcaHome });   // #1144: agents a SIGKILLed server/CLI left running
 
   // Actions (issue #529): reap orphaned action processes, mark interrupted setups, release
   // until-pr checkouts whose PR closed (D11) and apply the checkout cap (D12).
