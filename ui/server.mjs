@@ -423,7 +423,7 @@ import { resolveShapeRequest, PLAN_ASK_KIND, planFileOf } from '../src/core/shap
 import { savePlanToCheckout } from '../src/core/shape/save.mjs';
 import { featureView, currentFeatureId, featureOfPipeline, featuresOfTickets, cancelRest, resumeFeature,
   rechainWaiting, replanRest, setApproveEach, recordShapePlan, listShapePlans, chainFeature,
-  sliceOfPipeline, slicePrPreamble, featureShipSuggestion, recordSliceDraft, recordShip, featureShipInput,
+  sliceOfPipeline, slicePrPreamble, featureShipSuggestion, recordSliceDraft, recordShip, clearShip, featureShipInput,
   liveSliceFrom, shaperCard, featureThread, addFeatureNote, appendFeatureRun, liveRoundOf } from '../src/core/shape/features.mjs';
 import { roundsOf, roundOrigin, nextRound, setRoundOutcome } from '../src/core/shape/rounds.mjs';
 import { changesCard, applyChanges, applyRoute, landingFacts, landingFactsOfFeature, shapeToolCheck, threadWork, shapeThreadFacts } from '../src/core/shape/changes.mjs';
@@ -4783,10 +4783,13 @@ async function shipFeatureNow(id, mode, { actor = null, release = null, watch = 
     if (mode === 'one' && shown.slices.some((s) => s.pr && s.pr.url && s.pr.state !== 'CLOSED' && !s.pr.draft)) {
       return { status: 409, body: { error: 'a run in this feature already has a PR: create one PR per run' } };
     }
-    if (mode === 'stacked' && shown.slices.some((s) => s.pipelineId && !s.pr)) {
+    clearShip(id);                                   // a withdrawn ship (its PRs all closed unmerged); no-op otherwise
+    // A slice whose PR was closed gets a new one (openMemberPr opens past a CLOSED PR).
+    const needsPr = (s) => s.pipelineId && (!s.pr || s.pr.state === 'CLOSED');
+    if (mode === 'stacked' && shown.slices.some(needsPr)) {
       const made = [];
       for (const s of shown.slices) {
-        if (!s.pipelineId || s.pr) continue;
+        if (!needsPr(s)) continue;
         const r = await openMemberPr(s.pipelineId, { actor });
         if (!r.ok) return { status: r.status || 500, body: { error: `could not create run ${s.index}'s PR: ${r.error}. Create PR again to continue.`, prs: made } };
         made.push(r.pr.url);

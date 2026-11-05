@@ -229,12 +229,15 @@ export function featureView(id, { live = () => null } = {}) {
   // D24: Ship as once every slice is done, on a feature that is still active and not shipped. The suggestion is
   // async (featureShipSuggestion); the GET route merges it.
   const lastPrUrl = slices.length ? (slices[slices.length - 1].pr?.url || null) : null;
-  const release = f.release_version ? { version: f.release_version, url: f.release_url || null, error: f.release_error || null } : null;
-  const ship = { ready: slices.length > 0 && done === slices.length && f.status === 'active' && !f.ship_mode && !roundLive,
-    mode: f.ship_mode || null, prUrl: f.ship_pr_url || null, lastPrUrl, suggested: null, linesAdded: null,
+  // A ship whose PRs were all closed unmerged is withdrawn: the feature ships again (the ship route clears the record).
+  const shipPrs = slices.map((s) => s.pr).filter((p) => p && p.url);
+  const shipped = !!f.ship_mode && !(shipPrs.length && shipPrs.every((p) => p.state === 'CLOSED'));
+  const release = shipped && f.release_version ? { version: f.release_version, url: f.release_url || null, error: f.release_error || null } : null;
+  const ship = { ready: slices.length > 0 && done === slices.length && f.status === 'active' && !shipped && !roundLive,
+    mode: shipped ? f.ship_mode : null, prUrl: shipped ? f.ship_pr_url || null : null, lastPrUrl, suggested: null, linesAdded: null,
     linesRemoved: null, files: null, release,
     // s4: what the applied Ship card shows, wherever it renders (chat, group page, Plans).
-    result: f.ship_mode ? { mode: f.ship_mode, prUrl: f.ship_pr_url || lastPrUrl,
+    result: shipped ? { mode: f.ship_mode, prUrl: f.ship_pr_url || lastPrUrl,
       closed: f.ship_mode === 'one' ? (f.ship_closed ?? slices.filter((s) => s.pr && s.pr.state === 'CLOSED').length) : 0, release } : null };
   // The Re-plan the rest run (replanning/replanned): its ticket id is the run id it fires as (ui/server.mjs:2188).
   const rt = f.replan_ticket_id ? getTicket(f.replan_ticket_id) : null;
@@ -339,6 +342,14 @@ export function recordShip(id, { mode, prUrl = null, closed = null, release = nu
       release_version = ?, release_target = ? WHERE id = ? AND ship_mode IS NULL`)
     .run(mode, prUrl, Number.isInteger(closed) ? closed : null, iso(now), iso(now), release ? release.version : null,
       release ? (release.target || null) : null, String(id))
+    .changes > 0;
+}
+
+/** Forget a withdrawn ship (every PR closed unmerged) so the next ship records afresh. false = nothing recorded. */
+export function clearShip(id, { now = Date.now() } = {}) {
+  return getDb().prepare(`UPDATE shape_features SET ship_mode = NULL, ship_pr_url = NULL, ship_closed = NULL, shipped_at = NULL,
+      release_version = NULL, release_target = NULL, updated_at = ? WHERE id = ? AND ship_mode IS NOT NULL`)
+    .run(iso(now), String(id))
     .changes > 0;
 }
 
