@@ -203,3 +203,9 @@ test('slice variants are reserved: readWorkflow returns them with the flag off, 
   assert.ok(!(await listWorkflows()).some((w) => SHAPE_SLICE_REQ_WORKFLOW_IDS.includes(w.id)));
   assert.equal((await autoCandidates()).some((w) => SHAPE_SLICE_REQ_WORKFLOW_IDS.includes(w.id)), false);
 });
+
+test('the requirements refiner asks for a plain twin on every decision', () => {
+  const text = readFileSync(new URL('../agents/worca-cc-requirements-refiner.md', import.meta.url), 'utf8');
+  assert.match(text, /Write `plain` on every decision and every option/);
+  assert.doesNotMatch(text, /`plain` \(optional\)/);
+});

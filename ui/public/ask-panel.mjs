@@ -5212,6 +5212,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // A shaped card follows card.shape; the nudge is advisory.
     const shapeUi = card.shape || card.nudge ? shapeCardExtras(doc, card, { fetch }) : null;
     local.shapeUi = shapeUi;
+    // A direct Shaper card on the requirements workflow: Shape requirements is its only start button.
+    const direct = !!(card.shape && shapeUi && shapeUi.requirements);
     rootEl.appendChild(head);
 
     // target section
@@ -5459,26 +5461,29 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       laterBtn.dataset.minLevel = 'advanced';
       laterBtn.addEventListener('click', async () => {
         const picked = await openScheduleSheet(sheetOpts());
-        if (picked) startCard(block, rootEl, local, picked);
+        if (!picked) return;
+        if (card.shape && shapeUi) shapeUi.commit();     // a direct card's lead is saved as Shape requirements saves it
+        startCard(block, rootEl, local, picked);
       });
     }
     // Shape it first: Start holds an icon and a text node, so only the text node is relabelled.
     let shapeBtn = null;
     if (shapeUi) {
       const setLabel = (b, t) => { const n = [...b.childNodes].find((x) => x.nodeType === 3); if (n) n.textContent = t; else b.append(t); };
-      if (card.shape) {
+      if (card.shape && !shapeUi.requirements) {
         setLabel(startBtn, 'Start planning');            // a shaped card is never scheduled
       } else {
         if (shapeUi.requirements) {
           // Medium or large with shapeRequirements on: Shape requirements is the one primary, Run as is steps back. Until a
           // lead is picked it stays in the tab order, aria-disabled, described by "You lead as".
           shapeBtn = toElement(doc, railButton({ label: 'Shape requirements', kind: 'primary', attrs: { 'data-ask-card-shape': '' } }));
-          startBtn.classList.replace('btn-primary', 'btn-quiet');
+          if (!card.shape) startBtn.classList.replace('btn-primary', 'btn-quiet');
           const syncLead = () => {
             const blocked = shapeUi.blocked();
             if (blocked) shapeBtn.setAttribute('aria-disabled', 'true'); else shapeBtn.removeAttribute('aria-disabled');
             // described by "You lead as" only once that span exists (the profile is still loading before)
             if (blocked && shapeUi.el.querySelector(`#${shapeUi.labelId}`)) shapeBtn.setAttribute('aria-describedby', shapeUi.labelId); else shapeBtn.removeAttribute('aria-describedby');
+            if (direct) laterBtn.disabled = blocked;     // Schedule… starts a run too: no requirements run without a lead
           };
           shapeUi.el.addEventListener('shape-lead-change', syncLead);
           syncLead();
@@ -5493,7 +5498,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
           shapeBtn.dataset.askCardShape = '';
           shapeBtn.addEventListener('click', () => startCard(block, rootEl, local, null, { shaped: true }));
         }
-        setLabel(startBtn, 'Run as is');                 // D32: the choice card's own words, never "anyway"
+        if (!card.shape) setLabel(startBtn, 'Run as is');   // D32: the choice card's own words, never "anyway"
       }
     }
     foot.append(openNp, summary, dismissBtn, laterBtn, ...(shapeBtn ? [shapeBtn] : []), startBtn);
@@ -5502,6 +5507,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // Shaper (D20, mock board 13): a shaped card shows the title, the brief clamped, Project, Base branch,
     // Perspectives and what happens; every other field MOVES, unchanged, into a collapsed Advanced. Moves only: each
     // control keeps its class, so collectCardBody / startCard read the same values and the request is unchanged.
+    // The requirements layout drops Perspectives and What happens: the lead sentence, in .shape-card above, says both.
     let paintAdvanced = () => {};
     if (card.shape && shapeUi) {
       const kicker = eyebrow.querySelector('.ask-rp-kicker');
@@ -5517,7 +5523,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       more.addEventListener('click', () => { preview.hidden = true; more.hidden = true; briefSec.hidden = false; grow(); });
       const what = make('div', 'ask-rp-shape-what');
       what.append(make('span', 'ask-rp-label', 'What happens'), make('span', null, shapeWhatHappens(card.shape)));
-      main.append(preview, more, briefSec, targetHost, rpField('Perspectives', shapeUi.el), what);
+      main.append(preview, more, briefSec, targetHost, ...(shapeUi.requirements ? [] : [rpField('Perspectives', shapeUi.chipsEl || shapeUi.el), what]));
       const adv = doc.createElement('details');
       adv.className = 'ask-rp-adv disclosure';
       adv.setAttribute('data-ask-card-advanced', '');
@@ -5535,7 +5541,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       rootEl.insertBefore(adv, err);
       openNp.classList.add('link-btn');
       delete openNp.dataset.minLevel;                       // one of the small card's own controls (D20)
-      foot.replaceChildren(openNp, dismissBtn, startBtn);   // the Advanced summary stands in for the lane summary
+      foot.replaceChildren(openNp, dismissBtn, direct ? shapeBtn : startBtn);   // the Advanced summary stands in for the lane summary
       let advLane = null;
       paintAdvanced = (lane = advLane) => {
         advLane = lane;
@@ -5783,7 +5789,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       const line = createTagRulesLine(doc, tagInput);
       tagRow.appendChild(line.el);
       rootEl.__rp.tagRules = line;
-      const sync = () => { const why = line.blocked(); startBtn.disabled = !!why || !!local.workflowUnavailable; startBtn.title = why || ''; };   // a missing workflow keeps Start off
+      const gated = direct ? shapeBtn : startBtn;
+      const sync = () => { const why = line.blocked(); gated.disabled = !!why || !!local.workflowUnavailable; gated.title = why || ''; };   // a missing workflow keeps Start off
       line.onChange(sync);
       let gen = 0;
       let lastQ = null;
@@ -5869,7 +5876,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const err = rootEl.querySelector('.ask-card-err');
     const startBtn = rootEl.querySelector('[data-ask-card-start]');
     err.textContent = '';
-    startBtn.disabled = true;
+    if (startBtn) startBtn.disabled = true;               // a direct card's only start button is Shape requirements
     const shapeBtn = rootEl.querySelector('[data-ask-card-shape]');
     if (shapeBtn) shapeBtn.disabled = true;               // a double click must not post /api/run twice
     freezeTargetInputs(rootEl, true);
@@ -5932,7 +5939,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       // (beginRun is NEVER called — spec §10.5).
     } finally {
       const tagBlocked = !!rootEl.__rp?.tagRules?.blocked();   // an enforced tag still missing keeps Start off
-      startBtn.disabled = tagBlocked;
+      if (startBtn) startBtn.disabled = tagBlocked;
       if (shapeBtn) shapeBtn.disabled = tagBlocked;            // Shaper starts a run too: the same tag rule
       freezeTargetInputs(rootEl, false);
       // freezeTargetInputs re-enabled the select; a shaped card's workflow is fixed.
