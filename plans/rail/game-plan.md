@@ -65,12 +65,7 @@ need into the design system first, and goes to the Shaper as one Feature behind 
 
 ## 4. Open decisions
 
-From Wave 1's slices (each built a default):
-- Narrow screens: the DS's icon rail at 760px or today's drawer (default: drawer).
-- The needs count on the Runs row and the Pulse badge: one place or both.
-- Team policy at Expert (default) or Advanced.
-- Paused runs under Runs (default) or Notifications › Limits.
-- Run page stand-ins: "Pause after this step" off with its reason; "Continue without cap".
+Wave 1's open decisions are decided (5 Nov): `agreed/decisions-1.5b.md`, enrolled with Wave 1.5.
 
 For Wave 1.5 and later:
 - When the type moves to Inter: with graduation or a wave earlier.
