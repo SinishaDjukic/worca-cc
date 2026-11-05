@@ -112,3 +112,62 @@ test('composer save: empty name is a field error before any POST; success closes
     } },
   ]);
 });
+
+test('#1127: Use as template opens a clean unsaved copy; the badge says Editing / Unsaved copy / Built-in / Not saved; Save on a copy mints a new workflow', async () => {
+  const s = shell();
+  const docEl = s.doc.createElement('span');
+  docEl.hidden = true;
+  s.doc.body.appendChild(docEl);
+  const bodies = [];
+  const { createComposer, isBuiltinWorkflow } = await import(composerPath);
+  const c = createComposer({ ...s.hostEls, docState: docEl }, {
+    doc: s.doc, api: { ...API, saveWorkflow: async (b) => { bodies.push(b); return { ok: true, workflow: { id: 'wf_default-copy' } }; } },
+    raf: s.raf, viewport: () => ({ ...RECT }), storage: null, portsFn,
+  });
+  c.mount();
+  c.loadTemplate(null);
+  assert.equal(docEl.hidden, true, 'a blank, untouched canvas says nothing');
+  c.setName('Draft');
+  assert.deepEqual([docEl.hidden, docEl.dataset.kind, docEl.textContent], [false, 'new', 'Not saved']);
+  c.loadTemplate({ ...fixture(), id: 'wf_mine', name: 'Mine' });
+  assert.deepEqual([docEl.hidden, docEl.dataset.kind, docEl.textContent], [false, 'edit', 'Editing']);
+  c.loadTemplate({ ...fixture(), id: 'wf_default', name: 'Default' });
+  assert.deepEqual([docEl.dataset.kind, docEl.textContent], ['builtin', 'Built-in'], 'a built-in loaded in place');
+  assert.equal(c.openSaveDialog().dataset.saveAs, '1', 'its Save is Save a copy, as before');
+
+  const copy = await c.openCopy({ ...fixture(), id: 'wf_default', name: 'Default', origin: '' });
+  assert.ok(copy);
+  assert.deepEqual([c.template().id, c.template().name, s.el.name.value, c.origin(), c.isDirty(), c.undoDepth()],
+    ['', 'Default copy', 'Default copy', '', false, 0]);
+  assert.deepEqual(c.copyOf(), { id: 'wf_default', name: 'Default' });
+  assert.deepEqual(c.docState(), { kind: 'copy', of: { id: 'wf_default', name: 'Default' } });
+  assert.deepEqual([docEl.hidden, docEl.dataset.kind, docEl.textContent], [false, 'copy', 'Unsaved copy']);
+  assert.match(docEl.title, /“Default” stays as it is/);
+  const dlg = c.openSaveDialog();
+  assert.equal(dlg.dataset.saveAs, '', 'a copy is a NEW document: plain Save, no forced copy');
+  assert.equal(dlg.querySelector('.sd-name').value, 'Default copy');
+  dlg.querySelector('.sd-confirm').dispatchEvent(new s.win.MouseEvent('click', { bubbles: true }));
+  await tick(); await tick();
+  assert.equal(bodies.length, 1);
+  assert.equal('id' in bodies[0], false, 'no id: the server mints a new workflow; the source never changes');
+  assert.deepEqual([c.template().id, c.copyOf(), docEl.dataset.kind], ['wf_default-copy', null, 'edit'], 'once saved it is yours, being edited');
+
+  await c.openCopy({ ...fixture(), id: 'wfp_demo_x', name: 'Demo', origin: 'plugin:demo' });
+  assert.deepEqual([c.origin(), c.template().name], ['', 'Demo copy'], 'a plugin row\'s copy is no longer plugin-owned');
+
+  c.setName('Edited');
+  c.hooks.confirmDiscard = async () => false;
+  assert.equal(await c.openCopy({ ...fixture(), id: 'wf_default', name: 'Default' }), null, 'the discard question answered No');
+  assert.equal(c.template().name, 'Edited', 'nothing replaced');
+
+  c.loadTemplate({ ...fixture(), id: '' }, { copyOf: { id: 'wf_x', name: 'X' } });
+  assert.deepEqual(c.copyOf(), { id: 'wf_x', name: 'X' }, 'a load may carry copyOf (a chat card\'s Undo)');
+  c.loadTemplate({ ...fixture(), id: '' });
+  assert.equal(c.copyOf(), null, 'every other load clears it');
+
+  assert.deepEqual([
+    isBuiltinWorkflow({ id: 'wf_default' }), isBuiltinWorkflow({ id: 'wf_shape' }), isBuiltinWorkflow({ id: 'wf_shape_req' }),
+    isBuiltinWorkflow({ id: 'wf_x', origin: 'plugin:demo' }), isBuiltinWorkflow({ id: 'wf_x', origin: 'auto' }),
+    isBuiltinWorkflow({ id: 'wf_x', origin: null }), isBuiltinWorkflow(null),
+  ], [true, true, true, true, false, false, false]);
+});
