@@ -52,6 +52,7 @@
 // is deliberately no in-module cache: worcaHome() is read fresh per operation,
 // so a saved root takes effect for new runs/listing without a server restart.
 
+import { isAnswererLead, ANSWERER_LEAD_KEYS } from '../shared/answerer.mjs';
 import { mkdir, writeFile, rename } from 'node:fs/promises';
 import { suggestModelHandle } from '../shared/connections.mjs';
 export { suggestModelHandle };
@@ -2845,6 +2846,31 @@ export async function setChatHomePinsFor(person, list) {
   settings.chatHomePins = map;
   await persistSettings(settings);
   return chatHomePinsFor(person);
+}
+
+/** The answerer profile (the lead a person shapes as): per person, keyed like the Chat home pins. It describes the
+ *  person, not a project, so it sits outside the user-to-project settings cascade. */
+function answererMap(settings) {
+  const m = settings.answererProfiles;
+  return Object.assign(Object.create(null), m && typeof m === 'object' && !Array.isArray(m) ? m : {});
+}
+
+/** The person's profile, `{ lead }` (null when never set or unknown). Never throws. */
+export function answererProfileFor(person) {
+  if (homeGuarded()) return { lead: null };
+  const lead = answererMap(readSettings())[pinsPersonKey(person)]?.lead;
+  return { lead: isAnswererLead(lead) ? lead : null };
+}
+
+/** Set the person's lead. Throws { code: 'BAD_LEAD' } before any write. */
+export async function setAnswererProfileFor(person, { lead } = {}) {
+  if (!isAnswererLead(lead)) throw Object.assign(new Error(`Pick one of: ${ANSWERER_LEAD_KEYS.join(', ')}`), { code: 'BAD_LEAD' });
+  const settings = readSettings();
+  const map = answererMap(settings);
+  map[pinsPersonKey(person)] = { lead };
+  settings.answererProfiles = map;
+  await persistSettings(settings);
+  return answererProfileFor(person);
 }
 
 /** Local tag dimensions (Settings › Tags): used when the run target's team policy sets none. Never throws. */

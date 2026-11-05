@@ -194,3 +194,12 @@ test('re-planning: the re-plan run\'s outline ask is the open step (live snapsho
   const ptr = featureCardModel({ own: snap('p1'), card: card({ ...v, ask: { index: null, runId: 'run-rp1', pipelineId: 'rp1', id: 'q-split', kind: 'outline' } }) });
   assert.equal(ptr.step.kind, 'outline');
 });
+
+test('featureCardModel returns requirementChecks keyed by pipeline or ticket', () => {
+  const check = { items: [{ id: 'R-po-1', label: 'R-po-1 · covered by the diff', pass: true, detail: '' }], passed: 1, total: 1 };
+  const v = VIEW([SL(1, 'done', { pipelineId: 'p1', requirements: { ids: ['R-po-1'], check } }), SL(2, 'planned', { requirements: { ids: ['R-qa-1'], check: null } }),
+    SL(3, 'planned', { requirements: { ids: ['R-ux-1'], check } })]);
+  const m = featureCardModel({ own: snap('p1', { status: 'done', terminal: true }), card: card(v) });
+  assert.deepEqual(m.requirementChecks, { p1: check, t3: check });
+  assert.deepEqual(featureCardModel({ own: snap('p1'), card: card(VIEW([SL(1, 'running', { pipelineId: 'p1' })])) }).requirementChecks, {});
+});

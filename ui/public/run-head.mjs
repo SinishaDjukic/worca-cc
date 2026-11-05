@@ -150,14 +150,17 @@ function workspaceHead(f) {
 
 /** One ship flow (slice 2): a feature's or a chain's head, in workspaceHead's shape. `state`: groupModel's; `prs`:
  *  groupPrList(row). Create PR while no run has a PR; View PR ▾ for one PR, View PRs ▾ for several; while the group
- *  is still ready (a partly shipped chain) Create PR stays as a head button beside them. */
-export function groupHead({ state, prs }) {
+ *  is still ready (a partly shipped chain) Create PR stays as a head button beside them. Shaper requirements s3:
+ *  `unmarked` (a feature's unmarked agreed requirements) locks every Create PR, as the Ship card's ledger does. */
+export function groupHead({ state, prs, unmarked = 0 }) {
   const ready = state === 'ready';
-  if (!prs.length) return { ...NONE, key: 'group', cta: ready ? { state: 'create' } : null };
+  const lock = unmarked > 0 ? `Mark every requirement before you create the PR · ${unmarked} left` : '';
+  if (!prs.length) return { ...NONE, key: 'group', cta: ready ? { state: 'create', ...(lock ? { disabled: true, quiet: true, title: lock } : {}) } : null };
   const cta = prs.length === 1
     ? { state: prs[0].merged ? 'merged' : 'view', href: prs[0].url, menu: true }
     : { state: 'view', label: VIEW_PRS_LABEL, menu: true, ws: true };
-  return { ...NONE, key: 'group', cta, after: ready ? [btn('ship', CREATE_PR_LABEL, { primary: true, icon: 'pr-create' })] : [] };
+  return { ...NONE, key: 'group', cta,
+    after: ready ? [btn('ship', CREATE_PR_LABEL, lock ? { disabled: true, title: lock, icon: 'pr-create' } : { primary: true, icon: 'pr-create' })] : [] };
 }
 
 /** The route's Watch words (D16): status only; the ▾ menu edits Watch. */

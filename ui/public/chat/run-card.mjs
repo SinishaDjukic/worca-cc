@@ -953,7 +953,13 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     kind.textContent = kindWord;
     kind.hidden = !kindWord;
     open.setAttribute('href', curRow ? (curRow.groupKind === 'feature' ? `#feature/${encodeURIComponent(curRow.groupId)}` : `#group/${encodeURIComponent(curRow.groupId)}`) : progressRoute(id, s));
-    if (curRow) { membersEl.replaceChildren(renderMemberRows(doc, curRow)); membersEl.hidden = false; } else { membersEl.replaceChildren(); membersEl.hidden = true; }
+    if (curRow) {
+      // A Requirements fold the person opened stays open across the repaint (the rows are rebuilt each paint).
+      const opened = [...membersEl.querySelectorAll('.run-member')].filter((li) => li.querySelector('.plan-check-line[aria-expanded="true"]')).map((li) => li.dataset.key);
+      membersEl.replaceChildren(renderMemberRows(doc, curRow, { checks: fm && fm.requirementChecks }));
+      for (const li of membersEl.querySelectorAll('.run-member')) if (opened.includes(li.dataset.key)) li.querySelector('.plan-check-line')?.click();
+      membersEl.hidden = false;
+    } else { membersEl.replaceChildren(); membersEl.hidden = true; }
     // Run 4 (D20): no id in visible text — the run id is the sub line's tooltip.
     if (isNoProjectRun(s)) where.replaceChildren(kindChip(doc, 'none'));
     else where.textContent = projectLabel(id, s);

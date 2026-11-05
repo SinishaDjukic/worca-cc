@@ -80,7 +80,7 @@ const state = {
 };
 // The group page host (runs redesign slice 4, D16). Up here, next to `state`: the boot's synchronous showView runs
 // mountGroupPage on a #feature/… reload, and a `const` declared below that call would still be in its TDZ.
-const GROUP_PAGE = { host: null, route: '', id: '', tab: 'runs', featureId: '', gone: false, failed: false, resolving: false, reentered: false, paintQueued: false };
+const GROUP_PAGE = { host: null, route: '', id: '', tab: 'runs', featureId: '', gone: false, failed: false, resolving: false, reentered: false, paintQueued: false, unmarked: 0 };
 
 import { icon } from './icons.mjs';
 import { telemetrySlotHtml, paintTelemetry } from './run-telemetry-view.mjs';
@@ -516,6 +516,7 @@ async function paintShapeFeature(host) {
   // F47: the route follows replaced_by, so f.id can be a newer feature than the host's id. Frames name f.id, and the
   // actions must reach it.
   host.__shapeShown = f.id;
+  noteGroupFeatureLock(f);                                   // Shaper requirements s3: the page header's Create PR lock
   // A rebuild drops the focus (rule: app-js-repaint-drops-focus): give it back to the same control. An action names
   // its control itself (F39: in Chromium the disabled button has already lost the focus); a WS repaint reads it.
   const act = host.__shapeFocus || featureFocusOf(document, host);
@@ -1873,6 +1874,7 @@ function handleServerMessage(msg) {
   if (msg.type === 'shape-feature') {
     SLICE_INFO.clear();
     refreshShapeFeatures(msg.id);
+    void refreshGroupFeatureLock(msg.id);
     refreshShaperCards();
     chatHome?.refreshPlans();
     return;
@@ -33675,7 +33677,7 @@ el.groupDetail?.addEventListener('click', (e) => {
 });
 async function mountGroupPage(host, { route, id, tab, reentered = false }) {
   const fresh = GROUP_PAGE.host !== host || GROUP_PAGE.route !== route || GROUP_PAGE.id !== id;
-  Object.assign(GROUP_PAGE, { host, route, id, tab, reentered, ...(fresh ? { featureId: '', gone: false, failed: false, resolving: false } : {}) });
+  Object.assign(GROUP_PAGE, { host, route, id, tab, reentered, ...(fresh ? { featureId: '', gone: false, failed: false, resolving: false, unmarked: 0 } : {}) });
   if (fresh) {
     groupMessage(host, 'feature-page-loading', 'Loading group…');
     host.__gp = null;
@@ -33698,7 +33700,7 @@ async function mountGroupPage(host, { route, id, tab, reentered = false }) {
       // A network error or a 5xx is not an answer; only a 404 means gone.
       GROUP_PAGE.failed = !res || (!res.ok && res.status !== 404);
       if (res && res.status === 404) GROUP_PAGE.gone = true;
-      else if (res && res.ok) GROUP_PAGE.featureId = ((await res.json().catch(() => ({}))).id) || id;
+      else if (res && res.ok) { const f = await res.json().catch(() => ({})); GROUP_PAGE.featureId = f.id || id; GROUP_PAGE.unmarked = unmarkedOf(f); }
     }
   }
   paintGroupPageNow();
@@ -33749,7 +33751,8 @@ function paintGroupPageNow() {
   // The run page's Logs tab is Expert-only, so the group page offers its Logs (links to those tabs) at Expert too.
   // Run 3 (D15): the group's Labels fact is the read-only union of its members' History labels.
   const labels = [...new Set(row.members.flatMap((mb) => (histOf(mb.pipelineId) || {}).labels || []))].sort();
-  paintGroupPage(host.__gp, { row, project: row.groupName || '', tab, overview: row.groupKind === 'feature', logs: levelAtLeast('expert'), labels }, {
+  paintGroupPage(host.__gp, { row, project: row.groupName || '', tab, overview: row.groupKind === 'feature', logs: levelAtLeast('expert'), labels,
+    unmarked: route === 'feature' ? GROUP_PAGE.unmarked : 0 }, {
     onAction: (aid, b) => groupAction(row, aid, b),
     onMore: (anchor) => openGroupMoreMenu(anchor, row),
     // One ship flow (D11): Create PR / View PR ▾ / View PRs ▾ on the status line, for every group kind.
@@ -33788,6 +33791,26 @@ function paintGroupPageNow() {
 }
 // Frames arrive in bursts: paint the group page once per microtask. The flag lives on GROUP_PAGE (declared at the
 // top) because History's cached paint can call this during boot, before a `let` down here is initialised.
+/** Shaper requirements s3: a feature's unmarked agreed requirements (0 without a ledger, or with the flag off: the
+ *  route then leaves ship.acceptance out). The page header's Create PR locks on it, as the Ship card does. */
+function unmarkedOf(f) { const a = f && f.ship && f.ship.acceptance; return a && !a.ready ? Math.max(0, (a.total || 0) - (a.marked || 0)) : 0; }
+/** The open feature page's lock from a fetched feature view; a change repaints the page header. */
+function noteGroupFeatureLock(f) {
+  if (GROUP_PAGE.route !== 'feature' || !f || f.id !== GROUP_PAGE.featureId) return;
+  const n = unmarkedOf(f);
+  if (n !== GROUP_PAGE.unmarked) { GROUP_PAGE.unmarked = n; scheduleGroupPagePaint(); }
+}
+/** A shape-feature frame (a mark saved here, in Chat or in another tab): re-read the open feature page's lock. A
+ *  mounted Overview view of the feature refetches it anyway (refreshShapeFeatures) and notes the lock itself. */
+async function refreshGroupFeatureLock(id) {
+  const fid = GROUP_PAGE.featureId;
+  if (GROUP_PAGE.route !== 'feature' || !fid || (id && id !== fid && id !== GROUP_PAGE.id)) return;
+  for (const [host, hid] of SHAPE_FEATURE_HOSTS) {
+    if (host.isConnected && !host.closest('.view.hidden') && (hid === fid || host.__shapeShown === fid)) return;
+  }
+  const res = await fetch(`/api/shape/features/${encodeURIComponent(fid)}`).catch(() => null);
+  noteGroupFeatureLock(res && res.ok ? await res.json().catch(() => null) : null);
+}
 function scheduleGroupPagePaint() {
   if (GROUP_PAGE.paintQueued) return;
   GROUP_PAGE.paintQueued = true;
@@ -36548,10 +36571,10 @@ const PR_CTA_LOOK = {
   view: { look: 'pr-view', icon: 'pull-request', label: VIEW_PR_LABEL },
   merged: { look: 'pr-merged', icon: 'merge', label: VIEW_PR_LABEL },
 };
-function paintPrCta(slot, { state = 'none', href = '', onClick = null, cls = '', label: own = '', title = '', disabled = false, menu = false, ws = false } = {}) {
+function paintPrCta(slot, { state = 'none', href = '', onClick = null, cls = '', label: own = '', title = '', disabled = false, menu = false, ws = false, quiet = false } = {}) {
   if (!slot) return;
   slot._prClick = onClick;                         // read at click time: a repaint re-binds it
-  const sig = `${state}|${href}|${cls}|${own}|${title}|${disabled}|${menu}|${ws}`;
+  const sig = `${state}|${href}|${cls}|${own}|${title}|${disabled}|${menu}|${ws}|${quiet}`;
   if (slot.dataset.sig === sig) return;
   const from = slot.dataset.state || 'none';
   slot.dataset.sig = sig;
@@ -36628,7 +36651,7 @@ function paintPrCta(slot, { state = 'none', href = '', onClick = null, cls = '',
     ctl.rel = 'noopener';
   }
   if (!menu || state === 'create' || state === 'push') {
-    ctl.className = ['btn', look ? '' : 'btn-primary', look, cls].filter(Boolean).join(' ');
+    ctl.className = ['btn', look || quiet ? '' : 'btn-primary', look, cls].filter(Boolean).join(' ');   // quiet: a locked Create PR
     ctl.setAttribute('data-rd-cta', '');
     if (title) ctl.title = title;
     if (disabled && ctl.tagName === 'BUTTON') ctl.disabled = true;

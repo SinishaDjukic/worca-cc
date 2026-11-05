@@ -48,6 +48,32 @@ test('#feature/:id for an existing feature renders the group page (Runs tab firs
   assert.equal(gp.querySelector('.gpage-panel[data-tab="overview"] .shape-feature'), view, 'a repaint never remounts the Shaper view');
 });
 
+test('Shaper requirements s3: the header Create PR follows the ledger lock; a shape-feature frame unlocks it', async () => {
+  const ledger = (marked) => ({ items: [], agreed: [{ id: 'R-po-1' }, { id: 'R-ux-1' }], entries: [], covered: [], ready: marked === 2, marked, total: 2 });
+  let acceptance = ledger(0);
+  const ctx = await boot((url) => (url.startsWith('/api/shape/features/feat_1')
+    ? json({ ...FEATURE, ship: { ...FEATURE.ship, acceptance } }) : handler(url)));
+  ctx.go('feature/feat_1');
+  await ctx.settle(6);
+  const cta = () => pageOf(ctx).querySelector('.gpage-card .rd-pr-slot [data-rd-cta]');
+  assert.ok(cta(), 'the header has its Create PR');
+  assert.equal(cta().disabled, true, 'locked while requirements are unmarked');
+  assert.equal(cta().classList.contains('btn-primary'), false, 'not primary while locked');
+  assert.equal(cta().title, 'Mark every requirement before you create the PR · 2 left');
+  acceptance = ledger(2);
+  ctx.dispatch({ type: 'shape-feature', id: 'feat_1' });
+  await ctx.settle(6);
+  assert.equal(cta().disabled, false, 'every requirement marked: enabled');
+  assert.equal(cta().classList.contains('btn-primary'), true, 'and primary again');
+  ctx.go('feature/feat_1/overview');                              // the Overview view's own refetch carries the lock
+  await ctx.settle(6);
+  acceptance = ledger(1);
+  ctx.dispatch({ type: 'shape-feature', id: 'feat_1' });
+  await ctx.settle(6);
+  assert.equal(cta().disabled, true, 'a mark taken back elsewhere locks it again');
+  assert.equal(cta().title, 'Mark every requirement before you create the PR · 1 left');
+});
+
 test('#feature/:id for an unknown id says so; #group/:id renders a user group without Overview', async () => {
   const ctx = await boot();
   ctx.go('feature/feat_gone');

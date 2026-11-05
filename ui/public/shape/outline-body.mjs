@@ -62,6 +62,9 @@ export function renderOutlineBody(panel, pq, deps) {
 
   const summary = h('p', 'plan-summary outline-summary');
   const list = h('ol', 'outline-slices');
+  // The agreed ids a person left out (an id no run placed is the check row's, not this line's).
+  const leftOut = h('div', 'outline-goal');
+  leftOut.dataset.kind = 'left-out';
   // Undo edits: shown only while there are edits. It posts nothing.
   const undo = btn('outline-undo', 'Undo edits');
   undo.addEventListener('click', (e) => { e.stopPropagation(); edits = []; paint(); });
@@ -69,7 +72,7 @@ export function renderOutlineBody(panel, pq, deps) {
   const { row: each, input: eachBox } = makeSwitch(doc, { label: 'Ask me before each run', checked: plan.approveEach === true, rowClass: 'outline-approve-each' });
   const under = h('div', 'outline-under'); under.append(undo, each);
   const checks = buildCheckFold(doc, runWorded(checkSlices(asked)), 'Outline');
-  body.append(summary, list, under, checks.line, checks.rows);
+  body.append(summary, list, leftOut, under, checks.line, checks.rows);
 
   // Ask for changes: closed by default, then Send changes (D30)
   const typed = plan.revisable ? typedRow() : null;
@@ -100,6 +103,9 @@ export function renderOutlineBody(panel, pq, deps) {
     const outline = r.ok ? r.outline : asked;
     const n = outline.slices.length;
     list.replaceChildren(...outline.slices.map((s, i) => runItem(s, i, n)));
+    const left = (outline.leftOut || []).filter((e) => e.reason);
+    leftOut.textContent = left.length ? `Left out: ${left.map((e) => `${e.id} — ${e.reason}`).join('; ')}` : '';
+    leftOut.hidden = !left.length;
     summary.textContent = outlineSummary(outline, plan.round || 1);
     checks.update(runWorded(checkSlices(outline)));
     undo.hidden = !edits.length;
@@ -128,6 +134,11 @@ export function renderOutlineBody(panel, pq, deps) {
     }
     li.appendChild(head);
     if (s.goal) li.appendChild(h('div', 'outline-goal', s.goal));
+    if (s.requirements && s.requirements.length) {
+      const sat = h('div', 'outline-goal', `Satisfies: ${s.requirements.join(', ')}`);
+      sat.dataset.kind = 'satisfies';
+      li.appendChild(sat);
+    }
     return li;
   }
 

@@ -71,15 +71,19 @@ export function renderPlanBody(panel, pq, deps) {
   if (deps.extras) { summary = h('p', 'plan-summary'); summary.hidden = true; body.appendChild(summary); }
 
   // #990 s5: the implementer's plan concern — why an approved plan is asked again. Shown once; the buttons stay.
+  // Shaper requirements s3 (3.A): a reviewer's requirement concern rides the same note, one detail line per id.
   if (pq.concern && pq.concern.title) {
     const c = pq.concern;
+    const req = c.kind === 'requirement';
     const note = h('div', 'shape-plan-outline-change plan-concern');
-    note.append(h('div', 'shape-plan-outline-change-head', 'The implementer has a concern about this plan:'),
+    note.append(h('div', 'shape-plan-outline-change-head', req ? 'A reviewer says an agreed requirement is wrong or cannot be met:'
+      : 'The implementer has a concern about this plan:'),
       h('p', 'shape-plan-outline-change-text plan-concern-title', String(c.title)));
-    if (c.detail) note.appendChild(h('p', 'shape-plan-outline-change-text', String(c.detail)));
+    if (c.detail) for (const line of req ? String(c.detail).split('\n') : [String(c.detail)]) note.appendChild(h('p', 'shape-plan-outline-change-text', line));
     if (c.section) note.appendChild(h('p', 'shape-plan-outline-change-text', `Section: ${c.section}`));
-    note.appendChild(h('p', 'shape-plan-outline-change-text plan-concern-what',
-      'Approve overrides the concern and builds the plan as written. Ask for changes accepts it and sends the plan back to the planner with this concern.'));
+    note.appendChild(h('p', 'shape-plan-outline-change-text plan-concern-what', req
+      ? 'Approve keeps the requirement as agreed and builds the plan. Ask for changes sends your answer to the planner.'
+      : 'Approve overrides the concern and builds the plan as written. Ask for changes accepts it and sends the plan back to the planner with this concern.'));
     body.appendChild(note);
   }
 
