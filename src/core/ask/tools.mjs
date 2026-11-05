@@ -582,7 +582,8 @@ export function createAskTools(deps) {
     { name: 'read_attachment',
       description: 'Read an attachment of this conversation by id. Text attachments return their content, paged by byte offset (default 32000 bytes per page). HTML attachments (.html / .htm) return their raw markup by default; as: "text" converts them to readable text first (scripts, styles and page chrome dropped, the page title reported, conversionTruncated when the conversion itself was cut) and offset / nextOffset then count bytes of that converted text. ' + (deps.engine
         ? 'Image and PDF attachments come back as an image or document block of the result itself, beside their metadata (when this chat can view that kind; the note says when it cannot).'
-        : 'Image and PDF attachments return metadata plus a file path — pass that path to your Read tool to view the content.'),
+        : 'Image and PDF attachments return metadata plus a file path — pass that path to your Read tool to view the content.')
+        + ' Any other binary file returns its name, type and size' + (deps.engine ? '.' : ', plus a path.'),
       inputSchema: SCHEMA.obj({ id: SCHEMA.s('attachment id'), offset: SCHEMA.i('byte offset', 0, Number.MAX_SAFE_INTEGER), maxBytes: SCHEMA.i('bytes per page', 1, L.attachmentReadMaxBytes),
         as: SCHEMA.s('HTML attachments only: "raw" (default) = the markup as uploaded | "text" = converted to readable text; ignored for every other attachment') }, ['id']) },
     { name: 'list_diff_comments',
@@ -2364,6 +2365,13 @@ export function createAskTools(deps) {
       if (!['raw', 'text'].includes(as)) throw new AskToolError('read_attachment: as must be raw or text');
       const a = deps.readAttachment(id);
       if (!a) throw new AskToolError('read_attachment: attachment not found');
+      // A generic binary (GENERIC_BINARY_MIME, application/octet-stream): neither an image nor a PDF, so never a media block.
+      if (a.kind && a.kind !== 'text' && a.mime === 'application/octet-stream') {
+        const meta = { name: a.name, kind: a.kind, mime: a.mime, totalBytes: a.bytes };
+        const what = 'a binary file that is not an image or a PDF';
+        if (deps.engine) return { ...meta, note: `${what}: this chat has no file tools to open it, so only its name, type and size are available` };
+        return { ...meta, path: a.path, note: `${what}: Read shows only text, images and PDFs, so \`path\` is for tools that can open this type` };
+      }
       if (a.kind && a.kind !== 'text' && deps.engine) {
         // A locked-down chat has no Read tool and no file path to follow: worca sends the image or PDF itself, as an MCP
         // content block of this result, on an engine that forwards such blocks to its model (engine-switch.mjs `chat`).

@@ -9,6 +9,8 @@ import { revealTargetFor as askRevealTargetFor } from '../../../src/core/ask/sho
 import { THREAD_SORTS, attachmentPath as askAttachmentPath, countThreads as askCountThreads, createThread as askCreateThread, getAttachment as askGetAttachment, getThread as askGetThread, listAttachments as askListAttachments, listMessages as askListMessages, listRunLinks as askListRunLinks, listThreadIds as askListThreadIds, listThreads as askListThreads, listThreadsPage as askListThreadsPage, readAttachmentText as askReadAttachmentText, setArchived as askSetArchived, setPinned as askSetPinned, updateThread as askUpdateThread } from '../../../src/core/ask/store.mjs';
 import { removeAskWorktree as askRemoveWorktree } from '../../../src/core/ask/worktrees.mjs';
 import { actorOf } from '../../../src/core/identity.mjs';
+import { attachmentDisposition } from '../../../src/core/download-filename.mjs';
+import { isInlineServableMime } from '../../../src/shared/artifact-kinds.mjs';
 import { CHAT_BUSY } from '../../../src/shared/chat-busy.mjs';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
@@ -281,14 +283,17 @@ app.get('/api/ask/threads/:id/attachments/:attId', (req, res) => {
     if (!file) return res.status(404).json({ error: 'attachment not found' });
     // Text bodies serve as utf-8 text/plain (pre-#398, byte-for-byte: the body
     // was UTF-8-validated at upload and stored verbatim) whatever their mime —
-    // this is what makes an HTML attachment (a text kind labelled text/html)
-    // safe: with nosniff it is shown as source, never rendered or run on the
-    // worca origin, so text/html must never be served here. Binary bodies are
-    // sniff-verified allowlisted mimes only, so serving their real mime inline
-    // is safe — and it is what lets the transcript render <img> thumbnails
-    // (#398). The one scriptable binary is a show_files SVG copy, which gets the
-    // sandbox CSP below.
-    const type = att.kind === 'text' ? 'text/plain; charset=utf-8' : (att.mime || 'application/octet-stream');
+    // this is what makes an HTML or SVG attachment (a text kind) safe: with
+    // nosniff it is shown as source, never rendered or run on the worca origin,
+    // so text/html must never be served here. A non-text body is served inline
+    // under its own mime only when that is a known upload/snapshot binary mime
+    // (sniff-verified image/PDF, show_files media): that is what lets the
+    // transcript render <img> thumbnails (#398). The one scriptable such body is
+    // a show_files SVG copy, which gets the sandbox CSP below. Every other
+    // non-text body (a generic upload, application/octet-stream) is untrusted
+    // bytes of unknown type: it goes out as an octet-stream download, never inline.
+    const download = att.kind !== 'text' && !isInlineServableMime(att.mime);
+    const type = att.kind === 'text' ? 'text/plain; charset=utf-8' : (download ? 'application/octet-stream' : att.mime);
     // The chat files card's viewer reads a text body as JSON {text}, like the artifact text route (docs/show-files.md).
     if (req.query.as === 'text') {
       if (att.kind !== 'text') return res.status(415).json({ error: 'not a text attachment' });
@@ -302,7 +307,7 @@ app.get('/api/ask/threads/:id/attachments/:attId', (req, res) => {
     // store-minted id, so a stat-based ETag/Last-Modified plus a year-long
     // private immutable cache replaces a 5 MB sync read and sha1 per request —
     // the transcript re-creates every <img> on each structural render.
-    const headers = { 'Content-Type': type, 'X-Content-Type-Options': 'nosniff', 'Content-Disposition': 'inline',
+    const headers = { 'Content-Type': type, 'X-Content-Type-Options': 'nosniff', 'Content-Disposition': download ? attachmentDisposition(att.name) : 'inline',
       'Cache-Control': 'private, max-age=31536000, immutable' };
     // A show_files SVG is drawn through <img> only; opened in its own tab, the sandbox CSP keeps its scripts dead
     // (the ask-files route's rule).

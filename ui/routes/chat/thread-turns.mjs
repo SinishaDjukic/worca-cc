@@ -22,6 +22,7 @@ import { resolveIdentity } from '../../../src/core/identity.mjs';
 import { ASK_ENGINES } from '../../../src/core/model-env.mjs';
 import { CLAUDE_SIGNED_OUT_CODE, CLAUDE_SIGNED_OUT_MESSAGE } from '../../../src/core/preflight.mjs';
 import { changesCard, landingFacts, landingFactsOfFeature } from '../../../src/core/shape/changes.mjs';
+import { isGenericBinary } from '../../../src/shared/artifact-kinds.mjs';
 import { chatAttachRefusal, chatSwitchChanges, engineLabel } from '../../../src/shared/engine-switch.mjs';
 import { askChatEngine, askContextTokens, askDeleting, askEngineSwitchText, askIdParam, askInFlight, askRunningCount, askSwitchTranscript, askTurnEngine, askViewer, badRequest, broadcast, brokerStartRefusal, factDeps, liveRunEntry, postDirection, startAskTurn, switchThreadScope } from '../../server.mjs';
 
@@ -86,6 +87,7 @@ async function askEnginePreflight({ thread, engine, model, req }) {
 async function askEngineSwitchPlan(id, thread, { from, to, model, effort }) {
   const [fromTokens, toTokens] = await Promise.all([askContextTokens(thread.model), askContextTokens(model)]);
   const attachments = askListAttachments(id)
+    .filter((a) => !isGenericBinary(a))   // a generic file needs no viewing capability: the model gets a name and a path
     .filter((a) => chatAttachRefusal({ engine: to, kind: a.kind, pdf: a.mime === 'application/pdf' }))
     .map((a) => ({ id: a.id, name: a.name }));
   const ctx = thread.context || {};
@@ -220,6 +222,7 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
         maxBytesPerBinaryFile: ASK_LIMITS.attachment.maxBytesPerBinaryFile, maxBytesTotal: ASK_LIMITS.attachment.maxBytesPerMessage,
         hash: false,
         refuse: (cls, name) => {
+          // Runs for a LISTED extension only (an unlisted one needs no viewing capability).
           // D16: what the chat's engine cannot take (a Codex chat no PDF; Copilot, Gemini CLI and Qwen Code no image or
           // PDF) is refused at attach time, before any write. (classifyExtension gives kind text|image|binary; a PDF is
           // kind 'binary', mime 'application/pdf'.)

@@ -256,3 +256,15 @@ test('the product owner\'s text on a file whose read is not done comes with the 
   assert.equal(renderAttachmentsForPrompt([doneRow({ status: 'failed', summary: '', error: { code: 'STORE_FAILED' } })]),
     'support-tickets.pdf (PDF, 2.1 MB): the file itself could not be stored; known by name only.');
 });
+
+test('kindTitle / kindWord / genericSummary: a generic binary is a File; a PDF and the rest are as before', async () => {
+  const { kindTitle, kindWord, genericSummary, reqUploadOptions } = await import('../src/core/requirements/attachments.mjs');
+  const generic = { kind: 'binary', mime: 'application/octet-stream' };
+  assert.deepEqual([kindTitle(generic), kindWord(generic)], ['File', 'file']);
+  assert.deepEqual([kindTitle({ kind: 'binary', mime: 'application/pdf' }), kindWord({ kind: 'binary', mime: 'application/pdf' })], ['PDF', 'PDF']);
+  assert.deepEqual([kindTitle({ kind: 'image', mime: 'image/png' }), kindTitle({ kind: 'text', mime: 'text/plain' })], ['Image', 'Text']);
+  assert.match(genericSummary('a.zip'), /can't read this kind of file/);
+  assert.doesNotMatch(genericSummary('a.zip'), /Save it as PDF/);
+  assert.match(genericSummary('Plan.DOCX'), /Save it as PDF and Replace it/);
+  assert.equal('notAllowed' in reqUploadOptions(), false);
+});
