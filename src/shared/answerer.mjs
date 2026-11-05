@@ -13,12 +13,13 @@ const isPlainLead = (lead) => ANSWERER_LEADS[lead] === 'plain';
 
 const words = (text) => String(text).split(/\s+/).filter((w) => /[A-Za-z0-9]/.test(w));
 
-/** `text` with code tokens removed: backticked spans, scope tokens (`project:read`; `10:30` and `https://` stay),
+/** `text` with code tokens removed: backticked spans, scope tokens (`project:read`, `project:read/write`; `10:30`,
+ *  `localhost:4317` and `https://` stay),
  *  snake_case and `name()` tokens; spaces squeezed. */
 export function plainWords(text) {
   return String(text ?? '')
     .replace(/`[^`]*`/g, ' ')
-    .replace(/(?<![\w/])[A-Za-z][\w-]*:[A-Za-z][\w-]*(?![\w/])/g, ' ')
+    .replace(/(?<![\w/])[A-Za-z][\w-]*:[A-Za-z][\w-]*(?:\/[A-Za-z][\w-]*)*(?![\w/])/g, ' ')
     .replace(/\b\w+(?:_\w+)+\b/g, ' ')
     .replace(/\b[\w.]+\(\)/g, ' ')
     .replace(/\s+([,.;:!?])/g, '$1')
@@ -28,14 +29,15 @@ export function plainWords(text) {
 
 /**
  * The words of `entry[field]` for a reader leading as `lead`. No lead, or a technical one: the entry's own words.
- * A plain-register lead: the entry's `plain` twin when it has one; else, with `strip`, the words with code tokens
- * removed, and when fewer than 2 words remain `Option n` (an option, `n` given) or `This decision` (a question).
+ * A plain-register lead, or no lead with `register: 'plain'` (a given lead always decides): the entry's `plain` twin
+ * when it has one; else, with `strip`, the words with code tokens removed, and when fewer than 2 words remain
+ * `Option n` (an option, `n` given) or `This decision` (a question).
  * @param {object} entry @param {string} field @param {string|null} lead
- * @param {{strip?:boolean, n?:number}} [opts]
+ * @param {{strip?:boolean, n?:number, register?:'plain'}} [opts]
  */
-export function wordsFor(entry, field, lead, { strip = false, n } = {}) {
+export function wordsFor(entry, field, lead, { strip = false, n, register } = {}) {
   const own = entry?.[field];
-  if (!lead || !isPlainLead(lead)) return own;
+  if (lead ? !isPlainLead(lead) : register !== 'plain') return own;
   const plain = typeof entry?.plain === 'string' && entry.plain.trim() ? entry.plain : null;
   if (!strip) return plain ?? own;
   const stripped = plain ? plainWords(plain) : plainWords(own);

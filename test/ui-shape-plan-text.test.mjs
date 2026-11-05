@@ -154,6 +154,24 @@ test('fixAllFeedback: one failure equals fixFeedback; several are listed', () =>
   assert.equal(fixAllFeedback([a, b, ok]), 'The shape check fails 2 checks:\n- "A": x\n- "B"\nFix the plan so these checks pass.');
 });
 
+test('fixAllFeedback: uncovered requirements read as agreed requirements; checks keep their words; both join', () => {
+  const a = { label: 'A', pass: false, detail: 'x' }; const b = { label: 'B', pass: false };
+  const r1 = { id: 'R-ops-1', label: 'R-ops-1 · not covered by any step', detail: 'Turning the flag off removes the export', pass: false };
+  const r2 = { id: 'R-sec-2', label: 'R-sec-2 · not covered by any step', pass: false };
+  const ok = { id: 'R-po-1', label: 'R-po-1 · covered by Step 1', pass: true };
+  assert.equal(fixAllFeedback([], [r1, ok]),
+    'The agreed requirement R-ops-1: Turning the flag off removes the export is not covered by any step. Fix the plan so a step delivers it.');
+  assert.equal(fixAllFeedback([], [r1, r2]),
+    '2 agreed requirements are not covered by any step:\n- R-ops-1: Turning the flag off removes the export\n- R-sec-2\nFix the plan so a step delivers each.');
+  assert.equal(fixAllFeedback([a], [r2]),
+    'The shape check fails "A": x. Fix the plan so this check passes.\nThe agreed requirement R-sec-2 is not covered by any step. Fix the plan so a step delivers it.');
+  assert.equal(fixAllFeedback([a, b], [r1]),
+    'The shape check fails 2 checks:\n- "A": x\n- "B"\nFix the plan so these checks pass.\n'
+    + 'The agreed requirement R-ops-1: Turning the flag off removes the export is not covered by any step. Fix the plan so a step delivers it.');
+  assert.equal(fixAllFeedback([a, b], []), 'The shape check fails 2 checks:\n- "A": x\n- "B"\nFix the plan so these checks pass.');
+  assert.equal(fixAllFeedback([a, b], [ok]), fixAllFeedback([a, b]), 'no failing requirement: today\'s words');
+});
+
 test('approveLabel names the outcome; shaperWait only for Shaper steps with the gate on', () => {
   assert.equal(approveLabel({}), 'Approve and build');
   assert.equal(approveLabel({ outline: { slices: [] } }), 'Approve and build', 'the outline label lives in outline-body');

@@ -66,6 +66,17 @@ export function describeScanModels(m) {
   return `scan agent ${m.scanModel}${m.scanEffort ? ` · ${m.scanEffort}` : ''}, project agents ${subagentAliasLabel(m.agentModel)} · ${m.agentEffort}`;
 }
 
+/** The signed-out refusal of a scan whose scan model needs the Claude Code sign-in, naming where the model came from.
+ *  @param {{scanModel:string, source?:string}} models resolveScanModels' answer */
+export function scanSignInMessage(models) {
+  const tail = 'or sign in (run `claude`, then /login)';
+  if (!models || !models.source || models.source === 'default') {
+    return `Workspace scan: ${models?.scanModel || WORKSPACE_SCAN_DEFAULT_MODELS.scanModel} needs Claude Code sign-in and no other scan model is set — pick one in Settings › Runs › Workspaces, ${tail}`;
+  }
+  const where = models.source === 'explicit' ? "this scan's pick" : models.source === 'workspace' ? "the workspace's scan pick" : 'Settings › Runs › Workspaces';
+  return `Claude Code isn't signed in, and ${where} names ${models.scanModel}, which needs it — pick a routed model in Settings › Runs › Workspaces, ${tail}`;
+}
+
 /** The scan models EVERY scan with no usable stored pick falls to: WORKSPACE_SCAN_DEFAULT_MODELS,
  *  or — when a KNOWN catalog (the primary member's) lacks the default SCAN agent model — a THROWN
  *  Error (the caller's 400, or the automatic re-scan's skip reason). An absent or empty catalog

@@ -261,3 +261,18 @@ test('only the plan target raises requirement concerns: diff and requirements ta
   assert.equal(!!ROLE_REVIEW_TARGETS.diff.requirementConcerns, false);
   assert.equal(!!ROLE_REVIEW_TARGETS.requirements.requirementConcerns, false);
 });
+
+test('secondOpinion: names a declared role (or a provider role); normalized only when present', () => {
+  const spec = { roleReview: { ...SPEC, secondOpinion: 'security' } };
+  assert.deepEqual(roleReviewIssues(spec), []);
+  assert.equal(roleReviewOf(spec).secondOpinion, 'security');
+  assert.equal('secondOpinion' in roleReviewOf({ roleReview: SPEC }), false, 'absent: the spec comes back without it');
+  assert.deepEqual(roleReviewIssues({ roleReview: { ...SPEC, secondOpinion: 'qa' } }),
+    ['roleReview.secondOpinion "qa" names no role of this review (roles: correctness, security)']);
+  assert.equal(roleReviewOf({ roleReview: { ...SPEC, secondOpinion: 'qa' } }), null);
+  assert.deepEqual(roleReviewIssues({ roleReview: { ...SPEC, secondOpinion: 7 } }),
+    ['roleReview.secondOpinion 7 names no role of this review (roles: correctness, security)']);
+  const picked = { source: 'picked', target: 'plan', checklist: 'perspectives', sink: 'refiner' };
+  assert.equal(roleReviewOf({ roleReview: { ...picked, secondOpinion: 'product' } }).secondOpinion, 'product', 'a provider role');
+  assert.match(roleReviewIssues({ roleReview: { ...picked, secondOpinion: 'nobody' } })[0], /^roleReview\.secondOpinion "nobody" names no role of this review \(roles: product, /);
+});

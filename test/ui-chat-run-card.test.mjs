@@ -706,6 +706,7 @@ test('chat run card helpers: progressIdent, runRefOf, autoChip, resultWord, answ
       assert.equal(answerReceipt({ id: 'q', payload: { decision: 'approve' } }, { id: 'q', planAsk: true, roleReviews: RECORDED, step: 'Plan' }),
         'Plan approved · 5 roles reviewed · 1 open issue accepted');
       assert.equal(answerReceipt({ id: 'q', payload: { decision: 'approve' } }, { id: 'q', planAsk: false, step: 'Plan' }), 'Answer sent · Plan');
+      assert.equal(answerReceipt({ id: 'q', payload: { decision: 'approve' } }, { id: 'q', planAsk: true, reqAsk: true, step: 'Requirements' }), 'Requirements agreed');
       assert.equal(midTrunc('abcdefghij', 5), 'ab…ij');
       assert.equal(midTrunc('short.md'), 'short.md');
     } },

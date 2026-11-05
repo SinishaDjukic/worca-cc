@@ -29,7 +29,8 @@ import { delegateQuestion } from '../question-delegate.mjs';
 import { paintStatusDot } from '../status-dot.mjs';
 import { levelAtLeast } from '../ui-level.mjs';
 import { featureCardModel, paintFeatureLog } from '../shape/feature-card.mjs';
-import { namedAnswer, forgetAnswer } from '../shape/step-receipt.mjs';
+import { namedAnswer, forgetAnswer, REQUIREMENTS_AGREED } from '../shape/step-receipt.mjs';
+import { isRequirementsAsk } from '../shape/step-card.mjs';
 import { renderChecklistGroups } from '../shape/checklist-view.mjs';
 import { checkLine, roundCheck } from '../shape/plan-text.mjs';
 import { paintFeatureActions } from '../shape/feature-actions.mjs';
@@ -164,6 +165,7 @@ export function answerReceipt(sent, painted) {
   if (named) return named;
   const step = (painted && (painted.step || painted.heading)) || '';
   const tail = (t) => (step ? `${t} · ${step}` : t);
+  if (sent && painted && painted.reqAsk && sent.payload && sent.payload.decision === 'approve') return REQUIREMENTS_AGREED;
   if (sent && painted && painted.planAsk && sent.payload && sent.payload.decision === 'approve') return planApprovedLine(painted.roleReviews);
   if (sent && sent.payload && Array.isArray(sent.payload.answers)) {
     const n = sent.payload.answers.length;
@@ -564,7 +566,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
       if (!painted || painted.id !== (q.id || null)) { qErr.hidden = true; sent = null; shownFor = null; planSent = null; }
       const planAsk = askKindOf(pq) === 'plan' && !!pq.plan && !pq.plan.outline;
       painted = { id: q.id || null, runId: stepRef().runId, kind: q.kind || askKindOf(pq), heading: q.heading || '', step: q.step || '',
-        stepCard: !!q.stepCard, planAsk, roleReviews: planAsk ? pq.plan.roleReviews || null : null };
+        stepCard: !!q.stepCard, planAsk, reqAsk: isRequirementsAsk(pq), roleReviews: planAsk ? pq.plan.roleReviews || null : null };
       qHead.textContent = painted.heading;
       qHead.hidden = !painted.heading || painted.stepCard;   // a step card's own head says it once (shaper-cards D16)
       qBody.hidden = false;

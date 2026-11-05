@@ -34,6 +34,8 @@ export function roleOf(slot, { name = '' } = {}) {
     if (DEEP_STEP_KEYS.has(key) || DEEP_STEP_NAMES.has(String(name || '').trim().toLowerCase())) return 'deep';
     return QUICK_STEP_KEYS.has(key) ? 'quick' : 'everyday';
   }
+  // The Second-opinion reviewer has no role: from a role it would run on its step's model and undo the second opinion.
+  if (id === 'secondOpinionModel' || id === 'utilityModels.secondOpinion') return null;
   if (id.startsWith('utilityModels.')) return 'quick';
   return Object.hasOwn(SLOT_ROLES, id) ? SLOT_ROLES[id] : null;
 }
@@ -41,7 +43,7 @@ export function roleOf(slot, { name = '' } = {}) {
 // Claude's helper jobs are stored under their own keys (settings-cascade.mjs CLAUDE_USER); Codex's under utilityModels.codex.
 const CLAUDE_JOB_KEYS = Object.freeze({
   title: 'titleModel', classifier: 'autoWorkflowModel', prDescription: 'prDescriptionModel', memoryDefrag: 'memoryDefrag',
-  workspaceScan: 'workspaceScan', overview: 'utilityModels.overview',
+  workspaceScan: 'workspaceScan', overview: 'utilityModels.overview', secondOpinion: 'secondOpinionModel',
 });
 // Jobs with one key whatever the engine (user-only, Claude-only slots).
 const ENGINE_FREE_JOB_KEYS = Object.freeze({

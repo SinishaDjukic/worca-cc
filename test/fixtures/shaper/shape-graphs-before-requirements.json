@@ -101,9 +101,7 @@
       "roles": [
        {
         "key": "product",
-        "label": "Product",
-        "model": "claude-opus-5-5",
-        "effort": "medium"
+        "label": "Product"
        },
        {
         "key": "architect",
@@ -141,10 +139,9 @@
       "source": "picked",
       "target": "plan",
       "checklist": "perspectives",
-      "sink": "refiner"
-     },
-     "model": "claude-sonnet-5-5",
-     "effort": "medium"
+      "sink": "refiner",
+      "secondOpinion": "product"
+     }
     }
    }
   ],
@@ -417,9 +414,7 @@
       "roles": [
        {
         "key": "product",
-        "label": "Product",
-        "model": "claude-opus-5-5",
-        "effort": "medium"
+        "label": "Product"
        },
        {
         "key": "architect",
@@ -457,10 +452,9 @@
       "source": "picked",
       "target": "plan",
       "checklist": "perspectives",
-      "sink": "refiner"
-     },
-     "model": "claude-sonnet-5-5",
-     "effort": "medium"
+      "sink": "refiner",
+      "secondOpinion": "product"
+     }
     }
    }
   ],
