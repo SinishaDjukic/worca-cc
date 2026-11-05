@@ -92,16 +92,19 @@ roles. The Roles card on the Models page (above the Engines card) sets them:
 |---|---|---|
 | Deep thinking | `deep` | Plans and reviews: the Plan, Plan review, Refine plan, Review implementation, Deck review and Bug Root Cause steps, and Away mode's decider (`nightMode.deciderModel`) |
 | Everyday coding | `everyday` | Every other step, Chat (`askModels`), Agent generation (`agentGenModel`), the Requirements interview (`requirementsInterview`) and Claude's Auto classifier (`autoWorkflowModel`) |
-| Quick jobs | `quick` | Titles (`titleModel`), Run naming (`namingModel`), Command summaries (`commandSummaryModel`), PR description (`prDescriptionModel`), Memory defragment (`memoryDefrag`, including its step), Workspace scan (`workspaceScan`, the scan model only) and every `utilityModels.<engine>.*` job, Codex's Auto classifier included |
+| Quick jobs | `quick` | Titles (`titleModel`), Run naming (`namingModel`), Command summaries (`commandSummaryModel`), PR description (`prDescriptionModel`), Memory defragment (`memoryDefrag`, including its step), Workspace scan (`workspaceScan`, the scan model only) and every `utilityModels.<engine>.*` job, Codex's Auto classifier included (not `secondOpinion`, which has no role) |
 
 Where a slot looks, in order:
 
 - **Steps:** the node's own pick, the project's step model, your or the team's
-  step model, the workflow template's own model, then the role. A run started
+  step model, the workflow template's own model, else Worca's factory default
+  for that slot, then the role. A run started
   with its own model (`--model`) uses that model for every unset step instead
   of the role, and an Auto run skips the role, as it skips your step models.
-- **Helper jobs:** the job's own setting, then the role, then today's
-  fallback (for titles: the run's model, then the built-in Haiku).
+- **Helper jobs:** the job's own setting, then the role, then Worca's factory
+  default where the job has one, then today's fallback (for titles: the run's
+  model, then the built-in Haiku). Memory defragment and the workspace scan read
+  this way even as steps of their own run.
 
 Roles are kept per harness (`modelRoles.claude`, `modelRoles.codex`): a Claude
 run never reads the Codex roles, and a harness with no roles keeps today's
@@ -121,6 +124,63 @@ curl -X POST http://localhost:4317/api/settings -H 'Content-Type: application/js
 
 `null` clears a role (`{ "modelRoles": { "claude": { "quick": null } } }`).
 Chat's `change_setting` sets the same values as `models.<harness>.roles.<role>`.
+
+### Built-in workflows take their models from the Models page
+
+The built-in workflows name no model. Each model they used to pin is now a
+factory default on the Models page. The helper jobs show theirs as "(default)"
+until you set your own; the two step rows keep your role's text and name it in
+their hint, because it applies to role reviews only:
+
+| Home on the Models page | Used by | Factory default |
+|---|---|---|
+| Step models › Plan Review | role reviews of a plan (Shaper's Plan Review step) | Sonnet 5.5 · medium |
+| Step models › Requirements Review | role reviews of the requirements (Shaper with requirements first) | Sonnet 5.5 · medium |
+| Helper jobs › Second-opinion reviewer | the one role a role review names as its second opinion (Shaper's Product reviewer) | Opus 5.5 · medium |
+| Helper jobs › Memory defragment | the Memory defragment run | Sonnet 5 |
+| Settings › Runs › Workspaces | the workspace scan | Sonnet 5 · medium, project agents `sonnet` · medium |
+
+The factory default sits where the template's own model used to, so a node
+pick, a project pick and your step model still win over it. On the Plan Review
+step it applies to role reviews only: a plain plan review step (Default, Auto)
+keeps your Deep thinking role. Memory defragment and the workspace scan take
+the Quick jobs role first, as before.
+
+**Second-opinion reviewer** (`secondOpinionModel` on Claude, a `{ model, effort }`
+pair; `utilityModels.codex.secondOpinion` on Codex) is a helper job of its own.
+A role review names its second opinion with `roleReview.secondOpinion: "<role key>"`
+(Shaper names `product`), and that role runs on this model, so one reviewer
+always judges on another model than its step. It is set per user only and has
+no role: from a role it would land on its step's model again.
+
+**When a factory default cannot run.** On a Claude install that is not signed
+in to Claude Code (for example one that runs GitHub Copilot models), a factory
+default that needs the sign-in is dropped. The step uses what it would use with
+nothing set: your role for that step, else the run's model, else Claude's own
+default. The run log says so once per setting, for example
+`Second-opinion reviewer: Opus 5.5 needs Claude Code sign-in; using Copilot Claude Sonnet 4.6 · high`.
+When the second opinion has no other model, it runs on its step's model at the
+next effort the model offers (`(same model and effort as the step)` when there
+is none). A model routed through a provider, or one whose own `env` signs the
+CLI in (`ANTHROPIC_API_KEY`, `CLAUDE_CODE_USE_BEDROCK`, …), never needs the
+sign-in and is never dropped or refused; when the sign-in state is unknown, the
+factory default stays.
+
+**A model you set is never replaced.** If a model you, your team, the project
+or the run set needs the sign-in while Claude Code is signed out, the start is
+refused before anything runs, naming the setting and the model, for example
+``Claude Code isn't signed in, and Models › Step models › Plan Review names Opus 5.5, which needs it — pick a model routed through a provider on the Models page, or sign in (run `claude`, then /login)``.
+A workspace scan is refused the same way, naming Settings › Runs › Workspaces.
+A paused run resumes on the models it started with, without a new warning or
+refusal.
+
+```sh
+curl -X POST http://localhost:4317/api/settings -H 'Content-Type: application/json' \
+  -d '{ "secondOpinionModel": { "model": "claude-opus-5-5", "effort": "high" } }'
+```
+
+`null` clears it. A saved copy of Shaper made before this change keeps the
+models it was saved with and does not name a second opinion.
 
 ## Providers
 
@@ -487,6 +547,38 @@ A plugin never ships a credential: a `copilot` entry resolves against each
 user's own sign-in, and an `apiKey` must be a `${VAR}` reference. A team policy
 may ship `upstream` models under the same rule.
 
+## Claude Code
+
+Claude Code is the default engine. Every run and every chat uses it unless you pick another engine. Real runs need
+it installed and signed in. Mock runs (`worca ui --mock`, or the Mock switch) need neither.
+
+**Install and sign in:**
+
+```bash
+npm install -g @anthropic-ai/claude-code   # puts `claude` on your PATH
+claude auth login                          # opens the browser; sign in with your Claude account
+claude auth status                         # check: it should say you are signed in
+```
+
+- **Sign in with an API key instead.** Use `claude auth login --console` (Anthropic Console, billed per token), or
+  set `ANTHROPIC_API_KEY` in worca's environment.
+- **Sign in on a server with no browser.** Run `claude setup-token` on a machine that has one. Then set the token it
+  prints as `CLAUDE_CODE_OAUTH_TOKEN` where worca runs.
+- **Another endpoint.** Bedrock, Vertex, a gateway or a provider through the bridge need no sign-in. See
+  [Three ways a model connects](#three-ways-a-model-connects).
+- **The desktop app's sign-in does not carry over.** The Claude desktop app and the `claude` CLI sign in separately.
+- **Signing in again** works from a terminal: `claude auth logout`, then `claude auth login`.
+
+**Make sure worca finds it.** worca runs the `claude` that is first on its `PATH`. Point it at another binary with
+`WORCA_CLAUDE_BIN=/path/to/claude`. On native Windows, Anthropic's
+[native installer](https://docs.anthropic.com/en/docs/claude-code/setup) (`claude.exe`) and the npm install both
+work. For an npm install worca runs the package's native `claude.exe` next to npm's `claude.cmd` shim.
+
+**How worca checks it.** Getting started's **Connect Claude Code** step and the setup assistant run
+`claude auth status` (see [getting-started.md](getting-started.md)). An API key, an OAuth token, a custom endpoint
+or the Bedrock / Vertex switch in worca's environment counts as signed in. When a chat turn or a model test fails
+because the CLI is signed out, worca says so instead of showing the bare error.
+
 ## Codex
 
 worca can run pipelines and chats on OpenAI's Codex CLI.
@@ -556,11 +648,33 @@ What an Ask chat on Codex can do, and what it cannot do:
 
 worca can run pipelines and chats on GitHub's own Copilot CLI (`copilot`). This is a separate engine from the Copilot *provider* above. The provider routes Claude Code's requests to Copilot's API through worca's bridge, as an editor client. The engine runs GitHub's own supported CLI as the agent, without worca's bridge in between. Your plan's AI-credit (premium request) allowance still does.
 
-1. Install the CLI (`npm i -g @github/copilot`, version 1.0.92 or later) and make sure worca finds it: on `PATH`, or `WORCA_COPILOT_BIN=/path/to/copilot` in worca's environment. On Windows an npm install needs no `WORCA_*_BIN`: worca runs the package's native `.exe` when it finds one next to npm's `.cmd` shim, else `node <entry script>` from the shim (never a shell), and the variable may point at a `.exe` or a `.cmd`.
-2. Sign in once in a terminal: `copilot login`. Or put a fine-grained token with the "Copilot Requests" permission in `COPILOT_GITHUB_TOKEN`. worca never hands `GH_TOKEN` or `GITHUB_TOKEN` to an agent, so Copilot does not pick those up.
-3. Pick Copilot per run on New pipeline, run `worca --engine copilot …`, or set it as the default engine on the Models page (Engines) or in a project's Settings. For Chat, Settings › Chat › Engine & models.
+You need a GitHub account with Copilot access (any Copilot plan, including Free).
 
-There is no sign-in status command, so worca checks only that the binary runs before a run starts. A signed-out CLI fails at the first agent node with an auth error.
+**Install and sign in:**
+
+```bash
+npm install -g @github/copilot   # puts `copilot` on your PATH; needs 1.0.92 or later (Chat needs 1.0.100)
+copilot --version                # check the version
+copilot login                    # follow the prompts to sign in to GitHub
+```
+
+- **Sign in with a token instead.** Create a fine-grained GitHub token with the **Copilot Requests** permission.
+  Set it as `COPILOT_GITHUB_TOKEN` in worca's environment. worca never hands `GH_TOKEN` or `GITHUB_TOKEN` to an
+  agent, so Copilot does not pick those up.
+- **This is not the Copilot provider's sign-in.** The [Providers](#providers) page has its own GitHub sign-in, for
+  Claude Code runs on Copilot models. Signing in to one does not sign in the other.
+- **Check the sign-in yourself.** The CLI has no sign-in status command, so worca checks only that the binary runs.
+  A signed-out CLI fails at the first agent node with an auth error. When in doubt, run
+  `copilot login` again.
+
+**Make sure worca finds it.** worca runs the `copilot` that is first on its `PATH`. Point it at another binary with
+`WORCA_COPILOT_BIN=/path/to/copilot`. On Windows an npm install needs no `WORCA_*_BIN`: worca runs the package's
+native `.exe` when it finds one next to npm's `.cmd` shim, else `node <entry script>` from the shim (never a shell),
+and the variable may point at a `.exe` or a `.cmd`.
+
+**Use it.** Pick Copilot per run under **Engine** on New pipeline (Advanced), or run `worca --engine copilot …`. To
+make it the default, set it on the Models page (Engines) or in a project's Settings. For Chat, use Settings › Chat ›
+Engine & models.
 
 **Models.** The models `copilot --model` takes are built-in catalog entries on the Copilot sign-in, listed under *Copilot built-in models* on the Models page. Their catalog id is `copilot/<Copilot's id>`, such as `copilot/gpt-5.5` or `copilot/claude-sonnet-5.5`. Copilot's own ids clash with Codex's built-ins (`gpt-5.5`) and look like Claude's, and the catalog keeps one entry per id. Copilot is handed its own id. To add a model Copilot gained after this list, add a model with the Copilot sign-in.
 
@@ -1035,9 +1149,10 @@ picked per run, findings to Refine). Every node and role pick is cleaned in one 
     `runs Codex's default effort` (a node).
 
   Only the winning layer counts: a lower layer's pick that a higher one overrode never ran, so
-  it is not named. A built-in workflow's own defaults (Shaper's models, for example) are
-  recorded as `wanted` but never warned about: they are nobody's pick. A saved workflow's
-  models are, so they warn.
+  it is not named. Worca's factory defaults (Shaper's Plan Review and Second-opinion reviewer
+  models, for example, see [Built-in workflows take their models from the Models page](#built-in-workflows-take-their-models-from-the-models-page))
+  are recorded as `wanted` but never warned about: they are nobody's pick. A saved workflow's
+  own models are, so they warn.
 - **A usage limit during a role names the role's connection.** If a role runs on a provider
   model, the pause says that provider's limit (for example `OpenAI-compatible limit — …`),
   even when the node itself runs on the sign-in.

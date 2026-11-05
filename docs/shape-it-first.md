@@ -415,6 +415,36 @@ card is posted per fix run. When the watch gives up, the run card says so under 
 card the watch is only the PR link's tooltip (`PR #781 · watched`). With Shaper off, each fix run still gets its own
 `PR fix run` card.
 
+## Requirements first (Labs)
+
+Labs flag `shapeRequirements`. A medium or large Shaper task agrees its requirements before the plan is written. The
+Shaper's Requirements step is a hold, like the plan approval, and it has its own card. Three cards change:
+
+- **The Shaper card.** One facts line (`Large task · ≈ $31 · ~84 min`), then one sentence: `You lead as [Product ▾],
+  supported by [QA and Security ▾].` Each picker opens a menu: the lead is one of Product, Engineering, Design, QA,
+  Security and DevOps, and the supporters are switches (Product always reviews and is not listed). The first time, the
+  lead reads `pick a role` and **Shape requirements** stays off until you pick one; your pick is remembered for next
+  time. **Shape requirements** is the primary button and **Run as is** steps back. A small task keeps **Shaper** and
+  **Run as is**, with the facts line and the perspective chips. A card proposed directly as Shaper gets the same
+  sentence and **Shape requirements** when medium or large, and it has no **Run as is**; a small or unsized one keeps
+  its fields and **Start planning**, with the facts line.
+- **The Requirements card.** `6 agreed by the perspectives · 2 need you · as Product`, then the agreed requirements as
+  rows, then the decisions the perspectives could not settle. Each decision is one question with Worca's pick already
+  chosen and marked `recommended`; change any of them. Questions and answers are worded for the lead you picked: a
+  Product or Design lead never sees code terms such as `project:read`; a scope token with no plain wording reads
+  `read access`. **Agree and plan** is the only primary.
+  **Ask for changes** sends your words and your picks back. Agree and plan is off, with the reason beside it, when no
+  requirement was written or a requirement fails its check. If the requirements could not be loaded the card says so and
+  **Try again** is the primary.
+- **The plan card.** A **Requirements 7/8 · 1 to fix** fold sits above **Shape** and opens when a requirement has no
+  step that delivers it; the row reads `R-ops-1 · <the requirement>` and `not covered by any step`. While any row fails,
+  **Fix all** is the primary and **Approve and build** is a plain button; when everything is covered, **Approve and
+  build** is the primary again. The Chat run card says `Requirements 7/8 · 1 to fix · Plan ✓ · Refine ✓ while planning`
+  in place of `Clarify ✓` for such a run.
+
+Rollback: turn the flag off. New runs ask the old questions and show the old cards. A run already held at its
+requirements keeps asking, and its card stays answerable until it finishes.
+
 ## Limits
 
 - Workspace runs are not sliced, and their checklists are not merged: a shaped
