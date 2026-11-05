@@ -4065,7 +4065,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       subWrap.appendChild(make('span', null, 'Sub-agents'));
       const subSel = rpSelect('ask-rp-subagent', `Sub-agent model for ${row.label}`);
       subSel.appendChild(opt('', 'subs: default (agent picks)'));
-      for (const v of lane.subagentModels) { const o = opt(v, `subs: ${subagentAliasLabel(v)}`); o.title = subagentAliasTitle(v); subSel.appendChild(o); }
+      for (const v of lane.subagentModels) { const o = opt(v, `subs: ${subagentAliasLabel(v)}`); const t = subagentAliasTitle(v); if (t) o.title = t; subSel.appendChild(o); }
       subSel.value = lane.subagentModels.includes(c.subagentModel) ? c.subagentModel : '';
       subSel.disabled = !lane.editable;
       subSel.title = 'Model for the sub-agents this node spawns (needs fan-out)';

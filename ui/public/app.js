@@ -4717,7 +4717,7 @@ function renderSubagentModelSelect(sel, value) {
   const label = (v) => `subs: ${subagentAliasLabel(v)}`;
   sel.innerHTML = '';
   sel.appendChild(option('', 'subs: default (agent picks)'));
-  for (const v of state.subagentModels) { const o = option(v, label(v)); o.title = subagentAliasTitle(v); sel.appendChild(o); }
+  for (const v of state.subagentModels) { const o = option(v, label(v)); const t = subagentAliasTitle(v); if (t) o.title = t; sel.appendChild(o); }
   sel.value = state.subagentModels.includes(value) ? value : '';
 }
 
@@ -10565,7 +10565,7 @@ function paintScanModelPickers(ids, pick, catalog) {
   sm.value = pick.scanModel || '';
   paintScanEffort(ids, pick.scanEffort || '', catalog);
   am.innerHTML = '';
-  for (const v of SCAN_AGENT_ALIASES) { const o = option(v, subagentAliasLabel(v)); o.title = subagentAliasTitle(v); am.appendChild(o); }
+  for (const v of SCAN_AGENT_ALIASES) { const o = option(v, subagentAliasLabel(v)); const t = subagentAliasTitle(v); if (t) o.title = t; am.appendChild(o); }
   am.value = pick.agentModel;
   ae.innerHTML = '';
   for (const e of SCAN_EFFORTS) ae.appendChild(option(e, e));
