@@ -15,6 +15,8 @@ import { MARK } from '../src/core/chat/receipts.mjs';
 import { splitText, withRetryLadder } from '../plugins/telegram-chat/lib/send-util.mjs';
 import { toTelegramHtml, toSlackMrkdwn } from '../plugins/telegram-chat/lib/markdown.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { isValidIncoming } from '../src/core/chat/channel-protocol.mjs';
+import { readFileSync } from 'node:fs';
 
 const json = (obj, status = 200) => ({
   ok: status >= 200 && status < 300,
@@ -381,6 +383,21 @@ const fakeTimers = () => {
   return { timers, setTimer: (fn, ms) => { const t = { fn, ms, cleared: false }; timers.push(t); return t; }, clearTimer: (t) => { t.cleared = true; } };
 };
 const md = (value) => ({ title: null, severity: 'info', body: [{ kind: 'markdown', value }] });
+
+const SG = { id: -1001234, type: 'supergroup', title: 'devs' };
+const ADA = { id: 111, first_name: 'Ada', username: 'ada' };
+const BEN = { id: 222, first_name: 'Ben' };
+const BOTU = { id: 77, is_bot: true, first_name: 'worca', username: 'worca_bot' };
+const mention = (len = 10) => [{ type: 'mention', offset: 0, length: len }];
+async function tgWorker(reply = () => undefined, { files = null } = {}) {
+  const api = botApi(reply);
+  const { ctx, events, abort } = fakeCtx();
+  const sleeps = [];
+  const fetchFn = (u, init) => (String(u).includes('/file/bot') ? files(String(u), init) : api.fetchFn(u, init));
+  const w = createTelegramWorker(ctx, { fetchFn, _sleep: async (ms) => { sleeps.push(ms); } });
+  await w.start();
+  return { w, api, events, sleeps, stop: async () => { await w.stop(); abort(); } };
+}
 
 test('ids: surfaces and message keys name their chat; anything else is refused', () => {
   assert.deepEqual(parseSurface('42'), { chat: '42', topic: null, anchor: null });
@@ -783,4 +800,217 @@ test('topics: the pointer to a new topic escapes the thread name', async (t) => 
   await waitFor(() => events.inbound.length === 1);
   await w.send('-1009', md('h'), { thread: { fromMessageId: '-1009:21', name: 'a <b> & c' } });
   assert.equal(api.of('sendMessage').at(-1).body.text, 'Continuing in the topic <a href="https://t.me/c/9/31">a &lt;b&gt; &amp; c</a>.');
+});
+
+test('inbound context: reply_to_message is quoted with its caption and document; a caption mention counts; topic starts and the bot\'s own messages inside a conversation are not quoted', async () => {
+  const { api, events, stop } = await tgWorker();
+  api.push({ update_id: 1, message: { message_id: 10, date: 1700000000, chat: SG, from: ADA, text: '@worca_bot summarise', entities: mention(),
+    reply_to_message: { message_id: 9, date: 1699999999, chat: SG, from: BEN, caption: 'the plan',
+      document: { file_id: 'doc-9', file_unique_id: 'u9', file_name: 'plan.md', mime_type: 'text/markdown', file_size: 19 } } } });
+  const a = await waitFor(() => events.inbound[0]);
+  assert.equal(a.text, 'summarise');
+  assert.deepEqual([a.replyTo.author, a.replyTo.text, a.replyTo.at, a.replyTo.link], ['Ben', 'the plan', '2023-11-14T22:13:19.000Z', 'https://t.me/c/1234/9']);
+  assert.deepEqual(a.replyTo.attachments.map(({ ref, ...x }) => x), [{ name: 'plan.md', contentType: 'text/markdown', size: 19 }]);
+  assert.match(a.replyTo.attachments[0].ref, /^[A-Za-z0-9_-]{24}$/);
+  assert.equal(isValidIncoming(a), true);
+
+  api.push({ update_id: 2, message: { message_id: 11, date: 1700000001, chat: SG, from: ADA, caption: '@worca_bot look', caption_entities: mention(),
+    photo: [{ file_id: 'p-s', file_unique_id: 's', width: 90, height: 90, file_size: 1000 }, { file_id: 'p-l', file_unique_id: 'l', width: 1280, height: 1280, file_size: 50000 }] } });
+  const b = await waitFor(() => events.inbound[1]);
+  assert.deepEqual([b.text, b.meta.mentionsBot, b.meta.link], ['look', true, 'https://t.me/c/1234/11']);
+  assert.deepEqual(b.attachments.map(({ ref, ...x }) => x), [{ name: 'photo-11.jpg', contentType: 'image/jpeg', size: 50000 }]);
+  assert.equal(b.replyTo, undefined);
+
+  const FORUM = { id: -1003000, type: 'supergroup', title: 'ops', is_forum: true };
+  api.push({ update_id: 3, message: { message_id: 21, date: 1700000002, chat: FORUM, from: ADA, text: '@worca_bot hi', entities: mention(),
+    message_thread_id: 20, is_topic_message: true, reply_to_message: { message_id: 20, date: 1700000000, chat: FORUM, from: ADA, forum_topic_created: { name: 'x' } } } });
+  const DM = { id: 111, type: 'private', first_name: 'Ada' };
+  api.push({ update_id: 4, message: { message_id: 31, date: 1700000003, chat: DM, from: ADA, text: 'yes', reply_to_message: { message_id: 30, date: 1700000000, chat: DM, from: BOTU, text: 'Which branch?' } } });
+  api.push({ update_id: 5, message: { message_id: 32, date: 1700000004, chat: DM, from: ADA, text: 'and this', reply_to_message: { message_id: 29, date: 1700000000, chat: DM, from: ADA, text: 'my note' } } });
+  api.push({ update_id: 6, message: { message_id: 12, date: 1700000005, chat: SG, from: ADA, text: '@worca_bot what is this', entities: mention(),
+    reply_to_message: { message_id: 8, date: 1700000000, chat: SG, from: BOTU, text: 'Run 1234 failed' } } });
+  await waitFor(() => events.inbound.length === 6);
+  assert.equal(events.inbound[2].replyTo, undefined, 'a topic\'s own start is not a reply');
+  assert.equal(events.inbound[3].replyTo, undefined, 'a reply to the bot inside the DM conversation answers it');
+  assert.equal(events.inbound[4].replyTo.author, 'Ada');
+  assert.equal(events.inbound[5].replyTo.author, 'worca (this bot)', 'a group start may quote the bot\'s notification');
+  for (const m of events.inbound) assert.equal(isValidIncoming(m), true);
+  await stop();
+});
+
+test('albums: messages sharing a media_group_id go out as ONE message (the caption as its text, every file); a later message of the chat sends a pending album first', async () => {
+  const api = botApi();
+  const { ctx, events, abort } = fakeCtx();
+  const { timers, setTimer, clearTimer } = fakeTimers();
+  const w = createTelegramWorker(ctx, { fetchFn: api.fetchFn, _sleep: async () => {}, setTimer, clearTimer });
+  await w.start();
+  try {
+    const DM = { id: 111, type: 'private', first_name: 'Ada' };
+    const photo = (id) => [{ file_id: `p-${id}`, file_unique_id: `u${id}`, width: 90, height: 90, file_size: 1000 + id }];
+    api.push(
+      { update_id: 1, message: { message_id: 40, date: 1700000000, chat: DM, from: ADA, media_group_id: 'g1', photo: photo(40) } },
+      { update_id: 2, message: { message_id: 41, date: 1700000000, chat: DM, from: ADA, media_group_id: 'g1', caption: 'compare these', photo: photo(41) } },
+      { update_id: 3, message: { message_id: 42, date: 1700000000, chat: DM, from: ADA, media_group_id: 'g1', photo: photo(42) } });
+    await waitFor(() => timers.length === 3);
+    assert.equal(events.inbound.length, 0, 'an album waits for its last message');
+    assert.deepEqual(timers.map((t) => t.cleared), [true, true, false], 'each arrival restarts the wait');
+    timers[2].fn();
+    assert.equal(events.inbound.length, 1);
+    const a = events.inbound[0];
+    assert.deepEqual([a.chatId, a.text, a.meta.messageId], ['111', 'compare these', '111:41'], 'the captioned message leads');
+    assert.deepEqual(a.attachments.map((x) => x.name), ['photo-40.jpg', 'photo-41.jpg', 'photo-42.jpg']);
+    assert.equal(isValidIncoming(a), true);
+
+    api.push(
+      { update_id: 4, message: { message_id: 50, date: 1700000001, chat: DM, from: ADA, media_group_id: 'g2', photo: photo(50) } },
+      { update_id: 5, message: { message_id: 51, date: 1700000001, chat: DM, from: ADA, media_group_id: 'g2', photo: photo(51) } },
+      { update_id: 6, message: { message_id: 52, date: 1700000002, chat: DM, from: ADA, text: 'and why' } });
+    await waitFor(() => events.inbound.length === 3);
+    assert.deepEqual(events.inbound.slice(1).map((m) => [m.text, (m.attachments || []).length, m.meta.messageId]),
+      [['', 2, '111:50'], ['and why', 0, '111:52']], 'no caption: the first message leads; the album goes out before the next message');
+    assert.ok(timers.slice(3).every((t) => t.cleared), 'a sent album leaves no timer behind');
+  } finally {
+    await w.stop();
+    abort();
+  }
+});
+
+test('fetchFile: getFile then the file URL; the largest photo within the cap; the token only in the download URL, never in an error; 20 MB and tooBig', async () => {
+  const downloads = [];
+  const inits = [];
+  let dl = 'ok';
+  const { w, api, events, stop } = await tgWorker((method, body) => {
+    if (method !== 'getFile') return undefined;
+    if (body.file_id === 'huge') return json({ ok: false, description: 'Bad Request: file is too big' }, 400);
+    if (body.file_id === 'dotdot') return json({ ok: true, result: { file_id: 'dotdot', file_unique_id: 'u', file_path: 'documents/../../x.md' } });
+    if (body.file_id === 'query') return json({ ok: true, result: { file_id: 'query', file_unique_id: 'u', file_path: 'documents/x.md?a=1' } });
+    return json({ ok: true, result: { file_id: body.file_id, file_unique_id: 'u', file_path: `photos/${body.file_id}.jpg` } });
+  }, { files: (u, init) => {
+    downloads.push(u);
+    inits.push(init);
+    if (dl === 'boom') throw new TypeError('fetch failed');
+    if (dl === '404') return new Response('', { status: 404 });
+    if (dl === 'long') return new Response(Buffer.alloc(3000, 1), { status: 200 });
+    return new Response(Buffer.from('JPEGDATA'), { status: 200 });
+  } });
+  api.push({ update_id: 1, message: { message_id: 11, date: 1700000001, chat: { id: 111, type: 'private', first_name: 'Ada' }, from: ADA, caption: 'pic',
+    photo: [{ file_id: 'p-s', file_unique_id: 's', file_size: 1000 }, { file_id: 'p-l', file_unique_id: 'l', file_size: 50000 }],
+  } });
+  api.push({ update_id: 2, message: { message_id: 12, date: 1700000002, chat: { id: 111, type: 'private', first_name: 'Ada' }, from: ADA,
+    document: { file_id: 'big', file_unique_id: 'b', file_name: 'video.bin', file_size: 30 * 1024 * 1024 } } });
+  api.push({ update_id: 3, message: { message_id: 13, date: 1700000003, chat: { id: 111, type: 'private', first_name: 'Ada' }, from: ADA,
+    document: { file_id: 'huge', file_unique_id: 'h', file_name: 'dump.bin' } } });
+  for (const [n, fileId] of [[14, 'dotdot'], [15, 'query']]) {
+    api.push({ update_id: n - 10, message: { message_id: n, date: 1700000000 + n, chat: { id: 111, type: 'private', first_name: 'Ada' }, from: ADA,
+      document: { file_id: fileId, file_unique_id: fileId, file_name: `${fileId}.md`, file_size: 10 } } });
+  }
+  const ref = (await waitFor(() => events.inbound[0])).attachments[0].ref;
+  assert.equal((await waitFor(() => events.inbound[1])).attachments[0].unavailable, 'over the 20 MB the Telegram Bot API lets a bot download');
+  assert.equal(String((await w.fetchFile(ref, { maxBytes: 100000 })).data), 'JPEGDATA');
+  assert.equal(api.of('getFile').at(-1).body.file_id, 'p-l');
+  assert.equal(downloads.at(-1), 'https://api.telegram.org/file/botbot-token-1234/photos/p-l.jpg');
+  await w.fetchFile(ref, { maxBytes: 2000 });
+  assert.equal(api.of('getFile').at(-1).body.file_id, 'p-s', 'the largest size that fits the cap');
+  const calls = api.of('getFile').length;
+  await assert.rejects(w.fetchFile(ref, { maxBytes: 500 }), (e) => e.tooBig === true);
+  assert.equal(api.of('getFile').length, calls, 'nothing fits: no request');
+  for (const [m, re, permanent] of [['boom', /file download failed/, false], ['404', /not found/, true]]) {
+    dl = m;
+    await assert.rejects(w.fetchFile(ref, { maxBytes: 100000 }), (e) => re.test(e.message) && !e.message.includes('bot-token-1234') && (e.permanent === true) === permanent, m);
+  }
+  await assert.rejects(w.fetchFile('Z'.repeat(24), { maxBytes: 10 }), (e) => e.permanent === true && /expired/.test(e.message));
+  const huge = (await waitFor(() => events.inbound[2])).attachments[0];
+  assert.deepEqual([huge.size, typeof huge.ref], [0, 'string'], 'a document of unknown size is offered as a ref');
+  await assert.rejects(w.fetchFile(huge.ref, { maxBytes: 100000 }), (e) => e.tooBig === true && e.permanent === true, 'getFile "file is too big" is tooBig');
+  assert.ok(inits.length > 0 && inits.every((i) => i?.redirect === 'error'), 'the URL that holds the token is fetched with no redirects');
+  dl = 'long';
+  await assert.rejects(w.fetchFile(ref, { maxBytes: 2000 }), (e) => e.tooBig === true, 'a body over the cap is cut off, whatever size Telegram declared');
+  dl = 'ok';
+  const fetched = downloads.length;
+  for (const k of [3, 4]) {
+    const r = (await waitFor(() => events.inbound[k])).attachments[0].ref;
+    await assert.rejects(w.fetchFile(r, { maxBytes: 100000 }), (e) => e.permanent === true && /no file path/.test(e.message), `inbound ${k}`);
+  }
+  assert.equal(downloads.length, fetched, 'a file path Telegram should never answer is not fetched');
+  await stop();
+});
+
+test('typing: sendChatAction now and every 4 s (topics carry their thread); a 429 pauses beats until retry_after; refusals stop it', async () => {
+  let mode = 'ok';
+  const api = botApi((method) => {
+    if (method !== 'sendChatAction') return undefined;
+    if (mode === 'limit') { mode = 'ok'; return json({ ok: false, parameters: { retry_after: 9 } }, 429); }
+    if (mode === '403') return json({ ok: false, description: 'Forbidden: bot was kicked' }, 403);
+    return undefined;
+  });
+  const { ctx, events } = fakeCtx();
+  let t = 1_000_000;
+  const timers = new Map();
+  let nextT = 0;
+  const _timers = { setInterval: (fn, ms) => { const id = ++nextT; timers.set(id, { fn, ms }); return id; }, clearInterval: (id) => { timers.delete(id); } };
+  const beat = async (ms) => { t += ms; for (const { fn } of [...timers.values()]) fn(); await new Promise((r) => setTimeout(r, 5)); };
+  const w = createTelegramWorker(ctx, { fetchFn: api.fetchFn, _sleep: async () => {}, now: () => t, _timers });
+  assert.deepEqual(await w.typing('-1003000:t20', true), { ok: true });
+  assert.deepEqual(api.of('sendChatAction').map((c) => c.body), [{ chat_id: '-1003000', action: 'typing', message_thread_id: 20 }]);
+  assert.deepEqual([...timers.values()].map((x) => x.ms), [4000]);
+  await beat(4000);
+  assert.equal(api.of('sendChatAction').length, 2);
+  mode = 'limit';
+  await beat(4000);                                   // 429 retry_after 9 s
+  await beat(4000); await beat(4000);
+  assert.equal(api.of('sendChatAction').length, 3, 'no request while retry_after runs');
+  await beat(4000);
+  assert.equal(api.of('sendChatAction').length, 4);
+  assert.deepEqual(await w.typing('-1003000:t20', false), { ok: true });
+  assert.equal(timers.size, 0);
+  mode = '403';
+  await assert.rejects(w.typing('-500', true), (e) => e.permanent === true);
+  assert.equal(timers.size, 0, 'a refused start starts no refresh');
+  mode = 'ok';
+  await w.typing('-500', true);
+  await beat(31 * 60 * 1000);
+  assert.equal(timers.size, 0, 'it ends on its own after 30 min');
+  await w.typing('-501', true);
+  await w.stop();
+  assert.equal(timers.size, 0, 'stop() clears every refresh');
+  await assert.rejects(w.typing('not a chat', true), (e) => e.permanent === true);
+  void events;
+});
+
+test('live status: a status edit spends one 10 s budget of 429 waits, then throws back with retryAfterMs', async () => {
+  const api = botApi((method) => (method === 'editMessageText' ? json({ ok: false, parameters: { retry_after: 5 } }, 429) : undefined));
+  const { ctx } = fakeCtx();
+  const sleeps = [];
+  const w = createTelegramWorker(ctx, { fetchFn: api.fetchFn, _sleep: async (ms) => { sleeps.push(ms); } });
+  await assert.rejects(w.send('-500:r505', md('⏳ Working on it… · 5 s'), { edit: { messageId: '-500:507' } }), (e) => e.kind === 'rate-limit' && e.retryAfterMs === 5000);
+  assert.ok(sleeps.reduce((a, b) => a + b, 0) <= 10000, `under the host's 15 s send RPC (${sleeps})`);
+});
+
+test('live status: a reply longer than one message edits the status message with the first chunk and posts the rest on the same surface, keyboard on the last', async () => {
+  const api = botApi();
+  const { ctx } = fakeCtx();
+  const w = createTelegramWorker(ctx, { fetchFn: api.fetchFn, _sleep: async () => {} });
+  const long = 'a'.repeat(4096) + 'b'.repeat(4096) + 'c'.repeat(500);
+  const r = await w.send('-500:t12', { title: null, severity: 'info', body: [{ kind: 'text', value: long }],
+    controls: [{ kind: 'button', ref: REF, label: 'Stop', style: 'danger' }] }, { edit: { messageId: '-500:507' } });
+  const edits = api.of('editMessageText').map((c) => c.body);
+  const posts = api.of('sendMessage').map((c) => c.body);
+  assert.equal(edits.length, 1);
+  assert.deepEqual(edits[0].reply_markup, { inline_keyboard: [] }, 'the keyboard does not ride the first of several chunks');
+  assert.equal(posts.length, 2);
+  assert.deepEqual(posts.map((p) => [p.chat_id, p.message_thread_id]), [['-500', 12], ['-500', 12]], 'the rest goes to the same topic');
+  assert.equal(posts[0].reply_markup, undefined);
+  assert.deepEqual(posts[1].reply_markup.inline_keyboard.flat().map((b) => b.text), ['Stop']);
+  assert.equal(edits[0].text + posts.map((p) => p.text).join(''), long, 'nothing of the reply is lost');
+  assert.deepEqual(r.messageIds, ['-500:507', '-500:501', '-500:502']);
+});
+
+test('telegram-chat 0.4.0 manifest: live status; no history setting and no attachment hosts (files ride as worker refs)', () => {
+  const m = JSON.parse(readFileSync(new URL('../plugins/telegram-chat/worca-cc-plugin.json', import.meta.url), 'utf8'));
+  assert.equal(m.version, '0.4.0');
+  const ch = m.chatChannels[0];
+  assert.deepEqual(ch.capabilities, { inbound: true, outbound: true, interactive: true, liveStatus: true });
+  assert.equal(ch.configSchema.some((f) => f.key === 'historyOnStart'), false);
+  assert.equal('attachmentHosts' in ch, false);
+  assert.match(ch.configSchema.find((f) => f.key === 'freeformChat').help, /no channel history/);
 });

@@ -159,7 +159,8 @@ test('typing frame: one chat and on/off, nothing else required', () => {
   assert.equal(isValidFrame({ ...ok, on: false }), true);
   assert.equal(isValidFrame({ ...ok, on: 1 }), false);
   assert.equal(isValidFrame({ ...ok, chatId: '' }), false);
-  assert.equal(isValidFrame({ ...ok, chatId: 'x'.repeat(65) }), false);
+  assert.equal(isValidFrame({ ...ok, chatId: `19:${'a'.repeat(32)}@thread.tacv2;messageid=1700000000001` }), true, 'a Teams reply chain (72 chars)');
+  assert.equal(isValidFrame({ ...ok, chatId: 'x'.repeat(257) }), false);
   assert.equal(isValidFrame({ ...ok, id: 7 }), false);
 });
 
@@ -204,7 +205,43 @@ test('history frame: a chat, the message to read before, and a 1..50 limit', () 
   assert.ok(HOST_FRAMES.includes('history'));
   assert.equal(isValidFrame(ok), true);
   for (const bad of [{ ...ok, limit: 0 }, { ...ok, limit: 51 }, { ...ok, limit: 2.5 }, { ...ok, before: '' },
-    { ...ok, chatId: 'x'.repeat(65) }, { ...ok, chatId: '' }, { ...ok, id: 1 }]) {
+    { ...ok, chatId: 'x'.repeat(257) }, { ...ok, chatId: '' }, { ...ok, id: 1 }]) {
     assert.equal(isValidFrame(bad), false, JSON.stringify(bad));
+  }
+  assert.equal(isValidFrame({ ...ok, chatId: `19:${'a'.repeat(32)}@thread.tacv2;messageid=1700000000001` }), true, 'a Teams reply chain (72 chars)');
+});
+
+test('worker file fetch: an attachment has exactly one of url | ref | unavailable; file and file-chunk frames are bounded', async () => {
+  const { isValidAttachmentRef, isValidIncoming, FILE_REF_RE, FILE_LIMITS, INBOUND_LIMITS, WORKER_FRAMES } = await import('../src/core/chat/channel-protocol.mjs');
+  const REF = 'Ab3_-'.repeat(5);   // 25 chars
+  const base = { name: 'plan.md', contentType: 'text/markdown', size: 12 };
+  assert.ok(FILE_REF_RE.test(REF));
+  assert.equal(isValidAttachmentRef({ ...base, ref: REF }), true);
+  assert.equal(isValidAttachmentRef({ ...base, size: 0, unavailable: 'a SharePoint file link' }), true);
+  assert.equal(isValidAttachmentRef({ ...base, url: 'https://cdn.discordapp.com/a/b/plan.md' }), true, 'the Discord path is unchanged');
+  for (const bad of [
+    { ...base },                                                         // no source
+    { ...base, ref: REF, url: 'https://cdn.discordapp.com/x' },          // two sources
+    { ...base, ref: REF, unavailable: 'x' },
+    { ...base, ref: 'short' }, { ...base, ref: 'a'.repeat(129) }, { ...base, ref: `${REF}/../x` }, { ...base, ref: 7 },
+    { ...base, unavailable: '' }, { ...base, unavailable: 'x'.repeat(INBOUND_LIMITS.unavailable + 1) }, { ...base, unavailable: 3 },
+  ]) assert.equal(isValidAttachmentRef(bad), false, JSON.stringify(bad).slice(0, 80));
+  assert.equal(isValidIncoming({ chatId: 'C1', userId: 'U1', text: '', meta: {}, attachments: [{ ...base, ref: REF }] }), true);
+
+  const file = { type: 'file', id: 'f-1', ref: REF, maxBytes: 25 * 1024 * 1024, timeoutMs: 20000 };
+  assert.ok(HOST_FRAMES.includes('file'));
+  assert.ok(WORKER_FRAMES.includes('file-chunk'));
+  assert.equal(isValidFrame(file), true);
+  for (const bad of [{ ...file, ref: 'nope' }, { ...file, maxBytes: 0 }, { ...file, maxBytes: FILE_LIMITS.maxBytes + 1 }, { ...file, maxBytes: 1.5 },
+    { ...file, timeoutMs: 999 }, { ...file, timeoutMs: FILE_LIMITS.maxTimeoutMs + 1 }, { ...file, id: 1 }]) {
+    assert.equal(isValidFrame(bad), false, JSON.stringify(bad));
+  }
+  const full = Buffer.alloc(FILE_LIMITS.chunkBytes, 1).toString('base64');
+  const chunk = { type: 'file-chunk', id: 'f-1', seq: 0, dataB64: full };
+  assert.equal(isValidFrame(chunk), true);
+  assert.ok(encodeFrame(chunk).length < MAX_FRAME_BYTES, 'a full chunk fits one frame');
+  for (const bad of [{ ...chunk, seq: -1 }, { ...chunk, seq: 0.5 }, { ...chunk, dataB64: '' }, { ...chunk, dataB64: `${full}AAAA` },
+    { ...chunk, dataB64: 'not base64!' }, { ...chunk, id: undefined }]) {
+    assert.equal(isValidFrame(bad), false, JSON.stringify({ ...bad, dataB64: String(bad.dataB64).slice(0, 12) }));
   }
 });

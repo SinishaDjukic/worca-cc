@@ -1,6 +1,6 @@
 {
   "name": "teams-chat",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Two-way Microsoft Teams channel via Bot Framework: pipeline notifications + chat commands + freeform chat with Adaptive Card buttons (opt-in; webhook ingress through a tunnel)",
   "license": "MIT",
   "engines": { "worca-cc-api": ">=2 <3" },
@@ -11,7 +11,7 @@
       "platform": "teams",
       "module": "./channel/worker.mjs",
       "ingress": "webhook",
-      "capabilities": { "inbound": true, "outbound": true, "interactive": true },
+      "capabilities": { "inbound": true, "outbound": true, "interactive": true, "liveStatus": true },
       "configSchema": [
         {
           "key": "appId",

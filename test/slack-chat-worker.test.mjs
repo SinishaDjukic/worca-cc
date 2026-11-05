@@ -10,7 +10,7 @@ import {
   createSlackWorker, renderToMrkdwn, renderActions, renderBlocks, renderModalView, fallbackModal, parseActionId,
   toBlockAction, toViewSubmission, splitChatId, reactionName,
 } from '../plugins/slack-chat/channel/worker.mjs';
-import { isValidIncoming, isValidInteraction, isValidFrame, isValidControls } from '../src/core/chat/channel-protocol.mjs';
+import { isValidIncoming, isValidInteraction, isValidFrame, isValidControls, isValidHistory } from '../src/core/chat/channel-protocol.mjs';
 import { MARK } from '../src/core/chat/receipts.mjs';
 import { SAY, stripBotMention } from '../src/core/chat/conversation-bridge.mjs';
 import { checkRows } from './helpers/rows.mjs';
@@ -236,16 +236,22 @@ const REF2 = 'ZyXwVuTsRqPoNmLkJiHgFeDc';
 const MODAL = { title: 'Request changes to this run', fields: [{ id: 'text', label: 'What should change?', style: 'paragraph', required: true, maxLength: 4000 }] };
 
 /** A started worker over a recording Web API stub: `api[method](body)` answers one call (default {ok:true, ts}). */
-async function slackWorker(config = {}, { state = {}, api = {} } = {}) {
+async function slackWorker(config = {}, { state = {}, api = {}, files = null } = {}) {
   FakeWebSocket.instances = [];
   const calls = [];
   let n = 0;
   const fetchFn = async (url, init = {}) => {
-    const method = String(url).slice(String(url).lastIndexOf('/') + 1);
-    const body = init.body ? JSON.parse(init.body) : null;
+    const u = new URL(String(url));
+    if (u.hostname !== 'slack.com') {
+      calls.push({ method: 'file', url: String(url), auth: init.headers?.Authorization ?? null, redirect: init.redirect ?? null });
+      if (!files) throw new Error(`unexpected ${url}`);
+      return files(String(url), init);
+    }
+    const method = u.pathname.slice(u.pathname.lastIndexOf('/') + 1);
+    const body = init.body ? JSON.parse(init.body) : (u.search ? Object.fromEntries(u.searchParams) : null);
     calls.push({ method, body });
     if (api[method]) return api[method](body);
-    if (method === 'auth.test') return json({ ok: true, user: 'worca', user_id: 'UBOT' });
+    if (method === 'auth.test') return json({ ok: true, user: 'worca', user_id: 'UBOT', bot_id: 'BBOT', url: 'https://acme.slack.com/' });
     if (method === 'apps.connections.open') return json({ ok: true, url: 'wss://slack.test/socket' });
     return json({ ok: true, ts: `200.${++n}` });
   };
@@ -278,6 +284,16 @@ const clickPayload = (actionId, { channel = 'C1', threadTs = '100.1', user = 'U1
   message: { ts: '200.9', ...(threadTs ? { thread_ts: threadTs } : {}), ...(blocks ? { blocks } : {}) },
   actions: [{ action_id: actionId, type, ...(value ? { selected_option: { value } } : {}) }],
 });
+
+const md = (value) => ({ title: null, severity: 'info', body: [{ kind: 'markdown', value }] });
+const FF = { freeformChat: 'on', allowedChatIds: 'C1', chatMembers: 'U9=ada@example.com' };
+const ROOT_TS = '1700000000.000100';
+const MENTION_TS = '1700000000.000500';
+const fileOf = (name, extra = {}) => ({ id: `F-${name}`, name, mimetype: 'text/markdown', size: 9, url_private: `https://files.slack.com/files-pri/T1-F1/${name}`, ...extra });
+const ROOT = { ts: ROOT_TS, user: 'U7', text: 'the plan', user_profile: { display_name: 'alice' },
+  files: [fileOf('plan.md'), fileOf('ext.pdf', { is_external: true, url_private: 'https://drive.example.com/x' })] };
+const mentionIn = (thread, over = {}) => ({ type: 'app_mention', channel: 'C1', channel_type: 'channel', user: 'U9',
+  text: '<@UBOT> what now?', ts: MENTION_TS, ...(thread ? { thread_ts: thread } : {}), ...over });
 
 test('Block Kit: buttons, selects, links and modals render inside Slack\'s limits', () => {
   const controls = [
@@ -392,7 +408,7 @@ test('a fresh worker (no memory of the post) still opens a modal for a w:m: butt
   await w.stop();
 });
 
-test('freeform threads: a top-level mention starts one; replies in the bot\'s thread get its chat id, also after a restart; other threads and DMs start nothing', async () => {
+test('freeform threads: a top-level mention starts one; replies in the bot\'s thread get its chat id, also after a restart; a mention in another thread is flagged; DMs start nothing', async () => {
   const first = await slackWorker({ channelAllowlist: 'C1' });
   first.event({ type: 'message', channel: 'C1', channel_type: 'channel', user: 'U1', text: '<@UBOT> plan the release', ts: '100.1' });
   first.event({ type: 'app_mention', channel: 'C1', user: 'U1', text: '<@UBOT> plan the release', ts: '100.1' });
@@ -427,7 +443,7 @@ test('freeform threads: a top-level mention starts one; replies in the bot\'s th
   second.event({ type: 'message', channel: 'C1', user: 'U1', text: 'off-list', ts: '100.5' });
   assert.equal(second.events.inbound.length, 1, 'the rest of an off-list channel stays filtered');
   second.event({ type: 'message', channel: 'C2', user: 'U1', text: '<@UBOT> hi', ts: '300.2', thread_ts: '300.1' });
-  assert.deepEqual([second.events.inbound[1].chatId, second.events.inbound[1].meta.mentionsBot], ['C2', false], 'a mention inside a thread the bot did not open starts nothing');
+  assert.deepEqual([second.events.inbound[1].chatId, second.events.inbound[1].meta.mentionsBot], ['C2', true], 'a mention inside a thread the bot did not open is flagged with the plain channel id (the start binds THAT thread)');
   second.event({ type: 'message', channel: 'C2', user: 'U1', channel_type: 'im', text: '<@UBOT> hi', ts: '300.3' });
   assert.equal(second.events.inbound[2].meta.mentionsBot, false, 'DMs are not supported for freeform chat');
   second.event({ type: 'message', channel: 'C2', user: 'U1', subtype: 'thread_broadcast', text: 'also to channel', ts: '300.4', thread_ts: '300.1' });
@@ -559,19 +575,253 @@ test('splitChatId: a plain channel or a channel plus thread ts', () => {
 
 test('manifest, README and the shared refusal text are ready for Slack freeform chat', () => {
   const man = JSON.parse(readFileSync(new URL('../plugins/slack-chat/worca-cc-plugin.json', import.meta.url), 'utf8'));
-  assert.equal(man.version, '0.3.0');
+  assert.equal(man.version, '0.4.0');
   const ch = man.chatChannels[0];
-  assert.deepEqual(ch.capabilities, { inbound: true, outbound: true, interactive: true });
+  assert.deepEqual(ch.capabilities, { inbound: true, outbound: true, interactive: true, liveStatus: true });
+  assert.equal('attachmentHosts' in ch, false);
   const field = (k) => ch.configSchema.find((f) => f.key === k);
   assert.deepEqual([field('freeformChat').default, field('freeformChat').options], ['off', ['off', 'on']]);
   assert.match(field('chatMembers').help, /slackMemberId=worca identity/);
   assert.equal(field('worcaUrl').label, 'Worca address for links (optional)');
-  for (const k of ['freeformChat', 'chatMembers', 'worcaUrl']) assert.equal(field(k).advanced, undefined, `${k} is not advanced`);
+  for (const k of ['freeformChat', 'chatMembers', 'worcaUrl', 'historyOnStart']) assert.equal(field(k).advanced, undefined, `${k} is not advanced`);
+  const h = field('historyOnStart');
+  assert.deepEqual([h.type, h.default, h.options], ['select', 'off', ['off', '5', '10', '20', '50']]);
+  assert.match(h.help, /thread's earlier replies/);
+  assert.match(h.help, /never in direct messages/);
   const readme = readFileSync(new URL('../plugins/slack-chat/README.md', import.meta.url), 'utf8');
-  for (const s of ['reactions:write', 'chat:write', 'app_mentions:read', 'channels:history', 'groups:history', 'Interactivity', 'no Request URL']) {
+  for (const s of ['reactions:write', 'chat:write', 'app_mentions:read', 'channels:history', 'groups:history', 'files:read', 'Interactivity', 'no Request URL']) {
     assert.ok(readme.includes(s), `README names ${s}`);
   }
   assert.match(readme, /direct messages are not supported/i);
+  assert.match(readme, /no typing indicator/i);
   assert.doesNotMatch(SAY.notMember, /Discord/, 'Slack users never read Discord wording');
   assert.match(SAY.notMember, /not set up for worca chat/);
+});
+
+test('chat context: a start mention inside a thread the bot did not open quotes the root with its files, binds THAT thread; strangers and bound threads cost no read', async () => {
+  const { w, calls, events, event, state } = await slackWorker(FF, { api: { 'conversations.replies': () => json({ ok: true, messages: [ROOT] }) } });
+  event(mentionIn(ROOT_TS));
+  const m = await waitFor(() => events.inbound[0]);
+  assert.equal(m.chatId, 'C1');
+  assert.equal(m.meta.mentionsBot, true);
+  assert.deepEqual(calls.filter((c) => c.method === 'conversations.replies').map((c) => c.body), [{ channel: 'C1', ts: ROOT_TS, limit: '1', inclusive: 'true' }]);
+  assert.deepEqual([m.replyTo.author, m.replyTo.text, m.replyTo.at, m.replyTo.link],
+    ['alice', 'the plan', '2023-11-14T22:13:20.000Z', 'https://acme.slack.com/archives/C1/p1700000000000100']);
+  assert.match(m.replyTo.attachments[0].ref, /^[A-Za-z0-9_-]{24}$/);
+  assert.deepEqual(m.replyTo.attachments.map(({ ref, ...a }) => a), [
+    { name: 'plan.md', contentType: 'text/markdown', size: 9 },
+    { name: 'ext.pdf', contentType: 'text/markdown', size: 9, unavailable: 'an external file link (not stored in Slack)' },
+  ]);
+  assert.equal(isValidIncoming(m), true);
+  assert.ok(!JSON.stringify(m).includes('files.slack.com'), 'no file URL leaves the worker');
+
+  const head = await w.send('C1', md('worca chat'), { thread: { fromMessageId: MENTION_TS, name: 'worca chat' } });
+  assert.equal(head.threadId, `C1:${ROOT_TS}`, 'the existing thread is bound, not a thread off the mention');
+  assert.equal(calls.at(-1).body.thread_ts, ROOT_TS);
+  assert.ok(state.freeformThreads.includes(`C1:${ROOT_TS}`));
+
+  const reads = () => calls.filter((c) => c.method === 'conversations.replies').length;
+  event(mentionIn(ROOT_TS, { ts: '1700000000.000600', text: '<@UBOT> and this?' }));      // in the now-bound thread
+  const bound = await waitFor(() => events.inbound[1]);
+  assert.equal(bound.chatId, `C1:${ROOT_TS}`);
+  assert.equal(bound.replyTo, undefined, 'the root is the conversation\'s own start');
+  event(mentionIn('1700000000.000700', { ts: '1700000000.000800', user: 'U8' }));          // not a member
+  event(mentionIn('1700000000.000900', { ts: '1700000000.001000', channel: 'C2' }));       // not an allowed channel
+  await waitFor(() => events.inbound.length === 4);
+  assert.equal(reads(), 1, 'no read for a stranger or an unlisted channel');
+  assert.ok(events.inbound.slice(2).every((x) => x.replyTo === undefined));
+});
+
+test('send(options.thread): a start that throws forgets the binding, so the thread routes as the channel again; its 429 waits share one budget', async () => {
+  let mode = 'refuse';
+  const { w, events, event, state, sleeps } = await slackWorker(FF, { api: {
+    'conversations.replies': () => json({ ok: true, messages: [ROOT] }),
+    'chat.postMessage': () => (mode === 'refuse' ? json({ ok: false, error: 'channel_not_found' }) : mode === 'limit' ? json({}, 429, { 'retry-after': '5' }) : json({ ok: true, ts: '200.9' })),
+  } });
+  event(mentionIn(ROOT_TS));
+  await waitFor(() => events.inbound[0]);
+  await assert.rejects(w.send('C1', md('worca chat'), { thread: { fromMessageId: MENTION_TS, name: 'x' } }), (e) => e.permanent === true);
+  assert.ok(!(state.freeformThreads || []).includes(`C1:${ROOT_TS}`));
+  mode = 'limit';
+  await assert.rejects(w.send('C1', md('worca chat'), { thread: { fromMessageId: MENTION_TS, name: 'x' } }), (e) => e.kind === 'rate-limit');
+  assert.ok(sleeps.reduce((a, b) => a + b, 0) <= 10000, `one budget for the whole start (${sleeps})`);
+  assert.ok(!(state.freeformThreads || []).includes(`C1:${ROOT_TS}`));
+  event(mentionIn(ROOT_TS, { ts: '1700000000.000600', text: 'later' }));
+  assert.equal((await waitFor(() => events.inbound[1])).chatId, 'C1', 'no dead composite chat id');
+  mode = 'ok';
+  await w.send('C1', md('worca chat'), { thread: { fromMessageId: '1700000000.001100', name: 'x' } });
+  mode = 'refuse';
+  await assert.rejects(w.send('C1', md('worca chat'), { thread: { fromMessageId: '1700000000.001100', name: 'x' } }), (e) => e.permanent === true);
+  assert.ok(state.freeformThreads.includes('C1:1700000000.001100'), 'a failed re-send never unbinds a thread that was already bound');
+});
+
+test('history(): a thread start reads the thread\'s earlier replies, a top-level start the channel; oldest first; other bots skipped, worca kept; never a DM; 429 and scopes', async () => {
+  const replies = [ROOT,
+    { ts: '1700000000.000200', user: 'U7', text: 'first', user_profile: { real_name: 'Alice A' } },
+    { ts: '1700000000.000300', user: 'B9', bot_id: 'B9', text: 'beep' },
+    { ts: '1700000000.000400', user: 'UBOT', bot_id: 'BBOT', text: 'my answer' },
+    { ts: '1700000000.000450', subtype: 'channel_join', user: 'U5', text: 'joined' }];
+  const channel = [{ ts: '1700000000.002000', user: 'U3', text: 'newest' }, { ts: '1700000000.001500', user: 'U2', text: 'oldest', files: [fileOf('a.md')] }];
+  let mode = 'ok';
+  let limited = 0;
+  const answer = (rows) => () => {
+    if (mode === 'limit' && limited++ === 0) return json({}, 429, { 'retry-after': '1' });
+    if (mode === 'long') return json({}, 429, { 'retry-after': '30' });
+    if (mode === 'scope') return json({ ok: false, error: 'missing_scope', needed: 'channels:history' });
+    return json({ ok: true, messages: rows, has_more: false });
+  };
+  const { w, calls, event, events, sleeps } = await slackWorker({ ...FF, allowedChatIds: 'C1,D1' }, { api: { 'conversations.replies': answer(replies), 'conversations.history': answer(channel) } });
+  await assert.rejects(w.history('C1', MENTION_TS, 5), (e) => e.permanent === true, 'no message seen in C1 yet');
+  event(mentionIn(ROOT_TS));
+  await waitFor(() => events.inbound[0]);
+  const t = await w.history('C1', MENTION_TS, 5);
+  assert.deepEqual(calls.at(-1), { method: 'conversations.replies', body: { channel: 'C1', ts: ROOT_TS, latest: MENTION_TS, inclusive: 'false', limit: '200' } });
+  assert.deepEqual(t.map((q) => [q.author, q.text]), [['Alice A', 'first'], ['worca (this bot)', 'my answer']], 'root, other bots and joins left out');
+  assert.equal(isValidHistory(t), true);
+  assert.deepEqual((await w.history('C1', MENTION_TS, 1)).map((q) => q.text), ['my answer'], 'the newest `limit` kept');
+  event({ type: 'app_mention', channel: 'C1', channel_type: 'channel', user: 'U9', text: '<@UBOT> top', ts: '1700000000.003000' });
+  await waitFor(() => events.inbound[1]);
+  const c = await w.history('C1', '1700000000.003000', 5);
+  assert.deepEqual(calls.at(-1), { method: 'conversations.history', body: { channel: 'C1', latest: '1700000000.003000', inclusive: 'false', limit: '5' } });
+  assert.deepEqual(c.map((q) => q.text), ['oldest', 'newest'], 'Slack answers newest first');
+  assert.match(c[0].attachments[0].ref, /^[A-Za-z0-9_-]{24}$/);
+  event({ type: 'message', channel: 'D1', channel_type: 'im', user: 'U9', text: 'hi', ts: '1700000000.004000' });
+  await waitFor(() => events.inbound[2]);
+  await assert.rejects(w.history('D1', '1700000000.004000', 5), (e) => e.permanent === true && /never in direct messages/.test(e.message));
+  mode = 'limit';
+  assert.equal((await w.history('C1', '1700000000.003000', 5)).length, 2);
+  assert.deepEqual(sleeps.slice(-1), [1000]);
+  mode = 'long';
+  await assert.rejects(w.history('C1', '1700000000.003000', 5), (e) => e.kind === 'rate-limit' && e.retryAfterMs === 30000 && e.permanent !== true);
+  assert.ok(!sleeps.includes(30000), 'the worker did not sit out a long wait');
+  mode = 'scope';
+  await assert.rejects(w.history('C1', '1700000000.003000', 5), (e) => e.permanent === true && /channels:history/.test(e.message));
+});
+
+test('fetchFile: the bot token goes only to Slack\'s file host, with no redirects; sign-in page, 403 and expired refs are permanent; over the cap is tooBig; no token in any error', async () => {
+  let mode = 'ok';
+  const { w, calls, event, events } = await slackWorker({}, { files: () => {
+    if (mode === 'html') return new Response('<html>sign in</html>', { status: 200, headers: { 'content-type': 'text/html; charset=utf-8' } });
+    if (mode === '403') return new Response('', { status: 403 });
+    if (mode === 'boom') throw new TypeError('fetch failed');
+    return new Response('# plan ok\n', { status: 200, headers: { 'content-type': 'text/markdown' } });
+  } });
+  event({ type: 'message', subtype: 'file_share', channel: 'C1', channel_type: 'channel', user: 'U9', text: 'see file', ts: '1700000000.000100',
+    files: [fileOf('plan.md'), fileOf('evil.md', { url_private: 'https://evil.example.com/plan.md' })] });
+  const m = await waitFor(() => events.inbound[0]);
+  assert.equal(m.meta.link, 'https://acme.slack.com/archives/C1/p1700000000000100');
+  const [ok, evil] = m.attachments;
+  assert.equal(evil.unavailable, 'Slack does not offer this file for download here');
+  const got = await w.fetchFile(ok.ref, { maxBytes: 100, signal: AbortSignal.timeout(2000) });
+  assert.equal(String(got.data), '# plan ok\n');
+  assert.deepEqual(calls.filter((c) => c.method === 'file'), [{ method: 'file', url: 'https://files.slack.com/files-pri/T1-F1/plan.md', auth: 'Bearer xoxb-1', redirect: 'error' }]);
+  await assert.rejects(w.fetchFile(ok.ref, { maxBytes: 3, signal: AbortSignal.timeout(2000) }), (e) => e.tooBig === true);
+  for (const [m2, re] of [['html', /files:read/], ['403', /files:read/], ['boom', /download failed/]]) {
+    mode = m2;
+    await assert.rejects(w.fetchFile(ok.ref, { maxBytes: 100, signal: AbortSignal.timeout(2000) }),
+      (e) => re.test(e.message) && !e.message.includes('xoxb-1') && !e.message.includes('files.slack.com') && (m2 === 'boom' ? e.permanent !== true : e.permanent === true), m2);
+  }
+  await assert.rejects(w.fetchFile('Z'.repeat(24), { maxBytes: 100 }), (e) => e.permanent === true && /expired/.test(e.message));
+});
+
+test('live status: a status edit spends one bounded 429 budget, then throws back; a deleted status message is permanent; typing sends nothing', async () => {
+  let mode = 'limit';
+  const { w, calls, sleeps } = await slackWorker({}, { api: { 'chat.update': () => (mode === 'limit' ? json({}, 429, { 'retry-after': '5' }) : json({ ok: false, error: 'message_not_found' })) } });
+  await assert.rejects(w.send('C1:1.1', md('⏳ Working on it… · 5 s'), { edit: { messageId: '200.1' } }), (e) => e.kind === 'rate-limit' && Number.isFinite(e.retryAfterMs));
+  assert.ok(sleeps.reduce((a, b) => a + b, 0) <= 10000, `the waits of one edit stay under the host's 15 s send RPC (${sleeps})`);
+  mode = 'gone';
+  await assert.rejects(w.send('C1:1.1', md('⏹️ Interrupted'), { edit: { messageId: '200.1' } }), (e) => e.permanent === true);
+  const before = calls.length;
+  assert.deepEqual(await w.typing('C1:1.1', true), { ok: true });
+  assert.deepEqual(await w.typing('C1:1.1', false), { ok: true });
+  assert.equal(calls.length, before, 'Slack has no bot typing indicator in channels: no request');
+});
+
+test('live status: a reply longer than one section edits the status message with the first chunk and posts the rest in the thread, controls on the last', async () => {
+  const { w, calls } = await slackWorker();
+  const long = 'a'.repeat(3000) + 'b'.repeat(3000) + 'c'.repeat(1000);
+  const controls = [{ kind: 'button', ref: REF, label: 'Start run', style: 'primary' }];
+  const r = await w.send('C1:100.1', { title: null, severity: 'info', body: [{ kind: 'text', value: long }], controls }, { edit: { messageId: '200.5' } });
+  const update = calls.filter((c) => c.method === 'chat.update');
+  const posts = calls.filter((c) => c.method === 'chat.postMessage').map((c) => c.body);
+  assert.equal(update.length, 1);
+  assert.deepEqual(update[0].body.blocks.map((b) => b.type), ['section'], 'the controls do not ride the first of several chunks');
+  assert.equal(posts.length, 2);
+  assert.deepEqual(posts.map((p) => [p.channel, p.thread_ts]), [['C1', '100.1'], ['C1', '100.1']]);
+  assert.equal(posts[0].blocks, undefined);
+  assert.deepEqual(posts[1].blocks.map((b) => b.type), ['section', 'actions']);
+  assert.equal(update[0].body.text + posts.map((p) => p.text).join(''), long, 'nothing of the reply is lost');
+  assert.equal(r.messageIds.length, 3);
+  assert.equal(r.messageIds[0], '200.5');
+  await w.stop();
+});
+
+test('chat context guards: an app_mention twin without channel_type still lets history read; a top-level mention or freeform off reads no root; a pending root read holds later channel messages in order', async () => {
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const { w, calls, events, event, ctx } = await slackWorker(FF, { api: {
+    'conversations.replies': async () => { await gate; return json({ ok: true, messages: [ROOT] }); },
+    'conversations.history': () => json({ ok: true, messages: [{ ts: '1700000000.000050', user: 'U2', text: 'before' }] }),
+  } });
+  const reads = () => calls.filter((c) => c.method === 'conversations.replies').length;
+  // Slack's app_mention event carries no channel_type, and it can arrive before its message twin.
+  event({ type: 'app_mention', channel: 'C1', user: 'U9', text: '<@UBOT> top', ts: '1700000000.000060' });
+  event({ type: 'message', channel: 'C1', channel_type: 'channel', user: 'U9', text: '<@UBOT> top', ts: '1700000000.000060' });
+  await waitFor(() => events.inbound[0]);
+  assert.equal(events.inbound.length, 1, 'the twin is emitted once');
+  assert.equal(events.inbound[0].meta.mentionsBot, true);
+  assert.equal(reads(), 0, 'a top-level mention reads no thread root');
+  assert.deepEqual((await w.history('C1', '1700000000.000060', 5)).map((q) => q.text), ['before'], 'the twin that carried channel_type still counts');
+  event(mentionIn(ROOT_TS));                                                                     // its root read hangs
+  event({ type: 'message', channel: 'C1', channel_type: 'channel', user: 'U5', text: 'next', ts: '1700000000.000700' });
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(events.inbound.length, 1, 'a later message in the channel waits for the pending read');
+  release();
+  await waitFor(() => events.inbound.length === 3);
+  assert.deepEqual(events.inbound.slice(1).map((m) => m.text), ['<@UBOT> what now?', 'next']);
+  assert.equal(events.inbound[1].replyTo.text, 'the plan');
+  ctx.config.freeformChat = 'off';
+  event(mentionIn('1700000000.000800', { ts: '1700000000.000900' }));
+  await waitFor(() => events.inbound.length === 4);
+  assert.equal(reads(), 1, 'freeform off: no read');
+});
+
+test('files: plan-hidden, check_file_info, tombstoned, odd-port and userinfo URLs never get a ref; at most 10 per message; a file 429 goes back with its wait', async () => {
+  let mode = 'ok';
+  const { w, events, event } = await slackWorker({}, { files: () => (mode === '429' ? new Response('', { status: 429, headers: { 'retry-after': '7' } }) : new Response('x', { status: 200 })) });
+  event({ type: 'message', subtype: 'file_share', channel: 'C1', channel_type: 'channel', user: 'U9', text: 'files', ts: '1700000000.000100', files: [
+    fileOf('ok.md'), fileOf('ci.md', { file_access: 'check_file_info' }), fileOf('old.md', { mode: 'hidden_by_limit' }), fileOf('gone.md', { mode: 'tombstone' }),
+    fileOf('port.md', { url_private: 'https://files.slack.com:8443/files-pri/T1-F1/port.md' }),
+    fileOf('cred.md', { url_private: 'https://u:p@files.slack.com/files-pri/T1-F1/cred.md' }),
+  ] });
+  const m = await waitFor(() => events.inbound[0]);
+  const no = 'Slack does not offer this file for download here';
+  assert.deepEqual(m.attachments.map((a) => [a.name, a.ref ? 'ref' : a.unavailable]), [
+    ['ok.md', 'ref'], ['ci.md', no], ['old.md', 'hidden by the Slack plan\'s message history limit'], ['port.md', no], ['cred.md', no]]);
+  event({ type: 'message', subtype: 'file_share', channel: 'C1', channel_type: 'channel', user: 'U9', text: 'many', ts: '1700000000.000200',
+    files: Array.from({ length: 12 }, (_, i) => fileOf(`f${i}.md`)) });
+  assert.equal((await waitFor(() => events.inbound[1])).attachments.length, 10);
+  assert.equal(isValidIncoming(events.inbound[1]), true);
+  mode = '429';
+  await assert.rejects(w.fetchFile(m.attachments[0].ref, { maxBytes: 100 }), (e) => e.kind === 'rate-limit' && e.retryAfterMs === 7000 && e.permanent !== true);
+});
+
+test('history(): a long answer drops its oldest messages to stay under the 1 MiB frame', async () => {
+  const big = Array.from({ length: 50 }, (_, i) => ({ ts: `1700000000.${String(1000 + i).padStart(6, '0')}`, user: 'U2', text: '中'.repeat(4000),
+    files: Array.from({ length: 10 }, (_, k) => fileOf(`${'中'.repeat(240)}${k}.md`)) })).reverse();   // Slack answers newest first
+  const { w, events, event } = await slackWorker(FF, { api: { 'conversations.history': () => json({ ok: true, messages: big }) } });
+  event({ type: 'message', channel: 'C1', channel_type: 'channel', user: 'U9', text: 'hi', ts: '1700000000.009000' });
+  await waitFor(() => events.inbound[0]);
+  const h = await w.history('C1', '1700000000.009000', 50);
+  assert.ok(h.length > 0 && h.length < 50, `trimmed to ${h.length}`);
+  assert.ok(Buffer.byteLength(JSON.stringify(h), 'utf8') <= 900 * 1024);
+  assert.match(h.at(-1).link, /p1700000000001049$/, 'the newest is kept');
+  assert.equal(isValidHistory(h), true);
+});
+
+test('history(): a channel outside the listen filter is never read, even when a bound thread in it passes the filter', async () => {
+  const { w, events, event } = await slackWorker({ ...FF, channelAllowlist: 'C2' }, { state: { freeformThreads: ['C1:100.1'] } });
+  event({ type: 'message', channel: 'C1', channel_type: 'channel', user: 'U9', text: 'in the bound thread', ts: '100.2', thread_ts: '100.1' });
+  await waitFor(() => events.inbound[0]);
+  await assert.rejects(w.history('C1', '100.2', 5), (e) => e.permanent === true);
 });

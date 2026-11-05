@@ -1,6 +1,6 @@
 {
   "name": "telegram-chat",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Two-way Telegram bot channel: pipeline notifications + chat commands (/status, /pause, /approve…) + freeform chat with inline buttons and reactions (opt-in)",
   "license": "MIT",
   "engines": { "worca-cc-api": ">=2 <3" },
@@ -11,7 +11,7 @@
       "platform": "telegram",
       "module": "./channel/worker.mjs",
       "ingress": "connect",
-      "capabilities": { "inbound": true, "outbound": true, "interactive": true },
+      "capabilities": { "inbound": true, "outbound": true, "interactive": true, "liveStatus": true },
       "configSchema": [
         {
           "key": "botToken",
@@ -53,7 +53,7 @@
           "label": "Freeform chat",
           "default": "off",
           "options": ["off", "on"],
-          "help": "on: a listed member chats with worca's Ask engine (paid model turns). In a direct message to the bot every message continues one conversation; in an allowed group, mentioning the bot opens one (a forum topic, or a reply thread under the bot's header). The chat must be in Allowed chat IDs; a direct message's chat ID is the person's user ID. Needs Freeform chat members. off (default): commands and notifications only."
+          "help": "on: a listed member chats with worca's Ask engine (paid model turns). In a direct message to the bot every message continues one conversation; in an allowed group, mentioning the bot opens one (a forum topic, or a reply thread under the bot's header). The chat must be in Allowed chat IDs; a direct message's chat ID is the person's user ID. Needs Freeform chat members. Replies quote the replied-to message and save its photos and documents (no channel history: the Bot API cannot read past messages). off (default): commands and notifications only."
         },
         {
           "key": "chatMembers",

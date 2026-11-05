@@ -764,7 +764,8 @@ export function buildTurnPrompt(header, text, inlined = [], chatContext = '') {
 // both delimiters it could forge ([worca context], [chat context]) are neutralised in every interpolated value.
 const CHAT_CONTEXT_TAG_RE = /\[\/?chat context\]/gi;
 const chatCtxLine = (s) => flatten(String(s ?? '')).replace(CHAT_CONTEXT_TAG_RE, '(chat context)');
-const chatPlatformName = (p) => (p === 'discord' ? 'Discord' : 'the chat app');
+const CHAT_PLATFORM_NAMES = Object.freeze({ discord: 'Discord', slack: 'Slack', telegram: 'Telegram', teams: 'Microsoft Teams' });
+const chatPlatformName = (p) => (typeof p === 'string' && Object.hasOwn(CHAT_PLATFORM_NAMES, p) ? CHAT_PLATFORM_NAMES[p] : 'the chat app');
 
 export function renderChatContextPrompt(block) {
   if (!block || block.kind !== 'chat-context') return '';

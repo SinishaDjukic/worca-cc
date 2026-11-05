@@ -50,11 +50,18 @@ function gitInit(dir) {
 
 // ── the fake Bot API ─────────────────────────────────────────────────────────
 
-const tg = { calls: [], updates: [], waiting: [], nextUpdate: 1, nextMessage: {}, nextTopic: 70, failures: [] };
+const tg = { calls: [], updates: [], waiting: [], nextUpdate: 1, nextMessage: {}, nextTopic: 70, failures: [], files: {}, filePaths: {}, fileGets: [] };
 const reply = (res, status, obj) => { res.writeHead(status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); };
 const flushPolls = () => { for (const go of tg.waiting.splice(0)) go(); };
 const nextMessageId = (chat) => { const k = String(chat); tg.nextMessage[k] = (tg.nextMessage[k] || 1000) + 1; return tg.nextMessage[k]; };
 const api = http.createServer((req, res) => {
+  if ((req.url || '').startsWith('/file/bot')) {
+    tg.fileGets.push(req.url);
+    const path = decodeURIComponent(req.url.replace(/^\/file\/bot[^/]+\//, ''));
+    const body = tg.files[path];
+    res.writeHead(body ? 200 : 404, { 'Content-Type': 'application/octet-stream' });
+    return res.end(body || '');
+  }
   const method = (/^\/bot[^/]+\/(\w+)/.exec(req.url || '') || [])[1] || '';
   let raw = '';
   req.on('data', (d) => { raw += d; });
@@ -77,6 +84,7 @@ const api = http.createServer((req, res) => {
     if (method === 'sendMessage') result = { message_id: nextMessageId(body.chat_id), chat: { id: Number(body.chat_id) }, text: body.text };
     if (method === 'createForumTopic') result = { message_thread_id: ++tg.nextTopic, name: body.name };
     if (method === 'editMessageText') result = { message_id: body.message_id, chat: { id: Number(body.chat_id) }, text: body.text };
+    if (method === 'getFile') result = { file_id: body.file_id, file_unique_id: `u-${body.file_id}`, file_path: tg.filePaths[body.file_id] };
     tg.calls.push({ method, body, result });
     return reply(res, 200, { ok: true, result });
   });
@@ -93,7 +101,8 @@ function say(chat, from, text, { topic = null, replyTo = null, edited = false } 
   const m = { message_id, date: 1, chat, from: { ...from, is_bot: from.is_bot === true }, text,
     ...(at >= 0 ? { entities: [{ type: 'mention', offset: at, length: BOT.username.length + 1 }] } : {}),
     ...(topic != null ? { message_thread_id: topic, is_topic_message: true } : {}),
-    ...(replyTo != null ? { reply_to_message: { message_id: replyTo, date: 1, chat } } : {}) };
+    ...(replyTo != null ? { reply_to_message: typeof replyTo === 'object' ? replyTo
+      : { message_id: replyTo, date: 1, chat, from: { ...BOT, is_bot: true } } } : {}) };
   push(edited ? { edited_message: m } : { message: m });
   return { key: `${chat.id}:${message_id}`, id: message_id };
 }
@@ -134,8 +143,17 @@ function waitFor(pred, timeoutMs = 15000) {
   });
 }
 const sentCalls = (pred = () => true) => tg.calls.filter((c) => c.method === 'sendMessage' && c.result && pred(c.body));
-const textsIn = (chat, topic) => sentCalls((b) => String(b.chat_id) === String(chat.id) && (topic === undefined || b.message_thread_id === topic)).map((c) => c.body.text);
+/** The sendMessage call that posted the message a call shows its text in: itself, or for an edit the post it edited. */
+const postOf = (c) => (c.method === 'sendMessage' ? c
+  : tg.calls.find((x) => x.method === 'sendMessage' && x.result?.message_id === c.body.message_id && String(x.body.chat_id) === String(c.body.chat_id)));
+/** Every text the bot showed in a chat (or one topic), posted or edited in: with live status (0.4.0) the reply's first
+ *  part replaces the "⏳ Working on it…" message instead of being posted. */
+const shownCalls = (chat, topic) => tg.calls.filter((c) => (c.method === 'sendMessage' || c.method === 'editMessageText') && c.result
+  && String(c.body.chat_id) === String(chat.id) && (topic === undefined || postOf(c)?.body.message_thread_id === topic));
+const textsIn = (chat, topic) => shownCalls(chat, topic).map((c) => c.body.text);
 const has = (chat, needle, topic) => textsIn(chat, topic).some((t) => t.includes(needle));
+/** The post (sendMessage call) that shows `needle` now or showed it first: posted with it, or edited into it. */
+const shownIn = (chat, needle) => { const c = shownCalls(chat).find((x) => x.body.text.includes(needle)); return c ? postOf(c) : null; };
 const splitKey = (key) => { const i = key.lastIndexOf(':'); return [key.slice(0, i), Number(key.slice(i + 1))]; };
 /** Every successful reaction call on a message, in order ('' = cleared). */
 const reactionsOf = (key) => {
@@ -313,7 +331,7 @@ test('5. group reply chain', async () => {
   chainSurface = `${GROUP.id}:r${header.result.message_id}`;
   const b = await waitFor(() => binding(chainSurface));
   assert.equal(b.parentChatId, String(GROUP.id));
-  const answer = await waitFor(() => sentCalls((x) => String(x.chat_id) === String(GROUP.id) && x.text.includes('[mock] status of the build?'))[0]);
+  const answer = await waitFor(() => shownIn(GROUP, '[mock] status of the build?'));
   assert.ok(answer.body.reply_parameters, 'a chain post replies into the chain');
   await waitFor(() => reactionOn(m.key) === '👌');
   await idle(b.askThreadId);
@@ -399,10 +417,43 @@ test('8. worker restart keeps chains and keyboards', async () => {
   await channelHost.reloadPlugin(NAME);
   writePluginsLock({ [NAME]: LOCK });
   await startRealWorker();
-  const last = sentCalls((x) => String(x.chat_id) === String(GROUP.id) && x.text.includes('[mock] and the tests?')).at(-1);
+  const last = shownIn(GROUP, '[mock] and the tests?');
   const m = say(GROUP, ADA, 'one more thing', { replyTo: last.result.message_id });
   await waitFor(() => has(GROUP, '[mock] one more thing'));
   await waitFor(() => reactionOn(m.key) === '👌');
   await idle(c.askThreadId);
   assert.equal(await toast(pressLabel(ADA, 'demo', DM)), 'Scope: demo');
+});
+
+test('9. reply-to-start with a file: the replied-to message and its document are quoted and saved; the token stays in the worker', async () => {
+  _testing.chatBridge.resetRateLimits();
+  const lines = [];
+  const realErr = console.error;
+  console.error = (...a) => { lines.push(a.map(String).join(' ')); realErr(...a); };
+  try {
+    tg.filePaths['doc-1'] = 'documents/file_7.md';
+    tg.files['documents/file_7.md'] = Buffer.from('# Plan\nship friday\n');
+    const ben = { message_id: nextMessageId(GROUP.id), date: 1700000000, chat: GROUP, from: { ...BEN, is_bot: false }, caption: 'the plan',
+      document: { file_id: 'doc-1', file_unique_id: 'd1', file_name: 'plan.md', mime_type: 'text/markdown', file_size: 19 } };
+    const m = say(GROUP, ADA, `@${BOT.username} summarise this`, { replyTo: ben });
+    const header = await waitFor(() => sentCalls((x) => String(x.chat_id) === String(GROUP.id) && /worca chat/.test(x.text) && x.reply_parameters?.message_id === m.id)[0]);
+    const b = await waitFor(() => binding(`${GROUP.id}:r${header.result.message_id}`));
+    await waitFor(() => has(GROUP, '[mock] summarise this'));
+    await idle(b.askThreadId);
+    const askStore = await import('../src/core/ask/store.mjs');
+    const rows = askStore.listMessages(b.askThreadId);
+    const cb = rows.find((r) => r.role === 'user').blocks.find((x) => x.kind === 'chat-context');
+    assert.equal(cb.platform, 'telegram');
+    assert.deepEqual([cb.replyTo.author, cb.replyTo.text], ['Ben', 'the plan']);
+    assert.deepEqual(cb.replyTo.files.map((f) => [f.name, typeof f.id]), [['plan.md', 'string']]);
+    const atts = askStore.listAttachments(b.askThreadId);
+    assert.equal(askStore.readAttachmentText(b.askThreadId, atts[0].id).text, '# Plan\nship friday\n');
+    assert.ok(tg.calls.some((c) => c.method === 'getFile' && c.body.file_id === 'doc-1'));
+    assert.equal(tg.fileGets.length, 1);
+    assert.ok(!JSON.stringify(rows).includes(CFG.botToken) && !JSON.stringify(atts).includes(CFG.botToken), 'no token in the stored rows or sources');
+    assert.ok(!lines.some((l) => l.includes(CFG.botToken)), 'no token in the logs');
+    assert.match(_testing.askJobs.get(b.askThreadId).turn.prompt, /\[chat context\] Quoted from Telegram/);
+  } finally {
+    console.error = realErr;
+  }
 });

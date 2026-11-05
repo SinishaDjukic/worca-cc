@@ -19,7 +19,8 @@ URL, no Events API endpoint, no Interactivity request URL, no tunnel.
    - `channels:history` — read messages in public channels (inbound, and freeform replies without a mention);
    - `groups:history` — the same for private channels, only if you use one;
    - `app_mentions:read` — the mention that starts a freeform chat;
-   - `reactions:write` — the bot's status reactions (⏳ ✅ ❌ ⏹️).
+   - `reactions:write` — the bot's status reactions (⏳ ✅ ❌ ⏹️);
+   - `files:read` — files on a message, its thread root and history (chat context).
 
    Install (or reinstall after adding scopes) to the workspace → copy the
    **Bot User OAuth Token** (`xoxb-…`).
@@ -85,8 +86,9 @@ or press its controls.
 
 ### Where it works
 
-- Only a top-level message in a channel starts a chat. A mention inside an existing thread the bot did not open starts
-  nothing (Slack has no nested threads); start a new top-level message instead.
+- A mention in a top-level message of a channel starts a chat in a new thread under it. A mention inside an existing
+  thread starts a conversation in THAT thread (Slack has no nested threads); its first message is quoted to worca as
+  context.
 - Direct messages are not supported for freeform chat (commands in a DM work as before).
 - A command (`/status`, ...) typed inside a freeform thread acts for the parent channel and answers in the thread.
 
@@ -110,9 +112,34 @@ or press its controls.
   user mentions are escaped before posting.
 - Cost: every message is a paid model turn under worca's global cost limit, limited to 6 per minute per person.
 
+### Context: thread root, history and files (0.4.0)
+
+- **Thread root.** A mention inside an existing thread quotes the thread's first message (with its files) to worca as
+  context. The worker reads it (`conversations.replies`) only for a listed **Freeform chat member** in an **Allowed
+  channel**; anybody else's mention costs no API call.
+- **History** (opt-in, **Read recent history when a conversation starts**: off, 5, 10, 20 or 50). The first turn also
+  quotes that many earlier messages, oldest first. A start inside a thread reads the thread's earlier replies; a
+  top-level start reads the channel. Only in Allowed channels, never in direct messages; other bots' messages and joins
+  are skipped, worca's own are kept.
+- **Files** on the message, the thread root and history are saved as chat attachments. The worker downloads them with
+  the bot token (`files:read`); the token and file addresses never leave the worker. External files, Slack Connect
+  files and files hidden by the plan's history limit are listed by name with why. The same caps as Discord apply: 25 MB
+  per file, 4 files per message, 8 files and 50 MB per message with its context.
+- **Authors** are the display name when Slack includes it, else the member ID (`U0123ABCD`). No `users:read` scope is
+  needed.
+- All of it is untrusted data: worca quotes it to the model, never obeys it.
+
+### Live status while worca works (0.4.0)
+
+- While worca works, the thread shows a "⏳ Working on it…" message that is edited with progress (`chat.update`) and
+  then into the answer. An answer longer than one Slack section continues in new replies in the thread.
+- A Slack rate limit on an edit is waited out up to 10 seconds; a longer one goes back to worca, which waits it.
+- If worca restarts mid-turn, the status message is edited to "⏹️ Interrupted — send your message again."
+- Slack has **no typing indicator** for bots in channels, so the status message is the only live signal.
+
 ### Behavior notes
 
-- No attachments, and replies arrive when complete rather than streaming.
+- Replies arrive when complete rather than streaming.
 - Delivery is at-least-once: after a crash a message part can repeat.
 - The bot remembers the newest 2000 threads it opened (across restarts). An older thread stops being a conversation:
   start a new one with a mention.

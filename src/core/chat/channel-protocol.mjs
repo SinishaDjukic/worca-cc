@@ -16,6 +16,9 @@
 // v2 additive: optional `controls`, `send.options`, `interaction`/`interaction-reply` frames — only for `interactive` channels
 // v2 additive (chat context): optional inbound `attachments`, `replyTo`, `history` and the `history` host frame
 // v2 additive (live status): the `typing` host frame (start / stop the platform's typing indicator in one chat)
+// v2 additive (worker file fetch): an attachment may carry an opaque `ref` (the worker downloads it, with its own
+// platform credential, when the host sends a `file` frame; the bytes come back as `file-chunk` frames) or
+// `unavailable` (listed by name with the reason, never downloaded)
 
 export const MESSAGE_SEGMENT_KINDS = ['text', 'bold', 'code', 'code_block', 'link', 'markdown'];
 export const SEVERITY_LEVELS = ['info', 'success', 'warning', 'error'];
@@ -31,8 +34,8 @@ export const MAX_FRAME_BYTES = 1024 * 1024;
 /** Op/send error kinds — same vocabulary as PluginOpError (plugin spec §11). */
 export const ERROR_KINDS = ['auth', 'rate-limit', 'network', 'plugin', 'timeout', 'protocol'];
 
-export const HOST_FRAMES = ['hello', 'send', 'webhook', 'config', 'ping', 'shutdown', 'interaction-reply', 'react', 'history', 'typing'];
-export const WORKER_FRAMES = ['ready', 'status', 'inbound', 'send-result', 'webhook-result', 'state-delta', 'pong', 'log', 'interaction'];
+export const HOST_FRAMES = ['hello', 'send', 'webhook', 'config', 'ping', 'shutdown', 'interaction-reply', 'react', 'history', 'typing', 'file'];
+export const WORKER_FRAMES = ['ready', 'status', 'inbound', 'send-result', 'webhook-result', 'state-delta', 'pong', 'log', 'interaction', 'file-chunk'];
 
 /** Native controls (interactive channels only). Executable controls carry a host-issued opaque `ref`; the platform
  *  echoes it back in an `interaction` frame. Links carry no ref and execute nothing. */
@@ -128,7 +131,7 @@ export function isValidMessage(msg) {
  *  to the model, never obeyed. A worker that sends none behaves exactly as before. */
 export const INBOUND_LIMITS = Object.freeze({
   attachments: 10, attachmentName: 255, contentType: 128, url: 2048, attachmentSize: 2 ** 40,
-  author: 100, text: 4000, at: 40, link: 512, history: 50,
+  author: 100, text: 4000, at: 40, link: 512, history: 50, unavailable: 200,
 });
 const IL = INBOUND_LIMITS;
 const httpsUrl = (v, max) => {
@@ -136,12 +139,25 @@ const httpsUrl = (v, max) => {
   try { return new URL(v).protocol === 'https:'; } catch { return false; }
 };
 
-/** One file on a message: the host downloads `url` (only from the plugin's declared attachmentHosts). */
+/** An attachment the worker downloads itself: an opaque id it minted (never a URL, never a credential). */
+export const FILE_REF_RE = /^[A-Za-z0-9_-]{16,128}$/;
+/** Worker file fetch: data bytes per `file-chunk` frame (its base64 stays under MAX_FRAME_BYTES), the largest file a
+ *  host may ask for, and the worker's own deadline for one download. */
+export const FILE_LIMITS = Object.freeze({ chunkBytes: 512 * 1024, maxBytes: 100 * 1024 * 1024, minTimeoutMs: 1000, maxTimeoutMs: 120_000 });
+const FILE_CHUNK_B64_MAX = Math.ceil(FILE_LIMITS.chunkBytes / 3) * 4;
+const B64_RE = /^[A-Za-z0-9+/]*={0,2}$/;
+
+/** One file on a message, from exactly one source: `url` (the host downloads it, only from the plugin's declared
+ *  attachmentHosts), `ref` (the worker downloads it on a `file` request) or `unavailable` (listed with that reason). */
 export function isValidAttachmentRef(a) {
-  return !!a && typeof a === 'object' && !Array.isArray(a)
-    && str(a.name, IL.attachmentName) && httpsUrl(a.url, IL.url)
-    && Number.isSafeInteger(a.size) && a.size >= 0 && a.size <= IL.attachmentSize
-    && (a.contentType === undefined || a.contentType === null || str(a.contentType, IL.contentType));
+  if (!a || typeof a !== 'object' || Array.isArray(a)) return false;
+  if (!str(a.name, IL.attachmentName) || !Number.isSafeInteger(a.size) || a.size < 0 || a.size > IL.attachmentSize) return false;
+  if (!(a.contentType === undefined || a.contentType === null || str(a.contentType, IL.contentType))) return false;
+  const sources = (a.url !== undefined) + (a.ref !== undefined) + (a.unavailable !== undefined);
+  if (sources !== 1) return false;
+  if (a.url !== undefined) return httpsUrl(a.url, IL.url);
+  if (a.ref !== undefined) return typeof a.ref === 'string' && FILE_REF_RE.test(a.ref);
+  return str(a.unavailable, IL.unavailable);
 }
 const isValidAttachmentList = (list) => Array.isArray(list) && list.length <= IL.attachments && list.every(isValidAttachmentRef);
 
@@ -202,13 +218,21 @@ export function isValidFrame(frame) {
         && typeof frame.on === 'boolean';
     case 'history':   // v2 interactive (chat context): the recent messages of one chat before one message
       return typeof frame.id === 'string'
-        && typeof frame.chatId === 'string' && frame.chatId !== '' && frame.chatId.length <= 64
+        && typeof frame.chatId === 'string' && frame.chatId !== '' && frame.chatId.length <= MAX_CHAT_ID
         && typeof frame.before === 'string' && frame.before !== '' && frame.before.length <= 64
         && Number.isInteger(frame.limit) && frame.limit >= 1 && frame.limit <= INBOUND_LIMITS.history;
     case 'typing':   // v2 interactive (live status): start (`on`) or stop the typing indicator in one chat; the worker refreshes it
       return typeof frame.id === 'string'
-        && typeof frame.chatId === 'string' && frame.chatId !== '' && frame.chatId.length <= 64
+        && typeof frame.chatId === 'string' && frame.chatId !== '' && frame.chatId.length <= MAX_CHAT_ID
         && typeof frame.on === 'boolean';
+    case 'file':   // v2 (worker file fetch): the bytes of one attachment the worker announced with `ref`
+      return typeof frame.id === 'string' && typeof frame.ref === 'string' && FILE_REF_RE.test(frame.ref)
+        && Number.isSafeInteger(frame.maxBytes) && frame.maxBytes >= 1 && frame.maxBytes <= FILE_LIMITS.maxBytes
+        && Number.isInteger(frame.timeoutMs) && frame.timeoutMs >= FILE_LIMITS.minTimeoutMs && frame.timeoutMs <= FILE_LIMITS.maxTimeoutMs;
+    case 'file-chunk':   // worker → host: one slice of a `file` answer, in order from seq 0; a send-result ends it
+      return typeof frame.id === 'string' && Number.isInteger(frame.seq) && frame.seq >= 0
+        && typeof frame.dataB64 === 'string' && frame.dataB64.length >= 1 && frame.dataB64.length <= FILE_CHUNK_B64_MAX
+        && B64_RE.test(frame.dataB64);
     case 'interaction':
       return isValidInteraction(frame.evt);
     case 'webhook':

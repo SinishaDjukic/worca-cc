@@ -54,7 +54,8 @@ you discover the conversation ID.
 
    `team` lets the bot hear @mentions in channels (freeform chat and channel
    commands), `personal` is the 1:1 chat with the bot, `groupChat` group
-   chats. `supportsFiles` stays `false`: worca takes no file uploads from Teams.
+   chats. `supportsFiles` stays `false`: images pasted into a channel post
+   arrive without it, and worca takes no file uploads in personal chats.
    No new permission and no resource-specific consent is needed: the bot only
    receives messages that @mention it. For a quick 1:1 test without a package,
    the App ID deep link works too:
@@ -142,6 +143,40 @@ comma or newline separated, for example
 Object ID), the same id **Allowed user IDs** uses. Only listed people can start
 or continue a freeform chat or press its buttons.
 
+### Context: images and files (0.4.0)
+
+- **Images.** Images pasted into your message are downloaded by the worca
+  worker with the bot's own Bot Framework token, only from Teams' attachment
+  hosts (the conversation's Bot Connector host, `smba.trafficmanager.net` and
+  `*.asm.skype.com`; never after a redirect), and saved as attachments of the
+  chat, so the model can read them and they show in worca. An image anywhere
+  else is listed by name and never downloaded: the token is not sent there.
+  The chat's usual limits apply (types, 25 MB per file, files per message).
+- **SharePoint and OneDrive files.** A file shared in a channel lives in
+  SharePoint. worca lists it by name with a note ("open it in Teams") and does
+  not download it: that would need Microsoft Graph permissions this plugin
+  does not ask for.
+- **No reply quote.** In a channel Teams sends a reply's thread id but none of
+  the replied-to message's content, so nothing is quoted.
+- **No channel history.** Reading earlier channel messages needs Microsoft
+  Graph and resource-specific consent, which this plugin does not ask for, so
+  the *Read recent history* setting does not exist here.
+
+### Live status while worca works (0.4.0)
+
+As soon as a message starts a turn, the bot posts "⏳ Working on it… this
+message will update." in the conversation. While worca works the same card is
+updated in place (Bot Framework `updateActivity`) with the elapsed time and
+what worca is doing; when the answer is ready the card becomes its first part
+(an answer longer than one card continues in new cards below it).
+A failure, Stop or busy refusal turns it into the usual explanation. When Teams
+answers 429, one update waits at most 10 seconds in total; a longer wait is
+handed back to worca, which retries the update later. After a worca restart a
+card still marked working is updated to "⏹️ Interrupted — send your message
+again."; a card that was deleted is left alone. Teams shows no typing indicator
+for bots in channels, so in a freeform conversation the status card is the only
+live signal (personal and group chats get Teams' typing indicator).
+
 ### Security
 
 - Only the person who started a conversation controls it. Other members'
@@ -180,7 +215,8 @@ or continue a freeform chat or press its buttons.
   the ⏳ / ✅ / ❌ / ⏹️ marks the Discord plugin shows do not exist here. While
   worca works on a command in a personal or group chat, the bot shows Teams'
   typing indicator instead. Teams does not show a bot's typing indicator in
-  channels, so a freeform conversation shows nothing until the reply is posted.
+  channels, so in a freeform conversation the status card is the only live
+  signal.
   A failure is still explained in a reply.
 - Cards update in place (the header after a scope change, a proposal after
   Start). Replies are plain text and arrive when complete rather than
@@ -188,7 +224,7 @@ or continue a freeform chat or press its buttons.
 - Delivery is at-least-once: after a crash a message part can repeat.
 - A command (`/status`, ...) typed in a freeform conversation acts for the
   channel and answers in the conversation.
-- No attachments, no 1:1 or group-chat freeform chat. Teams does not let bots
+- No 1:1 or group-chat freeform chat. Teams does not let bots
   post in private channels, so use a standard channel.
 
 ## Security

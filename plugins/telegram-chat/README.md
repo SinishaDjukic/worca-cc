@@ -142,9 +142,38 @@ needed. If a chat restricts reactions, or the message was deleted, the reaction 
 message is handled exactly as before; a Telegram rate limit is waited out. Reactions are remembered in memory only: if
 worca restarts while a reply is in progress, that message can keep 👀.
 
+### Context: replies and files (0.4.0)
+
+When a person replies to a message, worca quotes it with the reply: its author, time, text (or a photo's or document's
+caption), a link to it in a supergroup, and its photo or document. Two replies are not quoted: a forum topic's own start
+message (every message in a topic counts as a reply to it), and a reply to the bot's own message inside a conversation
+(a direct message, a bound topic or a reply thread): that message is already in the conversation, and replying to it is
+how a person answers a question. A mention in a group that replies to one of the bot's notifications quotes it.
+
+Photos and documents on the message and on the replied-to message are saved as attachments of the chat, under the same
+limits as Discord (25 MB per file, 4 per message, 8 per turn) and Telegram's own 20 MB limit on what a bot may download.
+The worker downloads them itself (`getFile`, then the file address, which holds the bot token and never leaves the
+worker); a photo is saved at the largest size that fits. A document over 20 MB is listed by name as not saved. Video,
+voice, audio and stickers are not saved. An album (photos or documents sent together) reaches worca as ONE message: its
+caption is the text and every file is attached (Telegram sends an album one file at a time, so the worker waits about a
+second after the last one).
+
+**No history.** The Telegram Bot API cannot read a chat's past messages, so there is no *Read recent history* setting.
+
+Privacy mode (Setup step 1): a mention that replies to another person's message reaches the bot only with privacy
+mode off or when the bot is an admin.
+
+### Live status while worca works (0.4.0)
+
+When worca starts working on a message it posts "⏳ Working on it…" in the conversation and edits it with its progress,
+then into the answer (`editMessageText`; an answer longer than one Telegram message continues in new messages below
+it). While it works, the chat shows "typing…" (`sendChatAction`, refreshed every
+4 s). Telegram rate limits are waited out up to 10 s per edit; a longer wait skips that update. If worca restarts while
+a reply is in progress, the status message is edited to "⏹️ Interrupted — send your message again.".
+
 ### Behavior notes
 
-- No attachments; replies are not streamed.
+- Replies are not streamed: they arrive when complete (the status message shows progress).
 - Delivery is at-least-once: after a crash a message part can repeat.
 - The bot remembers the topics and reply threads it is part of across restarts (the newest 500 topics and 2000 thread
   messages). A restart in the moment between a mention and the conversation's header answers "mention the bot again".

@@ -16,11 +16,17 @@
  * header: parseSurface), host controls become inline keyboards, a button that needs
  * typed text asks for a ForceReply answer, and the host's receipt marks become the
  * bot's own Telegram reaction (REACTION_FOR). README "Freeform chat".
+ *
+ * Chat context and live status (0.4.0): the message a person replied to is quoted (text or caption, its photo and
+ * document); photos and documents ride as opaque refs that fetchFile() downloads (getFile, then the file URL that
+ * holds the token — never outside this process); typing() keeps "typing…" up with sendChatAction. The Bot API cannot
+ * read a chat's past messages, so there is no history().
  */
 
 import { createHash } from 'node:crypto';
 import { renderSegments, TELEGRAM_HTML_STYLE, escapeHtml } from '../lib/segments.mjs';
 import { splitText, sendError, withRetryLadder } from '../lib/send-util.mjs';
+import { createFileRefs, readCapped, releaseBody, tooBigError } from '../lib/file-refs.mjs';
 
 const TELEGRAM_API = 'https://api.telegram.org';
 const LONG_POLL_TIMEOUT_SEC = 25; // < the host's 30s ping interval
@@ -52,6 +58,16 @@ const REACT_MAX_WAIT_MS = 5 * 1000;
  *  gives up after 15 s and binds nothing, so a start that succeeded later would leave its topic bound with no
  *  conversation: past this budget the start fails instead, inside openSurface's rollback. */
 const START_WAIT_BUDGET_MS = 10 * 1000;
+const QUOTE_TEXT_MAX = 4000;
+const QUOTE_AUTHOR_MAX = 100;
+const ATTACHMENTS_MAX = 10;
+const ALBUM_WAIT_MS = 1000;   // an album's messages arrive one by one: wait this long after the newest before sending
+const ALBUM_KEEP = 50;        // albums waiting at once; past it the oldest goes out
+const TG_DOWNLOAD_MAX = 20 * 1024 * 1024;     // getFile serves files up to 20 MB to a bot
+const FILE_PATH_RE = /^[A-Za-z0-9_./-]{1,256}$/;
+const TYPING_REFRESH_MS = 4 * 1000;           // Telegram shows a chat action for ~5 s
+const TYPING_MAX_MS = 30 * 60 * 1000;
+const EDIT_WAIT_BUDGET_MS = 10 * 1000;        // every 429 wait of one status edit: under the host's 15 s send RPC
 
 /** A press is answered (the client's spinner stops) when the host replies (its text becomes the toast), or without text
  *  after this long, so a slow host never leaves the spinner on. A later host reply is posted as a message. */
@@ -174,13 +190,35 @@ function withoutUrlButtons(rows) {
 
 // ── mentions ───────────────────────────────────────────────────────────────────
 
-/** The bot's own mentions in a message: an `@username` mention entity, or a text_mention of its id. */
+/** The bot's own mentions in a message (its text, or a photo's / document's caption): an `@username` mention entity,
+ *  or a text_mention of its id. */
 export function ownMentions(m, { username, id }) {
-  const t = typeof m?.text === 'string' ? m.text : '';
+  const t = typeof m?.text === 'string' ? m.text : typeof m?.caption === 'string' ? m.caption : '';
+  const ents = Array.isArray(m?.entities) ? m.entities : Array.isArray(m?.caption_entities) ? m.caption_entities : [];
   const me = username ? `@${String(username).toLowerCase()}` : null;
-  return (Array.isArray(m?.entities) ? m.entities : []).filter((e) => e && Number.isInteger(e.offset) && Number.isInteger(e.length)
+  return ents.filter((e) => e && Number.isInteger(e.offset) && Number.isInteger(e.length)
     && ((e.type === 'mention' && me !== null && t.slice(e.offset, e.offset + e.length).toLowerCase() === me)
       || (e.type === 'text_mention' && id != null && String(e.user?.id) === String(id))));
+}
+
+/** A Telegram unix date → ISO time, or null. */
+export const dateIso = (d) => (Number.isInteger(d) && d > 0 ? new Date(d * 1000).toISOString() : null);
+
+/** A public link to a message: a supergroup or channel with a username, or a private supergroup (t.me/c/…). DMs and
+ *  basic groups have none. */
+export function messageLink(chat, messageId) {
+  if (!chat || !Number.isInteger(messageId) || (chat.type !== 'supergroup' && chat.type !== 'channel')) return null;
+  if (typeof chat.username === 'string' && /^[A-Za-z0-9_]{4,32}$/.test(chat.username)) return `https://t.me/${chat.username}/${messageId}`;
+  const id = String(chat.id);
+  return /^-100\d{1,16}$/.test(id) ? `https://t.me/c/${id.slice(4)}/${messageId}` : null;
+}
+
+/** "Ada Lovelace", "@ada" or "unknown", marked "(this bot)" / "(bot)". */
+export function authorOf(from, botId) {
+  const name = [from?.first_name, from?.last_name].filter((x) => typeof x === 'string' && x).join(' ')
+    || (typeof from?.username === 'string' && from.username ? `@${from.username}` : '') || 'unknown';
+  const own = botId != null && from != null && String(from.id) === String(botId);
+  return `${name.slice(0, QUOTE_AUTHOR_MAX - 11)}${own ? ' (this bot)' : from?.is_bot === true ? ' (bot)' : ''}`;
 }
 
 /** Cut the given entities (UTF-16 offsets, as Telegram counts) out of the text; everything else stays as typed. */
@@ -198,6 +236,7 @@ export function createTelegramWorker(ctx, {
   setTimer = (fn, ms) => { const t = setTimeout(fn, ms); t.unref?.(); return t; },
   clearTimer = (t) => clearTimeout(t),
   callbackAckMs = CALLBACK_ACK_MS,
+  _timers = { setInterval: (fn, ms) => setInterval(fn, ms), clearInterval: (t) => clearInterval(t) },
 } = {}) {
   const token = String(ctx.config.botToken || '');
   const endpoint = (method) => `${TELEGRAM_API}/bot${token}/${method}`;
@@ -224,6 +263,72 @@ export function createTelegramWorker(ctx, {
   const inbound = new Recent(KEEP.inbound);     // group mention key -> {forum, topic} (where a conversation starts)
   const pending = new Recent(KEEP.pending);     // interaction id -> {cq, answered, timer, surface, replyTo}
   const reactions = new Recent(KEEP.reactions); // message key -> the reaction this worker set last
+
+  const fileRefs = createFileRefs({ now });
+  const typingFor = new Map();                  // surface -> { since, pauseUntil, timer }
+  const albums = new Map();                     // `<chat>:<media_group_id>` -> { chat, items: [{ out, captioned }], timer }
+
+  /** A message's photo (the size is picked at download time: the largest that fits the cap) and document → refs. */
+  function filesOf(m) {
+    const out = [];
+    const photo = Array.isArray(m?.photo) ? m.photo.filter((p) => p && typeof p.file_id === 'string') : [];
+    if (photo.length) {
+      const sizes = photo.map((p) => ({ fileId: p.file_id, size: Number.isSafeInteger(p.file_size) ? p.file_size : 0 })).sort((a, b) => a.size - b.size);
+      const shown = sizes.filter((s) => s.size <= TG_DOWNLOAD_MAX).at(-1) ?? sizes[0];
+      out.push({ name: `photo-${m.message_id}.jpg`, contentType: 'image/jpeg', size: shown.size, ref: fileRefs.put({ sizes }) });
+    }
+    const d = m?.document;
+    if (d && typeof d.file_id === 'string') {
+      const name = String(d.file_name || `file-${m.message_id}`).slice(0, 255) || 'file';
+      const size = Number.isSafeInteger(d.file_size) && d.file_size >= 0 ? d.file_size : 0;
+      const contentType = typeof d.mime_type === 'string' && d.mime_type ? d.mime_type.slice(0, 128) : null;
+      out.push(size > TG_DOWNLOAD_MAX
+        ? { name, contentType, size, unavailable: 'over the 20 MB the Telegram Bot API lets a bot download' }
+        : { name, contentType, size, ref: fileRefs.put({ sizes: [{ fileId: d.file_id, size }] }) });
+    }
+    return out.slice(0, ATTACHMENTS_MAX);
+  }
+
+  /** The message a person replied to, quoted — except a forum topic's own start (every topic message "replies" to
+   *  it), and inside a conversation (a DM, a bound topic or reply chain) a reply to the bot's own message: that one is
+   *  already in the transcript, and replying to it is how a person answers a question card. */
+  function quotedReply(m, surface, isPrivate) {
+    const r = m.reply_to_message;
+    if (!r || typeof r !== 'object' || !Number.isInteger(r.message_id)) return null;
+    if (r.forum_topic_created || (m.is_topic_message === true && r.message_id === m.message_thread_id)) return null;
+    const own = botId != null && String(r.from?.id) === String(botId);
+    if (own && (isPrivate || surface !== String(m.chat.id))) return null;
+    const at = dateIso(r.date);
+    if (!at) return null;
+    const text = typeof r.text === 'string' ? r.text : typeof r.caption === 'string' ? r.caption : '';
+    const attachments = filesOf(r);
+    return { author: authorOf(r.from, botId), text: text.slice(0, QUOTE_TEXT_MAX), at,
+      link: messageLink(r.chat ?? m.chat, r.message_id), ...(attachments.length ? { attachments } : {}) };
+  }
+
+  function stopTyping(s, entry = typingFor.get(s)) {
+    if (!entry || typingFor.get(s) !== entry) return;
+    typingFor.delete(s);
+    if (entry.timer != null) _timers.clearInterval(entry.timer);
+  }
+
+  /** One "typing…" beat: null when shown, skipped (5xx, network, a 429's wait) or over; a typed error when refused. */
+  async function typingBeat(s, entry) {
+    if (typingFor.get(s) !== entry) return null;
+    if (now() - entry.since > TYPING_MAX_MS) { stopTyping(s, entry); return null; }
+    if (now() < entry.pauseUntil) return null;
+    const p = parseSurface(s);
+    try {
+      await call('sendChatAction', { chat_id: p.chat, action: 'typing', ...(p.topic != null ? { message_thread_id: p.topic } : {}) },
+        { maxWaitMs: 0, timeoutMs: REACT_TIMEOUT_MS });
+      return null;
+    } catch (err) {
+      if (err.kind === 'rate-limit') { entry.pauseUntil = now() + (Number.isFinite(err.retryAfterMs) ? err.retryAfterMs : 1000); return null; }
+      if (err.kind === 'auth') { stopTyping(s, entry); return err; }
+      if ([400, 403, 404].includes(err.status)) { stopTyping(s, entry); return refusal(sendError('plugin', `typing refused: ${err.description}`)); }
+      return null;   // a 5xx or a network error skips one beat
+    }
+  }
 
   const setStatus = (state, detail) => {
     const d = detail ?? null;
@@ -351,10 +456,14 @@ export function createTelegramWorker(ctx, {
   /** Post into a surface: a topic gets its thread id, a chain replies to its newest message (or `replyTo`). The keyboard
    *  rides the last chunk; `budget` caps the 429 waits of all chunks (see call). Returns the posted message keys. */
   async function post(surfaceId, msg, { replyTo = null, budget = null } = {}) {
+    const { html, keyboard, controls } = render(msg);
+    return postChunks(surfaceId, splitText(html, MAX_MESSAGE_CHARS), { keyboard, controls, replyTo, budget });
+  }
+
+  /** Post rendered chunks into a surface (see post); the keyboard rides the last one. */
+  async function postChunks(surfaceId, chunks, { keyboard, controls, replyTo = null, budget = null }) {
     const s = parseSurface(surfaceId);
     if (!s) throw refusal(sendError('plugin', `not a Telegram chat id: ${surfaceId}`));
-    const { html, keyboard, controls } = render(msg);
-    const chunks = splitText(html, MAX_MESSAGE_CHARS);
     const messageIds = [];
     for (let k = 0; k < chunks.length; k++) {
       const last = k === chunks.length - 1;
@@ -374,22 +483,29 @@ export function createTelegramWorker(ctx, {
     return { ok: true, chunks: chunks.length, messageIds };
   }
 
-  /** Edit one posted message in place: the first chunk and the new keyboard (none = the buttons go). */
+  /** Edit one posted message in place: the first chunk and the new keyboard (none = the buttons go). A live status
+   *  edit carries the WHOLE reply: the rest follows as new posts on the same surface, the keyboard on the last one.
+   *  One budget caps every 429 wait of the edit and its posts. */
   async function edit(chatId, messageId, msg) {
     const k = parseMessageKey(messageId, chatId);
     if (!k) throw refusal(sendError('plugin', `message not found (${messageId})`));
     const key = messageKey(k.chat, k.id);
     const { html, keyboard, controls } = render(msg);
+    const chunks = splitText(html, MAX_MESSAGE_CHARS);
+    const single = chunks.length === 1;
+    const budget = { left: EDIT_WAIT_BUDGET_MS };
     try {
-      await deliver('editMessageText', { chat_id: k.chat, message_id: k.id, text: splitText(html, MAX_MESSAGE_CHARS)[0],
-        parse_mode: 'HTML', reply_markup: { inline_keyboard: keyboard } });
+      await deliver('editMessageText', { chat_id: k.chat, message_id: k.id, text: chunks[0],
+        parse_mode: 'HTML', reply_markup: { inline_keyboard: single ? keyboard : [] } }, { budget });
     } catch (err) {
       const why = String(err.description || err.message || '');
       if (/message to edit not found|message not found|MESSAGE_ID_INVALID/i.test(why)) throw refusal(sendError('plugin', `message not found (${messageId})`));
       if (!/message is not modified/i.test(why)) throw err;   // the same content: nothing to change
     }
-    if (controls.length) keyboards.set(key, { controls, pages: {} }); else keyboards.delete(key);
-    return { ok: true, messageIds: [key] };
+    if (single && controls.length) keyboards.set(key, { controls, pages: {} }); else keyboards.delete(key);
+    if (single) return { ok: true, messageIds: [key] };
+    const rest = await postChunks(chatId, chunks.slice(1), { keyboard, controls, budget });
+    return { ok: true, messageIds: [key, ...rest.messageIds] };
   }
 
   /** Start a conversation off a message (send options.thread) → the surface it lives on, as `threadId`. */
@@ -512,7 +628,7 @@ export function createTelegramWorker(ctx, {
   async function handleMessage(m) {
     if (m.from?.is_bot === true && !STAND_IN_SENDERS.has(m.from.id)) return;   // other bots (Telegram hides them anyway)
     const chat = String(m.chat.id);
-    const raw = typeof m.text === 'string' ? m.text : '';
+    const raw = typeof m.text === 'string' ? m.text : typeof m.caption === 'string' ? m.caption : '';
     const userId = String(m.from?.id ?? m.chat.id);
     if (takePromptAnswer(m, chat, raw, userId)) return;
     let text = raw;
@@ -533,7 +649,10 @@ export function createTelegramWorker(ctx, {
       inbound.set(id, { forum: m.chat.is_forum === true,
         topic: m.is_topic_message === true && Number.isInteger(m.message_thread_id) ? m.message_thread_id : null });
     }
-    ctx.emitMessage({
+    const attachments = filesOf(m);
+    const replyTo = quotedReply(m, surface, isPrivate);
+    const link = attachments.length ? messageLink(m.chat, m.message_id) : null;
+    const out = {
       chatId: surface,
       userId,
       text,
@@ -547,8 +666,44 @@ export function createTelegramWorker(ctx, {
         // Freeform chat: a DM always addresses the bot; in a group only an @mention of THIS bot does (cut above).
         mentionsBot,
         botId: botId == null ? null : String(botId),
+        ...(link ? { link } : {}),
       },
-    });
+      ...(attachments.length ? { attachments } : {}),
+      ...(replyTo ? { replyTo } : {}),
+    };
+    const group = typeof m.media_group_id === 'string' && attachments.length ? `${chat}:${m.media_group_id}` : null;
+    // An album the chat sent before this message goes out first, so the host sees the chat's messages in order.
+    for (const [key, a] of [...albums]) if (a.chat === chat && key !== group) flushAlbum(key);
+    if (!group) { ctx.emitMessage(out); return; }
+    holdAlbum(group, chat, out, raw.trim() !== '');
+  }
+
+  /** Telegram sends an album (photos or files sent together) as one message per file, sharing a media_group_id, with
+   *  the caption on one of them. Each would start a turn and the rest would be answered "still replying", so they wait
+   *  together and go out as ONE message: the captioned one (else the first) leads, carrying every file. */
+  function holdAlbum(group, chat, out, captioned) {
+    let a = albums.get(group);
+    if (!a) {
+      if (albums.size >= ALBUM_KEEP) flushAlbum(albums.keys().next().value);
+      a = { chat, items: [], timer: null };
+      albums.set(group, a);
+    }
+    a.items.push({ out, captioned });
+    if (a.timer) clearTimer(a.timer);
+    a.timer = null;
+    if (a.items.length >= ATTACHMENTS_MAX) { flushAlbum(group); return; }   // Telegram albums hold at most 10
+    a.timer = setTimer(() => flushAlbum(group), ALBUM_WAIT_MS);
+  }
+
+  function flushAlbum(group) {
+    const a = albums.get(group);
+    if (!a) return;
+    albums.delete(group);
+    if (a.timer) clearTimer(a.timer);
+    const lead = (a.items.find((i) => i.captioned) ?? a.items[0]).out;
+    const replyTo = lead.replyTo ?? a.items.find((i) => i.out.replyTo)?.out.replyTo;
+    ctx.emitMessage({ ...lead, attachments: a.items.flatMap((i) => i.out.attachments || []).slice(0, ATTACHMENTS_MAX),
+      ...(replyTo ? { replyTo } : {}) });
   }
 
   async function handleCallback(cq) {
@@ -739,6 +894,8 @@ export function createTelegramWorker(ctx, {
       running = false;
       clearInterval(staleTimer);
       for (const p of pending.values()) if (p.timer) clearTimer(p.timer);
+      for (const s of [...typingFor.keys()]) stopTyping(s);
+      for (const key of [...albums.keys()]) flushAlbum(key);   // a waiting album still reaches the host
     },
 
     /** options: {} (post), {edit:{messageId}} (in place), {thread:{fromMessageId, name}} (start a conversation). */
@@ -787,6 +944,53 @@ export function createTelegramWorker(ctx, {
       }
       if (on) reactions.set(key, shown); else reactions.delete(key);
       return { ok: true };
+    },
+
+    /** Start (`on`) or stop "typing…" in one chat or topic; refreshed every 4 s until stopped (30 min at most). The
+     *  first request is awaited: its refusal is permanent and starts no refresh. */
+    async typing(chatId, on) {
+      const s = String(chatId ?? '');
+      if (!parseSurface(s)) throw refusal(sendError('plugin', `not a Telegram chat id: ${s}`));
+      stopTyping(s);
+      if (!on) return { ok: true };
+      const entry = { since: now(), pauseUntil: 0, timer: null };
+      typingFor.set(s, entry);
+      const refused = await typingBeat(s, entry);
+      if (refused) throw refused;
+      if (typingFor.get(s) === entry) {
+        entry.timer = _timers.setInterval(() => {
+          typingBeat(s, entry).then((err) => { if (err) ctx.log('warn', `typing stopped: ${err.message}`); }, () => {});
+        }, TYPING_REFRESH_MS);
+        entry.timer?.unref?.();
+      }
+      return { ok: true };
+    },
+
+    /** The bytes of one photo or document this worker announced: getFile, then the file URL. That URL holds the bot
+     *  token, so it is built here, fetched with no redirects, and never put into an error or a log. */
+    async fetchFile(ref, { maxBytes, signal } = {}) {
+      const e = fileRefs.get(ref);
+      if (!e) throw refusal(sendError('plugin', 'file reference expired: send the file again'));
+      const cap = Math.min(Number(maxBytes) || 0, TG_DOWNLOAD_MAX);
+      const pick = e.sizes.filter((x) => x.size <= cap).at(-1);
+      if (!pick) throw tooBigError(cap);
+      let file;
+      try { file = await call('getFile', { file_id: pick.fileId }, { maxWaitMs: 2000, timeoutMs: 10_000 }); }
+      catch (err) {
+        if (/file is too big/i.test(String(err.description || ''))) throw tooBigError(cap);
+        if ([400, 403, 404].includes(err.status)) throw refusal(sendError('plugin', `file not available: ${err.description}`));
+        throw err;
+      }
+      const path = String(file?.file_path || '');
+      if (!FILE_PATH_RE.test(path) || path.split('/').includes('..')) throw refusal(sendError('plugin', 'Telegram answered no file path'));
+      let res;
+      try { res = await fetchFn(`${TELEGRAM_API}/file/bot${token}/${path}`, { redirect: 'error', ...(signal ? { signal } : {}) }); }
+      catch { throw sendError('network', 'file download failed'); }
+      if (res.status === 404) { releaseBody(res); throw refusal(sendError('plugin', 'file not found on Telegram')); }
+      if (!res.ok) { releaseBody(res); throw sendError(res.status >= 500 ? 'network' : 'plugin', `file download failed (HTTP ${res.status})`); }
+      const got = await readCapped(res, cap);
+      if (got.tooBig) throw tooBigError(cap);
+      return { data: got.buf, contentType: null };
     },
   };
 }

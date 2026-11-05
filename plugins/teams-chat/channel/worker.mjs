@@ -30,6 +30,7 @@ import { renderSegments } from '../lib/segments.mjs';
 import { splitText, sendError, withRetryLadder } from '../lib/send-util.mjs';
 import { createJwtValidator } from './jwt.mjs';
 import { createTokenProvider } from './token.mjs';
+import { createFileRefs, readCapped, releaseBody, tooBigError } from '../lib/file-refs.mjs';
 
 const SEEN_LRU_MAX = 200;
 const MAX_CONVERSATIONS = 200;
@@ -51,6 +52,11 @@ const REF_RE = /^[A-Za-z0-9_-]{16,64}$/;
 const FIELD_ID_RE = /^[a-z][a-z0-9_]{0,31}$/;
 const KINDS = new Set(['button', 'select', 'modal']);
 const ACTION_STYLE = { primary: 'positive', success: 'positive', danger: 'destructive' };
+const ATTACHMENTS_MAX = 10;
+const EDIT_WAIT_BUDGET_MS = 10 * 1000;   // every 429 wait of one status edit: under the host's 15 s send RPC
+const IMAGE_EXT = Object.freeze({ 'image/png': '.png', 'image/jpeg': '.jpg', 'image/jpg': '.jpg', 'image/gif': '.gif', 'image/webp': '.webp' });
+const SHAREPOINT_NOTE = 'a SharePoint or OneDrive file link: open it in Teams (worca does not download SharePoint files)';
+const OFF_HOST_NOTE = 'an image on a host worca does not send the bot\'s token to';
 
 /** What the worker itself answers (no host round trip): a click it cannot hand on, or the hold running out. */
 export const NOTICE = Object.freeze({
@@ -242,6 +248,19 @@ export const invokeReply = (text) => ({
   bodyB64: Buffer.from(JSON.stringify({ statusCode: 200, type: 'application/vnd.microsoft.activity.message', value: String(text).slice(0, 2000) })).toString('base64'),
 });
 
+/** The only hosts the bot's Bot Framework token is ever sent to for a file: the conversation's own serviceUrl host
+ *  (vouched by the inbound JWT's serviceurl claim), the Bot Connector's attachment host and Teams' image store. */
+export function teamsFileHostOk(contentUrl, serviceUrl) {
+  let u;
+  try { u = new URL(String(contentUrl)); } catch { return false; }
+  if (u.protocol !== 'https:' || u.username || u.password || u.port !== '') return false;
+  const h = u.hostname.toLowerCase();
+  let svc = null;
+  try { svc = new URL(String(serviceUrl)).hostname.toLowerCase(); } catch { /* none */ }
+  return h === svc || h === 'smba.trafficmanager.net' || h.endsWith('.asm.skype.com');
+}
+const isSharePoint = (url) => { try { return /(^|\.)sharepoint\.com$/i.test(new URL(String(url)).hostname); } catch { return false; } };
+
 export function createTeamsWorker(ctx, {
   fetchFn = globalThis.fetch,
   _sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
@@ -257,6 +276,57 @@ export function createTeamsWorker(ctx, {
   const names = new Map();     // user id (aadObjectId) -> display name, for `<@id>` in host notices
   const typing = new Map();    // `${chatId}\0${messageId}` -> interval timer
   const loggedTyping = new Set();
+  const fileRefs = createFileRefs({ now });
+
+  /** An activity's files: inline images on a vouched host → refs; SharePoint / OneDrive files → listed with a note;
+   *  cards are not files. A `text/html` attachment is the message body again: only its `<img src>` on a vouched host
+   *  count (Teams may put a channel's pasted images only there); any other <img> there (emoji, stickers) is skipped. */
+  function filesOf(activity) {
+    const out = [];
+    const urls = new Set();
+    let n = 0;
+    const image = (url, type, name) => {
+      if (urls.has(url)) return;
+      urls.add(url);
+      n += 1;
+      const fileName = String(name || `image-${n}${IMAGE_EXT[type] || '.png'}`).slice(0, 255);
+      const contentType = Object.hasOwn(IMAGE_EXT, type) ? type : null;
+      out.push(teamsFileHostOk(url, activity.serviceUrl)
+        ? { name: fileName, contentType, size: 0, ref: fileRefs.put({ url, serviceUrl: activity.serviceUrl }) }
+        : { name: fileName, contentType: null, size: 0, unavailable: OFF_HOST_NOTE });
+    };
+    const list = (Array.isArray(activity.attachments) ? activity.attachments : []).filter((a) => a && typeof a === 'object');
+    for (const a of list) {
+      if (out.length >= ATTACHMENTS_MAX) break;
+      const type = String(a.contentType || '').toLowerCase();
+      const url = typeof a.contentUrl === 'string' ? a.contentUrl : '';
+      if (type.startsWith('image/') && url) image(url, type, a.name);
+      else if (type === 'application/vnd.microsoft.teams.file.download.info' || type === 'reference' || isSharePoint(url)) {
+        out.push({ name: String(a.name || 'file').slice(0, 255) || 'file', contentType: null, size: 0, unavailable: SHAREPOINT_NOTE });
+      }
+    }
+    for (const a of list) {
+      if (String(a.contentType || '').toLowerCase() !== 'text/html' || typeof a.content !== 'string') continue;
+      for (const m of a.content.slice(0, 200_000).matchAll(/<img\b[^>]*?\ssrc="([^"]{1,2048})"/gi)) {
+        if (out.length >= ATTACHMENTS_MAX) break;
+        const url = m[1].replace(/&amp;/g, '&');
+        if (teamsFileHostOk(url, activity.serviceUrl)) image(url, '', null);
+      }
+    }
+    return out;
+  }
+
+  /** Repeat a typing activity under `key` until stopped (TYPING_MAX_MS at most, or a refused repeat). */
+  async function startTyping(key, chatId, ref) {
+    if (!(await sendTyping(chatId, ref))) return;
+    const until = now() + TYPING_MAX_MS;
+    const timer = setInterval(async () => {
+      if (!typing.has(key)) return;
+      if (now() > until || !(await sendTyping(chatId, ref))) stopTyping(key);
+    }, typingEveryMs);
+    timer.unref?.();
+    typing.set(key, timer);
+  }
 
   const conversations = async () => migrateConversations((await ctx.state.get('conversations')) || {});
   /** The stored reference for a chat id: a reply chain uses its channel's reference. */
@@ -296,7 +366,7 @@ export function createTeamsWorker(ctx, {
 
   /** One Bot Framework call through the 429 ladder. Refusals that fail again (400, 403, 404) are `permanent`; 5xx and
    *  network errors are transient. `once`: a 429 is thrown back instead of waited out (notices, typing). */
-  async function call(method, serviceUrl, path, body, { what = 'post activity', once = false } = {}) {
+  async function call(method, serviceUrl, path, body, { what = 'post activity', once = false, budget = null } = {}) {
     const url = `${serviceUrl.endsWith('/') ? serviceUrl : `${serviceUrl}/`}${path}`;
     let refreshed = false;
     return withRetryLadder(async () => {
@@ -314,7 +384,8 @@ export function createTeamsWorker(ctx, {
       }
       if (res.status === 429) {
         const retryAfterMs = (Number(res.headers?.get?.('retry-after')) || 2) * 1000;
-        if (once) throw sendError('rate-limit', `Teams rate limit: retry in ${retryAfterMs} ms`, retryAfterMs);
+        if (once || (budget && retryAfterMs > budget.left)) throw sendError('rate-limit', `Teams rate limit: retry in ${retryAfterMs} ms`, retryAfterMs);
+        if (budget) budget.left -= retryAfterMs;
         return { retryAfterMs };
       }
       if (res.status === 401) {
@@ -472,6 +543,7 @@ export function createTeamsWorker(ctx, {
         const chatId = chatIdOf(activity);
         const hasMentions = Array.isArray(activity.entities) && activity.entities.some((e) => e?.type === 'mention');
         const mine = botMentions(activity);
+        const attachments = filesOf(activity);
         ctx.emitMessage({
           chatId,
           userId,
@@ -490,6 +562,7 @@ export function createTeamsWorker(ctx, {
             // Only a channel post has a `;messageid=` root, so "the chat id is not the conversation id" means exactly that.
             mentionsBot: chatId !== String(activity.conversation?.id || '') && mine.length > 0,
           },
+          ...(attachments.length ? { attachments } : {}),
         });
       }
       // conversationUpdate etc. only feed the conversation store.
@@ -505,12 +578,23 @@ export function createTeamsWorker(ctx, {
       const from = { id: ref.botId || appId };
       const chunks = splitText(textOf(msg), MAX_CARD_TEXT);
       if (options.edit) {
-        // An edit is one card: the text is cut to one chunk (card posts are built to fit), controls replace the old ones.
+        // The first chunk updates the card, controls replace the old ones. A live status edit carries the WHOLE reply:
+        // the rest follows as new posts in the same chat, and the controls ride the last one. One budget caps every
+        // 429 wait of the edit and its posts.
         const id = options.edit.messageId;
+        const budget = { left: EDIT_WAIT_BUDGET_MS };
         await call('PUT', ref.serviceUrl, activitiesPath(chatId, id),
-          { type: 'message', id, from, attachments: [cardFor({ title: msg.title, severity: msg.severity, text: chunks[0], controls: msg.controls })] },
-          { what: 'update activity' });
-        return { ok: true, messageIds: [String(id)] };
+          { type: 'message', id, from, attachments: [cardFor({ title: msg.title, severity: msg.severity, text: chunks[0], controls: chunks.length === 1 ? msg.controls : null })] },
+          { what: 'update activity', budget });
+        const messageIds = [String(id)];
+        for (let k = 1; k < chunks.length; k++) {
+          const out = await call('POST', ref.serviceUrl, activitiesPath(chatId), {
+            type: 'message', from, conversation: { id: chatId },
+            attachments: [cardFor({ severity: msg.severity, text: chunks[k], controls: k === chunks.length - 1 ? msg.controls : null })],
+          }, { budget });
+          messageIds.push(String(out?.data?.id || ''));
+        }
+        return { ok: true, messageIds };
       }
       let target = chatId;
       let threadId = null;
@@ -552,15 +636,40 @@ export function createTeamsWorker(ctx, {
       if (!on) return { ok: true };
       const ref = await refFor(chatId);
       if (!ref || ref.conversationType === 'channel') return { ok: true };
-      if (!(await sendTyping(chatId, ref))) return { ok: true };
-      const until = now() + TYPING_MAX_MS;
-      const timer = setInterval(async () => {
-        if (!typing.has(key)) return;
-        if (now() > until || !(await sendTyping(chatId, ref))) stopTyping(key);
-      }, typingEveryMs);
-      timer.unref?.();
-      typing.set(key, timer);
+      await startTyping(key, chatId, ref);
       return { ok: true };
+    },
+
+    /** Start (`on`) or stop the typing indicator in one conversation: a typing activity repeated until stopped in a
+     *  personal or group chat. Teams shows no bot typing in channels, so a channel (where freeform chat runs) sends
+     *  nothing. */
+    async typing(chatId, on) {
+      const key = `typing:${chatId}`;
+      stopTyping(key);
+      if (!on) return { ok: true };
+      const ref = await refFor(chatId);
+      if (!ref) throw refusal(sendError('plugin', `conversation ${chatId} not seen yet`));
+      if (ref.conversationType === 'channel') return { ok: true };
+      await startTyping(key, chatId, ref);
+      return { ok: true };
+    },
+
+    /** The bytes of one inline image this worker announced, fetched with the Bot Framework token from a vouched host
+     *  only, with no redirects. Errors never carry the URL or the token. */
+    async fetchFile(ref, { maxBytes, signal } = {}) {
+      const e = fileRefs.get(ref);
+      if (!e) throw refusal(sendError('plugin', 'file reference expired: send the image again'));
+      if (!teamsFileHostOk(e.url, e.serviceUrl)) throw refusal(sendError('plugin', OFF_HOST_NOTE));
+      const token = await tokens.get();
+      let res;
+      try { res = await fetchFn(e.url, { headers: { Authorization: `Bearer ${token}` }, redirect: 'error', ...(signal ? { signal } : {}) }); }
+      catch { throw sendError('network', 'image download failed'); }
+      if (res.status === 429) { releaseBody(res); const ms = (Number(res.headers?.get?.('retry-after')) || 2) * 1000; throw sendError('rate-limit', `Teams rate limit: retry in ${ms} ms`, ms); }
+      if (res.status === 401 || res.status === 403 || res.status === 404) { releaseBody(res); throw refusal(sendError('plugin', `Teams refused the image download (HTTP ${res.status})`)); }
+      if (!res.ok) { releaseBody(res); throw sendError(res.status >= 500 ? 'network' : 'plugin', `image download failed (HTTP ${res.status})`); }
+      const got = await readCapped(res, maxBytes);
+      if (got.tooBig) throw tooBigError(maxBytes);
+      return { data: got.buf, contentType: res.headers?.get?.('content-type') || null };
     },
   };
 }

@@ -15,14 +15,20 @@
  * joins), events seen twice (an app_mention twin, a redelivery), plus the
  * optional channelAllowlist to keep big workspaces from flooding the host.
  *
- * Freeform threads: a Slack thread is a channel plus the root message's ts. A
- * thread this bot opened (send options.thread) is its own chat, `<channel>:<ts>`,
- * remembered in ctx.state so a restart keeps routing it; every other message
- * keeps the plain channel id, so commands and notifications behave as before.
+ * Freeform threads: a Slack thread is a channel plus the root message's ts. A thread this bot binds (send
+ * options.thread) is its own chat, `<channel>:<ts>`, remembered in ctx.state so a restart keeps routing it; every other
+ * message keeps the plain channel id. A start mention inside an existing thread binds THAT thread (Slack has no
+ * nested threads): the worker remembers which thread each such mention sat in.
+ *
+ * Chat context (0.4.0): a start mention inside a thread quotes the thread's root (conversations.replies, read only
+ * for a listed member in an allowed channel, before the host decides anything else); history() reads the thread's
+ * earlier replies or, for a top-level start, the channel; files[] ride as opaque refs that fetchFile() downloads with
+ * the bot token (files:read). The token and file URLs never leave this process.
  */
 
 import { renderSegments, SLACK_STYLE } from '../lib/segments.mjs';
 import { splitText, sendError, withRetryLadder } from '../lib/send-util.mjs';
+import { createFileRefs, readCapped, releaseBody, tooBigError } from '../lib/file-refs.mjs';
 
 const SLACK_API = 'https://slack.com/api';
 const MAX_MESSAGE_CHARS = 4000; // Slack's recommended text ceiling
@@ -41,6 +47,23 @@ const THREADS_STATE_KEY = 'freeformThreads';
 const THREADS_KEEP = 2000;            // newest thread chat ids kept in ctx.state (~30 bytes each, far under the 1 MiB frame)
 const SEEN_KEEP = 1000;
 const MODALS_KEEP = 500;
+const CONTEXT_READ_TIMEOUT_MS = 5 * 1000;   // one conversations.replies / .history page
+const HISTORY_MAX_WAIT_MS = 2 * 1000;       // a longer 429 goes back to the host: the turn starts without history
+const HISTORY_MAX = 50;
+const HISTORY_PAGES = 5;                    // a long thread: at most 5 pages of 200 replies are walked
+const HISTORY_FRAME_BUDGET = 900 * 1024;    // the history answer stays under the 1 MiB frame cap
+const QUOTE_TEXT_MAX = 4000;
+const QUOTE_AUTHOR_MAX = 100;
+const ATTACHMENTS_MAX = 10;
+/** Every 429 wait of one status edit or one thread start together: under the host's 15 s send RPC, so a long
+ *  Retry-After throws back (the bridge waits it) instead of landing after the host gave up. */
+const EDIT_WAIT_BUDGET_MS = 10 * 1000;
+const TS_RE = /^\d{1,12}\.\d{1,8}$/;
+const CHANNEL_RE = /^[A-Z0-9]{2,32}$/;
+const FILE_HOST_RE = /^files(-[a-z0-9-]{1,40})?\.slack\.com$/;
+const MENTION_THREADS_KEEP = 1000;
+const KINDS_KEEP = 2000;
+const HISTORY_SUBTYPES = new Set(['thread_broadcast', 'file_share', 'bot_message', 'me_message']);
 
 /** worca's receipt marks (src/core/chat/receipts.mjs MARK) → Slack emoji names. ⏹ comes with and without U+FE0F.
  *  Keys are built from code points so no invisible variation selector can go missing in a copy. */
@@ -91,6 +114,33 @@ export function splitChatId(chatId) {
   const s = String(chatId ?? '');
   const i = s.indexOf(':');
   return i < 0 ? { channel: s, threadTs: null } : { channel: s.slice(0, i), threadTs: s.slice(i + 1) };
+}
+
+/** A Slack ts ("1700000000.000100") → ISO time, or null. */
+export function tsIso(ts) {
+  const s = String(ts ?? '');
+  if (!TS_RE.test(s)) return null;
+  return new Date(Math.round(Number(s) * 1000)).toISOString();
+}
+
+/** A message permalink on the workspace's own address (auth.test `url`); a reply carries its thread. */
+export function slackPermalink(teamUrl, channel, ts, threadTs = null) {
+  if (typeof teamUrl !== 'string' || !TS_RE.test(String(ts)) || !CHANNEL_RE.test(String(channel))) return null;
+  let origin;
+  try { const u = new URL(teamUrl); if (u.protocol !== 'https:') return null; origin = u.origin; } catch { return null; }
+  const thread = threadTs && String(threadTs) !== String(ts) && TS_RE.test(String(threadTs)) ? `?thread_ts=${threadTs}&cid=${channel}` : '';
+  const link = `${origin}/archives/${channel}/p${String(ts).replace('.', '')}${thread}`;
+  return link.length <= 512 ? link : null;
+}
+
+/** A read method (conversations.replies / .history): GET with a query string — Slack's read methods take no JSON body. */
+async function slackGet(fetchFn, method, token, params, signal) {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== null) qs.set(k, String(v));
+  const res = await fetchFn(`${SLACK_API}/${method}?${qs}`, { method: 'GET', headers: { Authorization: `Bearer ${token}` }, ...(signal ? { signal } : {}) });
+  if (res.status === 429) return { httpStatus: 429, retryAfterMs: (Number(res.headers?.get?.('retry-after')) || 1) * 1000 };
+  const data = await res.json().catch(() => ({}));
+  return { httpStatus: res.status, ...data };
 }
 
 /** A receipt mark → its Slack emoji name, or null (never guessed). */
@@ -226,6 +276,7 @@ export function createSlackWorker(ctx, {
   fetchFn = globalThis.fetch,
   WebSocketImpl = globalThis.WebSocket,
   _sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  now = Date.now,
 } = {}) {
   const botToken = String(ctx.config.botToken || '');
   const appToken = String(ctx.config.appToken || '');
@@ -239,6 +290,103 @@ export function createSlackWorker(ctx, {
   const seen = new Set();             // `<channel>:<ts>` of messages already emitted (app_mention twins, redeliveries)
   const pendingModals = new Map();    // ref -> modal spec from controls this process sent (nicer labels; optional)
   const interactions = new Map();     // interactionId -> { chatId, userId, at } (ephemeral reply target)
+  let selfBotId = null;
+  let selfName = null;
+  let teamUrl = null;                 // auth.test `url` (https://acme.slack.com/): message links
+  const kinds = new Map();            // channel -> channel_type of its messages (history: only channel / group)
+  const mentionThreads = new Map();   // a start mention's ts -> the root ts of the thread it sat in
+  const chains = new Map();           // channel -> the pending delivery a thread-root read holds (keeps message order)
+  const fileRefs = createFileRefs({ now });
+  const keep = (map, k, v, max) => { map.delete(k); map.set(k, v); while (map.size > max) map.delete(map.keys().next().value); };
+  const listOf = (v) => String(v || '').split(/[\s,]+/).map((s) => s.trim()).filter(Boolean);
+
+  /** The worker's own pre-check before it reads a thread root for a start (the host still decides): freeform on, the
+   *  person in Freeform chat members, the channel in Allowed chat IDs. Nobody else's mention costs an API call. */
+  function mayReadContext(channel, userId) {
+    const cfg = ctx.config || {};
+    if (cfg.freeformChat !== 'on' || !listOf(cfg.allowedChatIds).includes(channel)) return false;
+    return listOf(cfg.chatMembers).some((pair) => pair.split('=')[0].trim() === userId);
+  }
+
+  async function forgetThread(id) {
+    if (!threads.delete(id)) return;
+    try { await ctx.state.set(THREADS_STATE_KEY, [...threads]); } catch (err) { ctx.log('warn', `thread list not saved: ${err?.message || err}`); }
+  }
+
+  /** Slack files[] → attachment refs. A file on Slack's file host gets an opaque ref (fetchFile holds its URL; the bot
+   *  token never leaves this worker); an external, Slack Connect or plan-hidden file is listed by name with why. */
+  function refsOf(list) {
+    const out = [];
+    for (const f of Array.isArray(list) ? list : []) {
+      if (!f || typeof f !== 'object' || f.mode === 'tombstone') continue;
+      if (out.length >= ATTACHMENTS_MAX) break;
+      const name = String(f.name || f.title || 'file').slice(0, 255) || 'file';
+      const size = Number.isSafeInteger(f.size) && f.size >= 0 ? f.size : 0;
+      const contentType = typeof f.mimetype === 'string' && f.mimetype ? f.mimetype.slice(0, 128) : null;
+      const url = typeof f.url_private_download === 'string' ? f.url_private_download : f.url_private;
+      let host = null;
+      try { const u = new URL(String(url)); if (u.protocol === 'https:' && !u.username && !u.password && u.port === '') host = u.hostname.toLowerCase(); } catch { /* no url */ }
+      if (f.mode === 'hidden_by_limit') out.push({ name, contentType, size, unavailable: 'hidden by the Slack plan\'s message history limit' });
+      else if (f.is_external === true || f.mode === 'external') out.push({ name, contentType, size, unavailable: 'an external file link (not stored in Slack)' });
+      else if (f.file_access === 'check_file_info' || !host || !FILE_HOST_RE.test(host)) out.push({ name, contentType, size, unavailable: 'Slack does not offer this file for download here' });
+      else out.push({ name, contentType, size, ref: fileRefs.put({ url, name }) });
+    }
+    return out;
+  }
+
+  /** One Slack message → a quoted message (author, time, text, link, files), or null without a valid ts. */
+  function toQuoted(m, channel, threadTs = null) {
+    const at = tsIso(m?.ts);
+    if (!m || !at) return null;
+    const own = (selfUserId != null && m.user === selfUserId) || (selfBotId != null && m.bot_id === selfBotId);
+    const p = m.user_profile && typeof m.user_profile === 'object' ? m.user_profile : {};
+    const name = String(p.display_name || p.real_name || (own ? selfName : '') || m.username || m.user || 'unknown').slice(0, QUOTE_AUTHOR_MAX - 11) || 'unknown';
+    const attachments = refsOf(m.files);
+    return { author: `${name}${own ? ' (this bot)' : m.bot_id ? ' (bot)' : ''}`, text: String(m.text ?? '').slice(0, QUOTE_TEXT_MAX), at,
+      link: slackPermalink(teamUrl, channel, m.ts, threadTs), ...(attachments.length ? { attachments } : {}) };
+  }
+
+  /** The root of the thread a start mention sits in (conversations.replies, its first row). Null on any failure: the
+   *  mention still goes through, without the quote (the log says why). No 429 wait: the person is waiting. */
+  async function readRoot(channel, rootTs) {
+    try {
+      const out = await slackGet(fetchFn, 'conversations.replies', botToken, { channel, ts: rootTs, limit: 1, inclusive: true }, AbortSignal.timeout(CONTEXT_READ_TIMEOUT_MS));
+      if (!out.ok) {
+        ctx.log('warn', `thread root not read: ${out.error || `HTTP ${out.httpStatus}`}${out.error === 'missing_scope' ? ' (the bot needs channels:history, + groups:history for private channels)' : ''}`);
+        return null;
+      }
+      const root = (Array.isArray(out.messages) ? out.messages : []).find((m) => m && String(m.ts) === rootTs);
+      return root ? toQuoted(root, channel, rootTs) : null;
+    } catch (err) {
+      ctx.log('warn', `thread root not read: ${err?.message || err}`);
+      return null;
+    }
+  }
+
+  function toInbound(env, ev, chatId, text, mentionsBot, replyTo) {
+    const channel = String(ev.channel || '');
+    const attachments = refsOf(ev.files);
+    const link = attachments.length ? slackPermalink(teamUrl, channel, ev.ts, ev.thread_ts ?? null) : null;
+    return {
+      chatId,
+      userId: String(ev.user),
+      text,
+      meta: {
+        platform: 'slack',
+        messageId: ev.ts == null ? null : String(ev.ts),
+        ts: ev.ts ?? null,
+        threadTs: ev.thread_ts ?? null,
+        team: env.payload?.team_id ?? null,
+        // Only a 1:1 DM ("im") is not a group; channels and multi-person DMs are.
+        isGroup: ev.channel_type !== 'im',
+        mentionsBot,
+        botId: selfUserId == null ? null : String(selfUserId),
+        ...(link ? { link } : {}),
+      },
+      ...(attachments.length ? { attachments } : {}),
+      ...(replyTo ? { replyTo } : {}),
+    };
+  }
 
   const chatIdOf = (channel, threadTs) => (threadTs && threads.has(`${channel}:${threadTs}`) ? `${channel}:${threadTs}` : channel);
   const admits = (chatId) => !channelFilter.length || channelFilter.includes(splitChatId(chatId).channel) || threads.has(chatId);
@@ -289,33 +437,32 @@ export function createSlackWorker(ctx, {
   function handleEvent(env) {
     const ev = env.payload?.event;
     if (!ev || (ev.type !== 'message' && ev.type !== 'app_mention')) return;
-    // Edits, deletes, joins and bot posts arrive as subtypes; a reply also sent to the channel is still a message.
-    if (ev.subtype && ev.subtype !== 'thread_broadcast') return;
+    // Edits, deletes, joins and bot posts arrive as subtypes; a reply also sent to the channel, and a message with
+    // files, are still messages.
+    if (ev.subtype && ev.subtype !== 'thread_broadcast' && ev.subtype !== 'file_share') return;
     if (ev.bot_id || !ev.user || ev.user === selfUserId) return;
     const channel = String(ev.channel || '');
     const threadTs = ev.thread_ts && ev.thread_ts !== ev.ts ? String(ev.thread_ts) : null;
     const chatId = chatIdOf(channel, threadTs);
     if (!admits(chatId)) return;
+    // Before the twin check: Slack's app_mention carries no channel_type and can arrive before its message twin.
+    if (typeof ev.channel_type === 'string') keep(kinds, channel, ev.channel_type, KINDS_KEEP);
     if (ev.ts && !firstSight(`${channel}:${ev.ts}`)) return;
     const text = ev.text ?? '';
-    ctx.emitMessage({
-      chatId,
-      userId: String(ev.user),
-      text,
-      meta: {
-        platform: 'slack',
-        messageId: ev.ts == null ? null : String(ev.ts),
-        ts: ev.ts ?? null,
-        threadTs: ev.thread_ts ?? null,
-        team: env.payload?.team_id ?? null,
-        // Only a 1:1 DM ("im") is not a group; channels and multi-person DMs are.
-        isGroup: ev.channel_type !== 'im',
-        // Freeform chat starts only from a top-level channel message that mentions THIS bot: a mention inside a
-        // thread (Slack has no nested threads) or in a DM starts nothing. The host strips only `<@botId>`.
-        mentionsBot: !threadTs && ev.channel_type !== 'im' && !!selfUserId && text.includes(`<@${selfUserId}>`),
-        botId: selfUserId == null ? null : String(selfUserId),
-      },
-    });
+    const bound = chatId !== channel;
+    // Freeform chat starts from a channel message that mentions THIS bot, top-level or inside a thread the bot has not
+    // bound yet (that thread is then bound); a DM starts nothing. The host strips only `<@botId>`.
+    const mentionsBot = !bound && ev.channel_type !== 'im' && !!selfUserId && text.includes(`<@${selfUserId}>`);
+    const startInThread = mentionsBot && !!threadTs && TS_RE.test(String(ev.ts || '')) && TS_RE.test(threadTs);
+    if (startInThread) keep(mentionThreads, String(ev.ts), threadTs, MENTION_THREADS_KEEP);
+    const read = startInThread && mayReadContext(channel, String(ev.user));
+    const held = chains.get(channel);
+    if (!read && !held) { ctx.emitMessage(toInbound(env, ev, chatId, text, mentionsBot, null)); return; }
+    const run = (held || Promise.resolve())
+      .then(async () => { ctx.emitMessage(toInbound(env, ev, chatId, text, mentionsBot, read ? await readRoot(channel, threadTs) : null)); })
+      .catch((err) => ctx.log('warn', `message not delivered: ${err?.message || err}`));
+    chains.set(channel, run);
+    run.finally(() => { if (chains.get(channel) === run) chains.delete(channel); });
   }
 
   async function handleInteractive(p, envelopeId) {
@@ -374,12 +521,18 @@ export function createSlackWorker(ctx, {
     }
   }
 
-  /** One Web API write through the 429 ladder → the answer's `ts`. */
-  const call = (method, body) => withRetryLadder(async () => {
+  /** One Web API write through the 429 ladder → the answer's `ts`. `budget` ({left} ms) caps every 429 wait of a
+   *  status edit or a thread start together (EDIT_WAIT_BUDGET_MS); past it the rate limit goes back to the host. */
+  const call = (method, body, { budget = null } = {}) => withRetryLadder(async () => {
     let out;
     try { out = await slackApi(fetchFn, method, botToken, body); }
     catch (err) { throw sendError('network', err?.message || String(err)); }
-    return check(out, method) ?? { ts: out.ts == null ? null : String(out.ts) };
+    const retry = check(out, method);
+    if (retry && budget) {
+      if (retry.retryAfterMs > budget.left) throw sendError('rate-limit', `Slack rate limit: retry in ${retry.retryAfterMs} ms`, retry.retryAfterMs);
+      budget.left -= retry.retryAfterMs;
+    }
+    return retry ?? { ts: out.ts == null ? null : String(out.ts) };
   }, _sleep);
 
   return {
@@ -405,6 +558,9 @@ export function createSlackWorker(ctx, {
         throw Object.assign(new Error(detail), { kind: auth.httpStatus === 429 ? 'rate-limit' : 'network' });
       }
       selfUserId = auth.user_id ?? null;
+      selfBotId = auth.bot_id ?? null;
+      selfName = typeof auth.user === 'string' ? auth.user : null;
+      teamUrl = typeof auth.url === 'string' ? auth.url : null;
       connectLoop().catch((err) => ctx.log('error', `socket loop died: ${err?.message || err}`));
       return { identity: auth.user ? `@${auth.user}` : null };
     },
@@ -416,7 +572,8 @@ export function createSlackWorker(ctx, {
 
     /** Post (or with options.edit, update in place) one message. Controls render as Block Kit on the last chunk.
      *  options.thread opens the freeform thread off the given message: Slack threads need no create call, so its chat
-     *  id is `<channel>:<fromMessageId>` and the first post is the reply that starts it. */
+     *  id is `<channel>:<fromMessageId>` and the first post is the reply that starts it. A mention that sat inside an
+     *  existing thread binds THAT thread instead (`<channel>:<root ts>`; Slack has no nested threads). */
     async send(chatId, msg, options = {}) {
       const controls = Array.isArray(msg.controls) && msg.controls.length ? msg.controls : null;
       for (const c of controls || []) {
@@ -427,26 +584,49 @@ export function createSlackWorker(ctx, {
       }
       const text = renderToMrkdwn(msg);
       if (options.edit) {
-        // An edit is one message. Blocks are always sent (a section, plus the actions when there are controls): what
-        // Slack renders then never depends on chat.update's text-vs-blocks rules, and spent buttons always go away.
-        const first = splitText(text, MAX_SECTION_CHARS)[0];
-        await call('chat.update', { channel: splitChatId(chatId).channel, ts: String(options.edit.messageId), text: first, blocks: renderBlocks(first, controls) });
-        return { ok: true, messageIds: [String(options.edit.messageId)] };
+        // Blocks are always sent (a section, plus the actions when there are controls): what Slack renders then never
+        // depends on chat.update's text-vs-blocks rules, and spent buttons always go away. A live status edit carries
+        // the WHOLE reply: the first section updates the message, the rest follows as new posts in the same chat, and
+        // the controls ride the last one. One budget caps every 429 wait of the edit and its posts.
+        const parts = splitText(text, MAX_SECTION_CHARS);
+        const budget = { left: EDIT_WAIT_BUDGET_MS };
+        const { channel, threadTs } = splitChatId(chatId);
+        await call('chat.update', { channel, ts: String(options.edit.messageId), text: parts[0],
+          blocks: renderBlocks(parts[0], parts.length === 1 ? controls : null) }, { budget });
+        const messageIds = [String(options.edit.messageId)];
+        for (let k = 1; k < parts.length; k++) {
+          const last = k === parts.length - 1;
+          const out = await call('chat.postMessage', { channel, text: parts[k], ...(threadTs ? { thread_ts: threadTs } : {}),
+            ...(last && controls ? { blocks: renderBlocks(parts[k], controls) } : {}) }, { budget });
+          messageIds.push(out?.ts || '');
+        }
+        return { ok: true, messageIds };
       }
       let { channel, threadTs } = splitChatId(chatId);
       let threadId = null;
+      let fresh = false;
+      let budget = null;
       if (options.thread) {
-        threadTs = String(options.thread.fromMessageId);
+        const from = String(options.thread.fromMessageId);
+        threadTs = mentionThreads.get(from) ?? from;   // a mention inside an existing thread binds THAT thread
         threadId = `${channel}:${threadTs}`;
+        fresh = !threads.has(threadId);
+        budget = { left: EDIT_WAIT_BUDGET_MS };
         await rememberThread(threadId);   // before the first post: the owner can reply the moment it appears
       }
       const chunks = splitText(text, controls ? MAX_SECTION_CHARS : MAX_MESSAGE_CHARS);
       const messageIds = [];
-      for (let k = 0; k < chunks.length; k++) {
-        const last = k === chunks.length - 1;
-        const out = await call('chat.postMessage', { channel, text: chunks[k], ...(threadTs ? { thread_ts: threadTs } : {}),
-          ...(last && controls ? { blocks: renderBlocks(chunks[k], controls) } : {}) });
-        messageIds.push(out?.ts || '');
+      try {
+        for (let k = 0; k < chunks.length; k++) {
+          const last = k === chunks.length - 1;
+          const out = await call('chat.postMessage', { channel, text: chunks[k], ...(threadTs ? { thread_ts: threadTs } : {}),
+            ...(last && controls ? { blocks: renderBlocks(chunks[k], controls) } : {}) }, { budget });
+          messageIds.push(out?.ts || '');
+        }
+      } catch (err) {
+        // The bridge binds nothing when the start throws: a remembered thread without a conversation would be dead.
+        if (threadId && fresh) await forgetThread(threadId);
+        throw err;
       }
       return { ok: true, chunks: chunks.length, messageIds, ...(threadId ? { threadId } : {}) };
     },
@@ -483,6 +663,81 @@ export function createSlackWorker(ctx, {
         return retry;
       }, _sleep);
       return { ok: true };
+    },
+
+    /** Up to `limit` messages before `before`, oldest first, for a conversation that starts here (the host's history
+     *  RPC, historyOnStart). A start inside a thread reads that thread's earlier replies (conversations.replies; the
+     *  root is already the quoted reply); a top-level start reads the channel (conversations.history). Only a channel
+     *  or private channel the bot saw a message in that passes the listen filter; never a DM or a group DM. Other bots'
+     *  messages and joins are skipped; worca's own stay. A 429 longer than 2 s goes back to the host. */
+    async history(chatId, before, limit) {
+      const channel = String(chatId ?? '');
+      const from = String(before ?? '');
+      const kind = kinds.get(channel);
+      if (!CHANNEL_RE.test(channel) || !TS_RE.test(from) || (kind !== 'channel' && kind !== 'group') || !admits(channel)) {
+        throw refusal(sendError('plugin', 'history is read only in an allowed Slack channel, never in direct messages'));
+      }
+      const n = Math.max(1, Math.min(HISTORY_MAX, Math.trunc(Number(limit)) || 1));
+      const root = mentionThreads.get(from) ?? null;
+      const readPage = (method, params) => withRetryLadder(async () => {
+        let out;
+        try { out = await slackGet(fetchFn, method, botToken, params, AbortSignal.timeout(CONTEXT_READ_TIMEOUT_MS)); }
+        catch (err) { throw sendError('network', err?.message || String(err)); }
+        const retry = check(out, method);
+        if (retry && retry.retryAfterMs > HISTORY_MAX_WAIT_MS) throw sendError('rate-limit', `Slack rate limit: retry in ${retry.retryAfterMs} ms`, retry.retryAfterMs);
+        return retry ?? { data: out };
+      }, _sleep).then((r) => r.data);
+      let rows = [];
+      if (root) {
+        let cursor = null;
+        for (let page = 0; page < HISTORY_PAGES; page++) {
+          const out = await readPage('conversations.replies', { channel, ts: root, latest: from, inclusive: false, limit: 200, ...(cursor ? { cursor } : {}) });
+          rows = rows.concat((Array.isArray(out.messages) ? out.messages : []).filter((m) => m && String(m.ts) !== root));   // oldest first
+          cursor = out.has_more ? out.response_metadata?.next_cursor || null : null;
+          if (!cursor) break;
+        }
+      } else {
+        const out = await readPage('conversations.history', { channel, latest: from, inclusive: false, limit: n });
+        rows = (Array.isArray(out.messages) ? out.messages : []).slice().reverse();   // Slack answers newest first
+      }
+      const msgs = [];
+      for (const m of rows) {
+        if (!m || typeof m !== 'object' || (m.subtype && !HISTORY_SUBTYPES.has(m.subtype))) continue;
+        const own = (selfUserId != null && m.user === selfUserId) || (selfBotId != null && m.bot_id === selfBotId);
+        if (m.bot_id && !own) continue;
+        const q = toQuoted(m, channel, root);
+        if (q) msgs.push(q);
+      }
+      const out = msgs.slice(-n);
+      while (out.length && Buffer.byteLength(JSON.stringify(out), 'utf8') > HISTORY_FRAME_BUDGET) out.shift();   // drop oldest
+      return out;
+    },
+
+    /** Slack shows no typing indicator for a bot in a channel (assistant.threads.setStatus belongs to Slack's
+     *  AI-assistant app surface, not to a channel thread), so this sends nothing: the live status message is the only
+     *  signal while worca works. */
+    async typing() { return { ok: true }; },
+
+    /** The bytes of one file this worker announced (files:read). The bot token goes only to Slack's file host, with no
+     *  redirects (a redirect is Slack's sign-in page). Errors never carry the URL or the token. */
+    async fetchFile(ref, { maxBytes, signal } = {}) {
+      const e = fileRefs.get(ref);
+      if (!e) throw refusal(sendError('plugin', 'file reference expired: send the file again'));
+      let res;
+      try { res = await fetchFn(e.url, { headers: { Authorization: `Bearer ${botToken}` }, redirect: 'error', ...(signal ? { signal } : {}) }); }
+      catch { throw sendError('network', 'file download failed'); }
+      if (res.status === 429) { releaseBody(res); const ms = (Number(res.headers?.get?.('retry-after')) || 1) * 1000; throw sendError('rate-limit', `Slack rate limit: retry in ${ms} ms`, ms); }
+      if (res.status === 401 || res.status === 403) { releaseBody(res); throw refusal(sendError('plugin', 'Slack refused the file: the bot needs the files:read scope (reinstall the app)')); }
+      if (res.status === 404) { releaseBody(res); throw refusal(sendError('plugin', 'file not found (deleted?)')); }
+      if (!res.ok) { releaseBody(res); throw sendError(res.status >= 500 ? 'network' : 'plugin', `file download failed (HTTP ${res.status})`); }
+      const type = String(res.headers?.get?.('content-type') || '');
+      if (/^text\/html/i.test(type) && !/\.html?$/i.test(e.name || '')) {
+        releaseBody(res);
+        throw refusal(sendError('plugin', 'Slack answered a sign-in page: the bot needs the files:read scope (reinstall the app)'));
+      }
+      const got = await readCapped(res, maxBytes);
+      if (got.tooBig) throw tooBigError(maxBytes);
+      return { data: got.buf, contentType: type || null };
     },
   };
 }

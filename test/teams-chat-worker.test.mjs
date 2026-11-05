@@ -11,9 +11,10 @@ import { createJwtValidator, decodeJwt } from '../plugins/teams-chat/channel/jwt
 import { createTokenProvider } from '../plugins/teams-chat/channel/token.mjs';
 import {
   createTeamsWorker, validateConfig, renderCard, renderControls, stripMentions, parseSubmit, chatIdOf, splitConversationId,
-  interactionIdOf, NOTICE,
+  interactionIdOf, NOTICE, teamsFileHostOk,
 } from '../plugins/teams-chat/channel/worker.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { isValidIncoming } from '../src/core/chat/channel-protocol.mjs';
 
 const APP_ID = 'app-1234';
 const SERVICE_URL = 'https://smba.trafficmanager.net/emea/';
@@ -670,7 +671,7 @@ test('typing stops on its own after TYPING_MAX_MS, and after a refused repeat', 
   await w.stop();
 });
 
-test('held invokes and notices: stop() answers a held invoke at once; a notice past its TTL is not posted; an edit is one card', async () => {
+test('held invokes and notices: stop() answers a held invoke at once; a notice past its TTL is not posted; a long edit posts its tail', async () => {
   let offset = 0;
   const routes = tokenRoutes();
   const { w, events } = await channelWorker({ invokeHoldMs: 30000, now: () => Date.now() + offset }, routes);
@@ -691,10 +692,20 @@ test('held invokes and notices: stop() answers a held invoke at once; a notice p
   assert.equal(routes.posts.length, before, 'an expired notice is not posted');
   offset = 0;
 
-  await w.send(THREAD, { title: null, severity: 'info', body: [{ kind: 'text', value: 'z'.repeat(13000) }] }, { edit: { messageId: 'hdr-1' } });
-  const put = routes.posts.at(-1);
-  assert.equal(put.method, 'PUT');
-  assert.equal(put.body.attachments[0].content.body.at(-1).text.length, 6000, 'an edit carries the first chunk only');
+  // A live status edit carries the WHOLE reply: the first chunk updates the card, the rest follows as new posts in the
+  // same reply chain, and the controls ride the last one.
+  const from = routes.posts.length;
+  const long = 'x'.repeat(6000) + 'y'.repeat(6000) + 'z'.repeat(1000);
+  const r = await w.send(THREAD, { title: null, severity: 'info', body: [{ kind: 'text', value: long }],
+    controls: [{ kind: 'button', ref: REF, label: 'Stop', style: 'danger' }] }, { edit: { messageId: 'hdr-1' } });
+  const sent = routes.posts.slice(from);
+  assert.deepEqual(sent.map((p) => p.method), ['PUT', 'POST', 'POST']);
+  assert.ok(sent.slice(1).every((p) => p.url.endsWith(`/v3/conversations/${encodeURIComponent(THREAD)}/activities`)), 'the rest goes to the same chat');
+  const blocks = sent.map((p) => p.body.attachments[0].content.body);
+  assert.equal(blocks.map((b) => b.find((x) => x.type === 'TextBlock').text).join(''), long, 'nothing of the reply is lost');
+  assert.deepEqual(blocks.map((b) => b.some((x) => x.type !== 'TextBlock')), [false, false, true], 'the controls ride the last chunk');
+  assert.equal(r.messageIds.length, 3);
+  assert.equal(r.messageIds[0], 'hdr-1');
 });
 
 test('upgrade from v0.2.0: a channel reference stored under its post id still sends, is a channel, and is re-keyed to the channel', async () => {
@@ -741,15 +752,168 @@ test('upgrade from v0.2.0: a channel reference stored under its post id still se
 test('manifest + README: interactive, freeform settings, documented Teams limits', async () => {
   const { readFile } = await import('node:fs/promises');
   const manifest = JSON.parse(await readFile(new URL('../plugins/teams-chat/worca-cc-plugin.json', import.meta.url), 'utf8'));
-  assert.equal(manifest.version, '0.3.0');
+  assert.equal(manifest.version, '0.4.0');
   const ch = manifest.chatChannels[0];
-  assert.deepEqual(ch.capabilities, { inbound: true, outbound: true, interactive: true });
+  assert.deepEqual(ch.capabilities, { inbound: true, outbound: true, interactive: true, liveStatus: true });
+  assert.equal('attachmentHosts' in ch, false, 'Teams files go through the worker, never the host URL path');
   const keys = ch.configSchema.map((f) => f.key);
   for (const k of ['freeformChat', 'chatMembers', 'worcaUrl']) assert.ok(keys.includes(k), k);
+  assert.equal(keys.includes('historyOnStart'), false, 'Teams has no channel history');
   assert.equal(ch.configSchema.find((f) => f.key === 'freeformChat').default, 'off');
   const readme = await readFile(new URL('../plugins/teams-chat/README.md', import.meta.url), 'utf8');
   assert.match(readme, /@mention the bot in every reply/);
   assert.match(readme, /cannot add reactions/);
   assert.match(readme, /"supportsFiles": false/);
   assert.match(readme, /\*\*Upgrading from 0\.2\.\*\*/);
+  assert.match(readme, /SharePoint/);
+  assert.match(readme, /no channel history/i);
+});
+
+// ── 0.4.0: files, typing and live status ────────────────────────────────────
+
+const PNG_BYTES = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(16)]);
+const IMG_URL = 'https://smba.trafficmanager.net/emea/v3/attachments/0-weu-d1-abc/views/original';
+function filesRoutes(base, img) {
+  const seen = [];
+  return { seen, fetchFn: async (url, opts = {}) => {
+    if (url.includes('/v3/attachments/') || url.includes('.asm.skype.com') || url.includes('evil.example.com')) {
+      seen.push({ url, auth: opts.headers?.Authorization ?? null, redirect: opts.redirect ?? null });
+      return img(url, opts);
+    }
+    return base.fetchFn(url, opts);
+  } };
+}
+
+test('inbound files: inline images become refs, SharePoint files are listed with a note, html bodies and cards are not files; no attachments key without files', async () => {
+  const { ctx, events } = fakeCtx();
+  const r = tokenRoutes();
+  const w = createTeamsWorker(ctx, { fetchFn: r.fetchFn, _sleep: async () => {} });
+  await w.handleWebhook(frame(CHANNEL_POST({ id: '1700000000002', attachments: [
+    { contentType: 'image/png', contentUrl: IMG_URL },
+    { contentType: 'image/*', contentUrl: 'https://us-api.asm.skype.com/v1/objects/0-x/views/imgo' },
+    { contentType: 'image/png', contentUrl: 'https://evil.example.com/x.png' },
+    { contentType: 'application/vnd.microsoft.teams.file.download.info', name: 'report.docx', content: { downloadUrl: 'https://tenant.sharepoint.com/x' } },
+    { contentType: 'reference', name: 'deck.pptx', contentUrl: 'https://tenant.sharepoint.com/sites/x/deck.pptx' },
+    { contentType: 'text/html', content: '<div>hi</div>' },
+  ] })));
+  const m = events.inbound.at(-1);
+  assert.deepEqual(m.attachments.map(({ ref, ...a }) => a), [
+    { name: 'image-1.png', contentType: 'image/png', size: 0 },
+    { name: 'image-2.png', contentType: null, size: 0 },
+    { name: 'image-3.png', contentType: null, size: 0, unavailable: 'an image on a host worca does not send the bot\'s token to' },
+    { name: 'report.docx', contentType: null, size: 0, unavailable: 'a SharePoint or OneDrive file link: open it in Teams (worca does not download SharePoint files)' },
+    { name: 'deck.pptx', contentType: null, size: 0, unavailable: 'a SharePoint or OneDrive file link: open it in Teams (worca does not download SharePoint files)' },
+  ]);
+  assert.match(m.attachments[0].ref, /^[A-Za-z0-9_-]{24}$/);
+  assert.equal(m.replyTo, undefined, 'Teams carries no replied-to content: nothing is quoted');
+  assert.equal(isValidIncoming(m), true);
+  // meta.serviceUrl is smba.trafficmanager.net itself: look for the file URLs, not the host
+  for (const leak of ['/v3/attachments/', 'asm.skype.com', 'evil.example.com', 'sharepoint.com']) assert.ok(!JSON.stringify(m).includes(leak), `no file URL leaves the worker (${leak})`);
+  await w.handleWebhook(frame(CHANNEL_POST({ id: '1700000000003' })));
+  assert.equal('attachments' in events.inbound.at(-1), false);
+});
+
+test('fetchFile: the Bot Framework token goes only to the vouched hosts, with no redirects; 403 permanent; over the cap tooBig; no token in an error', async () => {
+  const { ctx, events } = fakeCtx();
+  let mode = 'ok';
+  const routes = filesRoutes(tokenRoutes(), () => {
+    if (mode === '403') return new Response('', { status: 403 });
+    if (mode === 'boom') throw new TypeError('fetch failed');
+    return new Response(PNG_BYTES, { status: 200, headers: { 'content-type': 'image/png' } });
+  });
+  const w = createTeamsWorker(ctx, { fetchFn: routes.fetchFn, _sleep: async () => {} });
+  await w.handleWebhook(frame(CHANNEL_POST({ id: '1700000000002', attachments: [{ contentType: 'image/png', contentUrl: IMG_URL }] })));
+  const ref = events.inbound.at(-1).attachments[0].ref;
+  const got = await w.fetchFile(ref, { maxBytes: 1000 });
+  assert.deepEqual([Buffer.compare(got.data, PNG_BYTES), got.contentType], [0, 'image/png']);
+  assert.deepEqual(routes.seen, [{ url: IMG_URL, auth: 'Bearer tok-1', redirect: 'error' }]);
+  await assert.rejects(w.fetchFile(ref, { maxBytes: 4 }), (e) => e.tooBig === true);
+  for (const [m, permanent] of [['403', true], ['boom', false]]) {
+    mode = m;
+    await assert.rejects(w.fetchFile(ref, { maxBytes: 1000 }), (e) => (e.permanent === true) === permanent && !e.message.includes('tok-1') && !e.message.includes('trafficmanager'), m);
+  }
+  await assert.rejects(w.fetchFile('Z'.repeat(24), { maxBytes: 10 }), (e) => e.permanent === true && /expired/.test(e.message));
+});
+
+test('typing(): a typing activity repeated in a personal chat until stopped; a channel sends nothing; an unseen chat is refused', async () => {
+  const routes = tokenRoutes();
+  const { w } = await channelWorker({ typingEveryMs: 20 }, routes);
+  const typings = () => routes.posts.filter((p) => p.body.type === 'typing');
+  assert.deepEqual(await w.typing(THREAD, true), { ok: true });
+  assert.deepEqual(await w.typing(CHANNEL, true), { ok: true });
+  await new Promise((r) => setTimeout(r, 60));
+  assert.equal(typings().length, 0, 'Teams shows no bot typing in channels: nothing is sent');
+  assert.deepEqual(await w.typing('conv-1', true), { ok: true });          // channelWorker has seen the personal conv-1
+  await until(() => typings().length >= 2);
+  assert.ok(typings().every((p) => p.url.includes(encodeURIComponent('conv-1'))));
+  assert.deepEqual(await w.typing('conv-1', false), { ok: true });
+  const n = typings().length;
+  await new Promise((r) => setTimeout(r, 60));
+  assert.equal(typings().length, n, 'stopped');
+  await assert.rejects(w.typing('conv-never', true), (e) => e.permanent === true);
+});
+
+test('live status: a status edit spends one bounded 429 budget, then throws back; a deleted status message is permanent', async () => {
+  let mode = 'limit';
+  const routes = tokenRoutes({ post: () => (mode === 'limit' ? { status: 429, headers: { 'retry-after': '5' } } : { status: 404 }) });
+  const sleeps = [];
+  const { w } = await channelWorker({ _sleep: async (ms) => { sleeps.push(ms); } }, routes);
+  await assert.rejects(w.send(THREAD, { title: null, severity: 'info', body: [{ kind: 'text', value: '⏳ Working on it…' }] }, { edit: { messageId: 'st-1' } }),
+    (e) => e.kind === 'rate-limit' && e.retryAfterMs === 5000);
+  assert.ok(sleeps.reduce((a, b) => a + b, 0) <= 10000, `${sleeps}`);
+  mode = 'gone';
+  await assert.rejects(w.send(THREAD, { title: null, severity: 'info', body: [{ kind: 'text', value: 'x' }] }, { edit: { messageId: 'st-1' } }), (e) => e.permanent === true);
+});
+
+test('file hosts: https on the vouched hosts only (no userinfo, no port); the JWT-vouched serviceUrl host counts; 10 files at most; any SharePoint URL is listed; a refused first typing post starts no repeat', async () => {
+  const GCC = 'https://smba.infra.gcc.teams.microsoft.com/teams/';
+  const gccUrl = `${GCC}v3/attachments/0-gcc-d1-abc/views/original`;
+  for (const [url, svc, ok] of [
+    [IMG_URL, SERVICE_URL, true],
+    ['https://us-api.asm.skype.com/v1/objects/0-x/views/imgo', SERVICE_URL, true],
+    [gccUrl, GCC, true],
+    [gccUrl, SERVICE_URL, false],
+    ['http://smba.trafficmanager.net/emea/v3/attachments/a/views/original', SERVICE_URL, false],
+    ['https://user:pw@smba.trafficmanager.net/emea/v3/attachments/a/views/original', SERVICE_URL, false],
+    ['https://smba.trafficmanager.net:8443/emea/v3/attachments/a/views/original', SERVICE_URL, false],
+    ['https://asm.skype.com.evil.example/x.png', SERVICE_URL, false],
+    ['https://evilasm.skype.com/x.png', SERVICE_URL, false],
+    ['not a url', SERVICE_URL, false],
+  ]) assert.equal(teamsFileHostOk(url, svc), ok, `${url} on ${svc}`);
+
+  const { ctx, events } = fakeCtx();
+  const w = createTeamsWorker(ctx, { fetchFn: tokenRoutes().fetchFn, _sleep: async () => {} });
+  await w.handleWebhook(frame(CHANNEL_POST({ id: '1700000000004', serviceUrl: GCC, attachments: [{ contentType: 'image/png', contentUrl: gccUrl }] }),
+    `Bearer ${mint({ serviceurl: GCC })}`));
+  assert.match(events.inbound.at(-1).attachments[0].ref ?? '', /^[A-Za-z0-9_-]{24}$/, 'an image on the JWT-vouched serviceUrl host is a ref');
+  await w.handleWebhook(frame(CHANNEL_POST({ id: '1700000000005', attachments: Array.from({ length: 12 }, (_, i) => ({ contentType: 'image/png', contentUrl: IMG_URL.replace('-abc/', `-abc${i}/`) })) })));
+  assert.equal(events.inbound.at(-1).attachments.length, 10);
+  assert.equal(isValidIncoming(events.inbound.at(-1)), true);
+  await w.handleWebhook(frame(CHANNEL_POST({ id: '1700000000006', attachments: [{ contentType: 'application/pdf', name: 'spec.pdf', contentUrl: 'https://tenant-my.sharepoint.com/personal/x/spec.pdf' }] })));
+  assert.deepEqual(events.inbound.at(-1).attachments, [{ name: 'spec.pdf', contentType: null, size: 0,
+    unavailable: 'a SharePoint or OneDrive file link: open it in Teams (worca does not download SharePoint files)' }]);
+
+  const routes = tokenRoutes({ post: () => ({ status: 403, body: {} }) });
+  const { w: w2 } = await channelWorker({ typingEveryMs: 10 }, routes);
+  const typings = () => routes.posts.filter((p) => p.body.type === 'typing').length;
+  assert.deepEqual(await w2.typing('conv-1', true), { ok: true });
+  await tick(50);
+  assert.equal(typings(), 1, 'a refused first typing post starts no repeat');
+  await w2.stop();
+});
+
+test('inbound files: an image pasted into a channel post may arrive only as <img> in the text/html body; it becomes a ref once (deduplicated with an image attachment); other <img> hosts are skipped', async () => {
+  const { ctx, events } = fakeCtx();
+  const r = tokenRoutes();
+  const w = createTeamsWorker(ctx, { fetchFn: r.fetchFn, _sleep: async () => {} });
+  const AMS = 'https://us-api.asm.skype.com/v1/objects/0-wus-d2-abc/views/imgo';
+  const html = (src) => ({ contentType: 'text/html', content: `<div><p>look</p><img alt="image" src="${src}" itemtype="http://schema.skype.com/AMSImage"><img src="https://statics.teams.cdn.office.net/evergreen-assets/emoji/smile.png"></div>` });
+  await w.handleWebhook(frame(CHANNEL_POST({ id: '1700000000004', attachments: [html(AMS)] })));
+  const only = events.inbound.at(-1);
+  assert.deepEqual(only.attachments.map(({ ref, ...a }) => a), [{ name: 'image-1.png', contentType: null, size: 0 }], 'the emoji on another host is not a file');
+  assert.match(only.attachments[0].ref, /^[A-Za-z0-9_-]{24}$/);
+  assert.equal(isValidIncoming(only), true);
+  await w.handleWebhook(frame(CHANNEL_POST({ id: '1700000000005', attachments: [{ contentType: 'image/*', contentUrl: AMS }, html(AMS)] })));
+  assert.equal(events.inbound.at(-1).attachments.length, 1, 'one image sent both ways is one file');
+  assert.ok(!JSON.stringify(events.inbound.slice(-2)).includes('asm.skype.com'), 'no file URL leaves the worker');
 });
