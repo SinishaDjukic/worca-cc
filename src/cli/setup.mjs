@@ -48,7 +48,7 @@ export async function cmdSetup(argv, {
   out = (s) => process.stdout.write(`${s}\n`), err = (s) => process.stderr.write(`${s}\n`),
   input = process.stdin, prompt = process.stderr, settings = readSettings,
   catalog = async () => (await import('../core/config.mjs')).listModels(null),
-  claudeAuth = async () => (await (await import('../core/preflight.mjs')).probeClaudeAuth()).state,
+  claudeAuth = async () => (await (await import('../core/preflight.mjs')).probeClaudeAuth({ bin: (await import('../core/cli-resolve.mjs')).configuredClaudeBin() })).state,
 } = {}) {
   if (argv[0] === 'help' || argv.includes('--help')) { out(HELP); return 0; }
   const at = argv.indexOf('--from'); const from = at >= 0 ? argv[at + 1] : null;

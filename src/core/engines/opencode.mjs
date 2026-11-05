@@ -59,7 +59,8 @@
 //   user's own MCP servers still start (their tools are denied); their instructions files still reach the prompt.
 // - OpenCode Zen's free models (`opencode/…`) refuse a request without the shell, so a chat never runs on them.
 import { mkdirSync, readFileSync, writeFileSync, rmSync, existsSync, realpathSync } from 'node:fs';
-import { execFile } from 'node:child_process';
+import { execCli, cliRefusal } from './exec-cli.mjs';
+import { OPENCODE_CLI } from './cli-specs.mjs';
 import { homedir } from 'node:os';
 import { join, relative } from 'node:path';
 import { worcaHome } from '../projects.mjs';
@@ -429,13 +430,13 @@ export function opencodePreflight({ bin = opencodeDefaultBin(), timeoutMs = 1500
   const allowed = defaultModelAllowed();
   const { env } = composeSpawnEnv({ envScrub, envAllowlist, prefixes: OPENCODE_ENV_PREFIXES });
   const run = (args) => new Promise((resolve) => {
-    execFile(bin, args, { timeout: timeoutMs, env: { ...env, OPENCODE_DISABLE_AUTOUPDATE: '1' } }, (err, stdout, stderr) => resolve({ err, stdout, stderr }));
+    execCli(OPENCODE_CLI, bin, args, { timeout: timeoutMs, env: { ...env, OPENCODE_DISABLE_AUTOUPDATE: '1' } }, (err, stdout, stderr) => resolve({ err, stdout, stderr }));
   });
   return (async () => {
     const v = await run(['--version']);
     if (v.err) {
       return /^(ENOENT|EACCES|EINVAL)$/.test(String(v.err.code)) || typeof v.err.code === 'number'
-        ? { refusal: `cannot run ${bin} (${v.err.code}) — install OpenCode (opencode.ai), or point WORCA_OPENCODE_BIN at it` }
+        ? { refusal: cliRefusal({ bin, err: v.err, install: 'install OpenCode (opencode.ai), or point WORCA_OPENCODE_BIN at it' }) }
         : { warning: `could not check ${bin} (${v.err.message})` };
     }
     // OpenCode 2 (npm @opencode/cli, Homebrew's opencode) breaks this adapter: `run` attaches to a shared background
@@ -591,6 +592,7 @@ export async function runOpencodeProcess({
     const spawnSignal = cap ? (signal ? AbortSignal.any([signal, capCtrl.signal]) : capCtrl.signal) : signal;
     const args = buildOpencodeArgs({ agent: nodeAgent, model, effort, sessionId });
     const res = await superviseSpawn({
+      cli: OPENCODE_CLI,
       file: bin, args, displayBin: bin, cwd, env, stdin: String(prompt ?? ''), signal: spawnSignal, asAgent, stagedDir: asAgent ? scratch : null, onEvent,
       cleanup: () => {},
       isBenignStderr,
@@ -632,7 +634,7 @@ export async function runOpencodeProcess({
     let costUsd = 0; let usage = { ...ZERO_USAGE }; const missed = [];
     for (const { sessionId: id, toolUseId } of subs) {
       const text = await new Promise((resolve) => {
-        execFile(bin, ['export', id], { cwd, env, timeout: 20000, maxBuffer: 64 * 1024 * 1024 }, (err, stdout) => resolve(err ? null : stdout));
+        execCli(OPENCODE_CLI, bin, ['export', id], { cwd, env, timeout: 20000, maxBuffer: 64 * 1024 * 1024 }, (err, stdout) => resolve(err ? null : stdout));
       });
       const s = text == null ? null : readSubsession(text, { parentId: toolUseId, mcpServers: Object.keys(mcp || {}) });
       if (!s) { missed.push(id); continue; }
@@ -678,8 +680,8 @@ export const OPENCODE_ASK_MIN_VERSION = '1.19.4';
 /** Can this opencode be locked down for a chat? OpenCode 1.x at least OPENCODE_ASK_MIN_VERSION. Never rejects. */
 export function opencodeAskSupport({ bin = opencodeDefaultBin(), timeoutMs = 15000 } = {}) {
   return new Promise((resolve) => {
-    execFile(bin, ['--version'], { timeout: timeoutMs, env: { ...process.env, OPENCODE_DISABLE_AUTOUPDATE: '1' } }, (err, stdout) => {
-      if (err) { resolve({ refusal: /^(ENOENT|EACCES|EINVAL)$/.test(String(err.code)) ? `cannot run ${bin} (${err.code}) — install OpenCode 1.x (npm i -g opencode-ai), or point WORCA_OPENCODE_BIN at it` : `could not ask ${bin} its version (${err.message})` }); return; }
+    execCli(OPENCODE_CLI, bin, ['--version'], { timeout: timeoutMs, env: { ...process.env, OPENCODE_DISABLE_AUTOUPDATE: '1' } }, (err, stdout) => {
+      if (err) { resolve({ refusal: /^(ENOENT|EACCES|EINVAL)$/.test(String(err.code)) ? cliRefusal({ bin, err, install: 'install OpenCode 1.x (npm i -g opencode-ai), or point WORCA_OPENCODE_BIN at it' }) : `could not ask ${bin} its version (${err.message})` }); return; }
       const v = /(\d+)\.(\d+)\.(\d+)/.exec(String(stdout));
       const n = v ? v.slice(1).map(Number) : null;
       const min = OPENCODE_ASK_MIN_VERSION.split('.').map(Number);

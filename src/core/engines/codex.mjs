@@ -19,7 +19,8 @@
 import { mkdirSync, readFileSync, writeFileSync, existsSync, symlinkSync, rmSync, renameSync, readdirSync, linkSync, copyFileSync, lstatSync, readlinkSync } from 'node:fs';
 import { createHash, randomBytes } from 'node:crypto';
 import { homedir } from 'node:os';
-import { execFile } from 'node:child_process';
+import { execCli, cliRefusal } from './exec-cli.mjs';
+import { CODEX_CLI } from './cli-specs.mjs';
 import { join, resolve, dirname, relative } from 'node:path';
 import { worcaHome } from '../projects.mjs';
 import { hostGuardEnabled, hostGuardSystemPrompt } from '../host-guard.mjs';
@@ -687,10 +688,10 @@ export function parseLoginStatus({ code, stdout = '', stderr = '' } = {}) {
  */
 export function codexPreflight({ bin = CODEX_DEFAULT_BIN, timeoutMs = 10000, signIn = true } = {}) {
   return new Promise((resolve) => {
-    execFile(bin, ['login', 'status'], { timeout: timeoutMs }, (err, stdout, stderr) => {
+    execCli(CODEX_CLI, bin, ['login', 'status'], { timeout: timeoutMs }, (err, stdout, stderr) => {
       if (err && typeof err.code !== 'number') {
         resolve(/^(ENOENT|EACCES|EINVAL)$/.test(String(err.code))
-          ? { refusal: `cannot run ${bin} (${err.code}) — install codex, or point WORCA_CODEX_BIN at it` }
+          ? { refusal: cliRefusal({ bin, err, install: 'install codex, or point WORCA_CODEX_BIN at it' }) }
           : { warning: `could not check the codex sign-in (${err.message})` });
         return;
       }
@@ -716,9 +717,9 @@ export function parseCodexFeatures(stdout = '') {
  */
 export function codexAskSupport({ bin = CODEX_DEFAULT_BIN, timeoutMs = 10000 } = {}) {
   return new Promise((resolve) => {
-    execFile(bin, ['features', 'list'], { timeout: timeoutMs }, (err, stdout) => {
+    execCli(CODEX_CLI, bin, ['features', 'list'], { timeout: timeoutMs }, (err, stdout) => {
       if (err && typeof err.code !== 'number') {
-        resolve({ refusal: /^(ENOENT|EACCES|EINVAL)$/.test(String(err.code)) ? `cannot run ${bin} (${err.code}) — install codex, or point WORCA_CODEX_BIN at it` : `could not ask ${bin} which features it has (${err.message})` });
+        resolve({ refusal: /^(ENOENT|EACCES|EINVAL)$/.test(String(err.code)) ? cliRefusal({ bin, err, install: 'install codex, or point WORCA_CODEX_BIN at it' }) : `could not ask ${bin} which features it has (${err.message})` });
         return;
       }
       const have = err ? new Set() : parseCodexFeatures(stdout);
@@ -891,6 +892,7 @@ export async function runCodexProcess({
   let toolCalls = 0; let capped = false;
   const spawnSignal = cap ? (signal ? AbortSignal.any([signal, capCtrl.signal]) : capCtrl.signal) : signal;
   const res = await superviseSpawn({
+    cli: CODEX_CLI,
     file: bin, args, displayBin: bin, cwd, env, stdin, signal: spawnSignal, asAgent, stagedDir: null, onEvent,
     cleanup: () => { if (roleFile) rmSync(roleFile, { force: true }); },
     stdoutErrorDetail: () => normalizer.finish().error || '',

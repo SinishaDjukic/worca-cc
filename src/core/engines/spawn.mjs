@@ -4,6 +4,7 @@
 // grace -> SIGKILL, staged-file cleanup, the scrubbed spawn env. What a stdout
 // line MEANS is the adapter's business (onStdoutLine); this module never parses one.
 import { spawn, spawnSync } from 'node:child_process';
+import { resolveCliCommand, explainUnspawnableCli, GENERIC_CLI } from '../cli-resolve.mjs';
 import { createInterface } from 'node:readline';
 import { realpathSync } from 'node:fs';
 import { join, resolve, dirname, basename } from 'node:path';
@@ -173,7 +174,8 @@ export function signalTree(child, sig, { group = true, platform = process.platfo
  * `"<displayBin> exited with code N: <detail>"` carrying `errorClass` (and
  * `stream:'err'` when the detail came from stderr).
  * @param {object} o
- * @param {string} o.file                          the resolved executable
+ * @param {string} o.file                          the configured bin (an already-resolved absolute .exe is fine)
+ * @param {object} [o.cli]                         the engine's CliSpec (cli-specs.mjs); `file` is resolved through it on Windows
  * @param {string[]} o.args
  * @param {string} o.displayBin                    the name used in error messages (the caller's `bin`)
  * @param {string} o.cwd
@@ -200,11 +202,28 @@ export function signalTree(child, sig, { group = true, platform = process.platfo
  * @param {(err:Error, prefix:string) => Error} o.spawnError
  * @param {(code:number) => any} o.onDone
  */
+const notedResolutions = new Set();
+/** Log a shim substitution once per process: the same bin resolves on every spawn. */
+function noteResolved(r) {
+  if (!r?.note) return;
+  const key = [r.bin, ...r.prefixArgs].join('|');
+  if (notedResolutions.has(key)) return;
+  notedResolutions.add(key);
+  console.warn('[worca] ' + r.note);
+}
+
 export function superviseSpawn(o) {
-  const { file, args, displayBin, cwd, env, stdin, signal, asAgent, stagedDir, agentHome = null, cleanup, onEvent,
+  const { file, args, cli = GENERIC_CLI, displayBin, cwd, env, stdin, signal, asAgent, stagedDir, agentHome = null, cleanup, onEvent,
     onStdoutLine, onStderrLine = null, stdoutErrorDetail, classify, isBenignStderr = () => false, redactText = null, spawnError, onDone } = o;
   return new Promise((resolveP, rejectP) => {
     let childEnv = env;
+    // ENOENT/EINVAL on a Windows script shim: say why (the same text the preflight shows).
+    const withShimHint = (err) => {
+      if (!err || !/^(ENOENT|EINVAL)$/.test(String(err.code))) return err;
+      let hint = null;
+      try { hint = explainUnspawnableCli(file, cli); } catch { /* no hint */ }
+      return hint ? Object.assign(new Error(`${err.message} — ${hint}`), { code: err.code }) : err;
+    };
     // Agent isolation (agent-user.mjs): the same command under the agent's uid, via sudo, in its
     // own process group so a stuck agent can still be SIGKILLed through sudo.
     const agentId = asAgent ? agentIdentityFor(currentOwner()) : null;   // the owner's pool user (agent-pool.mjs)
@@ -212,13 +231,15 @@ export function superviseSpawn(o) {
     const ownGroup = !agentId && process.platform !== 'win32';
     let child;
     try {
-      let exe = file;
-      let argv = args;
+      const cmd = resolveCliCommand(file, args, cli);
+      let exe = cmd.file;
+      let argv = cmd.args;
+      noteResolved(cmd.resolved);
       if (agentId) {
         // Every folder the server staged for this spawn, opened to the agent's group up to worca's tmp.
         // A `{dir, writable}` entry is one the agent also writes into (Copilot's usage file).
         for (const d of [stagedDir].flat()) if (d) shareWithAgent(typeof d === 'string' ? d : d.dir, agentId, { stopAt: join(worcaHome(), 'tmp'), writable: typeof d === 'object' && d.writable === true });
-        ({ file: exe, args: argv, env: childEnv } = agentSpawn(file, args, childEnv, agentId, agentHome ? { home: agentHome(agentId) } : {}));
+        ({ file: exe, args: argv, env: childEnv } = agentSpawn(exe, argv, childEnv, agentId, agentHome ? { home: agentHome(agentId) } : {}));
       }
       child = spawn(exe, argv, {
         cwd, stdio: [stdin != null ? 'pipe' : 'ignore', 'pipe', 'pipe'], ...(childEnv ? { env: childEnv } : {}),
@@ -228,7 +249,7 @@ export function superviseSpawn(o) {
       if (ownGroup && typeof child.pid === 'number') liveGroups.add(child.pid);
     } catch (err) {
       cleanup();
-      rejectP(spawnError(err, `Failed to spawn ${displayBin}`));
+      rejectP(spawnError(withShimHint(err), `Failed to spawn ${displayBin}`));
       return;
     }
     if (stdin != null) {
@@ -321,7 +342,7 @@ export function superviseSpawn(o) {
     });
 
     child.on('error', (err) => {
-      finish(rejectP, spawnError(err, `${displayBin} error`));
+      finish(rejectP, spawnError(withShimHint(err), `${displayBin} error`));
     });
 
     child.on('close', (code) => {
