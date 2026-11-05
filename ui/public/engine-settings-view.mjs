@@ -304,10 +304,21 @@ export function renderAskEngineSection(host, { catalog = [], askEngine, askModel
   // card says to add one.
   const others = CHAT_ENGINE_NAMES.filter((e) => e !== 'claude');
   const offered = Object.fromEntries(others.map((e) => [e, catalog.some((m) => m && m.engine === e)]));
-  const unavailable = (e) => (engineLock(e) !== null ? `Chat on ${engineLabel(e)} is off while the credential broker is on, so new chats start on Claude.`
-    : ENGINES[e].signin ? `Chat on ${engineLabel(e)} needs a ${engineLabel(e)} model: add one on the Models page.`
-      : `Chat on ${engineLabel(e)} is unavailable on this ${e} version, so new chats start on Claude.`);
-  const notes = others.filter((e) => !offered[e]).map(unavailable).join(' ');
+  // One sentence per reason, the engines named in a natural list; "new chats start on Claude" is said once at the end.
+  const list = (names) => (names.length < 2 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`);
+  const missing = others.filter((e) => !offered[e]);
+  const broker = missing.filter((e) => engineLock(e) !== null);
+  const rest = missing.filter((e) => engineLock(e) === null);
+  const needModel = rest.filter((e) => ENGINES[e].signin);
+  const sentences = [];
+  if (broker.length) sentences.push(`Chat on ${list(broker.map(engineLabel))} is off while the credential broker is on.`);
+  if (needModel.length === 1) sentences.push(`Chat on ${engineLabel(needModel[0])} needs a ${engineLabel(needModel[0])} model: add one on the Models page.`);
+  else if (needModel.length > 1) sentences.push(`Chat on ${list(needModel.map(engineLabel))} needs a model of their own: add one for each on the Models page.`);
+  const oldVersion = rest.filter((x) => !ENGINES[x].signin);
+  if (oldVersion.length === 1) sentences.push(`Chat on ${engineLabel(oldVersion[0])} is unavailable on this ${oldVersion[0]} version.`);
+  else if (oldVersion.length > 1) sentences.push(`Chat on ${list(oldVersion.map(engineLabel))} is unavailable on these engine versions.`);
+  if (broker.length || rest.length > needModel.length) sentences.push('New chats start on Claude.');
+  const notes = sentences.join(' ');
   host.append(renderInheritField(doc, { id: 'askEngine', label: 'Engine for new chats', kind: 'select', level: 'user',
     hint: `New chats start here. A chat can move to another engine later, from its model picker.${notes ? ` ${notes}` : ''}`,
     options: [{ value: 'claude', label: 'Claude' }, ...others.map((e) => ({ value: e, label: offered[e] ? engineChoiceLabel(e) : `${engineLabel(e)} (unavailable)` }))],
