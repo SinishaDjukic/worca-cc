@@ -2,7 +2,7 @@
 name: chat-plugin-freeform-port
 description: Porting Discord's freeform chat (interactive controls, threads, reactions) to another chat plugin worker — where the contract is tested and which traps cost a c
 paths: plugins/*-chat/**, test/*-chat-worker.test.mjs
-updated: 2026-11-05T12:56:19.012Z
+updated: 2026-11-05T13:15:42.092Z
 author: Bulibas
 ---
 
@@ -65,3 +65,7 @@ Porting freeform chat to slack-chat (2026-11-03) showed where the worker-host co
   (`conversation-bridge.mjs` `!text && !hasContext`). Telegram albums (N messages sharing `media_group_id`) then
   start a turn on the first message, and the rest get busy replies. Group album messages in the worker before emitting
   them.
+- **A Telegram worker test that builds its own worker must `stop()` and `abort()` in a `finally`.** `botApi`'s
+  `getUpdates` holds a promise open until the ctx's shutdown signal aborts. A red assertion before `abort()` leaves the
+  long poll alive, and the file hangs past the Bash tool's 120 s instead of printing the failure (fix cycle of run
+  16797c62). Inject `setTimer`/`clearTimer` (`fakeTimers()`) to drive the album wait without real time.
