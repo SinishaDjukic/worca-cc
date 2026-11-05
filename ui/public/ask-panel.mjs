@@ -41,7 +41,7 @@ import { CHATS_PAGE } from './chats-list.mjs';
 import { chatPageKeyAction, keyHint, isMac, LIST_FIELD } from './list-keys.mjs';
 import { openKeysSheet } from './keys-sheet.mjs';
 import { gitOn } from './git-gate.mjs';
-import { originMark } from './chat-origin.mjs';
+import { originMark, platformName } from './chat-origin.mjs';
 import { NO_PROJECT_KEY, NO_PROJECT_NAME, NEEDS_REPO_NOTE } from '../../src/shared/no-project.mjs';
 import { createTagInput, fetchTagVocabulary, createTagRulesLine } from './tag-input.mjs';
 import { INTENTS, splitIntentLead } from './chat/intent.mjs';
@@ -6809,7 +6809,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (history.length) parts.push(`${history.length} earlier message${history.length === 1 ? '' : 's'}`);
     const own = Array.isArray(b.files) ? b.files.filter((f) => f && typeof f.name === 'string') : [];
     if (own.length) parts.push(`${own.length} file${own.length === 1 ? '' : 's'} not saved`);
-    const where = b.platform === 'discord' ? 'Discord' : 'chat';
+    const where = platformName(b.platform) || 'chat';
     box.appendChild(make('summary', 'ask-user-context-h', `Context from ${where}${parts.length ? `: ${parts.join(', ')}` : ''}`));
     const fileLine = (f) => make('div', 'ask-user-context-f', f.note ? `${f.name} — ${String(f.note)}` : f.name);
     const quote = (q) => {

@@ -2,7 +2,9 @@
 // on it, on the message it replies to and on recent channel history; which of them the host downloads, from where and
 // under which caps; and the chat-context block the Ask user row and the turn prompt carry. Platform-neutral: every chat
 // plugin sends the same validated fields (channel-protocol.mjs INBOUND_LIMITS). All content is untrusted DATA.
-import { classifyExtension } from '../ask/attachment-kind.mjs';
+// Files a plugin serves only with its own credential arrive as an opaque `ref` and are downloaded by the worker
+// (`fetchRef`, channel-host.mjs `fetchFile`); the limits below apply to both paths.
+import { classifyExtension, sniffMime } from '../ask/attachment-kind.mjs';
 import { ASK_LIMITS } from '../ask/limits.mjs';
 import { validateAttachmentBuffer } from '../attachment-upload.mjs';
 
@@ -21,6 +23,18 @@ export const CHAT_CONTEXT_TEXT_BUDGET = 20_000;
 
 const size = (n) => (n >= MB ? `${Math.round(n / MB)} MB` : `${n} B`);
 const extOf = (name) => { const dot = name.lastIndexOf('.'); return dot === -1 ? '' : name.slice(dot).toLowerCase(); };
+const IMAGE_EXT_OF = Object.freeze({ 'image/png': '.png', 'image/jpeg': '.jpg', 'image/gif': '.gif', 'image/webp': '.webp' });
+
+/** A worker cannot always know an image's format before it downloads it (Teams sends a pasted image as `image/*`, so
+ *  the worker names it `.png`): `x.png` holding JPEG bytes becomes `x.jpg`. Any other name, or bytes that are not one
+ *  of these images, is kept as it is (validateAttachmentBuffer then decides). */
+export function nameByImageBytes(name, buf) {
+  const m = /\.(png|jpe?g|gif|webp)$/i.exec(name);
+  const ext = IMAGE_EXT_OF[sniffMime(buf)];
+  if (!m || !ext) return name;
+  const cur = m[0].toLowerCase() === '.jpeg' ? '.jpg' : m[0].toLowerCase();
+  return cur === ext ? name : name.slice(0, m.index) + ext;
+}
 
 /** A file URL the host may fetch: https, no credentials, no port, the host name exactly one the plugin declared. */
 export function isAllowedFileUrl(raw, hosts) {
@@ -66,7 +80,8 @@ export function planChatFiles({ link = null, attachments = [], replyTo = null, h
       const source = { from: g.from, ...(g.index !== undefined ? { index: g.index } : {}), link: g.link };
       const cls = classifyExtension(extOf(ref.name));
       let why = null;
-      if (!cls) why = 'not saved: this file type cannot be attached';
+      if (typeof ref.unavailable === 'string') why = `not saved: ${ref.unavailable}`;
+      else if (!cls) why = 'not saved: this file type cannot be attached';
       else if (refuse(cls, ref.name)) why = `not saved: ${refuse(cls, ref.name)}`;
       else if (ref.size > limits.perFileBytes) why = `not saved: over the ${size(limits.perFileBytes)} limit per file`;
       else if (onMessage >= limits.perMessage) why = `not saved: only ${limits.perMessage} files per message are saved`;
@@ -103,26 +118,34 @@ async function readCapped(res, cap) {
 /** Download the planned files one at a time from the plugin's declared hosts (`redirect: 'error'`: a redirect can never
  *  leave them), each validated like an upload. Never throws: every file that is not stored is listed with its reason.
  *  @returns {Promise<{files: Array<{name, kind, mime, text?, data, bytes, source, quoted}>, skipped: Array<{name, why, source}>}>} */
-export async function fetchChatFiles(inbound, { fetchFn = globalThis.fetch, allowedHosts = [], refuse = () => null, limits = CHAT_FILE_LIMITS, log = () => {} } = {}) {
+export async function fetchChatFiles(inbound, { fetchFn = globalThis.fetch, fetchRef = null, allowedHosts = [], refuse = () => null, limits = CHAT_FILE_LIMITS, log = () => {} } = {}) {
   const { take, skipped } = planChatFiles(inbound, limits, { refuse });
   const files = [];
   let total = 0;
+  const deadlineAt = Date.now() + limits.turnTimeoutMs;
   const deadline = AbortSignal.timeout(limits.turnTimeoutMs);
   for (const { ref, source } of take) {
     const skip = (why) => { skipped.push({ name: ref.name, why, source }); };
-    if (!isAllowedFileUrl(ref.url, allowedHosts)) { skip('not saved: not from the chat platform\'s file host'); continue; }
+    const viaWorker = typeof ref.ref === 'string';
+    if (viaWorker && typeof fetchRef !== 'function') { skip('not saved: this chat plugin cannot download files'); continue; }
+    if (!viaWorker && !isAllowedFileUrl(ref.url, allowedHosts)) { skip('not saved: not from the chat platform\'s file host'); continue; }
     if (total + ref.size > limits.turnBytes) { skip(`not saved: over the ${size(limits.turnBytes)} limit per message`); continue; }
     if (deadline.aborted) { skip('not saved: the downloads took too long'); continue; }
     const cap = Math.min(limits.perFileBytes, limits.turnBytes - total);
     let got;
     try {
-      const res = await fetchFn(ref.url, { redirect: 'error', signal: AbortSignal.any([deadline, AbortSignal.timeout(limits.fileTimeoutMs)]) });
-      if (!res.ok) {
-        res.body?.cancel().catch(() => {});   // release the connection now, not at GC
-        skip(`not saved: download failed (HTTP ${res.status})`);
-        continue;
+      if (viaWorker) {
+        // The worker downloads with its own credential; the host caps what comes back (channel-host.mjs fetchFile).
+        got = await fetchRef(ref, { maxBytes: cap, timeoutMs: Math.max(1000, Math.min(limits.fileTimeoutMs, deadlineAt - Date.now())) });
+      } else {
+        const res = await fetchFn(ref.url, { redirect: 'error', signal: AbortSignal.any([deadline, AbortSignal.timeout(limits.fileTimeoutMs)]) });
+        if (!res.ok) {
+          res.body?.cancel().catch(() => {});   // release the connection now, not at GC
+          skip(`not saved: download failed (HTTP ${res.status})`);
+          continue;
+        }
+        got = await readCapped(res, cap);
       }
-      got = await readCapped(res, cap);
     } catch (err) {
       log('warn', `chat file ${ref.name} not downloaded: ${err?.message || err}`);
       skip('not saved: download failed');
@@ -132,7 +155,9 @@ export async function fetchChatFiles(inbound, { fetchFn = globalThis.fetch, allo
       skip(cap < limits.perFileBytes ? `not saved: over the ${size(limits.turnBytes)} limit per message` : `not saved: over the ${size(limits.perFileBytes)} limit per file`);
       continue;
     }
-    const v = validateAttachmentBuffer(ref.name, got.buf, { maxBytesPerFile: limits.perFileBytes, maxBytesPerBinaryFile: limits.perFileBytes, refuse });
+    // A worker-fetched image is named by its bytes (nameByImageBytes); a URL file keeps the name the platform gave.
+    const name = viaWorker ? nameByImageBytes(ref.name, got.buf) : ref.name;
+    const v = validateAttachmentBuffer(name, got.buf, { maxBytesPerFile: limits.perFileBytes, maxBytesPerBinaryFile: limits.perFileBytes, refuse });
     if (!v.ok) { skip(`not saved: ${v.error}`); continue; }
     total += v.file.bytes;
     const f = v.file;

@@ -55,6 +55,10 @@ test('followUpError reads a failed event turn from a 200 card answer only (revie
 test('parseChatMembers: id=identity pairs; bad ids and identities actorOf would refuse are skipped', () => {
   const m = parseChatMembers('123=ada@example.com,\n 456 = local , bad id=x, 789=, =y, 42=a<b>, 43=a' + String.fromCharCode(0x2028) + 'b, 44=a' + String.fromCharCode(0x85) + 'b');
   assert.deepEqual([...m], [['123', 'ada@example.com'], ['456', 'local']]);
+  // A Teams member is their Entra object id (a 36-char GUID); ids stay capped at 64.
+  const t = parseChatMembers(`8a3e1f2b-1234-4cde-9abc-0123456789ab=ada@example.com, ${'x'.repeat(64)}=bob, ${'y'.repeat(65)}=eve`);
+  assert.deepEqual([...t.keys()], ['8a3e1f2b-1234-4cde-9abc-0123456789ab', 'x'.repeat(64)]);
+  assert.doesNotMatch(SAY.notMember, /Discord/, 'the not-member notice names no platform');
 });
 
 test('synthetic rows are recognised by the synthetic notice flag only', () => {
@@ -714,4 +718,13 @@ test('live status: a failing status check never blocks delivery (head of line)',
   await B.bridge.reconcile(c);
   assert.ok(B.posts.some((p) => p.message.body[0].value === 'still delivered'));
   assert.ok(B.logs.some((m) => /status messages not checked: listMessages exploded/.test(m)));
+});
+
+test('SAY.notOwner: a mention where the platform renders <@id> (Discord, Slack), the plain sentence elsewhere', () => {
+  assert.equal(SAY.notOwner('U1'), 'Only <@U1> can act on this conversation.', 'Discord is the default');
+  assert.equal(SAY.notOwner('123', 'discord'), 'Only <@123> can act on this conversation.');
+  assert.equal(SAY.notOwner('U1', 'slack'), 'Only <@U1> can act on this conversation.');
+  for (const platform of ['telegram', 'teams']) {
+    assert.equal(SAY.notOwner('u-1', platform), 'Only the person who started this conversation can act on it.', platform);
+  }
 });

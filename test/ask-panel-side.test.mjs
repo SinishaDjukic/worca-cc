@@ -264,6 +264,9 @@ test('a chat-context block shows collapsed above the bubble: the reply, history 
   const state = { snap: snapOf([
     userRow('askm_u0000001', 1, 'what does it say?', [block]),
     userRow('askm_u0000002', 2, '', [{ kind: 'chat-context', platform: 'discord', replyTo: block.replyTo }]),
+    userRow('askm_u0000003', 3, '', [{ kind: 'chat-context', platform: 'slack', replyTo: block.replyTo }]),
+    userRow('askm_u0000004', 4, '', [{ kind: 'chat-context', platform: 'teams', replyTo: block.replyTo }]),
+    userRow('askm_u0000005', 5, '', [{ kind: 'chat-context', platform: 'constructor', replyTo: block.replyTo }]),
   ]) };
   const ctx = makePanel({ fetchHandler: api(state) });
   ctx.panel.open({ threadId: TID });
@@ -283,6 +286,9 @@ test('a chat-context block shows collapsed above the bubble: the reply, history 
   assert.deepEqual([...box.querySelectorAll('.ask-user-context-f')].map((n) => n.textContent), ['notes.md', 'big.zip — not saved: this file type cannot be attached']);
   assert.equal(users[1].querySelector('.ask-user-bubble'), null, 'no empty bubble under a context-only message');
   assert.equal(users[1].querySelector('summary').textContent, 'Context from Discord: reply to Alice');
+  assert.equal(users[2].querySelector('summary').textContent, 'Context from Slack: reply to Alice');
+  assert.equal(users[3].querySelector('summary').textContent, 'Context from Microsoft Teams: reply to Alice');
+  assert.equal(users[4].querySelector('summary').textContent, 'Context from chat: reply to Alice', 'an unknown platform (even a prototype key) is "chat"');
   ctx.panel.destroy();
 });
 
