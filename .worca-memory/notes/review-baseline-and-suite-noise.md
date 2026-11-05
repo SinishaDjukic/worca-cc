@@ -1,7 +1,7 @@
 ---
 name: review-baseline-and-suite-noise
 description: Read before reviewing a worca run's diff or proving new tests catch their fixes — the checkpoint may not be the base, and many guard removals stay green.
-updated: 2026-11-05T00:16:27.717Z
+updated: 2026-11-05T20:28:38.456Z
 author: Bulibas
 ---
 
@@ -74,5 +74,8 @@ route's `if (!check) return`), even when the tests are copied verbatim from a re
   were the blocking findings. Demand an "in the real app" row per wiring line.
 - Spawn hardening options (`env: scrubbedEnv()`, an `inflight.delete` on settle) are rarely pinned even when a plan's
   mutation table is otherwise complete: swap them for `process.env` / delete them and run the module's test.
+- `readRegularText` (lstat + O_NOFOLLOW) reads of agent-writable store/pipeline files are rarely pinned: swap them for
+  `readFile` (#1143 commit summary, 2026-11-05: green). A format row (subject/stats/trailer) also hides a dropped
+  content source: mutate the source to `''`.
 
 Judging a red, cancelled or hung full suite: [[test-suite-known-failures]].
