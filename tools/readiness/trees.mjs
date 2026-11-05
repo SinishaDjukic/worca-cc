@@ -39,7 +39,7 @@ export async function applySplit(run, dir, { splitter = dir } = {}) {
   assertScratch(run, dir);
   if (!hasSplitter(splitter)) throw new Error(`no splitter: tools/split-by-feature.mjs is not in ${splitter}`);
   const mod = await import(pathToFileURL(join(splitter, 'tools/split-by-feature.mjs')).href);
-  mod.assertExpress4(dir);
+  (mod.assertExpress ?? mod.assertExpress4)(dir);   // an older splitter (M^'s) knows Express 4 only
   const plan = mod.planSplit({ root: dir });
   if (plan.alreadySplit) throw new Error(`${dir} is already split`);
   if (plan.problems.length) throw new Error(`the split plan has ${plan.problems.length} problem(s):\n${plan.problems.join('\n')}`);

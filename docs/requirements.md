@@ -322,6 +322,8 @@ Worca. Exporting costs nothing: no model is called.
   of the description, or a Jira multi-line text field). Change it later in **Export ▾ › Export setup…**. The setup names
   a connection only; the token stays in the plugin. If the saved connection was removed, the list starts with **Choose a
   connection**.
+- With [Ticket updates](ticket-updates.md) (Labs), the setup's project list holds only the projects you work on in that
+  connection; a project the setup already names stays listed.
 - **Preview.** Every export shows the ticket as Jira will show it: the fields and the description (goal and its measure,
   actors, main flow, business rules, edge cases, out of scope, acceptance criteria, confirmed assumptions, the names of
   the files the spec mentions, and the footer "From Worca FEAT-7 · exported 26 Oct 2026"). You can change the issue
@@ -340,7 +342,10 @@ Worca. Exporting costs nothing: no model is called.
   that gives Worca a starting point to compare against.
 - **Report back.** Once a feature has a ticket, **Start in Worca** has **Report back to SHOP-123**, on by default: when the
   run ends, Worca comments on the ticket with the result and the pull request link, and moves it to the status named in
-  the Jira connection (**Transition on completion**), if any.
+  the Jira connection (**Transition on completion**), if any. With [Ticket updates](ticket-updates.md) (Labs) saved for that
+  connection, the hint says what its rule for the ticket's project does instead: "and moves the ticket to a Done status
+  (Ticket updates in the Jira connection)", "and moves the ticket to Resolved (…)" ("Resolve (as typed)" for an old setting
+  carried over), or "Ticket updates in the Jira connection leave SHOP tickets where they are".
 - If Jira cannot be reached or refuses a field, nothing is recorded and the preview stays open.
 - If the answer to a create was lost (Jira took too long, the network dropped, or Worca stopped) after Jira made the
   ticket, the next export finds that ticket instead of making a second one. Usually it then updates the ticket with what

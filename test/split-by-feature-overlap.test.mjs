@@ -9,6 +9,13 @@ test('a param path overlaps a literal it can stand for; disjoint paths do not', 
   assert.equal(canOverlap(r('/api/runs/:id'), r('/api/runs/groups')), true);
   assert.equal(canOverlap(r('/api/runs/:id'), r('/api/chat')), false);
 });
+test('Express 5 paths: a named wildcard and an optional group', () => {
+  assert.equal(canOverlap(r('/api/runs/:id/artifact-raw/*splat'), r('/api/runs/:id/artifact-raw/a/b')), true);
+  assert.equal(canOverlap(r('/api/runs/:id/artifact-raw/*splat'), r('/api/runs/:id/logs')), false);
+  assert.equal(canOverlap(r('/api/x{/:id}'), r('/api/x')), true);
+  assert.equal(canOverlap(r('/api/x{/:id}'), r('/api/x/3')), true);
+  assert.equal(canOverlap(r('/api/x{/:id}'), r('/api/y')), false);
+});
 test('array and regexp paths overlap conservatively', () => {
   assert.equal(canOverlap(r(['/api/a', '/api/runs/:id']), r('/api/runs/groups')), true);
   assert.equal(canOverlap(r(['/api/a', '/api/b']), r('/api/runs/groups')), false);

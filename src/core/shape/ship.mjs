@@ -34,7 +34,8 @@ export function onePrBody(slices, keptUrl = null, { maxChars = Infinity } = {}) 
  */
 export async function shipFeature({ feature, mode, maxBody = Infinity }, deps) {
   if (!SHIP_MODES.includes(mode)) return { ok: false, status: 400, error: 'mode must be stacked or one' };
-  const slices = feature.slices;
+  // A PR already closed (a withdrawn earlier ship) is no draft: nothing to close or to list.
+  const slices = feature.slices.map((s) => (s.pr && s.pr.state === 'CLOSED' ? { ...s, pr: null } : s));
   const last = slices[slices.length - 1];
   // One ship flow: stacked marks every slice PR ready, so each needs one; One makes its own and closes only those that exist.
   const missing = mode === 'stacked' && slices.find((s) => !s.pr || !s.pr.url);

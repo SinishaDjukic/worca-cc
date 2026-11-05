@@ -17,7 +17,7 @@
 - Stacked on `feat/req-a6-jira-export`. One commit per task (review fixes as their own commits); subjects start `Requirements:`; every message ends with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`. A merge of the base is a merge commit; no rebase, no amend.
 - **No model call, no real tracker in tests.** Every tracker call in a test goes to the mock shim (`WORCA_MOCK=1`, `setMockSourceResponses`), an injected `callSource`, or the fake Jira HTTP servers of `test/helpers/fake-jira.mjs` on `127.0.0.1` (Cloud and Data Center, plus a "media" server for Cloud's signed attachment address). The mock shim answers every new op, so the browser proof runs offline.
 - **Flag (D18).** Every new route is in `REQUIREMENTS_ROUTES` behind `requireFlag('requirements')`, so the flag-off walk of `test/requirements-api.test.mjs` covers it; changes reach the page only through the `requirements-changed` frame; the import books nothing (the files' reads cost and book as A8 reads).
-- **Schema v84** (first written as v80 on A6's v79; A6 took 80 when it met `dev`'s 79, so Task 18 renumbered it to v81; security #854 then took 81 on `dev`, so the merge of `dev` after PR #1041 renumbered it to v82; `dev`'s automations #711 and #943 then took 82 and 83, so the next merge renumbered it to v84): `req_export_links.origin TEXT NOT NULL DEFAULT 'export'` and `req_attachments.fetch_json TEXT`, both in `INCREMENTAL_COLUMNS`; the rung `if (current < 84) repairSchemaGaps(db, schemaGaps(db));` right after dev's v83 note. No new table.
+- **Schema v85** (first written as v80 on A6's v79; A6 took 80 when it met `dev`'s 79, so Task 18 renumbered it to v81; security #854 then took 81 on `dev`, so the merge of `dev` after PR #1041 renumbered it to v82; `dev`'s automations #711 and #943 then took 82 and 83, so the next merge renumbered it to v84; #990 then took 84, so the merge with Ticket updates #1072 renumbered it to v85): `req_export_links.origin TEXT NOT NULL DEFAULT 'export'` and `req_attachments.fetch_json TEXT`, both in `INCREMENTAL_COLUMNS`; the rung `if (current < 85) repairSchemaGaps(db, schemaGaps(db));` right after dev's v84 note. No new table.
 - **The contract (D2):** the four ops are optional and additive; `WORCA_PLUGIN_API` stays 5, jira-source keeps `"worca-cc-api": ">=5 <6"`. A source can import only when `capabilities()` answers `import: true`; A6's probe (one call per plugin, source id and installed version) answers both `export` and `import`. None of the four is added to `POST /api/sources/call`'s allowlist.
 - **Safety (D15):** every tracker call is `callSource` from `import.mjs` or `attachment-fetch.mjs`, with the connection's profile; no response carries a config value. Ticket text is data: the description in `<description>`, the criteria in `<current_spec>`, the comments in `<attachments>`, the import line in `<thread>`, all through the prompts' existing `asData`; the page renders it with `textContent` only. The description, criteria and comment bodies are redacted with `redactAskText` at the import (before the preview, before storage, before any clip); downloaded attachments are stored as given and redacted on the way to the model (A8). A download writes only to `dest`, the fixed name `body.part` inside a fresh 0700 folder `<worcaHome>/tmp/requirements/att-get-<8 hex>/`; the host trusts nothing there until its checks pass. People are display names only, never an email or account id.
 - **Timeouts (D17):** `IMPORT_TIMEOUT_MS = 60_000` for `importOptions`, `searchTickets`, `importTicket`; `DOWNLOAD_TIMEOUT_MS = 120_000` per `downloadAttachment`; `MAX_DOWNLOAD_JOBS = 2` across all features, separate from A8's `MAX_READ_JOBS` and A1's `MAX_JOBS`; a create waiting for its files does not hold a `MAX_JOBS` slot; round 1 waits at most `ROUND1_WAIT_MS` (6 minutes) for downloads and reads together.
@@ -42,7 +42,7 @@
 
 | File | Task(s) | Responsibility |
 |---|---|---|
-| `src/core/db.mjs` | 1, 18 | v84: two `INCREMENTAL_COLUMNS`, the rung |
+| `src/core/db.mjs` | 1, 18 | v85: two `INCREMENTAL_COLUMNS`, the rung |
 | `src/core/requirements/store.mjs` | 1 | `createFeature`'s `criteria`; `saveExportLink`'s `origin`; `linkByTicket`; the `downloading` status, `fetch` on a row, `listDownloadingAttachments` |
 | `src/core/requirements/ticket-import.mjs` (new) | 2 | pure: the criteria section, the clip, counted redaction, the comments file, the reasons, the thread line, `processTicket`, `pickDefaults` |
 | `src/core/requirements/export.mjs` | 3, 10 | one probe for `export` and `import` (`trackersWith`); `connectionLabel`, `sameConn`, `firstLine` exported; the imported link in `planExport`, `linkDates`, `exportView` | (after the review: the probe and helpers are `trackers.mjs`)
@@ -62,9 +62,9 @@ The spec put the Jira tests in `test/jira-source-connector.test.mjs` (a fake `fe
 
 ---
 
-### Task 1: Schema v80 (now v84) and the store
+### Task 1: Schema v80 (now v85) and the store
 
-**Files:** `src/core/db.mjs`, `src/core/requirements/store.mjs`; tests `test/db-migrate-v84.test.mjs` (new; written as v80, then v81, then v82), `test/requirements-import-store.test.mjs` (new), `test/db-migrate-v79.test.mjs` and `-v77` (the new columns).
+**Files:** `src/core/db.mjs`, `src/core/requirements/store.mjs`; tests `test/db-migrate-v85.test.mjs` (new; written as v80, then v81, v82 and v84), `test/requirements-import-store.test.mjs` (new), `test/db-migrate-v79.test.mjs` and `-v77` (the new columns).
 
 **Interfaces:** `createFeature({ …, criteria = [] })` writes `{ id: 'R-po-<n>', text, edited: true, source }` (empties and repeats left out, at most 30 of 500 characters; `criteriaSeq` their count); `saveExportLink(seq, { …, origin = 'export' })` and `Link.origin`; `linkByTicket({ plugin, sourceId, profile, key }) → { seq, id, title } | null` (archived included); `insertAttachment` / `updateAttachment` accept `status: 'downloading'`, `Attachment.fetch: { plugin, sourceId, profile, tracker, key, id, name, bytes } | null`; `listDownloadingAttachments()`.
 
@@ -251,7 +251,7 @@ Each task landed as one commit; review fixes landed as their own commits.
 
 | Task | Delivered | Tested by |
 |---|---|---|
-| 1 | the two columns (v80, renumbered to v81 in Task 18, to v82 at the merge of `dev` with #854 and to v84 at the merge with #711/#943); criteria on create; the link's origin; `linkByTicket`; download rows | `db-migrate-v84` (14 tests), `requirements-import-store` (5) |
+| 1 | the two columns (v80, renumbered to v81 in Task 18, to v82 at the merge of `dev` with #854 and to v84 at the merge with #711/#943, to v85 at the merge with #990/#1072); criteria on create; the link's origin; `linkByTicket`; download rows | `db-migrate-v85` (16 tests), `requirements-import-store` (5) |
 | 2 | `ticket-import.mjs`; review fix: redaction before the split and the clip | `requirements-ticket-import` (18) |
 | 3 | one probe for export and import; the mock answers; the contract and the plugin skill | `requirements-export-trackers`, `plugin-shim` |
 | 4 | jira-source's `importOptions`, `searchTickets`, `importTicket`; the markup rules and `plainWiki`; review fixes: criteria wiki through `plainWiki`, a bounded Cloud search, nested lists | `jira-source-import` (18) against a fake Jira, Cloud and Data Center |
@@ -299,7 +299,7 @@ Each is recorded in the design as "(adjusted for the build)" or as U1, U2 or Q1�
 | D10 the feature at once, downloads afterwards, round 1 waits, readiness, per-file failures, Try again, removal, restart | 7, 8, 9, 14, 15 |
 | D11 A6's link with `origin = 'import'`; Export's copy; type and priority kept; edited check; Report back; a new ticket | 1, 9, 10, 16 |
 | D12 one ticket follows one feature | 1, 6, 9, 12, 13, 14, 16 |
-| D13 schema v84, two columns | 1, 18 |
+| D13 schema v85, two columns | 1, 18 |
 | D14 the import's thread line; `from` on the file turn; "from SHOP-124" | 2, 7, 8, 9, 10, 15 |
 | D15 server-side calls; data rules; redaction at the import; no account id; the download's rules; `dest` and the checks | 2, 3, 4, 5, 6, 7 |
 | D16 the errors; U1 A6's wording | 3, 6, 7, 9, 11–15 |

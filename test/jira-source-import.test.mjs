@@ -49,7 +49,7 @@ const OTHERS = [
 
 test("capabilities: import and export are on; write-back still follows the run's input", async () => {
   const { src } = await site();
-  assert.deepEqual(src.capabilities({ inputs: { writeBack: 'yes' } }), { writeBack: true, incrementalSync: false, export: true, import: true });
+  assert.deepEqual(src.capabilities({ inputs: { writeBack: 'yes' } }), { writeBack: true, incrementalSync: false, export: true, import: true, ticketUpdates: true });
 });
 
 test('importOptions: the projects as "SHOP — Shop web" on Cloud and Data Center', async () => {

@@ -36,7 +36,7 @@ import {
   assembleResults, persistResults, persistDiffPatch, buildPerProject, rollupSummary,
   retainedWorkPatchName, sizeOfChange,
 } from './results.mjs';
-import { resolveTaskInput, retryWriteback, sourcePlaceholderTitle, ticketRunTitle } from './sources.mjs';
+import { reportedAuditLine, resolveTaskInput, retryWriteback, sourcePlaceholderTitle, ticketRunTitle } from './sources.mjs';
 import { projectKey, projectStorePath, workspaceStorePath, noProjectWorkDir, isNoProjectWorkDir } from './store.mjs';
 import { NO_PROJECT_KEY, NO_PROJECT_NAME, NO_PROJECT_ERRORS, WORK_DIR_NAME, isNoProjectKey } from '../shared/no-project.mjs';
 import { harvestWork, ownWorkDir, WORK_ARTIFACT_KIND } from './no-project-work.mjs';
@@ -107,7 +107,7 @@ import { isNormalized } from './engines/events.mjs';
 import { createClaudeNormalizer } from './engines/claude-events.mjs';
 import { cachedFreeDailyCounts } from './openrouter-free.mjs';
 import { withBillTo, currentBillTo } from './billing.mjs';
-import { claimRunDir } from './agent-pool.mjs';
+import { claimRunDir, claimRunExtras, shareFailureReason } from './agent-pool.mjs';
 import { brokerEnabled, brokerEngineRefusal, brokerInfo, personSlots } from './broker-client.mjs';
 import { mockEnabled } from './claude-runner.mjs';
 import { modelSlot, manifestModels, manifestNeedsModel, missingCredentials, describeMissing } from './broker-routing.mjs';
@@ -1366,6 +1366,7 @@ export class RunHarness extends EventEmitter {
     else if (pq.kind === 'gate') line = `Gate **${d || 'answered'}**`;
     else if (pq.kind === 'recovery') line = `Recovery decision **${d || 'answered'}**`;
     else if (pq.kind === PLAN_ASK_KIND && pq.plan?.outline) line = `Slice outline **${d || 'answered'}** (round ${pq.plan.round || 1})`;
+    else if (pq.kind === PLAN_ASK_KIND && pq.concern) line = `Plan concern **${d === 'revise' ? 'accepted' : d === 'approve' ? 'overridden' : d || 'answered'}**`;
     else if (pq.kind === PLAN_ASK_KIND) line = `Plan approval **${d || 'answered'}**`;
     if (!line) return;
     appendAudit(this.pipeline.dir, `${line}${byActor(by)}.`, { actor: by }).catch(() => {});
@@ -1449,7 +1450,7 @@ export class RunHarness extends EventEmitter {
     // continue there (engine-switch.mjs). On a provider or a custom endpoint it is that provider's (a spent
     // OpenRouter free allowance, a gateway's quota): another harness on the same provider would hit it too, so
     // none is offered; the pause names the provider, and a resume can pick another model.
-    const conn = reason === REASON.USAGE_LIMIT && ctx && !freeDaily ? this._limitConnection(nc) : null;
+    const conn = reason === REASON.USAGE_LIMIT && ctx && !freeDaily ? this._limitConnection(nc, ctx?.role ?? null) : null;
     const limitEngine = conn?.kind === 'signin' ? (this.claude.engine || 'claude') : null;
     const limitText = conn && conn.kind !== 'signin' && !detail ? `${connectionLabel({ connection: conn })} limit — ${text}` : text;
     // D3/D11: when the limit comes back, read from the RAW message (`text` may be the OpenRouter
@@ -1586,7 +1587,9 @@ export class RunHarness extends EventEmitter {
       // row says plugin, with the same source_ref a run started from that ticket would have, so write-back reports to it.
       const reportTo = source.type !== 'plugin' && this.opts.reportTo && typeof this.opts.reportTo === 'object' ? this.opts.reportTo : null;
       const reportMeta = reportTo ? { plugin: reportTo.plugin, sourceId: reportTo.sourceId, taskId: reportTo.taskId, profile: reportTo.profile || null,
-        inputs: reportTo.inputs && typeof reportTo.inputs === 'object' ? reportTo.inputs : null, url: reportTo.url ?? null, title: reportTo.title ?? null } : null;
+        inputs: reportTo.inputs && typeof reportTo.inputs === 'object' ? reportTo.inputs : null, url: reportTo.url ?? null, title: reportTo.title ?? null,
+        // Ticket updates (D6): a Requirements start names the link's tracker project, so write-back picks that project's rule
+        ...(typeof reportTo.project === 'string' && reportTo.project ? { project: reportTo.project } : {}) } : null;
       this.pipeline = await createPipeline(this.projectDir, {
         promptText: input.promptText,
         // ?? keeps the legacy both-set corner byte-identical: inline prompt wins the
@@ -3759,11 +3762,11 @@ export class RunHarness extends EventEmitter {
   }
 
   /** The connection of the model a node's step ran on (its own, else the run's; a step with neither is on the
-   *  harness's own sign-in). Never throws. */
-  _limitConnection(nc) {
+   *  harness's own sign-in); for a role-review slice, the model that role ran on (_rolePair). Never throws. */
+  _limitConnection(nc, role = null) {
     const engine = this.claude.engine || 'claude';
     let model = null;
-    try { model = nc ? this._nodeModelPair(nc).model : this._engineModel(this.claude.model); } catch { model = null; }
+    try { model = nc ? (role ? this._rolePair(nc, role) : this._nodeModelPair(nc)).model : this._engineModel(this.claude.model); } catch { model = null; }
     return (model && modelConnection(model, { projectDir: this.projectDir })) || { kind: 'signin', engine };
   }
 
@@ -3776,6 +3779,20 @@ export class RunHarness extends EventEmitter {
     // A model on two harnesses keeps its own engine's efforts; this harness takes the nearest one (effortOn).
     if (own) return { model: own, effort: nc.effort ? (effortOn(nc.effort, this.claude.engine || 'claude') || undefined) : nc.effort };
     return { model: this._engineModel(this.claude.model), effort: nc?.model ? undefined : nc?.effort };
+  }
+
+  /** The pair a role-review slice runs on: "Model for all" wins; else the role's own pick (nc.roles, role-slots.mjs)
+   *  through this engine as _nodeModelPair takes the node's; a role naming only an effort runs the node's model on it;
+   *  else the node's pair. */
+  _rolePair(nc, key) {
+    if (this._modelForAll) return this._nodeModelPair(nc);
+    const pick = nc?.roles?.[key];
+    const engine = this.claude.engine || 'claude';
+    const own = pick?.model ? this._engineModel(pick.model) : undefined;
+    if (own) return { model: own, effort: pick.effort ? (effortOn(pick.effort, engine) || undefined) : undefined };
+    const node = this._nodeModelPair(nc);
+    if (!pick?.model && pick?.effort) return { ...node, effort: effortOn(pick.effort, engine) || undefined };
+    return node;
   }
 
   _settingsScope() { return this.isWorkspace ? null : this.projectDir; }
@@ -6427,7 +6444,7 @@ export class RunHarness extends EventEmitter {
    * @returns {Promise<any>} the answer payload
    */
   async _ask({ id, kind, questions, issues, recovery, agent, nodeId, wireId, executionId, deliveryNo, holdNo, workflow, plan,
-    askId, form, version, title, surface, data, layout, answerSchema, fileRefs, files, autoValues, validate, origin }) {
+    concern, askId, form, version, title, surface, data, layout, answerSchema, fileRefs, files, autoValues, validate, origin }) {
     this._checkAbort();
     // No interactive prompt may OPEN on a pausing run. pause() rejects only the
     // prompt that is currently open; a queued ask (a parallel sibling's questions
@@ -6460,6 +6477,7 @@ export class RunHarness extends EventEmitter {
       ...(holdNo != null ? { holdNo } : {}),
       ...(workflow !== undefined ? { workflow } : {}),
       ...(plan !== undefined ? { plan } : {}),
+      ...(concern ? { concern } : {}),            // #990 s5: the implementer's plan concern (kind stays 'plan')
       // The ask-form envelope (spec §4, ruling X1) rides the EXISTING 'question'
       // frame — no new transport, no new slot. `id` (already emitted above) is the
       // ANSWER token; `askId` is the route-safe file token and they are never
@@ -6505,10 +6523,11 @@ export class RunHarness extends EventEmitter {
       return await new Promise((resolveP, rejectP) => {
         // An outline ask keeps its marker and round, so _auditDecision can word its answer (F38).
         this.pendingQuestion = { id, kind, resolve: resolveP, reject: rejectP, validate: typeof validate === 'function' ? validate : null,
-          ...(plan && plan.outline ? { plan: { outline: true, round: plan.round } } : {}) };
+          ...(plan && plan.outline ? { plan: { outline: true, round: plan.round } } : {}),
+          ...(concern ? { concern: true } : {}) };
         // A throw inside a Promise executor REJECTS the ask (and fails the node): night mode
         // must never break a question the user could still answer.
-        const nq = { id, kind, questions, issues, recovery, wireId, executionId, deliveryNo, holdNo, workflow, plan, form, version, answerSchema, autoValues, nodeId, agent, origin };
+        const nq = { id, kind, questions, issues, recovery, wireId, executionId, deliveryNo, holdNo, workflow, plan, concern, form, version, answerSchema, autoValues, nodeId, agent, origin };
         if (kind !== PLAN_ASK_KIND) {
           try { this._nightArm(nq); } catch (err) { this._nightFailed(nq, `Away mode could not get ready for ${kind} ${id}: ${err?.message || err}`); }
         }
@@ -7059,10 +7078,15 @@ export class RunHarness extends EventEmitter {
 
   /** List the user's attached files copied into <pipeline>/extras/ (basename + abs
    *  path), sorted for deterministic seeded-file content. Empty when none were
-   *  attached or the dir is absent. */
+   *  attached or the dir is absent. Under agent isolation they are handed to the
+   *  run owner's agent first (best effort), which also repairs a run whose files
+   *  createPipeline left unreadable. */
   async _collectExtras() {
     try {
       const dir = join(this.pipeline.dir, 'extras');
+      try {
+        for (const f of claimRunExtras(dir)) this._log('orchestrator', 'warn', `extras/${f.name} not shared with the agent: ${shareFailureReason(f.error)}`);
+      } catch { /* no extras folder, or not one worca owns: the agent reports what it cannot read */ }
       const names = (await readdir(dir)).sort();
       return names.map((name) => ({ name, path: join(dir, name) }));
     } catch {
@@ -7310,7 +7334,8 @@ export class RunHarness extends EventEmitter {
       if (outcome?.ok === false) {
         this._log('writeback', 'warn', `task-source write-back failed: ${outcome.error} — use "Report result" in the results view to retry`);
       } else if (outcome?.ok && !outcome.skipped) {
-        await appendAudit(this.pipeline.dir, 'Result reported back to the task source.').catch(() => {});
+        // Ticket updates (D11): the plugin's outcome line ends the audit line, quoted as data ("…: “Moved to Resolved.”")
+        await appendAudit(this.pipeline.dir, reportedAuditLine(outcome)).catch(() => {});
       }
     } catch (err) {
       this._log('writeback', 'warn', `task-source write-back failed: ${err?.message || err}`);

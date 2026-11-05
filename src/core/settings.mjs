@@ -63,7 +63,7 @@ import {
   EFFORTS, CODEX_EFFORTS, effortsForEngine, MODEL_ENGINES, RUN_ENGINES, ASK_ENGINES, HELPER_ENGINES, OWN_SIGNIN_ENGINES, aModelOf, ownSignInNote, modelIdProblem, SUBAGENT_MODELS, isReservedModelEnvKey, assertModelCost, envFlag,
   assertModelUpstream, upstreamEnvConflict, modelEnvRef, codexUpstreamProblem,
   UPSTREAM_PROVIDERS, COPILOT_ACCOUNT_TYPES, DEFAULT_PROVIDER_CONCURRENCY, MAX_PROVIDER_CONCURRENCY,
-  COPILOT_TERMS_VERSION, isUpstreamBaseUrl, REASONING_EFFORT_LEVELS,
+  isUpstreamBaseUrl, REASONING_EFFORT_LEVELS,
 } from './model-env.mjs';
 import { MODEL_ROLES } from '../shared/model-roles.mjs';
 import { CODEX_PRICES, listPriceFor } from './list-prices.mjs';
@@ -1372,12 +1372,17 @@ export function assertAskModelsInput(input) {
   }
   return out;
 }
+/** setAskModels' merge, pure, over an ALREADY asserted patch (setup apply canonicalises ids in between). undefined = delete. */
+export function nextAskModels(current, patch) {
+  const all = isObj(current) ? { ...current } : {};
+  for (const [engine, pair] of Object.entries(patch)) { if (pair === null) delete all[engine]; else all[engine] = pair; }
+  return Object.keys(all).length ? all : undefined;
+}
 export async function setAskModels(input) {
   const patch = assertAskModelsInput(input);
   const settings = readSettings();
-  const all = isObj(settings.askModels) ? { ...settings.askModels } : {};
-  for (const [engine, pair] of Object.entries(patch)) { if (pair === null) delete all[engine]; else all[engine] = pair; }
-  if (Object.keys(all).length) settings.askModels = all; else delete settings.askModels;
+  const v = nextAskModels(settings.askModels, patch);
+  if (v === undefined) delete settings.askModels; else settings.askModels = v;
   await persistSettings(settings);
   return { askModels: askModelsSetting() };
 }
@@ -2387,11 +2392,12 @@ export async function removeGlobalModel(id) {
 // it in memory. Readers are loud-and-lenient; setters throw.
 //
 //   providers: {
-//     copilot:   { githubToken?, accountType?, acknowledgedTerms?, termsVersion?, maxConcurrent?, login? },
+//     copilot:   { githubToken?, accountType?, maxConcurrent?, login? },
 //     openai:    { baseUrl?, apiKey?, maxConcurrent? },
 //     anthropic: { baseUrl?, apiKey?, maxConcurrent? },
 //     speech:    { stt: {...}, tts: {...} },   // voice mode, NOT an upstream — see the Speech block below
 //   }
+//   (An older Worca also stored copilot.acknowledgedTerms / termsVersion; readers ignore them.)
 // ---------------------------------------------------------------------------
 
 const PROVIDER_SECRET_KEYS = Object.freeze({ copilot: ['githubToken'], openai: ['apiKey'], anthropic: ['apiKey'] });
@@ -2411,14 +2417,6 @@ function sanitizeProvider(name, raw) {
     if (r.accountType !== undefined) {
       if (COPILOT_ACCOUNT_TYPES.includes(r.accountType)) out.accountType = r.accountType;
       else warn('accountType', `must be one of ${COPILOT_ACCOUNT_TYPES.join(' | ')}`);
-    }
-    if (r.acknowledgedTerms !== undefined) {
-      if (typeof r.acknowledgedTerms === 'string' && !Number.isNaN(Date.parse(r.acknowledgedTerms))) out.acknowledgedTerms = r.acknowledgedTerms;
-      else warn('acknowledgedTerms', 'not an ISO timestamp');
-    }
-    if (r.termsVersion !== undefined) {
-      if (Number.isInteger(r.termsVersion) && r.termsVersion > 0) out.termsVersion = r.termsVersion;
-      else warn('termsVersion', 'not a positive integer');
     }
     if (r.login !== undefined) {
       if (typeof r.login === 'string' && r.login.trim()) out.login = r.login.trim();
@@ -2481,18 +2479,12 @@ export function resolveProviderSecret(value, sourceEnv = process.env) {
   return typeof v === 'string' ? v.trim() : '';
 }
 
-/** Whether the Copilot terms notice has been acknowledged at the CURRENT wording version. */
-export function copilotTermsAcknowledged() {
-  const c = providerConfig('copilot');
-  return !!c.acknowledgedTerms && (c.termsVersion || 0) >= COPILOT_TERMS_VERSION;
-}
-
 /** updateProvider's validation alone (it throws the same messages). */
 export function assertProviderPatch(name, patch) {
   if (!UPSTREAM_PROVIDERS.includes(name)) throw new Error(`unknown provider ${JSON.stringify(name)}`);
   if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error('provider patch must be an object');
   const allowed = new Set([...PROVIDER_SECRET_KEYS[name], 'maxConcurrent',
-    ...(name === 'copilot' ? ['accountType', 'acknowledgedTerms', 'termsVersion', 'login'] : ['baseUrl'])]);
+    ...(name === 'copilot' ? ['accountType', 'login'] : ['baseUrl'])]);
   for (const [k, v] of Object.entries(patch)) {
     if (!allowed.has(k)) throw new Error(`unknown provider field ${JSON.stringify(k)} for ${name}`);
     if (isClearInput(v)) continue;
@@ -2505,10 +2497,6 @@ export function assertProviderPatch(name, patch) {
     } else if (k === 'maxConcurrent') {
       const n = Number(v);
       if (!Number.isInteger(n) || n < 1 || n > MAX_PROVIDER_CONCURRENCY) throw new Error(`maxConcurrent must be an integer from 1 to ${MAX_PROVIDER_CONCURRENCY}`);
-    } else if (k === 'acknowledgedTerms') {
-      if (typeof v !== 'string' || Number.isNaN(Date.parse(v))) throw new Error('acknowledgedTerms must be an ISO timestamp');
-    } else if (k === 'termsVersion') {
-      if (!Number.isInteger(v) || v <= 0) throw new Error('termsVersion must be a positive integer');
     }
   }
 }
@@ -2650,12 +2638,7 @@ export async function updateSpeech(patch = {}) {
   return speechConfig();
 }
 
-/** Record the Copilot terms acknowledgement at the current wording version. */
-export async function acknowledgeCopilotTerms(now = new Date()) {
-  return updateProvider('copilot', { acknowledgedTerms: now.toISOString(), termsVersion: COPILOT_TERMS_VERSION });
-}
-
-/** Forget the Copilot sign-in (token + login); the acknowledgement stays. */
+/** Forget the Copilot sign-in (token + login). */
 export async function clearCopilotSignIn() {
   return updateProvider('copilot', { githubToken: null, login: null });
 }

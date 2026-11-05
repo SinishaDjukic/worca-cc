@@ -4,9 +4,10 @@
 // test fixture. `fixtures.mjs` re-exports it as FIXTURE_DEFAULT so the engine
 // tests and the shipping default can never drift apart.
 //
-// Pure data + one pure helper — no IO, no dependency on the registry. The one import is the pure
-// role-review round cap, a shared shape constant.
+// Pure data + one pure helper — no IO, no dependency on the registry. The imports are pure shared shape constants:
+// the role-review round cap and the perspectives Shaper declares as its role reviews' roles.
 import { ROLE_REVIEW_MAX_ROUNDS } from '../../shared/shape/role-review.mjs';
+import { PERSPECTIVES } from '../../shared/shape/perspectives.mjs';
 
 /** Recursively freeze a value and everything reachable from it, returning the
  *  same reference. A shallow `Object.freeze` is NOT enough here: it passes
@@ -283,7 +284,27 @@ export const SHAPE_CLARIFY_HINTS = 'Shaping: ask at most 3 questions — only de
   + 'and that the repo can\'t answer. Give each question a recommended option.';
 const SHAPE_CLARIFY_CONFIG = { maxQuestions: 3, promptHints: SHAPE_CLARIFY_HINTS };
 const SHAPE_APPROVE_CONFIG = { approve: { kind: 'plan', port: 'plan' } };
-const SHAPE_ROLES_CONFIG = { roleReview: true, model: 'claude-sonnet-5-5', effort: 'medium' };   // spec decision 1
+/** Shaper's plan review is the engine role-review step, configured: the perspectives as roles, the run's picked ones
+ *  running, each judged on its own checklist items (the `perspectives` provider), the findings handed to Refine. */
+/** The diversity default: Product (locked, so in every Shaper run) reviews on another model than the node's, so one
+ *  plan role always judges independently. A built-in default: dropped quietly (recorded as `wanted`) off Claude. */
+export const SHAPE_DIVERSE_ROLE = Object.freeze({ key: 'product', model: 'claude-opus-5-5', effort: 'medium' });
+const SHAPE_ROLES_CONFIG = {
+  roleReview: {
+    roles: PERSPECTIVES.map(({ key, label }) => (key === SHAPE_DIVERSE_ROLE.key
+      ? { key, label, model: SHAPE_DIVERSE_ROLE.model, effort: SHAPE_DIVERSE_ROLE.effort } : { key, label })),
+    source: 'picked', target: 'plan', checklist: 'perspectives', sink: 'refiner',
+  },
+  model: 'claude-sonnet-5-5', effort: 'medium',   // spec decision 1
+};
+/** Shaper's code review is the same engine step on the diff: three declared roles, each an independent reviewer, their
+ *  merged findings handed to the implementer's fix. No node model and no diversity pick: the node keeps its default. */
+export const SHAPE_CODE_ROLES_CONFIG = deepFreeze({
+  roleReview: {
+    roles: [{ key: 'correctness', label: 'Correctness' }, { key: 'security', label: 'Security' }, { key: 'fit', label: 'Project fit' }],
+    source: 'declared', target: 'diff', sink: 'implementer',
+  },
+});
 /** Refine waits for the reviewed plan AND its findings, both from n_roles (one publish), so it fires once per round. */
 const SHAPE_REFINE_CONFIG = { ...SHAPE_APPROVE_CONFIG, awaitAll: true };
 /** Spec §3: plan → role reviews → refine, one loop of at most 2 rounds that ends at the plan approval. Default's
@@ -314,7 +335,7 @@ export const GRAPH_SHAPE_WORKFLOW = deepFreeze({
     { id: 'n_plan', kind: 'agent', key: 'planner', x: 600, y: 200, config: {} },
     { id: 'n_refine', kind: 'agent', key: 'refiner', x: 880, y: 200, config: { ...SHAPE_REFINE_CONFIG } },
     { id: 'n_impl', kind: 'agent', key: 'implementer', x: 1160, y: 200, config: {} },
-    { id: 'n_review', kind: 'agent', key: 'reviewer', x: 1440, y: 200, config: {} },
+    { id: 'n_review', kind: 'agent', key: 'reviewer', x: 1440, y: 200, config: { ...SHAPE_CODE_ROLES_CONFIG } },
     { id: 'n_end', kind: 'end', x: 1720, y: 200, config: {} },
     { ...SHAPE_ROLES_NODE, config: { ...SHAPE_ROLES_CONFIG } },
   ],
@@ -339,7 +360,7 @@ export const GRAPH_SHAPE_UX_WORKFLOW = deepFreeze({
     { id: 'n_plan', kind: 'agent', key: 'planner', x: 600, y: 200, config: {} },
     { id: 'n_refine', kind: 'agent', key: 'refiner', x: 880, y: 200, config: { ...SHAPE_REFINE_CONFIG } },
     { id: 'n_impl', kind: 'agent', key: 'implementer', x: 1160, y: 200, config: {} },
-    { id: 'n_review', kind: 'agent', key: 'reviewer', x: 1440, y: 200, config: {} },
+    { id: 'n_review', kind: 'agent', key: 'reviewer', x: 1440, y: 200, config: { ...SHAPE_CODE_ROLES_CONFIG } },
     { id: 'n_check', kind: 'agent', key: 'manualTestsChecklist', x: 1720, y: 200, config: {} },
     { id: 'n_webui', kind: 'agent', key: 'manualWebUiTesting', x: 2000, y: 200, config: {} },
     { id: 'n_end', kind: 'end', x: 2280, y: 200, config: {} },

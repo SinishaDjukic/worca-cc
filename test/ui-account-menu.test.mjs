@@ -384,6 +384,7 @@ test('the level controller paints the menu row and the side menu; choosing there
   const checked = () => [...doc.querySelectorAll('#lvl-menu [aria-checked="true"]')].map((o) => o.dataset.levelChoice);
   assert.deepEqual(checked(), ['simple']);
   const expert = doc.querySelector('#lvl-menu [data-level-choice="expert"]');
+  doc.getElementById('lvl-menu').hidden = false;   // open, as when a person picks: jsdom 30 never focuses inside a hidden menu
   expert.focus();
   expert.click();
   assert.equal(doc.documentElement.dataset.level, 'expert', 'applies at once, before the save answers');

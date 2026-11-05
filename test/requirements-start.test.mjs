@@ -631,7 +631,7 @@ test('A6 D15: a feature with a ticket reports back by default: reportTo names th
   const r = await call('POST', `/api/requirements/${f.seq}/start`, {});
   assert.equal(r.status, 201, JSON.stringify(r.json));
   assert.deepEqual(calls[0].opts.reportTo, { plugin: 'jira-source', sourceId: 'jira', profile: 'acme', taskId: 'SHOP-123',
-    url: 'https://acme.test/browse/SHOP-123', title: 'Report me', inputs: { writeBack: 'yes' } });
+    url: 'https://acme.test/browse/SHOP-123', title: 'Report me', inputs: { writeBack: 'yes' }, project: 'SHOP' });
   assert.equal(calls[0].body.promptMarkdown.includes('# FEAT-'), true, 'the task is still the spec');
 });
 

@@ -8,6 +8,7 @@ import { listTaskSources } from '../sources.mjs';
 import { readPluginsLock } from '../plugins-lock.mjs';
 import { listProfiles, configStamp } from '../plugin-config.mjs';
 import { resolveProfile, listBindingsForScope } from '../source-bindings.mjs';
+import { reachReason, reachSentence } from '../source-reach.mjs';
 
 /** A capability probe's time limit (D3): it runs inside every feature view, so a slow connector must not hold the page. */
 export const PROBE_TIMEOUT_MS = 10_000;
@@ -62,14 +63,15 @@ const installOf = (plugin) => {
 /** A source's connections: a multi-profile source's profiles; a single-profile source is its one configuration. */
 const connectionsOf = (s) => (s.multiProfile === true ? (s.profiles || []) : [{ id: null, label: s.displayName }]);
 
-const NO_CAPS = Object.freeze({ export: false, import: false });
+const NO_CAPS = Object.freeze({ export: false, import: false, ticketUpdates: false });
 
 async function probe(s, first, d) {
   try {
     const caps = await callOf(d)({ plugin: s.plugin, sourceId: s.sourceId, op: 'capabilities', args: { inputs: {} },
       profile: first.id || undefined, timeoutMs: PROBE_TIMEOUT_MS });
-    // A6 D3 and A6.1 D2: one answer says both; only `true` counts
-    return { keep: true, caps: { export: !!(caps && caps.export === true), import: !!(caps && caps.import === true) } };
+    // A6 D3, A6.1 D2 and Ticket updates D14: one answer says all three; only `true` counts
+    return { keep: true, caps: { export: !!(caps && caps.export === true), import: !!(caps && caps.import === true),
+      ticketUpdates: !!(caps && caps.ticketUpdates === true) } };
   } catch (err) {
     // A connector without the op can do neither (kept); any other failure stands for PROBE_RETRY_MS (D3)
     return { keep: (err && err.kind) === 'unimplemented', caps: NO_CAPS };
@@ -106,6 +108,13 @@ export async function trackersWith(cap, d = {}) {
   return found.filter(Boolean);
 }
 
+/** Ticket updates D14: can this connection's connector hear a move? Only a kept probe answer that lacks ticketUpdates says no; an
+ *  unknown (a probe that failed or has not run) counts as yes, as write-back then passes the move anyway (S1). */
+export function heardMove(c) {
+  const caps = capCache.get(`${c.plugin}/${c.sourceId}@${installOf(c.plugin)}`);
+  return !caps || caps.ticketUpdates === true;
+}
+
 let warmLogged = false;
 /**
  * The server calls this once after it listens, with the `requirements` flag on: the first capabilities probe (a plugin child spawn,
@@ -137,25 +146,8 @@ export function defaultConnection(scope, trackers, { memberKeys = [] } = {}) {
   return { plugin: t.plugin, sourceId: t.sourceId, profile: t.profiles[0].id || null };
 }
 
-/** Kinds whose message is the connector's own sentence ("Jira unreachable: fetch failed.", "Jira refused the request: …"). */
-const SENTENCE_KINDS = new Set(['network', 'rate-limit', 'plugin']);
-/** Not product copy: more than one line, a stack frame, a path or URL scheme of a file, the shim's own words, a JS error. */
-const NOT_COPY = /[\r\n]|\bat\s+\S+\s+\(|\b(?:file|node):|[A-Za-z]:\\|(?:^|[\s'"(=])\/[\w.-]+\/|^plugin "|^\w*Error\b|^Cannot read propert|is not (?:a function|defined)/;
-const isSentence = (m) => typeof m === 'string' && !!m.trim() && m.length <= 300 && !NOT_COPY.test(m);
-
-/** D11: why a tracker could not be reached, in product words. A message that is not product copy (a connector that crashed,
- *  an answer the shim could not read, a kind the host does not know) becomes a fixed phrase; trackerCall logs the first line of the raw text. */
-export function reachReason(err, name) {
-  const kind = err && err.kind;
-  const message = err && err.message;
-  const plugin = name ? `the ${name} plugin` : "the tracker's plugin";
-  if (kind === 'auth') return 'the API token was refused';
-  if (kind === 'timeout') return 'it did not answer within a minute';
-  if (kind === 'protocol') return `${plugin} gave an answer Worca could not read`;
-  if (kind && !(SENTENCE_KINDS.has(kind) && isSentence(message))) return `${plugin} stopped unexpectedly`;
-  return String(message || 'it did not answer').trim().replace(/\.+$/, '');
-}
-export const reachSentence = (name, err) => `Worca could not reach ${name || 'the tracker'}: ${reachReason(err, name)}.`;
+// D11's reach sentences live in src/core/source-reach.mjs (shared with Ticket updates); re-exported for import.mjs.
+export { reachReason, reachSentence };
 
 /** The same connection: plugin, source id and profile. */
 export const sameConn = (a, b) => !!a && !!b && a.plugin === b.plugin && a.sourceId === b.sourceId && (a.profile || null) === (b.profile || null);

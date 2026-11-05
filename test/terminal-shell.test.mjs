@@ -6,7 +6,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, existsSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { pickShell, shellKind, shellLaunch, ensureZshDir, BASH_RC } from '../src/core/terminal/shell.mjs';
+import { pickShell, shellKind, shellLaunch, ensureZshDir, BASH_RC, isWslLauncher, shellDoctorLine, noBlocksMessage } from '../src/core/terminal/shell.mjs';
 import { MarkerParser } from '../src/core/terminal/markers.mjs';
 
 const home = mkdtempSync(join(tmpdir(), 'term-shell-'));
@@ -42,9 +42,75 @@ test('pickShell prefers $SHELL, then bash, then sh; kind is bash, zsh or other',
   assert.deepEqual(pickShell({ env: { SHELL: '/bin/zsh' }, platform: 'darwin', exists }), { file: '/bin/zsh', kind: 'zsh', platform: 'darwin' });
   assert.equal(pickShell({ env: { SHELL: '/nope/fish' }, platform: 'linux', exists }).file, '/bin/bash');
   assert.equal(pickShell({ env: {}, platform: 'linux', exists: (f) => f === '/bin/sh' }).kind, 'other');
-  assert.deepEqual(pickShell({ env: { ComSpec: 'C:\\Windows\\system32\\cmd.exe' }, platform: 'win32' }),
+  assert.deepEqual(pickShell({ env: { ComSpec: 'C:\\Windows\\system32\\cmd.exe' }, platform: 'win32', exists: () => false }),
     { file: 'C:\\Windows\\system32\\cmd.exe', kind: 'other', platform: 'win32' });
   assert.equal(shellKind('/usr/local/bin/bash'), 'bash');
+});
+
+const W = 'win32';
+const SYS = { SystemRoot: 'C:\\Windows', ComSpec: 'C:\\Windows\\system32\\cmd.exe' };
+const only = (...files) => (f) => files.some((x) => x.toLowerCase() === String(f).toLowerCase());
+const PF_BASH = 'C:\\Program Files\\Git\\bin\\bash.exe';
+
+test('pickShell on Windows: override, CLAUDE_CODE_GIT_BASH_PATH, Program Files, LocalAppData, git on PATH, then cmd', () => {
+  const pf = { ...SYS, ProgramFiles: 'C:\\Program Files' };
+  assert.deepEqual(pickShell({ env: pf, platform: W, exists: only(PF_BASH) }), { file: PF_BASH, kind: 'bash', platform: W });
+  assert.equal(pickShell({ env: { ...pf, WORCA_TERMINAL_SHELL: 'D:\\tools\\bash.exe' }, platform: W, exists: only(PF_BASH, 'D:\\tools\\bash.exe') }).file,
+    'D:\\tools\\bash.exe', 'the override wins');
+  assert.equal(pickShell({ env: { ...pf, WORCA_TERMINAL_SHELL: 'D:\\missing\\bash.exe' }, platform: W, exists: only(PF_BASH) }).file,
+    PF_BASH, 'a missing override is skipped');
+  assert.equal(pickShell({ env: { ...pf, CLAUDE_CODE_GIT_BASH_PATH: 'E:\\Git\\bin\\bash.exe' }, platform: W, exists: only(PF_BASH, 'E:\\Git\\bin\\bash.exe') }).file,
+    'E:\\Git\\bin\\bash.exe', 'Claude Code\'s Git Bash before Program Files');
+  assert.equal(pickShell({ env: { ...SYS, 'ProgramFiles(x86)': 'C:\\Program Files (x86)' }, platform: W, exists: only('C:\\Program Files (x86)\\Git\\bin\\bash.exe') }).file,
+    'C:\\Program Files (x86)\\Git\\bin\\bash.exe');
+  const lad = 'C:\\Users\\me\\AppData\\Local';
+  assert.equal(pickShell({ env: { ...SYS, LOCALAPPDATA: lad }, platform: W, exists: only(`${lad}\\Programs\\Git\\bin\\bash.exe`) }).file,
+    `${lad}\\Programs\\Git\\bin\\bash.exe`);
+  assert.equal(pickShell({ env: { ...SYS, PATH: 'C:\\Windows\\System32;D:\\Git\\cmd' }, platform: W, exists: only('D:\\Git\\cmd\\git.exe', 'D:\\Git\\bin\\bash.exe') }).file,
+    'D:\\Git\\bin\\bash.exe');
+  assert.equal(pickShell({ env: { ...SYS, Path: '"D:\\Git\\mingw64\\bin"' }, platform: W, exists: only('D:\\Git\\mingw64\\bin\\git.exe', 'D:\\Git\\bin\\bash.exe') }).file,
+    'D:\\Git\\bin\\bash.exe', 'Path (Windows casing) and a quoted entry are read too');
+  assert.equal(pickShell({ env: { ...SYS, PATH: 'C:\\Git\\cmd' }, platform: W, exists: only('C:\\Git\\cmd\\git.exe', 'C:\\bin\\bash.exe') }).file, SYS.ComSpec);
+  assert.deepEqual(pickShell({ env: pf, platform: W, exists: () => false }), { file: SYS.ComSpec, kind: 'other', platform: W });
+});
+
+test('pickShell on Windows never picks WSL\'s bash.exe, even as the override or via PATH', () => {
+  const everything = () => true;
+  for (const wsl of ['C:\\Windows\\System32\\bash.exe', 'c:\\windows\\sysnative\\BASH.EXE', 'C:\\Users\\me\\AppData\\Local\\Microsoft\\WindowsApps\\bash.exe']) {
+    assert.equal(isWslLauncher(wsl, SYS), true, wsl);
+    assert.equal(pickShell({ env: { ...SYS, WORCA_TERMINAL_SHELL: wsl, CLAUDE_CODE_GIT_BASH_PATH: wsl }, platform: W, exists: everything }).kind, 'other', wsl);
+  }
+  assert.equal(pickShell({ env: { ...SYS, PATH: 'C:\\Windows\\System32' }, platform: W, exists: everything }).file, SYS.ComSpec);
+  assert.equal(isWslLauncher(PF_BASH, SYS), false);
+});
+
+test('shellKind: the platform\'s basename; .exe stripped (any case) on Windows only', () => {
+  assert.equal(shellKind('C:\\Program Files\\Git\\bin\\BASH.EXE', 'win32'), 'bash');
+  assert.equal(shellKind('C:/msys64/usr/bin/zsh.exe', 'win32'), 'zsh');
+  assert.equal(shellKind('C:\\Windows\\system32\\cmd.exe', 'win32'), 'other');
+  assert.equal(shellKind('/usr/bin/bash.exe', 'linux'), 'other');
+  assert.equal(shellKind('/usr/local/bin/bash', 'darwin'), 'bash');
+});
+
+test('shellLaunch: on Windows the --rcfile path uses forward slashes', () => {
+  const l = shellLaunch({ file: PF_BASH, kind: 'bash', platform: 'win32' }, { nonce: 'n1' });
+  assert.deepEqual(l.args, ['--rcfile', BASH_RC.replace(/\\/g, '/'), '-i']);
+  assert.equal(l.args[1].includes('\\'), false);
+  assert.deepEqual(shellLaunch({ file: '/bin/bash', kind: 'bash', platform: 'linux' }, { nonce: 'n1' }).args, ['--rcfile', BASH_RC, '-i']);
+});
+
+test('shellDoctorLine and noBlocksMessage say how to get blocks on Windows', () => {
+  assert.equal(shellDoctorLine({ file: PF_BASH, kind: 'bash', platform: W }, {}), `terminal shell: ${PF_BASH} (bash; commands are recorded as blocks)`);
+  const cmd = shellDoctorLine({ file: SYS.ComSpec, kind: 'other', platform: W }, { WORCA_TERMINAL_SHELL: 'D:\\nope\\bash.exe' });
+  assert.match(cmd, /no command blocks/);
+  assert.match(cmd, /Git for Windows/);
+  assert.match(cmd, /WORCA_TERMINAL_SHELL=D:\\nope\\bash\.exe was ignored/);
+  assert.match(shellDoctorLine({ file: PF_BASH, kind: 'bash', platform: W }, { WORCA_TERMINAL_SHELL: 'D:\\nope\\bash.exe' }),
+    /recorded as blocks; WORCA_TERMINAL_SHELL=D:\\nope\\bash\.exe was ignored/, 'an ignored override is reported even when Git Bash was found');
+  assert.equal(shellDoctorLine({ file: '/bin/bash', kind: 'bash', platform: 'linux' }, { WORCA_TERMINAL_SHELL: '/x' }),
+    'terminal shell: /bin/bash (bash; commands are recorded as blocks)', 'POSIX never reads the override');
+  assert.match(noBlocksMessage('win32'), /Install Git for Windows.*WORCA_TERMINAL_SHELL/);
+  assert.equal(noBlocksMessage('linux'), 'This shell does not record commands (bash or zsh is needed).');
 });
 
 test('shellLaunch: bash gets --rcfile, zsh gets ZDOTDIR; only they get the nonce; others run plain', () => {

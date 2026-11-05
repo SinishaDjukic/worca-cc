@@ -96,7 +96,8 @@ export async function startFeature(seq, { reason, workflowId, sourceBranch, repo
     // A6 D15: read once, here: a link forgotten later leaves this run reporting to the ticket its pipeline row names
     const link = getExportLink(f.seq);
     const reportTo = link && link.key && reportBack !== false ? { plugin: link.plugin, sourceId: link.sourceId, profile: link.profile || null,
-      taskId: link.key, url: link.url || null, title: f.title, inputs: { writeBack: 'yes' } } : null;   // writeBack: jira-source's reserved "on"
+      taskId: link.key, url: link.url || null, title: f.title, inputs: { writeBack: 'yes' },   // writeBack: jira-source's reserved "on"
+      ...(link.trackerProject ? { project: link.trackerProject } : {}) } : null;   // Ticket updates (D6): the ticket's project
     const res = await startRun(body, { runId, startedBy: by,
       ...(sent.length ? { extrasFiles: sent.map(({ id, name, path, sha256 }) => ({ id, name, path, sha256 })) } : {}),
       ...(reportTo ? { reportTo } : {}) });

@@ -59,18 +59,18 @@ test('an unmapped route fails the coverage check, with its file:line', () => {
   for (const p of r.problems) assert.match(p, /\((?:ui|tools)\/[^\s:]+:\d+\)$/, p);
 });
 
-test('every mode refuses Express 5 and names the version', async () => {
-  const stub = mkdtempSync(join(tmpdir(), 'sbf-x5-'));
+test('every mode refuses an express other than 4 or 5 and names the version', async () => {
+  const stub = mkdtempSync(join(tmpdir(), 'sbf-x6-'));
   mkdirSync(join(stub, 'node_modules/express'), { recursive: true });
   writeFileSync(join(stub, 'package.json'), '{"name":"stub"}');
-  writeFileSync(join(stub, 'node_modules/express/package.json'), '{"name":"express","version":"5.3.0"}');
+  writeFileSync(join(stub, 'node_modules/express/package.json'), '{"name":"express","version":"6.0.0"}');
   for (const mode of ['--check', '--apply', '--dry-run', '--write-caps']) {
     const errs = []; const code = await main([mode, '--root', stub], { err: (m) => errs.push(m), out: () => {} });
-    assert.equal(code, 1, mode); assert.match(errs.join('\n'), /found express 5\.3\.0/, mode);
+    assert.equal(code, 1, mode); assert.match(errs.join('\n'), /found express 6\.0\.0/, mode);
   }
   for (const mode of ['--check', '--apply', '--dry-run', '--write-caps']) {           // and as a real process
     assert.throws(() => execFileSync(process.execPath, [join(ROOT, 'tools/split-by-feature.mjs'), mode, '--root', stub], { stdio: 'pipe' }),
-      (e) => e.status === 1 && /found express 5\.3\.0/.test(String(e.stderr)), mode);
+      (e) => e.status === 1 && /found express 6\.0\.0/.test(String(e.stderr)), mode);
   }
 });
 

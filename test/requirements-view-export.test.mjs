@@ -1409,3 +1409,22 @@ test('saving an export setup drops the kept import answer, so the import dialog 
   assert.equal(imports(), 2, 'the saved setup moves the import default: asked again');
   m.view.destroy();
 });
+
+test("Ticket updates (D14): Report back's hint says the rule's move; without one, the two lines stay", async () => {
+  const hint = async (move) => {
+    const m = await openFeature(feature({ export: XV({ link: LINK, doneStatus: 'Done', move }) }));
+    return text(document.getElementById(q('report-card', m.host).getAttribute('aria-describedby')));
+  };
+  assert.equal(await hint({ kind: 'category', label: 'a Done status' }), 'When the run ends, Worca comments with the result and the pull request link, '
+    + 'and moves the ticket to a Done status (Ticket updates in the Jira connection).');
+  assert.equal(await hint({ kind: 'status', label: 'Resolved' }), 'When the run ends, Worca comments with the result and the pull request link, '
+    + 'and moves the ticket to Resolved (Ticket updates in the Jira connection).');
+  assert.equal(await hint({ kind: 'none', label: 'SHOP' }), 'When the run ends, Worca comments with the result and the pull request link. '
+    + 'Ticket updates in the Jira connection leave SHOP tickets where they are.');
+  const old = 'When the run ends, Worca comments with the result and the pull request link, '
+    + 'and moves the ticket to Done (the status named in the Jira connection; without one, it only comments).';
+  assert.equal(await hint({ kind: 'none', label: '' }), old, 'no project name: the old lines, not "leave  tickets"');
+  assert.equal(await hint({ kind: 'category', label: '' }), old);
+  assert.equal(await hint(null), 'When the run ends, Worca comments with the result and the pull request link, '
+    + 'and moves the ticket to Done (the status named in the Jira connection; without one, it only comments).');
+});

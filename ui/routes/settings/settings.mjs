@@ -47,7 +47,8 @@ app.get('/api/memory/proposals', async (req, res) => {
     res.json({ proposals });
   } catch (err) { return memoryError(res, err); }
 });
-app.post('/api/memory/proposals/:id/:action(approve|reject)', async (req, res) => {
+app.post('/api/memory/proposals/:id/:action', async (req, res, next) => {
+  if (req.params.action !== 'approve' && req.params.action !== 'reject') return next();   // any other action: no route, 404
   try {
     if (!teamOriginOk(req, res)) return;
     const id = String(req.params.id || '');

@@ -21,7 +21,7 @@ project's working tree, so nothing is ever committed to your repo.
                                         status) and req_export_links (one row per feature: its current ticket, the
                                         spec and fields as last sent, the tracker's fingerprint of the description,
                                         a pending create's marker). Every export is also an `export` turn.
-                                        Requirements import (v84): req_export_links.origin ('export' | 'import'; a link
+                                        Requirements import (v85): req_export_links.origin ('export' | 'import'; a link
                                         an import made keeps the ticket's issue type and priority) and
                                         req_attachments.fetch_json (the tracker file a row comes from: the
                                         connection, the ticket key and the attachment id; NULL for an upload).
@@ -157,6 +157,9 @@ project's working tree, so nothing is ever committed to your repo.
   plugins/                              installed plugin checkouts
     .cache/<slug>.tree/<sha>/            without git: a GitHub commit's plugin folders and marketplace file
                                          (the newest three and every installed pin kept; <sha>.meta.json beside it)
+    <name>/data/ticket-updates.json      Ticket updates (Labs): per profile and task source, the projects you work on
+                                         and the rules for a finished run; dropped with its profile, kept by uninstall,
+                                         removed by purge
   agents/                               installed agent registry checkouts
   workflows/                            saved workflow templates
   projects/                             New and Clone from URL projects (the default projects root). Removing a

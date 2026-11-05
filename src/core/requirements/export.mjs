@@ -5,6 +5,8 @@
 // through callSource (D18): the browser never drives one, and no config value leaves the plugin.
 import { randomBytes } from 'node:crypto';
 import { callSource as shimCallSource } from '../plugin-shim.mjs';
+import { DEFAULT_PROFILE } from '../plugin-config.mjs';
+import { projectFilter, filterProjects, moveFor, describeMove } from '../ticket-updates.mjs';
 import { actorLabel } from '../identity.mjs';
 import { tx } from '../db.mjs';
 import { RequirementsError } from './spec.mjs';
@@ -17,11 +19,14 @@ import { readiness } from './ready.mjs';
 import { pendingRound } from './round.mjs';
 import { isBusy } from './interview.mjs';
 import { REASON_MAX } from './start.mjs';
+import { reachReason, reachSentence } from '../source-reach.mjs';
 import { isStarting, STARTING_MESSAGE, markExporting, unmarkExporting, isExporting } from './starting.mjs';
-import { trackersWith, defaultConnection, bindingsOf, sourceName, connectionLabel, sameConn, reachSentence, firstLine, _resetTrackerCaches } from './trackers.mjs';
+import { trackersWith, defaultConnection, bindingsOf, sourceName, connectionLabel, sameConn, firstLine, heardMove, _resetTrackerCaches } from './trackers.mjs';
 import { buildTicket, exportChanges, changeSummary, renderExportComment, ticketHash, exportDate, exportTime, exportLabel, normalizeLabels } from './ticket.mjs';
 
 export { isExporting };
+// D11's reach sentences live in src/core/source-reach.mjs (shared with Ticket updates); re-exported.
+export { reachReason, reachSentence };
 
 /** Every export op's time limit (D14): a create makes up to three tracker calls; exportOptions pages through projects. */
 export const EXPORT_TIMEOUT_MS = 60_000;
@@ -124,6 +129,9 @@ export async function exportOptions(scope, body = {}, d = {}) {
   };
   lastDone.set(connKey(conn), out.doneStatus);
   const setup = getExportSetup(scope.scopeType, scope.scopeKey);
+  // Ticket updates (D9): only the projects this connection works on; the setup's own project stays listed when it is this connection's
+  const keep = setup && sameConn(setup, conn) && setup.trackerProject ? [setup.trackerProject] : [];
+  out.projects = filterProjects(out.projects, projectFilter(conn.plugin, conn.sourceId, conn.profile || DEFAULT_PROFILE), keep);
   if (setup && sameConn(setup, conn) && setup.doneStatus !== out.doneStatus) setExportSetupDoneStatus(scope.scopeType, scope.scopeKey, out.doneStatus);
   return out;
 }
@@ -419,10 +427,14 @@ export async function exportView(f, turns = [], d = {}) {
       exporting: isExporting(f.seq),
       // Report back moves the ticket only to the status its own connection names (D15)
       doneStatus: link && setup && sameConn(setup, link) ? setup.doneStatus || null : null,
+      // Ticket updates (D14): what Report back will do, by the rule of the link's connection and tracker project (write-back's
+      // own moveFor), when its connector can hear a move; null with the flag off or nothing saved, and the hint keeps its two lines
+      move: link && heardMove(link) ? describeMove(moveFor({ plugin: link.plugin, sourceId: link.sourceId, profile: link.profile || DEFAULT_PROFILE,
+        project: link.trackerProject || '', status: 'completed' }), { project: link.trackerProject || '' }) : null,
       history: (turns || []).filter((t) => t && (t.kind === 'export' || t.kind === 'import') && t.payload).map(historyEntry).reverse(),
     };
   } catch (err) {
     console.error(`requirements: the export view of feature ${f && f.seq} failed:`, err && err.message ? err.message : err);
-    return { tracker: null, canExport: false, hasSetup: false, link: null, exporting: false, doneStatus: null, history: [] };
+    return { tracker: null, canExport: false, hasSetup: false, link: null, exporting: false, doneStatus: null, move: null, history: [] };
   }
 }

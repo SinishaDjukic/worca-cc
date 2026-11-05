@@ -562,6 +562,64 @@ test('chat run card result region: words, churn, top files → Diff, artifact ch
       assert.equal($('.chat-rc-create-pr').disabled, false);
       assert.equal(refreshed.length, 1);
     } },
+    { name: 'a run on its source branch: merged back → Push (no Create PR); pushed → disabled "Pushed to origin"; not merged back → How to merge only; a feature-branch run keeps Create PR', run: async () => {
+      const pushes = [];
+      const controls = { prHost: () => true, openShipIt: async () => null, pushSource: (ref) => { pushes.push(ref); return Promise.resolve({ ok: true, remote: 'origin' }); } };
+      const onSource = { sameAsSource: true, sourceBranch: 'dev', mergeBack: { merged: true }, push: { remote: 'origin', state: 'ahead' } };
+      const { card, $, refreshed, calls } = mk({ controls });
+      card.update(done({ ...EXTRAS, source: onSource }));
+      assert.equal($('.chat-rc-create-pr'), null, 'no Create PR for a source-branch run');
+      const push = $('.chat-rc-push');
+      assert.equal(push.textContent, 'Push');
+      assert.equal(push.disabled, false);
+      assert.equal(push.title, 'Push to dev');
+      push.click();
+      await settle();
+      assert.equal(pushes.length, 1);
+      assert.equal(pushes[0].pipelineId, 'abcd1234');
+      assert.equal(refreshed.length, 1, 're-read the card once the push settles');
+      assert.equal($('.chat-rc-push').textContent, 'Pushed to origin');
+      assert.equal($('.chat-rc-push').disabled, true);
+      // Already on the remote: disabled, "Pushed to origin".
+      const again = mk({ controls });
+      again.card.update(done({ ...EXTRAS, source: { ...onSource, push: { remote: 'origin', state: 'pushed' } } }));
+      assert.equal(again.$('.chat-rc-push').textContent, 'Pushed to origin');
+      assert.equal(again.$('.chat-rc-push').disabled, true);
+      // Diverged: disabled with the pull-or-rebase tip.
+      const div = mk({ controls });
+      div.card.update(done({ ...EXTRAS, source: { ...onSource, push: { remote: 'origin', state: 'diverged' } } }));
+      assert.equal(div.$('.chat-rc-push').disabled, true);
+      assert.match(div.$('.chat-rc-push').title, /have diverged/);
+      // Not merged back: no Create PR, no Push, a pointer to the run page.
+      const nm = mk({ controls });
+      nm.card.update(done({ ...EXTRAS, source: { sameAsSource: true, sourceBranch: 'dev', mergeBack: { merged: false } } }));
+      assert.equal(nm.$('.chat-rc-create-pr'), null);
+      assert.equal(nm.$('.chat-rc-push'), null);
+      const shipBtns = (c) => [...c.card.el.querySelectorAll('[data-model-action="ship"]')].filter((b) => !b.hidden).map((b) => b.textContent);
+      assert.deepEqual(shipBtns(nm), [], 'the footer makes no Create PR for a not-merged-back source run');
+      nm.$('.chat-rc-how-to-merge').click();
+      assert.deepEqual(nm.calls.at(-1).slice(0, 1).concat([nm.calls.at(-1)[2]]), ['panel', { tab: 'overview' }]);
+      // Below Advanced the result's row is hidden: the footer makes no Create PR for a source-branch run either.
+      const sim = mk({ controls });
+      sim.card.el.ownerDocument.documentElement.dataset.level = 'simple';
+      sim.card.update(done({ ...EXTRAS, source: onSource }));
+      assert.deepEqual(shipBtns(sim), []);
+      // A normal feature-branch run is unchanged.
+      const fb = mk({ controls });
+      fb.card.update(done(EXTRAS));
+      assert.ok(fb.$('.chat-rc-create-pr'));
+      assert.equal(fb.$('.chat-rc-push'), null);
+      assert.equal(calls.length, 0);
+    } },
+    { name: 'a failed Push says why in the card and stays retryable', run: async () => {
+      const { card, $ } = mk({ controls: { prHost: () => true, pushSource: async () => ({ ok: false, error: 'git push failed: rejected' }) } });
+      card.update(done({ ...EXTRAS, source: { sameAsSource: true, sourceBranch: 'dev', mergeBack: { merged: true } } }));
+      $('.chat-rc-push').click();
+      await settle();
+      assert.equal($('.chat-rc-res-err').hidden, false);
+      assert.match($('.chat-rc-res-err').textContent, /rejected/);
+      assert.equal($('.chat-rc-push').disabled, false);
+    } },
     { name: 'no PR host → no Create; checks → "N things to check"; nothing changed → Done', run: async () => {
       const { card, $ } = mk({ controls: { prHost: () => false } });
       card.update(done({ ...EXTRAS, results: { ...EXTRAS.results, checks: 2 } }));

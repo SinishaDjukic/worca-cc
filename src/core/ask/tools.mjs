@@ -511,15 +511,16 @@ export function createAskTools(deps) {
       description: 'List the saved workflows with their ordered step groups (parallel agent nodes share a group) and feedback loops. Pick one by name, domain and steps.',
       inputSchema: SCHEMA.obj({}) },
     { name: 'list_runs',
-      description: 'Find past runs, newest first. Optional filters: projectKey OR workspaceId, status (e.g. done, running, error, stopped), query (title substring), startedBy (the person who started the run, exactly as list_people names them, case-insensitive; "me" = the person signed in to this chat, only on a shared sign-in). Each row carries startedBy (a person, "local" for this machine, null before attribution). limit defaults to 20, max 100.',
+      description: 'Find past runs, newest first. Optional filters: projectKey OR workspaceId, status (e.g. done, running, error, stopped), query (title substring), startedBy (the person who started the run, exactly as list_people names them, case-insensitive; "me" = the person signed in to this chat, only on a shared sign-in). Each row carries startedBy (a person, "local" for this machine, null before attribution). limit defaults to 20, max 100. Optional pr: only the runs whose recorded pull request matches (a URL matches that PR exactly; owner/repo#N that repo\'s PR; a bare number the PR with that number in any project of the scope). A row with a PR carries pr {url, number, state}; a workspace run carries prs[], one per member project. A row with fixesPr is a Watch PR fix run on an existing PR, not the run that opened it; with pr, those rows come after the runs that opened it.',
       inputSchema: SCHEMA.obj({ projectKey: SCHEMA.s('project key from list_projects'), workspaceId: SCHEMA.s('workspace id from list_projects'),
+        pr: SCHEMA.s('pull request: a PR URL (GitHub, Azure DevOps, Bitbucket), owner/repo#N, or a number'),
         status: SCHEMA.s('run status to match'), limit: SCHEMA.i('max results (1-100)', 1, L.listRunsMaxLimit), query: SCHEMA.s('case-insensitive title substring'),
         startedBy: SCHEMA.s('who started the run (a name from list_people, or "me")') }) },
     { name: 'list_people',
       description: 'Who has started runs on this worca: one row per person (the name recorded when they started a run — a verified sign-in email, a trusted-header name, or the operator\'s declared name; "local" = runs started on this machine with no identity) with runs, lastRunAt and totalCostUsd, most active first. Optional scope: projectKey OR workspaceId. Runs from before attribution existed have no person and are not counted. Read-only; this machine\'s runs only (team-wide people are in get_team_metrics actor breakdowns).',
       inputSchema: SCHEMA.obj({ projectKey: SCHEMA.s('project key from list_projects'), workspaceId: SCHEMA.s('workspace id from list_projects') }) },
     { name: 'get_run',
-      description: 'Read one run: its metadata, the user\'s original prompt, startedBy (the person who started it), `scheduled` when a schedule started it, and `actedBy` — the people who acted on it (paused, resumed, stopped, answered its questions, continued past a cost cap, opened its PR, archived it) with when (not the run\'s Actions: those are get_run_checkout). Give projectKey or workspaceId when known; without them the user-pinned scope (when the chat has one) is tried first, then the id is searched everywhere.',
+      description: 'Read one run: its metadata, the user\'s original prompt, startedBy (the person who started it), `scheduled` when a schedule started it, and `actedBy` — the people who acted on it (paused, resumed, stopped, answered its questions, continued past a cost cap, opened its PR, archived it) with when (not the run\'s Actions: those are get_run_checkout). pr {url, number, state} when the run opened a pull request (prs[] per member for a workspace run); fixesPr when it is a Watch PR fix run on an existing PR. Give projectKey or workspaceId when known; without them the user-pinned scope (when the chat has one) is tried first, then the id is searched everywhere.',
       inputSchema: SCHEMA.obj({ id: SCHEMA.s('run id (8 hex)'), projectKey: SCHEMA.s('scope to a project'), workspaceId: SCHEMA.s('scope to a workspace') }, ['id']) },
     { name: 'get_run_diff',
       description: 'Read the unified diff of a run, paged by byte offset (use nextOffset until truncated is false). Optional path = one file only. files[] lists every file with added/removed counts; credential files are omitted. For a run still in progress it returns the changes so far in its worktree, with live: true — they will keep moving until the run ends.',
@@ -840,7 +841,7 @@ export function createAskTools(deps) {
         description: 'The model catalog every picker, workflow node and Ask chat draws from: id, label, source (built-in | user | plugin | team policy), editable (a user entry — the only kind propose_model_change edits or removes), engine (claude | codex | cursor | copilot | goose | opencode: the engine it belongs to; a copilot built-in\'s id is copilot/<the id the Copilot CLI takes>), harnesses (every engine that can run it, preferred first — a run\'s models must be ones its engine runs), efforts, connection ("default" = the CLI\'s own login; "env" = the entry\'s ANTHROPIC_BASE_URL/… env points the claude CLI at an endpoint that speaks the Messages API; "provider" = worca\'s bridge forwards to a provider, or on a codex model, codex connects to the OpenAI-compatible endpoint itself), and for a bridged model its provider, upstreamApi (anthropic passes through; openai-chat and openai-responses are translated), upstreamModel, capabilities (maxPromptTokens / maxOutputTokens / reasoningEfforts …) and ready / notReady. A user entry adds its own config under entry: env (credential values masked; ${VAR} references readable), upstream (baseUrl, apiKey masked or ${VAR}, headers, capabilities) and cost. Every model also carries its picking facts (docs/models.md "Per-agent models for one run"): vendor (anthropic | openai | other — who makes it), tier (its price tier by output list price per million tokens: premium from $40, top from $20, strong from $8, mid from $2, else economy; null when unpriced), price ({input, output} USD per million tokens: the list price, or the entry\'s own cost), free (a Copilot import is not: it carries billing "copilot" — Copilot bills premium requests — with no price and no tier unless the entry sets its own cost), and context (its prompt window in tokens: the pinned maxPromptTokens, a built-in\'s known window, else the CLI\'s 200k). Read-only.',
         inputSchema: SCHEMA.obj({}) },
       { name: 'get_providers',
-        description: 'The providers that bridged models share (the Providers page): copilot (connected, login, accountType, termsCurrent — the notice acknowledgement, maxConcurrent), openai and anthropic (baseUrl, keySet, keySource "env" | "stored", keyRef when it is a ${VAR} reference, keyOptional — a local OpenAI-compatible endpoint needs no key, configured — the key resolves now, maxConcurrent). Never a key. Read-only.',
+        description: 'The providers that bridged models share (the Providers page): copilot (connected, login, accountType, maxConcurrent), openai and anthropic (baseUrl, keySet, keySource "env" | "stored", keyRef when it is a ${VAR} reference, keyOptional — a local OpenAI-compatible endpoint needs no key, configured — the key resolves now, maxConcurrent). Never a key. Read-only.',
         inputSchema: SCHEMA.obj({}) },
       { name: 'test_provider',
         description: 'Check one provider now: openai / anthropic GET the endpoint\'s models list with the configured key (reachability + auth, and how many models it lists); copilot exchanges the sign-in for a Copilot token. Returns {ok:true, models?} or {ok:false, message}. The endpoint is contacted.',
@@ -853,7 +854,7 @@ export function createAskTools(deps) {
         inputSchema: SCHEMA.obj({ baseUrl: SCHEMA.s('the endpoint\'s OpenAI base URL, e.g. http://127.0.0.1:11434/v1 (default: the openai provider\'s)'),
           apiKey: SCHEMA.s('the endpoint\'s own key, as a ${VAR} reference (never the key itself) — e.g. ${GEMINI_API_KEY}') }) },
       { name: 'propose_model_change',
-        description: 'Propose a model catalog or provider change for the user to confirm — it never changes anything itself; the user sees a card with the before → after and applies or declines it. kind: "add_model" (model: {id, label?, engine?: claude | codex | cursor | goose | opencode (fixed once added), efforts?, env?, cost?, upstream?} — a cursor model takes no env, no upstream and no efforts (cursor-agent\'s own sign-in); a goose model\'s id is provider/model, it takes no env and no upstream (Goose\'s own providers), and its efforts are GOOSE_THINKING_EFFORT values; an opencode model\'s id is provider/model, it takes no env and no upstream (OpenCode\'s own providers), and its efforts are OpenCode variants; a codex model takes no env, and as upstream only an OpenAI-compatible Responses endpoint {provider: openai, api: openai-responses, model, baseUrl?, apiKey?: "${VAR}", headers?}, which codex reaches directly with no sign-in of its own; a Messages-API endpoint by env: {ANTHROPIC_BASE_URL, ANTHROPIC_AUTH_TOKEN:"${VAR}", …}; through a provider by upstream: {provider: openai | anthropic | copilot, api: anthropic | openai-chat | openai-responses, model: <the id the endpoint expects>, baseUrl?, apiKey?: "${VAR}", headers?, capabilities?: {maxPromptTokens, maxOutputTokens, reasoning, reasoningEfforts?: the effort levels the model lists, …}}; cost: {free:true} or {perMtok:{input, output, …}}), "edit_model" (id + model: the fields to change — env merges per key, null deletes a key; upstream merges into the current block, a null field removes it, capabilities merge per key; upstream:null drops the bridge), "remove_model" (id — workflow nodes that name it fall back to the default model), "provider" (provider + set: {baseUrl?, apiKey?: "${VAR}", maxConcurrent?, accountType?: individual | business | enterprise (copilot)}; null or "" clears a field), "import_copilot" (ids from list_copilot_models), "import_endpoint" (ids from list_endpoint_models, with its baseUrl and apiKey when you passed them — each becomes an entry carrying the window the server reports: free and keyless from a server the user runs, unpriced and with that ${VAR} key from Gemini or Qwen). Credentials are ${VAR} references to variables in worca\'s environment, never the value: a literal key is refused — the user pastes one on the Providers page. The Copilot sign-in and its notice are the user\'s, on the Providers page. Returns {ok:true, card} (card.warnings: what will still stop the model working) or {ok:false, errors} to fix and retry. Never claim a change was applied — the card says so when it happens.',
+        description: 'Propose a model catalog or provider change for the user to confirm — it never changes anything itself; the user sees a card with the before → after and applies or declines it. kind: "add_model" (model: {id, label?, engine?: claude | codex | cursor | goose | opencode (fixed once added), efforts?, env?, cost?, upstream?} — a cursor model takes no env, no upstream and no efforts (cursor-agent\'s own sign-in); a goose model\'s id is provider/model, it takes no env and no upstream (Goose\'s own providers), and its efforts are GOOSE_THINKING_EFFORT values; an opencode model\'s id is provider/model, it takes no env and no upstream (OpenCode\'s own providers), and its efforts are OpenCode variants; a codex model takes no env, and as upstream only an OpenAI-compatible Responses endpoint {provider: openai, api: openai-responses, model, baseUrl?, apiKey?: "${VAR}", headers?}, which codex reaches directly with no sign-in of its own; a Messages-API endpoint by env: {ANTHROPIC_BASE_URL, ANTHROPIC_AUTH_TOKEN:"${VAR}", …}; through a provider by upstream: {provider: openai | anthropic | copilot, api: anthropic | openai-chat | openai-responses, model: <the id the endpoint expects>, baseUrl?, apiKey?: "${VAR}", headers?, capabilities?: {maxPromptTokens, maxOutputTokens, reasoning, reasoningEfforts?: the effort levels the model lists, …}}; cost: {free:true} or {perMtok:{input, output, …}}), "edit_model" (id + model: the fields to change — env merges per key, null deletes a key; upstream merges into the current block, a null field removes it, capabilities merge per key; upstream:null drops the bridge), "remove_model" (id — workflow nodes that name it fall back to the default model), "provider" (provider + set: {baseUrl?, apiKey?: "${VAR}", maxConcurrent?, accountType?: individual | business | enterprise (copilot)}; null or "" clears a field), "import_copilot" (ids from list_copilot_models), "import_endpoint" (ids from list_endpoint_models, with its baseUrl and apiKey when you passed them — each becomes an entry carrying the window the server reports: free and keyless from a server the user runs, unpriced and with that ${VAR} key from Gemini or Qwen). Credentials are ${VAR} references to variables in worca\'s environment, never the value: a literal key is refused — the user pastes one on the Providers page. The Copilot sign-in is the user\'s, on the Providers page. Returns {ok:true, card} (card.warnings: what will still stop the model working) or {ok:false, errors} to fix and retry. Never claim a change was applied — the card says so when it happens.',
         inputSchema: SCHEMA.obj({ kind: SCHEMA.s('add_model | edit_model | remove_model | provider | import_copilot'),
           id: SCHEMA.s('edit_model / remove_model: the catalog model id'),
           model: { type: 'object', description: 'add_model: the entry; edit_model: the fields to change', additionalProperties: true },
@@ -1094,6 +1095,46 @@ export function createAskTools(deps) {
   // Comment failures are model-actionable -> AskToolError text, never a crash.
   const asCommentError = (tool, err) => (err && err.name === 'DiffCommentError'
     ? new AskToolError(`${tool}: ${err.message}`) : err);
+
+  // One sanitiser for every stored PR URL the model sees: a string without control characters, http(s) only, no
+  // userinfo, on a forge host worca supports (github.com, dev.azure.com, *.visualstudio.com, bitbucket.org), cut to
+  // origin + pathname (no query or fragment). Anything else is null; self-hosted forges are not supported by parsePrRef.
+  const PR_HOSTS = new Set(['github.com', 'www.github.com', 'dev.azure.com', 'bitbucket.org']);
+  function safePrUrl(value) {
+    if (value == null) return null;
+    // Leading/trailing whitespace and control characters are trimmed; any inside the URL (an injected line) rejects it.
+    const text = String(value).replace(/^[\s\u0000-\u001f\u007f-\u009f]+|[\s\u0000-\u001f\u007f-\u009f]+$/g, '');
+    // eslint-disable-next-line no-control-regex
+    if (/[\s\u0000-\u001f\u007f-\u009f]/.test(text)) return null;
+    let u;
+    try { u = new URL(text); } catch { return null; }
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
+    if (u.username || u.password) return null;
+    const host = u.hostname.toLowerCase();
+    if (!PR_HOSTS.has(host) && !host.endsWith('.visualstudio.com')) return null;
+    return deps.redact(u.origin + u.pathname);
+  }
+
+  // PR facts for a list row / get_run: pr, prs (workspace members), or fixesPr (a Watch PR fix run), never two of them.
+  function prFieldsOf(info) {
+    if (!info) return {};
+    const norm = (p) => {
+      const url = safePrUrl(p.url);
+      if (!url) return null;
+      return { url, number: p.number ?? deps.parsePrRef?.(url)?.number ?? null, state: p.state ?? 'OPEN' };
+    };
+    if (info.fixesPrUrl) {
+      const url = safePrUrl(info.fixesPrUrl);
+      return { fixesPr: url ? { url, number: deps.parsePrRef?.(url)?.number ?? null } : null };
+    }
+    const members = Object.entries(info.members || {}).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+    if (members.length) {
+      const prs = members.map(([projectKey, p]) => [projectKey, norm(p)]).filter(([, n]) => n).map(([projectKey, n]) => ({ projectKey, ...n }));
+      return prs.length ? { prs } : {};
+    }
+    const pr = info.pr ? norm(info.pr) : null;
+    return pr ? { pr } : {};
+  }
 
   function shapeRun(row) {
     const isWs = row.target === 'workspace' || !!row.workspace_key;
@@ -1955,11 +1996,20 @@ export function createAskTools(deps) {
       const query = str(input.query).toLowerCase();
       const limit = clampInt(input.limit, 1, L.listRunsMaxLimit, L.listRunsDefaultLimit);
       const startedBy = personFilter(input.startedBy, 'list_runs');
+      const prText = str(input.pr);
+      let ref = null;
+      if (prText) {
+        if (typeof deps.parsePrRef !== 'function' || typeof deps.prRefMatches !== 'function') throw new AskToolError('list_runs: PR lookup is not available');
+        ref = deps.parsePrRef(prText);
+        if (!ref) throw new AskToolError('list_runs: pr must be a pull request URL (GitHub, Azure DevOps or Bitbucket), owner/repo#N, or a number');
+      }
+      const index = typeof deps.runPrIndex === 'function' ? deps.runPrIndex() : null;
       // Unkeyed: the newest runsScanLimit rows are enough. Keyed: scan everything — a
       // project's runs may all be older than the 200 globally newest (lite = one SQL
       // + one readdir per store key, no git).
-      const rows = await deps.listAllPipelines({ lite: true, limit: wantKey ? -1 : L.runsScanLimit });
+      const rows = await deps.listAllPipelines({ lite: true, limit: (wantKey || ref) ? -1 : L.runsScanLimit });
       const out = [];
+      const fixRows = [];
       for (const e of rows) {
         if (wantKey && e.projectKey !== wantKey) continue;
         if (status && String(e.status ?? '').toLowerCase() !== status) continue;
@@ -1967,7 +2017,21 @@ export function createAskTools(deps) {
         if (startedBy && String(e.startedBy ?? '').toLowerCase() !== startedBy) continue;
         const isWs = e.target === 'workspace' || String(e.projectKey).startsWith('workspaces/');
         const none = !isWs && e.projectKey === NO_PROJECT_KEY;   // P3: a run with no project (propose_run: noProject: true)
-        out.push({
+        const fixUrl = index?.fixes?.get(e.id) ?? null;
+        const entry = index?.prs?.get(e.id) ?? null;
+        const prInfo = fixUrl || entry ? { fixesPrUrl: fixUrl, pr: entry?.pr ?? null, members: entry?.members ?? {} } : null;
+        let isFix = false;
+        if (ref) {
+          if (fixUrl) {
+            if (!deps.prRefMatches(ref, { url: fixUrl })) continue;
+            isFix = true;
+          } else {
+            const mem = Object.values(entry?.members ?? {});
+            const cands = mem.length ? mem : (entry?.pr ? [entry.pr] : []);
+            if (!cands.some((p) => deps.prRefMatches(ref, p))) continue;
+          }
+        }
+        (isFix ? fixRows : out).push({
           id: e.id, title: deps.redact(e.title ?? e.id), target: isWs ? 'workspace' : none ? 'none' : 'project',
           ...(isWs
             ? { workspaceId: String(e.projectKey).slice('workspaces/'.length), workspaceName: e.workspaceName ?? null }
@@ -1978,10 +2042,12 @@ export function createAskTools(deps) {
           sourceBranch: e.sourceBranch ?? null, guardrailsId: e.guardrailsId ?? null,
           totalCostUsd: e.totalCostUsd ?? null,
           startedBy: e.startedBy ?? null,
+          ...prFieldsOf(prInfo),
         });
         if (out.length >= limit) break;
       }
-      return out;
+      // With pr: the runs that opened it first, Watch PR fix runs after, never crowding the creators out.
+      return ref ? [...out, ...fixRows].slice(0, limit) : out;
     },
     async get_run(input) {
       const row = await resolveRow(input, 'get_run');
@@ -1994,8 +2060,10 @@ export function createAskTools(deps) {
       const actions = typeof deps.readRunActions === 'function' ? await deps.readRunActions(row) : [];
       // #527: has the base moved on the remote since the run started (last fetch, no network).
       const baseMoved = await baseMovedOf(row, run.baseSha, run.sourceBranch);
+      const prs = typeof deps.readRunPrs === 'function' ? await deps.readRunPrs(row) : null;
       return { ...run, hasDiff: !run.archived && await deps.hasDiffPatch(row), ...(memory ? { memory } : {}), ...(policy ? { policy } : {}),
         ...(baseMoved ? { baseMoved } : {}),
+        ...prFieldsOf(prs),
         ...(actions.length ? { actedBy: actions.map((a) => ({ at: a.at, by: a.by, what: deps.redact(a.what) })) } : {}) };
     },
     async list_people(input) {

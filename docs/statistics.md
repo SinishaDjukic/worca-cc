@@ -135,3 +135,24 @@ With `report=1` the response adds `report`:
   Requirements spend, and `totals.requirements` (the Statistics tile's figures) is left out.
 
 Without `report=1` there is no `report` key.
+
+### Review quality
+
+Only finished (`done`) runs count, and runs that finished before this endpoint existed have no data: their role reviews
+were never kept.
+
+`GET /api/stats/review-quality?startMs=1740787200000&endMs=1743465600000`
+
+| Parameter | Values |
+| --- | --- |
+| `startMs`, `endMs` | whole milliseconds; optional. The window is runs started in `[startMs, endMs)`, all time by default |
+
+The response is `{ startMs, endMs, runs, roles }`. `runs` is the number of finished runs with role reviews in the window.
+`roles` has one row per reviewed role and target, plan roles first:
+`{ target, role, label, runs, reviews, raised, fixed, disputed, open }`. `target` is `plan` or `diff`, `reviews` is
+how many times the role reviewed, and the four counts are its findings and their answers, summed over the runs. They
+come only from each role's recorded counts, never from the findings' text. At most 200 rows. Archived and deleted runs
+are included, as everywhere in Statistics.
+
+A malformed `startMs` or `endMs`, or an `endMs` not after `startMs`, answers 400 with `{ error }`. A database failure
+answers 500 with `{ error: 'review quality unavailable' }`; the details go to the server log.

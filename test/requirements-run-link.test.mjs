@@ -397,6 +397,7 @@ test('server: Start with Report back makes a plugin pipeline row; write-back rep
     const ref = JSON.parse(row.source_ref);
     assert.deepEqual([ref.plugin, ref.sourceId, ref.profile, ref.taskId, ref.url, ref.inputs], ['jira-source', 'jira', 'acme', 'SHOP-123',
       'https://mock.test/browse/SHOP-123', { writeBack: 'yes' }]);
+    assert.equal(ref.project, 'SHOP', "Ticket updates (D6): the link's tracker project is pinned on the row");
     const out = await reportResultForPipeline({ ...row, status: 'done' }, { results: null, branch: null, prUrl: null });
     assert.deepEqual(out, { ok: true });
     const last = JSON.parse(readPluginState('jira-source', 'acme').lastReport);

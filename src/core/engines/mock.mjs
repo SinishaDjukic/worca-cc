@@ -101,7 +101,7 @@ async function emitLog(onEvent, text) {
  * switch and pins the lockstep.
  */
 export const MOCK_WRITER_ROLES = new Set([
-  'clarify', 'planner-plan', 'refiner', 'decomposer', 'implementer', 'reviewer', 'plan-review',
+  'clarify', 'planner-plan', 'refiner', 'decomposer', 'implementer', 'reviewer', 'plan-review', 'code-review',
   'workspace-scan', 'agent-gen', 'workspace-reviewer', 'manual-tests-checklist', 'manual-web-ui-testing', 'memory-defrag',
   'generic-producer', 'generic-verifier', 'deck-builder', 'deck-audit', 'deck-export',
   'workspace-usage', 'workspace-synth', 'c4-architect',
@@ -537,6 +537,11 @@ export async function runMock({ cwd, systemPrompt, prompt, onEvent, signal, resu
       break;
     case 'plan-review':
       text = await mockPlanReview(m, cycle, onEvent, prompt);
+      break;
+    case 'code-review':
+      // A code role slice: the role mode with no prompt, so the plan's house-brief duplicate check finds nothing. It
+      // reports the plan's checklist (spec D7) like the plain reviewer; the orchestrator judges it on the merged verdict.
+      text = await mockPlanReview(m, cycle, onEvent, '', { planChecklist: true });
       break;
     case 'workspace-scan':
       text = await mockWorkspaceSurvey(m, onEvent);
@@ -1002,10 +1007,11 @@ async function mockRefiner(m, cycle, onEvent) {
             },
           ],
         };
-  // Role reviews (spec §3): the refiner fed the merged findings says which ids it fixed — here, every one listed.
+  // Role reviews (spec §3): the refiner fed the merged findings says which ids it fixed — here, every one listed (or,
+  // with a dispositions file, every one the knob leaves fixed).
   if (m.MOCK_FINDINGS) {
     const findings = await readFile(m.MOCK_FINDINGS, 'utf8').catch(() => '');
-    review.addressed = [...findings.matchAll(/\*\*([a-z]+-\d+-\d+)\*\*/g)].map((x) => x[1]);
+    review.addressed = (await mockDispositions(findings)) ?? [...findings.matchAll(FINDING_ID_RE)].map((x) => x[1]);
   }
 
   if (jsonPath) {
@@ -1051,8 +1057,42 @@ async function mockDecomposer(m, onEvent) {
  * runs and legacy workspace runs are byte-identical. `ctx.workspace` is NOT available
  * here by design; these absolute paths are the only channel.
  */
+const FINDING_ID_RE = /\*\*([a-z]+-\d+-\d+)\*\*/g;
+
+/** Role findings (#990 slice 3): the sink's answer, written to the path the findings text's `Dispositions file:` line
+ *  names. `WORCA_MOCK_DISPOSITIONS='{"ux-1-1":"disputed"}'` answers an id fixed | disputed | omit (default: fixed);
+ *  `WORCA_MOCK_CONFLICTS` is a JSON array passed through. Returns the ids left fixed; null without that line. */
+async function mockDispositions(findingsText) {
+  // The last such line: dispositionsBlock ends every findings file with it, so finding text above cannot redirect the write.
+  const path = [...String(findingsText || '').matchAll(/^Dispositions file: (.+)$/gm)].at(-1)?.[1]?.trim();
+  if (!path) return null;
+  const knob = (name) => { try { return JSON.parse(process.env[name] || 'null'); } catch { return null; } };
+  const table = knob('WORCA_MOCK_DISPOSITIONS') || {};
+  const conflicts = knob('WORCA_MOCK_CONFLICTS');
+  const dispositions = [];
+  for (const [, id] of findingsText.matchAll(FINDING_ID_RE)) {
+    const status = table[id] || 'fixed';
+    if (status === 'omit') continue;
+    dispositions.push(status === 'disputed' ? { id, status, reason: 'mock: the plan already covers this' } : { id, status: 'fixed' });
+  }
+  await ensureDir(path);
+  await writeFile(path, JSON.stringify({ dispositions, ...(Array.isArray(conflicts) ? { conflicts } : {}) }, null, 2) + '\n', 'utf8');
+  return dispositions.filter((d) => d.status === 'fixed').map((d) => d.id);
+}
+
 async function mockImplementer(m, cwd, onEvent, workspaceWriteTargets) {
   await emitLog(onEvent, '[mock] implementer applying plan via TDD (red-green-refactor)');
+  // A role review's implementer sink: its first bound input (`fix`) is the findings file.
+  if (m.MOCK_IN) await mockDispositions(await readFile(m.MOCK_IN, 'utf8').catch(() => ''));
+  // #990 s5: a test raises a plan concern with WORCA_MOCK_PLAN_CONCERN; only a prompt that offers one writes it.
+  if (m.MOCK_PLAN_CONCERN) {
+    let concern = null;
+    try { concern = JSON.parse(process.env.WORCA_MOCK_PLAN_CONCERN || 'null'); } catch { concern = null; }
+    if (concern) {
+      await writeFile(m.MOCK_PLAN_CONCERN, JSON.stringify(concern, null, 2) + '\n', 'utf8');
+      await emitLog(onEvent, '[mock] implementer raised a plan concern');
+    }
+  }
   const targets = Array.isArray(workspaceWriteTargets) && workspaceWriteTargets.length
     ? workspaceWriteTargets
     : [cwd];
@@ -1103,6 +1143,18 @@ async function mockImplementer(m, cwd, onEvent, workspaceWriteTargets) {
     written.map((w) => w.srcFile).join(', ');
 }
 
+/** Shape it first (C10): the code reviewer's report on the plan's checklist (MOCK_IN), or null when it has none.
+ *  Cycle 1 leaves the first item unmet, so the checklist loops once; cycle 2 meets it and marks the last item n/a. */
+async function planChecklistReport(m, cycle) {
+  let items = [];
+  if (m.MOCK_IN) { try { items = extractChecklist(await readFile(m.MOCK_IN, 'utf8')); } catch { items = []; } }
+  if (!items.length) return null;
+  const met = (id) => ({ id, status: 'met', evidence: 'test/feature.test.mjs (mock)' });
+  return items.map((it, i) => (cycle <= 1
+    ? (i === 0 ? { id: it.id, status: 'unmet', evidence: 'mock: no test covers it yet' } : met(it.id))
+    : (i === items.length - 1 && items.length > 1 ? { id: it.id, status: 'na', evidence: 'mock: does not apply here' } : met(it.id))));
+}
+
 async function mockReviewer(m, cycle, onEvent) {
   const mdPath = m.MOCK_OUT;
   const jsonPath = m.MOCK_JSON;
@@ -1134,16 +1186,8 @@ async function mockReviewer(m, cycle, onEvent) {
           ],
         };
 
-  // Shape it first (C10): report the plan's checklist when it has one. Cycle 1 leaves the first item unmet, so the
-  // checklist loops once; cycle 2 meets it and marks the last item n/a.
-  let items = [];
-  if (m.MOCK_IN) { try { items = extractChecklist(await readFile(m.MOCK_IN, 'utf8')); } catch { items = []; } }
-  if (items.length) {
-    const met = (id) => ({ id, status: 'met', evidence: 'test/feature.test.mjs (mock)' });
-    review.checklist = items.map((it, i) => (cycle <= 1
-      ? (i === 0 ? { id: it.id, status: 'unmet', evidence: 'mock: no test covers it yet' } : met(it.id))
-      : (i === items.length - 1 && items.length > 1 ? { id: it.id, status: 'na', evidence: 'mock: does not apply here' } : met(it.id))));
-  }
+  const checklist = await planChecklistReport(m, cycle);
+  if (checklist) review.checklist = checklist;
 
   if (mdPath) {
     const md =
@@ -1200,7 +1244,7 @@ function roleSeverity(role, cycle) {
   return table?.[role]?.[String(cycle)] || 'minor';
 }
 
-async function mockPlanReview(m, cycle, onEvent, prompt = '') {
+async function mockPlanReview(m, cycle, onEvent, prompt = '', { planChecklist = false } = {}) {
   const role = m.MOCK_PERSPECTIVE || null;
   if (role) {
     const severity = roleSeverity(role, cycle);
@@ -1222,6 +1266,7 @@ async function mockPlanReview(m, cycle, onEvent, prompt = '') {
         issues: severity === 'none' ? [] : [{ severity, title: `${role}: mock finding`, section: 'Testing', fix: 'Add the missing case.', detail: 'mock' }],
         checklist: ids.map((id) => ({ id, status: blocking ? 'unmet' : 'met', evidence: 'mock' })),
       };
+    if (planChecklist) review.checklist = [...review.checklist, ...((await planChecklistReport(m, cycle)) || [])];
     await emitLog(onEvent, `[mock] ${role} role review (round ${cycle})`);
     if (m.MOCK_JSON) { await ensureDir(m.MOCK_JSON); await writeFile(m.MOCK_JSON, JSON.stringify(review, null, 2) + '\n', 'utf8'); }
     if (m.MOCK_OUT) { await ensureDir(m.MOCK_OUT); await writeFile(m.MOCK_OUT, `# ${role} findings (mock)\n`, 'utf8'); }

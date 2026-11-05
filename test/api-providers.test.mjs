@@ -1,7 +1,7 @@
 // test/api-providers.test.mjs
 // The provider routes (model-bridge-design.md §9) against a stubbed
 // globalThis.fetch standing in for github.com: state payloads never carry a
-// token, the terms gate on login, the device-flow poll, the models list and
+// token, the device-flow login and poll, the models list and
 // the import, PATCH validation, /api/models' bridged facts, and the CLI's
 // pure formatters. Sandboxes HOME (settings.json) + WORCA_HOME (DB).
 import { test, before, after } from 'node:test';
@@ -69,24 +69,21 @@ test('GET /api/providers: defaults, never a token', async () => {
   const { status, body } = await jfetch('/api/providers');
   assert.equal(status, 200);
   assert.equal(body.copilot.connected, false);
-  assert.equal(body.copilot.termsCurrent, false);
+  assert.equal('termsCurrent' in body.copilot, false);
+  assert.equal('acknowledgedTerms' in body.copilot, false);
   assert.equal(body.copilot.accountType, 'individual');
   assert.equal(body.openai.configured, false);
   assert.equal(body.openai.baseUrl, 'https://api.openai.com/v1');
   assert.equal(JSON.stringify(body).includes('gho_'), false);
 });
 
-test('login is refused until the notice is acknowledged (409 TERMS)', async () => {
-  const r = await post('/api/providers/copilot/login');
-  assert.equal(r.status, 409);
-  assert.equal(r.body.code, 'TERMS');
-  const a = await post('/api/providers/copilot/acknowledge');
-  assert.equal(a.status, 200);
-  assert.equal(a.body.copilot.termsCurrent, true);
-  assert.match(a.body.copilot.acknowledgedTerms, /^\d{4}-\d{2}-\d{2}T/);
+test('Copilot sign-in needs no acknowledgement: the old acknowledge route is gone', async () => {
+  const r = await post('/api/providers/copilot/acknowledge');
+  assert.equal(r.status, 404);
 });
 
 test('device flow: start → pending → ok stores the sign-in; state shows the login; quota on demand; models list; import', async () => {
+  // No acknowledgement first: sign-in starts straight away (the notice is gone).
   const start = await post('/api/providers/copilot/login');
   assert.equal(start.status, 200, JSON.stringify(start.body));
   assert.equal(start.body.userCode, 'WXYZ-9876');
@@ -200,7 +197,6 @@ test('PATCH /api/providers: validation, masked echo = keep, logout flips the cat
 
   const out = await post('/api/providers/copilot/logout');
   assert.equal(out.body.copilot.connected, false);
-  assert.equal(out.body.copilot.termsCurrent, true);   // the acknowledgement stays
   const models = await jfetch('/api/models');
   const gpt = models.body.models.find((m) => m.id === 'copilot-gpt-5');
   assert.equal(gpt.needsSignIn, true);
@@ -258,8 +254,9 @@ test('CLI formatters + argv parser + `worca models providers/list` through injec
   assert.equal(formatModelLine({ id: 'copilot-gpt-5', label: 'My GPT', custom: 'global', bridged: 'copilot', upstreamModel: 'gpt-5', upstreamApi: 'openai-chat', needsSignIn: true, signInReason: 'not_signed_in' }),
     'copilot-gpt-5  (My GPT)  yours  bridged: copilot → gpt-5 (translated)  NEEDS SIGN-IN');
   assert.equal(formatModelLine({ id: 'claude-opus-4-8', label: 'Opus', custom: false, hidden: true }), 'claude-opus-4-8  (Opus)  built-in  hidden');
-  const lines = formatProviders({ copilot: { connected: true, login: 'o', accountType: 'individual', maxConcurrent: 4, termsCurrent: true, acknowledgedTerms: '2026-09-20T00:00:00Z', quota: { used: 1, entitlement: 5 } }, openai: { configured: false, keySet: true, keySource: 'env', keyRef: '${K}', baseUrl: 'u', maxConcurrent: 8 }, anthropic: { maxConcurrent: 8 } });
-  assert.match(lines[0], /connected as @o.*terms=acknowledged 2026-09-20/);
+  const lines = formatProviders({ copilot: { connected: true, login: 'o', accountType: 'individual', maxConcurrent: 4, quota: { used: 1, entitlement: 5 } }, openai: { configured: false, keySet: true, keySource: 'env', keyRef: '${K}', baseUrl: 'u', maxConcurrent: 8 }, anthropic: { maxConcurrent: 8 } });
+  assert.match(lines[0], /connected as @o/);
+  assert.doesNotMatch(lines[0], /terms=/);
   assert.match(lines[1], /premium requests: 1 \/ 5/);
   assert.match(lines[2], /openai.*key \$\{VAR\} NOT SET \(\$\{K\}\)/);
   assert.deepEqual(modelsArgs(['import', 'copilot', '--pick=a,b', '--yes'], ['--pick'], ['--yes']), { _: ['import', 'copilot'], pick: 'a,b', yes: true });
@@ -277,10 +274,11 @@ test('CLI formatters + argv parser + `worca models providers/list` through injec
   assert.match(out[0], /worca models/);
   await assert.rejects(cmdModels(['login', 'openai'], io), /only `worca models login copilot`/);
   await assert.rejects(cmdModels(['import', 'copilot', '--all', '--yes'], io), /not signed in/);
-  // login with --accept-terms walks the device flow against the stub.
+  await assert.rejects(cmdModels(['login', 'copilot', '--accept-terms'], io), /Unknown flag/);
+  // login walks the device flow against the stub, with no prompt before it.
   pollState = 'ok';
   out.length = 0;
-  assert.equal(await cmdModels(['login', 'copilot', '--accept-terms'], { ...io, sleep: async () => {} }), 0);
+  assert.equal(await cmdModels(['login', 'copilot'], { ...io, sleep: async () => {} }), 0);
   assert.ok(out.some((l) => /WXYZ-9876/.test(l)));
   assert.ok(out.some((l) => /Connected to GitHub Copilot as @octo/.test(l)));
   out.length = 0;
