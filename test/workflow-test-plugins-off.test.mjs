@@ -11,6 +11,7 @@ import { createRedactor } from '../src/core/redact.mjs';
 import { openTryLog, pendingTryLogRedactor, redactTryLogRetrying, _testing as tryLogTesting } from '../src/core/engines/try-log-redaction.mjs';
 import { RunHarness } from '../src/core/run-harness.mjs';
 import { composeSpawnEnv } from '../src/core/engines/spawn.mjs';
+import { SETTINGS_IGNORED_FILE } from '../src/core/workflow-tests/try-guard-env.mjs';
 import { runOpts, taskHeader, fanOutDirective, PLUGINS_OFF_SOURCES } from '../src/core/phases.mjs';
 import { runClaude } from '../src/core/claude-runner.mjs';
 
@@ -533,4 +534,63 @@ test('I-1: runClaudeProcess holds the log while a sibling spawn on it still runs
     assert.doesNotMatch(readFileSync(log, 'utf8'), /sk-ant-sibling-secret/);
     assert.equal(readFileSync(log, 'utf8').trim().split('\n').length, 2);
   } finally { _testing.reset(); }
+});
+
+// ── Task 5 fix review (concern 8): a canary catches a --settings file Claude Code silently dropped ────────────────────────
+const settingsOfArgs = (args) => { const v = args[args.indexOf('--settings') + 1]; return JSON.parse(v.startsWith('{') ? v : readFileSync(v, 'utf8')); };
+const canaryMarkOf = (settings) => {
+  const cmd = settings.hooks.SessionStart[0].hooks[0].command;
+  return JSON.parse(cmd.slice(cmd.lastIndexOf(' "') + 1));
+};
+
+test('concern 8: the payload carries the canary\'s SessionStart hook only when the try guard names a canary', () => {
+  const s = buildSettingsPayload(null, { tryGuard: { logFile: '/run/connector-calls.ndjson', canary: '/run/.worca-settings-canary-ab' } }).settings;
+  assert.equal(s.hooks.SessionStart.length, 1);
+  assert.match(s.hooks.SessionStart[0].hooks[0].command, /settings-canary\.mjs" "\/run\/\.worca-settings-canary-ab"$/);
+  assert.equal(s.disableAllHooks, false);
+  assert.equal('SessionStart' in buildSettingsPayload(null, { tryGuard: { logFile: '/run/connector-calls.ndjson' } }).settings.hooks, false);
+});
+
+/** One Pretend spawn through the seam: `mark` writes the canary's marker (as the CLI would run the hook), `init` the session start. */
+async function canarySpawn({ mark, init = true, pluginsOff = true }) {
+  const d = tmp();
+  const log = join(d, 'connector-calls.ndjson');
+  const events = [];
+  let settings = null;
+  _testing.set({ superviseSpawn: (o) => {
+    settings = settingsOfArgs(o.args);
+    if (mark && settings.hooks.SessionStart) writeFileSync(canaryMarkOf(settings), 'ok');
+    if (init) o.onStdoutLine(JSON.stringify({ type: 'system', subtype: 'init', session_id: 's1' }));
+    const r = o.onDone(0);
+    o.cleanup();
+    return Promise.resolve(r);
+  } });
+  try {
+    await withConfigDir(tmp(), () => runClaudeProcess({ cwd: tmp(), prompt: 'p', allowedTools: ['Read'], tryGuard: { logFile: log },
+      ...(pluginsOff ? { pluginsOff: true, settingSources: ['project'] } : {}), onEvent: (e) => events.push(e) }));
+  } finally { _testing.reset(); }
+  const said = events.filter((e) => e.type === 'stderr').map((e) => carryLine(e.text)).filter(Boolean);
+  return { d, settings, said, ignored: existsSync(join(d, SETTINGS_IGNORED_FILE)), left: readdirSync(d) };
+}
+
+test('concern 8: a Pretend spawn whose canary wrote its marker: nothing said, the marker removed', async () => {
+  const r = await canarySpawn({ mark: true });
+  assert.ok(r.settings.hooks.SessionStart, 'a Pretend spawn carries the canary');
+  assert.deepEqual(r.said, []);
+  assert.equal(r.ignored, false);
+  assert.deepEqual(r.left, [], 'the marker is removed when the spawn ends');
+});
+
+test('concern 8: a Pretend spawn that started with no marker: one carry warning, and the run folder marks the try as Worca\'s problem', async () => {
+  const r = await canarySpawn({ mark: false });
+  assert.deepEqual(r.said, [{ kind: 'warning', text: 'Claude Code ignored Worca\'s settings for this try: its guards may not have applied.' }]);
+  assert.equal(r.ignored, true);
+});
+
+test('concern 8: no session start (the spawn never ran), or not a Pretend spawn: no canary verdict', async () => {
+  const r = await canarySpawn({ mark: false, init: false });
+  assert.deepEqual([r.said, r.ignored], [[], false]);
+  const n = await canarySpawn({ mark: false, pluginsOff: false });
+  assert.equal('SessionStart' in n.settings.hooks, false);
+  assert.deepEqual([n.said, n.ignored], [[], false]);
 });

@@ -247,6 +247,24 @@ export function tryGuardHookEntry() {
   return { matcher: 'Bash|PowerShell', hooks: [{ type: 'command', command: `${q(process.execPath)} ${q(TRY_GUARD_PATH)}` }] };
 }
 
+// ── Task 5 fix review (concern 8): the settings canary ──────────────────────────────────────────────────────────────────
+// Claude Code drops a --settings file it rejects WHOLE and silently (C1), Worca's guards with it. In a Pretend try Worca's
+// payload also carries a SessionStart hook that writes a marker into the try's run folder; a spawn that started a session
+// and ended without it gets one run warning, and the run folder's SETTINGS_IGNORED_FILE marks the try as Worca's problem
+// (runner.mjs worcaProblemOf 'settings'): it is set aside and made again once.
+export const SETTINGS_CANARY_PATH = fileURLToPath(new URL('./settings-canary.mjs', import.meta.url));
+/** The canary's marker file names in a try's run folder (the spawn adds a random part, and removes it when it ends). */
+export const SETTINGS_CANARY_PREFIX = '.worca-settings-canary-';
+/** Written in a try's run folder when a spawn ran without Worca's settings; readTryOutcome reads it. */
+export const SETTINGS_IGNORED_FILE = 'settings-ignored.ndjson';
+/** The run warning for it (also the carry warning line's text). */
+export const SETTINGS_IGNORED_TEXT = 'Claude Code ignored Worca\'s settings for this try: its guards may not have applied.';
+/** The SessionStart hook entry that writes `marker`. */
+export function settingsCanaryHookEntry(marker) {
+  const q = (s) => JSON.stringify(fwd(s));
+  return { hooks: [{ type: 'command', command: `${q(process.execPath)} ${q(SETTINGS_CANARY_PATH)} ${q(marker)}` }] };
+}
+
 /** Permission rules with the try's deny list added. */
 export function withTryDeny(rules) {
   const r = rules && typeof rules === 'object' && !Array.isArray(rules) ? rules : {};

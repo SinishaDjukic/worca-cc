@@ -223,6 +223,7 @@ export const WORCA_PROBLEM_TEXT = Object.freeze({
   start: 'the try did not start',
   answer: 'it could not answer a question for the try',
   check: 'it could not run a check',
+  settings: 'Claude Code ignored Worca\'s settings for it, so its guards may not have applied',   // Task 5 fix review, concern 8
 });
 export const worcaProblemText = (kind) => WORCA_PROBLEM_TEXT[kind] || WORCA_PROBLEM_TEXT.start;
 /** A set-aside try's verdict (D75's wording family). */

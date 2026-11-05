@@ -14,7 +14,7 @@ import { WORK_ARTIFACT_KIND } from '../no-project-work.mjs';
 import { runBenchOnce } from '../script-bench.mjs';
 import { readScript } from '../script-store.mjs';
 import { CONNECTOR_CALLS_FILE } from './connectors.mjs';
-import { scratchTryLog } from './try-guard-env.mjs';
+import { scratchTryLog, SETTINGS_IGNORED_FILE } from './try-guard-env.mjs';
 import { runShellStep, readTrySetup, tryShellEnv, firstLine } from './shell-step.mjs';
 import { DEFAULT_TIMEOUT_MS } from '../../shared/graph/script-meta.mjs';
 import { runCheck, judgeTry, wordCount, checkLabel, TEXT_KINDS, SCOPE_KINDS, commandSummary } from '../../shared/workflow-tests/checks.mjs';
@@ -113,8 +113,11 @@ export async function readTryOutcome(pipelineId, { help = [], failReason = null,
   const main = row ? await mainResult(row.id, { project: projectRun }) : { ...NONE };
   const project = projectRun ? await projectOutcome(row, dir) : null;
   const files = project ? project.paths : row ? (await listRunArtifacts(row.id, { kind: WORK_ARTIFACT_KIND })).map((a) => a.relPath) : [];
+  // Task 5 fix review (concern 8): a spawn of this try ran without Worca's settings file (its canary's marker was missing).
+  const settingsIgnored = !!dir && existsSync(join(dir, SETTINGS_IGNORED_FILE));
   return { pipelineId: row ? row.id : null, facts, ...main, files, project,
-    setup: projectRun && dir ? await readTrySetup(dir) : null, logFile: dir ? join(dir, CONNECTOR_CALLS_FILE) : null };
+    setup: projectRun && dir ? await readTrySetup(dir) : null, logFile: dir ? join(dir, CONNECTOR_CALLS_FILE) : null,
+    ...(settingsIgnored ? { settingsIgnored: true } : {}) };
 }
 
 let benchTail = Promise.resolve();

@@ -10,6 +10,7 @@ import { createPipeline, writeState, recordArtifact } from '../src/core/artifact
 import { projectKey } from '../src/core/store.mjs';
 import { mainResult, readTryOutcome, checkTry, runScriptCheck, SCRIPT_CHECK_MARGIN_MS } from '../src/core/workflow-tests/result.mjs';
 import { normaliseCheck } from '../src/shared/workflow-tests/checks.mjs';
+import { SETTINGS_IGNORED_FILE } from '../src/core/workflow-tests/try-guard-env.mjs';
 
 const homes = [];
 let projectDir;
@@ -176,4 +177,11 @@ test('the bench gets the script own timeout, the backstop deadline follows it, a
   assert.equal(r.error, 'timed out');
   await new Promise((res) => setTimeout(res, 200));
   assert.ok(calls <= 3, `retried ${calls} times after the deadline`);
+});
+
+test('concern 8: an outcome says when Claude Code ignored Worca\'s settings for the try (the canary\'s mark in its run folder)', async () => {
+  const t = await seedTry();
+  assert.equal('settingsIgnored' in await readTryOutcome(t.id), false);
+  await writeFile(join(t.dir, SETTINGS_IGNORED_FILE), 'x\n');
+  assert.equal((await readTryOutcome(t.id)).settingsIgnored, true);
 });

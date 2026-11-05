@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { _resetForTests, getDb } from '../src/core/db.mjs';
 import * as store from '../src/core/workflow-tests/store.mjs';
+import { worcaTryText } from '../src/shared/workflow-tests/project-text.mjs';
 import { createTestRunner, MAX_PARALLEL, PAUSE_REFUSED_TEXT, PAUSE_REFUSED_OTHER, pauseVerdict, worcaProblemOf } from '../src/core/workflow-tests/runner.mjs';
 import { checkTry } from '../src/core/workflow-tests/result.mjs';
 import { progressOf, compareOf } from '../src/core/workflow-tests/service.mjs';
@@ -827,4 +828,10 @@ test('U-T2: worcaProblemOf names each kind, with the raw first line', () => {
   assert.deepEqual(worcaProblemOf({ outcome: { pipelineId: 'p1', facts: { status: 'done' } }, checkErrors: [{ met: false, value: 'Not met', error: 'bench gone', worcaProblem: true }] }),
     { kind: 'check', detail: 'bench gone' });
   assert.equal(worcaProblemOf({ outcome: { pipelineId: 'p1', facts: { status: 'done' } }, checkErrors: [{ met: false, value: 'Not met' }] }), null);
+});
+
+test('concern 8: a try whose spawn ran without Worca\'s settings (the canary missing) is a Worca problem: set aside, made again once', () => {
+  assert.deepEqual(worcaProblemOf({ outcome: { pipelineId: 'p1', facts: { status: 'done' }, settingsIgnored: true } }),
+    { kind: 'settings', detail: 'Claude Code ignored Worca\'s settings for this try.' });
+  assert.equal(worcaTryText('settings'), 'Worca could not run this try: Claude Code ignored Worca\'s settings for it, so its guards may not have applied.');
 });

@@ -70,16 +70,20 @@ export function pauseVerdict(reason, detail = null) {
  * in its own setup (state.setupStage set, and not the person's setup command, TRY_SETUP_STAGE, which stays D55); a
  * started try with no run row (readTryOutcome's "The try did not start."); the answerer's own failure (answers.mjs's
  * `{ worca: true }`); a check Worca could not run (result.mjs's `worcaProblem`). A step error after the setup, the
- * person's setup command and a check that ran and missed are the workflow's. `detail` is the raw first line: for the
+ * person's setup command and a check that ran and missed are the workflow's. Concern 8 (Task 5 fix review): a try one of whose
+ * spawns ran without Worca's settings file (readTryOutcome's `settingsIgnored`) is Worca's too ('settings'). `detail` is the raw first line: for the
  * server log and the try's verdict (For developers), never the page's sentences.
  * @param {{pause?: object|null, liveState?: {setupStage?: string|null}|null, outcome?: object|null,
  *   failReason?: {reason: string|null, worca?: boolean}|null, checkErrors?: Array}} o
- * @returns {{kind: 'copy'|'start'|'answer'|'check', detail: string} | null}
+ * @returns {{kind: 'copy'|'start'|'settings'|'answer'|'check', detail: string} | null}
  */
 export function worcaProblemOf({ pause = null, liveState = null, outcome = null, failReason = null, checkErrors = [] } = {}) {
   const stage = liveState && typeof liveState.setupStage === 'string' && liveState.setupStage ? liveState.setupStage : null;
   if (pause && pause.fail && stage && stage !== TRY_SETUP_STAGE) return { kind: 'copy', detail: firstLine(pause.raw) || stage };
   if (outcome && !outcome.pipelineId) return { kind: 'start', detail: firstLine(outcome.facts && outcome.facts.failReason) || 'The try did not start.' };
+  // Task 5 fix review (concern 8): a spawn ran without Worca's settings file (the canary's marker missing): its guards may
+  // not have applied, so the try says nothing of the workflow.
+  if (outcome && outcome.settingsIgnored === true) return { kind: 'settings', detail: 'Claude Code ignored Worca\'s settings for this try.' };
   if (failReason && failReason.worca && failReason.reason) return { kind: 'answer', detail: firstLine(failReason.reason) };
   const bad = (Array.isArray(checkErrors) ? checkErrors : []).find((c) => c && c.worcaProblem);
   if (bad) return { kind: 'check', detail: firstLine(bad.error || bad.value) };

@@ -12,9 +12,10 @@ import { CLAUDE_CLI } from './cli-specs.mjs';
 import { hostGuardEnabled, hostGuardHookEntry, hostGuardSystemPrompt } from '../host-guard.mjs';
 import { memoryUsageHookEntry } from '../memory-usage.mjs';
 import { readGuardHookEntry, readGuardDecisions } from '../file-read-guard.mjs';
-import { tryGuardHookEntry, withTryDeny } from '../workflow-tests/try-guard-env.mjs';
-import { lstatSync, mkdtempSync, readdirSync, writeFileSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { tryGuardHookEntry, withTryDeny, settingsCanaryHookEntry, SETTINGS_CANARY_PREFIX, SETTINGS_IGNORED_FILE, SETTINGS_IGNORED_TEXT } from '../workflow-tests/try-guard-env.mjs';
+import { appendFileSync, existsSync, lstatSync, mkdtempSync, readdirSync, writeFileSync, rmSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
+import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { agentIdentity } from '../agent-user.mjs';
 import { agentIdentityFor } from '../agent-pool.mjs';
@@ -151,6 +152,10 @@ export function buildSettingsPayload(permissionRules, { hostGuard = false, extra
     settings.hooks = settings.hooks ?? {};
     settings.hooks.PreToolUse = [...(settings.hooks.PreToolUse ?? []), tg];
     settings.disableAllHooks = false;   // as the A8 read guard: the user's settings cannot switch the try's hook off
+    // Task 5 fix review (concern 8): a Pretend try's canary (runClaudeProcess names its marker) proves the file was read.
+    if (typeof tryGuard.canary === 'string' && tryGuard.canary) {
+      settings.hooks.SessionStart = [...(settings.hooks.SessionStart ?? []), settingsCanaryHookEntry(tryGuard.canary)];
+    }
   }
   if (hostOnly) {
     settings.hooks = settings.hooks ?? {};
@@ -831,6 +836,9 @@ export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, perm
     const guardedSystemPrompt = guardOn
       ? [hostGuardSystemPrompt(process.pid), systemPrompt].filter(Boolean).join('\n\n')
       : systemPrompt;
+    // Task 5 fix review (concern 8): a Pretend try's settings canary, a marker in the try's run folder its SessionStart hook writes.
+    const canary = pluginsOff === true && tryGuard && typeof tryGuard.logFile === 'string' && tryGuard.logFile
+      ? join(dirname(tryGuard.logFile), `${SETTINGS_CANARY_PREFIX}${process.pid}-${randomBytes(6).toString('hex')}`) : null;
     let plan;
     try {
       plan = stageClaudeInvocation({
@@ -839,7 +847,7 @@ export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, perm
         mcpConfigPath, mcpServerGrants, permissionRules,
         tools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages,
         maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, addDirs, disallowedTools, agents,
-        pluginDirs, extraSettings, memoryLoadLog, tryGuard,
+        pluginDirs, extraSettings, memoryLoadLog, tryGuard: canary ? { ...tryGuard, canary } : tryGuard,
         signInSettings: carry && Object.keys(carry.settings).length ? carry.settings : null,
         safetySettings: carry && carry.safety ? carry.safety : null,
         systemPromptMode, readGuard, noSessionPersistence,
@@ -851,6 +859,7 @@ export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, perm
     }
     const { args } = plan;
     const cleanupStaged = () => {
+      if (canary) { try { rmSync(canary, { force: true }); } catch { /* best effort */ } }
       if (!plan.dir) return;
       try { rmSync(plan.dir, { recursive: true, force: true }); } catch { /* best effort */ }
     };
@@ -915,6 +924,17 @@ export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, perm
       }
 
       let resultText = '';
+      let sessionStarted = false;   // concern 8: the CLI started a session (its init event)
+      // Concern 8: a session that ran to its end without the canary's marker ran without Worca's settings file: one run warning
+      // (a carry warning line), and the run folder marks the try as Worca's problem (readTryOutcome, worcaProblemOf 'settings').
+      const canaryVerdict = () => {
+        if (!canary || !sessionStarted) return;
+        try {
+          if (existsSync(canary)) return;
+          appendFileSync(join(dirname(tryGuard.logFile), SETTINGS_IGNORED_FILE), `${JSON.stringify({ ts: new Date().toISOString(), why: 'settings canary missing' })}\n`);
+        } catch { /* the warning still says it */ }
+        safeEmit(onEvent, { type: 'stderr', stream: 'err', text: `${CARRY_WARNING_PREFIX}${SETTINGS_IGNORED_TEXT}` });
+      };
       let assistantText = '';
       // In stream-json mode claude reports failures (auth, unknown/unavailable
       // model, API errors) as a terminal `result` event with is_error:true on
@@ -951,7 +971,10 @@ export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, perm
         spawnError: (err, prefix) => spawnFailure(err, prefix),
         // A8: a guarded read also returns its guard's decisions (read before cleanup removes the log), so the caller can
         // check that every tool call was decided (file-read-guard.mjs guardDecisionsCover).
-        onDone: (code) => ({ text: resultText || assistantText, exitCode: code, ...(plan.readGuardLog ? { readGuardDecisions: readGuardDecisions(plan.readGuardLog) } : {}) }),
+        onDone: (code) => {
+          canaryVerdict();
+          return { text: resultText || assistantText, exitCode: code, ...(plan.readGuardLog ? { readGuardDecisions: readGuardDecisions(plan.readGuardLog) } : {}) };
+        },
         onStdoutLine: (trimmed) => {
           let evt;
           try {
@@ -964,6 +987,7 @@ export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, perm
           const text = extractText(evt);
           // Pause/Resume: surface the session id from the init event so the
           // orchestrator can persist it per step (claude --resume needs it).
+          if (evt?.type === 'system' && evt?.subtype === 'init') sessionStarted = true;
           if (evt?.type === 'system' && evt?.subtype === 'init' && typeof evt.session_id === 'string') {
             safeEmit(onEvent, { type: 'session', sessionId: evt.session_id });
           }
