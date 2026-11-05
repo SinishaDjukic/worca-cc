@@ -698,11 +698,13 @@ export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, perm
       stdoutErrorDetail: () => errorDetail || apiErrorText || bridgeFailureText,
       // S3: route a swallowed step failure (zero exit + is_error result) through the normal
       // failure/recovery path. ONLY the node-runner path opts in (rejectOnErrorResult); every other
-      // runClaude caller passes null here and resolves on is_error exactly as today.
-      // Security: keep classifier input deterministic for is_error so model-controlled text cannot
-      // steer recovery classification/retry policy.
+      // runClaude caller passes null here and resolves on is_error exactly as today. Same precedence
+      // as stdoutErrorDetail, with an explicit, non-stuttering fallback so the reject fires even on
+      // an empty detail.
       errorResultDetail: rejectOnErrorResult
-        ? () => (resultIsError ? 'MODEL_RESULT_IS_ERROR' : null)
+        ? () => (resultIsError
+            ? (errorDetail || apiErrorText || bridgeFailureText || 'no error text was provided')
+            : null)
         : null,
       classify: classifyError,
       isBenignStderr: isBenignStderrLine,
