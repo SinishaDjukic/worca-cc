@@ -378,7 +378,8 @@ export function superviseSpawn(o) {
         // err.stream undefined — this detail is stdout-borne, not an stderr line. stderrClass is
         // intentionally NOT consulted: on a ZERO exit the process succeeded, so its stderr is benign
         // retry/MCP chatter, not the cause — the stdout result detail is.
-        const raw = redactText ? redactText(resultErr) : resultErr;
+        // If no redactor is available, never surface raw result detail in error text.
+        const raw = redactText ? redactText(resultErr) : '[redacted result detail]';
         const detail = raw.length > STDERR_DETAIL_MAX ? `… ${raw.slice(-STDERR_DETAIL_MAX)}` : raw;
         const err = new Error(`${displayBin} reported an error result: ${detail}`);
         err.errorClass = classify(raw);
