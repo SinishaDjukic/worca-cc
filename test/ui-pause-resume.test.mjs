@@ -264,3 +264,17 @@ test('the History / chat resume path (resumePipeline) shows Resuming… on an in
     } },
   ]);
 });
+
+test('#1090: the start reply\'s late starting does not undo a running the socket already delivered', async () => {
+  const { window } = await bootLive();
+  const np = window.__np;
+  // The server broadcasts the new run's frames before it answers POST /api/run (measured ~0.1 ms apart).
+  const r = np.upsertRun({ runId: 'r1', pipelineId: 'p1', title: 't', projectDir: PROJECT, status: 'starting' });
+  np.onState(r, { status: 'running' });
+  // Then the reply lands and beginRun records the run as it knew it at the click.
+  np.upsertRun({ runId: 'r1', title: 't', projectDir: PROJECT, status: 'starting', local: true });
+  assert.equal(r.status, 'running', 'the Runs row keeps the status the server sent');
+  // A run the page meets first through its own start still begins as Starting.
+  const fresh = np.upsertRun({ runId: 'r2', title: 'u', projectDir: PROJECT, status: 'starting', local: true });
+  assert.equal(fresh.status, 'starting');
+});

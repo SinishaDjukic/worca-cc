@@ -971,3 +971,8 @@ test('the header names the page on screen apart from the scope, right after the 
   assert.match(w, /^on screen: workspace Havn \(wks-havn-649ebfe7\), the page the user is looking at, not this chat's scope$/m);
   assert.doesNotMatch(buildContextHeader({ view: 'runs' }), /on screen:/);
 });
+
+test('rule 19 points PR lookups at list_runs pr', () => {
+  assert.ok(ASK_SYSTEM_RULES.includes('call list_runs with `pr`'));
+  assert.ok(ASK_SYSTEM_RULES.includes('`fixesPr` marks a Watch PR fix run'));
+});

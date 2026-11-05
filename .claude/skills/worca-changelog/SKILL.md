@@ -177,7 +177,7 @@ Build the page:
    dot rail is built from them.
 3. Set the hero ribbon text to the section names, uppercased, `·`-separated,
    **repeated twice** so the drift never shows the end.
-4. Point every `<img src>` at the local file (logo: `ui/public/assets/worca-logo.png`).
+4. Point every `<img src>` at the local file (logo: `ui/public/assets/worca-logo.svg`).
 5. Inline and check weight:
 
 ```bash

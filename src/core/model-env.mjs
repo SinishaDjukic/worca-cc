@@ -700,6 +700,3 @@ export function bridgeExcludedTools(upstream) {
 export const COPILOT_ACCOUNT_TYPES = Object.freeze(['individual', 'business', 'enterprise']);
 export const DEFAULT_PROVIDER_CONCURRENCY = Object.freeze({ copilot: 4, openai: 8, anthropic: 8 });
 export const MAX_PROVIDER_CONCURRENCY = 64;
-/** Bump when the Copilot terms notice wording changes materially — a stored
- *  acknowledgement of an older version is shown again (§8.2). */
-export const COPILOT_TERMS_VERSION = 1;

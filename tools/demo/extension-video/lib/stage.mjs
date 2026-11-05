@@ -18,7 +18,7 @@ export function stageCss() {
   const font = (w) => `@font-face{font-family:'Stage Poppins';font-weight:${w};font-display:block;src:url(data:font/woff2;base64,${b64(`ui/public/fonts/poppins-latin-${w}-normal.woff2`)}) format('woff2')}`;
   return `${[400, 500, 600, 700].map(font).join('\n')}\n${tokens}\n${readFileSync(new URL('../stage/stage.css', import.meta.url), 'utf8')}`;
 }
-export const logoDataUri = () => `data:image/png;base64,${b64('ui/public/assets/worca-logo.png')}`;
+export const logoDataUri = () => `data:image/svg+xml;base64,${b64('ui/public/assets/worca-logo.svg')}`;
 
 /** Dock sidebar.html (pinned to this tab) on the right; the app keeps the rest of the width. */
 export async function mountSidebar(page, { extensionId, tabId, windowId, width = 440 }) {

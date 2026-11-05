@@ -769,7 +769,7 @@ test('runChains: lists each open chain in pre-order with member states, links on
   const setStatus = (id, status) => getDb().prepare('UPDATE pipelines SET status = ? WHERE id = ?').run(status, id);
   // A ticket after `after` created at `now`; fired into `pipelineId` when given, else left waiting.
   const chainTicket = (title, after, now, pipelineId = null) => {
-    const t = createTicket({ projectDir: DIR, title, request: REQ, after, now });
+    const t = createTicket({ projectDir: DIR, title, request: REQ, sourceFromPrevious: true, after, now });
     if (pipelineId) markTicketFired(t.id, { pipelineId, now });
     return t;
   };
@@ -781,7 +781,7 @@ test('runChains: lists each open chain in pre-order with member states, links on
       chainRun('p0000002', 'nb1', 'nb2');
       setStatus('p0000002', 'running');
       const t2 = chainFire('p0000002', { kind: 'pipeline', id: 'p0000001' });
-      const t3 = createTicket({ projectDir: DIR, title: 'third', request: REQ, after: { kind: 'ticket', id: t2.id }, now: T0 });
+      const t3 = createTicket({ projectDir: DIR, title: 'third', request: REQ, sourceFromPrevious: true, after: { kind: 'ticket', id: t2.id }, now: T0 });
       const chains = runChains();
       assert.equal(chains.length, 1);
       assert.equal(chains[0].id, 'p:p0000001');
@@ -792,11 +792,42 @@ test('runChains: lists each open chain in pre-order with member states, links on
       assert.equal(chains[0].members[2].ticketId, t3.id);
       assert.deepEqual(chains[0].members.map((m) => m.after), [null, 1, 2], 'D29: each member names the position it runs after');
     } },
+    { name: '#1096: a timing-only Run after roots its own chain, names the run it waits for, and never stacks on it', run: () => {
+      clearTables();
+      // An unrelated running run U; slice 1 only waits for it (its own base), slices 2 and 3 build on slice 1.
+      chainRun('u0000001', 'dev', 'nu1');
+      setStatus('u0000001', 'running');
+      getDb().prepare("UPDATE pipelines SET title = 'Freeform chat' WHERE id = 'u0000001'").run();
+      const s1 = createTicket({ projectDir: DIR, title: 'Slice 1', request: REQ, after: { kind: 'pipeline', id: 'u0000001' }, now: T0 });
+      const s2 = createTicket({ projectDir: DIR, title: 'Slice 2', request: REQ, sourceFromPrevious: true, after: { kind: 'ticket', id: s1.id }, now: T0 + MIN });
+      createTicket({ projectDir: DIR, title: 'Slice 3', request: REQ, sourceFromPrevious: true, after: { kind: 'ticket', id: s2.id }, now: T0 + 2 * MIN });
+      const chains = runChains();
+      assert.equal(chains.length, 1, 'the run it waited for is in no group with it');
+      assert.equal(chains[0].id, `t:${s1.id}`);
+      assert.equal(chains[0].title, 'Slice 1', 'the group is named by the runs that build on each other');
+      assert.deepEqual(chains[0].members.map((m) => m.title), ['Slice 1', 'Slice 2', 'Slice 3']);
+      assert.deepEqual(chains[0].members.map((m) => m.after), [null, 1, 2]);
+      assert.deepEqual(chains[0].members[0].waitsFor, { title: 'Freeform chat' }, 'the root still says what it waits for');
+      assert.deepEqual(chains[0].members.map((m) => m.stacks), [false, true, true]);
+      // A lone timing-only ticket after a ticket: no group at all.
+      clearTables();
+      const a = createTicket({ projectDir: DIR, title: 'A', request: REQ, runAtMs: T0 + HOUR, now: T0 });
+      createTicket({ projectDir: DIR, title: 'B', request: REQ, after: { kind: 'ticket', id: a.id }, now: T0 });
+      assert.deepEqual(runChains(), []);
+      // The same link from the previous run's branch: one chain, root named by A, no waitsFor.
+      clearTables();
+      const a2 = createTicket({ projectDir: DIR, title: 'A', request: REQ, runAtMs: T0 + HOUR, now: T0 });
+      createTicket({ projectDir: DIR, title: 'B', request: REQ, sourceFromPrevious: true, after: { kind: 'ticket', id: a2.id }, now: T0 });
+      const one = runChains();
+      assert.equal(one.length, 1);
+      assert.deepEqual(one[0].members.map((m) => m.title), ['A', 'B']);
+      assert.equal(one[0].members[0].waitsFor, null);
+    } },
     { name: 'a javascript: pr_url yields prUrl null', run: () => {
       clearTables();
       chainRun('p0000011', 'dev', 'nb1');
       setPr('p0000011', 'javascript:alert(1)');
-      createTicket({ projectDir: DIR, title: 'next', request: REQ, after: { kind: 'pipeline', id: 'p0000011' }, now: T0 });
+      createTicket({ projectDir: DIR, title: 'next', request: REQ, sourceFromPrevious: true, after: { kind: 'pipeline', id: 'p0000011' }, now: T0 });
       assert.equal(runChains()[0].members[0].prUrl, null);
     } },
     { name: 'every member done or failed yields no chain', run: () => {
@@ -811,7 +842,7 @@ test('runChains: lists each open chain in pre-order with member states, links on
       clearTables();
       chainRun('p0000031', 'dev', 'nb1');
       assert.deepEqual(runChains(), []);
-      createTicket({ projectDir: DIR, title: 'next', request: REQ, after: { kind: 'pipeline', id: 'p0000031' }, now: T0 });
+      createTicket({ projectDir: DIR, title: 'next', request: REQ, sourceFromPrevious: true, after: { kind: 'pipeline', id: 'p0000031' }, now: T0 });
       const chains = runChains();
       assert.equal(chains.length, 1);
       assert.deepEqual(chains[0].members.map((m) => m.state), ['done', 'waiting']);
@@ -824,7 +855,7 @@ test('runChains: lists each open chain in pre-order with member states, links on
       // The newer ticket is created first in code order but later in time.
       chainTicket('newer', { kind: 'pipeline', id: 'p0000041' }, T0 + MIN, 'p0000043');
       chainTicket('older', { kind: 'pipeline', id: 'p0000041' }, T0, 'p0000042');
-      createTicket({ projectDir: DIR, title: 'tail', request: REQ, after: { kind: 'pipeline', id: 'p0000041' }, now: T0 + 2 * MIN });
+      createTicket({ projectDir: DIR, title: 'tail', request: REQ, sourceFromPrevious: true, after: { kind: 'pipeline', id: 'p0000041' }, now: T0 + 2 * MIN });
       setStatus('p0000043', 'running');
       const chains = runChains();
       assert.equal(chains.length, 1);
@@ -834,8 +865,8 @@ test('runChains: lists each open chain in pre-order with member states, links on
     } },
     { name: 'a hand-made cycle has no root and is not listed', run: () => {
       clearTables();
-      const x = createTicket({ projectDir: DIR, title: 'x', request: REQ, after: { kind: 'pipeline', id: 'zzzzzzzz' }, now: T0 });
-      const y = createTicket({ projectDir: DIR, title: 'y', request: REQ, after: { kind: 'ticket', id: x.id }, now: T0 });
+      const x = createTicket({ projectDir: DIR, title: 'x', request: REQ, sourceFromPrevious: true, after: { kind: 'pipeline', id: 'zzzzzzzz' }, now: T0 });
+      const y = createTicket({ projectDir: DIR, title: 'y', request: REQ, sourceFromPrevious: true, after: { kind: 'ticket', id: x.id }, now: T0 });
       getDb().prepare("UPDATE scheduled_runs SET after_kind = 'ticket', after_id = ? WHERE id = ?").run(y.id, x.id);
       assert.deepEqual(runChains(), []);
     } },
@@ -843,7 +874,7 @@ test('runChains: lists each open chain in pre-order with member states, links on
       clearTables();
       chainRun('p0000051', 'dev', 'nb1');
       setStatus('p0000051', 'interrupted');
-      createTicket({ projectDir: DIR, title: 'next', request: REQ, after: { kind: 'pipeline', id: 'p0000051' }, now: T0 });
+      createTicket({ projectDir: DIR, title: 'next', request: REQ, sourceFromPrevious: true, after: { kind: 'pipeline', id: 'p0000051' }, now: T0 });
       assert.equal(runChains({ isLive: (q) => q.pipelineId === 'p0000051' })[0].members[0].state, 'current');
       assert.equal(runChains()[0].members[0].state, 'failed');
     } },
@@ -853,7 +884,7 @@ test('runChains: lists each open chain in pre-order with member states, links on
       chainRun('p0000062', 'nb1', 'nb2');
       setStatus('p0000062', 'running');
       chainFire('p0000062', { kind: 'ticket', id: 'purged-ticket' });
-      createTicket({ projectDir: DIR, title: 'after-62', request: REQ, after: { kind: 'pipeline', id: 'p0000062' }, now: T0 });
+      createTicket({ projectDir: DIR, title: 'after-62', request: REQ, sourceFromPrevious: true, after: { kind: 'pipeline', id: 'p0000062' }, now: T0 });
       const chains = runChains();
       assert.equal(chains.length, 1);
       assert.equal(chains[0].id, 'p:p0000062');
@@ -862,7 +893,7 @@ test('runChains: lists each open chain in pre-order with member states, links on
     { name: 'a fired ticket with pipeline_id NULL is current, with its ticketId', run: () => {
       clearTables();
       chainRun('p0000071', 'dev', 'nb1');
-      const t = createTicket({ projectDir: DIR, title: 'fired', request: REQ, after: { kind: 'pipeline', id: 'p0000071' }, now: T0 });
+      const t = createTicket({ projectDir: DIR, title: 'fired', request: REQ, sourceFromPrevious: true, after: { kind: 'pipeline', id: 'p0000071' }, now: T0 });
       getDb().prepare("UPDATE scheduled_runs SET status = 'fired' WHERE id = ?").run(t.id);
       const m = runChains()[0].members[1];
       assert.equal(m.state, 'current');
@@ -872,7 +903,7 @@ test('runChains: lists each open chain in pre-order with member states, links on
     { name: 'a workspace pipeline member has historyKey workspaces/<key>', run: () => {
       clearTables();
       seedPipelineRow({ id: 'p0000081', title: 'ws', status: 'running', target: 'workspace', workspaceKey: 'wk1', projectKey: 'workspaces-wk1', startedAt: new Date(T0).toISOString() });
-      createTicket({ projectDir: DIR, title: 'next', request: REQ, after: { kind: 'pipeline', id: 'p0000081' }, now: T0 });
+      createTicket({ projectDir: DIR, title: 'next', request: REQ, sourceFromPrevious: true, after: { kind: 'pipeline', id: 'p0000081' }, now: T0 });
       const m = runChains()[0].members[0];
       assert.equal(m.historyKey, 'workspaces/wk1');
       assert.equal(m.workspaceId, 'wk1');
@@ -936,10 +967,10 @@ test('runChains({ keepDone }): a chain with a run still without a PR reads Ready
 test('runChains({ keepDone }): a finished chain with a run that can have no PR is not listed; members carry canPr and stacks', () => {
   chainRun('kn00000a', 'main', 'feat/kn-a');
   seedPipelineRow({ id: 'kn00000b', title: 'kn00000b', status: 'done', startedAt: new Date(T0).toISOString(), branch: { source: 'main' } });
-  chainFire('kn00000b', { kind: 'pipeline', id: 'kn00000a' }, false);
+  chainFire('kn00000b', { kind: 'pipeline', id: 'kn00000a' });
   assert.equal(runChains({ keepDone: true, now: T0 }).some((c) => c.id === 'p:kn00000a'), false);
   const c = runChains({ keepDone: 'all', now: T0 }).find((x) => x.id === 'p:kn00000a');
-  assert.deepEqual(c.members.map((m) => [m.canPr, m.stacks]), [[true, false], [false, false]]);
+  assert.deepEqual(c.members.map((m) => [m.canPr, m.stacks]), [[true, false], [false, true]]);
 });
 
 // ── scheduled resume (v44) ──────────────────────────────────────────────────
@@ -1061,27 +1092,32 @@ test('a ticket a paused run\'s resume waits on cannot be moved to wait on that r
   assert.equal(getTicket(t.id).after, null);
 });
 
-test('a waiting resume ticket is a dependent of its predecessor and a chain member that links to the paused run', () => {
+test('a waiting resume ticket is a dependent of its predecessor but only waits for it: it roots its own chain (#1096)', () => {
   seedPipelineRow({ id: 'pl_b', status: 'running', title: 'Build' });
   seedPipelineRow({ id: 'pl_a', status: 'paused', title: 'Docs' });
   const t = resumeAfter('pl_a', { kind: 'pipeline', id: 'pl_b' });
   assert.deepEqual(dependentsOfRun({ pipelineId: 'pl_b' }).map((x) => x.id), [t.id]);
+  assert.deepEqual(runChains(), [], 'a resume never starts on the run it waits for: no group with it');
+  // A run stacked on the paused one: the chain is rooted at the resume member, which names what it waits for.
+  const next = createTicket({ projectDir: DIR, title: 'Next', request: REQ, sourceFromPrevious: true, after: { kind: 'pipeline', id: 'pl_a' }, now: T0 });
   const chains = runChains();
   assert.equal(chains.length, 1);
-  const [b, a] = chains[0].members;
-  assert.equal(b.pipelineId, 'pl_b');
-  assert.equal(b.state, 'current');
+  assert.equal(chains[0].id, 'p:pl_a');
+  const [a, n] = chains[0].members;
   assert.equal(a.ticketId, t.id);
   assert.equal(a.pipelineId, 'pl_a');
   assert.equal(a.state, 'waiting');
   assert.equal(a.historyKey, 'proj-00000001');
-  assert.equal(a.after, 1);
+  assert.equal(a.after, null);
+  assert.deepEqual(a.waitsFor, { title: 'Build' });
+  assert.equal(n.ticketId, next.id);
+  assert.equal(n.after, 1);
   // Resumed by hand: the ticket is skipped and the member reads the run's own state, never `failed`.
   getDb().prepare("UPDATE pipelines SET status = 'running' WHERE id = 'pl_a'").run();
   skipTicket(t, 'it was already resumed', { now: T0 });
-  assert.deepEqual(runChains()[0].members.map((m) => m.state), ['current', 'current']);
+  assert.deepEqual(runChains()[0].members.map((m) => m.state), ['current', 'waiting']);
   getDb().prepare("UPDATE pipelines SET status = 'done' WHERE id = 'pl_a'").run();
-  assert.deepEqual(runChains()[0].members.map((m) => m.state), ['current', 'done']);
+  assert.deepEqual(runChains()[0].members.map((m) => m.state), ['done', 'waiting']);
 });
 
 test('runDueTickets: start() answering skip marks the ticket skipped with a feed entry', async () => {

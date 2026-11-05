@@ -132,7 +132,7 @@ that the migration commit updates them.
 | 2. Keep ready | on every PR touching `ui/server.mjs`, `ui/public/style.css` or `ui/public/index.html`: CI (split-by-feature tests + `Parity (dev against itself)`); a new route gets a row in `tools/split-by-feature/feature-map.json` and `tools/parity/route-classes.json` | the PR author | CI green; `--check` prints `covered` |
 | 3. Readiness | `npm run readiness -- run --out DIR`; read `DIR/report.md`; `npm run readiness -- post --out DIR` | go/no-go owner | verdict `go`; the comment shows in `gh issue view 919 --comments`; every PR author with an action is told |
 | 4. Freeze day | announce the freeze on #919; rerun step 3 on the final dev commit; on a clean checkout run `git fetch origin dev && git switch -c split/feature-migration origin/dev && node tools/split-by-feature.mjs --apply && node tools/split-by-feature.mjs --apply && git add -A && git commit -m "Split large files by feature (#919)"` (the second `--apply` prints `0 files changed`); open its PR into dev and squash-merge it as M | go/no-go owner | readiness `go` on the exact commit the split is applied to |
-| 5. After the freeze | the PR catch-up recipe for each `catch up after the freeze` row; rebase the express 5 PR; rollback A or B if needed | PR authors; owner for rollback | `npm test` and `O=$(mktemp -d); npm run parity -- run --a tree:. --b tree:. --out "$O"` green on dev; no open PR conflicts only because of the split |
+| 5. After the freeze | the PR catch-up recipe for each `catch up after the freeze` row; land the express 5 PR (#1049) once dev is green; rollback A or B if needed | PR authors; owner for rollback | `npm test` and `O=$(mktemp -d); npm run parity -- run --a tree:. --b tree:. --out "$O"` green on dev; no open PR conflicts only because of the split |
 | 6. Before the next release | `npm pack --dry-run` lists `ui/routes/` and every feature folder; `O=$(mktemp -d); npm run parity -- run --a tree:. --b package:. --out "$O"`; release per docs/RELEASING.md | release owner | 0 route, visual and flow differences between the tree and the package |
 
 The spike gate (`--check --stats`): at least 95% of the route statements between the static mount and the SPA
@@ -177,7 +177,7 @@ confirms before the step happens. Nothing here is done by a tool on its own: eve
 | D8 | Suite and parity on dev | owner | `npm test`; `O=$(mktemp -d); npm run parity -- run --a tree:. --b tree:. --out "$O"` | both green |
 | D9 | Red while still frozen | owner | Rollback A below (`git revert M`) | its Pass: line |
 | E1 | Unfreeze | owner | announce on #919 | announced |
-| E2 | Open PRs catch up | PR authors | `npm run split:catch-up -- BRANCH`; the express 5 PR last | each PR green on the split |
+| E2 | Open PRs catch up | PR authors | `npm run split:catch-up -- BRANCH`, for Express 4 branches also after Express 5 lands | each PR green on the split |
 | E3 | Watch period, staging, release | owner | docs/RELEASING.md | no split regression reported |
 | E4 | Lower the caps and clean up | owner | one final, separate PR | merged on its own, revertable on its own |
 
@@ -258,12 +258,20 @@ M below is the migration commit's full SHA (the tag `feature-split/after`; M^ is
 6. Shared clones borrow objects from this repository: remove `$W` before any `git gc --prune=now` here, and do the
    same for a `--keep` readiness tree.
 
+**Express 4 branches after Express 5.** dev is on Express 5 (#1049); a branch that started before the split is still on
+Express 4, and so are M^ and its splitter. Catch-up keeps working for it: the split, the dry run and parity read either
+major through one route table (`tools/express-routes.mjs`), and compare paths in one spelling (`*` = `*splat`, `/:p?` =
+`{/:p}`). What does not carry over is Express 4 path syntax in P's own routes: Express 5 throws on it when the server
+starts. The catch-up names each such route as a hand fix, and on dev `--check` (After the split) fails on it, both with the
+Express 5 spelling: `*` → `*splat` (the handler reads `req.params.splat`, an array of segments), `:p?` → `{/:p}`, `:p(re)`
+→ `:p` checked in the handler, and a reserved character (`( ) [ ] ? + !`) escaped or a RegExp route.
+
 Pass: step 5's diff lists only P's own files, `npm test` has 0 failures outside `test/flaky-register.json`, and parity has 0 route and flow differences outside P's own routes.
 
 ## After the split
 
 On the split tree (`ui/public/parts.json` exists), `node tools/split-by-feature.mjs --check` and its test
-(`test/split-by-feature-plan.test.mjs`) catch three old-layout changes that otherwise merge cleanly
+(`test/split-by-feature-plan.test.mjs`) catch four old-layout changes that otherwise merge cleanly
 (`tools/split-by-feature/after-split.mjs`):
 
 - **A movable route left in `ui/server.mjs`.** Between the parts-aware static mount (`servePublic`) and the SPA fallback,
@@ -275,6 +283,10 @@ On the split tree (`ui/public/parts.json` exists), `node tools/split-by-feature.
   `tools/split-by-feature/central-routes.json` (today's ingress, body-limit, git guard and `/vendor` routes, each with
   its reason) fails with the same message plus `(top of ui/server.mjs is for central sign-in and guards only)`. The
   rule is the same for people and AI agents: move the code, never add an exception.
+- **Express 4 path syntax.** On Express 5, a route path in `ui/server.mjs` or `ui/routes/**` written for Express 4 (a bare
+  `*`, `:p?`, `:p(re)` or a reserved character) fails with
+  `route GET /api/x/* (ui/routes/FEATURE/AREA.mjs:N) uses Express 4 path syntax: … — dev is on Express 5` and its Express 5
+  spelling (see Express 4 branches after Express 5).
 - **A kept monolith.** `ui/public/style.css` or `ui/public/index.html` next to `ui/public/parts.json`, typically a
   modify/delete conflict resolved by keeping the PR's copy, is not served: the app builds `/style.css` and the page from
   the parts. `--check` and `test/public-assets.test.mjs` fail and name the catch-up command.

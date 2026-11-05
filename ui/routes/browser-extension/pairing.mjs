@@ -70,7 +70,8 @@ app.get('/api/extension/pair/:requestId', (req, res) => {
   res.set('Cache-Control', 'no-store').status(r.status).json(r.body);
 });
 
-app.post('/api/extension/pair/:requestId/:verdict(approve|deny)', (req, res) => {
+app.post('/api/extension/pair/:requestId/:verdict', (req, res, next) => {
+  if (req.params.verdict !== 'approve' && req.params.verdict !== 'deny') return next();   // any other verdict: no route, 404
   if (!extensionUiCaller(req, res)) return;
   if (REMOTE_MODE) return res.status(409).json({ error: 'pairing is off while remote access is on', code: 'extension-remote-mode' });
   try {

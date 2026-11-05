@@ -24,7 +24,7 @@ read at startup, `docs/network-proxy.md`) → Test. Each restart with a wrong pa
 attempt against the account lockout limit.
 
 **GitHub Copilot models, today (~45 clicks, 4 pages, ~17 model slots):** switch to Expert →
-Providers › Copilot › Sign in → notice → device code → account type → Import models… → Models ›
+Providers › Copilot › Sign in → device code → account type → Import models… → Models ›
 Engines › Step models (one row per step) → Helper jobs (titles, Auto classifier, PR description,
 memory defragment, agent generation, requirements interview) → then the slots that live elsewhere
 (Chat's model, smart naming, command summaries, workspace scan models, the Away mode decider).
@@ -69,7 +69,7 @@ up, every one of them fails.
 | D9 | **Test before swap.** `checkUpstream()` (`src/core/upstream-proxy.mjs`) already builds its own connector for the values it is given. `POST /api/proxy/test` accepts the candidate settings in its body, tests them, and only a passing test lets Apply swap them in. This replaces the `RESTART_NEEDED` refusal in `src/core/proxy-host.mjs`. The NT hash is still sent only to a host the person typed and tested. |
 | D10 | Other Worca processes (a `worca run` started from a shell) watch `networkProxy` in `settings.json` the way `reloadLogin()` watches `proxy-login.json` today (`src/core/egress-policy.mjs`) and swap within a few seconds. Only a new `fixedPort` waits for the next start; the UI says "Applies at the next start" on that field. Chat's proxy card (`src/core/ask/proxy-proposal.mjs`) uses the same live path. |
 | D11 | The assistant has seven steps: Check this machine → Network → Model access → Models → How you work → Review → Apply. Every step has a working default, so Skip is always safe. A detected answer collapses to a one-line confirmation. |
-| D12 | **Team setup** records only what is the same for the whole team: model roles, `runEngine`, `hideBuiltinModels`, `uiLevel`, `autoGeneratePrDescription`, `smartNaming` (including `pattern` and `types`), spend limits, and optionally `tagDimensions`, `enforceTags`, `sync`, `networkWait` and enabled feature `flags`. It **never** records network or proxy settings, model sources, provider addresses, plan types or keys, tokens, passwords, the Copilot notice acceptance, machine paths, editor or terminal commands, ports, theme, alerts or Getting started progress. (slice 5) Tags reach runs through the team policy's `runs.tagDimensions` / `runs.enforceTags`, not the team setup; feature `flags` are deferred. |
+| D12 | **Team setup** records only what is the same for the whole team: model roles, `runEngine`, `hideBuiltinModels`, `uiLevel`, `autoGeneratePrDescription`, `smartNaming` (including `pattern` and `types`), spend limits, and optionally `tagDimensions`, `enforceTags`, `sync`, `networkWait` and enabled feature `flags`. It **never** records network or proxy settings, model sources, provider addresses, plan types or keys, tokens, passwords, machine paths, editor or terminal commands, ports, theme, alerts or Getting started progress. (slice 5) Tags reach runs through the team policy's `runs.tagDimensions` / `runs.enforceTags`, not the team setup; feature `flags` are deferred. |
 | D13 | A team setup's roles name an **upstream model** and effort (`claude-opus-5-5` · `high`), never a catalog entry. Each machine maps it to a catalog entry served by one of its own sources (the Claude sign-in, a Copilot import `copilot-<id>`, an API-key or OpenRouter entry with that upstream id). When none serves it, the assistant says so and keeps that person's pick for that role. |
 | D14 | Team setup is a **field group in the existing team policy registry** (`src/core/policy/registry.mjs`), named **Setup**, using its kinds (`default`, `soft`). New fields: `models.roles` (`default`, `soft`), `setup.uiLevel`, `setup.autoPrDescription`, `setup.smartNaming`, `setup.runEngine`, `setup.tags`, `setup.sync`, `setup.networkWait`, `setup.flags` (all `default`). Existing fields are reused for limits (`cost.*`) and `models.hideBuiltins`. The Team policy editor gets the Setup tab from its one-tab-per-group rule. (slice 5) `setup.tags` and `setup.flags` are not added: tags use the existing `runs.*` fields, and flags wait for a decision on locked flags. |
 | D15 | `models.roles` in a policy applies through the effective policy layer like `models.steps` does, for runs on that repository, without writing user settings. The other Setup fields are user-level: when a project with such a policy is added, or the policy changes, the account menu offers "Your team has a recommended setup · Review", which opens the assistant on Review with the team's rows marked Team. Nothing is applied before Apply. |
@@ -87,7 +87,7 @@ up, every one of them fails.
 | `modelRoles.<harness>.{deep,everyday,quick}` | (new), D1 |
 | `networkProxy.enabled` | (new), replaces the `corporateProxy` flag, D6 |
 | `networkProxy.{upstream,auth,noProxy,timeouts,fixedPort}` | existing (`setNetworkProxy`, `src/core/settings.mjs`) |
-| `providers.copilot.{githubToken,accountType,acknowledgedTerms,termsVersion,maxConcurrent}`, `providers.openai.{baseUrl,apiKey}`, `providers.anthropic.{baseUrl,apiKey}` | existing (`updateProvider`, `src/core/settings.mjs`; `src/core/bridge/provider-ops.mjs`) |
+| `providers.copilot.{githubToken,accountType,maxConcurrent}`, `providers.openai.{baseUrl,apiKey}`, `providers.anthropic.{baseUrl,apiKey}` | existing (`updateProvider`, `src/core/settings.mjs`; `src/core/bridge/provider-ops.mjs`) |
 | `uiLevel`, `pipelineCostLimitUsd`, `totalCostLimitUsd`, `costLimitResetPeriod`, `autoGeneratePrDescription`, `smartNaming`, `runEngine` | existing |
 | `GET /api/setup/detect` | (new): `claude` on PATH and signed in (`probeClaudeAuth`, `src/core/preflight.mjs`), git, `HTTPS_PROXY`/`NO_PROXY` from the source env, a direct probe to api.anthropic.com, installed harness CLIs (`GET /api/engines` facts), a local Ollama on `localhost:11434`, `ANTHROPIC_API_KEY`, a team setup file |
 | `POST /api/setup/apply` | (new), D20 |
@@ -148,7 +148,7 @@ The setting, the resolver, and a Roles card on the Models page. Useful with no a
 ### Slice 4 — Setup assistant UI
 
 - AC-4.1 A fresh install opens the assistant before the welcome dialog; **Set up later** closes it and the welcome dialog follows.
-- AC-4.2 The corporate Copilot path (proxy test, Copilot notice, device sign-in, roles, limits, Apply) completes without leaving the dialog and without changing the interface mode.
+- AC-4.2 The corporate Copilot path (proxy test, device sign-in, roles, limits, Apply) completes without leaving the dialog and without changing the interface mode.
 - AC-4.3 Next on Network stays disabled until the shown proxy values pass a test.
 - AC-4.4 Settings › General › Setup assistant reopens it with the current values; Review lists only changed rows (D19).
 - AC-4.5 A "proxy needs login" stop and a Copilot "needs sign-in" pill open the assistant on that step.
