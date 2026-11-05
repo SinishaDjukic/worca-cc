@@ -305,7 +305,8 @@ write-back and `meta.project` pinning, the `/api/sources/call` and `exportOption
 flag, the mock, jira-source (contract, §7, 0.2.0), the section and its two controls, tests, docs. The `importOptions`
 filter lands here if #1041 merges first, else in #1041's follow-up.
 **PR 2:** azure-boards-source and github-source adopt the contract (`listStatuses`, `legacyMove`, `move`, `meta.project`,
-github-source's `listProjects` over its repos).
+github-source's `listProjects` over its repos). Its decisions (the `owner/repo` key, GitHub's statuses, Azure's status moves,
+GitHub's `optionsFrom`) are in `plans/ticket-updates-pr2-plan.md`.
 **Out of scope:** moments other than `finished`; per-run overrides; a Worca-native tracker; moving tickets on failure;
 team policy for these settings.
 
