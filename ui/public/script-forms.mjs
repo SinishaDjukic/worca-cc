@@ -29,6 +29,7 @@ export function select(doc, cls, name, label, items, value, { disabled = false, 
   const optionEl = (opt) => {
     const o = doc.createElement('option');
     o.value = opt.value; o.textContent = opt.text;
+    if (opt.title) o.title = opt.title;
     if (opt.value === (value == null ? '' : String(value))) o.selected = true;
     return o;
   };

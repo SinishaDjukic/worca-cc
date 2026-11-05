@@ -590,6 +590,25 @@ test('AC-3.6 broker: anthropic, whitespace and non-string keys; a refused sign-i
   await assert.rejects(planSetupApply({ access: { openai: { apiKey: 42 } } }, deps), (e) => e.field === 'access.openai.apiKey');
 });
 
+test('broker: an importModels-only Copilot block imports, plans pending ids and refuses nothing', async () => {
+  seed({});
+  const { calls, deps } = fakeDeps({
+    brokerRefusal: brokerOn,
+    checkModelRoles: realRoleCheck,
+    importCopilot: async (ids) => { calls.push('copilot-import'); return { created: ids.map((id) => `copilot-${id}`), updated: [], skipped: [] }; },
+  });
+  const { plan, out } = await applyAll({
+    access: { copilot: { importModels: ['claude-opus-5.5'] } },
+    models: { modelRoles: { claude: { deep: { model: 'copilot-claude-opus-5.5' } } }, testRoles: true },
+  }, deps);
+  assert.deepEqual(plan.refused, []);
+  assert.deepEqual(plan.steps.map((s) => s.id), ['copilot-import', 'role-test.claude.deep']);
+  assert.equal(plan.steps[0].skip, undefined);
+  assert.equal(plan.steps[1].importedBy, 'copilot-import');
+  assert.deepEqual(calls, ['copilot-import', 'test:copilot-claude-opus-5.5']);
+  assert.equal(out.ok, true);
+});
+
 test('sameValue ignores key order; a reordered role block writes nothing', async () => {
   assert.equal(sameValue({ a: 1, b: { c: [1, 2] } }, { b: { c: [1, 2] }, a: 1 }), true);
   assert.equal(sameValue({ a: 1 }, { a: 2 }), false);

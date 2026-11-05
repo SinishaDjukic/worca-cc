@@ -181,7 +181,9 @@ test('R-qa-7: a product lead never sees project:read in a question or an option;
   assert.doesNotMatch(shown, /project:read|project:write/);
   assert.equal($$('.qtext-t')[1].textContent, 'Who may export: everyone who can see the project?');
   assert.equal($$('[data-q="d-2"] .chat-q-opt-label')[0].textContent, 'Anyone who can see the project');
-  assert.equal($$('[data-q="d-3"] .chat-q-opt-label')[0].textContent, 'Option 1');
+  assert.equal($$('.qtext-t')[2].textContent, 'Gate the export on read access or write access');
+  assert.equal($$('[data-q="d-3"] .chat-q-opt-label')[0].textContent, 'Read access');
+  assert.equal($$('[data-q="d-3"] .chat-q-opt-label')[1].textContent, 'Write access');
 });
 
 test('plan.lead architect: decision 3 keeps its label as written', () => {

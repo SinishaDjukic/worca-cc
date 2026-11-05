@@ -18,7 +18,7 @@
 import { domainError } from '../web-allowlist.mjs';
 import { FIELD_LABELS } from '../../shared/away-mode/labels.mjs';
 import { normaliseDimension, MAX_DIMENSIONS } from '../../shared/tag-dimensions.mjs';
-import { MODEL_ROLES, ROLE_HARNESSES } from '../../shared/model-roles.mjs';
+import { MODEL_ROLES, TEAM_ROLE_HARNESSES } from '../../shared/model-roles.mjs';
 import { ENGINES } from '../../shared/engine-switch.mjs';
 
 export const POLICY_SCHEMA = 1;
@@ -320,7 +320,7 @@ function baseError(meta, value) {
     case 'roles': {
       if (!isPlainObject(value)) return 'must be an object of harness → { deep, everyday, quick }';
       for (const [hn, roles] of Object.entries(value)) {
-        if (!ROLE_HARNESSES.includes(hn)) return `harness "${hn}" has no model roles (accepts ${ROLE_HARNESSES.join(' | ')})`;
+        if (!TEAM_ROLE_HARNESSES.includes(hn)) return `harness "${hn}" has no team model roles (accepts ${TEAM_ROLE_HARNESSES.join(' | ')})`;
         if (!isPlainObject(roles)) return `${hn} must be an object of role → { model, effort }`;
         for (const [r, sel] of Object.entries(roles)) {
           if (!MODEL_ROLES.includes(r)) return `${hn}: role "${r}" is not one of ${MODEL_ROLES.join(' | ')}`;

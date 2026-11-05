@@ -10,6 +10,7 @@ import { chatEngine as askChatEngineOf } from '../../../src/core/ask/models.mjs'
 import { applyPolicyChange } from '../../../src/core/ask/policy-deps.mjs';
 import { applyProjectChange } from '../../../src/core/ask/project-deps.mjs';
 import { projectEventPrompt, projectNoticeText } from '../../../src/core/ask/project-proposal.mjs';
+import { checkQuestionAnswer, questionEventPrompt, questionNoticeText } from '../../../src/core/ask/question-card.mjs';
 import { applyProxyChange } from '../../../src/core/ask/proxy-deps.mjs';
 import { chatScopeOf, scopeEventPrompt, scopeNoticeText } from '../../../src/core/ask/scope.mjs';
 import { applyScriptCard } from '../../../src/core/ask/script-approval.mjs';
@@ -35,7 +36,12 @@ import { readWorkflow, writeGraphWorkflow } from '../../../src/core/workflows.mj
 import { RESCAN_CHOICES, memoGitProbe, readWorkspace, removeWorkspaceMember } from '../../../src/core/workspaces.mjs';
 import { formatInstant } from '../../../src/shared/schedule/recurrence.mjs';
 import { changesCardVerb, routeCardVerb } from '../../../src/shared/shape/route.mjs';
-import { AGENTS_DIR, afterMembersChanged, afterProjectRegistered, agentMayBeCaller, askChatActions, askDeferred, askEventPick, askIdParam, askInFlight, askViewer, askWebAccessFor, badRequest, broadcast, broadcastFeature, emitChanged, failedEventTurn, flipCard, followCloneCard, fsAllowedRoots, fsLimitedHere, pinUiLevel, postAskSystemNotice, proxyHost, prunedNote, refuseAgentCaller, removeRecommendation, runs, scheduleVerb, schedulerTick, shipFeatureNow, startAskTurn, startCloneJob, startMetricsEventTurn, startRunAs, startScopeEventTurn, workspaceMembersBusy } from '../../server.mjs';
+import { AGENTS_DIR, ASK_DEFERRED_REPLIES_MAX, afterMembersChanged, afterProjectRegistered, agentMayBeCaller, askChatActions, askDeferred, askDeferredReplies, askEventPick, askIdParam, askInFlight, askViewer, askWebAccessFor, badRequest, broadcast, broadcastFeature, emitChanged, failedEventTurn, flipCard, followCloneCard, fsAllowedRoots, fsLimitedHere, pinUiLevel, postAskSystemNotice, proxyHost, prunedNote, refuseAgentCaller, removeRecommendation, runs, scheduleVerb, schedulerTick, shipFeatureNow, startAskTurn, startCloneJob, startMetricsEventTurn, startRunAs, startScopeEventTurn, workspaceMembersBusy } from '../../server.mjs';
+
+/** The cards route's handler, set by register(): the chat bridge applies a chat channel's card actions through it
+ *  in-process (ui/server.mjs invokeAskCard, with req._chatOrigin set). */
+let cardRoute = null;
+export const askCardRoute = (req, res) => cardRoute(req, res);
 
 export function register(app) {
 
@@ -186,7 +192,7 @@ function askScopeCardUserText(threadId, cardMessage) {
 // D14 dismiss ("Not now" keeps a stub — the client renders state:'dismissed') for a RUN card;
 // the workflow-card state machine (spec §8.4) for a workflow one. The card is looked up BEFORE
 // the body is validated because the legal verb set depends on the card's type.
-app.post('/api/ask/threads/:id/cards/:cardId', async (req, res) => {
+async function askCardHandler(req, res) {
   const id = askIdParam(res, req.params.id, 'thread');
   if (!id) return;
   const cardId = askIdParam(res, req.params.cardId, 'card');
@@ -197,6 +203,9 @@ app.post('/api/ask/threads/:id/cards/:cardId', async (req, res) => {
     const body = req.body || {};
     const found = askFindCard(id, cardId);
     if (!found) return res.status(404).json({ error: 'card not found' });
+   if (req._chatOrigin === true && found.block.card && (found.block.card.type === 'script-approval' || found.block.card.type === 'actions')) {
+     return res.status(403).json({ error: 'scripts and Actions are decided in worca, not from a chat channel', code: 'CHAT_REMOTE_REFUSED' });
+   }
     // Ask Worca's graph card (a workflow-build card on an ASK chat, which has no canvas): Save writes the workflow, and
     // Save and Decline start the workflow-card event turn (rule 12) — a paid turn, as the Auto workflow card's. The
     // Workflows chat's build cards keep the composer branch below (Apply / Undo in the browser, no event turn).
@@ -251,6 +260,26 @@ app.post('/api/ask/threads/:id/cards/:cardId', async (req, res) => {
         const state = pick ? 'switched' : 'declined';
         const text = scopeEventPrompt({ cardId, state, projectKey: pick?.key ?? null, name: pick?.name ?? '', keys, userText: askScopeCardUserText(id, found.message) });
         const turn = await startScopeEventTurn(id, { scope: pick ? { pinned: true, projectKey: pick.key } : null, text, notice: scopeNoticeText({ state, name: pick?.name ?? '' }) });
+        return res.json({ block, turn });
+      } finally { askCardBusy.delete(cardId); }
+    }
+    if (found.block.card && found.block.card.type === 'question') {
+      // Freeform chat D5: one answer (a pick or a short text), then the event turn continues the conversation.
+      // No {state:'closed'} arm: neither the browser card nor the chat bridge ever closes a question.
+      const ans = checkQuestionAnswer(found.block.card, body);
+      if (!ans.ok) return badRequest(res, ans.error);
+      if (found.block.state !== 'proposed') return res.status(409).json({ error: `card is ${found.block.state}` });
+      if (askCardBusy.has(cardId)) return res.status(409).json({ error: 'card is being applied' });
+      askCardBusy.add(cardId);
+      try {
+        const block = flipCard(id, cardId, { state: 'answered', card: ans.patch });
+        if (!block) return res.status(409).json({ error: 'card vanished' });
+        const text = questionEventPrompt({ cardId, card: found.block.card, answerText: ans.answerText, choice: ans.patch.choice ?? null });
+        const turn = await startScopeEventTurn(id, { scope: null, text, notice: questionNoticeText({ card: found.block.card, answerText: ans.answerText }),
+          onDeferredStart: (r) => {
+            if (askDeferredReplies.size >= ASK_DEFERRED_REPLIES_MAX) askDeferredReplies.delete(askDeferredReplies.keys().next().value);
+            askDeferredReplies.set(cardId, r && r.ok ? { assistantMessageId: r.assistantMessageId } : { error: (r && r.error) || 'unknown error' });
+          } });
         return res.json({ block, turn });
       } finally { askCardBusy.delete(cardId); }
     }
@@ -725,5 +754,7 @@ app.post('/api/ask/threads/:id/cards/:cardId', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
-});
+}
+cardRoute = askCardHandler;
+app.post('/api/ask/threads/:id/cards/:cardId', askCardHandler);
 }

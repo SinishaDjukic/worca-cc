@@ -435,11 +435,14 @@ Shaper's Requirements step is a hold, like the plan approval, and it has its own
   Security and DevOps, and the supporters are switches (Product always reviews and is not listed). The first time, the
   lead reads `pick a role` and **Shape requirements** stays off until you pick one; your pick is remembered for next
   time. **Shape requirements** is the primary button and **Run as is** steps back. A small task keeps **Shaper** and
-  **Run as is**, with the facts line and the perspective chips.
+  **Run as is**, with the facts line and the perspective chips. A card proposed directly as Shaper gets the same
+  sentence and **Shape requirements** when medium or large, and it has no **Run as is**; a small or unsized one keeps
+  its fields and **Start planning**, with the facts line.
 - **The Requirements card.** `6 agreed by the perspectives · 2 need you · as Product`, then the agreed requirements as
   rows, then the decisions the perspectives could not settle. Each decision is one question with Worca's pick already
   chosen and marked `recommended`; change any of them. Questions and answers are worded for the lead you picked: a
-  Product or Design lead never sees code terms such as `project:read`. **Agree and plan** is the only primary.
+  Product or Design lead never sees code terms such as `project:read`; a scope token with no plain wording reads
+  `read access`. **Agree and plan** is the only primary.
   **Ask for changes** sends your words and your picks back. Agree and plan is off, with the reason beside it, when no
   requirement was written or a requirement fails its check. If the requirements could not be loaded the card says so and
   **Try again** is the primary.

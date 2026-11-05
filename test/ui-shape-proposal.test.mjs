@@ -6,6 +6,8 @@ import { JSDOM } from 'jsdom';
 import { shapeCardExtras, shapeWhatHappens, shapeAdvancedSummary } from '../ui/public/shape/proposal.mjs';
 import { SHAPE_ATTENTION } from '../ui/public/shape/plan-text.mjs';
 import { _resetAnswerer } from '../ui/public/answerer.mjs';
+import { resolveShapeRequest } from '../src/core/shape/run.mjs';
+import { SHAPE_REQ_WORKFLOW_IDS } from '../src/core/graph/builtin-workflows.mjs';
 
 const doc = () => new JSDOM('<!doctype html><body></body>').window.document;
 const est = (planningUsd, buildUsd, minutes) => ({ costUsd: planningUsd + buildUsd, planningUsd, buildUsd, minutes, samples: 4 });
@@ -339,4 +341,72 @@ test('flag off: a large nudge renders today\'s choices and no sentence', () => {
   assert.equal(ui.requirements, false);
   assert.equal(ui.blocked(), false);
   assert.deepEqual(ui.body(), { workflowId: 'wf_shape', shape: { perspectives: ['product', 'architect'], size: 'large' } });
+});
+
+// Literal, captured before the direct-card change: with the flag off this card must never change, byte for byte.
+const GOLDEN_DIRECT_CARD = `<div class="shape-card"><div class="shape-chips" role="group" aria-label="Perspectives"><button type="button" class="shape-chip on" data-perspective="product" title="Problem, goal, users, success criteria, out of scope." aria-pressed="true" disabled="" data-locked="1">Product</button><button type="button" class="shape-chip on" data-perspective="qa" title="Acceptance criteria as testable checks, a test plan with file names." aria-pressed="true">QA</button><button type="button" class="shape-chip on" data-perspective="security" title="Trust boundaries, inputs, secrets, permissions, abuse cases." aria-pressed="true">Security</button><button type="button" class="shape-chip-more">+ 5 more</button></div></div>`;
+
+test('flag off: golden direct card', () => {
+  const ui = shapeCardExtras(flagDoc(''), { shape: { perspectives: ['qa', 'security'], size: 'large' } });
+  assert.equal(ui.el.outerHTML, GOLDEN_DIRECT_CARD);
+});
+
+// A direct Shaper card (card.shape) with shapeRequirements on: the same card as a nudged one when the run will use the
+// requirements workflow, the small rule otherwise. It has no estimates.
+async function directCard(shape, { lead = 'architect', flags } = {}) {
+  stubAnswerer({ lead });
+  const d = flagDoc(flags);
+  const ui = shapeCardExtras(d, { shape });
+  d.body.appendChild(ui.el);
+  await tick();
+  return { d, ui };
+}
+
+test('direct card, flag on, large: the requirements layout', async () => {
+  const { ui } = await directCard({ perspectives: ['qa', 'security'], size: 'large' });
+  assert.equal(ui.requirements, true);
+  assert.deepEqual(texts(ui.el, '.shape-facts'), ['Large task · no estimate yet']);
+  assert.equal(ui.el.querySelector('.shape-lead-line').textContent, 'You lead as Engineering, supported by QA and Security.');
+  assert.equal(ui.el.querySelector('.shape-chips'), null);
+  assert.equal(ui.chipsEl, undefined);
+});
+
+test('direct card body: the picks, slices and size', async () => {
+  const large = await directCard({ perspectives: ['qa', 'security'], slices: 'off', size: 'large' });
+  assert.deepEqual(large.ui.body(), { workflowId: 'wf_shape', shape: { lead: 'architect', perspectives: ['product', 'architect', 'qa', 'security'], slices: 'off', size: 'large' } });
+  const medium = await directCard({ perspectives: ['qa'], size: 'medium' });
+  assert.equal(medium.ui.requirements, true);
+  assert.deepEqual(medium.ui.body().shape, { lead: 'architect', perspectives: ['product', 'architect', 'qa'], size: 'medium' });
+  const fit = await directCard({ perspectives: ['fit', 'qa'], size: 'large' });
+  assert.ok(fit.ui.body().shape.perspectives.includes('fit'), 'a pick of fit stays in the body');
+});
+
+test('direct card, flag on, small: the facts line and chipsEl; no lead in the body', async () => {
+  const { ui } = await directCard({ perspectives: ['qa'], size: 'small' }, { lead: 'qa' });
+  assert.equal(ui.requirements, false);
+  assert.deepEqual(texts(ui.el, '.shape-facts'), ['Small task · no estimate yet']);
+  assert.ok(ui.chipsEl.matches('.shape-chips'));
+  assert.equal(ui.el.querySelector('.spick-b'), null);
+  assert.equal(ui.blocked(), false);
+  assert.deepEqual(ui.body(), { workflowId: 'wf_shape', shape: { perspectives: ['product', 'qa'], size: 'small' } });
+});
+
+test('direct card, flag on, no size: "This task", the same as small', async () => {
+  const { ui } = await directCard({ perspectives: ['qa'] }, { lead: 'qa' });
+  assert.equal(ui.requirements, false);
+  assert.deepEqual(texts(ui.el, '.shape-facts'), ['This task · no estimate yet']);
+  assert.ok(ui.chipsEl.matches('.shape-chips'));
+  assert.deepEqual(ui.body(), { workflowId: 'wf_shape', shape: { perspectives: ['product', 'qa'] } });
+});
+
+test('card and run agree for every size', async () => {
+  for (const size of [undefined, 'small', 'medium', 'large']) {
+    for (const perspectives of [['qa'], ['ux', 'qa']]) {
+      const { ui } = await directCard({ perspectives, ...(size ? { size } : {}) });
+      const res = resolveShapeRequest(ui.body(), { requirementsOn: true });
+      assert.equal(res.ok, true, res.error);
+      assert.equal(SHAPE_REQ_WORKFLOW_IDS.includes(res.workflowId), ui.requirements, `${size} ${perspectives}`);
+      assert.match(res.workflowId, perspectives.includes('ux') ? /^wf_shape_ux/ : /^wf_shape(_req)?$/);
+    }
+  }
 });
