@@ -13,6 +13,9 @@ Online: the [Design System](https://claude.ai/artifact/P38jGMS7jA9XQu2U2uP3HP) (
 | Pulse: the notification hub, usage rings, limit notifications and what a start does near a limit | `pulse.md` | Concept, in the prototype (`pulse.html`) |
 | Settings: from the profile menu, the sidebar becomes its menu (four groups), one row per decision, records as Lists, search | `docs/design-system.md` › Settings, mocks `mocks/settings-menu-*.png` | In the prototype (`pulse.html` › Settings; `settings/`) |
 
+Wave 1 (the run and group pages, Pulse, Settings, the shell) is `wave-1.md`; the waves after it, and the design
+system's own consistency work between them, are `waves.md`.
+
 - `prototype/`: the clickable prototype, laid out like the app's files.
   - `index.html` is **the one Worca**: today's shell and pages (`today/`, captured from the app in mock mode by
     `gates/capture-today.mjs`) with Wave 1 in them, joined by `shell/` (the router and the decisions on today's
