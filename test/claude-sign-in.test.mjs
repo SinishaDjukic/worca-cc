@@ -216,6 +216,19 @@ test('I1: anchoredDenyRule: the absolute `//` form on Windows and POSIX; a UNC c
   for (const r of ['Read(//abs)', 'Read(~/x)', 'Bash(/bin/x)', 'Read', 'Read()', 'Edit(.env)', 'NotATool(/x)']) assert.equal(anchoredDenyRule(r, '/x/cfg'), r, r);
 });
 
+test('concern 6 (m8): a config folder on a network path gives one note naming how many `/…` deny rules could not be anchored',
+  { skip: process.platform !== 'win32' ? 'UNC paths are a Windows form' : false }, () => {
+    const unc = `${BS}${BS}server${BS}share${BS}cfg`;
+    const read = () => JSON.stringify({ permissions: { deny: ['Edit(/settings.json)', 'Read(/.credentials.json)', 'Read(//etc/hosts)', 'Bash(x)', 'Edit(/settings.json)'] } });
+    const s = readUserSafety({ env: { CLAUDE_CONFIG_DIR: unc }, read });
+    assert.deepEqual(s.deny, ['Edit(/settings.json)', 'Read(/.credentials.json)', 'Read(//etc/hosts)', 'Bash(x)'], 'carried as written, as before');
+    assert.deepEqual(s.notes, ['2 of your deny rules name a path in your Claude Code settings folder (they start with one "/"), and that folder is on a network path, '
+      + 'so Worca could not carry them as written: in this try they do not protect that folder.']);
+    const one = readUserSafety({ env: { CLAUDE_CONFIG_DIR: unc }, read: () => JSON.stringify({ permissions: { deny: ['Read(/a)'] } }) });
+    assert.match(one.notes[0], /^1 of your deny rules names a path/);
+    assert.equal('notes' in readUserSafety({ env: {}, home: home({ permissions: { deny: ['Edit(/settings.json)'] } }) }), false, 'a local folder: anchored, nothing said');
+  });
+
 test('M10: a relative CLAUDE_CONFIG_DIR is refused: nothing is read (the CLI would resolve it against the checkout, not Worca\'s folder)', () => {
   const h = home({ env: { ANTHROPIC_API_KEY: 'sk-ant-1' }, permissions: { deny: ['Bash(x)'] } });
   assert.equal(userSettingsFile({ env: { CLAUDE_CONFIG_DIR: 'cfg' }, home: h }), null);

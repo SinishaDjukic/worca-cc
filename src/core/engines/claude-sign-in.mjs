@@ -213,11 +213,19 @@ function posixDir(dir) {
 }
 /** I1: `rule` with a `/…` path (a file-tool rule) anchored at `configDir` in the `//` form; every other rule as it is. */
 export function anchoredDenyRule(rule, configDir) {
-  const m = /^([A-Za-z][A-Za-z0-9_]*)\(([\s\S]*)\)$/.exec(String(rule));
-  if (!m || !PATH_RULE_TOOLS.has(m[1]) || !m[2].startsWith('/') || m[2].startsWith('//')) return rule;
+  const m = folderRule(rule);
+  if (!m) return rule;
   const dir = posixDir(configDir);
   return dir === null ? rule : `${m[1]}(/${dir}${m[2]})`;
 }
+/** A file-tool rule whose path starts with a single `/` (anchored at its settings folder): its match, else null. */
+function folderRule(rule) {
+  const m = /^([A-Za-z][A-Za-z0-9_]*)\(([\s\S]*)\)$/.exec(String(rule));
+  return m && PATH_RULE_TOOLS.has(m[1]) && m[2].startsWith('/') && !m[2].startsWith('//') ? m : null;
+}
+/** Concern 6 (Task 5 fix review, m8): the run-log line for `n` folder-anchored rules a network config folder kept as written. */
+const unanchoredNote = (n) => `${n} of your deny rules ${n === 1 ? 'names' : 'name'} a path in your Claude Code settings folder (they start with one "/"), `
+  + 'and that folder is on a network path, so Worca could not carry them as written: in this try they do not protect that folder.';
 
 // ── D81b (2026-11-05): Worca's --settings file is a flag-tier source the CLI trusts fully, so a project or local layer laid
 // into it never carries what Claude Code takes only from the user, managed (policy) or --settings tiers: a normal run ignores
@@ -372,9 +380,13 @@ export function readUserSafety({ env = process.env, home, read = readCapped, cwd
     if (!s) return noSafety();
     const configDir = dirname(file);
     const d = isPlain(s.permissions) && Array.isArray(s.permissions.deny) ? s.permissions.deny : [];
-    const deny = [...new Set(d.filter((x) => typeof x === 'string' && x.trim()).map((r) => anchoredDenyRule(r, configDir)))].slice(0, SAFETY_DENY_MAX);
+    const kept = [...new Set(d.filter((x) => typeof x === 'string' && x.trim()))];
+    const deny = [...new Set(kept.map((r) => anchoredDenyRule(r, configDir)))].slice(0, SAFETY_DENY_MAX);
     const warnings = [];
     const notes = [];
+    // Concern 6: a config folder with no `//` form (a network path) keeps `/…` rules as written, anchored elsewhere: said once.
+    const unanchored = posixDir(configDir) === null ? kept.filter((r) => folderRule(r)).length : 0;
+    if (unanchored) notes.push(unanchoredNote(unanchored));
     let sandbox = isPlain(s.sandbox) ? s.sandbox : null;
     const bad = sandbox ? sandboxProblem(sandbox) : null;
     if (bad) { warnings.push(sandboxNotCarried('your', bad)); sandbox = null; }
