@@ -88,6 +88,37 @@ test('POST /api/run: overlay.nodes is checked against the workflow and the catal
   assert.match((await auto.json()).error, /^overlay needs a saved workflow/);
 });
 
+test('POST /api/run: overlay roles are refused (400) on a node without a role review and for an undeclared role', { timeout: 60000 }, async () => {
+  const { writeGraphWorkflow } = await import('../src/core/workflows.mjs');
+  const { id } = await writeGraphWorkflow({
+    name: 'Overlay roles', domain: 'coding',
+    nodes: [{ id: 'n_task', kind: 'task', x: 0, y: 0, config: {} },
+      { id: 'n_plan', kind: 'agent', key: 'planner', x: 300, y: 0, config: {} },
+      { id: 'n_reviewer', kind: 'agent', key: 'reviewer', x: 600, y: 0,
+        config: { roleReview: { roles: [{ key: 'correctness', label: 'Correctness' }, { key: 'security', label: 'Security' }], source: 'declared', target: 'plan', sink: 'refiner' } } },
+      { id: 'n_refine', kind: 'agent', key: 'refiner', x: 900, y: 0, config: { awaitAll: true } },
+      { id: 'n_end', kind: 'end', x: 1200, y: 0, config: {} }],
+    wires: [{ id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_plan', port: 'task' } },
+      { id: 'w2', from: { node: 'n_plan', port: 'plan' }, to: { node: 'n_reviewer', port: 'plan' } },
+      { id: 'w3', from: { node: 'n_reviewer', port: 'plan' }, to: { node: 'n_refine', port: 'plan' } },
+      { id: 'w4', from: { node: 'n_reviewer', port: 'findings' }, to: { node: 'n_refine', port: 'findings' } },
+      { id: 'w5', from: { node: 'n_refine', port: 'revise' }, to: { node: 'n_reviewer', port: 'revise' }, config: { maxCycles: 2, onExhausted: 'clean' } },
+      { id: 'w6', from: { node: 'n_refine', port: 'plan' }, to: { node: 'n_end', port: 'result' } }],
+  });
+  const body = { projectDir: project.path, workflowId: id, guardrailsId: 'normal', prompt: 'roles', scheduledFor: DAY() };
+  for (const [overlay, re] of [
+    [{ nodes: { n_plan: { roles: { security: { model: 'claude-opus-5-5' } } } } }, /^node n_plan has no role review; roles are not allowed$/],
+    [{ nodes: { n_reviewer: { roles: { perf: { model: 'claude-opus-5-5' } } } } }, /^node n_reviewer declares no role 'perf'$/],
+    [{ nodes: { n_reviewer: { roles: { security: { model: 7 } } } } }, /^overlay\.nodes\.n_reviewer\.roles\.security: model must be a string of at most 200 characters$/],
+  ]) {
+    const r = await post('/api/run', { ...body, overlay });
+    assert.equal(r.status, 400, JSON.stringify(overlay));
+    assert.match((await r.json()).error, re);
+  }
+  const ok = await post('/api/run', { ...body, overlay: { nodes: { n_reviewer: { roles: { security: { model: 'claude-opus-5-5' } } } } } });
+  assert.equal(ok.status, 202, await ok.text());
+});
+
 test('POST /api/run: a normal run resolves the overlay over the project layer for THAT run, records it, writes no config', { timeout: 120000 }, async () => {
   const r = await post('/api/run', { projectDir: project.path, workflowId: 'wf_default', guardrailsId: 'normal', prompt: 'demo task',
     overlay: { nodes: { n_plan: { model: 'CLAUDE-HAIKU-4-5', effort: 'medium' }, n_impl: { model: 'claude-opus-5-5' } } } });

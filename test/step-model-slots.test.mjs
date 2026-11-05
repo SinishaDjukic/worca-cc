@@ -100,3 +100,80 @@ test('§7: a run names each node model that came from a slot, and where the slot
   assert.deepEqual(slotSourceLines('codex', nodes, slots), ['codex model "gpt-5.5" for planner from project settings (models.codex.steps.planner)']);
   assert.deepEqual(slotSourceLines('claude', nodes, { planner: { model: 'gpt-5.5', source: 'team' } }), ['claude model "gpt-5.5" for planner from the team policy (models.claude.steps.planner)']);
 });
+
+// No silent fallbacks (#990 slice 2): a dropped pick is named once in state.warnings, the log and the audit at start;
+// the manifest keeps `wanted` and the resume point the lines, so a resume shows the same warnings without a second log line.
+const outsOf = (ctx) => Object.fromEntries((ctx.ports.outputs || []).map((p) => [p.id, { path: ctx.outputs?.[p.id]?.path ?? null, type: p.type }]));
+function pausingRunners(getOrch, seen) {
+  const done = (ctx, verdict) => ({ outputs: outsOf(ctx), verdict, summary: '' });
+  return {
+    clarifier: async (ctx) => done(ctx, null),
+    verifier: async (ctx) => done(ctx, { issues: [], summary: '' }),
+    producer: async (ctx) => {
+      if (seen.paused) return done(ctx, null);
+      seen.paused = true;
+      queueMicrotask(() => getOrch().pause());
+      return new Promise((_r, rej) => {
+        const onAbort = () => { const e = new Error('aborted'); e.name = 'AbortError'; rej(e); };
+        if (ctx.signal.aborted) onAbort(); else ctx.signal.addEventListener('abort', onAbort, { once: true });
+      });
+    },
+  };
+}
+const PLAN_DROP = "Plan: claude-opus-5-5 is not on Codex, runs Codex's default model";
+const auditOf = (id) => getDb().prepare('SELECT text FROM pipeline_events WHERE pipeline_id = ?').all(id).map((r) => r.text);
+const warnLines = (logs, line) => logs.filter((l) => l.level === 'warn' && String(l.text || l.message || '').includes(line)).length;
+
+test('a Codex run names a dropped Claude node pick once (state, log, audit); resume keeps it without a second log line', async () => {
+  const { gitDir } = await import('./helpers/git-dir.mjs');
+  const { createOrchestrator } = await import('../src/core/orchestrator.mjs');
+  const { readPipelineForResume } = await import('../src/core/artifacts.mjs');
+  const dir = gitDir('pick-drop');
+  const claude = { mock: true, engine: 'codex' };
+  const seen = {};
+  const logs = [];
+  let orch;
+  orch = createOrchestrator({ projectDir: dir, workflowId: 'wf_default', prompt: 'demo', auto: true, guardrailsId: 'permissive', claude,
+    overlay: { nodes: { n_plan: { model: 'claude-opus-5-5' } } }, runners: pausingRunners(() => orch, seen) });
+  orch.on('log', (l) => logs.push(l));
+  const first = await orch.run();
+  assert.equal(first.status, 'paused', first.error);
+  assert.deepEqual(orch.resolved.nodeCtx.n_plan.wanted, { model: 'claude-opus-5-5', source: 'run' }, 'the record keeps the pick');
+  assert.equal(orch.getState().warnings.filter((w) => w === PLAN_DROP).length, 1, 'state.warnings names it once, after the scheduler syncs');
+  assert.equal(warnLines(logs, PLAN_DROP), 1, 'one warn log line');
+  assert.equal(auditOf(orch.getState().id).filter((t) => t === `${PLAN_DROP}.`).length, 1, 'one audit line');
+  const saved = readPipelineForResume(orch.getState().id);
+  assert.deepEqual(saved.resumePoint.manifest.graph.nodes.find((n) => n.id === 'n_plan').wanted, { model: 'claude-opus-5-5', source: 'run' }, 'the manifest cell persists it');
+
+  const logs2 = [];
+  let orch2;
+  orch2 = createOrchestrator({ projectDir: dir, workflowId: 'wf_default', auto: true, claude, resume: saved, runners: pausingRunners(() => orch2, { paused: true }) });
+  orch2.on('log', (l) => logs2.push(l));
+  const res = await orch2.resume();
+  assert.equal(res.status, 'done', res.error);
+  assert.deepEqual(orch2.resolved.nodeCtx.n_plan.wanted, { model: 'claude-opus-5-5', source: 'run' }, 'restored from the manifest');
+  assert.equal(orch2.getState().warnings.filter((w) => w === PLAN_DROP).length, 1, 'the same warning, restored');
+  assert.equal(warnLines(logs2, PLAN_DROP), 0, 'no second warn log line on resume');
+});
+
+test('a resume that switches the Codex run to Claude Code keeps the start lines, never reformats them for the new engine', async () => {
+  const { gitDir } = await import('./helpers/git-dir.mjs');
+  const { createOrchestrator } = await import('../src/core/orchestrator.mjs');
+  const { readPipelineForResume } = await import('../src/core/artifacts.mjs');
+  const dir = gitDir('pick-drop-switch');
+  const seen = {};
+  let orch;
+  orch = createOrchestrator({ projectDir: dir, workflowId: 'wf_default', prompt: 'demo', auto: true, guardrailsId: 'permissive', claude: { mock: true, engine: 'codex' },
+    overlay: { nodes: { n_plan: { model: 'claude-opus-5-5' } } }, runners: pausingRunners(() => orch, seen) });
+  const first = await orch.run();
+  assert.equal(first.status, 'paused', first.error);
+  const saved = readPipelineForResume(orch.getState().id);
+
+  let orch2;
+  orch2 = createOrchestrator({ projectDir: dir, workflowId: 'wf_default', auto: true, claude: { mock: true, engine: 'claude' }, resume: saved, runners: pausingRunners(() => orch2, { paused: true }) });
+  const res = await orch2.resume();
+  assert.equal(res.status, 'done', res.error);
+  const warnings = orch2.getState().warnings;
+  assert.equal(warnings.filter((w) => w.includes('is not on Claude,')).length, 0, 'no false line for the engine the run switched to');
+  assert.equal(warnings.filter((w) => w === PLAN_DROP).length, 1, 'the line judged at start is kept once');
+});

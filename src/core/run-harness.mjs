@@ -1366,6 +1366,7 @@ export class RunHarness extends EventEmitter {
     else if (pq.kind === 'gate') line = `Gate **${d || 'answered'}**`;
     else if (pq.kind === 'recovery') line = `Recovery decision **${d || 'answered'}**`;
     else if (pq.kind === PLAN_ASK_KIND && pq.plan?.outline) line = `Slice outline **${d || 'answered'}** (round ${pq.plan.round || 1})`;
+    else if (pq.kind === PLAN_ASK_KIND && pq.concern) line = `Plan concern **${d === 'revise' ? 'accepted' : d === 'approve' ? 'overridden' : d || 'answered'}**`;
     else if (pq.kind === PLAN_ASK_KIND) line = `Plan approval **${d || 'answered'}**`;
     if (!line) return;
     appendAudit(this.pipeline.dir, `${line}${byActor(by)}.`, { actor: by }).catch(() => {});
@@ -1449,7 +1450,7 @@ export class RunHarness extends EventEmitter {
     // continue there (engine-switch.mjs). On a provider or a custom endpoint it is that provider's (a spent
     // OpenRouter free allowance, a gateway's quota): another harness on the same provider would hit it too, so
     // none is offered; the pause names the provider, and a resume can pick another model.
-    const conn = reason === REASON.USAGE_LIMIT && ctx && !freeDaily ? this._limitConnection(nc) : null;
+    const conn = reason === REASON.USAGE_LIMIT && ctx && !freeDaily ? this._limitConnection(nc, ctx?.role ?? null) : null;
     const limitEngine = conn?.kind === 'signin' ? (this.claude.engine || 'claude') : null;
     const limitText = conn && conn.kind !== 'signin' && !detail ? `${connectionLabel({ connection: conn })} limit — ${text}` : text;
     // D3/D11: when the limit comes back, read from the RAW message (`text` may be the OpenRouter
@@ -3759,11 +3760,11 @@ export class RunHarness extends EventEmitter {
   }
 
   /** The connection of the model a node's step ran on (its own, else the run's; a step with neither is on the
-   *  harness's own sign-in). Never throws. */
-  _limitConnection(nc) {
+   *  harness's own sign-in); for a role-review slice, the model that role ran on (_rolePair). Never throws. */
+  _limitConnection(nc, role = null) {
     const engine = this.claude.engine || 'claude';
     let model = null;
-    try { model = nc ? this._nodeModelPair(nc).model : this._engineModel(this.claude.model); } catch { model = null; }
+    try { model = nc ? (role ? this._rolePair(nc, role) : this._nodeModelPair(nc)).model : this._engineModel(this.claude.model); } catch { model = null; }
     return (model && modelConnection(model, { projectDir: this.projectDir })) || { kind: 'signin', engine };
   }
 
@@ -3776,6 +3777,20 @@ export class RunHarness extends EventEmitter {
     // A model on two harnesses keeps its own engine's efforts; this harness takes the nearest one (effortOn).
     if (own) return { model: own, effort: nc.effort ? (effortOn(nc.effort, this.claude.engine || 'claude') || undefined) : nc.effort };
     return { model: this._engineModel(this.claude.model), effort: nc?.model ? undefined : nc?.effort };
+  }
+
+  /** The pair a role-review slice runs on: "Model for all" wins; else the role's own pick (nc.roles, role-slots.mjs)
+   *  through this engine as _nodeModelPair takes the node's; a role naming only an effort runs the node's model on it;
+   *  else the node's pair. */
+  _rolePair(nc, key) {
+    if (this._modelForAll) return this._nodeModelPair(nc);
+    const pick = nc?.roles?.[key];
+    const engine = this.claude.engine || 'claude';
+    const own = pick?.model ? this._engineModel(pick.model) : undefined;
+    if (own) return { model: own, effort: pick.effort ? (effortOn(pick.effort, engine) || undefined) : undefined };
+    const node = this._nodeModelPair(nc);
+    if (!pick?.model && pick?.effort) return { ...node, effort: effortOn(pick.effort, engine) || undefined };
+    return node;
   }
 
   _settingsScope() { return this.isWorkspace ? null : this.projectDir; }
@@ -6427,7 +6442,7 @@ export class RunHarness extends EventEmitter {
    * @returns {Promise<any>} the answer payload
    */
   async _ask({ id, kind, questions, issues, recovery, agent, nodeId, wireId, executionId, deliveryNo, holdNo, workflow, plan,
-    askId, form, version, title, surface, data, layout, answerSchema, fileRefs, files, autoValues, validate, origin }) {
+    concern, askId, form, version, title, surface, data, layout, answerSchema, fileRefs, files, autoValues, validate, origin }) {
     this._checkAbort();
     // No interactive prompt may OPEN on a pausing run. pause() rejects only the
     // prompt that is currently open; a queued ask (a parallel sibling's questions
@@ -6460,6 +6475,7 @@ export class RunHarness extends EventEmitter {
       ...(holdNo != null ? { holdNo } : {}),
       ...(workflow !== undefined ? { workflow } : {}),
       ...(plan !== undefined ? { plan } : {}),
+      ...(concern ? { concern } : {}),            // #990 s5: the implementer's plan concern (kind stays 'plan')
       // The ask-form envelope (spec §4, ruling X1) rides the EXISTING 'question'
       // frame — no new transport, no new slot. `id` (already emitted above) is the
       // ANSWER token; `askId` is the route-safe file token and they are never
@@ -6505,10 +6521,11 @@ export class RunHarness extends EventEmitter {
       return await new Promise((resolveP, rejectP) => {
         // An outline ask keeps its marker and round, so _auditDecision can word its answer (F38).
         this.pendingQuestion = { id, kind, resolve: resolveP, reject: rejectP, validate: typeof validate === 'function' ? validate : null,
-          ...(plan && plan.outline ? { plan: { outline: true, round: plan.round } } : {}) };
+          ...(plan && plan.outline ? { plan: { outline: true, round: plan.round } } : {}),
+          ...(concern ? { concern: true } : {}) };
         // A throw inside a Promise executor REJECTS the ask (and fails the node): night mode
         // must never break a question the user could still answer.
-        const nq = { id, kind, questions, issues, recovery, wireId, executionId, deliveryNo, holdNo, workflow, plan, form, version, answerSchema, autoValues, nodeId, agent, origin };
+        const nq = { id, kind, questions, issues, recovery, wireId, executionId, deliveryNo, holdNo, workflow, plan, concern, form, version, answerSchema, autoValues, nodeId, agent, origin };
         if (kind !== PLAN_ASK_KIND) {
           try { this._nightArm(nq); } catch (err) { this._nightFailed(nq, `Away mode could not get ready for ${kind} ${id}: ${err?.message || err}`); }
         }

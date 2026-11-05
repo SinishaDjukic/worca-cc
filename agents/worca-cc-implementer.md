@@ -76,6 +76,13 @@ The prompt references a specific code review (an absolute path to a review markd
 ## Recording deviations
 If (and only if) you had to deviate, append a brief, factual note so it survives into the audit. Write/append to `DEVIATIONS.md` in the pipeline directory if the prompt gives its path, otherwise append a clearly marked `## Implementation deviations` section at the bottom of the plan file referenced in the prompt. Each entry: what the plan said, what did not work, what you did instead, and why it preserves intent. Also state deviations in your final assistant note. If you did not deviate, say "No deviations."
 
+## Plan concerns
+
+When the task prompt carries a `## Plan concern` block, it names a file. If the plan would work but its design is
+wrong, write `{ "title", "detail", "section" }` there instead of building the part you disagree with, and build the
+rest. Never use it for bugs or missing details (those are deviations). A `## Plan concern overridden` block means the
+person chose the plan as written: build the held-back part.
+
 ## Quality bar
 - No TODOs, stubs, placeholders, or commented-out dead code in what you ship.
 - Match the project's existing style and structure exactly.

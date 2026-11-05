@@ -606,6 +606,25 @@ shipT('a stacked failure mid-loop says how to continue; run 1\'s PR stays and a 
   assert.equal(ghCalls(seen, 'create').length - before, 2);
 });
 
+shipT('a ship whose PRs were all closed unmerged ships again: stacked opens a new PR per run', async () => {
+  let n = 10;
+  const seen = []; stubShip(seen, { create: () => okRun(`https://github.com/me/repo/pull/${++n}\n`) });
+  const w = shipWorld({ drafts: false });
+  const { recordShip } = await import('../src/core/shape/features.mjs');
+  recordShip(w.f.id, { mode: 'stacked', release: { version: 'v1.2.0', target: 'main' } });
+  assert.equal((await ship(w.f.id, 'stacked')).status, 409, 'its PRs are still open');
+  getDb().prepare("UPDATE pipelines SET pr_state = 'CLOSED' WHERE id IN (?, ?, ?)").run(...w.pids);
+  const r = await ship(w.f.id, 'stacked');
+  assert.equal(r.status, 200, await r.clone().text());
+  assert.equal(ghCalls(seen, 'create').length, 3, 'a new PR for every run');
+  const { readPrState } = await import('../src/core/artifacts.mjs');
+  assert.deepEqual(w.pids.map((p) => [readPrState(p).url, readPrState(p).state]),
+    [11, 12, 13].map((k) => [`https://github.com/me/repo/pull/${k}`, 'OPEN']));
+  const row = getDb().prepare('SELECT ship_mode, release_version FROM shape_features WHERE id = ?').get(w.f.id);
+  assert.deepEqual({ ...row }, { ship_mode: 'stacked', release_version: null }, 'the old release is not carried over');
+  assert.equal((await ship(w.f.id, 'one')).status, 409, 'shipped again');
+});
+
 shipT('watch: true turns Watch on for each slice PR', async () => {
   let n = 0;
   const seen = []; stubShip(seen, { create: () => okRun(`https://github.com/me/repo/pull/${++n}\n`) });
