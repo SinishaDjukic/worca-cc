@@ -66,6 +66,8 @@ need into the design system first, and goes to the Shaper as one Feature behind 
 ## 4. Open decisions
 
 Wave 1's open decisions are decided (5 Nov): `agreed/decisions-1.5b.md`, enrolled with Wave 1.5.
+Wave 2's first choices are decided (5 Nov): `agreed/chat-and-runs-decisions.md` (Chat home, the build card, Runs as an
+operations view, a build opens as a full page).
 
 For Wave 1.5 and later:
 - When the type moves to Inter: with graduation or a wave earlier.
