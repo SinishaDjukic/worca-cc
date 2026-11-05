@@ -8,7 +8,7 @@ import {
   pushBranch, createPr, ghRepoAccess, ghForkRepo, prMergeable, findPrForBranch, prLifecycleState, prProviderFor, prHostsAvailable, anyPrHost,
   markPrReady, closePr, _testing as gitInfo,
 } from '../src/core/git-info.mjs';
-import { forgeOf, forgeOfPrUrl, prNumberFromUrl } from '../src/core/forge.mjs';
+import { forgeOf, forgeOfPrUrl, prNumberFromUrl, prIdentity, parsePrRef, prRefMatches } from '../src/core/forge.mjs';
 import * as azurePr from '../src/core/pr/azure.mjs';
 import * as bitbucketPr from '../src/core/pr/bitbucket.mjs';
 import { execFileSync } from 'node:child_process';
@@ -645,3 +645,42 @@ test('Bitbucket base remote: createPr, mergeable and findPrForBranch go over RES
     assert.ok(!calls.some((c) => c.startsWith('gh pr')), 'gh pr never ran');
   } finally { bitbucketPr._testing.reset(); }
 }));
+
+test('prIdentity: GitHub / Azure (both spellings) / Bitbucket canonical keys; tails, case, query ignored; unsupported hosts null', () => {
+  const k = 'github.com/o/r/pull/7';
+  for (const u of ['https://github.com/o/r/pull/7', 'https://www.GitHub.com/O/R/pull/7/files', 'http://github.com/o/r/pull/7?x=1#c', ' https://github.com/o/r/pull/7/ ']) {
+    assert.equal(prIdentity(u)?.key, k, u);
+  }
+  assert.deepEqual(prIdentity('https://github.com/O/r/pull/7'), { forge: 'github', owner: 'O', repo: 'r', number: 7, key: k });
+  const az = prIdentity('https://dev.azure.com/Acme/Shop/_git/api/pullrequest/9');
+  assert.equal(az.key, 'dev.azure.com/acme/shop/api/pullrequest/9');
+  assert.equal(prIdentity('https://acme.visualstudio.com/Shop/_git/api/pullrequest/9?a=1').key, az.key);
+  assert.equal(prIdentity('https://bitbucket.org/o/r/pull-requests/3').key, 'bitbucket.org/o/r/pull-requests/3');
+  assert.equal(prIdentity('https://gitlab.com/o/r/-/merge_requests/1'), null);
+  assert.equal(prIdentity('https://github.com/o/r/pull/0'), null);
+  assert.equal(prIdentity(null), null);
+});
+
+test('parsePrRef: url, owner/repo#N, number, #number; rejects zero, non-numeric, gitlab', () => {
+  assert.deepEqual(parsePrRef(' 1069 '), { kind: 'number', number: 1069 });
+  assert.deepEqual(parsePrRef('#1069'), { kind: 'number', number: 1069 });
+  assert.deepEqual(parsePrRef('o/r#5'), { kind: 'slug', owner: 'o', repo: 'r', number: 5 });
+  assert.deepEqual(parsePrRef('https://github.com/o/r/pull/5/files'), { kind: 'url', number: 5, key: 'github.com/o/r/pull/5', forge: 'github' });
+  for (const bad of ['0', '#0', 'abc', '', 'o/r', 'https://gitlab.com/o/r/-/merge_requests/1', null, 5]) assert.equal(parsePrRef(bad), null, String(bad));
+});
+
+test('prRefMatches: number via pr_number or URL tail; slug owner/repo incl. Azure org|project; never throws on null', () => {
+  const gh = { url: 'https://github.com/Own/Repo/pull/12', number: null };
+  assert.equal(prRefMatches(parsePrRef('12'), gh), true);
+  assert.equal(prRefMatches(parsePrRef('13'), gh), false);
+  assert.equal(prRefMatches(parsePrRef('12'), { url: 'x', number: 12 }), true);
+  assert.equal(prRefMatches(parsePrRef('own/repo#12'), gh), true);
+  assert.equal(prRefMatches(parsePrRef('other/repo#12'), gh), false);
+  assert.equal(prRefMatches(parsePrRef('https://github.com/own/repo/pull/12/files'), gh), true);
+  const az = { url: 'https://dev.azure.com/Acme/Shop/_git/api/pullrequest/9' };
+  assert.equal(prRefMatches(parsePrRef('acme/api#9'), az), true);
+  assert.equal(prRefMatches(parsePrRef('shop/api#9'), az), true);
+  assert.equal(prRefMatches(parsePrRef('nope/api#9'), az), false);
+  assert.equal(prRefMatches(null, gh), false);
+  assert.equal(prRefMatches(parsePrRef('12'), null), false);
+});

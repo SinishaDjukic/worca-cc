@@ -52,6 +52,7 @@
 // is deliberately no in-module cache: worcaHome() is read fresh per operation,
 // so a saved root takes effect for new runs/listing without a server restart.
 
+import { isAnswererLead, ANSWERER_LEAD_KEYS } from '../shared/answerer.mjs';
 import { mkdir, writeFile, rename } from 'node:fs/promises';
 import { suggestModelHandle } from '../shared/connections.mjs';
 export { suggestModelHandle };
@@ -63,7 +64,7 @@ import {
   EFFORTS, CODEX_EFFORTS, effortsForEngine, MODEL_ENGINES, RUN_ENGINES, ASK_ENGINES, HELPER_ENGINES, OWN_SIGNIN_ENGINES, aModelOf, ownSignInNote, modelIdProblem, SUBAGENT_MODELS, isReservedModelEnvKey, assertModelCost, envFlag,
   assertModelUpstream, upstreamEnvConflict, modelEnvRef, codexUpstreamProblem,
   UPSTREAM_PROVIDERS, COPILOT_ACCOUNT_TYPES, DEFAULT_PROVIDER_CONCURRENCY, MAX_PROVIDER_CONCURRENCY,
-  COPILOT_TERMS_VERSION, isUpstreamBaseUrl, REASONING_EFFORT_LEVELS,
+  isUpstreamBaseUrl, REASONING_EFFORT_LEVELS,
 } from './model-env.mjs';
 import { MODEL_ROLES } from '../shared/model-roles.mjs';
 import { CODEX_PRICES, listPriceFor } from './list-prices.mjs';
@@ -1281,6 +1282,7 @@ export const SETTINGS_POST_KEYS = Object.freeze([
   'agentGenModel',                           // the agent wizard's Generate: model + effort (Claude, user-level)
   'namingModel',                             // Smart run naming's model + effort (Models › Helper jobs, Claude, user-level)
   'commandSummaryModel',                     // Command summaries' model + effort (Models › Helper jobs, Claude, user-level)
+  'secondOpinionModel',                      // Second-opinion reviewer's model + effort (Models › Helper jobs, Claude, user-level)
   'workspaceScan',                           // Settings › Runs › Workspaces: the scan's models
   'schedule',                                // scheduled-run defaults { graceMin, ifMissed, maxFailures }
   'nightMode',                               // night mode user layer (night/config.mjs fields)
@@ -1304,7 +1306,7 @@ function projectOverride(id, scope) {
   try { return projectLayerReader(id, scope); } catch { return undefined; }
 }
 
-export const UTILITY_JOBS = Object.freeze(['title', 'classifier', 'overview', 'prDescription', 'memoryDefrag', 'workspaceScan']);
+export const UTILITY_JOBS = Object.freeze(['title', 'classifier', 'overview', 'prDescription', 'memoryDefrag', 'workspaceScan', 'secondOpinion']);
 const MODEL_PAIR_MAX_LEN = 200;
 const homeGuarded = () => !!process.env.NODE_TEST_CONTEXT && !process.env.WORCA_TEST_ALLOW_HOME_FALLBACK;
 export function runEngineSetting() {
@@ -1372,12 +1374,17 @@ export function assertAskModelsInput(input) {
   }
   return out;
 }
+/** setAskModels' merge, pure, over an ALREADY asserted patch (setup apply canonicalises ids in between). undefined = delete. */
+export function nextAskModels(current, patch) {
+  const all = isObj(current) ? { ...current } : {};
+  for (const [engine, pair] of Object.entries(patch)) { if (pair === null) delete all[engine]; else all[engine] = pair; }
+  return Object.keys(all).length ? all : undefined;
+}
 export async function setAskModels(input) {
   const patch = assertAskModelsInput(input);
   const settings = readSettings();
-  const all = isObj(settings.askModels) ? { ...settings.askModels } : {};
-  for (const [engine, pair] of Object.entries(patch)) { if (pair === null) delete all[engine]; else all[engine] = pair; }
-  if (Object.keys(all).length) settings.askModels = all; else delete settings.askModels;
+  const v = nextAskModels(settings.askModels, patch);
+  if (v === undefined) delete settings.askModels; else settings.askModels = v;
   await persistSettings(settings);
   return { askModels: askModelsSetting() };
 }
@@ -1817,6 +1824,35 @@ export async function setCommandSummaryModel(input, { models = null } = {}) {
   else settings.commandSummaryModel = pair.effort ? pair : { model: pair.model };
   await persistSettings(settings);
   return { commandSummaryModel: commandSummaryModel() };
+}
+
+// ── Second-opinion reviewer (Models › Engines › Claude › Helper jobs › Second-opinion reviewer) ───
+// `secondOpinionModel`: the { model, effort } pair of the one role a role review names as `secondOpinion` (Shaper's
+// Product reviewer), so it judges on another model than its step. User-level only and no model role: mapped to a
+// role it would land on its step's model again. Codex's is `utilityModels.codex.secondOpinion`. Unset = Worca's factory
+// default (factory-models.mjs).
+
+/** The STORED pair, or null when unset or invalid. Sync and never throws. */
+export function secondOpinionModelSetting() {
+  if (homeGuarded()) return null;
+  const v = readSettings().secondOpinionModel;
+  const m = isObj(v) ? v.model : undefined;
+  if (typeof m !== 'string' || !m.trim() || m.length > DEFRAG_MODEL_MAX_LEN) return null;
+  return { model: m.trim(), effort: typeof v.effort === 'string' && EFFORTS.includes(v.effort) ? v.effort : null };
+}
+
+/** Validate a POST value exactly like assertNamingModelInput. */
+export function assertSecondOpinionModelInput(input, models = null) {
+  return assertModelPairInput('secondOpinionModel', input, models);
+}
+
+export async function setSecondOpinionModel(input, { models = null } = {}) {
+  const pair = assertSecondOpinionModelInput(input, models);
+  const settings = readSettings();
+  if (pair === null) delete settings.secondOpinionModel;
+  else settings.secondOpinionModel = pair.effort ? pair : { model: pair.model };
+  await persistSettings(settings);
+  return { secondOpinionModel: secondOpinionModelSetting() };
 }
 
 // ── Spawn-debug diagnostics toggle (the stored side of WORCA_DEBUG_SPAWN) ────
@@ -2387,11 +2423,12 @@ export async function removeGlobalModel(id) {
 // it in memory. Readers are loud-and-lenient; setters throw.
 //
 //   providers: {
-//     copilot:   { githubToken?, accountType?, acknowledgedTerms?, termsVersion?, maxConcurrent?, login? },
+//     copilot:   { githubToken?, accountType?, maxConcurrent?, login? },
 //     openai:    { baseUrl?, apiKey?, maxConcurrent? },
 //     anthropic: { baseUrl?, apiKey?, maxConcurrent? },
 //     speech:    { stt: {...}, tts: {...} },   // voice mode, NOT an upstream — see the Speech block below
 //   }
+//   (An older Worca also stored copilot.acknowledgedTerms / termsVersion; readers ignore them.)
 // ---------------------------------------------------------------------------
 
 const PROVIDER_SECRET_KEYS = Object.freeze({ copilot: ['githubToken'], openai: ['apiKey'], anthropic: ['apiKey'] });
@@ -2411,14 +2448,6 @@ function sanitizeProvider(name, raw) {
     if (r.accountType !== undefined) {
       if (COPILOT_ACCOUNT_TYPES.includes(r.accountType)) out.accountType = r.accountType;
       else warn('accountType', `must be one of ${COPILOT_ACCOUNT_TYPES.join(' | ')}`);
-    }
-    if (r.acknowledgedTerms !== undefined) {
-      if (typeof r.acknowledgedTerms === 'string' && !Number.isNaN(Date.parse(r.acknowledgedTerms))) out.acknowledgedTerms = r.acknowledgedTerms;
-      else warn('acknowledgedTerms', 'not an ISO timestamp');
-    }
-    if (r.termsVersion !== undefined) {
-      if (Number.isInteger(r.termsVersion) && r.termsVersion > 0) out.termsVersion = r.termsVersion;
-      else warn('termsVersion', 'not a positive integer');
     }
     if (r.login !== undefined) {
       if (typeof r.login === 'string' && r.login.trim()) out.login = r.login.trim();
@@ -2481,18 +2510,12 @@ export function resolveProviderSecret(value, sourceEnv = process.env) {
   return typeof v === 'string' ? v.trim() : '';
 }
 
-/** Whether the Copilot terms notice has been acknowledged at the CURRENT wording version. */
-export function copilotTermsAcknowledged() {
-  const c = providerConfig('copilot');
-  return !!c.acknowledgedTerms && (c.termsVersion || 0) >= COPILOT_TERMS_VERSION;
-}
-
 /** updateProvider's validation alone (it throws the same messages). */
 export function assertProviderPatch(name, patch) {
   if (!UPSTREAM_PROVIDERS.includes(name)) throw new Error(`unknown provider ${JSON.stringify(name)}`);
   if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error('provider patch must be an object');
   const allowed = new Set([...PROVIDER_SECRET_KEYS[name], 'maxConcurrent',
-    ...(name === 'copilot' ? ['accountType', 'acknowledgedTerms', 'termsVersion', 'login'] : ['baseUrl'])]);
+    ...(name === 'copilot' ? ['accountType', 'login'] : ['baseUrl'])]);
   for (const [k, v] of Object.entries(patch)) {
     if (!allowed.has(k)) throw new Error(`unknown provider field ${JSON.stringify(k)} for ${name}`);
     if (isClearInput(v)) continue;
@@ -2505,10 +2528,6 @@ export function assertProviderPatch(name, patch) {
     } else if (k === 'maxConcurrent') {
       const n = Number(v);
       if (!Number.isInteger(n) || n < 1 || n > MAX_PROVIDER_CONCURRENCY) throw new Error(`maxConcurrent must be an integer from 1 to ${MAX_PROVIDER_CONCURRENCY}`);
-    } else if (k === 'acknowledgedTerms') {
-      if (typeof v !== 'string' || Number.isNaN(Date.parse(v))) throw new Error('acknowledgedTerms must be an ISO timestamp');
-    } else if (k === 'termsVersion') {
-      if (!Number.isInteger(v) || v <= 0) throw new Error('termsVersion must be a positive integer');
     }
   }
 }
@@ -2650,12 +2669,7 @@ export async function updateSpeech(patch = {}) {
   return speechConfig();
 }
 
-/** Record the Copilot terms acknowledgement at the current wording version. */
-export async function acknowledgeCopilotTerms(now = new Date()) {
-  return updateProvider('copilot', { acknowledgedTerms: now.toISOString(), termsVersion: COPILOT_TERMS_VERSION });
-}
-
-/** Forget the Copilot sign-in (token + login); the acknowledgement stays. */
+/** Forget the Copilot sign-in (token + login). */
 export async function clearCopilotSignIn() {
   return updateProvider('copilot', { githubToken: null, login: null });
 }
@@ -2749,33 +2763,36 @@ export async function writeStoredFlags(map) {
 }
 
 // ── Getting started (onboarding) ─────────────────────────────────────────────
-// Two machine-wide flags, nothing more: which steps are DONE is derived from
+// Three machine-wide flags, nothing more: which steps are DONE is derived from
 // product state by src/core/onboarding.mjs and never stored. `hidden` is the
 // checklist's Hide (Settings › General › Getting started shows it again);
-// `welcomeSeen` is the one-time welcome dialog. Both absent = both false.
+// `welcomeSeen` is the one-time welcome dialog; `workspaceGuideSeen` is the
+// "How workspaces work" walkthrough (FEAT-7) — set on every open, cleared when
+// the last workspace is deleted. All absent = all false.
+const ONBOARDING_FLAGS = Object.freeze(['hidden', 'welcomeSeen', 'workspaceGuideSeen']);
+
 export function onboardingPrefs() {
   const o = readSettings().onboarding;
   const obj = o && typeof o === 'object' && !Array.isArray(o) ? o : {};
-  return { hidden: obj.hidden === true, welcomeSeen: obj.welcomeSeen === true };
+  return Object.fromEntries(ONBOARDING_FLAGS.map((k) => [k, obj[k] === true]));
 }
 
-/** @throws {Error} unless every present key is a boolean. Unknown keys are refused. */
+/** @throws {Error} unless every present key is a known flag holding a boolean. */
 export function assertOnboardingPrefsInput(patch) {
   if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error('onboarding prefs must be an object');
   for (const [k, v] of Object.entries(patch)) {
-    if (k !== 'hidden' && k !== 'welcomeSeen') throw new Error(`unknown onboarding key ${JSON.stringify(k)}`);
+    if (!ONBOARDING_FLAGS.includes(k)) throw new Error(`unknown onboarding key ${JSON.stringify(k)}`);
     if (typeof v !== 'boolean') throw new Error(`onboarding.${k} must be true or false`);
   }
 }
 
-/** Merge `patch` over the stored flags; a store with both flags false drops the key. */
+/** Merge `patch` over the stored flags; a store with every flag false drops the key. */
 export async function setOnboardingPrefs(patch = {}) {
   assertOnboardingPrefsInput(patch);
-  const settings = readSettings();
+  const { onboarding: _previous, ...rest } = readSettings();
   const next = { ...onboardingPrefs(), ...patch };
-  if (!next.hidden && !next.welcomeSeen) delete settings.onboarding;
-  else settings.onboarding = next;
-  await persistSettings(settings);
+  const allFalse = ONBOARDING_FLAGS.every((k) => !next[k]);
+  await persistSettings(allFalse ? rest : { ...rest, onboarding: next });
   return onboardingPrefs();
 }
 
@@ -2859,6 +2876,31 @@ export async function setChatHomePinsFor(person, list) {
   settings.chatHomePins = map;
   await persistSettings(settings);
   return chatHomePinsFor(person);
+}
+
+/** The answerer profile (the lead a person shapes as): per person, keyed like the Chat home pins. It describes the
+ *  person, not a project, so it sits outside the user-to-project settings cascade. */
+function answererMap(settings) {
+  const m = settings.answererProfiles;
+  return Object.assign(Object.create(null), m && typeof m === 'object' && !Array.isArray(m) ? m : {});
+}
+
+/** The person's profile, `{ lead }` (null when never set or unknown). Never throws. */
+export function answererProfileFor(person) {
+  if (homeGuarded()) return { lead: null };
+  const lead = answererMap(readSettings())[pinsPersonKey(person)]?.lead;
+  return { lead: isAnswererLead(lead) ? lead : null };
+}
+
+/** Set the person's lead. Throws { code: 'BAD_LEAD' } before any write. */
+export async function setAnswererProfileFor(person, { lead } = {}) {
+  if (!isAnswererLead(lead)) throw Object.assign(new Error(`Pick one of: ${ANSWERER_LEAD_KEYS.join(', ')}`), { code: 'BAD_LEAD' });
+  const settings = readSettings();
+  const map = answererMap(settings);
+  map[pinsPersonKey(person)] = { lead };
+  settings.answererProfiles = map;
+  await persistSettings(settings);
+  return answererProfileFor(person);
 }
 
 /** Local tag dimensions (Settings › Tags): used when the run target's team policy sets none. Never throws. */

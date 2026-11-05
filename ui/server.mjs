@@ -34,7 +34,7 @@ import { createUpdateChecker, fetchNpmLatest, isSourceBuild, parseVersion, relea
 import { UPDATE_EXIT_CODE, supervisorMatches, readUpdateRecord, writeUpdateRecord, startCommand } from '../src/core/ui-update.mjs';
 import { isSharedInstall, updateEligibility, probeNpmGlobal, UPDATE_MESSAGES } from '../src/core/update-eligibility.mjs';
 import { limitResumeDecision } from '../src/core/limit-resume.mjs';
-import { selectRunEngine } from '../src/core/engines/index.mjs';
+import { selectRunEngine, reapAgentGroupsAtBoot } from '../src/core/engines/index.mjs';
 import { mockSlowMs } from '../src/core/engines/mock.mjs';
 import { stopPausedRun, StopPausedError } from '../src/core/stop-paused.mjs';
 import {
@@ -98,7 +98,7 @@ import {
   memoryDefragModel, setMemoryDefragModel, assertMemoryDefragModelInput,
   agentGenModel as storedAgentGenModel, setAgentGenModel, assertAgentGenModelInput,
   namingModel as storedNamingModel, setNamingModel, assertNamingModelInput,
-  commandSummaryModel as storedCommandSummaryModel, setCommandSummaryModel, assertCommandSummaryModelInput,
+  commandSummaryModel as storedCommandSummaryModel, setCommandSummaryModel, assertCommandSummaryModelInput, setSecondOpinionModel, assertSecondOpinionModelInput,
   workspaceScanModels, setWorkspaceScanModels, assertWorkspaceScanInput,
   scheduleDefaults, setScheduleDefaults,
   userTagDimensions, setUserTagDimensions, userEnforceTags, setUserEnforceTags,
@@ -243,7 +243,7 @@ import { getSession as getTerminalSession, listBlocks as listTerminalBlocks, cou
   listAudit as listTerminalAudit, listBranchWorktrees, findBranchWorktree, markInterruptedSessions, listRecentBlocks as listRecentTerminalBlocks } from '../src/core/terminal/store.mjs';
 import { createAskCommands, terminalEventPrompt, terminalNoticeText } from '../src/core/ask/commands.mjs';
 import { openBranchWorktree, removeBranchWorktree, releaseBranchWorktree, enforceBranchWorktreeCap, sweepBranchWorktrees } from '../src/core/terminal/worktrees.mjs';
-import { pidAlive, killDescendants } from '../src/core/terminal/pty.mjs';
+import { pidAlive, terminalReapOptions } from '../src/core/terminal/pty.mjs';
 import { createTerminalFanout } from '../src/core/terminal/fanout.mjs';
 import { detectBuiltins, builtinLaunch, revealLaunch, copyCommandText, findOnPath } from '../src/core/actions/builtins.mjs';
 import { buildLauncherCommand, launchAndWatch, installedLaunchers, launcherExamples, launcherWarning, lineForPickedApp } from '../src/core/actions/launcher.mjs';
@@ -286,9 +286,10 @@ import { engineReadiness, engineLocks } from '../src/core/engines/readiness.mjs'
 import { chatDescriptor, chatEngineGate } from '../src/core/engines/chat.mjs';   // #943: the switch route runs the turn's gate
 import { chatModelRates } from '../src/core/ask/chat-price.mjs';
 import { providerReadiness } from '../src/core/bridge/registry.mjs';
+import { canonicaliseModelIds, checkAskModelsPatch } from '../src/core/setup/slot-checks.mjs';
 import { startBridge } from '../src/core/bridge/server.mjs';
 import {
-  providersState, patchProvider, acknowledgeTerms, beginCopilotLogin, pollCopilotLogin, copilotLogout,
+  providersState, patchProvider, beginCopilotLogin, pollCopilotLogin, copilotLogout,
   copilotModelsForImport, importCopilotModels, testProviderConnection,
   endpointModelsForImport, importEndpointModels, patchSpeech,
 } from '../src/core/bridge/provider-ops.mjs';
@@ -300,7 +301,7 @@ import { detectSetup, defaultProbes } from '../src/core/setup/detect.mjs';
 import { teamSetupState, buildTeamSetup, SHARE_SETTING_KEYS } from '../src/core/setup/team-file.mjs';
 import { planSetupApply, commitSetupPlan, runSetupSteps, SetupFieldError, SetupConflictError } from '../src/core/setup/apply.mjs';
 import {
-  DEFAULT_UI_PORT, UI_HEALTH_NAME, UI_TOKEN_HEADER, newUiToken, writeUiInstance, removeUiInstance, uiUrl,
+  DEFAULT_UI_PORT, UI_HEALTH_NAME, UI_TOKEN_HEADER, newUiToken, writeUiInstance, removeUiInstance, uiUrl, keepIdleConnections,
 } from '../src/core/ui-instance.mjs';
 import { validateGuardrails } from '../src/core/guardrails.mjs';
 import {
@@ -417,13 +418,13 @@ import {
   GRAPH_SHAPE_WORKFLOW, SHAPE_WORKFLOW_ID, SHAPE_UX_WORKFLOW_ID,
 } from '../src/core/graph/builtin-workflows.mjs';
 import { latestChecklist, checklistMarkdown, CHECKLIST_PR_MARKER } from '../src/shared/shape/review-checklist.mjs';
-import { currentPass } from '../src/shared/shape/role-review.mjs';
+import { attachRoleReviews } from '../src/shared/shape/role-review.mjs';
 import { resolveShapeRequest, PLAN_ASK_KIND, planFileOf } from '../src/core/shape/run.mjs';
 import { savePlanToCheckout } from '../src/core/shape/save.mjs';
 import { featureView, currentFeatureId, featureOfPipeline, featuresOfTickets, cancelRest, resumeFeature,
   rechainWaiting, replanRest, setApproveEach, recordShapePlan, listShapePlans, chainFeature,
-  sliceOfPipeline, slicePrPreamble, featureShipSuggestion, recordSliceDraft, recordShip, featureShipInput,
-  liveSliceFrom, shaperCard, featureThread, addFeatureNote, appendFeatureRun, liveRoundOf } from '../src/core/shape/features.mjs';
+  sliceOfPipeline, slicePrPreamble, featureShipSuggestion, recordSliceDraft, recordShip, clearShip, featureShipInput,
+  liveSliceFrom, shaperCard, featureThread, addFeatureNote, appendFeatureRun, liveRoundOf, acceptanceRefusal } from '../src/core/shape/features.mjs';
 import { roundsOf, roundOrigin, nextRound, setRoundOutcome } from '../src/core/shape/rounds.mjs';
 import { changesCard, applyChanges, applyRoute, landingFacts, landingFactsOfFeature, shapeToolCheck, threadWork, shapeThreadFacts } from '../src/core/shape/changes.mjs';
 import { defaultShapeToolDeps } from '../src/core/ask/shape-tool-deps.mjs';
@@ -844,7 +845,7 @@ function settleRunEntry(entry) {
 // WebSocket plumbing
 // ---------------------------------------------------------------------------
 const app = express();
-const server = http.createServer(app);
+const server = keepIdleConnections(http.createServer(app));
 
 // Settings › About manual update (issue #841). The version list (npm packument, cached 12 h like the
 // check above), who may update, and the handoff record's last result. Never at boot, never under mock
@@ -1462,9 +1463,8 @@ function wireRun(entry) {
       const event = { type: name, ...(payload && typeof payload === 'object' ? payload : { value: payload }) };
 
       if (name === 'question') {
-        // Slice 4: the Plan step card's role rows read the current pass of role reviews off the plan ask (D1).
-        const rr = event.kind === 'plan' && event.plan && !event.plan.outline ? currentPass(orch.state?.roleReviews) : null;
-        if (rr) event.plan = { ...event.plan, roleReviews: rr };
+        // Slice 4: the Plan step card (D1) and a role-review loop's gate card (D8) read the current pass of role reviews.
+        attachRoleReviews(event, orch.state?.roleReviews);
         entry.pendingQuestion = event;
       }
       if (name === 'night-decision') {
@@ -2844,7 +2844,7 @@ const startRunHandler = async (req, res) => {
     // plan at run start; here we only normalize + reject an unknown id up front
     // so the client gets a clean 400 instead of a mid-run error event.
     // Shape it first (spec D9/D12): `shape` and the shape workflows.
-    const shapeReq = resolveShapeRequest({ shape: body.shape, workflowId: body.workflowId }, { internal: !!internal });
+    const shapeReq = resolveShapeRequest({ shape: body.shape, workflowId: body.workflowId }, { internal: !!internal, requirementsOn: flagEnabled('shapeRequirements') });
     if (!shapeReq.ok) return badRequest(res, shapeReq.error);
     const { shape: askedShape } = shapeReq;
     // L7: a sliced Shape-it-first run chains tickets per slice, and a run without a project cannot be scheduled. So with
@@ -3110,7 +3110,7 @@ const startRunHandler = async (req, res) => {
       // creation, where createWorkspace enforced isGitRepo) is rejected the same
       // way, so the client gets a clean 400 instead of a mid-run worktree error.
       const projects = [];
-      await gitState();                                   // U4: refresh the cached git answer (≤ 1 min old) memberWorkMode reads
+      await gitState();                                   // U4: a stale "missing" re-probes before this returns (a stale "available" is served, then refreshed); memberWorkMode reads it
       for (const dir of ws.projectPaths) {
         if (!fs.existsSync(dir)) {
           return badRequest(res, 'workspace member path is missing');
@@ -4754,7 +4754,7 @@ async function refreshSliceBody(prUrl, pid, repoDir) {
   if (!cur.ok || !cur.body.startsWith('Part of ')) return null;
   // The preamble: the "Part of" line, a blank line, the "- Slice" list; it ends at the first blank line after the list.
   const lines = cur.body.split('\n');
-  let end = 1;
+  let end = lines[1]?.startsWith('Satisfies: ') ? 2 : 1;   // the slice's agreed ids, under the "Part of" line
   while (end < lines.length && lines[end] === '') end += 1;
   while (end < lines.length && lines[end].startsWith('- Slice ')) end += 1;
   const fresh = slicePrPreamble(pid);
@@ -4762,6 +4762,7 @@ async function refreshSliceBody(prUrl, pid, repoDir) {
   return editPrBody({ projectDir: repoDir, prUrl, body: [fresh, ...lines.slice(end)].join('\n') });
 }
 const SHIPPING = new Set();     // feature ids with a Ship as in flight (ship_mode is written only at the end)
+const featureShipping = (id) => SHIPPING.has(String(id));   // s3 (D9): the acceptance PUT refuses while one is in flight
 /** One ship flow: a PR a ship opened or marked ready is stored as an open, ready PR at once, so the group page and its
  *  Runs row stop reading Draft (or Ready to ship) before the next PR lookup. persistPrState keeps an old verdict
  *  unless it is given one; a different PR (a closed draft's row taking the one PR) starts from a fresh verdict. */
@@ -4784,6 +4785,9 @@ async function shipFeatureNow(id, mode, { actor = null, release = null, watch = 
     return { status: 409, body: { error: `a round of run ${s ? s.index : '?'} is still going` } };
   }
   if (!view.ship.ready) return { status: 409, body: { error: 'every slice must be done before the feature ships' } };
+  // Shaper requirements s3 (D8): every agreed requirement is marked before any PR, changelog, push or forge call.
+  const unmarked = flagEnabled('shapeRequirements') && acceptanceRefusal(view);
+  if (unmarked) return { status: 409, body: unmarked };
   SHIPPING.add(id);
   try {
     // One ship flow: stacked gives each slice without a PR its own, ready, on its stacked base, in merge order;
@@ -4793,10 +4797,13 @@ async function shipFeatureNow(id, mode, { actor = null, release = null, watch = 
     if (mode === 'one' && shown.slices.some((s) => s.pr && s.pr.url && s.pr.state !== 'CLOSED' && !s.pr.draft)) {
       return { status: 409, body: { error: 'a run in this feature already has a PR: create one PR per run' } };
     }
-    if (mode === 'stacked' && shown.slices.some((s) => s.pipelineId && !s.pr)) {
+    clearShip(id);                                   // a withdrawn ship (its PRs all closed unmerged); no-op otherwise
+    // A slice whose PR was closed gets a new one (openMemberPr opens past a CLOSED PR).
+    const needsPr = (s) => s.pipelineId && (!s.pr || s.pr.state === 'CLOSED');
+    if (mode === 'stacked' && shown.slices.some(needsPr)) {
       const made = [];
       for (const s of shown.slices) {
-        if (!s.pipelineId || s.pr) continue;
+        if (!needsPr(s)) continue;
         const r = await openMemberPr(s.pipelineId, { actor });
         if (!r.ok) return { status: r.status || 500, body: { error: `could not create run ${s.index}'s PR: ${r.error}. Create PR again to continue.`, prs: made } };
         made.push(r.pr.url);
@@ -4962,7 +4969,7 @@ async function offerShipCard(pipelineId) {
   const ctx = shipCtxOf(view);
   const release = ctx.error ? null : await releaseVersionHint(ctx.target.repoDir);
   const card = { type: 'ship', featureId: fid, title: view.title, runs: view.total, files: stats.files,
-    added: stats.linesAdded, deleted: stats.linesRemoved, suggested: stats.suggested, release };
+    added: stats.linesAdded, deleted: stats.linesRemoved, suggested: stats.suggested, release, ...(flagEnabled('shapeRequirements') && view.ship.acceptance ? { acceptance: view.ship.acceptance } : {}) };
   const message = askAppendMessage(th.threadId, { role: 'assistant', text: '', status: 'done',
     blocks: [{ kind: 'card', id: newAskId('card'), state: 'proposed', card }] });
   broadcast({ type: 'ask-message', threadId: th.threadId, message });
@@ -4986,7 +4993,7 @@ function syncShipCard(featureId) {
     const view = featureView(featureId, { live: liveSliceOf });
     const th = view && view.ship.result ? featureThread(featureId) : null;
     const found = th ? findShipCardIn(th.threadId, featureId) : null;
-    if (found) flipCard(th.threadId, found.block.id, { state: 'applied', card: { result: view.ship.result } });
+    if (found) flipCard(th.threadId, found.block.id, { state: 'applied', card: { result: view.ship.result, ...(flagEnabled('shapeRequirements') && view.ship.acceptance ? { acceptance: view.ship.acceptance } : {}) } });
   } catch (err) { console.error(`[worca-ui] ship card sync failed: ${err?.message || err}`); }
 }
 
@@ -7351,10 +7358,10 @@ function primaryMemberOf(paths) {
  * refuses — mock, an auth env var, or an unknown answer (an older CLI) all pass.
  * Sends the 409 and returns true when it refused.
  */
-async function refuseSignedOutClaude(res) {
+async function refuseSignedOutClaude(res, message = CLAUDE_SIGNED_OUT_MESSAGE) {
   const { state } = await probeClaudeAuth({ bin: configuredClaudeBin(), mock: serverMockMode() });
   if (state !== 'signed-out') return false;
-  res.status(409).json({ code: CLAUDE_SIGNED_OUT_CODE, error: CLAUDE_SIGNED_OUT_MESSAGE });
+  res.status(409).json({ code: CLAUDE_SIGNED_OUT_CODE, error: message });
   return true;
 }
 
@@ -7767,17 +7774,7 @@ async function checkModelRolesPatch(patch, { pending = [] } = {}) {
   // Model and harness only: the role effort is mapped when used (effortOn), never refused here (A7).
   for (const [engine, roles] of Object.entries(patch)) for (const [role, value] of Object.entries(roles)) if (value) items.push({ id: `modelRoles.${engine}.${role}`, engine, value: { model: value.model } });
   await assertSlotModels(items, { pending });
-  // Store the catalog's canonical id (A8), so every consumer matches the same spelling; a pending id keeps the
-  // spelling its import will write.
-  if (items.length) {
-    const models = await listModels('');
-    for (const roles of Object.values(patch)) for (const value of Object.values(roles)) {
-      if (!value) continue;
-      const lc = value.model.toLowerCase();
-      const hit = models.find((m) => m?.id?.toLowerCase() === lc) || pending.find((p) => p.id.toLowerCase() === lc);
-      if (hit) value.model = hit.id;
-    }
-  }
+  await canonicaliseModelIds(Object.values(patch).flatMap((roles) => Object.values(roles)), pending);
   return patch;
 }
 
@@ -7822,7 +7819,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
   const hasNamingModelKey = has('namingModel');
   const namingModels = hasNamingModelKey ? (autoModels || defragModels || agentGenModels || await listModels('')) : null;
   const hasCommandSummaryModelKey = has('commandSummaryModel');
-  const csModels = hasCommandSummaryModelKey ? (autoModels || defragModels || agentGenModels || namingModels || await listModels('')) : null;
+  const csModels = hasCommandSummaryModelKey ? (autoModels || defragModels || agentGenModels || namingModels || await listModels('')) : null; const secondOpinionModels = has('secondOpinionModel') ? (autoModels || defragModels || agentGenModels || namingModels || csModels || await listModels('')) : null;
   const hasWorkspaceScanKey = has('workspaceScan');
   const hasRunEngineKey = has('runEngine');
   const hasStepModelsKey = has('stepModels');
@@ -7857,7 +7854,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
   if (has('askMaxTurns')) ask.askMaxTurns = body.askMaxTurns ?? '';
   if (has('askMaxBudgetUsd')) ask.askMaxBudgetUsd = body.askMaxBudgetUsd === undefined ? '' : body.askMaxBudgetUsd;
   {   // was the route's try: a refusal now reaches the caller (the route maps it to 400, the chat to a notice)
-    for (const key of ['titleModel', 'autoWorkflowModel', 'prDescriptionModel', 'memoryDefrag', 'agentGenModel', 'namingModel', 'commandSummaryModel', 'workspaceScan', ...(hasRequirementsInterviewKey ? ['requirementsInterview'] : [])]) {
+    for (const key of ['titleModel', 'autoWorkflowModel', 'prDescriptionModel', 'memoryDefrag', 'agentGenModel', 'namingModel', 'commandSummaryModel', 'secondOpinionModel', 'workspaceScan', ...(hasRequirementsInterviewKey ? ['requirementsInterview'] : [])]) {
       if (has(key)) asSettingsField(key, () => refuseNonClaudeUtilityModel(key, body[key]));
     }
     // Each validator / setter that can refuse a value runs tagged with the body key it checks,
@@ -7897,7 +7894,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     if (hasMemoryDefragKey) asSettingsField('memoryDefrag', () => assertMemoryDefragModelInput(body.memoryDefrag, defragModels));
     if (hasAgentGenKey) asSettingsField('agentGenModel', () => assertAgentGenModelInput(body.agentGenModel, agentGenModels));
     if (hasNamingModelKey) asSettingsField('namingModel', () => assertNamingModelInput(body.namingModel, namingModels));
-    if (hasCommandSummaryModelKey) asSettingsField('commandSummaryModel', () => assertCommandSummaryModelInput(body.commandSummaryModel, csModels));
+    if (hasCommandSummaryModelKey) asSettingsField('commandSummaryModel', () => assertCommandSummaryModelInput(body.commandSummaryModel, csModels)); if (secondOpinionModels) asSettingsField('secondOpinionModel', () => assertSecondOpinionModelInput(body.secondOpinionModel, secondOpinionModels));
     if (hasWorkspaceScanKey) asSettingsField('workspaceScan', () => assertWorkspaceScanInput(body.workspaceScan, wsScanModels));
     if (hasRunEngineKey) asSettingsField('runEngine', () => assertRunEngineInput(body.runEngine));
     if (hasAskEngineKey) asSettingsField('askEngine', () => assertAskEngineInput(body.askEngine));
@@ -7982,7 +7979,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     if (hasMemoryDefragKey) await setMemoryDefragModel(body.memoryDefrag, { models: defragModels });
     if (hasAgentGenKey) await setAgentGenModel(body.agentGenModel, { models: agentGenModels });
     if (hasNamingModelKey) await setNamingModel(body.namingModel, { models: namingModels });
-    if (hasCommandSummaryModelKey) await setCommandSummaryModel(body.commandSummaryModel, { models: csModels });
+    if (hasCommandSummaryModelKey) await setCommandSummaryModel(body.commandSummaryModel, { models: csModels }); if (secondOpinionModels) await setSecondOpinionModel(body.secondOpinionModel, { models: secondOpinionModels });
     if (hasWorkspaceScanKey) await setWorkspaceScanModels(body.workspaceScan, { models: wsScanModels });
     if (hasRunEngineKey) await asSettingsField('runEngine', () => setRunEngineSetting(body.runEngine));
     if (hasStepModelsKey) await asSettingsField('stepModels', () => setStepModels(body.stepModels));
@@ -8006,7 +8003,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     // Other open tabs repaint their Settings cards (a stale tab could otherwise
     // "save" its old checkbox state over this one with no feedback to either).
     if (hasSmartNaming || hasNamingModelKey) cachedPick = undefined;
-    if (hasAskKey || hasAskWeb || hasSmartNaming || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasUiLevelKey || hasAutoKey || hasPrDescKey || hasAutoPrDescKey || hasHumanRateKey || hasMemoryDefragKey || hasAgentGenKey || hasNamingModelKey || hasCommandSummaryModelKey || hasWorkspaceScanKey || has('schedule') || has('sync') || has('tagDimensions') || has('enforceTags') || has('chat') || hasAskEngineKey || hasAskModelsKey || hasRequirementsInterviewKey || hasNetworkWaitKey || hasRunLimitsKey || hasActionsKey || hasNightKey || hasRunEngineKey || hasStepModelsKey || hasModelRolesKey || hasUtilityModelsKey || hasUpdateCheckKey || hasKeepAwakeKey) emitChanged('settings-changed');
+    if (hasAskKey || hasAskWeb || hasSmartNaming || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasUiLevelKey || hasAutoKey || hasPrDescKey || hasAutoPrDescKey || hasHumanRateKey || hasMemoryDefragKey || hasAgentGenKey || hasNamingModelKey || hasCommandSummaryModelKey || secondOpinionModels || hasWorkspaceScanKey || has('schedule') || has('sync') || has('tagDimensions') || has('enforceTags') || has('chat') || hasAskEngineKey || hasAskModelsKey || hasRequirementsInterviewKey || hasNetworkWaitKey || hasRunLimitsKey || hasActionsKey || hasNightKey || hasRunEngineKey || hasStepModelsKey || hasModelRolesKey || hasUtilityModelsKey || hasUpdateCheckKey || hasKeepAwakeKey) emitChanged('settings-changed');
     // Editor / Terminal: saved as typed; a program Worca cannot find comes back as a warning on its field.
     const actionsWarnings = hasActionsKey ? Object.fromEntries(['editor', 'terminal']
       .map((k) => [k, launcherWarning(actionsSettings()[k], { findOnPath: (n) => findOnPath(n) })]).filter(([, w]) => w)) : null;
@@ -8169,6 +8166,7 @@ function setupDeps() {
     applyProxy: (np, beforeFixed) => proxyHost.applyWritten(np, beforeFixed),
     reloadLogin: () => egressNow()?.reloadLogin?.(),
     checkModelRoles: (patch, o) => checkModelRolesPatch(patch, o),
+    checkAskModels: (patch, o) => checkAskModelsPatch(patch, o),
     testModel: async (id) => {
       const key = String(id).toLowerCase();
       if (modelTestsInFlight.has(key)) return { ok: false, message: 'test already running for this model' };
@@ -9128,7 +9126,7 @@ function askGroupFor(req, res) {
 const factDeps = { readPrState, findPipelineRowById, readRunTags, readRunLabels, featureView: (fid) => featureView(fid, { live: liveSliceOf }) };
 /** Shaper (ordinary stays ordinary, D6): propose_changes / route_message, applied in the parent. Re-checked NOW with the
  *  live runs overlay (an open step the classic MCP child cannot see, D7); a refusal is a notice in the reply. */
-const shapeToolFactDeps = { live: (id) => liveSliceOf(id), readPrState, findPipelineRowById, readRunTags, readRunLabels };
+const shapeToolFactDeps = { live: (id) => liveSliceOf(id), readPrState, findPipelineRowById, readRunTags, readRunLabels, requirementsOn: () => flagEnabled('shapeRequirements') };
 function askShapeAction(req, threadId) {
   if (!threadId) return { ok: false, notice: 'Not applied: no chat to post to' };
   let r;
@@ -9735,8 +9733,9 @@ export async function bootMaintenance({ log } = {}) {
   // interrupted, and sweep the branch worktrees under the keep policy and cap. Before Actions: its keep
   // policy and checkout cap read the terminal pid file, which must not still hold the last server's rows.
   try {
-    const orphans = await reapOrphans({ pidFile: terminalPidFileNow(),
-      kill: (pid) => { killDescendants(pid); try { process.kill(-pid, 'SIGKILL'); } catch { /* gone */ } } });
+    const termPidFile = terminalPidFileNow();
+    // Windows checks each pid is still its recorded shell; the rows are read before reapOrphans rewrites the file.
+    const orphans = await reapOrphans({ pidFile: termPidFile, ...terminalReapOptions(termPidFile) });
     // reapOrphans keeps rows stamped with this pid; a restarted container reuses the old server's pid, so
     // such rows would keep their runs "busy" for ever. Nothing is live here yet: rewrite the file.
     terminals.writePidFile();
@@ -9749,6 +9748,7 @@ export async function bootMaintenance({ log } = {}) {
     summary.terminal = { orphans: 0, interrupted: 0, removed: 0, evicted: 0 };
     console.error(`[worca-ui] terminal boot maintenance failed: ${err?.message || err}`);
   }
+  summary.agentGroups = await reapAgentGroupsAtBoot({ home: worcaHome });   // #1144: agents a SIGKILLed server/CLI left running
 
   // Actions (issue #529): reap orphaned action processes, mark interrupted setups, release
   // until-pr checkouts whose PR closed (D11) and apply the checkout cap (D12).
@@ -10144,7 +10144,7 @@ if (isMain) {
 }
 
 export { app, server, runs };
-export { AGENTS_DIR, APP_INFO, APP_REPO_URL, ASK_SCOPE_BUSY, ASK_TEXT_PREVIEW_MAX, BRANCH_SETTLED, BUGS_SLUG, CLONE_JOBS, HOST, MARKETPLACE_ID_RE, MARKET_JOBS, NO_PR_HOST, PKG_VERSION, PLAN_TEXT_MAX, PLUGIN_NAME_RE, PORT, PROJECT_ROOT, PR_TITLE_MAX, REMOTE_MODE, RUNNING_VERSION, ResumeError, SETTLED_RUN, SETUP_AGENT_TEXT, SETUP_JOBS, SKILLS_DIR, SKILL_FOLDER_IMPORTS, SKILL_MD_UNREACHABLE, STORE_ERROR_CODES, actions, actionsEnabledHere, activeActionSnaps, adoWebhookSecret, afterMembersChanged, afterProjectRegistered, agentErrorStatus, agentMayBeCaller, answerRun, applyProjectSettingsPatch, applySettingsPatch, askBusyReason, askChatActions, askChatEngine, askCommandBridges, askCommands, askCommandsEnabled, askContextTokens, askDeferred, askDeleting, askEngineSwitchText, askEventPick, askFilesRunDir, askFilesStoreDir, askFollowers, askGroupFor, askGroupThreads, askIdParam, askInFlight, askLiveRun, askProxyBridges, askRefResolver, askRelays, askRunFromPipelineRow, askRunningCount, askSwitchTranscript, askThreadVisible, askTrackingCount, askTurnEngine, askValidateScope, askViewer, askWebAccessFor, askWorktreesEnvelope, autoDetectedBuiltins, automationWorkspaceMembers, automations, awayPersonOf, badRequest, bareWorkspaceKey, bearerMatches, broadcast, broadcastFeature, brokerStartRefusal, builtins, busyActionRunIds, channelHost, chatGroupError, chatNotifier, chatRefusals, checkoutRecOf, commentIdParam, commentsCreate, commentsDelete, commentsFail, commentsList, commentsPatch, commentsReply, createRunPr, crosslinkMemberPrs, currentUpdateEligibility, defaultPrRemotes, deleteAskThreadFully, detectSystemProxyImpl, detectTeamMemorySoon, drainServer, effectiveUiLevel, egressNow, emitAskWorktrees, emitChanged, emitMemoryChanged, emitPluginsChanged, ensureSetup, extensionPairing, factDeps, failedEventTurn, findScheduleItem, flipCard, followCloneCard, forkPrRefusal, fsAllowedRoots, fsLimitedHere, gitMissing, isFinishingRun, isFreshInstall, isLiveRun, isPlainObject, isPrStoreKey, isTruthy, kickAutomations, kickPrWatch, labelsOn, lastUpdateResult, liveAutoRescan, liveDefragRun, liveDiffOf, livePr, liveProbe, liveRunEntry, liveRunIds, liveSliceOf, marketJobFailure, mcpRunPreview, mcpTargetOf, memberFor, memoryError, modelTestsInFlight, namingBucket, namingCatalog, namingOn, namingPick, noRawCommand, notifReader, openMemberPr, ownsWorkspaceTarget, parseMcpOptOut, pauseRun, pickPrRemotes, pinUiLevel, postAskSystemNotice, postDirection, prTargetFor, prWatchFrame, prWatcher, presetCheckCtx, presetScopeOf, primaryMemberOf, projectAutomationRepo, projectDirForKey, projectSettingsState, proxyHost, pruneMarketJobs, prunedNote, publicCloneJob, readInstalledManifest, refuseAgentCaller, refuseSignedOutClaude, registeredProjectForDir, rejectRawTerminalFields, removeRecommendation, requireActions, requireFsAllowed, requireTerminal, resolvePrPipeline, resolveProjectDir, resolveRunScope, resumeEngineOpts, resumeRun, resumeTargetDirs, runGroupIds, runSourceIssue, scanModelsFor, scanRequest, scheduleVerb, sendArtifactRaw, sendCheckoutError, sendMetricsError, sendPolicyError, sendPresetError, serveAskFile, serverMockMode, settleShipped, setupJobs, setupProbesOverride, shipChainNow, shipCtxOf, shipFeatureNow, skillRunPreview, snapshotFor, sockets, stackStates, stackTokens, startAgentGen, startAskTurn, startCloneJob, startMetricsEventTurn, startOrQueue, startRunAs, startRunHandler, startScopeEventTurn, startScriptBench, stopCheckoutServices, stopMemberServices, stopPausedPipeline, stopRun, switchThreadScope, syncMode, syncProjectAction, syncRoute, teamOriginOk, teamWarn, terminalCallerOk, terminalEnabledHere, terminalError, terminalSameOrigin, terminals, tmProject, uiControl, unsyncableBlock, updateChecker, updatePort, updatePreview, validateResumeTarget, versionLister, versionPayload, webhookSecret, withAfter, workspaceMembersBusy };
+export { AGENTS_DIR, APP_INFO, APP_REPO_URL, ASK_SCOPE_BUSY, ASK_TEXT_PREVIEW_MAX, BRANCH_SETTLED, BUGS_SLUG, CLONE_JOBS, HOST, MARKETPLACE_ID_RE, MARKET_JOBS, NO_PR_HOST, PKG_VERSION, PLAN_TEXT_MAX, PLUGIN_NAME_RE, PORT, PROJECT_ROOT, PR_TITLE_MAX, REMOTE_MODE, RUNNING_VERSION, ResumeError, SETTLED_RUN, SETUP_AGENT_TEXT, SETUP_JOBS, SKILLS_DIR, SKILL_FOLDER_IMPORTS, SKILL_MD_UNREACHABLE, STORE_ERROR_CODES, actions, actionsEnabledHere, activeActionSnaps, adoWebhookSecret, afterMembersChanged, afterProjectRegistered, agentErrorStatus, agentMayBeCaller, answerRun, applyProjectSettingsPatch, applySettingsPatch, askBusyReason, askChatActions, askChatEngine, askCommandBridges, askCommands, askCommandsEnabled, askContextTokens, askDeferred, askDeleting, askEngineSwitchText, askEventPick, askFilesRunDir, askFilesStoreDir, askFollowers, askGroupFor, askGroupThreads, askIdParam, askInFlight, askLiveRun, askProxyBridges, askRefResolver, askRelays, askRunFromPipelineRow, askRunningCount, askSwitchTranscript, askThreadVisible, askTrackingCount, askTurnEngine, askValidateScope, askViewer, askWebAccessFor, askWorktreesEnvelope, autoDetectedBuiltins, automationWorkspaceMembers, automations, awayPersonOf, badRequest, bareWorkspaceKey, bearerMatches, broadcast, broadcastFeature, brokerStartRefusal, builtins, busyActionRunIds, channelHost, chatGroupError, chatNotifier, chatRefusals, checkoutRecOf, commentIdParam, commentsCreate, commentsDelete, commentsFail, commentsList, commentsPatch, commentsReply, createRunPr, crosslinkMemberPrs, currentUpdateEligibility, defaultPrRemotes, deleteAskThreadFully, detectSystemProxyImpl, detectTeamMemorySoon, drainServer, effectiveUiLevel, egressNow, emitAskWorktrees, emitChanged, emitMemoryChanged, emitPluginsChanged, ensureSetup, extensionPairing, factDeps, failedEventTurn, featureShipping, findScheduleItem, findShipCardIn, flipCard, followCloneCard, forkPrRefusal, fsAllowedRoots, fsLimitedHere, gitMissing, isFinishingRun, isFreshInstall, isLiveRun, isPlainObject, isPrStoreKey, isTruthy, kickAutomations, kickPrWatch, labelsOn, lastUpdateResult, liveAutoRescan, liveDefragRun, liveDiffOf, livePr, liveProbe, liveRunEntry, liveRunIds, liveSliceOf, marketJobFailure, mcpRunPreview, mcpTargetOf, memberFor, memoryError, modelTestsInFlight, namingBucket, namingCatalog, namingOn, namingPick, noRawCommand, notifReader, openMemberPr, ownsWorkspaceTarget, parseMcpOptOut, pauseRun, pickPrRemotes, pinUiLevel, postAskSystemNotice, postDirection, prTargetFor, prWatchFrame, prWatcher, presetCheckCtx, presetScopeOf, primaryMemberOf, projectAutomationRepo, projectDirForKey, projectSettingsState, proxyHost, pruneMarketJobs, prunedNote, publicCloneJob, readInstalledManifest, refuseAgentCaller, refuseSignedOutClaude, registeredProjectForDir, rejectRawTerminalFields, removeRecommendation, requireActions, requireFsAllowed, requireTerminal, resolvePrPipeline, resolveProjectDir, resolveRunScope, resumeEngineOpts, resumeRun, resumeTargetDirs, runGroupIds, runSourceIssue, scanModelsFor, scanRequest, scheduleVerb, sendArtifactRaw, sendCheckoutError, sendMetricsError, sendPolicyError, sendPresetError, serveAskFile, serverMockMode, settleShipped, setupJobs, setupProbesOverride, shipChainNow, shipCtxOf, shipFeatureNow, skillRunPreview, snapshotFor, sockets, stackStates, stackTokens, startAgentGen, startAskTurn, startCloneJob, startMetricsEventTurn, startOrQueue, startRunAs, startRunHandler, startScopeEventTurn, startScriptBench, stopCheckoutServices, stopMemberServices, stopPausedPipeline, stopRun, switchThreadScope, syncMode, syncProjectAction, syncRoute, teamOriginOk, teamWarn, terminalCallerOk, terminalEnabledHere, terminalError, terminalSameOrigin, terminals, tmProject, uiControl, unsyncableBlock, updateChecker, updatePort, updatePreview, validateResumeTarget, versionLister, versionPayload, webhookSecret, withAfter, workspaceMembersBusy };
 export const _testing = {
   updateChecker,
   // The startEgressPolicy() result the /api/proxy routes read, or a startLiveEgress() that also applies saves.

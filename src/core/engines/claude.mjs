@@ -7,7 +7,8 @@ import { prepareModelEnv, envFlag, describeModelEnv, withProviderModesOff, withS
 import { effectiveDebugSpawn } from '../settings.mjs';
 import { classifyError } from '../recoverable-error.mjs';
 import { bridgeEvents } from '../bridge/telemetry.mjs';
-import { explainUnspawnableClaude, resolveClaudeBin } from '../preflight.mjs';
+import { resolveClaudeBin } from '../preflight.mjs';
+import { CLAUDE_CLI } from './cli-specs.mjs';
 import { hostGuardEnabled, hostGuardHookEntry, hostGuardSystemPrompt } from '../host-guard.mjs';
 import { memoryUsageHookEntry } from '../memory-usage.mjs';
 import { readGuardHookEntry, readGuardDecisions } from '../file-read-guard.mjs';
@@ -145,16 +146,11 @@ export function redactArgvForLog(args) {
   });
 }
 
-/** Log each npm-shim resolution once per process, not once per spawn. */
-const _resolveNoted = new Set();
-
-/** The spawn-failure Error for `bin`: the OS message, plus the Windows npm-shim
- *  explanation when that is what actually went wrong (ENOENT on a bare name
- *  whose only PATH hit is claude.cmd; EINVAL on an explicit .cmd). */
-function spawnFailure(bin, err, prefix) {
+/** The spawn-failure Error: the OS message (superviseSpawn already appended the
+ *  Windows npm-shim explanation when that is what actually went wrong). */
+function spawnFailure(err, prefix) {
   const unspawnable = /ENOENT|EINVAL/.test(String(err && err.code || err && err.message || ''));
-  const hint = unspawnable ? explainUnspawnableClaude(bin) : null;
-  const out = new Error(`${prefix}: ${err.message}${hint ? ` — ${hint}` : ''}`);
+  const out = new Error(`${prefix}: ${err.message}`);
   // An unspawnable CLI (not installed / not on PATH) is user-fixable, not a
   // pipeline bug: stamp the recovery class so the orchestrator's gate pauses
   // the run for manual resume instead of hard-failing it (ENOENT matches no
@@ -582,11 +578,8 @@ export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, perm
     // cannot spawn; resolveClaudeBin swaps in the package's native claude.exe.
     // Everywhere else this is `bin` unchanged. Resolved BEFORE the argv plan so
     // the command-line measure below counts the path that is actually spawned.
+    // (superviseSpawn resolves the same bin through CLAUDE_CLI and logs the note once.)
     const resolved = resolveClaudeBin(bin);
-    if (resolved.note && !_resolveNoted.has(resolved.bin)) {
-      _resolveNoted.add(resolved.bin);
-      console.warn(`[worca] ${resolved.note}`);
-    }
 
     // GH #380: inline argv when it fits, else prompt on stdin + files (see
     // ARGV_INLINE_LIMIT). The staging dir, when any, is removed on every
@@ -696,7 +689,7 @@ export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, perm
     if (bridgeKey) bridgeEvents.on('failure', onBridgeFailure);
 
     superviseSpawn({
-      file: resolved.bin, args, displayBin: bin, cwd, env: spawnEnv, stdin: plan.stdin ?? null,
+      file: bin, cli: CLAUDE_CLI, args, displayBin: bin, cwd, env: spawnEnv, stdin: plan.stdin ?? null,
       signal, asAgent, stagedDir: plan.dir || null, onEvent,
       cleanup: () => {
         if (bridgeKey) bridgeEvents.off('failure', onBridgeFailure);
@@ -714,7 +707,7 @@ export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, perm
       classify: classifyError,
       isBenignStderr: isBenignStderrLine,
       redactText: redactor ? redactor.text : null,
-      spawnError: (err, prefix) => spawnFailure(bin, err, prefix),
+      spawnError: (err, prefix) => spawnFailure(err, prefix),
       // A8: a guarded read also returns its guard's decisions (read before cleanup removes the log), so the caller can
       // check that every tool call was decided (file-read-guard.mjs guardDecisionsCover).
       onDone: (code) => ({ text: resultText || assistantText, exitCode: code, ...(plan.readGuardLog ? { readGuardDecisions: readGuardDecisions(plan.readGuardLog) } : {}) }),

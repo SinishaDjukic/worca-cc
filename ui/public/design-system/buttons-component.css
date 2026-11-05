@@ -9,6 +9,10 @@
 .btn:hover:not(:disabled){background-color:var(--btn-hover);}
 .btn:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 .btn:disabled{opacity:.45;cursor:not-allowed;}
+/* A step that stays in the tab order and explains itself: only the Shaper requirements surfaces (Shape requirements,
+   Agree and plan). Other .btn[aria-disabled] elsewhere in the app keep their own look. */
+.btn[aria-disabled="true"][data-ask-card-shape],.shape-reqs .btn[aria-disabled="true"]{opacity:.45;cursor:not-allowed;}
+.btn-primary[aria-disabled="true"][data-ask-card-shape]:hover,.shape-reqs .btn-primary[aria-disabled="true"]:hover{background-color:var(--ink);}
 .btn svg{flex:none;}
 .btn-sm{height:28px;padding:0 10px;gap:5px;font-size:var(--fs-meta);}
 .btn-lg{height:40px;padding:0 18px;gap:8px;font-size:var(--fs-body);}
@@ -70,6 +74,13 @@
 .menu-item.is-danger:hover:not(:disabled){background:var(--red-bg);}
 .menu-sep{height:1px;margin:4px 6px;background:var(--line);}
 .menu-h{padding:8px 9px 4px;color:var(--ink-2);font-size:var(--fs-meta);font-weight:600;}
+/* SentencePicker (docs/design-system.md › Worca Rail): the chosen words inside the sentence they change. The menu it
+   opens is openMenu's .menu (toggleMenu), so only the trigger is drawn here. */
+.spick{position:relative;}
+.spick-b{display:inline;margin:0;padding:0;border:0;border-radius:var(--r-xs);background:none;font:inherit;font-weight:600;line-height:inherit;color:var(--ink);white-space:nowrap;cursor:pointer;transition:background-color 100ms,box-shadow 100ms;}
+.spick-b svg{margin-left:2px;vertical-align:-2px;color:var(--ink-2);}
+.spick-b:hover,.spick-b[aria-expanded="true"]{background:var(--hover);box-shadow:0 0 0 3px var(--hover);}
+.spick-b:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 
 /* A row a person opens (docs/design-system.md › Row button): full width inside its divided list, the --hover fill and
    the 6px corner on hover, an inset ring for the keyboard. Each list keeps its own grid, gaps and padding. */

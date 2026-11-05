@@ -161,6 +161,53 @@ export function claimFileForAgent(file, id, { uid = process.getuid?.() ?? null }
   } finally { closeSync(fd); }
 }
 
+const realFdOps = { fchown: fchownSync, fchmod: fchmodSync };
+
+/** The group a run's attached files go to: the pool user's own group (`id.runGid`), else the shared agent group
+ *  (`id.gid`, what a run folder keeps without a pool); null when neither is known. */
+function extrasGid(id) {
+  if (!id) return null;
+  if (Number.isInteger(id.runGid)) return id.runGid;
+  return Number.isInteger(id.gid) ? id.gid : null;
+}
+
+/** Give one attached file (`<run>/extras/<name>`) to the agent: its group (`extrasGid`), mode 0640, never world
+ *  readable. copyFile carries the source's mode and group (a staged 0660 copy in worca's own group), which setgid does
+ *  not override, so the agent could not read it. Opens the file itself (O_NOFOLLOW) and throws on a link, a non-regular
+ *  file or another user's file. No-op without isolation. */
+export function claimExtraFile(file, id, { uid = process.getuid?.() ?? null, fdOps = realFdOps } = {}) {
+  const gid = extrasGid(id);
+  if (gid == null) return;
+  const fd = openOwn(file, constants.O_RDONLY | constants.O_NONBLOCK, uid);
+  try {
+    if (!fstatSync(fd).isFile()) throw new Error(`${file} is not a regular file`);
+    fdOps.fchown(fd, -1, gid);
+    fdOps.fchmod(fd, 0o640);
+  } finally { closeSync(fd); }
+}
+
+/** The run's `extras/` folder and every file in it, for the agent: the folder in the agent's group, 2750 (traverse and
+ *  list, no write), each regular file as claimExtraFile. The folder itself must be a real folder worca owns (throws);
+ *  a file that cannot be claimed is skipped and returned in `failed` ({name, error}) so the caller can log it, and one
+ *  bad entry never blocks the rest. Every entry is reached through the open folder fd (/proc/self/fd, Linux, the only
+ *  place isolation runs): the agent can rename `extras/` and plant a link in its place, and a path lookup after the
+ *  check would then claim worca's own files elsewhere. No-op without isolation. */
+export function claimExtrasDir(dir, id, { uid = process.getuid?.() ?? null, fdOps = realFdOps } = {}) {
+  const failed = [];
+  const gid = extrasGid(id);
+  if (gid == null) return failed;
+  const fd = openOwn(dir, constants.O_RDONLY | constants.O_DIRECTORY, uid);
+  try {
+    fdOps.fchown(fd, -1, gid);
+    fdOps.fchmod(fd, 0o2750);
+    const via = `/proc/self/fd/${fd}`;
+    for (const name of readdirSync(via)) {
+      try { claimExtraFile(`${via}/${name}`, id, { uid, fdOps }); } catch (error) { failed.push({ name, error }); }
+    }
+  } finally { closeSync(fd); }
+  return failed;
+}
+
 /** Hand one run's own folder to its owner's agent (G19): the pool user's own group (`id.runGid`, which only worca and
  *  that user are in) with setgid 2770, so what either writes inside keeps the group and no other person's agent can
  *  open it; the parent becomes sticky, so an agent can neither rename nor delete a run folder it does not own.

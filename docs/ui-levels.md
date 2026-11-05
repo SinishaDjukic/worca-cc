@@ -343,12 +343,13 @@ Settings tabs once, pages of their own now. The old addresses (`#settings/plugin
 | Element | Level |
 |---|---|
 | Marketplace page: the Browse, Installed and Marketplaces tabs, install, update, Add marketplace, Health (Check health), leftover data and Purge | A |
+| Marketplace page, behind the `ticketUpdates` flag: the installed plugin sheet's **Ticket updates** section (Projects you work on and its popover, the rules and their move select, Add a project rule, the states), and "Moved to Ticket updates." on the old setting | A — with the Marketplace page |
 | Connectors page: the Sets, Servers and Skills views | A |
 | Models page: the catalog, and the Engines card (Default engine, Models per engine: Step models and Helper jobs tables, including titles, Auto classifier, PR description, Memory defragment, Agent generation and, behind the `requirements` flag, Requirements interview) | E |
 | Models page: the Roles card (Deep thinking, Everyday coding, Quick jobs per harness; its Claude / Codex switch is E). The Models nav entry is E, so below Expert the card opens from the `#models` address until the setup assistant adds a Simple-level way in | S |
 | Models page: the catalog toolbar (search, filter chips, folding groups), the editor dialog's Connection section, the Import-models dialog (Copilot and OpenAI-compatible sources) | E |
 | Providers page: Providers card (Copilot sign-in, account type, concurrency cap, key rows) and its Import-models shortcuts | E |
-| The Copilot notice modal; a card's "needs sign-in" pill and button; the New pipeline caption's "needs sign-in" note | all (rule 1 — they block a run) |
+| A card's "needs sign-in" pill and button; the New pipeline caption's "needs sign-in" note | all (rule 1 — they block a run) |
 
 ### Requirements (behind the `requirements` flag)
 
@@ -367,8 +368,7 @@ Settings tabs once, pages of their own now. The old addresses (`#settings/plugin
 | A feature's spec card: the sections and their edits, Let Worca rewrite this, criteria add / remove, assumptions Confirm / Reject, the folded flow, edge cases, rules and out of scope | S |
 | Ready to start?: the six checks and what each misses, Start in Worca, "Start before it's Ready…" and its dialog (the failing checks, the required reason, "Recorded as") | S |
 | Decide the assumptions: Confirm / Reject, Show the other N, Confirm the N left, "Done, ask about A-n" | S |
-| Ready to build: what Start does, the Workflow and Branch from chips, Start in Worca | S — the chips show a non-default workflow or branch at every level (rule 2) |
-| Ready to build: Change (the Workflow and Branch from pickers) | A — like New pipeline's workflow list and branches |
+| Ready to build: what Start does, the Workflow and Branch from chips, Change (the Workflow and Branch from pickers), Start in Worca and its Set up this run overlay (a preset, each agent's model and effort, each loop's cycles) | S — a product owner picks the workflow and branch at every level |
 | A started feature: Runs from this feature (each run's pill, spec version, "started before Ready", cost and link; the total; Start again with v<n>), Changed since the run started and Undo my changes, the "v<n> draft / v<n> started" switch | S |
 | What Worca found in the code (a feature whose project or workspace has no product brief): the summary, how often Worca looked and what it cost, Look again | S |
 | What Worca found in the code: the files Worca read | A |

@@ -6,11 +6,13 @@
 import { layoutDialog } from './dialog-layout.mjs';
 import { guardModal } from './modal-guard.mjs';
 import { makeSwitch } from './switch.mjs';
-import { COPILOT_TERMS, renderCopilotSignIn } from './bridge-view.mjs';
-import { renderRolesSection, readRolesValues } from './engine-settings-view.mjs';
+import { renderCopilotSignIn } from './bridge-view.mjs';
+import { renderRolesSection, ENGINE_EFFORTS } from './engine-settings-view.mjs';
+import { renderInheritField, readInheritField } from './inherit-field.mjs';
 import { fetchJson as defaultFetchJson, renderResults, PORT_EMPTY_NOTE, PORT_SWITCH_NOTE, AUTH_OPTIONS } from './settings-network-proxy.mjs';
 import { LEVEL_INFO, UI_LEVELS } from './ui-level.mjs';
-import { ROLE_LABELS, MODEL_ROLES } from '../../src/shared/model-roles.mjs';
+import { ROLE_LABELS, MODEL_ROLES, ROLE_HARNESSES } from '../../src/shared/model-roles.mjs';
+import { CHAT_ENGINE_NAMES, engineLabel } from '../../src/shared/engine-switch.mjs';
 import { UPSTREAM_TIMEOUTS } from '../../src/shared/proxy-timeouts.mjs';
 
 export const SETUP_STEPS = Object.freeze([
@@ -124,12 +126,12 @@ function answersFrom(saved, detect, entry, step) {
     access: {
       claude: check('claude')?.state === 'ok' || (!cpConnected && !pv.openai?.configured && !pv.anthropic?.configured),
       copilot: cpConnected || (entry === 'fix' && step === 'access'),
-      copilotAck: !!pv.copilot?.termsCurrent, copilotAccount: pv.copilot?.accountType || 'individual', copilotConnected: cpConnected, copilotLogin: pv.copilot?.login || '',
+      copilotAccount: pv.copilot?.accountType || 'individual', copilotConnected: cpConnected, copilotLogin: pv.copilot?.login || '',
       openai: !!pv.openai?.configured, openaiUrl: pv.openai?.baseUrl || '', openaiKey: '',
       anthropic: !!pv.anthropic?.configured, anthropicUrl: pv.anthropic?.baseUrl || '', anthropicKey: '',
       importModels: [],
     },
-    models: { modelRoles: structuredClone(s.modelRoles || {}), testRoles: true },
+    models: { modelRoles: structuredClone(s.modelRoles || {}), askModel: structuredClone(s.askModels?.[askEngineOf(s)] ?? null), testRoles: true },
     work: Object.fromEntries(WORK_KEYS.map((k) => [k, structuredClone(s[k] ?? null)])),
     // Not an answer: what detection found (A22). Kept out of the diff by buildApplyBody.
     found: { proxy: found, claude: entry === 'first' && check('claude')?.state === 'ok' },
@@ -150,6 +152,11 @@ function savedNetworkPatch(saved) {
   return { enabled: true, upstream: p.upstream || null, auth: p.auth || 'auto', noProxy: (Array.isArray(p.noProxy) ? p.noProxy.join(', ') : p.noProxy) || null,
     ...(p.fixedPort ? { fixedPort: p.fixedPort } : {}), ...(p.timeouts && Object.keys(p.timeouts).length ? { timeouts: p.timeouts } : {}) };
 }
+
+/** The engine Chat's new chats start on, as saved (askEngine, D17; unset or unknown = Claude): the Chat field's slot. */
+export function askEngineOf(settings = {}) { return CHAT_ENGINE_NAMES.includes(settings?.askEngine) ? settings.askEngine : 'claude'; }
+/** What an empty Chat field means: the Everyday coding role where roles exist (withRole), else the engine's own default. */
+const chatFallback = (engine) => (ROLE_HARNESSES.includes(engine) ? 'same as Everyday coding' : `${engineLabel(engine)}'s default model`);
 
 /**
  * The modelRoles patch (A10): every harness/role whose answer differs from the saved one, with the answer,
@@ -179,8 +186,7 @@ export function buildApplyBody(saved, answers) {
   const a = answers.access; const pv = saved.providers || {};
   const cpSaved = !!pv.copilot?.connected || pv.broker?.providers?.copilot?.state === 'set';
   if (a.copilot && ((a.copilotConnected && !cpSaved) || a.copilotAccount !== (pv.copilot?.accountType || 'individual') || a.importModels.length)) {
-    // acknowledgeTerms only from the person's own switch (security-2-2); the server refuses any value but true.
-    body.access = { ...body.access, copilot: { ...(a.copilotAck ? { acknowledgeTerms: true } : {}), accountType: a.copilotAccount, signIn: true,
+    body.access = { ...body.access, copilot: { accountType: a.copilotAccount, signIn: true,
       ...(a.importModels.length ? { importModels: a.importModels } : {}) } };
   }
   for (const name of ['openai', 'anthropic']) {
@@ -189,8 +195,14 @@ export function buildApplyBody(saved, answers) {
     const patch = { ...(url !== (pv[name]?.baseUrl || '') ? { baseUrl: url } : {}), ...(key ? { apiKey: key } : {}) };
     if (Object.keys(patch).length) body.access = { ...body.access, [name]: patch };
   }
+  const models = {};
   const roles = rolePatch(saved.settings?.modelRoles || {}, answers.models.modelRoles);
-  if (Object.keys(roles).length) body.models = { modelRoles: roles, testRoles: answers.models.testRoles };
+  if (Object.keys(roles).length) Object.assign(models, { modelRoles: roles, testRoles: answers.models.testRoles });
+  // Chat's model on its saved engine: sent only when it differs; null clears it so Chat follows Everyday again.
+  const chatEngine = askEngineOf(saved.settings);
+  const chat = answers.models.askModel ?? null;
+  if (!same(chat, saved.settings?.askModels?.[chatEngine] ?? null)) models.askModels = { [chatEngine]: chat };
+  if (Object.keys(models).length) body.models = models;
   for (const k of WORK_KEYS) {
     if (!same(answers.work[k], saved.settings?.[k] ?? null)) (body.work ||= {})[k] = answers.work[k];
   }
@@ -202,6 +214,7 @@ export function diffRows(saved, answers) {
   const body = buildApplyBody(saved, answers); const n = answers.network; const a = answers.access; const w = answers.work;
   const sources = [a.claude && 'Claude Code', a.copilot && 'GitHub Copilot', a.openai && 'OpenAI-compatible', a.anthropic && 'Anthropic-compatible'].filter(Boolean);
   const roles = answers.models.modelRoles[w.runEngine || 'claude'] || {};
+  const chatLine = { role: 'Chat', model: answers.models.askModel?.model || null, fallback: chatFallback(askEngineOf(saved.settings)) };
   const money = (v) => (v == null ? 'none' : `$${v}`);
   // Whether the team filled a key of this group (the Team chip); network and access never: D12.
   const teamIn = (group) => (answers.found?.team || []).some((k) => k.startsWith(`${group}.`));
@@ -210,8 +223,8 @@ export function diffRows(saved, answers) {
       value: n.mode === 'proxy' ? `Corporate proxy · ${n.host}:${n.port || '8080'}` : 'Direct' },
     { group: 'access', step: 'access', label: 'Model access', changed: !!body.access, team: false, value: sources.join(', ') || 'None' },
     { group: 'models', step: 'models', label: 'Models', changed: !!body.models, team: teamIn('models'),
-      value: MODEL_ROLES.map((r) => `${ROLE_LABELS[r]} · ${roles[r]?.model || 'each job’s own default'}`).join('; '),
-      lines: MODEL_ROLES.map((r) => ({ role: ROLE_LABELS[r], model: roles[r]?.model || null })) },
+      value: [...MODEL_ROLES.map((r) => `${ROLE_LABELS[r]} · ${roles[r]?.model || 'each job’s own default'}`), `Chat · ${chatLine.model || chatLine.fallback}`].join('; '),
+      lines: [...MODEL_ROLES.map((r) => ({ role: ROLE_LABELS[r], model: roles[r]?.model || null })), chatLine] },
     { group: 'work', step: 'work', label: 'How you work', changed: !!body.work, team: teamIn('work'),
       value: `${LEVEL_INFO[w.uiLevel || 'simple']?.label || 'Simple'} interface · per run ${money(w.pipelineCostLimitUsd)} · total ${money(w.totalCostLimitUsd)}` },
   ];
@@ -229,8 +242,6 @@ export function nextGate(step, answers, { saved, tested = null, now = Date.now()
   if (step === 'access') {
     const a = answers.access;
     if (!a.claude && !a.copilot && !a.openai && !a.anthropic) return { ok: false, reason: 'Pick at least one source' };
-    // Consent first, even when already connected (an older terms version leaves copilotAck false).
-    if (a.copilot && !a.copilotAck && !saved?.providers?.broker?.enabled) return { ok: false, reason: 'Accept the GitHub Copilot notice to continue' };
     if (a.copilot && !a.copilotConnected) return { ok: false, reason: 'Sign in to GitHub Copilot to continue' };
     if (a.openai && !a.openaiUrl.trim()) return { ok: false, reason: 'Enter the server address' };
     const claude = (detect?.checks || []).find((c) => c.id === 'claude');
@@ -256,7 +267,7 @@ const SUBTITLES = Object.freeze({
   check: { first: 'Worca checks this machine, then asks only what it could not find.', other: 'Status of your local setup.' },
   network: 'Worca’s agents use this route for every model call.',
   access: 'Turn on every source you can use. You need at least one.',
-  models: 'Each role sets the model for every job that has none of its own.',
+  models: 'Each role sets the model for every job that has none of its own. Chat can have a model of its own.',
   work: 'You can change all of these later in Settings.',
   review: { first: 'Worca will save these settings, sign in, import the models and test each one.', other: 'Only the rows marked Changed will be written.' },
   apply: 'Each change runs in order and shows its result.',
@@ -624,8 +635,6 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
       const box = el('div', 'sa-step sa-copilot');
       if (broker) box.append(brokerNote('Copilot sign-in is kept by the credential broker.'));
       else {
-        for (const para of COPILOT_TERMS.body.split('\n\n')) box.append(el('p', 'sa-sub', para));
-        box.append(sw(COPILOT_TERMS.checkbox, a.copilotAck, (on) => { a.copilotAck = on; paint(); }, 'sa-cp-ack'));
         box.append(field('Plan', seg(COPILOT_PLANS, a.copilotAccount, (v) => { a.copilotAccount = v; paint(); }, { label: 'Plan' }), null));
         if (a.copilotConnected) {
           // Use another account: sign out (the Providers page's endpoint), then the device sign-in starts here.
@@ -634,7 +643,7 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
           const list = rows('sa-cp', li);
           if (S.cpSwitch) {
             const ask = row(badge('amber', 'Check'), 'Sign out of GitHub Copilot?', 'Models bridged through Copilot stop working until you sign in again.');
-            const go = btn('Sign out and sign in again', 'btn btn-sm sa-cp-switch-go', () => { void copilotSwitch(); }); go.disabled = !a.copilotAck;
+            const go = btn('Sign out and sign in again', 'btn btn-sm sa-cp-switch-go', () => { void copilotSwitch(); });
             ask.append(go, btn('Cancel', 'btn btn-sm btn-quiet sa-cp-switch-cancel', () => { S.cpSwitch = false; paint(); }));
             list.append(ask);
           }
@@ -642,7 +651,7 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
         }
         else {
           const go = btn('Sign in with GitHub', 'btn btn-sm sa-cp-signin', () => { void copilotSignIn(); });
-          go.disabled = !a.copilotAck || !!S.cpFlow; box.append(go);
+          go.disabled = !!S.cpFlow; box.append(go);
           if (S.cpFlow) {
             const flow = renderCopilotSignIn(S.cpFlow, { doc });
             flow.querySelector('.mv-cp-cancel')?.addEventListener('click', () => { S.cpFlow = null; timers.clearTimeout(S.cpT); paint(); });
@@ -711,15 +720,43 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
     const host = el('div', 'sa-roles');
     const pending = pendingCopilotModels(S.copilotModels);
     const catalog = [...S.saved.catalog, ...pending];
+    const m = S.answers.models;
+    const chatEngine = askEngineOf(S.saved.settings);
+    // Picked Copilot models still to import, from the roles and the Chat field alike: Apply imports exactly these.
+    const syncImports = () => {
+      const picked = new Set([...Object.values(m.modelRoles || {}).flatMap((h) => Object.values(h || {}).map((v) => v?.model)), m.askModel?.model].filter(Boolean));
+      S.answers.access.importModels = pending.filter((p) => picked.has(p.id)).map((p) => p.id.replace(/^copilot-/, ''));
+    };
+    const chatHost = el('div', 'sa-chat-model');
+    // The empty choice names what Chat uses now: the Everyday pick on screen (a role), else the engine's own default.
+    const paintChat = () => {
+      const everyday = ROLE_HARNESSES.includes(chatEngine) && m.modelRoles?.[chatEngine]?.everyday?.model ? m.modelRoles[chatEngine].everyday : undefined;
+      const f = renderInheritField(doc, { id: `models.${chatEngine}.ask`, label: 'Default model for Chat', kind: 'model', level: 'user', engine: chatEngine,
+        catalog, efforts: ENGINE_EFFORTS[chatEngine], own: m.askModel ?? undefined,
+        inherited: { value: everyday, source: 'role', label: everyday ? 'Same as Everyday coding' : null }, defaultLabel: chatFallback(chatEngine) });
+      f.querySelector('.inherit-model').dataset.saField = `models.askModels.${chatEngine}`;   // an apply 400 marks it (markField)
+      chatHost.replaceChildren(f);
+    };
+    // A change (or Use default) only: opening a select must not rewrite a saved value. No model = "same as Everyday":
+    // stores nothing, so an effort chosen alone is dropped with it (withRole would ignore it).
+    const readChat = () => {
+      const f = chatHost.querySelector('.inherit-field'); if (!f) return;
+      const v = readInheritField(f);
+      const next = v && v.model ? v : null;
+      if (same(next, m.askModel ?? null)) return;
+      m.askModel = next; syncImports(); paintFoot();
+    };
+    chatHost.addEventListener('change', readChat);
+    chatHost.addEventListener('click', (e) => { if (e.target.closest?.('.inherit-clear')) readChat(); });
     body.append(host);
-    renderRolesSection(host, { roles: S.answers.models.modelRoles, catalog, engine: S.answers.work.runEngine || 'claude', onChange: (next) => {
+    renderRolesSection(host, { roles: m.modelRoles, catalog, engine: S.answers.work.runEngine || 'claude', onChange: (next) => {
       // A click that changes nothing (the harness switch) keeps the answers as they were.
-      if (!Object.keys(rolePatch(S.answers.models.modelRoles, next)).length) return;
-      S.answers.models.modelRoles = next;
-      const picked = new Set(Object.values(next).flatMap((h) => Object.values(h || {}).map((v) => v?.model)).filter(Boolean));
-      S.answers.access.importModels = pending.filter((m) => picked.has(m.id)).map((m) => m.id.replace(/^copilot-/, ''));
-      paintFoot();
+      if (!Object.keys(rolePatch(m.modelRoles, next)).length) return;
+      m.modelRoles = next;
+      syncImports(); paintChat(); paintFoot();
     } });
+    paintChat();
+    body.append(section('Chat', `New chats on ${engineLabel(chatEngine)} start with this model. The engine is set in Settings › Chat.`, chatHost));
   }
 
   function paintWork() {
@@ -755,7 +792,7 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
       const what = el('td', 'sa-review-what'); what.append(el('div', 'sa-review-name', r.label));
       if (r.lines) {
         const ul = el('ul', 'sa-review-lines');
-        for (const l of r.lines) { const li = el('li'); li.append(el('span', 'sa-review-role', l.role), doc.createTextNode(l.model ? labelOf(l.model) : 'each job’s own default')); ul.append(li); }
+        for (const l of r.lines) { const li = el('li'); li.append(el('span', 'sa-review-role', l.role), doc.createTextNode(l.model ? labelOf(l.model) : (l.fallback || 'each job’s own default'))); ul.append(li); }
         what.append(ul);
       } else what.append(el('div', 'sa-review-value', r.value));
       const marks = el('td', 'sa-review-marks');
@@ -767,8 +804,9 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
     }
     body.append(list);
     // Next to the Apply button it governs: the role tests run on the Apply step, after the network, sign-ins and
-    // imports are saved, so they test what will run. Only with changed roles: the body carries testRoles only then.
-    if (diffRows(S.saved, S.answers).some((r) => r.group === 'models' && r.changed)) {
+    // imports are saved, so they test what will run. Only with changed roles: the body carries testRoles only then
+    // (the Chat model is not tested here).
+    if (buildApplyBody(S.saved, S.answers).models?.modelRoles) {
       body.append(sw('Test models after applying', S.answers.models.testRoles, (on) => { S.answers.models.testRoles = on; paintFoot(); }, 'sa-test-roles'));
     }
     if (entry === 'team' && !tbody.children.length) body.append(el('p', 'hint sa-review-empty', S.answers.found.teamGone ? TEAM_GONE_LINE : TEAM_MATCHES_LINE));
@@ -956,13 +994,10 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
     paint();
   }
 
-  // Model access › Copilot: acknowledge, start the device flow, poll on the injected timers (A12).
+  // Model access › Copilot: start the device flow, poll on the injected timers (A12).
   async function copilotSignIn() {
     const a = S.answers.access;
-    if (!a.copilotAck || S.saved.providers?.broker?.enabled) return;
-    const ack = await call('/api/providers/copilot/acknowledge', { method: 'POST', body: {} });
-    if (closed) return;
-    if (!ack.ok) { S.error = ack.data.error || 'Could not accept the notice'; paint(); return; }
+    if (S.saved.providers?.broker?.enabled) return;
     const start = await call('/api/providers/copilot/login', { method: 'POST', body: {} });
     if (closed) return;
     if (!start.ok) { S.error = start.data.error || 'Sign-in did not start'; paint(); return; }

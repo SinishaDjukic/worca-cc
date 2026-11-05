@@ -364,3 +364,63 @@ test('slice 3: without `hold` (the chat card, the run page) a group between runs
   paintRunStatus(host, groupModel({ kind: 'feature', title: 'T', members: [F.at(-1), WAIT2] }, { now: NOW }));
   assert.equal(host.querySelector('.run-status-bar').hidden, true, 'no hold: the waiting group has no bar');
 });
+
+// Requirements slices: a reviewed slice row on the chat card unfolds its Requirements check.
+const REQ_CHECK = { passed: 2, total: 3, items: [
+  { id: 'R-po-1', label: 'R-po-1 · covered by the diff', pass: true, detail: 'People see it' },
+  { id: 'R-ux-1', label: 'R-ux-1 · covered by the diff', pass: true, detail: 'It reads well' },
+  { id: 'R-ops-1', label: 'R-ops-1 · not covered by the diff', pass: false, detail: 'Turning the flag off removes the export, and a long criterion text wraps inside the row' },
+] };
+const reqRow = () => ({ members: [
+  { position: 1, title: 'Slice 1', href: '#running/r1', pipelineId: 'p1', model: runModel({ status: 'done' }, { now: NOW }) },
+  { position: 2, title: 'Slice 2', href: '#running/r2', ticketId: 't2', model: runModel({ status: 'done' }, { now: NOW }) },
+] });
+
+test('renderMemberRows draws a Requirements fold for a keyed member, none without checks', () => {
+  const doc = dom();
+  const ol = renderMemberRows(doc, reqRow(), { checks: { p1: REQ_CHECK } });
+  const [one, two] = ol.querySelectorAll('.run-member');
+  const line = one.querySelector('.run-member-main > .plan-check-line');
+  assert.equal(line.textContent.replace('›', '').trim(), 'Requirements 2/3 · 1 to fix');
+  assert.equal(one.querySelector('.run-member-line').nextElementSibling, line, 'the fold line follows the status line');
+  assert.equal(line.nextElementSibling.className, 'plan-checks');
+  assert.equal(line.nextElementSibling.hidden, true, 'folded by default');
+  const bad = [...one.querySelectorAll('.plan-check-row')].find((r) => !r.classList.contains('ok'));
+  assert.equal(bad.querySelector('.plan-check-label').textContent, 'R-ops-1 · not covered by the diff');
+  assert.match(bad.querySelector('.plan-check-detail').textContent, /^Turning the flag off/);
+  assert.equal(two.querySelector('.plan-check-line'), null);
+  assert.equal(renderMemberRows(doc, reqRow()).querySelectorAll('.plan-check-line').length, 0);
+  assert.equal(renderMemberRows(doc, reqRow(), { checks: {} }).querySelectorAll('.plan-check-line').length, 0);
+  assert.equal(renderMemberRows(doc, reqRow(), { checks: { t2: REQ_CHECK } }).querySelectorAll('.run-member')[1].querySelectorAll('.plan-check-line').length, 1, 'a ticket key');
+});
+
+test('the fold line toggles aria-expanded; a click on the line or an unfolded row does not follow the title link', async () => {
+  const doc = dom();
+  const ol = renderMemberRows(doc, reqRow(), { checks: { p1: REQ_CHECK } });
+  doc.body.append(ol);
+  let followed = 0;
+  ol.querySelector('.run-member-title').addEventListener('click', () => { followed += 1; });
+  const line = ol.querySelector('.plan-check-line');
+  line.click();
+  assert.equal(line.getAttribute('aria-expanded'), 'true');
+  assert.equal(line.nextElementSibling.hidden, false);
+  ol.querySelector('.plan-check-row').click();
+  line.click();
+  assert.equal(line.getAttribute('aria-expanded'), 'false');
+  assert.equal(followed, 0);
+  const { readFile } = await import('node:fs/promises');
+  const css = await readFile(new URL('../ui/public/runs/group-page.css', import.meta.url), 'utf8');
+  assert.ok(css.includes('.run-members.is-table .run-member-main :is(.plan-check-line, .plan-checks){position:relative;z-index:1;}'),
+    'the fold sits above the stretched title link');
+});
+
+test('at 375px the fold and a long criterion detail wrap: scrollWidth <= clientWidth', () => {
+  const doc = dom();
+  const host = doc.createElement('div');
+  host.style.width = '375px';
+  const ol = renderMemberRows(doc, reqRow(), { checks: { p1: REQ_CHECK } });
+  host.append(ol);
+  doc.body.append(host);
+  ol.querySelector('.plan-check-line').click();
+  for (const el of [ol.querySelector('.run-member-main'), ...ol.querySelectorAll('.plan-check-row')]) assert.ok(el.scrollWidth <= el.clientWidth);
+});

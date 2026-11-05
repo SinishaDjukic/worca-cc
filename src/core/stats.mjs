@@ -25,6 +25,7 @@ import {
 } from './cost-budget.mjs';
 import { savedUsd } from '../shared/human-estimate.mjs';
 import { effectiveHumanRateUsd } from './human-rate.mjs';
+import { aggregateReviewQuality, REVIEW_STATS_VERSION } from '../shared/review/quality.mjs';
 
 const RANGES = ['today', 'week', 'month', 'lastMonth', 'custom', 'all'];
 const DAY_MS = 86400000;
@@ -155,6 +156,26 @@ export function shapingGroups(fromMs, toMs) {
     };
   }
   return { groups: [...bySize.values()].filter((g) => g.shaped.runs || g.unshaped.runs) };
+}
+
+// Review quality (#990 s6): the per-role review counts of finished runs started in the window, newest first.
+const REVIEW_QUALITY_SELECT = `
+    SELECT review_stats FROM pipelines
+    WHERE status = 'done' AND review_stats IS NOT NULL
+      AND COALESCE(started_at, updated_at) >= ?
+      AND COALESCE(started_at, updated_at) <  ?
+    ORDER BY COALESCE(started_at, updated_at) DESC`;
+
+/** @returns {{runs:number, roles:Array<object>}} runs = the summaries read; roles = aggregateReviewQuality rows.
+ *  A row whose JSON does not parse, or of an unknown version, is skipped. */
+export function reviewQuality(fromMs, toMs) {
+  const summaries = [];
+  for (const r of prepare(REVIEW_QUALITY_SELECT).all(new Date(fromMs).toISOString(), new Date(toMs).toISOString())) {
+    let summary;
+    try { summary = JSON.parse(r.review_stats); } catch { continue; }
+    if (summary?.v === REVIEW_STATS_VERSION) summaries.push(summary);
+  }
+  return { runs: summaries.length, roles: aggregateReviewQuality(summaries) };
 }
 
 function shapeTotals(row) {

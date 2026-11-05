@@ -46,6 +46,8 @@
 .run-members.is-table .run-member-go{color:var(--ink-3);opacity:0;}
 .run-members.is-table .run-member:hover .run-member-go{opacity:1;}
 .run-members.is-table .run-member-pr{position:relative;z-index:1;}   /* the PR chip stays its own link */
+/* A slice row's Requirements fold sits above the stretched title link: its line toggles, its rows' text can be selected. */
+.run-members.is-table .run-member-main :is(.plan-check-line, .plan-checks){position:relative;z-index:1;}
 /* QA 7: a member row's chip is its own link to the PR; it keeps the chip's tone colour (.runs-pr.is-*). */
 .run-members.is-table a.runs-pr{text-decoration:none;}
 .run-members.is-table a.runs-pr:hover .runs-pr-word{text-decoration:underline;}

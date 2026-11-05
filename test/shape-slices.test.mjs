@@ -4,7 +4,9 @@ import {
   OUTLINE_FILE, OUTLINE_CHANGE_FILE, OUTLINE_ROUNDS_MAX, OUTLINE_EDITS_MAX, SLICE_IDS, SLICE_LABELS, FLAT_NOTE,
   normalizeOutline, checkSlices, normalizeEdits, applyOutlineEdits,
   outlineMarkdown, slicingBlock, outlineFixFeedback, outlineFixAllFeedback, outlineFeedbackBlock, sliceScopeBlock, sliceBrief, replanBrief, changelogWithFeature,
+  settleLeftOut, sliceRequirementIds,
 } from '../src/shared/shape/slices.mjs';
+import { criterionIds } from '../src/shared/review/coverage.mjs';
 import { checkShape, isTestable } from '../src/shared/shape/shape.mjs';
 import { wellShapedPlan } from './helpers/shape-plan.mjs';
 
@@ -300,4 +302,107 @@ test('outlineFixAllFeedback: one failure reads as outlineFixFeedback; several ar
   assert.ok(t.includes(`- "${SLICE_LABELS.notTiny}"\n`));
   assert.match(t, /Rewrite the outline so these checks pass\.$/);
   assert.doesNotMatch(t, /Fix the plan/);
+});
+
+// Slice 2 of the requirements feature: the outline carries the agreed R-ids.
+const AGREED = ['R-po-1', 'R-po-2', 'R-ux-1', 'R-qa-1', 'R-ops-1'].map((id) => ({ id, text: `text of ${id}` }));
+const reqOutline = (a, b, o = {}) => goodOutline({ slices: [slice('s1', { requirements: a }), slice('s2', { dependsOn: ['s1'], requirements: b })], ...o });
+const placed = (o) => [...o.slices.flatMap((s) => s.requirements), ...o.leftOut.map((e) => e.id)];
+const onceEach = (o) => assert.deepEqual([...placed(o)].sort(), AGREED.map((a) => a.id).sort(), JSON.stringify(o));
+
+test('normalizeOutline with agreed: lists ids per slice, unknown ids dropped, the first slice wins a duplicate', () => {
+  const r = normalizeOutline(reqOutline(['R-po-1', 'R-x-9', 'R-po-1', 'R-ux-1'], ['R-ux-1', 'R-po-2', 'R-qa-1']),
+    { agreed: [...AGREED, { id: 'bad', text: 'x' }, { id: 'R-po-1', text: 'dup' }] });
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.outline.slices.map((s) => s.requirements), [['R-po-1', 'R-ux-1'], ['R-po-2', 'R-qa-1']]);
+  assert.deepEqual(r.outline.agreed, AGREED);
+  assert.deepEqual(r.outline.leftOut, [{ id: 'R-ops-1', reason: '' }]);
+});
+
+test('an unplaced id lands in leftOut with an empty reason', () => {
+  const r = normalizeOutline({ ...reqOutline(['R-po-1'], ['R-po-2']), leftOut: [{ id: 'R-qa-1', reason: '  Moved to a later feature ' }] }, { agreed: AGREED });
+  assert.deepEqual(r.outline.leftOut, [{ id: 'R-qa-1', reason: 'Moved to a later feature' }, { id: 'R-ux-1', reason: '' }, { id: 'R-ops-1', reason: '' }]);
+  onceEach(r.outline);
+  assert.equal(normalizeOutline({ ...reqOutline([], []), leftOut: [{ id: 'R-qa-1', reason: 'x'.repeat(300) }] }, { agreed: AGREED }).outline.leftOut[0].reason.length, 200);
+});
+
+test('exactly once after merge/remove edits', () => {
+  const three = normalizeOutline(goodOutline({ slices: [slice('s1', { requirements: ['R-po-1'] }), slice('s2', { requirements: ['R-po-2', 'R-ux-1'] }),
+    slice('s3', { requirements: ['R-qa-1'] })] }), { agreed: AGREED }).outline;
+  const seqs = {
+    'merge 1+2 then 1+2 again (chain)': [{ op: 'merge', id: 's1' }, { op: 'merge', id: 's1' }],
+    'remove 2 then merge 1+2': [{ op: 'remove', id: 's2' }, { op: 'merge', id: 's1' }],
+    'remove down to one slice': [{ op: 'remove', id: 's3' }, { op: 'remove', id: 's2' }],
+  };
+  for (const [name, edits] of Object.entries(seqs)) {
+    const r = applyOutlineEdits(three, edits);
+    assert.equal(r.ok, true, name);
+    onceEach(r.outline);
+    onceEach(settleLeftOut(r.outline));
+  }
+  const chain = applyOutlineEdits(three, seqs['merge 1+2 then 1+2 again (chain)']).outline;
+  assert.deepEqual(chain.slices[0].requirements, ['R-po-1', 'R-po-2', 'R-ux-1', 'R-qa-1']);
+  const removed = applyOutlineEdits(three, [{ op: 'remove', id: 's2' }]).outline;
+  assert.deepEqual(removed.leftOut.slice(-2), [{ id: 'R-po-2', reason: 'Removed from the outline' }, { id: 'R-ux-1', reason: 'Removed from the outline' }]);
+  const bad = applyOutlineEdits(three, [{ op: 'merge', id: 's3' }]);
+  assert.equal(bad.ok, false);
+  onceEach(three);
+  const raw = { ...reqOutline(['R-po-1'], ['R-po-2']), leftOut: [{ id: 'R-qa-1', reason: 'a' }, { id: 'R-qa-1', reason: 'b' }, { id: 'R-z-1', reason: 'c' }, { id: 'R-po-1', reason: 'd' }] };
+  const n = normalizeOutline(raw, { agreed: AGREED }).outline;
+  assert.deepEqual(n.leftOut, [{ id: 'R-qa-1', reason: 'a' }, { id: 'R-ux-1', reason: '' }, { id: 'R-ops-1', reason: '' }]);
+  onceEach(n);
+});
+
+test('settleLeftOut fills empty reasons', () => {
+  const o = normalizeOutline(reqOutline(['R-po-1'], []), { agreed: AGREED }).outline;
+  const s = settleLeftOut(o);
+  assert.ok(s.leftOut.every((e) => e.reason));
+  assert.equal(s.leftOut.find((e) => e.id === 'R-ops-1').reason, 'Not placed in a slice when the outline was approved');
+  const plain = goodOutline();
+  assert.equal(settleLeftOut(plain), plain);
+});
+
+test('checkSlices adds the requirements row only with agreed, ✕ with `R-ops-1 is in no slice`', () => {
+  const o = normalizeOutline(reqOutline(['R-po-1', 'R-po-2', 'R-ux-1'], ['R-qa-1']), { agreed: AGREED }).outline;
+  const c = checkSlices(o);
+  assert.equal(c.total, 6);
+  const row = c.items.at(-1);
+  assert.deepEqual([row.id, row.label, row.pass, row.detail], ['requirements', 'Every agreed requirement is in one slice or left out with a reason', false, 'R-ops-1 is in no slice']);
+  assert.equal(checkSlices(settleLeftOut(o)).items.at(-1).pass, true);
+  assert.equal(checkSlices(goodOutline()).total, 5);
+});
+
+test('no agreed list: today\'s output, no new keys', () => {
+  const raw = reqOutline(['R-po-1'], ['R-po-2']);
+  const r = normalizeOutline(raw);
+  assert.deepEqual(Object.keys(r.outline), ['why', 'slices']);
+  assert.equal('requirements' in r.outline.slices[0], false);
+  assert.deepEqual(normalizeOutline(raw, { agreed: [] }), r);
+  assert.equal(outlineMarkdown(r.outline).includes('Satisfies'), false);
+  assert.equal(sliceBrief({ featureTitle: 'C', outline: r.outline, index: 2 }).includes('Satisfies'), false);
+  assert.equal(slicingBlock({ file: '/x' }), slicingBlock({ file: '/x', requirements: false }));
+  assert.deepEqual(applyOutlineEdits(r.outline, [{ op: 'remove', id: 's2' }]).outline, { why: r.outline.why, slices: [r.outline.slices[0]] });
+});
+
+test('sliceBrief lists `Satisfies:` and only its slice\'s criterion lines (`criteriaList` returns 4 ids)', () => {
+  const o = normalizeOutline(reqOutline(['R-po-1'], ['R-po-2', 'R-ux-1', 'R-qa-1', 'R-ops-1']), { agreed: AGREED }).outline;
+  const brief = sliceBrief({ featureTitle: 'Charts', outline: o, index: 2 });
+  assert.ok(brief.includes('Acceptance:\n- GET /api/x returns 200\n\nSatisfies: R-po-2, R-ux-1, R-qa-1, R-ops-1\n- **R-po-2** text of R-po-2\n'), brief);
+  assert.deepEqual(criterionIds(brief), ['R-po-2', 'R-ux-1', 'R-qa-1', 'R-ops-1']);
+  assert.ok(outlineMarkdown(o).includes('   Satisfies: R-po-1\n'));
+  assert.deepEqual(sliceRequirementIds({ index: 2, outline: o }), ['R-po-2', 'R-ux-1', 'R-qa-1', 'R-ops-1']);
+  assert.deepEqual(sliceRequirementIds({ index: 1, outline: goodOutline() }), []);
+});
+
+test('normalizeOutline(raw) keeps raw.agreed (ticket re-normalise)', () => {
+  const o = settleLeftOut(normalizeOutline(reqOutline(['R-po-1', 'R-po-2'], ['R-ux-1', 'R-qa-1']), { agreed: AGREED }).outline);
+  assert.deepEqual(normalizeOutline(JSON.parse(JSON.stringify(o))).outline, o);
+});
+
+test('agreed is capped at 64 entries and 300-char texts', () => {
+  const big = Array.from({ length: 70 }, (_, i) => ({ id: `R-po-${i + 1}`, text: 'y'.repeat(400) }));
+  const o = normalizeOutline(goodOutline(), { agreed: big }).outline;
+  assert.equal(o.agreed.length, 64);
+  assert.equal(o.agreed[0].text.length, 300);
+  assert.equal(o.leftOut.length, 64);
 });

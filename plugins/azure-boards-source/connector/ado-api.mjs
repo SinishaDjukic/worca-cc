@@ -22,6 +22,10 @@ export async function adoFetch(ado, url, { method = 'GET', body, contentType = '
   }
   let json = null;
   try { json = await res.json(); } catch { json = null; }
-  if (!res.ok) throw err('plugin', `Azure DevOps ${res.status}${json?.message ? `: ${json.message}` : ''} (${method} ${full})`, { status: res.status });
+  // `detail`: Azure's own message alone, for a Ticket updates line (index.mjs azureSaid)
+  if (!res.ok) {
+    throw err('plugin', `Azure DevOps ${res.status}${json?.message ? `: ${json.message}` : ''} (${method} ${full})`,
+      { status: res.status, detail: typeof json?.message === 'string' ? json.message : '' });
+  }
   return json;
 }

@@ -127,6 +127,17 @@ test('one: only the slices that have a PR are closed; stacked still needs every 
   assert.equal((await shipFeature({ feature, mode: 'stacked' }, fake().deps)).status, 409);
 });
 
+test('one: a slice whose PR is already closed is neither closed again nor listed as a draft', async () => {
+  const f = fake();
+  const closed = { url: 'https://github.com/o/r/pull/1', state: 'CLOSED' };
+  const feature = { id: 'f', title: 'Charts', slices: [slice(1, closed), slice(2, { url: 'https://github.com/o/r/pull/2', state: 'OPEN' })] };
+  const out = await shipFeature({ feature, mode: 'one' }, f.deps);
+  assert.equal(out.ok, true);
+  assert.equal(out.closed, 1);
+  assert.deepEqual(f.calls.filter((c) => c[0] === 'close').map((c) => c[1]), ['https://github.com/o/r/pull/2']);
+  assert.doesNotMatch(f.calls.find((c) => c[0] === 'openOnePr')[1].body, /pull\/1/);
+});
+
 test('onePrBody: a slice without a PR gets its section and no Draft line', () => {
   const body = onePrBody([slice(1, null), slice(2, { url: 'u2' })], 'u2');
   assert.match(body, /## Slice 1: S1\n\nsum 1/);
@@ -147,4 +158,16 @@ test('shipCardVerb (s4): ship-one / ship-stacked / not-now, every other body 400
     { verb: 'ship-one', release: { version: 'bad' } }, { verb: 'toString' }]) {
     assert.equal(shipCardVerb(body).status, 400, JSON.stringify(body));
   }
+});
+
+test('onePrBody lists Satisfies under each slice with ids', () => {
+  const body = onePrBody([
+    { index: 1, title: 'One', summary: 'did one', pr: null, requirements: { ids: ['R-po-1', 'R-ux-1'], check: null } },
+    { index: 2, title: 'Two', summary: 'did two', pr: null, requirements: { ids: [], check: null } },
+    { index: 3, title: 'Three', summary: '', pr: null },
+  ]);
+  assert.ok(body.startsWith('## Slice 1: One\n\nSatisfies: R-po-1, R-ux-1\n\ndid one\n\n'), body);
+  assert.equal(body.match(/Satisfies:/g).length, 1);
+  const plain = [{ index: 1, title: 'One', summary: 'did one', pr: null }];
+  assert.equal(onePrBody([{ ...plain[0], requirements: { ids: [], check: null } }]), onePrBody(plain));
 });

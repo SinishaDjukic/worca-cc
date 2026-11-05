@@ -18,35 +18,29 @@ import { renderModelsList, renderModelEditor, collectModelEditor, applyConnectio
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
 const EFFORTS = ['medium', 'high', 'xhigh', 'max'];
 const PROVIDERS = {
-  copilot: { connected: true, login: 'octo', accountType: 'business', acknowledgedTerms: '2026-09-20T10:00:00.000Z', termsCurrent: true, maxConcurrent: 3, tokenSource: 'stored', quota: { used: 12, entitlement: 300, unlimited: false, resetDate: '2026-10-01' } },
+  copilot: { connected: true, login: 'octo', accountType: 'business', maxConcurrent: 3, tokenSource: 'stored', quota: { used: 12, entitlement: 300, unlimited: false, resetDate: '2026-10-01' } },
   openai: { configured: true, keySet: true, keySource: 'stored', keyMasked: '••••••abcd', baseUrl: 'https://gw.example/v1', maxConcurrent: 8 },
   anthropic: { configured: false, keySet: true, keySource: 'env', keyRef: '${ANT}', baseUrl: 'https://api.anthropic.com', maxConcurrent: 8 },
 };
 
-test('providers card: not connected / not acknowledged states; sign-in block replaces the button', () => {
-  const card = renderProvidersCard({ copilot: { connected: false, termsCurrent: false, accountType: 'individual', maxConcurrent: 4 } }, { doc });
+test('providers card: not connected / connected states; sign-in block replaces the button; no notice anywhere', () => {
+  const card = renderProvidersCard({ copilot: { connected: false, accountType: 'individual', maxConcurrent: 4 } }, { doc });
   assert.match(card.querySelector('.mv-providers-hint').textContent, /then import or add models on the Models page and pick them/);
   const cp = card.querySelector('.mv-pv-row[data-provider="copilot"]');
-  // The state pill says what unblocks sign-in in the notice button's words, and IS a notice
-  // button: the same .mv-cp-terms class the Providers delegation opens the notice for.
-  const pill = cp.querySelector('.mv-cp-terms-pill');
-  assert.equal(pill.tagName, 'BUTTON');
-  assert.equal(pill.type, 'button');
-  assert.equal(pill.textContent, 'please read the notice first');
-  assert.ok(pill.classList.contains('mv-cp-terms'));
-  assert.match(pill.title, /blocked until you acknowledge/);
+  const pill = cp.querySelector('.mv-head .badge');
+  assert.equal(pill.tagName, 'SPAN');
+  assert.equal(pill.textContent, 'not connected');
   assert.ok(cp.querySelector('.mv-cp-signin'));
   assert.equal(cp.querySelector('.mv-cp-fetch-models').disabled, true);
-  const noticeButtons = [...cp.querySelectorAll('.mv-cp-terms')];
-  assert.equal(noticeButtons.length, 2);
-  assert.equal(noticeButtons.at(-1).textContent, 'Read notice');
-  // An acknowledgement of an older notice: the pill asks for the updated one.
+  assert.equal(cp.querySelector('.mv-cp-terms'), null, 'no notice button or pill');
+  assert.doesNotMatch(cp.textContent, /notice/i);
+  assert.match(cp.textContent, /Claude models run through Copilot's native Anthropic endpoint/);
+  const on = renderProvidersCard({ copilot: { connected: true, login: 'octo' } }, { doc });
+  assert.equal(on.querySelector('.mv-pv-row[data-provider="copilot"] .mv-head .badge').textContent, 'connected as @octo');
+  // A stale state object from an older server still renders plainly.
   const stale = renderProvidersCard({ copilot: { connected: false, termsCurrent: false, acknowledgedTerms: '2026-01-01T00:00:00.000Z' } }, { doc });
-  assert.equal(stale.querySelector('.mv-pv-row[data-provider="copilot"] .mv-cp-terms-pill').textContent, 'please re-read the updated notice');
-  // Once acknowledged the pill is plain status again, not a button.
-  const ok = renderProvidersCard({ copilot: { connected: false, termsCurrent: true } }, { doc });
-  assert.equal(ok.querySelector('.mv-pv-row[data-provider="copilot"] .badge').tagName, 'SPAN');
-  const flowCard = renderProvidersCard({ copilot: { connected: false, termsCurrent: true } }, { doc, signIn: { userCode: 'ABCD-1234', verificationUri: 'https://github.com/login/device' } });
+  assert.equal(stale.querySelector('.mv-pv-row[data-provider="copilot"] .mv-head .badge').textContent, 'not connected');
+  const flowCard = renderProvidersCard({ copilot: { connected: false } }, { doc, signIn: { userCode: 'ABCD-1234', verificationUri: 'https://github.com/login/device' } });
   assert.equal(flowCard.querySelector('.mv-cp-signin'), null);
   assert.equal(flowCard.querySelector('.mv-cp-code').textContent, 'ABCD-1234');
   assert.equal(flowCard.querySelector('.mv-cp-copy').dataset.code, 'ABCD-1234');
@@ -200,7 +194,7 @@ test('cards: bridged badge, needs-sign-in pill + Sign in button, degradation lin
   assert.equal(bridgedBadge({ bridged: false }, { doc }), null);
   assert.equal(needsSignInPill({ needsSignIn: false }, { doc }), null);
   assert.equal(needsSignInPill({ needsSignIn: true, signInReason: 'no_key', bridged: 'openai' }, { doc }).querySelector('.mv-signin').textContent, 'Set key');
-  assert.equal(needsSignInPill({ needsSignIn: true, signInReason: 'terms', bridged: 'copilot' }, { doc }).querySelector('.badge').textContent, 'needs acknowledgement');
+  assert.equal(needsSignInPill({ needsSignIn: true, signInReason: 'not_signed_in', bridged: 'copilot' }, { doc }).querySelector('.badge').textContent, 'needs sign-in');
   assert.equal(degradationLine(claude), '');
 });
 

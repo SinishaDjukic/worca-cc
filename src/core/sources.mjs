@@ -17,6 +17,7 @@ import { runDirForRow, readStoreMeta, readPromptFile } from './artifacts.mjs';
 import { RESULTS_FILE } from './results.mjs';
 import { anyPrHost, findPrForBranch } from './git-info.mjs';
 import { outcomeSuccessful } from './outcome.mjs';
+import { moveFor } from './ticket-updates.mjs';
 
 /** Parse the `outcome` JSON column to an object, or null. */
 const parseOutcome = (v) => { try { return v == null ? null : JSON.parse(v); } catch { return null; } };
@@ -114,7 +115,7 @@ export function ticketRunTitle(meta) {
  *   { type:'prompt', prompt } | { type:'markdown', promptText?, promptFile? }
  * | { type:'plugin', plugin, sourceId, taskId, inputs?, profile? }
  * @returns {Promise<{promptText:string, promptFile:string|null,
- *   sourceMeta:{plugin,sourceId,taskId,profile,url,title}|null}>}
+ *   sourceMeta:{plugin,sourceId,taskId,profile,url,title,project?}|null}>}
  */
 export async function resolveTaskInput(source, { projectDir } = {}) {
   const src = source && typeof source === 'object' ? source : { type: 'prompt', prompt: '' };
@@ -176,6 +177,9 @@ export async function resolveTaskInput(source, { projectDir } = {}) {
         inputs: src.inputs && typeof src.inputs === 'object' ? src.inputs : null,
         url: task.url ?? null,
         title: task.title ?? null,
+        // Ticket updates (D6): the ticket's project as the tracker names it (a listProjects value), pinned now so write-back
+        // picks its rule; the host never parses an id. Left out when the connector does not say.
+        ...(typeof task.meta?.project === 'string' && task.meta.project.trim() ? { project: task.meta.project.trim() } : {}),
       },
     };
   }
@@ -211,6 +215,37 @@ function buildResultSummary(row, bundle) {
   return lines.join('\n');
 }
 
+// C0/C1 controls (ordinary whitespace is collapsed below instead) become a space; bidi overrides/isolates, zero-width and
+// other invisible format characters are dropped, so what a person reads is what the text says.
+const CONTROL_RE = /[\u0000-\u0008\u000E-\u001F\u007F-\u009F]/g;
+const INVISIBLE_RE = /[­؜᠎​-‏‪-‮⁠-⁤⁦-⁯﻿]/g;
+
+/**
+ * A plugin's free text (reportResult's note and move names — Jira's own message, D10/D11) as one line of data: controls,
+ * bidi and zero-width characters gone, angle brackets shown as ‹ › so no tag-like sequence (`<system>`, `</x>`) survives,
+ * backticks as ' so no code fence or inline code survives, curly double quotes as straight ones so the text cannot close
+ * the audit line's quote, whitespace collapsed, at most 300 characters (S8). Never throws.
+ * @param {unknown} v
+ * @returns {string}
+ */
+export function pluginTextLine(v) {
+  let s;
+  try { s = String(v ?? ''); } catch { return ''; }
+  return s.replace(CONTROL_RE, ' ').replace(INVISIBLE_RE, '')
+    .replace(/</g, '‹').replace(/>/g, '›').replace(/`/g, "'").replace(/[“”]/g, '"')
+    .replace(/\s+/g, ' ').trim().slice(0, 300).trim();
+}
+
+/**
+ * The run's history line for a reported result (D11). The plugin's note is quoted, so the line reads as Worca's words
+ * followed by the tracker's words as data: Result reported back to the task source: “Moved to Resolved.”
+ * @param {{note?: string}|null|undefined} outcome  reportResultForPipeline's answer
+ */
+export function reportedAuditLine(outcome) {
+  const note = pluginTextLine(outcome?.note);
+  return note ? `Result reported back to the task source: “${note}”` : 'Result reported back to the task source.';
+}
+
 /** Tracker-comment links: the PR when the bundle knows one. */
 function buildResultLinks(bundle) {
   const links = [];
@@ -225,7 +260,7 @@ function buildResultLinks(bundle) {
  * for prompt/markdown rows and refs that cannot be parsed.
  * @param {object} pipelineRow  raw pipelines row (source_type/source_ref/status/title)
  * @param {{results:object|null, branch:string|null, prUrl:string|null}} resultsBundle
- * @returns {Promise<{ok:true, skipped?:true} | {ok:false, error:string}>}
+ * @returns {Promise<{ok:true, skipped?:true, note?:string, moved?:{from:string,to:string}} | {ok:false, error:string}>}
  */
 export async function reportResultForPipeline(pipelineRow, resultsBundle) {
   try {
@@ -268,30 +303,53 @@ export async function reportResultForPipeline(pipelineRow, resultsBundle) {
     // and we could not hear it; writing would violate it) — the caller
     // surfaces the error and the results-view retry re-probes.
     const inputs = ref.inputs && typeof ref.inputs === 'object' ? ref.inputs : {};
+    // Ticket updates (D7): the move by the rule of the ticket's project (pinned at fetch, D6), else All projects; undefined with
+    // the flag off or nothing saved for the row's profile and source (the plugin's old setting applies, D4). Decided before the
+    // probe, so a failed probe cannot let the old setting run over a saved rule (S1).
+    // S1: a done run that did not do the work reports (and moves its ticket) as failed.
+    const status = statusToResult(pipelineRow.status, { successful: outcomeSuccessful(parseOutcome(pipelineRow.outcome)) });
+    const ruled = moveFor({ plugin: ref.plugin, sourceId: ref.sourceId, profile: callRef.profile || DEFAULT_PROFILE,
+      project: typeof ref.project === 'string' ? ref.project : '', status });
+
     let writeBack = true;
+    let caps = null;
+    let probeFailed = false;
     try {
-      const caps = await callSource({ ...callRef, op: 'capabilities', args: { inputs } });
+      caps = await callSource({ ...callRef, op: 'capabilities', args: { inputs } });
       if (caps && caps.writeBack === false) writeBack = false;
     } catch (err) {
-      if ((err?.kind || 'plugin') !== 'unimplemented' && 'writeBack' in inputs) {
+      const kind = err?.kind || 'plugin';
+      if (kind !== 'unimplemented' && 'writeBack' in inputs) {
         return { ok: false, error: `write-back capability probe failed: ${err?.message || String(err)}` };
       }
+      probeFailed = kind !== 'unimplemented';
       writeBack = true;
     }
     if (!writeBack) return { ok: true, skipped: true };
 
-    await callSource({
+    // The move goes only to a connector that can hear it (capabilities().ticketUpdates, the probe above: no extra spawn). A probe
+    // that failed for another reason (a rate limit, a timeout) cannot say; with a saved rule the move is passed anyway (fail
+    // closed: a plugin ignores an arg it does not know, while no move would let its old setting run, D4).
+    const move = ruled && ((caps && caps.ticketUpdates === true) || probeFailed) ? ruled : undefined;
+    const answer = await callSource({
       ...callRef,
       op: 'reportResult',
       args: {
         id: ref.taskId,
-        status: statusToResult(pipelineRow.status, { successful: outcomeSuccessful(parseOutcome(pipelineRow.outcome)) }),
+        status,
         summary: buildResultSummary(pipelineRow, resultsBundle),
         links: buildResultLinks(resultsBundle),
         inputs,
+        ...(move ? { move } : {}),
       },
     });
-    return { ok: true };
+    // D11: what happened, for the audit line and the route's answer; nothing is added when the plugin says nothing. The note
+    // and the move are the plugin's text (Jira's own message, D10), cleaned here at ingestion as data (pluginTextLine, S8).
+    const line = pluginTextLine;
+    const out = { ok: true };
+    if (answer && typeof answer.note === 'string' && line(answer.note)) out.note = line(answer.note);
+    if (answer && answer.moved && typeof answer.moved === 'object') out.moved = { from: line(answer.moved.from), to: line(answer.moved.to) };
+    return out;
   } catch (err) {
     return { ok: false, error: err?.message || String(err) };
   }

@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import { makePanel } from './helpers/ask-panel-harness.mjs';
 import { stampFrames } from './helpers/ask-frames.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { _resetAnswerer } from '../ui/public/answerer.mjs';
 
 const TID = 'ask_00000001';
 const MID = 'askm_00000001';
@@ -117,6 +118,7 @@ function apiHandler(recorder = {}) {
 async function openWithCard(card, recorder = {}, overrides = {}) {
   const ctx = makePanel({ fetchHandler: apiHandler(recorder), ...overrides });
   if (overrides.git) ctx.doc.documentElement.dataset.git = overrides.git;
+  if (overrides.flags) ctx.doc.documentElement.dataset.flags = overrides.flags;
   ctx.storage.setItem('worca-cc.ask.thread', TID);
   ctx.panel.open();
   await ctx.tick(); await ctx.tick(); await ctx.tick();
@@ -2562,4 +2564,187 @@ test('#959 run proposal: shared fields (.select/.input), the branch carries its 
   feat.value = 'worca/x'; feat.dispatchEvent(new ctx.window.Event('input'));
   assert.equal(feat.title, 'worca/x', 'the tooltip follows the typed value');
   assert.ok(cardEl.querySelector('.ask-card-same-source').closest('.ask-rp-field').querySelector(':scope > .switch-row'), 'the switch field (style.css spans it)');
+});
+
+// Per-role picks (#990 slice 2): a role-review node's declared roles get one Agents row each — a model select and
+// effort pills only — and an edited row rides the run as overlay.nodes[id].roles[key].
+const { GRAPH_SHAPE_WORKFLOW } = await import('../src/core/graph/builtin-workflows.mjs');
+const { loadAgentRegistry } = await import('../src/core/agent-registry.mjs');
+const { PERSPECTIVES } = await import('../src/shared/shape/perspectives.mjs');
+const SHAPE_AGENTS = Object.entries(loadAgentRegistry(undefined, { userAgentsDir: null })).map(([key, m]) => ({ ...m, key }));
+const SONNET = { id: 'claude-sonnet-5-5', label: 'Sonnet 5.5', efforts: ['medium', 'high', 'xhigh', 'max'], custom: false };
+const shapeLane = (rec) => {
+  const base = shapeListed(rec);
+  Object.assign(rec, { agents: SHAPE_AGENTS, extraModels: [SONNET] });
+  return (url, opts) => (url.split('?')[0] === '/api/workflows/wf_shape'
+    ? { ok: true, status: 200, json: async () => structuredClone(GRAPH_SHAPE_WORKFLOW) } : base(url, opts));
+};
+const roleTile = (lane, key) => lane.querySelector(`.ask-rp-role[data-node-id="n_roles"][data-role="${key}"]`);
+const pickModel = (ctx, sel, id) => { sel.value = id; sel.dispatchEvent(new ctx.window.Event('change', { bubbles: true })); };
+const start = async (ctx) => { ctx.doc.querySelector('[data-ask-card-start]').click(); for (let i = 0; i < 6; i++) await ctx.tick(); };
+
+test('ask-panel-card: per-role Agents rows on a role-review node', async () => {
+  await checkRows([
+    shapeRow('a shaped card lists one row per declared role, each with exactly one select and one effort group', async () => {
+      const rec = {};
+      const ctx = await openWithCard(SHAPED_CARD, rec, { fetchHandler: shapeLane(rec) });
+      const lane = await laneOf(ctx);
+      const rows = [...lane.querySelectorAll('.ask-rp-role')];
+      assert.equal(rows.length, PERSPECTIVES.length + 3, 'every declared role, ticked or not, plus Review\'s three code roles (#990 slice 4)');
+      assert.deepEqual(rows.map((r) => r.querySelector('.ask-rp-name b').textContent), [...PERSPECTIVES.map((p) => `Plan Review · ${p.label}`),
+        'Review Implementation · Correctness', 'Review Implementation · Security', 'Review Implementation · Project fit']);
+      for (const r of rows) {
+        assert.equal(r.querySelectorAll('select').length, 1, r.dataset.role);
+        assert.equal(r.querySelectorAll('[role=radiogroup]').length, 1, r.dataset.role);
+        assert.equal(r.querySelectorAll('input[type=checkbox], [role=switch], .ask-rp-tile-l2, button.ask-rp-mini').length, 0, 'no switch, no reset, no line 2');
+      }
+      const arch = roleTile(lane, 'architect');
+      assert.equal(arch.querySelector('.ask-rp-model').options[0].textContent, "Node's model");
+      assert.equal(arch.querySelector('.ask-rp-model').value, '');
+      // The built-in Shaper pins no model (its Plan Review and Second-opinion reviewer models are Worca's factory defaults
+      // on the Models page), so the card has no template pick to show: every role reads the node's setting.
+      assert.equal(roleTile(lane, 'product').querySelector('.ask-rp-model').value, '', 'no template pick');
+    }),
+    shapeRow('Start posts an edited role pick as overlay.nodes.n_roles.roles; untouched rows post nothing; Reset clears it', async () => {
+      const rec = {};
+      const ctx = await openWithCard(SHAPED_CARD, rec, { fetchHandler: shapeLane(rec) });
+      const lane = await laneOf(ctx);
+      pickModel(ctx, roleTile(lane, 'security').querySelector('.ask-rp-model'), 'claude-haiku-4-5');
+      assert.ok(roleTile(lane, 'security').classList.contains('mod'));
+      lane.querySelector('.ask-rp-sec-head .ask-rp-mini').click();
+      assert.equal(roleTile(lane, 'security').querySelector('.ask-rp-model').value, '', 'Reset to proposal clears the role edit');
+      pickModel(ctx, roleTile(lane, 'security').querySelector('.ask-rp-model'), 'claude-haiku-4-5');
+      await start(ctx);
+      assert.deepEqual(rec.runBodies[0].overlay, { nodes: { n_roles: { roles: { security: { model: 'claude-haiku-4-5', effort: 'high' } } } } });
+    }),
+    shapeRow('an untouched shaped card posts no roles', async () => {
+      const rec = {};
+      const ctx = await openWithCard(SHAPED_CARD, rec, { fetchHandler: shapeLane(rec) });
+      await laneOf(ctx);
+      await start(ctx);
+      assert.equal('overlay' in rec.runBodies[0], false);
+    }),
+    shapeRow('Save as project defaults sends the role pick in the node PATCH', async () => {
+      const rec = {};
+      const ctx = await openWithCard(SHAPED_CARD, rec, { fetchHandler: shapeLane(rec) });
+      const lane = await laneOf(ctx);
+      pickModel(ctx, roleTile(lane, 'security').querySelector('.ask-rp-model'), 'claude-haiku-4-5');
+      const save = ctx.doc.querySelector('[data-ctl="saveDefaults"]');
+      save.checked = true; save.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
+      await start(ctx);
+      assert.deepEqual(rec.configWrites.map((w) => [w.method, Object.keys(w.body.nodes || {})]), [['PATCH', ['n_roles']]]);
+      assert.deepEqual(rec.configWrites[0].body.nodes.n_roles.roles, { security: { model: 'claude-haiku-4-5', effort: 'high' } });
+      assert.equal(rec.configWrites[0].body.nodes.n_roles.model, '', "the node's own pick is re-sent as it was (inherit)");
+      assert.equal('overlay' in rec.runBodies[0], false);
+    }),
+    shapeRow('a nudged card (Default\'s lane) has no role rows and posts no roles', async () => {
+      const rec = {};
+      const ctx = await openWithCard(NUDGED_CARD, rec);
+      const lane = await laneOf(ctx);
+      assert.equal(lane.querySelectorAll('.ask-rp-role').length, 0);
+      await start(ctx);
+      assert.equal(JSON.stringify(rec.runBodies[0].overlay || {}).includes('roles'), false);
+    }),
+  ]);
+});
+
+// Requirements first (shapeRequirements on): a medium or large nudge shows Shape requirements (primary) and Run as is (quiet);
+// the first time, Shape requirements is aria-disabled and described by "You lead as" until a lead is picked.
+const REQ_NUDGE = { ...NUDGE, perspectives: ['architect', 'qa'] };
+const answererApi = (rec, { lead = null, putFails = false } = {}) => {
+  const base = apiHandler(rec);
+  return (url, opts) => {
+    if (url !== '/api/answerer') return base(url, opts);
+    if ((opts.method || 'GET').toUpperCase() === 'PUT') {
+      rec.puts = [...(rec.puts || []), JSON.parse(opts.body)];
+      return putFails ? { ok: false, status: 500, json: async () => ({ error: { message: 'disk full' } }) } : { ok: true, status: 200, json: async () => JSON.parse(opts.body) };
+    }
+    return { ok: true, status: 200, json: async () => ({ lead }) };
+  };
+};
+const openRequirements = async (nudge, rec, answerer) => {
+  _resetAnswerer();
+  const ctx = await openWithCard({ ...PROJECT_CARD, nudge }, rec, { fetchHandler: answererApi(rec, answerer), flags: 'shapeRequirements' });
+  for (let i = 0; i < 4; i++) await ctx.tick();
+  ctx.flush();
+  return ctx;
+};
+const settle = async (ctx) => { for (let i = 0; i < 8; i++) await ctx.tick(); };
+
+test('ask-panel-card: shapeRequirements on, large nudge, first time', async () => {
+  await checkRows([
+    shapeRow('Shape requirements is the one primary, aria-disabled and described by "You lead as"; a click posts nothing', async () => {
+      const rec = {};
+      const ctx = await openRequirements(REQ_NUDGE, rec, { lead: null });
+      const cardEl = ctx.doc.querySelector('.ask-card');
+      const shapeBtn = cardEl.querySelector('[data-ask-card-shape]');
+      const startBtn = cardEl.querySelector('[data-ask-card-start]');
+      assert.equal(shapeBtn.textContent, 'Shape requirements');
+      assert.ok(shapeBtn.classList.contains('btn-primary'));
+      assert.ok(startBtn.classList.contains('btn-quiet') && !startBtn.classList.contains('btn-primary'));
+      assert.equal(startLabel(startBtn), 'Run as is');
+      assert.equal(cardEl.querySelector('.shape-choice'), null);
+      assert.equal(shapeBtn.getAttribute('aria-disabled'), 'true');
+      assert.equal(ctx.doc.getElementById(shapeBtn.getAttribute('aria-describedby')).textContent, 'You lead as');
+      shapeBtn.click();
+      await settle(ctx);
+      assert.equal(rec.runBodies, undefined, 'blocked: nothing was started');
+    }),
+    shapeRow('picking a lead enables it; the click saves it once and starts with shape.lead', async () => {
+      const rec = {};
+      const ctx = await openRequirements(REQ_NUDGE, rec, { lead: null });
+      const cardEl = ctx.doc.querySelector('.ask-card');
+      cardEl.querySelector('.spick-b').click();
+      const items = [...ctx.doc.querySelectorAll('.wfv-menu [role="menuitemradio"]')];
+      items[1].click();
+      const shapeBtn = cardEl.querySelector('[data-ask-card-shape]');
+      assert.equal(shapeBtn.hasAttribute('aria-disabled'), false);
+      assert.equal(shapeBtn.hasAttribute('aria-describedby'), false);
+      assert.equal(rec.puts, undefined, 'a pick alone does not save');
+      shapeBtn.click();
+      await settle(ctx);
+      assert.deepEqual(rec.puts, [{ lead: 'architect' }]);
+      assert.equal(rec.runBodies[0].workflowId, 'wf_shape');
+      assert.deepEqual(rec.runBodies[0].shape, { lead: 'architect', perspectives: ['product', 'architect', 'qa'], size: 'large' });
+    }),
+    shapeRow('a saved lead needs no pick and no save; Run as is posts neither shape nor lead', async () => {
+      const rec = {};
+      const ctx = await openRequirements(REQ_NUDGE, rec, { lead: 'qa' });
+      const cardEl = ctx.doc.querySelector('.ask-card');
+      const shapeBtn = cardEl.querySelector('[data-ask-card-shape]');
+      assert.equal(shapeBtn.hasAttribute('aria-disabled'), false);
+      shapeBtn.click();
+      await settle(ctx);
+      assert.equal(rec.puts, undefined);
+      assert.equal(rec.runBodies[0].shape.lead, 'qa');
+      cardEl.querySelector('[data-ask-card-start]').click();
+      await settle(ctx);
+      assert.equal(rec.runBodies[1].workflowId, 'wf_default');
+      assert.equal('shape' in rec.runBodies[1], false);
+    }),
+    shapeRow('a failing save shows the error toast and the run still starts', async () => {
+      const rec = {};
+      const ctx = await openRequirements(REQ_NUDGE, rec, { lead: null, putFails: true });
+      const cardEl = ctx.doc.querySelector('.ask-card');
+      cardEl.querySelector('.spick-b').click();
+      [...ctx.doc.querySelectorAll('.wfv-menu [role="menuitemradio"]')][3].click();
+      cardEl.querySelector('[data-ask-card-shape]').click();
+      await settle(ctx);
+      assert.equal(rec.runBodies.length, 1);
+      assert.match(ctx.doc.querySelector('.toast.err .tt')?.textContent ?? '', /Could not save your lead role\. It is used for this run only\./);
+    }),
+    shapeRow('a small nudge keeps Shaper and Run as is (btn-primary), with the facts line', async () => {
+      const rec = {};
+      const ctx = await openRequirements({ ...REQ_NUDGE, size: 'small' }, rec, { lead: 'qa' });
+      const cardEl = ctx.doc.querySelector('.ask-card');
+      const shapeBtn = cardEl.querySelector('[data-ask-card-shape]');
+      const startBtn = cardEl.querySelector('[data-ask-card-start]');
+      assert.equal(shapeBtn.textContent, 'Shaper');
+      assert.ok(!shapeBtn.classList.contains('btn-primary'));
+      assert.ok(startBtn.classList.contains('btn-primary'));
+      assert.equal(startLabel(startBtn), 'Run as is');
+      assert.ok(cardEl.querySelector('.shape-facts'));
+      assert.ok(cardEl.querySelector('.shape-chips'));
+    }),
+  ]);
 });

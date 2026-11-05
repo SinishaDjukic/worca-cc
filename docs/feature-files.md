@@ -83,7 +83,7 @@ and pinned routes). See [split-by-feature.md](split-by-feature.md).
 | `ui/public/new-run/pluggable-source.css` | 34 |
 | `ui/public/new-run/target-branches.css` | 63 |
 | `ui/routes/new-run/run-defaults.mjs` | 26 |
-| `ui/routes/new-run/sources.mjs` | 149 |
+| `ui/routes/new-run/sources.mjs` | 152 |
 
 ## runs
 
@@ -240,6 +240,7 @@ and pinned routes). See [split-by-feature.md](split-by-feature.md).
 | `ui/public/marketplace/installed-plugin.css` | 67 |
 | `ui/public/marketplace/installed-tab.css` | 44 |
 | `ui/public/marketplace/marketplace-dialogs.css` | 15 |
+| `ui/public/marketplace/marketplace-ticket.css` | 84 |
 | `ui/public/marketplace/marketplace.html` | 8 |
 | `ui/public/marketplace/marketplaces-tab.css` | 44 |
 | `ui/public/marketplace/plugin-icons.css` | 141 |
@@ -247,7 +248,7 @@ and pinned routes). See [split-by-feature.md](split-by-feature.md).
 | `ui/public/marketplace/plugin-sheet.css` | 55 |
 | `ui/public/marketplace/plugin.html` | 18 |
 | `ui/public/marketplace/plugins-view.css` | 24 |
-| `ui/routes/marketplace/plugins.mjs` | 622 |
+| `ui/routes/marketplace/plugins.mjs` | 627 |
 
 ## guardrails ([guardrails.md](guardrails.md))
 

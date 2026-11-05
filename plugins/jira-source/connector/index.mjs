@@ -8,6 +8,9 @@
 // labels) becomes a v2 issue in wiki markup; a create stores Worca's marker as the issue property `worca.export`; after a
 // create or update the description is read back once for the fingerprint Worca compares (D9). A refused field and a ticket
 // that is gone are results, not errors (D11). deps.fetch injected by tests.
+// Ticket updates (plans/ticket-updates-design.md §7): Worca decides what happens to a ticket when a run finishes and passes it
+// as reportResult's `move`; this plugin maps Jira onto Worca's four categories (D1), lists a project's statuses, says what its
+// old transitionOnComplete setting means (legacyMove, D4), and without a `move` behaves exactly as before.
 import { createHash } from 'node:crypto';
 import { jiraFetch } from './jira-api.mjs';
 import { htmlToMarkdown, markdownToWiki, wikiLink } from './markup.mjs';
@@ -62,6 +65,27 @@ const PROPERTY = 'worca.export';
 /** D10: once Jira has made the issue, each further request (the marker property, the read-back) gets this long, so a
  *  hung one cannot run the op into the host's 60 s limit, which would read as "nothing made" and make a second ticket. */
 export const AFTER_KEY_TIMEOUT_MS = 15_000;
+
+/** D1: a done status whose name means a negative ending is cancelled (case-insensitive; ' or ’). */
+export const CANCELLED_NAME = /^(?:won['’]?t (?:do|fix)|rejected|duplicate|cancell?ed|declined|invalid|obsolete|abandoned|not planned)$/i;
+/** Inner runs of whitespace (NBSP too) collapse to one space and the ends are trimmed before the test. */
+const squash = (name) => String(name ?? '').replace(/\s+/g, ' ').trim();
+export const isCancelledName = (name) => CANCELLED_NAME.test(squash(name));
+/** I1: a transition's own name can cancel a ticket even when it leads to a neutral status ("Won't Do" into Closed, "Close as
+ *  Duplicate"): the cancelling words anywhere in the name, as whole words, whitespace and NBSP collapsed. */
+const CANCELLED_TRANSITION = /\b(?:won['’]?t|wont|duplicate|reject(?:ed)?|cancell?(?:ed)?|declin(?:e|ed)|invalid|obsolete|abandon(?:ed)?|not planned|cannot reproduce)\b/i;
+export const isCancelledTransition = (name) => isCancelledName(name) || CANCELLED_TRANSITION.test(squash(name));
+/** A transition named like a done verb ("Done", "Close Issue", "Resolve"). */
+const DONE_VERB = /^(?:done|close|closed|resolve|resolved|complete|completed|finish)\b/i;
+const doneVerb = (name) => DONE_VERB.test(squash(name));
+/** D1: Jira's statusCategory onto Worca's four: new → todo, indeterminate → in_progress, done → done (cancelled-named:
+ *  cancelled); a status without a category is to do. */
+export function categoryOf(status) {
+  const key = status?.statusCategory?.key;
+  if (key === 'done') return isCancelledName(status?.name) ? 'cancelled' : 'done';
+  if (key === 'indeterminate') return 'in_progress';
+  return 'todo';
+}
 
 export default function createTaskSource(ctx, deps = {}) {
   const base = String(ctx.config?.baseUrl || '').trim().replace(/\/+$/, '');
@@ -170,6 +194,8 @@ export default function createTaskSource(ctx, deps = {}) {
     return Object.assign(new Error(`Jira refused the request: ${said || 'no reason given'}`), { kind: 'plugin', status: e.status });
   }
   const exportOp = (fn) => async (args = {}) => { try { return await fn(args); } catch (e) { throw plainFailure(e); } };
+  // Ticket updates (S3): listStatuses through exportOp, so a 403 or 404 carries Jira's own words to the host's reach sentence
+  const listStatusesOp = exportOp(async ({ project }) => statusesOf(project));
   // The ticket's fields (design §5). Labels arrive normalised (no spaces); the criteria field gets the items as a wiki list.
   function ticketFields(t) {
     const f = { project: { key: t.project }, issuetype: { id: String(t.issueType) }, summary: t.title, description: markdownToWiki(t.description),
@@ -192,6 +218,138 @@ export default function createTaskSource(ctx, deps = {}) {
   const refusesProperties = (e) => e?.status === 400 && ('properties' in (e.body?.errors || {})
     || (e.body?.errorMessages || []).some((m) => /propert/i.test(String(m))));
   const lastLine = (text) => String(text ?? '').replace(/\r\n?/g, '\n').split('\n').map((l) => l.trim()).filter(Boolean).at(-1) || '';
+  // Ticket updates: a project key, never a path (S9): `..` would turn /project/../statuses into another REST endpoint
+  function projectKeyOf(project) {
+    const key = String(project ?? '').trim();
+    if (!key) throw Object.assign(new Error('a project is required'), { kind: 'plugin' });
+    if (key.length > 100 || /^\.+$/.test(key) || /[/\\?#]/.test(key)) {
+      throw Object.assign(new Error('a project key cannot be a path'), { kind: 'plugin' });
+    }
+    return key;
+  }
+  // Every status of a project once by id, in Jira's order (one list per issue type), with its category (D1). Unwrapped: applyMove
+  // (Task 10) reads jira-api's own failure kinds and status.
+  async function statusesOf(project) {
+    const key = projectKeyOf(project);
+    const types = await jiraFetch(jira, `/rest/api/2/project/${enc(key)}/statuses`);
+    const seen = new Set();
+    const out = [];
+    for (const t of Array.isArray(types) ? types : []) {
+      for (const s of Array.isArray(t?.statuses) ? t.statuses : []) {
+        const id = String(s?.id ?? '');
+        if (!id || seen.has(id)) continue;
+        seen.add(id);
+        out.push({ value: id, label: String(s.name || id), category: categoryOf(s) });
+      }
+    }
+    return out;
+  }
+
+  // ---- Ticket updates: one move (§7, D10) ----
+  const PREFERRED = ['done', 'closed', 'resolved', 'complete', 'completed'];
+  const RESOLUTIONS = ['done', 'fixed', 'complete', 'completed'];
+  const lc = (s) => String(s ?? '').trim().toLowerCase();
+  /** "A", "A and B", "A, B and C". */
+  const andList = (names) => (names.length < 2 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`);
+  /** Jira's own words for a refusal, without a trailing full stop; "Jira gave no reason" when it sends none (decided 2026-10-30). */
+  const jiraSaid = (e) => ([...(e?.body?.errorMessages || []), ...Object.values(e?.body?.errors || {})]
+    .map((m) => String(m).replace(/\s+/g, ' ').trim()).filter(Boolean).join('; ') || 'Jira gave no reason').replace(/\.+$/, '');
+  /** Deviation 3 (decided 2026-10-30): a 4xx refusal of the transition, other than 401 (auth) and 429 (rate limit), is a line;
+   *  a 5xx, network, timeout, 401 or 429 throws, so the write-back fails and Report result retries. */
+  const refusedMove = (e) => !!e && e.kind === 'plugin' && e.status >= 400 && e.status < 500 && e.status !== 401 && e.status !== 429;
+  /** Jira would not let Worca read the ticket's status or transitions (403, 404): a line; anything else throws. */
+  const unreadable = (e) => !!e && e.kind === 'plugin' && (e.status === 403 || e.status === 404);
+  /** What a transition still needs: its Resolution (undefined when not required; the first allowed value named Done, Fixed,
+   *  Complete or Completed; null when none fits), and its other required fields without a default (Worca fills none). */
+  function needs(t) {
+    const fields = t?.fields && typeof t.fields === 'object' ? t.fields : {};
+    const r = fields.resolution;
+    const resolution = r && r.required === true ? (r.allowedValues || []).find((v) => RESOLUTIONS.includes(lc(v?.name))) || null : undefined;
+    const other = Object.entries(fields).filter(([k, f]) => k !== 'resolution' && f && f.required === true && !f.hasDefaultValue).map(([k, f]) => f.name || k);
+    return { resolution, other };
+  }
+  const nameOf = (t) => t?.to?.name || t?.name || '?';
+  const needLine = (t, n) => (n.other.length ? `Not moved: the move to ${nameOf(t)} asks for fields Worca does not fill (${n.other.join(', ')}).`
+    : `Not moved: the move to ${nameOf(t)} needs a Resolution, and none is named Done, Fixed or Complete.`);
+  const transitionsOf = async (key) => ((await jiraFetch(jira, `/rest/api/2/issue/${enc(key)}/transitions?expand=transitions.fields`)) || {}).transitions || [];
+  /** §7: one move, before the comment. Answers { note, moved, transitioned }. A 4xx refusal of the transition (Deviation 3) or
+   *  of reading the ticket's status or transitions (403, 404) is a "Not moved" line; auth, network, rate limit, timeout and a
+   *  5xx throw, so the write-back fails and Report result retries (a retry after a failed comment finds the ticket moved:
+   *  "Already in …"). */
+  async function applyMove(key, move) {
+    const none = { note: '', moved: null, transitioned: false };
+    if (!move || move.none === true) return none;
+    if (move.category !== 'done' && typeof move.status !== 'string' && typeof move.status !== 'number') return none;   // an unrecognised shape moves nothing
+    const notRead = (e) => ({ ...none, note: `Not moved: Jira did not let Worca read ${key}'s transitions (${jiraSaid(e)}).` });
+    let fields;
+    try { fields = (await issue(key, ['status', 'project']))?.fields || {}; } catch (e) { if (unreadable(e)) return notRead(e); throw e; }
+    const readTransitions = async () => {
+      try { return { list: await transitionsOf(key) }; } catch (e) { if (unreadable(e)) return { refused: notRead(e) }; throw e; }
+    };
+    const now = fields.status || {};
+    const from = now.name || '?';
+    const go = async (t, resolution) => {
+      try {
+        await jiraFetch(jira, `/rest/api/2/issue/${enc(key)}/transitions`, { method: 'POST',
+          body: { transition: { id: t.id }, ...(resolution ? { fields: { resolution: { id: resolution.id } } } : {}) } });
+      } catch (e) {
+        if (refusedMove(e)) return { ...none, note: `Not moved: Jira refused the move to ${nameOf(t)}: ${jiraSaid(e)}.` };
+        throw e;
+      }
+      return { note: resolution ? `Moved to ${nameOf(t)}, Resolution: ${resolution.name}.` : `Moved to ${nameOf(t)}.`,
+        moved: { from, to: nameOf(t) }, transitioned: true };
+    };
+    if (move.category === 'done') {
+      if (now.statusCategory?.key === 'done') return { ...none, note: `Already in ${from}.` };
+      const read = await readTransitions();
+      if (read.refused) return read.refused;
+      const done = read.list.filter((t) => t?.to?.statusCategory?.key === 'done');
+      const usable = done.filter((t) => !isCancelledName(t.to?.name) && !isCancelledTransition(t.name));
+      if (!usable.length) {
+        const names = [...new Set(done.map((t) => (isCancelledName(t.to?.name) ? t.to?.name : t.name || t.to?.name)).filter(Boolean))];
+        // "only Won't Do leads", "only Won't Do and Duplicate lead" (decided 2026-10-30)
+        return { ...none, note: names.length ? `Not moved: from "${from}" only ${andList(names)} ${names.length === 1 ? 'leads' : 'lead'} to a Done status.`
+          : `Not moved: from "${from}" no transition leads to a Done status.` };
+      }
+      const rank = (t) => { const i = PREFERRED.indexOf(lc(t.to?.name)); return i < 0 ? PREFERRED.length : i; };
+      const ordered = usable.map((t, i) => [t, i]).sort((a, b) => rank(a[0]) - rank(b[0]) || Number(!doneVerb(a[0].name)) - Number(!doneVerb(b[0].name)) || a[1] - b[1]).map(([t]) => t);
+      for (const t of ordered) {
+        const n = needs(t);
+        if (!n.other.length && n.resolution !== null) return go(t, n.resolution);
+      }
+      return { ...none, note: needLine(ordered[0], needs(ordered[0])) };
+    }
+    const want = String(move.status ?? '').trim();
+    const named = typeof move.name === 'string' && move.name.trim() ? move.name.trim() : null;
+    if (String(now.id ?? '') === want || lc(from) === lc(want) || (named && lc(from) === lc(named))) return { ...none, note: `Already in ${from}.` };
+    const read = await readTransitions();
+    if (read.refused) return read.refused;
+    const transitions = read.list;
+    // By the status id; else, as legacy does (S2), a transition's name across all transitions first, then a target's name.
+    // I1: a transition whose own name cancels ("Won't Do" into Closed) is not taken to a neutral-named status; of the rest,
+    // one named like a done verb comes first.
+    const viaTo = (match) => {
+      const ok = transitions.filter(match).filter((x) => isCancelledName(x?.to?.name) || !isCancelledTransition(x?.name));
+      return ok.find((x) => doneVerb(x?.name)) || ok[0];
+    };
+    const t = viaTo((x) => String(x?.to?.id ?? '') === want)
+      || transitions.find((x) => lc(x?.name) === lc(want))
+      || viaTo((x) => lc(x?.to?.name) === lc(want));
+    if (!t) {
+      const project = fields.project?.key;
+      if (named && project) {
+        let has = true;
+        try { has = (await statusesOf(project)).some((s) => s.value === want); } catch { has = true; }   // unknown: the general line
+        if (!has) return { ...none, note: `Not moved: ${project} has no status named ${named} any more.` };
+      }
+      const note = `Could not move to "${named || want}" from "${from}" (available: ${transitions.map((x) => x.name).join(', ') || 'none'}).`;
+      log('warn', `${key}: ${note}`);
+      return { ...none, note };
+    }
+    const n = needs(t);
+    if (n.other.length || n.resolution === null) return { ...none, note: needLine(t, n) };
+    return go(t, n.resolution);
+  }
 
   return {
     async validateConfig() {
@@ -217,7 +375,8 @@ export default function createTaskSource(ctx, deps = {}) {
       }
     },
     async listProjects() {
-      return (await projectList()).map((p) => ({ value: p.key, label: `${p.name} (${p.key})` }));
+      // `name` (Ticket updates, D5): the project's name alone, for the chips
+      return (await projectList()).map((p) => ({ value: p.key, label: `${p.name} (${p.key})`, name: p.name }));
     },
     async listTasks({ inputs = {}, search, cursor } = {}) {
       const key = pastedKey(search);
@@ -256,10 +415,20 @@ export default function createTaskSource(ctx, deps = {}) {
           priority: f.priority?.name || null },
       };
     },
-    async reportResult(id, { status, summary: text, links = [], inputs = {} } = {}) {
+    async reportResult(id, { status, summary: text, links = [], inputs = {}, move } = {}) {
       // A bad id throws: sources.mjs records a throw as a failed write-back, a return as ok:true.
       const key = requireKey(id);
       if (!yes(inputs?.writeBack)) return { skipped: true };
+      if (move && typeof move === 'object') {
+        // Ticket updates (§7, D11): Worca decided the move; Jira transitions first, then one comment: the run summary, its links,
+        // then the outcome line last. Without a move (nothing saved in Worca) the old path below runs unchanged (D4).
+        const out = await applyMove(key, move);
+        const lines = links.map((l) => `* ${wikiLink(l.title, l.url)}`);
+        const body = [markdownToWiki(text || `worca pipeline ${status}`), ...(lines.length ? ['', ...lines] : []),
+          ...(out.note ? ['', markdownToWiki(out.note)] : [])].join('\n');
+        await jiraFetch(jira, `/rest/api/2/issue/${enc(key)}/comment`, { method: 'POST', body: { body } });
+        return { commented: true, transitioned: out.transitioned, moved: out.moved, note: out.note };
+      }
       // The transition goes first so the one comment can say how it went: a bad transition name shows on the
       // ticket instead of in a log, and a retry after a failed comment finds the issue already moved.
       const target = String(ctx.config?.transitionOnComplete || '').trim();
@@ -288,7 +457,16 @@ export default function createTaskSource(ctx, deps = {}) {
       await jiraFetch(jira, `/rest/api/2/issue/${enc(key)}/comment`, { method: 'POST', body: { body } });
       return { commented: true, transitioned };
     },
-    capabilities({ inputs } = {}) { return { writeBack: yes(inputs?.writeBack), incrementalSync: false, export: true }; },
+    capabilities({ inputs } = {}) { return { writeBack: yes(inputs?.writeBack), incrementalSync: false, export: true, ticketUpdates: true }; },
+    // ---- Ticket updates (plans/ticket-updates-design.md §3, §7) ----
+    async listStatuses({ project } = {}) {
+      projectKeyOf(project);   // its own words pass unchanged: plainFailure would turn them into "no reason given"
+      return listStatusesOp({ project });   // S3: a refusal says Jira's words, not the REST path
+    },
+    legacyMove() {
+      const text = String(ctx.config?.transitionOnComplete || '').trim();
+      return { field: 'transitionOnComplete', target: text ? { typed: text } : null };
+    },
     // ---- A6: export (plans/requirements-a6-design.md §4, §5); each op through exportOp (Jira's words, never a status or path) ----
     exportOptions: exportOp(async ({ project, issueType } = {}) => {
       const projects = (await projectList()).map((p) => ({ value: p.key, label: `${p.key} — ${p.name}` }));

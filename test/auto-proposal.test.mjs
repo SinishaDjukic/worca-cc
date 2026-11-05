@@ -202,7 +202,7 @@ test('Project fit: without a brief the chip is absent and no error is raised', a
   assert.deepEqual(plain.card.shape.perspectives, ['product', 'architect', 'qa']);
   const shown = chips(plain.card);
   assert.equal('fit' in shown, false);
-  assert.equal(Object.keys(shown).length, 7);
+  assert.equal(Object.keys(shown).length, 8, "every perspective but Project fit (Devil's advocate included)");
   const asked = await propose(async () => false, { shape: { perspectives: ['qa', 'fit'] } });
   assert.equal(asked.ok, true, JSON.stringify(asked));
   assert.deepEqual(asked.card.shape.perspectives, ['product', 'qa']);
