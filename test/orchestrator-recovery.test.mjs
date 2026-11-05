@@ -826,21 +826,24 @@ test('S3: a real-engine zero-exit is_error result takes the _recover path and pa
   });
 });
 
-// Regression: a clean real-engine result is unaffected — the node finishes and the run ends 'done'.
-test('S3: a clean real-engine result finishes done (no reroute)', S3_POSIX_SHIM, async () => {
+// Regression: a clean real-engine result is unaffected — it never reroutes through _recover. The fake
+// binary writes no files, so since #1067's OUTPUT_MISSING rule the run parks later at Planning's unwritten
+// plan ("did not write output"); that pause is the engine's, not S3's, and must not be an error-result one.
+test('S3: a clean real-engine result never reroutes through _recover', S3_POSIX_SHIM, async () => {
   await withMockOff(async () => {
     const dir = gitDir();
     const bin = await fakeBin(dir, {
       code: 0,
       stdout: '{"type":"system","subtype":"init","session_id":"s1"}\n{"type":"result","result":"ok"}',
     });
-    let recoverCalls = 0;
+    const recovered = [];
     const orch = createOrchestrator({ projectDir: dir, prompt: 'demo', auto: true, claude: { bin, mock: false }, runners: { verifier: okVerifier } });
     const realRecover = orch._recover.bind(orch);
-    orch._recover = async (a) => { recoverCalls++; return realRecover(a); };
-    const res = await orch.run();
-    assert.equal(res.status, 'done');
-    assert.equal(recoverCalls, 0, 'no failure → recovery path never entered');
+    orch._recover = async (a) => { recovered.push(String(a?.err?.message || a?.err || '')); return realRecover(a); };
+    await orch.run();
+    assert.ok(!recovered.some((m) => /reported an error result/.test(m)), `a clean result never takes the S3 reroute: ${recovered.join(' | ')}`);
+    assert.doesNotMatch(String(orch.state.pauseDetail || ''), /reported an error result/, 'a clean result is never an error result');
+    assert.ok((orch.state.steps || []).some((st) => st.nodeId === 'n_clarify' && st.status === 'done'), 'the real-engine node finished clean');
   });
 });
 
