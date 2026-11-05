@@ -1,0 +1,34 @@
+/* "How workspaces work" (FEAT-7): the list topbar's button pair + the walkthrough */
+.ws-top-actions{display:flex;align-items:center;gap:8px;flex:0 0 auto;}
+@media (max-width:560px){
+  .ws-screen-list .topbar{flex-wrap:wrap;}
+  .ws-screen-list .topbar > div:first-child{flex:1 1 100%;min-width:0;}
+  .ws-top-actions{flex-wrap:wrap;max-width:100%;}
+}
+/* Above the spotlight tour (.guide-layer 72–73): Create workspace can be pressed from the tour. */
+#workspace-guide-modal.viewer-modal{z-index:75;}
+#workspace-guide-modal .wg-card{width:min(640px,100%);}
+.wg-head{display:flex;align-items:center;gap:10px;}
+.wg-dots{display:inline-flex;gap:6px;}
+.wg-dot{width:8px;height:8px;border-radius:50%;background:var(--line-2);}
+.wg-dot[data-state="done"]{background:var(--ink-3);}
+.wg-dot[data-state="current"]{background:var(--ink);}
+.wg-step-of{font-size:var(--fs-meta);color:var(--ink-2);}
+.wg-close{margin-left:auto;}
+.wg-title{margin:10px 0 0;}
+.wg-step p{margin:0 0 10px;line-height:1.5;}
+.wg-art{margin:12px 0 4px;}
+.wg-map{display:block;width:100%;height:auto;}
+.wg-node rect{fill:var(--surface);stroke:var(--line-2);stroke-width:1.5;}
+.wg-node text{fill:var(--ink);font:600 12px var(--sans);}
+.wg-line{fill:none;stroke:var(--wg-k);stroke-width:1.8;}
+.wg-arrow{fill:var(--wg-k);}
+.wg-label{fill:var(--ink-2);font:500 11px var(--sans);paint-order:stroke;stroke:var(--surface);stroke-width:4px;stroke-linejoin:round;}
+/* The real map's kind colours (workspace-pages.css --wm-k), on this picture's own names. */
+.wg-k-http{--wg-k:var(--blue);}
+.wg-k-topic{--wg-k:var(--amber);}
+.wg-k-pkg{--wg-k:var(--slate);}
+.wg-caption{font-size:var(--fs-meta);color:var(--ink-2);margin-top:6px;}
+.wg-order{margin:8px 0 0;padding-left:22px;}
+.wg-order li{margin:2px 0;}
+.wg-actions .wg-spacer{flex:1 1 auto;}

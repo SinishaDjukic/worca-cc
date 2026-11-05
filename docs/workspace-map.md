@@ -139,6 +139,8 @@ The same actions over HTTP:
 
 ## Creating a workspace
 
+**How workspaces work.** The Workspaces page has a *How workspaces work* button that opens a four-screen walkthrough (what a workspace is, how links are found, checking the Map, how the change order guides a run) with a sample map. It also opens by itself the first time someone with no workspace presses Create workspace, and again after the last workspace is deleted. Opening it never changes a workspace.
+
 **Workspaces › Create workspace** opens the wizard: a name, the member projects (2–40) and the
 scan's models. The project list shows every registered project. Repositories that are not projects
 yet come in through **Add…** or the box under it — paste paths, one per line, then press
