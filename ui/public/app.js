@@ -7252,7 +7252,7 @@ async function mountPluginSourcePane(src) {
         const r = await pluginApi('PUT', '/api/source-bindings',
           { ...resolved.ref, plugin: src.plugin, sourceId: src.sourceId, profile });
         if (!r.ok) return notify({ tone: 'err', title: 'Could not save the profile binding', detail: r.data.error || '', key: 'profile-binding' });
-        requirementsView.importChanged();   // a binding moves the import's default connection; no frame is sent for it
+        requirementsView.importChanged();   // a binding moves the default connection of an import; no frame is sent for it
         mountPluginSourcePane(src);
       },
     }));
