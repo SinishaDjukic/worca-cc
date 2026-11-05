@@ -257,6 +257,53 @@ test('commit(): saves a lead that differs from the profile once; the same lead s
   assert.match(f.d.querySelector('.toast.err .tt')?.textContent ?? '', /Could not save your lead role\. It is used for this run only\./);
 });
 
+test('commit() twice before the save settles sends one PUT; after it settles the same lead sends none, another lead one', async () => {
+  const { d, ui, triggers } = await reqCard();
+  triggers()[0].click();
+  menuItems(d)[3].click();                                                // QA
+  ui.commit();
+  ui.commit();
+  assert.equal(puts.length, 1, 'a double click on Shape sends one PUT');
+  await tick();
+  ui.commit();
+  await tick();
+  assert.equal(puts.length, 1, 'the saved lead is not sent again');
+  triggers()[0].click();
+  menuItems(d)[2].click();                                                // Design
+  ui.commit();
+  await tick();
+  assert.deepEqual(puts, [{ lead: 'qa' }, { lead: 'ux' }]);
+});
+
+test('the lead menu: ArrowUp wraps from the first item to the last and moves up; Enter and Space on a trigger are left to native activation, which opens the menu on the first item', async () => {
+  const { d, triggers } = await reqCard();
+  const [lead] = triggers();
+  assert.equal(lead.tagName, 'BUTTON');
+  assert.equal(lead.hasAttribute('aria-disabled'), false);
+  for (const key of ['Enter', ' ']) assert.equal(keyOn(lead, key).defaultPrevented, false, `${JSON.stringify(key)} reaches the native button`);
+  lead.click();
+  const items = menuItems(d);
+  assert.equal(d.activeElement, items[0]);
+  keyOn(items[0], 'ArrowUp');
+  assert.equal(d.activeElement, items[5], 'wraps to the last');
+  keyOn(items[5], 'ArrowUp');
+  assert.equal(d.activeElement, items[4]);
+  lead.click();
+  assert.equal(d.querySelector('.wfv-menu'), null, 'a second activation closes it');
+});
+
+test('the supporters menu: Escape after a toggle closes it and returns focus to the supporters trigger', async () => {
+  const { d, triggers } = await reqCard();
+  const [, supp] = triggers();
+  supp.click();
+  const rows = menuItems(d);
+  rows[0].click();
+  assert.ok(d.querySelector('.wfv-menu'));
+  keyOn(rows[0], 'Escape');
+  assert.equal(d.querySelector('.wfv-menu'), null);
+  assert.equal(d.activeElement, supp);
+});
+
 test('shape-lead-change fires when the sentence paints and when the lead is picked', async () => {
   stubAnswerer({ lead: null });
   const d = flagDoc();

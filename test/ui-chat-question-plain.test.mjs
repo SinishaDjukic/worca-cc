@@ -32,3 +32,11 @@ test('no options: an entry with backticks and no plain twin gives the same marku
   assert.equal(buildChatQuestion(doc, spec(q), {}).el.outerHTML, base);
   assert.equal(buildChatQuestion(doc, spec(PLAIN)).el.querySelector('.qtext-t').textContent, PLAIN[0].text, 'no lead: the entry text');
 });
+
+test('register plain with no lead: plain twins, no code tokens', () => {
+  const doc = rig();
+  const { el } = buildChatQuestion(doc, spec(PLAIN), { lead: null, strip: true, register: 'plain' });
+  assert.equal(el.querySelector('.qtext-t').textContent, 'Who may export?');
+  assert.deepEqual([...el.querySelectorAll('.chat-q-opt-label')].map((n) => n.textContent), ['Anyone who can see the project', 'Owner only']);
+  assert.doesNotMatch(el.textContent, /project:read/);
+});

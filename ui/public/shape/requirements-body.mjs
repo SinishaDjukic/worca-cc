@@ -5,7 +5,7 @@
 import { buildChatQuestion } from '../chat/question.mjs';
 import { buildCheckRows, swapOpen } from './check-row.mjs';
 import { stepHead, stepSender } from './step-card.mjs';
-import { buildFeedbackRow } from './plan-body.mjs';
+import { buildFeedbackRow } from './feedback-row.mjs';
 import { loadAnswerer, leadLabel } from '../answerer.mjs';
 import { emptyState } from '../design-system/components/empty-state.mjs';
 import { toElement } from '../design-system/components/html.mjs';
@@ -58,7 +58,7 @@ export function renderRequirementsBody(panel, pq, deps) {
 
   if (error) {
     body.appendChild(toElement(doc, emptyState({ title: 'Could not load the requirements.', text: error.message || '', error: true })));
-  } else if (!agreed) {
+  } else if (!agreed && !failing) {
     body.appendChild(toElement(doc, emptyState({ title: 'No requirements were written.' })));
   } else {
     const rows = h('div', 'plan-checks');
@@ -86,15 +86,15 @@ export function renderRequirementsBody(panel, pq, deps) {
   } else {
     agree = btn('btn-primary plan-approve', 'Agree and plan');
     const hint = typed ? ': ask for changes' : '';
-    const reason = !agreed ? `Nothing to agree yet${hint}` : failing ? `${failing} to fix${hint}` : '';
+    const reason = !agreed && !failing ? `Nothing to agree yet${hint}` : failing ? `${failing} to fix${hint}` : '';
     // aria-disabled, not disabled: it stays in the tab order, keeps its words, and setPanelBusy cannot re-enable it
     let waiting = decisions.length > 0;            // the decisions are not on screen yet
     const syncAgree = () => {
-      const blocked = !!reason || waiting;
-      if (blocked) agree.setAttribute('aria-disabled', 'true'); else agree.removeAttribute('aria-disabled');
-      if (reason) { agree.title = reason; agree.setAttribute('aria-describedby', note.id); } else { agree.removeAttribute('title'); agree.removeAttribute('aria-describedby'); }
+      const shown = reason || (waiting ? 'Loading your role…' : '');
+      if (shown || waiting) agree.setAttribute('aria-disabled', 'true'); else agree.removeAttribute('aria-disabled');
+      if (shown) { agree.title = shown; agree.setAttribute('aria-describedby', note.id); } else { agree.removeAttribute('title'); agree.removeAttribute('aria-describedby'); }
+      note.textContent = shown || (decisions.length ? 'Worca\'s picks marked · change any' : '');
     };
-    note.textContent = reason || (decisions.length ? 'Worca\'s picks marked · change any' : '');
     agree.addEventListener('click', (e) => {
       e.stopPropagation();
       if (agree.getAttribute('aria-disabled') === 'true') return;
@@ -112,6 +112,7 @@ export function renderRequirementsBody(panel, pq, deps) {
 
   if (!decisions.length || error) return;
   const paintDecisions = (lead) => {
+    if (list) return;
     paintSub(lead);
     list = buildChatQuestion(doc, {
       id: `req-${pq.id || 'q'}`,
@@ -124,7 +125,7 @@ export function renderRequirementsBody(panel, pq, deps) {
       foot: false,
       submitLabel: () => '',
       onSubmit: () => {},
-    }, { lead, strip: true });
+    }, { lead, strip: true, register: 'plain' });
     slot.appendChild(list.el);
     decisionsShown();
   };

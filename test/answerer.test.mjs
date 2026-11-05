@@ -17,10 +17,21 @@ test('plainWords drops scope tokens, backticks, snake_case and name() tokens; ke
   assert.equal(out, 'needs and');
   assert.equal(plainWords('meet at 10:30, see https://x.io'), 'meet at 10:30, see https://x.io');
   assert.equal(plainWords('call run_command or exportRuns() now'), 'call or now');
+  assert.equal(plainWords('needs project:read/write now'), 'needs now', '`/` tails go with the token');
+  assert.equal(plainWords('grant a:b/c/d here'), 'grant here');
+  assert.equal(plainWords('open localhost:4317 or https://x.io/a:b'), 'open localhost:4317 or https://x.io/a:b');
 });
 
 const OPTION = { value: 'members', label: 'Require project:read', plain: 'Anyone who can see the project' };
 const NO_TWIN = { value: 'read', label: 'project:read' };
+
+test('wordsFor: a decision with no plain twin loses every scope form for product, and for no lead with register plain; a known technical lead keeps its words', () => {
+  const entry = { text: 'Allow project:read/write for members' };
+  assert.equal(wordsFor(entry, 'text', 'product', { strip: true }), 'Allow for members');
+  assert.equal(wordsFor(entry, 'text', null, { strip: true, register: 'plain' }), 'Allow for members');
+  assert.equal(wordsFor(entry, 'text', 'architect', { strip: true, register: 'plain' }), entry.text);
+  assert.equal(wordsFor(entry, 'text', null, { strip: true }), entry.text, 'no register: the own words');
+});
 
 test('wordsFor with strip: the plain twin for product, the label for architect, Option n when too little is left', () => {
   assert.equal(wordsFor(OPTION, 'label', 'product', { strip: true, n: 1 }), 'Anyone who can see the project');

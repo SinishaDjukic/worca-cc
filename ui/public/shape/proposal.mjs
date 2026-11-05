@@ -53,6 +53,7 @@ function requirementsCard(doc, card, h, fetchFn) {
   const supporters = new Set(picked.filter((k) => k !== 'product' && offered.includes(k)));
   let lead = null;          // the pick
   let saved = null;         // the profile's lead
+  let saving = null;        // the lead whose PUT is in flight
   let leadBtn = null;
   let suppBtn = null;
   const labelId = `shape-lead-label-${++leadSeq}`;
@@ -97,10 +98,12 @@ function requirementsCard(doc, card, h, fetchFn) {
     el, requirements: true, labelId,
     blocked: () => lead == null,
     commit() {
-      if (!lead || lead === saved) return;
+      if (!lead || lead === saved || lead === saving) return;
       const chosen = lead;
-      saveAnswerer(chosen, fetchFn).then(() => { saved = chosen; },
-        () => notify({ tone: 'err', title: 'Could not save your lead role. It is used for this run only.' }, { doc }));
+      saving = chosen;
+      const settle = () => { if (saving === chosen) saving = null; };
+      saveAnswerer(chosen, fetchFn).then(() => { settle(); saved = chosen; },
+        () => { settle(); notify({ tone: 'err', title: 'Could not save your lead role. It is used for this run only.' }, { doc }); });
     },
     body: () => bodyOf(card, offered.filter((k) => k === 'product' || k === lead || (supporters.has(k) && k !== lead)),
       lead ? { lead } : {}),

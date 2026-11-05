@@ -13,9 +13,10 @@ const isNode = (v) => !!v && typeof v === 'object' && typeof v.nodeType === 'num
  *  Opt-in (absent = the markup above): an option's `recommended: true` appends `span.qrec` (Worca's pick);
  *  `preset: Map<qid,value>` pre-picks a tile and marks it `data-preset="1"` until a person picks in that block;
  *  `foot: false` drops the footer (the host owns the submit), and Enter then picks without submitting.
- *  opts = { lead?, strip? }: the reader's lead perspective (src/shared/answerer.mjs wordsFor); none = the entry's words
+ *  opts = { lead?, strip?, register? }: the reader's lead perspective (src/shared/answerer.mjs wordsFor); none = the
+ *  entry's words, unless `register: 'plain'`
  *  → { el, picks: () => Map, destroy: () => void } */
-export function buildChatQuestion(doc, spec, { lead = null, strip = false } = {}) {
+export function buildChatQuestion(doc, spec, { lead = null, strip = false, register } = {}) {
   const h = (tag, cls, text) => {
     const n = doc.createElement(tag);
     if (cls) n.className = cls;
@@ -41,7 +42,7 @@ export function buildChatQuestion(doc, spec, { lead = null, strip = false } = {}
     const block = h('div', 'qblock');
     block.dataset.q = q.id;
     const text = h('div', 'qtext');
-    const qText = wordsFor(q, 'text', lead, { strip });
+    const qText = wordsFor(q, 'text', lead, { strip, register });
     text.append(h('span', 'qn', String(i + 1)), h('span', 'qtext-t', qText));
     if (nonEmpty(q.why)) text.appendChild(h('span', 'qwhy', q.why));
     const group = h('div', 'qopts');
@@ -54,7 +55,7 @@ export function buildChatQuestion(doc, spec, { lead = null, strip = false } = {}
       btn.dataset.value = o.value;
       btn.setAttribute('aria-pressed', 'false');
       const name = h('span', 'chat-q-opt-name');
-      name.appendChild(h('span', 'chat-q-opt-label', wordsFor(o, 'label', lead, { strip, n: k + 1 })));
+      name.appendChild(h('span', 'chat-q-opt-label', wordsFor(o, 'label', lead, { strip, register, n: k + 1 })));
       if (isNode(o.chip)) name.appendChild(o.chip);
       const txt = h('span', 'qopt-txt');
       txt.appendChild(name);
