@@ -31,6 +31,8 @@ The same six steps, in order. A wave is not handed to Worca before step 4 is don
 | **3 Building blocks** | Workflows (list and canvas), Requirements and Shaper features (the Plans tab), Schedules, Projects, Workspaces (list, map, create) | Where work is set up | large |
 | **4 Store and insight** | Marketplace and Plugins, Skills, Statistics, Team metrics, Usage and costs at full size, C4 and graph views, Artifacts and diff viewers, the terminal and logs | Read more than acted on; charts and tables patterns | large |
 | **5 Edges and graduation** | Getting started and the setup assistant, Away screensaver, empty and error pages, the browser extension's sidebar, docs-site and changelog look; then graduation | Last pages; then the old design leaves | medium |
+| **6 Chat is the product** | Chat and builds become one: a build is the engine under a conversation, not a thing people manage | The end state of the product, not a page redesign; to shape (below) | to shape |
+| **7 Micro-frontends** | The app splits into independently built features on one shell and one design system | Last: it moves code, not looks, once every page is Rail | to shape |
 
 The `rail` flag stays the one switch across the waves: each wave's pages join it, so there are still only two states to
 test, today's Worca or Rail. Graduation (Wave 5) removes the flag, every part in `rail-retires.json` and the
@@ -59,6 +61,50 @@ the design system itself.
    - Stand-in wording on the run page ("Pause after this step" off with its reason, "Continue without cap").
 5. **The type.** The DS names Inter in place of Poppins; Wave 1 keeps Poppins. Decide when the type moves: with
    graduation (one switch for everyone) or a wave earlier behind the flag.
+
+## Wave 6: Chat is the product, builds are the engine (to shape)
+
+The final product stage: people talk to Worca in Chat, and the build (today's run, with its workflow, steps, branch and
+PR) becomes a hidden engine inside the conversation. Nobody should have to manage builds. It is not shaped yet; these
+are the challenges to work through, not decisions:
+
+- **What stays visible.** A conversation needs the outcome (what changed, can I ship it), the questions only a person can
+  answer, cost and limits. Which of the run page's parts survive as cards in Chat, and which go behind a "how it ran"
+  view for experts (the interface levels may be the line)?
+- **Runs static, Chat interactive** (decided 25 Oct): a build stays statically dispatched and Chat does the steering.
+  Hiding builds keeps that rule; it changes where a build is seen, not how it runs.
+- **The navigation model.** "A thing opens as a full page" assumes a run is a thing. If the conversation is the thing,
+  what is a run's address, what does a link or a notification open, and does the Runs list survive as an operations
+  view (all builds across chats, for teams and admins) or disappear?
+- **Builds with no conversation.** Schedules, automations, a ticket from a tracker, a re-run, a PR fix run: whose chat do
+  they belong to, or do they open one?
+- **Features and Shaper.** A Feature is many builds over hours; its feature card already lives in a chat thread. Is one
+  chat one feature, or can a chat hold several?
+- **Pulse and needs you.** Pulse lists runs that need you today; in the end state it lists conversations waiting on you.
+- **Teams.** Shared visibility of a teammate's builds, review and ship by someone else, audit: a private chat is not a
+  team surface.
+- **Ordinary stays ordinary** (decided 18 Oct): no message is intercepted or rerouted by keywords; a build starts from
+  Ask Worca's own tools or an explicit button on a card.
+- **What Waves 2–5 should not lock in.** Wave 2 redesigns the Runs list, Chat and run cards: it should be shaped toward
+  this end state (the run card as the build's face in Chat, the Runs list as an operations view), so it is not
+  redesigned twice.
+
+## Wave 7: micro-frontends (to shape)
+
+The last wave changes how the app is built, not how it looks: each feature (`ui/public/FEATURE/`, the #919 split) becomes
+an independently built and loaded frontend on one shell. Questions to shape:
+
+- **Why, and for whom.** Independent releases per feature, teams owning features, plugins shipping their own pages, or a
+  smaller first load. The answer decides how far the split goes.
+- **The shared core.** The design system (tokens, components, CSS parts) as one versioned package every frontend uses,
+  so the DS stays the leader; the shell (sidebar, top bar, trail, Pulse) and the router as the host.
+- **Contracts.** How a frontend mounts, registers its routes and addresses, reads flags and levels, and gets the live
+  WebSocket frames and shared state without reaching into another feature.
+- **Styles.** Tokens stay global; each frontend's CSS scoped so one cannot restyle another; no copy of the components.
+- **Build and delivery.** The app ships today as one Node server serving `ui/public/`; how frontends are built, versioned
+  and loaded (an import map, module federation or plain ES modules per feature), offline and in the Docker image.
+- **Gates.** Each frontend passes the DS checks on its own and in the composed app.
+- **Order.** After Wave 6: the chat-first product decides which features exist as frontends at all.
 
 ## What each wave has to settle
 
