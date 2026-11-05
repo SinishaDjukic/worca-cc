@@ -531,6 +531,7 @@
   "PUT /api/projects/:key/tags/defaults": {"class": "probe", "reason": "tmProject answers 404"},
   "PUT /api/proxy/settings": {"class": "probe", "reason": "400 networkProxy is required with {}"},
   "PUT /api/requirements/:seq/criteria/:id": {"class": "probe", "reason": "flag-gated; bad seq answers 404"},
+  "PUT /api/requirements/:seq/early-start-reason": {"class": "probe", "reason": "flag-gated; bad seq answers 404"},
   "PUT /api/requirements/:seq/spec/:section": {"class": "probe", "reason": "flag-gated; bad seq answers 404"},
   "PUT /api/requirements/brief/:scopeType/:scopeKey/sections/:section": {"class": "probe", "reason": "checkTarget answers 400 first"},
   "PUT /api/requirements/context/:scopeType/:scopeKey": {"class": "probe", "reason": "checkTarget answers 400 before setContext"},
