@@ -20,7 +20,7 @@ import {
   stackedPrBase, recordShapePlan, listShapePlans, featuresOfTickets, featureClarify, chainFeature, sliceOfPipeline, slicePrPreamble,
   recordShip, clearShip, recordSliceDraft, featureShipSuggestion, featureShipInput, ONE_PR_MAX_LINES,
   liveSliceFrom, shaperCard, featureThread,
-  addFeatureNote, featureNotes, appendFeatureRun, featureBase, liveRoundOf,
+  addFeatureNote, featureNotes, appendFeatureRun, featureBase, liveRoundOf, setFeatureAcceptance,
 } from '../src/core/shape/features.mjs';
 
 useTempHome(after, 'worca-shape-features-');
@@ -902,4 +902,66 @@ test('featureView: requirements.check null before review; 2/3 with one uncovered
   const plain = mk(2);
   assert.equal('requirements' in featureView(plain.id).slices[0], false);
   assert.equal('requirements' in (await featureShipInput(featureView(plain.id))).slices[0], false);
+});
+
+// Shaper requirements s3 (D7, D11): the acceptance ledger in outline.acceptance and on the ship block.
+test('setFeatureAcceptance round-trips; ship.acceptance lists every agreed id; absent without agreed requirements', async () => {
+  const { pid, id } = mk(2, { outline: reqOutline() });
+  let a = featureView(id).ship.acceptance;
+  assert.deepEqual([a.ready, a.marked, a.total], [false, 0, 3]);
+  assert.deepEqual(a.items.map((i) => i.label), ['R-po-1 · People see it · not marked', 'R-ux-1 · It reads well · not marked',
+    'R-ops-1 · It rolls back · not marked']);
+  await writeReview(pid, 'impl', 1, { summary: 'r1', issues: [] });
+  assert.equal(featureView(id).ship.acceptance.items[0].detail, 'covered by the diff', 'nothing pre-marked, the cover said');
+  assert.deepEqual([featureView(id).ship.acceptance.agreed.map((a) => a.id), featureView(id).ship.acceptance.entries],
+    [['R-po-1', 'R-ux-1', 'R-ops-1'], []], 'the card repaints from the agreed list and the stored marks');
+  const entries = [{ id: 'R-po-1', mark: 'met' }, { id: 'R-ux-1', mark: 'dropped', reason: 'later' }, { id: 'R-ops-1', mark: 'not-met', target: 'Run 5' }];
+  assert.equal(setFeatureAcceptance(id, entries), true);
+  assert.deepEqual(JSON.parse(getDb().prepare('SELECT outline FROM shape_features WHERE id = ?').get(id).outline).acceptance, entries);
+  a = featureView(id).ship.acceptance;
+  assert.deepEqual([a.ready, a.marked, a.total], [true, 3, 3]);
+  assert.deepEqual(a.entries, entries);
+  assert.equal(featureView(id).slices.length, 2, 'the rest of the outline is kept');
+  assert.equal(setFeatureAcceptance('feat_missing', entries), false);
+  assert.equal('acceptance' in featureView(mk(2).id).ship, false);
+});
+
+test('a follow-up after marks keeps outline.acceptance', () => {
+  const { id } = mk(2, { outline: reqOutline() });
+  setFeatureAcceptance(id, [{ id: 'R-po-1', mark: 'met' }]);
+  appendFeatureRun(id, { title: 'Follow-up: blue bars', goal: 'make the bars blue', kind: 'follow-up' });
+  assert.deepEqual(JSON.parse(getDb().prepare('SELECT outline FROM shape_features WHERE id = ?').get(id).outline).acceptance,
+    [{ id: 'R-po-1', mark: 'met' }]);
+});
+
+// Shaper requirements s3 (D12): a requirements-first follow-up and the Changes facts of a shipped feature.
+test('a requirements-first follow-up asks shape.requirementsFirst; an extra run never does; the Changes facts carry shipped, agreed and the marks', async () => {
+  const { landingFactsOfFeature } = await import('../src/core/shape/changes.mjs');
+  const { id } = mk(2, { outline: reqOutline() });
+  setFeatureAcceptance(id, [{ id: 'R-po-1', mark: 'met' }]);
+  const deps = { readPrState: () => null, readRunTags: () => [], readRunLabels: () => [], featureView: (fid) => featureView(fid) };
+  assert.equal(landingFactsOfFeature(id, deps).feature.shipped, false);
+  getDb().prepare("UPDATE shape_features SET ship_mode = 'one' WHERE id = ?").run(id);
+  const facts = landingFactsOfFeature(id, deps).feature;
+  assert.deepEqual([facts.shipped, facts.agreed.map((a) => a.id), facts.acceptance, facts.perspectives],
+    [true, ['R-po-1', 'R-ux-1', 'R-ops-1'], [{ id: 'R-po-1', mark: 'met' }], ['product']]);
+  const a = appendFeatureRun(id, { title: 'Follow-up: blue', goal: 'make it blue', kind: 'follow-up', requirementsFirst: true });
+  assert.equal(getTicket(a.ticketId, { withRequest: true }).request.shape.requirementsFirst, true);
+  const plain = appendFeatureRun(id, { title: 'Follow-up: red', goal: 'make it red', kind: 'follow-up' });
+  assert.equal('requirementsFirst' in getTicket(plain.ticketId, { withRequest: true }).request.shape, false);
+  const extra = appendFeatureRun(id, { title: 'Extra', goal: 'more', kind: 'extra', requirementsFirst: true });
+  assert.equal('requirementsFirst' in getTicket(extra.ticketId, { withRequest: true }).request.shape, false);
+});
+
+test('resumeFeature: a stopped requirements-first follow-up restarts requirements first; a plain one stays plain', () => {
+  for (const requirementsFirst of [true, false]) {
+    const { id } = mk(2, { outline: reqOutline(), pipelineId: pipe('done') });
+    setTicket(tickets(id)[1].ticket_id, 'fired', { pipelineId: pipe('done') });
+    const f = appendFeatureRun(id, { title: 'Follow-up: blue', goal: 'make it blue', kind: 'follow-up', requirementsFirst });
+    setTicket(f.ticketId, 'fired', { pipelineId: pipe('stopped') });
+    const res = resumeFeature(id);
+    assert.equal(res.action, 'restart', JSON.stringify(res));
+    const shape = getTicket(res.ticketId, { withRequest: true }).request.shape;
+    assert.deepEqual([shape.slice.index, shape.requirementsFirst === true], [3, requirementsFirst]);
+  }
 });

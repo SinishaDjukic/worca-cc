@@ -10,6 +10,9 @@ const BLOCKING = new Set(['critical', 'major']);
 const SEVERITIES = new Set(['critical', 'major', 'minor', 'suggestion']);
 const STATUSES = new Set(['met', 'unmet', 'na']);
 const oneLine = (v) => String(v ?? '').replace(/\s+/g, ' ').trim();
+/** A finding that names an agreed requirement (Shaper requirements s3): a concern for the person, never blocking. */
+export const isRequirementConcern = (f) => !!f?.requirement;
+const blocks = (f) => BLOCKING.has(f.severity) && !isRequirementConcern(f);
 
 export const ROLE_KEY_RE = /^[a-z]{1,24}$/;   // finding ids are `key-round-n`: letters only keep them parseable
 const MAX_ROLES = 12;
@@ -32,7 +35,7 @@ export const ROLE_REVIEW_SINKS = Object.freeze([REFINER_SINK, 'implementer']);
  *  the reviewed file on) and the findings file's head line. The engine reads this table; it never compares a target. */
 export const ROLE_REVIEW_TARGETS = Object.freeze({
   plan: Object.freeze({ findingsPort: 'findings', continuePort: 'revise', mockRole: 'plan-review', noun: 'plan', sectionHint: 'the plan section',
-    reviewedPort: 'plan', reviewedHead: 'Plan reviewed' }),
+    reviewedPort: 'plan', reviewedHead: 'Plan reviewed', requirementConcerns: true }),
   diff: Object.freeze({ findingsPort: 'review', continuePort: 'done', mockRole: 'code-review', noun: 'diff', sectionHint: 'the file and line',
     reviewedPort: 'plan', reviewedHead: 'Diff reviewed against the plan' }),
   requirements: Object.freeze({ findingsPort: 'findings', continuePort: 'revise', mockRole: 'requirements-review', noun: 'requirements',
@@ -135,7 +138,7 @@ export function rolesForRound(roles, round, lastRound = null) {
   const last = new Map((lastRound.roles || []).map((r) => [r.key, r]));
   return list.map((role) => {
     const r = last.get(role.key);
-    const clean = !!r && !(r.findings || []).some((f) => BLOCKING.has(f.severity))
+    const clean = !!r && !(r.findings || []).some(blocks)
       && (r.checklist || []).every((c) => c.status === 'met' || c.status === 'na')
       && (r.planChecklist || []).every((c) => (c.status === 'met' && c.evidence) || c.status === 'na');
     return { ...role, skip: clean };
@@ -143,8 +146,9 @@ export function rolesForRound(roles, round, lastRound = null) {
 }
 
 /** One reviewer's raw verdict JSON → the stored role record. Ids are `key-round-n` (`ux-1-2`). Every expected
- *  checklist id gets an entry; one the reviewer left out is `unmet`, so it can never earn a round-2 skip. */
-export function roleRecord(role, round, verdict, expectedIds = []) {
+ *  checklist id gets an entry; one the reviewer left out is `unmet`, so it can never earn a round-2 skip. A finding
+ *  keeps its `requirement` only when that id is one of `requirementIds` (the run's agreed ids). */
+export function roleRecord(role, round, verdict, expectedIds = [], { requirementIds = [] } = {}) {
   const { key, label } = role;
   const issues = Array.isArray(verdict?.issues) ? verdict.issues : [];
   const findings = issues.filter((i) => SEVERITIES.has(i?.severity)).map((i, n) => ({
@@ -154,6 +158,7 @@ export function roleRecord(role, round, verdict, expectedIds = []) {
     section: oneLine(i.section || i.location),
     fix: oneLine(i.fix || i.detail),
     status: 'open',
+    ...(typeof i.requirement === 'string' && requirementIds.includes(i.requirement) ? { requirement: i.requirement } : {}),
   }));
   const given = new Map((Array.isArray(verdict?.checklist) ? verdict.checklist : [])
     .filter((c) => expectedIds.includes(String(c?.id)))
@@ -169,26 +174,40 @@ export function findingsMarkdown(round, planPath, roles, { dispositionsPath, tar
   for (const r of roles) {
     lines.push(`## ${r.label}${r.skipped ? ' (skipped: clean last round)' : ''}`, '');
     if (!r.findings.length) lines.push('- No findings.');
-    for (const f of r.findings) lines.push(`- **${f.id}** [${f.severity}] ${f.section ? `${f.section}: ` : ''}${f.title} — fix: ${f.fix}`);
+    for (const f of r.findings) {
+      lines.push(isRequirementConcern(f)
+        ? `- **${f.id}** [requirement concern ${f.requirement}] ${f.title} — for the person; leave the plan as it is`
+        : `- **${f.id}** [${f.severity}] ${f.section ? `${f.section}: ` : ''}${f.title} — fix: ${f.fix}`);
+    }
     for (const c of r.checklist.filter((x) => x.status === 'unmet')) lines.push(`- ${c.id}: unmet — ${c.evidence}`);
     lines.push('');
   }
-  if (dispositionsPath) lines.push(dispositionsBlock(dispositionsPath));
+  if (dispositionsPath) lines.push(withoutConcerns(dispositionsBlock(dispositionsPath), roles));
   return lines.join('\n');
+}
+
+/** The dispositions block, told to leave the requirement concerns out: it names the ids to answer, never a concern's. */
+function withoutConcerns(block, roles) {
+  const all = roles.flatMap((r) => r.findings);
+  if (!all.some(isRequirementConcern)) return block;
+  const ids = all.filter((f) => !isRequirementConcern(f)).map((f) => `\`${f.id}\``);
+  const at = block.lastIndexOf('Dispositions file:');
+  return `${block.slice(0, at)}The requirement concerns above are for the person: leave them out. ` +
+    `${ids.length ? `Answer only ${ids.join(', ')}.` : 'There is no finding to answer.'}\n\n${block.slice(at)}`;
 }
 
 /** The non-skipped roles' critical/major findings as verdict issues (`id: title`, the fix as detail, the section as
  *  location): the ONE mapping of findings to issues. */
 export function roleBlockingIssues(roles) {
   return (Array.isArray(roles) ? roles : []).filter((r) => !r.skipped).flatMap((r) => r.findings || [])
-    .filter((f) => BLOCKING.has(f.severity))
+    .filter(blocks)
     .map((f) => ({ severity: f.severity, title: `${f.id}: ${f.title}`, detail: f.fix, location: f.section }));
 }
 
 /** The verdict a role review routes on itself (a port set with blocking/clean outputs): its blocking findings. */
 export function roleRoutingVerdict(roles) {
   const issues = roleBlockingIssues(roles);
-  const by = (Array.isArray(roles) ? roles : []).filter((r) => !r.skipped && (r.findings || []).some((f) => BLOCKING.has(f.severity)))
+  const by = (Array.isArray(roles) ? roles : []).filter((r) => !r.skipped && (r.findings || []).some(blocks))
     .map((r) => r.label || r.key);
   return {
     summary: issues.length ? `Role reviews: ${issues.length} blocking finding(s) from ${by.join(', ')}.` : 'Role reviews: no blocking findings.',

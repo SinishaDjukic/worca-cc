@@ -534,6 +534,7 @@
   "PUT /api/runs/:id/labels": {"class": "probe", "reason": "runLabels gate; findPipelineRowById misses, 404"},
   "PUT /api/runs/:id/tags": {"class": "probe", "reason": "findPipelineRowById misses, 404"},
   "PUT /api/scripts/:key": {"class": "probe", "reason": "updateScript of an unknown key errors; scriptError catches"},
+  "PUT /api/shape/features/:id/acceptance": {"class": "probe", "reason": "featureView misses an unknown feature, 404 before any write; try/catch"},
   "PUT /api/scripts/:key/cases": {"class": "probe", "reason": "400 cases must be an array"},
   "PUT /api/sets/:id/skills/:skillId": {"class": "probe", "reason": "setSkillId answers 400 invalid skill id"},
   "PUT /api/source-bindings": {"class": "probe", "reason": "400 when projectDir/projectKey/workspaceId is missing"},

@@ -794,3 +794,110 @@ shipT('refresh keeps one Satisfies line', async () => {
   assert.equal(body.match(/^Satisfies: /gm).length, 1, body);
   assert.match(body, /^Part of Charts: slice 1 of 3\nSatisfies: R-po-1, R-ux-1\n\n- Slice 2, Slice 2: https:\/\/github\.com\/me\/repo\/pull\/2\n- Slice 3, Slice 3: https:\/\/github\.com\/me\/repo\/pull\/3\n\nWhat changed\.$/);
 });
+
+// ── Shaper requirements s3 (D8, D9): the acceptance ledger gates the ship ─────────────────────────────────────────
+const REQ_ON = { ...NO_ADO, WORCA_FLAGS: 'shapeRequirements' };
+const reqShipT = (name, fn, env = REQ_ON) => test(name, () => withEnvVars(env, async () => {
+  ({ _testing: gitInfo } = await import('../src/core/git-info.mjs'));
+  try { await fn(); } finally { gitInfo.reset(); }
+}));
+const AGREED2 = [{ id: 'R-po-1', text: 'People see it' }, { id: 'R-ops-1', text: 'It rolls back' }];
+const withAgreed = (fid) => {
+  const row = getDb().prepare('SELECT outline FROM shape_features WHERE id = ?').get(fid);
+  getDb().prepare('UPDATE shape_features SET outline = ? WHERE id = ?').run(JSON.stringify({ ...JSON.parse(row.outline), agreed: AGREED2 }), fid);
+};
+const putMarks = (id, entries) => fetch(`${base}/api/shape/features/${id}/acceptance`, { method: 'PUT', headers: JSONH, body: JSON.stringify({ entries }) });
+const storedMarks = (fid) => JSON.parse(getDb().prepare('SELECT outline FROM shape_features WHERE id = ?').get(fid).outline).acceptance;
+const sideEffects = (seen) => seen.filter((a) => (a[0] === 'gh' && a[1] === 'pr' && ['create', 'ready', 'close', 'edit'].includes(a[2]))
+  || (a[0] === 'git' && ['push', 'commit', 'commit-tree', 'update-ref'].includes(a[1])));
+const ALL_MARKED = [{ id: 'R-po-1', mark: 'met' }, { id: 'R-ops-1', mark: 'dropped', reason: 'later' }];
+
+reqShipT('ship refuses 409 ACCEPTANCE_INCOMPLETE before any PR, changelog or push, in one and stacked mode', async () => {
+  for (const [mode, opts] of [['one', {}], ['stacked', { prs: false }]]) {
+    const seen = []; stubShip(seen);
+    const w = shipWorld(opts);
+    withAgreed(w.f.id);
+    assert.equal((await putMarks(w.f.id, [{ id: 'R-po-1', mark: 'met' }])).status, 200);
+    const r = await ship(w.f.id, mode);
+    assert.equal(r.status, 409, mode);
+    const body = await r.json();
+    assert.deepEqual([body.code, body.missing], ['ACCEPTANCE_INCOMPLETE', ['R-ops-1']], mode);
+    assert.deepEqual(sideEffects(seen), [], `${mode}: no side effect`);
+    assert.throws(() => git(w.dir, 'show', `${w.last}:CHANGELOG.md`), /CHANGELOG/, `${mode}: no changelog commit`);
+  }
+});
+
+reqShipT('PUT acceptance: 400 ACCEPTANCE_INVALID stores nothing; 200 stores the marks; then ship goes through', async () => {
+  const seen = []; stubShip(seen);
+  const w = shipWorld();
+  withAgreed(w.f.id);
+  assert.equal((await putMarks('feat_missing', [])).status, 404);
+  assert.equal((await putMarks(w.f.id, [{ id: 'R-po-1', mark: 'met' }])).status, 200);
+  const bad = await putMarks(w.f.id, [{ id: 'R-ops-1', mark: 'not-met', target: ' ' }]);
+  assert.equal(bad.status, 400);
+  assert.deepEqual(await bad.json(), { error: 'R-ops-1: not met needs where it moved', code: 'ACCEPTANCE_INVALID' });
+  assert.deepEqual(storedMarks(w.f.id), [{ id: 'R-po-1', mark: 'met' }], 'the refused save stored nothing');
+  const ok = await putMarks(w.f.id, ALL_MARKED);
+  assert.equal(ok.status, 200);
+  assert.deepEqual([(await ok.json()).acceptance.ready], [true]);
+  const r = await ship(w.f.id, 'one');
+  assert.equal(r.status, 200, await r.clone().text());
+  assert.equal((await putMarks(w.f.id, ALL_MARKED)).status, 409, 'after ship');
+});
+
+reqShipT('PUT acceptance merges per id: a save from a card with stale marks never reverts another card\'s mark', async () => {
+  const seen = []; stubShip(seen);
+  const w = shipWorld();
+  withAgreed(w.f.id);
+  assert.equal((await putMarks(w.f.id, [{ id: 'R-po-1', mark: 'met' }])).status, 200);
+  assert.equal((await putMarks(w.f.id, [{ id: 'R-po-1', mark: 'dropped', reason: 'later' }])).status, 200, 'the chat card');
+  const r = await putMarks(w.f.id, [{ id: 'R-ops-1', mark: 'met' }]);   // the feature page, still showing R-po-1 met
+  assert.equal(r.status, 200);
+  const want = [{ id: 'R-po-1', mark: 'dropped', reason: 'later' }, { id: 'R-ops-1', mark: 'met' }];
+  assert.deepEqual([storedMarks(w.f.id), (await r.json()).acceptance.entries], [want, want]);
+});
+
+reqShipT('PUT acceptance while the feature is shipping answers 409', async () => {
+  let release; const held = new Promise((r) => { release = r; });
+  let entered; const inCreate = new Promise((r) => { entered = r; });
+  const seen = []; stubShip(seen, { create: async () => { entered(); await held; return okRun('https://github.com/me/repo/pull/9\n'); } });
+  const w = shipWorld({ prs: false });
+  withAgreed(w.f.id);
+  await putMarks(w.f.id, ALL_MARKED);
+  const shipping = ship(w.f.id, 'stacked');
+  await inCreate;
+  const r = await putMarks(w.f.id, [{ id: 'R-po-1', mark: 'met' }]);
+  assert.equal(r.status, 409);
+  assert.equal((await r.json()).error, 'this feature is already shipping');
+  release();
+  await (await shipping).text();
+  assert.deepEqual(storedMarks(w.f.id), ALL_MARKED);
+});
+
+reqShipT('flag off: an unmarked feature with agreed requirements ships as today; no ledger in the view, and PUT answers 404', async () => {
+  const seen = []; stubShip(seen);
+  const w = shipWorld();
+  withAgreed(w.f.id);
+  assert.equal('acceptance' in (await view(w.f.id)).ship, false);
+  assert.equal((await putMarks(w.f.id, ALL_MARKED)).status, 404);
+  assert.equal(storedMarks(w.f.id), undefined, 'nothing stored');
+  const r = await ship(w.f.id, 'one');
+  assert.equal(r.status, 200, await r.clone().text());
+}, { ...NO_ADO, WORCA_FLAGS: '-shapeRequirements' });
+
+reqShipT('the chat Ship card carries the ledger: offered unmarked, updated by each PUT, and final once shipped', async () => {
+  const seen = []; stubShip(seen);
+  const w = shipWorld();
+  withAgreed(w.f.id);
+  const thread = createThread({ title: 'charts' });
+  askLinkRun(thread.id, { runId: 'run-s3-ledger', pipelineId: w.pids[0], cardId: 'card_s3_ledger' });
+  await testing.offerShipCard(w.pids[2]);
+  const card = () => listMessages(thread.id).flatMap((m) => m.blocks || []).find((b) => b.card && b.card.type === 'ship');
+  assert.deepEqual([card().card.acceptance.agreed.map((a) => a.id), card().card.acceptance.entries], [['R-po-1', 'R-ops-1'], []]);
+  assert.equal((await view(w.f.id)).ship.acceptance.total, 2, 'the feature page gets the ledger with the flag on');
+  assert.equal((await putMarks(w.f.id, ALL_MARKED)).status, 200);
+  assert.deepEqual([card().state, card().card.acceptance.entries, card().card.acceptance.ready], ['proposed', ALL_MARKED, true]);
+  const r = await ship(w.f.id, 'one');
+  assert.equal(r.status, 200, await r.clone().text());
+  assert.deepEqual([card().state, card().card.acceptance.entries], ['applied', ALL_MARKED]);
+});

@@ -14,7 +14,7 @@ import { validateDecisionPicks } from '../../shared/review/decisions.mjs';
 export const PLAN_ASK_KIND = 'plan';
 export const PLAN_FEEDBACK_MAX = 8000;
 const SHAPE_FIELDS = new Set(['perspectives', 'slices', 'size', 'lead']);
-const SHAPE_INTERNAL_FIELDS = new Set(['slice', 'replaces']);   // only a fired slice ticket / a re-plan run carries these
+const SHAPE_INTERNAL_FIELDS = new Set(['slice', 'replaces', 'requirementsFirst']);   // only a fired slice ticket / a re-plan run / a Changes follow-up carries these
 const SLICES_MODES = new Set(['auto', 'off']);
 const SIZES = new Set(['small', 'medium', 'large']);
 
@@ -67,6 +67,9 @@ export function resolveShapeRequest({ shape, workflowId }, { internal = false, r
   if (shape?.replaces !== undefined && (typeof shape.replaces !== 'string' || !shape.replaces)) {
     return { ok: false, error: 'shape.replaces must be a feature id' };
   }
+  if (shape?.requirementsFirst !== undefined && shape.requirementsFirst !== true) {
+    return { ok: false, error: 'shape.requirementsFirst must be true' };
+  }
   const resolved = {
     perspectives: p.perspectives,
     ...(shape?.slices !== undefined ? { slices: shape.slices } : {}),
@@ -74,11 +77,12 @@ export function resolveShapeRequest({ shape, workflowId }, { internal = false, r
     ...(shape?.lead !== undefined ? { lead: shape.lead } : {}),
     ...(slice ? { slice } : {}),
     ...(shape?.replaces !== undefined ? { replaces: shape.replaces } : {}),
+    ...(shape?.requirementsFirst === true ? { requirementsFirst: true } : {}),
   };
   const ux = p.perspectives.includes('ux');
   if (SHAPE_REQ_WORKFLOW_IDS.includes(named)) {
     if (!requirementsOn) return { ok: false, error: 'the requirements stage is off (Labs flag shapeRequirements)' };
-    if (resolved.slice) return { ok: false, error: `a slice ticket runs the Shaper workflow (${SHAPE_WORKFLOW_ID})` };
+    if (resolved.slice && !resolved.requirementsFirst) return { ok: false, error: `a slice ticket runs the Shaper workflow (${SHAPE_WORKFLOW_ID})` };
     if (!shapeRequirementsEligible(resolved, true)) return { ok: false, error: 'the requirements stage needs a medium or large task' };
   }
   // A slice of a feature with agreed requirements runs the slice variant, chosen when its ticket fires: the flag off
@@ -88,7 +92,8 @@ export function resolveShapeRequest({ shape, workflowId }, { internal = false, r
     return { ok: false, error: `${named} runs only as a slice of a feature with agreed requirements` };
   }
   const req = shapeRequirementsEligible(resolved, requirementsOn);
-  const sliceReq = requirementsOn && sliceIds.length > 0;
+  // s3 (D13): a requirements-first Changes run updates the requirements before it plans, a slice included.
+  const sliceReq = requirementsOn && sliceIds.length > 0 && !resolved.requirementsFirst;
   return {
     ok: true,
     shape: resolved,

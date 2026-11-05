@@ -72,7 +72,10 @@ export const REQUIREMENTS_ROLE_CHECKLIST = Object.freeze({
   wantsHouseBrief: () => false,
 });
 
-/** A run takes the requirements stage only with the flag on, for a medium or large task, and never as a slice ticket. */
+/** A run takes the requirements stage only with the flag on, for a medium or large task, and never as a slice ticket.
+ *  s3 (D13): a Changes run after ship (`requirementsFirst`) takes it too, a follow-up slice included. */
 export function shapeRequirementsEligible(shape, flagOn) {
-  return flagOn === true && !!shape && (shape.size === 'medium' || shape.size === 'large') && shape.slice === undefined;
+  if (flagOn !== true || !shape) return false;
+  if (shape.requirementsFirst === true) return true;
+  return (shape.size === 'medium' || shape.size === 'large') && shape.slice === undefined;
 }

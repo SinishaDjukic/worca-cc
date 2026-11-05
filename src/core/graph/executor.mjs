@@ -56,7 +56,8 @@ import { perspectivesBlock } from '../../shared/shape/perspectives.mjs';
 import { roleChecklistOf, genericRoleBrief, roleTargetOf } from '../../shared/graph/role-review-step.mjs';
 import { reviewChecklistBlock } from '../../shared/shape/review-checklist.mjs';
 import { slicingBlock, outlineFeedbackBlock, FLAT_NOTE, sliceScopeBlock } from '../../shared/shape/slices.mjs';
-import { planConcernBlock, planConcernOverrideBlock } from '../../shared/review/plan-concern.mjs';
+import { planConcernBlock, planConcernOverrideBlock, requirementConcernBlock } from '../../shared/review/plan-concern.mjs';
+import { criterionIds } from '../../shared/review/coverage.mjs';
 import { runScriptExecution } from './script-runner.mjs';
 // Skills registry §4.1: the CLI's refusal of `--plugin-dir` under managed `disableSideloadFlags` (P3's one regex).
 import { SIDELOAD_REFUSAL_RE as SIDELOAD_REFUSED_RE } from '../skills-registry/host.mjs';
@@ -563,12 +564,15 @@ function markersFor({ role, ordinal, runCtx, outputs, verdict, bindings, ports, 
   return markers;
 }
 
-/** The brief of one role slice: its checklist provider's, else the generic one. */
+/** The brief of one role slice: its checklist provider's, else the generic one. A plan review with a requirements
+ *  input also gets the requirement-concern block (Shaper requirements s3, D6), in any workflow. */
 function roleBriefFor(ctx) {
   const spec = ctx.roleSpec;
   const provider = roleChecklistOf(spec);
-  if (provider) return provider.brief(ctx.role, ctx.rolePlanText || '', { houseBrief: ctx.houseBrief, shape: ctx.roleShape || null });
-  return genericRoleBrief(spec.roles.find((r) => r.key === ctx.role) || { key: ctx.role, label: ctx.role }, spec.target);
+  const concerns = ctx.bindings?.requirements && roleTargetOf(spec).requirementConcerns
+    ? requirementConcernBlock(criterionIds(ctx.roleRequirementsText || '')) : '';
+  if (provider) return provider.brief(ctx.role, ctx.rolePlanText || '', { houseBrief: ctx.houseBrief, shape: ctx.roleShape || null }) + concerns;
+  return genericRoleBrief(spec.roles.find((r) => r.key === ctx.role) || { key: ctx.role, label: ctx.role }, spec.target) + concerns;
 }
 
 /**

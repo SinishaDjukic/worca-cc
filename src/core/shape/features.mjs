@@ -8,6 +8,7 @@ import { readPrState, readPipelineExtras, readRunResultsById, readClarifyRow } f
 import { projectKey } from '../store.mjs';
 import { sliceBrief, replanBrief } from '../../shared/shape/slices.mjs';
 import { requirementsCheck } from '../../shared/review/requirements-coverage.mjs';
+import { acceptanceGate, ledgerCheck } from '../../shared/shape/acceptance.mjs';
 import { latestChecklist, checklistMarkdown } from '../../shared/shape/review-checklist.mjs';
 import { buildDecisionLog } from '../../shared/shape/feature-log.mjs';
 import { PLAN_ASK_KIND } from './run.mjs';
@@ -37,7 +38,8 @@ function requestOptions(base = {}, startedBy = null) {
 }
 
 /** A slice ticket's stored request (L6): what POST /api/run would take, plus `internal`. */
-export function sliceRequest({ feature, index, outline, perspectives, workflowId, base = {}, projectDir, startedBy = null, sourceBranch = null }) {
+export function sliceRequest({ feature, index, outline, perspectives, workflowId, base = {}, projectDir, startedBy = null, sourceBranch = null,
+  requirementsFirst = false }) {
   const total = outline.slices.length;
   const { top, internal } = requestOptions(base, startedBy);
   return {
@@ -47,7 +49,8 @@ export function sliceRequest({ feature, index, outline, perspectives, workflowId
     workflowId,
     ...top,
     ...(sourceBranch ? { sourceBranch } : {}),
-    shape: { perspectives: [...perspectives], slices: 'off', slice: { feature: feature.id, index, total, outline } },
+    shape: { perspectives: [...perspectives], slices: 'off', slice: { feature: feature.id, index, total, outline },
+      ...(requirementsFirst ? { requirementsFirst: true } : {}) },
     internal,
   };
 }
@@ -126,6 +129,32 @@ export function featureApprovesEach(id) {
 
 export function setApproveEach(id, on, { now = Date.now() } = {}) {
   return getDb().prepare('UPDATE shape_features SET approve_each = ?, updated_at = ? WHERE id = ?').run(on ? 1 : 0, iso(now), String(id)).changes > 0;
+}
+
+/** Shaper requirements s3 (D7): the acceptance ledger replaces `outline.acceptance` (entries already normalised). */
+export function setFeatureAcceptance(featureId, entries, { now = Date.now() } = {}) {
+  const f = featureRow(featureId);
+  if (!f) return false;
+  return getDb().prepare('UPDATE shape_features SET outline = ?, updated_at = ? WHERE id = ?')
+    .run(JSON.stringify({ ...f.outline, acceptance: entries }), iso(now), f.id).changes > 0;
+}
+
+/** The ledger on the ship block (D11): nothing pre-marked; a row the code review covered says so in its detail.
+ *  `agreed`, `entries` and `covered` let the ship card repaint its rows as the person marks them. */
+function shipAcceptance(f, slices) {
+  const covered = [...new Set(slices.flatMap((s) => (s.requirements?.check?.items || []).filter((i) => i.pass).map((i) => i.id)))];
+  const { items } = ledgerCheck(f.outline.agreed, f.outline.acceptance, covered);
+  const { ready, marked, total } = acceptanceGate(f.outline.agreed, f.outline.acceptance);
+  const agreed = f.outline.agreed.map(({ id, text }) => ({ id, text }));
+  return { items, ready, marked, total, agreed, entries: Array.isArray(f.outline.acceptance) ? f.outline.acceptance : [], covered };
+}
+
+/** The ship gate's refusal body (D8) while an agreed requirement is unmarked, else null. */
+export function acceptanceRefusal(view) {
+  const ledger = view?.ship?.acceptance;
+  if (!ledger || ledger.ready) return null;
+  const missing = ledger.items.filter((i) => !i.pass).map((i) => i.id);
+  return { error: `mark every requirement before you create the PR (${missing.length} left)`, code: 'ACCEPTANCE_INCOMPLETE', missing };
 }
 
 /** s2: what a Shaper run started without a predecessor carries from the feature's origin run: its cost tags and labels. */
@@ -248,7 +277,8 @@ export function featureView(id, { live = () => null } = {}) {
     linesRemoved: null, files: null, release,
     // s4: what the applied Ship card shows, wherever it renders (chat, group page, Plans).
     result: shipped ? { mode: f.ship_mode, prUrl: f.ship_pr_url || lastPrUrl,
-      closed: f.ship_mode === 'one' ? (f.ship_closed ?? slices.filter((s) => s.pr && s.pr.state === 'CLOSED').length) : 0, release } : null };
+      closed: f.ship_mode === 'one' ? (f.ship_closed ?? slices.filter((s) => s.pr && s.pr.state === 'CLOSED').length) : 0, release } : null,
+    ...(f.outline.agreed?.length ? { acceptance: shipAcceptance(f, slices) } : {}) };
   // The Re-plan the rest run (replanning/replanned): its ticket id is the run id it fires as (ui/server.mjs:2188).
   const rt = f.replan_ticket_id ? getTicket(f.replan_ticket_id) : null;
   const replan = rt ? { ticketId: rt.id, pipelineId: rt.pipelineId || null, runId: rt.pipelineId ? (live(rt.pipelineId)?.runId || null) : null } : null;
@@ -305,7 +335,7 @@ export function liveRoundOf(featureId) {
 }
 
 /** Shaper s5 (D13): run N+1 of the feature. 'extra' chains after the last run; 'follow-up' fires now from the base. */
-export function appendFeatureRun(featureId, { title, goal, kind, by = null, now = Date.now() }) {
+export function appendFeatureRun(featureId, { title, goal, kind, by = null, requirementsFirst = false, now = Date.now() }) {
   if (kind !== 'extra' && kind !== 'follow-up') throw new TypeError('kind must be extra or follow-up');
   const db = getDb();
   const f = featureRow(featureId);
@@ -323,7 +353,8 @@ export function appendFeatureRun(featureId, { title, goal, kind, by = null, now 
     const t = createTicket({
       title: sliceTitle(f.title, index, index, s), projectDir: f.project_dir,
       request: { ...sliceRequest({ feature, index, outline, perspectives: f.perspectives, workflowId: f.workflow_id, base: f.base,
-        projectDir: f.project_dir, startedBy: by, sourceBranch: kind === 'follow-up' ? f.source_branch : null }),
+        projectDir: f.project_dir, startedBy: by, sourceBranch: kind === 'follow-up' ? f.source_branch : null,
+        requirementsFirst: kind === 'follow-up' && requirementsFirst === true }),
       ...(kind === 'follow-up' ? originCarry(f) : {}) },   // s2: a chained `extra` inherits at fire instead
       ...(kind === 'extra' ? { after, afterPolicy: 'done', sourceFromPrevious: true } : { runAtMs: now }),
       createdBy: by, now,
@@ -580,9 +611,12 @@ export function resumeFeature(id, { live = () => null, by = null, now = Date.now
   // F43: createTicket throws on {kind:'pipeline', id:null}. A previous slice with no pipeline has not run (e.g. this
   // slice was started early with Run now): nothing to chain after.
   if (prev && !prev.pipelineId) return { status: 409, error: `slice ${prev.index} has not run yet: start it first` };
+  // s3 (D12): a requirements-first follow-up restarts requirements first; the flag lives only in its old ticket's request.
+  const old = rows[h.index - 1]?.ticketId ? getTicket(rows[h.index - 1].ticketId, { withRequest: true }) : null;
   const request = { ...sliceRequest({ feature: { id, title: f.title }, index: h.index, outline: f.outline, perspectives: f.perspectives,
     workflowId: f.workflow_id, base: f.base, projectDir: f.project_dir, startedBy: by,
-    sourceBranch: prev ? null : f.source_branch || null }), ...(prev ? {} : originCarry(f)) };   // s2: chained restarts inherit at fire
+    sourceBranch: prev ? null : f.source_branch || null, requirementsFirst: old?.request?.shape?.requirementsFirst === true }),
+    ...(prev ? {} : originCarry(f)) };   // s2: chained restarts inherit at fire
   let ticketId = null;
   tx(() => {
     const t = createTicket({

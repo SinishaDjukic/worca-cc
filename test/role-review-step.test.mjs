@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import {
   LEGACY_ROLE_REVIEW, ROLE_CHECKLISTS, roleReviewOf, roleReviewIssues, runningRoles, rolesForRound, roleRecord,
   findingsMarkdown, genericRoleBrief, refinerVerdict, ROLE_REVIEW_SINKS, ROLE_REVIEW_TARGETS, roleTargetOf, roleBlockingIssues, roleRoutingVerdict,
+  isRequirementConcern,
 } from '../src/shared/graph/role-review-step.mjs';
 import { dispositionsBlock } from '../src/shared/review/findings.mjs';
 import { PERSPECTIVE_ROLE_CHECKLIST } from '../src/shared/shape/role-review.mjs';
@@ -205,4 +206,58 @@ test('coverage spec with no roles materialises the 4 provider roles', () => {
   const rr = roleReviewOf({ roleReview: { source: 'declared', target: 'diff', checklist: 'coverage', sink: 'implementer' } });
   assert.deepEqual(rr.roles.map((r) => r.key), ['correctness', 'security', 'fit', 'requirements']);
   assert.equal(rr.checklist, 'coverage');
+});
+
+// Shaper requirements s3 (D1, D2): a finding naming an agreed requirement is a concern for the person, never blocking.
+const AGREED = { requirementIds: ['R-po-1', 'R-sec-2'] };
+const concernVerdict = { issues: [{ severity: 'major', title: 'Export needs a server', fix: 'Drop it', requirement: 'R-po-1' },
+  { severity: 'major', title: 'Missing test', fix: 'Add it' }] };
+
+test('roleRecord keeps requirement only for an agreed id; with no ids the record is as before', () => {
+  const r = roleRecord(CS[0], 1, { issues: [{ severity: 'major', title: 'a', fix: 'f', requirement: 'R-po-1' },
+    { severity: 'major', title: 'b', fix: 'f', requirement: 'R-zz-9' }] }, [], AGREED);
+  assert.equal(r.findings[0].requirement, 'R-po-1');
+  assert.equal('requirement' in r.findings[1], false);
+  assert.deepEqual(roleRecord(CS[0], 1, concernVerdict, []), roleRecord(CS[0], 1, concernVerdict, [], { requirementIds: [] }));
+  assert.deepEqual(roleRecord(CS[0], 1, concernVerdict, []).findings.map((f) => Object.keys(f)),
+    [['id', 'severity', 'title', 'section', 'fix', 'status'], ['id', 'severity', 'title', 'section', 'fix', 'status']]);
+});
+
+test('a concern finding does not block: roleBlockingIssues, refinerVerdict and roleRoutingVerdict leave it out', () => {
+  const concernOnly = roleRecord(CS[0], 1, { issues: [concernVerdict.issues[0]] }, [], AGREED);
+  assert.equal(isRequirementConcern(concernOnly.findings[0]), true);
+  assert.deepEqual(roleBlockingIssues([concernOnly]), []);
+  const both = [concernOnly, roleRecord(CS[1], 1, { issues: [concernVerdict.issues[1]] }, [], AGREED)];
+  assert.deepEqual(refinerVerdict({ roles: both }, { issues: [] }).verdict.issues.map((i) => i.title), ['security-1-1: Missing test']);
+  assert.deepEqual(roleRoutingVerdict(both), { summary: 'Role reviews: 1 blocking finding(s) from Security.', issues: roleBlockingIssues(both) });
+  assert.deepEqual(roleRoutingVerdict([concernOnly]), { summary: 'Role reviews: no blocking findings.', issues: [] });
+});
+
+test('an unknown requirement id still blocks', () => {
+  const r = roleRecord(CS[0], 1, { issues: [{ severity: 'major', title: 'x', fix: 'f', requirement: 'R-zz-9' }] }, [], AGREED);
+  assert.equal(roleBlockingIssues([r]).length, 1);
+});
+
+test('rolesForRound skips a role whose only blocking finding is a concern as clean in round 2', () => {
+  const last = { roles: [roleRecord(CS[0], 1, { issues: [concernVerdict.issues[0]] }, [], AGREED),
+    roleRecord(CS[1], 1, { issues: [concernVerdict.issues[1]] }, [], AGREED)] };
+  assert.deepEqual(rolesForRound(CS, 2, last).map((r) => r.skip), [true, false]);
+});
+
+test('findingsMarkdown marks a concern for the person; the dispositions block asks only for the plain ids', () => {
+  const roles = [roleRecord(CS[0], 1, concernVerdict, [], AGREED)];
+  const md = findingsMarkdown(1, '/p/plan.md', roles, { dispositionsPath: '/p/d.json' });
+  assert.match(md, /^- \*\*correctness-1-1\*\* \[requirement concern R-po-1\] Export needs a server — for the person; leave the plan as it is$/m);
+  assert.match(md, /^- \*\*correctness-1-2\*\* \[major\] Missing test — fix: Add it$/m);
+  const disp = md.slice(md.indexOf('## Dispositions'));
+  assert.match(disp, /correctness-1-2/);
+  assert.doesNotMatch(disp, /correctness-1-1/);
+  const plain = [roleRecord(CS[0], 1, concernVerdict, [])];
+  assert.equal(findingsMarkdown(1, '/p/plan.md', plain, { dispositionsPath: '/p/d.json' }).endsWith(dispositionsBlock('/p/d.json')), true);
+});
+
+test('only the plan target raises requirement concerns: diff and requirements targets do not', () => {
+  assert.equal(ROLE_REVIEW_TARGETS.plan.requirementConcerns, true);
+  assert.equal(!!ROLE_REVIEW_TARGETS.diff.requirementConcerns, false);
+  assert.equal(!!ROLE_REVIEW_TARGETS.requirements.requirementConcerns, false);
 });

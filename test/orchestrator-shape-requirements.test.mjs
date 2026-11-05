@@ -45,10 +45,11 @@ const isReqAsk = (q) => q.kind === 'plan' && !!(q.plan?.criteria || q.plan?.erro
 /** A mock Shaper run. `onAsk(q, orch)` answers every plan ask (default approve); Clarify is answered empty. */
 function start(opts = {}, onAsk = approve) {
   const dir = opts.projectDir || gitDir('shapereq');
-  const req = resolveShapeRequest({ shape: opts.shape ?? { size: 'large', lead: 'security' } }, { requirementsOn: opts.flag !== false });
+  const req = resolveShapeRequest({ shape: opts.shape ?? { size: 'large', lead: 'security' } }, { requirementsOn: opts.flag !== false, internal: !!opts.internal });
   assert.equal(req.ok, true, req.error);
   const orch = createOrchestrator({ projectDir: dir, workflowId: opts.workflowId || req.workflowId, prompt: opts.prompt || 'demo',
-    claude: { mock: true }, ...(opts.savedShape ? {} : { shape: req.shape }), ...(opts.resume ? { resume: opts.resume } : {}) });
+    claude: { mock: true }, ...(opts.savedShape ? {} : { shape: req.shape }), ...(opts.resume ? { resume: opts.resume } : {}),
+    ...(opts.branch ? { branch: opts.branch } : {}) });
   const asks = []; const execs = [];
   orch.on('exec', (e) => execs.push(e));
   orch.on('question', (q) => {
@@ -412,4 +413,103 @@ test('code review: a role that reported a plan item unmet is not skipped in roun
   assert.equal(rounds.length, 2);
   assert.deepEqual(rounds[1].roles.filter((r) => !r.skipped).map((r) => r.key), ['correctness', 'security', 'fit', 'requirements']);
   assert.equal(implFixes(h.orch).length, 1);
+});
+
+// Shaper requirements s3 (D1-D5): a plan reviewer's finding naming an agreed requirement rides the plan approval.
+const QA_CONCERN = JSON.stringify({ qa: { 1: { severity: 'major', requirement: 'R-po-1' } } });
+const auditOf = (orch) => getDb().prepare('SELECT text FROM pipeline_events WHERE pipeline_id = ?').all(orch.getState().id).map((r) => r.text);
+const withConcern = async (fn) => {
+  process.env.WORCA_MOCK_ROLE_REVIEW = QA_CONCERN;
+  try { return await fn(); } finally { delete process.env.WORCA_MOCK_ROLE_REVIEW; }
+};
+
+test('a QA finding naming R-po-1: one plan approval carries the concern; no extra round; the Planner runs once', () => withConcern(async () => {
+  const h = start({});
+  const res = await h.done;
+  assert.equal(res.status, 'done', res.error);
+  assert.deepEqual(h.asks.filter((q) => q.kind === 'plan').map((q) => q.id), ['plan-n_reqrefine-1', 'plan-n_refine-1']);
+  const ask = h.asks.find((q) => q.id === 'plan-n_refine-1');
+  assert.equal(ask.concern.kind, 'requirement');
+  assert.deepEqual(ask.concern.requirements, ['R-po-1']);
+  assert.equal(ask.concern.detail, 'R-po-1 (QA): Add the missing case.');
+  assert.equal(h.asks.find((q) => q.id === 'plan-n_reqrefine-1').concern, undefined);
+  assert.equal(shells(h.execs, 'n_plan').length, 1, 'the Planner ran once');
+  assert.equal(shells(h.execs, 'n_refine').length, 1, 'Refine ran once: no extra round');
+  assert.ok(auditOf(h.orch).includes('Requirement concern overridden: R-po-1 kept as agreed.'));
+}));
+
+test('Ask for changes on a requirement concern writes the concern into the planner feedback', () => withConcern(async () => {
+  let revised = false;
+  const h = start({}, (q, orch) => {
+    if (!revised && q.id === 'plan-n_refine-1') { revised = true; orch.answer(q.id, { decision: 'revise', feedback: 'Drop the export.' }); return; }
+    approve(q, orch);
+  });
+  const res = await h.done;
+  assert.equal(res.status, 'done', res.error);
+  const fb = await readFile(join(h.orch.pipeline.dir, 'plan-feedback-1.md'), 'utf8');
+  assert.match(fb, /Drop the export\./);
+  assert.match(fb, /^## Requirement concern$/m);
+  assert.match(fb, /^> R-po-1 \(QA\): Add the missing case\.$/m);
+}));
+
+test('a pause while the concern ask is open re-raises the same ask with the same concern after a resume', () => withConcern(async () => {
+  const dir = gitDir('shapereq-concern');
+  let paused = false;
+  const h = start({ projectDir: dir }, (q, orch) => {
+    if (!paused && q.id === 'plan-n_refine-1') { paused = true; orch.pause(); return; }
+    approve(q, orch);
+  });
+  assert.equal((await h.done).status, 'paused');
+  const first = h.asks.find((q) => q.id === 'plan-n_refine-1');
+  const saved = readPipelineForResume(h.orch.getState().id);
+  assert.equal('requirementConcern' in saved.resumePoint, false, 'no new resume-point field');
+  const h2 = start({ projectDir: dir, resume: saved, workflowId: 'wf_shape_req', savedShape: true });
+  const res = await h2.done;
+  assert.equal(res.status, 'done', res.error);
+  const again = h2.asks.find((q) => q.kind === 'plan');
+  assert.equal(again.id, 'plan-n_refine-1');
+  assert.deepEqual(again.concern, first.concern);
+}));
+
+// Shaper requirements s3 (D12, D13): Changes after ship on a feature with agreed requirements updates them first.
+const SHIPPED_FACTS = { feature: { id: 'f1', title: 'Charts', base: 'dev', projectDir: '/p', shipped: true,
+  shipPr: { number: 52, url: 'https://x/pull/52', state: 'OPEN' }, agreed: [{ id: 'R-po-1', text: 'Export the report' }],
+  acceptance: [{ id: 'R-po-1', mark: 'met' }], perspectives: ['product', 'qa'],
+  slices: [{ index: 1, state: 'done', pipelineId: 'aaaa0001', branch: { source: 'dev', feature: 'worca/charts-1' }, pr: null, rounds: 1 }] } };
+
+test('a Changes round of a shipped feature asks the requirements hold before the plan approval', async () => {
+  const { changesCard } = await import('../src/core/shape/changes.mjs');
+  const card = changesCard({ text: 'make it blue', facts: SHIPPED_FACTS, requirementsOn: true });
+  assert.equal(card.landing.kind, 'round');
+  const h = start({ shape: card.run.shape, prompt: card.run.prompt,
+    branch: { roundOf: { pipelineId: 'aaaa0001', round: 2, request: 'make it blue' } } });
+  assert.equal(h.workflowId, 'wf_shape_req');
+  const res = await h.done;
+  assert.equal(res.status, 'done', res.error);
+  assert.deepEqual(h.asks.filter((q) => q.kind === 'plan').map((q) => q.id), ['plan-n_reqrefine-1', 'plan-n_refine-1']);
+  assert.equal(h.asks.filter((q) => q.kind === 'clarify' || q.kind === 'questions').length, 0, 'no Clarify');
+});
+
+const FOLLOW_SLICE = { feature: 'f1', index: 1, total: 2, outline: { agreed: [{ id: 'R-po-1', text: 'Export the report' }], leftOut: [], slices: [
+  { id: 's1', title: 'Charts', goal: 'g', inScope: [], outOfScope: [], acceptance: ['a'], dependsOn: [], estimate: 'small', requirements: [] },
+  { id: 's2', title: 'Follow-up', goal: 'g', inScope: [], outOfScope: [], acceptance: [], dependsOn: [], estimate: null, requirements: ['R-po-1'] }] } };
+
+test('a requirements-first follow-up keeps shape.requirementsFirst across a pause and resume; its criteria are not narrowed to the slice', async () => {
+  const dir = gitDir('shapereq-first');
+  const shape = { perspectives: ['product'], slices: 'off', slice: FOLLOW_SLICE, requirementsFirst: true };
+  let paused = false;
+  const h = start({ projectDir: dir, shape, internal: true }, (q, orch) => {
+    if (!paused && q.id === 'plan-n_reqrefine-1') { paused = true; orch.pause(); return; }
+    approve(q, orch);
+  });
+  assert.equal(h.workflowId, 'wf_shape_req');
+  assert.equal((await h.done).status, 'paused');
+  const saved = readPipelineForResume(h.orch.getState().id);
+  assert.equal(saved.resumePoint.shape.requirementsFirst, true);
+  const h2 = start({ projectDir: dir, shape, internal: true, resume: saved, workflowId: 'wf_shape_req', savedShape: true });
+  const res = await h2.done;
+  assert.equal(res.status, 'done', res.error);
+  assert.equal(h2.orch.runShape.requirementsFirst, true);
+  const plan = h2.asks.find((q) => q.id === 'plan-n_refine-1');
+  assert.equal(plan.plan.coverage.total, 8, 'every drafted criterion, not only the slice\'s');
 });

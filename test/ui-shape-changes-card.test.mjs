@@ -52,3 +52,30 @@ test('a long Changes or Route title ellipsizes instead of overflowing the card',
   assert.ok(rule, 'the shared title fix-up rule exists');
   for (const sel of ['.ask-changescard .ask-mcard-title', '.ask-routecard .ask-mcard-title']) assert.ok(rule.includes(sel), sel);
 });
+
+// Shaper requirements s3 (3.C, D12): a shipped feature with agreed requirements updates them before it plans.
+const AGREED = [{ id: 'R-po-1', text: 'Export the report' }, { id: 'R-sec-2', text: 'Sign it' }, { id: 'R-ux-1', text: 'Dark' }, { id: 'R-ops-1', text: 'Alert' }];
+const SHIPPED = (agreed, over = {}) => F([S(1, 'done'), S(2, 'done', { pr: { number: 52, url: 'https://x/pull/52', state: 'OPEN' } })],
+  { shipPr: { number: 52, url: 'https://x/pull/52', state: 'OPEN' }, shipped: true, agreed, acceptance: [], perspectives: ['product', 'qa'], ...over });
+test('requirements first: the line under the quote, plural and singular; the primary label is still the landing\'s', () => {
+  const d = new JSDOM('<!doctype html><body></body>').window.document;
+  for (const [agreed, line] of [[AGREED, 'Requirements first: the 4 agreed requirements are updated before the plan.'],
+    [AGREED.slice(0, 1), 'Requirements first: the 1 agreed requirement is updated before the plan.']]) {
+    const card = changesCard({ text: 'make it blue', facts: SHIPPED(agreed), requirementsOn: true });
+    assert.equal(card.requirementsFirst.count, agreed.length);
+    const el = renderChangesCard(d, { state: 'proposed', card }, { onStart: async () => {}, onNotNow: async () => {} });
+    assert.equal(el.querySelector('.ask-changescard-first').textContent, line);
+    assert.equal(el.querySelector('.btn-primary').textContent, 'Start round 2');
+  }
+});
+
+test('requirements first is off: flag off, not shipped, or no agreed requirements draw today\'s card', () => {
+  const d = new JSDOM('<!doctype html><body></body>').window.document;
+  const render = (card) => renderChangesCard(d, { state: 'proposed', card }, { onStart: async () => {}, onNotNow: async () => {} }).outerHTML;
+  const today = render(changesCard({ text: 'make it blue', facts: SHIPPED(AGREED) }));
+  for (const [facts, on] of [[SHIPPED(AGREED), false], [SHIPPED(AGREED, { shipped: false }), true], [SHIPPED([]), true]]) {
+    const card = changesCard({ text: 'make it blue', facts, requirementsOn: on });
+    assert.equal('requirementsFirst' in card, false);
+    if (facts.feature.shipped) assert.equal(render(card), today);
+  }
+});

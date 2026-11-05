@@ -1340,17 +1340,21 @@ export function fitDuplicates(planText, briefText) {
 }
 
 /** Role mode (spec §3): `WORCA_MOCK_ROLE_REVIEW='{"ux":{"1":"critical"}}'` picks a role's severity per round;
- *  'none' = no issue. Default: one minor finding (non-blocking), so mock shape runs do one round unless a test asks. */
+ *  'none' = no issue. Default: one minor finding (non-blocking), so mock shape runs do one round unless a test asks.
+ *  An object value `{"severity":"major","requirement":"R-po-1"}` also names the agreed requirement the finding
+ *  concerns (Shaper requirements s3, D15). */
 function roleSeverity(role, cycle) {
   let table = {};
   try { table = JSON.parse(process.env.WORCA_MOCK_ROLE_REVIEW || '{}') || {}; } catch { table = {}; }
-  return table?.[role]?.[String(cycle)] || 'minor';
+  const v = table?.[role]?.[String(cycle)];
+  if (v && typeof v === 'object') return { severity: v.severity || 'minor', requirement: typeof v.requirement === 'string' ? v.requirement : null };
+  return { severity: v || 'minor', requirement: null };
 }
 
 async function mockPlanReview(m, cycle, onEvent, prompt = '', { planChecklist = false } = {}) {
   const role = m.MOCK_PERSPECTIVE || null;
   if (role) {
-    const severity = roleSeverity(role, cycle);
+    const { severity, requirement } = roleSeverity(role, cycle);
     const blocking = severity === 'critical' || severity === 'major';
     const ids = String(m.MOCK_CHECKLIST || '').split(',').map((s) => s.trim()).filter(Boolean);
     // Project fit (slice 3): a plan that adds a second copy of a component the house brief lists.
@@ -1377,7 +1381,8 @@ async function mockPlanReview(m, cycle, onEvent, prompt = '', { planChecklist = 
       }
       : {
         summary: `[mock] ${role} review, round ${cycle}`,
-        issues: severity === 'none' ? [] : [{ severity, title: `${role}: mock finding`, section: 'Testing', fix: 'Add the missing case.', detail: 'mock' }],
+        issues: severity === 'none' ? [] : [{ severity, title: `${role}: mock finding`, section: 'Testing', fix: 'Add the missing case.', detail: 'mock',
+          ...(requirement ? { requirement } : {}) }],
         checklist: ids.map((id) => ({ id, status: blocking ? 'unmet' : 'met', evidence: 'mock' })),
       };
     if (planChecklist && role !== 'requirements') review.checklist = [...review.checklist, ...((await planChecklistReport(m, cycle)) || [])];

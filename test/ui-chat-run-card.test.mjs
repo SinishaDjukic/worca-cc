@@ -2263,3 +2263,29 @@ test('run labels (slice 1): read-only chips after the status line; none for an e
   off.card.update(live({ labels: ['hotfix'] }));
   assert.equal(off.$$('.label-chip').length, 0);
 });
+
+// Shaper requirements s3 (R-qa-5): a Changes run of a shipped feature asks the requirements hold first. The card draws
+// that hold (step n_reqrefine, plan.port 'requirements') and no plan approval card until it is answered.
+test('a Changes run of a shipped feature: the requirements hold\'s card first, the plan approval card only after it', async () => {
+  const hold = { id: 'plan-n_reqrefine-1', kind: 'plan', nodeId: 'n_reqrefine', plan: { nodeId: 'n_reqrefine', port: 'requirements', round: 1,
+    revisable: true, file: 'requirements.md', check: null, perspectives: ['product'], decisions: [],
+    criteria: { ok: true, passed: 1, total: 1, items: [{ id: 'R-po-1', label: 'R-po-1 · Export the report', pass: true }] } } };
+  const planAsk = { id: 'plan-n_refine-1', kind: 'plan', nodeId: 'n_refine', plan: { nodeId: 'n_refine', port: 'plan', round: 1, revisable: true,
+    file: 'plans/p.md', check: null, perspectives: ['product'] } };
+  const q = stepStub(hold, renderPlanBody);
+  const { card, $ } = mk({ controls: { ...q, answer: async () => true } });
+  card.update(live({ pendingQuestion: hold }));
+  assert.equal($('.chat-rc-q').hidden, false);
+  assert.equal($('.chat-rc-q .qpanel').dataset.qid, 'plan-n_reqrefine-1', 'the hold is the card\'s ask');
+  assert.equal(card.el.querySelectorAll('.chat-rc-q .qpanel').length, 1, 'one ask on the card');
+  assert.equal(card.el.querySelector('[data-qid="plan-n_refine-1"]'), null, 'no plan approval card yet');
+  $('.chat-rc-q .plan-approve').click();
+  await settle();
+  assert.equal(q.log.posts.length, 1);
+  assert.equal(q.log.posts[0].decision, 'approve');
+  const next = stepStub(planAsk, renderPlanBody);
+  const after = mk({ controls: { ...next, answer: async () => true } });
+  after.card.update(live({ pendingQuestion: planAsk }));
+  assert.equal(after.$('.chat-rc-q .qpanel').dataset.qid, 'plan-n_refine-1', 'the plan approval comes after the hold');
+  forgetAnswer('run-uuid-1', hold.id);
+});

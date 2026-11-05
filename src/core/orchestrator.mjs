@@ -40,7 +40,7 @@ import { createSliceFeature, retireFeaturesOf, earlierSliceChanges, featureAppro
 import { checkSlices, applyOutlineEdits, normalizeOutline, settleLeftOut, sliceRequirementIds, OUTLINE_FILE, OUTLINE_CHANGE_FILE, OUTLINE_ROUNDS_MAX } from '../shared/shape/slices.mjs';
 import { onlyCriteria } from '../shared/review/requirements-coverage.mjs';
 import { DEFAULT_PERSPECTIVES } from '../shared/shape/perspectives.mjs';
-import { normalizePlanConcern, planConcernFileName, concernFeedbackSection } from '../shared/review/plan-concern.mjs';
+import { normalizePlanConcern, planConcernFileName, concernFeedbackSection, requirementConcernOf, requirementConcernFeedbackSection } from '../shared/review/plan-concern.mjs';
 import { ensureHouseBrief } from './house-brief.mjs';
 import { extractChecklist } from '../shared/shape/checklist.mjs';
 import { applyChecklist, checklistFindingsMarkdown, mergeReportedChecklists, normalizeReviewChecklist } from '../shared/shape/review-checklist.mjs';
@@ -1337,6 +1337,9 @@ export class GraphOrchestrator extends RunHarness {
     let check = null;
     // #990 slice 3: the last round's conflicts; the person's picks for them ride any decision, and are never required.
     const conflicts = currentPass(this.state.roleReviews)?.rounds.at(-1)?.conflicts || [];
+    // Shaper requirements s3 (D4): findings naming an agreed requirement ride this ask as one concern, never a loop.
+    // Derived from the saved role reviews, so a resume re-raises the same concern.
+    const concern = requirementConcernOf(currentPass(this.state.roleReviews)?.rounds);
     const asked = (async () => {
       check = await this._planCheck(q.plan?.file);
       const coverage = spec?.coverage ? await this._planCoverage(q, spec.coverage) : null;
@@ -1348,18 +1351,19 @@ export class GraphOrchestrator extends RunHarness {
       if (sl && sl.index > 1 && !featureApprovesEach(sl.feature) && !this._nightActiveNow()) {
         // D19: plan once, confirm later: the plan stops only when its check fails or the planner says the slice
         // cannot be built as outlined. A missing check (null: it errored) stops too.
-        if (check?.ok === true && !outlineChange && !notes.length) {
+        if (check?.ok === true && !outlineChange && !notes.length && !concern) {
           this._log('orchestrator', 'info', `plan approval ${q.id}: approved (Approve each slice's plan is off)`);
           await appendAudit(this.pipeline.dir, 'Plan approval **approve** (Approve each slice\'s plan is off).').catch(() => {});
           return { decision: 'approve' };
         }
         const why = outlineChange ? 'the planner says this slice cannot be built as outlined'
-          : notes.length ? 'the chat added notes to this run' : 'the shape check did not pass';
+          : notes.length ? 'the chat added notes to this run'
+          : concern ? 'a reviewer raised a requirement concern' : 'the shape check did not pass';
         await appendAudit(this.pipeline.dir, `Plan approval held: ${why}.`).catch(() => {});
       }
       const perspectives = this._shapePerspectives();
       return this._enqueueAsk(() => this._ask({
-        id: q.id, kind: PLAN_ASK_KIND, nodeId: q.nodeId, executionId: q.executionId,
+        id: q.id, kind: PLAN_ASK_KIND, nodeId: q.nodeId, executionId: q.executionId, ...(concern ? { concern } : {}),
         plan: { ...q.plan, nodeId: q.nodeId, check, perspectives, ...(coverage ? { coverage } : {}), ...(outlineChange ? { outlineChange } : {}), ...(notes.length ? { notes } : {}) },
         validate: (raw) => validatePlanAnswer(raw, { revisable: q.plan?.revisable === true, perspectives, conflicts }),
       }));
@@ -1381,7 +1385,8 @@ export class GraphOrchestrator extends RunHarness {
           this._planRevise = { id: q.id, path };
           // Keep the real cause: the run rethrows _graphError, else a generic 'a graph execution failed'.
           const picked = conflictClarifications(conflicts, payload.conflicts);
-          const feedback = picked.length ? `${payload.feedback}\n\nDecisions made so far:\n\n${picked.join('\n')}` : payload.feedback;
+          const answered = picked.length ? `${payload.feedback}\n\nDecisions made so far:\n\n${picked.join('\n')}` : payload.feedback;
+          const feedback = concern ? answered + requirementConcernFeedbackSection(concern) : answered;
           try { await writeFile(path, renderPlanFeedback(feedback, q.plan.file), 'utf8'); }
           catch (err) { this._planRevise = null; this._graphError ||= err; throw err; }
           this._shapeRec?.revises.push({ round: q.plan.round, by: payload.source === 'check' ? 'check' : 'person' });
@@ -1391,6 +1396,9 @@ export class GraphOrchestrator extends RunHarness {
         // D28: the approved round's shape score
         if (payload?.decision === 'approve' && this._shapeRec) this._shapeRec.shapeScore = shapeScoreOf(check);
         if (payload?.decision === 'approve') await this._recordConflictPicks(q, conflicts, payload.conflicts);
+        if (payload?.decision === 'approve' && concern) {
+          await appendAudit(this.pipeline.dir, `Requirement concern overridden: ${concern.requirements.join(', ')} kept as agreed.`).catch(() => {});
+        }
         return payload;                              // { decision:'approve' } | { decision:'withdrawn' }
       },
       (err) => {
@@ -1427,7 +1435,8 @@ export class GraphOrchestrator extends RunHarness {
    *  to the file of every agreed id, so the text is narrowed to the slice's ids; identity without agreed requirements. */
   _sliceCriteria(text) {
     const sl = this.runShape?.slice;
-    return sl?.outline?.agreed?.length ? onlyCriteria(text, sliceRequirementIds(sl)) : text;
+    // s3 (D13): a requirements-first Changes run reworks every agreed requirement, so its text is not narrowed.
+    return sl?.outline?.agreed?.length && this.runShape.requirementsFirst !== true ? onlyCriteria(text, sliceRequirementIds(sl)) : text;
   }
 
   /** The held criteria document and its decisions: the criteria check (agreed ids must survive), the sink's decisions
@@ -3274,7 +3283,9 @@ export class GraphOrchestrator extends RunHarness {
     const reqPath = args.bindings?.requirements?.path;
     const boundText = reqPath ? await readFile(reqPath, 'utf8').catch(() => '') : '';
     const requirementsText = this.runShape ? this._sliceCriteria(boundText) : boundText;
-    const { findingsPort, reviewedPort } = roleTargetOf(spec);
+    const { findingsPort, reviewedPort, requirementConcerns } = roleTargetOf(spec);
+    // Shaper requirements s3 (D1): only a plan review raises requirement concerns; a diff or requirements review blocks.
+    const requirementIds = requirementConcerns ? criterionIds(requirementsText) : [];
     const provider = roleChecklistOf(spec);
     const outs = ports.outputs || [];
     const routes = outs.some((p) => p.when === 'blocking' || p.when === 'clean');
@@ -3303,7 +3314,7 @@ export class GraphOrchestrator extends RunHarness {
       // The role's own report on the plan's items, each one it left out unmet, so only a full clean report earns a skip.
       const own = feeds && ownReports ? normalizeReviewChecklist(raw?.checklist) || [] : null;
       const planChecklist = own && items.map((it) => own.find((c) => c.id === it.id) || { id: it.id, status: 'unmet', evidence: 'no verdict given' });
-      return { ...roleRecord(r, round, raw, provider ? provider.items(r.key, planText, requirementsText) : []),
+      return { ...roleRecord(r, round, raw, provider ? provider.items(r.key, planText, requirementsText) : [], { requirementIds }),
         ...(planChecklist ? { planChecklist } : {}), ...this._roleRecordPair(nc, r.key) };
     }));
     const out = allocateOutputs({ node, ports, executionId: args.executionId, ordinal, runCtx: this._runCtx(nc) });
