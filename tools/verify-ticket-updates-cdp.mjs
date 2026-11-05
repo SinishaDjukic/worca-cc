@@ -201,6 +201,10 @@ const openSheet = async () => {
   check('the jira-source row is listed', listed, listed ? '' : JSON.stringify(await js(`return { at: location.href,
     rows: [...document.querySelectorAll('.mk-name')].map((n) => n.dataset.name || n.textContent.trim()),
     text: (document.querySelector('main') || document.body).innerText.replace(/\\s+/g, ' ').slice(0, 300) };`).catch((e) => String(e))));
+  // Entering #marketplace starts a background refresh of the marketplaces (the Installed header's Refresh is aria-busy until it
+  // answers). Its answer repaints the sheet's head, which can move the projects popover's button and close the popover mid-pick:
+  // on a fast runner it landed ~0.3 s after the page loaded, between the picks and the footer check. Wait it out first.
+  await until(() => js(`return !document.querySelector('.mk-refresh[aria-busy="true"]');`), 30000);
   await js(`for (const s of document.querySelectorAll('.mk-tu')) s.dataset.stale = '1'; return true;`);
   await click('button.mk-name[data-name="jira-source"]');
   return until(() => js(`const host = document.getElementById('mk-sheet-host'); const s = document.querySelector('#mk-sheet .mk-tu:not([data-stale])');
