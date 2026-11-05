@@ -63,7 +63,7 @@ const SCALARS = [
   scalar({ id: 'memory.maxBytesPerFile', path: ['memory', 'maxBytesPerFile'], check: SETTING_CHECKS.byteCap, def: DEFAULT_MEMORY_HARD_BYTES_PER_FILE }),
   // Team memory (phase 1a): project-only opt-in — no user layer (readUser off), no team key.
   scalar({ id: 'memory.team', path: ['memory', 'team'], check: SETTING_CHECKS.teamMemory, def: false, hint: 'must be true, false or "only"', readUser: () => undefined }),
-  // Open a PR when a run finishes: project-only (no user layer); the team layer is the policy's pr.* default.
+  // Create a PR when a run finishes: project-only (no user layer); the team layer is the policy's pr.* default.
   scalar({ id: 'pr.open', path: ['pr', 'open'], check: (value) => PR_OPEN.includes(value), def: 'none', teamKey: 'pr.open', hint: 'must be one of none | draft | ready', readUser: () => undefined }),
   scalar({ id: 'pr.slices', path: ['pr', 'slices'], check: (value) => PR_SLICES.includes(value), def: 'each', teamKey: 'pr.slices', hint: 'must be one of each | one', readUser: () => undefined }),
   scalar({ id: 'memory.teamMaxFiles', path: ['memory', 'teamMaxFiles'], check: SETTING_CHECKS.byteCap, def: DEFAULT_MEMORY_TEAM_MAX_FILES, hint: 'must be a positive whole number' }),

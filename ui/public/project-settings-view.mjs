@@ -9,10 +9,10 @@ const usd = (value) => (value == null ? 'no cap' : `$${Number(value).toFixed(2)}
 // "fix, feat chore" → ['fix', 'feat', 'chore'] (the server validates each word).
 const typesOf = (text) => String(text).toLowerCase().split(/[\s,]+/).filter(Boolean);
 const labelled = (labels) => Object.entries(labels).map(([value, label]) => ({ value, label }));
-// Open a PR when a run finishes: stored as the value itself; inherited from the team policy, else Worca's default.
+// Create a PR when a run finishes: stored as the value itself; inherited from the team policy, else Worca's default.
 const PR_FIELDS = [
   { id: 'pr.open', label: 'When a run finishes', kind: 'select', options: labelled(PR_OPEN_LABELS), format: (v) => PR_OPEN_LABELS[v] ?? null,
-    hint: 'New runs of this project open this PR when they finish with work committed. A run can choose otherwise on the New run form.' },
+    hint: 'New runs of this project create this PR when they finish with work committed. A run can choose otherwise on the New run form.' },
   { id: 'pr.slices', label: 'Shaper features', kind: 'select', options: labelled(PR_SLICES_LABELS), format: (v) => PR_SLICES_LABELS[v] ?? null,
     hint: 'When Shaper plans a run in slices: a stacked PR per slice, or one PR when the feature is done.' },
 ];

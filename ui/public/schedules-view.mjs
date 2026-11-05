@@ -33,7 +33,7 @@ const KIND = {
   // Git event automations (#711): what a rule did with an issue or PR.
   automation_started: ['Started', 'blue'], automation_skipped: ['Skipped', 'grey'], automation_queued: ['Queued', 'grey'],
   'automation_awaiting-approval': ['Approve?', 'amber'], automation_done: ['Done', 'green'], automation_failed: ['Failed', 'red'],
-  pr_auto: ['Pull request', 'amber'],   // "Open a PR when a run finishes": a PR it could not open
+  pr_auto: ['Pull request', 'amber'],   // "Create a PR when a run finishes": a PR it could not open
 };
 const RESULT_WORD = { completed: 'completed', error: 'ended with an error', failed: 'could not start', missed: 'missed', skipped: 'skipped', paused: 'paused', stopped: 'stopped' };
 const RESULT_FAMILY = { completed: 'green', error: 'red', failed: 'red', missed: 'amber', skipped: 'grey', paused: 'amber', stopped: 'grey' };

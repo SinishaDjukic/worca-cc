@@ -187,7 +187,7 @@ test('Pull requests card: pr.open and pr.slices with Team default / Worca defaul
   const open = field(host, 'pr.open');
   assert.equal(open.querySelector('label').textContent, 'When a run finishes');
   assert.deepEqual([...open.querySelector('.inherit-input').options].map((o) => [o.value, o.textContent]),
-    [['', 'Open a draft PR (team default)'], ['none', "Don't open a PR"], ['ready', 'Open a PR ready for review']], 'the team value is the empty choice, its twin is dropped');
+    [['', 'Create a draft PR (team default)'], ['none', "Don't create a PR"], ['ready', 'Create a PR ready for review']], 'the team value is the empty choice, its twin is dropped');
   const slices = field(host, 'pr.slices');
   assert.equal(slices.querySelector('label').textContent, 'Shaper features');
   assert.equal(slices.querySelector('.inherit-input').value, 'one');
@@ -204,6 +204,6 @@ test('Pull requests card: with no team value pr.open inherits "Worca default"', 
   const view = { ...VIEW, own: {}, layers: { ...VIEW.layers, 'pr.open': { default: 'none' }, 'pr.slices': { default: 'each' } } };
   const { host } = harness({ settings: () => ({ status: 200, body: view }) });
   for (let i = 0; i < 4; i++) await tick();
-  assert.equal(field(host, 'pr.open').querySelector('.inherit-input').options[0].textContent, "Don't open a PR (default)");
+  assert.equal(field(host, 'pr.open').querySelector('.inherit-input').options[0].textContent, "Don't create a PR (default)");
   assert.equal(field(host, 'pr.slices').querySelector('.inherit-input').options[0].textContent, 'A PR per slice, stacked (default)');
 });

@@ -1,5 +1,5 @@
 // src/core/pr-auto.mjs
-// "Open a PR when a run finishes": the run's body check, the resolution (run > project/workspace setting > team policy >
+// "Create a PR when a run finishes": the run's body check, the resolution (run > project/workspace setting > team policy >
 // none), the decision a run saves at start (pipelines.pr_auto) and the outcome the finisher writes back
 // (src/core/pr-auto-finish.mjs). A Shaper feature keeps its own copy (shape_features.pr_*), which every slice reads.
 

@@ -1,5 +1,5 @@
 // ui/public/pr-auto-view.mjs
-// "Open a PR when a run finishes" in the browser: the New run form's two fields, the read-only line on a run's page,
+// "Create a PR when a run finishes" in the browser: the New run form's two fields, the read-only line on a run's page,
 // the Workspace page's setting and the Schedules row. app.js only calls these; the logic lives here.
 
 import { PR_OPEN, PR_OPEN_LABELS, PR_SLICES, PR_SLICES_LABELS, prSourceText, prExemptText } from '../../src/shared/pr-auto.mjs';
@@ -9,7 +9,7 @@ const node = (doc, tag, cls, text) => { const el = doc.createElement(tag); if (c
 const optionOf = (doc, value, label) => { const el = node(doc, 'option', null, label); el.value = value; return el; };
 const jsonOf = async (response) => { try { return await response.json(); } catch { return null; } };
 
-/** "Open a draft PR · A PR per slice, stacked" for the Schedules details; '' when the request carries none. */
+/** "Create a draft PR · A PR per slice, stacked" for the Schedules details; '' when the request carries none. */
 export function prRowText(pr) {
   if (!pr) return '';
   return [PR_OPEN_LABELS[pr.open], PR_SLICES_LABELS[pr.slices]].filter(Boolean).join(' · ');
@@ -110,7 +110,7 @@ export async function mountWorkspacePrSetting(host, { workspaceId, fetchFn = (ur
     host.replaceChildren();
     const effective = data.effective['pr.open'];
     const row = node(doc, 'div', 'field drow');
-    const label = node(doc, 'label', 'drow-label', 'Open a PR when a run finishes');
+    const label = node(doc, 'label', 'drow-label', 'Create a PR when a run finishes');
     const select = node(doc, 'select', 'select');
     select.append(optionOf(doc, '', 'Use team policy / Worca default'), ...PR_OPEN.map((v) => optionOf(doc, v, PR_OPEN_LABELS[v])));
     select.value = data.own['pr.open'] || '';

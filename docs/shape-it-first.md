@@ -182,7 +182,7 @@ repository so that GitHub retargets the next PR when one merges.
 
 **Pull requests when a run finishes.** The `pr.slices` setting (Settings › Project › Pull requests, or
 the team policy's default) says what a sliced feature does when its runs finish; it works together with
-`pr.open` ("Don't open a PR", "Open a draft PR", "Open a PR ready for review"). The values are saved on the feature
+`pr.open` ("Don't create a PR", "Create a draft PR", "Create a PR ready for review"). The values are saved on the feature
 when you approve the outline, and every slice reads them from there:
 
 - **A PR per slice, stacked** (`each`): each slice that finishes with work committed opens its own PR on the
@@ -465,14 +465,14 @@ requirements keeps asking, and its card stays answerable until it finishes.
 
 ## Pull requests when a run finishes
 
-`pr.open` decides whether a finished run opens a PR: **Don't open a PR** (the default), **Open a draft PR** or **Open a PR
+`pr.open` decides whether a finished run opens a PR: **Don't create a PR** (the default), **Create a draft PR** or **Open a PR
 ready for review**. A run takes the first value it finds, in this order:
 
 1. the run's own choice (the **Pull request when done** field in New run's Advanced section, or a Chat card or preset
    that sets it; only a value you changed is saved as the run's);
 2. the project's setting, or the workspace's (Settings › Project › Pull requests; the Workspace page);
 3. the team policy (`fields`, or `workspaceRuns` for a workspace run);
-4. **Don't open a PR**.
+4. **Don't create a PR**.
 
 The value is decided once, when the run starts, and saved with it: a later change to a setting never changes a run that
 has started. The run's page shows it under **Pull request**, with where it came from and what happened. A run opens a PR

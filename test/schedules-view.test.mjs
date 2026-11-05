@@ -85,7 +85,7 @@ test('a request that carries a pr shows a Pull request row in Details; one witho
   const view = await mount({ tickets: [withPr, without] });
   try {
     const rows = (id) => [...document.querySelector(`[data-id="${id}"]`).querySelectorAll('.sched-kv')].map((r) => r.textContent);
-    assert.ok(rows('t_pr').includes('Pull requestOpen a draft PR · One PR for the whole feature'), rows('t_pr').join('|'));
+    assert.ok(rows('t_pr').includes('Pull requestCreate a draft PR · One PR for the whole feature'), rows('t_pr').join('|'));
     assert.equal(rows('t_nopr').some((t) => t.startsWith('Pull request')), false);
   } finally { view.destroy(); }
 });

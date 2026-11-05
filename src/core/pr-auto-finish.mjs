@@ -1,5 +1,5 @@
 // src/core/pr-auto-finish.mjs
-// "Open a PR when a run finishes": the server-side step that runs once a run has settled (after teardown committed its
+// "Create a PR when a run finishes": the server-side step that runs once a run has settled (after teardown committed its
 // work). It reads the decision the run saved at its start (pipelines.pr_auto, src/core/pr-auto.mjs) and opens the PR through
 // the server's own PR paths, attributed to the person who started the run. A Shaper feature's slices follow the feature's
 // copy: `each` opens a stacked PR per slice, `one` opens a single PR once the whole feature is done.

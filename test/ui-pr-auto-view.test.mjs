@@ -33,18 +33,18 @@ test('renderRunPrFact: normal / slice (from the feature, read-only) / exempt / o
   const fact = (pa) => renderRunPrFact(w.document, pa);
   const normal = fact({ open: 'draft', slices: 'each', source: { open: 'project' }, scope: 'project' });
   assert.equal(normal.className, 'hd-pr-auto');
-  assert.equal(text(normal), 'Open a draft PR · Project setting', 'a normal run has no slices part');
+  assert.equal(text(normal), 'Create a draft PR · Project setting', 'a normal run has no slices part');
   assert.equal(normal.querySelector('input,select,button'), null, 'read-only: no control');
   const slice = fact({ open: 'draft', slices: 'one', source: { open: 'feature' }, feature: { id: 'f1', source: { open: 'team' } }, outcome: { status: 'waiting' } });
-  assert.equal(text(slice), 'Open a draft PR · One PR for the whole feature · From the feature (Team default) Waiting for the feature');
+  assert.equal(text(slice), 'Create a draft PR · One PR for the whole feature · From the feature (Team default) Waiting for the feature');
   const done = fact({ open: 'draft', slices: 'one', source: { open: 'feature' }, feature: { id: 'f1', source: { open: 'team' }, outcome: { status: 'opened', urls: ['https://github.com/o/r/pull/9'] } }, outcome: { status: 'waiting' } });
   assert.match(text(done), /Opened: https:\/\/github\.com\/o\/r\/pull\/9$/);
   assert.equal(done.querySelector('a').getAttribute('href'), 'https://github.com/o/r/pull/9');
   assert.equal(done.querySelector('a').rel, 'noopener noreferrer');
   assert.equal(text(fact({ open: 'none', exempt: 'automation', source: { open: 'default' } })), "The Git automation opens this run's PR");
   const skipped = fact({ open: 'ready', slices: null, source: { open: 'run' }, outcome: { status: 'skipped', reason: 'the run ended with status error' } });
-  assert.equal(text(skipped), 'Open a PR ready for review · This run Not opened: the run ended with status error');
-  assert.equal(text(fact({ open: 'none', slices: null, source: { open: 'default' }, outcome: { status: 'skipped', reason: 'x' } })), "Don't open a PR · Worca default", 'a none setting has no outcome line');
+  assert.equal(text(skipped), 'Create a PR ready for review · This run Not opened: the run ended with status error');
+  assert.equal(text(fact({ open: 'none', slices: null, source: { open: 'default' }, outcome: { status: 'skipped', reason: 'x' } })), "Don't create a PR · Worca default", 'a none setting has no outcome line');
   assert.equal(text(fact(null)), '');
 });
 
@@ -55,7 +55,7 @@ test('paintRunPrAuto fills the fact row, hides it for a run from before v86, and
   const fetchFn = async () => { calls++; return { ok: true, json: async () => ({ prAuto: { open: 'draft', slices: null, source: { open: 'project' }, outcome: { status: 'opened', urls: ['u'] } } }) }; };
   await paintRunPrAuto(row, 'abcd0001', 'done', () => true, { fetchFn });
   assert.equal(row.hidden, false);
-  assert.match(text(row.querySelector('.hd-pr-auto')), /^Open a draft PR · Project setting Opened: u$/);
+  assert.match(text(row.querySelector('.hd-pr-auto')), /^Create a draft PR · Project setting Opened: u$/);
   await paintRunPrAuto(row, 'abcd0001', 'done', () => true, { fetchFn });
   assert.equal(calls, 1, 'a terminal answer is kept');
   const stale = dom('<div class="rd-kv-row" hidden><dd class="rd-kv-v"></dd></div>').document.querySelector('.rd-kv-row');
@@ -121,21 +121,21 @@ test('mountWorkspacePrSetting: shows the source; PATCH and clear', async () => {
   };
   await mountWorkspacePrSetting(host, { workspaceId: 'wks-a-00000001', fetchFn });
   assert.equal(calls[0].url, '/api/workspaces/wks-a-00000001/settings');
-  assert.equal(text(host.querySelector('.hint')), 'Now: Open a draft PR (Team default)');
+  assert.equal(text(host.querySelector('.hint')), 'Now: Create a draft PR (Team default)');
   const select = host.querySelector('select');
-  assert.deepEqual([...select.options].map((o) => [o.value, o.textContent]), [['', 'Use team policy / Worca default'], ['none', "Don't open a PR"], ['draft', 'Open a draft PR'], ['ready', 'Open a PR ready for review']]);
+  assert.deepEqual([...select.options].map((o) => [o.value, o.textContent]), [['', 'Use team policy / Worca default'], ['none', "Don't create a PR"], ['draft', 'Create a draft PR'], ['ready', 'Create a PR ready for review']]);
   assert.equal(select.value, '');
   select.value = 'ready';
   host.querySelector('button').click();
   await tick(); await tick();
   assert.deepEqual(calls.at(-1), { url: '/api/workspaces/wks-a-00000001/settings', method: 'PATCH', body: { 'pr.open': 'ready' } });
-  assert.equal(text(host.querySelector('.hint')), 'Now: Open a PR ready for review (Workspace setting)');
+  assert.equal(text(host.querySelector('.hint')), 'Now: Create a PR ready for review (Workspace setting)');
   assert.equal(host.querySelector('select').value, 'ready');
   host.querySelector('select').value = '';
   host.querySelector('button').click();
   await tick(); await tick();
   assert.deepEqual(calls.at(-1).body, { 'pr.open': null }, 'the empty choice clears it');
-  assert.equal(text(host.querySelector('.hint')), 'Now: Open a draft PR (Team default)');
+  assert.equal(text(host.querySelector('.hint')), 'Now: Create a draft PR (Team default)');
 });
 
 test('mountWorkspacePrSetting: a refusal is a card alert and keeps the pick', async () => {
@@ -248,7 +248,7 @@ test('createRunPrFields: a preset\'s values are still sent when the scope read f
 });
 
 test('prRowText for the Schedules details', () => {
-  assert.equal(prRowText({ open: 'draft', slices: 'one' }), 'Open a draft PR · One PR for the whole feature');
+  assert.equal(prRowText({ open: 'draft', slices: 'one' }), 'Create a draft PR · One PR for the whole feature');
   assert.equal(prRowText({ open: null, slices: 'each' }), 'A PR per slice, stacked');
   assert.equal(prRowText(undefined), '');
 });

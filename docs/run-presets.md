@@ -183,6 +183,6 @@ every preset.
 `setup` takes the `POST /api/run` keys `workflowId`, `engine`, `guardrailsId`, `mcpOptOut`, `mock`,
 `nightMode`, `humanInLoop`, `sourceBranch`, `sourceBranchByKey`, `sameAsSource`, `syncBeforeStart`,
 `tags`, `pr` (`{ open?: 'none' | 'draft' | 'ready', slices?: 'each' | 'one' }`, see
-[Open a PR when a run finishes](shape-it-first.md#pull-requests-when-a-run-finishes)) and `overlay` (`nodes` and `wires`, see [Per-agent models for one run](models.md#per-agent-models-for-one-run)).
+[Create a PR when a run finishes](shape-it-first.md#pull-requests-when-a-run-finishes)) and `overlay` (`nodes` and `wires`, see [Per-agent models for one run](models.md#per-agent-models-for-one-run)).
 Any other key is dropped, and a setup larger than 32 KB is refused. A run started from a preset
 sends the preset's choices as an ordinary run body, plus `presetId`, `overlay` and `humanInLoop`.
