@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Shaper: shape the requirements first
+
+- Requirements stage and plan coverage (3-card UX, behind a Labs flag): Unchanged since cycle 2: fix cycle 2 edited no file (newest edit 10:43, before the cycle 2 review at 10:46; DEVIATIONS 14).
+- Build by requirements: slices and code reviews carry the R-*: Cycle 4: the cycle-3 blocker (R-qa-6) is fixed.
+- Close the loop: requirement concerns, acceptance and changes after ship: Cycle 4 fixes both web UI review majors.
+- Cleanup: drop dead paths after the requirements stage settles: The slice is verification-only, as the v3 plan says.
+
 ### Independent review gates, engine-first (#990)
 
 - Engine role-review step, model per role, Shaper plan review moved onto it: Both cycle-1 blockers are fixed and tested.
