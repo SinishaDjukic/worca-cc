@@ -80,6 +80,7 @@ test('the base graphs are unchanged: wf_shape and wf_shape_ux deepEqual their ca
   assert.deepEqual(JSON.parse(JSON.stringify(GRAPH_SHAPE_UX_WORKFLOW)), fixture.wf_shape_ux);
   assert.equal(requirementsVariant(GRAPH_SHAPE_WORKFLOW, 'wf_x').id, 'wf_x');
   assert.deepEqual(JSON.parse(JSON.stringify(GRAPH_SHAPE_WORKFLOW)), fixture.wf_shape, 'the builder never mutates its base');
+  assert.doesNotMatch(JSON.stringify(fixture), /"model"/, 'the built-in graphs pin no model (factory-models.mjs)');
 });
 
 test('flag off picks today\'s ids for every shape it accepts', () => {

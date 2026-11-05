@@ -86,11 +86,10 @@ test('role reviews (spec §3): both shape graphs fan the plan out to n_roles and
     assert.equal(roles.key, 'planReviewer', wf.id);
     assert.deepEqual(roles.config, {
       roleReview: {
-        roles: PERSPECTIVES.map(({ key, label }) => (key === 'product' ? { key, label, model: 'claude-opus-5-5', effort: 'medium' } : { key, label })),
-        source: 'picked', target: 'plan', checklist: 'perspectives', sink: 'refiner',
+        roles: PERSPECTIVES.map(({ key, label }) => ({ key, label })),
+        source: 'picked', target: 'plan', checklist: 'perspectives', sink: 'refiner', secondOpinion: 'product',
       },
-      model: 'claude-sonnet-5-5', effort: 'medium',
-    }, wf.id);
+    }, wf.id, 'no model pins: the models are Models page homes (factory-models.mjs)');
     assert.equal(wf.nodes.find((n) => n.id === 'n_refine').config.awaitAll, true, wf.id);
     assert.ok(!wf.wires.some((w) => edge(w) === 'n_refine.revise->n_refine.revise'), `${wf.id}: no refiner self-loop`);
     const w5 = wf.wires.find((w) => w.id === 'w5');

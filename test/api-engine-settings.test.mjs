@@ -164,3 +164,30 @@ test('POST /api/settings requirementsInterview: a change emits a settings-change
     await post('/api/settings', { requirementsInterview: null });
   }
 });
+
+test('secondOpinionModel: GET carries it and the factory defaults; POST saves, clears and refuses', async () => {
+  const { readFileSync } = await import('node:fs');
+  const stored = () => JSON.parse(readFileSync(join(sandboxHome, '.worca-cc', 'settings.json'), 'utf8')).secondOpinionModel;
+  const g = await get('/api/settings');
+  assert.equal(g.body.secondOpinionModel, null);
+  assert.deepEqual(g.body.factoryModels.claude.helpers.secondOpinion, { model: 'claude-opus-5-5', effort: 'medium' });
+  assert.deepEqual(g.body.factoryModels.claude.helpers.memoryDefrag, { model: 'claude-sonnet-5' });
+  assert.deepEqual(g.body.factoryModels.claude.steps.planReviewer, { model: 'claude-sonnet-5-5', effort: 'medium' });
+  const r = await post('/api/settings', { secondOpinionModel: { model: 'claude-sonnet-5', effort: 'high' } });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.deepEqual(r.body.secondOpinionModel, { model: 'claude-sonnet-5', effort: 'high' });
+  assert.deepEqual((await get('/api/settings')).body.secondOpinionModel, { model: 'claude-sonnet-5', effort: 'high' });
+  const bad = await post('/api/settings', { secondOpinionModel: { model: 'no-such-model-xyz' } });
+  assert.equal(bad.status, 400);
+  assert.equal(bad.body.field, 'secondOpinionModel');
+  assert.match(bad.body.error, /no-such-model-xyz.*not in the catalog/);
+  assert.deepEqual(stored(), { model: 'claude-sonnet-5', effort: 'high' }, 'a refused value writes nothing');
+  const c = await post('/api/settings', { secondOpinionModel: null });
+  assert.equal(c.status, 200);
+  assert.equal(c.body.secondOpinionModel, null);
+  assert.equal(stored(), undefined);
+  const cx = await post('/api/settings', { utilityModels: { codex: { secondOpinion: { model: 'gpt-5.5', effort: 'low' } } } });
+  assert.equal(cx.status, 200, JSON.stringify(cx.body));
+  assert.deepEqual(cx.body.utilityModels.codex.secondOpinion, { model: 'gpt-5.5', effort: 'low' });
+  await post('/api/settings', { utilityModels: { codex: { secondOpinion: null } } });
+});

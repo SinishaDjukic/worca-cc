@@ -2601,8 +2601,9 @@ test('ask-panel-card: per-role Agents rows on a role-review node', async () => {
       const arch = roleTile(lane, 'architect');
       assert.equal(arch.querySelector('.ask-rp-model').options[0].textContent, "Node's model");
       assert.equal(arch.querySelector('.ask-rp-model').value, '');
-      assert.ok(arch.querySelectorAll('.ask-rp-eff button:not([disabled])').length > 0, "pills follow the node's model");
-      assert.equal(roleTile(lane, 'product').querySelector('.ask-rp-model').value, 'claude-opus-5-5', "the template's pick shows");
+      // The built-in Shaper pins no model (its Plan Review and Second-opinion reviewer models are Worca's factory defaults
+      // on the Models page), so the card has no template pick to show: every role reads the node's setting.
+      assert.equal(roleTile(lane, 'product').querySelector('.ask-rp-model').value, '', 'no template pick');
     }),
     shapeRow('Start posts an edited role pick as overlay.nodes.n_roles.roles; untouched rows post nothing; Reset clears it', async () => {
       const rec = {};

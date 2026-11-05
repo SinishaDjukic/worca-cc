@@ -132,6 +132,7 @@ import { readRunTags } from './run-tags-store.mjs';
 import { missingRequired } from '../shared/tag-dimensions.mjs';
 import { byActor } from './identity.mjs';
 import { isWorkspaceScanWorkflow, WORKSPACE_RESYNTH_WORKFLOW_ID, MEMORY_DEFRAG_WORKFLOW_ID, AUTO_WORKFLOW_ID } from './graph/builtin-workflows.mjs';
+import { signInRefusalText } from './factory-models.mjs';
 import { agentIdentity } from './agent-user.mjs';
 import { resolveRegistry, requiredOf, toolNameLimitFor, skipReasonText, cachedTeamFor } from './mcp/registry.mjs';
 import { loadCatalog } from './mcp/catalog.mjs';
@@ -3283,6 +3284,9 @@ export class RunHarness extends EventEmitter {
       // dropping it would run every node on the CLI default model, often the most expensive one.
       const why = foreignRunModel(this.claude.model, name, this.projectDir);
       if (why) throw engineRefusal(name, why);
+      // A model a person set that needs the Claude Code sign-in while it is signed out (resolveGraph signInBlocked):
+      // refused naming the setting and the model, before any spawn. Unset on resume, which never resolves.
+      if (this._signInBlocked?.length) throw engineRefusal(name, signInRefusalText(this._signInBlocked, this._signInLabels));
       return [];
     }
     const projectRules = this._engineProjectRules ?? null;

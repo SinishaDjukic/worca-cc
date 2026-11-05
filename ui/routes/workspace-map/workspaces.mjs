@@ -6,7 +6,7 @@ import { resetWorkspaceGuideIfNoWorkspaces } from '../../../src/core/onboarding.
 import { WORKSPACE_RESYNTH_WORKFLOW_ID } from '../../../src/core/graph/builtin-workflows.mjs';
 import { cancelForTarget } from '../../../src/core/scheduler.mjs';
 import { assertWorkspaceScanInput } from '../../../src/core/settings.mjs';
-import { createWorkspaceWithHomes } from '../../../src/core/workspace-scan-run.mjs';
+import { createWorkspaceWithHomes, scanSignInMessage } from '../../../src/core/workspace-scan-run.mjs';
 import { RESCAN_CHOICES, WORKSPACE_KEY_RE, addWorkspaceManualEdge, addWorkspaceMembers, checkNewWorkspace, deleteWorkspace, listWorkspaces, memoGitProbe, readWorkspace, readWorkspaceMap, readWorkspaceStacks, regenerateWorkspaceDescription, removeWorkspaceManualEdge, removeWorkspaceMember, scanMemberProblems, setWorkspaceEdgeState, setWorkspaceScanPick, updateWorkspace, updateWorkspaceStacks, workspaceMembers } from '../../../src/core/workspaces.mjs';
 import { effectiveEdges } from '../../../src/shared/workspace-map/overrides.mjs';
 import { afterMembersChanged, agentMayBeCaller, badRequest, emitChanged, liveAutoRescan, ownsWorkspaceTarget, primaryMemberOf, prunedNote, refuseAgentCaller, refuseSignedOutClaude, removeRecommendation, resolveProjectDir, runs, scanModelsFor, scanRequest, workspaceMembersBusy } from '../../server.mjs';
@@ -325,7 +325,7 @@ app.post('/api/workspaces/:id/map/render', async (req, res) => {
  */
 async function refuseSignedOutScan(res, models) {
   if (models && modelHasBaseUrlRouting(models.scanModel)) return false;
-  return refuseSignedOutClaude(res);
+  return refuseSignedOutClaude(res, scanSignInMessage(models));
 }
 
 // POST /api/workspaces/scan (first scan): validated exactly as the save will be (D4).
