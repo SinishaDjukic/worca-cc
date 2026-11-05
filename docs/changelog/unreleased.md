@@ -33,7 +33,7 @@ Read it: [Ticket updates](../ticket-updates.md)
 Pull requests (add each number when it opens):
 
 - Ticket updates (#1072)
-- Ticket updates: Azure Boards and GitHub Issues
+- Ticket updates: Azure Boards and GitHub Issues (#1133)
 
 ## Independent reviewers for any workflow
 
