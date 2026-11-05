@@ -18,7 +18,7 @@ import { createRunProgressCard, snapshotFromState, PROGRESS_CARD_TYPE } from './
 import { createCommandCard, createCommandGroup, COMMAND_CARD_TYPE } from './ask-command-card.mjs';
 import { commandRuns } from './ask-command-group.mjs';
 import { buildTrace, scheduleTrace, playAssembly } from './auto-build.mjs';
-import { buildNodeConfigRows, pruneNodeSelection, modifiedFieldsOf, healForEngine } from './node-tunables.mjs';
+import { buildNodeConfigRows, buildRoleRows, pruneNodeSelection, modifiedFieldsOf, healForEngine } from './node-tunables.mjs';
 import { ENGINE_EFFORTS } from './engine-settings-view.mjs';
 import { ENGINE_NAMES, engineLabel, isBetaEngine } from '../../src/shared/engine-switch.mjs';
 import { lockEngineOptions } from './engine-locks.mjs';
@@ -3718,14 +3718,22 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // them as its defaults ("Save as project defaults", saveLaneEdits). `explicit`: a workspace card's rows are the
     // built-in defaults, not the run's baseline (laneOverlay names its picks outright). `proposal` / `proposed` /
     // `warnings`: Ask Worca's per-agent picks (card.nodes) once applyProposal lays them in as the lane's baseline.
-    return { wf, registry, runConfig, rows, edits: {}, editable: true, explicit: !projectDir, engine, defaultEngine, allModels, proposal: {}, proposed: {}, warnings: [],
+    // `reviewRoleRows`: a role-review node's declared roles (node-tunables buildRoleRows); their edits live apart from
+    // the node rows' in `reviewRoleEdits[nodeId][roleKey]` (`row.role` already names Default's legacy step role).
+    return { wf, registry, runConfig, rows, edits: {}, reviewRoleRows: buildRoleRows(wf, rows, runConfig), reviewRoleEdits: {},
+      editable: true, explicit: !projectDir, engine, defaultEngine, allModels, proposal: {}, proposed: {}, warnings: [],
       models, efforts: engine === 'claude' ? (Array.isArray(cfg.efforts) ? cfg.efforts : []) : [...(ENGINE_EFFORTS[engine] || [])],
       subagentModels: Array.isArray(cfg.subagentModels) ? cfg.subagentModels : [] };
   }
   const laneEffective = (lane, row) => ({ ...row, ...(lane.edits[row.nodeId] || {}) });
   const laneCaps = (row) => ({ asksQuestions: row.askQuestions !== null, questionsLocked: row.questionsLocked });
-  const laneEditedRows = (lane) => lane.rows.filter((r) => lane.edits[r.nodeId]);
-  const laneOverrideCount = (lane) => lane.rows.filter((r) => modifiedFieldsOf(laneEffective(lane, r), r.def, laneCaps(r)).length).length;
+  const laneReviewRoleEdit = (lane, rr) => (lane.reviewRoleEdits[rr.nodeId] || {})[rr.roleKey] || null;
+  const laneReviewRoleEffective = (lane, rr) => ({ ...rr, ...(laneReviewRoleEdit(lane, rr) || {}) });
+  const laneReviewRoleChanged = (lane, rr) => { const c = laneReviewRoleEffective(lane, rr); return (c.model || '') !== (rr.def.model || '') || (c.effort || '') !== (rr.def.effort || ''); };
+  const laneReviewRoleEdited = (lane) => (lane.reviewRoleRows || []).filter((rr) => laneReviewRoleEdit(lane, rr));
+  const laneEditedRows = (lane) => lane.rows.filter((r) => lane.edits[r.nodeId] || laneReviewRoleEdited(lane).some((rr) => rr.nodeId === r.nodeId));
+  const laneOverrideCount = (lane) => lane.rows.filter((r) => modifiedFieldsOf(laneEffective(lane, r), r.def, laneCaps(r)).length).length
+    + (lane.reviewRoleRows || []).filter((rr) => laneReviewRoleChanged(lane, rr)).length;
   const modelLabel = (lane, id) => { const m = lane.models.find((x) => x.id === id); return m ? (m.label || m.id).replace(' (1M)', '') : id; };
   function laneSummary(lane) {
     const counts = new Map();
@@ -3743,6 +3751,24 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const next = { ...(lane.edits[row.nodeId] || {}), ...patch };
     for (const k of Object.keys(next)) if (next[k] === row[k]) delete next[k];   // back to the proposal = no edit
     if (Object.keys(next).length) lane.edits[row.nodeId] = next; else delete lane.edits[row.nodeId];
+  }
+  /** laneSet for a review-role row: the same "back to the row = no edit" rule, keyed by node and role. */
+  function laneReviewRoleSet(lane, rr, patch) {
+    const byRole = { ...(lane.reviewRoleEdits[rr.nodeId] || {}) };
+    const next = { ...(byRole[rr.roleKey] || {}), ...patch };
+    for (const k of Object.keys(next)) if (next[k] === rr[k]) delete next[k];
+    if (Object.keys(next).length) byRole[rr.roleKey] = next; else delete byRole[rr.roleKey];
+    if (Object.keys(byRole).length) lane.reviewRoleEdits[rr.nodeId] = byRole; else delete lane.reviewRoleEdits[rr.nodeId];
+  }
+  /** What a review-role row runs as a pick `{ model?, effort? }`, or null for "the node's setting". "Node's model" over
+   *  a template or project pick names the node's own model, since a pick cannot be cleared by naming nothing. */
+  function laneReviewRolePick(lane, rr) {
+    const c = laneReviewRoleEffective(lane, rr);
+    const node = lane.rows.find((r) => r.nodeId === rr.nodeId);
+    const n = node ? laneEffective(lane, node) : {};
+    const pair = c.model ? { model: c.model, effort: c.effort } : (rr.def.model && n.model ? { model: n.model, effort: c.effort || n.effort } : { effort: c.effort });
+    const out = { ...(pair.model ? { model: pair.model } : {}), ...(pair.effort ? { effort: pair.effort } : {}) };
+    return Object.keys(out).length ? out : null;
   }
   // Ask Worca's per-agent picks (card.nodes) are the lane's BASELINE edits: "changed" means the user moved a row off
   // them; with no proposal that is exactly "the row has an edit", as before.
@@ -3816,6 +3842,14 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       if ((c.subagentModel || '') !== (row.subagentModel || '')) e.subagentModel = c.subagentModel || row.def.subagentModel || 'auto';
       if (Object.keys(e).length) nodes[row.nodeId] = e;
     }
+    // Edited review-role rows that differ from the project's (or template's) pick ride as `nodes[id].roles[key]`; a
+    // node entry may carry roles only.
+    for (const rr of laneReviewRoleEdited(lane)) {
+      if (!laneReviewRoleChanged(lane, rr)) continue;
+      const pick = laneReviewRolePick(lane, rr);
+      if (!pick) continue;
+      nodes[rr.nodeId] = { ...(nodes[rr.nodeId] || {}), roles: { ...((nodes[rr.nodeId] || {}).roles || {}), [rr.roleKey]: pick } };
+    }
     return { nodes };
   }
   /** Ask Worca's picks as proposed (card.nodes), for a Start whose lane has not loaded (still loading, or it could
@@ -3846,7 +3880,15 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (!lane || !lane.editable || !projectDir) return null;
     const workflowId = local.workflowId();
     for (const row of laneEditedRows(lane)) {
-      const patch = pruneNodeSelection(row, lane.edits[row.nodeId]);
+      const patch = pruneNodeSelection(row, lane.edits[row.nodeId] || {});
+      // The node's role picks are written whole (setNodeModel replaces the map): the stored ones, the edits over them.
+      const roleRows = (lane.reviewRoleRows || []).filter((rr) => rr.nodeId === row.nodeId);
+      if (roleRows.some((rr) => laneReviewRoleEdit(lane, rr))) {
+        const stored = (((lane.runConfig || {}).nodes || {})[row.nodeId] || {}).roles || {};
+        patch.roles = Object.fromEntries(roleRows
+          .map((rr) => [rr.roleKey, laneReviewRoleEdit(lane, rr) ? laneReviewRolePick(lane, rr) : (Object.hasOwn(stored, rr.roleKey) ? stored[rr.roleKey] : null)])
+          .filter(([, pick]) => pick));
+      }
       const body = row.role
         ? { projectDir, step: row.role, ...patch }
         : { projectDir, workflowId, nodes: { [row.nodeId]: patch } };
@@ -3908,7 +3950,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       return;
     }
     // "changed" = rows the user moved off the proposal (Ask Worca's picks are the baseline, not the user's edits).
-    const edited = lane.rows.filter((r) => laneDiverged(lane, r)).length;
+    const edited = lane.rows.filter((r) => laneDiverged(lane, r)).length + laneReviewRoleEdited(lane).length;
     const picked = laneProposedCount(lane);
     const over = laneOverrideCount(lane);
     const overText = `${over} override${over === 1 ? '' : 's'} of the workflow defaults`;
@@ -3917,7 +3959,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       : picked ? `Chat picked ${picked} agent${picked > 1 ? 's' : ''} for this run · ${overText}`
         : `proposed by Worca · ${overText}`;
     reset.hidden = !edited;
-    reset.addEventListener('click', () => { lane.edits = cloneEdits(lane.proposal); if (lane.dropped) lane.dropped.clear(); renderLane(laneSec, lane, lc); });
+    reset.addEventListener('click', () => { lane.edits = cloneEdits(lane.proposal); lane.reviewRoleEdits = {}; if (lane.dropped) lane.dropped.clear(); renderLane(laneSec, lane, lc); });
     // The lane shows at every mode while Ask Worca's picks are laid in (data-level-keep, set when the card is built);
     // healed away on another engine, or on another workflow, it is Expert-only again — and the team policy's word on
     // the picks (card.warnings, soft: the run still starts) goes with them.
@@ -4042,6 +4084,54 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       tile.appendChild(l2);
       box.appendChild(tile);
     });
+    // A role-review node's declared roles, below the node tiles: a model select and effort pills, nothing else.
+    for (const rr of lane.reviewRoleRows || []) {
+      const node = lane.rows.find((r) => r.nodeId === rr.nodeId);
+      const c = laneReviewRoleEffective(lane, rr);
+      const tile = make('div', `ask-rp-tile ask-rp-role${laneReviewRoleEdit(lane, rr) ? ' mod' : ''}`);
+      tile.dataset.nodeId = rr.nodeId;
+      tile.dataset.role = rr.roleKey;
+      const l1 = make('div', 'ask-rp-tile-l1');
+      l1.appendChild(make('span', `ask-rp-acc${node && RP_ACC.has(node.color) ? ` ${node.color}` : ''}`));
+      const name = make('div', 'ask-rp-name');
+      name.appendChild(make('b', null, rr.label));
+      l1.appendChild(name);
+      const sel = rpSelect('ask-rp-model', `Model for ${rr.label}`);
+      sel.appendChild(opt('', "Node's model"));
+      appendModelGroups(sel, lane.models.filter((m) => (!m.hidden && !m.needsSignIn) || m.id === c.model), {
+        engine: lane.engine, text: (m) => modelOptionText(m) + (m.needsSignIn ? ' (needs sign-in)' : '') });
+      sel.value = c.model || '';
+      sel.disabled = !lane.editable;
+      sel.addEventListener('change', () => {
+        const mid = sel.value;
+        const list = (lane.models.find((m) => m.id === mid) || {}).efforts || [];
+        const keep = list.includes(c.effort) ? c.effort : (list[1] || list[0] || '');
+        laneReviewRoleSet(lane, rr, { model: mid, effort: mid ? keep : '' });
+        renderLane(laneSec, lane, lc);
+      });
+      l1.appendChild(sel);
+      if (lane.efforts.length) {
+        // A role naming no model runs on the node's: its pills follow the node tile's model.
+        const runsOnModel = c.model || (node ? laneEffective(lane, node).model : '');
+        const eff = make('div', `ask-rp-eff${c.model ? '' : ' unset'}`);
+        eff.setAttribute('role', 'radiogroup');
+        eff.setAttribute('aria-label', `Effort for ${rr.label}`);
+        const offered = (lane.models.find((m) => m.id === runsOnModel) || {}).efforts || [];
+        for (const e of lane.efforts) {
+          const b = make('button', `ask-rp-effbtn${e === c.effort ? ' on' : ''}`, e);
+          b.type = 'button';
+          b.setAttribute('role', 'radio');
+          b.setAttribute('aria-checked', String(e === c.effort));
+          b.disabled = !lane.editable || !offered.includes(e);
+          if (!offered.includes(e) && runsOnModel) b.title = `Not offered by ${modelLabel(lane, runsOnModel)}`;
+          b.addEventListener('click', () => { laneReviewRoleSet(lane, rr, { effort: e }); renderLane(laneSec, lane, lc); });
+          eff.appendChild(b);
+        }
+        l1.appendChild(eff);
+      }
+      tile.appendChild(l1);
+      box.appendChild(tile);
+    }
     // A per-run lane: changes (and Ask Worca's picks) apply to THIS run only, unless the user saves them as the
     // project's defaults — a project target only (agent defaults are per project).
     const foot = make('div', 'ask-rp-agents-foot');

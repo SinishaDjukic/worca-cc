@@ -961,6 +961,87 @@ agent step (`propose_run` `nodes`), from the models the run's engine runs:
   refused; any other top-level key is refused with *overlay takes nodes and wires only*. A
   [run preset](run-presets.md) sends its loop budgets this way.
 
+#### Per-role models
+
+A node can review as several independent reviewers at once: its config's `roleReview`
+declares the roles, and the run starts one slice per role, in parallel, each seeing only its
+own role. Their findings are merged into one file for the refiner (#990: independent reviewers
+are an engine capability, not Shaper's alone).
+A node saved with the older `roleReview: true` still reads as Shaper's plan review (perspectives
+picked per run, findings to Refine). Every node and role pick is cleaned in one place,
+`src/shared/graph/role-slots.mjs`; `test/model-pick-cleaner-single.test.mjs` guards it.
+
+```json
+{ "roleReview": { "roles": [{ "key": "correctness", "label": "Correctness" },
+                            { "key": "security", "label": "Security", "model": "claude-haiku-4-5", "effort": "high" }],
+                  "source": "declared", "target": "plan", "sink": "refiner" } }
+```
+
+- **Keys** are 1–24 lowercase letters, at most 12 roles. `target` is `plan` or `diff`, and `sink`
+  is `refiner` or `implementer`; anything else fails the graph check (V31) before a run starts.
+- **The sink answers every finding.** The findings file ends with a `## Dispositions` section
+  naming a JSON file beside it (`…-role-findings-r1-dispositions.json`). The sink writes
+  `{ "dispositions": [{ "id": "security-1-1", "status": "fixed" }, { "id": "correctness-1-1",
+  "status": "disputed", "reason": "…" }] }` there: `fixed`, or `disputed` with a one-line reason.
+  An id it leaves out, a disputed one without a reason, or a file that is missing, unreadable or
+  over 256 KB counts as **open** (audited); no finding is ever dropped. A refiner's `addressed`
+  list still counts its ids as fixed. Every round records `counts: { raised, fixed, disputed,
+  open }`; an older run's rounds derive them from the finding statuses.
+- **An implementer sink** takes the findings on its existing `fix` input: wire the review's
+  `findings` to the implementer's `fix`, and its `plan` to the implementer's `plan`. The counts
+  are the same; only a refiner sink routes the refine loop on the open critical and major findings.
+- **A `diff` target reviews the implementation.** The node keeps a reviewer's own ports:
+  inputs `plan` and `done` (the worktree, so each role inspects `git diff`), outputs `review`
+  (the merged findings, `…-code-role-findings-r1.md`, only when a role found a critical or
+  major issue) and `pass` (when none did). Use `"sink": "implementer"` and wire `review` to the
+  implementer's `fix`, as for a plain reviewer: a reviewer node opts in by config alone, with its
+  wires unchanged. Each fix cycle is the next round of the same pass, and a role that was clean
+  is skipped (its record is carried forward). The loop's cycle gate lists the roles' rows.
+  Shaper's Review ships this way, with `correctness`, `security` and `fit` (Project fit):
+
+  ```json
+  { "roleReview": { "roles": [{ "key": "correctness", "label": "Correctness" },
+                              { "key": "security", "label": "Security" },
+                              { "key": "fit", "label": "Project fit" }],
+                    "source": "declared", "target": "diff", "sink": "implementer" } }
+  ```
+
+  For your own reviewer, put the same block in its node config (for example only
+  `correctness` and `security`), and add `model` / `effort` to a role that should run on
+  another model.
+- **Conflicts go to the person.** When two roles ask for opposite changes to one section, the
+  sink marks both disputed and adds a `conflicts` entry (`findings`, `question`, 2–4 `options`).
+  The plan card shows one decision card per pair; the pick is written into the plan's
+  `## Clarifications (Q&A)` at approval. Approving without a pick (auto-approve, `--yes`) is
+  never blocked: the conflict is audited as left undecided.
+- **Each role has its own model and effort.** A run overlay pick
+  (`overlay.nodes.<nodeId>.roles.<key>`) beats the project's (`POST /api/config`
+  `nodes.<nodeId>.roles`), which beats the template's (`roles[i].model` / `effort`). An effort
+  travels with its model. A role nothing names runs on the node's model, and *Model for all*
+  runs every role on the run's model.
+- **The record names what ran:** each role's review records the model and effort its slice
+  ran on.
+- **Set them in the Chat run card** (Advanced › Agents): a node that declares roles gets one row
+  per role, labelled like `Plan Review · Architect`, with a model select ("Node's model" = no
+  pick) and effort pills. An edited row rides that run only, or becomes the project's default
+  with *Save as project defaults*. A workflow, the project config and a run overlay set them too.
+- **A pick the run's engine cannot run is named, never dropped silently.** The node or role
+  runs on what the layers below give it, its record keeps the request as `wanted`, and the run
+  page shows one warning per drop, logged and audited once at start:
+  - a node pick: `Plan: claude-opus-5-5 is not on Codex, runs Codex's default model` (or the
+    model it does run, for example `runs gpt-5.5`);
+  - a role pick: `Plan Review · Security: claude-opus-5-5 is not on Codex, runs the node's model`;
+  - an effort-only pick: `effort max is not on Codex, runs the node's effort` (a role) or
+    `runs Codex's default effort` (a node).
+
+  Only the winning layer counts: a lower layer's pick that a higher one overrode never ran, so
+  it is not named. A built-in workflow's own defaults (Shaper's models, for example) are
+  recorded as `wanted` but never warned about: they are nobody's pick. A saved workflow's
+  models are, so they warn.
+- **A usage limit during a role names the role's connection.** If a role runs on a provider
+  model, the pause says that provider's limit (for example `OpenAI-compatible limit — …`),
+  even when the node itself runs on the sign-in.
+
 ## When the network drops
 
 A step whose error is network-class (a refused or reset connection, a DNS failure,

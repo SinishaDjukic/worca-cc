@@ -418,7 +418,7 @@ import {
   GRAPH_SHAPE_WORKFLOW, SHAPE_WORKFLOW_ID, SHAPE_UX_WORKFLOW_ID,
 } from '../src/core/graph/builtin-workflows.mjs';
 import { latestChecklist, checklistMarkdown, CHECKLIST_PR_MARKER } from '../src/shared/shape/review-checklist.mjs';
-import { currentPass } from '../src/shared/shape/role-review.mjs';
+import { attachRoleReviews } from '../src/shared/shape/role-review.mjs';
 import { resolveShapeRequest, PLAN_ASK_KIND, planFileOf } from '../src/core/shape/run.mjs';
 import { savePlanToCheckout } from '../src/core/shape/save.mjs';
 import { featureView, currentFeatureId, featureOfPipeline, featuresOfTickets, cancelRest, resumeFeature,
@@ -1459,9 +1459,8 @@ function wireRun(entry) {
       const event = { type: name, ...(payload && typeof payload === 'object' ? payload : { value: payload }) };
 
       if (name === 'question') {
-        // Slice 4: the Plan step card's role rows read the current pass of role reviews off the plan ask (D1).
-        const rr = event.kind === 'plan' && event.plan && !event.plan.outline ? currentPass(orch.state?.roleReviews) : null;
-        if (rr) event.plan = { ...event.plan, roleReviews: rr };
+        // Slice 4: the Plan step card (D1) and a role-review loop's gate card (D8) read the current pass of role reviews.
+        attachRoleReviews(event, orch.state?.roleReviews);
         entry.pendingQuestion = event;
       }
       if (name === 'night-decision') {

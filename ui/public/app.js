@@ -4113,7 +4113,7 @@ if (typeof window !== 'undefined') {
     paintExecChip,
     wireExecChip,
     openRunArtifact,
-    paintQuiescenceBanner,
+    paintRunWarnings,
     progressText,
     histCountsLine,
     gateWireCopy,
@@ -23860,7 +23860,7 @@ async function loadHistDetailScreen(screen, record, parsed, ship = null) {
     // `logs`: the run saved a log (HD_TABS' Logs tab shows), so a tray header has a log to open; its cards link the same way.
     { run: st, runId: parsed.id, mode: 'monitor', record: rec, logs: Array.isArray(data.artifacts) && data.artifacts.some((a) => a && a.kind === 'live-log') })
     : null, st.steps);
-  if (isGraphManifest(st.stepper)) paintQuiescenceBanner(screen.querySelector('.hd-banners'), decorFromState(st, { live: false, now: 0 }));
+  if (isGraphManifest(st.stepper)) paintRunWarnings(screen.querySelector('.hd-banners'), decorFromState(st, { live: false, now: 0 }));
 
   paintHdHeaderMeta(screen, rec, data);
   setupHdActions(screen, rec, data);
@@ -31513,21 +31513,25 @@ function runDecorFor(r, mode = 'monitor') {
   return bag;
 }
 
-/** The amber quiescence banner (spec §8), in .rd-banners / .hd-banners. Idempotent:
- *  one element per host, shown/hidden from the bag's `quiescent`. */
-function paintQuiescenceBanner(host, decor) {
+/** The run's warnings (decor.warnings: a dropped model pick, the scheduler's lines, the quiescence line of spec §8) as
+ *  amber banners in .rd-banners / .hd-banners: one `.run-warn` per distinct text, in order. Idempotent; an empty list
+ *  leaves none. */
+function paintRunWarnings(host, decor) {
   if (!host) return;
-  const show = !!(decor && decor.quiescent);
-  let el = host.querySelector(':scope > .run-warn');
-  if (!el) {
-    if (!show) return;
-    el = document.createElement('div');
-    el.className = 'run-warn';
-    el.setAttribute('role', 'status');
-    host.appendChild(el);
-  }
-  el.textContent = 'finished at quiescence — End not reached';
-  el.hidden = !show;
+  const texts = [...new Set((decor && Array.isArray(decor.warnings) ? decor.warnings : []).filter(Boolean))];
+  const els = [...host.querySelectorAll(':scope > .run-warn')];
+  texts.forEach((text, i) => {
+    let el = els[i];
+    if (!el) {
+      el = document.createElement('div');
+      el.className = 'run-warn';
+      el.setAttribute('role', 'status');
+      host.appendChild(el);
+    }
+    el.textContent = text;
+    el.hidden = false;
+  });
+  for (const el of els.slice(texts.length)) el.remove();
 }
 
 /** The P5 line ("Build · task 2 of 4"); supersedes the D15 "3/6 done" counter (spec 2026-10-14 P12). '' on a v1 run. */
@@ -35236,7 +35240,7 @@ function paintRunDetail(r) {
   ensureRdTabs(screen, r);   // builds the pill row + lazy panels exactly once
   paintRdHeader(screen, r);
   paintRdBanners(screen, r);
-  if (isGraphRun(r)) paintQuiescenceBanner(screen.querySelector('.rd-banners'), runDecorFor(r, 'monitor'));
+  if (isGraphRun(r)) paintRunWarnings(screen.querySelector('.rd-banners'), runDecorFor(r, 'monitor'));
   paintRdGraph(screen, r);
   paintRdQuestions(screen, r);
   paintShaperWait(screen, r);

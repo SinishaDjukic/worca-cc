@@ -5,6 +5,7 @@
 // template is the validator's to report, so this filters and never throws.
 import { classifyLoops } from './loops.mjs';
 import { portsOf } from './ports.mjs';
+import { roleReviewOf } from './role-review-step.mjs';
 import { SESSION_ID_RE, SESSION_MODES, MAX_SESSION_MEMBERS, SESSION_MIN_MEMBERS } from './constants.mjs';
 import { mintId, normalizeSessions } from './template.mjs';
 import { LABEL_H } from './geometry.mjs';
@@ -360,7 +361,7 @@ function outsideNote(tpl, portsFn, members, labelOf) {
   for (const id of members) {
     const n = byId.get(id);
     const name = labelOf(id) || id;
-    if (n && isObj(n.config) && n.config.roleReview === true) note += ` ${name}'s role reviews run outside the session.`;
+    if (n && isObj(n.config) && roleReviewOf(n.config) !== null) note += ` ${name}'s role reviews run outside the session.`;
     else if (n && portsOf(portsFn, n).inputs.some((p) => p?.expands === true && wired(id, p.id))) note += ` ${name}'s ×N tasks run outside the session.`;
   }
   return note;

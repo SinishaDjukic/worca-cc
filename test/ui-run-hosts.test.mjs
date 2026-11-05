@@ -912,7 +912,7 @@ test('a card click on the Workflow tab opens its log in the drawer under the gra
 });
 
 // ── banner / progress / gate copy / History header + Overview ────────────────
-test('a v2 run page: progress reads numerically, .rd-step names what runs (no step count), and the quiescence banner shows once when it drained without End', async () => {
+test('a v2 run page: progress reads numerically, .rd-step names what runs (no step count), and the run warnings show once each (quiescence when it drained without End)', async () => {
   await checkRows([
     { name: 'progress reads numerically everywhere and the quiescence banner appears once', run: async () => {
       const window = await bootApp();
@@ -923,17 +923,39 @@ test('a v2 run page: progress reads numerically, .rd-step names what runs (no st
         steps: [{ key: 'x:n_a:1', executionId: 'x:n_a:1', nodeId: 'n_a', ordinal: 1, status: 'done', activeMs: 1000, costUsd: 0.1 }] });
       assert.deepEqual((({ n, m }) => [n, m])(np.runStepLabel(r)), [1, 1]);
       const banners = window.document.createElement('div');
-      np.paintQuiescenceBanner(banners, np.runDecorFor(r, 'monitor'));
-      np.paintQuiescenceBanner(banners, np.runDecorFor(r, 'monitor'));
+      np.paintRunWarnings(banners, np.runDecorFor(r, 'monitor'));
+      np.paintRunWarnings(banners, np.runDecorFor(r, 'monitor'));
       assert.equal(banners.querySelectorAll('.run-warn').length, 1, 'idempotent');
       assert.equal(banners.querySelector('.run-warn').textContent, 'finished at quiescence — End not reached');
       assert.equal(banners.querySelector('.run-warn').hidden, false);
-      np.paintQuiescenceBanner(banners, { quiescent: false });
-      assert.equal(banners.querySelector('.run-warn').hidden, true);
+      assert.equal(banners.querySelector('.run-warn').getAttribute('role'), 'status');
+      np.paintRunWarnings(banners, { quiescent: false, warnings: [] });
+      assert.equal([...banners.querySelectorAll('.run-warn')].filter((el) => !el.hidden).length, 0, 'an empty list leaves none visible');
       assert.equal(np.progressText(r), 'Finished', 'the P5 line supersedes the "n/m done" counter (spec 2026-10-14 P12)');
       assert.equal(np.histCountsLine({ ...r, stepper: MANIFEST }), '1 execution · 2 loop deliveries');
       const v1 = np.makeRun({ runId: 'r2', title: 't', projectDir: '/p', status: 'running' });
       assert.equal(np.progressText(v1), '', 'v1 runs have no progress line');
+    } },
+    { name: 'each distinct run warning shows once: a pick drop repeated, and quiescence with a dead-end line', run: async () => {
+      const window = await bootApp();
+      const np = window.__np;
+      const DROP = "Plan: claude-opus-5-5 is not on Codex, runs Codex's default model";
+      const r = np.makeRun({ runId: 'r1', title: 't', projectDir: '/p', status: 'running' });
+      np.onState(r, { status: 'running', stepper: MANIFEST, active: [], warnings: [DROP, DROP], steps: [] });
+      const banners = window.document.createElement('div');
+      np.paintRunWarnings(banners, np.runDecorFor(r, 'monitor'));
+      const shown = () => [...banners.querySelectorAll('.run-warn')].filter((el) => !el.hidden).map((el) => el.textContent);
+      assert.deepEqual(shown(), [DROP], 'one .run-warn per distinct text');
+      np.paintRunWarnings(banners, np.runDecorFor(r, 'monitor'));
+      assert.deepEqual(shown(), [DROP], 'a repaint keeps one');
+      assert.equal(banners.querySelectorAll('.run-warn').length, 1);
+      // The scheduler's own list, as it writes it at quiescence (scheduler.mjs): the line, then the dead ends.
+      const QUIET = 'finished at quiescence — End not reached';
+      const DEAD = 'dead-ended output: n_a.extra — fired with no wire';
+      const q = np.makeRun({ runId: 'r2', title: 't', projectDir: '/p', status: 'done' });
+      np.onState(q, { status: 'done', stepper: MANIFEST, active: [], endReached: false, warnings: [QUIET, DEAD], steps: [] });
+      np.paintRunWarnings(banners, np.runDecorFor(q, 'monitor'));
+      assert.deepEqual(shown(), [QUIET, DEAD], 'quiescence, then the dead end');
     } },
     { name: 'the detail header .rd-step names what runs on a v2 run, with no step count', run: async () => {
       const window = await bootApp();
