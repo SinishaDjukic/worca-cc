@@ -594,3 +594,33 @@ test('concern 8: no session start (the spawn never ran), or not a Pretend spawn:
   assert.equal('SessionStart' in n.settings.hooks, false);
   assert.deepEqual([n.said, n.ignored], [[], false]);
 });
+
+// ── Task 5 fix review (m11): runClaudeProcess itself hands the spawn the I3 env order and the M1 redaction ───────────────
+/** One Pretend spawn through the seam with the person's settings `user`; returns what the spawn was handed. */
+async function handedSpawn(user, { modelEnv } = {}) {
+  const cfg = tmp();
+  writeFileSync(join(cfg, 'settings.json'), JSON.stringify(user));
+  let handed = null;
+  const events = [];
+  _testing.set({ superviseSpawn: (o) => { handed = o; o.onEvent({ type: 'log', text: 'helper said echo sk-ant-helper-abcdef01' }); o.cleanup(); return Promise.resolve({ text: '' }); } });
+  try {
+    await withConfigDir(cfg, () => runClaudeProcess({ cwd: tmp(), prompt: 'p', allowedTools: ['Read'], pluginsOff: true, settingSources: ['project'],
+      ...(modelEnv ? { modelEnv } : {}), onEvent: (e) => events.push(e) }));
+  } finally { _testing.reset(); }
+  return { handed, events };
+}
+
+test('m11 (I3): runClaudeProcess hands the spawn the carried env over a model profile\'s env, and under Worca\'s bridge', async () => {
+  const user = { env: { ANTHROPIC_BASE_URL: 'https://corp-gw.example', ANTHROPIC_CUSTOM_HEADERS: 'x-corp-key: S3CRET-HEADER' } };
+  const { handed } = await handedSpawn(user, { modelEnv: { ANTHROPIC_BASE_URL: 'https://vendor.example', ANTHROPIC_AUTH_TOKEN: 'vendor-token-0001' } });
+  assert.deepEqual([handed.env.ANTHROPIC_BASE_URL, handed.env.ANTHROPIC_CUSTOM_HEADERS, handed.env.ANTHROPIC_AUTH_TOKEN],
+    ['https://corp-gw.example', 'x-corp-key: S3CRET-HEADER', 'vendor-token-0001']);
+  const bridged = await handedSpawn(user, { modelEnv: { ANTHROPIC_BASE_URL: 'http://127.0.0.1:4100/m/claude-sonnet-4-5' } });
+  assert.equal(bridged.handed.env.ANTHROPIC_BASE_URL, 'http://127.0.0.1:4100/m/claude-sonnet-4-5', 'Worca\'s bridge stays on top');
+});
+
+test('m11 (M1): runClaudeProcess hands the spawn a redactor that hides the carried helper strings, in its events and its error text', async () => {
+  const { handed, events } = await handedSpawn({ apiKeyHelper: 'echo sk-ant-helper-abcdef01' });
+  assert.equal(handed.redactText('failed: echo sk-ant-helper-abcdef01'), 'failed: [redacted]');
+  assert.equal(events.find((e) => e.type === 'log').text, 'helper said [redacted]');
+});
