@@ -86,27 +86,40 @@ Each group folds, with the count in its header; built-in models start folded.
 ## Model roles
 
 Every model slot that has no value of its own falls back to one of three
-roles. The Roles card on the Models page (above the Engines card) sets them:
+roles. Set them once in the setup assistant (its Models step), or on the Roles
+card of the Models page (above the Engines card). Everything else then follows
+them: you only set a model elsewhere to override a role.
 
 | Role | Setting key | What it covers |
 |---|---|---|
 | Deep thinking | `deep` | Plans and reviews: the Plan, Plan review, Refine plan, Review implementation, Deck review and Bug Root Cause steps, and Away mode's decider (`nightMode.deciderModel`) |
-| Everyday coding | `everyday` | Every other step, Chat (`askModels`), Agent generation (`agentGenModel`), the Requirements interview (`requirementsInterview`) and Claude's Auto classifier (`autoWorkflowModel`) |
-| Quick jobs | `quick` | Titles (`titleModel`), Run naming (`namingModel`), Command summaries (`commandSummaryModel`), PR description (`prDescriptionModel`), Memory defragment (`memoryDefrag`, including its step), Workspace scan (`workspaceScan`, the scan model only) and every `utilityModels.<engine>.*` job, Codex's Auto classifier included |
+| Everyday coding | `everyday` | Every other step, Chat (`askModels`), Agent generation (`agentGenModel`), the Requirements interview (`requirementsInterview`), Claude's Auto classifier (`autoWorkflowModel`) and the Workspace scan (`workspaceScan`, the scan agent; it surveys every member and writes the cross-project synthesis) |
+| Quick jobs | `quick` | Titles (`titleModel`), Run naming (`namingModel`), Command summaries (`commandSummaryModel`), PR description (`prDescriptionModel`), Memory defragment (`memoryDefrag`, including its step) and every other `utilityModels.<engine>.*` job, Codex's Auto classifier included (not `secondOpinion`, which has no role) |
 
 Where a slot looks, in order:
 
 - **Steps:** the node's own pick, the project's step model, your or the team's
-  step model, the workflow template's own model, then the role. A run started
+  step model, the workflow template's own model, then the role, else Worca's
+  factory default for that slot. A run started
   with its own model (`--model`) uses that model for every unset step instead
   of the role, and an Auto run skips the role, as it skips your step models.
-- **Helper jobs:** the job's own setting, then the role, then today's
-  fallback (for titles: the run's model, then the built-in Haiku).
+- **Helper jobs:** the job's own setting, then the role, then Worca's factory
+  default where the job has one, then today's fallback (for titles: the run's
+  model, then the built-in Haiku). Memory defragment and the workspace scan read
+  this way even as steps of their own run.
 
-Roles are kept per harness (`modelRoles.claude`, `modelRoles.codex`): a Claude
-run never reads the Codex roles, and a harness with no roles keeps today's
-fallbacks. With no `modelRoles` at all, every slot resolves exactly as it did
-before roles existed.
+Roles are kept per harness (`modelRoles.claude`, `modelRoles.codex`,
+`modelRoles.copilot`, … one per engine): a Claude run never reads the Codex
+roles, and a harness with no roles keeps today's fallbacks. With no
+`modelRoles` at all, every slot resolves exactly as it did before roles
+existed. Every engine has roles, so a Copilot, Cursor, Gemini CLI, Qwen Code,
+Goose or OpenCode run takes its steps' models from that engine's roles. Helper
+jobs still run on Claude or Codex only, so the other engines' roles cover
+steps and Chat. On OpenCode, which refuses a step that names no model, roles
+are the simple way to give every step one. The setup assistant shows roles for
+Claude, the engines it found ready and your run engine; the Models page's
+engine switch (Expert) shows every engine. A team policy's `models.roles` and a
+shared team setup carry Claude's and Codex's roles only.
 
 A role names a catalog model that runs on its harness; the server refuses any
 other and stores the catalog's own spelling of the id (`Claude-Opus-5-5` is
@@ -121,6 +134,63 @@ curl -X POST http://localhost:4317/api/settings -H 'Content-Type: application/js
 
 `null` clears a role (`{ "modelRoles": { "claude": { "quick": null } } }`).
 Chat's `change_setting` sets the same values as `models.<harness>.roles.<role>`.
+
+### Built-in workflows take their models from the Models page
+
+The built-in workflows name no model. Each model they used to pin is now a
+factory default on the Models page. The helper jobs show theirs as "(default)"
+until you set your own; the two step rows keep your role's text and name it in
+their hint, because it applies to role reviews only:
+
+| Home on the Models page | Used by | Factory default |
+|---|---|---|
+| Step models › Plan Review | role reviews of a plan (Shaper's Plan Review step) | Sonnet 5.5 · medium |
+| Step models › Requirements Review | role reviews of the requirements (Shaper with requirements first) | Sonnet 5.5 · medium |
+| Helper jobs › Second-opinion reviewer | the one role a role review names as its second opinion (Shaper's Product reviewer) | Opus 5.5 · medium |
+| Helper jobs › Memory defragment | the Memory defragment run | Sonnet 5 |
+| Settings › Runs › Workspaces | the workspace scan | your Everyday coding role (else Sonnet 5 · medium), project agents `sonnet` · medium |
+
+The factory default comes after your role: a node pick, a project pick, your
+step model and your role all win over it, so it only fills a slot nothing else
+names. On the Plan Review step it applies to role reviews only: a plain plan
+review step (Default, Auto) keeps your Deep thinking role. Memory defragment
+takes the Quick jobs role first, and the workspace scan the Everyday coding role.
+
+**Second-opinion reviewer** (`secondOpinionModel` on Claude, a `{ model, effort }`
+pair; `utilityModels.codex.secondOpinion` on Codex) is a helper job of its own.
+A role review names its second opinion with `roleReview.secondOpinion: "<role key>"`
+(Shaper names `product`), and that role runs on this model, so one reviewer
+always judges on another model than its step. It is set per user only and has
+no role: from a role it would land on its step's model again.
+
+**When a factory default cannot run.** On a Claude install that is not signed
+in to Claude Code (for example one that runs GitHub Copilot models), a factory
+default that needs the sign-in is dropped. The step uses what it would use with
+nothing set: your role for that step, else the run's model, else Claude's own
+default. The run log says so once per setting, for example
+`Second-opinion reviewer: Opus 5.5 needs Claude Code sign-in; using Copilot Claude Sonnet 4.6 · high`.
+When the second opinion has no other model, it runs on its step's model at the
+next effort the model offers (`(same model and effort as the step)` when there
+is none). A model routed through a provider, or one whose own `env` signs the
+CLI in (`ANTHROPIC_API_KEY`, `CLAUDE_CODE_USE_BEDROCK`, …), never needs the
+sign-in and is never dropped or refused; when the sign-in state is unknown, the
+factory default stays.
+
+**A model you set is never replaced.** If a model you, your team, the project
+or the run set needs the sign-in while Claude Code is signed out, the start is
+refused before anything runs, naming the setting and the model, for example
+``Claude Code isn't signed in, and Models › Step models › Plan Review names Opus 5.5, which needs it — pick a model routed through a provider on the Models page, or sign in (run `claude`, then /login)``.
+A workspace scan is refused the same way, naming Settings › Runs › Workspaces.
+A paused run resumes on the models it started with, without a new warning or
+refusal.
+
+```sh
+curl -X POST http://localhost:4317/api/settings -H 'Content-Type: application/json' \
+  -d '{ "secondOpinionModel": { "model": "claude-opus-5-5", "effort": "high" } }'
+```
+
+`null` clears it. A saved copy of Shaper made before this change keeps the
+models it was saved with and does not name a second opinion.
 
 ## Providers
 
@@ -1089,9 +1159,10 @@ picked per run, findings to Refine). Every node and role pick is cleaned in one 
     `runs Codex's default effort` (a node).
 
   Only the winning layer counts: a lower layer's pick that a higher one overrode never ran, so
-  it is not named. A built-in workflow's own defaults (Shaper's models, for example) are
-  recorded as `wanted` but never warned about: they are nobody's pick. A saved workflow's
-  models are, so they warn.
+  it is not named. Worca's factory defaults (Shaper's Plan Review and Second-opinion reviewer
+  models, for example, see [Built-in workflows take their models from the Models page](#built-in-workflows-take-their-models-from-the-models-page))
+  are recorded as `wanted` but never warned about: they are nobody's pick. A saved workflow's
+  own models are, so they warn.
 - **A usage limit during a role names the role's connection.** If a role runs on a provider
   model, the pause says that provider's limit (for example `OpenAI-compatible limit — …`),
   even when the node itself runs on the sign-in.

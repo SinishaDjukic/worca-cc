@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import {
   parseShortstat, normalizeMergeable, diffShortstat, branchExists,
-  findPrForBranch, commitsAhead, readPrBody, editPrBody, _testing as gitInfo,
+  findPrForBranch, commitsAhead, readPrBody, editPrBody, withRefSnapshot, _testing as gitInfo,
 } from '../src/core/git-info.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
@@ -175,6 +175,27 @@ test('commitsAhead counts source..feature; null on failure', async () => {
   gitInfo.setRunner(() => Promise.resolve({ ok: false, stdout: '', stderr: 'bad rev', code: 128 }));
   assert.equal(await commitsAhead('/r/api', 'main', 'f-api'), null);
   assert.equal(await commitsAhead(null, 'main', 'f'), null);
+  gitInfo.reset();
+});
+
+test('commitsAhead in a ref snapshot: remembered per commit ids, asked again once a tip moves, 0 for equal tips', async () => {
+  const A = 'a'.repeat(40), B = 'b'.repeat(40), C = 'c'.repeat(40);
+  let tip = B; const revs = [];
+  gitInfo.setRunner((cmd, args) => {
+    if (args[0] === 'for-each-ref') return Promise.resolve({ ok: true, stdout: `refs/heads/main ${A}\nrefs/heads/f ${tip}\nrefs/heads/same ${A}\n`, stderr: '', code: 0 });
+    revs.push(args.at(-1));
+    return Promise.resolve({ ok: true, stdout: '2\n', stderr: '', code: 0 });
+  });
+  // three refreshes, each its own scope (one request each): git counts once
+  for (let i = 0; i < 3; i += 1) assert.equal(await withRefSnapshot(() => commitsAhead('/r', 'main', 'f')), 2);
+  assert.deepEqual(revs, ['main..f']);
+  tip = C;                                                    // a commit on the branch: a new id, so git is asked again
+  assert.equal(await withRefSnapshot(() => commitsAhead('/r', 'main', 'f')), 2);
+  assert.equal(revs.length, 2);
+  assert.equal(await withRefSnapshot(() => commitsAhead('/r', 'main', 'same')), 0, 'equal tips are 0 without rev-list');
+  assert.equal(revs.length, 2);
+  await commitsAhead('/r', 'main', 'f');                     // outside a scope every call asks git
+  assert.equal(revs.length, 3);
   gitInfo.reset();
 });
 

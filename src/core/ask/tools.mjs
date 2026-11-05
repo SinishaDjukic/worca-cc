@@ -1046,6 +1046,11 @@ export function createAskTools(deps) {
           guess: { type: 'string', enum: ['add', 'own', 'save'], description: 'add | own | save' },
           reason: SCHEMA.s('one short line: why this guess') }, ['featureId', 'text', 'guess', 'reason']) },
     ] : []),
+    ...(deps.chatQuestions ? [{ name: 'ask_question',
+      description: 'Ask the user ONE question that the chat shows as native controls (this chat is a chat-channel conversation, e.g. Discord). answer "choice": 2–25 options, each {id, label, description?} — the user picks exactly one. answer "text": the user types a short answer (no options). Use it only when you cannot continue without the answer and the answer is a bounded pick or a short text; never to confirm a run (propose_run makes its own card) and never to ask several things at once. It decides nothing: END YOUR TURN right after it. The app sends "[worca event] question card <id> answered: …" with the answer; continue from it. Returns {ok:true, card} or {ok:false, errors}.',
+      inputSchema: SCHEMA.obj({ answer: SCHEMA.s('"choice" | "text"'), question: SCHEMA.s('one line (≤ 300 chars)'),
+        options: { type: 'array', maxItems: 25, items: { type: 'object', properties: { id: { type: 'string' }, label: { type: 'string' }, description: { type: 'string' } }, required: ['id', 'label'] }, description: 'choice only: 2–25 options' },
+        placeholder: SCHEMA.s('text only: hint shown in the answer box') }, ['answer', 'question']) }] : []),
   ];
 
   const EMPTY_DIFF = () => ({ available: false, files: [], text: '', truncated: false, totalBytes: 0, nextOffset: 0 });
@@ -2216,6 +2221,7 @@ export function createAskTools(deps) {
       }
     },
     async propose_scope_switch(input) { if (!deps.scopeSwitch || typeof deps.scopeSwitch.validate !== 'function') throw new AskToolError('propose_scope_switch: unavailable'); return deps.scopeSwitch.validate(input && typeof input === 'object' ? input : {}); },
+    async ask_question(input) { if (!deps.chatQuestions || typeof deps.chatQuestions.validate !== 'function') throw new AskToolError('ask_question: unavailable'); return deps.chatQuestions.validate(input && typeof input === 'object' ? input : {}); },
     async list_diff_comments(input) {
       const row = await resolveRow(input, 'list_diff_comments');
       const status = str(input.status) || 'all';

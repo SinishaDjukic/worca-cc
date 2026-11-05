@@ -20,42 +20,49 @@ const ASK_MESSAGES = Object.freeze({
 });
 const nameOf = (a) => (a && typeof a.name === 'string' ? a.name : '');
 
+/** One file's checks, in Ask's order: the caller's refusal (listed extensions only), a non-empty body, the per-kind cap,
+ *  then its content: a listed image/PDF proven by its magic number, else text/plain or generic binary by UTF-8 decoding
+ *  (see the header). {ok:true, file} | {ok:false, status, error}. Shared by the upload list below and the chat files
+ *  the host downloads (chat/inbound-context.mjs). */
+export function validateAttachmentBuffer(name, buf, { maxBytesPerFile, maxBytesPerBinaryFile, refuse = () => null,
+  messages = {} } = {}) {
+  const m = { ...ASK_MESSAGES, ...messages };
+  const no = (status, error) => ({ ok: false, status, error });
+  const dot = name.lastIndexOf('.');
+  const ext = dot === -1 ? '' : name.slice(dot).toLowerCase();
+  const listed = classifyExtension(ext);
+  if (listed) {
+    const refused = refuse(listed, name);
+    if (refused) return no(400, refused);
+  }
+  if (!Buffer.isBuffer(buf) || !buf.length) return no(400, m.empty(name));
+  const cap = listed && listed.kind === 'text' ? maxBytesPerFile : maxBytesPerBinaryFile;
+  if (buf.length > cap) return no(413, m.tooBig(name, cap));
+  if (listed && listed.kind !== 'text' && sniffMime(buf) === listed.mime) {
+    return { ok: true, file: { name, kind: listed.kind, mime: listed.mime, data: buf, bytes: buf.length } };
+  }
+  let text = null;
+  try { text = new TextDecoder('utf-8', { fatal: true }).decode(buf); } catch { text = null; }
+  if (text !== null && text.includes('\u0000')) text = null;
+  if (text === null) return { ok: true, file: { name, kind: 'binary', mime: GENERIC_BINARY_MIME, data: buf, bytes: buf.length } };
+  const mime = listed && listed.kind === 'text' ? listed.mime : 'text/plain';
+  return { ok: true, file: { name, kind: 'text', mime, data: buf, text, bytes: buf.length } };
+}
+
 export function validateAttachmentUploads(list, { maxFiles, maxBytesPerFile, maxBytesPerBinaryFile, maxBytesTotal,
   refuse = () => null, messages = {}, hash = true } = {}) {
   const m = { ...ASK_MESSAGES, ...messages };
   const no = (status, error) => ({ ok: false, status, error });
   if (!Array.isArray(list)) return no(400, m.notArray());
   if (list.length > maxFiles) return no(400, m.tooMany(maxFiles, nameOf(list[maxFiles])));
-  const dec = new TextDecoder('utf-8', { fatal: true });
   const files = [];
   const digest = (buf) => (hash ? { sha256: createHash('sha256').update(buf).digest('hex') } : {});
   for (const a of list) {
-    const name = nameOf(a);
-    const dot = name.lastIndexOf('.');
-    const ext = dot === -1 ? '' : name.slice(dot).toLowerCase();
-    const listed = classifyExtension(ext);
-    if (listed) {
-      const refused = refuse(listed, name);
-      if (refused) return no(400, refused);
-    }
     const raw = a && typeof a.dataBase64 === 'string' ? a.dataBase64 : '';
-    const buf = raw ? Buffer.from(raw, 'base64') : Buffer.alloc(0);
-    if (!buf.length) return no(400, m.empty(name));
-    const cap = listed && listed.kind === 'text' ? maxBytesPerFile : maxBytesPerBinaryFile;
-    if (buf.length > cap) return no(413, m.tooBig(name, cap));
-    if (listed && listed.kind !== 'text' && sniffMime(buf) === listed.mime) {
-      files.push({ name, kind: listed.kind, mime: listed.mime, data: buf, bytes: buf.length, ...digest(buf) });
-      continue;
-    }
-    let text = null;
-    try { text = dec.decode(buf); } catch { text = null; }
-    if (text !== null && text.includes('\u0000')) text = null;
-    if (text === null) {
-      files.push({ name, kind: 'binary', mime: GENERIC_BINARY_MIME, data: buf, bytes: buf.length, ...digest(buf) });
-    } else {
-      const mime = listed && listed.kind === 'text' ? listed.mime : 'text/plain';
-      files.push({ name, kind: 'text', mime, data: buf, text, bytes: buf.length, ...digest(buf) });
-    }
+    const v = validateAttachmentBuffer(nameOf(a), raw ? Buffer.from(raw, 'base64') : Buffer.alloc(0),
+      { maxBytesPerFile, maxBytesPerBinaryFile, refuse, messages });
+    if (!v.ok) return v;
+    files.push({ ...v.file, ...digest(v.file.data) });
   }
   let total = 0;
   for (const f of files) {

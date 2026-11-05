@@ -3,6 +3,34 @@
 Notes on merged features that have no release page yet. `/worca-changelog` folds
 them into the next page and empties this file.
 
+## Set your roles once
+
+**Pick your models in the setup assistant. Everything else follows.**
+
+Your roles now beat Worca's own defaults. Shaper's role reviews use your role, not the built-in Sonnet 5.5. Every engine has roles now, Copilot CLI and the other beta engines included. The setup assistant shows roles for Claude and each engine it finds ready. The workspace scan runs on your Everyday coding role. Create workspace saves no model of its own unless you change one, so its re-scans follow your roles. Old workspaces no longer ask for a model on every re-scan. The sub-agent picker says which Claude model each choice runs: sub-agents do not follow your roles yet.
+
+Chips: roles first · every engine · setup assistant · workspace scan · no re-scan prompt · honest sub-agent labels
+
+Read it: [Model roles](../models.md#model-roles)
+
+Pull requests (add each number when it opens):
+
+- #1153 Set your roles once
+
+## Built-in workflow models live on the Models page
+
+**Shaper runs on a Copilot-only install that is not signed in to Claude Code.**
+
+The built-in workflows no longer pin first-party Claude models. Each model they used is now a factory default on the Models page: a new **Second-opinion reviewer** helper job for Shaper's Product reviewer (Opus 5.5 · medium) and Memory defragment (Sonnet 5) show theirs as "(default)", and the Plan Review and Requirements Review step rows name theirs in the hint (Sonnet 5.5 · medium, role reviews only). When Claude Code is signed out, a factory default that needs the sign-in is dropped: the step uses your role, the run's model or Claude's default, and the run log says so once per setting. When the second opinion has no other model, it runs at another effort. A model you set is never replaced: if it needs the sign-in while signed out, the start is refused, naming the setting and the model.
+
+Chips: Models page · factory defaults · Second-opinion reviewer · signed out · one warning per setting · refused, never replaced
+
+Read it: [Built-in workflows take their models from the Models page](../models.md#built-in-workflows-take-their-models-from-the-models-page)
+
+Pull requests (add each number when it opens):
+
+- Built-in workflow models live on the Models page
+
 ## Requirements (experimental)
 
 **Define a feature with Worca before anything is built.**
@@ -42,7 +70,7 @@ Pull requests (add each number when it opens):
 
 **Agree the requirements before the plan, in cards that read like a conversation.**
 
-With Labs › Requirements first on, a medium or large Shaper task opens with one sentence, `You lead as Product, supported by QA and Security`, and a primary **Shape requirements**. The Requirements card lists what the perspectives agreed, then asks only what they could not settle: Worca's pick is already chosen and marked `recommended`, worded for the role you lead as. **Agree and plan** is the one primary; **Ask for changes** sends your words and your picks back. The plan card gains a **Requirements 7/8** fold that names any requirement no step delivers, and **Fix all** takes the primary until every one is covered. The Chat run card shows the same count while the run plans.
+With Labs › Requirements first on, a medium or large Shaper task opens with one sentence, `You lead as Product, supported by QA and Security`, and a primary **Shape requirements**. The Requirements card lists what the perspectives agreed, then asks only what they could not settle: Worca's pick is already chosen and marked `recommended`, worded for the role you lead as. **Agree and plan** is the one primary; **Ask for changes** sends your words and your picks back. The plan card gains a **Requirements 7/8** fold that names any requirement no step delivers, and **Fix all** takes the primary until every one is covered. The Chat run card shows the same count while the run plans. A card proposed directly as Shaper now gets the same sentence and **Shape requirements** when medium or large. For a Product or Design lead, a code term with no plain wording now reads in words: `project:read` becomes `read access`, so a decision no longer loses half a sentence.
 
 Chips: Shape requirements · lead role · supporters · Requirements card · recommended picks · Requirements fold · Fix all · experimental: turn it on in Settings › Labs
 
@@ -52,6 +80,7 @@ Pull requests (add each number when it opens):
 
 - Shaper: shape the requirements first (#1139)
 - Shaper: requirements first, the three cards
+- Shaper: the requirements card on direct proposals, and readable product wording
 
 ## Independent reviewers for any workflow
 

@@ -278,3 +278,16 @@ test('a chat with no reply yet whose model moved meanwhile still starts: it has 
   assert.equal(r.ok, true, JSON.stringify(r));
   await idle(t.id);
 });
+
+test('credential broker on: a message in a Codex chat is refused 409 engine-broker before any row is written', async () => {
+  const id = codexChat();
+  const rows = store.listMessages(id).length;
+  const prev = process.env.WORCA_BROKER_URL;
+  process.env.WORCA_BROKER_URL = 'http://127.0.0.1:9';
+  try {
+    const r = await send('POST', `/api/ask/threads/${id}/messages`, { text: 'again', model: 'gpt-5.5', effort: 'low' });
+    assert.equal(r.status, 409, JSON.stringify(r.body));
+    assert.equal(r.body.code, 'engine-broker');
+  } finally { if (prev === undefined) delete process.env.WORCA_BROKER_URL; else process.env.WORCA_BROKER_URL = prev; }
+  assert.equal(store.listMessages(id).length, rows, 'nothing was stored');
+});

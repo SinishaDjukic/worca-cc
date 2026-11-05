@@ -36,3 +36,27 @@ test('leadLabel: one word per lead key; an unknown key falls back to the perspec
   assert.equal(leadLabel('release'), 'Release');
   assert.equal(leadLabel('nobody'), 'nobody');
 });
+
+test('loadAnswerer times out to { lead: null } and the next call fetches again', async () => {
+  _resetAnswerer({ timeoutMs: 20 });
+  let n = 0;
+  const f = () => { n += 1; return new Promise(() => {}); };
+  assert.deepEqual(await loadAnswerer(f), { lead: null });
+  assert.deepEqual(await loadAnswerer(f), { lead: null });
+  assert.equal(n, 2);
+});
+
+test('a failed profile is not cached; a late answer after the timeout is ignored', async () => {
+  let n = 0;
+  const f = async () => { n += 1; return n === 1 ? reply(500, {}) : reply(200, { lead: 'qa' }); };
+  assert.deepEqual(await loadAnswerer(f), { lead: null });
+  assert.deepEqual(await loadAnswerer(f), { lead: 'qa' });
+  _resetAnswerer({ timeoutMs: 20 });
+  let answer;
+  const late = new Promise((r) => { answer = r; });
+  const p = loadAnswerer(() => late);
+  assert.deepEqual(await p, { lead: null });
+  answer(reply(200, { lead: 'ux' }));
+  await new Promise((r) => setTimeout(r, 10));
+  assert.deepEqual(await p, { lead: null });
+});

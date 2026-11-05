@@ -448,7 +448,7 @@ test("sub-agent model writes: a value is PATCHed and marked, inherit is stored a
 
       const write = sink.find((w) => w.method === 'PATCH' && w.body && w.body.nodes && w.body.nodes.n0);
       assert.equal(write.body.nodes.n0.subagentModel, 'opus', 'the value reaches the node writer');
-      assert.match(doc.querySelector('.agent-sum[data-node-id="n0"]').textContent, /subs: opus/);
+      assert.match(doc.querySelector('.agent-sum[data-node-id="n0"]').textContent, /subs: Opus \(deep thinking\)/);
       assert.ok(doc.querySelector('.agent-row[data-node-id="n0"] .agent-mod'), 'it deviates from the default');
     } },
     { name: 'an explicit inherit is stored as a value, marked modified, and captioned', run: async () => {
@@ -512,7 +512,7 @@ test('buildRoleRows: one row per declared role of a role-review node, labelled b
   assert.deepEqual(rows.map((r) => r.nodeId), [...PERSPECTIVES.map(() => 'n_roles'), 'n_review', 'n_review', 'n_review']);
   const by = Object.fromEntries(rows.filter((r) => r.nodeId === 'n_roles').map((r) => [r.roleKey, r]));
   assert.deepEqual(by.architect, { nodeId: 'n_roles', roleKey: 'architect', label: 'Plan Review · Architect', model: '', effort: '', def: { model: '', effort: '' } }, "'' = the node's setting");
-  assert.deepEqual(by.product.def, { model: 'claude-opus-5-5', effort: 'medium' }, 'the template role pick');
+  assert.deepEqual(by.product.def, { model: '', effort: '' }, 'the built-in pins no role model: its second opinion is a factory default');
   assert.deepEqual(by.security.def, { model: 'claude-haiku-4-5', effort: 'high' }, 'the project layer wins');
   assert.deepEqual(by.qa.def, { model: '', effort: 'max' }, 'an effort-only project pick');
   const def = buildRoleRows(GRAPH_DEFAULT_WORKFLOW, buildNodeConfigRows(GRAPH_DEFAULT_WORKFLOW, reg, { nodes: {} }), { nodes: {} });

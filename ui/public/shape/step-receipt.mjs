@@ -8,6 +8,9 @@ import { clarifyText, planApprovedText, splitText, gateText, NOT_SPLIT_TEXT } fr
 import { planApprovedLine } from '../log-line.mjs';
 import { isRequirementsAsk } from './step-card.mjs';
 
+/** The receipt of an agreed Requirements step; the chat run card's fallback says the same. */
+export const REQUIREMENTS_AGREED = 'Requirements agreed';
+
 const NAMED = new Map();          // `${runId}|${questionId}` → { text, answers }
 const NAMED_MAX = 200;
 
@@ -22,7 +25,7 @@ export function stepReceipt(pq, payload, { shaping = false } = {}) {
   if (kind === 'plan') {
     const plan = pq.plan || {};
     if (isRequirementsAsk(pq)) {
-      return d === 'approve' ? 'Requirements agreed' : d === 'stop' ? 'Stopped at the requirements'
+      return d === 'approve' ? REQUIREMENTS_AGREED : d === 'stop' ? 'Stopped at the requirements'
         : d === 'retry' ? 'Tried again' : 'Changes asked · Requirements';
     }
     if (plan.outline) {
