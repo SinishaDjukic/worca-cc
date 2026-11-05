@@ -33,6 +33,7 @@ function toFeature(r) {
     status: r.status, spec: { ...emptySpec(), ...json(r.spec_json, {}) }, orientation: json(r.orientation_json, null),
     criteriaSeq: Number(r.criteria_seq), assumptionSeq: Number(r.assumption_seq), rounds: Number(r.rounds),
     costUsd: Math.round((Number(r.cost_usd) || 0) * 1e4) / 1e4, savedPath: r.saved_path || null,
+    earlyStartReason: r.early_start_reason || null,
     createdBy: r.created_by || null, createdAt: r.created_at, updatedBy: r.updated_by || null, updatedAt: r.updated_at,
   };
 }
@@ -96,6 +97,13 @@ export function addFeatureCost(seq, usd) {
   if (!Number.isFinite(usd) || usd <= 0) return;
   getDb();
   prepare('UPDATE req_features SET cost_usd = cost_usd + ? WHERE seq = ?').run(usd, Number(seq));
+}
+
+/** Keep (or clear, with null) the reason given for starting a feature before it is Ready. A draft note, not a spec
+ *  change, so updated_at/updated_by stay (as addFeatureCost leaves them). */
+export function setEarlyStartReason(seq, reason) {
+  getDb();
+  prepare('UPDATE req_features SET early_start_reason = ? WHERE seq = ?').run(reason == null ? null : String(reason), Number(seq));
 }
 
 export function appendTurn(seq, { kind, payload = {}, model = null, costUsd = null } = {}, { by = null } = {}) {
