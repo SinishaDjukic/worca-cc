@@ -119,7 +119,6 @@ button.act-srow-name{cursor:pointer}
 .badge.act-kept{background:var(--blue-bg);color:var(--blue-ink)}
 .shipit-try{display:flex;gap:8px;align-items:center;margin:10px 0}
 .shipit-try[hidden]{display:none}
-.act-port-range .drow-control .input{width:110px}
 /* In-flight states (Check out, setup, Discard, Start): one spinner, drawn in the text colour so it follows light and
    dark. A busy button keeps its place in the row; the status line under it says what is happening now. */
 .act-spin{display:inline-block;flex:none;width:12px;height:12px;border-radius:50%;border:2px solid currentColor;border-right-color:transparent;animation:ws-spin .8s linear infinite;vertical-align:-2px}

@@ -45,7 +45,7 @@ import {
   folderApplyRetainFor,
   resolveIndexedArtifactFileForRow, openArtifactUnder, readPromptFile, runDirForRow, recordArtifact, appendAudit,
   persistMemberPrState, readMemberPrStates, readPipelineExtras,
-  checkoutRecordsFor, retainedWorkFor, runEngineOfRow, folderFacts,
+  checkoutRecordsFor, retainedWorkFor, runEngineOfRow, folderFacts, readRunResultsForRow,
 } from '../src/core/artifacts.mjs';
 import { FolderApplyError, folderMemberTarget, readFolderChanges, planFolderApply, applyFolderChanges, discardFolderChanges, releaseFolderCopy } from '../src/core/folder-apply.mjs';
 import { releaseFolderMember } from '../src/core/folder-members.mjs';
@@ -98,7 +98,7 @@ import {
   memoryDefragModel, setMemoryDefragModel, assertMemoryDefragModelInput,
   agentGenModel as storedAgentGenModel, setAgentGenModel, assertAgentGenModelInput,
   namingModel as storedNamingModel, setNamingModel, assertNamingModelInput,
-  commandSummaryModel as storedCommandSummaryModel, setCommandSummaryModel, assertCommandSummaryModelInput,
+  commandSummaryModel as storedCommandSummaryModel, setCommandSummaryModel, assertCommandSummaryModelInput, setSecondOpinionModel, assertSecondOpinionModelInput,
   workspaceScanModels, setWorkspaceScanModels, assertWorkspaceScanInput,
   scheduleDefaults, setScheduleDefaults,
   userTagDimensions, setUserTagDimensions, userEnforceTags, setUserEnforceTags,
@@ -6361,7 +6361,7 @@ async function askCommandTarget(threadId, { runId = null, member = null, project
     if (!m) throw new Error(member ? 'that project is not part of this run' : 'this run has several projects: pass member');
     if (!m.cwd) {
       throw new Error(m.state === 'needs-checkout'
-        ? 'this finished run has no checkout yet: ask the user to check it out (Actions), then try again'
+        ? 'this finished run has no checkout yet: ask the user to open a terminal on it (or check it out in Actions), then try again'
         : (m.reason || 'this run has no folder'));
     }
     return { cwd: m.cwd, scope: 'run', label: `${row.title || row.id} · ${m.projectName}`, runId: row.id, member: m.projectKey,
@@ -6469,7 +6469,7 @@ function ensureSetup(runId, pk, { enabled, rerun = false }) {
 
 function sendCheckoutError(res, e) {
   const map = { NOT_FOUND: 404, BAD_REQUEST: 400, NOT_FINISHED: 409, RETAINED: 409, BRANCH_MISSING: 409,
-    BRANCH_CHECKED_OUT: 409, TARGET_EXISTS: 409, SNAPSHOT_FAILED: 409 };
+    BRANCH_CHECKED_OUT: 409, TARGET_EXISTS: 409, SNAPSHOT_FAILED: 409, NOT_AFFECTED: 409 };
   res.status(map[e?.code] || 500).json({ error: e?.message || String(e), code: e?.code || 'ERROR',
     ...(e?.holder ? { holder: e.holder, projectKey: e.projectKey || null } : {}) });
 }
@@ -7347,10 +7347,10 @@ function primaryMemberOf(paths) {
  * refuses — mock, an auth env var, or an unknown answer (an older CLI) all pass.
  * Sends the 409 and returns true when it refused.
  */
-async function refuseSignedOutClaude(res) {
+async function refuseSignedOutClaude(res, message = CLAUDE_SIGNED_OUT_MESSAGE) {
   const { state } = await probeClaudeAuth({ bin: configuredClaudeBin(), mock: serverMockMode() });
   if (state !== 'signed-out') return false;
-  res.status(409).json({ code: CLAUDE_SIGNED_OUT_CODE, error: CLAUDE_SIGNED_OUT_MESSAGE });
+  res.status(409).json({ code: CLAUDE_SIGNED_OUT_CODE, error: message });
   return true;
 }
 
@@ -7513,8 +7513,7 @@ async function askPrCardFacts(row) {
     : parse(row.branch) || {};
   let summary = null;
   try {
-    const dir = await runDirForRow(row);
-    const res = dir ? JSON.parse(await fsp.readFile(path.join(dir, 'results.json'), 'utf8')) : null;
+    const res = await readRunResultsForRow(row);
     summary = res && res.summary && typeof res.summary === 'object' ? res.summary : null;
     // P5: a workspace run's Folder members ship in no pull request (their changes wait for Apply): count the Git members only
     const folder = isWs ? new Set(((parse(row.workspace_meta) || {}).projects || []).filter((p) => p && p.workMode === 'folder').map((p) => p.projectKey)) : null;
@@ -7808,7 +7807,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
   const hasNamingModelKey = has('namingModel');
   const namingModels = hasNamingModelKey ? (autoModels || defragModels || agentGenModels || await listModels('')) : null;
   const hasCommandSummaryModelKey = has('commandSummaryModel');
-  const csModels = hasCommandSummaryModelKey ? (autoModels || defragModels || agentGenModels || namingModels || await listModels('')) : null;
+  const csModels = hasCommandSummaryModelKey ? (autoModels || defragModels || agentGenModels || namingModels || await listModels('')) : null; const secondOpinionModels = has('secondOpinionModel') ? (autoModels || defragModels || agentGenModels || namingModels || csModels || await listModels('')) : null;
   const hasWorkspaceScanKey = has('workspaceScan');
   const hasRunEngineKey = has('runEngine');
   const hasStepModelsKey = has('stepModels');
@@ -7843,7 +7842,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
   if (has('askMaxTurns')) ask.askMaxTurns = body.askMaxTurns ?? '';
   if (has('askMaxBudgetUsd')) ask.askMaxBudgetUsd = body.askMaxBudgetUsd === undefined ? '' : body.askMaxBudgetUsd;
   {   // was the route's try: a refusal now reaches the caller (the route maps it to 400, the chat to a notice)
-    for (const key of ['titleModel', 'autoWorkflowModel', 'prDescriptionModel', 'memoryDefrag', 'agentGenModel', 'namingModel', 'commandSummaryModel', 'workspaceScan', ...(hasRequirementsInterviewKey ? ['requirementsInterview'] : [])]) {
+    for (const key of ['titleModel', 'autoWorkflowModel', 'prDescriptionModel', 'memoryDefrag', 'agentGenModel', 'namingModel', 'commandSummaryModel', 'secondOpinionModel', 'workspaceScan', ...(hasRequirementsInterviewKey ? ['requirementsInterview'] : [])]) {
       if (has(key)) asSettingsField(key, () => refuseNonClaudeUtilityModel(key, body[key]));
     }
     // Each validator / setter that can refuse a value runs tagged with the body key it checks,
@@ -7883,7 +7882,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     if (hasMemoryDefragKey) asSettingsField('memoryDefrag', () => assertMemoryDefragModelInput(body.memoryDefrag, defragModels));
     if (hasAgentGenKey) asSettingsField('agentGenModel', () => assertAgentGenModelInput(body.agentGenModel, agentGenModels));
     if (hasNamingModelKey) asSettingsField('namingModel', () => assertNamingModelInput(body.namingModel, namingModels));
-    if (hasCommandSummaryModelKey) asSettingsField('commandSummaryModel', () => assertCommandSummaryModelInput(body.commandSummaryModel, csModels));
+    if (hasCommandSummaryModelKey) asSettingsField('commandSummaryModel', () => assertCommandSummaryModelInput(body.commandSummaryModel, csModels)); if (secondOpinionModels) asSettingsField('secondOpinionModel', () => assertSecondOpinionModelInput(body.secondOpinionModel, secondOpinionModels));
     if (hasWorkspaceScanKey) asSettingsField('workspaceScan', () => assertWorkspaceScanInput(body.workspaceScan, wsScanModels));
     if (hasRunEngineKey) asSettingsField('runEngine', () => assertRunEngineInput(body.runEngine));
     if (hasAskEngineKey) asSettingsField('askEngine', () => assertAskEngineInput(body.askEngine));
@@ -7968,7 +7967,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     if (hasMemoryDefragKey) await setMemoryDefragModel(body.memoryDefrag, { models: defragModels });
     if (hasAgentGenKey) await setAgentGenModel(body.agentGenModel, { models: agentGenModels });
     if (hasNamingModelKey) await setNamingModel(body.namingModel, { models: namingModels });
-    if (hasCommandSummaryModelKey) await setCommandSummaryModel(body.commandSummaryModel, { models: csModels });
+    if (hasCommandSummaryModelKey) await setCommandSummaryModel(body.commandSummaryModel, { models: csModels }); if (secondOpinionModels) await setSecondOpinionModel(body.secondOpinionModel, { models: secondOpinionModels });
     if (hasWorkspaceScanKey) await setWorkspaceScanModels(body.workspaceScan, { models: wsScanModels });
     if (hasRunEngineKey) await asSettingsField('runEngine', () => setRunEngineSetting(body.runEngine));
     if (hasStepModelsKey) await asSettingsField('stepModels', () => setStepModels(body.stepModels));
@@ -7992,7 +7991,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     // Other open tabs repaint their Settings cards (a stale tab could otherwise
     // "save" its old checkbox state over this one with no feedback to either).
     if (hasSmartNaming || hasNamingModelKey) cachedPick = undefined;
-    if (hasAskKey || hasAskWeb || hasSmartNaming || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasUiLevelKey || hasAutoKey || hasPrDescKey || hasAutoPrDescKey || hasHumanRateKey || hasMemoryDefragKey || hasAgentGenKey || hasNamingModelKey || hasCommandSummaryModelKey || hasWorkspaceScanKey || has('schedule') || has('sync') || has('tagDimensions') || has('enforceTags') || has('chat') || hasAskEngineKey || hasAskModelsKey || hasRequirementsInterviewKey || hasNetworkWaitKey || hasRunLimitsKey || hasActionsKey || hasNightKey || hasRunEngineKey || hasStepModelsKey || hasModelRolesKey || hasUtilityModelsKey || hasUpdateCheckKey || hasKeepAwakeKey) emitChanged('settings-changed');
+    if (hasAskKey || hasAskWeb || hasSmartNaming || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasUiLevelKey || hasAutoKey || hasPrDescKey || hasAutoPrDescKey || hasHumanRateKey || hasMemoryDefragKey || hasAgentGenKey || hasNamingModelKey || hasCommandSummaryModelKey || secondOpinionModels || hasWorkspaceScanKey || has('schedule') || has('sync') || has('tagDimensions') || has('enforceTags') || has('chat') || hasAskEngineKey || hasAskModelsKey || hasRequirementsInterviewKey || hasNetworkWaitKey || hasRunLimitsKey || hasActionsKey || hasNightKey || hasRunEngineKey || hasStepModelsKey || hasModelRolesKey || hasUtilityModelsKey || hasUpdateCheckKey || hasKeepAwakeKey) emitChanged('settings-changed');
     // Editor / Terminal: saved as typed; a program Worca cannot find comes back as a warning on its field.
     const actionsWarnings = hasActionsKey ? Object.fromEntries(['editor', 'terminal']
       .map((k) => [k, launcherWarning(actionsSettings()[k], { findOnPath: (n) => findOnPath(n) })]).filter(([, w]) => w)) : null;

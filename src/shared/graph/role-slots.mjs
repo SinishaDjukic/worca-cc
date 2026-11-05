@@ -49,18 +49,20 @@ export function layerPick(layers) {
   return withEffort ? { effort: withEffort.effort } : {};
 }
 
-const SOURCES = ['run', 'project', 'template'];
+const SOURCES = ['run', 'project', 'slot', 'template'];
 
 /**
  * Each declared role's pick: `{ [key]: { model?, effort?, source, wanted? } }`. A role whose layers name nothing is
  * absent. A requested model (or a lone effort) the engine does not run is dropped (the role runs on the node's pair) and
- * the entry keeps the request as `wanted`.
+ * the entry keeps the request as `wanted`. Layers: run overlay > project > `slot` (a helper job's pick, by role key) >
+ * the template's role pick.
  */
-export function resolveRolePicks({ roles, overlay, project, engine, runs, efforts, effortOn = defaultEffortOn }) {
+export function resolveRolePicks({ roles, overlay, project, slot, engine, runs, efforts, effortOn = defaultEffortOn }) {
   const out = {};
   const byKey = (map, key) => (map && typeof map === 'object' && Object.hasOwn(map, key) ? map[key] : null);
   for (const role of Array.isArray(roles) ? roles : []) {
-    const layers = [cleanPick(byKey(overlay, role.key)), cleanPick(byKey(project, role.key)), cleanPick({ model: role.model, effort: role.effort })];
+    const layers = [cleanPick(byKey(overlay, role.key)), cleanPick(byKey(project, role.key)), cleanPick(byKey(slot, role.key)),
+      cleanPick({ model: role.model, effort: role.effort })];
     const wanted = layerPick(layers);
     if (!wanted.model && !wanted.effort) continue;
     const at = wanted.model ? layers.findIndex((l) => l?.model) : layers.findIndex((l) => l?.effort);
@@ -76,7 +78,8 @@ const dropText = (w, E, instead) => (w.model ? `${w.model} is not on ${E}, runs 
 
 /**
  * The run warnings for every dropped pick (`wanted`), node lines and role lines alike, each once, in node order.
- * `quietTemplate` skips template-sourced drops (a built-in workflow's own defaults are no person's pick).
+ * `quietTemplate` skips template-sourced drops (a built-in workflow's own defaults are no person's pick). A `default`
+ * source (a factory default, factory-models.mjs) is never printed: nobody picked it, and its own warning names it.
  * @param {Record<string, object>} nodeCtx resolved node contexts
  * @param {{engine:string, quietTemplate?:boolean, roleLabel?:(nc:object, key:string)=>string}} opts
  * @returns {string[]}
@@ -85,7 +88,7 @@ export function pickDropWarnings(nodeCtx, { engine, quietTemplate = false, roleL
   const E = engineLabel(engine);
   const lines = new Set();
   const named = (w) => w && typeof w === 'object' && (typeof w.model === 'string' || typeof w.effort === 'string');
-  const loud = (source) => !(quietTemplate && source === 'template');
+  const loud = (source) => source !== 'default' && !(quietTemplate && source === 'template');
   for (const nc of Object.values(nodeCtx && typeof nodeCtx === 'object' ? nodeCtx : {})) {
     if (!nc || nc.kind !== 'agent') continue;
     const node = nc.meta?.displayName || nc.key;

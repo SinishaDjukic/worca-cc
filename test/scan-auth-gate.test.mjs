@@ -88,7 +88,7 @@ test('POST /api/workspaces/scan: signed-out Claude → 409 claude-signed-out, no
   assert.equal(r.status, 409);
   const body = await r.json();
   assert.equal(body.code, 'claude-signed-out');
-  assert.match(body.error, /isn't signed in/);
+  assert.match(body.error, /needs Claude Code sign-in and no other scan model is set/, 'the factory scan model: names the setting');
   assert.match(body.error, /\/login/);
   assert.equal(body.runId, undefined);
   assert.equal(entries(), before, 'no run registered');

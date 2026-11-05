@@ -139,3 +139,22 @@ test('pickDropWarnings: one line per dropped node or role pick, in node order, e
   assert.deepEqual(pickDropWarnings(NODES(), { engine: 'codex' }).find((l) => l.includes('· security')), "Plan Review · security: claude-opus-5-5 is not on Codex, runs the node's model", 'the role key is the default label');
   assert.deepEqual(pickDropWarnings(null, { engine: 'codex' }), []);
 });
+
+test('resolveRolePicks: the helper-job slot beats the template and loses to the project; no slot changes nothing', () => {
+  const roles = [{ key: 'product', label: 'Product', model: 'claude-opus-5-5', effort: 'medium' }, { key: 'ux', label: 'UX' }];
+  const base = { roles, engine: 'claude', ...env('claude') };
+  assert.deepEqual(resolveRolePicks({ ...base, slot: { product: { model: 'claude-haiku-4-5', effort: 'high' } } }),
+    { product: { model: 'claude-haiku-4-5', effort: 'high', source: 'slot' } });
+  assert.deepEqual(resolveRolePicks({ ...base, project: { product: { model: 'claude-sonnet-5-5' } }, slot: { product: { model: 'claude-haiku-4-5' } } }),
+    { product: { model: 'claude-sonnet-5-5', source: 'project' } });
+  assert.deepEqual(resolveRolePicks({ ...base, slot: undefined }), resolveRolePicks(base));
+  assert.deepEqual(resolveRolePicks(base), { product: { model: 'claude-opus-5-5', effort: 'medium', source: 'template' } });
+});
+
+test('pickDropWarnings: a wanted record whose source is default is never printed', () => {
+  const nc = { n: { kind: 'agent', key: 'planReviewer', meta: { displayName: 'Plan Review' }, model: 'gw',
+    wanted: { model: 'claude-sonnet-5-5', source: 'default' },
+    roles: { product: { effort: 'high', source: 'default', wanted: { model: 'claude-opus-5-5', effort: 'medium' } } } } };
+  assert.deepEqual(pickDropWarnings(nc, { engine: 'claude' }), []);
+  assert.deepEqual(pickDropWarnings(nc, { engine: 'codex' }), []);
+});

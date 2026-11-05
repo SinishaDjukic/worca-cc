@@ -706,6 +706,7 @@ test('chat run card helpers: progressIdent, runRefOf, autoChip, resultWord, answ
       assert.equal(answerReceipt({ id: 'q', payload: { decision: 'approve' } }, { id: 'q', planAsk: true, roleReviews: RECORDED, step: 'Plan' }),
         'Plan approved · 5 roles reviewed · 1 open issue accepted');
       assert.equal(answerReceipt({ id: 'q', payload: { decision: 'approve' } }, { id: 'q', planAsk: false, step: 'Plan' }), 'Answer sent · Plan');
+      assert.equal(answerReceipt({ id: 'q', payload: { decision: 'approve' } }, { id: 'q', planAsk: true, reqAsk: true, step: 'Requirements' }), 'Requirements agreed');
       assert.equal(midTrunc('abcdefghij', 5), 'ab…ij');
       assert.equal(midTrunc('short.md'), 'short.md');
     } },
@@ -1353,6 +1354,18 @@ test('chat run card while shaping (Shape it first): "Clarify ✓ · Plan ✓ · 
       assert.equal(card.el.querySelectorAll('.chat-rc-shaped-open').length, 1);
     } },
   ]);
+});
+
+test('chat run card, requirements first: a round with coverage replaces "Clarify ✓" with the Requirements count; the last such round wins', () => {
+  const SH = (rounds) => ({ perspectives: ['ux'], rounds, approved: { round: 2, file: 'docs/plans/2026-10-14-login.md' }, savedTo: null });
+  const { card, $ } = mk();
+  card.update(live({ shaping: SH([{ round: 1, coverage: { ok: false, passed: 6, total: 8 } }, { round: 2, coverage: { ok: false, passed: 7, total: 8 } }]) }));
+  assert.equal($('.chat-rc-shaped-stages').textContent, 'Requirements 7/8 · 1 to fix · Plan ✓ · Refine ✓ while planning');
+  card.update(live({ shaping: SH([{ round: 1, coverage: { ok: true, passed: 8, total: 8 } }, { round: 2 }]) }));
+  assert.equal($('.chat-rc-shaped-stages').textContent, 'Requirements 8/8 · Plan ✓ · Refine ✓ while planning', 'a later round without counts does not hide the last known ones');
+  card.update(live({ shaping: SH([{ round: 1 }, { round: 2 }]) }));
+  assert.equal($('.chat-rc-shaped-stages').textContent, 'Clarify ✓ · Plan ✓ · Refine ✓ while planning', 'no coverage: today\'s line');
+  assert.equal(card.el.querySelectorAll('.chat-rc-shaped-stages').length, 1);
 });
 
 const PQ_PLAN = { id: 'plan-n_refine-1', kind: 'plan', plan: { round: 1 } };

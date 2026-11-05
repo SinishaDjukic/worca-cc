@@ -191,3 +191,78 @@ test('keepFocus (#958): a control moved inside the root gets the focus back when
   assert.notEqual(doc.activeElement, opt, 'destroyed: no watch');
   root.remove();
 });
+
+// Requirements card (U7): opt-in spec fields; absent, the markup and keys are today's.
+function decisionsSpec(doc, over = {}) {
+  return spec(doc, {
+    heading: '2 need you',
+    questions: [
+      { id: 'd-1', text: 'Email in export', options: [{ value: 'leave-out', label: 'Leave them out', recommended: true }, { value: 'include', label: 'Include them' }] },
+      { id: 'd-2', text: 'Who may export', options: [{ value: 'members', label: 'Members', recommended: true }, { value: 'owner', label: 'Owner only' }, { value: 'all', label: 'Everyone' }] },
+    ],
+    ...over,
+  });
+}
+
+test('U7: no new spec field → the markup of an option list without recommended/preset/foot is unchanged', () => {
+  const { doc } = rig();
+  const plain = buildChatQuestion(doc, spec(doc)).el.outerHTML;
+  const withFalse = buildChatQuestion(doc, spec(doc, { foot: undefined, preset: undefined })).el.outerHTML;
+  assert.equal(withFalse, plain);
+  assert.equal(plain.includes('qrec'), false);
+  assert.equal(plain.includes('data-preset'), false);
+});
+
+test('U7: recommended:true appends span.qrec "recommended" after the option text', () => {
+  const { doc } = rig();
+  const { el } = buildChatQuestion(doc, decisionsSpec(doc));
+  const tiles = [...el.querySelectorAll('[data-q="d-1"] .qopt')];
+  assert.deepEqual(tiles.map((t) => t.querySelector('.qrec')?.textContent ?? null), ['recommended', null]);
+  assert.equal(tiles[0].lastElementChild.className, 'qrec');
+});
+
+test('U7: preset pre-picks a tile (.sel, aria-pressed, data-preset) and picks() holds it; a person pick drops data-preset in that block only', () => {
+  const { doc } = rig();
+  const { el, picks } = buildChatQuestion(doc, decisionsSpec(doc, { preset: new Map([['d-1', 'leave-out'], ['d-2', 'members']]) }));
+  const tile = (q, v) => el.querySelector(`[data-q="${q}"] .qopt[data-value="${v}"]`);
+  assert.deepEqual([...picks()], [['d-1', 'leave-out'], ['d-2', 'members']]);
+  assert.deepEqual([tile('d-1', 'leave-out').classList.contains('sel'), tile('d-1', 'leave-out').getAttribute('aria-pressed'), tile('d-1', 'leave-out').dataset.preset], [true, 'true', '1']);
+  assert.equal(tile('d-1', 'include').hasAttribute('data-preset'), false);
+  const before = tile('d-1', 'leave-out').cloneNode(true);
+  tile('d-1', 'leave-out').click();                               // re-pick the recommended value
+  const after = tile('d-1', 'leave-out');
+  assert.equal(after.hasAttribute('data-preset'), false);
+  before.removeAttribute('data-preset');
+  assert.equal(after.outerHTML, before.outerHTML, 'only data-preset changed');
+  assert.equal(tile('d-2', 'members').dataset.preset, '1', 'the other block keeps its preset');
+  assert.equal(el.querySelector('.qanswered').textContent, '2 of 2 answered');
+});
+
+test('U7: foot:false drops the footer; Enter picks without submitting', async () => {
+  const { doc, win } = rig();
+  let sent = 0;
+  const { el, picks } = buildChatQuestion(doc, decisionsSpec(doc, { foot: false, onSubmit: async () => { sent += 1; } }));
+  doc.body.appendChild(el);
+  assert.equal(el.querySelector('.qpanel-foot'), null);
+  const t = el.querySelector('[data-q="d-1"] .qopt[data-value="include"]');
+  t.focus();
+  const e = keyOn(win, t, 'Enter');
+  assert.equal(e.defaultPrevented, true);
+  assert.equal(picks().get('d-1'), 'include');
+  await tick();
+  assert.equal(sent, 0);
+});
+
+test('U7: Home and End pick the first and the last option of the focused block', () => {
+  const { doc, win } = rig();
+  const { el, picks } = buildChatQuestion(doc, decisionsSpec(doc));
+  doc.body.appendChild(el);
+  const tiles = [...el.querySelectorAll('[data-q="d-2"] .qopt')];
+  tiles[1].focus();
+  keyOn(win, tiles[1], 'End');
+  assert.equal(picks().get('d-2'), 'all');
+  assert.equal(doc.activeElement, tiles[2]);
+  keyOn(win, tiles[2], 'Home');
+  assert.equal(picks().get('d-2'), 'members');
+  assert.equal(doc.activeElement, tiles[0]);
+});

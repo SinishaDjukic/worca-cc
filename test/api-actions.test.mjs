@@ -19,6 +19,7 @@ import { templateRepo } from './helpers/git-dir.mjs';
 const prev = { WORCA_HOME: process.env.WORCA_HOME, HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
 const created = [];
 let homeDir, srv, base, wsBase, repo, key, id, id2, id3, id4, SRV;
+let factsWs, factsMs, factsRun;            // the change-facts workspace run; the 409 guard test reuses it
 const JSONH = { 'Content-Type': 'application/json' };
 const NODE = `"${process.execPath}"`;
 const git = (cwd, args) => spawnSync('git', args, { cwd, encoding: 'utf8' });
@@ -280,7 +281,10 @@ test('a stack step on a member whose setup is pending runs that setup first (D29
   const branches = {};
   for (const [i, m] of members.entries()) {
     const feature = `worca-cc/ws${i}`;
-    git(m.projectDir, ['branch', feature]);
+    // A commit on the branch: Check out with no members takes only the projects the run changed.
+    git(m.projectDir, ['switch', '-q', '-c', feature]);
+    git(m.projectDir, ['commit', '-q', '--allow-empty', '-m', 'work']);
+    git(m.projectDir, ['switch', '-q', 'main']);
     branches[m.projectKey] = { source: 'main', feature, runRootMode: 'detached', worktreeRemoved: true, branchKept: true,
       worktreeDir: join(worcaHome(), 'runs', wsId, 'repos', m.projectKey) };
   }
@@ -316,6 +320,116 @@ test('a stack step on a member whose setup is pending runs that setup first (D29
   assert.equal((await post(`/api/runs/${wsId}/stacks/dev/stop?${scope}`, {})).status, 200);
   assert.equal((await getJson('/api/actions/running')).some((x) => x.runId === wsId), false);
   assert.equal((await fetch(`${base}/api/runs/${wsId}/checkout?${scope}`, { method: 'DELETE', headers: JSONH, body: '{}' })).status, 200);
+});
+
+test('GET /actions carries per-member change facts and a totals object', async () => {
+  // Build a 2-member workspace run, freeze results.json so one member changed and one did not.
+  const { createWorkspace, workspaceMembers } = await import('../src/core/workspaces.mjs');
+  const { addProject } = await import('../src/core/projects.mjs');
+  const { seedWorkspacePipeline } = await import('./helpers/db-seed.mjs');
+  const a = await freshRepo('worca-cc-apiact-fa-');
+  const b = await freshRepo('worca-cc-apiact-fb-');
+  for (const d of [a, b]) await addProject({ name: basename(d), path: d });
+  factsWs = await createWorkspace({ name: 'Facts WS', projectPaths: [a, b] });
+  factsMs = await workspaceMembers(factsWs.id);
+  const branches = {};
+  for (const [i, m] of factsMs.entries()) { git(m.projectDir, ['branch', `worca-cc/f${i}`]); branches[m.projectKey] = { source: 'main', feature: `worca-cc/f${i}`, runRootMode: 'detached', worktreeRemoved: true, branchKept: true }; }
+  const projects = factsMs.map((m) => ({ projectKey: m.projectKey, projectDir: m.projectDir, projectName: m.name }));
+  factsRun = await seedWorkspacePipeline(factsMs[0].projectDir, factsWs.id, { title: 'facts', status: 'done',
+    projects, projectKeys: factsMs.map((m) => m.projectKey), branches, branch: {} }, projects);
+  const sum = (n, add) => ({ filesNew: n, filesChanged: 0, filesDeleted: 0, linesAdded: add, linesRemoved: 0 });
+  await writeFile(join(factsRun.dir, 'results.json'), JSON.stringify({ summary: sum(3, 30),
+    perProject: { [factsMs[0].projectKey]: { summary: sum(3, 30) }, [factsMs[1].projectKey]: { summary: sum(0, 0) } } }));
+
+  const r = await getJson(`/api/runs/${factsRun.id}/actions?workspaceId=${factsWs.id}`);
+  const byKey = Object.fromEntries(r.members.map((m) => [m.projectKey, m]));
+  assert.equal(byKey[factsMs[0].projectKey].affected, true);
+  assert.equal(byKey[factsMs[0].projectKey].files, 3);
+  assert.equal(byKey[factsMs[0].projectKey].added, 30);
+  assert.equal(byKey[factsMs[1].projectKey].affected, false, 'an all-zero frozen summary proves unchanged');
+  assert.deepEqual(r.totals, { members: 2, changed: 1, files: 3, added: 30, removed: 0 });
+});
+
+test('GET /actions totals: a count no changed member carries is null, not 0', async () => {
+  // A run still going: no git (live:false), so every member is unknown (counts as changed) with no counts.
+  const { seedWorkspacePipeline } = await import('./helpers/db-seed.mjs');
+  const branches = Object.fromEntries(factsMs.map((m, i) => [m.projectKey, { source: 'main', feature: `worca-cc/f${i}` }]));
+  const projects = factsMs.map((m) => ({ projectKey: m.projectKey, projectDir: m.projectDir, projectName: m.name }));
+  const going = await seedWorkspacePipeline(factsMs[0].projectDir, factsWs.id, { title: 'going', status: 'running',
+    projects, projectKeys: factsMs.map((m) => m.projectKey), branches, branch: {} }, projects);
+  const r = await getJson(`/api/runs/${going.id}/actions?workspaceId=${factsWs.id}`);
+  assert.deepEqual(r.totals, { members: 2, changed: 2, files: null, added: null, removed: null });
+  // and a check out on it is answered by the core's not-finished check, not by the change facts
+  const refused = await post(`/api/runs/${going.id}/checkout?workspaceId=${factsWs.id}`, { members: [factsMs[1].projectKey] });
+  assert.equal(refused.status, 409);
+  assert.equal((await refused.json()).code, 'NOT_FINISHED');
+});
+
+test('checkout refuses a member the run did not change (409), and an all-members call checks out only the changed ones', async () => {
+  const scope = `workspaceId=${factsWs.id}`;
+  const refused = await post(`/api/runs/${factsRun.id}/checkout?${scope}`, { members: [factsMs[1].projectKey] });
+  assert.equal(refused.status, 409);
+  const body = await refused.json();
+  assert.equal(body.code, 'NOT_AFFECTED');
+  assert.equal(body.error, 'No changes in this project');
+  assert.deepEqual(body.members, [factsMs[1].projectKey]);
+  // the changed member still checks out
+  assert.equal((await post(`/api/runs/${factsRun.id}/checkout?${scope}`, { members: [factsMs[0].projectKey] })).status, 200);
+  await fetch(`${base}/api/runs/${factsRun.id}/checkout?${scope}`, { method: 'DELETE', headers: JSONH, body: JSON.stringify({ force: true }) });
+  // an all-members call (Ship It's "Try it first", History's Try it send {}) means the changed members only
+  const all = await post(`/api/runs/${factsRun.id}/checkout?${scope}`, {});
+  assert.equal(all.status, 200);
+  assert.deepEqual((await all.json()).members.map((m) => m.projectKey), [factsMs[0].projectKey]);
+  const after = await getJson(`/api/runs/${factsRun.id}/actions?${scope}`);
+  assert.equal(after.members.find((m) => m.projectKey === factsMs[1].projectKey).checkout, null, 'no empty worktree for the unchanged one');
+  await fetch(`${base}/api/runs/${factsRun.id}/checkout?${scope}`, { method: 'DELETE', headers: JSONH, body: JSON.stringify({ force: true }) });
+});
+
+test('checkout with no members on a workspace run that changed nothing: 409 NOT_AFFECTED, no worktrees', async () => {
+  const { seedWorkspacePipeline } = await import('./helpers/db-seed.mjs');
+  const branches = Object.fromEntries(factsMs.map((m, i) => [m.projectKey, { source: 'main', feature: `worca-cc/f${i}`, runRootMode: 'detached', worktreeRemoved: true, branchKept: true }]));
+  const projects = factsMs.map((m) => ({ projectKey: m.projectKey, projectDir: m.projectDir, projectName: m.name }));
+  const idle = await seedWorkspacePipeline(factsMs[0].projectDir, factsWs.id, { title: 'idle', status: 'done',
+    projects, projectKeys: factsMs.map((m) => m.projectKey), branches, branch: {} }, projects);
+  const zero = { summary: { filesNew: 0, filesChanged: 0, filesDeleted: 0, linesAdded: 0, linesRemoved: 0 } };
+  await writeFile(join(idle.dir, 'results.json'), JSON.stringify({ summary: zero.summary,
+    perProject: Object.fromEntries(factsMs.map((m) => [m.projectKey, zero])) }));
+  const r = await post(`/api/runs/${idle.id}/checkout?workspaceId=${factsWs.id}`, {});
+  assert.equal(r.status, 409);
+  const body = await r.json();
+  assert.equal(body.code, 'NOT_AFFECTED');
+  assert.equal(body.error, 'No project changed in this run');
+  const model = await getJson(`/api/runs/${idle.id}/actions?workspaceId=${factsWs.id}`);
+  assert.ok(model.members.every((m) => m.checkout === null));
+});
+
+test('a stack step on a member the run did not change checks it out itself, so the 409 guard is not a dead end', async () => {
+  const scope = `workspaceId=${factsWs.id}`;
+  const cold = factsMs[1].projectKey;                        // the member whose frozen summary is all zeros
+  // No setup command: the fresh checkout's `pending` stamp settles as `none`, and the step starts.
+  assert.equal((await put(`/api/projects/${cold}/actions`, { setup: '', actions: [RUN] })).status, 200);
+  assert.equal((await put(`/api/workspaces/${factsWs.id}/actions`,
+    { stacks: [{ id: 'cold', label: 'Cold', kind: 'service', steps: [{ member: cold, action: 'run', env: [] }] }] })).status, 200);
+  const before = await getJson(`/api/runs/${factsRun.id}/actions?${scope}`);
+  assert.equal(before.members.find((m) => m.projectKey === cold).checkout, null, 'it starts out not checked out');
+  // The tab offers no checkout for it and the route refuses one, so the stack is the only way in.
+  assert.equal((await post(`/api/runs/${factsRun.id}/checkout?${scope}`, { members: [cold] })).status, 409);
+
+  assert.equal((await post(`/api/runs/${factsRun.id}/stacks/cold/start?${scope}`, {})).status, 200);
+  const model = await waitFor(async () => {
+    const m = await getJson(`/api/runs/${factsRun.id}/actions?${scope}`);
+    const s = m.stackStates.find((x) => x.stackId === 'cold');
+    return s && s.status !== 'starting' ? m : null;
+  });
+  const state = model.stackStates.find((x) => x.stackId === 'cold');
+  assert.equal(state.error, null, 'not "<name> is not checked out"');
+  assert.equal(state.status, 'running');
+  const rec = model.members.find((m) => m.projectKey === cold);
+  assert.ok(rec.checkout?.worktreeDir, 'stack start checked the unchanged member out');
+  assert.equal(rec.affected, false, 'and it is still reported as unchanged');
+  assert.ok(model.instances.some((x) => x.member === cold && x.actionId === 'run'), 'its step really started');
+  assert.equal((await post(`/api/runs/${factsRun.id}/stacks/cold/stop?${scope}`, {})).status, 200);
+  await fetch(`${base}/api/runs/${factsRun.id}/checkout?${scope}`, { method: 'DELETE', headers: JSONH, body: JSON.stringify({ force: true }) });
 });
 
 test('a branch checked out in the project folder: the model names it (heldBy), Check out answers 409 with the holder, useExisting links it', async () => {
