@@ -3,7 +3,7 @@ import { projectKey as keyOfDir } from './store.mjs';
 import {
   readSettings, setProjectLayerReader, nightModeSettings, memoryDefragModel,
   runEngineSetting, stepModelsSetting, utilityModelsSetting, normalizeModelPair, SETTING_CHECKS,
-  askEngineSetting, askModelsSetting, requirementsInterviewSetting,
+  askEngineSetting, askModelsSetting, requirementsInterviewSetting, secondOpinionModelSetting,
   assertAskWebInput, askWebStoreShape, assertSmartNamingInput, SMART_NAMING_DEFAULTS, UTILITY_JOBS,
   DEFAULT_CONTEXT_MAX_BYTES_PER_FILE, DEFAULT_CONTEXT_MAX_BYTES_TOTAL, DEFAULT_SKILL_MOUNT,
   DEFAULT_MEMORY_SOFT_BYTES_PER_FILE, DEFAULT_MEMORY_HARD_BYTES_PER_FILE, DEFAULT_MEMORY_MAX_FILES_PER_SCOPE,
@@ -78,7 +78,7 @@ const NIGHT = NIGHT_FIELDS.map((field) => ({
 const STATIC = new Map([...SCALARS, ...NIGHT].map((entry) => [entry.id, entry]));
 // From the engine lists: step slots on every model engine, helper slots on the helper engines, Ask slots on the Ask engines.
 const STEP_RE = new RegExp(`^models\\.(${MODEL_ENGINES.join('|')})\\.steps\\.([A-Za-z0-9_-]{1,64})$`);
-const UTIL_RE = new RegExp(`^models\\.(${HELPER_ENGINES.join('|')})\\.(?:utility\\.(title|classifier|overview|prDescription)|(memoryDefrag|workspaceScan))$`);
+const UTIL_RE = new RegExp(`^models\\.(${HELPER_ENGINES.join('|')})\\.(?:utility\\.(title|classifier|overview|prDescription)|(memoryDefrag|workspaceScan|secondOpinion))$`);
 const RUN_JOBS = new Set(['title', 'classifier', 'overview', 'prDescription']);
 const utilityId = (engine, job) => (RUN_JOBS.has(job) ? `models.${engine}.utility.${job}` : `models.${engine}.${job}`);
 
@@ -94,12 +94,13 @@ const CLAUDE_USER = {
   title: (ctx) => storedModel(ctx, 'titleModel'), classifier: (ctx) => storedModel(ctx, 'autoWorkflowModel'),
   overview: () => undefined, prDescription: (ctx) => storedModel(ctx, 'prDescriptionModel'),
   memoryDefrag: () => { const pair = memoryDefragModel(); return pair.model ? { model: pair.model, ...(pair.effort ? { effort: pair.effort } : {}) } : undefined; },
+  secondOpinion: () => pickPair(secondOpinionModelSetting()),
 };
 function utilEntry(engine, job) {
   if (!HELPER_ENGINES.includes(engine)) return null;          // the own-sign-in engines: no utility ids (helper jobs run on Claude)
   if (engine === 'claude' && job === 'workspaceScan') return null;
   return { id: utilityId(engine, job), family: 'utility', engine, job, path: ['utilityModels', engine, job], store: 'settings',
-    default: undefined, userOnly: job === 'workspaceScan', validate: pairCheck(engine),
+    default: undefined, userOnly: job === 'workspaceScan' || job === 'secondOpinion', validate: pairCheck(engine),
     readUser: engine === 'claude' ? CLAUDE_USER[job] : () => pickPair(dig(utilityModelsSetting(), [engine, job])),
     readProject: (ctx) => pickPair(dig(ctx.projectSettings(), ['utilityModels', engine, job])), team: null };
 }

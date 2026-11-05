@@ -29,8 +29,10 @@ import { delegateQuestion } from '../question-delegate.mjs';
 import { paintStatusDot } from '../status-dot.mjs';
 import { levelAtLeast } from '../ui-level.mjs';
 import { featureCardModel, paintFeatureLog } from '../shape/feature-card.mjs';
-import { namedAnswer, forgetAnswer } from '../shape/step-receipt.mjs';
+import { namedAnswer, forgetAnswer, REQUIREMENTS_AGREED } from '../shape/step-receipt.mjs';
+import { isRequirementsAsk } from '../shape/step-card.mjs';
 import { renderChecklistGroups } from '../shape/checklist-view.mjs';
+import { checkLine, roundCheck } from '../shape/plan-text.mjs';
 import { paintFeatureActions } from '../shape/feature-actions.mjs';
 import { renderAskChanges } from './ask-changes.mjs';
 import { roundsModel, liveRound } from './rounds.mjs';
@@ -163,6 +165,7 @@ export function answerReceipt(sent, painted) {
   if (named) return named;
   const step = (painted && (painted.step || painted.heading)) || '';
   const tail = (t) => (step ? `${t} · ${step}` : t);
+  if (sent && painted && painted.reqAsk && sent.payload && sent.payload.decision === 'approve') return REQUIREMENTS_AGREED;
   if (sent && painted && painted.planAsk && sent.payload && sent.payload.decision === 'approve') return planApprovedLine(painted.roleReviews);
   if (sent && sent.payload && Array.isArray(sent.payload.answers)) {
     const n = sent.payload.answers.length;
@@ -563,7 +566,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
       if (!painted || painted.id !== (q.id || null)) { qErr.hidden = true; sent = null; shownFor = null; planSent = null; }
       const planAsk = askKindOf(pq) === 'plan' && !!pq.plan && !pq.plan.outline;
       painted = { id: q.id || null, runId: stepRef().runId, kind: q.kind || askKindOf(pq), heading: q.heading || '', step: q.step || '',
-        stepCard: !!q.stepCard, planAsk, roleReviews: planAsk ? pq.plan.roleReviews || null : null };
+        stepCard: !!q.stepCard, planAsk, reqAsk: isRequirementsAsk(pq), roleReviews: planAsk ? pq.plan.roleReviews || null : null };
       qHead.textContent = painted.heading;
       qHead.hidden = !painted.heading || painted.stepCard;   // a step card's own head says it once (shaper-cards D16)
       qBody.hidden = false;
@@ -972,7 +975,10 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     const sh = s && s.shaping;
     if (!fm && sh && sh.approved) {           // D15: a feature card's step log says it
       const name = String(sh.approved.file || '').split(/[\\/]/).pop();
-      shapedEl.replaceChildren(h('span', 'chat-rc-shaped-stages', 'Clarify ✓ · Plan ✓ · Refine ✓ while planning'),
+      const covered = (Array.isArray(sh.rounds) ? sh.rounds : []).filter((r) => roundCheck(r && r.coverage)).pop();   // the last round with counts
+      // a run that agreed its requirements first never had a Clarify
+      shapedEl.replaceChildren(h('span', 'chat-rc-shaped-stages', covered ? `${checkLine(roundCheck(covered.coverage), 'Requirements')} · Plan ✓ · Refine ✓ while planning`
+        : 'Clarify ✓ · Plan ✓ · Refine ✓ while planning'),
         h('span', 'chat-rc-shaped-plan', `Plan: ${name}`));
       if (sh.savedTo) {
         const open = button('chat-rc-shaped-open');

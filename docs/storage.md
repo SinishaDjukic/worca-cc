@@ -21,7 +21,15 @@ project's working tree, so nothing is ever committed to your repo.
                                         status) and req_export_links (one row per feature: its current ticket, the
                                         spec and fields as last sent, the tracker's fingerprint of the description,
                                         a pending create's marker). Every export is also an `export` turn.
-                                        Requirements import (v86): req_export_links.origin ('export' | 'import'; a link
+                                        Freeform chat (v85): chat_conversations (one row per platform thread bound
+                                        to an Ask thread: plugin, channel, parent chat, owner user id, the worca
+                                        identity the operator mapped, header message id, header_new_off since v86),
+                                        chat_controls (opaque
+                                        button/select refs: action, card, issued state, expiry, used time),
+                                        chat_deliveries (one row per delivered message part with the platform
+                                        message id and the card state it shows) and chat_inbound_seen (handled
+                                        message/interaction ids, 2 days).
+                                        Requirements import (v87): req_export_links.origin ('export' | 'import'; a link
                                         an import made keeps the ticket's issue type and priority) and
                                         req_attachments.fetch_json (the tracker file a row comes from: the
                                         connection, the ticket key and the attachment id; NULL for an upload).

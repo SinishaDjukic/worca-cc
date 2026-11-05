@@ -76,7 +76,8 @@ export async function launch({ width = 1920, height = 1080, scale = 1, chrome } 
     proc = spawn(exe, [...args, ...extra, 'about:blank'], { stdio: ['ignore', 'ignore', 'ignore'], windowsHide: true, env: chromeEnv() });
     proc.once('exit', () => { exited = true; });
     proc.once('error', () => { exited = true; });
-    for (let i = 0; i < 600 && !port && !exited; i++) {
+    // 120 s: a cold start on a busy CI runner can pass 30 s, while a browser that dies still ends this wait at once
+    for (let i = 0; i < 2400 && !port && !exited; i++) {
       if (existsSync(portFile)) {
         const [p, w] = readFileSync(portFile, 'utf8').split('\n');
         if (p && w) { port = p.trim(); wsPath = w.trim(); }

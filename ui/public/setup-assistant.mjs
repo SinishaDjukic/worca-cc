@@ -33,6 +33,8 @@ const WORK_KEYS = Object.freeze(['uiLevel', 'pipelineCostLimitUsd', 'totalCostLi
 export const TEAM_MATCHES_LINE = "Your setup already matches your team's recommendation.";
 /** The Review line when the notice's policy home is no longer cached by the time the dialog loads (T17). */
 export const TEAM_GONE_LINE = "Your team's setup is no longer available.";
+/** The Review line when a re-run or a fix-it visit changed nothing: Finish keeps the setup as it is. */
+export const NO_CHANGES_LINE = 'No changes to apply. Your current setup is kept.';
 /** The browser's record of the team setup hashes it has shown (T15): { [policy home]: hash }. */
 export const TEAM_SEEN_KEY = 'worca-cc.teamSetupSeen';
 /** The account-menu notice for the first home whose Setup hash this browser has not seen, or null (D15, AC-5.7). */
@@ -108,6 +110,8 @@ export function initialAnswers({ saved, detect = null, entry = 'first', step = n
   return a;
 }
 const isRecord = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
+/** Whether `/api/providers` says Copilot is signed in: here, or on the credential broker's key page. */
+const copilotConnectedIn = (pv) => !!pv?.copilot?.connected || pv?.broker?.providers?.copilot?.state === 'set';
 function answersFrom(saved, detect, entry, step) {
   const s = saved.settings || {}; const p = saved.proxy?.settings || {}; const pv = saved.providers || {};
   let host = ''; let port = '';
@@ -119,7 +123,7 @@ function answersFrom(saved, detect, entry, step) {
     if (envHost) { const [h, pt] = String(envHost).split(':'); host ||= h; port ||= pt || ''; mode = 'proxy'; found = `${host}:${port || '8080'}`; }
     else if (check('direct')?.state === 'no') mode = 'proxy';
   }
-  const cpConnected = !!pv.copilot?.connected || pv.broker?.providers?.copilot?.state === 'set';
+  const cpConnected = copilotConnectedIn(pv);
   return {
     network: { mode, host, port, auth: p.auth || 'auto', noProxy: Array.isArray(p.noProxy) ? p.noProxy.join(', ') : (p.noProxy || ''),
       domain: saved.proxy?.login?.domain || '', user: saved.proxy?.login?.user || '', password: '', fixedPort: p.fixedPort ? String(p.fixedPort) : '', timeouts: p.timeouts || {} },
@@ -184,8 +188,11 @@ export function buildApplyBody(saved, answers) {
   const login = typedLogin(answers.network);
   if (login) (body.network ||= {}).login = login;
   const a = answers.access; const pv = saved.providers || {};
-  const cpSaved = !!pv.copilot?.connected || pv.broker?.providers?.copilot?.state === 'set';
-  if (a.copilot && ((a.copilotConnected && !cpSaved) || a.copilotAccount !== (pv.copilot?.accountType || 'individual') || a.importModels.length)) {
+  const cpSaved = copilotConnectedIn(pv);
+  if (pv.broker?.enabled) {
+    // The sign-in is kept on the key page: the server refuses signIn, and the Plan control is hidden, so only the imports ride.
+    if (a.copilot && a.importModels.length) body.access = { ...body.access, copilot: { importModels: a.importModels } };
+  } else if (a.copilot && ((a.copilotConnected && !cpSaved) || a.copilotAccount !== (pv.copilot?.accountType || 'individual') || a.importModels.length)) {
     body.access = { ...body.access, copilot: { accountType: a.copilotAccount, signIn: true,
       ...(a.importModels.length ? { importModels: a.importModels } : {}) } };
   }
@@ -233,7 +240,8 @@ export function diffRows(saved, answers) {
 /**
  * Whether the primary button may run on `step`, and the status line when it may not (A11, R-ux-2).
  * `tested` = { key, at } of the last passing test, or null. A first start with nothing to apply returns
- * { ok: true, finish: true } on Review (A23); so does any entry once Next on Network saved it (`netSaved`).
+ * { ok: true, finish: true } on Review (A23); so does any entry once Next on Network saved it (`netSaved`), and a
+ * re-run or fix-it visit that changed nothing (NO_CHANGES_LINE).
  */
 export function nextGate(step, answers, { saved, tested = null, now = Date.now(), detect = null, entry = 'first', netSaved = '' } = {}) {
   if (step === 'network' && answers.network.mode === 'proxy') {
@@ -252,6 +260,7 @@ export function nextGate(step, answers, { saved, tested = null, now = Date.now()
     if (entry === 'first') return { ok: true, finish: true, reason: 'Nothing to change: your current setup already works.' };
     // 'team' finishes like 'first' (T17): Finish closes with done, which marks the notice seen.
     if (entry === 'team') return { ok: true, finish: true, reason: answers.found?.teamGone ? TEAM_GONE_LINE : TEAM_MATCHES_LINE };
+    if (entry === 'rerun' || entry === 'fix') return { ok: true, finish: true, reason: NO_CHANGES_LINE };
     return { ok: false, reason: 'Nothing changed.' };
   }
   return { ok: true, reason: '' };
@@ -301,7 +310,8 @@ function paintApplyRows(doc, list, results, done) {
 /**
  * Open the assistant. entry 'first' | 'rerun' | 'fix' | 'team'; `step` opens on that step (a fix-it link); `team` is the
  * policy home a 'team' entry reviews (the account-menu notice).
- * onClose(how): 'later' (Set up later / Cancel / Close / Discard), 'done' (Continue after Apply, or Finish).
+ * onClose(how, { applied }): how is 'later' (Set up later / Cancel / Close / Discard) or 'done' (Continue after Apply, or Finish);
+ * `applied` is true when the dialog saved something (an Apply, or the network apply on Next).
  * Returns { onFrame(msg), goTo(step), close() }; goTo is a no-op on Apply and switches Copilot on for 'access'.
  */
 export function openSetupAssistant({ doc = globalThis.document, fetchJson = defaultFetchJson, entry = 'first', step = 'check', team: teamHome = null, onClose = () => {}, now = () => Date.now(),
@@ -315,7 +325,10 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
     cpFlow: null, cpT: null, copilotModels: [], expanded: false, more: false, hadLogin: false, retryLogin: null, note: '', sharing: false, team: null,
     // Network applies on Next (a network-only apply): netJob while it runs; netRetry { fromStep, body, login } after
     // a failed step; netPending what a Retry would resend; netSaved the line once it is saved.
-    netJob: false, netRetry: null, netPending: null, netSaved: '' };
+    netJob: false, netRetry: null, netPending: null, netSaved: '',
+    // Model access with the credential broker: cpChecking while a /api/providers read is in flight, cpChecked the line
+    // a manual Check again leaves, provSeq a counter that drops an answer a newer load or read has overtaken.
+    cpChecking: false, cpChecked: '', provSeq: 0 };
 
   const stepOf = el('span', 'sa-step-of'); const title = el('h2', null); title.id = 'setup-title'; const sub = el('p', 'sa-sub');
   // One segment per step, above "Step N of 7". Decorative: the step line says the same to a screen reader.
@@ -359,19 +372,22 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
   }
 
   const opener = doc.activeElement; let closed = false;
-  function teardown(how) {
+  // The key page is another tab: the Copilot sign-in made there is read again when this window regains focus.
+  const win = doc.defaultView; const onFocus = () => { void refreshProviders(); };
+  function teardown(how, { applied = false } = {}) {
     if (closed) return; closed = true;
     timers.clearTimeout(S.pollT); timers.clearTimeout(S.cpT); timers.clearTimeout(S.passT);
+    win?.removeEventListener('focus', onFocus);
     guard.release(); modal.remove();
     if (opener?.isConnected) opener.focus?.();
-    onClose(how);
+    onClose(how, { applied });
   }
   const guard = guardModal(modal, { kind: 'form', close: () => teardown('later'), busy: () => S.netJob,
     // Apply (and a login Retry after it) is past the point of discarding: its writes are done (architect-1-2).
     isDirty: () => S.step !== 'apply' && !S.retryLogin && !!S.answers && !!S.opened && JSON.stringify(S.answers) !== S.opened });
 
   const idx = () => SETUP_STEPS.findIndex((s) => s.id === S.step);
-  function goTo(id) { S.step = SETUP_STEPS.some((s) => s.id === id) ? id : 'check'; S.error = ''; S.errField = null; paint(); }
+  function goTo(id) { S.step = SETUP_STEPS.some((s) => s.id === id) ? id : 'check'; S.error = ''; S.errField = null; S.cpChecked = ''; paint(); }
   // A second openSetup while the dialog is up (A5): the same entry fix as initialAnswers, never mid-apply (architect-2-2).
   function focusStep(id) {
     if (closed || S.step === 'apply' || S.applying || S.retryLogin) return;
@@ -633,7 +649,17 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
     body.append(sw('GitHub Copilot', a.copilot, toggle('copilot'), 'sa-src-copilot'));
     if (a.copilot) {
       const box = el('div', 'sa-step sa-copilot');
-      if (broker) box.append(brokerNote('Copilot sign-in is kept by the credential broker.'));
+      if (broker) {
+        box.append(brokerNote('Copilot sign-in is kept by the credential broker.'));
+        const li = a.copilotConnected
+          ? row(badge('green', 'OK'), 'GitHub Copilot is signed in on the key page.')
+          : row(badge('amber', 'Check'), 'Sign in on the key page, then come back here.', S.cpChecked);
+        if (!a.copilotConnected) {
+          const again = btn('Check again', 'btn btn-sm sa-cp-recheck', () => { void refreshProviders({ manual: true }); });
+          again.disabled = S.cpChecking; li.append(again);
+        }
+        box.append(rows('sa-cp', li));
+      }
       else {
         box.append(field('Plan', seg(COPILOT_PLANS, a.copilotAccount, (v) => { a.copilotAccount = v; paint(); }, { label: 'Plan' }), null));
         if (a.copilotConnected) {
@@ -704,8 +730,9 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
         upstream: { provider: 'copilot', api: m.api || null, model: m.id }, cost: { free: true } };
     });
   }
-  // Copilot already connected when the dialog opened: its models are fetched once, on the first visit to Models
-  // (a sign-in in the dialog fetches them itself). Until then the pickers show the catalog alone.
+  // Copilot connected, with the credential broker on or off: its models are fetched on Models, once per connection
+  // (a sign-in in the dialog fetches them itself; a key-page sign-in found by the refresh starts the list over).
+  // Until then the pickers show the catalog alone.
   async function loadCopilotModels() {
     S.copilotModelsAsked = true;
     const list = await call('/api/providers/copilot/models');
@@ -714,7 +741,7 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
   }
   function paintModels() {
     const a = S.answers.access;
-    if (a.copilot && a.copilotConnected && !S.copilotModels.length && !S.copilotModelsAsked && !S.saved.providers?.broker?.enabled) void loadCopilotModels();
+    if (a.copilot && a.copilotConnected && !S.copilotModels.length && !S.copilotModelsAsked) void loadCopilotModels();
     if ((S.answers.found.team || []).some((k) => k.startsWith('models.'))) paintTeamLine('Your team recommends these roles.');
     paintUnmapped();
     const host = el('div', 'sa-roles');
@@ -809,7 +836,10 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
     if (buildApplyBody(S.saved, S.answers).models?.modelRoles) {
       body.append(sw('Test models after applying', S.answers.models.testRoles, (on) => { S.answers.models.testRoles = on; paintFoot(); }, 'sa-test-roles'));
     }
-    if (entry === 'team' && !tbody.children.length) body.append(el('p', 'hint sa-review-empty', S.answers.found.teamGone ? TEAM_GONE_LINE : TEAM_MATCHES_LINE));
+    if (!tbody.children.length) {
+      const line = entry === 'team' ? (S.answers.found.teamGone ? TEAM_GONE_LINE : TEAM_MATCHES_LINE) : entry === 'first' ? null : NO_CHANGES_LINE;
+      if (line) body.append(el('p', 'hint sa-review-empty', line));
+    }
     paintUnmapped();
   }
 
@@ -827,7 +857,7 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
         const share = btn('Share as team setup', 'btn btn-quiet sa-share', () => { void shareDraft(); });
         share.disabled = S.sharing;                              // one draft at a time (ux-1-5)
         actions.append(share);
-        actions.append(btn('Continue', 'btn btn-primary sa-continue', () => teardown('done')));
+        actions.append(btn('Continue', 'btn btn-primary sa-continue', () => teardown('done', { applied: true })));
       } else if (S.done) {
         actions.append(btn('Close', 'btn sa-close', () => teardown('later')));
         actions.append(S.done.retry ? btn('Retry', 'btn btn-primary sa-retry', () => retry(S.done.retry))
@@ -860,7 +890,7 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
     const skipLabel = S.answers && idx() >= 1 && idx() <= 4 ? skipLabelFor(gate) : null;
     if (skipLabel) actions.append(btn(skipLabel, 'btn btn-quiet sa-skip', () => { void skip(); }));
     const label = S.step === 'check' ? 'Start' : S.step === 'review' ? (gate.finish ? 'Finish' : 'Apply') : 'Next';
-    const onNext = () => (S.step === 'network' ? nextFromNetwork() : S.step !== 'review' ? goTo(SETUP_STEPS[idx() + 1].id) : gate.finish ? teardown('done') : startApply(null));
+    const onNext = () => (S.step === 'network' ? nextFromNetwork() : S.step !== 'review' ? goTo(SETUP_STEPS[idx() + 1].id) : gate.finish ? teardown('done', { applied: !!S.netSaved }) : startApply(null));
     const next = btn(label, 'btn btn-primary sa-next', onNext);
     next.disabled = !gate.ok || S.testing; actions.append(next);
     status.className = `hint sa-status${S.error ? ' err' : ''}`; status.textContent = S.error || gate.reason;
@@ -914,6 +944,7 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
 
   // keepAnswers: a 409 SETTINGS_CHANGED reloads what is saved and keeps what the person typed (A20).
   async function load({ keepAnswers = false } = {}) {
+    S.provSeq++;
     S.loadError = ''; if (!keepAnswers) S.error = ''; paint();   // a successful Try again leaves no stale error (ux-2-1)
     const [settings, proxy, providers, cfg, detect, teamRes] = await Promise.all(['/api/settings', '/api/proxy/status', '/api/providers', '/api/config', '/api/setup/detect', '/api/setup/team'].map((u) => call(u)));
     if (closed) return;
@@ -928,9 +959,45 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
     if (!keepAnswers || !S.answers) {
       S.answers = initialAnswers({ saved: S.saved, detect: S.detect, entry, step, team: S.team, savedKeys: Array.isArray(t?.savedKeys) ? t.savedKeys : null });
       S.opened = JSON.stringify(S.answers);
-    }
+    } else syncBrokerCopilot();
     paint();
     guard.markClean();
+  }
+
+  // With the credential broker on there is no sign-in in the dialog, so the Copilot answers always follow the saved
+  // providers. True when they changed. A dialog that was clean stays clean: only the baseline moves with the answers.
+  function syncBrokerCopilot() {
+    const pv = S.saved?.providers;
+    if (!S.answers || !pv?.broker?.enabled) return false;
+    const a = S.answers.access; const clean = JSON.stringify(S.answers) === S.opened;
+    const connected = copilotConnectedIn(pv); const login = pv.copilot?.login || '';
+    const flipped = a.copilotConnected !== connected; const changed = flipped || a.copilotLogin !== login;
+    a.copilotConnected = connected; a.copilotLogin = login;
+    if (flipped) { S.copilotModels = []; S.copilotModelsAsked = false; }   // the Models step fetches the list again
+    if (clean) S.opened = JSON.stringify(S.answers);
+    return changed;
+  }
+  // No refresh while the dialog is closed, still loading, failed to load, or past the point of changing answers.
+  const refreshBlocked = () => closed || !S.saved || !S.answers || !!S.loadError || S.applying || S.netJob || S.step === 'apply' || !!S.retryLogin;
+  // Re-read /api/providers (the key page is another tab). One read at a time; an answer a newer load or an apply
+  // has overtaken is dropped. `manual` = Check again: it shows its result, and its failure.
+  async function refreshProviders({ manual = false } = {}) {
+    if (refreshBlocked() || !S.saved.providers?.broker?.enabled || S.cpChecking) return;
+    S.cpChecking = true; const seq = ++S.provSeq;
+    if (manual) { S.error = ''; paintBody(); }
+    const r = await call('/api/providers');
+    S.cpChecking = false;
+    if (closed) return;
+    if (refreshBlocked() || seq !== S.provSeq) { if (S.answers && S.step === 'access') paintBody(); return; }
+    if (!r.ok) {
+      if (manual) { S.error = r.data?.error || "Couldn't check the GitHub Copilot sign-in."; paintBody(); paintFoot(); }
+      return;
+    }
+    let changed = JSON.stringify(S.saved.providers) !== JSON.stringify(r.data);
+    S.saved.providers = r.data;
+    changed = syncBrokerCopilot() || changed;
+    if (manual) S.cpChecked = 'Checked again just now.';
+    if (changed || manual) paint();
   }
 
   // Model access › Claude › Check again: detect once more, past its cache. After "Sign in again", a signed-in answer
@@ -1168,6 +1235,7 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
 
   doc.body.append(modal);
   guard.opened();
+  win?.addEventListener('focus', onFocus);
   void load();
   return { onFrame, goTo: focusStep, close: () => teardown('later') };
 }

@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import {
   ASK_SYSTEM_RULES, ASK_HOSTING_RULE, buildSystemPrompt, validateClientContext, buildContextHeader,
   selectInlineAttachments, buildTurnPrompt, buildRestoredPrompt,
-  renderScriptsSection, SCRIPTS_SECTION_MAX_BYTES, renderWebSection, renderCommandsSection,
+  renderScriptsSection, SCRIPTS_SECTION_MAX_BYTES, renderWebSection, renderCommandsSection, renderChatChannelSection,
 } from '../src/core/ask/prompt.mjs';
 import { SANDBOX_NOTE } from '../src/core/ask/spawn.mjs';
 import { ASK_LIMITS } from '../src/core/ask/limits.mjs';
@@ -975,4 +975,25 @@ test('the header names the page on screen apart from the scope, right after the 
 test('rule 19 points PR lookups at list_runs pr', () => {
   assert.ok(ASK_SYSTEM_RULES.includes('call list_runs with `pr`'));
   assert.ok(ASK_SYSTEM_RULES.includes('`fixesPr` marks a Watch PR fix run'));
+});
+
+// ── Freeform chat: a thread mirrored to a chat app ──────────────────────────────
+
+test('chat channel section: only for a mirrored thread, after shape and before commands; names only buttons that exist there', async () => {
+  const { renderShapeSection } = await import('../src/core/ask/prompt.mjs');
+  const cat = { projects: [], workspaces: [], workflows: [] };
+  const plain = buildSystemPrompt(cat, { shape: true });
+  assert.equal(buildSystemPrompt(cat, { shape: true, chat: null }), plain, 'an unbound thread is byte-identical');
+  const s = renderChatChannelSection({ platform: 'discord' });
+  assert.equal(buildSystemPrompt(cat, { shape: true, chat: { platform: 'discord' } }), `${plain}\n\n${s}`);
+  assert.equal(buildSystemPrompt(cat, { shape: true, commands: true, chat: { platform: 'discord' } }),
+    `${plain}\n\n${s}\n\n${renderCommandsSection()}`, 'commands stay last');
+  assert.ok(buildSystemPrompt(cat, { shape: true }).includes(renderShapeSection()));
+  assert.match(s, /^## Chat channel\n/);
+  assert.match(s, /a Discord thread/);
+  assert.match(renderChatChannelSection({}), /a chat-app thread/);
+  assert.match(s, /Start run, Not now and Request changes there, also when it carries `source`/);
+  for (const k of ['presetId', 'when, every or after', 'a shape', 'attachmentIds']) assert.ok(s.includes(k), k);   // card-render NATIVE_RUN_EXCLUDES + attachments
+  assert.match(s, /A typed "ok", "yes" or "go" is a message, not an approval: nothing starts from text/);
+  assert.doesNotMatch(s, /press Start(?! run)/i);
 });

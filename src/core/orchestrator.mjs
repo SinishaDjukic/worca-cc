@@ -27,6 +27,7 @@ import { classifyLoops } from '../shared/graph/loops.mjs';
 import { buildGraphManifest, manifestTemplate, manifestPortsFn } from '../shared/graph/manifest.mjs';
 import { DEFAULT_MAX_CYCLES, KEYED_KINDS } from '../shared/graph/constants.mjs';
 import { pickDropWarnings } from '../shared/graph/role-slots.mjs';
+import { factoryFallbackLines } from './factory-models.mjs';
 import { scriptNodeCtx, pythonMissingSentence } from '../shared/graph/script-meta.mjs';
 import { probePython } from './graph/python-probe.mjs';
 import { mediaToolProblems } from './graph/media-preflight.mjs';
@@ -72,6 +73,7 @@ import { buildProposal, sanitizeProposalAnswer, remapTunables, mintAutoWorkflowI
 import { resolveAutoModel } from './auto/model.mjs';
 import { autoModelsFor } from './auto/runnable.mjs';
 import { probeClaudeAuth } from './preflight.mjs';
+import { configuredClaudeBin } from './cli-resolve.mjs';
 import { helperEngineFor } from './model-env.mjs';
 import {
   appendAudit, writeReview, reviewKindOf, writeDecomposition, updateTaskStatus,
@@ -148,9 +150,10 @@ export class GraphOrchestrator extends RunHarness {
     // Whether Claude Code is signed in decides which models Auto may design with
     // (auto/runnable.mjs). `claudeAuth` is the test seam.
     // The run's `bin` only on a Claude run: on any other run it is another CLI's (cursor-agent on a Cursor run), and the
-    // probe reads Claude's own sign-in with no bin.
-    this._claudeAuth = typeof opts?.claudeAuth === 'function' ? opts.claudeAuth
-      : () => probeClaudeAuth({ bin: (this.claude.engine || 'claude') === 'claude' ? (this.claude.bin || undefined) : undefined });
+    // probe reads Claude's own sign-in. With no run `bin`, the binary a spawn would use (WORCA_CLAUDE_BIN).
+    this._claudeAuthInjected = typeof opts?.claudeAuth === 'function';
+    this._claudeAuth = this._claudeAuthInjected ? opts.claudeAuth
+      : () => probeClaudeAuth({ bin: ((this.claude.engine || 'claude') === 'claude' && this.claude.bin) || configuredClaudeBin() });
     Object.assign(this.state, {
       engine: 2,
       active: [],                // [{nodeId, executionId}]
@@ -211,9 +214,14 @@ export class GraphOrchestrator extends RunHarness {
     const overlay = hasNodes || hasWires ? { ...(hasNodes ? { nodes: overlayNodes } : {}), ...(hasWires ? { wires: overlayWires } : {}) } : null;
     const resolved = await resolveGraph(this.projectDir, this.workflowId, registry, this.agentsDir, {
       engine: this.claude.engine || 'claude', runModel: this.claude.model || null, isWorkspace: this.isWorkspace, scripts: this.scriptRegistry, ...(overlay ? { overlay } : {}), ...(defrag && defrag.pair ? { agentPair: defrag.pair } : {}),
-      ...(scan ? { agentPair: scan.agentPair, subagentPin: scan.subagentPin } : {}),
+      ...(scan ? { agentPair: scan.agentPair, subagentPin: scan.subagentPin } : {}), claudeAuth: this._resolveClaudeAuth(),
     });
     this._adoptResolvedGraph(resolved);
+    // A model a person set that needs the Claude Code sign-in while it is signed out: the engine gate refuses the start
+    // (RunHarness#_engineGate). Fresh starts only: resume never resolves, so this stays null there.
+    this._signInBlocked = resolved.signInBlocked
+      ? resolved.signInBlocked.map((b) => (b.source === 'pair' ? { ...b, pair: this.memoryScope ? 'defrag' : 'scan' } : b)) : null;
+    this._signInLabels = this._signInBlocked ? await this._modelLabels() : null;
     // Cascading settings §7: name each node model that came from a step slot, and where it was set
     // (run log + audit), so a model the engine rejects is traceable to its setting.
     const engineNow = this.claude.engine || 'claude';
@@ -226,6 +234,7 @@ export class GraphOrchestrator extends RunHarness {
       this._log('orchestrator', 'warn', line);
       this._pendingAudits.push(`${line}.`);
     }
+    await this._noteFactoryFallbacks(resolved.factoryNotes);
     // A setting that failed the catalog check degrades — and says what the run uses INSTEAD, read
     // off the resolved graph (a project's own pick, a team default or the template's model): a run
     // log line, and an audit line queued until the pipeline dir exists (RunHarness._pendingAudits).
@@ -633,6 +642,7 @@ export class GraphOrchestrator extends RunHarness {
     for (const [nodeId, sel] of Object.entries(answer.nodes || {})) overlayNodes[nodeId] = { ...(overlayNodes[nodeId] || {}), ...sel };
     const resolved = await resolveGraph(this.projectDir, workflowId, registry, this.agentsDir, {
       engine: this.claude.engine || 'claude', runModel: this.claude.model || null, isWorkspace: this.isWorkspace, overlay: { nodes: overlayNodes }, ignoreProjectOverrides: true, scripts: this.scriptRegistry,
+      claudeAuth: this._resolveClaudeAuth(),
     });
     if (!this.humanInLoop) {
       // spec D3: no agent may stop the run to ask (generic — every agent node).
@@ -640,6 +650,9 @@ export class GraphOrchestrator extends RunHarness {
     }
     this.workflowId = workflowId;
     this._adoptResolvedGraph(resolved);
+    // Auto picks runnable models itself and skips the user slots, so it has no user-set model to refuse
+    // (signInBlocked is ignored); a dropped factory default is still said once.
+    await this._noteFactoryFallbacks(resolved.factoryNotes);
     const manifest = buildGraphManifest(this.resolved.template, this.resolved.agentsByKey, {
       overlays: { nodes: this.resolved.nodeCtx, wires: this.resolved.wires }, scripts: this.resolved.scriptsByKey,
     });
@@ -783,6 +796,30 @@ export class GraphOrchestrator extends RunHarness {
    */
   _adoptResolvedGraph(resolved) {
     this.resolved = { ...resolved, nodeCtx: resolved.nodes };
+  }
+
+  /** The sign-in seam resolveGraph probes with: an injected `claudeAuth` always; the real probe only off mock, so a mock
+   *  run (tools/test.mjs never sets WORCA_MOCK) never spawns `claude auth status`. */
+  _resolveClaudeAuth() {
+    return this._claudeAuthInjected || !this.claude.mock ? this._claudeAuth : undefined;
+  }
+
+  /** Model id → catalog label, for the factory warnings and the sign-in refusal. */
+  async _modelLabels() {
+    return Object.fromEntries((await listModels(this.projectDir)).map((m) => [m.id, m.label || m.id]));
+  }
+
+  /** One warning per factory default resolveGraph dropped (factory-models.mjs), logged and audited once and kept with
+   *  the pick-drop warnings, so the resume point carries them and a resume never logs them again. */
+  async _noteFactoryFallbacks(notes) {
+    if (!notes?.length) return;
+    const lines = factoryFallbackLines(notes, await this._modelLabels());
+    this._pickWarnings = [...(this._pickWarnings || []), ...lines];
+    this.state.warnings = [...new Set([...lines, ...(this.state.warnings || [])])];
+    for (const line of lines) {
+      this._log('orchestrator', 'warn', line);
+      this._pendingAudits.push(`${line}.`);
+    }
   }
 
   /** The run warnings for the picks this run's engine dropped (role-slots pickDropWarnings), kept in `_pickWarnings`

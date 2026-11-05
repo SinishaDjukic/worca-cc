@@ -149,6 +149,7 @@ import { ATTACH_MAX_MESSAGE_BYTES } from './attach-files.mjs';
 // worca Chat P2: the receipt, stop and pull-request cards (registered below, before the chat mounts).
 import { registerChatActionCards, refreshChatPrWatch } from './chat/action-cards.mjs';
 import { registerScopeSwitchCard } from './chat/scope-switch-card.mjs';
+import { registerQuestionCard } from './chat/question-card.mjs';
 import { registerFilesCard, filesForViewer, fileViewerUrls } from './chat/files-card.mjs';
 import { createTerminalPane } from './terminal-pane.mjs';
 import { notify, announce, withButton, fieldError, clearFieldErrors, cardAlert, trackDirty, splitMessage, BUTTON_DONE_MS } from './feedback.mjs';
@@ -19177,7 +19178,7 @@ async function exportPluginFlow() {
   }
 }
 
-const CODEX_HELPER_JOBS = ['title', 'classifier', 'overview', 'prDescription', 'memoryDefrag', 'workspaceScan'];
+const CODEX_HELPER_JOBS = ['title', 'classifier', 'overview', 'prDescription', 'memoryDefrag', 'workspaceScan', 'secondOpinion'];
 // src/core/model-env.mjs HELPER_ENGINES (the browser cannot load /src/core): the engines with helper slots of their own.
 const HELPER_ENGINES = ['claude', 'codex'];
 // Claude's helper slots at user level are their own settings keys (settings-cascade.mjs CLAUDE_USER): a model id for
@@ -19185,7 +19186,7 @@ const HELPER_ENGINES = ['claude', 'codex'];
 // summaries pairs. No user-level overview slot. Agent generation, Run naming and Command summaries are Claude's alone
 // (they always run on Claude), so no other tab has their rows; Run naming shows only while smartRunNaming is on, Command
 // summaries only while commandSummaries is on.
-const CLAUDE_USER_HELPER_JOBS = ['title', 'classifier', 'prDescription', 'memoryDefrag', 'agentGen', 'naming', 'commandSummary'];
+const CLAUDE_USER_HELPER_JOBS = ['title', 'classifier', 'prDescription', 'memoryDefrag', 'agentGen', 'naming', 'commandSummary', 'secondOpinion'];
 const helperPair = (p) => (p && p.model ? { model: p.model, ...(p.effort ? { effort: p.effort } : {}) } : undefined);
 // Run naming shows only while smartRunNaming is on, Command summaries only while commandSummaries is on; the
 // Requirements interview is a user-only slot (settings key requirementsInterview), listed only while its flag is on.
@@ -19203,6 +19204,7 @@ const CLAUDE_USER_HELPER_OWN = (data) => ({
     ? { ...(data.requirementsInterview.model ? { model: data.requirementsInterview.model } : {}), ...(data.requirementsInterview.effort ? { effort: data.requirementsInterview.effort } : {}) } : undefined,
   naming: helperPair(data.namingModel),
   commandSummary: helperPair(data.commandSummaryModel),
+  secondOpinion: helperPair(data.secondOpinionModel),
 });
 let lastEngineSettingsData = null;
 // The catalog the Models cards last painted with, and whether it loaded (the Roles card's catalog-failure line).
@@ -19224,6 +19226,22 @@ async function paintEngineSettings(data, { force = false } = {}) {
   const claudeOwn = CLAUDE_USER_HELPER_OWN(data || {});
   const claudeJobs = claudeUserHelperJobs();
   for (const job of claudeJobs) fields[utilityId('claude', job)] = { own: claudeOwn[job], inherited: { value: undefined, source: 'default' } };
+  // Worca's factory defaults (src/core/factory-models.mjs) read "(default)" on the Claude tab: the Second-opinion
+  // reviewer and Memory defragment (unless the Quick jobs role, which it takes first, names a model). A step's applies to
+  // role reviews only, so its row keeps the role or default text and its hint names the factory default.
+  const factory = data?.factoryModels?.claude;
+  const factoryPair = (p) => (p && p.model ? { value: { model: p.model, ...(p.effort ? { effort: p.effort } : {}) }, source: 'default' } : null);
+  const quickRole = data?.modelRoles?.claude?.quick?.model;
+  for (const job of ['secondOpinion', ...(quickRole ? [] : ['memoryDefrag'])]) {
+    const inherited = factoryPair(factory?.helpers?.[job]);
+    if (inherited && fields[utilityId('claude', job)]) fields[utilityId('claude', job)].inherited = inherited;
+  }
+  const claudeStepHints = {};
+  for (const [key, pick] of Object.entries(factory?.steps || {})) {
+    if (!pick?.model) continue;
+    const label = catalog.find((m) => m.id === pick.model)?.label || pick.model;
+    claudeStepHints[key] = `Role reviews (Shaper) default to ${label}${pick.effort ? ` · ${pick.effort}` : ''}`;
+  }
   // The interview's empty choices read "Opus 5.5 (default)" and "medium (default)" (the answer's requirementsInterviewDefault).
   const interviewDefault = data?.requirementsInterviewDefault;
   if (interviewDefault?.model && claudeJobs.includes('requirementsInterview')) fields[utilityId('claude', 'requirementsInterview')].inherited = { value: { model: interviewDefault.model, ...(interviewDefault.effort ? { effort: interviewDefault.effort } : {}) }, source: 'default' };
@@ -19237,7 +19255,7 @@ async function paintEngineSettings(data, { force = false } = {}) {
   if (!keep) {
     renderEngineSection(root, { level: 'user', roles, catalog, fields, status: document.getElementById('engineSettingsMsg'), onTest: testModelRow,
       noEffort: ['title', 'classifier', 'prDescription'].map((job) => utilityId('claude', job)),
-      defaultLabels: { claude: 'the default model' },
+      defaultLabels: { claude: 'the default model' }, stepHints: { claude: claudeStepHints },
       jobs: { claude: claudeJobs, codex: CODEX_HELPER_JOBS, cursor: [], goose: [], opencode: [] }, modelRoles: data.modelRoles || {} });
   }
   lastEngineSettingsData = data;
@@ -38020,12 +38038,13 @@ let setupDialog = null;
 function openSetup({ entry = 'rerun', step = 'check', team = null, teamHash = null } = {}) {
   if (setupDialog) { setupDialog.goTo(step); return; }
   setMobileNavOpen(false);
-  setupDialog = openSetupAssistant({ doc: document, entry, step, team, onClose: (how) => {
+  setupDialog = openSetupAssistant({ doc: document, entry, step, team, onClose: (how, { applied = false } = {}) => {
     setupDialog = null;
-    // A7: a first start always continues to the welcome; a finished re-run ends on the doors; a fix-it
-    // run (entry 'fix') returns to the page it came from (product-1-2).
+    // A7: a first start always continues to the welcome; a finished re-run that applied something ends on the
+    // doors, and a Finish with nothing applied goes back to the page; a fix-it run (entry 'fix') returns to
+    // the page it came from (product-1-2).
     if (entry === 'first') showWelcome();
-    else if (entry === 'rerun' && how === 'done') showWelcome({ force: true });
+    else if (entry === 'rerun' && how === 'done' && applied) showWelcome({ force: true });
     // T15: Apply then Continue, or Finish when nothing differs. Set up later / Escape keep the notice.
     else if (entry === 'team' && how === 'done' && team && teamHash) { markTeamSeen(team, teamHash); void paintTeamNotice(); }
   } });
@@ -40710,6 +40729,7 @@ function scopeChatTo(project) {
   if (project && project.key) askPanel?.setScope?.({ pinned: true, projectKey: project.key, label: project.name });
 }
 registerScopeSwitchCard();
+registerQuestionCard();   // freeform chat D5: the ask_question card (Open in worca parity)
 // The chat files card (show_files) and its built-in file renderers, registered before the chat mounts too.
 registerFilesCard();
 
