@@ -31,6 +31,14 @@ import { readUserSignIn, readUserSafety, sandboxProblem, SIGN_IN_SETTINGS_KEYS }
 
 export const DEFAULT_BIN = process.env.WORCA_CLAUDE_BIN || process.env.ORCH_CLAUDE_BIN || 'claude';
 
+const _ov = { superviseSpawn: null };
+/** Test seam (as exec-cli.mjs's): stub the process supervision runClaudeProcess hands its spawn to (it receives the same
+ *  options object: args, env, cleanup, onDone, onStdoutLine, ...). */
+export const _testing = {
+  set({ superviseSpawn: sup = _ov.superviseSpawn } = {}) { _ov.superviseSpawn = sup; },
+  reset() { _ov.superviseSpawn = null; },
+};
+
 // Env every Claude spawn carries, over the ambient, run and model env (#810). Claude Code 2.1.302 offers
 // `subagent_type: "fork"` in -p by default: a fork inherits the parent's context, tools and model, so a
 // fan-out node's children would bypass the pinned investigator (--agents, phases.mjs investigatorAgents)
@@ -662,12 +670,13 @@ export function stageClaudeInvocation(opts, { bin = DEFAULT_BIN, limit = ARGV_IN
  * into a spawn that runs as another OS user (agent isolation: one user's sign-in never moves to another; M12: nor are the
  * operator's own rules shown to agents). M3: an agent user that cannot be looked up counts as one (fail closed). `cwd`: the
  * spawn's working directory, whose `.claude` sandbox stays on top of the person's (D81a); `sources`: the spawn's setting
- * sources (M7); `userLoaded`: the run itself loads user settings (M11). Never throws.
+ * sources (M7); `userLoaded`: the run itself loads user settings (M11); `ownDeny`: Worca's own deny rules for the same
+ * --settings file (Task 5 fix review, concern 1). Never throws.
  * @returns {{env: Record<string,string>, settings: Record<string,string>, safety?: {deny: string[], sandbox: object|null},
  *   warnings?: string[], notes?: string[]} | null}
  */
 export function signInCarry({ modelEnv = null, asAgent = false, read = readUserSignIn, readSafety = readUserSafety,
-  agentUser = () => agentIdentityFor(currentOwner()), cwd = null, sources = undefined, userLoaded = true } = {}) {
+  agentUser = () => agentIdentityFor(currentOwner()), cwd = null, sources = undefined, userLoaded = true, ownDeny = [] } = {}) {
   try {
     // D71, M12: neither the sign-in nor the guards with the broker on or into a spawn that runs as another OS user.
     let isolated = false;
@@ -682,7 +691,7 @@ export function signInCarry({ modelEnv = null, asAgent = false, read = readUserS
     let notes = [];
     const texts = (a) => (Array.isArray(a) ? a.filter((w) => typeof w === 'string' && w) : []);
     try {
-      const g = readSafety({ env, cwd, sources, userLoaded });
+      const g = readSafety({ env, cwd, sources, userLoaded, ownDeny: Array.isArray(ownDeny) ? ownDeny : [] });
       if (g && ((Array.isArray(g.deny) && g.deny.length) || g.sandbox)) safety = { deny: g.deny || [], sandbox: g.sandbox || null };
       if (g) { warnings = texts(g.warnings); notes = texts(g.notes); }
     } catch { safety = null; }
@@ -766,7 +775,8 @@ export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, perm
   // sign-in kept there (and the person's own guards, D81) is carried over, and its secret values are redacted like the
   // registry's. Absent on every other spawn: nothing is read and the redactor is as before.
   const carry = pluginsOff === true
-    ? signInCarry({ modelEnv, asAgent, cwd: cwd || process.cwd(), sources: settingSources, userLoaded: runLoadsUserSettings === true }) : null;
+    ? signInCarry({ modelEnv, asAgent, cwd: cwd || process.cwd(), sources: settingSources, userLoaded: runLoadsUserSettings === true,
+      ownDeny: permissionRules && Array.isArray(permissionRules.deny) ? permissionRules.deny : [] }) : null;
   const redactList = [...(Array.isArray(redactValues) ? redactValues : []), ...carryRedactValues(carry)];
   const redactor = redactList.length ? createRedactor(redactList) : null;
   if (redactor) { const emit = onEvent; onEvent = (e) => emit(redactor.deep(e)); }
@@ -952,7 +962,7 @@ export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, perm
       if (bridgeKey) bridgeEvents.on('failure', onBridgeFailure);
       detachBridge = () => { if (bridgeKey) bridgeEvents.off('failure', onBridgeFailure); };
 
-      superviseSpawn({
+      (_ov.superviseSpawn ?? superviseSpawn)({
         file: bin, cli: CLAUDE_CLI, args, displayBin: bin, cwd, env: spawnEnv, stdin: plan.stdin ?? null,
         signal, asAgent, stagedDir: plan.dir || null, onEvent,
         cleanup: () => {

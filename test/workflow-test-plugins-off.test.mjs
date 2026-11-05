@@ -6,7 +6,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSyn
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildSettingsPayload, buildClaudeArgs, planClaudeInvocation, signInCarry, secretValuesOf, runClaudeProcess, carryLine, CARRY_WARNING_PREFIX, CARRY_NOTE_PREFIX,
-  carryRedactValues, carryOverModelEnv, sweepStaleStagingDirs, STAGING_PREFIX, redactTryLog } from '../src/core/engines/claude.mjs';
+  carryRedactValues, carryOverModelEnv, sweepStaleStagingDirs, STAGING_PREFIX, redactTryLog, _testing } from '../src/core/engines/claude.mjs';
 import { createRedactor } from '../src/core/redact.mjs';
 import { RunHarness } from '../src/core/run-harness.mjs';
 import { composeSpawnEnv } from '../src/core/engines/spawn.mjs';
@@ -21,6 +21,16 @@ after(() => { for (const d of dirs) rmSync(d, { recursive: true, force: true });
 const BASE = { prompt: 'p', permissionMode: 'acceptEdits', allowedTools: ['Read'] };
 const HELPERS = { apiKeyHelper: 'node key.js', awsAuthRefresh: 'aws sso login', awsCredentialExport: 'aws x' };
 const OPTS = { role: 'implementer', prompt: 'x', systemPrompt: 's', allowedTools: [] };
+/** Runs `fn` with CLAUDE_CONFIG_DIR at `cfg` and no WORCA_MOCK, both restored after. */
+async function withConfigDir(cfg, fn) {
+  const prev = { cfg: process.env.CLAUDE_CONFIG_DIR, mock: process.env.WORCA_MOCK };
+  process.env.CLAUDE_CONFIG_DIR = cfg;
+  delete process.env.WORCA_MOCK;
+  try { return await fn(); } finally {
+    if (prev.cfg === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = prev.cfg;
+    if (prev.mock !== undefined) process.env.WORCA_MOCK = prev.mock;
+  }
+}
 
 test('the --settings payload: the three sign-in helpers only, and unchanged without them', () => {
   assert.equal(buildSettingsPayload(null, {}), null, 'nothing to carry: no flag');
@@ -209,6 +219,28 @@ test('M7/M11: the guards are read with the spawn\'s sources and whether the run 
   assert.equal('runLoadsUserSettings' in ro({ claudeSettingSources: ['project'] }), false, 'a project-only run');
   assert.equal('runLoadsUserSettings' in ro({}), false);
   assert.equal('runLoadsUserSettings' in runOpts({ projectDir: '/p', claudeOpts: {}, claudeSettingSources: null }, OPTS), false, 'not a Pretend try: absent');
+});
+
+test('concern 1: the guards are read knowing Worca\'s own deny rules, and runClaudeProcess passes its permission rules\' deny list', async () => {
+  const none = () => ({ state: 'none', env: {}, settings: {} });
+  let seen = null;
+  signInCarry({ read: none, readSafety: (o) => { seen = o; return { deny: [], sandbox: null }; }, ownDeny: ['Read(//x)'] });
+  assert.deepEqual(seen.ownDeny, ['Read(//x)']);
+  signInCarry({ read: none, readSafety: (o) => { seen = o; return { deny: [], sandbox: null }; } });
+  assert.deepEqual(seen.ownDeny, [], 'not said: none');
+  const cfg = tmp();
+  const cwd = tmp();
+  mkdirSync(join(cwd, '.claude'));
+  writeFileSync(join(cfg, 'settings.json'), JSON.stringify({ sandbox: { enabled: true } }));
+  writeFileSync(join(cwd, '.claude', 'settings.json'), JSON.stringify({ sandbox: { filesystem: { allowRead: ['/p'] } } }));
+  const settingsOf = async (permissionRules) => {
+    let payload = null;
+    _testing.set({ superviseSpawn: (o) => { const i = o.args.indexOf('--settings'); payload = JSON.parse(readFileSync(o.args[i + 1], 'utf8')); o.cleanup(); return Promise.resolve({ text: '' }); } });
+    try { await withConfigDir(cfg, () => runClaudeProcess({ cwd, prompt: 'p', allowedTools: ['Read'], pluginsOff: true, settingSources: ['project'], permissionRules, onEvent: () => {} })); } finally { _testing.reset(); }
+    return payload;
+  };
+  assert.deepEqual((await settingsOf({ deny: ['Read(//**/.worca-cc/settings.json)'] })).sandbox, { enabled: true, autoAllowBashIfSandboxed: false });
+  assert.deepEqual((await settingsOf(null)).sandbox, { enabled: true, autoAllowBashIfSandboxed: false, filesystem: { allowRead: ['/p'] } });
 });
 
 test('M4: a Pretend try whose run sources hold neither project nor local still never loads every source', () => {

@@ -315,6 +315,26 @@ test('review m3: a project\'s allowNestedUserNamespaces: true is not carried; a 
     'the project\'s false holds over the person\'s true, as in a normal run');
 });
 
+// ── Task 5 fix review (concern 1, m2): Worca's own --settings rules switch on the CLI's project filters in a normal run too ──
+test('concern 1: with a Read(…) deny among Worca\'s own rules, the project\'s allowRead and allowWrite are left to the CLI (its filter applies, as in a normal run)', () => {
+  const project = { sandbox: { filesystem: { allowRead: ['/home/u/.ssh/id_rsa'], allowWrite: ['out'], denyRead: ['/secret'] } } };
+  const s = readUserSafety({ env: {}, home: home({ sandbox: { filesystem: { allowRead: ['/mine'] } } }), cwd: checkout(project),
+    ownDeny: ['Read(//**/.worca-cc/settings.json)', 'Edit(//**/.worca-cc/settings.json)'] });
+  assert.deepEqual(s.sandbox, { filesystem: { allowRead: ['/mine'], denyRead: ['/secret'] } }, 'the person\'s own allowRead stays');
+  assert.equal('notes' in s, false, 'nothing is lost: the CLI reads them from the project file itself');
+  const without = readUserSafety({ env: {}, home: home({ sandbox: { enabled: true } }), cwd: checkout(project), ownDeny: ['Edit(//x)', 'Bash(rm:*)', 'Read'] });
+  assert.deepEqual(without.sandbox.filesystem.allowRead, ['/home/u/.ssh/id_rsa'], 'no Read(…) deny of Worca\'s: laid in as before');
+  assert.equal(without.sandbox.filesystem.allowWrite.length, 1);
+});
+
+test('concern 1: with a WebFetch(domain:…) deny among Worca\'s own rules, the project\'s proxy ports are left to the CLI', () => {
+  const project = { sandbox: { network: { httpProxyPort: 8080, socksProxyPort: 1080, allowedDomains: ['p.example'] } } };
+  const s = readUserSafety({ env: {}, home: home({ sandbox: { enabled: true } }), cwd: checkout(project), ownDeny: ['WebFetch(domain:evil.example)'] });
+  assert.deepEqual(s.sandbox, { enabled: true, network: { allowedDomains: ['p.example'] } });
+  const plain = readUserSafety({ env: {}, home: home({ sandbox: { enabled: true } }), cwd: checkout(project), ownDeny: ['WebFetch'] });
+  assert.equal(plain.sandbox.network.httpProxyPort, 8080, 'no domain deny: laid in as before');
+});
+
 // ── Task 5 (security review M11): a run that loads no user settings gets no auto-approved sandboxed Bash from the person ──
 test('M11: unless the run loads user settings, the carried sandbox says autoAllowBashIfSandboxed: false (a project layer may still set it)', () => {
   const of = (user, project, userLoaded) => readUserSafety({ env: {}, home: home({ sandbox: user }), cwd: checkout(project), userLoaded }).sandbox;

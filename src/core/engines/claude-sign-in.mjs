@@ -234,10 +234,26 @@ export const PROJECT_TRUE_IGNORED_SANDBOX_KEYS = Object.freeze(['allowUnsandboxe
  *  project's settings ("values from project settings are ignored"; for allowedDomains in strictAllowlist's own text, for the
  *  proxy ports in their `$_` rule). Review m1: not excludedCommands, whose rule (`Nt`) does not name strictAllowlist. */
 export const STRICT_ALLOWLIST_IGNORED_SANDBOX_KEYS = Object.freeze(['network.allowedDomains', 'network.httpProxyPort', 'network.socksProxyPort']);
+// Task 5 fix review (concern 1, m2): Worca's OWN --settings rules (never the person's carried ones) switch on some of the CLI's
+// project filters in a normal run too: "When managed settings or a --settings file set … a Read(…) deny rule …" (its `W_` and
+// `B_` rules: a project allowRead that re-opens a denied path, or an allowWrite under one, or either as a glob or a network
+// path, is ignored), and "… a WebFetch(domain:…) deny rule …" (`$_`: the project's proxy ports are ignored). The guardrail
+// presets' Read(…) denies are in every normal run's --settings. Laid into Worca's file, those project values would skip that
+// filter, so they are left to the CLI, which still reads them from the project file under its own filter: nothing is lost.
+/** Worca's own deny rules: whether one is a Read(…) rule, and whether one is a WebFetch(domain:…) rule. */
+function ownTriggers(ownDeny) {
+  const rules = (Array.isArray(ownDeny) ? ownDeny : []).filter((r) => typeof r === 'string').map((r) => r.trim());
+  return { readDeny: rules.some((r) => /^Read\((?!\))[\s\S]*\)$/.test(r)), domainDeny: rules.some((r) => /^WebFetch\(domain:[\s\S]+\)$/.test(r)) };
+}
+/** Concern 1: the project sandbox keys the CLI filters by Worca's own rules (ownTriggers), left out of the lay-in unsaid. */
+const ownFilteredKeys = (own) => [...(own.readDeny ? ['filesystem.allowRead', 'filesystem.allowWrite'] : []),
+  ...(own.domainDeny ? ['network.httpProxyPort', 'network.socksProxyPort'] : [])];
 /** A project layer without the keys the CLI would not take from it, and its `true` for PROJECT_TRUE_IGNORED_SANDBOX_KEYS
- *  ("a false in managed, --settings or user settings holds whatever project settings say (false there still applies)"). */
-function projectLayer(sb, { strict }) {
+ *  ("a false in managed, --settings or user settings holds whatever project settings say (false there still applies)").
+ *  `own`: the keys the CLI reads from the project file itself under a filter Worca's own rules switch on (concern 1). */
+function projectLayer(sb, { strict, own = [] }) {
   const drop = new Set([...PROJECT_IGNORED_SANDBOX_KEYS, ...(strict ? STRICT_ALLOWLIST_IGNORED_SANDBOX_KEYS : [])]);
+  const left = new Set(own);
   const dropped = [];
   const walk = (o, prefix) => {
     const out = {};
@@ -245,7 +261,8 @@ function projectLayer(sb, { strict }) {
       if (k === '__proto__') continue;
       const path = prefix ? `${prefix}.${k}` : k;
       if (drop.has(path) || (PROJECT_TRUE_IGNORED_SANDBOX_KEYS.includes(path) && v === true)) { dropped.push(`sandbox.${path}`); continue; }
-      if (isPlain(v) && [...drop].some((d) => d.startsWith(`${path}.`))) {
+      if (left.has(path)) continue;
+      if (isPlain(v) && [...drop, ...left].some((d) => d.startsWith(`${path}.`))) {
         const sub = walk(v, path);
         if (Object.keys(sub).length || !Object.keys(v).length) out[k] = sub;   // emptied by the drop: left out
         continue;
@@ -342,9 +359,12 @@ function checkoutSettingsFile(cwd, name) {
  * checkout), and those with no known root are left out. Each layer that leaves something out gives one line in `notes`.
  * M11: `userLoaded: false` (the run itself loads no user settings) carries `autoAllowBashIfSandboxed: false` under the
  * project's layers: the person's sandbox must not auto-approve Bash a normal project-only run would ask about.
+ * Concern 1 (Task 5 fix review): `ownDeny` are Worca's own deny rules in the same --settings file (never the person's). A
+ * Read(…) one leaves the project's filesystem.allowRead and allowWrite out of the lay-in, a WebFetch(domain:…) one its proxy
+ * ports: a normal run's CLI filters those project values by the same rules, and still reads them from the project file.
  * @returns {{deny: string[], sandbox: object|null, warnings?: string[], notes?: string[]}}
  */
-export function readUserSafety({ env = process.env, home, read = readCapped, cwd = null, sources = ['project', 'local'], userLoaded = true } = {}) {
+export function readUserSafety({ env = process.env, home, read = readCapped, cwd = null, sources = ['project', 'local'], userLoaded = true, ownDeny = [] } = {}) {
   try {
     const file = userSettingsFile({ env, home });
     if (!file) return noSafety();
@@ -375,7 +395,7 @@ export function readUserSafety({ env = process.env, home, read = readCapped, cwd
         if (!p || !isPlain(p.sandbox)) continue;
         const pBad = sandboxProblem(p.sandbox);
         if (pBad) { warnings.push(sandboxNotCarried(`the project's .claude/${name}`, pBad)); continue; }
-        const layer = projectLayer(p.sandbox, { strict });
+        const layer = projectLayer(p.sandbox, { strict, own: ownFilteredKeys(ownTriggers(ownDeny)) });
         const placed = placeSandboxPaths(layer.sandbox, cwd);
         const n = leftOutNote(`the project's .claude/${name}`, layer.dropped, placed.dropped);
         if (n) notes.push(n);
