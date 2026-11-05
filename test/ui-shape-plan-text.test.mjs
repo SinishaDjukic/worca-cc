@@ -6,7 +6,7 @@ import { JSDOM } from 'jsdom';
 import {
   SHAPE_ATTENTION, isShapingRun, planStats, perspectiveChangeFeedback, fixFeedback, sectionOwners, defaultAnswers,
   planSummary, checkLine, unmetLine, fixAllFeedback, approveLabel, shaperWait,
-  planApproveLabel,
+  planApproveLabel, roundCheck,
 } from '../ui/public/shape/plan-text.mjs';
 import { buildPerspectiveChips } from '../ui/public/shape/chips.mjs';
 import { PERSPECTIVES } from '../src/shared/shape/perspectives.mjs';
@@ -181,4 +181,14 @@ test('planApproveLabel: open critical/major issues are named on a plan ask only'
   assert.equal(planApproveLabel({}, 0), 'Approve and build');
   assert.equal(planApproveLabel({}), 'Approve and build');
   assert.equal(planApproveLabel({ outline: { slices: [] } }, 3), approveLabel({ outline: { slices: [] } }));
+});
+
+test('roundCheck: a round\'s counts as a check — total - passed failing rows, none when the counts are missing', () => {
+  const c = roundCheck({ ok: false, passed: 7, total: 8 });
+  assert.deepEqual([c.passed, c.total, c.items.length, c.items.filter((i) => !i.pass).length], [7, 8, 8, 1]);
+  assert.equal(checkLine(c, 'Requirements'), 'Requirements 7/8 · 1 to fix');
+  assert.equal(checkLine(roundCheck({ passed: 8, total: 8 }), 'Requirements'), 'Requirements 8/8');
+  assert.equal(roundCheck(null), null);
+  assert.equal(roundCheck({ passed: 'x' }), null);
+  assert.equal(roundCheck({ passed: 0, total: 0 }), null, 'no criteria written: no 0/0 check on the run card');
 });

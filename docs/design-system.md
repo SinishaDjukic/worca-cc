@@ -129,8 +129,8 @@ shows it; sizes, colours and spacing come with the component. Names are the Desi
 | Going to another page or place | Text link, or a ListRow you open | Changes +358 −144, a file, a step |
 | Copying text | CopyButton: a quiet 28px icon button; a tick for 1.2s and `Copied` in its tooltip and the live region; its width never changes | a branch, a command, an id |
 | **Choosing** | | |
-| A choice that changes a step | SentencePicker: a picker in the sentence it changes, opening a CompactMenu | `dev ▾`, `3 stacked PRs ▾` |
-| Answering Worca's question | OptionList: one line per answer, a radio dot, Worca's pick marked, your own answer under it | the asking step's answers |
+| A choice that changes a step | SentencePicker: a picker in the sentence it changes, opening a CompactMenu (in the app, wired to `toggleMenu`, so the menu has keys) | `dev ▾`, `3 stacked PRs ▾` |
+| Answering Worca's question | OptionList: one line per answer, a radio dot, Worca's pick marked, your own answer under it (in the app, `buildChatQuestion` takes `preset` for Worca's pick and `recommended` on an option) | the asking step's answers |
 | A setting that is on or off | Switch: takes effect at once, no confirm; a failed change flips back and a toast says why | Watch on a PR |
 | Picking items from a list, an opt-out, a consent | Checkbox | the checklist, No cap, Draft |
 | Two or three views of the same thing | Segmented | Light and Dark, Summaries and Raw |

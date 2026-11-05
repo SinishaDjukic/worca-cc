@@ -1,10 +1,11 @@
 // test/ui-shape-proposal.test.mjs — the run card's Shape it first parts (spec §3.2): chips on a shaped card,
 // the nudge (open decisions, both choices with estimates) on a nudged one.
-import { test } from 'node:test';
+import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { shapeCardExtras, shapeWhatHappens, shapeAdvancedSummary } from '../ui/public/shape/proposal.mjs';
 import { SHAPE_ATTENTION } from '../ui/public/shape/plan-text.mjs';
+import { _resetAnswerer } from '../ui/public/answerer.mjs';
 
 const doc = () => new JSDOM('<!doctype html><body></body>').window.document;
 const est = (planningUsd, buildUsd, minutes) => ({ costUsd: planningUsd + buildUsd, planningUsd, buildUsd, minutes, samples: 4 });
@@ -106,4 +107,189 @@ test('shapeAdvancedSummary', () => {
     'Advanced · Claude · Normal guardrails · 7 agents, 2 changed from workflow defaults');
   assert.equal(shapeAdvancedSummary({ engine: 'Codex', guardrails: 'Strict' }), 'Advanced · Codex · Strict guardrails');
   assert.equal(shapeAdvancedSummary(), 'Advanced');
+});
+
+// Requirements first (shapeRequirements on): one facts line and the sentence "You lead as … supported by …".
+const realFetch = globalThis.fetch;
+let puts;
+let profile;
+function stubAnswerer({ lead = null, fail = false, putFails = false } = {}) {
+  puts = [];
+  profile = { lead };
+  globalThis.fetch = async (url, init = {}) => {
+    if (url !== '/api/answerer') throw new Error(`unexpected ${url}`);
+    if (init.method === 'PUT') {
+      puts.push(JSON.parse(init.body));
+      if (putFails) return { ok: false, status: 500, json: async () => ({ error: { message: 'disk full' } }) };
+      return { ok: true, status: 200, json: async () => JSON.parse(init.body) };
+    }
+    return fail ? { ok: false, status: 500, json: async () => null } : { ok: true, status: 200, json: async () => profile };
+  };
+}
+beforeEach(() => { _resetAnswerer(); });
+afterEach(() => { globalThis.fetch = realFetch; });
+const tick = () => new Promise((r) => setTimeout(r, 0));
+const flagDoc = (flags = 'shapeRequirements') => {
+  const win = new JSDOM(`<!doctype html><html data-flags="${flags}"><body></body></html>`).window;
+  return win.document;
+};
+const keyOn = (el, key) => { const e = new el.ownerDocument.defaultView.KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }); el.dispatchEvent(e); return e; };
+const menuItems = (d) => [...d.querySelectorAll('.wfv-menu [role^="menuitem"]')];
+async function reqCard(over = {}, { lead = 'architect', flags } = {}) {
+  stubAnswerer({ lead });
+  const d = flagDoc(flags);
+  const ui = shapeCardExtras(d, { nudge: nudge({ perspectives: ['architect', 'qa', 'security'], ...over }) });
+  d.body.appendChild(ui.el);
+  await tick();
+  return { d, ui, triggers: () => [...ui.el.querySelectorAll('.spick-b')] };
+}
+
+test('flag on, large: one facts line, the sentence with two pickers, no choices and no chips row', async () => {
+  const { ui, triggers } = await reqCard();
+  assert.equal(ui.requirements, true);
+  assert.deepEqual(texts(ui.el, '.shape-facts'), ['Large task · ≈ $2 · ~9 min']);
+  assert.equal(ui.el.querySelector('.shape-choice'), null);
+  assert.equal(ui.el.querySelector('.shape-chips'), null);
+  assert.equal(ui.el.querySelector('.shape-nudge-list'), null);
+  assert.deepEqual(triggers().map((b) => b.textContent), ['Engineering', 'QA and Security']);
+  assert.equal(ui.el.querySelector('.shape-lead-line').textContent, 'You lead as Engineering, supported by QA and Security.');
+  assert.equal(ui.blocked(), false);
+});
+
+test('flag on: no estimate → "no estimate yet"; a nudge without a size reads "This task"', async () => {
+  const a = await reqCard({ estimates: null });
+  assert.deepEqual(texts(a.ui.el, '.shape-facts'), ['Large task · no estimate yet']);
+  const b = await reqCard({ size: null, estimates: { asIs: null, shaped: est(30, 1, 84) } });
+  assert.deepEqual(texts(b.ui.el, '.shape-facts'), ['This task · ≈ $31 · ~84 min']);
+  assert.equal(b.ui.requirements, false);
+});
+
+test('first time (no saved lead, or the profile fetch fails): "pick a role", nothing checked, blocked until a pick', async () => {
+  for (const setup of [{ lead: null }, { fail: true }]) {
+    stubAnswerer(setup);
+    _resetAnswerer();
+    const d = flagDoc();
+    const ui = shapeCardExtras(d, { nudge: nudge() });
+    d.body.appendChild(ui.el);
+    assert.equal(ui.blocked(), true, 'blocked before the profile loads');
+    assert.equal(ui.el.querySelector('.spick-b'), null, 'the sentence paints after the profile');
+    await tick();
+    const [lead] = [...ui.el.querySelectorAll('.spick-b')];
+    assert.equal(lead.textContent, 'pick a role');
+    assert.equal(ui.blocked(), true);
+    lead.click();
+    assert.equal(menuItems(d).filter((i) => i.getAttribute('aria-checked') === 'true').length, 0);
+    menuItems(d)[2].click();
+    assert.equal(ui.blocked(), false);
+    assert.equal(lead.textContent, 'Design');
+  }
+});
+
+test('the lead menu: six labelled radios, the saved lead says "you, last time", keys move, Escape returns focus', async () => {
+  const { d, triggers } = await reqCard({}, { lead: 'qa' });
+  const [lead] = triggers();
+  lead.click();
+  const items = menuItems(d);
+  assert.deepEqual(items.map((i) => i.getAttribute('role')), Array(6).fill('menuitemradio'));
+  assert.deepEqual(items.map((i) => i.querySelector('.wfv-menu-l').textContent), ['Product', 'Engineering', 'Design', 'QA', 'Security', 'DevOps']);
+  assert.deepEqual(items.map((i) => i.getAttribute('aria-checked')), ['false', 'false', 'false', 'true', 'false', 'false']);
+  assert.deepEqual(items.map((i) => i.querySelector('.wfv-menu-hint')?.textContent ?? null), [null, null, null, 'you, last time', null, null]);
+  assert.equal(d.activeElement, items[0]);
+  keyOn(items[0], 'ArrowDown');
+  assert.equal(d.activeElement, items[1]);
+  keyOn(items[1], 'End');
+  assert.equal(d.activeElement, items[5]);
+  keyOn(items[5], 'Home');
+  assert.equal(d.activeElement, items[0]);
+  keyOn(items[0], 'Escape');
+  assert.equal(d.querySelector('.wfv-menu'), null);
+  assert.equal(d.activeElement, lead);
+  assert.equal(puts.length, 0, 'moving through a menu saves nothing');
+});
+
+test('the supporters menu: switch rows without Product or the lead; a toggle keeps it open; emptied reads "no one else"', async () => {
+  const { d, ui, triggers } = await reqCard();
+  const [, supp] = triggers();
+  supp.click();
+  const rows = menuItems(d);
+  assert.deepEqual(rows.map((r) => r.getAttribute('role')), Array(rows.length).fill('menuitemcheckbox'));
+  assert.deepEqual(rows.map((r) => r.querySelector('b').textContent), ['QA', 'Design', 'Security', 'DevOps', 'Release', "Devil's advocate"]);
+  assert.equal(rows.some((r) => /Product|Engineering/.test(r.textContent)), false);
+  assert.deepEqual(rows.map((r) => r.getAttribute('aria-checked')), ['true', 'false', 'true', 'false', 'false', 'false']);
+  rows[0].click();
+  rows[2].click();
+  assert.ok(d.querySelector('.wfv-menu'), 'the menu stays open');
+  assert.equal(supp.textContent, 'no one else');
+  assert.deepEqual(ui.body().shape.perspectives, ['product', 'architect']);
+  rows[1].click();
+  assert.equal(supp.textContent, 'Design');
+  assert.equal(puts.length, 0);
+});
+
+test('body(): lead, the size, and the perspectives product + lead + supporters in list order', async () => {
+  const { ui, triggers } = await reqCard();
+  assert.deepEqual(ui.body(), { workflowId: 'wf_shape', shape: { lead: 'architect', perspectives: ['product', 'architect', 'qa', 'security'], size: 'large' } });
+  triggers()[0].click();
+  menuItems(triggers()[0].ownerDocument)[0].click();                       // lead → Product
+  assert.deepEqual(ui.body().shape, { lead: 'product', perspectives: ['product', 'architect', 'qa', 'security'], size: 'large' });
+});
+
+test('commit(): saves a lead that differs from the profile once; the same lead saves nothing; a failed save raises the error toast', async () => {
+  const { d, ui, triggers } = await reqCard();
+  ui.commit();
+  await tick();
+  assert.equal(puts.length, 0, 'the saved lead is the picked one');
+  triggers()[0].click();
+  menuItems(d)[3].click();                                                // QA
+  assert.equal(puts.length, 0, 'a pick alone does not save');
+  ui.commit();
+  await tick();
+  assert.deepEqual(puts, [{ lead: 'qa' }]);
+  ui.commit();
+  await tick();
+  assert.equal(puts.length, 1, 'now the profile holds it');
+  const f = await reqCard({}, { lead: null });
+  stubAnswerer({ lead: null, putFails: true });
+  f.triggers()[0].click();
+  menuItems(f.d)[1].click();
+  f.ui.commit();
+  await tick(); await tick();
+  assert.match(f.d.querySelector('.toast.err .tt')?.textContent ?? '', /Could not save your lead role\. It is used for this run only\./);
+});
+
+test('shape-lead-change fires when the sentence paints and when the lead is picked', async () => {
+  stubAnswerer({ lead: null });
+  const d = flagDoc();
+  const ui = shapeCardExtras(d, { nudge: nudge() });
+  let n = 0;
+  ui.el.addEventListener('shape-lead-change', () => { n += 1; });
+  await tick();
+  assert.equal(n, 1);
+  ui.el.querySelector('.spick-b').click();
+  menuItems(d)[1].click();
+  assert.equal(n, 2);
+});
+
+test('flag on, small: the facts line and today\'s chips; no sentence; today\'s body', async () => {
+  stubAnswerer({ lead: 'qa' });
+  const d = flagDoc();
+  const ui = shapeCardExtras(d, { nudge: nudge({ size: 'small', openDecisions: ['a', 'b'] }) });
+  await tick();
+  assert.equal(ui.requirements, false);
+  assert.deepEqual(texts(ui.el, '.shape-facts'), ['Small task · ≈ $2 · ~9 min']);
+  assert.ok(ui.el.querySelector('.shape-chips'));
+  assert.equal(ui.el.querySelector('.spick-b'), null);
+  assert.equal(ui.el.querySelector('.shape-choice'), null);
+  assert.equal(ui.blocked(), false);
+  assert.deepEqual(ui.body(), { workflowId: 'wf_shape', shape: { perspectives: ['product', 'architect'], size: 'small' } });
+});
+
+test('flag off: a large nudge renders today\'s choices and no sentence', () => {
+  const ui = shapeCardExtras(flagDoc(''), { nudge: nudge() });
+  assert.ok(ui.el.querySelector('.shape-choice.primary'));
+  assert.equal(ui.el.querySelector('.spick-b'), null);
+  assert.equal(ui.el.querySelector('.shape-facts'), null);
+  assert.equal(ui.requirements, false);
+  assert.equal(ui.blocked(), false);
+  assert.deepEqual(ui.body(), { workflowId: 'wf_shape', shape: { perspectives: ['product', 'architect'], size: 'large' } });
 });

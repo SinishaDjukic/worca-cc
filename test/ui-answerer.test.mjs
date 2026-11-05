@@ -2,7 +2,8 @@
 // callers, `{ lead: null }` on a failure, and a save the cache follows. No DOM.
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { loadAnswerer, saveAnswerer, _resetAnswerer } from '../ui/public/answerer.mjs';
+import { loadAnswerer, saveAnswerer, _resetAnswerer, LEAD_LABELS, leadLabel } from '../ui/public/answerer.mjs';
+import { ANSWERER_LEAD_KEYS } from '../src/shared/answerer.mjs';
 
 beforeEach(() => _resetAnswerer());
 const reply = (status, body) => ({ ok: status < 400, status, json: async () => body });
@@ -27,4 +28,11 @@ test('saveAnswerer PUTs the lead and the cache follows; a refusal rejects with t
   assert.deepEqual(await loadAnswerer(f), { lead: 'ux' });
   assert.deepEqual(calls, [['/api/answerer', 'PUT', '{"lead":"ux"}']], 'no GET after a save');
   await assert.rejects(saveAnswerer('boss', async () => reply(400, { error: { code: 'BAD_LEAD', message: 'Pick one of: product' } })), /Pick one of: product/);
+});
+
+test('leadLabel: one word per lead key; an unknown key falls back to the perspective label, then the key', () => {
+  assert.deepEqual(ANSWERER_LEAD_KEYS.map(leadLabel), ['Product', 'Engineering', 'Design', 'QA', 'Security', 'DevOps']);
+  assert.deepEqual(Object.keys(LEAD_LABELS), [...ANSWERER_LEAD_KEYS]);
+  assert.equal(leadLabel('release'), 'Release');
+  assert.equal(leadLabel('nobody'), 'nobody');
 });

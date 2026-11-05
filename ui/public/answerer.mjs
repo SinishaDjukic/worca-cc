@@ -1,7 +1,16 @@
 // ui/public/answerer.mjs — the signed-in person's answerer profile (GET/PUT /api/answerer): one cached promise per
 // page, so no card fetches it twice and none reads it before it loads. There is no synchronous getter on purpose.
 
+import { perspectiveByKey } from '../../src/shared/shape/perspectives.mjs';
+
 let cached = null;
+
+/** The word a lead goes by on the cards (the perspective list says Architect and "DevOps and infrastructure"). */
+export const LEAD_LABELS = Object.freeze({
+  product: 'Product', architect: 'Engineering', ux: 'Design', qa: 'QA', security: 'Security', devops: 'DevOps',
+});
+/** One label for a perspective key, on every card: `LEAD_LABELS`, else the perspective's own label, else the key. */
+export const leadLabel = (key) => LEAD_LABELS[key] || (perspectiveByKey(key) || {}).label || String(key);
 
 /** The profile, `{ lead }`; `{ lead: null }` on any failure. One request per page, whoever asks first. */
 export function loadAnswerer(fetchFn = (...a) => fetch(...a)) {

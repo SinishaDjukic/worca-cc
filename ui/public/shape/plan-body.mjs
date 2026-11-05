@@ -5,25 +5,52 @@
 // plan → the artifact popup), perspectives edit, Save and Open in New run.
 import { buildPerspectiveChips } from './chips.mjs';
 import { planStats, perspectiveChangeFeedback, fixAllFeedback, sectionOwners, planSummary, unmetLine,
-  planApproveLabel } from './plan-text.mjs';
+  planApproveLabel, displayCoverage } from './plan-text.mjs';
 import { openBlocking } from '../../../src/shared/shape/role-review.mjs';
 import { perspectiveByKey, PERSPECTIVES, chipsHiddenFor } from '../../../src/shared/shape/perspectives.mjs';
 import { levelAtLeast } from '../ui-level.mjs';
 import { toggleMenu } from '../workflows/menu.mjs';
 import { icon } from '../icons.mjs';
 import { fold, swapOpen, buildCheckFold } from './check-row.mjs';
-import { SEND_FAILED, stepHead, stepSender } from './step-card.mjs';
+import { SEND_FAILED, stepHead, stepSender, isRequirementsAsk } from './step-card.mjs';
 import { buildRoleFold, buildConflictCards } from './role-rows.mjs';
+import { renderRequirementsBody } from './requirements-body.mjs';
 
 export { SEND_FAILED };
 
 const labelOf = (k) => (perspectiveByKey(k) || {}).label || k;
 
+/** Ask for changes' typed row, shared by the plan card and the Requirements card: the field, Cancel and Send changes.
+ *  `onSend(text)` gets the trimmed text (maybe empty: the caller says what to do then). */
+export function buildFeedbackRow(doc, { label, onSend }) {
+  const h = (tag, cls, text) => { const e = doc.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+  const btn = (cls, text) => { const b = h('button', `btn btn-sm ${cls}`, text); b.type = 'button'; return b; };
+  const typed = h('textarea', 'plan-feedback');
+  typed.rows = 2;
+  typed.placeholder = 'Ask for changes in your own words…';
+  typed.setAttribute('aria-label', label);
+  const cancel = btn('btn-quiet plan-typed-cancel', 'Cancel');
+  const sendBtn = btn('plan-revise', 'Send changes');
+  sendBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    onSend(typed.value.trim());
+  });
+  const acts = h('div', 'plan-typed-acts'); acts.append(cancel, sendBtn);
+  const row = h('div', 'plan-typed'); row.append(typed, acts);
+  return { row, typed, cancel };
+}
+
 export function renderPlanBody(panel, pq, deps) {
+  if (isRequirementsAsk(pq)) return renderRequirementsBody(panel, pq, deps);
   const { doc } = deps;
   const plan = pq.plan || {};
   const check = plan.check || null;
   const items = check && Array.isArray(check.items) ? check.items : [];
+  // Requirements first: `coverage` (which agreed requirements a step delivers) draws only when it has items; without it
+  // the fold, the foot and ⋯ are what they were.
+  const coverage = plan.coverage && Array.isArray(plan.coverage.items) && plan.coverage.items.length ? plan.coverage : null;
+  const uncovered = coverage ? coverage.items.filter((it) => !it.pass) : [];
+  const failingRows = !!coverage && (uncovered.length > 0 || items.some((it) => !it.pass));
   const perspectives = Array.isArray(plan.perspectives) ? plan.perspectives : [];
   const h = (tag, cls, text) => { const e = doc.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
   const btn = (cls, text) => { const b = h('button', `btn btn-sm ${cls}`, text); b.type = 'button'; return b; };
@@ -47,23 +74,10 @@ export function renderPlanBody(panel, pq, deps) {
     return picks.length ? { ...payload, conflicts: picks } : payload;
   };
 
-  const typedRow = () => {
-    const typed = h('textarea', 'plan-feedback');
-    typed.rows = 2;
-    typed.placeholder = 'Ask for changes in your own words…';
-    typed.setAttribute('aria-label', 'Changes to the plan');
-    const cancel = btn('btn-quiet plan-typed-cancel', 'Cancel');
-    const sendBtn = btn('plan-revise', 'Send changes');
-    sendBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const text = typed.value.trim();
-      if (!text) { setErrors([{ path: 'feedback', message: 'Write what should change first' }]); return; }
-      send(withPicks({ decision: 'revise', feedback: text }));
-    });
-    const acts = h('div', 'plan-typed-acts'); acts.append(cancel, sendBtn);
-    const row = h('div', 'plan-typed'); row.append(typed, acts);
-    return { row, typed, cancel };
-  };
+  const typedRow = () => buildFeedbackRow(doc, { label: 'Changes to the plan', onSend: (text) => {
+    if (!text) { setErrors([{ path: 'feedback', message: 'Write what should change first' }]); return; }
+    send(withPicks({ decision: 'revise', feedback: text }));
+  } });
   panel.appendChild(stepHead(doc, deps.title, deps.chip));
   const title = deps.run && deps.run.title && deps.run.title !== '(untitled)' ? String(deps.run.title) : '';
   body.appendChild(h('div', 'plan-sub', `${title ? `${title} · ` : ''}v${plan.round || 1}`));
@@ -105,6 +119,12 @@ export function renderPlanBody(panel, pq, deps) {
     body.appendChild(box);
   }
 
+  // Requirements first: the coverage fold sits above Shape and opens when a row fails
+  if (coverage) {
+    const f = buildCheckFold(doc, displayCoverage(coverage), 'Requirements');
+    if (uncovered.length) f.line.click();
+    body.append(f.line, f.rows);
+  }
   // one check line, folded; neutral rows with ✓ / ✕ (D7); Fix all lives in ⋯ (D8)
   if (items.length) { const f = buildCheckFold(doc, check, 'Shape'); body.append(f.line, f.rows); }
 
@@ -169,7 +189,13 @@ export function renderPlanBody(panel, pq, deps) {
   const foot = h('div', 'qpanel-foot plan-actions');
   if (typed) foot.appendChild(swapOpen(btn('plan-ask-changes', 'Ask for changes'), typed.row, typed.cancel, () => typed.typed.focus()));
   foot.appendChild(fullButton());
-  const approve = btn('btn-primary plan-approve', planApproveLabel(plan, openBlocking(plan.roleReviews)));
+  // With a failing row Fix all is the primary (revisable) and Approve steps back to a plain button; not revisable: no primary
+  if (failingRows && plan.revisable) {
+    const fix = btn('btn-primary plan-fix-primary', 'Fix all');
+    fix.addEventListener('click', (e) => { e.stopPropagation(); send(withPicks({ decision: 'revise', feedback: fixAllFeedback([...items, ...uncovered]) })); });
+    foot.appendChild(fix);
+  }
+  const approve = btn(`${failingRows ? '' : 'btn-primary '}plan-approve`, planApproveLabel(plan, openBlocking(plan.roleReviews)));
   approve.addEventListener('click', (e) => {
     e.stopPropagation();
     const waiting = decisions && decisions.firstUnanswered();
@@ -202,7 +228,7 @@ export function renderPlanBody(panel, pq, deps) {
     more.setAttribute('aria-haspopup', 'menu');
     const ws = !!(deps.run && deps.run.workspaceId);
     more.addEventListener('click', (e) => { e.stopPropagation(); toggleMenu({ doc, anchor: more, align: 'end', label: 'More for this plan', items: [
-      ...(plan.revisable && items.some((it) => !it.pass) ? [{ label: 'Fix all', onSelect: () => send(withPicks({ decision: 'revise', feedback: fixAllFeedback(items) })) }] : []),
+      ...(plan.revisable && !failingRows && items.some((it) => !it.pass) ? [{ label: 'Fix all', onSelect: () => send(withPicks({ decision: 'revise', feedback: fixAllFeedback(items) })) }] : []),
       ...(deps.extras && !ws ? [{ label: 'Save to plans/', onSelect: () => savePlan(false) }] : []),
       ...(deps.extras && !ws && levelAtLeast('advanced', doc) ? [{ label: 'Open in New run', onSelect: openInNewRun }] : []),
       { label: 'Stop', onSelect: stopRun },

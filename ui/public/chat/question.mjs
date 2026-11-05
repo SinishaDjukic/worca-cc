@@ -10,6 +10,9 @@ const isNode = (v) => !!v && typeof v === 'object' && typeof v.nodeType === 'num
 /** spec = { id, heading, questions: [{ id, text, why?, options: [{ value, label, chip?: Node, sub?: string }] }],
  *          submitLabel(picks: Map<qid,value>) -> string, onSubmit(picks: Map<qid,value>) -> void | Promise<void>,
  *          answered?: Map<qid,value> }   // answered: the card stays, its picks marked, nothing left to press (B9)
+ *  Opt-in (absent = the markup above): an option's `recommended: true` appends `span.qrec` (Worca's pick);
+ *  `preset: Map<qid,value>` pre-picks a tile and marks it `data-preset="1"` until a person picks in that block;
+ *  `foot: false` drops the footer (the host owns the submit), and Enter then picks without submitting.
  *  opts = { lead?, strip? }: the reader's lead perspective (src/shared/answerer.mjs wordsFor); none = the entry's words
  *  → { el, picks: () => Map, destroy: () => void } */
 export function buildChatQuestion(doc, spec, { lead = null, strip = false } = {}) {
@@ -57,6 +60,7 @@ export function buildChatQuestion(doc, spec, { lead = null, strip = false } = {}
       txt.appendChild(name);
       if (nonEmpty(o.sub)) txt.appendChild(h('span', 'chat-q-opt-sub', o.sub));
       btn.appendChild(txt);
+      if (o.recommended === true) btn.appendChild(h('span', 'qrec', 'recommended'));
       group.appendChild(btn);
       return btn;
     });
@@ -96,7 +100,18 @@ export function buildChatQuestion(doc, spec, { lead = null, strip = false } = {}
   go.type = 'button';
   go.dataset.qpanelSubmit = '';
   foot.append(count, go);
-  panel.appendChild(foot);
+  const footed = spec.foot !== false;
+  if (footed) panel.appendChild(foot);
+  if (spec.preset instanceof Map) {
+    for (const entry of blocks) {
+      if (!spec.preset.has(entry.q.id)) continue;
+      const tile = entry.tiles.find((t) => t.dataset.value === String(spec.preset.get(entry.q.id)));
+      if (!tile) continue;
+      picks.set(entry.q.id, tile.dataset.value);
+      mark(entry, tile);
+      tile.dataset.preset = '1';
+    }
+  }
 
   const complete = () => questions.every((q) => picks.has(q.id));
   function paint() {
@@ -109,6 +124,7 @@ export function buildChatQuestion(doc, spec, { lead = null, strip = false } = {}
     if (busy) return;
     picks.set(entry.q.id, btn.dataset.value);
     mark(entry, btn);
+    for (const t of entry.tiles) delete t.dataset.preset;
     paint();
   }
   function submit() {
@@ -144,11 +160,19 @@ export function buildChatQuestion(doc, spec, { lead = null, strip = false } = {}
       e.preventDefault();
       return;
     }
+    if (e.key === 'Home' || e.key === 'End') {
+      if (!entry) return;
+      const edge = e.key === 'Home' ? entry.tiles[0] : entry.tiles[entry.tiles.length - 1];
+      pick(entry, edge);
+      edge.focus();
+      e.preventDefault();
+      return;
+    }
     if (e.key === 'Enter') {
       if (!entry) return;
       pick(entry, tile);
       e.preventDefault();
-      submit();
+      if (footed) submit();
       return;
     }
     if (/^[a-z]$/i.test(e.key)) {
