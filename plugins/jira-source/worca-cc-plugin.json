@@ -1,6 +1,6 @@
 {
   "name": "jira-source",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Pull tasks from Jira issues, write results back",
   "license": "MIT",
   "engines": { "worca-cc-api": ">=5 <6" },

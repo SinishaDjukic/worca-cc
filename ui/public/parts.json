@@ -136,6 +136,7 @@
     "marketplace/plugin-sheet.css",
     "marketplace/installed-tab.css",
     "marketplace/installed-plugin.css",
+    "marketplace/marketplace-ticket.css",
     "marketplace/marketplaces-tab.css",
     "setup-assistant/setup-wizard.css",
     "marketplace/marketplace-dialogs.css",

@@ -3470,6 +3470,9 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     if (!l) return null;
     const hintId = `req-report-hint-${where}`;
     const done = xOf(f).doneStatus;
+    // Ticket updates (D14): the rule's move when the link's connection has one; else the two lines A6 wrote
+    const mv = xOf(f).move;
+    const lead = 'When the run ends, Worca comments with the result and the pull request link';
     const name = l.tracker || trackerName(f) || 'the tracker';
     const { row, input } = makeSwitch(document, { label: `Report back to ${l.key}`, checked: reportBack.get(f.seq) !== false,
       rowClass: 'req-report-row', data: { ui: `report-${where}` } });
@@ -3478,10 +3481,15 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       reportBack.set(f.seq, input.checked);
       for (const o of document.querySelectorAll('[data-ui="report-card"],[data-ui="report-dialog"],[data-ui="report-runs"]')) if (o !== input) o.checked = input.checked;
     });
+    const hintText = mv && mv.label && mv.kind === 'none'
+      ? `${lead}. Ticket updates in the ${name} connection leave ${mv.label} tickets where they are.`
+      : mv && mv.label && (mv.kind === 'category' || mv.kind === 'status')
+        ? `${lead}, and moves the ticket to ${mv.label} (Ticket updates in the ${name} connection).`
+        : done
+          ? `${lead}, and moves the ticket to ${done} (the status named in the ${name} connection; without one, it only comments).`
+          : `${lead}. The ${name} connection names no status to move the ticket to, so it only comments.`;
     return h('div', { class: 'req-report' }, row,
-      h('p', { class: 'hint req-report-hint', id: hintId, text: done
-        ? `When the run ends, Worca comments with the result and the pull request link, and moves the ticket to ${done} (the status named in the ${name} connection; without one, it only comments).`
-        : `When the run ends, Worca comments with the result and the pull request link. The ${name} connection names no status to move the ticket to, so it only comments.` }));
+      h('p', { class: 'hint req-report-hint', id: hintId, text: hintText }));
   }
   /** A send that failed (D9–D13): the edited race (`onEdited`, the preview's), a ticket an earlier export made that was found
    *  and linked (relinked), else showFailure. */

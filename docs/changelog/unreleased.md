@@ -20,6 +20,20 @@ Pull requests (add each number when it opens):
 - Requirements: Feature chat (#989)
 - Requirements: export to a tracker (#1010)
 
+## Ticket updates (experimental)
+
+**Say what a finished run does to its ticket, per project.**
+
+In Marketplace › Installed › Jira › Settings, a saved connection gets **Ticket updates**: the projects you work on and, per project, Don't move, Any Done status or one of that project's own statuses. A run that writes back moves its ticket by that rule, and Worca's comment ends with a line saying what happened. Any Done status never closes a ticket as Won't Do or Duplicate, and Worca fills in a required Resolution. A move Jira refuses becomes a "Not moved" line and the comment still posts; a refused token, a rate limit, a Jira error or a timeout fails the write-back so it can be retried. New run and the Requirements export list only the projects you work on. Until you save, the old **Transition on completion** setting works as before.
+
+Chips: Ticket updates · Jira · projects you work on · Any Done status · experimental: turn it on in Settings › Labs
+
+Read it: [Ticket updates](../ticket-updates.md)
+
+Pull requests (add each number when it opens):
+
+- Ticket updates (#1072)
+
 ## Independent reviewers for any workflow
 
 **Any workflow can review a plan with several independent reviewers, each on its own model.**

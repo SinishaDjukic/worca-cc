@@ -1,0 +1,422 @@
+// ui/public/marketplace/ticket-updates-section.mjs — Ticket updates in the manage sheet (plans/ticket-updates-design.md §8 boards
+// 1–6, §10, §11; D2, D4, D12). Host-drawn: every tracker read goes through the server's /api/plugins/:name/ticket-updates
+// routes (D8). The sheet owns Save: this module says when it is dirty, hands over the PUT body and takes the saved state
+// back. Removing a project from Projects you work on keeps its rule (D2). Pure DOM; `doc` and `api` are injected.
+import { icon } from '../icons.mjs';
+import { createMoveSelect, FALLBACK_ERROR } from './move-select.mjs';
+import { openProjectsPopover } from './projects-popover.mjs';
+
+/** How many projects' statuses load at once when the section opens, to find a status that is gone (§8, board 5 E). */
+export const STATUS_LOADS = 4;
+export const TU_COPY = Object.freeze({
+  title: 'Ticket updates',
+  sub: "What Worca does to a ticket when a run that writes back finishes. A project's own rule wins over All projects.",
+  projects: 'Projects you work on',
+  addProjects: 'Add projects…',
+  projectsHint: 'New run and Requirements export list only these. None picked = all projects.',
+  rules: 'When a run finishes successfully',
+  all: 'All projects',
+  allSub: 'Unless a project below says otherwise',
+  addRule: 'Add a project rule',
+  allHaveRules: 'Every project you work on has a rule.',
+  newRowHint: "A project rule lists that project's own statuses. The project list is the projects you work on (all projects when none are picked).",
+  hint: "Any Done status: one the ticket can reach, never Won't Do, Rejected or Duplicate. When a move asks for a Resolution, Worca fills in Done, Fixed or Complete. Every update is the last line of Worca's comment on the ticket.",
+  newRuleLabel: 'New rule: move to',
+  project: 'Project',
+});
+export const notSavedLine = (tracker) => `Save this connection first. Ticket updates read ${tracker}'s projects and statuses through it.`;
+export const goneLine = (key, name) => `${key} has no status named ${name} any more. Pick another; until then a run leaves ${key} tickets where they are and says so in its comment.`;
+
+const list = (v) => (Array.isArray(v) ? v : []);
+const fromLegacy = (t) => (t && t.category === 'done' ? { kind: 'category', value: 'done' }
+  : t && typeof t.typed === 'string' && t.typed ? { kind: 'typed', value: t.typed } : null);
+/** Keys that move a closed select's choice (and fire change on Windows) without the user meaning to commit it. */
+const PICK_KEYS = new Set(['ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown']);
+let instances = 0;   // two sections on one page (the same source twice) never share an element id
+
+/**
+ * @param {{doc:Document, api:(m:string,u:string,b?:object)=>Promise<{ok:boolean,status:number,data:any}>, plugin:string, sourceId:string,
+ *   profile?:string|null, tracker?:string, popHost?:Element|null}} o
+ */
+export function createTicketUpdates({ doc, api, plugin, sourceId, profile = null, tracker = 'the tracker', popHost = null }) {
+  const mk = (tag, cls, text) => { const n = doc.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
+  const enc = encodeURIComponent;
+  const base = `/api/plugins/${enc(plugin)}/ticket-updates`;
+  const query = `sourceId=${enc(sourceId)}${profile ? `&profile=${enc(profile)}` : ''}`;
+  const sid = `${String(sourceId).replace(/[^A-Za-z0-9_-]/g, '-')}-${++instances}`;
+  const el = mk('section', 'mk-tu');
+  el.hidden = true;
+  el.dataset.sourceId = sourceId;
+  let info = null;           // the GET answer
+  let projects = [];         // [{ value, label }] picked, in pick order
+  let rules = [];            // [{ uid, project, label, target }]: All projects (project '') first; project null = a new row
+  let baseline = '';
+  let destroyed = false;
+  let popover = null;
+  let seq = 0;
+  const selects = new Map(); // rule uid → its move select
+  const statusCache = new Map();
+  let projectsPromise = null;
+  const refs = {};
+  const uid = () => `mk-tu-${sid}-r${++seq}`;
+  const profileLabel = () => (info && info.profile ? info.profile.label : tracker);
+  const legacyField = () => (info && info.legacy && info.legacy.field) || null;
+
+  // ---- reads, once per sheet opening; a failed one is asked again next time (§10 D) ----
+  function statuses(key) {
+    if (!key) return Promise.resolve([]);
+    if (!statusCache.has(key)) {
+      const p = api('GET', `${base}/statuses?${query}&project=${enc(key)}`).then((r) => {
+        if (r?.ok) return list(r.data?.statuses);
+        throw new Error(r?.data?.error || FALLBACK_ERROR);
+      });
+      p.catch(() => { if (statusCache.get(key) === p) statusCache.delete(key); });
+      statusCache.set(key, p);
+    }
+    return statusCache.get(key);
+  }
+  function projectList() {
+    if (!projectsPromise) {
+      const p = api('GET', `${base}/projects?${query}`).then((r) => {
+        if (r?.ok) return list(r.data?.projects);
+        throw new Error(r?.data?.error || FALLBACK_ERROR);
+      });
+      p.catch(() => { if (projectsPromise === p) projectsPromise = null; });
+      projectsPromise = p;
+    }
+    return projectsPromise;
+  }
+
+  // ---- what Save sends (D12) ----
+  function collect() {
+    return {
+      projects: projects.map(({ value, label }) => ({ value, label })),
+      rules: rules.filter((r) => r.project !== null).map((r) => (r.project
+        ? { project: r.project, label: r.label, moment: 'finished', target: r.target }
+        : { project: '', moment: 'finished', target: r.target })),
+    };
+  }
+
+  // ---- projects you work on ----
+  function renderChips() {
+    refs.chips.replaceChildren(...projects.map((p) => {
+      const c = mk('span', 'chip mk-tu-chip');
+      c.setAttribute('role', 'listitem');
+      c.dataset.value = p.value;
+      c.append(mk('span', 'mk-mono mk-tu-key', p.value));
+      if (p.label && p.label !== p.value) c.append(mk('span', 'mk-tu-cname', p.label));
+      const x = mk('button', 'mk-tu-x');
+      x.type = 'button';
+      x.setAttribute('aria-label', `Remove ${p.value}`);
+      x.append(icon(doc, 'x', 12));
+      x.addEventListener('click', () => {
+        projects = projects.filter((y) => y.value !== p.value);   // its rule stays (D2)
+        renderChips();
+        refreshRules();
+        refs.addProjects.focus();
+      });
+      c.append(x);
+      return c;
+    }));
+  }
+  function openPopover() {
+    popover = openProjectsPopover({ doc, anchor: refs.addProjects, host: popHost || doc.body, profileLabel: profileLabel(), tracker,
+      isPicked: (v) => projects.some((p) => p.value === v), pickedCount: () => projects.length, loadProjects: projectList,
+      onToggle: (p, on) => {
+        const v = String(p.value);
+        if (on && !projects.some((x) => x.value === v)) projects.push({ value: v, label: String(p.name || p.label || v) });
+        if (!on) projects = projects.filter((x) => x.value !== v);
+        renderChips();
+        refreshRules();
+      },
+      onClose: () => { popover = null; } });
+  }
+  function projectsBlock() {
+    const b = mk('div', 'mk-tu-block mk-tu-projects');
+    const hid = `mk-tu-ph-${sid}`;
+    const h = mk('h5', 'mk-tu-h', TU_COPY.projects);
+    h.id = hid;
+    refs.chips = mk('div', 'mk-tu-chips');
+    refs.chips.setAttribute('role', 'list');
+    refs.chips.setAttribute('aria-labelledby', hid);
+    refs.addProjects = mk('button', 'btn btn-sm mk-tu-add-projects', TU_COPY.addProjects);
+    refs.addProjects.prepend(icon(doc, 'plus', 12));   // board 1: a 12 px + before the words (as app.js's Add to group…)
+    refs.addProjects.type = 'button';
+    refs.addProjects.setAttribute('aria-haspopup', 'dialog');
+    refs.addProjects.setAttribute('aria-expanded', 'false');   // the popover sets it while open
+    // its own press toggles: a second one while open closes it (the popover ignores presses on its anchor)
+    refs.addProjects.addEventListener('click', () => (popover ? popover.close() : openPopover()));
+    const row = mk('div', 'mk-tu-chiprow');
+    row.append(refs.chips, refs.addProjects);
+    b.append(h, row, mk('p', 'hint', TU_COPY.projectsHint));
+    renderChips();
+    return b;
+  }
+
+  // ---- the rules ----
+  const rowOf = (r) => (refs.listEl ? refs.listEl.querySelector(`[data-uid="${r.uid}"]`) : null);
+  const option = (value, text, { name = '', placeholder = false } = {}) => {
+    const o = mk('option', '', text);
+    o.value = value;
+    if (name) o.dataset.name = name;
+    if (placeholder) { o.disabled = true; o.selected = true; }
+    return o;
+  };
+  async function fillPicker(sel) {
+    const taken = new Set(rules.map((x) => x.project).filter(Boolean));
+    // "OPS · Operations": key, middle dot, name, as the boards (decided 2026-10-30)
+    const choices = (src) => src.filter((p) => !taken.has(p.value))
+      .map((p) => option(p.value, p.label && p.label !== p.value ? `${p.value} · ${p.label}` : p.value, { name: p.label }));
+    // §10 C: an option's text is not announced when it changes, so the loading and failure lines are also said (aria-live)
+    const live = sel.parentElement ? sel.parentElement.querySelector('.mk-tu-plive') : null;
+    const say = (t) => { if (live) live.textContent = t; };
+    delete sel.dataset.failed;
+    if (projects.length) { say(''); sel.replaceChildren(option('', TU_COPY.project, { placeholder: true }), ...choices(projects)); return; }
+    const getting = `Getting ${profileLabel()}'s projects…`;
+    sel.replaceChildren(option('', getting, { placeholder: true }));
+    say(getting);
+    try {
+      const all = (await projectList()).map((p) => ({ value: String(p.value), label: String(p.name || p.label || p.value) }));
+      if (destroyed || !refs.listEl || !refs.listEl.contains(sel)) return;
+      sel.replaceChildren(option('', TU_COPY.project, { placeholder: true }), ...choices(all));
+      say('');
+    } catch (e) {
+      if (destroyed || !refs.listEl || !refs.listEl.contains(sel)) return;
+      const msg = (e && e.message) || FALLBACK_ERROR;
+      sel.replaceChildren(option('', msg, { placeholder: true }));
+      say(msg);
+      sel.dataset.failed = '1';   // asked again when the select takes focus
+    }
+  }
+  function projectPicker(r) {
+    const wrap = mk('div', 'select-wrap mk-tu-pwrap');
+    const sel = mk('select', 'select mk-tu-project');
+    sel.setAttribute('aria-label', TU_COPY.project);
+    // WCAG 3.2.2: on Windows, each arrow key on a closed select fires change, so a pick made with the keys stays pending
+    // until Enter or blur; a mouse pick (no key before it) commits at once
+    let typed = false;
+    const commit = (focusMove) => {
+      const o = sel.selectedOptions[0];
+      if (destroyed || r.project !== null || !o || !o.value || !rowOf(r)) return false;
+      r.project = o.value;
+      r.label = o.dataset.name || o.value;
+      replaceRow(r, focusMove);
+      refreshRules();
+      return true;
+    };
+    sel.addEventListener('mousedown', () => { typed = false; });
+    sel.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        typed = false;
+        if (commit(true)) e.preventDefault();
+        return;
+      }
+      if (e.altKey) return;
+      if (PICK_KEYS.has(e.key) || (e.key.length === 1 && !e.ctrlKey && !e.metaKey)) typed = true;
+    });
+    sel.addEventListener('change', () => { if (!typed) commit(true); });
+    sel.addEventListener('blur', () => {
+      // after the focus has landed: a Tab into this row (its move select or remove button, replaced with the row)
+      // goes on to the fresh row's move select; a move out of the row stays where it went
+      setTimeout(() => {
+        const row = rowOf(r);
+        if (!row || doc.activeElement === sel) return;   // gone, or the window lost the focus (the select keeps it)
+        // a press on this row's remove button (Tab from the select reaches the move select first): it removes, not commits
+        if (doc.activeElement === row.querySelector('.mk-tu-remove')) return;
+        const inRow = row.contains(doc.activeElement);
+        if (commit(inRow)) typed = false;
+      }, 0);
+    });
+    sel.addEventListener('focus', () => { if (sel.dataset.failed === '1') void fillPicker(sel); });
+    const live = mk('span', 'sr-only mk-tu-plive');
+    live.setAttribute('aria-live', 'polite');
+    wrap.append(sel, live);
+    void fillPicker(sel);
+    return wrap;
+  }
+  function ruleRow(r) {
+    const row = mk('div', 'mk-tu-rule');
+    row.setAttribute('role', 'listitem');
+    row.dataset.uid = r.uid;
+    const name = mk('div', 'mk-tu-name');
+    if (r.project === '') {
+      row.classList.add('mk-tu-all');
+      name.append(mk('span', 'mk-tu-rname', TU_COPY.all), mk('span', 'hint mk-tu-rsub', TU_COPY.allSub));
+    } else if (r.project) {
+      row.dataset.project = r.project;
+      name.append(mk('span', 'mk-mono mk-tu-key', r.project));
+      if (r.label && r.label !== r.project) name.append(mk('span', 'mk-tu-rname', r.label));
+    } else {
+      row.classList.add('mk-tu-newrow');
+      name.append(projectPicker(r));
+    }
+    const ms = createMoveSelect({ doc, project: r.project || '', value: r.target, general: !r.project,
+      label: r.project === null ? TU_COPY.newRuleLabel : null, host: popHost || doc.body,
+      loadStatuses: () => statuses(r.project),
+      onChange: (t) => { r.target = t; clearGone(r); } });
+    selects.set(r.uid, ms);
+    row.append(name, ms.el);
+    if (r.project !== '') {
+      const rm = mk('button', 'btn btn-quiet btn-icon mk-tu-remove');
+      rm.type = 'button';
+      rm.setAttribute('aria-label', r.project ? `Remove the ${r.project} rule` : 'Remove the new rule');
+      rm.append(icon(doc, 'trash', 16));   // board 1: a trash can, not ×
+      rm.addEventListener('click', () => removeRule(r));
+      row.append(rm);
+    }
+    return row;
+  }
+  function replaceRow(r, focusMove) {
+    const old = rowOf(r);
+    selects.get(r.uid)?.destroy();
+    const fresh = ruleRow(r);
+    old.replaceWith(fresh);
+    if (focusMove) fresh.querySelector('.mk-tu-move').focus();
+  }
+  function removeRule(r) {
+    const prev = rules[rules.indexOf(r) - 1];
+    rules = rules.filter((x) => x !== r);
+    selects.get(r.uid)?.destroy();
+    selects.delete(r.uid);
+    rowOf(r)?.remove();
+    refreshRules();
+    if (!refs.addRule.disabled) { refs.addRule.focus(); return; }
+    // S11: Add a project rule may be disabled now; the focus never falls to <body>, where Tab would leave the sheet
+    // (manage-sheet.mjs's focus trap): the row above takes it, its remove button, else its move select (All projects)
+    const above = prev ? rowOf(prev) : null;
+    (above?.querySelector('.mk-tu-remove') || above?.querySelector('.mk-tu-move') || refs.addProjects).focus();
+  }
+  function addRule() {
+    const pending = rules.find((x) => x.project === null);
+    if (pending) { rowOf(pending)?.querySelector('.mk-tu-project')?.focus(); return; }
+    const r = { uid: uid(), project: null, label: '', target: { kind: 'category', value: 'done' } };   // board 4: starts at Any Done status
+    rules.push(r);
+    refs.listEl.append(ruleRow(r));
+    refreshRules();
+    rowOf(r).querySelector('.mk-tu-project').focus();
+  }
+  function refreshRules() {
+    if (!refs.addRule) return;
+    const taken = new Set(rules.map((x) => x.project).filter(Boolean));
+    const hasNew = rules.some((x) => x.project === null);
+    const full = !hasNew && projects.length > 0 && projects.every((p) => taken.has(p.value));
+    refs.addRule.disabled = full;
+    refs.addHint.hidden = !full;
+    if (full) refs.addRule.setAttribute('aria-describedby', refs.addHint.id); else refs.addRule.removeAttribute('aria-describedby');
+    refs.newHint.hidden = !hasNew;
+    const sel = refs.listEl.querySelector('.mk-tu-project');
+    if (sel) void fillPicker(sel);
+  }
+  function rulesBlock() {
+    const b = mk('div', 'mk-tu-block mk-tu-rulesblock');
+    const hid = `mk-tu-rh-${sid}`;
+    const h = mk('h5', 'mk-tu-h', TU_COPY.rules);
+    h.id = hid;
+    refs.listEl = mk('div', 'mk-tu-rules');
+    refs.listEl.setAttribute('role', 'list');
+    refs.listEl.setAttribute('aria-labelledby', hid);
+    for (const r of rules) refs.listEl.append(ruleRow(r));
+    refs.addRule = mk('button', 'btn btn-sm mk-tu-add-rule', TU_COPY.addRule);
+    refs.addRule.prepend(icon(doc, 'plus', 12));
+    refs.addRule.type = 'button';
+    refs.addRule.addEventListener('click', addRule);
+    refs.addHint = mk('p', 'hint mk-tu-add-hint', TU_COPY.allHaveRules);
+    refs.addHint.id = `mk-tu-ah-${sid}`;
+    refs.newHint = mk('p', 'hint mk-tu-newrow-hint', TU_COPY.newRowHint);
+    b.append(h, refs.listEl, refs.addRule, refs.addHint, refs.newHint, mk('p', 'hint mk-tu-hint', TU_COPY.hint));
+    refreshRules();
+    return b;
+  }
+
+  // ---- a status that is gone (board 5 E) ----
+  function markGone(r) {
+    const row = rowOf(r);
+    if (!row || row.querySelector('.mk-tu-gone')) return;
+    const p = mk('p', 'mk-tu-gone', goneLine(r.project, r.target.label || r.target.value));
+    p.id = `${r.uid}-gone`;
+    row.append(p);
+    selects.get(r.uid)?.describe(p.id);
+  }
+  function clearGone(r) {
+    rowOf(r)?.querySelector('.mk-tu-gone')?.remove();
+    selects.get(r.uid)?.describe(null);
+  }
+  /** STATUS_LOADS projects at a time; a project that cannot be read marks nothing (its listbox says why when opened, §10 D). */
+  async function checkGone() {
+    const todo = rules.filter((r) => r.project && r.target && r.target.kind === 'status');
+    let next = 0;
+    const worker = async () => {
+      while (next < todo.length) {
+        const r = todo[next++];
+        let found;
+        try { found = await statuses(r.project); } catch { continue; }
+        if (destroyed || !rules.includes(r) || !r.target || r.target.kind !== 'status') continue;
+        if (!found.some((s) => String(s.value) === String(r.target.value))) markGone(r);
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(STATUS_LOADS, todo.length) }, worker));
+  }
+
+  // ---- the section ----
+  /** Close whatever is open (each widget drops its document listeners); the focus is left where it is. */
+  function closeWidgets() {
+    for (const s of selects.values()) s.destroy();
+    selects.clear();
+    popover?.close(false);
+    popover = null;
+  }
+  function carriedNote() {
+    const t = info.legacy && info.legacy.target;
+    if (info.saved || !t) return [];
+    const p = mk('p', 'hint mk-tu-carried');
+    p.append(doc.createTextNode('Filled in from the old '), mk('strong', '', info.legacy.label),
+      doc.createTextNode(' setting. Nothing changes until you save; after that, the old setting is no longer used.'));
+    return [p];
+  }
+  function paint() {
+    closeWidgets();
+    const headId = `mk-tu-h-${sid}`;
+    el.setAttribute('aria-labelledby', headId);
+    const head = mk('div', 'mk-sec-head mk-tu-head');
+    const h = mk('h4', 'subsection-title', TU_COPY.title);
+    h.id = headId;
+    head.append(h);
+    if (info.profile) head.append(mk('span', 'mk-meta', info.profile.id === 'default' ? info.profile.label : `${info.profile.label} (${info.profile.id})`));
+    if (info.connection !== 'saved') { el.replaceChildren(head, mk('p', 'hint mk-tu-new', notSavedLine(tracker))); return; }
+    el.replaceChildren(head, mk('p', 'hint mk-tu-sub', TU_COPY.sub), projectsBlock(), ...carriedNote(), rulesBlock());
+  }
+
+  async function load() {
+    const r = await api('GET', `${base}?${query}`);
+    if (destroyed) return { available: false };
+    if (!r?.ok || !r.data?.available) { el.hidden = true; return { available: false }; }
+    info = r.data;
+    projects = list(info.projects).filter((p) => p && p.value).map((p) => ({ value: String(p.value), label: String(p.label || p.value) }));
+    const all = list(info.rules).find((x) => x && x.project === '');
+    const carried = info.saved ? null : fromLegacy(info.legacy && info.legacy.target);
+    rules = [{ uid: uid(), project: '', label: '', target: all ? all.target : (carried || { kind: 'none' }) },
+      ...list(info.rules).filter((x) => x && x.project).map((x) => ({ uid: uid(), project: String(x.project), label: String(x.label || x.project), target: x.target }))];
+    baseline = JSON.stringify(collect());   // a carried-over All projects row is not a change (§10 B)
+    el.hidden = false;
+    paint();
+    if (info.connection === 'saved') void checkGone();
+    return { available: true, saved: !!info.saved, connection: info.connection, legacyField: legacyField() };
+  }
+
+  return {
+    el,
+    load,
+    dirty: () => !!info && info.connection === 'saved' && JSON.stringify(collect()) !== baseline,
+    body: () => ({ sourceId, ...(profile ? { profile } : {}), ...collect() }),
+    markSaved(sent) {
+      baseline = JSON.stringify({ projects: sent.projects, rules: sent.rules });
+      if (info) info = { ...info, saved: true };
+      el.querySelector('.mk-tu-carried')?.remove();
+    },
+    legacyField,
+    destroy() {
+      destroyed = true;
+      closeWidgets();
+    },
+  };
+}
