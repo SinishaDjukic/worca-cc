@@ -7206,18 +7206,18 @@ async function supersedeRescans(id) {
  * POST /api/workspaces/:id/scan (scanRequest), and tag its run as automatic. A workspace the
  * scan cannot read (a member that is not its own repository with a commit), a scan model that
  * no longer fits, or a signed-out CLI skips it with the reason — the page offers Re-scan.
- * { needsModel: true } when the workspace has no usable stored pick (the page asks the user).
+ * { needsModel: true } when the workspace has no usable stored pick (the page asks the user), unless `seedPick`
+ * (Ask's create card, #1129): a never-picked workspace then scans on Settings/defaults, saved as its pick.
  * @returns {Promise<{runId:string}|{skipped:string}|{needsModel:boolean}>}
  */
-async function startAutoRescan(ws, { workflowId = WORKSPACE_SCAN_WORKFLOW_ID } = {}) {
+async function startAutoRescan(ws, { workflowId = WORKSPACE_SCAN_WORKFLOW_ID, seedPick = false } = {}) {
   const problems = scanMemberProblems(ws.projectPaths);
   if (problems.length) return { skipped: `read-only workspace scan: ${problems.join('; ')}` };
   let models;
-  try { models = await scanModelsFor({}, ws.projectPaths, ws); }
+  try { models = await scanModelsFor({}, ws.projectPaths, ws);
+    if (models && models.needsModel && seedPick && !ws.scanModels) await setWorkspaceScanPick(ws.id, models = await scanModelsFor({}, ws.projectPaths, null)); }
   catch (err) { return { skipped: err && err.message ? err.message : String(err) }; }
-  // No usable stored pick (a legacy workspace, or one whose model left the catalog): the page
-  // opens the pick-a-model window and starts the scan itself; the member change stands.
-  if (models && models.needsModel) return { needsModel: true };
+  if (models && models.needsModel) return { needsModel: true };   // legacy, or its model left the catalog: the page asks
   if (!(models && modelHasBaseUrlRouting(models.scanModel))) {
     const { state } = await probeClaudeAuth({ bin: configuredClaudeBin(), mock: isTruthy(process.env.WORCA_MOCK ?? process.env.ORCH_MOCK) });
     if (state === 'signed-out') return { skipped: CLAUDE_SIGNED_OUT_MESSAGE };
@@ -7268,10 +7268,10 @@ function prunedNote(rec) {
  * always 'full'. A 'partial' whose stored map does not cover exactly the members (resynthBlocker)
  * runs 'full' instead, with a `note` saying why — decided HERE, before launch, so a partial run that
  * cannot work never starts (its seed would pause it, and a paused one owns the workspace).
- * Runs build their own graphs per member worktree from the registry at start.
+ * Runs build their own graphs per member worktree from the registry at start. `seedPick`: see startAutoRescan.
  * @returns {Promise<{mode:'none'|'partial'|'full', runId?:string, skipped?:string, needsModel?:boolean, note?:string}>}
  */
-async function afterMembersChanged(workspace, added = [], { rescan = 'full' } = {}) {
+async function afterMembersChanged(workspace, added = [], { rescan = 'full', seedPick = false } = {}) {
   for (const dir of added) {
     if (getProjectByPath(dir)?.vcs === 'none') continue;   // P5: a Folder member has no origin of its own (nested in a repository it would take that one's)
     discoverProject(dir, { force: true }).then(() => emitChanged('team-metrics-changed', 'discovered')).catch(() => { /* retried hourly */ });
@@ -7289,7 +7289,7 @@ async function afterMembersChanged(workspace, added = [], { rescan = 'full' } = 
   const told = note ? { note } : {};
   if (!autoRescanOn) return { mode, ...told, skipped: 'automatic re-scans are off (test seam)' };
   const workflowId = mode === 'partial' ? WORKSPACE_RESYNTH_WORKFLOW_ID : WORKSPACE_SCAN_WORKFLOW_ID;
-  try { return { mode, ...told, ...(await startAutoRescan(workspace, { workflowId })) }; }
+  try { return { mode, ...told, ...(await startAutoRescan(workspace, { workflowId, seedPick })) }; }
   catch (err) { return { mode, ...told, skipped: err && err.message ? err.message : String(err) }; }
 }
 
