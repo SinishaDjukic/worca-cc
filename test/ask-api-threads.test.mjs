@@ -913,3 +913,18 @@ test('the list says what each chat did: runs it started from a card, runs it onl
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test('GET /api/ask/threads: a chat a chat integration opened carries its origin (paged and unpaged); an app chat has origin null', async () => {
+  const store = await import('../src/core/ask/store.mjs');
+  const C = await import('../src/core/chat/conversations.mjs');
+  const app = store.createThread({ title: 'App chat' });
+  const tg = store.createThread({ title: 'From Telegram' });
+  C.createConversation({ plugin: 'telegram-chat', channelId: 'main', platform: 'telegram', parentChatId: 'C9', chatId: `T-${tg.id}`,
+    ownerUserId: 'U9', worcaIdentity: 'local', askThreadId: tg.id });
+  for (const q of ['?limit=200', '?show=all&limit=200']) {
+    const { threads } = await (await fetch(`${base}/api/ask/threads${q}`)).json();
+    const row = (id) => threads.find((t) => t.id === id);
+    assert.deepEqual(row(tg.id).origin, { plugin: 'telegram-chat', channelId: 'main', platform: 'telegram', label: null }, q);
+    assert.equal(row(app.id).origin, null, q);
+  }
+});

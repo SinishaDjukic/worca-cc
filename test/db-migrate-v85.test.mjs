@@ -34,3 +34,15 @@ test('a DB stamped current without the column is healed, its stamp untouched', (
   assert.equal(version(db), SCHEMA_VERSION);
   assert.ok(cols(db, 'req_features').includes('early_start_reason'));
 });
+
+// v85 also numbered the freeform chat tables on the Discord chat branch, so a DB that dev stamped 85 has none of them.
+// The migration step for them is gated at < 85; the hoisted schema-gap repair is what creates them.
+test('a DB stamped 85 by dev (no chat tables) gets them, header_new_off included, and is stamped current', () => {
+  const db = new DatabaseSync(':memory:');
+  migrate(db);
+  db.exec('DROP TABLE chat_conversations; DROP TABLE chat_controls; DROP TABLE chat_deliveries; DROP TABLE chat_inbound_seen; PRAGMA user_version = 85');
+  migrate(db);
+  assert.equal(version(db), SCHEMA_VERSION);
+  for (const t of ['chat_conversations', 'chat_controls', 'chat_deliveries', 'chat_inbound_seen']) assert.ok(cols(db, t).length > 0, t);
+  assert.ok(cols(db, 'chat_conversations').includes('header_new_off'));
+});
