@@ -35,6 +35,21 @@ export function normalizeReviewChecklist(raw) {
   return out;
 }
 
+const MERGE_RANK = { unmet: 3, met: 2, na: 1 };
+
+/** Several reviewers' raw `checklist`s (role reviews, #990) → ONE normalized list for applyChecklist: per id the
+ *  strictest status wins (unmet, then met, then na) with its evidence. Null when no reviewer sent an array. */
+export function mergeReportedChecklists(raws) {
+  const lists = (Array.isArray(raws) ? raws : []).map(normalizeReviewChecklist).filter(Boolean);
+  if (!lists.length) return null;
+  const byId = new Map();
+  for (const c of lists.flat()) {
+    const prev = byId.get(c.id);
+    if (!prev || MERGE_RANK[c.status] > MERGE_RANK[prev.status]) byId.set(c.id, c);
+  }
+  return [...byId.values()];
+}
+
 /**
  * Merge a normalized review with the approved plan's items (`extractChecklist`). Every item gets the reviewer's
  * status, or `missing`. Each gap becomes a major issue after the reviewer's own (C2). With no items, the review

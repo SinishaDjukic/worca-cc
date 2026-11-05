@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { _resetForTests, getDb } from '../src/core/db.mjs';
 import { createPipeline, writeState, isTestPipeline, listAllPipelines, countPipelines, findPipelineRowById, listNetworkWaitRuns } from '../src/core/artifacts.mjs';
-import { getStats } from '../src/core/stats.mjs';
+import { getStats, reviewQuality } from '../src/core/stats.mjs';
 import { recordCostDelta, budgetStatus } from '../src/core/cost-budget.mjs';
 import { recordRunMetrics } from '../src/core/metrics/record.mjs';
 import { listPeople } from '../src/core/ask/tool-deps.mjs';
@@ -64,6 +64,14 @@ test('Statistics leaves out their runs, spend and people; the spending limit sti
   assert.equal(getStats({ range: 'all' }).totals.pipelineSpendUsd, 1);
   assert.equal(budgetStatus().windowSpendUsd, 3);
   assert.deepEqual(listPeople().map((p) => p.name), ['person@example.com'], "Ask's people list leaves the tester out (M6)");
+});
+
+test("Statistics' review quality (#990 s6) leaves test tries out", async () => {
+  const summary = JSON.stringify({ v: 1, roles: [{ target: 'plan', role: 'security', label: 'Security', reviews: 1, raised: 2, fixed: 1, disputed: 0, open: 1 }] });
+  for (const id of [await seed({ isTest: true }), await seed()]) {
+    getDb().prepare('UPDATE pipelines SET review_stats = ? WHERE id = ?').run(summary, id);
+  }
+  assert.equal(reviewQuality(Date.now() - 86_400_000, Date.now() + 86_400_000).runs, 1, 'one normal run, the try left out');
 });
 
 test('the Versions page counts no test try as a run of a version (review I1)', async () => {

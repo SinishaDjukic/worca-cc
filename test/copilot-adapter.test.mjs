@@ -416,11 +416,17 @@ test('runCopilotProcess refuses a writable folder inside Worca\'s home before it
   await assert.rejects(runCopilotProcess({ ...base, cwd: worcaHome() }), /refusing to start copilot/);
   assert.equal(existsSync(join(dir, 'record.json')), false, 'copilot never ran');
   assert.equal(existsSync(join(dir, 's')), false, 'no scratch folder was written');
-  // A read-only spawn adds no folder, so nothing is refused; the run store is allowed.
+  // A read-only spawn adds no folder, so nothing is refused; the run store is allowed and brings its project/workspace store root.
   await runCopilotProcess({ ...base, sandbox: 'read-only', addDirs: [plugins] });
-  const plans = join(worcaHome(), 'store', 'k', 'plans');
+  const projStore = join(worcaHome(), 'store', 'k');
+  const plans = join(projStore, 'plans');
   await runCopilotProcess({ ...base, writableDirs: [plans] });
-  assert.ok(f.record().argv.includes(plans));
+  assert.ok(f.record().argv.includes(plans) && f.record().argv.includes(projStore));
+  const wksStore = join(worcaHome(), 'store', 'workspaces', 'wks-1');
+  const wksPlans = join(wksStore, 'plans');
+  await runCopilotProcess({ ...base, writableDirs: [wksPlans] });
+  assert.ok(f.record().argv.includes(wksPlans) && f.record().argv.includes(wksStore));
+  assert.ok(!f.record().argv.includes(join(worcaHome(), 'store', 'workspaces')));
 });
 
 test('Ask Worca on copilot: only worca\'s MCP server, no custom instructions, no folder, a scrubbed env that carries the command token', POSIX, async () => {

@@ -21,13 +21,14 @@ import { rollupChanges } from './folder-members.mjs';
 import { harvestWork, WORK_ARTIFACT_KIND } from './no-project-work.mjs';
 import { updateRunManifest } from './run-manifest.mjs';
 import { listProjects, worcaHome, runOnboarded } from './projects.mjs';
-import { claimRunDir } from './agent-pool.mjs';
+import { claimRunDir, claimRunExtras, shareFailureReason } from './agent-pool.mjs';
 import { branchExists, diffShortstat, anyPrHost, findPrForBranch, commitsAhead, withRefSnapshot } from './git-info.mjs';
 import { getDb, tx } from './db.mjs';
 import { rollupMemberPrs, workspaceMembers, changedFileCount } from './workspace-prs.mjs';
 import { RUN_LOG_FILE } from './run-log.mjs';
 import { readRunLedger } from './metrics/ledger.mjs';
 import { readPolicyState } from './policy/state.mjs';
+import { runReviewStats } from '../shared/review/quality.mjs';
 import { memoryTotals } from './memory-sync.mjs';
 import { actorLabel } from './identity.mjs';
 import { attachWatchPipeline, getWatch, watchActive } from './pr-watch.mjs';
@@ -1264,6 +1265,16 @@ export async function createPipeline(projectDir, opts = {}) {
   if (Array.isArray(extras) && extras.length) {
     const extrasDir = join(dir, 'extras');
     await mkdir(extrasDir, { recursive: true });
+    // Under agent isolation the agent must read what is attached: copyFile keeps the source's group and mode (a staged
+    // 0660 copy in worca's group), so the folder and each file are handed over explicitly, never left to setgid
+    // inheritance. The folder first, so the agent cannot write into it while worca fills it; the files once, through
+    // the folder fd (an agent can swap `extras/` for a link between a per-file path claim and its target).
+    const share = () => {
+      try {
+        for (const f of claimRunExtras(extrasDir)) console.warn(`[artifacts] extras/${f.name} not shared with the agent: ${shareFailureReason(f.error)}`);
+      } catch (err) { console.warn(`[artifacts] extras folder not shared with the agent: ${shareFailureReason(err)}`); }
+    };
+    share();
     for (const ex of extras) {
       if (!ex) continue;
       const src = resolveAgainst(projectDir, ex);
@@ -1274,6 +1285,7 @@ export async function createPipeline(projectDir, opts = {}) {
         // Skip unreadable extras; never fail pipeline creation on a bad path.
       }
     }
+    if (copiedExtras.length) share();
   }
 
   const startedAt = new Date().toISOString();
@@ -1453,11 +1465,11 @@ export async function writeState(pipelineDir, stateObj, { prWatchRunId = null, r
       INSERT INTO pipelines (id, project_key, workspace_key, target, title, base_name,
         date_prefix, status, phase, cycle, started_at, updated_at, total_cost_usd,
         total_active_ms, prompt, branch, workspace_meta, stepper, tools, resume_point,
-        source_type, source_ref, guardrails_id, outcome, human_hours, started_by, shape_stats, run_size, run_setup, is_test)
+        source_type, source_ref, guardrails_id, outcome, human_hours, started_by, shape_stats, run_size, run_setup, review_stats, is_test)
       VALUES (@id,@project_key,@workspace_key,@target,@title,@base_name,@date_prefix,
         @status,@phase,@cycle,@started_at,@updated_at,@total_cost_usd,@total_active_ms,
         @prompt,@branch,@workspace_meta,@stepper,@tools,@resume_point,
-        @source_type,@source_ref,@guardrails_id,@outcome,@human_hours,@started_by,@shape_stats,@run_size,@run_setup,@is_test)
+        @source_type,@source_ref,@guardrails_id,@outcome,@human_hours,@started_by,@shape_stats,@run_size,@run_setup,@review_stats,@is_test)
       ON CONFLICT(id) DO UPDATE SET
         status=excluded.status, phase=excluded.phase, cycle=excluded.cycle,
         updated_at=excluded.updated_at, total_cost_usd=excluded.total_cost_usd,
@@ -1468,6 +1480,7 @@ export async function writeState(pipelineDir, stateObj, { prWatchRunId = null, r
         resume_point=excluded.resume_point,
         outcome=excluded.outcome,
         shape_stats=COALESCE(excluded.shape_stats, shape_stats),
+        review_stats=COALESCE(excluded.review_stats, review_stats),
         run_size=COALESCE(excluded.run_size, run_size),
         base_name=COALESCE(excluded.base_name, base_name),
         date_prefix=COALESCE(excluded.date_prefix, date_prefix)
@@ -1658,6 +1671,22 @@ export function readMemberPrStates(pipelineId) {
     ).all(pipelineId);
     return Object.fromEntries(rows.map((r) => [r.member_key, { url: r.pr_url, number: r.pr_number ?? null, state: r.pr_state || 'OPEN' }]));
   } catch { return {}; }
+}
+
+/** Every active run's recorded PR facts in two SELECTs: Map<pipelineId, { pr, members }> (empty Map on any error). */
+export function listRunPrIndex() {
+  const index = new Map();
+  try {
+    const db = getDb();
+    const entry = (id) => { if (!index.has(id)) index.set(id, { pr: null, members: {} }); return index.get(id); };
+    for (const r of db.prepare('SELECT id, pr_url, pr_number, pr_state FROM pipelines WHERE pr_url IS NOT NULL AND deleted_at IS NULL').all()) {
+      entry(r.id).pr = { url: r.pr_url, number: r.pr_number ?? null, state: r.pr_state ?? 'OPEN' };
+    }
+    for (const r of db.prepare('SELECT pipeline_id, member_key, pr_url, pr_number, pr_state FROM pipeline_member_prs ORDER BY pipeline_id, member_key').all()) {
+      entry(r.pipeline_id).members[r.member_key] = { url: r.pr_url, number: r.pr_number ?? null, state: r.pr_state || 'OPEN' };
+    }
+    return index;
+  } catch { return new Map(); }
 }
 
 /**
@@ -2006,6 +2035,8 @@ function toPipelineRow(o) {
     // Shaper D28: a writer without them (an unshaped run, a pre-results persist) keeps the column (COALESCE)
     shape_stats: o.shapeStats ? s(o.shapeStats) : null,
     run_size: o.runSize ?? null,
+    // #990 s6: the run's per-role review counts, never finding prose; a persist without rounds keeps the column (COALESCE)
+    review_stats: (() => { const r = runReviewStats(o.roleReviews); return r ? s(r) : null; })(),
     // §5.9 outcome: the derived run-level v2 facts, so a rehydrated state matches
     // a live one. NULL for a v1 run (nothing to say), so v1 rows are unchanged.
     outcome: (o.engine === 2 || o.endReached !== undefined || (typeof o.runEngine === 'string' && o.runEngine !== 'claude'))
@@ -2089,6 +2120,26 @@ async function settleLandedMergeBack(mb, repoDir, feature, source) {
     return landed ? { ...m, merged: true, kind: null, reason: null, landed: true } : m;
   }));
   return { merged: members.every((m) => m.merged === true), members };
+}
+
+/** The chat run card's ship facts for a single-project run on its source branch (branch.sameAsSource), the same
+ *  facts the History entry carries for the run page's Push: { sameAsSource: true, sourceBranch, mergeBack: { merged },
+ *  push? } (push = sourcePushStatus, refs only, only once merged back). null for every other run, a workspace run, or
+ *  a row without a repo. */
+export async function sourceShipFacts(row, repoDir) {
+  if (!row || row.target === 'workspace') return null;
+  const branchObj = j(row.branch, null);
+  const feature = branchObj?.feature ?? null;
+  const source = branchObj?.source ?? null;
+  const mergeBack = await settleLandedMergeBack(mergeBackFor(row), repoDir, feature, source);
+  if (!mergeBack) return null;
+  const out = { sameAsSource: true, sourceBranch: source, mergeBack: { merged: mergeBack.merged } };
+  if (mergeBack.merged === true && repoDir && source) {
+    const { sourcePushStatus } = await import('./project-sync.mjs');   // lazy: project-sync -> worktree -> artifacts
+    const push = await sourcePushStatus(repoDir, branchObj, row.project_key ?? null);
+    if (push) out.push = push;
+  }
+  return out;
 }
 
 /**

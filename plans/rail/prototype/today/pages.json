@@ -1,0 +1,62 @@
+{
+  "chat": {
+    "root": "",
+    "body": "view-chat",
+    "main": "main",
+    "row": "main-row"
+  },
+  "runs": {
+    "root": "",
+    "body": "view-runs",
+    "main": "main",
+    "row": "main-row"
+  },
+  "schedules": {
+    "root": "",
+    "body": "",
+    "main": "main",
+    "row": "main-row"
+  },
+  "stats": {
+    "root": "",
+    "body": "",
+    "main": "main",
+    "row": "main-row"
+  },
+  "team-metrics": {
+    "root": "",
+    "body": "",
+    "main": "main",
+    "row": "main-row"
+  },
+  "workflows": {
+    "root": "",
+    "body": "view-workflows",
+    "main": "main",
+    "row": "main-row"
+  },
+  "requirements": {
+    "root": "",
+    "body": "",
+    "main": "main",
+    "row": "main-row"
+  },
+  "projects": {
+    "root": "",
+    "body": "view-projects",
+    "main": "main",
+    "row": "main-row"
+  },
+  "workspaces": {
+    "root": "",
+    "body": "view-workspaces",
+    "main": "main",
+    "row": "main-row"
+  },
+  "marketplace": {
+    "root": "",
+    "body": "",
+    "main": "main",
+    "row": "main-row"
+  }
+}

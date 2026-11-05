@@ -47,7 +47,7 @@ test('routes while git is missing', async (t) => {
   withNoGit(t);
   await checkRows([
     { name: 'every table entry shadows a real handler (no typo can hide a route)', run: () => {
-      const layers = app._router.stack.filter((l) => l.route);
+      const layers = app.router.stack.filter((l) => l.route);
       for (const [m, p] of T.GIT_ONLY_ROUTES) assert.ok(layers.filter((l) => l.route.path === p && l.route.methods[m]).length >= 2, `${m} ${p}`);
     } },
     { name: 'every non-U2a table entry: 409 GIT_MISSING', run: async () => {

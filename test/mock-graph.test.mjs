@@ -78,9 +78,10 @@ test('the 14 builtins pin roles the switch already handles — no new case strin
   }
   // Nothing in the switch is orphaned either: what the builtins do not claim is
   // now only agent-gen (the presentation sidecars pin generic-producer/-verifier
-  // and the two new deck roles, and architect pins c4-architect, so those are all claimed).
+  // and the two new deck roles, and architect pins c4-architect, so those are all claimed), and code-review, which
+  // a diff-target role slice reaches through ROLE_REVIEW_TARGETS (src/shared/graph/role-review-step.mjs).
   const unclaimed = [...MOCK_WRITER_ROLES].filter((r) => !Object.values(pinned).includes(r));
-  assert.deepEqual(unclaimed.sort(), ['agent-gen'],
+  assert.deepEqual(unclaimed.sort(), ['agent-gen', 'code-review'],
     'the switch carries no case the chain can never reach');
 });
 

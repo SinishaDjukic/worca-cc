@@ -705,9 +705,10 @@ function chainStillShipping(members, now) {
  * `after` links (a ticket waits on a ticket or a pipeline; a fired ticket IS its pipeline), read in
  * pre-order with siblings by creation time: a plain line reads in its own order, a fork lists each
  * branch whole. A link whose predecessor ticket was purged starts its own chain; a hand-made cycle
- * has no root and is never listed. Read-only.
+ * has no root and is never listed. Only a link that starts on the previous run's branch (source_from_previous) joins
+ * a chain (#1096): a timing-only wait starts its own chain, and that root member says what it waits for. Read-only.
  * Member: { ticketId, pipelineId, title, state: done|current|waiting|failed, prUrl, prState, archived, historyKey, projectKey,
- * workspaceId, projectDir }.
+ * workspaceId, projectDir, after }; the root also has waitsFor: { title } | null.
  * `keepDone: 'all'` keeps every all-done chain (the ship route's lookup; its own checks say what is left to ship).
  * @param {{isLive?: (q:{id:string, pipelineId:string|null}) => boolean, keepDone?: boolean|'all', now?: number}} [opts]
  * @returns {Array<{id:string, title:string|null, members:object[]}>}
@@ -731,6 +732,9 @@ export function runChains({ isLive = null, keepDone = false, now = Date.now() } 
   for (const t of linked) {
     const self = node(keyOf(t));
     self.ticket = t;
+    // #1096: only a run that starts on the previous run's branch builds on it. A timing-only wait (no
+    // source_from_previous, a resume included) roots its own chain; its member names the run it waits for.
+    if (!t.source_from_previous) continue;
     let parentKey;
     if (t.after_kind === 'ticket') {
       const pt = ticketRow(t.after_id);
@@ -744,6 +748,16 @@ export function runChains({ isLive = null, keepDone = false, now = Date.now() } 
     node(parentKey).children.push(self.key);
   }
   const created = (n) => (n.ticket && n.ticket.created_at) || '';
+  // The title of the run a timing-only root waits for; null when it waits for nothing or the run is gone.
+  const waitsForOf = (n) => {
+    const t = n.ticket;
+    if (!t || !t.after_id || t.source_from_previous) return null;
+    const pt = t.after_kind === 'ticket' ? ticketRow(t.after_id) : null;
+    const pid = t.after_kind === 'ticket' ? (pt && (pt.pipeline_id || pt.resume_pipeline_id)) : t.after_id;
+    const row = pid ? db.prepare('SELECT title FROM pipelines WHERE id = ?').get(String(pid)) : null;
+    const title = (pt && pt.title) || (row && row.title) || null;
+    return title ? { title } : null;
+  };
   const member = (n) => {
     const t = n.ticket;
     const row = n.pipelineId ? db.prepare(CHAIN_PIPELINE_SQL).get(n.pipelineId) || null : null;
@@ -792,6 +806,8 @@ export function runChains({ isLive = null, keepDone = false, now = Date.now() } 
     const members = order.map(member);
     // D29: the 1-based position of the member this one runs after (null for the root), for "starts after run N".
     order.forEach((n, i) => { const j = n.parent ? order.findIndex((x) => x.key === n.parent) : -1; members[i].after = j >= 0 ? j + 1 : null; });
+    // #1096: a root that only waits for another run (outside this chain) names it, for "starts after <title>".
+    members[0].waitsFor = waitsForOf(root);
     const live = members.some((m) => m.state === 'current' || m.state === 'waiting');
     // One ship flow (D8): an all-done chain stays listed (asked for by GET /api/schedules) until it is shipped and its
     // PRs end, or a run is archived; so it can read Ready to ship, then In review.

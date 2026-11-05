@@ -11,6 +11,8 @@ import { setupSections, renderSetupFields, collectSetupFields, flagMissing } fro
 import { errorWash } from './install-view.mjs';
 import { channelBadge } from '../plugins-view.mjs';
 import { renderManageHead, renderHealth, renderAdds, renderSource, renderRemoveRow, renderTestResult } from './manage-view.mjs';
+import { flagOn } from '../flags.mjs';
+import { createTicketUpdates } from './ticket-updates-section.mjs';
 
 export const TEST_POLL_MS = 5000;
 export const TEST_MAX_MS = 5 * 60 * 1000;
@@ -45,6 +47,7 @@ export function createManageSheet({ doc, win, page, deps, wait = (ms) => new Pro
   // A real close (not a hand-off) parks focus on the Installed tab first; P3 then moves it to the opener, and when the
   // opener is gone or hidden (a removed row, a Browse tile behind the Installed tab) it stays there, never on <body>.
   const sheet = createSheet({ doc, win, onClose: () => {
+    for (const g of view?.groups || []) g.tu?.destroy();   // Ticket updates: its open lists and popover go with the sheet
     token += 1; name = null; view = null;
     const a = doc.activeElement;
     if (sheet.root.classList.contains('hidden') && (!a || a === doc.body || sheet.root.contains(a))) doc.querySelector('.mk-tab[data-tab="installed"]')?.focus();
@@ -55,7 +58,10 @@ export function createManageSheet({ doc, win, page, deps, wait = (ms) => new Pro
   const live = (t = token) => sheet.isOpen() && sheet.panel.dataset.mode === 'manage' && t === token;
   const baselineOf = (g) => JSON.stringify(collectSetupFields(g.setup));
   const changed = (g) => !!g.setup && baselineOf(g) !== g.baseline;
-  const isDirty = () => !!view && view.groups.some(changed);
+  // A group's Ticket updates section counts as well. It is asked each time (a pick committed on Enter or blur, or a move
+  // select's onChange, fires no change event the sheet could catch).
+  const tuDirty = (g) => !!g.tu?.dirty();
+  const isDirty = () => !!view && view.groups.some((g) => changed(g) || tuDirty(g));
   const rowOf = (n) => list(page.state.plugins).find((p) => p?.name === n) || null;
 
   function close() { sheet.close(); }
@@ -229,6 +235,50 @@ export function createManageSheet({ doc, win, page, deps, wait = (ms) => new Pro
     }
     if (g.single) g.el.querySelector('.mk-setup-h')?.remove();
     g.baseline = g.setup ? baselineOf(g) : '';
+    if (section.kind === 'source' && !section.broker) mountTicketUpdates(g);
+  }
+
+  // Ticket updates (plans/ticket-updates-design.md D12): a task source's group gets the section after Test connection when the
+  // flag is on and the plugin can update tickets; it repaints with the group (a profile switch, Add or Remove profile reread it).
+  function mountTicketUpdates(g) {
+    g.tu?.destroy();
+    g.tu?.el.remove();   // a remount in place (S13) leaves one section
+    g.tu = null;
+    if (!flagOn('ticketUpdates', doc)) return;
+    const t = token;
+    const tu = createTicketUpdates({ doc, api: deps.api, plugin: name, sourceId: g.section.id, profile: g.setup?.dataset.profile || null,
+      tracker: g.title, popHost: sheet.panel });
+    g.tu = tu;
+    g.el.append(tu.el);
+    void tu.load().then((info) => {
+      if (!live(t) || g.tu !== tu || !info.available) return;
+      if (info.saved && info.legacyField) movedField(g, info.legacyField);
+    });
+  }
+
+  // D4: once Ticket updates is saved, the old setting's control gives way to "Moved to Ticket updates." Its label stays, so a
+  // person who looks for it finds where it went; with the control gone a Save never sends it, and its absence is no change.
+  function movedField(g, key) {
+    const row = g.setup ? [...g.setup.querySelectorAll('.field[data-field]')].find((r) => r.dataset.field === key) : null;
+    if (!row || row.querySelector('.mk-tu-moved')) return;
+    // A value typed into the old field before the GET answered is not dropped silently: the control stays this time, Save sends
+    // the edit as typed, and the next opening shows the line.
+    try {
+      const was = JSON.parse(g.baseline).values?.[key];
+      const now = collectSetupFields(g.setup).values?.[key];
+      if (now !== undefined && now !== was) return;
+    } catch { /* no baseline yet: nothing was typed */ }
+    const had = row.contains(doc.activeElement);
+    for (const c of [...row.querySelectorAll('[data-key]')]) (c.closest('.select-wrap, .mk-secret, .mk-secret-set') || c).remove();
+    row.querySelector(':scope > small.hint')?.remove();   // the help described the control that left (Deviation 5)
+    row.querySelector(':scope > label')?.removeAttribute('for');   // its control is gone: the label names nothing
+    row.append(make(doc, 'p', 'hint mk-tu-moved', 'Moved to Ticket updates.'));
+    if (had) sheet.panel.focus();   // the focused control left: the panel holds the focus, never <body>
+    try {
+      const b = JSON.parse(g.baseline);
+      delete b.values[key];
+      g.baseline = JSON.stringify(b);   // typed edits elsewhere in the group stay changes
+    } catch { g.baseline = baselineOf(g); }
   }
 
   function makeGroup(section) {
@@ -266,6 +316,9 @@ export function createManageSheet({ doc, win, page, deps, wait = (ms) => new Pro
       if (!owns()) return;
       if (!put?.ok) { show(renderTestResult(doc, { ok: false, errors: [{ message: put?.data?.error || 'save failed' }] })); return; }
       g.baseline = JSON.stringify(c);   // what was sent: an edit typed while the PUT was out stays a change
+      // S13 (decided 2026-10-30): the PUT may have just saved the connection (D12), so the section reads it again and state A
+      // turns into the live section without reopening; a section with unsaved changes is left as it is
+      if (g.tu && !g.tu.dirty()) mountTicketUpdates(g);
     }
     const profile = g.setup.dataset.profile || null;
     const started = now();
@@ -313,7 +366,7 @@ export function createManageSheet({ doc, win, page, deps, wait = (ms) => new Pro
   async function switchProfile(t, g, sel) {
     const prev = g.setup?.dataset.profile ?? '';
     const wanted = sel.value;
-    if (changed(g) && !(await deps.confirmModal({ title: 'Discard unsaved changes?',
+    if ((changed(g) || tuDirty(g)) && !(await deps.confirmModal({ title: 'Discard unsaved changes?',
       message: 'Switching profiles discards the edits you have not saved.', confirmLabel: 'Discard and switch' }))) {
       sel.value = prev;
       refocus(t, sel);
@@ -357,39 +410,55 @@ export function createManageSheet({ doc, win, page, deps, wait = (ms) => new Pro
     await reread(t, g, null);
   }
 
-  // Save: one PUT per changed group (an untouched stored secret is never sent; a channel PUT restarts its worker).
+  // Save: per changed group, its config PUT, then its Ticket updates PUT (D12); a refusal stops there, so a refused config save
+  // sends nothing more. An untouched stored secret is never sent; a channel PUT restarts its worker.
   async function save(t, btn) {
     if (!live(t) || btn.dataset.fbState === 'busy') return;
-    const todo = view.groups.filter(changed);
+    const todo = view.groups.filter((g) => changed(g) || tuDirty(g));
     if (!todo.length) { close(); return; }
     const cancel = sheet.foot.querySelector('[data-act="cancel"]');
     const settings = view.settings;
     sheet.setBusy(true);
     if (cancel) cancel.disabled = true;
     saving = t;
+    const refused = (text) => {
+      const wash = hooked(text, 'mk-save-err');
+      settings.querySelector('.mk-sec-head').after(wash);
+      wash.scrollIntoView?.({ block: 'nearest' });
+    };
     const pending = withButton(btn, async () => {
       settings.querySelector('.mk-save-err')?.remove();
       clearFieldErrors(view.body);
-      if (todo.reduce((n, g) => n + flagMissing(g.setup), 0)) return { ok: false };
+      if (todo.reduce((n, g) => n + (changed(g) ? flagMissing(g.setup) : 0), 0)) return { ok: false };
       let sent = false;
       for (const g of todo) {
-        const c = collectSetupFields(g.setup);
-        if (c.newProfile) {
-          const p = await deps.api('POST', url('/profiles'), { sourceId: c.sourceId, id: c.profile, label: '' });
+        // the section Save was pressed on: a profile switch while a PUT is out repaints g.tu, and only this one is marked
+        const tu = g.tu;
+        if (changed(g)) {
+          const c = collectSetupFields(g.setup);
+          if (c.newProfile) {
+            const p = await deps.api('POST', url('/profiles'), { sourceId: c.sourceId, id: c.profile, label: '' });
+            if (!live(t)) return { ok: false };
+            if (!p?.ok) { fieldError(g.setup.querySelector('.mk-profile-id'), p?.data?.error || 'could not create the profile'); return { ok: false }; }
+          }
+          const { newProfile, ...req } = c;
+          const put = await deps.api('PUT', url('/config'), req);
           if (!live(t)) return { ok: false };
-          if (!p?.ok) { fieldError(g.setup.querySelector('.mk-profile-id'), p?.data?.error || 'could not create the profile'); return { ok: false }; }
+          if (!put?.ok) { refused(put?.data?.error || 'save failed'); return { ok: false, sent }; }
+          sent = true;
+          g.baseline = JSON.stringify(c);   // what was sent, never what was typed meanwhile
         }
-        const { newProfile, ...req } = c;
-        const put = await deps.api('PUT', url('/config'), req);
-        if (!live(t)) return { ok: false };
-        if (!put?.ok) {
-          const wash = hooked(put?.data?.error || 'save failed', 'mk-save-err');
-          settings.querySelector('.mk-sec-head').after(wash);
-          wash.scrollIntoView?.({ block: 'nearest' });
-          return { ok: false, sent };
+        if (tu?.dirty()) {
+          const body = tu.body();
+          const put = await deps.api('PUT', url('/ticket-updates'), body);
+          if (!live(t)) return { ok: false };
+          if (!put?.ok) { refused(put?.data?.error || 'save failed'); return { ok: false, sent }; }
+          sent = true;
+          if (g.tu === tu) {
+            tu.markSaved(body);
+            if (tu.legacyField()) movedField(g, tu.legacyField());
+          }
         }
-        sent = true;
-        g.baseline = JSON.stringify(c);   // what was sent, never what was typed meanwhile
       }
       return { ok: true, sent };
     }, { busy: 'Saving…', done: 'Saved' });
@@ -402,7 +471,7 @@ export function createManageSheet({ doc, win, page, deps, wait = (ms) => new Pro
     sheet.setBusy(false);
     if (cancel) cancel.disabled = false;
     const back = () => { if (doc.activeElement === sheet.panel && btn.isConnected) btn.focus(); };
-    if (!r.ok) { back(); return; }
+    if (!r.ok) { if (r.sent) void page.load(); back(); return; }
     const typed = isDirty();   // typed while Save ran (each baseline is what was sent): still a change, the sheet stays
     if (typed) back(); else close();
     if (r.sent) {
@@ -526,6 +595,7 @@ export function createManageSheet({ doc, win, page, deps, wait = (ms) => new Pro
     const body = make(doc, 'div', 'mk-manage-body');
     body.append(secEl('settings', { busy: true }), renderHealth(doc, { report: cache.get(n) || null }), secEl('adds', { busy: true }),
       renderRemoveRow(doc, n));
+    for (const g of view?.groups || []) g.tu?.destroy();   // Ticket updates: a sheet opened over another one drops its lists
     view = { head, body, settings: null, groups: [], names: {} };
     wire(t, head, body);
     sheet.setBusy(false);

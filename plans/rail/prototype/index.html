@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Worca Rail · Prototype</title>
+<!-- The one Worca: today's shell and pages (today/, captured from the app) with Wave 1 in them: the Rail run and group
+     page, Pulse, the profile menu, New run and Settings. The app's own CSS, then the Rail layer, then each feature's. -->
+<link rel="stylesheet" href="app.css">
+<link rel="stylesheet" href="design-system/rail-look.css">
+<link rel="stylesheet" href="design-system/rail.css">
+<link rel="stylesheet" href="pulse/pulse.css">
+<link rel="stylesheet" href="shell/shell.css">
+</head>
+<body>
+<div class="app" id="worca"></div>
+<div class="pz-app rail-layer" id="app"></div>
+<div class="rc-toast" role="status" aria-live="polite"></div>
+
+<!-- The prototype's own controls (not Worca): which case each Rail piece shows, what happens next, the theme. -->
+<details class="mk-tools" data-run-tools>
+  <summary>Prototype</summary>
+  <div class="mk-bar">
+    <p class="mk-rev" title="Prototype revision, when it was published and the commit it was built from">Rev 41 · 4 Nov 2026 · built on feat/rail-components</p>
+    <label>Run <select class="select select-sm" id="case"></select></label>
+    <span class="mk-row"><button type="button" class="btn btn-sm" id="next-event" title="Something outside the run happens: checks finish, a reviewer approves">Next event</button><button type="button" class="btn btn-sm btn-quiet" id="restart" title="Start again from a new run">Restart</button></span>
+    <label class="pd-check" title="The next confirmed step or suggestion fails, to show how a failure reads"><input type="checkbox" id="fail-next"> Next one fails</label>
+    <label title="What an error nobody planned for looks like">Break <select class="select select-sm" id="break"><option value="">Nothing</option><option value="step">The next step, unexpectedly</option><option value="part">This tab</option><option value="background">Something in the background</option><option value="offline">The connection</option></select></label>
+    <label>Pulse <select class="select select-sm" id="pulse-case"></select></label>
+    <div class="seg" role="group" aria-label="Theme"><button type="button" data-theme-pick="light">Light</button><button type="button" data-theme-pick="dark">Dark</button></div>
+    <p class="mk-note">Other pages keep today's design in the Rail colours. Explorers: <a href="run-page.html">run page cases</a> · <a href="pulse.html">Pulse cases</a> · <a href="components.html">components</a>.</p>
+  </div>
+</details>
+
+<script>(function () { const dark = matchMedia('(prefers-color-scheme: dark)').matches; document.querySelectorAll('[data-theme-pick]').forEach((b) => b.setAttribute('aria-pressed', String((b.dataset.themePick === 'dark') === dark))); })();</script>
+<script src="components.js"></script>
+<script src="today.js"></script>
+<script src="runs/run-page-model.js"></script>
+<script src="pulse/pulse-model.js"></script>
+<script src="settings/settings-model.js"></script>
+<script src="settings/settings.js"></script>
+<script src="shell/shell.js"></script>
+<script src="runs/run-page.js"></script>
+<script src="pulse/pulse.js"></script>
+</body>
+</html>

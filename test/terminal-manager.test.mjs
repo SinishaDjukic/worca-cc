@@ -2,13 +2,14 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, renameSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, renameSync, mkdirSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { TerminalManager, MAX_SESSIONS, REPLAY_CHARS } from '../src/core/terminal/manager.mjs';
 import { listAudit, getBlock, getSession } from '../src/core/terminal/store.mjs';
-import { pidAlive } from '../src/core/terminal/pty.mjs';
+import { pidAlive, winShellPid, parseMsysPs, msysPsFor, msysCommandPids } from '../src/core/terminal/pty.mjs';
+import { shellKind } from '../src/core/terminal/shell.mjs';
 
 useTempHome(after);
 const work = mkdtempSync(join(tmpdir(), 'term-mgr-'));
@@ -22,7 +23,7 @@ const baseEnv = { PATH: process.env.PATH, HOME: work };
 function waitFor(pred, ms = 15000) {
   return new Promise((resolve, reject) => {
     const t0 = Date.now();
-    const tick = () => { const v = pred(); if (v) return resolve(v); if (Date.now() - t0 > ms) return reject(new Error('timed out')); setTimeout(tick, 25); };
+    const tick = async () => { const v = await pred(); if (v) return resolve(v); if (Date.now() - t0 > ms) return reject(new Error('timed out')); setTimeout(tick, 25); };
     tick();
   });
 }
@@ -232,4 +233,73 @@ test('replay segments: output keeps the PTY width it was written at, across resi
   const r = m.replay(s.id);
   assert.equal(r.data, 'a1a2b1b2');
   assert.deepEqual(r.segments, [{ cols: 100, rows: 30, data: 'a1a2' }, { cols: 140, rows: 40, data: 'b1b2' }]);
+});
+
+test('runCommand on a Windows shell without bash: NO_BLOCKS says to install Git for Windows or set WORCA_TERMINAL_SHELL', async () => {
+  const m = new TerminalManager({ platform: 'win32', ptyInfo: () => ({ pty: null }),
+    shell: () => ({ file: 'C:\\Windows\\system32\\cmd.exe', kind: 'other', platform: 'win32' }),
+    spawnImpl: () => ({ pid: null, mode: 'pipes', write() {}, resize() {}, signal() {}, onData() {}, onExit() {} }) });
+  const s = await m.open({ cwd: work, scope: 'run', by: 'ada', baseEnv });
+  await assert.rejects(m.runCommand(s.id, 'ls', { by: 'ask:x' }), (e) => e.code === 'NO_BLOCKS' && /Git for Windows/.test(e.message) && /WORCA_TERMINAL_SHELL/.test(e.message));
+});
+
+test('Windows pid file rows record the shell (the boot reap checks it before killing)', async () => {
+  const file = join(work, 'win-live.json');
+  // kind 'other' and a fake pid: no CIM lookup starts, and this manager is never closed (close would taskkill the pid).
+  const m = new TerminalManager({ platform: 'win32', pidFile: file, ptyInfo: () => ({ pty: null }),
+    shell: () => ({ file: 'C:\\Windows\\system32\\cmd.exe', kind: 'other', platform: 'win32' }),
+    spawnImpl: () => ({ pid: 4242, mode: 'pipes', write() {}, resize() {}, signal() {}, onData() {}, onExit() {} }) });
+  const s = await m.open({ cwd: work, scope: 'run', by: 'ada', baseEnv });
+  assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')).map((r) => [r.pid, r.sessionId, r.shell]), [[4242, s.id, 'C:\\Windows\\system32\\cmd.exe']]);
+});
+
+/** Git Bash, found the way test/file-read-guard.test.mjs finds it; null off Windows or when missing. */
+const GIT_BASH = process.platform === 'win32'
+  ? [process.env.CLAUDE_CODE_GIT_BASH_PATH, 'C:\\Program Files\\Git\\bin\\bash.exe'].find((p) => p && existsSync(p)) || null
+  : null;
+
+test('Windows: Git Bash records Ask\'s commands as blocks, reports C:/ folders; Stop keeps the shell; close leaves no command', { skip: GIT_BASH ? false : 'no Git Bash', timeout: 120_000 }, async () => {
+  const win = new TerminalManager({ ptyInfo: () => ({ pty: null, reason: 'test' }), shell: () => ({ file: GIT_BASH, kind: shellKind(GIT_BASH, 'win32'), platform: 'win32' }) });
+  const got = [];
+  win.on('block', (b) => got.push(b));
+  try {
+    const s = await win.open({ cwd: work, scope: 'project', by: 'ask:x', baseEnv: { ...process.env, HOME: work }, agent: true });
+    assert.equal(s.shellKind, 'bash');
+    // Git Bash's first prompt can take several seconds on a cold start (or under an antivirus scan): wait longer than READY_MS.
+    const { seq } = await win.runCommand(s.id, 'echo hi-win', { by: 'ask:x', cwd: work, readyMs: 30000 });
+    const done = await waitFor(() => got.find((b) => b.sessionId === s.id && b.seq === seq && b.status === 'done'), 30000);
+    assert.equal(done.exitCode, 0);
+    assert.match(getBlock(s.id, seq).output, /hi-win/);
+    assert.match(win.cwdOf(s.id), /^[A-Za-z]:\//, 'the W mark is a Windows path (pwd -W)');
+
+    mkdirSync(join(work, 'sub-win'), { recursive: true });
+    await win.runCommand(s.id, 'cd sub-win', { by: 'ask:x', cwd: work });      // C:/… vs C:\…: sameDir, no MOVED
+    await waitFor(() => win.free(s.id) && /sub-win$/.test(win.cwdOf(s.id) || ''));
+    await assert.rejects(win.runCommand(s.id, 'ls', { by: 'ask:x', cwd: work }), { code: 'MOVED' });
+
+    // Over pipes Windows has no SIGINT: the 3 s escalation ends the command (found in MSYS's table), not the shell.
+    const slow = await win.runCommand(s.id, 'sleep 30', { by: 'ask:x', cwd: win.cwdOf(s.id) });
+    win.interrupt(s.id, 'cy');
+    const stopped = await waitFor(() => got.find((b) => b.sessionId === s.id && b.seq === slow.seq && b.status !== 'running'), 30000);
+    assert.equal(stopped.status, 'stopped');
+    await waitFor(() => win.free(s.id));
+    const again = await win.runCommand(s.id, 'echo alive', { by: 'ask:x', cwd: win.cwdOf(s.id) });
+    await waitFor(() => got.find((b) => b.sessionId === s.id && b.seq === again.seq && b.status === 'done'), 30000);
+
+    // close ends a running command too (taskkill /T on the launcher alone would leave it running). Wait until MSYS
+    // lists the real /usr/bin/sleep (not the short-lived fork stub before it), then take the shell's command pids.
+    await win.runCommand(s.id, 'sleep 60', { by: 'ask:x', cwd: win.cwdOf(s.id) });
+    const ps = msysPsFor(GIT_BASH);
+    assert.ok(ps, `no MSYS ps.exe next to ${GIT_BASH}`);
+    const cmds = await waitFor(async () => {
+      const text = spawnSync(ps, ['-a'], { encoding: 'utf8', windowsHide: true }).stdout || '';
+      if (!/\/usr\/bin\/sleep\s*$/m.test(text)) return null;
+      const list = msysCommandPids(await winShellPid(s.pid), parseMsysPs(text));
+      return list.length ? list : null;
+    }, 30000);
+    assert.ok(cmds.some((p) => pidAlive(p)), 'the command is running before close');
+    await win.close(s.id, 'test');
+    assert.notEqual(win.get(s.id).status, 'running');
+    for (const p of cmds) assert.equal(pidAlive(p), false, `command pid ${p} still running after close`);
+  } finally { await win.closeAll(); }
 });

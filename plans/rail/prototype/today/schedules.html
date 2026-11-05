@@ -1,0 +1,23 @@
+<section class="view" data-view="schedules">
+          <div class="topbar">
+            <div>
+              <div class="sub" id="schedules-sub">0 runs waiting · 0 repeating schedules active</div>
+            </div>
+            <a class="btn btn-primary" href="#new/schedule" id="schedules-new" style="text-decoration:none">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
+              Schedule a run
+            </a>
+          </div>
+          <p id="schedules-msg" class="form-msg" aria-live="polite"></p>
+          <!-- Tabs, the Statistics .seg idiom: #schedules/<tab> routes them (activity | once | repeating). -->
+          <div class="sched-tabs">
+            <div class="tabs" id="schedules-tabs" role="group" aria-label="Schedules">
+              <button type="button" class="tab on" data-tab="activity" aria-pressed="true">Activity</button>
+              <button type="button" class="tab" data-tab="once" aria-pressed="false">Once</button>
+              <button type="button" class="tab" data-tab="repeating" aria-pressed="false">Repeating</button>
+            </div>
+          </div>
+          <section class="card sched-feed sched-pane" id="schedules-feed" data-pane="activity" aria-label="Activity"><div class="card-head sched-feed-head"><h2>Activity</h2><div class="sched-feed-tools"><div class="seg" role="group" aria-label="Filter activity"><button type="button" class="on" aria-pressed="true">All</button><button type="button" class="" aria-pressed="false">Unread</button><button type="button" class="" aria-pressed="false">Problems</button></div><button type="button" class="btn btn-sm" disabled="">Mark all read</button></div></div><p class="empty-line">No activity yet. Missed, failed, skipped and completed scheduled runs show up here.</p></section>
+          <div class="sched-list drows sched-pane" id="schedules-once" data-pane="once" hidden=""><p class="empty-line">No one-off run is waiting. Pick a time with <a href="#new/schedule">Schedule a run</a>, then describe the task. Or use Schedule… next to Start run on New run.</p></div>
+          <div class="sched-list drows sched-pane" id="schedules-repeating" data-pane="repeating" hidden=""><p class="empty-line">No repeating schedule. Pick a time with <a href="#new/schedule">Schedule a run</a> and choose Every day, Weekdays, Weekly or Monthly.</p></div>
+        </section>

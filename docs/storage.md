@@ -150,6 +150,9 @@ project's working tree, so nothing is ever committed to your repo.
   plugins/                              installed plugin checkouts
     .cache/<slug>.tree/<sha>/            without git: a GitHub commit's plugin folders and marketplace file
                                          (the newest three and every installed pin kept; <sha>.meta.json beside it)
+    <name>/data/ticket-updates.json      Ticket updates (Labs): per profile and task source, the projects you work on
+                                         and the rules for a finished run; dropped with its profile, kept by uninstall,
+                                         removed by purge
   agents/                               installed agent registry checkouts
   workflows/                            saved workflow templates
   projects/                             New and Clone from URL projects (the default projects root). Removing a
@@ -168,7 +171,7 @@ Everything that used to be a per-run `.json`/`.md` control file —
 plan/review **markdown**, `prompt.md`, and `extras/` remain on disk (their
 existence is indexed in the database).
 
-### Workflow history and versions (v84)
+### Workflow history and versions (v85)
 
 Behind the experimental flag `workflowTests`; the data is kept either way.
 
@@ -195,7 +198,7 @@ Behind the experimental flag `workflowTests`; the data is kept either way.
   Never a path, a display name, a colour, an icon or the order.
 - A loop's limit is part of the graph: the stored wire keeps it in `config.maxCycles` (with `config.onExhausted`).
 
-### Workflow tests (v85)
+### Workflow tests (v86)
 
 Behind the experimental flag `workflowTests`; the data is kept either way. No foreign keys, like `workflow_revisions`:
 a deleted workflow keeps its examples, and they come back with a workflow saved again under the same id.
@@ -237,9 +240,9 @@ a deleted workflow keeps its examples, and they come back with a workflow saved 
 - `workflow-tests/seen-connectors.json` (worcaHome): the claude.ai connector names Worca saw when a run started, so
   Test a version can name the ones a pretend try switches off.
 
-### Workflow tests on a project (v86)
+### Workflow tests on a project (v87)
 
-Behind the flag `workflowTests`, like v85. FK-free like the v85 tables.
+Behind the flag `workflowTests`, like v86. FK-free like the v86 tables.
 
 - `wf_test_example_projects`: one row per example that works on a project:
   - the project's key and its name when the start was pinned (`project_name`: shown when the project is no longer

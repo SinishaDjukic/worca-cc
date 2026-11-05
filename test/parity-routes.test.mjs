@@ -2,12 +2,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { readFileSync, mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { routesFromStack, fillPath, judgeSignedOut, classOf, request, listRoutes, ROUTE_CLASSES } from '../tools/parity/routes.mjs';
 import { withCatchUpHint } from '../tools/split-by-feature.mjs';
 
+const REPO = new URL('..', import.meta.url).pathname;
 const layer = (path, methods) => ({ route: { path, methods } });
 const listen = (handler) => new Promise((ok) => { const s = createServer(handler).listen(0, '127.0.0.1', () => ok(s)); });
 
@@ -18,17 +19,44 @@ test('routesFromStack dedupes method+path, expands arrays, keeps only /api, sort
     { method: 'GET', path: '/api/a' }, { method: 'GET', path: '/api/b' }, { method: 'POST', path: '/api/run' }]);
 });
 
-test('routesFromStack resolves a nested router with its mount prefix (Express 4 mount regexp)', () => {
-  const sub = { name: 'router', mount: { source: '^\\/api\\/feat\\/?(?=\\/|$)' },
-    handle: { stack: [layer('/items', { get: true }), layer('/items/:id', { delete: true })] } };
-  const root = { name: 'router', mount: { source: '^\\/?(?=\\/|$)', fastSlash: true }, handle: { stack: [layer('/api/z', { get: true })] } };
-  assert.deepEqual(routesFromStack([sub, root]), [
-    { method: 'DELETE', path: '/api/feat/items/:id' }, { method: 'GET', path: '/api/feat/items' }, { method: 'GET', path: '/api/z' }]);
+test('routesFromStack resolves a nested router with its recorded mount path, in normalizePath spelling', () => {
+  const sub = { name: 'router', mount: '/api/feat', stack: [layer('/items', { get: true }), layer('/items/:id', { delete: true }), layer('/f/*splat', { get: true })] };
+  const root = { name: 'router', mount: '/', stack: [layer('/api/z/:p?', { get: true })] };
+  assert.deepEqual(routesFromStack([sub, root]), [{ method: 'DELETE', path: '/api/feat/items/:id' }, { method: 'GET', path: '/api/feat/f/*' },
+    { method: 'GET', path: '/api/feat/items' }, { method: 'GET', path: '/api/z{/:p}' }]);
 });
 
 test('routesFromStack throws on a non-string /api path and on a mount it cannot read back', () => {
   assert.throws(() => routesFromStack([layer({ source: '^\\/api\\/x' }, { get: true })]), /not a string/);
-  assert.throws(() => routesFromStack([{ name: 'router', mount: { source: '^\\/api\\/(?:a|b)\\/?(?=\\/|$)' }, handle: { stack: [] } }]), /mount/);
+  assert.throws(() => routesFromStack([{ name: 'router', mount: '/api/:v', stack: [] }]), /mount path of router "router" \("\/api\/:v"\)/);
+  assert.throws(() => routesFromStack([{ name: 'router', mount: null, stack: [] }]), /mount path/);
+});
+
+// A tree whose node_modules/express is Express 4 (the express4 alias) or 5, with the same routes in each major's syntax.
+function expressTree(t, major) {
+  const root = mkdtempSync(join(tmpdir(), `parity-x${major}-`)); t.after(() => rmSync(root, { recursive: true, force: true }));
+  mkdirSync(join(root, 'ui')); mkdirSync(join(root, 'node_modules'));
+  symlinkSync(join(REPO, 'node_modules', major === 4 ? 'express4' : 'express'), join(root, 'node_modules', 'express'), 'dir');
+  writeFileSync(join(root, 'package.json'), '{"name":"x","type":"module"}');
+  const [star, opt] = major === 4 ? ['*', '/:tab?'] : ['*splat', '{/:tab}'];
+  writeFileSync(join(root, 'ui', 'server.mjs'), `import express from 'express';
+export const app = express();
+const feat = express.Router();
+feat.get('/items/:id', (q, s) => s.end());
+app.use(express.json());
+app.use('/api/feat', feat);
+app.get('/api/runs/:id/raw/${star}', (q, s) => s.end());
+app.get('/api/page${opt}', (q, s) => s.end());
+app.post(['/api/a', '/api/b'], (q, s) => s.end());
+`);
+  return root;
+}
+
+test('listRoutes reads an Express 4 tree and an Express 5 tree to the same list', (t) => {
+  const four = listRoutes({ kind: 'tree', root: expressTree(t, 4) }); const five = listRoutes({ kind: 'tree', root: expressTree(t, 5) });
+  assert.deepEqual(four, [{ method: 'GET', path: '/api/feat/items/:id' }, { method: 'GET', path: '/api/page{/:tab}' },
+    { method: 'GET', path: '/api/runs/:id/raw/*' }, { method: 'POST', path: '/api/a' }, { method: 'POST', path: '/api/b' }]);
+  assert.deepEqual(five, four);
 });
 
 test('fillPath uses seeded ids for GET and the placeholder otherwise', () => {

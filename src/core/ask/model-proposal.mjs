@@ -8,8 +8,8 @@
 //
 // Why a card: the catalog and the providers are machine-wide settings every run spawns with,
 // and a wrong base URL or key breaks every pipeline that names the model. Credentials never
-// pass through here: a key is a ${VAR} reference or nothing, and the Copilot sign-in and its
-// notice stay on the Providers card.
+// pass through here: a key is a ${VAR} reference or nothing, and the Copilot sign-in stays
+// on the Providers card.
 import { modelEnvRef, maskModelEnvValue, isLocalBaseUrl, isTranslatedApi, UPSTREAM_PROVIDERS, effortsForEngine } from '../model-env.mjs';
 
 export const MODEL_CHANGE_KINDS = Object.freeze(['add_model', 'edit_model', 'remove_model', 'provider', 'import_copilot', 'import_endpoint']);
@@ -33,7 +33,7 @@ export const MODEL_ERRORS = Object.freeze({
   secretHeader: (k) => `upstream.headers.${k} looks like a credential — the user sets it in the model editor; use apiKey with a \${VAR} reference instead`,
   provider: `provider must be one of ${UPSTREAM_PROVIDERS.join(', ')}`,
   providerSet: 'provider needs set: {baseUrl?, apiKey?, maxConcurrent?, accountType?}',
-  signIn: (k) => `${k} is not settable here — the Copilot sign-in and its notice happen on the Providers page, by the user`,
+  signIn: (k) => `${k} is not settable here — the Copilot sign-in happens on the Providers page, by the user`,
   noChange: 'nothing changes — the settings already say exactly this',
   importIds: `import_copilot needs ids: 1 to ${MAX_IMPORT} Copilot model ids from list_copilot_models`,
   endpointIds: `import_endpoint needs ids: 1 to ${MAX_IMPORT} model ids from list_endpoint_models`,
@@ -271,7 +271,7 @@ export function createModelChangeValidator(r) {
     if (!UPSTREAM_PROVIDERS.includes(name)) return { ok: false, errors: [MODEL_ERRORS.provider] };
     if (!isObj(input.set) || !Object.keys(input.set).length) return { ok: false, errors: [MODEL_ERRORS.providerSet] };
     const set = { ...input.set };
-    for (const k of ['githubToken', 'acknowledgedTerms', 'termsVersion', 'login']) if (k in set) return { ok: false, errors: [MODEL_ERRORS.signIn(k)] };
+    for (const k of ['githubToken', 'login']) if (k in set) return { ok: false, errors: [MODEL_ERRORS.signIn(k)] };
     if ('apiKey' in set && !isClear(set.apiKey) && !(typeof set.apiKey === 'string' && modelEnvRef(set.apiKey.trim()))) {
       return { ok: false, errors: [MODEL_ERRORS.secretKey(`${name} apiKey`)] };
     }

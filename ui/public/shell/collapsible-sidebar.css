@@ -8,8 +8,8 @@
    closing brace in any comment — ruleBody() stops its capture at the first one
    and both would break the tests. */
 .brand .logo-mark{display:none;width:26px;height:26px;border-radius:var(--r-sm);background:var(--ink);
-  -webkit-mask:url(/assets/worca-mark-mask.png) center/contain no-repeat;-webkit-mask-mode:luminance;
-  mask:url(/assets/worca-mark-mask.png) center/contain no-repeat;mask-mode:luminance;}
+  -webkit-mask:url(/assets/worca-favicon.svg) center/contain no-repeat;
+  mask:url(/assets/worca-favicon.svg) center/contain no-repeat;}
 
 /* 60 - 1px border-right = 59px, and #side-scroll pads 10px a side: a 39px content box
    for the 40px squares. ::-webkit-scrollbar makes the vertical gutter SPACE-CONSUMING

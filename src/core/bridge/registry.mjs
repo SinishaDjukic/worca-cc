@@ -5,7 +5,7 @@
 // bridge (for resolveModelEnv), so nothing under src/core/bridge/ may import
 // config.mjs.
 
-import { listGlobalModels, providerConfig, providerSecretSet, resolveProviderSecret, copilotTermsAcknowledged } from '../settings.mjs';
+import { listGlobalModels, providerConfig, providerSecretSet, resolveProviderSecret } from '../settings.mjs';
 import { listPluginModels } from '../plugin-models.mjs';
 import { policyCatalogModels } from '../policy/cache.mjs';
 import { isLocalBaseUrl, OWN_SIGNIN_ENGINES } from '../model-env.mjs';
@@ -59,25 +59,19 @@ export function findBridgedEntry(id) {
 /**
  * Whether the provider behind `upstream` can be used right now, and if not,
  * why — the "needs sign-in" state the UI and the spawn fail-fast share (§8.5).
- * @returns {{ok:true}|{ok:false, reason:'not_signed_in'|'terms'|'no_key', message:string}}
+ * @returns {{ok:true}|{ok:false, reason:'not_signed_in'|'no_key', message:string}}
  */
 export function providerReadiness(upstream) {
   if (!upstream) return { ok: true };
   const p = upstream.provider;
   // Credential broker: worca holds no provider key or GitHub sign-in. Ready when the model
   // maps to a broker slot (or is a keyless local endpoint); whether the PERSON has a key
-  // is the broker's question, answered per spawn. Copilot's terms stay an install setting.
+  // is the broker's question, answered per spawn.
   if (brokerEnabled()) {
-    if (p === 'copilot' && !copilotTermsAcknowledged()) {
-      return { ok: false, reason: 'terms', message: 'provider copilot: terms not acknowledged — open the Providers page' };
-    }
     const r = routeBridgedUpstream(upstream);
     return r.error ? { ok: false, reason: 'no_key', message: `provider ${p}: ${r.error}` } : { ok: true };
   }
   if (p === 'copilot') {
-    if (!copilotTermsAcknowledged()) {
-      return { ok: false, reason: 'terms', message: 'provider copilot: terms not acknowledged — open the Providers page' };
-    }
     const cfg = providerConfig('copilot');
     if (!resolveProviderSecret(cfg.githubToken)) {
       return { ok: false, reason: 'not_signed_in', message: 'provider copilot: not signed in — run `worca models login copilot` or open the Providers page' };

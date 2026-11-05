@@ -65,6 +65,9 @@
 .plan-finding{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 8px;min-width:0;padding:4px 0;border-top:1px solid var(--line);font-size:12px;color:var(--ink);}
 .plan-finding-fix{flex:1 1 12em;min-width:0;overflow-wrap:anywhere;}
 .plan-finding-section,.plan-finding-status{color:var(--ink-2);}
+/* #990 slice 3: a disputed finding names its status and, on its own line, the sink's reason */
+.plan-finding-status.disputed{color:var(--amber-ink);}
+.plan-finding-reason{flex:1 1 100%;min-width:0;color:var(--ink-2);overflow-wrap:anywhere;}
 .plan-sev{flex:none;padding:0 6px;border-radius:var(--r-xs);font-size:11px;font-weight:600;}
 .plan-sev-critical{background:var(--red-bg);color:var(--red-ink-strong);}
 .plan-sev-major{background:var(--amber-bg);color:var(--amber-ink-strong);}

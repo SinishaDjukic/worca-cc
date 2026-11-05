@@ -53,9 +53,10 @@ import { SUBAGENT_MODELS } from '../model-env.mjs';
 import { AWAIT_PORT } from '../../shared/graph/constants.mjs';
 import { withRecheck } from '../../shared/graph/verdict.mjs';
 import { perspectivesBlock } from '../../shared/shape/perspectives.mjs';
-import { roleBriefBlock, roleItems, houseBriefBlock } from '../../shared/shape/role-review.mjs';
+import { roleChecklistOf, genericRoleBrief, roleTargetOf } from '../../shared/graph/role-review-step.mjs';
 import { reviewChecklistBlock } from '../../shared/shape/review-checklist.mjs';
 import { slicingBlock, outlineFeedbackBlock, FLAT_NOTE, sliceScopeBlock } from '../../shared/shape/slices.mjs';
+import { planConcernBlock, planConcernOverrideBlock } from '../../shared/review/plan-concern.mjs';
 import { runScriptExecution } from './script-runner.mjs';
 // Skills registry §4.1: the CLI's refusal of `--plugin-dir` under managed `disableSideloadFlags` (P3's one regex).
 import { SIDELOAD_REFUSAL_RE as SIDELOAD_REFUSED_RE } from '../skills-registry/host.mjs';
@@ -529,7 +530,7 @@ function decompositionContractBlock(expandsPort, runCtx) {
 /** The MOCK marker set for this execution, per the resolution chain. Only markers
  *  `runMock` reads are emitted (MOCK_ROLE, MOCK_CYCLE, MOCK_BASE, MOCK_OUT, MOCK_JSON,
  *  MOCK_IN, MOCK_PRIOR, MOCK_TASKS_DIR). */
-function markersFor({ role, ordinal, runCtx, outputs, verdict, bindings, ports, expandsPort, priorCount, perspective, planText }) {
+function markersFor({ role, ordinal, runCtx, outputs, verdict, bindings, ports, expandsPort, priorCount, perspective, planText, roleSpec, planConcernFile }) {
   const markers = { MOCK_ROLE: role, MOCK_CYCLE: ordinal, MOCK_BASE: runCtx.baseName };
   if (role === MOCK_ROLE_CLARIFY) {
     markers.MOCK_OUT = outputs[answersPortOf(ports)?.id]?.path;
@@ -553,9 +554,19 @@ function markersFor({ role, ordinal, runCtx, outputs, verdict, bindings, ports, 
   // Role reviews (spec §3): the reviewer's role and its plan items; the refiner's merged findings. Empty values are
   // skipped by mockMarkers, so every other prompt is unchanged.
   markers.MOCK_PERSPECTIVE = perspective || '';
-  markers.MOCK_CHECKLIST = perspective ? roleItems(perspective, planText || '').map((i) => i.id).join(',') : '';
+  markers.MOCK_CHECKLIST = perspective ? (roleChecklistOf(roleSpec)?.items(perspective, planText || '') || []).join(',') : '';
   markers.MOCK_FINDINGS = bindings.findings?.path || '';
+  // #990 s5: the implementer's plan-concern file, only when one is offered, so every other prompt is unchanged.
+  if (planConcernFile) markers.MOCK_PLAN_CONCERN = planConcernFile;
   return markers;
+}
+
+/** The brief of one role slice: its checklist provider's, else the generic one. */
+function roleBriefFor(ctx) {
+  const spec = ctx.roleSpec;
+  const provider = roleChecklistOf(spec);
+  if (provider) return provider.brief(ctx.role, ctx.rolePlanText || '', { houseBrief: ctx.houseBrief });
+  return genericRoleBrief(spec.roles.find((r) => r.key === ctx.role) || { key: ctx.role, label: ctx.role }, spec.target);
 }
 
 /**
@@ -598,11 +609,14 @@ export function buildAgentPrompt(ctx) {
   // Spec D7: the approved plan's R-… items, set by the orchestrator for a shaped run's reviewer only. Driven by the
   // list, never by ctx.shape, so every unshaped and shaped-without-items prompt stays byte-identical.
   const checklist = reviewChecklistBlock(ctx.checklistItems);
+  // #990 s5: set by the orchestrator only for an implementer below a plan approval stop, so every other prompt stays
+  // byte-identical.
+  const concernFile = ctx.planConcern?.file || '';
+  const concern = planConcernBlock(concernFile) + planConcernOverrideBlock(ctx.planConcernOverride);
   const title = meta.displayName || node?.key || node?.id || 'agent';
-  // Spec §3: a role reviewer's prompt carries ITS role brief only (ctx.role is set per composite slice).
-  const roleBrief = ctx.role ? roleBriefBlock(ctx.role, ctx.rolePlanText || '') : '';
-  // Slice 3: the house brief rides on the Project fit reviewer only (houseBriefBlock is '' for any other role).
-  const houseBrief = ctx.role ? houseBriefBlock(ctx.role, ctx.houseBrief) : '';
+  // Spec §3: a role reviewer's prompt carries ITS role brief only (ctx.role is set per composite slice); a provider's
+  // brief carries the house brief for the role that wants it.
+  const roleBrief = ctx.role ? roleBriefFor(ctx) : '';
   // The siblings block is for implementer tasks sharing a tree; other reviewers are not shown (spec §3).
   const siblings = ctx.slice && !ctx.role ? siblingsBlock(ctx.slice.siblings) : '';
   const answersBlock = (ports.inputs || []).some((p) => p?.as === 'answers')
@@ -617,9 +631,9 @@ export function buildAgentPrompt(ctx) {
     (hints ? hints + '\n\n' : '') +
     perspectives +
     roleBrief +
-    houseBrief +
     sliceScope +
     slicing +
+    concern +
     modeBlock(selectMode({ ports, bindings, freshPorts: trigger.freshPorts })) +
     fanOutDirective(ctxFanOut(ctx), { omitProjectAgents: relative, subagentModel: ctxSubagentModel(ctx), endpointRouted: routed, investigator: !!ctxSubagentEffort(ctx), engine: node?.engine, personalOff: ctx?.pluginsOff === true }) +
     workspaceFanOutDirective(meta.workspaceStrategy, ctx.workspace, { relative, endpointRouted: routed, serial: node?.noSubagents === true }) +
@@ -633,7 +647,8 @@ export function buildAgentPrompt(ctx) {
       ordinal, runCtx, outputs, verdict, bindings, ports,
       expandsPort,
       priorCount: (ctx.priorAnswers || []).length,
-      perspective: ctx.role || null, planText: ctx.rolePlanText,
+      perspective: ctx.role || null, planText: ctx.rolePlanText, roleSpec: ctx.role ? ctx.roleSpec : null,
+      planConcernFile: concernFile,
     }))
   );
 }
@@ -687,7 +702,8 @@ async function prepare(ctx) {
   const expandsPort = ctx.expandsPort !== undefined
     ? ctx.expandsPort
     : (ctx.template && ctx.portsFn ? expandsOutputPort(ctx.template, ctx.portsFn, node.id) : null);
-  const mockRole = resolveMockRole({ meta, expandsPort });
+  // Every role slice is mocked as an independent role reviewer of its target, whatever agent key its node has.
+  const mockRole = ctx.role ? roleTargetOf(ctx.roleSpec).mockRole : resolveMockRole({ meta, expandsPort });
   const priorAnswers = Array.isArray(ctx.priorAnswers)
     ? ctx.priorAnswers
     : await readPriorAnswers(ports, ctx.bindings);

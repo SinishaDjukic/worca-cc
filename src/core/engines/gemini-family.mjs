@@ -251,15 +251,19 @@ export function withEnvRefs(servers, names) {
 
 // ── spawn ────────────────────────────────────────────────────────────────────
 
-/** The store project folders (`<worca home>/store/<project>`) that hold any of `dirs`. */
+/** The store project/workspace folders (`<worca home>/store/<project>` or `<worca home>/store/workspaces/<workspace>`) that hold any of `dirs`. */
 export function storeProjectDirs(dirs, home = worcaHome()) {
   const store = resolve(home, 'store');
   const out = [];
   for (const d of dirs) {
+    if (!d) continue;
     const rel = relative(store, resolve(d));
     if (!rel || rel.startsWith('..') || isAbsolute(rel)) continue;
-    const p = join(store, rel.split(sep)[0]);
-    if (!out.includes(p)) out.push(p);
+    const parts = rel.split(sep);
+    const p = parts[0] === 'workspaces'
+      ? (parts[1] ? join(store, 'workspaces', parts[1]) : null)
+      : join(store, parts[0]);
+    if (p && !out.includes(p)) out.push(p);
   }
   return out;
 }

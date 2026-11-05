@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Independent review gates, engine-first (#990)
+
+- Engine role-review step, model per role, Shaper plan review moved onto it: Both cycle-1 blockers are fixed and tested.
+- No silent fallbacks, picks per role in the Shaper card, diversity default: The cycle 1 major issue is fixed.
+- Finding dispositions and structured review counts: The diff implements the plan's contracts and invariants.
+- Code role reviews on Shaper's review node, by configuration: The cycle-2 critical is fixed.
+- plan_concern pauses at the plan approval gate: The cycle-1 major is fixed.
+- Review-quality API from structured counts: The diff implements the plan as specified: a pure counts-only aggregation module, a COALESCE-kept pipelines.review_stats column with no version bump, the reviewQuality reader and the guarded route, the parity row, the docs, and a real mock-run seeded-defect test.
+- Cleanup: drop dead paths, keep old-data readers: The diff implements D1, D3-D8 exactly as planned and keeps every old-data reader (K1-K9).
+
+### One Node: 24 for the image, CI and releases
+
+- The Docker image moves from Node 22 to Node 24 (`node:24-bookworm-slim`). `.nvmrc` names Node 24, and every CI job, the release build and the image follow it; CI's fast tests also run the exact floor (22.19.0) and the newest LTS (26). The supported range for an npm install is unchanged: Node 22.19.0 or newer.
+
 ### Node 22.19 or newer
 
 - Worca now needs Node 22.19.0 or newer (was 22.13.0): undici 8, which routes fetch() through `HTTP(S)_PROXY`, needs it. On an older Node the CLI says so and exits; `nvm use` picks up the bundled `.nvmrc`.

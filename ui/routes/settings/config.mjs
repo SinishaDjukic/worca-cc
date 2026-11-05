@@ -116,7 +116,7 @@ app.patch('/api/config', async (req, res) => {
         await setNodeModel(projectDir, workflowId, nodeId, {
           model: sel && sel.model, effort: sel && sel.effort,
           fanOut: sel && sel.fanOut, askQuestions: sel && sel.askQuestions,
-          subagentModel: sel && sel.subagentModel,
+          subagentModel: sel && sel.subagentModel, roles: sel ? sel.roles : undefined,
         });
       }
     }

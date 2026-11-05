@@ -27,7 +27,8 @@ don't cherry-pick commits, skills, or docs across them.
 Requirements:
 
 - **Node.js >= 22.19.0** — required by the built-in `node:sqlite` store and undici 8. Run
-  `nvm use` to pick up the bundled `.nvmrc`.
+  `nvm use` to pick up the bundled `.nvmrc` (Node 24): CI, the release and the Docker image all run
+  that major, and CI's fast tests also run the exact floor and the newest LTS.
 - The **`claude` CLI** on your `PATH` — only for real (non-mock) pipeline runs.
   Everything else, including the full test suite, works without it.
 
@@ -44,7 +45,7 @@ are `express` + `ws` only.
 Run from source:
 
 ```bash
-npm start                                 # web UI (default http://localhost:4317)
+npm start                                 # web UI (default http://127.0.0.1:4317)
 npm run cli -- ui stop                    # stop it (also: status | restart | --port <n>)
 npm run cli -- --project <dir> --prompt "<task>"   # CLI pipeline run
 ```

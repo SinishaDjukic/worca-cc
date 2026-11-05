@@ -6,8 +6,10 @@ import { readFile, access } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   listAllPipelines, lookupPipelineRow, findPipelineRowById, totalsFor, readStoreMeta, runDirForRow, readMemoryLedger,
-  listRunArtifacts, readRunProgress, resolveIndexedArtifactForRow,
+  listRunArtifacts, readRunProgress, resolveIndexedArtifactForRow, listRunPrIndex, readPrState, readMemberPrStates,
 } from '../artifacts.mjs';
+import { parsePrRef, prRefMatches } from '../forge.mjs';
+import { watchFixRuns, watchFixRunOf } from '../pr-watch.mjs';
 import { DIFF_PATCH_FILE } from '../results.mjs';
 import { GUARDRAIL_PRESETS } from '../guardrails.mjs';
 import { buildCatalog } from './catalog.mjs';
@@ -99,6 +101,14 @@ export function defaultToolDeps({ threadId, viewer = null }) {
     defaultGuardrailsId: defaultGuardrailSetId,
     listPresets: () => listPresets({ owner: typeof viewer === 'string' && viewer ? viewer : null }),
     listPeople,
+    // PR lookups (list_runs pr, get_run pr): the parsers and the bulk / per-run readers, injected so tools.mjs stays import-free.
+    parsePrRef,
+    prRefMatches,
+    runPrIndex: () => ({ prs: listRunPrIndex(), fixes: watchFixRuns() }),
+    readRunPrs: (row) => {
+      const p = readPrState(row.id);
+      return { pr: p ? { url: p.url, number: p.number, state: p.state } : null, members: readMemberPrStates(row.id), fixesPrUrl: watchFixRunOf(row.id) };
+    },
     readRunActions,
     buildCatalog,
     listAllPipelines,

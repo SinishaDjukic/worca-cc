@@ -1197,7 +1197,8 @@
       "css": [
         "^Plugins view",
         "^Plugin provenance",
-        "^marketplace P"
+        "^marketplace P",
+        "^marketplace ticket updates"
       ],
       "html": [
         "<!-- ===== VIEW: MARKETPLACE",

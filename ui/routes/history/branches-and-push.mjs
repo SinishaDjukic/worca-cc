@@ -112,7 +112,8 @@ app.get('/api/branches', async (req, res) => {
   }
 });
 
-// CONTRACT §0: is git usable here, re-probed at most once a minute (U4: installing git needs no restart).
+// CONTRACT §0: is git usable here, re-probed at most once a minute (U4: installing git needs no restart). A stale
+// "available" is answered at once and re-probed in the background; a stale "missing" waits for the (fast) probe.
 // A flip broadcasts the `git` frame through onGitChange.
 app.get('/api/git', async (_req, res) => {
   const s = await gitState({ maxAgeMs: 60_000 });
