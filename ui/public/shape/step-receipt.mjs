@@ -6,6 +6,7 @@ import { applyOutlineEdits } from '../../../src/shared/shape/slices.mjs';
 import { askKindOf } from '../ask/registry.mjs';
 import { clarifyText, planApprovedText, splitText, gateText, NOT_SPLIT_TEXT } from '../../../src/shared/shape/feature-log.mjs';
 import { planApprovedLine } from '../log-line.mjs';
+import { isRequirementsAsk } from './step-card.mjs';
 
 const NAMED = new Map();          // `${runId}|${questionId}` → { text, answers }
 const NAMED_MAX = 200;
@@ -20,6 +21,10 @@ export function stepReceipt(pq, payload, { shaping = false } = {}) {
   if (kind === 'recovery') return d === 'retry' ? 'Retried' : d === 'abort' ? 'Aborted' : 'Paused';
   if (kind === 'plan') {
     const plan = pq.plan || {};
+    if (isRequirementsAsk(pq)) {
+      return d === 'approve' ? 'Requirements agreed' : d === 'stop' ? 'Stopped at the requirements'
+        : d === 'retry' ? 'Tried again' : 'Changes asked · Requirements';
+    }
     if (plan.outline) {
       if (d === 'approve') {
         const r = applyOutlineEdits(plan.outline, Array.isArray(p.edits) ? p.edits : []);

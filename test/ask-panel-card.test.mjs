@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import { makePanel } from './helpers/ask-panel-harness.mjs';
 import { stampFrames } from './helpers/ask-frames.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { _resetAnswerer } from '../ui/public/answerer.mjs';
 
 const TID = 'ask_00000001';
 const MID = 'askm_00000001';
@@ -117,6 +118,7 @@ function apiHandler(recorder = {}) {
 async function openWithCard(card, recorder = {}, overrides = {}) {
   const ctx = makePanel({ fetchHandler: apiHandler(recorder), ...overrides });
   if (overrides.git) ctx.doc.documentElement.dataset.git = overrides.git;
+  if (overrides.flags) ctx.doc.documentElement.dataset.flags = overrides.flags;
   ctx.storage.setItem('worca-cc.ask.thread', TID);
   ctx.panel.open();
   await ctx.tick(); await ctx.tick(); await ctx.tick();
@@ -2641,6 +2643,107 @@ test('ask-panel-card: per-role Agents rows on a role-review node', async () => {
       assert.equal(lane.querySelectorAll('.ask-rp-role').length, 0);
       await start(ctx);
       assert.equal(JSON.stringify(rec.runBodies[0].overlay || {}).includes('roles'), false);
+    }),
+  ]);
+});
+
+// Requirements first (shapeRequirements on): a medium or large nudge shows Shape requirements (primary) and Run as is (quiet);
+// the first time, Shape requirements is aria-disabled and described by "You lead as" until a lead is picked.
+const REQ_NUDGE = { ...NUDGE, perspectives: ['architect', 'qa'] };
+const answererApi = (rec, { lead = null, putFails = false } = {}) => {
+  const base = apiHandler(rec);
+  return (url, opts) => {
+    if (url !== '/api/answerer') return base(url, opts);
+    if ((opts.method || 'GET').toUpperCase() === 'PUT') {
+      rec.puts = [...(rec.puts || []), JSON.parse(opts.body)];
+      return putFails ? { ok: false, status: 500, json: async () => ({ error: { message: 'disk full' } }) } : { ok: true, status: 200, json: async () => JSON.parse(opts.body) };
+    }
+    return { ok: true, status: 200, json: async () => ({ lead }) };
+  };
+};
+const openRequirements = async (nudge, rec, answerer) => {
+  _resetAnswerer();
+  const ctx = await openWithCard({ ...PROJECT_CARD, nudge }, rec, { fetchHandler: answererApi(rec, answerer), flags: 'shapeRequirements' });
+  for (let i = 0; i < 4; i++) await ctx.tick();
+  ctx.flush();
+  return ctx;
+};
+const settle = async (ctx) => { for (let i = 0; i < 8; i++) await ctx.tick(); };
+
+test('ask-panel-card: shapeRequirements on, large nudge, first time', async () => {
+  await checkRows([
+    shapeRow('Shape requirements is the one primary, aria-disabled and described by "You lead as"; a click posts nothing', async () => {
+      const rec = {};
+      const ctx = await openRequirements(REQ_NUDGE, rec, { lead: null });
+      const cardEl = ctx.doc.querySelector('.ask-card');
+      const shapeBtn = cardEl.querySelector('[data-ask-card-shape]');
+      const startBtn = cardEl.querySelector('[data-ask-card-start]');
+      assert.equal(shapeBtn.textContent, 'Shape requirements');
+      assert.ok(shapeBtn.classList.contains('btn-primary'));
+      assert.ok(startBtn.classList.contains('btn-quiet') && !startBtn.classList.contains('btn-primary'));
+      assert.equal(startLabel(startBtn), 'Run as is');
+      assert.equal(cardEl.querySelector('.shape-choice'), null);
+      assert.equal(shapeBtn.getAttribute('aria-disabled'), 'true');
+      assert.equal(ctx.doc.getElementById(shapeBtn.getAttribute('aria-describedby')).textContent, 'You lead as');
+      shapeBtn.click();
+      await settle(ctx);
+      assert.equal(rec.runBodies, undefined, 'blocked: nothing was started');
+    }),
+    shapeRow('picking a lead enables it; the click saves it once and starts with shape.lead', async () => {
+      const rec = {};
+      const ctx = await openRequirements(REQ_NUDGE, rec, { lead: null });
+      const cardEl = ctx.doc.querySelector('.ask-card');
+      cardEl.querySelector('.spick-b').click();
+      const items = [...ctx.doc.querySelectorAll('.wfv-menu [role="menuitemradio"]')];
+      items[1].click();
+      const shapeBtn = cardEl.querySelector('[data-ask-card-shape]');
+      assert.equal(shapeBtn.hasAttribute('aria-disabled'), false);
+      assert.equal(shapeBtn.hasAttribute('aria-describedby'), false);
+      assert.equal(rec.puts, undefined, 'a pick alone does not save');
+      shapeBtn.click();
+      await settle(ctx);
+      assert.deepEqual(rec.puts, [{ lead: 'architect' }]);
+      assert.equal(rec.runBodies[0].workflowId, 'wf_shape');
+      assert.deepEqual(rec.runBodies[0].shape, { lead: 'architect', perspectives: ['product', 'architect', 'qa'], size: 'large' });
+    }),
+    shapeRow('a saved lead needs no pick and no save; Run as is posts neither shape nor lead', async () => {
+      const rec = {};
+      const ctx = await openRequirements(REQ_NUDGE, rec, { lead: 'qa' });
+      const cardEl = ctx.doc.querySelector('.ask-card');
+      const shapeBtn = cardEl.querySelector('[data-ask-card-shape]');
+      assert.equal(shapeBtn.hasAttribute('aria-disabled'), false);
+      shapeBtn.click();
+      await settle(ctx);
+      assert.equal(rec.puts, undefined);
+      assert.equal(rec.runBodies[0].shape.lead, 'qa');
+      cardEl.querySelector('[data-ask-card-start]').click();
+      await settle(ctx);
+      assert.equal(rec.runBodies[1].workflowId, 'wf_default');
+      assert.equal('shape' in rec.runBodies[1], false);
+    }),
+    shapeRow('a failing save shows the error toast and the run still starts', async () => {
+      const rec = {};
+      const ctx = await openRequirements(REQ_NUDGE, rec, { lead: null, putFails: true });
+      const cardEl = ctx.doc.querySelector('.ask-card');
+      cardEl.querySelector('.spick-b').click();
+      [...ctx.doc.querySelectorAll('.wfv-menu [role="menuitemradio"]')][3].click();
+      cardEl.querySelector('[data-ask-card-shape]').click();
+      await settle(ctx);
+      assert.equal(rec.runBodies.length, 1);
+      assert.match(ctx.doc.querySelector('.toast.err .tt')?.textContent ?? '', /Could not save your lead role\. It is used for this run only\./);
+    }),
+    shapeRow('a small nudge keeps Shaper and Run as is (btn-primary), with the facts line', async () => {
+      const rec = {};
+      const ctx = await openRequirements({ ...REQ_NUDGE, size: 'small' }, rec, { lead: 'qa' });
+      const cardEl = ctx.doc.querySelector('.ask-card');
+      const shapeBtn = cardEl.querySelector('[data-ask-card-shape]');
+      const startBtn = cardEl.querySelector('[data-ask-card-start]');
+      assert.equal(shapeBtn.textContent, 'Shaper');
+      assert.ok(!shapeBtn.classList.contains('btn-primary'));
+      assert.ok(startBtn.classList.contains('btn-primary'));
+      assert.equal(startLabel(startBtn), 'Run as is');
+      assert.ok(cardEl.querySelector('.shape-facts'));
+      assert.ok(cardEl.querySelector('.shape-chips'));
     }),
   ]);
 });

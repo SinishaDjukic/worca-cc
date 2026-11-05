@@ -608,3 +608,80 @@ test('a requirement concern: its head and what line, and each id once in the car
     assert.equal($('.plan-approve').textContent.includes('Approve'), true, 'the buttons do not change');
   }
 });
+
+// Requirements first: the plan ask carries `coverage` (which agreed requirements a step delivers).
+const COVERED = (n) => Array.from({ length: n }, (_, i) => ({ id: `R-po-${i + 1}`, label: `R-po-${i + 1} · covered by Step ${i + 1}`, pass: true }));
+const UNCOVERED = { id: 'R-ops-1', label: 'R-ops-1 · not covered by any step', detail: 'Turning the flag off removes the export', pass: false };
+const COVERAGE = { ok: false, passed: 7, total: 8, items: [...COVERED(7), UNCOVERED] };
+const COVERAGE_OK = { ok: true, passed: 8, total: 8, items: COVERED(8) };
+const SHAPE_OK = { ...CHECK, ok: true, passed: 2, items: [CHECK.items[0], { ...CHECK.items[1], pass: true, detail: undefined }] };
+const lines = ($) => [...$('.plan-body').querySelectorAll('.plan-check-line')];
+const foot = ($) => [...$('.plan-actions').children].map((b) => b.textContent || b.getAttribute('aria-label'));
+
+test('U11: coverage shows a Requirements fold above Shape, open when a row fails, with the criterion text and "not covered by any step"', () => {
+  const { $, $$ } = setup({ pq: ask({ coverage: COVERAGE }) });
+  const lines = $$('.plan-check-line');
+  assert.deepEqual(lines.map((l) => l.querySelector('.plan-fold-text').textContent), ['Requirements 7/8 · 1 to fix', 'Shape 2/3 · 1 to fix']);
+  assert.equal(lines[0].getAttribute('aria-expanded'), 'true');
+  assert.equal(lines[0].nextElementSibling.hidden, false);
+  assert.equal(lines[1].getAttribute('aria-expanded'), 'false');
+  const bad = $$('.plan-check-row').find((r) => r.querySelector('.plan-check-label').textContent.startsWith('R-ops-1'));
+  assert.equal(bad.querySelector('.plan-check-label').textContent, 'R-ops-1 · Turning the flag off removes the export');
+  assert.equal(bad.querySelector('.plan-check-detail').textContent, 'not covered by any step');
+  assert.equal($$('.plan-check-row')[0].querySelector('.plan-check-label').textContent, 'R-po-1 · covered by Step 1');
+  const closed = setup({ pq: ask({ coverage: COVERAGE_OK, check: SHAPE_OK }) });
+  assert.equal(closed.$('.plan-check-line').getAttribute('aria-expanded'), 'false');
+  assert.equal(closed.$('.plan-check-line .plan-fold-text').textContent, 'Requirements 8/8');
+  const bare = setup({ pq: ask({ coverage: { ...COVERAGE, items: [{ ...UNCOVERED, detail: '' }] , passed: 0, total: 1 } }) });
+  assert.equal(bare.$$('.plan-check-label')[0].textContent, 'R-ops-1 · not covered by any step', 'an empty detail keeps the engine label');
+});
+
+test('R-ux-5: with a failing row Fix all is the foot\'s only primary and is not in ⋯; Approve is a plain btn; "Still to fix" stays shape-only', () => {
+  const { $, $$, calls } = setup({ pq: ask({ coverage: COVERAGE }) });
+  assert.deepEqual(foot($), ['Ask for changes', 'Full plan', 'Fix all', 'Approve and build', 'More for this plan']);
+  assert.deepEqual($$('.btn-primary').map((b) => b.textContent), ['Fix all']);
+  assert.equal($('.plan-approve').classList.contains('btn-primary'), false);
+  assert.equal($('.plan-approve').classList.contains('btn'), true);
+  assert.ok(!menu($).labels.includes('Fix all'));
+  assert.doesNotMatch($('.plan-unmet').textContent, /R-ops-1/);
+  $('.plan-approve').click();
+  assert.deepEqual(calls.submit, [{ decision: 'approve' }], 'Approve still approves');
+});
+
+test('U11: Fix all asks for the shape rows, then the raw uncovered rows', () => {
+  const { $, calls } = setup({ pq: ask({ coverage: COVERAGE }) });
+  $('.plan-fix-primary').click();
+  assert.deepEqual(calls.submit, [{ decision: 'revise', feedback: fixAllFeedback([...CHECK.items, UNCOVERED]) }]);
+});
+
+test('R-ux-5: a failing shape row alone (coverage all covered) also makes Fix all the primary', () => {
+  const { $ } = setup({ pq: ask({ coverage: COVERAGE_OK }) });
+  assert.deepEqual(primaries($), ['Fix all']);
+  assert.ok(!menu($).labels.includes('Fix all'));
+});
+const primaries = ($) => [...$('.plan-actions').querySelectorAll('.btn-primary')].map((b) => b.textContent);
+
+test('R-ux-5: all rows pass → Approve is the primary and there is no Fix all', () => {
+  const { $ } = setup({ pq: ask({ coverage: COVERAGE_OK, check: SHAPE_OK }) });
+  assert.deepEqual(primaries($), ['Approve and build']);
+  assert.equal($('.plan-fix-primary'), null);
+  assert.ok(!menu($).labels.includes('Fix all'));
+});
+
+test('R-ux-5: not revisable and a failing row → no primary and no Fix all', () => {
+  const { $ } = setup({ pq: ask({ coverage: COVERAGE, revisable: false }) });
+  assert.deepEqual(primaries($), []);
+  assert.equal($('.plan-fix-primary'), null);
+  assert.ok(!menu($).labels.includes('Fix all'));
+});
+
+test('U11 scope: with no coverage and a failing shape row the foot is today\'s (Approve primary, Fix all only in ⋯)', () => {
+  const { $ } = setup();
+  assert.deepEqual(foot($), ['Ask for changes', 'Full plan', 'Approve and build', 'More for this plan']);
+  assert.deepEqual(primaries($), ['Approve and build']);
+  assert.equal(lines($).length, 1);
+  assert.ok(menu($).labels.includes('Fix all'));
+  const empty = setup({ pq: ask({ coverage: { ok: true, passed: 0, total: 0, items: [] } }) });
+  assert.equal(lines(empty.$).length, 1, 'a coverage with no items draws nothing');
+  assert.deepEqual(primaries(empty.$), ['Approve and build']);
+});

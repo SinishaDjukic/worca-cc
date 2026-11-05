@@ -31,6 +31,7 @@ import { levelAtLeast } from '../ui-level.mjs';
 import { featureCardModel, paintFeatureLog } from '../shape/feature-card.mjs';
 import { namedAnswer, forgetAnswer } from '../shape/step-receipt.mjs';
 import { renderChecklistGroups } from '../shape/checklist-view.mjs';
+import { checkLine, roundCheck } from '../shape/plan-text.mjs';
 import { paintFeatureActions } from '../shape/feature-actions.mjs';
 import { renderAskChanges } from './ask-changes.mjs';
 import { roundsModel, liveRound } from './rounds.mjs';
@@ -972,7 +973,10 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     const sh = s && s.shaping;
     if (!fm && sh && sh.approved) {           // D15: a feature card's step log says it
       const name = String(sh.approved.file || '').split(/[\\/]/).pop();
-      shapedEl.replaceChildren(h('span', 'chat-rc-shaped-stages', 'Clarify ✓ · Plan ✓ · Refine ✓ while planning'),
+      const covered = (Array.isArray(sh.rounds) ? sh.rounds : []).filter((r) => roundCheck(r && r.coverage)).pop();   // the last round with counts
+      // a run that agreed its requirements first never had a Clarify
+      shapedEl.replaceChildren(h('span', 'chat-rc-shaped-stages', covered ? `${checkLine(roundCheck(covered.coverage), 'Requirements')} · Plan ✓ · Refine ✓ while planning`
+        : 'Clarify ✓ · Plan ✓ · Refine ✓ while planning'),
         h('span', 'chat-rc-shaped-plan', `Plan: ${name}`));
       if (sh.savedTo) {
         const open = button('chat-rc-shaped-open');

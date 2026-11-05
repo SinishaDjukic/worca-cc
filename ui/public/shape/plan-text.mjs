@@ -81,6 +81,23 @@ export function checkLine(check, name = 'Shape') {
   return n ? `${score} · ${n} to fix` : score;
 }
 
+/** A shaping round's coverage counts `{ passed, total }` as a check for `checkLine`: `total - passed` failing rows. */
+export function roundCheck(cov) {
+  if (!cov || !Number.isInteger(cov.passed) || !Number.isInteger(cov.total) || cov.total < 1 || cov.total < cov.passed) return null;
+  return { passed: cov.passed, total: cov.total,
+    items: Array.from({ length: cov.total }, (_, i) => ({ id: `r${i + 1}`, label: `r${i + 1}`, pass: i < cov.passed })) };
+}
+
+/** The engine's coverage (`R-ops-1 · not covered by any step`, detail = the criterion text) as the card draws it: an
+ *  uncovered row reads `R-ops-1 · <the criterion>` with the reason as its detail; a covered row keeps the engine's label. */
+export function displayCoverage(cov) {
+  const items = (cov && Array.isArray(cov.items) ? cov.items : []).map((it) => {
+    if (it.pass || !it.detail) return it;
+    return { ...it, label: `${it.id} · ${it.detail}`, detail: 'not covered by any step' };
+  });
+  return { ...cov, items };
+}
+
 /** "Still to fix: missing sections, no test plan" — under the buttons when the check fails (D32). */
 export function unmetLine(check) {
   const bad = failing(check);
