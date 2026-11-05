@@ -5,8 +5,9 @@
 import { test, before, after, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm, readFile } from 'node:fs/promises';
+import { mkdirSync, readFileSync, writeFileSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname, basename } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { gitDir } from './helpers/git-dir.mjs';
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
@@ -17,6 +18,8 @@ import { runClaude } from '../src/core/claude-runner.mjs';
 import { buildGraphManifest } from '../src/shared/graph/manifest.mjs';
 import { loadAgentRegistry } from '../src/core/agent-registry.mjs';
 import { GRAPH_SHAPE_WORKFLOW, GRAPH_DEFAULT_WORKFLOW } from '../src/core/graph/builtin-workflows.mjs';
+import { DEFAULT_PERSPECTIVES } from '../src/shared/shape/perspectives.mjs';
+import { roundCounts } from '../src/shared/review/findings.mjs';
 
 useTempHome(after);
 
@@ -65,6 +68,8 @@ function start(opts = {}, onPlan = (q, orch) => orch.answer(q.id, { decision: 'a
 }
 const shells = (execs, nodeId, status = 'start') => execs.filter((e) => e.nodeId === nodeId && e.kind !== 'task' && e.status === status);
 const slices = (execs, status = 'start') => execs.filter((e) => e.nodeId === 'n_roles' && e.kind === 'task' && e.status === status);
+/** The plan role rounds (n_roles); Shaper's Review appends its own code rounds (n_review) since #990 slice 4. */
+const planRounds = (orch) => orch.state.roleReviews.rounds.filter((r) => r.node === 'n_roles');
 const auditOf = (orch) => getDb().prepare('SELECT text FROM pipeline_events WHERE pipeline_id = ?').all(orch.getState().id).map((r) => r.text);
 
 test('1-3 one round: 3 parallel reviewers, each with only its own brief; Refine runs once on all their findings', async () => {
@@ -107,8 +112,7 @@ test('1-3 one round: 3 parallel reviewers, each with only its own brief; Refine 
   assert.equal(h.plans.length, 1);
 
   // 7. state + reviews rows
-  const rr = h.orch.state.roleReviews;
-  assert.deepEqual(rr.rounds.map((r) => [r.pass, r.round]), [[1, 1]]);
+  assert.deepEqual(planRounds(h.orch).map((r) => [r.pass, r.round]), [[1, 1]]);
   const kinds = getDb().prepare('SELECT kind FROM reviews WHERE pipeline_id = ?').all(h.orch.getState().id).map((r) => r.kind);
   for (const k of ['role-product', 'role-ux', 'role-qa']) assert.ok(kinds.includes(k), `${k} in ${kinds}`);
 });
@@ -124,10 +128,10 @@ test('4-5 a round-1 critical earns round 2, which starts only the blocked role; 
   assert.deepEqual(round2.map((e) => e.title), ['UX'], 'product and qa make 0 agent calls in round 2');
   assert.equal(h.asks.filter((a) => a.kind === 'gate').length, 0);
   assert.equal(h.plans.length, 1);
-  const rr = h.orch.state.roleReviews;
-  assert.deepEqual(rr.rounds.map((r) => [r.pass, r.round]), [[1, 1], [1, 2]]);
-  assert.deepEqual(rr.rounds[1].roles.filter((r) => r.skipped).map((r) => r.key), ['product', 'qa']);
-  assert.equal(rr.rounds[0].roles.find((r) => r.key === 'ux').findings[0].status, 'fixed', 'the mock refiner addressed it');
+  const rounds = planRounds(h.orch);
+  assert.deepEqual(rounds.map((r) => [r.pass, r.round]), [[1, 1], [1, 2]]);
+  assert.deepEqual(rounds[1].roles.filter((r) => r.skipped).map((r) => r.key), ['product', 'qa']);
+  assert.equal(rounds[0].roles.find((r) => r.key === 'ux').findings[0].status, 'fixed', 'the mock refiner addressed it');
 });
 
 test('6 critical in both rounds: exactly 2 rounds, then the approval with a forced token and the open issues', async () => {
@@ -162,8 +166,7 @@ test('8 pause while round 2\'s slice runs: the resume keeps round 1 and re-runs 
   const res = await h2.done;
   assert.equal(res.status, 'done', res.error);
   assert.deepEqual(slices(h2.execs).map((e) => e.title), ['UX']);
-  const rr = h2.orch.state.roleReviews;
-  assert.deepEqual(rr.rounds.map((r) => [r.pass, r.round]), [[1, 1], [1, 2]]);
+  assert.deepEqual(planRounds(h2.orch).map((r) => [r.pass, r.round]), [[1, 1], [1, 2]]);
   assert.equal(h2.plans.length, 1);
 });
 
@@ -185,7 +188,180 @@ test('9 Ask for changes: the Planner re-runs, then a new pass reviews it at roun
   const idx = (e) => h.execs.indexOf(e);
   const lastDone = Math.max(...slices(h.execs, 'done').filter((e) => e.executionId.startsWith('x:n_roles:3:')).map(idx));
   assert.ok(idx(shells(h.execs, 'n_refine')[2]) > lastDone, 'Refine waits for the new pass');
-  assert.deepEqual(h.orch.state.roleReviews.rounds.map((r) => [r.pass, r.round]), [[1, 1], [1, 2], [2, 1]]);
+  assert.deepEqual(planRounds(h.orch).map((r) => [r.pass, r.round]), [[1, 1], [1, 2], [2, 1]]);
+});
+
+// Parity (engine role-review step): a no-picks Shaper run is recorded before the move and must not drift after it.
+// Regenerate deliberately with UPDATE_ROLE_PARITY=1 and review the diff.
+const PARITY_FILE = join(import.meta.dirname, 'fixtures', 'role-review', 'shaper-parity.json');
+const ADDITIVE = ['model', 'effort', 'wanted'];
+
+/** Every run-specific part of a string as a placeholder: the temp homes, the run id, the store key and the date. */
+function parityNormalizer(orch, dir) {
+  const pipeDir = orch.pipeline.dir;
+  const storeDir = dirname(dirname(pipeDir));
+  const pairs = [];
+  for (const [p, name] of [[pipeDir, '$PIPE'], [storeDir, '$STORE'], [process.env.WORCA_HOME, '$WH'], [dir, '$PROJ']]) {
+    for (const v of new Set([p, realpathSync(p)])) pairs.push([v, name]);
+  }
+  pairs.sort((a, b) => b[0].length - a[0].length);
+  const id = orch.getState().id;
+  const key = basename(storeDir);
+  return (s) => {
+    let t = String(s);
+    for (const [v, name] of pairs) t = t.split(v).join(name);
+    return t.split(id).join('$RUN').split(key).join('$KEY').replace(/\b\d\d-\d\d-\d\d-/g, '$TS-');
+  };
+}
+const sortKeys = (v) => (Array.isArray(v) ? v.map(sortKeys)
+  : v && typeof v === 'object' ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, sortKeys(v[k])])) : v);
+
+/** One no-picks Shaper mock run, captured: every n_roles slice prompt, the role reviews, each findings file, and each
+ *  Refine's plan/findings bindings and prompt. Additive record keys come back apart in `pairs`. */
+async function captureParity(table) {
+  if (table) severities(table); else delete process.env.WORCA_MOCK_ROLE_REVIEW;
+  const prompts = [];
+  _testing.runClaude = (o) => { prompts.push(o.prompt); return runClaude(o); };
+  const h = start();
+  const res = await h.done;
+  assert.equal(res.status, 'done', res.error);
+  const norm = parityNormalizer(h.orch, h.dir);
+  const marker = (p, k) => (new RegExp(`^${k}: (.*)$`, 'm').exec(p) || [])[1] || '';
+  // Scoped to n_roles: Shaper's Review (n_review) runs code role reviews on the diff since #990 slice 4.
+  const slicePrompts = prompts.filter((p) => marker(p, 'MOCK_PERSPECTIVE') && marker(p, 'MOCK_ROLE') === 'plan-review')
+    .sort((a, b) => (marker(a, 'MOCK_CYCLE') + marker(a, 'MOCK_PERSPECTIVE')).localeCompare(marker(b, 'MOCK_CYCLE') + marker(b, 'MOCK_PERSPECTIVE')))
+    .map(norm);
+  const refinePrompts = prompts.filter((p) => marker(p, 'MOCK_ROLE') === 'refiner').map(norm);
+  const refines = h.orch._graphSnapshot.execs.filter((e) => e.nodeId === 'n_refine').sort((a, b) => a.ordinal - b.ordinal);
+  const pairs = [];
+  const rounds = h.orch.state.roleReviews.rounds.filter((r) => (r.node ?? 'n_roles') === 'n_roles').map(({ node, target, ...r }) => ({
+    ...r,
+    roles: r.roles.map((rec) => {
+      const kept = { ...rec };
+      for (const k of ADDITIVE) delete kept[k];
+      pairs.push({ key: rec.key, pair: Object.fromEntries(ADDITIVE.filter((k) => k in rec).map((k) => [k, rec[k]])) });
+      return kept;
+    }),
+  }));
+  const capture = {
+    slicePrompts,
+    roleReviews: JSON.parse(norm(JSON.stringify(sortKeys({ rounds })))),
+    findings: await Promise.all(refines.map(async (e) => norm(await readFile(e.bindings.findings.path, 'utf8')))),
+    refine: refines.map((e) => ({ plan: norm(e.bindings.plan.path), findings: norm(e.bindings.findings.path) })),
+    refinePrompts,
+  };
+  return { capture, pairs };
+}
+
+test('parity: a no-picks Shaper mock run matches the recorded fixture', async () => {
+  const scenarios = { oneRound: null, twoRounds: { ux: { 1: 'critical' } } };
+  const actual = {};
+  const pairs = [];
+  for (const [name, table] of Object.entries(scenarios)) {
+    const a = await captureParity(table);
+    if (process.env.UPDATE_ROLE_PARITY === '1') {
+      // Two captures in a row must be byte-identical before the fixture is ever written.
+      const b = await captureParity(table);
+      assert.equal(JSON.stringify(b.capture), JSON.stringify(a.capture), `${name}: the capture is not deterministic`);
+    }
+    actual[name] = a.capture;
+    pairs.push(...a.pairs);
+  }
+  const text = `${JSON.stringify(actual, null, 2)}\n`;
+  if (process.env.UPDATE_ROLE_PARITY === '1') {
+    mkdirSync(dirname(PARITY_FILE), { recursive: true });
+    writeFileSync(PARITY_FILE, text, 'utf8');
+    return;
+  }
+  assert.deepEqual(actual, JSON.parse(readFileSync(PARITY_FILE, 'utf8')),
+    'drifted from test/fixtures/role-review/shaper-parity.json. If the change is deliberate, review the diff and regenerate with UPDATE_ROLE_PARITY=1.');
+  // The additive keys: every record names the pair its slice ran on (n_roles's own pair, Product's diversity pick), none dropped.
+  const reviewed = pairs.filter((p) => Object.keys(p.pair).length);
+  assert.ok(reviewed.length >= 4, 'every reviewed record carries its pair');
+  for (const p of reviewed) {
+    assert.deepEqual(p.pair, p.key === 'product' ? { model: 'claude-opus-5-5', effort: 'medium' } : { model: 'claude-sonnet-5-5', effort: 'medium' }, p.key);
+  }
+});
+
+test('Shaper review: three code role records against the diff; the implementer\'s fix carries their merged findings', async () => {
+  severities({ security: { 1: 'major' } });
+  const prompts = [];
+  _testing.runClaude = (o) => { prompts.push(o.prompt); return runClaude(o); };
+  const h = start();
+  const res = await h.done;
+  assert.equal(res.status, 'done', res.error);
+  const code = h.orch.state.roleReviews.rounds.filter((r) => r.node === 'n_review');
+  assert.deepEqual(code.map((r) => [r.pass, r.round, r.target]), [[1, 1, 'diff'], [1, 2, 'diff']]);
+  assert.deepEqual(code[0].roles.map((r) => r.key), ['correctness', 'security', 'fit']);
+  assert.deepEqual(code[1].roles.map((r) => [r.key, r.skipped]), [['correctness', true], ['security', false], ['fit', true]], 'fix cycles review the open role only');
+  const plan = h.orch.state.roleReviews.rounds.filter((r) => r.node === 'n_roles');
+  assert.ok(plan.length >= 1 && plan.every((r) => r.target === 'plan'), 'the plan rounds keep their own node');
+  const fix = h.orch._graphSnapshot.execs.filter((e) => e.nodeId === 'n_impl' && e.bindings.fix).map((e) => e.bindings.fix.path);
+  assert.equal(fix.length, 1);
+  assert.equal(code[0].dispositions, fix[0].replace(/\.md$/, '-dispositions.json'), 'the fix is round 1\'s findings file');
+  const md = await readFile(fix[0], 'utf8');
+  // Spec D7: the plan's unmet R-item is judged once, on the merged verdict, and reaches the implementer here.
+  assert.deepEqual([...md.matchAll(/^## (.+)$/gm)].map((m) => m[1]),
+    ['Correctness', 'Security', 'Project fit', 'Dispositions', 'Perspective checklist (added by Worca)']);
+  assert.match(md, /^- \*\*\[major\]\*\* R-\w+-1 not met: /m);
+  assert.match(md, /^Diff reviewed against the plan: /m);
+  const codePrompts = prompts.filter((p) => /^MOCK_ROLE: code-review$/m.test(p));
+  assert.equal(codePrompts.length, 4, '3 roles in round 1, security alone in round 2');
+  for (const p of codePrompts) assert.doesNotMatch(p, /house brief|`R-fit/, 'no plan checklist or house brief for a code role');
+  assert.equal(h.orch.state.progressFacts.reviews.n_review.blocking, 0);
+});
+
+test('an old roleReview:true run resumes and reads its records', async () => {
+  severities({ ux: { 1: 'critical' } });
+  const dir = gitDir('roles-legacy');
+  const h = start({ projectDir: dir });
+  await waitFor(() => slices(h.execs).some((e) => e.executionId.startsWith('x:n_roles:2:')));
+  h.orch.pause();
+  assert.equal((await h.done).status, 'paused');
+  const saved = readPipelineForResume(h.orch.getState().id);
+  // As a run saved before the engine step: the legacy `true` on the cell, no per-role picks, records without a pair.
+  const cell = saved.resumePoint.manifest.graph.nodes.find((n) => n.id === 'n_roles');
+  cell.config = { ...cell.config, roleReview: true };
+  delete cell.roles;
+  // ...and before slice 4: a plain Review, rounds that name no node or target.
+  saved.resumePoint.manifest.graph.nodes.find((n) => n.id === 'n_review').config = {};
+  // ...and before slice 3: no counts, no dispositions path, statuses that came from the refiner's `addressed` list.
+  const r1 = saved.resumePoint.roleReviews.rounds[0];
+  for (const r of r1.roles) { delete r.model; delete r.effort; delete r.wanted; delete r.counts; }
+  delete r1.counts; delete r1.dispositions; delete r1.node; delete r1.target;
+  const old = JSON.parse(JSON.stringify(r1.roles));
+
+  const h2 = start({ projectDir: dir, resume: saved, shape: undefined });
+  const res = await h2.done;
+  assert.equal(res.status, 'done', res.error);
+  assert.deepEqual(slices(h2.execs).map((e) => e.title), ['UX'], 'it continues at round 2');
+  const rr = h2.orch.state.roleReviews;
+  assert.deepEqual(rr.rounds.map((r) => [r.pass, r.round]), [[1, 1], [1, 2]]);
+  assert.deepEqual(rr.rounds[0].roles, old, 'the old records read unchanged');
+  assert.deepEqual([rr.rounds[1].roles.find((r) => r.key === 'ux').model, rr.rounds[1].roles.find((r) => r.key === 'ux').effort],
+    ['claude-sonnet-5-5', 'medium'], 'the new round records the node\'s pair');
+  assert.equal('counts' in rr.rounds[0], false, 'nothing rewrites the old round');
+  assert.deepEqual(roundCounts(rr.rounds[0]), { raised: 3, fixed: 3, disputed: 0, open: 0 }, 'an old resume point reads with derived counts');
+  assert.deepEqual(rr.rounds[1].counts, roundCounts(rr.rounds[1]), 'the new round stores its counts');
+});
+
+test('a refiner verdict carrying only `addressed`, with no dispositions file, marks those ids fixed', async () => {
+  // A refiner that follows its unchanged directive and ignores the findings' ## Dispositions section.
+  _testing.runClaude = async (o) => {
+    const out = await runClaude(o);
+    const findings = /^MOCK_FINDINGS: (.+)$/m.exec(o.prompt)?.[1];
+    if (/^MOCK_ROLE: refiner$/m.test(o.prompt) && findings) {
+      await rm(/^Dispositions file: (.+)$/m.exec(await readFile(findings, 'utf8'))[1], { force: true });
+    }
+    return out;
+  };
+  const h = start();
+  const res = await h.done;
+  assert.equal(res.status, 'done', res.error);
+  const round = h.orch.state.roleReviews.rounds[0];
+  assert.deepEqual(round.roles.flatMap((r) => r.findings.map((f) => f.status)), ['fixed', 'fixed', 'fixed']);
+  assert.deepEqual(round.counts, { raised: 3, fixed: 3, disputed: 0, open: 0 });
+  assert.ok(auditOf(h.orch).some((t) => /^Role findings, round 1: the dispositions file .* was not written/.test(t)));
 });
 
 test('10 an old manifest (refiner self-loop) resumes with its own topology', async () => {
@@ -209,4 +385,35 @@ test('10 an old manifest (refiner self-loop) resumes with its own topology', asy
   assert.equal(res.status, 'done', res.error);
   assert.equal(h2.execs.filter((e) => e.nodeId === 'n_roles').length, 0);
   assert.equal(shells(h2.execs, 'n_refine').length, 2, 'the old self-loop: the mock refiner blocks once');
+});
+
+test('diversity default: a no-picks run on the default perspectives runs exactly one plan role (Product) on another model; no Devil\'s advocate', async () => {
+  const h = start({ shape: { perspectives: [...DEFAULT_PERSPECTIVES] } });
+  const res = await h.done;
+  assert.equal(res.status, 'done', res.error);
+  const roles = h.orch.state.roleReviews.rounds[0].roles;
+  assert.deepEqual(Object.fromEntries(roles.map((r) => [r.key, [r.model, r.effort]])), {
+    product: ['claude-opus-5-5', 'medium'], architect: ['claude-sonnet-5-5', 'medium'], qa: ['claude-sonnet-5-5', 'medium'],
+  });
+  assert.equal(roles.filter((r) => r.model !== h.orch.resolved.nodeCtx.n_roles.model).length, 1, 'exactly one role differs');
+  assert.equal(h.orch.state.roleReviews.rounds.flatMap((r) => r.roles).some((r) => r.key === 'devil'), false, 'no devil record');
+  assert.deepEqual(h.orch.getState().warnings.filter((w) => w.includes(' is not on ')), [], 'a Claude run drops nothing');
+});
+
+test('no silent fallbacks: a Codex run names a dropped Security pick once; the built-in template drops stay quiet', async () => {
+  const h = start({
+    claude: { mock: true, engine: 'codex' }, guardrailsId: 'permissive', shape: { perspectives: ['product', 'security'] },
+    overlay: { nodes: { n_roles: { roles: { security: { model: 'claude-opus-5-5' } } } } },
+  });
+  const res = await h.done;
+  assert.equal(res.status, 'done', res.error);
+  const line = "Plan Review · Security: claude-opus-5-5 is not on Codex, runs the node's model";
+  const warnings = h.orch.getState().warnings;
+  assert.equal(warnings.filter((w) => w === line).length, 1, warnings.join('\n'));
+  assert.deepEqual(warnings.filter((w) => w.startsWith('Plan Review')), [line], 'the node\'s sonnet and Product\'s opus are built-in defaults: recorded, not warned');
+  const roles = h.orch.resolved.nodeCtx.n_roles.roles;
+  assert.deepEqual(roles.security, { source: 'run', wanted: { model: 'claude-opus-5-5' } }, 'the role record keeps the pick');
+  assert.deepEqual(roles.product.wanted, { model: 'claude-opus-5-5', effort: 'medium' }, 'the diversity pick is recorded as wanted');
+  assert.deepEqual(h.orch.resolved.nodeCtx.n_roles.wanted, { model: 'claude-sonnet-5-5', effort: 'medium', source: 'template' });
+  assert.equal(auditOf(h.orch).filter((t) => t === `${line}.`).length, 1, 'one audit line');
 });

@@ -16,7 +16,7 @@ export const HOME_TAB_KEY = 'worca-cc.chat.homeTab';
 export const RECENT_CHATS_MAX = 6;
 export const WORKFLOWS_MAX = 12;
 /** The server's built-ins (ui/server.mjs GET /api/workflows; library.mjs RESERVED). */
-export const BUILTIN_WORKFLOW_IDS = Object.freeze(['wf_default', 'wf_memory_defrag']);
+export const BUILTIN_WORKFLOW_IDS = Object.freeze(['wf_default', 'wf_lean_build', 'wf_memory_defrag']);
 const PANEL_ID = 'chat-home-panel';
 /** The screen-reader words for the three dots (worca Chat P1): Replying, Needs you, Following a run. */
 const DOT_TEXT = Object.freeze({ think: 'Replying', wait: 'Needs you', live: 'Following a run' });

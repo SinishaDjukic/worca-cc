@@ -1,13 +1,14 @@
 // ui/public/bridge-view.mjs
 // Pure DOM renderers for the model bridge (model-bridge-design.md §8): the
 // Providers card, the Copilot sign-in block, the Import-from-Copilot sheet,
-// the editor's Connection section, the terms notice text, and the card
+// the editor's Connection section, and the card
 // badges. Same contract as models-view.mjs: every function takes `doc` via
 // opts and returns DETACHED elements; app.js owns endpoint calls, mounting
 // and the delegated listeners. Interactive elements carry a routing class
 // (mv-cp-*, mv-pv-*, mvi-*, mv-conn-*) plus data-provider / data-id.
 
 import { icon } from './icons.mjs';
+import { copyButton, copyFromButton } from './copy-button.mjs';
 import { makeSwitch } from './switch.mjs';
 import { codexReaches, runsOnText } from '../../src/shared/connections.mjs';
 import { SIGN_IN_ENGINE_NAMES } from '../../src/shared/engine-switch.mjs';
@@ -61,19 +62,6 @@ function stashReasoningEfforts(conn, upstream) {
 }
 export const CAPABILITY_FLAGS = [['toolCalls', 'Tool calls'], ['vision', 'Vision'], ['reasoning', 'Reasoning']];
 
-/** The notice every Copilot sign-in must acknowledge (§8.2). One source of truth: the UI modal and the CLI print it. */
-export const COPILOT_TERMS = Object.freeze({
-  title: 'Using GitHub Copilot from Worca',
-  body: [
-    "Worca will talk to GitHub Copilot through the same API GitHub's editor extensions use, identifying itself as an editor client. GitHub's terms allow Copilot only through supported clients, and GitHub has suspended Copilot access for automated or unsupported use. Pipelines are automated, high-volume use.",
-    '• Your GitHub account, not Worca, carries this risk.',
-    '• Worca caps concurrent requests (configurable) and never signs in without you.',
-    '• Premium-request quotas apply per your plan; Worca shows usage but cannot enforce it.',
-  ].join('\n\n'),
-  checkbox: 'I understand and want to continue',
-  confirm: 'Continue',
-});
-
 /** One-line degradation copy for a translated (openai-chat / openai-responses) model, '' otherwise (§8.5). */
 export function degradationLine(m) {
   // A Codex model is not translated: codex speaks the endpoint's Responses API itself.
@@ -106,7 +94,7 @@ export function bridgedBadge(m, { doc = globalThis.document } = {}) {
 export function needsSignInPill(m, { doc = globalThis.document } = {}) {
   if (!m || !m.needsSignIn) return null;
   const wrap = h(doc, 'span', 'mv-needs-signin');
-  const b = h(doc, 'span', 'badge red mv-needs-signin-badge', m.signInReason === 'terms' ? 'needs acknowledgement' : m.signInReason === 'no_key' ? 'needs API key' : 'needs sign-in');
+  const b = h(doc, 'span', 'badge red mv-needs-signin-badge', m.signInReason === 'no_key' ? 'needs API key' : 'needs sign-in');
   b.title = m.signInMessage || 'The provider behind this model is not usable yet.';
   wrap.appendChild(b);
   const btn = h(doc, 'button', 'btn mv-signin', m.signInReason === 'no_key' ? 'Set key' : 'Sign in');
@@ -119,14 +107,6 @@ export function needsSignInPill(m, { doc = globalThis.document } = {}) {
 // ── Providers card (§8.1) ────────────────────────────────────────────────────
 
 function providerStatePill(doc, c) {
-  if (!c.termsCurrent) {
-    // What unblocks sign-in, in the "Read notice" button's own words — and it opens that notice.
-    const pill = h(doc, 'button', 'btn btn-sm btn-quiet mv-cp-terms mv-cp-terms-pill',
-      c.acknowledgedTerms ? 'please re-read the updated notice' : 'please read the notice first');
-    pill.type = 'button';
-    pill.title = 'Sign-in is blocked until you acknowledge the GitHub Copilot notice. Click to read it.';
-    return pill;
-  }
   if (!c.connected) return h(doc, 'span', 'badge grey', 'not connected');
   return h(doc, 'span', 'badge green', `connected${c.login ? ` as @${c.login}` : ''}`);
 }
@@ -312,7 +292,7 @@ function renderSpeechRow(doc, sp) {
  */
 export function renderProvidersCard(providers, { doc = globalThis.document, signIn = null, split = false } = {}) {
   const p = providers || {};
-  const c = p.copilot || { connected: false, termsCurrent: false, accountType: 'individual', maxConcurrent: 4 };
+  const c = p.copilot || { connected: false, accountType: 'individual', maxConcurrent: 4 };
   // On the Providers page the card holds one divided row per provider (docs/design-system.md ›
   // Cards versus divided rows); inside the Models view (the old home) it is the headed card. Either
   // way the rows keep their shape, so every flow that finds .mv-pv-row[data-provider] is unaffected.
@@ -325,7 +305,7 @@ export function renderProvidersCard(providers, { doc = globalThis.document, sign
       "Providers let Worca run models that don't speak the Anthropic API. Worca runs them through its own in-process bridge. Sign in or set a key once; then import or add models on the Models page and pick them anywhere a model is picked."));
   }
   // Credential broker: keys and the Copilot sign-in are per person, on the broker's key page.
-  // This card keeps the shared settings (base URLs, concurrency, the Copilot notice, imports);
+  // This card keeps the shared settings (base URLs, concurrency, imports);
   // its key fields, sign-in and key test are hidden (style.css .mv-providers--broker).
   if (p.broker && p.broker.enabled) {
     root.classList.add('mv-providers--broker');
@@ -352,13 +332,11 @@ export function renderProvidersCard(providers, { doc = globalThis.document, sign
   const cpHead = h(doc, 'div', 'mv-head');
   cpHead.appendChild(h(doc, 'b', 'mv-name', 'GitHub Copilot'));
   const brokered = !!(p.broker && p.broker.enabled);
-  // The notice gates Copilot models either way; past it, the broker's view of your sign-in.
-  cpHead.appendChild(brokered && c.termsCurrent ? brokerPill(doc, p.broker, 'copilot') : providerStatePill(doc, c));
+  // With the broker, the broker's view of your sign-in.
+  cpHead.appendChild(brokered ? brokerPill(doc, p.broker, 'copilot') : providerStatePill(doc, c));
   cpMain.appendChild(cpHead);
   cpMain.appendChild(h(doc, 'small', 'hint',
-    c.acknowledgedTerms
-      ? `Notice acknowledged on ${String(c.acknowledgedTerms).slice(0, 10)}${c.termsCurrent ? '' : ' (the wording changed, please re-read)'}. Claude models run through Copilot's native Anthropic endpoint (thinking intact); other vendors run through a translation layer.`
-      : 'Uses your Copilot subscription for GPT, Gemini, Grok and Claude models. Sign in reads the GitHub notice first.'));
+    "Uses your Copilot subscription for GPT, Gemini, Grok and Claude models. Claude models run through Copilot's native Anthropic endpoint (thinking intact); other vendors run through a translation layer."));
   if (c.tokenSource === 'env') cpMain.appendChild(h(doc, 'small', 'hint', `Token read from your shell env (${c.tokenRef}).`));
   const flow = h(doc, 'div', 'mv-cp-flow');
   if (signIn) flow.appendChild(renderCopilotSignIn(signIn, { doc }));
@@ -403,9 +381,6 @@ export function renderProvidersCard(providers, { doc = globalThis.document, sign
     inBtn.type = 'button';
     cpBtns.appendChild(inBtn);
   }
-  const terms = h(doc, 'button', 'btn mv-cp-terms', c.acknowledgedTerms ? 'Re-read notice' : 'Read notice');
-  terms.type = 'button';
-  cpBtns.appendChild(terms);
   cp.appendChild(cpBtns);
   place(cp);
 
@@ -538,48 +513,30 @@ export function collectSpeechRow(rootEl) {
   return body;
 }
 
-/** The device-flow block: the code in large type, copy, the link, a live status line, cancel (§8.1). */
-export const COPY_DONE_MS = 2000;
-/** The pre-Clipboard-API copy: browsers hide navigator.clipboard on plain http away from localhost (a LAN address). */
-function copyByCommand(doc, text) {
-  const ta = doc.createElement('textarea');
-  ta.value = text; ta.setAttribute('readonly', ''); ta.style.position = 'fixed'; ta.style.opacity = '0';
-  doc.body.append(ta); ta.select();
-  let ok = false;
-  try { ok = doc.execCommand?.('copy') === true; } catch { ok = false; }
-  ta.remove();
-  return ok;
-}
-/** Copy code: the app's copy-button pattern (copy icon, a green tick and "Copied" once done, as the branch copy
- *  buttons). It copies by itself, so the box works wherever it is mounted (Providers, the setup assistant). */
-function copyCodeButton(doc, code) {
-  const b = h(doc, 'button', 'btn mv-cp-copy');
-  b.type = 'button'; b.dataset.code = code;
-  const label = h(doc, 'span', 'mv-cp-copy-label', 'Copy code');
-  b.append(icon(doc, 'copy', 14, 'ic ico-copy'), icon(doc, 'check', 14, 'ic ico-check'), label);
-  let timer = null;
+/** The code is its own copy button (copy-button.mjs: the code as the label, then a green tick and "Copied"), the one
+ *  step of the box. It copies by itself, so the box works wherever it is mounted (Providers, the setup assistant).
+ *  A failure stays in the box's status line: a button's text cannot be selected, so it says to type the code. */
+function copyCodeButton(doc, code, status) {
+  const b = copyButton(doc, { name: `Copy code ${code}`, label: code, title: 'Copy code', cls: 'mv-cp-copy' });
+  b.querySelector('.copy-btn-text').classList.add('mv-cp-code');
+  b.dataset.code = code;
   b.addEventListener('click', async () => {
-    const win = doc.defaultView;
-    let ok = false;
-    try { await win.navigator.clipboard.writeText(code); ok = true; } catch { ok = copyByCommand(doc, code); }   // no API: plain http on another host
-    b.classList.toggle('copied', ok);
-    label.textContent = ok ? 'Copied' : 'Copy failed: select the code';
-    win.clearTimeout(timer);
-    timer = win.setTimeout(() => { b.classList.remove('copied'); label.textContent = 'Copy code'; }, COPY_DONE_MS);
+    if (await copyFromButton(b, code, { empty: 'No code yet' })) return;
+    status.textContent = code ? `Could not copy the code. Type ${code} on GitHub instead.` : 'No code yet.';
+    status.classList.add('err');
   });
   return b;
 }
 
-// In the order it is used: the code and Copy as one group, then Open (the primary step); below, the wait (a spinner
-// while it lasts) with Cancel on the same line. Every control is the same 32px tall, the code included.
+// In the order it is used: the code (its own copy button), then Open (the primary step); below, the wait (a spinner
+// while it lasts) with Cancel on the same line.
 export function renderCopilotSignIn(flow, { doc = globalThis.document } = {}) {
   const box = h(doc, 'div', 'mv-cp-signin-box');
   box.appendChild(h(doc, 'small', 'hint', 'Copy this code, then enter it on GitHub to connect your Copilot account.'));
+  const status = h(doc, 'small', `hint mv-cp-status${flow.error ? ' err' : ''}`, flow.error || flow.status || 'Waiting for approval…');
+  status.setAttribute('role', 'status');
   const codeRow = h(doc, 'div', 'mv-cp-code-row');
-  const group = h(doc, 'div', 'mv-cp-code-group');
-  group.appendChild(h(doc, 'code', 'mv-cp-code', flow.userCode || ''));
-  group.appendChild(copyCodeButton(doc, flow.userCode || ''));
-  codeRow.appendChild(group);
+  codeRow.appendChild(copyCodeButton(doc, flow.userCode || '', status));
   const link = h(doc, 'a', 'btn btn-primary mv-cp-open', 'Open github.com/login/device');
   link.href = flow.verificationUri || 'https://github.com/login/device';
   link.target = '_blank'; link.rel = 'noopener';
@@ -588,8 +545,6 @@ export function renderCopilotSignIn(flow, { doc = globalThis.document } = {}) {
   const foot = h(doc, 'div', 'mv-cp-foot');
   const wait = h(doc, 'div', 'mv-cp-wait');
   if (!flow.error) { const spin = h(doc, 'span', 'mk-phase-spin'); spin.setAttribute('aria-hidden', 'true'); wait.appendChild(spin); }
-  const status = h(doc, 'small', `hint mv-cp-status${flow.error ? ' err' : ''}`, flow.error || flow.status || 'Waiting for approval…');
-  status.setAttribute('role', 'status');
   wait.appendChild(status);
   const cancel = h(doc, 'button', 'btn btn-quiet mv-cp-cancel', flow.error ? 'Dismiss' : 'Cancel');
   cancel.type = 'button';

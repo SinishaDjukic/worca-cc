@@ -1,0 +1,8 @@
+/* ---------- Budget readout (Settings) ---------- */
+/* Section gap before the limit fields (the disclaimer hint that used to sit
+   here moved into the card heading's ⓘ tooltip). */
+.budget-readout{margin-bottom:24px;}
+.budget-readout .spend-ind-meter{max-width:420px;}
+.budget-readout-line{font-size:13px;color:var(--ink-2);margin-top:8px;}
+.budget-readout-line b{font-family:var(--mono);font-weight:600;color:var(--ink);}
+

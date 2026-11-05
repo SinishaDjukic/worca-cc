@@ -7,8 +7,9 @@ import { randomBytes } from 'node:crypto';
 import { mkdirSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { MarkerParser } from './markers.mjs';
-import { pickShell, shellLaunch, ensureZshDir } from './shell.mjs';
-import { spawnTerminal, loadPty, killDescendants, descendantPids, signalPids, signalDescendants } from './pty.mjs';
+import { pickShell, shellLaunch, ensureZshDir, noBlocksMessage } from './shell.mjs';
+import { spawnTerminal, loadPty, killDescendants, descendantPids, signalPids, signalDescendants,
+  killTree, winShellPid, killWinCommands } from './pty.mjs';
 import { terminalEnv } from './context.mjs';
 import * as store from './store.mjs';
 import { sameDir } from './same-dir.mjs';
@@ -21,6 +22,7 @@ const FLUSH_MS = 16;
 const FLUSH_CHARS = 64 * 1024;                  // flush early once this much output is pending
 const STOP_ESCALATE_MS = 3000;
 const CLOSE_GRACE_MS = 1000;
+const WIN_SHELL_WAIT_MS = 5000;                 // Windows close: how long to wait for Git Bash's real-shell lookup
 const FOLDER_CHECK_MS = 5000;
 const ENDED_KEEP = 20;                          // ended sessions kept in memory (their replay); the DB keeps all
 const READY_MS = 5000;                          // runCommand: a fresh shell's first prompt
@@ -108,17 +110,19 @@ export class TerminalManager extends EventEmitter {
         runLive: !!runLive, folder: 'ok', commands: 0, ...size },   // cols/rows: the PTY's size, so a replay is drawn at the width it was written for
       proc, parser: new MarkerParser({ nonce }), chunks: [], chunkChars: 0, seq: 0, pendingOut: '', flushTimer: null,
       block: null, blockSeq: 0, lastInputBy: by, cwdNow: cwd, ino, stopTimer: null, closing: null, exitWaiters: [],
-      atPrompt: false, pendingRun: null, readyWaiters: [], startWaiters: [],   // runCommand (#574)
+      atPrompt: false, pendingRun: null, readyWaiters: [], startWaiters: [], winShellLookup: null,   // runCommand (#574)
     };
     try {
       store.insertSession(s.snap);
     } catch (e) {
       // No row means no record of what runs here, and nothing would ever end it: do not leave the shell.
-      if (proc.pid) killDescendants(proc.pid, this.platform);
+      if (proc.pid) { if (this.platform === 'win32') killTree(proc.pid); else killDescendants(proc.pid, this.platform); }
       proc.signal('SIGKILL');
       throw e;
     }
     this.sessions.set(id, s);
+    // Windows: Git Bash's real shell (under the bin\bash.exe launcher), found once in the background (CIM takes 1-2 s).
+    if (this.platform === 'win32' && shell.kind === 'bash' && proc.pid) this._winShell(s).catch(() => {});
     store.recordAudit({ sessionId: id, runId, actor: by, action: 'open', detail: cwd, now: at });
     proc.onData((d) => this._onData(s, d));
     proc.onExit((e) => this._onExit(s, e));
@@ -174,7 +178,7 @@ export class TerminalManager extends EventEmitter {
   async runCommand(id, command, { by, source = 'ask', cwd = null, readyMs = READY_MS, ackMs = ACK_MS } = {}) {
     const s = this.sessions.get(id);
     if (!s || s.snap.status !== 'running') throw codeError('NO_SESSION', 'That terminal is not running.');
-    if (s.snap.shellKind === 'other') throw codeError('NO_BLOCKS', 'This shell does not record commands (bash or zsh is needed).');
+    if (s.snap.shellKind === 'other') throw codeError('NO_BLOCKS', noBlocksMessage(this.platform));
     if (s.block || s.pendingRun) throw codeError('BUSY', 'A command is already running in this terminal.');
     if (!s.atPrompt) await this._waitFor(s.readyWaiters, readyMs, 'NO_BLOCKS', 'The shell did not reach its prompt.');
     if (s.block || s.pendingRun) throw codeError('BUSY', 'A command is already running in this terminal.');
@@ -207,13 +211,18 @@ export class TerminalManager extends EventEmitter {
     const b = s.block;
     if (b) b.stopRequestedBy = by;
     store.recordAudit({ sessionId: id, blockSeq: b?.seq ?? null, runId: s.snap.runId, actor: by, action: 'stop', detail: b?.command ?? null, now: this.now() });
-    // Under a PTY the tty delivers ^C to the foreground job. Over pipes there is no tty, and bash still
-    // starts each command in its own process group, so SIGINT goes to each of the shell's descendants.
+    // Under a PTY the tty delivers ^C to the foreground job (ConPTY too). Over pipes there is no tty, and bash still
+    // starts each command in its own process group, so SIGINT goes to each of the shell's descendants. Windows has no
+    // SIGINT over pipes: there the 3 s escalation below ends the command (and leaves Git Bash's shell running).
     if (s.proc.mode === 'pty') s.proc.write('\x03');
     else signalDescendants(s.proc.pid, 'SIGINT', this.platform);
     clearTimeout(s.stopTimer);
     if (b) {
-      s.stopTimer = setTimeout(() => { if (s.block === b) killDescendants(s.proc.pid, this.platform); }, STOP_ESCALATE_MS);
+      s.stopTimer = setTimeout(() => {
+        if (s.block !== b) return;
+        if (this.platform !== 'win32') { killDescendants(s.proc.pid, this.platform); return; }
+        this._winShell(s).then((sp) => { if (s.block === b) killWinCommands(sp, s.snap.shell); }).catch(() => {});
+      }, STOP_ESCALATE_MS);
       s.stopTimer.unref?.();
     }
     return { blockSeq: b?.seq ?? null };
@@ -226,12 +235,24 @@ export class TerminalManager extends EventEmitter {
     s.closing = { by, reason };
     const exited = new Promise((r) => s.exitWaiters.push(r));
     const wait = (ms) => Promise.race([exited, new Promise((r) => setTimeout(r, ms).unref?.())]);
-    // Jobs in their own process groups outlive the SIGHUP, and once the shell exits they are no longer its
-    // descendants: list them first, kill them after the grace period.
-    const tree = this.platform === 'win32' ? [] : descendantPids(s.proc.pid);
-    s.proc.signal('SIGHUP');
-    await wait(CLOSE_GRACE_MS);
-    signalPids(new Set([...tree, ...descendantPids(s.proc.pid)]), 'SIGKILL', this.platform);
+    if (this.platform === 'win32') {
+      // No SIGHUP on Windows, and Git Bash's commands are not in the Windows process tree (MSYS forks through stubs
+      // that exit): end them from MSYS's own table while the shell still owns them, then the launcher's whole tree.
+      // The real-shell lookup is normally cached by now; a hung PowerShell must not hold close for its 15 s timeouts.
+      if (s.proc.pid) {
+        const sp = await Promise.race([this._winShell(s).catch(() => s.proc.pid), wait(WIN_SHELL_WAIT_MS).then(() => s.proc.pid)]);
+        try { killWinCommands(sp, s.snap.shell); } catch { /* best effort: the launcher's tree is still ended below */ }
+        killTree(s.proc.pid);
+      }
+      await wait(CLOSE_GRACE_MS);
+    } else {
+      // Jobs in their own process groups outlive the SIGHUP, and once the shell exits they are no longer its
+      // descendants: list them first, kill them after the grace period.
+      const tree = descendantPids(s.proc.pid);
+      s.proc.signal('SIGHUP');
+      await wait(CLOSE_GRACE_MS);
+      signalPids(new Set([...tree, ...descendantPids(s.proc.pid)]), 'SIGKILL', this.platform);
+    }
     if (s.snap.status === 'running') {
       s.proc.signal('SIGKILL');
       await wait(2000);
@@ -327,6 +348,17 @@ export class TerminalManager extends EventEmitter {
     }
   }
 
+  /** Windows: the pid Git Bash's commands run under (cached; the launcher's pid while unknown, which ends nothing). */
+  async _winShell(s) {
+    const pid = s.proc.pid;
+    if (s.snap.shellKind !== 'bash' || !pid) return pid;
+    if (s.proc.winShellPid && s.proc.winShellPid !== pid) return s.proc.winShellPid;
+    s.winShellLookup ??= winShellPid(pid).finally(() => { s.winShellLookup = null; });
+    const sp = await s.winShellLookup;
+    if (sp && sp !== pid) s.proc.winShellPid = sp;     // pty.mjs's exit handler reads it too
+    return sp || pid;
+  }
+
   _waitFor(list, ms, code, message) {
     return new Promise((res, rej) => {
       const w = { res: (v) => { clearTimeout(t); res(v); }, rej: (e) => { clearTimeout(t); rej(e); } };
@@ -381,7 +413,8 @@ export class TerminalManager extends EventEmitter {
     const file = this.pidFile;
     if (!file) return;
     const rows = this.live().filter((s) => s.proc.pid).map((s) => ({ pid: s.proc.pid, ownerPid: process.pid, sessionId: s.snap.id,
-      ...(s.snap.runId ? { instanceId: `term:${s.snap.runId}:${s.snap.id}` } : {}) }));
+      ...(s.snap.runId ? { instanceId: `term:${s.snap.runId}:${s.snap.id}` } : {}),
+      ...(this.platform === 'win32' ? { shell: s.snap.shell } : {}) }));   // the boot reap checks the pid is still this program
     try {                                    // tmp + rename, like ActionRegistry: the harness reads it from another process
       mkdirSync(dirname(file), { recursive: true });
       writeFileSync(`${file}.tmp`, JSON.stringify(rows));

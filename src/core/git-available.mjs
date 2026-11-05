@@ -44,16 +44,19 @@ export async function probeGit({ env = process.env, platform = process.platform,
   if (platform === 'darwin' && realpath(hit).toLowerCase() === MAC_SHIM) {
     // The CLT shim opens the install dialog whenever it runs without the tools: ask xcode-select, never the shim.
     const xs = await exec('/usr/bin/xcode-select', ['-p'], { env, timeoutMs: GIT_PROBE_TIMEOUT_MS });
+    if (xs.timedOut) return done('probe-failed', { timedOut: true });   // a slow xcode-select is not a missing git
     const dir = xs.code === 0 ? xs.stdout.trim() : '';
     if (!dir || !exists(posix.join(dir, 'usr', 'bin', 'git'))) return done('xcode-clt-missing');
   }
   const v = await exec(hit, ['--version'], { env, timeoutMs: GIT_PROBE_TIMEOUT_MS });
   const m = v.code === 0 ? /^git version (\S+)/.exec(v.stdout.trim()) : null;
-  return m ? done('ok', { available: true, version: m[1] }) : done('probe-failed');
+  // timedOut is a probe-time signal, not part of the stored state (settle() strips it): a slow machine is not a missing git.
+  return m ? done('ok', { available: true, version: m[1] }) : done('probe-failed', v.timedOut ? { timedOut: true } : {});
 }
 
 let state = NOT_PROBED;
 let inflight = null;
+let timeouts = 0;                // probes in a row that timed out; one never flips an ok answer, two do
 let probeImpl = () => probeGit();
 const listeners = new Set();
 function commit(next) {
@@ -62,19 +65,33 @@ function commit(next) {
   if (state.available !== prev.available) for (const fn of [...listeners]) { try { fn(state); } catch { /* a listener never breaks the flip */ } }
   return state;
 }
+function settle(result) {
+  const { timedOut, ...next } = result;
+  const first = timedOut && state.available && timeouts === 0;
+  timeouts = timedOut ? timeouts + 1 : 0;
+  return commit(first ? { ...state, checkedAt: next.checkedAt } : next);
+}
 const envForced = () => forced(process.env, Date.now());
 export function gitAvailable() {
   return process.env.WORCA_GIT === '0' ? false : process.env.WORCA_GIT === '1' ? true : state.available;
 }
 export function currentGitState() { return { ...(envForced() ?? state) }; }
+// Stale-while-revalidate: a stale answer that says git IS there (or that a probe failed twice) is returned at once and
+// re-probed in the background (a page load must never wait on a slow `git --version`). The first call, `fresh: true`
+// and a stale real "missing" (not-on-path, xcode-clt-missing, ...) wait: that probe is a fast PATH scan, and a run
+// must not pick folder mode from a minute-old answer after git was installed.
 export function gitState({ maxAgeMs = 60_000, fresh = false } = {}) {
   const f = envForced();
   if (f) return Promise.resolve(f);
-  if (!fresh && state.reason !== 'not-probed' && Date.now() - state.checkedAt < maxAgeMs) return Promise.resolve({ ...state });
-  inflight ??= Promise.resolve().then(probeImpl)
-    .then(commit, () => commit({ ...NOT_PROBED, reason: 'probe-failed', checkedAt: Date.now() }))
-    .finally(() => { inflight = null; });
-  return inflight.then((s) => ({ ...s }));
+  const known = state.reason !== 'not-probed';
+  if (!known || fresh || Date.now() - state.checkedAt >= maxAgeMs) {
+    const wait = !known || fresh || (!state.available && state.reason !== 'probe-failed');
+    inflight ??= Promise.resolve().then(probeImpl).then(settle)
+      .catch(() => commit({ ...NOT_PROBED, reason: 'probe-failed', checkedAt: Date.now() }))   // never an unhandled rejection
+      .finally(() => { inflight = null; });
+    if (wait) return inflight.then((s) => ({ ...s }));
+  }
+  return Promise.resolve({ ...state });
 }
 export function onGitChange(fn) { listeners.add(fn); return () => listeners.delete(fn); }
 export function gitMissingResult() { return { ok: false, stdout: '', stderr: GIT_MISSING.message, code: -1 }; }
@@ -83,6 +100,6 @@ export const _testing = {
   set(partial = {}) {
     return commit({ ...NOT_PROBED, reason: partial.available === true ? 'forced-on' : 'forced-off', checkedAt: Date.now(), ...partial, available: partial.available === true });
   },
-  reset() { state = NOT_PROBED; inflight = null; probeImpl = () => probeGit(); },
+  reset() { state = NOT_PROBED; inflight = null; timeouts = 0; probeImpl = () => probeGit(); },
   useProbe(fn) { probeImpl = fn || (() => probeGit()); },
 };

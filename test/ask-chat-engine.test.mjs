@@ -80,13 +80,13 @@ test('askEngine codex and the Ask slots pick the new-chat default', async () => 
   assert.deepEqual(cat.defaults.claude, { model: 'claude-haiku-4-5', effort: 'high' });
 });
 
-test('validateModelEffort: any engine before the first turn; inside a chat only its engine', async () => {
+test('validateModelEffort: any engine before the first turn; inside a chat only its engine (switching is its own route, #943)', async () => {
   const m = mk();
   assert.deepEqual(await m.validateModelEffort('gpt-5.5', 'low'), { ok: true, model: 'gpt-5.5', effort: 'low' });
   assert.deepEqual(await m.validateModelEffort('claude-opus-5-5', 'high', { engine: 'codex' }),
-    { ok: false, error: 'this chat runs on Codex; start a new chat to use Claude' });
+    { ok: false, error: 'this chat runs on Codex; switch it to Claude from the Chat model picker first' });
   assert.deepEqual(await m.validateModelEffort('gpt-5.5', 'low', { engine: 'claude' }),
-    { ok: false, error: 'this chat runs on Claude; start a new chat to use Codex' });
+    { ok: false, error: 'this chat runs on Claude; switch it to Codex from the Chat model picker first' });
   assert.deepEqual(await m.validateModelEffort('gpt-5.5', 'max'), { ok: false, error: 'effort "max" is not available for model "gpt-5.5"' });
 });
 

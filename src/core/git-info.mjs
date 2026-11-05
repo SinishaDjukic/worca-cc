@@ -6,6 +6,7 @@
 // never shell out to real git/gh/GitHub. Nothing here ever throws.
 
 import { spawn } from 'node:child_process';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { mkdtemp, writeFile, rm, readFile, copyFile, rename, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, isAbsolute } from 'node:path';
@@ -71,12 +72,31 @@ export function parseShortstat(out) {
   return { added: ins ? Number(ins[1]) : 0, removed: del ? Number(del[1]) : 0 };
 }
 
-/** Added/removed line counts for source...feature (merge-base/3-dot). 0/0 on any failure. */
+/** Added/removed line counts for source...feature (merge-base/3-dot). 0/0 on any failure. Inside a withRefSnapshot
+ *  scope, two names resolved to commit ids fix the answer for good: remembered per (repository, ids). */
 export async function diffShortstat(projectDir, source, feature) {
   if (!projectDir || !source || !feature) return { added: 0, removed: 0 };
+  const snap = await refSnapshot(projectDir);
+  const a = snap && resolveName(snap, source), b = snap && resolveName(snap, feature);
+  const key = a && b ? `${projectDir}\0${a}...${b}` : null;
+  if (key && shortstatCache.has(key)) return { ...shortstatCache.get(key) };
   const r = await _run('git', ['diff', '--shortstat', `${source}...${feature}`], { cwd: projectDir });
   if (!r.ok) return { added: 0, removed: 0 };
-  return parseShortstat(r.stdout);
+  const out = parseShortstat(r.stdout);
+  if (key) { if (shortstatCache.size >= 2000) shortstatCache.clear(); shortstatCache.set(key, out); }
+  return { ...out };
+}
+const shortstatCache = new Map();
+const SHA = /^[0-9a-f]{40,64}$/i;
+/** The commit id git would read `name` as, from a snapshot (gitrevisions order: refs/<name>, tags, heads, remotes,
+ *  remotes/<name>/HEAD), or null when the snapshot cannot say (a short id, HEAD, a ref outside it, `^`/`~`). */
+function resolveName(snap, name) {
+  if (SHA.test(name)) return name.toLowerCase();
+  if (!/^[\w./-]+$/.test(name) || /(^|\/)HEAD$|\.\./.test(name)) return null;
+  for (const ref of [`refs/${name}`, `refs/tags/${name}`, `refs/heads/${name}`, `refs/remotes/${name}`, `refs/remotes/${name}/HEAD`]) {
+    if (snap.has(ref)) return ref.startsWith('refs/tags/') ? null : snap.get(ref);   // a tag's own id may be no commit
+  }
+  return null;
 }
 
 /**
@@ -303,8 +323,33 @@ export async function uncommittedPatch(dir, { base = 'HEAD', outFile } = {}) {
 }
 
 /** True iff `branch` exists locally in `projectDir`. False on a missing repo/branch. */
+// One `for-each-ref` per repository for the length of a withRefSnapshot scope (the history list builds every row of
+// a repository from it: no `rev-parse` / `for-each-ref` per row). Outside a scope every call asks git.
+const refScope = new AsyncLocalStorage();
+/** Run `fn` with local and remote-tracking tips read once per repository (read-only listings, one request long). */
+export function withRefSnapshot(fn) { return refScope.run(new Map(), fn); }
+/** `make()`'s promise, made once per `key` inside a withRefSnapshot scope; null outside one. */
+function refScopeOnce(key, make) {
+  const scope = refScope.getStore();
+  if (!scope) return null;
+  if (!scope.has(key)) scope.set(key, make());
+  return scope.get(key);
+}
+/** `for-each-ref --format='%(refname) %(objectname)'` output -> refname -> sha. */
+export const parseRefTips = (out) => new Map(String(out || '').split(/\r?\n/).map((l) => l.trim().split(' ')).filter((p) => p.length === 2));
+/** refname -> sha for refs/heads, refs/remotes and refs/tags of `projectDir`, or null (no scope, or git failed: ask per call). */
+/** Inside a withRefSnapshot scope: refSnapshot's promise (for in-base.mjs); null outside one. */
+export const scopedRefTips = (projectDir) => (refScope.getStore() ? refSnapshot(projectDir) : null);
+function refSnapshot(projectDir) {
+  if (!projectDir) return null;
+  return refScopeOnce(`git-info\0${projectDir}`, () => _run('git', ['for-each-ref', '--format=%(refname) %(objectname)', 'refs/heads', 'refs/remotes', 'refs/tags'], { cwd: projectDir })
+    .then((r) => (r.ok ? parseRefTips(r.stdout) : null)));
+}
+
 export async function branchExists(projectDir, branch) {
   if (!projectDir || !branch) return false;
+  const snap = await refSnapshot(projectDir);
+  if (snap) return snap.has(`refs/heads/${branch}`);
   const r = await _run('git', ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`], { cwd: projectDir });
   return r.ok && !!r.stdout.trim();
 }
@@ -415,7 +460,10 @@ async function ghCreatePr({ projectDir, base, head, title, body = '', repo = nul
     return { ok: true, url, existed: false };
   }
   if (/already exists/i.test(r.stderr || '')) {
-    const v = await _run('gh', ['pr', 'view', headRef, ...repoArgs, '--json', 'url', '-q', '.url'], { cwd: projectDir, env: (await githubEnv('read', { repo: ownerRepo(repo) })).env });
+    // The person's own pull request, found as them ("push as me" reads, opt-in). Every other read
+    // here (status, checks, chips, the watcher, ghApi) feeds shared views, caches or automations,
+    // so it stays on worca's own credential.
+    const v = await _run('gh', ['pr', 'view', headRef, ...repoArgs, '--json', 'url', '-q', '.url'], { cwd: projectDir, env: (await githubEnv('read', { readAsPerson: true, repo: ownerRepo(repo) })).env });
     if (v.ok && v.stdout.trim()) return { ok: true, url: v.stdout.trim(), existed: true };
     // gh's message ends with the existing PR's URL ("… already exists:\n<url>");
     // use it when the view selector cannot resolve (e.g. a PR opened from another fork).
@@ -1068,6 +1116,8 @@ export async function branchPushedTo(projectDir, branch) {
 export async function branchTips(projectDir, branch, remote) {
   if (!projectDir || !branch) return null;
   const refs = [`refs/heads/${branch}`, ...(remote ? [`refs/remotes/${remote}/${branch}`] : [])];
+  const snap = await refSnapshot(projectDir);
+  if (snap) return { local: snap.get(refs[0]) || null, remote: remote ? snap.get(refs[1]) || null : null };
   const r = await _run('git', ['for-each-ref', '--format=%(refname) %(objectname)', ...refs], { cwd: projectDir });
   if (!r.ok) return null;
   // for-each-ref also matches refs UNDER a pattern (refs/heads/feat/sub), so keep exact names only.
@@ -1084,13 +1134,20 @@ export async function branchTips(projectDir, branch, remote) {
 export async function tipsRelation(projectDir, local, remote) {
   if (!projectDir || !local || !remote) return null;
   if (local === remote) return 'same';
+  // Two commit ids fix the answer for good: remembered, so a history reload asks git once per pair.
+  const sha = /^[0-9a-f]{40,64}$/i;
+  const key = sha.test(local) && sha.test(remote) ? `${remote}...${local}` : null;
+  if (key && relationCache.has(key)) return relationCache.get(key);
   const r = await _run('git', ['rev-list', '--left-right', '--count', `${remote}...${local}`], { cwd: projectDir });
   const m = r.ok && /^(\d+)\s+(\d+)\s*$/.exec(r.stdout || '');
   if (!m) return null;
   const behind = Number(m[1]) > 0;
   const ahead = Number(m[2]) > 0;
-  return ahead && behind ? 'diverged' : ahead ? 'ahead' : behind ? 'behind' : 'same';
+  const rel = ahead && behind ? 'diverged' : ahead ? 'ahead' : behind ? 'behind' : 'same';
+  if (key) { if (relationCache.size >= 2000) relationCache.clear(); relationCache.set(key, rel); }
+  return rel;
 }
+const relationCache = new Map();
 
 /** Recreate a local branch from its remote-tracking ref (checkout D7). */
 export async function restoreBranchFromRemote(projectDir, branch, remote) {
@@ -1369,8 +1426,57 @@ export async function checkConflictMerge(projectDir, { baseSha, from, to } = {})
 }
 
 // Test seam: swap the command runner + clear the gh memo. Mirrors server.mjs#_testing.
+// ── Git event automations (#711): one REST call on github.com ───────────────
+
+/** Split `gh api --include` output into { status, headers, text }. gh prints the status line and headers first. */
+export function parseGhInclude(out) {
+  const s = String(out || '');
+  const m = /^HTTP\/[\d.]+ (\d{3})[^\n]*\r?\n((?:[^\r\n]+\r?\n)*)\r?\n([\s\S]*)$/.exec(s);
+  if (!m) return { status: null, headers: {}, text: s };
+  const headers = {};
+  for (const line of m[2].split(/\r?\n/)) {
+    const i = line.indexOf(':');
+    if (i > 0) headers[line.slice(0, i).trim().toLowerCase()] = line.slice(i + 1).trim();
+  }
+  return { status: Number(m[1]), headers, text: m[3] };
+}
+
+/**
+ * One GitHub REST call through `gh api` with worca's credential for `role` (githubEnv: token, split, App or
+ * push-as-person modes alike). `etag` sends If-None-Match; `body` (an object) goes as the JSON request body.
+ * Never throws: { ok, status, json, etag, link, notModified? } | { ok:false, status, class: 'rate-limit'|'auth'|'failed', error }.
+ * `link` is the Link header (pagination), or null.
+ */
+export async function ghApi({ role = 'read', repo = null, method = 'GET', path, body = null, etag = null, timeout = 30_000 } = {}) {
+  if (!path) return { ok: false, status: null, class: 'failed', error: 'path is required' };
+  const cred = await githubEnv(role, { repo: ownerRepo(repo) });
+  if (cred.error) return { ok: false, status: null, class: 'auth', error: cred.error };
+  const args = ['api', '--include', '-X', method, '-H', 'Accept: application/vnd.github+json', path];
+  if (etag) args.push('-H', `If-None-Match: ${etag}`);
+  let dir = null;
+  if (body != null) {
+    dir = await mkdtemp(join(tmpdir(), 'worca-ghapi-'));
+    const file = join(dir, 'body.json');
+    await writeFile(file, JSON.stringify(body));
+    args.push('--input', file);
+  }
+  let r;
+  try { r = await _run('gh', args, { env: cred.env, timeout }); }
+  finally { if (dir) await rm(dir, { recursive: true, force: true }).catch(() => {}); }
+  const res = parseGhInclude(r.stdout);
+  if (res.status === 304) return { ok: true, status: 304, notModified: true, json: null, etag };
+  if (r.ok && res.status && res.status < 300) {
+    let parsed = null;
+    try { parsed = res.text.trim() ? JSON.parse(res.text) : null; } catch { parsed = null; }
+    return { ok: true, status: res.status, json: parsed, etag: res.headers.etag || null, link: res.headers.link || null };
+  }
+  const err = (r.stderr || '').trim() || res.text.trim().slice(0, 300) || `gh exited ${r.code}`;
+  const limited = res.status === 429 || (res.status === 403 && res.headers['x-ratelimit-remaining'] === '0') || /rate limit/i.test(err);
+  return { ok: false, status: res.status, class: limited ? 'rate-limit' : ghFailureKind(err), error: err };
+}
+
 export const _testing = {
   defaultRun,
   setRunner(fn) { _runner = typeof fn === 'function' ? fn : defaultRun; _ghCache = null; },
-  reset() { _runner = defaultRun; _ghCache = null; },
+  reset() { _runner = defaultRun; _ghCache = null; relationCache.clear(); shortstatCache.clear(); },
 };

@@ -10,6 +10,7 @@ import { applyLevel } from '../ui/public/ui-level.mjs';
 import { registerFilesCard } from '../ui/public/chat/files-card.mjs';
 import { _resetChatExtensions } from '../ui/public/chat/extensions.mjs';
 import { _resetFileRenderers } from '../ui/public/chat/file-renderers.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const TID = 'ask_00000001';
 
@@ -274,7 +275,7 @@ test('ask-panel-render: a tool row is a dot, the tool name, its args (never cut 
   assert.ok(rows[2].querySelector('.ask-tool-dot').classList.contains('is-running'));
   assert.ok(rows[3].querySelector('.ask-tool-dot').classList.contains('is-error'));
   assert.ok(rows[3].querySelector('.ask-tool-name').classList.contains('ask-tool-mcp'));
-  const css = (await import('node:fs')).readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   const target = css.match(/\n\.ask-tool-target\{([^}]*)\}/)[1];
   for (const decl of ['display:-webkit-box', '-webkit-line-clamp:2', '-webkit-box-orient:vertical', 'overflow:hidden', 'white-space:normal', 'overflow-wrap:anywhere']) {
     assert.ok(target.includes(decl), `.ask-tool-target has ${decl}`);

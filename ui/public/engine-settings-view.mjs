@@ -175,10 +175,18 @@ export function renderEngineSection(host, options) {
   // Level 5 under the card's Save: how many changes are pending.
   if (options.status) {
     const paintStatus = () => { const n = host.querySelectorAll('.inherit-field[data-dirty="1"]').length; options.status.textContent = n ? `${n} unsaved change${n === 1 ? '' : 's'}` : ''; };
-    host.addEventListener('change', paintStatus); host.addEventListener('input', paintStatus); host.addEventListener('click', paintStatus);
+    bindStatusOnce(host, paintStatus, ['change', 'input', 'click']);
     paintStatus();
   }
   return {};
+}
+// The host outlives repaints: its listeners are bound once and call the latest paint. A listener per paint would
+// keep every earlier build of the card (and its rows) alive through its closure.
+const STATUS_HOST = new WeakMap();
+function bindStatusOnce(host, paint, events) {
+  const bound = STATUS_HOST.has(host);
+  STATUS_HOST.set(host, paint);
+  if (!bound) for (const ev of events) host.addEventListener(ev, () => STATUS_HOST.get(host)());
 }
 export const readEngineSection = (host) => readDirtyFields(host);
 
@@ -300,7 +308,7 @@ export function renderAskEngineSection(host, { catalog = [], askEngine, askModel
       : `Chat on ${engineLabel(e)} is unavailable on this ${e} version, so new chats start on Claude.`);
   const notes = others.filter((e) => !offered[e]).map(unavailable).join(' ');
   host.append(renderInheritField(doc, { id: 'askEngine', label: 'Engine for new chats', kind: 'select', level: 'user',
-    hint: `A chat keeps the engine it started on; to switch, start a new chat.${notes ? ` ${notes}` : ''}`,
+    hint: `New chats start here. A chat can move to another engine later, from its model picker.${notes ? ` ${notes}` : ''}`,
     options: [{ value: 'claude', label: 'Claude' }, ...others.map((e) => ({ value: e, label: offered[e] ? engineChoiceLabel(e) : `${engineLabel(e)} (unavailable)` }))],
     own: askEngine ?? undefined, inherited: { value: 'claude', source: 'default' }, format: engineName }));
   applyEngineLocks(host);
@@ -317,7 +325,7 @@ export function renderAskEngineSection(host, { catalog = [], askEngine, askModel
   host.append(slotTable(doc, 'ask-chat-models', 'Chat models', rows, { what: 'engine', from: "Worca's defaults", onTest, always: true }));
   if (status) {
     const paintStatus = () => { const n = host.querySelectorAll('.inherit-field[data-dirty="1"]').length; status.textContent = n ? `${n} unsaved change${n === 1 ? '' : 's'}` : ''; };
-    host.addEventListener('change', paintStatus); host.addEventListener('click', paintStatus); paintStatus();
+    bindStatusOnce(host, paintStatus, ['change', 'click']); paintStatus();
   }
 }
 export const readAskEngineSection = (host) => readDirtyFields(host);

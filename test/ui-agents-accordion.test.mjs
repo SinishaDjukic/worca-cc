@@ -4,21 +4,20 @@
 // disclosure that must never hide active state.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
 
-const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 const PROJECT = '/tmp/proj';
 
 async function boot({ fetchHandler } = {}) {
-  const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4319/' }));
+  const dom = trackDom(new JSDOM(readIndexHtml(), { url: 'http://localhost:4319/' }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
   window.WebSocket = class {
@@ -497,4 +496,25 @@ test('resolveNodeTunables is the ONE resolution rule shared by the v1 and v2 row
   assert.equal(bare.subagentModel, '', 'unset stays raw — the RUNTIME resolves auto');
   assert.equal(bare.fanOut, true, 'meta fanOut is the last layer');
   assert.equal(bare.askQuestions, true, 'meta questionsDefault is the last layer');
+});
+
+test('buildRoleRows: one row per declared role of a role-review node, labelled by node and role; none on Default', async () => {
+  const { buildNodeConfigRows, buildRoleRows } = await import('../ui/public/node-tunables.mjs');
+  const { GRAPH_SHAPE_WORKFLOW, GRAPH_DEFAULT_WORKFLOW } = await import('../src/core/graph/builtin-workflows.mjs');
+  const { loadAgentRegistry } = await import('../src/core/agent-registry.mjs');
+  const { PERSPECTIVES } = await import('../src/shared/shape/perspectives.mjs');
+  const reg = loadAgentRegistry(undefined, { userAgentsDir: null });
+  const runConfig = { nodes: { n_roles: { roles: { security: { model: 'claude-haiku-4-5', effort: 'high' }, qa: { effort: 'max' } } } } };
+  const rows = buildRoleRows(GRAPH_SHAPE_WORKFLOW, buildNodeConfigRows(GRAPH_SHAPE_WORKFLOW, reg, runConfig), runConfig);
+  assert.equal(rows.length, PERSPECTIVES.length + 3, 'every declared role, ticked or not, plus the three code roles (#990 slice 4)');
+  assert.deepEqual(rows.map((r) => r.label), [...PERSPECTIVES.map((p) => `Plan Review · ${p.label}`),
+    'Review Implementation · Correctness', 'Review Implementation · Security', 'Review Implementation · Project fit']);
+  assert.deepEqual(rows.map((r) => r.nodeId), [...PERSPECTIVES.map(() => 'n_roles'), 'n_review', 'n_review', 'n_review']);
+  const by = Object.fromEntries(rows.filter((r) => r.nodeId === 'n_roles').map((r) => [r.roleKey, r]));
+  assert.deepEqual(by.architect, { nodeId: 'n_roles', roleKey: 'architect', label: 'Plan Review · Architect', model: '', effort: '', def: { model: '', effort: '' } }, "'' = the node's setting");
+  assert.deepEqual(by.product.def, { model: 'claude-opus-5-5', effort: 'medium' }, 'the template role pick');
+  assert.deepEqual(by.security.def, { model: 'claude-haiku-4-5', effort: 'high' }, 'the project layer wins');
+  assert.deepEqual(by.qa.def, { model: '', effort: 'max' }, 'an effort-only project pick');
+  const def = buildRoleRows(GRAPH_DEFAULT_WORKFLOW, buildNodeConfigRows(GRAPH_DEFAULT_WORKFLOW, reg, { nodes: {} }), { nodes: {} });
+  assert.deepEqual(def, []);
 });

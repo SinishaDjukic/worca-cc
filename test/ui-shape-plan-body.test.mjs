@@ -7,6 +7,7 @@ import { JSDOM } from 'jsdom';
 import { readFileSync } from 'node:fs';
 import { renderPlanBody, SEND_FAILED } from '../ui/public/shape/plan-body.mjs';
 import { fixAllFeedback, perspectiveChangeFeedback } from '../ui/public/shape/plan-text.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
 const flush = () => new Promise((r) => setTimeout(r, 0));
@@ -425,7 +426,7 @@ test('recorded shaped run: one row per role, Show unfolds that role\'s findings,
   assert.equal($('.plan-role-line .plan-fold-text').textContent, 'Reviewed by 5 roles · 1 open');
   const rows = $$('.plan-roles .plan-check-row');
   assert.deepEqual(rows.map((r) => r.querySelector('.plan-check-label').textContent), ['Product · no findings',
-    'Architect · 1 major fixed', 'QA · 1 critical, 1 suggestion fixed', 'UX · 1 minor fixed', 'Project fit · 1 major open']);
+    'Architect · 1 fixed', 'QA · 2 fixed', 'UX · 1 fixed', 'Project fit · 1 open']);
   // A met row's mark is the check icon (icons.mjs, D14); an open issue's is `!`.
   assert.deepEqual(rows.map((r) => { const m = r.querySelector('.plan-check-mark'); return m.querySelector('svg') ? 'check' : m.textContent; }), ['check', 'check', 'check', 'check', '!']);
   assert.equal($$('.plan-roles .plan-check-show').length, 4);
@@ -468,6 +469,55 @@ test('a plan ask without role reviews has no role line', () => {
   assert.equal(setup().$$('.plan-role-line').length, 0);
 });
 
+// #990 slice 3: a conflict between two roles is one decision card; Approve carries the picks and needs one per card.
+const withConflict = () => {
+  const rr = structuredClone(RECORDED.plan.roleReviews);
+  const last = rr.rounds.at(-1);
+  last.conflicts = [{ id: 'conflict-1', findings: ['qa-1-1', 'fit-2-1'], roles: ['qa', 'fit'], section: 'Code layout',
+    question: 'One shared row module, or keep the plan card\'s own?', options: ['One shared module', 'Keep its own'] }];
+  return recordedAsk(rr);
+};
+
+test('one conflict renders one decision card inside the plan card, before the actions', () => {
+  const { $, $$ } = setup({ pq: withConflict() });
+  assert.equal($$('.plan-decisions .plan-decision').length, 1);
+  assert.equal($('.plan-decision-src').textContent, 'QA and Project fit disagree on Code layout');
+  assert.equal($$('.plan-decision .qpanel-foot, .plan-decision [data-qpanel-submit]').length, 0, 'no submit of its own');
+  assert.equal($$('.btn-primary').length, 1);
+  assert.ok($('.plan-decisions').compareDocumentPosition($('.plan-actions')) & 4, 'the decisions come before Approve');
+});
+
+test('Approve with an unanswered decision shows "Answer each decision first", focuses it and sends nothing', async () => {
+  const { $, calls, panel } = setup({ pq: withConflict() });
+  doc.body.appendChild(panel);
+  $('.plan-approve').click();
+  await flush();
+  assert.deepEqual(calls.submit, []);
+  assert.equal($('.plan-err').hidden, false);
+  assert.equal($('.plan-err').textContent, 'Answer each decision first');
+  assert.equal(doc.activeElement, $('.plan-decision'));
+  panel.remove();
+});
+
+test('with picks, Approve sends conflicts; a revise sends the picks made so far; no conflicts, no key', async () => {
+  const a = setup({ pq: withConflict() });
+  a.$$('.plan-decision .qopt')[1].click();
+  a.$('.plan-approve').click();
+  await flush();
+  assert.deepEqual(a.calls.submit, [{ decision: 'approve', conflicts: [{ id: 'conflict-1', choice: 'Keep its own' }] }]);
+  const r = setup({ pq: withConflict() });
+  r.$$('.plan-decision .qopt')[0].click();
+  r.$('.plan-ask-changes').click();
+  r.$('.plan-feedback').value = 'Tighten the rollout.';
+  r.$('.plan-revise').click();
+  await flush();
+  assert.deepEqual(r.calls.submit, [{ decision: 'revise', feedback: 'Tighten the rollout.', conflicts: [{ id: 'conflict-1', choice: 'One shared module' }] }]);
+  const plain = setup({ pq: recordedAsk() });
+  plain.$('.plan-approve').click();
+  await flush();
+  assert.deepEqual(plain.calls.submit, [{ decision: 'approve' }]);
+});
+
 test('plan-body draws no check row itself and has no local fold (one check-row component)', () => {
   const src = readFileSync(new URL('../ui/public/shape/plan-body.mjs', import.meta.url), 'utf8');
   assert.doesNotMatch(src, /plan-check-row/);
@@ -476,7 +526,7 @@ test('plan-body draws no check row itself and has no local fold (one check-row c
 });
 
 test('slice 4 CSS: 2px/4px radii only, light-dark colour tokens only, 1px dividers, the finding line wraps', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  const css = readStyleCss().replace(/\/\*[\s\S]*?\*\//g, '');
   const rules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].filter((m) => /plan-(sev|finding|check-show)/.test(m[1]));
   assert.ok(rules.length >= 7);
   for (const [, sel, body] of rules) {
@@ -507,4 +557,30 @@ test('run 4 D8: Ask for changes swaps for the field, Cancel swaps back', () => {
   assert.equal(ask.hidden, false);
   assert.equal(doc.activeElement, ask);
   panel.remove();
+});
+
+test('#990 s5 the approval card shows the implementer\'s concern once, above the approve button', async () => {
+  const pq = ask();
+  pq.concern = { title: 'Store export jobs in the DB, not in memory', detail: 'A restart loses queued exports.', section: 'Decisions' };
+  const { panel, $, $$ } = setup({ pq });
+  await flush();
+  assert.equal($$('.plan-concern').length, 1);
+  assert.equal(panel.textContent.split(pq.concern.title).length - 1, 1, 'the title is shown once');
+  assert.ok($('.plan-sub').compareDocumentPosition($('.plan-concern')) & 4, 'the note comes after the sub line');
+  assert.ok($('.plan-concern').compareDocumentPosition($('.plan-approve')) & 4, 'the note comes before Approve');
+  assert.equal($('.plan-concern .shape-plan-outline-change-head').textContent, 'The implementer has a concern about this plan:');
+  assert.ok($('.plan-concern').textContent.includes('Section: Decisions'));
+  assert.equal($('.plan-concern-what').textContent,
+    'Approve overrides the concern and builds the plan as written. Ask for changes accepts it and sends the plan back to the planner with this concern.');
+  assert.equal($('.plan-ask-changes').textContent, 'Ask for changes');
+});
+
+test('#990 s5 no concern, no concern note; markup in a concern stays text', async () => {
+  assert.equal(setup({ pq: ask() }).$('.plan-concern'), null);
+  const pq = ask();
+  pq.concern = { title: '<img src=x onerror=alert(1)>' };
+  const { $ } = setup({ pq });
+  await flush();
+  assert.equal($('.plan-concern img'), null);
+  assert.equal($('.plan-concern-title').textContent, '<img src=x onerror=alert(1)>');
 });

@@ -4,7 +4,6 @@
 // and the app.js version arms. (The artifact routes live in test/api-run-artifact.test.mjs.)
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { createGraphView } from '../ui/public/graph/view.mjs';
@@ -531,9 +530,8 @@ test('a hidden host (0×0) is never fitted — on EITHER host — and the first 
 // ── app.js: version arms ────────────────────────────────────────────────────
 // jsdom boot idiom copied from test/ui-subagent-cycle-split.test.mjs (`boot()`).
 async function bootApp() {
-  const htmlPath2 = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
   const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
-  const dom = trackDom(new JSDOM(readFileSync(htmlPath2, 'utf8'), { url: 'http://localhost:4317/' }));
+  const dom = trackDom(new JSDOM(readIndexHtml(), { url: 'http://localhost:4317/' }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
   window.WebSocket = class { constructor() { this.readyState = 1; } send() {} close() {} addEventListener() {} };
@@ -914,7 +912,7 @@ test('a card click on the Workflow tab opens its log in the drawer under the gra
 });
 
 // ── banner / progress / gate copy / History header + Overview ────────────────
-test('a v2 run page: progress reads numerically, .rd-step names what runs (no step count), and the quiescence banner shows once when it drained without End', async () => {
+test('a v2 run page: progress reads numerically, .rd-step names what runs (no step count), and the run warnings show once each (quiescence when it drained without End)', async () => {
   await checkRows([
     { name: 'progress reads numerically everywhere and the quiescence banner appears once', run: async () => {
       const window = await bootApp();
@@ -925,17 +923,39 @@ test('a v2 run page: progress reads numerically, .rd-step names what runs (no st
         steps: [{ key: 'x:n_a:1', executionId: 'x:n_a:1', nodeId: 'n_a', ordinal: 1, status: 'done', activeMs: 1000, costUsd: 0.1 }] });
       assert.deepEqual((({ n, m }) => [n, m])(np.runStepLabel(r)), [1, 1]);
       const banners = window.document.createElement('div');
-      np.paintQuiescenceBanner(banners, np.runDecorFor(r, 'monitor'));
-      np.paintQuiescenceBanner(banners, np.runDecorFor(r, 'monitor'));
+      np.paintRunWarnings(banners, np.runDecorFor(r, 'monitor'));
+      np.paintRunWarnings(banners, np.runDecorFor(r, 'monitor'));
       assert.equal(banners.querySelectorAll('.run-warn').length, 1, 'idempotent');
       assert.equal(banners.querySelector('.run-warn').textContent, 'finished at quiescence — End not reached');
       assert.equal(banners.querySelector('.run-warn').hidden, false);
-      np.paintQuiescenceBanner(banners, { quiescent: false });
-      assert.equal(banners.querySelector('.run-warn').hidden, true);
+      assert.equal(banners.querySelector('.run-warn').getAttribute('role'), 'status');
+      np.paintRunWarnings(banners, { quiescent: false, warnings: [] });
+      assert.equal([...banners.querySelectorAll('.run-warn')].filter((el) => !el.hidden).length, 0, 'an empty list leaves none visible');
       assert.equal(np.progressText(r), 'Finished', 'the P5 line supersedes the "n/m done" counter (spec 2026-10-14 P12)');
       assert.equal(np.histCountsLine({ ...r, stepper: MANIFEST }), '1 execution · 2 loop deliveries');
       const v1 = np.makeRun({ runId: 'r2', title: 't', projectDir: '/p', status: 'running' });
       assert.equal(np.progressText(v1), '', 'v1 runs have no progress line');
+    } },
+    { name: 'each distinct run warning shows once: a pick drop repeated, and quiescence with a dead-end line', run: async () => {
+      const window = await bootApp();
+      const np = window.__np;
+      const DROP = "Plan: claude-opus-5-5 is not on Codex, runs Codex's default model";
+      const r = np.makeRun({ runId: 'r1', title: 't', projectDir: '/p', status: 'running' });
+      np.onState(r, { status: 'running', stepper: MANIFEST, active: [], warnings: [DROP, DROP], steps: [] });
+      const banners = window.document.createElement('div');
+      np.paintRunWarnings(banners, np.runDecorFor(r, 'monitor'));
+      const shown = () => [...banners.querySelectorAll('.run-warn')].filter((el) => !el.hidden).map((el) => el.textContent);
+      assert.deepEqual(shown(), [DROP], 'one .run-warn per distinct text');
+      np.paintRunWarnings(banners, np.runDecorFor(r, 'monitor'));
+      assert.deepEqual(shown(), [DROP], 'a repaint keeps one');
+      assert.equal(banners.querySelectorAll('.run-warn').length, 1);
+      // The scheduler's own list, as it writes it at quiescence (scheduler.mjs): the line, then the dead ends.
+      const QUIET = 'finished at quiescence — End not reached';
+      const DEAD = 'dead-ended output: n_a.extra — fired with no wire';
+      const q = np.makeRun({ runId: 'r2', title: 't', projectDir: '/p', status: 'done' });
+      np.onState(q, { status: 'done', stepper: MANIFEST, active: [], endReached: false, warnings: [QUIET, DEAD], steps: [] });
+      np.paintRunWarnings(banners, np.runDecorFor(q, 'monitor'));
+      assert.deepEqual(shown(), [QUIET, DEAD], 'quiescence, then the dead end');
     } },
     { name: 'the detail header .rd-step names what runs on a v2 run, with no step count', run: async () => {
       const window = await bootApp();
@@ -1180,22 +1200,22 @@ test('focusNodeIds: running steps first, then a paused or stopped step, then the
 // `model` (the run's resolved pick — project node selection > team default > authored),
 // never the template's authored `config.model`, and through the catalog label like the composer.
 test('a run card labels the run-resolved model (manifest cell), mapped through the catalog, with the full name as a tooltip', () => {
-  const CATALOG = { 'claude-opus-5-5': 'Opus 5.5', 'discretestack-stable': 'discretestack-stable-max' };
+  const CATALOG = { 'claude-opus-5-5': 'Opus 5.5', 'example-stable': 'example-stable-max' };
   const ran = { ...MANIFEST, graph: { ...MANIFEST.graph, nodes: [
-    { ...MANIFEST.graph.nodes[0], config: { model: 'discretestack-stable' }, model: 'claude-opus-5-5' },
+    { ...MANIFEST.graph.nodes[0], config: { model: 'example-stable' }, model: 'claude-opus-5-5' },
     MANIFEST.graph.nodes[1],
   ] } };
   const { m, host } = mountHost('monitor', 800, { modelLabel: (id) => CATALOG[id] || id });
   m.update('run1', ran, decorFromState(RUN({ stepper: ran })));
   const lm = host.querySelector('[data-node-id="n_a"] .nlabel .lm');
-  assert.equal(lm.textContent, 'Opus 5.5', 'the resolved model, not the authored discretestack-stable');
+  assert.equal(lm.textContent, 'Opus 5.5', 'the resolved model, not the authored example-stable');
   assert.equal(lm.title, 'Opus 5.5', 'an ellipsised model keeps its full name as a tooltip');
 
   // A manifest cell with no resolved model falls back to the authored config, still through the catalog.
   const authored = { ...ran, graph: { ...ran.graph, nodes: [{ ...ran.graph.nodes[0], model: '' }, ran.graph.nodes[1]] } };
   const h2 = mountHost('monitor', 800, { modelLabel: (id) => CATALOG[id] || id });
   h2.m.update('run2', authored, decorFromState(RUN({ stepper: authored })));
-  assert.equal(h2.host.querySelector('[data-node-id="n_a"] .nlabel .lm').textContent, 'discretestack-stable-max');
+  assert.equal(h2.host.querySelector('[data-node-id="n_a"] .nlabel .lm').textContent, 'example-stable-max');
 
   // No catalog handed in: the raw resolved id.
   const h3 = mountHost('monitor');
@@ -1205,6 +1225,7 @@ test('a run card labels the run-resolved model (manifest cell), mapped through t
 
 // ── Chat P3: the `card` host (the chat run card's graph well) ───────────────
 import { CARD_ZOOM, CARD_ZOOM_NARROW, CARD_ZOOM_MIN, CARD_MIN_H, CARD_MAX_H, CARD_PAD, CARD_FOLLOW_IDLE_MS, FOCUS_PAD } from '../ui/public/graph/run-hosts.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
 test('card host: the Workflows rendering in a chat-card well — width-led zoom 0.3–0.74, well height 200–480 on the wrap, centred when it fits, framed on the running node when it does not', async () => {
   await checkRows([

@@ -2,14 +2,13 @@
 // facts from the snapshot inventory, Set up wash, Done rows.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { addsRows, asksFor, setupLines, renderSteps, renderSheetHead, renderReview, renderSetupStep, nowRows, renderDone } from '../ui/public/marketplace/install-view.mjs';
 import { setupSections } from '../ui/public/marketplace/setup-fields.mjs';
 import { landing } from '../ui/public/marketplace/kinds.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { SLACK, ATLASSIAN, AZURE, INV, item, SLACK_CONFIG } from './helpers/marketplace-install-fixtures.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
 
@@ -211,7 +210,7 @@ test('Set up and Done details: the error wash order, blank ids dropped, no empty
   assert.equal(renderDone(doc, ATLASSIAN, {}).querySelector('.mk-list-row .mk-meta'), null);
 });
 
-const css = readFileSync(fileURLToPath(new URL('../ui/public/style.css', import.meta.url)), 'utf8');
+const css = readStyleCss();
 // Classes that are only JS / test hooks and need no rule of their own.
 const HOOKS = new Set(['mk-step-label', 'mk-setup', 'mk-disc-body', 'mk-replace', 'mk-profile-sel', 'mk-profile-id', 'mk-src-sha', 'mk-src-sep']);
 test('every mk- class the install renderers emit has a rule in style.css; the P4 block is tokens only', () => {

@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { renderAskEngineSection, readAskEngineSection, askPatchToSettingsBody } from '../ui/public/engine-settings-view.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
 const trackDom = useDomRelease(afterEach);
 const CATALOG = [
@@ -43,7 +44,7 @@ test('askPatchToSettingsBody maps the field ids onto the settings keys', () => {
 });
 
 test('index.html carries the card; app.js paints and saves it', () => {
-  const html = readFileSync(new URL('../ui/public/index.html', import.meta.url), 'utf8');
+  const html = readIndexHtml();
   assert.match(html, /id="ask-engine-root"/);
   assert.match(html, /id="askEngineSave"/);
   const app = readFileSync(new URL('../ui/public/app.js', import.meta.url), 'utf8');

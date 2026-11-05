@@ -3,19 +3,18 @@
 // card, the last type cannot be switched off, the rows are muted while the flag is off.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { applyFlags } from '../ui/public/flags.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
-const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 const tick = (n = 1) => new Promise((r) => setTimeout(r, n));
 const STORED = { suggestTitle: true, suggestBranch: true, pattern: '{type}/{slug}', types: ['feat', 'fix', 'chore', 'docs', 'refactor', 'test'], trigger: 'debounce', addRunId: false };
 const MODELS = [{ id: 'claude-haiku-5-5', label: 'Haiku 5.5', efforts: ['low', 'high'], engine: 'claude' }];
 
 async function boot({ postStatus = 200, postBody = null } = {}) {
-  const dom = new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4317/#settings' });
+  const dom = new JSDOM(readIndexHtml(), { url: 'http://localhost:4317/#settings' });
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
   window.WebSocket = class { constructor() { this.readyState = 1; } send() {} close() {} addEventListener() {} };

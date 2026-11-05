@@ -17,6 +17,7 @@ import { DEFAULT_AGENTS_DIR, loadAgentRegistry } from '../src/core/agent-registr
 import { scrubbedEnv, WIN32_ENV_BASELINE } from '../src/core/plugin-shim.mjs';
 import { lastPathSegment } from '../src/core/chat/command-router.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { readServerSource, SERVER_MJS } from '../src/core/read-server-source.mjs';
 
 const REPO = fileURLToPath(new URL('../', import.meta.url));
 const PROXY_NAMES = ['HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'http_proxy', 'https_proxy', 'no_proxy'];
@@ -55,10 +56,10 @@ function walk(dir, out = []) {
 
 test('no Node-side module uses `new URL(…, import.meta.url).pathname` as a filesystem path', () => {
   const dirs = ['src', 'tools', 'scripts'].map((d) => join(REPO, d)).filter((d) => existsSync(d));
-  const files = [...dirs.flatMap((d) => walk(d)), join(REPO, 'ui', 'server.mjs')];
-  assert.ok(files.length > 50, 'sweep must actually see the codebase');
-  const offenders = files.filter((f) => /import\.meta\.url\)\s*\.pathname/.test(readFileSync(f, 'utf8')));
-  assert.deepEqual(offenders.map((f) => f.slice(REPO.length)), [], 'use fileURLToPath(new URL(…, import.meta.url)) instead');
+  const sources = [...dirs.flatMap((d) => walk(d)).map((f) => [f.slice(REPO.length), readFileSync(f, 'utf8')]), [SERVER_MJS, readServerSource()]];
+  assert.ok(sources.length > 50, 'sweep must actually see the codebase');
+  const offenders = sources.filter(([, src]) => /import\.meta\.url\)\s*\.pathname/.test(src)).map(([name]) => name);
+  assert.deepEqual(offenders, [], 'use fileURLToPath(new URL(…, import.meta.url)) instead');
 });
 
 test('scrubbedEnv: PATH, HOME, the proxy and CA variables on POSIX; Windows additionally gets the non-secret system baseline', async () => {

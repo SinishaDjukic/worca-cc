@@ -246,3 +246,10 @@ test('the parent validator (clone-deps) names the Bitbucket token for a Bitbucke
     for (const k of keys) { if (prev[k] === undefined) delete process.env[k]; else process.env[k] = prev[k]; }
   }
 });
+
+test('push as me: the clone card says the person\'s own GitHub is used when they connected it', () => {
+  assert.match(hostCredentialLabel('none', { asPerson: 'prefer' }), /^your own GitHub account if you connected it on the key page \(the clone is then visible to everyone on this worca\); otherwise none: public repositories only$/);
+  assert.match(hostCredentialLabel('app', { asPerson: 'required', appId: '9' }), /your own GitHub account.*otherwise GitHub App 9/);
+  // Other hosts are unaffected.
+  assert.match(hostCredentialLabel('none', { host: 'dev.azure.com', asPerson: 'prefer' }), /Azure DevOps/);
+});

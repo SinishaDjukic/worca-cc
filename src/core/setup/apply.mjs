@@ -3,12 +3,11 @@
 // (D19), then run the side effects in order and report one result each. A failed step keeps the earlier
 // writes and names itself as the step to retry; a credential-broker refusal is a result, never a stop (AC-3.6).
 import {
-  readSettings, writeSettingsKeys, assertCostLimitInputs, assertModelRolesInput, assertTestSettingsAccess,
+  readSettings, writeSettingsKeys, assertCostLimitInputs, assertModelRolesInput, assertAskModelsInput, assertTestSettingsAccess,
   nextUsdCap, nextCostLimitResetPeriod, nextUiLevel, nextAutoGeneratePrDescription, nextSmartNaming, nextRunEngine,
-  nextModelRoles, nextNetworkProxy, nextProviders, copilotTermsAcknowledged,
+  nextModelRoles, nextAskModels, nextNetworkProxy, nextProviders,
   nextSyncSettings, nextNetworkWait, assertHideBuiltinModelsInput, DEFAULT_HIDE_BUILTIN_MODELS,
 } from '../settings.mjs';
-import { COPILOT_TERMS_VERSION } from '../model-env.mjs';
 import { settingsErrorReply, userLine, INTERNAL_KEY } from '../settings-errors.mjs';
 import { assertProxyLoginInput, savedLoginRefusal, saveProxyLogin, ProxyLoginError } from '../proxy-credentials.mjs';
 import { brokerRefusal, testProviderConnection, importCopilotModels, importEndpointModels, endpointModelsForImport, pendingImportIds } from '../bridge/provider-ops.mjs';
@@ -20,12 +19,12 @@ import { SAVED_TEXT, SAVED_OFF_TEXT, PORT_PENDING_TEXT } from '../../shared/netw
 export const SETUP_GROUPS = Object.freeze({
   network: Object.freeze(['networkProxy', 'login']),
   access: Object.freeze(['copilot', 'openai', 'anthropic']),
-  models: Object.freeze(['modelRoles', 'testRoles']),
+  models: Object.freeze(['modelRoles', 'askModels', 'testRoles']),
   work: Object.freeze(['uiLevel', 'pipelineCostLimitUsd', 'totalCostLimitUsd', 'costLimitResetPeriod', 'autoGeneratePrDescription', 'smartNaming', 'runEngine',
     'hideBuiltinModels', 'sync', 'networkWait']),
 });
 const PROVIDER_FIELDS = Object.freeze({
-  copilot: ['acknowledgeTerms', 'accountType', 'signIn', 'importModels'],
+  copilot: ['accountType', 'signIn', 'importModels'],
   openai: ['baseUrl', 'apiKey', 'importModels'],
   anthropic: ['baseUrl', 'apiKey'],
 });
@@ -101,9 +100,9 @@ const isMaskedEcho = (v) => typeof v === 'string' && v.startsWith('••');
  */
 export async function planSetupApply(body, deps = {}) {
   // checkProxy has no default on purpose: a caller that forgets it must not skip the UNTESTED gate (fail closed).
-  const d = { readSettings, brokerRefusal, checkProxy: null, checkModelRoles: async (p) => p,
+  const d = { readSettings, brokerRefusal, checkProxy: null, checkModelRoles: async (p) => p, checkAskModels: async (p) => p,
     endpointModels: (o) => endpointModelsForImport(o),
-    fixedPortNow: () => null, now: () => new Date(), ...deps };
+    fixedPortNow: () => null, ...deps };
   if (!isObj(body)) throw new SetupFieldError(null, 'Send the setup as one JSON object.');
   for (const k of Object.keys(body)) if (!own(SETUP_GROUPS, k) && k !== 'fromStep') throw new SetupFieldError(k, `Worca has no setup group “${k}”.`);
   for (const [g, keys] of Object.entries(SETUP_GROUPS)) {
@@ -130,6 +129,8 @@ export async function planSetupApply(body, deps = {}) {
   // ── models ── (the shape is checked here; the catalog check runs after access, with its planned imports)
   const models = body.models || {};
   const roleInput = own(models, 'modelRoles') ? await check('models', 'modelRoles', () => assertModelRolesInput(models.modelRoles)) : null;
+  // Chat's model per engine (askModels, D17): the shape here; the catalog check runs with the planned imports below.
+  const askInput = own(models, 'askModels') ? await check('models', 'askModels', () => assertAskModelsInput(models.askModels)) : null;
   if (own(models, 'testRoles') && typeof models.testRoles !== 'boolean') throw new SetupFieldError('models.testRoles', '“Models · Test the roles” must be true or false.');
 
   // ── network ──
@@ -184,8 +185,6 @@ export async function planSetupApply(body, deps = {}) {
     }
     if (name === 'openai' && own(patch, 'apiKey')) openaiKey = patch.apiKey;
     if (name === 'copilot') {
-      if (own(a, 'acknowledgeTerms') && a.acknowledgeTerms !== true) throw new SetupFieldError('access.copilot.acknowledgeTerms', '“GitHub Copilot · Acknowledge the notice” must be true.');
-      if (a.acknowledgeTerms === true && !copilotTermsAcknowledged()) Object.assign(patch, { acknowledgedTerms: d.now().toISOString(), termsVersion: COPILOT_TERMS_VERSION });
       if (own(a, 'signIn') && typeof a.signIn !== 'boolean') throw new SetupFieldError('access.copilot.signIn', '“GitHub Copilot · Sign in” must be true or false.');
       if (a.signIn === true) {
         const err = d.brokerRefusal('sign in to GitHub Copilot');
@@ -201,28 +200,37 @@ export async function planSetupApply(body, deps = {}) {
   }
   if (providers !== current.providers) next.providers = providers;
 
-  // ── model roles (D20): a role may name a model this apply's own import creates (pending ids) ──
+  // ── model roles and the Chat model (D20): either may name a model this apply's own import creates (pending ids) ──
   let rolePatch = null;
   let pending = [];
-  if (roleInput) {
+  if (roleInput || askInput) {
     const openaiBase = providers?.openai?.baseUrl || undefined;
     const p = await pendingImportIds({
       copilot: imports.copilot && !signInRefused ? imports.copilot : null,           // a skipped import creates nothing
       openai: imports.openai ? { ids: imports.openai, baseUrl: openaiBase, apiKey: openaiKey, providerBaseUrl: openaiBase } : null,
     }, { endpointModels: d.endpointModels });
     pending = p.pending;
-    rolePatch = await check('models', 'modelRoles', async () => {
-      try { return await d.checkModelRoles(roleInput, { pending }); }
-      catch (err) {
-        if (p.unreachable && /unknown model/.test(String(err && err.message))) {
-          // A camelCase token in the reason would make settingsErrorReply's safe() replace the WHOLE line (D-E).
-          const why = INTERNAL_KEY.test(p.unreachable) ? '' : `: ${p.unreachable}`;
-          err.message = `${String(err.message).replace(/\.$/, '')}. Worca could not reach the OpenAI-compatible endpoint to list the models this setup imports${why}`;
-        }
-        throw err;
+    /** An "unknown model" while the endpoint listing failed: say why the pending id is missing. */
+    const explain = (err) => {
+      if (p.unreachable && /unknown model/.test(String(err && err.message))) {
+        // A camelCase token in the reason would make settingsErrorReply's safe() replace the WHOLE line (D-E).
+        const why = INTERNAL_KEY.test(p.unreachable) ? '' : `: ${p.unreachable}`;
+        err.message = `${String(err.message).replace(/\.$/, '')}. Worca could not reach the OpenAI-compatible endpoint to list the models this setup imports${why}`;
       }
-    });
-    next.modelRoles = nextModelRoles(current.modelRoles, rolePatch);
+      return err;
+    };
+    if (roleInput) {
+      rolePatch = await check('models', 'modelRoles', async () => {
+        try { return await d.checkModelRoles(roleInput, { pending }); } catch (err) { throw explain(err); }
+      });
+      next.modelRoles = nextModelRoles(current.modelRoles, rolePatch);
+    }
+    if (askInput) {
+      const askPatch = await check('models', 'askModels', async () => {
+        try { return await d.checkAskModels(askInput, { pending }); } catch (err) { throw explain(err); }
+      });
+      next.askModels = nextAskModels(current.askModels, askPatch);
+    }
   }
 
   // ── diff (D19) and steps (D20 order) ──

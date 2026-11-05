@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { readFileSync } from 'node:fs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 import { headModel, groupHead, routeModel, routeGroupOf, landingOf, prRef, renderRoute, routeOpenWanted, setRouteOpen, ROUTE_OPEN_KEY,
   renderHeadButtons, prMenuItems, trackerWatchWords, canResolvePr, showsFixConflicts, hdPrWatchLabel, ASK_IN_CHAT, verdictWords,
   tryStep, tryServiceOf } from '../ui/public/run-head.mjs';
@@ -547,7 +547,7 @@ test('route DOM: an ordered list, aria-current on the current row, the full bran
   const copy = ol.querySelector('button.rd-route-copy');
   assert.equal(copy.getAttribute('aria-label'), 'Copy branch name fix/git-sync-fetch-timeout-kills-process-group');
   copy.click();
-  assert.deepEqual(copied, [['btn btn-sm btn-quiet rd-route-copy', 'fix/git-sync-fetch-timeout-kills-process-group']]);
+  assert.deepEqual(copied, [['btn btn-sm btn-quiet copy-btn btn-icon rd-route-copy', 'fix/git-sync-fetch-timeout-kills-process-group']]);
   assert.equal(ol.querySelectorAll('button.rd-route-copy').length, 1, 'copy only on the run\'s own branch');
   const pr = ol.children[1].querySelector('a.rd-fact-link');
   assert.equal(pr.getAttribute('href'), 'https://github.com/worca/worka-cc/pull/912');
@@ -674,22 +674,23 @@ test('route: Show route falls back to memory only when the store throws', () => 
 });
 
 test('route CSS: 20px circles, an ellipsis on mono names, sentence-case 12px --ink-2 label, the copied tick', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   assert.match(css, /\.rd-route-dot\{[^}]*width:20px;height:20px;/);
   assert.match(css, /\.rd-route-name\{[^}]*text-overflow:ellipsis;/);
   assert.match(css, /\.rd-route-row\.is-linked::before\{background:var\(--green\);\}/);
   assert.match(css, /\.rd-route\[hidden\]\{display:none;\}/);
   assert.match(css, /\.rd-route-label\{font-size:var\(--fs-meta\);color:var\(--ink-2\);\}/);
   assert.match(css, /\.rd-route-second\{[^}]*overflow-wrap:anywhere;/);
-  assert.match(css, /\.rd-route-copy\.copied \.ico-copy\{display:none;\}/);
-  assert.match(css, /\.rd-route-copy\.copied \.ico-check\{display:inline;/);
+  // the copied tick is the shared copy button's (copy-button.mjs, design-system.md › Copy button)
+  assert.match(css, /\.copy-btn:is\(\.copied,\.copy-miss\) \.ico-copy\{display:none;\}/);
+  assert.match(css, /\.copy-btn\.copied \.ico-check\{display:inline-flex;color:var\(--green-ink\);\}/);
   assert.doesNotMatch(css, /\.rd-route[^{]*\{[^}]*text-transform:uppercase/);
   // Split needles, so the removed-symbol grep (Testing) finds no line in this file either.
   assert.doesNotMatch(css, new RegExp(['\\.rd-' + 'track', '\\.rd-page-' + 'branch'].join('|')), 'the tracker and the Branch chip are gone');
 });
 
 test('CSS: fact labels never wrap', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const css = readStyleCss();
   assert.match(css, /^\.rd-kv-k\{[^}]*white-space:nowrap;/m);
 });
 

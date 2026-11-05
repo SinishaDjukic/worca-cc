@@ -35,7 +35,7 @@ function fakeDeps(over = {}) {
   return { calls, writes, deps: {
     writeSettingsKeys: async (v) => { writes.push(Object.keys(v)); return settings.writeSettingsKeys(v); },
     checkProxy: () => ({ refused: null }), fixedPortNow: () => null,
-    checkModelRoles: async (p) => p,
+    checkModelRoles: async (p) => p, checkAskModels: async (p) => p,
     applyProxy: async (np) => { calls.push('proxy-swap'); return { networkProxy: np, applied: true, pending: [] }; },
     saveLogin: async (l) => { calls.push('proxy-login'); return { label: `${l.domain}\\${l.user}` }; },
     verifyCopilot: async () => { calls.push('copilot-signin'); return { ok: true }; },
@@ -53,6 +53,11 @@ async function applyAll(body, deps) {
   await commitSetupPlan(plan, deps);
   return { plan, out: await runSetupSteps(plan, { deps }) };
 }
+/** checkAskModelsPatch's catalog check without the server: assertSlotModels with the plan's pending ids. */
+const realAskCheck = async (patch, { pending = [] } = {}) => {
+  await assertSlotModels(Object.entries(patch).filter(([, v]) => v).map(([engine, value]) => ({ id: `askModels.${engine}`, engine, value })), { pending });
+  return patch;
+};
 /** checkModelRolesPatch's catalog check without the server: assertSlotModels with the plan's pending ids. */
 const realRoleCheck = async (patch, { pending = [] } = {}) => {
   const items = [];
@@ -80,6 +85,8 @@ test('next*: same normalisation as the setters', () => {
   assert.equal(settings.nextRunEngine(''), undefined);
   assert.equal(settings.nextSmartNaming({ suggestTitle: false, model: 'x' }, { suggestTitle: true }), undefined);   // back to defaults: block deleted
   assert.deepEqual(settings.nextModelRoles({ claude: { quick: { model: 'a' } } }, { claude: { quick: null } }), undefined);
+  assert.deepEqual(settings.nextAskModels({ claude: { model: 'a' } }, { claude: null, codex: { model: 'b' } }), { codex: { model: 'b' } });
+  assert.equal(settings.nextAskModels({ claude: { model: 'a' } }, { claude: null }), undefined);
   assert.deepEqual(settings.nextProviders({ openai: { baseUrl: 'http://x/v1' } }, 'openai', { baseUrl: 'http://y/v1/ ', apiKey: '' }), { openai: { baseUrl: 'http://y/v1' } });
   assert.throws(() => settings.nextProviders({}, 'openai', { baseUrl: 'ftp://x' }), /^Error: baseUrl must be an http\(s\) URL/);
 });
@@ -144,6 +151,7 @@ test('AC-3.2: an invalid field in any group writes nothing and names the field',
     [{ network: { networkProxy: { auth: 'kerberos' } } }, 'network.networkProxy.auth'],
     [{ access: { openai: { baseUrl: 'ftp://x' } } }, 'access.openai.baseUrl'],
     [{ models: { modelRoles: { claude: { fast: { model: 'x' } } } } }, 'models.modelRoles.claude'],
+    [{ models: { askModels: { claude: { model: 'claude-opus-5-5', effort: 'turbo' } } } }, 'models.askModels.claude.effort'],
     [{ network: { login: { user: 'jdoe', password: '' } } }, 'network.login.password'],
     [{ work: { colour: 'red' } }, 'work.colour'],
   ]) {
@@ -166,7 +174,7 @@ test('AC-3.2 labels: the 400 text names the visible label', async () => {
   const msg = async (body) => { try { await planSetupApply(body, deps); } catch (e) { return e.message; } return null; };
   assert.match(await msg({ work: { pipelineCostLimitUsd: -1 } }), /^“Per-pipeline cost limit” must/);
   assert.match(await msg({ models: { testRoles: 'yes' } }), /^“Models · Test the roles”/);
-  assert.match(await msg({ access: { copilot: { acknowledgeTerms: false } } }), /^“GitHub Copilot · Acknowledge the notice”/);
+  assert.equal(await msg({ access: { copilot: { acknowledgeTerms: true } } }), 'Worca has no setup field “access.copilot.acknowledgeTerms”.');
   assert.match(await msg({ access: { copilot: { signIn: 'yes' } } }), /^“GitHub Copilot · Sign in”/);
   assert.match(await msg({ network: { login: { domain: 'ACME', user: '', password: 'pw' } } }), /^“User name”/);
 });
@@ -176,7 +184,7 @@ test('AC-3.3: one write, one ordered result per side effect', async () => {
   const { deps, writes, calls } = fakeDeps();
   const plan = await planSetupApply({
     network: { networkProxy: { enabled: true, upstream: 'proxy.acme.example:8080', auth: 'ntlm' }, login: { domain: 'ACME', user: 'jdoe', password: 'pw' } },
-    access: { copilot: { acknowledgeTerms: true, signIn: true, importModels: ['claude-opus-5-5'] } },
+    access: { copilot: { signIn: true, importModels: ['claude-opus-5-5'] } },
     models: { modelRoles: { claude: { everyday: { model: 'claude-sonnet-5-5' } } }, testRoles: true },
     work: { uiLevel: 'simple', pipelineCostLimitUsd: 5 },
   }, deps);
@@ -192,7 +200,6 @@ test('AC-3.3: one write, one ordered result per side effect', async () => {
   assert.equal(s.pipelineCostLimitUsd, 5);
   assert.equal(s.uiLevel, 'simple');
   assert.match(s.networkProxy.upstream, /proxy\.acme\.example:8080$/);
-  assert.ok(s.providers.copilot.acknowledgedTerms);
   assert.equal(seen[1].line, 'Logged in as ACME\\jdoe.');
   assert.doesNotMatch(JSON.stringify(out), /"pw"/);
 });
@@ -453,16 +460,94 @@ test('AC-3.5: a re-run that changes only the per-run limit writes only pipelineC
   assert.deepEqual(read(), { ...saved, pipelineCostLimitUsd: 8 });
 });
 
-test('nothing changed: no write at all; acknowledged terms are not re-stamped', async () => {
+test('nothing changed: no write at all on a re-run of the same provider patch', async () => {
   seed({ uiLevel: 'simple' });
-  const { deps, writes } = fakeDeps({ now: () => new Date('2026-10-25T00:00:00Z') });
-  const first = await planSetupApply({ access: { copilot: { acknowledgeTerms: true } } }, deps);
+  const { deps, writes } = fakeDeps();
+  const first = await planSetupApply({ access: { copilot: { accountType: 'business' } } }, deps);
   await commitSetupPlan(first, deps);
   assert.deepEqual(first.written, ['providers']);
-  const plan = await planSetupApply({ work: { uiLevel: 'simple' }, access: { copilot: { acknowledgeTerms: true } } }, deps);
+  const plan = await planSetupApply({ work: { uiLevel: 'simple' }, access: { copilot: { accountType: 'business' } } }, deps);
   assert.deepEqual(plan.written, []);
   await commitSetupPlan(plan, deps);
   assert.equal(writes.length, 1);
+});
+
+test('a stale client still sending access.copilot.acknowledgeTerms gets the generic “no such setup field” 400, nothing written', async () => {
+  seed({ theme: 'dark' });
+  const before = readFileSync(settingsPath(), 'utf8');
+  const { deps, writes } = fakeDeps();
+  await assert.rejects(planSetupApply({ access: { copilot: { acknowledgeTerms: true, signIn: true } } }, deps),
+    (e) => e instanceof SetupFieldError && e.field === 'access.copilot.acknowledgeTerms' && /^Worca has no setup field/.test(e.message));
+  assert.deepEqual(writes, []);
+  assert.equal(readFileSync(settingsPath(), 'utf8'), before);
+});
+
+test('models.askModels: the Chat model is written in the one settings write, with its effort; no role test is planned', async () => {
+  seed({});
+  const { deps, writes } = fakeDeps({ checkAskModels: realAskCheck });
+  const { plan, out } = await applyAll({
+    models: { askModels: { claude: { model: 'claude-opus-5-5', effort: 'high' } }, testRoles: true },
+    work: { uiLevel: 'simple' },
+  }, deps);
+  assert.equal(writes.length, 1);
+  assert.deepEqual(new Set(writes[0]), new Set(['uiLevel', 'askModels']));
+  assert.deepEqual(read().askModels, { claude: { model: 'claude-opus-5-5', effort: 'high' } });
+  assert.deepEqual(plan.steps, [], 'testRoles tests roles only, and none are saved');
+  assert.equal(out.ok, true);
+});
+
+test('models.askModels: an unknown model is refused with the Chat model label, field named, nothing written', async () => {
+  seed({ theme: 'dark' });
+  const before = readFileSync(settingsPath(), 'utf8');
+  const { deps, writes } = fakeDeps({ checkAskModels: realAskCheck });
+  await assert.rejects(planSetupApply({ models: { askModels: { claude: { model: 'no-such-model' } } } }, deps), (e) => {
+    assert.ok(e instanceof SetupFieldError);
+    assert.equal(e.field, 'models.askModels.claude');
+    assert.match(e.message, /^“Chat model”: unknown model "no-such-model" — add it to the catalog first\.$/);
+    assert.doesNotMatch(e.message, INTERNAL_KEY);
+    return true;
+  });
+  assert.deepEqual(writes, []);
+  assert.equal(readFileSync(settingsPath(), 'utf8'), before);
+});
+
+test('models.askModels: a Copilot model this apply imports may be Chat\'s model; on Codex it is refused', async () => {
+  seed({});
+  const { calls, deps } = fakeDeps({
+    checkAskModels: realAskCheck,
+    importCopilot: async (ids) => { calls.push('copilot-import'); return { created: ids.map((id) => `copilot-${id}`), updated: [], skipped: [] }; },
+  });
+  const { plan, out } = await applyAll({
+    access: { copilot: { importModels: ['claude-opus-5.5'] } },
+    models: { askModels: { claude: { model: 'copilot-claude-opus-5.5' } } },
+  }, deps);
+  assert.deepEqual(plan.steps.map((s) => s.id), ['copilot-import']);
+  assert.deepEqual(read().askModels, { claude: { model: 'copilot-claude-opus-5.5' } });
+  assert.equal(out.ok, true);
+  await assert.rejects(planSetupApply({
+    access: { copilot: { importModels: ['claude-opus-5.5'] } },
+    models: { askModels: { codex: { model: 'copilot-claude-opus-5.5' } } },
+  }, fakeDeps({ checkAskModels: realAskCheck }).deps), (e) => e.field.startsWith('models.askModels') && /runs on Claude/.test(e.message));
+});
+
+test('models.askModels: null clears that engine\'s Chat model (Chat follows Everyday again); the last one removes the key', async () => {
+  seed({ askModels: { claude: { model: 'claude-haiku-5-5' }, codex: { model: 'gpt-5.5' } } });
+  const { deps } = fakeDeps();
+  await applyAll({ models: { askModels: { claude: null } } }, deps);
+  assert.deepEqual(read().askModels, { codex: { model: 'gpt-5.5' } });
+  await applyAll({ models: { askModels: { codex: null } } }, deps);
+  assert.equal('askModels' in read(), false);
+  // Same value again: nothing to write.
+  const plan = await planSetupApply({ models: { askModels: { codex: null } } }, deps);
+  assert.deepEqual(plan.written, []);
+});
+
+test('models.askModels: shape errors name the field', async () => {
+  seed({});
+  const { deps } = fakeDeps();
+  const fieldOf = async (body) => { try { await planSetupApply(body, deps); } catch (e) { return e.field; } return null; };
+  assert.equal(await fieldOf({ models: { askModels: 'x' } }), 'models.askModels');
+  assert.equal(await fieldOf({ models: { askModels: { cursor9: { model: 'x' } } } }), 'models.askModels');
 });
 
 test('a masked API key echo is dropped, never stored', async () => {

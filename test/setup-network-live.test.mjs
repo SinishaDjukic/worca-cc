@@ -45,7 +45,7 @@ before(async () => {
   delete process.env.WORCA_AGENT_USER; delete process.env.WORCA_AGENT_HOME;
   process.env.HOME = sandboxHome; process.env.USERPROFILE = sandboxHome;
   process.env.WORCA_MOCK = '1';
-  process.env.WORCA_TEST_ALLOW_HOME_FALLBACK = '1';   // the Copilot notice writes settings in the sandboxed HOME
+  process.env.WORCA_TEST_ALLOW_HOME_FALLBACK = '1';   // the Copilot sign-in writes settings in the sandboxed HOME
   const mod = await import('../ui/server.mjs');
   testing = mod._testing;
   srv = mod.server;
@@ -95,8 +95,6 @@ test('fresh home: Test with the typed login, the network-only apply, then a serv
   assert.equal(fetchProxy?.status, 'on', 'Worca\'s fetch dispatcher was re-installed');
   assert.equal(egress.connector.status().login, 'ACME\\jdoe', 'the connector logs in with the saved account');
 
-  const ack = await call('POST', '/api/providers/copilot/acknowledge', {});
-  assert.equal(ack.status, 200, ack.text);
   const heads = fake.stats.heads.length;
   const type3 = fake.stats.type3;
   await call('POST', '/api/providers/copilot/login', {});   // the stand-in is no TLS server: the answer is an error

@@ -1,0 +1,20 @@
+
+/* Live scan loader (role=status aria-live=polite). */
+.ws-loader{display:flex;flex-direction:column;align-items:center;gap:12px;padding:36px 24px;text-align:center;}
+.spinner{width:38px;height:38px;border-radius:50%;border:3px solid var(--line-2);border-top-color:var(--ink);animation:ws-spin .9s linear infinite;}
+@keyframes ws-spin{to{transform:rotate(360deg);}}
+
+/* Refresh button busy state (History SWR/Phase-2 load); reuses @keyframes ws-spin. */
+#refresh-history.busy{position:relative;color:transparent;pointer-events:none;}
+#refresh-history.busy::after{
+  content:"";position:absolute;inset:0;margin:auto;
+  width:14px;height:14px;border-radius:50%;
+  border:2px solid var(--line-2);border-top-color:var(--ink);
+  animation:ws-spin .9s linear infinite;
+}
+.status-label{font-weight:600;font-size:15px;color:var(--ink);max-width:520px;}
+.status-sub{font-family:var(--mono);font-size:12px;color:var(--ink-3);}
+
+/* History pill "WS" badge for workspace runs. */
+.hist-pill.ws::before{content:'WS';font-size:11px;font-weight:800;background:var(--slate-bg);color:var(--slate-ink);border-radius:var(--r-sm);padding:2px 5px;margin-right:2px;}
+.hist-pill.ws.active::before{background:var(--on-ink-wash-2);color:var(--on-ink);}

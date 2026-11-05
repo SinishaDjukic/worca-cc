@@ -87,6 +87,30 @@ export const FLAGS = Object.freeze([
     reviewBy: '2027-01-23',
     docs: 'docs/run-telemetry.md',
   }),
+  entry({
+    key: 'gitAutomations',
+    title: 'Git event automations',
+    description: 'Start a workflow when an issue or pull request is created in a project or a workspace: rules, the Auto-handle switches (propose a fix, full fix, automatic review) and the GitHub webhook. Off: nothing polls GitHub and the routes answer 404.',
+    stage: 'experimental',
+    default: false,
+    owner: 'denislavprinov',
+    since: '1.16.0',
+    added: '2026-10-22',
+    reviewBy: '2027-01-20',
+    docs: 'docs/git-automations.md',
+  }),
+  entry({
+    key: 'sessionGroups',
+    title: 'One session',
+    description: 'Mark 2–4 consecutive steps as one session. Where the engine supports it they run as sub-agents of one main agent; otherwise as separate sessions. The run page shows each session\'s turns and cost.',
+    stage: 'experimental',
+    default: false,
+    owner: 'Bulibas',
+    since: '1.15.0',
+    added: '2026-10-28',
+    reviewBy: '2027-01-26',
+    docs: 'docs/sessions.md',
+  }),
 ]);
 
 const BY_KEY = new Map(FLAGS.map((f) => [f.key, f]));

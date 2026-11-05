@@ -1,0 +1,25 @@
+    <!-- ===== Interface mode (docs/ui-levels.md) ===== -->
+    <!-- Opened by [data-mode-open] (Settings › General's "Change…") and by a guide whose switch failed.
+         Choosing a card applies at once, so the app re-lays out behind the dialog as the preview.
+         ui-level.mjs owns the cards, focus and keys. -->
+    <div id="mode-modal" class="viewer-modal mode-modal hidden" role="dialog" aria-modal="true" aria-labelledby="mode-title" aria-describedby="mode-sub">
+      <div class="card dlg">
+        <div class="dlg-head">
+          <div class="card-head">
+            <h2 id="mode-title">Interface mode</h2>
+          </div>
+          <p class="mode-sub" id="mode-sub">Choose how much of Worca is on screen. Nothing is switched off, only tidied away, and you can change this at any time.</p>
+        </div>
+        <div class="dlg-body">
+          <div class="lv-cards" id="mode-cards" role="radiogroup" aria-labelledby="mode-title"></div>
+        </div>
+        <div class="dlg-foot">
+          <small class="hint" id="mode-msg" aria-live="polite"></small>
+          <div class="mode-foot">
+            <span class="hint">Applies at once. Runs and saved settings are not affected.</span>
+            <button type="button" id="mode-done" class="btn btn-primary">Done</button>
+          </div>
+        </div>
+      </div>
+    </div>
+

@@ -1,11 +1,8 @@
 import { test, expect, configure, openSidebar, pairedSidebar, tokenFor, runCommand, stubCapture } from './fixtures.mjs';
-import { readFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { tokenMap } from '../../tools/extension-css.mjs';
+import { readStyleCss } from '../../src/core/read-style-css.mjs';
 
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');   // not the cwd (review m10)
-const COLOR_TOKENS = Object.entries(tokenMap(readFileSync(join(ROOT, 'ui/public/style.css'), 'utf8'))).filter(([, v]) => /light-dark\(|^#/.test(v)).map(([k]) => k);
+const COLOR_TOKENS = Object.entries(tokenMap(readStyleCss())).filter(([, v]) => /light-dark\(|^#/.test(v)).map(([k]) => k);
 const resolveTokens = (names) => names.map((n) => { const p = document.createElement('i'); p.style.color = `var(${n})`; document.body.append(p); const c = getComputedStyle(p).color; p.remove(); return c; });
 
 // Computed-style parity (review M5): the same element in the real Worca Chat page vs the sidebar.

@@ -1,0 +1,8 @@
+
+/* Guardrails row editors (used by the Guardrails view) */
+.gr-list{display:flex;flex-direction:column;margin-bottom:8px;}
+.gr-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:7px 0;border-bottom:1px solid var(--line);font-family:var(--mono);font-size:12px;}
+.gr-row:last-child{border-bottom:none;}
+.gr-rm{flex:0 0 auto;display:grid;place-items:center;}
+.gr-empty{color:var(--ink-3);font-size:12px;padding:6px 0;}
+

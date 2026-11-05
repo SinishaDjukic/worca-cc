@@ -5,6 +5,8 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { CREATE_PR_LABEL, VIEW_PR_LABEL, createPrLabel, viewPrLabel, doneStatusWord } from '../ui/public/ship-words.mjs';
 import { ACTION_LABEL } from '../src/shared/run-model.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 
 const read = (p) => readFileSync(new URL(`../ui/public/${p}`, import.meta.url), 'utf8');
 const noComments = (s) => s.split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).map((l) => l.replace(/\s\/\/.*$/, '')).join('\n');
@@ -51,13 +53,13 @@ test('PR wording: no string literal uses "open" as a PR verb or says "Create pul
   const files = [...walkFrom('ui/public'), ...walkFrom('src/shared'), 'ui/server.mjs'];
   assert.ok(files.includes('ui/public/app.js') && files.includes('ui/public/run-head.mjs'), 'precondition: the walk reaches app.js');
   const hits = files.flatMap((f) => banHits(readRepo(f)).map((h) => `${f}: ${h}`));
-  const html = read('index.html').replace(/<!--[\s\S]*?-->/g, '');
+  const html = readIndexHtml().replace(/<!--[\s\S]*?-->/g, '');
   for (const [re, why] of BANS) if (re.test(html)) hits.push(`index.html: ${re} (${why})`);
   assert.deepEqual(hits, []);
 });
 
 test('PR wording: buttons and dialog titles in index.html say "PR"; the Create PR dialog title equals its confirm', () => {
-  const page = new JSDOM(read('index.html')).window.document;
+  const page = new JSDOM(readIndexHtml()).window.document;
   for (const b of page.querySelectorAll('button')) assert.doesNotMatch(b.textContent, /pull request/i, b.outerHTML.slice(0, 80));
   for (const d of page.querySelectorAll('[role="dialog"]')) {
     assert.doesNotMatch(d.getAttribute('aria-label') || '', /pull request/i, d.id);
@@ -78,8 +80,8 @@ test('PR words: no JS module under ui/public repeats the Create PR / View PR(s) 
 });
 
 test('no "Ship it" or "View pull request" label is left in ui/public (comments aside)', () => {
-  const html = read('index.html').replace(/<!--[\s\S]*?-->/g, '');
-  assert.equal(html.includes('Ship it'), false, 'index.html');
+  const html = readIndexHtml().replace(/<!--[\s\S]*?-->/g, '');
+  assert.equal(html.includes('Ship it'), false, 'the shell markup');
   const walk = (dir) => readdirSync(new URL(`../ui/public/${dir}`, import.meta.url), { withFileTypes: true }).flatMap((e) =>
     e.isDirectory() ? walk(`${dir}${e.name}/`) : /\.(mjs|js)$/.test(e.name) ? [`${dir}${e.name}`] : []);
   const files = walk('');
@@ -102,14 +104,14 @@ test('F-9: the four run-time surfaces route through whenLabel, none through form
 });
 
 test('F-22: a zero diff count is neutral ink and the files tile is a link', () => {
-  const css = read('style.css');
+  const css = readStyleCss();
   // --ink-2, not --ink-3: --ink-3 is 2.58:1 on the tile (the theme proof's AA gate).
   assert.match(css, /\.rd-stats \.hd-diff-counts \.is-zero\{color:var\(--ink-2\);\}/);
   assert.match(read('app.js'), /diff-del\$\{f\.removed === 0 \? ' is-zero' : ''\}/);
 });
 
 test('the stat card sub line is sans --ink-2: dropping .mono left the baseline, and --ink-3 is 2.8:1', () => {
-  const css = read('style.css');
+  const css = readStyleCss();
   assert.match(css, /\.hd-ov-card \.hd-ov-sub\{color:var\(--ink-2\);\}/);
   assert.match(read('app.js'), /s\.className = 'hd-ov-sub';/);
 });
