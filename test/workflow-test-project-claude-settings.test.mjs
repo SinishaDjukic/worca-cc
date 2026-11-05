@@ -135,7 +135,8 @@ test('D72a: the frontmatter loses its top-level hooks key and block; every other
   assert.equal(strippedFrontmatterText(FM(BLOCK, '')).text, FM('', ''), 'the last key');
   const crlf = `\uFEFF${FM(BLOCK)}`.replace(/\n/g, '\r\n');
   assert.equal(strippedFrontmatterText(crlf).text, `\uFEFF${FM('')}`.replace(/\n/g, '\r\n'), 'BOM and CRLF kept');
-  for (const t of [FM(''), 'no frontmatter\nhooks: x\n', '', FM('', 'description: hooks: none\nnested:\n  hooks: kept\n')]) {
+  // (review m4: `description: hooks: none` unquoted is not YAML at all and now fails closed; quoted it is a plain value)
+  for (const t of [FM(''), 'no frontmatter\nhooks: x\n', '', FM('', 'description: "hooks: none"\nnested:\n  hooks: kept\n')]) {
     assert.equal(strippedFrontmatterText(t), null, JSON.stringify(t.slice(0, 40)));
   }
 });
@@ -146,6 +147,63 @@ test('D72a: a frontmatter Worca cannot change safely is left as it is and named'
     [FM('hooks: "a\n  b"\n'), 'an open quote']]) {
     assert.deepEqual(strippedFrontmatterText(t), { unsafe: true }, why);
   }
+});
+
+test('review m4: YAML forms that still carry a top-level hooks key fail closed (left as they are, named); one that parses without it is fine', () => {
+  for (const [t, why] of [
+    ['---\n  name: x\n  hooks:\n    Stop: []\n---\nbody\n', 'an indented root mapping'],
+    ['---\nname: x\n? hooks\n: { Stop: [] }\n---\nbody\n', 'an explicit ? key'],
+    ['---\nname: x\nbase: &b\n  hooks:\n    Stop: []\n<<: *b\n---\nbody\n', 'a merge key bringing hooks'],
+    ['---\n{ name: x, hooks: { Stop: [] } }\n---\nbody\n', 'a flow-style frontmatter'],
+    ['---\n"ho\\u006fks": { Stop: [] }\nname: x\n---\nbody\n', 'an escaped key'],
+    ['---\nname: [x\n  hooks: { Stop: [] }\n---\nbody\n', 'YAML that does not parse, mentioning hooks'],
+    [FM('', 'description: hooks: none\n'), 'not YAML (a plain value with ": " in it), mentioning hooks'],
+    [FM(BLOCK, 'base: &b\n  hooks:\n    Stop: []\n<<: *b\n'), 'a merge key bringing hooks back after the line strip'],
+  ]) assert.deepEqual(strippedFrontmatterText(t), { unsafe: true }, why);
+  assert.equal(strippedFrontmatterText('---\nname: x\nbase: &b\n  model: y\n<<: *b\n---\nbody\n'), null, 'a merge key with no hooks: nothing to do');
+  assert.equal(strippedFrontmatterText('---\nname: [x\n---\nbody\n'), null, 'YAML that does not parse and never says hooks: nothing to do');
+});
+
+test('I-2: nested .claude folders below the checkout root (a monorepo package\'s skills load once the agent works there: probe nested-read-318) lose their hooks too', async () => {
+  const d = tmp();
+  const w = (rel, text) => { mkdirSync(join(d, ...rel.split('/').slice(0, -1)), { recursive: true }); writeFileSync(join(d, ...rel.split('/')), text); };
+  w('packages/web/.claude/skills/deploy/SKILL.md', FM(BLOCK));
+  w('packages/web/.claude/agents/a.md', FM(BLOCK));
+  w('packages/web/.claude/commands/c.md', FM(BLOCK));
+  w('packages/web/.claude/settings.json', JSON.stringify({ hooks: { Stop: [] } }));
+  w('packages/web/src/.claude/skills/deeper/SKILL.md', FM(BLOCK));
+  w('packages/api/.claude/commands/broken.md', '---\nhooks:\n  Stop: []\n');
+  w('node_modules/pkg/.claude/skills/s/SKILL.md', FM(BLOCK));
+  w('.git/x/.claude/skills/s/SKILL.md', FM(BLOCK));
+  const outside = tmp();
+  w('packages/linked/keep.txt', 'x');
+  mkdirSync(join(outside, '.claude', 'skills', 's'), { recursive: true });
+  writeFileSync(join(outside, '.claude', 'skills', 's', 'SKILL.md'), FM(BLOCK));
+  symlinkSync(outside, join(d, 'packages', 'outside'), 'junction');                       // an ordinary link: never followed, kept
+  symlinkSync(join(outside, '.claude'), join(d, 'packages', 'linked', '.claude'), 'junction');   // a nested .claude link: removed
+  const r = await stripProjectClaudeSettings(d);
+  assert.deepEqual(r.changed, ['packages/web/.claude/skills/deploy/SKILL.md', 'packages/web/.claude/agents/a.md', 'packages/web/.claude/commands/c.md',
+    'packages/web/src/.claude/skills/deeper/SKILL.md']);
+  assert.deepEqual(r.links, ['packages/linked/.claude']);
+  assert.deepEqual(r.unparsed, ['packages/api/.claude/commands/broken.md']);
+  assert.equal(readFileSync(join(d, 'packages', 'web', '.claude', 'skills', 'deploy', 'SKILL.md'), 'utf8'), FM(''));
+  assert.equal(readFileSync(join(d, 'packages', 'web', '.claude', 'settings.json'), 'utf8'), JSON.stringify({ hooks: { Stop: [] } }),
+    'a nested settings file is not one the CLI loads (only the root\'s): left as it is');
+  assert.equal(readFileSync(join(d, 'node_modules', 'pkg', '.claude', 'skills', 's', 'SKILL.md'), 'utf8'), FM(BLOCK), 'node_modules is skipped');
+  assert.equal(readFileSync(join(d, '.git', 'x', '.claude', 'skills', 's', 'SKILL.md'), 'utf8'), FM(BLOCK), '.git is skipped');
+  assert.equal(readFileSync(join(outside, '.claude', 'skills', 's', 'SKILL.md'), 'utf8'), FM(BLOCK), 'nothing outside the checkout is touched');
+  assert.equal(existsSync(join(d, 'packages', 'outside')), true, 'an ordinary link elsewhere in the checkout stays');
+  assert.equal(existsSync(join(d, 'packages', 'linked', '.claude')), false);
+});
+
+test('m13: a folder too deep to walk is named as not checked, never passed over silently', async () => {
+  const d = tmp();
+  const deep = ['.claude', 'skills', ...Array.from({ length: 40 }, (_, i) => `d${i}`)];
+  mkdirSync(join(d, ...deep), { recursive: true });
+  writeFileSync(join(d, ...deep, 'SKILL.md'), FM(BLOCK));
+  const r = await stripProjectClaudeSettings(d);
+  assert.equal(r.unparsed.length, 1);
+  assert.match(r.unparsed[0], /^\.claude\/skills\/d0\/d1\//);
 });
 
 test('D72a: in a checkout: skills\' SKILL.md, agents and commands lose their frontmatter hooks; links go, never followed; unsafe ones are named', async () => {
