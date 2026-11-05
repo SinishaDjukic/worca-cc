@@ -335,7 +335,7 @@ import { webEventPrompt, webNoticeText, chatWebHosts } from '../src/core/ask/web
 import { createConversationBridge } from '../src/core/chat/conversation-bridge.mjs';
 import { fetchChatFiles, fitChatContext, chatContextBlock } from '../src/core/chat/inbound-context.mjs';
 import { createReceipts, commandOutcome } from '../src/core/chat/receipts.mjs';
-import { conversationForThread, listActiveConversations } from '../src/core/chat/conversations.mjs';
+import { conversationForThread, listActiveConversations, chatOrigins } from '../src/core/chat/conversations.mjs';
 import { scopeSelectOptions } from '../src/core/chat/card-render.mjs';
 import { EventEmitter } from 'node:events';
 import { chatScopeOf, withChatScope, sameScope, scopeBody, targetInScope, scopeRefusalText, noProjectRunText, scopeEventPrompt, scopeNoticeText } from '../src/core/ask/scope.mjs';
@@ -14910,10 +14910,20 @@ app.get('/api/ask/threads', (req, res) => {
     const mode = !req.worcaExtension && req.query.mode === 'composer' ? 'composer' : null;
     // q = the History column's search (title or any message's text); the owner and surface filters above still apply.
     const query = typeof req.query.q === 'string' ? req.query.q.trim() : '';
-    const decorate = (t) => {
+    // origin = the chat integration that opened the thread (null = started in the app), one lookup per page.
+    const withOrigins = (rows) => {
+      const found = chatOrigins(rows.map((t) => t.id));
+      const named = found.size ? channelHost.list() : [];
+      const label = (o) => named.find((e) => e.plugin === o.plugin && e.channelId === o.channelId)?.displayName || null;
+      return rows.map((t) => {
+        const o = found.get(t.id);
+        return decorate(t, o ? { ...o, label: label(o) } : null);
+      });
+    };
+    const decorate = (t, origin) => {
       const trackingRuns = askTrackingCount(t.id);
       return { ...t, inFlight: !!askInFlight(t.id), tracking: trackingRuns > 0, trackingRuns, waiting: askWaitingCount(t.id) > 0,
-        commands: askCommands.running(t.id), archived: !!t.archivedAt, scope: chatScopeOf(t.context) };
+        commands: askCommands.running(t.id), archived: !!t.archivedAt, scope: chatScopeOf(t.context), origin };
     };
     // #948 s2: the Chats column pages (show / sort / cursor). Without them the answer keeps today's top-level keys.
     const cursor = typeof req.query.cursor === 'string' && req.query.cursor ? req.query.cursor : null;
@@ -14929,9 +14939,9 @@ app.get('/api/ask/threads', (req, res) => {
         needs: askCountThreads({ ...base, show: 'all', ids: needIds }),
         archived: askCountThreads({ ...base, show: 'archived' }),
       };
-      return res.json({ threads: page.threads.map(decorate), cursor: page.cursor, total: counts[show], counts });
+      return res.json({ threads: withOrigins(page.threads), cursor: page.cursor, total: counts[show], counts });
     }
-    const threads = askListThreads({ limit, visibleTo, mode, query }).map(decorate);
+    const threads = withOrigins(askListThreads({ limit, visibleTo, mode, query }));
     // total = EVERY saved chat (the History popover's meter), not the capped page above; while searching, the chats
     // the search matches, with all = every saved chat ("3 of 54 chats").
     const total = askCountThreads({ visibleTo, mode, query });

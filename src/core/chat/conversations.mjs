@@ -51,6 +51,26 @@ export function conversationForThread(askThreadId) {
   return r ? rowToConversation(r) : null;
 }
 
+/** Where each of these Ask threads came from: Map threadId -> { plugin, channelId, platform } for threads a chat
+ *  integration opened; app chats are absent. The current binding wins; a thread a New conversation left behind keeps
+ *  its origin through its delivered rows (chat_deliveries still name the conversation after the rebind). */
+export function chatOrigins(threadIds) {
+  const ids = [...new Set((threadIds || []).filter((id) => typeof id === 'string' && id))];
+  const out = new Map();
+  if (!ids.length) return out;
+  getDb();
+  const marks = ids.map(() => '?').join(', ');
+  const rows = prepare(`SELECT c.ask_thread_id AS tid, c.plugin, c.channel_id, c.platform, 0 AS rank, c.created_at
+      FROM chat_conversations c WHERE c.ask_thread_id IN (${marks})
+    UNION ALL
+    SELECT DISTINCT m.thread_id AS tid, c.plugin, c.channel_id, c.platform, 1 AS rank, c.created_at
+      FROM chat_deliveries d JOIN ask_messages m ON m.id = d.ask_message_id JOIN chat_conversations c ON c.id = d.conversation_id
+      WHERE m.thread_id IN (${marks})
+    ORDER BY rank, created_at DESC`).all(...ids, ...ids);
+  for (const r of rows) if (!out.has(r.tid)) out.set(r.tid, { plugin: r.plugin, channelId: r.channel_id, platform: r.platform });
+  return out;
+}
+
 export function listActiveConversations({ plugin = null, channelId = null } = {}) {
   getDb();
   const rows = plugin

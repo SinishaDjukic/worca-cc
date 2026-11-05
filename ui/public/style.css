@@ -4873,6 +4873,10 @@ body.view-runs .main{display:flex;flex-direction:column;overflow:hidden;padding:
 .runs-row{display:flex;flex-wrap:wrap;align-items:center;column-gap:8px;padding:8px 0;color:inherit;text-decoration:none;min-width:0;}
 .runs-row:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
 .runs-row-title{flex:1 1 50%;min-width:50%;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+/* A chat a chat integration opened (Discord, Slack, Telegram, Teams): its platform's mark leads the title text, inline,
+   so the row's height and the title's ellipsis stay as they were (chat-origin.mjs; Chats column, chat home, side column). */
+.chat-origin{display:inline-block;line-height:0;vertical-align:-2px;margin-right:5px;color:var(--ink-2);}
+.chat-origin svg{display:block;}
 .runs-row-right{flex:0 0 auto;max-width:100%;margin-left:auto;display:inline-flex;flex-wrap:wrap;justify-content:flex-end;gap:8px;align-items:center;font-variant-numeric:tabular-nums;}
 .runs-row-sub{flex:1 0 100%;color:var(--ink-2);font-size:12px;}
 .runs-row > .runs-stage,.runs-row > .runs-row-prog{flex:1 0 100%;margin-top:6px;}
