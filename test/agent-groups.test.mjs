@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { createGroupTracker, reapAgentGroups, agentGroupsDir } from '../src/core/agent-groups.mjs';
+import { createGroupTracker, reapAgentGroups, agentGroupsDir, processStartTicks } from '../src/core/agent-groups.mjs';
 
 const fresh = () => mkdtempSync(join(tmpdir(), 'agent-groups-'));
 const DEAD = 999999;
@@ -18,14 +18,14 @@ test('agentGroupsDir lives under the worca home, apart from the custom agents fo
 
 test('the tracker writes one file per owner and removes it when the last group ends', () => {
   const dir = fresh();
-  const t = createGroupTracker({ dir: () => dir, ownerPid: 4242, bootId: () => 'boot-a', now: () => 1000 });
+  const t = createGroupTracker({ dir: () => dir, ownerPid: 4242, bootId: () => 'boot-a', now: () => 1000, startTicks: (pid) => pid * 10 });
   t.add(111, { bin: 'claude' });
   t.add(222, { bin: 'codex' });
   const file = join(dir, '4242.json');
   const rows = JSON.parse(readFileSync(file, 'utf8'));
   assert.deepEqual(rows, [
-    { pgid: 111, ownerPid: 4242, bootId: 'boot-a', startedAt: 1000, bin: 'claude' },
-    { pgid: 222, ownerPid: 4242, bootId: 'boot-a', startedAt: 1000, bin: 'codex' },
+    { pgid: 111, ownerPid: 4242, bootId: 'boot-a', startTicks: 1110, ownerStartTicks: 42420, startedAt: 1000, bin: 'claude' },
+    { pgid: 222, ownerPid: 4242, bootId: 'boot-a', startTicks: 2220, ownerStartTicks: 42420, startedAt: 1000, bin: 'codex' },
   ]);
   t.delete(111);
   assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')).map((r) => r.pgid), [222]);
@@ -91,6 +91,45 @@ test('reapAgentGroups never kills a group recorded before the last reboot (its p
   assert.deepEqual(killed, []);
   assert.deepEqual(r, { reaped: 0, files: 1 });
   assert.equal(existsSync(join(dir, '4242.json')), false);
+});
+
+// A container restart keeps the kernel (same boot id) but starts a new PID namespace, and the
+// agent-groups folder lives on a volume: an old row's pids now name whatever got them in the new container.
+test('reapAgentGroups never kills a pid that was reused by another process (its start time differs)', async () => {
+  const dir = fresh();
+  writeFileSync(join(dir, `${DEAD}.json`), JSON.stringify([
+    { pgid: 111, ownerPid: DEAD, bootId: 'boot-a', startTicks: 500 },   // reused: now started at 900
+    { pgid: 222, ownerPid: DEAD, bootId: 'boot-a', startTicks: 600 },   // the same process: reaped
+  ]));
+  const killed = [];
+  const r = await reapAgentGroups({
+    dir, bootId: 'boot-a', ownerPid: 1,
+    isAlive: (pid) => pid !== DEAD, isGroupLeader: async () => true, kill: (pid) => killed.push(pid),
+    startTicks: (pid) => ({ 111: 900, 222: 600 })[pid] ?? null,
+  });
+  assert.deepEqual(killed, [222]);
+  assert.deepEqual(r, { reaped: 1, files: 1 });
+});
+
+test('reapAgentGroups treats an owner whose pid now belongs to another process as dead', async () => {
+  const dir = fresh();
+  const OWNER = 20;
+  writeFileSync(join(dir, `${OWNER}.json`), JSON.stringify([{ pgid: 45, ownerPid: OWNER, bootId: 'boot-a', startTicks: 70, ownerStartTicks: 60 }]));
+  const killed = [];
+  const r = await reapAgentGroups({
+    dir, bootId: 'boot-a', ownerPid: 1,
+    isAlive: () => true, isGroupLeader: async () => true, kill: (pid) => killed.push(pid),
+    startTicks: (pid) => ({ [OWNER]: 61, 45: 70 })[pid] ?? null,   // pid 20 is alive, but started later
+  });
+  assert.deepEqual(killed, [45]);
+  assert.deepEqual(r, { reaped: 1, files: 1 });
+});
+
+test('processStartTicks reads a live process\'s start time and null for a dead one', { skip: process.platform !== 'linux' && '/proc is Linux-only' }, () => {
+  const t = processStartTicks(process.pid);
+  assert.ok(Number.isSafeInteger(t) && t > 0, `got ${t}`);
+  assert.equal(processStartTicks(process.pid), t);
+  assert.equal(processStartTicks(DEAD), null);
 });
 
 test('reapAgentGroups tolerates a missing folder and a corrupt file', async () => {

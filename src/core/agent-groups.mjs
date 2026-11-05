@@ -28,12 +28,29 @@ export function currentBootId() {
 }
 
 /**
+ * Linux: when the process started, in clock ticks since the kernel booted (/proc/<pid>/stat field 22);
+ * null for a process that is gone, or where there is no /proc (macOS). A pid that a NEW process got
+ * (a restarted container: same kernel, so the same boot id, but a fresh PID namespace whose pids start
+ * at 1 again, while the agent-groups folder lives on a volume) always has a later start time.
+ */
+export function processStartTicks(pid) {
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
+    // Field 2 (comm) is parenthesised and may hold spaces: count from after its closing paren (field 3).
+    const v = Number(stat.slice(stat.lastIndexOf(')') + 2).split(' ')[22 - 3]);
+    return Number.isSafeInteger(v) ? v : null;
+  } catch { return null; }
+}
+
+/**
  * The host's record of its live groups. Every write is best-effort and synchronous (the record is
  * small, and the 'exit' path cannot await); the file is removed once the last group has ended.
- * @param {{dir: () => string, ownerPid?: number, bootId?: () => string|null, now?: () => number}} o
+ * @param {{dir: () => string, ownerPid?: number, bootId?: () => string|null, now?: () => number,
+ *   startTicks?: (pid:number) => number|null}} o
  */
-export function createGroupTracker({ dir, ownerPid = process.pid, bootId = currentBootId, now = Date.now }) {
+export function createGroupTracker({ dir, ownerPid = process.pid, bootId = currentBootId, now = Date.now, startTicks = processStartTicks }) {
   const rows = new Map();
+  let ownerTicks;   // read once: the host's own start time never changes
   const fileOf = () => join(dir(), `${ownerPid}.json`);
   const write = () => {
     try {
@@ -46,7 +63,8 @@ export function createGroupTracker({ dir, ownerPid = process.pid, bootId = curre
   };
   return {
     add(pgid, { bin = null } = {}) {
-      rows.set(pgid, { pgid, ownerPid, bootId: bootId(), startedAt: now(), bin });
+      if (ownerTicks === undefined) ownerTicks = startTicks(ownerPid);
+      rows.set(pgid, { pgid, ownerPid, bootId: bootId(), startTicks: startTicks(pgid), ownerStartTicks: ownerTicks, startedAt: now(), bin });
       write();
     },
     delete(pgid) {
@@ -75,7 +93,9 @@ const defaultKill = (pgid) => { try { process.kill(-pgid, 'SIGKILL'); } catch { 
  * @returns {Promise<{reaped:number, files:number}>} groups killed, files of dead hosts removed
  */
 export async function reapAgentGroups({ dir, ownerPid = process.pid, bootId = currentBootId(),
-  isAlive = defaultAlive, isGroupLeader = defaultGroupLeader, kill = defaultKill } = {}) {
+  isAlive = defaultAlive, isGroupLeader = defaultGroupLeader, kill = defaultKill, startTicks = processStartTicks } = {}) {
+  // Still the process the row recorded: alive and, when its start time was recorded, started then.
+  const sameProcess = (pid, ticks) => isAlive(pid) && (ticks == null || startTicks(pid) === ticks);
   let names = [];
   try { names = readdirSync(dir); } catch { return { reaped: 0, files: 0 }; }
   let reaped = 0;
@@ -91,12 +111,12 @@ export async function reapAgentGroups({ dir, ownerPid = process.pid, bootId = cu
     // A file from an earlier boot: its owner is dead, whoever holds that pid now.
     const sameBoot = (r) => !bootId || !r?.bootId || r.bootId === bootId;
     const fromEarlierBoot = list.length > 0 && !list.some(sameBoot);
-    if (!fromEarlierBoot && isAlive(owner)) continue;
+    if (!fromEarlierBoot && sameProcess(owner, list[0]?.ownerStartTicks)) continue;
     for (const r of list) {
       const pgid = Number(r?.pgid);
       if (!Number.isSafeInteger(pgid) || pgid <= 1 || !sameBoot(r)) continue;
       try {
-        if (isAlive(pgid) && await isGroupLeader(pgid)) { kill(pgid); reaped++; }
+        if (sameProcess(pgid, r.startTicks) && await isGroupLeader(pgid)) { kill(pgid); reaped++; }
       } catch { /* one bad row must not stop the sweep */ }
     }
     try { rmSync(file, { force: true }); files++; } catch { /* best-effort */ }
