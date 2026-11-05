@@ -254,7 +254,7 @@ async function until(expr, tag, tries = 100) {
 // frozen and any running animation cancelled; two settles so the frozen values are
 // the ones getComputedStyle reports.
 const READY = `(async()=>{await document.fonts.ready;
-  await Promise.all(['/assets/worca-logo-mask.png','/assets/worca-mark-mask.png','/assets/worca-favicon.png'].map((src)=>new Promise((r)=>{const i=new Image();i.onload=i.onerror=r;i.src=src;})));return 1;})()`;
+  await Promise.all(['/assets/worca-logo.svg','/assets/worca-favicon.svg','/assets/worca-favicon.png'].map((src)=>new Promise((r)=>{const i=new Image();i.onload=i.onerror=r;i.src=src;})));return 1;})()`;
 const FREEZE_CSS = '*,*::before,*::after{transition:none!important;animation:none!important;caret-color:transparent!important}';
 async function freeze(tag) {
   await ev(`(()=>{let s=document.getElementById('theme-freeze');if(!s){s=document.createElement('style');s.id='theme-freeze';s.textContent=${JSON.stringify(FREEZE_CSS)};document.head.appendChild(s);}

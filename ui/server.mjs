@@ -243,7 +243,7 @@ import { getSession as getTerminalSession, listBlocks as listTerminalBlocks, cou
   listAudit as listTerminalAudit, listBranchWorktrees, findBranchWorktree, markInterruptedSessions, listRecentBlocks as listRecentTerminalBlocks } from '../src/core/terminal/store.mjs';
 import { createAskCommands, terminalEventPrompt, terminalNoticeText } from '../src/core/ask/commands.mjs';
 import { openBranchWorktree, removeBranchWorktree, releaseBranchWorktree, enforceBranchWorktreeCap, sweepBranchWorktrees } from '../src/core/terminal/worktrees.mjs';
-import { pidAlive, killDescendants } from '../src/core/terminal/pty.mjs';
+import { pidAlive, terminalReapOptions } from '../src/core/terminal/pty.mjs';
 import { createTerminalFanout } from '../src/core/terminal/fanout.mjs';
 import { detectBuiltins, builtinLaunch, revealLaunch, copyCommandText, findOnPath } from '../src/core/actions/builtins.mjs';
 import { buildLauncherCommand, launchAndWatch, installedLaunchers, launcherExamples, launcherWarning, lineForPickedApp } from '../src/core/actions/launcher.mjs';
@@ -301,7 +301,7 @@ import { detectSetup, defaultProbes } from '../src/core/setup/detect.mjs';
 import { teamSetupState, buildTeamSetup, SHARE_SETTING_KEYS } from '../src/core/setup/team-file.mjs';
 import { planSetupApply, commitSetupPlan, runSetupSteps, SetupFieldError, SetupConflictError } from '../src/core/setup/apply.mjs';
 import {
-  DEFAULT_UI_PORT, UI_HEALTH_NAME, UI_TOKEN_HEADER, newUiToken, writeUiInstance, removeUiInstance, uiUrl,
+  DEFAULT_UI_PORT, UI_HEALTH_NAME, UI_TOKEN_HEADER, newUiToken, writeUiInstance, removeUiInstance, uiUrl, keepIdleConnections,
 } from '../src/core/ui-instance.mjs';
 import { validateGuardrails } from '../src/core/guardrails.mjs';
 import {
@@ -845,7 +845,7 @@ function settleRunEntry(entry) {
 // WebSocket plumbing
 // ---------------------------------------------------------------------------
 const app = express();
-const server = http.createServer(app);
+const server = keepIdleConnections(http.createServer(app));
 
 // Settings › About manual update (issue #841). The version list (npm packument, cached 12 h like the
 // check above), who may update, and the handoff record's last result. Never at boot, never under mock
@@ -3099,7 +3099,7 @@ const startRunHandler = async (req, res) => {
       // creation, where createWorkspace enforced isGitRepo) is rejected the same
       // way, so the client gets a clean 400 instead of a mid-run worktree error.
       const projects = [];
-      await gitState();                                   // U4: refresh the cached git answer (≤ 1 min old) memberWorkMode reads
+      await gitState();                                   // U4: a stale "missing" re-probes before this returns (a stale "available" is served, then refreshed); memberWorkMode reads it
       for (const dir of ws.projectPaths) {
         if (!fs.existsSync(dir)) {
           return badRequest(res, 'workspace member path is missing');
@@ -9715,8 +9715,9 @@ export async function bootMaintenance({ log } = {}) {
   // interrupted, and sweep the branch worktrees under the keep policy and cap. Before Actions: its keep
   // policy and checkout cap read the terminal pid file, which must not still hold the last server's rows.
   try {
-    const orphans = await reapOrphans({ pidFile: terminalPidFileNow(),
-      kill: (pid) => { killDescendants(pid); try { process.kill(-pid, 'SIGKILL'); } catch { /* gone */ } } });
+    const termPidFile = terminalPidFileNow();
+    // Windows checks each pid is still its recorded shell; the rows are read before reapOrphans rewrites the file.
+    const orphans = await reapOrphans({ pidFile: termPidFile, ...terminalReapOptions(termPidFile) });
     // reapOrphans keeps rows stamped with this pid; a restarted container reuses the old server's pid, so
     // such rows would keep their runs "busy" for ever. Nothing is live here yet: rewrite the file.
     terminals.writePidFile();

@@ -35,8 +35,10 @@ async function freePort() {
   return port;
 }
 
-test('uiUrl/urlHost: loopback binds print as localhost, IPv6 literals get brackets', () => {
-  assert.equal(uiUrl(), `http://localhost:${DEFAULT_UI_PORT}`);
+test('uiUrl/urlHost: a 127.0.0.1 bind prints 127.0.0.1 (no ::1 fallback), other loopbacks localhost, IPv6 literals get brackets', () => {
+  assert.equal(uiUrl(), `http://127.0.0.1:${DEFAULT_UI_PORT}`);
+  assert.equal(uiUrl({ host: '127.0.0.1', port: 5 }), 'http://127.0.0.1:5');
+  assert.equal(uiUrl({ host: 'localhost', port: 5 }), 'http://localhost:5');
   assert.equal(uiUrl({ host: '::1', port: 5 }), 'http://localhost:5');
   assert.equal(uiUrl({ host: '0.0.0.0', port: 5 }), 'http://0.0.0.0:5');
   assert.equal(urlHost('fe80::1'), '[fe80::1]');
