@@ -143,10 +143,23 @@ async function connect(wsUrl) {
   let msgId = 0;
   const pending = new Map();
   const pageErrors = [];
+  // The page's plugin and marketplace requests, from the Network domain (enabled below, before the app's modules load): which are
+  // in flight, when the last one started or ended, and whether a marketplaces refresh has answered. openSheet waits on these.
+  const net = { inflight: new Map(), changedAt: Date.now(), refreshed: false };
+  const watched = (url) => /\/api\/(plugins|marketplaces)\b/.test(url || '');
   ws.on('message', (raw) => {
     const m = JSON.parse(raw.toString());
     if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); }
     if (m.method === 'Runtime.exceptionThrown') pageErrors.push(m.params.exceptionDetails?.exception?.description || 'exception');
+    if (m.method === 'Network.requestWillBeSent' && watched(m.params.request?.url)) {
+      net.inflight.set(m.params.requestId, m.params.request.url);
+      net.changedAt = Date.now();
+    }
+    if ((m.method === 'Network.loadingFinished' || m.method === 'Network.loadingFailed') && net.inflight.has(m.params.requestId)) {
+      if (net.inflight.get(m.params.requestId).includes('/api/marketplaces/refresh')) net.refreshed = true;
+      net.inflight.delete(m.params.requestId);
+      net.changedAt = Date.now();
+    }
   });
   const send = (method, params = {}) => new Promise((res, rej) => {
     const id = (msgId += 1);
@@ -158,6 +171,7 @@ async function connect(wsUrl) {
     if (r.exceptionDetails) throw new Error(r.exceptionDetails.exception?.description || 'eval failed');
     return r.result.value;
   };
+  await send('Network.enable');   // first: the app's requests start once its modules load, well after this
   await send('Runtime.enable');
   await send('Page.enable');
   // Up to 120 s for the page's load: a cold headless Chrome on a busy machine has taken over 60 s to load the app's modules
@@ -169,7 +183,7 @@ async function connect(wsUrl) {
   }
   check('the page loaded', loaded);
   log('page loaded');
-  return { send, evalJs, pageErrors };
+  return { send, evalJs, pageErrors, net };
 }
 async function openPage(url) {
   const r = await fetch(`http://127.0.0.1:${PORT}/json/new?${encodeURIComponent(url)}`, { method: 'PUT' });
@@ -204,7 +218,12 @@ const openSheet = async () => {
   // Entering #marketplace starts a background refresh of the marketplaces (the Installed header's Refresh is aria-busy until it
   // answers). Its answer repaints the sheet's head, which can move the projects popover's button and close the popover mid-pick:
   // on a fast runner it landed ~0.3 s after the page loaded, between the picks and the footer check. Wait it out first.
-  await until(() => js(`return !document.querySelector('.mk-refresh[aria-busy="true"]');`), 30000);
+  // "Not busy" alone is not enough: the refresh may not have started yet, and a trailing load can start another. So wait for
+  // the refresh's answer, then until no plugin or marketplace request is in flight, none started or ended for 0.8 s and nothing
+  // shows busy (the Network domain's view: resource timing is no use here, the page's modules fill its buffer first).
+  await until(() => A.net.refreshed, 30000);
+  await until(async () => A.net.inflight.size === 0 && Date.now() - A.net.changedAt >= 800
+    && !(await has('.mk-refresh[aria-busy="true"]')), 30000);
   await js(`for (const s of document.querySelectorAll('.mk-tu')) s.dataset.stale = '1'; return true;`);
   await click('button.mk-name[data-name="jira-source"]');
   return until(() => js(`const host = document.getElementById('mk-sheet-host'); const s = document.querySelector('#mk-sheet .mk-tu:not([data-stale])');
