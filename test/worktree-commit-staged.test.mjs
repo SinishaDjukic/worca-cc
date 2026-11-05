@@ -119,3 +119,25 @@ test('a project that ignores .claude/ commits: the mount exclude under the ignor
   const files = git(wt.worktreeDir, ['show', '--name-only', '--format=', 'HEAD']).stdout.trim().split('\n').sort();
   assert.deepEqual(files, ['.gitignore', 'work.txt']);
 });
+
+test('a message function gets the staged changes, and its text is the commit message', async () => {
+  const { wt } = await worktree();
+  await writeFile(join(wt.worktreeDir, 'work.txt'), 'one\ntwo\n');
+  let seen = null;
+  const r = await commitStagedWork(wt.worktreeDir, {
+    message: async (changes) => { seen = changes; return 'worca: fn\n\nWorca-Run: abc'; },
+  });
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(r.committed, true);
+  assert.deepEqual(seen, { files: [{ status: 'A', path: 'work.txt', added: 2, removed: 0 }], insertions: 2, deletions: 0 });
+  assert.equal(git(wt.worktreeDir, ['log', '-1', '--format=%B']).stdout.trimEnd(), 'worca: fn\n\nWorca-Run: abc');
+});
+
+test('a message function is not called when nothing is staged', async () => {
+  const { wt } = await worktree();
+  let called = false;
+  const r = await commitStagedWork(wt.worktreeDir, { message: () => { called = true; return 'x'; } });
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(r.committed, false);
+  assert.equal(called, false);
+});

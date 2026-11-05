@@ -73,6 +73,9 @@ headline does not change, so read the notice. It offers:
   source branch, Apply also fast-forwards the source branch onto the work and deletes the run's hidden
   branch. If the source moved on in the meantime, the merge-back notice explains how to merge by hand. If
   the commit fails again, nothing changes and git's message is shown.
+  The commit message is the one the run would have written: `worca: <title>`, a short summary (the
+  run's newest plan goal, else its overview, else its last implementation review; never the task text),
+  the files the commit changes with their line counts, and a `Worca-Run: <run id>` trailer.
 - **Download the recovery patch**: the snapshot saved when the work was kept.
 - **Discard worktree**: saves a recovery patch of anything uncommitted, then removes the worktree. The
   branch and the run's history stay.
