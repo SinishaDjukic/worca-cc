@@ -235,6 +235,7 @@ import { withBillTo, currentBillTo, currentOwner } from '../src/core/billing.mjs
 import { agentIdentity } from '../src/core/agent-user.mjs';
 import { spawn } from 'node:child_process';
 import { ActionRegistry, instanceIdFor, reapOrphans, busyRunIdsFromPidFile, actionsPidFile, actionsStateFile } from '../src/core/actions/registry.mjs';
+import { reapAgentGroups, agentGroupsDir } from '../src/core/agent-groups.mjs';
 import { runStack, stopStack } from '../src/core/actions/stack.mjs';
 import { TerminalManager, MAX_SESSIONS as TERMINAL_MAX_SESSIONS } from '../src/core/terminal/manager.mjs';
 import { terminalPidFile, zshDotDir } from '../src/core/terminal/paths.mjs';
@@ -9736,6 +9737,14 @@ export async function bootMaintenance({ log } = {}) {
   } catch (err) {
     summary.terminal = { orphans: 0, interrupted: 0, removed: 0, evicted: 0 };
     console.error(`[worca-ui] terminal boot maintenance failed: ${err?.message || err}`);
+  }
+
+  // #1144: agent process groups (Claude, Codex, …) a SIGKILLed server or CLI run left running.
+  try {
+    summary.agentGroups = await reapAgentGroups({ dir: agentGroupsDir(worcaHome()) });
+    if (summary.agentGroups.reaped) console.log(`[worca-ui] stopped ${summary.agentGroups.reaped} orphaned agent process group(s) left by a process that was killed`);
+  } catch (err) {
+    console.error(`[worca-ui] agent process-group sweep failed: ${err?.message || err}`);
   }
 
   // Actions (issue #529): reap orphaned action processes, mark interrupted setups, release

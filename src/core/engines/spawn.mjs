@@ -15,6 +15,7 @@ import { agentIdentityFor } from '../agent-pool.mjs';
 import { currentOwner } from '../billing.mjs';
 import { isReservedModelEnvKey } from '../model-env.mjs';
 import { worcaHome } from '../projects.mjs';
+import { agentGroupsDir, createGroupTracker } from '../agent-groups.mjs';
 import { isWithin } from '../fs-scope.mjs';
 import { withNoGitPath } from '../nogit-stub.mjs';
 import { withoutProxyLogin } from '../env-proxy.mjs';
@@ -142,8 +143,16 @@ const STDERR_DETAIL_MAX = 2000;
 // Ctrl+C, so the groups still running are killed when the host exits (an 'exit' listener must be
 // synchronous; a host that is SIGKILLed cannot run it). Windows has no groups: `taskkill /T` walks
 // the tree while the root is alive.
+// #1144: so the groups are also recorded on disk (agent-groups.mjs), and the next server boot reaps
+// the ones a SIGKILLed host left running.
 const liveGroups = new Set();
-process.on('exit', () => { for (const pid of liveGroups) { try { process.kill(-pid, 'SIGKILL'); } catch { /* gone */ } } });
+const groupRecord = createGroupTracker({ dir: () => agentGroupsDir(worcaHome()) });
+const trackGroup = (pid, bin) => { liveGroups.add(pid); groupRecord.add(pid, { bin }); };
+const untrackGroup = (pid) => { liveGroups.delete(pid); groupRecord.delete(pid); };
+process.on('exit', () => {
+  for (const pid of liveGroups) { try { process.kill(-pid, 'SIGKILL'); } catch { /* gone */ } }
+  groupRecord.clear();
+});
 
 /** Signal a child's whole tree. The group id stays allocated while any member lives, so `-pid`
  *  only ever reaches our descendants; an empty group answers ESRCH. Never throws. */
@@ -239,7 +248,7 @@ export function superviseSpawn(o) {
         ...(agentId || ownGroup ? { detached: true } : {}),
         windowsHide: true,
       });
-      if (ownGroup && typeof child.pid === 'number') liveGroups.add(child.pid);
+      if (ownGroup && typeof child.pid === 'number') trackGroup(child.pid, displayBin);
     } catch (err) {
       cleanup();
       rejectP(spawnError(withShimHint(err), `Failed to spawn ${displayBin}`));
@@ -288,7 +297,7 @@ export function superviseSpawn(o) {
       if (signal) signal.removeEventListener?.('abort', onAbort);
       if (killTimer) clearTimeout(killTimer);
       // E3: reap what the agent left running in its group (a forgotten background job). ESRCH when nothing is left.
-      if (ownGroup && typeof child?.pid === 'number') { signalTree(child, 'SIGKILL'); liveGroups.delete(child.pid); }
+      if (ownGroup && typeof child?.pid === 'number') { signalTree(child, 'SIGKILL'); untrackGroup(child.pid); }
       cleanup();
       fn(arg);
     };
