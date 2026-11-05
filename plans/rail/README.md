@@ -15,6 +15,7 @@ Online: the [Design System](https://claude.ai/artifact/P38jGMS7jA9XQu2U2uP3HP) (
 
 Wave 1 (the run and group pages, Pulse, Settings, the shell) is `wave-1.md`; the waves after it, and the design
 system's own consistency work between them, are `waves.md`.
+Where it all stands, Accepted and Shaping, and the open decisions: `game-plan.md`.
 
 - `prototype/`: the clickable prototype, laid out like the app's files.
   - `index.html` is **the one Worca**: today's shell and pages (`today/`, captured from the app in mock mode by
