@@ -1917,9 +1917,20 @@ test('Ask graph card: a declined draft refuses Save (nothing posted); Open in Wo
   ctx.flush(); await ticks(ctx, 2);
   const savedCard = [...ctx.doc.querySelectorAll('.ask-ccard [aria-label="Proposed workflow"]')].find((e) => /Saved as wf_fix-and-review/.test(e.textContent));
   assert.ok(savedCard);
-  clickText(savedCard, 'Open in Workflows');
+  // #1126: a line above the buttons names the saved workflow and links its address; its click takes openComposer.
+  const line = savedCard.querySelector('.wfc-savedto');
+  assert.equal(line.textContent, 'Saved to Workflows: Fix and review');
+  assert.equal(line.nextElementSibling, savedCard.querySelector('.wfc-actions'), 'right above the buttons');
+  const link = line.querySelector('a[data-ask-wf-link]');
+  assert.equal(link.getAttribute('href'), '#workflows/wf_fix-and-review');
+  const before = link.ownerDocument.defaultView.location.hash;
+  link.click();
   await ticks(ctx, 2);
   assert.deepEqual(r.opened, ['wf_fix-and-review']);
+  assert.equal(link.ownerDocument.defaultView.location.hash, before, 'the click takes openComposer, never the href');
+  clickText(savedCard, 'Open in Workflows');
+  await ticks(ctx, 2);
+  assert.deepEqual(r.opened, ['wf_fix-and-review', 'wf_fix-and-review']);
 });
 
 test('Ask graph card with a command (D10): every command shows under the import notice above the buttons, and Save confirms them (acceptScripts: the list shown)', async () => {

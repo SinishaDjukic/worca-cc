@@ -218,6 +218,7 @@ app.post('/api/ask/threads/:id/cards/:cardId', async (req, res) => {
         return res.status(saved.status).json({ error: saved.error, ...(saved.code ? { code: saved.code } : {}),
           ...(saved.errors ? { errors: saved.errors } : {}), ...(saved.scriptNodes ? { scriptNodes: saved.scriptNodes } : {}) });
       }
+      emitChanged('workflows-changed', 'saved');          // a new origin:'auto' row: an open Library re-reads (#1126)
       if (!saved.block) return res.status(409).json({ error: 'card vanished' });
       const turn = await startWorkflowEventTurn(id, saved.block, { thenRun: found.block.card.thenRun === true });
       return res.json({ block: saved.block, turn });
@@ -718,6 +719,7 @@ app.post('/api/ask/threads/:id/cards/:cardId', async (req, res) => {
     let saved;
     try { saved = await saveWorkflowCard(id, found.block, body); }
     finally { askCardBusy.delete(cardId); }
+    if (!saved.matched) emitChanged('workflows-changed', 'saved');   // adopting a twin writes no row (#1126)
     // flipCard() null — the row (if written) stays, the card is gone with its thread.
     if (!saved.block) return res.status(409).json({ error: 'card vanished' });
     const turn = await startWorkflowEventTurn(id, saved.block, { thenRun: !!found.block.card.thenRun });
