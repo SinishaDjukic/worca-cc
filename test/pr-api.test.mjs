@@ -1508,3 +1508,32 @@ test('a slice pipeline\'s PR body starts with "Part of FEATURE: slice 1 of 2"', 
     assert.ok(body.startsWith('Part of Charts: slice 1 of 2\n\n- Slice 2, Slice 2: not opened yet\n\n'), body);
   });
 });
+
+test('a requirements slice\'s PR body says which R-ids it satisfies', async () => {
+  const { createSliceFeature } = await import('../src/core/shape/features.mjs');
+  const { runMock, MOCK_REQUIREMENTS_CRITERIA } = await import('../src/core/engines/mock.mjs');
+  const { normalizeOutline, settleLeftOut } = await import('../src/shared/shape/slices.mjs');
+  const { criteriaList } = await import('../src/shared/review/coverage.mjs');
+  const { readFile } = await import('node:fs/promises');
+  const dir = await mkdtemp(join(tmpdir(), 'worca-pr-req-'));
+  const req = join(dir, 'requirements.md');
+  const slicesFile = join(dir, 'slices.json');
+  const text = `# Requirements\n\n${MOCK_REQUIREMENTS_CRITERIA.map(([id, t]) => `- **${id}** ${t}`).join('\n')}\n`;
+  writeFileSync(req, text);
+  await runMock({ cwd: dir, systemPrompt: '', onEvent: () => {},
+    prompt: `MOCK_ROLE: planner-plan\nMOCK_BASE: demo\nMOCK_OUT: ${join(dir, 'plan.md')}\nMOCK_SLICES: ${slicesFile}\nMOCK_REQUIREMENTS: ${req}\nPlan this in slices.` });
+  const outline = settleLeftOut(normalizeOutline(JSON.parse(await readFile(slicesFile, 'utf8')), { agreed: criteriaList(text) }).outline);
+  const seeded = await seedPipeline(betaRepo, { title: 'Export · 1/2: Store', status: 'done', startedAt: '2026-06-03T00:00:00Z',
+    branch: { source: 'main', feature: 'worca-cc/export-s1', branchKept: true, commit: 'abc' } });
+  createSliceFeature({ pipelineId: seeded.id, projectDir: betaRepo, title: 'Export', outline, perspectives: ['product'], workflowId: 'wf_shape' });
+  await withEnv(NO_ADO, async () => {
+    const seen = [];
+    stubForkRepo(seen);
+    const r = await post({ id: seeded.id, projectKey: seeded.key });
+    assert.equal(r.status, 200, await r.clone().text());
+    const c = seen.find((a) => a[0] === 'gh' && a[1] === 'pr' && a[2] === 'create');
+    const body = c[c.indexOf('--body') + 1];
+    assert.ok(body.startsWith('Part of Export: slice 1 of 2\nSatisfies: R-po-1, R-po-2, R-arch-1, R-ux-1\n\n'), body);
+  });
+  await rm(dir, { recursive: true, force: true });
+});

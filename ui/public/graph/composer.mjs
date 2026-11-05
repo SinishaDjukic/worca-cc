@@ -42,7 +42,7 @@ export const RESERVED_WORKFLOW_ID = 'wf_default';
  *  workflow. All open read-only here (Save is Save-a-copy). wf_auto never reaches the composer. */
 export const RESERVED_WORKFLOW_IDS = new Set([RESERVED_WORKFLOW_ID, 'wf_lean_build', 'wf_memory_defrag', 'wf_shape', 'wf_shape_ux']);
 /** Shaper's requirements-stage ids, apart from the list above (whose members are pinned): open read-only too. */
-export const SHAPE_REQ_WORKFLOW_IDS = new Set(['wf_shape_req', 'wf_shape_ux_req']);
+export const SHAPE_REQ_WORKFLOW_IDS = new Set(['wf_shape_req', 'wf_shape_ux_req', 'wf_shape_slice_req', 'wf_shape_ux_slice_req']);
 export const isReservedWorkflowId = (id) => RESERVED_WORKFLOW_IDS.has(id) || SHAPE_REQ_WORKFLOW_IDS.has(id);
 
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));

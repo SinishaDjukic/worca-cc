@@ -505,7 +505,7 @@ export const SLICE_SCOPE_AGENT_KEYS = PERSPECTIVE_AGENT_KEYS;
 function slicingPromptBlock(ctx) {
   if (ctx.shapeOutlineNote?.decision === 'flat') return FLAT_NOTE;
   if (!ctx.shapeSlicing) return '';
-  return slicingBlock({ file: ctx.shapeSlicing.file, size: ctx.shapeSlicing.size || null })
+  return slicingBlock({ file: ctx.shapeSlicing.file, size: ctx.shapeSlicing.size || null, requirements: ctx.shapeSlicing.requirements === true })
     + (ctx.shapeOutlineNote?.decision === 'revise' ? outlineFeedbackBlock(ctx.shapeOutlineNote.feedback) : '')
     + mockMarkers({ MOCK_SLICES: ctx.shapeSlicing.file }) + '\n\n';
 }

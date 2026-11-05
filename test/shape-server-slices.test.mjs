@@ -768,3 +768,29 @@ shipT('GET /api/pr/remotes carries the release hint; POST /api/pr with a release
   const row = getDb().prepare('SELECT release_version, release_target FROM pipelines WHERE id = ?').get(w.pids[0]);
   assert.deepEqual({ ...row }, { release_version: 'v1.12.0', release_target: 'main' });
 });
+
+const reqOutlineOf = (n) => ({ ...outlineOf(n), agreed: [{ id: 'R-po-1', text: 'a' }, { id: 'R-ux-1', text: 'b' }], leftOut: [],
+  slices: outlineOf(n).slices.map((s, i) => ({ ...s, requirements: i === 0 ? ['R-po-1', 'R-ux-1'] : [] })) });
+const { shipWorld: reqShipWorld, cleanup: reqShipCleanup } = shipKit({ nextId, outlineOf: reqOutlineOf });
+after(reqShipCleanup);
+
+shipT('refresh keeps one Satisfies line', async () => {
+  const seen = [];
+  const old = 'Part of Charts: slice 1 of 3\nSatisfies: R-po-1, R-ux-1\n\n- Slice 2, Slice 2: not opened yet\n- Slice 3, Slice 3: not opened yet\n\nWhat changed.';
+  gitInfo.setRunner((cmd, args) => {
+    seen.push([cmd, ...args]);
+    if (cmd === 'gh' && args[0] === '--version') return okRun('gh 2.x');
+    if (cmd === 'git' && args[0] === 'remote') return okRun(REMOTES_V);
+    if (cmd === 'git' && args[0] === 'describe') return failRun('fatal: No names found');
+    if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'view' && args.includes('body')) return okRun(old);
+    return okRun('');
+  });
+  const w = reqShipWorld();
+  const r = await ship(w.f.id, 'stacked');
+  assert.equal(r.status, 200, await r.clone().text());
+  const edit = ghCalls(seen, 'edit').find((a) => a[3] === 'https://github.com/me/repo/pull/1');
+  assert.ok(edit, 'slice 1\'s body was refreshed');
+  const body = argOf(edit, '--body');
+  assert.equal(body.match(/^Satisfies: /gm).length, 1, body);
+  assert.match(body, /^Part of Charts: slice 1 of 3\nSatisfies: R-po-1, R-ux-1\n\n- Slice 2, Slice 2: https:\/\/github\.com\/me\/repo\/pull\/2\n- Slice 3, Slice 3: https:\/\/github\.com\/me\/repo\/pull\/3\n\nWhat changed\.$/);
+});

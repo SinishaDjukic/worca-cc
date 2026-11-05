@@ -292,6 +292,28 @@ and is not retried.
 with their state. A sliced feature's row opens its card underneath. The tab shows
 only while Shaper is on.
 
+### Slices and code reviews carry the requirements
+
+Labs flag `shapeRequirements`. When a sliced run agreed its requirements first (the
+`R-po-1`, `R-ux-1`, … criteria), the outline cuts the runs by them:
+
+- **Satisfies.** Each run on the Split card lists the ids it delivers under its goal
+  (`Satisfies: R-po-1, R-ux-1`). The same line opens the run's task and its PR body,
+  under `Part of …`, and the one PR's body lists it under each run.
+- **Left out.** An id the Planner moved out of this feature shows on a `Left out:` line
+  with its reason. An id no run took fails the outline check's last row,
+  **Every agreed requirement is in one run or left out with a reason**. Approving anyway
+  is allowed: the id is then recorded as left out, "Not placed in a slice when the
+  outline was approved".
+- **The code review checks them.** The code review gains a **Requirements** role that
+  checks only that run's ids against the diff. An id the diff does not deliver is a
+  major finding (`R-ops-1 · not covered by the diff`), so the run goes back to the
+  implementer before you are asked to ship it. Once a run is reviewed, its row on the
+  feature card unfolds **Requirements 2/3 · 1 to fix**.
+
+Rollback: turn the flag off. Later runs of a feature then fire as plain Shaper runs;
+the Satisfies text in their task is only prose.
+
 ## Iterate in the chat (s5)
 
 Iterating is one action: say it in the chat. Every finished run card, finished feature card, Ship card (ready or

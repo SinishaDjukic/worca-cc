@@ -24,7 +24,7 @@ before(async () => {
   for (const k of ['HOME', 'USERPROFILE', 'WORCA_TEST_ALLOW_HOME_FALLBACK']) prevEnv[k] = process.env[k];
   Object.assign(process.env, { HOME: sandboxHome, USERPROFILE: sandboxHome, WORCA_TEST_ALLOW_HOME_FALLBACK: '1' });
 });
-afterEach(() => { delete process.env.WORCA_MOCK_UNCOVERED; _testing.runClaude = null; });
+afterEach(() => { delete process.env.WORCA_MOCK_UNCOVERED; delete process.env.WORCA_MOCK_DIFF_UNCOVERED; _testing.runClaude = null; });
 after(async () => {
   for (const [k, v] of Object.entries(prevEnv)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
   await rm(sandboxHome, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
@@ -123,4 +123,53 @@ test('a planner with an extra requirements input: the plan hold reports coverage
   assert.deepEqual(ask.plan.coverage.items.filter((i) => !i.pass).map((i) => [i.label, i.detail]),
     [['R-ops-1 · not covered by any step', 'Turning the flag off removes the export']]);
   assert.equal(ask.plan.coverage.items.find((i) => i.id === 'R-sec-2').label, 'R-sec-2 · covered by Step 1');
+});
+
+const DIFF_GRAPH = {
+  id: 'wf_diff_cover', name: 'Diff coverage', version: 2, domain: 'coding',
+  nodes: [
+    { id: 'n_task', kind: 'task', ...at, config: {} },
+    { id: 'n_plan', kind: 'agent', key: 'planner', ...at, config: {} },
+    { id: 'n_impl', kind: 'agent', key: 'implementer', ...at, config: {} },
+    { id: 'n_review', kind: 'agent', key: 'reviewer', ...at, config: {
+      roleReview: { source: 'declared', target: 'diff', checklist: 'coverage', sink: 'implementer' }, extraInputs: [{ id: 'requirements', type: 'md' }],
+    } },
+    { id: 'n_end', kind: 'end', ...at, config: {} },
+  ],
+  wires: [
+    w('w1', ['n_task', 'task'], ['n_plan', 'task']),
+    w('w2', ['n_plan', 'plan'], ['n_impl', 'plan']),
+    w('w3', ['n_plan', 'plan'], ['n_review', 'plan']),
+    w('w4', ['n_impl', 'done'], ['n_review', 'done']),
+    w('w5', ['n_review', 'review'], ['n_impl', 'fix'], { maxCycles: 3 }),
+    w('w6', ['n_review', 'pass'], ['n_end', 'result']),
+    w('w7', ['n_task', 'task'], ['n_review', 'requirements']),
+  ],
+};
+
+test('diff target: an uncovered R-* is a blocking finding, no Shaper, no engine change', async () => {
+  await writeGraphWorkflow(DIFF_GRAPH);
+  process.env.WORCA_MOCK_DIFF_UNCOVERED = 'R-ops-1';
+  const prompts = [];
+  _testing.runClaude = (o) => { prompts.push(o.prompt); return runClaude(o); };
+  const orch = createOrchestrator({ projectDir: gitDir('rrdiff'), workflowId: 'wf_diff_cover', claude: { mock: true },
+    prompt: '# Demo\n\n- **R-po-1** People see the chart\n- **R-ops-1** Turning the flag off removes it\n' });
+  orch.on('question', (q) => setImmediate(() => orch.answer(q.id, q.kind === 'plan' ? { decision: 'approve' } : { answers: [] })));
+  const res = await orch.run();
+  assert.equal(res.status, 'done', res.error);
+  const rounds = orch.state.roleReviews.rounds.filter((r) => r.node === 'n_review');
+  assert.equal(rounds.length, 2);
+  const blocking = rounds[0].roles.flatMap((r) => r.findings).filter((f) => f.severity === 'major' || f.severity === 'critical');
+  assert.deepEqual(blocking.map((f) => [f.severity, f.title]), [['major', 'R-ops-1 · not covered by the diff']]);
+  const fixes = orch._graphSnapshot.execs.filter((e) => e.nodeId === 'n_impl' && e.bindings?.fix?.path);
+  assert.equal(fixes.length, 1);
+  assert.match(fixes[0].bindings.fix.path, /-code-role-findings-r1\.md$/);
+  const reqPrompts = prompts.filter((p) => /^MOCK_PERSPECTIVE: requirements$/m.test(p));
+  assert.equal(reqPrompts.length, 2);
+  for (const p of reqPrompts) assert.match(p, /^MOCK_CHECKLIST: R-po-1,R-ops-1$/m);
+  const correctness = prompts.find((p) => /^MOCK_PERSPECTIVE: correctness$/m.test(p));
+  assert.ok(correctness);
+  assert.doesNotMatch(correctness, /not covered by the diff/);
+  assert.deepEqual(rounds[1].roles.filter((r) => !r.skipped).flatMap((r) => r.findings).filter((f) => f.severity === 'major'), []);
+  assert.ok(orch._graphSnapshot.tokens['n_end.result'], 'round 2 routes pass to End');
 });

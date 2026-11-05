@@ -869,3 +869,37 @@ test('s2: a slice 1 restart (no predecessor) carries the origin run\'s cost tags
   const rq = getTicket(res.ticketId, { withRequest: true }).request;
   assert.deepEqual([rq.tags, rq.labels], [['client:acme'], ['hotfix']]);
 });
+
+// Requirements slices: the agreed ids per slice reach the PR preamble and the feature view's check.
+const AGREED3 = [{ id: 'R-po-1', text: 'People see it' }, { id: 'R-ux-1', text: 'It reads well' }, { id: 'R-ops-1', text: 'It rolls back' }];
+const reqOutline = () => ({ ...outlineOf(2), agreed: AGREED3, leftOut: [],
+  slices: outlineOf(2).slices.map((s, i) => ({ ...s, requirements: i ? [] : ['R-po-1', 'R-ux-1', 'R-ops-1'] })) });
+
+test('slicePrPreamble adds Satisfies only with ids', () => {
+  const { pid, id } = mk(2, { outline: reqOutline() });
+  assert.match(slicePrPreamble(pid), /^Part of Charts: slice 1 of 2\nSatisfies: R-po-1, R-ux-1, R-ops-1\n\n- Slice 2, Slice 2: not opened yet$/);
+  const p2 = pipe('done');
+  getDb().prepare('UPDATE shape_feature_slices SET pipeline_id = ? WHERE feature_id = ? AND idx = 2').run(p2, id);
+  assert.match(slicePrPreamble(p2), /^Part of Charts: slice 2 of 2\n\n- Slice 1,/, 'a slice with no ids has no Satisfies line');
+  const plain = mk(2);
+  assert.match(slicePrPreamble(plain.pid), /^Part of Charts: slice 1 of 2\n\n- Slice 2/);
+});
+
+test('featureView: requirements.check null before review; 2/3 with one uncovered impl issue; key absent without agreed', async () => {
+  const { pid, id } = mk(2, { outline: reqOutline() });
+  let v = featureView(id);
+  assert.deepEqual(v.slices[0].requirements, { ids: ['R-po-1', 'R-ux-1', 'R-ops-1'], check: null });
+  assert.deepEqual(v.slices[1].requirements, { ids: [], check: null }, 'no pipeline yet');
+  await writeReview(pid, 'impl', 1, { summary: 'r1', issues: [{ severity: 'major', title: 'requirements-1-1: R-ops-1 · not covered by the diff', detail: '' }] });
+  await writeReview(pid, 'refine', 3, { summary: 'plan', issues: [{ severity: 'major', title: 'R-po-1 · not covered by any step', detail: '' }] });
+  v = featureView(id);
+  const c = v.slices[0].requirements.check;
+  assert.deepEqual([c.passed, c.total], [2, 3]);
+  assert.deepEqual(c.items.find((i) => !i.pass), { id: 'R-ops-1', label: 'R-ops-1 · not covered by the diff', pass: false, detail: 'It rolls back' });
+  await writeReview(pid, 'impl', 2, { summary: 'r2', issues: [] });
+  assert.equal(featureView(id).slices[0].requirements.check.passed, 3, 'the highest-cycle code review counts');
+  assert.equal((await featureShipInput(featureView(id))).slices[0].requirements.ids.length, 3);
+  const plain = mk(2);
+  assert.equal('requirements' in featureView(plain.id).slices[0], false);
+  assert.equal('requirements' in (await featureShipInput(featureView(plain.id))).slices[0], false);
+});

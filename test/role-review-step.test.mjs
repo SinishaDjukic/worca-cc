@@ -44,7 +44,7 @@ test('roleReviewIssues: one named message per problem; none for absent, true or 
   assert.deepEqual(issues({ roles: CS, target: 'plan' }), ['roleReview.sink is required (refiner or implementer)']);
   assert.deepEqual(ROLE_REVIEW_SINKS, ['refiner', 'implementer']);
   assert.equal(roleReviewOf({ roleReview: { ...SPEC, sink: 'implementer' } }).sink, 'implementer');
-  assert.deepEqual(issues({ ...SPEC, checklist: 'x' }), ['roleReview.checklist "x" is unknown (known: perspectives, requirements)']);
+  assert.deepEqual(issues({ ...SPEC, checklist: 'x' }), ['roleReview.checklist "x" is unknown (known: perspectives, requirements, coverage)']);
   assert.deepEqual(issues({ source: 'declared', target: 'plan', sink: 'refiner' }), ['roleReview.roles is required without a checklist provider']);
   assert.deepEqual(issues({ ...SPEC, roles: [CS[0], CS[0]] }), ['roleReview.roles[1].key "correctness" is declared twice']);
   assert.deepEqual(issues({ ...SPEC, roles: [{ key: 'qa', label: '' }] }), ['roleReview.roles[0].label must be 1–60 characters']);
@@ -193,4 +193,16 @@ test('the orchestrator holds one expand and one finish path, neither reading Sha
     const b = body(name);
     assert.doesNotMatch(b, /_shapePerspectives|perspectiveByKey|FIT_KEY/, `${name} is engine code`);
   }
+});
+
+test('coverage spec without a requirements role is rejected', () => {
+  const spec = { roles: CS, source: 'declared', target: 'diff', checklist: 'coverage', sink: 'implementer' };
+  assert.deepEqual(roleReviewIssues({ roleReview: spec }), ['roleReview.roles needs a role with key "requirements" for the coverage checklist']);
+  assert.deepEqual(roleReviewIssues({ roleReview: { ...spec, roles: [...CS, { key: 'requirements', label: 'Requirements' }] } }), []);
+});
+
+test('coverage spec with no roles materialises the 4 provider roles', () => {
+  const rr = roleReviewOf({ roleReview: { source: 'declared', target: 'diff', checklist: 'coverage', sink: 'implementer' } });
+  assert.deepEqual(rr.roles.map((r) => r.key), ['correctness', 'security', 'fit', 'requirements']);
+  assert.equal(rr.checklist, 'coverage');
 });

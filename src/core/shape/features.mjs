@@ -7,6 +7,7 @@ import { createTicket, getTicket, cancelTicket, updateTicket, previousBranchesOf
 import { readPrState, readPipelineExtras, readRunResultsById, readClarifyRow } from '../artifacts.mjs';
 import { projectKey } from '../store.mjs';
 import { sliceBrief, replanBrief } from '../../shared/shape/slices.mjs';
+import { requirementsCheck } from '../../shared/review/requirements-coverage.mjs';
 import { latestChecklist, checklistMarkdown } from '../../shared/shape/review-checklist.mjs';
 import { buildDecisionLog } from '../../shared/shape/feature-log.mjs';
 import { PLAN_ASK_KIND } from './run.mjs';
@@ -200,6 +201,14 @@ function featureLog(f, slices) {
   });
 }
 
+/** A slice's agreed ids and their check against its last code review (null before one ran). */
+function sliceRequirements(f, r) {
+  const ids = f.outline.slices[r.index - 1]?.requirements || [];
+  const last = r.pipelineId ? readPipelineExtras(r.pipelineId).reviews.filter((v) => v.kind === 'impl').sort((a, b) => a.cycle - b.cycle).at(-1) : null;
+  const texts = Object.fromEntries(f.outline.agreed.map((a) => [a.id, a.text]));
+  return { ids, check: last ? requirementsCheck(ids, texts, last.issues) : null };
+}
+
 export function featureView(id, { live = () => null } = {}) {
   const f = featureRow(id);
   if (!f) return null;
@@ -217,7 +226,8 @@ export function featureView(id, { live = () => null } = {}) {
     return { index: r.index, title: r.title, goal: s.goal || '', estimate: s.estimate || null, state,
       runId: l?.runId || null, pipelineId: r.pipelineId, ticketId: r.ticketId, pr,
       kind: r.kind || null, rounds: (r.pipelineId && rounds.get(r.pipelineId)) || [],
-      watch: pr && pr.url ? stoppedWatchFact(getWatch(pr.url)) : null };
+      watch: pr && pr.url ? stoppedWatchFact(getWatch(pr.url)) : null,
+      ...(f.outline.agreed?.length ? { requirements: sliceRequirements(f, r) } : {}) };
   });
   const roundLive = slices.some((s) => s.rounds.some((x) => LIVE_ROUND.has(x.status)));
   const ideas = getDb().prepare(`SELECT COUNT(*) AS n FROM shape_feature_notes WHERE feature_id = ? AND kind = 'idea'
@@ -379,7 +389,8 @@ export async function featureShipInput(view) {
     const last = reviews.filter((v) => v.kind === 'impl' && v.summary).sort((a, b) => a.cycle - b.cycle).at(-1);
     const cl = latestChecklist(reviews);
     slices.push({ index: s.index, title: s.title, pipelineId: s.pipelineId, pr: s.pr,
-      summary: last ? last.summary.slice(0, 600) : '', checklistMd: cl ? checklistMarkdown(cl.checklist).trimEnd() : '' });
+      summary: last ? last.summary.slice(0, 600) : '', checklistMd: cl ? checklistMarkdown(cl.checklist).trimEnd() : '',
+      ...(s.requirements ? { requirements: s.requirements } : {}) });
   }
   return { id: view.id, title: view.title, slices };
 }
@@ -483,7 +494,8 @@ export function slicePrPreamble(pipelineId) {
     const pr = r.pipelineId ? readPrState(r.pipelineId) : null;
     return `- Slice ${r.index}, ${r.title}: ${pr?.url || 'not opened yet'}`;
   });
-  return `Part of ${f.title}: slice ${at.idx} of ${rows.length}\n\n${others.join('\n')}`;
+  const ids = f.outline?.slices?.[at.idx - 1]?.requirements || [];
+  return `Part of ${f.title}: slice ${at.idx} of ${rows.length}\n${ids.length ? `Satisfies: ${ids.join(', ')}\n` : ''}\n${others.join('\n')}`;
 }
 
 /** L6, D14: each done earlier slice's last review summary and changed files (results.json), oldest first. */

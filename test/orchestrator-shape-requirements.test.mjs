@@ -17,6 +17,9 @@ import { _testing } from '../src/core/graph/executor.mjs';
 import { runClaude } from '../src/core/claude-runner.mjs';
 import { resolveShapeRequest } from '../src/core/shape/run.mjs';
 import { projectKey, projectStorePath } from '../src/core/store.mjs';
+import { getDb } from '../src/core/db.mjs';
+import { getTicket } from '../src/core/scheduler.mjs';
+import { slicePrPreamble } from '../src/core/shape/features.mjs';
 
 useTempHome(after);
 
@@ -30,7 +33,7 @@ before(async () => {
   process.env.USERPROFILE = sandboxHome;
   process.env.WORCA_TEST_ALLOW_HOME_FALLBACK = '1';
 });
-afterEach(() => { delete process.env.WORCA_MOCK_UNCOVERED; _testing.runClaude = null; });
+afterEach(() => { delete process.env.WORCA_MOCK_UNCOVERED; delete process.env.WORCA_MOCK_DIFF_UNCOVERED; _testing.runClaude = null; });
 after(async () => {
   for (const k of ENV) { if (prevEnv[k] === undefined) delete process.env[k]; else process.env[k] = prevEnv[k]; }
   await rm(sandboxHome, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
@@ -44,8 +47,8 @@ function start(opts = {}, onAsk = approve) {
   const dir = opts.projectDir || gitDir('shapereq');
   const req = resolveShapeRequest({ shape: opts.shape ?? { size: 'large', lead: 'security' } }, { requirementsOn: opts.flag !== false });
   assert.equal(req.ok, true, req.error);
-  const orch = createOrchestrator({ projectDir: dir, workflowId: opts.workflowId || req.workflowId, prompt: 'demo',
-    claude: { mock: true }, shape: req.shape, ...(opts.resume ? { resume: opts.resume } : {}) });
+  const orch = createOrchestrator({ projectDir: dir, workflowId: opts.workflowId || req.workflowId, prompt: opts.prompt || 'demo',
+    claude: { mock: true }, ...(opts.savedShape ? {} : { shape: req.shape }), ...(opts.resume ? { resume: opts.resume } : {}) });
   const asks = []; const execs = [];
   orch.on('exec', (e) => execs.push(e));
   orch.on('question', (q) => {
@@ -281,4 +284,132 @@ test('a wf_shape_req run paused at the requirements hold resumes with the flag o
   const res = await h2.done;
   assert.equal(res.status, 'done', res.error);
   assert.deepEqual(h2.asks.filter((q) => q.kind === 'plan').map((q) => q.nodeId), ['n_reqrefine', 'n_refine']);
+});
+
+// Slice 2 of the requirements feature: a sliced run carries the agreed ids into the outline, slice 1's checks and the
+// later slices' tickets.
+const SLICED = 'Plan this in slices: demo';
+const isOutlineAsk = (q) => q.kind === 'plan' && !!q.plan?.outline;
+const SLICE1 = ['R-po-1', 'R-po-2', 'R-arch-1', 'R-ux-1'];
+const capturePrompts = () => {
+  const prompts = [];
+  _testing.runClaude = (o) => { prompts.push(o.prompt); return runClaude(o); };
+  return prompts;
+};
+const checklistOf = (prompts, role) => prompts.filter((p) => new RegExp(`^MOCK_PERSPECTIVE: ${role}$`, 'm').test(p))
+  .map((p) => (/^MOCK_CHECKLIST: (.*)$/m.exec(p) || [])[1] || '');
+
+test('sliced: slices.json lists each agreed id once', async () => {
+  const h = start({ prompt: SLICED });
+  const res = await h.done;
+  assert.equal(res.status, 'done', res.error);
+  assert.equal(h.asks.filter(isOutlineAsk).length, 1);
+  const outline = JSON.parse(await readFile(join(h.orch.pipeline.dir, 'slices.json'), 'utf8'));
+  assert.deepEqual(outline.slices.map((s) => s.requirements), [SLICE1, ['R-qa-1', 'R-sec-1', 'R-sec-2']]);
+  assert.deepEqual(outline.leftOut, [{ id: 'R-ops-1', reason: 'Moved to a later feature' }]);
+  assert.equal(outline.agreed.length, 8);
+  const ask = h.asks.find(isOutlineAsk);
+  assert.equal(ask.plan.check.items.at(-1).id, 'requirements');
+  assert.equal(ask.plan.check.items.at(-1).pass, true);
+  assert.equal(slicePrPreamble(h.orch.pipeline.id).split('\n')[1], `Satisfies: ${SLICE1.join(', ')}`);
+});
+
+test('sliced: slice 1\'s code review checks only slice 1\'s ids', async () => {
+  const dir = gitDir('shapereq-sliced');
+  let prompts = capturePrompts();
+  let paused = false;
+  const h = start({ projectDir: dir, prompt: SLICED }, (q, orch) => {
+    if (!paused && q.nodeId === 'n_refine' && !isOutlineAsk(q)) { paused = true; orch.pause(); return; }
+    approve(q, orch);
+  });
+  assert.equal((await h.done).status, 'paused');
+  const planAsk = h.asks.find((q) => q.nodeId === 'n_refine' && !isOutlineAsk(q));
+  assert.deepEqual([planAsk.plan.coverage.passed, planAsk.plan.coverage.total], [4, 4]);
+  assert.deepEqual(planAsk.plan.coverage.items.map((i) => i.id), SLICE1);
+  const saved = readPipelineForResume(h.orch.getState().id);
+  prompts = capturePrompts();
+  const h2 = start({ projectDir: dir, prompt: SLICED, resume: saved, workflowId: 'wf_shape_req', savedShape: true });   // as the server resumes
+  const res = await h2.done;
+  assert.equal(res.status, 'done', res.error);
+  const again = h2.asks.find((q) => q.nodeId === 'n_refine');
+  assert.equal(again.plan.coverage.total, 4, 'the re-asked plan hold after the resume');
+  const lists = checklistOf(prompts, 'requirements');
+  assert.ok(lists.length >= 1);
+  for (const l of lists) assert.equal(l, SLICE1.join(','));
+});
+
+test('the slice 2 ticket\'s prompt contains `Satisfies: R-qa-1, R-sec-1, R-sec-2`', async () => {
+  const h = start({ prompt: SLICED });
+  assert.equal((await h.done).status, 'done');
+  const f = getDb().prepare('SELECT id FROM shape_features WHERE origin_pipeline_id = ?').get(h.orch.pipeline.id);
+  const row = getDb().prepare('SELECT ticket_id FROM shape_feature_slices WHERE feature_id = ? AND idx = 2').get(f.id);
+  const request = getTicket(row.ticket_id, { withRequest: true }).request;
+  assert.match(request.prompt, /^Satisfies: R-qa-1, R-sec-1, R-sec-2$/m);
+  assert.match(request.prompt, /^- \*\*R-qa-1\*\* A test proves the CSV columns$/m);
+  assert.doesNotMatch(request.prompt, /^- \*\*R-po-1\*\*/m);
+  assert.equal(request.workflowId, 'wf_shape', 'the stored request keeps wf_shape; the variant is picked at fire');
+  const fired = resolveShapeRequest({ shape: request.shape, workflowId: request.workflowId }, { internal: true, requirementsOn: true });
+  assert.equal(fired.workflowId, 'wf_shape_slice_req');
+});
+
+test('code review: R-arch-1 met by Requirements does not satisfy the plan\'s R-arch-1', async () => {
+  _testing.runClaude = async (o) => {
+    const out = await runClaude(o);
+    const role = /^MOCK_ROLE: code-review$/m.test(o.prompt) && (/^MOCK_PERSPECTIVE: (\w+)$/m.exec(o.prompt) || [])[1];
+    const json = role && /^MOCK_CYCLE: 1$/m.test(o.prompt) && (/^MOCK_JSON: (.+)$/m.exec(o.prompt) || [])[1];
+    if (json) {
+      const v = JSON.parse(await readFile(json, 'utf8'));
+      v.checklist = (v.checklist || []).filter((c) => c.id !== 'R-arch-1')
+        .concat({ id: 'R-arch-1', status: role === 'requirements' ? 'met' : 'unmet', evidence: 'test' });
+      await writeFile(json, JSON.stringify(v), 'utf8');
+    }
+    return out;
+  };
+  const h = start({ prompt: SLICED });
+  const res = await h.done;
+  assert.equal(res.status, 'done', res.error);
+  const r1 = h.orch.state.roleReviews.rounds.find((r) => r.node === 'n_review' && r.round === 1);
+  assert.equal(r1.roles.find((r) => r.key === 'requirements').checklist.find((c) => c.id === 'R-arch-1').status, 'met');
+  const { readPipelineExtras } = await import('../src/core/artifacts.mjs');
+  const impl1 = readPipelineExtras(h.orch.pipeline.id).reviews.find((v) => v.kind === 'impl' && v.cycle === 1);
+  assert.ok(impl1.issues.some((i) => /R-arch-1/.test(i.title) && !/not covered by the diff/.test(i.title)), JSON.stringify(impl1.issues));
+});
+
+const implFixes = (orch) => orch._graphSnapshot.execs.filter((e) => e.nodeId === 'n_impl' && e.bindings?.fix?.path);
+const reviewRounds = (orch) => orch.state.roleReviews.rounds.filter((r) => r.node === 'n_review');
+
+test('code review: a round 2 that re-runs only Requirements keeps the skipped roles\' plan checklist; one fix, then done', async () => {
+  process.env.WORCA_MOCK_DIFF_UNCOVERED = 'R-ux-1';
+  _testing.runClaude = async (o) => {
+    const out = await runClaude(o);
+    const role = /^MOCK_ROLE: code-review$/m.test(o.prompt) && (/^MOCK_PERSPECTIVE: (\w+)$/m.exec(o.prompt) || [])[1];
+    const json = role && role !== 'requirements' && /^MOCK_CYCLE: 1$/m.test(o.prompt) && (/^MOCK_JSON: (.+)$/m.exec(o.prompt) || [])[1];
+    if (json) {
+      const v = JSON.parse(await readFile(json, 'utf8'));
+      v.checklist = (v.checklist || []).map((c) => ({ ...c, status: 'met', evidence: 'test' }));
+      await writeFile(json, JSON.stringify(v), 'utf8');
+    }
+    return out;
+  };
+  const h = start({ prompt: SLICED });
+  const res = await h.done;
+  assert.equal(res.status, 'done', res.error);
+  const rounds = reviewRounds(h.orch);
+  assert.equal(rounds.length, 2);
+  assert.deepEqual(rounds[1].roles.filter((r) => !r.skipped).map((r) => r.key), ['requirements']);
+  assert.equal(implFixes(h.orch).length, 1);
+  const { readPipelineExtras } = await import('../src/core/artifacts.mjs');
+  const impl2 = readPipelineExtras(h.orch.pipeline.id).reviews.find((v) => v.kind === 'impl' && v.cycle === 2);
+  assert.deepEqual(impl2.issues.filter((i) => i.severity === 'major' || i.severity === 'critical'), [], JSON.stringify(impl2.issues));
+});
+
+test('code review: a role that reported a plan item unmet is not skipped in round 2, so the fix is judged again', async () => {
+  process.env.WORCA_MOCK_DIFF_UNCOVERED = 'R-ux-1';   // the mock code roles report the plan's first item unmet in round 1
+  const h = start({ prompt: SLICED });
+  const res = await h.done;
+  assert.equal(res.status, 'done', res.error);
+  const rounds = reviewRounds(h.orch);
+  assert.equal(rounds.length, 2);
+  assert.deepEqual(rounds[1].roles.filter((r) => !r.skipped).map((r) => r.key), ['correctness', 'security', 'fit', 'requirements']);
+  assert.equal(implFixes(h.orch).length, 1);
 });

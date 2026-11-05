@@ -12,6 +12,7 @@ import { _resetForTests } from '../src/core/db.mjs';
 import {
   GRAPH_SHAPE_WORKFLOW, GRAPH_SHAPE_UX_WORKFLOW, GRAPH_SHAPE_REQ_WORKFLOW, GRAPH_SHAPE_UX_REQ_WORKFLOW,
   SHAPE_REQ_WORKFLOW_IDS, RESERVED_WORKFLOW_IDS, isReservedWorkflowId, requirementsVariant,
+  GRAPH_SHAPE_SLICE_REQ_WORKFLOW, GRAPH_SHAPE_UX_SLICE_REQ_WORKFLOW, SHAPE_SLICE_REQ_WORKFLOW_IDS,
 } from '../src/core/graph/builtin-workflows.mjs';
 import { readWorkflow, listWorkflows, writeGraphWorkflow, deleteWorkflow } from '../src/core/workflows.mjs';
 import { resolveShapeRequest } from '../src/core/shape/run.mjs';
@@ -47,7 +48,9 @@ const REQ_WIRES = [
   'wr4 n_reqroles.requirements->n_reqrefine.requirements', 'wr5 n_reqroles.findings->n_reqrefine.findings',
   'wr6 n_reqrefine.revise->n_reqroles.revise', 'wr7 n_reqrefine.requirements->n_plan.requirements',
   'wr8 n_reqrefine.requirements->n_roles.requirements', 'wr9 n_reqrefine.requirements->n_refine.requirements',
+  'wr10 n_reqrefine.requirements->n_review.requirements',
 ];
+const CODE_REVIEW_CONFIG = { roleReview: { source: 'declared', target: 'diff', checklist: 'coverage', sink: 'implementer' }, extraInputs: [{ id: 'requirements', type: 'md' }] };
 
 test('wf_shape_req and wf_shape_ux_req: Clarify replaced by the stage, every other node and wire id kept; both validate', () => {
   const ports = registryPortsFn(loadAgentRegistry(undefined, { userAgentsDir: null }));
@@ -63,6 +66,7 @@ test('wf_shape_req and wf_shape_ux_req: Clarify replaced by the stage, every oth
     });
     for (const id2 of ['n_plan', 'n_roles', 'n_refine']) assert.deepEqual(node(wf, id2).config.extraInputs, [{ id: 'requirements', type: 'md' }], id2);
     assert.deepEqual(node(wf, 'n_refine').config.approve, { kind: 'plan', port: 'plan', coverage: 'requirements' });
+    assert.deepEqual(node(wf, 'n_review').config, CODE_REVIEW_CONFIG);
     assert.deepEqual(wf.wires.find((w) => w.id === 'wr6').config, { maxCycles: 2, onExhausted: 'clean' });
     assert.ok(Object.isFrozen(wf) && Object.isFrozen(node(wf, 'n_reqrefine').config.approve), 'deep-frozen');
     const v = validateGraph(wf, ports);
@@ -149,4 +153,52 @@ test('readWorkflow resolves both ids with the flag off; save and delete refuse t
   assert.ok(ids.includes('wf_shape'), 'the listing answered');
   assert.equal(ids.some((id) => SHAPE_REQ_WORKFLOW_IDS.includes(id)), false);
   assert.equal((await autoCandidates()).some((w) => SHAPE_REQ_WORKFLOW_IDS.includes(w.id)), false);
+});
+
+test('slice variants: `n_task.task` feeds four takers via ws1–ws4 and validate returns no errors', () => {
+  const ports = registryPortsFn(loadAgentRegistry(undefined, { userAgentsDir: null }));
+  for (const [wf, baseWf, id] of [[GRAPH_SHAPE_SLICE_REQ_WORKFLOW, GRAPH_SHAPE_WORKFLOW, 'wf_shape_slice_req'], [GRAPH_SHAPE_UX_SLICE_REQ_WORKFLOW, GRAPH_SHAPE_UX_WORKFLOW, 'wf_shape_ux_slice_req']]) {
+    assert.equal(wf.id, id);
+    assert.equal(wf.name, 'Shaper');
+    assert.deepEqual(wf.nodes.map((n) => n.id), baseWf.nodes.map((n) => n.id), 'Clarify is kept');
+    assert.deepEqual(wf.wires.map(edge), [...baseWf.wires.map(edge),
+      'ws1 n_task.task->n_plan.requirements', 'ws2 n_task.task->n_roles.requirements', 'ws3 n_task.task->n_refine.requirements', 'ws4 n_task.task->n_review.requirements']);
+    for (const id2 of ['n_plan', 'n_roles', 'n_refine']) assert.deepEqual(node(wf, id2).config.extraInputs, [{ id: 'requirements', type: 'md' }], id2);
+    assert.deepEqual(node(wf, 'n_refine').config.approve, { kind: 'plan', port: 'plan', coverage: 'requirements' });
+    assert.deepEqual(node(wf, 'n_review').config, CODE_REVIEW_CONFIG);
+    assert.ok(Object.isFrozen(wf));
+    assert.deepEqual(validateGraph(wf, ports).errors, [], id);
+  }
+});
+
+const REQ_SLICE = { ...SLICE, outline: { ...SLICE.outline, slices: SLICE.outline.slices.map((s, i) => ({ ...s, requirements: i ? ['R-qa-1'] : ['R-po-1'] })),
+  agreed: [{ id: 'R-po-1', text: 'a' }, { id: 'R-qa-1', text: 'b' }], leftOut: [] } };
+
+test('slice ticket resolution: flag on + ids → wf_shape_slice_req (ux → wf_shape_ux_slice_req); flag off + ids → wf_shape (ux → wf_shape_ux); a named slice variant without a slice returns the error', () => {
+  const fire = (shape, requirementsOn, workflowId = 'wf_shape') => resolveShapeRequest({ shape, workflowId }, { internal: true, requirementsOn });
+  assert.equal(fire({ size: 'large', slice: REQ_SLICE }, true).workflowId, 'wf_shape_slice_req');
+  assert.equal(fire({ size: 'large', slice: REQ_SLICE, perspectives: ['ux'] }, true).workflowId, 'wf_shape_ux_slice_req');
+  assert.equal(fire({ size: 'large', slice: REQ_SLICE }, false).workflowId, 'wf_shape');
+  assert.equal(fire({ size: 'large', slice: REQ_SLICE, perspectives: ['ux'] }, false).workflowId, 'wf_shape_ux');
+  assert.equal(fire({ size: 'large', slice: SLICE }, true).workflowId, 'wf_shape', 'a slice without ids runs wf_shape');
+  assert.deepEqual(fire({ size: 'large', slice: REQ_SLICE }, true).shape.slice.outline.agreed, REQ_SLICE.outline.agreed);
+  for (const id of SHAPE_SLICE_REQ_WORKFLOW_IDS) {
+    assert.deepEqual(fire({ size: 'large' }, true, id), { ok: false, error: `${id} runs only as a slice of a feature with agreed requirements` });
+    assert.deepEqual(fire({ size: 'large', slice: SLICE }, true, id), { ok: false, error: `${id} runs only as a slice of a feature with agreed requirements` });
+  }
+  assert.equal(fire({ size: 'large', slice: REQ_SLICE }, true, 'wf_shape_slice_req').workflowId, 'wf_shape_slice_req');
+});
+
+test('slice variants are reserved: readWorkflow returns them with the flag off, deleteWorkflow refuses them, listWorkflows hides them', async () => {
+  assert.equal(await readWorkflow('wf_shape_slice_req'), GRAPH_SHAPE_SLICE_REQ_WORKFLOW);
+  assert.equal(await readWorkflow('wf_shape_ux_slice_req'), GRAPH_SHAPE_UX_SLICE_REQ_WORKFLOW);
+  for (const id of SHAPE_SLICE_REQ_WORKFLOW_IDS) {
+    assert.equal(isReservedWorkflowId(id), true, id);
+    assert.equal(composerReserved(id), true, `composer ${id}`);
+    assert.equal(await deleteWorkflow(id), false);
+    const del = await fetch(`${base}/api/workflows/${id}`, { method: 'DELETE', headers: { Origin: base } });
+    assert.equal(del.status, 400, id);
+  }
+  assert.ok(!(await listWorkflows()).some((w) => SHAPE_SLICE_REQ_WORKFLOW_IDS.includes(w.id)));
+  assert.equal((await autoCandidates()).some((w) => SHAPE_SLICE_REQ_WORKFLOW_IDS.includes(w.id)), false);
 });

@@ -1,10 +1,13 @@
 // src/core/shape/run.mjs — shaped-run helpers: the POST /api/run `shape` field and the plan answer (spec D2, D9).
 import { isAbsolute } from 'node:path';
-import { SHAPE_WORKFLOW_ID, SHAPE_UX_WORKFLOW_ID, SHAPE_REQ_WORKFLOW_ID, SHAPE_UX_REQ_WORKFLOW_ID, SHAPE_REQ_WORKFLOW_IDS } from '../graph/builtin-workflows.mjs';
+import {
+  SHAPE_WORKFLOW_ID, SHAPE_UX_WORKFLOW_ID, SHAPE_REQ_WORKFLOW_ID, SHAPE_UX_REQ_WORKFLOW_ID, SHAPE_REQ_WORKFLOW_IDS,
+  SHAPE_SLICE_REQ_WORKFLOW_ID, SHAPE_UX_SLICE_REQ_WORKFLOW_ID, SHAPE_SLICE_REQ_WORKFLOW_IDS,
+} from '../graph/builtin-workflows.mjs';
 import { shapeRequirementsEligible } from '../../shared/shape/requirements.mjs';
 import { isAnswererLead, ANSWERER_LEAD_KEYS } from '../../shared/answerer.mjs';
 import { normalizePerspectives, DEFAULT_PERSPECTIVES } from '../../shared/shape/perspectives.mjs';
-import { normalizeOutline, normalizeEdits, applyOutlineEdits } from '../../shared/shape/slices.mjs';
+import { normalizeOutline, normalizeEdits, applyOutlineEdits, sliceRequirementIds } from '../../shared/shape/slices.mjs';
 import { normalizePicks } from '../../shared/review/findings.mjs';
 import { validateDecisionPicks } from '../../shared/review/decisions.mjs';
 
@@ -25,7 +28,8 @@ function normalizeSliceRef(raw) {
   return { feature, index, total, outline: o.outline };
 }
 
-export const isShapeWorkflowId = (id) => id === SHAPE_WORKFLOW_ID || id === SHAPE_UX_WORKFLOW_ID || SHAPE_REQ_WORKFLOW_IDS.includes(id);
+export const isShapeWorkflowId = (id) => id === SHAPE_WORKFLOW_ID || id === SHAPE_UX_WORKFLOW_ID || SHAPE_REQ_WORKFLOW_IDS.includes(id)
+  || SHAPE_SLICE_REQ_WORKFLOW_IDS.includes(id);
 
 /**
  * The `shape` field and workflow of a run request. A shaped run always runs wf_shape — wf_shape_ux when UX is a
@@ -77,11 +81,19 @@ export function resolveShapeRequest({ shape, workflowId }, { internal = false, r
     if (resolved.slice) return { ok: false, error: `a slice ticket runs the Shaper workflow (${SHAPE_WORKFLOW_ID})` };
     if (!shapeRequirementsEligible(resolved, true)) return { ok: false, error: 'the requirements stage needs a medium or large task' };
   }
+  // A slice of a feature with agreed requirements runs the slice variant, chosen when its ticket fires: the flag off
+  // picks plain wf_shape (the rollback), whatever the stored request named.
+  const sliceIds = resolved.slice ? sliceRequirementIds(resolved.slice) : [];
+  if (SHAPE_SLICE_REQ_WORKFLOW_IDS.includes(named) && !sliceIds.length) {
+    return { ok: false, error: `${named} runs only as a slice of a feature with agreed requirements` };
+  }
   const req = shapeRequirementsEligible(resolved, requirementsOn);
+  const sliceReq = requirementsOn && sliceIds.length > 0;
   return {
     ok: true,
     shape: resolved,
-    workflowId: req ? (ux ? SHAPE_UX_REQ_WORKFLOW_ID : SHAPE_REQ_WORKFLOW_ID) : (ux ? SHAPE_UX_WORKFLOW_ID : SHAPE_WORKFLOW_ID),
+    workflowId: sliceReq ? (ux ? SHAPE_UX_SLICE_REQ_WORKFLOW_ID : SHAPE_SLICE_REQ_WORKFLOW_ID)
+      : req ? (ux ? SHAPE_UX_REQ_WORKFLOW_ID : SHAPE_REQ_WORKFLOW_ID) : (ux ? SHAPE_UX_WORKFLOW_ID : SHAPE_WORKFLOW_ID),
   };
 }
 

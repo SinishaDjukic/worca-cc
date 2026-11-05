@@ -41,6 +41,9 @@ export function criteriaList(markdown) {
 
 export const criterionIds = (markdown) => criteriaList(markdown).map((c) => c.id);
 
+/** A text names `id` when this matches: `R-po-1` is not named by `R-po-10` or `XR-po-1`. */
+export const criterionMention = (id) => new RegExp(`(?<![A-Za-z0-9-])${escapeRe(id)}(?![0-9])`);
+
 const prefixOf = (id) => id.split('-')[1];
 const checkOf = (items, extra = {}) => {
   const passed = items.filter((i) => i.pass).length;
@@ -78,7 +81,7 @@ export function coverageOf(ids, planMarkdown, { texts = {} } = {}) {
   const list = [...new Set((Array.isArray(ids) ? ids : []).filter((id) => typeof id === 'string' && CRITERION_ID_RE.test(id)))];
   if (!list.length) return { ok: true, passed: 0, total: 0, items: [] };
   const found = new Map();                              // id -> { line, heading }
-  const res = list.map((id) => [id, new RegExp(`(?<![A-Za-z0-9-])${escapeRe(id)}(?![0-9])`)]);
+  const res = list.map((id) => [id, criterionMention(id)]);
   let heading = '';
   let skipUntil = 0;                                     // skip lines until a heading of this level or higher (0: none)
   for (const line of walk(planMarkdown)) {

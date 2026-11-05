@@ -9,6 +9,8 @@ import { dirname, join } from 'node:path';
 import { mockShapeFor } from '../auto/recipes.mjs';
 import { normalizeShape } from '../../shared/graph/assemble.mjs';
 import { extractChecklist } from '../../shared/shape/checklist.mjs';
+import { criteriaList } from '../../shared/review/coverage.mjs';
+import { uncoveredTitle } from '../../shared/review/requirements-coverage.mjs';
 import { extractText, extractResultCost } from './claude.mjs';
 import { writeMockSurvey, writeMockUsage, writeMockSynthesis } from '../workspace-scan-mock.mjs';
 import { safeEmit } from './spawn.mjs';
@@ -906,6 +908,23 @@ export const MOCK_OUTLINE_3 = Object.freeze({
   ],
 });
 
+/** The outline with the agreed ids dealt to its slices in order, in near-equal runs (the first slices take the extra);
+ *  the last id is left out. */
+function mockOutlineRequirements(outline, requirementsText) {
+  const ids = criteriaList(requirementsText).map((c) => c.id);
+  if (!ids.length) return outline;
+  const dealt = ids.slice(0, -1);
+  const n = outline.slices.length;
+  let at = 0;
+  const slices = outline.slices.map((s, i) => {
+    const take = Math.floor(dealt.length / n) + (i < dealt.length % n ? 1 : 0);
+    const requirements = dealt.slice(at, at + take);
+    at += take;
+    return { ...s, requirements };
+  });
+  return { ...outline, slices, leftOut: [{ id: ids.at(-1), reason: 'Moved to a later feature' }] };
+}
+
 async function mockPlannerPlan(m, onEvent, prompt = '') {
   const out = m.MOCK_OUT;
   const base = m.MOCK_BASE || 'feature';
@@ -913,7 +932,8 @@ async function mockPlannerPlan(m, onEvent, prompt = '') {
   // §3.8: a slicing prompt whose task says "plan this in slices" gets a two-slice outline and no plan (the real
   // Planner STOPs after the outline). The resumed spawn carries no MOCK_SLICES, so it writes the plan below.
   if (m.MOCK_SLICES && /\bplan this in (3 )?slices\b/i.test(prompt)) {
-    const outline = /\bplan this in 3 slices\b/i.test(prompt) ? MOCK_OUTLINE_3 : MOCK_OUTLINE;
+    const fixed = /\bplan this in 3 slices\b/i.test(prompt) ? MOCK_OUTLINE_3 : MOCK_OUTLINE;
+    const outline = m.MOCK_REQUIREMENTS ? mockOutlineRequirements(fixed, await readFile(m.MOCK_REQUIREMENTS, 'utf8').catch(() => '')) : fixed;
     await ensureDir(m.MOCK_SLICES);
     await writeFile(m.MOCK_SLICES, JSON.stringify(outline, null, 2) + '\n', 'utf8');
     safeEmit(onEvent, { type: 'tool_use', text: `wrote ${m.MOCK_SLICES}`, raw: { mock: true, file: m.MOCK_SLICES } });
@@ -1335,7 +1355,18 @@ async function mockPlanReview(m, cycle, onEvent, prompt = '', { planChecklist = 
     const ids = String(m.MOCK_CHECKLIST || '').split(',').map((s) => s.trim()).filter(Boolean);
     // Project fit (slice 3): a plan that adds a second copy of a component the house brief lists.
     const dups = role === 'fit' && m.MOCK_IN ? fitDuplicates(await readFile(m.MOCK_IN, 'utf8').catch(() => ''), prompt) : [];
-    const review = dups.length
+    // The code review's Requirements role (checklist 'coverage'): every id met, except WORCA_MOCK_DIFF_UNCOVERED's in
+    // round 1, each filed as the fixed-title major issue, so the run passes in round 2.
+    const uncovered = role === 'requirements' && cycle <= 1
+      ? new Set(String(process.env.WORCA_MOCK_DIFF_UNCOVERED || '').split(',').map((x) => x.trim()).filter((id) => ids.includes(id)))
+      : new Set();
+    const review = role === 'requirements'
+      ? {
+        summary: `[mock] requirements coverage, round ${cycle}`,
+        issues: [...uncovered].map((id) => ({ severity: 'major', title: uncoveredTitle(id), section: id, fix: `Deliver ${id} in the diff.`, detail: 'mock' })),
+        checklist: ids.map((id) => (uncovered.has(id) ? { id, status: 'unmet', evidence: 'not in the diff' } : { id, status: 'met', evidence: 'mock' })),
+      }
+      : dups.length
       ? {
         summary: `[mock] ${role} review, round ${cycle}`,
         issues: dups.map((d) => ({ severity: 'major', title: `Second component: ${d.added} repeats ${d.existing}`, section: 'Fit',
@@ -1349,7 +1380,7 @@ async function mockPlanReview(m, cycle, onEvent, prompt = '', { planChecklist = 
         issues: severity === 'none' ? [] : [{ severity, title: `${role}: mock finding`, section: 'Testing', fix: 'Add the missing case.', detail: 'mock' }],
         checklist: ids.map((id) => ({ id, status: blocking ? 'unmet' : 'met', evidence: 'mock' })),
       };
-    if (planChecklist) review.checklist = [...review.checklist, ...((await planChecklistReport(m, cycle)) || [])];
+    if (planChecklist && role !== 'requirements') review.checklist = [...review.checklist, ...((await planChecklistReport(m, cycle)) || [])];
     await emitLog(onEvent, `[mock] ${role} role review (round ${cycle})`);
     if (m.MOCK_JSON) { await ensureDir(m.MOCK_JSON); await writeFile(m.MOCK_JSON, JSON.stringify(review, null, 2) + '\n', 'utf8'); }
     if (m.MOCK_OUT) { await ensureDir(m.MOCK_OUT); await writeFile(m.MOCK_OUT, `# ${role} findings (mock)\n`, 'utf8'); }

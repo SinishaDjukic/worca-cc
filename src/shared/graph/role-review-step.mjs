@@ -3,6 +3,7 @@
 // workflow may declare it; Shaper declares its perspectives as roles. Pure and browser-safe.
 import { PERSPECTIVE_ROLE_CHECKLIST } from '../shape/role-review.mjs';
 import { REQUIREMENTS_ROLE_CHECKLIST } from '../shape/requirements.mjs';
+import { REQUIREMENTS_COVERAGE_CHECKLIST, COVERAGE_ROLE } from '../review/requirements-coverage.mjs';
 import { dispositionsBlock } from '../review/findings.mjs';
 
 const BLOCKING = new Set(['critical', 'major']);
@@ -48,6 +49,7 @@ export const LEGACY_ROLE_REVIEW = Object.freeze({ source: 'picked', target: 'pla
 export const ROLE_CHECKLISTS = Object.freeze({
   get perspectives() { return PERSPECTIVE_ROLE_CHECKLIST; },
   get requirements() { return REQUIREMENTS_ROLE_CHECKLIST; },
+  get coverage() { return REQUIREMENTS_COVERAGE_CHECKLIST; },
 });
 
 const specOf = (config) => (config === true ? true : (config && typeof config === 'object' ? config.roleReview : undefined));
@@ -92,6 +94,9 @@ export function roleReviewIssues(config) {
     if (typeof r.label !== 'string' || !r.label.trim() || r.label.length > LABEL_MAX) out.push(`${at}.label must be 1–${LABEL_MAX} characters`);
     for (const k of ['model', 'effort']) if (r[k] !== undefined && typeof r[k] !== 'string') out.push(`${at}.${k} must be a string`);
   });
+  if (rr.checklist === 'coverage' && !rr.roles.some((r) => isObj(r) && r.key === COVERAGE_ROLE.key)) {
+    out.push(`roleReview.roles needs a role with key "${COVERAGE_ROLE.key}" for the coverage checklist`);
+  }
   return out;
 }
 
@@ -123,7 +128,7 @@ export function runningRoles(spec, picked) {
 }
 
 /** The roles one round reviews. Round 1: every running role. Round 2+: drop a role whose last review in the same pass
- *  was clean (no critical/major) and whose checklist is fully met/na. */
+ *  was clean (no critical/major) and whose checklist, and its report on the plan's items, is fully met/na. */
 export function rolesForRound(roles, round, lastRound = null) {
   const list = (Array.isArray(roles) ? roles : []).map((r) => ({ key: r.key, label: r.label || r.key }));
   if (round <= 1 || !lastRound) return list.map((r) => ({ ...r, skip: false }));
@@ -131,7 +136,8 @@ export function rolesForRound(roles, round, lastRound = null) {
   return list.map((role) => {
     const r = last.get(role.key);
     const clean = !!r && !(r.findings || []).some((f) => BLOCKING.has(f.severity))
-      && (r.checklist || []).every((c) => c.status === 'met' || c.status === 'na');
+      && (r.checklist || []).every((c) => c.status === 'met' || c.status === 'na')
+      && (r.planChecklist || []).every((c) => (c.status === 'met' && c.evidence) || c.status === 'na');
     return { ...role, skip: clean };
   });
 }

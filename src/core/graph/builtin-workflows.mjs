@@ -8,6 +8,7 @@
 // the role-review round cap and the perspectives Shaper declares as its role reviews' roles.
 import { ROLE_REVIEW_MAX_ROUNDS } from '../../shared/shape/role-review.mjs';
 import { PERSPECTIVES } from '../../shared/shape/perspectives.mjs';
+import { SHAPE_CODE_ROLES } from '../../shared/review/requirements-coverage.mjs';
 
 /** Recursively freeze a value and everything reachable from it, returning the
  *  same reference. A shallow `Object.freeze` is NOT enough here: it passes
@@ -301,7 +302,7 @@ const SHAPE_ROLES_CONFIG = {
  *  merged findings handed to the implementer's fix. No node model and no diversity pick: the node keeps its default. */
 export const SHAPE_CODE_ROLES_CONFIG = deepFreeze({
   roleReview: {
-    roles: [{ key: 'correctness', label: 'Correctness' }, { key: 'security', label: 'Security' }, { key: 'fit', label: 'Project fit' }],
+    roles: SHAPE_CODE_ROLES.map(({ key, label }) => ({ key, label })),
     source: 'declared', target: 'diff', sink: 'implementer',
   },
 });
@@ -413,22 +414,43 @@ const SHAPE_REQ_WIRES = [
   { id: 'wr7', from: { node: 'n_reqrefine', port: 'requirements' }, to: { node: 'n_plan', port: 'requirements' } },
   { id: 'wr8', from: { node: 'n_reqrefine', port: 'requirements' }, to: { node: 'n_roles', port: 'requirements' } },
   { id: 'wr9', from: { node: 'n_reqrefine', port: 'requirements' }, to: { node: 'n_refine', port: 'requirements' } },
+  { id: 'wr10', from: { node: 'n_reqrefine', port: 'requirements' }, to: { node: 'n_review', port: 'requirements' } },
 ];
-const REQ_TAKERS = new Set(['n_plan', 'n_roles', 'n_refine']);
+const REQ_TAKERS = new Set(['n_plan', 'n_roles', 'n_refine', 'n_review']);
+/** The code review of a run with agreed requirements: the coverage provider supplies the three code roles plus
+ *  Requirements, which checks the bound R-ids against the diff. */
+const SHAPE_REQ_CODE_REVIEW = Object.freeze({ source: 'declared', target: 'diff', checklist: 'coverage', sink: 'implementer' });
+
+/** The requirements takers of a Shaper graph, each with the `requirements` extra input (Refine's hold shows coverage,
+ *  the code review checks it). */
+const withRequirementsInput = (nodes) => nodes.map((n) => {
+  if (!REQ_TAKERS.has(n.id)) return n;
+  if (n.id === 'n_review') return { ...n, config: { roleReview: { ...SHAPE_REQ_CODE_REVIEW }, extraInputs: [{ ...REQUIREMENTS_INPUT }] } };
+  const config = { ...n.config, extraInputs: [{ ...REQUIREMENTS_INPUT }] };
+  if (n.id === 'n_refine') config.approve = { ...n.config.approve, coverage: 'requirements' };
+  return { ...n, config };
+});
 
 /** A Shaper graph with the requirements stage in place of Clarify. Pure: every other node and wire keeps its id. */
 export function requirementsVariant(graph, id) {
-  const nodes = graph.nodes.filter((n) => n.id !== 'n_clarify').map((n) => {
-    if (!REQ_TAKERS.has(n.id)) return n;
-    const config = { ...n.config, extraInputs: [{ ...REQUIREMENTS_INPUT }] };
-    if (n.id === 'n_refine') config.approve = { ...n.config.approve, coverage: 'requirements' };
-    return { ...n, config };
-  });
   return deepFreeze({
     ...graph,
     id,
-    nodes: [...nodes, ...SHAPE_REQ_NODES.map((n) => ({ ...n, config: structuredClone(n.config) }))],
+    nodes: [...withRequirementsInput(graph.nodes.filter((n) => n.id !== 'n_clarify')), ...SHAPE_REQ_NODES.map((n) => ({ ...n, config: structuredClone(n.config) }))],
     wires: [...graph.wires.filter((w) => w.id !== 'w1' && w.id !== 'w3'), ...SHAPE_REQ_WIRES.map(copyWire)],
+  });
+}
+
+/** A slice run of a feature with agreed requirements: the Shaper graph as is (Clarify kept), with the slice's task,
+ *  which lists only its own criteria, as the `requirements` input of the same four takers. Pure. */
+export function sliceRequirementsVariant(graph, id) {
+  const wires = ['n_plan', 'n_roles', 'n_refine', 'n_review'].map((to, i) => (
+    { id: `ws${i + 1}`, from: { node: 'n_task', port: 'task' }, to: { node: to, port: 'requirements' } }));
+  return deepFreeze({
+    ...graph,
+    id,
+    nodes: withRequirementsInput(graph.nodes),
+    wires: [...graph.wires.map(copyWire), ...wires],
   });
 }
 
@@ -436,6 +458,12 @@ export const GRAPH_SHAPE_REQ_WORKFLOW = requirementsVariant(GRAPH_SHAPE_WORKFLOW
 export const GRAPH_SHAPE_UX_REQ_WORKFLOW = requirementsVariant(GRAPH_SHAPE_UX_WORKFLOW, SHAPE_UX_REQ_WORKFLOW_ID);
 /** Reserved apart from RESERVED_WORKFLOW_IDS (whose members are pinned): never listed, never saved over, never deleted. */
 export const SHAPE_REQ_WORKFLOW_IDS = Object.freeze([SHAPE_REQ_WORKFLOW_ID, SHAPE_UX_REQ_WORKFLOW_ID]);
+export const SHAPE_SLICE_REQ_WORKFLOW_ID = 'wf_shape_slice_req';
+export const SHAPE_UX_SLICE_REQ_WORKFLOW_ID = 'wf_shape_ux_slice_req';
+export const GRAPH_SHAPE_SLICE_REQ_WORKFLOW = sliceRequirementsVariant(GRAPH_SHAPE_WORKFLOW, SHAPE_SLICE_REQ_WORKFLOW_ID);
+export const GRAPH_SHAPE_UX_SLICE_REQ_WORKFLOW = sliceRequirementsVariant(GRAPH_SHAPE_UX_WORKFLOW, SHAPE_UX_SLICE_REQ_WORKFLOW_ID);
+/** Reserved and hidden like SHAPE_REQ_WORKFLOW_IDS: a slice ticket picks one when it fires (never listed, never a row). */
+export const SHAPE_SLICE_REQ_WORKFLOW_IDS = Object.freeze([SHAPE_SLICE_REQ_WORKFLOW_ID, SHAPE_UX_SLICE_REQ_WORKFLOW_ID]);
 
 /** The ids no saved row may claim: writeGraphWorkflow re-mints them, listWorkflows hides them,
  *  DELETE refuses them. wf_workspace_scan and wf_pr_fix are reserved but never listed anywhere;
@@ -445,4 +473,4 @@ export const SHAPE_REQ_WORKFLOW_IDS = Object.freeze([SHAPE_REQ_WORKFLOW_ID, SHAP
  *  NOTE: `ui/public/graph/composer.mjs` keeps a twin of this list as a `Set` (`.has`), not an
  *  Array (`.includes`) — the two are not interchangeable. */
 export const RESERVED_WORKFLOW_IDS = Object.freeze([GRAPH_DEFAULT_WORKFLOW.id, LEAN_WORKFLOW_ID, AUTO_WORKFLOW_ID, MEMORY_DEFRAG_WORKFLOW_ID, WORKSPACE_SCAN_WORKFLOW_ID, PR_FIX_WORKFLOW_ID, SHAPE_WORKFLOW_ID, SHAPE_UX_WORKFLOW_ID, WORKSPACE_RESYNTH_WORKFLOW_ID]);
-export function isReservedWorkflowId(id) { return RESERVED_WORKFLOW_IDS.includes(id) || SHAPE_REQ_WORKFLOW_IDS.includes(id); }
+export function isReservedWorkflowId(id) { return RESERVED_WORKFLOW_IDS.includes(id) || SHAPE_REQ_WORKFLOW_IDS.includes(id) || SHAPE_SLICE_REQ_WORKFLOW_IDS.includes(id); }

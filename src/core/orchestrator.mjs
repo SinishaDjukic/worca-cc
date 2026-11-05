@@ -37,12 +37,13 @@ import { checkPlan } from './shape/check.mjs';
 import { clarifyCounts, shapeScoreOf } from './shape/stats.mjs';
 import { PLAN_ASK_KIND, validatePlanAnswer, validateOutlineAnswer, renderPlanFeedback, SHAPING_FEEDBACK_PREVIEW } from './shape/run.mjs';
 import { createSliceFeature, retireFeaturesOf, earlierSliceChanges, featureApprovesEach, featureClarify, featureNotes } from './shape/features.mjs';
-import { checkSlices, applyOutlineEdits, normalizeOutline, OUTLINE_FILE, OUTLINE_CHANGE_FILE, OUTLINE_ROUNDS_MAX } from '../shared/shape/slices.mjs';
+import { checkSlices, applyOutlineEdits, normalizeOutline, settleLeftOut, sliceRequirementIds, OUTLINE_FILE, OUTLINE_CHANGE_FILE, OUTLINE_ROUNDS_MAX } from '../shared/shape/slices.mjs';
+import { onlyCriteria } from '../shared/review/requirements-coverage.mjs';
 import { DEFAULT_PERSPECTIVES } from '../shared/shape/perspectives.mjs';
 import { normalizePlanConcern, planConcernFileName, concernFeedbackSection } from '../shared/review/plan-concern.mjs';
 import { ensureHouseBrief } from './house-brief.mjs';
 import { extractChecklist } from '../shared/shape/checklist.mjs';
-import { applyChecklist, checklistFindingsMarkdown, mergeReportedChecklists } from '../shared/shape/review-checklist.mjs';
+import { applyChecklist, checklistFindingsMarkdown, mergeReportedChecklists, normalizeReviewChecklist } from '../shared/shape/review-checklist.mjs';
 import { REFINER_SINK, roleReviewOf, roleChecklistOf, runningRoles, rolesForRound, roleTaskId, roleRecord, findingsMarkdown, refinerVerdict, roleTargetOf, roleRoutingVerdict } from '../shared/graph/role-review-step.mjs';
 import { DISPOSITIONS_MAX_BYTES, applyDispositions, withCounts, normalizeConflicts, dispositionsPathFor, conflictClarifications, withClarifications } from '../shared/review/findings.mjs';
 import { currentPass } from '../shared/shape/role-review.mjs';
@@ -1417,9 +1418,16 @@ export class GraphOrchestrator extends RunHarness {
     const path = this._heldInputPath(q, port);
     if (!path || !q.plan?.file) return null;
     try {
-      const list = criteriaList(await readFile(path, 'utf8'));
+      const list = criteriaList(this._sliceCriteria(await readFile(path, 'utf8')));
       return coverageOf(list.map((c) => c.id), await readFile(q.plan.file, 'utf8'), { texts: Object.fromEntries(list.map((c) => [c.id, c.text])) });
     } catch { return null; }
+  }
+
+  /** Shaper: a sliced feature's run checks only its own slice's agreed criteria. The planning run (slice 1) is bound
+   *  to the file of every agreed id, so the text is narrowed to the slice's ids; identity without agreed requirements. */
+  _sliceCriteria(text) {
+    const sl = this.runShape?.slice;
+    return sl?.outline?.agreed?.length ? onlyCriteria(text, sliceRequirementIds(sl)) : text;
   }
 
   /** The held criteria document and its decisions: the criteria check (agreed ids must survive), the sink's decisions
@@ -1609,7 +1617,7 @@ export class GraphOrchestrator extends RunHarness {
       // A file left from an earlier spawn must not be read as this Planner's outline. Keep it once a round was
       // asked (the loop re-asks that outline after a pause, F25) or when the paused session resumes.
       if (!rounds.length && !resuming) await rm(file, { force: true });
-      out.shapeSlicing = { file, size: this.runShape?.size || null };
+      out.shapeSlicing = { file, size: this.runShape?.size || null, ...(ctx.bindings?.requirements?.path ? { requirements: true } : {}) };
       // A pause during a revise spawn: put the person's feedback back (the outline file was removed before it).
       const last = rounds[rounds.length - 1];
       if (last?.decision === 'revise' && this._outlineRevise) out.shapeOutlineNote = { decision: 'revise', feedback: this._outlineRevise };
@@ -1665,6 +1673,7 @@ export class GraphOrchestrator extends RunHarness {
     let carried = null;                                     // the edits of an approval whose feature creation failed
     let carriedEach = null;                                 // and its Approve each slice's plan choice
     let retry = 0;
+    const agreed = await this._outlineAgreed(ctx);
     for (;;) {
       this._checkAbort();
       let raw = null;
@@ -1677,7 +1686,7 @@ export class GraphOrchestrator extends RunHarness {
         }
         raw = { error: err?.message || String(err) };
       }
-      const read = normalizeOutline(raw);
+      const read = normalizeOutline(raw, { agreed });
       if (!read.ok || read.outline.slices.length < 2) {
         await appendAudit(this.pipeline.dir, `${label}: ${read.ok ? 'a one-slice outline' : `an unreadable outline (${read.error})`} — planning the whole task.`).catch(() => {});
         this._retireOrphanFeature();
@@ -1722,6 +1731,7 @@ export class GraphOrchestrator extends RunHarness {
         return this._resumeOutline(nc, ctx, { decision: 'flat' });
       }
       const applied = applyOutlineEdits(outline, payload.edits || []);      // validated already: ok
+      applied.outline = settleLeftOut(applied.outline);                     // an id no slice placed is left out
       if (applied.outline.slices.length < 2) {
         this._retireOrphanFeature();
         this._shapingOutlineDecision(round, { decision: 'flat' });
@@ -1758,6 +1768,16 @@ export class GraphOrchestrator extends RunHarness {
       // F47: hosts still pointed at the re-planned feature now follow replaced_by to this one: repaint them too.
       if (this.runShape?.replaces) this._emit('shape-feature', { id: this.runShape.replaces });
       return this._resumeOutline(nc, ctx, payload);
+    }
+  }
+
+  /** The agreed criteria the Planner's `requirements` input holds, for the outline; [] without one or when unreadable. */
+  async _outlineAgreed(ctx) {
+    const path = ctx.bindings?.requirements?.path;
+    if (!path) return [];
+    try { return criteriaList(await readFile(path, 'utf8')); } catch (err) {
+      this._log('orchestrator', 'warn', `slices: cannot read the agreed requirements: ${err?.message || err}`);
+      return [];
     }
   }
 
@@ -2046,6 +2066,7 @@ export class GraphOrchestrator extends RunHarness {
       ctx.rolePlanText = plan?.path ? await readFile(plan.path, 'utf8').catch(() => '') : '';
       const req = args.bindings?.requirements;
       ctx.roleRequirementsText = req?.path ? await readFile(req.path, 'utf8').catch(() => '') : '';
+      if (this.runShape) ctx.roleRequirementsText = this._sliceCriteria(ctx.roleRequirementsText);
       ctx.roleShape = this.runShape || null;
       if (roleChecklistOf(ctx.roleSpec)?.wantsHouseBrief(ctx.role)) ctx.houseBrief = await this._fitHouseBrief();
     }
@@ -3251,19 +3272,39 @@ export class GraphOrchestrator extends RunHarness {
     const planPath = this._rolePlanBinding(args, spec)?.path || '';
     const planText = planPath ? await readFile(planPath, 'utf8').catch(() => '') : '';
     const reqPath = args.bindings?.requirements?.path;
-    const requirementsText = reqPath ? await readFile(reqPath, 'utf8').catch(() => '') : '';
+    const boundText = reqPath ? await readFile(reqPath, 'utf8').catch(() => '') : '';
+    const requirementsText = this.runShape ? this._sliceCriteria(boundText) : boundText;
     const { findingsPort, reviewedPort } = roleTargetOf(spec);
     const provider = roleChecklistOf(spec);
+    const outs = ports.outputs || [];
+    const routes = outs.some((p) => p.when === 'blocking' || p.when === 'clean');
+    // Spec D7: the plan's items belong to the Review step as a whole, as they did for one reviewer.
+    const items = routes && this.runShape && nc.key === CHECKLIST_REVIEWER_KEY ? await this._reviewChecklistItems({ bindings: args.bindings }) : [];
     const reported = [];
-    const roles = await Promise.all(rolesForRound(runningRoles(spec, this._runPickedRoles()), round, last).map(async (r) => {
-      if (r.skip) return { ...last.roles.find((x) => x.key === r.key), skipped: true };
+    const running = runningRoles(spec, this._runPickedRoles());
+    // Only a step with a role kept out of the merge records each role's own plan report: a round that re-runs only
+    // that role then still has the others' reports. Other steps skip and merge as before.
+    const ownReports = items.length > 0 && running.some((r) => provider?.feedsPlanChecklist?.(r.key) === false);
+    const roles = await Promise.all(rolesForRound(running, round, last).map(async (r) => {
+      if (r.skip) {
+        // A role skipped as clean still reported the plan's items last round; its report stands in the merge.
+        const prev = last.roles.find((x) => x.key === r.key);
+        if (prev?.planChecklist) reported.push(prev.planChecklist);
+        return { ...prev, skipped: true };
+      }
       const v = allocateVerdict({ node, ports, ordinal, runCtx: this._runCtx(nc, roleTaskId(r.key)) });
       let raw = null;
       try { raw = v?.path ? JSON.parse(await readFile(v.path, 'utf8')) : null; } catch (err) {
         await appendAudit(this.pipeline.dir, `${node.id}: ${r.key} review unreadable (${err.message}); counted as empty.`).catch(() => {});
       }
-      reported.push(raw?.checklist);
-      return { ...roleRecord(r, round, raw, provider ? provider.items(r.key, planText, requirementsText) : []), ...this._roleRecordPair(nc, r.key) };
+      // A provider's role whose ids are not the plan's (D12) keeps its verdicts out of the plan-checklist merge.
+      const feeds = provider?.feedsPlanChecklist?.(r.key) !== false;
+      if (feeds) reported.push(raw?.checklist);
+      // The role's own report on the plan's items, each one it left out unmet, so only a full clean report earns a skip.
+      const own = feeds && ownReports ? normalizeReviewChecklist(raw?.checklist) || [] : null;
+      const planChecklist = own && items.map((it) => own.find((c) => c.id === it.id) || { id: it.id, status: 'unmet', evidence: 'no verdict given' });
+      return { ...roleRecord(r, round, raw, provider ? provider.items(r.key, planText, requirementsText) : []),
+        ...(planChecklist ? { planChecklist } : {}), ...this._roleRecordPair(nc, r.key) };
     }));
     const out = allocateOutputs({ node, ports, executionId: args.executionId, ordinal, runCtx: this._runCtx(nc) });
     const findings = out[findingsPort];
@@ -3271,19 +3312,13 @@ export class GraphOrchestrator extends RunHarness {
     const dispositions = dispositionsPathFor(findings.path);
     this.state.roleReviews ||= { rounds: [] };
     this.state.roleReviews.rounds.push(withCounts({ pass, round, node: node.id, target: spec.target, plan: planPath, roles, dispositions }));
-    const outs = ports.outputs || [];
-    const routes = outs.some((p) => p.when === 'blocking' || p.when === 'clean');
     let verdict = routes ? roleRoutingVerdict(roles) : null;
     let checklistMd = '';
-    if (verdict && this.runShape && nc.key === CHECKLIST_REVIEWER_KEY) {
-      // Spec D7: the plan's items belong to the Review step as a whole, as they did for one reviewer.
-      const items = await this._reviewChecklistItems({ bindings: args.bindings });
-      if (items.length) {
-        const merged = applyChecklist({ ...verdict, checklist: mergeReportedChecklists(reported) }, items);
-        const added = merged.issues.slice(verdict.issues.length);
-        if (added.length) checklistMd = '\n' + checklistFindingsMarkdown(added);
-        verdict = merged;
-      }
+    if (verdict && items.length) {
+      const merged = applyChecklist({ ...verdict, checklist: mergeReportedChecklists(reported) }, items);
+      const added = merged.issues.slice(verdict.issues.length);
+      if (added.length) checklistMd = '\n' + checklistFindingsMarkdown(added);
+      verdict = merged;
     }
     await writeFile(findings.path, findingsMarkdown(round, planPath, roles, { dispositionsPath: dispositions, target: spec.target }) + checklistMd);
     const reviewed = roles.filter((r) => !r.skipped).length;
