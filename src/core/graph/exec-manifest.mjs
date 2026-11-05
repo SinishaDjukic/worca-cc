@@ -5,7 +5,7 @@
 // channel between nodes (a file copied from another session's scratch tree, 6c9cf587) is on record
 // (E9). Best effort throughout: nothing here can fail an execution.
 import { createHash } from 'node:crypto';
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { appendFile, mkdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { isAbsolute, join, relative, resolve } from 'node:path';
@@ -59,18 +59,41 @@ const SYSTEM_PREFIXES = ['/dev/', '/usr/', '/bin/', '/sbin/', '/opt/homebrew/', 
 // An absolute POSIX path in a shell command, after a space, a quote, `=` or `(`.
 const ABS_IN_COMMAND = /(?:^|[\s'"=(:])(\/(?:[\w.@+~-]+\/)*[\w.@+~-]+)/g;
 
-/** The paths a tool call names, by tool: file tools' path fields, and absolute paths in a Bash command. */
+// Whether `/<segment>` exists, cached per segment: a word in a command whose first segment is no
+// directory on this machine (`/files`, `/api/runs/x`: a route, a URL path, a grep pattern) is no file.
+const topExists = new Map();
+function topSegmentExists(p) {
+  const top = p.split('/')[1] || '';
+  if (!top) return false;
+  if (!topExists.has(top)) topExists.set(top, existsSync('/' + top));
+  return topExists.get(top);
+}
+
+/** The paths a tool call names, by tool: file tools' path fields, and absolute paths in a Bash command
+ *  (only those whose first segment exists on disk). */
 function pathsOfCall(call) {
   const input = call?.input && typeof call.input === 'object' ? call.input : {};
   const out = [];
   for (const k of ['file_path', 'notebook_path', 'path']) if (typeof input[k] === 'string' && input[k]) out.push(input[k]);
-  if (typeof input.command === 'string') for (const m of input.command.matchAll(ABS_IN_COMMAND)) out.push(m[1]);
+  if (typeof input.command === 'string') {
+    for (const m of input.command.matchAll(ABS_IN_COMMAND)) if (topSegmentExists(m[1])) out.push(m[1]);
+  }
   return out;
+}
+
+/** The files an execution owns wherever worca put them (a plan port lives in the project store):
+ *  its bound inputs, allocated outputs, verdict, questions file and slicing outline. Exact paths only. */
+function ownedFiles(ctx) {
+  const tokens = [...Object.values(ctx?.bindings || {}), ...Object.values(ctx?.outputs || {}), ctx?.verdict]
+    .flatMap((t) => (Array.isArray(t) ? t : [t]));
+  return new Set([...tokens.map((t) => t?.path), ctx?.questionsFile, ctx?.shapeSlicing?.file]
+    .filter((p) => typeof p === 'string' && p).map((p) => resolve(p)));
 }
 
 /**
  * Collects, from a spawn's `tool` events, the absolute paths an agent read or wrote outside the
- * places it owns (its cwd, the run root, the pipeline dir, its memory mount, workspace members).
+ * places it owns (its cwd, the run root, the pipeline dir, its memory mount, workspace members, and its
+ * own port files — see ownedFiles).
  * Relative paths resolve against the cwd and are therefore inside it.
  */
 export function createScopeWatch(ctx) {
@@ -78,6 +101,7 @@ export function createScopeWatch(ctx) {
   const roots = [ctx?.projectDir, ctx?.runRoot, ctx?.pipelineDir, ctx?.runCtx?.pipelineDir, ctx?.memoryMount,
     ...(Array.isArray(ctx?.repos) ? ctx.repos.map((r) => r?.dir || r?.path) : [])]
     .filter((r) => typeof r === 'string' && r).map((r) => resolve(r));
+  const owned = ownedFiles(ctx);
   const seen = new Map();
   return {
     observe(e) {
@@ -88,7 +112,7 @@ export function createScopeWatch(ctx) {
           if (!isAbsolute(raw)) continue;
           const p = resolve(cwd, raw);
           if (SYSTEM_PREFIXES.some((s) => p.startsWith(s))) continue;
-          if (roots.some((r) => isWithin(p, r))) continue;
+          if (owned.has(p) || roots.some((r) => isWithin(p, r))) continue;
           if (!seen.has(p)) seen.set(p, { path: p, tool: String(c.name || '?') });
         }
       }
