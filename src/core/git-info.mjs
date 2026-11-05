@@ -121,14 +121,23 @@ export async function commitFilesSince(projectDir, fromSha, toRef, { max = 2000,
 }
 
 /** Commits on `feature` not on `source` (`git rev-list --count source..feature`), or null on any failure.
- *  `timeout` (ms, default none) bounds the call; a timeout is a failure. */
+ *  `timeout` (ms, default none) bounds the call; a timeout is a failure. Inside a withRefSnapshot scope, two names
+ *  resolved to commit ids fix the answer for good, as diffShortstat's do: remembered per (repository, ids). */
 export async function commitsAhead(projectDir, source, feature, { timeout = 0 } = {}) {
   if (!projectDir || !source || !feature) return null;
+  const snap = await refSnapshot(projectDir);
+  const a = snap && resolveName(snap, source), b = snap && resolveName(snap, feature);
+  if (a && b && a === b) return 0;
+  const key = a && b ? `${projectDir}\0${a}..${b}` : null;
+  if (key && aheadCache.has(key)) return aheadCache.get(key);
   const r = await _run('git', ['rev-list', '--count', `${source}..${feature}`], { cwd: projectDir, ...(timeout > 0 ? { timeout } : {}) });
   if (!r.ok) return null;
   const n = Number.parseInt(String(r.stdout || '').trim(), 10);
-  return Number.isInteger(n) && n >= 0 ? n : null;
+  if (!Number.isInteger(n) || n < 0) return null;
+  if (key) { if (aheadCache.size >= 2000) aheadCache.clear(); aheadCache.set(key, n); }
+  return n;
 }
+const aheadCache = new Map();
 
 /**
  * Parse `git diff --name-status -M` rows. `head` omitted -> diff base vs working tree.
@@ -1478,5 +1487,5 @@ export async function ghApi({ role = 'read', repo = null, method = 'GET', path, 
 export const _testing = {
   defaultRun,
   setRunner(fn) { _runner = typeof fn === 'function' ? fn : defaultRun; _ghCache = null; },
-  reset() { _runner = defaultRun; _ghCache = null; relationCache.clear(); shortstatCache.clear(); },
+  reset() { _runner = defaultRun; _ghCache = null; relationCache.clear(); shortstatCache.clear(); aheadCache.clear(); },
 };

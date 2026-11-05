@@ -119,4 +119,3 @@ button.act-srow-name{cursor:pointer}
 .badge.act-kept{background:var(--blue-bg);color:var(--blue-ink)}
 .shipit-try{display:flex;gap:8px;align-items:center;margin:10px 0}
 .shipit-try[hidden]{display:none}
-.act-port-range .drow-control .input{width:110px}

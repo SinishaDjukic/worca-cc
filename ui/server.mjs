@@ -45,7 +45,7 @@ import {
   folderApplyRetainFor,
   resolveIndexedArtifactFileForRow, openArtifactUnder, readPromptFile, runDirForRow, recordArtifact, appendAudit,
   persistMemberPrState, readMemberPrStates, readPipelineExtras,
-  checkoutRecordsFor, retainedWorkFor, runEngineOfRow, folderFacts,
+  checkoutRecordsFor, retainedWorkFor, runEngineOfRow, folderFacts, readRunResultsForRow,
 } from '../src/core/artifacts.mjs';
 import { FolderApplyError, folderMemberTarget, readFolderChanges, planFolderApply, applyFolderChanges, discardFolderChanges, releaseFolderCopy } from '../src/core/folder-apply.mjs';
 import { releaseFolderMember } from '../src/core/folder-members.mjs';
@@ -6361,7 +6361,7 @@ async function askCommandTarget(threadId, { runId = null, member = null, project
     if (!m) throw new Error(member ? 'that project is not part of this run' : 'this run has several projects: pass member');
     if (!m.cwd) {
       throw new Error(m.state === 'needs-checkout'
-        ? 'this finished run has no checkout yet: ask the user to check it out (Actions), then try again'
+        ? 'this finished run has no checkout yet: ask the user to open a terminal on it (or check it out in Actions), then try again'
         : (m.reason || 'this run has no folder'));
     }
     return { cwd: m.cwd, scope: 'run', label: `${row.title || row.id} · ${m.projectName}`, runId: row.id, member: m.projectKey,
@@ -6469,7 +6469,7 @@ function ensureSetup(runId, pk, { enabled, rerun = false }) {
 
 function sendCheckoutError(res, e) {
   const map = { NOT_FOUND: 404, BAD_REQUEST: 400, NOT_FINISHED: 409, RETAINED: 409, BRANCH_MISSING: 409,
-    BRANCH_CHECKED_OUT: 409, TARGET_EXISTS: 409, SNAPSHOT_FAILED: 409 };
+    BRANCH_CHECKED_OUT: 409, TARGET_EXISTS: 409, SNAPSHOT_FAILED: 409, NOT_AFFECTED: 409 };
   res.status(map[e?.code] || 500).json({ error: e?.message || String(e), code: e?.code || 'ERROR',
     ...(e?.holder ? { holder: e.holder, projectKey: e.projectKey || null } : {}) });
 }
@@ -7513,8 +7513,7 @@ async function askPrCardFacts(row) {
     : parse(row.branch) || {};
   let summary = null;
   try {
-    const dir = await runDirForRow(row);
-    const res = dir ? JSON.parse(await fsp.readFile(path.join(dir, 'results.json'), 'utf8')) : null;
+    const res = await readRunResultsForRow(row);
     summary = res && res.summary && typeof res.summary === 'object' ? res.summary : null;
     // P5: a workspace run's Folder members ship in no pull request (their changes wait for Apply): count the Git members only
     const folder = isWs ? new Set(((parse(row.workspace_meta) || {}).projects || []).filter((p) => p && p.workMode === 'folder').map((p) => p.projectKey)) : null;
