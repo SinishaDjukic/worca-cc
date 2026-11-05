@@ -487,6 +487,38 @@ A plugin never ships a credential: a `copilot` entry resolves against each
 user's own sign-in, and an `apiKey` must be a `${VAR}` reference. A team policy
 may ship `upstream` models under the same rule.
 
+## Claude Code
+
+Claude Code is the default engine. Every run and every chat uses it unless you pick another engine. Real runs need
+it installed and signed in. Mock runs (`worca ui --mock`, or the Mock switch) need neither.
+
+**Install and sign in:**
+
+```bash
+npm install -g @anthropic-ai/claude-code   # puts `claude` on your PATH
+claude auth login                          # opens the browser; sign in with your Claude account
+claude auth status                         # check: it should say you are signed in
+```
+
+- **Sign in with an API key instead.** Use `claude auth login --console` (Anthropic Console, billed per token), or
+  set `ANTHROPIC_API_KEY` in worca's environment.
+- **Sign in on a server with no browser.** Run `claude setup-token` on a machine that has one. Then set the token it
+  prints as `CLAUDE_CODE_OAUTH_TOKEN` where worca runs.
+- **Another endpoint.** Bedrock, Vertex, a gateway or a provider through the bridge need no sign-in. See
+  [Three ways a model connects](#three-ways-a-model-connects).
+- **The desktop app's sign-in does not carry over.** The Claude desktop app and the `claude` CLI sign in separately.
+- **Signing in again** works from a terminal: `claude auth logout`, then `claude auth login`.
+
+**Make sure worca finds it.** worca runs the `claude` that is first on its `PATH`. Point it at another binary with
+`WORCA_CLAUDE_BIN=/path/to/claude`. On native Windows, Anthropic's
+[native installer](https://docs.anthropic.com/en/docs/claude-code/setup) (`claude.exe`) and the npm install both
+work. For an npm install worca runs the package's native `claude.exe` next to npm's `claude.cmd` shim.
+
+**How worca checks it.** Getting started's **Connect Claude Code** step and the setup assistant run
+`claude auth status` (see [getting-started.md](getting-started.md)). An API key, an OAuth token, a custom endpoint
+or the Bedrock / Vertex switch in worca's environment counts as signed in. When a chat turn or a model test fails
+because the CLI is signed out, worca says so instead of showing the bare error.
+
 ## Codex
 
 worca can run pipelines and chats on OpenAI's Codex CLI.
@@ -556,11 +588,33 @@ What an Ask chat on Codex can do, and what it cannot do:
 
 worca can run pipelines and chats on GitHub's own Copilot CLI (`copilot`). This is a separate engine from the Copilot *provider* above. The provider routes Claude Code's requests to Copilot's API through worca's bridge, as an editor client. The engine runs GitHub's own supported CLI as the agent, without worca's bridge in between. Your plan's AI-credit (premium request) allowance still does.
 
-1. Install the CLI (`npm i -g @github/copilot`, version 1.0.92 or later) and make sure worca finds it: on `PATH`, or `WORCA_COPILOT_BIN=/path/to/copilot` in worca's environment. On Windows an npm install needs no `WORCA_*_BIN`: worca runs the package's native `.exe` when it finds one next to npm's `.cmd` shim, else `node <entry script>` from the shim (never a shell), and the variable may point at a `.exe` or a `.cmd`.
-2. Sign in once in a terminal: `copilot login`. Or put a fine-grained token with the "Copilot Requests" permission in `COPILOT_GITHUB_TOKEN`. worca never hands `GH_TOKEN` or `GITHUB_TOKEN` to an agent, so Copilot does not pick those up.
-3. Pick Copilot per run on New pipeline, run `worca --engine copilot …`, or set it as the default engine on the Models page (Engines) or in a project's Settings. For Chat, Settings › Chat › Engine & models.
+You need a GitHub account with Copilot access (any Copilot plan, including Free).
 
-There is no sign-in status command, so worca checks only that the binary runs before a run starts. A signed-out CLI fails at the first agent node with an auth error.
+**Install and sign in:**
+
+```bash
+npm install -g @github/copilot   # puts `copilot` on your PATH; needs 1.0.92 or later (Chat needs 1.0.100)
+copilot --version                # check the version
+copilot login                    # follow the prompts to sign in to GitHub
+```
+
+- **Sign in with a token instead.** Create a fine-grained GitHub token with the **Copilot Requests** permission.
+  Set it as `COPILOT_GITHUB_TOKEN` in worca's environment. worca never hands `GH_TOKEN` or `GITHUB_TOKEN` to an
+  agent, so Copilot does not pick those up.
+- **This is not the Copilot provider's sign-in.** The [Providers](#providers) page has its own GitHub sign-in, for
+  Claude Code runs on Copilot models. Signing in to one does not sign in the other.
+- **Check the sign-in yourself.** The CLI has no sign-in status command, so worca checks only that the binary runs.
+  A signed-out CLI fails at the first agent node with an auth error. When in doubt, run
+  `copilot login` again.
+
+**Make sure worca finds it.** worca runs the `copilot` that is first on its `PATH`. Point it at another binary with
+`WORCA_COPILOT_BIN=/path/to/copilot`. On Windows an npm install needs no `WORCA_*_BIN`: worca runs the package's
+native `.exe` when it finds one next to npm's `.cmd` shim, else `node <entry script>` from the shim (never a shell),
+and the variable may point at a `.exe` or a `.cmd`.
+
+**Use it.** Pick Copilot per run under **Engine** on New pipeline (Advanced), or run `worca --engine copilot …`. To
+make it the default, set it on the Models page (Engines) or in a project's Settings. For Chat, use Settings › Chat ›
+Engine & models.
 
 **Models.** The models `copilot --model` takes are built-in catalog entries on the Copilot sign-in, listed under *Copilot built-in models* on the Models page. Their catalog id is `copilot/<Copilot's id>`, such as `copilot/gpt-5.5` or `copilot/claude-sonnet-5.5`. Copilot's own ids clash with Codex's built-ins (`gpt-5.5`) and look like Claude's, and the catalog keeps one entry per id. Copilot is handed its own id. To add a model Copilot gained after this list, add a model with the Copilot sign-in.
 
