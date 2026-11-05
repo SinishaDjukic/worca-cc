@@ -2,10 +2,10 @@
 // and nothing else from them.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { readUserSignIn, readUserSafety, sandboxProblem, SAFETY_DENY_MAX, SETTINGS_FILE_MAX, isSignInEnvKey, SIGN_IN_SETTINGS_KEYS, userSettingsFile } from '../src/core/engines/claude-sign-in.mjs';
+import { readUserSignIn, readUserSafety, sandboxProblem, anchoredDenyRule, SAFETY_DENY_MAX, SETTINGS_FILE_MAX, isSignInEnvKey, SIGN_IN_SETTINGS_KEYS, userSettingsFile } from '../src/core/engines/claude-sign-in.mjs';
 import { userClaudeSignIn } from '../src/core/requirements/interview.mjs';
 
 const dirs = [];
@@ -151,7 +151,7 @@ test('C1: a valid sandbox in every documented part is carried as it is, with no 
     network: { allowedDomains: ['a.example'], deniedDomains: ['b.example'], strictAllowlist: true, allowUnixSockets: ['/s'], allowAllUnixSockets: false,
       allowLocalBinding: true, allowMachLookup: ['com.apple.*'], httpProxyPort: 8080, socksProxyPort: 1080, tlsTerminate: { caCertPath: '/ca.pem' } },
     filesystem: { allowWrite: ['/tmp'], denyWrite: ['/etc'], denyRead: ['~/.ssh'], allowRead: ['~/.ssh/known_hosts'], disabled: false },
-    credentials: { files: [{ path: '~/.netrc', mode: 'mask', extract: 'password (\S+)' }, { path: '~/.aws/', mode: 'deny' }],
+    credentials: { files: [{ path: '~/.netrc', mode: 'mask', extract: 'password ([^ ]+)' }, { path: '~/.aws/', mode: 'deny' }],
       envVars: [{ name: 'GH_TOKEN', mode: 'mask', injectHosts: ['api.github.com'] }], allowPlaintextInject: false,
       awsPairs: [{ accessKeyIdVar: 'K1', secretAccessKeyVar: 'S1' }], sigv4: { streaming: 'deny' } },
     ignoreViolations: { '*': ['/tmp/x'] }, enableWeakerNestedSandbox: false, enableWeakerNetworkIsolation: false, allowAppleEvents: false,
@@ -173,10 +173,11 @@ test('C1: a project or local sandbox that is not valid adds nothing; the person\
     'a bad project layer does not stop the local one');
 });
 
-test('C1: layers that are each valid but clash once laid together carry no sandbox', () => {
+test('C1/D81b: layers that would clash once laid together (awsPairs) no longer can: a project\'s awsPairs is not carried', () => {
   const pair = (k, s) => ({ credentials: { awsPairs: [{ accessKeyIdVar: k, secretAccessKeyVar: s }] } });
-  assert.deepEqual(safetyOf(pair('K', 'S1'), { sandbox: pair('K', 'S2') }),
-    { deny: [], sandbox: null, warnings: [NOT_CARRIED('your', 'sandbox.credentials.awsPairs[1] (with the project\'s laid over it)')] });
+  assert.deepEqual(safetyOf(pair('K', 'S1'), { sandbox: pair('K', 'S2') }), { deny: [], sandbox: pair('K', 'S1'),
+    notes: ['Worca did not carry these sandbox settings from the project\'s .claude/settings.json: sandbox.credentials.awsPairs. '
+      + 'Claude Code takes them only from your own, managed or command-line settings.'] });
 });
 
 test('C1: sandboxProblem names the first part the CLI would reject; null when valid', () => {
@@ -189,4 +190,122 @@ test('C1: sandboxProblem names the first part the CLI would reject; null when va
   assert.equal(sandboxProblem({ credentials: { files: [{ path: '/d/', mode: 'mask' }] } }), 'sandbox.credentials.files[0].path');
   assert.equal(sandboxProblem({ credentials: { files: [{ path: '/d', mode: 'mask', maskClaims: ['sub'] }] } }), 'sandbox.credentials.files[0].maskClaims');
   assert.equal(sandboxProblem(JSON.parse('{"ignoreViolations":{"__proto__":["x"]}}')), 'sandbox.ignoreViolations');
+});
+
+// ── Task 5 (security review I1, M10): a `/path` deny rule keeps its meaning in Worca's settings file ───────────────────────
+/** The `//` form Claude Code matches an absolute path by (a Windows drive as /c/…, as the CLI normalizes it). */
+const BS = String.fromCharCode(92);   // a backslash
+const posixAbs = (p) => { const f = p.split(BS).join('/'); const m = /^([A-Za-z]):(\/.*)$/.exec(f); return `/${m ? `/${m[1].toLowerCase()}${m[2]}` : f}`; };
+
+test('I1: a rule anchored at the settings folder (`/…`) is rewritten to the person\'s config folder; every other rule is kept', () => {
+  const h = home({ permissions: { deny: ['Edit(/settings.json)', 'Read(/.credentials.json)', 'Read(//etc/hosts)', 'Read(~/a.txt)', 'Read(./b)',
+    'Read(c/**)', 'Bash(/usr/bin/curl:*)', 'WebFetch(domain:x.example)', 'Read', 'Grep(/logs/**)', 'mcp__x__y'] } });
+  const cfg = posixAbs(join(h, '.claude'));
+  assert.deepEqual(readUserSafety({ env: {}, home: h }).deny, [`Edit(${cfg}/settings.json)`, `Read(${cfg}/.credentials.json)`, 'Read(//etc/hosts)',
+    'Read(~/a.txt)', 'Read(./b)', 'Read(c/**)', 'Bash(/usr/bin/curl:*)', 'WebFetch(domain:x.example)', 'Read', `Grep(${cfg}/logs/**)`, 'mcp__x__y']);
+  const other = home({ permissions: { deny: ['Edit(/settings.json)'] } });
+  assert.deepEqual(readUserSafety({ env: { CLAUDE_CONFIG_DIR: join(other, '.claude') }, home: h }).deny, [`Edit(${posixAbs(join(other, '.claude'))}/settings.json)`],
+    'CLAUDE_CONFIG_DIR moves the folder the rule is anchored at');
+});
+
+test('I1: anchoredDenyRule: the absolute `//` form on Windows and POSIX; a UNC config folder keeps the rule as it is', () => {
+  assert.equal(anchoredDenyRule('Edit(/settings.json)', ['C:', 'Users', 'a', '.claude'].join(BS)), 'Edit(//c/Users/a/.claude/settings.json)');
+  assert.equal(anchoredDenyRule('Read(/x/**)', 'D:/cfg/'), 'Read(//d/cfg/x/**)');
+  assert.equal(anchoredDenyRule('Edit(/settings.json)', '/x/cfg'), 'Edit(//x/cfg/settings.json)');
+  assert.equal(anchoredDenyRule('Edit(/settings.json)', `${BS}${BS}server${BS}share${BS}cfg`), 'Edit(/settings.json)');
+  for (const r of ['Read(//abs)', 'Read(~/x)', 'Bash(/bin/x)', 'Read', 'Read()', 'Edit(.env)', 'NotATool(/x)']) assert.equal(anchoredDenyRule(r, '/x/cfg'), r, r);
+});
+
+test('M10: a relative CLAUDE_CONFIG_DIR is refused: nothing is read (the CLI would resolve it against the checkout, not Worca\'s folder)', () => {
+  const h = home({ env: { ANTHROPIC_API_KEY: 'sk-ant-1' }, permissions: { deny: ['Bash(x)'] } });
+  assert.equal(userSettingsFile({ env: { CLAUDE_CONFIG_DIR: 'cfg' }, home: h }), null);
+  assert.equal(userSettingsFile({ env: { CLAUDE_CONFIG_DIR: './.claude' }, home: h }), null);
+  assert.deepEqual(readUserSignIn({ env: { CLAUDE_CONFIG_DIR: 'cfg' }, home: h, read: () => JSON.stringify({ apiKeyHelper: 'x' }) }), NONE);
+  assert.deepEqual(readUserSafety({ env: { CLAUDE_CONFIG_DIR: 'cfg' }, home: h, read: () => JSON.stringify({ permissions: { deny: ['Bash(x)'] } }) }),
+    { deny: [], sandbox: null });
+});
+
+// ── Task 5 (security review M7): only the sources the spawn loads, and never through a link ─────────────────────────────
+test('M7: the local file\'s sandbox is laid on only when `local` is one of the spawn\'s sources', () => {
+  const U = { enabled: true };
+  const c = checkout({ sandbox: { excludedCommands: ['p'] } }, { sandbox: { excludedCommands: ['l'] } });
+  const of = (sources) => readUserSafety({ env: {}, home: home({ sandbox: U }), cwd: c, sources }).sandbox;
+  assert.deepEqual(of(['project']), { enabled: true, excludedCommands: ['p'] }, 'project only: the local file is not read');
+  assert.deepEqual(of(['project', 'local']), { enabled: true, excludedCommands: ['p', 'l'] });
+  assert.deepEqual(of(['local']), { enabled: true, excludedCommands: ['l'] }, 'no project source: the project file is not read');
+});
+
+test('M7: a checkout settings file or .claude folder that is a link is not read', () => {
+  const U = { enabled: true };
+  const outside = checkout({ sandbox: { excludedCommands: ['outside'] } });
+  const viaJunction = mkdtempSync(join(tmpdir(), 'worca-cc-sbx-'));
+  dirs.push(viaJunction);
+  symlinkSync(join(outside, '.claude'), join(viaJunction, '.claude'), 'junction');
+  assert.deepEqual(readUserSafety({ env: {}, home: home({ sandbox: U }), cwd: viaJunction }).sandbox, U, 'a .claude junction is not followed');
+  const viaFile = checkout();
+  let linked = true;
+  try { symlinkSync(join(outside, '.claude', 'settings.json'), join(viaFile, '.claude', 'settings.json')); } catch { linked = false; }
+  if (linked) assert.deepEqual(readUserSafety({ env: {}, home: home({ sandbox: U }), cwd: viaFile }).sandbox, U, 'a settings file link is not followed');
+});
+
+// ── Task 5 (D81b): the project's layers never carry what Claude Code takes only from the user, managed or flag tiers ───────
+const PROJECT_ONLY_NOT = { network: { strictAllowlist: true, tlsTerminate: { caCertPath: '/ca.pem' }, allowManagedDomainsOnly: true, allowedDomains: ['p.example'] },
+  filesystem: { disabled: true, allowManagedReadPathsOnly: true, denyWrite: ['/etc'] },
+  credentials: { allowPlaintextInject: true, awsPairs: [{ accessKeyIdVar: 'K', secretAccessKeyVar: 'S' }], sigv4: { streaming: 'passthrough' } },
+  allowNestedUserNamespaces: true, allowAppleEvents: true, ripgrep: { command: 'rg' }, bwrapPath: '/b', socatPath: '/s', enabled: true };
+
+test('D81b: a project layer drops the keys Claude Code takes only from user, managed or --settings tiers, and says which', () => {
+  const s = safetyOf({ enabled: false }, { sandbox: PROJECT_ONLY_NOT });
+  assert.deepEqual(s.sandbox, { enabled: true, network: { allowedDomains: ['p.example'] }, filesystem: { denyWrite: ['/etc'] } });
+  assert.deepEqual(s.notes, ['Worca did not carry these sandbox settings from the project\'s .claude/settings.json: sandbox.network.strictAllowlist, '
+    + 'sandbox.network.tlsTerminate, sandbox.network.allowManagedDomainsOnly, sandbox.filesystem.disabled, sandbox.filesystem.allowManagedReadPathsOnly, '
+    + 'sandbox.credentials.allowPlaintextInject, sandbox.credentials.awsPairs, sandbox.credentials.sigv4, sandbox.allowNestedUserNamespaces, '
+    + 'sandbox.allowAppleEvents, sandbox.ripgrep, sandbox.bwrapPath, sandbox.socatPath. Claude Code takes them only from your own, managed or command-line settings.']);
+  assert.equal('warnings' in s, false);
+  assert.deepEqual(safetyOf(PROJECT_ONLY_NOT).sandbox.allowAppleEvents, true, 'the person\'s own are carried');
+});
+
+test('D81b: a project\'s allowUnsandboxedCommands: true is not carried (a person\'s false holds); a project false is', () => {
+  const s = safetyOf({ allowUnsandboxedCommands: false }, { sandbox: { allowUnsandboxedCommands: true } });
+  assert.deepEqual(s.sandbox, { allowUnsandboxedCommands: false });
+  assert.match(s.notes[0], /sandbox\.allowUnsandboxedCommands/);
+  assert.deepEqual(safetyOf({ allowUnsandboxedCommands: true }, undefined, { sandbox: { allowUnsandboxedCommands: false } }).sandbox,
+    { allowUnsandboxedCommands: false }, 'a local false still applies');
+});
+
+test('D81b: with the person\'s network.strictAllowlist on, the project\'s domains, proxy ports and excluded commands are not carried', () => {
+  const s = safetyOf({ network: { strictAllowlist: true, allowedDomains: ['u.example'] } },
+    { sandbox: { network: { allowedDomains: ['p.example'], httpProxyPort: 1, socksProxyPort: 2, deniedDomains: ['d.example'] }, excludedCommands: ['docker'] } });
+  assert.deepEqual(s.sandbox, { network: { strictAllowlist: true, allowedDomains: ['u.example'], deniedDomains: ['d.example'] } });
+  assert.match(s.notes[0], /sandbox\.network\.allowedDomains, sandbox\.network\.httpProxyPort, sandbox\.network\.socksProxyPort, sandbox\.excludedCommands/);
+  assert.deepEqual(safetyOf({ network: { allowedDomains: ['u.example'] } }, { sandbox: { network: { allowedDomains: ['p.example'] } } }).sandbox,
+    { network: { allowedDomains: ['u.example', 'p.example'] } }, 'without it: joined as before');
+});
+
+test('D81b: a relative sandbox path keeps its meaning (the person\'s config folder, the checkout); one Worca cannot place is left out', () => {
+  const h = home({ sandbox: { filesystem: { allowWrite: ['build', './out/**', '/abs', '//abs2', '~/h', '~'], denyRead: ['secrets'] },
+    credentials: { files: [{ path: 'keys/a.pem', mode: 'deny' }] }, ignoreViolations: { '*': ['/tmp/x', 'rel'] }, network: { allowUnixSockets: ['/s', 'rel.sock'] } } });
+  const cfg = join(h, '.claude').split(BS).join('/');
+  const c = checkout({ sandbox: { filesystem: { denyRead: ['private/**', '/abs3'] }, credentials: { files: [{ path: '.env', mode: 'deny' }] } } });
+  const s = readUserSafety({ env: {}, home: h, cwd: c });
+  const co = c.split(BS).join('/');
+  assert.deepEqual(s.sandbox.filesystem, { allowWrite: [`${cfg}/build`, `${cfg}/out/**`, '/abs', '//abs2', '~/h', '~'],
+    denyRead: [`${cfg}/secrets`, `${co}/private/**`, '/abs3'] });
+  assert.deepEqual(s.sandbox.credentials, { files: [{ path: `${cfg}/keys/a.pem`, mode: 'deny' }, { path: `${co}/.env`, mode: 'deny' }] });
+  assert.deepEqual(s.sandbox.ignoreViolations, { '*': ['/tmp/x'] });
+  assert.deepEqual(s.sandbox.network, { allowUnixSockets: ['/s'] });
+  assert.deepEqual(s.notes, ['Worca did not carry these sandbox paths from your Claude Code settings, as it could not tell what they point at once moved: '
+    + 'sandbox.ignoreViolations.*[1], sandbox.network.allowUnixSockets[1].']);
+});
+
+// ── Task 5 (security review M11): a run that loads no user settings gets no auto-approved sandboxed Bash from the person ──
+test('M11: unless the run loads user settings, the carried sandbox says autoAllowBashIfSandboxed: false (a project layer may still set it)', () => {
+  const of = (user, project, userLoaded) => readUserSafety({ env: {}, home: home({ sandbox: user }), cwd: checkout(project), userLoaded }).sandbox;
+  assert.deepEqual(of({ enabled: true }, undefined, false), { enabled: true, autoAllowBashIfSandboxed: false });
+  assert.deepEqual(of({ enabled: true, autoAllowBashIfSandboxed: true }, undefined, false), { enabled: true, autoAllowBashIfSandboxed: false });
+  assert.deepEqual(of({ enabled: true }, { sandbox: { autoAllowBashIfSandboxed: true } }, false), { enabled: true, autoAllowBashIfSandboxed: true },
+    'the project\'s own value, as a normal project-only run has it');
+  assert.deepEqual(of({ enabled: true }, undefined, true), { enabled: true }, 'a run that loads user settings: as the person has it');
+  assert.deepEqual(of({ enabled: true }, undefined, undefined), { enabled: true }, 'not said: as before');
+  assert.equal(readUserSafety({ env: {}, home: home({ permissions: { deny: ['Bash(x)'] } }), userLoaded: false }).sandbox, null, 'no sandbox: none');
 });

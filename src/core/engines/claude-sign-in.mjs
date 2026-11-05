@@ -3,9 +3,9 @@
 // `--setting-sources project` (or `project,local`, D70a), which drops that file; readUserSignIn reads only the sign-in out of it, so the try is
 // still signed in and nothing else of the person's setup (hooks, plugins, permissions, other env) comes along. The key rule
 // is the requirements interview's (A1.1 D6), moved here unchanged.
-import { readFileSync, statSync } from 'node:fs';
+import { lstatSync, readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, isAbsolute, join, posix } from 'node:path';
 
 /** Keys of the user settings' `env` block that sign Claude Code in or route its traffic (A1.1 D6). */
 export const SIGN_IN_ENV_KEYS = new Set([
@@ -17,11 +17,13 @@ export const isSignInEnvKey = (k) => SIGN_IN_ENV_KEYS.has(k) || /^https?_proxy$/
 /** The settings keys that sign in by running a command. */
 export const SIGN_IN_SETTINGS_KEYS = Object.freeze(['apiKeyHelper', 'awsAuthRefresh', 'awsCredentialExport']);
 
-/** The user settings file the CLI reads: `settings.json` in CLAUDE_CONFIG_DIR (trimmed), else in `<home>/.claude`. */
+/** The user settings file the CLI reads: `settings.json` in CLAUDE_CONFIG_DIR (trimmed), else in `<home>/.claude`. Task 5
+ *  (security review M10): null for a relative CLAUDE_CONFIG_DIR. The CLI resolves it against the spawn's working directory
+ *  (the checkout), not Worca's, so Worca would read another file than the CLI; nothing is carried then. */
 export function userSettingsFile({ env = process.env, home } = {}) {
-  const dir = typeof env?.CLAUDE_CONFIG_DIR === 'string' && env.CLAUDE_CONFIG_DIR.trim()
-    ? env.CLAUDE_CONFIG_DIR.trim() : join(home ?? homedir(), '.claude');
-  return join(dir, 'settings.json');
+  const set = typeof env?.CLAUDE_CONFIG_DIR === 'string' && env.CLAUDE_CONFIG_DIR.trim() ? env.CLAUDE_CONFIG_DIR.trim() : null;
+  if (set !== null && !isAbsolute(set)) return null;
+  return join(set ?? join(home ?? homedir(), '.claude'), 'settings.json');
 }
 
 const none = (state) => ({ state, env: {}, settings: {} });
@@ -34,8 +36,10 @@ const none = (state) => ({ state, env: {}, settings: {} });
  */
 export function readUserSignIn({ env = process.env, home, read = (p) => readFileSync(p, 'utf8') } = {}) {
   try {
+    const file = userSettingsFile({ env, home });
+    if (!file) return none('none');
     let raw;
-    try { raw = String(read(userSettingsFile({ env, home }))); } catch (err) {
+    try { raw = String(read(file)); } catch (err) {
       return none(err && (err.code === 'ENOENT' || err.code === 'ENOTDIR') ? 'none' : 'unreadable');
     }
     const text = raw.charCodeAt(0) === 0xFEFF ? raw.slice(1) : raw;
@@ -163,6 +167,7 @@ const SANDBOX_SHAPE = Object.freeze({
   credentials: CREDENTIALS,
   ignoreViolations: (v) => isPlain(v) && Object.entries(v).every(([k, x]) => k !== '__proto__' && isStrList(x)),
   enableWeakerNestedSandbox: isBool, enableWeakerNetworkIsolation: isBool, allowAppleEvents: isBool,
+  allowNestedUserNamespaces: isBool,   // 2.1.318 (D81b's schema read)
   excludedCommands: isStrList,
   ripgrep: { problem: (v, at) => shapeProblem(v, { command: (x) => typeof x === 'string', args: isStrList }, at) || (typeof v.command === 'string' ? null : at) },
   bwrapPath: (v) => typeof v === 'string', socatPath: (v) => typeof v === 'string',
@@ -192,40 +197,189 @@ export function layerSandbox(base, over) {
   return out;
 }
 
+// ── I1 (security review, 2026-11-04): a deny rule whose path starts with a single `/` is anchored at the folder of the
+// settings file it sits in (probe P5). Moved into Worca's --settings file it would be anchored at the staging folder, so it
+// is rewritten to the absolute `//` form of the person's config folder. Claude Code matches Windows paths in their POSIX
+// form (C:\Users\a is /c/Users/a). `~/` and `//` rules, relative ones and rules without a path keep their meaning anywhere.
+const PATH_RULE_TOOLS = new Set(['Read', 'Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'NotebookRead', 'Glob', 'Grep', 'LS']);
+const BACKSLASH = String.fromCharCode(92);
+/** `dir` as the CLI's absolute POSIX path (`/c/Users/a` for `C:\Users\a`) without a trailing `/`; null for a UNC or relative folder. */
+function posixDir(dir) {
+  const f = String(dir).split(BACKSLASH).join('/');
+  if (f.startsWith('//')) return null;   // a network share: no `//` form names it
+  const m = /^([A-Za-z]):(\/.*)?$/.exec(f);
+  const p = m ? `/${m[1].toLowerCase()}${m[2] || '/'}` : f;
+  return p.startsWith('/') ? p.replace(/\/+$/, '') : null;
+}
+/** I1: `rule` with a `/…` path (a file-tool rule) anchored at `configDir` in the `//` form; every other rule as it is. */
+export function anchoredDenyRule(rule, configDir) {
+  const m = /^([A-Za-z][A-Za-z0-9_]*)\(([\s\S]*)\)$/.exec(String(rule));
+  if (!m || !PATH_RULE_TOOLS.has(m[1]) || !m[2].startsWith('/') || m[2].startsWith('//')) return rule;
+  const dir = posixDir(configDir);
+  return dir === null ? rule : `${m[1]}(/${dir}${m[2]})`;
+}
+
+// ── D81b (2026-11-05): Worca's --settings file is a flag-tier source the CLI trusts fully, so a project or local layer laid
+// into it never carries what Claude Code takes only from the user, managed (policy) or --settings tiers: a normal run ignores
+// those keys in a project's settings. Source: the sandbox settings schema of Claude Code 2.1.318 (its descriptions: "Only
+// honored from user, managed/policy, or CLI (--settings) settings — project settings (.claude/settings.json and
+// .claude/settings.local.json) are ignored", "Only honored from admin-controlled managed settings", "set in managed settings").
+export const PROJECT_IGNORED_SANDBOX_KEYS = Object.freeze(['network.strictAllowlist', 'network.tlsTerminate', 'network.allowManagedDomainsOnly',
+  'filesystem.disabled', 'filesystem.allowManagedReadPathsOnly', 'credentials.allowPlaintextInject', 'credentials.awsPairs', 'credentials.sigv4',
+  'allowNestedUserNamespaces', 'allowAppleEvents', 'ripgrep', 'bwrapPath', 'socatPath']);
+/** D81b: while user (or managed, or --settings) settings set network.strictAllowlist, the CLI leaves these out of a
+ *  project's settings ("values from project settings are ignored"; for allowedDomains in strictAllowlist's own text). */
+export const STRICT_ALLOWLIST_IGNORED_SANDBOX_KEYS = Object.freeze(['network.allowedDomains', 'network.httpProxyPort', 'network.socksProxyPort', 'excludedCommands']);
+/** A project layer without the keys the CLI would not take from it, and its `allowUnsandboxedCommands: true` ("a false in
+ *  managed, --settings or user settings holds whatever project settings say (false there still applies)"). */
+function projectLayer(sb, { strict }) {
+  const drop = new Set([...PROJECT_IGNORED_SANDBOX_KEYS, ...(strict ? STRICT_ALLOWLIST_IGNORED_SANDBOX_KEYS : [])]);
+  const dropped = [];
+  const walk = (o, prefix) => {
+    const out = {};
+    for (const [k, v] of Object.entries(o)) {
+      if (k === '__proto__') continue;
+      const path = prefix ? `${prefix}.${k}` : k;
+      if (drop.has(path) || (path === 'allowUnsandboxedCommands' && v === true)) { dropped.push(`sandbox.${path}`); continue; }
+      if (isPlain(v) && [...drop].some((d) => d.startsWith(`${path}.`))) {
+        const sub = walk(v, path);
+        if (Object.keys(sub).length || !Object.keys(v).length) out[k] = sub;   // emptied by the drop: left out
+        continue;
+      }
+      out[k] = v;
+    }
+    return out;
+  };
+  return { sandbox: walk(sb, ''), dropped };
+}
+
+// D81b: sandbox paths the CLI resolves against the root of the settings file they sit in (its schema: "absolute, ~ expanded,
+// or relative to the settings file root (project root for project settings, ~/.claude for user settings)"). In Worca's
+// --settings file a relative one would resolve against the staging folder, so it is written out against its own root.
+// ignoreViolations and network.allowUnixSockets paths have no documented resolution: a relative one is left out.
+const SANDBOX_FS_PATH_KEYS = Object.freeze(['allowWrite', 'denyWrite', 'denyRead', 'allowRead']);
+const fwdSlashes = (p) => (process.platform === 'win32' ? String(p).split(BACKSLASH).join('/') : String(p));
+const isRelativeSandboxPath = (v) => {
+  const t = v.trim();
+  return !(t === '~' || /^~[\\/]/.test(t) || t.startsWith('//') || isAbsolute(t)
+    || (process.platform === 'win32' && /^%(?:USERPROFILE|APPDATA|LOCALAPPDATA)%/i.test(t)));
+};
+/** `sb` with its relative paths written against `root` (null: cannot be placed), and the entries left out. */
+function placeSandboxPaths(sb, root) {
+  const base = root ? fwdSlashes(root) : null;
+  const placeable = !!base && !base.startsWith('//');
+  const place = (v) => posix.join(base, fwdSlashes(v.trim()));
+  const dropped = [];
+  const keep = (list, at) => list.filter((v, i) => {
+    const out = typeof v === 'string' && isRelativeSandboxPath(v);
+    if (out) dropped.push(`${at}[${i}]`);
+    return !out;
+  });
+  const fix = (list, at) => (placeable ? list.map((v) => (typeof v === 'string' && isRelativeSandboxPath(v) ? place(v) : v)) : keep(list, at));
+  const out = { ...sb };
+  if (isPlain(out.filesystem)) {
+    const f = { ...out.filesystem };
+    for (const k of SANDBOX_FS_PATH_KEYS) if (Array.isArray(f[k])) f[k] = fix(f[k], `sandbox.filesystem.${k}`);
+    out.filesystem = f;
+  }
+  if (isPlain(out.credentials) && Array.isArray(out.credentials.files)) {
+    const files = [];
+    out.credentials.files.forEach((e, i) => {
+      if (!isPlain(e) || typeof e.path !== 'string' || !isRelativeSandboxPath(e.path)) files.push(e);
+      else if (placeable) files.push({ ...e, path: place(e.path) });
+      else dropped.push(`sandbox.credentials.files[${i}]`);
+    });
+    out.credentials = { ...out.credentials, files };
+  }
+  if (isPlain(out.ignoreViolations)) {
+    const iv = {};
+    for (const [pat, list] of Object.entries(out.ignoreViolations)) {
+      if (pat !== '__proto__') iv[pat] = Array.isArray(list) ? keep(list, `sandbox.ignoreViolations.${pat}`) : list;
+    }
+    out.ignoreViolations = iv;
+  }
+  if (isPlain(out.network) && Array.isArray(out.network.allowUnixSockets)) {
+    out.network = { ...out.network, allowUnixSockets: keep(out.network.allowUnixSockets, 'sandbox.network.allowUnixSockets') };
+  }
+  return { sandbox: out, dropped };
+}
+/** D81b: the run-log line for what a layer left out, or null. */
+function leftOutNote(who, keys, paths) {
+  const parts = [];
+  if (keys.length) parts.push(`Worca did not carry these sandbox settings from ${who}: ${keys.join(', ')}. Claude Code takes them only from your own, managed or command-line settings.`);
+  if (paths.length) parts.push(`Worca did not carry these sandbox paths from ${who}, as it could not tell what they point at once moved: ${paths.join(', ')}.`);
+  return parts.length ? parts.join(' ') : null;
+}
+/** M7: a plain file in the checkout's own `.claude` folder (never through a link: `.claude` or the file being one). */
+function checkoutSettingsFile(cwd, name) {
+  try {
+    if (!lstatSync(join(cwd, '.claude')).isDirectory()) return null;   // a symlink or junction is not a directory to lstat
+    const p = join(cwd, '.claude', name);
+    return lstatSync(p).isFile() ? p : null;
+  } catch { return null; }
+}
+
 /**
  * Workflow tests 3b (D81): the person's own guards in their user settings: `permissions.deny` (non-empty strings,
  * deduplicated, at most SAFETY_DENY_MAX) and `sandbox` (a plain object). Never their allow or ask rules. Nothing from a file
  * Worca cannot read or parse. Never throws.
- * Deny rules merge across scopes, so they only ever add blocks. The sandbox does not: carried on the command line it would
+ * Deny rules merge across scopes, so they only ever add blocks. I1: a rule anchored at the settings folder (`/…`) is written
+ * against the person's config folder (anchoredDenyRule). The sandbox does not merge: carried on the command line it would
  * outrank the project's, so (D81a) the try checkout's (`cwd`) `.claude/settings.json` and then `.claude/settings.local.json`
  * sandbox are laid over the person's (layerSandbox), keeping Claude Code's own order (local > project > user). A project or
  * local file that cannot be read or parsed adds nothing. No sandbox of the person's: none (the project's loads by itself).
+ * M7: a checkout file is read only when its source is one of the spawn's `sources` (default both), and never through a link.
  * C1: every layer is checked (sandboxProblem) before it is laid on, and the result after. A person's sandbox that fails
  * carries no sandbox at all; a project or local one that fails adds nothing; a clash once laid together carries none. Each
  * gives one line in `warnings` (present only when there is one), which the runner turns into a run warning.
- * @returns {{deny: string[], sandbox: object|null, warnings?: string[]}}
+ * D81b: a project or local layer leaves out what the CLI takes only from the user, managed or flag tiers
+ * (PROJECT_IGNORED_SANDBOX_KEYS, its `allowUnsandboxedCommands: true`, and with the person's network.strictAllowlist on
+ * STRICT_ALLOWLIST_IGNORED_SANDBOX_KEYS); relative sandbox paths are written against their own root (the config folder, the
+ * checkout), and those with no known root are left out. Each layer that leaves something out gives one line in `notes`.
+ * M11: `userLoaded: false` (the run itself loads no user settings) carries `autoAllowBashIfSandboxed: false` under the
+ * project's layers: the person's sandbox must not auto-approve Bash a normal project-only run would ask about.
+ * @returns {{deny: string[], sandbox: object|null, warnings?: string[], notes?: string[]}}
  */
-export function readUserSafety({ env = process.env, home, read = readCapped, cwd = null } = {}) {
+export function readUserSafety({ env = process.env, home, read = readCapped, cwd = null, sources = ['project', 'local'], userLoaded = true } = {}) {
   try {
-    const s = settingsObject(userSettingsFile({ env, home }), read);
+    const file = userSettingsFile({ env, home });
+    if (!file) return noSafety();
+    const s = settingsObject(file, read);
     if (!s) return noSafety();
+    const configDir = dirname(file);
     const d = isPlain(s.permissions) && Array.isArray(s.permissions.deny) ? s.permissions.deny : [];
-    const deny = [...new Set(d.filter((x) => typeof x === 'string' && x.trim()))].slice(0, SAFETY_DENY_MAX);
+    const deny = [...new Set(d.filter((x) => typeof x === 'string' && x.trim()).map((r) => anchoredDenyRule(r, configDir)))].slice(0, SAFETY_DENY_MAX);
     const warnings = [];
+    const notes = [];
     let sandbox = isPlain(s.sandbox) ? s.sandbox : null;
     const bad = sandbox ? sandboxProblem(sandbox) : null;
     if (bad) { warnings.push(sandboxNotCarried('your', bad)); sandbox = null; }
+    if (sandbox) {
+      const placed = placeSandboxPaths(sandbox, configDir);
+      sandbox = placed.sandbox;
+      const n = leftOutNote('your Claude Code settings', [], placed.dropped);
+      if (n) notes.push(n);
+      if (userLoaded === false) sandbox = { ...sandbox, autoAllowBashIfSandboxed: false };
+    }
     if (sandbox && typeof cwd === 'string' && cwd) {
-      for (const name of ['settings.json', 'settings.local.json']) {
-        const p = settingsObject(join(cwd, '.claude', name), read);
+      const strict = isPlain(sandbox.network) && sandbox.network.strictAllowlist === true;
+      const list = Array.isArray(sources) ? sources : [];
+      for (const [name, source] of [['settings.json', 'project'], ['settings.local.json', 'local']]) {
+        if (!list.includes(source)) continue;
+        const f = checkoutSettingsFile(cwd, name);
+        const p = f ? settingsObject(f, read) : null;
         if (!p || !isPlain(p.sandbox)) continue;
         const pBad = sandboxProblem(p.sandbox);
         if (pBad) { warnings.push(sandboxNotCarried(`the project's .claude/${name}`, pBad)); continue; }
-        sandbox = layerSandbox(sandbox, p.sandbox);
+        const layer = projectLayer(p.sandbox, { strict });
+        const placed = placeSandboxPaths(layer.sandbox, cwd);
+        const n = leftOutNote(`the project's .claude/${name}`, layer.dropped, placed.dropped);
+        if (n) notes.push(n);
+        sandbox = layerSandbox(sandbox, placed.sandbox);
       }
       const clash = sandboxProblem(sandbox);
       if (clash) { warnings.push(sandboxNotCarried('your', `${clash} (with the project's laid over it)`)); sandbox = null; }
     }
-    return { deny, sandbox, ...(warnings.length ? { warnings } : {}) };
+    return { deny, sandbox, ...(warnings.length ? { warnings } : {}), ...(notes.length ? { notes } : {}) };
   } catch { return noSafety(); }
 }
