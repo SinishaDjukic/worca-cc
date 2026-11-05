@@ -1065,7 +1065,8 @@ test('D15, board 29 (6): Report back to SHOP-123 on the Ready to build card, on 
 
 test('D15: the start-before-Ready dialog and the runs card carry the same switch; the start sends reportBack', async () => {
   const f = feature({ readiness: readiness(['openQuestions']), state: 'decide', export: XV({ link: LINK }) });
-  const { host, calls } = await openFeature(f, { [`POST ${F}/start`]: () => ({ runId: 'r1', version: 1, feature: f, turns: [] }) });
+  const { host, calls } = await openFeature(f, { [`POST ${F}/start`]: () => ({ runId: 'r1', version: 1, feature: f, turns: [] }),
+    [`PUT ${F}/early-start-reason`]: () => ({ earlyStartReason: 'Now.' }) });
   q('start-anyway', host).click();
   await settle();
   const sw = q('report-dialog');

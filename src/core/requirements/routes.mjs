@@ -12,7 +12,7 @@ import { listProjects } from '../projects.mjs';
 import { workspaceTarget } from '../ask/workflow-deps.mjs';
 import { RequirementsError, parseFeatureSeq, SCOPE_TYPES } from './spec.mjs';
 import {
-  createFeature, requireFeature, listFeatures, listTurns, getContext, setContext, updateFeature, listStarts, latestStart, recentLookCosts,
+  createFeature, requireFeature, listFeatures, listTurns, getContext, setContext, updateFeature, setEarlyStartReason, listStarts, latestStart, recentLookCosts,
   getBrief, usableBrief, listBriefs, setBriefSections, deleteBrief, briefUsers, listAttachments, countHelperMessages,
 } from './store.mjs';
 import {
@@ -32,7 +32,7 @@ import {
   revertToStart, addToBrief, editable,
 } from './edits.mjs';
 import { readiness, displayState, changedSince, unaskedRejections, unaskedFiles } from './ready.mjs';
-import { startFeature, startView } from './start.mjs';
+import { startFeature, startView, REASON_MAX } from './start.mjs';
 import { exportSetupView, exportOptions, saveSetup, previewExport, runExport, forgetLink, exportView } from './export.mjs';
 import { budgetStatus, requirementsWindowedSpendUsd } from '../cost-budget.mjs';
 import { renderSpecMarkdown } from './markdown.mjs';
@@ -69,7 +69,7 @@ export const REQUIREMENTS_ROUTES = Object.freeze([
   ['POST', `${P}/:seq/attachments/:attId/replace`], ['POST', `${P}/:seq/attachments/:attId/ask`], ['POST', `${P}/:seq/attachments/:attId/read-again`],
   ['POST', `${P}/:seq/archive`],
   ['GET', `${P}/:seq/markdown`], ['POST', `${P}/:seq/save`],
-  ['POST', `${P}/:seq/start`], ['POST', `${P}/:seq/revert`],
+  ['POST', `${P}/:seq/start`], ['PUT', `${P}/:seq/early-start-reason`], ['POST', `${P}/:seq/revert`],
   ['POST', `${P}/:seq/export/preview`], ['POST', `${P}/:seq/export`], ['DELETE', `${P}/:seq/export/link`],
   // A3 §5: Feature chat, one chat per feature
   ['GET', `${P}/:seq/helper`], ['DELETE', `${P}/:seq/helper`], ['POST', `${P}/:seq/helper/messages`], ['POST', `${P}/:seq/helper/stop`],
@@ -728,10 +728,22 @@ export function registerRequirementsRoutes(app, { broadcast, deps = {} } = {}) {
       const f = requireFeature(seq);
       if (typeof d.startRun !== 'function') throw new Error('starting runs is not available');
       const b = req.body || {};
-      const r = await startFeature(seq, { reason: b.reason, workflowId: b.workflowId, sourceBranch: b.sourceBranch, reportBack: b.reportBack },
+      const r = await startFeature(seq, { reason: b.reason, workflowId: b.workflowId, sourceBranch: b.sourceBranch, reportBack: b.reportBack, overlay: b.overlay },
         { by: by(req) }, { startRun: d.startRun, target: await targetFor(f) });
       onChange(seq);
       res.status(201).json({ runId: r.runId, version: r.version, ...await featureView(seq, d) });
+    },
+    [`PUT ${P}/:seq/early-start-reason`]: async (req, res) => {
+      const seq = seqOf(req);
+      const f = requireFeature(seq);
+      const given = (req.body || {}).reason;
+      if (given !== null && typeof given !== 'string') throw new RequirementsError('BAD_REQUEST', 'reason must be text or null');
+      const reason = given === null ? '' : given.trim();
+      if (reason.length > REASON_MAX) throw new RequirementsError('BAD_REQUEST', `the reason must be at most ${REASON_MAX} characters`);
+      if (f.status === 'archived') throw new RequirementsError('CONFLICT', 'this feature is archived; restore it first');
+      setEarlyStartReason(seq, reason || null);   // a draft note: not refused while busy or starting
+      onChange(seq);
+      res.json({ earlyStartReason: reason || null });
     },
     [`POST ${P}/:seq/revert`]: async (req, res) => {
       const seq = seqOf(req);

@@ -841,6 +841,7 @@ ${STEP_QUESTIONS_DDL}
  */
 const INCREMENTAL_COLUMNS = {
   req_cost_ledger:        { brief_id: 'INTEGER', attachment_id: 'TEXT', helper_message_id: 'INTEGER' },   // v74: a brief look's spend (feature_seq is 0 then); v77: a file's read or ask; v78: a helper call (A3 D13)
+  req_features:           { early_start_reason: 'TEXT' },   // v85: the reason given for starting a feature before Ready, kept until a run starts; NULL = none
   req_starts:             { files_json: "TEXT NOT NULL DEFAULT '[]'" },   // v77: the files a start sent (A8 D14)
   run_groups:             { name_source: "TEXT NOT NULL DEFAULT 'user'" },   // v79: 'suggested' | 'user' (Smart naming), as ask_chat_groups
   pipelines:              { resume_point: 'TEXT', owner_pid: 'INTEGER', owner_host: 'TEXT', heartbeat_at: 'TEXT',
@@ -2789,6 +2790,9 @@ export function migrate(db) {
     if (current < 82) db.exec(AUTOMATIONS_DDL);   // v82 Git event automations (#711), project and workspace rules
     // v83 (#943): ask_messages.engine — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
     // v84 (#990): config_workflow_nodes.roles — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
+    // v85 had two meanings: dev's req_features.early_start_reason (INCREMENTAL_COLUMNS) and this branch's chat tables.
+    // Both heal on either v85 DB: the hoisted repairSchemaGaps adds the missing column, and chat_conversations is in
+    // INCREMENTAL_TABLES, so a dev-v85 DB (which skips the step below) gets its chat tables there too.
     if (current < 85) db.exec(CHAT_CONVERSATIONS_DDL);   // v85 freeform chat conversations (first written as v84; dev took 84)
     // v86: chat_conversations.header_new_off — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps (a v85 DB) or
     // by the v85 DDL above (an older DB)
