@@ -19,7 +19,7 @@ const BROWSER_CONFIRM_CODES = new Set(['sync-diverged', 'sync-fetch-failed', 're
 const BOT_ID_RE = /^[A-Za-z0-9_-]{1,32}$/;
 
 export const SAY = {
-  notMember: 'You are not set up for worca chat here. Ask the worca operator to add your Discord user ID under Freeform chat members.',
+  notMember: 'You are not set up for worca chat here. Ask the worca operator to add your chat user ID under Freeform chat members.',
   notOwner: (owner) => `Only <@${owner}> can act on this conversation.`,
   stale: 'This control is no longer valid. Use the newest message.',
   busy: 'Chat is still replying. Try again once the answer lands.',
