@@ -41,6 +41,8 @@ export const BUTTON_STYLES = ['primary', 'secondary', 'success', 'danger'];
 export const INTERACTION_KINDS = ['button', 'select', 'modal'];
 export const CONTROL_REF_RE = /^[A-Za-z0-9_-]{16,64}$/;
 const MODAL_FIELD_ID_RE = /^[a-z][a-z0-9_]{0,31}$/;
+/** A chat id in an interaction or a react frame. Teams reply-chain ids (`19:…@thread.tacv2;messageid=…`) run past 64. */
+export const MAX_CHAT_ID = 256;
 export const CONTROL_LIMITS = Object.freeze({
   controls: 10, selects: 1, selectOptions: 25, label: 80, optionValue: 100, optionLabel: 100, description: 100,
   placeholder: 100, url: 512, modalTitle: 45, modalFields: 5, modalFieldLabel: 45, modalFieldMax: 4000,
@@ -98,7 +100,7 @@ export function isValidSendOptions(o) {
 /** One component interaction the worker already acknowledged. No platform token ever rides it. */
 export function isValidInteraction(e) {
   if (!e || typeof e !== 'object') return false;
-  if (!str(e.id, 64) || !str(e.chatId, 64) || typeof e.userId !== 'string') return false;
+  if (!str(e.id, 64) || !str(e.chatId, MAX_CHAT_ID) || typeof e.userId !== 'string') return false;
   if (typeof e.ref !== 'string' || !CONTROL_REF_RE.test(e.ref) || !INTERACTION_KINDS.includes(e.kind)) return false;
   if (e.values !== undefined && !(Array.isArray(e.values) && e.values.length <= L.interactionValues && e.values.every((v) => str(v, L.optionValue)))) return false;
   if (e.fields !== undefined) {
@@ -194,7 +196,7 @@ export function isValidFrame(frame) {
         && typeof frame.text === 'string' && frame.text.length >= 1 && frame.text.length <= CONTROL_LIMITS.replyText;
     case 'react':   // v2 interactive: add/remove the bot's OWN reaction on one message
       return typeof frame.id === 'string'
-        && typeof frame.chatId === 'string' && frame.chatId !== '' && frame.chatId.length <= 64
+        && typeof frame.chatId === 'string' && frame.chatId !== '' && frame.chatId.length <= MAX_CHAT_ID
         && typeof frame.messageId === 'string' && frame.messageId !== '' && frame.messageId.length <= 64
         && typeof frame.emoji === 'string' && frame.emoji !== '' && frame.emoji.length <= 32
         && typeof frame.on === 'boolean';
