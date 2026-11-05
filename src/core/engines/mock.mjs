@@ -1063,7 +1063,8 @@ const FINDING_ID_RE = /\*\*([a-z]+-\d+-\d+)\*\*/g;
  *  names. `WORCA_MOCK_DISPOSITIONS='{"ux-1-1":"disputed"}'` answers an id fixed | disputed | omit (default: fixed);
  *  `WORCA_MOCK_CONFLICTS` is a JSON array passed through. Returns the ids left fixed; null without that line. */
 async function mockDispositions(findingsText) {
-  const path = /^Dispositions file: (.+)$/m.exec(findingsText || '')?.[1]?.trim();
+  // The last such line: dispositionsBlock ends every findings file with it, so finding text above cannot redirect the write.
+  const path = [...String(findingsText || '').matchAll(/^Dispositions file: (.+)$/gm)].at(-1)?.[1]?.trim();
   if (!path) return null;
   const knob = (name) => { try { return JSON.parse(process.env[name] || 'null'); } catch { return null; } };
   const table = knob('WORCA_MOCK_DISPOSITIONS') || {};
