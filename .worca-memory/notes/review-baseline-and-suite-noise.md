@@ -1,7 +1,7 @@
 ---
 name: review-baseline-and-suite-noise
 description: Read before reviewing a worca run's diff or proving new tests catch their fixes — the checkpoint may not be the base, and many guard removals stay green.
-updated: 2026-11-04T19:11:57.624Z
+updated: 2026-11-05T00:16:27.717Z
 author: Bulibas
 ---
 
@@ -68,5 +68,11 @@ route's `if (!check) return`), even when the tests are copied verbatim from a re
   row (MCP card plan v3 R-sec-5, 2026-11-04).
 - The app.js boot `toolMirror.schedule()` is an equivalent mutant: the panel's boot `setPrefs` always saves the model
   (it adds `max:false`), and `onChange` schedules the PUT anyway.
+- A jsdom module test that INJECTS its deps or URL set (`createFilesKind({ previewDeps })`, a viewer `URLS` fixture
+  with `pdf`) cannot catch app.js dropping them at registration. Mutate the app.js line itself (deps → `() => ({})`,
+  delete one URL-set key such as `runArtifactUrls` `pdf:`): both survived on the Files-tab viewer (2026-11-05) and
+  were the blocking findings. Demand an "in the real app" row per wiring line.
+- Spawn hardening options (`env: scrubbedEnv()`, an `inflight.delete` on settle) are rarely pinned even when a plan's
+  mutation table is otherwise complete: swap them for `process.env` / delete them and run the module's test.
 
 Judging a red, cancelled or hung full suite: [[test-suite-known-failures]].
