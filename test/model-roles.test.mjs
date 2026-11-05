@@ -368,3 +368,17 @@ test('projectRolesFor: a signed-out Claude login skips the built-in; a refused t
   assert.doesNotMatch(logs[0], /sk-ant-/);
   _resetRoleAuthForTests();
 });
+
+test('sub-agent alias labels are the role names, built from ROLE_LABELS; stored values are untouched', async () => {
+  const { ROLE_LABELS, SUBAGENT_ALIAS_LABELS, subagentAliasLabel, subagentAliasTitle } = await import('../src/shared/model-roles.mjs');
+  assert.equal(subagentAliasLabel('opus'), ROLE_LABELS.deep);
+  assert.equal(subagentAliasLabel('sonnet'), ROLE_LABELS.everyday);
+  assert.equal(subagentAliasLabel('fable'), `${ROLE_LABELS.deep} · premium`);
+  assert.equal(subagentAliasLabel('auto'), 'agent picks');
+  assert.equal(subagentAliasLabel('inherit'), 'inherit');
+  assert.equal(subagentAliasLabel('haiku'), 'haiku', 'an unknown value passes through');
+  assert.equal(subagentAliasLabel('toString'), 'toString', 'no prototype lookups');
+  assert.deepEqual(Object.keys(SUBAGENT_ALIAS_LABELS).sort(), ['auto', 'fable', 'inherit', 'opus', 'sonnet']);
+  assert.equal(subagentAliasTitle('opus'), 'Runs on Opus');
+  assert.equal(subagentAliasTitle('auto'), '');
+});

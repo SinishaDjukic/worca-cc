@@ -67,3 +67,23 @@ export function roleOfSettingId(settingId, { name = '' } = {}) {
   const job = rest.startsWith('utility.') ? rest.slice('utility.'.length) : rest;
   return roleOfJob(engine, job);
 }
+
+// The sub-agent alias picker (src/core/model-env.mjs SUBAGENT_MODELS) shows these role names, never the bare model names.
+// LABELS ONLY: the stored values stay sonnet | opus | fable | auto | inherit. Haiku is not an alias, so no "Quick jobs" here.
+export const SUBAGENT_ALIAS_LABELS = Object.freeze({
+  opus: ROLE_LABELS.deep,
+  sonnet: ROLE_LABELS.everyday,
+  fable: `${ROLE_LABELS.deep} · premium`,
+  auto: 'agent picks',
+  inherit: 'inherit',
+});
+const SUBAGENT_ALIAS_MODELS = Object.freeze({ opus: 'Opus', sonnet: 'Sonnet', fable: 'Fable' });
+
+/** The label a sub-agent alias shows; an unknown value is returned unchanged. @param {string} v */
+export function subagentAliasLabel(v) {
+  return Object.hasOwn(SUBAGENT_ALIAS_LABELS, v) ? SUBAGENT_ALIAS_LABELS[v] : v;
+}
+/** Tooltip naming the model behind an alias ("Runs on Opus"), or '' for auto / inherit / unknown. @param {string} v */
+export function subagentAliasTitle(v) {
+  return Object.hasOwn(SUBAGENT_ALIAS_MODELS, v) ? `Runs on ${SUBAGENT_ALIAS_MODELS[v]}` : '';
+}

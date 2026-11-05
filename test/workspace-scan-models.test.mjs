@@ -85,7 +85,7 @@ test('resolveScanModels: explicit > stored > default; a stale stored pick degrad
   const none = resolveScanModels({ models: CATALOG });
   assert.deepEqual({ ...none }, { ...WORKSPACE_SCAN_DEFAULT_MODELS, source: 'default', warning: null });
   assert.throws(() => resolveScanModels({ explicit: { ...PICK, agentModel: 'haiku' }, models: CATALOG }), /agentModel/);
-  assert.equal(describeScanModels(none), 'scan agent claude-sonnet-5 · medium, project agents sonnet · medium');
+  assert.equal(describeScanModels(none), 'scan agent claude-sonnet-5 · medium, project agents Everyday coding · medium');
 });
 
 test('resolveScanModels: precedence explicit > workspace > settings > default', () => {

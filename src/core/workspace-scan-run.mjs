@@ -22,6 +22,7 @@ import { resolveProjectPolicy, autoPolicyHome } from './policy/sync.mjs';
 import { assertWorkspaceScanInput } from './settings.mjs';
 import { WORKSPACE_SCAN_DEFAULT_MODELS } from './graph/builtin-workflows.mjs';
 import { scanDescriptionBudget } from '../shared/workspace-size.mjs';
+import { subagentAliasLabel } from '../shared/model-roles.mjs';
 
 /** The render card's output file (scripts/workspaceMapRender.meta.json outputs[0].filename): the
  *  description the pipeline rendered with the overrides the run froze at start (wsmap M15; none on a
@@ -60,9 +61,9 @@ export function scanRunPrompt({ name, projectNames = [], rescan = false, partial
   return lines.join('\n\n');
 }
 
-/** `scan agent claude-sonnet-5 · medium, project agents sonnet · medium` */
+/** `scan agent claude-sonnet-5 · medium, project agents Everyday coding · medium` */
 export function describeScanModels(m) {
-  return `scan agent ${m.scanModel}${m.scanEffort ? ` · ${m.scanEffort}` : ''}, project agents ${m.agentModel} · ${m.agentEffort}`;
+  return `scan agent ${m.scanModel}${m.scanEffort ? ` · ${m.scanEffort}` : ''}, project agents ${subagentAliasLabel(m.agentModel)} · ${m.agentEffort}`;
 }
 
 /** The scan models EVERY scan with no usable stored pick falls to: WORKSPACE_SCAN_DEFAULT_MODELS,
