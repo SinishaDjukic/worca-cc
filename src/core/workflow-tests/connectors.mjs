@@ -17,10 +17,13 @@ import { CLAUDE_AI_RE, plainName, serverName } from '../../shared/workflow-tests
 import { selectRunEngine } from '../engines/index.mjs';
 import { guardCall } from './guard-calls.mjs';
 import { createRedactor } from '../redact.mjs';
+import { pendingTryLogRedactor } from '../engines/try-log-redaction.mjs';
 
 // Task 5 (M13): the stand-ins and the try guard write the calls raw (they hold no secret list); what Worca shows of them is
 // redacted like the transcript: broker tokens always, in keys and values at any depth (the spawn's own secrets are redacted
-// in the file when the spawn ends, claude.mjs redactTryLog). The arguments themselves stay: they are what board 31 shows.
+// in the file once its last spawn ends, try-log-redaction.mjs). The arguments themselves stay: they are what board 31 shows.
+// Fix review I-1: while spawns still write, a rewrite is in flight, or the rewrite failed, the redactors Worca still holds
+// for the file in memory are applied here too.
 const brokerTokensOut = createRedactor([]).deep;
 
 export { CONNECTOR_MODES } from './store.mjs';
@@ -239,11 +242,13 @@ export async function readConnectorCalls(pipelineId) {
   const row = pipelineId ? findPipelineRowById(pipelineId) : null;
   if (!row) return [];
   let text = '';
-  try { text = await readFile(join(await runDirForRow(row), CONNECTOR_CALLS_FILE), 'utf8'); } catch { return []; }
+  let file = null;
+  try { file = join(await runDirForRow(row), CONNECTOR_CALLS_FILE); text = await readFile(file, 'utf8'); } catch { return []; }
+  const held = pendingTryLogRedactor(file);
   const out = [];
   for (const line of text.split('\n')) {
     if (!line.trim() || out.length >= CALLS_MAX) continue;
-    try { const v = JSON.parse(line); if (v && typeof v.tool === 'string') out.push(brokerTokensOut(v)); } catch { /* a torn line */ }
+    try { const v = JSON.parse(line); if (v && typeof v.tool === 'string') out.push(brokerTokensOut(held ? held.deep(v) : v)); } catch { /* a torn line */ }
   }
   return out;
 }

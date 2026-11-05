@@ -19,6 +19,8 @@ import { viewContext } from '../src/core/mcp/views.mjs';
 import { MOCK_CONNECTOR_PATH } from '../src/core/mcp/mock-connector.mjs';
 import { runOpts, CLAUDE_AI_TOOLS } from '../src/core/phases.mjs';
 import { buildClaudeArgs } from '../src/core/engines/claude.mjs';
+import { openTryLog, _testing as tryLogTesting } from '../src/core/engines/try-log-redaction.mjs';
+import { createRedactor } from '../src/core/redact.mjs';
 import { envForShell } from '../src/core/graph/script-runner.mjs';
 import {
   pretendServers, connectorNotes, humanizeTool, nounOf, sentCall, wouldHaveSent, noteSeenServers, seenClaudeAiServers,
@@ -301,4 +303,22 @@ test('M13: readConnectorCalls redacts broker tokens in every entry, keys and nes
   const [e] = await readConnectorCalls(id);
   assert.deepEqual(e.arguments, { text: 'token wbt_[redacted]', nested: { 'wbt_[redacted]': ['wbt_[redacted]'] } });
   assert.equal((await wouldHaveSent(id)).sent[0].preview, 'token wbt_[redacted]');
+});
+
+// ── Task 5 fix review (I-1): a log Worca could not rewrite is still shown redacted, from the redactors held in memory ──────
+test('I-1: readConnectorCalls applies the redactors still held for a try log that could not be rewritten', async () => {
+  const home = await tmp();
+  const { id, dir } = await createPipeline(join(home, 'proj'), { prompt: 'p', title: 't', isTest: true });
+  const log = join(dir, CONNECTOR_CALLS_FILE);
+  await writeFile(log, `${JSON.stringify({ ts: 't', server: 'slack_team', tool: 'post_message', arguments: { text: 'key sk-ant-held-secret-0001' } })}\n`);
+  const warned = [];
+  tryLogTesting.set({ rename: () => { throw Object.assign(new Error('busy'), { code: 'EPERM' }); }, sleep: async () => {}, warn: (t) => warned.push(t) });
+  try {
+    openTryLog(log, createRedactor(['sk-ant-held-secret-0001']))();
+    for (let i = 0; i < 50 && !warned.length; i++) await new Promise((r) => setImmediate(r));
+    assert.equal(warned.length, 1, 'one warning');
+    assert.match(readFileSync(log, 'utf8'), /sk-ant-held-secret-0001/, 'the raw file stays');
+    const [e] = await readConnectorCalls(id);
+    assert.equal(e.arguments.text, 'key [redacted]');
+  } finally { tryLogTesting.reset(); }
 });

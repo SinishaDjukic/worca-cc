@@ -13,8 +13,7 @@ import { hostGuardEnabled, hostGuardHookEntry, hostGuardSystemPrompt } from '../
 import { memoryUsageHookEntry } from '../memory-usage.mjs';
 import { readGuardHookEntry, readGuardDecisions } from '../file-read-guard.mjs';
 import { tryGuardHookEntry, withTryDeny } from '../workflow-tests/try-guard-env.mjs';
-import { lstatSync, mkdtempSync, readdirSync, readFileSync, renameSync, writeFileSync, rmSync } from 'node:fs';
-import { randomBytes } from 'node:crypto';
+import { lstatSync, mkdtempSync, readdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { agentIdentity } from '../agent-user.mjs';
@@ -26,6 +25,7 @@ import { MODEL_CREDENTIAL_ENV_KEYS } from '../broker-guard.mjs';
 import { modelSlot } from '../broker-routing.mjs';
 import { pluginModelRoute, syncPluginSlots } from '../plugin-broker-slots.mjs';
 import { superviseSpawn, composeSpawnEnv, cleanRunEnv, safeEmit } from './spawn.mjs';
+import { openTryLog } from './try-log-redaction.mjs';
 import { CAPABILITY_KEYS } from './capabilities.mjs';
 import { readUserSignIn, readUserSafety, sandboxProblem, SIGN_IN_SETTINGS_KEYS } from './claude-sign-in.mjs';
 
@@ -602,44 +602,8 @@ export function sweepStaleStagingDirs({ dir = tmpdir(), maxAgeMs = STAGING_MAX_A
   return removed;
 }
 
-/**
- * Task 5 (M13, from PR #979's code scanning): the try's connector-calls.ndjson is written raw by the stand-in connectors and
- * the try guard (child processes that hold no secret list), then shown in "Would have sent", while the same values in the
- * transcript are redacted. When a spawn with a redactor ends, its log is rewritten through that redactor: every whole line
- * (as JSON, keys included; a line that is not JSON as text), a torn last line kept as it is. Only when something changes,
- * through a new temp file and a rename (never through a link, never into a hardlink's other name); a log that grew while it
- * was read is read again (three tries, then left for the next spawn's end). Never throws.
- * @returns {boolean} whether the log was rewritten
- */
-export function redactTryLog(file, redactor) {
-  if (typeof file !== 'string' || !file || !redactor) return false;
-  for (let attempt = 0; attempt < 3; attempt++) {
-    let tmp = null;
-    try {
-      const st = lstatSync(file);
-      if (!st.isFile()) return false;   // a symlink (or anything but a plain file): never followed
-      const text = readFileSync(file, 'utf8');
-      const parts = text.split('\n');
-      const torn = parts.pop();          // after the last newline: '' or a line still being written
-      const lines = parts.map((l) => {
-        if (!l.trim()) return l;
-        try { return JSON.stringify(redactor.deep(JSON.parse(l))); } catch { return redactor.text(l); }
-      });
-      const next = [...lines, torn].join('\n');
-      if (next === text) return false;
-      const now = lstatSync(file);
-      if (now.size !== st.size || now.mtimeMs !== st.mtimeMs) continue;   // it grew: read it again
-      tmp = `${file}.worca-${process.pid}-${randomBytes(4).toString('hex')}.tmp`;
-      writeFileSync(tmp, next, { encoding: 'utf8', flag: 'wx' });
-      renameSync(tmp, file);
-      return true;
-    } catch {
-      if (tmp) { try { rmSync(tmp, { force: true }); } catch { /* best effort */ } }
-      return false;
-    }
-  }
-  return false;
-}
+// Task 5 (M13; fix review I-1): the try log's redaction lives in try-log-redaction.mjs (re-exported here for its callers).
+export { redactTryLog } from './try-log-redaction.mjs';
 
 /** planClaudeInvocation + the I/O: a private temp dir is created and the files
  *  written ONLY on the staged branch, or when a session host spawn passes
@@ -894,7 +858,8 @@ export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, perm
     // the bridge key, ...) still removes the staging folder, which may hold the carried helper strings, and is redacted.
     let detachBridge = () => {};
     // Task 5 (M13): the try's connector-calls log, redacted like this spawn's transcript once the spawn ends.
-    const redactLog = () => { if (redactor && tryGuard && typeof tryGuard.logFile === 'string') redactTryLog(tryGuard.logFile, redactor); };
+    // Fix review I-1: counted per log file, so the log is rewritten once, when the LAST spawn writing to it has ended.
+    const redactLog = redactor && tryGuard && typeof tryGuard.logFile === 'string' ? openTryLog(tryGuard.logFile, redactor) : () => {};
     try {
       if (plan.staged) {
         console.warn(`[worca] claude argv would be ${plan.inlineLength} chars (limit ${limit}): prompt on stdin, system prompt/settings as files`);

@@ -2,12 +2,13 @@
 // carry only the sign-in kept there, and every other spawn stays byte-identical.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, existsSync, renameSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildSettingsPayload, buildClaudeArgs, planClaudeInvocation, signInCarry, secretValuesOf, runClaudeProcess, carryLine, CARRY_WARNING_PREFIX, CARRY_NOTE_PREFIX,
   carryRedactValues, carryOverModelEnv, sweepStaleStagingDirs, STAGING_PREFIX, redactTryLog, _testing } from '../src/core/engines/claude.mjs';
 import { createRedactor } from '../src/core/redact.mjs';
+import { openTryLog, pendingTryLogRedactor, redactTryLogRetrying, _testing as tryLogTesting } from '../src/core/engines/try-log-redaction.mjs';
 import { RunHarness } from '../src/core/run-harness.mjs';
 import { composeSpawnEnv } from '../src/core/engines/spawn.mjs';
 import { runOpts, taskHeader, fanOutDirective, PLUGINS_OFF_SOURCES } from '../src/core/phases.mjs';
@@ -453,4 +454,83 @@ test('M13: a spawn with a redactor and a try guard redacts the try log when it e
   await assert.rejects(runClaudeProcess({ cwd: d, bin: join(d, 'no-such-claude.exe'), prompt: 'p', allowedTools: ['Read'], tryGuard: { logFile: log },
     redactValues: ['sk-ant-secret-0002'], onEvent: () => {} }));
   assert.equal(JSON.parse(readFileSync(log, 'utf8')).arguments.text, '[redacted]');
+});
+
+// ── Task 5 fix review (I-1): the try log is rewritten once, when its last spawn ends; a refused rename is tried again ───────
+const callLine = (text) => `${JSON.stringify({ ts: 't', server: 's', tool: 'post', arguments: { text } })}\n`;
+const ticks = async (n = 50) => { for (let i = 0; i < n; i++) await new Promise((r) => setImmediate(r)); };
+
+test('I-1: a rename refused with EPERM once is tried again and succeeds', async () => {
+  const log = join(tmp(), 'connector-calls.ndjson');
+  writeFileSync(log, callLine('sk-ant-retry-secret-01'));
+  let calls = 0;
+  tryLogTesting.set({ rename: (a, b) => { calls++; if (calls === 1) throw Object.assign(new Error('busy'), { code: 'EPERM' }); renameSync(a, b); }, sleep: async () => {} });
+  try {
+    assert.equal(await redactTryLogRetrying(log, createRedactor(['sk-ant-retry-secret-01'])), 'rewritten');
+  } finally { tryLogTesting.reset(); }
+  assert.equal(calls, 2);
+  assert.equal(JSON.parse(readFileSync(log, 'utf8')).arguments.text, '[redacted]');
+  assert.deepEqual(readdirSync(join(log, '..')), ['connector-calls.ndjson'], 'no temp file left');
+});
+
+test('I-1: two overlapping spawns on one log: nothing is rewritten until the last ends, then every line is kept, redacted by both', async () => {
+  const log = join(tmp(), 'connector-calls.ndjson');
+  writeFileSync(log, '');
+  const relA = openTryLog(log, createRedactor(['sk-ant-spawn-a-secret']));
+  const relB = openTryLog(log, createRedactor(['sk-ant-spawn-b-secret']));
+  appendFileSync(log, callLine('a sk-ant-spawn-a-secret'));
+  relA();
+  relA();   // a second call does nothing
+  assert.match(readFileSync(log, 'utf8'), /sk-ant-spawn-a-secret/, 'B still writes: not rewritten yet');
+  appendFileSync(log, callLine('b sk-ant-spawn-b-secret and sk-ant-spawn-a-secret'));
+  assert.ok(pendingTryLogRedactor(log), 'held while spawns write');
+  relB();
+  await ticks();
+  const lines = readFileSync(log, 'utf8').trim().split('\n').map((l) => JSON.parse(l).arguments.text);
+  assert.deepEqual(lines, ['a [redacted]', 'b [redacted] and [redacted]']);
+  assert.equal(pendingTryLogRedactor(log), null, 'rewritten: nothing held');
+});
+
+test('I-1: a rename that keeps failing leaves the raw log, warns once, and keeps the redactors for the read path', async () => {
+  const log = join(tmp(), 'connector-calls.ndjson');
+  writeFileSync(log, callLine('sk-ant-stuck-secret-01'));
+  const warned = [];
+  let calls = 0;
+  tryLogTesting.set({ rename: () => { calls++; throw Object.assign(new Error('busy'), { code: 'EBUSY' }); }, sleep: async () => {}, warn: (t) => warned.push(t) });
+  try {
+    openTryLog(log, createRedactor(['sk-ant-stuck-secret-01']))();
+    await ticks();
+    assert.equal(calls, 11, 'the first try and ten retries');
+    assert.equal(warned.length, 1);
+    assert.doesNotMatch(warned[0], /sk-ant/);
+    assert.match(readFileSync(log, 'utf8'), /sk-ant-stuck-secret-01/);
+    assert.equal(pendingTryLogRedactor(log).text('x sk-ant-stuck-secret-01'), 'x [redacted]');
+    openTryLog(log, createRedactor(['other-secret-000']))();   // a later spawn on the same log: one warning still
+    await ticks();
+    assert.equal(warned.length, 1);
+  } finally { tryLogTesting.reset(); }
+});
+
+test('I-1: runClaudeProcess holds the log while a sibling spawn on it still runs, and rewrites it when the last one ends', async () => {
+  const d = tmp();
+  const log = join(d, 'connector-calls.ndjson');
+  writeFileSync(log, callLine('x sk-ant-sibling-secret-1'));
+  const ends = [];
+  _testing.set({ superviseSpawn: (o) => new Promise((res) => { ends.push(() => { o.cleanup(); res({ text: '' }); }); }) });
+  try {
+    const run = (s) => runClaudeProcess({ cwd: d, prompt: 'p', allowedTools: ['Read'], tryGuard: { logFile: log }, redactValues: [s], onEvent: () => {} });
+    const a = run('sk-ant-sibling-secret-1');
+    const b = run('sk-ant-sibling-secret-2');
+    appendFileSync(log, callLine('y sk-ant-sibling-secret-2'));
+    ends[1]();
+    await b;
+    await ticks();
+    assert.equal(readFileSync(log, 'utf8'), callLine('x sk-ant-sibling-secret-1') + callLine('y sk-ant-sibling-secret-2'),
+      'the sibling still runs (it may still append): not rewritten until its end');
+    ends[0]();
+    await a;
+    await ticks();
+    assert.doesNotMatch(readFileSync(log, 'utf8'), /sk-ant-sibling-secret/);
+    assert.equal(readFileSync(log, 'utf8').trim().split('\n').length, 2);
+  } finally { _testing.reset(); }
 });
