@@ -36,6 +36,7 @@ import { isSharedInstall, updateEligibility, probeNpmGlobal, UPDATE_MESSAGES } f
 import { limitResumeDecision } from '../src/core/limit-resume.mjs';
 import { selectRunEngine } from '../src/core/engines/index.mjs';
 import { mockSlowMs } from '../src/core/engines/mock.mjs';
+import { sweepStaleStagingDirs } from '../src/core/engines/claude.mjs';
 import { stopPausedRun, StopPausedError } from '../src/core/stop-paused.mjs';
 import {
   listPipelines, readPipeline, listAllPipelines, readPipelineByKey,
@@ -9739,6 +9740,15 @@ export async function bootMaintenance({ log } = {}) {
     if (summary.recoveredAttachmentReads) console.log(`[worca-ui] requirements: ${summary.recoveredAttachmentReads} interrupted file read(s) marked`);
   } catch (err) {
     console.error(`[worca-ui] requirements file-read sweep failed: ${err && err.message ? err.message : err}`);
+  }
+
+  // Workflow tests 3b, Task 5 (security review M2): Claude staging folders a killed Worca left in the OS temp folder (they
+  // may hold a Pretend try's carried sign-in helpers). Only folders older than a day: another Worca may share the folder.
+  try {
+    const gone = sweepStaleStagingDirs();
+    if (gone.length) console.log(`[worca-ui] removed ${gone.length} leftover Claude staging folder(s)`);
+  } catch (err) {
+    console.error(`[worca-ui] Claude staging folder sweep failed: ${err && err.message ? err.message : err}`);
   }
 
   try {

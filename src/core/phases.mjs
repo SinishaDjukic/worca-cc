@@ -904,8 +904,13 @@ export const PLUGINS_OFF_SOURCES = Object.freeze(['project', 'local']);
 function pluginsOffSources(ctx) {
   const run = ctx.claudeSettingSources === null ? PLUGINS_OFF_SOURCES
     : Array.isArray(ctx.claudeSettingSources) ? ctx.claudeSettingSources : ['project'];
-  return PLUGINS_OFF_SOURCES.filter((s) => run.includes(s));
+  const out = PLUGINS_OFF_SOURCES.filter((s) => run.includes(s));
+  // Task 5 (security review M4): never empty: no --setting-sources flag at all would load every source, the user's too.
+  return out.length ? out : ['project'];
 }
+/** Task 5 (security review M11): whether the run itself (a normal run of it) loads the user settings. */
+const runLoadsUserSettings = (ctx) => ctx.claudeSettingSources === null
+  || (Array.isArray(ctx.claudeSettingSources) && ctx.claudeSettingSources.includes('user'));
 
 export function runOpts(ctx, { role, prompt, systemPrompt, allowedTools }) {
   const c = ctx.claudeOpts || {};
@@ -954,7 +959,8 @@ export function runOpts(ctx, { role, prompt, systemPrompt, allowedTools }) {
     ...(ctx.tryGuard ? { tryGuard: ctx.tryGuard } : {}),
     // Workflow tests 3b (D70, D71): a Pretend try loads no user settings, and the runner carries over only the sign-in kept
     // there. Absent on every other spawn, so its argv and env stay byte-identical.
-    ...(ctx.pluginsOff === true ? { settingSources: pluginsOffSources(ctx), pluginsOff: true } : {}),
+    // Task 5 (M11): `runLoadsUserSettings` tells the carry whether the person's sandbox applies to a normal run of it.
+    ...(ctx.pluginsOff === true ? { settingSources: pluginsOffSources(ctx), pluginsOff: true, ...(runLoadsUserSettings(ctx) ? { runLoadsUserSettings: true } : {}) } : {}),
     // Whose approvals decide the checkout's committed `.mcp.json` servers on Claude (claude-runner.mjs).
     mcpjsonProjectDir: ctx.mcpjsonProjectDir,
     // P1 (S31): a non-git run's spawn asks no git (approvals, Cursor's info/exclude). Absent on git runs.
