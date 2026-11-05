@@ -48,7 +48,8 @@
 // - A provider that is itself an agent CLI (claude-acp, codex-acp, cursor-agent, gemini-cli, …) runs that CLI's own
 //   tools, out of goose's reach: a chat never runs on one.
 import { mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
-import { execFile } from 'node:child_process';
+import { execCli, cliRefusal } from './exec-cli.mjs';
+import { GOOSE_CLI } from './cli-specs.mjs';
 import { join } from 'node:path';
 import { worcaHome } from '../projects.mjs';
 import { agentIdentityFor } from '../agent-pool.mjs';
@@ -355,10 +356,10 @@ export const GOOSE_SIGNED_OUT_HINT = 'run `goose configure`, or set the provider
  *  checked: goose keeps provider keys in its config, its keyring or the env, and none of them is readable cheaply. */
 export function goosePreflight({ bin = gooseDefaultBin(), timeoutMs = 10000 } = {}) {
   return new Promise((resolve) => {
-    execFile(bin, ['--version'], { timeout: timeoutMs }, (err) => {
+    execCli(GOOSE_CLI, bin, ['--version'], { timeout: timeoutMs }, (err) => {
       if (!err) { resolve({}); return; }
       resolve(/^(ENOENT|EACCES|EINVAL)$/.test(String(err.code)) || typeof err.code === 'number'
-        ? { refusal: `cannot run ${bin} (${err.code}) — install the Goose CLI (brew install block-goose-cli), or point WORCA_GOOSE_BIN at it` }
+        ? { refusal: cliRefusal({ bin, err, install: 'install the Goose CLI (brew install block-goose-cli), or point WORCA_GOOSE_BIN at it' }) }
         : { warning: `could not check ${bin} (${err.message})` });
     });
   });
@@ -491,6 +492,7 @@ export async function runGooseProcess({
     };
     const args = buildGooseArgs({ model, systemPrompt: sys, sessionName, resume: !!resumeName, extensions, ask });
     const res = await superviseSpawn({
+      cli: GOOSE_CLI,
       file: bin, args, displayBin: bin, cwd, env, stdin, signal: spawnSignal, asAgent, stagedDir: asAgent ? dir : null, onEvent,
       ...(ask && agentId ? { agentHome: () => home } : {}),
       cleanup: () => {},
@@ -551,10 +553,10 @@ export const GOOSE_ASK_MIN_VERSION = '1.56.0';
 
 /** Can this goose be locked down for a chat? At least GOOSE_ASK_MIN_VERSION, with `--no-profile`. Never rejects. */
 export function gooseAskSupport({ bin = gooseDefaultBin(), timeoutMs = 15000 } = {}) {
-  const run = (args) => new Promise((resolve) => { execFile(bin, args, { timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024 }, (err, stdout) => resolve({ err, out: String(stdout || '') })); });
+  const run = (args) => new Promise((resolve) => { execCli(GOOSE_CLI, bin, args, { timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024 }, (err, stdout) => resolve({ err, out: String(stdout || '') })); });
   return (async () => {
     const v = await run(['--version']);
-    if (v.err) return { refusal: /^(ENOENT|EACCES|EINVAL)$/.test(String(v.err.code)) ? `cannot run ${bin} (${v.err.code}) — install the Goose CLI, or point WORCA_GOOSE_BIN at it` : `could not ask ${bin} its version (${v.err.message})` };
+    if (v.err) return { refusal: /^(ENOENT|EACCES|EINVAL)$/.test(String(v.err.code)) ? cliRefusal({ bin, err: v.err, install: 'install the Goose CLI, or point WORCA_GOOSE_BIN at it' }) : `could not ask ${bin} its version (${v.err.message})` };
     const n = (/(\d+)\.(\d+)\.(\d+)/.exec(v.out) || []).slice(1).map(Number);
     const min = GOOSE_ASK_MIN_VERSION.split('.').map(Number);
     const older = n.length !== 3 || n[0] < min[0] || (n[0] === min[0] && (n[1] < min[1] || (n[1] === min[1] && n[2] < min[2])));

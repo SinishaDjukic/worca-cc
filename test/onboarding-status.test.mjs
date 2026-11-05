@@ -58,6 +58,18 @@ test('claudeReady (Windows): a .cmd shim alone is not ready (hint); a real claud
       assert.equal(r.ready, true);
       assert.equal(r.hint, null);
     } },
+    { name: 'claudeReady: Windows — the npm shim with the native claude.exe next to it is ready, at that path', run: () => {
+      const exists = (p) => /claude\.cmd$/.test(p) || /claude-code[\\/]bin[\\/]claude\.exe$/.test(p);
+      const r = claudeReady('claude', { platform: 'win32', pathEnv: 'C:\\npm', exists, isNativeExe: () => true });
+      assert.equal(r.ready, true);
+      assert.match(r.bin, /claude\.exe$/);
+      assert.equal(r.hint, null);
+    } },
+    { name: 'claudeReady: Windows — an explicit .cmd path resolves next to itself', run: () => {
+      const exists = (p) => /claude\.cmd$/.test(p) || /claude-code[\\/]bin[\\/]claude\.exe$/.test(p);
+      const r = claudeReady('C:\\npm\\claude.cmd', { platform: 'win32', pathEnv: '', exists, isNativeExe: () => true });
+      assert.equal(r.ready, true);
+    } },
   ]);
 });
 
