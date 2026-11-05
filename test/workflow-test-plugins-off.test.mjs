@@ -91,8 +91,8 @@ test('what is carried: the person\'s sign-in; nothing with the broker on or into
     ANTHROPIC_AUTH_TOKEN: 'short', AWS_SESSION_TOKEN: 'zzzzzzzzzz' }), ['sk-ant-12345678', 'abcdefgh1234', 'zzzzzzzzzz']);
   // D71a: every carried value is redacted unless it is plain routing; URL userinfo is redacted on its own.
   assert.deepEqual(secretValuesOf({ ANTHROPIC_CUSTOM_HEADERS: 'Authorization: Bearer abcdefgh12345' }), ['Authorization: Bearer abcdefgh12345']);
-  assert.deepEqual(secretValuesOf({ ANTHROPIC_BASE_URL: 'https://user1:pa55word@gw.example.com' }), ['user1', 'pa55word']);
-  assert.deepEqual(secretValuesOf({ HTTPS_PROXY: 'http://puser:ppass99@proxy.example.com:8080' }), ['puser', 'ppass99']);
+  assert.deepEqual(secretValuesOf({ ANTHROPIC_BASE_URL: 'https://user1:pa55word@gw.example.com' }), ['https://user1:pa55word@gw.example.com', 'user1', 'pa55word'], 'review m7: the whole carried URL too');
+  assert.deepEqual(secretValuesOf({ HTTPS_PROXY: 'http://puser:ppass99@proxy.example.com:8080' }), ['http://puser:ppass99@proxy.example.com:8080', 'puser', 'ppass99']);
   assert.deepEqual(secretValuesOf({ CLAUDE_CODE_USE_VERTEX: '1', AWS_REGION: 'us-east-1', CLOUD_ML_REGION: 'europe-west4', NO_PROXY: 'localhost,127.0.0.1' }), []);
 });
 
@@ -296,13 +296,17 @@ test('M1: the carried helper strings are redacted like the carried env', () => {
   assert.deepEqual(carryRedactValues(null), []);
 });
 
-test('M9: plain routing keys are not redacted; the path, query and login of a carried URL are', () => {
+test('M9 (review m7): plain routing keys are not redacted; a carried URL is, whole, with its query, its login and only its secret-looking path segments', () => {
   assert.deepEqual(secretValuesOf({ AWS_DEFAULT_REGION: 'eu-central-1', VERTEX_REGION_CLAUDE_3_5_SONNET: 'europe-west1' }), []);
-  assert.deepEqual(secretValuesOf({ ANTHROPIC_BASE_URL: 'https://gw.example.com/tenant/SECRET-TENANT-9?key=abcdef123456' }),
-    ['/tenant/SECRET-TENANT-9', '?key=abcdef123456']);
+  const u = 'https://gw.example.com/tenant/sk9f8d7a6s5d4f3g2h1j/v1?key=abcdef123456';
+  assert.deepEqual(secretValuesOf({ ANTHROPIC_BASE_URL: u }), [u, '?key=abcdef123456', 'sk9f8d7a6s5d4f3g2h1j'],
+    'the whole URL, its query, and a segment of 16+ token characters; never a short segment such as /tenant or /v1');
   assert.deepEqual(secretValuesOf({ HTTPS_PROXY: 'http://us%40r:p%3Ass word@proxy.example.com:8080' }),
-    ['us%40r', 'p%3Ass word', 'us@r', 'p:ss word', 'p%3Ass%20word'], 'as written, decoded, and as URL re-encodes it');
-  assert.deepEqual(secretValuesOf({ ANTHROPIC_BASE_URL: 'https://user1:pa55word@gw.example.com' }), ['user1', 'pa55word'], 'no path, no query: as before');
+    ['http://us%40r:p%3Ass word@proxy.example.com:8080', 'us%40r', 'p%3Ass word', 'us@r', 'p:ss word', 'p%3Ass%20word'], 'as written, decoded, and as URL re-encodes it');
+  assert.deepEqual(secretValuesOf({ ANTHROPIC_BASE_URL: 'https://user1:pa55word@gw.example.com' }), ['https://user1:pa55word@gw.example.com', 'user1', 'pa55word']);
+  const r = createRedactor(secretValuesOf({ ANTHROPIC_BASE_URL: 'https://gw.example.com/anthropic' }));
+  assert.equal(r.text('see github.com/anthropics/claude-code and https://gw.example.com/anthropic'), 'see github.com/anthropics/claude-code and [redacted]',
+    'a plain gateway path such as /anthropic is not blanked everywhere');
 });
 
 test('D81a: the guards are read with the spawn\'s working directory, so the checkout\'s own sandbox stays on top', () => {

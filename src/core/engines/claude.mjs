@@ -759,14 +759,22 @@ export function secretValuesOf(env) {
     if (!u) continue;
     const m = URL_PARTS_RE.exec(v.trim());
     const raw = m && m[1] != null ? [m[1].split(':')[0], m[1].includes(':') ? m[1].slice(m[1].indexOf(':') + 1) : ''] : [];
+    if (!m) {   // not `scheme://…` (e.g. a header line that happens to parse): no login, path or query of its own
+      for (const part of [u.username, u.password]) { if (part.length >= 4) out.push(part); }
+      continue;
+    }
+    // Task 5 fix review (m7): the whole URL as carried, its login and its query; of its path only a segment that looks like a
+    // secret (SECRET_SEGMENT_RE), so a plain gateway path such as `/anthropic` is not blanked out of every text.
+    if (v.length >= 8) out.push(v);
     for (const part of [...raw, ...raw.map(decoded), u.username, u.password]) { if (part.length >= 4) out.push(part); }
-    if (!m) continue;   // not `scheme://…` (e.g. a header line that happens to parse): no path or query of its own
-    const path = m[2] && m[2] !== '/' ? m[2] : '';
     const query = m[3] && m[3] !== '?' ? m[3] : '';
-    for (const part of [path, query, u.pathname !== '/' ? u.pathname : '', u.search]) { if (part) out.push(part); }
+    for (const part of [query, u.search]) { if (part) out.push(part); }
+    for (const seg of (m[2] || '').split('/')) { if (SECRET_SEGMENT_RE.test(seg)) out.push(seg, decoded(seg)); }
   }
   return [...new Set(out)];
 }
+/** m7: a URL path segment that looks like a token: 16 or more characters of a token's alphabet. */
+const SECRET_SEGMENT_RE = /^[A-Za-z0-9._~+=%-]{16,}$/;
 
 export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, permissionMode, model, effort, onEvent, signal, bin, resumeSessionId, mcpConfigPath, mcpServerGrants, permissionRules, envScrub, envAllowlist, modelEnv, spawnEnv: runSpawnEnv, redactValues, disallowedTools, tools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages, maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, addDirs, agents, pluginDirs, extraSettings, memoryLoadLog, argvInlineLimit, asAgent, systemPromptMode, readGuard, noSessionPersistence, tryGuard, pluginsOff, runLoadsUserSettings, forwardSubagentText, agentsViaFile, mainThreadGuard }) { // billTo/spawnKind/runId/threadId are consumed by runViaBroker
   // MCP registry §5.5.3: with registry secrets in this spawn's env, every emit, the result text and the error
