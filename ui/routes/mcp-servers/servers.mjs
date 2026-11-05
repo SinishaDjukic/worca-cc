@@ -4,7 +4,7 @@ import { SERVER_ID_RE, SET_ID_RE, validateMcpDefinition } from '../../../src/cor
 import { McpStoreError, addManualServer, createSet, deleteMember, deleteSet, deleteSkillMember, duplicateSet, editManualServer, putMember, putSkillMember, removeServerEverywhere, renameSet, setProjectAssignment } from '../../../src/core/mcp/store.mjs';
 import { isTeamSkillId, teamAction, teamForget, teamSkillAction, teamSkillConsent } from '../../../src/core/mcp/team.mjs';
 import { retestAfterSave, retestServers, testMembership } from '../../../src/core/mcp/test.mjs';
-import { getSetView, listCatalogView, listSetsView, projectAssignmentView, teamDuplicateSource, teamMemberRefusal, teamSkillMemberRefusal, viewContext } from '../../../src/core/mcp/views.mjs';
+import { getSetView, listCatalogView, listSetsView, manualNameTaken, projectAssignmentView, teamDuplicateSource, teamMemberRefusal, teamSkillMemberRefusal, viewContext } from '../../../src/core/mcp/views.mjs';
 import { approveCommittedMcp, committedMcpStatus } from '../../../src/core/mcpjson-approval.mjs';
 import { listProjects } from '../../../src/core/projects.mjs';
 import { SKILL_ID_RE } from '../../../src/core/skills-registry/ids.mjs';
@@ -42,13 +42,7 @@ app.post('/api/mcp/servers/validate', async (req, res) => {
   const [name, raw] = mcpDefinitionBody(req);
   try {
     const { errors } = validateMcpDefinition(raw, { name, source: 'manual' });
-    if (req.query.edit !== '1') {
-      const { snapshot, catalog } = await viewContext();
-      // What P1 addManualServer refuses: a manual name in use, a base another id holds (a removed manual server keeps
-      // its own base, so its name can be added again) or a catalog server's declared name.
-      const held = Object.entries(snapshot.bases).some(([sid, b]) => b === name && sid !== `manual:${name}`);
-      if (Object.hasOwn(snapshot.manual, name) || held || catalog.some((e) => e.name === name)) errors.push(`the name "${name}" is taken`);
-    }
+    if (req.query.edit !== '1' && manualNameTaken(await viewContext(), name)) errors.push(`the name "${name}" is taken`);
     res.json({ errors });
   } catch (err) { sendMcpError(res, err); }
 });

@@ -17,7 +17,7 @@ import { worcaHome } from '../projects.mjs';
 import { PROJECT_KEY_RE } from '../store.mjs';
 import { withLock } from '../metrics/lock.mjs';
 import { writeJsonAtomic } from '../json-atomic.mjs';
-import { validateMcpDefinition, screenNonSecretValue, canonicalJson, sha256Hex, MCP_ENV_VAR_RE, URL_SAFE_SECRET_RE, SETS_API_NOUNS } from './definitions.mjs';
+import { validateMcpDefinition, screenNonSecretValue, canonicalJson, sha256Hex, defDigest, MCP_ENV_VAR_RE, URL_SAFE_SECRET_RE, SETS_API_NOUNS } from './definitions.mjs';
 import { parseSkillId, SKILL_ID_RE } from '../skills-registry/ids.mjs';
 import { assignBaseNames, newSetId, slugFor, teamRecord, teamRecordsFor } from './identity.mjs';
 
@@ -532,11 +532,13 @@ async function writeMigration(tx, dirty) {
 }
 
 /** Manual Edit definition (§4.6): the name is the id and never changes; every membership migrates. */
-export async function editManualServer(name, rawDef) {
+export async function editManualServer(name, rawDef, { expect } = {}) {
   const def = checkManual(name, rawDef);
   return withMcpLock(async (tx) => {
     const s = tx.snapshot;
     if (!Object.hasOwn(s.manual, name)) fail(404, `no manual MCP server "${name}"`);
+    // A chat card pins the definition it was made from (docs/mcp-servers.md "Chat"); compared here, under the lock.
+    if (expect !== undefined && defDigest(s.manual[name]) !== expect) fail(409, `${name} changed since this card was made — ask the chat again`);
     await writeMigration(tx, migrate(s, `manual:${name}`, def));
     s.manual[name] = def;
     await tx.write('servers');
@@ -551,9 +553,15 @@ export async function migrateServerFields(serverId, oldDef, newDef) {
 
 /** Manual Remove, Remove of a retired policy server, plugin uninstall (§4.6): every membership (Team state
  *  included), their secrets and tests, then the manual or policy definition. The base stays reserved. */
-export async function removeServerEverywhere(serverId) {
+export async function removeServerEverywhere(serverId, { expect } = {}) {
   return withMcpLock(async (tx) => {
     const s = tx.snapshot;
+    if (expect !== undefined) {
+      // A chat card removes only the Manual definition it showed (docs/mcp-servers.md "Chat").
+      const name = serverId.slice(serverId.indexOf(':') + 1);
+      if (!serverId.startsWith('manual:') || !Object.hasOwn(s.manual, name)) fail(404, `no manual MCP server "${name}"`);
+      if (defDigest(s.manual[name]) !== expect) fail(409, `${name} changed since this card was made — ask the chat again`);
+    }
     let sets = false;
     for (const set of Object.values(s.sets)) {
       const kept = set.members.filter((m) => m.server !== serverId);

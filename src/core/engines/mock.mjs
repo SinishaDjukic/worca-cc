@@ -239,7 +239,7 @@ async function mockAsk({ markers, prompt, cwd, onEvent, signal, resumeSessionId 
   const wfEvent = /^\s*\[worca event\] workflow card (card_[0-9a-f]{8}) (?:(declined)|saved as (\S+) "([^"]*)"; thenRun=(true|false))/.exec(userText);
   // A metrics-card EVENT, then the metrics trigger — both before the run arm, whose \brun\b would otherwise fire on
   // "include my runs"-style prose (it does not, \b stops at the s, but "propose" would).
-  const tmEvent = /^\s*\[worca event\] (?:metrics|policy|model) card (card_[0-9a-f]{8}) (applied|declined|failed)/.exec(userText);
+  const tmEvent = /^\s*\[worca event\] (?:metrics|policy|model|mcp) card (card_[0-9a-f]{8}) (applied|declined|failed)/.exec(userText);
   // Ask agent mode (#574): a command Ask ran ended. Before every later arm: the command text ("npm run dev") would trip them.
   const trEvent = /\[worca event\] terminal block (t-[0-9a-f]{10}:\d+) exited (\S+?);/.exec(userText);
   // The metrics arm wants a CHANGE, not a question: "metrics" plus a verb of intent ("stop recording my metrics",
