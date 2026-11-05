@@ -316,7 +316,8 @@ test('an ask-command frame with a new status refetches the list once; the same s
 
 test('ask-history-cleared: a full clear empties the column at once; a scoped clear drops the named rows and refetches', async () => {
   const list = [...LIST];
-  const { ctx, rec, col } = await bootOn({ list });
+  const closed = [];
+  const { ctx, rec, col } = await bootOn({ list, deps: { onChatsClosed: (ids) => closed.push(ids) } });
   const wait = async () => { await new Promise((r) => setTimeout(r, 300)); await ticks(ctx); };
   assert.ok(rowLink(col, 'ask_00000002'));
   // Scoped: only the named chat goes, before the refetch answers.
@@ -332,6 +333,7 @@ test('ask-history-cleared: a full clear empties the column at once; a scoped cle
   list.length = 0;
   ctx.panel.pushServerFrame({ type: 'ask-history-cleared' });
   ctx.flush();
+  assert.deepEqual(closed, [['ask_00000002'], null], 'the tool panel closes the cleared chats\' tabs (null: every chat)');
   assert.equal(col.querySelectorAll('a.runs-row').length, 0);
   assert.match(col.textContent, /No chats yet\./);
 });
@@ -463,6 +465,24 @@ test('Delete group… confirms the server total (archived included), not the loa
   [...doc.querySelectorAll('.wfv-menu [role="menuitem"]')].find((b) => b.querySelector('.wfv-menu-l').textContent === 'Delete group…').click();
   await new Promise((r) => setTimeout(r, 0));
   assert.equal(asked.message, '“Release prep” and its 3 chats (1 archived) are removed. This cannot be undone.');
+});
+
+test('Archive group and Delete group… tell the tool panel (issue 1064): onChatsClosed gets the ids the server changed', async () => {
+  const closed = [];
+  const groupMenu = (col, doc, label) => {
+    col.querySelector(`.runs-item[data-row-key="cgroup:${GID}"] .runs-more`).click();
+    [...doc.querySelectorAll('.wfv-menu [role="menuitem"]')].find((b) => b.querySelector('.wfv-menu-l').textContent === label).click();
+  };
+  const a = await bootOn({ list: GROUPED, groups: [{ id: GID, name: 'Release prep', count: 2, total: 2 }], deps: { onChatsClosed: (ids) => closed.push(ids) },
+    onGroupCall: (m, url) => (m === 'POST' && url.endsWith('/archive') ? { threadIds: ['ask_00000003'] } : undefined) });
+  groupMenu(a.col, a.doc, 'Archive group');
+  await ticks(a.ctx, 8);
+  assert.deepEqual(closed, [['ask_00000003']]);
+  const d = await bootOn({ list: GROUPED, groups: [{ id: GID, name: 'Release prep', count: 2, total: 2 }], deps: { onChatsClosed: (ids) => closed.push(ids) },
+    confirm: async () => true, onGroupCall: (m) => (m === 'DELETE' ? { threadIds: ['ask_00000004'] } : undefined) });
+  groupMenu(d.col, d.doc, 'Delete group…');
+  await ticks(d.ctx, 8);
+  assert.deepEqual(closed, [['ask_00000003'], ['ask_00000004']]);
 });
 
 test('a group opened because a chat needed you stays open after the chat stops needing you', async () => {
@@ -616,4 +636,20 @@ test('G with a selection opens the picker for the selection, anchored at the bar
   pickerKey(doc, 'Enter');
   await ticks(ctx, 8);
   assert.deepEqual(rec.groupCalls.at(-1)[2].threadIds, ['ask_00000002', 'ask_10000000']);
+});
+
+test('archiving a chat tells the tool panel (issue 1064): onChatsClosed gets the archived ids, never on Undo', async () => {
+  const closed = [];
+  const list = LIST.filter((t) => t.id !== 'ask_00000001');
+  const { doc, col, ctx } = await bootOn({ list, deps: { onChatsClosed: (ids) => closed.push(ids) } });
+  const row = [...col.querySelectorAll('[data-section="week"] a.runs-row')][1];
+  const gone = row.dataset.rowKey.slice('chat:'.length);
+  row.focus();
+  list.splice(list.findIndex((t) => t.id === gone), 1);
+  key(doc, row, { key: 'e' });
+  await ticks(ctx, 6);
+  assert.deepEqual(closed, [[gone]]);
+  doc.querySelector('.toast .toast-act').click();
+  await ticks(ctx);
+  assert.deepEqual(closed, [[gone]], 'Undo (unarchive) closes nothing');
 });

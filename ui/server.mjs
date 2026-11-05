@@ -50,7 +50,8 @@ import {
 import { FolderApplyError, folderMemberTarget, readFolderChanges, planFolderApply, applyFolderChanges, discardFolderChanges, releaseFolderCopy } from '../src/core/folder-apply.mjs';
 import { releaseFolderMember } from '../src/core/folder-members.mjs';
 import { readChangesFile, readRegularText, checkFolderSize } from '../src/core/folder-copy.mjs';
-import { mimeForPath, viewerKindFor } from '../src/shared/artifact-kinds.mjs';
+import { mimeForPath, viewerKindFor, isOfficePath } from '../src/shared/artifact-kinds.mjs';
+import { officePdf, OfficePreviewError, OFFICE_LIMITS } from '../src/core/office-preview.mjs';
 import { attachmentDisposition } from '../src/core/download-filename.mjs';
 import { appendDirection, DIRECTION_MAX_CHARS, DIRECTIONS_KIND, DIRECTIONS_FILE, DIRECTIONS_CLOSED } from '../src/core/directions.mjs';
 import { DIFF_PATCH_FILE } from '../src/core/results.mjs';
@@ -110,6 +111,7 @@ import {
   runLimits, assertRunLimitsInput, setRunLimits, autoTestWorkers,
   networkProxySettings, networkProxyEnabled, migrateCorporateProxyFlag,
   keepAwakeEnabled, setKeepAwake, assertKeepAwakeInput, migrateKeepAwakeFlag,
+  chatLinksInPanel, setChatLinksInPanel, assertChatLinksInPanelInput,
   runEngineSetting, assertRunEngineInput, setRunEngineSetting,
   stepModelsSetting, assertStepModelsInput, setStepModels,
   modelRolesSetting, assertModelRolesInput, setModelRoles,
@@ -249,6 +251,14 @@ import { detectBuiltins, builtinLaunch, revealLaunch, copyCommandText, findOnPat
 import { buildLauncherCommand, launchAndWatch, installedLaunchers, launcherExamples, launcherWarning, lineForPickedApp } from '../src/core/actions/launcher.mjs';
 import { assertNoRawCommand, normalizeStacks, memberAliases, SETUP_ACTION_ID, ActionConfigError } from '../src/core/actions/model.mjs';
 import { parsePortRange } from '../src/core/actions/ports.mjs';
+import { createPreviewProxy, createPreviewTokens, portRefusal, previewPrefix, sendPreviewNote } from '../src/core/preview-proxy.mjs';
+import { createToolTabsMirror, tabScope, isTabScope } from '../src/core/tool-tabs-mirror.mjs';
+import { createTabTools, TabToolError } from '../src/core/tab-tools.mjs';
+import { createChatLinks, ChatLinkError } from '../src/core/chat-links.mjs';
+import { createFrameCheck } from '../src/core/frame-check.mjs';
+import { FILE_REFS_MAX, FILE_PATH_MAX } from '../src/shared/file-refs.mjs';
+import { createPageCapture } from '../src/core/page-capture.mjs';
+import { detectDevServer, devServerAction } from '../src/core/dev-server.mjs';
 import { checkoutRun, checkoutRunUnderLock, discardCheckout, membersOfRow, checkoutPathFor, setSetupState, markInterruptedSetups,
   enforceCheckoutCap, releaseKeptCheckouts, updateBranchRecords, withRunLock, freeBranchCheckout, canon } from '../src/core/checkout.mjs';
 import { checkRunBase, settleResolutions, updateRunBranch, pickBaseMember, baseMembersOfRow, assertFinishedRow, assertNotResolving,
@@ -301,7 +311,7 @@ import { detectSetup, defaultProbes } from '../src/core/setup/detect.mjs';
 import { teamSetupState, buildTeamSetup, SHARE_SETTING_KEYS } from '../src/core/setup/team-file.mjs';
 import { planSetupApply, commitSetupPlan, runSetupSteps, SetupFieldError, SetupConflictError } from '../src/core/setup/apply.mjs';
 import {
-  DEFAULT_UI_PORT, UI_HEALTH_NAME, UI_TOKEN_HEADER, newUiToken, writeUiInstance, removeUiInstance, uiUrl, keepIdleConnections,
+  DEFAULT_UI_PORT, UI_HEALTH_NAME, UI_TOKEN_HEADER, newUiToken, writeUiInstance, removeUiInstance, uiUrl, keepIdleConnections, probeUi,
 } from '../src/core/ui-instance.mjs';
 import { validateGuardrails } from '../src/core/guardrails.mjs';
 import {
@@ -938,8 +948,10 @@ function extensionSocketAuth(req) {
   return extensionPairing.verify(origin, offered.find((p) => p.startsWith(TOKEN_PREFIX)) || null) || 'refuse';
 }
 
+// noServer: one 'upgrade' listener below routes /ws here and /preview/ to the Browser tab's proxy (issue 1064); with
+// `server`, ws answered every other upgrade path with 400 itself.
 const wss = new WebSocketServer({
-  server,
+  noServer: true,
   path: '/ws',
   verifyClient: (info, done) => {
     if (!isTrustedPeer(info.req)) return done(false, 403);   // G4: before the extension gate, as for HTTP
@@ -968,6 +980,16 @@ const wss = new WebSocketServer({
 // stack trace; the http server's own handler (isMain below) is the one that
 // reports it, so this side of the pair only has to not throw.
 wss.on('error', () => {});
+server.on('upgrade', (req, socket, head) => {
+  // Node takes the http server's 'error' listener off an upgraded socket; ws's handleUpgrade adds its own, the 400 below
+  // and a gate's refusal in upgradePreview would not: a client that resets mid-answer (EPIPE) would end Worca.
+  socket.on('error', () => socket.destroy());
+  const path = String(req.url || '').split('?')[0];
+  if (path === '/ws') { wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req)); return; }
+  // No unhandledRejection handler here (F29): a throw inside the upgrade path must end only this socket.
+  if (path.startsWith('/preview/')) { upgradePreview(req, socket, head).catch(() => socket.destroy()); return; }
+  socket.end('HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n', () => socket.destroy());
+});
 
 /** All currently connected sockets. */
 const sockets = new Set();
@@ -1008,6 +1030,8 @@ heartbeat.unref();
   const httpClose = server.close.bind(server);
   server.close = (cb) => {
     for (const ws of sockets) { try { ws.terminate(); } catch { /* already gone */ } }
+    closePreviewSockets();   // proxied dev-server WebSockets are upgraded sockets too (issue 1064)
+    void pageCapture.close();   // the headless Chrome of the tab tools (issue 1064 slice 3)
     return httpClose(cb);
   };
 }
@@ -1856,9 +1880,10 @@ app.use((req, res, next) => {
 });
 
 app.use((req, res, next) => {
-  if (!req.worcaExtensionRoute && !isLocalRequest(req)) {   // S1 itself is unchanged for every other request
-    return res.status(403).json({ error: HOST_FORBIDDEN });
-  }
+  // A Browser tab's preview page runs in an opaque origin (Origin: null) by design: /preview/ requests are held to the
+  // Host check here and to their per-tab token in the proxy (issue 1064). S1 itself is unchanged for every other request.
+  const ok = req.worcaExtensionRoute || (isPreviewPath(req.path) ? previewHostOk(req) : isLocalRequest(req));
+  if (!ok) return res.status(403).json({ error: HOST_FORBIDDEN });
   next();
 });
 
@@ -1930,6 +1955,9 @@ app.use((req, res, next) => {
   if (admitThisBoxCaller(req)) return next();
   res.status(403).json({ error: AGENT_CALLER_BLOCKED, code: 'AGENT_CALLER_BLOCKED' });
 });
+// The Browser tab's preview proxy (issue 1064): after the peer, host, identity and agent gates, before any body parser
+// (a proxied POST streams through unread) and the static files.
+app.use((req, res, next) => (isPreviewPath(req.path) ? handlePreview(req, res) : next()));
 
 // Ask threads have an owner (ask_threads.created_by). On a shared deployment (a real per-person
 // sign-in, identity.mjs#isSharedIdentity) a person reaches only their own threads and ownerless
@@ -4145,6 +4173,19 @@ export async function schedulerTick({ now = Date.now() } = {}) {
 const RETENTION_EVERY_MS = 24 * 3600_000;
 let _retentionTimer = null;
 let _retentionBusy = false;
+/** One sweep: archive the finished runs older than `days`, and close their shells (issue 1064: a run's tool panel
+ *  terminals go with it, as on every other archive path). Returns pruneOldRuns' report; never throws. */
+async function sweepRunRetention(days) {
+  try {
+    const out = await pruneOldRuns({ days });
+    for (const id of out.archived) await terminals.closeWhere((s) => s.runId === id, 'system', 'run archived').catch(() => {});
+    if (out.archived.length) {
+      console.log(`[worca-ui] retention: archived ${out.archived.length} run(s) older than ${days} day(s)${out.skipped.length ? `, kept ${out.skipped.length}` : ''}`);
+      emitChanged('pipelines-changed', 'updated');
+    }
+    return out;
+  } catch (err) { console.warn(`[worca-ui] retention: ${err?.message || err}`); return { archived: [], skipped: [] }; }
+}
 function scheduleRunRetention(delayMs = 5000) {
   clearTimeout(_retentionTimer);
   _retentionTimer = setTimeout(async () => {
@@ -4152,14 +4193,7 @@ function scheduleRunRetention(delayMs = 5000) {
     const days = runLimits().keepRunsDays;
     if (days && !_retentionBusy) {
       _retentionBusy = true;
-      try {
-        const { archived, skipped } = await pruneOldRuns({ days });
-        if (archived.length) {
-          console.log(`[worca-ui] retention: archived ${archived.length} run(s) older than ${days} day(s)${skipped.length ? `, kept ${skipped.length}` : ''}`);
-          emitChanged('pipelines-changed', 'updated');
-        }
-      } catch (err) { console.warn(`[worca-ui] retention: ${err?.message || err}`); }
-      finally { _retentionBusy = false; }
+      try { await sweepRunRetention(days); } finally { _retentionBusy = false; }
     }
     scheduleRunRetention(RETENTION_EVERY_MS);
   }, delayMs);
@@ -5562,19 +5596,15 @@ async function serveAskFile(res, runDir, askId, index) {
 const ARTIFACT_RAW_MAX_BYTES = 25 * 1024 * 1024;   // the text route caps at 2 MB; why-worca.standalone.html is 7 MB
 const safeFilename = (rel) => String(rel).split('/').pop().replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 120) || 'artifact';
 
-/** Stream one indexed artifact's bytes. `rel` only SELECTS among the run's
- *  indexed rows (never a filesystem path); a stored `..` row is unreachable.
- *  `download` (the routes' `?download=1`, the viewer's and the browser's Download)
- *  is always an `attachment` under a Windows-safe name, takes any extension (no
- *  known type -> application/octet-stream) and has no preview ceiling: sendFile
- *  streams it, nothing is buffered. The preview form keeps its 415, and its 25 MB
- *  413 for every kind EXCEPT audio/video: a player streams and seeks with HTTP
- *  Range (send's default, on both forms), so a long video plays inline at any size
- *  without the file ever being buffered. */
-async function sendArtifactRaw(res, row, rel, { download = false } = {}) {
-  const hit = await resolveIndexedArtifactFileForRow(row, rel);
-  if (!hit) return res.status(404).json({ error: 'artifact not found' });
-  const mime = mimeForPath(hit.rel);
+/** Stream one file's bytes under the raw-route rules (formerly sendArtifactRaw's body; the Files tab's route shares it).
+ *  `open()` → the file handle the CALLER's path guard opened (never a path opened here), or null → 404 `notFound`.
+ *  `download` (`?download=1`): always an `attachment` under a Windows-safe name, any extension, no preview ceiling.
+ *  `asPdf` (`?as=pdf`): an Office document as its PDF preview (src/core/office-preview.mjs). Otherwise the preview form
+ *  keeps its 415 for unknown types and its 25 MB 413 for every kind EXCEPT audio/video (players stream and seek with
+ *  HTTP Range). */
+async function sendRawFile(res, { rel, open, download = false, asPdf = false, notFound = 'artifact not found' }) {
+  if (asPdf) return sendOfficePdf(res, { name: rel, open, notFound });
+  const mime = mimeForPath(rel);
   // V16: the shell's CSP `script-src 'self'` admits any script on this origin. Agent-written JS is served
   // from here, so a script load from the worca origin itself is refused, and the JS is a script only for a
   // deck's sandboxed frame (an opaque origin: cross-site). Anything else gets it as text, which nosniff never
@@ -5586,10 +5616,10 @@ async function sendArtifactRaw(res, row, rel, { download = false } = {}) {
     return res.status(403).json({ error: 'artifact scripts do not run in the worca page' });
   }
   const servedMime = isScript && fetchHeader('sec-fetch-site') !== 'cross-site' ? 'text/plain; charset=utf-8' : mime;
-  if (!mime && !download) return res.status(415).json({ error: 'no preview for this file type', rel: hit.rel });
-  // Served from the file the link check passed, never by path again (V9: openArtifactUnder).
-  const fh = await openArtifactUnder(hit.base, hit.rel);
-  if (!fh) return res.status(404).json({ error: 'artifact not found' });
+  if (!mime && !download) return res.status(415).json({ error: 'no preview for this file type', rel });
+  // The caller's guard opened it (V9: openArtifactUnder for artifacts); never by path again here.
+  const fh = await open();
+  if (!fh) return res.status(404).json({ error: notFound });
   let streaming = false;
   try {
     const st = await fh.stat();
@@ -5601,9 +5631,9 @@ async function sendArtifactRaw(res, row, rel, { download = false } = {}) {
     if ((ifMatch && ifMatch !== '*') || (Number.isFinite(unmodifiedSince) && Math.floor(st.mtimeMs / 1000) * 1000 > unmodifiedSince)) {
       return res.status(412).end();
     }
-    const kind = viewerKindFor(hit.rel);
+    const kind = viewerKindFor(rel);
     const anySize = download || kind === 'audio' || kind === 'video';
-    if (!anySize && size > ARTIFACT_RAW_MAX_BYTES) return res.status(413).json({ error: 'artifact too large to preview', rel: hit.rel, size });
+    if (!anySize && size > ARTIFACT_RAW_MAX_BYTES) return res.status(413).json({ error: 'artifact too large to preview', rel, size });
     res.set('Accept-Ranges', 'bytes');
     // One byte range for the players' seeks (express's req.range); a Range the file cannot satisfy is a 416
     // with Content-Range, never the artifact's type or name. Several ranges get the whole file.
@@ -5622,8 +5652,8 @@ async function sendArtifactRaw(res, row, rel, { download = false } = {}) {
     res.set('Content-Length', String(size ? end - start + 1 : 0));
     res.set('Content-Type', servedMime || 'application/octet-stream');
     res.set('X-Content-Type-Options', 'nosniff');
-    res.set('Content-Disposition', download ? attachmentDisposition(hit.rel)
-      : `${kind === 'binary' ? 'attachment' : 'inline'}; filename="${safeFilename(hit.rel)}"`);
+    res.set('Content-Disposition', download ? attachmentDisposition(rel)
+      : `${kind === 'binary' || kind === 'office' ? 'attachment' : 'inline'}; filename="${safeFilename(rel)}"`);
     res.set('Cache-Control', 'no-store');                       // artifacts are mutable while a run is live
     // Defense in depth for scriptable markup: even opened in a top-level tab the
     // document runs in an opaque origin. The viewer's <iframe sandbox> is the primary guard.
@@ -5654,6 +5684,46 @@ async function sendArtifactRaw(res, row, rel, { download = false } = {}) {
   } finally {
     if (!streaming) await fh.close().catch(() => {});
   }
+}
+
+/** Stream one indexed artifact's bytes. `rel` only SELECTS among the run's indexed rows (never a filesystem path); a
+ *  stored `..` row is unreachable. Served from the file the link check passed (V9: openArtifactUnder). */
+async function sendArtifactRaw(res, row, rel, { download = false, asPdf = false } = {}) {
+  const hit = await resolveIndexedArtifactFileForRow(row, rel);
+  if (!hit) return res.status(404).json({ error: 'artifact not found' });
+  return sendRawFile(res, { rel: hit.rel, open: () => openArtifactUnder(hit.base, hit.rel), download, asPdf });
+}
+/** A raw route's query flags. */
+const rawOpts = (req) => ({ download: req.query.download === '1', asPdf: req.query.as === 'pdf' });
+
+const OFFICE_PDF_STATUS = Object.freeze({ NOT_OFFICE: 415, TOO_LARGE: 413, NO_CONVERTER: 501, CONVERT_FAILED: 422, TIMEOUT: 422 });
+/** An Office document's PDF preview (inline, nosniff, no-store; the PDF itself is cached by content hash). HEAD converts
+ *  too, so the viewer's probe and the frame's GET share one conversion (the second reads the cache). */
+async function sendOfficePdf(res, { name, open, notFound = 'file not found' }) {
+  if (!isOfficePath(name)) return res.status(415).json({ error: 'Only Office documents convert to PDF.', code: 'NOT_OFFICE' });
+  const fh = await open();
+  if (!fh) return res.status(404).json({ error: notFound });
+  let buf;
+  try {
+    const st = await fh.stat();
+    if (!st.isFile()) return res.status(404).json({ error: notFound });
+    if (st.size > OFFICE_LIMITS.maxBytes) return res.status(413).json({ error: 'This document is too large to preview.', code: 'TOO_LARGE' });
+    buf = await fh.readFile();
+  } finally { await fh.close().catch(() => {}); }
+  let pdf;
+  try { pdf = await officePdf(buf, name); } catch (e) {
+    if (e instanceof OfficePreviewError) return res.status(OFFICE_PDF_STATUS[e.code] || 422).json({ error: e.message, code: e.code });
+    throw e;
+  }
+  const base = String(name).split('/').pop().replace(/\.[^.]+$/, '') || 'document';
+  res.status(200).set({
+    'Content-Type': 'application/pdf', 'Content-Length': String(pdf.size), 'X-Content-Type-Options': 'nosniff',
+    'Content-Disposition': `inline; filename="${safeFilename(`${base}.pdf`)}"`, 'Cache-Control': 'no-store',
+  });
+  if (res.req?.method === 'HEAD') return res.end();
+  const stream = fs.createReadStream(pdf.path);
+  stream.on('error', () => res.destroy());
+  stream.pipe(res);
 }
 
 /** The run dir behind a LIVE id: the pipeline id (what /api/runs/:id/artifact
@@ -6071,6 +6141,15 @@ actions.on('status', (snap) => {
  */
 const bareWorkspaceKey = (row) =>
   (row.target === 'workspace' || row.workspace_key) && row.workspace_key ? String(row.workspace_key).replace(/^workspaces\//, '') : null;
+
+function runRowForScope(req, res) {
+  const scope = resolveRunScope(req, res);          // query params; answers 400/404 itself
+  if (!scope) return null;
+  const row = findPipelineRowById(req.params.id);
+  const matches = row && (scope.workspaceId ? bareWorkspaceKey(row) === scope.workspaceId : (row.project_key === (scope.projectKey || projectKey(scope.projectDir))));
+  if (!matches || row.archived_at) { res.status(404).json({ error: 'pipeline not found' }); return null; }
+  return row;
+}
 const isLiveRun = (id) => liveRunIds().includes(id);
 /**
  * D30: this process is still inside the run's orch.run()/orch.resume() promise. liveRunIds() drops a run
@@ -6539,6 +6618,91 @@ const askCommands = createAskCommands({
   onFinish: (threadId, block) => { startTerminalEventTurn(threadId, block).catch((e) => console.warn(`[worca-ui] ask: terminal event for ${threadId}: ${e?.message || e}`)); },
 });
 
+/** A chat's tool folder: its newest worktree of its pinned project that still exists, else that project's own folder.
+ *  { gone } for a chat that is missing, archived or someone else's; { error, code } for a chat with no single project. */
+async function chatToolFolder(threadId, req, { trusted = false } = {}) {
+  const t = askGetThread(threadId);
+  if (!t || t.archivedAt || (!trusted && !askThreadVisible(t, req))) return { gone: true };
+  const scope = chatScopeOf(t.context);
+  if (!scope || !scope.projectKey) return { error: 'This chat has no project. Pick one in the chat to use its tools.', code: 'NO_PROJECT' };
+  const p = (await listProjects()).find((x) => x.key === scope.projectKey);
+  if (!p) return { error: `No project ${scope.projectKey}.`, code: 'NO_PROJECT' };
+  const wt = askListWorktrees(threadId)
+    .filter((w) => w.projectKey === p.key && w.path && fs.existsSync(w.path))
+    .sort((a, z) => String(z.updatedAt).localeCompare(String(a.updatedAt)))[0] || null;
+  return wt ? { dir: wt.path, label: `${p.name} · ${wt.ref}`, projectKey: p.key, worktree: true }
+    : { dir: p.path, label: p.name, projectKey: p.key, worktree: false };
+}
+
+// ── Chat links (issue 1064 §1–§2): the root a chat's file links resolve against ───────────────────────────────────────
+const chatLinks = createChatLinks();
+const RUN_ROOT_RE = /^run:([0-9a-f]{8})$/;
+/** The run a chat follows, as the root spec chatLinkRoots parses (`run:<id>`, never the bare id), or null: its newest
+ *  run link with a saved, not deleted run (there is no "follows" field; D1). An archived run still counts: its
+ *  branch is read (D2). */
+function followedRunOf(threadId) {
+  for (const l of askListRunLinks(threadId)) {
+    if (typeof l.pipelineId !== 'string' || !/^[0-9a-f]{8}$/.test(l.pipelineId)) continue;
+    const row = findPipelineRowById(l.pipelineId);
+    if (row && !row.deleted_at) return `run:${l.pipelineId}`;
+  }
+  return null;
+}
+/** A run's link roots, one per member: its folder while it has one (worktree, checkout), else its feature branch. */
+async function runLinkRoots(pid) {
+  const row = findPipelineRowById(pid);
+  if (!row || row.deleted_at) return { error: 'This run is gone.', code: 'ROOT_GONE' };
+  const root = `run:${pid}`;
+  const label = row.title || pid;
+  const targets = row.archived_at ? null : terminalTargets(row, { isLive: isLiveRun });
+  const roots = [];
+  for (const m of membersOfRow(row)) {
+    const member = row.workspace_key ? m.projectKey : null;
+    const t = targets?.members.find((x) => x.projectKey === m.projectKey);
+    if (t?.cwd && fs.existsSync(t.cwd)) { roots.push({ kind: 'dir', dir: t.cwd, root, member, label }); continue; }
+    const feature = m.br?.feature;
+    if (feature && m.projectDir && await branchExists(m.projectDir, feature)) {
+      roots.push({ kind: 'branch', repoDir: m.projectDir, ref: `refs/heads/${feature}`, root, member, label });
+    }
+  }
+  return roots.length ? { roots, root, label } : { error: "This run's files are gone: it has no folder and no branch.", code: 'ROOT_GONE' };
+}
+/** A chat's link roots: { roots, root: 'run:<id>'|null, label } | { gone } | { error, code }. `spec` undefined = the
+ *  default (the followed run, else the chat's own folder); '' = the chat's folder; 'run:<id>' = that run, only when
+ *  this chat links it. `trusted`: the caller already owns the chat (the tab bridge). */
+async function chatLinkRoots(threadId, req, { spec, trusted = false } = {}) {
+  const t = askGetThread(threadId);
+  if (!t || t.archivedAt || (!trusted && !askThreadVisible(t, req))) return { gone: true };
+  const want = spec === undefined ? followedRunOf(threadId) : spec;
+  if (want) {
+    const pid = RUN_ROOT_RE.exec(String(want))?.[1];
+    if (!pid || !askListRunLinks(threadId).some((l) => l.pipelineId === pid)) return { error: 'This chat does not follow that run.', code: 'ROOT_REFUSED' };
+    const r = await runLinkRoots(pid);
+    // A default root that is gone falls back to the chat's folder; an explicit one answers why.
+    if (!r.error || spec !== undefined) return r;
+  }
+  const f = await chatToolFolder(threadId, req, { trusted });
+  if (f.gone || f.error) return f;
+  return { roots: [{ kind: 'dir', dir: f.dir, root: null, member: null, label: f.label }], root: null, label: f.label };
+}
+
+// A run keeps its run diff (live while it runs, the saved one after); a project's or chat's folder shows its
+// uncommitted work against its last commit.
+/** Run statuses whose Changes tab reads the saved diff (app.js RD_TERMINAL's ended ones). */
+const TOOL_RUN_ENDED = new Set(['done', 'stopped', 'error']);
+
+// The Browser tab's framing check (issue 1064 §3, src/core/frame-check.mjs). A remote Worca follows the chat's web
+// policy (no chat = web off: nothing is asked); a local one asks for the person at the keyboard.
+const frameCheck = createFrameCheck();
+
+/** Archiving or deleting a chat closes its shells: its agent-mode ones (askCommands) and the ones its tabs opened. */
+function closeChatTerminals(threadId, reason) {
+  return Promise.allSettled([
+    askCommands.closeThread(threadId),
+    terminals.closeWhere((s) => s.chatId === threadId, 'system', reason),
+  ]);
+}
+
 /** The folder an Ask command runs in: a run member's terminal target, or
  *  a project's folder only inside the chat scope (P4): the named member of its workspace, else the chat's project.
  *  The person routes' logic without their `res`; no folder ever comes from the model. */
@@ -6666,14 +6830,23 @@ function sendCheckoutError(res, e) {
     ...(e?.holder ? { holder: e.holder, projectKey: e.projectKey || null } : {}) });
 }
 
-/** Start now, or, while setup is pending/running/interrupted, queue behind it (D25). */
+/** Re-running `npm ci` under a live dev server would pull node_modules out from under it. */
+const liveActionsOf = (runId, pk) => actions.listFor(runId)
+  .some((s) => s.member === pk && s.actionId !== SETUP_ACTION_ID && ['starting', 'running', 'ready'].includes(s.status));
+/** A setup command saved after this checkout ran with none (Use this adds one) runs before its next start: never in a
+ *  linked folder (the person's own clone runs setup only when asked) and never under a live action of that member. */
+const setupLate = (rec, runId, pk) => rec.setup?.status === 'none' && !rec.external && !!readProjectActions(pk).setup
+  && !liveActionsOf(runId, pk);
+
+/** Start now, or, while setup is pending/running/interrupted (or added since, `setupLate`), queue behind it (D25). */
 async function startOrQueue(req, res, row, m, action, extra = {}) {
   const rec = checkoutRecOf(row.id, m.projectKey);
   if (!rec) return res.status(409).json({ error: 'Check out the run first.', code: 'NOT_CHECKED_OUT' });
   const setup = rec.setup?.status;
   if (setup === 'failed') return res.status(409).json({ error: 'The setup command failed. Fix it and run setup again.', code: 'SETUP_FAILED' });
   const spec = { runId: row.id, member: m.projectKey, worktreeDir: rec.worktreeDir, branch: rec.branch, action };
-  if (['pending', 'running', 'interrupted'].includes(setup) || setupJobs.has(`${row.id}:${m.projectKey}`)) {
+  const late = setupLate(rec, row.id, m.projectKey);
+  if (late || ['pending', 'running', 'interrupted'].includes(setup) || setupJobs.has(`${row.id}:${m.projectKey}`)) {
     const instanceId = instanceIdFor(row.id, m.projectKey, action.id);
     // A queued start that cannot start must say so; nobody is waiting on the HTTP answer any more.
     const report = (text) => {
@@ -6685,7 +6858,7 @@ async function startOrQueue(req, res, row, m, action, extra = {}) {
       recordActionFrame(instanceId, { type: 'action-status', snapshot: null, error: text });
       emitChanged('actions-changed', 'queued-failed');
     };
-    ensureSetup(row.id, m.projectKey, { enabled: true, rerun: setup === 'interrupted' })   // every caller passed requireActions
+    ensureSetup(row.id, m.projectKey, { enabled: true, rerun: setup === 'interrupted' || late })   // every caller passed requireActions
       .then((ok) => (ok ? actions.start(spec) : report('Not started: the setup command did not finish successfully.')))
       .catch((e) => report(`Not started: ${e?.message || e}`));
     return res.status(202).json({ ...extra, queued: true, instanceId });
@@ -6697,6 +6870,126 @@ async function startOrQueue(req, res, row, m, action, extra = {}) {
     res.status(status).json({ error: e.message, code: e.code || 'ERROR' });
   }
 }
+
+// ── The Browser tab's preview proxy (issue 1064, src/core/preview-proxy.mjs) ─────────────────────────────────────────
+// /preview/<port>/<token>/… forwards to 127.0.0.1 (then ::1) only. Allowed ports: every loopback port by default, or
+// the Actions range and running instances' ports (Settings › Runs › Actions › Preview ports); a hosted Worca is always
+// "Actions range only" — any loopback port there reaches the server's own internal services. Never Worca's own port.
+// Same gates as the Actions routes: hosted Worca proxies only with WORCA_ACTIONS_REMOTE=1. A token is minted per tab
+// (POST below, an exact-origin /api request) and names one port; the frame's own requests carry no cookie (opaque
+// origin), so the token is their auth.
+const isPreviewPath = (p) => typeof p === 'string' && p.startsWith('/preview/');
+/** The host guard without its Origin half: a preview page's Origin is `null` on purpose. */
+const previewHostOk = (req) => hostGuard({ headers: { host: req.headers.host } });
+const previewTokens = createPreviewTokens();
+/** 'all' | 'range' — what the proxy applies. Hosted is ENFORCED to 'range': no stored setting can lift it. */
+const previewPortMode = () => (REMOTE_MODE ? 'range' : actionsSettings().previewPorts);
+const previewRefusal = (port) => portRefusal(port, { all: previewPortMode() === 'all', range: parsePortRange(actionsSettings()),
+  held: actions.running().flatMap((s) => Object.values(s.ports || {})), self: updatePort() });
+const previewProxy = createPreviewProxy({
+  tokens: previewTokens,
+  refuse: previewRefusal,
+  pageOrigins: (req) => (req.headers.host ? [`http://${req.headers.host}`, `https://${req.headers.host}`] : []),
+  drop: () => [UI_TOKEN_HEADER, String(process.env.WORCA_IDENTITY_HEADER || '').trim()],
+  // Another Worca (a run's Action of worca itself): asked again whenever the proxy re-resolves a port's host, so a token
+  // minted for a dev server is refused once a Worca answers on that port instead.
+  isWorca: async (host, port) => (await probeUi({ host, port, timeoutMs: 1000 })).state === 'worca',
+});
+const PREVIEW_ACTIONS_OFF = 'Actions are turned off on this hosted deployment, and local previews with them. An administrator can enable them with WORCA_ACTIONS_REMOTE=1.';
+function handlePreview(req, res) {
+  if (!actionsEnabledHere(req)) return sendPreviewNote(res, 403, 'ACTIONS_DISABLED', PREVIEW_ACTIONS_OFF);
+  previewProxy.handle(req, res).catch((e) => {
+    console.warn(`[worca-ui] preview: ${e?.message || e}`);
+    if (!res.headersSent) sendPreviewNote(res, 502, 'UPSTREAM', 'The preview failed.');
+  });
+}
+/** A /preview/ WebSocket upgrade (dev-server HMR): upgrades bypass express, so the HTTP gates run here by hand. */
+async function upgradePreview(req, socket, head) {
+  const refuse = (status, text) => { socket.end(`HTTP/1.1 ${status} ${text}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`, () => socket.destroy()); };
+  socket.on('error', () => socket.destroy());
+  if (!isTrustedPeer(req)) return refuse(403, 'Forbidden');
+  dropUntrustedIdentityHeader(req);
+  if (!previewHostOk(req)) return refuse(403, 'Forbidden');
+  let who = null;
+  try { who = await requestIdentity(req); } catch { return refuse(503, 'Service Unavailable'); }
+  if (!who) return refuse(401, 'Unauthorized');
+  req.worcaUser = who;
+  if (!admitThisBoxCaller(req, { ws: true }) || !actionsEnabledHere(req)) return refuse(403, 'Forbidden');
+  return previewProxy.upgrade(req, socket, head);
+}
+function closePreviewSockets() { previewProxy.closeAll(); }
+const PREVIEW_REFUSED = {
+  BAD_PORT: [400, () => 'port must be a whole number from 1 to 65535.'],
+  SELF: [403, () => 'Worca does not preview itself.'],
+  PORT_NOT_ALLOWED: [403, (port) => {
+    const r = parsePortRange(actionsSettings());
+    return REMOTE_MODE
+      ? `Port ${port} is outside the ports Worca previews on this hosted deployment: ${r.low}–${r.high} and running Actions.`
+      : `Port ${port} is outside the ports Worca previews: ${r.low}–${r.high} and running Actions. Choose "All local ports" under Preview ports in Settings › Runs › Actions, or widen the range.`;
+  }],
+};
+
+// ── The tool panel's tabs for the chat (issue 1064 slice 3, src/core/tab-tools.mjs) ───────────────────────────────
+// The page mirrors its chat and project tabs (PUT /api/tools/tabs); open_tab adds the assistant's; screenshot_tab,
+// read_tab and Pick element load a page in headless Chrome through the same preview rules the Browser tab follows.
+const toolTabs = createToolTabsMirror();
+let pageCapture = createPageCapture();
+/** Who owns a chat's mirrored tabs: its creator on a shared deployment, '' otherwise (askViewer(req) on the page side). */
+const tabOwnerOf = (t) => (askSharedOwner(t) ? t.createdBy : '');
+const PREVIEW_ACTIONS_OFF_SHORT = 'Actions are turned off on this hosted deployment, and local previews with them.';
+const tabTools = createTabTools({
+  mirror: toolTabs,
+  thread: (threadId) => {
+    const t = askGetThread(threadId);
+    if (!t || t.archivedAt) return null;
+    return { owner: tabOwnerOf(t), projectKey: chatScopeOf(t.context)?.projectKey || null };
+  },
+  web: (threadId) => askWebAccessFor(threadId, askGetThread(threadId)?.context),
+  previewRefusal: async (port) => {
+    if (!actionsEnabledHere(null)) return PREVIEW_ACTIONS_OFF_SHORT;
+    const why = previewRefusal(port);
+    if (why) return PREVIEW_REFUSED[why][1](port);
+    if (await previewProxy.worcaAt(port)) return 'This port runs a Worca. Open it in a browser tab of its own.';
+    return null;
+  },
+  // Headless Chrome on THIS machine reaches Worca's own loopback listener (the command bridge's address). The token
+  // is the capture's own and is revoked when the capture ends (done), so captures never evict a live tab's token.
+  previewBase: async (port) => {
+    const token = previewTokens.issue(port);
+    return { origin: `http://127.0.0.1:${updatePort()}`, prefix: previewPrefix(port, token), done: () => previewTokens.revoke(token) };
+  },
+  capture: (o) => pageCapture.capture(o),
+  saveImage: (threadId, { name, png }) => {
+    const used = askListAttachments(threadId).reduce((n, a) => n + (Number(a.bytes) || 0), 0);
+    if (used + png.length > ASK_LIMITS.showFiles.threadBytes) {
+      throw new TabToolError(`screenshot_tab: this chat's files would pass ${Math.round(ASK_LIMITS.showFiles.threadBytes / 1048576)} MiB`, 'BUDGET');
+    }
+    const att = askAddAttachment(threadId, null, { name, kind: 'image', mime: 'image/png', data: png });
+    return { id: att.id, name: att.name, bytes: att.bytes };
+  },
+  notify: (threadId, extra = {}) => broadcast({ type: 'ask-tool-tabs', threadId, ...extra }),   // ask-*: askFrameOwner keeps it to the chat's owner
+  // open_tab files (issue 1064 §1): the chat's link root, checked by chat-links.mjs; its refusals reach the assistant.
+  fileTarget: async (threadId, input) => {
+    const r = await chatLinkRoots(threadId, null, { trusted: true });
+    if (r.gone) throw new TabToolError('open_tab: this chat is gone', 'NOT_FOUND');
+    if (r.error) throw new TabToolError(`open_tab: ${r.error}`, r.code || 'NO_ROOT');
+    try { return await chatLinks.target(r.roots, input); }
+    catch (e) { if (e instanceof ChatLinkError) throw new TabToolError(`open_tab: ${e.message}`, e.code); throw e; }
+  },
+});
+
+// The tab bridge (classic mode only: relay mode is agent isolation, where the preview proxy refuses agent callers).
+const askTabsEnabled = () => !agentIdentity();
+const askTabBridges = new Map();   // token -> threadId (one per turn, dropped when the turn ends)
+function askTabBridge({ threadId }) {
+  if (!askTabsEnabled()) return null;
+  const token = randomBytes(24).toString('base64url');
+  askTabBridges.set(token, threadId);
+  const port = server.address()?.port || PORT;
+  return { url: `http://127.0.0.1:${port}/api/ask/tabs`, token, dispose: () => { askTabBridges.delete(token); tabTools.endTurn(token); } };
+}
+const tabFailure = (res, e) => res.status(e instanceof TabToolError || e?.name === 'CaptureError' ? 409 : 500)
+  .json({ error: e?.message || String(e), code: e?.code || null });
 
 // ---------------------------------------------------------------------------
 // PR remotes (fork support). The ship-it dialog picks (1) the remote the feature
@@ -7976,6 +8269,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
   const hasSmartNaming = has('smartNaming');      // null clears the stored block
   const hasDebugSpawnKey = has('debugSpawnEnabled');
   const hasKeepAwakeKey = has('keepAwake');
+  const hasChatLinksKey = has('chatLinksInPanel');
   const hasLimitResumeKey = has('resumeAfterUsageLimit');
   const hasAutoPrDescKey = has('autoGeneratePrDescription');
   const hasUpdateCheckKey = has('updateCheck');
@@ -8109,7 +8403,13 @@ async function applySettingsPatch(body, { person = null } = {}) {
     });
     if (has('nightModeToggle')) asSettingsField('nightModeToggle', () => assertNightModeToggleInput(body.nightModeToggle));
     if (hasActionsKey) asSettingsField('actions', () => assertActionsInput(body.actions));
+    if (hasActionsKey && REMOTE_MODE) asSettingsField('actions', () => {
+      if (body.actions && typeof body.actions === 'object' && body.actions.previewPorts === 'all') {
+        throw new Error('actions.previewPorts stays "Actions range only" on a hosted Worca');
+      }
+    });
     if (hasKeepAwakeKey) asSettingsField('keepAwake', () => assertKeepAwakeInput(body.keepAwake));
+    if (hasChatLinksKey) asSettingsField('chatLinksInPanel', () => assertChatLinksInPanelInput(body.chatLinksInPanel));
     if (has('sync')) asSettingsField('sync', () => assertSyncSettingsInput(body.sync));
     if (hasNetworkWaitKey) asSettingsField('networkWait', () => assertNetworkWaitInput(body.networkWait));
     if (hasRunLimitsKey) asSettingsField('runLimits', () => assertRunLimitsInput(body.runLimits));
@@ -8143,6 +8443,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     if (hasSmartNaming) await setSmartNaming(body.smartNaming);
     if (hasDebugSpawnKey) await setDebugSpawnEnabled(body.debugSpawnEnabled);
     if (hasKeepAwakeKey) { await setKeepAwake(body.keepAwake); syncKeepAwake(); }
+    if (hasChatLinksKey) await setChatLinksInPanel(body.chatLinksInPanel);
     if (hasLimitResumeKey) await setResumeAfterUsageLimit(body.resumeAfterUsageLimit);
     if (hasAutoPrDescKey) await setAutoGeneratePrDescription(body.autoGeneratePrDescription);
     if (hasUpdateCheckKey) {
@@ -8183,7 +8484,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     // Other open tabs repaint their Settings cards (a stale tab could otherwise
     // "save" its old checkbox state over this one with no feedback to either).
     if (hasSmartNaming || hasNamingModelKey) cachedPick = undefined;
-    if (hasAskKey || hasAskWeb || hasSmartNaming || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasUiLevelKey || hasAutoKey || hasPrDescKey || hasAutoPrDescKey || hasHumanRateKey || hasMemoryDefragKey || hasAgentGenKey || hasNamingModelKey || hasCommandSummaryModelKey || secondOpinionModels || hasWorkspaceScanKey || has('schedule') || has('sync') || has('tagDimensions') || has('enforceTags') || has('chat') || hasAskEngineKey || hasAskModelsKey || hasRequirementsInterviewKey || hasNetworkWaitKey || hasRunLimitsKey || hasActionsKey || hasNightKey || hasRunEngineKey || hasStepModelsKey || hasModelRolesKey || hasUtilityModelsKey || hasUpdateCheckKey || hasKeepAwakeKey) emitChanged('settings-changed');
+    if (hasAskKey || hasAskWeb || hasSmartNaming || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasUiLevelKey || hasAutoKey || hasPrDescKey || hasAutoPrDescKey || hasHumanRateKey || hasMemoryDefragKey || hasAgentGenKey || hasNamingModelKey || hasCommandSummaryModelKey || secondOpinionModels || hasWorkspaceScanKey || has('schedule') || has('sync') || has('tagDimensions') || has('enforceTags') || has('chat') || hasAskEngineKey || hasAskModelsKey || hasRequirementsInterviewKey || hasNetworkWaitKey || hasRunLimitsKey || hasActionsKey || hasNightKey || hasRunEngineKey || hasStepModelsKey || hasModelRolesKey || hasUtilityModelsKey || hasUpdateCheckKey || hasKeepAwakeKey || hasChatLinksKey) emitChanged('settings-changed');
     // Editor / Terminal: saved as typed; a program Worca cannot find comes back as a warning on its field.
     const actionsWarnings = hasActionsKey ? Object.fromEntries(['editor', 'terminal']
       .map((k) => [k, launcherWarning(actionsSettings()[k], { findOnPath: (n) => findOnPath(n) })]).filter(([, w]) => w)) : null;
@@ -8614,7 +8915,9 @@ async function deleteAskThreadFully(id) {
   // Outside the `if (job)` block below: a thread deleted while it had a queued
   // event turn but no live job entry would otherwise keep its queue forever.
   askDeferred.delete(id);
-  await askCommands.closeThread(id).catch(() => {});        // #574: its Ask terminal sessions
+  await closeChatTerminals(id, 'chat deleted');        // #574: its Ask terminal sessions
+  // Issue 1064 slice 3: its mirrored tool panel tabs. Best-effort: a throw here must not leave the id in askDeleting.
+  try { toolTabs.dropScope(tabScope('chat', id)); } catch { /* the rows stay; no chat reaches them once it is gone */ }
   try {
     const stopJob = () => {
       const job = askJobs.get(id);
@@ -8705,9 +9008,9 @@ function askWebAccessFor(threadId, ctx) {
  *  (`edits`) — with the runtimes this host actually has (the python probe, cached 60 s); plus the web section when `web`
  *  (askWebAccess() for this turn) is on, and the MCP servers section when the turn has registry copies (`mcp`,
  *  askMcpPromptInput()). Memory is mounted, not rendered. */
-async function askSystemPromptFor(catalog, { web = null, mcp = null, commands = false, engine = 'claude', chat = null } = {}) {
+async function askSystemPromptFor(catalog, { web = null, mcp = null, commands = false, engine = 'claude', chat = null, tabs = false } = {}) {
   const scripts = { ...(await askScriptPromptInput({ enabled: true })), edits: scriptToolsEnabled() };
-  return askBuildSystemPrompt(catalog, { scripts, deployment: DEPLOYMENT, web, mcp, commands, git: gitAvailable(),
+  return askBuildSystemPrompt(catalog, { scripts, deployment: DEPLOYMENT, web, mcp, commands, tabs, git: gitAvailable(),
     ...(engine !== 'claude' ? { engine } : {}), shape: true, ...(chat ? { chat } : {}) });
 }
 
@@ -9175,13 +9478,17 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
     // Agent mode (#574; worca Chat R5): an Ask chat is ALWAYS in agent mode where the host allows commands at all.
     // The thread's agentMode column and a message's agentMode are still validated and stored — never read here.
     const agentOn = !composerMode && chatAgentModeFor(id, chatBound);
+    // Issue 1064 slice 3: the tab tools. Like agent mode, never in a chat bound to a platform conversation: no page or
+    // tool panel takes its tabs.
+    const tabsOn = !composerMode && !chatBound && askTabsEnabled();
     const systemPrompt = composerMode
       ? await askComposerSystemPromptFor(catalog, { web, engine })
-      : await askSystemPromptFor(catalog, { web, mcp: await askMcpPromptInput(mcp), commands: agentOn, engine,
+      : await askSystemPromptFor(catalog, { web, mcp: await askMcpPromptInput(mcp), commands: agentOn, engine, tabs: tabsOn,
         chat: chatConv ? { platform: chatConv.platform } : null });
     // Shared terminal: what the user ran in this chat's Ask tabs since its last user turn (their commands never wake
     // the chat; an event turn leaves them for the next user turn).
     if (!synthetic && !chatBound && askCommandsEnabled()) headerCtx.personCommands = askCommands.takePersonCommands(id);
+    if (tabsOn) headerCtx.tabs = tabTools.headerTabs(id);
     const header = askBuildContextHeader(headerCtx);
     // The open canvas rides the composer chat's turn prompt (never the 1 KB context header, which clips).
     const composerBlock = composerMode ? await composerPromptBlock(askGetThread(id)) : '';
@@ -9233,6 +9540,7 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
         agentRelay: agentIdentity() ? (o) => askAgentRelay({ ...o, engine }) : null,
         commandBridge: askCommandBridge,                     // #574: null unless agent mode can work here
         proxyBridge: askProxyBridge,                         // the corporate proxy bridge: null for an agent caller
+        tabsBridge: tabsOn ? askTabBridge : null,   // issue 1064 slice 3: the tab tools
         onFrame: stampAskFrames(id, job),
         onOutOfTurn: (f) => broadcast({ ...f, threadId: id }),
         onCommentMutation: ({ runId }) => { emitDiffCommentsChanged(runId); },
@@ -10413,8 +10721,9 @@ if (isMain) {
 }
 
 export { app, server, runs };
-export { AGENTS_DIR, APP_INFO, APP_REPO_URL, ASK_DEFERRED_REPLIES_MAX, ASK_SCOPE_BUSY, ASK_TEXT_PREVIEW_MAX, BRANCH_SETTLED, BUGS_SLUG, CLONE_JOBS, HOST, MARKETPLACE_ID_RE, MARKET_JOBS, NO_PR_HOST, PKG_VERSION, PLAN_TEXT_MAX, PLUGIN_NAME_RE, PORT, PROJECT_ROOT, PR_TITLE_MAX, REMOTE_MODE, RUNNING_VERSION, ResumeError, SETTLED_RUN, SETUP_AGENT_TEXT, SETUP_JOBS, SKILLS_DIR, SKILL_FOLDER_IMPORTS, SKILL_MD_UNREACHABLE, STORE_ERROR_CODES, actions, actionsEnabledHere, activeActionSnaps, adoWebhookSecret, afterMembersChanged, afterProjectRegistered, agentErrorStatus, agentMayBeCaller, answerRun, applyProjectSettingsPatch, applySettingsPatch, askBusyReason, askChatActions, askChatEngine, askChatEngineGate, askCommandBridges, askCommands, askCommandsEnabled, askContextTokens, askCredentialGate, askDeferred, askDeferredReplies, askDeleting, askEngineSwitchText, askEventPick, askFilesRunDir, askFilesStoreDir, askFollowers, askGroupFor, askGroupThreads, askIdParam, askInFlight, askLiveRun, askProxyBridges, askRefResolver, askRelays, askRunFromPipelineRow, askRunningCount, askSignedIn, askSwitchTranscript, askThreadVisible, askTrackingCount, askTurnEngine, askValidateScope, askViewer, askWebAccessFor, askWorktreesEnvelope, autoDetectedBuiltins, automationWorkspaceMembers, automations, awayPersonOf, badRequest, bareWorkspaceKey, bearerMatches, broadcast, broadcastFeature, brokerStartRefusal, builtins, busyActionRunIds, channelHost, chatGroupError, chatNotifier, chatRefusals, checkoutRecOf, commentIdParam, commentsCreate, commentsDelete, commentsFail, commentsList, commentsPatch, commentsReply, createRunPr, crosslinkMemberPrs, currentUpdateEligibility, defaultPrRemotes, deleteAskThreadFully, detectSystemProxyImpl, detectTeamMemorySoon, drainServer, effectiveUiLevel, egressNow, emitAskWorktrees, emitChanged, emitMemoryChanged, emitPluginsChanged, ensureSetup, extensionPairing, factDeps, failedEventTurn, featureShipping, findScheduleItem, findShipCardIn, flipCard, followCloneCard, forkPrRefusal, fsAllowedRoots, fsLimitedHere, gitMissing, isFinishingRun, isFreshInstall, isLiveRun, isPlainObject, isPrStoreKey, isTruthy, kickAutomations, kickPrWatch, labelsOn, lastUpdateResult, liveAutoRescan, liveDefragRun, liveDiffOf, livePr, liveProbe, liveRunEntry, liveRunIds, liveSliceOf, marketJobFailure, mcpRunPreview, mcpTargetOf, memberFor, memoryError, modelTestsInFlight, namingBucket, namingCatalog, namingOn, namingPick, noRawCommand, notifReader, openMemberPr, ownsWorkspaceTarget, parseMcpOptOut, pauseRun, pickPrRemotes, pinUiLevel, postAskSystemNotice, postDirection, prTargetFor, prWatchFrame, prWatcher, presetCheckCtx, presetScopeOf, primaryMemberOf, projectAutomationRepo, projectDirForKey, projectSettingsState, proxyHost, pruneMarketJobs, prunedNote, publicCloneJob, readInstalledManifest, refuseAgentCaller, refuseSignedOutClaude, registeredProjectForDir, rejectRawTerminalFields, removeRecommendation, requireActions, requireFsAllowed, requireTerminal, resolvePrPipeline, resolveProjectDir, resolveRunScope, resumeEngineOpts, resumeRun, resumeTargetDirs, runGroupIds, runSourceIssue, scanModelsFor, scanRequest, scheduleVerb, sendArtifactRaw, sendCheckoutError, sendMetricsError, sendPolicyError, sendPresetError, serveAskFile, serverMockMode, settleShipped, setupJobs, setupProbesOverride, shipChainNow, shipCtxOf, shipFeatureNow, skillRunPreview, snapshotFor, sockets, stackStates, stackTokens, startAgentGen, startAskTurn, startCloneJob, startMetricsEventTurn, startOrQueue, startRunAs, startRunHandler, startScopeEventTurn, startScriptBench, stopCheckoutServices, stopMemberServices, stopPausedPipeline, stopRun, switchThreadScope, syncMode, syncProjectAction, syncRoute, teamOriginOk, teamWarn, terminalCallerOk, terminalEnabledHere, terminalError, terminalSameOrigin, terminals, tmProject, uiControl, unsyncableBlock, updateChecker, updatePort, updatePreview, validateResumeTarget, versionLister, versionPayload, webhookSecret, withAfter, workspaceMembersBusy };
+export { AGENTS_DIR, APP_INFO, APP_REPO_URL, ASK_DEFERRED_REPLIES_MAX, ASK_SCOPE_BUSY, ASK_TEXT_PREVIEW_MAX, BRANCH_SETTLED, BUGS_SLUG, CLONE_JOBS, HOST, MARKETPLACE_ID_RE, MARKET_JOBS, NO_PR_HOST, PKG_VERSION, PLAN_TEXT_MAX, PLUGIN_NAME_RE, PORT, PREVIEW_REFUSED, PROJECT_ROOT, PR_TITLE_MAX, REMOTE_MODE, RUNNING_VERSION, ResumeError, SETTLED_RUN, SETUP_AGENT_TEXT, SETUP_JOBS, SKILLS_DIR, SKILL_FOLDER_IMPORTS, SKILL_MD_UNREACHABLE, STORE_ERROR_CODES, TOOL_RUN_ENDED, actions, actionsEnabledHere, activeActionSnaps, adoWebhookSecret, afterMembersChanged, afterProjectRegistered, agentErrorStatus, agentMayBeCaller, answerRun, applyProjectSettingsPatch, applySettingsPatch, askBusyReason, askChatActions, askChatEngine, askChatEngineGate, askCommandBridges, askCommands, askCommandsEnabled, askContextTokens, askCredentialGate, askDeferred, askDeferredReplies, askDeleting, askEngineSwitchText, askEventPick, askFilesRunDir, askFilesStoreDir, askFollowers, askGroupFor, askGroupThreads, askIdParam, askInFlight, askLiveRun, askProxyBridges, askRefResolver, askRelays, askRunFromPipelineRow, askRunningCount, askSignedIn, askSwitchTranscript, askTabBridges, askTabsEnabled, askThreadVisible, askTrackingCount, askTurnEngine, askValidateScope, askViewer, askWebAccessFor, askWorktreesEnvelope, autoDetectedBuiltins, automationWorkspaceMembers, automations, awayPersonOf, badRequest, bareWorkspaceKey, bearerMatches, broadcast, broadcastFeature, brokerStartRefusal, builtins, busyActionRunIds, channelHost, chatGroupError, chatLinkRoots, chatLinks, chatNotifier, chatRefusals, chatToolFolder, checkoutRecOf, closeChatTerminals, commentIdParam, commentsCreate, commentsDelete, commentsFail, commentsList, commentsPatch, commentsReply, createRunPr, crosslinkMemberPrs, currentUpdateEligibility, defaultPrRemotes, deleteAskThreadFully, detectSystemProxyImpl, detectTeamMemorySoon, drainServer, effectiveUiLevel, egressNow, emitAskWorktrees, emitChanged, emitMemoryChanged, emitPluginsChanged, ensureSetup, extensionPairing, factDeps, failedEventTurn, featureShipping, findScheduleItem, findShipCardIn, flipCard, followCloneCard, forkPrRefusal, frameCheck, fsAllowedRoots, fsLimitedHere, gitMissing, isFinishingRun, isFreshInstall, isLiveRun, isPlainObject, isPrStoreKey, isTruthy, kickAutomations, kickPrWatch, labelsOn, lastUpdateResult, liveActionsOf, liveAutoRescan, liveDefragRun, liveDiffOf, livePr, liveProbe, liveRunEntry, liveRunIds, liveSliceOf, marketJobFailure, mcpRunPreview, mcpTargetOf, memberFor, memoryError, modelTestsInFlight, namingBucket, namingCatalog, namingOn, namingPick, noRawCommand, notifReader, openMemberPr, ownsWorkspaceTarget, parseMcpOptOut, pauseRun, pickPrRemotes, pinUiLevel, postAskSystemNotice, postDirection, prTargetFor, prWatchFrame, prWatcher, presetCheckCtx, presetScopeOf, previewPortMode, previewProxy, previewRefusal, previewTokens, primaryMemberOf, projectAutomationRepo, projectDirForKey, projectSettingsState, proxyHost, pruneMarketJobs, prunedNote, publicCloneJob, rawOpts, readInstalledManifest, refuseAgentCaller, refuseSignedOutClaude, registeredProjectForDir, rejectRawTerminalFields, removeRecommendation, requireActions, requireFsAllowed, requireTerminal, resolvePrPipeline, resolveProjectDir, resolveRunScope, resumeEngineOpts, resumeRun, resumeTargetDirs, runGroupIds, runRowForScope, runSourceIssue, scanModelsFor, scanRequest, scheduleVerb, sendArtifactRaw, sendCheckoutError, sendMetricsError, sendOfficePdf, sendPolicyError, sendPresetError, sendRawFile, serveAskFile, serverMockMode, settleShipped, setupJobs, setupLate, setupProbesOverride, shipChainNow, shipCtxOf, shipFeatureNow, skillRunPreview, snapshotFor, sockets, stackStates, stackTokens, startAgentGen, startAskTurn, startCloneJob, startMetricsEventTurn, startOrQueue, startRunAs, startRunHandler, startScopeEventTurn, startScriptBench, stopCheckoutServices, stopMemberServices, stopPausedPipeline, stopRun, switchThreadScope, syncMode, syncProjectAction, syncRoute, tabFailure, tabOwnerOf, tabTools, teamOriginOk, teamWarn, terminalCallerOk, terminalEnabledHere, terminalError, terminalSameOrigin, terminals, tmProject, toolTabs, uiControl, unsyncableBlock, updateChecker, updatePort, updatePreview, validateResumeTarget, versionLister, versionPayload, webhookSecret, withAfter, workspaceMembersBusy };
 export const _testing = {
+  toolTabs, tabTools, askTabBridge, previewTokens, setPageCapture: (c) => { pageCapture = c || createPageCapture(); },
   chatBridge, invokeAskCard, askBus, chatAgentModeFor, chatTurnIdentity,
   updateChecker,
   // Chat context: tests never reach a CDN (null = the real fetch again).
@@ -10450,7 +10759,7 @@ export const _testing = {
   prWatcherDeps, askPrFixRun, askLinkIsPrFix, prFixRoundOf,
   applySettingsPatch, applyProjectSettingsPatch, askChatActions, askChatSettings, askChatTurnDeps, askShapeAction,
   openMemberPr, stackedBaseFor, chainRootFor, shipChainNow, afterRunSettled, offerShipCard, syncShipCard, draftReleasesOnMerge,
-  startAutoRescan,
+  startAutoRescan, sweepRunRetention,
   networkWatchTick: () => networkWatch().tick(),
   setNetworkProbe(fn) { _networkProbe = fn; },
   setAutoRescan(on) { autoRescanOn = on !== false; },

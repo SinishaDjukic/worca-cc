@@ -25,6 +25,7 @@ import { FS_OUTSIDE_ALLOWED, checkInside, outsideAllowedMessage } from '../../..
 import { actorOf } from '../../../src/core/identity.mjs';
 import { displayPath, listProjects, normalizeProjectPath } from '../../../src/core/projects.mjs';
 import { PROXY_AGENT_TEXT } from '../../../src/core/proxy-host.mjs';
+import { isInContainer } from '../../../src/core/remote-access.mjs';
 import { addAskWebHost } from '../../../src/core/settings.mjs';
 import { applyChanges, applyRoute } from '../../../src/core/shape/changes.mjs';
 import { addFeatureNote, appendFeatureRun, currentFeatureId } from '../../../src/core/shape/features.mjs';
@@ -36,7 +37,8 @@ import { readWorkflow, writeGraphWorkflow } from '../../../src/core/workflows.mj
 import { RESCAN_CHOICES, memoGitProbe, readWorkspace, removeWorkspaceMember } from '../../../src/core/workspaces.mjs';
 import { formatInstant } from '../../../src/shared/schedule/recurrence.mjs';
 import { changesCardVerb, routeCardVerb } from '../../../src/shared/shape/route.mjs';
-import { AGENTS_DIR, ASK_DEFERRED_REPLIES_MAX, afterMembersChanged, afterProjectRegistered, agentMayBeCaller, askChatActions, askDeferred, askDeferredReplies, askEventPick, askIdParam, askInFlight, askViewer, askWebAccessFor, badRequest, broadcast, broadcastFeature, emitChanged, failedEventTurn, flipCard, followCloneCard, fsAllowedRoots, fsLimitedHere, pinUiLevel, postAskSystemNotice, proxyHost, prunedNote, refuseAgentCaller, removeRecommendation, runs, scheduleVerb, schedulerTick, shipFeatureNow, startAskTurn, startCloneJob, startMetricsEventTurn, startRunAs, startScopeEventTurn, workspaceMembersBusy } from '../../server.mjs';
+import { AGENTS_DIR, ASK_DEFERRED_REPLIES_MAX, afterMembersChanged, afterProjectRegistered, agentMayBeCaller, askChatActions, askDeferred, askDeferredReplies, askEventPick, askIdParam, askInFlight, askTabBridges, askTabsEnabled, askViewer, askWebAccessFor, badRequest, broadcast, broadcastFeature, chatLinkRoots, chatLinks, emitChanged, failedEventTurn, flipCard, followCloneCard, fsAllowedRoots, fsLimitedHere, pinUiLevel, postAskSystemNotice, proxyHost, prunedNote, refuseAgentCaller, removeRecommendation, runs, scheduleVerb, schedulerTick, shipFeatureNow, startAskTurn, startCloneJob, startMetricsEventTurn, startRunAs, startScopeEventTurn, tabFailure, tabTools, terminalCallerOk, workspaceMembersBusy } from '../../server.mjs';
+import { FILE_PATH_MAX, FILE_REFS_MAX } from '../../../src/shared/file-refs.mjs';
 
 /** The cards route's handler, set by register(): the chat bridge applies a chat channel's card actions through it
  *  in-process (ui/server.mjs invokeAskCard, with req._chatOrigin set). */
@@ -68,6 +70,38 @@ async function applyScheduleCard(card, { by = null } = {}) {
   else detail = card.action === 'cancel' ? 'canceled' : 'deleted';
   return { ok: true, detail, ...(b.runId ? { runId: b.runId } : {}), ...(b.pipelineId ? { pipelineId: b.pipelineId } : {}) };
 }
+const TAB_OPS = Object.freeze({ open: (id, i, turn) => tabTools.open(id, i, { turn }), screenshot: (id, i) => tabTools.screenshot(id, i), read: (id, i) => tabTools.read(id, i) });
+app.post('/api/ask/tabs', async (req, res) => {
+  if (!isInContainer(req)) return res.status(403).json({ error: 'tabs: loopback callers only' });   // the /api/ask/relay gate
+  const token = String(req.headers['x-worca-ask-tabs'] || '');
+  const threadId = askTabBridges.get(token);
+  if (!threadId) return res.status(403).json({ error: 'tabs: unknown or finished turn' });
+  if (!askTabsEnabled()) return res.status(403).json({ error: 'tabs: not available while agent isolation is on' });
+  const op = req.body && req.body.op;
+  const input = req.body && req.body.input && typeof req.body.input === 'object' && !Array.isArray(req.body.input) ? req.body.input : {};
+  if (typeof op !== 'string' || !Object.hasOwn(TAB_OPS, op)) return badRequest(res, 'tabs: unknown op');
+  try { res.json({ result: await TAB_OPS[op](threadId, input, token) }); } catch (e) { tabFailure(res, e); }
+});
+// Chat file links (issue 1064 §2): which candidate paths of an answer exist in the chat's root. Same guard as the Files
+// tab (terminalCallerOk: exact origin, never a possible agent). Refused paths answer {ok:false} like missing ones.
+app.post('/api/ask/files/resolve', async (req, res) => {
+  if (!terminalCallerOk(req, res)) return;
+  const b = req.body && typeof req.body === 'object' ? req.body : {};
+  const id = askIdParam(res, b.threadId, 'thread'); if (!id) return;
+  const paths = Array.isArray(b.paths) ? b.paths : null;
+  if (!paths || !paths.length || paths.length > FILE_REFS_MAX || paths.some((p) => typeof p !== 'string' || !p || p.length > FILE_PATH_MAX)) {
+    return res.status(400).json({ error: `paths: 1 to ${FILE_REFS_MAX} strings of at most ${FILE_PATH_MAX} characters`, code: 'BAD_INPUT' });
+  }
+  try {
+    const r = await chatLinkRoots(id, req);
+    if (r.gone) return res.status(404).json({ error: 'This chat is gone or archived.', code: 'SCOPE_GONE' });
+    if (r.error) return res.json({ root: null, paths: Object.fromEntries(paths.map((p) => [p, { ok: false }])) });
+    res.json({ root: r.root, paths: await chatLinks.resolve(r.roots, [...new Set(paths)]) });
+  } catch (e) {
+    console.error(`[worca-ui] files resolve: ${e?.message || e}`);
+    res.status(500).json({ error: 'resolve failed' });
+  }
+});
 
 // Card ids with a Save in flight: the mint + the row write await, so the
 // `state === 'proposed'` check alone would let two Saves both pass and write two rows.

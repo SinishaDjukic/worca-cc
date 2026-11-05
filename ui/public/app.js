@@ -139,7 +139,7 @@ import {
   collectSeedDecisions, seedSummary, seedableCount, renderTeamAvailableLine,
 } from './memory-view.mjs';
 import { createScriptsController, nextCopyKey } from './scripts-view.mjs';
-import { renderRunPill, renderOverviewStrip, renderShipItStrip, shipItTryState, renderRunningActionRows, historyActionBadges, createActionsController, releaseCheckout } from './actions-view.mjs';
+import { renderRunPill, renderOverviewStrip, renderShipItStrip, shipItTryState, renderRunningActionRows, historyActionBadges, createActionsController, releaseCheckout, withPort } from './actions-view.mjs';
 import { editorFieldEl, renderProjectActionsEditor, renderStackEditor } from './actions-config-view.mjs';
 import { createMcpView, mountProjectMcp, paintMcpResolution, paintAskMcpBlock, setMcpStripRenderer, parseMcpParam } from './mcp-view.mjs';
 import { createAskPanel } from './ask-panel.mjs';
@@ -151,7 +151,18 @@ import { registerChatActionCards, refreshChatPrWatch } from './chat/action-cards
 import { registerScopeSwitchCard } from './chat/scope-switch-card.mjs';
 import { registerQuestionCard } from './chat/question-card.mjs';
 import { registerFilesCard, filesForViewer, fileViewerUrls } from './chat/files-card.mjs';
-import { createTerminalPane } from './terminal-pane.mjs';
+import { createTerminalTool } from './terminal-pane.mjs';
+import { createToolPanel } from './tool-panel.mjs';
+import { createToolRegistry } from './tool-kinds.mjs';
+import { createTabModel } from './tool-tabs.mjs';
+import { createTabMirror } from './tool-mirror.mjs';
+import { createFilesKind } from './tool-files.mjs';
+import { createChangesKind } from './tool-changes.mjs';
+import { createBrowserKind, readRecentUrls, classifyUrl } from './tool-browser.mjs';
+import { createFrameVerdicts } from './frame-verdicts.mjs';
+import { linkDecision, linkHint, sameAddress } from './chat-link-route.mjs';
+import { stateOfTarget } from './tool-tabs.mjs';
+import { filePreviewOf } from './chat/file-renderers.mjs';
 import { notify, announce, withButton, fieldError, clearFieldErrors, cardAlert, trackDirty, splitMessage, BUTTON_DONE_MS } from './feedback.mjs';
 import { layoutDialog, watchDialogEdges } from './dialog-layout.mjs';
 import { setEngineLocks, engineLock, applyEngineLocks } from './engine-locks.mjs';
@@ -645,7 +656,21 @@ if (typeof window !== 'undefined') window.__shapeFeature = { mount: mountShapeFe
   shaperCard: shaperCardFor, threadForRun: featureThreadFor };   // test seam
 let activityMenu = null;       // the top bar's Activity (activity-menu.mjs) — assigned beside New run; updateNavCounts uses activityMenu?.
 let awayScreensaver = null;    // the away screensaver easter egg (away-screensaver.mjs) — assigned beside Activity; timerTick uses awayScreensaver?.
-let terminalPane = null;       // terminal pane (#573) — assigned by the boot mount; every seam uses terminalPane?.
+let terminalTool = null;   // the Terminal tool (issues 573, 1064) — assigned by the boot mount; seams use terminalTool?.
+let toolPanel = null;      // the tool panel (issue 1064) — assigned by the boot mount; seams use toolPanel?.
+// "Open chat links in the panel" (issue 1064 §4): read at boot and on every settings paint. null until the boot read
+// lands = off (no resolve POST, no labels): the thread snapshot renders before /api/settings answers (D17 "off = today").
+let chatLinksPref = null;
+// The preview port rule as the page knows it (D16, mirrors preview-proxy.mjs portRefusal): range mode (a hosted Worca, or
+// Settings › Actions "Preview ports: range") allows the Actions range and the running Actions' ports only.
+let previewPortGate = { range: false, low: null, high: null };
+function setChatLinksPref(on) {
+  const next = on !== false;   // from null (not read yet) to either value always repaints
+  if (next === chatLinksPref) return;
+  chatLinksPref = next;
+  askPanel?.refreshAnswers?.();
+}
+let toolMirror = null;      // the tool panel's server mirror (issue 1064 slice 3) — assigned by the boot mount
 let newPipelinePrefill = null; // one-shot card → New Pipeline handoff (§10.2 seam 7, consumed by Task 11)
 // Engine readiness (GET /api/engines): which engines a usage-limit pause offers. Fetched on demand, refreshed after
 // 60 s. null until an answer with an `engines` array arrives — then usageLimitSwitches offers every other engine.
@@ -1085,7 +1110,7 @@ function connectWS() {
   ws.addEventListener('close', (e) => {
     state.wsReady = false;
     conn.lost();
-    if (terminalPane) terminalPane.onConnection(false);   // its keys are not sent until the next hello
+    if (terminalTool) terminalTool.onConnection(false);
     // 4001: the server closed it because the sign-in token it opened with expired (W7). Reconnect
     // straight away: the gate in front checks the session again on the new upgrade.
     if (e?.code === 4001) { scheduleReconnect(50); return; }
@@ -1741,7 +1766,8 @@ function handleServerMessage(msg) {
     conn.back();
     onHello(msg);
     refreshRunningActions();
-    if (terminalPane) terminalPane.onHello(msg);
+    if (terminalTool) terminalTool.onHello(msg);
+    if (toolPanel) toolPanel.onContextChange();   // a boot on a live run page: the run (and its pipeline id) arrives with this hello
     if (Array.isArray(msg.extensionPairs)) msg.extensionPairs.forEach((r) => void promptExtensionPair(r));
     return;
   }
@@ -1752,6 +1778,19 @@ function handleServerMessage(msg) {
   }
   if (msg.type === 'git') { applyGit(msg.git); return; }
   if (msg.type === 'setup-apply') { setupDialog?.onFrame(msg); return; }
+  // open_tab (issue 1064 slice 3): the assistant opened a tab in a chat; the panel takes it in when that chat is on screen.
+  if (msg.type === 'ask-tool-tabs') {
+    const v = toolPanel?.view();
+    const onScreen = v?.side?.type === 'chat' && v.side.id === msg.threadId;
+    const inColumn = !onScreen && !!askSide?.shown?.() && askPanel?.threadId?.() === msg.threadId;
+    // Brought forward (open_tab on an open tab): every page holding that tab takes the new line, so its next mirror PUT
+    // keeps it (review minor 5); only a page showing the chat brings the tab forward.
+    if (typeof msg.focus === 'string') { void toolPanel?.focusTab(msg.focus, stateOfTarget(msg.target), { show: onScreen || inColumn }); return; }
+    if (!onScreen && !inColumn) return;
+    if (onScreen) void toolPanel?.pullMirror();
+    else void toolPanel?.pullChat(msg.threadId);   // the panel may not be built yet (null until boot)
+    return;
+  }
 
   if (msg.type === 'channel-status') {
     onChannelStatus(msg);
@@ -2003,7 +2042,7 @@ function handleServerMessage(msg) {
   }
   // Terminal frames are tagged by sessionId (#573); the pane keeps its own.
   if (typeof msg.type === 'string' && msg.type.startsWith('term-')) {
-    if (terminalPane) terminalPane.onFrame(msg);
+    terminalTool?.onFrame(msg);
     return;
   }
   // Action frames are tagged by instanceId (not runId); each controller keeps its own run's.
@@ -7955,6 +7994,7 @@ async function loadProjects(selectName, { quiet = false } = {}) {
   paintNoProjectWorkDir();
   renderProjectOptions(selectName, { quiet });
   askPanel?.pageChanged?.();   // Ask worca beside the page: a project page's chip and scope name the project now
+  toolPanel?.onContextChange();   // the tool panel too: a project page has its context only once this list knows the project
   if (state.presets.length) paintPresetMenu();   // pinned presets' group labels name the projects
   // P3-D7: the automatic No project default (no stored choice, no project at boot) gives way to the first project.
   if (state.runTargetAuto && state.runTarget === 'none' && state.projects.length) setRunTarget('project', { persist: false });
@@ -13210,7 +13250,7 @@ function openProjDetail(p, parsed, { instant = false } = {}) {
     if (action) openProjectGitModal(p.key, action, () => projDetail && projDetail.screen.querySelector('.pd-git'));
   });
   paintProjHeader(screen, p);
-  terminalPane?.syncOpeners();             // the cloned header's terminal button says whether the pane is open
+  toolPanel?.syncIcons();   // the cloned header's terminal opener says whether the panel is open
   initPdTabs(screen, p);
   activateProjTab(parsed.tab, parsed.sub);
 
@@ -15795,6 +15835,7 @@ async function loadSettings() {
     paintDebugSpawnSettings(data);
     paintKeepAwakeRow(data.keepAwake !== false);
     paintPrSettings(data);
+    paintChatLinksSettings(data);
     await paintEngineSettings(data);
     await paintWorkspaceScanModelsSettings(data);
     paintBudgetReadout();
@@ -17040,6 +17081,16 @@ document.getElementById('prSettingsSave')?.addEventListener('click', (e) => post
   { autoGeneratePrDescription: !!document.getElementById('prAutoDescribe')?.checked },
   { card: document.getElementById('pr-settings-card'), paint: paintPrSettings, dirty: settingsCardDirty('prSettingsSave'), button: e.currentTarget }));
 settingsCardDirty('prSettingsSave');
+function paintChatLinksSettings(data) {
+  const cb = document.getElementById('chatLinksInPanel');
+  setChatLinksPref(!(data && data.chatLinksInPanel === false));
+  if (!cb) return;
+  cb.checked = chatLinksPref === true;
+  settingsCardPainted('chatLinksSave');
+}
+document.getElementById('chatLinksSave')?.addEventListener('click', (e) => postSettingsCard({ chatLinksInPanel: !!document.getElementById('chatLinksInPanel')?.checked },
+  { card: document.getElementById('chat-links-card'), paint: paintChatLinksSettings, dirty: settingsCardDirty('chatLinksSave'), button: e.currentTarget }));
+settingsCardDirty('chatLinksSave');
 
 // ---- Helper models: Claude's title, Auto and PR description slots are rows of the Engines card's Helper jobs
 // (engine-settings-view.mjs). What stays here: the project-less catalog every model picker reads, the Claude-only
@@ -18401,10 +18452,13 @@ function destroyActionsIn(root) {
 }
 
 // ---- running actions: sidebar card, header pill, tab dots, History badges ----
+/** Called after every refresh of state.actionsRunning: the tool panel's Browser tabs and its + page (issue 1064). */
+const runningActionsListeners = new Set();
 async function refreshRunningActions() {
   const r = await actionsCall('GET', '/api/actions/running');
   if (r.ok && Array.isArray(r.data)) state.actionsRunning = r.data;
   paintRunningActions();
+  for (const fn of runningActionsListeners) { try { fn(); } catch (e) { console.warn('running actions listener:', e); } }
 }
 const runningServicesOf = (runId) => (state.actionsRunning || []).filter((s) => s.runId === runId && s.kind === 'service');
 async function stopActionInstance(s) {
@@ -18421,7 +18475,8 @@ function paintRunningActions() {
   if (side) {
     const services = running.filter((s) => s.kind === 'service');
     const opts = { doc: document, titleOf: (s) => s.runTitle || s.runId, onStop: stopActionInstance,
-      onOpen: (s) => { sideActionsFlyout?.close(); openActionRun(s); } };
+      onOpen: (s) => { sideActionsFlyout?.close(); openActionRun(s); },
+      onBrowse: (s) => { sideActionsFlyout?.close(); openServiceInBrowser(s); } };
     // The column's rows and the rail flyout's copy (its buttons are menu items). A repaint under a
     // focused row (a Stop just pressed, in the column or in the open flyout) keeps focus in that list:
     // the same control of the same row while its service still runs, else the same control of the
@@ -18431,7 +18486,8 @@ function paintRunningActions() {
     const focusHost = [colHost, flyHost].find((host) => host && host.contains(document.activeElement)) || null;
     const focused = focusHost ? document.activeElement : null;
     const focusedId = focused?.closest('.act-srow')?.dataset.instanceId;
-    const focusedPart = focused?.classList.contains('act-stop') ? '.act-stop' : '.act-srow-name';
+    const focusedPart = focused?.classList.contains('act-stop') ? '.act-stop'
+      : focused?.classList.contains('act-srow-open') ? '.act-srow-open' : '.act-srow-name';
     const tileFocused = !!sideActionsTile && document.activeElement === sideActionsTile;   // the rail tile goes with the last row
     const rows = renderRunningActionRows(services, opts);
     const flyRows = renderRunningActionRows(services, { ...opts, menu: true });
@@ -18450,9 +18506,9 @@ function paintRunningActions() {
     if ((focused && !focused.isConnected) || (tileFocused && !rows)) {
       const host = rows && (focusHost === colHost || sideActionsFlyout?.isOpen()) ? focusHost : null;
       const row = host && [...host.querySelectorAll('.act-srow')].find((r) => r.dataset.instanceId === focusedId);
-      // The same control of the same row, else that row's other button (its name is plain text once its
-      // run loses its saved row), else the same control of the first row.
-      const next = host && (row?.querySelector(`button${focusedPart}`) || row?.querySelector('button')
+      // The same control of the same row, else that row's Stop (its name is plain text once its run loses its
+      // saved row; never its globe, issue 1064), else the same control of the first row.
+      const next = host && (row?.querySelector(`button${focusedPart}`) || row?.querySelector('button.act-stop')
         || host.querySelector(`button${focusedPart}`) || host.querySelector('button'));
       // Else the open page's row, or the first control that takes focus here: a control that is
       // not shown ignores focus() (the collapse toggle on a tablet or a phone), and New run in the
@@ -18630,6 +18686,7 @@ async function buildWdActions(sec, id) {
 
 // ---- Settings › Runs › Actions ----
 function paintActionsSettings(data) {
+  setPreviewPortGate(data);
   const a = (data && data.actions) || {};
   const set = (id, v) => { const n = document.getElementById(id); if (n) n.value = v ?? ''; };
   set('act-keep', a.keep || 'never');
@@ -18638,6 +18695,15 @@ function paintActionsSettings(data) {
   set('act-editor', a.editor);
   set('act-terminal', a.terminal);
   set('act-max', a.maxCheckouts);
+  // Preview ports (Browser tab): the effective mode comes from actionsGate — a hosted Worca locks it to the range.
+  const gate = (data && data.actionsGate) || {};
+  const pp = document.getElementById('act-preview-ports');
+  if (pp) {
+    pp.value = gate.previewPortsLocked ? 'range' : (a.previewPorts === 'range' ? 'range' : 'all');
+    pp.disabled = !!gate.previewPortsLocked;
+  }
+  const ppNote = document.getElementById('act-preview-ports-note');
+  if (ppNote) ppNote.textContent = gate.previewPortsLocked ? 'This hosted Worca previews only the Actions range and running Actions.' : '';
   actionsDetected = (data && data.actionsDetected) || {};
   // A save answers with actionsWarnings (a program Worca cannot find): amber on that field until it changes.
   for (const key of ['editor', 'terminal']) {
@@ -18784,6 +18850,8 @@ function readActionsSettingsForm() {
   const num = (id) => (val(id) === '' ? null : Number(val(id)));   // blank -> null clears the key
   const form = { keep: val('act-keep') || 'never', portLow: num('act-port-low'), portHigh: num('act-port-high'),
     editor: val('act-editor'), terminal: val('act-terminal'), maxCheckouts: num('act-max') };
+  const pp = document.getElementById('act-preview-ports');
+  if (pp && !pp.disabled) form.previewPorts = pp.value === 'range' ? 'range' : 'all';
   if (form.portLow != null && form.portHigh != null && form.portLow > form.portHigh) {
     fieldError([document.getElementById('act-port-low'), document.getElementById('act-port-high')], 'The low port can’t be higher than the high port.');
     return null;
@@ -18796,7 +18864,7 @@ document.getElementById('act-save')?.addEventListener('click', (e) => {
   if (actions) saveActionsSettings(actions, { button: e.currentTarget });
 });
 document.getElementById('act-reset')?.addEventListener('click', (e) => saveActionsSettings(
-  { keep: null, portLow: null, portHigh: null, editor: null, terminal: null, maxCheckouts: null },
+  { keep: null, portLow: null, portHigh: null, editor: null, terminal: null, maxCheckouts: null, previewPorts: null },
   { button: e.currentTarget, gate: false, busy: 'Resetting…', done: 'Reset' }));
 settingsCardDirty('act-save');
 
@@ -23671,6 +23739,7 @@ function openHistDetail(parsed, { instant = false, host: where = 'page' } = {}) 
   histDetailState.screen = screen;
   // The panel has no glance, so there is no page title to watch.
   if (panel) presentRunScreenInPanel(screen); else watchPageTitle(screen, 'hd');
+  toolPanel?.syncIcons();                   // the bar's tool icons (issue 1064)
 
   screen.querySelector('.hd-back').addEventListener('click', () => backToRunsList());   // slice 2: the list itself, never the D6 restore
   // Glance <-> Details are routes, so the browser's back and forward walk them.
@@ -26553,7 +26622,7 @@ function runMoreItems(screen, { away = [], extra = [] } = {}) {
   if (preset) items.push({ label: 'Save as preset', title: preset.title, onSelect: () => preset.click() });
   items.push(...extra);
   // The Chat panel hides the terminal opener on purpose (.crp .term-opener): no Terminal item there either.
-  if (screen.dataset.presentation !== 'panel') items.push({ label: 'Terminal', hint: 'Ctrl+`', onSelect: () => terminalPane?.toggle() });
+  if (screen.dataset.presentation !== 'panel') items.push({ label: 'Terminal', hint: 'Ctrl+`', onSelect: () => toolPanel?.toggleKind('terminal') });
   const report = offered('.hd-report, .rd-report');
   const archive = offered('.hd-archive, .rd-archive');
   const restore = offered('.hd-restore');
@@ -26603,6 +26672,7 @@ async function archiveRunFlow({ btn, rec: r, run, screen, onGone }) {
     const dd = await safeJson(res);
     if (!res.ok) throw new Error((dd && dd.error) || `HTTP ${res.status}`);
     state.historyAll = state.historyAll.filter((x) => !(x && x.id === r.id && x.projectKey === r.projectKey));
+    toolPanel?.closeScope({ type: 'run', id: r.id });   // its tabs go (the server closed its shells)
     // The archived feed too, so a revisit of the Archived toggle does not show the
     // just-archived run as still archived.
     if (state.historyArchived) {
@@ -26796,7 +26866,7 @@ async function hdBaseAction(screen, record, data, m, action, button) {
     if (action === 'resolve-terminal' && d.session) {
       hdBaseMarkResolving(data, m.key);              // the server marked it: Re-check now settles it
       say(`Merge started: ${(d.conflicts || []).length} conflicting file(s). Commit it in the terminal, then Re-check.`);
-      terminalPane?.showSession(d.session.id);
+      toolPanel?.showSession(d.session.id);
     }
   } catch (err) {
     say(`${BASE_ACTION_TITLE[action]}: ${err.message}`, true);
@@ -29650,6 +29720,65 @@ function rdRenderFileBody(pane, index, entry) {
   pane.appendChild(body);
 }
 
+// The Diff tab's file list and body for a { results, patch } diff; the tool panel's Changes tab draws with it too
+// (issue 1064). `picked`: the section key to open first; `onPick(key)` after every pick. Returns the key picked.
+function paintDiffGrid(host, out, { picked = null, onPick = null } = {}) {
+  const results = out.results;
+  const rows = results ? hdDiffFileRows(results) : [];
+  if (!rows.length) return picked;
+  const grid = document.createElement('div');
+  grid.className = 'hd-diff';
+  const list = document.createElement('div');
+  list.className = 'hd-diff-list';
+  const pane = document.createElement('div');
+  pane.className = 'hd-diff-pane';
+  grid.append(list, pane);
+  host.appendChild(grid);
+  const sums = results.summary || {};
+  const head = document.createElement('div');
+  head.className = 'hd-diff-list-head';
+  const nFiles = (sums.filesNew || 0) + (sums.filesChanged || 0);
+  const total = document.createElement('b');
+  total.textContent = `${nFiles} file${nFiles === 1 ? '' : 's'} changed`;
+  head.append(total, hdFileCountsNode(document, { added: sums.linesAdded || 0, removed: sums.linesRemoved || 0 }));
+  list.appendChild(head);
+  const rowsHost = document.createElement('div');
+  rowsHost.className = 'hd-diff-rows';
+  list.appendChild(rowsHost);
+  const index = out.patch ? patchIndex(splitPatchSections(out.patch)) : null;
+  const pick = (entry, btn) => {
+    for (const b of rowsHost.querySelectorAll('.rd-diff-row')) b.classList.toggle('active', b === btn);
+    picked = sectionKey(entry.project, entry.f.path);
+    rdRenderFileBody(pane, index, entry);
+    if (onPick) onPick(picked);
+  };
+  let first = null;
+  for (const entry of rows) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'rd-diff-row';
+    // What Ask Worca's page context reads as "the file open here" (getPageContext).
+    btn.dataset.path = entry.f.path;
+    if (entry.project) btn.dataset.project = entry.project;
+    const name = document.createElement('span');
+    name.className = 'rd-diff-row-path mono';
+    name.textContent = entry.project ? `${entry.project}/${entry.f.path}` : entry.f.path;
+    name.title = name.textContent;
+    if (entry.isNew) {
+      const tag = document.createElement('span');
+      tag.className = 'rd-diff-new';
+      tag.textContent = 'new';
+      btn.append(name, tag, hdFileCountsNode(document, entry.f));
+    } else btn.append(name, hdFileCountsNode(document, entry.f));
+    btn.addEventListener('click', () => pick(entry, btn));
+    rowsHost.appendChild(btn);
+    const key = sectionKey(entry.project, entry.f.path);
+    if (!first || key === picked) first = { entry, btn };
+  }
+  if (first) pick(first.entry, first.btn);
+  return picked;
+}
+
 function buildRdDiff(sec, ctx) {
   const r = ctx.run;
   sec.innerHTML = '';
@@ -29688,55 +29817,7 @@ function buildRdDiff(sec, ctx) {
       return;
     }
     if (out.capped) noteText.textContent += ' Some new files are not listed.';
-    const grid = document.createElement('div');
-    grid.className = 'hd-diff';
-    const list = document.createElement('div');
-    list.className = 'hd-diff-list';
-    const pane = document.createElement('div');
-    pane.className = 'hd-diff-pane';
-    grid.append(list, pane);
-    host.appendChild(grid);
-    const sums = results.summary || {};
-    const head = document.createElement('div');
-    head.className = 'hd-diff-list-head';
-    const nFiles = (sums.filesNew || 0) + (sums.filesChanged || 0);
-    const total = document.createElement('b');
-    total.textContent = `${nFiles} file${nFiles === 1 ? '' : 's'} changed`;
-    head.append(total, hdFileCountsNode(document, { added: sums.linesAdded || 0, removed: sums.linesRemoved || 0 }));
-    list.appendChild(head);
-    const rowsHost = document.createElement('div');
-    rowsHost.className = 'hd-diff-rows';
-    list.appendChild(rowsHost);
-    const index = out.patch ? patchIndex(splitPatchSections(out.patch)) : null;
-    const pick = (entry, btn) => {
-      for (const b of rowsHost.querySelectorAll('.rd-diff-row')) b.classList.toggle('active', b === btn);
-      picked = sectionKey(entry.project, entry.f.path);
-      rdRenderFileBody(pane, index, entry);
-    };
-    let first = null;
-    for (const entry of rows) {
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'rd-diff-row';
-      // What Ask Worca's page context reads as "the file open here" (getPageContext).
-      btn.dataset.path = entry.f.path;
-      if (entry.project) btn.dataset.project = entry.project;
-      const name = document.createElement('span');
-      name.className = 'rd-diff-row-path mono';
-      name.textContent = entry.project ? `${entry.project}/${entry.f.path}` : entry.f.path;
-      name.title = name.textContent;
-      if (entry.isNew) {
-        const tag = document.createElement('span');
-        tag.className = 'rd-diff-new';
-        tag.textContent = 'new';
-        btn.append(name, tag, hdFileCountsNode(document, entry.f));
-      } else btn.append(name, hdFileCountsNode(document, entry.f));
-      btn.addEventListener('click', () => pick(entry, btn));
-      rowsHost.appendChild(btn);
-      const key = sectionKey(entry.project, entry.f.path);
-      if (!first || key === picked) first = { entry, btn };
-    }
-    pick(first.entry, first.btn);
+    picked = paintDiffGrid(host, out, { picked, onPick: (k) => { picked = k; } });
     if (askSide?.shown()) askPanel?.pageChanged?.();   // Ask worca beside the page: the first file opens with no click
     rdPaintTabBadges(runDetailState.screen || sec, rdCtx(r));
   };
@@ -32732,6 +32813,7 @@ function runArtifactUrls(base) {
     text: (rel) => `${base}/artifact?rel=${encodeURIComponent(rel)}`,
     raw: (rel) => rawArtifactUrl(base, rel),
     download: (rel) => `${rawArtifactUrl(base, rel)}?download=1`,
+    pdf: (rel) => `${rawArtifactUrl(base, rel)}?as=pdf`,
   };
 }
 
@@ -34362,6 +34444,7 @@ async function runBulkAction(action, targets = selectedTargets()) {
     if ((action === 'archive' || action === 'delete') && out.done.length) {
       const gone = new Set(out.done.map((d) => d.id));
       dropParkedRuns((e) => gone.has(e.pipelineId));
+      for (const id of gone) toolPanel?.closeScope({ type: 'run', id });
     }
     reloadRunsHistory();
   } catch (e) {
@@ -34952,6 +35035,7 @@ function openRunDetail(runId, { instant = false, host: where = 'page' } = {}) {
   runDetailState = { runId, screen, host: panel ? 'panel' : 'page' };
   // The panel has no glance, so there is no page title to watch (the bar never repeats the name there).
   if (panel) presentRunScreenInPanel(screen); else watchPageTitle(screen, 'rd');
+  toolPanel?.syncIcons();                   // the bar's tool icons (issue 1064)
 
   screen.querySelector('.rd-back').addEventListener('click', () => backToRunsList());
   // Glance <-> Details are routes, so the browser's own back and forward walk them.
@@ -39087,7 +39171,7 @@ function showView(name, param = '') {
   // The guide re-derives its hop on a tick, so it is told here — before a view's
   // own loader runs — and never misses a switch because a loader threw.
   onboardingViewChanged(name);
-  if (terminalPane) terminalPane.onContextChange();
+  if (toolPanel) toolPanel.onContextChange();
 
   // Focus selection lives only while on the Running view.
   state.selectedRunId = (name === 'running') ? runDetailParts(param).runId : '';
@@ -39844,6 +39928,22 @@ function getPageContext() {
   // ignores it for MCP servers, the context header and the memory mount (§9.1).
   const dir = selectedProjectPath();
   if (dir) { ctx.projectDir = dir; ctx.projectSource = 'fallback'; }
+  return ctx;
+}
+/** The tool panel's page context (issue 1064): getPageContext plus what it needs and the Chat page does not carry.
+ *  On Chat the scope is the chat itself (its id and pinned project), never the run in its panel. A live project run
+ *  names only its folder: the project key comes from the run (historyKeyForRun). */
+function toolPageContext() {
+  const ctx = getPageContext();
+  if (ctx.view === 'chat') {
+    const sc = askPanel?.scope?.() || null;
+    return { view: 'chat', chatId: askPanel?.threadId?.() || null, chatProjectKey: sc && sc.pinned && sc.projectKey ? sc.projectKey : null };
+  }
+  if (ctx.view === 'running' && ctx.runId && !ctx.projectKey && !ctx.workspaceId) {
+    const r = runs.get(ctx.runId);
+    const key = r ? historyKeyForRun(r) : '';
+    if (key) ctx.projectKey = key;
+  }
   return ctx;
 }
 /** Ask worca beside the page: the composer's chips for the page on screen (ask-page-chips.mjs), named with what this
@@ -40971,7 +41071,7 @@ askPanel = createAskPanel({
   win: window,
   fetch: (...args) => fetch(...args),
   // Shared terminal (#574): a click on a command card's folder shows its tab in the pane below (Ask's own commands never do).
-  showTerminal: (sessionId) => terminalPane?.showSession(sessionId),
+  showTerminal: (sessionId) => toolPanel?.showSession(sessionId),
   sendWs: (obj) => {
     const ws = state.ws;
     if (ws && state.wsReady) {
@@ -41000,6 +41100,8 @@ askPanel = createAskPanel({
   summariseCommands: () => chatSummariesPref,
   // Ask worca beside the page: the page on screen as chips and as a new side chat's scope, and the column's head buttons.
   getPageChips,
+  onToolScope: () => toolPanel?.onContextChange(),                 // a chat switch or a scope change moves no hash
+  onChatsClosed: (ids) => { for (const id of ids || [null]) toolPanel?.closeScope({ type: 'chat', id }); },   // null: every chat (a history clear)
   getPageScope,
   sideActions: {
     hide: () => askSide?.hide(),
@@ -41022,7 +41124,7 @@ if ($('#ask-side') && $('#topnav-ask')) {
     storage: localStorage,
     aside: $('#ask-side'),
     button: $('#topnav-ask'),
-    getTermW: () => (terminalPane?.isOpen() ? (parseInt(document.body?.style.getPropertyValue('--term-w'), 10) || 460) : 0),
+    getTermW: () => (toolPanel?.isOpen() ? (parseInt(document.body?.style.getPropertyValue('--term-w'), 10) || 460) : 0),
     onShow: ({ focus, button }) => {
       const host = $('#ask-side [data-ask-side-host]');
       if (host && askPanel.root.parentNode !== host) host.appendChild(askPanel.root);
@@ -41066,7 +41168,9 @@ if ($('#ask-side') && $('#topnav-ask')) {
 Promise.resolve().then(() => fetch('/api/settings')).then((r) => safeJson(r)).then((d) => {
   setChatSummariesPref(d && d.chat);
   paintKeepAwakeRow(!(d && d.keepAwake === false));
-}).catch(() => { /* keep: on */ });
+  setChatLinksPref(!(d && d.chatLinksInPanel === false));
+  setPreviewPortGate(d);
+}).catch(() => { setChatLinksPref(true); /* keep: on (the chat links pref is null = off until here) */ });
 onFlagChange('commandSummaries', () => { askPanel?.refreshCommandCards(); void paintHelperModelCards(); });
 // One delegated handler for every Summaries / Raw switch (Logs tab, History Logs, both drawers, Chat's run
 // panel): they are cloned on every build, so per-node listeners would be lost on each rebuild.
@@ -41129,28 +41233,169 @@ window.addEventListener('focus', () => { void refreshVersionStatus(); });
   window.addEventListener('focus', () => { loadCredentials().then((d) => { if (d) repaintPickers(); }); });
 }
 
-// Terminal pane (issue #573): a JS-built body-level pane on the right, like the Ask dock above. No
-// network until it is opened (or was left open); xterm.js loads on first open, and opening it on a run
-// or a project starts (or reattaches) that page's shell.
-terminalPane = createTerminalPane({
+// Tool panel (issue 1064): the terminal pane's column, now with tabs. Terminal, Files and Changes register here; slice
+// 2's Browser registers the same way (toolKinds.register) and its header icon slot lights up. No network until the panel
+// is first opened (or was left open); xterm.js loads with the first terminal tab.
+terminalTool = createTerminalTool({
   doc: document,
   win: window,
   fetch: (...args) => fetch(...args),
-  // false while /ws is down: the pane shows it is reconnecting instead of dropping keys silently.
+  // false while /ws is down: the terminal shows it is reconnecting instead of dropping keys silently.
   sendWs: (obj) => {
     const ws = state.ws;
     if (!ws || !state.wsReady) return false;
     try { ws.send(JSON.stringify(obj)); return true; } catch { return false; }
   },
-  getPageContext,
   confirm: confirmModal,
-  storage: localStorage,
+  onSessions: (list) => toolPanel?.syncSessions(list),
 });
-document.body.appendChild(terminalPane.root);
-// Its openers are the run and project pages' header buttons (.term-opener); a page cloned later (the
-// project page) syncs its own, see openProjDetail.
-document.addEventListener('click', (e) => { if (e.target.closest?.('.term-opener')) terminalPane?.toggle(); });
-terminalPane.syncOpeners();
+const toolKinds = createToolRegistry();
+toolKinds.register(terminalTool.kind);
+toolKinds.register(createFilesKind({ doc: document, fetch: (...args) => fetch(...args),
+  previewDeps: () => ({ ...artifactViewerDeps(), hljsLoader: diffHljsLoader }) }));
+toolKinds.register(createChangesKind({ doc: document, fetch: (...args) => fetch(...args), renderDiff: (host, out, opts) => paintDiffGrid(host, out, opts) }));
+const frameVerdicts = createFrameVerdicts({ fetch: (...args) => fetch(...args), storage: (() => { try { return window.sessionStorage; } catch { return null; } })() });
+toolKinds.register(createBrowserKind({ doc: document, win: window, fetch: (...args) => fetch(...args), storage: localStorage,
+  services: () => state.actionsRunning || [],
+  onServices: (fn) => { runningActionsListeners.add(fn); return () => runningActionsListeners.delete(fn); },
+  onPick: (files, o) => toolPickToChat(files, o),
+  frameCheck: (url, tab) => frameVerdicts.check(url, { threadId: tab?.scope?.type === 'chat' ? tab.scope.id : null }),
+  frameRefused: (origin) => frameVerdicts.refused(origin) }));
+const toolModel = createTabModel({ storage: localStorage, onChange: () => toolMirror?.schedule() });
+toolMirror = createTabMirror({ win: window, fetch: (...args) => fetch(...args), model: toolModel });
+toolPanel = createToolPanel({
+  doc: document,
+  win: window,
+  registry: toolKinds,
+  model: toolModel,
+  mirror: toolMirror,
+  getPageContext: toolPageContext,
+  refreshSessions: () => terminalTool.refreshInfo(),
+  suggest: (view) => toolSuggestions(view),
+});
+toolMirror.schedule();   // the first sync: this browser's chat and project tabs as they were left
+runningActionsListeners.add(() => toolPanel?.refreshNewPage());
+document.body.appendChild(toolPanel.root);
+// The project page's header button (.term-opener) toggles the terminal; the chat and run headers hold the icon strip.
+document.addEventListener('click', (e) => { if (e.target.closest?.('.term-opener')) toolPanel?.toggleKind('terminal'); });
+// An Actions service's Open link (the run's Actions tab, the Overview strip) opens in a Browser tab of the tool panel
+// (issue 1064). A modified or middle click keeps the browser's own new tab, and so does a link in a dialog (Create PR's
+// Try it first: the panel sits under it), a link to another site, or one whose tab would have nowhere to go.
+document.addEventListener('click', (e) => {
+  const a = e.target.closest?.('a.act-open');
+  if (!a || !toolPanel || e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+  if (a.closest('.viewer-modal, dialog[open], [aria-modal="true"]')) return;
+  const url = a.getAttribute('href');
+  if (classifyUrl(url).kind !== 'local') return;   // an Action's openUrl on another site keeps its own tab (most refuse frames)
+  const s = (state.actionsRunning || []).find((x) => x.url === url);
+  const v = toolPanel.view();
+  if (!s && (v.blocked || (!v.side && !v.project))) return;   // its tab would have nowhere to go: the browser's own
+  e.preventDefault();
+  openServiceInBrowser(s || { url });
+});
+// Chat links (issue 1064 §2–§4): web links in the chat's answers open in a Browser tab of the chat, file links (buttons
+// built by ask-file-links.mjs) in a Files tab. The tab goes into the chat's tab group: on another page (the side column)
+// it shows in that page's panel as a guest. The panel opens if closed (the full-screen sheet when narrow).
+function chatToolScope(threadId) { return typeof threadId === 'string' && threadId ? { type: 'chat', id: threadId } : null; }
+function openChatFile({ threadId, path, type, line, endLine, root, member }) {
+  const scope = chatToolScope(threadId);
+  if (!scope || !toolPanel || typeof path !== 'string') return;
+  const dir = type === 'dir';
+  const state = { ...(dir ? { path, file: undefined, line: undefined, endLine: undefined } : { file: path, line: line || undefined, endLine: endLine || undefined }),
+    root: root || undefined, member: member || undefined, att: undefined };
+  void toolPanel.openIn('files', scope, state, { match: (t) => !t.state.att && (dir ? t.state.path === path && !t.state.file : t.state.file === path)
+    && (t.state.root || null) === (root || null) && (t.state.member || null) === (member || null) });
+}
+function openChatUrl(url) {
+  const scope = chatToolScope(askPanel?.threadId?.());
+  if (!scope || !toolPanel) return false;
+  void toolPanel.openIn('browser', scope, { url }, { match: (t) => sameAddress(t.state.url, url) });
+  return true;
+}
+function setPreviewPortGate(data) {
+  const gate = (data && data.actionsGate) || {};
+  const a = (data && data.actions) || {};
+  const n = (v) => (Number.isInteger(v) ? v : null);
+  const next = { range: !!gate.previewPortsLocked || gate.previewPorts === 'range', low: n(a.portLow), high: n(a.portHigh) };
+  const changed = next.range !== previewPortGate.range || next.low !== previewPortGate.low || next.high !== previewPortGate.high;
+  previewPortGate = next;
+  if (changed && chatLinksPref) askPanel?.refreshAnswers?.();   // a loopback link's accessible name may change
+}
+/** May the preview proxy show this loopback port? (worca's own port never gets here: it is worca's own origin.) */
+function previewPortAllowed(port) {
+  const g = previewPortGate;
+  if (!g.range) return true;
+  if (g.low != null && g.high != null && port >= g.low && port <= g.high) return true;
+  return (state.actionsRunning || []).some((s) => Object.values(s.ports || {}).includes(port));
+}
+/** The fields every chat link decision shares (the click and the accessible name). */
+function chatLinkContext(href) {
+  return { href, origin: window.location.origin, enabled: chatLinksPref === true, refused: (o) => frameVerdicts.refused(o), portAllowed: previewPortAllowed };
+}
+chatDeps.linksInPanel = () => chatLinksPref === true;
+chatDeps.linkHint = (href) => linkHint(chatLinkContext(href));
+chatDeps.openFileLink = (t) => openChatFile(t);
+chatDeps.openInPanel = ({ threadId, item }) => {
+  const scope = chatToolScope(threadId);
+  if (!scope || !toolPanel || !item?.attId) return;
+  void toolPanel.openIn('files', scope, { att: item.attId, attName: item.name, attBytes: item.bytes, attKind: filePreviewOf(item) },
+    { match: (t) => t.state.att === item.attId });
+};
+document.addEventListener('click', (e) => {
+  const a = e.target.closest?.('a[href]');
+  if (!a || e.defaultPrevented || !askPanel || !toolPanel || !askPanel.root.contains(a) || !a.closest('.ask-md')) return;
+  const d = linkDecision({ ...chatLinkContext(a.getAttribute('href')), button: e.button, meta: e.metaKey, ctrl: e.ctrlKey,
+    shift: e.shiftKey, alt: e.altKey });
+  if (d.action === 'native') {
+    // the browser opens it (target=_blank) inside this click; a refused preview port says why it did not go to the panel
+    if (d.notice === 'port') notify({ tone: 'info', title: `Port ${d.port} is not previewed here`, detail: 'It opened in a new browser tab.' });
+    return;
+  }
+  e.preventDefault();
+  if (d.action === 'inapp') { askSide?.uncover?.(); window.location.hash = d.hash; return; }
+  if (d.action === 'panel' && !openChatUrl(d.url)) window.open(d.url, '_blank', 'noopener,noreferrer');
+});
+toolPanel.syncIcons();
+
+/** The tool panel scope of a running Actions instance: its run (a workspace run by its workspace). */
+function actionScope(s) {
+  if (!s || typeof s.runId !== 'string' || !s.runId) return null;
+  return s.workspaceId ? { type: 'run', id: s.runId, workspaceId: s.workspaceId } : { type: 'run', id: s.runId, projectKey: s.member || undefined };
+}
+/** Pick element (issue 1064 slice 3): the picked element's files go into the chat composer (D8) — the chat on screen,
+ *  else the side column's (openChat), else the Chat page. A failed screenshot still sends the selector, and says why. */
+function toolPickToChat(files, { note = '' } = {}) {
+  if (!askPanel || !Array.isArray(files) || !files.length) return;
+  if (currentView() !== 'chat') openChat();
+  void askPanel.addFiles(files);
+  if (note) notify({ tone: 'warn', title: 'Pick element', detail: note });
+}
+/** A service's address in a new Browser tab: in the page's own run, chat or project, else in the service's run. */
+function openServiceInBrowser(s) {
+  if (!s?.url) return;
+  toolPanel?.openKind('browser', { url: s.url }, { scope: actionScope(s) });
+}
+/** The + page's Suggested rows (issue 1064): the view's running services, recent addresses, and the project's repo on
+ *  GitHub (from its sync chip; GitHub refuses frames, so that row opens a window of its own). */
+function toolSuggestions(view) {
+  const pk = view?.project || view?.side?.projectKey || null;
+  const runId = view?.side?.type === 'run' ? view.side.id : null;
+  const items = [];
+  const mine = (state.actionsRunning || []).filter((s) => s && s.kind === 'service' && s.url && (s.runId === runId || (!!pk && s.member === pk)));
+  for (const s of mine.slice(0, 5)) {
+    items.push({ label: withPort(s.label || s.actionId, s), detail: s.runTitle || s.url, icon: 'globe', open: () => openServiceInBrowser(s) });
+  }
+  const shown = new Set(mine.slice(0, 5).map((s) => classifyUrl(s.url).url || s.url));   // recent addresses are stored normalised
+  for (const url of readRecentUrls(localStorage).filter((u) => !shown.has(u)).slice(0, 5)) {
+    items.push({ label: url, detail: 'Recent', icon: 'globe', open: () => toolPanel?.openKind('browser', { url }) });
+  }
+  const remote = pk ? state.syncChips?.[pk]?.remoteLabel : null;
+  if (typeof remote === 'string' && /^github\.com\/[\w.-]+\/[\w.-]+$/.test(remote)) {
+    items.push({ label: `${remote.slice('github.com/'.length)} on GitHub`, detail: 'Opens in a new window', icon: 'external',
+      open: () => window.open(`https://${remote}`, '_blank', 'noopener,noreferrer') });
+  }
+  return items;
+}
 
 // ---------------------------------------------------------------------------
 // Export to Claude Code — modal wiring. Turns a saved v2 workflow into a runnable

@@ -422,6 +422,19 @@ test('the corporate proxy bridge: the token rides spawnEnv for every engine, the
   assert.equal(buildMcpConfig({ homeBase: '/h', threadId: 'ask_0000aaaa', serverPath: '/s.mjs', env: {} }).mcpServers.worca.env.WORCA_ASK_PROXY, undefined);
 });
 
+test('the tab bridge (issue 1064 slice 3): the token rides spawnEnv, the URL (never the token) rides the mcp env; none ⇒ unchanged', () => {
+  const tabs = { url: 'http://127.0.0.1:1/api/ask/tabs', token: 'secret' };
+  const base = { thread: { id: 'ask_0000aaaa' }, turn: {}, limits: {}, mcpConfigPath: '/m.json', scratchDir: '/t' };
+  const cfg = buildMcpConfig({ homeBase: '/h', threadId: 'ask_0000aaaa', serverPath: '/s.mjs', env: {}, tabs });
+  assert.deepEqual(JSON.parse(cfg.mcpServers.worca.env.WORCA_ASK_TABS), { url: 'http://127.0.0.1:1/api/ask/tabs' });
+  assert.doesNotMatch(JSON.stringify(cfg), /secret/);
+  assert.equal(buildMcpConfig({ homeBase: '/h', threadId: 'ask_0000aaaa', serverPath: '/s.mjs', env: {} }).mcpServers.worca.env.WORCA_ASK_TABS, undefined);
+  for (const engine of ['claude', 'codex', 'copilot']) {
+    assert.deepEqual(buildAskSpawnOptions({ ...base, engine, tabs }).spawnEnv, { ASK_TABS_TOKEN: 'secret' }, engine);
+    assert.equal(buildAskSpawnOptions({ ...base, engine }).spawnEnv, undefined, engine);
+  }
+});
+
 test('without commands the sub-agent note and the mcp env are unchanged (#574)', () => {
   assert.equal(sandboxNote({ commands: false }), SANDBOX_NOTE);
   const doc = buildMcpConfig({ homeBase: '/h', threadId: 'ask_0000aaaa', serverPath: '/s.mjs', env: {} });

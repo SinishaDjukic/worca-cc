@@ -24,7 +24,7 @@ export function filesForViewer(items) {
 /** The viewer's urls contract ({text, raw, download}) over the attachment route. */
 export function fileViewerUrls(threadId) {
   const at = (rel) => attachmentUrl(threadId, String(rel).split('/')[0]);
-  return { raw: at, download: at, text: (rel) => `${at(rel)}?as=text` };
+  return { raw: at, download: at, text: (rel) => `${at(rel)}?as=text`, pdf: (rel) => `${at(rel)}?as=pdf` };
 }
 
 const make = (doc, tag, cls, text) => { const n = doc.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
@@ -33,6 +33,7 @@ const make = (doc, tag, cls, text) => { const n = doc.createElement(tag); if (cl
 const GLYPH = {
   download: '<path d="M12 4v11M7 10l5 5 5-5M5 19h14"/>',
   folder: '<path d="M3.5 6.5A1.5 1.5 0 0 1 5 5h4.6l2 2.5H19a1.5 1.5 0 0 1 1.5 1.5v8.5A1.5 1.5 0 0 1 19 19H5a1.5 1.5 0 0 1-1.5-1.5z"/>',
+  panel: '<rect x="3.5" y="4.5" width="17" height="15" rx="1.5"/><path d="M14 4.5v15"/>',
 };
 function glyph(doc, body) {
   const s = doc.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -47,6 +48,16 @@ function glyph(doc, body) {
  *  open a folder here) and Download. Show in folder starts hidden, so a hosted worca never shows it. */
 function fileActions(doc, item, href, ctx, tid) {
   const box = make(doc, 'span', 'ask-filescard-acts');
+  // Open in panel (issue 1064 §2): the chat's stored copy in a Files tab of the chat; the tab says it is a copy.
+  if (tid && item.attId && typeof ctx.openInPanel === 'function') {
+    const pb = make(doc, 'button', 'btn btn-sm btn-quiet btn-icon ask-filescard-ib ask-filescard-panel');
+    pb.type = 'button';
+    pb.title = 'Open in panel';
+    pb.setAttribute('aria-label', `Open ${item.name} in the panel`);
+    pb.appendChild(glyph(doc, GLYPH.panel));
+    pb.addEventListener('click', (e) => { e.stopPropagation(); ctx.openInPanel({ threadId: tid, item }); });
+    box.appendChild(pb);
+  }
   if (item.source === true && tid && typeof ctx.revealFile === 'function' && typeof ctx.revealInfo === 'function') {
     const fb = make(doc, 'button', 'btn btn-sm btn-quiet btn-icon ask-filescard-ib ask-filescard-reveal');
     fb.type = 'button';
@@ -91,6 +102,7 @@ export function registerBuiltinFileRenderers() {
   registerFileRenderer('pdf', { label: 'PDF', preview: 'pdf' });
   registerFileRenderer('video', { label: 'Video', preview: 'video' });
   registerFileRenderer('audio', { label: 'Audio', preview: 'audio' });
+  registerFileRenderer('office', { label: 'Document', preview: 'office' });
   registerFileRenderer('markdown', { label: 'Markdown', preview: 'markdown' });
   registerFileRenderer('json', { label: 'JSON', preview: 'json' });
   registerFileRenderer('diff', { label: 'Diff', preview: 'diff' });

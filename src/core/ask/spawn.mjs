@@ -135,10 +135,11 @@ export function buildMockMarkers(card) {
   return `\n\nMOCK_ROLE: ask\nMOCK_ASK_CARD: ${JSON.stringify(card ?? {})}\n`;
 }
 
-/** The per-turn bridge tokens (agent mode's command bridge, the corporate proxy bridge): never on disk — spawnEnv
+/** The per-turn bridge tokens (agent mode's command bridge, the corporate proxy bridge, the tab bridge): never on disk — spawnEnv
  *  survives the scrub, and every engine hands its spawn env to the stdio MCP child. */
-function bridgeTokens({ commands = null, proxy = null } = {}) {
-  return { ...(commands?.token ? { ASK_COMMAND_TOKEN: commands.token } : {}), ...(proxy?.token ? { ASK_PROXY_TOKEN: proxy.token } : {}) };
+function bridgeTokens({ commands = null, proxy = null, tabs = null } = {}) {
+  return { ...(commands?.token ? { ASK_COMMAND_TOKEN: commands.token } : {}), ...(proxy?.token ? { ASK_PROXY_TOKEN: proxy.token } : {}),
+    ...(tabs?.token ? { ASK_TABS_TOKEN: tabs.token } : {}) };
 }
 
 /**
@@ -153,17 +154,18 @@ function bridgeTokens({ commands = null, proxy = null } = {}) {
  * @param {object|null} [o.registry]  resolveRegistry()'s result for this turn (MCP registry §9.2); no copies ⇒ ignored
  * @param {{url:string, token:string}|null} [o.commands]  agent mode's command bridge for this turn (#574); null ⇒ no command tools
  * @param {{url:string, token:string}|null} [o.proxy]  the corporate proxy bridge for this turn (proxy-deps.mjs); null ⇒ none
+ * @param {{url:string, token:string}|null} [o.tabs]  the tool panel's tab bridge for this turn (tab-deps.mjs); null ⇒ no tab tools
  * @param {{pluginDirs:string[], names:string[]}|null} [o.skills]  this turn's set-skill mount (skills registry §4.4); no plugin dir ⇒ ignored
  * @param {boolean} [o.composer]  a Workflows-chat turn: no Task built-in
  * @param {boolean} [o.git]  false = this machine has no git: the sub-agent note promises no worktree
  * @returns {object} runClaude options
  */
-export function buildAskSpawnOptions({ thread = {}, turn = {}, limits = {}, mcpConfigPath, scratchDir, memoryDir = null, web = null, relayed = false, registry = null, commands = null, proxy = null, skills = null, engine = 'claude', composer = false, git = true, env = process.env } = {}) {
+export function buildAskSpawnOptions({ thread = {}, turn = {}, limits = {}, mcpConfigPath, scratchDir, memoryDir = null, web = null, relayed = false, registry = null, commands = null, proxy = null, tabs = null, skills = null, engine = 'claude', composer = false, git = true, env = process.env } = {}) {
   if (!scratchDir) throw new Error('buildAskSpawnOptions: scratchDir is required');
   if (!mcpConfigPath) throw new Error('buildAskSpawnOptions: mcpConfigPath is required');
   const chat = engine !== 'claude' ? chatDescriptor(engine) : null;
   if (engine !== 'claude' && !chat) throw new Error(`buildAskSpawnOptions: Chat does not run on ${engine}`);
-  if (chat) return buildLockedAskOptions({ chat, thread, turn, mcpConfigPath, scratchDir, web, relayed, commands, proxy, env, registry });
+  if (chat) return buildLockedAskOptions({ chat, thread, turn, mcpConfigPath, scratchDir, web, relayed, commands, proxy, tabs, env, registry });
   const systemPrompt = String(turn.systemPrompt ?? '') + (turn.mock ? buildMockMarkers(turn.mock.card) : '');
   const reg = registry && Array.isArray(registry.copies) && registry.copies.length ? registry : null;
   // Skills registry §4.4 (P3 probe 6): --disable-slash-commands hides the Skill tool AND every plugin skill, so a turn
@@ -222,7 +224,7 @@ export function buildAskSpawnOptions({ thread = {}, turn = {}, limits = {}, mcpC
     // present in worca's own env), their values for the redactor, and over-long tool names withheld (§5.6).
     // Agent mode (#574): the command bridge token. Never on disk (the mcp json is model-readable): spawnEnv
     // survives the scrub, and Claude Code hands its env to the stdio MCP child (command-deps.mjs reads it).
-    ...((reg || commands?.token || proxy?.token) ? { spawnEnv: { ...(reg ? reg.env : {}), ...bridgeTokens({ commands, proxy }) } } : {}),
+    ...((reg || commands?.token || proxy?.token || tabs?.token) ? { spawnEnv: { ...(reg ? reg.env : {}), ...bridgeTokens({ commands, proxy, tabs }) } } : {}),
     ...(reg ? { redactValues: [...reg.secretValues], disallowedTools: [...reg.disallowedTools] } : {}),
   };
 }
@@ -238,7 +240,7 @@ export function buildAskSpawnOptions({ thread = {}, turn = {}, limits = {}, mcpC
  * routing env) do not exist there; the caps are turn.mjs's watchdog (D14). The host-guard preamble is prepended by the
  * adapter.
  */
-function buildLockedAskOptions({ chat, thread, turn, mcpConfigPath, scratchDir, web, relayed, commands = null, proxy = null, env = process.env, registry = null }) {
+function buildLockedAskOptions({ chat, thread, turn, mcpConfigPath, scratchDir, web, relayed, commands = null, proxy = null, tabs = null, env = process.env, registry = null }) {
   const keyVar = !relayed ? webKeyVar(web) : null;
   // MCP registry §9.2 on a locked-down chat: the copies ride the per-turn config beside `worca` (the adapter's lockdown
   // allows each by name), their secrets in spawnEnv (never on disk), their values redacted; a stdio copy's launcher
@@ -264,7 +266,7 @@ function buildLockedAskOptions({ chat, thread, turn, mcpConfigPath, scratchDir, 
     ...(chat.turnImages && Array.isArray(turn.images) && turn.images.length ? { images: [...turn.images] } : {}),
     // Agent mode (#574): the command bridge token, as a Claude chat gets it — never on disk; the adapter hands an Ask
     // chat's spawn env to its MCP servers. The registry copies' secrets and MCP_TIMEOUT ride the same way.
-    ...(reg || commands?.token || proxy?.token ? { spawnEnv: { ...(reg ? reg.env : {}), ...bridgeTokens({ commands, proxy }) } } : {}),
+    ...(reg || commands?.token || proxy?.token || tabs?.token ? { spawnEnv: { ...(reg ? reg.env : {}), ...bridgeTokens({ commands, proxy, tabs }) } } : {}),
     ...(reg && reg.secretValues.length ? { redactValues: [...reg.secretValues] } : {}),
     signal: turn.signal,
     onEvent: turn.onEvent,
@@ -307,7 +309,7 @@ export function webMcpEnv(web) {
  * (path.resolve(process.env.WORCA_HOME) or dirname(worcaHome())) — never
  * worcaHome() itself. The argv twins make the child independent of env forwarding.
  */
-export function buildMcpConfig({ homeBase, threadId, execPath = process.execPath, serverPath, env = process.env, reader = null, relay = null, web = null, extraServers = null, commands = null, proxy = null, engine = 'claude', model = null, skillRoot = null, claudeAuth = null, git = undefined }) {
+export function buildMcpConfig({ homeBase, threadId, execPath = process.execPath, serverPath, env = process.env, reader = null, relay = null, web = null, extraServers = null, commands = null, proxy = null, tabs = null, engine = 'claude', model = null, skillRoot = null, claudeAuth = null, git = undefined }) {
   if (!serverPath) throw new Error('buildMcpConfig: serverPath is required');
   if (typeof homeBase !== 'string' || !homeBase.trim()) throw new Error('buildMcpConfig: homeBase is required');
   const base = resolvePath(homeBase);
@@ -346,6 +348,7 @@ export function buildMcpConfig({ homeBase, threadId, execPath = process.execPath
       ...(chatDescriptor(engine) && typeof skillRoot === 'string' && skillRoot ? { WORCA_ASK_SKILL_ROOT: skillRoot } : {}),
       // Agent mode (#574): the bridge URL only; its token rides spawnEnv (buildAskSpawnOptions), never this file.
       ...(commands && commands.url ? { WORCA_ASK_COMMANDS: JSON.stringify({ url: commands.url }) } : {}),
-      ...(proxy && proxy.url ? { WORCA_ASK_PROXY: JSON.stringify({ url: proxy.url }) } : {}) },
+      ...(proxy && proxy.url ? { WORCA_ASK_PROXY: JSON.stringify({ url: proxy.url }) } : {}),
+      ...(tabs && tabs.url ? { WORCA_ASK_TABS: JSON.stringify({ url: tabs.url }) } : {}) },
   });
 }

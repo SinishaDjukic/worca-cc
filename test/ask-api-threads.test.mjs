@@ -599,6 +599,30 @@ test('show_files copies on the attachment route: an SVG gets the sandbox CSP; ?a
         if (prev === undefined) delete process.env.WORCA_IDENTITY_HEADER; else process.env.WORCA_IDENTITY_HEADER = prev;
       }
     } },
+    { name: '?as=pdf: a text body is never converted, even one named .docx; an image is not Office', run: async () => {
+      const t = store.createThread();
+      const txt = store.addAttachment(t.id, null, { name: 'notes.docx', kind: 'text', mime: 'text/plain', text: 'just text' });
+      const png = store.addAttachment(t.id, null, { name: 'a.png', kind: 'image', mime: 'image/png', data: Buffer.from('89504e470d0a1a0a', 'hex') });
+      for (const a of [txt, png]) {
+        const r = await fetch(url(t.id, a.id, '?as=pdf'));
+        assert.equal(r.status, 415);
+        assert.equal((await r.json()).code, 'NOT_OFFICE');
+      }
+    } },
+    { name: '?as=pdf on an Office copy with no LibreOffice: 501 NO_CONVERTER', run: async () => {
+      const { sofficeBin } = await import('../src/core/office-preview.mjs');
+      const t = store.createThread();
+      const docx = store.addAttachment(t.id, null, { name: 'r.docx', kind: 'binary',
+        mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', data: Buffer.from('504b0304207265706f7274', 'hex') });
+      const saved = process.env.PATH;
+      process.env.PATH = '/nonexistent-worca-bin';
+      try {
+        if (sofficeBin()) return;             // a Mac with LibreOffice in /Applications: no-converter cannot happen here
+        const r = await fetch(url(t.id, docx.id, '?as=pdf'));
+        assert.equal(r.status, 501);
+        assert.equal((await r.json()).code, 'NO_CONVERTER');
+      } finally { process.env.PATH = saved; }
+    } },
   ]);
 });
 

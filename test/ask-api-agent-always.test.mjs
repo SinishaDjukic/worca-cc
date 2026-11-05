@@ -71,3 +71,58 @@ test('the Workflows chat (composer mode) is never in agent mode, even where the 
   assert.doesNotMatch(turn.systemPrompt, /## Commands \(agent mode\)/);
   await idle();
 });
+
+// ── The tool panel's tab tools (issue 1064 slice 3): on in an Ask chat, off in the Workflows chat and under agent isolation ──
+const putTabs = (threadId, tabs) => fetch(`${base}/api/tools/tabs?scope=chat&threadId=${threadId}`, { method: 'PUT', headers: JSONH, body: JSON.stringify({ tabs }) });
+const tabsChat = async (body = {}) => {
+  const { thread } = await (await post('/api/ask/threads', body)).json();
+  const r = await putTabs(thread.id, [{ id: 'tab_aa1064', kind: 'files' }]);
+  assert.equal(r.status, 200); await r.json();
+  return thread;
+};
+// Under agent isolation a caller on this box needs the instance token (G1) to reach any route at all.
+const uiTok = () => ({ 'x-worca-ui-token': mod._testing.uiToken() });
+const bridgeCall = (token) => fetch(`${base}/api/ask/tabs`, { method: 'POST', headers: { ...JSONH, ...uiTok(), 'x-worca-ask-tabs': token }, body: JSON.stringify({ op: 'open', input: { kind: 'files' } }) });
+
+test('tab tools: an Ask chat\'s turn has the prompt section and the tool tabs line', async () => {
+  await idle();
+  const thread = await tabsChat();
+  const r = await post(`/api/ask/threads/${thread.id}/messages`, { text: 'hi', ...MODEL, context: { view: 'chat', pinned: false } });
+  assert.equal(r.status, 202, await r.text());
+  const turn = await turnOf(thread.id);
+  assert.match(turn.systemPrompt, /## Tool panel tabs/);
+  assert.match(turn.prompt, /tool tabs: tab_aa1064 files/);
+  await idle();
+});
+
+test('tab tools: the Workflows chat (composer mode) has neither the section nor the tool tabs line', async () => {
+  await idle();
+  const thread = await tabsChat({ mode: 'composer' });
+  const composer = { sessionId: 'cs_ab12cd35', docToken: 'd_ab12cd35', graph: { name: 'x', nodes: [], wires: [] }, selection: null, drafts: [] };
+  const r = await post(`/api/ask/threads/${thread.id}/messages`, { text: 'Build a workflow', ...MODEL, context: {}, composer });
+  assert.equal(r.status, 202, await r.text());
+  const turn = await turnOf(thread.id);
+  assert.doesNotMatch(turn.systemPrompt, /## Tool panel tabs/);
+  assert.doesNotMatch(turn.prompt, /tool tabs:/);
+  await idle();
+});
+
+test('tab tools under agent isolation: no bridge, the route refuses a live token, and a turn has neither the section nor the line', async () => {
+  await idle();
+  const thread = await tabsChat();
+  const live = mod._testing.askTabBridge({ threadId: thread.id });
+  process.env.WORCA_AGENT_USER = 'worca-agent'; process.env.WORCA_AGENT_HOME = '/home/worca-agent';
+  try {
+    assert.equal(mod._testing.askTabBridge({ threadId: thread.id }), null);
+    const refused = await bridgeCall(live.token);
+    assert.equal(refused.status, 403);
+    assert.match((await refused.json()).error, /agent isolation/);
+    const r = await fetch(`${base}/api/ask/threads/${thread.id}/messages`, { method: 'POST', headers: { ...JSONH, ...uiTok() },
+      body: JSON.stringify({ text: 'hi', ...MODEL, context: { view: 'chat', pinned: false } }) });
+    assert.equal(r.status, 202, await r.text());
+    const turn = await turnOf(thread.id);
+    assert.doesNotMatch(turn.systemPrompt, /## Tool panel tabs/);
+    assert.doesNotMatch(turn.prompt, /tool tabs:/);
+    await idle();
+  } finally { delete process.env.WORCA_AGENT_USER; delete process.env.WORCA_AGENT_HOME; live.dispose(); }
+});

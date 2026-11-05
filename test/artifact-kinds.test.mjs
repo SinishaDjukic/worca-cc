@@ -3,14 +3,14 @@ import assert from 'node:assert/strict';
 import { checkRows } from './helpers/rows.mjs';
 import {
   viewerKindFor, mimeForPath, BINARY_KINDS, RAW_KINDS, classifyExtension, TEXT_EXTENSIONS, BINARY_EXTENSIONS,
-  isBrowsableKind,
+  isBrowsableKind, isOfficePath,
 } from '../src/shared/artifact-kinds.mjs';
 
 test('viewerKindFor: one case per extension family, dotfiles and unknowns fall to text', () => {
   const cases = {
     'plan.md': 'markdown', 'a/b/notes.markdown': 'markdown', 'clarify.json': 'json', 'diff-patch.patch': 'diff', 'x.diff': 'diff',
     'live-log.ndjson': 'text', 'deck/deck.html': 'html', 'x.HTM': 'html', 'shots/s01.png': 'image', 'a.jpg': 'image', 'a.jpeg': 'image',
-    'a.gif': 'image', 'a.webp': 'image', 'logo.svg': 'image', 'out.pdf': 'pdf', 'deck.pptx': 'binary', 'a.docx': 'binary', 'a.xlsx': 'binary',
+    'a.gif': 'image', 'a.webp': 'image', 'logo.svg': 'image', 'out.pdf': 'pdf', 'deck.pptx': 'office', 'a.docx': 'office', 'a.xlsx': 'office',
     'a.key': 'binary', 'a.zip': 'binary', 'a.tar': 'binary', 'deck/deck-stage.js': 'text', 'deck/font.woff2': 'binary', 'deck/font.otf': 'binary',
     '.gitignore': 'text', 'Makefile': 'text', 'weird.xyz': 'text', '': 'text',
   };
@@ -81,10 +81,23 @@ test('media plays inline: audio and video viewer kinds, avif is an image, fonts 
   for (const p of ['n.mp3', 'n.m4a', 'n.wav', 'n.ogg', 'deck/NARRATION.MP3']) assert.equal(viewerKindFor(p), 'audio', p);
   for (const p of ['c.mp4', 'c.webm']) assert.equal(viewerKindFor(p), 'video', p);
   assert.equal(viewerKindFor('art.avif'), 'image');
-  for (const p of ['f.woff2', 'f.woff', 'f.ttf', 'f.otf', 'deck.pptx', 'a.zip']) assert.equal(viewerKindFor(p), 'binary', p);
+  for (const p of ['f.woff2', 'f.woff', 'f.ttf', 'f.otf', 'a.zip']) assert.equal(viewerKindFor(p), 'binary', p);
   for (const k of ['audio', 'video']) {
     assert.equal(BINARY_KINDS.has(k), true, `${k} must never be decoded as text`);
     assert.equal(RAW_KINDS.has(k), true, `${k} must stream from the raw route`);
   }
   assert.equal(mimeForPath('n.ogg'), 'audio/ogg', 'the players get the right Content-Type');
+});
+
+test('office: OOXML and ODF documents are one viewer kind, served with their own mimes', () => {
+  for (const f of ['a.docx', 'b.PPTX', 'c.xlsx', 'd.odt', 'e.odp', 'f.ods']) {
+    assert.equal(viewerKindFor(f), 'office', f);
+    assert.equal(isOfficePath(f), true, f);
+  }
+  assert.equal(viewerKindFor('k.key'), 'binary', 'Keynote stays opaque');
+  assert.equal(isOfficePath('a.docx.txt'), false);
+  assert.equal(mimeForPath('d.odt'), 'application/vnd.oasis.opendocument.text');
+  assert.equal(mimeForPath('f.ods'), 'application/vnd.oasis.opendocument.spreadsheet');
+  assert.ok(mimeForPath('a.docx').endsWith('wordprocessingml.document'));
+  assert.ok(RAW_KINDS.has('office') && BINARY_KINDS.has('office'));
 });

@@ -110,3 +110,27 @@ test('files card: its icon buttons are the one button component; the card adds n
     assert.doesNotMatch(body, /box-shadow|--shadow-card/, `${sel}: no resting shadow`);
   }
 });
+
+test('files card: an Office copy previews as office (the viewer frames its PDF form); the urls carry ?as=pdf', async () => {
+  const { filePreviewOf } = await import('../ui/public/chat/file-renderers.mjs');
+  _resetFileRenderers();
+  registerBuiltinFileRenderers();
+  assert.equal(filePreviewOf({ kind: 'office', name: 'r.docx' }), 'office');
+  assert.deepEqual(filesForViewer([{ attId: 'att_00000009', name: 'r.docx', kind: 'office', bytes: 9 }]).map((a) => a.previewKind), ['office']);
+  assert.equal(fileViewerUrls('t1').pdf('att_1/r.docx'), '/api/ask/threads/t1/attachments/att_1?as=pdf');
+});
+
+test('Open in panel (issue 1064): each row and tile has it; a click reaches openInPanel and never the viewer; none without the dep', () => {
+  registerBuiltinFileRenderers();
+  const got = [];
+  const { opened, ctx } = ctxOf({ openInPanel: (o) => got.push(o) });
+  const { el } = buildFilesCard({ id: 'card_00000009', state: 'shown', card: { type: 'files', items: ITEMS } }, ctx);
+  ctx.doc.body.append(el);
+  const btns = [...el.querySelectorAll('.ask-filescard-panel')];
+  assert.equal(btns.length, ITEMS.length);
+  btns[0].click();
+  assert.deepEqual(got.map((o) => [o.threadId, o.item.attId]), [['ask_aaaaaaaa', ITEMS[0].attId]]);
+  assert.deepEqual(opened, []);
+  const none = ctxOf();
+  assert.equal(buildFilesCard({ id: 'card_0000000a', state: 'shown', card: { type: 'files', items: ITEMS } }, none.ctx).el.querySelector('.ask-filescard-panel'), null);
+});

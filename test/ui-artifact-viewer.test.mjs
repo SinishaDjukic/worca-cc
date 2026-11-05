@@ -33,7 +33,7 @@ test('previewKindFor: the existing chain\'s answer, widened with code, csv and n
     [null, 'notes.txt', 'text'], [null, 'run.log', 'text'], [null, 'data.csv', 'csv'], [null, 'data.TSV', 'csv'],
     [null, 'shot.png', 'image'], [null, 'logo.svg', 'image'], [null, 'art.avif', 'image'], [null, 'out.pdf', 'pdf'],
     [null, 'deck/deck.html', 'html'], [null, 'model.c4', 'c4'], [null, 'n.mp3', 'audio'], [null, 'c.mp4', 'video'],
-    [null, 'deck.pptx', 'none'], [null, 'f.woff2', 'none'], ['plan', 'PLAN', 'markdown'], [null, 'PLAN', 'text'],
+    [null, 'deck.pptx', 'office'], [null, 'notes.odt', 'office'], [null, 'k.key', 'none'], [null, 'f.woff2', 'none'], ['plan', 'PLAN', 'markdown'], [null, 'PLAN', 'text'],
     // An extension naming a table, a language or a byte format beats the kind; a kind still decides for the rest.
     ['result', 'out/data.csv', 'csv'], ['result', 'tools/x.py', 'code'], ['review', 'dist/a.tar.gz', 'none'],
     ['plan', 'notes.txt', 'markdown'], ['result', 'RESULT', 'diff'],
@@ -1370,4 +1370,49 @@ test('a pinned html (or c4, or junk) view is never framed: the renderer reads it
   await p.open({ artifact: { relPath: 'att_6/page.html', bytes: 8, previewKind: 'html' } }).ready;
   assert.equal(p.doc.querySelector('.apv iframe'), null);
   assert.ok(!p.calls.some((c) => c.includes('/raw/att_6')), 'never fetched as raw bytes');
+});
+
+test('office in the popup: with a pdf URL it frames the converted PDF; 501 says to install LibreOffice, with Download; 422 cannot convert', async () => {
+  const urls = { ...URLS, pdf: (rel) => `/raw/${rel}?as=pdf` };
+  const artifact = { kind: null, relPath: 'deck/report.docx' };
+  const PDF = '/raw/deck/report.docx?as=pdf';
+  await checkRows([
+    { name: 'HEAD 200: an <embed type=application/pdf> on the pdf URL', run: async () => {
+      const p = page();
+      await p.open({ urls, artifact }).ready;
+      const embed = p.doc.querySelector('.apv embed[type="application/pdf"]');
+      assert.equal(embed.getAttribute('src'), PDF);
+      assert.deepEqual(p.calls, [`HEAD ${PDF}`]);
+    } },
+    ...[[501, 'Install LibreOffice to preview Office files'], [422, 'Could not convert this file']].map(([status, note]) => ({
+      name: `HEAD ${status}: the info view says "${note}" and has its Download button`, run: async () => {
+        const p = page((url, method) => (url === PDF && method === 'HEAD' ? { status, body: {} } : null));
+        await p.open({ urls, artifact }).ready;
+        const root = p.doc.querySelector('.apv');
+        assert.equal(root.querySelector('.apv-info-note').textContent, note);
+        assert.ok(root.querySelector('.apv-info-dl'));
+        assert.equal(root.querySelector('embed'), null);
+      } })),
+    { name: 'no urls.pdf (the old URL sets): "No preview for this file type", exactly as before', run: async () => {
+      const p = page();
+      await p.open({ artifact }).ready;
+      const root = p.doc.querySelector('.apv');
+      assert.equal(root.querySelector('.apv-info-note').textContent, 'No preview for this file type');
+      assert.ok(root.querySelector('.apv-info-dl'));
+      assert.deepEqual(p.calls, [], 'without fetching anything');
+    } },
+  ]);
+});
+
+test('loadPreview: known text skips the fetch; a server-flagged binary is no preview; a stale call reports stale', async () => {
+  const { loadPreview } = await import('../ui/public/artifacts/stage.mjs');
+  const calls = [];
+  const fetch = async (u, o) => { calls.push([o?.method || 'GET', u]); return { ok: true, status: 200, headers: { get: () => null }, json: async () => ({ text: 'x' }), arrayBuffer: async () => new Uint8Array([1, 2]).buffer }; };
+  const m = mountIn();
+  const r1 = await loadPreview({ artifact: { relPath: 'a/b.md' }, stage: m, urls: URLS, fetch, known: { text: '# hi', binary: false } });
+  assert.deepEqual([r1.state, r1.text, calls.length], ['shown', '# hi', 0]);
+  const r2 = await loadPreview({ artifact: { relPath: 'x.bin' }, stage: mountIn(), urls: URLS, fetch, size: 10, known: { text: '', binary: true } });
+  assert.deepEqual(r2, { state: 'info', reason: 'No preview for this file type' });
+  const r3 = await loadPreview({ artifact: { relPath: 'shot.png' }, stage: mountIn(), urls: URLS, fetch, live: () => false });
+  assert.equal(r3.state, 'stale');
 });

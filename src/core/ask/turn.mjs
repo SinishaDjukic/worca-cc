@@ -204,6 +204,7 @@ class AskTurn extends EventEmitter {
     this._replyText = '';                         // the finished reply's text (set in _complete), the suggestion's input
     this.commands = null;
     this.proxyBridge = null;
+    this.tabsBridge = null;
     this.assistantMessageId = assistantMessageId;
     this.userMessageId = userMessageId;
     this.prompt = prompt;
@@ -307,6 +308,8 @@ class AskTurn extends EventEmitter {
       // terminal is enabled (terminalEnabledHere). null = no command tools.
       commandBridge: deps.commandBridge ?? null,
       proxyBridge: deps.proxyBridge ?? null,
+      // The tool panel's tab bridge (issue 1064 slice 3): ({threadId}) => {url, token, dispose()} | null.
+      tabsBridge: deps.tabsBridge ?? null,
       serverPath: deps.serverPath ?? ASK_MCP_SERVER_PATH,
       newAskId: deps.newAskId ?? newAskId,
       setPendingCardComments: deps.setPendingCardComments ?? setPendingCardComments,
@@ -1423,6 +1426,7 @@ class AskTurn extends EventEmitter {
       // Agent mode never rides the relay: relay mode is agent isolation, where the terminal refuses agent callers.
       this.commands = !this.relay && this.agentMode && d.commandBridge ? d.commandBridge({ threadId: this.threadId }) : null;
       this.proxyBridge = !this.relay && d.proxyBridge ? d.proxyBridge({ threadId: this.threadId }) : null;
+      this.tabsBridge = !this.relay && d.tabsBridge ? d.tabsBridge({ threadId: this.threadId }) : null;
       // One sign-in answer per turn: handed to the MCP child (spawn.mjs WORCA_ASK_CLAUDE_AUTH) and used by _onProposal,
       // so the model and the card get one verdict however long the turn runs. A relayed chat runs its tools here, in
       // this process (preflight's cache), so its child gets nothing.
@@ -1431,7 +1435,7 @@ class AskTurn extends EventEmitter {
       await d.fs.writeFile(
         mcpConfigPath,
         // MCP registry §9.2: the copies ride after `worca` — refs only (`${MCPSECRET_…}`); the values go in spawnEnv.
-        JSON.stringify(d.buildMcpConfig({ homeBase, threadId: this.threadId, serverPath: d.serverPath, git: d.gitAvailable(), ...(claudeAuth ? { claudeAuth } : {}), ...(this.reader ? { reader: this.reader } : {}), ...(this.relay ? { relay: this.relay } : {}), ...(this.web ? { web: this.web } : {}), ...(this.mcp ? { extraServers: this.mcp.servers } : {}), ...(this.commands ? { commands: this.commands } : {}), ...(this.proxyBridge ? { proxy: this.proxyBridge } : {}), ...(this.lockedDown ? { engine: this.engine, model: this.model } : {}), ...(skillRoot ? { skillRoot } : {}) }), null, 2),
+        JSON.stringify(d.buildMcpConfig({ homeBase, threadId: this.threadId, serverPath: d.serverPath, git: d.gitAvailable(), ...(claudeAuth ? { claudeAuth } : {}), ...(this.reader ? { reader: this.reader } : {}), ...(this.relay ? { relay: this.relay } : {}), ...(this.web ? { web: this.web } : {}), ...(this.mcp ? { extraServers: this.mcp.servers } : {}), ...(this.commands ? { commands: this.commands } : {}), ...(this.proxyBridge ? { proxy: this.proxyBridge } : {}), ...(this.tabsBridge ? { tabs: this.tabsBridge } : {}), ...(this.lockedDown ? { engine: this.engine, model: this.model } : {}), ...(skillRoot ? { skillRoot } : {}) }), null, 2),
         // Never a key value (webKeyVar: the key rides the process env). A relayed turn runs as
         // the person's agent user (agent-pool.mjs), which reads this file through its group. It
         // carries this turn's relay token: with a pool the file goes to that user's own group (worca
@@ -1467,6 +1471,7 @@ class AskTurn extends EventEmitter {
       if (this.relay) { try { this.relay.dispose(); } catch { /* already gone */ } this.relay = null; }
       if (this.commands) { try { this.commands.dispose(); } catch { /* already gone */ } this.commands = null; }
       if (this.proxyBridge) { try { this.proxyBridge.dispose(); } catch { /* already gone */ } this.proxyBridge = null; }
+      if (this.tabsBridge) { try { this.tabsBridge.dispose(); } catch { /* already gone */ } this.tabsBridge = null; }
       // Memory usage: ONE merge per turn (an Ask turn is one execution). Best-effort: a failure costs the counts only.
       if (this._memoryReads.size) {
         try { await d.recordMemoryUsage(this._memoryReads.events()); }
@@ -1541,6 +1546,7 @@ class AskTurn extends EventEmitter {
         ...(this.lockedDown ? { engine: this.engine } : {}),
         commands: this.commands,
         proxy: this.proxyBridge,
+        tabs: this.tabsBridge,
         git: d.gitAvailable(),
         ...(this.composer ? { composer: true } : {}),   // the Workflows chat: no Task built-in (spawn.mjs)
         // Skills registry §4.4: every attempt too, until the sideload safety net drops the layer.

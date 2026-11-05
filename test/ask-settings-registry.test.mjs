@@ -495,3 +495,7 @@ test('team memory (1a): the project defs leave out the memory.team opt-in and la
   // The exclusion matches memory.team and memory.team.* only: the cap beside it is a per-project setting, not "published".
   assert.match((await reg.check({ id: 'memory.teamMaxFiles', scope: 'user', value: 7 })).error, /^unknown setting "memory\.teamMaxFiles".*\(it is set per project: scope "project"\)$/);
 });
+
+test('extra: chatLinksInPanel is excluded from the chat', () => {
+  assert.ok(SETTING_EXCLUSIONS.some((e) => e.match.includes('chatLinksInPanel') && e.what === 'Open chat links in the panel'));
+});

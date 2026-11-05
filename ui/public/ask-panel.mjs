@@ -11,6 +11,7 @@ import { createThreadModel } from './ask-model.mjs';
 import { credentialBadge } from './credential-badges.mjs';
 import { createMarkdownRenderer } from './ask-markdown.mjs';
 import { createRefChips } from './ask-ref-chips.mjs';
+import { createFileLinks } from './ask-file-links.mjs';
 import { createDotOrbs, turnPhase } from './dot-orb.mjs';
 import { workflowPickerLabel } from './results-view.mjs';
 import { renderAutoProposal, AUTO_PROPOSAL_ORDER_CARD } from './auto-proposal.mjs';
@@ -205,7 +206,7 @@ const HISTORY_KEY = 'worca-cc.chat.history';
 const HISTORY_OPEN_MIN_W = 1600;
 const HISTORY_OVERLAY_BELOW = 1100;
 
-export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContext, openNewPipeline, openComposer = null, showTerminal = () => {}, openClaudeSetup = null, loadMarkdown, hljsLoader, storage, raf, now, runStore = null, createVoice = null, voiceLongPressMs = 500, chatDeps = null, onRoute = null, onUnread = null, composerActions = null, summariseCommands = () => true, getPageChips = () => [], getPageScope = () => null, sideActions = null }) {
+export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContext, openNewPipeline, openComposer = null, showTerminal = () => {}, openClaudeSetup = null, loadMarkdown, hljsLoader, storage, raf, now, runStore = null, createVoice = null, voiceLongPressMs = 500, chatDeps = null, onRoute = null, onUnread = null, composerActions = null, summariseCommands = () => true, getPageChips = () => [], getPageScope = () => null, sideActions = null, onToolScope = () => {}, onChatsClosed = () => {} }) {
   const homePick = browserPick();         // hoisted declaration (defined below)
   const st = {
     open: false,
@@ -310,6 +311,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   // Answer chips (ask-ref-chips.mjs): the PRs, issues, work items, runs and chats an answer names. The run chips follow
   // the run store like the run cards; lookups go out once an answer is done (renderAnswerPiece).
   const refChips = createRefChips({ doc, fetch, runStore, now, root: () => el.transcript || null, visible: () => st.open });
+  // File links (issue 1064 §2): paths an answer names that exist in the chat's root open a Files tab of the tool panel.
+  // Off with the "Open chat links in the panel" setting (chatDeps.linksInPanel).
+  const fileLinks = createFileLinks({ doc, fetch, now, threadId: () => st.threadId || null, root: () => el.transcript || null,
+    enabled: () => chatDep('linksInPanel') !== false, onOpen: (t) => chatDep('openFileLink', t),
+    webHint: (href) => chatDep('linkHint', href) ?? null });
   const orbs = createDotOrbs({ doc, win });   // the live turn's orb (ensureThinking), the Workflows chat's dot sphere
 
   // ---- storage --------------------------------------------------------------
@@ -1000,6 +1006,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         id = body.thread.id;
         loadGen += 1;                     // a pending loadThread() must not replace this fresh model
         st.threadId = id;
+        onToolScope();
         st.model = createThreadModel({ threadId: id });
         st.model.load({ thread: body.thread, messages: [], attachments: [], runLinks: [], inFlight: null });
         setContexts(body.thread && body.thread.contexts);
@@ -1740,6 +1747,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (!want && st.wantThread === undefined && isNewChat()) { st.wantThread = null; storeThread(null); return; }
     if (want) switchThread(want);
     else newThread();
+    onToolScope();
   }
 
   /** The panel moved to another chat: app.js points the address at it (pushed, or swapped with `replace`). */
@@ -2153,7 +2161,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       onHelp: (opener) => openChatKeys(opener),
       flagOn: (k) => flagOn(k, doc), confirm: (o) => confirm(o), requestRefresh: () => scheduleThreadsRefresh(),
       // #948 s3: Delete group removed these chats; the open one goes home, as a deleted chat does (deleteThread).
+      onChatsArchived: (ids) => onChatsClosed(ids),
       onChatsGone: (ids) => {
+        onChatsClosed(ids);
         for (const id of ids) { if (readStoredThread() === id) storeThread(null); st.askedIn.delete(id); st.queues.delete(id); }
         if (st.unread && ids.includes(st.unreadThread)) setUnread(false);   // the dot never points at a chat that is gone
         dropRecent(ids);                             // nor does the side column's Recent chats
@@ -2194,6 +2204,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     el.headMeter.setAttribute('aria-expanded', 'false');
     el.headMeter.addEventListener('click', () => openCtxPopover(el.headMeter));
     el.head.appendChild(el.headMeter);
+    // The tool panel's header icons (issue 1064): an empty host app.js fills (tool-panel.mjs syncIcons). The page only:
+    // the side column's head hides it by CSS.
+    el.head.appendChild(Object.assign(make('span', 'tool-icons chat-tool-icons'), { role: 'group' }));
+    el.head.lastChild.setAttribute('data-tool-icons', '');
+    el.head.lastChild.setAttribute('aria-label', 'Tools');
     updateMeters();
     loadHistory();                                // hidden (a boot on another page): stale until Chat shows
   }
@@ -3019,6 +3034,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     }
     el.scopeBtn.classList.toggle('is-pinned', st.scope.pinned);
     if (el.fitScope) el.fitScope();
+    onToolScope();
   }
 
   /** A pick in the scope pill is the person's: a new chat stops following the page (Ask worca beside the page, L3). */
@@ -3497,6 +3513,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     st.askedIn.delete(t.id);                         // a stopped turn's late reply never lights the Chat row for it
     if (st.unread && st.unreadThread === t.id) setUnread(false);   // the dot never points at a chat that is gone (as ask-history-cleared)
     dropRecent([t.id]);                              // nor does the side column's Recent chats
+    onChatsClosed([t.id]);
     st.queues.delete(t.id);                          // its queued messages go with it (newThread below repaints)
     loadHistory();                                   // the column drops the row
     // The chat shown — or the one still loading (its GET may answer after the delete) — goes home; an overlay closes,
@@ -6145,6 +6162,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     openFiles: (o) => chatDep('openFiles', o),
     revealInfo: () => chatDep('revealInfo'),
     revealFile: (o) => chatDep('revealFile', o),
+    openInPanel: (o) => chatDep('openInPanel', o),
     openShipIt: (ref, link) => chatDep('openShipIt', ref, link),
     runLinkFor: (ref) => runLinkFor(ref || {}),
     appendToComposer: (text) => appendToComposer(text),
@@ -6787,6 +6805,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       div.classList.remove('ask-answer-plain');
       div.replaceChildren(out.frag);
       refChips.decorate(div, { live: isLive });
+      fileLinks.decorate(div, { live: isLive });
       if (!isLive) renderer.highlight(div); // fire-and-forget; §10.5: highlight on done
     } else {
       div.classList.add('ask-answer-plain');
@@ -7164,6 +7183,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const switched = st.threadId !== id;
     if (switched) stopVoice();
     st.threadId = id;
+    onToolScope();
     if (st.open && st.unread && st.unreadThread === id) setUnread(false);   // the dot's chat is on screen now
     // #943: the engine this tab last knew. activeEngine, not thread.engine: a chat begun in this tab was loaded from
     // the create answer, whose engine is null until a reload.
@@ -7344,6 +7364,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       if (Array.isArray(frame.threadIds)) for (const id of frame.threadIds) st.queues.delete(id);
       else st.queues.clear();
       dropRecent(Array.isArray(frame.threadIds) ? frame.threadIds : null);   // …and the side column's Recent chats
+      onChatsClosed(Array.isArray(frame.threadIds) ? frame.threadIds : null);   // …and their tool tabs (null: every chat's)
       if (st.unread && (!Array.isArray(frame.threadIds) || frame.threadIds.includes(st.unreadThread))) setUnread(false);
       // A shared deployment's clear names the threads it removed: only a tab showing one of them resets.
       if (Array.isArray(frame.threadIds) && !frame.threadIds.includes(st.threadId)) { scheduleThreadsRefresh(); return; }
@@ -7726,6 +7747,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (st.runTick) { clearInterval(st.runTick); st.runTick = null; }
     if (st.runUnsub) { try { st.runUnsub(); } catch { /* ignore */ } st.runUnsub = null; }
     refChips.destroy();
+    fileLinks.destroy();
     pruneCardEls();                                  // every card graph mount and its ResizeObserver goes with the sheet
     destroyAddons();
     st.queues.clear();
@@ -7740,6 +7762,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     close: closePage,
     isOpen: () => st.open,
     threadId: () => (typeof st.wantThread === 'string' ? st.wantThread : st.threadId) || null,
+    scope: () => ({ pinned: !!st.scope?.pinned, projectKey: st.scope?.projectKey || null, workspaceId: st.scope?.workspaceId || null }),
     setHistoryOpen: (open, opts) => setHistoryOpen(open, opts),
     unreadThreadId: () => (st.unread ? st.unreadThread : null),
     contextChanged: () => onHashChange(),           // P4: the run panel's run changed with no hashchange (replaceState)
@@ -7747,10 +7770,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     setHost,                                        // Ask worca beside the page: 'page' (the Chat section) or 'dock' (the side column)
     host: () => st.host,
     appendToComposer,
+    addFiles: (files) => addFiles(files),           // Pick element (issue 1064 slice 3): files the "+" checks take, as chips
     setQuote,
     sendQuoted,
     pushServerFrame,
     refreshCommandCards,
+    refreshAnswers: () => rerenderAnswers(),      // the chat links setting changed: answers render again
     onHello,
     ownsKey,
     setScope: (scope) => setScopeFromApi(scope),

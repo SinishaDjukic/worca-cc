@@ -1345,3 +1345,24 @@ test('the Chat opens an artifact in the same popup viewer (chatDeps.openArtifact
   await settle(ctx.window, 10);
   assert.equal(ctx.window.document.querySelector('.apv .apv-meta').textContent, 'Planner · cycle 1 · 2.0 KB');
 });
+
+test('in the real app: an Office artifact in the run popup probes the raw route\'s ?as=pdf and frames the PDF; a 501 says to install LibreOffice', async () => {
+  const PDF = '/api/runs/p1/artifact-raw/reports/q3.docx?as=pdf';
+  await checkRows([
+    { name: 'HEAD 200: the converted PDF in an <embed>', run: async () => {
+      const ctx = await boot({ fetchHandler: (url) => (url.includes('/artifact-raw/') ? Promise.resolve({ ok: true, status: 200, json: async () => ({}) }) : null) });
+      await ctx.window.__np.openRunArtifactPopup({ pipelineId: 'p1' }, { kind: null, relPath: 'reports/q3.docx' });
+      await settle(ctx.window, 8);
+      assert.ok(ctx.calls.some((c) => c.url === PDF && c.opts.method === 'HEAD'), 'the probe asks for the PDF form');
+      assert.equal(ctx.window.document.querySelector('.apv embed[type="application/pdf"]')?.getAttribute('src'), PDF);
+    } },
+    { name: 'HEAD 501: "Install LibreOffice" with Download', run: async () => {
+      const ctx = await boot({ fetchHandler: (url) => (url === PDF ? Promise.resolve({ ok: false, status: 501, json: async () => ({}) }) : null) });
+      await ctx.window.__np.openRunArtifactPopup({ pipelineId: 'p1' }, { kind: null, relPath: 'reports/q3.docx' });
+      await settle(ctx.window, 8);
+      const root = ctx.window.document.querySelector('.apv');
+      assert.equal(root.querySelector('.apv-info-note').textContent, 'Install LibreOffice to preview Office files');
+      assert.ok(root.querySelector('.apv-info-dl'));
+    } },
+  ]);
+});

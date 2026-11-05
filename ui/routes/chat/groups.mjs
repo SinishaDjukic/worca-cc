@@ -7,7 +7,8 @@ import { actorOf } from '../../../src/core/identity.mjs';
 import { suggestGroupName } from '../../../src/core/naming.mjs';
 import { rememberUndo, takeUndo } from '../../../src/core/undo-tokens.mjs';
 import { chatGroupBusyText } from '../../../src/shared/chat-busy.mjs';
-import { askBusyReason, askGroupFor, askGroupThreads, askIdParam, askThreadVisible, askViewer, badRequest, chatGroupError, deleteAskThreadFully, emitChanged, namingBucket, namingOn, namingPick } from '../../server.mjs';
+import { askBusyReason, askGroupFor, askGroupThreads, askIdParam, askThreadVisible, askViewer, badRequest, chatGroupError, closeChatTerminals, deleteAskThreadFully, emitChanged, namingBucket, namingOn, namingPick, toolTabs } from '../../server.mjs';
+import { tabScope } from '../../../src/core/tool-tabs-mirror.mjs';
 
 export function register(app) {
 
@@ -83,6 +84,7 @@ app.post('/api/ask/groups/:id/archive', (req, res) => {
       }
     }
     for (const id of ids) askSetArchived(id, archived);
+    if (archived) for (const id of ids) { void closeChatTerminals(id, 'chat archived'); toolTabs.dropScope(tabScope('chat', id)); }
     emitChanged('ask-groups-changed', archived ? 'archived' : 'restored');
     res.json({ ok: true, threadIds: ids });
   } catch (err) { chatGroupError(res, err); }

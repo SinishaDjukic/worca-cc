@@ -25,7 +25,7 @@ const MAX_PAGE = 200;
 
 export function mountChatsColumn({ host, fetch: fetchImpl, storage, win, now = () => Date.now(), level = () => 'simple',
   scopeName = () => '', currentId = () => null, onOpen, onRename, onDelete, onHelp = () => {},
-  flagOn = () => false, confirm = async () => false, onChatsGone = () => {}, requestRefresh = null, onThreads = () => {} }) {
+  flagOn = () => false, confirm = async () => false, onChatsGone = () => {}, onChatsArchived = () => {}, requestRefresh = null, onThreads = () => {} }) {
   const doc = host.ownerDocument;
   const el = (tag, cls, text) => { const n = doc.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
   // focusKey uses list-dom.mjs's navKey form (`row:chat:ID`, `sec:older`), as runsUi does.
@@ -224,6 +224,7 @@ export function mountChatsColumn({ host, fetch: fetchImpl, storage, win, now = (
     st.sel.clear();
     st.selecting = false;
     await refresh();
+    if (!unarchive && done.length) onChatsArchived(done.map((r) => r.id));
     const word = (n) => `${n} chat${n === 1 ? '' : 's'}`;
     if (done.length) {
       notify({ tone: 'ok', title: `${unarchive ? 'Restored' : 'Archived'} ${word(done.length)}`, detail: plan.title,
@@ -345,7 +346,7 @@ export function mountChatsColumn({ host, fetch: fetchImpl, storage, win, now = (
           action: (r) => ({ label: 'Undo', run: async () => {
             for (const id of r.threadIds) await patch(id, { archived: false }).catch(() => null);
             await refresh();
-          } }) });
+          } }) }).then((r) => { if (r && Array.isArray(r.threadIds)) onChatsArchived(r.threadIds); });
     },
     deleteGroup: async (g) => {
       const opener = moreOf(g);

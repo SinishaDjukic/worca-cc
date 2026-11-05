@@ -1338,7 +1338,7 @@ test('isByteArtifact agrees with the shared artifact-kind table', () => {
   const exts = [
     'md', 'markdown', 'txt', 'json', 'csv', 'log', 'ndjson', 'diff', 'patch', 'html', 'htm', 'js', 'mjs', 'css',
     'png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'pdf',
-    'pptx', 'docx', 'xlsx', 'key', 'zip', 'tar', 'woff2', 'woff', 'ttf', 'otf', 'mp3', 'mp4',
+    'pptx', 'docx', 'xlsx', 'odt', 'odp', 'ods', 'key', 'zip', 'tar', 'woff2', 'woff', 'ttf', 'otf', 'mp3', 'mp4',
     'xyz', 'gitignore',
   ];
   for (const ext of exts) {

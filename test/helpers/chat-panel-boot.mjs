@@ -22,13 +22,16 @@ export const fail = (status, body) => Promise.resolve({ ok: false, status, json:
 // `matchMedia`: a stub installed BEFORE app.js loads (jsdom has none), e.g. a phone-width nav for the drawer test.
 // `local`: localStorage items set before app.js loads (a remembered choice, e.g. the side column left open).
 // `innerWidth`: the window's width before app.js loads (jsdom's is 1024).
-export async function bootChat({ rows = [], detail = DETAIL, url = 'http://localhost:4317/', arms = null, matchMedia = null, local = null, innerWidth = null } = {}) {
+// `hooks`: window.__worcaTestHooks before app.js loads (e.g. `askMarkdown`, the markdown loader the viewers use).
+export async function bootChat({ rows = [], detail = DETAIL, url = 'http://localhost:4317/', arms = null, matchMedia = null, local = null, session = null, innerWidth = null, hooks = null } = {}) {
   const dom = trackDom(new JSDOM(readIndexHtml(), { url }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
   if (matchMedia) window.matchMedia = matchMedia;
   if (local) for (const [k, v] of Object.entries(local)) window.localStorage.setItem(k, v);
+  if (session) for (const [k, v] of Object.entries(session)) window.sessionStorage.setItem(k, v);
   if (innerWidth) Object.defineProperty(window, 'innerWidth', { value: innerWidth, configurable: true, writable: true });
+  if (hooks) window.__worcaTestHooks = { ...hooks };
 
   const wsBox = { ws: null };
   window.WebSocket = class {

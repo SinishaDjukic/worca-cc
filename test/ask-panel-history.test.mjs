@@ -155,12 +155,15 @@ test('⋯ › Delete… asks first; a confirmed delete refetches the column; del
   const rec = {};
   const routes = [];
   const confirms = [];
-  const ctx = makePanel({ fetchHandler: api(rec), confirm: async (o) => { confirms.push(o); return true; }, deps: { onRoute: (id, o) => routes.push([id, o]) } });
+  const closed = [];
+  const ctx = makePanel({ fetchHandler: api(rec), confirm: async (o) => { confirms.push(o); return true; },
+    deps: { onRoute: (id, o) => routes.push([id, o]), onChatsClosed: (ids) => closed.push(ids) } });
   ctx.panel.open({ threadId: 'ask_00000001' });
   await ticks(ctx);
   const before = listFetches(rec);
   await deleteFromList(ctx, 'ask_00000001');
   await ticks(ctx, 5);
+  assert.deepEqual(closed, [['ask_00000001']], 'the tool panel closes the chat\'s tabs (issue 1064)');
   assert.equal(confirms[0].title, 'Delete this chat?');
   assert.equal(confirms[0].confirmLabel, 'Delete');
   assert.equal(confirms[0].danger, true);

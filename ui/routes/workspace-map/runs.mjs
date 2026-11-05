@@ -3,7 +3,7 @@
 import { lookupPipelineRow, readRunArtifactText, readRunLogText, readWorkspacePipeline, resolveIndexedArtifact } from '../../../src/core/artifacts.mjs';
 import { DIFF_PATCH_FILE } from '../../../src/core/results.mjs';
 import { WORKSPACE_KEY_RE } from '../../../src/core/workspaces.mjs';
-import { askFilesStoreDir, sendArtifactRaw, serveAskFile } from '../../server.mjs';
+import { askFilesStoreDir, rawOpts, sendArtifactRaw, serveAskFile } from '../../server.mjs';
 
 export function register(app) {
 
@@ -84,7 +84,7 @@ app.get('/api/workspaces/:id/runs/:runId/artifact-raw/*splat', async (req, res) 
   try {
     const row = lookupPipelineRow(`workspaces/${req.params.id}`, req.params.runId);
     if (!row) return res.status(404).json({ error: 'artifact not found' });
-    await sendArtifactRaw(res, row, req.params.splat.join('/'), { download: req.query.download === '1' });
+    await sendArtifactRaw(res, row, req.params.splat.join('/'), rawOpts(req));
   } catch (err) { res.status(500).json({ error: err && err.message ? err.message : String(err) }); }
 });
 }

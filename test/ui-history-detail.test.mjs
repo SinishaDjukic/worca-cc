@@ -213,7 +213,11 @@ test('a DEEP-LINKED Resume acts on the authoritative row, not the minimal stub',
 
 test('Archive: honest copy + danger styling, DELETE, back to the list, row dropped', async () => {
   const deletes = [];
+  // The tool panel's tabs (issue 1064): the archived run's go, another run's stay.
+  const tools = { v: 1, tabs: [{ id: 'tab_arch1', kind: 'files', scope: { type: 'run', id: ROW.id }, state: {}, at: 1 },
+    { id: 'tab_other1', kind: 'changes', scope: { type: 'run', id: 'ffff9999' }, state: {}, at: 2 }], active: {}, prefs: { open: false, width: 460 } };
   const ctx = await bootDetail({
+    local: { 'worca-cc.tools': JSON.stringify(tools) },
     arms: (url, opts, box) => {
       if (url.startsWith(`/api/runs/${ROW.id}`) && opts.method === 'DELETE') {
         deletes.push(url);
@@ -254,6 +258,7 @@ test('Archive: honest copy + danger styling, DELETE, back to the list, row dropp
   // goRunsList(): the bare list, not the remembered (now archived) run.
   assert.equal(window.location.hash.replace(/^#/, ''), 'runs');
   assert.equal(doc.querySelector(rowSel), null, 'the row is dropped from the list');
+  assert.deepEqual(JSON.parse(window.localStorage.getItem('worca-cc.tools')).tabs.map((t) => t.id), ['tab_other1'], 'its tool tabs closed');
 });
 
 test('Archive is hidden while the run is still live (running/pausing)', async () => {

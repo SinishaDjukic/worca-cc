@@ -172,6 +172,9 @@ export function labelForTool(name, input = {}, attachmentNames = {}) {
     case 'track_run': return 'Tracking a run';
     case 'read_attachment': return `Reading ${(attachmentNames && attachmentNames[id]) || 'attachment'}`;
     case 'show_files': return 'Showing files';
+    case 'open_tab': return 'Opening a tab';
+    case 'screenshot_tab': return 'Taking a screenshot';
+    case 'read_tab': return 'Reading a tab';
     case 'list_diff_comments': return id ? `Reading comments on ${id.slice(0, 12)}` : 'Reading diff comments';
     case 'add_diff_comment': return 'Writing a diff comment';
     case 'reply_to_diff_comment': return 'Replying to a diff comment';
@@ -849,8 +852,8 @@ export function createTurnReducer({
           if (ret && typeof ret.then === 'function') pendingHooks.push(ret.then(() => {}, () => { reducerErrors += 1; }));
         } catch { reducerErrors += 1; }
       }
-      if (b.name === 'mcp__worca__show_files' && typeof onShowFiles === 'function') {
-        // The parent re-reads every item from THIS thread's attachment rows (turn.mjs _onShowFiles).
+      if ((b.name === 'mcp__worca__show_files' || b.name === 'mcp__worca__screenshot_tab') && typeof onShowFiles === 'function') {
+        // show_files and screenshot_tab: the parent re-reads every item from THIS thread's attachment rows (turn.mjs _onShowFiles).
         try {
           const ret = onShowFiles({ toolUseId: b.id, input: fullInputs.get(b.id) ?? {}, text, isError: !!c.is_error });
           if (ret && typeof ret.then === 'function') pendingHooks.push(ret.then(() => {}, () => { reducerErrors += 1; }));

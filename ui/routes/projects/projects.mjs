@@ -16,9 +16,44 @@ import { cancelForTarget } from '../../../src/core/scheduler.mjs';
 import { getProjectsRoot } from '../../../src/core/settings.mjs';
 import { projectKey } from '../../../src/core/store.mjs';
 import path from 'node:path';
-import { CLONE_JOBS, afterProjectRegistered, badRequest, detectTeamMemorySoon, emitChanged, fsAllowedRoots, fsLimitedHere, isFinishingRun, liveRunIds, pinUiLevel, publicCloneJob, requireFsAllowed, runs, startCloneJob, tmProject } from '../../server.mjs';
+import { CLONE_JOBS, afterProjectRegistered, agentMayBeCaller, badRequest, detectTeamMemorySoon, emitChanged, fsAllowedRoots, fsLimitedHere, isFinishingRun, liveRunIds, noRawCommand, pinUiLevel, publicCloneJob, refuseAgentCaller, requireFsAllowed, runs, startCloneJob, tmProject } from '../../server.mjs';
+import { readProjectActions, writeProjectActions } from '../../../src/core/config.mjs';
+import { detectDevServer, devServerAction } from '../../../src/core/dev-server.mjs';
+import { ActionConfigError } from '../../../src/core/actions/model.mjs';
 
 export function register(app) {
+
+// The Browser tab's dev server offer (issue 1064, src/core/dev-server.mjs): only while the project has no service
+// Action. POST saves it as a project Action through the one Actions config; the body carries no command (ids only).
+app.get('/api/projects/:key/dev-server', async (req, res) => {
+  const p = await tmProject(req, res); if (!p) return;
+  try {
+    if (readProjectActions(p.key).actions.some((a) => a.kind === 'service')) return res.json({ suggestion: null, reason: 'HAS_SERVICE' });
+    res.json({ suggestion: await detectDevServer(p.path) });
+  } catch (e) { res.status(500).json({ error: e?.message || String(e) }); }
+});
+app.post('/api/projects/:key/dev-server', async (req, res) => {
+  if (agentMayBeCaller(req)) return refuseAgentCaller(res);
+  if (!noRawCommand(req, res)) return;
+  const p = await tmProject(req, res); if (!p) return;
+  try {
+    // Detect first: the read, the check and the write below run with no await between them, so an Actions editor
+    // save or a second Use this landing meanwhile is never overwritten.
+    const found = await detectDevServer(p.path);
+    const config = readProjectActions(p.key);
+    if (config.actions.some((a) => a.kind === 'service')) {
+      return res.status(409).json({ error: 'This project already has a service Action: start it from a run\'s Actions tab.', code: 'HAS_SERVICE' });
+    }
+    if (!found) return res.status(404).json({ error: 'package.json has no dev or start script, or it pins a port below 1024.', code: 'NO_DEV_SCRIPT' });
+    const action = devServerAction(found, config.actions.map((a) => a.id));
+    // A run's checkout has no node_modules: with no setup command the script's tools are missing (exit 127).
+    const saved = writeProjectActions(p.key, { ...config, setup: config.setup || found.setup || null, actions: [...config.actions, action] });
+    res.status(201).json({ action: saved.actions.find((a) => a.id === action.id), config: saved });
+  } catch (e) {
+    if (e instanceof ActionConfigError) return res.status(400).json({ error: e.message, code: 'BAD_REQUEST', field: e.field });
+    res.status(500).json({ error: e?.message || String(e) });
+  }
+});
 
 // ownedFolder: Remove deletes this project's folder too (ownsProjectFolder), so the UI shows that warning.
 // nestedRepo (#693): a repository an older worca git-inited inside the user's repository — the UI warns with the fix.

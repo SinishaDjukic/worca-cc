@@ -236,7 +236,9 @@ can check a run out by itself when it ends:
 | `until-pr` | Kept until its pull request is merged or closed. Checked at start-up and every hour; a run without a PR stays |
 
 A kept checkout skips setup until its first action, which runs setup first (the card says "Setup
-runs before the first action").
+runs before the first action"). A setup command added after a checkout was made with none (the Browser tab's
+Use this adds one) runs before that checkout's next action, unless an action of that project is running in the
+checkout (as **Run setup** refuses then) or the checkout is your own folder (setup runs there only when you ask).
 
 **Keep at most N** caps the number of checked-out runs. After every checkout and at start-up, the
 oldest checkouts beyond N are discarded. A run with a running action is never discarded, and
@@ -353,7 +355,9 @@ ones, and up to 40 log lines per instance.
   Editor and Terminal: it runs the line being edited, behind the same guards as saving it.
 - **cwd pinned.** `cwd` must stay inside the worktree: checked when the config is saved, and again
   before every spawn.
-- **Open links** are `http`/`https` only, checked on save and again before they are rendered.
+- **Open links** are `http`/`https` only, checked on save and again before they are rendered. A click opens
+  the address in a Browser tab of the tool panel, through the preview proxy for a local address
+  ([terminal.md](terminal.md#browser-tabs)); Ctrl- or middle-click opens your browser's own tab.
 - **Hosted (remote) mode.** Actions are refused with `403 ACTIONS_DISABLED` unless the server starts
   with `WORCA_ACTIONS_REMOTE=1`. It is an environment variable on purpose: in remote mode every
   signed-in person is an administrator of the UI (see [remote-access.md](remote-access.md#limits)),

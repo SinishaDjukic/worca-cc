@@ -28,14 +28,22 @@ const VIEWER_TEXT_TYPES = Object.freeze({ '.ndjson': 'application/x-ndjson', '.d
   '.c4': 'text/plain', '.likec4': 'text/plain' });
 const DOCUMENT_TYPES = Object.freeze({ '.html': 'text/html', '.htm': 'text/html', '.svg': 'image/svg+xml' });
 const OPAQUE_TYPES = Object.freeze({
+  '.key': 'application/vnd.apple.keynote',
+  '.zip': 'application/zip', '.tar': 'application/x-tar',
+});
+/** Office documents: the viewer kind 'office' — downloaded as themselves, previewed as a PDF that the server makes with
+ *  LibreOffice when it is installed (src/core/office-preview.mjs, the raw routes' `?as=pdf`). */
+const OFFICE_TYPES = Object.freeze({
   '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
   // split literal: the shared-purity scanner forbids a bare `document` token even
   // inside a string, and this OOXML mime ends in `.document`.
   '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.docu' + 'ment',
   '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-  '.key': 'application/vnd.apple.keynote',
-  '.zip': 'application/zip', '.tar': 'application/x-tar',
+  '.odt': 'application/vnd.oasis.opendocument.text',
+  '.odp': 'application/vnd.oasis.opendocument.presentation',
+  '.ods': 'application/vnd.oasis.opendocument.spreadsheet',
 });
+export const OFFICE_EXTENSIONS = Object.freeze(Object.keys(OFFICE_TYPES));
 /** What an HTML artifact loads relatively (kit scripts, styles, fonts, media).
  *  Streamed by the raw route so a deck's <script src="deck-stage.js"> resolves.
  *  Viewer kinds: js/css view as text, audio/video play inline (the artifact viewer's players), .avif is an image,
@@ -57,9 +65,9 @@ const SUBRESOURCE_TYPES = Object.freeze({
 export const TEXT_EXTENSIONS = Object.freeze(Object.keys(TEXT_TYPES));
 export const BINARY_EXTENSIONS = Object.freeze(Object.keys(BINARY_TYPES));
 /** Viewer kinds that must never be decoded as UTF-8 text. */
-export const BINARY_KINDS = Object.freeze(new Set(['image', 'pdf', 'binary', 'audio', 'video']));
+export const BINARY_KINDS = Object.freeze(new Set(['image', 'pdf', 'binary', 'audio', 'video', 'office']));
 /** Viewer kinds the raw-bytes route may stream (binary = download only; audio/video play inline in the viewer). */
-export const RAW_KINDS = Object.freeze(new Set(['image', 'pdf', 'html', 'binary', 'audio', 'video']));
+export const RAW_KINDS = Object.freeze(new Set(['image', 'pdf', 'html', 'binary', 'audio', 'video', 'office']));
 
 /** ARTIFACT kinds (the `kind` column, not a viewer kind) that are indexed but
  *  never listed as a row a human is asked to open. Two families:
@@ -109,6 +117,7 @@ export function classifyExtension(ext) {
 const SNAPSHOT_TYPES = Object.freeze({
   'image/svg+xml': '.svg', 'image/avif': '.avif', 'video/mp4': '.mp4', 'video/webm': '.webm',
   'audio/mpeg': '.mp3', 'audio/wav': '.wav', 'audio/ogg': '.ogg',
+  ...Object.fromEntries(Object.entries(OFFICE_TYPES).map(([ext, mime]) => [mime, ext])),
 });
 
 /** The on-disk extension for a stored Ask body (unchanged behaviour). */
@@ -125,7 +134,7 @@ function extOf(pathname) {
   return dot <= 0 ? '' : base.slice(dot).toLowerCase();
 }
 
-/** markdown | json | diff | text | image | pdf | html | audio | video | binary. Unknown → text (today's behaviour). */
+/** markdown | json | diff | text | image | pdf | html | audio | video | office | binary. Unknown → text (today's behaviour). */
 export function viewerKindFor(pathname) {
   const e = extOf(pathname);
   if (e === '.md' || e === '.markdown') return 'markdown';
@@ -134,6 +143,7 @@ export function viewerKindFor(pathname) {
   if (e === '.pdf') return 'pdf';
   if (e === '.html' || e === '.htm') return 'html';
   if (e === '.svg' || (has(BINARY_TYPES, e) && BINARY_TYPES[e].startsWith('image/'))) return 'image';
+  if (has(OFFICE_TYPES, e)) return 'office';
   if (has(OPAQUE_TYPES, e)) return 'binary';
   if (has(SUBRESOURCE_TYPES, e)) {
     const mime = SUBRESOURCE_TYPES[e];
@@ -145,10 +155,15 @@ export function viewerKindFor(pathname) {
   return 'text';
 }
 
+/** Is this path an Office document LibreOffice may convert (by extension, case-insensitive)? */
+export function isOfficePath(pathname) {
+  return has(OFFICE_TYPES, extOf(pathname));
+}
+
 /** Content-Type for the raw route, or null when the extension is unknown. */
 export function mimeForPath(pathname) {
   const e = extOf(pathname);
-  for (const table of [TEXT_TYPES, VIEWER_TEXT_TYPES, DOCUMENT_TYPES, BINARY_TYPES, OPAQUE_TYPES, SUBRESOURCE_TYPES]) {
+  for (const table of [TEXT_TYPES, VIEWER_TEXT_TYPES, DOCUMENT_TYPES, BINARY_TYPES, OPAQUE_TYPES, OFFICE_TYPES, SUBRESOURCE_TYPES]) {
     if (has(table, e)) return /^text\/|json$/.test(table[e]) ? `${table[e]}; charset=utf-8` : table[e];
   }
   return null;

@@ -45,6 +45,7 @@ export const CARDS = Object.freeze([
   card('runs', 'ws-scan-models-card', 'Workspaces', { min: 'advanced', alts: ['scan', 'workspace', 'monorepo'] }),
   card('runs', 'chat-settings-card', 'Chat notifications', { min: 'advanced', alts: ['chat alerts', 'replies', 'notify'] }),
   card('ask', 'ask-engine-card', 'Engine & models', { alts: ['engine', 'model', 'claude', 'codex', 'llm'] }),
+  card('ask', 'chat-links-card', 'Links in answers', { alts: ['links', 'file paths', 'web links', 'panel'] }),
   card('ask', 'ask-settings-card', 'Limits & access', { alts: ['limits', 'access', 'tools', 'spend', 'read only'] }),
 ]);
 

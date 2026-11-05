@@ -1938,6 +1938,45 @@ test('agent mode off, or relay mode: the bridge is never asked and the mcp json 
   }
 });
 
+// ── Tool panel tabs (issue 1064 slice 3) ──────────────────────────────────────────────────────────────
+test('tab tools: the bridge URL rides the mcp json, the token only spawnEnv; disposed when the turn ends', async () => {
+  const s = seed();
+  let raw = null; let spawnEnv = null; const asked = []; let disposed = 0;
+  const { turn } = makeTurn(s, {}, {
+    tabsBridge: (o) => { asked.push(o); return { url: 'http://127.0.0.1:4317/api/ask/tabs', token: 'TOKEN-1064-tabs', dispose: () => { disposed += 1; } }; },
+    runClaudeImpl: async (opts) => {
+      raw = readFileSync(opts.mcpConfigPath, 'utf8');
+      spawnEnv = opts.spawnEnv;
+      throw Object.assign(new Error('claude exited with code 1: boom'), { errorClass: 'api' });
+    },
+  });
+  await turn.run();
+  assert.deepEqual(asked, [{ threadId: s.thread.id }]);
+  assert.equal(JSON.parse(JSON.parse(raw).mcpServers.worca.env.WORCA_ASK_TABS).url, 'http://127.0.0.1:4317/api/ask/tabs');
+  assert.ok(!raw.includes('TOKEN-1064-tabs'), 'the token never lands on disk');
+  assert.equal(spawnEnv.ASK_TABS_TOKEN, 'TOKEN-1064-tabs');
+  assert.equal(disposed, 1, 'the token ends with the turn');
+  assert.equal(turn.tabsBridge, null);
+});
+
+test('tab tools: no bridge dep, or relay mode: the bridge is never asked and the mcp json has no tabs key', async () => {
+  for (const deps of [{}, { agentRelay: () => ({ url: 'http://127.0.0.1:1/api/ask/relay', token: 'r', dispose() {} }) }]) {
+    const s = seed();
+    let cfg = null; let called = 0;
+    const { turn } = makeTurn(s, {}, {
+      ...deps,
+      ...('agentRelay' in deps ? { tabsBridge: () => { called += 1; return { url: 'u', token: 't', dispose() {} }; } } : {}),
+      runClaudeImpl: async (opts) => {
+        cfg = JSON.parse(readFileSync(opts.mcpConfigPath, 'utf8'));
+        throw Object.assign(new Error('claude exited with code 1: boom'), { errorClass: 'api' });
+      },
+    });
+    await turn.run();
+    assert.equal(called, 0);
+    assert.ok(!('WORCA_ASK_TABS' in cfg.mcpServers.worca.env));
+  }
+});
+
 test('run_command result mints one command card; an error result mints nothing', async () => {
   const s = seed();
   const runner = (frames) => async (opts) => {

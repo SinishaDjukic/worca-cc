@@ -29,6 +29,10 @@ project's working tree, so nothing is ever committed to your repo.
                                         chat_deliveries (one row per delivered message part with the platform
                                         message id and the card state it shows) and chat_inbound_seen (handled
                                         message/interaction ids, 2 days).
+                                        The tool panel's tab mirror (v87): tool_tabs (one row per chat or
+                                        project tab the page mirrors, and the tabs the assistant opened with
+                                        open_tab, undelivered until a page takes them in; never run tabs);
+                                        tool_tabs.target holds a Files tab's file or folder and line (JSON)
   backup-<ts>/                          legacy JSON archived on first upgrade (see below)
   store/no-project-00000000/            runs without a project: one store, the History group "No project";
                                         a run's work/ moves into its pipeline folder as work/ when it ends

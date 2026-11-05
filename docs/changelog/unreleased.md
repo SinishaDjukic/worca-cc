@@ -17,6 +17,26 @@ Pull requests (add each number when it opens):
 
 - Built-in workflow models live on the Models page
 
+## The assistant works with your tool panel tabs
+
+**Chat can open, look at and read the Browser tabs beside it.**
+
+In a chat with a project, the assistant can open a tab for you (`open_tab`: a local preview, an allowlisted site, a Terminal, Files or Changes tab), marked as opened by the assistant. It can screenshot a Browser tab into its reply (`screenshot_tab`) and read the page's text and console errors (`read_tab`), from a fresh headless load on the Worca server. It reaches only this chat's tabs and its project's, and other sites follow the chat's web allowlist. **Pick element** in the Browser tab's toolbar puts a screenshot of the element you click, and its selector, into the chat composer.
+
+## Chat links open in the tool panel
+
+**File paths and web links in the chat's answers open in tabs beside the chat.**
+
+A file path the chat names (`src/app.js:120`, or a bare `app.js` when only one file has that name) becomes a link once worca confirms it exists in the chat's folder or followed run, and opens a Files tab at that line; an archived run's files open from its branch. Web links open in a Browser tab of the chat, unless the site refuses being framed: then they open a new browser tab inside the click, and a server-side check spots sites that refuse. The assistant can open files too (`open_tab` with a path and line, 3 per turn), and an open file or address is brought forward instead of opened twice. A `show_files` card gains **Open in panel**. Settings › Chat › Links in answers turns it off.
+
+Chips: file links · web links · open_tab files · framing check · Open in panel · Settings › Chat
+
+Read it: [Terminal › Links from the chat](../terminal.md#links-from-the-chat)
+
+Pull requests (add each number when it opens):
+
+- Chat links in the tool panel (issue 1064)
+
 ## Requirements (experimental)
 
 **Define a feature with Worca before anything is built.**

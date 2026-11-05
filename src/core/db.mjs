@@ -64,7 +64,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 86;
+export const SCHEMA_VERSION = 87;
 
 /** store_meta row holding the install's default guardrail set id (JSON string). */
 export const GUARDRAILS_DEFAULT_META_KEY = 'guardrails:default';
@@ -925,6 +925,7 @@ const INCREMENTAL_COLUMNS = {
                             resume_pipeline_id: 'TEXT',   // v44: a one-off "resume this paused run" ticket (NULL = starts a new run)
                             preset_id: 'TEXT' },   // v63: the run preset this run follows (read at fire time); NULL = none
   projects:               { vcs: 'TEXT' },   // v69: 'git' | 'none' (CONTRACT §1); NULL reads as 'git'
+  tool_tabs:              { target: 'TEXT' },   // #1064 chat links: a Files tab's target (no SCHEMA_VERSION bump; v87 table heals)
 };
 
 /** v23: per-loop-wire cycle budgets, the graph-engine twin of
@@ -1078,6 +1079,25 @@ CREATE TABLE IF NOT EXISTS pr_watch_runs (
   created_at TEXT NOT NULL,
   FOREIGN KEY (pr_url) REFERENCES pr_watches(pr_url) ON DELETE CASCADE,
   FOREIGN KEY (pipeline_id) REFERENCES pipelines(id) ON DELETE SET NULL
+);
+`;
+
+// v87 (#1064 slice 3; first written as v84 on its branch): the tool panel's chat and project tabs, mirrored by the page (PUT /api/tools/tabs) so the chat's
+// tab tools work with no page open; the assistant's open_tab adds rows here first (delivered = 0). The worca server is
+// the only writer (src/core/tool-tabs-mirror.mjs).
+const TOOL_TABS_DDL = `
+CREATE TABLE IF NOT EXISTS tool_tabs (
+  owner     TEXT NOT NULL DEFAULT '',     -- the signed-in person on a shared deployment, '' otherwise
+  scope     TEXT NOT NULL,                -- chat:<threadId> | project:<projectKey>
+  id        TEXT NOT NULL,                -- tab_… (ui/public/tool-tabs.mjs)
+  kind      TEXT NOT NULL,                -- browser | terminal | files | changes | …
+  url       TEXT,                         -- a Browser tab's address
+  target    TEXT,                         -- a Files tab's file or folder: JSON { path, dir?, line?, endLine?, root?, member? }
+  opened_by TEXT NOT NULL DEFAULT 'user', -- user | assistant
+  delivered INTEGER NOT NULL DEFAULT 1,   -- 0: the assistant opened it and no page has taken it in yet
+  at        INTEGER NOT NULL,
+  pos       INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (owner, scope, id)
 );
 `;
 
@@ -1615,6 +1635,7 @@ const INCREMENTAL_TABLES = {
   req_helper_messages: REQUIREMENTS_HELPER_DDL,
   req_export_setups: REQUIREMENTS_EXPORT_DDL,  // v80 (A6)
   req_export_links:  REQUIREMENTS_EXPORT_DDL,  // v80 (A6)
+  tool_tabs: TOOL_TABS_DDL,
 };
 
 /**
@@ -2796,6 +2817,7 @@ export function migrate(db) {
     if (current < 85) db.exec(CHAT_CONVERSATIONS_DDL);   // v85 freeform chat conversations (first written as v84; dev took 84)
     // v86: chat_conversations.header_new_off — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps (a v85 DB) or
     // by the v85 DDL above (an older DB)
+    if (current < 87) db.exec(TOOL_TABS_DDL);   // v87 the tool panel's tab mirror (#1064 slice 3; first written as v84 on its branch)
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

@@ -210,6 +210,9 @@ test('labelForTool: representative worca labels, Task/Agent → null, web tools 
       assert.equal(labelForTool('mcp__worca__grep', { pattern: 'x' }), 'Searching files');
       assert.equal(labelForTool('mcp__worca__glob', { pattern: '**/*.mjs' }), 'Listing files');
       assert.equal(labelForTool('mcp__worca__show_files'), 'Showing files');
+      assert.equal(labelForTool('mcp__worca__open_tab', { kind: 'browser' }), 'Opening a tab');
+      assert.equal(labelForTool('mcp__worca__screenshot_tab', { tabId: 'tab_a1' }), 'Taking a screenshot');
+      assert.equal(labelForTool('mcp__worca__read_tab', { tabId: 'tab_a1' }), 'Reading a tab');
 
       assert.equal(labelForTool('Task', {}), null);
       assert.equal(labelForTool('Agent', {}), null);
@@ -738,6 +741,8 @@ const RESULT_HOOKS = [
   ['propose_project_change: labelled, and its RESULT reaches onProjectProposal with the full input; a sub-agent call never does', 'propose_project_change', 'onProjectProposal', { kind: 'create', name: 'landing-page' }],
   ['show_files: labelled, and its RESULT reaches onShowFiles with the full input; a sub-agent call never does',
     'show_files', 'onShowFiles', { files: [{ path: '$WORCA_ASK_OUT/a.png' }] }],
+  ['screenshot_tab (issue 1064 slice 3): its RESULT reaches onShowFiles too, so the image shows as a files card; a sub-agent call never does',
+    'screenshot_tab', 'onShowFiles', { tabId: 'tab_a1' }],
   ['onProxyProposal fires on the propose_network_proxy_change result', 'propose_network_proxy_change', 'onProxyProposal', { upstream: 'proxy2.acme.test:3128' }],
   ['onProxyFlagProposal fires on the propose_corporate_proxy_on result', 'propose_corporate_proxy_on', 'onProxyFlagProposal', { note: 'office' }],
 ];

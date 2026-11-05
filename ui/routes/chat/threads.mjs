@@ -13,7 +13,11 @@ import { actorOf } from '../../../src/core/identity.mjs';
 import { CHAT_BUSY } from '../../../src/shared/chat-busy.mjs';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
-import { ASK_SCOPE_BUSY, ASK_TEXT_PREVIEW_MAX, REMOTE_MODE, SETTLED_RUN, agentMayBeCaller, askBusyReason, askChatEngine, askCommands, askFollowers, askIdParam, askInFlight, askTrackingCount, askValidateScope, askViewer, askWorktreesEnvelope, badRequest, broadcast, builtins, channelHost, deleteAskThreadFully, emitAskWorktrees, emitChanged, liveRunEntry, requireTerminal, switchThreadScope } from '../../server.mjs';
+import { ASK_SCOPE_BUSY, ASK_TEXT_PREVIEW_MAX, REMOTE_MODE, SETTLED_RUN, agentMayBeCaller, askBusyReason, askChatEngine, askCommands, askFollowers, askIdParam, askInFlight, askTrackingCount, askValidateScope, askViewer, askWorktreesEnvelope, badRequest, broadcast, builtins, channelHost, chatToolFolder, closeChatTerminals, deleteAskThreadFully, emitAskWorktrees, emitChanged, liveRunEntry, rejectRawTerminalFields, requireTerminal, sendOfficePdf, switchThreadScope, terminalError, terminals, toolTabs } from '../../server.mjs';
+import { currentBranch } from '../../../src/core/worktree.mjs';
+import { tabScope } from '../../../src/core/tool-tabs-mirror.mjs';
+import { isOfficePath } from '../../../src/shared/artifact-kinds.mjs';
+import fsp from 'node:fs/promises';
 
 export function register(app) {
 
@@ -26,6 +30,22 @@ app.get('/api/ask/threads/:id/commands/:blockId', (req, res) => {
   const view = askCommands.view(req.params.blockId);
   if (!view) return res.status(404).json({ error: 'block not found' });
   res.json(view);
+});
+
+// A shell in a chat's folder (issue 1064): its worktree, else its project's own folder. Scope 'chat' and the chat's id
+// (in memory only, D11), so the tool panel shows it among that chat's tabs.
+app.post('/api/ask/threads/:id/terminal', async (req, res) => {
+  if (!requireTerminal(req, res) || !rejectRawTerminalFields(req, res)) return;
+  const id = askIdParam(res, req.params.id, 'thread'); if (!id) return;
+  try {
+    const f = await chatToolFolder(id, req);
+    if (f.gone) return res.status(404).json({ error: 'thread not found', code: 'SCOPE_GONE' });
+    if (f.error) return res.status(409).json({ error: f.error, code: f.code });
+    const branch = await currentBranch(f.dir);
+    const session = await terminals.open({ cwd: f.dir, scope: 'chat', chatId: id, label: !f.worktree && branch ? `${f.label} · ${branch}` : f.label,
+      projectKey: f.projectKey, branch, by: actorOf(req), cols: req.body?.cols, rows: req.body?.rows });
+    res.status(201).json({ session, warning: null });
+  } catch (e) { terminalError(res, e); }
 });
 
 /** worca Chat (the History column's amber dot): how many of this chat's followed, unsettled runs wait on a question
@@ -194,6 +214,7 @@ app.patch('/api/ask/threads/:id', async (req, res) => {
         if (reason) return res.status(409).json({ error: CHAT_BUSY[reason], code: 'CHAT_BUSY', reason });
       }
       if (body.archived !== undefined) askSetArchived(id, body.archived);
+      if (body.archived === true) { await closeChatTerminals(id, 'chat archived'); toolTabs.dropScope(tabScope('chat', id)); }
       if (body.pinned !== undefined) askSetPinned(id, body.pinned);
       return res.json({ thread: askGetThread(id) });
     }
@@ -280,7 +301,7 @@ app.delete('/api/ask/threads/:id/worktrees/:wtId', async (req, res) => {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
 });
-app.get('/api/ask/threads/:id/attachments/:attId', (req, res) => {
+app.get('/api/ask/threads/:id/attachments/:attId', async (req, res) => {
   const id = askIdParam(res, req.params.id, 'thread');
   if (!id) return;
   const attId = askIdParam(res, req.params.attId, 'attachment');
@@ -308,6 +329,10 @@ app.get('/api/ask/threads/:id/attachments/:attId', (req, res) => {
       if (!r) return res.status(404).json({ error: 'not found' });
       res.set('Cache-Control', 'private, no-store');
       return res.json({ text: r.text });
+    }
+    if (req.query.as === 'pdf') {
+      if (att.kind === 'text' || !isOfficePath(att.name)) return res.status(415).json({ error: 'Only Office documents convert to PDF.', code: 'NOT_OFFICE' });
+      return await sendOfficePdf(res, { name: att.name, open: () => fsp.open(file, 'r').catch(() => null), notFound: 'attachment not found' });
     }
     // Streamed, not readFileSync + send: a body is immutable under its
     // store-minted id, so a stat-based ETag/Last-Modified plus a year-long
