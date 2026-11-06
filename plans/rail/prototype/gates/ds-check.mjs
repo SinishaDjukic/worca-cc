@@ -108,7 +108,7 @@ for (const page of readdirSync(here('.')).filter((f) => f.endsWith('.html') && f
   const p = await b.newPage({ viewport: { width: 900, height: 900 } });
   p.on('pageerror', (e) => add('script error', String(e)));
   await p.goto('file://' + here(page));
-  const cases = await p.evaluate(() => [...document.querySelectorAll('#case option')].map((o) => o.value));
+  const cases = page === 'index.html' ? [] : await p.evaluate(() => [...document.querySelectorAll('#case option')].map((o) => o.value));   // the one Worca's pages are read by route, below
   for (const c of cases) for (const o of [null, ...OPEN]) {
     await p.selectOption('#case', cases[(cases.indexOf(c) + 1) % cases.length]); await p.selectOption('#case', c);
     if (o && o.startsWith('break:')) { if (!(await p.$('#break'))) continue; await p.selectOption('#break', o.slice(6)); }   // the error cases

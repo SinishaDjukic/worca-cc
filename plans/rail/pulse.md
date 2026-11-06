@@ -15,7 +15,7 @@ among them).
 | Activity popover (live state), Schedules' notification log, desktop alerts, chat notices and toasts, each with its own switches | One hub, **Pulse**: the panel under one top-bar button, with no page of its own: **Now** (live state, today's Activity) and **Updates** (what happened, stored, read and cleared) |
 | Desktop switches in Settings › General › Alerts, resume after a limit in Settings › Runs, chat switches in Settings › Chat | One tab, **Settings › Notifications** (after General): every notification setting and what a start does near a limit, one sentence per row |
 | A usage limit is known only when a run hits it and pauses | Usage is visible before it stops anything: **rings on the avatar**, a **Limits** row in Now when one is near, and an update when it crosses the warning line, is reached or resets |
-| The avatar ring shows spend against a budget | The avatar shows every window that can stop a run: **session**, the **long window** (week, day or month), and **spend** when a budget has a limit; each ring shades along its arc |
+| The avatar ring shows spend against a budget | The avatar shows live usage only: **session** and the **long window** (week, day or month) of connected providers, refreshed every minute; each ring shades along its arc. A budget is set in Settings › Runs and read in Usage and costs |
 | The account menu opens on the spend card | The menu keeps its rows; the spend card moves into its last row, **Usage and costs ›**, a side menu with every harness's limits and the spend |
 | A run starts and pauses at the limit | Before it starts, Pulse checks the run's **estimate** (its size, and what runs like it used) against what is left: New run warns only when it will not fit and offers a harness with room or a start after the reset; slices, queued and scheduled runs move, wait, or let a smaller start that fits go first |
 
@@ -151,7 +151,7 @@ as fresh as the last turn that used the harness (`as of 14:28`). A harness no ru
 
 ### 4.2 The rings on the avatar
 - The account corner keeps its place (sidebar foot; the rail shows the avatar alone). Around the avatar, concentric
-  rings, outside in: **Session**, the **long window**, **Spend** (only when a budget has a limit). At most three.
+  rings, outside in: **Session** and the **long window**. At most two.
 - The rings hug the avatar: 1px lines, 1.5px apart, the innermost 1.5px off the 24px avatar (38px in all). In the menu
   row and the side menu the small ring is 1.25px and 1.5px.
 - Each ring shows its **tightest harness** (the highest share): with Claude Code at 48% and Codex at 12%, the session
@@ -161,8 +161,7 @@ as fresh as the last turn that used the harness (`as of 14:28`). A harness no ru
   amber. Used up, it is full and solid red (a reached limit is never hidden). The track is `--line-2`. Never green
   (green is done) and never violet. The same ring, smaller, leads each row of the side menu and the menu row.
 - A ring no harness in use reports is not drawn (with only Gemini in use there is no session ring).
-- The avatar's tooltip says it in words, one line per ring, naming the window:
-  `Session 86% · Claude Code · resets 16:40` / `Day 84% · Gemini · resets 02:00` / `Spend $92 of $100 in October`.
+- The avatar's tooltip says it in words, two lines per ring: `Weekly · Claude Code: 55%`, then `Resets Wed 5:00 PM`.
 
 ### 4.3 The account menu and its Usage and costs side menu
 The account menu keeps today's rows (`#acct-menu`) and becomes a panel in the Rail sense (it opens over any page from

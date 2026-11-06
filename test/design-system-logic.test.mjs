@@ -112,3 +112,14 @@ test('a run\'s other states: what each offers, and what it holds back', () => {
   assert.equal(R.actionLevel('Resume now'), 'simple');
   assert.ok(R.memberKeeps('Resume now') && R.memberKeeps('Retry') && !R.memberKeeps('Create PR again'));
 });
+
+test('usage: only connected providers count; a ring says what it shows; it refreshes every minute', () => {
+  const usage = [{ p: 'claude' }, { p: 'codex' }];
+  assert.deepEqual(R.connectedUsage(usage, (p) => p === 'codex'), [{ p: 'codex' }]);
+  assert.equal(R.usageTip({ what: 'Weekly', who: 'Claude Code', figure: '55%', resets: 'Wed 5:00 PM' }), 'Weekly · Claude Code: 55%\nResets Wed 5:00 PM');
+  assert.equal(R.usageTip({ what: 'Spend', who: 'this week', figure: '$10 of $20' }), 'Spend · this week: $10 of $20');
+  assert.equal(R.usageWindow('week'), 'Weekly');
+  assert.equal(R.USAGE_REFRESH_MS, 60000);
+  R.prefs.setConnected('claude', false); assert.ok(!R.prefs.connected('claude')); assert.ok(R.prefs.connected('codex'));
+  R.prefs.setConnected('claude', true); assert.ok(R.prefs.connected('claude'));
+});

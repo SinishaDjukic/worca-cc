@@ -5,7 +5,7 @@
 | `small.names` | A name is the thing, 1–3 words, a plain noun; one thing, one name | The same word everywhere | ds-check |
 | `small.disabled-why` | A disabled control says why in its tooltip | It teaches what is coming and where | click-check |
 | `small.no-emoji` | No emoji and no exclamation marks | Calm | by hand |
-| `small.usage-rings` | Usage is rings around the avatar; its figures live in the Usage and costs side menu | One place for figures | pulse-sweep |
+| `small.usage-rings` | Rings around the avatar show live usage of connected providers only, refreshed every minute; figures and money live in Usage and costs | What is drawn is what can stop a run now | worca-sweep |
 
 - **Names** (a page, a menu item, a section head, a settings row): the thing itself, as the people who use it call it,
   in 1–3 words, a plain noun first (`Budget`, `Labels`, `Away mode`, `Team policy`). One thing, one name: never two
@@ -23,8 +23,12 @@
 - No emoji and no exclamation marks in the interface.
 - In a list you can select, the tick box takes the mark's place on the rail only while selecting, so the list keeps
   one text edge.
-- Usage is rings around the avatar, outside in: session, the long window (week, day or month), spend (when a budget
-  has a limit). Each ring shows its tightest harness and shades along its arc: `--ink-2` at the start, `--amber` at
+- Usage is rings around the avatar, outside in: session and the long window (week, day or month). They show live usage
+  and nothing else: only providers connected right now (signing one out removes it at once), refreshed every minute; offline,
+  the last figures stay with their time. Money is never a ring: a budget is set in Settings › Runs › Budget (a day, a week or
+  a month) and read in Usage and costs. A ring's tooltip says what it shows, on two lines: `Weekly · Claude Code: 55%`, then
+  `Resets Wed 5:00 PM`. With nothing connected no ring is drawn and Usage and costs says so, with its link. Each ring shows
+  its tightest harness and shades along its arc: `--ink-2` at the start, `--amber` at
   the warning line, `--red` at the limit; used up, full and solid red. Never green, never violet. Its figures live in
   one place, the account menu's Usage and costs side menu; a limit warns before it is spent only in New run, Resume
   and the confirm of a step that starts agent work, and only when the run's estimate does not fit in what is left

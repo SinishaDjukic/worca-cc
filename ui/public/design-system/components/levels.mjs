@@ -14,13 +14,15 @@ export const runPartShows = (part, mode) => atLevel(mode, RUN_PAGE_LEVELS[part] 
 // The person's interface mode and Labs flags, one store for a page and its parts: the profile menu and Labs write it,
 // a page reads it and draws again when it changes. Starts as the caller sets it; nothing is saved here.
 function createPrefs() {
-  let mode = 'expert'; const flags = new Map(); const subs = new Set();
+  let mode = 'expert'; const flags = new Map(); const off = new Set(); const subs = new Set();
   const changed = () => subs.forEach((fn) => fn());
   return {
     mode: () => mode,
     setMode(m) { rank(m); mode = m; changed(); },
     flag: (k) => !!flags.get(k),
     setFlag(k, on) { flags.set(k, !!on); changed(); },
+    connected: (p) => !off.has(p),
+    setConnected(p, on) { if (on) off.delete(p); else off.add(p); changed(); },
     onChange(fn) { subs.add(fn); return () => subs.delete(fn); },
   };
 }

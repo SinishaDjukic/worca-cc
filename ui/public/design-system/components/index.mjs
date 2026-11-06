@@ -36,3 +36,4 @@ export { offlineLine, sideColumn, actionRow, awayScreen, awayShows, AWAY_IDLE_MS
 export { accountItem, navFlyout, themeChoice, cardTitleLink } from './account-menu.mjs';
 export { workflowGraph } from './workflow-graph.mjs';
 export { logLines } from './log-lines.mjs';
+export { USAGE_REFRESH_MS, usageWindow, connectedUsage, usageTip } from './usage.mjs';

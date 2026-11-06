@@ -31,7 +31,8 @@ function applyAppearance(m) {
   document.querySelectorAll('[data-theme-pick]').forEach((x) => x.setAttribute('aria-pressed', String(x.dataset.themePick === document.documentElement.dataset.theme)));
 }
 
-const C = () => M.withQuota(caseOf(ui.caseId), ui.sv.gemQuota, ui.sv.gemUsed);
+// What the rings and figures read: only providers connected now, as of the last one-minute refresh.
+const C = () => { const c = M.refreshed(M.withQuota(caseOf(ui.caseId), ui.sv.gemQuota, ui.sv.gemUsed), ui.usageTicks || 0, ui.usageClock || ''); return { ...c, usage: R.connectedUsage(c.usage, R.prefs.connected) }; };
 // A row's read state is the person's own on a shared sign-in; a problem clears when it is acted on; info rows arrive read.
 const isFixed = (u) => ui.fixed.includes(u.id);
 const isUnread = (u) => u.unread && !isFixed(u) && !ui.read.includes(u.id);
@@ -73,7 +74,7 @@ function picker(id, text, items, tip) {
 const gring = (pct, cls, t) => `<span class="pz-gring${cls ? ' ' + cls : ''}${t === 'over' ? ' is-over' : ''}" style="--p:${Math.max(0, Math.min(100, pct))};--w:${ui.s.warnAt}" aria-hidden="true"></span>`;
 function avatar() {
   const rs = M.rings(C(), ui.s.warnAt);
-  const tip = rs.length ? rs.map((r) => r.line).join('\n') : 'No usage reported yet';
+  const tip = rs.length ? rs.map((r) => r.line).join('\n\n') : 'No provider connected';
   return `<span class="pz-ava-wrap" title="${esc(tip)}">${rs.map((r, i) => gring(r.pct, 'pz-ring-' + i, r.tone)).join('')}<span class="pz-ava">${esc(initials())}</span><i class="acct-dot pz-ava-dot" aria-hidden="true">${R.icon('away', 8, { stroke: 3 })}</i></span>`;
 }
 const people = () => C().identity?.people || ['Emil Angelov'];
@@ -244,16 +245,16 @@ function usageFly() {
   };
   return R.navFlyout({ label: 'Usage and costs', cls: `pz-fly${inCls('sub')}`, body: `${back}
     <span class="nav-fly-k" title="What can stop a run, per harness: the rings around your avatar show the closest of each">Limits</span>
-    <div class="pz-ublocks">${c.usage.map(block).join('')}</div>${spendCard(c)}
+    <div class="pz-ublocks">${c.usage.length ? c.usage.map(block).join('') : `<p class="pz-unote">No provider connected. ${R.textLink({ label: 'Open Providers', attrs: { 'data-land': 'providers|GitHub Copilot|list', title: 'Opens Settings › Providers' } })}</p>`}</div>${spendCard(c)}
     <div class="msect" role="group">${R.accountItem({ label: 'Limit settings', mark: svg('gear', 16, 'mi-ic'), attrs: { 'data-go': 'settings', 'data-to': 'notifications', title: 'The warning line, what reaches you, and what Worca does when a limit is near' } })}</div>
   ` });
 }
-// The spend card as account-menu.mjs paints it today (renderSpendCard), with the gradient ring when a budget has a limit.
+// The spend card as account-menu.mjs paints it today (renderSpendCard): figures, never a ring.
 function spendCard(c) {
   const b = c.budget; if (!b) return '';
   const pct = M.spendPct(b), t = pct == null ? '' : M.tone(pct, ui.s.warnAt);
   const rows = b.limit ? `<dt>Limit</dt><dd>${M.usd(b.limit)}</dd><dt>Spent</dt><dd class="${t}">${M.usd(b.spent)}</dd>` : `<dt>Spent</dt><dd>${M.usd(b.spent)}</dd><dt>Saved</dt><dd class="pos">${M.usd(b.saved)}</dd>`;
-  return `<div class="mcard spend-card" role="group" aria-label="Spend ${b.period}" title="Estimated spend ${b.period}: ${M.usd(b.spent)}${b.limit ? ` of ${M.usd(b.limit)}` : ''}. Claude Code client-side estimate, not authoritative billing"><div class="mc-head">${pct != null ? mini(pct, t) : ''}${R.cardTitleLink({ label: `Spend ${b.period}`, attrs: { 'data-details': true, title: 'Opens Statistics: spend per run, model and day' } })}</div><dl class="mc-rows">${rows}</dl></div>`;
+  return `<div class="mcard spend-card" role="group" aria-label="Spend ${b.period}" title="Estimated spend ${b.period}: ${M.usd(b.spent)}${b.limit ? ` of ${M.usd(b.limit)}` : ''}. Claude Code client-side estimate, not authoritative billing"><div class="mc-head">${R.cardTitleLink({ label: `Spend ${b.period}`, attrs: { 'data-details': true, title: 'Opens Statistics: spend per run, model and day' } })}</div><dl class="mc-rows">${rows}</dl></div>`;
 }
 function lvlFly() {
   if (ui.sub !== 'lvl') return '';
@@ -272,7 +273,7 @@ const AUTO = [
   { id: 'asis', text: 'starts anyway', help: 'It starts as planned and may pause; it resumes by itself after the reset' }];
 // New run checks the run's estimate (Shaper's size, history of runs like it) against what is left on the harness.
 function openNewRun(size) {
-  const c = C(), w = ui.s.warnAt, sz = size || c.task.size, first = c.usage.find((u) => M.PROVIDER[u.p].runs).p, lim = M.near(c, first, w, sz), rm = M.room(c, w, first, sz);
+  const c0 = C(), c = c0.usage.some((u) => M.PROVIDER[u.p].runs) ? c0 : caseOf(ui.caseId), w = ui.s.warnAt, sz = size || c.task.size, first = c.usage.find((u) => M.PROVIDER[u.p].runs).p, lim = M.near(c, first, w, sz), rm = M.room(c, w, first, sz);
   ui.nr = { on: first, size: sz, wait: false, moved: '' };
   if (lim && ui.s.mine === 'move' && rm.length) ui.nr = { on: rm[0], size: sz, wait: false, moved: `Worca picked ${pname(rm[0])}: ${lim.need != null ? `this run needs about ${lim.need}% of ${lim.name}'s ${lim.what} and ${lim.left}% is left` : `${lim.name}'s ${lim.what} is at ${lim.pct}%`}` };
   else if (lim && ui.s.mine === 'wait') ui.nr.wait = true;
@@ -764,6 +765,12 @@ caseSel.addEventListener('change', () => {
 });
 if (!SHELL) R.prefs.setFlag('gitAutomations', true);   // the explorer shows every group
 R.prefs.onChange(() => { stepUnlock(); render(); });
+// Usage refreshes every minute; offline, the last figures stay with their time until the connection is back.
+setInterval(() => {
+  if (document.getElementById('conn')?.value === 'offline') return;
+  const d = new Date(); ui.usageTicks = (ui.usageTicks || 0) + 1; ui.usageClock = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  render();
+}, R.USAGE_REFRESH_MS);
 document.querySelectorAll('[data-theme-pick]').forEach((b) => b.addEventListener('click', () => { applyAppearance(b.dataset.themePick); render(); }));
 window.RailPulse = {
   show: (page, sset, view) => {

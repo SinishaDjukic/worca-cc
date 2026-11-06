@@ -1,6 +1,7 @@
 // Pulse mock: the cases, the event catalogue by group, and the pure figures the renderer paints (pulse.js).
 // Spec: plans/rail/pulse.md. Now is a state, Updates is an event; usage is read per provider and window.
 (function () {
+  const R = window.RailUI;
   // The groups, in Settings order. Each event: its id, its own title, its severity: needs (waiting for a person), problem
   // (went wrong while nobody waited), info (simply happened). A group with a `flag` follows that Labs feature.
   // Your own Pause and a drain (the server stopping) wait on nobody: they are not events and never notify.
@@ -284,17 +285,16 @@
   const fig = (w) => (w.of ? `${w.used.toLocaleString('en')} of ${w.of.toLocaleString('en')}` : `${w.pct}%`);
 
   // The avatar's rings, outside in: Session, then the long window (a week; a day or a month where that is the only
-  // one), then Spend when a budget has a limit. Each shows its tightest provider; a ring nobody reports is not drawn.
+  // one), each its tightest connected provider's live usage; a ring nobody reports is not drawn. Money is not a ring: a budget
+  // lives in Settings › Runs and its figures in Usage and costs.
   function rings(c, warnAt) {
     const out = [];
     for (const [slot, kinds] of [['session', ['session']], ['long', LONG]]) {
       let best = null;
       for (const u of c.usage) for (const w of u.win) if (kinds.includes(w.k) && (!best || w.pct > best.pct)) best = { ...w, p: u.p };
       if (best) out.push({ slot, pct: best.pct, tone: tone(best.pct, warnAt),
-        line: `${winWord(best.k)} ${best.pct}% · ${PROVIDER[best.p].name} · ${best.pct >= 100 ? 'reached, resets' : 'resets'} ${best.resets}` });
+        line: R.usageTip({ what: R.usageWindow(best.k), who: PROVIDER[best.p].name, figure: `${best.pct}%`, resets: best.resets }) });
     }
-    const sp = spendPct(c.budget);
-    if (sp != null) out.push({ slot: 'spend', pct: sp, tone: tone(sp, warnAt), line: `Spend ${usd(c.budget.spent)} of ${usd(c.budget.limit)} ${c.budget.period}` });
     return out;
   }
 
@@ -320,6 +320,10 @@
     for (const r of c.runs) out[sectionOf(wordOf(r.state))]?.push(r);
     return out;
   }
+
+  // What the mock's next minute reports: only connected providers, a little further on, as of now. In the app the figures
+  // come from each provider; a Wave 1 question.
+  const refreshed = (c, ticks, clock) => (ticks ? { ...c, usage: c.usage.map((u) => ({ ...u, asOf: clock, win: u.win.map((w) => { const pct = Math.min(100, w.pct + ticks); return w.of ? { ...w, pct, used: Math.min(w.of, w.used + ticks) } : { ...w, pct }; }) })) } : c);
 
   // Gemini's window is the person's own: the quota set in Settings › Providers, what Worca counted against it.
   function withQuota(c, quota, used) {
@@ -347,5 +351,5 @@
       .sort((a, b) => Math.max(...a.win.map((w) => w.pct)) - Math.max(...b.win.map((w) => w.pct))).map((u) => u.p);
   }
 
-  window.PulseModel = { withQuota, nowRuns, awayRow, awayLine, FINDS, FLAG_ROW, find, EVENT, CHANNELS, SCHED, GROUPS, LEVELS, WHERE, PROVIDER, CASES, SIZES, N, WHAT, qualifies, tone, rings, limits, near, room, est, winWord, fig, usd, spendPct };
+  window.PulseModel = { refreshed, withQuota, nowRuns, awayRow, awayLine, FINDS, FLAG_ROW, find, EVENT, CHANNELS, SCHED, GROUPS, LEVELS, WHERE, PROVIDER, CASES, SIZES, N, WHAT, qualifies, tone, rings, limits, near, room, est, winWord, fig, usd, spendPct };
 })();

@@ -79,6 +79,22 @@ for (const scheme of ['light', 'dark']) for (const w of [1280, 900, 760, 375]) {
   await step('a place above the mode unlocks', () => document.querySelector('#route-today [data-unlock]')?.click(), () => RailUI.prefs.mode() === 'advanced' && !document.querySelector('#route-today [data-unlock]'));
   await p.close();
 }
+// Usage: live, connected providers only, every minute (docs/rail/small-rules.md).
+{
+  const p = await b.newPage({ viewport: { width: 1280, height: 860 }, reducedMotion: 'reduce' });
+  await p.clock.install(); await p.goto(`${URL_}#runs`); await p.clock.runFor(200);
+  const tip = () => p.evaluate(() => document.querySelector('.pz-ava-wrap')?.title || '');
+  const t0 = await tip();
+  if (!/^Weekly · Claude Code: 31%\nResets /m.test(t0) && !/· .+: \d+%\nResets /.test(t0)) add('a ring does not say what it shows', t0);
+  if (/Spend/.test(t0)) add('money on a ring', t0);
+  await p.clock.runFor(60_000); await p.waitForTimeout(50);
+  if (await tip() === t0) add('usage did not refresh after a minute', t0);
+  const n0 = await p.evaluate(() => document.querySelectorAll('.pz-ava-wrap .pz-gring').length);
+  await p.evaluate(() => { for (const x of ['claude', 'codex', 'copilot', 'gemini', 'openrouter']) window.RailUI.prefs.setConnected(x, false); }); await p.clock.runFor(50);
+  if (!n0 || await p.evaluate(() => document.querySelectorAll('.pz-ava-wrap .pz-gring').length)) add('a disconnected provider keeps its ring', `${n0}`);
+  if ((await tip()) !== 'No provider connected') add('nothing connected is not said', await tip());
+  await p.close(); checks += 4;
+}
 await b.close();
 console.log(`${checks} checks · ` + (issues.size ? '\n' + [...issues].map(([k, v]) => `${k}\n   ${v.join('\n   ')}`).join('\n') : 'no glitches found'));
 process.exitCode = issues.size ? 1 : 0;

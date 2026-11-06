@@ -74,6 +74,10 @@ The Labs row keeps the registry's name, Git event automations.
 Pausing… and Resuming… at the click (#969); the one-line run title (#967); a closed shell says why (#977); ⌘ and
 Shift-click selection (#970); "Added to …" with Undo (#1004); credential slots as Chips (#1065, #1066).
 
+## Usage and budget (6 Nov)
+
+The rings show live usage of connected providers only, refreshed every minute; money is not a ring. The app's budget resets weekly or monthly (`costLimitResetPeriod`); Rail adds a daily reset, which needs its backend in Wave 1. So does a usage feed: the app has none today.
+
 ## Shared pieces that changed
 
 `--sess-fill`, `--sess-head`, `--sess-line` and `--peach-ink-strong` were added to the tokens (no value changed);

@@ -281,7 +281,7 @@
       { title: 'Spending', meta: (sv) => `Spent this month: $412${sv.total ? ` of ${usd(sv.total)}` : ''}.`, rows: [
         { name: 'Budget', say: 'All runs pause at **{bTotal}**; one run at **{bRun}**', vals: { bTotal: (sv) => (sv.total ? `${usd(sv.total)} a ${sv.period}` : 'no limit'), bRun: (sv) => usd(sv.perRun) },
           acts: [{ label: 'Change…', edit: { title: 'Change the budget', yes: 'Save', note: 'Empty means no limit.', check: (v) => (/^\d*(\.\d+)?$/.test(v.perRun) && /^\d*(\.\d+)?$/.test(v.total) ? '' : 'A limit is an amount in dollars'), fields: [
-            { key: 'perRun', label: 'Per run (USD)', placeholder: 'No limit' }, { key: 'total', label: 'Total (USD)', placeholder: 'No limit' }, { key: 'period', label: 'The total starts again', options: O(['week', 'Each week, from Monday'], ['month', 'Each month, from the 1st']) },
+            { key: 'perRun', label: 'Per run (USD)', placeholder: 'No limit' }, { key: 'total', label: 'Total (USD)', placeholder: 'No limit' }, { key: 'period', label: 'The total starts again', options: O(['day', 'Each day, at midnight'], ['week', 'Each week, from Monday'], ['month', 'Each month, from the 1st']) },
           ], done: 'Budget saved' } }],
           more: [
             { name: 'Team caps', say: 'Your team\'s policy caps each run at **$50** and all runs at **$2,000 a month**', min: 'advanced', acts: [{ label: 'Open', id: 'team', go: 'team', help: 'Settings › Team policy' }] },
@@ -390,7 +390,7 @@
         { name: 'Engine', say: 'New runs use {eng}; each step and helper job uses its role', picks: { eng: P('claude', ENGINES, 'The engine a new run starts on') } },
         { name: 'Claude sign-in', say: '{claudeWords}', vals: { claudeWords: (sv) => (sv.claudeIn ? 'Signed in to Claude Code; factory defaults show as (default)' : 'Not signed in to Claude Code: Memory defragment and Second-opinion reviewer lose their factory default. A run that needs one is refused, never given another model') },
           chip: (sv) => (sv.claudeIn ? '' : 'Signed out'),
-          acts: [{ label: 'Sign out', when: (sv) => sv.claudeIn, do: (sv) => { sv.claudeIn = false; return 'Signed out of Claude Code'; } }, { label: 'Sign in', when: (sv) => !sv.claudeIn, do: (sv) => { sv.claudeIn = true; return 'Signed in to Claude Code'; } }] },
+          acts: [{ label: 'Sign out', when: (sv) => sv.claudeIn, do: (sv) => { sv.claudeIn = false; window.RailUI.prefs.setConnected('claude', false); return 'Signed out of Claude Code'; } }, { label: 'Sign in', when: (sv) => !sv.claudeIn, do: (sv) => { sv.claudeIn = true; window.RailUI.prefs.setConnected('claude', true); return 'Signed in to Claude Code'; } }] },
       ] },
       { title: 'Jobs', meta: 'A step or a helper job follows its role until you override it.', rows: [
         { name: 'Step models', say: '**{stepN}** set here; the others follow their role', vals: { stepN: (sv) => shownOf(STEPS, sv, 'Step models') }, acts: [{ label: (sv) => (sv.stepsAll ? 'Show set' : 'Show all 5'), id: 'steps-all', do: (sv) => { sv.stepsAll = !sv.stepsAll; sv.__open = 'more:models/Jobs/Step models'; return ''; } }], moreList: STEPS, empty: 'None overridden: Show all lists the steps' },
@@ -417,8 +417,14 @@
             Edit: (r, x) => x.dialog({ title: 'GitHub Copilot', yes: 'Save', fields: [{ key: 'acct', label: 'Account type', value: r.account, options: O('Individual', 'Business', 'Enterprise') }, { key: 'conc', label: 'Requests at once', value: String(r.conc), type: 'number', hint: 'Keep it low: more waits its turn, and it lowers GitHub\'s abuse-detection risk' }], then: (v) => { r.account = v.acct; r.conc = v.conc; return 'GitHub Copilot saved'; } }),
             'Import models': (r, x) => x.dialog(importModels('models/Catalogue')),
             'Refresh usage': (r) => { r.used += 7; return `Copilot: ${r.used} of 1,000 used, from GitHub`; },
-            'Sign out': (r) => { r.signedOut = true; r.mark = ''; return 'Signed out of Copilot'; },
-            'Sign in': (r) => { r.signedOut = false; r.mark = 'is-green'; return 'Signed in to Copilot as @emil-angelov'; },
+            'Sign out': (r) => { r.signedOut = true; r.mark = ''; window.RailUI.prefs.setConnected('copilot', false); return 'Signed out of Copilot'; },
+            'Sign in': (r) => { r.signedOut = false; r.mark = 'is-green'; window.RailUI.prefs.setConnected('copilot', true); return 'Signed in to Copilot as @emil-angelov'; },
+          } },
+        { title: 'Codex', meta: 'Your ChatGPT sign-in', mark: 'is-green', detail: 'Codex reports its own session and weekly usage.',
+          live: (sv, r) => (r.signedOut ? 'Not signed in' : 'Your ChatGPT sign-in'), menu: (r) => (r.signedOut ? ['Sign in'] : ['Sign out']),
+          on: {
+            'Sign out': (r) => { r.signedOut = true; r.mark = ''; window.RailUI.prefs.setConnected('codex', false); return 'Signed out of Codex'; },
+            'Sign in': (r) => { r.signedOut = false; r.mark = 'is-green'; window.RailUI.prefs.setConnected('codex', true); return 'Signed in to Codex'; },
           } },
         { title: 'OpenAI-compatible', meta: 'Not set up · presets: OpenRouter',
           live: (sv, r) => (r.url ? (r.preset === 'openrouter' ? orFree(sv) : `${r.url} · key set`) : 'Not set up · presets: OpenRouter'),
@@ -433,8 +439,10 @@
         { title: 'Gemini CLI', meta: 'Your Gemini sign-in; the CLI is the engine', mark: 'is-green',
           detail: 'Google does not report a quota to Worca. Set the number your plan allows and Worca counts requests against it.',
           live: (sv) => (sv.gemQuota ? `Your Gemini sign-in · ${sv.gemUsed} of ${sv.gemQuota} requests today, counted by Worca against your quota` : 'Your Gemini sign-in · no quota set, so nothing is counted'),
-          menu: (r, sv) => (sv.gemQuota ? ['Set quota', 'Clear quota'] : ['Set quota']),
+          menu: (r, sv) => (r.signedOut ? ['Sign in'] : sv.gemQuota ? ['Set quota', 'Clear quota', 'Sign out'] : ['Set quota', 'Sign out']),
           on: {
+            'Sign out': (r) => { r.signedOut = true; r.mark = ''; window.RailUI.prefs.setConnected('gemini', false); return 'Signed out of Gemini'; },
+            'Sign in': (r) => { r.signedOut = false; r.mark = 'is-green'; window.RailUI.prefs.setConnected('gemini', true); return 'Signed in to Gemini'; },
             'Set quota': (r, x) => x.dialog({ title: 'Set the Gemini quota', yes: 'Save', note: 'Google does not report one. Worca counts requests against the number you set here, and Pulse warns near it.', fields: [{ key: 'gemQuota', label: 'Requests a day', type: 'number', placeholder: 'No quota', value: x.sv.gemQuota }], check: (v) => (+v.gemQuota >= 0 ? '' : 'A quota is a number'), then: (v, sv) => { sv.gemQuota = v.gemQuota; return v.gemQuota ? `Gemini quota: ${v.gemQuota} requests a day` : 'Gemini quota cleared'; } }),
             'Clear quota': (r, x) => { x.sv.gemQuota = ''; return 'Gemini quota cleared'; },
           } },

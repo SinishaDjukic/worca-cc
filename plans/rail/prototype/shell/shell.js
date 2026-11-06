@@ -17,7 +17,8 @@
   // Today's runs, opened as the Rail run page on the case that shows them best.
   const RUN_CASE = { 'Add CSV export to billing': 'question', 'Migrate cron parser': 'gate', 'Fix flaky login test': 'working', 'Rename settings keys': 'checks', 'Unified page navigation': 'ready' };
   const RUN_DOT = { question: 'is-amber', gate: 'is-amber', working: 'is-peach is-pulse', checks: 'is-peach', ready: 'is-green' };
-  const RUN_LINE = { question: 'Needs you · Plan asks 2 questions', gate: 'Needs you · Review gate', working: 'Working · Build', checks: 'In review · checks running', ready: 'Ready · checks pass' };
+  const word = (id) => window.RailUI.runState(id).word;
+  const RUN_LINE = { question: `${word('question')} · Plan asks 2 questions`, gate: `${word('gate')} · Review gate`, working: `${word('working')} · Build`, checks: `${word('checks')} · checks running`, ready: `${word('ready')} · checks pass` };
   const el = (html) => { const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstElementChild; };
 
   // ---- the sidebar: places only (a setting or a place, docs/rail/settings.md) ----
