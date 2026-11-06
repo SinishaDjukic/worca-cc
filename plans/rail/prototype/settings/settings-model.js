@@ -90,7 +90,9 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
 
   // ---- values that are not a row's own ----
   const STATE = { ver: '1.19.0', latest: '1.19.0', upd: 'latest', updTried: false, gsShown: false, proxyLogin: true, claudeIn: true, chats: 38, worktrees: 12, attach: '140 MB',
-    tidied: '3 days ago', seeded: false, speechModels: true, gemQuota: '', gemUsed: 840, perRun: '', total: '1000', period: 'month', orLeft: 820 };
+    defragged: '3 days ago', seeded: false, speechModels: true, gemQuota: '', gemUsed: 840, perRun: '', total: '1000', period: 'month', orLeft: 820,
+    pol: POLICY, capRun: POLICY.capRun, capAll: POLICY.capAll, wsCap: POLICY.wsCap, blockMcp: POLICY.blockMcp, policyTitle: POLICY.policyTitle, policyNotes: POLICY.policyNotes,
+    gone: { Sentry: true }, chToken: { Telegram: true, Discord: true, Slack: false, Teams: false }, chAllowed: {} };
   const NOTES = [note('architecture.md', 'How the server and the UI are split · today · from Chat'), note('conventions.md', 'Naming, commits and tests · 2 Oct · from run #398')];
   const COST_TAGS = [
     { title: 'Cost centre', meta: 'R&D, Platform, Support · required', menu: ['Edit', 'Remove'] },
@@ -241,6 +243,20 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
   const orFree = (sv) => `OpenRouter · ${sv.orLeft} of 1,000 free requests left today · resets 00:00 UTC`;
   const OPENROUTER = { base: 'https://openrouter.ai/api/v1', key: '${OPENROUTER_KEY}' };
 
+  const SUGGEST = O(['both', 'a title and a branch name'], ['title', 'a title'], ['branch', 'a branch name']);
+  const SUGGEST_WHEN = O(['typing', 'while you type the task'], ['ask', 'when you press Suggest']);
+  const LATE = O(['30m', '30 minutes'], ['1h', '1 hour'], ['6h', '6 hours'], ['24h', '24 hours']);
+  const REQUIRED = ['Jira', 'Sentry'];
+  const GUARD_SETS = {
+    Default: { deny: ['rm -rf', 'git push --force', 'curl | sh', 'git reset --hard', 'chmod -R 777', 'dd if='], paths: ['.env', '.git/', '~/.ssh'] },
+    Strict: { deny: ['rm -rf', 'git push --force', 'curl | sh', 'git reset --hard', 'chmod -R 777', 'dd if=', 'sudo', 'npm publish', 'docker push', 'kubectl delete', 'terraform apply', 'git clean -fd', 'mkfs', 'shutdown'], paths: ['.env', '.git/', '~/.ssh', '~/.aws', 'secrets/', 'infra/'] },
+    'Team policy': { deny: ['rm -rf', 'git push --force', 'curl | sh', 'git reset --hard', 'chmod -R 777', 'dd if=', 'sudo', 'npm publish', 'kubectl delete'], paths: ['.env', '.git/', '~/.ssh'] },
+  };
+
+  // A guardrail set's counts read its lists; viewing one shows them.
+  const guardCounts = (r) => `${plural(r.deny.length, 'deny rule')} · ${plural(r.paths.length, 'protected path')}`;
+  const guardNote = (r) => `Deny: ${r.deny.map((x) => '`' + x + '`').join(', ')}. Protected: ${r.paths.map((x) => '`' + x + '`').join(', ')}.${r.about ? ' ' + r.about : ''}`;
+
   const SECTIONS = {
     general: { title: 'General', meta: 'Setup, storage, and which version of Worca runs.', sections: [
       { title: 'Setup', rows: [
@@ -289,40 +305,40 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
       lock: { level: 'expert', why: 'Expert mode changes the policy; here you can read it' }, sections: [
       { title: 'Effective policy', meta: 'What the next run on this machine will use.', table: { label: 'Effective policy', columns: [{ id: 'f', label: 'Field' }, { id: 't', label: 'Team', narrow: false }, { id: 'k', label: 'Kind', narrow: false }, { id: 'y', label: 'Yours', narrow: false }, { id: 'e', label: 'Effective' }],
         rows: (sv) => [
-          { f: 'Per run limit', t: '$50', k: 'Soft', y: usd(sv.perRun), e: sv.perRun ? usd(Math.min(+sv.perRun, 50)) : '$50' },
-          { f: 'Total limit', t: '$2,000', k: 'Soft', y: usd(sv.total), e: sv.total ? usd(Math.min(+sv.total, 2000)) : '$2,000' },
+          { f: 'Per run limit', t: usd(sv.pol.capRun), k: 'Pauses', y: usd(sv.perRun), e: usd(sv.perRun ? Math.min(+sv.perRun, +sv.pol.capRun) : sv.pol.capRun) },
+          { f: 'Total limit', t: `${usd(sv.pol.capAll)} a month`, k: 'Pauses', y: sv.total ? `${usd(sv.total)} a ${sv.period}` : usd(''), e: sv.total && sv.period === 'month' ? `${usd(Math.min(+sv.total, +sv.pol.capAll))} a month` : sv.total ? `${usd(sv.total)} a ${sv.period}, ${usd(sv.pol.capAll)} a month` : `${usd(sv.pol.capAll)} a month` },
           { f: 'Guardrails', t: 'Team policy', k: 'Required', y: 'Default', e: 'Team policy' },
-          { f: 'Create a PR', t: { none: 'None', draft: 'Draft', ready: 'Ready' }[sv.prOpen], k: 'Default', y: '', e: { none: 'None', draft: 'Draft', ready: 'Ready' }[sv.prOpen] },
+          { f: 'Create a PR', t: PR_WORDS[sv.pol.prOpen], k: 'Default', y: '', e: PR_WORDS[sv.pol.prOpen] },
         ] } },
       { title: 'Defaults', meta: 'A project, New run and the run page can change these.', rows: [
-        { name: 'Pull requests', help: 'Create a PR when a run finishes. If it cannot, a notification says why', say: 'When a run finishes, {prOpen}; a feature gets {prSlices}',
+        { name: 'Pull requests', help: 'Create a PR when a run finishes. If it cannot, a notification says why', chip: pendingChip('prOpen', 'prSlices'), say: (sv) => (sv.prOpen === 'none' ? 'When a run finishes, {prOpen}' : 'When a run finishes, {prOpen}; a feature gets {prSlices}'),
           picks: { prOpen: P('none', O(['none', 'don\'t create a PR'], ['draft', 'create a draft PR'], ['ready', 'create a PR ready for review']), 'Team default for every project'), prSlices: P('each', O(['each', 'a PR per slice, stacked'], ['one', 'one PR for the whole feature']), 'How a feature\'s slices become pull requests', true) } },
-        { name: 'Spending', say: 'Each run up to **{capRun}**, all runs **{capAll} a month**; a run may go past', vals: { capRun: '$50', capAll: '$2,000' }, acts: [edit('Change the spending caps', [{ key: 'capRun', label: 'Per run' }, { key: 'capAll', label: 'Total a month' }], { done: 'Pull request opened with the new caps' })] },
-        { name: 'Workspace runs', say: 'These values replace the others for a run across a workspace: **{wsCap}** a run', vals: { wsCap: '$120' }, acts: [edit('Change for workspace runs', [{ key: 'wsCap', label: 'Per run' }], { done: 'Pull request opened for workspace runs' })] },
+        { name: 'Spending', chip: pendingChip('capRun', 'capAll'), say: (sv) => `Each run pauses at **${usd(sv.capRun)}**, all runs at **${usd(sv.capAll)} a month**; you can continue past, and that is recorded`, acts: [polEdit('Change the spending caps', [{ key: 'capRun', label: 'Per run (USD)' }, { key: 'capAll', label: 'Total a month (USD)' }], (v) => (isAmount(v.capRun) && isAmount(v.capAll) ? '' : 'A cap is an amount in dollars'))] },
+        { name: 'Workspace runs', chip: pendingChip('wsCap'), say: (sv) => `A run across a workspace pauses at **${usd(sv.wsCap)}** instead`, acts: [polEdit('Change for workspace runs', [{ key: 'wsCap', label: 'Per run (USD)' }], (v) => (isAmount(v.wsCap) ? '' : 'A cap is an amount in dollars'))] },
       ] },
-      { title: 'Allowed', actions: [
-        { label: 'Install all…', help: 'The required plugins', read: true, off: (sv) => (sv.__recs['team/Allowed/Required plugins']?.some((r) => r.missing) === false ? 'Everything required is installed' : ''),
-          edit: (sv) => ({ title: 'Install what is required', yes: 'Install', note: 'Slack, from worca-official at commit `c81d02e`: a chat channel, 1 skill, no agents.', then: () => { (sv.__recs['team/Allowed/Required plugins'] || []).forEach((r) => { r.missing = false; r.mark = ''; r.meta = 'Installed'; r.menu = []; }); return 'Required plugins installed'; } }) },
+      { title: 'Rules', actions: [
+        { label: (sv) => { const m = REQUIRED.filter((t) => !installed(sv, t)); return m.length === 1 ? `Install ${m[0]}…` : 'Install all…'; }, id: 'install', help: 'The required plugins', read: true, off: (sv) => (REQUIRED.every((t) => installed(sv, t)) ? 'Everything required is installed' : ''),
+          edit: (sv) => ({ title: 'Install what is required', yes: 'Install', note: REQUIRED.filter((t) => !installed(sv, t)).map((t) => `${t}, from worca-official at commit \`c81d02e\`: ${t === 'Sentry' ? 'an MCP server' : 'a task source'}, 1 skill, no agents.`).join(' '), then: () => { const left = REQUIRED.filter((t) => !installed(sv, t)); sv.gone = Object.fromEntries(Object.entries(sv.gone).filter(([t]) => !left.includes(t))); return `Installed: ${andList(left)}`; } }) },
       ], groups: [
         { title: 'Required plugins', meta: 'Installing shows its source and what it ships, and waits for your click.', list: [
-          { title: 'Jira', meta: 'Installed' },
-          { title: 'Slack', meta: 'Missing on this machine', mark: 'is-amber', missing: true },
+          ...REQUIRED.map((t) => ({ title: t, meta: 'Installed', live: (sv) => (installed(sv, t) ? 'Installed' : 'Missing on this machine'), mark: (sv) => (installed(sv, t) ? '' : 'is-amber') })),
         ] },
         { title: 'Blocked', meta: 'A run with one of these enabled proceeds and is recorded as off-policy.', list: [
-          { title: 'Unknown MCP servers', meta: 'Blocked by acme/worca-policy', menu: ['Remove'] },
+          { title: 'Unknown MCP servers', meta: 'Blocked by acme/worca-policy', when: (sv) => sv.pol.blockMcp, chip: (sv) => (sv.blockMcp ? '' : 'Not published'), menu: (r, sv) => (sv.blockMcp ? [{ id: 'Unblock', text: 'Unblock' }] : ['Keep blocked']),
+            on: { Unblock: (r, x) => { x.sv.blockMcp = false; return pendingWords(x.sv); }, 'Keep blocked': (r, x) => { x.sv.blockMcp = true; return pendingWords(x.sv); } } },
         ] },
         { title: 'Guardrail sets', meta: 'Read-only on every machine that follows this policy.', list: [
-          { title: 'Team policy', meta: '9 deny rules · read-only', open: (r, x) => x.go('guardrails') },
+          { title: 'Team policy', meta: `${plural(GUARD_SETS['Team policy'].deny.length, 'deny rule')} · read-only`, open: (r, x) => x.go('guardrails') },
         ] },
         { title: 'Models', meta: 'Selectable everywhere a model is chosen.', list: [
-          { title: 'Opus via Acme gateway', meta: 'Through Anthropic-compatible · roles for Claude and Codex only', open: (r, x) => x.go('models') },
+          { title: 'Opus via Acme gateway', meta: 'Through Anthropic-compatible · roles for Claude and Codex only', openMin: 'expert', open: (r, x) => x.go('models') },
         ] },
         { title: 'MCP servers', meta: 'What the policy adds to every run. Each waits for your consent.', list: [
-          { title: 'github', meta: 'stdio · consented on 2 Oct', menu: ['Review'], on: { Review: (r, x) => x.dialog({ title: 'github', view: true, yes: 'Close', note: 'Runs `npx @modelcontextprotocol/server-github`, with `GITHUB_TOKEN` from your settings.' }) } },
+          { title: 'github', meta: 'stdio · consented on 2 Oct', open: (r, x) => x.dialog({ title: 'github', view: true, yes: 'Close', note: 'Runs `npx @modelcontextprotocol/server-github`, with `GITHUB_TOKEN` from your settings.' }) },
         ] },
       ] },
       { title: 'Editing', rows: [
-        { name: 'Policy', say: '**{policyTitle}**; a change opens a pull request on `worca-policy`', vals: { policyTitle: 'Gateway team policy', policyNotes: 'Ask #platform' }, acts: [{ label: 'Edit policy', edit: { title: 'Edit the policy', yes: 'Open pull request', fields: [{ key: 'policyTitle', label: 'Title' }, { key: 'policyNotes', label: 'Notes', multiline: true, hint: 'Who to ask, and why' }], done: 'Pull request opened on worca-policy' } }], more: [
+        { name: 'Policy', chip: pendingChip('policyTitle', 'policyNotes'), say: (sv) => `**${sv.policyTitle}**; it lives on the \`worca-policy\` branch, and only what you publish reaches your team`, acts: [{ label: 'Edit policy', edit: { title: 'Edit the policy', yes: 'Add to changes', note: 'Nothing reaches your team until you publish.', fields: [{ key: 'policyTitle', label: 'Title' }, { key: 'policyNotes', label: 'Notes', multiline: true, hint: 'Who to ask, and why' }], check: (v) => (v.policyTitle.trim() ? '' : 'A policy needs a title'), then: (v, sv) => { Object.assign(sv, v); return pendingWords(sv); } } }], more: [
           { name: 'Home', say: 'Follows **{policyHome}** · synced today', vals: { policyHome: 'acme/worca-policy' }, acts: [edit('Change the policy home', [{ key: 'policyHome', label: 'Repository', hint: 'The project whose marker branch carries the policy' }], { yes: 'Follow it', done: 'Now following the new policy home' })] },
           { name: 'Consent', say: 'Accepted on 2 Oct; a change to it asks again', acts: [{ label: 'Review', read: true, edit: { title: 'Accepted policy', view: true, yes: 'Close', note: 'Policy version `4f2a91c`, published by @dana on 1 Oct: required plugins, spending caps, the Team policy guardrail set and one model.' } }] },
         ] },
@@ -339,18 +355,17 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
     ] },
 
     runs: { title: 'Runs', meta: 'How runs spend, start and wait.', sections: [
-      { title: 'Spending', meta: (sv) => `Spent this month: $412${sv.total ? ` of ${usd(sv.total)}` : ''}.`, rows: [
-        { name: 'Budget', say: 'All runs pause at **{bTotal}**; one run at **{bRun}**', vals: { bTotal: (sv) => (sv.total ? `${usd(sv.total)} a ${sv.period}` : 'no limit'), bRun: (sv) => usd(sv.perRun) },
-          acts: [{ label: 'Change…', edit: { title: 'Change the budget', yes: 'Save', note: 'Empty means no limit.', check: (v) => (/^\d*(\.\d+)?$/.test(v.perRun) && /^\d*(\.\d+)?$/.test(v.total) ? '' : 'A limit is an amount in dollars'), fields: [
+      { title: 'Spending', meta: spentWords, rows: [
+        { name: 'Budget', say: (sv) => `All runs pause at ${totalCap(sv)}; one run at ${runCap(sv)}`,
+          acts: [{ label: 'Change…', edit: { title: 'Change the budget', yes: 'Save', note: 'Empty means only your team\'s cap applies. The tighter of the two wins.', check: (v) => (/^\d*(\.\d+)?$/.test(v.perRun) && /^\d*(\.\d+)?$/.test(v.total) ? '' : 'A limit is an amount in dollars'), fields: [
             { key: 'perRun', label: 'Per run (USD)', placeholder: 'No limit' }, { key: 'total', label: 'Total (USD)', placeholder: 'No limit' }, { key: 'period', label: 'The total starts again', options: O(['day', 'Each day, at midnight'], ['week', 'Each week, from Monday'], ['month', 'Each month, from the 1st']) },
           ], done: 'Budget saved' } }],
           more: [
-            { name: 'Team caps', say: 'Your team\'s policy caps each run at **$50** and all runs at **$2,000 a month**', min: 'advanced', acts: [{ label: 'Open', id: 'team', go: 'team', help: 'Settings › Team policy' }] },
-            { name: 'Usage', say: 'What was spent, per harness', acts: [{ label: 'Usage', click: ['[data-acct]', '[data-sub="usage"]'], help: 'The profile menu\'s Usage and costs' }] },
-            { name: 'Hourly rate', say: 'Time saved is counted at **${rate}** an hour', vals: { rate: '35' }, acts: [edit('Change the hourly rate', [{ key: 'rate', label: 'USD an hour', hint: 'What an hour of a developer costs, for Statistics' }], { done: 'Hourly rate saved' })] },
-            { name: 'Clear limits', say: 'Remove both limits', acts: [{ label: 'Clear', off: (sv) => (sv.perRun || sv.total ? '' : 'No limit is set'), do: (sv) => { sv.perRun = ''; sv.total = ''; return 'Limits cleared'; } }] },
+            { name: 'Team caps', say: 'Your team sets its own caps; you can continue past one when a run pauses, and that is recorded', min: 'advanced', acts: [{ label: 'Open', id: 'team', go: 'team', help: 'Settings › Team policy' }] },
+            { name: 'Usage', say: 'What was spent, per harness', acts: [{ label: 'Open', id: 'usage', click: ['[data-acct]', '[data-sub="usage"]'], help: 'The profile menu\'s Usage and costs' }] },
           ] },
-        { name: 'Cost tags', say: 'Spend is counted by **Cost centre** and **Customer**; a run needs its Cost centre', acts: [{ label: 'Add tag', edit: (sv) => ({ title: 'Add a cost tag', yes: 'Add', fields: [{ key: 'name', label: 'Name', value: '' }, { key: 'vals', label: 'Values', value: '', hint: 'Comma-separated; empty lets any value in' }], check: (v) => (v.name.trim() ? '' : 'A tag needs a name'), then: (v) => { const k = 'runs/Spending/Cost tags'; sv.__recs[k] ||= COST_TAGS.map((it, i) => ({ ...it, id: 'r' + i })); sv.__recs[k].push({ id: 'n' + Date.now(), title: v.name, meta: `${v.vals || 'Any value'} · optional`, menu: ['Edit', 'Remove'] }); sv.__open = 'more:' + k; return `Cost tag added: ${v.name}`; } }) }], more: [
+        { name: 'Hourly rate', say: 'Time saved is counted at **${rate}** an hour', vals: { rate: '35' }, acts: [edit('Change the hourly rate', [{ key: 'rate', label: 'USD an hour', hint: 'What an hour of a developer costs, for Statistics' }], { done: 'Hourly rate saved', check: (v) => (isAmount(v.rate) ? '' : 'A rate is an amount in dollars') })] },
+        { name: 'Cost tags', say: (sv) => { const tags = sv.__recs['runs/Spending/Cost tags'] || COST_TAGS, req = tags.filter((t) => t.required).map((t) => `**${t.title}**`); if (!tags.length) return 'No cost tags: spend is counted per run only'; return `Spend is counted by ${andList(tags.map((t) => `**${t.title}**`))}; ${sv.tagsReq && req.length ? `a run needs its ${andList(req)}` : 'a run starts without any'}`; }, acts: [{ label: 'Add tag', edit: (sv) => ({ title: 'Add a cost tag', yes: 'Add', fields: costTagFields('', '', false), check: (v) => (v.name.trim() ? '' : 'A tag needs a name'), then: (v) => { const k = 'runs/Spending/Cost tags'; sv.__recs[k] ||= COST_TAGS.map((it, i) => ({ ...it, id: 'r' + i })); sv.__recs[k].push({ ...costTag(v.name, v.vals, v.req), id: 'n' + Date.now() }); sv.__open = 'more:' + k; return `Cost tag added: ${v.name}`; } }) }], more: [
           { name: 'Required', say: 'A run starts only with every required cost tag set', sw: { key: 'tagsReq', on: true } },
         ], moreList: COST_TAGS },
       ] },
@@ -366,8 +381,8 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
           { name: 'Remote', say: 'Sync from {remote}; if the branch has diverged, {div}', picks: { remote: P('origin', O('origin', 'upstream'), 'The remote to sync from'), div: P('ask', O(['ask', 'ask me'], ['origin', 'start from origin'], ['stop', 'don\'t run']), 'What a run does when the branch has diverged', true) } },
           { name: 'Background checks', say: 'Check remotes {bg}', picks: { bg: P('10', O(['off', 'never'], ['5', 'every 5 minutes'], ['10', 'every 10 minutes'], ['30', 'every 30 minutes'], ['60', 'every hour']), 'How often Worca looks for new commits') } },
         ] },
-        { name: 'Pull requests', help: GIT_TIP, say: 'Draft the description with AI as the PR opens', sw: { key: 'prDraft', on: false }, more: [
-          { name: 'Create a PR', min: 'advanced', say: 'A finished run follows the team default: **{prNow}**', vals: { prNow: (sv) => ({ none: 'no PR', draft: 'a draft PR', ready: 'a PR ready for review' }[sv.prOpen]) }, acts: [{ label: 'Open', id: 'team', go: 'team', help: 'Settings › Team policy › Defaults; a project or New run can change it' }] },
+        { name: 'Pull requests', help: GIT_TIP, say: (sv) => (sv.prDraft ? 'Draft the description with AI as the PR opens' : 'You write the description when the PR opens'), sw: { key: 'prDraft', on: false }, more: [
+          { name: 'Create a PR', min: 'advanced', say: 'A finished run follows the team default: **{prNow}**', vals: { prNow: (sv) => ({ none: 'no PR', draft: 'a draft PR', ready: 'a PR ready for review' }[sv.pol.prOpen]) }, acts: [{ label: 'Open', id: 'team', go: 'team', help: 'Settings › Team policy › Defaults; a project or New run can change it' }] },
         ] },
         { name: 'Schedules', min: 'advanced', say: 'A missed start still runs, up to **{lateNow}** late', vals: { lateNow: (sv) => ({ '30m': '30 minutes', '1h': '1 hour', '6h': '6 hours', '24h': '24 hours' }[sv.lateMax]) }, more: [
           { name: 'Missed starts', say: 'When Worca was not running, {late} up to {lateMax} late', picks: { late: P('late', O(['late', 'start it'], ['skip', 'skip it']), 'What a scheduled run does when its time passed'), lateMax: P('6h', O(['30m', '30 minutes'], ['1h', '1 hour'], ['6h', '6 hours'], ['24h', '24 hours']), 'How late it may still start', true) } },
