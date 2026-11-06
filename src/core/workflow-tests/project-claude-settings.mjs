@@ -22,12 +22,13 @@ export const PLUGINS_OFF_STAGE = 'Switching off the project\'s hooks and plugins
 // forge CLIs' empty sign-in folders, WSL's view of them, its own WORCA_* keys, and the tokens it strips (isTryStrippedKey).
 // Task 5 fix review (concern 3): NODE_OPTIONS and NODE_PATH, which the CLI also hands to Worca's own `node` hooks (the try
 // guard) and could load the checkout's code into them (probe nodeopts-318: a project `--require` ran inside the hook).
+// The dynamic loader's keys (LD_*, DYLD_*) do the same to any hook process, so they go too (controller decision, 2026-11-06).
 const TRY_GUARD_ENV_KEYS = new Set(['PATH', 'GIT_SSH_COMMAND', 'GH_CONFIG_DIR', 'GLAB_CONFIG_DIR', 'AZURE_CONFIG_DIR', 'GIT_TERMINAL_PROMPT',
   'GCM_INTERACTIVE', 'WSLENV', 'NODE_OPTIONS', 'NODE_PATH']);
 /** M10: a settings `env` key that would undo the try guard for the agent's tools (any spelling: Windows env names ignore case). */
 export const isTryGuardEnvKey = (k) => {
   const u = String(k).toUpperCase();
-  return TRY_GUARD_ENV_KEYS.has(u) || u.startsWith('GIT_CONFIG') || u.startsWith('WORCA_') || isTryStrippedKey(k);
+  return TRY_GUARD_ENV_KEYS.has(u) || u.startsWith('LD_') || u.startsWith('DYLD_') || u.startsWith('GIT_CONFIG') || u.startsWith('WORCA_') || isTryStrippedKey(k);
 };
 
 /** The settings text without STRIPPED_SETTINGS_KEYS and the try guard's env keys (2-space JSON and a final newline), or null

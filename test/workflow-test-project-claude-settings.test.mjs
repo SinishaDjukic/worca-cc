@@ -110,6 +110,13 @@ test('concern 3: NODE_OPTIONS and NODE_PATH go too: the CLI hands settings env t
   for (const k of ['NODE_OPTIONS', 'Node_Options', 'NODE_PATH']) assert.ok(isTryGuardEnvKey(k), k);
 });
 
+test('concern 3: the loader keys go too: LD_* and DYLD_* would load checkout code into the own node hook of Worca the same way', () => {
+  const t = strippedSettingsText(JSON.stringify({ env: { LD_PRELOAD: './x.so', ld_library_path: './lib', LD_AUDIT: './a.so',
+    DYLD_INSERT_LIBRARIES: './x.dylib', DYLD_LIBRARY_PATH: './lib', OLD_LD_FLAG: 'kept' } }));
+  assert.deepEqual(JSON.parse(t), { env: { OLD_LD_FLAG: 'kept' } });
+  for (const k of ['LD_PRELOAD', 'Ld_Library_Path', 'DYLD_INSERT_LIBRARIES', 'dyld_fallback_library_path']) assert.ok(isTryGuardEnvKey(k), k);
+});
+
 // ── Task 5 (security review M6): never write through a hardlink ───────────────────────────────────────────────────────────
 test('M6: a settings file that is a hardlink to a file outside the checkout: the outside file is unchanged', async () => {
   const d = tmp();
