@@ -1,5 +1,7 @@
 # The Runs list and the Chats column: what dev has, and where it goes in Rail
 
+**Reference only.** These lists are in the prototype so Wave 2 starts from everything dev has; their design is decided in Wave 2 Shaping, not here.
+
 Written before building, from `ui/public/runs-list.mjs`, `chats-column.mjs`, `chats-list.mjs`, `runs-selection.mjs`,
 `list-keys.mjs`, `list-dom.mjs`, `group-picker.mjs`, `group-add.mjs`, `chat-group-dialog.mjs`, `keys-sheet.mjs`,
 `runs-view-menu.mjs`, app.js's `runsRowMenuItems`, and `docs/ui-levels.md`. The library holds what both lists share
