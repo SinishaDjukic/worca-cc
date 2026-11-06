@@ -17,8 +17,8 @@ function freshSettings(c) {
 }
 // a case starts fresh: nothing from the case before it carries over
 const fresh = (caseId) => ({ caseId, page: 'runs', pop: false, popTab: 'now', acct: false, sub: '', nr: null, menu: '', show: 'unread', from: 'all', nowShow: 'all', nowFrom: 'all',
-  pick: R.selectClear(), rowKey: '', read: [], cleared: [], fixed: [], custom: '', confirm: '', toast: '', flash: '', awayStatus: caseOf(caseId).away.status, keep: true, s: freshSettings(caseOf(caseId)), sset: '', sv: { ...SV.fresh(), gemQuota: caseOf(caseId).gemQuota || '' },
-  stopped: [], fly: false, teamSeen: false, chatSeen: false, unlock: null, session: false, person: 0, people: {} });
+  pick: R.selectClear(), rowKey: '', read: [], cleared: [], fixed: [], custom: '', confirm: '', toast: '', flash: '', awayStatus: caseOf(caseId).away.status, keep: true, s: freshSettings(caseOf(caseId)), sset: '', sv: { ...SV.fresh(), gemQuota: caseOf(caseId).gemQuota || '', ...(caseOf(caseId).newVersion ? { latest: caseOf(caseId).newVersion, upd: 'available' } : {}) },
+  stopped: [], teamSeen: false, chatSeen: false, unlock: null, session: false, person: 0, people: {} });
 let ui = fresh('afternoon');
 // What opened with this click: only that fades in (a repaint of what was already open does not fade again).
 let opening = '';
@@ -49,14 +49,19 @@ const limitsNow = () => M.limits(C(), ui.s.warnAt);
 // the project and goes only with its own choice.
 const NOW_SHOWS = [{ id: 'all', text: 'everything', help: 'Every section: what needs you, limits, what is running and what is scheduled' },
   { id: 'needs', text: 'needs you', help: 'Runs waiting on a person: questions, gates, cost caps, a pause, a failure, ready to ship' }, { id: 'running', text: 'running', help: 'Runs working now' },
+  { id: 'actions', text: 'running actions', help: 'What keeps running after a run: dev servers, previews; each with its Stop' },
   { id: 'scheduled', text: 'scheduled', help: 'Starts coming up: slices, queued and scheduled runs' }, { id: 'limits', text: 'limits', help: 'Usage and spend at or over the warning line, per harness' }];
 const wordOf = (state) => R.runState(state).word;
 const nowRuns = () => M.nowRuns(C(), R.sectionOf, wordOf);
+// What keeps running after a run, until someone stops it: it never needs a person, so it stays out of Pulse's badge.
+const runningActions = () => C().actions.filter((a) => !ui.stopped.includes(a.id));
+const actionProject = (a) => C().runs.find((r) => r.title === a.run)?.project || '';
 function nowShown(show = ui.nowShow, from = ui.nowFrom) {
   const c = nowRuns(), runs = (k) => (show === 'all' || show === k ? c[k].filter((r) => from === 'all' || r.project === from) : []);
-  return { needs: runs('needs'), limits: show === 'all' || show === 'limits' ? limitsNow() : [], running: runs('running'), scheduled: runs('scheduled') };
+  const actions = show === 'all' || show === 'actions' ? runningActions().filter((a) => from === 'all' || actionProject(a) === from) : [];
+  return { needs: runs('needs'), limits: show === 'all' || show === 'limits' ? limitsNow() : [], running: runs('running'), actions, scheduled: runs('scheduled') };
 }
-const nowN = (v) => v.needs.length + v.limits.length + v.running.length + v.scheduled.length;
+const nowN = (v) => v.needs.length + v.limits.length + v.running.length + v.actions.length + v.scheduled.length;
 const nowProjects = () => [...new Set(C().runs.map((r) => r.project))];
 const nowCount = () => nowN(nowShown());
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many || one + 's'}`;
@@ -84,22 +89,10 @@ const personName = () => people()[ui.person] || people()[0];
 const initials = () => personName().split(/\s+/).map((w) => w[0]).join('').slice(0, 2).toUpperCase();
 const awayRow = () => M.awayRow({ ...C().away, status: ui.awayStatus });
 const isAway = () => awayRow().state === 'away';
-// The sidebar's foot: Running actions (only while one runs, at every mode: it must stay stoppable), Update available, the avatar.
-const runningActions = () => C().actions.filter((a) => !ui.stopped.includes(a.id));
-function actionRows(menu) {
-  return runningActions().map((a) => R.actionRow({ text: `${a.run} · ${a.label}`, stop: `Stop ${a.label} and free its port`, stopIcon: svg('stop', 12), menu, stopAttrs: { 'data-act-stop': a.id },
-    open: a.go ? { 'data-act-open': a.id, title: `Opens ${a.run}` } : null })).join('');
-}
+// The sidebar's foot: the avatar. The sidebar holds places only; what keeps running is in Now, a new version in Updates.
 function sideFoot() {
-  const rs = M.rings(C(), ui.s.warnAt), n = runningActions().length, label = plural(n, 'running action');
-  const actions = n ? `<div class="side-actions" role="group" aria-label="Running actions"><div class="side-actions-rows"><div class="act-rows">${actionRows(false)}</div></div>${R.actionTile({ n, label, open: !!ui.fly })}</div>` : '';
-  const update = C().update ? '<a class="side-update" href="#settings/general" data-land="general|Version" aria-label="Update available" title="Opens Settings › General, on the version"><span class="side-update-dot" aria-hidden="true"></span><span class="side-update-label">Update available</span></a>' : '';
-  const acct = R.accountButton({ name: personName(), avatar: avatar(), chevron: svg('updown', 14, 'pz-updown'), away: isAway(), open: !!ui.acct, label: `Account and usage${isAway() ? ', away' : ''}: ${rs.map((r) => r.line).join('; ') || 'no usage reported yet'}` });
-  return actions + update + acct;
-}
-function actionsFly() {
-  if (!ui.fly || !runningActions().length) return '';
-  return R.navFlyout({ label: 'Running actions', cls: `act-fly pz-act-fly${inCls('sub')}`, body: `<span class="nav-fly-k">Running actions</span><div class="act-fly-rows"><div class="act-rows">${actionRows(true)}</div></div>` });
+  const rs = M.rings(C(), ui.s.warnAt);
+  return R.accountButton({ name: personName(), avatar: avatar(), chevron: svg('updown', 14, 'pz-updown'), away: isAway(), open: !!ui.acct, label: `Account and usage${isAway() ? ', away' : ''}: ${rs.map((r) => r.line).join('; ') || 'no usage reported yet'}` });
 }
 const mini = (pct, t) => gring(pct, 'pz-mini', t);
 const pname = (p) => M.PROVIDER[p].name;
@@ -148,6 +141,8 @@ function nowSections() {
   const out = sec(R.runState('question').word, c.needs.length, c.needs.map((r, i) => runRow(r, 'need' + i, 'Opens the run page at what it asks')).join(''))
     + sec('Limits', lim.length, lim.map((l, i) => row({ dot: l.tone === 'over' ? 'is-red' : 'is-amber', title: l.title, meta: l.detail, time: l.time, key: 'lim' + i, tip: `${l.tip} · opens the usage card` })).join(''))
     + sec('Running', c.running.length, c.running.map((r, i) => runRow(r, 'run' + i, 'Opens the live run')).join(''))
+    + sec('Running actions', c.actions.length, c.actions.map((a) => R.pulseRow({ mark: runMark('working'), title: a.run, meta: a.label, time: '', id: 'act:' + a.id, tip: a.go ? `Opens ${a.run}` : 'Its run is gone; it can still be stopped',
+      action: R.button({ label: 'Stop', kind: 'quiet', attrs: { 'data-act-stop': a.id, title: `Stop ${a.label} and free its port` } }) })).join(''))
     + scheduledSection(c.scheduled);
   const all = ui.nowShow === 'all' && ui.nowFrom === 'all';
   return bar + (out || `<p class="pz-empty">${all ? 'Nothing needs you. Nothing is running.' : 'Nothing here right now.'}</p>`);
@@ -423,7 +418,7 @@ function settingsPage() {
 // ---- search: runs, projects, workspaces, workflows, schedules, tickets, labels (label:), settings, add-ons, plugins and
 // chats, each with where it lives. What the mode or Labs hides is still found, with its lock note; picking it hands you to
 // the unlock and then on to it. The last row asks Chat. ----
-const NOTIF_ROWS = ['Desktop', 'Badge', 'Chat', 'Runs', 'Schedules', 'Automations', 'Pull requests', 'Usage', 'Away mode', 'Projects'];
+const NOTIF_ROWS = ['Desktop', 'Badge', 'Chat', 'Runs', 'Schedules', 'Automations', 'Pull requests', 'Usage', 'Away mode', 'Projects', 'Worca'];
 const RUNS_LIMIT_ROWS = ['Warning line', 'Manual starts', 'Automatic starts'];
 const strict = (...ms) => ms.filter(Boolean).sort((a, b) => R.MODES.indexOf(b) - R.MODES.indexOf(a))[0] || '';
 function settingsFinds() {
@@ -461,7 +456,7 @@ function searchResults() {
   const rows = found.map((e, i) => ({ id: 'srch|' + i, text: e.label, where: [e.where, lockNote(e)].filter(Boolean).join(' · ') }));
   return R.searchResults([...rows, { id: 'srch|ask', text: `Ask Chat: ${ui.q.trim()}`, where: 'Chat' }]);
 }
-const closeOverlays = () => { ui.q = ''; ui.menu = ''; ui.pop = false; ui.acct = false; ui.sub = ''; ui.fly = false; SHELL?.closeSearch(); const i = document.querySelector('[data-search]'); if (i) i.value = ''; };
+const closeOverlays = () => { ui.q = ''; ui.menu = ''; ui.pop = false; ui.acct = false; ui.sub = ''; SHELL?.closeSearch(); const i = document.querySelector('[data-search]'); if (i) i.value = ''; };
 // Lands on a setting's row: goes to its section, and lights the row once it is drawn.
 let landing = null;
 function landRow(e) {
@@ -544,7 +539,7 @@ function renderInShell() {
   document.querySelector('#side-rail .brand')?.classList.toggle('is-settings', sideNow);
   if (sideNow) document.getElementById('route-settings').innerHTML = `<div class="pz-page">${settingsPage()}</div>`;
   const res = document.querySelector('[data-search-res]'); if (res) res.innerHTML = searchResults();
-  document.getElementById('app').innerHTML = `${popover()}${newRun()}${acctMenu()}${actionsFly()}${sessionDialog()}`;
+  document.getElementById('app').innerHTML = `${popover()}${newRun()}${acctMenu()}${sessionDialog()}`;
   const t = toastEl(); t.innerHTML = ui.toast ? esc(ui.toast) + (undo ? R.toastUndo({ title: undo.tip }) : '') : ''; t.classList.toggle('is-on', !!ui.toast);
   for (const b of document.querySelectorAll('[data-mixed]')) b.indeterminate = true;
   const pb = document.querySelector('.pz-pbody'); if (pb && !opening) pb.scrollTop = keepP;
@@ -601,7 +596,7 @@ function paintAlone() {
   const sideNow = ui.page === 'settings'; swapCls = sideWas !== null && sideWas !== sideNow ? ' is-swap' : ''; sideWas = sideNow;
   const scroller = document.scrollingElement || document.documentElement; const keepY = scroller.scrollTop;
   const keepP = document.querySelector('.pz-pbody')?.scrollTop || 0;
-  document.getElementById('app').innerHTML = `<div class="pz-app">${sidebar()}<div class="pz-main">${topbar()}<main class="pz-page">${unlockStrip()}${ui.page === 'settings' ? settingsPage() : runsPage()}</main></div>${popover()}${newRun()}${acctMenu()}${actionsFly()}</div>`;
+  document.getElementById('app').innerHTML = `<div class="pz-app">${sidebar()}<div class="pz-main">${topbar()}<main class="pz-page">${unlockStrip()}${ui.page === 'settings' ? settingsPage() : runsPage()}</main></div>${popover()}${newRun()}${acctMenu()}</div>`;
   const t = toastEl(); t.innerHTML = ui.toast ? esc(ui.toast) + (undo ? R.toastUndo({ title: undo.tip }) : '') : ''; t.classList.toggle('is-on', !!ui.toast);
   for (const b of document.querySelectorAll('[data-mixed]')) b.indeterminate = true;
   const pb = document.querySelector('.pz-pbody'); if (pb && !opening) pb.scrollTop = keepP;
@@ -670,10 +665,7 @@ document.addEventListener('click', (e) => {
   if ((el = tg('[data-menu]'))) { ui.menu = ui.menu === el.dataset.menu ? '' : el.dataset.menu; if (ui.menu) opening = 'menu'; render(); return; }
   if (!tg('.pz-pick, .spick')) ui.menu = '';
   if (ui.q && !tg('.rl-search, .tsearch-field, #tsearch-open')) { ui.q = ''; const r = document.querySelector('[data-search-res]'); if (r) r.innerHTML = ''; const i = document.querySelector('[data-search]'); if (i) i.value = ''; }
-  if ((el = tg('[data-act-tile]'))) { ui.fly = !ui.fly; ui.acct = false; ui.pop = false; if (ui.fly) opening = 'sub'; render(); return; }
-  if ((el = tg('[data-act-stop]'))) { const a = C().actions.find((x) => x.id === el.dataset.actStop); ui.stopped = ui.stopped.concat(a.id); if (!runningActions().length) ui.fly = false; toast(`Stopped ${a.label}`); render(); return; }
-  if ((el = tg('[data-act-open]'))) { const a = C().actions.find((x) => x.id === el.dataset.actOpen); ui.fly = false; if (SHELL) { SHELL.closeDrawer(); SHELL.openRun(a.go, a.run); } else toast(`Opens ${a.run} (not in this prototype)`); render(); return; }
-  if (ui.fly && !tg('.act-fly')) { ui.fly = false; render(); return; }
+  if ((el = tg('[data-act-stop]'))) { const a = C().actions.find((x) => x.id === el.dataset.actStop); ui.stopped = ui.stopped.concat(a.id); toast(`Stopped ${a.label}`); render(); return; }
   if ((el = tg('[data-land]'))) { e.preventDefault(); const [sset, label, list] = el.dataset.land.split('|'); land({ sset, label, list: !!list }); return; }
   if ((el = tg('[data-unlock]'))) { window.RailPulse.unlock(el.dataset.unlock); return; }
   if ((el = tg('[data-fix]'))) { const u = C().updates.find((x) => x.id === el.dataset.fix); ui.fixed = ui.fixed.concat(u.id); toast(`${u.fix}: done, and the problem is resolved (mock)`); render(); return; }
@@ -719,9 +711,11 @@ document.addEventListener('click', (e) => {
     if (u) {
       if (!ui.read.includes(u.id)) ui.read = ui.read.concat(u.id);
       if (u.go === 'usage') { ui.pop = false; ui.acct = true; ui.sub = 'usage'; }
+      else if (u.land) { const [sset, label] = u.land.split('|'); land({ sset, label }); return; }
       else openTarget(u.go, u.title.split(' · ')[1] || u.title, `Opens ${u.to}`);
     }
     else if (key.startsWith('lim')) { ui.pop = false; ui.acct = true; ui.sub = 'usage'; }
+    else if (key.startsWith('act:')) { const a = C().actions.find((x) => x.id === key.slice(4)); if (a.go) openTarget(a.go, a.run, `Opens ${a.run}`); else toast(`${a.run} is gone; ${a.label} can still be stopped`); }
     else {
       const all = nowRuns(), r = key.startsWith('need') ? all.needs[+key.slice(4)] : key.startsWith('run') ? all.running[+key.slice(3)] : C().runs[+key.slice(3)];
       openTarget(r.state === 'scheduled' && !r.on ? 'schedules' : r.state === 'scheduled' ? 'run/scheduled' : 'run/' + r.state, r.title, el.title.split('\n').pop());
@@ -771,12 +765,12 @@ document.addEventListener('keydown', (e) => {
   const scopes = [...(inPanel ? (ui.popTab === 'updates' ? ['selecting', 'list'] : ['list']) : []), 'anywhere'];
   const act = R.shortcutAction(R.keyFacts(e, ROW), { scopes, selecting: ui.pick.on });
   if (act === 'search') { if (somethingUp()) return; e.preventDefault(); if (SHELL && innerWidth <= 760) document.getElementById('tsearch-open')?.click(); document.querySelector('[data-search]')?.focus(); return; }
-  if (act === 'help') { if (somethingUp() || ui.menu || ui.acct || ui.fly) return; e.preventDefault(); openSheet(); return; }
+  if (act === 'help') { if (somethingUp() || ui.menu || ui.acct) return; e.preventDefault(); openSheet(); return; }
   if (e.key === 'Enter' && e.target.matches?.('[data-search]') && ui.q) { document.querySelector('.rl-search-res [data-menu-pick]')?.click(); return; }
   if (SHELL && SHELL.runActive() && !ui.pop && !ui.acct && !ui.nr && !ui.menu) return;   // the run page's keys
   if (act && act !== 'close' && act !== 'clear') { e.preventDefault(); panelKey(act, e); return; }
   if (!act) return;
-  if (ui.q) { ui.q = ''; const i = document.querySelector('[data-search]'); if (i) i.value = ''; } else if (ui.unlock?.strip) ui.unlock = null; else if (ui.fly) ui.fly = false; else if (ui.menu) ui.menu = ''; else if (ui.sv.__dialog) ui.sv.__dialog = null; else if (ui.sv.__confirm) ui.sv.__confirm = null; else if (ui.sub) ui.sub = ''; else if (ui.pop && ui.pick.on) ui.pick = R.selectClear(); else if (ui.pop || ui.acct || ui.nr) { ui.pop = false; ui.acct = false; ui.nr = null; } else if (ui.confirm) ui.confirm = ''; else return;
+  if (ui.q) { ui.q = ''; const i = document.querySelector('[data-search]'); if (i) i.value = ''; } else if (ui.unlock?.strip) ui.unlock = null; else if (ui.menu) ui.menu = ''; else if (ui.sv.__dialog) ui.sv.__dialog = null; else if (ui.sv.__confirm) ui.sv.__confirm = null; else if (ui.sub) ui.sub = ''; else if (ui.pop && ui.pick.on) ui.pick = R.selectClear(); else if (ui.pop || ui.acct || ui.nr) { ui.pop = false; ui.acct = false; ui.nr = null; } else if (ui.confirm) ui.confirm = ''; else return;
   render();
 });
 document.addEventListener('focusin', (e) => { const r = e.target.closest?.('.pz-popover [data-row]'); if (r) ui.rowKey = r.dataset.row; });

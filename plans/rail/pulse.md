@@ -43,9 +43,9 @@ two lists twice). On a narrow screen the panel is the window's width.
 - Head: tabs **Now** and **Updates**, each with its count as a caption (Rail: a count is a caption, never a chip), and
   ⋯ at the right: Mark all read, Clear read, Notification settings. The body scrolls; the head stays.
 - **Now**: the groups that have rows, in this order: Needs you (amber dot), Limits (amber or red), Running (peach,
-  pulses), Scheduled (hollow; a slice, queued or scheduled run says what it will do near a limit, §4.5). Above them,
+  pulses), Running actions (each with its Stop; it needs nobody, so its count stays out of the badge), Scheduled (hollow; a slice, queued or scheduled run says what it will do near a limit, §4.5). Above them,
   the same sentence as every list: `Showing [everything ▾] from [all projects ▾]`, each choice with its count. Shows:
-  Everything, Needs you, Running, Scheduled, Limits. From: all projects or one project; a limit belongs to a harness,
+  Everything, Needs you, Running, Running actions, Scheduled, Limits. From: all projects or one project; a limit belongs to a harness,
   so it ignores the project and goes only with Everything or Limits. The Now tab's count follows the sentence; the
   Pulse button's badge does not, so a filter never hides a run that waits. A run's section follows its state
   (`runState`, `sectionOf` in the library): Paused, Failed and Ready sort under Needs you, Waiting under Scheduled.
@@ -107,6 +107,7 @@ Three sections, one rail. Every choice is a **picker in its sentence** (Rail: ne
 | **Usage** (new; usage limits and spend) | usage.near, usage.reached, usage.reset, usage.moved, usage.held, budget.threshold, budget.exceeded | Needs you and problems | Desktop and chat |
 | Away mode | started, ended | Everything | Chat |
 | Projects | clone, sync, scan | Needs you and problems | Pulse only |
+| Worca | a new version (`app.update_available`): an update that opens Settings › General on the version, the sidebar holds places only | Everything | Pulse only |
 
 - **Each kind has its own title.** Runs' needs-you kinds: Questions waiting, Approval needed, Recovery decision needed,
   Workflow to review, Cost cap reached. A pause says why: Usage limit reached (a harness that reports no window; one that

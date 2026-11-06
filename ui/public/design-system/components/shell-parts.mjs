@@ -1,5 +1,5 @@
 // The shell's own pieces (docs/rail/components.md, panels.md, motion.md): the quiet offline line, a side column's frame,
-// a running action's row in the sidebar's foot, the away screensaver.
+// the away screensaver.
 import { attrs, cls, esc } from './html.mjs';
 import { button } from './button.mjs';
 import { statusDot } from './status-line.mjs';
@@ -21,23 +21,6 @@ export function offlineLine({ text = 'Offline · retrying', tip = 'Worca lost it
 export function sideColumn({ title, body, close = '', width = 440, hooks = {} }) {
   const grip = `<div class="ask-side-grip" role="separator" aria-orientation="vertical" tabindex="0"${attrs({ 'aria-label': `Resize ${title}`, 'aria-valuemin': 360, 'aria-valuemax': 680, 'aria-valuenow': width, title: 'Drag to resize, 360 to 680px', ...(hooks.grip || {}) })}></div>`;
   return `${grip}<div class="ask-side-in rl-side"><div class="rl-side-head"><h2 class="rl-side-title">${esc(title)}</h2>${button({ label: 'Close', kind: 'quiet', iconOnly: true, icon: close, attrs: hooks.close || {} })}</div><div class="rl-side-body">${body}</div></div>`;
-}
-
-/**
- * A running action in the sidebar's foot: a live dot, what runs (it opens its run), Stop. It must stay stoppable in every
- * interface mode.
- * @param {object} o
- * @param {string} o.text
- * @param {string} o.stop        Stop's tooltip
- * @param {string} o.stopIcon    the SVG
- * @param {object} [o.open]      attrs of the name; without them the name is plain text
- * @param {object} [o.stopAttrs]
- * @param {boolean} [o.menu]     inside a flyout: its buttons are menu items
- */
-export function actionRow({ text, stop, stopIcon, open = null, stopAttrs = {}, menu = false }) {
-  const role = menu ? { role: 'menuitem' } : {};
-  const name = open ? `<button type="button" class="act-srow-name"${attrs({ ...role, ...open })}>${esc(text)}</button>` : `<span class="act-srow-name">${esc(text)}</span>`;
-  return `<div class="act-srow"${attrs({ title: text, role: menu ? 'none' : null })}><span class="pdot" aria-hidden="true"></span>${name}<button type="button" class="act-stop"${attrs({ title: stop, 'aria-label': stop, ...role, ...stopAttrs })}>${stopIcon}</button></div>`;
 }
 
 export const AWAY_IDLE_MS = 5 * 60 * 1000;
@@ -81,17 +64,6 @@ export function navItem({ label, icon, current = false, off = false, title = '',
  */
 export function accountButton({ name, avatar, chevron, label, away = false, open = false }) {
   return `<button type="button" class="pz-acct${open ? ' is-open' : ''}"${attrs({ 'data-acct': true, 'data-presence': away ? 'away' : 'here', 'aria-haspopup': 'menu', 'aria-expanded': String(open), 'aria-label': label })}>${avatar}<span class="pz-acct-name">${esc(name)}</span>${chevron}</button>`;
-}
-
-/**
- * In the collapsed sidebar: how many actions run, the tile that opens them.
- * @param {object} o
- * @param {number} o.n
- * @param {string} o.label
- * @param {boolean} [o.open]
- */
-export function actionTile({ n, label, open = false }) {
-  return `<button type="button" class="act-tile"${attrs({ 'data-act-tile': true, 'aria-haspopup': 'menu', 'aria-expanded': String(open), 'aria-label': label, title: label })}><span class="pdot" aria-hidden="true"></span><span class="act-tile-n">${esc(n)}</span></button>`;
 }
 
 /**

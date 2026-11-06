@@ -22,7 +22,6 @@ shows it; sizes, colours and spacing come with the component. Names are the Desi
 | Copying text | CopyButton: a quiet 28px icon button; a tick for 1.2s and `Copied` in its tooltip and the live region; its width never changes | a branch, a command, an id |
 | A place in the sidebar | NavItem | Runs, Chats |
 | The sidebar's foot, the door to the account menu | AccountButton, then AccountItem rows in a side menu | Interface mode, Away |
-| How many actions run, in the collapsed sidebar | ActionTile, opening their ActionRows | 2 running actions |
 | An action in the top bar whose words give way on a narrow screen | TopBarAction | Pulse, New run |
 | **Choosing** | | |
 | A choice that changes a step | SentencePicker: a picker in the sentence it changes, opening a CompactMenu (in the app, wired to `toggleMenu`, so the menu has keys) | `dev ▾`, `3 stacked PRs ▾` |
@@ -51,6 +50,7 @@ shows it; sizes, colours and spacing come with the component. Names are the Desi
 | Labels and cost tags | TagGroup | ui, team: web, +2 |
 | A list of things | ListRow on the rail, the whole row opens, never a box per item. Rows are split by space; a list grouped by something (status, day, section) draws one `--line` where each group after the first starts, from the text edge, and none between rows. Mock `plans/rail/mocks/now-dividers-compare-*.png` (option 4) | runs, files, decisions, Pulse's Now, a settings tab |
 | An update or a thing in Pulse | PulseRow, built on `row()`; while selecting, its tick box on the rail | Plan asks 2 questions |
+| What keeps running after a run | A PulseRow in Pulse's Now, under `Running actions`, with its Stop; never in the sidebar, which holds places only, and never in Pulse's badge, since it needs nobody | Dev server :4417 |
 | A short fact: a stage, a source, a slot to set up | Chip | Beta, Official, No API key |
 | Why a control is off, a cut-off text, an id | Tooltip | Checks are still running on #959 |
 | A workflow at full size | WorkflowGraph, the view in a Dialog without a form: a lane per stage, a node per step in its colour, a node opens its log under it | Open the graph |

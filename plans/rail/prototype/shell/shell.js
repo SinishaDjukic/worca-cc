@@ -33,7 +33,7 @@
     side.querySelector('#acct-menu')?.remove();   // the Rail profile menu takes its place (pulse.js)
     // the needs-you count lives only on Pulse's badge
     nav.querySelector('#nav-needs-count')?.remove(); nav.querySelector('#nav-running-count')?.remove();
-    side.querySelector('#side-foot').innerHTML = '';   // Running actions, Update available and the avatar: pulse.js draws them
+    side.querySelector('#side-foot').innerHTML = '';   // the avatar: pulse.js draws it
     return side;
   }
   // What a place needs: the sidebar's own data-min-level and data-flag, as the app's sidebar.html has them.

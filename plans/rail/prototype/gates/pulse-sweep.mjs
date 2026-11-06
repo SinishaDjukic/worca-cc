@@ -20,7 +20,7 @@ const VIEWS = {
   usage: async (p) => { await click(p, '[data-acct]'); await click(p, '[data-sub="usage"]'); },
   popSelect: async (p) => { await click(p, '[data-pop]'); await click(p, '[data-ptab="updates"]'); await click(p, '[data-menu="more"]'); await click(p, '[data-pick="more|select"]'); await click(p, '[data-sel]'); },
   popNowFiltered: async (p) => { await click(p, '[data-pop]'); await click(p, '[data-menu="nowShow"]'); await click(p, '[data-pick="nowShow|running"]'); },
-  actions: async (p) => click(p, '[data-act-tile]'),
+  popActions: async (p) => { await click(p, '[data-pop]'); await click(p, '[data-menu="nowShow"]'); await click(p, '[data-pick="nowShow|actions"]'); },
   levelFly: async (p) => { await click(p, '[data-acct]'); await click(p, '[data-sub="lvl"]'); },
   popMore: async (p) => { await click(p, '[data-pop]'); await click(p, '[data-ptab="updates"]'); await click(p, '[data-menu="more"]'); },
   newrun: async (p) => click(p, '[data-newrun]'),

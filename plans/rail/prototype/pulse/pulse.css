@@ -38,11 +38,7 @@
 /* The away dot on the avatar, as the app's corner has it. */
 .pz-ava-dot{display:none;}
 .pz-acct[data-presence="away"] .pz-ava-dot{display:grid;place-items:center;}
-.pz-foot .side-actions,.pz-foot .side-update{margin-bottom:4px;}
-/* Running actions as a flyout from the rail's tile, beside the corner. */
-.pz-app .nav-fly.pz-act-fly{left:64px;bottom:64px;width:min(280px,calc(100% - 72px));}
 .acct-menu .mi-hint{font-family:var(--sans);}
-.act-tile-n{font-variant-numeric:tabular-nums;}
 .pz-team{height:auto;min-height:32px;}
 .pz-team .mi-lbl{white-space:normal;}
 .pz-team .status-dot{flex:none;margin:0 3px;}
@@ -72,7 +68,7 @@
 /* Appearance sits in the first section with Interface mode (both are how Worca looks), as a row of its own. */
 .acct-menu .msect > .theme-sect{display:flex;align-items:center;gap:10px;height:32px;padding:0 4px 0 9px;}
 .acct-menu .msect > .theme-sect .theme-k{flex:1;}
-.pz-fly .nav-fly-k,.pz-act-fly .nav-fly-k{color:var(--ink-2);}
+.pz-fly .nav-fly-k{color:var(--ink-2);}
 /* The spend card's title is its link to Statistics (a text link: --blue-ink-strong, 600), in place of Details. */
 .pz-mc-link{flex:none;padding:0;border:0;background:none;text-align:left;cursor:pointer;color:var(--blue-ink-strong);}
 .pz-mc-link:hover{text-decoration:underline;text-underline-offset:3px;}
@@ -191,10 +187,6 @@
   .pz-nav-i{justify-content:center;padding:0;}
   .pz-nav-l,.pz-side .pz-acct-name,.pz-side .pz-updown{display:none;}
   .pz-foot{padding:8px 4px 10px;}
-  .pz-foot .side-actions-rows{display:none;}
-  .pz-foot .act-tile{display:flex;align-items:center;justify-content:center;gap:5px;width:40px;height:28px;margin:0 auto;border:0;border-radius:var(--r-sm);background:none;color:var(--ink-2);font-size:var(--fs-caption);cursor:pointer;}
-  .pz-foot .side-update{justify-content:center;padding:6px 0;}
-  .pz-foot .side-update-label{display:none;}
   .pz-side .pz-acct{justify-content:center;padding:0;}
   .pz-top{padding:0 8px 0 16px;}
   .pz-page{padding:16px 12px 32px 4px;}

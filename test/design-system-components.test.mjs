@@ -411,10 +411,6 @@ test('the shell pieces: offline line, side column, action row, away screen', () 
   assert.equal(side.querySelector('.ask-side-grip').getAttribute('aria-valuemax'), '680');
   assert.equal(side.querySelector('.rl-side-title').textContent, 'Ask <worca>');
   assert.ok(side.querySelector('[data-side-close]'));
-  const act = dom(C.actionRow({ text: 'web · Dev <server>', stop: 'Stop it', stopIcon: '<svg></svg>', open: { 'data-x': '1' } }));
-  assert.equal(act.querySelector('button.act-srow-name').textContent, 'web · Dev <server>');
-  assert.equal(act.querySelector('.act-stop').getAttribute('aria-label'), 'Stop it');
-  assert.equal(dom(C.actionRow({ text: 'a', stop: 's', stopIcon: '' })).querySelector('span.act-srow-name').textContent, 'a');
   const on = { away: true, keepAwake: true, focused: true, idleMs: C.AWAY_IDLE_MS, reduced: false };
   assert.equal(C.awayShows(on), true);
   for (const off2 of [{ away: false }, { keepAwake: false }, { focused: false }, { idleMs: C.AWAY_IDLE_MS - 1 }, { reduced: true }]) assert.equal(C.awayShows({ ...on, ...off2 }), false);
@@ -511,7 +507,7 @@ test('pulseRow: its mark, the tick box on the rail while selecting, its text ope
   assert.equal(dom(C.pulseRow({ mark: '<i></i>', title: 'a', meta: 'm', time: 't', tip: 'x', id: 'k' })).querySelector('.pz-check'), null);
 });
 
-test('navItem, accountButton, actionTile, topBarAction: the shell\'s own buttons', () => {
+test('navItem, accountButton, topBarAction: the shell\'s own buttons', () => {
   const n = dom(C.navItem({ label: 'Runs', icon: '', current: true, attrs: { 'data-go': 'runs' } }));
   assert.ok(n.classList.contains('is-on'));
   assert.equal(n.getAttribute('aria-current'), 'page');
@@ -522,9 +518,6 @@ test('navItem, accountButton, actionTile, topBarAction: the shell\'s own buttons
   assert.equal(a.dataset.presence, 'away');
   assert.equal(a.getAttribute('aria-expanded'), 'true');
   assert.equal(a.querySelector('.pz-acct-name').textContent, 'A <b>');
-  const t = dom(C.actionTile({ n: 2, label: '2 running actions' }));
-  assert.equal(t.querySelector('.act-tile-n').textContent, '2');
-  assert.equal(t.title, '2 running actions');
   const top = dom(C.topBarAction({ label: 'Pulse', icon: '', labelCls: 'l', kind: 'quiet', badge: { n: 3, tone: 'need' } }));
   assert.ok(top.classList.contains('btn-sm') && top.classList.contains('btn-quiet'));
   assert.equal(top.querySelector('.topnav-badge').dataset.tone, 'need');

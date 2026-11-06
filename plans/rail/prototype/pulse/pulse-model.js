@@ -31,6 +31,7 @@
     { id: 'projects', name: 'Projects', level: 'problems', where: 'pulse', events: [
       ['project.clone_failed', 'Clone failed', 'problem'], ['project.clone_done', 'Clone finished', 'info'],
       ['project.sync_failed', 'Sync failed', 'problem'], ['project.sync_behind', 'Behind its remote', 'info']] },
+    { id: 'app', name: 'Worca', level: 'all', where: 'pulse', events: [['app.update_available', 'Update available', 'info']] },
   ];
   const EVENT = Object.fromEntries(GROUPS.flatMap((g) => g.events.map(([id, name, sev]) => [id, { id, name, sev, g: g.id }])));
   const CHANNELS = ['Telegram', 'Discord', 'Slack', 'Teams'];
@@ -90,7 +91,7 @@
     unread: EVENT[e].sev !== 'info' && !o.read, to: o.to || 'the run page', go: o.go || 'runs', ...o });
   const CASES = [
     { id: 'afternoon', label: 'A busy afternoon', desktop: 'on', task: { title: 'Add rate limiting to the public API', size: 'medium' },
-      away: { status: 'here', hours: ['22:00', '07:00'] }, update: true, chatUnread: true,
+      away: { status: 'here', hours: ['22:00', '07:00'] }, newVersion: '1.20.0', chatUnread: true,
       actions: [{ id: 'a1', run: 'Fix flaky login test', label: 'Dev server :4417', go: 'run/working' }, { id: 'a2', run: 'Rename settings keys', label: 'Storybook :6006', go: 'run/checks' }],
       runs: [run('question', 'Add CSV export to billing', 'billing-api', 'Plan asks 2 questions', '14:32'), run('gate', 'Migrate cron parser', 'worca-cc', 'Gate: approve the plan', '13:40'),
         run('working', 'Fix flaky login test', 'web-app', 'Build · step 3 of 5', '12 min'), run('checks', 'Rename settings keys', 'worca-cc', 'Review · checks running', '4 min'),
@@ -103,6 +104,7 @@
         { p: 'openrouter', plan: 'Free', asOf: '13:30', win: [{ k: 'day', pct: 64, used: 32, of: 50, resets: '02:00' }] }],
       budget: { period: 'this week', spent: 1225.97, saved: 69306.73 },
       updates: [
+        up('u-upd', 'app.update_available', '1.20.0', 'Worca · you run 1.19.0', '08:40', 'Today', { unread: true, to: 'Settings › General, on the version', go: 'settings/general', land: 'general|Version' }),
         up('u1', 'run.questions', 'Add CSV export to billing', 'billing-api · Plan asks 2 questions', '14:32', 'Today', { open: true, to: 'the run page at its questions', go: 'run/question' }),
         up('u2', 'run.failed', 'Update Node to 24', 'web-app · Test step · 3 tests failed', '13:58', 'Today', { to: 'the run page, on the step that stopped', go: 'run/failed', fix: 'Try again' }),
         up('u3', 'pr.published', '#962 Retry on 502', 'web-app · watched PR · checks green', '13:10', 'Today', { to: 'the fix run', go: 'run/checks' }),
@@ -163,7 +165,7 @@
         up('q1', 'run.done', 'Tidy the settings page', 'worca-cc · 18 min · $1.42', '09:15', 'Today', { go: 'run/ready' })] },
     // A shared sign-in with one of every kind: the card, the team's note, a blocked budget, every Now section and event.
     { id: 'every', label: 'Every kind, shared sign-in', desktop: 'on', task: { title: 'Add rate limiting to the public API', size: 'medium' },
-      identity: { people: ['Emil Angelov', 'Dana Ruiz'], via: 'Through your team\'s sign-in' }, teamSetup: true, update: true, chatUnread: true,
+      identity: { people: ['Emil Angelov', 'Dana Ruiz'], via: 'Through your team\'s sign-in' }, teamSetup: true, newVersion: '1.20.0', chatUnread: true,
       away: { status: 'away-hours', hours: ['18:00', '08:00'] },
       actions: [{ id: 'a1', run: 'Fix flaky login test', label: 'Dev server :4417', go: 'run/working' }, { id: 'a2', run: 'A removed run', label: 'Tunnel :8080', go: '' }],
       runs: [run('question', 'Add CSV export to billing', 'billing-api', 'Plan asks 2 questions', '14:32'), run('failed', 'Update Node to 24', 'web-app', 'Test step · 3 tests failed', '13:58'),
@@ -178,6 +180,7 @@
         { p: 'gemini', plan: 'CLI', asOf: '13:02', win: [] }],
       budget: { period: 'in November', spent: 100, limit: 100, blocked: true },
       updates: [
+        up('e-upd', 'app.update_available', '1.20.0', 'Worca · you run 1.19.0', '08:40', 'Today', { unread: true, to: 'Settings › General, on the version', go: 'settings/general', land: 'general|Version' }),
         up('e01', 'run.questions', 'Add CSV export to billing', 'billing-api · Plan asks 2 questions', '14:32', 'Today', { open: true, to: 'the run page at its questions', go: 'run/question' }),
         up('e02', 'run.gate', 'Migrate cron parser', 'worca-cc · approve the plan', '14:20', 'Today', { open: true, to: 'the run page at its gate', go: 'run/gate' }),
         up('e03', 'run.recovery', 'Update Node to 24', 'web-app · the same step failed three times', '14:10', 'Today', { open: true, go: 'run/failed' }),
