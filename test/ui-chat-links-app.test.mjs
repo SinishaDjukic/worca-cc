@@ -176,11 +176,12 @@ test('row 11 + 11b: a focus frame brings the chat\'s tab forward at the new line
   assert.deepEqual(put.tabs.find((t) => t.id === id).target, { path: 'src/a.js', line: 44 });
 });
 
-test('row 12: a show_files card\'s Open in panel opens the chat copy', async () => {
+test('row 12: a show_files card\'s name opens the chat copy (the setting is on: a non-image goes to a Files tab)', async () => {
   const block = { kind: 'card', id: 'card_00000001', state: 'shown', card: { type: 'files', items: [{ attId: 'att_00000001', name: 'notes.txt', kind: 'text', bytes: 10, mime: 'text/plain' }] } };
   const a = await boot({ blocks: [block] });
-  const pb = await until(() => a.doc.querySelector('.ask-filescard-panel')) && a.doc.querySelector('.ask-filescard-panel');
-  assert.ok(pb, 'the Open in panel button is there');
+  const pb = await until(() => a.doc.querySelector('.ask-filescard-name')) && a.doc.querySelector('.ask-filescard-name');
+  assert.ok(pb, 'the file row is there');
+  assert.ok(a.doc.querySelector('.ask-filescard-quick'), 'its small icon is Quick look');
   pb.click();
   await a.settle(12);
   assert.ok(await until(() => /Chat copy/.test(a.doc.querySelector('.tool-panel')?.textContent || '')), 'panel: ' + (a.doc.querySelector('.tool-panel')?.hidden) + ' ' + a.doc.querySelector('.tool-panel')?.textContent.slice(0,300) + ' tabs ' + JSON.stringify(a.model().tabs));

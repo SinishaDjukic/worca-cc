@@ -8,7 +8,7 @@
 // user-supplied name. Text kinds stay `.txt`/utf8; binary kinds (#398) keep the
 // extension of their SNIFFED mime and raw bytes.
 import { randomBytes } from 'node:crypto';
-import { mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, lstatSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { getDb, prepare, tx } from '../db.mjs';
 import { worcaHome } from '../projects.mjs';
@@ -42,6 +42,15 @@ export function attachmentsDir(threadId) {
 export function askOutDir(threadId) {
   if (typeof threadId !== 'string' || !ASK_ID_RE.test(threadId)) throw new Error('askOutDir: refusing a thread id the store never minted');
   return join(askRoot(), threadId, 'out');
+}
+/** The chat's output folder as a Files tab root (the tool routes' spec 'out', issue 1064 D7): the folder (lstat: a link
+ *  in its place is not the folder), else ROOT_GONE (409 on the tool routes). */
+export function askOutRoot(threadId) {
+  const dir = askOutDir(threadId);
+  let isDir = false;
+  try { isDir = lstatSync(dir).isDirectory(); } catch { isDir = false; }
+  if (!isDir) return { error: 'This chat has saved no output files yet.', code: 'ROOT_GONE' };
+  return { roots: [{ kind: 'dir', dir, root: 'out', member: null, label: 'Chat output' }], root: 'out', label: 'Chat output' };
 }
 
 /** 1.4: a chat's folder (its attachments, worktrees, skill mounts, output) belongs to the agent user of the person

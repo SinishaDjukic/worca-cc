@@ -17,11 +17,13 @@ const NO_VIEW = Object.freeze({ project: null, side: null });
  * `refreshSessions()`: the terminal's server list (the first open loads it, D14); `suggest(view)`: the + page's Suggested
  * rows `[{ label, detail?, icon?, open() }]` (app.js toolSuggestions: running services, recent addresses, the repo);
  * `mirror`: createTabMirror() (tool-mirror.mjs): the assistant's tabs join when their chat or project comes into view.
+ * `overview`: createOverview() (tool-overview.mjs): what a run, chat or project shows with no tab selected; without it
+ * the no-tab view is the + page.
  * Open or closed is kept per run, chat or project page (tool-tabs.mjs openKeyOf); nothing but the person's action opens it.
  */
-export function createToolPanel({ doc, win, registry, model, getPageContext, refreshSessions = null, suggest = null, mirror = null }) {
+export function createToolPanel({ doc, win, registry, model, getPageContext, refreshSessions = null, suggest = null, mirror = null, overview = null }) {
   const st = { open: false, view: null, runId: null, carry: null, fresh: new Set(), page: 'tab', mounted: null, guest: null, note: '',
-    drag: null, sessionsAsked: false, inerted: false, pendingTimer: null, destroyed: false };
+    drag: null, sessionsAsked: false, inerted: false, pendingTimer: null, destroyed: false, expand: null, focusSection: null };
   const drawn = { strip: '' };
   const make = (tag, cls, text) => { const n = doc.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
   const iconButton = (name, label, cls, onClick) => {
@@ -62,6 +64,9 @@ export function createToolPanel({ doc, win, registry, model, getPageContext, ref
   const visibleOrder = () => { const v = visibleList(); return [...v.project, ...v.side]; };
   const activeTab = () => (st.page === 'new' ? null : guestTab() || model.active(currentView()));
   const keepIds = () => new Set([st.mounted?.tab.id, model.active(currentView())?.id, st.guest].filter(Boolean));
+  /** The Overview is there for a run or a chat (a no-project chat too) and a project page; never for a new chat, a
+   *  starting run or no view (their no-tab view stays the + page with its reason). */
+  const hasOverview = (v) => !!overview && !!v && (!!v.side || (!!v.project && !v.blocked));
   function unavailable(def, v) {
     if (v.blocked) return v.blocked;
     if (!v.side && !v.project) return 'Open a run, a chat or a project to use its tools.';
@@ -96,7 +101,7 @@ export function createToolPanel({ doc, win, registry, model, getPageContext, ref
     const want = same ? st.open : model.isOpenAt(key);
     st.guest = null;
     st.note = '';
-    if (st.page === 'new' && model.active(next)) st.page = 'tab';
+    st.page = 'tab';                                       // the + page is a one-off: another scope shows its Overview
     if (want && !st.open) void open();
     else if (!want && st.open) hide();
     else show();
@@ -134,17 +139,20 @@ export function createToolPanel({ doc, win, registry, model, getPageContext, ref
     const m = st.mounted;
     st.mounted = null;
     if (m) { try { m.kind?.unmount?.(m.tab); } catch { /* a kind's own trouble */ } }
+    unmountOverview();
     body.replaceChildren();
     delete body.dataset.kind;
   }
-  /** Draws the strip and the icons; when open, the active tab (mounted once) or the + page. */
+  function unmountOverview() { if (overview) { try { overview.unmount(); } catch { /* the Overview's own trouble */ } } }
+  /** Draws the strip and the icons; when open, the active tab (mounted once), the Overview or the + page. */
   async function show() {
     renderStrip();
     syncIcons();
     const tab = st.open ? activeTab() : null;
     if (st.mounted && (!tab || tab.id !== st.mounted.tab.id)) unmountCurrent();
     if (!st.open) return;
-    if (!tab) { renderNewPage(); return; }
+    if (!tab) { showNoTab(); return; }
+    if (overview?.viewKey()) { unmountOverview(); body.replaceChildren(); }
     if (st.mounted) return;
     const kind = registry.get(tab.kind);
     body.replaceChildren();
@@ -154,8 +162,21 @@ export function createToolPanel({ doc, win, registry, model, getPageContext, ref
     try { await kind.mount(tab, body, kindApi); }
     catch (e) { if (st.mounted?.tab.id === tab.id) body.append(make('p', 'tool-note tool-error', e?.message || String(e))); }
   }
+  /** No tab selected: the view's Overview (mounted once per view), else the + page. */
+  function showNoTab() {
+    const v = currentView();
+    if (st.page === 'new' || !hasOverview(v)) { unmountOverview(); st.expand = null; renderNewPage(); return; }
+    if (overview.viewKey() !== viewKey(v)) {
+      const expand = st.expand;
+      st.expand = null;
+      body.replaceChildren();
+      try { overview.mount(body, v, { expand }); } catch (e) { body.append(make('p', 'tool-note tool-error', e?.message || String(e))); }
+    }
+    body.dataset.kind = 'overview';
+  }
   function focusActive() {
     const m = st.mounted;
+    if (!m && overview?.viewKey()) { const id = st.focusSection; st.focusSection = null; overview.focus(id); return; }
     if (!m) { body.querySelector('.tool-newtab-row:not(:disabled)')?.focus(); return; }
     if (typeof m.kind?.focus === 'function') m.kind.focus(m.tab);
     else body.querySelector('button:not(:disabled), select, pre[tabindex]')?.focus();
@@ -190,6 +211,26 @@ export function createToolPanel({ doc, win, registry, model, getPageContext, ref
   async function showNewPage() {
     st.page = 'new';
     await open({ focus: true });
+  }
+  /**
+   * The Overview icon's action (and the composer meter's, through app.js): no tab selected in the view, the panel open
+   * on its Overview with `expand` (a section id) open and focused. `scope`: the chat the caller means; another scope on
+   * screen refuses. → false (nothing changes) when the view has no Overview or is not `scope`.
+   */
+  function showOverview({ scope = null, expand = null } = {}) {
+    follow();
+    const v = currentView();
+    if (!hasOverview(v)) return false;
+    if (scope && scopeKey(scope) !== scopeKey(v.side)) return false;
+    model.deselect(v);
+    st.guest = null;
+    st.page = 'tab';
+    st.note = '';
+    if (expand && overview.viewKey() === viewKey(v)) overview.expand(expand);
+    else st.expand = expand || null;
+    st.focusSection = expand || null;
+    void open({ focus: true });
+    return true;
   }
   /** The icons' and shortcuts' action: the newest tab of `kind` in view, else a new one (fresh: always a new one). */
   async function showKind(kind, { fresh = false } = {}) {
@@ -231,7 +272,7 @@ export function createToolPanel({ doc, win, registry, model, getPageContext, ref
   /** The + page's Suggested rows changed (a service started or stopped): draw it again when it is on screen, keeping
    *  the focus on the row it was on. */
   function refreshNewPage() {
-    if (!st.open || st.mounted || activeTab()) return;
+    if (!st.open || st.mounted || activeTab() || body.dataset.kind !== 'new') return;
     const had = body.contains(doc.activeElement) ? doc.activeElement.textContent : null;
     renderNewPage();
     if (had != null) [...body.querySelectorAll('button')].find((b) => b.textContent === had)?.focus();
@@ -480,6 +521,14 @@ export function createToolPanel({ doc, win, registry, model, getPageContext, ref
 
   // ── header icons (every empty [data-tool-icons] host) and the project page's opener ─────────────
   function fillIcons(hostEl) {
+    if (overview) {
+      const b = make('button', 'btn btn-sm btn-quiet btn-icon tool-icon tool-icon-overview');
+      b.type = 'button';
+      b.dataset.toolView = 'overview';
+      b.setAttribute('aria-label', 'Overview');
+      b.append(icon(doc, 'summary', 16));
+      hostEl.append(b);
+    }
     const extra = registry.list().filter((d) => d.strip && !ICON_SLOTS.some((s) => s.kind === d.kind))
       .map((d) => ({ kind: d.kind, label: d.label, icon: d.icon }));
     for (const s of [...ICON_SLOTS, ...extra]) {
@@ -503,7 +552,13 @@ export function createToolPanel({ doc, win, registry, model, getPageContext, ref
     const fresh = new Set(visibleOrder().filter((t) => st.fresh.has(t.id)).map((t) => t.kind));   // kinds with a mark in view
     for (const hostEl of doc.querySelectorAll('[data-tool-icons]')) {
       if (!hostEl.childElementCount) fillIcons(hostEl);
-      for (const b of hostEl.querySelectorAll('.tool-icon')) {
+      for (const b of hostEl.querySelectorAll('.tool-icon-overview')) {
+        const on = hasOverview(v);
+        b.disabled = !on;
+        b.title = on ? 'Overview' : `Overview: ${v.blocked || 'Open a run, a chat or a project to see its overview.'}`;
+        b.setAttribute('aria-pressed', String(on && st.open && st.page !== 'new' && !act));
+      }
+      for (const b of hostEl.querySelectorAll('.tool-icon[data-tool-kind]')) {
         const k = b.dataset.toolKind;
         const def = registry.get(k);
         const slot = ICON_SLOTS.find((s) => s.kind === k);
@@ -560,6 +615,8 @@ export function createToolPanel({ doc, win, registry, model, getPageContext, ref
     toggleKind(def.kind);
   };
   const onDocClick = (e) => {
+    const ov = e.target?.closest?.('.tool-icon[data-tool-view="overview"]');
+    if (ov) { if (!ov.disabled) showOverview(); return; }
     const b = e.target?.closest?.('.tool-icon[data-tool-kind]');
     if (!b || b.disabled) return;
     showKind(b.dataset.toolKind, { fresh: !!e.shiftKey });
@@ -662,6 +719,6 @@ export function createToolPanel({ doc, win, registry, model, getPageContext, ref
   }
 
   return { root, registry, open, hide, toggle: () => (st.open ? hide() : open({ focus: true })), isOpen: () => st.open,
-    showKind, toggleKind, openKind, refreshNewPage, showSession, syncSessions, syncIcons, onContextChange, closeScope,
+    showKind, toggleKind, openKind, refreshNewPage, showOverview, showSession, syncSessions, syncIcons, onContextChange, closeScope,
     pullMirror: () => pullView(currentView()), view: () => currentView(), destroy, openIn, focusTab, pullChat };
 }

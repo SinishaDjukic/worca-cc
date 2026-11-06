@@ -242,12 +242,18 @@ export function createTabModel({ storage = null, newId = defaultId, now = () => 
       return true;
     },
     activate(view, id) { if (get(id)) { delete st.active[viewKey(view)]; st.active[viewKey(view)] = id; save(); } },
-    /** The view's active tab: the one it last showed, else its last visible tab (a run's or chat's before the project's). */
+    /** No tab selected (the panel's Overview): the view's stored entry goes; nothing saves when there was none. */
+    deselect(view) {
+      const k = viewKey(view);
+      if (!Object.prototype.hasOwnProperty.call(st.active, k)) return;
+      delete st.active[k];
+      save();
+    },
+    /** The view's active tab: the one it last showed while still in view, else null (no tab selected: the Overview). */
     active(view) {
       const v = visible(view);
-      const list = [...v.project, ...v.side];
-      return list.find((t) => t.id === st.active[viewKey(view)])
-        || list.findLast((t) => !(t.kind === 'terminal' && t.state.openedBy === 'assistant' && !t.state.sessionId)) || null;
+      const id = st.active[viewKey(view)];
+      return (id && [...v.project, ...v.side].find((t) => t.id === id)) || null;
     },
     newest(kind, view) {
       const v = visible(view);

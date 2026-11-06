@@ -79,3 +79,13 @@ test('extra: an undelivered tab keeps its target through a stale page; a bad roo
   mirror.replace('', S, []);
   assert.deepEqual(mirror.list('', S).find((t) => t.id === a.id).target, { path: 'src/a.js', line: 2 });
 });
+
+test('root out kept; a junk root dropped', () => {
+  const S = 'chat:ask_0000c0e0';
+  const a = mirror.add('', S, { kind: 'files', target: { path: 'report.md', root: 'out' } });
+  assert.deepEqual(a.target, { path: 'report.md', root: 'out' });
+  for (const root of ['out/x', 'outs', 'run:abcd1234x']) {
+    const b = mirror.add('', S, { kind: 'files', target: { path: 'a.md', root } });
+    assert.deepEqual(b.target, { path: 'a.md' }, root);
+  }
+});

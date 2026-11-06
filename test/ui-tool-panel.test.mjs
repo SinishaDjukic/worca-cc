@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { createToolPanel } from '../ui/public/tool-panel.mjs';
 import { createToolRegistry } from '../ui/public/tool-kinds.mjs';
-import { createTabModel } from '../ui/public/tool-tabs.mjs';
+import { createTabModel, viewKey, BLOCKED, TOOLS_KEY } from '../ui/public/tool-tabs.mjs';
 import { readFileSync } from 'node:fs';
 
 const tick = async (n = 6) => { for (let i = 0; i < n; i++) await new Promise((r) => setTimeout(r, 0)); };
@@ -24,7 +24,18 @@ function fakeKind(kind, order, log, shortcut) {
     unmount: (tab) => log.push(['unmount', tab.id]),
     close: async (tab) => { log.push(['close', tab.id]); return true; } };
 }
-function boot({ ctx = RUN_A, storage = memStore(), sheet = false, suggest = null, mirror = null } = {}) {
+/** A fake Overview controller (tool-overview.mjs's shape) that records what the panel asks of it. */
+function fakeOverview() {
+  const log = [];
+  let key = null;
+  return { log,
+    mount: (host, view, { expand = null } = {}) => { key = viewKey(view); log.push(['mount', key, expand]); host.append(Object.assign(host.ownerDocument.createElement('button'), { className: 'ov-root', textContent: key })); },
+    unmount: () => { if (key) log.push(['unmount', key]); key = null; },
+    focus: (id = null) => log.push(['focus', id]),
+    expand: (id) => log.push(['expand', id]),
+    viewKey: () => key };
+}
+function boot({ ctx = RUN_A, storage = memStore(), sheet = false, suggest = null, mirror = null, overview = null } = {}) {
   const dom = new JSDOM('<!doctype html><body><div class="app"><div class="bar"><span class="tool-icons" data-tool-icons></span></div></div></body>', { url: 'http://localhost/' });
   const win = dom.window;
   win.matchMedia = () => ({ matches: sheet, addEventListener() {}, removeEventListener() {} });
@@ -35,7 +46,7 @@ function boot({ ctx = RUN_A, storage = memStore(), sheet = false, suggest = null
   registry.register(fakeKind('files', 30, log, { code: 'KeyE', key: 'E', ctrl: true, shift: true, label: 'Ctrl+Shift+E' }));
   registry.register(fakeKind('changes', 40, log));
   const model = createTabModel({ storage });
-  const panel = createToolPanel({ doc: win.document, win, registry, model, getPageContext: () => env.ctx, suggest, mirror });
+  const panel = createToolPanel({ doc: win.document, win, registry, model, getPageContext: () => env.ctx, suggest, mirror, overview });
   win.document.body.append(panel.root);
   panel.syncIcons();
   const doc = win.document;
@@ -43,7 +54,8 @@ function boot({ ctx = RUN_A, storage = memStore(), sheet = false, suggest = null
   const tabsText = () => [...doc.querySelectorAll('.tool-tabs > *')].map((n) => (n.classList.contains('tool-divider') ? '|' : n.querySelector('.tool-tab-text').textContent));
   const icon = (k) => doc.querySelector(`.tool-icon[data-tool-kind="${k}"]`);
   const key = (o) => doc.dispatchEvent(new win.KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...o }));
-  const b = { win, doc, panel, model, registry, log, env, go, tabsText, icon, key, storage };
+  const ovIcon = () => doc.querySelector('.tool-icon-overview');
+  const b = { win, doc, panel, model, registry, log, env, go, tabsText, icon, key, storage, overview, ovIcon };
   booted.push(b);
   return b;
 }
@@ -668,4 +680,224 @@ test('the dot rule: terminal-pane.css draws it on a marked icon and opener with 
   const css = readFileSync(new URL('../ui/public/terminal/terminal-pane.css', import.meta.url), 'utf8');
   assert.match(css, /\.tool-icon\.has-dot,\.term-opener\.has-dot\{position:relative;\}/);
   assert.match(css, /\.tool-icon\.has-dot::after,\.term-opener\.has-dot::after\{content:"";[^}]*border-radius:50%;[^}]*background:var\(--blue-ink-strong\);/);
+});
+
+// ── the Overview (the no-tab view) ────────────────────────────────────────────────────────────────────
+const OS_NOPROJ = { view: 'chat', chatId: 'ask_0000cccc' };
+const mounted = (b) => b.overview.viewKey();
+const kindOf = (b) => b.panel.root.querySelector('.tool-body').dataset.kind;
+
+test('overview icon first only with overview: no tool kind, labelled Overview', () => {
+  const b = boot({ overview: fakeOverview() });
+  const first = b.doc.querySelector('[data-tool-icons]').firstElementChild;
+  assert.ok(first.classList.contains('tool-icon-overview'));
+  assert.equal(first.dataset.toolView, 'overview');
+  assert.equal(first.getAttribute('aria-label'), 'Overview');
+  assert.equal(first.dataset.toolKind, undefined, 'the kind click delegate ignores it');
+  assert.ok(first.querySelector('svg'));
+  assert.equal(first.disabled, false);
+  assert.equal(first.title, 'Overview');
+  assert.deepEqual([...b.doc.querySelectorAll('.tool-icon[data-tool-kind]')].map((x) => x.dataset.toolKind), ['terminal', 'browser', 'files', 'changes']);
+  const plain = boot();
+  assert.equal(plain.ovIcon(), null);
+});
+
+test('no tab → overview mounted; the + page still opens Open a tool', async () => {
+  const b = boot({ overview: fakeOverview() });
+  await b.panel.open();
+  assert.equal(mounted(b), viewKey({ project: 'app-0000aaaa', side: { type: 'run', id: 'aaaa1111', projectKey: 'app-0000aaaa' } }));
+  assert.equal(kindOf(b), 'overview');
+  assert.equal(b.panel.root.querySelector('.tool-newtab'), null);
+  assert.equal(b.ovIcon().getAttribute('aria-pressed'), 'true');
+  await b.panel.open();
+  assert.equal(b.overview.log.filter(([e]) => e === 'mount').length, 1, 'a second show keeps the mounted Overview');
+  b.doc.querySelector('.tool-new').click();
+  await tick();
+  assert.ok(b.panel.root.querySelector('.tool-newtab'), 'the + page');
+  assert.equal(kindOf(b), 'new');
+  assert.equal(mounted(b), null, 'the Overview let go');
+  assert.equal(b.ovIcon().getAttribute('aria-pressed'), 'false');
+  b.panel.refreshNewPage();
+  b.ovIcon().click();
+  await tick();
+  assert.equal(kindOf(b), 'overview');
+  b.panel.refreshNewPage();
+  assert.equal(kindOf(b), 'overview', 'a Suggested refresh never draws the + page over the Overview');
+});
+
+test('icon returns from a tab; the choice survives a re-boot', async () => {
+  const storage = memStore();
+  const b = boot({ overview: fakeOverview(), storage });
+  b.icon('terminal').click();
+  await tick();
+  const t = b.model.tabs()[0];
+  assert.equal(kindOf(b), 'terminal');
+  assert.equal(b.ovIcon().getAttribute('aria-pressed'), 'false');
+  b.ovIcon().click();
+  await tick();
+  assert.equal(kindOf(b), 'overview');
+  assert.ok(b.log.some(([e, id]) => e === 'unmount' && id === t.id), 'the tab is unmounted, not closed');
+  assert.equal(b.model.tabs().length, 1);
+  assert.equal(b.icon('terminal').getAttribute('aria-pressed'), 'false');
+  assert.equal(b.ovIcon().getAttribute('aria-pressed'), 'true');
+  assert.deepEqual(b.overview.log.filter(([e]) => e === 'focus'), [['focus', null]], 'the focus moves into the Overview');
+  const again = boot({ overview: fakeOverview(), storage });
+  await tick();
+  assert.equal(again.panel.isOpen(), true, 'it was left open here');
+  assert.equal(kindOf(again), 'overview', 'no tab selected survives the reload');
+  b.panel.root.querySelector('.tool-tab').click();
+  await tick();
+  assert.equal(kindOf(b), 'terminal', 'a tab click leaves the Overview');
+  assert.equal(mounted(b), null);
+});
+
+test('closing the last tab → overview', async () => {
+  const b = boot({ overview: fakeOverview() });
+  b.icon('terminal').click();
+  await tick();
+  await b.panel.root.querySelector('.tool-tab-close').click();
+  await tick();
+  assert.equal(b.model.tabs().length, 0);
+  assert.equal(kindOf(b), 'overview');
+  assert.ok(mounted(b));
+});
+
+test('new chat or a starting run: icon disabled with the blocked title, the no-tab view is the + page with its reason', async () => {
+  const b = boot({ ctx: OS_NEW_CHAT, overview: fakeOverview() });
+  assert.equal(b.ovIcon().disabled, true);
+  assert.equal(b.ovIcon().title, `Overview: ${BLOCKED.newChat}`);
+  assert.equal(b.panel.showOverview(), false);
+  assert.equal(b.panel.isOpen(), false, 'a refusal opens nothing');
+  await b.panel.showKind('files');
+  await tick();
+  assert.ok(b.panel.root.querySelector('.tool-newtab'));
+  assert.match(b.panel.root.querySelector('.tool-note').textContent, /first message/);
+  assert.equal(mounted(b), null);
+  await b.go(OS_PENDING);
+  assert.equal(b.ovIcon().disabled, true);
+  assert.equal(b.ovIcon().title, `Overview: ${BLOCKED.pending}`);
+  await b.go({ view: 'settings' });
+  const none = boot({ ctx: { view: 'settings' }, overview: fakeOverview() });
+  assert.equal(none.ovIcon().title, 'Overview: Open a run, a chat or a project to see its overview.');
+});
+
+test('no-project chat: overview enabled, tools disabled; a project page has one too', async () => {
+  const b = boot({ ctx: OS_NOPROJ, overview: fakeOverview() });
+  assert.equal(b.ovIcon().disabled, false);
+  assert.equal(b.icon('terminal').disabled, true);
+  assert.equal(b.icon('files').disabled, true);
+  assert.equal(b.panel.showOverview({ scope: { type: 'chat', id: 'ask_0000cccc' } }), true);
+  await tick();
+  assert.equal(kindOf(b), 'overview');
+  await b.panel.showKind('files');
+  assert.equal(b.model.tabs().length, 0, 'openNew still refuses');
+  const p = boot({ ctx: OS_PROJECT, overview: fakeOverview() });
+  assert.equal(p.ovIcon().disabled, false);
+  assert.equal(p.panel.showOverview(), true);
+  await tick();
+  assert.equal(mounted(p), 'app-0000aaaa|');
+});
+
+test('showOverview other scope → false, model untouched', async () => {
+  const storage = memStore();
+  const b = boot({ ctx: OS_CHAT_A, overview: fakeOverview(), storage });
+  b.icon('files').click();
+  await tick();
+  const t = b.model.tabs()[0];
+  const saved = storage.getItem(TOOLS_KEY);
+  assert.equal(b.panel.showOverview({ scope: { type: 'chat', id: 'ask_0000bbbb' }, expand: 'context' }), false);
+  await tick();
+  assert.equal(storage.getItem(TOOLS_KEY), saved, 'nothing saved');
+  assert.equal(b.model.active(b.panel.view()).id, t.id);
+  assert.equal(kindOf(b), 'files');
+  b.panel.hide();
+  assert.equal(b.panel.showOverview({ scope: { type: 'chat', id: 'ask_0000bbbb' } }), false);
+  assert.equal(b.panel.isOpen(), false, 'still closed');
+  assert.equal(b.panel.showOverview({ scope: { type: 'chat', id: 'ask_0000aaaa' } }), true);
+  await tick();
+  assert.equal(b.model.active(b.panel.view()), null, 'the tab is deselected');
+  assert.equal(kindOf(b), 'overview');
+});
+
+test('expand forwarded: to the mount, then to the mounted Overview; the focus goes to that section', async () => {
+  const b = boot({ ctx: OS_CHAT_A, overview: fakeOverview() });
+  const scope = { type: 'chat', id: 'ask_0000aaaa' };
+  assert.equal(b.panel.showOverview({ scope, expand: 'context' }), true);
+  await tick();
+  assert.deepEqual(b.overview.log.filter(([e]) => e === 'mount').map((x) => x[2]), ['context']);
+  assert.deepEqual(b.overview.log.at(-1), ['focus', 'context']);
+  assert.equal(b.panel.showOverview({ scope, expand: 'context' }), true);
+  await tick();
+  assert.ok(b.overview.log.some(([e, id]) => e === 'expand' && id === 'context'), 'already mounted: expand()');
+  assert.equal(b.overview.log.filter(([e]) => e === 'mount').length, 1);
+});
+
+test('view change resets the + page: the next scope shows its Overview', async () => {
+  const b = boot({ overview: fakeOverview() });
+  await b.go(RUN_B);
+  await b.panel.open();
+  await b.go(RUN_A);
+  await b.panel.open();
+  b.doc.querySelector('.tool-new').click();
+  await tick();
+  assert.equal(kindOf(b), 'new');
+  await b.go(RUN_B);
+  assert.equal(b.panel.isOpen(), true);
+  assert.equal(kindOf(b), 'overview');
+  await b.go(RUN_A);
+  assert.equal(kindOf(b), 'overview', 'the + page was a one-off');
+});
+
+test('hide unmounts the overview', async () => {
+  const b = boot({ overview: fakeOverview() });
+  await b.panel.open();
+  assert.ok(mounted(b));
+  b.panel.hide();
+  assert.equal(mounted(b), null);
+});
+
+// ── the Overview: branches the first rows left unpinned (review M7) ───────────────────────────────────────
+test('the Overview icon drops a guest tab: the Overview shows in its place', async () => {
+  const b = boot({ overview: fakeOverview() });
+  const s = { id: 't-g', status: 'running', scope: 'project', projectKey: 'x-0000aaaa', createdBy: 'ask:ask_7', label: 'Ask · x', createdAt: '2026-01-01T00:00:00Z' };
+  b.panel.syncSessions([s]);
+  assert.equal(await b.panel.showSession('t-g'), true);
+  await tick();
+  assert.deepEqual(b.tabsText(), ['Terminal'], 'the guest is on screen');
+  assert.equal(kindOf(b), 'terminal');
+  b.ovIcon().click();
+  await tick();
+  assert.equal(kindOf(b), 'overview', 'the guest is not selected any more');
+  assert.deepEqual(b.tabsText(), [], 'it left the strip');
+  assert.ok(mounted(b));
+  assert.equal(b.ovIcon().getAttribute('aria-pressed'), 'true');
+});
+
+test('showOverview reads the page first: a route that changed this tick (onContextChange still deferred) is the view it checks', async () => {
+  const b = boot({ ctx: OS_CHAT_A, overview: fakeOverview() });
+  b.env.ctx = OS_CHAT_B;
+  b.panel.onContextChange();   // follows on a 0 ms timer: not yet
+  assert.equal(b.panel.showOverview({ scope: { type: 'chat', id: 'ask_0000bbbb' } }), true, 'the new chat is the one on screen');
+  await tick();
+  assert.equal(kindOf(b), 'overview');
+  assert.equal(mounted(b), viewKey({ project: 'app-0000aaaa', side: { type: 'chat', id: 'ask_0000bbbb', projectKey: 'app-0000aaaa' } }));
+  const n = boot({ ctx: OS_CHAT_A, overview: fakeOverview() });
+  n.env.ctx = OS_NEW_CHAT;
+  n.panel.onContextChange();
+  assert.equal(n.panel.showOverview(), false, 'a new chat has no Overview, even before the deferred follow');
+  assert.equal(n.panel.isOpen(), false);
+});
+
+test('a page with no Overview: a guest opened and closed leaves the disabled Overview icon unpressed', async () => {
+  const b = boot({ ctx: { view: 'settings' }, overview: fakeOverview() });
+  assert.equal(b.ovIcon().disabled, true);
+  const t = await b.panel.openKind('files', { path: 'x' }, { scope: { type: 'run', id: 'cccc3333', projectKey: 'app-0000aaaa' } });
+  assert.ok(t);
+  assert.equal(b.panel.isOpen(), true);
+  b.panel.root.querySelector('.tool-tab-close').click();
+  await tick();
+  assert.deepEqual(b.tabsText(), []);
+  assert.equal(b.panel.isOpen(), true, 'the panel stays open on the + page');
+  assert.equal(b.ovIcon().disabled, true);
+  assert.equal(b.ovIcon().getAttribute('aria-pressed'), 'false', 'a disabled icon never reads pressed');
 });

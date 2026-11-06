@@ -68,6 +68,7 @@
   "GET /api/ask/threads/:id": {"class": "probe", "reason": "local DB read; 404 for an unknown thread"},
   "GET /api/ask/threads/:id/attachments/:attId": {"class": "probe", "reason": "local read; 404 for an unknown thread or attachment"},
   "GET /api/ask/threads/:id/commands/:blockId": {"class": "probe", "reason": "terminal gate, then 404 for an unknown thread"},
+  "GET /api/ask/threads/:id/overview": {"class": "probe", "reason": "local DB and folder read; 404 for an unknown thread"},
   "GET /api/automations": {"class": "probe", "reason": "requireFlag('gitAutomations') answers 404 (flag off by default); on: DB lists, no forge call without a scope"},
   "GET /api/away-mode": {"class": "probe", "reason": "reads settings only"},
   "GET /api/branches": {"class": "probe", "reason": "400 without a projectDir query; local git only"},

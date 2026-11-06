@@ -232,3 +232,69 @@ test('extra: a deleted run is never a root: skipped as the default, 409 when ask
   const e = await get(`/api/tools/file?scope=chat&threadId=${D}&root=run:${gone}&path=src/a.js`);
   assert.deepEqual([e.status, e.body.code], [409, 'ROOT_GONE']);
 });
+
+// ── the Overview's saved files (issue 1064, D7): root=out is the chat's output folder ───────────────────────────────
+test('root=out reads a file of the chat\'s output folder; a no-project chat can read it too', async () => {
+  const { mkdir, writeFile } = await import('node:fs/promises');
+  const out = askStore.askOutDir(A);
+  await mkdir(join(out, 'sub'), { recursive: true });
+  await writeFile(join(out, 'sub', 'report.md'), '# done\n');
+  const r = await get(`/api/tools/file?scope=chat&threadId=${A}&root=out&path=sub/report.md`);
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.text, '# done\n');
+  const list = await get(`/api/tools/files?scope=chat&threadId=${A}&root=out&path=`);
+  assert.equal(list.status, 200, JSON.stringify(list.body));
+  const N = askStore.createThread({ title: 'no project' }).id;
+  await mkdir(askStore.askOutDir(N), { recursive: true });
+  await writeFile(join(askStore.askOutDir(N), 'a.txt'), 'hi');
+  const n = await get(`/api/tools/file?scope=chat&threadId=${N}&root=out&path=a.txt`);
+  assert.equal(n.status, 200, JSON.stringify(n.body));
+  assert.equal(n.body.text, 'hi');
+});
+
+test('root=out: a missing out folder → 409 ROOT_GONE; a path escape is refused; a junk root stays 403', async () => {
+  const r = await get(`/api/tools/file?scope=chat&threadId=${C}&root=out&path=a.txt`);
+  assert.deepEqual([r.status, r.body.code], [409, 'ROOT_GONE']);
+  assert.equal(r.body.error, 'This chat has saved no output files yet.');
+  const { mkdir, writeFile } = await import('node:fs/promises');
+  await mkdir(askStore.askOutDir(B), { recursive: true });
+  await writeFile(join(homeDir, 'secret.txt'), 'no');
+  for (const path of ['../../secret.txt', '/etc/hosts']) {
+    const e = await get(`/api/tools/file?scope=chat&threadId=${B}&root=out&path=${encodeURIComponent(path)}`);
+    assert.ok(e.status >= 400 && e.status < 500, `${path}: ${e.status}`);
+    assert.notEqual(e.body.text, 'no');
+  }
+  const junk = await get(`/api/tools/file?scope=chat&threadId=${B}&root=outx&path=a.txt`);
+  assert.deepEqual([junk.status, junk.body.code], [403, 'ROOT_REFUSED']);
+});
+
+test('root=out follows the chat\'s visibility: an archived chat is 404 SCOPE_GONE; another person\'s chat is 404 (shared sign-in)', async () => {
+  const { mkdir, writeFile } = await import('node:fs/promises');
+  const ARCH = askStore.createThread({ title: 'archived' }).id;
+  await mkdir(askStore.askOutDir(ARCH), { recursive: true });
+  await writeFile(join(askStore.askOutDir(ARCH), 'ok.txt'), 'OK');
+  assert.equal((await get(`/api/tools/file?scope=chat&threadId=${ARCH}&root=out&path=ok.txt`)).status, 200, 'readable before the archive');
+  askStore.setArchived(ARCH, true);
+  const arch = await get(`/api/tools/file?scope=chat&threadId=${ARCH}&root=out&path=ok.txt`);
+  assert.deepEqual([arch.status, arch.body.code], [404, 'SCOPE_GONE'], JSON.stringify(arch.body));
+  const ALICE = askStore.createThread({ title: 'alice', createdBy: 'alice@example.com' }).id;
+  await mkdir(askStore.askOutDir(ALICE), { recursive: true });
+  await writeFile(join(askStore.askOutDir(ALICE), 'ok.txt'), 'OK');
+  const prevHeader = process.env.WORCA_IDENTITY_HEADER;
+  const prevProxies = process.env.WORCA_IDENTITY_TRUSTED_PROXIES;
+  process.env.WORCA_IDENTITY_HEADER = 'x-test-user';
+  process.env.WORCA_IDENTITY_TRUSTED_PROXIES = '127.0.0.1,::1';   // X1: the in-process server's callers are loopback
+  try {
+    const as = (who, p) => raw('GET', p, { ...H(), 'x-test-user': who });
+    const bob = await as('bob@example.com', `/api/tools/file?scope=chat&threadId=${ALICE}&root=out&path=ok.txt`);
+    assert.equal(bob.status, 404, JSON.stringify(bob.body));
+    assert.notEqual(bob.body?.text, 'OK');
+    assert.equal((await as('bob@example.com', `/api/ask/threads/${ALICE}/overview`)).status, 404, 'the Overview route too');
+    const alice = await as('alice@example.com', `/api/tools/file?scope=chat&threadId=${ALICE}&root=out&path=ok.txt`);
+    assert.equal(alice.status, 200, JSON.stringify(alice.body));
+    assert.equal(alice.body.text, 'OK');
+  } finally {
+    if (prevHeader === undefined) delete process.env.WORCA_IDENTITY_HEADER; else process.env.WORCA_IDENTITY_HEADER = prevHeader;
+    if (prevProxies === undefined) delete process.env.WORCA_IDENTITY_TRUSTED_PROXIES; else process.env.WORCA_IDENTITY_TRUSTED_PROXIES = prevProxies;
+  }
+});

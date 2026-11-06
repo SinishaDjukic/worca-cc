@@ -153,6 +153,9 @@ import { registerQuestionCard } from './chat/question-card.mjs';
 import { registerFilesCard, filesForViewer, fileViewerUrls } from './chat/files-card.mjs';
 import { createTerminalTool } from './terminal-pane.mjs';
 import { createToolPanel } from './tool-panel.mjs';
+import { createOverview } from './tool-overview.mjs';
+import { overviewSourceFor } from './tool-overview-sources.mjs';
+import { resolveRefKeys } from './ask-ref-chips.mjs';
 import { createToolRegistry } from './tool-kinds.mjs';
 import { createTabModel } from './tool-tabs.mjs';
 import { createTabMirror } from './tool-mirror.mjs';
@@ -41263,6 +41266,32 @@ toolKinds.register(createBrowserKind({ doc: document, win: window, fetch: (...ar
   frameRefused: (origin) => frameVerdicts.refused(origin) }));
 const toolModel = createTabModel({ storage: localStorage, onChange: () => toolMirror?.schedule() });
 toolMirror = createTabMirror({ win: window, fetch: (...args) => fetch(...args), model: toolModel });
+// The tool panel's Overview (issue 1064): what a run, chat or project shows with no tab selected. Its sections live in
+// tool-overview-sources.mjs; each dep is one line here.
+const overviewDeps = {
+  fetch: (...args) => fetch(...args),
+  get askPanel() { return askPanel; },
+  runStore: askRunStore,
+  projectOf: (key) => { const p = projectByKey(key); return p ? { name: p.name || projectName(p.path), path: p.path } : null; },
+  workspaceOf: (id) => { const w = workspaceById(id); return w ? { name: w.name } : null; },
+  actionsRunning: () => state.actionsRunning || [],
+  onActions: (fn) => { runningActionsListeners.add(fn); return () => runningActionsListeners.delete(fn); },
+  stopAction: (s) => stopActionInstance(s),
+  openService: (s) => openServiceInBrowser(s),
+  showSession: (id) => toolPanel?.showSession(id),
+  go: (hash) => { window.location.hash = hash; },
+  openInPanel: (o) => chatDeps.openInPanel(o),
+  openFiles: (o) => chatDeps.openFiles(o),
+  linksInPanel: () => chatLinksPref === true,
+  openOutFile: (threadId, path) => openChatFile({ threadId, path, root: 'out' }),
+  openRunArtifact: (ref, artifact) => openRunArtifactPopup(ref, artifact),
+  historyRows: (key) => projectHistoryRows(key),
+  historyRow: (pipelineId) => (state.historyAll || []).find((r) => r && r.id === pipelineId) || null,
+  liveRunsOf: (key) => [...runs.values()].filter((r) => isLive(r) && historyKeyForRun(r) === key).map((r) => askRunStore.get(r.runId)).filter(Boolean),
+  resolveRefs: (keys) => resolveRefKeys({ fetch: (...args) => fetch(...args), keys }),
+  now: () => Date.now(),
+};
+const toolOverview = createOverview({ doc: document, win: window, source: (v) => overviewSourceFor(v, overviewDeps) });
 toolPanel = createToolPanel({
   doc: document,
   win: window,
@@ -41272,6 +41301,7 @@ toolPanel = createToolPanel({
   getPageContext: toolPageContext,
   refreshSessions: () => terminalTool.refreshInfo(),
   suggest: (view) => toolSuggestions(view),
+  overview: toolOverview,
 });
 toolMirror.schedule();   // the first sync: this browser's chat and project tabs as they were left
 runningActionsListeners.add(() => toolPanel?.refreshNewPage());
@@ -41335,6 +41365,8 @@ function chatLinkContext(href) {
 chatDeps.linksInPanel = () => chatLinksPref === true;
 chatDeps.linkHint = (href) => linkHint(chatLinkContext(href));
 chatDeps.openFileLink = (t) => openChatFile(t);
+// The composer's context meter on the Chat page (issue 1064 D5): the panel's Overview with Context open (false: the popover).
+chatDeps.openOverview = ({ threadId, section }) => toolPanel?.showOverview({ scope: chatToolScope(threadId), expand: section }) === true;
 chatDeps.openInPanel = ({ threadId, item }) => {
   const scope = chatToolScope(threadId);
   if (!scope || !toolPanel || !item?.attId) return;

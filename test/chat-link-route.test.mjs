@@ -78,3 +78,21 @@ test('sameAddress normalizes', () => {
   assert.equal(sameAddress('https://example.org/a', 'https://example.org/b'), false);
   assert.equal(sameAddress('nope', 'nope'), false);
 });
+
+test('fileCardAction truth table', async () => {
+  const { fileCardAction } = await import('../ui/public/chat-link-route.mjs');
+  const rows = [
+    [{ preview: 'markdown', enabled: true }, 'panel'],
+    [{ preview: 'none', enabled: true }, 'panel'],
+    [{ preview: 'pdf', enabled: true }, 'panel'],
+    [{ preview: 'image', enabled: true }, 'popup'],
+    [{ preview: 'markdown', enabled: false }, 'popup'],
+    [{ preview: 'image', enabled: false }, 'popup'],
+    [{ preview: 'markdown', enabled: 'yes' }, 'popup'],
+    [{ preview: 'markdown', enabled: 1 }, 'popup'],
+    [{ preview: 'markdown' }, 'popup'],
+    [{}, 'popup'],
+  ];
+  for (const [input, want] of rows) assert.equal(fileCardAction(input), want, JSON.stringify(input));
+  assert.equal(fileCardAction(), 'popup');
+});

@@ -31,8 +31,8 @@ switch each tab remembers, highlighted code, tables, images, PDF, audio and vide
 Office documents as PDF when LibreOffice is installed) and **Changes** (the uncommitted changes of a project or chat folder, `git diff HEAD` plus
 new files; a run shows its own diff). Several tabs of one kind can be open. Each shell is its own tab.
 
-- **Header icons.** Run and chat pages show four icons: Terminal, Browser, Files and Changes. A
-  click focuses the newest tab of that kind on the page, or opens one; Shift-click always opens another.
+- **Header icons.** Run and chat pages show the Overview icon, then four tool icons: Terminal, Browser, Files and
+  Changes. A tool icon focuses the newest tab of that kind on the page, or opens one; Shift-click always opens another.
   Shortcuts: Ctrl+\` Terminal, Ctrl+Shift+F Browser, Ctrl+Shift+E Files, Ctrl+Shift+G Changes. Ctrl+\` on a
   terminal tab hides the panel again.
 - **Suggested.** The **+** page also lists the page's running Actions services, recent addresses and the
@@ -51,6 +51,31 @@ new files; a run shows its own diff). Several tabs of one kind can be open. Each
 - **Size.** Drag the panel's edge to resize it, or maximize it over the whole window. Below 880 px wide it is a
   full-screen sheet. The open tabs, the width and maximize are kept per browser.
 - **Archiving** a run or a chat closes its shells and its tabs.
+
+#### Overview
+
+The **Overview** is what the panel shows for a run, chat or project page while no tab is selected. It is not a tab:
+the first header icon always comes back to it, and closing the last tab lands on it. It is a quiet list of sections,
+each with a count; a click on a section's label folds it (the choice holds until the page reloads), and a section with
+nothing in it is hidden. Arrow keys, Home and End move between its rows.
+
+- **Chat:** Environment (the project or workspace, the engine and model, the branch of the run it follows),
+  Context (folded at first; the context window, topics, agents and worktrees, the same as the composer's
+  context popover), Runs the chat started (live status and cost; a click opens the run), Pull requests (their
+  state; a click opens the pull request), Artifacts (the files the chat showed and the files it saved in its output
+  folder, newest first, 5 then **Show all**) and Background (its running commands and its runs' running Actions,
+  each with **Stop**).
+- **Run:** its status, branch, project and whether it is checked out; its pull request, artifacts and running Actions.
+- **Project:** its recent runs and their pull requests.
+
+On the Chat page the composer's context meter opens the Overview with Context unfolded. In the side column, and in a
+new chat before its first message, it opens the context popover as before. A new chat and a starting run have no
+Overview (the icon says why); a chat without a project has one, while its tools stay off.
+
+`GET /api/ask/threads/:id/overview` answers the chat's started runs (a run card's run, or one of its schedules',
+never a run it only follows and never a PR fix run), their pull requests and the chat's applied pull request cards,
+its shown and saved files (at most 50 each, newest first) and the followed run's branch. A saved file opens in a
+Files tab through `root=out` (the chat's output folder; links in it are never followed).
 
 A second shell of a folder is numbered, like `demo · main 2`. A shell opened in a branch folder (see below) is a
 project tab named `<project> · <branch>`. Below the terminal is its folder, with a warning or the member select

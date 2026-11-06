@@ -55,3 +55,12 @@ export function linkHint(o) {
 export function sameAddress(a, b) {
   try { return new URL(a).href === new URL(b).href; } catch { return false; }
 }
+
+/**
+ * Where a click on a chat file card goes (issue 1064): with "Open chat links in the panel" on (`enabled === true`), a
+ * file that is not an image opens its stored copy in a Files tab ('panel'); an image, and everything with the setting
+ * off, opens the pop-up ('popup'). `preview` is filePreviewOf(item) (an svg is 'image' too).
+ */
+export function fileCardAction({ preview, enabled } = {}) {
+  return enabled === true && preview !== 'image' ? 'panel' : 'popup';
+}

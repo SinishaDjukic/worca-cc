@@ -101,6 +101,8 @@ test('in the real panel: the Terminal action starts a shell in the run, another 
     await tick(12);
     const r2tab = b.model.tabs().find((t) => t.state.sessionId === 't-9');
     assert.deepEqual(r2tab?.scope, { type: 'run', id: 'r2' });
+    b.model.activate(b.panel.view(), r2tab.id);   // no default tab any more (the Overview): the person picks it
+    await b.panel.open();
     assert.equal(b.sent.filter((m) => m.type === 'term-attach').at(-1).sessionId, 't-9', 'r2 had no tab on screen: the new one shows');
 
     await b.go(RUN_CTX);

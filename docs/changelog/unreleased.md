@@ -23,6 +23,22 @@ Pull requests (add each number when it opens):
 
 In a chat with a project, the assistant can open a tab for you (`open_tab`: a local preview, an allowlisted site, a Terminal, Files or Changes tab), marked as opened by the assistant. It can screenshot a Browser tab into its reply (`screenshot_tab`) and read the page's text and console errors (`read_tab`), from a fresh headless load on the Worca server. It reaches only this chat's tabs and its project's, and other sites follow the chat's web allowlist. **Pick element** in the Browser tab's toolbar puts a screenshot of the element you click, and its selector, into the chat composer.
 
+## The tool panel opens on an Overview
+
+**A run, chat or project shows what it holds before you pick a tab.**
+
+The tool panel's first icon is the Overview: for a chat, its project and model, its context window (also from the composer's meter), the runs it started with their pull requests, the files it showed and saved, and the commands and Actions still running, each with Stop. A run shows its status, branch, checkout, pull request and artifacts; a project its recent runs. The **+** page still opens a new tool.
+
+Pull requests (add each number when it opens):
+
+- Tool panel Overview
+
+## Chat file cards open in a tab
+
+**With "Open chat links in the panel" on, a file the chat showed opens in a Files tab.**
+
+A click on a file card's name opens its stored copy in a Files tab of the chat, and its small icon becomes **Quick look** (the pop-up). Images keep the pop-up and get **Open in panel**. A file that is already open comes forward instead of opening twice. With the setting off, every card opens the pop-up as before.
+
 ## Chat links open in the tool panel
 
 **File paths and web links in the chat's answers open in tabs beside the chat.**

@@ -164,3 +164,50 @@ code .ask-file-link{font-family:inherit;}
 .tool-browser-offer-text code{font:12px/1.3 var(--mono);color:var(--ink);}
 .tool-browser-status{flex-basis:100%;}
 
+/* The Overview (issue 1064): what a run, chat or project shows with no tab selected. A quiet list: no cards and no borders,
+   small muted section labels, rows of icon + one line + right-aligned muted meta, collapsible sections with a count. */
+.tov{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:14px;padding:14px 10px 20px;}
+.tov:focus{outline:none;}
+.tov-sec{display:flex;flex-direction:column;gap:2px;}
+.tov-sec[hidden],.tov-item[hidden],.tov-box[hidden],.tov-ring[hidden]{display:none;}
+.tov-label{margin:0;font:inherit;}
+.tov-head{display:flex;align-items:center;gap:6px;width:100%;height:24px;padding:0 6px;border:0;border-radius:var(--r-ctrl);background:none;
+  color:var(--ink-3);font-size:var(--fs-meta);font-weight:600;text-align:left;cursor:pointer;}
+.tov-head:hover{background:var(--hover);color:var(--ink-2);}
+.tov-head:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+.tov-name{flex:none;}
+.tov-count{color:var(--ink-3);font-weight:400;font-variant-numeric:tabular-nums;}
+.tov-ring{display:inline-flex;align-items:center;}
+.tov-ring svg.is-ctx-warn .ask-ctx-ring-arc{stroke:var(--amber);}
+.tov-ring svg.is-ctx-high .ask-ctx-ring-arc{stroke:var(--red);}
+.tov-chev{display:inline-flex;margin-left:auto;transform:rotate(90deg);transition:transform .15s ease;}
+.tov-sec.is-collapsed .tov-chev{transform:none;}
+@media (prefers-reduced-motion: reduce){ .tov-chev{transition:none} }
+.tov-box{display:flex;flex-direction:column;}
+.tov-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;}
+.tov-item{display:flex;align-items:center;gap:2px;min-width:0;}
+.tov-row{flex:1;min-width:0;display:flex;align-items:center;gap:8px;height:30px;padding:0 6px;border:0;border-radius:var(--r-ctrl);
+  background:none;color:var(--ink);font:inherit;font-size:13px;text-align:left;text-decoration:none;cursor:pointer;}
+.tov-row:hover{background:var(--hover);}
+.tov-row:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+.tov-row.is-static{cursor:default;}
+.tov-row.is-static:hover{background:none;}
+.tov-ic{flex:none;color:var(--ink-2);}
+.tov-dot{flex:none;display:inline-flex;align-items:center;justify-content:center;width:14px;}
+.tov-text{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.tov-pill{flex:none;font-size:11px;font-weight:500;}
+.tov-pill.tone-green{color:var(--green-ink);}
+.tov-pill.tone-red{color:var(--red-ink);}
+.tov-pill.tone-amber{color:var(--amber-ink);}
+.tov-pill.tone-slate{color:var(--slate-ink);}
+.tov-meta{flex:none;max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink-2);font-size:var(--fs-meta);
+  font-variant-numeric:tabular-nums;}
+.tov-stop,.tov-more{flex:none;height:26px;padding:0 8px;border:0;border-radius:var(--r-ctrl);background:none;color:var(--ink-2);
+  font:inherit;font-size:var(--fs-meta);cursor:pointer;}
+.tov-stop:hover,.tov-more:hover{background:var(--hover);color:var(--ink);}
+.tov-stop:focus-visible,.tov-more:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+.tov-stop:disabled{opacity:.5;cursor:default;}
+.tov-more{align-self:flex-start;margin-left:28px;}
+.tov-note,.tov-empty{margin:4px 6px 0;color:var(--ink-2);font-size:var(--fs-meta);}
+.tov-empty{margin:8px 6px;}
+.tov-body{padding:4px 6px 0;font-size:13px;}

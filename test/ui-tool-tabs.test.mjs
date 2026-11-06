@@ -66,17 +66,36 @@ test('visible: the view\'s project tabs, then its run\'s tabs; another run\'s ta
   assert.notEqual(viewKey(vA), viewKey(vB));
 });
 
-test('active: per view, falling back to the last visible tab; newest finds the newest of a kind', () => {
+test('active: no fallback; a stored tab or null; newest finds the newest of a kind', () => {
   let t = 0;
   const m = createTabModel({ storage: memStore(), newId: ids, now: () => (t += 1) });
   const a1 = m.open('terminal', vA.side);
   const a2 = m.open('terminal', vA.side);
-  assert.equal(m.active(vA).id, a2.id);
+  assert.equal(m.active(vA), null, 'a scope with tabs and no stored selection shows the Overview');
   m.activate(vA, a1.id);
-  assert.equal(m.active(vA).id, a1.id);
+  assert.equal(m.active(vA).id, a1.id, 'a stored tab');
+  m.close(a1.id);
+  assert.equal(m.active(vA), null, 'a stored tab that was closed: null, never a neighbour');
   assert.equal(m.active(vB), null);
   assert.equal(m.newest('terminal', vA).id, a2.id);
   assert.equal(m.newest('files', vA), null);
+});
+
+test('deselect clears and persists; a no-op does not save', () => {
+  const store = memStore();
+  let saves = 0;
+  const m = createTabModel({ storage: store, newId: ids, onChange: () => { saves += 1; } });
+  const a = m.open('files', vA.side);
+  m.activate(vA, a.id);
+  assert.equal(m.active(vA).id, a.id);
+  const before = saves;
+  m.deselect(vA);
+  assert.equal(m.active(vA), null);
+  assert.equal(saves, before + 1, 'one save');
+  assert.equal(createTabModel({ storage: store, newId: ids }).active(vA), null, 'survives a reload');
+  m.deselect(vA);
+  m.deselect(vB);
+  assert.equal(saves, before + 1, 'deselect on an empty entry saves nothing');
 });
 
 test('move and moveBefore stay inside a group; moveToProject changes the scope', () => {
@@ -285,16 +304,13 @@ test('onChange fires on every save; adopt takes in the assistant\'s new tabs onc
   assert.equal(n, 2);
 });
 
-test('active(): an assistant Terminal tab that never started a shell is never the default tab', () => {
+test('active(): an assistant Terminal tab that never started a shell is never a default (nothing is)', () => {
   const m = createTabModel({ storage: memStore(), newId: ids });
   const chat = { type: 'chat', id: 'ask_0000aaaa', projectKey: 'app-0000aaaa' };
   const view = { project: 'app-0000aaaa', side: chat };
-  const f = m.open('files', chat);
+  m.open('files', chat);
   m.adopt(chat, [{ id: 'tab_srv9', kind: 'terminal' }]);
-  assert.equal(m.active(view).id, f.id);
+  assert.equal(m.active(view), null, 'no default: the Overview shows');
   m.activate(view, 'tab_srv9');
   assert.equal(m.active(view).id, 'tab_srv9', 'the user picked it');
-  const only = createTabModel({ storage: memStore(), newId: ids });
-  only.adopt(chat, [{ id: 'tab_srv8', kind: 'terminal' }]);
-  assert.equal(only.active(view), null, 'nothing shows rather than a shell starting');
 });

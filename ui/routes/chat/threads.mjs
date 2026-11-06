@@ -6,18 +6,27 @@ import { validateMcpOff } from '../../../src/core/ask/mcp.mjs';
 import { validateModelEffort } from '../../../src/core/ask/models.mjs';
 import { chatScopeOf, sameScope } from '../../../src/core/ask/scope.mjs';
 import { revealTargetFor as askRevealTargetFor } from '../../../src/core/ask/show-files-deps.mjs';
-import { THREAD_SORTS, attachmentPath as askAttachmentPath, countThreads as askCountThreads, createThread as askCreateThread, getAttachment as askGetAttachment, getThread as askGetThread, listAttachments as askListAttachments, listMessages as askListMessages, listRunLinks as askListRunLinks, listThreadIds as askListThreadIds, listThreads as askListThreads, listThreadsPage as askListThreadsPage, readAttachmentText as askReadAttachmentText, setArchived as askSetArchived, setPinned as askSetPinned, updateThread as askUpdateThread } from '../../../src/core/ask/store.mjs';
+import { THREAD_SORTS, askOutDir, attachmentPath as askAttachmentPath, countThreads as askCountThreads, createThread as askCreateThread, getAttachment as askGetAttachment, getThread as askGetThread, listAttachments as askListAttachments, listMessages as askListMessages, listRunLinks as askListRunLinks, listThreadIds as askListThreadIds, listThreads as askListThreads, listThreadsPage as askListThreadsPage, readAttachmentText as askReadAttachmentText, setArchived as askSetArchived, setPinned as askSetPinned, updateThread as askUpdateThread } from '../../../src/core/ask/store.mjs';
 import { removeAskWorktree as askRemoveWorktree } from '../../../src/core/ask/worktrees.mjs';
+import { buildThreadOverview } from '../../../src/core/ask/overview.mjs';
+import { findPipelineRowById, readPrState } from '../../../src/core/artifacts.mjs';
+import { getDb } from '../../../src/core/db.mjs';
 import { chatOrigins } from '../../../src/core/chat/conversations.mjs';
 import { actorOf } from '../../../src/core/identity.mjs';
 import { CHAT_BUSY } from '../../../src/shared/chat-busy.mjs';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
-import { ASK_SCOPE_BUSY, ASK_TEXT_PREVIEW_MAX, REMOTE_MODE, SETTLED_RUN, agentMayBeCaller, askBusyReason, askChatEngine, askCommands, askFollowers, askIdParam, askInFlight, askTrackingCount, askValidateScope, askViewer, askWorktreesEnvelope, badRequest, broadcast, builtins, channelHost, chatToolFolder, closeChatTerminals, deleteAskThreadFully, emitAskWorktrees, emitChanged, liveRunEntry, rejectRawTerminalFields, requireTerminal, sendOfficePdf, switchThreadScope, terminalError, terminals, toolTabs } from '../../server.mjs';
+import { ASK_SCOPE_BUSY, ASK_TEXT_PREVIEW_MAX, REMOTE_MODE, SETTLED_RUN, agentMayBeCaller, askBusyReason, askChatEngine, askCommands, askFollowers, askIdParam, askInFlight, askLinkIsPrFix, askTrackingCount, askValidateScope, askViewer, askWorktreesEnvelope, badRequest, broadcast, builtins, channelHost, chatToolFolder, closeChatTerminals, deleteAskThreadFully, emitAskWorktrees, emitChanged, followedRunOf, liveRunEntry, rejectRawTerminalFields, requireTerminal, sendOfficePdf, switchThreadScope, terminalError, terminals, toolTabs } from '../../server.mjs';
 import { currentBranch } from '../../../src/core/worktree.mjs';
 import { tabScope } from '../../../src/core/tool-tabs-mirror.mjs';
 import { isOfficePath } from '../../../src/shared/artifact-kinds.mjs';
 import fsp from 'node:fs/promises';
+
+/** The runs a chat's recurring schedules fired (D8: materializeNext never links them to the chat), newest first. */
+function scheduleRunIds(threadId, limit) {
+  return getDb().prepare(`SELECT id FROM pipelines WHERE schedule_id IN (SELECT id FROM schedules WHERE ask_thread_id = ?)
+    AND deleted_at IS NULL ORDER BY started_at DESC LIMIT ?`).all(threadId, limit).map((r) => r.id);
+}
 
 export function register(app) {
 
@@ -190,6 +199,23 @@ app.get('/api/ask/threads/:id', (req, res) => {
       worktrees: askWorktreesEnvelope(id),
       inFlight: job && job.messageId ? { messageId: job.messageId } : null, // null while the slot is only reserved
     });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// The tool panel's Overview (issue 1064): the chat's started runs, their PRs and its applied PR cards, the files it
+// showed and saved, the followed run's branch. Another person's chat is a 404 (the askThreadVisible middleware).
+app.get('/api/ask/threads/:id/overview', async (req, res) => {
+  const id = askIdParam(res, req.params.id, 'thread');
+  if (!id) return;
+  try {
+    const thread = askGetThread(id);
+    if (!thread || thread.archivedAt) return res.status(404).json({ error: 'thread not found' });
+    res.json(await buildThreadOverview(id, {
+      listRunLinks: askListRunLinks, isPrFix: askLinkIsPrFix, findPipelineRowById, scheduleRunIds, readPrState,
+      listMessages: askListMessages, listAttachments: askListAttachments, outDir: askOutDir, followedRunOf,
+    }));
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }

@@ -87,3 +87,19 @@ test('archiving closes tool tabs: the run archive, the bulk action and the chat 
   assert.ok(app.includes("for (const id of gone) toolPanel?.closeScope({ type: 'run', id });"));
   assert.ok(app.includes("onChatsClosed: (ids) => { for (const id of ids || [null]) toolPanel?.closeScope({ type: 'chat', id }); },"));
 });
+
+test('every .tov class the Overview builds has a rule; the chevron has its reduced-motion block; tokens only', () => {
+  const pane = readFileSync(new URL('../ui/public/terminal/terminal-pane.css', import.meta.url), 'utf8');
+  const src = readFileSync(new URL('../ui/public/tool-overview.mjs', import.meta.url), 'utf8');
+  const classes = new Set(['tov', ...[...src.matchAll(/\btov-[a-z]+(?:-[a-z]+)*/g)].map((m) => m[0])]);
+  classes.delete('tov-section');   // the data-tov-section attribute, not a class
+  assert.ok(classes.size >= 18, [...classes].join(' '));
+  for (const c of classes) assert.match(pane, new RegExp(`\\.${c}(?![a-z-])[^{]*\\{`), `.${c} has a rule`);
+  assert.ok(css.includes('.tov{'), 'the part is in the shipped stylesheet');
+  assert.match(pane, /@media \(prefers-reduced-motion: reduce\)\{ \.tov-chev\{transition:none\} \}/);
+  const rules = [...pane.matchAll(/([^{}]*\.tov[^{}]*)\{([^}]*)\}/g)];
+  assert.ok(rules.length > 20);
+  for (const [, sel, body] of rules) {
+    assert.doesNotMatch(body, /#[0-9a-fA-F]{3,8}\b|(?<![\w-])(white|black)(?![\w-])|rgba?\(|hsla?\(/, `${sel.trim()}: tokens only`);
+  }
+});

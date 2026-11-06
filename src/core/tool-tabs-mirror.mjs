@@ -24,7 +24,7 @@ export const isTabScope = (s) => typeof s === 'string' && SCOPE_RE.test(s);
 export const newTabId = () => `tab_${randomBytes(6).toString('hex')}`;
 const ownerOf = (o) => (typeof o === 'string' && o.length <= L.ownerMaxChars ? o : '');
 
-const ROOT_RE = /^run:[0-9a-f]{8}$/;
+const ROOT_RE = /^(run:[0-9a-f]{8}|out)$/;
 const MEMBER_RE = /^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,199}$/;
 /** A Files tab's file or folder as a page or open_tab sends it, or null. */
 export function cleanTarget(kind, t) {
