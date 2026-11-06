@@ -128,9 +128,9 @@ function topbar() {
 // One row on the 20px rail: the dot, the title line, the meta line, the time at the right.
 // In Updates the rail holds the mark (amber: still waits for you, blue: unread, nothing once read) and, while selecting,
 // the tick box in its place: one text edge for every list.
-function row({ dot, mark: own, title, meta, time, tip, key, check, unreadDot, resolved, flash, fix, fixTip }) {
+function row({ dot, mark: own, title, meta, time, tip, key, check, unreadDot, resolved, flash, fix, fixTip, fixLand }) {
   return R.pulseRow({ mark: own || (dot ? R.statusDot({ tone: dot }) : ''), title, meta, time, tip, id: key, check, unread: unreadDot, resolved, flash,
-    action: fix ? R.button({ label: fix, kind: 'quiet', attrs: { 'data-fix': key, title: fixTip } }) : '' });
+    action: fix ? R.button({ label: fix, kind: 'quiet', attrs: { ...(fixLand ? { 'data-land': fixLand } : { 'data-fix': key }), title: fixTip } }) : '' });
 }
 const dotOf = (u) => (u.sev === 'needs' && u.open ? 'is-amber' : '');
 // A run's mark and word come from the library's state.
@@ -139,7 +139,7 @@ const metaOf = (r, detail = r.detail) => [r.project, detail].filter(Boolean).joi
 const runRow = (r, tip) => row({ mark: runMark(r.state), title: r.title, meta: metaOf(r), time: r.time, key: 'r:' + r.id, tip });
 function updateRow(u, withCheck) {
   return row({ dot: dotOf(u), title: u.title, meta: `${groupOf(u.g).name} · ${u.meta}`, time: u.time, key: u.id, check: withCheck ? ui.pick.ids.includes(u.id) : undefined,
-    unreadDot: isUnread(u), resolved: u.resolved || isFixed(u), fix: !isFixed(u) && !ui.pick.on ? u.fix : '', fixTip: u.fixLand ? `${u.fix}: opens Settings › Runs, on Budget` : `${u.fix} from here; the row then reads Resolved`, flash: ui.flash === u.id, tip: `Opens ${u.to}${isUnread(u) ? ' and marks it read' : ''}` });
+    unreadDot: isUnread(u), resolved: u.resolved || isFixed(u), fix: !isFixed(u) && !ui.pick.on ? u.fix : '', fixLand: u.fixLand, fixTip: u.fixLand ? `${u.fix}: opens Settings › Runs, on Budget` : `${u.fix} from here; the row then reads Resolved`, flash: ui.flash === u.id, tip: `Opens ${u.to}${isUnread(u) ? ' and marks it read' : ''}` });
 }
 function vitalsSections() {
   const c = vitalsShown(), lim = c.limits;
@@ -781,10 +781,9 @@ document.addEventListener('click', (e) => {
 });
 const isUpdate = (id) => C().updates.some((u) => u.id === id);
 const undoClear = (ids, read) => ({ tip: 'Puts them back in the list', run: () => { ui.cleared = ui.cleared.filter((x) => !ids.includes(x)); if (read) ui.read = read; toast('Back in the list'); } });
-// A row's step: it does what it says on the mock's run, so every list reads the same; or it goes to where that is done.
+// A row's step: it does what it says on the mock's run, so every list reads the same.
 const STEP_MOVES = { 'Try again': ['working', 'Tried again · back at work'], Resume: ['working', 'Resumed · back at work'], 'Run now': ['starting', 'Started by you'] };
 function takeStep(u) {
-  if (u.fixLand) { if (!ui.read.includes(u.id)) ui.read = ui.read.concat(u.id); const [sset, label] = u.fixLand.split('|'); land({ sset, label }); return; }
   ui.fixed = ui.fixed.concat(u.id);
   const move = STEP_MOVES[u.fix], r = u.run && W.find(u.run);
   if (move && r) { W.move(r.id, ...move); window.RailRunsList?.show(); }
