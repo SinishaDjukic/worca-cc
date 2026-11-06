@@ -538,6 +538,7 @@ test('pulseRow: its mark, the tick box on the rail while selecting, its text ope
   assert.equal(r.querySelector('.pz-check input').checked, true);
   assert.equal(r.querySelector('.pz-row-main').getAttribute('data-open'), 'k');
   assert.ok(r.querySelector('.pz-resolved'));
+  assert.ok(!r.querySelector('.pz-row-tt .pz-resolved'), 'the title shortens, the state word beside it never does');
   assert.equal(dom(C.pulseRow({ mark: '<i></i>', title: 'a', meta: 'm', time: 't', tip: 'x', id: 'k' })).querySelector('.pz-check'), null);
 });
 
@@ -696,6 +697,7 @@ test('openShortcutsSheet: one at a time, holds the keys, Esc or Close closes and
 test('listSentence, listWord: its words, one menu open, a pick reports its id and each choice its count', () => {
   const p = new JSDOM(`<div>${C.listSentence({ open: 'by', parts: [{ word: 'Showing', id: 'show', text: 'a<ll', items: [] }, { word: 'by', id: 'by', text: 'state', items: [{ id: 'day', text: 'day', hint: '5', checked: false }] }] })}</div>`).window.document.body.firstElementChild;
   assert.match(p.textContent, /^Showing a<ll by state/);
+  assert.equal(p.querySelectorAll('.list-part').length, 2, 'each word stays with its picker');
   assert.equal(p.querySelectorAll('[data-menu]').length, 2);
   assert.equal(p.querySelector('[data-pick="by|day"] .mi-hint').textContent, '5');
   assert.equal(dom(`<div>${C.listWord({ id: 'x', text: 't', items: [] })}</div>`).querySelector('.menu'), null);

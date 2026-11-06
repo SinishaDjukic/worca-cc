@@ -36,7 +36,7 @@ export function listWord({ id, text, items, tip = '', align = '' }, { open = '',
  * @param {string} [o.menuCls]
  */
 export function listSentence({ parts, open = '', chevron = '', menuCls = '' }) {
-  return parts.map((p) => `${esc(p.word)} ${listWord(p, { open, chevron, menuCls })}`).join(' ');
+  return parts.map((p) => `<span class="list-part">${esc(p.word)} ${listWord(p, { open, chevron, menuCls })}</span>`).join(' ');
 }
 
 /**

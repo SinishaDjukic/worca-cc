@@ -14,6 +14,8 @@
   question (`What it may do`, `Up to date`); never a word made up for the screen. The same thing keeps its name
   everywhere: a menu item's name is its page's title. `ds-check` reads every name on a Rail page by this rule. The one
   exception is `Vitals`, the Pulse tab: a made-up word for the screen, which only makes sense under Pulse.
+- Money is a **budget**, a window is a **limit**: `Budget`, `Raise budget`, `Limit settings`, the Limits of Usage and costs.
+  A run's own ceiling is its `Cost cap`.
 - Hover is a tint, never a lift.
 - A row with no state to show (an idle chat) may show its kind's line icon in the dot's place, in `--ink-2`; a row with
   a state shows its dot.
