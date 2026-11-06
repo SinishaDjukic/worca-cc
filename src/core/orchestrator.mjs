@@ -2581,7 +2581,7 @@ export class GraphOrchestrator extends RunHarness {
       step.humanHours = ctx.human.hours;
       step.humanSignals = ctx.human.signals;
     }
-    if (terminal) this.state.humanHours = this.claude?.mock ? 0 : sumStepHours(this.state.steps);   // a mock run saved nobody any work
+    if (terminal) this.state.humanHours = sumStepHours(this.state.steps);
     if (status === 'start') this._clockResume(key);
     else this._clockPause(key);
     this.state.totalActiveMs = sumStepActive(this.state.steps);
@@ -2678,7 +2678,7 @@ export class GraphOrchestrator extends RunHarness {
       await this._humanEstimate(ctx);
       if (ctx.human) { step.humanHours = ctx.human.hours; step.humanSignals = ctx.human.signals; }
     }
-    this.state.humanHours = this.claude?.mock ? 0 : sumStepHours(this.state.steps);
+    this.state.humanHours = sumStepHours(this.state.steps);
   }
 
   /** The retry loop around ONE execution — the NODE site of failure-policy.mjs.

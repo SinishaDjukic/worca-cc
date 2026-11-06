@@ -133,15 +133,15 @@ export function headModel(f) {
     disabled: f.pushState?.state === 'pushed' || f.pushState?.state === 'diverged' } };
   if (m.state !== 'ready') return { ...NONE, key: m.state };             // merged into its base without a PR (inBase)
   // A mock run's change is a placeholder: it never reads as work that is ready.
-  const readyLine = f.mock ? 'Mock run · no model was called' : `Ready to ship · not in ${base} yet`;
+  const readyStatus = f.mock ? { word: 'Mock run', line: 'Mock run · no model was called' } : { line: `Ready to ship · not in ${base} yet` };
   // No remote: a PR has nowhere to go, so the head offers the way to get one and the way to land it without.
   if (f.noRemote && !pr) {
-    return { ...NONE, key: 'no-remote', status: { line: readyLine },
+    return { ...NONE, key: 'no-remote', status: readyStatus,
       before: [...tryIt, btn('merge-local', 'How to merge')], after: [btn('link-remote', 'Link remote', { primary: true })] };
   }
   const cta = f.prInput === 'PENDING' ? { state: 'pending' } : f.canCreatePr ? { state: 'create' } : null;
   if (s === 'CLOSED') return { ...NONE, key: 'pr-closed', status: { line: 'Ready to ship · the PR was closed' }, before: tryIt, cta };
-  return { ...NONE, key: 'ready', status: { line: readyLine }, before: tryIt, cta };
+  return { ...NONE, key: 'ready', status: readyStatus, before: tryIt, cta };
 }
 
 function workspaceHead(f) {
