@@ -142,7 +142,7 @@ export async function gatherFacts({ person, shared, live, tz, now = Date.now(), 
   const who = { person: String(person ?? ''), shared: shared === true };
   const lv = normaliseLive(live);
   const skipped = skip instanceof Set ? skip : new Set();
-  const ctx = `person=${JSON.stringify(who.person)} shared=${who.shared}`;
+  const ctx = `personPresent=${who.person.length > 0} shared=${who.shared}`;
   const guard = async (name, fn, fallback) => {
     if (skipped.has(name) || skipped.has(SKIP_NAMES[name])) return fallback;
     try { return await fn(); } catch (err) {
