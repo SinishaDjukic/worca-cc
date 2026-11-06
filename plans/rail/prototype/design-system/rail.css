@@ -831,7 +831,6 @@ html,body{height:auto;overflow:visible;margin:0;}
   .set-detail{grid-column:1;}
   .spick-b{white-space:normal;text-align:left;}
   .set-sec-head{flex-wrap:wrap;}
-  .set-sec-head > .btn-quiet,.set-sec-head > .tip-wrap > .btn-quiet{margin-right:0;}
   /* A record stacks as a row does: its name and meta take the width, its end goes under them. Nothing is cut. */
   .set-sec .list-rows{grid-template-columns:var(--lr-rail) minmax(0,1fr);}
   .set-sec .list-rows > .list-row > .lr-end{grid-column:2;justify-content:flex-start;}
@@ -1069,8 +1068,8 @@ th.rt-c{color:var(--ink-2);font-weight:500;}
   -webkit-mask:radial-gradient(farthest-side,transparent calc(100% - var(--t) - .5px),#000 calc(100% - var(--t)));
   mask:radial-gradient(farthest-side,transparent calc(100% - var(--t) - .5px),#000 calc(100% - var(--t)));}
 .usage-ring::before{content:"";position:absolute;inset:0;border-radius:50%;
-  background:conic-gradient(var(--ink-2) calc(var(--w) * 1%),var(--amber) calc(var(--w) * 1%),var(--red) 100%);
-  -webkit-mask:conic-gradient(#000 calc(var(--p) * 1%),transparent 0);mask:conic-gradient(#000 calc(var(--p) * 1%),transparent 0);}
+  background:conic-gradient(var(--ink-2) calc((var(--w) - 6) * 1%),var(--amber) calc(var(--w) * 1%),var(--red) 100%);   /* ds-ok: --w and --p are each ring's, from usageRing */
+  -webkit-mask:conic-gradient(#000 calc(var(--p) * 1%),transparent 0);mask:conic-gradient(#000 calc(var(--p) * 1%),transparent 0);}   /* ds-ok: as above */
 .usage-ring.is-over::before{background:var(--red);}
 /* A panel over the page: its head stays, its body scrolls. Where it sits is the page's. */
 .panel-frame{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:var(--r-card);background:var(--panel);box-shadow:var(--shadow-pop);}

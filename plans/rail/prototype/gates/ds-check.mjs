@@ -74,7 +74,7 @@ for (const name of PAGES_JS) for (const [c, n] of Object.entries(scanText(readFi
 // --- names: a page, a menu item, a section head, a settings row (docs/rail/small-rules.md) ---
 const NAMES = () => {
   const out = [];
-  const sel = '.pz-title, .side-menu .side-l, .set-sec-h, .set-name, .list-h, .dlg-title, .rc-tabs .tab, .mi-lbl';
+  const sel = '.pz-title, .side-menu .side-l, .set-sec-h, .set-name, .list-h, .dlg-title, .rc-tabs .tab, .menu-item:not(.pz-team) .mi-lbl';   // .pz-team is a notice, in the app's own words
   for (const e of document.querySelectorAll(sel)) {
     if (!e.offsetParent) continue;
     const t = (e.childNodes[0]?.textContent || e.textContent).trim();
