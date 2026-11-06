@@ -169,13 +169,15 @@ function rewrittenFrontmatter(mapping, fm) {
  * it), `{ text }` when Worca removed it, and `{ text, unsafe: true }` when it wrote what it could but cannot be sure (named in
  * a run warning). Pure. In order:
  *  1. Neither reading has `hooks` and one parses: null (a `hooks:` line inside a string or a nested key is not one).
- *  2. The line strip: the `hooks:` lines and their blocks go, every other byte stays. When a reading of the result parses and
+ *  2. Nothing parses (re-review 2, N-I1: when in doubt, remove; re-review 3, m1: the CLI reads no field of it in a normal run,
+ *     2.1.318 `xd` keeps `{}` when `pMn` fails, so the try must not read any either): the line-stripped text while it still
+ *     does not parse, else, when it mentions `hooks`, an empty frontmatter (read as empty too); `unsafe` either way.
+ *  3. The line strip: the `hooks:` lines and their blocks go, every other byte stays. When a reading of the result parses and
  *     has no `hooks`: `{ text }`.
- *  3. A reading has `hooks` that the line strip cannot remove (review m4: an indented root mapping, a `? hooks` key, a `<<:`
+ *  4. A reading has `hooks` that the line strip cannot remove (review m4: an indented root mapping, a `? hooks` key, a `<<:`
  *     merge, a flow-style `{…}` frontmatter, an escaped key, a quoted or flow value over lines, an anchor used elsewhere): the
  *     frontmatter is rewritten from that reading without `hooks` (the same values; its comments and layout go), checked again.
- *  4. Nothing parses (re-review 2, N-I1: when in doubt, remove): the line-stripped text when there is one, else, when it
- *     mentions `hooks`, an empty frontmatter (the CLI reads such a frontmatter as empty anyway); `unsafe` either way.
+ *  5. Else: the line-stripped text when there is one, else an empty frontmatter; `unsafe` either way.
  */
 export function strippedFrontmatterText(text) {
   const f = cliFrontmatter(text);
@@ -184,18 +186,20 @@ export function strippedFrontmatterText(text) {
   const before = readings(f.fm);
   if (before.parses && !before.hooks) return null;
   const ls = lineStripped(f.fm);
+  if (!before.parses) {
+    if (ls !== null && !readings(ls).parses) return { text: at(ls), unsafe: true };
+    return ls !== null || /hooks/i.test(f.fm) ? { text: at(''), unsafe: true } : null;
+  }
   if (ls !== null) {
     const after = readings(ls);
     if (after.parses && !after.hooks) return { text: at(ls) };
   }
-  if (before.mapping && before.hooks) {
+  if (before.mapping) {
     const fm = rewrittenFrontmatter(before.mapping, f.fm);
     const check = readings(fm);
     if (check.parses && !check.hooks) return { text: at(fm) };
   }
-  if (ls !== null) return { text: at(ls), unsafe: true };
-  if (before.hooks || /hooks/i.test(f.fm)) return { text: at(''), unsafe: true };
-  return null;
+  return { text: at(ls ?? ''), unsafe: true };
 }
 
 /** D72a: the trees (in a `.claude` folder) whose markdown files Claude Code reads frontmatter hooks from, and which files. */

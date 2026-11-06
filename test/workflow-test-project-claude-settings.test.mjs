@@ -189,6 +189,15 @@ test('re-review 2 N-I1: a value that is not strict YAML but mentions hooks (the 
   assert.deepEqual(strippedFrontmatterText(FM(BLOCK, broken)), { text: FM('', broken), unsafe: true });
 });
 
+test('re-review 3 m1: a frontmatter that no reading parses stays unreadable: the CLI reads no field of it in a normal run (2.1.318 xd: {} when pMn fails)', () => {
+  // the fault is only in the hooks block: the line strip alone would bring name, model and allowed-tools to life in the try
+  const fm = '---\nname: a\nmodel: opus\nallowed-tools: Bash\nhooks:\n  - [ {matcher: Bash}\n---\nbody\n';
+  assert.deepEqual(strippedFrontmatterText(fm), { text: '---\n---\nbody\n', unsafe: true }, 'an empty frontmatter: no fields, as in a normal run');
+  // still unreadable after the line strip: the line-stripped text is kept (unreadable the same way), named
+  const broken = 'other:\n  - [broken: hooks\n';
+  assert.deepEqual(strippedFrontmatterText(FM(BLOCK, broken)), { text: FM('', broken), unsafe: true });
+});
+
 test('I-2: nested .claude folders below the checkout root (a monorepo package\'s skills load once the agent works there: probe nested-read-318) lose their hooks too', async () => {
   const d = tmp();
   const w = (rel, text) => { mkdirSync(join(d, ...rel.split('/').slice(0, -1)), { recursive: true }); writeFileSync(join(d, ...rel.split('/')), text); };
