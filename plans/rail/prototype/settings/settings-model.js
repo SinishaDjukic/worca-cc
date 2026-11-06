@@ -96,8 +96,8 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
     gone: { Sentry: true }, chToken: { Telegram: true, Discord: true, Slack: false, Teams: false }, chAllowed: {} };
   const NOTES = [note('architecture.md', 'How the server and the UI are split · today · from Chat'), note('conventions.md', 'Naming, commits and tests · 2 Oct · from run #398')];
   const COST_TAGS = [
-    { title: 'Cost centre', meta: 'R&D, Platform, Support · required', menu: ['Edit', 'Remove'] },
-    { title: 'Customer', meta: 'Any value · optional', menu: ['Edit', 'Remove'] },
+    costTag('Cost centre', 'R&D, Platform, Support', true),
+    costTag('Customer', '', false),
   ];
 
   // ---- General › About: what `Check now`, `Update` and `Choose version…` do ----
@@ -441,15 +441,15 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
     ] },
 
     presets: { min: 'advanced', title: 'Presets', meta: 'Saved setups a new run can start from. Save one from a run\'s ⋯.', sections: [
-      { title: 'Presets', empty: 'No presets yet', list: [
-        preset('Bug fix', 'Any project', 'Fix workflow · Claude · updated 3 Oct'),
-        preset('Docs pass', 'Only worca-cc', 'Docs workflow · Claude · updated 28 Sep'),
-        preset('Billing slice', 'Workspace gone', 'Feature workflow · Claude · updated 12 Sep', 'is-amber'),
+      { title: 'Presets', bare: true, empty: 'No presets yet', list: [
+        preset('Bug fix', 'Any project', 'Fix workflow · Claude · updated 3 Oct', '', { task: 'Fix the bug you describe here', size: 'small' }),
+        preset('Docs pass', 'Only worca-cc', 'Docs workflow · Claude · updated 28 Sep', '', { task: 'Bring the docs in line with the code', size: 'small' }),
+        preset('Billing slice', 'Workspace gone', 'Feature workflow · Claude · updated 12 Sep', 'is-amber', { task: 'Build the next billing slice', size: 'large' }),
       ] },
     ] },
 
     labels: { flag: 'runLabels', title: 'Labels', meta: 'Free words you put on runs to find them again.', sections: [
-      { title: 'Labels', meta: 'The most used first.', empty: 'No labels yet', list: [
+      { title: 'Labels', bare: true, meta: 'The most used first.', empty: 'No labels yet', list: [
         { title: 'frontend', meta: 'On 14 runs', menu: ['Rename', 'Remove'] },
         { title: 'needs demo', meta: 'On 6 runs', menu: ['Rename', 'Remove'] },
         { title: 'hotfix', meta: 'On 3 runs', menu: ['Rename', 'Remove'] },
@@ -458,12 +458,12 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
 
     automations: { min: 'advanced', flag: 'gitAutomations', title: 'Automations', meta: 'What runs by itself across projects; each project keeps its own rules.', sections: [
       { title: 'Waiting', empty: 'Nothing is waiting', list: [
-        { title: 'Issue #1088', meta: 'A fix is proposed · worca-cc', mark: 'is-amber', fig: '2h ago', menu: ['Approve', 'Skip'],
+        { title: 'Issue #1088', meta: 'A fix is proposed · worca-cc', mark: 'is-amber', fig: '2h ago', menu: ['Approve', 'Skip'], quick: ['Approve'],
           on: { Approve: (r, x) => { x.remove(); x.add({ title: r.title, meta: 'Approved: a run started · worca-cc', fig: 'now' }, 'automations/Recent'); return 'Issue #1088: a run started'; }, Skip: (r, x) => { x.remove(); x.add({ title: r.title, meta: 'Skipped by you · worca-cc', fig: 'now' }, 'automations/Recent'); return 'Issue #1088: skipped'; } } },
       ] },
       { title: 'Projects', list: [
-        { title: 'worca-cc', meta: 'Proposes a fix for new issues and reviews PRs · 3 rules' },
-        { title: 'billing workspace', meta: 'Every member repository · reviews PRs · 1 rule' },
+        { title: 'worca-cc', meta: 'Proposes a fix for new issues and reviews PRs · 3 rules', open: (r, x) => x.page('projects', 'Opens the project worca-cc, where its 3 rules are') },
+        { title: 'billing workspace', meta: 'Every member repository · reviews PRs · 1 rule', open: (r, x) => x.page('workspaces', 'Opens the billing workspace, where its rule is') },
       ] },
       { title: 'Recent', list: [
         { title: 'PR #1087', meta: 'Reviewed · worca-cc', fig: '09:12' },
@@ -490,7 +490,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
           menu: (r) => (r.signedOut ? ['Sign in'] : ['Edit', 'Import models', 'Refresh usage', 'Sign out']),
           on: {
             Edit: (r, x) => x.dialog({ title: 'GitHub Copilot', yes: 'Save', fields: [{ key: 'acct', label: 'Account type', value: r.account, options: O('Individual', 'Business', 'Enterprise') }, { key: 'conc', label: 'Requests at once', value: String(r.conc), type: 'number', hint: 'Keep it low: more waits its turn, and it lowers GitHub\'s abuse-detection risk' }], then: (v) => { r.account = v.acct; r.conc = v.conc; return 'GitHub Copilot saved'; } }),
-            'Import models': (r, x) => x.dialog(importModels('models/Catalogue')),
+            'Import models': (r, x) => (importable(x.sv).length ? x.dialog(importModels(x.sv)) : 'Nothing new to import: the catalogue has it all'),
             'Refresh usage': (r) => { r.used += 7; return `Copilot: ${r.used} of 1,000 used, from GitHub`; },
             'Sign out': (r) => { r.signedOut = true; r.mark = ''; window.RailUI.prefs.setConnected('copilot', false); return 'Signed out of Copilot'; },
             'Sign in': (r) => { r.signedOut = false; r.mark = 'is-green'; window.RailUI.prefs.setConnected('copilot', true); return 'Signed in to Copilot as @emil-angelov'; },
@@ -525,8 +525,8 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
       { title: 'Catalogue', actions: [{ label: 'Add model', edit: (sv) => ({ title: 'Add a model', yes: 'Add', fields: [{ key: 'id', label: 'Model id', value: '', hint: 'Worca\'s handle for it' }, { key: 'lab', label: 'Label', value: '' }], check: (v) => (v.id.trim() ? '' : 'A model needs an id'), then: (v) => { (sv.__recs['models/Catalogue'] ||= recsSeed('models', 'Catalogue')).unshift({ id: 'n' + Date.now(), title: v.id, meta: v.lab || 'Added by you', menu: ['Edit', 'Remove'] }); return `Model added: ${v.id}`; } }) }], rows: [
         { name: 'Sources', say: 'Built-in models, import from a provider, sharing with the team', more: [
           { name: 'Built-in models', say: 'Show the built-in Anthropic models', sw: { key: 'builtIn', on: true, why: 'Turn off when you don\'t use a first-party Anthropic account' } },
-          { name: 'Import', say: 'Bring models in from Copilot or a provider', acts: [{ label: 'Import…', edit: importModels('models/Catalogue') }] },
-          { name: 'Sharing', say: 'Share your models with the team as a plugin', acts: [{ label: 'Share…', edit: { title: 'Share your models', yes: 'Create plugin', note: 'Makes a plugin with your 3 models, with no keys in it.', done: 'Plugin created: team-models' } }] },
+          { name: 'Import', say: 'Bring models in from Copilot or a provider', acts: [{ label: 'Import…', off: (sv) => (importable(sv).length ? '' : 'Nothing new to import: the catalogue has it all'), edit: importModels }] },
+          { name: 'Sharing', say: 'Share your models with the team as a plugin', acts: [{ label: 'Share…', edit: (sv) => ({ title: 'Share your models', yes: 'Create plugin', note: `Makes a plugin with your ${plural((sv.__recs['models/Catalogue'] || recsSeed('models', 'Catalogue')).length, 'model')}, with no keys in it.`, done: 'Plugin created: team-models' }) }] },
         ] },
       ], list: [
         { title: 'claude-sonnet-5-5', meta: 'Your Claude login · priced by the CLI', menu: ['Edit', 'Remove'] },
@@ -549,11 +549,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
               check: (v) => { const t = v.turns === '' ? 400 : +v.turns, c = v.cap === '' ? 1 : +v.cap; if (!(t >= 1 && t <= 500)) return 'The turn limit is 1 to 500'; if (!(c >= 0.1 && c <= 100)) return 'The cap is 0.1 to 100'; return ''; },
               then: (v, sv) => { sv.turns = v.turns === '' ? '400' : v.turns; sv.cap = v.cap; return 'Chat limits saved'; } })] },
         ] },
-        { name: 'Web', say: 'Reads web pages from {web}', picks: { web: P('allowed', O(['allowed', 'the allowed sites'], ['any', 'any site, without asking'])) }, sw: { key: 'webOn', on: false }, more: [
-          { name: 'Allowed sites', say: '`{webSites}`', vals: { webSites: 'docs.python.org, developer.mozilla.org' }, acts: [edit('Change the allowed sites', [{ key: 'webSites', label: 'Sites', hint: 'Comma-separated' }], { done: 'Allowed sites saved' })] },
-          { name: 'Search', min: 'expert', say: 'Searches with {searchWords}', vals: { searchWords: (sv) => (sv.searchUrl ? sv.searchUrl : 'the built-in search'), searchUrl: '' }, acts: [edit('Use your own search', [{ key: 'searchUrl', label: 'Endpoint' }, { key: 'searchVar', label: 'Key variable', value: '' }, { key: 'searchHead', label: 'Key header', value: '' }], { done: 'Search saved' })] },
-        ] },
-        { name: 'Connectors', say: 'Uses the **General** set: 3 servers, 2 skills', acts: [{ label: 'Open', go: 'connectors' }] },
+        { name: 'Connectors', say: (sv) => `Uses the **General** set: ${setCount(sv, 'General').replace(' · ', ', ')}`, acts: [{ label: 'Open', go: 'connectors' }] },
       ] },
       { title: 'Channels', meta: 'Chat plugins that carry notifications and your replies. What each kind of update sends is in Notifications.', actions: [{ label: 'Add channel', page: 'marketplace', say: 'Opens the Marketplace, the store in the sidebar' }], list: [
         channel('Telegram', 'chTelegram', { on: true, meta: 'Personal bot · last message 2h ago' }),
@@ -578,28 +574,29 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
     ] },
 
     guardrails: { min: 'advanced', title: 'Guardrails', meta: 'What agents may not touch, as sets a project follows.', sections: [
-      { title: 'Sets', actions: [{ label: 'New set', min: 'expert', edit: (sv) => ({ title: 'New guardrail set', yes: 'Create set', fields: [{ key: 'name', label: 'Name', value: '' }], check: (v) => (v.name.trim() ? '' : 'A set needs a name'), then: (v) => { (sv.__recs['guardrails/Sets'] ||= recsSeed('guardrails', 'Sets')).unshift(editable(v.name, '0 deny rules · 0 protected paths · no project')); return `Set created: ${v.name}`; } }) }], list: [
-        readOnlySet('Default', 'Built in · 6 deny rules · 3 protected paths · 5 projects', 'Deny: `rm -rf`, `git push --force`, `curl | sh`. Protected: `.env`, `.git/`, `~/.ssh`.'),
-        editable('Strict', '14 deny rules · 6 protected paths · 1 project'),
-        readOnlySet('Team policy', 'From the team policy · 9 deny rules · read-only', 'Ships with acme/worca-policy; a change opens a pull request there.'),
+      { title: 'Sets', actions: [{ label: 'New set', min: 'expert', edit: (sv) => ({ title: 'New guardrail set', yes: 'Create set', fields: [{ key: 'name', label: 'Name', value: '' }], check: (v) => (v.name.trim() ? '' : 'A set needs a name'), then: (v) => { (sv.__recs['guardrails/Sets'] ||= recsSeed('guardrails', 'Sets')).unshift(editable(v.name, 'no project', { deny: [], paths: [] })); return `Set created: ${v.name}`; } }) }], list: [
+        readOnlySet('Default', 'Built in', '5 projects'),
+        editable('Strict', '1 project'),
+        readOnlySet('Team policy', 'From the team policy', 'read-only', 'Ships with acme/worca-policy; a change is published there, from Team policy.'),
       ] },
     ] },
 
-    memory: { min: 'advanced', title: 'Memory', meta: 'What agents remember between runs, as notes Worca keeps tidy.', sections: [
-      { title: 'Notes', meta: (sv) => `Healthy · ${(sv.__recs['memory/Notes'] || NOTES).length} notes · tidied ${sv.tidied}`, actions: [{ label: 'New note', edit: (sv) => ({ title: 'New note', yes: 'Create', fields: [{ key: 'name', label: 'Name', value: '', hint: 'A file name, such as testing.md' }, { key: 'body', label: 'Note', value: '', multiline: true }], check: (v) => (v.name.trim() ? '' : 'A note needs a name'), then: (v) => { (sv.__recs['memory/Notes'] ||= recsSeed('memory', 'Notes')).unshift({ ...note(v.name, 'Today · from you'), id: 'n' + Date.now() }); return `Note created: ${v.name}`; } }) }], rows: [
-        { name: 'History', say: 'What the notes were before each tidying', acts: [{ label: 'Tidy now', min: 'expert', do: (sv) => { sv.tidied = 'just now'; return 'Notes tidied'; } }], moreList: [
-          { title: 'Before tidying', meta: '3 days ago · 31 notes', menu: ['Restore'], on: { Restore: (r, x) => { x.remove(); return 'Notes restored from before tidying'; } } },
-        ], empty: 'Nothing to restore' },
-      ], empty: 'No notes yet', list: NOTES },
-      { title: 'Proposals', meta: 'Changes runs suggest; nothing changes until you approve.', empty: 'Nothing to approve', list: [
-        { title: 'testing.md', meta: 'Update · from run #412 · 2h ago', mark: 'is-amber', menu: ['Approve', 'Reject'], on: { Approve: (r, x) => { x.remove(); x.add({ ...note('testing.md', 'How we test · today · from run #412') }, 'memory/Notes'); return 'testing.md approved'; } } },
+    memory: { min: 'advanced', title: 'Memory', meta: 'What agents remember between runs, as notes Worca keeps in order.', sections: [
+      { title: 'Notes', meta: (sv) => `Healthy · ${plural((sv.__recs['memory/Notes'] || NOTES).length, 'note')} · defragmented ${sv.defragged}`, actions: [{ label: 'New note', edit: (sv) => ({ title: 'New note', yes: 'Create', fields: [{ key: 'name', label: 'Name', value: '', hint: 'A file name, such as testing.md' }, { key: 'body', label: 'Note', value: '', multiline: true }], check: (v) => (v.name.trim() ? '' : 'A note needs a name'), then: (v) => { (sv.__recs['memory/Notes'] ||= recsSeed('memory', 'Notes')).unshift({ ...note(v.name, 'Today · from you'), id: 'n' + Date.now() }); (sv.__recs['memory/Team memory'] ||= recsSeed('memory', 'Team memory')).unshift({ ...teamNote(v.name, sv.seeded ? 'Shared' : 'Local only', 'Yours', true), id: 'n' + Date.now() }); return `Note created: ${v.name}`; } }) },
+        { label: 'Defragment now', min: 'expert', help: 'Merges duplicates and drops what is stale; what the notes were stays as a restore point', do: (sv) => { const notes = sv.__recs['memory/Notes'] || recsSeed('memory', 'Notes'); (sv.__recs['memory/Restore points'] ||= recsSeed('memory', 'Restore points')).unshift({ ...restorePoint('just now', notes.map((n) => [n.title, n.meta])), id: 'p' + Date.now() }); sv.defragged = 'just now'; return 'Notes defragmented; a restore point is kept'; } }],
+        empty: 'No notes yet', list: NOTES },
+      { title: 'Restore points', meta: 'What the notes were before each defragment.', empty: 'Nothing to restore', list: [
+        restorePoint('3 days ago', [['architecture.md', 'How the server and the UI are split · 1 Oct · from Chat'], ['conventions.md', 'Naming, commits and tests · 2 Oct · from run #398'], ['old-deploy.md', 'The old deploy steps · 12 Aug · from Chat']]),
       ] },
-      { title: 'Team memory', rows: [
+      { title: 'Proposals', meta: 'Changes runs suggest; nothing changes until you approve.', empty: 'Nothing to approve', list: [
+        { title: 'testing.md', meta: 'New note · from run #412 · 2h ago', mark: 'is-amber', menu: ['Approve', 'Reject'], quick: ['Approve'], open: (r, x) => x.dialog({ title: 'testing.md: the change', view: true, yes: 'Close', note: 'A new note, from run #412: `+ # How we test` · `+ Run the page\'s sweep before the full suite.` · `+ A new case must pass its sweep.`' }), on: { Approve: (r, x) => { x.remove(); x.add({ ...note('testing.md', 'How we test · today · from run #412') }, 'memory/Notes'); x.add({ ...teamNote('testing.md', x.sv.seeded ? 'Shared' : 'Local only', 'Yours', true) }, 'memory/Team memory'); return 'testing.md approved'; } } },
+      ] },
+      { title: 'Team memory', listWhen: (sv) => sv.teamLoad !== 'local', rows: [
         { name: 'Load', help: 'Local is team memory off', say: 'Runs and chats load {teamLoad}', picks: { teamLoad: P('local', O(['local', 'this machine\'s notes'], ['team', 'the team\'s notes only'], ['both', 'yours and the team\'s']), 'Team and Both share this project\'s notes on the worca-memory branch') } },
         { name: 'Sync', when: (sv) => sv.teamLoad !== 'local', say: 'Branch `worca-memory` on origin · fetched {teamSync}', vals: { teamSync: '5 minutes ago' }, acts: [{ label: 'Sync now', do: (sv) => { sv.teamSync = 'just now'; return 'Team memory synced'; } }] },
-        { name: 'Share notes', when: (sv) => sv.teamLoad !== 'local', say: '{shareWords}', vals: { shareWords: (sv) => (sv.seeded ? 'Your 2 local notes are shared' : '2 local notes are not shared yet') },
+        { name: 'Share notes', when: (sv) => sv.teamLoad !== 'local', say: '{shareWords}', vals: { shareWords: (sv) => { const n = (sv.__recs['memory/Notes'] || NOTES).length; return sv.seeded ? `Your ${plural(n, 'local note')} ${n === 1 ? 'is' : 'are'} shared` : `${plural(n, 'local note')} ${n === 1 ? 'is' : 'are'} not shared yet`; } },
           acts: [
-            { label: 'Share…', when: (sv) => !sv.seeded, edit: { title: 'Share existing notes', yes: 'Share them', note: 'Pushes your notes to the `worca-memory` branch, where teammates load them. You can undo the last sharing.', then: (v, sv) => { sv.seeded = true; for (const r of sv.__recs['memory/Team memory'] || []) if (r.tstate === 'Local only') { r.tstate = 'Shared'; } return '2 notes shared'; } } },
+            { label: 'Share…', when: (sv) => !sv.seeded, edit: { title: 'Share existing notes', yes: 'Share them', note: 'Pushes your notes to the `worca-memory` branch, where teammates load them. You can undo the last sharing.', then: (v, sv) => { sv.seeded = true; let n = 0; for (const r of sv.__recs['memory/Team memory'] || []) if (r.tstate === 'Local only') { r.tstate = 'Shared'; n += 1; } return `${plural(n, 'note')} shared`; } } },
             { label: 'Undo', when: (sv) => sv.seeded, do: (sv) => { sv.seeded = false; for (const r of sv.__recs['memory/Team memory'] || []) if (r.tstate === 'Shared' && r.mine) r.tstate = 'Local only'; return 'Sharing undone'; } },
           ] },
       ], list: [
@@ -638,16 +635,23 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
         { title: 'postgres', meta: 'stdio · needs a secret in Frontend', mark: 'is-amber', menu: ['Edit', 'Remove'] },
       ] },
       { title: 'Sets', actions: [{ label: 'New set', edit: addTo('connectors/Sets', 'New set', 'Name', '0 servers · 0 skills · no project', ['Rename', 'Duplicate', 'Delete']) }], list: [
-        { title: 'General', meta: 'Built in · 3 servers · 2 skills · Chat and 5 projects', menu: ['Duplicate'], copy: { menu: ['Rename', 'Duplicate', 'Delete'], meta: '3 servers · 2 skills · no project' } },
-        { title: 'Frontend', meta: '2 servers · 1 skill · 2 projects', menu: ['Rename', 'Duplicate', 'Delete'] },
+        { title: 'General', meta: 'Built in', live: (sv) => `Built in · ${setCount(sv, 'General')} · Chat and 5 projects`, menu: ['Duplicate'], copy: { menu: ['Rename', 'Duplicate', 'Delete'], live: (sv) => `${setCount(sv, 'General')} · no project` } },
+        { title: 'Frontend', meta: 'A set', live: (sv) => `${setCount(sv, 'Frontend')} · 2 projects`, menu: ['Rename', 'Duplicate', 'Delete'] },
       ] },
       { title: 'Skills', actions: [{ label: 'Import skill', edit: addTo('connectors/Skills', 'Import a skill', 'Skill', 'From your Claude Code skills · in no set', ['Edit', 'Remove']) }], empty: 'No skills', list: [
-        { title: 'pdf-tools', meta: 'From your Claude Code skills · in 1 set', menu: ['Edit', 'Remove'] },
+        { title: 'pdf-tools', meta: 'From your Claude Code skills · in 2 sets', menu: ['Edit', 'Remove'] },
       ] },
     ] },
   };
 
   // Function declarations, so the table above reads top down.
+  function costTag(title, vals, required) {
+    return { title, vals, required, meta: `${vals || 'Any value'} · ${required ? 'required' : 'optional'}`, live: (sv, r) => `${r.vals || 'Any value'} · ${r.required ? 'required' : 'optional'}`, menu: ['Edit', 'Remove'],
+      on: { Edit: (r, x) => x.dialog({ title: `Edit ${r.title}`, yes: 'Save', fields: costTagFields(r.title, r.vals, r.required), check: (v) => (v.name.trim() ? '' : 'A tag needs a name'), then: (v) => { r.title = v.name.trim(); r.vals = v.vals; r.required = !!v.req; return `${r.title} saved`; } }) } };
+  }
+  function costTagFields(name, vals, req) {
+    return [{ key: 'name', label: 'Name', value: name }, { key: 'vals', label: 'Values', value: vals, hint: 'Comma-separated; empty lets any value in' }, { key: 'req', check: true, label: 'A run needs this tag', value: req }];
+  }
   function launcher(key, name, apps) {
     return { title: `Change the ${name.toLowerCase()}`, yes: 'Save', fields: [
       { key: 'app', label: 'Pick an app', value: '', options: apps, then: (v) => { v[key] = v.app; } },
@@ -655,30 +659,31 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
       { key: 'try', button: 'Try', hint: 'Opens the folder with this command', do: (v) => `Ran ${v[key]}` },
     ], then: (v, sv) => { sv[key] = v[key]; return `${name} saved`; } };
   }
-  function preset(title, scope, tail, mark) {
-    return { title, scope, tail, mark, meta: `${scope} · ${tail}`, menu: ['Use', 'Rename', 'Duplicate', 'Edit scope', 'Delete'], live: (sv, r) => `${r.scope} · ${r.tail}`,
+  function preset(title, scope, tail, mark, start) {
+    return { title, scope, tail, mark, start, meta: `${scope} · ${tail}`, menu: (r) => [r.mark ? { text: 'Use', off: true, help: 'Its workspace is gone: change its scope first' } : 'Use', 'Rename', 'Duplicate', 'Edit scope', 'Delete'], live: (sv, r) => `${r.scope} · ${r.tail}`,
       on: {
-        Use: (r, x) => { x.click(['[data-newrun]']); return `New run starts from ${r.title}`; },
+        Use: (r, x) => { x.sv.__preset = { title: r.title, ...r.start }; x.click(['[data-newrun]']); return `New run starts from ${r.title}`; },
         'Edit scope': (r, x) => x.dialog({ title: `Scope of ${r.title}`, yes: 'Save', fields: [{ key: 'scope', label: 'Offered on', value: r.scope, options: O('Any project', 'Only worca-cc', 'Only billing workspace') }], then: (v) => { r.scope = v.scope; r.mark = ''; return `${r.title}: ${v.scope}`; } }),
       } };
   }
   function chatModel(e, title) {
-    return { title, model: e === 'claude' ? 'Sonnet 5.5' : '', live: (sv, r) => (r.model ? r.model : (e === 'gemini' || e === 'qwen' ? 'Needs a model of its own' : 'Worca\'s default')),
-      menu: (r) => (r.model ? ['Test', 'Change', 'Clear'] : ['Change']),
-      on: {
-        Test: (r) => `One tiny prompt to ${r.model}: answered in 1.1s`,
-        Change: (r, x) => x.dialog({ title: `Chat on ${title}`, yes: 'Save', fields: [{ key: 'to', label: 'Model', value: r.model || (ENGINE_MODELS[e][0][0][1]), options: ENGINE_MODELS[e][0].map(([, t]) => [t, t]) }], then: (v) => { r.model = v.to; return `Chat on ${title}: ${v.to}`; } }),
-        Clear: (r) => { r.model = ''; return `Chat on ${title}: back to the default`; },
-      } };
+    const key = 'chatModel_' + e, needs = e === 'gemini' || e === 'qwen';
+    return { name: title, say: (sv) => (sv[key] || !needs ? `Chats on ${title} use {${key}}` : `Chats on ${title} {${key}}`),
+      picks: { [key]: P(e === 'claude' ? 'Sonnet 5.5' : '', [['', needs ? 'need a model' : 'Worca\'s default'], ...ENGINE_MODELS[e][0].map(([, t]) => [t, t])], `The model a chat on ${title} starts on`) },
+      acts: [{ label: 'Test', help: 'Sends one tiny prompt to this model', when: (sv) => !!sv[key], do: (sv) => `One tiny prompt to ${sv[key]}: answered in 1.1s` }] };
   }
-  function importModels(where) {
-    return { title: 'Import models', yes: 'Import', note: 'What your providers offer that the catalogue does not have yet.', fields: [
-      { key: 'impA', check: true, label: 'gpt-5 (Copilot)', value: true }, { key: 'impB', check: true, label: 'Sonnet 5 (Copilot)', value: true }, { key: 'impC', check: true, label: 'Gemini Pro (hosted API, GEMINI_API_KEY)', value: false },
-    ], then: (v, sv) => {
-      const l = (sv.__recs[where] ||= recsSeed(...where.split('/'))), names = [v.impA && 'gpt-5-copilot', v.impB && 'sonnet-5-copilot', v.impC && 'gemini-pro'].filter(Boolean);
-      names.forEach((n, i) => l.unshift({ id: 'i' + Date.now() + i, title: n, meta: 'Imported just now', menu: ['Edit', 'Remove'] }));
-      return names.length ? `Imported ${names.length} models` : 'Nothing picked';
-    } };
+  function importable(sv) {
+    const have = (sv.__recs['models/Catalogue'] || recsSeed('models', 'Catalogue')).map((r) => r.title);
+    return [['sonnet-5-copilot', 'Sonnet 5 (Copilot)', true], ['gemini-pro', 'Gemini Pro (hosted API, GEMINI_API_KEY)', false]].filter(([id]) => !have.includes(id));
+  }
+  function importModels(sv) {
+    const offer = importable(sv), where = 'models/Catalogue';
+    return { title: 'Import models', yes: 'Import', note: 'What your providers offer that the catalogue does not have yet.', fields: offer.map(([id, label, on]) => ({ key: 'imp_' + id, check: true, label, value: on })),
+      then: (v) => {
+        const l = (sv.__recs[where] ||= recsSeed('models', 'Catalogue')), names = offer.map(([id]) => id).filter((id) => v['imp_' + id]);
+        names.forEach((n, i) => l.unshift({ id: 'i' + Date.now() + i, title: n, meta: 'Imported just now', menu: ['Edit', 'Remove'] }));
+        return names.length ? `Imported ${plural(names.length, 'model')}` : 'Nothing picked';
+      } };
   }
   function openaiSetup(r) {
     return { title: 'OpenAI-compatible', yes: 'Save', fields: [
@@ -686,22 +691,24 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
       { key: 'url', label: 'Base URL', value: r.url || '', type: 'url' }, { key: 'key', label: 'Key', value: r.url ? '${OPENAI_KEY}' : '', hint: 'A stored key is never replaced by a preset' },
     ], check: (v) => (v.url.trim() ? '' : 'It needs a base URL'), then: (v, sv) => { r.url = v.url; r.preset = v.preset; r.mark = 'is-green'; sv.orLeft = sv.orLeft ?? 820; return v.preset === 'openrouter' ? 'OpenRouter set up' : 'OpenAI-compatible saved'; } };
   }
-  function readOnlySet(title, meta, rules) {
-    return { title, meta, menu: ['View', 'Save as new set'], open: (r, x) => r.on.View(r, x),
-      on: {
-        View: (r, x) => x.dialog({ title: r.title, yes: 'Save as new set', note: rules, then: () => saveAs(r, x) }),
-        'Save as new set': (r, x) => saveAs(r, x),
-      } };
+  function readOnlySet(title, from, tail, about) {
+    const r0 = { ...GUARD_SETS[title], about };
+    return { ...r0, title, meta: `${from} · ${guardCounts(r0)} · ${tail}`, menu: () => (atLevel('expert') ? ['Save as new set'] : []),
+      open: (r, x) => x.dialog({ title: r.title, view: true, yes: 'Close', note: guardNote(r) }),
+      on: { 'Save as new set': (r, x) => { x.add(editable(`${r.title} copy`, 'no project', r), 'guardrails/Sets'); return `Saved as ${r.title} copy`; } } };
   }
-  function saveAs(r, x) { x.add(editable(`${r.title} copy`, meta2(r)), 'guardrails/Sets'); return `Saved as ${r.title} copy`; }
-  function meta2(r) { return r.meta.replace(/^(Built in|From the team policy) · /, '').replace(/ · (read-only|\d+ projects?)$/, '') + ' · no project'; }
-  function editable(title, meta) {
-    return { id: 'n' + title, title, meta, menu: ['Edit', 'Duplicate', 'Delete'], open: (r, x) => SHARED_EDIT(r, x), on: { Edit: (r, x) => SHARED_EDIT(r, x) } };
+  function editable(title, tail, lists) {
+    const set = lists || GUARD_SETS[title];
+    return { id: 'n' + title, title, tail, deny: [...set.deny], paths: [...set.paths], meta: `${guardCounts(set)} · ${tail}`, live: (sv, r) => `${guardCounts(r)} · ${r.tail}`, menu: () => (atLevel('expert') ? ['Edit', 'Duplicate', 'Delete'] : ['Edit', 'Delete']), open: (r, x) => SHARED_EDIT(r, x), on: { Edit: (r, x) => SHARED_EDIT(r, x) }, copy: { tail: 'no project' } };
   }
   function SHARED_EDIT(r, x) {
     return x.dialog({ title: `Edit ${r.title}`, yes: 'Save', fields: [{ key: 'name', label: 'Name', value: r.title }, { key: 'deny', label: 'Deny rules', value: '`rm -rf`, `git push --force`', multiline: true }, { key: 'paths', label: 'Protected paths', value: '.env, .git/', multiline: true }], then: (v) => { r.title = v.name.trim() || r.title; return `${r.title} saved`; } });
   }
   function note(title, meta) { return { title, meta, menu: ['Rename', 'Delete'], open: (r, x) => x.dialog({ title: r.title, yes: 'Save', fields: [{ key: 'body', label: 'Note', value: `# ${r.title}\n\nWhat the agents should remember.`, multiline: true }], then: () => `${r.title} saved` }) }; }
+  function restorePoint(when, notes) {
+    return { title: 'Before defragmenting', notes, meta: `${when} · ${plural(notes.length, 'note')}`, menu: ['Restore'],
+      on: { Restore: (r, x) => x.confirm({ text: `Put back the ${plural(r.notes.length, 'note')} from before this defragment? Notes added since go.`, yes: 'Restore', then: (s) => { s.__recs['memory/Notes'] = r.notes.map(([t, m], i) => ({ ...note(t, m), id: 'rp' + Date.now() + i })); x.remove(); return `Restored ${plural(r.notes.length, 'note')}`; } }) } };
+  }
   function teamNote(title, tstate, meta, mine) {
     return { title, tstate, mine, meta, when: (sv) => sv.teamLoad !== 'local', chip: undefined, live: (sv, r) => `${r.tstate} · ${r.meta}`, mark: tstate === 'Held' ? 'is-amber' : '',
       menu: (r) => (r.tstate === 'Team only' ? ['Compare'] : r.tstate === 'Held' ? ['Compare', 'Share anyway'] : ['Compare', 'Remove from team']),

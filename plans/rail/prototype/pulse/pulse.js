@@ -270,10 +270,12 @@ const AUTO = [
   { id: 'asis', text: 'starts anyway', help: 'It starts as planned and may pause; it resumes by itself after the reset' }];
 // New run checks the run's estimate (Shaper's size, history of runs like it) against what is left on the harness.
 function openNewRun(size) {
-  const c = startable(), w = ui.s.warnAt, sz = size || c.task.size, first = c.usage.find((u) => M.PROVIDER[u.p].runs).p, lim = M.near(c, first, w, sz), rm = M.room(c, w, first, sz);
+  const preset = ui.sv.__preset || (size ? ui.nr?.preset : null); ui.sv.__preset = null;
+  const c = startable(), w = ui.s.warnAt, sz = size || preset?.size || c.task.size, first = c.usage.find((u) => M.PROVIDER[u.p].runs).p, lim = M.near(c, first, w, sz), rm = M.room(c, w, first, sz);
   ui.nr = { on: first, size: sz, wait: false, moved: '' };
   if (lim && ui.s.mine === 'move' && rm.length) ui.nr = { on: rm[0], size: sz, wait: false, moved: `Worca picked ${pname(rm[0])}: ${lim.need != null ? `this run needs about ${lim.need}% of ${lim.name}'s ${lim.what} and ${lim.left}% is left` : `${lim.name}'s ${lim.what} is at ${lim.pct}%`}` };
   else if (lim && ui.s.mine === 'wait') ui.nr.wait = true;
+  if (preset) ui.nr.preset = preset;
 }
 const SIZE_HELP = { small: 'A change in one or two files', medium: 'A change across a few files, with tests', large: 'A feature across modules; Shaper may offer slices' };
 function newRun() {
@@ -308,7 +310,7 @@ function newRun() {
   return R.dialogFrame({ label: 'New run', cls: 'pz-newrun', scrimCls: inCls('nr').trim(), body: `
     <div class="pz-nr"><h2 class="pz-nr-h">New run</h2>
       <p class="pz-sentence">A ${picker('nr-size', sz, M.SIZES.map((x) => ({ id: x, text: x, checked: x === sz, help: SIZE_HELP[x] })), sizeTip)} task on ${picker('nr-on', pname(h), items, 'Which harness runs it: each shows how much of its limits is used, and +what this run needs')} in web-app${esc(need)}</p>
-      <div class="pz-nr-task" title="The task (filled in for this prototype)">${esc(c.task.title)}</div>
+      <div class="pz-nr-task" title="${ui.nr.preset ? `From the preset ${esc(ui.nr.preset.title)}` : 'The task (filled in for this prototype)'}">${esc(ui.nr.preset?.task || c.task.title)}</div>
       ${advice}</div>
     <div class="pz-pfoot">${R.button({ label: 'Cancel', kind: 'quiet', title: 'Closes without starting', attrs: { 'data-nr-cancel': true } })}${R.button({ label: start, kind: 'primary', title: signedOut ? 'Sign in first: nothing that can run is signed in' : waits ? `Schedules it for ${lim.resets}` : `Starts it now on ${pname(h)}`, attrs: { 'data-nr-start': true , disabled: signedOut } })}</div>
   ` });
