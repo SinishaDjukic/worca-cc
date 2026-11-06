@@ -32,6 +32,8 @@ function applyAppearance(m) {
 }
 
 // What the rings and figures read: only providers connected now, as of the last one-minute refresh.
+// What New run offers: the connected harnesses that can run; with none connected, every harness, so its page still draws.
+const startable = () => { const c = C(); return c.usage.some((u) => M.PROVIDER[u.p].runs) ? c : caseOf(ui.caseId); };
 const C = () => { const c = M.refreshed(M.withQuota(caseOf(ui.caseId), ui.sv.gemQuota, ui.sv.gemUsed), ui.usageTicks || 0, ui.usageClock || ''); return { ...c, usage: R.connectedUsage(c.usage, R.prefs.connected) }; };
 // A row's read state is the person's own on a shared sign-in; a problem clears when it is acted on; info rows arrive read.
 const isFixed = (u) => ui.fixed.includes(u.id);
@@ -273,7 +275,7 @@ const AUTO = [
   { id: 'asis', text: 'starts anyway', help: 'It starts as planned and may pause; it resumes by itself after the reset' }];
 // New run checks the run's estimate (Shaper's size, history of runs like it) against what is left on the harness.
 function openNewRun(size) {
-  const c0 = C(), c = c0.usage.some((u) => M.PROVIDER[u.p].runs) ? c0 : caseOf(ui.caseId), w = ui.s.warnAt, sz = size || c.task.size, first = c.usage.find((u) => M.PROVIDER[u.p].runs).p, lim = M.near(c, first, w, sz), rm = M.room(c, w, first, sz);
+  const c = startable(), w = ui.s.warnAt, sz = size || c.task.size, first = c.usage.find((u) => M.PROVIDER[u.p].runs).p, lim = M.near(c, first, w, sz), rm = M.room(c, w, first, sz);
   ui.nr = { on: first, size: sz, wait: false, moved: '' };
   if (lim && ui.s.mine === 'move' && rm.length) ui.nr = { on: rm[0], size: sz, wait: false, moved: `Worca picked ${pname(rm[0])}: ${lim.need != null ? `this run needs about ${lim.need}% of ${lim.name}'s ${lim.what} and ${lim.left}% is left` : `${lim.name}'s ${lim.what} is at ${lim.pct}%`}` };
   else if (lim && ui.s.mine === 'wait') ui.nr.wait = true;
@@ -281,7 +283,8 @@ function openNewRun(size) {
 const SIZE_HELP = { small: 'A change in one or two files', medium: 'A change across a few files, with tests', large: 'A feature across modules; Shaper may offer slices' };
 function newRun() {
   if (!ui.nr) return '';
-  const c = C(), w = ui.s.warnAt, h = ui.nr.on, sz = ui.nr.size, lim = M.near(c, h, w, sz), rm = M.room(c, w, h, sz);
+  const c = startable(); if (!c.usage.some((u) => u.p === ui.nr.on)) ui.nr.on = c.usage.find((u) => M.PROVIDER[u.p].runs).p;   // the chosen one signed out: the next that can run
+  const w = ui.s.warnAt, h = ui.nr.on, sz = ui.nr.size, lim = M.near(c, h, w, sz), rm = M.room(c, w, h, sz);
   const hint = (p) => { const u = c.usage.find((x) => x.p === p), e = M.est(p, sz); return u.win.length ? u.win.map((x) => `${M.winWord(x.k).toLowerCase()} ${x.pct}%${e && e[x.k] != null ? ` +${e[x.k]}` : ''}`).join(', ') : u.noQuota ? 'no quota set' : 'billed per token'; };
   const items = c.usage.filter((u) => M.PROVIDER[u.p].runs).map((u) => ({ id: u.p, text: pname(u.p), hint: hint(u.p), checked: u.p === h, help: `${M.PROVIDER[u.p].vendor} · ${u.plan}: used, and +what this run needs` }));
   const reached = !!lim && lim.pct >= 100, waits = !!lim && (ui.nr.wait || reached);
