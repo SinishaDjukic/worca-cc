@@ -395,6 +395,16 @@ set in-process only, never from an HTTP body. A later group-membership record ca
 Rounds run the project's default workflow: a round never re-shapes a decided run. They carry the origin's tags.
 While a round of a feature's run is live, Ship waits (`a round of run 3 is still going`).
 
+**Rounds in the Runs list.** A round is never a row of its own. Watch PR fix runs, Resolve and Ask for changes all
+stack under the run that opened the PR, or under its member row inside a feature group. The row's line is the newest
+round's (`Round 8 · merge dev in · pushed 3e4f5a6 · Thu`), and the `7 rounds` toggle at the line's end opens the trail: the
+newest 5, then `+2 earlier`. Each line opens that round's page. While a round runs, the row takes its state
+(`Running · Round 9 · merge dev in`, chip `Fixing`), and it lists under Running, not Needs you. One open PR raises at
+most one Needs-you item: a round never needs you through its PR (only through its own question, pause or unread
+failure), and of two runs on the same open PR only the newest counts. The badge, Activity and the Needs-you section
+count the same way. A round whose run is gone or filtered out heads its own stack (`… · Round 8`). The rounds of an
+archived run leave the active list with it.
+
 **Pushing a round.** Nothing is pushed by itself. A plain run's round updates its PR through the run's Push action
 (`POST /api/push`); a feature's goes out with Ship.
 

@@ -24,6 +24,7 @@ import { listProjects, worcaHome, runOnboarded } from './projects.mjs';
 import { claimRunDir, claimRunExtras, shareFailureReason } from './agent-pool.mjs';
 import { branchExists, diffShortstat, anyPrHost, findPrForBranch, commitsAhead, withRefSnapshot } from './git-info.mjs';
 import { getDb, tx } from './db.mjs';
+import { cleanOutcome } from './shape/rounds.mjs';
 import { rollupMemberPrs, workspaceMembers, changedFileCount } from './workspace-prs.mjs';
 import { RUN_LOG_FILE } from './run-log.mjs';
 import { readRunLedger } from './metrics/ledger.mjs';
@@ -2429,6 +2430,16 @@ export function resultsFilesCount(res) {
  * @param {string|null} repoDir git repo root for live branch facts
  * @param {object} opts { withPr?, lite? }
  */
+/** A round's marker on the History wire (shape/rounds.mjs, plan Task 1): { pipelineId, round, request, by?, kinds?,
+ *  outcome? } from branch.roundOf, or null for round 1, a plain run and a malformed marker. */
+function wireRoundOf(m) {
+  if (!m || typeof m !== 'object' || !m.pipelineId || !Number.isInteger(m.round) || m.round < 2) return null;
+  const outcome = cleanOutcome(m.outcome);
+  return { pipelineId: String(m.pipelineId), round: m.round, request: String(m.request || ''),
+    ...(m.by ? { by: String(m.by) } : {}), ...(Array.isArray(m.kinds) ? { kinds: m.kinds.map(String) } : {}),
+    ...(outcome ? { outcome } : {}) };
+}
+
 async function rowToHistoryEntry(row, repoDir = null, opts = {}) {
   const branchObj = j(row.branch, null);
   const feature = branchObj?.feature ?? (typeof branchObj === 'string' ? branchObj : null);
@@ -2489,6 +2500,9 @@ async function rowToHistoryEntry(row, repoDir = null, opts = {}) {
     totalActiveMs: active,
     mtime: row.updated_at ? (Date.parse(row.updated_at) || 0) : 0,
   };
+  // A round of another run (Runs list fold, plan D1): the key only when the marker is valid.
+  const roundOf = wireRoundOf(branchObj?.roundOf);
+  if (roundOf) entry.roundOf = roundOf;
   // Workspace rows: eligibility is decided across EVERY member, never the primary alone.
   // Computed BEFORE the PR lookup so a row WITH members skips the primary-only search.
   if (row.target === 'workspace' && !opts.lite) {
