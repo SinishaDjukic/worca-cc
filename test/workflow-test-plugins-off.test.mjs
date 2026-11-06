@@ -2,7 +2,7 @@
 // carry only the sign-in kept there, and every other spawn stays byte-identical.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { appendFileSync, chmodSync, existsSync, renameSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, existsSync, linkSync, renameSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildSettingsPayload, buildClaudeArgs, planClaudeInvocation, signInCarry, secretValuesOf, runClaudeProcess, carryLine, CARRY_WARNING_PREFIX, CARRY_NOTE_PREFIX,
@@ -552,15 +552,18 @@ test('concern 8: the payload carries the canary\'s SessionStart hook only when t
 });
 
 /** One Pretend spawn through the seam: `mark` writes the canary's marker (as the CLI would run the hook), `init` the session start. */
-async function canarySpawn({ mark, init = true, pluginsOff = true }) {
+async function canarySpawn({ mark, init = true, pluginsOff = true, exit = 0, before = null }) {
   const d = tmp();
+  if (before) before(d);
   const log = join(d, 'connector-calls.ndjson');
   const events = [];
   let settings = null;
+  let failed = null;
   _testing.set({ superviseSpawn: (o) => {
     settings = settingsOfArgs(o.args);
     if (mark && settings.hooks.SessionStart) writeFileSync(canaryMarkOf(settings), 'ok');
     if (init) o.onStdoutLine(JSON.stringify({ type: 'system', subtype: 'init', session_id: 's1' }));
+    if (exit !== 0) { o.cleanup(); return Promise.reject(new Error(`claude exited with code ${exit}`)); }   // as superviseSpawn: no onDone
     const r = o.onDone(0);
     o.cleanup();
     return Promise.resolve(r);
@@ -568,10 +571,11 @@ async function canarySpawn({ mark, init = true, pluginsOff = true }) {
   try {
     await withConfigDir(tmp(), () => runClaudeProcess({ cwd: tmp(), prompt: 'p', allowedTools: ['Read'], tryGuard: { logFile: log },
       ...(pluginsOff ? { pluginsOff: true, settingSources: ['project'] } : {}), onEvent: (e) => events.push(e) }));
-  } finally { _testing.reset(); }
+  } catch (e) { failed = e; } finally { _testing.reset(); }
   const said = events.filter((e) => e.type === 'stderr').map((e) => carryLine(e.text)).filter(Boolean);
-  return { d, settings, said, ignored: existsSync(join(d, SETTINGS_IGNORED_FILE)), left: readdirSync(d) };
+  return { d, settings, said, failed, ignored: existsSync(join(d, SETTINGS_IGNORED_FILE)), left: readdirSync(d).filter((n) => n !== SETTINGS_IGNORED_FILE) };
 }
+const SETTINGS_NOT_LOADED = 'Claude Code did not load Worca\'s settings for this try (an invalid settings file or a managed hooks policy): its guards may not have applied.';
 
 test('concern 8: a Pretend spawn whose canary wrote its marker: nothing said, the marker removed', async () => {
   const r = await canarySpawn({ mark: true });
@@ -583,8 +587,36 @@ test('concern 8: a Pretend spawn whose canary wrote its marker: nothing said, th
 
 test('concern 8: a Pretend spawn that started with no marker: one carry warning, and the run folder marks the try as Worca\'s problem', async () => {
   const r = await canarySpawn({ mark: false });
-  assert.deepEqual(r.said, [{ kind: 'warning', text: 'Claude Code ignored Worca\'s settings for this try: its guards may not have applied.' }]);
+  assert.deepEqual(r.said, [{ kind: 'warning', text: SETTINGS_NOT_LOADED }], 're-review 2 n6: the text names both causes');
   assert.equal(r.ignored, true);
+});
+
+test('re-review 2 n1: a Pretend spawn that started with no marker and then FAILED is still judged: Worca\'s problem, not the workflow\'s', async () => {
+  const r = await canarySpawn({ mark: false, exit: 1 });
+  assert.match(String(r.failed && r.failed.message), /exited with code 1/, 'the spawn still fails');
+  assert.deepEqual(r.said, [{ kind: 'warning', text: SETTINGS_NOT_LOADED }]);
+  assert.equal(r.ignored, true);
+  assert.deepEqual(r.left, [], 'the marker is removed (after the verdict)');
+  const ok = await canarySpawn({ mark: true, exit: 1 });
+  assert.deepEqual([ok.said, ok.ignored, ok.left], [[], false, []], 'a failed spawn whose canary did run: no verdict');
+});
+
+test('re-review 2 n2: the verdict never writes through a link planted at settings-ignored.ndjson (the warning is still said)', async (t) => {
+  const outside = join(tmp(), 'outside.txt');
+  writeFileSync(outside, 'keep\n');
+  let linked = true;
+  const r = await canarySpawn({ mark: false, before: (d) => { try { symlinkSync(outside, join(d, SETTINGS_IGNORED_FILE)); } catch { linked = false; } } });
+  if (!linked) { t.skip('this machine cannot make file symlinks (EPERM on Windows without developer mode)'); return; }
+  assert.equal(readFileSync(outside, 'utf8'), 'keep\n', 'the link target is untouched');
+  assert.deepEqual(r.said, [{ kind: 'warning', text: SETTINGS_NOT_LOADED }]);
+});
+
+test('re-review 2 n2: nor through a hardlink planted at that name (its other name may be any file the server user can write)', async () => {
+  const outside = join(tmp(), 'outside.txt');
+  writeFileSync(outside, 'keep\n');
+  const r = await canarySpawn({ mark: false, before: (d) => linkSync(outside, join(d, SETTINGS_IGNORED_FILE)) });
+  assert.equal(readFileSync(outside, 'utf8'), 'keep\n', 'the other name is untouched');
+  assert.deepEqual(r.said, [{ kind: 'warning', text: SETTINGS_NOT_LOADED }], 'the warning is still said');
 });
 
 test('concern 8: no session start (the spawn never ran), or not a Pretend spawn: no canary verdict', async () => {

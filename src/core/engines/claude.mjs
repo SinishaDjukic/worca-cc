@@ -13,7 +13,7 @@ import { hostGuardEnabled, hostGuardHookEntry, hostGuardSystemPrompt } from '../
 import { memoryUsageHookEntry } from '../memory-usage.mjs';
 import { readGuardHookEntry, readGuardDecisions } from '../file-read-guard.mjs';
 import { tryGuardHookEntry, withTryDeny, settingsCanaryHookEntry, SETTINGS_CANARY_PREFIX, SETTINGS_IGNORED_FILE, SETTINGS_IGNORED_TEXT } from '../workflow-tests/try-guard-env.mjs';
-import { appendFileSync, existsSync, lstatSync, mkdtempSync, readdirSync, writeFileSync, rmSync } from 'node:fs';
+import { closeSync, constants as fsConstants, existsSync, lstatSync, mkdtempSync, openSync, readdirSync, writeFileSync, writeSync, rmSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -610,6 +610,17 @@ export function sweepStaleStagingDirs({ dir = tmpdir(), maxAgeMs = STAGING_MAX_A
 // Task 5 (M13; fix review I-1): the try log's redaction lives in try-log-redaction.mjs (re-exported here for its callers).
 export { redactTryLog } from './try-log-redaction.mjs';
 
+/** Re-review 2 (n2): append `text` to `file` in a run folder an agent can write to, never through a link: a symlink (or a
+ *  junction) or a hardlink already at that name is refused (thrown), and the open itself does not follow a symlink where the
+ *  platform can say so (O_NOFOLLOW; not on Windows, where the lstat is the check). */
+function appendNoFollow(file, text) {
+  let st = null;
+  try { st = lstatSync(file); } catch (e) { if (e && e.code !== 'ENOENT') throw e; }
+  if (st && (!st.isFile() || st.nlink > 1)) throw new Error(`refusing to write through a link: ${file}`);
+  const fd = openSync(file, fsConstants.O_WRONLY | fsConstants.O_APPEND | fsConstants.O_CREAT | (fsConstants.O_NOFOLLOW ?? 0), 0o644);
+  try { writeSync(fd, text); } finally { closeSync(fd); }
+}
+
 /** planClaudeInvocation + the I/O: a private temp dir is created and the files
  *  written ONLY on the staged branch, or when a session host spawn passes
  *  `agentsViaFile` (C3) (`dir` is null otherwise, so the caller has nothing to
@@ -927,11 +938,15 @@ export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, perm
       let sessionStarted = false;   // concern 8: the CLI started a session (its init event)
       // Concern 8: a session that ran to its end without the canary's marker ran without Worca's settings file: one run warning
       // (a carry warning line), and the run folder marks the try as Worca's problem (readTryOutcome, worcaProblemOf 'settings').
+      // Re-review 2 (n1): judged in the cleanup, so on EVERY end of a session that started (a failed one too: a try that ran
+      // without Worca's guards and then failed is Worca's problem, not the workflow's), before cleanupStaged removes the marker.
+      let canaryJudged = false;
       const canaryVerdict = () => {
-        if (!canary || !sessionStarted) return;
+        if (!canary || !sessionStarted || canaryJudged) return;
+        canaryJudged = true;
         try {
           if (existsSync(canary)) return;
-          appendFileSync(join(dirname(tryGuard.logFile), SETTINGS_IGNORED_FILE), `${JSON.stringify({ ts: new Date().toISOString(), why: 'settings canary missing' })}\n`);
+          appendNoFollow(join(dirname(tryGuard.logFile), SETTINGS_IGNORED_FILE), `${JSON.stringify({ ts: new Date().toISOString(), why: 'settings canary missing' })}\n`);
         } catch { /* the warning still says it */ }
         safeEmit(onEvent, { type: 'stderr', stream: 'err', text: `${CARRY_WARNING_PREFIX}${SETTINGS_IGNORED_TEXT}` });
       };
@@ -961,6 +976,7 @@ export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, perm
         signal, asAgent, stagedDir: plan.dir || null, onEvent,
         cleanup: () => {
           if (bridgeKey) bridgeEvents.off('failure', onBridgeFailure);
+          canaryVerdict();   // n1: whatever the exit, before the marker goes
           cleanupStaged();
           redactLog();
         },
@@ -972,7 +988,7 @@ export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, perm
         // A8: a guarded read also returns its guard's decisions (read before cleanup removes the log), so the caller can
         // check that every tool call was decided (file-read-guard.mjs guardDecisionsCover).
         onDone: (code) => {
-          canaryVerdict();
+          canaryVerdict();   // (the cleanup judges it too; once)
           return { text: resultText || assistantText, exitCode: code, ...(plan.readGuardLog ? { readGuardDecisions: readGuardDecisions(plan.readGuardLog) } : {}) };
         },
         onStdoutLine: (trimmed) => {
