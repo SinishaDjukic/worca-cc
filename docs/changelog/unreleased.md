@@ -3,6 +3,20 @@
 Notes on merged features that have no release page yet. `/worca-changelog` folds
 them into the next page and empties this file.
 
+## Shaper keeps going while you're away
+
+**You answer what to build. Away mode handles how to build it.**
+
+A sliced feature no longer stops at every plan while you are away. Away mode approves a slice outline and a plan whose checks passed, at once with a zero delay, and a later slice with **Ask me before each run** off continues the way it does when you are here. Clarify, the Requirements hold, a failed check, the planner's outline change and notes from the chat still wait for you, with no countdown. A requirement or plan concern is approved with the agreed text kept, and flagged *please check*. Every approval is a rule, costs nothing and reads `by Away mode` in the feature's log. This applies to anyone already using Away mode: *Never on this run* or pausing Away keeps a plan waiting, and a spend cap is worth setting, since a feature can now be built with no plan seen by anyone. `--yes` is unchanged.
+
+Chips: outline and plan approved · concerns flagged · what to build still waits · no decider cost · marks reach later slices
+
+Read it: [Shape it first](../shape-it-first.md)
+
+Pull requests (add each number when it opens):
+
+- Shaper keeps going while you're away
+
 ## A lighter Requirements card
 
 **The Shaper's Requirements card now says what each persona wants, and why.**

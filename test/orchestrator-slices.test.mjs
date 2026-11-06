@@ -15,6 +15,8 @@ import { seedPipelineRow } from './helpers/db-seed.mjs';
 import { getDb } from '../src/core/db.mjs';
 import { createSliceFeature } from '../src/core/shape/features.mjs';
 import { MOCK_OUTLINE } from '../src/core/engines/mock.mjs';
+import { getTicket } from '../src/core/scheduler.mjs';
+import { readNightDecisions } from '../src/core/night/store.mjs';
 
 useTempHome(after);
 
@@ -261,18 +263,18 @@ test('audit: pendingQuestion keeps plan {outline, round} for an outline ask only
   assert.deepEqual(seen, { outline: true, round: 1 });
 });
 
-// D19: a later slice's plan stops only on a failing check or outline-change.md (or Approve each / Away mode). The mock
-// plan fails the shape check, so a passing one is stubbed.
+// D19: a later slice's plan stops only on a failing check or outline-change.md (or Approve each). Away mode changes who
+// answers the stop, not whether it is raised. The mock plan fails the shape check, so a passing one is stubbed.
 const PASS = { ok: true, passed: 8, total: 8, items: [] };
 const FAIL = { ok: false, passed: 3, total: 8, items: [] };
-const d19 = ({ each = false, check = PASS, change = false, away = false, afterSpawn } = {}) => {
+const d19 = ({ each = false, check = PASS, change = false, away = false, afterSpawn, onPlan } = {}) => {
   const pid = `p${Date.now()}${Math.random().toString(36).slice(2, 6)}`;   // the feature's origin id
   const f = createSliceFeature({ pipelineId: pid, projectDir: gitDir(`d19-${pid}`), title: 'T',
     outline: MOCK_OUTLINE, perspectives: SHAPE.perspectives, workflowId: 'wf_shape', approveEach: each });
   const slice = { feature: f.id, index: 2, total: 2, outline: MOCK_OUTLINE };
-  const h = start({ prompt: 'demo', shape: { ...SHAPE, slices: 'off', slice }, ...(afterSpawn ? { afterSpawn } : {}) });
+  const h = start({ prompt: 'demo', shape: { ...SHAPE, slices: 'off', slice }, ...(afterSpawn ? { afterSpawn } : {}) }, undefined, onPlan);
   h.orch._planCheck = async () => check;
-  if (away) h.orch._nightActiveNow = () => true;
+  if (away) h.orch.setNightOverride('on');
   if (change) h.orch._outlineChangeText = async () => 'Slice 1 did not add the tags table.';
   return h;
 };
@@ -329,10 +331,144 @@ test('D19: Approve each on → always a plan ask', async () => {
   await h.done;
   assert.equal(h.plans.length, 1);
 });
-test('D19: Away mode → a plan ask', async () => {
+test('D19: Away active → continues like Away off', async () => {
   const h = d19({ away: true });
   assert.equal((await h.done).status, 'done');
+  assert.equal(h.plans.length, 0);
+  assert.ok(audit(h.orch).some((x) => x.includes("Plan approval **approve** (Approve each slice's plan is off)")));
+});
+
+const LEAVE = () => {};                                     // nobody answers: only Away could
+const settled = () => new Promise((r) => setTimeout(r, 300));
+
+test('D19: Ask me before each run on, Away active → Away approves', async () => {
+  const h = d19({ each: true, away: true, onPlan: LEAVE });
+  assert.equal((await h.done).status, 'done');
   assert.equal(h.plans.length, 1);
+  assert.equal(h.orch.answeredBy(h.plans[0].id), 'night-mode');
+  assert.ok(audit(h.orch).some((x) => x.startsWith('Plan approval **approve** by night-mode.')));
+});
+
+for (const [name, opts, line] of [
+  ['a failing check', { check: FAIL }, 'the shape check did not pass'],
+  ['a null check', { check: null }, 'the shape check did not pass'],
+  ['outline-change.md', { change: true }, 'the planner says this slice cannot be built as outlined'],
+]) {
+  test(`D19: ${name} with Away active waits for a person`, async () => {
+    const h = d19({ ...opts, away: true, onPlan: LEAVE });
+    await waitFor(() => h.plans.length === 1);
+    await settled();
+    assert.equal(h.orch.pendingQuestion?.id, h.plans[0].id, 'still open');
+    assert.equal(h.orch.state.night.openedAt, null, 'no countdown');
+    assert.ok(audit(h.orch).some((x) => x.includes(`Plan approval held: ${line}`)));
+    h.orch.answer(h.plans[0].id, { decision: 'approve' });
+    assert.equal((await h.done).status, 'done');
+  });
+}
+
+test('slice 1 and its outline run to the end with Away on', async () => {
+  const h = start({}, LEAVE, LEAVE);
+  h.orch._planCheck = async () => PASS;
+  h.orch.setNightOverride('on');
+  assert.equal((await h.done).status, 'done');
+  assert.equal(h.orch.answeredBy('plan-outline-n_plan-1'), 'night-mode');
+  assert.equal(h.orch.answeredBy('plan-n_refine-1'), 'night-mode');
+  const [f] = featuresOf(h.orch.getState().id);
+  assert.equal(f.approve_each, 0, 'the switch stays as shown');
+  const texts = audit(h.orch);
+  assert.ok(texts.some((x) => x.startsWith('Slice outline **approve** (round 1) by night-mode.')));
+  assert.ok(texts.some((x) => x.startsWith('Plan approval **approve** by night-mode.')));
+  assert.ok(ran(h.execs, 'n_impl').length > 0, 'the plan was built');
+  const plans = readNightDecisions(h.orch.getState().id).filter((d) => d.kind === 'plan');
+  assert.deepEqual(plans.map((d) => [d.questionId, d.choice, d.strategy]),
+    [['plan-outline-n_plan-1', 'approve', 'rule'], ['plan-n_refine-1', 'approve', 'rule']], 'one stored record each');
+});
+
+// The window: Away's answer() has cleared the ask, the approval has not settled, and a pause lands. The seeded review
+// makes the approval's own awaits real: a requirement concern and an open conflict, the asks Away flags.
+const flaggedRun = (dir) => {
+  const pid = `p${Date.now()}${Math.random().toString(36).slice(2, 6)}`;
+  const f = createSliceFeature({ pipelineId: pid, projectDir: dir, title: 'T',
+    outline: MOCK_OUTLINE, perspectives: SHAPE.perspectives, workflowId: 'wf_shape', approveEach: true });
+  const shape = { ...SHAPE, slices: 'off', slice: { feature: f.id, index: 2, total: 2, outline: MOCK_OUTLINE } };
+  const h = start({ projectDir: dir, prompt: 'demo', shape }, undefined, LEAVE);
+  h.orch._planCheck = async () => PASS;
+  h.orch.setNightOverride('on');
+  const planAsk = h.orch._planAsk.bind(h.orch);
+  h.orch._planAsk = (q) => {
+    h.orch.state.roleReviews = { rounds: [{ node: 'n_roles', target: 'plan', pass: 1, round: 1, conflicts: [{ id: 'conflict-1' }],
+      roles: [{ key: 'qa', label: 'QA', findings: [{ requirement: 'R-po-1', title: 'R-po-1: add it', severity: 'major', fix: 'Add it.' }] }] }] };
+    return planAsk(q);
+  };
+  const answer = h.orch.answer.bind(h.orch);
+  h.orch.answer = (id, payload, by) => { const ok = answer(id, payload, by); if (by === 'night-mode') h.orch.pause(); return ok; };
+  return h;
+};
+const resumeOf = (h, dir, { pauseDuringReplay = false } = {}) => {
+  const h2 = start({ projectDir: dir, resume: readPipelineForResume(h.orch.getState().id), shape: undefined }, undefined, LEAVE);
+  h2.orch._planCheck = async () => PASS;
+  if (pauseDuringReplay) {
+    const planAsk = h2.orch._planAsk.bind(h2.orch);
+    h2.orch._planAsk = (q) => { const out = planAsk(q); h2.orch.pause(); return out; };
+  }
+  return h2;
+};
+const once = (texts, line) => assert.equal(texts.filter((x) => x.startsWith(line)).length, 1, line);
+
+test('Away approve then pause: the resume replays it, one record, one log line, no second ask', async () => {
+  const dir = gitDir(`d19-pause-${Date.now()}`);
+  const h = flaggedRun(dir);
+  assert.equal((await h.done).status, 'paused');
+  const id = h.plans[0].id;
+  assert.deepEqual(readPipelineForResume(h.orch.getState().id).resumePoint.planAwayApproved, { id });
+  assert.equal(readPipelineForResume(h.orch.getState().id).resumePoint.night.override, 'on');
+
+  const h2 = resumeOf(h, dir);
+  assert.equal((await h2.done).status, 'done');
+  assert.deepEqual(h2.plans, [], 'not raised again, so Away cannot decide it twice or hit its limit');
+  assert.equal(h2.orch.answeredBy(id), 'night-mode');
+  assert.ok(h2.orch.state.shaping.approved, 'the run card still reads approved');
+  assert.deepEqual(readNightDecisions(h.orch.getState().id).filter((d) => d.kind === 'plan').map((d) => d.questionId), [id], 'one stored record');
+  const texts = audit(h2.orch);
+  once(texts, 'Plan concern **overridden** by night-mode.');
+  once(texts, 'conflict-1 left undecided at approval');
+  once(texts, 'Requirement concern overridden: R-po-1 kept as agreed.');
+  assert.equal(ran(h2.execs, 'n_impl').filter((e) => e.status === 'start' && e.executionId === 'x:n_impl:1').length, 1, 'built once');
+});
+
+test('Away approve then pause: a second pause during the replay keeps it', async () => {
+  const dir = gitDir(`d19-pause-twice-${Date.now()}`);
+  const h = flaggedRun(dir);
+  assert.equal((await h.done).status, 'paused');
+  const h2 = resumeOf(h, dir, { pauseDuringReplay: true });
+  assert.equal((await h2.done).status, 'paused');
+  assert.deepEqual(h2.plans, []);
+  const h3 = resumeOf(h2, dir);
+  assert.equal((await h3.done).status, 'done');
+  assert.deepEqual(h3.plans, []);
+  assert.equal(readNightDecisions(h.orch.getState().id).filter((d) => d.kind === 'plan').length, 1);
+});
+
+test("a stale Away approve is dropped, and a person's approve is not stashed", async () => {
+  const h = d19({ each: true, onPlan: (q, orch) => { orch.answer(q.id, { decision: 'approve' }, 'ann'); } });
+  h.orch._planAwayApproved = { id: 'plan-n_other-9' };
+  assert.equal((await h.done).status, 'done');
+  assert.equal(h.plans.length, 1, 'a different id is asked as usual');
+  assert.equal(h.orch._planAwayApproved, null);
+});
+
+test("the run's mark reaches the slice tickets", async () => {
+  const h = start({ nightMode: true }, (q, orch) => orch.answer(q.id, { decision: 'approve' }));
+  assert.equal((await h.done).status, 'done');
+  const [f] = featuresOf(h.orch.getState().id);
+  assert.equal(getTicket(sliceRows(f.id)[1].ticket_id, { withRequest: true }).request.nightMode, true);
+});
+
+test("an unmarked run's tickets carry no nightMode", async () => {
+  const h = start({}, (q, orch) => orch.answer(q.id, { decision: 'approve' }));
+  assert.equal((await h.done).status, 'done');
+  const [f] = featuresOf(h.orch.getState().id);
+  assert.equal('nightMode' in getTicket(sliceRows(f.id)[1].ticket_id, { withRequest: true }).request, false);
 });
 
 test('D19: slice 2 asks no Clarify question and its Planner gets slice 1\'s answers', async () => {

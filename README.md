@@ -601,7 +601,8 @@ level and has no **Diff**, **Changes** or **Actions**.
 - **Runs keep going while you're away** — during your away hours, or after you turn on **Away**
   in the account menu (the corner at the foot of the sidebar), Worca answers what a run would wait on: clarifying
   questions, mid-step questions, input forms, review-loop gates, proposed workflows and failed-step
-  retries. It trusts the agent's recommendation when the agent is sure enough. Otherwise a
+  retries. On a Shaper run you still answer what to build (Clarify, Requirements, and any plan whose check did not pass);
+  Worca approves the outline and plans whose checks passed, flagging concerns *please check*. It trusts the agent's recommendation when the agent is sure enough. Otherwise a
   read-only review (it can only read files), on the run's engine, scores each option against your
   Worca memory, how easily it can be undone, scope, the codebase's conventions and cost. An answer it is unsure of is
   still given, but flagged *please check*.

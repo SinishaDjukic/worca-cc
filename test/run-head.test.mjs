@@ -703,6 +703,22 @@ test('CSS: fact labels never wrap', () => {
   assert.match(css, /^\.rd-kv-k\{[^}]*white-space:nowrap;/m);
 });
 
+test('a project with no remote: no Create PR, the head offers Link remote and How to merge, the route says what is missing', () => {
+  const f = F({ noRemote: true, canCreatePr: false });
+  const h = headModel(f);
+  assert.equal(h.key, 'no-remote');
+  assert.equal(h.cta, null);
+  assert.deepEqual(ids(h), ['try', 'merge-local', 'link-remote']);
+  assert.equal(h.status.line, 'Ready to ship · not in dev yet');
+  const pr = routeModel(f).rows.find((r) => r.kind === 'pr');
+  assert.match(JSON.stringify(pr), /Needs a git remote/);
+});
+
+test('a mock run never reads as ready to ship', () => {
+  assert.equal(headModel(F({ mock: true })).status.line, 'Mock run · no model was called');
+  assert.equal(headModel(F({ mock: true, noRemote: true, canCreatePr: false })).status.line, 'Mock run · no model was called');
+});
+
 test('renderHeadButtons: a busy item is aria-disabled and runs nothing; Open is a new-tab link; a note is status text', () => {
   const d = doc();
   const host = d.querySelector('.acts');

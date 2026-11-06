@@ -109,6 +109,34 @@ export function workflowRule({ proposal, budget }) {
   return { payload, flagged: !!tight, reason: tight ? `workflow accepted; ${Math.round((budget.spent / budget.cap) * 100)}% of the away spend cap used` : 'workflow accepted as proposed' };
 }
 
+/**
+ * A plan ask: a person answers what to build, Away handles how. An allowlist over the ask's fields (they all share
+ * kind 'plan'): whatever it does not recognise as clean waits. The order is the decision.
+ * @returns {{payload:object, flagged:boolean, reason:string, ask:'plan'|'outline'|'concern'}|null} null = waits for a person
+ */
+export function planRule(q) {
+  const p = q?.plan;
+  if (!p || p.error || p.criteria) return null;     // the Requirements hold, or an ask that needs a retry
+  if (p.outline) {
+    if (p.check?.ok !== true) return null;
+    // The check accepts a left-out id that has a reason, and nothing later catches it: a person must hear about it.
+    const left = (p.outline.leftOut || []).map((e) => e.id);
+    return { payload: { decision: 'approve', approveEach: p.approveEach === true }, flagged: left.length > 0,
+      reason: `the slice outline's check passed${left.length ? `; left out of every slice: ${left.join(', ')}` : ''}`, ask: 'outline' };
+  }
+  const approve = { decision: 'approve' };
+  if (q.concern && q.concern.kind !== 'requirement') {
+    return { payload: approve, flagged: true, reason: `the implementer raised a concern on the plan: ${q.concern.title}; the plan is built as written`, ask: 'concern' };
+  }
+  if (p.check?.ok !== true || p.outlineChange || p.notes?.length) return null;
+  if (Object.hasOwn(p, 'coverage') && p.coverage?.ok !== true) return null;
+  const open = p.openConflicts > 0 ? p.openConflicts : 0;
+  const reason = q.concern ? `a reviewer raised a concern on an agreed requirement: ${q.concern.title}; the requirement stays as agreed` : "the plan's shape check passed";
+  return { payload: approve, flagged: Boolean(q.concern) || open > 0,
+    reason: open ? `${reason}; ${open} reviewer conflict${open === 1 ? '' : 's'} left undecided` : reason,
+    ask: q.concern ? 'concern' : 'plan' };
+}
+
 export function recoveryRule({ attempts, max }) {
   return attempts < max ? { decision: 'retry', flagged: false } : { decision: 'pause', flagged: true };
 }

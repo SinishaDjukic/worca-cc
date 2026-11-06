@@ -556,7 +556,7 @@ export function renderPolicyEmptyState({ doc = globalThis.document } = {}) {
   };
   grid.append(
     card('01 · PROJECT', 'Set up team policy on a project',
-      ['Creates a ', { code: 'worca-policy' }, " branch on the project's origin holding one document: cost caps, expected plugins, model and guardrail defaults. Every teammate's Worca reads it; nothing is added to your code branches."], '#projects', 'Go to Projects', true),
+      ['Creates a ', { code: 'worca-policy' }, " branch on the project's origin holding one document: cost caps, expected plugins, model and guardrail defaults. The project needs a git remote. Every teammate's Worca reads it; nothing is added to your code branches."], '#projects', 'Go to Projects', true),
     card('02 · WORKSPACE', 'Pick a policy home for a workspace',
       ['Workspace runs use the policy of one member you choose, with the values that document sets for workspace runs. The choice lives on this machine and can be changed on the workspace card.'], '#workspaces', 'Go to Workspaces', false),
   );

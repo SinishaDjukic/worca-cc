@@ -736,7 +736,7 @@ async function attachAndDrive(orch, flags, start) {
   orch.on('question', async (payload) => {
     const { id, kind, questions, issues, recovery, agent } = payload;
     if (kind === 'plan') {
-      // A plan approval needs a person and is answered in the worca app (shape-it-first D2). Pause, so the hold
+      // A plan ask is answered in the worca app, by a person or by Away mode once it resumes there. Pause, so the hold
       // stays in the resume point. Deferred one microtask, like abandonAnswer (:608): _ask emits `question`
       // before it parks pendingQuestion.
       out(c('yellow', `The plan ${payload.plan?.file || ''} is waiting for approval in the worca app; pausing the run.`));

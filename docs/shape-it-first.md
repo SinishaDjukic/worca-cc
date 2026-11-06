@@ -132,7 +132,7 @@ missing details stay deviations, as before.
   the run goes on. It cannot raise a second concern in that step.
 - Under `--yes` no one is asked: the concern is overridden, and the audit log reads
   "Plan concern overridden automatically (--yes)".
-- Away mode waits for you: a concern is a plan approval, and Away mode never decides one.
+- In Away mode the concern is approved for you: the plan is built as written, and the answer is flagged *please check*.
 - A concern stops the run even when "Approve each slice's plan" is off.
 - Only workflows with a plan approval stop offer a concern. Default's implementer is never offered one.
 
@@ -204,9 +204,8 @@ slice 1. Their planner still writes a plan for its own slice.
 **Ask before each run** (on the outline card: **Ask me before each run**). Off by default: a later slice's plan stops for you
 only when its shape check fails or the planner says the slice can't be built as
 outlined (it then tells you why on the plan card). Turn it on to review every
-slice's plan. Either way an audit line records what happened, and in Away mode a
-plan always waits for a person. Only a person can change the switch; a proposal
-from Ask cannot.
+slice's plan. Either way an audit line records what happened. Only a person can change the switch; a proposal
+from Ask cannot. Away mode approves the outline with the switch as shown.
 
 **The feature card.** The planning run's card in Chat becomes the card for the whole
 feature, in the thread that started it. Its head reads `Shaping` until the outline is
@@ -342,8 +341,8 @@ met:**, with one line per id and the role that raised it.
 - **Approve** keeps the requirement as agreed and builds the plan. The audit log reads
   "Requirement concern overridden: R-po-1 kept as agreed."
 - **Ask for changes** sends your answer, with the concern, to the planner.
-- The concern stops the run even when "Approve each slice's plan" is off. Under `--yes` and in Away mode the plan is
-  approved and the requirement is kept.
+- The concern stops the run even when "Approve each slice's plan" is off. Away mode approves it, keeps the requirement
+  and flags the answer *please check*, as long as the plan's check passed. Under `--yes` the plan approval waits for a person.
 - Only a review of the plan raises a concern. A code review's or a requirements review's finding that names an id
   blocks as before. Any workflow with a role review, a requirements input and a plan approval stop gets the same card.
 
@@ -368,6 +367,41 @@ This holds for a round on the same PR and for a follow-up run after the PR merge
 
 Rollback for all three: turn the flag off. Findings then block as before, the Ship card has no ledger and ships
 unmarked, and a Changes request runs as a plain round or follow-up. Saved marks stay stored, unread.
+
+## Away mode on a Shaper run
+
+A person answers what to build. Away mode handles how to build it. While Away is active on a Shaper run:
+
+| Stop | What happens |
+|---|---|
+| Clarify | Waits for you. A normal run's Clarify is still answered |
+| Requirements hold (first run, or a requirements-first Changes run) | Waits for you |
+| Agents' questions, review gates, failed steps | Away answers, as on any run |
+| Slice outline whose check passed | Away approves it, with **Ask me before each run** as shown. If it leaves an agreed requirement out of every slice, Away flags it *please check* and names the requirement |
+| Plan approval whose checks passed, slice 1 included | Away approves it |
+| Later slice's plan, **Ask me before each run** off | Continues by itself, the same as when Away is off |
+| Later slice's plan, **Ask me before each run** on | Away approves it |
+| Requirement concern or plan concern | Away approves it, keeps the requirement or plan as written, and flags it *please check* |
+| A failed check: shape, outline, coverage, or a check that errored | Waits for you |
+| The planner's outline change, or notes from the chat | Waits for you |
+| A card showing an error | Waits for you |
+
+Reviewer conflicts left open do not stop Away: it approves with no picks, as you may, and flags the answer.
+
+Away's usual rules apply to every approval: which runs, away hours, delay and limits. Each one is a rule, so it costs
+nothing and appears in *Answered for you*; the feature's log says `by Away mode`. A question that waits shows no countdown
+and does not count against the limits.
+
+**Which runs.** Marking a run reaches its later slices, as long as you mark it before the outline is approved: a slice
+already planned to start keeps what it was given, and waits for you. *Never on this run* stays on that one run, because
+a later slice is a new run. If you want the whole feature to wait, set it on each run, or pause Away mode. Settings, away
+hours and the "I'm away" switch are read fresh by every run.
+
+**Set a spend cap.** With Away active, a feature can be built from start to finish with no plan seen by anyone. A spend
+cap in **Settings › Runs › Away mode** is the way to bound what that costs. Approving a concern also runs the implementer
+once more, which the limits cover but the answer's own cost does not show.
+
+`--yes` is different and unchanged: it never approves a plan, so a plan approval pauses or waits for a person.
 
 ## Iterate in the chat (s5)
 

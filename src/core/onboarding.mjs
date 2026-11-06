@@ -8,7 +8,6 @@
 import { getDb } from './db.mjs';
 import { countProjects } from './projects.mjs';
 import { countWorkspaces } from './workspaces.mjs';
-import { countThreads } from './ask/store.mjs';
 import { listScopes } from './metrics/read.mjs';
 import { listPolicyScopes } from './policy/sync.mjs';
 import { probeClaudeAuth } from './preflight.mjs';
@@ -74,7 +73,8 @@ export async function onboardingStatus({ recheck = false } = {}) {
     project: countProjects() > 0,
     run: count("SELECT COUNT(*) AS n FROM pipelines WHERE status = 'done'") > 0,
     realRun: count('SELECT COUNT(*) AS n FROM pipelines WHERE total_cost_usd > 0') > 0,
-    ask: countThreads() > 0,
+    // An answer landed: a thread whose only turn failed (signed out, say) has not shown the step.
+    ask: count("SELECT COUNT(*) AS n FROM ask_messages WHERE role = 'assistant' AND status = 'done'") > 0,
     // The New pipeline picker persists a choice per project (PATCH /api/config
     // activeWorkflowId) the moment one is picked — Auto included: knowing the
     // picker exists is the step, not which workflow won.
