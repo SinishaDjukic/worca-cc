@@ -92,7 +92,7 @@
   // world's run it is about (it must be in the case). `chat`: the chat it opens. `fix`: the step that deals with a problem;
   // taking it resolves the row, or `fixLand` takes you to where it is done.
   const up = (id, e, about, meta, time, day, o = {}) => ({ id, e, g: EVENT[e].g, sev: EVENT[e].sev, title: o.title || `${EVENT[e].name} · ${about}`, meta, time, day, unread: EVENT[e].sev !== 'info' && !o.read,
-    ...(o.chat ? { go: `chat/${o.chat}`, to: 'the chat' } : DEST[e] || DEST[EVENT[e].g] || (o.run ? { go: 'run', to: 'the run page' } : { go: 'runs', to: 'Runs' })), ...o });
+    ...(o.chat ? { go: `chat/${o.chat}`, to: 'the chat' } : DEST[e] || DEST[e.split('.')[0]] || (o.run ? { go: 'run', to: 'the run page' } : { go: 'runs', to: 'Runs' })), ...o });
   // An update about one of the world's runs: its title and project are the run's own.
   const ofRun = (id, e, runId, meta, time, day, o = {}) => up(id, e, W.title(runId), `${W.project(runId)} · ${meta}`, time, day, { run: runId, ...o });
   const NEW_VERSION = (id) => up(id, 'app.update_available', '', 'you run 1.19', '08:40', 'Today', { title: 'New version: 1.20' });
