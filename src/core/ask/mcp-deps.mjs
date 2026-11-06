@@ -5,10 +5,12 @@
 // calls as the Settings routes (ui/routes/mcp-servers/servers.mjs), each of which re-validates under the registry lock.
 //   • the MCP child (mcp-stdio.mjs): deps.mcpServers.* behind list_mcp_servers and propose_mcp_change (validate only);
 //   • the parent: turn.mjs re-validates a proposal with validateMcpChange, and the cards route applies a confirmed
-//     card with applyMcpChange.
+//     card with applyMcpChange;
+//   • the Connectors routes (ui/routes/mcp-servers/servers.mjs): a person's import from other tools —
+//     discoverForSettings, then previewMcpImport (the chat's import card, nothing written) and importMcpServers (apply).
 // Applying never adds a server to a set: the user turns it on on Connectors › MCP servers.
 import { viewContext, buildCatalogView, buildSetsView, buildSetView, manualNameTaken } from '../mcp/views.mjs';
-import { addManualServer, editManualServer, removeServerEverywhere } from '../mcp/store.mjs';
+import { addManualServer, addManualServers, editManualServer, removeServerEverywhere } from '../mcp/store.mjs';
 import { retestServers } from '../mcp/test.mjs';
 import { getEngine } from '../engines/index.mjs';
 import { describeUnattachableMcp } from '../engines/capabilities.mjs';
@@ -18,7 +20,8 @@ import { discoverMcpConfigs, homeConfigsAllowed } from '../mcp/discover.mjs';
 import { listProjects } from '../projects.mjs';
 import { listWorkspaces } from '../workspaces.mjs';
 import { projectKey as projectKeyOf } from '../store.mjs';
-import { createMcpImportValidator, discoveryView } from './mcp-import.mjs';
+import { createMcpImportValidator, discoveryView, MCP_IMPORT_UI_ERRORS } from './mcp-import.mjs';
+import { createHash } from 'node:crypto';
 
 /** Which run engines can attach a server of this shape: each adapter's own unattachableMcp rule (the one
  *  askEngineSwitchPlan and mcpForEngine apply). Claude, Cursor, Gemini, OpenCode and Qwen attach every transport. */
@@ -117,6 +120,72 @@ export const validateMcpChange = createMcpChangeValidator({
   importChange: createMcpImportValidator({ ...registry, discover: ({ pin }) => discoverRaw(pin) }),
 });
 
+/** `registry` with io.viewContext honoured (the Connectors routes' wrappers below; tests inject it). */
+function registryFor(io = {}) {
+  const ctx = () => (io.viewContext ?? viewContext)();
+  return {
+    catalog: async () => catalogEntries(await ctx()),
+    nameTaken: async (name) => manualNameTaken(await ctx(), name),
+    engines: (name, def) => enginesFor(name, def, io),
+  };
+}
+
+/** Connectors › MCP servers' list step: discover_mcp_servers' masked view without the chat's howTo, plus whether this
+ *  machine's home-folder configs were read. `projects` is [{key, path}], already resolved by the route. */
+export async function discoverForSettings({ projects = [] } = {}, io = {}) {
+  const homeConfigs = homeConfigsAllowed(io.env ?? process.env);
+  const [disc, ctx] = await Promise.all([(io.discover ?? discoverMcpConfigs)({ projects, homeScope: homeConfigs }), (io.viewContext ?? viewContext)()]);
+  const { howTo: _howTo, ...view } = discoveryView(disc, catalogEntries(ctx));
+  return { ...view, homeConfigs };
+}
+
+/** What a review shows: the definitions, warnings and already-present servers apply will write against. */
+const importDigest = (card) => createHash('sha256')
+  .update(JSON.stringify({ servers: card.change.servers, warnings: card.warnings, alreadyPresent: card.alreadyPresent })).digest('hex');
+
+/** The review step: the chat's import card over a fresh discovery, in a person's words. Writes nothing. `card` is for
+ *  importMcpServers only (the route never sends it). */
+export async function previewMcpImport({ projects = [], servers }, io = {}) {
+  const validate = createMcpImportValidator({ ...registryFor(io), errors: MCP_IMPORT_UI_ERRORS,
+    discover: () => (io.discover ?? discoverMcpConfigs)({ projects, homeScope: homeConfigsAllowed(io.env ?? process.env) }) });
+  const r = await validate({ servers });
+  const alreadyPresent = r.alreadyPresent || []; const skipped = r.skipped || [];
+  if (!r.ok) {
+    const nothing = r.errors.length === 1 && r.errors[0] === MCP_IMPORT_UI_ERRORS.nothing;
+    return { ok: false, code: nothing ? 'NOTHING_TO_IMPORT' : 'IMPORT_INVALID', errors: r.errors, alreadyPresent, skipped };
+  }
+  const { card } = r;
+  return {
+    ok: true, digest: importDigest(card),
+    review: { summary: card.summary, names: card.change.servers.map((s) => s.name), changes: card.changes, warnings: card.warnings,
+      effects: card.effects, alreadyPresent: card.alreadyPresent, skipped },
+    card,
+  };
+}
+
+/** Confirm: re-run the review, and write only when it is still the one the person saw (same digest). The whole list is
+ *  written in ONE locked store write (addManualServers), so a name another writer took since the re-validation refuses
+ *  all of it: the McpStoreError is re-thrown as-is and nothing is written. */
+export async function importMcpServers({ projects = [], servers, digest }, io = {}) {
+  const preview = await previewMcpImport({ projects, servers }, io);
+  if (!preview.ok) return preview;
+  if (digest !== preview.digest) {
+    return { ok: false, code: 'IMPORT_CHANGED', errors: ['the other tools’ files or worca’s servers changed since the review — review the import again'],
+      alreadyPresent: preview.review.alreadyPresent, skipped: preview.review.skipped };
+  }
+  const ctx = await (io.viewContext ?? viewContext)();
+  const list = preview.card.change.servers.map((s) => ({ name: s.name, def: s.def }));
+  await (io.addMany ?? addManualServers)(list, { catalogNames: ctx.catalog.map((e) => e.name) });
+  return { ok: true, names: preview.review.names, alreadyPresent: preview.card.alreadyPresent, detail: importDetail(list.map((s) => s.name), preview.card) };
+}
+
+/** The import's success line, the chat's card and Connectors alike. */
+function importDetail(added, card) {
+  const one = added.length === 1;
+  const have = Array.isArray(card.alreadyPresent) ? card.alreadyPresent.length : 0;
+  return `Added ${added.join(', ')}. ${one ? 'It is' : 'They are'} in no set yet: turn ${one ? 'it' : 'them'} on in a set on ${MCP_PAGE}${have ? ` · ${have} already in worca, not added again` : ''}`;
+}
+
 /**
  * Apply a CONFIRMED MCP card (cards route, after the user's click). Each store call re-validates under the
  * registry lock. Returns a result the card renders and the event turn quotes; throws on failure.
@@ -138,9 +207,7 @@ export async function applyMcpChange(card, io = {}) {
       }
       added.push(s.name);
     }
-    const one = added.length === 1;
-    const have = Array.isArray(card.alreadyPresent) ? card.alreadyPresent.length : 0;
-    return { ok: true, serverId: `manual:${added[0]}`, detail: `Added ${added.join(', ')}. ${one ? 'It is' : 'They are'} in no set yet: turn ${one ? 'it' : 'them'} on in a set on ${MCP_PAGE}${have ? ` · ${have} already in worca, not added again` : ''}` };
+    return { ok: true, serverId: `manual:${added[0]}`, detail: importDetail(added, card) };
   }
   if (card.kind === 'add') {
     await (io.add ?? addManualServer)(c.name, c.def, { catalogNames: ctx.catalog.map((e) => e.name) });

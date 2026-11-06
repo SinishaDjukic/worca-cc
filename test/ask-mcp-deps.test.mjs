@@ -2,15 +2,18 @@
 // (docs/mcp-servers.md "Chat").
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, realpathSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, dirname } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
-import { manualNameTaken } from '../src/core/mcp/views.mjs';
+import { manualNameTaken, viewContext } from '../src/core/mcp/views.mjs';
 
 useTempHome(after, 'worca-ask-mcp-deps-');
-const { listMcpServers, enginesFor, applyMcpChange, validateMcpChange, pinnedProjects, discoverMcpServers } = await import('../src/core/ask/mcp-deps.mjs');
+const { listMcpServers, enginesFor, applyMcpChange, validateMcpChange, pinnedProjects, discoverMcpServers,
+  discoverForSettings, previewMcpImport, importMcpServers } = await import('../src/core/ask/mcp-deps.mjs');
+const { discoverMcpConfigs } = await import('../src/core/mcp/discover.mjs');
 const { projectKey } = await import('../src/core/store.mjs');
-const { addManualServer, createSet, putMember, editManualServer, removeServerEverywhere, readMcpStore, mcpDir } = await import('../src/core/mcp/store.mjs');
+const { addManualServer, addManualServers, createSet, putMember, editManualServer, removeServerEverywhere, readMcpStore, mcpDir } = await import('../src/core/mcp/store.mjs');
 const { ENGINE_NAMES, engineLabel } = await import('../src/shared/engine-switch.mjs');
 
 const TOKEN = 'ghp_' + 'a'.repeat(36);
@@ -145,4 +148,129 @@ test('pinnedProjects: a project pin, a workspace pin (its members), no pin; disc
   assert.deepEqual(view.servers, []);
   await discoverMcpServers({ pin: null }, { ...io, env: {}, discover: async (o) => { seen = o; return { servers: [], files: [] }; } });
   assert.deepEqual(seen, { projects: [], homeScope: true });
+});
+
+// Connectors › MCP servers' import (ui/routes/mcp-servers/servers.mjs): the chat's validator and apply, in a person's words.
+const SECRET = 'sk-live-123';
+const DSN = 'postgres://app:hunter2@db.test/shop';
+const LEAKS = [SECRET, 'hunter2', '${GITHUB_TOKEN}'];
+const fixHome = realpathSync(mkdtempSync(join(tmpdir(), 'worca-mcp-settings-import-')));
+after(() => rmSync(fixHome, { recursive: true, force: true }));
+const cursorFile = join(fixHome, '.cursor', 'mcp.json');
+const writeFixture = (over = {}) => {
+  mkdirSync(dirname(cursorFile), { recursive: true });
+  writeFileSync(cursorFile, JSON.stringify({ mcpServers: {
+    openai: { command: 'uvx', args: ['openai-mcp'], env: { OPENAI_API_KEY: SECRET, LOG_LEVEL: 'debug' } },
+    ghx: { command: 'npx', args: ['-y', 'ghx-mcp'], env: { GITHUB_TOKEN: '${GITHUB_TOKEN}' } },
+    pgx: { command: 'pgx-mcp', env: { DATABASE_URL: DSN } },
+    'dup-srv': { command: 'dup-mcp' },
+    ...over,
+  } }));
+};
+writeFixture();
+const seenOpts = [];
+const fixIo = (extra = {}) => ({ env: {}, discover: (o) => { seenOpts.push(o); return discoverMcpConfigs({ ...o, home: fixHome, platform: 'linux', env: {} }); }, ...extra });
+const fixId = (name) => `cursor:user:${name}`;
+const noLeak = (out) => { const t = JSON.stringify(out); for (const v of LEAKS) assert.equal(t.includes(v), false, v); };
+
+test('discoverForSettings: masked rows without howTo; homeConfigs follows the deployment', async () => {
+  await addManualServer('dup-srv', { type: 'stdio', command: 'dup-mcp', args: [], env: {}, fields: [], description: '' });
+  const out = await discoverForSettings({}, fixIo());
+  assert.equal(Object.hasOwn(out, 'howTo'), false);
+  assert.equal(out.homeConfigs, true);
+  assert.deepEqual(seenOpts.at(-1), { projects: [], homeScope: true });
+  const openai = out.servers.find((x) => x.id === fixId('openai'));
+  assert.deepEqual(openai.env.OPENAI_API_KEY, { value: '••••', secret: true });
+  assert.equal(out.servers.find((x) => x.id === fixId('dup-srv')).inWorca, true);
+  assert.equal(out.files.find((f) => f.tool === 'Cursor').status, 'ok');
+  noLeak(out);
+  const hosted = await discoverForSettings({ projects: [{ key: 'shop', path: '/nowhere/shop' }] }, fixIo({ env: { WORCA_CONTAINER: '1' } }));
+  assert.equal(hosted.homeConfigs, false);
+  assert.deepEqual(seenOpts.at(-1), { projects: [{ key: 'shop', path: '/nowhere/shop' }], homeScope: false });
+  assert.deepEqual(hosted.servers, []);
+});
+
+test('previewMcpImport: the review carries the warnings and a digest, writes nothing; nothing to import names the present ones', async () => {
+  const before = JSON.stringify((await readMcpStore()).manual);
+  const r = await previewMcpImport({ servers: [{ id: fixId('openai') }, { id: fixId('ghx') }] }, fixIo());
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.match(r.digest, /^[0-9a-f]{64}$/);
+  assert.deepEqual(r.review.names, ['openai', 'ghx']);
+  assert.ok(r.review.warnings.some((w) => w.startsWith('openai: OPENAI_API_KEY is an empty secret field')), JSON.stringify(r.review.warnings));
+  assert.ok(r.review.warnings.some((w) => /^ghx: env GITHUB_TOKEN was the variable GITHUB_TOKEN/.test(w)), JSON.stringify(r.review.warnings));
+  assert.deepEqual(Object.keys(r.review).sort(), ['alreadyPresent', 'changes', 'effects', 'names', 'skipped', 'summary', 'warnings']);
+  noLeak(r.review);
+  assert.equal(JSON.stringify((await readMcpStore()).manual), before);
+  const none = await previewMcpImport({ servers: [{ id: fixId('dup-srv') }] }, fixIo());
+  assert.equal(none.ok, false);
+  assert.equal(none.code, 'NOTHING_TO_IMPORT');
+  assert.deepEqual(none.alreadyPresent.map((p) => p.name), ['dup-srv']);
+  const bad = await previewMcpImport({ servers: [{ id: fixId('nope') }] }, fixIo());
+  assert.deepEqual([bad.code, bad.errors], ['IMPORT_INVALID', ["a picked server is no longer in the other tools' files (cursor:user:nope) — list them again"]]);
+  // A container worca reads no home configs at review time either, and the registry reads honour io.viewContext.
+  let reads = 0;
+  const hosted = await previewMcpImport({ projects: [{ key: 'shop', path: '/nowhere/shop' }], servers: [{ id: fixId('openai') }] },
+    fixIo({ env: { WORCA_CONTAINER: '1' }, viewContext: async () => { reads += 1; return viewContext(); } }));
+  assert.deepEqual(seenOpts.at(-1), { projects: [{ key: 'shop', path: '/nowhere/shop' }], homeScope: false });
+  assert.equal(hosted.code, 'IMPORT_INVALID');
+  assert.ok(reads > 0, 'the validator read the registry through io.viewContext');
+});
+
+test('importMcpServers: a wrong digest, a file edited since the review and an invalid pick write nothing', async () => {
+  let adds = 0;
+  const spy = fixIo({ add: async () => { adds += 1; }, addMany: async () => { adds += 1; } });
+  const picks = [{ id: fixId('openai') }];
+  const wrong = await importMcpServers({ servers: picks, digest: 'f'.repeat(64) }, spy);
+  assert.deepEqual([wrong.ok, wrong.code], [false, 'IMPORT_CHANGED']);
+  assert.match(wrong.errors[0], /changed since the review/);
+  const { digest } = await previewMcpImport({ servers: [{ id: fixId('ghx') }] }, spy);
+  writeFixture({ ghx: { command: 'npx', args: ['-y', 'ghx-mcp', '--read-only'], env: { GITHUB_TOKEN: '${GITHUB_TOKEN}' } } });
+  const edited = await importMcpServers({ servers: [{ id: fixId('ghx') }], digest }, spy);
+  writeFixture();
+  assert.equal(edited.code, 'IMPORT_CHANGED');
+  const invalid = await importMcpServers({ servers: [{ id: fixId('nope') }], digest }, spy);
+  assert.deepEqual([invalid.ok, invalid.code], [false, 'IMPORT_INVALID']);
+  assert.equal(adds, 0);
+  assert.equal(Object.hasOwn((await readMcpStore()).manual, 'ghx'), false);
+});
+
+test('importMcpServers: with the review digest it adds Manual servers with empty secret fields, in no set; a second import adds no copy', async () => {
+  const picks = [{ id: fixId('openai') }, { id: fixId('pgx'), as: 'pg-ro' }];
+  const pre = await previewMcpImport({ servers: picks }, fixIo());
+  assert.equal(pre.ok, true, JSON.stringify(pre));
+  const r = await importMcpServers({ servers: picks, digest: pre.digest }, fixIo());
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.deepEqual(r.names, ['openai', 'pg-ro']);
+  assert.match(r.detail, /^Added openai, pg-ro\. They are in no set yet/);
+  noLeak(r);
+  const stored = disk('servers').manual;
+  assert.deepEqual(stored.openai.env, { OPENAI_API_KEY: { field: 'OPENAI_API_KEY' }, LOG_LEVEL: 'debug' });
+  assert.deepEqual(stored['pg-ro'].env, { DATABASE_URL: { field: 'DATABASE_URL' } });
+  assert.equal(readFileSync(join(mcpDir(), 'servers.json'), 'utf8').includes(SECRET), false);
+  assert.equal(members().some((m) => m === 'manual:openai' || m === 'manual:pg-ro'), false);
+  const again = await previewMcpImport({ servers: [{ id: fixId('openai') }] }, fixIo());
+  assert.deepEqual([again.code, again.alreadyPresent.map((p) => p.name)], ['NOTHING_TO_IMPORT', ['openai']]);
+  const twice = await importMcpServers({ servers: [{ id: fixId('openai') }], digest: pre.digest }, fixIo());
+  assert.equal(twice.code, 'NOTHING_TO_IMPORT');
+  assert.deepEqual(Object.keys(disk('servers').manual).filter((k) => k.startsWith('openai')), ['openai']);
+});
+
+test('importMcpServers: a name taken between the review and the write refuses the whole list; nothing of it is written', async () => {
+  const picks = [{ id: fixId('ghx'), as: 'race-a' }, { id: fixId('pgx'), as: 'race-b' }];
+  const pre = await previewMcpImport({ servers: picks }, fixIo());
+  assert.equal(pre.ok, true, JSON.stringify(pre));
+  let batches = 0;
+  // Another writer (a second tab, the chat's card, the Add form) takes race-b after the re-validation, before the write.
+  const racing = fixIo({ addMany: async (list, opts) => {
+    batches += 1;
+    assert.deepEqual(list.map((s) => s.name), ['race-a', 'race-b']);
+    await addManualServer('race-b', { type: 'stdio', command: 'other-mcp', args: [], env: {}, fields: [], description: '' });
+    return addManualServers(list, opts);
+  } });
+  await assert.rejects(importMcpServers({ servers: picks, digest: pre.digest }, racing),
+    (e) => e.status === 409 && /the name "race-b" is taken/.test(e.message));
+  assert.equal(batches, 1);
+  const stored = disk('servers').manual;
+  assert.equal(Object.hasOwn(stored, 'race-a'), false, 'the first pick was not written either');
+  assert.equal(stored['race-b'].command, 'other-mcp');
 });

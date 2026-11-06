@@ -4,7 +4,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { freshHomes, plain, put, disk, recordWrites } from './helpers/mcp-store-fixtures.mjs';
 import {
-  readMcpStore, addManualServer, editManualServer, removeServerEverywhere, migrateServerFields, assignBases,
+  readMcpStore, addManualServer, addManualServers, editManualServer, removeServerEverywhere, migrateServerFields, assignBases,
   setTeamState, putPolicyServer, forgetTeamState, putMember, deleteSet, duplicateSet,
 } from '../src/core/mcp/store.mjs';
 import { validateMcpDefinition, defDigest } from '../src/core/mcp/definitions.mjs';
@@ -41,6 +41,25 @@ test('addManualServer: validated, stored normalized, base assigned; refuses a ba
   await assert.rejects(addManualServer('jira', PG_RAW), { status: 409 });
   await assert.rejects(addManualServer('sentry', PG_RAW, { catalogNames: ['sentry'] }), { status: 409 });
   await assert.rejects(addManualServer('postgres-ro', PG_RAW), { status: 409 });
+});
+
+test('addManualServers: every name is checked first, then the whole list is written in one servers write; any refusal writes none', async () => {
+  await addManualServer('postgres-ro', PG_RAW);
+  put('servers', { ...disk('servers'), bases: { ...disk('servers').bases, 'plugin:gone/jira': 'jira' } });
+  const before = JSON.stringify(disk('servers'));
+  // The second name is taken: by a stored server, a catalog name, another id's base, or the list itself.
+  await assert.rejects(addManualServers([{ name: 'fresh-a', def: PG_RAW }, { name: 'postgres-ro', def: PG_RAW }]), { status: 409 });
+  await assert.rejects(addManualServers([{ name: 'fresh-a', def: PG_RAW }, { name: 'sentry', def: PG_RAW }], { catalogNames: ['sentry'] }), { status: 409 });
+  await assert.rejects(addManualServers([{ name: 'fresh-a', def: PG_RAW }, { name: 'jira', def: PG_RAW }]), { status: 409 });
+  await assert.rejects(addManualServers([{ name: 'fresh-a', def: PG_RAW }, { name: 'fresh-a', def: PG_RAW }]), { status: 409 });
+  await assert.rejects(addManualServers([{ name: 'fresh-a', def: PG_RAW }, { name: 'bad', def: { ...PG_RAW, command: './x' } }]), { status: 400 });
+  await assert.rejects(addManualServers([]), { status: 400 });
+  assert.equal(JSON.stringify(disk('servers')), before);
+  const writes = await recordWrites(() => addManualServers([{ name: 'fresh-a', def: PG_RAW }, { name: 'fresh-b', def: PG_RAW }]));
+  assert.deepEqual(writes.map((w) => w.file), ['servers']);
+  const s = disk('servers');
+  assert.deepEqual(Object.keys(s.manual).filter((k) => k.startsWith('fresh-')), ['fresh-a', 'fresh-b']);
+  assert.deepEqual([s.bases['manual:fresh-a'], s.bases['manual:fresh-b']], ['fresh-a', 'fresh-b']);
 });
 
 test('editManualServer: the name stays; a type switch migrates every membership — sets, then secrets, then the definition', async () => {
