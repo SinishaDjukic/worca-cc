@@ -153,11 +153,6 @@
 .pz-check input{margin:0;cursor:pointer;}
 .pz-list.is-selecting .pz-check{display:grid;}
 .pz-list.is-selecting .pz-rail > :not(.pz-check){visibility:hidden;}
-/* Touch has no hover and no ⌘: the tick boxes show from the start, as a long-press is not something you can see. */
-@media (hover: none){
-  .pz-row.has-check .pz-check{display:grid;}
-  .pz-row.has-check .pz-rail > :not(.pz-check){visibility:hidden;}
-}
 /* The Runs list's selection bar, at the panel's foot on the panel's own fill. */
 .pz-popover .runs-bulk{flex:none;padding:8px 12px;background:inherit;border-radius:0 0 var(--r-card) var(--r-card);}
 

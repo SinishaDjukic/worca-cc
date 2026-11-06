@@ -28,5 +28,5 @@ prototype does both at 375px.
 - **A branch or a path loses its middle,** never its end: its start and its last part stay (`feat/unifi…-breadcrumb`,
   `ui/…/run-head.mjs`), since the end is what tells two apart. The full name is in its tooltip and a click copies it.
   The short name beside it (`dev`, the PR number) never shortens.
-- **Touch:** what shows on hover is there from the start (a list's tick boxes); what needs a pointer moves to its
-  editor (a tag's ×).
+- **Touch:** a list shows its marks by default, since state comes first; tick boxes take the mark's place only while
+  selecting, started by a long-press or the list's `Select`. What needs a pointer moves to its editor (a tag's ×).

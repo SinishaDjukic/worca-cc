@@ -695,7 +695,7 @@ document.addEventListener('click', (e) => {
   if ((el = tg('[data-selall]'))) { ui.pick = el.checked ? R.selectAll(ui.pick, shownIds()) : R.selectPrune(ui.pick, []); render(); return; }
   if ((el = tg('[data-sel]'))) { pickRow(R.selectionAction({ click: true, onBox: true, shiftKey: e.shiftKey }), el.dataset.sel); return; }
   if ((el = tg('.pz-popover [data-open]')) && isUpdate(el.dataset.open)) {
-    const act = R.selectionAction({ click: true, button: e.button, metaKey: e.metaKey, ctrlKey: e.ctrlKey, shiftKey: e.shiftKey });
+    const act = R.selectionAction({ click: true, button: e.button, metaKey: e.metaKey, ctrlKey: e.ctrlKey, shiftKey: e.shiftKey }, { selecting: ui.pick.on });
     if (act) { e.preventDefault(); pickRow(act, el.dataset.open); return; }
   }
   if ((el = tg('[data-bulk]'))) {

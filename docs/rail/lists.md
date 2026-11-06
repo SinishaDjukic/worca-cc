@@ -22,7 +22,7 @@ list (Runs, Chats, Pulse's Now and Updates, Schedules) uses this one sentence, s
 ends selecting. An action that can be taken back does not confirm and offers Undo in its Toast; one that cannot confirms in the strip.
 A list that has selecting calls the library: `selectionAction` and `selectApply` (`selection.mjs`) for what a click, a
 long-press or a key means, `selectionBar`, `selectAllBox` and `bindLongPress` (`selection-bar.mjs`) for its parts. On
-touch the tick boxes show from the start, in the mark's place, since a long-press is not something you can see. Unticking
-the last row ends selecting. The keys are in [keyboard.md](keyboard.md).
+touch a list shows its marks by default, since state comes first; the tick boxes take the mark's place only while selecting, started by a
+long-press or `Select`, and while selecting a tap on a row ticks it instead of opening it. Unticking the last row ends selecting. The keys are in [keyboard.md](keyboard.md).
 Empty is EmptyState's one sentence and, when there is one, the way forward as its one quiet action (`No schedules
 yet.` · New schedule).

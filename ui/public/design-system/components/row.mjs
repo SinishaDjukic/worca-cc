@@ -50,7 +50,7 @@ export function row({ kind = 'list', rail = '', text = '', end = '', more = '', 
  */
 export function pulseRow({ mark = '', title, meta, time, tip, id, check, unread = false, resolved = false, flash = false, action = '' }) {
   const unreadMark = !mark && unread ? '<span class="pz-unread" title="Unread"></span>' : '';
-  return row({ kind: 'pulse', cls: `${check !== undefined ? 'has-check' : ''}${check ? ' is-sel' : ''}${unread ? ' is-unread' : ''}${flash ? ' is-flash' : ''}`, attrs: { 'data-row': id },
+  return row({ kind: 'pulse', cls: `${check ? 'is-sel' : ''}${unread ? ' is-unread' : ''}${flash ? ' is-flash' : ''}`, attrs: { 'data-row': id },
     rail: `${mark}${unreadMark}${check !== undefined ? checkbox({ cls: 'pz-check', why: 'Select', checked: !!check, attrs: { 'data-sel': id, 'aria-label': `Select ${title}` } }) : ''}`,
     text: `<button type="button" class="pz-row-main row-btn"${attrs({ 'data-open': id, title: `${title}\n${meta}\n${tip}` })}><span class="pz-row-t${unread ? ' is-unread' : ''}">${esc(title)}${resolved ? '<span class="pz-resolved">Resolved</span>' : ''}</span><span class="pz-row-m">${esc(meta)}</span></button><span class="pz-row-end"><span class="pz-row-time">${esc(time)}</span>${action}</span>` });
 }

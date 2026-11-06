@@ -59,7 +59,7 @@ export function selectionAction(f, { selecting = false } = {}) {
   if (f.click) {
     if (f.button) return null;   // a middle click keeps what the browser does
     if (f.shiftKey) return 'range';
-    return f.onBox || f.metaKey || f.ctrlKey ? 'toggle' : null;
+    return f.onBox || f.metaKey || f.ctrlKey || selecting ? 'toggle' : null;   // while selecting a plain click or tap ticks
   }
   return shortcutAction(f, { scopes: ['selecting'], selecting });
 }

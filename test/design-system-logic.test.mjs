@@ -180,6 +180,7 @@ test('selectionAction: a click or a press or a key to its action; a plain click 
   assert.equal(click({ onBox: true, shiftKey: true }), 'range');
   assert.equal(click({ button: 1, metaKey: true }), null, 'a middle click stays the browser\'s');
   assert.equal(R.selectionAction({ press: true }), 'toggle');
+  assert.equal(R.selectionAction({ click: true }, { selecting: true }), 'toggle', 'while selecting a plain click or tap ticks');
   assert.equal(R.selectionAction({ key: ' ', onRow: true }), 'toggle');
   assert.equal(R.selectionAction({ key: ' ' }), null, 'Space on a button stays the button\'s');
   assert.equal(R.selectionAction({ key: 'a', metaKey: true }), 'all');
