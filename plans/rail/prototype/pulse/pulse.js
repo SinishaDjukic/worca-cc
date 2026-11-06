@@ -260,12 +260,12 @@ function lvlFly() {
 
 // ---- New run: where a limit is about to be spent, the one place it warns before starting ----
 const MINE = [
-  { id: 'suggest', text: 'suggest one with room', help: 'New run and Resume say which limit is near and offer a harness with room, or a start after the reset; you choose' },
-  { id: 'move', text: 'pick one with room', help: 'Worca picks the harness with the most room and says why; you can change it back in the sentence' },
+  { id: 'suggest', text: 'suggest another provider with room', help: 'New run and Resume say which limit is near and offer a harness with room, or a start after the reset; you choose' },
+  { id: 'move', text: 'pick another provider with room', help: 'Worca picks the harness with the most room and says why; you can change it back in the sentence' },
   { id: 'wait', text: 'start after the reset', help: 'The start button becomes Start at, the time the limit resets' },
   { id: 'asis', text: 'start as chosen', help: 'Only a line saying it may pause' }];
 const AUTO = [
-  { id: 'move', text: 'moves to one with room', help: 'It starts on the harness with the most room and keeps it to the end; with none, it waits for the reset. Each move or wait is an update in Pulse' },
+  { id: 'move', text: 'moves to another provider with room', help: 'It starts on the harness with the most room and keeps it to the end; with none, it waits for the reset. Each move or wait is an update in Pulse' },
   { id: 'wait', text: 'waits for the reset', help: 'It starts when the limit resets; an update in Pulse says so' },
   { id: 'asis', text: 'starts anyway', help: 'It starts as planned and may pause; it resumes by itself after the reset' }];
 // New run checks the run's estimate (Shaper's size, history of runs like it) against what is left on the harness.
@@ -373,7 +373,7 @@ const effWhere = (g, ev) => { const gs = ui.s.groups[g.id]; return gs.ex[ev[0]] 
 const quiet = (label, a) => R.button({ label, kind: 'quiet', attrs: a });
 function notifications() {
   const s = ui.s;
-  const BADGE = [{ id: 'needs', text: 'what needs you', help: 'The tab title, the favicon\'s dot and the app icon show while 2 runs wait for you' }, { id: 'problems', text: 'what needs you and problems', help: 'Also unread problems: a failed run, a missed start, a limit' }, { id: 'none', text: 'nothing', help: 'The tab title never shows a count' }];
+  const BADGE = M.BADGE;
   const desk = s.desktop === 'blocked'
     ? R.settingsRow({ name: 'Desktop', sentence: 'Desktop notifications are <b>blocked in this browser</b>', end: R.button({ label: 'How to allow', kind: 'quiet', attrs: { 'data-how': '', title: 'Allow notifications for this site in the browser\'s site settings, then come back' } }) })
     : s.desktop === 'unsupported' ? R.settingsRow({ name: 'Desktop', sentence: 'This browser does not support desktop notifications' })
@@ -388,19 +388,21 @@ function notifications() {
     const gs = s.groups[g.id], open = ui.custom === g.id, nEx = Object.keys(gs.ex).length;
     const detailRows = open ? g.events.map((ev) => {
       const w = effWhere(g, ev);
-      return R.settingsRow({ name: ev[1], help: `${ev[0]} · ${ev[2] === 'needs' ? 'needs you' : ev[2]}`, changed: !!gs.ex[ev[0]], sentence: `on ${sp('ev:' + ev[0], whereText(w), M.WHERE.map((x) => ({ ...x, checked: x.id === w })), `Where ${ev[1]} goes`)}` });
+      return R.settingsRow({ name: ev[1], help: `${ev[0]} · ${ev[2] === 'needs' ? 'needs you' : ev[2]}`, changed: !!gs.ex[ev[0]], sentence: `${w === 'pulse' ? '' : 'Goes to '}${sp('ev:' + ev[0], whereText(w), M.WHERE.map((x) => ({ ...x, checked: x.id === w })), `Where ${ev[1]} goes`)}` });
     }).join('') : '';
     const detailAction = open && nEx ? quiet('Back to the group', { 'data-backgroup': g.id, title: 'Every event follows the group again' }) : '';
     // Usage's limits are Runs': one row, in the section that owns it (docs/rail/settings.md)
     const end = g.id === 'usage' ? quiet('Limits', { 'data-land': 'runs|Warning line', title: 'What a run does near a limit: Settings › Runs › Limits' }) : '';
     return R.settingsRow({ name: g.name, end, detailRows, detailAction, changed: nEx > 0,
-      sentence: `Tell me about ${sp('lvl:' + g.id, levelText(gs.level), M.LEVELS.map((l) => ({ ...l, checked: l.id === gs.level })), `How much of ${g.name} reaches you`)} on ${sp('whr:' + g.id, whereText(gs.where), M.WHERE.map((x) => ({ ...x, checked: x.id === gs.where })), `Where ${g.name} goes beyond Pulse`, true)}`,
+      // Pulse keeps everything, so with Pulse only there is no level to choose.
+      sentence: gs.where === 'pulse' ? sp('whr:' + g.id, whereText(gs.where), M.WHERE.map((x) => ({ ...x, checked: x.id === gs.where })), `Where ${g.name} goes beyond Pulse`)
+        : `Send ${sp('lvl:' + g.id, levelText(gs.level), M.LEVELS.map((l) => ({ ...l, checked: l.id === gs.level })), `How much of ${g.name} reaches you`)} to ${sp('whr:' + g.id, whereText(gs.where), M.WHERE.map((x) => ({ ...x, checked: x.id === gs.where })), `Where ${g.name} goes beyond Pulse`, true)}`,
       fold: { open, attrs: { 'data-custom': g.id }, help: open ? 'Close the events' : 'Choose per event: ' + g.events.map((e) => e[1]).join(', ') } });
   }).join('');
-  const confirm = ui.confirm === 'reset' ? R.confirmStrip({ text: 'Reset every group to its defaults? Your channels stay as they are.', yes: 'Reset' }) : '';
-  return confirm
-    + R.settingsSection({ title: 'Channels', rows: channels })
-    + R.settingsSection({ title: 'Updates', meta: 'What each kind of update sends beyond Pulse. Pulse keeps everything for 90 days; a problem clears when you act on it.', rows: groups, action: quiet('Reset to defaults', { 'data-reset': '', title: 'Every group back to its defaults; asks first' }) });
+  const atDefaults = JSON.stringify(s.groups) === JSON.stringify(freshSettings(C()).groups);
+  const reset = quiet('Reset to defaults', { 'data-reset': '', title: 'Every group back to its defaults; asks first' });
+  return R.settingsSection({ title: 'Channels', rows: channels })
+    + R.settingsSection({ title: 'Updates', meta: `What each kind of update sends beyond Pulse. Pulse keeps everything for 90 days; a problem clears when you act on it.${s.desktop === 'on' ? '' : ' Desktop notifications are off, so nothing shows there.'}`, rows: groups, action: atDefaults ? R.tooltip({ text: 'Nothing to reset: every group is at its default', off: true, html: R.button({ label: 'Reset to defaults', kind: 'quiet', attrs: { disabled: true } }) }) : reset });
 }
 // What a run does near a limit is a run's business, so it sits in Settings › Runs; Notifications only says how you hear of it.
 function limitsRows() {
@@ -662,15 +664,15 @@ function pick(id, v) {
     else if (v === 'allread') { const n = unread().length; const was = ui.read; ui.read = ui.read.concat(unread().map((u) => u.id)); toast(n ? `Marked ${plural(n, 'update')} read` : 'Nothing is unread', n ? { tip: 'Marks them unread again', run: () => { ui.read = was; toast('Unread again'); } } : null); }
     else { const ids = shown().filter((u) => !isUnread(u)).map((u) => u.id); ui.cleared = ui.cleared.concat(ids); ui.pick = R.selectPrune(ui.pick, []); toast(ids.length ? `Cleared ${plural(ids.length, 'read update')}` : 'Nothing read to clear', ids.length ? undoClear(ids) : null); }
   }
-  else if (id === 'badge') s.badge = v;
-  else if (id === 'sound') s.sound = v;
-  else if (id === 'mine') s.mine = v;
-  else if (id === 'auto') s.auto = v;
+  else if (id === 'badge') { if (s.badge !== v) toast(`Badge: the tab title ${M.BADGE.find((b) => b.id === v).text}`); s.badge = v; }
+  else if (id === 'sound') { if (s.sound !== v) toast(`Sound: ${R.SOUND_CHOICES.find((x) => x.id === v).text}`); s.sound = v; }
+  else if (id === 'mine') { if (s.mine !== v) toast(`Manual starts: New run and Resume near a limit ${MINE.find((m) => m.id === v).text}`); s.mine = v; }
+  else if (id === 'auto') { if (s.auto !== v) toast(`Automatic starts: a slice or scheduled run near a limit ${AUTO.find((m) => m.id === v).text}`); s.auto = v; }
   else if (id === 'nr-on') ui.nr = { ...ui.nr, on: v, wait: false, moved: '' };
   else if (id === 'nr-size') openNewRun(v);
-  else if (id === 'warn') { s.warnAt = +v; toast(`Warning line at ${v}%: rings, Vitals and updates follow it`); }
-  else if (id.startsWith('lvl:')) s.groups[id.slice(4)].level = v;
-  else if (id.startsWith('whr:')) s.groups[id.slice(4)].where = v;
+  else if (id === 'warn') { if (s.warnAt !== +v) toast(`Warning line at ${v}%: rings, Vitals and updates follow it`); s.warnAt = +v; }
+  else if (id.startsWith('lvl:')) { const g = s.groups[id.slice(4)]; if (g.level !== v) { g.level = v; toast(`${M.GROUPS.find((x) => x.id === id.slice(4)).name}: ${g.where === 'pulse' ? whereText(g.where) : `send ${levelText(v)} to ${whereText(g.where)}`}`); } }
+  else if (id.startsWith('whr:')) { const g = s.groups[id.slice(4)]; if (g.where !== v) { g.where = v; toast(`${M.GROUPS.find((x) => x.id === id.slice(4)).name}: ${v === 'pulse' ? whereText(v) : `send ${levelText(g.level)} to ${whereText(v)}`}`); } }
   else if (id.startsWith('ev:')) {
     const evId = id.slice(3), g = M.GROUPS.find((x) => x.events.some((e) => e[0] === evId)), gs = s.groups[g.id], ev = g.events.find((e) => e[0] === evId);
     const base = M.qualifies(gs.level, ev[2]) ? gs.where : 'pulse';

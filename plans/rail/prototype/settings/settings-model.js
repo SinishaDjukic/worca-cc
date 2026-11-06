@@ -8,9 +8,9 @@
 //   - Change… opens a Dialog with Fields (`edit`). A reset of many rows sits in its section's head and confirms.
 //   - Names follow Small rules › Names: the thing, 1–3 words, one thing one name. Theme, Interface mode and going away
 //     live in the profile menu only.
-// A row: { name, help, min, flag, when(sv), chip, say: 'words, {key} where a picker or a value sits, **strong**, `code`',
-//   picks: { key: { value, options: [[id, text, help]], tip, right } }, vals: { key: string | (sv) => string },
-//   sw: { key | flag, on, why, locked }, acts: [action], more: [rows], moreList: [records] }.
+// A row: { name, help, min, flag, when(sv), chip, say: 'words, {key} where a picker or a value sits, **strong**, `code`' or (sv) → those words,
+//   picks: { key: { value, options: [[id, text, help, off]] or (sv) → them, tip, right, then(sv) } }, vals: { key: string | (sv) => string },
+//   sw: { key | flag, on, why, locked, off(sv) → why }, acts: [action], more: [rows], moreList: [records], foldLabel }.
 // An action: { label, help, min, when(sv), off(sv) → why, read, go | edit | confirm | copy | do(sv) | page | click | say }.
 // A record: { title, meta, live(sv), detail, mark, fig, chip, sw, when(sv), menu: [labels or { text, off, help }] | (rec, sv) → them, quick: [labels on the row's end],
 //   openMin, on: { label: (rec, x) → toast }, open: (rec, x) → toast }; a row opens only what it does not already show; a ⋯ with one item is a button.
@@ -77,15 +77,15 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
 
   // ---- Labs: the registry's flags (src/shared/flags/registry.mjs), but its Flags demo ----
   const FLAGS = [
-    { key: 'commandSummaries', name: 'Command summaries', stage: 'Beta', on: true, say: 'Commands in Chat show as one line saying what they do', why: 'Adds Chat › Summaries' },
+    { key: 'commandSummaries', name: 'Command summaries', stage: 'Beta', on: true, say: 'Commands in Chat show as one line saying what they do', why: 'Adds Chat › Summaries, which needs Advanced' },
     { key: 'runLabels', name: 'Run labels', stage: 'Experimental', on: false, say: 'Free-word labels on runs, with a Label filter on the Runs list', why: 'Adds Settings › Labels and labels on runs' },
     { key: 'smartRunNaming', name: 'Smart run naming', stage: 'Experimental', on: false, say: 'A quick model suggests the run title and a branch name as you type', why: 'Adds Runs › Naming' },
     { key: 'requirements', name: 'Requirements', stage: 'Experimental', on: false, say: 'Turn an idea into a testable spec through a short interview, before any run', why: 'Adds Requirements to the sidebar' },
-    { key: 'runTelemetry', name: 'Run telemetry', stage: 'Experimental', on: false, say: 'Runs record context size, tokens and timing of every model call', locked: 'Locked by WORCA_FLAGS' },
-    { key: 'gitAutomations', name: 'Git event automations', stage: 'Experimental', on: false, say: 'Start a workflow when an issue or a pull request is opened', why: 'Adds Settings › Automations' },
-    { key: 'sessionGroups', name: 'One session', stage: 'Experimental', on: false, say: 'Run 2–4 steps in a row as one session' },
-    { key: 'ticketUpdates', name: 'Ticket updates', stage: 'Experimental', on: false, say: 'A finished run moves its ticket, by a rule per tracker project', why: 'Adds Plugins › Ticket updates' },
-    { key: 'shapeRequirements', name: 'Requirements first', stage: 'Experimental', on: false, say: 'A medium or large Shaper task agrees keyed requirements before the plan' },
+    { key: 'runTelemetry', name: 'Run telemetry', stage: 'Experimental', on: false, say: 'Runs record context size, tokens and timing of every model call', why: 'Adds these numbers to a run\'s log', locked: 'Locked by WORCA_FLAGS' },
+    { key: 'gitAutomations', name: 'Git event automations', stage: 'Experimental', on: false, say: 'Start a workflow when an issue or a pull request is opened', why: 'Adds Settings › Automations, which needs Advanced' },
+    { key: 'sessionGroups', name: 'Shared session', stage: 'Experimental', on: false, say: 'Run 2 to 4 steps in a row in one agent session, so they share what they learned', why: 'Changes how a workflow\'s steps run' },
+    { key: 'ticketUpdates', name: 'Ticket updates', stage: 'Experimental', on: false, say: 'A finished run moves its ticket, by a rule per tracker project', why: 'Adds Plugins › Ticket updates, which needs Advanced' },
+    { key: 'shapeRequirements', name: 'Requirements first', stage: 'Experimental', on: false, say: 'A medium or large Shaper task first agrees what must be true, then plans', why: 'Adds a step to Shaper' },
   ];
   const flagsChanged = () => FLAGS.filter((f) => !f.locked && window.RailUI.prefs.flag(f.key) !== f.on);
 
@@ -103,10 +103,11 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
   // ---- General › About: what `Check now`, `Update` and `Choose version…` do ----
   const cmd = (sv) => `npm install -g @worca/app@${sv.upd === 'failed' || sv.upd === 'available' ? sv.latest : sv.ver}`;
   const short = (v) => v.replace(/\.0$/, '');   // 1.20.0 reads 1.20
-  const updWords = (sv) => ({ latest: 'Up to date', available: `New version: ${short(sv.latest)}`, failed: `Could not update to ${short(sv.latest)}`, back: `An older version; ${short(sv.latest)} is the latest` }[sv.upd]);
+  const updateFailed = (sv) => window.RailUI.failureOf(`Update to ${short(sv.latest)}`, 'npm could not write to the install folder');
+  const updWords = (sv) => ({ latest: 'Up to date', available: `New version: ${short(sv.latest)}`, failed: updateFailed(sv).title, back: `An older version; ${short(sv.latest)} is the latest` }[sv.upd]);
   const outdated = (sv) => sv.upd === 'available' || sv.upd === 'failed' || sv.upd === 'back';
   const canUpdate = (sv) => sv.upd === 'available' || sv.upd === 'back';
-  const VERSIONS = O(['1.20.0', '1.20.0, the latest'], ['1.19.0', '1.19.0'], ['1.18.2', '1.18.2'], ['1.17.0', '1.17.0']);
+  const VERSIONS = O(['1.20.0', '1.20, the latest'], ['1.19.0', '1.19'], ['1.18.2', '1.18.2'], ['1.17.0', '1.17']);
 
   // ---- General › Setup assistant: one Dialog, one step per screen (docs/rail/forms.md). No workspace walkthrough. ----
   const setup = () => ({ title: 'Setup assistant', yes: 'Apply',
@@ -158,33 +159,37 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
     opencode: [O(['local-llama', 'local-llama']), O('minimal', 'low', 'medium', 'high', 'max'), {}],
     qwen: [O(['qwen-max', 'Qwen Max']), O('low', 'medium', 'high', 'xhigh', 'max'), {}],
   };
-  const NONE = ['', "each job's own default"];
+  const NONE = ['', 'the default', "Each job's own default"];
   const roleKey = (e, r, what) => `role_${e}_${r}_${what}`;
-  const roleRows = (e) => ROLES.map(([r, name, help]) => {
-    const [models, efforts, set] = ENGINE_MODELS[e];
-    return { name, help, say: efforts ? `{${roleKey(e, r, 'm')}} at {${roleKey(e, r, 'e')}} effort` : `{${roleKey(e, r, 'm')}}`,
-      picks: { [roleKey(e, r, 'm')]: P(set[r] || '', [NONE, ...models], help), ...(efforts ? { [roleKey(e, r, 'e')]: P(efforts.some((x) => x[0] === 'medium') ? 'medium' : efforts[0][0], efforts, 'Its effort', true) } : {}) } };
-  });
-  const roleLive = (e) => (sv) => {
-    const names = ROLES.map(([r, n]) => { const v = sv[roleKey(e, r, 'm')] ?? ENGINE_MODELS[e][2][r] ?? ''; return v ? `${n}: ${(ENGINE_MODELS[e][0].find((x) => x[0] === v) || [v, v])[1]}` : ''; }).filter(Boolean);
-    return names.length ? names.join(' · ') : "No roles set: each job uses its own default";
+  // An engine's roles: one sentence, its choices in it. Clearing a role is picking the default.
+  const ROLE_WORDS = { deep: 'Plans and reviews on', every: 'Writes code on', quick: 'Quick jobs on' };
+  const roleRow = ([e, label]) => {
+    const [models, efforts, set] = ENGINE_MODELS[e], picks = {};
+    for (const [r, , help] of ROLES) {
+      picks[roleKey(e, r, 'm')] = P(set[r] || '', [NONE, ...models], help);
+      if (efforts) picks[roleKey(e, r, 'e')] = P(efforts.some((x) => x[0] === 'medium') ? 'medium' : efforts[0][0], efforts, 'Its effort');
+    }
+    return { name: label.replace(' (beta)', ''), help: e === 'claude' || e === 'codex' ? 'Steps, Chat and helper jobs fall back to these. A team policy can also set them' : 'Steps and Chat fall back to these. Helper jobs run on Claude or Codex', picks,
+      say: (sv) => ROLES.map(([r]) => `${ROLE_WORDS[r]} {${roleKey(e, r, 'm')}}${efforts && sv[roleKey(e, r, 'm')] ? ` at {${roleKey(e, r, 'e')}}` : ''}`).join('; ') };
   };
-  const roleRecord = ([e, label]) => ({ title: label.replace(' (beta)', ''), meta: 'Deep thinking, Everyday coding, Quick jobs', live: roleLive(e),
-    open: (r, x) => x.dialog({ title: `Roles on ${r.title}`, view: true, yes: 'Done', note: e === 'claude' || e === 'codex' ? 'Steps, Chat and helper jobs fall back to these. A team policy can also set them.' : 'Steps and Chat fall back to these. Helper jobs run on Claude or Codex.', rows: roleRows(e) }), menu: ['Clear'],
-    on: { Clear: (r, x) => { ROLES.forEach(([k]) => { x.sv[roleKey(e, k, 'm')] = ''; }); return `Roles on ${r.title}: cleared`; } } });
+  const roleName = (sv, r) => pickText([NONE, ...MODEL], sv[roleKey('claude', r, 'm')]);
 
-  // A step or a helper job: a row that follows its role until it is overridden.
   // A job runs on its role's model, or on one picked here: one sentence per job, its choice in the sentence. Clearing is
-  // picking its role again, so there is nothing else to learn.
+  // picking its role again, so there is nothing else to learn. What it offers follows the engine New run starts on; a
+  // helper job runs on Claude or Codex.
   const slot = (title, role, o = {}) => ({ title, role, factory: o.factory || '', detail: o.detail || '' });
+  const jobEngine = (kind, sv) => (kind === 'jobHelp' && sv.eng !== 'codex' ? 'claude' : sv.eng);
+  const jobOptions = (j, kind) => (sv) => { const e = jobEngine(kind, sv), factory = e === 'claude' ? j.factory : '';
+    return [...(factory ? [[`model:${factory}`, `${factory} (default)`, 'What Worca ships for this job']] : []), ['follows', `Follows ${j.role}`, `Follows ${j.role} in Roles`], ...ENGINE_MODELS[e][0].filter(([, x]) => x !== factory).map(([, x]) => [`model:${x}`, x])]; };
   const jobRows = (list, kind) => list.map((j, i) => {
-    const key = kind + i, followsId = 'follows';
-    const start = j.factory ? `model:${j.factory}` : followsId;
+    const key = kind + i, start = j.factory ? `model:${j.factory}` : 'follows';
     return { name: j.title, help: j.detail, say: '{' + key + '}',
-      picks: { [key]: P(start, [...(j.factory ? [[`model:${j.factory}`, `${j.factory} (default)`, 'What Worca ships for this job']] : []), [followsId, `Follows ${j.role}`, `Follows ${j.role} in Roles`], ...MODEL.filter(([, x]) => x !== j.factory).map(([, x]) => [`model:${x}`, x])], j.detail) },
-      acts: [{ label: 'Test', help: 'Sends one tiny prompt to this model', when: (sv) => sv[key] !== followsId, do: (sv) => (j.factory && sv[key] === start && !sv.claudeIn ? `${j.title}: sign in to Claude Code or pick a model` : `${j.title}: ${String(sv[key]).replace('model:', '')} answered in 1.2s`) }] };
+      picks: { [key]: P(start, jobOptions(j, kind), j.detail) },
+      acts: [{ label: 'Test', help: 'Sends one tiny prompt to this model', when: (sv) => sv[key] !== 'follows', do: (sv) => (j.factory && sv[key] === start && !sv.claudeIn ? `${j.title}: sign in to Claude Code or pick a model` : `${j.title}: ${String(sv[key]).replace('model:', '')} answered in 1.2s`) }] };
   });
   const jobsSet = (list, kind, sv) => list.filter((_, i) => sv[kind + i] !== 'follows').length;
+  // Another engine: a job's own model that it does not offer goes back to its role, and the toast says how many.
+  const engineChanged = (sv) => { let n = 0; for (const [list, kind] of [[STEPS, 'jobStep'], [HELPERS, 'jobHelp']]) list.forEach((j, i) => { const k = kind + i; if (!jobOptions(j, kind)(sv).some((o) => o[0] === sv[k])) { sv[k] = 'follows'; n += 1; } }); return n ? `${plural(n, 'job')} back to its role` : ''; };
   const HELPERS = [
     slot('Titles', 'Quick jobs', { detail: 'Writes the short title every run and chat gets.' }),
     slot('Auto workflow classifier', 'Everyday coding', { detail: 'Reads an Auto run\'s task and picks the workflow it runs.' }),
@@ -196,26 +201,29 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
     slot('Command summaries', 'Quick jobs', { detail: 'Writes the one-line summary of a chat command.' }),
     slot('Workspace scan', 'Everyday coding', { detail: 'Runs the scan that maps how member projects connect.' }),
     slot('Requirements interview', 'Everyday coding', { detail: 'Runs the interview rounds on the Requirements page.' }),
-    slot('Second-opinion reviewer', 'Deep thinking', { factory: 'Opus 5.5 · medium', detail: 'The one review that runs on another model than its step (Shaper\'s Product reviewer).' }),
+    slot('Second-opinion reviewer', 'Deep thinking', { factory: 'Opus 5.5', detail: 'The one review that runs on another model than its step (Shaper\'s Product reviewer), at medium effort.' }),
   ];
   const STEPS = ['Plan', 'Plan review', 'Implement', 'Review', 'Fix'].map((t, i) => slot(t, i === 2 || i === 4 ? 'Everyday coding' : 'Deep thinking'));
 
   // ---- Chat › Channels: a chat plugin's channel, with what stops it working ----
-  const channel = (title, key, o) => ({ title, sw: { key, on: o.on }, meta: o.meta, chip: (sv) => o.state(sv), mark: o.mark, warned: !!o.warn,
-    menu: (r) => (r.warned ? ['Test', 'Allow chat', 'Manage'] : ['Test', 'Manage']),
+  // Its switch and state live here; Plugins installs and sets it up. Everything reads channelState.
+  const channel = (title, key, o) => ({ title, sw: { key, on: o.on, off: (sv) => (sv.chToken[title] ? '' : 'Set it up in Plugins first') }, meta: o.meta, chip: (sv) => channelState(sv, title, key), when: (sv) => installed(sv, title),
+    live: (sv) => (!sv.chToken[title] ? 'Needs a bot token: set it up in Plugins' : o.warn && !sv.chAllowed[title] ? o.warn : o.meta),
+    mark: (sv) => (sv.chToken[title] && o.warn && !sv.chAllowed[title] ? 'is-amber' : ''),
+    menu: (r, sv) => (!sv.chToken[title] ? ['Set up'] : [sv[key] ? 'Test' : { text: 'Test', off: true, help: 'Turn it on to send a test' }, ...(o.warn && !sv.chAllowed[title] ? ['Allow chat'] : [])]),
     on: {
-      Test: (r) => (o.state() === 'Not set up' ? `Could not send: ${title} needs a bot token` : `Test sent to ${title}`),
-      'Allow chat': (r, x) => x.dialog({ title: `Allow a chat on ${title}`, yes: 'Allow', fields: [{ key: 'chat', label: 'Chat id', value: o.chatId || '', hint: 'Replies like /approve from this chat count' }], then: (v) => { r.warned = false; r.mark = ''; r.meta = o.fixed; return `Chat ${v.chat} can answer on ${title}`; } }),
-      Manage: (r, x) => x.go('plugins'),
+      Test: () => `Test sent to ${title}`,
+      'Set up': (r, x) => x.go('plugins'),
+      'Allow chat': (r, x) => x.dialog({ title: `Allow a chat on ${title}`, yes: 'Allow', fields: [{ key: 'chat', label: 'Chat id', value: o.chatId || '', hint: 'Replies like /approve from this chat count' }], check: (v) => (v.chat.trim() ? '' : 'It needs a chat id'), then: (v, sv) => { sv.chAllowed = { ...sv.chAllowed, [title]: v.chat }; return `Chat ${v.chat} can answer on ${title}`; } }),
     } });
 
   // ---- Plugins: the trackers, each with its own Ticket updates ----
   const MOVES = window.RailUI?.TRACKER_MOVES || { jira: [] };   // the library's; the sweeps read this file for its section ids, without it
   const ruleWords = (m) => (m === 'none' ? 'Don\'t move' : m === 'done' ? 'Any Done status' : `Moves to ${m}`);
-  const rule = (title, move, gone) => ({ title, move, mark: gone ? 'is-amber' : '',
+  const rule = (title, move, gone) => ({ title, move, gone, mark: gone ? 'is-amber' : '',
     meta: gone ? `${title} has no status named ${gone} any more: pick another; until then a run leaves its tickets where they are` : ruleWords(move),
     menu: ['Change rule', 'Remove'],
-    on: { 'Change rule': (r, x) => x.dialog({ title: `Rule for ${r.title}`, yes: 'Save', fields: [{ key: 'to', label: 'Move its ticket', value: r.move, options: [['none', 'Don\'t move'], ['done', 'Any Done status'], ...MOVES[r.tracker].map((m) => [m, m])] }], then: (v) => { r.move = v.to; r.meta = ruleWords(v.to); r.mark = ''; return `${r.title}: ${r.meta}`; } }) } });
+    on: { 'Change rule': (r, x) => x.dialog({ title: `Rule for ${r.title}`, yes: 'Save', fields: [{ key: 'to', label: 'Move its ticket', value: r.move, options: [['none', 'Don\'t move'], ['done', 'Any Done status'], ...MOVES[r.tracker].filter((m) => m !== r.gone).map((m) => [m, m])] }], then: (v) => { r.move = v.to; r.gone = ''; r.meta = ruleWords(v.to); r.mark = ''; return `${r.title}: ${r.meta}`; } }) } });
 
   const plugin = (title, meta, key, on, o = {}) => ({ title, meta, sw: { key, on }, mark: o.mark, menu: o.menu || ['Settings', 'Uninstall'], when: (sv) => installed(sv, title),
     on: {
@@ -273,8 +281,8 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
       { title: 'Setup', rows: [
         { name: 'Setup assistant', say: 'Checks this machine, the network, model access and your limits', acts: [{ label: 'Run setup', edit: setup }] },
         { name: 'Getting started', say: 'The first nine things to do, and the guided tour{gsWords}', vals: { gsWords: (sv) => (sv.gsShown ? ': back in the sidebar' : '') }, acts: [{ label: 'Show again', off: (sv) => (sv.gsShown ? 'The checklist is already showing' : ''), do: (sv) => { sv.gsShown = true; return 'The Getting started checklist is back in the sidebar'; } }] },
-        { name: 'Browser extension', help: 'Works with a local Worca only', say: 'Add Worca to {browser}', picks: { browser: P('chrome', O(['chrome', 'Chrome'], ['edge', 'Edge'], ['firefox', 'Firefox']), 'Which browser to install it in') },
-          acts: [{ label: 'Install', edit: (sv) => ({ title: `Install in ${{ chrome: 'Chrome', edge: 'Edge', firefox: 'Firefox' }[sv.browser]}`, view: true, yes: 'Close', note: 'Load the folder `~/.worca-cc/extension` in the browser\'s extensions page, or take the zip from the latest release. It pairs on first use.' }) }],
+        { name: 'Browser extension', help: 'Works with a local Worca only', say: 'Add Worca to {browser}', picks: { browser: P('chrome', O(['chrome', 'Chrome'], ['edge', 'Edge'], ['firefox', 'Firefox']), 'Which browser to install it in') }, foldLabel: 'Paired browsers',
+          acts: [{ label: 'How to install', edit: (sv) => ({ title: `Install in ${{ chrome: 'Chrome', edge: 'Edge', firefox: 'Firefox' }[sv.browser]}`, view: true, yes: 'Close', note: 'Load the folder `~/.worca-cc/extension` in the browser\'s extensions page, or take the zip from the latest release. It pairs on first use.' }) }],
           moreList: [
             { title: 'MacBook · Chrome', meta: 'Paired 2 Oct · last used today', menu: ['Revoke'] },
             { title: 'Work PC · Edge', meta: 'Paired 14 Sep · not used yet', menu: ['Revoke'] },
@@ -282,29 +290,26 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
       ] },
       { title: 'Storage', min: 'advanced', rows: [
         { name: 'Folders', say: 'Data lives in `{root}`; new projects go in `{projects}`', vals: { root: '~/.worca-cc', projects: '~/src' },
-          acts: [edit('Change the folders', [{ key: 'root', label: 'Worca folder', hint: 'Does not move data: Worca starts fresh here, and the old folder stays as it was' }, { key: 'projects', label: 'Projects folder', hint: 'Its CLAUDE.md, skills and .mcp.json reach every agent' }], { done: 'Folders saved; new runs use them' })],
-          more: [{ name: 'Defaults', say: 'Back to `~/.worca-cc` and `~/src`', acts: [{ label: 'Reset', do: (sv) => { sv.root = '~/.worca-cc'; sv.projects = '~/src'; return 'Folders: back to their defaults'; } }] }] },
+          acts: [edit('Change the folders', [{ key: 'root', label: 'Worca folder', hint: 'Does not move data: Worca starts fresh here, and the old folder stays as it was' }, { key: 'projects', label: 'Projects folder', hint: 'Its CLAUDE.md, skills and .mcp.json reach every agent' }, { key: 'useDefaults', button: 'Use the defaults', hint: 'Fills in ~/.worca-cc and ~/src; Save applies them', when: (v) => v.root !== '~/.worca-cc' || v.projects !== '~/src', do: (v) => { v.root = '~/.worca-cc'; v.projects = '~/src'; return 'Save to start fresh in ~/.worca-cc'; } }], { done: 'Folders saved; new runs use them', check: (v) => (v.root.trim() && v.projects.trim() ? '' : 'A folder needs a path') })] },
         { name: 'Diagnostics', min: 'expert', say: 'Log each agent start in the run log: its binary, arguments and routing, never a credential. A set `WORCA_DEBUG_SPAWN` overrides this', sw: { key: 'spawnLog', on: false, why: 'Applies to runs started here and from the CLI, with no restart' } },
       ] },
-      { title: 'Credentials', meta: 'Shown when Worca runs with your team\'s credential broker.', rows: [
-        { name: 'Model keys', say: 'Claude and OpenAI keys come from **the broker**', acts: [{ label: 'Manage keys', say: 'Opens your team\'s key page in a new tab' }] },
+      { title: 'Credentials', rows: [
+        { name: 'Model keys', help: 'With a team credential broker, keys come from it and this opens its key page', say: 'Each engine signs in by itself, in Models › Sign-ins', acts: [{ label: 'Open Models', min: 'expert', go: 'models', help: 'Models › Sign-ins' }] },
         { name: 'GitHub', say: 'Signed in as **@emil-angelov**' },
       ] },
       { title: 'About', rows: [
         { name: 'Version', help: 'From a source checkout this says Source build and offers no Update', say: '**{verNow}** · {updNow}', vals: { verNow: (sv) => short(sv.ver), updNow: updWords },
           acts: [
-            { label: 'Update', kind: '', when: canUpdate, do: (sv) => { if (!sv.updTried) { sv.updTried = true; sv.upd = 'failed'; sv.__open = 'more:general/About/Version'; return ''; } sv.ver = sv.latest; sv.upd = 'latest'; return `Worca ${short(sv.ver)} is running`; } },
+            { label: (sv) => (sv.upd === 'failed' ? 'Try again' : 'Update'), id: 'update', when: (sv) => canUpdate(sv) || sv.upd === 'failed', do: (sv) => { if (!sv.updTried) { sv.updTried = true; sv.upd = 'failed'; sv.__open = 'more:general/About/Version'; return ''; } sv.ver = sv.latest; sv.upd = 'latest'; return `Worca ${short(sv.ver)} is running`; } },
             { label: 'Check now', when: (sv) => sv.upd === 'latest', do: (sv) => { if (sv.ver === '1.20.0') return 'You have the latest version'; sv.latest = '1.20.0'; sv.upd = 'available'; return `New version: ${short(sv.latest)}`; } },
           ],
           more: [
-            { name: 'Other versions', say: 'Move to any released version, older ones too', acts: [{ label: 'Choose version…', edit: (sv) => ({ title: 'Choose a version', yes: 'Install it', fields: [{ key: 'to', label: 'Version', value: sv.ver, options: VERSIONS }], then: (v) => { if (v.to === sv.ver) return `Already on ${v.to}`; sv.latest = '1.20.0'; sv.ver = v.to; sv.upd = v.to === sv.latest ? 'latest' : 'back'; return `Worca ${v.to} is running`; } }) }] },
+            { name: 'Other versions', say: 'Move to any released version, older ones too', acts: [{ label: 'Choose version…', edit: (sv) => ({ title: 'Choose a version', yes: 'Install it', fields: [{ key: 'to', label: 'Version', value: sv.ver, options: VERSIONS }], check: (v) => (v.to === sv.ver ? `Already on ${short(sv.ver)}` : ''), then: (v) => { sv.latest = '1.20.0'; sv.ver = v.to; sv.upd = v.to === sv.latest ? 'latest' : 'back'; return `Worca ${short(v.to)} is running`; } }) }] },
             { name: 'Updates', say: 'Look for new versions of Worca once a day', sw: { key: 'updates', on: true, why: 'Nothing installs by itself' } },
             { name: 'Release notes', say: '`docs.worca.dev/changelog`', acts: [opens('the changelog')] },
             { name: 'Command', when: outdated, say: 'Or from a terminal: `{updCmd}`', vals: { updCmd: cmd }, acts: [{ label: 'Copy command', copy: cmd }] },
-            { name: 'Last update', when: (sv) => sv.upd === 'failed', say: 'Could not update to **{latestNow}**: npm could not write to the install folder. Update from a terminal instead', vals: { latestNow: (sv) => sv.latest }, acts: [{ label: 'Dismiss', do: (sv) => { sv.upd = 'available'; return ''; } }] },
+            { name: 'Last update', when: (sv) => sv.upd === 'failed', say: (sv) => { const f = updateFailed(sv); return `${f.title}. ${f.detail} Update from a terminal instead`; }, acts: [{ label: 'Dismiss', do: (sv) => { sv.upd = 'available'; return ''; } }] },
             { name: 'npm output', when: (sv) => sv.upd === 'failed', say: 'The last lines npm wrote', acts: [{ label: 'View', edit: { title: 'npm output', view: true, yes: 'Close', note: '`npm ERR! code EACCES` · `npm ERR! syscall rename` · `npm ERR! path /usr/local/lib/node_modules/@worca/app`' } }] },
-            { name: "What's new", when: outdated, say: 'What changed in **{latestShown}**', vals: { latestShown: (sv) => sv.latest }, acts: [{ label: 'Open', id: 'whats-new', say: 'Opens the 1.20.0 changelog page in a new tab' }] },
-            { name: 'Changes', help: 'Changes since this version', when: outdated, say: 'Changes since this version, on GitHub', acts: [{ label: 'Compare', say: 'Opens the compare view on GitHub in a new tab' }] },
             { name: 'Repository', say: '`github.com/SinishaDjukic/worca-cc`', acts: [opens('the repository')] },
             { name: 'Report a bug', say: 'Opens a new issue, labelled bug', acts: [{ label: 'Open', id: 'bug', say: 'Opens a new bug issue on GitHub in a new tab' }] },
             { name: 'Suggest an improvement', say: 'Opens a new issue, labelled enhancement', acts: [{ label: 'Open', id: 'idea', say: 'Opens a new enhancement issue on GitHub in a new tab' }] },
@@ -314,6 +319,12 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
 
     team: { min: 'advanced', title: 'Team policy', meta: 'What your team requires of every Worca that follows its policy.',
       lock: { level: 'expert', why: 'Expert mode changes the policy; here you can read it' }, sections: [
+      { title: 'Not published', when: (sv) => pending(sv).length > 0, meta: 'Nothing reaches your team until you publish: one commit on the worca-policy branch, read by every teammate\'s Worca.', actions: [
+        { label: 'Cancel editing', do: (sv) => { Object.assign(sv, sv.pol); return 'Changes dropped; the policy is as published'; } },
+        { label: 'Publish to worca-policy', id: 'publish', confirm: (sv) => ({ text: `Publish ${plural(pending(sv).length, 'change')} to worca-policy? Every teammate's Worca reads it at its next run.`, yes: 'Publish', then: (s) => { s.pol = Object.fromEntries(Object.keys(POLICY).map((k) => [k, s[k]])); return 'Policy published · commit 7a1c3e2'; } }) },
+      ], rows: [
+        { name: 'Changes', say: (sv) => pending(sv).map((k) => POLICY_WORDS[k](sv[k])).join(' · '), acts: [{ label: 'Copy for PR', help: 'The whole policy as JSON, for a pull request against worca-policy', copy: (sv) => JSON.stringify(Object.fromEntries(Object.keys(POLICY).map((k) => [k, sv[k]])), null, 2), copied: 'Copied: paste it into .worca-policy/policy.json on a pull request' }] },
+      ] },
       { title: 'Effective policy', meta: 'What the next run on this machine will use.', table: { label: 'Effective policy', columns: [{ id: 'f', label: 'Field' }, { id: 't', label: 'Team', narrow: false }, { id: 'k', label: 'Kind', narrow: false }, { id: 'y', label: 'Yours', narrow: false }, { id: 'e', label: 'Effective' }],
         rows: (sv) => [
           { f: 'Per run limit', t: usd(sv.pol.capRun), k: 'Pauses', y: usd(sv.perRun), e: usd(sv.perRun ? Math.min(+sv.perRun, +sv.pol.capRun) : sv.pol.capRun) },
@@ -381,61 +392,62 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
         ], moreList: COST_TAGS },
       ] },
       { title: 'Starting', rows: [
-        { name: 'Naming', flag: 'smartRunNaming', say: 'Suggest a title and a branch name as you type', sw: { key: 'naming', on: true, why: 'Labs › Smart run naming' }, more: [
-          { name: 'Suggestions', say: 'Suggest {what} for a new run, {when}', picks: { what: P('both', O(['both', 'a title and a branch name'], ['title', 'a title'], ['branch', 'a branch name']), 'What the model suggests'), when: P('typing', O(['typing', 'while you type the task'], ['ask', 'when you press Suggest']), 'When it suggests', true) } },
+        { name: 'Naming', flag: 'smartRunNaming', say: (sv) => (sv.naming ? `Suggest ${pickText(SUGGEST, sv.what)} ${pickText(SUGGEST_WHEN, sv.when)}` : 'You name each run; nothing is suggested'), sw: { key: 'naming', on: true, why: 'Labs › Smart run naming' }, more: [
+          { name: 'Suggestions', say: 'Suggest {what} for a new run, {when}', picks: { what: P('both', SUGGEST, 'What the model suggests'), when: P('typing', SUGGEST_WHEN, 'When it suggests', true) } },
           { name: 'Branch', help: 'A project can override the pattern and the types in its own Settings', say: 'Branches are named `{pattern}`, the type one of {types}', vals: { pattern: '{type}/{slug}', types: 'feat, fix, chore, docs, refactor, test' }, acts: [edit('Change the branch pattern', [{ key: 'pattern', label: 'Pattern', hint: '{type}, {slug}, {ticket} and {id} are filled in' }, { key: 'types', label: 'Types', hint: 'The model picks one of these' }], { done: 'Branch pattern saved' })] },
           { name: 'Add run id', say: 'Append the short run id when the pattern has no `{id}`', sw: { key: 'runId', on: false } },
-          { name: 'Model', say: 'Uses the **Run naming** model, about $0.001 a suggestion', acts: [{ label: 'Open Models', go: 'models', help: 'Models › Helper jobs' }] },
+          { name: 'Model', say: 'Uses the **Run naming** model, about $0.001 a suggestion', acts: [{ label: 'Open Models', min: 'expert', go: 'models', help: 'Models › Helper jobs' }] },
           { name: 'Defaults', say: 'Back to `{type}/{slug}` and the six types', acts: [{ label: 'Use defaults', do: (sv) => { sv.pattern = '{type}/{slug}'; sv.types = 'feat, fix, chore, docs, refactor, test'; sv.runId = false; return 'Naming: back to its defaults'; } }] },
         ] },
-        { name: 'Sync', min: 'advanced', help: GIT_TIP, say: 'Bring the source branch up to date first', sw: { key: 'sync', on: true }, more: [
+        { name: 'Sync', min: 'advanced', help: GIT_TIP, say: (sv) => (sv.sync ? 'Bring the source branch up to date first' : 'A run starts from the branch as it is'), sw: { key: 'sync', on: true }, more: [
           { name: 'Remote', say: 'Sync from {remote}; if the branch has diverged, {div}', picks: { remote: P('origin', O('origin', 'upstream'), 'The remote to sync from'), div: P('ask', O(['ask', 'ask me'], ['origin', 'start from origin'], ['stop', 'don\'t run']), 'What a run does when the branch has diverged', true) } },
-          { name: 'Background checks', say: 'Check remotes {bg}', picks: { bg: P('10', O(['off', 'never'], ['5', 'every 5 minutes'], ['10', 'every 10 minutes'], ['30', 'every 30 minutes'], ['60', 'every hour']), 'How often Worca looks for new commits') } },
+          { name: 'Background checks', say: '{bg}', picks: { bg: P('10', O(['off', 'Never checks remotes'], ['5', 'Checks remotes every 5 minutes'], ['10', 'Checks remotes every 10 minutes'], ['30', 'Checks remotes every 30 minutes'], ['60', 'Checks remotes every hour']), 'How often Worca looks for new commits') } },
         ] },
         { name: 'Pull requests', help: GIT_TIP, say: (sv) => (sv.prDraft ? 'Draft the description with AI as the PR opens' : 'You write the description when the PR opens'), sw: { key: 'prDraft', on: false }, more: [
           { name: 'Create a PR', min: 'advanced', say: 'A finished run follows the team default: **{prNow}**', vals: { prNow: (sv) => ({ none: 'no PR', draft: 'a draft PR', ready: 'a PR ready for review' }[sv.pol.prOpen]) }, acts: [{ label: 'Open', id: 'team', go: 'team', help: 'Settings › Team policy › Defaults; a project or New run can change it' }] },
         ] },
-        { name: 'Schedules', min: 'advanced', say: 'A missed start still runs, up to **{lateNow}** late', vals: { lateNow: (sv) => ({ '30m': '30 minutes', '1h': '1 hour', '6h': '6 hours', '24h': '24 hours' }[sv.lateMax]) }, more: [
-          { name: 'Missed starts', say: 'When Worca was not running, {late} up to {lateMax} late', picks: { late: P('late', O(['late', 'start it'], ['skip', 'skip it']), 'What a scheduled run does when its time passed'), lateMax: P('6h', O(['30m', '30 minutes'], ['1h', '1 hour'], ['6h', '6 hours'], ['24h', '24 hours']), 'How late it may still start', true) } },
+        { name: 'Schedules', min: 'advanced', say: (sv) => `${sv.late === 'skip' ? 'A missed start is skipped' : `A missed start still runs, up to **${pickText(LATE, sv.lateMax)}** late`}; a schedule pauses after **${sv.fails} failures** in a row`, more: [
+          { name: 'Missed starts', say: (sv) => (sv.late === 'skip' ? 'When Worca was not running, {late}' : 'When Worca was not running, {late} up to {lateMax} late'), picks: { late: P('late', O(['late', 'start it'], ['skip', 'skip it']), 'What a scheduled run does when its time passed'), lateMax: P('6h', LATE, 'How late it may still start', true) } },
           { name: 'Failures', say: 'Pause a repeating schedule after {fails} failures in a row', picks: { fails: P('3', O('2', '3', '5', '10'), 'Failures in a row before it pauses') } },
         ] },
       ] },
-      { title: 'Limits', meta: 'Near: the run’s estimate does not fit in what is left of a window; with no estimate, at the warning line.', rows: [
+      { title: 'Limits', meta: 'Near a limit: what is left of a provider\'s usage cannot cover the run\'s estimate; with no estimate, past the warning line.', rows: [
         { name: 'Paused runs', say: 'A run paused at a usage limit {resume}', picks: { resume: P('auto', O(['auto', 'resumes after the reset', 'Worca schedules its resume for 5 minutes after the limit resets'], ['me', 'waits for you', 'It stays paused until you resume it']), 'What a run paused at a usage limit does when the limit resets') } },
       ] },
       { title: 'Away mode', min: 'advanced', meta: 'Going away is the Away switch in your profile menu.', rows: [
-        { name: 'Hours', say: 'Worca answers your runs\' questions from **{awayFrom} to {awayTo}**, {awayZone}', vals: { awayFrom: '22:00', awayTo: '07:00', awayZone: 'Europe/Sofia' }, acts: [edit('Change the away hours', [{ key: 'awayFrom', label: 'From' }, { key: 'awayTo', label: 'To' }, { key: 'awayZone', label: 'Time zone' }], { done: 'Away hours saved' })], more: [
-          { name: 'Runs', say: 'Worca answers on {which}; a marked run is also answered by day after {byDay}', picks: { which: P('marked', O(['marked', 'runs you marked'], ['all', 'every run']), 'Which runs Worca answers on while you are away'), byDay: P('30', O(['never', 'never'], ['15', '15 minutes'], ['30', '30 minutes'], ['60', 'an hour']), 'How long a question waits by day before Worca answers it', true) } },
-          { name: 'Decisions', say: 'It {method}, trusting the agent at {sure} sure with a lead of {lead}', picks: { method: P('mixed', O(['mixed', 'trusts a sure agent, else weighs', 'Trusts the agent when it is sure; otherwise weighs the options'], ['trust', 'always trusts the agent'], ['weigh', 'always weighs the options']), 'How Worca picks an answer'), sure: P('60', O(['50', '50%'], ['60', '60%'], ['70', '70%'], ['80', '80%']), 'How sure the agent must be'), lead: P('25', O(['15', '15 points'], ['25', '25 points'], ['40', '40 points']), 'How far its pick must lead the next one', true) } },
-          { name: 'Priorities', say: 'Matches past decisions **{pPast}** · easy to undo **{pUndo}** · changes least **{pLeast}** · conventions **{pConv}** · cheapest **{pCheap}**', vals: { pPast: '3', pUndo: '3', pLeast: '2', pConv: '2', pCheap: '1' }, acts: [edit('Change the priorities', [{ key: 'pPast', label: 'Matches past decisions', hint: '0 ignores it, 10 decides' }, { key: 'pUndo', label: 'Easy to undo' }, { key: 'pLeast', label: 'Changes the least' }, { key: 'pConv', label: 'Follows the conventions' }, { key: 'pCheap', label: 'Costs the least' }], { done: 'Priorities saved' })] },
-          { name: 'Model', say: '{dmodel} at {deffort} effort', picks: { dmodel: P('run', O(['run', 'the run\'s own model'], ...MODEL), 'The model that weighs the options'), deffort: P('medium', EFFORT, 'Its effort') } },
-          { name: 'Limits', say: 'Pause a run after {answers} answers, and everything at {spent} spent while away', picks: { answers: P('20', O('10', '20', '40'), 'Answers in one run before it pauses'), spent: P('none', O(['none', 'no cap'], ['25', '$25'], ['50', '$50'], ['100', '$100']), 'Spent while away before every run pauses', true) } },
-          { name: 'Review loops', say: 'Allow {extra} extra fix rounds; the team cap is {exceed}', picks: { extra: P('0', O('0', '1', '2', '3'), 'Fix rounds beyond the workflow\'s own'), exceed: P('kept', O(['kept', 'kept'], ['exceed', 'allowed to be exceeded']), 'Whether away answers may go over the team\'s cost cap', true) } },
+        { name: 'Hours', say: 'Worca answers your runs\' questions from **{awayFrom} to {awayTo}**, {awayZone}', vals: { awayFrom: '22:00', awayTo: '07:00', awayZone: 'Europe/Sofia' }, acts: [edit('Change the away hours', [{ key: 'awayFrom', label: 'From', hint: 'A time, such as 22:00' }, { key: 'awayTo', label: 'To' }, { key: 'awayZone', label: 'Time zone' }], { done: 'Away hours saved', check: (v) => { const t = /^([01]\d|2[0-3]):[0-5]\d$/; return !t.test(v.awayFrom) || !t.test(v.awayTo) ? 'A time reads like 22:00' : v.awayZone.trim() ? '' : 'It needs a time zone'; } })], more: [
+          { name: 'Runs', say: 'Worca answers on {which}; by day, a marked run {byDay}', picks: { which: P('marked', O(['marked', 'runs you marked'], ['all', 'every run']), 'Which runs Worca answers on while you are away'), byDay: P('30', O(['never', 'waits for you'], ['15', 'is answered after 15 minutes'], ['30', 'is answered after 30 minutes'], ['60', 'is answered after an hour']), 'How long a question waits by day before Worca answers it', true) } },
+          { name: 'Decisions', say: (sv) => (sv.method === 'mixed' ? 'It {method}. An agent is sure at {sure}, with a lead of {lead}' : 'It {method}'), picks: { method: P('mixed', O(['mixed', 'trusts a sure agent, and otherwise weighs the options', 'Trusts the agent when it is sure; otherwise weighs the options'], ['trust', 'always trusts the agent'], ['weigh', 'always weighs the options']), 'How Worca picks an answer'), sure: P('60', O(['50', '50%'], ['60', '60%'], ['70', '70%'], ['80', '80%']), 'How sure the agent must be'), lead: P('25', O(['15', '15 points'], ['25', '25 points'], ['40', '40 points']), 'How far its pick must lead the next one', true) } },
+          { name: 'Priorities', say: 'Matches past decisions **{pPast}** · easy to undo **{pUndo}** · changes least **{pLeast}** · conventions **{pConv}** · cheapest **{pCheap}**', vals: { pPast: '3', pUndo: '3', pLeast: '2', pConv: '2', pCheap: '1' }, acts: [edit('Change the priorities', [{ key: 'pPast', label: 'Matches past decisions', hint: '0 ignores it, 10 decides' }, { key: 'pUndo', label: 'Easy to undo' }, { key: 'pLeast', label: 'Changes the least' }, { key: 'pConv', label: 'Follows the conventions' }, { key: 'pCheap', label: 'Costs the least' }], { done: 'Priorities saved', check: (v) => (['pPast', 'pUndo', 'pLeast', 'pConv', 'pCheap'].every((k) => /^\d+$/.test(v[k]) && +v[k] <= 10) ? '' : 'A priority is a whole number from 0 to 10') })] },
+          { name: 'Model', say: 'Weighs the options with {dmodel} at {deffort} effort', picks: { dmodel: P('run', O(['run', 'the run\'s own model'], ...MODEL), 'The model that weighs the options'), deffort: P('medium', EFFORT, 'Its effort') } },
+          { name: 'Limits', say: 'Pause a run after {answers} answers; while away, {spent}', picks: { answers: P('20', O('10', '20', '40'), 'Answers in one run before it pauses'), spent: P('none', O(['none', 'spending has no cap'], ['25', 'everything pauses at $25'], ['50', 'everything pauses at $50'], ['100', 'everything pauses at $100']), 'Spent while away before every run pauses', true) } },
+          { name: 'Review loops', say: (sv) => `Allow {extra} extra fix ${+sv.extra === 1 ? 'round' : 'rounds'}; at the team's cap a run {exceed}`, picks: { extra: P('0', O('0', '1', '2', '3'), 'Fix rounds beyond the workflow\'s own'), exceed: P('kept', O(['kept', 'pauses'], ['exceed', 'carries on, and is flagged']), 'Whether away answers may go past the team\'s cost cap', true) } },
           { name: 'Exceptions', say: 'Always waits for you on {awayEx}', vals: { awayEx: 'approving a plan, merging and deleting' }, acts: [edit('Change the exceptions', [{ key: 'awayEx', label: 'Waits for you on', hint: 'Comma-separated' }], { done: 'Exceptions saved' })] },
         ] },
       ] },
       { title: 'Machine', rows: [
-        { name: 'Capacity', min: 'advanced', say: 'Up to **{nNow}** runs at a time; finished runs are kept', vals: { nNow: (sv) => sv.n }, more: [
-          { name: 'Parallel runs', say: 'Up to {n} runs at a time; each tests with {w}', picks: { n: P('3', O('1', '2', '3', '4', '6', '8', '12', '20'), 'More runs wait in line'), w: P('half', O(['half', 'half the cores'], ['1', '1 worker'], ['2', '2 workers'], ['4', '4 workers'], ['8', '8 workers']), 'Test workers per run', true) } },
-          { name: 'Archive', say: 'Archive finished runs after {arch}', picks: { arch: P('never', O(['never', 'never'], ['7', '7 days'], ['30', '30 days'], ['90', '90 days'], ['365', 'a year']), 'Archiving removes the branch, worktree and logs') } },
-          { name: 'Checkouts', help: GIT_TIP, say: 'An action\'s checkout is {keep}; keep at most {coMax}', picks: { keep: P('demand', O(['demand', 're-created when needed'], ['success', 'kept after a successful run'], ['pr', 'kept until the PR closes']), 'When a checkout is removed'), coMax: P('none', O(['none', 'any number'], ['5', '5'], ['10', '10'], ['20', '20']), 'The oldest go first', true) } },
-          { name: 'Ports', say: 'Port variables come from `{portLow}–{portHigh}`', vals: { portLow: '4400', portHigh: '4499' }, acts: [edit('Change the ports', [{ key: 'portLow', label: 'From' }, { key: 'portHigh', label: 'To' }], { done: 'Ports saved' })] },
-          { name: 'Editor', help: `${GIT_TIP}. Actions are off on hosted deployments unless an administrator enables them`, say: 'Opens folders with `{editor}` (found on this machine)', vals: { editor: 'code {folder}' }, acts: [{ label: 'Change…', edit: launcher('editor', 'Editor', O(['code {folder}', 'VS Code'], ['cursor {folder}', 'Cursor'], ['zed {folder}', 'Zed'])) }] },
-          { name: 'Terminal', help: `${GIT_TIP}. Actions are off on hosted deployments unless an administrator enables them`, say: 'Opens shells with `{terminal}` (found on this machine)', vals: { terminal: 'open -a iTerm {folder}' }, acts: [{ label: 'Change…', edit: launcher('terminal', 'Terminal', O(['open -a iTerm {folder}', 'iTerm'], ['open -a Terminal {folder}', 'Terminal'], ['wezterm start --cwd {folder}', 'WezTerm'])) }] },
-          { name: 'Scans', say: 'A workspace scan and a new project agent follow the **Everyday coding** role', acts: [{ label: 'Open Models', go: 'models' }] },
+        { name: 'Capacity', min: 'advanced', say: (sv) => `Up to {n} ${sv.n === '1' ? 'run' : 'runs'} at a time; finished runs ${pickText(ARCHIVE, sv.arch)}`, picks: { n: P('3', O('1', '2', '3', '4', '6', '8', '12', '20'), 'More runs wait in line') }, more: [
+          { name: 'Test workers', say: 'Each run tests with {w}', picks: { w: P('half', O(['half', 'half the cores'], ['1', '1 worker'], ['2', '2 workers'], ['4', '4 workers'], ['8', '8 workers']), 'Test workers per run') } },
+          { name: 'Archive', say: 'Finished runs {arch}', picks: { arch: P('never', ARCHIVE, 'Archiving removes the branch, worktree and logs') } },
+          { name: 'Checkouts', help: GIT_TIP, say: 'An action\'s checkout is {keep}; {coMax}', picks: { keep: P('demand', O(['demand', 're-created when needed'], ['success', 'kept after a successful run'], ['pr', 'kept until the PR closes']), 'When a checkout is removed'), coMax: P('none', O(['none', 'any number are kept'], ['5', 'at most 5 are kept'], ['10', 'at most 10 are kept'], ['20', 'at most 20 are kept']), 'The oldest go first', true) } },
         ] },
-        { name: 'Network', say: '{netWords}; a run waits up to **{waitNow}** offline', vals: { netWords: (sv) => (sv.proxy ? `Through ${sv.proxyHost}:${sv.proxyPort}` : 'A direct connection'), waitNow: (sv) => ({ '30m': '30 minutes', '1h': '1 hour', '4h': '4 hours', '12h': '12 hours', '24h': '24 hours' }[sv.wait]) }, more: [
-          { name: 'Proxy', say: 'Through **{proxyHost}:{proxyPort}**, signing in with {auth}', vals: { proxyHost: 'proxy.corp.example', proxyPort: '8080', proxyLocal: '' },
-            picks: { auth: P('auto', O(['auto', 'NTLMv2'], ['basic', 'Basic', 'Sends the password in cleartext; cannot use a saved login'], ['digest', 'Digest', 'Cannot use a saved login'], ['none', 'no login']), 'How Worca signs in to the proxy') },
-            acts: [{ label: 'Change…', edit: (sv) => ({ title: 'Change the proxy', yes: 'Save and test', fields: [{ key: 'proxyHost', label: 'Host' }, { key: 'proxyPort', label: 'Port' }, { key: 'proxyLocal', label: 'Local port', hint: 'Empty: Worca picks one and keeps it', placeholder: 'Automatic' }, { key: 'proxyTest', button: 'Test', hint: 'A new address must pass a test before it saves', do: (v) => `Reached ${v.proxyHost}:${v.proxyPort}` }], check: (v) => (v.proxyHost.trim() ? '' : 'A proxy needs a host'), done: 'Proxy saved; tested and working' }) }], sw: { key: 'proxy', on: false, why: 'Off: Worca connects directly' } },
-          { name: 'Login', say: '{loginWords}', vals: { loginWords: (sv) => (sv.proxyLogin ? `Saved for ${sv.proxyUser}: the NT hash, never the password` : 'No saved login'), proxyUser: 'CORP\\emil' },
+        { name: 'Tools', min: 'advanced', help: `${GIT_TIP}. Actions are off on hosted deployments unless an administrator enables them`, say: 'Folders open with `{editorNow}`, shells with `{terminalNow}`', vals: { editorNow: (sv) => sv.editor, terminalNow: (sv) => sv.terminal }, more: [
+          { name: 'Ports', say: 'Port variables come from `{portLow}–{portHigh}`', vals: { portLow: '4400', portHigh: '4499' }, acts: [edit('Change the ports', [{ key: 'portLow', label: 'From' }, { key: 'portHigh', label: 'To' }], { done: 'Ports saved', check: (v) => { const ok = (x) => /^\d+$/.test(x) && +x >= 1024 && +x <= 65535; return !ok(v.portLow) || !ok(v.portHigh) ? 'A port is a number from 1024 to 65535' : +v.portLow > +v.portHigh ? 'From must not be above To' : ''; } })] },
+          { name: 'Editor', say: 'Opens folders with `{editor}` (found on this machine)', vals: { editor: 'code {folder}' }, acts: [{ label: 'Change…', edit: launcher('editor', 'Editor', O(['code {folder}', 'VS Code'], ['cursor {folder}', 'Cursor'], ['zed {folder}', 'Zed'])) }] },
+          { name: 'Terminal', say: 'Opens shells with `{terminal}` (found on this machine)', vals: { terminal: 'open -a iTerm {folder}' }, acts: [{ label: 'Change…', edit: launcher('terminal', 'Terminal', O(['open -a iTerm {folder}', 'iTerm'], ['open -a Terminal {folder}', 'Terminal'], ['wezterm start --cwd {folder}', 'WezTerm'])) }] },
+        ] },
+        { name: 'Network', say: (sv) => `${sv.proxy ? `Through ${sv.proxyHost}:${sv.proxyPort}` : 'A direct connection'}; ${sv.netWait ? `a run waits up to **${pickText(WAIT, sv.wait)}** offline` : 'a run fails when offline'}`, more: [
+          { name: 'Proxy', say: (sv) => (!sv.proxy ? 'Off: Worca connects directly. Turn it on to use **{proxyHost}:{proxyPort}**' : sv.auth === 'none' ? 'Through **{proxyHost}:{proxyPort}**, {auth}' : 'Through **{proxyHost}:{proxyPort}**, signing in with {auth}'), vals: { proxyHost: 'proxy.corp.example', proxyPort: '8080', proxyLocal: '' },
+            picks: { auth: P('auto', O(['auto', 'NTLMv2'], ['basic', 'Basic', 'Sends the password in cleartext; cannot use a saved login'], ['digest', 'Digest', 'Cannot use a saved login'], ['none', 'with no login']), 'How Worca signs in to the proxy') },
+            acts: [{ label: 'Change…', edit: (sv) => ({ title: 'Change the proxy', yes: 'Save and test', fields: [{ key: 'proxyHost', label: 'Host' }, { key: 'proxyPort', label: 'Port' }, { key: 'proxyLocal', label: 'Local port', hint: 'Empty: Worca picks one and keeps it', placeholder: 'Automatic' }], check: (v) => (!v.proxyHost.trim() ? 'A proxy needs a host' : !/^\d+$/.test(v.proxyPort) || +v.proxyPort > 65535 ? 'A port is a number up to 65535' : ''), then: (v, s) => { Object.assign(s, v); return `Reached ${v.proxyHost}:${v.proxyPort}: proxy saved${s.proxy ? '' : '; turn it on to use it'}`; } }) }], sw: { key: 'proxy', on: false, why: 'Off: Worca connects directly' } },
+          { name: 'Login', when: (sv) => sv.proxy, say: '{loginWords}', vals: { loginWords: (sv) => (sv.proxyLogin ? `Saved for ${sv.proxyUser}: the NT hash, never the password` : 'No saved login'), proxyUser: 'CORP\\emil' },
             acts: [
               { label: 'Log out', when: (sv) => sv.proxyLogin, do: (sv) => { sv.proxyLogin = false; return 'Proxy login removed'; } },
               { label: 'Log in…', when: (sv) => !sv.proxyLogin, off: (sv) => (sv.auth === 'basic' || sv.auth === 'digest' ? 'This login mode needs the password in HTTPS_PROXY; choose NTLMv2 for a saved login' : ''), edit: { title: 'Log in to the proxy', yes: 'Log in', note: 'Worca saves your domain, user name and the NT hash in a file only you can read.', fields: [{ key: 'pxDomain', label: 'Domain', value: 'CORP' }, { key: 'pxUser', label: 'User name', value: 'emil' }, { key: 'pxPass', label: 'Password', type: 'password', value: '' }], then: (v, sv) => { sv.proxyLogin = true; sv.proxyUser = `${v.pxDomain}\\${v.pxUser}`; return 'Logged in to the proxy'; } } },
             ] },
-          { name: 'Bypass', say: 'These go direct: `{bypass}`', vals: { bypass: 'localhost, *.corp.example' }, acts: [edit('Change the bypass list', [{ key: 'bypass', label: 'Hosts', hint: 'Comma-separated; * matches any part' }], { done: 'Bypass list saved' })] },
-          { name: 'Timeouts', min: 'expert', say: 'Connect within {ct}, sign in within {lt}, drop idle after {it}', picks: { ct: P('60', O(['30', '30s'], ['60', '60s'], ['120', '120s']), 'Connect timeout'), lt: P('60', O(['30', '30s'], ['60', '60s'], ['120', '120s']), 'Login timeout'), it: P('300', O(['120', '2 minutes'], ['300', '5 minutes'], ['600', '10 minutes']), 'Idle timeout', true) } },
-          { name: 'Offline', min: 'advanced', say: 'When the network drops, a run waits up to {wait}', picks: { wait: P('4h', O(['30m', '30 minutes'], ['1h', '1 hour'], ['4h', '4 hours'], ['12h', '12 hours'], ['24h', '24 hours']), 'How long it waits before it fails') }, sw: { key: 'netWait', on: true } },
+          { name: 'Bypass', when: (sv) => sv.proxy, say: 'These go direct: `{bypass}`', vals: { bypass: 'localhost, *.corp.example' }, acts: [edit('Change the bypass list', [{ key: 'bypass', label: 'Hosts', hint: 'Comma-separated; * matches any part' }], { done: 'Bypass list saved' })] },
+          { name: 'Timeouts', when: (sv) => sv.proxy, min: 'expert', say: 'Connect within {ct}, sign in within {lt}, drop idle after {it}', picks: { ct: P('60', O(['30', '30s'], ['60', '60s'], ['120', '120s']), 'Connect timeout'), lt: P('60', O(['30', '30s'], ['60', '60s'], ['120', '120s']), 'Login timeout'), it: P('300', O(['120', '2 minutes'], ['300', '5 minutes'], ['600', '10 minutes']), 'Idle timeout', true) } },
+          { name: 'Offline', min: 'advanced', say: (sv) => (sv.netWait ? 'When the network drops, a run waits up to {wait}' : 'When the network drops, a run fails at once'), picks: { wait: P('4h', WAIT, 'How long it waits before it fails') }, sw: { key: 'netWait', on: true } },
         ] },
       ] },
     ] },
@@ -473,8 +485,8 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
 
     models: { min: 'expert', title: 'Models', meta: 'The models every project can pick from, and the sign-ins they run through.', sections: [
       { title: 'Defaults', rows: [
-        { name: 'Roles', say: 'Every engine keeps its own: on Claude, **Opus** plans and reviews, **Sonnet** writes the code, **Haiku** does quick jobs', help: 'Roles open at Simple through the link from a run or the setup assistant', moreList: ENGINES.map(roleRecord) },
-        { name: 'Engine', say: 'New runs use {eng}; each step and helper job uses its role', picks: { eng: P('claude', ENGINES, 'The engine a new run starts on') } },
+        { name: 'Roles', say: (sv) => `On Claude, **${roleName(sv, 'deep')}** plans and reviews, **${roleName(sv, 'every')}** writes the code, **${roleName(sv, 'quick')}** does quick jobs; every engine keeps its own`, help: 'Roles open at Simple through the link from a run or the setup assistant', more: ENGINES.map(roleRow) },
+        { name: 'Engine', say: (sv) => { const e = pickText(ENGINES, sv.eng).replace(' (beta)', ''); return sv.eng === 'claude' || sv.eng === 'codex' ? `New runs use {eng}; each step and helper job uses its ${e} role, unless set below` : `New runs use {eng}; each step uses its ${e} role, unless set below; helper jobs stay on Claude`; }, picks: { eng: { ...P('claude', ENGINES, 'The engine a new run starts on'), then: (sv) => engineChanged(sv) } } },
       ] },
       { title: 'Jobs', meta: 'A step or a helper job follows its role until you override it.', rows: [
         { name: 'Step models', say: '{stepWords}', vals: { stepWords: (sv) => { const n = jobsSet(STEPS, 'jobStep', sv); return n ? `${n} of ${STEPS.length} have their own model; the rest follow their role` : `All ${STEPS.length} follow their role`; } }, more: jobRows(STEPS, 'jobStep') },
@@ -503,7 +515,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
           } },
         { title: 'OpenAI-compatible', meta: 'Not set up · presets: OpenRouter',
           live: (sv, r) => (r.url ? (r.preset === 'openrouter' ? orFree(sv) : `${r.url} · key set`) : 'Not set up · presets: OpenRouter'),
-          mark: '', menu: (r) => (r.url ? (r.preset === 'openrouter' ? ['Edit', 'Refresh usage', 'Remove'] : ['Edit', 'Remove']) : ['Set up…']),
+          mark: '', open: (r, x) => r.on[r.url ? 'Edit' : 'Set up…'](r, x), menu: (r) => (r.url ? (r.preset === 'openrouter' ? ['Edit', 'Refresh usage', 'Remove'] : ['Edit', 'Remove']) : ['Set up…']),
           on: {
             'Set up…': (r, x) => x.dialog(openaiSetup(r)), Edit: (r, x) => x.dialog(openaiSetup(r)),
             'Refresh usage': (r, x) => { x.sv.orLeft = x.sv.orLeft > 100 ? 80 : 820; r.mark = x.sv.orLeft < 100 ? 'is-amber' : 'is-green'; return x.sv.orLeft < 100 ? `Low: ${x.sv.orLeft} free requests left; New run warns below 10%` : `${x.sv.orLeft} free requests left today`; },
@@ -513,12 +525,12 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
           on: { Edit: (r, x) => x.dialog({ title: 'Anthropic-compatible', yes: 'Save', fields: [{ key: 'url', label: 'Base URL', value: 'https://llm.corp.example' }, { key: 'conc', label: 'Requests at once', value: '8', type: 'number' }], then: (v) => { r.meta = `${v.url.replace(/^https?:\/\//, '')} · key set · ${v.conc} requests at once`; return 'Anthropic-compatible saved'; } }) } },
         { title: 'Gemini CLI', meta: 'Your Gemini sign-in; the CLI is the engine', mark: 'is-green',
           detail: 'Google does not report a quota to Worca. Set the number your plan allows and Worca counts requests against it.',
-          live: (sv) => (sv.gemQuota ? `Your Gemini sign-in · ${sv.gemUsed} of ${sv.gemQuota} requests today, counted by Worca against your quota` : 'Your Gemini sign-in · no quota set, so nothing is counted'),
+          live: (sv, r) => (r.signedOut ? 'Not signed in' : sv.gemQuota ? `Your Gemini sign-in · ${sv.gemUsed} of ${sv.gemQuota} requests today, counted by Worca against your quota` : 'Your Gemini sign-in · no quota set, so nothing is counted'),
           menu: (r, sv) => (r.signedOut ? ['Sign in'] : sv.gemQuota ? ['Set quota', 'Clear quota', 'Sign out'] : ['Set quota', 'Sign out']),
           on: {
             'Sign out': (r) => { r.signedOut = true; r.mark = ''; window.RailUI.prefs.setConnected('gemini', false); return 'Signed out of Gemini'; },
             'Sign in': (r) => { r.signedOut = false; r.mark = 'is-green'; window.RailUI.prefs.setConnected('gemini', true); return 'Signed in to Gemini'; },
-            'Set quota': (r, x) => x.dialog({ title: 'Set the Gemini quota', yes: 'Save', note: 'Google does not report one. Worca counts requests against the number you set here, and Pulse warns near it.', fields: [{ key: 'gemQuota', label: 'Requests a day', type: 'number', placeholder: 'No quota', value: x.sv.gemQuota }], check: (v) => (+v.gemQuota >= 0 ? '' : 'A quota is a number'), then: (v, sv) => { sv.gemQuota = v.gemQuota; return v.gemQuota ? `Gemini quota: ${v.gemQuota} requests a day` : 'Gemini quota cleared'; } }),
+            'Set quota': (r, x) => x.dialog({ title: 'Set the Gemini quota', yes: 'Save', note: 'Google does not report one. Worca counts requests against the number you set here, and Pulse warns near it.', fields: [{ key: 'gemQuota', label: 'Requests a day', type: 'number', placeholder: 'No quota', value: x.sv.gemQuota }], check: (v) => (+v.gemQuota >= 0 ? '' : 'A quota is a number'), then: (v, sv) => { if (v.gemQuota === sv.gemQuota) return ''; sv.gemQuota = v.gemQuota; return v.gemQuota ? `Gemini quota: ${v.gemQuota} requests a day` : 'Gemini quota cleared'; } }),
             'Clear quota': (r, x) => { x.sv.gemQuota = ''; return 'Gemini quota cleared'; },
           } },
       ] },
@@ -536,18 +548,22 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
     ] },
 
     ask: { min: 'advanced', title: 'Chat', meta: 'Worca\'s own assistant: its engine, what it may do and where it may look.', sections: [
-      { title: 'Chat', rows: [
-        { name: 'Engine', help: 'Engine for new chats. A chat can move to another engine later, from its model picker', say: 'New chats start on {chatEngine}{chatNote}', vals: { chatNote: (sv) => (sv.chatEngine === 'gemini' || sv.chatEngine === 'qwen' ? '. It needs a model of its own: add one on Models' : '') },
-          picks: { chatEngine: P('claude', [...ENGINES.filter(([id]) => id !== 'cursor'), ['cursor', 'Cursor (unavailable)', 'Unavailable on this Cursor version; new chats start on Claude']], 'The engine a new chat starts on') },
-          moreList: ENGINES.filter(([id]) => id !== 'cursor').map(([e, label]) => chatModel(e, label.replace(' (beta)', ''))) },
-        { name: 'Abilities', say: 'Runs scripts, sums up commands, suggests a next prompt', more: [
+      { title: 'Assistant', rows: [
+        { name: 'Engine', help: 'Engine for new chats. A chat can move to another engine later, from its model picker', say: 'New chats start on {chatEngine}{chatNote}', vals: { chatNote: (sv) => { const m = sv['chatModel_' + sv.chatEngine]; return m ? ` with ${m}` : sv.chatEngine === 'gemini' || sv.chatEngine === 'qwen' ? '. It needs a model: pick one under Customise' : ''; } },
+          picks: { chatEngine: P('claude', [...ENGINES.filter(([id]) => id !== 'cursor'), ['cursor', 'Cursor', 'Unavailable on this Cursor version; new chats start on Claude', true]], 'The engine a new chat starts on') },
+          more: ENGINES.filter(([id]) => id !== 'cursor').map(([e, label]) => chatModel(e, label.replace(' (beta)', ''))) },
+        { name: 'Abilities', say: (sv) => { const on = [sv.scripts && 'runs scripts', sv.summaries && window.RailUI?.prefs.flag('commandSummaries') && 'sums up commands', sv.nextPrompt && 'suggests a next prompt'].filter(Boolean); return on.length ? `${on[0][0].toUpperCase()}${andList(on).slice(1)}` : 'It only answers: no scripts, no summaries, no suggestions'; }, more: [
           { name: 'Scripts', say: 'Create and run scripts', sw: { key: 'scripts', on: true } },
           { name: 'Summaries', flag: 'commandSummaries', say: 'Show each command as one line saying what it does', sw: { key: 'summaries', on: true, why: 'With Labs › Command summaries on' } },
           { name: 'Suggestions', say: 'Suggest a next prompt after each reply', sw: { key: 'nextPrompt', on: true } },
-          { name: 'Limits', help: 'On an engine other than Claude the cap is checked when a reply ends', say: 'One message may use **{turns}** turns, and a turn stops at **{capWords}**', vals: { turns: '400', cap: '', capWords: (sv) => (sv.cap ? `$${sv.cap}` : 'no cap') },
+        ] },
+        { name: 'Limits', help: 'On an engine other than Claude the cap is checked when a reply ends', say: 'One message may use **{turns}** turns, and a turn stops at **{capWords}**', vals: { turns: '400', cap: '', capWords: (sv) => (sv.cap ? `$${sv.cap}` : 'no cost cap') },
             acts: [edit('Change the chat limits', [{ key: 'turns', label: 'Turn limit', type: 'number', hint: '1 to 500, per message; empty restores 400', placeholder: '400' }, { key: 'cap', label: 'Per-turn cost cap (USD)', type: 'number', hint: '0.1 to 100; empty means no cap', placeholder: 'No cap' }], {
               check: (v) => { const t = v.turns === '' ? 400 : +v.turns, c = v.cap === '' ? 1 : +v.cap; if (!(t >= 1 && t <= 500)) return 'The turn limit is 1 to 500'; if (!(c >= 0.1 && c <= 100)) return 'The cap is 0.1 to 100'; return ''; },
               then: (v, sv) => { sv.turns = v.turns === '' ? '400' : v.turns; sv.cap = v.cap; return 'Chat limits saved'; } })] },
+        { name: 'Web', say: (sv) => (sv.webOn ? 'Reads web pages from {web}' : 'No web access: replies use what Worca already has'), picks: { web: P('allowed', O(['allowed', 'the allowed sites'], ['any', 'any site, without asking'])) }, sw: { key: 'webOn', on: false }, more: [
+          { name: 'Allowed sites', when: (sv) => sv.webOn && sv.web === 'allowed', say: '`{webSites}`', vals: { webSites: 'docs.python.org, developer.mozilla.org' }, acts: [edit('Change the allowed sites', [{ key: 'webSites', label: 'Sites', hint: 'Comma-separated' }], { done: 'Allowed sites saved' })] },
+          { name: 'Search', when: (sv) => sv.webOn, min: 'expert', say: 'Searches with {searchWords}', vals: { searchWords: (sv) => (sv.searchUrl ? sv.searchUrl : 'the built-in search'), searchUrl: '' }, acts: [edit('Use your own search', [{ key: 'searchUrl', label: 'Endpoint' }, { key: 'searchVar', label: 'Key variable', value: '' }, { key: 'searchHead', label: 'Key header', value: '' }], { done: 'Search saved' })] },
         ] },
         { name: 'Connectors', say: (sv) => `Uses the **General** set: ${setCount(sv, 'General').replace(' · ', ', ')}`, acts: [{ label: 'Open', go: 'connectors' }] },
       ] },
@@ -561,7 +577,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
         { name: 'Listening', say: 'Chat listens with {stt}', picks: { stt: P('whisper', O(['whisper', 'Whisper, in the browser'], ['server', 'your speech server']), 'The speech-to-text engine') }, more: [
           { name: 'Listening URL', when: (sv) => sv.stt === 'server', say: '`{sttUrl}`', vals: { sttUrl: 'https://speech.corp.example/v1/audio/transcriptions' }, acts: [edit('Change the listening URL', [{ key: 'sttUrl', label: 'URL', type: 'url' }], { done: 'Listening URL saved' })] },
         ] },
-        { name: 'Speaking', say: 'Replies are read aloud with {tts}', picks: { tts: P('kokoro', O(['kokoro', 'Kokoro, in the browser'], ['server', 'your speech server'], ['off', 'nothing: replies stay text']), 'The text-to-speech engine') }, more: [
+        { name: 'Speaking', say: 'Replies {tts}', picks: { tts: P('kokoro', O(['kokoro', 'are read aloud with Kokoro, in the browser'], ['server', 'are read aloud with your speech server'], ['off', 'stay text']), 'The text-to-speech engine') }, more: [
           { name: 'Speaking URL', when: (sv) => sv.tts === 'server', say: '`{ttsUrl}`', vals: { ttsUrl: 'https://speech.corp.example/v1/audio/speech' }, acts: [edit('Change the speaking URL', [{ key: 'ttsUrl', label: 'URL', type: 'url' }], { done: 'Speaking URL saved' })] },
         ] },
         { name: 'Speech models', say: '{speechWords}', vals: { speechWords: (sv) =>  (sv.speechModels ? 'Downloaded: 480 MB; the next mic use fetches them again' : 'Not downloaded; the first mic use fetches them, up to 500 MB') }, acts: [{ label: 'Remove', off: (sv) => (sv.speechModels ? '' : 'Nothing is downloaded'), do: (sv) => { sv.speechModels = false; return 'Speech models removed'; } }] },
@@ -653,11 +669,11 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
     return [{ key: 'name', label: 'Name', value: name }, { key: 'vals', label: 'Values', value: vals, hint: 'Comma-separated; empty lets any value in' }, { key: 'req', check: true, label: 'A run needs this tag', value: req }];
   }
   function launcher(key, name, apps) {
-    return { title: `Change the ${name.toLowerCase()}`, yes: 'Save', fields: [
-      { key: 'app', label: 'Pick an app', value: '', options: apps, then: (v) => { v[key] = v.app; } },
+    return (sv) => ({ title: `Change the ${name.toLowerCase()}`, yes: 'Save', fields: [
+      { key: 'app', label: 'Pick an app', value: apps.some((a) => a[0] === sv[key]) ? sv[key] : '', options: apps, then: (v) => { v[key] = v.app; } },
       { key, label: 'Command', hint: '{folder} marks where the checkout goes; without it, the folder is added at the end' },
       { key: 'try', button: 'Try', hint: 'Opens the folder with this command', do: (v) => `Ran ${v[key]}` },
-    ], then: (v, sv) => { sv[key] = v[key]; return `${name} saved`; } };
+    ], check: (v) => (v[key].trim() ? '' : 'It needs a command'), then: (v, s) => { s[key] = v[key]; return `${name} saved`; } });
   }
   function preset(title, scope, tail, mark, start) {
     return { title, scope, tail, mark, start, meta: `${scope} · ${tail}`, menu: (r) => [r.mark ? { text: 'Use', off: true, help: 'Its workspace is gone: change its scope first' } : 'Use', 'Rename', 'Duplicate', 'Edit scope', 'Delete'], live: (sv, r) => `${r.scope} · ${r.tail}`,
@@ -666,6 +682,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
         'Edit scope': (r, x) => x.dialog({ title: `Scope of ${r.title}`, yes: 'Save', fields: [{ key: 'scope', label: 'Offered on', value: r.scope, options: O('Any project', 'Only worca-cc', 'Only billing workspace') }], then: (v) => { r.scope = v.scope; r.mark = ''; return `${r.title}: ${v.scope}`; } }),
       } };
   }
+  // A chat engine's model: one sentence with its picker; the default is the picker's first choice.
   function chatModel(e, title) {
     const key = 'chatModel_' + e, needs = e === 'gemini' || e === 'qwen';
     return { name: title, say: (sv) => (sv[key] || !needs ? `Chats on ${title} use {${key}}` : `Chats on ${title} {${key}}`),
@@ -702,7 +719,8 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
     return { id: 'n' + title, title, tail, deny: [...set.deny], paths: [...set.paths], meta: `${guardCounts(set)} · ${tail}`, live: (sv, r) => `${guardCounts(r)} · ${r.tail}`, menu: () => (atLevel('expert') ? ['Edit', 'Duplicate', 'Delete'] : ['Edit', 'Delete']), open: (r, x) => SHARED_EDIT(r, x), on: { Edit: (r, x) => SHARED_EDIT(r, x) }, copy: { tail: 'no project' } };
   }
   function SHARED_EDIT(r, x) {
-    return x.dialog({ title: `Edit ${r.title}`, yes: 'Save', fields: [{ key: 'name', label: 'Name', value: r.title }, { key: 'deny', label: 'Deny rules', value: '`rm -rf`, `git push --force`', multiline: true }, { key: 'paths', label: 'Protected paths', value: '.env, .git/', multiline: true }], then: (v) => { r.title = v.name.trim() || r.title; return `${r.title} saved`; } });
+    const lines = (s) => s.split('\n').map((t) => t.trim()).filter(Boolean);
+    return x.dialog({ title: `Edit ${r.title}`, yes: 'Save', fields: [{ key: 'name', label: 'Name', value: r.title }, { key: 'deny', label: 'Deny rules', value: r.deny.join('\n'), multiline: true, hint: 'One per line' }, { key: 'paths', label: 'Protected paths', value: r.paths.join('\n'), multiline: true, hint: 'One per line' }], then: (v) => { r.title = v.name.trim() || r.title; r.deny = lines(v.deny); r.paths = lines(v.paths); return `${r.title} saved`; } });
   }
   function note(title, meta) { return { title, meta, menu: ['Rename', 'Delete'], open: (r, x) => x.dialog({ title: r.title, yes: 'Save', fields: [{ key: 'body', label: 'Note', value: `# ${r.title}\n\nWhat the agents should remember.`, multiline: true }], then: () => `${r.title} saved` }) }; }
   function restorePoint(when, notes) {
@@ -710,11 +728,11 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
       on: { Restore: (r, x) => x.confirm({ text: `Put back the ${plural(r.notes.length, 'note')} from before this defragment? Notes added since go.`, yes: 'Restore', then: (s) => { s.__recs['memory/Notes'] = r.notes.map(([t, m], i) => ({ ...note(t, m), id: 'rp' + Date.now() + i })); x.remove(); return `Restored ${plural(r.notes.length, 'note')}`; } }) } };
   }
   function teamNote(title, tstate, meta, mine) {
-    return { title, tstate, mine, meta, when: (sv) => sv.teamLoad !== 'local', chip: undefined, live: (sv, r) => `${r.tstate} · ${r.meta}`, mark: tstate === 'Held' ? 'is-amber' : '',
+    return { title, tstate, mine, meta, when: (sv, r) => sv.teamLoad !== 'local' && (!r?.mine || (sv.__recs['memory/Notes'] || NOTES).some((n) => n.title === r.title)), chip: undefined, live: (sv, r) => `${r.tstate} · ${r.meta}`, mark: tstate === 'Held' ? 'is-amber' : '',
       menu: (r) => (r.tstate === 'Team only' ? ['Compare'] : r.tstate === 'Held' ? ['Compare', 'Share anyway'] : ['Compare', 'Remove from team']),
       on: {
         Compare: (r, x) => x.dialog({ title: `Compare ${r.title}`, view: true, yes: 'Close', note: r.tstate === 'Team only' ? 'The team has this note; this machine does not.' : 'Yours and the team\'s are the same, but for one line.' }),
-        'Share anyway': (r) => { r.tstate = 'Shared'; r.mark = ''; return `${r.title} shared`; },
+        'Share anyway': (r, x) => x.confirm({ text: `Share ${r.title} with your team? It looks like it holds a secret, and every teammate will load it.`, yes: 'Share anyway', danger: true, then: () => { r.tstate = 'Shared'; r.mark = ''; r.meta = 'Yours'; return `${r.title} shared`; } }),
         'Remove from team': (r) => { r.tstate = 'Local only'; return `${r.title}: removed from the team, kept here`; },
       } };
   }

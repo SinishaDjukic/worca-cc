@@ -5,6 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { BASELINE, ROOT, compare, scanText, scanTree } from '../tools/rail-gate.mjs';
 
 const baseline = () => JSON.parse(readFileSync(BASELINE, 'utf8'));
@@ -43,4 +44,8 @@ test('compare: a new file with a hit grows; an old file may not grow; a lower co
   assert.deepEqual(compare({ 'a.mjs': 3 }, { 'a.mjs': 2 }).grew, [{ file: 'a.mjs', was: 2, now: 3 }]);
   assert.deepEqual(compare({ 'a.mjs': 2 }, { 'a.mjs': 2 }), { grew: [], shrank: [] });
   assert.deepEqual(compare({}, { 'a.mjs': 2 }).shrank, [{ file: 'a.mjs', was: 2, now: 0 }]);
+});
+
+test('every Settings sentence reads right for every option: no markup, no 1 runs, no after never (no browser needed)', () => {
+  execFileSync(process.execPath, [join(ROOT, 'plans/rail/prototype/gates/settings-sentences.mjs')], { stdio: 'pipe' });
 });

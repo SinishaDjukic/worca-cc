@@ -3,9 +3,9 @@
 
 /** The choices of Notifications › Channels › Sound: what plays. Info never does. */
 export const SOUND_CHOICES = [
-  { id: 'needs', text: 'what needs you', help: 'Only what waits for you: a question, a gate, a watched PR that needs a person' },
-  { id: 'problems', text: 'also problems', help: 'Also what went wrong while nobody was waiting: a failed run, a missed start, a limit' },
-  { id: 'none', text: 'nothing', help: 'No sound at all' },
+  { id: 'needs', text: 'Play a sound for what needs you', help: 'Only what waits for you: a question, a gate, a watched PR that needs a person' },
+  { id: 'problems', text: 'Play a sound for what needs you and problems', help: 'Also what went wrong while nobody was waiting: a failed run, a missed start, a limit' },
+  { id: 'none', text: 'Play no sound', help: 'No sound at all' },
 ];
 /** Events closer together than this are one burst, and a burst plays once. */
 export const BURST_MS = 3000;

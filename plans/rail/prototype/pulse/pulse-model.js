@@ -34,18 +34,17 @@
     { id: 'app', name: 'Worca', level: 'all', where: 'pulse', events: [['app.update_available', 'New version', 'info']] },
   ];
   const EVENT = Object.fromEntries(GROUPS.flatMap((g) => g.events.map(([id, name, sev]) => [id, { id, name, sev, g: g.id }])));
-  const CHANNELS = ['Telegram', 'Discord', 'Slack', 'Teams'];
   // Vitals › Scheduled, top to bottom.
   const SCHED = [['missed', 'Missed'], ['today', 'Today'], ['tomorrow', 'Tomorrow'], ['week', 'This week'], ['later', 'Later'], ['after', 'After a run']];
   const LEVELS = [
-    { id: 'needs', text: 'needs you', help: 'Only what waits for you: questions, gates, a watched PR that needs a person' },
-    { id: 'problems', text: 'needs you and problems', help: 'Also what went wrong while nobody was waiting: a failed run, a missed start, a limit' },
+    { id: 'needs', text: 'what needs you', help: 'Only what waits for you: questions, gates, a watched PR that needs a person' },
+    { id: 'problems', text: 'what needs you and problems', help: 'Also what went wrong while nobody was waiting: a failed run, a missed start, a limit' },
     { id: 'all', text: 'everything', help: 'Also what simply happened: a run finished, a fix was published, a limit reset' },
   ];
   const WHERE = [
-    { id: 'pulse', text: 'Pulse only', help: 'Kept in Pulse; nothing leaves Worca' },
+    { id: 'pulse', text: 'Stays in Pulse only', help: 'Kept in Pulse; nothing leaves Worca' },
     { id: 'desktop', text: 'desktop', help: 'Also a desktop notification, in browsers that allow it' },
-    { id: 'chat', text: 'chat', help: 'Also a message to your chat channels (Telegram, Discord, Slack, Teams)' },
+    { id: 'chat', text: 'chat', help: 'Also a message to your working chat channels' },
     { id: 'both', text: 'desktop and chat', help: 'Also a desktop notification and a chat message' },
   ];
   // Notifications' other sentences: each reads right for every choice (gates/settings-sentences.mjs).
