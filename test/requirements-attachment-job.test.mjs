@@ -914,3 +914,33 @@ test('fileView: asking is the question of the running or queued ask, null otherw
   assert.equal(seen.at(-1), null, 'the last frame (the answer) shows it cleared');
   assert.equal(getAttachment(c.id).asks.at(-1).question, 'Queued?');
 });
+
+const ZIP = Buffer.from([0x50, 0x4b, 0x03, 0x04, 0, 1, 2]);
+const zipFile = (name = 'a.zip', data = ZIP) => binFile(name, data, 'binary', 'application/octet-stream');
+
+test('a generic file keeps its original extension on disk; replacing .zip with .7z removes the old body', async () => {
+  const f = feature();
+  const [row] = job.addAttachments(own(f), [zipFile('Pack.ZIP')], {}, deps(fakeRunner([])));
+  await job.readsSettled(own(f));
+  const old = job.attachmentFile(row);
+  assert.equal(old.endsWith(`${row.id}.zip`), true);
+  assert.deepEqual(readFileSync(old), ZIP);
+  assert.equal(job.attachmentFile({ id: row.id, kind: 'binary', mime: 'application/octet-stream', name: 'noext' }).endsWith('.bin'), true);
+  job.replaceAttachment(own(f), row.id, zipFile('Pack.7z', Buffer.concat([ZIP, Buffer.from([9])])), {}, deps(fakeRunner([])));
+  assert.equal(existsSync(old), false, 'the old .zip body is gone');
+  assert.equal(existsSync(old.replace(/\.zip$/, '.7z')), true);
+});
+
+test('a generic file is finished at once: done, no model call, a fixed summary, cost 0; asking about it is a CONFLICT', async () => {
+  const f = feature();
+  const r = fakeRunner([]);
+  const rows = job.addAttachments(own(f), [zipFile('deck.pptx')], {}, deps(r));
+  await job.readsSettled(own(f));
+  assert.equal(r.calls.length, 0, 'callModel never ran');
+  const row = getAttachment(rows[0].id);
+  assert.deepEqual([row.status, row.readCostUsd, row.readModel], ['done', null, null]);
+  assert.match(row.summary, /can't read this kind of file.*Save it as PDF and Replace it/);
+  assert.equal(job.fileView(row, { href: 'x' }).estimateUsd, 0);
+  assert.throws(() => job.askAttachment(own(f), row.id, 'what?', {}, deps(r)), { code: 'CONFLICT' });
+  assert.equal(r.calls.length, 0);
+});

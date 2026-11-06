@@ -839,7 +839,8 @@ function handoffBlockLine(b, to) {
   if (b.kind === 'tool') return `[tool ${clip(flatten(String(b.name || '').replace(/^mcp__worca__/, '')), 60)} — ${b.status === 'error' ? 'failed' : label(b.status || 'done')}]`;
   if (b.kind === 'agent') return `[sub-agent ${clip(flatten(b.label || b.type || 'agent'), 60)} — ${label(b.status || 'done')}]`;
   if (b.kind === 'attachment') {
-    const refused = chatAttachRefusal({ engine: to, kind: b.attKind || 'text', pdf: b.mime === 'application/pdf' });
+    const generic = (b.attKind || 'text') !== 'text' && b.mime === 'application/octet-stream';   // a generic file needs no viewing capability
+    const refused = !generic && chatAttachRefusal({ engine: to, kind: b.attKind || 'text', pdf: b.mime === 'application/pdf' });
     return `[attachment ${label(b.id)} ${clip(flatten(b.name), 80)} — ${refused ? `${engineLabel(to)} cannot view it; only its name is here` : 'read_attachment reads it'}]`;
   }
   if (b.kind === 'card') {
