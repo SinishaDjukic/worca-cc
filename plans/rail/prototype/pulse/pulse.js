@@ -81,7 +81,7 @@ const gring = (pct, cls, t) => `<span class="pz-gring${cls ? ' ' + cls : ''}${t 
 function avatar() {
   const rs = M.rings(C(), ui.s.warnAt);
   const tip = rs.length ? rs.map((r) => r.line).join('\n\n') : 'No provider connected';
-  return `<span class="pz-ava-wrap" title="${esc(tip)}">${rs.map((r, i) => gring(r.pct, 'pz-ring-' + i, r.tone)).join('')}<span class="pz-ava">${esc(initials())}</span><i class="acct-dot pz-ava-dot" aria-hidden="true">${R.icon('away', 8, { stroke: 3 })}</i></span>`;
+  return `<span class="pz-ava-wrap" title="${esc(tip)}">${rs.map((r, i) => gring(r.pct, 'pz-ring-' + i, r.tone)).join('')}<span class="pz-ava">${esc(initials())}</span><i class="acct-dot pz-ava-dot" aria-hidden="true">${R.icon('away', 8)}</i></span>`;
 }
 const people = () => C().identity?.people || ['Emil Angelov'];
 const personName = () => people()[ui.person] || people()[0];

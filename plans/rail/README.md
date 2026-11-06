@@ -17,6 +17,9 @@ Wave 1 (the run and group pages, Pulse, Settings, the shell) is `wave-1.md`; the
 system's own consistency work between them, are `waves.md`.
 Where it all stands, Accepted and Shaping, and the open decisions: `game-plan.md`.
 
+To look at it, `npm run rail` builds the prototype's generated files and opens `prototype/index.html`. What to check by
+eye before accepting it: `review-agreed.md`.
+
 - `prototype/`: the clickable prototype, laid out like the app's files.
   - `index.html` is **the one Worca**: today's shell and pages (`today/`, captured from the app in mock mode by
     `gates/capture-today.mjs`) with Wave 1 in them, joined by `shell/` (the router and the decisions on today's

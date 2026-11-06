@@ -171,7 +171,7 @@ pipeline agent behavior belong in `agents/`.
 UI work starts at [docs/rail/README.md](docs/rail/README.md): the rules, one concern per file. Pages are built from
 the library in `ui/public/design-system/components/` (components and shared logic), and
 `docs/design-system-catalog.json` says which one meets which need. The working design is the prototype in
-`plans/rail/prototype/`.
+`plans/rail/prototype/`; `npm run rail` builds it and opens it in your browser.
 
 `npm test` fails new UI code that writes a component's markup or a state's words by hand (`test/rail-gate.test.mjs`). Old
 pages are frozen by a ratchet that can only shrink: after moving a page to the library, run

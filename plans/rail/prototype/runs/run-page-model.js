@@ -42,49 +42,49 @@
 
   const CASES0 = [
     // One run, start to merge
-    { id: 'starting', group: 'Run', label: 'Starting', figs: [['Time', '0m 12s'], ['Cost', '$0.00']],
+    { id: 'starting', group: 'Running', label: 'Starting', figs: [['Time', '0m 12s'], ['Cost', '$0.00']],
       stages: run({ plan: [s('Clarify', 'now', '', { live: 'Setting up the worktree', when: 'now' }), next('Plan'), next('Refine plan'), next('Plan review')], build: allNext(BUILD), review: allNext(REVIEW) }) },
-    { id: 'working', group: 'Run', label: 'Working', figs: LIVE_FIGS,
+    { id: 'working', group: 'Running', label: 'Working', figs: LIVE_FIGS,
       stages: run({ review: [REVIEW[0], REVIEW[1], s('Manual web UI testing', 'now', '21m', { live: 'Opening the Runs page at 375px to check the breadcrumb', when: '8s ago' })] }) },
-    { id: 'question', group: 'Run', label: R.runState('question').word, figs: LIVE_FIGS,
+    { id: 'question', group: 'Needs you', label: R.runState('question').word, figs: LIVE_FIGS,
       stages: run({ review: [s('Review implementation', 'ask', '12m', { live: 'Keep the breadcrumb on phones under 600px, or show only Back there?', when: '4m' }), next('Manual tests checklist'), next('Manual web UI testing')] }) },
-    { id: 'paused', group: 'Run', label: 'Paused', detail: 'Usage limit · resumes at 14:00', figs: [['Time', '2h 40m'], ['Cost', '$48.30']],
+    { id: 'paused', group: 'Paused', label: 'Paused', detail: 'Usage limit · resumes at 14:00', figs: [['Time', '2h 40m'], ['Cost', '$48.30']],
       stages: run({ build: [s('Implementation', 'paused', '1h 2m')], review: allNext(REVIEW) }) },
-    { id: 'failed', group: 'Run', label: 'Failed', figs: [['Time', '2h 12m'], ['Cost', '$41.30']],
+    { id: 'failed', group: 'Ended', label: 'Failed', figs: [['Time', '2h 12m'], ['Cost', '$41.30']],
       stages: run({ build: [s('Implementation', 'failed', '1h 30m', { loops: 3, live: 'Tests still failing after every retry' })], review: allNext(REVIEW) }) },
-    { id: 'ready', group: 'Run', label: 'Ready', figs: DONE_FIGS, stages: run({}) },
-    { id: 'no-remote', group: 'Run', label: 'Ready, no git remote', detail: 'This project has no git remote', figs: DONE_FIGS, stages: run({ pr: [next('Create PR', { live: 'Needs a git remote' }), next('Checks'), next('Approval')] }) },
-    { id: 'mock-run', group: 'Run', label: 'Mock run', detail: 'No model was called; it adds nothing to Saved', figs: [['Time', '2m'], ['Cost', '$0.00']], stages: run({ pr: [next('Create PR', { live: 'A mock run’s change is a placeholder' }), next('Checks'), next('Approval')] }) },
-    { id: 'checks', group: 'Run', label: 'Checks running', figs: DONE_FIGS,
+    { id: 'ready', group: 'Ready', label: 'Ready', figs: DONE_FIGS, stages: run({}) },
+    { id: 'no-remote', group: 'Ready', label: 'Ready, no git remote', detail: 'This project has no git remote', figs: DONE_FIGS, stages: run({ pr: [next('Create PR', { live: 'Needs a git remote' }), next('Checks'), next('Approval')] }) },
+    { id: 'mock-run', group: 'Ready', label: 'Mock run', detail: 'No model was called; it adds nothing to Saved', figs: [['Time', '2m'], ['Cost', '$0.00']], stages: run({ pr: [next('Create PR', { live: 'A mock run’s change is a placeholder' }), next('Checks'), next('Approval')] }) },
+    { id: 'checks', group: 'Pull requests', label: 'Checks running', figs: DONE_FIGS,
       stages: run({ pr: PR_OPEN(s('Checks', 'now', '', { live: '3 of 7 passed', when: 'running' }), next('Approval')) }) },
-    { id: 'failing', group: 'Run', label: 'Checks failing', figs: DONE_FIGS,
+    { id: 'failing', group: 'Pull requests', label: 'Checks failing', figs: DONE_FIGS,
       stages: run({ pr: PR_OPEN(s('Checks', 'problem', '', { live: '2 failed · unit, e2e' }), next('Approval')) }) },
-    { id: 'conflicts', group: 'Run', label: 'Conflicts', figs: DONE_FIGS,
+    { id: 'conflicts', group: 'Pull requests', label: 'Conflicts', figs: DONE_FIGS,
       stages: run({ pr: PR_OPEN(ok('Checks', '', { live: '7 of 7 passed' }), s('Up to date with dev', 'problem', '', { live: 'Conflicts in 2 files' })) }) },
-    { id: 'approved', group: 'Run', label: 'Approved', figs: DONE_FIGS,
+    { id: 'approved', group: 'Pull requests', label: 'Approved', figs: DONE_FIGS,
       stages: run({ pr: PR_OPEN(ok('Checks', '', { live: '7 of 7 passed' }), ok('Approval', '', { live: 'Approved by 1 reviewer' })) }) },
-    { id: 'labelled', group: 'Run', label: 'With labels, tags, group', figs: DONE_FIGS, stages: run({}),
+    { id: 'labelled', group: 'Ready', label: 'With labels, tags, group', figs: DONE_FIGS, stages: run({}),
       chips: [{ kind: 'label', text: 'ui' }, { kind: 'label', text: 'needs demo' }, { kind: 'tag', text: 'team: web' }, { kind: 'group', text: 'Navigation' }] },
-    { id: 'merged', group: 'Run', label: 'Merged', figs: DONE_FIGS,
+    { id: 'merged', group: 'Done', label: 'Merged', figs: DONE_FIGS,
       stages: run({ pr: PR_OPEN(ok('Checks'), ok('Approval')), merged: LAND('merged', 'Merged 25 Oct, 16:02') }) },
 
     // States the app has today: a run waiting to start after another, a review gate, a cost cap, kept work, archived
-    { id: 'scheduled', group: 'Run', label: 'Waiting (run after)', detail: 'Starts when “Unified page navigation” finishes', figs: [['Time', '0m'], ['Cost', '$0.00']],
+    { id: 'scheduled', group: 'Waiting', label: 'Waiting (run after)', detail: 'Starts when “Unified page navigation” finishes', figs: [['Time', '0m'], ['Cost', '$0.00']],
       title: 'Breadcrumb tests for saved runs', tabs: [['summary', 'Overview'], ['activity', 'Activity'], ['decisions', 'Decisions']], stages: run({ plan: allNext(PLAN), build: allNext(BUILD), review: allNext(REVIEW) }) },
-    { id: 'waiting-interrupted', group: 'Run', label: 'Waiting on an interrupted run', detail: '“Unified page navigation” was interrupted and can still resume; this waits for it', figs: [['Time', '0m'], ['Cost', '$0.00']],
+    { id: 'waiting-interrupted', group: 'Waiting', label: 'Waiting on an interrupted run', detail: '“Unified page navigation” was interrupted and can still resume; this waits for it', figs: [['Time', '0m'], ['Cost', '$0.00']],
       title: 'Breadcrumb tests for saved runs', tabs: [['summary', 'Overview'], ['activity', 'Activity'], ['decisions', 'Decisions']], stages: run({ plan: allNext(PLAN), build: allNext(BUILD), review: allNext(REVIEW) }) },
-    { id: 'gate', group: 'Run', label: 'Review gate', detail: 'Review sent it back 3 times; the limit is 3', figs: LIVE_FIGS,
+    { id: 'gate', group: 'Needs you', label: 'Review gate', detail: 'Review sent it back 3 times; the limit is 3', figs: LIVE_FIGS,
       stages: run({ review: [s('Review implementation', 'ask', '37m 21s', { loops: 3, live: 'Still 1 minor issue after 3 rounds: accept, or run another cycle?', when: '6m' }), next('Manual tests checklist'), next('Manual web UI testing')] }) },
-    { id: 'capped', group: 'Run', label: 'Paused at cost cap', detail: 'Reached the $120 cap for this run', figs: LIVE_FIGS,
+    { id: 'capped', group: 'Needs you', label: 'Paused at cost cap', detail: 'Reached the $120 cap for this run', figs: LIVE_FIGS,
       stages: run({ review: [REVIEW[0], s('Manual tests checklist', 'paused', '1m 18s', { live: 'Paused at $120.00' }), next('Manual web UI testing')] }) },
-    { id: 'kept', group: 'Run', label: 'Work kept', detail: 'The last commit failed; the work is kept in a copy', over: true, figs: DONE_FIGS,
+    { id: 'kept', group: 'Ended', label: 'Work kept', detail: 'The last commit failed; the work is kept in a copy', over: true, figs: DONE_FIGS,
       stages: run({ review: [REVIEW[0], REVIEW[1], s('Manual web UI testing', 'problem', '21m 10s', { live: 'Commit failed: pre-commit hook exited 1' })] }) },
-    { id: 'archived', group: 'Run', label: 'Archived', detail: 'Branch, worktree and logs removed; the remote branch and PR stay', figs: DONE_FIGS, archived: true,
+    { id: 'archived', group: 'Done', label: 'Archived', detail: 'Branch, worktree and logs removed; the remote branch and PR stay', figs: DONE_FIGS, archived: true,
       stages: run({ pr: PR_OPEN(ok('Checks'), ok('Approval')), merged: LAND('merged', 'Merged 25 Oct, 16:02') }) },
     // Where actions lead: a stopped, discarded or applied run
-    { id: 'stopped', group: 'Run', label: 'Stopped', detail: 'Stopped by you · the branch and changes stay', figs: [['Time', '2h 40m'], ['Cost', '$48.30']],
+    { id: 'stopped', group: 'Ended', label: 'Stopped', detail: 'Stopped by you · the branch and changes stay', figs: [['Time', '2h 40m'], ['Cost', '$48.30']],
       stages: run({ build: [s('Implementation', 'paused', '1h 2m', { live: 'Stopped by you' })], review: allNext(REVIEW) }) },
-    { id: 'discarded', group: 'Run', label: 'Discarded', detail: 'The changes are gone; the run stays in history', figs: DONE_FIGS,
+    { id: 'discarded', group: 'Ended', label: 'Discarded', detail: 'The changes are gone; the run stays in history', figs: DONE_FIGS,
       stages: run({ tail: [{ key: 'done', label: 'Done', subs: [s('Discarded', 'paused', '', { live: 'By you, 25 Oct 14:02' })] }] }) },
 
     // Run kinds
@@ -159,8 +159,8 @@
   const P_FIGS = [['Time', '2h 40m'], ['Cost', '$48.30']];
   const pausedCase = (id, state, label, detail, live, o) => Object.assign({ id, state, group: 'Paused', label, detail, figs: P_FIGS, stages: PAUSED_AT(live) }, o || {});
   const TICKET = { title: 'Nightly dependency update', figs: [['Time', '0m'], ['Cost', '$0.00']], tabs: [['summary', 'Overview'], ['activity', 'Activity'], ['decisions', 'Decisions']] };
-  const ticket = (id, state, label, detail, o) => Object.assign({ id, state, group: 'Schedule', label, detail, stages: run({ plan: allNext(PLAN), build: allNext(BUILD), review: allNext(REVIEW) }) }, TICKET, o || {});
-  const prCase = (id, state, label, detail, pr, o) => Object.assign({ id, state, group: 'Pull request', label, detail, figs: DONE_FIGS, stages: run({ pr }) }, o || {});
+  const ticket = (id, state, label, detail, o) => Object.assign({ id, state, group: 'Waiting', label, detail, stages: run({ plan: allNext(PLAN), build: allNext(BUILD), review: allNext(REVIEW) }) }, TICKET, o || {});
+  const prCase = (id, state, label, detail, pr, o) => Object.assign({ id, state, group: 'Pull requests', label, detail, figs: DONE_FIGS, stages: run({ pr }) }, o || {});
   const CHECKS_OK = ok('Checks', '', { live: '7 of 7 passed' });
   const CHECKS_RUN = s('Checks', 'now', '', { live: '3 of 7 passed', when: 'running' });
   const WATCH = (state, live, o) => s('Watch', state, '', Object.assign({ live }, o || {}));
@@ -197,45 +197,45 @@
     pausedCase('interrupted-dead', 'interrupted-dead', 'Interrupted, cannot resume', 'Worca stopped while it ran · this run cannot resume', 'Interrupted', { over: true, noSetup: true }),
 
     // Live, in trouble, or not in the usual shape
-    { id: 'copying', state: 'starting', group: 'Live', label: 'Copying the folder', detail: 'Copying the folder', figs: [['Time', '0m 12s'], ['Cost', '$0.00']], ...FOLDER,
+    { id: 'copying', state: 'starting', group: 'Running', label: 'Copying the folder', detail: 'Copying the folder', figs: [['Time', '0m 12s'], ['Cost', '$0.00']], ...FOLDER,
       stages: run({ plan: [s('Clarify', 'now', '', { live: 'Preflight: checking the copy', when: 'now' }), next('Plan'), next('Refine plan'), next('Plan review')], build: allNext(BUILD), review: allNext(REVIEW), tail: APPLY('next', 'Nothing changed yet') }) },
-    { id: 'network', group: 'Live', label: 'Waiting for the network', detail: 'Waiting for the network · api.anthropic.com · retries by itself until 14:40', figs: LIVE_FIGS,
+    { id: 'network', group: 'Running', label: 'Waiting for the network', detail: 'Waiting for the network · api.anthropic.com · retries by itself until 14:40', figs: LIVE_FIGS,
       stages: run({ review: [REVIEW[0], s('Manual tests checklist', 'now', '1m', { live: 'Waiting for the network', when: '40s' }), next('Manual web UI testing')] }) },
-    { id: 'recovery', group: 'Live', label: 'Cannot reach the model', detail: 'This step could not reach the model · it retries by itself until 14:40', figs: LIVE_FIGS, ev: REC_EV,
+    { id: 'recovery', group: 'Needs you', label: 'Cannot reach the model', detail: 'This step could not reach the model · it retries by itself until 14:40', figs: LIVE_FIGS, ev: REC_EV,
       stages: run({ build: [s('Implementation', 'problem', '1h 2m', { live: R.failureOf('Reach the model').title })], review: allNext(REVIEW) }) },
-    { id: 'recovery-auth', state: 'recovery', group: 'Live', label: 'Sign-in expired', detail: 'The Claude token has expired · run claude setup-token, then Retry', figs: LIVE_FIGS, ev: AUTH_EV,
+    { id: 'recovery-auth', state: 'recovery', group: 'Needs you', label: 'Sign-in expired', detail: 'The Claude token has expired · run claude setup-token, then Retry', figs: LIVE_FIGS, ev: AUTH_EV,
       stages: run({ build: [s('Implementation', 'problem', '1h 2m', { live: R.failureOf('Reach the model').title })], review: allNext(REVIEW) }) },
-    { id: 'parallel', state: 'working', group: 'Live', label: 'Parallel steps', figs: LIVE_FIGS,
+    { id: 'parallel', state: 'working', group: 'Running', label: 'Parallel steps', figs: LIVE_FIGS,
       stages: run({ review: [s('Review implementation', 'now', '12m', { live: 'Reading the diff', when: '2s ago' }), s('Manual tests checklist', 'now', '9m', { live: 'Writing the checklist', when: '5s ago' }), s('Manual web UI testing', 'now', '3m', { live: 'Opening the Runs page', when: '1s ago' })] }) },
-    { id: 'roles-live', state: 'working', group: 'Live', label: 'Role reviews running', figs: LIVE_FIGS,
+    { id: 'roles-live', state: 'working', group: 'Running', label: 'Role reviews running', figs: LIVE_FIGS,
       stages: run({ review: [s('Security review', 'done', '6m', { live: 'Passed · no findings' }), s('Design review', 'now', '4m', { live: 'Reading the diff', when: '3s ago' }), s('Backend review', 'now', '4m', { live: 'Checking the routes', when: '9s ago' }), next('Manual web UI testing')] }) },
-    { id: 'nodes', state: 'working', group: 'Live', label: 'A workflow without stages', title: 'Weekly issue triage', figs: LIVE_FIGS, tabs: [['summary', 'Overview'], ['activity', 'Activity'], ['decisions', 'Decisions']], noDiff: true, branch: '',
+    { id: 'nodes', state: 'working', group: 'Running', label: 'A workflow without stages', title: 'Weekly issue triage', figs: LIVE_FIGS, tabs: [['summary', 'Overview'], ['activity', 'Activity'], ['decisions', 'Decisions']], noDiff: true, branch: '',
       stages: [{ key: 'n1', label: 'Fetch issues', subs: [ok('Fetch issues', '4m')] }, { key: 'n2', label: 'Triage', subs: [s('Triage', 'now', '2m', { live: 'Sorting 41 issues', when: '3s ago' })] }, { key: 'n3', label: 'Write report', subs: [next('Write report')] }, { key: 'n4', label: 'Post report', subs: [next('Post report')] }] },
-    { id: 'noreview', state: 'working', group: 'Live', label: 'A stage not in the workflow', figs: LIVE_FIGS,
+    { id: 'noreview', state: 'working', group: 'Running', label: 'A stage not in the workflow', figs: LIVE_FIGS,
       stages: run({ build: [s('Implementation', 'now', '12m', { live: 'Editing app.js', when: '3s ago' })], review: [next('Not in this workflow')] }) },
 
     // Finished, with something to say
-    { id: 'ready-issues', state: 'ready', group: 'Finished', label: 'Ready, open issues', detail: '2 open issues · not in dev yet', figs: DONE_FIGS, stages: run({}), issues: true, shaped: true },
-    { id: 'ready-end', state: 'ready', group: 'Finished', label: 'Ready, end not reached', detail: 'End not reached · part of the workflow did not run', figs: DONE_FIGS, stages: run({}) },
-    { id: 'ready-moved', state: 'ready', group: 'Finished', label: 'Ready, base moved', detail: 'Not in dev yet · dev moved while it ran', figs: DONE_FIGS, stages: run({}), baseMoved: true },
-    { id: 'ready-held', state: 'ready', group: 'Finished', label: 'Ready, branch held', figs: DONE_FIGS, stages: run({}), heldBy: 'Breadcrumb tests for saved runs' },
-    { id: 'ready-deps', state: 'ready', group: 'Finished', label: 'Ready, runs wait on it', figs: DONE_FIGS, stages: run({}), dependents: 2 },
-    { id: 'ready-nocost', state: 'ready', group: 'Finished', label: 'Ready, engine with no cost', figs: DONE_FIGS, stages: run({}), agentsUnknown: true },
-    { id: 'hosted', state: 'ready', group: 'Finished', label: 'Ready, on a hosted Worca', figs: DONE_FIGS, stages: run({}), hosted: true },
-    { id: 'finished-nogit', state: 'noproject', group: 'Finished', label: 'Finished, no git', detail: 'Git is not set up here, so there is no branch or PR', branch: '', figs: [['Time', '12m'], ['Cost', '$1.80']], noDiff: true, noSetup: true, tabs: [['summary', 'Overview'], ['activity', 'Activity'], ['decisions', 'Decisions']],
+    { id: 'ready-issues', state: 'ready', group: 'Ready', label: 'Ready, open issues', detail: '2 open issues · not in dev yet', figs: DONE_FIGS, stages: run({}), issues: true, shaped: true },
+    { id: 'ready-end', state: 'ready', group: 'Ready', label: 'Ready, end not reached', detail: 'End not reached · part of the workflow did not run', figs: DONE_FIGS, stages: run({}) },
+    { id: 'ready-moved', state: 'ready', group: 'Ready', label: 'Ready, base moved', detail: 'Not in dev yet · dev moved while it ran', figs: DONE_FIGS, stages: run({}), baseMoved: true },
+    { id: 'ready-held', state: 'ready', group: 'Ready', label: 'Ready, branch held', figs: DONE_FIGS, stages: run({}), heldBy: 'Breadcrumb tests for saved runs' },
+    { id: 'ready-deps', state: 'ready', group: 'Ready', label: 'Ready, runs wait on it', figs: DONE_FIGS, stages: run({}), dependents: 2 },
+    { id: 'ready-nocost', state: 'ready', group: 'Ready', label: 'Ready, engine with no cost', figs: DONE_FIGS, stages: run({}), agentsUnknown: true },
+    { id: 'hosted', state: 'ready', group: 'Ready', label: 'Ready, on a hosted Worca', figs: DONE_FIGS, stages: run({}), hosted: true },
+    { id: 'finished-nogit', state: 'noproject', group: 'Ready', label: 'Finished, no git', detail: 'Git is not set up here, so there is no branch or PR', branch: '', figs: [['Time', '12m'], ['Cost', '$1.80']], noDiff: true, noSetup: true, tabs: [['summary', 'Overview'], ['activity', 'Activity'], ['decisions', 'Decisions']],
       stages: run({ tail: [{ key: 'done', label: 'Done', subs: [ok('Finished')] }] }) },
-    { id: 'folder-nochange', state: 'noproject', group: 'Finished', label: 'Folder, no files changed', detail: 'No files changed', ...FOLDER, figs: [['Time', '12m'], ['Cost', '$1.80']], noDiff: true, tabs: [['summary', 'Overview'], ['activity', 'Activity'], ['decisions', 'Decisions']],
+    { id: 'folder-nochange', state: 'noproject', group: 'Ready', label: 'Folder, no files changed', detail: 'No files changed', ...FOLDER, figs: [['Time', '12m'], ['Cost', '$1.80']], noDiff: true, tabs: [['summary', 'Overview'], ['activity', 'Activity'], ['decisions', 'Decisions']],
       stages: run({ tail: [{ key: 'done', label: 'Done', subs: [ok('Finished', '', { live: 'Nothing to apply' })] }] }) },
-    { id: 'failed-kept', group: 'Finished', label: 'Failed, work kept', detail: 'Tests still failing · the work is kept in a copy', over: true, ev: KEPT_EV, figs: [['Time', '2h 12m'], ['Cost', '$41.30']], stages: FAILED_AT() },
-    { id: 'failed-kept-wait', group: 'Finished', label: 'Failed, kept work settling', detail: 'Tests still failing · the kept work is still being saved', over: true, ev: KEPT_EV, figs: [['Time', '2h 12m'], ['Cost', '$41.30']], stages: FAILED_AT() },
-    { id: 'failed-folder', group: 'Finished', label: 'Failed, folder copy pending', detail: 'Tests still failing · 5 files changed in a copy', over: true, ...FOLDER, ev: KEPT_EV, figs: [['Time', '52m'], ['Cost', '$9.15']],
+    { id: 'failed-kept', group: 'Ended', label: 'Failed, work kept', detail: 'Tests still failing · the work is kept in a copy', over: true, ev: KEPT_EV, figs: [['Time', '2h 12m'], ['Cost', '$41.30']], stages: FAILED_AT() },
+    { id: 'failed-kept-wait', group: 'Ended', label: 'Failed, kept work settling', detail: 'Tests still failing · the kept work is still being saved', over: true, ev: KEPT_EV, figs: [['Time', '2h 12m'], ['Cost', '$41.30']], stages: FAILED_AT() },
+    { id: 'failed-folder', group: 'Ended', label: 'Failed, folder copy pending', detail: 'Tests still failing · 5 files changed in a copy', over: true, ...FOLDER, ev: KEPT_EV, figs: [['Time', '52m'], ['Cost', '$9.15']],
       stages: run({ build: [s('Implementation', 'failed', '30m', { live: 'Tests still failing after every retry' })], review: allNext(REVIEW), tail: APPLY('next', '5 files changed in a copy') }) },
-    { id: 'stopped-folder', group: 'Finished', label: 'Stopped, folder copy pending', detail: 'Stopped by you · 5 files changed in a copy', over: true, ...FOLDER, figs: [['Time', '52m'], ['Cost', '$9.15']],
+    { id: 'stopped-folder', group: 'Ended', label: 'Stopped, folder copy pending', detail: 'Stopped by you · 5 files changed in a copy', over: true, ...FOLDER, figs: [['Time', '52m'], ['Cost', '$9.15']],
       stages: run({ build: [s('Implementation', 'paused', '30m', { live: 'Stopped by you' })], review: allNext(REVIEW), tail: APPLY('next', '5 files changed in a copy') }) },
-    { id: 'in-base', group: 'Finished', label: 'Already in the base', detail: 'Already in dev through another branch · no PR of its own', noSetup: true, figs: DONE_FIGS, stages: run({ tail: [{ key: 'merged', label: 'Merged', subs: [s('Into dev', 'merged', '', { live: 'In dev · no PR of its own' })] }] }) },
-    { id: 'pushed', group: 'Finished', label: 'On its source, pushed', detail: SRC + ' is on origin', branch: SRC, onSource: true, figs: DONE_FIGS, stages: run({ tail: [{ key: 'push', label: 'Push', subs: [ok('Merge back', '', { live: 'Into ' + SRC }), s('To origin/' + SRC, 'merged', '', { live: 'Pushed' })] }] }) },
-    { id: 'diverged', group: 'Finished', label: 'On its source, diverged', detail: SRC + ' and origin have diverged: pull or rebase, then push', branch: SRC, onSource: true, figs: DONE_FIGS, stages: run({ tail: [{ key: 'push', label: 'Push', subs: [ok('Merge back', '', { live: 'Into ' + SRC }), s('To origin/' + SRC, 'problem', '', { live: 'Diverged' })] }] }) },
-    { id: 'deleted', group: 'Finished', label: 'Deleted', detail: 'Gone from Runs; only this page still knows it', figs: DONE_FIGS, noSetup: true, archived: true, stages: run({ tail: [{ key: 'done', label: 'Done', subs: [s('Deleted', 'paused', '', { live: 'By you' })] }] }) },
+    { id: 'in-base', group: 'Done', label: 'Already in the base', detail: 'Already in dev through another branch · no PR of its own', noSetup: true, figs: DONE_FIGS, stages: run({ tail: [{ key: 'merged', label: 'Merged', subs: [s('Into dev', 'merged', '', { live: 'In dev · no PR of its own' })] }] }) },
+    { id: 'pushed', group: 'Done', label: 'On its source, pushed', detail: SRC + ' is on origin', branch: SRC, onSource: true, figs: DONE_FIGS, stages: run({ tail: [{ key: 'push', label: 'Push', subs: [ok('Merge back', '', { live: 'Into ' + SRC }), s('To origin/' + SRC, 'merged', '', { live: 'Pushed' })] }] }) },
+    { id: 'diverged', group: 'Done', label: 'On its source, diverged', detail: SRC + ' and origin have diverged: pull or rebase, then push', branch: SRC, onSource: true, figs: DONE_FIGS, stages: run({ tail: [{ key: 'push', label: 'Push', subs: [ok('Merge back', '', { live: 'Into ' + SRC }), s('To origin/' + SRC, 'problem', '', { live: 'Diverged' })] }] }) },
+    { id: 'deleted', group: 'Done', label: 'Deleted', detail: 'Gone from Runs; only this page still knows it', figs: DONE_FIGS, noSetup: true, archived: true, stages: run({ tail: [{ key: 'done', label: 'Done', subs: [s('Deleted', 'paused', '', { live: 'By you' })] }] }) },
 
     // A scheduled run before it is a run
     ticket('ticket-missed', 'ticket-missed', 'Missed its start', 'Missed its 09:00 start · Worca was off'),
@@ -746,5 +746,7 @@
     { kind: 'group', menu: 'Add to group', help: 'Tracks it with related runs on one page', placeholder: 'New group name', suggest: ['Navigation', 'Billing export', 'Onboarding'] }];
   const TITLES = {};
   // A host page may name a case's run as the row that opens it (the one Worca's Runs list); empty here.
-  window.RunCardModel = { stateOf: (id) => { const c = CASES.find((x) => x.id === id); if (!c) throw new Error(`no run case ${id}`); return c.state || c.id; }, forms: FORMS, titles: TITLES, chainStart: CHAIN_START, chainPrs: CHAIN_PRS.map((x) => x[0]), proposed: PROPOSED, isNew: (t) => NEW.has(t), flow: FLOW, runFlow: RUN_FLOW, cases: CASES.map((c) => ({ id: c.id, label: c.label, group: c.group, chips: c.chips || [] })), view, add: ADD };
+  // The case picker's groups, by what you check.
+  const CASE_GROUPS = ['Running', 'Needs you', 'Paused', 'Waiting', 'Pull requests', 'Ready', 'Done', 'Ended', 'Kinds', 'Shaper', 'Groups'];
+  window.RunCardModel = { caseGroups: CASE_GROUPS, stateOf: (id) => { const c = CASES.find((x) => x.id === id); if (!c) throw new Error(`no run case ${id}`); return c.state || c.id; }, forms: FORMS, titles: TITLES, chainStart: CHAIN_START, chainPrs: CHAIN_PRS.map((x) => x[0]), proposed: PROPOSED, isNew: (t) => NEW.has(t), flow: FLOW, runFlow: RUN_FLOW, cases: CASES.map((c) => ({ id: c.id, label: c.label, group: c.group, chips: c.chips || [] })), view, add: ADD };
 })();
