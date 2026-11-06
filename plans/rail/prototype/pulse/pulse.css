@@ -107,7 +107,7 @@
 .pz-advice-t{margin:0;font-size:var(--fs-meta);line-height:1.5;color:var(--ink-2);}
 .pz-advice-acts{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;}
 
-/* The panel under the Pulse button is all of Pulse: Now and Updates with ⋯ beside them; the body scrolls. */
+/* The panel under the Pulse button is all of Pulse: Vitals and Updates with ⋯ beside them; the body scrolls. */
 .pz-popover{position:absolute;top:52px;right:8px;z-index:44;display:flex;flex-direction:column;width:min(420px,calc(100% - 16px));max-height:560px;
   border:1px solid var(--line);border-radius:var(--r-card);background:var(--panel);box-shadow:var(--shadow-pop);}
 .pz-phead{flex:none;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:0 8px 0 16px;box-shadow:inset 0 -1px 0 var(--line);}

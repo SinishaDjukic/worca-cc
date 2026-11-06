@@ -19,6 +19,7 @@ export { trail, pager } from './navigation.mjs';
 export { dialog, dialogFrame } from './dialog.mjs';
 export { field, tooltip } from './field.mjs';
 export { ICONS, icon } from './icons.mjs';
+export { SOUND_CHOICES, BURST_MS, soundFor, playChime } from './sound.mjs';
 export { row, pulseRow } from './row.mjs';
 export { chip } from './chip.mjs';
 export { checkbox } from './checkbox.mjs';

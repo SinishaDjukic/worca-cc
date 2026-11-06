@@ -25,9 +25,11 @@
 </head>
 <body class="rc-board">
 <div class="mk-wrap">
-  <p class="mk-intro">Pulse is one hub for what is happening (Now) and what happened (Updates): the panel under its button, with no page of its own. The rings around the avatar show usage for every harness. New run checks the run's estimate (its size and what runs like it used) against what is left, and warns only when it will not fit. Settings › Notifications holds every notification setting. New: all of Settings, its sidebar turned into its menu, every section drawn from the Rail components and checked for alignment. Pick a case, then open Pulse, the avatar, New run or Settings; the Every kind case holds one of each event. <a href="run-page.html" style="color:var(--ink)">The run page</a>.</p>
+  <p class="mk-intro">Pulse is one hub for what is happening (Vitals) and what happened (Updates): the panel under its button, with no page of its own. The rings around the avatar show usage for every harness. New run checks the run's estimate (its size and what runs like it used) against what is left, and warns only when it will not fit. Settings › Notifications holds every notification setting. New: all of Settings, its sidebar turned into its menu, every section drawn from the Rail components and checked for alignment. Pick a case, then open Pulse, the avatar, New run or Settings; the Every kind case holds one of each event. <a href="run-page.html" style="color:var(--ink)">The run page</a>.</p>
   <div class="mk-bar">
     <label style="display:flex;align-items:center;gap:8px;font-size:var(--fs-meta);color:var(--ink-2)">Case <select class="select" id="case" style="width:220px"></select></label>
+    <label title="A new event arrives in Pulse and plays the chime, if Settings › Notifications › Sound says so">Event <select class="select select-sm" id="new-event-kind"><option value="needs">Needs you</option><option value="problem">Problem</option><option value="info">Info</option></select></label>
+    <span class="mk-row"><button type="button" class="btn btn-sm" id="new-event" title="A new event arrives now: try it twice for a burst, or under Away for silence">New event</button></span>
     <div class="seg" role="group" aria-label="Theme">
       <button type="button" data-theme-pick="light">Light</button>
       <button type="button" data-theme-pick="dark" aria-pressed="true">Dark</button>

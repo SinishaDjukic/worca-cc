@@ -20,7 +20,7 @@ The table is `SHORTCUTS` in `shortcuts.mjs`. A page names where the focus is, an
 | The run page | L labels · Ctrl+` terminal · arrows, Home and End move through tabs, stages, the ship choice and a menu |
 
 ⌘ is Ctrl off a Mac, and either works everywhere; `keyGlyph` and `keyHint` write the right one. Space and Enter act only
-with the focus on a row, so a button keeps its own. A list whose rows cannot be acted on together (Pulse's Now) has moving and
+with the focus on a row, so a button keeps its own. A list whose rows cannot be acted on together (Pulse's Vitals) has moving and
 opening only. The things allowed in a field are a field's own way out: Esc, the arrows from a menu's own field
 into its items, and Chat's ⌥⌘N, ⌘\\ and ⌘⇧L, since you are in its composer.
 

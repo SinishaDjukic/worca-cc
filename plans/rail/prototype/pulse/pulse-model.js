@@ -1,5 +1,5 @@
 // Pulse mock: the cases, the event catalogue by group, and the pure figures the renderer paints (pulse.js).
-// Spec: plans/rail/pulse.md. Now is a state, Updates is an event; usage is read per provider and window.
+// Spec: plans/rail/pulse.md. Vitals is a state, Updates is an event; usage is read per provider and window.
 (function () {
   const R = window.RailUI;
   // The groups, in Settings order. Each event: its id, its own title, its severity: needs (waiting for a person), problem
@@ -31,11 +31,11 @@
     { id: 'projects', name: 'Projects', level: 'problems', where: 'pulse', events: [
       ['project.clone_failed', 'Clone failed', 'problem'], ['project.clone_done', 'Clone finished', 'info'],
       ['project.sync_failed', 'Sync failed', 'problem'], ['project.sync_behind', 'Behind its remote', 'info']] },
-    { id: 'app', name: 'Worca', level: 'all', where: 'pulse', events: [['app.update_available', 'Update available', 'info']] },
+    { id: 'app', name: 'Worca', level: 'all', where: 'pulse', events: [['app.update_available', 'New version', 'info']] },
   ];
   const EVENT = Object.fromEntries(GROUPS.flatMap((g) => g.events.map(([id, name, sev]) => [id, { id, name, sev, g: g.id }])));
   const CHANNELS = ['Telegram', 'Discord', 'Slack', 'Teams'];
-  // Now › Scheduled, top to bottom.
+  // Vitals › Scheduled, top to bottom.
   const SCHED = [['missed', 'Missed'], ['today', 'Today'], ['tomorrow', 'Tomorrow'], ['week', 'This week'], ['later', 'Later'], ['after', 'After a run']];
   const LEVELS = [
     { id: 'needs', text: 'needs you', help: 'Only what waits for you: questions, gates, a watched PR that needs a person' },
@@ -81,7 +81,7 @@
   };
   const N = { small: 21, medium: 12, large: 5 };
 
-  // A run in Now: `state` is the library's state (runState, sectionOf: which section it sorts into) and the run page's case.
+  // A run in Vitals: `state` is the library's state (runState, sectionOf: which section it sorts into) and the run page's case.
   const run = (state, title, project, detail, time, more) => ({ state, title, project, detail, time, ...more });
   // A start still to come, by when it comes (SCHED).
   const start = (when, title, project, detail, time, more) => run('scheduled', title, project, detail, time, { when, ...more });
@@ -104,7 +104,7 @@
         { p: 'openrouter', plan: 'Free', asOf: '13:30', win: [{ k: 'day', pct: 64, used: 32, of: 50, resets: '02:00' }] }],
       budget: { period: 'this week', spent: 1225.97, saved: 69306.73 },
       updates: [
-        up('u-upd', 'app.update_available', '1.20.0', 'Worca · you run 1.19.0', '08:40', 'Today', { unread: true, to: 'Settings › General, on the version', go: 'settings/general', land: 'general|Version' }),
+        up('u-upd', 'app.update_available', '', 'Worca · you run 1.19', '08:40', 'Today', { title: 'New version: 1.20', unread: true, to: 'Settings › General, on the version', go: 'settings/general', land: 'general|Version' }),
         up('u1', 'run.questions', 'Add CSV export to billing', 'billing-api · Plan asks 2 questions', '14:32', 'Today', { open: true, to: 'the run page at its questions', go: 'run/question' }),
         up('u2', 'run.failed', 'Update Node to 24', 'web-app · Test step · 3 tests failed', '13:58', 'Today', { to: 'the run page, on the step that stopped', go: 'run/failed', fix: 'Try again' }),
         up('u3', 'pr.published', '#962 Retry on 502', 'web-app · watched PR · checks green', '13:10', 'Today', { to: 'the fix run', go: 'run/checks' }),
@@ -163,7 +163,7 @@
       budget: { period: 'this week', spent: 18.2, saved: 402.1 },
       updates: [
         up('q1', 'run.done', 'Tidy the settings page', 'worca-cc · 18 min · $1.42', '09:15', 'Today', { go: 'run/ready' })] },
-    // A shared sign-in with one of every kind: the card, the team's note, a blocked budget, every Now section and event.
+    // A shared sign-in with one of every kind: the card, the team's note, a blocked budget, every Vitals section and event.
     { id: 'every', label: 'Every kind, shared sign-in', desktop: 'on', task: { title: 'Add rate limiting to the public API', size: 'medium' },
       identity: { people: ['Emil Angelov', 'Dana Ruiz'], via: 'Through your team\'s sign-in' }, teamSetup: true, newVersion: '1.20.0', chatUnread: true,
       away: { status: 'away-hours', hours: ['18:00', '08:00'] },
@@ -180,7 +180,7 @@
         { p: 'gemini', plan: 'CLI', asOf: '13:02', win: [] }],
       budget: { period: 'in November', spent: 100, limit: 100, blocked: true },
       updates: [
-        up('e-upd', 'app.update_available', '1.20.0', 'Worca · you run 1.19.0', '08:40', 'Today', { unread: true, to: 'Settings › General, on the version', go: 'settings/general', land: 'general|Version' }),
+        up('e-upd', 'app.update_available', '', 'Worca · you run 1.19', '08:40', 'Today', { title: 'New version: 1.20', unread: true, to: 'Settings › General, on the version', go: 'settings/general', land: 'general|Version' }),
         up('e01', 'run.questions', 'Add CSV export to billing', 'billing-api · Plan asks 2 questions', '14:32', 'Today', { open: true, to: 'the run page at its questions', go: 'run/question' }),
         up('e02', 'run.gate', 'Migrate cron parser', 'worca-cc · approve the plan', '14:20', 'Today', { open: true, to: 'the run page at its gate', go: 'run/gate' }),
         up('e03', 'run.recovery', 'Update Node to 24', 'web-app · the same step failed three times', '14:10', 'Today', { open: true, go: 'run/failed' }),
@@ -302,7 +302,7 @@
     return out;
   }
 
-  // Limits in Now: each window at or over the warning line, and the budget. It is a state: it goes when the window resets.
+  // Limits in Vitals: each window at or over the warning line, and the budget. It is a state: it goes when the window resets.
   function limits(c, warnAt) {
     const out = [];
     for (const u of c.usage) for (const w of u.win) {
@@ -318,8 +318,8 @@
     return out;
   }
 
-  // Now's runs by the section their state sorts into: `sectionOf` and `wordOf` come from the library (run-state.mjs).
-  function nowRuns(c, sectionOf, wordOf) {
+  // Vitals's runs by the section their state sorts into: `sectionOf` and `wordOf` come from the library (run-state.mjs).
+  function vitalsRuns(c, sectionOf, wordOf) {
     const out = { needs: [], running: [], scheduled: [] };
     for (const r of c.runs) out[sectionOf(wordOf(r.state))]?.push(r);
     return out;
@@ -355,5 +355,8 @@
       .sort((a, b) => Math.max(...a.win.map((w) => w.pct)) - Math.max(...b.win.map((w) => w.pct))).map((u) => u.p);
   }
 
-  window.PulseModel = { refreshed, withQuota, nowRuns, awayRow, awayLine, FINDS, FLAG_ROW, find, EVENT, CHANNELS, SCHED, GROUPS, LEVELS, WHERE, PROVIDER, CASES, SIZES, N, WHAT, qualifies, tone, rings, limits, near, room, est, winWord, fig, usd, spendPct };
+  // The Prototype corner's new event, one per severity, so the sound can be tried. Each is a fresh update.
+  const TRY = { needs: ['run.questions', 'Rename settings keys', 'worca-cc · 1 question', 'run/question'], problem: ['run.failed', 'Fix the flaky e2e test', 'worca-cc · it stopped at Review', 'run/failed'], info: ['run.done', 'Update the changelog', 'docs-site · ready', 'run/ready'] };
+  const tryEvent = (sev, n) => { const [e, about, meta, go] = TRY[sev]; return { ...up('try-' + n, e, about, meta, 'now', 'Today', { go }), unread: true }; };
+  window.PulseModel = { tryEvent, refreshed, withQuota, vitalsRuns, awayRow, awayLine, FINDS, FLAG_ROW, find, EVENT, CHANNELS, SCHED, GROUPS, LEVELS, WHERE, PROVIDER, CASES, SIZES, N, WHAT, qualifies, tone, rings, limits, near, room, est, winWord, fig, usd, spendPct };
 })();

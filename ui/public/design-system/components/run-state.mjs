@@ -1,5 +1,5 @@
 // The states of a run, and what each one offers (docs/rail/logic.md). The one source of a state's word, colour and one
-// action, so a page (the run page, a group, Pulse's Now, Chat's list later) cannot turn Paused into Ready by drawing its
+// action, so a page (the run page, a group, Pulse's Vitals, Chat's list later) cannot turn Paused into Ready by drawing its
 // own. Pure: no DOM, no mock data. Names in the words (`{pr}`, `{base}`, `{branch}`…) come from the run through `ctx`.
 import { CREATE_PR_LABEL, VIEW_PR_LABEL, VIEW_PRS_LABEL } from '../../ship-words.mjs';
 
@@ -1134,7 +1134,7 @@ export const makeAction = (label, icon, primary, items) => ({ label, icon, prima
 const GROUP_OWNS = /^(Create|Merge|Push|Publish|Discard|Try it|View|Watch|Copy|How to merge|Apply to folder|Open the)/;
 export const memberKeeps = (label) => !GROUP_OWNS.test(label);
 
-// A state's section in a list of things that wait on you (Pulse's Now; Chat's list later): waiting on a person first,
+// A state's section in a list of things that wait on you (Pulse's Vitals; Chat's list later): waiting on a person first,
 // then working, then the rest. Paused and Stopped are never Ready.
 const SECTION = { 'Needs you': 'needs', Working: 'running', Starting: 'running', 'In review': 'running', Waiting: 'scheduled', Paused: 'needs', 'Ready to merge': 'needs', Ready: 'needs', Failed: 'needs' };
 export const sectionOf = (word) => SECTION[word] || 'recent';

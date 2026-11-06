@@ -339,3 +339,32 @@ test('dismissOnOutside: a click outside closes; inside never; a real control als
   click('scrim'); assert.equal(dlg, true, 'typed text stays'); esc(); assert.equal(dlg, true, 'Esc too');
   off();
 });
+
+test('soundFor: what the choice says plays; info never; a burst once; never when away', () => {
+  const needs = [{ sev: 'needs' }], problem = [{ sev: 'problem' }], info = [{ sev: 'info' }];
+  assert.equal(R.soundFor({ events: needs }), true, 'what needs you is the default');
+  assert.equal(R.soundFor({ events: problem }), false);
+  assert.equal(R.soundFor({ choice: 'problems', events: problem }), true);
+  assert.equal(R.soundFor({ choice: 'problems', events: needs }), true);
+  for (const choice of ['needs', 'problems', 'none']) assert.equal(R.soundFor({ choice, events: info }), false, `info is silent on ${choice}`);
+  assert.equal(R.soundFor({ choice: 'none', events: needs }), false);
+  assert.equal(R.soundFor({ events: needs, away: true }), false);
+  assert.equal(R.soundFor({ events: [...info, ...needs, ...needs] }), true, 'many at once are one sound');
+  assert.equal(R.soundFor({ events: needs, at: 1000 + R.BURST_MS - 1, lastAt: 1000 }), false, 'the same burst');
+  assert.equal(R.soundFor({ events: needs, at: 1000 + R.BURST_MS, lastAt: 1000 }), true);
+  assert.deepEqual(R.SOUND_CHOICES.map((c) => c.id), ['needs', 'problems', 'none']);
+});
+
+test('playChime: two notes; quiet with no error when the browser blocks or has no Web Audio', () => {
+  assert.equal(R.playChime({}), false, 'no Web Audio');
+  const never = () => { throw new Error('must not open audio before the first click'); };
+  assert.equal(R.playChime({ AudioContext: never, navigator: { userActivation: { hasBeenActive: false } } }), false);
+  assert.equal(R.playChime({ AudioContext: function () { throw new Error('blocked'); } }), false, 'a throw stays inside');
+  let notes = 0;
+  const param = () => ({ value: 0, setValueAtTime() {}, linearRampToValueAtTime() {}, exponentialRampToValueAtTime() {} });
+  class Ctx { currentTime = 0; destination = {}; resume() { return Promise.reject(new Error('blocked')); }
+    createOscillator() { notes += 1; return { frequency: param(), connect() {}, start() {}, stop() {} }; }
+    createGain() { return { gain: param(), connect() {} }; } }
+  assert.equal(R.playChime({ AudioContext: Ctx, navigator: { userActivation: { hasBeenActive: true } } }), true);
+  assert.equal(notes, 2);
+});

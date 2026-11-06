@@ -12,20 +12,20 @@ among them).
 
 | Today | With Pulse |
 |---|---|
-| Activity popover (live state), Schedules' notification log, desktop alerts, chat notices and toasts, each with its own switches | One hub, **Pulse**: the panel under one top-bar button, with no page of its own: **Now** (live state, today's Activity) and **Updates** (what happened, stored, read and cleared) |
+| Activity popover (live state), Schedules' notification log, desktop alerts, chat notices and toasts, each with its own switches | One hub, **Pulse**: the panel under one top-bar button, with no page of its own: **Vitals** (live state, today's Activity) and **Updates** (what happened, stored, read and cleared) |
 | Desktop switches in Settings › General › Alerts, resume after a limit in Settings › Runs, chat switches in Settings › Chat | One tab, **Settings › Notifications** (after General): every notification setting and what a start does near a limit, one sentence per row |
-| A usage limit is known only when a run hits it and pauses | Usage is visible before it stops anything: **rings on the avatar**, a **Limits** row in Now when one is near, and an update when it crosses the warning line, is reached or resets |
+| A usage limit is known only when a run hits it and pauses | Usage is visible before it stops anything: **rings on the avatar**, a **Limits** row in Vitals when one is near, and an update when it crosses the warning line, is reached or resets |
 | The avatar ring shows spend against a budget | The avatar shows live usage only: **session** and the **long window** (week, day or month) of connected providers, refreshed every minute; each ring shades along its arc. A budget is set in Settings › Runs and read in Usage and costs |
 | The account menu opens on the spend card | The menu keeps its rows; the spend card moves into its last row, **Usage and costs ›**, a side menu with every harness's limits and the spend |
 | A run starts and pauses at the limit | Before it starts, Pulse checks the run's **estimate** (its size, and what runs like it used) against what is left: New run warns only when it will not fit and offers a harness with room or a start after the reset; slices, queued and scheduled runs move, wait, or let a smaller start that fits go first |
 
 ## 2. The rule that places everything
 
-> **Now is a state. Updates is an event.** If it stops being true by itself, it is Now. If it happened at a time and
+> **Vitals is a state. Updates is an event.** If it stops being true by itself, it is Vitals. If it happened at a time and
 > stays happened, it is Updates. (Pulse Center §3, unchanged.)
 
 Usage follows the same rule:
-- "Claude's session is at 86%" stops being true when the session resets, so it is a **Now** row (group Limits).
+- "Claude's session is at 86%" stops being true when the session resets, so it is a **Vitals** row (group Limits).
 - "Claude's session passed 80% at 14:20" happened, so it is an **Updates** row, and the event that can reach Desktop
   and Chat.
 
@@ -40,16 +40,16 @@ Usage follows the same rule:
 ### 3.2 The Pulse panel (all of Pulse)
 Pulse is the panel under its button, over whatever page is open; there is no Pulse page (a page would hold the same
 two lists twice). On a narrow screen the panel is the window's width.
-- Head: tabs **Now** and **Updates**, each with its count as a caption (Rail: a count is a caption, never a chip), and
+- Head: tabs **Vitals** and **Updates**, each with its count as a caption (Rail: a count is a caption, never a chip), and
   ⋯ at the right: Mark all read, Clear read, Notification settings. The body scrolls; the head stays.
-- **Now**: the groups that have rows, in this order: Needs you (amber dot), Limits (amber or red), Running (peach,
+- **Vitals**: the groups that have rows, in this order: Needs you (amber dot), Limits (amber or red), Running (peach,
   pulses), Running actions (each with its Stop; it needs nobody, so its count stays out of the badge), Scheduled (hollow; a slice, queued or scheduled run says what it will do near a limit, §4.5). Above them,
   the same sentence as every list: `Showing [everything ▾] from [all projects ▾]`, each choice with its count. Shows:
   Everything, Needs you, Running, Running actions, Scheduled, Limits. From: all projects or one project; a limit belongs to a harness,
-  so it ignores the project and goes only with Everything or Limits. The Now tab's count follows the sentence; the
+  so it ignores the project and goes only with Everything or Limits. The Vitals tab's count follows the sentence; the
   Pulse button's badge does not, so a filter never hides a run that waits. A run's section follows its state
   (`runState`, `sectionOf` in the library): Paused, Failed and Ready sort under Needs you, Waiting under Scheduled.
-  Scheduled groups its rows: Missed, Today, Tomorrow, This week, Later, After a run. No selection: Now's rows are states and
+  Scheduled groups its rows: Missed, Today, Tomorrow, This week, Later, After a run. No selection: Vitals's rows are states and
   leave by themselves, so there is nothing to mark read or clear. Empty: "Nothing needs you. Nothing is running.";
   narrowed: "Nothing here right now."
 - **Updates**: a divided list grouped by day (Today, Yesterday, Earlier), on the 20px rail: the unread dot, a title
@@ -70,13 +70,14 @@ two lists twice). On a narrow screen the panel is the window's width.
   chat notice opens the panel at its row.
 
 ### 3.3 Settings › Notifications
-A tab of its own in Settings, after General, at every interface level. It holds every setting about what reaches you
-and what a start does near a limit, so nothing about notifications stays elsewhere:
+A tab of its own in Settings, after General, at every interface level. It holds every setting about what reaches you,
+so nothing about notifications stays elsewhere; its sections are Channels and Updates:
 - **Alerts** leaves Settings › General: its Desktop notifications and Badge switches and Send test become the Desktop
   and Badge rows below (the same `alerts.mjs` values, per browser).
 - **Resume runs automatically when a usage limit resets** stays in Settings › Runs, as its Paused runs row (it is how
-  runs behave, not what reaches you); Notifications has a link row to it. The cost limits stay in Runs too.
+  runs behave, not what reaches you); Notifications' Usage row links to Runs › Limits. The cost limits stay in Runs too.
 - Chat channels stay in Settings › Chat (they are chat's own setup); the Chat row links there.
+- **Sound** is a row in Channels: `Play a sound for [what needs you ▾]` (what needs you, also problems, nothing). Rules: `docs/rail/small-rules.md`.
 
 Three sections, one rail. Every choice is a **picker in its sentence** (Rail: never a toggle row or radio cards).
 
@@ -107,7 +108,7 @@ Three sections, one rail. Every choice is a **picker in its sentence** (Rail: ne
 | **Usage** (new; usage limits and spend) | usage.near, usage.reached, usage.reset, usage.moved, usage.held, budget.threshold, budget.exceeded | Needs you and problems | Desktop and chat |
 | Away mode | started, ended | Everything | Chat |
 | Projects | clone, sync, scan | Needs you and problems | Pulse only |
-| Worca | a new version (`app.update_available`): an update that opens Settings › General on the version, the sidebar holds places only | Everything | Pulse only |
+| Worca | a new version (`app.update_available`): an update reading `New version: 1.20` that opens Settings › General on the version, the sidebar holds places only | Everything | Pulse only |
 
 - **Each kind has its own title.** Runs' needs-you kinds: Questions waiting, Approval needed, Recovery decision needed,
   Workflow to review, Cost cap reached. A pause says why: Usage limit reached (a harness that reports no window; one that
@@ -115,7 +116,7 @@ Three sections, one rail. Every choice is a **picker in its sentence** (Rail: ne
   Night guardrail reached, Time limit reached, Worca was stopped. Your own Pause and a drain (the server stopping) wait
   on nobody and never notify.
 - Usage has one more picker in its sentence: `warn at [80% ▾]` (70, 80, 90%). It sets the line for the
-  rings' amber, the Limits row in Now, the `usage.near` update and what "near" means below.
+  rings' amber, the Limits row in Vitals, the `usage.near` update and what "near" means below.
 
 **When a limit is near** (the last section): what a start does when the run will not fit in what is left (§4.5).
 | Row | Sentence | Choices (default first) |
@@ -137,7 +138,7 @@ a month where that is the only one).
 | Codex (OpenAI) | 5-hour | week | the rate-limit figures Codex reports with each turn |
 | Copilot (GitHub) | none | month: premium requests | read from the provider (used of entitlement) |
 | Cursor | none | month: requests, where the plan has a cap | not reported today: "Not reported by Cursor" |
-| Gemini (Google) | none | day: requests | reports nothing: the person sets its daily quota in Settings › Providers and Worca counts against it; with none set, no ring and a link to set it |
+| Gemini (Google) | none | day: requests | reports nothing: the person sets its daily quota in Settings › Models › Sign-ins and Worca counts against it; with none set, no ring and a link to set it |
 | OpenRouter free models | none | day: free requests | the count the spend card shows today ("Free requests today") |
 | An API key (any vendor) | none | none: billed per token | the spend and its budget are its limit |
 
@@ -184,10 +185,10 @@ since the menu opens up from the avatar and the bottom is nearest the hand:
     session or weekly limit`. Each row's tooltip names its source (`Reported by Claude Code at 14:28`).
   - **The spend card** (`renderSpendCard`): Spent and Saved, or Limit and Spent with its ring. Its title, `Spend this
     week`, is the link to Statistics (a text link, `--blue-ink-strong`, 600); the Details button goes. OpenRouter's free-request row leaves the card: it is a block in Limits now.
-  - **Limit settings**: opens Settings › Notifications.
+  - **Limit settings**: opens Settings › Runs › Limits.
 
 ### 4.4 Usage notifications
-| Event | When | Severity | Pulse row | Now |
+| Event | When | Severity | Pulse row | Vitals |
 |---|---|---|---|---|
 | `usage.near` | a harness's window crosses the warning line (once per window) | problem | `Claude Code session at 80% · resets 16:40` | Limits row while it stays over |
 | `usage.reached` | a window is used up; runs on that harness pause | problem | `Codex weekly limit reached · 2 runs paused · resets Mon 09:00` | Limits row, red, until reset |
@@ -246,7 +247,7 @@ against its own estimate when its turn comes, follows the setting, and says what
   the window left before the reset is used by work that can finish in it. Order is otherwise kept, and a slice still
   waits for the slice before it.
 - **Slices**: slice k starts when slice k-1 is done (`shape-it-first.md`); the rule applies at that moment, per slice.
-  Moving a slice does not touch its branch (it still starts from slice k-1's branch). Before it starts, its row in Now ›
+  Moving a slice does not touch its branch (it still starts from slice k-1's branch). Before it starts, its row in Vitals ›
   Scheduled says what it will do: `Will start on Codex: it needs about 28% of Claude Code's session, 14% is left`, or
   `Waits for 16:40: …`. With
   **Ask me before each run** on, the plan stop shows the same note as New run.

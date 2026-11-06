@@ -14,13 +14,13 @@ global.window = {}; await import('../settings/settings-model.js');
 const SECTION_IDS = window.SettingsModel.GROUPS.flatMap((g) => g.items).filter((id) => id !== 'notifications');
 const VIEWS = {
   now: async () => {},
-  popNow: async (p) => click(p, '[data-pop]'),
+  popVitals: async (p) => click(p, '[data-pop]'),
   popUpdates: async (p) => { await click(p, '[data-pop]'); await click(p, '[data-ptab="updates"]'); },
   account: async (p) => click(p, '[data-acct]'),
   usage: async (p) => { await click(p, '[data-acct]'); await click(p, '[data-sub="usage"]'); },
   popSelect: async (p) => { await click(p, '[data-pop]'); await click(p, '[data-ptab="updates"]'); await click(p, '[data-menu="more"]'); await click(p, '[data-pick="more|select"]'); await click(p, '[data-sel]'); },
-  popNowFiltered: async (p) => { await click(p, '[data-pop]'); await click(p, '[data-menu="nowShow"]'); await click(p, '[data-pick="nowShow|running"]'); },
-  popActions: async (p) => { await click(p, '[data-pop]'); await click(p, '[data-menu="nowShow"]'); await click(p, '[data-pick="nowShow|actions"]'); },
+  popVitalsFiltered: async (p) => { await click(p, '[data-pop]'); await click(p, '[data-menu="vitalsShow"]'); await click(p, '[data-pick="vitalsShow|running"]'); },
+  popActions: async (p) => { await click(p, '[data-pop]'); await click(p, '[data-menu="vitalsShow"]'); await click(p, '[data-pick="vitalsShow|actions"]'); },
   levelFly: async (p) => { await click(p, '[data-acct]'); await click(p, '[data-sub="lvl"]'); },
   popMore: async (p) => { await click(p, '[data-pop]'); await click(p, '[data-ptab="updates"]'); await click(p, '[data-menu="more"]'); },
   newrun: async (p) => click(p, '[data-newrun]'),

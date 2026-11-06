@@ -11,7 +11,7 @@ Shaped 4 Nov 2026. The steps: the Settings prototype (done), one prototype of al
 | In Wave 1 | How |
 |---|---|
 | The run page and the group page | Rail, as in the prototype (`index.html`) |
-| Pulse: Now and Updates, the usage rings, Usage and costs, what a start does near a limit | Rail (`pulse.html`, `pulse.md`) |
+| Pulse: Vitals and Updates, the usage rings, Usage and costs, what a start does near a limit | Rail (`pulse.html`, `pulse.md`) |
 | Settings: every section, opened from the profile menu | Rail (`pulse.html` › Settings, `settings-model.js`) |
 | Every other page (Runs list, Chats, Schedules, Projects, Statistics, the Add-ons' own pages) | Today's design, with the Rail colours and surfaces: the palette and one surface for page and card; Poppins stays until graduation (`agreed/decisions-1.5b.md`, D6) |
 | What the design promises and the app cannot do yet | Built: each gap is its own slice, with its backend (new APIs, calls, events), after the surface that needs it; the surface ships with a clear stand-in until it lands |
@@ -96,7 +96,7 @@ outline. The proposed slices, in order (the Planner may merge or reorder them; n
    bar; the trail is the one way back; the address is the page (Navigation: one model).
 5. **Settings:** every section on SettingsSection, SettingsRow and SideMenu; its search lands on every row; Team policy,
    Plugins, Connectors, Models and Providers move into it.
-6. **Pulse:** Now and Updates, the usage rings, Usage and costs, what a start does near a limit.
+6. **Pulse:** Vitals and Updates, the usage rings, Usage and costs, what a start does near a limit.
 7. **The run and group pages:** the Rail run page (status line, stepper, tabs by exception, Figures, Create PR, the place
    line, including a run on its source branch).
 8. **The gaps:** each piece of missing functionality with its backend, after the surface that needs it (that surface

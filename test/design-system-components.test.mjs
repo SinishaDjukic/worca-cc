@@ -476,8 +476,8 @@ test('statusDotClass, the button\'s count, the checkbox without words or with a 
 });
 
 test('tabs with no panel: the page\'s hooks in place of the panel\'s', () => {
-  const t = dom(C.tabs({ items: [{ id: 'now', label: 'Now', count: 2, selected: true }], hooks: (x) => ({ 'data-ptab': x.id }) })).querySelector('.tab');
-  assert.equal(t.getAttribute('data-ptab'), 'now');
+  const t = dom(C.tabs({ items: [{ id: 'vitals', label: 'Vitals', count: 2, selected: true }], hooks: (x) => ({ 'data-ptab': x.id }) })).querySelector('.tab');
+  assert.equal(t.getAttribute('data-ptab'), 'vitals');
   assert.equal(t.getAttribute('aria-selected'), 'true');
   assert.equal(t.hasAttribute('data-tab'), false);
   assert.equal(t.querySelector('.n').textContent, '2');

@@ -93,7 +93,7 @@ for (const scheme of ['light', 'dark']) for (const w of [1280, 900, 760, 375]) {
   const clicks = (...ss) => (p) => p.evaluate(async (list) => { for (const x of list) { document.querySelector(x)?.click(); await new Promise((r) => setTimeout(r, 30)); } }, ss);
   const OVER = [
     ['Pulse', 'runs', clicks('[data-pop]'), '.pz-popover'], ['Pulse on a run', 'run/ready', clicks('[data-pop]'), '.pz-popover'], ['Pulse on Settings', 'settings/general', clicks('[data-pop]'), '.pz-popover'],
-    ['Pulse\'s sentence', 'runs', clicks('[data-pop]', '[data-menu="nowShow"]'), '.pz-popover .pz-menu'],
+    ['Pulse\'s sentence', 'runs', clicks('[data-pop]', '[data-menu="vitalsShow"]'), '.pz-popover .pz-menu'],
     ['the profile menu', 'runs', clicks('[data-acct]'), '#app .acct-menu'], ['Usage and costs', 'runs', clicks('[data-acct]', '[data-sub="usage"]'), '#app .pz-fly'],
     ['New run', 'runs', clicks('[data-newrun]'), '.pz-newrun', '.viewer-modal'],
     ['the Runs sentence', 'runs', clicks('#runs-root [data-menu="show"]'), '#runs-root .pz-menu'], ['the list\'s ⋯', 'runs', clicks('#runs-root [data-menu="tools"]'), '#runs-root .rc-pop > .menu'],

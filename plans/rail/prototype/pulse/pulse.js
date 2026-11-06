@@ -13,12 +13,12 @@ const svg = (name, size, cls) => R.icon(name, size, { cls, stroke: 1.8 });
 const caseOf = (id) => M.CASES.find((c) => c.id === id);
 const groupOf = (id) => M.GROUPS.find((g) => g.id === id);
 function freshSettings(c) {
-  return { desktop: c.desktop, badge: 'needs', warnAt: 80, mine: 'suggest', auto: 'move', groups: Object.fromEntries(M.GROUPS.map((g) => [g.id, { level: g.level, where: g.where, ex: {} }])) };
+  return { desktop: c.desktop, badge: 'needs', sound: 'needs', warnAt: 80, mine: 'suggest', auto: 'move', groups: Object.fromEntries(M.GROUPS.map((g) => [g.id, { level: g.level, where: g.where, ex: {} }])) };
 }
 // a case starts fresh: nothing from the case before it carries over
-const fresh = (caseId) => ({ caseId, page: 'runs', pop: false, popTab: 'now', acct: false, sub: '', nr: null, menu: '', show: 'unread', from: 'all', nowShow: 'all', nowFrom: 'all',
+const fresh = (caseId) => ({ caseId, page: 'runs', pop: false, popTab: 'vitals', acct: false, sub: '', nr: null, menu: '', show: 'unread', from: 'all', vitalsShow: 'all', vitalsFrom: 'all',
   pick: R.selectClear(), rowKey: '', read: [], cleared: [], fixed: [], custom: '', confirm: '', toast: '', flash: '', awayStatus: caseOf(caseId).away.status, keep: true, s: freshSettings(caseOf(caseId)), sset: '', sv: { ...SV.fresh(), gemQuota: caseOf(caseId).gemQuota || '', ...(caseOf(caseId).newVersion ? { latest: caseOf(caseId).newVersion, upd: 'available' } : {}) },
-  stopped: [], teamSeen: false, chatSeen: false, unlock: null, session: false, person: 0, people: {} });
+  added: [], soundAt: null, stopped: [], teamSeen: false, chatSeen: false, unlock: null, session: false, person: 0, people: {} });
 let ui = fresh('afternoon');
 // What opened with this click: only that fades in (a repaint of what was already open does not fade again).
 let opening = '';
@@ -42,28 +42,28 @@ const isUnread = (u) => u.unread && !isFixed(u) && !ui.read.includes(u.id);
 const groupShows = (g) => !g.flag || R.prefs.flag(g.flag);
 const groupsShown = () => M.GROUPS.filter(groupShows);
 const inShownGroup = (u) => groupShows(groupOf(u.g));
-const live = () => C().updates.filter((u) => inShownGroup(u) && !ui.cleared.includes(u.id));
+const live = () => [...ui.added, ...C().updates].filter((u) => inShownGroup(u) && !ui.cleared.includes(u.id));
 const unread = () => live().filter(isUnread);
 const limitsNow = () => M.limits(C(), ui.s.warnAt);
-// Now's sections, and what its sentence keeps of them: a run by its project; a limit belongs to a harness, so it ignores
+// Vitals's sections, and what its sentence keeps of them: a run by its project; a limit belongs to a harness, so it ignores
 // the project and goes only with its own choice.
-const NOW_SHOWS = [{ id: 'all', text: 'everything', help: 'Every section: what needs you, limits, what is running and what is scheduled' },
+const VITALS_SHOWS = [{ id: 'all', text: 'everything', help: 'Every section: what needs you, limits, what is running and what is scheduled' },
   { id: 'needs', text: 'needs you', help: 'Runs waiting on a person: questions, gates, cost caps, a pause, a failure, ready to ship' }, { id: 'running', text: 'running', help: 'Runs working now' },
   { id: 'actions', text: 'running actions', help: 'What keeps running after a run: dev servers, previews; each with its Stop' },
   { id: 'scheduled', text: 'scheduled', help: 'Starts coming up: slices, queued and scheduled runs' }, { id: 'limits', text: 'limits', help: 'Usage and spend at or over the warning line, per harness' }];
 const wordOf = (state) => R.runState(state).word;
-const nowRuns = () => M.nowRuns(C(), R.sectionOf, wordOf);
+const vitalsRuns = () => M.vitalsRuns(C(), R.sectionOf, wordOf);
 // What keeps running after a run, until someone stops it: it never needs a person, so it stays out of Pulse's badge.
 const runningActions = () => C().actions.filter((a) => !ui.stopped.includes(a.id));
 const actionProject = (a) => C().runs.find((r) => r.title === a.run)?.project || '';
-function nowShown(show = ui.nowShow, from = ui.nowFrom) {
-  const c = nowRuns(), runs = (k) => (show === 'all' || show === k ? c[k].filter((r) => from === 'all' || r.project === from) : []);
+function vitalsShown(show = ui.vitalsShow, from = ui.vitalsFrom) {
+  const c = vitalsRuns(), runs = (k) => (show === 'all' || show === k ? c[k].filter((r) => from === 'all' || r.project === from) : []);
   const actions = show === 'all' || show === 'actions' ? runningActions().filter((a) => from === 'all' || actionProject(a) === from) : [];
   return { needs: runs('needs'), limits: show === 'all' || show === 'limits' ? limitsNow() : [], running: runs('running'), actions, scheduled: runs('scheduled') };
 }
-const nowN = (v) => v.needs.length + v.limits.length + v.running.length + v.actions.length + v.scheduled.length;
-const nowProjects = () => [...new Set(C().runs.map((r) => r.project))];
-const nowCount = () => nowN(nowShown());
+const vitalsN = (v) => v.needs.length + v.limits.length + v.running.length + v.actions.length + v.scheduled.length;
+const vitalsProjects = () => [...new Set(C().runs.map((r) => r.project))];
+const vitalsCount = () => vitalsN(vitalsShown());
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many || one + 's'}`;
 
 // ---- shared pieces ----
@@ -88,7 +88,7 @@ const personName = () => people()[ui.person] || people()[0];
 const initials = () => personName().split(/\s+/).map((w) => w[0]).join('').slice(0, 2).toUpperCase();
 const awayRow = () => M.awayRow({ ...C().away, status: ui.awayStatus });
 const isAway = () => awayRow().state === 'away';
-// The sidebar's foot: the avatar. The sidebar holds places only; what keeps running is in Now, a new version in Updates.
+// The sidebar's foot: the avatar. The sidebar holds places only; what keeps running is in Vitals, a new version in Updates.
 function sideFoot() {
   const rs = M.rings(C(), ui.s.warnAt);
   return R.accountButton({ name: personName(), avatar: avatar(), chevron: svg('updown', 14, 'pz-updown'), away: isAway(), open: !!ui.acct, label: `Account and usage${isAway() ? ', away' : ''}: ${rs.map((r) => r.line).join('; ') || 'no usage reported yet'}` });
@@ -108,7 +108,7 @@ function sidebar() {
   </aside>`;
 }
 function topbar() {
-  const needs = nowRuns().needs.length, un = unread().length, run = nowRuns().running.length;
+  const needs = vitalsRuns().needs.length, un = unread().length, run = vitalsRuns().running.length;
   const badge = needs ? { n: needs, tone: 'need' } : un ? { n: un, tone: 'run' } : null;
   const words = [needs && plural(needs, 'needs you', 'need you'), un && plural(un, 'unread'), run && `${run} running`].filter(Boolean).join(' · ') || 'Nothing new';
   return `<header class="pz-top"><div class="pz-top-l">${R.search({ value: ui.q || '', label: 'Search or ask', results: searchResults() })}</div><div class="pz-top-r">
@@ -133,11 +133,11 @@ function updateRow(u, withCheck) {
   return row({ dot: dotOf(u), title: u.title, meta: `${groupOf(u.g).name} · ${u.meta}`, time: u.time, key: u.id, check: withCheck ? ui.pick.ids.includes(u.id) : undefined,
     unreadDot: isUnread(u), resolved: u.resolved || isFixed(u), fix: !isFixed(u) && !ui.pick.on ? u.fix : '', flash: ui.flash === u.id, tip: `Opens ${u.to}${isUnread(u) ? ' and marks it read' : ''}` });
 }
-function nowSections() {
-  const c = nowShown(), lim = c.limits;
+function vitalsSections() {
+  const c = vitalsShown(), lim = c.limits;
   const bar = `<div class="pz-bar"><span class="pz-rail"></span><span class="pz-sentence">${sentence([
-    { word: 'Showing', id: 'nowShow', text: NOW_SHOWS.find((x) => x.id === ui.nowShow).text, items: NOW_SHOWS.map((x) => ({ ...x, checked: x.id === ui.nowShow, hint: String(nowN(nowShown(x.id, ui.nowFrom))) })), tip: 'Which of Now\'s sections the panel shows' },
-    { word: 'from', id: 'nowFrom', text: ui.nowFrom === 'all' ? 'all projects' : ui.nowFrom, items: [{ id: 'all', text: 'all projects', checked: ui.nowFrom === 'all', hint: String(nowN(nowShown(ui.nowShow, 'all'))) }, { sep: true }].concat(nowProjects().map((p) => ({ id: p, text: p, checked: ui.nowFrom === p, hint: String(nowN(nowShown(ui.nowShow, p))) }))), tip: 'Which project\'s runs it shows; limits belong to a harness and show for every project' }])}</span></div>`;
+    { word: 'Showing', id: 'vitalsShow', text: VITALS_SHOWS.find((x) => x.id === ui.vitalsShow).text, items: VITALS_SHOWS.map((x) => ({ ...x, checked: x.id === ui.vitalsShow, hint: String(vitalsN(vitalsShown(x.id, ui.vitalsFrom))) })), tip: 'Which of Vitals\'s sections the panel shows' },
+    { word: 'from', id: 'vitalsFrom', text: ui.vitalsFrom === 'all' ? 'all projects' : ui.vitalsFrom, items: [{ id: 'all', text: 'all projects', checked: ui.vitalsFrom === 'all', hint: String(vitalsN(vitalsShown(ui.vitalsShow, 'all'))) }, { sep: true }].concat(vitalsProjects().map((p) => ({ id: p, text: p, checked: ui.vitalsFrom === p, hint: String(vitalsN(vitalsShown(ui.vitalsShow, p))) }))), tip: 'Which project\'s runs it shows; limits belong to a harness and show for every project' }])}</span></div>`;
   const sec = (h, n, rows) => (n ? `<section class="pz-sec"><h3 class="pz-h">${h} <span class="n">${n}</span></h3><div class="pz-list">${rows}</div></section>` : '');
   const out = sec(R.runState('question').word, c.needs.length, c.needs.map((r, i) => runRow(r, 'need' + i, 'Opens the run page at what it asks')).join(''))
     + sec('Limits', lim.length, lim.map((l, i) => row({ dot: l.tone === 'over' ? 'is-red' : 'is-amber', title: l.title, meta: l.detail, time: l.time, key: 'lim' + i, tip: `${l.tip} · opens the usage card` })).join(''))
@@ -145,7 +145,7 @@ function nowSections() {
     + sec('Running actions', c.actions.length, c.actions.map((a) => R.pulseRow({ mark: runMark('working'), title: a.run, meta: a.label, time: '', id: 'act:' + a.id, tip: a.go ? `Opens ${a.run}` : 'Its run is gone; it can still be stopped',
       action: R.button({ label: 'Stop', kind: 'quiet', attrs: { 'data-act-stop': a.id, title: `Stop ${a.label} and free its port` } }) })).join(''))
     + scheduledSection(c.scheduled);
-  const all = ui.nowShow === 'all' && ui.nowFrom === 'all';
+  const all = ui.vitalsShow === 'all' && ui.vitalsFrom === 'all';
   return bar + (out || `<p class="pz-empty">${all ? 'Nothing needs you. Nothing is running.' : 'Nothing here right now.'}</p>`);
 }
 
@@ -171,7 +171,7 @@ function startPlan(r) {
 }
 const share = (p, size) => { const e = M.est(p, size), u = C().usage.find((x) => x.p === p); const k = e && u && u.win.map((x) => x.k).find((x) => e[x] != null); return k ? `about ${e[k]}% of its ${M.WHAT[k]}` : ''; };
 function startDetail(r) {
-  const later = nowRuns().scheduled, pl = startPlan(r), i = later.indexOf(r);
+  const later = vitalsRuns().scheduled, pl = startPlan(r), i = later.indexOf(r);
   if (pl.go === 'asis') return `Starts on ${pl.lim.name} and may pause: ${pl.why}`;
   if (pl.go === 'move') return `Will start on ${pname(pl.to)}: ${pl.why}`;
   if (pl.go === 'wait') return `Waits for ${pl.lim.resets}: ${pl.why}`;
@@ -180,7 +180,7 @@ function startDetail(r) {
   return r.slice ? `Starts on ${pname(r.on)} when slice 2 is done · ${share(r.on, r.size)}` : `Starts on ${pname(r.on)} when a slot is free · ${share(r.on, r.size)}`;
 }
 
-// ---- Pulse: the panel under the Pulse button is the whole hub (Now, every update, select and clear); no page ----
+// ---- Pulse: the panel under the Pulse button is the whole hub (Vitals, every update, select and clear); no page ----
 function popover() {
   if (!ui.pop) return '';
   const un = unread();
@@ -190,8 +190,8 @@ function popover() {
     ...(ui.popTab === 'updates' ? [{ id: 'select', text: 'Select', help: 'Tick updates to mark read or clear several at once' }] : []), { sep: true },
     { id: 'settings', text: 'Notification settings', help: 'Settings › Notifications: what reaches you' }], 'right')}</span>`;
   return `<div class="pz-popover${inCls('pop')}" role="dialog" aria-label="Pulse">
-    <div class="pz-phead">${R.tabs({ cls: 'pz-ptabs', items: [{ id: 'now', label: 'Now', count: nowCount(), selected: ui.popTab === 'now', tip: 'What is true right now: it changes by itself and cannot be cleared' }, { id: 'updates', label: 'Updates', count: un.length, selected: ui.popTab === 'updates', tip: `What happened: read, select and clear, like runs. Kept for 90 days${C().identity ? '. Read and cleared are yours; others on this sign-in keep their own' : ''}` }], hooks: (t) => ({ 'data-ptab': t.id, title: t.tip }) })}${more}</div>
-    <div class="pz-pbody">${ui.popTab === 'now' ? nowSections() : updatesPanel()}</div>${bulkBar()}
+    <div class="pz-phead">${R.tabs({ cls: 'pz-ptabs', items: [{ id: 'vitals', label: 'Vitals', count: vitalsCount(), selected: ui.popTab === 'vitals', tip: 'What is true right now: it changes by itself and cannot be cleared' }, { id: 'updates', label: 'Updates', count: un.length, selected: ui.popTab === 'updates', tip: `What happened: read, select and clear, like runs. Kept for 90 days${C().identity ? '. Read and cleared are yours; others on this sign-in keep their own' : ''}` }], hooks: (t) => ({ 'data-ptab': t.id, title: t.tip }) })}${more}</div>
+    <div class="pz-pbody">${ui.popTab === 'vitals' ? vitalsSections() : updatesPanel()}</div>${bulkBar()}
   </div>`;
 }
 
@@ -344,7 +344,7 @@ function bulkBar() {
   const openNeeds = ups.filter((u) => u.sev === 'needs' && u.open).length;
   const actions = ui.show === 'cleared' ? [{ id: 'restore', label: 'Restore', n: ups.length, tip: 'Puts them back in All; Undo in the notice' }]
     : [{ id: 'read', label: 'Mark read', n: unreadN, tip: unreadN < ups.length ? `Skips ${ups.length - unreadN} already read` : 'Marks them read; Undo in the notice', why: 'All of them are read already' },
-      { id: 'clear', label: 'Clear', n: ups.length, tip: openNeeds ? `${plural(openNeeds, 'run')} still ${openNeeds === 1 ? 'waits' : 'wait'} for you in Now: clearing does not answer it` : 'Moves them to Cleared; Undo in the notice' }];
+      { id: 'clear', label: 'Clear', n: ups.length, tip: openNeeds ? `${plural(openNeeds, 'run')} still ${openNeeds === 1 ? 'waits' : 'wait'} for you in Vitals: clearing does not answer it` : 'Moves them to Cleared; Undo in the notice' }];
   return R.selectionBar({ label: 'Selected updates', count: ups.length, actions });
 }
 // The page behind Pulse: Runs is not in this prototype; Pulse opens over any page.
@@ -380,6 +380,7 @@ function notifications() {
       + R.switchButton({ on: s.desktop === 'on', label: 'Desktop notifications in this browser', why: s.desktop === 'on' ? 'On: what a group sends to desktop shows as a notification' : 'Off: no desktop notifications from any group', attrs: { 'data-desk': '' } }) });
   const channels = desk
     + R.settingsRow({ name: 'Badge', sentence: `The tab title counts ${sp('badge', BADGE.find((b) => b.id === s.badge).text, BADGE.map((b) => ({ ...b, checked: b.id === s.badge })), 'What the count in the tab title counts')}` })
+    + R.settingsRow({ name: 'Sound', sentence: `Play a sound for ${sp('sound', R.SOUND_CHOICES.find((x) => x.id === s.sound).text, R.SOUND_CHOICES.map((x) => ({ ...x, checked: x.id === s.sound })), 'What makes a sound as it arrives. Never during away hours; a burst plays once')}` })
     + R.settingsRow({ name: 'Chat', sentence: `Sent to ${M.CHANNELS.length} channels: ${M.CHANNELS.join(', ')}`, end: quiet('Manage', { 'data-sset': 'ask', title: 'Channels, mute and allow-lists are in Settings › Chat' }) });
   const groups = groupsShown().map((g) => {
     const gs = s.groups[g.id], open = ui.custom === g.id, nEx = Object.keys(gs.ex).length;
@@ -402,7 +403,7 @@ function notifications() {
 // What a run does near a limit is a run's business, so it sits in Settings › Runs; Notifications only says how you hear of it.
 function limitsRows() {
   const s = ui.s;
-  const warnRow = R.settingsRow({ name: 'Warning line', sentence: `Warn at ${sp('warn', s.warnAt + '%', [70, 80, 90].map((v) => ({ id: String(v), text: v + '%', checked: s.warnAt === v, help: `Rings turn amber, Now shows the limit and an update is sent at ${v}%` })), 'The warning line for usage and spend')} of a limit` });
+  const warnRow = R.settingsRow({ name: 'Warning line', sentence: `Warn at ${sp('warn', s.warnAt + '%', [70, 80, 90].map((v) => ({ id: String(v), text: v + '%', checked: s.warnAt === v, help: `Rings turn amber, Vitals shows the limit and an update is sent at ${v}%` })), 'The warning line for usage and spend')} of a limit` });
   const limits = warnRow + R.settingsRow({ name: 'Manual starts', sentence: `New run and Resume near a limit ${sp('mine', MINE.find((m) => m.id === s.mine).text, MINE.map((m) => ({ ...m, checked: m.id === s.mine })), 'What New run and Resume do when the harness is near its limit')}` })
     + R.settingsRow({ name: 'Automatic starts', sentence: `A slice or scheduled run near a limit ${sp('auto', AUTO.find((m) => m.id === s.auto).text, AUTO.map((m) => ({ ...m, checked: m.id === s.auto })), 'What a start with nobody there to ask does near a limit. One that waits never holds up the line: the next start that fits goes ahead')}` });
   return limits;
@@ -422,7 +423,7 @@ function settingsPage() {
 // ---- search: runs, projects, workspaces, workflows, schedules, tickets, labels (label:), settings, add-ons, plugins and
 // chats, each with where it lives. What the mode or Labs hides is still found, with its lock note; picking it hands you to
 // the unlock and then on to it. The last row asks Chat. ----
-const NOTIF_ROWS = ['Desktop', 'Badge', 'Chat', 'Runs', 'Schedules', 'Automations', 'Pull requests', 'Usage', 'Away mode', 'Projects', 'Worca'];
+const NOTIF_ROWS = ['Desktop', 'Badge', 'Sound', 'Chat', 'Runs', 'Schedules', 'Automations', 'Pull requests', 'Usage', 'Away mode', 'Projects', 'Worca'];
 const RUNS_LIMIT_ROWS = ['Warning line', 'Manual starts', 'Automatic starts'];
 const strict = (...ms) => ms.filter(Boolean).sort((a, b) => R.MODES.indexOf(b) - R.MODES.indexOf(a))[0] || '';
 function settingsFinds() {
@@ -529,7 +530,7 @@ function fitSearch() { const m = document.querySelector('.rl-search-res'); if (!
 
 // ---- in the one Worca: Pulse in Activity's place, the overlays above the shell, Settings in the page, its menu in the sidebar ----
 function pulseButton() {
-  const needs = nowRuns().needs.length, un = unread().length, run = nowRuns().running.length;
+  const needs = vitalsRuns().needs.length, un = unread().length, run = vitalsRuns().running.length;
   const badge = needs ? { n: needs, tone: 'need' } : un ? { n: un, tone: 'run' } : null;
   const words = [needs && plural(needs, 'needs you', 'need you'), un && plural(un, 'unread'), run && `${run} running`].filter(Boolean).join(' · ') || 'Nothing new';
   return R.topBarAction({ label: 'Pulse', icon: svg('signal', 16), labelCls: 'pz-pulse-l', kind: 'quiet', full: true, cls: 'topnav-act pz-pulse-b', badge, title: 'Pulse: ' + words, attrs: { 'data-pop': true, 'aria-haspopup': 'dialog', 'aria-expanded': String(!!ui.pop) } });
@@ -578,7 +579,7 @@ function renderInShell() {
 
 // The tab title's count follows Settings › Notifications › Badge.
 function tabTitle() {
-  const needs = nowRuns().needs.length, problems = unread().filter((u) => u.sev === 'problem').length;
+  const needs = vitalsRuns().needs.length, problems = unread().filter((u) => u.sev === 'problem').length;
   const n = ui.s.badge === 'none' ? 0 : ui.s.badge === 'needs' ? needs : needs + problems;
   return n ? `(${n}) Worca` : 'Worca';
 }
@@ -593,7 +594,7 @@ function showAway() {
   if (awayEl) return;
   closeOverlays();
   const host = document.createElement('div');
-  host.innerHTML = R.awayScreen({ line: M.awayLine(nowRuns().needs.length, nowRuns().running.length) });
+  host.innerHTML = R.awayScreen({ line: M.awayLine(vitalsRuns().needs.length, vitalsRuns().running.length) });
   awayEl = host.firstElementChild; document.body.append(awayEl);
   const mark = awayEl.querySelector('.rl-away-mark'); let x = 40, y = 40, dx = 60, dy = 60, t0 = performance.now();
   const step = (t) => {
@@ -648,8 +649,8 @@ function toast(text, canUndo) {
 function pick(id, v) {
   const s = ui.s;
   if (id === 'show') { ui.show = v; ui.pick = R.selectPrune(ui.pick, []); }
-  else if (id === 'nowShow') ui.nowShow = v;
-  else if (id === 'nowFrom') ui.nowFrom = v;
+  else if (id === 'vitalsShow') ui.vitalsShow = v;
+  else if (id === 'vitalsFrom') ui.vitalsFrom = v;
   else if (id === 'from') { ui.from = v; ui.pick = R.selectPrune(ui.pick, []); }
   else if (id === 'more') {
     if (v === 'settings') { ui.pop = false; if (SHELL) { SHELL.go('settings/notifications'); return; } ui.page = 'settings'; ui.sset = 'notifications'; }
@@ -658,11 +659,12 @@ function pick(id, v) {
     else { const ids = shown().filter((u) => !isUnread(u)).map((u) => u.id); ui.cleared = ui.cleared.concat(ids); ui.pick = R.selectPrune(ui.pick, []); toast(ids.length ? `Cleared ${plural(ids.length, 'read update')}` : 'Nothing read to clear', ids.length ? undoClear(ids) : null); }
   }
   else if (id === 'badge') s.badge = v;
+  else if (id === 'sound') s.sound = v;
   else if (id === 'mine') s.mine = v;
   else if (id === 'auto') s.auto = v;
   else if (id === 'nr-on') ui.nr = { ...ui.nr, on: v, wait: false, moved: '' };
   else if (id === 'nr-size') openNewRun(v);
-  else if (id === 'warn') { s.warnAt = +v; toast(`Warning line at ${v}%: rings, Now and updates follow it`); }
+  else if (id === 'warn') { s.warnAt = +v; toast(`Warning line at ${v}%: rings, Vitals and updates follow it`); }
   else if (id.startsWith('lvl:')) s.groups[id.slice(4)].level = v;
   else if (id.startsWith('whr:')) s.groups[id.slice(4)].where = v;
   else if (id.startsWith('ev:')) {
@@ -736,7 +738,7 @@ document.addEventListener('click', (e) => {
     else if (key.startsWith('lim')) { ui.pop = false; ui.acct = true; ui.sub = 'usage'; }
     else if (key.startsWith('act:')) { const a = C().actions.find((x) => x.id === key.slice(4)); if (a.go) openTarget(a.go, a.run, `Opens ${a.run}`); else toast(`${a.run} is gone; ${a.label} can still be stopped`); }
     else {
-      const all = nowRuns(), r = key.startsWith('need') ? all.needs[+key.slice(4)] : key.startsWith('run') ? all.running[+key.slice(3)] : C().runs[+key.slice(3)];
+      const all = vitalsRuns(), r = key.startsWith('need') ? all.needs[+key.slice(4)] : key.startsWith('run') ? all.running[+key.slice(3)] : C().runs[+key.slice(3)];
       openTarget(r.state === 'scheduled' && !r.on ? 'schedules' : r.state === 'scheduled' ? 'run/scheduled' : 'run/' + r.state, r.title, el.title.split('\n').pop());
     }
     render(); return;
@@ -760,7 +762,7 @@ function openTarget(go, title, say) {
   if (go.startsWith('run/')) SHELL.openRun(go, title); else SHELL.go(go);
 }
 // The keys come from the library's table (docs/rail/keyboard.md); this owns what they do here. The panel's lists take
-// them wherever the focus is: Updates all of them, Now moving and opening only.
+// them wherever the focus is: Updates all of them, Vitals moving and opening only.
 const ROW = '.pz-popover [data-open]';
 const rowEl = (id) => document.querySelector(`${ROW}[data-open="${CSS.escape(id)}"]`);
 const rowIds = () => [...document.querySelectorAll(ROW)].map((b) => b.dataset.open);
@@ -839,6 +841,15 @@ window.RailPulse = {
     ui.unlock = { e: { go: to || 'runs', label: flagName(v), flag: v, kind: 'place' } }; stepUnlock(); render();
   },
   session: (on) => { ui.session = on; render(); },
+  // The Prototype corner: a new event arrives, and plays if the sound setting says so.
+  newEvent: (sev) => {
+    const u = M.tryEvent(sev, ui.added.length), at = Date.now();
+    ui.added = [u, ...ui.added];
+    const plays = R.soundFor({ choice: ui.s.sound, events: [u], away: isAway(), at, lastAt: ui.soundAt });
+    if (plays) { ui.soundAt = at; R.playChime(window); }
+    toast(`New event: ${u.title}. ${plays ? 'Plays the chime' : isAway() ? 'No sound: away' : ui.soundAt !== null && at - ui.soundAt < R.BURST_MS && ui.s.sound !== 'none' && sev !== 'info' ? 'No sound: the same burst' : 'No sound: Notifications › Sound'}`);
+    render();
+  },
   playAway: () => { if (reducedMotion()) { toast('The screensaver is off under reduced motion'); render(); return; } showAway(); },
   // On a shared sign-in each person keeps their own read and cleared; a local install has one person.
   person: (name) => {
@@ -849,5 +860,6 @@ window.RailPulse = {
     toast(`Signed in as ${name}: their own read and cleared`); render();
   },
 };
+document.getElementById('new-event')?.addEventListener('click', () => window.RailPulse.newEvent(document.getElementById('new-event-kind').value));
 if (SHELL) SHELL.start(); else render();
 })();

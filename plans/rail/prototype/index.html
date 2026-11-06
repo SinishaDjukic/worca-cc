@@ -30,6 +30,8 @@
     <label>Pulse <select class="select select-sm" id="pulse-case"></select></label>
     <label title="On a shared sign-in, read and cleared belong to each person; try the Every kind case">Person <select class="select select-sm" id="person"><option>Emil Angelov</option><option>Dana Ruiz</option></select></label>
     <label title="What the shell shows when the connection drops or the sign-in ends">Connection <select class="select select-sm" id="conn"><option value="ok">Connected</option><option value="offline">Offline</option><option value="session">Session expired</option></select></label>
+    <label title="A new event arrives in Pulse and plays the chime, if Settings › Notifications › Sound says so">Event <select class="select select-sm" id="new-event-kind"><option value="needs">Needs you</option><option value="problem">Problem</option><option value="info">Info</option></select></label>
+    <span class="mk-row"><button type="button" class="btn btn-sm" id="new-event" title="A new event arrives now: try it twice for a burst, or under Away for silence">New event</button></span>
     <span class="mk-row"><button type="button" class="btn btn-sm" id="play-away" title="Plays the away screensaver now, without the 5 idle minutes; any input hides it">Play screensaver</button></span>
     <div class="seg" role="group" aria-label="Theme"><button type="button" data-theme-pick="light">Light</button><button type="button" data-theme-pick="dark">Dark</button></div>
     <p class="mk-note">Other pages keep today's design in the Rail colours. Explorers: <a href="run-page.html">run page cases</a> · <a href="pulse.html">Pulse cases</a> · <a href="components.html">components</a>.</p>

@@ -74,6 +74,8 @@
   ],
   "logic": [
     { "name": "Closing what lies over a page", "code": "ui/public/design-system/components/dismiss.mjs#dismissOnOutside", "needs": ["a menu, picker, popover, flyout, panel, search result, editor or Dialog that closes on a click outside or Esc"], "example": "dismissOnOutside(document, { open, inside, close, paint, back })" },
+    { "name": "The sound of a new event", "code": "ui/public/design-system/components/sound.mjs#soundFor", "needs": ["whether a new event plays a chime: the choice, a burst, away hours"], "example": "soundFor({ choice, events, away, at, lastAt })" },
+    { "name": "The chime", "code": "ui/public/design-system/components/sound.mjs#playChime", "needs": ["two soft notes from Web Audio, silent where the browser blocks it"], "example": "playChime(window)" },
     { "name": "A list page's behaviour", "code": "ui/public/design-system/components/list-page.mjs#listController", "needs": ["a list with its sentence, selecting, keys and states"], "example": "listController({ root, spec })" },
     { "name": "A chat's state", "code": "ui/public/design-system/components/run-state.mjs#chatState", "needs": ["a chat's word, dot and section"], "example": "chatState('replying')" },
     { "name": "States", "code": "ui/public/design-system/components/run-state.mjs#runState", "needs": ["a thing's state word, colour and one action", "where a state sorts in a list"], "example": "runState('paused'); sectionOf('Paused')" },
