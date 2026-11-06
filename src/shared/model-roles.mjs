@@ -18,8 +18,8 @@ const DEEP_STEP_NAMES = new Set(['plan', 'plan review', 'refine plan', 'review i
 const QUICK_STEP_KEYS = new Set(['memoryDefragmenter']);
 // D4 by setting key. autoWorkflowModel (Claude's Auto classifier) is everyday; utilityModels.<engine>.* is quick.
 export const SLOT_ROLES = Object.freeze({
-  'nightMode.deciderModel': 'deep',
-  askModels: 'everyday', agentGenModel: 'everyday', requirementsInterview: 'everyday', autoWorkflowModel: 'everyday',
+  'nightMode.deciderModel': 'deep', designLead: 'deep',
+  askModels: 'everyday', agentGenModel: 'everyday', requirementsInterview: 'everyday', autoWorkflowModel: 'everyday', designBuilder: 'everyday',
   titleModel: 'quick', namingModel: 'quick', commandSummaryModel: 'quick', prDescriptionModel: 'quick',
   memoryDefrag: 'quick', workspaceScan: 'quick',
 });

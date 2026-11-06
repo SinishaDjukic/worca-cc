@@ -135,6 +135,17 @@ export const FLAGS = Object.freeze([
     reviewBy: '2027-02-01',
     docs: 'docs/shape-it-first.md',
   }),
+  entry({
+    key: 'design',
+    title: 'Design',
+    description: 'A Design page: describe a web page, a deck or an HTML video in its own chat and real agents build it in front of you, one cursor per running agent. Its spend counts toward your limits and shows in Statistics. Off: the page is hidden and /api/design answers 404.',
+    stage: 'experimental',
+    default: false,
+    owner: 'denislavprinov',
+    since: '1.18.0',
+    added: '2026-11-05',
+    reviewBy: '2027-02-03',
+  }),
 ]);
 
 const BY_KEY = new Map(FLAGS.map((f) => [f.key, f]));

@@ -363,6 +363,7 @@ const RUNGS = [
   { v: 85, tables: [['chat_conversations', ['idx_chat_conversations_thread']], ['chat_controls', ['idx_chat_controls_card']],
     ['chat_deliveries', []], ['chat_inbound_seen', ['idx_chat_inbound_seen_at']]] },
   { v: 86, cols: [['chat_conversations', 'header_new_off', 0]] },
+  { v: 87, tables: [['designs', ['designs_updated']], ['design_builds', ['design_builds_design']], ['design_agents', ['design_agents_build']], ['design_cost_ledger', ['design_cost_ledger_ts']]] },
 ];
 
 // One row per host table, written before the removal: every one must survive the climb,
@@ -437,7 +438,7 @@ test('ladder: each incremental addition, removed (rows kept), is restored by one
     name: `v${r.v} stamp ${stamp} (${rungLabel(r)})`,
     run: () => climbAndCheck(r, stamp, SCHEMA_VERSION),
   })));
-  assert.equal(rows.length, 24, 'twelve rungs >= 25, two arms each');
+  assert.equal(rows.length, 26, 'thirteen rungs >= 25, two arms each');
   await checkRows(rows);
 });
 

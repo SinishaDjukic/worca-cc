@@ -64,7 +64,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 86;
+export const SCHEMA_VERSION = 87;
 
 /** store_meta row holding the install's default guardrail set id (JSON string). */
 export const GUARDRAILS_DEFAULT_META_KEY = 'guardrails:default';
@@ -1557,6 +1557,34 @@ CREATE TABLE IF NOT EXISTS req_export_links (
 );
 `;
 
+// v87 Design (SPEC C-9): the library row per design, one row per build round, one per agent process, and the spend
+// ledger (its rows outlive a deleted design). <home>/design/<designId>/ is the disk half. No spending limit of its own
+// (M13): spend counts toward worca's limits. Reconcile-safe: IF NOT EXISTS + INCREMENTAL_TABLES; no foreign keys.
+const DESIGN_DDL = `
+CREATE TABLE IF NOT EXISTS designs (
+  id TEXT PRIMARY KEY, title TEXT NOT NULL, kind TEXT NOT NULL, fast INTEGER NOT NULL DEFAULT 0,
+  project_key TEXT, thread_id TEXT, engine TEXT, status TEXT NOT NULL DEFAULT 'empty',
+  current_build TEXT, version INTEGER NOT NULL DEFAULT 0,
+  created_by TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS designs_updated ON designs(updated_at);
+CREATE TABLE IF NOT EXISTS design_builds (
+  id TEXT PRIMARY KEY, design_id TEXT NOT NULL, round INTEGER NOT NULL, kind TEXT NOT NULL, status TEXT NOT NULL,
+  brief TEXT NOT NULL, fast INTEGER NOT NULL, reason TEXT, sections_json TEXT NOT NULL DEFAULT '[]',
+  agents_total INTEGER NOT NULL DEFAULT 0, layers INTEGER NOT NULL DEFAULT 0, cost_usd REAL NOT NULL DEFAULT 0,
+  started_at TEXT NOT NULL, ended_at TEXT, created_by TEXT);
+CREATE INDEX IF NOT EXISTS design_builds_design ON design_builds(design_id, round);
+CREATE TABLE IF NOT EXISTS design_agents (
+  id TEXT PRIMARY KEY, build_id TEXT NOT NULL, role TEXT NOT NULL, section_id TEXT, job TEXT NOT NULL,
+  engine TEXT NOT NULL, model TEXT, effort TEXT, session_id TEXT, status TEXT NOT NULL,
+  cost_usd REAL, cost_known INTEGER NOT NULL DEFAULT 1, tokens TEXT, asks INTEGER NOT NULL DEFAULT 0,
+  started_at TEXT NOT NULL, ended_at TEXT, error TEXT);
+CREATE INDEX IF NOT EXISTS design_agents_build ON design_agents(build_id);
+CREATE TABLE IF NOT EXISTS design_cost_ledger (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, design_id TEXT NOT NULL, build_id TEXT, agent_id TEXT,
+  amount_usd REAL NOT NULL, model TEXT, ts INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS design_cost_ledger_ts ON design_cost_ledger(ts);
+`;
+
 const INCREMENTAL_TABLES = {
   config_workflow_wires: CONFIG_WORKFLOW_WIRES_DDL,
   step_questions:    STEP_QUESTIONS_DDL,
@@ -1615,6 +1643,10 @@ const INCREMENTAL_TABLES = {
   req_helper_messages: REQUIREMENTS_HELPER_DDL,
   req_export_setups: REQUIREMENTS_EXPORT_DDL,  // v80 (A6)
   req_export_links:  REQUIREMENTS_EXPORT_DDL,  // v80 (A6)
+  designs:            DESIGN_DDL,  // v87 Design (C-9)
+  design_builds:      DESIGN_DDL,  // v87
+  design_agents:      DESIGN_DDL,  // v87
+  design_cost_ledger: DESIGN_DDL,  // v87
 };
 
 /**
@@ -2796,6 +2828,7 @@ export function migrate(db) {
     if (current < 85) db.exec(CHAT_CONVERSATIONS_DDL);   // v85 freeform chat conversations (first written as v84; dev took 84)
     // v86: chat_conversations.header_new_off — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps (a v85 DB) or
     // by the v85 DDL above (an older DB)
+    if (current < 87) db.exec(DESIGN_DDL);   // v87 Design: library, builds, agents, spend
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

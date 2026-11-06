@@ -111,12 +111,29 @@ export function requirementsWindowedSpendUsd(fromMs, toMs = null) {
   return roundUsd(row?.s || 0);
 }
 
-/** Pipeline + Ask Worca + requirements spend since windowStartMs — THE enforcement figure
- *  (count-everywhere, ask-cost-statistics-design.md D3; requirements-design.md D9). windowedSpendUsd /
+/** Append one Design cost event (design SPEC C-9): one agent's spend in one build of one design. Design has no
+ *  limit of its own (M13); this row counts toward worca's own limits. Same no-op gate as the other ledgers
+ *  ($0 mock calls and a missing design id leave no row). */
+export function recordDesignCostDelta({ designId, buildId = null, agentId = null, amountUsd, model = null, tsMs = Date.now() }) {
+  if (!designId || !Number.isFinite(amountUsd) || amountUsd <= 0) return;
+  prepare(`INSERT INTO design_cost_ledger (design_id, build_id, agent_id, amount_usd, model, ts)
+    VALUES (?, ?, ?, ?, ?, ?)`).run(designId, buildId, agentId, amountUsd, model, tsMs);
+}
+
+/** Windowed Design spend; toMs null = open-ended (budget windows), else ts < toMs. */
+export function designWindowedSpendUsd(fromMs, toMs = null) {
+  const row = toMs == null
+    ? prepare('SELECT SUM(amount_usd) AS s FROM design_cost_ledger WHERE ts >= ?').get(fromMs)
+    : prepare('SELECT SUM(amount_usd) AS s FROM design_cost_ledger WHERE ts >= ? AND ts < ?').get(fromMs, toMs);
+  return roundUsd(row?.s || 0);
+}
+
+/** Pipeline + Ask Worca + requirements + Design spend since windowStartMs — THE enforcement figure
+ *  (count-everywhere, ask-cost-statistics-design.md D3; requirements-design.md D9; Design M13). windowedSpendUsd /
  *  allTimeTotals stay pipeline-only for the Statistics split. */
 export function totalWindowSpendUsd(windowStartMs) {
   return roundUsd(windowedSpendUsd(windowStartMs) + askWindowedSpendUsd(windowStartMs)
-    + requirementsWindowedSpendUsd(windowStartMs));
+    + requirementsWindowedSpendUsd(windowStartMs) + designWindowedSpendUsd(windowStartMs));
 }
 
 /** All-time spend + active time over ALL pipelines (archived included),
@@ -162,7 +179,8 @@ export function budgetStatus(now = new Date(), { scope = null } = {}) {
     windowEndMs,
     msUntilReset: windowEndMs - now.getTime(),
     windowSpendUsd,
-    allTimeSpendUsd: roundUsd(allTimeTotals().spendUsd + askWindowedSpendUsd(0) + requirementsWindowedSpendUsd(0)),
+    allTimeSpendUsd: roundUsd(allTimeTotals().spendUsd + askWindowedSpendUsd(0) + requirementsWindowedSpendUsd(0)
+      + designWindowedSpendUsd(0)),
     remainingUsd: totalLimitUsd == null ? null : Math.max(0, roundUsd(totalLimitUsd - windowSpendUsd)),
     blocked,
   };

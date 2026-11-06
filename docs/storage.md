@@ -91,6 +91,10 @@ project's working tree, so nothing is ever committed to your repo.
                                         Removed with the file, or with the brief for its documents; an archived
                                         feature keeps its files. A replace writes <id>.<ext>.tmp-<8 hex> and renames
                                         it over the body; one a crash left, older than an hour, is swept at boot
+  design/<designId>/                    a Design: work/ (the only place agents write), dist/ (assembled, no bridge),
+                                        versions/<n>/ (copy of work/ after each finished round, last 20). Rows: designs,
+                                        design_builds, design_agents (v87). Spend: design_cost_ledger, which keeps its
+                                        rows after a design is deleted.
   tmp/requirements/att-read-<8 hex>/    one file read's folder: a copy of that one file (a text file's copy is its
                                         redacted text), mode 0700 / 0600, removed when the read ends (a restart's
                                         leftovers older than an hour are swept at boot)

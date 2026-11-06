@@ -76,6 +76,11 @@ worca's read-only investigator and the node's sub-agent model. A value set in
 the shell Worca starts from does not change this, and an entry's env may not
 set the key.
 
+**No hook-off switches.** An entry's env may not set `CLAUDE_CODE_SIMPLE` or
+`CLAUDE_CODE_SAFE_MODE` either. Each one switches off every hook a settings
+file adds, worca's fail-closed read and write guards included. A spawn that
+carries one of those guards also drops both keys from the shell's env.
+
 ## The catalog
 
 The Models page is the catalog and nothing else. Above the rows sit a search
@@ -90,8 +95,8 @@ roles. The Roles card on the Models page (above the Engines card) sets them:
 
 | Role | Setting key | What it covers |
 |---|---|---|
-| Deep thinking | `deep` | Plans and reviews: the Plan, Plan review, Refine plan, Review implementation, Deck review and Bug Root Cause steps, and Away mode's decider (`nightMode.deciderModel`) |
-| Everyday coding | `everyday` | Every other step, Chat (`askModels`), Agent generation (`agentGenModel`), the Requirements interview (`requirementsInterview`) and Claude's Auto classifier (`autoWorkflowModel`) |
+| Deep thinking | `deep` | Plans and reviews: the Plan, Plan review, Refine plan, Review implementation, Deck review and Bug Root Cause steps, Away mode's decider (`nightMode.deciderModel`) and the Design page's lead (`designLead`) |
+| Everyday coding | `everyday` | Every other step, Chat (`askModels`), Agent generation (`agentGenModel`), the Requirements interview (`requirementsInterview`), Claude's Auto classifier (`autoWorkflowModel`) and Design builders (`designBuilder`) |
 | Quick jobs | `quick` | Titles (`titleModel`), Run naming (`namingModel`), Command summaries (`commandSummaryModel`), PR description (`prDescriptionModel`), Memory defragment (`memoryDefrag`, including its step), Workspace scan (`workspaceScan`, the scan model only) and every `utilityModels.<engine>.*` job, Codex's Auto classifier included (not `secondOpinion`, which has no role) |
 
 Where a slot looks, in order:

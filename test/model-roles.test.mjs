@@ -75,6 +75,7 @@ test('roleOf: every D4 setting key', () => {
     askModels: 'everyday', agentGenModel: 'everyday', requirementsInterview: 'everyday', autoWorkflowModel: 'everyday',
     titleModel: 'quick', namingModel: 'quick', commandSummaryModel: 'quick', prDescriptionModel: 'quick',
     memoryDefrag: 'quick', workspaceScan: 'quick', 'utilityModels.overview': 'quick',
+    designLead: 'deep', designBuilder: 'everyday',
   };
   for (const [slot, role] of Object.entries(table)) assert.equal(roleOf(slot), role, slot);
   assert.equal(roleOf('unknownKey'), null);
@@ -112,6 +113,15 @@ test('withRole: an own pair wins; else the slot role on that engine; else the pa
   assert.equal(withRole(null, 'claude', 'titleModel', { roles }).model, 'claude-haiku-5-5');
   assert.equal(withRole(null, 'copilot', 'titleModel', { roles }), null);
   assert.equal(withRole(null, 'claude', 'unknownKey', { roles }), null);
+});
+
+test('withRole: the Design slots fall back to their roles; an unset role stays the engine default', () => {
+  const roles = { claude: { deep: DEEP, everyday: EVERYDAY } };
+  assert.equal(withRole(null, 'claude', 'designLead', { roles }).model, 'claude-opus-5-5');
+  assert.equal(withRole(null, 'claude', 'designBuilder', { roles }).model, 'claude-sonnet-5-5');
+  assert.equal(withRole(null, 'claude', 'designLead', { roles: {} }), null);
+  const own = { model: 'claude-haiku-5-5' };
+  assert.equal(withRole(own, 'claude', 'designLead', { roles }), own);
 });
 
 test('withScanRole: the quick role is the scan model; the sub-agent alias keeps its default', () => {

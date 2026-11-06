@@ -21,8 +21,8 @@ test('pipelines has shape_stats and run_size on a fresh DB and on a current DB m
 });
 
 // #990 slice 6: pipelines.review_stats (a run's per-role review counts) is healed the same way, with no version bump.
-test('pipelines has review_stats on a fresh DB and on a current DB missing it; SCHEMA_VERSION stays 86', () => {
-  assert.equal(SCHEMA_VERSION, 86);
+test('pipelines has review_stats on a fresh DB and on a current DB missing it', () => {
+  assert.ok(SCHEMA_VERSION >= 84);
   const fresh = new DatabaseSync(':memory:');
   migrate(fresh);
   assert.ok(cols(fresh).includes('review_stats'));
@@ -32,5 +32,5 @@ test('pipelines has review_stats on a fresh DB and on a current DB missing it; S
   db.exec('ALTER TABLE pipelines DROP COLUMN review_stats');
   migrate(db);
   assert.ok(cols(db).includes('review_stats'));
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 86);
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, SCHEMA_VERSION);
 });
