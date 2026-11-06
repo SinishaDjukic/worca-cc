@@ -99,6 +99,7 @@ import { createLogDrawer } from './log-drawer.mjs';
 import { mountRunsResize } from './runs-resize.mjs';
 import { decorFromState, applyDecor, isGraphManifest, ledgerRows } from './graph/run-decor.mjs';
 import { mountRunGraph } from './graph/run-hosts.mjs';
+import { paintRunScope } from './run-scope-line.mjs';
 import { trailColumns, nowRows, glanceCopy, nodeLabel, preflightOpen, dotState } from './run-glance.mjs';
 import { workModeOf, isGitRun, isFolderRun, isNoProjectRun, NO_PROJECT_KEY, projectKind, kindChip, RUN_KIND_CHIP, folderMembersOf } from './run-kind.mjs';
 import { changesCounts, filesWord, renderCountsNode, applyBarModel, paintApplyBar, runChangesUrl, openApplyDialog, discardChanges, CHANGE_SIGN, CHANGE_WORD } from './folder-changes.mjs';
@@ -2494,7 +2495,7 @@ function makeRun({
     stepSkills: {},   // {`${nodeId}|${cycle}`: string[]} — MAIN-agent skills per dropdown group
     stepGraphify: {}, // {`${nodeId}|${cycle}`: number} — MAIN-agent graphify-use count per group
     // v2 (graph-engine) run-level outcome fields; a v1 run never sends them.
-    active: [], endReached: undefined, result: null, warnings: [], wireDeliveries: {}, tokens: {}, gate: null,
+    active: [], endReached: undefined, result: null, warnings: [], scopeNotices: [], wireDeliveries: {}, tokens: {}, gate: null,
     el: null,
     _finished: false,
     staleBoot: false,  // a restarted server never re-listed it (onHello): the run died with the old process
@@ -3082,7 +3083,8 @@ function onState(r, msg) {
   // v2 run-level outcome fields (ignored by v1 runs, which never send them).
   // roleReviews: the role-review rounds runModel's live role rows read (review A12).
   // sessionHosts: each session's summary (session groups), read by the tray decor and the Sessions tab.
-  for (const k of ['active', 'endReached', 'result', 'warnings', 'wireDeliveries', 'tokens', 'gate', 'progressFacts', 'roleReviews', 'sessionHosts']) {
+  // scopeNotices (E9): the paths each execution touched outside its checkout, the run page's one quiet scope line.
+  for (const k of ['active', 'endReached', 'result', 'warnings', 'scopeNotices', 'wireDeliveries', 'tokens', 'gate', 'progressFacts', 'roleReviews', 'sessionHosts']) {
     if (msg[k] !== undefined) r[k] = msg[k];
   }
   // Skills registry §6 board 9: the run's set skills (run-harness state.skillMount) for its Overview.
@@ -32169,7 +32171,7 @@ function runDecorFor(r, mode = 'monitor') {
 
 /** The run's warnings (decor.warnings: a dropped model pick, the scheduler's lines, the quiescence line of spec §8) as
  *  amber banners in .rd-banners / .hd-banners: one `.run-warn` per distinct text, in order. Idempotent; an empty list
- *  leaves none. */
+ *  leaves none. Under them, E9's ONE quiet scope line (decor.scope: run-scope-line.mjs), never a banner per spawn. */
 function paintRunWarnings(host, decor) {
   if (!host) return;
   const texts = [...new Set((decor && Array.isArray(decor.warnings) ? decor.warnings : []).filter(Boolean))];
@@ -32180,12 +32182,13 @@ function paintRunWarnings(host, decor) {
       el = document.createElement('div');
       el.className = 'run-warn';
       el.setAttribute('role', 'status');
-      host.appendChild(el);
+      host.insertBefore(el, host.querySelector(':scope > .run-scope'));
     }
     el.textContent = text;
     el.hidden = false;
   });
   for (const el of els.slice(texts.length)) el.remove();
+  paintRunScope(host, decor ? decor.scope : null, { doc: document });
 }
 
 /** The P5 line ("Build · task 2 of 4"); supersedes the D15 "3/6 done" counter (spec 2026-10-14 P12). '' on a v1 run. */
