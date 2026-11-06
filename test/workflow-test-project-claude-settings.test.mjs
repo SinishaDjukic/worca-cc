@@ -5,8 +5,9 @@ import assert from 'node:assert/strict';
 import { existsSync, linkSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { strippedSettingsText, strippedFrontmatterText, isTryGuardEnvKey, stripProjectClaudeSettings, PROJECT_SETTINGS_FILES, STRIPPED_SETTINGS_KEYS }
-  from '../src/core/workflow-tests/project-claude-settings.mjs';
+import { execFileSync } from 'node:child_process';
+import { strippedSettingsText, strippedFrontmatterText, isTryGuardEnvKey, stripProjectClaudeSettings, PROJECT_SETTINGS_FILES, STRIPPED_SETTINGS_KEYS,
+  _testing as pcsTesting } from '../src/core/workflow-tests/project-claude-settings.mjs';
 import { RunHarness } from '../src/core/run-harness.mjs';
 
 const dirs = [];
@@ -228,6 +229,77 @@ test('m13: a folder too deep to walk is named as not checked, never passed over 
   const r = await stripProjectClaudeSettings(d);
   assert.equal(r.unparsed.length, 1);
   assert.match(r.unparsed[0], /^\.claude\/skills\/d0\/d1\//);
+});
+
+/** A `git` for stripProjectClaudeSettings, as the harness's _git: { ok, stdout }. */
+const gitIn = (cwd) => async (args) => {
+  try { return { ok: true, stdout: execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }) }; } catch (e) { return { ok: false, stdout: '', stderr: String(e.stderr || e.message) }; }
+};
+
+test('re-review 2 n4: the nested walk skips gitignored folders (the CLI skips a gitignored skills dir too), and node_modules and .git still', async () => {
+  const d = tmp();
+  const w = (rel, text) => { mkdirSync(join(d, ...rel.split('/').slice(0, -1)), { recursive: true }); writeFileSync(join(d, ...rel.split('/')), text); };
+  execFileSync('git', ['init', '-q'], { cwd: d });
+  w('.gitignore', 'target/\n.venv/\nignored-pkg/.claude/\n');
+  w('target/debug/.claude/skills/s/SKILL.md', FM(BLOCK));
+  w('.venv/lib/.claude/agents/a.md', FM(BLOCK));
+  w('ignored-pkg/.claude/commands/c.md', FM(BLOCK));
+  w('packages/new/target/x/.claude/skills/s/SKILL.md', FM(BLOCK));   // an ignored folder inside an untracked one
+  w('packages/web/.claude/skills/s/SKILL.md', FM(BLOCK));
+  w('node_modules/pkg/.claude/skills/s/SKILL.md', FM(BLOCK));
+  w('.claude/skills/root/SKILL.md', FM(BLOCK));
+  w('.git/info/.claude/skills/s/SKILL.md', FM(BLOCK));
+  const r = await stripProjectClaudeSettings(d, { git: gitIn(d) });
+  assert.deepEqual(r.changed, ['.claude/skills/root/SKILL.md', 'packages/web/.claude/skills/s/SKILL.md']);
+  for (const p of ['target/debug/.claude/skills/s/SKILL.md', '.venv/lib/.claude/agents/a.md', 'ignored-pkg/.claude/commands/c.md',
+    'packages/new/target/x/.claude/skills/s/SKILL.md', 'node_modules/pkg/.claude/skills/s/SKILL.md', '.git/info/.claude/skills/s/SKILL.md']) {
+    assert.equal(readFileSync(join(d, ...p.split('/')), 'utf8'), FM(BLOCK), `${p} is not walked`);
+  }
+  // not a git checkout (or git fails): only node_modules and .git are skipped
+  const f = tmp();
+  mkdirSync(join(f, 'target', '.claude', 'skills', 's'), { recursive: true });
+  writeFileSync(join(f, 'target', '.claude', 'skills', 's', 'SKILL.md'), FM(BLOCK));
+  assert.deepEqual((await stripProjectClaudeSettings(f, { git: async () => ({ ok: false, stdout: '' }) })).changed, ['target/.claude/skills/s/SKILL.md']);
+});
+
+test('re-review 2 n4: the nested walk visits at most so many folders, and says so when it stops', async () => {
+  const d = tmp();
+  for (let i = 0; i < 6; i++) mkdirSync(join(d, `p${i}`, 'src'), { recursive: true });
+  mkdirSync(join(d, 'z', '.claude', 'skills', 's'), { recursive: true });
+  writeFileSync(join(d, 'z', '.claude', 'skills', 's', 'SKILL.md'), FM(BLOCK));
+  const capped = await stripProjectClaudeSettings(d, { walkDirsMax: 5 });
+  assert.equal(capped.walkCapped, 5);
+  assert.deepEqual(capped.changed, []);
+  const all = await stripProjectClaudeSettings(d);
+  assert.equal('walkCapped' in all, false);
+  assert.deepEqual(all.changed, ['z/.claude/skills/s/SKILL.md']);
+});
+
+test('re-review 2 n4, n5: the harness passes its git, logs a capped walk, and names the env keys it left out (names only)', async () => {
+  const d = tmp();
+  mkdirSync(join(d, '.claude'), { recursive: true });
+  writeFileSync(join(d, '.claude', 'settings.json'), JSON.stringify({ env: { NODE_OPTIONS: '--max-old-space-size=8192', LD_LIBRARY_PATH: '/opt/cuda/lib64', KEEP: '1' } }));
+  writeFileSync(join(d, '.claude', 'settings.local.json'), JSON.stringify({ env: { GH_CONFIG_DIR: '/x' } }));
+  const logs = [];
+  const gitCalls = [];
+  const h = { workDirs: new Map([['k', d]]), members: [{ projectKey: 'k' }], pipeline: { dir: tmp() }, _setupStage() {},
+    _git: async (args, o) => { gitCalls.push([args, o && o.cwd]); return { ok: true, stdout: '' }; }, _recordRunWarning: async () => {},
+    _log: (source, level, text) => logs.push({ source, level, text }) };
+  await RunHarness.prototype._pluginsOffInCheckout.call(h);
+  assert.ok(gitCalls.some(([a, cwd]) => a.includes('--ignored') && cwd === d), 'the ignored folders are listed with the harness\'s git, in the checkout');
+  const envLine = logs.find((l) => /env/.test(l.text));
+  assert.equal(envLine.text, 'Left the project\'s own settings env keys out of this try (they could undo Worca\'s guards): '
+    + '.claude/settings.json: NODE_OPTIONS, LD_LIBRARY_PATH; .claude/settings.local.json: GH_CONFIG_DIR.');
+  assert.doesNotMatch(JSON.stringify(logs), /cuda|8192|\/x"/, 'never a value');
+  assert.equal(logs.some((l) => /folders/.test(l.text)), false, 'no cap line when the walk was not capped');
+  pcsTesting.walkDirsMax(1);
+  try {
+    mkdirSync(join(d, 'a', 'b'), { recursive: true });
+    logs.length = 0;
+    await RunHarness.prototype._pluginsOffInCheckout.call(h);
+  } finally { pcsTesting.reset(); }
+  assert.deepEqual(logs.filter((l) => /folders/.test(l.text)).map((l) => [l.source, l.level, l.text]), [['worktree', 'warn',
+    'Worca stopped looking for the project\'s nested .claude folders after 1 folders; a skill, agent or command deeper in the checkout may keep its hooks in this try.']]);
 });
 
 test('D72a: in a checkout: skills\' SKILL.md, agents and commands lose their frontmatter hooks; links go, never followed; unsafe ones are named', async () => {

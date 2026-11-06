@@ -2965,9 +2965,19 @@ export class RunHarness extends EventEmitter {
     if (!cwd) return;
     this._setupStage(PLUGINS_OFF_STAGE);
     let r;
-    try { r = await stripProjectClaudeSettings(cwd); } catch (e) {
+    // Re-review 2 (n4): the harness's git (under the try's guard) lists the gitignored folders the nested search skips.
+    try { r = await stripProjectClaudeSettings(cwd, { git: (args) => this._git(args, { cwd }) }); } catch (e) {
       throw Object.assign(new Error(`Worca could not switch off the project's Claude Code hooks and plugins for this try: ${e && e.message ? e.message : e}`),
         { code: 'TRY_PLUGINS_OFF_FAILED' });
+    }
+    // Re-review 2 (n5): the settings env keys left out (they could undo Worca's guards) are named, never their values: a build
+    // that then misses its NODE_OPTIONS or LD_LIBRARY_PATH can be traced to this.
+    if (r.envKeys && r.envKeys.length) {
+      this._log('worktree', 'warn', `Left the project's own settings env keys out of this try (they could undo Worca's guards): ${
+        r.envKeys.map((e) => `${e.file}: ${e.keys.join(', ')}`).join('; ')}.`);
+    }
+    if (r.walkCapped) {
+      this._log('worktree', 'warn', `Worca stopped looking for the project's nested .claude folders after ${r.walkCapped} folders; a skill, agent or command deeper in the checkout may keep its hooks in this try.`);
     }
     // D72a (Task 5, I2): a skill, agent or command Worca is not sure it fully stripped is named, once each (re-review 2 N-I1:
     // it was still written, as far as Worca could strip it).

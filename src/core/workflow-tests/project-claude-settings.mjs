@@ -34,6 +34,12 @@ export const isTryGuardEnvKey = (k) => {
 /** The settings text without STRIPPED_SETTINGS_KEYS and the try guard's env keys (2-space JSON and a final newline), or null
  *  when nothing changes: no such key, or not a JSON object (the CLI ignores a file it cannot parse). A leading BOM is read. Pure. */
 export function strippedSettingsText(text) {
+  const r = settingsStrip(text);
+  return r ? r.text : null;
+}
+
+/** strippedSettingsText, and the names of the env keys it left out (re-review 2 n5: the run log names them, never values). */
+function settingsStrip(text) {
   const raw = String(text ?? '');
   const body = raw.charCodeAt(0) === 0xFEFF ? raw.slice(1) : raw;
   let s;
@@ -41,12 +47,13 @@ export function strippedSettingsText(text) {
   if (!s || typeof s !== 'object' || Array.isArray(s)) return null;
   const out = { ...s };
   let changed = false;
+  let envKeys = [];
   for (const k of STRIPPED_SETTINGS_KEYS) if (Object.hasOwn(out, k)) { delete out[k]; changed = true; }
   if (out.env && typeof out.env === 'object' && !Array.isArray(out.env)) {
-    const env = Object.fromEntries(Object.entries(out.env).filter(([k]) => !isTryGuardEnvKey(k)));
-    if (Object.keys(env).length !== Object.keys(out.env).length) { out.env = env; changed = true; }
+    envKeys = Object.keys(out.env).filter((k) => isTryGuardEnvKey(k));
+    if (envKeys.length) { out.env = Object.fromEntries(Object.entries(out.env).filter(([k]) => !isTryGuardEnvKey(k))); changed = true; }
   }
-  return changed ? `${JSON.stringify(out, null, 2)}\n` : null;
+  return changed ? { text: `${JSON.stringify(out, null, 2)}\n`, envKeys } : null;
 }
 
 // ── D72a: the frontmatter's top-level `hooks` key ───────────────────────────────────────────────────────────────────────
@@ -197,8 +204,13 @@ const FRONTMATTER_TREES = Object.freeze([['skills', (n) => /^skill\.md$/i.test(n
 const abs = (dir, rel) => join(dir, ...rel.split('/'));
 /** How deep a walk goes; a folder below it is named in `unparsed` (not checked), never passed over silently (review m13). */
 const WALK_DEPTH_MAX = 32;
-/** I-2: folders the nested `.claude` search never enters. */
+/** I-2: folders the nested `.claude` search never enters (gitignored ones are skipped too, re-review 2 n4). */
 const NESTED_SKIP = new Set(['node_modules', '.git']);
+/** Re-review 2 (n4): how many folders the nested `.claude` search reads at most; past it the harness logs a line. */
+export const WALK_DIRS_MAX = 20000;
+let walkDirsMaxDefault = WALK_DIRS_MAX;
+/** Test seam: a smaller default cap for the harness's call. */
+export const _testing = { walkDirsMax(n) { walkDirsMaxDefault = n; }, reset() { walkDirsMaxDefault = WALK_DIRS_MAX; } };
 
 /** M6: replace `file` with `text` through a new temp file and a rename: never written through a link or a hardlink. */
 async function replaceFile(file, text) {
@@ -227,15 +239,21 @@ async function walkTree(dir, rel, match, found, links, deep, depth = 0) {
  * Task 5 fix review I-2: the `.claude` folders below the checkout root, as paths relative to it (`packages/web/.claude`).
  * Claude Code 2.1.318 loads a nested `.claude/skills` once the agent works with files in that folder and runs its skills'
  * frontmatter hooks (probe nested-read-318). Never enters node_modules, .git or a link; a `.claude` that is a link goes to
- * `links`; a folder too deep to walk goes to `deep`. Depth first, in name order.
+ * `links`; a folder too deep to walk goes to `deep`. Depth first, in name order. Re-review 2 (n4): a gitignored folder
+ * (`out.ignored`) is not entered, as the CLI skips a gitignored skills dir ("[skills] Skipped gitignored skills dir"), and
+ * at most `out.max` folders are read (`out.capped` then).
  */
 async function nestedClaudeDirs(dir, rel, out, depth = 0) {
   if (depth > WALK_DEPTH_MAX) { out.deep.push(rel); return; }
+  if (out.visited >= out.max) { out.capped = true; return; }
+  out.visited++;
   let entries;
   try { entries = (await readdir(rel ? abs(dir, rel) : dir, { withFileTypes: true })).sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)); } catch { return; }
   for (const e of entries) {
+    if (out.capped) return;
     if (NESTED_SKIP.has(e.name)) continue;
     const r = rel ? `${rel}/${e.name}` : e.name;
+    if (out.ignored.has(r)) continue;
     if (e.name === '.claude') {
       if (!rel) continue;                                       // the root's own: done by the caller
       if (e.isSymbolicLink()) out.links.push(r);                // a symlink or, on Windows, a junction: never followed
@@ -279,15 +297,21 @@ async function stripFrontmatterTrees(checkoutDir, claudeRel, { changed, links, u
  * D72: switch the project's hooks and plugins off in `checkoutDir`. `changed`: the files rewritten; `links`: the links
  * removed (`.claude` itself, a settings file, or a link inside the skills, agents or commands folders); `unparsed` (present
  * only when there is one): skill, agent or command files Worca is not sure it removed every hook from (D72a; re-review 2 N-I1:
- * written as far as Worca could strip them, and also in ), or could not read as UTF-8 (left as they are), and folders
+ * written as far as Worca could strip them, and also in `changed`), or could not read as UTF-8 (left as they are), and folders
  * too deep to walk. I-2 (Task 5 fix review): the skills, agents and commands of every `.claude` folder below
  * the root (not in node_modules or .git) are treated the same way, and a nested `.claude` that is a link is removed; only the
  * root's settings files are ones the CLI loads. Throws only when a file cannot be read or written (the caller ends the try).
- * @returns {Promise<{changed: string[], links: string[], unparsed?: string[]}>}
+ * Re-review 2: `envKeys` (only when there is one): per settings file, the names of the env keys left out (n5; never values).
+ * `git(args)` (the harness's, run in the checkout: `{ ok, stdout }`) lists the gitignored folders the nested search skips
+ * (n4); without it, or when it fails (a Folder try), only node_modules and .git are skipped. `walkCapped` (only when it
+ * happened): the nested search stopped after that many folders.
+ * @returns {Promise<{changed: string[], links: string[], unparsed?: string[], envKeys?: {file: string, keys: string[]}[],
+ *   walkCapped?: number}>}
  */
-export async function stripProjectClaudeSettings(checkoutDir) {
+export async function stripProjectClaudeSettings(checkoutDir, { git = null, walkDirsMax = walkDirsMaxDefault } = {}) {
   const out = { changed: [], links: [], unparsed: [] };
   const { changed, links, unparsed } = out;
+  const envKeys = [];
   let st = null;
   try { st = await lstat(join(checkoutDir, '.claude')); } catch { /* no root .claude: the nested ones are still looked for */ }
   if (st && st.isSymbolicLink()) {   // a symlink or, on Windows, a junction: never read through it
@@ -300,17 +324,29 @@ export async function stripProjectClaudeSettings(checkoutDir) {
       try { fst = await lstat(file); } catch { continue; }
       if (fst.isSymbolicLink()) { await rm(file, { force: true }); links.push(rel); continue; }
       if (!fst.isFile()) continue;
-      const next = strippedSettingsText(await readFile(file, 'utf8'));
+      const next = settingsStrip(await readFile(file, 'utf8'));
       if (next === null) continue;
-      await replaceFile(file, next);
+      await replaceFile(file, next.text);
       changed.push(rel);
+      if (next.envKeys.length) envKeys.push({ file: rel, keys: next.envKeys });
     }
     await stripFrontmatterTrees(checkoutDir, '.claude', out);
   }
-  const nested = { dirs: [], links: [], deep: [] };
+  const nested = { dirs: [], links: [], deep: [], ignored: await ignoredFolders(git), visited: 0, max: walkDirsMax, capped: false };
   await nestedClaudeDirs(checkoutDir, '', nested);
   for (const l of nested.links) { await rm(abs(checkoutDir, l), { force: true }); links.push(l); }
   for (const d of nested.dirs) await stripFrontmatterTrees(checkoutDir, d, out);
   unparsed.push(...nested.deep);
-  return { changed, links, ...(unparsed.length ? { unparsed } : {}) };
+  return { changed, links, ...(unparsed.length ? { unparsed } : {}), ...(envKeys.length ? { envKeys } : {}),
+    ...(nested.capped ? { walkCapped: nested.visited } : {}) };
+}
+
+/** n4: the checkout's gitignored folders (untracked, collapsed: `target`, `packages/new/target`), as paths relative to it;
+ *  empty when there is no `git` or it fails. */
+async function ignoredFolders(git) {
+  if (typeof git !== 'function') return new Set();
+  let r;
+  try { r = await git(['-c', 'core.quotePath=false', 'ls-files', '--others', '--ignored', '--exclude-standard', '--directory', '-z']); } catch { return new Set(); }
+  if (!r || !r.ok || typeof r.stdout !== 'string') return new Set();
+  return new Set(r.stdout.split('\0').filter((p) => p.endsWith('/')).map((p) => p.slice(0, -1)));
 }
