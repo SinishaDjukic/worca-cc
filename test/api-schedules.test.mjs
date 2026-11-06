@@ -397,6 +397,10 @@ test('after-candidates, after/:id, dependents and the enriched ticket list', asy
   const b = await (await post('/api/run', { projectDir: dir, prompt: 'B', title: 'B', mock: true, after: { kind: 'ticket', id: a.runId } })).json();
   // A PAUSED pipeline is in SETTLED_RUN — it must still be offered (the rows, not the runs Map, decide).
   seedPipelineRow({ id: 'c0000001', title: 'Parked', status: 'paused', projectKey: projectKey(dir), startedAt: '2026-09-20T10:00:00.000Z' });
+  // An INTERRUPTED run that can still resume is still going: offered. One without a resume point ended: not offered.
+  seedPipelineRow({ id: 'c0000002', title: 'Interrupted', status: 'interrupted', projectKey: projectKey(dir), startedAt: '2026-09-20T10:01:00.000Z' });
+  getDb().prepare('UPDATE pipelines SET resume_point = ? WHERE id = ?').run(JSON.stringify({ version: 2 }), 'c0000002');
+  seedPipelineRow({ id: 'c0000003', title: 'Swept', status: 'interrupted', projectKey: projectKey(dir), startedAt: '2026-09-20T10:02:00.000Z' });
   // A MISSED ticket is never offered: resolveAfterRef refuses it under either policy.
   const m = await (await post('/api/run', { projectDir: dir, prompt: 'M', title: 'M', mock: true, scheduledFor: inFuture(3600_000) })).json();
   getDb().prepare("UPDATE scheduled_runs SET status = 'missed' WHERE id = ?").run(m.runId);
@@ -405,6 +409,11 @@ test('after-candidates, after/:id, dependents and the enriched ticket list', asy
   assert.ok(cands.tickets.some((t) => t.id === b.runId && t.after && t.after.id === a.runId));
   assert.equal(cands.tickets.some((t) => t.id === m.runId), false, 'a missed ticket is not a candidate');
   assert.deepEqual(cands.runs.find((r) => r.pipelineId === 'c0000001'), { pipelineId: 'c0000001', runId: null, title: 'Parked', status: 'paused' });
+  assert.deepEqual(cands.runs.find((r) => r.pipelineId === 'c0000002'), { pipelineId: 'c0000002', runId: null, title: 'Interrupted', status: 'interrupted' });
+  assert.equal(cands.runs.some((r) => r.pipelineId === 'c0000003'), false, 'an interrupted run that can never resume is not a candidate');
+  const parkedRef = await get('/api/schedules/after/c0000002');
+  assert.deepEqual([parkedRef.status, parkedRef.resumable], ['interrupted', true]);
+  assert.equal((await get('/api/schedules/after/c0000003')).resumable, false);
   const ref = await get(`/api/schedules/after/${a.runId}`);
   assert.deepEqual(ref, { kind: 'ticket', id: a.runId, title: 'A', status: 'scheduled', projectDir: dir, workspaceId: null, branchGone: false });
   assert.equal((await fetch(`${base}/api/schedules/after/nope`)).status, 404);

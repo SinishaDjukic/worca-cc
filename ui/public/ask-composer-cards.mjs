@@ -178,6 +178,23 @@ export function createAskComposerCards({ doc, fetch, blocks = () => [], postCard
     }
     return box;
   }
+  /** "Saved to Workflows: <name>" above a saved graph card's buttons (#1126): the name links the row's address and,
+   *  in the app, opens it the card's way (openComposer: the Library shows the row). An empty name saved as
+   *  'Workflow' (the server's fallback, thread-cards.mjs saveBuildCard). */
+  function savedToLine(b) {
+    const name = typeof b.card.name === 'string' && b.card.name.trim() ? b.card.name.trim() : 'Workflow';
+    const line = h('div', 'wfc-savedto', 'Saved to Workflows: ');
+    const a = h('a', 'wfc-savedlink', name);
+    a.href = `#workflows/${encodeURIComponent(b.workflowId)}`;
+    a.setAttribute('data-ask-wf-link', '');
+    a.addEventListener('click', (e) => {
+      if (typeof openComposer !== 'function') return;      // a bare host: the href navigates
+      e.preventDefault();
+      openComposer(b.workflowId);
+    });
+    line.appendChild(a);
+    return line;
+  }
   function renderBuild(b) {
     const c = b.card;
     const handle = b.state === 'declined' || b.state === 'failed' ? null : graphOf(b);
@@ -194,6 +211,7 @@ export function createAskComposerCards({ doc, fetch, blocks = () => [], postCard
     } });
     const cmds = b.state === 'proposed' || b.state === 'saved' ? commandsOf(serverCmds.has(b.id) ? { scriptNodes: serverCmds.get(b.id) } : c) : null;
     if (cmds) el.insertBefore(cmds, el.querySelector('.wfc-actions'));
+    if (b.state === 'saved' && b.workflowId) el.insertBefore(savedToLine(b), el.querySelector('.wfc-actions'));
     return { el, handle };
   }
   /** What a draft card shows (D12): an older proposed card of its key is replaced; a key the library holds by now through

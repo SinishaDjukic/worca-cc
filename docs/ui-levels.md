@@ -153,7 +153,7 @@ be skipped by forgetting it.
 |---|---|
 | Project, prompt, title, extra files, Start run; "Reuse last task" after a run starts (#687) | S |
 | Start run's caret menu (Schedule…) | A |
-| Workflow picker | S — lists Auto and Default only; the selected workflow always stays listed |
+| Workflow picker | S — lists Auto, Default and the workflows saved from Chat (Auto cards and Ask graph cards); every other saved workflow from A; the selected workflow always stays listed |
 | Mock mode | S — sits beside Start run, outside the Advanced disclosure |
 | Preset ▾ button and its menu (presets, Rename…, Delete…, Save as preset), its ✕, Update preset | S |
 | Preset picker's "Manage presets…" entry | A |
@@ -176,7 +176,7 @@ The **Auto** workflow option is available for both targets — a project and a w
 | "Scheduled" group (runs due within 24 h) | S — it only exists when something is scheduled |
 | Needs-input pill and banner; clarify questions; Auto proposal ("Review the workflow": preview that opens a pan/zoom popup, Accept) — all answered on the run page | S |
 | Recovery prompt, cycle gate, cost-pause banner | all |
-| Run page card head: the status line, the head buttons (Try it, Create PR, Push, View PR │ ▾, Fix conflicts, Ask for changes, Discard / Apply to branch, How to merge, Discard / Apply to folder, Report) and the route (Where the work is) | S |
+| Run page card head: the status line, the head buttons (Try it and its next step: Checking out… / Setting up…, Start <service>, Open :port and Stop, a failed setup's error, Create PR, Push, View PR │ ▾, Fix conflicts, Ask for changes, Discard / Apply to branch, How to merge, Discard / Apply to folder, Report) and the route (Where the work is) | S |
 | View PR ▾ › Watch | A |
 | Summary card › a live checkout: the Results row with Discard / Unlink | S |
 | Summary card › the Actions row value (`Local copy open · since 18:12`, `Try it on this machine`) and the Actions tab's Download patch | A |
