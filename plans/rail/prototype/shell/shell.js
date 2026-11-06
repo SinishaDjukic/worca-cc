@@ -57,6 +57,7 @@
     const act = top.querySelector('#topnav-activity');
     if (act) act.replaceWith(el('<span id="rail-pulse-slot"></span>'));
     top.querySelector('#topnav-new')?.setAttribute('data-newrun', '');
+    const kbd = top.querySelector('.tsearch-kbd'); if (kbd) kbd.textContent = R.keyHint(['mod', 'K'], R.isMac(window));
     const input = top.querySelector('#tsearch-input');
     if (input) { input.setAttribute('data-search', ''); input.removeAttribute('role'); input.closest('.tsearch-field')?.insertAdjacentHTML('beforeend', '<div data-search-res></div>'); }
     top.querySelector('#tsearch-pop')?.remove();

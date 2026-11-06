@@ -893,26 +893,28 @@ document.addEventListener('click', (e) => {
 // Keys: tabs and stages move with arrows / Home / End and select as they move; the ship choice is a radio group;
 // menus take ↑ ↓ Home End, and Escape or Tab close them with focus back on their trigger.
 document.addEventListener('keydown', (e) => {
-  if (SHELL && !SHELL.runActive()) return;
+  if (SHELL && (!SHELL.runActive() || document.querySelector('.pz-popover'))) return;   // Pulse's panel holds the keys while it is open
   const t = e.target;
+  const act = R.shortcutAction(R.keyFacts(e), { scopes: ['run', 'anywhere'] });   // the library's table; here, what each does
+  if (act === 'help' && !SHELL && !ui.menu && !ui.dialog) { e.preventDefault(); R.openShortcutsSheet({ doc: document, scopes: ['anywhere', 'run'] }); return; }   // in the one Worca, Pulse opens it
   if (t.id === 'group-input' && e.key === 'Enter') { e.preventDefault(); const g = t.value.trim(); if (g) { ui.chips = ui.chips.filter((c) => c.kind !== 'group').concat({ kind: 'group', text: g }); ui.menu = ''; pendingFocus = 'menu:more'; toast((KNOWN.group.some(([x]) => x === g) ? 'Moved to ' : 'Created and moved to ') + g); } render(); return; }
   if (t.id === 'tag-input' && e.key === 'Enter') { e.preventDefault(); addTag(t.value); render(); return; }
-  if ((e.key === 'l' || e.key === 'L') && !e.metaKey && !e.ctrlKey && !e.altKey && !/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName || '') && document.querySelector('.rc-tags')) { e.preventDefault(); ui.menu = 'tags'; pendingFocus = 'tag-input'; render(); return; }
-  if ((ui.confirm || ui.dialog) && e.key === 'Escape' && !ui.menu) { ui.form = null; ui.doc = null; ui.graphNode = null; if (ui.pr) { ui.pr.gen = false; ui.pr.genTitle = false; (ui.pr.prs || []).forEach((f) => { f.gen = false; f.genTitle = false; }); } ui.confirm = null; ui.dialog = ''; ui.busy = null; pendingFocus = 'act-main'; render(); return; }
-  if (e.key === '`' && e.ctrlKey) { e.preventDefault(); toast('Terminal opened in the worktree'); render(); return; }
+  if (act === 'labels' && document.querySelector('.rc-tags')) { e.preventDefault(); ui.menu = 'tags'; pendingFocus = 'tag-input'; render(); return; }
+  if ((ui.confirm || ui.dialog) && act === 'close' && !ui.menu) { ui.form = null; ui.doc = null; ui.graphNode = null; if (ui.pr) { ui.pr.gen = false; ui.pr.genTitle = false; (ui.pr.prs || []).forEach((f) => { f.gen = false; f.genTitle = false; }); } ui.confirm = null; ui.dialog = ''; ui.busy = null; pendingFocus = 'act-main'; render(); return; }
+  if (act === 'terminal') { e.preventDefault(); toast('Terminal opened in the worktree'); render(); return; }
   if (e.key === 'Enter' && e.target.id === 'after-task') { e.preventDefault(); document.querySelector('[data-confirm="yes"]')?.click(); return; }
-  if (ui.menu && (e.key === 'Escape' || (e.key === 'Tab' && t.closest && t.closest('.menu')))) {
-    pendingFocus = ui.menu === 'groups' ? 'menu:more' : 'menu:' + ui.menu; ui.menu = ''; render(); if (e.key === 'Escape') e.preventDefault(); return;
+  if (ui.menu && (act === 'close' || (e.key === 'Tab' && t.closest && t.closest('.menu')))) {
+    pendingFocus = ui.menu === 'groups' ? 'menu:more' : 'menu:' + ui.menu; ui.menu = ''; render(); if (act === 'close') e.preventDefault(); return;
   }
-  const keys = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1, Home: 'first', End: 'last' };
-  if (!(e.key in keys) || !t.closest) return;
+  const k = { next: 1, prev: -1, first: 'first', last: 'last' }[act];
+  if (!k || !t.closest) return;
   const group = t.closest('.menu') ? [...t.closest('.menu').querySelectorAll('.menu-item')]
     : t.getAttribute('role') === 'tab' ? [...t.closest('[role="tablist"]').querySelectorAll('[role="tab"]')]
     : t.getAttribute('role') === 'radio' ? [...t.closest('[role="radiogroup"]').querySelectorAll('[role="radio"]:not([disabled])')] : null;
   if (!group) return;
   if (t.getAttribute('role') === 'tab' && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) return;   // tabs are horizontal
   e.preventDefault();
-  const i = group.indexOf(t); const k = keys[e.key];
+  const i = group.indexOf(t);
   const next = group[k === 'first' ? 0 : k === 'last' ? group.length - 1 : (i + k + group.length) % group.length];
   if (t.closest('.menu')) { next.focus(); return; }
   pendingFocus = next.dataset.key; next.click();
