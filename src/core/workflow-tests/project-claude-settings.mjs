@@ -186,8 +186,9 @@ function rewrittenFrontmatter(mapping, fm) {
  *     merge, a flow-style `{…}` frontmatter, an escaped key, a quoted or flow value over lines, an anchor used elsewhere): the
  *     frontmatter is rewritten from that reading without `hooks` (the same values; its comments and layout go), checked again.
  *  5. Else: the line-stripped text when there is one, else an empty frontmatter; `unsafe` either way.
+ * `rewrite: false` (re-review 3, I1: a file that is not UTF-8) skips step 4, which would rewrite non-ASCII values too.
  */
-export function strippedFrontmatterText(text) {
+export function strippedFrontmatterText(text, { rewrite = true } = {}) {
   const f = cliFrontmatter(text);
   if (!f) return null;
   const at = (fm) => f.bom + f.head + fm + f.tail;
@@ -202,12 +203,45 @@ export function strippedFrontmatterText(text) {
     const after = readings(ls);
     if (after.parses && !after.hooks) return { text: at(ls) };
   }
-  if (before.mapping) {
+  if (rewrite && before.mapping) {
     const fm = rewrittenFrontmatter(before.mapping, f.fm);
     const check = readings(fm);
     if (check.parses && !check.hooks) return { text: at(fm) };
   }
   return { text: at(ls ?? ''), unsafe: true };
+}
+
+/** Whether the CLI's reading of `text` keeps a top-level `hooks` key: a reading has one, or none parses and a top-level
+ *  `hooks:` line is left (re-review 2, N-I1: when in doubt, it may). */
+function cliKeepsHooks(text) {
+  const f = cliFrontmatter(text);
+  if (!f) return false;
+  const r = readings(f.fm);
+  return r.hooks || (!r.parses && f.fm.split('\n').some((l) => HOOKS_KEY_RE.test(bare(l))));
+}
+
+/**
+ * D72a on a file's bytes: null when there is nothing to change, else `{ bytes, unsafe }`. Claude Code reads these files as
+ * UTF-8 (2.1.318 `tT`: `{ encoding: "utf8" }`, a bad byte read as U+FFFD), so a file that is not UTF-8 still loads its
+ * frontmatter hooks. Re-review 3 (I1): such a file is stripped on its latin1 reading (one character per byte; everything the
+ * strip reads or cuts, `---`, `hooks`, `:`, indentation and line ends, is ASCII) and written back as latin1, so every byte the
+ * strip does not cut stays; never rewritten from a YAML reading (`rewrite: false`: that would rewrite non-ASCII values too).
+ * Checked on the CLI's own (UTF-8) reading of the result: where the two readings disagree (a non-ASCII space after the
+ * opening `---`, say), the CLI's reading is stripped and written as UTF-8 (its bad bytes become U+FFFD, as the CLI reads
+ * them). Always `unsafe` (named): the CLI's lossy decoding is not one Worca can mirror byte for byte.
+ */
+function strippedFrontmatterBytes(buf) {
+  const view = buf.toString('utf8');
+  if (Buffer.from(view, 'utf8').equals(buf)) {
+    const r = strippedFrontmatterText(view);
+    return r && { bytes: Buffer.from(r.text, 'utf8'), unsafe: !!r.unsafe };
+  }
+  const bom = buf[0] === 0xEF && buf[1] === 0xBB && buf[2] === 0xBF ? 3 : 0;   // the CLI drops a UTF-8 BOM
+  const r = strippedFrontmatterText(buf.subarray(bom).toString('latin1'), { rewrite: false });
+  const out = r ? Buffer.concat([buf.subarray(0, bom), Buffer.from(r.text, 'latin1')]) : buf;
+  if (!cliKeepsHooks(out.toString('utf8'))) return r && { bytes: out, unsafe: true };
+  const lossy = strippedFrontmatterText(view);
+  return lossy && { bytes: Buffer.from(lossy.text, 'utf8'), unsafe: true };
 }
 
 /** D72a: the trees (in a `.claude` folder) whose markdown files Claude Code reads frontmatter hooks from, and which files. */
@@ -224,10 +258,11 @@ let walkDirsMaxDefault = WALK_DIRS_MAX;
 /** Test seam: a smaller default cap for the harness's call. */
 export const _testing = { walkDirsMax(n) { walkDirsMaxDefault = n; }, reset() { walkDirsMaxDefault = WALK_DIRS_MAX; } };
 
-/** M6: replace `file` with `text` through a new temp file and a rename: never written through a link or a hardlink. */
-async function replaceFile(file, text) {
+/** M6: replace `file` with `data` (a string, written as UTF-8, or a Buffer) through a new temp file and a rename: never written
+ *  through a link or a hardlink. */
+async function replaceFile(file, data) {
   const tmp = `${file}.worca-${process.pid}-${randomBytes(4).toString('hex')}.tmp`;
-  await writeFile(tmp, text, { encoding: 'utf8', flag: 'wx' });
+  await writeFile(tmp, data, { encoding: 'utf8', flag: 'wx' });
   try { await rename(tmp, file); } catch (e) { await rm(tmp, { force: true }).catch(() => {}); throw e; }
 }
 
@@ -277,8 +312,8 @@ async function nestedClaudeDirs(dir, rel, out, depth = 0) {
 }
 
 /** D72a in one `.claude` folder (`claudeRel`): its skills, agents and commands lose their frontmatter hooks; links in those
- *  trees are removed; files Worca is not sure it fully stripped (written anyway), files not in UTF-8 (left) and folders too
- *  deep to walk are named. */
+ *  trees are removed; files Worca is not sure it fully stripped (written anyway), files not in UTF-8 (stripped too, re-review
+ *  3 I1) and folders too deep to walk are named. */
 async function stripFrontmatterTrees(checkoutDir, claudeRel, { changed, links, unparsed }) {
   for (const [name, match] of FRONTMATTER_TREES) {
     const tree = `${claudeRel}/${name}`;
@@ -292,12 +327,9 @@ async function stripFrontmatterTrees(checkoutDir, claudeRel, { changed, links, u
     await walkTree(checkoutDir, tree, match, found, treeLinks, deep);
     for (const l of treeLinks) { await rm(abs(checkoutDir, l), { force: true }); links.push(l); }
     for (const rel of found) {
-      const buf = await readFile(abs(checkoutDir, rel));
-      const text = buf.toString('utf8');
-      const r = strippedFrontmatterText(text);
+      const r = strippedFrontmatterBytes(await readFile(abs(checkoutDir, rel)));
       if (r === null) continue;
-      if (!Buffer.from(text, 'utf8').equals(buf)) { unparsed.push(rel); continue; }   // not UTF-8: not rewritten, named
-      await replaceFile(abs(checkoutDir, rel), r.text);   // N-I1: written even when unsure (as far as Worca could strip it)
+      await replaceFile(abs(checkoutDir, rel), r.bytes);   // N-I1: written even when unsure (as far as Worca could strip it)
       changed.push(rel);
       if (r.unsafe) unparsed.push(rel);
     }
@@ -309,8 +341,8 @@ async function stripFrontmatterTrees(checkoutDir, claudeRel, { changed, links, u
  * D72: switch the project's hooks and plugins off in `checkoutDir`. `changed`: the files rewritten; `links`: the links
  * removed (`.claude` itself, a settings file, or a link inside the skills, agents or commands folders); `unparsed` (present
  * only when there is one): skill, agent or command files Worca is not sure it removed every hook from (D72a; re-review 2 N-I1:
- * written as far as Worca could strip them, and also in `changed`), or could not read as UTF-8 (left as they are), and folders
- * too deep to walk. I-2 (Task 5 fix review): the skills, agents and commands of every `.claude` folder below
+ * written as far as Worca could strip them, and also in `changed`; re-review 3 I1: every file that is not UTF-8, stripped too),
+ * and folders too deep to walk. I-2 (Task 5 fix review): the skills, agents and commands of every `.claude` folder below
  * the root (not in node_modules or .git) are treated the same way, and a nested `.claude` that is a link is removed; only the
  * root's settings files are ones the CLI loads. Throws only when a file cannot be read or written (the caller ends the try).
  * Re-review 2: `envKeys` (only when there is one): per settings file, the names of the env keys left out (n5; never values).

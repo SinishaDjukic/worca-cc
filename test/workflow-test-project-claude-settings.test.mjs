@@ -205,6 +205,44 @@ test('re-review 3 m2: the rewrite never brings a <<: merge\'s keys to the top le
     'a merge in a rewritten flow frontmatter goes too');
 });
 
+test('re-review 3 I1: a file that is not UTF-8 (the CLI reads it as UTF-8 anyway) loses its frontmatter hooks; every other byte stays', async () => {
+  const d = tmp();
+  const bytes = (s) => Buffer.from(s, 'latin1');   // one byte per character: \xE9 is a cp1252 é, \x93 \x94 its smart quotes
+  const files = {
+    'skills/body/SKILL.md': [`---\nname: x\n${BLOCK}description: d\n---\nBody: caf\xE9 \x93quoted\x94\n`, `---\nname: x\ndescription: d\n---\nBody: caf\xE9 \x93quoted\x94\n`],
+    'skills/bom/SKILL.md': ['\xEF\xBB\xBF---\r\nname: x\r\nhooks:\r\n  Stop: []\r\n---\r\ncaf\xE9\r\n', '\xEF\xBB\xBF---\r\nname: x\r\n---\r\ncaf\xE9\r\n'],   // a UTF-8 BOM, CRLF
+    // in the frontmatter, beside a valid UTF-8 character (\xE2\x80\x99 is a UTF-8 ’) and a block holding one itself
+    'agents/fm.md': [`---\nname: x\ndescription: caf\xE9 \x93q\x94 it\xE2\x80\x99s\n${BLOCK}hooks:\n  Stop: [{ command: "caf\xE9" }]\nmodel: opus\n---\nbody \xE9\n`,
+      `---\nname: x\ndescription: caf\xE9 \x93q\x94 it\xE2\x80\x99s\nmodel: opus\n---\nbody \xE9\n`],
+    // a form only a rewrite could cut: never rewritten in such a file (it would rewrite the non-ASCII bytes too); emptied instead
+    'commands/rewrite.md': [`---\nname: caf\xE9\n? hooks\n: { Stop: [] }\n---\nbody \xE9\n`, `---\n---\nbody \xE9\n`],
+  };
+  for (const [rel, [text]] of Object.entries(files)) {
+    mkdirSync(join(d, '.claude', ...rel.split('/').slice(0, -1)), { recursive: true });
+    writeFileSync(join(d, '.claude', ...rel.split('/')), bytes(text));
+  }
+  const r = await stripProjectClaudeSettings(d);
+  for (const [rel, [, want]] of Object.entries(files)) {
+    const got = readFileSync(join(d, '.claude', ...rel.split('/')));
+    assert.ok(got.equals(bytes(want)), `${rel}: ${JSON.stringify(got.toString('latin1'))}`);
+    assert.equal(strippedFrontmatterText(got.toString('utf8')), null, `${rel}: the CLI's reading (UTF-8) has no hooks left`);
+  }
+  assert.deepEqual(r.changed, ['.claude/skills/body/SKILL.md', '.claude/skills/bom/SKILL.md', '.claude/agents/fm.md', '.claude/commands/rewrite.md']);
+  assert.deepEqual(r.unparsed, r.changed, 'still named: the CLI reads the file through a lossy UTF-8 decoding');
+});
+
+test('re-review 3 I1: when the byte-for-byte strip and the CLI\'s UTF-8 reading disagree, the CLI\'s reading is stripped (the bad bytes as it reads them)', async () => {
+  const d = tmp();
+  mkdirSync(join(d, '.claude', 'skills', 's'), { recursive: true });
+  // the opening line ends in a UTF-8 U+3000 (whitespace to the CLI's \s, three letters to a byte-for-byte reading): only the
+  // CLI's reading sees this frontmatter
+  const file = join(d, '.claude', 'skills', 's', 'SKILL.md');
+  writeFileSync(file, Buffer.concat([Buffer.from('---　\nname: x\nhooks:\n  Stop: []\n---\n', 'utf8'), Buffer.from('caf\xE9\n', 'latin1')]));
+  const r = await stripProjectClaudeSettings(d);
+  assert.equal(readFileSync(file, 'utf8'), '---　\nname: x\n---\ncaf�\n');
+  assert.deepEqual([r.changed, r.unparsed], [['.claude/skills/s/SKILL.md'], ['.claude/skills/s/SKILL.md']]);
+});
+
 test('I-2: nested .claude folders below the checkout root (a monorepo package\'s skills load once the agent works there: probe nested-read-318) lose their hooks too', async () => {
   const d = tmp();
   const w = (rel, text) => { mkdirSync(join(d, ...rel.split('/').slice(0, -1)), { recursive: true }); writeFileSync(join(d, ...rel.split('/')), text); };
