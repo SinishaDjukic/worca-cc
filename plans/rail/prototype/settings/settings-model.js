@@ -48,7 +48,7 @@
 
   // ---- values that are not a row's own ----
   const STATE = { ver: '1.19.0', latest: '1.19.0', upd: 'latest', updTried: false, gsShown: false, proxyLogin: true, claudeIn: true, chats: 38, worktrees: 12, attach: '140 MB',
-    tidied: '3 days ago', jobsAll: false, stepsAll: false, seeded: false, speechModels: true, gemQuota: '', gemUsed: 840, perRun: '', total: '1000', period: 'month', orLeft: 820 };
+    tidied: '3 days ago', seeded: false, speechModels: true, gemQuota: '', gemUsed: 840, perRun: '', total: '1000', period: 'month', orLeft: 820 };
   const NOTES = [note('architecture.md', 'How the server and the UI are split · today · from Chat'), note('conventions.md', 'Naming, commits and tests · 2 Oct · from run #398')];
   const COST_TAGS = [
     { title: 'Cost centre', meta: 'R&D, Platform, Support · required', menu: ['Edit', 'Remove'] },
@@ -129,30 +129,31 @@
     on: { Clear: (r, x) => { ROLES.forEach(([k]) => { x.sv[roleKey(e, k, 'm')] = ''; }); return `Roles on ${r.title}: cleared`; } } });
 
   // A step or a helper job: a row that follows its role until it is overridden.
-  const test = (r) => `One tiny prompt to ${r.model}: answered in 1.2s`;
-  const slot = (title, role, o = {}) => ({ title, role, model: o.model || '', factory: o.factory || '', detail: o.detail || '', when: (sv, r) => r.model || sv[o.all || 'jobsAll'],
-    live: (sv, r) => (r.model ? `${r.model}${r.factory && !r.own ? ' (default)' : ''}` : `Follows ${role}`) + (r.factory && !r.own && !sv.claudeIn ? ' · dropped: not signed in' : ''),
-    menu: (r) => (r.model ? (r.own ? ['Test', 'Clear'] : ['Test', 'Override']) : ['Override']),
-    on: {
-      Test: (r, x) => (r.factory && !r.own && !x.sv.claudeIn ? `${r.title}: sign in to Claude Code or pick a model` : test(r)),
-      Clear: (r) => { r.own = false; r.model = r.factory; return `${r.title}: follows ${r.factory ? 'its default' : role} again`; },
-      Override: (r, x) => x.dialog({ title: `Override ${r.title}`, yes: 'Override', fields: [{ key: 'to', label: 'Model', value: 'Sonnet 5.5', options: MODEL.map(([, t]) => [t, t]) }], then: (v) => { r.model = v.to; r.own = true; return `${r.title}: ${v.to}`; } }),
-    } });
+  // A job runs on its role's model, or on one picked here: one sentence per job, its choice in the sentence. Clearing is
+  // picking its role again, so there is nothing else to learn.
+  const slot = (title, role, o = {}) => ({ title, role, factory: o.factory || '', detail: o.detail || '' });
+  const jobRows = (list, kind) => list.map((j, i) => {
+    const key = kind + i, followsId = 'follows';
+    const start = j.factory ? `model:${j.factory}` : followsId;
+    return { name: j.title, help: j.detail, say: '{' + key + '}',
+      picks: { [key]: P(start, [...(j.factory ? [[`model:${j.factory}`, `${j.factory} (default)`, 'What Worca ships for this job']] : []), [followsId, `Follows ${j.role}`, `Follows ${j.role} in Roles`], ...MODEL.filter(([, x]) => x !== j.factory).map(([, x]) => [`model:${x}`, x])], j.detail) },
+      acts: [{ label: 'Test', help: 'Sends one tiny prompt to this model', when: (sv) => sv[key] !== followsId, do: (sv) => (j.factory && sv[key] === start && !sv.claudeIn ? `${j.title}: sign in to Claude Code or pick a model` : `${j.title}: ${String(sv[key]).replace('model:', '')} answered in 1.2s`) }] };
+  });
+  const jobsSet = (list, kind, sv) => list.filter((_, i) => sv[kind + i] !== 'follows').length;
   const HELPERS = [
     slot('Titles', 'Quick jobs', { detail: 'Writes the short title every run and chat gets.' }),
     slot('Auto workflow classifier', 'Everyday coding', { detail: 'Reads an Auto run\'s task and picks the workflow it runs.' }),
     slot('Run overview', 'Quick jobs', { detail: 'Writes the overview a finished run opens on.' }),
     slot('PR description', 'Quick jobs', { detail: 'Drafts the pull request description.' }),
-    slot('Memory defragment', 'Quick jobs', { model: 'Sonnet 5', factory: 'Sonnet 5', detail: 'Runs Memory defragment, which restructures saved memory.' }),
+    slot('Memory defragment', 'Quick jobs', { factory: 'Sonnet 5', detail: 'Runs Memory defragment, which restructures saved memory.' }),
     slot('Agent generation', 'Everyday coding', { detail: 'Drafts a new agent\'s prompt and metadata in Workflows › Agents.' }),
     slot('Run naming', 'Quick jobs', { detail: 'Suggests the title and branch name on New run.' }),
     slot('Command summaries', 'Quick jobs', { detail: 'Writes the one-line summary of a chat command.' }),
     slot('Workspace scan', 'Everyday coding', { detail: 'Runs the scan that maps how member projects connect.' }),
     slot('Requirements interview', 'Everyday coding', { detail: 'Runs the interview rounds on the Requirements page.' }),
-    slot('Second-opinion reviewer', 'Deep thinking', { model: 'Opus 5.5 · medium', factory: 'Opus 5.5 · medium', detail: 'The one review that runs on another model than its step (Shaper\'s Product reviewer).' }),
+    slot('Second-opinion reviewer', 'Deep thinking', { factory: 'Opus 5.5 · medium', detail: 'The one review that runs on another model than its step (Shaper\'s Product reviewer).' }),
   ];
-  const STEPS = ['Plan', 'Plan review', 'Implement', 'Review', 'Fix'].map((t, i) => slot(t, i === 2 || i === 4 ? 'Everyday coding' : 'Deep thinking', { all: 'stepsAll' }));
-  const shownOf = (list, sv, key) => (sv.__recs['models/Jobs/' + key] || list).filter((r) => r.model).length;
+  const STEPS = ['Plan', 'Plan review', 'Implement', 'Review', 'Fix'].map((t, i) => slot(t, i === 2 || i === 4 ? 'Everyday coding' : 'Deep thinking'));
 
   // ---- Chat › Channels: a chat plugin's channel, with what stops it working ----
   const channel = (title, key, o) => ({ title, sw: { key, on: o.on }, meta: o.meta, chip: (sv) => o.state(sv), mark: o.mark, warned: !!o.warn,
@@ -408,8 +409,8 @@
         { name: 'Engine', say: 'New runs use {eng}; each step and helper job uses its role', picks: { eng: P('claude', ENGINES, 'The engine a new run starts on') } },
       ] },
       { title: 'Jobs', meta: 'A step or a helper job follows its role until you override it.', rows: [
-        { name: 'Step models', say: '**{stepN}** set here; the others follow their role', vals: { stepN: (sv) => shownOf(STEPS, sv, 'Step models') }, acts: [{ label: (sv) => (sv.stepsAll ? 'Show set' : 'Show all 5'), id: 'steps-all', do: (sv) => { sv.stepsAll = !sv.stepsAll; sv.__open = 'more:models/Jobs/Step models'; return ''; } }], moreList: STEPS, empty: 'None overridden: Show all lists the steps' },
-        { name: 'Helper jobs', say: '**{helperN}** have a model; the other {helperRest} follow their role', vals: { helperN: (sv) => shownOf(HELPERS, sv, 'Helper jobs'), helperRest: (sv) => HELPERS.length - shownOf(HELPERS, sv, 'Helper jobs') }, acts: [{ label: (sv) => (sv.jobsAll ? 'Show set' : 'Show all 11'), id: 'jobs-all', do: (sv) => { sv.jobsAll = !sv.jobsAll; sv.__open = 'more:models/Jobs/Helper jobs'; return ''; } }], moreList: HELPERS },
+        { name: 'Step models', say: '{stepWords}', vals: { stepWords: (sv) => { const n = jobsSet(STEPS, 'jobStep', sv); return n ? `${n} of ${STEPS.length} have their own model; the rest follow their role` : `All ${STEPS.length} follow their role`; } }, more: jobRows(STEPS, 'jobStep') },
+        { name: 'Helper jobs', say: '{helperWords}', vals: { helperWords: (sv) => { const n = jobsSet(HELPERS, 'jobHelp', sv); return n ? `${n} of ${HELPERS.length} have their own model; the rest follow their role` : `All ${HELPERS.length} follow their role`; } }, more: jobRows(HELPERS, 'jobHelp') },
       ] },
       { title: 'Sign-ins', meta: 'Sign-ins and keys for the models Worca runs through its own bridge.', rows: [
         { name: 'Claude sign-in', say: '{claudeWords}', vals: { claudeWords: (sv) => (sv.claudeIn ? 'Signed in to Claude Code; factory defaults show as (default)' : 'Not signed in to Claude Code: Memory defragment and Second-opinion reviewer lose their factory default. A run that needs one is refused, never given another model') },
