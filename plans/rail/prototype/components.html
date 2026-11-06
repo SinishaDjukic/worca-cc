@@ -127,6 +127,7 @@
     <p class="gl-need">For ${R.esc(c.needs.join('; '))}${c.notFor ? `. Not for ${R.esc(c.notFor)}` : ''}.</p>
     ${c.rules ? `<ul class="gl-rules">${c.rules.map((x) => `<li>${R.esc(x)}</li>`).join('')}</ul>` : ''}
     ${EX[c.name].map(([l, html]) => `<div class="gl-ex"><span class="gl-ex-l">${R.esc(l)}</span><div class="gl-show">${html}</div></div>`).join('')}</section>`).join(''));
+  for (const b of g.querySelectorAll('[data-mixed]')) b.indeterminate = true;
   const missing = window.RailCatalog.components.filter((c) => c.code && !EX[c.name]).map((c) => c.name);
   if (missing.length) g.insertAdjacentHTML('beforeend', `<p class="mk-intro">Built in code, not drawn here yet: ${R.esc(missing.join(', '))}.</p>`);
 </script>
