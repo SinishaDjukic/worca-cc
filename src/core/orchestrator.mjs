@@ -38,6 +38,7 @@ import { checkPlan } from './shape/check.mjs';
 import { clarifyCounts, shapeScoreOf } from './shape/stats.mjs';
 import { PLAN_ASK_KIND, validatePlanAnswer, validateOutlineAnswer, renderPlanFeedback, SHAPING_FEEDBACK_PREVIEW } from './shape/run.mjs';
 import { createSliceFeature, retireFeaturesOf, earlierSliceChanges, featureApprovesEach, featureClarify, featureNotes } from './shape/features.mjs';
+import { readRunPrAuto } from './pr-auto.mjs';
 import { checkSlices, applyOutlineEdits, normalizeOutline, settleLeftOut, sliceRequirementIds, OUTLINE_FILE, OUTLINE_CHANGE_FILE, OUTLINE_ROUNDS_MAX } from '../shared/shape/slices.mjs';
 import { onlyCriteria } from '../shared/review/requirements-coverage.mjs';
 import { DEFAULT_PERSPECTIVES } from '../shared/shape/perspectives.mjs';
@@ -1790,7 +1791,7 @@ export class GraphOrchestrator extends RunHarness {
           outline: applied.outline, proposed: outline.slices.length, merges: applied.merges, removals: applied.removals,
           approveEach: payload.approveEach === true, perspectives: this._shapePerspectives(),
           workflowId: this._shapePerspectives().includes('ux') ? SHAPE_UX_WORKFLOW_ID : SHAPE_WORKFLOW_ID,
-          base: this._sliceRequestBase(), replaces: this.runShape?.replaces || null, startedBy: this._runStarter(),
+          base: this._sliceRequestBase(), replaces: this.runShape?.replaces || null, startedBy: this._runStarter(), pr: this._featurePr(),
         });
       } catch (err) {
         this._log('orchestrator', 'warn', `slices: cannot create the feature: ${err?.message || err}`);
@@ -1929,6 +1930,12 @@ export class GraphOrchestrator extends RunHarness {
     try {
       if (retireFeaturesOf(this.pipeline.id, { by: this._runStarter() }) > 0) this._emit('state', this.getState());
     } catch (err) { this._log('orchestrator', 'warn', `slices: cannot retire an earlier feature: ${err?.message || err}`); }
+  }
+
+  /** The run's saved PR-when-done decision as the feature keeps it. Read from the row, so a resume and the carried-edits retry see it too. */
+  _featurePr() {
+    const pa = readRunPrAuto(this.pipeline.id);
+    return pa ? { open: pa.open, slices: pa.slices ?? 'each', source: pa.source } : null;
   }
 
   /** F37: who started this run. A resumed orchestrator has no opts.startedBy (ui/server.mjs:4333-4340); the harness

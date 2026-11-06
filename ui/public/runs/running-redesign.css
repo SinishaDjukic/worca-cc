@@ -195,3 +195,9 @@ button.runs-sec-head:focus-visible{outline:2px solid var(--ink);outline-offset:-
    new subtree, exactly as :1608 does for .hd/#shipit-modal. */
 .rd .mono{font-family:var(--mono);}
 
+
+/* Pull request when the run finishes: the run's saved setting, read-only, and what happened (ui/public/pr-auto-view.mjs). */
+.hd-pr-auto{display:flex;flex-direction:column;gap:2px;}
+.hd-pr-auto-outcome{color:var(--muted);font-size:12px;overflow-wrap:anywhere;}
+.hd-pr-auto-outcome.failed,.hd-pr-auto-outcome.blocked{color:var(--red-ink);}
+.wd-pr-setting{margin-top:16px;}

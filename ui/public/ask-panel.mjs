@@ -21,6 +21,7 @@ import { buildTrace, scheduleTrace, playAssembly } from './auto-build.mjs';
 import { buildNodeConfigRows, buildRoleRows, pruneNodeSelection, modifiedFieldsOf, healForEngine } from './node-tunables.mjs';
 import { ENGINE_EFFORTS } from './engine-settings-view.mjs';
 import { ENGINE_NAMES, engineLabel, isBetaEngine } from '../../src/shared/engine-switch.mjs';
+import { PR_OPEN, PR_OPEN_LABELS, prSourceText } from '../../src/shared/pr-auto.mjs';
 import { lockEngineOptions } from './engine-locks.mjs';
 import { runsOn, modelGroups } from '../../src/shared/connections.mjs';
 import { appendModelGroups, modelOptionText } from './model-options.mjs';
@@ -3728,6 +3729,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // the node rows' in `reviewRoleEdits[nodeId][roleKey]` (`row.role` already names Default's legacy step role).
     return { wf, registry, runConfig, rows, edits: {}, reviewRoleRows: buildRoleRows(wf, rows, runConfig), reviewRoleEdits: {},
       editable: true, explicit: !projectDir, engine, defaultEngine, allModels, proposal: {}, proposed: {}, warnings: [],
+      prDefault: defaults && defaults.pr && defaults.pr.scope === 'project' ? defaults.pr : null,
       models, efforts: engine === 'claude' ? (Array.isArray(cfg.efforts) ? cfg.efforts : []) : [...(ENGINE_EFFORTS[engine] || [])],
       subagentModels: Array.isArray(cfg.subagentModels) ? cfg.subagentModels : [] };
   }
@@ -5279,6 +5281,13 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     lvTag(engineField, 'advanced', !!card.engine && card.engine !== 'claude');
     wfRow.append(wfField, engineField, guardField);
     targetSec.appendChild(wfRow);
+    // Pull request when the run finishes: "Use the setting" sends nothing (the project's or workspace's value, with its source, once the lane has read it); a pick is this run's own choice.
+    const prSel = rpSelect('ask-card-pr', 'Pull request when done');
+    fillSelect(prSel, [{ value: '', label: 'Use the setting' }, ...PR_OPEN.map((v) => ({ value: v, label: PR_OPEN_LABELS[v] }))], (card.pr && card.pr.open) || '');
+    const prField = lvTag(rpField('Pull request when done', prSel), 'advanced', !!(card.pr && card.pr.open));
+    const prRow = make('div', 'ask-rp-grid wf-row');
+    prRow.appendChild(prField);
+    targetSec.appendChild(prRow);
     if (shapeUi) rootEl.appendChild(shapeUi.el);
     rootEl.appendChild(targetSec);
     engineSel.addEventListener('change', () => reloadLane());   // the agent rows offer the engine's models
@@ -5738,6 +5747,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         }
         if (lane) {
           engineSel.options[0].textContent = `${engineLabel(lane.defaultEngine)} (default)`;
+          prSel.options[0].textContent = lane.prDefault && local.target === 'project' ? `Use the setting: ${PR_OPEN_LABELS[lane.prDefault.open.value]} (${prSourceText(lane.prDefault.open.source)})` : 'Use the setting';
           for (const o of engineSel.options) o.hidden = o.value !== '' && o.value === lane.defaultEngine && engineSel.value !== o.value;   // listed once
         }
         wfDesc.textContent = lane ? workflowDesc(lane.wf, lane.registry, lane.runConfig) : '';
@@ -5831,6 +5841,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (tags.length) body.tags = tags;                      // none: a legacy body, byte for byte
     const engine = (rootEl.querySelector('.ask-card-engine') || {}).value;
     if (engine) body.engine = engine;                       // none: /api/run's default engine
+    // Pull request when done: only an explicit pick (and the proposal's slices mode on a project run); none: the setting decides.
+    const prOpen = (rootEl.querySelector('.ask-card-pr') || {}).value;
+    const pr = { ...(prOpen ? { open: prOpen } : {}), ...(card.pr && card.pr.slices && local.target === 'project' ? { slices: card.pr.slices } : {}) };
+    if (local.target !== 'none' && Object.keys(pr).length) body.pr = pr;
     // A tracker task: the reference, never a prompt (POST /api/run takes source OR prompt).
     if (card.source) {
       delete body.prompt;

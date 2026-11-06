@@ -19,7 +19,7 @@ import {
   earlierSliceChanges, cancelRest, resumeFeature, rechainWaiting, replanRest, setApproveEach, featureApprovesEach,
   stackedPrBase, recordShapePlan, listShapePlans, featuresOfTickets, featureClarify, chainFeature, sliceOfPipeline, slicePrPreamble,
   recordShip, clearShip, recordSliceDraft, featureShipSuggestion, featureShipInput, ONE_PR_MAX_LINES,
-  liveSliceFrom, shaperCard, featureThread,
+  liveSliceFrom, shaperCard, featureThread, featureRootSource,
   addFeatureNote, featureNotes, appendFeatureRun, featureBase, liveRoundOf, setFeatureAcceptance,
 } from '../src/core/shape/features.mjs';
 
@@ -964,4 +964,30 @@ test('resumeFeature: a stopped requirements-first follow-up restarts requirement
     const shape = getTicket(res.ticketId, { withRequest: true }).request.shape;
     assert.deepEqual([shape.slice.index, shape.requirementsFirst === true], [3, requirementsFirst]);
   }
+});
+
+test('createSliceFeature stores pr; a replacing feature copies the replaced feature\'s pr', () => {
+  const read = (id) => getDb().prepare('SELECT pr_open, pr_slices, pr_source FROM shape_features WHERE id = ?').get(id);
+  const pr = { open: 'draft', slices: 'one', source: { open: 'team', slices: 'project' } };
+  const a = mk(2, { pr });
+  assert.deepEqual({ ...read(a.id) }, { pr_open: 'draft', pr_slices: 'one', pr_source: JSON.stringify(pr.source) });
+  const b = mk(2, { replaces: a.id, pr: { open: 'ready', slices: 'each', source: { open: 'run', slices: 'run' } } });
+  assert.deepEqual({ ...read(b.id) }, { pr_open: 'draft', pr_slices: 'one', pr_source: JSON.stringify(pr.source) }, 'a re-plan keeps the decision and its source');
+  const none = mk(2);
+  assert.deepEqual({ ...read(none.id) }, { pr_open: null, pr_slices: null, pr_source: null }, 'no pr leaves the columns NULL');
+  const c = mk(2, { replaces: none.id, pr });
+  assert.equal(read(c.id).pr_open, 'draft', 'a replaced feature with no value does not block the new one');
+});
+
+test('featureRootSource follows replaces back to the first feature', () => {
+  const a = mk(2, { pipelineId: pipe('done', { branch: { source: 'main' } }) });
+  const b = mk(2, { replaces: a.id, pipelineId: pipe('done', { branch: { source: 'feat/last-done' } }) });
+  const c = mk(2, { replaces: b.id, pipelineId: pipe('done', { branch: { source: 'feat/later' } }) });
+  const src = (id) => getDb().prepare('SELECT source_branch FROM shape_features WHERE id = ?').get(id).source_branch;
+  assert.equal(src(c.id), 'feat/later');
+  assert.equal(featureRootSource(c.id), src(a.id));
+  assert.equal(featureRootSource(a.id), src(a.id));
+  assert.equal(featureRootSource('feat_missing'), null);
+  getDb().prepare('UPDATE shape_features SET replaces = ? WHERE id = ?').run(c.id, a.id);   // a loop stops
+  assert.equal(typeof featureRootSource(c.id), 'string');
 });

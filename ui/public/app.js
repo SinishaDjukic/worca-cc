@@ -291,6 +291,7 @@ import { runCostBreakdown, floorText, auxLabelForSubagent } from '../../src/shar
 import { costBreakdownEl, costSummaryText, awayTotalText } from './cost-breakdown.mjs';
 import { describeRun, describeNewRun, describeAwayRow } from '../../src/shared/away-mode/describe.mjs';
 import { createSchedulesView } from './schedules-view.mjs';
+import { createRunPrFields, mountWorkspacePrSetting, paintRunPrAuto } from './pr-auto-view.mjs';
 import { createRequirementsView } from './requirements-view.mjs';
 import { createLevelController, levelAtLeast, currentLevel, tagLevel, keepVisible, minLevelFor, LEVEL_INFO, UI_LEVELS } from './ui-level.mjs';
 import { applyFlags, currentFlags, decorateFlagChips, flagOn, onFlagChange } from './flags.mjs';
@@ -5003,8 +5004,13 @@ document.getElementById('runTagsSaveDefault')?.addEventListener('click', async (
 });
 
 let runDefaultsGen = 0;
+// The New run form's PR-when-done fields (pr-auto-view.mjs), built on first use.
+function runPrFields() {
+  return (runPrFields.ctl ||= createRunPrFields({ doc: document, onChange: () => notePresetChange(), getTarget: () => ({ kind: state.runTarget === 'workspace' || state.runTarget === 'none' ? state.runTarget : 'project', projectDir: selectedProjectPath(), workspaceId: (el.workspaceSelect && el.workspaceSelect.value) || '' }) }));
+}
 async function loadRunDefaults(projectDir) {
   const gen = ++runDefaultsGen;
+  void runPrFields().refresh();
   let data = null;
   try { const res = await fetch(projectDir ? `/api/run-defaults?projectDir=${encodeURIComponent(projectDir)}` : '/api/run-defaults'); data = res.ok ? await safeJson(res) : null; } catch {}
   if (gen !== runDefaultsGen) return;
@@ -9089,7 +9095,7 @@ async function ensureWorkspaceOptions({ keepMembers = false } = {}) {
     placeholder.selected = true;
   }
   // The select is filled without a change event: the tag-dimension slots follow the restored workspace.
-  if (state.runTarget === 'workspace') void refreshRunTagDims();
+  if (state.runTarget === 'workspace') { void refreshRunTagDims(); void runPrFields().refresh(); }
   // A background list refresh (keepMembers) leaves a still-selected workspace's member rows and
   // branch picks alone; only a changed selection repaints them.
   if (keepMembers && state.selectedWorkspaceId && state.selectedWorkspaceId === shown) return;
@@ -9105,6 +9111,7 @@ if (el.targetSeg) {
 if (el.workspaceSelect) {
   el.workspaceSelect.addEventListener('change', () => {
     state.selectedWorkspaceId = el.workspaceSelect.value || '';
+    void runPrFields().refresh();
     if (state.selectedWorkspaceId) localStorage.setItem(LAST_WORKSPACE_KEY, state.selectedWorkspaceId);
     // D-W1: Human in the loop is per run on a workspace — a new workspace starts it on again. This
     // listener does not re-run renderWorkflowConfig, so repaint the switch here.
@@ -9594,6 +9601,7 @@ function buildWdOverview(sec, id) {
   const [upDate, upTime] = w.updatedAt ? String(fmtDate(w.updatedAt)).split(', ') : ['—', ''];
   grid.appendChild(pdStatCard('updated', 'Updated', upDate, [upTime, w.createdAt ? `created ${String(fmtDate(w.createdAt)).split(', ')[0]}` : ''].filter(Boolean).join(' · ')));
   sec.appendChild(grid);
+  void mountWorkspacePrSetting(sec.appendChild(document.createElement('section')), { workspaceId: id });   // Pull requests: the workspace's own pr.open
   // wsDetail is set before the tab builds, so the card can paint at once (and again per status read).
   paintPdBranchCards();
   void refreshSyncChips();
@@ -15124,6 +15132,7 @@ function buildRunBody() {
     // The engine shown is the engine that runs: Claude goes unsent only when the default is KNOWN
     // to be Claude (a failed or stale defaults read must not let the server pick a Codex default).
     engine: state.engine !== 'claude' ? state.engine : (state.runDefaults?.engine?.value === 'claude' ? undefined : 'claude'),
+    pr: runPrFields().body(),   // only a value the person changed from the setting
     allowUnguardedEngine: state.engine !== 'claude' && el.engineAllowUnguarded && el.engineAllowUnguarded.checked ? true : undefined,
     // Run tags (#718): omitted when empty, so a legacy body stays byte-identical. A slot wins its key.
     tags: (() => {
@@ -25312,6 +25321,7 @@ function paintHdGlance(screen, record, data) {
   paintGroupLine(glance.querySelector('.rd-kv .rd-group-line'), record.id || '', record.title || '', home);
   paintRunPlace(screen, home);
   paintRunLabels(glance.querySelector('.rd-kv [data-fact="labels"] > .rd-kv-v'), { pipelineId: data.state.id, labels: data.state.labels, onSaved: (l) => { data.state.labels = l; } });
+  void paintRunPrAuto(glance.querySelector('.rd-kv [data-fact="pr-auto"]'), data.state.id, st.status, () => !!histDetailState && histDetailState.data === data);
   syncFacts(glance.querySelector('.rd-kv'));
 
   // Time · Cost · Changes, then the Cost tags row, as on the Running page in every state.
@@ -37720,6 +37730,7 @@ function paintRdHeader(screen, r) {
   // Run tags (#718): read-only chips after the person chip, replaced on every paint.
   for (const c of screen.querySelectorAll('.rd-page-meta .tag-chip')) c.remove();   // s2: the chips moved to the Cost tags row
   paintRunLabels(screen.querySelector('.rd-glance .rd-kv [data-fact="labels"] > .rd-kv-v'), { pipelineId: r.pipelineId || '', labels: r.labels, onSaved: (l) => { r.labels = l; } });
+  void paintRunPrAuto(screen.querySelector('.rd-glance .rd-kv [data-fact="pr-auto"]'), r.pipelineId, r.status, () => screen.isConnected && runs.get(r.runId) === r);
   paintRunKindChip(screen.querySelector('.rd-page-meta'), workModeOf(r));
   syncFacts(screen.querySelector('.rd-glance .rd-kv'));
 
@@ -40237,6 +40248,7 @@ async function applyPreset(id) {
       setSelectValueAdding(el.sourceBranch, s.sourceBranch);
     }
     if (Array.isArray(s.tags)) applyRunTagsFromPreset(s.tags);
+    runPrFields().apply(s.pr);
     applyPresetSwitches();
     await renderWorkflowConfig(state.workflowId);
   } finally {
@@ -40263,6 +40275,7 @@ function applyPresetSwitches() {
 
 function leavePresetMode() {
   state.preset = null;
+  runPrFields().apply(null);
   if (el.presetSelect) el.presetSelect.value = '';
   paintPresetChip();
   paintPresetBroken();
