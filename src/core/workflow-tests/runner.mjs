@@ -83,7 +83,7 @@ export function worcaProblemOf({ pause = null, liveState = null, outcome = null,
   if (outcome && !outcome.pipelineId) return { kind: 'start', detail: firstLine(outcome.facts && outcome.facts.failReason) || 'The try did not start.' };
   // Task 5 fix review (concern 8): a spawn ran without Worca's settings file (the canary's marker missing): its guards may
   // not have applied, so the try says nothing of the workflow.
-  if (outcome && outcome.settingsIgnored === true) return { kind: 'settings', detail: 'Claude Code ignored Worca\'s settings for this try.' };
+  if (outcome && outcome.settingsIgnored === true) return { kind: 'settings', detail: 'Claude Code did not load Worca\'s settings for this try (an invalid settings file or a managed hooks policy).' };
   if (failReason && failReason.worca && failReason.reason) return { kind: 'answer', detail: firstLine(failReason.reason) };
   const bad = (Array.isArray(checkErrors) ? checkErrors : []).find((c) => c && c.worcaProblem);
   if (bad) return { kind: 'check', detail: firstLine(bad.error || bad.value) };

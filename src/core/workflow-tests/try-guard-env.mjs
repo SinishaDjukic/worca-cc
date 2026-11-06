@@ -257,8 +257,9 @@ export const SETTINGS_CANARY_PATH = fileURLToPath(new URL('./settings-canary.mjs
 export const SETTINGS_CANARY_PREFIX = '.worca-settings-canary-';
 /** Written in a try's run folder when a spawn ran without Worca's settings; readTryOutcome reads it. */
 export const SETTINGS_IGNORED_FILE = 'settings-ignored.ndjson';
-/** The run warning for it (also the carry warning line's text). */
-export const SETTINGS_IGNORED_TEXT = 'Claude Code ignored Worca\'s settings for this try: its guards may not have applied.';
+/** The run warning for it (also the carry warning line's text). Re-review 2 (n6): not only a dropped settings file; a managed
+ *  `disableAllHooks` / `allowManagedHooksOnly` also keeps Worca's hooks from running. */
+export const SETTINGS_IGNORED_TEXT = 'Claude Code did not load Worca\'s settings for this try (an invalid settings file or a managed hooks policy): its guards may not have applied.';
 /** The SessionStart hook entry that writes `marker`. */
 export function settingsCanaryHookEntry(marker) {
   const q = (s) => JSON.stringify(fwd(s));

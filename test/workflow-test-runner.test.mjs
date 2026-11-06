@@ -832,6 +832,6 @@ test('U-T2: worcaProblemOf names each kind, with the raw first line', () => {
 
 test('concern 8: a try whose spawn ran without Worca\'s settings (the canary missing) is a Worca problem: set aside, made again once', () => {
   assert.deepEqual(worcaProblemOf({ outcome: { pipelineId: 'p1', facts: { status: 'done' }, settingsIgnored: true } }),
-    { kind: 'settings', detail: 'Claude Code ignored Worca\'s settings for this try.' });
-  assert.equal(worcaTryText('settings'), 'Worca could not run this try: Claude Code ignored Worca\'s settings for it, so its guards may not have applied.');
+    { kind: 'settings', detail: 'Claude Code did not load Worca\'s settings for this try (an invalid settings file or a managed hooks policy).' });
+  assert.equal(worcaTryText('settings'), 'Worca could not run this try: Claude Code did not load Worca\'s settings for it (an invalid settings file or a managed hooks policy), so its guards may not have applied.');
 });
