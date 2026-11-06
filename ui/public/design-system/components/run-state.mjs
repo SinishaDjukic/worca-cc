@@ -431,7 +431,7 @@ Object.assign(STATES, {
   'interrupted-dead': { word: 'Paused', dot: 'is-grey', action: act('Start a new run', 'play', false, ['Archive']) },
   // Live, and in trouble
   network: { word: 'Working', dot: 'is-peach is-pulse' },
-  recovery: { word: 'Needs you', sym: 'q', action: act('Retry', 'refresh', true, ['Pause', 'Abort']) },
+  recovery: { word: 'Needs you', sym: 'q', action: act('Retry', 'refresh', true, ['Pause', 'Stop']) },
   // Tickets: a scheduled run before it is a run
   'ticket-missed': { word: 'Waiting', dot: 'is-grey-ring', action: act('Start now', 'play', true, ['Cancel']) },
   'ticket-firing': { word: 'Starting', dot: 'is-peach is-pulse' },
@@ -556,7 +556,6 @@ Object.assign(HELP, {
   'Open Team policy': 'Opens Settings › Team › Policy, where the cap is set',
   Archive: 'Removes the branch, worktree and logs; the remote branch and PR stay',
   Retry: 'Tries the step again now',
-  Abort: 'Ends the run; the branch and changes stay',
   'Mark ready for review': 'Takes {pr} out of draft; reviewers are asked',
   'View fix run': 'Opens the short run that is fixing {pr}',
   'Create PR again': 'Opens a new pull request from this run’s branch into {base}',
@@ -1017,7 +1016,7 @@ Object.assign(FLOW, {
   interrupted: { 'Resume now': RESUMED, Archive: ARCHIVE },
   'interrupted-dead': { 'Start a new run': NEW_RUN, Archive: ARCHIVE },
   network: { next: 'working', event: 'The network is back; the step retries' },
-  recovery: { Retry: { to: 'working', say: 'Retrying Implementation' }, Pause: { to: 'paused-reason', say: 'Paused; Resume tries the step again' }, Abort: { to: 'stopped', confirm: 'Abort the run? The branch and changes stay.' } },
+  recovery: { Retry: { to: 'working', say: 'Retrying Implementation' }, Pause: { to: 'paused-reason', say: 'Paused; Resume tries the step again' }, Stop: { to: 'stopped', confirm: 'Abort the run? The branch and changes stay.' } },
   'ticket-missed': { 'Start now': { to: 'starting', say: 'Started now' }, Cancel: { to: 'discarded', confirm: 'Delete this scheduled run?' } },
   'ticket-firing': { next: 'starting', event: 'The schedule fired; the run starts' },
   'ticket-failed': { 'Start now': { to: 'starting', say: 'Started now' }, Cancel: { to: 'discarded', confirm: 'Delete this scheduled run?' } },

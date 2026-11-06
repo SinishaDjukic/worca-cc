@@ -18,7 +18,7 @@ const statusDot = (v) => R.statusDot({ tone: v.dot, sym: v.sym, glyph: R.ICONS[v
 // A menu: an optional line on what the main action does, then each item with its one-line help.
 // One compact menu everywhere, as the app's View menu: one line per item, a leading check for a choice, a hint on the
 // right (a count or a shortcut), the help in the tooltip; danger items come last, after a rule.
-const DANGER = /^(Discard|Stop|Stop the run|Stop run \d+|Abort|Archive|Delete|Cancel|Cancel the rest)$/;
+const DANGER = /^(Discard|Stop|Stop the run|Stop run \d+|Archive|Delete|Cancel|Cancel the rest)$/;
 function menu(id, items) {
   if (ui.menu !== id) return '';
   return R.compactMenu({ items: items.map((it) => (it.sep || it.header ? it : Object.assign({ danger: DANGER.test(it.text) }, it))) });
@@ -171,6 +171,7 @@ function docsSection(v) {
 // projects that changed. They run on your machine, so on a hosted Worca they are off and say why.
 const HOSTED_WHY = 'Actions run on your own machine; this Worca is hosted, so use your own checkout';
 function actionsHtml(v) {
+  if (!R.runPartShows('actions', R.prefs.mode())) return '';
   const d = v.tabData; const off = v.hosted;
   const hook = (o) => (off ? Object.assign({ disabled: true, title: HOSTED_WHY }, o) : o);
   const svc = d.services.map((x) => { const on = !!ui.services[x.id];

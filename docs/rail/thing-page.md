@@ -7,7 +7,7 @@
 | `thing.list-home` | A list about a step is Overview's focus; a list about the whole is a tab; never both | One place per list | by hand |
 | `thing.by-exception` | A tab draws in full what needs you; what went fine is one line | The exception is the news | by hand |
 | `thing.opens` | A row opens its detail in place; a problem opens itself once; sections never collapse | Nothing is hidden when it matters | by hand |
-| `thing.tabs-by-level` | Four tabs in every interface mode; inside them, Logs and the graph are Advanced, Agents and log filters Expert | The page keeps its shape in every mode | design-system-components |
+| `thing.tabs-by-level` | Four tabs in every interface mode; inside them, Logs, the graph and Actions are Advanced, Agents and log filters Expert | The page keeps its shape in every mode | design-system-components |
 
 **A thing's page** (a run, a group; the pattern for any page about one thing with a state), top to bottom:
 | Slot | Holds | Never holds |

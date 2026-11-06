@@ -84,6 +84,7 @@ test('interface mode: four tabs always; Logs and the graph Advanced, Agents and 
   assert.ok(!R.runPartShows('graph', 'simple')); assert.ok(R.runPartShows('graph', 'advanced'));
   assert.ok(!R.runPartShows('agents', 'advanced')); assert.ok(R.runPartShows('agents', 'expert'));
   assert.ok(!R.runPartShows('logFilters', 'advanced')); assert.ok(R.runPartShows('logFilters', 'expert'));
+  assert.ok(!R.runPartShows('actions', 'simple')); assert.ok(R.runPartShows('actions', 'advanced'));
   assert.ok(R.runPartShows('overview', 'simple'));
   assert.throws(() => R.atLevel('nope'), /unknown mode/);
 });
