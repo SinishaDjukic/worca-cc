@@ -24,7 +24,7 @@ import { ORIGIN_MARKS, originLabel } from '../../chat-origin.mjs';
 export function listWord({ id, text, items, tip = '', align = '' }, { open = '', chevron = '', menuCls = '' } = {}) {
   const on = open === id;
   const menu = on ? compactMenu({ items: items.map((it) => (it.sep || it.header ? it : { ...it, id: `${id}|${it.id}` })), cls: `pz-menu${align === 'right' ? ' is-right' : ''}${menuCls}`, pickAttr: 'data-pick', motion: false }) : '';
-  return wordPicker({ text, tip, cls: 'is-words', wrapCls: 'pz-pick', chevron: chevron || icon('chevron', 12, { stroke: 1.8 }), open: on, menuHtml: menu, attrs: { 'data-menu': id } });
+  return wordPicker({ text, tip, cls: 'is-words', wrapCls: 'pz-pick', chevron: chevron || icon('chevron', 12), open: on, menuHtml: menu, attrs: { 'data-menu': id } });
 }
 
 /**
@@ -50,7 +50,7 @@ export function listSentence({ parts, open = '', chevron = '', menuCls = '' }) {
  * @param {string} [o.rows]   the member rows' markup
  */
 export function groupRow({ count, shown, noun, toggle, rows = '', end = '', ...row }) {
-  const fold = button({ label: `${shown ? 'Hide' : 'Show'} the ${noun} in ${row.title}`, kind: 'quiet', iconOnly: true, title: false, icon: icon(shown ? 'chevron' : 'chevR', 14, { stroke: 1.8 }), attrs: { 'aria-expanded': String(shown), ...toggle } });
+  const fold = button({ label: `${shown ? 'Hide' : 'Show'} the ${noun} in ${row.title}`, kind: 'quiet', iconOnly: true, title: false, icon: icon(shown ? 'chevron' : 'chevR', 14), attrs: { 'aria-expanded': String(shown), ...toggle } });
   return listRow({ ...row, endText: count, end: fold + end, after: shown && rows ? `<div class="lr-members" role="list"><div class="list-rows">${rows}</div></div>` : '' });
 }
 
@@ -66,7 +66,7 @@ export function groupRow({ count, shown, noun, toggle, rows = '', end = '', ...r
  */
 export function roundRows({ line, n, open, toggle, rounds = [], more = null }) {
   const word = `${n} ${n === 1 ? 'round' : 'rounds'}`;
-  const head = `<div class="lr-round-line"><span class="lr-m"${attrs({ title: line })}>${esc(line)}</span>${button({ label: word, kind: 'quiet', icon: icon(open ? 'chevron' : 'chevR', 12, { stroke: 1.8 }), attrs: { 'aria-expanded': String(open), 'aria-label': `${open ? 'Hide' : 'Show'} the ${word}`, ...toggle } })}</div>`;
+  const head = `<div class="lr-round-line"><span class="lr-m"${attrs({ title: line })}>${esc(line)}</span>${button({ label: word, kind: 'quiet', icon: icon(open ? 'chevron' : 'chevR', 12), attrs: { 'aria-expanded': String(open), 'aria-label': `${open ? 'Hide' : 'Show'} the ${word}`, ...toggle } })}</div>`;
   if (!open) return `<div class="lr-rounds">${head}</div>`;
   return `<div class="lr-rounds">${head}<div class="list-rows">${rounds.map((r) => listRow({ title: `Round ${r.n} · ${r.words}`, endText: r.time || '', open: r.attrs || null })).join('')}</div>${more ? button({ label: `+${more.n} earlier`, kind: 'quiet', attrs: more.attrs }) : ''}</div>`;
 }
@@ -93,11 +93,11 @@ export function listState({ state, noun, text = '', retry = null, action = '' })
 export function originMark({ platform, label = '' }) {
   const d = Object.hasOwn(ORIGIN_MARKS, platform) ? ORIGIN_MARKS[platform] : '';
   const name = originLabel({ platform, label });
-  if (!d) return `<span class="lr-origin"${attrs({ title: name, 'aria-label': name, role: 'img' })}>${icon('plug', 12, { stroke: 1.8 })}</span>`;
+  if (!d) return `<span class="lr-origin"${attrs({ title: name, 'aria-label': name, role: 'img' })}>${icon('plug', 12)}</span>`;
   return `<span class="lr-origin"${attrs({ title: name, 'aria-label': name, role: 'img' })}><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="${d}"></path></svg></span>`;
 }
 
 /** An idle chat's mark: what it did, its kind's icon in the dot's place. */
 export function chatKindIcon({ icon: name, label }) {
-  return `<span class="lr-kind"${attrs({ title: label, 'aria-label': label, role: 'img' })}>${icon(name, 14, { stroke: 1.8 })}</span>`;
+  return `<span class="lr-kind"${attrs({ title: label, 'aria-label': label, role: 'img' })}>${icon(name, 14)}</span>`;
 }

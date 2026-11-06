@@ -1,4 +1,5 @@
-// The line icons of a Rail page (docs/rail/components.md): one set, so no page keeps its own copy of a path.
+// The line icons of a Rail page (docs/rail/components.md): one set at one line weight, so no page keeps its own copy of a
+// path or its own weight. `nav-<view>` are the sidebar's places, the app's own paths (ui/public/shell/sidebar.html).
 const P = (d) => `<path d="${d}"></path>`;
 export const ICONS = {
   workflow: '<rect x="3" y="9" width="6" height="6" rx="1.6"></rect><rect x="15" y="4" width="6" height="5.5" rx="1.6"></rect><rect x="15" y="14.5" width="6" height="5.5" rx="1.6"></rect><path d="M9 12h3m0 0V7h3m-3 5v5h3"></path>',
@@ -46,11 +47,21 @@ export const ICONS = {
   whoYou: P('M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8z') + P('M4.5 20a7.5 7.5 0 0 1 15 0'),
   whoAway: P('M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z'),
   whoDefault: P('M12 3v4M12 17v4M3 12h4M17 12h4'),
+  'nav-chat': P('M11 5H4.5A2.5 2.5 0 0 0 2 7.5v8A2.5 2.5 0 0 0 4.5 18H6v2.2c0 .9 1.1 1.3 1.7.6L10.5 18h6A2.5 2.5 0 0 0 19 15.5v-3') + P('M18 2.2Q18.8 5.2 21.8 6Q18.8 6.8 18 9.8Q17.2 6.8 14.2 6Q17.2 5.2 18 2.2z'),
+  'nav-runs': P('M3 12a9 9 0 1 0 3-6.7') + P('M3 4v4h4') + P('M12 8v4l3 2'),
+  'nav-schedules': '<rect x="3.5" y="5" width="17" height="15.5" rx="3"></rect>' + P('M3.5 10h17M8 3v4M16 3v4') + P('M12 13.2v2.6l1.8 1.1'),
+  'nav-stats': P('M5 20v-7M12 20V4M19 20v-11'),
+  'nav-team-metrics': P('M4 19h16') + P('M6 15l4-5 4 3 4-6') + '<circle cx="6" cy="15" r="1.2"></circle><circle cx="10" cy="10" r="1.2"></circle><circle cx="14" cy="13" r="1.2"></circle><circle cx="18" cy="7" r="1.2"></circle>',
+  'nav-workflows': '<rect x="3" y="9" width="6" height="6" rx="1.6"></rect><rect x="15" y="4" width="6" height="5.5" rx="1.6"></rect><rect x="15" y="14.5" width="6" height="5.5" rx="1.6"></rect>' + P('M9 12h2.5M11.5 12V6.8H15M11.5 12v5.3H15'),
+  'nav-requirements': P('M8 4h8l3 3v13H5V4h3') + P('M9 11h6M9 15h4') + P('M9 4v2h6V4'),
+  'nav-marketplace': P('M5 8h14l-1.2 12H6.2L5 8z') + P('M9 10V6.5a3 3 0 0 1 6 0V10'),
+  'nav-projects': P('M3 7.5A1.5 1.5 0 0 1 4.5 6h4l2 2.2H19.5A1.5 1.5 0 0 1 21 9.7v8.3A1.5 1.5 0 0 1 19.5 19.5h-15A1.5 1.5 0 0 1 3 18z'),
+  'nav-workspaces': '<rect x="3" y="3" width="7" height="7" rx="1.6"></rect><rect x="14" y="3" width="7" height="7" rx="1.6"></rect><rect x="3" y="14" width="7" height="7" rx="1.6"></rect>' + P('M14 17.5h7M17.5 14v7'),
   eye: P('M2.5 12s3.5-6.5 9.5-6.5S21.5 12 21.5 12s-3.5 6.5-9.5 6.5S2.5 12 2.5 12z') + '<circle cx="12" cy="12" r="2.5"></circle>',
 };
 
-/** An icon's SVG, or '' for a name the set does not have. */
-export function icon(name, size = 14, { stroke = 2, cls = '' } = {}) {
+/** An icon's SVG, or '' for a name the set does not have. Every icon draws at 1.8px; no page chooses its own weight. */
+export function icon(name, size = 14, { cls = '' } = {}) {
   if (!ICONS[name]) return '';
-  return `<svg${cls ? ` class="${cls}"` : ''} width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${stroke}" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name]}</svg>`;
+  return `<svg${cls ? ` class="${cls}"` : ''} width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name]}</svg>`;
 }

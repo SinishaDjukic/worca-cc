@@ -39,6 +39,7 @@ for (const scheme of ['light', 'dark']) for (const w of [1280, 900, 760, 375]) {
       const cur = document.querySelector('#side-rail nav.nav [aria-current="page"]');
       const locked = !!document.querySelector('#route-today [data-unlock]');
       if (view !== 'settings' && !locked && document.querySelector('#side-rail').offsetParent && (!cur || cur.dataset.nav !== place)) out.push(['the sidebar does not mark the place', `${place} (marked: ${cur ? cur.dataset.nav : 'none'})`]);
+      for (const s of document.querySelectorAll('#side-rail nav.nav button[data-nav] svg')) if (s.getAttribute('stroke-width') !== '1.8') out.push(['a sidebar icon not from the library', s.parentElement.dataset.nav]);
       if (view === 'settings' && document.querySelector('#side-rail').offsetParent && innerWidth > 1080 && !document.querySelector('#side-rail .side-menu')) out.push(['Settings without its menu', '']);
       const shown = view === 'run' ? '#route-run' : view === 'settings' ? '#route-settings' : view === 'runs' ? '#route-runs' : '#route-today';
       if (!document.querySelector(shown).textContent.trim()) out.push(['an empty page', '']);

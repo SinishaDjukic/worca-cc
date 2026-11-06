@@ -270,6 +270,12 @@ test('listRow menu: the row\'s own actions in its ⋯, the ones that cannot be t
   assert.equal(dom(C.listRow({ title: 'x', menu: { id: 'm', label: 'l', icon: '', items: ['Edit'] } })).querySelector('.menu'), null, 'closed: no menu');
 });
 
+test('icon: one line weight, and no caller can choose another; the sidebar has its places', () => {
+  assert.match(C.icon('check', 14), /stroke-width="1.8"/);
+  assert.match(C.icon('check', 14, { stroke: 3 }), /stroke-width="1.8"/);
+  for (const v of ['chat', 'runs', 'schedules', 'stats', 'team-metrics', 'workflows', 'requirements', 'marketplace', 'projects', 'workspaces']) assert.ok(C.ICONS['nav-' + v], v);
+});
+
 test('settingsGroup: a small head over its own rows', () => {
   const g = dom(C.settingsGroup({ title: 'Beta', rows: C.settingsRow({ name: 'Summaries' }) }));
   assert.equal(g.querySelector('.list-h').textContent, 'Beta');

@@ -8,7 +8,7 @@ const R = window.RailUI;
 const SHELL = window.RailShell || null;   // the one Worca: mount into today's shell instead of drawing a frame   // the Rail components (ui/public/design-system/components)
 const SM = window.SettingsModel, SV = window.SettingsView;   // Settings: its menu and every section but Notifications
 const esc = R.esc;
-const svg = (name, size, cls) => R.icon(name, size, { cls, stroke: 1.8 });
+const svg = (name, size, cls) => R.icon(name, size, { cls });
 
 const caseOf = (id) => M.CASES.find((c) => c.id === id);
 const groupOf = (id) => M.GROUPS.find((g) => g.id === id);

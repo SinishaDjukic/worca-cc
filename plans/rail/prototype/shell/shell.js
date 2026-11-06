@@ -27,6 +27,8 @@
     const market = nav.querySelector('[data-nav="marketplace"]'), req = nav.querySelector('[data-nav="requirements"]');
     if (market && req) req.after(market);
     for (const s of nav.querySelectorAll('.nav-sect')) if (/Add-ons/.test(s.textContent)) s.remove();
+    // a place's icon is the library's, at the set's one line weight
+    for (const b of nav.querySelectorAll('button[data-nav]')) { const i = R.icon('nav-' + b.dataset.nav, 16); if (i) b.querySelector('svg')?.replaceWith(el(i)); }
     side.querySelector('#acct-menu')?.remove();   // the Rail profile menu takes its place (pulse.js)
     // the needs-you count lives only on Pulse's badge
     nav.querySelector('#nav-needs-count')?.remove(); nav.querySelector('#nav-running-count')?.remove();

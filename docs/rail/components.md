@@ -20,6 +20,7 @@ shows it; sizes, colours and spacing come with the component. Names are the Desi
 | Acting on several rows of a list | SelectionBar at the list's foot, while selecting | 2 selected · Clear 2 · Cancel |
 | Going to another page or place | Text link, or a ListRow you open | Changes +358 −144, a file, a step |
 | Copying text | CopyButton: a quiet 28px icon button; a tick for 1.2s and `Copied` in its tooltip and the live region; its width never changes | a branch, a command, an id |
+| A line icon | `icon` from the library's one set, at its one weight (1.8px); no page draws a path or picks a weight, and the sidebar's places are `nav-<view>` | ✓ on a menu item, Runs in the sidebar |
 | A place in the sidebar | NavItem | Runs, Chats |
 | The sidebar's foot, the door to the account menu | AccountButton, then AccountItem rows in a side menu | Interface mode, Away |
 | An action in the top bar whose words give way on a narrow screen | TopBarAction | Pulse, New run |

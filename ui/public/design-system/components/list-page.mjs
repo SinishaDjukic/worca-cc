@@ -53,7 +53,7 @@ export function fitMenu(m, vw) {
 export function listController({ root, spec }) {
   const doc = root.ownerDocument, win = doc.defaultView;
   const s = { pick: selectClear(), menu: '', more: new Set(), groups: new Map(), rounds: new Set(), roundsAll: new Set(), confirm: null, pop: null, dialog: null, focus: '', flash: '', order: [], rows: new Map() };
-  const dots = () => icon('more', 16, { stroke: 1.8 });
+  const dots = () => icon('more', 16);
   const groupOpen = (r) => (s.groups.has(r.key) ? s.groups.get(r.key) : !!r.open);
 
   function rowHtml(r) {

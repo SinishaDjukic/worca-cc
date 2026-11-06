@@ -47,7 +47,7 @@
   // Each component's examples: what the code draws for each of its states.
   const R = window.RailUI;
   document.getElementById('try-chime').addEventListener('click', () => R.playChime(window));
-  const P = (d) => `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${d}"></path></svg>`;
+  const P = (d) => `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${d}"></path></svg>`;
   const CHEV = P('M6 9.5l6 6 6-6'); const X = P('M7 7l10 10M17 7 7 17'); const MERGE = P('M6 7.7v8.6M6 7.7c0 2.4 2.5 4.3 9.8 4.3');
   const DOTS = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8"></circle><circle cx="12" cy="12" r="1.8"></circle><circle cx="19" cy="12" r="1.8"></circle></svg>';
   const card = (html) => `<section class="rc-card">${html}</section>`;   // a StatusLine lives in a card
