@@ -17,7 +17,7 @@ function freshSettings(c) {
 }
 // a case starts fresh: nothing from the case before it carries over
 const fresh = (caseId) => ({ caseId, page: 'runs', pop: false, popTab: 'now', acct: false, sub: '', nr: null, menu: '', show: 'unread', from: 'all', nowShow: 'all', nowFrom: 'all',
-  sel: [], selecting: false, anchor: '', read: [], cleared: [], fixed: [], custom: '', confirm: '', toast: '', flash: '', awayStatus: caseOf(caseId).away.status, keep: true, s: freshSettings(caseOf(caseId)), sset: '', sv: { ...SV.fresh(), gemQuota: caseOf(caseId).gemQuota || '' },
+  pick: R.selectClear(), rowKey: '', read: [], cleared: [], fixed: [], custom: '', confirm: '', toast: '', flash: '', awayStatus: caseOf(caseId).away.status, keep: true, s: freshSettings(caseOf(caseId)), sset: '', sv: { ...SV.fresh(), gemQuota: caseOf(caseId).gemQuota || '' },
   stopped: [], fly: false, teamSeen: false, chatSeen: false, unlock: null, session: false, person: 0, people: {} });
 let ui = fresh('afternoon');
 // What opened with this click: only that fades in (a repaint of what was already open does not fade again).
@@ -134,13 +134,12 @@ function row({ dot, mark: own, title, meta, time, tip, key, check, unreadDot, re
     action: fix ? R.button({ label: fix, kind: 'quiet', attrs: { 'data-fix': key, title: `${fix}: deals with it here, and the row reads Resolved` } }) : '' });
 }
 const dotOf = (u) => (u.sev === 'needs' && u.open ? 'is-amber' : '');
-const withCheckBusy = () => ui.selecting;
 // A run's mark and word come from the library's state.
 const runMark = (state) => { const st = R.runState(state); return R.statusDot({ tone: st.dot, sym: st.sym }); };
 const runRow = (r, key, tip) => row({ mark: runMark(r.state), title: r.title, meta: `${r.project} · ${r.detail}`, time: r.time, key, tip });
 function updateRow(u, withCheck) {
-  return row({ dot: dotOf(u), title: u.title, meta: `${groupOf(u.g).name} · ${u.meta}`, time: u.time, key: u.id, check: withCheck ? ui.sel.includes(u.id) : undefined,
-    unreadDot: isUnread(u), resolved: u.resolved || isFixed(u), fix: !isFixed(u) && !withCheckBusy() ? u.fix : '', flash: ui.flash === u.id, tip: `Opens ${u.to}${isUnread(u) ? ' and marks it read' : ''}` });
+  return row({ dot: dotOf(u), title: u.title, meta: `${groupOf(u.g).name} · ${u.meta}`, time: u.time, key: u.id, check: withCheck ? ui.pick.ids.includes(u.id) : undefined,
+    unreadDot: isUnread(u), resolved: u.resolved || isFixed(u), fix: !isFixed(u) && !ui.pick.on ? u.fix : '', flash: ui.flash === u.id, tip: `Opens ${u.to}${isUnread(u) ? ' and marks it read' : ''}` });
 }
 function nowSections() {
   const c = nowShown(), lim = c.limits;
@@ -330,34 +329,23 @@ function shown(show = ui.show, from = ui.from) {
 }
 function updatesPanel() {
   const list = shown();
-  const n = ui.sel.filter((id) => list.some((u) => u.id === id)).length;
   // While selecting, Select all sits at the sentence's right, as in the Runs list's head
-  const all = ui.selecting && list.length ? R.checkbox({ label: 'Select all', cls: 'runs-all-wrap', checked: n === list.length, attrs: { class: 'runs-check runs-all', 'data-selall': true, 'data-mixed': n && n !== list.length ? true : null, 'aria-label': 'Select all shown' } }) : '';
+  const all = ui.pick.on && list.length ? R.selectAllBox({ state: R.selectAllState(ui.pick, list.map((u) => u.id)) }) : '';
   const bar = `<div class="pz-bar"><span class="pz-rail"></span><span class="pz-sentence">Showing ${picker('show', SHOWS.find((s) => s.id === ui.show).text, SHOWS.map((s) => ({ ...s, checked: s.id === ui.show, hint: String(shown(s.id, ui.from).length) })), 'Which updates the list shows')} from ${picker('from', ui.from === 'all' ? 'all groups' : groupOf(ui.from).name, [{ id: 'all', text: 'all groups', checked: ui.from === 'all', hint: String(shown(ui.show, 'all').length) }, { sep: true }].concat(groupsShown().map((g) => ({ id: g.id, text: g.name, checked: ui.from === g.id, hint: String(shown(ui.show, g.id).length) }))), 'Which group the updates come from')}</span>${all}</div>`;
   if (!list.length) return bar + `<p class="pz-empty">${ui.show === 'unread' ? 'You are up to date.' : ui.show === 'cleared' ? 'Nothing cleared.' : 'No updates here.'}</p>`;
   const days = [...new Set(list.map((u) => u.day))];
-  return bar + days.map((d) => `<section class="pz-sec"><h3 class="pz-h pz-day">${d}</h3><div class="pz-list${ui.selecting ? ' is-selecting' : ''}">${list.filter((u) => u.day === d).map((u) => updateRow(u, true)).join('')}</div></section>`).join('');
+  return bar + days.map((d) => `<section class="pz-sec"><h3 class="pz-h pz-day">${d}</h3><div class="pz-list${ui.pick.on ? ' is-selecting' : ''}">${list.filter((u) => u.day === d).map((u) => updateRow(u, true)).join('')}</div></section>`).join('');
 }
-// The selection's actions: the Runs list's bar (.runs-bulk) at the panel's foot, each action with how many it applies to.
+// The selection's actions: the bar at the panel's foot, each action with how many it applies to.
+const shownIds = () => shown().map((u) => u.id);
 function bulkBar() {
-  if (ui.popTab !== 'updates' || !ui.selecting) return '';
-  const ups = shown().filter((u) => ui.sel.includes(u.id)), unreadN = ups.filter(isUnread).length;
+  if (ui.popTab !== 'updates' || !ui.pick.on) return '';
+  const ups = shown().filter((u) => ui.pick.ids.includes(u.id)), unreadN = ups.filter(isUnread).length;
   const openNeeds = ups.filter((u) => u.sev === 'needs' && u.open).length;
-  const btn = (k, word, n, tip) => R.button({ label: word, count: n, title: n ? tip : ups.length ? 'All of them are read already' : 'Nothing selected', attrs: { 'data-bulk': k, disabled: !n } });
-  const acts = ui.show === 'cleared' ? btn('restore', 'Restore', ups.length, 'Puts them back in All')
-    : btn('read', 'Mark read', unreadN, unreadN < ups.length ? `Skips ${ups.length - unreadN} already read` : 'Marks them read; they stay in All')
-      + btn('clear', 'Clear', ups.length, openNeeds ? `${plural(openNeeds, 'run')} still ${openNeeds === 1 ? 'waits' : 'wait'} for you in Now: clearing does not answer it` : 'Moves them to Cleared; Undo in the notice');
-  return `<div class="runs-bulk" role="toolbar" aria-label="Selected updates"><span class="runs-bulk-n">${ups.length} selected</span>${acts}${R.button({ label: 'Cancel', kind: 'quiet', title: 'Stop selecting · Esc', attrs: { 'data-bulk': 'cancel' } })}</div>`;
-}
-// As the Runs list: ⌘ or Ctrl-click (or the tick box) ticks one update, Shift ticks every one from the last ticked;
-// unticking the last one stops selecting.
-function tick(id, range) {
-  const ids = shown().map((u) => u.id), a = ids.indexOf(ui.anchor), b = ids.indexOf(id);
-  ui.selecting = true;
-  if (range && a >= 0 && b >= 0) { ui.sel = [...new Set(ui.sel.concat(ids.slice(Math.min(a, b), Math.max(a, b) + 1)))]; return; }
-  ui.anchor = id;
-  ui.sel = ui.sel.includes(id) ? ui.sel.filter((x) => x !== id) : ui.sel.concat(id);
-  if (!ui.sel.length) ui.selecting = false;
+  const actions = ui.show === 'cleared' ? [{ id: 'restore', label: 'Restore', n: ups.length, tip: 'Puts them back in All; Undo in the notice' }]
+    : [{ id: 'read', label: 'Mark read', n: unreadN, tip: unreadN < ups.length ? `Skips ${ups.length - unreadN} already read` : 'Marks them read; Undo in the notice', why: 'All of them are read already' },
+      { id: 'clear', label: 'Clear', n: ups.length, tip: openNeeds ? `${plural(openNeeds, 'run')} still ${openNeeds === 1 ? 'waits' : 'wait'} for you in Now: clearing does not answer it` : 'Moves them to Cleared; Undo in the notice' }];
+  return R.selectionBar({ label: 'Selected updates', count: ups.length, actions });
 }
 // The page behind Pulse: Runs is not in this prototype; Pulse opens over any page.
 function runsPage() {
@@ -521,6 +509,16 @@ function pulseButton() {
   const words = [needs && plural(needs, 'needs you', 'need you'), un && plural(un, 'unread'), run && `${run} running`].filter(Boolean).join(' · ') || 'Nothing new';
   return R.topBarAction({ label: 'Pulse', icon: svg('signal', 16), labelCls: 'pz-pulse-l', kind: 'quiet', full: true, cls: 'topnav-act pz-pulse-b', badge, title: 'Pulse: ' + words, attrs: { 'data-pop': true, 'aria-haspopup': 'dialog', 'aria-expanded': String(!!ui.pop) } });
 }
+// A redraw keeps the focus: on the same control, else on the row beside the one that left, else back on Pulse.
+const KEPT = ['data-open', 'data-sel', 'data-selall', 'data-ptab', 'data-menu', 'data-bulk', 'data-pop'];
+function holdFocus(paint) {
+  const a = document.activeElement, inPanel = !!a?.closest?.('.pz-popover'), attr = KEPT.find((k) => a?.hasAttribute?.(k));
+  if (!inPanel && attr !== 'data-pop') { paint(); return; }
+  const value = a.getAttribute(attr), before = rowIds();
+  paint();
+  const same = attr && document.querySelector(`[${attr}${value ? `="${CSS.escape(value)}"` : ''}]`);
+  (same || rowEl(R.keepFocus(before, rowIds(), a.closest('[data-row]')?.dataset.row || ui.rowKey)) || document.querySelector('[data-pop]'))?.focus();
+}
 function renderInShell() {
   const sideNow = ui.page === 'settings'; swapCls = sideWas !== null && sideWas !== sideNow ? ' is-swap' : ''; sideWas = sideNow;
   const scroller = document.scrollingElement || document.documentElement; const keepY = scroller.scrollTop;
@@ -543,7 +541,7 @@ function renderInShell() {
   if (sideNow) document.getElementById('route-settings').innerHTML = `<div class="pz-page">${settingsPage()}</div>`;
   const res = document.querySelector('[data-search-res]'); if (res) res.innerHTML = searchResults();
   document.getElementById('app').innerHTML = `${popover()}${newRun()}${acctMenu()}${actionsFly()}${sessionDialog()}`;
-  const t = document.querySelector('.rc-toast'); t.innerHTML = ui.toast ? esc(ui.toast) + (undoIds ? R.toastUndo({ title: 'Puts them back in the list' }) : '') : ''; t.classList.toggle('is-on', !!ui.toast);
+  const t = document.querySelector('.rc-toast'); t.innerHTML = ui.toast ? esc(ui.toast) + (undo ? R.toastUndo({ title: undo.tip }) : '') : ''; t.classList.toggle('is-on', !!ui.toast);
   for (const b of document.querySelectorAll('[data-mixed]')) b.indeterminate = true;
   const pb = document.querySelector('.pz-pbody'); if (pb && !opening) pb.scrollTop = keepP;
   fitMenus();
@@ -594,13 +592,13 @@ setInterval(() => { if (!awayEl && R.awayShows({ away: isAway(), keepAwake: ui.k
 
 // ---- render ----
 let sideWas = null, swapCls = '';   // the sidebar's content fades only when it changes between Worca's and Settings'
-function render() {
-  if (SHELL) return renderInShell();
+function render() { holdFocus(SHELL ? renderInShell : paintAlone); }
+function paintAlone() {
   const sideNow = ui.page === 'settings'; swapCls = sideWas !== null && sideWas !== sideNow ? ' is-swap' : ''; sideWas = sideNow;
   const scroller = document.scrollingElement || document.documentElement; const keepY = scroller.scrollTop;
   const keepP = document.querySelector('.pz-pbody')?.scrollTop || 0;
   document.getElementById('app').innerHTML = `<div class="pz-app">${sidebar()}<div class="pz-main">${topbar()}<main class="pz-page">${unlockStrip()}${ui.page === 'settings' ? settingsPage() : runsPage()}</main></div>${popover()}${newRun()}${acctMenu()}${actionsFly()}</div>`;
-  const t = document.querySelector('.rc-toast'); t.innerHTML = ui.toast ? esc(ui.toast) + (undoIds ? R.toastUndo({ title: 'Puts them back in the list' }) : '') : ''; t.classList.toggle('is-on', !!ui.toast);
+  const t = document.querySelector('.rc-toast'); t.innerHTML = ui.toast ? esc(ui.toast) + (undo ? R.toastUndo({ title: undo.tip }) : '') : ''; t.classList.toggle('is-on', !!ui.toast);
   for (const b of document.querySelectorAll('[data-mixed]')) b.indeterminate = true;
   const pb = document.querySelector('.pz-pbody'); if (pb && !opening) pb.scrollTop = keepP;
   fitMenus();
@@ -617,23 +615,23 @@ function fitMenus() {
     const r2 = m.getBoundingClientRect(); if (r2.left < 16) m.style.left = `${parseFloat(m.style.left || 0) + 16 - r2.left}px`;
   }
 }
-let toastTimer = 0, undoIds = null;
-function toast(text, undo) {
-  ui.toast = text; undoIds = undo || null; clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { ui.toast = ''; undoIds = null; const el = document.querySelector('.rc-toast'); if (el) { el.classList.remove('is-on'); el.textContent = ''; } }, 5000);
+let toastTimer = 0, undo = null;   // { tip, run }: what the toast's Undo does
+function toast(text, canUndo) {
+  ui.toast = text; undo = canUndo || null; clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { ui.toast = ''; undo = null; const el = document.querySelector('.rc-toast'); if (el) { el.classList.remove('is-on'); el.textContent = ''; } }, 5000);
 }
 
 function pick(id, v) {
   const s = ui.s;
-  if (id === 'show') { ui.show = v; ui.sel = []; }
+  if (id === 'show') { ui.show = v; ui.pick = R.selectPrune(ui.pick, []); }
   else if (id === 'nowShow') ui.nowShow = v;
   else if (id === 'nowFrom') ui.nowFrom = v;
-  else if (id === 'from') { ui.from = v; ui.sel = []; }
+  else if (id === 'from') { ui.from = v; ui.pick = R.selectPrune(ui.pick, []); }
   else if (id === 'more') {
     if (v === 'settings') { ui.pop = false; if (SHELL) { SHELL.go('settings/notifications'); return; } ui.page = 'settings'; ui.sset = 'notifications'; }
-    else if (v === 'select') ui.selecting = true;
+    else if (v === 'select') ui.pick = R.selectStart(ui.pick);
     else if (v === 'allread') { const n = unread().length; ui.read = ui.read.concat(unread().map((u) => u.id)); toast(n ? `Marked ${plural(n, 'update')} read` : 'Nothing is unread'); }
-    else { const ids = shown().filter((u) => !isUnread(u)).map((u) => u.id); ui.cleared = ui.cleared.concat(ids); ui.sel = []; toast(ids.length ? `Cleared ${plural(ids.length, 'read update')}` : 'Nothing read to clear', ids); }
+    else { const ids = shown().filter((u) => !isUnread(u)).map((u) => u.id); ui.cleared = ui.cleared.concat(ids); ui.pick = R.selectPrune(ui.pick, []); toast(ids.length ? `Cleared ${plural(ids.length, 'read update')}` : 'Nothing read to clear', ids.length ? undoClear(ids) : null); }
   }
   else if (id === 'badge') s.badge = v;
   else if (id === 'mine') s.mine = v;
@@ -692,22 +690,25 @@ document.addEventListener('click', (e) => {
   if ((el = tg('[data-nr-now]'))) { ui.nr.wait = false; render(); return; }
   if ((el = tg('[data-nr-cancel]'))) { ui.nr = null; render(); return; }
   if ((el = tg('[data-nr-start]'))) { toast(`${el.textContent === 'Start run' ? `Started on ${pname(ui.nr.on)}` : `Scheduled: ${el.textContent.replace('Start at', 'starts at')}`} (not in this prototype)`); ui.nr = null; render(); return; }
-  if ((el = tg('[data-ptab]'))) { ui.popTab = el.dataset.ptab; ui.sel = []; ui.selecting = false; render(); return; }
+  if ((el = tg('[data-ptab]'))) { ui.popTab = el.dataset.ptab; ui.pick = R.selectClear(); ui.rowKey = ''; render(); return; }
   if (SHELL && (el = tg('[data-sset]'))) { SHELL.go('settings/' + el.dataset.sset); return; }
   if (SHELL && (el = tg('[data-go]'))) { ui.pop = false; ui.acct = false; ui.sub = ''; SHELL.closeDrawer(); SHELL.go(el.dataset.go === 'settings' ? 'settings/' + (el.dataset.to || '') : el.dataset.go); return; }
   if ((el = tg('[data-sset]'))) { ui.sset = el.dataset.sset; ui.sv.__confirm = null; ui.sv.__dialog = null; ui.sv.__open = ''; ui.menu = ''; ui.custom = ''; ui.confirm = ''; opening = 'section'; render(); scrollTo(0, 0); return; }
   if ((el = tg('[data-go]'))) { ui.page = el.dataset.go; ui.sset = el.dataset.to || ''; ui.pop = false; ui.acct = false; ui.sub = ''; render(); return; }
-  if ((el = tg('[data-selall]'))) { const ids = shown().map((u) => u.id); ui.sel = el.checked ? ids : []; render(); return; }
-  if ((el = tg('[data-sel]'))) { tick(el.dataset.sel, e.shiftKey); render(); return; }
-  if ((el = tg('.pz-popover [data-open]')) && (e.metaKey || e.ctrlKey || e.shiftKey) && isUpdate(el.dataset.open)) { e.preventDefault(); tick(el.dataset.open, e.shiftKey); render(); return; }
+  if ((el = tg('[data-selall]'))) { ui.pick = el.checked ? R.selectAll(ui.pick, shownIds()) : R.selectPrune(ui.pick, []); render(); return; }
+  if ((el = tg('[data-sel]'))) { pickRow(R.selectionAction({ click: true, onBox: true, shiftKey: e.shiftKey }), el.dataset.sel); return; }
+  if ((el = tg('.pz-popover [data-open]')) && isUpdate(el.dataset.open)) {
+    const act = R.selectionAction({ click: true, button: e.button, metaKey: e.metaKey, ctrlKey: e.ctrlKey, shiftKey: e.shiftKey });
+    if (act) { e.preventDefault(); pickRow(act, el.dataset.open); return; }
+  }
   if ((el = tg('[data-bulk]'))) {
-    const ids = shown().filter((u) => ui.sel.includes(u.id)).map((u) => u.id), a = el.dataset.bulk; ui.sel = []; ui.selecting = false;
-    if (a === 'read') { const n = ids.filter((id) => isUnread(C().updates.find((u) => u.id === id))).length; ui.read = ui.read.concat(ids); toast(`Marked ${plural(n, 'update')} read`); }
-    if (a === 'clear') { ui.cleared = ui.cleared.concat(ids); ui.read = ui.read.concat(ids); toast(`Cleared ${plural(ids.length, 'update')}`, ids); }
-    if (a === 'restore') { ui.cleared = ui.cleared.filter((x) => !ids.includes(x)); toast(`Restored ${plural(ids.length, 'update')}`); }
+    const ids = shown().filter((u) => ui.pick.ids.includes(u.id)).map((u) => u.id), a = el.dataset.bulk; ui.pick = R.selectClear();
+    if (a === 'read') { const was = ids.filter((id) => isUnread(C().updates.find((u) => u.id === id))); ui.read = ui.read.concat(ids); toast(`Marked ${plural(was.length, 'update')} read`, { tip: 'Marks them unread again', run: () => { ui.read = ui.read.filter((x) => !was.includes(x)); toast('Unread again'); } }); }
+    if (a === 'clear') { const was = ui.read; ui.cleared = ui.cleared.concat(ids); ui.read = ui.read.concat(ids); toast(`Cleared ${plural(ids.length, 'update')}`, undoClear(ids, was)); }
+    if (a === 'restore') { ui.cleared = ui.cleared.filter((x) => !ids.includes(x)); toast(`Restored ${plural(ids.length, 'update')}`, { tip: 'Clears them again', run: () => { ui.cleared = ui.cleared.concat(ids); toast('Cleared again'); } }); }
     render(); return;
   }
-  if ((el = tg('[data-undo]'))) { if (undoIds) { const ids = undoIds; ui.cleared = ui.cleared.filter((x) => !ids.includes(x)); toast('Back in the list'); } render(); return; }
+  if ((el = tg('[data-undo]'))) { const u = undo; if (u) u.run(); render(); return; }
   if ((el = tg('[data-open]'))) {
     const key = el.dataset.open, u = C().updates.find((x) => x.id === key);
     if (u) {
@@ -733,36 +734,49 @@ document.addEventListener('click', (e) => {
   if (hadMenu && !ui.menu) render();
 });
 const isUpdate = (id) => C().updates.some((u) => u.id === id);
+const undoClear = (ids, read) => ({ tip: 'Puts them back in the list', run: () => { ui.cleared = ui.cleared.filter((x) => !ids.includes(x)); if (read) ui.read = read; toast('Back in the list'); } });
+const pickRow = (action, id) => { ui.pick = R.selectApply(ui.pick, action, { id, shown: shownIds() }); render(); };
 // Opens what a Pulse row names: a page in the one Worca; on pulse.html a Toast says where it goes.
 function openTarget(go, title, say) {
   ui.pop = false;
   if (!SHELL) { ui.pop = true; toast(`${say} (not in this prototype)`); return; }
   if (go.startsWith('run/')) SHELL.openRun(go, title); else SHELL.go(go);
 }
+// The keys come from the library's table (docs/rail/keyboard.md); this owns what they do here. The panel's lists take
+// them wherever the focus is: Updates all of them, Now moving and opening only.
+const ROW = '.pz-popover [data-open]';
+const rowEl = (id) => document.querySelector(`${ROW}[data-open="${CSS.escape(id)}"]`);
+const rowIds = () => [...document.querySelectorAll(ROW)].map((b) => b.dataset.open);
+const rowFrom = (t) => t.closest?.('.pz-popover [data-row]')?.dataset.row || ui.rowKey;
+const somethingUp = () => [...document.querySelectorAll('.viewer-modal, #card .menu, [data-run-tools] .menu')].some((m) => m.getClientRects().length);
+function openSheet() {
+  R.openShortcutsSheet({ doc: document, scopes: ['anywhere', 'list', 'selecting', ...(SHELL?.runActive() ? ['run'] : [])], fallback: () => rowEl(ui.rowKey) || document.querySelector('[data-pop]') });
+}
+function panelKey(act, e) {
+  const from = rowFrom(e.target);
+  if (act === 'down' || act === 'up') { rowEl(R.listMove(rowIds(), from, act === 'down' ? 1 : -1))?.focus(); return; }
+  if (act === 'open') { e.target.closest(ROW).click(); return; }
+  if (act === 'toggle') { pickRow(act, e.target.closest(ROW).dataset.open); return; }
+  if (act === 'all') { pickRow(act, ''); return; }
+  const { pick, to } = R.selectExtend(ui.pick, shownIds(), from, act === 'extend-down' ? 1 : -1);
+  ui.pick = pick; render(); rowEl(to)?.focus();
+}
 document.addEventListener('keydown', (e) => {
-  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); if (SHELL && innerWidth <= 760) document.getElementById('tsearch-open')?.click(); document.querySelector('[data-search]')?.focus(); return; }
+  const inPanel = ui.pop && !ui.menu && !ui.acct && !ui.nr && !ui.sub && !somethingUp();
+  const scopes = [...(inPanel ? (ui.popTab === 'updates' ? ['selecting', 'list'] : ['list']) : []), 'anywhere'];
+  const act = R.shortcutAction(R.keyFacts(e, ROW), { scopes, selecting: ui.pick.on });
+  if (act === 'search') { if (somethingUp()) return; e.preventDefault(); if (SHELL && innerWidth <= 760) document.getElementById('tsearch-open')?.click(); document.querySelector('[data-search]')?.focus(); return; }
+  if (act === 'help') { if (somethingUp() || ui.menu || ui.acct || ui.fly) return; e.preventDefault(); openSheet(); return; }
   if (e.key === 'Enter' && e.target.matches?.('[data-search]') && ui.q) { document.querySelector('.rl-search-res [data-menu-pick]')?.click(); return; }
   if (SHELL && SHELL.runActive() && !ui.pop && !ui.acct && !ui.nr && !ui.menu) return;   // the run page's keys
-  // The Runs list's keys in Updates: ⌘A (Ctrl+A) ticks every update shown, Space ticks the focused one, Esc stops selecting.
-  const inUpdates = ui.pop && ui.popTab === 'updates' && !ui.menu && !ui.acct && !ui.nr;
-  if (inUpdates && (e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === 'a') { e.preventDefault(); ui.selecting = true; ui.sel = shown().map((u) => u.id); render(); return; }
-  const rowBtn = inUpdates && e.key === ' ' && e.target.closest?.('.pz-popover [data-open]');
-  if (rowBtn && isUpdate(rowBtn.dataset.open)) {
-    e.preventDefault(); const id = rowBtn.dataset.open; tick(id, e.shiftKey); render();
-    document.querySelector(`.pz-popover [data-open="${CSS.escape(id)}"]`)?.focus(); return;
-  }
-  if (e.key !== 'Escape') return;
-  if (ui.q) { ui.q = ''; const i = document.querySelector('[data-search]'); if (i) i.value = ''; } else if (ui.unlock?.strip) ui.unlock = null; else if (ui.fly) ui.fly = false; else if (ui.menu) ui.menu = ''; else if (ui.sv.__dialog) ui.sv.__dialog = null; else if (ui.sv.__confirm) ui.sv.__confirm = null; else if (ui.sub) ui.sub = ''; else if (ui.pop && ui.selecting) { ui.sel = []; ui.selecting = false; } else if (ui.pop || ui.acct || ui.nr) { ui.pop = false; ui.acct = false; ui.nr = null; } else if (ui.confirm) ui.confirm = ''; else return;
+  if (act && act !== 'close' && act !== 'clear') { e.preventDefault(); panelKey(act, e); return; }
+  if (!act) return;
+  if (ui.q) { ui.q = ''; const i = document.querySelector('[data-search]'); if (i) i.value = ''; } else if (ui.unlock?.strip) ui.unlock = null; else if (ui.fly) ui.fly = false; else if (ui.menu) ui.menu = ''; else if (ui.sv.__dialog) ui.sv.__dialog = null; else if (ui.sv.__confirm) ui.sv.__confirm = null; else if (ui.sub) ui.sub = ''; else if (ui.pop && ui.pick.on) ui.pick = R.selectClear(); else if (ui.pop || ui.acct || ui.nr) { ui.pop = false; ui.acct = false; ui.nr = null; } else if (ui.confirm) ui.confirm = ''; else return;
   render();
 });
-// Touch: a long-press on an update starts selecting, as on the Runs list; the click that follows is swallowed.
-let press = null, pressed = '';
-document.addEventListener('pointerdown', (e) => {
-  const r = e.pointerType === 'touch' && e.target.closest?.('.pz-popover [data-row]');
-  if (r && isUpdate(r.dataset.row)) press = setTimeout(() => { pressed = r.dataset.row; tick(pressed); render(); }, 500);
-});
-for (const t of ['pointerup', 'pointercancel', 'pointermove']) document.addEventListener(t, () => { clearTimeout(press); press = null; });
-document.addEventListener('click', (e) => { if (pressed) { e.preventDefault(); e.stopPropagation(); pressed = ''; } }, true);
+document.addEventListener('focusin', (e) => { const r = e.target.closest?.('.pz-popover [data-row]'); if (r) ui.rowKey = r.dataset.row; });
+// Touch: holding an update starts selecting.
+R.bindLongPress({ root: document, selector: '.pz-popover [data-row]', accept: (r) => isUpdate(r.dataset.row), onPress: (r) => pickRow(R.selectionAction({ press: true }), r.dataset.row), win: window });
 const caseSel = document.getElementById('pulse-case') || document.getElementById('case');
 caseSel.innerHTML = M.CASES.map((c) => `<option value="${c.id}">${esc(c.label)}</option>`).join('');
 caseSel.addEventListener('change', () => {
