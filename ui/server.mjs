@@ -4607,6 +4607,8 @@ const chatBridge = createConversationBridge({
         const engine = askTurnEngine(threadId, fresh, mv.model);
         const got = await fetchChatFiles(fitted, {
           fetchFn: chatFileFetch,
+          // Files a plugin announced by opaque ref: its worker downloads them with its own credential (never the host).
+          fetchRef: (ref, o) => channelHost.fetchFile({ plugin: inbound.plugin, channelId: inbound.channelId, ref: ref.ref, ...o }),
           allowedHosts: chatAttachmentHosts(inbound.plugin, inbound.channelId),
           refuse: (cls, name) => { const r = chatAttachRefusal({ engine, kind: cls.kind, pdf: cls.mime === 'application/pdf' }); return r ? `${r}: ${name}` : null; },
           log: (level, m) => console.error(`[worca-ui] chat ${level}: ${m}`),

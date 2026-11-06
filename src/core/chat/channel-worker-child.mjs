@@ -12,7 +12,7 @@
 //   createChannelWorker(ctx) -> { start(), stop(), send(chatId, msg, options),
 //                                 handleWebhook?(req), onConfig?(config), replyInteraction?(interactionId, text),
 //                                 react?(chatId, messageId, emoji, on), history?(chatId, before, limit),
-//                                 typing?(chatId, on) }
+//                                 typing?(chatId, on), fetchFile?(ref, {maxBytes, signal}) -> {data: Uint8Array, contentType?} }
 //   validateConfig?(config)  -> {ok:true, identity?} | {ok:false, errors:[...]}
 // ctx = { apiVersion, platform, mock, config, state:{get,set}, log,
 //         emitMessage, emitInteraction, setStatus, shutdownSignal }
@@ -22,7 +22,7 @@
 
 import { createInterface } from 'node:readline';
 import { pathToFileURL } from 'node:url';
-import { encodeFrame, decodeFrame, isValidIncoming, isValidMessage, isValidInteraction, isValidSendOptions, CONNECTION_STATES, withoutInboundContext } from './channel-protocol.mjs';
+import { encodeFrame, decodeFrame, isValidIncoming, isValidMessage, isValidInteraction, isValidSendOptions, CONNECTION_STATES, withoutInboundContext, FILE_LIMITS } from './channel-protocol.mjs';
 import { useEnvProxy, proxyNotice } from '../env-proxy.mjs';
 
 const CHECK_MODE = process.argv.includes('--check');
@@ -259,6 +259,39 @@ async function main() {
               type: 'send-result', id: frame.id, ok: false,
               error: {
                 kind: errKind(err), message: err?.message || String(err),
+                ...(Number.isFinite(err?.retryAfterMs) ? { retryAfterMs: err.retryAfterMs } : {}),
+                ...(err?.permanent === true ? { permanent: true } : {}),
+              },
+            });
+          }
+        })();
+        break;
+      }
+      case 'file': {
+        (async () => {
+          try {
+            // Optional: a worker without it answers a permanent refusal (the host lists the file as not downloaded).
+            if (typeof worker.fetchFile !== 'function') throw Object.assign(new Error('worker cannot download files'), { kind: 'plugin', permanent: true });
+            const signal = AbortSignal.any([shutdownController.signal, AbortSignal.timeout(frame.timeoutMs)]);
+            const r = await worker.fetchFile(frame.ref, { maxBytes: frame.maxBytes, signal });
+            const raw = r?.data;
+            if (!(raw instanceof Uint8Array)) throw Object.assign(new Error('worker returned no file bytes'), { kind: 'protocol' });
+            const data = Buffer.from(raw.buffer, raw.byteOffset, raw.byteLength);
+            if (data.length > frame.maxBytes) throw Object.assign(new Error('file is over the size limit'), { kind: 'plugin', tooBig: true, permanent: true });
+            let seq = 0;
+            for (let at = 0; at < data.length; at += FILE_LIMITS.chunkBytes) {
+              const dataB64 = data.subarray(at, at + FILE_LIMITS.chunkBytes).toString('base64');
+              if (!writeFrame({ type: 'file-chunk', id: frame.id, seq, dataB64 })) throw Object.assign(new Error('file chunk not written'), { kind: 'protocol' });
+              seq += 1;
+            }
+            const contentType = typeof r.contentType === 'string' && r.contentType ? r.contentType.slice(0, 128) : null;
+            writeFrame({ type: 'send-result', id: frame.id, ok: true, detail: { bytes: data.length, chunks: seq, contentType } });
+          } catch (err) {
+            writeFrame({
+              type: 'send-result', id: frame.id, ok: false,
+              error: {
+                kind: errKind(err), message: err?.message || String(err),
+                ...(err?.tooBig === true ? { tooBig: true } : {}),
                 ...(Number.isFinite(err?.retryAfterMs) ? { retryAfterMs: err.retryAfterMs } : {}),
                 ...(err?.permanent === true ? { permanent: true } : {}),
               },
