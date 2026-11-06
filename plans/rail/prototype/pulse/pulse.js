@@ -514,10 +514,12 @@ const KEPT = ['data-open', 'data-sel', 'data-selall', 'data-ptab', 'data-menu', 
 function holdFocus(paint) {
   const a = document.activeElement, inPanel = !!a?.closest?.('.pz-popover'), attr = KEPT.find((k) => a?.hasAttribute?.(k));
   if (!inPanel && attr !== 'data-pop') { paint(); return; }
-  const value = a.getAttribute(attr), before = rowIds();
+  const picked = (a.dataset.menuPick || a.dataset.pick || '').split('|')[0];   // a choice in a menu: back on its picker
+  const sel = picked ? `[data-menu="${CSS.escape(picked)}"]` : attr && `[${attr}${a.getAttribute(attr) ? `="${CSS.escape(a.getAttribute(attr))}"` : ''}]`;
+  const row = a.closest('[data-row]')?.dataset.row || ui.rowKey, before = rowIds();
   paint();
-  const same = attr && document.querySelector(`[${attr}${value ? `="${CSS.escape(value)}"` : ''}]`);
-  (same || rowEl(R.keepFocus(before, rowIds(), a.closest('[data-row]')?.dataset.row || ui.rowKey)) || document.querySelector('[data-pop]'))?.focus();
+  const same = sel && document.querySelector(attr === 'data-pop' ? sel : `.pz-popover ${sel}`);
+  (same || rowEl(R.keepFocus(before, rowIds(), row)) || document.querySelector('[data-pop]'))?.focus();
 }
 function renderInShell() {
   const sideNow = ui.page === 'settings'; swapCls = sideWas !== null && sideWas !== sideNow ? ' is-swap' : ''; sideWas = sideNow;
@@ -541,7 +543,7 @@ function renderInShell() {
   if (sideNow) document.getElementById('route-settings').innerHTML = `<div class="pz-page">${settingsPage()}</div>`;
   const res = document.querySelector('[data-search-res]'); if (res) res.innerHTML = searchResults();
   document.getElementById('app').innerHTML = `${popover()}${newRun()}${acctMenu()}${actionsFly()}${sessionDialog()}`;
-  const t = document.querySelector('.rc-toast'); t.innerHTML = ui.toast ? esc(ui.toast) + (undo ? R.toastUndo({ title: undo.tip }) : '') : ''; t.classList.toggle('is-on', !!ui.toast);
+  const t = toastEl(); t.innerHTML = ui.toast ? esc(ui.toast) + (undo ? R.toastUndo({ title: undo.tip }) : '') : ''; t.classList.toggle('is-on', !!ui.toast);
   for (const b of document.querySelectorAll('[data-mixed]')) b.indeterminate = true;
   const pb = document.querySelector('.pz-pbody'); if (pb && !opening) pb.scrollTop = keepP;
   fitMenus();
@@ -598,7 +600,7 @@ function paintAlone() {
   const scroller = document.scrollingElement || document.documentElement; const keepY = scroller.scrollTop;
   const keepP = document.querySelector('.pz-pbody')?.scrollTop || 0;
   document.getElementById('app').innerHTML = `<div class="pz-app">${sidebar()}<div class="pz-main">${topbar()}<main class="pz-page">${unlockStrip()}${ui.page === 'settings' ? settingsPage() : runsPage()}</main></div>${popover()}${newRun()}${acctMenu()}${actionsFly()}</div>`;
-  const t = document.querySelector('.rc-toast'); t.innerHTML = ui.toast ? esc(ui.toast) + (undo ? R.toastUndo({ title: undo.tip }) : '') : ''; t.classList.toggle('is-on', !!ui.toast);
+  const t = toastEl(); t.innerHTML = ui.toast ? esc(ui.toast) + (undo ? R.toastUndo({ title: undo.tip }) : '') : ''; t.classList.toggle('is-on', !!ui.toast);
   for (const b of document.querySelectorAll('[data-mixed]')) b.indeterminate = true;
   const pb = document.querySelector('.pz-pbody'); if (pb && !opening) pb.scrollTop = keepP;
   fitMenus();
@@ -615,10 +617,11 @@ function fitMenus() {
     const r2 = m.getBoundingClientRect(); if (r2.left < 16) m.style.left = `${parseFloat(m.style.left || 0) + 16 - r2.left}px`;
   }
 }
+const toastEl = () => document.querySelector('body > .rc-toast');   // the page's own: the run page's sits in a route that may be hidden
 let toastTimer = 0, undo = null;   // { tip, run }: what the toast's Undo does
 function toast(text, canUndo) {
   ui.toast = text; undo = canUndo || null; clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { ui.toast = ''; undo = null; const el = document.querySelector('.rc-toast'); if (el) { el.classList.remove('is-on'); el.textContent = ''; } }, 5000);
+  toastTimer = setTimeout(() => { ui.toast = ''; undo = null; const el = toastEl(); if (el) { el.classList.remove('is-on'); el.textContent = ''; } }, 5000);
 }
 
 function pick(id, v) {
@@ -674,7 +677,7 @@ document.addEventListener('click', (e) => {
   if ((el = tg('[data-fix]'))) { const u = C().updates.find((x) => x.id === el.dataset.fix); ui.fixed = ui.fixed.concat(u.id); toast(`${u.fix}: done, and the problem is resolved (mock)`); render(); return; }
   if ((el = tg('[data-team]'))) { ui.teamSeen = true; ui.acct = false; if (SHELL) { SHELL.closeDrawer(); SHELL.go('settings/team'); } else { ui.page = 'settings'; ui.sset = 'team'; } render(); return; }
   // an open popover or account menu closes on a click outside it, and that click does nothing else
-  if ((ui.pop || ui.acct || ui.nr) && !tg('.pz-popover, .nav-fly, .pz-newrun, [data-pop], [data-acct], [data-newrun]')) { ui.pop = false; ui.acct = false; ui.sub = ''; ui.nr = null; render(); return; }
+  if ((ui.pop || ui.acct || ui.nr) && !tg('.pz-popover, .nav-fly, .pz-newrun, .rc-toast, [data-pop], [data-acct], [data-newrun]')) { ui.pop = false; ui.acct = false; ui.sub = ''; ui.nr = null; render(); return; }
   if ((el = tg('[data-pop]'))) { ui.pop = !ui.pop; ui.acct = false; ui.nr = null; if (ui.pop) opening = 'pop'; render(); return; }
   if ((el = tg('[data-acct]'))) { ui.acct = !ui.acct; ui.sub = ''; ui.pop = false; ui.nr = null; if (ui.acct) opening = 'acct'; render(); return; }
   if ((el = tg('[data-sub]'))) { const v = el.dataset.sub; ui.sub = v && ui.sub !== v ? v : ''; if (ui.sub) opening = 'sub'; render(); return; }
