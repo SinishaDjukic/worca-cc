@@ -1006,7 +1006,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         id = body.thread.id;
         loadGen += 1;                     // a pending loadThread() must not replace this fresh model
         st.threadId = id;
-        onToolScope();
+        onToolScope({ created: id });     // the tool panel: the same chat, now with an id (it keeps its open state)
         st.model = createThreadModel({ threadId: id });
         st.model.load({ thread: body.thread, messages: [], attachments: [], runLinks: [], inFlight: null });
         setContexts(body.thread && body.thread.contexts);

@@ -165,7 +165,7 @@ test('office: the PDF when the server converts; "Install LibreOffice" + Download
 // ── in the real app (app.js + index.html): the Files kind gets the app's preview deps ─────────────────────────────────
 async function bootFilesTab(file) {
   const { bootChat, ok } = await import('./helpers/chat-panel-boot.mjs');
-  const tools = { v: 1, tabs: [{ id: 'tab_f1', kind: 'files', scope: P, state: { file: file.path }, at: 1 }], active: {}, prefs: { open: true, width: 460 } };
+  const tools = { v: 1, tabs: [{ id: 'tab_f1', kind: 'files', scope: P, state: { file: file.path }, at: 1 }], active: {}, prefs: { width: 460 }, open: [`project:${P.id}`] };
   const ctx = await bootChat({ url: `http://localhost:4317/#projects/${P.id}`, local: { 'worca-cc.tools': JSON.stringify(tools) },
     hooks: { askMarkdown: realLoad, hljsLoader },
     arms: (url) => {

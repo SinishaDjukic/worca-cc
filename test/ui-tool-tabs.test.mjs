@@ -2,7 +2,7 @@
 // moves, hidden counts, the server-shell sync, persistence; and kinds as registrations.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { viewOf, viewKey, inView, sessionScope, scopeQuery, runQuery, createTabModel, cleanScope, BLOCKED, TOOLS_KEY } from '../ui/public/tool-tabs.mjs';
+import { viewOf, viewKey, inView, sessionScope, scopeQuery, runQuery, createTabModel, cleanScope, BLOCKED, TOOLS_KEY, openKeyOf } from '../ui/public/tool-tabs.mjs';
 import { createToolRegistry, ICON_SLOTS } from '../ui/public/tool-kinds.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
@@ -131,23 +131,98 @@ test('syncSessions: a tab per live shell in its scope; an ended shell\'s tab lea
   assert.ok(m.get(pending.id), 'a tab still starting its shell is never pruned');
 });
 
-test('persistence: tabs, active and prefs round-trip; junk is dropped; the pane\'s old keys seed the first boot', () => {
-  const store = memStore();
-  const m = createTabModel({ storage: store, newId: ids });
-  const a = m.open('terminal', vA.side, { sessionId: 't-9' });
-  m.activate(vA, a.id);
-  m.setPrefs({ open: true, width: 600, max: true });
-  const again = createTabModel({ storage: store, newId: ids });
-  assert.deepEqual(again.tabs(), m.tabs());
-  assert.equal(again.active(vA).id, a.id);
-  assert.deepEqual(again.prefs(), { open: true, width: 600, max: true });
-  const junk = memStore({ [TOOLS_KEY]: JSON.stringify({ v: 1, tabs: [{ id: 'x', kind: 'terminal', scope: vA.side }, { id: 'tab_ok', kind: 'BAD', scope: vA.side },
-    { id: 'tab_ok2', kind: 'files', scope: { type: 'nope', id: 'x' } }, { id: 'tab_ok3', kind: 'files', scope: vA.side, state: 'str' }] }) });
-  assert.deepEqual(createTabModel({ storage: junk }).tabs().map((t) => [t.id, t.state]), [['tab_ok3', {}]]);
-  const legacy = memStore({ 'worca-cc.terminal.open': '1', 'worca-cc.terminal.width': '520' });
-  assert.deepEqual(createTabModel({ storage: legacy }).prefs(), { open: true, width: 520, max: false });
-  assert.deepEqual(createTabModel({ storage: { getItem() { throw new Error('private'); }, setItem() { throw new Error('private'); } } }).prefs(),
-    { open: false, width: 460, max: false });
+test('persistence: tabs, active, width and maximize round-trip; open is kept per scope; junk is dropped; the pane\'s width (never its open flag) seeds the first boot', async () => {
+  await checkRows([
+    { name: 'round-trip, and a scope never opened starts closed', run: () => {
+      const store = memStore();
+      const m = createTabModel({ storage: store, newId: ids });
+      const a = m.open('terminal', vA.side, { sessionId: 't-9' });
+      m.activate(vA, a.id);
+      m.setPrefs({ open: true, width: 600, max: true });   // an old caller's `open` is ignored: open/closed is per scope
+      m.setOpenAt('run:aaaa1111', true);
+      const again = createTabModel({ storage: store, newId: ids });
+      assert.deepEqual(again.tabs(), m.tabs());
+      assert.equal(again.active(vA).id, a.id);
+      assert.deepEqual(again.prefs(), { width: 600, max: true });
+      assert.equal(again.isOpenAt('run:aaaa1111'), true);
+      assert.equal(again.isOpenAt('run:bbbb2222'), false);
+      assert.equal(again.isOpenAt(null), false);
+      assert.deepEqual(JSON.parse(store.map.get(TOOLS_KEY)).open, ['run:aaaa1111']);
+    } },
+    { name: 'junk tabs are dropped', run: () => {
+      const junk = memStore({ [TOOLS_KEY]: JSON.stringify({ v: 1, tabs: [{ id: 'x', kind: 'terminal', scope: vA.side }, { id: 'tab_ok', kind: 'BAD', scope: vA.side },
+        { id: 'tab_ok2', kind: 'files', scope: { type: 'nope', id: 'x' } }, { id: 'tab_ok3', kind: 'files', scope: vA.side, state: 'str' }] }) });
+      assert.deepEqual(createTabModel({ storage: junk }).tabs().map((t) => [t.id, t.state]), [['tab_ok3', {}]]);
+    } },
+    { name: 'first boot: the terminal pane\'s width carries over, its open flag never does', run: () => {
+      const legacy = createTabModel({ storage: memStore({ 'worca-cc.terminal.open': '1', 'worca-cc.terminal.width': '520' }) });
+      assert.deepEqual(legacy.prefs(), { width: 520, max: false });
+      for (const k of ['run:aaaa1111', 'chat:ask_1', 'project:app-0000aaaa']) assert.equal(legacy.isOpenAt(k), false, k);
+    } },
+    { name: 'an old global prefs.open opens nothing', run: () => {
+      const old = createTabModel({ storage: memStore({ [TOOLS_KEY]: JSON.stringify({ v: 1, tabs: [], active: {}, prefs: { open: true, width: 500 } }) }) });
+      assert.deepEqual(old.prefs(), { width: 500, max: false });
+      assert.equal(old.isOpenAt(openKeyOf(vA)), false);
+    } },
+    { name: 'stored open keys: junk dropped, a duplicate kept once', run: () => {
+      const store = memStore({ [TOOLS_KEY]: JSON.stringify({ v: 1, tabs: [], open: ['run:aaaa1111', 'run:aaaa1111', 'nope:x', 7, 'chat:', 'chat:../x', 'chat:ask_1'] }) });
+      const m = createTabModel({ storage: store });
+      assert.equal(m.isOpenAt('run:aaaa1111'), true);
+      m.setPrefs({ width: 470 });                          // any save writes the cleaned list
+      assert.deepEqual(JSON.parse(store.map.get(TOOLS_KEY)).open, ['run:aaaa1111', 'chat:ask_1']);
+      const many = createTabModel({ storage: memStore({ [TOOLS_KEY]: JSON.stringify({ v: 1, tabs: [], open: Array.from({ length: 60 }, (_, i) => `run:r${i}`) }) }) });
+      assert.deepEqual([many.isOpenAt('run:r9'), many.isOpenAt('run:r10'), many.isOpenAt('run:r59')], [false, true, true], 'a stored list keeps its 50 newest');
+    } },
+    { name: 'setOpenAt that changes nothing writes nothing (the mirror is not woken)', run: () => {
+      let writes = 0;
+      const store = memStore();
+      const setItem = store.setItem;
+      store.setItem = (k, v) => { writes += 1; setItem(k, v); };
+      const m = createTabModel({ storage: store });
+      m.setOpenAt('run:aaaa1111', true);
+      m.setOpenAt('run:aaaa1111', true);
+      m.setOpenAt('chat:ask_1', false);
+      assert.equal(writes, 1);
+    } },
+    { name: 'setOpenAt: a key that is no scope is refused; closing unlists; the 50 newest are kept', run: () => {
+      const store = memStore();
+      const m = createTabModel({ storage: store });
+      for (const bad of ['', 'run:', 'nope:x', null, 7]) m.setOpenAt(bad, true);
+      assert.equal(store.map.get(TOOLS_KEY), undefined, 'nothing saved for a refused key');
+      for (let i = 0; i < 60; i += 1) m.setOpenAt(`run:r${i}`, true);
+      assert.equal(m.isOpenAt('run:r9'), false);
+      assert.equal(m.isOpenAt('run:r10'), true);
+      m.setOpenAt('run:r59', false);
+      assert.equal(m.isOpenAt('run:r59'), false);
+      assert.equal(JSON.parse(store.map.get(TOOLS_KEY)).open.length, 49);
+    } },
+    { name: 'private mode: defaults, nothing open', run: () => {
+      const m = createTabModel({ storage: { getItem() { throw new Error('private'); }, setItem() { throw new Error('private'); } } });
+      assert.deepEqual(m.prefs(), { width: 460, max: false });
+      m.setOpenAt('run:aaaa1111', true);
+      assert.equal(m.isOpenAt('run:aaaa1111'), true, 'kept in memory');
+    } },
+  ]);
+});
+
+test('openKeyOf: a run or chat by its id, a project page by its project; a new chat, a starting run and no view have none', () => {
+  assert.equal(openKeyOf(vA), 'run:aaaa1111');
+  assert.equal(openKeyOf(viewOf({ view: 'chat', chatId: 'ask_1', chatProjectKey: 'app-0000aaaa' })), 'chat:ask_1');
+  assert.equal(openKeyOf(viewOf({ view: 'chat', chatId: 'ask_2' })), 'chat:ask_2', 'a chat with no project has its own');
+  assert.equal(openKeyOf(viewOf({ view: 'project-detail', projectKey: 'app-0000aaaa' })), 'project:app-0000aaaa');
+  assert.equal(openKeyOf(viewOf({ view: 'chat' })), null, 'a new chat before its first message');
+  assert.equal(openKeyOf(viewOf({ view: 'running', runId: 'u-1', projectKey: 'app-0000aaaa' })), null, 'a starting run never takes its project page\'s state');
+  assert.equal(openKeyOf(null), null);
+});
+
+test('closeScope also forgets the archived scope\'s open state (a chat history clear: every chat\'s)', () => {
+  const m = createTabModel({ storage: memStore(), newId: ids });
+  for (const k of ['run:aaaa1111', 'chat:ask_1', 'chat:ask_2', 'project:app-0000aaaa']) m.setOpenAt(k, true);
+  m.closeScope({ type: 'run', id: 'aaaa1111' });
+  assert.equal(m.isOpenAt('run:aaaa1111'), false);
+  assert.equal(m.isOpenAt('chat:ask_1'), true);
+  m.closeScope({ type: 'chat', id: null });
+  assert.deepEqual(['chat:ask_1', 'chat:ask_2', 'project:app-0000aaaa'].map((k) => m.isOpenAt(k)), [false, false, true]);
 });
 
 test('at most 64 tabs', () => {

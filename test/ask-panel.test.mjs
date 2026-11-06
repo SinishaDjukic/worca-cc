@@ -254,3 +254,23 @@ test('ask-panel: New chat clicked while a send is in flight neither throws nor t
     process.off('unhandledRejection', onRej);
   }
 });
+
+test('ask-panel: a new chat\'s first message tells the tool panel its new id (onToolScope({ created }))', async () => {
+  const hints = [];
+  const fetchHandler = (url, opts) => {
+    if (url === '/api/ask/threads' && opts.method === 'POST') {
+      return { ok: true, status: 201, json: async () => ({ thread: { id: 'ask_0000000a', title: null, createdAt: 't', updatedAt: 't', model: null, effort: null, sessionId: null, context: null, totals: {} } }) };
+    }
+    if (url.startsWith('/api/ask/threads/ask_0000000a/messages')) return { ok: true, status: 202, json: async () => ({ userMessageId: 'askm_u000000a', assistantMessageId: 'askm_0000000a' }) };
+    if (url.startsWith('/api/ask/threads')) return { ok: true, status: 200, json: async () => ({ threads: [] }) };
+    return { ok: true, status: 200, json: async () => ({}) };
+  };
+  const ctx = makePanel({ fetchHandler, deps: { onToolScope: (h) => hints.push(h ?? null) } });
+  ctx.panel.open();
+  await ctx.tick();
+  hints.length = 0;
+  ctx.doc.querySelector('textarea.ask-input').value = 'hello';
+  ctx.doc.querySelector('[data-ask-send]').click();
+  for (let i = 0; i < 6; i++) await ctx.tick();
+  assert.deepEqual(hints.filter(Boolean), [{ created: 'ask_0000000a' }]);
+});

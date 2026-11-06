@@ -90,6 +90,9 @@ body.tool-maxed .term-resize{display:none;}
 .tool-icon[aria-pressed="true"]{color:var(--ink);background:var(--hover);}
 .crp .tool-icons,.chat-page[data-host="dock"] .chat-tool-icons{display:none;}
 @media (max-width:760px){ .rd-bar-end > .tool-icons{display:none;} }
+/* An assistant's tab arrived while the panel was closed: a dot on its kind's icon (and the project page's opener) until the person opens the panel. */
+.tool-icon.has-dot,.term-opener.has-dot{position:relative;}
+.tool-icon.has-dot::after,.term-opener.has-dot::after{content:"";position:absolute;top:3px;right:3px;width:6px;height:6px;border-radius:50%;background:var(--blue-ink-strong);pointer-events:none;}
 /* Files */
 .tool-files,.tool-changes{display:flex;flex-direction:column;flex:1;min-height:0;}
 .tool-crumbs{display:flex;align-items:center;flex-wrap:wrap;gap:2px;padding:8px 12px;border-bottom:1px solid var(--line);font-size:var(--fs-meta);}

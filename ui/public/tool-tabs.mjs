@@ -6,13 +6,14 @@
 import { isNoProjectKey } from '../../src/shared/no-project.mjs';
 
 export const TOOLS_KEY = 'worca-cc.tools';
-export const LEGACY_OPEN_KEY = 'worca-cc.terminal.open';
-export const LEGACY_WIDTH_KEY = 'worca-cc.terminal.width';
+export const LEGACY_WIDTH_KEY = 'worca-cc.terminal.width';   // the old terminal pane's width seeds the first boot (its open flag never does)
 export const MAX_TABS = 64;
 export const DEFAULT_WIDTH = 460;
 const MAX_ACTIVE = 50;
+const MAX_OPEN = 50;
 const SCOPE_TYPES = new Set(['project', 'run', 'chat']);
 const ID_RE = /^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,199}$/;
+const OPEN_KEY_RE = /^(project|run|chat):[A-Za-z0-9][A-Za-z0-9_.:@-]{0,199}$/;
 const KIND_RE = /^[a-z][a-z0-9-]{0,31}$/;
 const TAB_ID_RE = /^tab_[A-Za-z0-9]{1,32}$/;
 
@@ -61,6 +62,17 @@ export function viewOf(ctx = {}) {
 }
 
 export const viewKey = (v) => `${v?.project || ''}|${scopeKey(v?.side)}`;
+
+/**
+ * The key a view keeps the panel open or closed under: its run or chat, else its project page. null for a view with no
+ * saved state (a new chat before its first message, a run still starting, no view): the panel starts closed there.
+ */
+export function openKeyOf(v) {
+  if (!v) return null;
+  if (v.side) return scopeKey(v.side);
+  if (v.blocked || !v.project) return null;
+  return `project:${v.project}`;
+}
 
 export function inView(tab, view) {
   if (!tab || !view) return false;
@@ -143,13 +155,12 @@ function load(storage) {
   if (raw?.active && typeof raw.active === 'object') {
     for (const [k, v] of Object.entries(raw.active)) if (typeof v === 'string' && seen.has(v)) active[k] = v;
   }
-  let open = raw?.prefs?.open === true;
+  const open = [];
+  for (const k of Array.isArray(raw?.open) ? raw.open : []) if (typeof k === 'string' && OPEN_KEY_RE.test(k) && !open.includes(k)) open.push(k);
   let width = Number(raw?.prefs?.width);
-  if (!raw) {                                         // the first boot with the tool panel: the terminal pane's own keys
-    open = readItem(storage, LEGACY_OPEN_KEY) === '1';
-    width = Number(readItem(storage, LEGACY_WIDTH_KEY));
-  }
-  return { tabs, active, prefs: { open, width: Number.isFinite(width) && width > 0 ? width : DEFAULT_WIDTH, max: raw?.prefs?.max === true } };
+  if (!raw) width = Number(readItem(storage, LEGACY_WIDTH_KEY));   // the first boot with the tool panel: the pane's width
+  return { tabs, active, open: open.slice(-MAX_OPEN),
+    prefs: { width: Number.isFinite(width) && width > 0 ? width : DEFAULT_WIDTH, max: raw?.prefs?.max === true } };
 }
 
 /** The tab model. Every change persists to `storage` (private mode: kept in memory only). */
@@ -158,7 +169,7 @@ export function createTabModel({ storage = null, newId = defaultId, now = () => 
   const save = () => {
     const keys = Object.keys(st.active);
     for (const k of keys.slice(0, Math.max(0, keys.length - MAX_ACTIVE))) delete st.active[k];
-    try { if (storage) storage.setItem(TOOLS_KEY, JSON.stringify({ v: 1, tabs: st.tabs, active: st.active, prefs: st.prefs })); } catch { /* private mode */ }
+    try { if (storage) storage.setItem(TOOLS_KEY, JSON.stringify({ v: 1, tabs: st.tabs, active: st.active, open: st.open, prefs: st.prefs })); } catch { /* private mode */ }
     if (typeof onChange === 'function') { try { onChange(); } catch { /* a listener's own trouble */ } }
   };
   const get = (id) => st.tabs.find((t) => t.id === id) || null;
@@ -191,9 +202,19 @@ export function createTabModel({ storage = null, newId = defaultId, now = () => 
     visible,
     prefs: () => ({ ...st.prefs }),
     setPrefs(p) {
-      if (typeof p.open === 'boolean') st.prefs.open = p.open;
       if (Number.isFinite(p.width) && p.width > 0) st.prefs.width = Math.round(p.width);
       if (typeof p.max === 'boolean') st.prefs.max = p.max;
+      save();
+    },
+    /** Whether the person left the panel open in the view keyed `key` (openKeyOf). */
+    isOpenAt: (key) => typeof key === 'string' && st.open.includes(key),
+    /** Remembers the panel open (newest last, at most 50) or closed (unlisted) for `key`; anything else is refused. */
+    setOpenAt(key, open) {
+      if (typeof key !== 'string' || !OPEN_KEY_RE.test(key)) return;
+      if (open ? st.open.at(-1) === key : !st.open.includes(key)) return;   // nothing changes: no save
+      st.open = st.open.filter((k) => k !== key);
+      if (open) st.open.push(key);
+      if (st.open.length > MAX_OPEN) st.open.splice(0, st.open.length - MAX_OPEN);
       save();
     },
     /** `keep`: tab ids the cap may not make room from (the panel's tabs on screen). */
@@ -264,12 +285,14 @@ export function createTabModel({ storage = null, newId = defaultId, now = () => 
     },
     /** Run and chat tabs another run or chat holds: they keep running, out of view. */
     hidden(view) { return st.tabs.filter((t) => t.scope.type !== 'project' && !inView(t, view)); },
-    /** A scope's tabs leave (archived); a scope with no id: every tab of its type (a chat history clear). */
+    /** A scope's tabs leave (archived), and its open state; a scope with no id: every tab and state of its type (a chat history clear). */
     closeScope(scope) {
       const key = scopeKey(scope);
-      const hit = scope && scope.id == null ? (t) => t.scope.type === scope.type : (t) => scopeKey(t.scope) === key;
+      const all = !!scope && scope.id == null;
+      const hit = all ? (t) => t.scope.type === scope.type : (t) => scopeKey(t.scope) === key;
       const gone = st.tabs.filter(hit);
-      if (gone.length) { st.tabs = st.tabs.filter((t) => !hit(t)); save(); }
+      const open = st.open.filter((k) => (all ? !k.startsWith(`${scope.type}:`) : k !== key));
+      if (gone.length || open.length !== st.open.length) { st.tabs = st.tabs.filter((t) => !hit(t)); st.open = open; save(); }
       return gone;
     },
     /**

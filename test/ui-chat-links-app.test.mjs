@@ -11,11 +11,13 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const until = async (fn, tries = 200) => { for (let i = 0; i < tries; i++) { if (fn()) return true; await wait(5); } return false; };
 
 async function boot({ url = `http://localhost:4317/#chat/${TID}`, settings = () => ({}), settingsDelay = 0, frame = () => ({ framable: null }),
-  serverTabs = () => [], blocks = [], running = () => [], session = null, innerWidth = null, matchMedia = null, local = null } = {}) {
+  serverTabs = () => [], blocks = [], running = () => [], session = null, innerWidth = null, matchMedia = null, local = null, more = null } = {}) {
   const { bootChat, ok } = await import('./helpers/chat-panel-boot.mjs');
   const rec = { resolve: [], frame: [], puts: [], file: [], minted: [], settingsPosts: [], att: [] };
   const msg = { id: 'askm_00000001', threadId: TID, seq: 1, role: 'assistant', text: ANSWER, blocks, status: 'done', createdAt: 't' };
   const ctx = await bootChat({ url, session, innerWidth, matchMedia, local, hooks: { askMarkdown: realMarkdown }, arms: (u, opts) => {
+    const extra = more ? more(u, opts) : null;
+    if (extra) return extra;
     const path = u.split('?')[0];
     const m = opts.method || 'GET';
     if (path.endsWith(`/api/ask/threads/${TID}`) && m === 'GET') return ok({ thread: { id: TID, title: 'Links', createdAt: 't', updatedAt: 't', context: { pinned: true, projectKey: PK } }, messages: [msg], attachments: [] });
@@ -278,4 +280,49 @@ test('the settings read fails: chat links still come on (the catch arm)', async 
   void bootChat;
   const a = await boot({ settings: () => { throw new Error('offline'); } });
   assert.ok(await until(() => a.doc.querySelector('.ask-md button.ask-file-link')), 'links on after a failed read');
+});
+
+// ── the tool panel opens only for the person, per scope (real app) ────────────────────────────────────────────
+test('tool panel per scope (a): a first start with the old terminal pane\'s open flag stays closed; its width carries over', async () => {
+  const a = await boot({ local: { 'worca-cc.terminal.open': '1', 'worca-cc.terminal.width': '520' } });
+  assert.equal(a.doc.querySelector('.tool-panel').hidden, true);
+  assert.equal(a.doc.body.classList.contains('term-open'), false);
+  assert.equal(a.doc.body.style.getPropertyValue('--term-w'), '520px');
+});
+
+test('tool panel per scope (b): open in a chat, a new chat starts closed; back in the chat it opens again', async () => {
+  const a = await boot();
+  assert.ok(await until(() => a.doc.querySelector('.ask-md button.ask-file-link')));
+  a.doc.querySelector('.ask-md button.ask-file-link').click();
+  await a.settle(12);
+  assert.equal(a.doc.querySelector('.tool-panel').hidden, false);
+  a.go('chat/new');
+  await a.settle(12);
+  assert.ok(await until(() => a.doc.querySelector('.tool-panel').hidden), 'a new chat starts closed');
+  a.go(`chat/${TID}`);
+  await a.settle(12);
+  assert.ok(await until(() => !a.doc.querySelector('.tool-panel').hidden), 'the chat it was open in opens again');
+  assert.deepEqual(a.model().open, [`chat:${TID}`]);
+});
+
+test('tool panel per scope (c): opened in a new chat, the first message keeps it open under the chat\'s new id', async () => {
+  const { ok } = await import('./helpers/chat-panel-boot.mjs');
+  const more = (u, opts) => {
+    const path = u.split('?')[0];
+    const m = opts.method || 'GET';
+    if (path.endsWith('/api/ask/threads') && m === 'POST') {
+      return ok({ thread: { id: TID, title: null, createdAt: 't', updatedAt: 't', model: null, effort: null, sessionId: null, context: { pinned: true, projectKey: PK }, totals: {} } });
+    }
+    if (path.endsWith(`/api/ask/threads/${TID}/messages`) && m === 'POST') return ok({ userMessageId: 'askm_u0000001', assistantMessageId: 'askm_00000002' });
+    return null;
+  };
+  const a = await boot({ url: 'http://localhost:4317/#chat/new', more });
+  a.doc.dispatchEvent(new a.window.KeyboardEvent('keydown', { code: 'KeyE', key: 'E', ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true }));
+  await a.settle(12);
+  assert.equal(a.doc.querySelector('.tool-panel').hidden, false, 'the person opened it (the + page: a new chat opens no tab yet)');
+  a.doc.querySelector('textarea.ask-input').value = 'hi';
+  a.doc.querySelector('[data-ask-send]').click();
+  await a.settle(16);
+  assert.ok(await until(() => (a.model().open || []).includes(`chat:${TID}`)), JSON.stringify(a.model().open));
+  assert.equal(a.doc.querySelector('.tool-panel').hidden, false, 'still open: the same chat, now with an id');
 });

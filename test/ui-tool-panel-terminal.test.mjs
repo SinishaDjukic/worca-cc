@@ -132,7 +132,7 @@ test('in the real app: a reload with the panel open on a project page shows the 
   const KEY = 'app-0000aaaa';
   let release;
   const held = new Promise((r) => { release = r; });
-  const tools = { v: 1, tabs: [{ id: 'tab_proj1', kind: 'files', scope: { type: 'project', id: KEY }, state: {}, at: 1 }], active: {}, prefs: { open: true, width: 460 } };
+  const tools = { v: 1, tabs: [{ id: 'tab_proj1', kind: 'files', scope: { type: 'project', id: KEY }, state: {}, at: 1 }], active: {}, prefs: { width: 460 }, open: [`project:${KEY}`] };
   const ctx = await bootChat({ url: `http://localhost:4317/#projects/${KEY}`, local: { 'worca-cc.tools': JSON.stringify(tools) },
     arms: (url) => (url.split('?')[0].endsWith('/api/projects')
       ? held.then(() => ok({ projects: [{ key: KEY, name: 'app', path: '/tmp/app' }] }))
@@ -141,7 +141,9 @@ test('in the real app: a reload with the panel open on a project page shows the 
   const tabs = () => [...doc.querySelectorAll('.tool-panel .tool-tab-text')].map((n) => n.textContent);
   await ctx.settle(6);
   assert.deepEqual(tabs(), [], 'precondition: no context before the list answers');
+  assert.equal(doc.querySelector('.tool-panel').hidden, true, 'no view yet: no saved state to open');
   release();
   await ctx.settle(10);
   assert.deepEqual(tabs(), ['Files']);
+  assert.equal(doc.querySelector('.tool-panel').hidden, false, 'the project page it was left open on opens again once its view arrives');
 });

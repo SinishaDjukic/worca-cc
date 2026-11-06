@@ -799,7 +799,7 @@ test('in the real app: a chat\'s undelivered assistant tab joins the strip, mark
 async function bootPicking(pick) {
   const { bootChat, ok } = await import('./helpers/chat-panel-boot.mjs');
   const tools = { v: 1, tabs: [{ id: 'tab_pk1', kind: 'browser', scope: { type: 'project', id: PK }, state: { url: 'http://localhost:4417/' }, at: 1 }],
-    active: {}, prefs: { open: true, width: 460 } };
+    active: {}, prefs: { width: 460 }, open: [`project:${PK}`] };
   const picks = [];
   const ctx = await bootChat({ url: `http://localhost:4317/#projects/${PK}`, local: { 'worca-cc.tools': JSON.stringify(tools) }, arms: (url, opts) => {
     const path = url.split('?')[0];

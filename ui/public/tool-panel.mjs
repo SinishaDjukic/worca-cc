@@ -5,7 +5,7 @@
 import { icon } from './icons.mjs';
 import { openMenu } from './workflows/menu.mjs';
 import { ICON_SLOTS } from './tool-kinds.mjs';
-import { viewOf, viewKey, inView, scopeKey, DEFAULT_WIDTH, BLOCKED } from './tool-tabs.mjs';
+import { viewOf, viewKey, inView, scopeKey, openKeyOf, DEFAULT_WIDTH, BLOCKED } from './tool-tabs.mjs';
 
 const MIN_W = 320;
 /** Below the Runs page's slide breakpoint (app.js RUNS_SPLIT_MIN, 880 px) the panel is a full-screen sheet. */
@@ -17,10 +17,11 @@ const NO_VIEW = Object.freeze({ project: null, side: null });
  * `refreshSessions()`: the terminal's server list (the first open loads it, D14); `suggest(view)`: the + page's Suggested
  * rows `[{ label, detail?, icon?, open() }]` (app.js toolSuggestions: running services, recent addresses, the repo);
  * `mirror`: createTabMirror() (tool-mirror.mjs): the assistant's tabs join when their chat or project comes into view.
+ * Open or closed is kept per run, chat or project page (tool-tabs.mjs openKeyOf); nothing but the person's action opens it.
  */
 export function createToolPanel({ doc, win, registry, model, getPageContext, refreshSessions = null, suggest = null, mirror = null }) {
-  const st = { open: false, view: null, page: 'tab', mounted: null, guest: null, note: '', drag: null, sessionsAsked: false,
-    inerted: false, pendingTimer: null, destroyed: false };
+  const st = { open: false, view: null, runId: null, carry: null, fresh: new Set(), page: 'tab', mounted: null, guest: null, note: '',
+    drag: null, sessionsAsked: false, inerted: false, pendingTimer: null, destroyed: false };
   const drawn = { strip: '' };
   const make = (tag, cls, text) => { const n = doc.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
   const iconButton = (name, label, cls, onClick) => {
@@ -71,22 +72,40 @@ export function createToolPanel({ doc, win, registry, model, getPageContext, ref
     const side = currentView().side;
     return side && scopeKey(side) === scopeKey(tab.scope) ? { ...side, ...tab.scope } : tab.scope;
   }
+  /** A live run page's run id: a starting run keeps it when its pipeline id lands (the same run, a new key). */
+  const runIdOf = (ctx) => (ctx && ctx.view === 'running' && typeof ctx.runId === 'string' && ctx.runId ? ctx.runId : null);
   function follow() {
     win.clearTimeout(st.pendingTimer);
-    const next = viewOf(getPageContext ? getPageContext() : {});
+    const ctx = getPageContext ? getPageContext() : {};
+    const next = viewOf(ctx);
     // A live run gets its pipeline id a moment after it starts: look again until it has one (the pane's schedulePending).
     if (next && next.blocked === BLOCKED.pending) st.pendingTimer = win.setTimeout(() => { if (!st.destroyed) follow(); }, 1500);
+    const carry = st.carry;
+    st.carry = null;
     if (!next) { syncIcons(); return; }                    // a page about no project, run or chat keeps the last view
     const changed = viewKey(next) !== viewKey(st.view) || (next.blocked || '') !== (st.view?.blocked || '');
+    const prevRun = st.runId;
     st.view = next;
+    st.runId = runIdOf(ctx);
     if (!changed) { syncIcons(); return; }
-    void pullView(next);
+    // Open or closed as the person left it in this scope (closed when never opened here). The same chat or run under a
+    // new id (a new chat's first message, a starting run's pipeline id) keeps the panel as it is, and saves that.
+    const key = openKeyOf(next);
+    const same = !!key && ((!!carry && scopeKey(carry) === key) || (!!prevRun && prevRun === st.runId));
+    if (same) model.setOpenAt(key, st.open);
+    const want = same ? st.open : model.isOpenAt(key);
     st.guest = null;
     st.note = '';
     if (st.page === 'new' && model.active(next)) st.page = 'tab';
-    show();
+    if (want && !st.open) void open();
+    else if (!want && st.open) hide();
+    else show();
+    void pullView(next);
   }
 
+  /** The assistant's tabs that arrived while the panel was closed: their kind's header icon (and the project page's
+   *  opener, for a terminal) shows a dot until the person opens the panel (setOpen clears the marks in view). */
+  function markFresh(tabs) { if (!st.open) for (const t of tabs) st.fresh.add(t.id); }
   /** The assistant's new tabs of the view's chat and project (D9): into the strip; when the panel is open, the newest
    *  non-terminal one shows (a Terminal tab starts a shell when it mounts, so the user picks that one). */
   async function pullView(v) {
@@ -94,6 +113,7 @@ export function createToolPanel({ doc, win, registry, model, getPageContext, ref
     const scopes = [v.side, v.project ? { type: 'project', id: v.project } : null].filter(Boolean);
     const added = (await Promise.all(scopes.map((s) => mirror.pull(s, { keep: keepIds() })))).flat();
     if (!added.length || st.destroyed) return;
+    markFresh(added);
     const pick = [...added].reverse().find((t) => t.kind !== 'terminal');
     if (st.open && pick && viewKey(currentView()) === viewKey(v)) await activate(pick);
     else show();
@@ -144,7 +164,8 @@ export function createToolPanel({ doc, win, registry, model, getPageContext, ref
     st.open = open;
     root.hidden = !open;
     doc.body.classList.toggle('term-open', open);
-    model.setPrefs({ open });
+    model.setOpenAt(openKeyOf(st.view), open);            // a view with no key (a new chat, a starting run) saves nothing
+    if (open) for (const t of visibleOrder()) st.fresh.delete(t.id);   // the person sees the strip now: its marks go
     syncSheet();
   }
   async function open({ focus = false } = {}) {
@@ -470,9 +491,16 @@ export function createToolPanel({ doc, win, registry, model, getPageContext, ref
       hostEl.append(b);
     }
   }
+  /** A marked button: the dot (style.css twin in terminal/terminal-pane.css) and its spoken note. */
+  function markDot(b, on) {
+    b.classList.toggle('has-dot', on);
+    if (on) b.setAttribute('aria-description', 'New tab from the assistant');
+    else b.removeAttribute('aria-description');
+  }
   function syncIcons() {
     const v = currentView();
     const act = st.open ? activeTab() : null;
+    const fresh = new Set(visibleOrder().filter((t) => st.fresh.has(t.id)).map((t) => t.kind));   // kinds with a mark in view
     for (const hostEl of doc.querySelectorAll('[data-tool-icons]')) {
       if (!hostEl.childElementCount) fillIcons(hostEl);
       for (const b of hostEl.querySelectorAll('.tool-icon')) {
@@ -482,12 +510,14 @@ export function createToolPanel({ doc, win, registry, model, getPageContext, ref
         const label = def?.label || slot?.label || k;
         const why = def ? unavailable(def, v) : 'coming soon';
         b.disabled = !def || (!!why && !model.newest(k, v));
-        b.title = b.disabled ? `${label}: ${why}`
-          : `${label}${def.shortcut?.label ? ` (${def.shortcut.label})` : ''}. Shift-click opens another`;
+        b.title = (b.disabled ? `${label}: ${why}`
+          : `${label}${def.shortcut?.label ? ` (${def.shortcut.label})` : ''}. Shift-click opens another`)
+          + (fresh.has(k) ? ' · new tab from the assistant' : '');
         b.setAttribute('aria-pressed', String(!!act && act.kind === k));
+        markDot(b, fresh.has(k));
       }
     }
-    for (const b of doc.querySelectorAll('.term-opener')) b.setAttribute('aria-expanded', String(st.open));
+    for (const b of doc.querySelectorAll('.term-opener')) { b.setAttribute('aria-expanded', String(st.open)); markDot(b, fresh.has('terminal')); }
   }
 
   // ── sessions, scopes, frames from app.js ─────────────────────────────────────────────────────────
@@ -514,7 +544,11 @@ export function createToolPanel({ doc, win, registry, model, getPageContext, ref
     show();
     return gone.length;
   }
-  const onContextChange = () => { win.setTimeout(() => { if (!st.destroyed) follow(); }, 0); };   // after showView syncs the hash
+  /** `hint.created`: the id a new chat just got (ask-panel's first message): that view keeps the panel as it is. */
+  const onContextChange = (hint) => {
+    if (hint && typeof hint.created === 'string' && hint.created) st.carry = { type: 'chat', id: hint.created };
+    win.setTimeout(() => { if (!st.destroyed) follow(); }, 0);   // after showView syncs the hash
+  };
 
   // ── global listeners ─────────────────────────────────────────────────────────────────────────────
   // Capture phase (D16): inside the terminal xterm takes Ctrl+` as a keystroke and stops the event.
@@ -559,10 +593,13 @@ export function createToolPanel({ doc, win, registry, model, getPageContext, ref
   const prefs = model.prefs();
   applyWidth(prefs.width);
   setMax(prefs.max);
-  st.view = viewOf(getPageContext ? getPageContext() : {});
+  const bootCtx = getPageContext ? getPageContext() : {};
+  st.view = viewOf(bootCtx);
+  st.runId = runIdOf(bootCtx);
   renderStrip();
+  // Open only where the person left it open; a scope never opened (and every first start) starts closed.
+  if (model.isOpenAt(openKeyOf(st.view))) open();
   void pullView(st.view);
-  if (prefs.open) open();
 
   /** A tab of `kind` in `scope` holding `state` (chat links, issue 1064): the tab `match` finds there takes the state and
    *  comes forward (drawn again when it was on screen), else a new one opens. A scope that is not the page's own shows
@@ -599,7 +636,7 @@ export function createToolPanel({ doc, win, registry, model, getPageContext, ref
       if (redraw) { unmountCurrent(); await activate(model.get(id)); }   // on screen as a guest: redraw at the line
       return true;
     }
-    if (!st.open) { if (inView(t, currentView())) model.activate(currentView(), id); renderStrip(); return true; }
+    if (!st.open) { if (inView(t, currentView())) model.activate(currentView(), id); st.fresh.add(id); renderStrip(); syncIcons(); return true; }
     if (redraw) unmountCurrent();
     await activate(model.get(id));
     return true;
@@ -609,6 +646,7 @@ export function createToolPanel({ doc, win, registry, model, getPageContext, ref
     if (!mirror || !threadId) return;
     const added = await mirror.pull({ type: 'chat', id: threadId }, { keep: keepIds() });
     if (!added.length || st.destroyed) return;
+    markFresh(added);
     const pick = [...added].reverse().find((t) => t.kind !== 'terminal');
     if (st.open && pick) await activate(pick); else show();
   }

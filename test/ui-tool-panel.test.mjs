@@ -6,6 +6,7 @@ import { JSDOM } from 'jsdom';
 import { createToolPanel } from '../ui/public/tool-panel.mjs';
 import { createToolRegistry } from '../ui/public/tool-kinds.mjs';
 import { createTabModel } from '../ui/public/tool-tabs.mjs';
+import { readFileSync } from 'node:fs';
 
 const tick = async (n = 6) => { for (let i = 0; i < n; i++) await new Promise((r) => setTimeout(r, 0)); };
 const memStore = () => { const m = new Map(); return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)) }; };
@@ -46,6 +47,12 @@ function boot({ ctx = RUN_A, storage = memStore(), sheet = false, suggest = null
   booted.push(b);
   return b;
 }
+const OS_CHAT_A = { view: 'chat', chatId: 'ask_0000aaaa', chatProjectKey: 'app-0000aaaa' };
+const OS_CHAT_B = { view: 'chat', chatId: 'ask_0000bbbb', chatProjectKey: 'app-0000aaaa' };
+const OS_NEW_CHAT = { view: 'chat' };
+const OS_PENDING = { view: 'running', runId: 'u-1', projectKey: 'app-0000aaaa' };
+const OS_PROJECT = { view: 'project-detail', projectKey: 'app-0000aaaa' };
+const shown = (b) => b.panel.isOpen() && !b.panel.root.hidden && b.doc.body.classList.contains('term-open');
 
 test('the icon strip: four slots in order; Browser is disabled until it registers; a click opens a tab in the run', async () => {
   const b = boot();
@@ -401,6 +408,7 @@ test('the assistant\'s tabs join when their chat comes into view, marked; an ope
   b.icon('files').click();
   await tick();
   serve = [{ id: 'tab_srv1', kind: 'changes' }, { id: 'tab_srv2', kind: 'terminal' }];   // the terminal is newest and last
+  b.model.setOpenAt('chat:ask_0000aaaa', true);   // the person left the panel open in that chat
   await b.go(CHAT_CTX);
   await tick();
   const items = [...b.doc.querySelectorAll('.tool-tab-item.is-assistant')];
@@ -488,4 +496,176 @@ test('focusTab: closed panel = state only; open = active without taking the focu
   assert.equal(b.doc.querySelector('.tool-tab[aria-selected="true"]').closest('.tool-tab-item').dataset.tabId, other.id);
   assert.equal(b.model.get(t.id).state.line, 7);
   assert.equal(await b.panel.focusTab('tab_nope', {}), false);
+});
+
+// ── open per scope: the panel starts closed and opens only for the person ──────────────────────────────────────
+test('first boot: no saved state starts closed; the old terminal pane\'s open flag is ignored, its width carries over', async () => {
+  for (const ctx of [RUN_A, OS_CHAT_A, OS_PROJECT]) {
+    const b = boot({ ctx });
+    await tick();
+    assert.equal(shown(b), false, JSON.stringify(ctx));
+  }
+  const legacy = memStore();
+  legacy.setItem('worca-cc.terminal.open', '1');
+  legacy.setItem('worca-cc.terminal.width', '520');
+  const b = boot({ ctx: OS_CHAT_A, storage: legacy });
+  await tick();
+  assert.equal(shown(b), false);
+  assert.equal(b.doc.body.style.getPropertyValue('--term-w'), '520px');
+});
+
+test('per scope: a new chat starts closed after the panel was open in another chat; a chat never opened too; back in the first chat it opens again; hidden stays hidden', async () => {
+  const b = boot({ ctx: OS_CHAT_A });
+  b.icon('files').click();
+  await tick();
+  assert.equal(shown(b), true);
+  const tab = b.model.tabs()[0];
+  await b.go(OS_NEW_CHAT);
+  assert.equal(shown(b), false, 'a new chat');
+  await b.go(OS_CHAT_B);
+  assert.equal(shown(b), false, 'a chat never opened');
+  await b.go(OS_CHAT_A);
+  assert.equal(shown(b), true, 'the chat it was left open in');
+  assert.equal(b.log.filter(([e, id]) => e === 'mount' && id === tab.id).length, 2, 'its tab is on screen again');
+  b.panel.hide();
+  await b.go(OS_CHAT_B);
+  await b.go(OS_CHAT_A);
+  assert.equal(shown(b), false, 'closed in A stays closed in A');
+});
+
+test('a reload opens the panel only in the scope it was left open in', async () => {
+  const storage = memStore();
+  const a = boot({ ctx: OS_CHAT_A, storage });
+  a.icon('files').click();
+  await tick();
+  assert.equal(shown(boot({ ctx: OS_CHAT_A, storage })), true);
+  const other = boot({ ctx: OS_CHAT_B, storage });
+  await tick();
+  assert.equal(shown(other), false);
+});
+
+test('a new chat that gets its id (first message) keeps the panel as it was; without that hint the id is a scope of its own', async () => {
+  for (const [hint, want] of [[{ created: 'ask_0000cccc' }, true], [{ created: 'ask_0000dddd' }, false], [undefined, false]]) {
+    const b = boot({ ctx: OS_NEW_CHAT });
+    b.key({ code: 'KeyE', key: 'E', ctrlKey: true, shiftKey: true });   // the person opens it (the + page: a new chat opens no tab)
+    await tick();
+    assert.equal(shown(b), true);
+    b.env.ctx = { view: 'chat', chatId: 'ask_0000cccc', chatProjectKey: 'app-0000aaaa' };
+    b.panel.onContextChange(hint);
+    await tick();
+    assert.equal(shown(b), want, JSON.stringify(hint));
+    assert.equal(b.model.isOpenAt('chat:ask_0000cccc'), want);
+    if (hint?.created !== 'ask_0000dddd') continue;
+    // The hint named another chat: it is spent, not kept for later. The person opens the panel here; the chat it named starts closed.
+    b.key({ code: 'KeyE', key: 'E', ctrlKey: true, shiftKey: true });
+    await tick();
+    assert.equal(shown(b), true);
+    await b.go({ view: 'chat', chatId: 'ask_0000dddd', chatProjectKey: 'app-0000aaaa' });
+    assert.equal(shown(b), false, 'a spent hint carries nothing');
+  }
+});
+
+test('a starting run keeps the panel as the person left it when its pipeline id lands; another run does not inherit it', async () => {
+  const other = { view: 'running', runId: 'u-9', pipelineId: 'dddd4444', projectKey: 'app-0000aaaa' };
+  for (const [next, want] of [[{ ...OS_PENDING, pipelineId: 'cccc3333' }, true], [other, false]]) {
+    const b = boot({ ctx: OS_PENDING });
+    b.doc.querySelector('.tool-new').click();             // the + button: opens without re-reading the page (the boot's run id)
+    await tick();
+    assert.equal(shown(b), true);
+    await b.go(next);
+    assert.equal(shown(b), want, next.runId);
+    assert.equal(b.model.isOpenAt(`run:${next.pipelineId}`), want);
+  }
+});
+
+test('a project page keeps its own state across a reload; a starting run of that project never takes it', async () => {
+  const storage = memStore();
+  const p = boot({ ctx: OS_PROJECT, storage });
+  p.icon('files').click();
+  await tick();
+  assert.equal(shown(p), true);
+  const again = boot({ ctx: OS_PROJECT, storage });
+  await tick();
+  assert.equal(shown(again), true);
+  const pending = boot({ ctx: OS_PENDING, storage });
+  await tick();
+  assert.equal(shown(pending), false);
+});
+
+function markRig(ctx = OS_CHAT_A) {
+  let serve = [];
+  const env = {};
+  // pull answers a tick later, like the real GET
+  const mirror = { pull: async (scope) => { await Promise.resolve(); return env.b.model.adopt(scope, serve.splice(0)); }, schedule() {} };
+  const b = (env.b = boot({ ctx, mirror }));
+  return { b, serve: (list) => { serve = list; } };
+}
+
+test('an assistant\'s tab arriving while the panel is closed: it stays closed; the strip marks it; its kind\'s icon (and the opener, for a terminal) gets a dot until the person opens the panel', async () => {
+  const { b, serve } = markRig();
+  const opener = b.doc.createElement('button');
+  opener.className = 'term-opener';
+  b.doc.body.append(opener);
+  await tick();
+  serve([{ id: 'tab_srv1', kind: 'changes' }, { id: 'tab_srv2', kind: 'terminal' }]);
+  await b.panel.pullMirror();
+  await tick();
+  assert.equal(shown(b), false);
+  assert.deepEqual([...b.doc.querySelectorAll('.tool-tab-item.is-assistant')].map((n) => n.dataset.tabId), ['tab_srv1', 'tab_srv2']);
+  assert.equal(b.icon('changes').classList.contains('has-dot'), true);
+  assert.equal(b.icon('changes').getAttribute('aria-description'), 'New tab from the assistant');
+  assert.match(b.icon('changes').title, /new tab from the assistant/);
+  assert.equal(b.icon('files').classList.contains('has-dot'), false);
+  assert.equal(opener.classList.contains('has-dot'), true, 'a terminal tab: the project page\'s opener too');
+  b.icon('changes').click();
+  await tick();
+  assert.equal(shown(b), true);
+  assert.equal(b.doc.querySelector('.tool-tab[aria-selected="true"]').closest('.tool-tab-item').dataset.tabId, 'tab_srv1');
+  assert.equal(b.doc.querySelectorAll('.has-dot').length, 0, 'opening the panel clears every mark in view');
+  assert.equal(b.icon('changes').hasAttribute('aria-description'), false);
+});
+
+test('an assistant\'s tab arriving while the panel is open: no dot (the strip is on screen); the newest non-terminal one shows', async () => {
+  const { b, serve } = markRig();
+  b.icon('files').click();
+  await tick();
+  serve([{ id: 'tab_srv3', kind: 'changes' }]);
+  await b.panel.pullMirror();
+  await tick();
+  assert.equal(b.icon('changes').classList.contains('has-dot'), false);
+  assert.equal(b.doc.querySelector('.tool-tab[aria-selected="true"]').closest('.tool-tab-item').dataset.tabId, 'tab_srv3');
+  serve([{ id: 'tab_srv5', kind: 'terminal' }]);           // a Terminal tab never comes forward on its own: still no dot
+  await b.panel.pullMirror();
+  await tick();
+  assert.equal(b.icon('terminal').classList.contains('has-dot'), false);
+});
+
+test('open_tab on a tab the chat already has, panel closed: it stays closed and the tab\'s kind gets the dot', async () => {
+  const b = boot({ ctx: OS_CHAT_A });
+  b.icon('files').click();
+  await tick();
+  const t = b.model.tabs()[0];
+  b.panel.hide();
+  assert.equal(await b.panel.focusTab(t.id, { line: 3 }), true);
+  await tick();
+  assert.equal(shown(b), false);
+  assert.equal(b.icon('files').classList.contains('has-dot'), true);
+});
+
+test('the side column\'s chat: its assistant tab arriving off screen is marked once that chat is in view', async () => {
+  const { b, serve } = markRig(RUN_A);
+  await tick();                                            // the boot pull of the run page has answered
+  serve([{ id: 'tab_srv4', kind: 'changes' }]);
+  await b.panel.pullChat('ask_0000aaaa');
+  await tick();
+  assert.equal(b.icon('changes').classList.contains('has-dot'), false, 'not this page\'s tab');
+  await b.go(OS_CHAT_A);
+  assert.equal(shown(b), false);
+  assert.equal(b.icon('changes').classList.contains('has-dot'), true);
+});
+
+test('the dot rule: terminal-pane.css draws it on a marked icon and opener with a colour token', () => {
+  const css = readFileSync(new URL('../ui/public/terminal/terminal-pane.css', import.meta.url), 'utf8');
+  assert.match(css, /\.tool-icon\.has-dot,\.term-opener\.has-dot\{position:relative;\}/);
+  assert.match(css, /\.tool-icon\.has-dot::after,\.term-opener\.has-dot::after\{content:"";[^}]*border-radius:50%;[^}]*background:var\(--blue-ink-strong\);/);
 });

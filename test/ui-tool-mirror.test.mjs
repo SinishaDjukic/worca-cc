@@ -69,7 +69,7 @@ async function bootMirrored({ url, tools, serverTabs = () => [], thread = null }
 
 test('in the real app: the boot PUTs this browser\'s project tabs; closing one PUTs the shorter list', async () => {
   const tools = { v: 1, tabs: [{ id: 'tab_pm1', kind: 'files', scope: { type: 'project', id: PK }, state: {}, at: 1 },
-    { id: 'tab_pm2', kind: 'changes', scope: { type: 'project', id: PK }, state: {}, at: 2 }], active: {}, prefs: { open: true, width: 460 } };
+    { id: 'tab_pm2', kind: 'changes', scope: { type: 'project', id: PK }, state: {}, at: 2 }], active: {}, prefs: { width: 460 }, open: [`project:${PK}`] };
   const a = await bootMirrored({ url: `http://localhost:4317/#projects/${PK}`, tools });
   await wait(MIRROR_DEBOUNCE_MS + 100);
   const q = `scope=project&projectKey=${PK}`;
@@ -85,7 +85,7 @@ test('in the real app: an ask-tool-tabs frame for the chat on screen pulls the a
   const thread = { id: TID, title: 'Tabs', createdAt: '2026-11-01T00:00:00Z', updatedAt: '2026-11-01T00:00:00Z', runLinks: 0 };
   let server = [];
   const a = await bootMirrored({ url: `http://localhost:4317/#chat/${TID}`, thread, serverTabs: () => server,
-    tools: { v: 1, tabs: [], active: {}, prefs: { open: true, width: 460 } } });
+    tools: { v: 1, tabs: [], active: {}, prefs: { width: 460 } } });
   await wait(MIRROR_DEBOUNCE_MS + 100);
   assert.deepEqual(a.puts, [], 'nothing mirrored yet');
   server = [{ id: 'tab_as1', kind: 'files', openedBy: 'assistant', delivered: false, at: 5 }];
@@ -95,6 +95,8 @@ test('in the real app: an ask-tool-tabs frame for the chat on screen pulls the a
   a.dispatch({ type: 'ask-tool-tabs', threadId: TID });
   await a.settle(8);
   assert.ok(a.doc.querySelector('.tool-panel .tool-tab-close[aria-label="Close Files"]'), 'the assistant\'s tab joined the strip');
+  assert.equal(a.doc.querySelector('.tool-panel').hidden, true, 'the assistant\'s tab never opens the panel');
+  assert.ok(a.doc.querySelector('.tool-icon.has-dot[data-tool-kind="files"]'), 'its kind\'s header icon has the dot');
   await wait(MIRROR_DEBOUNCE_MS + 100);
   const last = a.puts.at(-1);
   assert.equal(last.q, `scope=chat&threadId=${TID}`);

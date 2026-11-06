@@ -41100,7 +41100,7 @@ askPanel = createAskPanel({
   summariseCommands: () => chatSummariesPref,
   // Ask worca beside the page: the page on screen as chips and as a new side chat's scope, and the column's head buttons.
   getPageChips,
-  onToolScope: () => toolPanel?.onContextChange(),                 // a chat switch or a scope change moves no hash
+  onToolScope: (hint) => toolPanel?.onContextChange(hint),         // a chat switch or a scope change moves no hash; hint.created: a new chat's id
   onChatsClosed: (ids) => { for (const id of ids || [null]) toolPanel?.closeScope({ type: 'chat', id }); },   // null: every chat (a history clear)
   getPageScope,
   sideActions: {
