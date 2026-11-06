@@ -11,7 +11,7 @@ import { createRedactor } from '../src/core/redact.mjs';
 import { openTryLog, pendingTryLogRedactor, redactTryLogRetrying, _testing as tryLogTesting } from '../src/core/engines/try-log-redaction.mjs';
 import { RunHarness } from '../src/core/run-harness.mjs';
 import { composeSpawnEnv } from '../src/core/engines/spawn.mjs';
-import { SETTINGS_IGNORED_FILE } from '../src/core/workflow-tests/try-guard-env.mjs';
+import { SETTINGS_IGNORED_FILE, isSettingsIgnoredFile } from '../src/core/workflow-tests/try-guard-env.mjs';
 import { runOpts, taskHeader, fanOutDirective, PLUGINS_OFF_SOURCES } from '../src/core/phases.mjs';
 import { runClaude } from '../src/core/claude-runner.mjs';
 
@@ -676,6 +676,16 @@ test('re-review 2 n2: nor through a hardlink planted at that name (its other nam
   const r = await canarySpawn({ mark: false, before: (d) => linkSync(outside, join(d, SETTINGS_IGNORED_FILE)) });
   assert.equal(readFileSync(outside, 'utf8'), 'keep\n', 'the other name is untouched');
   assert.deepEqual(r.said, [{ kind: 'warning', text: SETTINGS_NOT_LOADED }], 'the warning is still said');
+  // re-review 3 (m4): the verdict is kept under a fresh name of its own (readTryOutcome reads every such name)
+  const fresh = r.left.filter((n) => isSettingsIgnoredFile(n));
+  assert.equal(fresh.length, 1, JSON.stringify(r.left));
+  assert.match(readFileSync(join(r.d, fresh[0]), 'utf8'), /"why":"settings canary missing"/);
+});
+
+test('re-review 3 m4: the verdict file names readTryOutcome reads', () => {
+  assert.equal(isSettingsIgnoredFile(SETTINGS_IGNORED_FILE), true);
+  assert.equal(isSettingsIgnoredFile('settings-ignored-0a1b2c3d4e5f6a7b.ndjson'), true);
+  for (const n of ['settings-ignored.ndjson.tmp', 'settings-ignored-.ndjson', 'settings-ignored-x/y.ndjson', 'connector-calls.ndjson']) assert.equal(isSettingsIgnoredFile(n), false, n);
 });
 
 test('concern 8: no session start (the spawn never ran), or not a Pretend spawn: no canary verdict', async () => {

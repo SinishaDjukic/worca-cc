@@ -184,4 +184,8 @@ test('concern 8: an outcome says when Claude Code ignored Worca\'s settings for 
   assert.equal('settingsIgnored' in await readTryOutcome(t.id), false);
   await writeFile(join(t.dir, SETTINGS_IGNORED_FILE), 'x\n');
   assert.equal((await readTryOutcome(t.id)).settingsIgnored, true);
+  // re-review 3 (m4): the verdict under a fresh name (a link at the usual name was refused) marks it too
+  const u = await seedTry();
+  await writeFile(join(u.dir, 'settings-ignored-0a1b2c3d4e5f6a7b.ndjson'), 'x\n');
+  assert.equal((await readTryOutcome(u.id)).settingsIgnored, true);
 });

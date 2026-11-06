@@ -621,6 +621,14 @@ function appendNoFollow(file, text) {
   try { writeSync(fd, text); } finally { closeSync(fd); }
 }
 
+/** Re-review 3 (m4): the settings canary's verdict in the run folder `dir`. Appended to SETTINGS_IGNORED_FILE; when a link sits
+ *  there (refused, never written through), written to a new file of its own (`wx`: created, never an existing name or a
+ *  link), so a planted link cannot keep readTryOutcome from marking the try as Worca's. */
+function writeSettingsIgnored(dir, text) {
+  try { appendNoFollow(join(dir, SETTINGS_IGNORED_FILE), text); return; } catch { /* a link: a fresh name below */ }
+  writeFileSync(join(dir, `settings-ignored-${randomBytes(8).toString('hex')}.ndjson`), text, { encoding: 'utf8', flag: 'wx', mode: 0o644 });
+}
+
 /** planClaudeInvocation + the I/O: a private temp dir is created and the files
  *  written ONLY on the staged branch, or when a session host spawn passes
  *  `agentsViaFile` (C3) (`dir` is null otherwise, so the caller has nothing to
@@ -947,7 +955,7 @@ export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, perm
         canaryJudged = true;
         try {
           if (existsSync(canary)) return;
-          appendNoFollow(join(dirname(tryGuard.logFile), SETTINGS_IGNORED_FILE), `${JSON.stringify({ ts: new Date().toISOString(), why: 'settings canary missing' })}\n`);
+          writeSettingsIgnored(dirname(tryGuard.logFile), `${JSON.stringify({ ts: new Date().toISOString(), why: 'settings canary missing' })}\n`);
         } catch { /* the warning still says it */ }
         safeEmit(onEvent, { type: 'stderr', stream: 'err', text: `${CARRY_WARNING_PREFIX}${SETTINGS_IGNORED_TEXT}` });
       };
