@@ -166,7 +166,7 @@
     return dialogHtml(sv, c) + strip + sec.sections.filter((s) => vis(s, c)).map((s) => {
       const where = id + '/' + s.title, cc = { ...c, locked };
       const head = (s.actions || []).filter((a) => vis(a, c)).map((a) => act(a, where, cc)).join('');
-      const rows = (s.rows || []).filter((r) => vis(r, c)).map((r) => row(r, sv, cc, where)).join('');
+      const rows = ((c.extra && c.extra[s.title]) || '') + (s.rows || []).filter((r) => vis(r, c)).map((r) => row(r, sv, cc, where)).join('');
       const table = s.table ? c.R.table({ ...s.table, rows: textOf(s.table.rows, sv) }) : '';
       return c.R.settingsSection({ title: s.title, meta: textOf(s.meta, sv) || '', action: head, rows: rows + table + (s.list ? records(s.list, sv, cc, where, s.empty) : '') });
     }).join('');
