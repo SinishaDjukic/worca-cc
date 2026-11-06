@@ -367,7 +367,7 @@ function render() {
   const pg = v.pager;
   const left = svg('chevron', 14).replace('M6 9.5l6 6 6-6', 'M14.5 6l-6 6 6 6');
   const right = svg('chevron', 14).replace('M6 9.5l6 6 6-6', 'M9.5 6l6 6-6 6');
-  const sib = (x, dir) => (x ? { ok: !!x.ok, why: `Run ${x.index + 1} hasn’t started`, attrs: { 'data-sib': x.index, 'data-key': 'sib:' + dir } } : { ok: false, attrs: { 'data-sib': '', 'data-key': 'sib:' + dir } });
+  const sib = (x, dir) => (x ? { ok: !!x.ok, why: `Run ${x.index + 1} hasn’t started`, attrs: { 'data-sib': x.index, 'data-key': 'sib:' + dir } } : { ok: false, why: dir === 'prev' ? 'This is the first run' : 'This is the last run', attrs: { 'data-sib': '', 'data-key': 'sib:' + dir } });
   const pager = pg ? R.pager({ label: 'Runs in this group', index: pg.index, n: pg.n, noun: 'run', prev: sib(pg.prev, 'prev'), next: sib(pg.next, 'next'), icons: { prev: left, next: right } }) : '';
   const scope = v.bar.scope ? ` title="Applies to the whole ${esc(v.bar.scope)}: the running run and the ones after it"` : '';
 
