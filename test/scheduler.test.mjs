@@ -19,7 +19,7 @@ import {
   chainBaseBranchesOf, stackedPrBaseOf, markTicketFired, cancelResumeTicketsFor, runChains, CHAIN_SHIP_WINDOW_MS, skipTicket,
 } from '../src/core/scheduler.mjs';
 import { projectKey } from '../src/core/store.mjs';
-import { listNotifications, unreadCount } from '../src/core/notifications.mjs';
+import { listNotifications, unreadCount, markRead, addNotification } from '../src/core/notifications.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
 useTempHome(after);
@@ -701,6 +701,100 @@ test('a predecessor that ends badly, is canceled, removed or archived strands it
       assert.deepEqual(out.missed, [t.id]); assert.deepEqual(out.fired, []);
       assert.equal(getTicket(t.id).failReason, 'The run before it was archived.');
       assert.equal(listNotifications().find((x) => x.ticketId === t.id).message, 'was waiting for ‘Old’, which was archived.');
+    } },
+  ]);
+});
+
+test('a run that starts after all, after its miss was resolved, says so in the feed and links the old miss to the run', async () => {
+  const byTicket = (id) => listNotifications().filter((n) => n.ticketId === id).reverse();
+  await checkRows([
+    { name: 'interrupted predecessor → missed; re-chained, resumed and done → the run fires: the miss is resolved with the pipeline, a started entry names the predecessor', run: async () => {
+      clearTables();
+      seedPipelineRow({ id: 'g0000010', title: 'Chat MCP', status: 'running', startedAt: new Date(T0).toISOString() });
+      const t = createTicket({ projectDir: DIR, title: 'Run 2', request: REQ, after: { kind: 'pipeline', id: 'g0000010' }, sourceFromPrevious: true, now: T0 });
+      getDb().prepare("UPDATE pipelines SET status = 'interrupted' WHERE id = 'g0000010'").run();
+      assert.deepEqual((await runDueTickets({ now: T0 + MIN, start: okStart() })).missed, [t.id]);
+      // The person waits on it again; the predecessor is resumed and finishes.
+      updateTicket(t.id, { after: { kind: 'pipeline', id: 'g0000010' } }, { now: T0 + 2 * MIN });
+      getDb().prepare("UPDATE pipelines SET status = 'running' WHERE id = 'g0000010'").run();
+      assert.deepEqual((await runDueTickets({ now: T0 + 3 * MIN, start: okStart() })).waiting, [t.id]);
+      getDb().prepare("UPDATE pipelines SET status = 'done' WHERE id = 'g0000010'").run();
+      seedPipelineRow({ id: 'g0000011', title: 'Run 2', status: 'running', startedAt: new Date(T0 + HOUR).toISOString() });
+      assert.deepEqual((await runDueTickets({ now: T0 + HOUR, start: okStart({ pipelineId: 'g0000011' }) })).fired, [t.id]);
+      const [missed, started, ...rest] = byTicket(t.id);
+      assert.deepEqual(rest, []);
+      assert.equal(missed.kind, 'missed');
+      assert.ok(missed.resolvedAt, 'the miss is resolved');
+      assert.equal(missed.pipelineId, 'g0000011', 'the miss links to the run it became');
+      assert.equal(missed.unread, false);
+      assert.equal(started.kind, 'started');
+      assert.equal(started.severity, 'info');
+      assert.equal(started.pipelineId, 'g0000011');
+      assert.equal(started.message, 'started after all, when ‘Chat MCP’ finished.');
+      assert.equal(unreadCount(), 0);
+    } },
+    { name: 'a start that learns its pipeline later (the server\'s pipeline event, a --wait terminal) back-fills every row of the ticket', run: async () => {
+      clearTables();
+      seedPipelineRow({ id: 'g0000012', title: 'A', status: 'stopped', startedAt: new Date(T0).toISOString() });
+      const t = createTicket({ projectDir: DIR, title: 'B', request: REQ, after: { kind: 'pipeline', id: 'g0000012' }, now: T0 });
+      await runDueTickets({ now: T0 + MIN, start: okStart() });
+      requestRunNow(t.id, { now: T0 + 2 * MIN });
+      assert.deepEqual((await runDueTickets({ now: T0 + 2 * MIN, start: okStart() })).fired, [t.id]);
+      let [missed, started] = byTicket(t.id);
+      assert.equal(missed.pipelineId, null); assert.equal(started.pipelineId, null);
+      assert.equal(started.message, 'started after all.', 'Run now: no predecessor sentence');
+      seedPipelineRow({ id: 'g0000013', title: 'B', status: 'running', startedAt: new Date(T0).toISOString() });
+      const named = addNotification({ kind: 'canceled', severity: 'info', ticketId: t.id, pipelineId: 'g0000099', message: 'names another run.' });
+      setTicketPipeline(t.id, 'g0000013');
+      assert.equal(listNotifications().find((n) => n.id === named.id).pipelineId, 'g0000099', 'a row that already names a run keeps it');
+      [missed, started] = byTicket(t.id);
+      assert.equal(missed.pipelineId, 'g0000013'); assert.equal(started.pipelineId, 'g0000013');
+      assert.equal(listNotifications().filter((n) => n.pipelineId === 'g0000013').length, 2, 'only this ticket\'s rows');
+    } },
+    { name: 'a one-off `when` run missed while Worca was down, then Run now (or a --wait terminal) → started entry; a series occurrence too', run: async () => {
+      clearTables();
+      const t = createTicket({ projectDir: DIR, title: 'When', runAtMs: T0, ifMissed: 'skip', request: REQ, now: T0 - HOUR });
+      await runDueTickets({ now: T0 + HOUR, start: okStart() });
+      assert.equal(getTicket(t.id).status, 'missed');
+      requestRunNow(t.id, { now: T0 + 2 * HOUR });
+      claimTicket(t.id, { now: T0 + 2 * HOUR });
+      markTicketFired(t.id, { pipelineId: 'g0000014', now: T0 + 2 * HOUR });
+      const [missed, started] = byTicket(t.id);
+      assert.ok(missed.resolvedAt); assert.equal(missed.pipelineId, 'g0000014');
+      assert.equal(started.kind, 'started'); assert.equal(started.pipelineId, 'g0000014');
+      const { schedule: s, ticket: occ } = createSchedule({ projectDir: DIR, title: 'Nightly', rule: nightly, request: REQ, ifMissed: 'skip', now: T0 });
+      await runDueTickets({ now: Date.parse(occ.runAt) + HOUR, start: okStart() });
+      assert.equal(getTicket(occ.id).status, 'missed');
+      requestRunNow(occ.id, { now: Date.parse(occ.runAt) + 2 * HOUR });
+      await runDueTickets({ now: Date.parse(occ.runAt) + 2 * HOUR, start: okStart({ pipelineId: 'g0000015' }) });
+      const occRows = byTicket(occ.id);
+      assert.deepEqual(occRows.map((n) => n.kind), ['missed', 'started']);
+      assert.equal(occRows[1].scheduleId, s.id);
+    } },
+    { name: 'a run that never missed writes no started entry (the feed stays quiet)', run: async () => {
+      clearTables();
+      seedPipelineRow({ id: 'g0000016', title: 'A', status: 'done', startedAt: new Date(T0).toISOString() });
+      const t = createTicket({ projectDir: DIR, title: 'B', request: REQ, after: { kind: 'pipeline', id: 'g0000016' }, now: T0 });
+      assert.deepEqual((await runDueTickets({ now: T0 + MIN, start: okStart({ pipelineId: 'g0000017' }) })).fired, [t.id]);
+      assert.deepEqual(byTicket(t.id), []);
+    } },
+    { name: 'a resolved problem never counts as unread, even marked unread again; the problems filter leaves it out', run: async () => {
+      clearTables();
+      seedPipelineRow({ id: 'g0000018', title: 'A', status: 'error', startedAt: new Date(T0).toISOString() });
+      const t = createTicket({ projectDir: DIR, title: 'B', request: REQ, after: { kind: 'pipeline', id: 'g0000018' }, now: T0 });
+      await runDueTickets({ now: T0 + MIN, start: okStart() });
+      assert.equal(unreadCount(), 1);
+      assert.equal(unreadCount('schedule', { reader: 'ada@example.com' }), 1);
+      assert.equal(listNotifications({ problems: true }).length, 1);
+      requestRunNow(t.id, { now: T0 + 2 * MIN });
+      const [missed] = byTicket(t.id);
+      markRead(missed.id, { read: false });
+      assert.equal(unreadCount(), 0);
+      assert.equal(unreadCount('schedule', { reader: 'ada@example.com' }), 0, 'per person too (a shared deployment)');
+      assert.equal(listNotifications({ unread: true }).length, 0);
+      assert.equal(listNotifications({ unread: true, reader: 'ada@example.com' }).length, 0);
+      assert.equal(byTicket(t.id)[0].unread, false);
+      assert.deepEqual(listNotifications({ problems: true }), []);
     } },
   ]);
 });

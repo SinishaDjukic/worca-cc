@@ -415,7 +415,30 @@ export function releaseTicket(id, { now = Date.now() } = {}) {
 }
 
 function markFired(id, pipelineId, now) {
+  const t = getTicket(id);   // before the update: `forced` is cleared by it
   touchTicket(id, "status = 'fired', pipeline_id = COALESCE(?, pipeline_id), forced = 0, queued = 0, retry_at = NULL", [pipelineId || null], now);
+  if (t) noteStartedAfterMiss(t, now);
+}
+
+/**
+ * A ticket that starts after it was reported missed (or failed) — Run now, a new time, a new wait on a
+ * predecessor that then finished — says so in the feed: the resolved problem row alone reads as if the run
+ * never started. (Each of those actions already resolved the problem.) An info `started` entry tells what
+ * happened next; setTicketPipeline links it, and the old row, to the run. A ticket with no such row (the
+ * normal path) writes nothing here.
+ */
+function noteStartedAfterMiss(t, now) {
+  const missed = getDb().prepare("SELECT 1 FROM notifications WHERE ticket_id = ? AND severity = 'problem' AND kind IN ('missed', 'failed') LIMIT 1").get(t.id);
+  if (!missed) return;
+  let when = '';
+  if (t.after && !t.forced) {
+    const p = predecessorState(t.after, { policy: t.after.policy, now });
+    when = `, when ‘${p.title || 'the run before it'}’ ${p.status === 'done' ? 'finished' : 'ended'}`;
+  }
+  addNotification({
+    kind: 'started', severity: 'info', scheduleId: t.scheduleId, ticketId: t.id,
+    projectDir: t.projectDir, title: t.title, message: `started after all${when}.`, now: new Date(now),
+  });
 }
 
 /**
@@ -427,6 +450,8 @@ export function setTicketPipeline(id, pipelineId, { now = Date.now() } = {}) {
   const t = getTicket(id);
   if (!t) return;
   if (t.pipelineId !== pipelineId) touchTicket(id, 'pipeline_id = ?', [pipelineId], now);
+  // The ticket's feed rows written before its run existed (a resolved miss, the started entry) link to it.
+  getDb().prepare('UPDATE notifications SET pipeline_id = ? WHERE ticket_id = ? AND pipeline_id IS NULL').run(pipelineId, String(id));
   try {
     getDb().prepare('UPDATE pipelines SET scheduled_for = ?, schedule_id = ? WHERE id = ? AND scheduled_for IS NULL')
       .run(t.runAt, t.scheduleId || null, pipelineId);

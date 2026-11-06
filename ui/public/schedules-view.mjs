@@ -29,7 +29,7 @@ const ICON = {
 const KIND = {
   missed: ['Missed', 'amber'], failed: ['Failed', 'red'], run_error: ['Error', 'red'], paused: ['Paused', 'amber'],
   run_paused: ['Paused', 'amber'], skipped: ['Skipped', 'grey'], late: ['Late', 'blue'], retrying: ['Retrying', 'grey'],
-  completed: ['Completed', 'green'], ended: ['Ended', 'grey'],
+  completed: ['Completed', 'green'], ended: ['Ended', 'grey'], started: ['Started', 'blue'],
   // Git event automations (#711): what a rule did with an issue or PR.
   automation_started: ['Started', 'blue'], automation_skipped: ['Skipped', 'grey'], automation_queued: ['Queued', 'grey'],
   'automation_awaiting-approval': ['Approve?', 'amber'], automation_done: ['Done', 'green'], automation_failed: ['Failed', 'red'],
@@ -45,6 +45,9 @@ const afterWord = (a, { waiting = false } = {}) => (a && a.status
   ? (waiting && a.status === 'interrupted' ? 'interrupted, waits for a Resume' : (AFTER_WORD[a.status] || a.status))
   : 'waiting');
 const afterName = (a) => `‘${(a && a.title) || 'the run before it'}’`;
+/** A problem the user (or a later start) already dealt with: shown neutral, never unread, never under Problems. */
+const isResolved = (n) => !!n.resolvedAt;
+const isUnread = (n) => !!n.unread && !isResolved(n);
 
 /** A constant SVG string from ICON as a node, parsed as XML. */
 function svgIcon(markup) {
@@ -352,7 +355,7 @@ export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repea
     if (!tabsHost) return;
     const once = model.tickets.filter((t) => !t.scheduleId).length;
     const series = model.schedules.filter((s) => s.status !== 'ended').length;
-    const unread = model.feed.filter((n) => n.unread).length;
+    const unread = model.feed.filter(isUnread).length;
     const label = { activity: unread ? `Activity · ${unread}` : 'Activity', once: once ? `Once · ${once}` : 'Once', repeating: series ? `Repeating · ${series}` : 'Repeating' };
     for (const b of tabsHost.querySelectorAll('button[data-tab]')) {
       b.textContent = label[b.dataset.tab] || b.dataset.tab;
@@ -386,8 +389,18 @@ export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repea
   }
 
   // ── feed ───────────────────────────────────────────────────────────────────
+  /** What happened after a resolved problem: the ticket's `started` entry, else "it started" when its run is known. */
+  function resolvedNote(n) {
+    const next = n.ticketId ? model.feed.find((x) => x.kind === 'started' && x.ticketId === n.ticketId) : null;
+    if (next) return `Resolved · ${humanMessage(next)}`;
+    return n.pipelineId ? 'Resolved · the run started after all.' : 'Resolved.';
+  }
+
   function feedItem(n) {
-    const [word, family] = KIND[n.kind] || [n.kind, 'grey'];
+    const resolved = isResolved(n);
+    const unread = isUnread(n);
+    const [word, kindFamily] = KIND[n.kind] || [n.kind, 'grey'];
+    const family = resolved ? 'grey' : kindFamily;
     const msg = plainFeedMessage(humanMessage(n));
     const ticket = n.ticketId ? model.tickets.find((t) => t.id === n.ticketId) : null;
     const series = n.scheduleId ? model.schedules.find((s) => s.id === n.scheduleId) : null;
@@ -407,16 +420,17 @@ export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repea
       b.addEventListener('click', () => deps.openRun({ pipelineId: n.pipelineId, projectDir: n.projectDir }));
       acts.push(b);
     }
-    if (n.unread) {
+    if (unread) {
       const b = h('button', { type: 'button', class: 'btn btn-sm btn-quiet sched-feed-read', text: 'Mark read', title: 'Mark as read' });
       b.addEventListener('click', async () => { try { await api('POST', `/api/notifications/${n.id}/read`); } catch (err) { say(err.message, 'err'); } await loadFeed(); });
       acts.push(b);
     }
     // One table row: Kind · What happened · Actions.
-    return h('tr', { class: `sched-feed-item${n.unread ? ' unread' : ''}`, 'data-id': n.id },
+    return h('tr', { class: `sched-feed-item${unread ? ' unread' : ''}${resolved ? ' resolved' : ''}`, 'data-id': n.id },
       h('td', { class: 'sched-feed-kind', 'data-label': 'Kind' }, h('span', { class: `badge ${family}`, text: word })),
       h('td', { class: 'sched-feed-body table-main' },
         h('div', { class: 'sched-feed-text', ...(msg.detail ? { title: msg.detail } : {}) }, h('b', { text: n.title || 'Scheduled run' }), ` ${msg.text}`),
+        resolved ? h('div', { class: 'sched-feed-resolved', text: resolvedNote(n) }) : null,
         h('div', { class: 'sched-feed-time', text: relativeAgo(n.createdAt), title: new Date(n.createdAt).toLocaleString() })),
       h('td', { class: 'sched-feed-acts', 'data-label': 'Actions' }, ...acts));
   }
@@ -427,8 +441,8 @@ export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repea
   }
 
   function paintFeed() {
-    const unread = model.feed.filter((n) => n.unread).length;
-    const rows = model.feed.filter((n) => (model.filter === 'unread' ? n.unread : model.filter === 'problems' ? n.severity === 'problem' : true));
+    const unread = model.feed.filter(isUnread).length;
+    const rows = model.feed.filter((n) => (model.filter === 'unread' ? isUnread(n) : model.filter === 'problems' ? n.severity === 'problem' && !isResolved(n) : true));
     const seg = h('div', { class: 'seg', role: 'group', 'aria-label': 'Filter activity' });
     for (const [key, label] of [['all', 'All'], ['unread', unread ? `Unread · ${unread}` : 'Unread'], ['problems', 'Problems']]) {
       const b = h('button', { type: 'button', class: model.filter === key ? 'on' : '', 'aria-pressed': model.filter === key ? 'true' : 'false', text: label });
