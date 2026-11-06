@@ -427,3 +427,37 @@ test('#943: a chat that has run names its engine, offers only that engine\'s mod
   assert.equal(h.$('.ask-model-btn-engine').textContent, 'Claude');
   assert.deepEqual(h.$$('.ask-pop-model .ask-pop-group').map((g) => g.textContent), ['Claude · this chat'], 'the open menu now lists the new engine');
 });
+
+test('a pasted link\'s auto-switch: the 202 `scope` moves the pill with no PATCH and the next message carries the pin; an ask-scope frame does too (review M1)', async () => {
+  let reply = null;
+  const posts = [];
+  const { route } = rig((p, o, method) => {
+    if (p === `/api/ask/threads/${TID}/messages` && method === 'POST') { posts.push(JSON.parse(o.body)); return ok({ userMessageId: `askm_u${posts.length}`, attachments: [], ...(reply || {}) }); }
+    return null;
+  });
+  const h = await bootSidebar({ storage: STORE, route });
+  reply = { scope: { pinned: false, projectKey: 'acme-api' } };
+  await typeAndSend(h, 'hello');
+  await h.flush();
+  assert.equal(h.$('.ask-scope-label').textContent, 'No project', 'a 202 scope that is not a pin leaves the pill');
+  reply = { scope: { pinned: true, projectKey: 'shop-0001', label: 'Shop' } };
+  await typeAndSend(h, 'fix https://github.com/Acme/Shop/issues/12');
+  await h.flush();
+  assert.equal(posts[1].context.pinned, false, 'the link message itself went out unpinned');
+  assert.equal(h.$('.ask-scope-label').textContent, 'Shop', 'the 202 moved the pill, named by its label');
+  assert.ok(h.$('.ask-scope-btn').classList.contains('is-pinned'));
+  assert.ok(!h.calls.some((c) => c.includes(`/api/ask/threads/${TID} {"scope"`)), 'no PATCH: the server stored it already');
+  reply = null;
+  await typeAndSend(h, 'and then');
+  await h.flush();
+  assert.deepEqual([posts[2].context.pinned, posts[2].context.projectKey], [true, 'shop-0001'], 'the next message keeps the switch');
+  h.sockets.at(-1).onmessage({ data: JSON.stringify({ type: 'ask-scope', threadId: 'askt_00000099', scope: { pinned: true, projectKey: 'acme-api' }, label: 'ACME API' }) });
+  await h.flush();
+  assert.equal(h.$('.ask-scope-label').textContent, 'Shop', 'another chat\'s frame changes nothing');
+  h.sockets.at(-1).onmessage({ data: JSON.stringify({ type: 'ask-scope', threadId: TID, scope: { pinned: true, projectKey: 'acme-web' }, label: 'ACME Web' }) });
+  await h.flush();
+  assert.equal(h.$('.ask-scope-label').textContent, 'ACME Web', 'the open chat\'s frame moves the pill');
+  await typeAndSend(h, 'more');
+  await h.flush();
+  assert.deepEqual([posts[3].context.pinned, posts[3].context.projectKey], [true, 'acme-web']);
+});

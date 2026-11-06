@@ -19,8 +19,8 @@ const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 
 const TID = 'ask_00000001';
 const MID = 'askm_00000001';
-const FIX = { projects: null, workspaces: null };   // a test swaps the /api/projects and /api/workspaces rows; reset after each test
-afterEach(() => { FIX.projects = null; FIX.workspaces = null; });
+const FIX = { projects: null, workspaces: null, sendBody: null };   // a test swaps the /api/projects and /api/workspaces rows and adds keys to the send's 202; reset after each test
+afterEach(() => { FIX.projects = null; FIX.workspaces = null; FIX.sendBody = null; });
 
 function askArms(url, opts) {
   const method = ((opts && opts.method) || 'GET').toUpperCase();
@@ -28,7 +28,7 @@ function askArms(url, opts) {
     return { ok: true, status: 200, json: async () => ({ models: [{ id: 'claude-opus-5-5', label: 'Opus 5.5', efforts: ['medium', 'high', 'xhigh', 'max'], custom: false }, { id: 'claude-haiku-4-5', label: 'Haiku 4.5', efforts: ['medium', 'high'], custom: false }], efforts: ['medium', 'high', 'xhigh', 'max'] }) };
   }
   if (url.includes(`/api/ask/threads/${TID}/messages`) && method === 'POST') {
-    return { ok: true, status: 202, json: async () => ({ userMessageId: 'askm_u0000001', assistantMessageId: MID }) };
+    return { ok: true, status: 202, json: async () => ({ userMessageId: 'askm_u0000001', assistantMessageId: MID, ...(FIX.sendBody || {}) }) };
   }
   if (url.includes(`/api/ask/threads/${TID}`) && method === 'DELETE') {
     return { ok: true, status: 200, json: async () => ({ ok: true }) };
@@ -271,6 +271,35 @@ test('ui-ask-integration P4: the scope menu\'s Add project… opens the Add proj
   await settle(window, 6);
   assert.equal(doc.getElementById('project-add-modal').classList.contains('hidden'), false, 'chatDeps.openAddProject → addProjectFlow');
   assert.equal(doc.querySelector('.ask-pop-scope'), null);
+});
+
+test('ui-ask-integration P4 auto-switch: app.js — a send whose 202 carries scope moves the pill label to the project name and the NEXT send carries { pinned:true, projectKey }', async () => {
+  FIX.projects = [{ key: 'demo-00000001', name: 'Demo', path: '/repos/demo', exists: true, vcs: 'git' }];
+  const { window, calls } = await boot();
+  await openChat(window);
+  const doc = window.document;
+  const lastCtx = () => JSON.parse(calls.filter((c) => c.url.includes('/messages') && c.opts.method === 'POST').at(-1).opts.body).context;
+  const label = () => doc.querySelector('[data-ask-scope-btn] .ask-scope-label').textContent;
+  assert.equal(label(), 'No project');
+  FIX.sendBody = { scope: { pinned: true, projectKey: 'demo-00000001', label: 'Demo' } };
+  await sendText(window, 'fix https://github.com/Acme/Demo/issues/3');
+  assert.equal(lastCtx().pinned, false, 'the message itself went out in No project');
+  assert.equal(label(), 'Demo', 'no ask-scope frame: the 202 moved the pill');
+  FIX.sendBody = null;
+  await sendText(window, 'and the tests too');
+  assert.deepEqual([lastCtx().pinned, lastCtx().projectKey], [true, 'demo-00000001']);
+});
+
+test('ui-ask-integration P4: an ask-scope frame delivered over the socket moves the pill (app.js fans it to the panel)', async () => {
+  FIX.projects = [{ key: 'demo-00000001', name: 'Demo', path: '/repos/demo', exists: true, vcs: 'git' }];
+  const { window, recv } = await boot();
+  await openChat(window);
+  await sendText(window, 'first message');
+  const label = () => window.document.querySelector('[data-ask-scope-btn] .ask-scope-label').textContent;
+  assert.equal(label(), 'No project');
+  recv({ type: 'ask-scope', threadId: TID, scope: { pinned: true, projectKey: 'demo-00000001' }, label: 'Demo' });
+  await settle(window);
+  assert.equal(label(), 'Demo');
 });
 
 test('ui-ask-integration P4: app.js registers the switch card before the chat mounts', async () => {

@@ -1045,8 +1045,16 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       st.scopeHeld = null;                           // S39: this message carried the held pick (its pinned is authoritative)
       // A toggle made while this POST was out PATCHed a value the route then overwrote with sentOff: re-send the latest.
       if (st.mcp.off !== sentOff) patchMcpOff(id, st.mcp.off);
-      const { userMessageId, attachments: stored, contexts } = await res.json();
+      const { userMessageId, attachments: stored, contexts, scope: switched } = await res.json();
+      // Reading the body yields: the user may have left the chat meanwhile. Its contexts, scope and echo belong to the
+      // chat they left; a `scope` applied here would move another chat's pill (review M2).
+      if (st.destroyed || st.model !== model || st.threadId !== id) return !!queued;
       if (Array.isArray(contexts)) setContexts(contexts);   // an older server omits it: keep what is shown
+      // A link in this message switched the No-project chat (docs/chat-home.md "Scope from a pasted link"): the pill
+      // follows even when the ask-scope frame was missed, so the next send cannot switch the chat back.
+      if (switched && typeof switched === 'object' && switched.pinned === true && typeof switched.projectKey === 'string') {
+        applyServerScope(switched, switched.label);
+      }
       // Prefer the server's rows: they carry the store-minted ids that key the
       // image thumbnail (#398) and the thread's attachment ledger. The pending
       // files are the fallback for a server that predates the field.
@@ -3081,6 +3089,15 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     st.scope = { ...scopeFromContext(context), label: null };
     updateScopeButton();          // the raw key shows until the name resolves
     if (st.scope.pinned) resolveScopeLabel();
+  }
+
+  /** A scope the server already stored (an ask-scope frame, a send's 202 after a link switched the chat): the pill
+   *  follows with no PATCH, so the next send keeps it. */
+  function applyServerScope(scope, rawLabel) {
+    const label = typeof rawLabel === 'string' && rawLabel ? rawLabel : null;
+    st.scopeHeld = null;                                    // S39: the server's switch wins over a held pick
+    setScope({ ...scopeFromContext(scope), label }, { persist: false, focus: false });
+    if (st.scope.pinned && !label) resolveScopeLabel();
   }
 
   function resolveScopeLabel() {
@@ -7397,10 +7414,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (frame.type === 'ask-scope') {                           // Projects, any way P4 (CONTRACT §4): a server-side switch
       // The open chat's pill follows it with no PATCH (the server stored it), so the next send keeps the new scope.
       if (frame.threadId === st.threadId && frame.scope && typeof frame.scope === 'object') {
-        const label = typeof frame.label === 'string' && frame.label ? frame.label : null;
-        st.scopeHeld = null;                                    // S39: the server's switch wins over a held pick
-        setScope({ ...scopeFromContext(frame.scope), label }, { persist: false, focus: false });
-        if (st.scope.pinned && !label) resolveScopeLabel();
+        applyServerScope(frame.scope, frame.label);
       }
       return;
     }

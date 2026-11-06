@@ -430,3 +430,170 @@ test('the project or workspace page on screen: named apart from the scope, a top
   assert.equal(none.pageProject, undefined, 'No project is never a page on screen');
   await idle();   // the mock turn (and its title job) ends before after() drops WORCA_MOCK: a later title spawn would be the real CLI
 });
+
+test('scope from a pasted link: a No-project send switches to the one project the link matches; a pinned scope, a declined card, a switch-back and a composer chat never do; two matches give a hint; a remote login never leaves the server', async () => {
+  const { mkdir, writeFile } = await import('node:fs/promises');
+  const { addProject } = await import('../src/core/projects.mjs');
+  const dirs = [];
+  const projectWith = async (name, origin) => {
+    const dir = await mkdtemp(join(tmpdir(), 'worca-cc-askscope-link-'));
+    dirs.push(dir);
+    await mkdir(join(dir, '.git'));
+    if (origin === 'config-dir') await mkdir(join(dir, '.git', 'config'));
+    else await writeFile(join(dir, '.git', 'config'), `[core]\n\tbare = false\n[remote "origin"]\n\turl = ${origin}\n`);
+    return (await addProject({ name, path: dir })).find((p) => p.name === name);
+  };
+  const turnOf = async (threadId) => {
+    for (let i = 0; i < 500 && !mod._testing.askJobs.get(threadId)?.turn; i++) await new Promise((r) => setTimeout(r, 10));
+    return mod._testing.askJobs.get(threadId).turn;
+  };
+  const NOPROJ = { view: 'chat', pinned: false };
+  const ISSUE = 'Please fix https://github.com/Acme/Shop/issues/12.';
+  const autoNotices = (id) => store.listMessages(id).filter((m) => (m.blocks || []).some((b) => b && b.autoScope));
+  try {
+    const shop = await projectWith('Shop', 'https://github.com/Acme/Shop.git');
+    const twinA = await projectWith('Twin A', 'https://github.com/Acme/Twin.git');
+    const twinB = await projectWith('Twin B', 'git@github.com:acme/twin.git');
+    const vault = await projectWith('Vault', 'https://bob:hunter2@github.com/Acme/Vault.git');
+    const odd = await projectWith('Odd', 'config-dir');
+    await checkRows([
+      { name: 'R1 a No-project send with an issue link switches: stored scope, the autoScope notice before the user row, the ask-scope frame, the 202 scope, the prompt\'s project: and scope: lines', run: async () => {
+        await idle();
+        const t = threadWithHistory({ pinned: false });
+        const w = openWs(); await w.opened;
+        try {
+          const r = await post(`/api/ask/threads/${t.id}/messages`, { text: ISSUE, ...MODEL, context: NOPROJ });
+          assert.equal(r.status, 202, await r.clone().text());
+          const body = await r.json();
+          assert.deepEqual(body.scope, { pinned: true, projectKey: shop.key, label: 'Shop' });
+          assert.deepEqual(store.getThread(t.id).context, { view: 'chat', pinned: true, projectKey: shop.key });
+          const turn = await turnOf(t.id);
+          assert.ok(turn.prompt.includes(`project: Shop (key ${shop.key}) [pinned by the user]\nscope: worca switched this chat to this project from the link in the message; the user can switch back with the scope pill\n`), turn.prompt);
+          await idle();
+          const rows = store.listMessages(t.id);
+          assert.deepEqual(rows.slice(0, 4).map((m) => [m.role, m.text]), [['user', ROOM], ['system', 'Switched to Shop'], ['system', 'Switched to Shop'], ['user', ISSUE]]);
+          assert.deepEqual(rows[2].blocks, [{ kind: 'notice', text: 'Switched to Shop', autoScope: { projectKey: shop.key } }]);
+          await waitFor(() => w.frames.some((f) => f.type === 'ask-scope' && f.threadId === t.id));
+          assert.deepEqual(w.frames.find((f) => f.type === 'ask-scope' && f.threadId === t.id), { type: 'ask-scope', threadId: t.id, scope: { pinned: true, projectKey: shop.key }, label: 'Shop' });
+          await waitFor(() => w.frames.some((f) => f.type === 'ask-message' && f.message.id === rows[2].id));
+        } finally { w.ws.close(); }
+      } },
+      { name: 'R1b an empty chat switches with the notice and no divider', run: async () => {
+        await idle();
+        const { thread } = await (await post('/api/ask/threads', {})).json();
+        const r = await post(`/api/ask/threads/${thread.id}/messages`, { text: ISSUE, ...MODEL, context: NOPROJ });
+        assert.equal(r.status, 202, await r.clone().text());
+        await idle();
+        assert.deepEqual(store.listMessages(thread.id).map((m) => [m.role, m.text]).slice(0, 2), [['system', 'Switched to Shop'], ['user', ISSUE]]);
+      } },
+      { name: 'R2 a send whose context pins another project keeps it; a stored workspace keeps it, and its pinned:false send does not auto-switch; no notice, no `scope` in the 202', run: async () => {
+        await idle();
+        const t = threadWithHistory({ pinned: false });
+        const r = await post(`/api/ask/threads/${t.id}/messages`, { text: ISSUE, ...MODEL, context: { view: 'chat', pinned: true, projectKey: android.key } });
+        assert.equal(r.status, 202, await r.clone().text());
+        assert.deepEqual(Object.keys(await r.json()).sort(), ['assistantMessageId', 'attachments', 'contexts', 'userMessageId']);
+        assert.equal(store.getThread(t.id).context.projectKey, android.key);
+        assert.deepEqual(autoNotices(t.id), []);
+        await idle();
+        const ws = threadWithHistory({ pinned: true, workspaceId: 'wks-havn-0000abcd' });
+        const r2 = await post(`/api/ask/threads/${ws.id}/messages`, { text: ISSUE, ...MODEL, context: { view: 'chat' } });
+        assert.equal(r2.status, 202, await r2.clone().text());
+        assert.equal((await r2.json()).scope, undefined);
+        assert.equal(store.getThread(ws.id).context.workspaceId, 'wks-havn-0000abcd', 'a send without `pinned` keeps the stored workspace');
+        await idle();
+        const r3 = await post(`/api/ask/threads/${ws.id}/messages`, { text: ISSUE, ...MODEL, context: NOPROJ });
+        assert.equal(r3.status, 202, await r3.clone().text());
+        assert.equal((await r3.json()).scope, undefined);
+        assert.equal(store.getThread(ws.id).context.projectKey, undefined, 'a stored scope is never replaced by a link');
+        assert.deepEqual(autoNotices(ws.id), []);
+        await idle();
+      } },
+      { name: 'R3 a chat with a scope-switch card about the project (any state) stays in No project', run: async () => {
+        await idle();
+        const t = threadWithHistory({ pinned: false });
+        store.appendMessage(t.id, { role: 'assistant', text: '', status: 'done', blocks: [{ kind: 'card', id: 'card_0000ab77', state: 'declined',
+          card: { type: 'scope-switch', reason: 'r', summary: 'Shop', candidates: [{ projectKey: shop.key, name: 'Shop', path: shop.path, vcs: 'git' }] } }] });
+        const r = await post(`/api/ask/threads/${t.id}/messages`, { text: ISSUE, ...MODEL, context: NOPROJ });
+        assert.equal(r.status, 202, await r.clone().text());
+        assert.equal((await r.json()).scope, undefined);
+        assert.deepEqual(store.getThread(t.id).context, { view: 'chat', pinned: false });
+        assert.deepEqual(autoNotices(t.id), []);
+        await idle();
+      } },
+      { name: 'R4 after an auto-switch, a pill switch-back to No project and another link to the project: stays in No project (clarify 1)', run: async () => {
+        await idle();
+        const t = threadWithHistory({ pinned: false });
+        assert.equal((await post(`/api/ask/threads/${t.id}/messages`, { text: ISSUE, ...MODEL, context: NOPROJ })).status, 202);
+        assert.equal(store.getThread(t.id).context.projectKey, shop.key);
+        await idle();
+        assert.equal((await patch(`/api/ask/threads/${t.id}`, { scope: { pinned: false } })).status, 200);
+        const r = await post(`/api/ask/threads/${t.id}/messages`, { text: 'and https://github.com/Acme/Shop/pull/40', ...MODEL, context: NOPROJ });
+        assert.equal(r.status, 202, await r.clone().text());
+        assert.equal((await r.json()).scope, undefined);
+        assert.deepEqual(store.getThread(t.id).context, { view: 'chat', pinned: false });
+        assert.equal(autoNotices(t.id).length, 1, 'only the first switch');
+        await idle();
+      } },
+      { name: 'R5 two projects on one origin: no switch, the prompt has a scope hint: line naming both', run: async () => {
+        await idle();
+        const t = threadWithHistory({ pinned: false });
+        const r = await post(`/api/ask/threads/${t.id}/messages`, { text: 'see https://github.com/Acme/Twin/pull/3/files', ...MODEL, context: NOPROJ });
+        assert.equal(r.status, 202, await r.clone().text());
+        assert.equal((await r.json()).scope, undefined);
+        assert.deepEqual(store.getThread(t.id).context, { view: 'chat', pinned: false });
+        const turn = await turnOf(t.id);
+        assert.ok(turn.prompt.includes(`project: - [No project]\nscope hint: links in this message match 2 projects: ${twinA.key} "Twin A", ${twinB.key} "Twin B"; if you ask, propose_scope_switch with only these\n`), turn.prompt);
+        assert.deepEqual(autoNotices(t.id), []);
+        await idle();
+      } },
+      { name: 'R6 an origin with a login: the user and password appear in no stored row, the 202, the frames or the prompt', run: async () => {
+        await idle();
+        const t = threadWithHistory({ pinned: false });
+        const w = openWs(); await w.opened;
+        try {
+          const r = await post(`/api/ask/threads/${t.id}/messages`, { text: 'https://github.com/Acme/Vault/issues/1', ...MODEL, context: NOPROJ });
+          assert.equal(r.status, 202);
+          const text = await r.text();
+          assert.deepEqual(JSON.parse(text).scope, { pinned: true, projectKey: vault.key, label: 'Vault' });
+          const turn = await turnOf(t.id);
+          await idle();
+          await waitFor(() => w.frames.some((f) => f.type === 'ask-scope' && f.threadId === t.id));
+          for (const [what, s] of [['202', text], ['rows', JSON.stringify(store.listMessages(t.id))], ['thread', JSON.stringify(store.getThread(t.id))],
+            ['frames', JSON.stringify(w.frames)], ['prompt', turn.prompt], ['system prompt', String(turn.systemPrompt || '')]]) {
+            assert.ok(!s.includes('hunter2') && !/\bbob\b/.test(s), `${what} carries the login`);
+          }
+        } finally { w.ws.close(); }
+      } },
+      { name: 'R7 a composer chat never switches', run: async () => {
+        await idle();
+        const { thread } = await (await post('/api/ask/threads', { mode: 'composer' })).json();
+        const composer = { sessionId: 'cs_ab12cd34', docToken: 'd_ab12cd34', graph: { name: 'x', nodes: [], wires: [] }, selection: null, drafts: [] };
+        const r = await post(`/api/ask/threads/${thread.id}/messages`, { text: ISSUE, ...MODEL, context: { pinned: false }, composer });
+        assert.equal(r.status, 202, await r.clone().text());
+        assert.equal((await r.json()).scope, undefined);
+        assert.equal(store.getThread(thread.id).context.projectKey, undefined);
+        assert.deepEqual(autoNotices(thread.id), []);
+        await idle();
+      } },
+      { name: 'R8 a message with no link reads no origin, and an unreadable origin never fails a send', run: async () => {
+        await idle();
+        const t = threadWithHistory({ pinned: false });
+        const r = await post(`/api/ask/threads/${t.id}/messages`, { text: `the ${odd.name} app is slow`, ...MODEL, context: NOPROJ });
+        assert.equal(r.status, 202, await r.clone().text());
+        assert.equal((await r.json()).scope, undefined);
+        assert.deepEqual(store.getThread(t.id).context, { view: 'chat', pinned: false });
+        await idle();
+        const r2 = await post(`/api/ask/threads/${t.id}/messages`, { text: 'https://github.com/Acme/Odd/issues/2', ...MODEL, context: NOPROJ });
+        assert.equal(r2.status, 202, await r2.clone().text());
+        assert.deepEqual(store.getThread(t.id).context, { view: 'chat', pinned: false });
+        await idle();
+      } },
+    ]);
+  } finally {
+    const { removeProject } = await import('../src/core/projects.mjs');
+    for (const name of ['Shop', 'Twin A', 'Twin B', 'Vault', 'Odd']) {
+      try { await removeProject(name, { pruneWaitMs: 0 }); } catch { /* not added */ }
+    }
+    for (const d of dirs) await rm(d, { recursive: true, force: true });
+  }
+});
