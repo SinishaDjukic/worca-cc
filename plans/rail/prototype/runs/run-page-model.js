@@ -46,7 +46,7 @@
       stages: run({ plan: [s('Clarify', 'now', '', { live: 'Setting up the worktree', when: 'now' }), next('Plan'), next('Refine plan'), next('Plan review')], build: allNext(BUILD), review: allNext(REVIEW) }) },
     { id: 'working', group: 'Run', label: 'Working', figs: LIVE_FIGS,
       stages: run({ review: [REVIEW[0], REVIEW[1], s('Manual web UI testing', 'now', '21m', { live: 'Opening the Runs page at 375px to check the breadcrumb', when: '8s ago' })] }) },
-    { id: 'question', group: 'Run', label: 'Needs you', figs: LIVE_FIGS,
+    { id: 'question', group: 'Run', label: R.runState('question').word, figs: LIVE_FIGS,
       stages: run({ review: [s('Review implementation', 'ask', '12m', { live: 'Keep the breadcrumb on phones under 600px, or show only Back there?', when: '4m' }), next('Manual tests checklist'), next('Manual web UI testing')] }) },
     { id: 'paused', group: 'Run', label: 'Paused', detail: 'Usage limit · resumes at 14:00', figs: [['Time', '2h 40m'], ['Cost', '$48.30']],
       stages: run({ build: [s('Implementation', 'paused', '1h 2m')], review: allNext(REVIEW) }) },
@@ -198,9 +198,9 @@
     { id: 'network', group: 'Live', label: 'Waiting for the network', detail: 'Waiting for the network · api.anthropic.com · retries by itself until 14:40', figs: LIVE_FIGS,
       stages: run({ review: [REVIEW[0], s('Manual tests checklist', 'now', '1m', { live: 'Waiting for the network', when: '40s' }), next('Manual web UI testing')] }) },
     { id: 'recovery', group: 'Live', label: 'Cannot reach the model', detail: 'This step could not reach the model · it retries by itself until 14:40', figs: LIVE_FIGS, ev: REC_EV,
-      stages: run({ build: [s('Implementation', 'problem', '1h 2m', { live: 'Could not reach the model' })], review: allNext(REVIEW) }) },
+      stages: run({ build: [s('Implementation', 'problem', '1h 2m', { live: R.failureOf('Reach the model').title })], review: allNext(REVIEW) }) },
     { id: 'recovery-auth', state: 'recovery', group: 'Live', label: 'Sign-in expired', detail: 'The Claude token has expired · run claude setup-token, then Retry', figs: LIVE_FIGS, ev: AUTH_EV,
-      stages: run({ build: [s('Implementation', 'problem', '1h 2m', { live: 'Could not reach the model' })], review: allNext(REVIEW) }) },
+      stages: run({ build: [s('Implementation', 'problem', '1h 2m', { live: R.failureOf('Reach the model').title })], review: allNext(REVIEW) }) },
     { id: 'parallel', state: 'working', group: 'Live', label: 'Parallel steps', figs: LIVE_FIGS,
       stages: run({ review: [s('Review implementation', 'now', '12m', { live: 'Reading the diff', when: '2s ago' }), s('Manual tests checklist', 'now', '9m', { live: 'Writing the checklist', when: '5s ago' }), s('Manual web UI testing', 'now', '3m', { live: 'Opening the Runs page', when: '1s ago' })] }) },
     { id: 'roles-live', state: 'working', group: 'Live', label: 'Role reviews running', figs: LIVE_FIGS,
@@ -236,7 +236,7 @@
     // A scheduled run before it is a run
     ticket('ticket-missed', 'ticket-missed', 'Missed its start', 'Missed its 09:00 start · Worca was off'),
     ticket('ticket-firing', 'ticket-firing', 'Its time has come', 'Starting from its schedule', { over: true }),
-    ticket('ticket-failed', 'ticket-failed', 'Could not start', 'Could not start at 09:00: the project folder is gone'),
+    ticket('ticket-failed', 'ticket-failed', R.failureOf('Start').title, R.failureOf('Start at 09:00').title + ': the project folder is gone'),
     ticket('ticket-canceled', 'ticket-ended', 'Cancelled', 'Cancelled before it started'),
     ticket('ticket-skipped', 'ticket-ended', 'Skipped', 'Skipped: the last one was still running'),
 
@@ -306,7 +306,7 @@
   // pointing at the merged branch unless GitHub deletes that branch).
   const CHAIN_PRS = [['#959', '+278 \u221264'], ['#960', '+41 \u221258'], ['#961', '+39 \u221222']];
   const CHAIN_START = ['ready', 'review', 'failing'];
-  const PR_LOOK = { ready: ['done', 'Ready to merge', '7 of 7 checks · approved'], review: ['review', 'In review', '5 of 7 checks'],
+  const PR_LOOK = { ready: ['done', R.runState('approved').word, '7 of 7 checks · approved'], review: ['review', R.runState('checks').word, '5 of 7 checks'],
     checks: ['review', 'Checks running', 'moved onto dev · checks run again'], failing: ['problem', 'Checks failing', '2 failed'], merged: ['merged', 'Merged', 'merged'] };
   const chainBase = (st, i) => (i === 0 || st[i - 1] === 'merged' ? 'dev' : CHAIN_PRS[i - 1][0]);
   function reviewOf(st) {
@@ -326,7 +326,7 @@
     const action = f >= 0 ? A('Fix checks on ' + CHAIN_PRS[f][0], 'refresh', true, (ready ? ['Merge ' + CHAIN_PRS[k][0]] : []).concat(tools))
       : ready ? A('Merge ' + CHAIN_PRS[k][0], 'merge', true, tools) : A('View PRs', 'pr', false, tools.slice(1));
     const detail = [f >= 0 ? CHAIN_PRS[f][0] + ' checks failing' : '', ready ? CHAIN_PRS[k][0] + ' ready to merge' : '', !ready && f < 0 ? CHAIN_PRS[k][0] + ' ' + PR_LOOK[st[k]][1].toLowerCase() : ''].filter(Boolean).join(' · ');
-    return Object.assign({}, c, { stages, word: f >= 0 || ready ? 'Needs you' : 'In review', dot: f >= 0 || ready ? 'is-amber' : 'is-peach is-pulse', detail, action });
+    return Object.assign({}, c, { stages, word: R.runState(f >= 0 || ready ? 'question' : 'checks').word, dot: f >= 0 || ready ? 'is-amber' : 'is-peach is-pulse', detail, action });
   }
 
 
@@ -532,7 +532,7 @@
       artifacts: planDone || built ? DETAIL.artifacts : DETAIL.artifacts.slice(0, 0) };
   }
   // A feature reads from the run that holds it up: failed first, then one that asks, one paused, one stopped.
-  const HOLD = [['Failed', 'group-failed', (k, n) => 'Run ' + k + ' of ' + n + ' · failed'], ['Needs you', 'group-needs', (k, n) => 'Run ' + k + ' of ' + n + ' · needs you'],
+  const HOLD = [['Failed', 'group-failed', (k, n) => 'Run ' + k + ' of ' + n + ' · failed'], [R.runState('group-needs').word, 'group-needs', (k, n) => 'Run ' + k + ' of ' + n + ' · needs you'],
     ['Paused', 'group-paused', (k, n, m) => 'Run ' + k + ' of ' + n + ' · ' + ((m.detail || 'paused').split(' · ')[0].toLowerCase())], ['Stopped', 'group-stopped', (k) => 'Stopped at run ' + k]];
   function groupHold(c) {
     if (!c.follows) return null;

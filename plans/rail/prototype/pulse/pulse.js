@@ -62,15 +62,11 @@ const plural = (n, one, many) => `${n} ${n === 1 ? one : many || one + 's'}`;
 // One compact menu (Rail › Menu): one line per item, a leading check for a choice, the help in the tooltip.
 function menu(id, items, align) {
   if (ui.menu !== id) return '';
-  return `<div class="menu pz-menu${align === 'right' ? ' is-right' : ''}${inCls('menu')}" role="menu">${items.map((it) => {
-    if (it.sep) return '<div class="menu-sep" role="separator"></div>';
-    const role = it.checked === undefined ? 'menuitem' : 'menuitemradio';
-    return `<button type="button" class="menu-item${it.danger ? ' is-danger' : ''}" role="${role}"${it.checked === undefined ? '' : ` aria-checked="${!!it.checked}"`} data-pick="${esc(id)}|${esc(it.id)}"${it.help ? ` title="${esc(it.help)}"` : ''}><span class="mi-l">${esc(it.text)}</span>${it.hint ? `<span class="mi-hint">${esc(it.hint)}</span>` : ''}</button>`;
-  }).join('')}</div>`;
+  return R.compactMenu({ items: items.map((it) => (it.sep ? it : { ...it, id: `${id}|${it.id}` })), cls: `pz-menu${align === 'right' ? ' is-right' : ''}${inCls('menu')}`, pickAttr: 'data-pick', motion: false });
 }
 // A picker in the sentence it changes: the chosen words, a chevron, the menu under it.
 function picker(id, text, items, tip) {
-  return `<span class="pz-pick"><button type="button" class="pd-base is-words" data-menu="${esc(id)}" aria-haspopup="menu" aria-expanded="${ui.menu === id}" title="${esc(tip)}">${esc(text)}${svg('chevron', 12)}</button>${menu(id, items)}</span>`;
+  return R.wordPicker({ text, tip, cls: 'is-words', wrapCls: 'pz-pick', chevron: svg('chevron', 12), open: ui.menu === id, menuHtml: menu(id, items), attrs: { 'data-menu': id } });
 }
 // A ring that shades along its arc: neutral at the start, amber at the warning line, red at the limit, so how far it
 // has filled shows which colours it has reached. Used up, it is full and solid red (a reached limit is never hidden).
@@ -93,36 +89,36 @@ function actionRows(menu) {
 }
 function sideFoot() {
   const rs = M.rings(C(), ui.s.warnAt), n = runningActions().length, label = plural(n, 'running action');
-  const actions = n ? `<div class="side-actions" role="group" aria-label="Running actions"><div class="side-actions-rows"><div class="act-rows">${actionRows(false)}</div></div><button type="button" class="act-tile" data-act-tile aria-haspopup="menu" aria-expanded="${ui.fly}" aria-label="${esc(label)}" title="${esc(label)}"><span class="pdot" aria-hidden="true"></span><span class="act-tile-n">${n}</span></button></div>` : '';
+  const actions = n ? `<div class="side-actions" role="group" aria-label="Running actions"><div class="side-actions-rows"><div class="act-rows">${actionRows(false)}</div></div>${R.actionTile({ n, label, open: !!ui.fly })}</div>` : '';
   const update = C().update ? '<a class="side-update" href="#settings/general" data-land="general|Version" aria-label="Update available" title="Opens Settings › General, on the version"><span class="side-update-dot" aria-hidden="true"></span><span class="side-update-label">Update available</span></a>' : '';
-  const acct = `<button type="button" class="pz-acct${ui.acct ? ' is-open' : ''}" data-acct data-presence="${isAway() ? 'away' : 'here'}" aria-haspopup="menu" aria-expanded="${ui.acct}" aria-label="Account and usage${isAway() ? ', away' : ''}: ${esc(rs.map((r) => r.line).join('; ') || 'no usage reported yet')}">${avatar()}<span class="pz-acct-name">${esc(personName())}</span>${svg('updown', 14, 'pz-updown')}</button>`;
+  const acct = R.accountButton({ name: personName(), avatar: avatar(), chevron: svg('updown', 14, 'pz-updown'), away: isAway(), open: !!ui.acct, label: `Account and usage${isAway() ? ', away' : ''}: ${rs.map((r) => r.line).join('; ') || 'no usage reported yet'}` });
   return actions + update + acct;
 }
 function actionsFly() {
   if (!ui.fly || !runningActions().length) return '';
-  return `<div class="menu nav-fly act-fly pz-act-fly${inCls('sub')}" role="menu" aria-label="Running actions"><span class="nav-fly-k">Running actions</span><div class="act-fly-rows"><div class="act-rows">${actionRows(true)}</div></div></div>`;
+  return R.navFlyout({ label: 'Running actions', cls: `act-fly pz-act-fly${inCls('sub')}`, body: `<span class="nav-fly-k">Running actions</span><div class="act-fly-rows"><div class="act-rows">${actionRows(true)}</div></div>` });
 }
 const mini = (pct, t) => gring(pct, 'pz-mini', t);
 const pname = (p) => M.PROVIDER[p].name;
 
 // ---- shell ----
 const NAV = [['runs', 'Runs'], ['chat', 'Chats'], ['clock', 'Schedules'], ['folder', 'Projects']];
-const navGo = (id, ic, t, tip) => `<button type="button" class="pz-nav-i${ui.page === id ? ' is-on" aria-current="page' : ''}" data-go="${id}" title="${tip}">${svg(ic, 16)}<span class="pz-nav-l">${t}</span></button>`;
+const navGo = (id, ic, t, tip) => R.navItem({ label: t, icon: svg(ic, 16), current: ui.page === id, title: tip, attrs: { 'data-go': id } });
 function sidebar() {
   return `<aside class="pz-side">
     <div class="pz-brand"><span class="pz-word${swapCls}">${ui.page === 'settings' ? 'Settings' : 'Worca'}</span></div>
     ${ui.page === 'settings' ? settingsMenu() : ''}
-    <nav class="pz-nav${ui.page === 'settings' ? ' is-app' : ''}${swapCls}">${NAV.map(([ic, t]) => ic === 'runs' ? navGo('runs', ic, t, 'Runs: the page behind Pulse in this prototype') : `<button type="button" class="pz-nav-i" aria-disabled="true" title="${t} is not in this prototype">${svg(ic, 16)}<span class="pz-nav-l">${t}</span></button>`).join('')}</nav>
+    <nav class="pz-nav${ui.page === 'settings' ? ' is-app' : ''}${swapCls}">${NAV.map(([ic, t]) => ic === 'runs' ? navGo('runs', ic, t, 'Runs: the page behind Pulse in this prototype') : R.navItem({ label: t, icon: svg(ic, 16), off: true, title: `${t} is not in this prototype` })).join('')}</nav>
     <div class="pz-foot">${sideFoot()}</div>
   </aside>`;
 }
 function topbar() {
   const needs = nowRuns().needs.length, un = unread().length, run = nowRuns().running.length;
-  const badge = needs ? `<span class="topnav-badge" data-tone="need">${needs}</span>` : un ? `<span class="topnav-badge" data-tone="run">${un}</span>` : '';
+  const badge = needs ? { n: needs, tone: 'need' } : un ? { n: un, tone: 'run' } : null;
   const words = [needs && plural(needs, 'needs you', 'need you'), un && plural(un, 'unread'), run && `${run} running`].filter(Boolean).join(' · ') || 'Nothing new';
   return `<header class="pz-top"><div class="pz-top-l">${R.search({ value: ui.q || '', label: 'Search or ask', results: searchResults() })}</div><div class="pz-top-r">
-    <button type="button" class="btn btn-sm btn-quiet topnav-act pz-pulse-b" data-pop aria-haspopup="dialog" aria-expanded="${ui.pop}" title="Pulse: ${esc(words)}">${svg('signal', 16)}<span class="pz-pulse-l">Pulse</span>${badge}</button>
-    <button type="button" class="btn btn-sm btn-primary" data-newrun title="Start a run">${svg('plus', 14)}<span class="pz-new-l">New run</span></button>
+    ${R.topBarAction({ label: 'Pulse', icon: svg('signal', 16), labelCls: 'pz-pulse-l', kind: 'quiet', cls: 'topnav-act pz-pulse-b', badge, title: 'Pulse: ' + words, attrs: { 'data-pop': true, 'aria-haspopup': 'dialog', 'aria-expanded': String(!!ui.pop) } })}
+    ${R.topBarAction({ label: 'New run', icon: svg('plus', 14), labelCls: 'pz-new-l', kind: 'primary', title: 'Start a run', attrs: { 'data-newrun': true } })}
   </div></header>`;
 }
 
@@ -131,10 +127,8 @@ function topbar() {
 // In Updates the rail holds the mark (amber: still waits for you, blue: unread, nothing once read) and, while selecting,
 // the tick box in its place: one text edge for every list.
 function row({ dot, mark: own, title, meta, time, tip, key, check, unreadDot, resolved, flash, fix }) {
-  const mark = own ? own : dot ? `<span class="status-dot ${dot}" aria-hidden="true"></span>` : unreadDot ? '<span class="pz-unread" title="Unread"></span>' : '';
-  return R.row({ kind: 'pulse', cls: `${check !== undefined ? 'has-check' : ''}${check ? ' is-sel' : ''}${unreadDot ? ' is-unread' : ''}${flash ? ' is-flash' : ''}`, attrs: { 'data-row': key },
-    rail: `${mark}${check !== undefined ? `<label class="pz-check" title="Select"><input type="checkbox" data-sel="${esc(key)}"${check ? ' checked' : ''} aria-label="Select ${esc(title)}"></label>` : ''}`,
-    text: `<button type="button" class="pz-row-main row-btn" data-open="${esc(key)}" title="${esc(`${title}\n${meta}\n${tip}`)}"><span class="pz-row-t${unreadDot ? ' is-unread' : ''}">${esc(title)}${resolved ? '<span class="pz-resolved">Resolved</span>' : ''}</span><span class="pz-row-m">${esc(meta)}</span></button><span class="pz-row-end"><span class="pz-row-time">${esc(time)}</span>${fix ? R.button({ label: fix, kind: 'quiet', attrs: { 'data-fix': key, title: `${fix}: deals with it here, and the row reads Resolved` } }) : ''}</span>` });
+  return R.pulseRow({ mark: own || (dot ? R.statusDot({ tone: dot }) : ''), title, meta, time, tip, id: key, check, unread: unreadDot, resolved, flash,
+    action: fix ? R.button({ label: fix, kind: 'quiet', attrs: { 'data-fix': key, title: `${fix}: deals with it here, and the row reads Resolved` } }) : '' });
 }
 const dotOf = (u) => (u.sev === 'needs' && u.open ? 'is-amber' : '');
 const withCheckBusy = () => ui.selecting;
@@ -149,7 +143,7 @@ function nowSections() {
   const c = nowShown(), lim = c.limits;
   const bar = `<div class="pz-bar"><span class="pz-rail"></span><span class="pz-sentence">Showing ${picker('nowShow', NOW_SHOWS.find((x) => x.id === ui.nowShow).text, NOW_SHOWS.map((x) => ({ ...x, checked: x.id === ui.nowShow, hint: String(nowN(nowShown(x.id, ui.nowFrom))) })), 'Which of Now\'s sections the panel shows')} from ${picker('nowFrom', ui.nowFrom === 'all' ? 'all projects' : ui.nowFrom, [{ id: 'all', text: 'all projects', checked: ui.nowFrom === 'all', hint: String(nowN(nowShown(ui.nowShow, 'all'))) }, { sep: true }].concat(nowProjects().map((p) => ({ id: p, text: p, checked: ui.nowFrom === p, hint: String(nowN(nowShown(ui.nowShow, p))) }))), 'Which project\'s runs it shows; limits belong to a harness and show for every project')}</span></div>`;
   const sec = (h, n, rows) => (n ? `<section class="pz-sec"><h3 class="pz-h">${h} <span class="n">${n}</span></h3><div class="pz-list">${rows}</div></section>` : '');
-  const out = sec('Needs you', c.needs.length, c.needs.map((r, i) => runRow(r, 'need' + i, 'Opens the run page at what it asks')).join(''))
+  const out = sec(R.runState('question').word, c.needs.length, c.needs.map((r, i) => runRow(r, 'need' + i, 'Opens the run page at what it asks')).join(''))
     + sec('Limits', lim.length, lim.map((l, i) => row({ dot: l.tone === 'over' ? 'is-red' : 'is-amber', title: l.title, meta: l.detail, time: l.time, key: 'lim' + i, tip: `${l.tip} · opens the usage card` })).join(''))
     + sec('Running', c.running.length, c.running.map((r, i) => runRow(r, 'run' + i, 'Opens the live run')).join(''))
     + scheduledSection(c.scheduled);
@@ -192,13 +186,13 @@ function startDetail(r) {
 function popover() {
   if (!ui.pop) return '';
   const un = unread();
-  const more = `<span class="pz-pick">${`<button type="button" class="btn btn-sm btn-quiet btn-icon" data-menu="more" aria-haspopup="menu" aria-expanded="${ui.menu === 'more'}" aria-label="More" title="More">${svg('more', 16)}</button>`}${menu('more', [
+  const more = `<span class="pz-pick">${R.button({ label: 'More', kind: 'quiet', iconOnly: true, icon: svg('more', 16), attrs: { 'data-menu': 'more', 'aria-haspopup': 'menu', 'aria-expanded': String(ui.menu === 'more') } })}${menu('more', [
     { id: 'allread', text: 'Mark all read', help: un.length ? 'Marks every unread update read; nothing is cleared' : 'Nothing is unread' },
     { id: 'clearread', text: 'Clear read', help: 'Moves every read update in this view to Cleared' },
     ...(ui.popTab === 'updates' ? [{ id: 'select', text: 'Select', help: 'Tick updates to mark read or clear several at once' }] : []), { sep: true },
     { id: 'settings', text: 'Notification settings', help: 'Settings › Notifications: what reaches you and what a start does near a limit' }], 'right')}</span>`;
   return `<div class="pz-popover${inCls('pop')}" role="dialog" aria-label="Pulse">
-    <div class="pz-phead"><div class="tabs pz-ptabs" role="tablist">${[['now', 'Now', nowCount()], ['updates', 'Updates', un.length]].map(([id, t, n]) => `<button type="button" class="tab" role="tab" aria-selected="${ui.popTab === id}" data-ptab="${id}" title="${id === 'now' ? 'What is true right now: it changes by itself and cannot be cleared' : `What happened: read, select and clear, like runs. Kept for 90 days${C().identity ? '. Read and cleared are yours; others on this sign-in keep their own' : ''}`}">${t}${n ? ` <span class="n">${n}</span>` : ''}</button>`).join('')}</div>${more}</div>
+    <div class="pz-phead">${R.tabs({ cls: 'pz-ptabs', items: [{ id: 'now', label: 'Now', count: nowCount(), selected: ui.popTab === 'now', tip: 'What is true right now: it changes by itself and cannot be cleared' }, { id: 'updates', label: 'Updates', count: un.length, selected: ui.popTab === 'updates', tip: `What happened: read, select and clear, like runs. Kept for 90 days${C().identity ? '. Read and cleared are yours; others on this sign-in keep their own' : ''}` }], hooks: (t) => ({ 'data-ptab': t.id, title: t.tip }) })}${more}</div>
     <div class="pz-pbody">${ui.popTab === 'now' ? nowSections() : updatesPanel()}</div>${bulkBar()}
   </div>`;
 }
@@ -213,28 +207,28 @@ function acctMenu() {
   const lvl = LEVELS_UI.find((l) => l[0] === R.prefs.mode()), away = awayRow();
   // Who is looking, only on a shared sign-in; your team's new setup, until you look at it; the way past a blocked budget.
   const id = c.identity ? `<div class="mcard id-card" role="group" aria-label="Signed in as"><span class="mc-k">Signed in as</span><b>${esc(personName())}</b><small>${esc(c.identity.via)}</small></div>` : '';
-  const team = c.teamSetup && !ui.teamSeen ? `<button type="button" class="mi menu-item pz-team" role="menuitem" data-team title="Opens Settings › Team policy; the note goes once you have looked">${R.statusDot({ tone: 'is-amber' })}<span class="mi-lbl">Your team updated the recommended setup</span><span class="mi-val">Review</span></button>` : '';
-  const raise = c.budget?.blocked ? `<button type="button" class="mi menu-item" role="menuitem" data-land="runs|Budget" title="Runs pause until the budget resets. Opens Settings › Runs, on Budget">${svg('up', 16, 'mi-ic')}<span class="mi-lbl">Raise limit</span><span class="mi-val">${M.usd(c.budget.limit)}</span></button>` : '';
-  const sub = (id) => `data-sub="${id}" aria-haspopup="menu" aria-expanded="${ui.sub === id}"`;
+  const team = c.teamSetup && !ui.teamSeen ? R.accountItem({ label: 'Your team updated the recommended setup', cls: 'pz-team', mark: R.statusDot({ tone: 'is-amber' }), value: 'Review', attrs: { 'data-team': true, title: 'Opens Settings › Team policy; the note goes once you have looked' } }) : '';
+  const raise = c.budget?.blocked ? R.accountItem({ label: 'Raise limit', mark: svg('up', 16, 'mi-ic'), value: M.usd(c.budget.limit), attrs: { 'data-land': 'runs|Budget', title: 'Runs pause until the budget resets. Opens Settings › Runs, on Budget' } }) : '';
+  const sub = (id) => ({ 'data-sub': id, 'aria-haspopup': 'menu', 'aria-expanded': String(ui.sub === id) });
   // Top to bottom, rarest to most used, since the menu opens up from the avatar: how Worca looks and the door to
   // Settings; you today (Away, Keep awake); what the rings say, right above the avatar that wears them.
-  return `<div class="menu nav-fly acct-menu${ui.sub ? ' has-sub' : ''}${inCls('acct')}" role="menu" aria-label="Account">
+  return R.navFlyout({ label: 'Account', cls: `acct-menu${ui.sub ? ' has-sub' : ''}${inCls('acct')}`, body: `
     ${id}<div class="msect" role="group" aria-label="Worca">${team}
-      <button type="button" class="mi menu-item" role="menuitem" ${sub('lvl')} title="How much of Worca you see">${svg('sliders', 16, 'mi-ic')}<span class="mi-lbl">Interface mode</span><span class="mi-val">${lvl[1]}</span>${svg('chevR', 14, 'mi-chev')}</button>
-      <div class="theme-sect" role="group" aria-labelledby="pz-theme-k">${svg('contrast', 16, 'mi-ic')}<span class="theme-k" id="pz-theme-k">Appearance</span><div class="theme-seg">${[['system', 'monitor'], ['light', 'sun'], ['dark', 'moon']].map(([m, ic]) => `<button type="button" class="theme-ic${appearance === m ? ' on' : ''}" role="menuitemradio" aria-checked="${appearance === m}" data-appearance="${m}" aria-label="${cap(m)}" title="${cap(m)}">${svg(ic, 14, 'mi-ic')}</button>`).join('')}</div></div>
-      <button type="button" class="mi menu-item" role="menuitem" data-go="settings" title="How Worca behaves everywhere">${svg('gear', 16, 'mi-ic')}<span class="mi-lbl">Settings</span></button>
+      ${R.accountItem({ label: 'Interface mode', mark: svg('sliders', 16, 'mi-ic'), value: lvl[1], chev: svg('chevR', 14, 'mi-chev'), attrs: { ...sub('lvl'), title: 'How much of Worca you see' } })}
+      <div class="theme-sect" role="group" aria-labelledby="pz-theme-k">${svg('contrast', 16, 'mi-ic')}<span class="theme-k" id="pz-theme-k">Appearance</span><div class="theme-seg">${[['system', 'monitor'], ['light', 'sun'], ['dark', 'moon']].map(([m, ic]) => R.themeChoice({ label: cap(m), icon: svg(ic, 14, 'mi-ic'), on: appearance === m, attrs: { 'data-appearance': m } })).join('')}</div></div>
+      ${R.accountItem({ label: 'Settings', mark: svg('gear', 16, 'mi-ic'), attrs: { 'data-go': 'settings', title: 'How Worca behaves everywhere' } })}
     </div>
     <div class="msect" role="group" aria-label="You">
-      <button type="button" class="mi menu-item away-item sw-item" role="menuitemcheckbox" aria-checked="${away.state === 'away'}" data-state="${away.state}"${away.disabled ? ' aria-disabled="true"' : ''} data-sw="away" title="${esc(away.tip)}">${svg('away', 16, 'mi-ic')}<span class="mi-lbl">Away</span>${away.hint ? `<span class="mi-hint">${esc(away.hint)}</span>` : ''}<span class="switch" aria-hidden="true"></span></button>
-      <button type="button" class="mi menu-item sw-item" role="menuitemcheckbox" aria-checked="${ui.keep}" data-sw="keep" title="Keeps the computer awake while runs are working. The display may still turn off.">${svg('cup', 16, 'mi-ic')}<span class="mi-lbl">Keep awake</span><span class="switch" aria-hidden="true"></span></button>
+      ${R.accountItem({ label: 'Away', cls: 'away-item sw-item', mark: svg('away', 16, 'mi-ic'), hint: away.hint, sw: true, attrs: { role: 'menuitemcheckbox', 'aria-checked': String(away.state === 'away'), 'data-state': away.state, 'aria-disabled': away.disabled ? 'true' : null, 'data-sw': 'away', title: away.tip } })}
+      ${R.accountItem({ label: 'Keep awake', cls: 'sw-item', mark: svg('cup', 16, 'mi-ic'), sw: true, attrs: { role: 'menuitemcheckbox', 'aria-checked': String(!!ui.keep), 'data-sw': 'keep', title: 'Keeps the computer awake while runs are working. The display may still turn off.' } })}
     </div>
     <div class="msect" role="group" aria-label="Usage">${raise}
-      <button type="button" class="mi menu-item" role="menuitem" ${sub('usage')} title="${esc(top ? `Closest to its limit: ${top.line}` : 'Limits per harness and the spend')}">${top ? gring(top.pct, 'pz-mi-ring', top.tone) : svg('signal', 16, 'mi-ic')}<span class="mi-lbl">Usage and costs</span><span class="mi-val">${esc(val)}</span>${svg('chevR', 14, 'mi-chev')}</button>
+      ${R.accountItem({ label: 'Usage and costs', mark: top ? gring(top.pct, 'pz-mi-ring', top.tone) : svg('signal', 16, 'mi-ic'), value: val, valueAlways: true, chev: svg('chevR', 14, 'mi-chev'), attrs: { ...sub('usage'), title: top ? `Closest to its limit: ${top.line}` : 'Limits per harness and the spend' } })}
     </div>
-  </div>${usageFly()}${lvlFly()}`;
+  ` }) + usageFly() + lvlFly();
 }
 // The side menus open beside the account menu (side-flyout.mjs 'beside'); on a narrow screen in its place, with a way back.
-const back = `<button type="button" class="mi menu-item pz-subback" role="menuitem" data-sub="" title="Back to the account menu">${svg('chevL', 14, 'mi-chev')}<span class="mi-lbl">Account</span></button>`;
+const back = R.accountItem({ label: 'Account', cls: 'pz-subback', mark: svg('chevL', 14, 'mi-chev'), attrs: { 'data-sub': '', title: 'Back to the account menu' } });
 function usageFly() {
   if (ui.sub !== 'usage') return '';
   const c = C(), w = ui.s.warnAt;
@@ -248,22 +242,22 @@ function usageFly() {
     const noSession = u.note ? `<p class="pz-unote" title="${esc(u.note.tip)}">${esc(u.note.text)}</p>` : '';
     return `<div class="pz-ublock"><div class="pz-uhead"><span class="pz-uname">${esc(pr.name)}</span><span class="pz-uplan" title="${esc(`${pr.vendor} · ${u.plan}`)}">${esc(pr.vendor)} · ${esc(u.plan)}</span><span class="pz-uas" title="As fresh as the last turn that used ${esc(pr.name)}">as of ${esc(u.asOf)}</span></div>${rows}${noSession}</div>`;
   };
-  return `<div class="menu nav-fly pz-fly${inCls('sub')}" role="menu" aria-label="Usage and costs">${back}
+  return R.navFlyout({ label: 'Usage and costs', cls: `pz-fly${inCls('sub')}`, body: `${back}
     <span class="nav-fly-k" title="What can stop a run, per harness: the rings around your avatar show the closest of each">Limits</span>
     <div class="pz-ublocks">${c.usage.map(block).join('')}</div>${spendCard(c)}
-    <div class="msect" role="group"><button type="button" class="mi menu-item" role="menuitem" data-go="settings" data-to="notifications" title="The warning line, what reaches you, and what Worca does when a limit is near">${svg('gear', 16, 'mi-ic')}<span class="mi-lbl">Limit settings</span></button></div>
-  </div>`;
+    <div class="msect" role="group">${R.accountItem({ label: 'Limit settings', mark: svg('gear', 16, 'mi-ic'), attrs: { 'data-go': 'settings', 'data-to': 'notifications', title: 'The warning line, what reaches you, and what Worca does when a limit is near' } })}</div>
+  ` });
 }
 // The spend card as account-menu.mjs paints it today (renderSpendCard), with the gradient ring when a budget has a limit.
 function spendCard(c) {
   const b = c.budget; if (!b) return '';
   const pct = M.spendPct(b), t = pct == null ? '' : M.tone(pct, ui.s.warnAt);
   const rows = b.limit ? `<dt>Limit</dt><dd>${M.usd(b.limit)}</dd><dt>Spent</dt><dd class="${t}">${M.usd(b.spent)}</dd>` : `<dt>Spent</dt><dd>${M.usd(b.spent)}</dd><dt>Saved</dt><dd class="pos">${M.usd(b.saved)}</dd>`;
-  return `<div class="mcard spend-card" role="group" aria-label="Spend ${b.period}" title="Estimated spend ${b.period}: ${M.usd(b.spent)}${b.limit ? ` of ${M.usd(b.limit)}` : ''}. Claude Code client-side estimate, not authoritative billing"><div class="mc-head">${pct != null ? mini(pct, t) : ''}<button type="button" class="mc-title pz-mc-link" role="menuitem" data-details title="Opens Statistics: spend per run, model and day">Spend ${b.period}</button></div><dl class="mc-rows">${rows}</dl></div>`;
+  return `<div class="mcard spend-card" role="group" aria-label="Spend ${b.period}" title="Estimated spend ${b.period}: ${M.usd(b.spent)}${b.limit ? ` of ${M.usd(b.limit)}` : ''}. Claude Code client-side estimate, not authoritative billing"><div class="mc-head">${pct != null ? mini(pct, t) : ''}${R.cardTitleLink({ label: `Spend ${b.period}`, attrs: { 'data-details': true, title: 'Opens Statistics: spend per run, model and day' } })}</div><dl class="mc-rows">${rows}</dl></div>`;
 }
 function lvlFly() {
   if (ui.sub !== 'lvl') return '';
-  return `<div class="menu nav-fly lvl-menu pz-fly${inCls('sub')}" role="menu" aria-label="Interface mode">${back}<span class="nav-fly-k">Interface mode</span>${LEVELS_UI.map(([id, t, h]) => `<button type="button" class="menu-item" role="menuitemradio" aria-checked="${R.prefs.mode() === id}" data-level="${id}" title="${esc(h)}"><span class="mi-l">${t}</span></button>`).join('')}</div>`;
+  return R.navFlyout({ label: 'Interface mode', cls: `lvl-menu pz-fly${inCls('sub')}`, body: `${back}<span class="nav-fly-k">Interface mode</span>${LEVELS_UI.map(([id, t, h]) => R.menuItem({ text: t, checked: R.prefs.mode() === id, help: h }, { pickAttr: null, attrs: { 'data-level': id } })).join('')}` });
 }
 
 // ---- New run: where a limit is about to be spent, the one place it warns before starting ----
@@ -290,7 +284,7 @@ function newRun() {
   const hint = (p) => { const u = c.usage.find((x) => x.p === p), e = M.est(p, sz); return u.win.length ? u.win.map((x) => `${M.winWord(x.k).toLowerCase()} ${x.pct}%${e && e[x.k] != null ? ` +${e[x.k]}` : ''}`).join(', ') : u.noQuota ? 'no quota set' : 'billed per token'; };
   const items = c.usage.filter((u) => M.PROVIDER[u.p].runs).map((u) => ({ id: u.p, text: pname(u.p), hint: hint(u.p), checked: u.p === h, help: `${M.PROVIDER[u.p].vendor} · ${u.plan}: used, and +what this run needs` }));
   const reached = !!lim && lim.pct >= 100, waits = !!lim && (ui.nr.wait || reached);
-  const note = (dot, text, acts) => `<div class="pz-advice"><span class="pz-rail">${dot ? `<span class="status-dot ${dot}" aria-hidden="true"></span>` : ''}</span><div><p class="pz-advice-t">${esc(text)}</p>${acts ? `<div class="pz-advice-acts">${acts}</div>` : ''}</div></div>`;
+  const note = (dot, text, acts) => `<div class="pz-advice"><span class="pz-rail">${dot ? R.statusDot({ tone: dot }) : ''}</span><div><p class="pz-advice-t">${esc(text)}</p>${acts ? `<div class="pz-advice-acts">${acts}</div>` : ''}</div></div>`;
   // the estimate in the size's sentence: what it needs of the tightest window, and what is left there; the advice says it
   // instead when the run does not fit (one place per fact)
   const e = M.est(h, sz), u = c.usage.find((x) => x.p === h);
@@ -303,20 +297,20 @@ function newRun() {
     const say = reached ? `${lim.name}'s ${lim.what} is used up until ${lim.resets}.`
       : lim.need != null ? `This run needs about ${lim.need}% of ${lim.name}'s ${lim.what}; ${lim.left}% is left until ${lim.resets}. It may pause before it finishes.`
       : `${lim.name}'s ${lim.what} is at ${lim.pct}% and resets ${lim.resets}. This run may pause before it finishes.`;
-    const other = rm.length ? `<button type="button" class="btn btn-sm" data-nr-use="${rm[0]}" title="${esc(`${pname(rm[0])} has room: ${hint(rm[0])}. Each agent runs the same tier on it`)}">Run on ${esc(pname(rm[0]))}</button>` : '';
+    const other = rm.length ? R.button({ label: `Run on ${pname(rm[0])}`, title: `${pname(rm[0])} has room: ${hint(rm[0])}. Each agent runs the same tier on it`, attrs: { 'data-nr-use': rm[0] } }) : '';
     if (waits) advice = note(reached ? 'is-red' : 'is-amber', `${say} It starts at ${lim.resets}, when that resets.${rm.length ? '' : ' No other harness has room.'}`,
-      other + (reached ? '' : '<button type="button" class="btn btn-sm btn-quiet" data-nr-now title="Start now: it may pause and resume by itself after the reset">Start now instead</button>'));
+      other + (reached ? '' : R.button({ label: 'Start now instead', kind: 'quiet', title: 'Start now: it may pause and resume by itself after the reset', attrs: { 'data-nr-now': true } })));
     else if (ui.s.mine === 'asis') advice = note('is-amber', say);
-    else advice = note('is-amber', say + (rm.length ? ` ${pname(rm[0])} has room.` : ' No other harness has room.'), other + `<button type="button" class="btn btn-sm btn-quiet" data-nr-wait title="Schedules it for when the limit resets">Start at ${esc(lim.resets)}</button>`);
+    else advice = note('is-amber', say + (rm.length ? ` ${pname(rm[0])} has room.` : ' No other harness has room.'), other + R.button({ label: `Start at ${lim.resets}`, kind: 'quiet', title: 'Schedules it for when the limit resets', attrs: { 'data-nr-wait': true } }));
   }
   const start = waits ? `Start at ${lim.resets}` : 'Start run';
-  return `<div class="viewer-modal${inCls('nr')}"><div class="card pz-newrun" role="dialog" aria-modal="true" aria-label="New run">
+  return R.dialogFrame({ label: 'New run', cls: 'pz-newrun', scrimCls: inCls('nr').trim(), body: `
     <div class="pz-nr"><h2 class="pz-nr-h">New run</h2>
       <p class="pz-sentence">A ${picker('nr-size', sz, M.SIZES.map((x) => ({ id: x, text: x, checked: x === sz, help: SIZE_HELP[x] })), sizeTip)} task on ${picker('nr-on', pname(h), items, 'Which harness runs it: each shows how much of its limits is used, and +what this run needs')} in web-app${esc(need)}</p>
       <div class="pz-nr-task" title="The task (filled in for this prototype)">${esc(c.task.title)}</div>
       ${advice}</div>
-    <div class="pz-pfoot"><button type="button" class="btn btn-sm btn-quiet" data-nr-cancel title="Closes without starting">Cancel</button><button type="button" class="btn btn-sm btn-primary" data-nr-start title="${waits ? `Schedules it for ${esc(lim.resets)}` : `Starts it now on ${esc(pname(h))}`}">${esc(start)}</button></div>
-  </div></div>`;
+    <div class="pz-pfoot">${R.button({ label: 'Cancel', kind: 'quiet', title: 'Closes without starting', attrs: { 'data-nr-cancel': true } })}${R.button({ label: start, kind: 'primary', title: waits ? `Schedules it for ${lim.resets}` : `Starts it now on ${pname(h)}`, attrs: { 'data-nr-start': true } })}</div>
+  ` });
 }
 
 // ---- Updates in the Pulse panel ----
@@ -334,7 +328,7 @@ function updatesPanel() {
   const list = shown();
   const n = ui.sel.filter((id) => list.some((u) => u.id === id)).length;
   // While selecting, Select all sits at the sentence's right, as in the Runs list's head
-  const all = ui.selecting && list.length ? `<label class="runs-all-wrap"><input type="checkbox" class="runs-check runs-all" data-selall${n === list.length ? ' checked' : n ? ' data-mixed' : ''} aria-label="Select all shown"> Select all</label>` : '';
+  const all = ui.selecting && list.length ? R.checkbox({ label: 'Select all', cls: 'runs-all-wrap', checked: n === list.length, attrs: { class: 'runs-check runs-all', 'data-selall': true, 'data-mixed': n && n !== list.length ? true : null, 'aria-label': 'Select all shown' } }) : '';
   const bar = `<div class="pz-bar"><span class="pz-rail"></span><span class="pz-sentence">Showing ${picker('show', SHOWS.find((s) => s.id === ui.show).text, SHOWS.map((s) => ({ ...s, checked: s.id === ui.show, hint: String(shown(s.id, ui.from).length) })), 'Which updates the list shows')} from ${picker('from', ui.from === 'all' ? 'all groups' : groupOf(ui.from).name, [{ id: 'all', text: 'all groups', checked: ui.from === 'all', hint: String(shown(ui.show, 'all').length) }, { sep: true }].concat(groupsShown().map((g) => ({ id: g.id, text: g.name, checked: ui.from === g.id, hint: String(shown(ui.show, g.id).length) }))), 'Which group the updates come from')}</span>${all}</div>`;
   if (!list.length) return bar + `<p class="pz-empty">${ui.show === 'unread' ? 'You are up to date.' : ui.show === 'cleared' ? 'Nothing cleared.' : 'No updates here.'}</p>`;
   const days = [...new Set(list.map((u) => u.day))];
@@ -345,11 +339,11 @@ function bulkBar() {
   if (ui.popTab !== 'updates' || !ui.selecting) return '';
   const ups = shown().filter((u) => ui.sel.includes(u.id)), unreadN = ups.filter(isUnread).length;
   const openNeeds = ups.filter((u) => u.sev === 'needs' && u.open).length;
-  const btn = (k, word, n, tip) => `<button type="button" class="btn btn-sm" data-bulk="${k}"${n ? '' : ' disabled'} title="${esc(n ? tip : ups.length ? 'All of them are read already' : 'Nothing selected')}">${word} <span class="runs-bulk-c">${n}</span></button>`;
+  const btn = (k, word, n, tip) => R.button({ label: word, count: n, title: n ? tip : ups.length ? 'All of them are read already' : 'Nothing selected', attrs: { 'data-bulk': k, disabled: !n } });
   const acts = ui.show === 'cleared' ? btn('restore', 'Restore', ups.length, 'Puts them back in All')
     : btn('read', 'Mark read', unreadN, unreadN < ups.length ? `Skips ${ups.length - unreadN} already read` : 'Marks them read; they stay in All')
       + btn('clear', 'Clear', ups.length, openNeeds ? `${plural(openNeeds, 'run')} still ${openNeeds === 1 ? 'waits' : 'wait'} for you in Now: clearing does not answer it` : 'Moves them to Cleared; Undo in the notice');
-  return `<div class="runs-bulk" role="toolbar" aria-label="Selected updates"><span class="runs-bulk-n">${ups.length} selected</span>${acts}<button type="button" class="btn btn-sm btn-quiet" data-bulk="cancel" title="Stop selecting · Esc">Cancel</button></div>`;
+  return `<div class="runs-bulk" role="toolbar" aria-label="Selected updates"><span class="runs-bulk-n">${ups.length} selected</span>${acts}${R.button({ label: 'Cancel', kind: 'quiet', title: 'Stop selecting · Esc', attrs: { 'data-bulk': 'cancel' } })}</div>`;
 }
 // As the Runs list: ⌘ or Ctrl-click (or the tick box) ticks one update, Shift ticks every one from the last ticked;
 // unticking the last one stops selecting.
@@ -514,9 +508,9 @@ function fitSearch() { const m = document.querySelector('.rl-search-res'); if (!
 // ---- in the one Worca: Pulse in Activity's place, the overlays above the shell, Settings in the page, its menu in the sidebar ----
 function pulseButton() {
   const needs = nowRuns().needs.length, un = unread().length, run = nowRuns().running.length;
-  const badge = needs ? `<span class="topnav-badge" data-tone="need">${needs}</span>` : un ? `<span class="topnav-badge" data-tone="run">${un}</span>` : '';
+  const badge = needs ? { n: needs, tone: 'need' } : un ? { n: un, tone: 'run' } : null;
   const words = [needs && plural(needs, 'needs you', 'need you'), un && plural(un, 'unread'), run && `${run} running`].filter(Boolean).join(' · ') || 'Nothing new';
-  return `<button type="button" class="btn btn-quiet topnav-act pz-pulse-b" data-pop aria-haspopup="dialog" aria-expanded="${ui.pop}" title="Pulse: ${esc(words)}">${svg('signal', 16)}<span class="pz-pulse-l">Pulse</span>${badge}</button>`;
+  return R.topBarAction({ label: 'Pulse', icon: svg('signal', 16), labelCls: 'pz-pulse-l', kind: 'quiet', full: true, cls: 'topnav-act pz-pulse-b', badge, title: 'Pulse: ' + words, attrs: { 'data-pop': true, 'aria-haspopup': 'dialog', 'aria-expanded': String(!!ui.pop) } });
 }
 function renderInShell() {
   const sideNow = ui.page === 'settings'; swapCls = sideWas !== null && sideWas !== sideNow ? ' is-swap' : ''; sideWas = sideNow;
@@ -540,7 +534,7 @@ function renderInShell() {
   if (sideNow) document.getElementById('route-settings').innerHTML = `<div class="pz-page">${settingsPage()}</div>`;
   const res = document.querySelector('[data-search-res]'); if (res) res.innerHTML = searchResults();
   document.getElementById('app').innerHTML = `${popover()}${newRun()}${acctMenu()}${actionsFly()}${sessionDialog()}`;
-  const t = document.querySelector('.rc-toast'); t.innerHTML = ui.toast ? esc(ui.toast) + (undoIds ? '<button type="button" class="pz-undo" data-undo title="Puts them back in the list">Undo</button>' : '') : ''; t.classList.toggle('is-on', !!ui.toast);
+  const t = document.querySelector('.rc-toast'); t.innerHTML = ui.toast ? esc(ui.toast) + (undoIds ? R.toastUndo({ title: 'Puts them back in the list' }) : '') : ''; t.classList.toggle('is-on', !!ui.toast);
   for (const b of document.querySelectorAll('[data-mixed]')) b.indeterminate = true;
   const pb = document.querySelector('.pz-pbody'); if (pb && !opening) pb.scrollTop = keepP;
   fitMenus();
@@ -597,7 +591,7 @@ function render() {
   const scroller = document.scrollingElement || document.documentElement; const keepY = scroller.scrollTop;
   const keepP = document.querySelector('.pz-pbody')?.scrollTop || 0;
   document.getElementById('app').innerHTML = `<div class="pz-app">${sidebar()}<div class="pz-main">${topbar()}<main class="pz-page">${unlockStrip()}${ui.page === 'settings' ? settingsPage() : runsPage()}</main></div>${popover()}${newRun()}${acctMenu()}${actionsFly()}</div>`;
-  const t = document.querySelector('.rc-toast'); t.innerHTML = ui.toast ? esc(ui.toast) + (undoIds ? '<button type="button" class="pz-undo" data-undo title="Puts them back in the list">Undo</button>' : '') : ''; t.classList.toggle('is-on', !!ui.toast);
+  const t = document.querySelector('.rc-toast'); t.innerHTML = ui.toast ? esc(ui.toast) + (undoIds ? R.toastUndo({ title: 'Puts them back in the list' }) : '') : ''; t.classList.toggle('is-on', !!ui.toast);
   for (const b of document.querySelectorAll('[data-mixed]')) b.indeterminate = true;
   const pb = document.querySelector('.pz-pbody'); if (pb && !opening) pb.scrollTop = keepP;
   fitMenus();

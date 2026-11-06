@@ -162,7 +162,7 @@
 
   // ---- Plugins: the three trackers Ticket updates knows ----
   const TRACKERS = O(['jira', 'Jira'], ['azure', 'Azure Boards'], ['github', 'GitHub Issues']);
-  const MOVES = { jira: ['In review', 'Resolved', 'Done'], azure: ['Resolved', 'Closed'], github: ['closed'] };
+  const MOVES = window.RailUI?.TRACKER_MOVES || { jira: [] };   // the library's; the sweeps read this file for its section ids, without it
   const ruleWords = (m) => (m === 'none' ? 'Don\'t move' : m === 'done' ? 'Any Done status' : `Moves to ${m}`);
   const rule = (title, tracker, move, gone) => ({ title, tracker, move, when: (sv, r) => r.tracker === sv.tuTracker, mark: gone ? 'is-amber' : '',
     meta: gone ? `${title} has no status named ${gone} any more: pick another; until then a run leaves its tickets where they are` : ruleWords(move),
@@ -531,7 +531,7 @@
         { name: 'Projects', help: 'None picked means all projects', say: 'New run and Requirements list only **{tuProjects}**', vals: { tuProjects: 'WEB, API, INFRA' }, acts: [edit('Change your projects', [{ key: 'tuProjects', label: 'Projects you work on', hint: 'Comma-separated; none means all. Removing one keeps its rule' }], { done: 'Projects saved' })] },
         { name: 'All projects', say: 'When a run finishes successfully, {tuAll}', picks: { tuAll: P('done', O(['none', 'don\'t move its ticket'], ['done', 'move it to any Done status', 'One the ticket can reach, never Won\'t Do, Rejected or Duplicate']), 'Unless a project below says otherwise') } },
       ], list: [
-        rule('WEB', 'jira', 'In review'),
+        rule('WEB', 'jira', MOVES.jira[0]),
         rule('INFRA', 'jira', 'none', 'Resolved'),
         rule('Billing', 'azure', 'Closed'),
         rule('acme/worca', 'github', 'closed'),

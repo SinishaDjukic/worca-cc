@@ -154,7 +154,7 @@
         if (!c) continue;
         row.dataset.railRun = c;
         const sub = row.querySelector('.runs-row-sub'); if (sub) sub.textContent = RUN_LINE[c];
-        const dot = row.querySelector('.status-dot'); if (dot) dot.className = 'status-dot ' + RUN_DOT[c];
+        const dot = row.querySelector('.status-dot'); if (dot) dot.className = R.statusDotClass(RUN_DOT[c]);
       }
       scrollTo(0, 0);
     }

@@ -6,7 +6,6 @@ const M = window.RunCardModel;
 const R = window.RailUI;
 const SHELL = window.RailShell || null;   // the one Worca: the run page answers only inside #card and its tools
 
-const P = (d) => `<path d="${d}"></path>`;
 const svg = (name, size) => R.icon(name, size);
 const esc = R.esc;
 
@@ -45,6 +44,9 @@ const groupEditorHtml = () => listEditorHtml({ label: 'Move to group', inputId: 
 let pendingFocus = '';
 let lastOpen = '';
 
+// A picker among the words of a form or a line: the chosen words, its ▾, its menu.
+const wordPick = (id, text, tip, items, cls = '') => R.wordPicker({ text, tip, cls, chevron: svg('chevron', 12), open: ui.menu === id, menuHtml: menu(id, items), attrs: { 'data-menu': id, 'data-key': 'menu:' + id } });
+
 const logsShow = () => R.runPartShows('logs', R.prefs.mode());
 function rowHtml(r, full) {
   const logs = logsShow();
@@ -54,7 +56,7 @@ function rowHtml(r, full) {
   return R.stepRow(r, { full, action: log, below: ev });
 }
 
-const DOTS = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8"></circle><circle cx="12" cy="12" r="1.8"></circle><circle cx="19" cy="12" r="1.8"></circle></svg>';
+const DOTS = svg('dots', 14);
 // A run of a cut: Merge with next and Remove, right on its row; Undo edits comes back while anything is changed.
 function outlineMenu(r) {
   const id = 'cut' + r.index; const last = r.index === r.total - 1; const two = r.total <= 2;
@@ -74,7 +76,7 @@ function stackHtml(k) {
 // what this state needs from you in full, what went fine one line each; Changes is everything the run produced,
 // grouped by what it is; Activity is every step with its rounds, model, cost and log, and what each step wrote;
 // Decisions is who decided what. Time, cost against the budget and the diff size stay the card's figures.
-const ICON_WHO = { you: P('M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8z') + P('M4.5 20a7.5 7.5 0 0 1 15 0'), away: P('M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z'), default: P('M12 3v4M12 17v4M3 12h4M17 12h4') };
+const ICON_WHO = { you: 'whoYou', away: 'whoAway', default: 'whoDefault' };
 const WHO = { you: 'You', away: 'Answered for you · Away mode', default: 'Worca’s default' };
 function focusHtml(v) {
   const f = v.over.focus;
@@ -108,8 +110,8 @@ function focusHtml(v) {
     const t = typeof x === 'string' ? x : x.t;
     // A check says why it is here and, when there is one, its one way to act (to its home: Decisions, a file in Changes).
     const why = x.why ? `<span class="ov-why">${esc(x.why)}${x.act ? ' · ' + R.textLink({ label: x.act, attrs: { 'data-go': x.go, 'data-key': 'go:' + i } }) : ''}</span>` : '';
-    if (f.kind === 'check') return `<li><label class="ov-check"><input type="checkbox" data-tick="${i}" data-key="tick:${i}"${st === 'done' ? ' checked' : ''}><span>${esc(t)}${why}</span></label></li>`;
-    return `<li class="rd-route-row is-${st}"><span class="rd-route-dot ${st === 'done' ? 'is-done' : st === 'now' ? 'is-working is-pulse' : 'is-future'}" role="img" aria-label="${st === 'done' ? 'Done' : st === 'now' ? 'In progress' : 'Not yet'}">${svg(st === 'done' ? 'check' : st === 'now' ? 'now' : '', 10)}</span><span class="rd-route-name">${esc(t)}</span></li>`;
+    if (f.kind === 'check') return `<li>${R.checkbox({ cls: 'ov-check', html: esc(t) + why, checked: st === 'done', attrs: { 'data-tick': i, 'data-key': 'tick:' + i } })}</li>`;
+    return R.row({ kind: 'route', cls: 'is-' + st, rail: R.stepDot({ dotCls: st === 'done' ? 'is-done' : st === 'now' ? 'is-working is-pulse' : 'is-future', word: st === 'done' ? 'Done' : st === 'now' ? 'In progress' : 'Not yet', icon: st === 'done' ? 'check' : st === 'now' ? 'now' : '' }), text: `<span class="rd-route-name">${esc(t)}</span>` });
   }).join('');
   if (f.kind === 'check') {
     const n = f.items.length - ui.ticks.length;
@@ -125,17 +127,17 @@ function summaryPanel(v) {
   if (!o.ask) return focusHtml(v) + after + `<section class="rtab"><h2 class="rtab-h">What you asked</h2><p class="rtab-p ov-task${ui.taskOpen ? ' is-open' : ''}">${esc(o.task)}</p></section>` + extra;
   // What went fine, one line each (What opens): the ask opens its parts in place, its only home; the evidence goes to
   // Activity, where the rounds and the steps live.
-  const ok = `<span class="rd-route-dot is-done" role="img" aria-label="Done">${svg('check', 10)}</span>`;
+  const ok = R.stepDot({ dotCls: 'is-done', word: 'Done', icon: 'check' });
   const open = !!ui.askOpen;
-  const parts = open ? `<div class="ov-line-more" data-motion="open"><p class="ov-quote">“${esc(o.task)}”</p><ul class="ov-parts">${o.ask.parts.map(([part, how]) => `<li>${ok}<span><span class="ov-part">${esc(part)}</span><span class="ov-why">${esc(how)}</span></span></li>`).join('')}</ul><p class="ov-why">Not asked: ${esc(o.ask.unasked[0])} in <code>${esc(o.ask.unasked[1])}</code></p></div>` : '';
-  const askLine = `<li class="rd-route-row ov-line${open ? ' is-open' : ''}">${ok}<button type="button" class="row-btn ov-line-btn" data-askopen aria-expanded="${open}" data-key="ask-open"><span>Did all ${o.ask.parts.length} parts you asked, plus ${esc(o.ask.unasked[0])}</span>${svg('chevron', 14)}</button>${parts}</li>`;
-  const evLine = o.evidence ? `<li class="rd-route-row ov-line">${ok}<button type="button" class="row-btn ov-line-btn is-link" data-tab="activity" data-key="ov-evidence" title="Opens Activity: the tests, the review's rounds and the manual test"><span>${esc(o.evidence)}</span>${svg('chevron', 14)}</button></li>` : '';
+  const parts = open ? `<p class="ov-quote">“${esc(o.task)}”</p><ul class="ov-parts">${o.ask.parts.map(([part, how]) => `<li>${ok}<span><span class="ov-part">${esc(part)}</span><span class="ov-why">${esc(how)}</span></span></li>`).join('')}</ul><p class="ov-why">Not asked: ${esc(o.ask.unasked[0])} in <code>${esc(o.ask.unasked[1])}</code></p>` : '';
+  const askLine = R.lineRow({ mark: ok, text: `Did all ${o.ask.parts.length} parts you asked, plus ${o.ask.unasked[0]}`, open, more: parts, attrs: { 'data-askopen': true, 'data-key': 'ask-open' } });
+  const evLine = o.evidence ? R.lineRow({ mark: ok, text: o.evidence, link: true, attrs: { 'data-tab': 'activity', 'data-key': 'ov-evidence', title: 'Opens Activity: the tests, the review\'s rounds and the manual test' } }) : '';
   return focusHtml(v) + after + `<section class="rtab"><ol class="rd-route-list ov-lines">${askLine}${evLine}</ol></section>` + extra;
 }
 // One line that opens its detail in place (What opens): its mark, its words, › .
 function lineRow(key, mark, text, more) {
   const open = ui.lines.includes(key);
-  return `<li class="rd-route-row ov-line${open ? ' is-open' : ''}">${mark}<button type="button" class="row-btn ov-line-btn" data-line="${esc(key)}" aria-expanded="${open}" data-key="line:${esc(key)}"><span>${esc(text)}</span>${svg('chevron', 14)}</button>${open ? `<div class="ov-line-more" data-motion="open">${more}</div>` : ''}</li>`;
+  return R.lineRow({ mark, text, open, more, attrs: { 'data-line': key, 'data-key': 'line:' + key } });
 }
 const okDot = () => `<span class="rd-route-dot is-done" role="img" aria-label="Done">${svg('check', 10)}</span>`;
 const warnDot = () => `<span class="rd-route-dot is-problem" role="img" aria-label="Needs attention">${svg('alert', 10)}</span>`;
@@ -165,7 +167,7 @@ function usedHtml(v) {
 // A run with no Changes tab keeps its documents here.
 function docsSection(v) {
   const arts = v.tabData.artifacts; if (!v.place.branch && !v.place.folder && v.stages.every((x) => x.key !== 'done')) return '';
-  return `<section class="rtab"><h2 class="rtab-h">Documents <span class="n">${arts.length}</span></h2><ul class="ov-issues">${arts.map(([doc, step], i) => `<li><span><button type="button" class="ov-art-name" data-doc="${i}" data-key="ovdoc:${i}" title="Open ${esc(doc)}"><code>${esc(doc)}</code></button><span class="ov-why">from ${esc(step)}</span></span></li>`).join('')}</ul></section>`;
+  return `<section class="rtab"><h2 class="rtab-h">Documents <span class="n">${arts.length}</span></h2><ul class="ov-issues">${arts.map(([doc, step], i) => `<li><span>${R.documentLink({ name: doc, attrs: { 'data-doc': i, 'data-key': 'ovdoc:' + i, title: 'Open ' + doc } })}<span class="ov-why">from ${esc(step)}</span></span></li>`).join('')}</ul></section>`;
 }
 // Changes' Actions, under Check out: the worktree's services, its ports and the patch; in a workspace, only the
 // projects that changed. They run on your machine, so on a hosted Worca they are off and say why.
@@ -210,11 +212,11 @@ function changesPanel(v) {
   const rows = kinds.map(([name, xs]) => head(name, `${xs.length} ${xs.length === 1 ? 'file' : 'files'}`, xs.reduce((s, x) => s + x.a, 0), xs.reduce((s, x) => s + x.dl, 0)) + xs.slice().sort((x, y) => (y.a + y.dl) - (x.a + x.dl)).map((r) => {
     const m = d.fileMeta[r.p] || { st: 'M' };
     const diff = open === r.i ? `<div class="ch-diff"><p class="ch-at">${esc(d.hunk.at)}</p><pre>${d.hunk.lines.map(([k, t]) => `<span class="${k === '+' ? 'add' : k === '-' ? 'del' : ''}">${esc(k + ' ' + t)}</span>`).join('\n')}</pre>${commentsHtml(r.p, d)}${R.button({ label: 'Open the whole diff', attrs: { 'data-key': 'file-full', 'data-say': 'Opens the whole diff of the file' } })}</div>` : '';
-    return `<li class="ch-file${open === r.i ? ' is-open' : ''}${ui.land === 'file:' + r.i ? ' is-flash' : ''}"><button type="button" class="ch-row" aria-expanded="${open === r.i}" data-file="${r.i}" data-key="file:${r.i}"><span class="ch-st is-${m.st}" title="${m.st === 'A' ? 'Added' : 'Modified'}">${m.st}</span><span class="ch-name" title="${esc(r.p)}">${esc(r.name)}<span class="ch-path">${esc(r.dir)}</span></span>${notesOf(r.p, d) ? `<span class="ch-notes" title="${notesOf(r.p, d)} review comments">${notesOf(r.p, d)}</span>` : '<span class="ch-notes"></span>'}<span class="ct"><span class="add">+${r.a}</span><span class="del">−${r.dl}</span></span><span class="ch-blocks" aria-hidden="true">${blocks(r.a, r.dl)}</span></button>${diff}</li>`;
+    return `<li class="ch-file${open === r.i ? ' is-open' : ''}${ui.land === 'file:' + r.i ? ' is-flash' : ''}">${R.fileRow({ status: m.st, name: r.name, dir: r.dir, path: r.p, notes: notesOf(r.p, d), added: r.a, removed: r.dl, blocks: blocks(r.a, r.dl), open: open === r.i, attrs: { 'data-file': r.i, 'data-key': 'file:' + r.i } })}${diff}</li>`;
   }).join('')).join('');
   // Documents its steps wrote: they stay with the run and are not in the PR. A name opens it; one download at the end.
   const arts = v.over.artifacts;
-  const docs = arts.length ? head('Not in the code', String(arts.length)) + `<li class="ch-gnote">Written by the run’s steps; they stay with the run and are not in the PR</li>` + arts.map(([doc, step], i) => `<li class="ch-file ch-doc${ui.land === 'doc:' + i ? ' is-flash' : ''}"><span class="ch-st" aria-hidden="true"></span><span class="ch-name"><button type="button" class="ov-art-name" data-key="art:${i}" data-doc="${i}" title="Open ${esc(doc)}"><code>${esc(doc)}</code></button><span class="ch-path">from ${esc(step)}</span></span>${R.button({ label: 'Download ' + doc, kind: 'quiet', iconOnly: true, icon: svg('download', 14), attrs: { 'data-key': 'dl:' + i, 'data-say': 'Downloading ' + doc } })}</li>`).join('') : '';
+  const docs = arts.length ? head('Not in the code', String(arts.length)) + `<li class="ch-gnote">Written by the run’s steps; they stay with the run and are not in the PR</li>` + arts.map(([doc, step], i) => `<li class="ch-file ch-doc${ui.land === 'doc:' + i ? ' is-flash' : ''}"><span class="ch-st" aria-hidden="true"></span><span class="ch-name">${R.documentLink({ name: doc, attrs: { 'data-key': 'art:' + i, 'data-doc': i, title: 'Open ' + doc } })}<span class="ch-path">from ${esc(step)}</span></span>${R.button({ label: 'Download ' + doc, kind: 'quiet', iconOnly: true, icon: svg('download', 14), attrs: { 'data-key': 'dl:' + i, 'data-say': 'Downloading ' + doc } })}</li>`).join('') : '';
   const where = v.place.folder ? `In a copy of ${v.place.folder}; Apply writes them into the folder.` : v.place.branch ? `${v.place.branch} into ${v.place.base || 'dev'}` : '';
   // The code's own actions sit in the Changes head, as the card's action does: Check out, the rest in its ▾.
   const chItems = (v.bar.stop ? [{ id: 'ch:refresh', text: 'Refresh', help: 'Reload the diff from the worktree' }] : [])
@@ -242,9 +244,9 @@ function activityPanel(v) {
       const key = st.key + '/' + r.name;
       const isOpen = rd && ui.rounds.includes(key);
       const row = rowHtml(Object.assign({}, r, { ref: '', akey: r.ref, logStep: st.label.startsWith('Run ') ? st.label + ' · ' + r.name : r.name, roundsKey: rd && r.loops ? key : '', roundsOpen: isOpen }), true);
-      const sub = isOpen ? rd.map(([t, why], i) => `<li class="rd-route-row sc-row is-round"><span class="ac-round-n" aria-hidden="true">${i + 1}</span><span class="sc-name ac-why">${esc(why)}</span><span class="sc-time">${esc(t)}</span><span class="sc-rest"></span></li>`).join('') : '';
+      const sub = isOpen ? rd.map(([t, why], i) => R.row({ kind: 'step', cls: 'is-round', rail: `<span class="ac-round-n" aria-hidden="true">${i + 1}</span>`, text: `<span class="sc-name ac-why">${esc(why)}</span><span class="sc-time">${esc(t)}</span><span class="sc-rest"></span>` })).join('') : '';
       const di = v.over.artifacts.findIndex(([, step]) => step === r.name);
-      const wrote = di < 0 ? '' : `<li class="rd-route-row sc-row is-round is-wrote"><span class="ac-round-n" aria-hidden="true"></span><span class="sc-name ac-why">Wrote ${R.textLink({ label: v.over.artifacts[di][0], attrs: { 'data-go': 'doc:' + di, 'data-key': 'wrote:' + di, title: 'Open it in Changes' } })}</span><span class="sc-time"></span><span class="sc-rest"></span></li>`;
+      const wrote = di < 0 ? '' : R.row({ kind: 'step', cls: 'is-round is-wrote', rail: '<span class="ac-round-n" aria-hidden="true"></span>', text: `<span class="sc-name ac-why">Wrote ${R.textLink({ label: v.over.artifacts[di][0], attrs: { 'data-go': 'doc:' + di, 'data-key': 'wrote:' + di, title: 'Open it in Changes' } })}</span><span class="sc-time"></span><span class="sc-rest"></span>` });
       return row + sub + wrote;
     }).join('');
   }).join('');
@@ -315,21 +317,20 @@ function decisionsPanel(v) {
   const by = (w) => ds.filter((x) => x.who === w).length;
   const ask = v.ask;
   const sum = [by('you') ? by('you') + ' by you' : '', by('away') ? by('away') + ' by Away mode' : '', by('default') ? by('default') + ' by default' : ''].filter(Boolean).join(' · ');
-  const waiting = ask ? `<li class="rd-route-row is-ask"><span class="rd-route-dot is-problem" role="img" aria-label="Waiting for you">${svg('question', 10)}</span><div class="dc-body"><p class="rtab-q">${esc(ask.q)}</p><p class="rtab-dim">Waiting for you · ${R.textLink({ label: 'Answer it in the card', attrs: { 'data-goanswer': true, 'data-key': 'dc-answer' } })}</p></div></li>` : '';
+  const waiting = ask ? R.row({ kind: 'route', cls: 'is-ask', rail: R.stepDot({ dotCls: 'is-problem', word: 'Waiting for you', icon: 'question' }), text: `<div class="dc-body"><p class="rtab-q">${esc(ask.q)}</p><p class="rtab-dim">Waiting for you · ${R.textLink({ label: 'Answer it in the card', attrs: { 'data-goanswer': true, 'data-key': 'dc-answer' } })}</p></div>` }) : '';
   return `<section class="rtab"><div class="ch-head"><h2 class="rtab-h">${ds.length} decisions</h2><span class="rtab-dim">${esc(sum)}</span></div>
-    <ol class="rd-route-list dc-list">${waiting}${ds.map((x) => `<li class="rd-route-row is-done"><span class="rd-route-dot dc-who is-${x.who}" role="img" aria-label="${esc(WHO[x.who])}"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON_WHO[x.who]}</svg></span><div class="dc-body"><p class="rtab-q">${esc(x.q)}</p><p class="dc-a">${esc(x.a)}</p><p class="rtab-dim">${esc([x.step, WHO[x.who], x.note, x.when].filter(Boolean).join(' · '))}</p></div></li>`).join('')}</ol></section>`;
+    <ol class="rd-route-list dc-list">${waiting}${ds.map((x) => R.row({ kind: 'route', cls: 'is-done', rail: R.stepDot({ dotCls: 'dc-who is-' + x.who, word: WHO[x.who], icon: ICON_WHO[x.who], size: 11 }), text: `<div class="dc-body"><p class="rtab-q">${esc(x.q)}</p><p class="dc-a">${esc(x.a)}</p><p class="rtab-dim">${esc([x.step, WHO[x.who], x.note, x.when].filter(Boolean).join(' · '))}</p></div>` })).join('')}</ol></section>`;
 }
 function panelHtml(v) {
   const t = v.tabs.find((x) => x.sel) || v.tabs[0]; const id = t.id;
   // a part that cannot be drawn says so in its own place; the rest of the page keeps working
-  if (ui.broken) return R.emptyState({ title: `Could not show the ${t.l.toLowerCase()}`, text: 'Something went wrong here. The rest of the page still works.', error: true,
+  if (ui.broken) return R.emptyState({ title: R.failureOf(`Show the ${t.l.toLowerCase()}`).title, text: 'Something went wrong here. The rest of the page still works.', error: true,
     actions: R.button({ label: 'Reload this part', attrs: { 'data-fixpart': true, 'data-key': 'fix-part' } }) + R.button({ label: 'Details', kind: 'quiet', attrs: { 'data-say': DETAILS, 'data-key': 'part-details' } }) });
   return ({ summary: summaryPanel, changes: changesPanel, activity: activityPanel, decisions: decisionsPanel })[id](v);
 }
 function figHtml(f, v) {
   if (f.k === 'Cost' && v) {
-    const rows = v.activity.filter((st) => st.meta).map((st) => `<li><span>${esc(st.label)}</span><span class="ct">${esc(st.meta)}</span></li>`).join('');
-    const html = `<div class="menu rc-cost" role="dialog" data-motion="in" aria-label="Cost by stage"><p class="menu-h">Cost by stage</p><ul>${rows}<li class="is-total"><span>Total</span><span class="ct">${esc(f.v)}</span></li></ul><p class="menu-help">${esc(f.title || '')}. Each step’s cost and model are in Activity.</p></div>`;
+    const html = R.figureBreakdown({ label: 'Cost by stage', rows: v.activity.filter((st) => st.meta).map((st) => [st.label, st.meta]), total: f.v, help: `${f.title || ''}. Each step’s cost and model are in Activity.` });
     return R.figure({ k: f.k, v: f.v, of: f.of, warn: f.warn, title: f.title || '', pop: { open: ui.menu === 'cost', html, attrs: { 'data-menu': 'cost', 'data-key': 'menu:cost' } } });
   }
   if (f.tab) return R.figure({ k: f.k, v: f.v, tab: f.tab, title: 'Open Changes', current: ui.tab === f.tab });
@@ -345,8 +346,7 @@ function render() {
   // The run's controls sit together on the status line: its one action (with ▾), then ⋯ for everything else.
   const split = a ? R.splitButton({ main: { label: a.label, kind: a.primary ? 'primary' : '', icon: svg(a.icon, 14), title: a.offWhy || a.help, attrs: { 'data-key': 'act-main', 'data-label': a.label, disabled: !!a.offWhy } },
     moreLabel: a.items.length ? 'More actions' : '', chevron: svg('chevron', 14), open: ui.menu === 'act', menuHtml: menu('act', a.items), moreAttrs: { 'data-menu': 'act', 'data-key': 'menu:act' }, cls: 'rc-action rc-pop is-right' }) : '';
-  const dots = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8"></circle><circle cx="12" cy="12" r="1.8"></circle><circle cx="19" cy="12" r="1.8"></circle></svg>';
-  const action = `<div class="rc-side">${split}<span class="rc-pop is-right">${R.button({ label: 'More for this run', iconOnly: true, title: false, icon: dots, attrs: { 'aria-haspopup': 'menu', 'aria-expanded': String(ui.menu === 'more'), 'data-menu': 'more', 'data-key': 'menu:more' } })}${ui.menu === 'groups' ? groupEditorHtml() : menu('more', moreItems(v))}</span></div>`;
+  const action = `<div class="rc-side">${split}<span class="rc-pop is-right">${R.button({ label: 'More for this run', iconOnly: true, title: false, icon: DOTS, attrs: { 'aria-haspopup': 'menu', 'aria-expanded': String(ui.menu === 'more'), 'data-menu': 'more', 'data-key': 'menu:more' } })}${ui.menu === 'groups' ? groupEditorHtml() : menu('more', moreItems(v))}</span></div>`;
   // Many labels and tags, one group: a run already in a feature or chain, or a group page, joins none; a run you
   // grouped can leave it again from the same menu.
   // Where the code lives, said as a phrase that follows the run: "branch into dev", "#959 merges branch into dev",
@@ -377,7 +377,7 @@ function render() {
   const head = o.isRun ? `<div class="sc-head"><span class="sc-run" title="${esc(o.title)}">${esc(o.title)}</span>${v.independent ? R.chip({ text: 'Independent', title: 'It does not start from another run’s branch' }) : ''}${o.meta ? `<span class="rtab-dim sc-run-cost">${esc(o.meta)}</span>` : ''}${o.canOpen ? `${R.button({ label: 'Open run', attrs: { 'data-open-run': o.runIndex, 'data-key': 'open-run' } })}` : v.bar.stop ? R.button({ label: 'Re-plan from here', title: 'The planner re-cuts this run and the ones after it', attrs: { 'data-replan': o.runIndex, 'data-key': 'replan' } }) : ''}</div>`
     : v.planHead ? `<div class="sc-head"><span class="sc-run">How the work was cut into runs</span>${R.button({ label: 'Open the plan', attrs: { 'data-key': 'open-plan', 'data-doc': 0 } })}</div>` : '';
   // the next run of a group, under the run it follows: starts by itself, or asks first
-  const then = v.then ? `<div class="sc-then">Then <b title="${esc(v.then.title)}">Run ${v.then.n} · ${esc(v.then.title)}</b><span class="rc-pop pd-basepop"><button type="button" class="pd-base pd-ship" data-menu="then" data-key="menu:then" aria-haspopup="menu" aria-expanded="${ui.menu === 'then'}" title="When run ${v.then.n} starts">${ui.askEach ? 'asks me first' : 'starts by itself'}${svg('chevron', 12)}</button>${menu('then', [{ id: 'group:go', text: 'Starts by itself', checked: !ui.askEach, help: 'Each run starts when the one before it is ready' }, { id: 'group:ask', text: 'Asks me first', checked: !!ui.askEach, help: 'Stops for your OK before the next run starts' }])}</span></div>` : '';
+  const then = v.then ? `<div class="sc-then">Then <b title="${esc(v.then.title)}">Run ${v.then.n} · ${esc(v.then.title)}</b>${wordPick('then', ui.askEach ? 'asks me first' : 'starts by itself', `When run ${v.then.n} starts`, [{ id: 'group:go', text: 'Starts by itself', checked: !ui.askEach, help: 'Each run starts when the one before it is ready' }, { id: 'group:ask', text: 'Asks me first', checked: !!ui.askEach, help: 'Stops for your OK before the next run starts' }], 'pd-ship')}</div>` : '';
   const ask = v.ask && o.rows.some((r) => /is-ask/.test(r.rowCls)) ? answerHtml(v.ask) : v.under && o.rows.some((r) => /is-ask/.test(r.rowCls)) ? underHtml(v.under) : '';
   const panel = o.stack ? stackHtml(Object.assign({}, o.stack, { enter })) + (v.under && v.id === 'outline' ? `<div class="sc-then">${esc(v.under.roles.length + ' roles reviewed the cut · 1 open issue')}</div>` : '') : `<ol class="rd-route-list sc-subs${enter ? ' is-enter' : ''}" aria-label="${esc(o.label)} steps" style="grid-column:1 / -1">${o.rows.map((r) => rowHtml(r) + (/is-ask/.test(r.rowCls) ? ask : '')).join('')}</ol>`;
   const sel = (v.tabs.find((t) => t.sel) || v.tabs[0]).id;
@@ -522,13 +522,13 @@ function done(f, label) {
 const REASON = { Resume: 'the schedule could not be saved', Raise: 'the budget settings could not be saved', Mark: 'GitHub did not answer', Apply: 'a terminal still has the folder open', Abort: 'the run did not answer; it may have just finished', Delete: 'a terminal still has the worktree open', Merge: 'GitHub says the branch is behind dev; update it and try again', Create: 'git push was rejected: the remote branch moved', Stop: 'the run did not answer; it may have just finished',
   Archive: 'a terminal still has the worktree open', Discard: 'a terminal still has the worktree open', Cancel: 'run 3 had just started', 'Re-plan': 'the planner did not answer in time', Continue: 'the budget settings could not be saved' };
 function failed(err) {
-  const why = err.detail.replace(/\. Nothing changed\.$/, '').replace(/^./, (c) => c.toLowerCase());
+  const why = err.reason.replace(/^./, (c) => c.toLowerCase());
   if (ui.form && ui.dialog === ui.form.id) { ui.form.err = err; pendingFocus = 'fd-ok'; return; }
   if (ui.dialog === 'pr') {
     // a stack fails part-way: the PRs already opened stay opened, and a retry opens only the rest
     const left = (ui.pr.prs || []).filter((x) => !x.made);
     if (ui.pr.prs && left.length > 1) { left[0].made = '#' + (959 + ui.pr.prs.indexOf(left[0])); left[0].open = false; ui.dialogLabel = 'Create ' + (left.length - 1) + ' PRs';
-      err.title = 'Could not create ' + (left.length - 1) + ' of ' + ui.pr.prs.length + ' PRs'; err.detail = 'Opened ' + left[0].made + '; the next one failed: ' + why + '. A retry opens only the rest.'; }
+      err.title = R.failureOf('Create ' + (left.length - 1) + ' of ' + ui.pr.prs.length + ' PRs').title; err.detail = 'Opened ' + left[0].made + '; the next one failed: ' + why + '. A retry opens only the rest.'; }
     ui.pr.err = err; pendingFocus = 'pd-ok';
   } else { ui.confirm.err = err; ui.confirm.ok = false; pendingFocus = 'confirm:yes'; }
 }
@@ -599,22 +599,21 @@ function nextEvent() {
 function underHtml(u) {
   return `<li class="sc-answer">${issuesHtml(u.issues)}${rolesHtml(u.roles, 'step')}</li>`;
 }
+const detailsLink = () => R.failureLink({ label: 'Details', attrs: { 'data-say': DETAILS, 'data-key': 'err-details' } });
 function stripHtml(v) {
   const acts = (yes) => R.confirmActions({ yes });
   if (ui.dialog === 'after') {
     const opts = v.finished ? ['Now, as a follow-up'] : ['When this run finishes'].concat(v.place.pr ? ['When its PR merges'] : []);
-    return `<form class="rc-confirm is-form" role="dialog" data-motion="open" aria-labelledby="rc-strip-t" data-form="after"><span class="rc-confirm-t" id="rc-strip-t">${esc(v.runAfter.label)}</span>
-      <input class="input input-sm" id="after-task" type="text" placeholder="What should the next run do?" aria-label="Task for the next run" data-key="after-task" value="${esc(ui.afterDraft || '')}">
-      ${opts.length > 1 ? `<select class="select input-sm" id="after-when" aria-label="When it starts" data-key="after-when">${opts.map((o) => `<option>${esc(o)}</option>`).join('')}</select>` : `<span class="rtab-dim" id="after-when-t">${esc(opts[0])}</span>`}${acts(v.finished ? 'Start run' : 'Schedule')}</form>`;
+    return R.confirmForm({ form: 'after', text: v.runAfter.label, body: `<input class="input input-sm" id="after-task" type="text" placeholder="What should the next run do?" aria-label="Task for the next run" data-key="after-task" value="${esc(ui.afterDraft || '')}">
+      ${opts.length > 1 ? `<select class="select input-sm" id="after-when" aria-label="When it starts" data-key="after-when">${opts.map((o) => `<option>${esc(o)}</option>`).join('')}</select>` : `<span class="rtab-dim" id="after-when-t">${esc(opts[0])}</span>`}${acts(v.finished ? 'Start run' : 'Schedule')}` });
   }
   if (ui.dialog === 'changes') {
-    return `<form class="rc-confirm is-form" role="dialog" data-motion="open" aria-labelledby="rc-strip-t" data-form="changes"><span class="rc-confirm-t" id="rc-strip-t">${esc(ui.changesFor === 'Revise' ? 'Tell Worca what to change in the workflow' : v.id === 'plan' || v.id === 'outline' ? 'Tell the planner what to change' : 'Say what to change')}</span>
-      ${R.suggestionField({ id: 'changes-text', cls: 'pd-wide', value: ui.changesText || '', rows: 3, placeholder: v.id === 'plan' || v.id === 'outline' ? 'What should the plan do differently?' : 'What should change?', writingPlaceholder: 'Drafting from the 2 open issues…', writing: ui.changesDraft, attrs: { 'data-key': 'changes-text' }, act: ui.changesDraft ? R.stopWriting({ attrs: { 'data-stopdraft': 'changes', 'data-key': 'draft-stop', title: null } }) : R.suggestButton({ tip: draftTip('Draft it from the open issues'), label: 'Draft it from the open issues', attrs: { 'data-draft': 'changes', 'data-key': 'draft-changes' } }) })}
-      ${ui.changesErr ? draftFail('changes') : ''}${acts(v.id === 'plan' || v.id === 'outline' ? 'Send to the planner' : 'Send')}</form>`;
+    return R.confirmForm({ form: 'changes', text: ui.changesFor === 'Revise' ? 'Tell Worca what to change in the workflow' : v.id === 'plan' || v.id === 'outline' ? 'Tell the planner what to change' : 'Say what to change', body: `${R.suggestionField({ id: 'changes-text', cls: 'pd-wide', value: ui.changesText || '', rows: 3, placeholder: v.id === 'plan' || v.id === 'outline' ? 'What should the plan do differently?' : 'What should change?', writingPlaceholder: 'Drafting from the 2 open issues…', writing: ui.changesDraft, attrs: { 'data-key': 'changes-text' }, act: ui.changesDraft ? R.stopWriting({ attrs: { 'data-stopdraft': 'changes', 'data-key': 'draft-stop', title: null } }) : R.suggestButton({ tip: draftTip('Draft it from the open issues'), label: 'Draft it from the open issues', attrs: { 'data-draft': 'changes', 'data-key': 'draft-changes' } }) })}
+      ${ui.changesErr ? draftFail('changes') : ''}${acts(v.id === 'plan' || v.id === 'outline' ? 'Send to the planner' : 'Send')}` });
   }
   if (ui.confirm) {
     const c = ui.confirm; const busy = !!ui.busy && !ui.dialog;
-    const err = c.err && { title: c.err.title, detail: c.err.detail, extra: c.err.odd ? `<button type="button" class="pd-retry" data-say="${esc(DETAILS)}" data-key="err-details">Details</button>` : '' };
+    const err = c.err && { title: c.err.title, detail: c.err.detail, extra: c.err.odd ? detailsLink() : '' };
     return R.confirmStrip({ text: c.text, yes: c.yes, danger: c.danger, busy: busy ? R.workingWord(c.label) : '', err });
   }
   return '';
@@ -636,8 +635,8 @@ function prDialogHtml(v) {
     const sparkle = (kind, what, label) => R.suggestButton({ tip: tip(what), label, attrs: hook({ 'data-pd': kind, 'data-key': `pd-${kind}${sfx}` }) });
     const titleField = R.suggestionField({ id: 'pd-title' + sfx, value: f.title, placeholder: 'Title', writingPlaceholder: 'Suggesting a title…', writing: f.genTitle, attrs: { maxlength: 256, 'data-key': 'pd-title' + sfx }, act: sparkle('gentitle', 'Suggest a title', 'Suggest a title') });
     const stop = R.stopWriting({ attrs: hook({ 'data-pd': 'stop', 'data-key': 'pd-stop' + sfx }) });
-    const eye = `<button type="button" class="pd-eye${f.mode === 'preview' ? ' is-on' : ''}" data-pdmode="${f.mode === 'preview' ? 'write' : 'preview'}" data-pi="${i}" data-key="pd-eye${sfx}" aria-pressed="${f.mode === 'preview'}" title="Preview" aria-label="Preview">${svg('eye', 14)}</button>`;
-    const descField = f.mode === 'preview' ? `<div class="pd-adorn${f.gen ? ' is-writing' : ''}"><div class="pd-preview">${f.desc ? md(f.desc) : '<p class="rtab-dim">Nothing to preview yet.</p>'}</div></div>`
+    const eye = R.previewToggle({ on: f.mode === 'preview', attrs: { 'data-pdmode': f.mode === 'preview' ? 'write' : 'preview', 'data-pi': i, 'data-key': 'pd-eye' + sfx } });
+    const descField = f.mode === 'preview' ? R.suggestionPreview({ writing: f.gen, html: f.desc ? md(f.desc) : '<p class="rtab-dim">Nothing to preview yet.</p>' })
       : R.suggestionField({ id: 'pd-desc' + sfx, value: f.desc, rows: 7, placeholder: 'Optional: empty uses the title', writingPlaceholder: 'Writing from the run: what it did, its changes, how it was checked…', writing: f.gen, attrs: { 'data-key': 'pd-desc' + sfx } });
     return `<div class="pd-f"><span class="pd-lab"><label for="pd-title${sfx}">Title</label>${f.titleSuggested && !f.genTitle ? sug : ''}</span>${titleField}${f.errTitle ? fail(f, i, sfx, 'gentitle') : ''}</div>
     <div class="pd-f"><span class="pd-lab"><label for="pd-desc${sfx}">Description</label>${f.descSuggested && !f.gen ? sug : ''}${f.gen ? stop : sparkle('gen', 'Write it from the run', 'Write the description from the run')}${eye}</span>${descField}${f.errDesc ? fail(f, i, sfx, 'gen') : ''}</div>`;
@@ -648,23 +647,23 @@ function prDialogHtml(v) {
   const rowLine = (f, i) => f.made ? `<span class="st-sum">Opened ${esc(f.made)}</span>` : f.gen || f.genTitle ? '<span class="st-writing">Writing…</span>'
     : (f.errDesc || f.errTitle) && !f.open ? '<span class="st-sum">Couldn’t write it; today’s text stays</span>'
     : v.tabData.prFlag[i] ? `<span class="st-flag">${esc(v.tabData.prFlag[i])}</span>` : `<span class="st-sum" title="${esc(v.tabData.prSum[i] || '')}">${esc(v.tabData.prSum[i] || '')}</span>`;
-  const rowsHtml = stacked && pr.prs ? `<div class="pd-f"><span class="pd-hint">Worca writes each title and description from its run. Open a row only to change it.</span><ol class="st-list">${pr.prs.map((f, i) => `<li class="st-row"><button type="button" class="st-head" data-prrow="${i}" data-key="prrow:${i}" aria-expanded="${!!f.open}"${f.made ? ' disabled' : ''}>${svg('chevron', 14).replace('M6 9.5l6 6 6-6', f.open ? 'M6 9.5l6 6 6-6' : 'M9.5 6l6 6-6 6')}<span class="st-num">PR ${i + 1}</span><span class="st-mid"><span class="st-t" title="${esc(f.title)}">${esc(f.title)}</span>${rowLine(f, i)}</span><span class="st-meta"><span>${esc((sh.sizes || [])[i] || '')} · ${v.tabData.prFiles[i] || 1} files</span><span>${i ? 'into PR ' + i : 'into ' + esc(pr.base)}</span></span></button>${f.open && !f.made ? `<div class="st-body">${fields(f, i)}</div>` : ''}</li>`).join('')}</ol></div>` : '';
+  const rowsHtml = stacked && pr.prs ? `<div class="pd-f"><span class="pd-hint">Worca writes each title and description from its run. Open a row only to change it.</span><ol class="st-list">${pr.prs.map((f, i) => R.stackedPrRow({ n: i + 1, title: f.title, line: rowLine(f, i), meta: [`${(sh.sizes || [])[i] || ''} · ${v.tabData.prFiles[i] || 1} files`, i ? 'into PR ' + i : 'into ' + pr.base], open: f.open, made: f.made, body: f.open && !f.made ? fields(f, i) : '', attrs: { 'data-prrow': i, 'data-key': 'prrow:' + i } })).join('')}</ol></div>` : '';
   const title = stacked ? '' : fields(pr, -1);
   const branch = v.place.branch || 'feat/unified-page-navigation';
   // The sentence says what opens, from where, into what; how many PRs is a picker in it, like the base.
-  const shipPick = sh ? `<span class="rc-pop pd-basepop"><button type="button" class="pd-base pd-ship" data-menu="pdship" data-key="menu:pdship" aria-haspopup="menu" aria-expanded="${ui.menu === 'pdship'}" title="How many PRs">${sh.pick === 'one' ? 'One PR' : sh.n + ' stacked PRs'}${svg('chevron', 12)}</button>${menu('pdship', [
+  const shipPick = sh ? `${wordPick('pdship', sh.pick === 'one' ? 'One PR' : sh.n + ' stacked PRs', 'How many PRs', [
     { id: 'ship:stack', text: sh.n + ' stacked PRs', checked: sh.pick !== 'one', hint: sh.rec !== 'one' ? 'Suggested' : '', help: 'One PR per run, each into the one before' },
-    { id: 'ship:one', text: 'One PR', checked: sh.pick === 'one', hint: sh.rec === 'one' ? 'Suggested' : '', off: !!sh.oneBlocked, help: sh.oneBlocked || 'Every run in one review' }])}</span><span>from</span>` : '';
+    { id: 'ship:one', text: 'One PR', checked: sh.pick === 'one', hint: sh.rec === 'one' ? 'Suggested' : '', off: !!sh.oneBlocked, help: sh.oneBlocked || 'Every run in one review' }], 'pd-ship')}<span>from</span>` : '';
   const shipHint = sh ? `<span class="pd-hint">${esc((sh.pick === sh.rec ? 'Worca suggests this: ' : 'Worca suggests ' + (sh.rec === 'one' ? 'one PR' : sh.n + ' stacked PRs') + ': ') + sh.reason)}</span>` : '';
-  const into = `<div class="pd-f"><div class="pd-into">${shipPick}<code class="pd-br" title="${esc(branch)}">${esc(branch)}</code><span>into</span><span class="rc-pop pd-basepop"><button type="button" class="pd-base" data-menu="pdbase" data-key="menu:pdbase" aria-haspopup="menu" aria-expanded="${ui.menu === 'pdbase'}" title="Base branch · pushes to origin">${esc(pr.base)}${svg('chevron', 12)}</button>${menu('pdbase', ['dev', 'main'].map((x) => ({ id: 'base:' + x, text: x, checked: pr.base === x })))}</span></div>
+  const into = `<div class="pd-f"><div class="pd-into">${shipPick}<code class="pd-br" title="${esc(branch)}">${esc(branch)}</code><span>into</span>${wordPick('pdbase', pr.base, 'Base branch · pushes to origin', ['dev', 'main'].map((x) => ({ id: 'base:' + x, text: x, checked: pr.base === x })))}</div>
     ${shipHint}<span class="pd-hint${pr.base === 'main' ? ' is-warn' : ''}">${pr.base === 'main' ? 'main is 41 commits behind dev; the PR would carry them too' : 'dev has 2 new commits since the run started; they merge cleanly'}</span></div>`;
   // Where it goes (Advanced): which remote it pushes to and which it opens against; another repository says so.
-  const remotes = R.shows('advanced') ? `<div class="pd-f"><div class="pd-into"><span>Push to</span><span class="rc-pop pd-basepop"><button type="button" class="pd-base" data-menu="pdpush" data-key="menu:pdpush" aria-haspopup="menu" aria-expanded="${ui.menu === 'pdpush'}" title="The remote the branch goes to">${esc(pr.push || 'origin')}${svg('chevron', 12)}</button>${menu('pdpush', ['origin', 'fork'].map((x) => ({ id: 'pushr:' + x, text: x, checked: (pr.push || 'origin') === x })))}</span><span>open on</span><span class="rc-pop pd-basepop"><button type="button" class="pd-base" data-menu="pdremote" data-key="menu:pdremote" aria-haspopup="menu" aria-expanded="${ui.menu === 'pdremote'}" title="The remote the pull request opens on">${esc(pr.remote || 'origin')}${svg('chevron', 12)}</button>${menu('pdremote', ['origin', 'upstream'].map((x) => ({ id: 'baser:' + x, text: x, checked: (pr.remote || 'origin') === x })))}</span></div>${(pr.remote || 'origin') !== (pr.push || 'origin') ? `<span class="pd-hint">A pull request across repositories: ${esc(pr.push || 'origin')}’s branch into ${esc(pr.remote || 'origin')}’s ${esc(pr.base)}</span>` : ''}</div>` : '';
+  const remotes = R.shows('advanced') ? `<div class="pd-f"><div class="pd-into"><span>Push to</span>${wordPick('pdpush', pr.push || 'origin', 'The remote the branch goes to', ['origin', 'fork'].map((x) => ({ id: 'pushr:' + x, text: x, checked: (pr.push || 'origin') === x })))}<span>open on</span>${wordPick('pdremote', pr.remote || 'origin', 'The remote the pull request opens on', ['origin', 'upstream'].map((x) => ({ id: 'baser:' + x, text: x, checked: (pr.remote || 'origin') === x })))}</div>${(pr.remote || 'origin') !== (pr.push || 'origin') ? `<span class="pd-hint">A pull request across repositories: ${esc(pr.push || 'origin')}’s branch into ${esc(pr.remote || 'origin')}’s ${esc(pr.base)}</span>` : ''}</div>` : '';
   const moved = v.baseMoved && pr.base === 'dev' ? `<span class="pd-hint is-warn">dev moved while the run worked: 12 new commits, 1 file overlaps. Update the branch first, or the PR opens with conflicts.</span>` : '';
   const release = `<div class="pd-f">${R.checkbox({ label: 'Add a release', checked: !!pr.release, attrs: { id: 'pd-release', 'data-key': 'pd-release' } })}${pr.release ? R.field({ id: 'pd-version', label: 'Version', value: pr.version === undefined ? 'v1.20.0' : pr.version, hint: 'From the latest tag · a draft release after it merges', attrs: { 'data-key': 'pd-version' } }) : ''}</div>`;
   const tryFirst = R.shows('advanced') && !stacked ? `<div class="pd-f"><div class="rl-tools">${R.button({ label: 'Try it first', kind: 'quiet', attrs: { 'data-pd': 'try', 'data-key': 'pd-try', title: v.heldBy ? `Held by “${v.heldBy}”` : v.hosted ? HOSTED_WHY : 'Checks the branch out locally before the PR opens', disabled: !!(v.heldBy || v.hosted || ui.copy) } })}${ui.copy ? '<span class="pd-hint">Local copy open · since 18:12</span>' : ''}</div></div>` : '';
   const opts = `<div class="pd-opts">${R.checkbox({ label: 'Draft', checked: pr.draft, attrs: { id: 'pd-draft', 'data-key': 'pd-draft' } })}${R.checkbox({ label: 'Watch: fix failing checks', checked: pr.watch, attrs: { id: 'pd-watch', 'data-key': 'pd-watch' } })}<span class="pd-hint pd-closes">${stacked ? 'The last PR closes ' : 'Closes '}${esc(v.tabData.issue)}</span></div>`;
-  const alert = pr.err ? `<div class="pd-alert" role="alert"><b>${esc(pr.err.title)}</b><span>${esc(pr.err.detail)}${pr.err.odd ? ` <button type="button" class="pd-retry" data-say="${esc(DETAILS)}" data-key="err-details">Details</button>` : ''}</span></div>` : '';
+  const alert = pr.err ? `<div class="pd-alert" role="alert"><b>${esc(pr.err.title)}</b><span>${esc(pr.err.detail)}${pr.err.odd ? ' ' + detailsLink() : ''}</span></div>` : '';
   const busy = !!ui.busy;
   // The Dialog component: its head (title, Close), the one scrolling body, its foot (Cancel, the step naming what happens).
   return R.dialog({ title: ui.dialogLabel, id: 'pd-h', close: svg('x', 14), body: `${into}${moved}${remotes}${rowsHtml}${title}${opts}${release}${tryFirst}${alert}`,

@@ -14,7 +14,7 @@ export const confirmOf = (f, label) => ({ text: f.confirm, yes: label.replace(/ 
 /** A failure in the design system's words: Could not …, the reason, Nothing changed. */
 export function failureOf(label, why, { odd = false } = {}) {
   const reason = odd || !why ? 'something went wrong on Worca’s side' : why;
-  return { title: `Could not ${label.charAt(0).toLowerCase()}${label.slice(1)}`, detail: `${reason[0].toUpperCase()}${reason.slice(1)}. Nothing changed.`, odd };
+  return { title: `Could not ${label.charAt(0).toLowerCase()}${label.slice(1)}`, detail: `${reason[0].toUpperCase()}${reason.slice(1)}. Nothing changed.`, reason, odd };
 }
 
 /**
