@@ -3,17 +3,18 @@
 // a colour, type size, corner or shadow that is not a token, and a token that does not exist; and, on every case of
 // every page, an inline style that sets a look (not layout or data), a class no stylesheet styles, and a control that
 // is not one of the design system's. A line marked `ds-ok: <reason>` is a known exception.
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 import { APP_CSS, writeAppCss } from './app-css.mjs';
 import { writeComponentsJs } from './components-js.mjs';
 import { ALIGN } from './align-check.mjs';
+import { scanText } from '../../../../tools/rail-gate.mjs';
 writeAppCss();   // the app's CSS, assembled from its parts
 writeComponentsJs();   // the Rail components, bundled for file://
 const here = (f) => fileURLToPath(new URL('../' + f, import.meta.url));   // the prototype's root
 const SHEETS = ['design-system/rail-look.css', 'design-system/rail.css', 'pulse/pulse.css'];
-const ALL = [APP_CSS, ...SHEETS.map(here), here('run-page.html'), here('pulse.html')];
+const ALL = [APP_CSS, ...SHEETS.map(here), ...readdirSync(here('.')).filter((f) => f.endsWith('.html')).map(here)];
 const SCRIPTS = ['runs/run-page.js', 'pulse/pulse.js', 'runs/run-page-model.js', 'pulse/pulse-model.js', 'settings/settings.js', 'settings/settings-model.js'].map(here);
 const issues = new Map(); const add = (k, where) => { if (!issues.has(k)) issues.set(k, new Set()); issues.get(k).add(where); };
 
@@ -65,23 +66,10 @@ for (const name of SHEETS) {
 }
 
 // --- the components ---
-// A page built from the components (ui/public/design-system/components/) writes none of their markup by hand: the
-// component brings it, so a fix or an upgrade reaches every page. BUILT lists the pages moved onto them; the others
-// move one at a time and join the list.
-const BUILT = ['runs/run-page.js', 'settings/settings.js'];
-const OWN = {
-  Button: /class="btn[ "]/, CompactMenu: /class="menu"/, StatusLine: /class="status-dot[ "]/, ConfirmStrip: /class="rc-confirm"/,
-  Tabs: /class="(tabs|tab)[ "]/, Segmented: /class="seg"/, Figures: /class="(rc-figs|rc-fig-link)[ "]/, Toast: /class="(rc-toast|toasts)[ "]/,
-  EmptyState: /class="empty-line[ "]/, 'Text link': /class="dc-link"/,
-  SettingsRow: /class="(set-row|set-rows|set-foot)[ "]/, SettingsSection: /class="set-sec[ "]/, SentencePicker: /class="spick[ "]/, Switch: /class="switch[ "]/,
-  ListRow: /class="(list-row|list|lr-main)[ "]/, Dialog: /class="viewer-modal[ "]/, Field: /class="fld[ "]/, SideMenu: /class="side-menu/, Search: /class="rl-search/, BackLink: /class="rl-back"/, Trail: /class="rc-crumbs"/, Pager: /class="rc-pager"/,
-};
-for (const name of BUILT) {
-  readFileSync(here(name), 'utf8').split('\n').forEach((line, i) => {
-    if (/ds-ok:/.test(line)) return;
-    for (const [c, re] of Object.entries(OWN)) if (re.test(line)) add('markup a component builds, written by hand (use the component)', `${name}:${i + 1} ${c}`);
-  });
-}
+// Every page writes none of their markup by hand: the component brings it, so a fix or an upgrade reaches every page.
+// The list reads itself: every script of every feature folder, by the same scan as npm test (tools/rail-gate.mjs).
+const PAGES_JS = ['runs', 'pulse', 'settings', 'shell'].flatMap((d) => readdirSync(here(d)).filter((f) => f.endsWith('.js')).map((f) => `${d}/${f}`));
+for (const name of PAGES_JS) for (const [c, n] of Object.entries(scanText(readFileSync(here(name), 'utf8')))) add('markup or logic the library owns, written by hand (use the library)', `${name} ${c} × ${n}`);
 
 // --- names: a page, a menu item, a section head, a settings row (docs/rail/small-rules.md) ---
 const NAMES = () => {
@@ -116,7 +104,7 @@ const HEADS = () => {
 // --- the pages ---
 const b = await chromium.launch({ channel: 'chrome' });
 const OPEN = ['break:part', 'break:background', 'break:offline', '[data-pop]', '[data-acct]', '[data-newrun]', '[data-key="act-main"]', '[data-menu]', '.rc-tabs .tab:nth-child(2)', '.rc-tabs .tab:nth-child(3)', '.rc-tabs .tab:nth-child(4)', '.rc-tabs .tab:nth-child(5)'];
-for (const page of ['run-page.html', 'pulse.html']) {
+for (const page of readdirSync(here('.')).filter((f) => f.endsWith('.html') && f !== 'components.html')) {
   const p = await b.newPage({ viewport: { width: 900, height: 900 } });
   p.on('pageerror', (e) => add('script error', String(e)));
   await p.goto('file://' + here(page));

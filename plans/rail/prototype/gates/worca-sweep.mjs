@@ -7,6 +7,7 @@
 // The run page and Pulse keep their own gates (run-page-sweep, pulse-sweep, ds-check); this one checks how they join.
 import { chromium } from 'playwright';
 import { fileURLToPath } from 'node:url';
+import { readFileSync } from 'node:fs';
 import { writeAppCss } from './app-css.mjs';
 import { writeComponentsJs } from './components-js.mjs';
 import { writeTodayJs } from './today-js.mjs';
@@ -14,11 +15,13 @@ writeAppCss(); writeComponentsJs(); writeTodayJs();
 const URL_ = 'file://' + fileURLToPath(new URL('../index.html', import.meta.url));
 global.window = {}; await import('../settings/settings-model.js');
 const SECTIONS = window.SettingsModel.GROUPS.flatMap((g) => g.items);
-const TODAY = ['chat', 'runs', 'schedules', 'stats', 'team-metrics', 'workflows', 'requirements', 'projects', 'workspaces', 'marketplace'];
-const RUNS = ['question', 'gate', 'working', 'checks', 'ready', 'feature', 'chain'];
-const ROUTES = [...TODAY, ...RUNS.map((c) => 'run/' + c), ...SECTIONS.map((s) => 'settings/' + s)];
+// Every route, read from the pages themselves: a new capture, run case or Settings section is checked without touching this file.
+const TODAY = Object.keys(JSON.parse(readFileSync(fileURLToPath(new URL('../today/pages.json', import.meta.url)), 'utf8')));
 const issues = new Map(); const add = (k, w) => { if (!issues.has(k)) issues.set(k, []); if (issues.get(k).length < 12) issues.get(k).push(w); };
 const b = await chromium.launch({ channel: 'chrome' });
+const scout = await b.newPage(); await scout.goto(URL_);
+const RUNS = await scout.evaluate(() => window.RunCardModel.cases.map((c) => c.id)); await scout.close();
+const ROUTES = [...TODAY, ...RUNS.map((c) => 'run/' + c), ...SECTIONS.map((s) => 'settings/' + s)];
 let checks = 0;
 for (const scheme of ['light', 'dark']) for (const w of [1280, 900, 760, 375]) {
   const p = await b.newPage({ viewport: { width: w, height: 860 }, colorScheme: scheme, reducedMotion: 'reduce' });

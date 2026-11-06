@@ -26,6 +26,7 @@ const CONTROLS = `(() => {
     if (!e.getClientRects().length || getComputedStyle(e).visibility === 'hidden') continue;
     const k = e.dataset.key || [...e.attributes].filter((a) => a.name.startsWith('data-') || a.name === 'id').map((a) => a.name + '=' + a.value).join('&') || (e.tagName + ':' + (e.getAttribute('aria-label') || e.textContent.trim().slice(0, 40)));
     if (seen.has(k)) continue; seen.add(k);
+    if (e.matches('[aria-selected="true"], [aria-current], [aria-checked="true"][role="radio"], [aria-checked="true"][role="menuitemradio"], [aria-pressed="true"]')) continue;   // already chosen: choosing it again rightly does nothing
     out.push({ k, off: e.disabled || e.getAttribute('aria-disabled') === 'true', why: e.title || e.closest('[title]')?.title || '', name: (e.getAttribute('aria-label') || e.textContent.trim()).slice(0, 40), tag: e.tagName });
   }
   return out;
@@ -38,27 +39,25 @@ const clickKey = (k) => `(() => { const SEL = 'button, a[href], [role="tab"], [r
     if (k === ${JSON.stringify(k)}) { if (e.tagName === 'SELECT') { const o = [...e.options].find((x) => x.value !== e.value); if (o) { e.value = o.value; e.dispatchEvent(new Event('change', { bubbles: true })); } return true; } e.click(); return true; } }
   return false; })()`;
 
-async function sweep(p, where, reset) {
+async function sweep(p, where, reset, seen) {
   const walk = async (path, depth) => {
     await reset(); for (const k of path) await p.evaluate(clickKey(k));
     const list = await p.evaluate(CONTROLS);
-    const before = new Set(path.length ? (await (async () => { await reset(); for (const k of path.slice(0, -1)) await p.evaluate(clickKey(k)); return (await p.evaluate(CONTROLS)).map((c) => c.k); })()) : []);
+    let before = new Set();
+    if (path.length) { await reset(); for (const k of path.slice(0, -1)) await p.evaluate(clickKey(k)); before = new Set((await p.evaluate(CONTROLS)).map((c) => c.k)); }
     for (const c of list) {
       if (before.has(c.k) || path.includes(c.k)) continue;
+      const id = path.join('>') + '>' + c.k;
+      if (seen.has(id)) continue; seen.add(id);
       if (c.off) { if (!c.why) add('a disabled control that does not say why', `${where}: ${c.name}`); continue; }
       await reset(); for (const k of path) await p.evaluate(clickKey(k));
-      await p.waitForTimeout(0);
       const a = await p.evaluate(signature);
       clicks++;
-      const hit = await p.evaluate(clickKey(c.k));
-      if (!hit) continue;
-      await p.waitForTimeout(25);
-      const b = await p.evaluate(signature);
-      if (a === b) add('a dead control', `${where}: ${c.name || c.k}`);
-      else if (depth > 0 && c.tag !== 'A') {
-        const opened = await p.evaluate(`[...document.querySelectorAll('.menu, [role="menu"], [role="dialog"]')].some((x) => x.getClientRects().length)`);
-        if (opened) { await walk([...path, c.k], depth - 1); }
-      }
+      if (!(await p.evaluate(clickKey(c.k)))) continue;
+      await p.waitForTimeout(12);
+      const bb = await p.evaluate(signature);
+      if (a === bb) add('a dead control', `${where}: ${c.name || c.k}`);
+      else if (depth > 0 && c.tag !== 'A' && await p.evaluate(`[...document.querySelectorAll('.menu, [role="menu"], [role="dialog"]')].some((x) => x.getClientRects().length)`)) await walk([...path, c.k], depth - 1);
     }
   };
   await walk([], 1);
@@ -79,15 +78,16 @@ for (const w of WIDTHS) {
         const other = cases[(cases.indexOf(c) + 1) % cases.length];
         await p.selectOption('#case', c);
         const tabs = await p.$$eval('.rc-tabs .tab', (x) => x.map((e) => e.dataset.tab));
+        const seen = new Set();   // a control shared by a case's tabs counts once
         for (const t of tabs.length ? tabs : ['']) {
-          await sweep(p, `${page} ${w} ${c}${t ? '/' + t : ''}`, async () => { await p.selectOption('#case', other); await p.selectOption('#case', c); if (t) await p.click(`.tab[data-tab="${t}"]`); });
+          await sweep(p, `${page} ${w} ${c}${t ? '/' + t : ''}`, async () => { await p.selectOption('#case', other); await p.selectOption('#case', c); if (t) await p.evaluate((x) => document.querySelector(`.tab[data-tab="${x}"]`)?.click(), t); }, seen);
         }
       }
     } else {
-      // The one Worca: its routes come from its own router (window.RailShell.routes) and the sections of Settings.
-      const routes = await p.evaluate(() => (window.RailShell?.routes ? window.RailShell.routes() : ['']));
+      // The one Worca: the shell on one place (captured pages are not the design), and every section of Settings.
+      const routes = await p.evaluate(() => (window.SettingsModel ? ['runs', ...window.SettingsModel.GROUPS.flatMap((g) => g.items).map((s) => 'settings/' + s)] : ['']));
       const list = SMALL ? routes.filter((_, i) => i % 5 === 0) : routes;
-      for (const r of list) await sweep(p, `${page} ${w} #${r}`, async () => { await p.goto(`${url}#${r}`); await p.reload(); await p.waitForTimeout(30); });
+      for (const r of list) { const seen = new Set(); await sweep(p, `${page} ${w} #${r}`, async () => { await p.evaluate((x) => { location.hash = x; }, r); await p.reload(); }, seen); }
     }
     await p.close();
   }

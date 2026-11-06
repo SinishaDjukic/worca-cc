@@ -49,6 +49,17 @@ export const ALIGN = () => {
     const sl = rows.filter((r) => !stacked && r.querySelector('.set-text').textContent.trim()).map((r) => textBox(r.querySelector('.set-text')).left);
     if (sl.some((x) => !near(x, sl[0]))) out.push(`the sentences start on ${new Set(sl.map(Math.round)).size} edges: ${label(rows[0])}…`);
   }
+  // One rail, one end: in every list of rows, on one edge each: the marks, the text, and the end's left and right.
+  const edges = (rows, name, sel) => { const xs = rows.map((r) => r.querySelector(sel)).filter((e) => e && e.offsetParent).map((e) => e.getBoundingClientRect()); return { xs, name }; };
+  const ROWS = [['.list-rows', ':scope > .list-row', { mark: '.lr-rail', text: '.lr-main', end: '.lr-end' }], ['.sc-subs', ':scope > .sc-row', { mark: '.rd-route-dot', text: '.sc-name' }], ['.pz-list', ':scope > .pz-row', { mark: '.pz-rail', text: '.pz-row-main', endR: '.pz-row-time' }]];
+  for (const [box, sel, parts] of ROWS) for (const list of document.querySelectorAll(box)) {
+    const rows = [...list.querySelectorAll(sel)].filter((r) => r.offsetParent); if (rows.length < 2) continue;
+    for (const [what, s] of Object.entries(parts)) {
+      const { xs } = edges(rows, what, s); if (xs.length < 2) continue;
+      if (what !== 'endR' && xs.some((x) => !near(x.left, xs[0].left))) out.push(`${box}: its rows' ${what} start on ${new Set(xs.map((x) => Math.round(x.left))).size} edges`);
+      if ((what === 'end' || what === 'endR') && xs.some((x) => !near(x.right, xs[0].right))) out.push(`${box}: its rows' ends stop on ${new Set(xs.map((x) => Math.round(x.right))).size} edges`);
+    }
+  }
   // a record's title starts on its section's text edge: its mark hangs left of it
   for (const sec of document.querySelectorAll('.set-sec')) {
     const h = sec.querySelector(':scope > .set-sec-head .set-sec-h'); if (!h || !h.offsetParent) continue;

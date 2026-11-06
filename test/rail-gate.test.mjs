@@ -3,8 +3,9 @@
 // (docs/rail/README.md) instead of writing its markup or its words. After moving a page: node tools/rail-gate.mjs --update.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { BASELINE, compare, scanText, scanTree } from '../tools/rail-gate.mjs';
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { BASELINE, ROOT, compare, scanText, scanTree } from '../tools/rail-gate.mjs';
 
 const baseline = () => JSON.parse(readFileSync(BASELINE, 'utf8'));
 
@@ -28,6 +29,13 @@ test('the gate catches each thing by hand, and passes a page that calls the libr
   assert.deepEqual(scanText('`Could not merge. Nothing changed.`'), { 'Step flow': 1 });
   assert.deepEqual(scanText('`<svg width="14" viewBox="0 0 24 24"></svg>`'), { 'Inline icon': 1 });
   assert.deepEqual(scanText("import { button, runState } from './design-system/components/index.mjs'; el.innerHTML = button({ label: 'Go' }) + runState(id).word;"), {});
+});
+
+test('the prototype\'s pages write nothing the library owns: no frozen count for them', () => {
+  const dir = join(ROOT, 'plans/rail/prototype');
+  const hits = {};
+  for (const d of ['runs', 'pulse', 'settings', 'shell']) for (const f of readdirSync(join(dir, d))) if (f.endsWith('.js')) { const h = scanText(readFileSync(join(dir, d, f), 'utf8')); if (Object.keys(h).length) hits[`${d}/${f}`] = h; }
+  assert.deepEqual(hits, {});
 });
 
 test('compare: a new file with a hit grows; an old file may not grow; a lower count is reported', () => {
