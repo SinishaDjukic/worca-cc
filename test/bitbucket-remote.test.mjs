@@ -1,7 +1,7 @@
 // test/bitbucket-remote.test.mjs — Bitbucket Cloud identity: hosts, PR URLs, and the forge helpers that use them.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { isBitbucketHost, parseBitbucketPrUrl, bitbucketPrUrl } from '../src/shared/bitbucket-remote.mjs';
+import { isBitbucketHost, parseBitbucketPrUrl, parseBitbucketIssueUrl, bitbucketPrUrl } from '../src/shared/bitbucket-remote.mjs';
 import { parseRemoteUrl, forgeOf, forgeOfPrUrl, prNumberFromUrl, watchablePrUrl, remoteRepoSlug, sameRepo, FORGE_LABEL } from '../src/core/forge.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
@@ -43,4 +43,21 @@ test('bitbucket-remote: hosts, PR URLs, forge detection', async () => {
       assert.equal(forgeOfPrUrl('https://dev.azure.com/acme/Shop/_git/api/pullrequest/9'), 'azure');
     } },
   ]);
+});
+
+test('parseBitbucketIssueUrl: /issues/N with and without a slug tail; a pull-requests URL, other hosts → null', () => {
+  const I = { host: 'bitbucket.org', owner: 'acme', repo: 'api', number: 5 };
+  assert.deepEqual(parseBitbucketIssueUrl('https://bitbucket.org/acme/api/issues/5'), I);
+  assert.deepEqual(parseBitbucketIssueUrl('https://bitbucket.org/acme/api/issues/5/'), I);
+  assert.deepEqual(parseBitbucketIssueUrl('https://www.bitbucket.org/acme/api/issues/5/login-fails-on-safari'), I);
+  assert.deepEqual(parseBitbucketIssueUrl('https://bitbucket.org/acme/api/issues/5?x=1#c'), I);
+  for (const bad of [
+    'https://bitbucket.org/acme/api/pull-requests/5',
+    'https://github.com/acme/api/issues/5',
+    'https://bitbucket.example.com/acme/api/issues/5',
+    'http://bitbucket.org/acme/api/issues/5',
+    'https://bitbucket.org/acme/api/issues/0',
+    'https://bitbucket.org/acme/api/issues',
+    undefined,
+  ]) assert.equal(parseBitbucketIssueUrl(bad), null, String(bad));
 });

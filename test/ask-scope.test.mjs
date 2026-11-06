@@ -141,6 +141,7 @@ test('propose_scope_switch: listed only with its bundle and never in the Workflo
   assert.deepEqual(def.inputSchema.required, ['candidates', 'reason']);
   for (const gate of ['No project', 'fairly certain', 'general question', 'hunch', '2–3', 'at most one card per project per chat',
     'Continue without project', 'END YOUR TURN', 'already has a project or workspace']) assert.ok(def.description.includes(gate), gate);
+  assert.ok(def.description.includes('worca may already have switched a No-project chat from an issue or pull request link in the message (its context block has a scope: line): continue in that project. When the links matched several projects, a scope hint: line names them: give only those as candidates.'), 'the link auto-switch');
   assert.deepEqual(await t.call('propose_scope_switch', { candidates: [A.key], reason: 'r' }), { ok: true, card: { type: 'scope-switch' } });
   assert.deepEqual(seen, [{ candidates: [A.key], reason: 'r' }]);
   assert.ok(!createAskTools({ limits: ASK_LIMITS, redact: (s) => s }).list().some((d) => d.name === 'propose_scope_switch'), 'a bundle-less list is unchanged');

@@ -273,6 +273,9 @@ async function openSocket() {
       patchModel();
       if (pops && el && pops.isOpen(el.model)) pops.rebuild();   // an open model menu lists the new engine's models
     }
+    // The chat's scope moved on the server (a pasted link, or a pick in Chat): the pill follows, so the next message
+    // carries the new scope instead of switching the chat back (review M1).
+    if (f.type === 'ask-scope') adoptServerScope(f.scope, f.label);
     renderTranscript();
   };
   ws.onclose = (ev) => {
@@ -401,6 +404,10 @@ async function send() {
     // A resync may have replaced the model meanwhile (its snapshot then already holds this message, and noteLocal…
     // dedupes by id); a switch away means this thread is not on screen.
     if (st.model && st.threadId === threadId) st.model.noteLocalUserMessage({ id: r.userMessageId, text: body.text, attachments: V.echoAttachments(r.attachments) });   // kind → attKind (m8)
+    // A link in this message switched the No-project chat (docs/chat-home.md "Scope from a pasted link"): the pill
+    // follows even when the ask-scope frame was missed. Only for the chat still open (review M1).
+    const sw = r && r.scope;
+    if (st.threadId === threadId && sw && typeof sw === 'object' && sw.pinned === true && typeof sw.projectKey === 'string') adoptServerScope(sw, sw.label);
     // Only now: a failed send keeps the draft (M4). The state is cleared first. `el` may be null when the socket
     // dropped during the POST and setPhase('offline') unmounted the composer (v7); the message was still sent, so a
     // remount must not restore the text and invite a double send.
@@ -422,6 +429,16 @@ async function send() {
 
 async function stop() {
   if (st.threadId) await client.call(`/api/ask/threads/${encodeURIComponent(st.threadId)}/stop`, { method: 'POST', body: {} }).catch(() => null);
+}
+
+/** A scope the server already stored (an ask-scope frame, a send's 202): adopted with no PATCH, read as openThread
+ *  reads a snapshot's context. A label names the pin before the lists load. */
+function adoptServerScope(scope, label) {
+  const s = scope && typeof scope === 'object' ? scope : {};
+  st.scope = s.pinned === true ? { pinned: true, projectKey: s.projectKey || null, workspaceId: s.workspaceId || null } : { pinned: false };
+  if (st.scope.pinned && typeof label === 'string' && label) st.scopeNames.set(st.scope.workspaceId ? `w:${st.scope.workspaceId}` : `p:${st.scope.projectKey}`, label);
+  patchScope();
+  if (pops && el && pops.isOpen(el.scope)) pops.rebuild();
 }
 
 async function setScope(value) {
