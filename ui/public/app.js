@@ -115,7 +115,7 @@ import { paintGroupShip, resetGroupShip } from './ship-group-dialog.mjs';
 import { setShipDialogOpener, shipReason } from './shape/ship-card.mjs';
 import { pageModel, runCrumbs, paintCrumbs, syncFacts } from './run-page-head.mjs';
 import { headModel, routeModel, routeGroupOf, renderHeadButtons, renderRoute, prMenuItems, canResolvePr, showsFixConflicts, HD_PR_WATCH_ACTIVE,
-  hdPrWatchLabel, WATCH_HELP, pushLabel, pushTip } from './run-head.mjs';
+  hdPrWatchLabel, WATCH_HELP, pushLabel, pushTip, tryServiceOf } from './run-head.mjs';
 import { delegateQuestion } from './question-delegate.mjs';
 import { loadRunsView, saveRunsView, viewChip, viewMenuItems } from './runs-view-menu.mjs';
 import { createRunsSelection, rowTarget, barModel, bulkBody, rangeKeys, labelTargets, pipelineTargets } from './runs-selection.mjs';
@@ -2000,6 +2000,12 @@ function handleServerMessage(msg) {
     if (scriptsCtl) scriptsCtl.onChanged();
     return;
   }
+  // A workflow row written elsewhere (a Chat card's Save, #1126): an OPEN Workflows view re-reads its lists; any
+  // other page reloads them on entry anyway (initWorkflows; New run's re-entry refresh).
+  if (msg.type === 'workflows-changed') {
+    if (currentShownView === 'workflows' && gvComposer) void wfvRefreshWorkflows();
+    return;
+  }
   // Bench frames are tagged by benchId (not runId) and ride the same broadcast
   // socket. Handle them BEFORE the !msg.runId early-return below.
   if (typeof msg.type === 'string' && msg.type.startsWith('scriptbench-')) {
@@ -3268,6 +3274,7 @@ let wfvRuntimes = null;     // the script runtime probe (GET /api/scripts/runtim
 let wfvChat = null;         // the composer chat dock (workflows/chat-dock.mjs), mounted with the view
 const WFV_SESSION = mintId('cs_');   // this page load's composer session: the chat applies only cards stamped with it
 const wfvPendingDraft = { agent: null, script: null, build: null };   // a chat draft's Edit… (and Ask's graph card's Open in Workflows), handed to the route it opens
+let wfvRevealId = '';   // a chat card's Open (#1126): routeWorkflows shows this saved row in the Library once
 const gvNewIds = new Set(); // workflows imported this page session (a NEW pill until reload)
 // A saved workflow id, by the server's own rule (workflows.mjs isSafeWorkflowId): a minted `wf_<slug>` (no
 // length cap), a plugin's `wfp_<plugin>_<slug>`, or any safe id a POST /api/workflows body kept (`myflow`).
@@ -3380,6 +3387,15 @@ async function wfvRefreshWorkflows() {
   gvComposer?.setSavedDomains([...new Set(rows.map((w) => w.domain || 'general'))].sort());
   wfvLibrary?.setData({ workflows: rows, archived, newIds: gvNewIds });
   void loadHomePins();                           // the Library ⋯ and Workflows menu labels follow the viewer's pins
+}
+
+/** Show a saved workflow in the Library (#1126): re-read the list first — highlight() finds the row's folder in the
+ *  data it holds, and a row saved since the last read would open none — then open the Library on Workflows and let
+ *  highlight open the row's domain folder and flash it. */
+async function wfvRevealWorkflow(id) {
+  await wfvRefreshWorkflows();
+  wfvShellActions().openLibrary('workflows');
+  wfvLibrary?.highlight('workflow', id);
 }
 
 /** Mount the engine + chrome ONCE. Resolves true on the first mount. */
@@ -3591,13 +3607,13 @@ async function openBuildFromAsk(build) {
 
 /** Open a saved workflow on the canvas (#1127): the user's own in place (Edit: Save changes it); a built-in or plugin one,
  *  or any row with `copy`, as a new unsaved copy (Use as template). Asks before discarding (the composer's guard), and
- *  says why when the row cannot be read — never nothing. */
+ *  says why when the row cannot be read — never nothing. Resolves null when the row cannot be read, else whether it opened. */
 async function wfvOpenSaved(id, { copy = false } = {}) {
   let full = null;
   try { full = await gvApi.readWorkflow(id); } catch { full = null; }   // a refused fetch: say so below
   if (!full) {
     notify({ tone: 'err', title: 'Could not open the workflow', detail: `"${id}" was deleted or renamed, or Worca did not answer.` });
-    return false;
+    return null;
   }
   const opened = copy || isBuiltinWorkflow(full) ? await gvComposer.openCopy(full) : await gvComposer.openTemplate(full);
   if (opened) gvComposer.fit();
@@ -3640,12 +3656,15 @@ async function routeWorkflows(param = '') {
   if (!head) return;
   // Any other head names a saved workflow (Ask's "Open in Workflows", the top-bar search, a bookmark): open it as its Library row does (a built-in as a copy, #1127)
   // and normalise the hash, or say why not — never nothing.
+  const reveal = wfvRevealId === head;            // a chat card asked for this row (openWorkflowFromAsk reveal)
+  wfvRevealId = '';
   try { window.history.replaceState(null, '', '#workflows'); } catch { /* sandboxed */ }
   if (!WF_ID_RE.test(head)) {
     notify({ tone: 'err', title: 'Could not open the workflow', detail: `"${head}" is not a workflow id or a Workflows address.` });
     return;
   }
-  await wfvOpenSaved(head);
+  const opened = await wfvOpenSaved(head);
+  if (reveal && opened !== null) await wfvRevealWorkflow(head);   // also when the discard prompt kept the canvas (D2)
 }
 
 async function enterWorkflowsView(param = '', prevView = '') {
@@ -4279,11 +4298,12 @@ async function loadWorkflowsInto(selectId) {
   const list = [AUTO_WORKFLOW, ...(workflows.length ? workflows : [{ id: 'wf_default', name: 'Default' }])];
   const want = selectId || state.workflowId || AUTO_WORKFLOW_ID;
   sel.innerHTML = '';
-  // Simple mode (docs/ui-levels.md) offers Auto and Default only. The workflow already selected
-  // stays listed whatever it is: a non-default value is never hidden from the run it applies to.
+  // Simple mode (docs/ui-levels.md) offers Auto, Default and the workflows Chat saved (origin 'auto', #1126).
+  // The workflow already selected stays listed whatever it is: a non-default value is never hidden from the
+  // run it applies to.
   const simplePicker = !levelAtLeast('advanced');
   list.forEach((wf) => {
-    if (simplePicker && wf.id !== AUTO_WORKFLOW_ID && wf.id !== 'wf_default' && wf.id !== want) return;
+    if (simplePicker && wf.id !== AUTO_WORKFLOW_ID && wf.id !== 'wf_default' && wf.origin !== 'auto' && wf.id !== want) return;
     const o = option(wf.id, wf.id === AUTO_WORKFLOW_ID ? wf.name : (workflowPickerLabel(wf, enabledPluginNames) || wf.id));
     // Memory defragment holds exactly one scope, and a workspace run has no single project to
     // resolve `project` against (the server 400s) — so it is disabled on a workspace target.
@@ -15580,6 +15600,8 @@ async function fetchAfterCandidates() {
 
 /** #new/after/<pipelineId> | #new/after/t:<ticketId>: pick the predecessor first, then describe the task. */
 const ENDED_BADLY = ['error', 'stopped', 'interrupted'];
+// An interrupted run that can still resume has not ended (scheduler pipelineGate waits for it): no `any` preset.
+const endedBadly = (r) => ENDED_BADLY.includes(r.status) && !(r.status === 'interrupted' && r.resumable === true);
 // A TICKET that ended this way can never be waited for (resolveAfterRef refuses it under either policy —
 // scheduler.mjs BAD_TICKET_REASON, same words); say so here rather than at Start.
 const ENDED_TICKET = { missed: 'was missed', canceled: 'was canceled', failed: 'could not start', skipped: 'was skipped' };
@@ -15618,7 +15640,7 @@ async function openAfterForNew(ref) {
   // (resolveAfterRef refuses it under done) — preset the switch the sheet would need.
   // branchGone: the predecessor finished but its feature branch no longer resolves (an archived
   // or restored run) — syncPreviousBranchOption then leaves "Branch of the run before it" out.
-  setPendingSchedule({ after: { kind: r.kind, id: r.id, title: r.title || null, branchGone: !!r.branchGone }, afterPolicy: ENDED_BADLY.includes(r.status) ? 'any' : 'done' });
+  setPendingSchedule({ after: { kind: r.kind, id: r.id, title: r.title || null, branchGone: !!r.branchGone }, afterPolicy: endedBadly(r) ? 'any' : 'done' });
   try { el.prompt?.focus(); } catch { /* jsdom */ }
 }
 function closeStartMenu() {
@@ -18322,13 +18344,15 @@ function rdScopeQuery(run) {
   return qs.toString();
 }
 
-/** Repaint every mounted strip for runId (Overview strip on either page, Ship It "Try it first") from the cache. */
+/** Repaint every mounted strip for runId (Overview strip on either page, Ship It "Try it first") from the cache, and
+ *  the open run heads whose Try it step reads it. */
 function paintActionsStrips(runId) {
   const model = actionsModelCache.get(runId);   // undefined when the model GET failed: the strip stays empty
   // Compare the dataset instead of building a selector: no CSS.escape needed (jsdom tests lack it).
   for (const el of [...document.querySelectorAll('.act-strip[data-run-id]')].filter((x) => x.dataset.runId === runId)) {
     el.replaceChildren(...(model ? [renderOverviewStrip(model, { doc: document, handlers: stripHandlers(el) })].filter(Boolean) : []));
   }
+  repaintTryHeads(runId);
 }
 /** Mount point: stamps the run id and scope, then paints from the cache or fetches the model once. */
 async function paintActionsStrip(strip, runId, scopeQuery) {
@@ -18353,8 +18377,11 @@ async function refreshActionsModel(runId, scopeQuery) {
  * Cached models of unmounted runs are dropped, so a revisit fetches instead of painting a stale state.
  */
 function refreshActionsStrips() {
+  tryModelAsked.clear();                       // a head whose model read failed may ask again on this frame
   const mounted = new Map();
   for (const el of document.querySelectorAll('.act-strip[data-run-id]')) mounted.set(el.dataset.runId, el.__scopeQuery);
+  // An open run head past Check out reads the model too (Start / Open / Stop): keep it cached and refetch it.
+  for (const [runId, scopeQuery] of openTryHeadScopes()) if (!mounted.has(runId)) mounted.set(runId, scopeQuery);
   for (const runId of [...actionsModelCache.keys()]) if (!mounted.has(runId)) actionsModelCache.delete(runId);
   const controlled = new Set([...actionControllers].map((c) => c.runId));
   for (const [runId, scopeQuery] of mounted) {
@@ -36674,7 +36701,7 @@ function paintPrCta(slot, { state = 'none', href = '', onClick = null, cls = '',
  *  a live run has none), `m` the page model, `kept` screen._headKept, `repaint` the page's head painter.
  *  Side effect: it starts the PR status reads it needs (the feed's, and each open workspace member's through
  *  ensurePrStatus); a landed member read calls `repaint`, which then finds it cached, so it cannot loop. */
-function headFactsOf(screen, rec, { m, mode, gitChrome, folder, canTry, kept, repaint, liveSource = '', liveBranch = '', pipelineId = '' }) {
+function headFactsOf(screen, rec, { m, mode, gitChrome, folder, canTry, tryIt = null, kept, repaint, liveSource = '', liveBranch = '', pipelineId = '' }) {
   const ws = !!rec && rec.target === 'workspace' && hasWsMembers(rec);
   const own = !ws && rec && rec.pr && typeof rec.pr === 'object' && rec.pr.url ? rec.pr : null;
   const open = !!own && String(own.state || '').toUpperCase() === 'OPEN';
@@ -36693,7 +36720,7 @@ function headFactsOf(screen, rec, { m, mode, gitChrome, folder, canTry, kept, re
   const source = (rec && rec.sourceBranch) || liveSource || '';
   const group = routeGroupOf(groupHomeOf((rec && rec.id) || pipelineId), { sourceBranch: source, histOf });
   return {
-    m, mode, gitChrome, folder, canTry, kept, level: currentLevel(),
+    m, mode, gitChrome, folder, canTry, tryIt, kept, level: currentLevel(),
     workspace: ws ? { members: histWsMembers(rec).map((x) => ({
       key: x.memberKey, name: (names && names[x.memberKey]) || String(x.projectKey || x.memberKey).replace(/-[0-9a-f]{8}$/, ''),
       pr: x.pr && typeof x.pr === 'object' ? x.pr : null,
@@ -36760,14 +36787,15 @@ function paintHdHead(screen, record, data) {
   const f = headFactsOf(glance, record, {
     m, mode, gitChrome: gitOn() && isGitRun(hdRunOf(record, data)), kept, repaint, pipelineId: record.id,
     folder: bar ? { state: bar.state, total: changesCounts(changes).total, dir: record.projectDir || '' } : null,
-    canTry: hdCanTry(record, st, held.retained, held.provisional) && !hdCheckoutFor(record),
+    canTry: hdCanTry(record, st, held.retained, held.provisional),
+    tryIt: tryFactsOf(rec),                             // past Check out: its setup, then the first service
   });
   paintRunHead(glance, f, headHandlers(glance, () => hdCurrentRecord(record), { kept, ctaCls: 'hd-g-pr', folderTotal: f.folder ? f.folder.total : 0,
-    onCreate: () => { const b = screen.querySelector('.hd-pr'); if (b) b.click(); } }));
+    onCreate: () => { const b = screen.querySelector('.hd-pr'); if (b) b.click(); }, onActions: () => hdGoDetails('actions') }));
 }
 
 /** Slice 3 (D11): the head buttons' and the route's calls. `cur()` re-reads the record at click time. */
-function headHandlers(screen, cur, { onCreate, kept, ctaCls = '', folderTotal = 0 }) {
+function headHandlers(screen, cur, { onCreate, kept, ctaCls = '', folderTotal = 0, onActions = null }) {
   const scopeOf = (memberKey) => { const rec = cur(); return { id: rec.id, projectKey: rec.projectKey, ...(memberKey ? { memberKey } : {}) }; };
   const feed = () => screen.querySelector('.rd-pr-feed');
   return {
@@ -36775,7 +36803,10 @@ function headHandlers(screen, cur, { onCreate, kept, ctaCls = '', folderTotal = 
     onHead: (id, b) => {
       const rec = cur();
       if (id === 'ship') return onCreate();
-      if (id === 'try') return tryItFlow(b, rec);
+      if (id === 'try') return tryItFlow(rec);
+      if (id === 'try-start') return tryStartFlow(rec);
+      if (id === 'try-stop') return tryStopFlow(rec);
+      if (id === 'try-actions') return onActions && onActions();
       if (id === 'push') return pushSourceFlow(b, rec);
       if (id === 'report') return openReportModal(rec.id);
       if (id === 'how-to-merge') return showViewer('How to merge', mergeBackText(rec));
@@ -36916,14 +36947,89 @@ async function copyPrLink(url) {
   try { await navigator.clipboard.writeText(url); notify({ tone: 'ok', title: 'PR link copied' }); }
   catch { notify({ tone: 'err', title: 'Could not copy the link' }); }
 }
-/** Try it (D11): today's Check out (stripHandlers().onCheckout); the History broadcast then repaints the head. */
-async function tryItFlow(btn, rec) {
+// Try it (D11) on the run heads: Check out, its setup, then the project's first service (run-head.mjs tryStep). A
+// request in flight is held per run, because every head repaint rebuilds its buttons; Check out's wait ends when
+// History's row shows the checkout (one pipelines-changed after the POST answers), or after TRY_WAIT_MS.
+const TRY_WAIT_MS = 15000;
+const tryBusy = new Map();          // runId -> { step: 'checkout' | 'start' | 'stop', timer }
+const tryModelAsked = new Set();    // runIds whose head asked for the Actions model since the last actions-changed
+function setTryBusy(id, step, wait = 0) {
+  clearTryBusy(id);
+  const timer = wait ? setTimeout(() => { if (tryBusy.get(id)?.timer === timer) { tryBusy.delete(id); repaintTryHeads(id); } }, wait) : null;
+  tryBusy.set(id, { step, timer });
+  repaintTryHeads(id);
+}
+function clearTryBusy(id) {
+  const b = tryBusy.get(id);
+  if (b && b.timer) clearTimeout(b.timer);
+  tryBusy.delete(id);
+}
+/** headModel's `tryIt` fact for `rec` (a History row): its checkout, the Actions model (asked for once while a checkout
+ *  exists) and the request in flight. Seeing the checkout ends Check out's wait. */
+function tryFactsOf(rec) {
+  if (!rec || !rec.id) return null;
+  const checkout = hdCheckoutFor(rec);
+  if (checkout && tryBusy.get(rec.id)?.step === 'checkout') clearTryBusy(rec.id);
+  if (checkout && !actionsModelCache.has(rec.id) && !tryModelAsked.has(rec.id)) {
+    tryModelAsked.add(rec.id);       // a failed read is not retried per paint (the reply repaints the head)
+    void refreshActionsModel(rec.id, runActionQuery(rec.projectDir || null, rec).toString());
+  }
+  return { checkout, actions: actionsModelCache.get(rec.id) || null, busy: tryBusy.get(rec.id)?.step || '' };
+}
+/** The open heads of run `runId` (History detail, run page): repaint them. */
+function repaintTryHeads(runId) {
+  const hd = histDetailState;
+  if (hd && hd.screen && hd.screen.isConnected && hd.data && hd.record && hd.record.id === runId) paintHdHead(hd.screen, hdCurrentRecord(hd.record), hd.data);
+  const r = rdOpenRun();
+  if (r && r.pipelineId === runId && runDetailState.screen && RD_TERMINAL.includes(r.status)) paintRdHead(runDetailState.screen, r);
+}
+/** [runId, scopeQuery] of each open head past Check out (refreshActionsStrips keeps and refetches their model). */
+function openTryHeadScopes() {
+  const out = [];
+  const add = (rec) => { if (rec && rec.id && hdCheckoutFor(rec)) out.push([rec.id, runActionQuery(rec.projectDir || null, rec).toString()]); };
+  if (histDetailState && histDetailState.screen && histDetailState.screen.isConnected && histDetailState.record) {
+    add((state.historyAll || []).find((x) => x && x.id === histDetailState.record.id) || histDetailState.record);
+  }
+  const r = rdOpenRun();
+  if (r && r.pipelineId && RD_TERMINAL.includes(r.status)) add(rdHistoryRecord(r));
+  return out;
+}
+async function tryItFlow(rec) {
   const scope = runActionQuery(rec.projectDir || null, rec).toString();
-  btn.disabled = true;
+  setTryBusy(rec.id, 'checkout', TRY_WAIT_MS);
   const r = await actionsCall('POST', actionsRunUrl(rec.id, '/checkout', scope), {});
-  if (btn.isConnected) btn.disabled = false;
-  if (!r.ok) notify({ tone: 'err', title: 'Could not check out', detail: (r.data && r.data.error) || `HTTP ${r.status}` });
-  await refreshActionsModel(rec.id, scope);
+  if (!r.ok) {
+    clearTryBusy(rec.id);
+    notify({ tone: 'err', title: 'Could not check out', detail: (r.data && r.data.error) || `HTTP ${r.status}` });
+  }
+  tryModelAsked.delete(rec.id);
+  await refreshActionsModel(rec.id, scope);   // repaints the heads (paintActionsStrips)
+}
+/** Start the project's first service (202: it starts after setup, whose row state then shows Setting up…). */
+async function tryStartFlow(rec) {
+  const t = tryServiceOf(hdCheckoutFor(rec), actionsModelCache.get(rec.id));
+  if (!t || !t.action) return;
+  const scope = runActionQuery(rec.projectDir || null, rec).toString();
+  setTryBusy(rec.id, 'start');
+  const r = await actionsCall('POST', actionsRunUrl(rec.id, `/actions/${encodeURIComponent(t.action.id)}/start`, scope), { member: t.member.projectKey });
+  if (!r.ok) notify({ tone: 'err', title: `Could not start ${t.action.label}`, detail: (r.data && r.data.error) || `HTTP ${r.status}` });
+  tryModelAsked.delete(rec.id);
+  await refreshActionsModel(rec.id, scope);   // still busy: the old model's step must not flash back before this lands
+  clearTryBusy(rec.id);
+  repaintTryHeads(rec.id);
+}
+/** Stop the service the head shows Open and Stop for. */
+async function tryStopFlow(rec) {
+  const t = tryServiceOf(hdCheckoutFor(rec), actionsModelCache.get(rec.id));
+  if (!t || !t.live) return;
+  const scope = runActionQuery(rec.projectDir || null, rec).toString();
+  setTryBusy(rec.id, 'stop');
+  const r = await actionsCall('POST', actionsRunUrl(rec.id, `/actions/${encodeURIComponent(t.live.actionId)}/stop`, scope), { member: t.live.member });
+  if (!r.ok) notify({ tone: 'err', title: `Could not stop ${t.live.label || 'the service'}`, detail: (r.data && r.data.error) || `HTTP ${r.status}` });
+  tryModelAsked.delete(rec.id);
+  await refreshActionsModel(rec.id, scope);   // still busy: the old model's step must not flash back before this lands
+  clearTryBusy(rec.id);
+  repaintTryHeads(rec.id);
 }
 
 function rdSheetGroup(title, rows) {
@@ -37296,9 +37402,10 @@ function paintRdHead(screen, r, m = rdModel(r)) {
     liveBranch: (r.branch && typeof r.branch === 'object' && r.branch.feature) || r.branchFeature || '',
     pipelineId: r.pipelineId || '',
     folder: bar ? { state: bar.state, total: changesCounts(changes).total, dir: r.projectDir || '' } : null,
-    canTry: !!(rec && rec.branch) && terminal && !kept && !!r.pipelineId && !hdCheckoutFor(rec),
+    canTry: !!(rec && rec.branch) && terminal && !kept && !!r.pipelineId,
+    tryIt: terminal && r.pipelineId ? tryFactsOf(rec) : null,
   });
-  paintRunHead(screen, f, headHandlers(screen, () => rdNoticeCarrier(r), { kept, ctaCls: 'rd-create-pr', folderTotal: f.folder ? f.folder.total : 0, onCreate: () => {
+  paintRunHead(screen, f, headHandlers(screen, () => rdNoticeCarrier(r), { kept, ctaCls: 'rd-create-pr', folderTotal: f.folder ? f.folder.total : 0, onActions: () => rdGoDetails('actions'), onCreate: () => {
     const key = historyKeyForRun(r);
     pendingShipIt = { id: r.pipelineId, projectKey: key };
     location.hash = `history/${key}/${r.pipelineId}`;
@@ -39458,7 +39565,7 @@ void mcpApi('GET', '/api/flags').then((r) => {
 });
 // Renderers that branch on the mode. Registered here (after levelListeners exists); every callee
 // is a hoisted function declaration.
-onLevelChange(() => { refreshNewPipelinePickers(); });     // Simple lists Auto + Default only
+onLevelChange(() => { refreshNewPipelinePickers(); });     // Simple lists Auto, Default and chat-saved workflows
 onLevelChange(() => paintHiddenSettings());
 onLevelChange(() => repaintOpenRunGroupLine());               // the Group row's "Add to group…" is Advanced (D18)
 onLevelChange(() => scheduleGroupPagePaint());                // the group page's Logs tab is Expert
@@ -39952,8 +40059,10 @@ function openNewPipeline(prefill) {
 }
 
 /** Ask Worca's "Open in composer" and the top-bar search's workflow rows: the Workflows view opens the
- *  saved row by its address (#workflows/<id>); the view asks before discarding an unsaved canvas. */
-async function openWorkflowFromAsk(workflowId) {
+ *  saved row by its address (#workflows/<id>); the view asks before discarding an unsaved canvas.
+ *  `reveal` (a chat card's way in, #1126): the Library then opens on the row's folder and flashes it. */
+async function openWorkflowFromAsk(workflowId, { reveal = false } = {}) {
+  if (reveal) wfvRevealId = String(workflowId);
   location.hash = `workflows/${workflowId}`;
   return true;
 }
@@ -41057,7 +41166,7 @@ askPanel = createAskPanel({
   getPageContext,
   // Ask worca beside the page (R11): Open in New run from the chat is a page it opens, so a covering column steps aside.
   openNewPipeline: (prefill) => { askSide?.uncover(); openNewPipeline(prefill); },
-  openComposer: (id) => { openWorkflowFromAsk(id); },
+  openComposer: (id) => { openWorkflowFromAsk(id, { reveal: true }); },
   composerActions: askComposerActions(),        // Ask's draft and graph cards: the Workflows chat's actions (ask-composer-cards.mjs)
   openClaudeSetup: () => { openClaudeSetup(); },
   loadMarkdown: loadAskMarkdown,

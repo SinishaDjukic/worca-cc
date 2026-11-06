@@ -4607,6 +4607,8 @@ const chatBridge = createConversationBridge({
         const engine = askTurnEngine(threadId, fresh, mv.model);
         const got = await fetchChatFiles(fitted, {
           fetchFn: chatFileFetch,
+          // Files a plugin announced by opaque ref: its worker downloads them with its own credential (never the host).
+          fetchRef: (ref, o) => channelHost.fetchFile({ plugin: inbound.plugin, channelId: inbound.channelId, ref: ref.ref, ...o }),
           allowedHosts: chatAttachmentHosts(inbound.plugin, inbound.channelId),
           refuse: (cls, name) => { const r = chatAttachRefusal({ engine, kind: cls.kind, pdf: cls.mime === 'application/pdf' }); return r ? `${r}: ${name}` : null; },
           log: (level, m) => console.error(`[worca-ui] chat ${level}: ${m}`),
@@ -6609,7 +6611,7 @@ function handleTerminalMessage(ws, msg) {
  * Taking a value, not `req`, lets the stack loop (which runs after its response) call it too.
  */
 function ensureSetup(runId, pk, { enabled, rerun = false }) {
-  const key = `${runId}:${pk}`;
+  const key = `${runId}:${pk}`; let settled = false;   // settled: this job wrote a setup state (none / skipped / ok / failed)
   if (setupJobs.has(key)) return setupJobs.get(key);
   const job = (async () => {
     const rec = checkoutRecOf(runId, pk);
@@ -6618,8 +6620,8 @@ function ensureSetup(runId, pk, { enabled, rerun = false }) {
     if (!rerun && ['ok', 'none', 'skipped'].includes(status)) return true;
     if (!rerun && status === 'failed') return false;
     const cfg = readProjectActions(pk);
-    if (!cfg.setup) { setSetupState(runId, pk, { status: 'none', at: new Date().toISOString() }); return true; }
-    if (!enabled) { setSetupState(runId, pk, { status: 'skipped', at: new Date().toISOString() }); return true; }
+    if (!cfg.setup) { setSetupState(runId, pk, { status: 'none', at: new Date().toISOString() }); settled = true; return true; }
+    if (!enabled) { setSetupState(runId, pk, { status: 'skipped', at: new Date().toISOString() }); settled = true; return true; }
     const t0 = Date.now();
     setSetupState(runId, pk, { status: 'running', at: new Date().toISOString() });
     emitChanged('pipelines-changed', 'updated');
@@ -6631,11 +6633,11 @@ function ensureSetup(runId, pk, { enabled, rerun = false }) {
     } catch { /* start failed or timed out → failed below */ }
     const ok = end?.status === 'exited' && end.exitCode === 0;
     const ms = Date.now() - t0;
-    setSetupState(runId, pk, { status: ok ? 'ok' : 'failed', exitCode: end?.exitCode ?? null, at: new Date().toISOString(), ms });
+    setSetupState(runId, pk, { status: ok ? 'ok' : 'failed', exitCode: end?.exitCode ?? null, at: new Date().toISOString(), ms }); settled = true;
     if (ok) writeActionsMeta(pk, { lastSetupMs: ms });
     emitChanged('pipelines-changed', 'updated');
     return ok;
-  })().catch(() => false).finally(() => setupJobs.delete(key));
+  })().catch(() => false).finally(() => { setupJobs.delete(key); if (settled) emitChanged('actions-changed', 'setup-done'); });   // the tab follows actions-changed only: a frame once the job is gone ends "Setting up"
   setupJobs.set(key, job);
   return job;
 }

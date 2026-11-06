@@ -1957,6 +1957,24 @@ test('F-26: the Save reason shows as text, linked by aria-describedby, and hides
   assert.equal(reason.hidden, true);
 });
 
+test('a workflows-changed frame (a chat save, #1126) re-reads the list into an OPEN Workflows Library; on another page it fetches nothing', async () => {
+  const { window: w, requests, recv } = await boot();
+  await go(w, 'workflows');
+  w.__wfv.library().open('workflows');
+  const chatRow = { id: 'wf_from-chat', name: 'From chat', version: 2, domain: 'coding', origin: 'auto',
+    nodes: [{ id: 'n_task', kind: 'task', x: 60, y: 200, config: {} }, { id: 'n_end', kind: 'end', x: 960, y: 200, config: {} }], wires: [] };
+  w.__rows.push(chatRow);
+  recv({ type: 'workflows-changed', action: 'saved' });
+  await tick(8);
+  // Default, Graph one and Legacy one are all coding: one domain, no folders — every row is drawn in the section.
+  assert.ok(w.document.querySelector('.wfl-wf[data-item="workflow:wf_from-chat"]'), 'the saved row is listed without leaving the view');
+  await go(w, 'running');
+  const n0 = requests.length;
+  recv({ type: 'workflows-changed', action: 'saved' });
+  await tick(8);
+  assert.deepEqual(requests.slice(n0).filter((r) => /\/api\/workflows\b/.test(r.url)).map((r) => r.url), [], 'a closed view reloads on entry anyway');
+});
+
 test('#1127: Edit opens your row in place, Use as template opens a built-in (or ⋯ on yours) as an unsaved copy, #workflows/<id> follows the same rule, and the canvas badge says which', async () => {
   const { window: w } = await boot();
   await go(w, 'workflows');

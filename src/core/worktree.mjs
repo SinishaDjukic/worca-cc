@@ -20,6 +20,7 @@ import { basename, join, resolve, sep } from 'node:path';
 
 import { slugify } from './artifacts.mjs';
 import { clearStaleGitLocks } from './git-lock.mjs';
+import { readStagedChanges } from './commit-message.mjs';
 // settings.mjs is a leaf (node builtins only), so importing the §10 flag reader here
 // adds no dependency on the DB layer — worktree.mjs stays DB-free.
 import { runRootMode } from './settings.mjs';
@@ -623,6 +624,8 @@ export async function withoutIgnored(paths, runGit) {
  * (step 'branch') unless HEAD is that branch: a person may have detached or switched the retained worktree
  * while recovering by hand, and Apply deletes the worktree after a good commit. For the same reason it refuses
  * (step 'add') a worktree with unresolved conflicts, which `add -A` would mark resolved.
+ * `message` is the commit message, or a function `(changes) => string|Promise<string>` called once something is
+ * staged, with the staged changes (commit-message.mjs `readStagedChanges`, null when git cannot tell).
  * @returns {Promise<{ok:true, committed:boolean, sha:string|null, hooksBypassed:boolean}
  *                  |{ok:false, step:'status'|'branch'|'add'|'commit', message:string}>}
  */
@@ -658,13 +661,15 @@ export async function commitStagedWork(worktreeDir, { message, exclude = [], byp
   if (!add.ok) return { ok: false, step: 'add', message: msgOf(add) };
   const staged = await run(['diff', '--cached', '--quiet']);
   if (staged.ok) return { ok: true, committed: false, sha: null, hooksBypassed: false };   // exit 0 = nothing staged
+  // A function message is built from what is staged now (Apply's run commit message, commit-message.mjs).
+  const text = typeof message === 'function' ? await message(await readStagedChanges((args) => run(args))) : message;
   const local = ['-c', 'user.email=orchestrator@local', '-c', 'user.name=orchestrator'];
   // As at teardown, the project's own commit hooks run (git-guard.mjs: never under agent isolation).
-  let commit = await indexWrite(['commit', '-m', message], { hooks: true });
-  if (!commit.ok) commit = await run([...local, 'commit', '-m', message], { hooks: true });
+  let commit = await indexWrite(['commit', '-m', text], { hooks: true });
+  if (!commit.ok) commit = await run([...local, 'commit', '-m', text], { hooks: true });
   let hooksBypassed = false;
   if (!commit.ok && bypassHooks) {
-    commit = await run(['-c', 'core.hooksPath=', ...local, 'commit', '-m', message]);
+    commit = await run(['-c', 'core.hooksPath=', ...local, 'commit', '-m', text]);
     hooksBypassed = commit.ok;
   }
   if (!commit.ok) return { ok: false, step: 'commit', message: msgOf(commit) };

@@ -763,6 +763,325 @@ test('controller: a Discard that succeeds says so in the card', async () => {
   ctl.destroy();
 });
 
+// ---------------------------------------------------------------------------
+// Progress while checking out, setting up, discarding and starting
+// ---------------------------------------------------------------------------
+
+const PK = 'app-0cea65fb';
+const NOW = Date.parse('2026-11-04T10:00:00Z');
+const SETUP_ID = `act:ab:${PK}:__setup`;
+const setupInst = (over = {}) => ({ instanceId: SETUP_ID, runId: 'ab', member: PK, actionId: '__setup', label: 'Setup', kind: 'task',
+  status: 'running', startedAt: NOW - 12000, ...over });
+const buttonNamed = (el, label) => [...el.querySelectorAll('button')].find((b) => b.textContent === label);
+/** A fake api whose writes wait until `release()`: the click-pending window, held open. */
+function heldApi(getModel) {
+  const calls = []; let open = [];
+  const api = (method, url, body) => {
+    calls.push([method, url, body]);
+    if (method === 'GET') return Promise.resolve({ ok: true, status: 200, data: getModel() });
+    return new Promise((res) => open.push(res));
+  };
+  const release = (r = { ok: true, status: 200, data: {} }) => { const o = open; open = []; for (const f of o) f(r); };
+  return { api, calls, release, writes: () => calls.filter((c) => c[0] !== 'GET') };
+}
+const pressAnyway = (b) => b.dispatchEvent(new doc.defaultView.Event('click'));
+const settle = async (n = 6) => { for (let i = 0; i < n; i++) await tick(); };
+
+test('checking out: the Check out button is busy and a status row names the branch', () => {
+  const el = renderActionsCard(model(member()), { doc, handlers: {}, busy: new Set([`checkout:${PK}`]) });
+  const card = el.querySelector('section.act-card');
+  assert.equal(card.dataset.state, 'checking-out');
+  assert.equal(card.querySelector('.act-state').textContent, 'Checking out');
+  const b = buttonNamed(el, 'Checking out…');
+  assert.ok(b && b.disabled, 'busy: disabled, with its own label');
+  assert.equal(b.getAttribute('aria-busy'), 'true');
+  assert.ok(b.querySelector('.act-spin'), 'a spinner in the button');
+  const status = card.querySelector('.act-status');
+  assert.equal(status.getAttribute('role'), 'status');
+  assert.ok(status.querySelector('.act-spin'));
+  assert.equal(status.textContent, 'Checking out worca-cc/x…');
+  assert.ok(['VS Code', 'Terminal', 'Finder'].every((l) => buttonNamed(el, l).disabled), 'the folder they open is not there yet');
+  // Without the busy key it is the plain card again.
+  const idle = renderActionsCard(model(member()), { doc, handlers: {} });
+  assert.equal(idle.querySelector('.act-status'), null);
+  assert.ok(!buttonNamed(idle, 'Check out').disabled);
+});
+
+test('setting up: spinner, the setup command, elapsed time, the usual length and the setup log tail', () => {
+  // The setup instance's own start wins over the checkout's stamp (the job wrote `running` a moment before it).
+  const m = member({ checkout: { setup: { status: 'running', at: new Date(NOW - 30000).toISOString() } }, setupQueued: true });
+  const logs = new Map([[SETUP_ID, [{ stream: 'out', text: 'added 512 packages' }]]]);
+  const el = renderActionsCard(model(m, [setupInst()]), { doc, handlers: {}, logs, now: NOW });
+  const status = el.querySelector('.act-status');
+  assert.ok(status.querySelector('.act-spin'));
+  assert.equal(status.querySelector('code').textContent, 'npm ci');
+  assert.equal(status.querySelector('.act-elapsed').textContent, '12s');
+  assert.equal(status.querySelector('.act-elapsed').dataset.since, String(NOW - 12000));
+  assert.equal(status.textContent, 'Running setup: npm ci · 12s · usually ~42s');
+  const pre = el.querySelector('pre.act-log');
+  assert.equal(pre.dataset.instanceId, SETUP_ID);
+  assert.equal(pre.textContent, 'added 512 packages\n');
+  // No setup instance yet (the job has only just begun): elapsed from the checkout's setup stamp; no estimate known.
+  const fresh = model(member({ checkout: { setup: { status: 'running', at: new Date(NOW - 12000).toISOString() } }, setupQueued: true }));
+  fresh.estimate = { lastSetupMs: null };
+  const el2 = renderActionsCard(fresh, { doc, handlers: {}, now: NOW });
+  assert.equal(el2.querySelector('.act-status').textContent, 'Running setup: npm ci · 12s');
+});
+
+test('workspace: the footer Check out is busy while any of its members checks out, and that row says Checking out', () => {
+  const api = member({ projectKey: 'api-1a2b3c4d', projectName: 'api' });
+  const web = member({ projectKey: 'web-5e6f7a8b', projectName: 'web' });
+  const m = { ...model(api), workspace: true, members: [api, web] };
+  const el = renderActionsCard(m, { doc, handlers: {}, busy: new Set(['checkout:web-5e6f7a8b']) });
+  const go = el.querySelector('.act-co-foot button');
+  assert.equal(go.textContent, 'Checking out…');
+  assert.ok(go.disabled && go.querySelector('.act-spin'));
+  const chips = [...el.querySelectorAll('.act-table tbody tr')].map((tr) => tr.querySelector('.act-c-end .badge').textContent);
+  assert.deepEqual(chips, ['Not checked out', 'Checking out']);
+  assert.ok(el.querySelectorAll('.act-table tbody tr')[1].querySelector('.act-spin'), 'the busy row spins');
+  assert.equal(renderActionsCard(m, { doc, handlers: {} }).querySelector('.act-co-foot button').textContent, 'Check out 2 projects');
+});
+
+test('setting up: the setup log stays the one shown when a newer instance exists', () => {
+  const m = member({ checkout: { setup: { status: 'running' } } });
+  const old = { instanceId: `act:ab:${PK}:test`, member: PK, actionId: 'test', kind: 'task', status: 'exited', exitCode: 0, startedAt: NOW };
+  const el = renderActionsCard(model(m, [setupInst({ startedAt: NOW - 5000 }), old]), { doc, handlers: {}, logs: new Map(), now: NOW });
+  assert.equal(el.querySelector('pre.act-log').dataset.instanceId, SETUP_ID);
+});
+
+test('setup done: Checked out, no status row, actions startable', () => {
+  const el = renderActionsCard(model(member({ checkout: { setup: { status: 'ok' } } }), [setupInst({ status: 'exited', exitCode: 0 })]), { doc, handlers: {}, now: NOW });
+  assert.equal(el.querySelector('.act-state').textContent, 'Checked out');
+  assert.equal(el.querySelector('.act-status'), null);
+  assert.ok(!buttonNamed(el, 'Run').disabled && !buttonNamed(el, 'Test').disabled);
+});
+
+test('setup failed: the error and the setup log stay visible', () => {
+  const logs = new Map([[SETUP_ID, [{ stream: 'err', text: 'npm ERR! missing script' }]]]);
+  const el = renderActionsCard(model(member({ checkout: { setup: { status: 'failed', exitCode: 1 } } }), [setupInst({ status: 'exited', exitCode: 1 })]),
+    { doc, handlers: {}, logs, now: NOW });
+  assert.equal(el.querySelector('.act-state').textContent, 'Setup failed');
+  assert.equal(el.querySelector('.act-exit.fail').textContent, 'Setup failed (exit 1).');
+  assert.equal(el.querySelector('.act-status'), null);
+  assert.equal(el.querySelector('pre.act-log').textContent, 'npm ERR! missing script\n');
+});
+
+test('busy Discard and Start: spinner, disabled, own label', () => {
+  const m = member({ checkout: { setup: { status: 'ok' } } });
+  const el = renderActionsCard(model(m), { doc, handlers: {}, busy: new Set([`discard:${PK}`, `start:${PK}:run`]) });
+  for (const label of ['Discarding…', 'Starting…']) {
+    const b = buttonNamed(el, label);
+    assert.ok(b && b.disabled && b.querySelector('.act-spin'), label);
+  }
+  assert.ok(buttonNamed(el, 'Test') && !buttonNamed(el, 'Test').disabled, 'only the pressed action is busy');
+  const linked = renderActionsCard(model(member({ checkout: { external: true, worktreeDir: '/u/app', setup: { status: 'skipped' } } })),
+    { doc, handlers: {}, busy: new Set([`discard:${PK}`]) });
+  assert.ok(buttonNamed(linked, 'Unlinking…').disabled);
+});
+
+test('a starting service shows a spinner until it is ready', () => {
+  const run = { instanceId: `act:ab:${PK}:run`, member: PK, actionId: 'run', kind: 'service', status: 'starting', ports: { PORT: 4417 }, url: 'http://localhost:4417', startedAt: NOW - 2000 };
+  const m = member({ checkout: { setup: { status: 'ok' } } });
+  for (const status of ['starting', 'running']) {
+    const line = renderActionsCard(model(m, [{ ...run, status }]), { doc, handlers: {}, now: NOW }).querySelector('.act-service');
+    assert.ok(line.querySelector('.act-spin'), status);
+    assert.match(line.textContent, /Starting…/);
+  }
+  const ready = renderActionsCard(model(m, [{ ...run, status: 'ready' }]), { doc, handlers: {}, now: NOW }).querySelector('.act-service');
+  assert.equal(ready.querySelector('.act-spin'), null);
+  assert.doesNotMatch(ready.textContent, /Starting…/);
+  const failing = renderActionsCard(model(m, [{ ...run, status: 'running', readyError: 'port never opened' }]), { doc, handlers: {}, now: NOW }).querySelector('.act-service');
+  assert.equal(failing.querySelector('.act-spin'), null, 'a ready check that gave up is not "starting"');
+});
+
+test('workspace checked-out rows: busy Discard / Unlink / Start, Starting… before ready, and the setup log while setting up', () => {
+  const other = member({ projectKey: 'web-5e6f7a8b', projectName: 'web', branch: 'b/web' });
+  const ws = (m, instances = [], opts = {}) => renderActionsCard(wsModel([m, other], { instances }), { doc, handlers: {}, now: NOW, ...opts })
+    .querySelector(`.act-wt-row[data-member="${PK}"]`);
+  const ok = member({ checkout: { worktreeDir: '/w/app', setup: { status: 'ok' } } });
+
+  const row = ws(ok, [], { busy: new Set([`discard:${PK}`, `start:${PK}:run`]) });
+  for (const label of ['Discarding…', 'Starting…']) {
+    const b = buttonNamed(row, label);
+    assert.ok(b && b.disabled && b.querySelector('.act-spin'), label);
+  }
+  assert.ok(buttonNamed(row, 'Test') && !buttonNamed(row, 'Test').disabled, 'only the pressed action is busy');
+  assert.ok(buttonNamed(ws(ok), 'Discard'), 'not busy without the key');
+  const linked = ws(member({ checkout: { external: true, worktreeDir: '/u/app', setup: { status: 'skipped' } } }), [],
+    { busy: new Set([`discard:${PK}`]) });
+  assert.ok(buttonNamed(linked, 'Unlinking…').disabled);
+
+  const run = { instanceId: `act:ab:${PK}:run`, member: PK, actionId: 'run', kind: 'service', status: 'starting', ports: { PORT: 4417 }, url: 'http://localhost:4417', startedAt: NOW - 2000 };
+  const starting = ws(ok, [run]).querySelector('.act-wt-svc');
+  assert.ok(starting.querySelector('.act-starting .act-spin'));
+  assert.equal(starting.querySelector('.act-uptime'), null, 'no uptime before ready');
+  const ready = ws(ok, [{ ...run, status: 'ready' }]).querySelector('.act-wt-svc');
+  assert.equal(ready.querySelector('.act-starting'), null);
+  assert.ok(ready.querySelector('.act-uptime'));
+
+  const old = { instanceId: `act:ab:${PK}:test`, member: PK, actionId: 'test', kind: 'task', status: 'exited', exitCode: 0, startedAt: NOW };
+  const settingUp = ws(member({ checkout: { worktreeDir: '/w/app', setup: { status: 'running' } } }), [setupInst({ startedAt: NOW - 5000 }), old], { logs: new Map() });
+  assert.equal(settingUp.dataset.state, 'setting-up');
+  assert.equal(settingUp.querySelector('pre.act-log').dataset.instanceId, SETUP_ID);
+  const failed = ws(member({ checkout: { worktreeDir: '/w/app', setup: { status: 'failed', exitCode: 1 } } }),
+    [setupInst({ status: 'exited', exitCode: 1, startedAt: NOW - 5000 }), old], { logs: new Map() });
+  assert.equal(failed.dataset.state, 'setup-failed');
+  assert.equal(failed.querySelector('pre.act-log').dataset.instanceId, SETUP_ID);
+});
+
+test('controller: Check out goes busy at once, a second click does nothing, the answer clears it', async () => {
+  let cur = model(member());
+  const h = heldApi(() => cur);
+  const host = doc.createElement('div');
+  const ctl = createActionsController({ runId: 'ab', scopeQuery: 'projectKey=app', api: h.api, ws: { send() {} }, host, doc, confirm: async () => true });
+  await ctl.refresh();
+  buttonNamed(host, 'Check out').click();
+  assert.ok(buttonNamed(host, 'Checking out…').disabled, 'busy before the server answers');
+  assert.equal(host.querySelector('.act-status').textContent, 'Checking out worca-cc/x…');
+  pressAnyway(buttonNamed(host, 'Checking out…'));   // a disabled button can still get an Event: the handler must refuse
+  ctl.onFrame({ type: 'action-status', instanceId: `act:ab:${PK}:x`, snapshot: null, seq: 1 });   // a re-render keeps busy
+  assert.ok(buttonNamed(host, 'Checking out…'));
+  await settle();
+  assert.equal(h.writes().length, 1, 'one checkout only');
+  cur = model(member({ checkout: { setup: { status: 'running' } }, setupQueued: true }));
+  h.release();
+  await settle();
+  assert.equal(host.querySelector('section.act-card').dataset.state, 'setting-up');
+  assert.equal(buttonNamed(host, 'Checking out…'), undefined);
+  ctl.destroy();
+});
+
+test('controller: a failed Check out clears busy and shows the error', async () => {
+  const h = heldApi(() => model(member()));
+  const host = doc.createElement('div');
+  const ctl = createActionsController({ runId: 'ab', scopeQuery: 'projectKey=app', api: h.api, ws: { send() {} }, host, doc, confirm: async () => true });
+  await ctl.refresh();
+  buttonNamed(host, 'Check out').click();
+  h.release({ ok: false, status: 500, data: { error: 'git worktree add failed' } });
+  await settle();
+  assert.ok(!buttonNamed(host, 'Check out').disabled);
+  assert.match(host.querySelector('.act-notice').textContent, /git worktree add failed/);
+  ctl.destroy();
+});
+
+test('controller: Discard is busy once confirmed; a second click while busy asks nothing', async () => {
+  let cur = model(member({ checkout: { setup: { status: 'ok' } } }));
+  const h = heldApi(() => cur);
+  const host = doc.createElement('div');
+  let asked = 0;
+  const ctl = createActionsController({ runId: 'ab', scopeQuery: 'projectKey=app', api: h.api, ws: { send() {} }, host, doc,
+    confirm: async () => { asked += 1; return true; } });
+  await ctl.refresh();
+  buttonNamed(host, 'Discard').click();
+  await settle();
+  assert.ok(buttonNamed(host, 'Discarding…').disabled);
+  pressAnyway(buttonNamed(host, 'Discarding…'));   // a disabled button can still get an Event: the handler must refuse
+  await settle();
+  assert.equal(asked, 1);
+  assert.equal(h.writes().length, 1);
+  cur = model(member());
+  h.release({ ok: true, status: 200, data: { patches: [] } });
+  await settle();
+  assert.ok(buttonNamed(host, 'Check out'));
+  assert.match(host.textContent, /Checkout discarded\./);
+  ctl.destroy();
+});
+
+test('controller: a declined Discard never shows busy', async () => {
+  const h = heldApi(() => model(member({ checkout: { setup: { status: 'ok' } } })));
+  const host = doc.createElement('div');
+  let answer; let asked = 0;
+  const ctl = createActionsController({ runId: 'ab', scopeQuery: 'projectKey=app', api: h.api, ws: { send() {} }, host, doc,
+    confirm: () => new Promise((r) => { asked += 1; answer = r; }) });
+  await ctl.refresh();
+  buttonNamed(host, 'Discard').click();
+  await settle();
+  assert.ok(buttonNamed(host, 'Discard'), 'not busy while the confirm is open');
+  await ctl.refresh();   // any re-render while the confirm is open (a refresh, a ws frame) still shows plain Discard
+  assert.equal(buttonNamed(host, 'Discarding…'), undefined, 'no busy look before the user confirms');
+  assert.ok(!buttonNamed(host, 'Discard').disabled);
+  buttonNamed(host, 'Discard').click();   // the confirm is still open: no second one
+  await settle();
+  assert.equal(asked, 1, 'a press while the confirm is open asks nothing');
+  answer(false);
+  await settle();
+  assert.ok(!buttonNamed(host, 'Discard').disabled);
+  buttonNamed(host, 'Discard').click();   // the lock is released after a cancel
+  await settle();
+  assert.equal(asked, 2, 'the lock is released after a cancel');
+  assert.equal(h.writes().length, 0, 'nothing was discarded');
+  ctl.destroy();
+});
+
+test('controller: Start is busy until the server answers; a second click starts nothing', async () => {
+  const h = heldApi(() => model(member({ checkout: { setup: { status: 'ok' } } })));
+  const host = doc.createElement('div');
+  const ctl = createActionsController({ runId: 'ab', scopeQuery: 'projectKey=app', api: h.api, ws: { send() {} }, host, doc, confirm: async () => true });
+  await ctl.refresh();
+  buttonNamed(host, 'Run').click();
+  assert.ok(buttonNamed(host, 'Starting…').disabled);
+  pressAnyway(buttonNamed(host, 'Starting…'));   // a disabled button can still get an Event: the handler must refuse
+  await settle();
+  assert.equal(h.writes().length, 1);
+  h.release({ ok: true, status: 200, data: { instanceId: `act:ab:${PK}:run`, member: PK, actionId: 'run', kind: 'service', status: 'starting', ports: {}, startedAt: Date.now() } });
+  await settle();
+  assert.equal(buttonNamed(host, 'Starting…'), undefined);
+  assert.match(host.querySelector('.act-service').textContent, /Starting…/);
+  ctl.destroy();
+});
+
+test('controller: the setup instance\'s first status frame subscribes it, and the elapsed time ticks in place', async (t) => {
+  t.mock.timers.enable({ apis: ['setInterval', 'Date'], now: NOW });
+  const m = model(member({ checkout: { setup: { status: 'running', at: new Date(NOW - 3000).toISOString() } }, setupQueued: true }));
+  const sent = [];
+  const host = doc.createElement('div');
+  const ctl = createActionsController({ runId: 'ab', scopeQuery: 'projectKey=app', api: async () => ({ ok: true, status: 200, data: m }),
+    ws: { send: (o) => sent.push(o) }, host, doc, confirm: async () => true });
+  await ctl.refresh();
+  assert.equal(host.querySelector('.act-elapsed').textContent, '3s');
+  ctl.onFrame({ type: 'action-status', instanceId: SETUP_ID, snapshot: setupInst({ startedAt: NOW - 3000 }), seq: 1 });
+  assert.deepEqual(sent.at(-1), { type: 'subscribe', instanceId: SETUP_ID }, 'its log replays from the start');
+  ctl.onFrame({ type: 'action-line', instanceId: SETUP_ID, stream: 'out', text: 'npm warn', seq: 2 });
+  const pre = host.querySelector('pre.act-log');
+  t.mock.timers.tick(2000);
+  assert.equal(host.querySelector('.act-elapsed').textContent, '5s');
+  assert.equal(host.querySelector('pre.act-log'), pre, 'the tick does not rebuild the card');
+  ctl.destroy();
+  t.mock.timers.tick(5000);   // no tick after destroy (the host is empty; nothing throws)
+});
+
+test('controller: Terminal before Check out shows Checking out while the POST is out; a second press checks out nothing', async () => {
+  const h = heldApi(() => model(member()));
+  const host = doc.createElement('div');
+  let asked = 0;
+  const ctl = createActionsController({ runId: 'ab', scopeQuery: 'projectKey=app', api: h.api, ws: { send() {} }, host, doc,
+    confirm: async () => { asked += 1; return true; } });
+  await ctl.refresh();
+  buttonNamed(host, 'Terminal').click();
+  await settle();
+  assert.equal(host.querySelector('section.act-card').dataset.state, 'checking-out');
+  assert.ok(buttonNamed(host, 'Checking out…').disabled);
+  pressAnyway(buttonNamed(host, 'Terminal'));   // a disabled button can still get an Event: the handler must refuse
+  await settle();
+  assert.equal(h.writes().length, 1, 'one checkout only');
+  h.release({ ok: true, status: 200, data: {} });
+  await settle();
+  assert.equal(buttonNamed(host, 'Checking out…'), undefined);
+  assert.ok(asked >= 1);
+  ctl.destroy();
+});
+
+test('workspace: only the first member shows "usually ~Ns" (the estimate is that project\'s)', () => {
+  const setting = { checkout: { setup: { status: 'running', at: new Date(NOW - 4000).toISOString() } }, setupQueued: true };
+  const api = member({ projectKey: 'api-1a2b3c4d', projectName: 'api', ...setting });
+  const web = member({ projectKey: 'web-5e6f7a8b', projectName: 'web', ...setting });
+  const m = { ...model(api), workspace: true, members: [api, web] };
+  const el = renderActionsCard(m, { doc, handlers: {}, now: NOW });
+  const [first, second] = [...el.querySelectorAll('.act-wt-row')].map((c) => c.querySelector('.act-status').textContent);
+  assert.equal(first, 'Running setup: npm ci · 4s · usually ~42s');
+  assert.equal(second, 'Running setup: npm ci · 4s', 'another project\'s estimate is never shown');
+});
+
 test('controller: the selection survives a re-render, and a NOT_AFFECTED refusal refreshes with no red error', async () => {
   const a = member({ projectKey: 'a', projectName: 'a', branch: 'b/a' });
   const b = member({ projectKey: 'b', projectName: 'b', branch: 'b/b' });

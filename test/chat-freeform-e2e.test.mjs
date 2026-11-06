@@ -23,6 +23,9 @@ useTempHome(after);
 const NAME = 'fixture-chat';
 const NAME2 = 'fixture-plain';
 const NAME3 = 'fixture-live';   // case 35: an interactive channel that declares capabilities.liveStatus
+const NAME4 = 'fixture-slack';   // case 36: platform slack, files by worker ref (mock behavior.file)
+const NAME5 = 'fixture-teams';   // case 37: platform teams
+const PNG_BYTES = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(16)]);
 const SCHEMA = ['botToken', 'allowedChatIds', 'allowedUserIds', 'freeformChat', 'chatMembers', 'worcaUrl', 'historyOnStart']
   .map((key) => ({ key, type: 'text', label: key, secret: key === 'botToken', required: key === 'botToken' }));
 const CFG = { botToken: 'sekret', allowedChatIds: 'C1', freeformChat: 'on', chatMembers: 'U1=ada@example.com', worcaUrl: 'https://worca.example' };
@@ -92,16 +95,30 @@ before(async () => {
       capabilities: { inbound: true, outbound: true, interactive: true, liveStatus: true } }],
   }));
   writeFileSync(join(cur3, 'channel', 'worker.mjs'), 'export function createChannelWorker() { return { start() {}, stop() {}, send() {} }; }');
+  for (const [name, platform] of [[NAME4, 'slack'], [NAME5, 'teams']]) {
+    const c = pluginCurrentDir(name);
+    mkdirSync(join(c, 'channel'), { recursive: true });
+    writeFileSync(join(c, 'worca-cc-plugin.json'), JSON.stringify({
+      name, engines: { 'worca-cc-api': '>=2 <3' },
+      // No liveStatus: case 35 owns the status flow; these cases pin the file path only.
+      chatChannels: [{ id: 'main', platform, module: './channel/worker.mjs', configSchema: SCHEMA,
+        capabilities: { inbound: true, outbound: true, interactive: true } }],
+    }));
+    writeFileSync(join(c, 'channel', 'worker.mjs'), 'export function createChannelWorker() { return { start() {}, stop() {}, send() {} }; }');
+  }
   const lockRow = { repoUrl: 'https://example.test/f.git', subdir: '', pinnedSha: 'a'.repeat(40), version: null, enabled: true, installedAt: '2026-08-12T00:00:00.000Z' };
   // Case 31: the in-tree task-source fixture (mock mode serves its getTask without spawning it; ask-schedules does the same).
   const curSrc = pluginCurrentDir('mock-source');
   mkdirSync(curSrc, { recursive: true });
   writeFileSync(join(curSrc, 'worca-cc-plugin.json'), readFileSync(new URL('./fixtures/plugins/mock-source/worca-cc-plugin.json', import.meta.url)));
   writePluginsLock({ [NAME]: lockRow, [NAME2]: { ...lockRow, repoUrl: 'https://example.test/g.git' }, [NAME3]: { ...lockRow, repoUrl: 'https://example.test/l.git' },
+    [NAME4]: { ...lockRow, repoUrl: 'https://example.test/sl.git' }, [NAME5]: { ...lockRow, repoUrl: 'https://example.test/tm.git' },
     'mock-source': { ...lockRow, repoUrl: 'https://example.test/s.git' } });
   writePluginConfig(NAME, SCHEMA, CFG);
   writePluginConfig(NAME3, SCHEMA, { ...CFG, allowedChatIds: 'L1' });
   writePluginConfig(NAME2, SCHEMA, { ...CFG, allowedChatIds: 'P1' });
+  writePluginConfig(NAME4, SCHEMA, { ...CFG, allowedChatIds: 'S1' });
+  writePluginConfig(NAME5, SCHEMA, { ...CFG, allowedChatIds: 'T1' });
   setMockChannelBehavior({ '*': behavior });
   mod = await import('../ui/server.mjs');
   ({ _testing } = mod);
@@ -1685,6 +1702,81 @@ test('35. live status: a slow turn shows a working message that becomes the answ
     assert.equal(getDb().prepare("SELECT platform_message_id FROM chat_deliveries WHERE conversation_id = ? AND ask_message_id = ? AND part = 'text:0'").get(b.id, reply.id).platform_message_id, st.platformMessageId);
   } finally {
     mock._testing.holdFrame = null;
+    H.setThreadId(() => 'TH1');
+  }
+});
+
+test('36. Slack (worker file fetch): reply-to-start with files fetched by ref, unavailable listed, thread history; Quoted from Slack', async () => {
+  _testing.chatBridge.resetRateLimits();
+  const askStore = await ask();
+  H.setThreadId(() => 'STH36');
+  const R = 'R'.repeat(24); const P = 'P'.repeat(24); const BIG = 'G'.repeat(24);
+  const fileCalls = []; const historyCalls = [];
+  setMockChannelBehavior({ '*': { ...behavior,
+    history: async (f) => { historyCalls.push(f); return [{ author: 'carol', text: 'earlier in the thread', at: '2026-11-05T09:00:00.000Z',
+      link: 'https://acme.slack.com/archives/S1/p1700000000000150?thread_ts=1700000000.000050&cid=S1' }]; },
+    file: async (f) => { fileCalls.push(f); if (f.ref === R) return { data: Buffer.from('# Plan\nship friday\n') }; if (f.ref === P) return { data: PNG_BYTES }; return { data: Buffer.alloc(f.maxBytes + 1) }; },
+  } });
+  writePluginConfig(NAME4, SCHEMA, { historyOnStart: '5' });
+  try {
+    const mid = '1700000000.000200';
+    channelHost.injectInboundMessage(NAME4, 'main', { chatId: 'S1', userId: 'U1', text: '<@UBOT> summarise the thread',
+      meta: { platform: 'slack', messageId: mid, isGroup: true, mentionsBot: true, botId: 'UBOT', link: 'https://acme.slack.com/archives/S1/p1700000000000200' },
+      attachments: [{ name: 'diagram.png', contentType: 'image/png', size: 24, ref: P }, { name: 'huge.md', contentType: null, size: 10, ref: BIG }],
+      replyTo: { author: 'alice', text: 'the plan is attached', at: '2026-11-05T08:59:00.000Z', link: 'https://acme.slack.com/archives/S1/p1700000000000050',
+        attachments: [{ name: 'plan.md', contentType: 'text/markdown', size: 19, ref: R },
+          { name: 'deck.key', contentType: null, size: 5, unavailable: 'an external file link (not stored in Slack)' }] } });
+    const b = await waitFor(() => findConversation({ plugin: NAME4, channelId: 'main', chatId: 'STH36' }));
+    await waitFor(() => posts.some((p) => p.chatId === 'STH36' && textOf(p).includes('[mock] summarise the thread')));
+    await idle(b.askThreadId);
+    const user = askStore.listMessages(b.askThreadId).find((m) => m.role === 'user');
+    assert.equal(user.text, 'summarise the thread');
+    const cb = user.blocks.find((x) => x.kind === 'chat-context');
+    assert.equal(cb.platform, 'slack');
+    assert.deepEqual(cb.replyTo.files.map((f) => [f.name, typeof f.id === 'string', f.note ?? null]),
+      [['plan.md', true, null], ['deck.key', false, 'not saved: an external file link (not stored in Slack)']]);
+    assert.deepEqual(cb.files.map((f) => [f.name, f.note]), [['huge.md', 'not saved: over the 25 MB limit per file']]);
+    assert.deepEqual(cb.history.map((q) => q.text), ['earlier in the thread']);
+    assert.deepEqual(askStore.listAttachments(b.askThreadId).map((a) => a.name).sort(), ['diagram.png', 'plan.md']);
+    assert.deepEqual(fileCalls.map((f) => f.ref), [P, BIG, R], 'own files first, then the reply; an unavailable file is never asked for');
+    assert.ok(fileCalls.every((f) => Number.isSafeInteger(f.maxBytes) && f.maxBytes >= 1 && f.timeoutMs >= 1000));
+    assert.deepEqual(historyCalls, [{ chatId: 'S1', before: mid, limit: 5 }]);
+    assert.match(_testing.askJobs.get(b.askThreadId).turn.prompt, /\[chat context\] Quoted from Slack/);
+    const stored = JSON.stringify(askStore.listMessages(b.askThreadId)) + JSON.stringify(askStore.listAttachments(b.askThreadId));
+    for (const r of [R, P, BIG]) assert.ok(!stored.includes(r), 'a ref is never stored');
+  } finally {
+    writePluginConfig(NAME4, SCHEMA, { historyOnStart: null });
+    setMockChannelBehavior({ '*': behavior });
+    H.setThreadId(() => 'TH1');
+  }
+});
+
+test('37. Teams (worker file fetch): an inline image fetched by ref, a SharePoint file listed with why; no reply quote; Quoted from Microsoft Teams', async () => {
+  _testing.chatBridge.resetRateLimits();
+  const askStore = await ask();
+  H.setThreadId(() => 'TTH37');
+  const I = 'I'.repeat(24);
+  const fileCalls = [];
+  setMockChannelBehavior({ '*': { ...behavior, file: async (f) => { fileCalls.push(f); return { data: PNG_BYTES, contentType: 'image/png' }; } } });
+  try {
+    channelHost.injectInboundMessage(NAME5, 'main', { chatId: 'T1', userId: 'U1', text: 'what is in this screenshot',
+      meta: { platform: 'teams', messageId: '1700000000037', isGroup: true, mentionsBot: true, botId: '28:app' },
+      attachments: [{ name: 'image-1.png', contentType: 'image/png', size: 0, ref: I },
+        { name: 'report.docx', contentType: null, size: 0, unavailable: 'a SharePoint or OneDrive file link: open it in Teams (worca does not download SharePoint files)' }] });
+    const b = await waitFor(() => findConversation({ plugin: NAME5, channelId: 'main', chatId: 'TTH37' }));
+    await waitFor(() => posts.some((p) => p.chatId === 'TTH37' && textOf(p).includes('[mock] what is in this screenshot')));
+    await idle(b.askThreadId);
+    const user = askStore.listMessages(b.askThreadId).find((m) => m.role === 'user');
+    const cb = user.blocks.find((x) => x.kind === 'chat-context');
+    assert.equal(cb.platform, 'teams');
+    assert.equal(cb.replyTo, undefined);
+    assert.deepEqual(cb.files.map((f) => f.name), ['report.docx']);
+    assert.match(cb.files[0].note, /^not saved: a SharePoint or OneDrive file link/);
+    assert.deepEqual(askStore.listAttachments(b.askThreadId).map((a) => a.name), ['image-1.png']);
+    assert.deepEqual(fileCalls.map((f) => f.ref), [I]);
+    assert.match(_testing.askJobs.get(b.askThreadId).turn.prompt, /\[chat context\] Quoted from Microsoft Teams/);
+  } finally {
+    setMockChannelBehavior({ '*': behavior });
     H.setThreadId(() => 'TH1');
   }
 });

@@ -389,6 +389,24 @@ export async function listRunArtifacts(pipelineId, filter = {}) {
 }
 
 /**
+ * The newest plan a run indexed (kind 'plan', store-root-relative) that still exists as a regular file (a symlink
+ * does not count: readers refuse it, so the next plan is tried), as an absolute path under `storeRoot`; null when none. Newest by time, then by the -vN suffix: two writes in one
+ * millisecond share a time, and the index's tie-break, the file name, sorts "x-v2.md" before "x.md".
+ * Shared by the Away review (run-harness `_nightPlanPaths`) and the run commit summary (commit-message.mjs).
+ */
+export async function newestPlanPath(pipelineId, storeRoot) {
+  if (!pipelineId || !storeRoot) return null;
+  const ver = (rel) => Number(/-v(\d+)\.md$/.exec(rel)?.[1] || 1);
+  const plans = (await listRunArtifacts(pipelineId, { kind: 'plan' }))
+    .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')) || ver(b.relPath) - ver(a.relPath));
+  for (const a of plans) {
+    const f = join(storeRoot, a.relPath);
+    try { if (lstatSync(f).isFile()) return f; } catch { /* gone: try the next one */ }
+  }
+  return null;
+}
+
+/**
  * Upsert the clarify row for a pipeline. Pass { questions } and/or { answers }. A
  * partial call updates only the provided column, preserving the other. JSON-encoded
  * TEXT columns. The agent writes clarify.json as transient run-dir scratch;
