@@ -16,3 +16,13 @@ alignment (`align-check.mjs`, in ds-check, at 900 and 400px): one left edge for 
 edge where every row's end stops (a quiet button by its text), and each row's name, sentence and end on one baseline.
 The alignment is SettingsRow's and SettingsSection's, never a page's; `align-proof.mjs` shows the check catches each
 fault.
+
+## New code
+
+`npm test` holds the design system like the feature flag tests hold flags (`test/rail-gate.test.mjs`, `tools/rail-gate.mjs`):
+- **New UI code that rebuilds what the library owns fails:** a component's markup, an inline icon, a state's word, a
+  failure's sentence. Call the library instead.
+- **Old pages are frozen.** `test/fixtures/rail-gate-baseline.json` holds each old file's count. It can only shrink: a
+  file that grows fails; a file that shrinks lowers its count in the same change, with `node tools/rail-gate.mjs --update`,
+  which refuses a higher one.
+- **The docs, catalog, library and gallery agree** (`test/rail-docs.test.mjs`).

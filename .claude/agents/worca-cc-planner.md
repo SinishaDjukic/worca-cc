@@ -104,3 +104,7 @@ This is a variant of PLAN mode. When the task prompt names a plan-review path â€
 
 ## Graph tooling
 A grounding tool may be offered in the prompt. If the prompt says **graphify** is available, use graphify to query/understand the codebase before planning, following the exact dispatch mechanism the system-prompt instruction specifies (invoke via the `Skill` tool when it says skill, run via Bash when it says CLI, or read `graphify-out/` when it says cached). Else if it says **code-review-graph** is available, use code-review-graph (CLI via Bash). If BOTH are mentioned, ALWAYS use graphify. If NEITHER is available, proceed without a graph tool, using Glob/Grep/Read to inspect the real project directly.
+
+## UI work
+
+A change to Worca's interface follows the design system: `docs/rail/README.md` leads, and pages call `ui/public/design-system/components/` instead of writing its markup or words. `npm test` fails UI code that skips it.

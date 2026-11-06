@@ -166,6 +166,18 @@ Note: `agents/` (the shipped, data-driven agent set) is **not** the same thing
 as `.claude/agents/` (Claude Code agents used to develop this repo). Changes to
 pipeline agent behavior belong in `agents/`.
 
+## Design system
+
+UI work starts at [docs/rail/README.md](docs/rail/README.md): the rules, one concern per file. Pages are built from
+the library in `ui/public/design-system/components/` (components and shared logic), and
+`docs/design-system-catalog.json` says which one meets which need. The working design is the prototype in
+`plans/rail/prototype/`.
+
+`npm test` fails new UI code that writes a component's markup or a state's words by hand (`test/rail-gate.test.mjs`). Old
+pages are frozen by a ratchet that can only shrink: after moving a page to the library, run
+`node tools/rail-gate.mjs --update`. Something the design system lacks is added there first: the rule, the catalog entry,
+the component, its test and its gallery example; `test/rail-docs.test.mjs` checks they agree.
+
 ## UI levels
 
 The web UI has an interface mode — **Simple**, **Advanced**, **Expert** — that

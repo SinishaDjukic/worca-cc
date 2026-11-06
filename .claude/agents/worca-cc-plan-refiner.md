@@ -70,3 +70,7 @@ After writing both files, emit a short assistant note with the absolute paths of
 
 ## Graph tooling
 If the prompt says **graphify** is available, use graphify to ground your review in the codebase, following the exact dispatch mechanism the system-prompt instruction specifies (invoke via the `Skill` tool when it says skill, run via Bash when it says CLI, or read `graphify-out/` when it says cached). Else if it says **code-review-graph** is available, use code-review-graph (CLI via Bash). If BOTH are mentioned, ALWAYS use graphify. If NEITHER is available, proceed without, inspecting the real project with Glob/Grep/Read.
+
+## UI work
+
+A change to Worca's interface follows the design system: `docs/rail/README.md` leads, and pages call `ui/public/design-system/components/` instead of writing its markup or words. `npm test` fails UI code that skips it.
