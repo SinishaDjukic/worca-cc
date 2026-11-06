@@ -25,6 +25,8 @@ export const CHECK_KIND_LABELS = Object.freeze({
 export const PROJECT_FILE_KIND_LABEL = 'A file with this name is added or changed';
 /** D57: "Stop the command after" (board 33), in minutes. */
 export const COMMAND_TIMEOUTS = Object.freeze([1, 5, 10, 30]);
+/** D82: when "The command passes" is met: it passes (the default, D57), or it breaks nothing that passed before. */
+export const COMMAND_MET_WHEN = Object.freeze(['passes', 'breaks-nothing']);
 const CMD_MAX = 500;
 const PATHS_MAX = 20;
 export const MAX_FILES_LIMIT = 10_000;
@@ -228,7 +230,10 @@ export function normaliseCheck(raw) {
     if (cmd.length > CMD_MAX || /[\r\n]/.test(cmd)) return { check: null, error: `the command must fit on one line of up to ${CMD_MAX} characters` };
     const t = raw.timeoutMin === undefined || raw.timeoutMin === null || raw.timeoutMin === '' ? 10 : Number(raw.timeoutMin);
     if (!COMMAND_TIMEOUTS.includes(t)) return { check: null, error: 'the time limit must be 1, 5, 10 or 30 minutes' };
-    return done({ cmd, timeoutMin: t });
+    // D82: stored only when it is not the default, so every check and example fingerprint left on "passes" stays byte for byte.
+    const mw = raw.metWhen === undefined || raw.metWhen === null || raw.metWhen === '' ? 'passes' : raw.metWhen;
+    if (!COMMAND_MET_WHEN.includes(mw)) return { check: null, error: 'pick when the command is met: it passes, or it breaks nothing that passed before' };
+    return done({ cmd, timeoutMin: t, ...(mw === 'breaks-nothing' ? { metWhen: mw } : {}) });
   }
   if (kind === 'under') {
     const dirs = [];
@@ -290,7 +295,7 @@ export function checkLabel(check, { scriptName = null } = {}) {
   if (c.kind === 'not-mentions') return inFile(`Does not mention "${c.text}"`);
   if (c.kind === 'file') return `Has a file named ${c.name}`;
   if (c.kind === 'script') return `The Library script "${scriptName || c.key}" passes`;
-  if (c.kind === 'command') return `The command ${c.cmd} passes`;
+  if (c.kind === 'command') return c.metWhen === 'breaks-nothing' ? `The command ${c.cmd} breaks nothing that passed before` : `The command ${c.cmd} passes`;
   if (c.kind === 'under') return `Changes only files under ${andList(c.dirs)}`;
   if (c.kind === 'unchanged') return `Leaves these files unchanged: ${c.patterns.join(', ')}`;
   if (c.kind === 'max-files') return `Changes at most ${c.max} ${c.max === 1 ? 'file' : 'files'}`;

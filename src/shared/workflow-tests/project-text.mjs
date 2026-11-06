@@ -234,3 +234,38 @@ export const worcaStoppedText = (reason) => `Stopped: Worca could not run a try,
 export const madeAgainText = (n) => (n === 1
   ? '1 try was made again after a problem in Worca. It is not counted.'
   : `${n} tries were made again after a problem in Worca. They are not counted.`);
+
+// ── 3b: the command before and after the change (U1; this plan's proposals until the mock is approved) ─────────────────────
+export const BEFORE_HEADING = 'Before the change';
+/** The exit-code sentence (D76): passed or failed before, passes or fails now. */
+export const beforeExitText = (r) => (r.beforeTimedOut ? 'Before the change, it ran longer than its time limit.'
+  : r.beforeOk && r.afterOk ? 'It passed before the change too.'
+    : !r.beforeOk && r.afterOk ? 'It failed before the change, and passes now.'
+      : r.beforeOk ? 'It passed before the change: the change broke it.'
+        : 'It failed before the change too.');
+export const beforeNotRunText = (r) => (r.reason === 'setup' ? 'Worca could not run it before the change: the setup step failed.'
+  : r.reason === 'stopped' ? 'Worca did not run it before the change: the test was stopped.'
+    : `Worca could not run it before the change${r.text ? `: ${String(r.text).replace(/[.\s]+$/, '')}` : ''}.`);
+export const BEFORE_GROUPS = Object.freeze({
+  madePass: 'Tests the change made pass', stillPass: 'Tests that passed before and still pass', broke: 'Tests it broke',
+  stillFailing: 'Tests that failed before and still fail', added: 'New tests', gone: 'Tests that no longer run',
+  failingNow: 'Tests failing now that did not fail before', noLongerFail: 'Tests that failed before and no longer fail',
+});
+export const FAILURES_ONLY_NOTE = 'This test tool names only the tests that fail, so the tests that pass are counted, not named.';
+export const EXIT_ONLY_NOTE = "Worca could not read test names in this command's output, so it compares only whether the command passed.";
+export const passedCountsText = (b, a) => `Passed: ${b} before, ${a} now`;
+export const addedText = (n, failing) => `${n}${failing ? `, ${failing} failing` : ''}`;
+export const moreNamesText = (n) => `and ${n} more`;
+export const BEFORE_KEPT_TEXT = ' · kept from an earlier test';
+// P45: board 36's "Failed: <file> · "<test>"" line.
+export const FAILED_LEAD = 'Failed: ';
+const TEST_FILE_HEAD_RE = /(?:\.(?:test|spec)\.[cm]?[jt]sx?|\.py)$/;
+/** A test name as Task 7 keys it, split at its first separator (" > ", " › ", "::") when the part before is a test file. */
+export function splitTestName(name) {
+  const s = String(name ?? '');
+  for (const sep of [' > ', ' › ', '::']) {
+    const i = s.indexOf(sep);
+    if (i > 0 && TEST_FILE_HEAD_RE.test(s.slice(0, i))) return { file: s.slice(0, i), test: s.slice(i + sep.length) };
+  }
+  return { file: null, test: s };
+}
