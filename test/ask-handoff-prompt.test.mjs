@@ -93,3 +93,8 @@ test('needsHandoff: no session but replies already (a switch, a cleared session)
   assert.equal(needsHandoff({ sessionId: null }, [M(1, 'user', 'hi')]), false, 'a first turn has nothing to hand over');
   assert.equal(needsHandoff({ sessionId: null, mode: 'composer' }, prior), false);
 });
+
+test('a generic binary attachment is never "cannot view it": it needs no viewing capability', () => {
+  const generic = [M(1, 'user', 'see zip', { blocks: [{ kind: 'attachment', id: 'att_00000009', name: 'a.zip', bytes: 9, attKind: 'binary', mime: 'application/octet-stream' }] })];
+  assert.match(buildHandoffPrompt(generic, '', { to: 'codex' }).prompt, /\[attachment att_00000009 a\.zip — read_attachment reads it\]/);
+});

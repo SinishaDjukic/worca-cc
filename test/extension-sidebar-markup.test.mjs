@@ -4,7 +4,6 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { makePanel } from './helpers/ask-panel-harness.mjs';
 import { buildQuoteChip, buildRow, buildComposer, buildNewChatButton, buildFileChip, buildDropOverlay, SEND_ICON_PATH, NEW_CHAT_ICON_PATH, ICON } from '../extension/src/sidebar/sidebar-view.mjs';
-import { ATTACH_ACCEPT } from '../ui/public/attach-files.mjs';
 import { formatQuotedMessage } from '../ui/public/pinpoint-model.mjs';
 
 const TID = 'askt_00000001';
@@ -103,8 +102,8 @@ test('the composer row keeps Ask\'s order and controls, minus voice and Sets, pl
   const row = mine.el.querySelector('.ask-composer-row');
   assert.deepEqual([...row.children].filter((c) => !c.matches('[data-wx-capture-btn]')).map(key), ref);
   assert.equal(row.querySelector('[data-wx-capture-btn]').previousElementSibling, row.querySelector('[data-ask-attach-btn]'), 'capture sits right after +');
-  assert.equal(mine.file.accept, ATTACH_ACCEPT);
-  assert.equal(mine.file.accept, h.doc.querySelector('.ask-composer-row input[type=file]').accept);
+  assert.equal(mine.file.hasAttribute('accept'), false);
+  assert.equal(h.doc.querySelector('.ask-composer-row input[type=file]').hasAttribute('accept'), false);
   // The ring, the model button and the stop glyph match Ask's markup.
   const attrs = (n) => [...n.attributes].map((a) => `${a.name}=${a.value}`).sort();
   for (const sel of ['.ask-ctx-ring svg', '.ask-ctx-ring-track', '.ask-ctx-ring-arc', '.ask-stop svg', '.ask-stop rect', '.ask-send svg', '.ask-model-btn svg']) {

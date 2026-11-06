@@ -29,7 +29,7 @@ project's working tree, so nothing is ever committed to your repo.
                                         chat_deliveries (one row per delivered message part with the platform
                                         message id and the card state it shows) and chat_inbound_seen (handled
                                         message/interaction ids, 2 days).
-                                        Requirements import (v87): req_export_links.origin ('export' | 'import'; a link
+                                        Requirements import (v88): req_export_links.origin ('export' | 'import'; a link
                                         an import made keeps the ticket's issue type and priority) and
                                         req_attachments.fetch_json (the tracker file a row comes from: the
                                         connection, the ticket key and the attachment id; NULL for an upload).

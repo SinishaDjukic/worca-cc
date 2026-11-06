@@ -825,3 +825,15 @@ test('appendMessage keeps a reply\'s engine; switchThreadEngine moves the chat a
   assert.throws(() => switchThreadEngine('ask_ffffffff', { engine: 'claude', model: 'm', effort: 'high', text: 't', blocks: [] }), /unknown thread/);
   assert.equal(listMessages(t.id).length, 3, 'nothing half-written');
 });
+
+test('a generic binary keeps its original extension on disk; attachmentPath and readAttachmentRaw agree; no ext -> .bin', () => {
+  const t = createThread();
+  const m = appendMessage(t.id, { role: 'user', text: 'zip' });
+  const data = Buffer.from([0x50, 0x4b, 0x03, 0x04, 0, 1, 2]);
+  const z = addAttachment(t.id, m.id, { name: 'Archive.ZIP', kind: 'binary', mime: 'application/octet-stream', data });
+  const bare = addAttachment(t.id, m.id, { name: 'README', kind: 'binary', mime: 'application/octet-stream', data });
+  assert.ok(existsSync(join(attachmentsDir(t.id), `${z.id}.zip`)));
+  assert.ok(existsSync(join(attachmentsDir(t.id), `${bare.id}.bin`)));
+  assert.equal(attachmentPath(t.id, z.id), join(attachmentsDir(t.id), `${z.id}.zip`));
+  assert.deepEqual(readAttachmentRaw(t.id, z.id).buffer, data);
+});

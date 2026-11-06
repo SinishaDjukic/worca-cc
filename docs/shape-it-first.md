@@ -180,6 +180,24 @@ own slice. The PR dialog proposes the previous slice's branch as the base until 
 slice's PR is merged. Turn on "Automatically delete head branches" in the GitHub
 repository so that GitHub retargets the next PR when one merges.
 
+**Pull requests when a run finishes.** The `pr.slices` setting (Settings › Project › Pull requests, or
+the team policy's default) says what a sliced feature does when its runs finish; it works together with
+`pr.open` ("Don't create a PR", "Create a draft PR", "Create a PR ready for review"). The values are saved on the feature
+when you approve the outline, and every slice reads them from there:
+
+- **A PR per slice, stacked** (`each`): each slice that finishes with work committed opens its own PR on the
+  previous slice's branch, as a draft or ready for review.
+- **One PR for the whole feature** (`one`): a slice opens nothing. When the last run is done, Worca opens one PR from
+  the last slice's branch into the feature's base, with the feature's changelog entry, like **Ship as one PR**. A
+  follow-up run (it starts from the base, so the last branch does not hold every run's work) stops it: Worca tells you
+  in the thread and you ship from the Ship card. With **Requirements** on, it waits until every agreed requirement is
+  marked, tells you once, and opens the PR when the last one is marked.
+
+A re-planned feature keeps the setting it had. A person's own Create PR and Ship as are unchanged. Each PR is opened as the
+person who started the run, and a run that errored or stopped opens nothing (its log says why; a resume that ends done
+decides again). The setting also applies to runs that are not sliced; see
+[Pull requests when a run finishes](#pull-requests-when-a-run-finishes).
+
 **Plan once.** Slices 2 and later skip Clarify: they use the answers you gave for
 slice 1. Their planner still writes a plan for its own slice.
 
@@ -377,6 +395,16 @@ set in-process only, never from an HTTP body. A later group-membership record ca
 Rounds run the project's default workflow: a round never re-shapes a decided run. They carry the origin's tags.
 While a round of a feature's run is live, Ship waits (`a round of run 3 is still going`).
 
+**Rounds in the Runs list.** A round is never a row of its own. Watch PR fix runs, Resolve and Ask for changes all
+stack under the run that opened the PR, or under its member row inside a feature group. The row's line is the newest
+round's (`Round 8 · merge dev in · pushed 3e4f5a6 · Thu`), and the `7 rounds` toggle at the line's end opens the trail: the
+newest 5, then `+2 earlier`. Each line opens that round's page. While a round runs, the row takes its state
+(`Running · Round 9 · merge dev in`, chip `Fixing`), and it lists under Running, not Needs you. One open PR raises at
+most one Needs-you item: a round never needs you through its PR (only through its own question, pause or unread
+failure), and of two runs on the same open PR only the newest counts. The badge, Activity and the Needs-you section
+count the same way. A round whose run is gone or filtered out heads its own stack (`… · Round 8`). The rounds of an
+archived run leave the active list with it.
+
 **Pushing a round.** Nothing is pushed by itself. A plain run's round updates its PR through the run's Push action
 (`POST /api/push`); a feature's goes out with Ship.
 
@@ -445,10 +473,38 @@ Shaper's Requirements step is a hold, like the plan approval, and it has its own
 Rollback: turn the flag off. New runs ask the old questions and show the old cards. A run already held at its
 requirements keeps asking, and its card stays answerable until it finishes.
 
+## Pull requests when a run finishes
+
+`pr.open` decides whether a finished run opens a PR: **Don't create a PR** (the default), **Create a draft PR** or **Open a PR
+ready for review**. A run takes the first value it finds, in this order:
+
+1. the run's own choice (the **Pull request when done** field in New run's Advanced section, or a Chat card or preset
+   that sets it; only a value you changed is saved as the run's);
+2. the project's setting, or the workspace's (Settings › Project › Pull requests; the Workspace page);
+3. the team policy (`fields`, or `workspaceRuns` for a workspace run);
+4. **Don't create a PR**.
+
+The value is decided once, when the run starts, and saved with it: a later change to a setting never changes a run that
+has started. The run's page shows it under **Pull request**, with where it came from and what happened. A run opens a PR
+only when it ended done with its work committed and has no live PR yet. An error or a stop, uncommitted work, no commits
+and a failed push are all written to the run's log. Runs of the Git automation, Watch PR fixes, rounds, conflict
+resolutions, scans, memory runs, runs on the source branch and runs with no project never open one this way. A run
+started from the CLI (`worca run`) does not either: there is no server to do it.
+
+When this deployment sends PRs as the person who started the run (`WORCA_GH_AS_PERSON`), a starter with no connected
+GitHub account opens nothing: the outcome says why and you get a notification. Worca's own credential is never used for it.
+
+API: `pr: { open?, slices? }` in the `POST /api/run` body (a bad value is a 400 and starts nothing), `pr` in
+`GET /api/run-defaults` (the setting with its source; `?workspaceId=` for a workspace), `GET /api/pipelines/:id/pr-auto`
+(the run's saved value and outcome, read-only) and `GET`/`PATCH /api/workspaces/:id/settings` (`{ "pr.open": value | null }`).
+
 ## Limits
 
 - Workspace runs are not sliced, and their checklists are not merged: a shaped
   workspace run gets a plain plan.
+- A workspace run's `pr.open` applies to every member whose branch has commits; `pr.slices` does not apply.
+- A manual **Ship as one PR** of a re-planned feature still starts from the last run's base; only the automatic one
+  uses the feature's first base.
 - Worca does not retarget a stacked PR when an earlier one merges. Use
   "Automatically delete head branches" on GitHub; automatic retargeting is a
   follow-up.

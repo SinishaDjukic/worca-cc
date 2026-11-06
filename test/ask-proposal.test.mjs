@@ -433,3 +433,15 @@ test('smart naming off: the card carries no marker and keeps today\'s name', asy
     assert.equal('featureBranchDerived' in card, false);
   } finally { if (prev === undefined) delete process.env.WORCA_FLAGS; else process.env.WORCA_FLAGS = prev; }
 });
+
+test('propose_run pr: validated into errors, carried on the card, slices dropped for a workspace and no-project runs', async () => {
+  const card = ok(await validateProposal({ projectKey: 'demo-00000001', brief: 'x', pr: { open: 'draft', slices: 'one' } }));
+  assert.deepEqual(card.pr, { open: 'draft', slices: 'one' });
+  assert.equal('pr' in ok(await validateProposal({ projectKey: 'demo-00000001', brief: 'x' })), false, 'a card without it keeps its shape');
+  assert.deepEqual(errs(await validateProposal({ projectKey: 'demo-00000001', brief: 'x', pr: { open: 'always' } })), ['pr.open must be one of none | draft | ready']);
+  assert.deepEqual(errs(await validateProposal({ projectKey: 'demo-00000001', brief: 'x', pr: 'draft' })), ['pr must be an object like { "open": "draft" }']);
+  assert.deepEqual(errs(await validateProposal({ projectKey: 'demo-00000001', brief: 'x', pr: { nope: 1 } })), ['pr: unknown key "nope"']);
+  assert.deepEqual(ok(await validateProposal({ workspaceId: 'wks-team-0000abcd', brief: 'x', pr: { open: 'ready', slices: 'one' } })).pr, { open: 'ready' });
+  assert.equal('pr' in ok(await validateProposal({ workspaceId: 'wks-team-0000abcd', brief: 'x', pr: { slices: 'one' } })), false);
+  assert.equal('pr' in ok(await validateProposal({ noProject: true, brief: 'x', pr: { open: 'draft' } })), false);
+});

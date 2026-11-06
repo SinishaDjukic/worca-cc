@@ -5,6 +5,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { requireFlag, flagEnabled } from '../flags.mjs';
 import { validateAttachmentUploads } from '../attachment-upload.mjs';
 import { attachmentDisposition } from '../download-filename.mjs';
+import { isGenericBinary } from '../../shared/artifact-kinds.mjs';
 import { costLimitResetPeriod } from '../settings.mjs';
 import { gitAvailable, GIT_MISSING } from '../git-available.mjs';
 import { actorOf } from '../identity.mjs';
@@ -170,9 +171,10 @@ function sendBody(req, res, row) {
   const etag = `"${row.sha256}"`;
   const fresh = req.headers['if-none-match'] === etag;
   const body = fresh ? null : readFileSync(file);   // before any header: a failed read answers JSON, not a typed body
+  const generic = isGenericBinary(row);   // untrusted bytes of unknown type: a download, never inline
   res.set({ 'Content-Type': row.kind === 'text' ? 'text/plain; charset=utf-8' : row.mime, 'X-Content-Type-Options': 'nosniff',
     // download-filename.mjs: a lone surrogate never throws, bidi controls cannot spoof the name, an ASCII fallback for old clients
-    'Content-Disposition': attachmentDisposition(row.name).replace(/^attachment;/, 'inline;'), 'Cache-Control': 'private, no-cache', ETag: etag });
+    'Content-Disposition': generic ? attachmentDisposition(row.name) : attachmentDisposition(row.name).replace(/^attachment;/, 'inline;'), 'Cache-Control': 'private, no-cache', ETag: etag });
   return fresh ? res.status(304).end() : res.send(body);
 }
 

@@ -83,6 +83,7 @@ const state = {
 const GROUP_PAGE = { host: null, route: '', id: '', tab: 'runs', featureId: '', gone: false, failed: false, resolving: false, reentered: false, paintQueued: false, unmarked: 0 };
 
 import { icon } from './icons.mjs';
+import { subagentAliasLabel, subagentAliasTitle } from '../../src/shared/model-roles.mjs';
 import { telemetrySlotHtml, paintTelemetry } from './run-telemetry-view.mjs';
 import { copyButton, copyFromButton, flashCopy, writeClipboard } from './copy-button.mjs';
 import { paintSessionsTab, sessionsTabVisible, sessionsBadge, sessionRowLine, sessionRowEl } from './run-sessions-view.mjs';
@@ -217,9 +218,9 @@ import {
 import { renderStatsBody, renderStatsView, renderBudgetReadout, renderCostPauseBanner, statsQuery, groupsToCsv, statsRangeLabel, DEFAULT_FMT } from './stats-view.mjs';
 import { createCostReport } from './cost-report.mjs';
 import { personInitials, describeAccount, paintAccountCorner, paintIdentityCard, renderSpendCard, paintAwayRow } from './account-menu.mjs';
-import { createComposer, isReservedWorkflowId } from './graph/composer.mjs';
+import { createComposer, isReservedWorkflowId, isBuiltinWorkflow } from './graph/composer.mjs';
 import { createWorkflowsShell, toSpawnEntry } from './workflows/shell.mjs';
-import { createLibrary } from './workflows/library.mjs';
+import { createLibrary, folderLabel, folderKeys } from './workflows/library.mjs';
 import { createChatDock } from './workflows/chat-dock.mjs';
 import { mintId } from '../../src/shared/graph/template.mjs';
 // mountStaticGraph is NOT imported here: the New-Pipeline workflow picker is a
@@ -290,6 +291,7 @@ import { runCostBreakdown, floorText, auxLabelForSubagent } from '../../src/shar
 import { costBreakdownEl, costSummaryText, awayTotalText } from './cost-breakdown.mjs';
 import { describeRun, describeNewRun, describeAwayRow } from '../../src/shared/away-mode/describe.mjs';
 import { createSchedulesView } from './schedules-view.mjs';
+import { createRunPrFields, mountWorkspacePrSetting, paintRunPrAuto } from './pr-auto-view.mjs';
 import { createRequirementsView } from './requirements-view.mjs';
 import { createLevelController, levelAtLeast, currentLevel, tagLevel, keepVisible, minLevelFor, LEVEL_INFO, UI_LEVELS } from './ui-level.mjs';
 import { applyFlags, currentFlags, decorateFlagChips, flagOn, onFlagChange } from './flags.mjs';
@@ -3343,7 +3345,7 @@ function wfvEls() {
   const g = (id) => document.getElementById(id);
   return {
     root: g('wfv'), stage: g('wfv-stage'), canvas: g('wfv-canvas'), chip: g('wfv-chip'), back: g('wfv-back'),
-    wfMenu: g('wfv-wf-menu'), name: g('wfv-name'), errors: g('wfv-errors'), importFile: g('wfv-import-file'),
+    wfMenu: g('wfv-wf-menu'), name: g('wfv-name'), docState: g('wfv-doc'), errors: g('wfv-errors'), importFile: g('wfv-import-file'),
     libToggle: g('wfv-lib-toggle'), saveWrap: g('wfv-savewrap'), save: g('wfv-save'), saveReason: g('wfv-save-reason'), add: g('wfv-add'),
     autolayout: g('wfv-autolayout'), zoom: g('wfv-zoom'), zoomLabel: g('wfv-zoom-label'), overlay: g('wfv-overlay'),
     library: g('wfv-library'), sheet: g('wfv-sheet'), sheetTitle: g('wfv-sheet-title'), sheetClose: g('wfv-sheet-close'),
@@ -3393,7 +3395,7 @@ async function initWorkflows() {
   insBody.className = 'wfv-ins';
   gvComposer = createComposer({
     canvas: els.canvas, chip: els.chip, name: els.name, errors: els.errors, autoBtn: els.autolayout,
-    saveBtn: els.save, saveWrap: els.saveWrap, saveReason: els.saveReason, insBody, dialogHost: els.dialogHost,
+    saveBtn: els.save, saveWrap: els.saveWrap, saveReason: els.saveReason, docState: els.docState, insBody, dialogHost: els.dialogHost,
   }, {
     doc: document, api: gvApi, portsFn: (node) => gvPortsFn(node),
     highlight: scriptHighlight,   // a script card's command/code params get the real editor
@@ -3499,7 +3501,7 @@ function wfvShellActions() {
       if (t.id && !gvComposer.isDirty()) { exportRow(t); return; }
       if (gvComposer.isPristine()) {
         wfvSetLibraryOpen(true); wfvLibrary?.open('workflows');
-        notify({ tone: 'info', title: 'Pick a pipeline to export', detail: 'Each saved pipeline has an Export button in the Library.' });
+        notify({ tone: 'info', title: 'Pick a pipeline to export', detail: 'Each saved pipeline has Export… in its ⋯ menu in the Library.' });
         return;
       }
       gvComposer.openSaveDialog({ then: exportRow });
@@ -3587,6 +3589,21 @@ async function openBuildFromAsk(build) {
   else location.hash = 'workflows';
 }
 
+/** Open a saved workflow on the canvas (#1127): the user's own in place (Edit: Save changes it); a built-in or plugin one,
+ *  or any row with `copy`, as a new unsaved copy (Use as template). Asks before discarding (the composer's guard), and
+ *  says why when the row cannot be read — never nothing. */
+async function wfvOpenSaved(id, { copy = false } = {}) {
+  let full = null;
+  try { full = await gvApi.readWorkflow(id); } catch { full = null; }   // a refused fetch: say so below
+  if (!full) {
+    notify({ tone: 'err', title: 'Could not open the workflow', detail: `"${id}" was deleted or renamed, or Worca did not answer.` });
+    return false;
+  }
+  const opened = copy || isBuiltinWorkflow(full) ? await gvComposer.openCopy(full) : await gvComposer.openTemplate(full);
+  if (opened) gvComposer.fit();
+  return Boolean(opened);
+}
+
 /** Route the view's param (D6). In-view hops (sheet ↔ canvas, tab ↔ tab) only route. */
 async function routeWorkflows(param = '') {
   const [head, ...rest] = String(param || '').split('/');
@@ -3621,20 +3638,14 @@ async function routeWorkflows(param = '') {
     return;
   }
   if (!head) return;
-  // Any other head names a saved workflow (Ask's "Open in Workflows", the top-bar search, a bookmark): open it
+  // Any other head names a saved workflow (Ask's "Open in Workflows", the top-bar search, a bookmark): open it as its Library row does (a built-in as a copy, #1127)
   // and normalise the hash, or say why not — never nothing.
   try { window.history.replaceState(null, '', '#workflows'); } catch { /* sandboxed */ }
   if (!WF_ID_RE.test(head)) {
     notify({ tone: 'err', title: 'Could not open the workflow', detail: `"${head}" is not a workflow id or a Workflows address.` });
     return;
   }
-  let full = null;
-  try { full = await gvApi.readWorkflow(head); } catch { full = null; }   // a refused fetch: say so below
-  if (!full) {
-    notify({ tone: 'err', title: 'Could not open the workflow', detail: `"${head}" was deleted or renamed, or Worca did not answer.` });
-    return;
-  }
-  if (await gvComposer.openTemplate(full)) gvComposer.fit();
+  await wfvOpenSaved(head);
 }
 
 async function enterWorkflowsView(param = '', prevView = '') {
@@ -3798,10 +3809,9 @@ function wfvLibraryActions() {
       const node = gvComposer.spawn(toSpawnEntry(payload));
       if (node) gvComposer.view.centerOn(node.id);
     },
-    openWorkflow: async (id) => {
-      const full = await gvApi.readWorkflow(id);
-      if (full && await gvComposer.openTemplate(full)) gvComposer.fit();
-    },
+    // #1127: a row of the user's opens to Edit (Save changes it); Use as template opens any row as a new unsaved copy.
+    editWorkflow: (id) => wfvOpenSaved(id),
+    useAsTemplate: (id) => wfvOpenSaved(id, { copy: true }),
     deleteWorkflow: async (wf) => {
       const schedNote = await scheduleDependentsNote(`workflowId=${encodeURIComponent(wf.id)}`, 'They will fail to start until you point them at another pipeline.');
       const ok = await confirmModal({ title: 'Delete pipeline', danger: true, confirmLabel: 'Delete',
@@ -3916,7 +3926,7 @@ function agentSummaryText(row) {
   // counted it read as a contradiction. '' (unset -> auto at run time) shows
   // nothing, like every other unset tunable.
   if (row.subagentModel) {
-    parts.push(row.subagentModel === 'auto' ? 'subs: agent picks' : `subs: ${row.subagentModel}`);
+    parts.push(`subs: ${subagentAliasLabel(row.subagentModel)}`);
   }
   if (row.askQuestions) parts.push('questions');
   if (!parts.length) return 'default';
@@ -4716,10 +4726,10 @@ function renderAgentRows(rows) {
 // (children ride the CLI's own resolution: agent frontmatter, else this node's
 // model); 'auto' is the stored form of the default.
 function renderSubagentModelSelect(sel, value) {
-  const label = (v) => (v === 'auto' ? 'subs: agent picks' : `subs: ${v}`);
+  const label = (v) => `subs: ${subagentAliasLabel(v)}`;
   sel.innerHTML = '';
   sel.appendChild(option('', 'subs: default (agent picks)'));
-  for (const v of state.subagentModels) sel.appendChild(option(v, label(v)));
+  for (const v of state.subagentModels) { const o = option(v, label(v)); const t = subagentAliasTitle(v); if (t) o.title = t; sel.appendChild(o); }
   sel.value = state.subagentModels.includes(value) ? value : '';
 }
 
@@ -5005,8 +5015,13 @@ document.getElementById('runTagsSaveDefault')?.addEventListener('click', async (
 });
 
 let runDefaultsGen = 0;
+// The New run form's PR-when-done fields (pr-auto-view.mjs), built on first use.
+function runPrFields() {
+  return (runPrFields.ctl ||= createRunPrFields({ doc: document, onChange: () => notePresetChange(), getTarget: () => ({ kind: state.runTarget === 'workspace' || state.runTarget === 'none' ? state.runTarget : 'project', projectDir: selectedProjectPath(), workspaceId: (el.workspaceSelect && el.workspaceSelect.value) || '' }) }));
+}
 async function loadRunDefaults(projectDir) {
   const gen = ++runDefaultsGen;
+  void runPrFields().refresh();
   let data = null;
   try { const res = await fetch(projectDir ? `/api/run-defaults?projectDir=${encodeURIComponent(projectDir)}` : '/api/run-defaults'); data = res.ok ? await safeJson(res) : null; } catch {}
   if (gen !== runDefaultsGen) return;
@@ -9093,7 +9108,7 @@ async function ensureWorkspaceOptions({ keepMembers = false } = {}) {
     placeholder.selected = true;
   }
   // The select is filled without a change event: the tag-dimension slots follow the restored workspace.
-  if (state.runTarget === 'workspace') void refreshRunTagDims();
+  if (state.runTarget === 'workspace') { void refreshRunTagDims(); void runPrFields().refresh(); }
   // A background list refresh (keepMembers) leaves a still-selected workspace's member rows and
   // branch picks alone; only a changed selection repaints them.
   if (keepMembers && state.selectedWorkspaceId && state.selectedWorkspaceId === shown) return;
@@ -9109,6 +9124,7 @@ if (el.targetSeg) {
 if (el.workspaceSelect) {
   el.workspaceSelect.addEventListener('change', () => {
     state.selectedWorkspaceId = el.workspaceSelect.value || '';
+    void runPrFields().refresh();
     if (state.selectedWorkspaceId) localStorage.setItem(LAST_WORKSPACE_KEY, state.selectedWorkspaceId);
     // D-W1: Human in the loop is per run on a workspace — a new workspace starts it on again. This
     // listener does not re-run renderWorkflowConfig, so repaint the switch here.
@@ -9598,6 +9614,7 @@ function buildWdOverview(sec, id) {
   const [upDate, upTime] = w.updatedAt ? String(fmtDate(w.updatedAt)).split(', ') : ['—', ''];
   grid.appendChild(pdStatCard('updated', 'Updated', upDate, [upTime, w.createdAt ? `created ${String(fmtDate(w.createdAt)).split(', ')[0]}` : ''].filter(Boolean).join(' · ')));
   sec.appendChild(grid);
+  void mountWorkspacePrSetting(sec.appendChild(document.createElement('section')), { workspaceId: id });   // Pull requests: the workspace's own pr.open
   // wsDetail is set before the tab builds, so the card can paint at once (and again per status read).
   paintPdBranchCards();
   void refreshSyncChips();
@@ -10520,7 +10537,7 @@ if (el.wsHowtoBtn) el.wsHowtoBtn.addEventListener('click', () => openWsGuide('le
 
 // ---- Workspace scan models (D15–D18): the scan agent (a catalog model + effort) and its project
 // agents (a sub-agent alias + effort). One painter for Create workspace and Settings › General.
-const SCAN_AGENT_ALIASES = [['sonnet', 'Sonnet'], ['opus', 'Opus'], ['fable', 'Fable']];
+const SCAN_AGENT_ALIASES = ['sonnet', 'opus', 'fable'];
 const SCAN_EFFORTS = ['medium', 'high', 'xhigh', 'max'];
 const SCAN_MODELS_FALLBACK = { scanModel: 'claude-sonnet-5', scanEffort: 'medium', agentModel: 'sonnet', agentEffort: 'medium' };
 const WIZ_MODEL_IDS = { scanModel: 'wiz-scan-model', scanEffort: 'wiz-scan-effort', agentModel: 'wiz-agent-model', agentEffort: 'wiz-agent-effort' };
@@ -10529,6 +10546,10 @@ let wizModelCatalog = [];
 // The wizard's Models column paint in flight (enterWizard): Scan awaits it, so a quick click never
 // sends the four still-empty selects (the scan route answers 400 to an empty pick).
 let wizModelsPainted = Promise.resolve();
+// The wizard stores a scan pick on the new workspace only when one is needed: the user changed a picker, or no
+// Everyday coding role covers the scan (a re-scan would then ask for a model). Otherwise its re-scans follow the role.
+let wizScanTouched = false;
+let wizScanPickNeeded = true;
 let wsScanCatalog = [];
 
 /** The pick a surface starts from: the stored one over the server's default (else Sonnet · medium). */
@@ -10565,7 +10586,7 @@ function paintScanModelPickers(ids, pick, catalog) {
   sm.value = pick.scanModel || '';
   paintScanEffort(ids, pick.scanEffort || '', catalog);
   am.innerHTML = '';
-  for (const [v, label] of SCAN_AGENT_ALIASES) am.appendChild(option(v, label));
+  for (const v of SCAN_AGENT_ALIASES) { const o = option(v, subagentAliasLabel(v)); const t = subagentAliasTitle(v); if (t) o.title = t; am.appendChild(o); }
   am.value = pick.agentModel;
   ae.innerHTML = '';
   for (const e of SCAN_EFFORTS) ae.appendChild(option(e, e));
@@ -10958,6 +10979,8 @@ async function paintWizardModels() {
     wizModelCatalog = catalog;
     if (res.ok) data = await safeJson(res);
   } catch { /* the fallback pick below */ }
+  wizScanTouched = false;
+  wizScanPickNeeded = !data.workspaceScanFromRole;
   let pick = scanModelsFrom(data);
   // A stored scan model that left the catalog is never offered as this scan's pick: the scan
   // route checks a SENT pick strictly (400), so it would refuse every scan. Start from the
@@ -10970,6 +10993,7 @@ async function paintWizardModels() {
   paintScanModelPickers(WIZ_MODEL_IDS, pick, wizModelCatalog);
 }
 if (el.wizScanModel) el.wizScanModel.addEventListener('change', () => paintScanEffort(WIZ_MODEL_IDS, el.wizScanEffort?.value || '', wizModelCatalog));
+for (const id of Object.values(WIZ_MODEL_IDS)) document.getElementById(id)?.addEventListener('change', () => { wizScanTouched = true; });
 
 // Render one checkbox per onboarded project (disabled for !exists). Pre-checks
 // anything already in selectedPaths (re-scan). Enables Start only at 2+.
@@ -11103,7 +11127,7 @@ async function startWizardScan() {
     if (state.wizard !== wiz) return;
     const res = await fetch('/api/workspaces/scan', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ projectPaths: paths, name, models: readScanModelPickers(WIZ_MODEL_IDS) }),
+      body: JSON.stringify({ projectPaths: paths, name, ...(wizScanTouched || wizScanPickNeeded ? { models: readScanModelPickers(WIZ_MODEL_IDS) } : {}) }),
     });
     const data = await safeJson(res);
     if (!res.ok || !data.runId) { if (state.wizard === wiz) setWizStep1Error(data.error || `Scan failed (${res.status})`, data.code); return; }
@@ -15121,6 +15145,7 @@ function buildRunBody() {
     // The engine shown is the engine that runs: Claude goes unsent only when the default is KNOWN
     // to be Claude (a failed or stale defaults read must not let the server pick a Codex default).
     engine: state.engine !== 'claude' ? state.engine : (state.runDefaults?.engine?.value === 'claude' ? undefined : 'claude'),
+    pr: runPrFields().body(),   // only a value the person changed from the setting
     allowUnguardedEngine: state.engine !== 'claude' && el.engineAllowUnguarded && el.engineAllowUnguarded.checked ? true : undefined,
     // Run tags (#718): omitted when empty, so a legacy body stays byte-identical. A slot wins its key.
     tags: (() => {
@@ -19228,7 +19253,8 @@ async function paintEngineSettings(data, { force = false } = {}) {
   for (const job of claudeJobs) fields[utilityId('claude', job)] = { own: claudeOwn[job], inherited: { value: undefined, source: 'default' } };
   // Worca's factory defaults (src/core/factory-models.mjs) read "(default)" on the Claude tab: the Second-opinion
   // reviewer and Memory defragment (unless the Quick jobs role, which it takes first, names a model). A step's applies to
-  // role reviews only, so its row keeps the role or default text and its hint names the factory default.
+  // role reviews only, and only when no role names a model, so its row keeps the role or default text and its hint
+  // names the factory default.
   const factory = data?.factoryModels?.claude;
   const factoryPair = (p) => (p && p.model ? { value: { model: p.model, ...(p.effort ? { effort: p.effort } : {}) }, source: 'default' } : null);
   const quickRole = data?.modelRoles?.claude?.quick?.model;
@@ -19240,7 +19266,7 @@ async function paintEngineSettings(data, { force = false } = {}) {
   for (const [key, pick] of Object.entries(factory?.steps || {})) {
     if (!pick?.model) continue;
     const label = catalog.find((m) => m.id === pick.model)?.label || pick.model;
-    claudeStepHints[key] = `Role reviews (Shaper) default to ${label}${pick.effort ? ` · ${pick.effort}` : ''}`;
+    claudeStepHints[key] = `Role reviews (Shaper) use your role; with none set, ${label}${pick.effort ? ` · ${pick.effort}` : ''}`;
   }
   // The interview's empty choices read "Opus 5.5 (default)" and "medium (default)" (the answer's requirementsInterviewDefault).
   const interviewDefault = data?.requirementsInterviewDefault;
@@ -25308,6 +25334,7 @@ function paintHdGlance(screen, record, data) {
   paintGroupLine(glance.querySelector('.rd-kv .rd-group-line'), record.id || '', record.title || '', home);
   paintRunPlace(screen, home);
   paintRunLabels(glance.querySelector('.rd-kv [data-fact="labels"] > .rd-kv-v'), { pipelineId: data.state.id, labels: data.state.labels, onSaved: (l) => { data.state.labels = l; } });
+  void paintRunPrAuto(glance.querySelector('.rd-kv [data-fact="pr-auto"]'), data.state.id, st.status, () => !!histDetailState && histDetailState.data === data);
   syncFacts(glance.querySelector('.rd-kv'));
 
   // Time · Cost · Changes, then the Cost tags row, as on the Running page in every state.
@@ -33378,8 +33405,9 @@ const RUNS_COLLAPSED_KEY = 'worca-cc.runs.collapsed';   // project / date sectio
 // skipRestore: bare #runs shows the list, not the remembered run, until another route (goRunsList).
 // groupsToggled: a person's ⌄ per group key for this session (D29); sel / selecting: the ticked rows (D20).
 // rowsByKey: every top-level and member row of the last paint; memos: runProgress / cost memos per run and group.
+// groupsToggled also holds a stack's open state, `rounds:<run id>` (closed by default); roundsAll: the stacks showing every round.
 const runsUi = { view: loadRunsView(localStorage), collapsed: loadIdSet(RUNS_COLLAPSED_KEY), reveal: '', skipRestore: false,
-  groupsToggled: new Map(), recentShown: RECENT_PAGE, selecting: false, anchorKey: null,
+  groupsToggled: new Map(), roundsAll: new Set(), recentShown: RECENT_PAGE, selecting: false, anchorKey: null,
   sel: createRunsSelection(), rowsByKey: new Map(), memos: new Map(), lastModel: null, listCounts: null,
   pendingSelect: null, focusKey: null,   // pendingSelect: the pipeline ids "Tag N runs" (Statistics › Cost) asked to tick
   archivedTotal: null };   // /api/counts' archived rows: the Show › Archived count before its feed loads
@@ -33427,6 +33455,12 @@ function runsStepWord(r) {
   return list.length === 1 ? String(list[0].label || '') : '';
 }
 
+/** A round's marker (pr-fix-rounds-stacking D1) for the list: a live run's state branch, else its History row's
+ *  `roundOf` (rowToHistoryEntry wireRoundOf). null for round 1, a plain run and a malformed marker. */
+function runsRoundOf(r, h = null) {
+  const m = (r && r.branch && typeof r.branch === 'object' && r.branch.roundOf) || (h && h.roundOf) || null;
+  return m && m.pipelineId && Number.isInteger(m.round) && m.round >= 2 ? m : null;
+}
 function runsLiveItem(r) {
   const pq = r.pendingQuestion;
   const g = runsGroupFor({ pipelineId: r.pipelineId || '', projectDir: r.projectDir || '', workspaceId: r.kind === 'workspace-run' ? (r.workspaceId || '') : '', workMode: workModeOf(r) });
@@ -33451,6 +33485,7 @@ function runsLiveItem(r) {
     files: folder ? (ffc ? ffc.total : null) : (rec && typeof rec.files === 'number' ? rec.files : null),
     tags: r.tags || [],
     labels: flagOn('runLabels') ? (r.labels || []) : [],
+    roundOf: runsRoundOf(r, r.pipelineId ? histOf(r.pipelineId) : null),   // a round folds into its origin (runs-list buildRunsModel)
     // The run model reads the raw run (runs-list.mjs runModel); its monotonic progress memo is kept per run. A finished
     // run takes its History row's PR (rdModelRun), so it reads In review here as on the run page.
     run: rdModelRun(r), memo: memoFor(r.pipelineId || r.runId),
@@ -33526,6 +33561,7 @@ function runsGroupItem({ id, groupKind, title, members, cost = null, planning = 
       projectKey: m.projectKey || pk || null,   // one ship flow: the chain dialog's GET /api/pr/remotes
       stacks: m.stacks,                         // one ship flow: a chain run started from the previous run's branch
       ticketId: m.ticketId || null, runId: r ? r.runId : '', kind: r ? 'live' : m.pipelineId ? 'hist' : 'sched', run,
+      roundOf: m.pipelineId ? runsRoundOf(r, h) : null,   // null for an origin: a member's own rounds fold under it
       memo: memoFor(m.pipelineId || m.ticketId || `${id}:${i}`),
       startedAt: (r && r.startedAt) || (h && h.startedAt) || null,       // D12: the group's dispatch time
       // D32: the member's own cost (a chain's total sums these). D5: max(live, History, the group's stored byPipeline):
@@ -33834,7 +33870,8 @@ const histRun = (p, st = null) => ({ status: String((p && p.status) || (st && st
   pauseReason: (p && p.pauseReason) || '', pr: runPrFor(p, storedPrOf(p && p.id)), ...(p && p.inBase ? { inBase: p.inBase } : {}),
   ...(memberPrsOf(p).length ? { memberPrs: memberPrsOf(p) } : {}),
   // D24: passed through for the model; the saved state's branch carries a round marker on a frozen row.
-  round: (p && p.round) || null, branch: (st && st.branch) || null, watch: (p && p.watch) || null,
+  // A round's History row carries its marker as `roundOf` (run-model roundOf reads `.round`).
+  round: (p && (p.round || p.roundOf)) || null, branch: (st && st.branch) || null, watch: (p && p.watch) || null,
   // An interrupted run that can never resume (no resume point, its project gone): the model offers Archive instead.
   ...((p && p.resumable === false) || (st && st.resumable === false) ? { resumable: false } : {}),
   // Projects, any way: a Folder run's changes and a run without a project word the finished line; no git here, no git chrome.
@@ -33853,6 +33890,7 @@ function runsHistItem(p) {
     startedAt: p.startedAt, mtime: p.mtime, groupName: histGroupName(p), groupKind: isNoProjectRun(p) ? 'none' : projectKindForKey(p.projectKey), by: runsPersonKey(p.startedBy),
     pr: glancePrInput(p),
     archived: !!p.archived,
+    roundOf: p.roundOf || null,   // a round folds into its origin (runs-list buildRunsModel, D2)
     ...(p.resumable === false ? { resumable: false } : {}),   // histRow / rowTarget: the bar's Archive / Delete take it
     checks: typeof p.checks === 'number' ? p.checks : null,
     changes: folder ? { state: (p.changes && p.changes.state) || 'pending' } : null,
@@ -33882,19 +33920,24 @@ function runsSchedItem(t) {
 // pipelineId: a live row painted before its id arrived must repaint once it does (selection
 // and the focus fallbacks below match on it).
 // A group line's fraction is patched in place (paintRunsProgress); its presence is structural (the model's state).
-const runsRowSig = (r) => [r.key, r.pipelineId, r.href, r.title, r.model.state, r.model.symbol || '', r.model.line, r.model.pulse ? 1 : 0, r.count || '',
+// A stack (its line, rounds and open state) repaints when a round arrives, changes or finishes.
+const roundsSig = (r) => (r.rounds && r.rounds.length ? [r.roundsLine || '', r.roundsOwnLine ? 1 : 0, r.rounds.length,
+  runsUi.groupsToggled.get(`rounds:${r.roundsId}`) ? 1 : 0, runsUi.roundsAll.has(`rounds:${r.roundsId}`) ? 1 : 0,
+  r.rounds.map((rd) => [rd.n, rd.status, rd.words || '', rd.time, rd.href])] : 0);
+const runsRowSig = (r) => [r.key, r.pipelineId, r.href, r.title, r.model.state, roundsSig(r), r.model.symbol || '', r.model.line, r.model.pulse ? 1 : 0, r.count || '',
   r.model.pr ? [r.model.pr.id, r.model.pr.word, r.model.pr.title, r.model.pr.icon, r.model.pr.pending ? 1 : 0] : 0, r.model.progress && r.model.progress.mode === 'stages' ? [r.model.progress.stage, r.model.progress.label] : 0,
   r.activityMs || 0, r.groupName, r.cost ?? null, r.costUsd ?? null, r.needs ? 1 : 0,
-  r.kind === 'chain' ? [r.open ? 1 : 0, r.members.map((m) => [m.key, m.model.state, m.model.line, m.title, m.href, m.cost ?? null, m.model.symbol || '',
+  r.kind === 'chain' ? [r.open ? 1 : 0, r.members.map((m) => [m.key, m.model.state, m.model.line, m.title, m.href, m.cost ?? null, m.model.symbol || '', roundsSig(m),
     m.model.pr ? [m.model.pr.id, m.model.pr.word, m.model.pr.title, m.model.pr.icon, m.model.pr.pending ? 1 : 0] : 0])] : 0, (r.labels || []).join('\n')];
 // Where focus goes back to after the list is rebuilt under it. A row can change key in the
 // rebuild: opening a finished run acknowledges it, and the same paint turns live:<runId> into
 // hist:<projectKey>/<pipelineId>. Its pipeline id carries over, then the selected row stands in;
 // a focused ⌄, checkbox, ⋯ or section head is found by its row or section. `near`: the row or head that took a gone
 // row's place (issue #948), ahead of the open run's row.
-function runsFocusTarget(host, { key, pid, section, chain, check, more, near = null }) {
+function runsFocusTarget(host, { key, pid, section, chain, check, more, rounds = '', near = null }) {
   const q = (sel) => host.querySelector(sel);
   const item = (k) => `.runs-item[data-row-key="${cssEscape(k)}"]`;
+  if (rounds) return q(`.runs-rounds-toggle[data-rounds-key="${cssEscape(rounds)}"]`);
   if (chain) return q(`${item(chain)} > .runs-row-tail .runs-expand`);
   if (check) return q(`${item(check)} > .runs-pick .runs-check`);
   if (more) return q(`${item(more)} > .runs-row-tail .runs-more`);
@@ -33919,7 +33962,10 @@ function paintRunsList() {
     labels: flagOn('runLabels') ? runsUi.view.labels : [],
     show: runsUi.view.show, groupBy: runsUi.view.groupBy, collapsed: runsUi.collapsed, toggled: runsUi.groupsToggled,
     recentShown: runsUi.recentShown, archivedCount: state.historyArchived ? state.historyArchived.length : null, now: Date.now(),
+    archivedIds: new Set((state.historyArchived || []).map((p) => p && p.id).filter(Boolean)),   // D4: an archived run's rounds stay out
   });
+  // D4: a stack whose run is not listed may belong to an archived run; the archived feed (loaded once) tells.
+  if (!archivedView && model.orphans && state.historyArchived === null && !state.historyArchivedError) void loadHistoryArchived();
   const note = archivedView
     ? (state.historyArchivedError && !histSource.length ? `Could not load archived runs: ${state.historyArchivedError}` : '')
     : (state.historyError && !(state.historyAll || []).length ? `Could not load finished runs: ${state.historyError}` : '');
@@ -33939,6 +33985,7 @@ function paintRunsList() {
   // Under Show = Archived the history source is the archived feed, so the model's other counts would read 0.
   if (!archivedView) runsUi.listCounts = model.counts;
   const checked = new Set(runsUi.sel.keys());
+  const roundsOpen = new Set([...runsUi.groupsToggled].filter(([k, v]) => k.startsWith('rounds:') && v).map(([k]) => k));
   const sig = JSON.stringify([
     model.sections.map((s) => [s.id, s.title, s.kind || '', s.count, s.more || 0, s.collapsed ? 1 : 0, s.collapsed ? [] : s.rows.map(runsRowSig)]),
     model.shown, model.view, model.spansProjects, note, [...checked], runsUi.selecting, loading, offline,
@@ -33951,7 +33998,8 @@ function paintRunsList() {
       const item = a.closest('.runs-item');
       const of = (cls) => (a.classList.contains(cls) && item ? item.dataset.rowKey : '');
       refocus = { key: a.matches('a.runs-row') ? (a.dataset.rowKey || '') : '', pid: a.dataset.pipelineId || '',
-        section: a.dataset.sectionKey || '', chain: of('runs-expand'), check: of('runs-check'), more: of('runs-more') };
+        section: a.dataset.sectionKey || '', chain: of('runs-expand'), check: of('runs-check'), more: of('runs-more'),
+        rounds: a.dataset.roundsKey || '' };   // a stack's toggle or "+n earlier": focus goes back to its toggle
       // A focused row the repaint drops (E, ⌫, an archive from elsewhere) hands the focus to its next, else previous, neighbour.
       refocus.nearKeys = a.matches('a.runs-row') ? runsRove.around(a) : [];
     }
@@ -33962,7 +34010,7 @@ function paintRunsList() {
       if (k && !lineFrom.has(k) && i.style.width) lineFrom.set(k, i.style.width);
     }
     host.replaceChildren(...renderRunsList(document, model, { checked, selecting: runsUi.selecting, emptyText: 'No runs yet. Start one from New run.', note, lineFrom,
-      loading, offline, retry: !!note }));
+      loading, offline, retry: !!note, roundsOpen, roundsAll: runsUi.roundsAll }));
     if (lineFrom.size) void host.offsetWidth;   // commit the start widths, so the patch below transitions
   }
   paintRunsProgress(host, model);   // P2/P7: the group lines' fraction, in place
@@ -34025,7 +34073,8 @@ function paintRunsSelection() {
   const sel = runsSelection();
   for (const a of host.querySelectorAll('.runs-row')) {
     const row = { kind: a.dataset.kind, runId: a.dataset.runId || '', pipelineId: a.dataset.pipelineId || '', projectKey: a.dataset.projectKey || '',
-      groupId: a.dataset.groupId || '', memberKeys: new Set((a.dataset.memberKeys || '').split(' ').filter(Boolean)) };
+      groupId: a.dataset.groupId || '', memberKeys: new Set((a.dataset.memberKeys || '').split(' ').filter(Boolean)),
+      ...(a.dataset.roundKeys ? { roundKeys: new Set(a.dataset.roundKeys.split(' ').filter(Boolean)) } : {}) };
     const on = isRowSelected(row, sel);
     // Run 3 (D4): a group whose run is open takes the lighter member-open highlight, and says so to assistive tech.
     const open = !on && isMemberOpen(row, sel);
@@ -34041,6 +34090,16 @@ function paintRunsSelection() {
 // a plain click routes in place. ⌄ opens or closes a group (D29), a project / date head folds, "Show older" pages
 // Recent. The checkbox and the ⋯ button have listeners of their own (below).
 el.runsList?.addEventListener('click', (e) => {
+  // D9: a stack's ▸ k rounds opens or closes it (closed by default); "+n earlier" shows every round.
+  const rt = e.target.closest && e.target.closest('.runs-rounds-toggle, .runs-rounds-more');
+  if (rt) {
+    e.preventDefault();
+    const k = rt.dataset.roundsKey;
+    if (rt.classList.contains('runs-rounds-more')) runsUi.roundsAll.add(k);
+    else { runsUi.groupsToggled.set(k, !runsUi.groupsToggled.get(k)); runsUi.roundsAll.delete(k); }
+    paintRunsList();   // the refocus path puts focus back on the rebuilt toggle
+    return;
+  }
   const exp = e.target.closest && e.target.closest('.runs-expand');
   if (exp) {
     e.preventDefault();
@@ -34250,6 +34309,7 @@ function runsLetterKey(action, item) {
   const out = it.onSelect();
   if (out && typeof out.then === 'function') void out.then(refocus);
 }
+const RUNS_ROW_ONLY_KEYS = new Set(['menu', 'archive', 'stop', 'add-to-group', 'leave-group', 'delete']);
 document.getElementById('runs-list-pane')?.addEventListener('keydown', (e) => {
   const t = e.target;
   const action = listKeyAction({ key: e.key, metaKey: e.metaKey, ctrlKey: e.ctrlKey, altKey: e.altKey, shiftKey: e.shiftKey,
@@ -34257,6 +34317,9 @@ document.getElementById('runs-list-pane')?.addEventListener('keydown', (e) => {
   { size: runsUi.sel.size, list: 'runs', level: currentLevel(document) });
   if (!action || action === 'clear' || action === 'help') return;   // Escape and ? are the document listeners' (below)
   if (action !== 'all' && !el.runsList.contains(t)) return;   // the head's View button and the selection bar keep their keys
+  // A stack's round link, toggle or "+n earlier" sits inside its head's item but names another run: the letter and menu
+  // keys (archive, stop, delete, group, ⋯) would act on the head, so they do nothing there. Arrows still move.
+  if (RUNS_ROW_ONLY_KEYS.has(action) && t.closest?.('.runs-rounds, .runs-rounds-line')) return;
   const item = t.closest?.('.runs-item') || null;
   const nav = t.closest?.(RUNS_NAV) || runsRowLink(item);
   e.preventDefault();
@@ -37716,6 +37779,7 @@ function paintRdHeader(screen, r) {
   // Run tags (#718): read-only chips after the person chip, replaced on every paint.
   for (const c of screen.querySelectorAll('.rd-page-meta .tag-chip')) c.remove();   // s2: the chips moved to the Cost tags row
   paintRunLabels(screen.querySelector('.rd-glance .rd-kv [data-fact="labels"] > .rd-kv-v'), { pipelineId: r.pipelineId || '', labels: r.labels, onSaved: (l) => { r.labels = l; } });
+  void paintRunPrAuto(screen.querySelector('.rd-glance .rd-kv [data-fact="pr-auto"]'), r.pipelineId, r.status, () => screen.isConnected && runs.get(r.runId) === r);
   paintRunKindChip(screen.querySelector('.rd-page-meta'), workModeOf(r));
   syncFacts(screen.querySelector('.rd-glance .rd-kv'));
 
@@ -37926,7 +37990,8 @@ function renderPipelineTabs() {
 // number is this one; `active` is every live run: the grey Runs number, Activity's running count.
 function runsNeedsInput() {
   return {
-    live: overviewRuns().map((r) => ({ runId: r.runId, pipelineId: r.pipelineId || '', status: r.status, ask: r.pendingQuestion != null, unread: isLingering(r) })),
+    live: overviewRuns().map((r) => ({ runId: r.runId, pipelineId: r.pipelineId || '', status: r.status, ask: r.pendingQuestion != null, unread: isLingering(r),
+      roundOf: runsRoundOf(r) })),   // a live fix round: its run is Working, not Needs you (runs-list needsYouItems, D5)
     history: Array.isArray(state.historyAll) ? state.historyAll : [],
     active: liveRuns().map((r) => ({ runId: r.runId })),
   };
@@ -38501,10 +38566,12 @@ function gsHops(step, g) {
       // Workflows: open the Library, open Default, read the canvas and the chat — then leave the editor
       // and start a run from New run (the pick persists the workflow: that is the derived tick).
       const lib = document.getElementById('wfv-library');
-      // The Library's selector picks Workflows; Default sits in its domain's folder (opened in place) whenever Workflows
-      // holds more than one domain. Once its row shows — there, or in a search's flat list — both hops are done.
-      // gsHops is re-derived on every reconsider, so `defFolder` follows the list as it loads.
-      const defFolder = (wfvLibrary ? wfvLibrary.folderOf('workflow', 'wf_default') : ['workflows']).join('/');
+      // The Library opens on Workflows (#1127); Default sits in its Built-in folder — in its domain's folder when the
+      // built-ins span more than one domain. Every folder on that path still folded is a target, outermost first: the
+      // first one showing is rung, and opening it moves the ring in. Once Default's row shows — there, or in a search's
+      // flat list — the hops are done. gsHops is re-derived on every reconsider, so the path follows the list as it loads.
+      const defPath = wfvLibrary ? wfvLibrary.folderOf('workflow', 'wf_default') : ['workflows'];
+      const defFolders = folderKeys(defPath);
       const defShown = () => !!lib && !!lib.querySelector('.wfl-wf[data-id="wf_default"]');
       const run = Object.fromEntries(gsRunHops(g, false).filter(Boolean).map((h) => [h.id.replace('nav:', ''), h]));
       return [
@@ -38515,13 +38582,13 @@ function gsHops(step, g) {
         { id: 'tab', target: '#wfv-library #wfl-tab-workflows', lift: ['.wfl'],
           met: () => !!lib && (lib.dataset.tab === 'workflows' || defShown()), skipWhenMet: true,
           text: 'Switch the Library to Workflows.' },
-        { id: 'folder', target: [`#wfv-library .wfl-folder[data-folder="${defFolder}"]`, '#wfv-library .wfl-head.is-searching #wfl-close'], lift: ['.wfl'],
-          met: () => !defFolder.includes('/') || defShown(), skipWhenMet: true,
-          text: [`Open “${defFolder.split('/').pop()}”: the built-in Default workflow lives in this folder.`, 'Close the search: the folders are under it.'] },
+        { id: 'folder', target: [...defFolders.map((f) => `#wfv-library .wfl-folder[data-folder="${f}"][aria-expanded="false"]`), '#wfv-library .wfl-head.is-searching #wfl-close'], lift: ['.wfl'],
+          met: () => defShown(), skipWhenMet: true,
+          text: [...defFolders.map((f, i) => `Open “${folderLabel(f.split('/'))}”: ${i === defFolders.length - 1 ? 'the built-in Default workflow lives in this folder.' : 'the workflows Worca ships live here.'}`), 'Close the search: the folders are under it.'] },
         { id: 'open', target: ['#wfv-library .wfl-wf[data-id="wf_default"]', '#wfv-library .wfl-wf'], lift: ['.wfl'],
           met: () => !!(document.getElementById('wfv-name')?.value || '').trim(),
-          text: 'Open Default: the built-in Plan → Refine → Implement → Review loop.',
-          already: 'A workflow is already on the canvas. Open Default to see the built-in Plan → Refine → Implement → Review loop.' },
+          text: 'Click Default: the built-in Plan → Refine → Implement → Review loop opens as a new copy you can change and save as your own.',
+          already: 'A workflow is already on the canvas. Click Default to open a copy of the built-in Plan → Refine → Implement → Review loop.' },
         { id: 'canvas', info: true, target: '#wfv-canvas', lift: ['.wfv-stage'],
           text: 'This is the whole workflow. Each card is an agent or a script; the wires carry plans, code and reviews from one to the next. Drag cards in from the Library, rewire them, or select one to tune it.' },
         { id: 'chat', info: true, target: '#wfc', lift: ['.wfv-float', '.wfv-stage'],
@@ -40233,6 +40300,7 @@ async function applyPreset(id) {
       setSelectValueAdding(el.sourceBranch, s.sourceBranch);
     }
     if (Array.isArray(s.tags)) applyRunTagsFromPreset(s.tags);
+    runPrFields().apply(s.pr);
     applyPresetSwitches();
     await renderWorkflowConfig(state.workflowId);
   } finally {
@@ -40259,6 +40327,7 @@ function applyPresetSwitches() {
 
 function leavePresetMode() {
   state.preset = null;
+  runPrFields().apply(null);
   if (el.presetSelect) el.presetSelect.value = '';
   paintPresetChip();
   paintPresetBroken();

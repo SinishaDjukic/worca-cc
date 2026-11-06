@@ -179,6 +179,9 @@ scope, or a member of its workspace); another project's folder is refused until 
   through wrappers (`xargs`, `nice`, `timeout`, `env`, …), `bash -c "…"`/`eval`, and git's global
   options, and treats an `rm -r` target built from `$(…)` or piped into `xargs` as outside the folder.
   It also refuses `gh auth token` (and `gh auth status --show-token`), and a command with a newline.
+  For `gh` and `glab` it refuses deletes (`gh repo delete`, `gh api -X DELETE`, …), a forced ref or a repository
+  made public (`gh repo edit --visibility public`, the same through `gh api`), `gh pr merge --admin` and
+  `gh gist create --public`; for `az`, any `delete` subcommand.
   Command lines and output that reach the model or the card are redacted. This check
   is a rail against mistakes and naive prompt injection, **not a sandbox**: an obfuscated command (a path
   built from variables, a `../../..` walk out of a run's checkout) can get around it.

@@ -375,8 +375,10 @@ test('a token on the crash line of stderr never reaches the warning', async () =
 
 test('a frame that arrived before the timeout is kept even if the child is killed while ending', async () => {
   const logLines = [];
+  // The timeout runs from spawn: 300 ms was less than a child's start on a loaded Windows machine, so the frame came too late.
+  // 3 s leaves room to start and answer; the 8 s stall on exit still outlasts it, so the child is killed while ending.
   const result = await callSource({
-    plugin: NAME, sourceId: 'main', op: 'answersThenStalls', args: { ms: 1000 }, timeoutMs: 300,
+    plugin: NAME, sourceId: 'main', op: 'answersThenStalls', args: { ms: 8000 }, timeoutMs: 3000,
     logger: (level, msg) => logLines.push(`${level}:${msg}`),
   });
   assert.deepEqual(result, { stalled: true });

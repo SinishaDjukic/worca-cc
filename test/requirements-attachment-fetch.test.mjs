@@ -184,12 +184,11 @@ test('a database error after the store (final review M1): DOWNLOAD "Worca could 
   assert.equal(getAttachment(r.id).status, 'done');
 });
 
-test('a file that arrived but A8 cannot use is refused (D10): too large, a size that lied, not its type, a duplicate', async () => {
+test('a file that arrived but A8 cannot use is refused (D10): too large, a size that lied, a duplicate; one that is not its type is kept as A8 keeps it (#1164)', async () => {
   const f = feature();
   const cases = [
     [() => ({ tooLarge: true, bytes: 30 * 1024 * 1024 }), 'it is over 25 MB'],
     [(a) => { writeFileSync(a.dest, PDF, { flag: 'wx' }); return { name: 'x.pdf', mime: 'application/pdf', bytes: PDF.length - 1 }; }, 'it is not the file Jira described'],
-    [(a) => { writeFileSync(a.dest, 'not a pdf at all', { flag: 'wx' }); return { name: 'x.pdf', mime: 'application/pdf', bytes: 16 }; }, 'its content does not match its type'],
   ];
   for (const [answer, reason] of cases) {
     setMockSourceResponses({ downloadAttachment: answer });
@@ -198,6 +197,12 @@ test('a file that arrived but A8 cannot use is refused (D10): too large, a size 
     assert.deepEqual(bodies(now.id), [], 'nothing stored');
     job.removeAttachment(own(f), now.id, {}, d);
   }
+  // #1164: A8 refuses no file for its content; a .pdf that is not a PDF but decodes as UTF-8 is kept as text, its body named .txt
+  setMockSourceResponses({ downloadAttachment: (a) => { writeFileSync(a.dest, 'not a pdf at all', { flag: 'wx' }); return { name: 'x.pdf', mime: 'application/pdf', bytes: 16 }; } });
+  const kept = await queue(f, row(f, '10042', 'not-a-pdf.pdf', 16));
+  assert.deepEqual([kept.status, kept.error, kept.kind, kept.mime], ['done', null, 'text', 'text/plain']);
+  assert.deepEqual(bodies(kept.id), [`${kept.id}.txt`]);
+  job.removeAttachment(own(f), kept.id, {}, d);
   job.addAttachments(own(f), [{ name: 'call-notes.pdf', kind: 'binary', mime: 'application/pdf', data: PDF, bytes: PDF.length, sha256: sha(PDF) }], {}, d);
   await job.readsSettled(own(f));
   setMockSourceResponses({ downloadAttachment: (a) => { writeFileSync(a.dest, PDF, { flag: 'wx' }); return { name: 'x.pdf', mime: 'application/pdf', bytes: PDF.length }; } });

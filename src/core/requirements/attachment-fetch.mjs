@@ -147,7 +147,7 @@ export async function runDownload(e) {
     const twin = listAttachments(row.ownerType, row.ownerId).find((x) => x.id !== row.id && x.sha256 === file.sha256);
     if (twin) { fail(row, 'REFUSED', `it is already attached as ${twin.name}`, e.by); return false; }
     mkdirSync(attachmentsDir(), { recursive: true, mode: DIR_MODE });
-    target = attachmentFile({ id: row.id, kind: file.kind, mime: file.mime });
+    target = attachmentFile({ id: row.id, kind: file.kind, mime: file.mime, name: row.name });   // a generic binary keeps its name's extension (#1164)
     d.writeBody(target, c.body, { mode: FILE_MODE });   // the checked bytes; never a rename of dest, which could have changed after the check (S7)
     try { chmodSync(target, FILE_MODE); } catch { /* no POSIX modes on Windows */ }
     if (e.cancelled || !getAttachment(row.id)) return false;   // removed meanwhile: the body goes below

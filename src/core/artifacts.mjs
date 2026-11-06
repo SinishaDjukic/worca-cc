@@ -24,6 +24,7 @@ import { listProjects, worcaHome, runOnboarded } from './projects.mjs';
 import { claimRunDir, claimRunExtras, shareFailureReason } from './agent-pool.mjs';
 import { branchExists, diffShortstat, anyPrHost, findPrForBranch, commitsAhead, withRefSnapshot } from './git-info.mjs';
 import { getDb, tx } from './db.mjs';
+import { cleanOutcome } from './shape/rounds.mjs';
 import { rollupMemberPrs, workspaceMembers, changedFileCount } from './workspace-prs.mjs';
 import { RUN_LOG_FILE } from './run-log.mjs';
 import { readRunLedger } from './metrics/ledger.mjs';
@@ -1167,6 +1168,7 @@ export async function readPromptFile(projectDir, promptFile) {
  * @param {object} [opts.sourceMeta]  { plugin, sourceId, taskId, url, title } | null
  * @param {string} [opts.guardrailsId] the run's selected guardrail set id (per-run)
  * @param {string|null} [opts.runSetup] JSON of the run's setup (pipelines.run_setup, v62); never on the state object
+ * @param {object|null} [opts.prAuto] the run's PR-when-done decision (pipelines.pr_auto, v86); same rule as runSetup
  * @param {string[]} [opts.extras]    paths to extra files copied into dir/extras
  * @param {string} [opts.title]       human title (defaults to derived text)
  * @param {string} [opts.workspaceKey]   opt-in: route to the workspace store
@@ -1180,7 +1182,7 @@ export async function createPipeline(projectDir, opts = {}) {
   const {
     prompt, promptFile, extras = [], title,
     promptText: precomputedPromptText = null, sourceType = null, sourceMeta = null,
-    guardrailsId = null, startedBy = null, prWatchRunId = null, tags = [], labels = [], runSetup = null,
+    guardrailsId = null, startedBy = null, prWatchRunId = null, tags = [], labels = [], runSetup = null, prAuto = null,
     workspaceKey = null, workspaceId = null, workspaceName = null,
     workspaceDescription = '', projects = null,
   } = opts;
@@ -1332,7 +1334,7 @@ export async function createPipeline(projectDir, opts = {}) {
   // no more state.json on disk. writeState also seeds the dir->id cache
   // (rememberDir) so appendAudit resolves this run without any call-site change
   // (A4). recordArtifact runs AFTER the row exists (FK -> pipelines).
-  await writeState(dir, state, { prWatchRunId, runSetup });
+  await writeState(dir, state, { prWatchRunId, runSetup, prAuto });
   // Run tags (#718): written once, after the row exists (FK) and after writeState's tx has
   // committed (tx cannot nest). writeState updates never touch them.
   insertRunTags(id, tags);
@@ -1440,7 +1442,7 @@ function rememberDir(dir, id) { if (dir && id) _dirIdCache.set(resolve(dir), id)
  * @param {object} stateObj
  * @returns {Promise<object>}
  */
-export async function writeState(pipelineDir, stateObj, { prWatchRunId = null, runSetup = null } = {}) {
+export async function writeState(pipelineDir, stateObj, { prWatchRunId = null, runSetup = null, prAuto = null } = {}) {
   const obj = { ...stateObj, updatedAt: new Date().toISOString() };
   const id = obj.id;
   if (!id) return obj; // pre-id state (constructor default): nothing to persist yet
@@ -1450,11 +1452,11 @@ export async function writeState(pipelineDir, stateObj, { prWatchRunId = null, r
       INSERT INTO pipelines (id, project_key, workspace_key, target, title, base_name,
         date_prefix, status, phase, cycle, started_at, updated_at, total_cost_usd,
         total_active_ms, prompt, branch, workspace_meta, stepper, tools, resume_point,
-        source_type, source_ref, guardrails_id, outcome, human_hours, started_by, shape_stats, run_size, run_setup, review_stats)
+        source_type, source_ref, guardrails_id, outcome, human_hours, started_by, shape_stats, run_size, run_setup, review_stats, pr_auto)
       VALUES (@id,@project_key,@workspace_key,@target,@title,@base_name,@date_prefix,
         @status,@phase,@cycle,@started_at,@updated_at,@total_cost_usd,@total_active_ms,
         @prompt,@branch,@workspace_meta,@stepper,@tools,@resume_point,
-        @source_type,@source_ref,@guardrails_id,@outcome,@human_hours,@started_by,@shape_stats,@run_size,@run_setup,@review_stats)
+        @source_type,@source_ref,@guardrails_id,@outcome,@human_hours,@started_by,@shape_stats,@run_size,@run_setup,@review_stats,@pr_auto)
       ON CONFLICT(id) DO UPDATE SET
         status=excluded.status, phase=excluded.phase, cycle=excluded.cycle,
         updated_at=excluded.updated_at, total_cost_usd=excluded.total_cost_usd,
@@ -1469,7 +1471,7 @@ export async function writeState(pipelineDir, stateObj, { prWatchRunId = null, r
         run_size=COALESCE(excluded.run_size, run_size),
         base_name=COALESCE(excluded.base_name, base_name),
         date_prefix=COALESCE(excluded.date_prefix, date_prefix)
-    `).run({ ...toPipelineRow(obj), run_setup: typeof runSetup === 'string' ? runSetup : null });
+    `).run({ ...toPipelineRow(obj), run_setup: typeof runSetup === 'string' ? runSetup : null, pr_auto: prAuto ? JSON.stringify(prAuto) : null });
 
     // A Watch PR fix run (#619): ownership lands in the same transaction that creates the row.
     if (prWatchRunId) attachWatchPipeline(prWatchRunId, id, obj.updatedAt);
@@ -2428,6 +2430,16 @@ export function resultsFilesCount(res) {
  * @param {string|null} repoDir git repo root for live branch facts
  * @param {object} opts { withPr?, lite? }
  */
+/** A round's marker on the History wire (shape/rounds.mjs, plan Task 1): { pipelineId, round, request, by?, kinds?,
+ *  outcome? } from branch.roundOf, or null for round 1, a plain run and a malformed marker. */
+function wireRoundOf(m) {
+  if (!m || typeof m !== 'object' || !m.pipelineId || !Number.isInteger(m.round) || m.round < 2) return null;
+  const outcome = cleanOutcome(m.outcome);
+  return { pipelineId: String(m.pipelineId), round: m.round, request: String(m.request || ''),
+    ...(m.by ? { by: String(m.by) } : {}), ...(Array.isArray(m.kinds) ? { kinds: m.kinds.map(String) } : {}),
+    ...(outcome ? { outcome } : {}) };
+}
+
 async function rowToHistoryEntry(row, repoDir = null, opts = {}) {
   const branchObj = j(row.branch, null);
   const feature = branchObj?.feature ?? (typeof branchObj === 'string' ? branchObj : null);
@@ -2488,6 +2500,9 @@ async function rowToHistoryEntry(row, repoDir = null, opts = {}) {
     totalActiveMs: active,
     mtime: row.updated_at ? (Date.parse(row.updated_at) || 0) : 0,
   };
+  // A round of another run (Runs list fold, plan D1): the key only when the marker is valid.
+  const roundOf = wireRoundOf(branchObj?.roundOf);
+  if (roundOf) entry.roundOf = roundOf;
   // Workspace rows: eligibility is decided across EVERY member, never the primary alone.
   // Computed BEFORE the PR lookup so a row WITH members skips the primary-only search.
   if (row.target === 'workspace' && !opts.lite) {

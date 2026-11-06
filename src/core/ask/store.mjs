@@ -818,7 +818,7 @@ export function addAttachment(threadId, messageId, { name, text, kind = 'text', 
   } else {
     if (!Buffer.isBuffer(data)) throw new Error('addAttachment: a non-text attachment needs a Buffer body');
     bytes = data.length;
-    writeFileSync(join(dir, `${id}${extensionForAttachment(kind, mime)}`), data); // no encoding: raw bytes
+    writeFileSync(join(dir, `${id}${extensionForAttachment(kind, mime, safeName)}`), data); // no encoding: raw bytes
   }
   const src = typeof sourcePath === 'string' && sourcePath ? sourcePath : null;
   const str = (v) => (typeof v === 'string' && v ? v : null);
@@ -870,7 +870,7 @@ export function readAttachmentText(threadId, id) {
 export function attachmentPath(threadId, id) {
   const a = getAttachment(threadId, id);
   if (!a || !ASK_ID_RE.test(a.id)) return null;
-  const path = join(attachmentsDir(threadId), `${a.id}${extensionForAttachment(a.kind, a.mime)}`);
+  const path = join(attachmentsDir(threadId), `${a.id}${extensionForAttachment(a.kind, a.mime, a.name)}`);
   return existsSync(path) ? path : null;
 }
 

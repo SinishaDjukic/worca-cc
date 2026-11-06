@@ -15,7 +15,7 @@ import { makeSwitch } from './switch.mjs';
 import { icon as sharedIcon } from './icons.mjs';
 import { openRunSetupOverlay } from './run-setup-overlay.mjs';
 import {
-  ATTACH_BINARY, extOf, checkAttachment, bytesToBase64, carriesFiles, pastedFiles, createPasteNamer, REQ_ATTACH, reqLimits, reqTypeMessage,
+  ATTACH_BINARY, ATTACH_TEXT_EXT, extOf, checkAttachment, bytesToBase64, carriesFiles, pastedFiles, createPasteNamer, REQ_ATTACH, reqLimits,
 } from './attach-files.mjs';
 
 // The displayed state (A2 §4), always the server's `f.state`: the page never derives it. `started` is
@@ -138,7 +138,9 @@ function ageOld(iso) {
 }
 
 // ---- A8: files (plans/requirements-a8-design.md §6; design round 3, boards 15–21) ----
-const KIND_TITLE = Object.freeze({ text: 'Text', image: 'Image', binary: 'PDF' });
+const KIND_TITLE = Object.freeze({ text: 'Text', image: 'Image', binary: 'PDF', file: 'File' });
+/** A stored row's label: a generic binary (octet-stream) is a "File", not a PDF. */
+const rowTitle = (a) => (a.mime === 'application/octet-stream' ? KIND_TITLE.file : KIND_TITLE[a.kind] || 'Text');
 // A6.1 (D9, board 36): A8's caps for the New feature form, said where a ticket's attachment cannot be ticked
 const CAP_FILES_UI = 'A feature takes up to 10 files; 10 are picked.';
 const CAP_BYTES_UI = "Picked files are at 100 MB, a new feature's limit. Add more on the feature page.";
@@ -153,6 +155,8 @@ export function sizeText(bytes) {
   if (v < 1024 * 1024) return `${Math.round(v / 1024)} KB`;
   return `${(v / (1024 * 1024)).toFixed(1)} MB`;
 }
+/** A picked file's label before upload: an extension off Ask's lists is a "File" (the server decides text or generic). */
+const nameTitle = (name) => { const e = extOf(name); return ATTACH_TEXT_EXT.includes(e) || ATTACH_BINARY[e] ? KIND_TITLE[kindOfName(name)] : KIND_TITLE.file; };
 const kindOfName = (name) => { const m = ATTACH_BINARY[extOf(name)]; return m ? (m.startsWith('image/') ? 'image' : 'binary') : 'text'; };
 /** The picks of the feature and brief pages, in requests of at most 100 MB each (D7). */
 export function uploadBatches(files) {
@@ -829,7 +833,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const refused = h('p', { class: 'req-file-refused', role: 'alert', hidden: true });
     const note = h('p', { class: 'hint req-new-files-note', hidden: true, text: 'Files stay on the feature. Which files go with a run is chosen later, on the feature page.' });
     const actions = h('div', { class: 'actions req-new-actions' });
-    const input = h('input', { type: 'file', id: 'req-new-files-input', multiple: true, accept: REQ_ATTACH.accept, hidden: true });
+    const input = h('input', { type: 'file', id: 'req-new-files-input', multiple: true, hidden: true });
     const choose = h('button', { type: 'button', class: 'link-btn', onclick: () => input.click() }, 'Choose files');
     const sync = () => {
       chips.replaceChildren(...picked.map((file) => {
@@ -837,7 +841,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         return h('span', { class: 'req-new-chip' },
           icon(kind === 'image' ? ICONS.image : ICONS.file, { size: 16 }),
           h('span', { class: 'req-new-chip-name', text: file.name }),
-          h('span', { class: 'hint', text: `${KIND_TITLE[kind]} · ${sizeText(file.size)}` }),
+          h('span', { class: 'hint', text: `${nameTitle(file.name)} · ${sizeText(file.size)}` }),
           icoBtn('remove', `Remove ${file.name}`, () => removePicked(file), { cls: 'req-new-chip-x' }));
       }));
       note.hidden = !picked.length && !ticketFiles().length;
@@ -858,7 +862,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       for (const file of files) {
         // the caps count everything the form holds: the ticket's files and the files picked here (D9)
         const pending = [...ticketFiles().map((x) => ({ name: x.name, bytes: x.bytes })), ...picked.map((p) => ({ name: p.name, bytes: p.size }))];
-        const c = checkAttachment(file, { pending, limits: reqLimits({ create: true }), typeMessage: reqTypeMessage });
+        const c = checkAttachment(file, { pending, limits: reqLimits({ create: true }) });
         if (!c.ok) { errors.push(c.error); continue; }
         picked = [...picked.filter((p) => p.name !== file.name), file];
       }
@@ -2264,7 +2268,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
 
   /** A hidden file input; `onFiles` gets the picked files. */
   function filePicker(onFiles, { multiple = true } = {}) {
-    const input = h('input', { type: 'file', accept: REQ_ATTACH.accept, hidden: true, multiple: multiple || null, tabindex: '-1', 'aria-hidden': 'true' });
+    const input = h('input', { type: 'file', hidden: true, multiple: multiple || null, tabindex: '-1', 'aria-hidden': 'true' });
     input.addEventListener('change', () => { const files = [...(input.files || [])]; input.value = ''; if (files.length) onFiles(files); });
     return input;
   }
@@ -2279,7 +2283,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const ok = [];
     const pending = existing.map((x) => ({ name: x.name, bytes: x.bytes }));
     for (const file of files) {
-      const c = checkAttachment(file, { pending, limits: reqLimits({ owner }), typeMessage: reqTypeMessage });
+      const c = checkAttachment(file, { pending, limits: reqLimits({ owner }) });
       if (!c.ok) { errors.push(c.error); continue; }
       ok.push(file);
       pending.push({ name: file.name, bytes: file.size });
@@ -2443,7 +2447,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   /** Replace with a newer version… (D11, board 21): the page's early checks of the new file (a refusal goes to the card's
    *  alert line), then the dialog; the choice of D11 only when the summary was edited; the server's refusals in it. */
   function openReplace(a, ctx, file) {
-    const c = checkAttachment(file, { pending: [], limits: reqLimits({ owner: ctx.doc ? 'brief' : 'feature' }), typeMessage: reqTypeMessage });
+    const c = checkAttachment(file, { pending: [], limits: reqLimits({ owner: ctx.doc ? 'brief' : 'feature' }) });
     if (!c.ok) { if (ctx.refuse) ctx.refuse(c.error); else say(c.error, 'err'); focusMore(a); return; }
     if (ctx.refuse) ctx.refuse('');
     closeDialog(false);
@@ -2474,7 +2478,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const card = h('section', { class: 'card req-dialog req-replace', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'req-dlg-title', 'aria-describedby': 'req-dlg-desc' },
       h('h2', { id: 'req-dlg-title', text: `Replace ${a.name}` }),
       h('p', { class: 'req-dlg-lead req-replace-lead', id: 'req-dlg-desc' }, 'New file: ', h('b', { text: file.name }),
-        ` · ${KIND_TITLE[c.attKind]} · ${sizeText(file.size)}. Worca reads it again (about ${est}); ${ctx.doc ? '“Send with every run”' : '“Send with the run”'} stays ${on ? 'on' : 'off'}.`),
+        ` · ${nameTitle(file.name)} · ${sizeText(file.size)}. Worca reads it again (about ${est}); ${ctx.doc ? '“Send with every run”' : '“Send with the run”'} stays ${on ? 'on' : 'off'}.`),
       choice,
       h('p', { class: 'hint req-replace-hint', text: ctx.doc ? "Interviews use the new version right away; the brief's sections change only when you Refresh it."
         : 'The next round uses the new version. A Ready feature gets one short follow-up round; after the start it counts as a change since the start.' }),
@@ -2589,7 +2593,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const replace = filePicker((files) => openReplace(a, ctx, files[0]), { multiple: false });
     const sendKey = ctx.doc ? 'sendWithEveryRun' : 'sendWithRun';
     const usesIt = ctx.doc ? 'Interviews use it once it is read.' : 'The next round uses it.';
-    const meta = [`${KIND_TITLE[a.kind] || 'Text'} · ${sizeText(a.bytes)}`, a.from ? `from ${a.from.key}` : null,
+    const meta = [`${rowTitle(a)} · ${sizeText(a.bytes)}`, a.from ? `from ${a.from.key}` : null,
       a.costUsd > 0 ? `read for ${usd(a.costUsd)}` : null].filter(Boolean).join(' · ');
     const top = h('div', { class: 'req-file-top' },
       // no body yet: the name is text, with the same data-ui and a tabindex, so ctx.focus('file-name-…') still lands
