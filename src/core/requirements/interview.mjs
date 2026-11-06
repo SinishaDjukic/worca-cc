@@ -28,7 +28,7 @@ import {
   ROUND_SYSTEM_PROMPT, ORIENTATION_SYSTEM_PROMPT, buildRoundPrompt, buildOrientationPrompt, applyRound,
   normalizeOrientation, mockRoundReply, RoundError, removedCriteria, pendingRound,
 } from './round.mjs';
-import { readsSettled, queueUnread, promptFiles, isReading, filesPending } from './attachment-job.mjs';
+import { readsSettled, queueUnread, promptFiles, isReading, isDownloading, filesPending } from './attachment-job.mjs';
 import { isStarting, STARTING_MESSAGE } from './starting.mjs';
 
 export const ROUND_TIMEOUT_MS = 180_000;
@@ -477,7 +477,8 @@ export function startOrientation(seq, { by = null, thenRound = true } = {}, deps
   // busy meanwhile, as during any job: its status stays `looking` and the page says "Reading N files…"). The look before
   // it and round 1 after it each take a job slot only when one is free, so MAX_JOBS still bounds the model calls. Such a
   // job is outside MAX_JOBS from its start, so several creates in a row are all taken while their reads run.
-  const waits = thenRound && listAttachments('feature', f.seq).some((r) => isReading(r.id));
+  // A6.1 D10: a file still being downloaded counts as one being read.
+  const waits = thenRound && listAttachments('feature', f.seq).some((r) => isReading(r.id) || isDownloading(r.id));
   return startJob(seq, d, async (job) => {
     if (waits) await takeSlot(f.seq);
     await runOrientation(seq, d, by, { useBrief: thenRound });
@@ -575,8 +576,8 @@ export function finishInterview(seq, { by = null } = {}, deps = {}) {
 export function retry(seq, { by = null } = {}, deps = {}) {
   const d = { ...DEFAULTS, ...deps };
   const f = guard(seq);
-  // A8 / A6: a file's or an export's turns never hide the error Try again answers
-  const turns = listTurns(seq).filter((t) => t.kind !== 'file' && t.kind !== 'export');
+  // A8 / A6 / A6.1: a file's, an export's or the import's turns never hide the error Try again answers
+  const turns = listTurns(seq).filter((t) => t.kind !== 'file' && t.kind !== 'export' && t.kind !== 'import');
   if (turns.at(-1)?.kind !== 'error') throw new RequirementsError('CONFLICT', 'nothing to retry');
   const lastReal = turns.filter((t) => t.kind !== 'error').at(-1);
   if (!f.orientation) return startOrientation(seq, { by }, deps);

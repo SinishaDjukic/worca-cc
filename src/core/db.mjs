@@ -64,7 +64,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 87;
+export const SCHEMA_VERSION = 88;
 
 /** store_meta row holding the install's default guardrail set id (JSON string). */
 export const GUARDRAILS_DEFAULT_META_KEY = 'guardrails:default';
@@ -844,6 +844,8 @@ const INCREMENTAL_COLUMNS = {
   req_features:           { early_start_reason: 'TEXT' },   // v85: the reason given for starting a feature before Ready, kept until a run starts; NULL = none
   req_starts:             { files_json: "TEXT NOT NULL DEFAULT '[]'" },   // v77: the files a start sent (A8 D14)
   run_groups:             { name_source: "TEXT NOT NULL DEFAULT 'user'" },   // v79: 'suggested' | 'user' (Smart naming), as ask_chat_groups
+  req_export_links:       { origin: "TEXT NOT NULL DEFAULT 'export'" },   // v88: where the link came from, 'export' | 'import' (A6.1 D11, D13)
+  req_attachments:        { fetch_json: 'TEXT' },   // v88: the tracker file a row comes from (A6.1 D10, D13); NULL for an upload
   pipelines:              { resume_point: 'TEXT', owner_pid: 'INTEGER', owner_host: 'TEXT', heartbeat_at: 'TEXT',
                             source_type: "TEXT DEFAULT 'prompt'", source_ref: 'TEXT', guardrails_id: 'TEXT',
                             archived_at: 'TEXT', cost_cap_override: 'INTEGER NOT NULL DEFAULT 0',
@@ -2803,6 +2805,11 @@ export function migrate(db) {
     // v86: chat_conversations.header_new_off — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps (a v85 DB) or
     // by the v85 DDL above (an older DB)
     // v87: pipelines.pr_auto, workspaces.settings_json, shape_features.pr_* — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
+    // v88 requirements A6.1: req_export_links.origin + req_attachments.fetch_json (INCREMENTAL_COLUMNS; first written as v80, then v81,
+    // v82, v84, v85, v86, then v87: A6 took 80, security #854 took 81, dev's automations #711 took 82, #943 took 83, #990 took 84, #1145 and
+    // freeform chat #1142 took 85, #1142 took 86 and PR-when-done #1156 took 87). The repair runs here, after the v77 and v80 rungs created
+    // those tables on a DB coming from below them.
+    if (current < 88) repairSchemaGaps(db, schemaGaps(db));
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

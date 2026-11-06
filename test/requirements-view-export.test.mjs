@@ -1389,6 +1389,28 @@ test('NOT_READY on send: while the feature is fetched again the buttons keep wai
   assert.equal(text(dlg().querySelector('h2')), 'Export FEAT-7 before it’s Ready?');
 });
 
+test('saving an export setup drops the kept import answer, so the import dialog starts from the new default connection', async () => {
+  const IMP = '/api/requirements/import/project/shop-1';
+  const SOURCES = { sources: [{ plugin: 'jira-source', sourceId: 'jira', name: 'Jira', profiles: [{ id: 'acme', label: 'acme' }] }], defaultConnection: CONN, defaultProject: null };
+  const m = await openFeature(feature(), { ...SETUP_ROUTES(SAVED), [`GET ${IMP}`]: SOURCES,
+    'GET /api/requirements': { features: [], interview: null, lookCostUsd: null, briefs: [], readEstimates: {} } });
+  const imports = () => m.calls.filter((c) => c.method === 'GET' && c.url === IMP).length;
+  await m.view.show('new');
+  await settle();
+  assert.equal(imports(), 1);
+  await m.view.show('feature/7');
+  await settle();
+  q('menu-export', m.host).click();
+  q('mi-export-setup', m.host).click();
+  await settle();
+  q('setup-save').click();
+  await settle();
+  await m.view.show('new');
+  await settle();
+  assert.equal(imports(), 2, 'the saved setup moves the import default: asked again');
+  m.view.destroy();
+});
+
 test("Ticket updates (D14): Report back's hint says the rule's move; without one, the two lines stay", async () => {
   const hint = async (move) => {
     const m = await openFeature(feature({ export: XV({ link: LINK, doneStatus: 'Done', move }) }));
