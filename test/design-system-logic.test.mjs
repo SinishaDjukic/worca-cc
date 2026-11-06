@@ -133,3 +133,150 @@ test('tryStep: says what is happening, then the next step; never a dead end', ()
   assert.deepEqual(R.tryStep({ service: { ...svc, running: true } }).map((x) => x.text), ['Open :3000', 'Stop Web']);
   assert.equal(R.tryStep({})[0].text, 'Open Actions');
 });
+
+test('selection: toggle sets the anchor, unticking the last ends selecting, a range adds from the anchor', () => {
+  const shown = ['a', 'b', 'c', 'd'];
+  let s = R.selectToggle(R.selectClear(), 'b');
+  assert.deepEqual(s, { on: true, ids: ['b'], anchor: 'b' });
+  assert.deepEqual(R.selectRange(s, shown, 'd').ids, ['b', 'c', 'd']);
+  assert.equal(R.selectRange(s, shown, 'd').anchor, 'b', 'the anchor stays');
+  assert.deepEqual(R.selectRange(s, shown, 'a').ids, ['b', 'a'], 'upwards too');
+  assert.deepEqual(R.selectRange(R.selectClear(), shown, 'c'), { on: true, ids: ['c'], anchor: 'c' }, 'no anchor: a toggle');
+  assert.equal(R.selectRange(s, shown, 'gone'), s, 'a row not shown: nothing');
+  assert.deepEqual(R.selectToggle(s, 'b'), R.selectClear());
+});
+
+test('selection: all, clear, count, what Select all shows, and starting with nothing ticked', () => {
+  const shown = ['a', 'b'];
+  const s = R.selectAll(R.selectClear(), shown);
+  assert.equal(R.selectCount(s, shown), 2);
+  assert.equal(R.selectCount(s, ['a', 'z']), 1, 'counts what is shown');
+  assert.equal(R.selectAllState(s, shown), 'all');
+  assert.equal(R.selectAllState(R.selectToggle(R.selectClear(), 'a'), shown), 'some');
+  assert.equal(R.selectAllState(R.selectStart(), shown), 'none');
+  assert.deepEqual(R.selectStart(), { on: true, ids: [], anchor: '' });
+  assert.deepEqual(R.selectPrune(s, ['b']).ids, ['b']);
+  assert.equal(R.selectPrune(s, []).on, true, 'selecting goes on');
+  assert.deepEqual(R.selectApply(s, 'clear'), R.selectClear());
+});
+
+test('selection: shift and an arrow extends from the row and stops at the ends', () => {
+  const shown = ['a', 'b', 'c'];
+  const one = R.selectExtend(R.selectClear(), shown, 'a', 1);
+  assert.equal(one.to, 'b'); assert.deepEqual(one.pick.ids, ['a', 'b']); assert.equal(one.pick.anchor, 'a');
+  const two = R.selectExtend(one.pick, shown, 'b', 1);
+  assert.equal(two.to, 'c'); assert.deepEqual(two.pick.ids, ['a', 'b', 'c']);
+  assert.equal(R.selectExtend(two.pick, shown, 'c', 1).to, 'c');
+  assert.equal(R.selectExtend(R.selectClear(), [], '', 1).to, '');
+});
+
+test('selectionAction: a click or a press or a key to its action; a plain click opens', () => {
+  const click = (o) => R.selectionAction({ click: true, ...o });
+  assert.equal(click({}), null);
+  assert.equal(click({ metaKey: true }), 'toggle');
+  assert.equal(click({ ctrlKey: true }), 'toggle');
+  assert.equal(click({ shiftKey: true }), 'range');
+  assert.equal(click({ onBox: true }), 'toggle');
+  assert.equal(click({ onBox: true, shiftKey: true }), 'range');
+  assert.equal(click({ button: 1, metaKey: true }), null, 'a middle click stays the browser\'s');
+  assert.equal(R.selectionAction({ press: true }), 'toggle');
+  assert.equal(R.selectionAction({ key: ' ', onRow: true }), 'toggle');
+  assert.equal(R.selectionAction({ key: ' ' }), null, 'Space on a button stays the button\'s');
+  assert.equal(R.selectionAction({ key: 'a', metaKey: true }), 'all');
+  assert.equal(R.selectionAction({ key: 'a', ctrlKey: true }), 'all');
+  assert.equal(R.selectionAction({ key: 'Escape' }), null, 'Esc only ends selecting while selecting');
+  assert.equal(R.selectionAction({ key: 'Escape' }, { selecting: true }), 'clear');
+  assert.equal(R.selectionAction({ key: 'ArrowDown', shiftKey: true }), 'extend-down');
+});
+
+test('keepFocus: the same row, else the next one still there, else the one before', () => {
+  assert.equal(R.keepFocus(['a', 'b', 'c'], ['a', 'b', 'c'], 'b'), 'b');
+  assert.equal(R.keepFocus(['a', 'b', 'c'], ['a', 'c'], 'b'), 'c');
+  assert.equal(R.keepFocus(['a', 'b', 'c'], ['a'], 'c'), 'a');
+  assert.equal(R.keepFocus(['a'], [], 'a'), '');
+  assert.equal(R.keepFocus([], ['x'], 'a'), 'x');
+});
+
+test('shortcutAction: a list moves and opens; selecting adds its keys; a scope that is not named does nothing', () => {
+  const list = { scopes: ['list', 'anywhere'] }, upd = { scopes: ['selecting', 'list', 'anywhere'] };
+  for (const [key, want] of [['ArrowDown', 'down'], ['j', 'down'], ['J', 'down'], ['ArrowUp', 'up'], ['k', 'up']]) assert.equal(R.shortcutAction({ key }, list), want, key);
+  assert.equal(R.shortcutAction({ key: 'Enter', onRow: true }, list), 'open');
+  assert.equal(R.shortcutAction({ key: 'Enter' }, list), null, 'Enter on a button stays the button\'s');
+  assert.equal(R.shortcutAction({ key: ' ', onRow: true }, list), null, 'a list with no selecting');
+  assert.equal(R.shortcutAction({ key: 'a', metaKey: true }, list), null);
+  assert.equal(R.shortcutAction({ key: ' ', onRow: true }, upd), 'toggle');
+  assert.equal(R.shortcutAction({ key: 'a', metaKey: true }, upd), 'all');
+  assert.equal(R.shortcutAction({ key: 'Escape' }, { ...upd, selecting: true }), 'clear');
+  assert.equal(R.shortcutAction({ key: 'Escape' }, upd), 'close', 'not selecting: Esc closes');
+  assert.equal(R.shortcutAction({ key: 'j', shiftKey: true }, list), null);
+  assert.equal(R.shortcutAction({ key: 'j', metaKey: true }, list), null);
+  assert.equal(R.shortcutAction({ key: 'j' }, { scopes: ['anywhere'] }), null);
+});
+
+test('shortcutAction: an action a list does not have does nothing and is not in its sheet', () => {
+  assert.equal(R.shortcutAction({ key: 'e' }, { scopes: ['list'] }), null);
+  assert.equal(R.shortcutAction({ key: 'e' }, { scopes: ['list'], can: ['archive'] }), 'archive');
+  const labels = (can) => R.shortcutSections({ scopes: ['list'], can })[0].rows.map((r) => r.label);
+  assert.ok(!labels([]).includes('Archive'));
+  assert.ok(labels(['archive']).includes('Archive'));
+});
+
+test('shortcutAction: anywhere and the run page; ? takes Shift or not by layout; Ctrl-only stays Ctrl-only', () => {
+  const any = { scopes: ['anywhere'] }, run = { scopes: ['run', 'anywhere'] };
+  assert.equal(R.shortcutAction({ key: 'k', metaKey: true }, any), 'search');
+  assert.equal(R.shortcutAction({ key: 'k', ctrlKey: true }, any), 'search');
+  assert.equal(R.shortcutAction({ key: 'k' }, any), null);
+  assert.equal(R.shortcutAction({ key: '?', shiftKey: true }, any), 'help');
+  assert.equal(R.shortcutAction({ key: '?' }, any), 'help');
+  assert.equal(R.shortcutAction({ key: 'l' }, run), 'labels');
+  assert.equal(R.shortcutAction({ key: 'L', shiftKey: true }, run), null);
+  assert.equal(R.shortcutAction({ key: '`', ctrlKey: true }, run), 'terminal');
+  assert.equal(R.shortcutAction({ key: '`', metaKey: true }, run), null);
+  for (const [key, want] of [['ArrowRight', 'next'], ['ArrowUp', 'prev'], ['Home', 'first'], ['End', 'last']]) assert.equal(R.shortcutAction({ key }, run), want, key);
+});
+
+test('keys never fire while typing: only Esc and a menu\'s own way out work in a field', () => {
+  const all = { scopes: ['selecting', 'list', 'run', 'anywhere'], selecting: true, can: ['menu', 'fold', 'stop', 'archive', 'rename', 'pin', 'group', 'delete'] };
+  for (const f of [{ key: 'k', metaKey: true }, { key: '?' }, { key: 'j' }, { key: 'l' }, { key: ' ', onRow: true }, { key: 'a', metaKey: true }, { key: 'Enter', onRow: true }, { key: 'e' }, { key: '`', ctrlKey: true }, { key: 'Backspace' }]) {
+    assert.ok(R.shortcutAction(f, all), `${f.key} acts out of a field`);
+    assert.equal(R.shortcutAction({ ...f, inField: true }, all), null, `${f.key} acts in a field`);
+  }
+  const inField = R.SHORTCUTS.flatMap((s) => s.rows).filter((r) => r.inField).map((r) => r.do).sort();
+  assert.deepEqual(inField, ['clear', 'close', 'first', 'last', 'next', 'prev']);
+  assert.equal(R.shortcutAction({ key: 'Escape', inField: true }, { scopes: ['anywhere'] }), 'close');
+  assert.equal(R.keyFacts({ key: 'j', target: { closest: (sel) => (sel === R.FIELD ? {} : null) } }).inField, true);
+  assert.equal(R.keyFacts({ key: 'j', target: { closest: () => null } }, '.row').onRow, false);
+});
+
+test('no shortcut uses a combo the browser owns', () => {
+  assert.ok(R.RESERVED.includes('mod+t'));
+  for (const s of R.SHORTCUTS) for (const r of s.rows) for (const c of r.keys) assert.ok(!R.RESERVED.includes(R.chordId(c)), `${r.label}: ${c.join('+')} is the browser's`);
+  assert.equal(R.chordId(['ctrl', 'T']), 'mod+t', 'Ctrl is the browser\'s too');
+});
+
+test('every row of the table: a label of 1 to 3 words, an action that is its own within its scope', () => {
+  for (const s of R.SHORTCUTS) {
+    const did = s.rows.map((r) => r.do);
+    assert.equal(new Set(did).size, did.length, s.title);
+    for (const r of s.rows) { assert.ok(r.label.split(' ').length <= 3, r.label); assert.ok(r.keys.length, r.label); }
+  }
+});
+
+test('keyGlyph, keyHint and isMac: ⌘ on a Mac, Ctrl elsewhere', () => {
+  assert.equal(R.keyGlyph('mod', true), '⌘');
+  assert.equal(R.keyGlyph('mod', false), 'Ctrl');
+  assert.equal(R.keyGlyph('ArrowUp', false), '↑');
+  assert.equal(R.keyGlyph('j', false), 'J');
+  assert.equal(R.keyHint(['mod', 'K'], true), '⌘K');
+  assert.equal(R.keyHint(['mod', 'K'], false), 'Ctrl+K');
+  assert.equal(R.isMac({ navigator: { platform: 'MacIntel' } }), true);
+  assert.equal(R.isMac({ navigator: { platform: 'Win32' } }), false);
+});
+
+test('listMove: on by one, stopping at the ends; from nowhere, the first row', () => {
+  assert.equal(R.listMove(['a', 'b'], 'a', 1), 'b');
+  assert.equal(R.listMove(['a', 'b'], 'b', 1), 'b');
+  assert.equal(R.listMove(['a', 'b'], 'a', -1), 'a');
+  assert.equal(R.listMove(['a', 'b'], '', 1), 'a');
+  assert.equal(R.listMove([], '', 1), '');
+});

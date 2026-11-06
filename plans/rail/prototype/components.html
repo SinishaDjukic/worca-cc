@@ -32,6 +32,7 @@
   .gl-show > .list{padding-left:32px;}   /* the rail hangs left of the text edge */
   .gl-show > .viewer-modal{position:static;inset:auto;display:block;padding:0;background:none;flex:1 1 100%;}
   .gl-show .fld{flex:1 1 100%;max-width:360px;}
+  .gl-sel{flex:1 1 100%;display:flex;flex-direction:column;gap:8px;}
   .gl-show .list{min-height:220px;}
 </style>
 <div class="rc-board mk-page">
@@ -57,6 +58,10 @@
       ['Needs you', card(R.statusLine({ dot: R.statusDot({ sym: 'q', glyph: '<path d="M9.2 9.2a2.9 2.9 0 1 1 4.2 2.6c-.9.5-1.4 1.1-1.4 2v.4"></path><path d="M12 17.6h.01"></path>' }), word: 'Needs your answer', detail: 'Review asks which breadcrumb to keep on phones', action: `<div class="rc-side">${R.button({ label: 'Send answer', kind: 'primary' })}${more}</div>` }))]],
     ConfirmStrip: [['Asks', R.confirmStrip({ text: 'Merge #959 into dev?', yes: 'Merge' })], ['Working', R.confirmStrip({ text: 'Merge #959 into dev?', yes: 'Merge', busy: 'Merging…' })],
       ['Failed: what, why, Try again', R.confirmStrip({ text: '', yes: 'Stop', danger: true, err: { title: 'Could not stop the run', detail: 'The run did not answer; it may have just finished. Nothing changed.' } })]],
+    SelectionBar: [['Selecting: the tick boxes on the rail, Select all in the head, the bar at the foot', `<div class="gl-sel">${R.selectAllBox({ state: 'some' })}<div class="pz-list is-selecting">${R.pulseRow({ title: 'Run failed', meta: 'Runs · web-app', time: '14:02', tip: 'Opens the run', id: 'g1', check: true })}${R.pulseRow({ title: 'PR merged', meta: 'Pull requests · web-app', time: '13:40', tip: 'Opens the PR', id: 'g2', check: false })}</div>${R.selectionBar({ label: 'Selected updates', count: 1, actions: [{ id: 'read', label: 'Mark read', n: 1, tip: 'Marks it read; Undo in the notice' }, { id: 'clear', label: 'Clear', n: 1, tip: 'Moves it to Cleared; Undo in the notice' }] })}</div>`],
+      ['Nothing selected yet: each action disabled, and says why', R.selectionBar({ label: 'Selected updates', count: 0, actions: [{ id: 'read', label: 'Mark read', n: 0, tip: '' }, { id: 'clear', label: 'Clear', n: 0, tip: '' }] })]],
+    ShortcutsSheet: [['On a Mac, drawn from the table', R.shortcutsSheet({ mac: true })],
+      ['Elsewhere: Ctrl', R.shortcutsSheet({ sections: R.shortcutSections({ scopes: ['anywhere', 'selecting'] }) })]],
     Tabs: [['A count by exception', R.tabs({ label: 'Run detail', controls: 'x', items: [{ id: 'a', label: 'Overview', selected: true }, { id: 'b', label: 'Changes', count: '5 · 3 docs' }, { id: 'c', label: 'Activity' }, { id: 'd', label: 'Decisions', count: 7 }] })]],
     Segmented: [['One pressed', R.segmented({ label: 'Show', items: [{ id: 'all', label: 'All steps', pressed: true }, { id: 'p', label: 'Problems and questions' }] })]],
     Figures: [['Against its budget; one opens its home', R.figures([R.figure({ k: 'Time', v: '42m' }), R.figure({ k: 'Cost', v: '$84.10', of: 'of $120' }), R.figure({ k: 'Changes', v: '+358 −144', tab: 'changes' })])],

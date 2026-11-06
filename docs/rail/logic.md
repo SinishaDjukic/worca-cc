@@ -21,3 +21,6 @@ All of it is exported by `ui/public/design-system/components/index.mjs`.
 | Where the work goes | `workPhrase(place)` in words, `workPlace(place)` for a page | `work-place.mjs` |
 | A long branch or path | `foldMiddle(text)` | `work-place.mjs` |
 | What an interface mode shows | `atLevel(mode, need)`, `runPartShows(part, mode)` | `levels.mjs` |
+| What a click, a long-press or a key means for a selection | `selectionAction(facts)`, `selectApply(pick, action, where)` | `selection.mjs` |
+| Where the focus goes when a row leaves | `keepFocus(before, after, id)` | `selection.mjs` |
+| What a key does here | `shortcutAction(keyFacts(e), { scopes })` | `shortcuts.mjs` |

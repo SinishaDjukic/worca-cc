@@ -852,6 +852,7 @@ button.lr-main:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
 .tip-wrap{display:inline-flex;}
 /* Dialog: the app's anatomy (.viewer-modal > .card.dlg); the title and the foot's two sides. */
 .viewer-modal .card.rl-dialog{width:min(560px, 100%);max-height:min(720px, calc(100vh - 48px));}
+.keys-modal .card.rl-dialog{width:min(760px, 100%);}
 .dlg-steps{flex:none;padding-top:8px;}   /* a stepped setup: the Stepper at the dialog's head */
 .rl-dialog .dlg-note{margin:0;}
 .dlg-choice{display:flex;flex-direction:column;gap:6px;}   /* a choice inside a Dialog: its label over its OptionList */

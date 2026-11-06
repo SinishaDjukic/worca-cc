@@ -5,7 +5,7 @@
 | `list.sentence` | What a list shows is a sentence above it, never a filter button | Narrowed the same way everywhere | by hand |
 | `list.sections` | Sections in a fixed order; empty ones not drawn; a long one shows less, never folds | Nothing hides | design-system-components |
 | `list.row-one-target` | The whole row opens one target; a fact in it is text | No second links in a row | by hand |
-| `list.select` | Selecting works one way in every list that has it | One habit | by hand |
+| `list.select` | Selecting works one way in every list that has it | One habit | design-system-logic |
 
 **A list page** (Runs, Schedules): the top bar's trail, then the title row with the page's one action at its right
 (`New schedule`), then a list. **A list** (runs, updates, files, PRs): divided ListRows on the rail. A row is its state mark on the rail (a status
@@ -20,5 +20,9 @@ list (Runs, Chats, Pulse's Now and Updates, Schedules) uses this one sentence, s
 `Select all` joins the head and the sentence stays. The selection bar (`.runs-bulk`) sits at the list's foot:
 `2 selected · Archive 2 · Cancel`. Each action shows how many rows it applies to and is disabled at 0. Cancel or Esc
 ends selecting. An action that can be taken back does not confirm and offers Undo in its Toast; one that cannot confirms in the strip.
+A list that has selecting calls the library: `selectionAction` and `selectApply` (`selection.mjs`) for what a click, a
+long-press or a key means, `selectionBar`, `selectAllBox` and `bindLongPress` (`selection-bar.mjs`) for its parts. On
+touch the tick boxes show from the start, in the mark's place, since a long-press is not something you can see. Unticking
+the last row ends selecting. The keys are in [keyboard.md](keyboard.md).
 Empty is EmptyState's one sentence and, when there is one, the way forward as its one quiet action (`No schedules
 yet.` · New schedule).

@@ -584,3 +584,74 @@ test('watchScrollbars: what scrolls is marked for a moment, the page itself too;
   later.forEach((fn) => fn());
   assert.ok(!d.getElementById('a').classList.contains('is-scrolling'));
 });
+
+test('selectionBar: how many, each action with its count, disabled at 0 with why, Cancel', () => {
+  const b = dom(C.selectionBar({ label: 'Selected updates', count: 2, actions: [{ id: 'read', label: 'Mark read', n: 0, tip: 'x', why: 'All read already' }, { id: 'clear', label: 'Clear', n: 2, tip: 'Moves them' }] }));
+  assert.equal(b.className, 'runs-bulk'); assert.equal(b.getAttribute('role'), 'toolbar'); assert.equal(b.getAttribute('aria-label'), 'Selected updates');
+  assert.equal(b.querySelector('.runs-bulk-n').textContent, '2 selected');
+  const read = b.querySelector('[data-bulk="read"]'), clear = b.querySelector('[data-bulk="clear"]');
+  assert.ok(read.disabled); assert.equal(read.title, 'All read already');
+  assert.ok(!clear.disabled); assert.equal(clear.title, 'Moves them'); assert.match(clear.textContent, /Clear.*2/);
+  assert.ok(b.querySelector('[data-bulk="cancel"]'));
+  const none = dom(C.selectionBar({ label: 'x', count: 0, actions: [{ id: 'a', label: 'A', n: 0, tip: '' }] }));
+  assert.equal(none.querySelector('[data-bulk="a"]').title, 'Nothing selected');
+});
+
+test('selectAllBox: checked at all, mixed at some', () => {
+  const box = (state) => dom(C.selectAllBox({ state })).querySelector('input');
+  assert.ok(box('all').checked); assert.ok(!box('none').checked); assert.ok(!box('some').checked);
+  assert.ok(box('some').hasAttribute('data-mixed')); assert.ok(!box('all').hasAttribute('data-mixed'));
+  assert.ok(box('all').hasAttribute('data-selall'));
+});
+
+test('bindLongPress: holding a row presses it and swallows its click; a move or a mouse does not', async () => {
+  const { window: w } = new JSDOM('<body><div class="r" id="a"></div><div class="r" id="no"></div></body>');
+  const d = w.document, a = d.getElementById('a'); const hits = [];
+  const off = C.bindLongPress({ root: d, selector: '.r', accept: (r) => r.id !== 'no', onPress: (r) => hits.push(r.id), win: w });
+  const ptr = (t, el, o = {}) => { const e = new w.Event(t, { bubbles: true, cancelable: true }); Object.assign(e, { pointerType: 'touch', clientX: 0, clientY: 0 }, o); el.dispatchEvent(e); return e; };
+  const wait = () => new Promise((r) => setTimeout(r, C.PRESS_MS + 40));
+  ptr('pointerdown', a, { pointerType: 'mouse' }); await wait(); assert.deepEqual(hits, [], 'a mouse does not');
+  ptr('pointerdown', d.getElementById('no')); await wait(); assert.deepEqual(hits, [], 'a row that cannot be selected');
+  ptr('pointerdown', a); ptr('pointermove', a, { clientX: 40 }); await wait(); assert.deepEqual(hits, [], 'a finger that moves scrolls');
+  ptr('pointerdown', a); ptr('pointerup', a); await wait(); assert.deepEqual(hits, [], 'a tap');
+  ptr('pointerdown', a); await wait(); assert.deepEqual(hits, ['a']);
+  const click = new w.MouseEvent('click', { bubbles: true, cancelable: true }); a.dispatchEvent(click);
+  assert.ok(click.defaultPrevented, 'the click that follows is swallowed');
+  const next = new w.MouseEvent('click', { bubbles: true, cancelable: true }); a.dispatchEvent(next);
+  assert.ok(!next.defaultPrevented, 'only that one');
+  off();
+});
+
+test('shortcutsSheet: a Dialog with only Close, drawn from the table, ⌘ or Ctrl', () => {
+  const s = dom(C.shortcutsSheet({ mac: true }));
+  assert.ok(s.classList.contains('viewer-modal') && s.classList.contains('keys-modal')); assert.equal(s.getAttribute('aria-modal'), 'true');
+  assert.equal(s.querySelector('.dlg-title').textContent, 'Keyboard shortcuts');
+  assert.equal(s.querySelectorAll('button').length, 1); assert.equal(s.querySelector('button').textContent, 'Close');
+  assert.ok(!s.querySelector('input, form'), 'no form');
+  const rows = [...s.querySelectorAll('.keys-row')];
+  const sections = C.shortcutSections();
+  assert.equal(rows.length, sections.flatMap((x) => x.rows).length);
+  const search = rows.find((r) => r.textContent.includes('Search or ask'));
+  assert.deepEqual([...search.querySelectorAll('kbd')].map((k) => k.textContent), ['⌘', 'K']);
+  const pc = [...dom(C.shortcutsSheet({ mac: false })).querySelectorAll('.keys-row')].find((r) => r.textContent.includes('Search or ask'));
+  assert.deepEqual([...pc.querySelectorAll('kbd')].map((k) => k.textContent), ['Ctrl', 'K']);
+  const only = dom(C.shortcutsSheet({ sections: C.shortcutSections({ scopes: ['run'] }) }));
+  assert.deepEqual([...only.querySelectorAll('.keys-h')].map((h) => h.textContent), ['Run page']);
+});
+
+test('openShortcutsSheet: one at a time, holds the keys, Esc or Close closes and the focus goes back', () => {
+  const { window: w } = new JSDOM('<body><button id="o">Open</button></body>', { pretendToBeVisual: true });
+  const d = w.document, o = d.getElementById('o'); let reached = 0;
+  d.addEventListener('keydown', () => { reached += 1; }); d.addEventListener('click', () => { reached += 1; });
+  o.focus();
+  const m = C.openShortcutsSheet({ doc: d });
+  assert.equal(C.openShortcutsSheet({ doc: d }), m);
+  assert.equal(d.activeElement.textContent, 'Close');
+  d.activeElement.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'j', bubbles: true }));
+  assert.equal(reached, 0, 'no key reaches the page');
+  d.activeElement.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  assert.equal(d.querySelector('.keys-modal'), null); assert.equal(d.activeElement, o);
+  C.openShortcutsSheet({ doc: d });
+  d.querySelector('[data-dialog="yes"]').click();
+  assert.equal(d.querySelector('.keys-modal'), null); assert.equal(reached, 0, 'its click stays its own');
+});

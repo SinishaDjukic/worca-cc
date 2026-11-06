@@ -17,6 +17,7 @@ shows it; sizes, colours and spacing come with the component. Names are the Desi
 | Supporting actions | ⋯ next to it, a CompactMenu, danger last after a rule | Terminal, Copy link, Archive |
 | A yes or no, or a one-line answer | ConfirmStrip, in place under the top bar | Merge #959 into dev?, Run after |
 | A step that needs fields first | Dialog, the only one for a form | Create PR |
+| Acting on several rows of a list | SelectionBar at the list's foot, while selecting | 2 selected · Clear 2 · Cancel |
 | Going to another page or place | Text link, or a ListRow you open | Changes +358 −144, a file, a step |
 | Copying text | CopyButton: a quiet 28px icon button; a tick for 1.2s and `Copied` in its tooltip and the live region; its width never changes | a branch, a command, an id |
 | A place in the sidebar | NavItem | Runs, Chats |

@@ -24,6 +24,7 @@ Each rule lives in one file. Every file opens with its rules: an id, one line, w
 | [thing-page.md](thing-page.md) | A thing's page: slots, where the work goes, lists on it, what opens |
 | [actions.md](actions.md) | Where an action goes, and how a step runs |
 | [lists.md](lists.md) | A list page and a list |
+| [keyboard.md](keyboard.md) | Keyboard shortcuts and their sheet |
 | [panels.md](panels.md) | Panels, side columns, conversations |
 | [settings.md](settings.md) | Settings and a settings tab |
 | [forms.md](forms.md) | Forms and suggestions |
