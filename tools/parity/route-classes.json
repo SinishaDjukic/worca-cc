@@ -348,7 +348,7 @@
   "POST /api/notifications/read-all": {"class": "skip", "reason": "marks every notification read (ui/server.mjs:4583)"},
   "POST /api/onboarding": {"class": "skip", "reason": "rewrites onboarding/global state (ui/server.mjs:6568)"},
   "POST /api/worca-level/ack": {"class": "probe", "reason": "400 an ack needs a valid what and index, checked before any write"},
-  "POST /api/worca-level/events": {"class": "probe", "reason": "400 type must be stats-viewed, checked before any write"},
+  "POST /api/worca-level/events": {"class": "probe", "reason": "400 WORCA_LEVEL_BAD_REQUEST for an unknown type, checked before any write"},
   "POST /api/pause": {"class": "probe", "reason": "400 unknown runId without runId"},
   "POST /api/pinpoint": {"class": "probe", "reason": "validatePinpointInput: 400 action must be one of"},
   "POST /api/pipelines/:id/preset": {"class": "probe", "reason": "readRunSetup 404 run not found"},

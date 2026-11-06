@@ -447,6 +447,24 @@ test('the corner avatar: an image in .acct-ava keeps the ring, the dot and the d
       paintAccountCorner(btn, acct, { budget, avatar: { ...avatar } });
       assert.equal(btn.querySelector('.acct-ava img'), img);
     } },
+    { name: 'avatar: data-worca-level carries the level key on .acct-ava; no level text or badge joins .acct', run: () => {
+      const keyed = { ...avatar, key: 'runner' };
+      paintAccountCorner(btn, acct, { budget, avatar: keyed });
+      const ava = btn.querySelector('.acct-ava');
+      assert.equal(ava.getAttribute('data-worca-level'), 'runner');
+      assert.equal(ava.querySelector('img').getAttribute('src'), avatar.src);
+      assert.equal(btn.querySelector('.acct-name').textContent, acct.short, 'the name stays the only text');
+      assert.equal(ava.children.length, 1, 'the image is the only child');
+      assert.doesNotMatch(btn.textContent, /Level|Pod worca|Runner/, 'no level text inside .acct');
+      assert.equal(btn.querySelector('.acct-ring').closest('.acct-ava'), null, 'the ring is a sibling outside the avatar');
+      assert.equal(btn.querySelector('.acct-dot').closest('.acct-ava'), null, 'the dot is outside the avatar');
+    } },
+    { name: 'avatar: without a key the level key comes from the art file name; with no avatar the attribute goes', run: () => {
+      paintAccountCorner(btn, acct, { budget, avatar: { src: '/assets/worca-levels/hooked.svg', alt: 'Hooked' } });
+      assert.equal(btn.querySelector('.acct-ava').getAttribute('data-worca-level'), 'hooked');
+      paintAccountCorner(btn, acct, { budget, avatar: null });
+      assert.equal(btn.querySelector('.acct-ava').hasAttribute('data-worca-level'), false);
+    } },
     { name: 'avatar null: initials and the native title as before, after an image was shown', run: () => {
       paintAccountCorner(btn, acct, { budget, avatar });
       paintAccountCorner(btn, acct, { budget, avatar: null });

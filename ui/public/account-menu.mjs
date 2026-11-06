@@ -6,7 +6,8 @@
 import { BUDGET_WARN_AT, DEFAULT_FMT, fmtResetAt, periodWord, windowSaved, signedUsd, SAVED_NOTE } from './stats-view.mjs';
 import { freeDailyRow } from './openrouter-free-view.mjs';
 import { ICONS, iconSvg } from './icons.mjs';
-import { tooltipModel } from './worca-level/model.mjs';
+import { setAvatarSrc, tooltipModel } from './worca-level/model.mjs';
+import { renderSegments } from './worca-level/segments.mjs';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
@@ -174,10 +175,27 @@ export function accountLabel(acct, { away = false, budget = null, fmt = DEFAULT_
   };
 }
 
+const ART_KEY = /([a-z][a-z0-9-]*)\.svg$/;
+
+/** The level key the art belongs to: the one the caller names, else the art file's own name. */
+function levelKey(avatar) {
+  if (avatar.key) return avatar.key;
+  const m = ART_KEY.exec(avatar.src);
+  return m ? m[1] : '';
+}
+
 /** Fill .acct-ava with the level image (kept as is while its src is unchanged, so a repaint does not
- *  flicker) or, without one, the person's initials. The only writer of .acct-ava. */
+ *  flicker) or, without one, the person's initials. data-worca-level lets the CSS tint the initials
+ *  fallback with the level's ink. The only writer of .acct-ava. */
 function paintAvatar(ava, acct, avatar) {
-  if (!avatar) { ava.textContent = acct.initials; return; }
+  if (!avatar) {
+    ava.removeAttribute('data-worca-level');
+    ava.textContent = acct.initials;
+    return;
+  }
+  const key = levelKey(avatar);
+  if (key) ava.setAttribute('data-worca-level', key);
+  else ava.removeAttribute('data-worca-level');
   const cur = ava.firstElementChild;
   const img = cur && cur.tagName === 'IMG' && ava.childNodes.length === 1 ? cur : ava.ownerDocument.createElement('img');
   if (img.getAttribute('src') !== avatar.src) img.setAttribute('src', avatar.src);
@@ -200,7 +218,9 @@ export function paintAccountCorner(btn, acct, { budget = null, away = false, fmt
   const arc = btn.querySelector('.acct-ring .arc');
   if (arc) arc.setAttribute('stroke-dasharray', ringDash(ring ? ring.ratio : 0, RING_R));
   const ava = btn.querySelector('.acct-ava');
-  const shown = avatar && typeof avatar.src === 'string' && avatar.src ? { src: avatar.src, alt: String(avatar.alt || '') } : null;
+  const shown = avatar && typeof avatar.src === 'string' && avatar.src
+    ? { src: avatar.src, alt: String(avatar.alt || ''), key: typeof avatar.key === 'string' ? avatar.key : '' }
+    : null;
   if (ava) paintAvatar(ava, acct, shown);
   const name = btn.querySelector('.acct-name');
   if (name) name.textContent = acct.short;
@@ -223,22 +243,51 @@ export function paintIdentityCard(card, acct) {
 
 // ── Your level ───────────────────────────────────────────────────────────────
 
-/** The "Your level" row, placed after the identity card and before the other rows: the level name and
- *  "Level n of 4", opening #profile/level. No data-min-level: every interface mode reaches it. null
- *  until the level view has loaded. app.js mounts it and routes the click like the card's buttons. */
-export function renderLevelRow(view, { doc = globalThis.document } = {}) {
+const CARD_AVATAR_PX = 22;
+const TOP_NOTE = "You've reached the top level.";
+
+/** The level card, placed directly above the Interface mode row: a 22px avatar, the level name and
+ *  "View level"; then "To <Next>" with the progress ("1 of 4", or "12 of 30 days"); then small segments.
+ *  At the top level it says so instead, with no second row and no segments. The progress is in the
+ *  button's accessible name, so the segments are aria-hidden. Opens #profile/level. No data-min-level:
+ *  every interface mode reaches it. null until the level view has loaded. app-wiring mounts it. */
+export function renderLevelCard(view, { doc = globalThis.document } = {}) {
   const level = view && view.level;
   if (!level || typeof level.name !== 'string' || !level.name) return null;
-  const { name, levelLine } = tooltipModel(view);
-  const row = h(doc, 'button', 'mi menu-item');
-  row.type = 'button';
-  row.id = 'acct-level';
-  row.setAttribute('role', 'menuitem');
-  row.dataset.nav = 'profile';
-  row.dataset.hash = 'profile/level';
-  row.appendChild(h(doc, 'span', 'mi-lbl', 'Your level'));
-  row.appendChild(h(doc, 'span', 'mi-val', `${name} · ${levelLine}`));
-  return row;
+  const m = tooltipModel(view);
+  const card = h(doc, 'button', 'wl-card');
+  card.type = 'button';
+  card.id = 'acct-level-card';
+  card.setAttribute('role', 'menuitem');
+  card.dataset.nav = 'profile';
+  card.dataset.hash = 'profile/level';
+
+  const head = h(doc, 'span', 'wl-card-head');
+  const img = h(doc, 'img', 'wl-card-ava');
+  setAvatarSrc(img, level.avatar);
+  img.setAttribute('alt', '');
+  img.setAttribute('width', String(CARD_AVATAR_PX));
+  img.setAttribute('height', String(CARD_AVATAR_PX));
+  head.append(img, h(doc, 'span', 'wl-card-name', m.name), h(doc, 'span', 'wl-card-go', 'View level'));
+  card.appendChild(head);
+
+  if (m.topLine || !m.nextName) {
+    card.appendChild(h(doc, 'span', 'wl-card-top', TOP_NOTE));
+    card.setAttribute('aria-label', `${m.name}, you've reached the top level. View level`);
+    return card;
+  }
+  const row = h(doc, 'span', 'wl-card-row');
+  row.appendChild(h(doc, 'span', 'wl-card-next', `To ${m.nextName}`));
+  if (m.segments) row.appendChild(h(doc, 'b', 'wl-card-prog', view.progress.unit === 'days' ? m.progressText : `${m.segments.done} of ${m.segments.total}`));
+  card.appendChild(row);
+  if (m.segments) {
+    const seg = renderSegments(doc, m.segments, { size: 'sm' });
+    seg.setAttribute('aria-hidden', 'true');
+    card.appendChild(seg);
+  }
+  const progress = m.progressText ? `, ${m.progressText}` : '';
+  card.setAttribute('aria-label', `${m.name}, to ${m.nextName}${progress}. View level`);
+  return card;
 }
 
 // ── The away row ─────────────────────────────────────────────────────────────

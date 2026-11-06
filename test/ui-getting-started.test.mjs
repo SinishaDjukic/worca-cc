@@ -111,46 +111,76 @@ test('the shelf paints nothing when hidden/foreign, replaces never stacks; all n
   ]);
 });
 
-test('the shelf shows one level line only when worcaNext is passed; it links to the level view and goes with the shelf', async () => {
-  const next = { name: 'Swimmer', avatar: '/assets/worca-levels/swimmer.svg', next: 2 };
+test('the shelf shows one level line when worcaLevel is passed; it links to the level view and goes with the shelf', async () => {
+  const curious = { top: false, level: { index: 1, name: 'Curious', avatar: '/assets/worca-levels/curious.svg' },
+    nextLevel: { index: 2, key: 'runner', name: 'Runner' },
+    ladder: [{ index: 1, avatar: '/assets/worca-levels/curious.svg' }, { index: 2, avatar: '/assets/worca-levels/runner.svg' }] };
+  const hooked = { top: false, level: { index: 3, name: 'Hooked', avatar: '/assets/worca-levels/hooked.svg' },
+    nextLevel: { index: 4, name: 'Council', avatar: '/assets/worca-levels/council.svg' } };
+  const top = { top: true, level: { index: 5, name: 'Worcaholic', avatar: '/assets/worca-levels/worcaholic.svg' }, nextLevel: null };
+  const text = (n) => n.textContent.replace(/\s+/g, ' ').trim();
   await checkRows([
-    { name: 'with worcaNext: exactly one line, 16px avatar, name interpolated, See levels -> #profile/level, still nine tiles', run: () => {
+    { name: 'one level line: exactly one, inside the shelf, still nine tiles and the same count', run: () => {
       const { window } = dom();
       const host = window.document.getElementById('host');
-      renderGettingStarted(host, status(['claude']), { worcaNext: next });
-      const lines = host.querySelectorAll('.gs-worca-line');
+      renderGettingStarted(host, status(['claude']), { worcaLevel: curious });
+      const lines = host.querySelectorAll('.gs-level-line');
       assert.equal(lines.length, 1);
-      assert.equal(lines[0].textContent.replace(/\s+/g, ' ').trim(), 'Finishing these moves you toward Swimmer, your next level. See levels');
-      const img = lines[0].querySelector('img');
-      assert.equal(img.getAttribute('src'), next.avatar);
-      assert.equal(img.getAttribute('width'), '16');
-      assert.equal(img.getAttribute('height'), '16');
-      assert.equal(lines[0].querySelector('a').getAttribute('href'), '#profile/level');
-      assert.equal(lines[0].querySelector('a').textContent, 'See levels');
+      assert.equal(lines[0].tagName, 'P');
       assert.ok(host.querySelector('.gs-card').contains(lines[0]), 'inside the shelf');
       assert.equal(GETTING_STARTED_STEPS.length, 9);
       assert.equal(host.querySelectorAll('.gs-tile').length, 9);
       assert.equal(host.querySelector('.gs-progress').textContent, '1 of 9');
     } },
-    { name: 'without worcaNext (or an unusable one): no line, and re-rendering never stacks it', run: () => {
+    { name: 'Curious copy points at the next level and shows its art at 16px', run: () => {
+      const { window } = dom();
+      const host = window.document.getElementById('host');
+      renderGettingStarted(host, status(['claude']), { worcaLevel: curious });
+      const line = host.querySelector('.gs-level-line');
+      assert.equal(text(line), 'Finishing these moves you toward Runner, your next level. See levels');
+      const img = line.querySelector('img');
+      assert.equal(img.getAttribute('src'), '/assets/worca-levels/runner.svg');
+      assert.equal(img.getAttribute('width'), '16');
+      assert.equal(img.getAttribute('height'), '16');
+    } },
+    { name: 'Runner-or-higher copy names the current level and shows its own art; the top level reads the same', run: () => {
+      const { window } = dom();
+      const host = window.document.getElementById('host');
+      renderGettingStarted(host, status(['claude']), { worcaLevel: hooked });
+      let line = host.querySelector('.gs-level-line');
+      assert.equal(text(line), 'You are Hooked, level 3 of 5. See levels');
+      assert.equal(line.querySelector('img').getAttribute('src'), hooked.level.avatar);
+      renderGettingStarted(host, status(['claude']), { worcaLevel: top });
+      line = host.querySelector('.gs-level-line');
+      assert.equal(text(line), 'You are Worcaholic, level 5 of 5. See levels');
+    } },
+    { name: 'the link is a.gs-level-link to #profile/level', run: () => {
+      const { window } = dom();
+      const host = window.document.getElementById('host');
+      renderGettingStarted(host, status(['claude']), { worcaLevel: hooked });
+      const a = host.querySelector('.gs-level-line a.gs-level-link');
+      assert.equal(a.getAttribute('href'), '#profile/level');
+      assert.equal(a.textContent, 'See levels');
+    } },
+    { name: 'without a usable view: no line, and re-rendering never stacks it', run: () => {
       const { window } = dom();
       const host = window.document.getElementById('host');
       renderGettingStarted(host, status(['claude']));
-      assert.equal(host.querySelector('.gs-worca-line'), null);
-      renderGettingStarted(host, status(['claude']), { worcaNext: null });
-      assert.equal(host.querySelector('.gs-worca-line'), null);
-      renderGettingStarted(host, status(['claude']), { worcaNext: {} });
-      assert.equal(host.querySelector('.gs-worca-line'), null);
-      renderGettingStarted(host, status(['claude']), { worcaNext: next });
-      renderGettingStarted(host, status(['claude']), { worcaNext: next });
-      assert.equal(host.querySelectorAll('.gs-worca-line').length, 1);
+      assert.equal(host.querySelector('.gs-level-line'), null);
+      renderGettingStarted(host, status(['claude']), { worcaLevel: null });
+      assert.equal(host.querySelector('.gs-level-line'), null);
+      renderGettingStarted(host, status(['claude']), { worcaLevel: {} });
+      assert.equal(host.querySelector('.gs-level-line'), null);
+      renderGettingStarted(host, status(['claude']), { worcaLevel: curious });
+      renderGettingStarted(host, status(['claude']), { worcaLevel: curious });
+      assert.equal(host.querySelectorAll('.gs-level-line').length, 1);
     } },
     { name: 'a dismissed shelf hides the line too', run: () => {
       const { window } = dom();
       const host = window.document.getElementById('host');
-      renderGettingStarted(host, status([], { hidden: true }), { worcaNext: next });
+      renderGettingStarted(host, status([], { hidden: true }), { worcaLevel: curious });
       assert.equal(host.hidden, true);
-      assert.equal(host.querySelector('.gs-worca-line'), null);
+      assert.equal(host.querySelector('.gs-level-line'), null);
     } },
   ]);
 });

@@ -7,6 +7,7 @@
 // (GET /api/onboarding, src/core/onboarding.mjs), this module only paints it.
 import { icon } from './icons.mjs';
 import { guardModal } from './modal-guard.mjs';
+import { WORCA_LEVEL_COUNT } from '../../src/shared/worca-levels.mjs';
 
 /** Shelf order = the arc: prerequisite → first object → see the loop → talk to
  *  it → know the workflows → real work → scale. Labels are outcomes, never settings. */
@@ -153,23 +154,40 @@ export function vignette(doc, id, { animate = true, delay = 0 } = {}) {
 
 /* ------------------------------------------------------------------ shelf */
 
-/** The one line that ties the checklist to the next Worca level (docs/worca-levels.md). Null when there is no usable next level. */
-function worcaNextLine(doc, worcaNext) {
-  if (!worcaNext || typeof worcaNext.name !== 'string' || !worcaNext.name) return null;
+const isText = (v) => typeof v === 'string' && v !== '';
+
+/** The art and the sentence for the level line. At Curious the line looks ahead to the next level (its art, its name);
+ *  from Runner up it says where the person stands. Null when the view cannot supply what its copy needs. */
+function levelLineParts(view) {
+  const level = view?.level;
+  if (!level || !isText(level.name) || !Number.isInteger(level.index)) return null;
+  if (level.index === 1) {
+    const next = view.nextLevel;
+    if (!next || !isText(next.name)) return null;
+    const entry = (view.ladder || []).find((l) => l.index === next.index);
+    return { avatar: next.avatar || entry?.avatar, text: `Finishing these moves you toward ${next.name}, your next level. ` };
+  }
+  return { avatar: level.avatar, text: `You are ${level.name}, level ${level.index} of ${WORCA_LEVEL_COUNT}. ` };
+}
+
+/** The one line that ties the checklist to the person's Worca level (docs/worca-levels.md). Null without a usable view. */
+function levelLine(doc, view) {
+  const parts = levelLineParts(view);
+  if (!parts) return null;
   const line = doc.createElement('p');
-  line.className = 'gs-worca-line';
-  if (typeof worcaNext.avatar === 'string' && worcaNext.avatar) {
+  line.className = 'gs-level-line';
+  if (isText(parts.avatar)) {
     const img = doc.createElement('img');
-    img.className = 'gs-worca-avatar';
-    img.src = worcaNext.avatar;
+    img.className = 'gs-level-avatar';
+    img.setAttribute('src', parts.avatar);
     img.alt = '';
     img.setAttribute('width', '16');
     img.setAttribute('height', '16');
     line.append(img, ' ');
   }
-  line.append(`Finishing these moves you toward ${worcaNext.name}, your next level. `);
+  line.append(parts.text);
   const link = doc.createElement('a');
-  link.className = 'gs-worca-link';
+  link.className = 'gs-level-link';
   link.href = '#profile/level';
   link.textContent = 'See levels';
   line.appendChild(link);
@@ -182,11 +200,11 @@ function worcaNextLine(doc, worcaNext) {
  * they are done, so any guide can be replayed.
  * @param {Element} host
  * @param {{steps?:Record<string,boolean>, hidden?:boolean}|null} status
- * @param {{onStep?:(id:string)=>void, onHide?:()=>void, animate?:boolean, hideLabel?:string, level?:string, worcaNext?:{name:string, avatar?:string, next?:number}|null}} [handlers]
- *   `level`: the current interface mode. `worcaNext`: the person's next Worca level; when given, one line under the
- *   header points to it (omit it at the top level). The steps and counts do not change.
+ * @param {{onStep?:(id:string)=>void, onHide?:()=>void, animate?:boolean, hideLabel?:string, level?:string, worcaLevel?:object|null}} [handlers]
+ *   `level`: the current interface mode. `worcaLevel`: the served WorcaLevelView; when usable, one line under the
+ *   header says where the person stands (or, at Curious, points at Runner). The steps and counts do not change.
  */
-export function renderGettingStarted(host, status, { onStep, onHide, animate = true, hideLabel = 'Hide', level = 'expert', worcaNext = null } = {}) {
+export function renderGettingStarted(host, status, { onStep, onHide, animate = true, hideLabel = 'Hide', level = 'expert', worcaLevel = null } = {}) {
   if (!host) return;
   const doc = host.ownerDocument;
   host.replaceChildren();
@@ -216,7 +234,7 @@ export function renderGettingStarted(host, status, { onStep, onHide, animate = t
   hide.addEventListener('click', () => onHide && onHide());
   head.append(h2, progress, hide);
   card.appendChild(head);
-  const worcaLine = worcaNextLine(doc, worcaNext);
+  const worcaLine = levelLine(doc, worcaLevel);
   if (worcaLine) card.appendChild(worcaLine);
 
   const tiles = doc.createElement('div');

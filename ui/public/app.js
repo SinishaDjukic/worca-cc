@@ -341,7 +341,7 @@ import { openLabelPicker, closeLabelPickerFor, fetchLabels, labelChip } from './
 import { labelStates, applyLabelChange, normaliseLabel } from '../../src/shared/run-labels.mjs';
 import { renderLabelsSection, runCount } from './labels-settings.mjs';
 import { makeSwitch } from './switch.mjs';
-import { createWorcaLevelWiring, worcaNextFor } from './worca-level/app-wiring.mjs';
+import { createWorcaLevelWiring } from './worca-level/app-wiring.mjs';
 
 // With site data blocked, Chrome throws SecurityError on merely reading `localStorage`. Every bare `localStorage` in
 // this module resolves here: the browser's storage, else an in-memory stand-in, so the page boots and forgets on reload.
@@ -38181,7 +38181,7 @@ function paintShelf({ entering = false } = {}) {
     hideLabel: gs.status.hidden ? 'Show in sidebar' : 'Hide from sidebar',
     animate: appearing,
     level: currentLevel(),
-    worcaNext: worcaNextFor(worca.state.view),
+    worcaLevel: worca.state.view,
   });
 }
 
@@ -39263,7 +39263,7 @@ function showView(name, param = '') {
     void loadModelsView().then(() => { if (modelId) revealModelCard(modelId, param); });
   }
   if (name === 'providers') void loadProvidersView().then(() => revealProviderRow(param));
-  if (name === 'stats' && prevView !== 'stats') worca.postStatsViewed();   // once per navigation, not per repaint
+  if (prevView !== name) worca.onViewShown(name);   // once per navigation, not per repaint: Statistics, Team metrics and Team policy feed the level
   if (name === 'profile') worca.showProfile(document.getElementById('profile-level-host'), () => currentShownView === 'profile');   // #profile/level
   if (name === 'new') {
     loadTaskSources(); applyBudgetToNewView(); refreshMentionHighlights();

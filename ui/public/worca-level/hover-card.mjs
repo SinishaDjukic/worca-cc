@@ -1,10 +1,12 @@
 // ui/public/worca-level/hover-card.mjs — the card that shows beside the account corner (#side-acct)
-// when the pointer rests on it or it takes keyboard focus: the level's avatar, name, "Level n of 4",
-// a progress bar, up to two "Try next" links and a link to the Profile page. A non-modal popover:
+// when the pointer rests on it or it takes keyboard focus: the level's avatar, name, "Level n of 5 ·
+// tagline", the Next level with its progress segments, up to two "Try next" links and a link to the
+// Profile page (a top-level view shows the top message instead). A non-modal popover:
 // no backdrop, no focus trap, no form control. It never takes the click: the corner still opens the
 // account menu, and the card steps aside when it does. Everything is painted as text.
 import { placeFlyout } from '../side-flyout.mjs';
 import { setAvatarSrc, tooltipModel } from './model.mjs';
+import { renderSegments } from './segments.mjs';
 
 export const HOVER_OPEN_DELAY_MS = 250;
 export const HOVER_CLOSE_GRACE_MS = 150;   // lets the pointer cross the gap from the corner into the card
@@ -24,18 +26,17 @@ function link(doc, cls, text, href) {
   return a;
 }
 
-function progressBar(doc, progress) {
-  const bar = h(doc, 'div', 'ohc-bar');
-  bar.setAttribute('role', 'progressbar');
-  bar.setAttribute('aria-label', 'Progress to the next level');
-  bar.setAttribute('aria-valuemin', '0');
-  bar.setAttribute('aria-valuemax', String(progress.total));
-  bar.setAttribute('aria-valuenow', String(progress.done));
-  const fill = h(doc, 'span', 'ohc-fill');
-  const pct = progress.total > 0 ? Math.max(0, Math.min(100, (progress.done / progress.total) * 100)) : 0;
-  fill.style.width = `${pct}%`;
-  bar.appendChild(fill);
-  return bar;
+function tryRow(doc, a) {
+  const row = link(doc, 'wl-try', null, a.href);
+  row.append(h(doc, 'span', 'wl-try-t', a.label), h(doc, 'span', 'wl-try-go', '→'), h(doc, 'span', 'wl-try-h', a.hint));
+  return row;
+}
+
+function nextBlock(doc, m) {
+  const next = h(doc, 'div', 'wl-hc-next');
+  next.append('Next: ', h(doc, 'strong', null, m.nextName));
+  if (m.progressText) next.append(h(doc, 'span', 'wl-hc-prog', ` · ${m.progressText}`));
+  return next;
 }
 
 /** Build the card for an WorcaLevelView (detached). */
@@ -47,31 +48,32 @@ export function renderHoverCard(view, doc = globalThis.document) {
   card.style.position = 'fixed';
   card.style.zIndex = '44';
 
-  const head = h(doc, 'div', 'ohc-head');
-  const img = h(doc, 'img', 'ohc-ava');
+  const head = h(doc, 'div', 'wl-hc-head');
+  const img = h(doc, 'img', 'wl-hc-ava');
   setAvatarSrc(img, view.level.avatar);
   img.setAttribute('alt', '');
   img.setAttribute('width', String(AVATAR_PX));
   img.setAttribute('height', String(AVATAR_PX));
-  const who = h(doc, 'div', 'ohc-who');
-  who.appendChild(h(doc, 'div', 'ohc-name', m.name));
-  who.appendChild(h(doc, 'div', 'ohc-level', m.levelLine));
+  const who = h(doc, 'div', 'wl-hc-who');
+  who.appendChild(h(doc, 'div', 'wl-hc-name', m.name));
+  const levelText = m.tagline ? `${m.levelLine} · ${m.tagline}` : m.levelLine;
+  who.appendChild(h(doc, 'div', 'wl-hc-level', levelText));
   head.append(img, who);
   card.appendChild(head);
 
-  if (view.progress) {
-    card.appendChild(progressBar(doc, view.progress));
-    card.appendChild(h(doc, 'div', 'ohc-prog', m.progressLine));
-  }
   if (m.topLine) {
-    card.appendChild(h(doc, 'p', 'ohc-top', m.topLine));
-  } else if (m.tryNext.length) {
-    const next = h(doc, 'div', 'ohc-next');
-    next.appendChild(h(doc, 'div', 'ohc-k', 'Try next'));
-    for (const a of m.tryNext) next.appendChild(link(doc, 'ohc-act', a.label, a.href));
-    card.appendChild(next);
+    card.appendChild(h(doc, 'p', 'wl-top', m.topLine));
+  } else {
+    if (m.nextName) card.appendChild(nextBlock(doc, m));
+    if (m.segments) card.appendChild(renderSegments(doc, m.segments, { size: 'sm' }));
+    if (m.tryNext.length) {
+      const tries = h(doc, 'div', 'wl-hc-tries');
+      tries.appendChild(h(doc, 'div', 'wl-hc-k', m.tryNextHeading));
+      for (const a of m.tryNext) tries.appendChild(tryRow(doc, a));
+      card.appendChild(tries);
+    }
   }
-  card.appendChild(link(doc, 'ohc-profile', 'See your level in Profile', PROFILE_HREF));
+  card.appendChild(link(doc, 'wl-profile-link', 'See your level in Profile', PROFILE_HREF));
   return card;
 }
 

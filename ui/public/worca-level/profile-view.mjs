@@ -1,13 +1,21 @@
-// ui/public/worca-level/profile-view.mjs — the Profile "level" view: hero, next-level card, the
-// "to reach" list and the grid of all four levels. Pure DOM in, pure DOM out: it paints an
-// WorcaLevelView (no fetch) into the host. Display only — it never renders a form control (I-7).
-import { isHashHref, setAvatarSrc, tooltipModel } from './model.mjs';
+// ui/public/worca-level/profile-view.mjs — the Profile "level" section: intro, hero with the next-level
+// panel, the "to reach" list and the grid of all levels. Pure DOM in, pure DOM out: it paints a
+// WorcaLevelView (no fetch) into the host. Display only — it never renders a form control (I-2, I-7).
+// Styling lives in worca-level.css.
+import { isHashHref, setAvatarSrc } from './model.mjs';
+import { renderSegments } from './segments.mjs';
+import { WORCA_LEVELS, WORCA_LEVEL_COUNT, WORCA_THRESHOLDS } from '../../../src/shared/worca-levels.mjs';
 
 const HERO_SIZE = 104;
-const LEVEL_COUNT = 4;
-const SVG_NS = 'http://www.w3.org/2000/svg';
-const GLYPH_DONE = 'M5 12.5l4.5 4.5L19 7.5';
+const CARD_SIZE = 52;
 const CHIP_TEXT = { reached: 'Reached', current: 'You are here', next: 'Next', later: 'Later' };
+const COUNT_UNIT = Object.freeze({
+  teamMetrics: ` of ${WORCA_THRESHOLDS.teamMetricsRuns} runs in Team metrics`,
+  councilStreak: ` of ${WORCA_THRESHOLDS.councilDays} days`,
+});
+const INTRO =
+  'Your level shows how much you know about orchestrating agents in Worca. Worca keeps track as you work. Only you can see it.';
+const TOP_TEXT = "You've reached the top level. There is no next level to work toward.";
 
 function make(doc, tag, cls, text) {
   const node = doc.createElement(tag);
@@ -17,7 +25,7 @@ function make(doc, tag, cls, text) {
 }
 
 function avatar(doc, src, alt, size) {
-  const img = make(doc, 'img', 'ol-avatar');
+  const img = make(doc, 'img', 'wl-avatar');
   setAvatarSrc(img, src);
   img.setAttribute('alt', alt);
   img.setAttribute('width', String(size));
@@ -25,131 +33,137 @@ function avatar(doc, src, alt, size) {
   return img;
 }
 
-function statusGlyph(doc, done) {
-  const svg = doc.createElementNS(SVG_NS, 'svg');
-  svg.setAttribute('viewBox', '0 0 24 24');
-  svg.setAttribute('width', '16');
-  svg.setAttribute('height', '16');
-  svg.setAttribute('aria-hidden', 'true');
-  svg.setAttribute('class', `ol-glyph ${done ? 'done' : 'todo'}`);
-  svg.setAttribute('fill', 'none');
-  svg.setAttribute('stroke', 'currentColor');
-  svg.setAttribute('stroke-width', '2');
-  svg.setAttribute('stroke-linecap', 'round');
-  svg.setAttribute('stroke-linejoin', 'round');
-  if (done) {
-    const path = doc.createElementNS(SVG_NS, 'path');
-    path.setAttribute('d', GLYPH_DONE);
-    svg.appendChild(path);
-  } else {
-    const ring = doc.createElementNS(SVG_NS, 'circle');
-    ring.setAttribute('cx', '12');
-    ring.setAttribute('cy', '12');
-    ring.setAttribute('r', '8');
-    svg.appendChild(ring);
-  }
-  return svg;
-}
-
+/** "Oct 14", with the year when it is not the current year; null for a missing or unreadable date. */
 function formatDate(iso) {
   const d = iso ? new Date(iso) : null;
   if (!d || Number.isNaN(d.getTime())) return null;
-  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  const opts = { month: 'short', day: 'numeric' };
+  if (d.getFullYear() !== new Date().getFullYear()) opts.year = 'numeric';
+  return d.toLocaleDateString(undefined, opts);
 }
 
-function heroNode(doc, view) {
-  const hero = make(doc, 'div', 'ol-hero');
-  hero.appendChild(avatar(doc, view.level.avatar, view.level.name, HERO_SIZE));
-  const text = make(doc, 'div', 'ol-hero-text');
-  text.appendChild(make(doc, 'h2', null, view.level.name));
-  text.appendChild(make(doc, 'p', 'ol-hero-line', `Level ${view.level.index} of ${LEVEL_COUNT}`));
-  hero.appendChild(text);
-  return hero;
+function nextLevelOf(view) {
+  if (view.nextLevel && view.nextLevel.name) return view.nextLevel;
+  return view.ladder.find((l) => l.index === view.level.index + 1) || null;
 }
 
-function progressNode(doc, progress) {
-  const wrap = make(doc, 'div', 'ol-progress');
-  const bar = make(doc, 'div', 'ol-bar');
-  bar.setAttribute('role', 'progressbar');
-  bar.setAttribute('aria-label', 'Progress to the next level');
-  bar.setAttribute('aria-valuemin', '0');
-  bar.setAttribute('aria-valuemax', String(progress.total));
-  bar.setAttribute('aria-valuenow', String(progress.done));
-  const fill = make(doc, 'div', 'ol-bar-fill');
-  const pct = progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0;
-  fill.style.width = `${pct}%`;
-  bar.appendChild(fill);
-  wrap.appendChild(bar);
-  wrap.appendChild(make(doc, 'p', 'ol-progress-line', `${progress.done} of ${progress.total} done`));
-  return wrap;
+const descriptionOf = (index) => WORCA_LEVELS.find((l) => l.index === index)?.description ?? '';
+
+function nextPanel(doc, view) {
+  const panel = make(doc, 'div', 'wl-next');
+  panel.appendChild(make(doc, 'span', 'wl-next-kicker', 'Next level'));
+  const row = make(doc, 'div', 'wl-next-row');
+  const next = nextLevelOf(view);
+  row.appendChild(make(doc, 'b', 'wl-next-name', next ? next.name : ''));
+  if (view.progress) {
+    const counter = make(doc, 'span', 'wl-next-count', String(view.progress.done));
+    counter.appendChild(make(doc, 'span', 'wl-next-of', ` / ${view.progress.total}`));
+    row.appendChild(counter);
+  }
+  panel.appendChild(row);
+  if (view.progress) panel.appendChild(renderSegments(doc, view.progress, { size: 'lg' }));
+  return panel;
 }
 
-function nextCard(doc, view) {
-  const card = make(doc, 'section', 'card ol-next');
-  card.appendChild(make(doc, 'h3', null, 'Next level'));
-  if (view.progress) card.appendChild(progressNode(doc, view.progress));
-  return card;
+function hero(doc, view) {
+  const section = make(doc, 'section', 'wl-hero');
+  const who = make(doc, 'div', 'wl-hero-who');
+  who.appendChild(avatar(doc, view.level.avatar, view.level.name, HERO_SIZE));
+  const text = make(doc, 'div', 'wl-hero-text');
+  text.appendChild(make(doc, 'span', 'wl-hero-kicker', `Your level · ${view.level.index} of ${WORCA_LEVEL_COUNT}`));
+  text.appendChild(make(doc, 'h1', 'wl-hero-name', view.level.name));
+  text.appendChild(make(doc, 'span', 'wl-hero-desc', view.level.description || descriptionOf(view.level.index)));
+  who.appendChild(text);
+  section.appendChild(who);
+  if (view.top !== true) section.appendChild(nextPanel(doc, view));
+  return section;
+}
+
+function statusDot(doc, done) {
+  const dot = make(doc, 'span', `wl-dot ${done ? 'is-done' : 'is-todo'}`);
+  dot.setAttribute('role', 'img');
+  dot.setAttribute('aria-label', done ? 'Done' : 'Not done yet');
+  return dot;
+}
+
+function countText(action) {
+  const unit = COUNT_UNIT[action.id];
+  if (!unit || action.done === true || action.count == null) return null;
+  return `${action.count}${unit}`;
+}
+
+function itemEnd(doc, action) {
+  if (action.done === true) {
+    const date = formatDate(action.doneAt);
+    return make(doc, 'span', 'wl-done', date ? `Done · ${date}` : 'Done');
+  }
+  if (!isHashHref(action.href)) return null;
+  const open = make(doc, 'a', 'btn wl-open', action.openLabel || 'Open');
+  open.setAttribute('href', action.href);
+  return open;
 }
 
 function reachItem(doc, action) {
-  const li = make(doc, 'li', 'ol-item');
+  const li = make(doc, 'li', 'wl-item');
   li.dataset.done = String(action.done === true);
-  li.appendChild(statusGlyph(doc, action.done === true));
-  const body = make(doc, 'div', 'ol-item-body');
-  body.appendChild(make(doc, 'span', 'ol-item-label', action.label));
-  if (action.done === true) {
-    const date = formatDate(action.doneAt);
-    body.appendChild(make(doc, 'span', 'ol-item-status', date ? `Done · ${date}` : 'Done'));
-  } else {
-    if (isHashHref(action.href)) {
-      const link = make(doc, 'a', 'ol-item-status', 'Not done, open it');
-      link.setAttribute('href', action.href);
-      body.appendChild(link);
-    } else {
-      body.appendChild(make(doc, 'span', 'ol-item-status', 'Not done'));
-    }
-  }
-  if (action.hint) body.appendChild(make(doc, 'span', 'ol-item-hint', action.hint));
+  li.appendChild(statusDot(doc, action.done === true));
+  const body = make(doc, 'div', 'wl-item-body');
+  body.appendChild(make(doc, 'span', 'wl-item-label', action.label));
+  if (action.hint) body.appendChild(make(doc, 'span', 'wl-item-hint', action.hint));
+  const count = countText(action);
+  if (count) body.appendChild(make(doc, 'span', 'wl-item-count', count));
   li.appendChild(body);
+  const end = itemEnd(doc, action);
+  if (end) li.appendChild(end);
   return li;
 }
 
-function reachCard(doc, view) {
-  const nextLevel = view.ladder.find((l) => l.index === view.level.index + 1);
-  const card = make(doc, 'section', 'card ol-reach');
-  card.appendChild(make(doc, 'h3', null, `To reach ${nextLevel ? nextLevel.name : 'the next level'}`));
-  const list = make(doc, 'ul', 'ol-list');
-  for (const action of view.next) list.appendChild(reachItem(doc, action));
-  card.appendChild(list);
-  return card;
+function reach(doc, view) {
+  const next = nextLevelOf(view);
+  const section = make(doc, 'section', 'wl-reach');
+  const head = make(doc, 'div', 'wl-reach-head');
+  head.appendChild(make(doc, 'h2', null, `To reach ${next ? next.name : 'the next level'}`));
+  head.appendChild(make(doc, 'span', 'wl-reach-note', 'Marked done when you do them in Worca'));
+  section.appendChild(head);
+  const list = make(doc, 'ul', 'wl-list');
+  for (const action of view.next || []) list.appendChild(reachItem(doc, action));
+  section.appendChild(list);
+  return section;
 }
 
-function topCard(doc, view) {
-  const card = make(doc, 'section', 'card ol-top');
-  card.appendChild(make(doc, 'p', null, tooltipModel(view).topLine));
-  return card;
+function top(doc) {
+  const section = make(doc, 'section', 'wl-top');
+  section.appendChild(make(doc, 'p', null, TOP_TEXT));
+  return section;
 }
 
+const LEVEL_STATES = new Set(['reached', 'current', 'next', 'later']);
+
+/** The server sends each ladder entry's `state`; the index comparison covers an entry without one. */
 function levelState(entry, current) {
+  if (LEVEL_STATES.has(entry.state)) return entry.state;
   if (entry.index === current) return 'current';
-  if (entry.reached) return 'reached';
+  if (entry.index < current) return 'reached';
   return entry.index === current + 1 ? 'next' : 'later';
 }
 
 function levelCard(doc, entry, current) {
   const state = levelState(entry, current);
-  const card = make(doc, 'div', 'ol-level-card');
+  const card = make(doc, 'div', 'wl-level');
   card.dataset.state = state;
-  card.appendChild(avatar(doc, entry.avatar, '', 56));
-  card.appendChild(make(doc, 'span', 'ol-level-name', entry.name));
-  card.appendChild(make(doc, 'span', 'ol-chip', CHIP_TEXT[state]));
+  const head = make(doc, 'div', 'wl-level-head');
+  head.appendChild(avatar(doc, entry.avatar, '', CARD_SIZE));
+  head.appendChild(make(doc, 'span', 'wl-chip', CHIP_TEXT[state]));
+  card.appendChild(head);
+  card.appendChild(make(doc, 'b', 'wl-level-name', entry.name));
+  card.appendChild(make(doc, 'span', 'wl-level-desc', entry.description || descriptionOf(entry.index)));
   return card;
 }
 
 function levelsGrid(doc, view) {
-  const section = make(doc, 'section', 'card ol-levels');
-  section.appendChild(make(doc, 'h3', null, 'All levels'));
-  const grid = make(doc, 'div', 'ol-grid');
+  const section = make(doc, 'section', 'wl-levels');
+  section.appendChild(make(doc, 'h2', null, 'All levels'));
+  const grid = make(doc, 'div', 'wl-grid');
   for (const entry of view.ladder) grid.appendChild(levelCard(doc, entry, view.level.index));
   section.appendChild(grid);
   return section;
@@ -158,12 +172,11 @@ function levelsGrid(doc, view) {
 /** Paint the level view into `host`, replacing whatever it held. */
 export function renderProfileLevel(host, view) {
   const doc = host.ownerDocument;
-  const parts = [heroNode(doc, view)];
-  if (view.top === true) {
-    parts.push(topCard(doc, view));
-  } else {
-    parts.push(nextCard(doc, view), reachCard(doc, view));
-  }
-  parts.push(levelsGrid(doc, view));
-  host.replaceChildren(...parts);
+  const isTop = view.top === true;
+  host.replaceChildren(
+    make(doc, 'p', 'wl-intro', INTRO),
+    hero(doc, view),
+    isTop ? top(doc) : reach(doc, view),
+    levelsGrid(doc, view),
+  );
 }

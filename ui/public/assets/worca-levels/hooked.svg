@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img">
+<defs>
+<radialGradient id="promoShine-hooked" cx="38%" cy="30%" r="70%"><stop offset="0" stop-color="#fff" stop-opacity=".38"></stop><stop offset=".55" stop-color="#fff" stop-opacity="0"></stop><stop offset="1" stop-color="#000" stop-opacity=".18"></stop></radialGradient>
+<linearGradient id="promoNose-hooked" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".28"></stop><stop offset="1" stop-color="#000" stop-opacity=".12"></stop></linearGradient>
+</defs>
+<circle cx="50" cy="50" r="50" fill="oklch(0.92 0.04 295)"></circle>
+<g transform="translate(3.679999999999998 7.0399999999999965) scale(0.92)">
+<ellipse cx="46" cy="88" rx="20" ry="2.6" fill="#000" opacity=".12"></ellipse>
+<rect x="37" y="70" width="7" height="17" rx="3.5" fill="#9C4E2E"></rect>
+<rect x="48" y="70" width="7" height="17" rx="3.5" fill="#9C4E2E"></rect>
+<path d="M39 36 C37 28 36 22 33 17 M53 35 C54 27 55 21 58 16" fill="none" stroke="#C0583A" stroke-width="2.6" stroke-linecap="round"></path>
+<circle cx="46" cy="54" r="24" fill="#B8613B"></circle>
+<circle cx="46" cy="54" r="24" fill="url(#promoShine-hooked)"></circle>
+<g><rect x="27" y="53" width="12" height="15" rx="1.5" fill="#E9D3A8" stroke="#8A5A33" stroke-width="1"></rect><rect x="30.5" y="51.5" width="5" height="3" rx="1" fill="#8A8F98"></rect><path d="M29.5 58 h1.5 M32.5 58 h4.5 M29.5 61.5 h1.5 M32.5 61.5 h4.5 M29.5 65 h1.5 M32.5 65 h4.5" stroke="#3A404A" stroke-width="1"></path></g>
+<path d="M56 66 L60 66 L61.5 76 L58 79 L54.5 76 Z" fill="#D2342E"></path>
+<circle cx="60" cy="46" r="6.5" fill="#fff" stroke="#1B1E24" stroke-width=".7"></circle>
+<circle cx="61.6" cy="46.6" r="3.4" fill="#1B1E24"></circle>
+<circle cx="62.7" cy="45.3" r="1" fill="#fff"></circle>
+<rect x="56" y="54" width="34" height="10" rx="5" fill="#B8613B"></rect>
+<rect x="56" y="54" width="34" height="10" rx="5" fill="url(#promoNose-hooked)"></rect>
+<g><path d="M22 42 C21 28 40 25 52 27 C62 29 68 34 69 40 L80 41 C81 44 74 45 66 44 L22 44 Z" fill="#5C5E62"></path><path d="M24 40 C30 32 46 30 66 38" fill="none" stroke="#6E7075" stroke-width="1.2"></path><circle cx="42" cy="37" r="5" fill="#fff"></circle><text x="42" y="39.5" text-anchor="middle" font-family="Poppins, sans-serif" font-size="6.8" font-weight="700" fill="#1B1E24">W</text></g>
+</g>
+</svg>

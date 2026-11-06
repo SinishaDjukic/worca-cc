@@ -26,7 +26,8 @@ beforeEach(() => { rmSync(dir, { recursive: true, force: true }); });
 
 const rec = (over = {}) => ({
   level: 0, celebrated: 0, welcome: { kind: 'new', seenAt: null }, doneAt: {},
-  live: { addons: [], spaces: false, statsDays: [], peakParallel: 0 },
+  tz: null,
+  live: { addons: [], addonPeak: 0, spaces: false, statsViewedAt: null, teamMetricsOpenedAt: null },
   createdAt: 't0', updatedAt: 't0', ...over,
 });
 
@@ -133,42 +134,97 @@ test('a valid-JSON file with the wrong shape is treated as corrupt too', () => {
   assert.ok(readdirSync(dir).some((n) => n.includes('.corrupt-')));
 });
 
-test('recordLive merges add-ons (deduped), the space flag, stats days (last 30 distinct) and a peakParallel that only rises', async () => {
-  const day = (i) => `2026-01-${String(i).padStart(2, '0')}`;
+const BLANK_LIVE = { addons: [], addonPeak: 0, spaces: false, statsViewedAt: null, teamMetricsOpenedAt: null };
+
+test('recordLive adds add-ons without duplicates and makes the space flag sticky', async () => {
   await store.recordLive('ann', { addon: 'a1' });
   await store.recordLive('ann', { addon: 'a1' });
-  let r = await store.recordLive('ann', { addon: 'a2', space: true, peakParallel: 3 });
+  let r = await store.recordLive('ann', { addon: 'a2', space: true });
   assert.deepEqual(r.live.addons, ['a1', 'a2']);
   assert.equal(r.live.spaces, true);
-  assert.equal(r.live.peakParallel, 3);
-  r = await store.recordLive('ann', { peakParallel: 2 });
-  assert.equal(r.live.peakParallel, 3);
-  r = await store.recordLive('ann', { peakParallel: 5 });
-  assert.equal(r.live.peakParallel, 5);
   r = await store.recordLive('ann', { space: false });
   assert.equal(r.live.spaces, true, 'a space flag never turns back off');
-
-  for (let i = 1; i <= 31; i++) await store.recordLive('ann', { statsDay: day(i) });
-  await store.recordLive('ann', { statsDay: day(31) });
-  const days = store.readPerson('ann').live.statsDays;
-  assert.equal(days.length, 30);
-  assert.equal(days[0], day(2));
-  assert.equal(days.at(-1), day(31));
 });
 
-test('recordLive creates the record when absent and keeps the other fields', async () => {
+test('recordLive keeps the MAX addonPeak (3 then 2 stays 3)', async () => {
+  let r = await store.recordLive('ann', { addonPeak: 3 });
+  assert.equal(r.live.addonPeak, 3);
+  r = await store.recordLive('ann', { addonPeak: 2 });
+  assert.equal(r.live.addonPeak, 3);
+  r = await store.recordLive('ann', { addonPeak: 5 });
+  assert.equal(r.live.addonPeak, 5);
+});
+
+test('statsViewedAt and teamMetricsOpenedAt latch: the first write wins', async () => {
+  const first = '2026-01-01T00:00:00.000Z';
+  const second = '2026-02-02T00:00:00.000Z';
+  let r = await store.recordLive('ann', { statsViewedAt: first, teamMetricsOpenedAt: first });
+  assert.equal(r.live.statsViewedAt, first);
+  assert.equal(r.live.teamMetricsOpenedAt, first);
+  r = await store.recordLive('ann', { statsViewedAt: second, teamMetricsOpenedAt: second });
+  assert.equal(r.live.statsViewedAt, first);
+  assert.equal(r.live.teamMetricsOpenedAt, first);
+  assert.equal(store.readPerson('ann').live.statsViewedAt, first);
+});
+
+test('removed live keys are ignored and never persisted', async () => {
+  const r = await store.recordLive('ann', {
+    peakParallel: 4, statsDays: ['2026-01-01'], statsDay: '2026-01-01', scheduledRuns: 2,
+    metricsRegular: true, peakParallelBackfill: 3, addon: 'x',
+  });
+  assert.deepEqual(r.live, { ...BLANK_LIVE, addons: ['x'] });
+  const disk = JSON.parse(readFileSync(file, 'utf8')).people.ann;
+  assert.deepEqual(Object.keys(disk.live).sort(), Object.keys(BLANK_LIVE).sort());
+  assert.equal('scheduledRuns' in disk, false);
+  assert.equal('MAX_STATS_DAYS' in store, false);
+});
+
+test('a legacy live block loses its removed fields on the next merge', async () => {
+  await store.updatePerson('ann', () => rec({ live: { addons: ['a'], spaces: true, statsDays: ['2026-01-01'], peakParallel: 7 } }));
+  const r = await store.recordLive('ann', { addon: 'b' });
+  assert.deepEqual(r.live, { ...BLANK_LIVE, addons: ['a', 'b'], spaces: true });
+});
+
+test('recordLive creates the record when absent (tz null) and keeps the other fields', async () => {
   const r = await store.recordLive('zed', { addon: 'x' });
   assert.equal(r.level, 0);
+  assert.equal(r.tz, null);
   assert.equal(r.welcome.seenAt, null);
   assert.equal(typeof r.createdAt, 'string');
   assert.deepEqual(r.live.addons, ['x']);
-  await store.updatePerson('zed', (p) => ({ ...p, level: 2, doneAt: { k: 'd' } }));
-  const again = await store.recordLive('zed', { statsDay: '2026-02-01' });
+  await store.updatePerson('zed', (p) => ({ ...p, level: 2, tz: 'Europe/Berlin', doneAt: { k: '2026-01-01T00:00:00.000Z' } }));
+  const again = await store.recordLive('zed', { addon: 'y' });
   assert.equal(again.level, 2);
-  assert.deepEqual(again.doneAt, { k: 'd' });
+  assert.equal(again.tz, 'Europe/Berlin');
+  assert.deepEqual(again.doneAt, { k: '2026-01-01T00:00:00.000Z' });
 });
 
 test('recordLive ignores malformed patch values instead of storing them', async () => {
-  const r = await store.recordLive('ann', { addon: 5, statsDay: 'yesterday', peakParallel: -1, space: 'yes' });
-  assert.deepEqual(r.live, { addons: [], spaces: false, statsDays: [], peakParallel: 0 });
+  const r = await store.recordLive('ann', {
+    addon: 5, addonPeak: -1, space: 'yes', statsViewedAt: 'yesterday', teamMetricsOpenedAt: 12,
+  });
+  assert.deepEqual(r.live, BLANK_LIVE);
+  const r2 = await store.recordLive('ann', { addon: '', addonPeak: Number.NaN, statsViewedAt: null });
+  assert.deepEqual(r2.live, BLANK_LIVE);
+});
+
+test('doneAt and tz round-trip through updatePerson', async () => {
+  const doneAt = { 'first-run': '2026-01-01T00:00:00.000Z', 'try-addon': '2026-01-02T00:00:00.000Z' };
+  await store.updatePerson('ann', () => rec({ doneAt, tz: 'America/New_York' }));
+  const got = store.readPerson('ann');
+  assert.deepEqual(got.doneAt, doneAt);
+  assert.equal(got.tz, 'America/New_York');
+});
+
+test('the store file is worca-levels.json and a stale file from the old name is ignored, not read or renamed', async () => {
+  assert.equal(store.worcaLevelsFile(), file);
+  assert.equal(store.STORE_VERSION, 1);
+  mkdirSync(dir, { recursive: true });
+  const stale = join(dir, `${['or', 'ca'].join('')}-levels.json`);
+  const text = JSON.stringify({ version: 1, people: { ann: rec({ level: 4 }) } });
+  writeFileSync(stale, text);
+  assert.equal(store.readPerson('ann'), null);
+  await store.updatePerson('bob', () => rec({ level: 1 }));
+  assert.equal(readFileSync(stale, 'utf8'), text);
+  assert.equal(readdirSync(dir).some((n) => n.includes('.corrupt-')), false);
 });

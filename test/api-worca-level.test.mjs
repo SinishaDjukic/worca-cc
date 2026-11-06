@@ -1,12 +1,13 @@
 // test/api-worca-level.test.mjs
-// src/core/worca-levels/service.mjs + GET /api/worca-level, POST /api/worca-level/ack, POST /api/worca-level/events.
+// GET /api/worca-level, POST /api/worca-level/ack, POST /api/worca-level/events (ui/routes/worca-levels/worca-level.mjs).
 // Server-test shape (api-onboarding.test.mjs): useTempHome at module top level, the app imported INSIDE
-// before(), an ephemeral http server and real fetch. The service's own rules (creation, celebration) are
-// driven through createWorcaLevelService with injected facts, since a real level-up needs host state.
+// before(), an ephemeral http server and real fetch. Rules that need host state a test cannot build (a
+// policy, ten ledgers, a level-up) are driven through createWorcaLevelService with injected facts.
 import { test, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { readFileSync, unlinkSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
@@ -17,8 +18,9 @@ const REAL_PROXIES = process.env.WORCA_IDENTITY_TRUSTED_PROXIES;
 process.env.HOME = home;                     // settings.json and worca-levels.json live under HOME
 
 const JSONH = { 'Content-Type': 'application/json' };
-const VIEW_KEYS = ['celebration', 'ladder', 'level', 'next', 'progress', 'top', 'welcome'];
+const VIEW_KEYS = ['celebration', 'count', 'ladder', 'level', 'next', 'nextLevel', 'progress', 'top', 'welcome'];
 const NOW = '2026-11-05T10:00:00.000Z';
+const TM_TYPE_ERROR = 'type must be "stats-viewed" or "team-metrics-viewed"';
 
 let srv, base, app, getDb, store, createWorcaLevelService;
 const get = (path = '/api/worca-level', headers = {}) => fetch(`${base}${path}`, { headers });
@@ -26,6 +28,8 @@ const post = (path, body, headers = {}) =>
   fetch(`${base}${path}`, { method: 'POST', headers: { ...JSONH, ...headers }, body: JSON.stringify(body) });
 const ack = (what, headers) => post('/api/worca-level/ack', { what }, headers);
 const view = async (r) => { assert.equal(r.status, 200, await r.clone().text()); return r.json(); };
+const storeBytes = () => (existsSync(store.worcaLevelsFile()) ? readFileSync(store.worcaLevelsFile(), 'utf8') : null);
+const dropStore = () => rmSync(store.worcaLevelsFile(), { recursive: true, force: true });
 
 before(async () => {
   process.env.WORCA_MOCK = '1';
@@ -49,54 +53,57 @@ after(async () => {
 
 beforeEach(() => {
   delete process.env.WORCA_IDENTITY_HEADER;
-  try { unlinkSync(store.worcaLevelsFile()); } catch { /* none yet */ }
+  dropStore();
   const db = getDb();
   for (const t of ['pipelines', 'schedules', 'req_features']) db.exec(`DELETE FROM ${t}`);
 });
 
-let seq = 0;
-const ago = (days) => new Date(Date.now() - days * 86400000).toISOString();
-function seedRun(startedBy, status = 'done') {
-  getDb().prepare(`INSERT INTO pipelines (id, project_key, target, status, phase, cycle, started_at, updated_at, started_by)
-    VALUES (?, 'proj-00000001', 'project', ?, 'done', 0, ?, ?, ?)`)
-    .run(`orcb${String(++seq).padStart(4, '0')}`, status, ago(1), ago(1), startedBy);
-}
-
-const LEVEL4_FACTS = {
-  gettingStartedDone: true, gettingStarted: { done: 9, total: 9 }, requirements: 1, requirementsFlag: true,
-  startedRuns: 1, doneRuns: 1, addonsInstalled: 2, addonsEnabled: 2, spaces: 1, schedules: 1,
-  scheduledRuns: 5, peakParallel: 2, statsDays: 3,
+const NEUTRAL = {
+  gettingStartedDone: false, gettingStarted: { done: 0, total: 9 }, policyInstalled: false,
+  requirements: 0, requirementsFlag: true, startedRuns: 0, doneRuns: 0, addonsInstalled: 0, addonsAtOnce: 0,
+  spaces: 0, schedules: false, repeatingSchedules: false, statsViewedAt: null, parallelDoneAt: null,
+  teamMetricsRuns: 0, teamMetricsOpenedAt: null, council: { current: 0, metAt: null },
 };
-const NO_FACTS = { ...LEVEL4_FACTS, gettingStartedDone: false, requirements: 0, startedRuns: 0, doneRuns: 0,
-  addonsInstalled: 0, addonsEnabled: 0, spaces: 0, schedules: 0, scheduledRuns: 0, peakParallel: 0, statsDays: 0 };
+const RUNNER = { ...NEUTRAL, gettingStartedDone: true, gettingStarted: { done: 9, total: 9 }, requirements: 1, startedRuns: 1, doneRuns: 1 };
+const HOOKED = { ...RUNNER, addonsInstalled: 1, spaces: 1, schedules: true, statsViewedAt: NOW };
+// Everything for WorcaHolic except opening Team metrics, which only a view can do.
+const BEFORE_TEAM_METRICS = { ...HOOKED, addonsInstalled: 2, addonsAtOnce: 2, repeatingSchedules: true, parallelDoneAt: NOW };
+const COUNCIL = { ...BEFORE_TEAM_METRICS, teamMetricsOpenedAt: NOW, council: { current: 30, metAt: NOW } };
 const local = { headers: {} };
+const person = (email) => ({ worcaUser: { email }, headers: {} });
 
+/** A service over a mutable `facts.current`; the stored live stamps are fed back in, as gatherFacts does. */
 function serviceWith(facts, extra = {}) {
   const pokes = [];
   const svc = createWorcaLevelService({
     isFreshInstall: () => true,
     emitChanged: (...a) => pokes.push(a),
-    gatherFacts: async () => facts.current,
+    gatherFacts: async ({ live }) => ({
+      ...facts.current,
+      statsViewedAt: live?.statsViewedAt ?? facts.current.statsViewedAt,
+      teamMetricsOpenedAt: live?.teamMetricsOpenedAt ?? facts.current.teamMetricsOpenedAt,
+    }),
     now: () => NOW,
     ...extra,
   });
   return { svc, pokes };
 }
 
-test('GET answers the view for a fresh install: level 1, a "new" welcome, no celebration, the four-rung ladder', async () => {
+test('fresh install: Simple and Curious, with a welcome that is new (R-po-8)', async () => {
   await checkRows([
-    { name: 'view shape', run: async () => {
+    { name: 'view shape and level 1', run: async () => {
       const v = await view(await get());
       assert.deepEqual(Object.keys(v).sort(), VIEW_KEYS);
       assert.equal(v.level.index, 1);
-      assert.deepEqual(Object.keys(v.level).sort(), ['avatar', 'description', 'index', 'key', 'name']);
+      assert.equal(v.level.key, 'curious');
       assert.deepEqual(v.welcome, { kind: 'new' });
       assert.equal(v.celebration, null);
       assert.equal(v.top, false);
-      assert.equal(v.ladder.length, 4);
-      assert.deepEqual(v.ladder.map((l) => l.reached), [true, false, false, false]);
-      assert.deepEqual(Object.keys(v.ladder[0]).sort(), ['avatar', 'index', 'key', 'name', 'reached']);
-      assert.equal(v.progress.total, v.next.length);
+      assert.equal(v.ladder.length, v.count);
+    } },
+    { name: 'the interface mode is Simple', run: async () => {
+      const s = await (await get('/api/settings')).json();
+      assert.equal(s.uiLevel, 'simple');
     } },
     { name: 'no person name or other-person data in the view', run: async () => {
       process.env.WORCA_IDENTITY_HEADER = 'X-User';
@@ -106,205 +113,146 @@ test('GET answers the view for a fresh install: level 1, a "new" welcome, no cel
   ]);
 });
 
-test('I-4: welcome.kind is "new" on a fresh install, "existing" with past activity, and never changes on later GETs', async () => {
-  await checkRows([
-    { name: 'fresh -> new, stays new after a run appears', run: async () => {
-      assert.equal((await view(await get())).welcome.kind, 'new');
-      seedRun('local');
-      assert.equal((await view(await get())).welcome.kind, 'new');
-    } },
-    { name: 'past activity at first GET -> existing, stays', run: async () => {
-      try { unlinkSync(store.worcaLevelsFile()); } catch { /* fresh */ }
-      assert.equal((await view(await get())).welcome.kind, 'existing');
-      assert.equal((await view(await get())).welcome.kind, 'existing');
-    } },
-  ]);
+test('welcome once: a new person sees "new" until the ack, then null (R-po-19)', async () => {
+  assert.deepEqual((await view(await get())).welcome, { kind: 'new' });
+  assert.deepEqual((await view(await get())).welcome, { kind: 'new' }, 'a GET does not clear it');
+  assert.equal((await view(await ack('welcome'))).welcome, null);
+  assert.equal((await view(await ack('welcome'))).welcome, null, 'idempotent');
+  assert.equal((await view(await get())).welcome, null, 'persisted');
 });
 
-test('I-4 (shared): past activity is the person\'s own req_features / pipelines / schedules row', async () => {
-  process.env.WORCA_IDENTITY_HEADER = 'X-User';
-  seedRun('Bob@x.com');
-  getDb().prepare(`INSERT INTO schedules (id, request, rule, created_by, created_at, updated_at) VALUES (?,?,?,?,?,?)`)
-    .run('sch_worca1', '{}', '{}', 'dora@x.com', ago(1), ago(1));
-  getDb().prepare(`INSERT INTO req_features (scope_type, scope_key, title, description, status, spec_json, created_by, created_at, updated_at)
-    VALUES ('project','k','t','d','draft','{}',?,?,?)`).run('rex@x.com', ago(1), ago(1));
-  await checkRows([
-    { name: 'a run owner is existing (case-insensitive)', run: async () => assert.equal((await view(await get('/api/worca-level', { 'X-User': 'bob@X.com' }))).welcome.kind, 'existing') },
-    { name: 'a schedule owner is existing', run: async () => assert.equal((await view(await get('/api/worca-level', { 'X-User': 'dora@x.com' }))).welcome.kind, 'existing') },
-    { name: 'a requirement owner is existing', run: async () => assert.equal((await view(await get('/api/worca-level', { 'X-User': 'rex@x.com' }))).welcome.kind, 'existing') },
-    { name: 'a person with no rows is new', run: async () => assert.equal((await view(await get('/api/worca-level', { 'X-User': 'nina@x.com' }))).welcome.kind, 'new') },
-  ]);
+test('existing user backfilled to their level, with no celebration for the levels skipped (R-po-20)', async () => {
+  const facts = { current: HOOKED };
+  const { svc } = serviceWith(facts, { isFreshInstall: () => false });
+  let v = await svc.getState(local);
+  assert.equal(v.level.index, 3);
+  assert.deepEqual(v.welcome, { kind: 'existing' });
+  assert.equal(v.celebration, null);
+  await svc.ack(local, { what: 'welcome' });
+  v = await svc.getState(local);
+  assert.equal(v.celebration, null, 'levels 2 and 3 were backfilled, not celebrated');
+  assert.equal(store.readPerson('_local').celebrated, 3);
 });
 
-test('ack: welcome clears the welcome, is idempotent; bad bodies are 400 with { error }', async () => {
+test('celebration once per level; an ack of index 5 is accepted (R-po-21)', async () => {
   await checkRows([
-    { name: 'ack welcome', run: async () => {
-      await get();
-      const a = await view(await ack('welcome'));
-      assert.equal(a.welcome, null);
-      assert.equal((await view(await ack('welcome'))).welcome, null);
-      assert.equal((await view(await get())).welcome, null, 'persisted');
-    } },
-    { name: 'ack of an unknown thing / missing body is 400', run: async () => {
-      for (const body of [{ what: 'level' }, {}, { what: 3 }, { what: '__proto__' }, { what: 'celebration' }, { what: 'celebration', index: 9 }]) {
-        const r = await post('/api/worca-level/ack', body);
-        assert.equal(r.status, 400, JSON.stringify(body));
-        assert.equal(typeof (await r.json()).error, 'string');
-      }
-    } },
-  ]);
-});
-
-test('I-3: one celebration for the highest level after the welcome; none at creation; none after ack', async () => {
-  await checkRows([
-    { name: 'levels backfilled at creation are never celebrated', run: async () => {
-      const facts = { current: LEVEL4_FACTS };
-      const { svc } = serviceWith(facts);
-      const v = await svc.getState(local);
-      assert.equal(v.level.index, 4);
-      assert.equal(v.top, true);
-      assert.equal(v.celebration, null);
-      await svc.ack(local, { what: 'welcome' });
-      assert.equal((await svc.getState(local)).celebration, null);
-    } },
-    { name: 'a level-up shows one celebration only once the welcome is acked, for the highest level', run: async () => {
-      try { unlinkSync(store.worcaLevelsFile()); } catch { /* fresh */ }
-      const facts = { current: NO_FACTS };
-      const { svc } = serviceWith(facts);
-      let v = await svc.getState(local);
-      assert.equal(v.level.index, 1);
-      facts.current = LEVEL4_FACTS;
-      v = await svc.getState(local);
-      assert.equal(v.level.index, 4);
-      assert.equal(v.celebration, null, 'welcome not yet seen');
-      assert.ok(v.welcome);
-      await svc.ack(local, { what: 'welcome' });
-      v = await svc.getState(local);
-      assert.deepEqual(Object.keys(v.celebration).sort(), ['avatar', 'index', 'key', 'name']);
-      assert.equal(v.celebration.index, 4);
-      v = await svc.ack(local, { what: 'celebration', index: 4 });
-      assert.equal(v.celebration, null);
-      assert.equal((await svc.ack(local, { what: 'celebration', index: 4 })).celebration, null, 'idempotent');
-      assert.equal((await svc.getState(local)).celebration, null);
-    } },
-    { name: 'a later level-up after an acked celebration celebrates again', run: async () => {
-      try { unlinkSync(store.worcaLevelsFile()); } catch { /* fresh */ }
-      const facts = { current: NO_FACTS };
+    { name: 'a level-up celebrates once the welcome is acked, and only once', run: async () => {
+      dropStore();
+      const facts = { current: NEUTRAL };
       const { svc } = serviceWith(facts);
       await svc.getState(local);
       await svc.ack(local, { what: 'welcome' });
-      facts.current = { ...NO_FACTS, gettingStartedDone: true, requirements: 1, doneRuns: 1, startedRuns: 1 };
+      facts.current = RUNNER;
       let v = await svc.getState(local);
       assert.equal(v.level.index, 2);
       assert.equal(v.celebration.index, 2);
-      await svc.ack(local, { what: 'celebration', index: 2 });
-      facts.current = LEVEL4_FACTS;
-      v = await svc.getState(local);
-      assert.equal(v.celebration.index, 4);
+      v = await svc.ack(local, { what: 'celebration', index: 2 });
+      assert.equal(v.celebration, null);
+      assert.equal((await svc.ack(local, { what: 'celebration', index: 2 })).celebration, null, 'idempotent');
+      assert.equal((await svc.getState(local)).celebration, null);
     } },
-    { name: 'M1: an ack names the level that was shown; a level reached after the GET is still celebrated', run: async () => {
-      try { unlinkSync(store.worcaLevelsFile()); } catch { /* fresh */ }
-      const facts = { current: NO_FACTS };
+    { name: 'the next level-up celebrates again; index 5 is accepted', run: async () => {
+      dropStore();
+      const facts = { current: NEUTRAL };
       const { svc } = serviceWith(facts);
       await svc.getState(local);
       await svc.ack(local, { what: 'welcome' });
-      facts.current = { ...NO_FACTS, gettingStartedDone: true, requirements: 1, doneRuns: 1, startedRuns: 1 };
-      assert.equal((await svc.getState(local)).celebration.index, 2);
-      facts.current = LEVEL4_FACTS;                         // the level rises before the dialog is closed
-      const v = await svc.ack(local, { what: 'celebration', index: 2 });
-      assert.equal(v.celebration.index, 4);
-      assert.equal((await svc.getState(local)).celebration.index, 4);
+      facts.current = COUNCIL;
+      let v = await svc.getState(local);
+      assert.equal(v.level.index, 5);
+      assert.equal(v.top, true);
+      assert.equal(v.celebration.index, 5);
+      v = await svc.ack(local, { what: 'celebration', index: 5 });
+      assert.equal(v.celebration, null);
     } },
-    { name: 'D-6: with the requirements flag off the Swimmer links open #new and say task; with it on they open #requirements', run: async () => {
-      try { unlinkSync(store.worcaLevelsFile()); } catch { /* fresh */ }
-      const swimmerFacts = { ...NO_FACTS, gettingStartedDone: true };
-      const hrefs = (v) => Object.fromEntries(v.next.map((a) => [a.id, a.href]));
-      const off = await serviceWith({ current: { ...swimmerFacts, requirementsFlag: false } }).svc.getState(local);
-      assert.equal(hrefs(off).firstRequirement, '#new');
-      assert.equal(hrefs(off).firstFeatureDone, '#new');
-      assert.equal(off.next.find((a) => a.id === 'firstRequirement').label, 'Write your first task');
-      assert.equal(hrefs(off).gettingStarted, '#getting-started');
-      const on = await serviceWith({ current: { ...swimmerFacts, requirementsFlag: true } }).svc.getState(local);
-      assert.equal(hrefs(on).firstRequirement, '#requirements');
-      assert.equal(on.next.find((a) => a.id === 'firstRequirement').label, 'Write your first requirement');
+    { name: 'over HTTP the ack accepts index 5 and answers a view', run: async () => {
+      await get();
+      const r = await post('/api/worca-level/ack', { what: 'celebration', index: 5 });
+      assert.equal(r.status, 200, await r.clone().text());
+      assert.deepEqual(Object.keys(await r.json()).sort(), VIEW_KEYS);
     } },
-    { name: 'M1: a celebration ack without a valid index is rejected', run: async () => {
-      const { svc } = serviceWith({ current: NO_FACTS });
-      for (const index of [undefined, 0, 5, 1.5, '2', null]) {
-        await assert.rejects(svc.ack(local, { what: 'celebration', index }), { code: 'WORCA_LEVEL_BAD_REQUEST' }, String(index));
+  ]);
+});
+
+test('mode change keeps the level; a level-up keeps the interface mode (R-po-2)', async () => {
+  await checkRows([
+    { name: 'POST /api/settings { uiLevel } leaves the level unchanged', run: async () => {
+      const before1 = await view(await get());
+      for (const uiLevel of ['expert', 'advanced', 'simple']) {
+        const r = await post('/api/settings', { uiLevel });
+        assert.equal(r.status, 200, await r.clone().text());
+        assert.equal((await view(await get())).level.index, before1.level.index, uiLevel);
       }
     } },
-    { name: 'the level never drops when facts shrink', run: async () => {
-      try { unlinkSync(store.worcaLevelsFile()); } catch { /* fresh */ }
-      const facts = { current: LEVEL4_FACTS };
+    { name: 'a level-up leaves uiLevel alone', run: async () => {
+      dropStore();
+      const modeBefore = (await (await get('/api/settings')).json()).uiLevel;
+      const facts = { current: NEUTRAL };
       const { svc } = serviceWith(facts);
       await svc.getState(local);
-      facts.current = NO_FACTS;
-      assert.equal((await svc.getState(local)).level.index, 4);
+      facts.current = COUNCIL;
+      assert.equal((await svc.getState(local)).level.index, 5);
+      assert.equal((await (await get('/api/settings')).json()).uiLevel, modeBefore);
     } },
   ]);
 });
 
-test('creation uses the injected past-activity check for a single-person install; kind never changes', async () => {
-  const facts = { current: NO_FACTS };
-  const { svc } = serviceWith(facts, { isFreshInstall: () => false });
-  assert.equal((await svc.getState(local)).welcome.kind, 'existing');
-  const { svc: fresh } = serviceWith(facts, { isFreshInstall: () => true });
-  assert.equal((await fresh.getState(local)).welcome.kind, 'existing', 'already stored');
-});
-
-test('noteLiveEvent records the live patch and pokes once, payload-free', async () => {
-  const { svc, pokes } = serviceWith({ current: NO_FACTS });
-  await svc.noteLiveEvent('_local', { addon: 'foo' });
-  assert.deepEqual(store.readPerson('_local').live.addons, ['foo']);
-  assert.deepEqual(pokes, [['worca-level-changed']]);
-});
-
-test('R-po 15: a seeded finished run appears as done on the next GET', async () => {
-  const before1 = await view(await get());
-  assert.ok(!before1.next.find((a) => a.id === 'firstFeatureDone').done);
-  seedRun('local', 'done');
-  const after1 = await view(await get());
-  assert.ok(after1.next.find((a) => a.id === 'firstFeatureDone').done);
-  assert.ok(after1.progress.done >= 1);
-});
-
-test('events: stats-viewed -> 204 and today (UTC) is stored; other types are 400', async () => {
-  await get();
+test('no route sets an item, a level or doneAt (I-2); /events takes exactly two types', async () => {
+  const routerSrc = readFileSync(new URL('../ui/routes/worca-levels/worca-level.mjs', import.meta.url), 'utf8');
+  const registered = [...routerSrc.matchAll(/app\.(get|post|put|patch|delete)\(\s*'([^']+)'/g)].map((m) => `${m[1]} ${m[2]}`);
+  assert.deepEqual(registered.sort(), ['get /api/worca-level', 'post /api/worca-level/ack', 'post /api/worca-level/events']);
   await checkRows([
-    { name: 'stats-viewed', run: async () => {
-      const r = await post('/api/worca-level/events', { type: 'stats-viewed' });
-      assert.equal(r.status, 204);
-      assert.equal(await r.text(), '');
-      assert.deepEqual(store.readPerson('_local').live.statsDays, [new Date().toISOString().slice(0, 10)]);
-      await post('/api/worca-level/events', { type: 'stats-viewed' });
-      assert.equal(store.readPerson('_local').live.statsDays.length, 1, 'distinct days');
-    } },
-    { name: 'unknown / missing type', run: async () => {
-      for (const body of [{ type: 'addon-installed' }, {}, { type: 5 }]) {
-        const r = await post('/api/worca-level/events', body);
-        assert.equal(r.status, 400, JSON.stringify(body));
-        assert.equal(typeof (await r.json()).error, 'string');
+    { name: 'events with any other type is 400', run: async () => {
+      for (const type of ['addon-installed', 'level-up', 'item', 'gettingStarted', 5, undefined]) {
+        const r = await post('/api/worca-level/events', { type });
+        assert.equal(r.status, 400, String(type));
+        assert.deepEqual(await r.json(), { error: TM_TYPE_ERROR, code: 'WORCA_LEVEL_BAD_REQUEST' });
       }
     } },
+    { name: 'ack of an item or a level is 400', run: async () => {
+      for (const body of [{ what: 'level', level: 5 }, { what: 'item', id: 'gettingStarted' }, { id: 'councilStreak' }, { level: 5 }]) {
+        assert.equal((await post('/api/worca-level/ack', body)).status, 400, JSON.stringify(body));
+      }
+    } },
+    { name: 'no other write path answers', run: async () => {
+      for (const p of ['/api/worca-level', '/api/worca-level/level', '/api/worca-level/item', '/api/worca-level/done']) {
+        assert.ok([404, 405].includes((await post(p, { level: 5, id: 'gettingStarted' })).status), p);
+      }
+      assert.equal(storeBytes(), null, 'nothing was written');
+    } },
   ]);
 });
 
-test('recordStatsViewed keeps only the last 30 distinct days and does not backfill', async () => {
-  const { svc } = serviceWith({ current: NO_FACTS });
-  await svc.getState(local);
-  assert.deepEqual(store.readPerson('_local').live.statsDays, []);
-  for (let i = 1; i <= 32; i++) {
-    const day = `2026-01-${String(i).padStart(2, '0')}`;
-    if (i <= 31) await store.recordLive('_local', { statsDay: day });
-  }
-  await svc.recordStatsViewed(local);
-  const days = store.readPerson('_local').live.statsDays;
-  assert.equal(days.length, 30);
-  assert.equal(days.at(-1), NOW.slice(0, 10));
+test('a bad ack or events body leaves the store byte-identical (I-3)', async () => {
+  const bad = [
+    ['/api/worca-level/ack', {}], ['/api/worca-level/ack', { what: 'level' }], ['/api/worca-level/ack', { what: 3 }],
+    ['/api/worca-level/ack', { what: '__proto__' }], ['/api/worca-level/ack', { what: 'celebration' }],
+    ['/api/worca-level/ack', { what: 'celebration', index: 0 }], ['/api/worca-level/ack', { what: 'celebration', index: 6 }],
+    ['/api/worca-level/ack', { what: 'celebration', index: '2' }], ['/api/worca-level/ack', { what: 'celebration', index: 1.5 }],
+    ['/api/worca-level/events', {}], ['/api/worca-level/events', { type: 'nope' }], ['/api/worca-level/events', { type: 7 }],
+  ];
+  await checkRows([
+    { name: 'no file on a fresh home', run: async () => {
+      for (const [p, body] of bad) {
+        const r = await post(p, body);
+        assert.equal(r.status, 400, `${p} ${JSON.stringify(body)}`);
+        const j = await r.json();
+        assert.equal(typeof j.error, 'string');
+        assert.equal(j.code, 'WORCA_LEVEL_BAD_REQUEST');
+      }
+      assert.equal(storeBytes(), null);
+    } },
+    { name: 'the same bytes when a record exists', run: async () => {
+      await get();
+      const bytes = storeBytes();
+      assert.ok(bytes);
+      for (const [p, body] of bad) await post(p, body);
+      assert.equal(storeBytes(), bytes);
+    } },
+  ]);
 });
 
-test('I-5: with WORCA_IDENTITY_HEADER each person sees only their own view; ?person= is ignored', async () => {
+test('A and B see only their own (R-po-24, I-5): ?person= and body person are ignored', async () => {
   process.env.WORCA_IDENTITY_HEADER = 'X-User';
   const A = { 'X-User': 'alice@x.com' };
   const B = { 'X-User': 'bob@x.com' };
@@ -328,17 +276,134 @@ test('I-5: with WORCA_IDENTITY_HEADER each person sees only their own view; ?per
       assert.equal((await view(await get('/api/worca-level', B))).welcome, null);
     } },
     { name: 'stats-viewed lands on the caller only', run: async () => {
-      await post('/api/worca-level/events', { type: 'stats-viewed' }, A);
-      assert.equal(store.readPerson('alice@x.com').live.statsDays.length, 1);
-      assert.equal(store.readPerson('bob@x.com').live.statsDays.length, 0);
+      assert.equal((await post('/api/worca-level/events', { type: 'stats-viewed' }, A)).status, 204);
+      assert.ok(store.readPerson('alice@x.com').live.statsViewedAt);
+      assert.equal(store.readPerson('bob@x.com').live.statsViewedAt, null);
     } },
     { name: '/api/stats and /api/team-metrics/scopes carry no worca data', run: async () => {
       for (const path of ['/api/stats', '/api/team-metrics/scopes']) {
         const text = await (await get(path, A)).text();
-        assert.ok(!/worca/i.test(text), `${path}: ${text.slice(0, 200)}`);
+        assert.ok(!/worca-?level/i.test(text), `${path}: ${text.slice(0, 200)}`);
       }
     } },
   ]);
+});
+
+test('team metrics needs a policy, 10 runs, then the open (R-po-33)', async () => {
+  const facts = { current: { ...BEFORE_TEAM_METRICS, policyInstalled: false, teamMetricsRuns: 10 } };
+  const { svc, pokes } = serviceWith(facts);
+  const teamMetrics = async () => (await svc.getState(local)).next?.find((a) => a.id === 'teamMetrics');
+  await svc.getState(local);
+  await checkRows([
+    { name: 'no policy: the open is not recorded', run: async () => {
+      await svc.recordViewed(local, { type: 'team-metrics-viewed' });
+      assert.equal(store.readPerson('_local').live.teamMetricsOpenedAt, null);
+      assert.deepEqual(pokes, []);
+    } },
+    { name: 'policy but too few runs: not recorded', run: async () => {
+      facts.current = { ...facts.current, policyInstalled: true, teamMetricsRuns: 9 };
+      await svc.recordViewed(local, { type: 'team-metrics-viewed' });
+      assert.equal(store.readPerson('_local').live.teamMetricsOpenedAt, null);
+    } },
+    { name: 'policy and 10 runs, level 3 -> the open counts and WorcaHolic is reached', run: async () => {
+      facts.current = { ...facts.current, teamMetricsRuns: 10 };
+      assert.equal((await svc.getState(local)).level.index, 3);
+      assert.equal((await teamMetrics()).done, false);
+      await svc.recordViewed(local, { type: 'team-metrics-viewed' });
+      assert.equal(store.readPerson('_local').live.teamMetricsOpenedAt, NOW);
+      assert.equal((await svc.getState(local)).level.index, 4);
+    } },
+  ]);
+});
+
+test('a stats view never marks team metrics (R-po-34, I-6)', async () => {
+  const facts = { current: { ...BEFORE_TEAM_METRICS, policyInstalled: true, teamMetricsRuns: 10, statsViewedAt: null } };
+  const { svc } = serviceWith(facts);
+  await svc.recordViewed(local, { type: 'stats-viewed' });
+  const rec = store.readPerson('_local');
+  assert.equal(rec.live.statsViewedAt, NOW);
+  assert.equal(rec.live.teamMetricsOpenedAt, null);
+  assert.equal((await svc.getState(local)).level.index, 3);
+  assert.equal(store.readPerson('_local').doneAt.teamMetrics, undefined);
+});
+
+test('a teammate\'s policy counts for the caller (R-po-37)', async () => {
+  // Bob installed nothing; the install-wide onboarding state reports a policy.
+  const facts = { current: { ...BEFORE_TEAM_METRICS, policyInstalled: true, teamMetricsRuns: 10 } };
+  const { svc } = serviceWith(facts, { isFreshInstall: () => false, hasSharedActivity: () => true });
+  const bob = person('bob@x.com');
+  await svc.getState(bob);
+  await svc.recordViewed(bob, { type: 'team-metrics-viewed' });
+  assert.equal(store.readPerson('bob@x.com').live.teamMetricsOpenedAt, NOW);
+  assert.equal(store.readPerson('_local'), null);
+});
+
+test('9 runs do not count, 10 do (R-po-38)', async () => {
+  for (const [runs, stamped] of [[9, null], [10, NOW]]) {
+    dropStore();
+    const { svc } = serviceWith({ current: { ...BEFORE_TEAM_METRICS, policyInstalled: true, teamMetricsRuns: runs } });
+    await svc.getState(local);
+    await svc.recordViewed(local, { type: 'team-metrics-viewed' });
+    assert.equal(store.readPerson('_local').live.teamMetricsOpenedAt, stamped, `${runs} runs`);
+  }
+});
+
+test('events over HTTP: 204 with no body; team-metrics-viewed before its preconditions writes nothing', async () => {
+  await get();
+  const r = await post('/api/worca-level/events', { type: 'stats-viewed' });
+  assert.equal(r.status, 204);
+  assert.equal(await r.text(), '');
+  assert.ok(store.readPerson('_local').live.statsViewedAt);
+  const bytes = storeBytes();
+  const tm = await post('/api/worca-level/events', { type: 'team-metrics-viewed' });
+  assert.equal(tm.status, 204);
+  assert.equal(storeBytes(), bytes);
+});
+
+test('tz: a valid zone is stored; an invalid one on GET is ignored and does not fail', async () => {
+  await checkRows([
+    { name: 'invalid tz is a normal 200', run: async () => {
+      for (const tz of ['Not/AZone', '', '../../etc', 'x'.repeat(300)]) {
+        const r = await get(`/api/worca-level?tz=${encodeURIComponent(tz)}`);
+        assert.equal(r.status, 200, tz);
+      }
+      assert.equal(store.readPerson('_local').tz, null);
+    } },
+    { name: 'a valid zone is stored', run: async () => {
+      assert.equal((await get('/api/worca-level?tz=Europe%2FParis')).status, 200);
+      assert.equal(store.readPerson('_local').tz, 'Europe/Paris');
+      assert.equal((await get('/api/worca-level?tz=Not%2FAZone')).status, 200);
+      assert.equal(store.readPerson('_local').tz, 'Europe/Paris', 'the invalid one did not replace it');
+    } },
+    { name: 'ack and events take tz from the body', run: async () => {
+      assert.equal((await post('/api/worca-level/ack', { what: 'welcome', tz: 'Asia/Tokyo' })).status, 200);
+      assert.equal(store.readPerson('_local').tz, 'Asia/Tokyo');
+      assert.equal((await post('/api/worca-level/events', { type: 'stats-viewed', tz: 'Not/AZone' })).status, 204);
+    } },
+  ]);
+});
+
+test('a store that cannot be read is a 500 with a friendly message and no internals', async () => {
+  mkdirSync(store.worcaLevelsFile(), { recursive: true });      // a directory where the file should be
+  try {
+    const r = await get();
+    assert.equal(r.status, 500);
+    const text = await r.text();
+    assert.deepEqual(JSON.parse(text), { error: 'Could not read your level.', code: 'WORCA_LEVEL_UNAVAILABLE' });
+    assert.ok(!text.includes(home), 'no path in the response');
+  } finally {
+    dropStore();
+  }
+});
+
+test('I-4: nothing in src/core/worca-levels imports setUiLevel or pinUiLevel', () => {
+  const dir = new URL('../src/core/worca-levels/', import.meta.url);
+  const files = readdirSync(dir).filter((f) => f.endsWith('.mjs'));
+  assert.ok(files.length > 0);
+  for (const f of files) {
+    const src = readFileSync(join(dir.pathname, f), 'utf8');
+    assert.doesNotMatch(src, /setUiLevel|pinUiLevel/, f);
+  }
 });
 
 test('two parallel first GETs create one record', async () => {

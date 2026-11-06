@@ -12,9 +12,7 @@ import { defaultRoot } from '../settings.mjs';
 import { writeJsonAtomic } from '../json-atomic.mjs';
 
 export const STORE_VERSION = 1;
-export const MAX_STATS_DAYS = 30;
 const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
-const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 export class WorcaLevelKeyError extends Error {
   constructor(key) {
@@ -118,37 +116,50 @@ export function updatePerson(key, fn) {
   });
 }
 
+function blankLive() {
+  return { addons: [], addonPeak: 0, spaces: false, statsViewedAt: null, teamMetricsOpenedAt: null };
+}
+
 function blankRecord(now) {
   return {
     level: 0,
     celebrated: 0,
     welcome: { kind: 'new', seenAt: null },
     doneAt: {},
-    live: { addons: [], spaces: false, statsDays: [], peakParallel: 0 },
+    tz: null,
+    live: blankLive(),
     createdAt: now,
     updatedAt: now,
   };
 }
 
+const isIso = (v) => typeof v === 'string' && v !== '' && Number.isFinite(Date.parse(v));
+
+// A latched timestamp keeps its first valid value; a later (or malformed) write changes nothing.
+const latch = (existing, incoming) => (isIso(existing) ? existing : isIso(incoming) ? incoming : null);
+
+/**
+ * Build the next `live` block from the stored one and a patch. Only the known keys survive, so a
+ * legacy block loses its removed fields. Never mutates `live` or `patch`.
+ */
 function mergeLive(live, patch) {
   const base = isObj(live) ? live : {};
-  const addons = Array.isArray(base.addons) ? base.addons : [];
-  const days = Array.isArray(base.statsDays) ? base.statsDays : [];
-  const peak = Number.isFinite(base.peakParallel) ? base.peakParallel : 0;
+  const addons = Array.isArray(base.addons) ? base.addons.filter((a) => typeof a === 'string') : [];
+  const peak = Number.isFinite(base.addonPeak) ? base.addonPeak : 0;
   const addon = typeof patch.addon === 'string' && patch.addon ? patch.addon : null;
-  const day = typeof patch.statsDay === 'string' && DAY_RE.test(patch.statsDay) ? patch.statsDay : null;
-  const nextPeak = Number.isFinite(patch.peakParallel) ? patch.peakParallel : 0;
+  const nextPeak = Number.isFinite(patch.addonPeak) ? patch.addonPeak : 0;
   return {
     addons: addon && !addons.includes(addon) ? [...addons, addon] : addons,
+    addonPeak: Math.max(peak, nextPeak),
     spaces: base.spaces === true || patch.space === true,
-    statsDays: day && !days.includes(day) ? [...days, day].slice(-MAX_STATS_DAYS) : days,
-    peakParallel: Math.max(peak, nextPeak),
+    statsViewedAt: latch(base.statsViewedAt, patch.statsViewedAt),
+    teamMetricsOpenedAt: latch(base.teamMetricsOpenedAt, patch.teamMetricsOpenedAt),
   };
 }
 
 /**
- * Merge a live event into `live`: { addon: id, space: true, statsDay: 'YYYY-MM-DD', peakParallel: n }.
- * Malformed values are ignored. Creates the record when absent.
+ * Merge a live event into `live`: { addon: id, addonPeak: n, space: true, statsViewedAt: ISO,
+ * teamMetricsOpenedAt: ISO }. Malformed values are ignored. Creates the record when absent.
  */
 export function recordLive(key, patch = {}) {
   const p = isObj(patch) ? patch : {};

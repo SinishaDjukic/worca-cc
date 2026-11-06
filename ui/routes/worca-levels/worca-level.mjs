@@ -1,9 +1,13 @@
 // ui/routes/worca-levels/worca-level.mjs — feature "worca-levels": the signed-in person's usage level.
 // Identity comes only from resolveIdentity(req) inside the service; no route reads a person parameter.
-import { createWorcaLevelService, WorcaLevelRequestError, personOf } from '../../../src/core/worca-levels/service.mjs';
-import { badRequest, emitChanged, isFreshInstall } from '../../server.mjs';
+// There is no route that sets an item, a level or doneAt: the level is derived from facts, and these routes
+// only read the view, acknowledge what was shown, and note that a screen was opened.
+import { createWorcaLevelService, WorcaLevelRequestError, VIEWED_TYPES } from '../../../src/core/worca-levels/service.mjs';
+import { emitChanged, isFreshInstall } from '../../server.mjs';
 
-const STATS_VIEWED = 'stats-viewed';
+const BAD_REQUEST = 'WORCA_LEVEL_BAD_REQUEST';
+const UNAVAILABLE = 'WORCA_LEVEL_UNAVAILABLE';
+const TYPE_MESSAGE = `type must be ${VIEWED_TYPES.map((t) => `"${t}"`).join(' or ')}`;
 
 let service = null;
 /** The one service instance, wired to the server's install check and change poke on first use. */
@@ -12,41 +16,36 @@ export function worcaLevelService() {
   return service;
 }
 
-const LIVE_STATUS = /^(running|starting|created|pausing)$/i;
-
-/** A run was just added to the runs map: record the starter's count of live runs as their peak (a shared install
- *  counts only the runs the same person started; a single install counts them all). Never throws. */
-export function noteRunStarted(runs, entry, req) {
-  const { person, shared } = personOf(req);
-  if (shared && !entry.startedBy) return;
-  const mine = (r) => r.kind === 'run' && LIVE_STATUS.test(String(r.status || '')) && (!shared || r.startedBy === entry.startedBy);
-  const peakParallel = [...runs.values()].filter(mine).length;
-  worcaLevelService().noteLiveEvent(shared ? entry.startedBy.toLowerCase() : person, { peakParallel })
-    .catch((err) => console.error(`[worca-levels] live run event not recorded: ${err?.message || err}`));
-}
+const refuse = (res, message) => res.status(400).json({ error: message, code: BAD_REQUEST });
 
 function fail(res, err) {
-  if (err instanceof WorcaLevelRequestError) return badRequest(res, err.message);
+  if (err instanceof WorcaLevelRequestError) return refuse(res, err.message);
   console.error('[worca-levels] request failed:', err?.stack || err);
-  return res.status(500).json({ error: 'Could not read your level.' });
+  return res.status(500).json({ error: 'Could not read your level.', code: UNAVAILABLE });
 }
+
+/** The IANA zone a client sent, or undefined; the service ignores one it cannot use. */
+const tzOf = (v) => (typeof v === 'string' ? v : undefined);
 
 export function register(app) {
 
 app.get('/api/worca-level', async (req, res) => {
-  try { res.json(await worcaLevelService().getState(req)); }
+  try { res.json(await worcaLevelService().getState(req, { tz: tzOf(req.query?.tz) })); }
   catch (err) { fail(res, err); }
 });
 
 app.post('/api/worca-level/ack', async (req, res) => {
-  try { res.json(await worcaLevelService().ack(req, { what: req.body?.what, index: req.body?.index })); }
-  catch (err) { fail(res, err); }
+  try {
+    const { what, index, tz } = req.body ?? {};
+    res.json(await worcaLevelService().ack(req, { what, index, tz: tzOf(tz) }));
+  } catch (err) { fail(res, err); }
 });
 
 app.post('/api/worca-level/events', async (req, res) => {
-  if (req.body?.type !== STATS_VIEWED) return badRequest(res, `type must be "${STATS_VIEWED}"`);
+  const { type, tz } = req.body ?? {};
+  if (!VIEWED_TYPES.includes(type)) return refuse(res, TYPE_MESSAGE);
   try {
-    await worcaLevelService().recordStatsViewed(req);
+    await worcaLevelService().recordViewed(req, { type, tz: tzOf(tz) });
     res.status(204).end();
   } catch (err) { fail(res, err); }
 });

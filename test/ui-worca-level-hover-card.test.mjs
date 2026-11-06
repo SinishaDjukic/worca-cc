@@ -14,7 +14,8 @@ afterEach(() => mock.timers.reset());
 
 const action = (id, done) => ({ id, label: `Label ${id}`, hint: `Hint ${id}`, href: `#/${id}`, done, doneAt: done ? 't' : null });
 const view = (over = {}) => ({
-  level: { index: 2, key: 'swimmer', name: 'Swimmer', description: 'd', avatar: '/assets/worca-levels/swimmer.svg' },
+  level: { index: 2, key: 'runner', name: 'Runner', tagline: 'Running real work', description: 'd', avatar: '/assets/worca-levels/runner.svg' },
+  nextLevel: { index: 3, key: 'hooked', name: 'Hooked' },
   progress: { done: 1, total: 4 },
   next: [action('a', true), action('b', false), action('c', false), action('d', false)],
   top: false,
@@ -66,33 +67,60 @@ test('a mouse that leaves before 250ms opens nothing', async () => {
   assert.equal(card(), null);
 });
 
-test('content: 40px avatar, name, Level n of 4, progress bar, up to 2 Try next links, Profile link', async () => {
+test('runner tooltip: 40px avatar, name, "Level 2 of 5 · tagline", Next: Hooked with 4 segments, 2 Try next links, Profile link', async () => {
   const { btn, card, fire, flush } = setup();
   fire(btn, 'mouseenter');
   mock.timers.tick(250);
   await flush();
   const c = card();
   const img = c.querySelector('img');
-  assert.deepEqual([img.getAttribute('src'), img.getAttribute('width'), img.getAttribute('height')], ['/assets/worca-levels/swimmer.svg', '40', '40']);
-  assert.equal(c.querySelector('.ohc-name').textContent, 'Swimmer');
-  assert.equal(c.querySelector('.ohc-level').textContent, 'Level 2 of 4');
-  const bar = c.querySelector('[role="progressbar"]');
-  assert.deepEqual([bar.getAttribute('aria-valuenow'), bar.getAttribute('aria-valuemax')], ['1', '4']);
+  assert.deepEqual([img.getAttribute('src'), img.getAttribute('width'), img.getAttribute('height')], ['/assets/worca-levels/runner.svg', '40', '40']);
+  assert.equal(c.querySelector('.wl-hc-name').textContent, 'Runner');
+  assert.equal(c.querySelector('.wl-hc-level').textContent, 'Level 2 of 5 · Running real work');
+  assert.match(c.querySelector('.wl-hc-next').textContent, /^Next: Hooked/);
+  assert.equal(c.querySelector('.wl-hc-next strong').textContent, 'Hooked');
   assert.match(c.textContent, /1 of 4 done/);
-  const next = [...c.querySelectorAll('.ohc-next a')].map((a) => [a.textContent, a.getAttribute('href')]);
-  assert.deepEqual(next, [['Label b', '#/b'], ['Label c', '#/c']], 'two not-done actions, each linking to its href');
-  const profile = c.querySelector('a.ohc-profile');
+  const seg = c.querySelector('.wl-seg');
+  assert.deepEqual([seg.getAttribute('aria-valuenow'), seg.getAttribute('aria-valuemax'), seg.getAttribute('data-size')], ['1', '4', 'sm']);
+  assert.equal(seg.querySelectorAll('.wl-seg-i').length, 4);
+  assert.equal(seg.querySelectorAll('.wl-seg-i[data-done="true"]').length, 1);
+  assert.equal(c.querySelector('.wl-hc-k').textContent, 'Try next');
+  const tries = [...c.querySelectorAll('a.wl-try')];
+  assert.deepEqual(tries.map((a) => a.getAttribute('href')), ['#/b', '#/c'], 'two not-done actions, each linking to its href');
+  assert.deepEqual([...tries[0].children].map((n) => n.textContent), ['Label b', '→', 'Hint b'], 'title, arrow, hint');
+  const profile = c.querySelector('a.wl-profile-link');
   assert.deepEqual([profile.textContent, profile.getAttribute('href')], ['See your level in Profile', '#profile/level']);
 });
 
-test('top level: the top message replaces Try next', async () => {
-  const top = setup({ getView: () => view({ top: true, level: { index: 4, key: 'pod-leader', name: 'Pod leader', description: 'd', avatar: '/p.svg' }, progress: { done: 9, total: 9 } }) });
+test('top tooltip has no segments: p.wl-top replaces Next, the segments and Try next', async () => {
+  const top = setup({ getView: () => view({ top: true, nextLevel: null, level: { index: 5, key: 'council', name: 'Council', tagline: 'Leading the pod', description: 'd', avatar: '/p.svg' }, progress: { done: 9, total: 9 } }) });
   top.fire(top.btn, 'mouseenter');
   mock.timers.tick(250);
   await top.flush();
-  assert.equal(top.card().querySelector('.ohc-next'), null);
-  assert.match(top.card().querySelector('.ohc-top').textContent, /top level/);
-  assert.equal(top.card().querySelector('.ohc-name').textContent, 'Pod leader');
+  const c = top.card();
+  assert.match(c.querySelector('p.wl-top').textContent, /top level/);
+  assert.equal(c.querySelector('.wl-seg'), null);
+  assert.equal(c.querySelector('.wl-hc-next'), null);
+  assert.equal(c.querySelector('a.wl-try'), null);
+  assert.equal(c.querySelector('.wl-hc-name').textContent, 'Council');
+  assert.equal(c.querySelector('.wl-hc-level').textContent, 'Level 5 of 5 · Leading the pod');
+  assert.ok(c.querySelector('a.wl-profile-link'));
+});
+
+test('Try next shows at most 2 not-done actions and only hash links; level 1 says "Your first steps"', async () => {
+  const rows = [
+    { name: 'a non-hash href is not a link', next: [{ ...action('x', false), href: 'https://example.com' }, action('y', false)], index: 2, links: ['#/y'], heading: 'Try next' },
+    { name: 'done actions are skipped, three open ones show two', next: [action('a', true), action('b', false), action('c', false), action('d', false)], index: 2, links: ['#/b', '#/c'], heading: 'Try next' },
+    { name: 'level 1 heading', next: [action('a', false)], index: 1, links: ['#/a'], heading: 'Your first steps' },
+  ];
+  for (const r of rows) {
+    const s = setup({ getView: () => view({ next: r.next, level: { index: r.index, key: 'curious', name: 'Curious', tagline: 't', description: 'd', avatar: '/c.svg' } }) });
+    s.fire(s.btn, 'mouseenter');
+    mock.timers.tick(250);
+    await s.flush();
+    assert.deepEqual([...s.card().querySelectorAll('a.wl-try')].map((a) => a.getAttribute('href')), r.links, r.name);
+    assert.equal(s.card().querySelector('.wl-hc-k').textContent, r.heading, r.name);
+  }
 });
 
 test('I-7: the card holds no input, select, textarea, checkbox or file picker', async () => {

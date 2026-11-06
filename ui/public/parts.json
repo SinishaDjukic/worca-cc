@@ -128,6 +128,7 @@
     "chat/chat-run-panel.css",
     "chat/chat-artifacts.css",
     "chat/chat-pinpoint.css",
+    "worca-level/worca-level.css",
     "chat/chat-home.css",
     "shape/shape-it.css",
     "runs/group-page.css",
@@ -144,7 +145,6 @@
     "runs/smart-naming.css",
     "network-proxy/proxy-settings.css",
     "settings/away-screensaver.css",
-    "worca-level/worca-level.css",
     "chat/card-nesting.css"
   ],
   "html": [

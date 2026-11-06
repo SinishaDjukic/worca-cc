@@ -8,7 +8,7 @@ import { JSDOM } from 'jsdom';
 import { BUDGET_WARN_AT } from '../ui/public/stats-view.mjs';
 import {
   spendRing, ringDash, spendPeriod, renderSpendCard, RING_R, MINI_R,
-  personInitials, describeAccount, accountLabel, paintAccountCorner, paintIdentityCard, paintAwayRow, renderLevelRow,
+  personInitials, describeAccount, accountLabel, paintAccountCorner, paintIdentityCard, paintAwayRow, renderLevelCard,
 } from '../ui/public/account-menu.mjs';
 import { describeAwayRow } from '../src/shared/away-mode/describe.mjs';
 import { createLevelController, levelMenuHtml, LEVEL_SHORT, LEVEL_INFO, UI_LEVELS } from '../ui/public/ui-level.mjs';
@@ -436,27 +436,83 @@ test('a failed save while the dialog is up shows its own line and does not call 
 const LEVEL_VIEW = { level: { index: 2, name: 'Swimmer' } };
 const APP_JS = readFileSync(new URL('../ui/public/app.js', import.meta.url), 'utf8');
 
-test('renderLevelRow: one "Your level" menu item with the level name and "Level n of 4", routed to #profile/level', () => {
-  const row = renderLevelRow(LEVEL_VIEW, { doc });
-  assert.equal(row.tagName, 'BUTTON');
-  assert.equal(row.getAttribute('type'), 'button');
-  assert.equal(row.getAttribute('role'), 'menuitem', 'keyboard reachable like the other rows');
-  assert.equal(row.id, 'acct-level');
-  assert.equal(row.dataset.nav, 'profile');
-  assert.equal(row.dataset.hash, 'profile/level');
-  assert.equal(row.querySelector('.mi-lbl').textContent, 'Your level');
-  assert.equal(row.querySelector('.mi-val').textContent, 'Swimmer · Level 2 of 4');
+const RUNNER_VIEW = {
+  level: { index: 2, name: 'Runner', avatar: '/assets/worca-levels/runner.svg' },
+  nextLevel: { name: 'Hooked' }, top: false, progress: { done: 1, total: 4, unit: 'done' },
+};
+const TOP_VIEW = { level: { index: 5, name: 'Worcaholic', avatar: '/assets/worca-levels/worcaholic.svg' }, top: true, progress: null };
+
+test('renderLevelCard: a menuitem button routed to #profile/level, ungated (R-po-1, R-po 16)', () => {
+  const card = renderLevelCard(RUNNER_VIEW, { doc });
+  assert.equal(card.tagName, 'BUTTON');
+  assert.equal(card.getAttribute('type'), 'button');
+  assert.equal(card.id, 'acct-level-card');
+  assert.ok(card.classList.contains('wl-card'));
+  assert.equal(card.getAttribute('role'), 'menuitem');
+  assert.equal(card.dataset.nav, 'profile');
+  assert.equal(card.dataset.hash, 'profile/level');
+  assert.equal(card.hasAttribute('data-min-level'), false, 'no role gate: Simple mode reaches it');
 });
 
-test('renderLevelRow: no role gate and no mode change, so Simple mode reaches it (R-po 16)', () => {
-  const row = renderLevelRow(LEVEL_VIEW, { doc });
-  assert.equal(row.hasAttribute('data-min-level'), false);
-  assert.equal(renderLevelRow({ level: { index: 4, name: 'Pod leader' } }, { doc }).querySelector('.mi-val').textContent, 'Pod leader · Level 4 of 4');
+test('renderLevelCard: avatar, name and "View level", then "To <Next>" with "d of t", then small segments', () => {
+  const card = renderLevelCard(RUNNER_VIEW, { doc });
+  const img = card.querySelector('img');
+  assert.deepEqual([img.getAttribute('src'), img.getAttribute('width'), img.getAttribute('height'), img.getAttribute('alt')], ['/assets/worca-levels/runner.svg', '22', '22', '']);
+  assert.equal(card.querySelector('.wl-card-name').textContent, 'Runner');
+  assert.equal(card.querySelector('.wl-card-go').textContent, 'View level');
+  assert.equal(card.querySelector('.wl-card-next').textContent, 'To Hooked');
+  assert.equal(card.querySelector('.wl-card-prog').textContent, '1 of 4');
+  const seg = card.querySelector('.wl-seg');
+  assert.equal(seg.getAttribute('data-size'), 'sm');
+  assert.equal(seg.querySelectorAll('.wl-seg-i[data-done]').length, 1);
+  assert.equal(seg.getAttribute('aria-hidden'), 'true', 'the progress is in the button name, not announced twice');
+  assert.equal(card.lastElementChild, seg);
 });
 
-test('renderLevelRow: nothing to show without a level view', () => {
-  assert.equal(renderLevelRow(null, { doc }), null);
-  assert.equal(renderLevelRow({}, { doc }), null);
+test('renderLevelCard: the accessible name carries the level, the next level and the progress', () => {
+  const card = renderLevelCard(RUNNER_VIEW, { doc });
+  assert.match(card.getAttribute('aria-label'), /^Runner, to Hooked, 1 of 4 done\. View level$/);
+  const days = renderLevelCard({ ...RUNNER_VIEW, progress: { done: 12, total: 30, unit: 'days' } }, { doc });
+  assert.equal(days.querySelector('.wl-card-prog').textContent, '12 of 30 days');
+  assert.equal(days.getAttribute('aria-label'), 'Runner, to Hooked, 12 of 30 days. View level');
+});
+
+test('renderLevelCard: the top level says so and has no row 2 and no segments', () => {
+  const card = renderLevelCard(TOP_VIEW, { doc });
+  assert.equal(card.querySelector('.wl-card-name').textContent, 'Worcaholic');
+  assert.match(card.textContent, /You've reached the top level\./);
+  assert.equal(card.querySelector('.wl-seg'), null);
+  assert.equal(card.querySelector('.wl-card-next'), null);
+  assert.equal(card.getAttribute('aria-label'), "Worcaholic, you've reached the top level. View level");
+});
+
+test('renderLevelCard: nothing to show without a level view', () => {
+  assert.equal(renderLevelCard(null, { doc }), null);
+  assert.equal(renderLevelCard({}, { doc }), null);
+});
+
+test('the level card sits directly above Interface mode (R-po-15) and never joins the mode pickers (R-po-1)', async () => {
+  const { createWorcaLevelWiring } = await import('../ui/public/worca-level/app-wiring.mjs');
+  const dom = new JSDOM(`<!doctype html><html data-level="advanced"><body><div id="acct-menu" role="menu"><div class="msect" role="group">${LEVEL_SHELL}</div></div>` +
+    '<div id="mode-modal" class="viewer-modal hidden"><div id="mode-cards"></div><small id="mode-msg" class="hint"></small><button type="button" id="mode-done">Done</button></div></body></html>');
+  const d = dom.window.document;
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: true, json: async () => RUNNER_VIEW });
+  try {
+    const wiring = createWorcaLevelWiring({ trigger: d.createElement('button'), menu: d.getElementById('acct-menu'), repaint() {}, isSettled: () => false, setupOpen: () => false, doc: d });
+    await wiring.boot();
+    await wiring.boot();
+  } finally { globalThis.fetch = realFetch; }
+  const card = d.getElementById('acct-level-card');
+  assert.equal(d.querySelectorAll('#acct-level-card').length, 1, 'a re-render replaces it, never duplicates');
+  assert.equal(card.nextElementSibling, d.getElementById('acct-lvl'));
+  const ctl = createLevelController({ doc: d, save: async (l) => ({ ok: true, level: l }) });
+  ctl.paint();
+  ctl.open(null);
+  const names = (sel) => [...d.querySelectorAll(sel)].map((o) => o.querySelector('.lv-opt-name, .lv-name, h3, strong')?.textContent.trim());
+  assert.deepEqual(names('#lvl-menu [data-level-choice]'), ['Simple', 'Advanced', 'Expert']);
+  assert.equal(d.querySelectorAll('#mode-cards [data-level-choice]').length, 3);
+  for (const host of ['#lvl-menu', '#mode-cards']) assert.doesNotMatch(d.querySelector(host).textContent, /Runner|Hooked|Curious|Council|Worcaholic/, `${host} lists modes only`);
 });
 
 test('the profile route: VIEW_NAMES lists it', () => {
