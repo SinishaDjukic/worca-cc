@@ -12,8 +12,9 @@
 //   picks: { key: { value, options: [[id, text, help]], tip, right } }, vals: { key: string | (sv) => string },
 //   sw: { key | flag, on, why, locked }, acts: [action], more: [rows], moreList: [records] }.
 // An action: { label, help, min, when(sv), off(sv) → why, read, go | edit | confirm | copy | do(sv) | page | click | say }.
-// A record: { title, meta, live(sv), detail, mark, fig, chip, sw, when(sv), menu: [labels] | (rec, sv) → labels,
-//   on: { label: (rec, x) → toast }, open: (rec, x) → toast }; Rename, Duplicate, Edit, Delete, Remove, Revoke, Uninstall
+// A record: { title, meta, live(sv), detail, mark, fig, chip, sw, when(sv), menu: [labels or { text, off, help }] | (rec, sv) → them, quick: [labels on the row's end],
+//   openMin, on: { label: (rec, x) → toast }, open: (rec, x) → toast }; a row opens only what it does not already show; a ⋯ with one item is a button.
+//   Rename, Duplicate, Edit, Delete, Remove, Revoke and Reject are shared (settings.js). `x` is { sv, remove, add, dialog, confirm, go, page, click }.
 //   and Reject are shared (settings.js). `x` is { sv, remove, add, dialog, confirm, go, page, click }.
 // A Dialog: { title, yes, note, facts, rows, fields, check(vals), then(vals, sv) → toast, done, view, steps: [{ label, … }] }.
 // A section: { title, meta, min, flag, actions: [action], rows, list, table, groups: [{ title, meta, rows | list, empty }] }.
@@ -216,12 +217,22 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
     menu: ['Change rule', 'Remove'],
     on: { 'Change rule': (r, x) => x.dialog({ title: `Rule for ${r.title}`, yes: 'Save', fields: [{ key: 'to', label: 'Move its ticket', value: r.move, options: [['none', 'Don\'t move'], ['done', 'Any Done status'], ...MOVES[r.tracker].map((m) => [m, m])] }], then: (v) => { r.move = v.to; r.meta = ruleWords(v.to); r.mark = ''; return `${r.title}: ${r.meta}`; } }) } });
 
-  const plugin = (title, meta, key, on, o = {}) => ({ title, meta, sw: { key, on }, mark: o.mark, menu: o.menu || ['Settings', 'Uninstall'],
+  const plugin = (title, meta, key, on, o = {}) => ({ title, meta, sw: { key, on }, mark: o.mark, menu: o.menu || ['Settings', 'Uninstall'], when: (sv) => installed(sv, title),
     on: {
       Settings: (r, x) => x.dialog({ title: `${title} settings`, fields: o.fields || [{ key: 'url', label: 'Address', value: o.url || '' }], done: `${title} saved` }),
       Update: (r) => { r.meta = meta.replace(' · 1 update', ''); r.mark = ''; r.menu = ['Settings', 'Uninstall']; return `${title} updated`; },
-      'Set up…': (r, x) => x.dialog({ title: `Set up ${title}`, yes: 'Save', fields: [{ key: 'tok', label: 'Bot token', value: '', hint: 'Kept in a file only you can read' }], then: (v, sv) => { r.meta = 'A chat channel · bot token set'; r.menu = ['Settings', 'Uninstall']; sv[key] = true; return `${title} is set up`; } }),
-    }, open: (r, x) => r.on[r.menu.includes('Set up…') ? 'Set up…' : 'Settings'](r, x) });
+      Uninstall: uninstall(title),
+    }, open: (r, x) => r.on.Settings(r, x) });
+  // A chat channel's plugin installs it and sets it up; its switch and state are Chat's, one link away.
+  const channelPlugin = (title, key) => ({ title, meta: 'A chat channel', when: (sv) => installed(sv, title),
+    live: (sv) => (sv.chToken[title] ? `A chat channel · ${channelState(sv, title, key) === 'Off' ? 'off' : 'on'} in Chat` : 'A chat channel · needs a bot token'),
+    menu: (r, sv) => (sv.chToken[title] ? ['Open in Chat', 'Settings', 'Uninstall'] : ['Set up…', 'Uninstall']),
+    on: {
+      'Open in Chat': (r, x) => x.go('ask'),
+      Settings: (r, x) => x.dialog({ title: `${title} settings`, yes: 'Save', fields: [{ key: 'allowed', label: 'Allowed chat IDs', value: x.sv.chAllowed[title] || '', hint: 'Replies from these chats count' }], then: (v, sv) => { sv.chAllowed = { ...sv.chAllowed, [title]: v.allowed }; return `${title} saved`; } }),
+      'Set up…': (r, x) => x.dialog({ title: `Set up ${title}`, yes: 'Save', fields: [{ key: 'tok', label: 'Bot token', value: '', hint: 'Kept in a file only you can read' }], check: (v) => (v.tok.trim() ? '' : 'It needs a bot token'), then: (v, sv) => { sv.chToken = { ...sv.chToken, [title]: true }; sv[key] = true; return `${title} is set up and on, in Chat`; } }),
+      Uninstall: uninstall(title),
+    }, open: (r, x) => (x.sv.chToken[title] ? x.go('ask') : r.on['Set up…'](r, x)) });
 
   // A tracker plugin keeps its own projects and rules; they fold under it, with Labs › Ticket updates on.
   const tracker = (title, id, meta, key, on, o, rules) => ({ ...plugin(title, meta, key, on, o), foldFlag: 'ticketUpdates', foldHelp: 'Ticket updates', moreList: rules.map((r) => ({ ...r, tracker: id })), empty: 'No project rules', more: [
@@ -545,10 +556,10 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
         { name: 'Connectors', say: 'Uses the **General** set: 3 servers, 2 skills', acts: [{ label: 'Open', go: 'connectors' }] },
       ] },
       { title: 'Channels', meta: 'Chat plugins that carry notifications and your replies. What each kind of update sends is in Notifications.', actions: [{ label: 'Add channel', page: 'marketplace', say: 'Opens the Marketplace, the store in the sidebar' }], list: [
-        channel('Telegram', 'chTelegram', { on: true, state: () => 'Connected', meta: 'Personal bot · last message 2h ago', fixed: 'Personal bot · last message 2h ago' }),
-        channel('Discord', 'chDiscord', { on: true, state: () => 'Connected', mark: 'is-amber', warn: true, chatId: '99812', meta: 'Commands are off: no chat is in Allowed chat IDs, so replies like /approve are ignored', fixed: 'Team server · replies count from allowed chats' }),
-        channel('Slack', 'chSlack', { on: false, state: () => 'Not set up', meta: 'Needs a bot token: Plugins › Slack › Settings', fixed: 'Workspace bot' }),
-        channel('Teams', 'chTeams', { on: false, state: () => 'Not set up', meta: 'Needs a bot token: Plugins › Teams › Settings', fixed: 'Team bot' }),
+        channel('Telegram', 'chTelegram', { on: true, meta: 'Personal bot · last message 2h ago' }),
+        channel('Discord', 'chDiscord', { on: true, chatId: '99812', meta: 'Team server · replies count from allowed chats', warn: 'Commands are off: no chat is in Allowed chat IDs, so replies like /approve are ignored' }),
+        channel('Slack', 'chSlack', { on: false, meta: 'Workspace bot' }),
+        channel('Teams', 'chTeams', { on: false, meta: 'Team bot' }),
       ], empty: 'No chat channels installed' },
       { title: 'Speech', min: 'expert', meta: 'Used by Chat\'s voice. The built-in engines run in your browser; audio never leaves this computer.', rows: [
         { name: 'Listening', say: 'Chat listens with {stt}', picks: { stt: P('whisper', O(['whisper', 'Whisper, in the browser'], ['server', 'your speech server']), 'The speech-to-text engine') }, more: [
@@ -609,13 +620,14 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
           tracker('GitHub Issues', 'github', 'A task source · worca-official', 'pIssues', false, { url: 'https://github.com/acme' }, [rule('acme/worca', 'closed')]),
         ] },
         { title: 'Chat channels', list: [
-          plugin('Telegram', 'A chat channel · bot token set', 'pTg', true, { fields: [{ key: 'allowed', label: 'Allowed chat IDs', value: '', hint: 'Replies from these chats count' }] }),
-          plugin('Discord', 'A chat channel · bot token set', 'pDiscord', true, { fields: [{ key: 'allowed', label: 'Allowed chat IDs', value: '', hint: 'Replies from these chats count' }] }),
-          plugin('Slack', 'A chat channel · needs a bot token', 'pSlack', false, { menu: ['Set up…', 'Uninstall'] }),
-          plugin('Teams', 'A chat channel · needs a bot token', 'pTeams', false, { menu: ['Set up…', 'Uninstall'] }),
+          channelPlugin('Telegram', 'chTelegram'),
+          channelPlugin('Discord', 'chDiscord'),
+          channelPlugin('Slack', 'chSlack'),
+          channelPlugin('Teams', 'chTeams'),
         ] },
         { title: 'Others', list: [
           plugin('Notion', 'An MCP server · worca-official', 'pNotion', true, { url: 'https://mcp.notion.com' }),
+          plugin('Sentry', 'An MCP server · worca-official', 'pSentry', true, { url: 'https://mcp.sentry.dev' }),
         ] },
       ] },
     ] },
@@ -713,7 +725,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
   ];
   const NOTIFICATIONS = { title: 'Notifications', meta: 'Pulse keeps everything; these choices say what else reaches you.' };
   window.SettingsModel = {
-    GROUPS, SECTIONS, FLAGS, STATE, FIRST: 'runs',
+    GROUPS, SECTIONS, FLAGS, STATE, FIRST: 'runs', workingChannels,
     title: (id) => (id === 'notifications' ? NOTIFICATIONS : SECTIONS[id] || { title: id }).title,
     meta: (id) => (id === 'notifications' ? NOTIFICATIONS : SECTIONS[id] || { meta: '' }).meta,
     min: (id) => (SECTIONS[id] || {}).min || '',

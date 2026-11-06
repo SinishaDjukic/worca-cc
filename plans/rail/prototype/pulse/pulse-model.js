@@ -48,6 +48,9 @@
     { id: 'chat', text: 'chat', help: 'Also a message to your chat channels (Telegram, Discord, Slack, Teams)' },
     { id: 'both', text: 'desktop and chat', help: 'Also a desktop notification and a chat message' },
   ];
+  // Notifications' other sentences: each reads right for every choice (gates/settings-sentences.mjs).
+  const BADGE = [{ id: 'needs', text: 'counts what needs you', help: 'The tab title, the favicon\'s dot and the app icon show while 2 runs wait for you' }, { id: 'problems', text: 'counts what needs you and problems', help: 'Also unread problems: a failed run, a missed start, a limit' }, { id: 'none', text: 'shows no count', help: 'The tab title never shows a count' }];
+  const chatWords = (names) => (names.length ? `Sent to ${names.join(', ')}` : 'No chat channel is working');
   const RANK = { needs: 0, problem: 1, info: 2 };
   const LEVEL_MAX = { needs: 0, problems: 1, all: 2 };
   const qualifies = (level, sev) => RANK[sev] <= LEVEL_MAX[level];
@@ -358,5 +361,5 @@
   // The Prototype corner's new event, one per severity, so the sound can be tried. Each is a fresh update.
   const TRY = { needs: ['run.questions', 'Rename settings keys', 'worca-cc · 1 question', 'run/question'], problem: ['run.failed', 'Fix the flaky e2e test', 'worca-cc · it stopped at Review', 'run/failed'], info: ['run.done', 'Update the changelog', 'docs-site · ready', 'run/ready'] };
   const tryEvent = (sev, n) => { const [e, about, meta, go] = TRY[sev]; return { ...up('try-' + n, e, about, meta, 'now', 'Today', { go }), unread: true }; };
-  window.PulseModel = { tryEvent, refreshed, withQuota, vitalsRuns, awayRow, awayLine, FINDS, FLAG_ROW, find, EVENT, CHANNELS, SCHED, GROUPS, LEVELS, WHERE, PROVIDER, CASES, SIZES, N, WHAT, qualifies, tone, rings, limits, near, room, est, winWord, fig, usd, spendPct };
+  window.PulseModel = { tryEvent, refreshed, withQuota, vitalsRuns, awayRow, awayLine, FINDS, FLAG_ROW, find, EVENT, BADGE, chatWords, SCHED, GROUPS, LEVELS, WHERE, PROVIDER, CASES, SIZES, N, WHAT, qualifies, tone, rings, limits, near, room, est, winWord, fig, usd, spendPct };
 })();

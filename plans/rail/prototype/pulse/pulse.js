@@ -379,9 +379,9 @@ function notifications() {
     : R.settingsRow({ name: 'Desktop', sentence: 'Desktop notifications in this browser', end: R.button({ label: 'Send test', kind: 'quiet', attrs: { 'data-test': '', disabled: s.desktop !== 'on', title: s.desktop === 'on' ? 'Sends one test notification' : 'Turn desktop notifications on to send a test' } })
       + R.switchButton({ on: s.desktop === 'on', label: 'Desktop notifications in this browser', why: s.desktop === 'on' ? 'On: what a group sends to desktop shows as a notification' : 'Off: no desktop notifications from any group', attrs: { 'data-desk': '' } }) });
   const channels = desk
-    + R.settingsRow({ name: 'Badge', sentence: `The tab title counts ${sp('badge', BADGE.find((b) => b.id === s.badge).text, BADGE.map((b) => ({ ...b, checked: b.id === s.badge })), 'What the count in the tab title counts')}` })
-    + R.settingsRow({ name: 'Sound', sentence: `Play a sound for ${sp('sound', R.SOUND_CHOICES.find((x) => x.id === s.sound).text, R.SOUND_CHOICES.map((x) => ({ ...x, checked: x.id === s.sound })), 'What makes a sound as it arrives. Never during away hours; a burst plays once')}` })
-    + R.settingsRow({ name: 'Chat', sentence: `Sent to ${M.CHANNELS.length} channels: ${M.CHANNELS.join(', ')}`, end: quiet('Manage', { 'data-sset': 'ask', title: 'Channels, mute and allow-lists are in Settings › Chat' }) });
+    + R.settingsRow({ name: 'Badge', sentence: `The tab title ${sp('badge', BADGE.find((b) => b.id === s.badge).text, BADGE.map((b) => ({ ...b, checked: b.id === s.badge })), 'What the count in the tab title counts')}` })
+    + R.settingsRow({ name: 'Sound', sentence: `${sp('sound', R.SOUND_CHOICES.find((x) => x.id === s.sound).text, R.SOUND_CHOICES.map((x) => ({ ...x, checked: x.id === s.sound })), 'What makes a sound as it arrives. Never during away hours; a burst plays once')}` })
+    + R.settingsRow({ name: 'Chat', sentence: esc(M.chatWords(SM.workingChannels(ui.sv))), end: R.shows('advanced', R.prefs.mode()) ? quiet('Channels', { 'data-sset': 'ask', title: 'Their switches and allow-lists are in Settings › Chat' }) : '' });
   const groups = groupsShown().map((g) => {
     const gs = s.groups[g.id], open = ui.custom === g.id, nEx = Object.keys(gs.ex).length;
     const detailRows = open ? g.events.map((ev) => {
