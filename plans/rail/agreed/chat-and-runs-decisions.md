@@ -1,7 +1,7 @@
 # Agreed · Rail for Chat and Runs: the first decisions (Wave 2)
 
-Decided 5 Nov 2026 (C1–C4, then C6). Wave 2 redesigns the daily loop toward the chat-first Worca (Wave 6). The rest of Wave 2 is still being
-shaped (`docs/rail-shaping`, `plans/rail/shaping/chat-and-runs.md`); these four choices hold.
+Decided 5 Nov 2026 (C1–C4, then C6). Wave 2 redesigns the daily loop toward the chat-first Worca (Wave 6). The rest of Wave 2 is still to be
+shaped; these choices hold.
 
 | # | Choice | Decided | Why |
 |---|---|---|---|

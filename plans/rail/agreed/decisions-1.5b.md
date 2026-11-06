@@ -1,4 +1,4 @@
-# Shaping · Wave 1.5 b: the decisions Wave 1 left open
+# Agreed · Wave 1.5 b: the decisions Wave 1 left open
 
 Status: **agreed** 5 Nov 2026: all six recommendations (`docs/rail-agreed`, enrolled with Wave 1.5). Each slice of Wave 1
 built a default so it could ship; these are the choices behind those defaults, and the recommendation is the decision.

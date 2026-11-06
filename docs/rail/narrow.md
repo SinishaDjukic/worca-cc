@@ -9,8 +9,9 @@
 
 A narrow page holds everything the wide one does: things move, they are never dropped. Two widths decide it, and the
 prototype does both at 375px.
-- **760px of window and below:** the trail becomes one link, `‹ Parent`; the sidebar becomes its rail of icons and the
-  avatar; a panel or Dialog takes the window's width; a menu stays 16px inside it.
+- **1080px of window and below:** the sidebar becomes its rail of icons (60px), so every place stays one tap away.
+- **760px of window and below:** the trail becomes one link, `‹ Parent`; the sidebar becomes a drawer, because a rail
+  would take a sixth of a phone's width; a panel or Dialog takes the window's width; a menu stays 16px inside it.
 - **520px of content and below** (the card or panel's own width): side by side becomes one above the other, on the
   same text edge:
   - the StatusLine's action slot moves under the state word and its detail; the main step and its ▾ stay whole, and

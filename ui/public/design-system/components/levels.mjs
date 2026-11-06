@@ -10,3 +10,19 @@ export const RUN_PAGE_LEVELS = { logs: 'advanced', graph: 'advanced', agents: 'e
 
 /** Whether a part of the run page shows in `mode`. A part with no level shows in every mode. */
 export const runPartShows = (part, mode) => atLevel(mode, RUN_PAGE_LEVELS[part] || 'simple');
+
+// The person's interface mode and Labs flags, one store for a page and its parts: the profile menu and Labs write it,
+// a page reads it and draws again when it changes. Starts as the caller sets it; nothing is saved here.
+function createPrefs() {
+  let mode = 'expert'; const flags = new Map(); const subs = new Set();
+  const changed = () => subs.forEach((fn) => fn());
+  return {
+    mode: () => mode,
+    setMode(m) { rank(m); mode = m; changed(); },
+    flag: (k) => !!flags.get(k),
+    setFlag(k, on) { flags.set(k, !!on); changed(); },
+    onChange(fn) { subs.add(fn); return () => subs.delete(fn); },
+  };
+}
+export const prefs = createPrefs();
+export const shows = (need, mode = prefs.mode()) => !need || atLevel(mode, need);

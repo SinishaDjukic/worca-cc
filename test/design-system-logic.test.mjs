@@ -87,3 +87,12 @@ test('interface mode: four tabs always; Logs and the graph Advanced, Agents and 
   assert.ok(R.runPartShows('overview', 'simple'));
   assert.throws(() => R.atLevel('nope'), /unknown mode/);
 });
+
+test('prefs: one mode and one set of Labs flags; a change tells who listens', () => {
+  const seen = []; const off = R.prefs.onChange(() => seen.push(R.prefs.mode()));
+  R.prefs.setMode('simple'); assert.ok(!R.shows('advanced')); assert.ok(R.shows(''));
+  R.prefs.setMode('expert'); R.prefs.setFlag('x', true); assert.ok(R.prefs.flag('x')); off();
+  R.prefs.setMode('advanced'); R.prefs.setMode('expert');
+  assert.deepEqual(seen, ['simple', 'expert', 'expert']);
+  assert.throws(() => R.prefs.setMode('nope'));
+});

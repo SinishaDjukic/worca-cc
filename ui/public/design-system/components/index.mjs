@@ -30,4 +30,4 @@ export { table } from './table.mjs';
 export { fill, runState, stateIds, actionHelp, actionFlow, runFlow, makeAction, memberKeeps, sectionOf, isDone, isLiveStep, stageState, subState, stepLook, defaultStage, stageMeta, toMin, fmtMin, STAGE_WORD } from './run-state.mjs';
 export { workingWord, confirmOf, failureOf, stepFlow } from './step-flow.mjs';
 export { foldMiddle, workParts, workPhrase, workPlace } from './work-place.mjs';
-export { MODES, atLevel, RUN_PAGE_LEVELS, runPartShows } from './levels.mjs';
+export { MODES, atLevel, RUN_PAGE_LEVELS, runPartShows, prefs, shows } from './levels.mjs';

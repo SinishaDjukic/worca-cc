@@ -213,6 +213,16 @@ The **Auto** workflow option is available for both targets — a project and a w
 | Graph node totals, fan and execution strips, Away mode chips and bands, loop badges | E |
 | Agents tab, worktree row, Auto proposal tunables table | E |
 
+### The Rail run page
+
+Rail's run page (`docs/rail/thing-page.md`) has one rule in place of the rows above, in code as `runPartShows`:
+
+| Element | Level |
+|---|---|
+| All four tabs: Overview, Changes, Activity, Decisions | S |
+| Inside them: the Logs and the Workflow graph | A |
+| Inside them: Agents and the log filters | E |
+
 ### History
 
 | Element | Level |
@@ -394,7 +404,7 @@ missing (`data-needs-git`), at every level.
 | Statistics page | A |
 | Statistics: the Requirements tile (spend, features, a link to the page; behind the `requirements` flag), the Requirements row in the Group by tables and in the Cost report (money already spent there stays listed while the flag is off) | A — with the page |
 | Team metrics page and every surface of it elsewhere | E |
-| Team policy page and its Policy / Plugins / Catalog tabs | E |
+| Team policy page and its Policy / Plugins / Catalog tabs | E (in Rail: A to read, E to change) |
 | Team-policy notes on New pipeline; the team caps readout under Budget & cost limits | all — a team cap applies in every mode, so the reason it applies is never hidden |
 | The Installed tab's Team policy card and the setup checklist (the Marketplace page) | A — with the page that holds them |
 | Ask: chat, history, attachments, run card (its progress bar and stage text), proposal title / project / workflow / brief / Start | S |
