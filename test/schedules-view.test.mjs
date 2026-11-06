@@ -79,6 +79,17 @@ test('a row that follows a preset names it; a deleted preset says the next run w
   } finally { view.destroy(); }
 });
 
+test('a request that carries a pr shows a Pull request row in Details; one without shows none', async () => {
+  const withPr = ticketAt('t_pr', 3600_000, { summary: { ...summary, pr: { open: 'draft', slices: 'one' } } });
+  const without = ticketAt('t_nopr', 7200_000);
+  const view = await mount({ tickets: [withPr, without] });
+  try {
+    const rows = (id) => [...document.querySelector(`[data-id="${id}"]`).querySelectorAll('.sched-kv')].map((r) => r.textContent);
+    assert.ok(rows('t_pr').includes('Pull requestCreate a draft PR · One PR for the whole feature'), rows('t_pr').join('|'));
+    assert.equal(rows('t_nopr').some((t) => t.startsWith('Pull request')), false);
+  } finally { view.destroy(); }
+});
+
 test('run 4 D22: feed messages read as plain words; the raw detail is kept for the tooltip', async () => {
   const { plainFeedMessage } = await import('../ui/public/schedules-view.mjs');
   assert.deepEqual(plainFeedMessage('paused (drain): Paused while worca was stopping'),

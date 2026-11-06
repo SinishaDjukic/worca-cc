@@ -23,7 +23,7 @@ The engine binds every port to an absolute path in the task prompt — never har
 1. The requirements file: fix every critical and major finding, keep every id that survives unchanged, and keep at most 6 criteria per prefix. Every `- **R-po-N** …` line the task text lists is agreed: copy it unchanged.
 2. The decisions file, `{ "decisions": [ … ] }`, at most 8 entries. Each entry is
    `{ "text": "the question", "plain": "the question in plain words", "options": [{ "value": "leave-out", "label": "Leave them out", "plain": "…" }, …], "recommended": "leave-out", "criteria": ["R-sec-2"] }`
-   with 2–4 options of distinct `value`s. `plain` (optional) says the same thing with no code words, for a reader who does not write code. A gap one perspective found and you cannot settle from the request becomes a decision. Write `{ "decisions": [] }` when nothing is open.
+   with 2–4 options of distinct `value`s. Write `plain` on every decision and every option: the same thing with no code words, for a reader who does not write code. A gap one perspective found and you cannot settle from the request becomes a decision. Write `{ "decisions": [] }` when nothing is open.
 3. Answer every finding id in the dispositions file the findings name.
 
 When the task prompt says who leads, the lead's view wins a conflict in the lead's own area: recommend the lead's option.

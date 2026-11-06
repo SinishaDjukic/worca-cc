@@ -964,8 +964,8 @@ const SHOTS = [
   { name: 'composer', level: 'advanced', hash: () => 'workflows',
     prep: async () => { await until2('document.querySelector(\'#wfv-library #wfl-tab-workflows\')', 'the Library selector'); await click('#wfv-library #wfl-tab-workflows');
       await until2('document.querySelector(\'#wfv-library .wfl-folder[data-folder^="workflows/"], #wfv-library .wfl-wf[data-id="wf_default"]\')', 'the Workflows section');
-      // Default sits in its domain's folder whenever Workflows holds more than one domain: expand it in place (a click folds an open one).
-      await ev("(()=>{const p=window.__wfv.library().folderOf('workflow','wf_default');const e=p.length>1&&[...document.querySelectorAll('#wfv-library .wfl-folder')].find((f)=>f.dataset.folder===p.join('/'));if(e&&e.getAttribute('aria-expanded')!=='true')e.click();return 1;})()");
+      // Default sits in Workflows › Built-in (in its domain's folder when the built-ins span several): open every folder on its path.
+      await ev("(()=>{const L=window.__wfv.library();L.openFolder(L.folderOf('workflow','wf_default'));return 1;})()");
       await until2('document.querySelector(\'#wfv-library .wfl-wf[data-id="wf_default"] .wfl-main\')', 'workflow list'); await click('#wfv-library .wfl-wf[data-id="wf_default"] .wfl-main');
       await until2("document.querySelectorAll('#wfv-canvas .gv-world .node').length >= 4", 'agent nodes'); } },
   { name: 'stats', level: 'advanced', hash: () => 'stats',

@@ -9,6 +9,7 @@ import { readWorkspace as realReadWorkspace, isGitRepo as realIsGitRepo, memberW
 import { readWorkflow as realReadWorkflow, assertRunnableWorkflow as realAssertRunnableWorkflow, GRAPH_MEMORY_DEFRAG_WORKFLOW } from '../workflows.mjs';
 import { readGuardrailSet as realReadGuardrailSet } from '../guardrail-store.mjs';
 import { validateMemoryScope } from '../memory-sync.mjs';
+import { checkRunPrBody } from '../pr-auto.mjs';
 import { isWorkspaceScanWorkflow, GRAPH_SHAPE_WORKFLOW, GRAPH_SHAPE_UX_WORKFLOW, GRAPH_SHAPE_REQ_WORKFLOW, GRAPH_SHAPE_UX_REQ_WORKFLOW, AUTO_WORKFLOW_ID, SHAPE_UX_WORKFLOW_ID } from '../graph/builtin-workflows.mjs';
 import { sanitizeBranchName } from '../worktree.mjs';
 import { deriveBranchName } from '../naming.mjs';
@@ -406,6 +407,14 @@ export function createProposalValidator({
       if (typeof inp.guardrailsId !== 'string') { errors.push(PROPOSAL_ERRORS.guardrailsType); guardrailsId = null; }
       else guardrailsId = inp.guardrailsId.trim() || 'normal';
     }
+    // ── pr (open a PR when the run finishes): the check POST /api/run makes; slices means nothing to a workspace or a no-project run ──
+    let cardPr = null;
+    if (inp.pr !== undefined && inp.pr !== null) {
+      const checked = checkRunPrBody(inp.pr);
+      if (!checked.ok) errors.push(checked.error);
+      else if (checked.pr && target.target !== 'none') cardPr = target.target === 'workspace' && checked.pr.slices ? (checked.pr.open ? { open: checked.pr.open } : null) : checked.pr;
+    }
+
     if (guardrailsId === 'permissive') errors.push(PROPOSAL_ERRORS.permissive);
     else if (guardrailsId && !(await readGuardrailSet(guardrailsId))) errors.push(PROPOSAL_ERRORS.unknownGuardrails(guardrailsId));
 
@@ -578,6 +587,8 @@ export function createProposalValidator({
         ...(sourceWarning ? { sourceWarning } : {}),
         // Only a proposal that names an engine: the card otherwise starts on the default, like New pipeline.
         ...(engine ? { engine } : {}),
+        // Only a proposal that asks for a PR when the run finishes.
+        ...(cardPr ? { pr: cardPr } : {}),
         // Only when the source is remote-only, behind its remote or unverifiable (offline).
         ...(sourceRef ? { sourceRef } : {}),
         // Only a proposal with per-agent picks: { nodeId: { model, effort, subagentModel?, reason?, facts? } } and the

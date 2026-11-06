@@ -191,10 +191,11 @@ function bindStatusOnce(host, paint, events) {
 }
 export const readEngineSection = (host) => readDirtyFields(host);
 
-/** The Claude / Codex / … engine switch (Expert). Used by the Engines card and the Roles card. `onPick(engine)`
- *  is called on a click; returns { el, pick } where pick(engine) sets the pressed button. */
-export function engineSwitch(doc, engines, onPick) {
-  const sw = doc.createElement('div'); sw.className = 'seg engine-switch'; sw.setAttribute('role', 'group'); sw.setAttribute('aria-label', 'Engine'); sw.dataset.minLevel = 'expert';
+/** The Claude / Codex / … engine switch (Expert unless `minLevel` says otherwise; null = every level). Used by the
+ *  Engines card and the Roles card. `onPick(engine)` is called on a click; returns { el, pick } where pick(engine)
+ *  sets the pressed button. */
+export function engineSwitch(doc, engines, onPick, { minLevel = 'expert' } = {}) {
+  const sw = doc.createElement('div'); sw.className = 'seg engine-switch'; sw.setAttribute('role', 'group'); sw.setAttribute('aria-label', 'Engine'); if (minLevel) sw.dataset.minLevel = minLevel;
   for (const engine of engines) {
     const btn = doc.createElement('button'); btn.type = 'button'; btn.dataset.engine = engine; btn.textContent = engineLabel(engine);
     if (isBetaEngine(engine)) { const beta = doc.createElement('span'); beta.className = 'flag-chip flag-chip-beta beta-badge'; beta.textContent = 'Beta'; btn.append(beta); }
@@ -205,15 +206,19 @@ export function engineSwitch(doc, engines, onPick) {
 }
 
 const ROLES_HOST = new WeakMap();
-/** The Roles card body (Models page): per harness, one model + effort row per role. Binds its listeners once per host. */
-export function renderRolesSection(host, { roles = {}, catalog = [], engine = 'claude', status = null, onChange = null } = {}) {
+/** The Roles card body (Models page, setup assistant): per harness, one model + effort row per role. Binds its
+ *  listeners once per host. `engines`: the harnesses to show (every engine with roles by default; the setup assistant
+ *  passes the ready ones); `switchLevel`: the engine switch's level (Expert on the Models page, every level in setup). */
+export function renderRolesSection(host, { roles = {}, catalog = [], engine = 'claude', engines = ROLE_HARNESSES, switchLevel = 'expert', status = null, onChange = null } = {}) {
   const doc = host.ownerDocument; host.replaceChildren();
-  const first = ROLE_HARNESSES.includes(engine) ? engine : 'claude';
+  const shown = ROLE_HARNESSES.filter((h) => engines.includes(h));
+  if (!shown.length) shown.push('claude');
+  const first = shown.includes(engine) ? engine : shown[0];
   const panels = {};
   const show = (h) => { for (const [e, p] of Object.entries(panels)) p.hidden = e !== h; sw.pick(h); };
-  const sw = engineSwitch(doc, ROLE_HARNESSES, show);
-  host.append(sw.el);
-  for (const h of ROLE_HARNESSES) {
+  const sw = engineSwitch(doc, shown, show, { minLevel: switchLevel });
+  if (shown.length > 1) host.append(sw.el);
+  for (const h of shown) {
     const panel = doc.createElement('section'); // Not .engine-card: that class names the Engines card's own panels.
     panel.className = 'roles-engine'; panel.dataset.engine = h;
     panel.append(Object.assign(doc.createElement('h3'), { className: 'engine-card-name', textContent: engineLabel(h) }));
@@ -304,10 +309,21 @@ export function renderAskEngineSection(host, { catalog = [], askEngine, askModel
   // card says to add one.
   const others = CHAT_ENGINE_NAMES.filter((e) => e !== 'claude');
   const offered = Object.fromEntries(others.map((e) => [e, catalog.some((m) => m && m.engine === e)]));
-  const unavailable = (e) => (engineLock(e) !== null ? `Chat on ${engineLabel(e)} is off while the credential broker is on, so new chats start on Claude.`
-    : ENGINES[e].signin ? `Chat on ${engineLabel(e)} needs a ${engineLabel(e)} model: add one on the Models page.`
-      : `Chat on ${engineLabel(e)} is unavailable on this ${e} version, so new chats start on Claude.`);
-  const notes = others.filter((e) => !offered[e]).map(unavailable).join(' ');
+  // One sentence per reason, the engines named in a natural list; "new chats start on Claude" is said once at the end.
+  const list = (names) => (names.length < 2 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`);
+  const missing = others.filter((e) => !offered[e]);
+  const broker = missing.filter((e) => engineLock(e) !== null);
+  const rest = missing.filter((e) => engineLock(e) === null);
+  const needModel = rest.filter((e) => ENGINES[e].signin);
+  const sentences = [];
+  if (broker.length) sentences.push(`Chat on ${list(broker.map(engineLabel))} is off while the credential broker is on.`);
+  if (needModel.length === 1) sentences.push(`Chat on ${engineLabel(needModel[0])} needs a ${engineLabel(needModel[0])} model: add one on the Models page.`);
+  else if (needModel.length > 1) sentences.push(`Chat on ${list(needModel.map(engineLabel))} needs a model of their own: add one for each on the Models page.`);
+  const oldVersion = rest.filter((x) => !ENGINES[x].signin);
+  if (oldVersion.length === 1) sentences.push(`Chat on ${engineLabel(oldVersion[0])} is unavailable on this ${oldVersion[0]} version.`);
+  else if (oldVersion.length > 1) sentences.push(`Chat on ${list(oldVersion.map(engineLabel))} is unavailable on these engine versions.`);
+  if (broker.length || rest.length > needModel.length) sentences.push('New chats start on Claude.');
+  const notes = sentences.join(' ');
   host.append(renderInheritField(doc, { id: 'askEngine', label: 'Engine for new chats', kind: 'select', level: 'user',
     hint: `New chats start here. A chat can move to another engine later, from its model picker.${notes ? ` ${notes}` : ''}`,
     options: [{ value: 'claude', label: 'Claude' }, ...others.map((e) => ({ value: e, label: offered[e] ? engineChoiceLabel(e) : `${engineLabel(e)} (unavailable)` }))],

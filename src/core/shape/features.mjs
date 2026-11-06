@@ -59,7 +59,7 @@ export function sliceRequest({ feature, index, outline, perspectives, workflowId
  *  slice-1 pipeline: an earlier active feature of the same run is cancelled and marked replanned (§5.3 note). */
 // node:sqlite refuses to bind `undefined`: every bound value has a default.
 export function createSliceFeature({ pipelineId, projectDir, title, outline, proposed = null, merges = 0, removals = 0,
-  approveEach = false, perspectives, workflowId, base = {}, replaces = null, startedBy = null, now = Date.now() }) {
+  approveEach = false, perspectives, workflowId, base = {}, replaces = null, startedBy = null, pr = null, now = Date.now() }) {
   const db = getDb();
   const id = `feat_${randomUUID().replace(/-/g, '').slice(0, 12)}`;
   const ts = iso(now);
@@ -88,6 +88,10 @@ export function createSliceFeature({ pipelineId, projectDir, title, outline, pro
       addSlice.run(id, k, s.id, s.title, t.id, null);
       prev = { kind: 'ticket', id: t.id };
     }
+    // I3 (PR when done): the decision is written here and nowhere else. A re-plan keeps the replaced feature's, source included.
+    const kept = replaces ? db.prepare('SELECT pr_open, pr_slices, pr_source FROM shape_features WHERE id = ?').get(String(replaces)) : null;
+    const stored = kept && kept.pr_open ? kept : pr ? { pr_open: pr.open, pr_slices: pr.slices, pr_source: JSON.stringify(pr.source || {}) } : null;
+    if (stored) db.prepare('UPDATE shape_features SET pr_open = ?, pr_slices = ?, pr_source = ? WHERE id = ?').run(stored.pr_open, stored.pr_slices, stored.pr_source, id);
     if (replaces) markReplaced(replaces, id, ts);
   });
   return { id, total };
@@ -438,6 +442,23 @@ export function currentFeatureId(id) {
     cur = r.replaced_by;
   }
   return cur;
+}
+
+/** The first feature of a Re-plan the rest chain (walks `replaces` back; bounded and cycle-safe): its `source_branch` is the
+ *  branch the whole feature merges into, which a later re-plan run's own source (the last done slice's branch) is not. */
+export function featureRootSource(featureId) {
+  const q = getDb().prepare('SELECT source_branch, replaces FROM shape_features WHERE id = ?');
+  const seen = new Set();
+  let cur = String(featureId); let row = null;
+  for (let i = 0; i < REPLAN_HOPS && !seen.has(cur); i++) {
+    seen.add(cur);
+    const r = q.get(cur);
+    if (!r) break;
+    row = r;
+    if (!r.replaces) break;
+    cur = r.replaces;
+  }
+  return row?.source_branch || null;
 }
 
 /** Shaper s2 (D10): what the Chat feature card reads for the run its thread started — the feature view (log and open

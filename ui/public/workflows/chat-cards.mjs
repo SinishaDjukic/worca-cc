@@ -177,7 +177,7 @@ export function createCardController({ doc, composer, sessionId, client, actions
       if (d.state === 'proposed') { const s = await saveDraft(d); if (!s.ok) return; }
     }
     if ((c.drafts || []).length) await act('reloadRegistry');
-    const prev = { tpl: JSON.parse(JSON.stringify(composer.template())), dirty: composer.isDirty(), origin: composer.origin() };
+    const prev = { tpl: JSON.parse(JSON.stringify(composer.template())), dirty: composer.isDirty(), origin: composer.origin(), copyOf: composer.copyOf() };
     composer.loadDraft({ name: c.name, domain: c.domain, nodes: c.workflow.nodes, wires: c.workflow.wires });
     enterAnimation();
     fitAboveDock();
@@ -194,7 +194,7 @@ export function createCardController({ doc, composer, sessionId, client, actions
         const undo = button('Undo', 'wfc-link', async () => {
           if (!lastBuild || !undoLive(lastBuild, b.id)) return;
           const p = lastBuild.prev;
-          composer.loadTemplate({ ...p.tpl, origin: p.origin });
+          composer.loadTemplate({ ...p.tpl, origin: p.origin }, { copyOf: p.copyOf });          // an unsaved copy comes back as a copy (#1127)
           if (p.dirty) composer.setName(p.tpl.name || '');          // still unsaved, as it was
           fitAboveDock();
           lastBuild = null;

@@ -1202,3 +1202,10 @@ test('summarizeRequest: sameAsSource only when set', () => {
   assert.equal(summarizeRequest({ sameAsSource: true }).sameAsSource, true);
   assert.equal('sameAsSource' in summarizeRequest({}), false);
 });
+
+test('summarizeRequest carries pr only when the request has one', () => {
+  assert.deepEqual(summarizeRequest({ pr: { open: 'draft' } }).pr, { open: 'draft', slices: null });
+  assert.deepEqual(summarizeRequest({ pr: { open: 'ready', slices: 'one' } }).pr, { open: 'ready', slices: 'one' });
+  assert.equal('pr' in summarizeRequest({}), false);
+  assert.equal('pr' in summarizeRequest({ pr: 'draft' }), false);
+});

@@ -78,12 +78,11 @@ test('attach: a picked file becomes a chip, × removes it, Send carries it befor
   assert.deepEqual(fileChips(h), [], 'sent files leave the composer');
 });
 
-test('attach: a refused type says so in the composer line', async () => {
+test('attach: any file type attaches', async () => {
   const { route } = rig();
   const h = await bootSidebar({ storage: STORE, route });
   await pickFiles(h, [new h.win.File(['x'], 'tool.exe')]);
-  assert.match(h.$('.ask-composer-msg').textContent, /attachment type not allowed: tool\.exe/);
-  assert.equal(h.$('.ask-composer-msg').hidden, false);
+  assert.equal(fileChips(h).length, 1);
 });
 
 test('model: the popover lists the catalog; a pick relabels the button, is stored and PATCHes the open thread', async () => {

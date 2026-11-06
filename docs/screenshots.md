@@ -106,7 +106,7 @@ is held in memory and never written anywhere.
 | `clarify.png` | A live run waiting on its two clarify questions | Simple | live mock run, questions rewritten in place |
 | `run-detail.png` | A finished run's Diff tab (`src/routes/contacts.js`) | Advanced | mock run with a real change on its branch |
 | `history.png` | Runs with finished runs, one run's summary open | Simple | 24 mock runs, restaged |
-| `composer.png` | Workflows (`#workflows`), the Default workflow on the canvas beside the Library | Advanced | built-in workflow, opened from the Library's Workflows section with its coding folder expanded |
+| `composer.png` | Workflows (`#workflows`), the Default workflow on the canvas beside the Library | Advanced | built-in workflow, used as a template from the Library's Built-in folder (the canvas shows an Unsaved copy) |
 | `stats.png` | Statistics on a range with several days of data (This week, This month or All time, by date) | Advanced | restaged costs, time and Ask spend |
 | `ask-worca.png` | The Chat page (`#chat/<id>`) with a run card | Simple | stored conversation |
 | `ask-terminal.png` | Agent mode: a chat's `npm test` command card with its output open, beside the terminal pane showing that shell | Simple | real terminal session, stored chat, pane opened from the card's folder button; needs bash's own `bash-<version>$` prompt (macOS), so it is skipped with a log line where a system bashrc sets one with the user and host (Debian, Ubuntu) |

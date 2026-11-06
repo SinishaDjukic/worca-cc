@@ -88,7 +88,7 @@ import { loadAgentRegistry, DEFAULT_AGENTS_DIR } from './agent-registry.mjs';
 import {
   createWorktree, removeWorktree, suggestBranchName, sanitizeBranchName, resolveDefaultBranch,
   isValidSourceRef, snapshotWorktreePatch, listLocalBranches, worktreeHead, deleteBranchIfAt,
-  reusedBranchBase, isAncestor,
+  reusedBranchBase, isAncestor, withoutIgnored,
 } from './worktree.mjs';
 import { deriveBranchName, uniqueBranch } from './naming.mjs';
 import { flagEnabled } from './flags.mjs';
@@ -1606,6 +1606,7 @@ export class RunHarness extends EventEmitter {
         tags: this.opts.tags || [],
         labels: this.opts.labels || [],
         runSetup: typeof this.opts.runSetup === 'string' ? this.opts.runSetup : null,
+        prAuto: this.opts.prAuto ?? null,
         ...(this.workMode === 'none' ? { id: this.opts.pipelineId } : {}),
         ...(this.isWorkspace ? {} : { projectKey: this.members[0].projectKey, ...(this.workMode !== 'git' ? { workMode: this.workMode } : {}) }),
         ...(this.isWorkspace ? {
@@ -5875,8 +5876,9 @@ export class RunHarness extends EventEmitter {
       await this._gitIndexWrite(['rm', '-r', '--cached', '-q', '--ignore-unmatch', '--',
         ...excludePathspecs.map((s) => s.replace(/^:\(exclude\)/, ''))], gitOpts);
     }
-    const add = excludePathspecs.length
-      ? await this._gitIndexWrite(['add', '-A', '--', '.', ...excludePathspecs], gitOpts)
+    const addEx = await this._addableExcludes(excludePathspecs, gitOpts);
+    const add = addEx.length
+      ? await this._gitIndexWrite(['add', '-A', '--', '.', ...addEx], gitOpts)
       : await this._gitIndexWrite(['add', '-A'], gitOpts);
     if (!add.ok) {
       const message = add.stderr.trim() || `exit ${add.code}`;
@@ -7466,7 +7468,7 @@ export class RunHarness extends EventEmitter {
       if (mode !== 'git') continue;                       // P3 'none': nothing to stage
       // §8.8: the exclusion set is the memory mount in both modes (and the skill mount under
       // detached); an empty set (a refused mount) reproduces the bare argv.
-      const ex = this._excludePathspecs(key);
+      const ex = await this._addableExcludes(this._excludePathspecs(key), { cwd: dir, ignoreAbort });
       const args = ex.length ? ['add', '-A', '-N', '--', '.', ...ex] : ['add', '-A', '-N'];
       const res = await this._gitIndexWrite(args, { cwd: dir, ignoreAbort });
       if (!res.ok && res.stderr && res.stderr.trim()) {
@@ -7502,6 +7504,13 @@ export class RunHarness extends EventEmitter {
     return entries
       .filter((e) => e && e.path && e.kind !== 'claudeMdSection' && e.kind !== 'engineConfig')
       .map((e) => `:(exclude)${e.path}`);
+  }
+
+  /** `ex` (`:(exclude)path` pathspecs) minus the paths an ignore rule already covers, which `git add` refuses (withoutIgnored). */
+  async _addableExcludes(ex, gitOpts) {
+    const paths = ex.map((s) => s.replace(/^:\(exclude\)/, ''));
+    const keep = new Set(await withoutIgnored(paths, (args) => this._git(args, gitOpts)));
+    return ex.filter((_, i) => keep.has(paths[i]));
   }
 
   /**
