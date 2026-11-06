@@ -9021,7 +9021,7 @@ function askSignedIn(req) {
   return who.source === 'local' ? null : who.name;
 }
 
-async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, files = [], synthetic = null, signedIn = null, reader = null, mcpOff = undefined, agentMode = undefined, client = null, onUserRow = null, chatContext = null }) {
+async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, files = [], synthetic = null, signedIn = null, reader = null, mcpOff = undefined, agentMode = undefined, client = null, onUserRow = null, chatContext = null, scopeNote = null }) {
   // §6.2.2 ATOMIC re-check + slot reservation. Today every await between the
   // top 409/429 pair and here resolves in microtasks (validateModelEffort ->
   // composeCatalog; askBuildCatalog -> three synchronous better-sqlite3
@@ -9138,6 +9138,9 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
     // Browser extension (docs/browser-extension.md): server-stamped from the request's token, never client-supplied —
     // the header tells the model the page attachments (context, text, quote) are untrusted web content.
     if (client) headerCtx.client = client;
+    // A No-project chat's scope from a pasted link (thread-turns.mjs): this turn's context block says worca switched it, or
+    // names the 2–3 projects the links matched. Server-made, for this turn only: never stored on the thread.
+    if (scopeNote) headerCtx.scopeNote = scopeNote;
     // Context chips: accumulate the project/run/workspace/named page this turn ran in
     // (origin first, deduped; contexts.mjs). Cosmetic — a failure must never fail the turn.
     try { askAddThreadContexts(id, askContextEntries(ctx, headerCtx)); } catch (e) {

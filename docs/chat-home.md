@@ -71,3 +71,19 @@ back. Workflows has its own chat and no button.
   takes this chat to the Chat page, and **Hide chat** closes the column. Open or hidden is
   remembered across pages and reloads. A dot on the **Ask worca** button means a new reply: the
   button opens that chat, as the Chat row does.
+
+## Scope from a pasted link
+
+A chat in **No project** can switch itself when your message holds links to an issue, a pull request
+or a work item: GitHub `/issues/N` and `/pull/N`, Azure DevOps pull requests and work items, Bitbucket
+pull requests and issues (https links only). Before the reply starts, worca compares each link with
+the `origin` remote in every registered project's local git config. It reads no network and runs no
+git command, and the remote's address never reaches the chat.
+
+- **One project matches:** the chat switches to it. You see "Switched to <name>", the scope pill
+  follows, and the message runs in that project. Links that match no project are ignored.
+- **Two or three projects match** (one repository cloned twice, or links into different projects):
+  nothing switches. The model is told which projects matched and may ask you with a scope card.
+- **Switching back sticks:** after you switch such a chat back to No project, worca never switches
+  it to that project again, as after "Continue without project" on a scope card.
+- A project or workspace you picked is never changed, and Workflows chats never switch.

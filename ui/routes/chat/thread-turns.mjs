@@ -8,7 +8,8 @@ import { ASK_LIMITS, askLimits as askLimitsFor } from '../../../src/core/ask/lim
 import { resolveAskMcp, validateMcpOff } from '../../../src/core/ask/mcp.mjs';
 import { validateModelEffort } from '../../../src/core/ask/models.mjs';
 import { handoffBudgetChars as askHandoffBudgetChars, validateClientContext } from '../../../src/core/ask/prompt.mjs';
-import { chatScopeOf, sameScope, scopeBody, withChatScope } from '../../../src/core/ask/scope.mjs';
+import { chatScopeOf, sameScope, scopeBody, scopeCardKeys, scopeNoticeText, withChatScope } from '../../../src/core/ask/scope.mjs';
+import { autoScopeKeys, matchScopeFromLinks, messageLinkTargets } from '../../../src/core/ask/scope-links.mjs';
 import { appendMessage as askAppendMessage, getThread as askGetThread, listAttachments as askListAttachments, listMessages as askListMessages, listRunLinks as askListRunLinks, newAskId, setArchived as askSetArchived, switchThreadEngine as askSwitchThreadEngine, updateThread as askUpdateThread } from '../../../src/core/ask/store.mjs';
 import { validateAttachmentUploads } from '../../../src/core/attachment-upload.mjs';
 import { brokerEngineRefusal } from '../../../src/core/broker-client.mjs';
@@ -18,14 +19,44 @@ import { budgetStatus } from '../../../src/core/cost-budget.mjs';
 import { DIRECTION_MAX_CHARS } from '../../../src/core/directions.mjs';
 import { chatDescriptor, chatEngineGate } from '../../../src/core/engines/chat.mjs';
 import { flagEnabled } from '../../../src/core/flags.mjs';
+import { readOriginUrl } from '../../../src/core/git-free/team-repo.mjs';
 import { ASK_ENGINES } from '../../../src/core/model-env.mjs';
 import { CLAUDE_SIGNED_OUT_CODE, CLAUDE_SIGNED_OUT_MESSAGE } from '../../../src/core/preflight.mjs';
+import { listProjects } from '../../../src/core/projects.mjs';
 import { changesCard, landingFacts, landingFactsOfFeature } from '../../../src/core/shape/changes.mjs';
 import { isGenericBinary } from '../../../src/shared/artifact-kinds.mjs';
 import { chatAttachRefusal, chatSwitchChanges, engineLabel } from '../../../src/shared/engine-switch.mjs';
 import { askChatEngine, askChatEngineGate, askContextTokens, askCredentialGate, askDeleting, askEngineSwitchText, askIdParam, askInFlight, askRunningCount, askSignedIn, askSwitchTranscript, askTurnEngine, askViewer, badRequest, broadcast, brokerStartRefusal, factDeps, liveRunEntry, postDirection, startAskTurn, switchThreadScope } from '../../server.mjs';
 
 export function register(app) {
+
+/**
+ * A No-project chat's scope from the issue / pull request links in a message (docs/chat-home.md "Scope from a pasted
+ * link"). Only for a send that names no scope, in a chat with none, outside the Workflows chat, with at least one
+ * supported link. Reads each registered project's origin from its local git config (readOriginUrl: no git spawn, no
+ * network); the remote URL never leaves this function. → { action:'none' } | { action:'switch', projectKey, name } |
+ * { action:'ask', candidates }. Re-checks the chat after its one await: the caller switches with no await in between.
+ * Never throws: a failure is logged and decides nothing.
+ */
+async function askLinkScope(id, thread, scope, text) {
+  try {
+    if (scope !== null || chatScopeOf(thread.context) !== null || thread.mode === 'composer') return { action: 'none' };
+    const links = messageLinkTargets(text);
+    if (!links.length) return { action: 'none' };
+    const projects = (await listProjects()).map((p) => {
+      let originUrl = null;
+      if (p.exists !== false) { try { originUrl = readOriginUrl(p.path); } catch { originUrl = null; } }
+      return { key: p.key, name: p.name, exists: p.exists, originUrl };
+    });
+    const cur = askGetThread(id);
+    if (!cur || chatScopeOf(cur.context) !== null || askInFlight(id)) return { action: 'none' };
+    const msgs = askListMessages(id);
+    return matchScopeFromLinks({ links, projects, excluded: [...scopeCardKeys(msgs), ...autoScopeKeys(msgs)] });
+  } catch (err) {
+    console.error(`[worca-ui] link scope: ${err && err.message ? err.message : err}`);
+    return { action: 'none' };
+  }
+}
 
 // ---------------------------------------------------------------------------
 // #943: an existing chat moves to another engine. Preview (dryRun) → the panel's confirm → commit. Both phases run the
@@ -188,8 +219,7 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
     // P4 (CONTRACT §4): the chat scope this message runs in. A context carrying `pinned` is authoritative — the scope
     // pill sent it (false = No project: no page target rides along). A context without it (a pre-#397 tab, an API
     // caller) keeps the thread's stored scope, else the projectKey / workspaceId it names; a projectDir never does.
-    const scope = cv.context.pinned === undefined ? (chatScopeOf(thread.context) || chatScopeOf(cv.context)) : chatScopeOf(cv.context);
-    const ctx = withChatScope(cv.context, scope);
+    let scope = cv.context.pinned === undefined ? (chatScopeOf(thread.context) || chatScopeOf(cv.context)) : chatScopeOf(cv.context);
 
     // §7.3 — validate EVERY attachment before ANY write (all-or-nothing), through the validation the Requirements page
     // shares (src/core/attachment-upload.mjs): Ask's caps, its engine refusals and its messages. The engine is read per
@@ -217,15 +247,34 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
       }
     }
 
+    // A No-project chat and a message with issue / pull request links: one matching project switches the chat (below,
+    // through the same switch as any scope change), 2–3 give this turn's context block a hint. After every refusal
+    // check above, so a refused send changes nothing.
+    let scopeNote = null;
+    let autoScope = null;
+    const linked = await askLinkScope(id, thread, scope, text);
+    if (linked.action === 'switch') scope = { projectKey: linked.projectKey };
+    else if (linked.action === 'ask') scopeNote = { kind: 'hint', candidates: linked.candidates };
+    const ctx = withChatScope(cv.context, scope);
+
     // P4: a send that changes the chat scope (a pick the PATCH refused mid-turn, a second tab, an API caller's first
     // message) switches first, so every tab's pill follows; a chat with messages gets the divider before the user row.
     if (!sameScope(chatScopeOf(thread.context), scope)) {
-      try { await switchThreadScope(id, scopeBody(scope), { divider: askListMessages(id).length > 0 }); }
+      let switched;
+      try { switched = await switchThreadScope(id, scopeBody(scope), { divider: askListMessages(id).length > 0 }); }
       catch (err) { if (err.code === 'TURN_IN_FLIGHT') return res.status(409).json({ error: 'turn in flight' }); throw err; }
+      if (linked.action === 'switch') {
+        // The scope card's notice, marked: a chat switched back from this project is never auto-switched to it again.
+        const noticeText = scopeNoticeText({ state: 'switched', name: switched.label });
+        const notice = askAppendMessage(id, { role: 'system', text: noticeText, blocks: [{ kind: 'notice', text: noticeText, autoScope: { projectKey: linked.projectKey } }] });
+        broadcast({ type: 'ask-message', threadId: id, message: notice });
+        scopeNote = { kind: 'switched' };
+        autoScope = { pinned: true, projectKey: linked.projectKey, label: switched.label };
+      }
     }
     if (composerState) askUpdateThread(id, { composer: composerState });
     if (thread.archivedAt) askSetArchived(id, false);   // #948 s2: a message brings an archived chat back
-    const r = await startAskTurn({ threadId: id, thread, ctx, model: mv.model, effort: mv.effort, text, files, signedIn: askSignedIn(req), reader: askViewer(req), mcpOff: mo.value, agentMode: body.agentMode, client: req.worcaExtension ? 'browser-extension' : null });
+    const r = await startAskTurn({ threadId: id, thread, ctx, model: mv.model, effort: mv.effort, text, files, signedIn: askSignedIn(req), reader: askViewer(req), mcpOff: mo.value, agentMode: body.agentMode, client: req.worcaExtension ? 'browser-extension' : null, scopeNote });
     if (!r.ok) return res.status(r.status).json({ error: r.error, ...(r.code ? { code: r.code } : {}), ...(r.budget ? { budget: r.budget } : {}) });
     // `attachments` carries the store-minted ids so the sender's own echo can key
     // image thumbnails and the thread budget off them (the ask-message broadcast
@@ -234,6 +283,9 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
       userMessageId: r.userMessageId, assistantMessageId: r.assistantMessageId, attachments: r.attachments,
       // the thread's context chips after this turn's merge, so the header repaints without a re-fetch
       contexts: askGetThread(id)?.contexts ?? [],
+      // Only after a link switched the chat: the sender's pill follows even when its ask-scope frame was missed, so its
+      // next send (which carries the pill's scope) cannot switch the chat back.
+      ...(autoScope ? { scope: autoScope } : {}),
     });
   } catch (err) {
     // startAskTurn never throws (it returns {ok:false,…}); only the route's own

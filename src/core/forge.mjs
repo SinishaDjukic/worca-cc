@@ -1,8 +1,8 @@
 // src/core/forge.mjs
 // Which code host a remote / PR URL belongs to, and the one remote-URL parser every caller shares
 // (Ship-it, sync, clone, metrics; the workspace map shares the Azure fold via src/shared/azure-remote.mjs).
-import { isAzureHost, parseAzurePath, parseAzurePrUrl } from '../shared/azure-remote.mjs';
-import { parseBitbucketPrUrl } from '../shared/bitbucket-remote.mjs';
+import { isAzureHost, parseAzurePath, parseAzurePrUrl, parseAzureWorkItemUrl } from '../shared/azure-remote.mjs';
+import { parseBitbucketIssueUrl, parseBitbucketPrUrl } from '../shared/bitbucket-remote.mjs';
 
 export const FORGE_LABEL = Object.freeze({ github: 'GitHub', azure: 'Azure DevOps', bitbucket: 'Bitbucket' });
 
@@ -15,6 +15,45 @@ export function parseGithubPrUrl(value) {
   const number = Number(raw);
   if (!Number.isSafeInteger(number)) return null;
   return { owner, repo, number, url: `https://github.com/${owner}/${repo}/pull/${number}` };
+}
+
+/** A github.com issue web URL (…/issues/<n>, then optionally /, ?… or #…) → { host, owner, repo, number } | null. */
+export function parseGithubIssueUrl(value) {
+  if (typeof value !== 'string') return null;
+  const m = /^https:\/\/(?:www\.)?github\.com\/([^/?#]+)\/([^/?#]+)\/issues\/([1-9]\d*)(?:[/?#].*)?$/i.exec(value.trim());
+  if (!m) return null;
+  const [, owner, repo, raw] = m;
+  if (owner.includes('@')) return null;
+  const number = Number(raw);
+  if (!Number.isSafeInteger(number)) return null;
+  return { host: 'github.com', owner, repo, number };
+}
+
+/**
+ * What an issue / pull request / work item web link points at, for a chat's scope (src/core/ask/scope-links.mjs):
+ *   { kind:'repo', host, owner, repo }                            GitHub issue or PR, Azure PR, Bitbucket PR or issue
+ *   { kind:'azure-project', host:'dev.azure.com', org, project }  Azure work item (it names no repository)
+ *   null                                                          anything else
+ * A repo target compares with sameRepo(parseRemoteUrl(origin), target). Pure; never throws.
+ */
+export function linkTargetOf(url) {
+  try {
+    if (typeof url !== 'string') return null;
+    const text = url.trim();
+    const pr = /^https:\/\/(?:www\.)?github\.com\/([^/?#]+)\/([^/?#]+)\/pull\/([1-9]\d*)(?:[/?#].*)?$/i.exec(text);
+    if (pr) {
+      return !pr[1].includes('@') && posInt(pr[3]) ? { kind: 'repo', host: 'github.com', owner: pr[1], repo: pr[2] } : null;
+    }
+    const issue = parseGithubIssueUrl(text);
+    if (issue) return { kind: 'repo', host: issue.host, owner: issue.owner, repo: issue.repo };
+    const az = parseAzurePrUrl(text);
+    if (az) return { kind: 'repo', host: az.host, owner: az.owner, repo: az.repo };
+    const wi = parseAzureWorkItemUrl(text);
+    if (wi) return { kind: 'azure-project', host: wi.host, org: wi.org, project: wi.project };
+    const bb = parseBitbucketPrUrl(text) || parseBitbucketIssueUrl(text);
+    if (bb) return { kind: 'repo', host: bb.host, owner: bb.owner, repo: bb.repo };
+    return null;
+  } catch { return null; }
 }
 
 /** A PR Watch PR can follow (#619): a canonical github.com PR, an Azure DevOps one, or a Bitbucket Cloud one. */

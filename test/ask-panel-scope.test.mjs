@@ -37,7 +37,7 @@ function handler(state) {
     }
     if (url === `/api/ask/threads/${TID}/messages` && method === 'POST') {
       state.bodies.push(JSON.parse(opts.body));
-      return { ok: true, status: 202, json: async () => ({ userMessageId: 'askm_u0000001', assistantMessageId: 'askm_00000001' }) };
+      return { ok: true, status: 202, json: async () => ({ userMessageId: 'askm_u0000001', assistantMessageId: 'askm_00000001', ...(state.sendBody || {}) }) };
     }
     return { ok: true, status: 200, json: async () => ({}) };
   };
@@ -269,6 +269,67 @@ test('P4 ask-scope: the open chat\'s pill follows a server-side switch with no P
   ctx.panel.pushServerFrame({ type: 'ask-scope', threadId: TID, scope: { pinned: true, workspaceId: 'wks-team-0000abcd' } });
   await ticks(ctx);
   assert.equal(label(btn), 'Team', 'a frame with no label: the name resolves from /api/workspaces');
+  ctx.panel.destroy();
+});
+
+test('a 202 with `scope` moves the pill with no ask-scope frame and no PATCH; a 202 without it leaves the pill', async () => {
+  const state = { patches: [], bodies: [], snap: snapOf() };
+  const ctx = makePanel({ fetchHandler: handler(state), storage: storeWith(TID) });
+  ctx.panel.open();
+  await ticks(ctx, 4);
+  const btn = ctx.doc.querySelector('[data-ask-scope-btn]');
+  await send(ctx, 'hello');
+  assert.equal(label(btn), 'No project', 'a 202 without scope leaves the pill');
+  assert.equal(state.bodies.at(-1).context.pinned, false);
+  state.sendBody = { scope: { pinned: true, projectKey: 'demo-00000001', label: 'Demo' } };
+  await send(ctx, 'fix https://github.com/Acme/Demo/issues/3');
+  assert.equal(label(btn), 'Demo', 'the 202 moved the pill');
+  assert.ok(btn.classList.contains('is-pinned'));
+  await ctx.tick();
+  assert.deepEqual(state.patches, [], 'the server stored it already');
+  state.sendBody = null;
+  await send(ctx, 'and then');
+  assert.deepEqual([state.bodies.at(-1).context.pinned, state.bodies.at(-1).context.projectKey], [true, 'demo-00000001'], 'the next send keeps the switch');
+  state.sendBody = { scope: { pinned: true, projectKey: 'notes-00000003' } };
+  await send(ctx, 'notes link');
+  await ticks(ctx);
+  assert.equal(label(btn), 'Notes', 'a scope with no label: the name resolves from /api/projects');
+  state.sendBody = { scope: { pinned: false, projectKey: 'demo-00000001' } };
+  await send(ctx, 'not a pin');
+  await ticks(ctx);
+  assert.equal(label(btn), 'Notes', 'a 202 scope that is not a pin leaves the pill');
+  ctx.panel.destroy();
+});
+
+test('a 202 `scope` whose body lands after the user left the chat moves no pill (review M2)', async () => {
+  const state = { patches: [], bodies: [], snap: snapOf() };
+  let release = null;
+  const gate = new Promise((r) => { release = r; });
+  const base = handler(state);
+  const ctx = makePanel({
+    fetchHandler: (url, opts) => {
+      const res = base(url, opts);
+      if (url === `/api/ask/threads/${TID}/messages`) {
+        state.sendBody = { scope: { pinned: true, projectKey: 'demo-00000001', label: 'Demo' } };
+        return { ...res, json: async () => { await gate; return { userMessageId: 'askm_u0000001', assistantMessageId: 'askm_00000001', ...state.sendBody }; } };
+      }
+      return res;
+    },
+    storage: storeWith(TID),
+  });
+  ctx.panel.open();
+  await ticks(ctx, 4);
+  const btn = ctx.doc.querySelector('[data-ask-scope-btn]');
+  await send(ctx, 'fix https://github.com/Acme/Demo/issues/3');
+  assert.equal(state.bodies.length, 1, 'the message was posted; its body is held');
+  ctx.doc.querySelector('[data-ask-new-btn]').click();   // the user opens a new chat while the 202 body is read
+  await ticks(ctx);
+  assert.equal(label(btn), 'No project');
+  release();
+  await ticks(ctx, 5);
+  assert.equal(label(btn), 'No project', 'the switch belongs to the chat the user left');
+  assert.equal(btn.classList.contains('is-pinned'), false);
+  assert.deepEqual(state.patches, []);
   ctx.panel.destroy();
 });
 
