@@ -1,6 +1,6 @@
 // src/core/night/decider.mjs
 // Turn ONE open ask into the payload answer() expects + the decision record we store.
-import { decideQuestion, gateRule, workflowRule, recoveryRule } from './strategies.mjs';
+import { decideQuestion, gateRule, workflowRule, recoveryRule, planRule } from './strategies.mjs';
 import { recoveryDelayMs } from '../recovery-backoff.mjs';
 import { RECOVERY_MAX_AUTO_ATTEMPTS } from '../failure-policy.mjs';
 import { nightNeverDecides } from './config.mjs';
@@ -74,7 +74,13 @@ export async function decideAsk(q, env) {
       return { payload: { decision: r.decision }, record: { choice: r.decision, strategy: 'rule', confidence: null, flagged: r.flagged,
         rationale: r.decision === 'retry' ? `retry ${attempts + 1} of ${RECOVERY_MAX_AUTO_ATTEMPTS} after a pause` : `the step failed ${attempts + 1} times; worca does not retry further while you are away`, reversible: true, meta: { cls } } };
     }
-    case 'plan': return null;   // a plan approval always waits for a person (shape-it-first D2)
+    case 'plan': {
+      // A person answers what to build, Away handles how: planRule says which plan asks wait.
+      const r = planRule(q);
+      if (!r) return null;
+      return { payload: r.payload, record: { choice: 'approve', strategy: 'rule', confidence: null, flagged: r.flagged, rationale: r.reason,
+        reversible: false, meta: { ask: r.ask } } };
+    }
     default: return null;
   }
 }
