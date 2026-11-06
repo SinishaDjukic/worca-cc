@@ -2976,8 +2976,8 @@ export class RunHarness extends EventEmitter {
       this._log('worktree', 'warn', `Left the project's own settings env keys out of this try (they could undo Worca's guards): ${
         r.envKeys.map((e) => `${e.file}: ${e.keys.join(', ')}`).join('; ')}.`);
     }
-    if (r.walkCapped) {
-      this._log('worktree', 'warn', `Worca stopped looking for the project's nested .claude folders after ${r.walkCapped} folders; a skill, agent or command deeper in the checkout may keep its hooks in this try.`);
+    if (r.walkCapped) {   // re-review 3 (m3): a run warning, as a folder too deep to walk is (the effect is the same)
+      await this._recordRunWarning(`Worca stopped looking for the project's nested .claude folders after ${r.walkCapped} folders; a skill, agent or command deeper in the checkout may keep its hooks in this try.`);
     }
     // D72a (Task 5, I2): a skill, agent or command Worca is not sure it fully stripped is named, once each (re-review 2 N-I1:
     // it was still written, as far as Worca could strip it).

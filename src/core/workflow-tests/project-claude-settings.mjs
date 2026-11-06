@@ -252,7 +252,7 @@ const abs = (dir, rel) => join(dir, ...rel.split('/'));
 const WALK_DEPTH_MAX = 32;
 /** I-2: folders the nested `.claude` search never enters (gitignored ones are skipped too, re-review 2 n4). */
 const NESTED_SKIP = new Set(['node_modules', '.git']);
-/** Re-review 2 (n4): how many folders the nested `.claude` search reads at most; past it the harness logs a line. */
+/** Re-review 2 (n4): how many folders the nested `.claude` search reads at most; past it the harness adds a run warning (re-review 3 m3). */
 export const WALK_DIRS_MAX = 20000;
 let walkDirsMaxDefault = WALK_DIRS_MAX;
 /** Test seam: a smaller default cap for the harness's call. */

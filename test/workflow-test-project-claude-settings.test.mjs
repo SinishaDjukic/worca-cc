@@ -329,15 +329,16 @@ test('re-review 2 n4: the nested walk visits at most so many folders, and says s
   assert.deepEqual(all.changed, ['z/.claude/skills/s/SKILL.md']);
 });
 
-test('re-review 2 n4, n5: the harness passes its git, logs a capped walk, and names the env keys it left out (names only)', async () => {
+test('re-review 2 n4, n5 (re-review 3 m3): the harness passes its git, warns of a capped walk in the run, and names the env keys it left out (names only)', async () => {
   const d = tmp();
   mkdirSync(join(d, '.claude'), { recursive: true });
   writeFileSync(join(d, '.claude', 'settings.json'), JSON.stringify({ env: { NODE_OPTIONS: '--max-old-space-size=8192', LD_LIBRARY_PATH: '/opt/cuda/lib64', KEEP: '1' } }));
   writeFileSync(join(d, '.claude', 'settings.local.json'), JSON.stringify({ env: { GH_CONFIG_DIR: '/x' } }));
   const logs = [];
+  const warnings = [];
   const gitCalls = [];
   const h = { workDirs: new Map([['k', d]]), members: [{ projectKey: 'k' }], pipeline: { dir: tmp() }, _setupStage() {},
-    _git: async (args, o) => { gitCalls.push([args, o && o.cwd]); return { ok: true, stdout: '' }; }, _recordRunWarning: async () => {},
+    _git: async (args, o) => { gitCalls.push([args, o && o.cwd]); return { ok: true, stdout: '' }; }, _recordRunWarning: async (t) => { warnings.push(t); },
     _log: (source, level, text) => logs.push({ source, level, text }) };
   await RunHarness.prototype._pluginsOffInCheckout.call(h);
   assert.ok(gitCalls.some(([a, cwd]) => a.includes('--ignored') && cwd === d), 'the ignored folders are listed with the harness\'s git, in the checkout');
@@ -345,15 +346,17 @@ test('re-review 2 n4, n5: the harness passes its git, logs a capped walk, and na
   assert.equal(envLine.text, 'Left the project\'s own settings env keys out of this try (they could undo Worca\'s guards): '
     + '.claude/settings.json: NODE_OPTIONS, LD_LIBRARY_PATH; .claude/settings.local.json: GH_CONFIG_DIR.');
   assert.doesNotMatch(JSON.stringify(logs), /cuda|8192|\/x"/, 'never a value');
-  assert.equal(logs.some((l) => /folders/.test(l.text)), false, 'no cap line when the walk was not capped');
+  assert.equal([...logs.map((l) => l.text), ...warnings].some((t) => /folders/.test(t)), false, 'no cap warning when the walk was not capped');
   pcsTesting.walkDirsMax(1);
   try {
     mkdirSync(join(d, 'a', 'b'), { recursive: true });
     logs.length = 0;
+    warnings.length = 0;
     await RunHarness.prototype._pluginsOffInCheckout.call(h);
   } finally { pcsTesting.reset(); }
-  assert.deepEqual(logs.filter((l) => /folders/.test(l.text)).map((l) => [l.source, l.level, l.text]), [['worktree', 'warn',
-    'Worca stopped looking for the project\'s nested .claude folders after 1 folders; a skill, agent or command deeper in the checkout may keep its hooks in this try.']]);
+  assert.deepEqual(warnings.filter((t) => /folders/.test(t)), [
+    'Worca stopped looking for the project\'s nested .claude folders after 1 folders; a skill, agent or command deeper in the checkout may keep its hooks in this try.'],
+  're-review 3 m3: a run warning (as a folder too deep to walk is), not only a run-log line');
 });
 
 test('D72a: in a checkout: skills\' SKILL.md, agents and commands lose their frontmatter hooks; links go, never followed; unsafe ones are named', async () => {
