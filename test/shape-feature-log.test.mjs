@@ -63,6 +63,29 @@ test('re-planning lists the re-planned runs last', () => {
   assert.deepEqual(log.at(-1), { key: 'replan', run: null, text: 'Re-planning runs 3–4', detail: ['3 · Part 3', '4 · Part 4'] });
 });
 
+test('an Away approval names Away in the log', () => {
+  assert.deepEqual(parseDecisionLine('Plan approval **approve** by night-mode.'), { kind: 'plan', decision: 'approve', away: true });
+  assert.deepEqual(parseDecisionLine('Slice outline **approve** (round 1) by night-mode.'), { kind: 'outline', decision: 'approve', away: true });
+  const log = buildDecisionLog({ sliced: true, slices: SLICES,
+    origin: ['Slice outline **approve** (round 1) by night-mode.', 'Plan approval **revise**.', 'Plan approval **approve** by night-mode.'],
+    runs: [{ index: 2, events: ['Plan approval **approve** by night-mode.'] }] });
+  assert.deepEqual(log.map((l) => [l.run, l.text]), [
+    [null, 'Split into 3 runs · by Away mode'], [1, 'Plan approved · after 1 round of changes · by Away mode'], [2, 'Plan approved · by Away mode'],
+  ]);
+});
+
+test("a person's approval reads as before", () => {
+  assert.deepEqual(parseDecisionLine('Plan approval **approve** by nightmode fan.'), { kind: 'plan', decision: 'approve' });
+  assert.deepEqual(parseDecisionLine('Plan concern **overridden** by ann.'), { kind: 'concern', decision: 'overridden' });
+  const log = buildDecisionLog({ origin: ['Plan approval **approve** by ann.', 'Plan concern **overridden** by ann.', 'Plan concern **accepted** by night-mode.'] });
+  assert.deepEqual(log.map((l) => l.text), ['Plan approved'], "a person's concern line stays silent");
+});
+
+test('an Away-overridden concern gets a row, and it ends a round of changes', () => {
+  const log = buildDecisionLog({ origin: ['Plan approval **revise**.', 'Plan concern **overridden** by night-mode.', 'Plan approval **approve**.'] });
+  assert.deepEqual(log.map((l) => l.text), ['Plan kept as written · by Away mode · please check', 'Plan approved']);
+});
+
 test('s5: rounds add "Round 1 · …" then "Round n · request" under their run, after its decisions', () => {
   const log = buildDecisionLog({ sliced: true, slices: SLICES, origin: ['Plan approval **approve** by ann.'],
     rounds: [{ run: 1, round: 2, request: 'make it blue', status: 'running' }] });

@@ -429,6 +429,19 @@ const withConcern = async (fn) => {
   try { return await fn(); } finally { delete process.env.WORCA_MOCK_ROLE_REVIEW; }
 };
 
+test('Away on: the run holds at Requirements, nothing answered', async () => {
+  const h = start({}, () => {});
+  h.orch.setNightOverride('on');
+  for (const end = Date.now() + 60000; !h.asks.some(isReqAsk) && Date.now() < end;) await new Promise((r) => setTimeout(r, 10));
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal(h.orch.pendingQuestion?.id, 'plan-n_reqrefine-1');
+  assert.equal(h.orch.state.night.openedAt, null, 'no countdown');
+  assert.equal(h.orch.state.night.decisions, 0);
+  assert.equal(h.orch.answeredBy('plan-n_reqrefine-1') === 'night-mode', false);
+  h.orch.stop();
+  await h.done;
+});
+
 test('a QA finding naming R-po-1: one plan approval carries the concern; no extra round; the Planner runs once', () => withConcern(async () => {
   const h = start({});
   const res = await h.done;

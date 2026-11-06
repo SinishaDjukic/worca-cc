@@ -130,6 +130,7 @@ export class GraphOrchestrator extends RunHarness {
     this._planVersion = 0;       // {vsuffix} ticks, carried across a resume
     this._planRevise = null;     // {id, path}: a revise answered just before a pause (F19), carried across a resume
     this._planConcernAnswer = null; // {id, payload}: a plan concern answered just before a pause (#990 s5), carried across a resume
+    this._planAwayApproved = null;  // {id}: a plan ask Away mode approved just before a pause, carried across a resume
     this._planConcernSeen = {};     // {[id]: 'raised' | 'decided'}: audited once per concern across resumes (#990 s5)
     this._planConcernHeld = null;   // {id, concern}: the parsed concern, carried across a resume (the agent need not rewrite it)
     this._slicingDone = false;   // L2: the Planner's slicing offer is over (no outline, or one decided); carried across a resume
@@ -1140,6 +1141,7 @@ export class GraphOrchestrator extends RunHarness {
       planVersion: this._planVersion,
       ...(this._planRevise ? { planRevise: { ...this._planRevise } } : {}),
       ...(this._planConcernAnswer ? { planConcernAnswer: { ...this._planConcernAnswer } } : {}),
+      ...(this._planAwayApproved ? { planAwayApproved: { ...this._planAwayApproved } } : {}),
       ...(Object.keys(this._planConcernSeen).length ? { planConcernSeen: { ...this._planConcernSeen } } : {}),
       ...(this._planConcernHeld ? { planConcernHeld: jsonClone(this._planConcernHeld) } : {}),
       ...(this.state.roleReviews ? { roleReviews: jsonClone(this.state.roleReviews) } : {}),
@@ -1370,6 +1372,14 @@ export class GraphOrchestrator extends RunHarness {
       );
     }
     this._planRevise = null;
+    // Away's approve, answered just before a pause, the same way: deciding again would store a second record, spend a
+    // second answer, and could hit the limit and lose it. Kept until another id: a replay can be paused too.
+    if (this._planAwayApproved?.id === q.id) {
+      this._answeredBy.set(q.id, NIGHT_ACTOR);
+      this._log('orchestrator', 'info', `plan approval ${q.id}: Away mode's approve replayed after a pause`);
+      return Promise.resolve({ decision: 'approve' });
+    }
+    this._planAwayApproved = null;
     const spec = this._approveSpec(q.nodeId);
     if (spec?.check === 'criteria') return this._criteriaAsk(q, spec);
     let check = null;
@@ -1386,7 +1396,7 @@ export class GraphOrchestrator extends RunHarness {
       const outlineChange = await this._outlineChangeText();
       // Shaper s5 (D12): notes from the chat force the stop, like outlineChange.
       const notes = (await this._shapeSliceScope())?.notes || [];
-      if (sl && sl.index > 1 && !featureApprovesEach(sl.feature) && !this._nightActiveNow()) {
+      if (sl && sl.index > 1 && !featureApprovesEach(sl.feature)) {
         // D19: plan once, confirm later: the plan stops only when its check fails or the planner says the slice
         // cannot be built as outlined. A missing check (null: it errored) stops too.
         if (check?.ok === true && !outlineChange && !notes.length && !concern) {
@@ -1402,12 +1412,15 @@ export class GraphOrchestrator extends RunHarness {
       const perspectives = this._shapePerspectives();
       return this._enqueueAsk(() => this._ask({
         id: q.id, kind: PLAN_ASK_KIND, nodeId: q.nodeId, executionId: q.executionId, ...(concern ? { concern } : {}),
-        plan: { ...q.plan, nodeId: q.nodeId, check, perspectives, ...(coverage ? { coverage } : {}), ...(outlineChange ? { outlineChange } : {}), ...(notes.length ? { notes } : {}) },
+        // coverage: null = it could not be read, which is not "no coverage configured"; Away waits on it (planRule).
+        plan: { ...q.plan, nodeId: q.nodeId, check, perspectives, ...(spec?.coverage ? { coverage } : {}), ...(outlineChange ? { outlineChange } : {}), ...(notes.length ? { notes } : {}),
+          ...(conflicts.length ? { openConflicts: conflicts.length } : {}) },
         validate: (raw) => validatePlanAnswer(raw, { revisable: q.plan?.revisable === true, perspectives, conflicts }),
       }));
     })();
     return asked.then(
       async (payload) => {
+        if (payload?.decision === 'approve' && this.answeredBy(q.id) === NIGHT_ACTOR) this._planAwayApproved = { id: q.id };   // before any await: the pause window
         this._shapingDecision(q, payload);
         if (payload?.decision === 'stop') {
           this._log('orchestrator', 'info', `plan approval ${q.id}: stop`);
@@ -1616,7 +1629,7 @@ export class GraphOrchestrator extends RunHarness {
       decision: null, ...(coverage ? { coverage: { ok: coverage.ok, passed: coverage.passed, total: coverage.total } } : {}) };
     const i = s.rounds.findIndex((r) => r.round === row.round);
     if (i >= 0) s.rounds[i] = row; else s.rounds.push(row);
-    // An approve answered just before a pause is not replayed: the resume re-asks the same round. Drop the stale
+    // A person's approve answered just before a pause is not replayed: the resume re-asks the same round. Drop the stale
     // `approved`, or the run card would show "while shaping" over an open plan ask.
     if (s.approved && s.approved.round === row.round) s.approved = null;
     this._emit('state', this.getState());
@@ -1708,8 +1721,8 @@ export class GraphOrchestrator extends RunHarness {
   /**
    * Spec §3.8, L1: in slicing mode the Planner either writes its plan (no outline: it chose not to slice) or writes
    * slices.json and stops. Ask a person, then resume the SAME session (as _questionsLoop does): slice 1's plan, the
-   * whole task (flat), or a rewritten outline (revise, at most OUTLINE_ROUNDS_MAX rounds). kind 'plan' keeps every
-   * human-only guard (F3): --yes, Away mode and the night decider never answer it.
+   * whole task (flat), or a rewritten outline (revise, at most OUTLINE_ROUNDS_MAX rounds). --yes never answers it (F3);
+   * Away mode approves one whose check passed (planRule).
    */
   async _outlineLoop(nc, ctx, firstResult) {
     let result = firstResult;
@@ -1840,7 +1853,7 @@ export class GraphOrchestrator extends RunHarness {
     return { file: join(this.pipeline.dir, planConcernFileName(ctx.nodeId, ctx.ordinal)), approvalNodeId: src.id };
   }
 
-  /** True when concern `id` was already decided as Approve (by a person or --yes): its execution is the override re-run. */
+  /** True when concern `id` was already decided as Approve (by a person, Away mode or --yes): its execution is the override re-run. */
   _planConcernOverridden(id) {
     return this._planConcernSeen[id] === 'decided' && this._planConcernHeld?.id === id
       && (this.auto || (this._planConcernAnswer?.id === id && this._planConcernAnswer.payload?.decision === 'approve'));
@@ -1863,7 +1876,7 @@ export class GraphOrchestrator extends RunHarness {
 
   /** #990 s5: the implementer said the plan's design is wrong. Re-raise the plan approval (kind 'plan', a `concern`
    *  field): Ask for changes (revise) rewinds to the Planner (D4); Approve builds as written (D5). A concern always
-   *  stops (D7); only --yes overrides it without a person (D6). */
+   *  stops (D7); --yes overrides it without an ask (D6), and Away mode approves the ask and flags it (planRule). */
   async _planConcernLoop(nc, ctx, result) {
     const pc = ctx.planConcern;
     if (!pc || result?.paused || result?.error) return result;
@@ -1965,6 +1978,7 @@ export class GraphOrchestrator extends RunHarness {
       ...(this.claude.model ? { model: this.claude.model } : {}),
       ...(engine && engine !== 'claude' ? { engine } : {}),
       ...(this.claude.mock ? { mock: true } : {}),
+      ...(this._night.optIn ? { nightMode: true } : {}),      // the run's mark; "Never on this run" stays on its one run
     };
   }
 
@@ -3550,6 +3564,7 @@ export class GraphOrchestrator extends RunHarness {
     const pca = rp.planConcernAnswer;
     this._planConcernAnswer = pca && typeof pca.id === 'string' && pca.payload && typeof pca.payload === 'object'
       ? { id: pca.id, payload: { ...pca.payload } } : null;
+    this._planAwayApproved = typeof rp.planAwayApproved?.id === 'string' ? { id: rp.planAwayApproved.id } : null;
     const seen = rp.planConcernSeen;
     this._planConcernSeen = Object.fromEntries(Object.entries(seen && typeof seen === 'object' ? seen : {})
       .filter(([, v]) => v === 'raised' || v === 'decided'));

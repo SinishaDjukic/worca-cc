@@ -156,6 +156,7 @@ import { redactSecrets } from '../shared/workspace-map/redact.mjs';
 import { effectiveNightConfig } from './night/effective.mjs';
 import { nightState, decideDelayMs, nightAnchorMs, runAllowed } from './night/activation.mjs';
 import { decideAsk } from './night/decider.mjs';
+import { planRule } from './night/strategies.mjs';
 import { PLAN_ASK_KIND, initialShaping } from './shape/run.mjs';
 import { runNightAnalysis, readMemoryText } from './night/analysis.mjs';
 import { resolveDeciderPair } from './night/decider-model.mjs';
@@ -6499,7 +6500,7 @@ export class RunHarness extends EventEmitter {
     try {
       // A night-eligible --yes run hands the ask to night mode: it is answered through the
       // same pendingQuestion + answer() path below (delay 0), so it is attributed and audited.
-      // A plan approval needs a person (spec D2): --yes never answers it and Away mode never decides it.
+      // --yes never answers a plan ask, and hands none to Away mode: only a run without --yes arms one (planRule says which).
       if (this.auto && kind !== PLAN_ASK_KIND && !this._nightOwnsAuto({ kind, origin })) {
         if (kind === 'recovery') {
           // Auto mode handles recovery in _recover before ever calling _ask;
@@ -6534,7 +6535,7 @@ export class RunHarness extends EventEmitter {
         // A throw inside a Promise executor REJECTS the ask (and fails the node): night mode
         // must never break a question the user could still answer.
         const nq = { id, kind, questions, issues, recovery, wireId, executionId, deliveryNo, holdNo, workflow, plan, concern, form, version, answerSchema, autoValues, nodeId, agent, origin };
-        if (kind !== PLAN_ASK_KIND) {
+        if (kind !== PLAN_ASK_KIND || !this.auto) {
           try { this._nightArm(nq); } catch (err) { this._nightFailed(nq, `Away mode could not get ready for ${kind} ${id}: ${err?.message || err}`); }
         }
       });
@@ -6589,6 +6590,15 @@ export class RunHarness extends EventEmitter {
     } catch { return false; }
   }
 
+  /** A person answers what to build, Away handles how: the plan asks planRule declines, and Clarify on a shaped run.
+   *  Decided at arm time, so such an ask never counts down, never starts the away stretch and cannot hit a limit's pause.
+   *  Never under --yes: that run's asks go the way they always did. */
+  _nightLeavesToPerson(q) {
+    if (this.auto) return false;
+    if (q.kind === PLAN_ASK_KIND) return planRule(q) === null;
+    return Boolean(this.runShape) && (q.kind === 'clarify' || (q.kind === 'form' && q.origin === 'clarify'));
+  }
+
   /** Schedule (or re-schedule) the decision for the open question. `q` = a newly opened ask. */
   _nightArm(q) {
     if (!this._night) return;            // a harness built without the constructor (unit seams)
@@ -6598,7 +6608,7 @@ export class RunHarness extends EventEmitter {
     if (!q || this.pendingQuestion?.id !== q.id) return;
     try {
       const { config } = effectiveNightConfig(this.projectDir);
-      this._night.decidable = !nightNeverDecides(config, q);
+      this._night.decidable = !nightNeverDecides(config, q) && !this._nightLeavesToPerson(q);
       if (!this._night.decidable) {
         // The kind joined neverDecide after a --yes run handed the ask to night mode: nobody else
         // will answer, so give today's --yes answer rather than hang.

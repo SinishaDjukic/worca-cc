@@ -140,6 +140,32 @@ test('chain: slice 1 approved and done, slice 2 planned just in time on slice 1\
   assert.notEqual(pid2, pid1);
 });
 
+test('chat notes with Away active wait', async () => {
+  const dir = gitDir('slices-notes-away');
+  const one = startRun({ projectDir: dir, prompt: 'Plan this in slices: demo', shape: { perspectives: ['product'] } });
+  assert.equal((await one.done).status, 'done');
+  const f = getDb().prepare('SELECT * FROM shape_features WHERE origin_pipeline_id = ?').get(one.orch.getState().id);
+  setApproveEach(f.id, false);
+  addFeatureNote(f.id, { kind: 'plan', text: 'use a log scale' });
+  const row = getDb().prepare('SELECT ticket_id FROM shape_feature_slices WHERE feature_id = ? AND idx = 2').get(f.id);
+  const { request } = getDb().prepare('SELECT request FROM scheduled_runs WHERE id = ?').get(row.ticket_id);
+  const body = JSON.parse(request);
+  const two = startRun({ projectDir: dir, workflowId: body.workflowId, prompt: body.prompt, claude: { mock: true }, shape: body.shape },
+    { hold: () => true });
+  two.orch._planCheck = async () => ({ ok: true, passed: 8, total: 8, items: [] });
+  two.orch.setNightOverride('on');
+  await waitFor(() => two.asks.some((q) => q.kind === 'plan'));
+  await new Promise((r) => setTimeout(r, 300));
+  const q = two.asks.find((x) => x.kind === 'plan');
+  assert.deepEqual(q.plan.notes, [{ kind: 'plan', text: 'use a log scale' }]);
+  assert.equal(two.orch.pendingQuestion?.id, q.id, 'still open');
+  assert.equal(two.orch.state.night.openedAt, null);
+  const audit = getDb().prepare('SELECT text FROM pipeline_events WHERE pipeline_id = ?').all(two.orch.getState().id).map((r) => r.text);
+  assert.ok(audit.includes('Plan approval held: the chat added notes to this run.'), JSON.stringify(audit));
+  two.orch.stop();
+  await two.done;
+});
+
 test('s5: dev moved after slice 1 → slice 2 merges dev before its first agent; a chat note holds its plan and reaches the Planner', async () => {
   capturePrompts();
   const dir = gitDir('slices-base');
