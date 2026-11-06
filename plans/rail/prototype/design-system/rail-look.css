@@ -31,3 +31,11 @@ body{-webkit-font-smoothing:antialiased;}
 html:not(.is-scrolling){scrollbar-color:transparent transparent;}
 .is-scrolling{scrollbar-color:var(--line-2) transparent;}
 @media (prefers-reduced-motion: reduce){*{transition:none;}}
+
+/* Safari has its own scrollbar rules, and the app's CSS gives it a 10px bar there: the same look and behaviour for it. */
+@supports not (scrollbar-color: auto) {
+  ::-webkit-scrollbar{width:6px;height:6px;background:transparent;}
+  ::-webkit-scrollbar-track{background:transparent;}
+  ::-webkit-scrollbar-thumb{background:transparent;border-radius:var(--r-sm);}
+  .is-scrolling::-webkit-scrollbar-thumb,html.is-scrolling::-webkit-scrollbar-thumb{background:var(--line-2);}
+}
