@@ -65,11 +65,11 @@ export function switchButton({ on, label, why = '', disabled = false, attrs: a =
  * @param {string} [o.detailRows] SettingsRows that open under the sentence (the row's fine-tuning)
  * @param {string} [o.detail]   other markup that opens after them (a List of records)
  * @param {string} [o.detailAction] one quiet button under them, on the folded rows' edge ("Back to the group")
- * @param {{open:boolean, attrs?:object, help?:string}} [o.fold]  the row's fine-tuning: Customise opens it, Done closes it
+ * @param {{open:boolean, label?:string, attrs?:object, help?:string}} [o.fold]  the row's fine-tuning: Customise opens it, Done closes it; `label` names what it holds when that is not fine-tuning (Paired browsers)
  * @param {object} [o.attrs]
  */
 export function settingsRow({ name, sentence = '', end = '', changed = false, help = '', detailRows = '', detail = '', detailAction = '', fold = null, attrs: a = {} }) {
-  const foldBtn = fold ? button({ label: fold.open ? 'Done' : 'Customise', kind: 'quiet', attrs: { 'aria-expanded': String(!!fold.open), title: fold.help || null, ...(fold.attrs || {}) } }) : '';
+  const foldBtn = fold ? button({ label: fold.open ? 'Done' : fold.label || 'Customise', kind: 'quiet', attrs: { 'aria-expanded': String(!!fold.open), title: fold.help || null, ...(fold.attrs || {}) } }) : '';
   const all = (detailRows ? `<div class="set-rows">${detailRows}</div>` : '') + detail + (detailAction ? `<div class="set-foot">${detailAction}</div>` : '');
   const shown = fold ? (fold.open ? all : '') : all;
   return row({ kind: 'setting', text: `<span class="set-name"${attrs({ title: help || null })}>${esc(name)}</span><span class="set-text">${sentence}</span>`, end: `${changed ? '<span class="set-changed">Changed</span>' : ''}${end}${foldBtn}`, after: shown ? `<div class="set-detail" data-motion="open">${shown}</div>` : '', attrs: a });
@@ -89,12 +89,12 @@ export function settingsGroup({ title, rows }) {
 /**
  * SettingsSection: a head (and the one action on the whole section, such as a reset), then its rows.
  * @param {object} o
- * @param {string} o.title
+ * @param {string} [o.title]   none on a tab that is one list: the tab's title already says it
  * @param {string} o.rows      SettingsRow markup
  * @param {string} [o.action]  a quiet button at the head's right
  * @param {string} [o.meta]    one line under the head
  * @param {object} [o.attrs]
  */
-export function settingsSection({ title, rows, action = '', meta = '', attrs: a = {} }) {
-  return `<section class="set-sec"${attrs(a)}><div class="set-sec-head"><h2 class="set-sec-h">${esc(title)}</h2>${action}</div>${meta ? `<p class="set-sec-meta">${esc(meta)}</p>` : ''}<div class="set-rows">${rows}</div></section>`;
+export function settingsSection({ title = '', rows, action = '', meta = '', attrs: a = {} }) {
+  return `<section class="set-sec"${attrs(a)}>${title || action ? `<div class="set-sec-head">${title ? `<h2 class="set-sec-h">${esc(title)}</h2>` : ''}${action}</div>` : ''}${meta ? `<p class="set-sec-meta">${esc(meta)}</p>` : ''}<div class="set-rows">${rows}</div></section>`;
 }

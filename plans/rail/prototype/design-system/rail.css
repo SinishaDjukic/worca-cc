@@ -436,6 +436,7 @@ html,body{height:auto;overflow:visible;margin:0;}
 
 /* Prototype feedback: a confirm strip for actions that cannot be taken back, a toast for what an action did. */
 .rc-confirm{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px 16px;padding:10px 12px;border:1px solid var(--line-2);border-radius:var(--r-md);background:var(--panel);font-size:var(--fs-body);}
+.pz-page > .rc-confirm{position:sticky;top:8px;z-index:6;}   /* a page with no shell: the strip stays on screen too */
 .rc-confirm-t{color:var(--ink);font-weight:500;}
 .rc-confirm-acts{display:flex;gap:8px;}
 .rc-toast{position:fixed;left:50%;bottom:24px;z-index:50;transform:translate(-50%,0);max-width:calc(100vw - 32px);padding:8px 14px;border-radius:var(--r-md);
@@ -778,6 +779,7 @@ html,body{height:auto;overflow:visible;margin:0;}
 .set-sec + .set-sec{margin-top:24px;padding-top:24px;border-top:1px solid var(--line);}   /* a line where a section starts; rows divide by space */
 .set-sec-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;min-height:28px;}
 .set-sec-h{margin:0;font:600 var(--fs-section)/var(--lh-title) var(--sans);letter-spacing:-.01em;color:var(--ink);}   /* Type roles › Heading */
+.set-sec-head > .set-sec-h{margin-right:auto;}   /* more than one action: they stay together at the right */
 .set-sec-head > .btn-quiet,.set-sec-head > .tip-wrap > .btn-quiet{margin-right:calc(-1 * var(--btn-inset));}
 .set-sec-meta{margin:2px 0 0;font-size:var(--fs-meta);color:var(--ink-2);}
 .set-rows{display:flex;flex-direction:column;margin-top:4px;}
@@ -802,6 +804,10 @@ html,body{height:auto;overflow:visible;margin:0;}
 .set-detail .set-name{grid-column:1;grid-row:1;font-size:var(--fs-meta);color:var(--ink);}
 .set-detail .set-text{grid-column:1;grid-row:2;}
 .set-detail .set-end{grid-column:2;grid-row:1 / span 2;align-self:center;}
+/* A record in Settings shows all of its meta: on touch no tooltip could. A fold's records stay in the sentence column. */
+.set-sec .lr-m{overflow:visible;white-space:normal;}
+.set-sec .lr-end > .btn-quiet:last-child,.set-sec .lr-end > .tip-wrap:last-child > .btn-quiet{margin-right:calc(-1 * var(--btn-inset));}
+.set-detail .list-rows{margin-left:calc(-1 * (var(--rail,20px) + var(--gap,12px)));}
 .set-foot{padding-top:4px;}   /* the fold's one action under its rows (Back to the group) */
 .set-end > .btn-icon.btn-quiet{--btn-inset:7px;}   /* an icon stands 7px inside its button */
 .set-foot > .btn-quiet{margin-left:calc(-1 * var(--btn-inset));}
@@ -915,6 +921,7 @@ body.view-chat #route-today:not([hidden]){flex:1 1 auto;min-height:0;display:fle
 .rl-dialog .dlg-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding-bottom:4px;}
 .rl-dialog .dlg-head .dlg-title{margin:0;font:600 var(--fs-section)/var(--lh-title) var(--sans);color:var(--ink);letter-spacing:-.01em;}
 .rl-dialog .dlg-foot{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;}
+.rl-dialog .dlg-body > .btn{align-self:flex-start;}   /* a Field's helper (Try) starts on the fields' edge */
 .rl-dialog .dlg-body{display:flex;flex-direction:column;gap:16px;}   /* its parts, 16px apart */
 .dlg-status{font-size:var(--fs-meta);color:var(--ink-2);min-width:0;}
 .dlg-acts{display:flex;gap:8px;margin-left:auto;}

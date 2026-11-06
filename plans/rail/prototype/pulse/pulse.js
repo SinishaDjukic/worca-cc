@@ -437,8 +437,8 @@ function settingsFinds() {
       if (s.title !== sec.title) out.push({ label: s.title, words: text(s.meta), sset: id, head: true, min: smin, flag: sflag, where: sec.title });
       const rowsIn = (rows, where, at, min, flag) => { for (const r of rows || []) {
         const rmin = strict(min, r.min), rflag = flag || r.flag, open = 'more:' + at + '/' + r.name;
-        out.push({ label: r.name, words: r.say, sset: id, min: rmin, flag: rflag, where });
-        for (const m of r.more || []) out.push({ label: m.name, words: m.say, sset: id, open, parent: r.name, min: strict(rmin, m.min), flag: rflag, where: `${sec.title} › ${r.name}` });
+        out.push({ label: r.name, words: text(r.say), sset: id, min: rmin, flag: rflag, where });
+        for (const m of r.more || []) out.push({ label: m.name, words: text(m.say), sset: id, open, parent: r.name, min: strict(rmin, m.min), flag: rflag, where: `${sec.title} › ${r.name}` });
         for (const it of r.moreList || []) out.push({ label: it.title, words: it.meta, sset: id, open, parent: r.name, list: true, min: rmin, flag: rflag, where: `${sec.title} › ${r.name}` });
       } };
       const recsIn = (list, where, at, min, flag, extra = {}) => { for (const it of list || []) {
@@ -524,6 +524,8 @@ function pickResult(v) {
   goTo(e);
 }
 const flagName = (key) => (SM.FLAGS || []).find((f) => f.key === key)?.name || M.FLAG_ROW[key] || key;
+// A yes or no asked on a Settings page: under the top bar, on screen wherever the page is scrolled (docs/rail/actions.md).
+const settingsStrip = () => (ui.page !== 'settings' ? '' : SV.strip(ui.sv) || (ui.confirm === 'reset' ? R.confirmStrip({ text: 'Reset every group to its defaults? Your channels stay as they are.', yes: 'Reset' }) : ''));
 const unlockStrip = () => (ui.unlock?.strip ? R.confirmStrip({ text: `${ui.unlock.e.label} needs ${cap(ui.unlock.strip)}. Switch to ${cap(ui.unlock.strip)}?`, yes: 'Switch' }) : '');
 document.addEventListener('input', (e) => { if (e.target.matches?.('[data-search]')) { ui.q = e.target.value; document.querySelector('[data-search-res]').innerHTML = searchResults(); fitSearch(); } });
 function fitSearch() { const m = document.querySelector('.rl-search-res'); if (!m) return; m.style.left = ''; const r = m.getBoundingClientRect(), vw = document.documentElement.clientWidth; if (r.right > vw - 16) m.style.left = `${vw - 16 - r.right}px`; }
@@ -554,7 +556,7 @@ function renderInShell() {
   document.getElementById('rail-pulse-slot').innerHTML = pulseButton();
   document.querySelector('#topnav-new')?.setAttribute('aria-expanded', String(!!ui.nr));
   document.getElementById('side-foot').innerHTML = sideFoot();
-  document.getElementById('rail-strip').innerHTML = unlockStrip();
+  document.getElementById('rail-strip').innerHTML = unlockStrip() || settingsStrip();
   // a reply in a chat you left: the dot on the Chat row and on Ask worca, until you open Chat
   const chatDot = !!C().chatUnread && !ui.chatSeen;
   for (const id of ['nav-chat-unread', 'topnav-ask-dot']) { const d = document.getElementById(id); if (d) d.hidden = !chatDot; }
@@ -625,7 +627,7 @@ function paintAlone() {
   const sideNow = ui.page === 'settings'; swapCls = sideWas !== null && sideWas !== sideNow ? ' is-swap' : ''; sideWas = sideNow;
   const scroller = document.scrollingElement || document.documentElement; const keepY = scroller.scrollTop;
   const keepP = document.querySelector('.pz-pbody')?.scrollTop || 0;
-  document.getElementById('app').innerHTML = `<div class="pz-app">${sidebar()}<div class="pz-main">${topbar()}<main class="pz-page">${unlockStrip()}${ui.page === 'settings' ? settingsPage() : runsPage()}</main></div>${popover()}${newRun()}${acctMenu()}</div>`;
+  document.getElementById('app').innerHTML = `<div class="pz-app">${sidebar()}<div class="pz-main">${topbar()}<main class="pz-page">${unlockStrip() || settingsStrip()}${ui.page === 'settings' ? settingsPage() : runsPage()}</main></div>${popover()}${newRun()}${acctMenu()}</div>`;
   const t = toastEl(); t.innerHTML = ui.toast ? esc(ui.toast) + (undo ? R.toastUndo({ title: undo.tip }) : '') : ''; t.classList.toggle('is-on', !!ui.toast);
   for (const b of document.querySelectorAll('[data-mixed]')) b.indeterminate = true;
   const pb = document.querySelector('.pz-pbody'); if (pb && !opening) pb.scrollTop = keepP;

@@ -2,7 +2,7 @@
 // the Rail components alone, so the look, the alignment and the motion are the components':
 //   a decision  → SettingsRow: its name, its state in words (SentencePickers where it changes), a Switch or a button;
 //                 its fine-tuning folds under Customise (`more`);
-//   a record    → ListRow in a List: the whole row opens the thing, its own actions in its ⋯;
+//   a record    → ListRow in a List: the row opens what it does not already show, or nothing; its one action a button, more in its ⋯;
 //   Change…     → a Dialog with Fields (`edit`), stepped when it has `steps`; a yes or no → the ConfirmStrip.
 // A value lives in `sv`, a Labs flag in R.prefs. Every control acts on them; nothing is saved (a prototype).
 (function () {
@@ -33,21 +33,31 @@
   }
   const dialogRows = (sv) => { const d = sv.__dialog; return d ? (d.steps ? d.steps.flatMap((s) => s.rows || []) : d.rows || []) : []; };
   const findPick = (sv, key) => { for (const r of [...dialogRows(sv), ...rowsOf()]) if (r.picks && r.picks[key]) return [r, r.picks[key]]; return [null, null]; };
-  const optText = (p, v) => (p.options.find((o) => o[0] === v) || [v, v])[1];
+  const optsOf = (p, sv) => (typeof p.options === 'function' ? p.options(sv) : p.options);
+  const optText = (p, v, sv) => (optsOf(p, sv).find((o) => o[0] === v) || [v, v])[1];
   const words = (t, c) => c.esc(t || '').replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/`(.+?)`/g, '<code>$1</code>');
   const vis = (x, c) => R.shows(x.min, c.level) && (!x.flag || R.prefs.flag(x.flag)) && (!x.when || x.when(c.sv));
   const textOf = (v, sv) => (typeof v === 'function' ? v(sv) : v);
 
   function sentence(r, sv, c) {
-    return words(r.say, c).replace(/\{(\w+)\}/g, (m, k) => {
+    return words(textOf(r.say, sv), c).replace(/\{(\w+)\}/g, (m, k) => {
       const p = r.picks && r.picks[k];
       if (p) {
-        if (c.locked) return `<b>${c.esc(optText(p, sv[k]))}</b>`;
-        return c.R.sentencePicker({ id: 'sv:' + k, text: optText(p, sv[k]), open: c.open === 'sv:' + k, tip: p.tip || '', chevron: c.svg('chevron', 12), right: !!p.right,
-          items: p.options.map(([id, text, help]) => ({ id, text, help, checked: sv[k] === id })) });
+        if (c.locked) return `<b>${c.esc(optText(p, sv[k], sv))}</b>`;
+        return c.R.sentencePicker({ id: 'sv:' + k, text: optText(p, sv[k], sv), open: c.open === 'sv:' + k, tip: p.tip || '', chevron: c.svg('chevron', 12), right: !!p.right,
+          items: optsOf(p, sv).map(([id, text, help, off]) => ({ id, text, help, off: !!off, checked: sv[k] === id })) });
       }
       if (r.vals && k in r.vals) return c.esc(typeof r.vals[k] === 'function' ? r.vals[k](sv) : sv[k]);
       return m;   // a literal {word}
+    });
+  }
+  // The sentence as plain words, the same fill as above: a toast says it, and gates/settings-sentences.mjs reads it.
+  function sentenceText(r, sv) {
+    return textOf(r.say, sv).replace(/\*\*(.+?)\*\*/g, '$1').replace(/`(.+?)`/g, '$1').replace(/\{(\w+)\}/g, (m, k) => {
+      const p = r.picks && r.picks[k];
+      if (p) return optText(p, sv[k], sv);
+      if (r.vals && k in r.vals) return String(typeof r.vals[k] === 'function' ? r.vals[k](sv) : sv[k]);
+      return m;
     });
   }
   // An action: a jump to another section (go), a Dialog (edit), a ConfirmStrip (confirm), a copy, a change (do), or a
@@ -64,7 +74,7 @@
   }
   function swOf(r, label, sv, c) {
     const s = r.sw; if (!s) return '';
-    const off = c.locked || s.locked || '';
+    const off = c.locked || s.locked || (s.off && s.off(sv)) || '';
     return c.R.switchButton({ on: s.flag ? R.prefs.flag(s.flag) : sv[s.key], label, why: off || s.why || '', disabled: !!off, attrs: { 'data-svsw': s.flag ? 'flag:' + s.flag : s.key } });
   }
   const chipOf = (x, sv, c) => { const t = x.chip && textOf(x.chip, sv); return t ? c.R.chip({ text: t, title: x.chipTip || '' }) : ''; };
@@ -74,7 +84,7 @@
     const inner = open ? (r.more || []).filter((m) => vis(m, c)).map((m) => row(m, sv, c, where + '/' + r.name)).join('') : '';
     const detail = open && r.moreList ? records(r.moreList, sv, c, where + '/' + r.name, r.empty) : '';
     const acts = (r.acts || []).filter((a) => vis(a, c)).map((a) => act(a, where + '/' + r.name, c)).join('');
-    return c.R.settingsRow({ name: r.name, help: r.help || '', sentence: sentence(r, sv, c), end: chipOf(r, sv, c) + acts + swOf(r, r.name, sv, c), detailRows: inner, detail, fold: folds ? { open, attrs: { 'data-svdo': key, 'data-key': 'sv:' + key } } : null });
+    return c.R.settingsRow({ name: r.name, help: r.help || '', sentence: sentence(r, sv, c), end: chipOf(r, sv, c) + acts + swOf(r, r.name, sv, c), detailRows: inner, detail, fold: folds ? { open, label: r.foldLabel, attrs: { 'data-svdo': key, 'data-key': 'sv:' + key } } : null });
   }
 
   // ---- records: each list's own copy, so a rename or a delete holds until the case changes ----
@@ -105,21 +115,28 @@
     const recs = recsOf(sv, where, items);
     return recs.filter((it) => !it.when || it.when(sv, it)).map((it) => {
       const k = where + '/' + it.id, mid = 'svm:' + k;
-      const menu = c.locked ? [] : (typeof it.menu === 'function' ? it.menu(it, sv) : it.menu) || [];
-      for (const m of menu) {
-        const fn = (it.on && it.on[m]) || SHARED[m];
-        if (!fn) throw new Error(`settings-model: "${m}" on ${it.title} does nothing`);
-        REG.set(k + '/' + m, { rec: fn, it, where });
+      const all = c.locked ? [] : (typeof it.menu === 'function' ? it.menu(it, sv) : it.menu) || [];
+      const nameOf = (m) => (typeof m === 'string' ? m : m.text);
+      for (const m of all) {
+        const n = nameOf(m), fn = (it.on && it.on[n]) || SHARED[n];
+        if (!fn) throw new Error(`settings-model: "${n}" on ${it.title} does nothing`);
+        if (!m.off) REG.set(k + '/' + n, { rec: fn, it, where });
       }
-      REG.set(k + '/open', { rec: it.open || ((r, x) => x.dialog({ title: r.title, view: true, yes: 'Close', note: r.detail || (r.live ? r.live(sv, r) : r.meta) })), it, where });
+      // The one answer sits on the row (`quick`); a ⋯ with one item is that item, as a button.
+      const quick = all.filter((m) => (it.quick || []).includes(nameOf(m))), rest = all.filter((m) => !quick.includes(m));
+      const onRow = rest.length === 1 ? [...quick, ...rest] : quick, menu = rest.length === 1 ? [] : rest;
+      const btns = onRow.map((m) => { const n = nameOf(m), b = c.R.button({ label: n, kind: 'quiet', attrs: m.off ? { disabled: true, 'data-key': 'sv:' + k + '/' + n } : { 'data-svdo': k + '/' + n, 'data-key': 'sv:' + k + '/' + n } }); return m.off ? c.R.tooltip({ text: m.help || '', off: true, html: b }) : b; }).join('');
+      // The row opens what it does not already show; with nothing more, it has no click. A level above yours: no link to a lock page.
+      const opener = (it.openMin && !R.shows(it.openMin, c.level) ? null : it.open) || (it.detail ? (r, x) => x.dialog({ title: r.title, view: true, yes: 'Close', note: r.detail }) : null);
+      if (opener) REG.set(k + '/open', { rec: opener, it, where });
       const meta = (it.live ? it.live(sv, it) : it.meta) || '';
       // A record's own fine-tuning (a tracker's Ticket updates) folds under it, as a row's does.
       const foldKey = 'more:' + where + '/' + it.title, foldOpen = sv.__open === foldKey;
       const canFold = it.more && (!it.foldFlag || R.prefs.flag(it.foldFlag));
       const under = canFold && foldOpen ? `<div class="set-detail" data-motion="open"><div class="set-rows">${it.more.filter((m) => vis(m, c)).map((m) => row(m, sv, c, where + '/' + it.title)).join('')}</div>${it.moreList ? records(it.moreList, sv, c, where + '/' + it.title, it.empty) : ''}</div>` : '';
-      return c.R.listRow({ title: it.title, meta, mark: it.mark ? c.R.statusDot({ tone: it.mark }) : '', endText: it.fig || '', end: chipOf(it, sv, c) + swOf(it, it.title, sv, c), after: under,
+      return c.R.listRow({ title: it.title, meta, mark: textOf(it.mark, sv) ? c.R.statusDot({ tone: textOf(it.mark, sv) }) : '', endText: it.fig || '', end: chipOf(it, sv, c) + btns + swOf(it, it.title, sv, c), after: under,
         fold: canFold ? { open: foldOpen, help: it.foldHelp || '', attrs: { 'data-svdo': foldKey, 'data-key': 'sv:' + foldKey } } : null,
-        open: { 'data-svdo': k + '/open', 'data-key': 'sv:' + k + '/open', title: meta || 'Open ' + it.title },
+        open: opener ? { 'data-svdo': k + '/open', 'data-key': 'sv:' + k + '/open', title: meta || 'Open ' + it.title } : null,
         menu: menu.length ? { id: mid, label: 'More for ' + it.title, icon: c.svg('more', 14), items: menu, open: c.open === mid } : null });
     });
   }
@@ -180,15 +197,18 @@
       return c.R.emptyState({ title: `${f.name} is off`, text: 'Turn it on in Labs.', actions: c.R.button({ label: 'Open Labs', kind: 'quiet', attrs: { 'data-sset': 'experimental' } }) });
     }
     const locked = sec.lock && !R.atLevel(level, sec.lock.level) ? sec.lock.why : '';
-    const strip = sv.__confirm && !sv.__dialog ? c.R.confirmStrip({ text: sv.__confirm.text, yes: sv.__confirm.yes, danger: !!sv.__confirm.danger }) : '';
-    return dialogHtml(sv, c) + strip + sec.sections.filter((s) => vis(s, c)).map((s) => {
+    return dialogHtml(sv, c) + sec.sections.filter((s) => vis(s, c)).map((s) => {
       const where = id + '/' + s.title, cc = { ...c, locked };
       const head = (s.actions || []).filter((a) => vis(a, c)).map((a) => act(a, where, cc)).join('');
       const rows = ((c.extra && c.extra[s.title]) || '') + (s.rows || []).filter((r) => vis(r, c)).map((r) => row(r, sv, cc, where)).join('');
       const table = s.table ? c.R.table({ ...s.table, rows: textOf(s.table.rows, sv) }) : '';
-      return c.R.settingsSection({ title: s.title, meta: textOf(s.meta, sv) || '', action: head, rows: rows + table + (s.list ? records(s.list, sv, cc, where, s.empty) : '') + groupsHtml(s, sv, cc, where) });
+      const list = s.list && (!s.listWhen || s.listWhen(sv)) ? records(s.list, sv, cc, where, s.empty) : '';
+      return c.R.settingsSection({ title: s.bare ? '' : s.title, meta: textOf(s.meta, sv) || '', action: head, rows: rows + table + list + groupsHtml(s, sv, cc, where) });
     }).join('');
   }
+
+  // The strip of a yes or no on the page, drawn under the top bar by the page around Settings (docs/rail/actions.md).
+  const strip = (sv) => (sv.__confirm && !sv.__dialog ? R.confirmStrip({ text: sv.__confirm.text, yes: sv.__confirm.yes, danger: !!sv.__confirm.danger }) : '');
 
   // ---- what a click means ----
   const runRec = (sv, a) => a.rec(a.it, tools(sv, a.it, a.where)) || '';
@@ -198,9 +218,10 @@
       return runRec(sv, a);
     }
     const key = id.slice(3), [r, p] = findPick(sv, key);
-    if (!p) return '';
+    if (!p || sv[key] === v || optsOf(p, sv).find((o) => o[0] === v)?.[3]) return '';   // no change, no toast; an off choice does nothing
     sv[key] = v;
-    return `${r.name}: ${optText(p, v)}`;
+    const also = p.then ? p.then(sv) : '';
+    return `${r.name}: ${sentenceText(r, sv)}${also ? `. ${also}` : ''}`;
   }
   function toggle(sv, key) {
     if (key.startsWith('flag:')) {
@@ -228,7 +249,7 @@
     if (a.rec) return runRec(sv, a);
     if (a.edit) { openDialog(sv, typeof a.edit === 'function' ? a.edit(sv) : a.edit); return ''; }
     if (a.confirm) { sv.__confirm = typeof a.confirm === 'function' ? a.confirm(sv) : a.confirm; return ''; }
-    if (a.copy) { try { navigator.clipboard?.writeText(textOf(a.copy, sv))?.catch(() => {}); } catch { /* a page without clipboard access */ } return `Copied: ${textOf(a.copy, sv)}`; }
+    if (a.copy) { try { navigator.clipboard?.writeText(textOf(a.copy, sv))?.catch(() => {}); } catch { /* a page without clipboard access */ } return a.copied || `Copied: ${textOf(a.copy, sv)}`; }
     if (a.do) return a.do(sv) || '';
     if (a.click) { clickThrough(a.click); return a.say || ''; }
     if (a.page) return toPage(a.page, a.say);
@@ -246,12 +267,12 @@
     if (d.steps && d.at < d.steps.length - 1) { d.at += 1; d.status = ''; return ''; }
     sv.__dialog = null;
     if (d.view && !d.then) return '';
-    const said = d.then ? d.then(d.vals, sv) : (Object.assign(sv, d.vals), '');
-    return said || d.done || `${d.title}: saved`;
+    const said = d.then ? d.then(d.vals, sv) : (Object.assign(sv, d.vals), undefined);
+    return said === '' ? '' : said || d.done || `${d.title}: saved`;   // a then that returns '' changed nothing
   }
   function confirm(sv, yes) {
     const c = sv.__confirm; sv.__confirm = null;
     return yes && c ? c.then(sv) || '' : '';
   }
-  window.SettingsView = { fresh, section, pick, toggle, act: doAct, dialog, confirm };
+  window.SettingsView = { fresh, section, strip, sentenceText, rowsOf, pick, toggle, act: doAct, dialog, confirm };
 })();

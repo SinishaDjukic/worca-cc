@@ -56,7 +56,7 @@ export function listRow({ title, meta = '', mark = '', end = '', endText = '', o
   const foldBtn = fold ? button({ label: fold.open ? 'Done' : 'Customise', kind: 'quiet', attrs: { 'aria-expanded': String(!!fold.open), title: fold.help || null, ...(fold.attrs || {}) } }) : '';
   const shown = !fold || fold.open ? after : '';
   const state = [unread && 'is-unread', current && 'is-current', holds && 'is-holds', flash && 'is-flash', check && 'is-sel'].filter(Boolean).join(' ');
-  return row({ kind: 'list', rail, text: main, cls: state, end: `${endText ? `<span class="lr-fig">${esc(endText)}</span>` : ''}${end}${foldBtn}`, more, attrs: current ? { 'aria-current': 'true', ...a } : a, after: shown ? `<div class="lr-after">${shown}</div>` : '' });
+  return row({ kind: 'list', rail, text: main, cls: state, end: `${endText ? `<span class="lr-fig">${esc(endText)}</span>` : ''}${foldBtn}${end}`, more, attrs: current ? { 'aria-current': 'true', ...a } : a, after: shown ? `<div class="lr-after">${shown}</div>` : '' });
 }
 
 /**

@@ -30,7 +30,49 @@
   const ENGINES = O(['claude', 'Claude'], ['codex', 'Codex (beta)'], ['copilot', 'Copilot (beta)'], ['cursor', 'Cursor (beta)'], ['gemini', 'Gemini CLI (beta)'], ['goose', 'Goose (beta)'], ['opencode', 'OpenCode (beta)'], ['qwen', 'Qwen Code (beta)']);
   const usd = (v) => (v === '' || v == null ? 'no limit' : '$' + Number(v).toLocaleString('en-US'));
   const opens = (where) => ({ label: 'Open', say: `Opens ${where} in a new tab` });
-  const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
+const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
+  const plural = (n, w) => `${n} ${w}${+n === 1 ? '' : 's'}`;
+  const andList = (xs) => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`);
+  const isAmount = (s) => /^\d+(\.\d+)?$/.test(String(s).trim());
+  const atLevel = (min) => window.RailUI.shows(min, window.RailUI.prefs.mode());
+  const pickText = (options, v) => (options.find((o) => o[0] === v) || [v, v])[1];
+  const ARCHIVE = O(['never', 'stay until you archive them'], ['7', 'are archived after 7 days'], ['30', 'are archived after 30 days'], ['90', 'are archived after 90 days'], ['365', 'are archived after a year']);
+  const WAIT = O(['30m', '30 minutes'], ['1h', '1 hour'], ['4h', '4 hours'], ['12h', '12 hours'], ['24h', '24 hours']);
+
+  // ---- Team policy: what the team published, and what you edit (docs/rail/settings.md › Team policy). The page edits
+  // sv's own values; `sv.pol` is the last published document, and everything outside the editor reads that. A change
+  // waits until Publish, one commit on the worca-policy branch, as in the app. ----
+  const POLICY = { prOpen: 'none', prSlices: 'each', capRun: '50', capAll: '2000', wsCap: '120', blockMcp: true, policyTitle: 'Gateway team policy', policyNotes: 'Ask #platform' };
+  const PR_WORDS = { none: 'None', draft: 'Draft', ready: 'Ready' };
+  const POLICY_WORDS = {
+    prOpen: (v) => `Create a PR: ${PR_WORDS[v]}`, prSlices: (v) => `A feature's PRs: ${v === 'each' ? 'one per slice' : 'one for all'}`, capRun: (v) => `Each run: ${usd(v)}`, capAll: (v) => `All runs: ${usd(v)} a month`,
+    wsCap: (v) => `Workspace runs: ${usd(v)} a run`, blockMcp: () => 'Unknown MCP servers no longer blocked', policyTitle: (v) => `Title: ${v}`, policyNotes: () => 'Notes changed',
+  };
+  const pending = (sv, keys = Object.keys(POLICY)) => keys.filter((k) => sv[k] !== sv.pol[k]);
+  const pendingWords = (sv) => { const n = pending(sv).length; return n ? `${plural(n, 'change')} not published` : 'Nothing to publish'; };
+  const pendingChip = (...keys) => (sv) => (pending(sv, keys).length ? 'Not published' : '');
+  const polEdit = (title, fields, check) => ({ label: 'Change…', edit: { title, yes: 'Add to changes', note: 'Nothing reaches your team until you publish.', fields, check, then: (v, sv) => { Object.assign(sv, v); return pendingWords(sv); } } });
+  // A cap has one behaviour: a run pauses at it (docs/rail/settings.md › Spending). The tighter of yours and your team's wins.
+  const runCap = (sv) => (!sv.perRun ? `**${usd(sv.pol.capRun)}** (your team's)` : +sv.perRun <= +sv.pol.capRun ? `**${usd(sv.perRun)}**` : `**${usd(sv.pol.capRun)}** (your team's; yours is ${usd(sv.perRun)})`);
+  const totalCap = (sv) => { const team = `${usd(sv.pol.capAll)} a month`, own = `${usd(sv.total)} a ${sv.period}`;
+    if (!sv.total) return `**${team}** (your team's)`;
+    if (sv.period !== 'month') return `**${own}**, and **${team}** (your team's)`;
+    return +sv.total <= +sv.pol.capAll ? `**${own}**` : `**${team}** (your team's; yours is ${usd(sv.total)})`; };
+  const SPENT = { day: ['today', 38], week: ['this week', 140], month: ['this month', 412] };
+  const spentWords = (sv) => { const own = sv.total ? sv.period : 'month', [when, n] = SPENT[own], of = sv.total && own !== 'month' ? +sv.total : sv.total ? Math.min(+sv.total, +sv.pol.capAll) : +sv.pol.capAll; return `Spent ${when}: $${n} of ${usd(of)}.`; };
+
+  // ---- Plugins and Chat › Channels read one fact from here: what is installed, and whether a channel has its token ----
+  const installed = (sv, title) => !sv.gone[title];
+  const uninstall = (title) => (r, x) => x.confirm({ text: `Uninstall ${title}?`, yes: 'Uninstall', danger: true, then: (s) => { s.gone = { ...s.gone, [title]: true }; return `Uninstalled: ${title}`; } });
+  const CHANNELS = [['Telegram', 'chTelegram'], ['Discord', 'chDiscord'], ['Slack', 'chSlack'], ['Teams', 'chTeams']];
+  const channelState = (sv, title, key) => (!sv.chToken[title] ? 'Not set up' : sv[key] ? 'Connected' : 'Off');
+  const workingChannels = (sv) => CHANNELS.filter(([t, k]) => installed(sv, t) && channelState(sv, t, k) === 'Connected').map(([t]) => t);
+
+  // ---- Connectors: a set holds names, so every count reads the lists ----
+  const SET_MEMBERS = { General: { servers: ['github', 'postgres'], skills: ['pdf-tools'] }, Frontend: { servers: ['github', 'postgres'], skills: ['pdf-tools'] } };
+  const setCount = (sv, name) => { const of = (where, names) => { const live = (sv.__recs[where] || recsSeed(...where.split('/'))).map((r) => r.title); return names.filter((n) => live.includes(n)).length; };
+    return `${plural(of('connectors/Servers', SET_MEMBERS[name].servers), 'server')} · ${plural(of('connectors/Skills', SET_MEMBERS[name].skills), 'skill')}`; };
+
 
   // ---- Labs: the registry's flags (src/shared/flags/registry.mjs), but its Flags demo ----
   const FLAGS = [
