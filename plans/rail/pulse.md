@@ -17,7 +17,7 @@ among them).
 | A usage limit is known only when a run hits it and pauses | Usage is visible before it stops anything: **rings on the avatar**, a **Limits** row in Vitals when one is near, and an update when it crosses the warning line, is reached or resets |
 | The avatar ring shows spend against a budget | The avatar shows live usage only: **session** and the **long window** (week, day or month) of connected providers, refreshed every minute; each ring shades along its arc. A budget is set in Settings › Runs and read in Usage and costs |
 | The profile menu opens on the spend card | The menu keeps its rows; the spend card moves into its last row, **Usage and costs ›**, a side menu with every harness's limits and the spend |
-| A run starts and pauses at the limit | Before it starts, Pulse checks the run's **estimate** (its size, and what runs like it used) against what is left: New run warns only when it will not fit and offers a harness with room or a start after the reset; slices, queued and scheduled runs move, wait, or let a smaller start that fits go first |
+| A run starts and pauses at the limit | Before it starts, Pulse checks the harness against the **warning line**: at or over it, New run warns and offers a harness with room or a start after the reset; slices, queued and scheduled runs move, wait, or let a start with room go first |
 
 ## 2. The rule that places everything
 
@@ -205,56 +205,41 @@ since the menu opens up from the avatar and the bottom is nearest the hand:
 `usage.reached` is the one notice for the harness; each paused run keeps its own pause notice on its page
 (`limit-notice.mjs`, unchanged) and does not raise its own `run.paused` update for the same limit.
 
-### 4.5 When a limit is near: check the estimate, warn before it starts, give the run to a harness with room
-A run that starts on a harness without room for it may pause halfway; the time to say so is before it starts. Pulse
-does not guess from the share alone: a small run at 86% still fits, a large one at 70% may not.
+### 4.5 When a limit is near: warn before it starts, give the run to a harness with room
+A run that starts on a harness near its limit may pause halfway; the time to say so is before it starts.
 
-**The estimate.** Each run has one before it starts, from two things Worca already has:
-- its **size**: Shaper's assessment (`small`, `medium`, `large`; `shape/nudge.mjs`), shown in New run as a picker in
-  its sentence (`A [large ▾] task`) so a wrong size is corrected where it is read;
-- **what runs like it used**: the median, per window, of done runs with the same agents and size in the last 60 days
-  (`shape/estimate.mjs` medians, split by size), read from the harness's usage before and after each run. A harness's
-  own figures, since a Codex session is not a Claude session. Fewer than 3 such runs: no estimate.
-
-**Near** is then: the run's share plus what is used is over 100% in any window of the harness (`needs about 28% of
-Claude Code's session; 14% is left`). With no estimate, it falls back to the warning line (at or over it). A harness
-with room is one where the run fits.
+**Near** is the warning line alone: a provider with a window at or over the line is near.
 
 **A harness with room**: set up, able to run every agent of the run's workflow (the engine locks of
-`engine-locks.mjs` hold), and the run fits there (with no estimate: every window under the warning line); the one with
-the most room first. Each agent runs the same tier on it (`model-tiers.mjs`), so the switch keeps the run's shape.
-With none, the only offer is the reset.
+`engine-locks.mjs` hold), and every window under the warning line; the one with the most room first. Each agent runs the
+same tier on it (`model-tiers.mjs`), so the switch keeps the run's shape. With none, the only offer is the reset.
 
 **You start it** (New run, Resume). New run is a Dialog (a form): it opens with the one sentence that frames the step,
-`A [large ▾] task on [Claude Code ▾] in web-app · about 12% of its session, 52% left` (the figures only while it fits;
-the note says them when it does not, one place per fact), then the task Field. The harness picker shows each choice's
-windows and what this run adds: `session 86% +28, week 52% +7`.
-When it fits, nothing more (quiet until needed). When it does not, on the rail with an amber dot, one note, by the
-setting:
-- *suggest one with room* (default): `This run needs about 28% of Claude Code's session; 14% is left until 16:40. It
-  may pause before it finishes. Codex has room.` · **Run on Codex** · **Start at 16:40**. Run on Codex changes the sentence; Start at turns
+`A task on [Claude Code ▾] in [web-app ▾]`, then the task Field. The harness picker shows each choice's windows:
+`session 86%, week 52%`. Under the line, nothing more (quiet until needed). At or over it, on the rail with an amber dot,
+one note, by the setting:
+- *suggest one with room* (default): `Claude Code's session is at 86% and resets 16:40. This run may pause before it
+  finishes. Codex has room.` · **Use Codex** · **Start at 16:40**. Use Codex changes the sentence; Start at turns
   the start button into **Start at 16:40** and the note says when, with **Start now instead**.
-- *pick one with room*: the sentence opens on Codex, and a grey line says why: `Worca picked Codex: this run needs
-  about 28% of Claude Code's session and 14% is left.` Changing it back is the sentence.
+- *pick one with room*: the sentence opens on Codex, and a grey line says why: `Worca picked Codex: Claude Code's
+  session is at 86%.` Changing it back is the sentence.
 - *start after the reset*: the start button is **Start at 16:40** from the start, with Start now instead.
 - *start as chosen*: the note alone, no buttons.
 - Used up (red dot): `Codex's weekly limit is used up until Mon 09:00. It starts at Mon 09:00, when that resets.` A
   harness with room is still offered; Start now is not (it would only pause).
 
 **Worca starts it** (a Shaper slice, a queued run, a scheduled run): nobody is there to ask, so each start is checked
-against its own estimate when its turn comes, follows the setting, and says what it did:
+against the warning line when its turn comes, follows the setting, and says what it did:
 - *moves to one with room* (default): it starts on the harness with the most room and **keeps it to the end** (a run
   never changes harness halfway); an update `usage.moved` says so. With none, it waits.
 - *waits for the reset*: it starts when the window resets; `usage.held`.
 - *starts anyway*: as today; it may pause and resumes by itself after the reset (`limit-resume.mjs`).
-- **Reprioritise**: a start that waits does not hold up the line. The next start that fits goes ahead of it on that
-  harness (`Rename the config flag · Goes ahead of slice 3 of 4 on Claude Code: it fits, about 4% of its session`), so
-  the window left before the reset is used by work that can finish in it. Order is otherwise kept, and a slice still
+- **Reprioritise**: a start that waits does not hold up the line. The next start on a harness with room goes ahead of it
+  (`Rename the config flag · Goes ahead of slice 3 of 4: Codex has room`). Order is otherwise kept, and a slice still
   waits for the slice before it.
 - **Slices**: slice k starts when slice k-1 is done (`shape-it-first.md`); the rule applies at that moment, per slice.
   Moving a slice does not touch its branch (it still starts from slice k-1's branch). Before it starts, its row in Vitals ›
-  Scheduled says what it will do: `Will start on Codex: it needs about 28% of Claude Code's session, 14% is left`, or
-  `Waits for 16:40: …`. With
+  Scheduled says what it will do: `Will start on Codex: Claude Code's session is at 86%`, or `Waits for 16:40: …`. With
   **Ask me before each run** on, the plan stop shows the same note as New run.
 - A run already running is not moved; its Running row and the Limits row say it may pause.
 
@@ -284,5 +269,5 @@ Interface mode writes `prefs.setMode`; the sidebar and every page follow it.
 - One warning line for all providers: the `warn at [80% ▾]` picker in Usage, not one per provider (30 Oct).
 - No Pulse page: the panel under the button is all of Pulse (30 Oct).
 - Settings › Notifications is a tab of its own, after General; Alerts and resume after a limit move into it (30 Oct).
-- A start near a limit is judged by its estimate (size and history), not the share alone; a start that waits lets the
-  next one that fits go first (30 Oct).
+- A start near a limit is judged by the warning line; a start that waits lets the
+  next one with room go first (30 Oct).

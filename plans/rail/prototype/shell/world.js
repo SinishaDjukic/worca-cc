@@ -39,9 +39,9 @@
     wait('r36', 'scheduled', 'week', 'Send the status report', 'worca-cc', 'Every Friday', 'Fri 09:00'),
     wait('r37', 'scheduled', 'later', 'Quarterly licence check', 'web-app', 'Every 3 months', 'Jan 5'),
     run('s2', 'slice', 'Rate limiting · slice 2 of 4', 'web-app', 'Build · Codex · moved from Claude Code at the start', '6 min', 'today', { cost: 2.4 }),
-    // Worca starts these with nobody there to ask: each is checked against its own estimate when its turn comes.
-    wait('s3', 'scheduled', 'after', 'Rate limiting · slice 3 of 4', 'web-app', '', '', { slice: true, on: 'claude', size: 'large' }),
-    wait('s4', 'scheduled', 'after', 'Rename the config flag', 'worca-cc', '', '', { queued: true, on: 'claude', size: 'small' }),
+    // Worca starts these with nobody there to ask: each is checked against the warning line when its turn comes.
+    wait('s3', 'scheduled', 'after', 'Rate limiting · slice 3 of 4', 'web-app', '', '', { slice: true, on: 'claude' }),
+    wait('s4', 'scheduled', 'after', 'Rename the config flag', 'worca-cc', '', '', { queued: true, on: 'claude' }),
     // what has ended: it reads the same in every case
     run('r18', 'merged', 'Fix the invoice rounding', 'billing-api', 'Merged', '09:12', 'today', { pr: '#951', cost: 3.1, labels: ['billing'] }),
     run('r19', 'stopped', 'Try the new planner', 'worca-cc', 'Stopped by you', '08:30', 'today', { cost: 8.8 }),

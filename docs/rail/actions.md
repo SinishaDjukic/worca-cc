@@ -32,7 +32,7 @@ a branch, a merge, a comment) or cannot be taken back (Create PR, Merge, Fix che
 Discard, Push, Apply to branch, Link remote) confirms first, in the dialog or the strip; the strip's safe side says
 what it keeps when Cancel would read as the step itself (`Delete run`, `Keep`). Spending alone never confirms: starting agent work is
 not a reason to ask, and Stop stays at hand while it works. Near a limit, the confirm of a step that starts agent work
-carries the limit note in one line (`Needs about 12% of Claude Code’s session; 9% is left.`). Its button then says
+carries the limit note in one line (`Claude Code’s session is at 91%. This may pause before it finishes.`). Its button then says
 what is happening (`Creating…`, `Merging…`) and is disabled until Worca has taken the step on; a step that keeps
 working (a fix, a re-plan) then becomes the state, and the state word says it (`Fixing checks`). On success the page
 moves on and a toast says what happened. On failure nothing changes: the place you acted says what failed and why

@@ -412,7 +412,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
           { name: 'Failures', say: 'Pause a repeating schedule after {fails} failures in a row', picks: { fails: P('3', O('2', '3', '5', '10'), 'Failures in a row before it pauses') } },
         ] },
       ] },
-      { title: 'Limits', meta: 'Near a limit: what is left of a provider\'s usage cannot cover the run\'s estimate; with no estimate, past the warning line.', rows: [
+      { title: 'Limits', meta: 'Near a limit: a provider at or past the warning line.', rows: [
         { name: 'Paused runs', say: 'A run paused at a usage limit {resume}', picks: { resume: P('auto', O(['auto', 'resumes after the reset', 'Worca schedules its resume for 5 minutes after the limit resets'], ['me', 'waits for you', 'It stays paused until you resume it']), 'What a run paused at a usage limit does when the limit resets') } },
       ] },
       { title: 'Away mode', min: 'advanced', meta: 'Going away is the Away switch in your profile menu.', rows: [
@@ -455,9 +455,9 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
 
     presets: { min: 'advanced', title: 'Presets', meta: 'Saved setups a new run can start from. Save one from a run\'s ⋯.', sections: [
       { title: 'Presets', bare: true, empty: 'No presets yet', list: [
-        preset('Bug fix', 'Any project', 'Fix workflow · Claude · updated 3 Oct', '', { task: 'Fix the bug you describe here', size: 'small' }),
-        preset('Docs pass', 'Only worca-cc', 'Docs workflow · Claude · updated 28 Sep', '', { task: 'Bring the docs in line with the code', size: 'small' }),
-        preset('Billing slice', 'Workspace gone', 'Feature workflow · Claude · updated 12 Sep', 'is-amber', { task: 'Build the next billing slice', size: 'large' }),
+        preset('Bug fix', 'Any project', 'Fix workflow · Claude · updated 3 Oct', '', { task: 'Fix the bug you describe here' }),
+        preset('Docs pass', 'Only worca-cc', 'Docs workflow · Claude · updated 28 Sep', '', { task: 'Bring the docs in line with the code' }),
+        preset('Billing slice', 'Workspace gone', 'Feature workflow · Claude · updated 12 Sep', 'is-amber', { task: 'Build the next billing slice' }),
       ] },
     ] },
 

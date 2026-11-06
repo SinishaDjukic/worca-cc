@@ -24,7 +24,6 @@ const VIEWS = {
   levelFly: async (p) => { await click(p, '[data-acct]'); await click(p, '[data-sub="lvl"]'); },
   popMore: async (p) => { await click(p, '[data-pop]'); await click(p, '[data-ptab="updates"]'); await click(p, '[data-menu="more"]'); },
   newrun: async (p) => click(p, '[data-newrun]'),
-  newrunSmall: async (p) => { await click(p, '[data-newrun]'); await click(p, '[data-menu="nr-size"]'); await click(p, '[data-pick="nr-size|small"]'); },
   settings: async (p) => { await click(p, '[data-acct]'); await click(p, '[data-go="settings"]'); await click(p, '[data-sset="notifications"]'); await click(p, '[data-custom="usage"]'); },
   // every other Settings section: their rows are the same components, each with its own pickers, switches and buttons
   ...Object.fromEntries(SECTION_IDS

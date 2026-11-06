@@ -165,27 +165,26 @@ function scheduledSection(list) {
   return `<section class="pz-sec"><h3 class="pz-h">Scheduled <span class="n">${list.length}</span></h3>${groups}</section>`;
 }
 
-// A start with nobody there to ask (a slice, a queued or scheduled run) is checked against its own estimate when its turn
-// comes, and follows Settings › When a limit is near. One that waits does not hold up the line: the next start that fits
-// goes ahead of it. A slice still waits for the slice before it.
+// A start with nobody there to ask (a slice, a queued or scheduled run) is checked against the warning line when its turn
+// comes, and follows Settings › When a limit is near. One that waits does not hold up the line: the next start on a
+// harness with room goes ahead of it. A slice still waits for the slice before it.
 function startPlan(r) {
-  const c = C(), w = ui.s.warnAt, lim = M.near(c, r.on, w, r.size);
+  const c = C(), w = ui.s.warnAt, lim = M.near(c, r.on, w);
   if (!lim) return { go: 'start' };
-  const rm = M.room(c, w, r.on, r.size);
-  const why = lim.pct >= 100 ? `${lim.name}'s ${lim.what} is used up` : lim.need != null ? `it needs about ${lim.need}% of ${lim.name}'s ${lim.what}, ${lim.left}% is left` : `${lim.name}'s ${lim.what} is at ${lim.pct}%`;
+  const rm = M.room(c, w, r.on);
+  const why = lim.pct >= 100 ? `${lim.name}'s ${lim.what} is used up` : `${lim.name}'s ${lim.what} is at ${lim.pct}%`;
   if (ui.s.auto === 'asis') return { go: 'asis', lim, why };
   if (ui.s.auto === 'move' && rm.length) return { go: 'move', to: rm[0], lim, why };
   return { go: 'wait', lim, why };
 }
-const share = (p, size) => { const e = M.est(p, size), u = C().usage.find((x) => x.p === p); const k = e && u && u.win.map((x) => x.k).find((x) => e[x] != null); return k ? `about ${e[k]}% of its ${M.WHAT[k]}` : ''; };
 function startDetail(r) {
   const later = vitalsRuns().scheduled, pl = startPlan(r), i = later.findIndex((x) => x.id === r.id);
   if (pl.go === 'asis') return `Starts on ${pl.lim.name} and may pause: ${pl.why}`;
   if (pl.go === 'move') return `Will start on ${pname(pl.to)}: ${pl.why}`;
   if (pl.go === 'wait') return `Waits for ${pl.lim.resets}: ${pl.why}`;
   const held = later.slice(0, i).find((x) => x.on && startPlan(x).go === 'wait');
-  if (held) return `Goes ahead of ${held.slice ? held.title.split(' · ')[1] : held.title} on ${pname(r.on)}: it fits, ${share(r.on, r.size)}`;
-  return r.slice ? `Starts on ${pname(r.on)} when slice 2 is done · ${share(r.on, r.size)}` : `Starts on ${pname(r.on)} when a slot is free · ${share(r.on, r.size)}`;
+  if (held) return `Goes ahead of ${held.slice ? held.title.split(' · ')[1] : held.title} : ${pname(r.on)} has room`;
+  return r.slice ? `Starts on ${pname(r.on)} when slice 2 is done` : `Starts on ${pname(r.on)} when a slot is free`;
 }
 
 // ---- Pulse: the panel under the Pulse button is the whole hub (Vitals, every update, select and clear); no page ----
@@ -275,33 +274,26 @@ const AUTO = [
   { id: 'move', text: 'moves to another provider with room', help: 'It starts on the harness with the most room and keeps it to the end; with none, it waits for the reset. Each move or wait is an update in Pulse' },
   { id: 'wait', text: 'waits for the reset', help: 'It starts when the limit resets; an update in Pulse says so' },
   { id: 'asis', text: 'starts anyway', help: 'It starts as planned and may pause; it resumes by itself after the reset' }];
-// New run checks the run's estimate (Shaper's size, history of runs like it) against what is left on the harness.
-function openNewRun(size) {
-  const preset = ui.sv.__preset || (size ? ui.nr?.preset : null); ui.sv.__preset = null;
-  const c = startable(), w = ui.s.warnAt, sz = size || preset?.size || c.task.size, first = c.usage.find((u) => M.PROVIDER[u.p].runs).p, lim = M.near(c, first, w, sz), rm = M.room(c, w, first, sz);
+// New run checks the harness against the warning line.
+function openNewRun() {
+  const preset = ui.sv.__preset; ui.sv.__preset = null;
+  const c = startable(), w = ui.s.warnAt, first = c.usage.find((u) => M.PROVIDER[u.p].runs).p, lim = M.near(c, first, w), rm = M.room(c, w, first);
   const project = ui.nr?.project || 'web-app';
-  ui.nr = { on: first, size: sz, wait: false, moved: '', project };
-  if (lim && ui.s.mine === 'move' && rm.length) ui.nr = { on: rm[0], size: sz, wait: false, project, moved: `Worca picked ${pname(rm[0])}: ${lim.need != null ? `this run needs about ${lim.need}% of ${lim.name}'s ${lim.what} and ${lim.left}% is left` : `${lim.name}'s ${lim.what} is at ${lim.pct}%`}` };
+  ui.nr = { on: first, wait: false, moved: '', project };
+  if (lim && ui.s.mine === 'move' && rm.length) ui.nr = { on: rm[0], wait: false, project, moved: `Worca picked ${pname(rm[0])}: ${lim.name}'s ${lim.what} is at ${lim.pct}%` };
   else if (lim && ui.s.mine === 'wait') ui.nr.wait = true;
   if (preset) ui.nr.preset = preset;
 }
 const PROJECTS = ['web-app', 'worca-cc', 'billing-api', 'docs-site'];
 const connOffline = () => document.getElementById('conn')?.value === 'offline';
-const SIZE_HELP = { small: 'A change in one or two files', medium: 'A change across a few files, with tests', large: 'A feature across modules; Shaper may offer slices' };
 function newRun() {
   if (!ui.nr) return '';
   const c = startable(); if (!c.usage.some((u) => u.p === ui.nr.on)) ui.nr.on = c.usage.find((u) => M.PROVIDER[u.p].runs).p;   // the chosen one signed out: the next that can run
-  const w = ui.s.warnAt, h = ui.nr.on, sz = ui.nr.size, lim = M.near(c, h, w, sz), rm = M.room(c, w, h, sz);
-  const hint = (p) => { const u = c.usage.find((x) => x.p === p), e = M.est(p, sz); return u.win.length ? u.win.map((x) => `${M.winWord(x.k).toLowerCase()} ${x.pct}%${e && e[x.k] != null ? ` +${e[x.k]}` : ''}`).join(', ') : u.noQuota ? 'no quota set' : 'billed per token'; };
-  const items = c.usage.filter((u) => M.PROVIDER[u.p].runs).map((u) => ({ id: u.p, text: pname(u.p), hint: hint(u.p), checked: u.p === h, help: `${M.PROVIDER[u.p].vendor} · ${u.plan}: used, and +what this run needs` }));
+  const w = ui.s.warnAt, h = ui.nr.on, lim = M.near(c, h, w), rm = M.room(c, w, h);
+  const hint = (p) => { const u = c.usage.find((x) => x.p === p); return u.win.length ? u.win.map((x) => `${M.winWord(x.k).toLowerCase()} ${x.pct}%`).join(', ') : u.noQuota ? 'no quota set' : 'billed per token'; };
+  const items = c.usage.filter((u) => M.PROVIDER[u.p].runs).map((u) => ({ id: u.p, text: pname(u.p), hint: hint(u.p), checked: u.p === h, help: `${M.PROVIDER[u.p].vendor} · ${u.plan}: how much of its limits is used` }));
   const reached = !!lim && lim.pct >= 100, waits = !!lim && (ui.nr.wait || reached);
   const note = (dot, text, acts) => `<div class="pz-advice"><span class="pz-rail">${dot ? R.statusDot({ tone: dot }) : ''}</span><div><p class="pz-advice-t">${esc(text)}</p>${acts ? `<div class="pz-advice-acts">${acts}</div>` : ''}</div></div>`;
-  // the estimate in the size's sentence: what it needs of the tightest window, and what is left there; the advice says it
-  // instead when the run does not fit (one place per fact)
-  const e = M.est(h, sz), u = c.usage.find((x) => x.p === h);
-  const tight = e && u.win.filter((x) => e[x.k] != null).sort((a, b) => b.pct + e[b.k] - (a.pct + e[a.k]))[0];
-  const need = lim && !ui.nr.moved ? '' : tight ? ` · about ${e[tight.k]}% of its ${M.WHAT[tight.k]}, ${Math.max(0, 100 - tight.pct)}% left` : u.win.length ? ` · too few runs this size to estimate` : '';
-  const sizeTip = tight ? `The median of ${M.N[sz]} done runs this size with the same agents, last 60 days. Shaper sized the task; change it if it is wrong` : 'Shaper sized the task; change it if it is wrong';
   let advice = '';
   const signedOut = !C().usage.some((u) => M.PROVIDER[u.p].runs), gone = budgetGone(), offline = connOffline();
   if (signedOut) advice = note('is-amber', `Nothing that can run is signed in. Only mock runs work until you sign in.`, quiet('Open Sign-ins', { 'data-land': 'models|GitHub Copilot|list', title: 'Opens Settings › Models › Sign-ins' }));
@@ -309,7 +301,6 @@ function newRun() {
   else if (ui.nr.moved) advice = note('', `${ui.nr.moved}.`);
   else if (lim) {
     const say = reached ? `${lim.name}'s ${lim.what} is used up until ${lim.resets}.`
-      : lim.need != null ? `This run needs about ${lim.need}% of ${lim.name}'s ${lim.what}; ${lim.left}% is left until ${lim.resets}. It may pause before it finishes.`
       : `${lim.name}'s ${lim.what} is at ${lim.pct}% and resets ${lim.resets}. This run may pause before it finishes.`;
     const other = rm.length ? R.button({ label: `Use ${pname(rm[0])}`, title: `${pname(rm[0])} has room: ${hint(rm[0])}. Each agent runs the same tier on it`, attrs: { 'data-nr-use': rm[0] } }) : '';
     if (waits) advice = note(reached ? 'is-red' : 'is-amber', `${say} It starts at ${lim.resets}, when that resets.${rm.length ? '' : ' No other harness has room.'}`,
@@ -321,7 +312,7 @@ function newRun() {
   const cannot = signedOut ? 'Sign in first: nothing that can run is signed in' : offline ? 'Offline: Worca cannot start a run until the connection is back' : gone ? `The budget is used up: raise it, or wait for ${M.BUDGET_RESETS}` : '';
   return R.dialogFrame({ label: 'New run', cls: 'pz-newrun', scrimCls: inCls('nr').trim(), body: `
     <div class="pz-nr"><h2 class="pz-nr-h">New run</h2>
-      <div class="pz-sentence">A ${picker('nr-size', sz, M.SIZES.map((x) => ({ id: x, text: x, checked: x === sz, help: SIZE_HELP[x] })), sizeTip)} task on ${items.length > 1 ? picker('nr-on', pname(h), items, 'Which harness runs it: each shows how much of its limits is used, and +what this run needs') : `<span class="pz-strong" title="The one harness that can run it: ${esc(hint(h))}">${esc(pname(h))}</span>`} in ${picker('nr-project', ui.nr.project, PROJECTS.map((x) => ({ id: x, text: x, checked: x === ui.nr.project })), 'Which project it runs in')}${esc(need)}</div>
+      <div class="pz-sentence">A task on ${items.length > 1 ? picker('nr-on', pname(h), items, 'Which harness runs it: each shows how much of its limits is used') : `<span class="pz-strong" title="The one harness that can run it: ${esc(hint(h))}">${esc(pname(h))}</span>`} in ${picker('nr-project', ui.nr.project, PROJECTS.map((x) => ({ id: x, text: x, checked: x === ui.nr.project })), 'Which project it runs in')}</div>
       <div class="pz-nr-task" title="${ui.nr.preset ? `From the preset ${esc(ui.nr.preset.title)}` : 'The task (filled in for this prototype)'}">${esc(ui.nr.preset?.task || c.task.title)}</div>
       ${advice}</div>
     <div class="pz-pfoot">${R.button({ label: 'Cancel', kind: 'quiet', title: 'Closes without starting', attrs: { 'data-nr-cancel': true } })}${R.button({ label: start, kind: 'primary', title: cannot || (waits ? `Schedules it for ${lim.resets}` : `Starts it now on ${pname(h)}`), attrs: { 'data-nr-start': true, disabled: !!cannot } })}</div>
@@ -426,7 +417,7 @@ function limitsRows() {
   const s = ui.s;
   const warnRow = R.settingsRow({ name: 'Warning line', changed: changedFrom('warnAt', 'Warning line', (v) => v + '%'), sentence: `Warn at ${sp('warn', s.warnAt + '%', [70, 80, 90].map((v) => ({ id: String(v), text: v + '%', checked: s.warnAt === v, help: `Rings turn amber, Vitals shows the limit and an update is sent at ${v}%` })), 'The warning line for usage and spend')} of a limit` });
   const limits = warnRow + R.settingsRow({ name: 'Manual starts', changed: changedFrom('mine', 'Manual starts', (v) => MINE.find((m) => m.id === v).text), sentence: `New run and Resume near a limit ${sp('mine', MINE.find((m) => m.id === s.mine).text, MINE.map((m) => ({ ...m, checked: m.id === s.mine })), 'What New run and Resume do when the harness is near its limit')}` })
-    + R.settingsRow({ name: 'Automatic starts', changed: changedFrom('auto', 'Automatic starts', (v) => AUTO.find((m) => m.id === v).text), sentence: `A slice or scheduled run near a limit ${sp('auto', AUTO.find((m) => m.id === s.auto).text, AUTO.map((m) => ({ ...m, checked: m.id === s.auto })), 'What a start with nobody there to ask does near a limit. One that waits never holds up the line: the next start that fits goes ahead')}` });
+    + R.settingsRow({ name: 'Automatic starts', changed: changedFrom('auto', 'Automatic starts', (v) => AUTO.find((m) => m.id === v).text), sentence: `A slice or scheduled run near a limit ${sp('auto', AUTO.find((m) => m.id === s.auto).text, AUTO.map((m) => ({ ...m, checked: m.id === s.auto })), 'What a start with nobody there to ask does near a limit. One that waits never holds up the line: the next start on a harness with room goes ahead')}` });
   return limits;
 }
 function settingsPage() {
@@ -694,7 +685,6 @@ function pick(id, v) {
   else if (id === 'auto') { if (s.auto !== v) toast(`Automatic starts: a slice or scheduled run near a limit ${AUTO.find((m) => m.id === v).text}`); s.auto = v; }
   else if (id === 'nr-on') ui.nr = { ...ui.nr, on: v, wait: false, moved: '' };
   else if (id === 'nr-project') ui.nr = { ...ui.nr, project: v };
-  else if (id === 'nr-size') openNewRun(v);
   else if (id === 'warn') { if (s.warnAt !== +v) toast(`Warning line at ${v}%: rings, Vitals and updates follow it`); s.warnAt = +v; }
   else if (id.startsWith('lvl:')) { const g = s.groups[id.slice(4)]; if (g.level !== v) { g.level = v; toast(`${M.GROUPS.find((x) => x.id === id.slice(4)).name}: ${g.where === 'pulse' ? whereText(g.where) : `send ${levelText(v)} to ${whereText(g.where)}`}`); } }
   else if (id.startsWith('whr:')) { const g = s.groups[id.slice(4)]; if (g.where !== v) { g.where = v; toast(`${M.GROUPS.find((x) => x.id === id.slice(4)).name}: ${v === 'pulse' ? whereText(v) : `send ${levelText(g.level)} to ${whereText(v)}`}`); } }

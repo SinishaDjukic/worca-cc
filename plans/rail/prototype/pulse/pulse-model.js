@@ -71,18 +71,6 @@
   const LONG = ['week', 'day', 'month'];
   const WHAT = { day: 'daily requests', week: 'weekly limit', month: 'monthly requests', session: 'session' };
 
-  // What a run uses of each window, per harness and Shaper's size: the median of done runs with the same agents and size
-  // in the last 60 days (estimate.mjs, read against the harness's usage before and after each run). `N`: how many runs
-  // it comes from. A harness with no history has no estimate, and the warning line decides alone.
-  const SIZES = ['small', 'medium', 'large'];
-  const EST = {
-    claude: { small: { session: 4, week: 1 }, medium: { session: 12, week: 3 }, large: { session: 28, week: 7 } },
-    codex: { small: { session: 3, week: 1 }, medium: { session: 10, week: 3 }, large: { session: 24, week: 6 } },
-    copilot: { small: { month: 1 }, medium: { month: 3 }, large: { month: 8 } },
-    gemini: { small: { day: 2 }, medium: { day: 6 }, large: { day: 15 } },
-  };
-  const N = { small: 21, medium: 12, large: 5 };
-
   // Where each kind of update opens: one destination per kind, and `to` says it. A run's own kinds open that run, as the
   // world has it now. Limits and the budget open Usage and costs; a step on the row may go further (Raise budget).
   const DEST = { schedule: { go: 'schedules', to: 'Schedules' }, automation: { go: 'settings/automations', to: 'Settings › Automations', land: 'automations|Automations' }, project: { go: 'projects', to: 'Projects' },
@@ -97,7 +85,7 @@
   const ofRun = (id, e, runId, meta, time, day, o = {}) => up(id, e, W.title(runId), `${W.project(runId)} · ${meta}`, time, day, { run: runId, ...o });
   const NEW_VERSION = (id) => up(id, 'app.update_available', '', 'you run 1.19', '08:40', 'Today', { title: 'New version: 1.20' });
   const CASES = [
-    { id: 'afternoon', label: 'A busy afternoon', desktop: 'on', task: { title: 'Add rate limiting to the public API', size: 'medium' },
+    { id: 'afternoon', label: 'A busy afternoon', desktop: 'on', task: { title: 'Add rate limiting to the public API' },
       away: { status: 'here', hours: ['22:00', '07:00'] }, newVersion: '1.20.0', chatUnread: true,
       updates: [
         NEW_VERSION('u-upd'),
@@ -111,40 +99,40 @@
         ofRun('u7', 'run.questions', 'h2', 'answered at 11:20', '11:02', 'Yesterday', { read: true, resolved: true }),
         up('u8', 'schedule.missed', 'Run after: Breadcrumb tests', 'worca-cc · started late, when the run before it resumed', '10:40', 'Yesterday', { read: true, resolved: true }),
         up('u9', 'project.clone_done', 'acme/design-tokens', '2.1 MB', '10:15', 'Yesterday')] },
-    { id: 'near', label: 'Session near its limit', desktop: 'unsupported', task: { title: 'Add rate limiting to the public API', size: 'large' },
+    { id: 'near', label: 'Session near its limit', desktop: 'unsupported', task: { title: 'Add rate limiting to the public API' },
       away: { status: 'no-hours' },
       updates: [
         up('n0', 'usage.moved', '', 'web-app · Claude Code\'s session was at 84% · the slice keeps Codex to the end', '14:24', 'Today', { title: 'Slice 2 of 4 moved to Codex · Rate limiting', run: 's2', to: 'the slice\'s run page' }),
         up('n1', 'usage.near', '', 'Claude · Max · runs on it may pause before it resets', '14:20', 'Today', { title: 'Claude Code session at 80% · resets 16:40' }),
         ofRun('n2', 'run.done', 'h1', '18 min · $1.42', '13:40', 'Today'),
         up('n3', 'pr.fix_started', '#962 Retry on 502', 'web-app · watched PR · 2 checks failing', '11:30', 'Today', { run: 'r7', to: 'the fix run' })] },
-    { id: 'reached', label: 'Weekly limit reached', desktop: 'on', task: { title: 'Add rate limiting to the public API', size: 'medium' },
+    { id: 'reached', label: 'Weekly limit reached', desktop: 'on', task: { title: 'Add rate limiting to the public API' },
       away: { status: 'paused' },
       updates: [
         up('r1', 'usage.reached', '', 'OpenAI · Plus · it resumes by itself Mon 09:05', '11:05', 'Today', { title: 'Codex weekly limit reached · 1 run paused' }),
         ofRun('r2', 'run.failed', 'r5', 'Test step · 3 tests failed', '09:58', 'Today', { to: 'the run page, on the step that stopped', fix: 'Try again' }),
         up('r3', 'usage.near', '', 'OpenAI · Plus', '16:12', 'Yesterday', { title: 'Codex week at 80% · resets Mon 09:00', read: true })] },
-    { id: 'budget', label: 'Spend near its budget', desktop: 'off', task: { title: 'Add rate limiting to the public API', size: 'medium' },
+    { id: 'budget', label: 'Spend near its budget', desktop: 'off', task: { title: 'Add rate limiting to the public API' },
       away: { status: 'away-now' },
       updates: [
         ofRun('b1', 'run.cost_cap', 'r1', 'paused at $5.00 · raise the cap or stop', '10:12', 'Today', { open: true, to: 'the run page at its cost cap' }),
         up('b2', 'budget.threshold', '', 'Budget · $80.40 of $100', '09:30', 'Today', { title: 'Budget at 80% of $100' })] },
     // The budget is used up: every run is paused, and nothing starts until it resets or is raised.
-    { id: 'spent', label: 'Budget used up', desktop: 'on', task: { title: 'Add rate limiting to the public API', size: 'medium' },
+    { id: 'spent', label: 'Budget used up', desktop: 'on', task: { title: 'Add rate limiting to the public API' },
       away: { status: 'here', hours: ['22:00', '07:00'] },
       updates: [
         up('x1', 'budget.exceeded', '', 'Budget · runs pause until it resets or you raise it', '09:30', 'Today', { title: 'Budget of $100 used up', fix: 'Raise budget', fixLand: 'runs|Budget' }),
         up('x2', 'budget.threshold', '', 'Budget · $80.40 of $100', '08:20', 'Today', { title: 'Budget at 80% of $100' })] },
-    { id: 'gemini', label: 'Gemini only', desktop: 'insecure', gemQuota: '1000', task: { title: 'Write the API reference for v2', size: 'large' },
+    { id: 'gemini', label: 'Gemini only', desktop: 'insecure', gemQuota: '1000', task: { title: 'Write the API reference for v2' },
       away: { status: 'here', hours: ['20:00', '08:00'] },
       updates: [
         up('g1', 'usage.near', '', 'Gemini · Free · 800 of 1,000 requests', '13:44', 'Today', { title: 'Gemini daily requests at 80% · resets 02:00' })] },
-    { id: 'quiet', label: 'All quiet', desktop: 'blocked', task: { title: 'Add rate limiting to the public API', size: 'small' },
+    { id: 'quiet', label: 'All quiet', desktop: 'blocked', task: { title: 'Add rate limiting to the public API' },
       away: { status: 'unknown' },
       updates: [
         ofRun('q1', 'run.done', 'h1', '18 min · $1.42', '09:15', 'Today')] },
     // A shared sign-in with one of every kind: the card, the team's note, every Vitals section and event.
-    { id: 'every', label: 'Every kind, shared sign-in', desktop: 'on', task: { title: 'Add rate limiting to the public API', size: 'medium' },
+    { id: 'every', label: 'Every kind, shared sign-in', desktop: 'on', task: { title: 'Add rate limiting to the public API' },
       identity: { people: ['Emil Angelov', 'Dana Ruiz'], via: 'Through your team\'s sign-in' }, teamSetup: true, newVersion: '1.20.0', chatUnread: true,
       away: { status: 'away-hours', hours: ['18:00', '08:00'] },
       updates: [
@@ -318,27 +306,20 @@
     return { ...c, usage: c.usage.map((u) => (u.p !== 'gemini' ? u : q ? { ...u, noQuota: false, win: [{ k: 'day', pct: Math.round((used / q) * 100), used, of: q, resets: '02:00' }] } : { ...u, noQuota: true, win: [] })) };
   }
 
-  // What a run of this size uses of each window on a harness, or null when it has no history.
-  const est = (p, size) => (size && EST[p] && EST[p][size]) || null;
-  // The window a start on this harness would run into, or null. With an estimate: one whose use plus the run's share is
-  // over 100%, so a small run near a limit still starts. With none: one at or over the warning line.
-  function near(c, p, warnAt, size) {
+  // The window a start on this harness would run into, or null: the fullest at or over the warning line.
+  function near(c, p, warnAt) {
     const u = c.usage.find((x) => x.p === p); if (!u) return null;
-    const e = est(p, size);
-    const hit = u.win.map((w) => ({ ...w, need: e && e[w.k] != null ? e[w.k] : null }))
-      .filter((w) => (w.need != null ? w.pct + w.need > 100 : w.pct >= warnAt))
-      .sort((a, b) => b.pct + (b.need || 0) - (a.pct + (a.need || 0)))[0];
-    return hit ? { ...hit, p, name: PROVIDER[p].name, what: WHAT[hit.k], left: Math.max(0, 100 - hit.pct) } : null;
+    const hit = u.win.filter((w) => w.pct >= warnAt).sort((a, b) => b.pct - a.pct)[0];
+    return hit ? { ...hit, p, name: PROVIDER[p].name, what: WHAT[hit.k] } : null;
   }
-  // The harnesses with room: set up, able to run the run, and the run fits (or, with no estimate, every window under the
-  // warning line); the most room first.
-  function room(c, warnAt, except, size) {
-    return c.usage.filter((u) => u.p !== except && PROVIDER[u.p].runs && u.win.length && !near(c, u.p, warnAt, size))
+  // The harnesses with room: set up, able to run the run, every window under the warning line; the most room first.
+  function room(c, warnAt, except) {
+    return c.usage.filter((u) => u.p !== except && PROVIDER[u.p].runs && u.win.length && !near(c, u.p, warnAt))
       .sort((a, b) => Math.max(...a.win.map((w) => w.pct)) - Math.max(...b.win.map((w) => w.pct))).map((u) => u.p);
   }
 
   // The Prototype corner's new event, one per severity, so the sound can be tried. Each is a fresh update.
   const TRY = { needs: ['run.questions', 'Rename settings keys', 'worca-cc · 1 question', 'run/question'], problem: ['run.failed', 'Fix the flaky e2e test', 'worca-cc · it stopped at Review', 'run/failed'], info: ['run.done', 'Update the changelog', 'docs-site · ready', 'run/ready'] };
   const tryEvent = (sev, n) => { const [e, about, meta, go] = TRY[sev]; return up('try-' + n, e, about, meta, 'now', 'Today', { go }); };
-  window.PulseModel = { BUDGET_RESETS, budgetGone, tryEvent, refreshed, withQuota, vitalsRuns, awayRow, awayLine, FINDS, FLAG_ROW, find, EVENT, BADGE, chatWords, SCHED, GROUPS, LEVELS, WHERE, PROVIDER, CASES, SIZES, N, WHAT, qualifies, tone, rings, limits, near, room, est, winWord, fig, usd, spendPct };
+  window.PulseModel = { BUDGET_RESETS, budgetGone, tryEvent, refreshed, withQuota, vitalsRuns, awayRow, awayLine, FINDS, FLAG_ROW, find, EVENT, BADGE, chatWords, SCHED, GROUPS, LEVELS, WHERE, PROVIDER, CASES, WHAT, qualifies, tone, rings, limits, near, room, winWord, fig, usd, spendPct };
 })();

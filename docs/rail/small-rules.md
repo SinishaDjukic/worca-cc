@@ -35,8 +35,7 @@
   its tightest harness and shades along its arc: `--ink-2` at the start, `--amber` at
   the warning line, `--red` at the limit; used up, full and solid red. Never green, never violet. Its figures live in
   one place, the profile menu's Usage and costs flyout; a limit interrupts a start only in New run, Resume
-  and the confirm of a step that starts agent work, and only when the run's estimate does not fit in what is left
-  (with no estimate, at the warning line).
+  and the confirm of a step that starts agent work, and only when the provider is at or past the warning line.
 - The needs-you count lives on Pulse's badge alone; the Runs row stays a place.
 - Pulse is the panel under its top-bar button, with no page of its own. Every notification setting lives in one
   Settings tab, Notifications.
