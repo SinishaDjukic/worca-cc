@@ -42,10 +42,10 @@
   function applyPrefs() {
     const nav = document.querySelector('#side-rail nav.nav');
     for (const b of nav.querySelectorAll(':scope > button[data-nav]')) b.hidden = !!lockOf(b.dataset.nav);
-    let sect = null, any = false;
-    const close = () => { if (sect) sect.hidden = !any; };
+    let sect = null, any = 0;
+    const close = () => { if (sect) sect.hidden = any < 2; };   // a head over one row says nothing: it goes, the row stays
     for (const x of nav.children) {
-      if (x.matches('.nav-sect')) { close(); sect = x; any = false; } else if (x.matches('button') && !x.hidden) any = true;
+      if (x.matches('.nav-sect')) { close(); sect = x; any = 0; } else if (x.matches('button') && !x.hidden) any++;
     }
     close();
   }
@@ -100,6 +100,8 @@
     // as the app does: the composer sits in the dock, and the column's own Close replaces the capture's
     const dock = side.querySelector('[data-chat-dock]'), composer = side.querySelector('.ask-composer');
     if (dock && composer) dock.append(composer);
+    // the column's head already says Ask worca: the capture's empty state does not say it again
+    side.querySelectorAll('.rl-side-body h1, .rl-side-body h2, .rl-side-body h3').forEach((h) => { if (h.textContent.trim() === 'Ask worca') h.remove(); });
     side.querySelectorAll('.ask-side-btn').forEach((b) => { if (/hide|close/i.test(b.getAttribute('aria-label') || b.title || '')) b.remove(); });
   }
   function syncAsk(view) {
@@ -139,6 +141,7 @@
   }
 
   // ---- the router ----
+  let reopen = false;   // a run opened from a row draws again, even on the same case: two rows can share one
   function route() {
     const [kind, arg] = (location.hash.slice(1) || 'runs').split('/');
     const view = TITLES[kind] ? kind : kind === 'run' || kind === 'settings' ? kind : 'runs';
@@ -168,7 +171,7 @@
     if (view === 'runs') { window.RailRunsList?.show(); main.scrollTop = runsY; window.RailRunsList?.focus(); }
     if (view === 'run') {
       const pick = document.getElementById('case');
-      if (pick && arg && pick.value !== arg) { pick.value = arg; pick.dispatchEvent(new Event('change', { bubbles: true })); }
+      if (pick && arg && (pick.value !== arg || reopen)) { reopen = false; pick.value = arg; pick.dispatchEvent(new Event('change', { bubbles: true })); }
       scrollTo(0, 0);
     }
   }
@@ -229,7 +232,7 @@
     runActive: () => !document.getElementById('route-run')?.hidden,
     go: (hash) => { if (location.hash.slice(1) === hash) route(); else location.hash = hash; },
     // a run opened from Pulse or the search carries its own title
-    openRun: (hash, title) => { const c = hash.split('/')[1]; if (RM && title) RM.titles[c] = title; window.RailShell.go(hash); },
+    openRun: (hash, title) => { const c = hash.split('/')[1]; if (RM && title) RM.titles[c] = title; reopen = true; window.RailShell.go(hash); },
     closeSearch: () => searchFold(false),
     connReset: () => { const sel = document.getElementById('conn'); if (sel) sel.value = 'ok'; conn = 'ok'; document.getElementById('rail-conn').innerHTML = ''; },
     closeDrawer: () => drawer(false),
@@ -248,5 +251,7 @@
   // A change of mode or a Labs flag: the sidebar follows, and the page if that changes whether it is locked.
   R.prefs.onChange(() => { applyPrefs(); if (routed.view && TITLES[routed.view] && !!lockOf(routed.view) !== routed.locked) route(); });
   addEventListener('hashchange', route);
+  // another Pulse case: the run page in view takes its title from it
+  window.RailWorld.onChange(() => { if (routed.view === 'run') { reopen = true; route(); } });
   window.RailShell.start = route;
 })();

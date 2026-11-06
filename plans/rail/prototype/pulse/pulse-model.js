@@ -1,7 +1,7 @@
 // Pulse mock: the cases, the event catalogue by group, and the pure figures the renderer paints (pulse.js).
 // Spec: plans/rail/pulse.md. Vitals is a state, Updates is an event; usage is read per provider and window.
 (function () {
-  const R = window.RailUI;
+  const R = window.RailUI, W = window.RailWorld;   // who is running what, and the usage and spend behind it, come from shell/world.js
   // The groups, in Settings order. Each event: its id, its own title, its severity: needs (waiting for a person), problem
   // (went wrong while nobody waited), info (simply happened). A group with a `flag` follows that Labs feature.
   // Your own Pause and a drain (the server stopping) wait on nobody: they are not events and never notify.
@@ -12,7 +12,7 @@
       ['run.paused_limit', 'Usage limit reached', 'problem'], ['run.paused_error', 'Paused on error', 'problem'], ['run.paused_night', 'Night guardrail reached', 'problem'],
       ['run.paused_time', 'Time limit reached', 'problem'], ['run.paused_stopped', 'Worca was stopped', 'problem'], ['run.done', 'Run finished', 'info'], ['run.resumed', 'Resumed after limit', 'info']] },
     { id: 'schedules', name: 'Schedules', level: 'problems', where: 'both', events: [
-      ['schedule.missed', 'Start missed', 'problem'], ['schedule.failed', 'Could not start', 'problem'], ['schedule.run_error', 'Run ended badly', 'problem'], ['schedule.run_paused', 'Run paused', 'problem'],
+      ['schedule.missed', 'Start missed', 'problem'], ['schedule.failed', 'Could not start', 'problem'], ['schedule.run_error', 'Scheduled run failed', 'problem'], ['schedule.run_paused', 'Run paused', 'problem'],
       ['schedule.self_paused', 'Series paused itself', 'problem'], ['schedule.late', 'Started late', 'info'], ['schedule.retrying', 'Retrying a start', 'info'], ['schedule.skipped', 'Start skipped', 'info'],
       ['schedule.canceled', 'Start canceled', 'info'], ['schedule.ended', 'Series ended', 'info'], ['schedule.completed', 'Scheduled run finished', 'info']] },
     { id: 'automations', name: 'Automations', level: 'problems', where: 'both', flag: 'gitAutomations', events: [
@@ -35,7 +35,7 @@
   ];
   const EVENT = Object.fromEntries(GROUPS.flatMap((g) => g.events.map(([id, name, sev]) => [id, { id, name, sev, g: g.id }])));
   // Vitals › Scheduled, top to bottom.
-  const SCHED = [['missed', 'Missed'], ['today', 'Today'], ['tomorrow', 'Tomorrow'], ['week', 'This week'], ['later', 'Later'], ['after', 'After a run']];
+  const SCHED = [['missed', 'Missed'], ['today', 'Today'], ['tomorrow', 'Tomorrow'], ['week', 'This week'], ['later', 'Later'], ['after', 'After a run'], ['reset', 'After a reset']];
   const LEVELS = [
     { id: 'needs', text: 'what needs you', help: 'Only what waits for you: questions, gates, a watched PR that needs a person' },
     { id: 'problems', text: 'what needs you and problems', help: 'Also what went wrong while nobody was waiting: a failed run, a missed start, a limit' },
@@ -83,158 +83,133 @@
   };
   const N = { small: 21, medium: 12, large: 5 };
 
-  // A run in Vitals: `state` is the library's state (runState, sectionOf: which section it sorts into) and the run page's case.
-  const run = (state, title, project, detail, time, more) => ({ state, title, project, detail, time, ...more });
-  // A start still to come, by when it comes (SCHED).
-  const start = (when, title, project, detail, time, more) => run('scheduled', title, project, detail, time, { when, ...more });
-  // An update. Its title is the event's own, then what it is about, unless it says more. Info rows arrive read. `go`: where
-  // it opens in the one Worca; `to`: the same in words. `fix`: the step that deals with a problem; taking it resolves the row.
-  const up = (id, e, about, meta, time, day, o = {}) => ({ id, e, g: EVENT[e].g, sev: EVENT[e].sev, title: o.title || `${EVENT[e].name} · ${about}`, meta, time, day,
-    unread: EVENT[e].sev !== 'info' && !o.read, to: o.to || 'the run page', go: o.go || 'runs', ...o });
+  // Where each kind of update opens: one destination per kind, and `to` says it. A run's own kinds open that run, as the
+  // world has it now. Limits and the budget open Usage and costs; a step on the row may go further (Raise budget).
+  const DEST = { schedule: { go: 'schedules', to: 'Schedules' }, automation: { go: 'settings/automations', to: 'Settings › Automations', land: 'automations|Automations' }, project: { go: 'projects', to: 'Projects' },
+    away: { go: 'settings/runs', to: 'Settings › Runs' }, budget: { go: 'usage', to: 'Usage and costs' }, 'usage.near': { go: 'usage', to: 'Usage and costs' }, 'usage.reached': { go: 'usage', to: 'Usage and costs' },
+    app: { go: 'settings/general', to: 'Settings › General, on the version', land: 'general|Version' } };
+  // An update. Its title is the event's own, then what it is about, unless it says more. Info rows arrive read. `run`: the
+  // world's run it is about (it must be in the case). `chat`: the chat it opens. `fix`: the step that deals with a problem;
+  // taking it resolves the row, or `fixLand` takes you to where it is done.
+  const up = (id, e, about, meta, time, day, o = {}) => ({ id, e, g: EVENT[e].g, sev: EVENT[e].sev, title: o.title || `${EVENT[e].name} · ${about}`, meta, time, day, unread: EVENT[e].sev !== 'info' && !o.read,
+    ...(o.chat ? { go: `chat/${o.chat}`, to: 'the chat' } : DEST[e] || DEST[EVENT[e].g] || (o.run ? { go: 'run', to: 'the run page' } : { go: 'runs', to: 'Runs' })), ...o });
+  // An update about one of the world's runs: its title and project are the run's own.
+  const ofRun = (id, e, runId, meta, time, day, o = {}) => up(id, e, W.title(runId), `${W.project(runId)} · ${meta}`, time, day, { run: runId, ...o });
+  const NEW_VERSION = (id) => up(id, 'app.update_available', '', 'you run 1.19', '08:40', 'Today', { title: 'New version: 1.20' });
   const CASES = [
     { id: 'afternoon', label: 'A busy afternoon', desktop: 'on', task: { title: 'Add rate limiting to the public API', size: 'medium' },
       away: { status: 'here', hours: ['22:00', '07:00'] }, newVersion: '1.20.0', chatUnread: true,
-      actions: [{ id: 'a1', run: 'Fix flaky login test', label: 'Dev server :4417', go: 'run/working' }, { id: 'a2', run: 'Rename settings keys', label: 'Storybook :6006', go: 'run/checks' }],
-      runs: [run('question', 'Add CSV export to billing', 'billing-api', 'Plan asks 2 questions', '14:32'), run('gate', 'Migrate cron parser', 'worca-cc', 'Gate: approve the plan', '13:40'),
-        run('working', 'Fix flaky login test', 'web-app', 'Build · step 3 of 5', '12 min'), run('checks', 'Rename settings keys', 'worca-cc', 'Review · checks running', '4 min'),
-        start('today', 'Tidy project memory', 'worca-cc', 'Today at 18:00', '18:00'), start('tomorrow', 'Nightly dependency bump', 'web-app', 'Every day at 03:00', '03:00'), start('later', 'Quarterly licence check', 'web-app', 'Every 3 months', 'Jan 5')],
-      usage: [
-        { p: 'claude', plan: 'Ultra', asOf: '14:28', win: [{ k: 'week', pct: 31, resets: 'Mon 09:00' }],
-          note: { text: 'No session limit on Ultra', tip: 'Anthropic removed the 5-hour session from verified Ultra accounts on 30 Oct 2026; the weekly limit stays' } },
-        { p: 'codex', plan: 'Plus', asOf: '13:52', win: [{ k: 'session', pct: 12, resets: '15:10' }, { k: 'week', pct: 40, resets: 'Sun 22:00' }] },
-        { p: 'copilot', plan: 'Business', asOf: '14:05', win: [{ k: 'month', pct: 71, used: 212, of: 300, resets: 'Nov 1' }] },
-        { p: 'openrouter', plan: 'Free', asOf: '13:30', win: [{ k: 'day', pct: 64, used: 32, of: 50, resets: '02:00' }] }],
-      budget: { period: 'this week', spent: 1225.97, saved: 69306.73 },
       updates: [
-        up('u-upd', 'app.update_available', '', 'Worca · you run 1.19', '08:40', 'Today', { title: 'New version: 1.20', unread: true, to: 'Settings › General, on the version', go: 'settings/general', land: 'general|Version' }),
-        up('u1', 'run.questions', 'Add CSV export to billing', 'billing-api · Plan asks 2 questions', '14:32', 'Today', { open: true, to: 'the run page at its questions', go: 'run/question' }),
-        up('u2', 'run.failed', 'Update Node to 24', 'web-app · Test step · 3 tests failed', '13:58', 'Today', { to: 'the run page, on the step that stopped', go: 'run/failed', fix: 'Try again' }),
-        up('u3', 'pr.published', '#962 Retry on 502', 'web-app · watched PR · checks green', '13:10', 'Today', { to: 'the fix run', go: 'run/checks' }),
-        up('u4', 'schedule.missed', 'Nightly dependency bump', 'web-app · Worca was not running at 03:00', '09:02', 'Today', { to: 'Schedules, with its sheet open', go: 'schedules', fix: 'Run now' }),
-        up('u5', 'run.done', 'Tidy the settings page', 'worca-cc · 18 min · $1.42', '08:40', 'Today', { go: 'run/ready' }),
-        up('u6', 'usage.reset', '', 'OpenAI · Plus · Session', '17:05', 'Yesterday', { title: 'Codex session reset · 1 run resumed', to: 'the resumed run', go: 'run/working' }),
-        up('u7', 'run.questions', 'Split the auth module', 'worca-cc · answered at 11:20', '11:02', 'Yesterday', { read: true, resolved: true, go: 'run/working' }),
-        up('u8', 'schedule.missed', 'Run after: Breadcrumb tests', 'worca-cc · started late, when the run before it resumed · Open run', '10:40', 'Yesterday', { read: true, resolved: true, go: 'run/working' }),
-        up('u8', 'project.clone_done', 'acme/design-tokens', 'Projects · 2.1 MB', '10:15', 'Yesterday', { to: 'the project page', go: 'projects' })] },
+        NEW_VERSION('u-upd'),
+        ofRun('u1', 'run.questions', 'r1', 'Plan asks 2 questions', '14:32', 'Today', { open: true, to: 'the run page at its questions' }),
+        up('u10', 'chat.run', 'Ship the CSV export', 'a run waits for your OK', '14:05', 'Today', { open: true, chat: 'c1' }),
+        ofRun('u2', 'run.failed', 'r5', 'Test step · 3 tests failed', '12:40', 'Today', { to: 'the run page, on the step that stopped', fix: 'Try again' }),
+        up('u3', 'pr.published', '#962 Retry on 502', 'web-app · watched PR · checks running', '13:10', 'Today', { run: 'r7', to: 'the fix run' }),
+        up('u4', 'schedule.missed', 'Nightly dependency bump', 'web-app · Worca was not running at 03:00', '09:02', 'Today', { run: 'r17', fix: 'Run now' }),
+        ofRun('u5', 'run.done', 'h1', '18 min · $1.42', '08:40', 'Today'),
+        up('u6', 'usage.reset', '', 'OpenAI · Plus · Session', '17:05', 'Yesterday', { title: 'Codex session reset · 1 run resumed', run: 'r10', to: 'the resumed run' }),
+        ofRun('u7', 'run.questions', 'h2', 'answered at 11:20', '11:02', 'Yesterday', { read: true, resolved: true }),
+        up('u8', 'schedule.missed', 'Run after: Breadcrumb tests', 'worca-cc · started late, when the run before it resumed', '10:40', 'Yesterday', { read: true, resolved: true }),
+        up('u9', 'project.clone_done', 'acme/design-tokens', '2.1 MB', '10:15', 'Yesterday')] },
     { id: 'near', label: 'Session near its limit', desktop: 'unsupported', task: { title: 'Add rate limiting to the public API', size: 'large' },
-      away: { status: 'no-hours' }, actions: [],
-      runs: [run('working', 'Fix flaky login test', 'web-app', 'Build · step 3 of 5 · Claude Code', '12 min'), run('slice', 'Rate limiting · slice 2 of 4', 'web-app', 'Build · Codex · moved from Claude Code at the start', '6 min'),
-        // Worca starts these with nobody there to ask: each is checked against its own estimate when its turn comes.
-        start('after', 'Rate limiting · slice 3 of 4', 'web-app', '', 'next', { slice: true, on: 'claude', size: 'large' }),
-        start('after', 'Rename the config flag', 'worca-cc', '', 'next', { queued: true, on: 'claude', size: 'small' })],
-      usage: [
-        { p: 'claude', plan: 'Max', asOf: '14:28', win: [{ k: 'session', pct: 86, resets: '16:40' }, { k: 'week', pct: 52, resets: 'Mon 09:00' }] },
-        { p: 'codex', plan: 'Plus', asOf: '14:24', win: [{ k: 'session', pct: 20, resets: '15:10' }, { k: 'week', pct: 44, resets: 'Sun 22:00' }] }],
-      budget: { period: 'this week', spent: 312.4, saved: 9120.55 },
+      away: { status: 'no-hours' },
       updates: [
-        up('n0', 'usage.moved', '', 'web-app · Claude Code\'s session was at 84% · the slice keeps Codex to the end', '14:24', 'Today', { title: 'Slice 2 of 4 moved to Codex · Rate limiting', to: 'the slice\'s run page', go: 'run/slice' }),
-        up('n1', 'usage.near', '', 'Claude · Max · runs on it may pause before it resets', '14:20', 'Today', { title: 'Claude Code session at 80% · resets 16:40', to: 'the usage card', go: 'usage' }),
-        up('n2', 'run.done', 'Tidy the settings page', 'worca-cc · 18 min · $1.42', '13:40', 'Today', { go: 'run/ready' }),
-        up('n3', 'pr.fix_started', '#962 Retry on 502', 'web-app · watched PR · 2 checks failing', '11:30', 'Today', { to: 'the fix run', go: 'run/working' })] },
+        up('n0', 'usage.moved', '', 'web-app · Claude Code\'s session was at 84% · the slice keeps Codex to the end', '14:24', 'Today', { title: 'Slice 2 of 4 moved to Codex · Rate limiting', run: 's2', to: 'the slice\'s run page' }),
+        up('n1', 'usage.near', '', 'Claude · Max · runs on it may pause before it resets', '14:20', 'Today', { title: 'Claude Code session at 80% · resets 16:40' }),
+        ofRun('n2', 'run.done', 'h1', '18 min · $1.42', '13:40', 'Today'),
+        up('n3', 'pr.fix_started', '#962 Retry on 502', 'web-app · watched PR · 2 checks failing', '11:30', 'Today', { run: 'r7', to: 'the fix run' })] },
     { id: 'reached', label: 'Weekly limit reached', desktop: 'on', task: { title: 'Add rate limiting to the public API', size: 'medium' },
-      away: { status: 'paused' }, actions: [{ id: 'a1', run: 'Rename settings keys', label: 'Preview :3000', go: 'run/checks' }],
-      runs: [run('checks', 'Rename settings keys', 'worca-cc', 'Review · checks running', '4 min'), run('paused', 'Update the changelog', 'docs-site', 'Usage limit · resumes Mon 09:05', '11:05'),
-        start('tomorrow', 'Nightly dependency bump', 'web-app', 'Every day at 03:00', '03:00')],
-      usage: [
-        { p: 'claude', plan: 'Max', asOf: '14:28', win: [{ k: 'session', pct: 30, resets: '16:40' }, { k: 'week', pct: 61, resets: 'Mon 09:00' }] },
-        { p: 'codex', plan: 'Plus', asOf: '11:05', win: [{ k: 'session', pct: 64, resets: '15:10' }, { k: 'week', pct: 100, resets: 'Mon 09:00' }], paused: 2 }],
-      budget: { period: 'this week', spent: 488.1, saved: 15402.2 },
+      away: { status: 'paused' },
       updates: [
-        up('r1', 'usage.reached', '', 'OpenAI · Plus · they resume by themselves Mon 09:05', '11:05', 'Today', { title: 'Codex weekly limit reached · 2 runs paused', to: 'Runs, filtered to the paused runs', go: 'runs' }),
-        up('r2', 'run.failed', 'Update Node to 24', 'web-app · Test step · 3 tests failed', '09:58', 'Today', { to: 'the run page, on the step that stopped', go: 'run/failed', fix: 'Try again' }),
-        up('r3', 'usage.near', '', 'OpenAI · Plus', '16:12', 'Yesterday', { title: 'Codex week at 80% · resets Mon 09:00', read: true, to: 'the usage card', go: 'usage' })] },
+        up('r1', 'usage.reached', '', 'OpenAI · Plus · it resumes by itself Mon 09:05', '11:05', 'Today', { title: 'Codex weekly limit reached · 1 run paused' }),
+        ofRun('r2', 'run.failed', 'r5', 'Test step · 3 tests failed', '09:58', 'Today', { to: 'the run page, on the step that stopped', fix: 'Try again' }),
+        up('r3', 'usage.near', '', 'OpenAI · Plus', '16:12', 'Yesterday', { title: 'Codex week at 80% · resets Mon 09:00', read: true })] },
     { id: 'budget', label: 'Spend near its budget', desktop: 'off', task: { title: 'Add rate limiting to the public API', size: 'medium' },
-      away: { status: 'away-now' }, actions: [],
-      runs: [run('capped', 'Add CSV export to billing', 'billing-api', 'Cost cap reached at $5.00', '10:12')],
-      usage: [{ p: 'claude', plan: 'API key', asOf: '10:12', win: [] }],
-      budget: { period: 'in October', spent: 92, limit: 100 },
+      away: { status: 'away-now' },
       updates: [
-        up('b1', 'run.cost_cap', 'Add CSV export to billing', 'billing-api · paused at $5.00 · raise the cap or stop', '10:12', 'Today', { open: true, to: 'the run page at its cost cap', go: 'run/capped' }),
-        up('b2', 'budget.threshold', '', 'Budget · $80.40 of $100', '09:30', 'Today', { title: 'Spend at 80% of $100 in October', to: 'Statistics', go: 'stats' })] },
+        ofRun('b1', 'run.cost_cap', 'r1', 'paused at $5.00 · raise the cap or stop', '10:12', 'Today', { open: true, to: 'the run page at its cost cap' }),
+        up('b2', 'budget.threshold', '', 'Budget · $80.40 of $100', '09:30', 'Today', { title: 'Budget at 80% of $100' })] },
+    // The budget is used up: every run is paused, and nothing starts until it resets or is raised.
+    { id: 'spent', label: 'Budget used up', desktop: 'on', task: { title: 'Add rate limiting to the public API', size: 'medium' },
+      away: { status: 'here', hours: ['22:00', '07:00'] },
+      updates: [
+        up('x1', 'budget.exceeded', '', 'Budget · runs pause until it resets or you raise it', '09:30', 'Today', { title: 'Budget of $100 used up', fix: 'Raise budget', fixLand: 'runs|Budget' }),
+        up('x2', 'budget.threshold', '', 'Budget · $80.40 of $100', '08:20', 'Today', { title: 'Budget at 80% of $100' })] },
     { id: 'gemini', label: 'Gemini only', desktop: 'insecure', gemQuota: '1000', task: { title: 'Write the API reference for v2', size: 'large' },
-      away: { status: 'here', hours: ['20:00', '08:00'] }, actions: [],
-      runs: [run('working', 'Write the API reference', 'docs-site', 'Build · step 2 of 4', '7 min')],
-      usage: [{ p: 'gemini', plan: 'Free tier', asOf: '14:02', win: [] }],
-      budget: null,
+      away: { status: 'here', hours: ['20:00', '08:00'] },
       updates: [
-        up('g1', 'usage.near', '', 'Gemini · Free · 800 of 1,000 requests', '13:44', 'Today', { title: 'Gemini daily requests at 80% · resets 02:00', to: 'the usage card', go: 'usage' })] },
+        up('g1', 'usage.near', '', 'Gemini · Free · 800 of 1,000 requests', '13:44', 'Today', { title: 'Gemini daily requests at 80% · resets 02:00' })] },
     { id: 'quiet', label: 'All quiet', desktop: 'blocked', task: { title: 'Add rate limiting to the public API', size: 'small' },
-      away: { status: 'unknown' }, actions: [],
-      runs: [],
-      usage: [{ p: 'claude', plan: 'Pro', asOf: '09:15', win: [{ k: 'session', pct: 5, resets: '13:30' }, { k: 'week', pct: 12, resets: 'Thu 08:00' }] }],
-      budget: { period: 'this week', spent: 18.2, saved: 402.1 },
+      away: { status: 'unknown' },
       updates: [
-        up('q1', 'run.done', 'Tidy the settings page', 'worca-cc · 18 min · $1.42', '09:15', 'Today', { go: 'run/ready' })] },
-    // A shared sign-in with one of every kind: the card, the team's note, a blocked budget, every Vitals section and event.
+        ofRun('q1', 'run.done', 'h1', '18 min · $1.42', '09:15', 'Today')] },
+    // A shared sign-in with one of every kind: the card, the team's note, every Vitals section and event.
     { id: 'every', label: 'Every kind, shared sign-in', desktop: 'on', task: { title: 'Add rate limiting to the public API', size: 'medium' },
       identity: { people: ['Emil Angelov', 'Dana Ruiz'], via: 'Through your team\'s sign-in' }, teamSetup: true, newVersion: '1.20.0', chatUnread: true,
       away: { status: 'away-hours', hours: ['18:00', '08:00'] },
-      actions: [{ id: 'a1', run: 'Fix flaky login test', label: 'Dev server :4417', go: 'run/working' }, { id: 'a2', run: 'A removed run', label: 'Tunnel :8080', go: '' }],
-      runs: [run('question', 'Add CSV export to billing', 'billing-api', 'Plan asks 2 questions', '14:32'), run('failed', 'Update Node to 24', 'web-app', 'Test step · 3 tests failed', '13:58'),
-        run('paused', 'Update the changelog', 'docs-site', 'Night guardrail · waits for you', '02:10'), run('approved', 'Retry on 502', 'web-app', '#962 approved · checks pass', '12:40'),
-        run('working', 'Fix flaky login test', 'web-app', 'Build · step 3 of 5', '12 min'), run('starting', 'Add audit log', 'worca-cc', 'Setting up its worktree', '1 min'),
-        start('missed', 'Nightly dependency bump', 'web-app', 'Was due at 03:00', '03:00'), start('today', 'Tidy project memory', 'worca-cc', 'Today at 18:00', '18:00'),
-        start('tomorrow', 'Refresh the docs index', 'docs-site', 'Tomorrow at 06:00', '06:00'), start('week', 'Weekly digest', 'worca-cc', 'Every Friday at 09:00', 'Fri'),
-        start('later', 'Quarterly licence check', 'web-app', 'Every 3 months', 'Jan 5'), start('after', 'Deploy docs site', 'docs-site', 'After Add audit log', 'next')],
-      usage: [
-        { p: 'claude', plan: 'Max', asOf: '14:28', win: [{ k: 'session', pct: 86, resets: '16:40' }, { k: 'week', pct: 52, resets: 'Mon 09:00' }] },
-        { p: 'copilot', plan: 'Business', asOf: '14:05', win: [{ k: 'month', pct: 71, used: 212, of: 300, resets: 'Nov 1' }] },
-        { p: 'gemini', plan: 'CLI', asOf: '13:02', win: [] }],
-      budget: { period: 'in November', spent: 100, limit: 100, blocked: true },
       updates: [
-        up('e-upd', 'app.update_available', '', 'Worca · you run 1.19', '08:40', 'Today', { title: 'New version: 1.20', unread: true, to: 'Settings › General, on the version', go: 'settings/general', land: 'general|Version' }),
-        up('e01', 'run.questions', 'Add CSV export to billing', 'billing-api · Plan asks 2 questions', '14:32', 'Today', { open: true, to: 'the run page at its questions', go: 'run/question' }),
-        up('e02', 'run.gate', 'Migrate cron parser', 'worca-cc · approve the plan', '14:20', 'Today', { open: true, to: 'the run page at its gate', go: 'run/gate' }),
-        up('e03', 'run.recovery', 'Update Node to 24', 'web-app · the same step failed three times', '14:10', 'Today', { open: true, go: 'run/failed' }),
-        up('e04', 'run.workflow', 'Add audit log', 'worca-cc · Shaper proposes a workflow', '14:02', 'Today', { open: true, go: 'run/plan' }),
-        up('e05', 'run.cost_cap', 'Add CSV export to billing', 'billing-api · paused at $5.00', '13:55', 'Today', { open: true, go: 'run/capped' }),
-        up('e06', 'run.failed', 'Update Node to 24', 'web-app · Test step · 3 tests failed', '13:50', 'Today', { go: 'run/failed', fix: 'Try again' }),
-        up('e07', 'run.paused_limit', 'Write the API reference', 'docs-site · Gemini refused: daily quota', '13:40', 'Today', { go: 'run/paused', fix: 'Resume' }),
-        up('e08', 'run.paused_error', 'Rename settings keys', 'worca-cc · lost the connection to the model', '13:30', 'Today', { go: 'run/paused', fix: 'Resume' }),
-        up('e09', 'run.paused_night', 'Update the changelog', 'docs-site · 20 answers while you were away', '02:10', 'Today', { go: 'run/paused', fix: 'Resume' }),
-        up('e10', 'run.paused_time', 'Fix flaky login test', 'web-app · Build ran past its time limit', '01:40', 'Today', { go: 'run/paused', fix: 'Resume' }),
-        up('e11', 'run.paused_stopped', 'Add audit log', 'worca-cc · resume it when you are ready', '01:05', 'Today', { go: 'run/paused', fix: 'Resume' }),
-        up('e12', 'run.done', 'Tidy the settings page', 'worca-cc · 18 min · $1.42', '00:40', 'Today', { go: 'run/ready' }),
-        up('e13', 'run.resumed', 'Rate limiting', 'web-app · after the session reset', '00:20', 'Today', { go: 'run/working' }),
-        up('e20', 'schedule.missed', 'Nightly dependency bump', 'web-app · Worca was not running at 03:00', '09:02', 'Yesterday', { to: 'Schedules, with its sheet open', go: 'schedules', fix: 'Run now' }),
-        up('e21', 'schedule.failed', 'Weekly digest', 'worca-cc · its project is missing', '09:00', 'Yesterday', { to: 'Schedules, with its sheet open', go: 'schedules', fix: 'Run now' }),
-        up('e22', 'schedule.run_error', 'Refresh the docs index', 'docs-site · ended with an error', '06:12', 'Yesterday', { go: 'run/failed', fix: 'Try again' }),
-        up('e23', 'schedule.run_paused', 'Tidy project memory', 'worca-cc · paused at its cost cap', '06:05', 'Yesterday', { go: 'run/paused', fix: 'Resume' }),
-        up('e24', 'schedule.self_paused', 'Weekly digest', 'worca-cc · 3 failures in a row', '06:00', 'Yesterday', { to: 'Schedules, with its sheet open', go: 'schedules', fix: 'Resume' }),
-        up('e25', 'schedule.late', 'Nightly dependency bump', 'web-app · started 40 min late', '03:40', 'Yesterday', { to: 'the run', go: 'run/working' }),
-        up('e26', 'schedule.retrying', 'Nightly dependency bump', 'web-app · try 2 of 3 in 5 min', '03:05', 'Yesterday', { to: 'Schedules', go: 'schedules' }),
-        up('e27', 'schedule.skipped', 'Tidy project memory', 'worca-cc · the last run is still going', '03:00', 'Yesterday', { to: 'Schedules', go: 'schedules' }),
-        up('e28', 'schedule.canceled', 'Deploy docs site', 'docs-site · canceled by you', '02:50', 'Yesterday', { to: 'Schedules', go: 'schedules' }),
-        up('e29', 'schedule.ended', 'Quarterly licence check', 'web-app · reached its end', '02:40', 'Yesterday', { to: 'Schedules', go: 'schedules' }),
-        up('e30', 'schedule.completed', 'Tidy project memory', 'worca-cc · 4 min · $0.20', '02:30', 'Yesterday', { go: 'run/ready' }),
-        up('e40', 'automation.approval', 'Issue #88 opened', 'web-app · a rule wants to start a run', '11:02', 'Yesterday', { open: true, to: 'Settings › Automations', go: 'settings/automations' }),
-        up('e41', 'automation.failed', 'Issue #87 opened', 'web-app · the workflow is missing', '10:58', 'Yesterday', { to: 'Settings › Automations', go: 'settings/automations' }),
-        up('e42', 'automation.started', 'PR #961 opened', 'web-app · run started', '10:50', 'Yesterday', { go: 'run/working' }),
-        up('e43', 'automation.skipped', 'Issue #86 opened', 'web-app · no rule matched its labels', '10:40', 'Yesterday', { to: 'Settings › Automations', go: 'settings/automations' }),
-        up('e44', 'automation.queued', 'Issue #85 opened', 'web-app · waits for a free slot', '10:30', 'Yesterday', { go: 'runs', to: 'Runs' }),
-        up('e45', 'automation.done', 'Issue #84 opened', 'web-app · run finished', '10:20', 'Yesterday', { go: 'run/ready' }),
-        up('e50', 'chat.run', 'Plan the API rewrite', 'Chat · a run waits for your OK', '10:12', 'Yesterday', { open: true, to: 'the chat', go: 'chat' }),
-        up('e51', 'chat.web', 'Why did the build fail', 'Chat · wants to reach npmjs.com', '10:08', 'Yesterday', { open: true, to: 'the chat', go: 'chat' }),
-        up('e52', 'chat.workflow', 'Release checklist', 'Chat · a workflow waits for your OK', '10:04', 'Yesterday', { open: true, to: 'the chat', go: 'chat' }),
-        up('e53', 'chat.schedule', 'Nightly tidy', 'Chat · a schedule waits for your OK', '10:00', 'Yesterday', { open: true, to: 'the chat', go: 'chat' }),
-        up('e60', 'pr.needs_person', '#960 Fix the login race', 'web-app · two reviewers disagree', '09:50', 'Earlier', { open: true, to: 'the run page', go: 'run/failing' }),
-        up('e61', 'pr.open_failed', 'Tidy the settings page', 'worca-cc · GitHub refused the push', '09:40', 'Earlier', { go: 'run/ready', fix: 'Open PR' }),
-        up('e62', 'pr.fix_started', '#962 Retry on 502', 'web-app · 2 checks failing', '09:30', 'Earlier', { to: 'the fix run', go: 'run/working' }),
-        up('e63', 'pr.published', '#962 Retry on 502', 'web-app · checks green', '09:20', 'Earlier', { to: 'the fix run', go: 'run/checks' }),
-        up('e70', 'usage.near', '', 'Claude · Max', '09:10', 'Earlier', { title: 'Claude Code session at 80% · resets 16:40', to: 'the usage card', go: 'usage' }),
-        up('e71', 'usage.reached', '', 'OpenAI · Plus', '09:00', 'Earlier', { title: 'Codex weekly limit reached · 2 runs paused', to: 'Runs', go: 'runs' }),
-        up('e72', 'usage.reset', '', 'OpenAI · Plus', '08:50', 'Earlier', { title: 'Codex session reset · 1 run resumed', to: 'the resumed run', go: 'run/working' }),
-        up('e73', 'usage.moved', '', 'web-app · the slice keeps Codex to the end', '08:40', 'Earlier', { title: 'Slice 2 of 4 moved to Codex · Rate limiting', go: 'run/slice' }),
-        up('e74', 'usage.held', '', 'web-app · no harness has room', '08:30', 'Earlier', { title: 'Slice 3 of 4 waits for 16:40 · Rate limiting', go: 'run/scheduled' }),
-        up('e75', 'budget.threshold', '', 'Budget · $80.40 of $100', '08:20', 'Earlier', { title: 'Spend at 80% of $100 in November', to: 'Statistics', go: 'stats' }),
-        up('e76', 'budget.exceeded', '', 'Budget · runs pause until it resets or you raise it', '08:10', 'Earlier', { title: 'Budget of $100 used up', to: 'Settings › Runs', go: 'settings/runs', fix: 'Raise limit' }),
-        up('e80', 'away.started', '', 'Until 08:00', '18:00', 'Earlier', { title: 'Away hours started', to: 'Settings › Runs', go: 'settings/runs' }),
-        up('e81', 'away.ended', '', 'Since 18:00 yesterday', '08:00', 'Earlier', { title: 'Away hours ended', to: 'Settings › Runs', go: 'settings/runs' }),
-        up('e90', 'project.clone_failed', 'acme/old-api', 'Projects · the repository is gone', '07:50', 'Earlier', { to: 'the project page', go: 'projects', fix: 'Try again' }),
-        up('e91', 'project.clone_done', 'acme/design-tokens', 'Projects · 2.1 MB', '07:40', 'Earlier', { to: 'the project page', go: 'projects' }),
-        up('e92', 'project.sync_failed', 'web-app', 'Projects · local changes in the way', '07:30', 'Earlier', { to: 'the project page', go: 'projects', fix: 'Try again' }),
-        up('e93', 'project.sync_behind', 'billing-api', 'Projects · 12 commits behind origin', '07:20', 'Earlier', { to: 'the project page', go: 'projects' })] },
+        NEW_VERSION('e-upd'),
+        ofRun('e01', 'run.questions', 'r1', 'Plan asks 2 questions', '14:32', 'Today', { open: true, to: 'the run page at its questions' }),
+        ofRun('e02', 'run.gate', 'r2', 'approve the plan', '13:40', 'Today', { open: true, to: 'the run page at its gate' }),
+        ofRun('e03', 'run.recovery', 'r29', 'the same step failed three times', '14:10', 'Today', { open: true }),
+        ofRun('e04', 'run.workflow', 'r30', 'Shaper proposes a workflow', '14:02', 'Today', { open: true }),
+        ofRun('e05', 'run.cost_cap', 'r4', 'paused at $120', '12:58', 'Today', { open: true, to: 'the run page at its cost cap' }),
+        ofRun('e06', 'run.failed', 'r5', 'Test step · 3 tests failed', '12:40', 'Today', { to: 'the run page, on the step that stopped', fix: 'Try again' }),
+        ofRun('e07', 'run.paused_limit', 'r3', 'Gemini refused: daily quota', '13:12', 'Today', { fix: 'Resume' }),
+        ofRun('e08', 'run.paused_error', 'r32', 'lost the connection to the model', '13:30', 'Today', { fix: 'Resume' }),
+        ofRun('e09', 'run.paused_night', 'r33', '20 answers while you were away', '02:10', 'Today', { fix: 'Resume' }),
+        ofRun('e10', 'run.paused_time', 'r31', 'Build ran past its time limit', '01:40', 'Today', { fix: 'Resume' }),
+        ofRun('e11', 'run.paused_stopped', 'r6', 'resume it when you are ready', '11:58', 'Today', { fix: 'Resume' }),
+        ofRun('e12', 'run.done', 'r8', '18 min · $9.90', '10:58', 'Today'),
+        ofRun('e13', 'run.resumed', 'r12', 'after the session reset', '00:20', 'Today'),
+        up('e20', 'schedule.missed', 'Nightly dependency bump', 'web-app · Worca was not running at 03:00', '09:02', 'Yesterday', { run: 'r17', fix: 'Run now' }),
+        up('e21', 'schedule.failed', 'Weekly digest', 'worca-cc · its project is missing', '09:00', 'Yesterday'),
+        up('e22', 'schedule.run_error', 'Refresh the docs index', 'docs-site · ended with an error', '06:12', 'Yesterday'),
+        up('e23', 'schedule.run_paused', 'Tidy project memory', 'worca-cc · paused at its cost cap', '06:05', 'Yesterday', { fix: 'Resume' }),
+        up('e24', 'schedule.self_paused', 'Weekly digest', 'worca-cc · 3 failures in a row', '06:00', 'Yesterday', { fix: 'Resume' }),
+        up('e25', 'schedule.late', 'Nightly dependency bump', 'web-app · started 40 min late', '03:40', 'Yesterday'),
+        up('e26', 'schedule.retrying', 'Nightly dependency bump', 'web-app · try 2 of 3 in 5 min', '03:05', 'Yesterday'),
+        up('e27', 'schedule.skipped', 'Tidy project memory', 'worca-cc · the last run is still going', '03:00', 'Yesterday'),
+        up('e28', 'schedule.canceled', 'Deploy docs site', 'docs-site · canceled by you', '02:50', 'Yesterday'),
+        up('e29', 'schedule.ended', 'Quarterly licence check', 'web-app · reached its end', '02:40', 'Yesterday'),
+        up('e30', 'schedule.completed', 'Tidy project memory', 'worca-cc · 4 min · $0.20', '02:30', 'Yesterday'),
+        up('e40', 'automation.approval', 'Issue #88 opened', 'web-app · a rule wants to start a run', '11:02', 'Yesterday', { open: true }),
+        up('e41', 'automation.failed', 'Issue #87 opened', 'web-app · the workflow is missing', '10:58', 'Yesterday'),
+        up('e42', 'automation.started', 'PR #961 opened', 'web-app · run started', '10:50', 'Yesterday'),
+        up('e43', 'automation.skipped', 'Issue #86 opened', 'web-app · no rule matched its labels', '10:40', 'Yesterday'),
+        up('e44', 'automation.queued', 'Issue #85 opened', 'web-app · waits for a free slot', '10:30', 'Yesterday'),
+        up('e45', 'automation.done', 'Issue #84 opened', 'web-app · run finished', '10:20', 'Yesterday'),
+        up('e50', 'chat.run', 'Plan the API rewrite', 'a run waits for your OK', '10:12', 'Yesterday', { open: true, chat: 'c5' }),
+        up('e51', 'chat.web', 'Why did the build fail', 'wants to reach npmjs.com', '10:08', 'Yesterday', { open: true, chat: 'c2' }),
+        up('e52', 'chat.workflow', 'Release checklist', 'a workflow waits for your OK', '10:04', 'Yesterday', { open: true, chat: 'c9' }),
+        up('e53', 'chat.schedule', 'Tidy the migrations', 'a schedule waits for your OK', '10:00', 'Yesterday', { open: true, chat: 'c3' }),
+        up('e60', 'pr.needs_person', '#960 Rename settings keys', 'worca-cc · two reviewers disagree', '09:50', 'Earlier', { open: true, run: 'r11' }),
+        ofRun('e61', 'pr.open_failed', 'r8', 'GitHub refused the push', '09:40', 'Earlier', { fix: 'Open PR' }),
+        up('e62', 'pr.fix_started', '#962 Retry on 502', 'web-app · round 7 · 2 checks failing', '09:30', 'Earlier', { run: 'r7', to: 'the fix run' }),
+        up('e63', 'pr.published', '#962 Retry on 502', 'web-app · round 5 · pushed 19ab20c', '09:20', 'Earlier', { run: 'r7', to: 'the fix run' }),
+        up('e70', 'usage.near', '', 'Claude · Max', '09:10', 'Earlier', { title: 'Claude Code session at 80% · resets 16:40' }),
+        up('e71', 'usage.reached', '', 'OpenAI · Plus', '09:00', 'Earlier', { title: 'Codex weekly limit reached · 1 run paused' }),
+        up('e72', 'usage.reset', '', 'OpenAI · Plus', '08:50', 'Earlier', { title: 'Codex session reset · 1 run resumed', run: 'r12', to: 'the resumed run' }),
+        up('e73', 'usage.moved', '', 'web-app · the slice keeps Codex to the end', '08:40', 'Earlier', { title: 'Slice 2 of 4 moved to Codex · Rate limiting', run: 's2', to: 'the slice\'s run page' }),
+        up('e74', 'usage.held', '', 'web-app · no harness has room', '08:30', 'Earlier', { title: 'Slice 3 of 4 waits for 16:40 · Rate limiting', run: 's3', to: 'the slice\'s run page' }),
+        up('e75', 'budget.threshold', '', 'Budget · $80.40 of $100', '08:20', 'Earlier', { title: 'Budget at 80% of $100' }),
+        up('e76', 'budget.exceeded', '', 'Budget · it reset on Nov 1', '08:10', 'Earlier', { title: 'Budget of $100 used up in October', read: true, resolved: true }),
+        up('e80', 'away.started', '', 'Until 08:00', '18:00', 'Earlier', { title: 'Away hours started' }),
+        up('e81', 'away.ended', '', 'Since 18:00 yesterday', '08:00', 'Earlier', { title: 'Away hours ended' }),
+        up('e90', 'project.clone_failed', 'acme/old-api', 'the repository is gone', '07:50', 'Earlier'),
+        up('e91', 'project.clone_done', 'acme/design-tokens', '2.1 MB', '07:40', 'Earlier'),
+        up('e92', 'project.sync_failed', 'web-app', 'local changes in the way', '07:30', 'Earlier'),
+        up('e93', 'project.sync_behind', 'billing-api', '12 commits behind origin', '07:20', 'Earlier')] },
   ];
+  // Newest first within a day, and each case with the world's usage, spend and running actions. An update's run must be
+  // in its case: a row can never name a run the lists do not have.
+  for (const c of CASES) {
+    const { usage, budget, actions } = W.facts(c.id);
+    Object.assign(c, { usage, budget, actions });
+    const dayOrder = [...new Set(c.updates.map((u) => u.day))];
+    c.updates.sort((a, b) => dayOrder.indexOf(a.day) - dayOrder.indexOf(b.day) || b.time.localeCompare(a.time));
+    for (const u of c.updates) if (u.run && !W.has(c.id, u.run)) throw new Error(`${u.id} is about ${u.run}, which is not in the case ${c.id}`);
+  }
 
   // The Away row in the profile menu: its hint and tip, from where the person stands (the app's describeAwayRow).
   const TURN_ON = 'Turn Away on to have Worca answer waiting run questions for you.';
@@ -259,26 +234,27 @@
   // show, the search's lock note. `go`: where it lands; a captured page just opens.
   const F = (kind, label, where, go, o) => ({ kind, label, where, go, ...o });
   const FINDS = [
-    F('run', 'Add CSV export to billing', 'Run · billing-api', 'run/question', { labels: ['billing', 'ui'] }), F('run', 'Migrate cron parser', 'Run · worca-cc', 'run/gate', { labels: ['backend'] }),
-    F('run', 'Fix flaky login test', 'Run · web-app', 'run/working', { labels: ['ui', 'tests'] }), F('run', 'Rename settings keys', 'Run · worca-cc', 'run/checks', { labels: ['backend'] }), F('run', 'Unified page navigation', 'Run · web-app', 'run/ready', { labels: ['ui'] }),
+    F('place', 'Runs', 'Place', 'runs'), F('place', 'Chats', 'Place', 'chat'), F('place', 'Schedules', 'Place', 'schedules', { min: 'advanced' }), F('place', 'Statistics', 'Place', 'stats', { min: 'advanced' }), F('place', 'Team metrics', 'Place', 'team-metrics', { min: 'expert' }),
+    F('place', 'Workflows', 'Place', 'workflows'), F('place', 'Requirements', 'Place', 'requirements', { flag: 'requirements' }), F('place', 'Marketplace', 'Place', 'marketplace', { min: 'advanced' }), F('place', 'Projects', 'Place', 'projects'), F('place', 'Workspaces', 'Place', 'workspaces', { min: 'advanced' }),
     F('project', 'billing-api', 'Project', 'projects'), F('project', 'web-app', 'Project', 'projects'), F('project', 'worca-cc', 'Project', 'projects'), F('project', 'docs-site', 'Project', 'projects'),
     F('workspace', 'platform-core', 'Workspace', 'workspaces', { min: 'advanced' }),
     F('workflow', 'Default', 'Workflow · 5 agents', 'workflows'), F('workflow', 'Lean', 'Workflow · 4 agents', 'workflows'), F('workflow', 'Shaper', 'Workflow · 6 agents', 'workflows'), F('workflow', 'Promo video', 'Workflow · 8 agents', 'workflows'), F('workflow', 'Architecture (C4)', 'Workflow · 2 agents', 'workflows'),
     F('schedule', 'Nightly dependency bump', 'Schedule · every day', 'schedules', { min: 'advanced' }), F('schedule', 'Weekly digest', 'Schedule · every Friday', 'schedules', { min: 'advanced' }),
     F('ticket', 'Deploy docs site', 'Scheduled once · after a run', 'schedules', { min: 'advanced' }), F('ticket', 'Tidy project memory', 'Scheduled once · today 18:00', 'schedules', { min: 'advanced' }),
     F('label', 'hotfix', 'Label · Runs', 'runs', { flag: 'runLabels' }), F('label', 'ui', 'Label · Runs', 'runs', { flag: 'runLabels' }), F('label', 'billing', 'Label · Runs', 'runs', { flag: 'runLabels' }), F('label', 'backend', 'Label · Runs', 'runs', { flag: 'runLabels' }), F('label', 'tests', 'Label · Runs', 'runs', { flag: 'runLabels' }),
-    F('addon', 'Statistics', 'Place', 'stats', { min: 'advanced' }), F('addon', 'Team metrics', 'Place', 'team-metrics', { min: 'expert' }), F('addon', 'Requirements', 'Place · Labs', 'requirements', { flag: 'requirements' }), F('addon', 'Marketplace', 'Add-ons', 'marketplace', { min: 'advanced' }),
     F('plugin', 'github-source', 'Plugin · Marketplace', 'marketplace', { min: 'advanced' }), F('plugin', 'jira-source', 'Plugin · Marketplace', 'marketplace', { min: 'advanced' }), F('plugin', 'telegram-chat', 'Plugin · Marketplace', 'marketplace', { min: 'advanced' }),
     F('plugin', 'slack-chat', 'Plugin · Marketplace', 'marketplace', { min: 'advanced' }), F('plugin', 'discord-chat', 'Plugin · Marketplace', 'marketplace', { min: 'advanced' }),
-    F('chat', 'Why did the build fail', 'Chat · today', 'chat'), F('chat', 'Plan the API rewrite', 'Chat · yesterday', 'chat'), F('chat', 'Release checklist', 'Chat · Oct 28', 'chat'),
+    F('chat', 'Why did the build fail', 'Chat · today', 'chat/c2'), F('chat', 'Plan the API rewrite', 'Chat · today', 'chat/c5'), F('chat', 'Release checklist', 'Chat · yesterday', 'chat/c9'),
   ];
   const FLAG_ROW = { requirements: 'Requirements', runLabels: 'Run labels', gitAutomations: 'Git event automations' };
   // `label:ui`: the runs with that label. Otherwise the name, or a word of where it lives, anywhere in the text.
+  // The runs are the world's, as they are now.
+  const runFinds = () => W.rows().filter((r) => !r.archived).map((r) => F('run', r.title, `Run · ${r.project || 'No project'}`, `run/${r.case}`, { labels: r.labels }));
   function find(q) {
     const raw = q.trim().toLowerCase();
-    const m = raw.match(/^label:\s*(.*)$/);
-    if (m) return [...FINDS.filter((f) => f.kind === 'label' && f.label.includes(m[1])), ...FINDS.filter((f) => f.kind === 'run' && (f.labels || []).some((l) => l.includes(m[1]))).map((f) => ({ ...f, flag: 'runLabels' }))];
-    return FINDS.filter((f) => f.label.toLowerCase().includes(raw) || f.kind.startsWith(raw));
+    const m = raw.match(/^label:\s*(.*)$/), runs = runFinds();
+    if (m) return [...FINDS.filter((f) => f.kind === 'label' && f.label.includes(m[1])), ...runs.filter((f) => (f.labels || []).some((l) => l.includes(m[1]))).map((f) => ({ ...f, flag: 'runLabels' }))];
+    return [...FINDS, ...runs].filter((f) => f.label.toLowerCase().includes(raw) || f.kind.startsWith(raw));
   }
 
   // The tone of a share: '' under the warning line, warn at or over it, over when used up.
@@ -286,6 +262,9 @@
   const winWord = (k) => WIN[k];
 
   const usd = (n) => '$' + n.toLocaleString('en', { minimumFractionDigits: n % 1 ? 2 : 0, maximumFractionDigits: 2 });
+  const BUDGET_RESETS = 'Dec 1';
+  // A used-up budget stops every run and every start; it wins over any window.
+  const budgetGone = (b) => !!b?.limit && b.spent >= b.limit;
   const spendPct = (b) => (b && b.limit ? Math.round((b.spent / b.limit) * 100) : null);
   // A window in words: "86%", or the count where the provider counts requests ("212 of 300").
   const fig = (w) => (w.of ? `${w.used.toLocaleString('en')} of ${w.of.toLocaleString('en')}` : `${w.pct}%`);
@@ -309,21 +288,22 @@
     const out = [];
     for (const u of c.usage) for (const w of u.win) {
       if (w.pct < warnAt) continue;
-      const name = PROVIDER[u.p].name;
-      const what = { day: 'daily requests', week: 'weekly limit', month: 'monthly requests', session: 'session' }[w.k];
+      const name = PROVIDER[u.p].name, what = WHAT[w.k], paused = (c.runs || []).filter((r) => r.resumes && r.on === u.p).length;
       out.push(w.pct >= 100
-        ? { p: u.p, tone: 'over', title: `${name} ${what} reached`, detail: `${u.paused || 0} runs paused · they resume by themselves after it resets`, time: w.resets, tip: `Resets ${w.resets}` }
-        : { p: u.p, tone: 'warn', title: `${name} ${what} at ${w.pct}%`, detail: `Resets ${w.resets} · runs on ${name} may pause before then`, time: w.resets, tip: `Resets ${w.resets}` });
+        ? { p: u.p, tone: 'over', title: `${name} ${what} reached`, detail: paused ? `${paused} ${paused === 1 ? 'run' : 'runs'} paused · ${paused === 1 ? 'it resumes' : 'they resume'} by ${paused === 1 ? 'itself' : 'themselves'} after it resets` : `Runs on ${name} wait until it resets`, time: `resets ${w.resets}`, tip: `Resets ${w.resets}` }
+        : { p: u.p, tone: 'warn', title: `${name} ${what} at ${w.pct}%`, detail: `Runs on ${name} may pause before then`, time: `resets ${w.resets}`, tip: `Resets ${w.resets}` });
     }
     const sp = spendPct(c.budget);
-    if (sp != null && sp >= warnAt) out.push({ tone: sp >= 100 ? 'over' : 'warn', title: `Spend at ${sp}% of ${usd(c.budget.limit)}`, detail: `${c.budget.period[0].toUpperCase() + c.budget.period.slice(1)} · runs stop at the budget`, time: 'Nov 1', tip: 'The budget resets on 1 November' });
+    if (sp != null && sp >= warnAt) out.push(sp >= 100
+      ? { tone: 'over', title: `Budget of ${usd(c.budget.limit)} used up`, detail: 'Runs stay paused until it resets or you raise it', time: `resets ${BUDGET_RESETS}`, tip: 'The budget resets on 1 December' }
+      : { tone: 'warn', title: `Budget at ${sp}% of ${usd(c.budget.limit)}`, detail: 'Runs stop at the budget', time: `resets ${BUDGET_RESETS}`, tip: 'The budget resets on 1 December' });
     return out;
   }
 
-  // Vitals's runs by the section their state sorts into: `sectionOf` and `wordOf` come from the library (run-state.mjs).
-  function vitalsRuns(c, sectionOf, wordOf) {
+  // Vitals's rows by section: the same top-level rows as the Runs list.
+  function vitalsRuns() {
     const out = { needs: [], running: [], scheduled: [] };
-    for (const r of c.runs) out[sectionOf(wordOf(r.state))]?.push(r);
+    for (const r of W.tops()) out[r.section]?.push(r);
     return out;
   }
 
@@ -359,6 +339,6 @@
 
   // The Prototype corner's new event, one per severity, so the sound can be tried. Each is a fresh update.
   const TRY = { needs: ['run.questions', 'Rename settings keys', 'worca-cc · 1 question', 'run/question'], problem: ['run.failed', 'Fix the flaky e2e test', 'worca-cc · it stopped at Review', 'run/failed'], info: ['run.done', 'Update the changelog', 'docs-site · ready', 'run/ready'] };
-  const tryEvent = (sev, n) => { const [e, about, meta, go] = TRY[sev]; return { ...up('try-' + n, e, about, meta, 'now', 'Today', { go }), unread: true }; };
-  window.PulseModel = { tryEvent, refreshed, withQuota, vitalsRuns, awayRow, awayLine, FINDS, FLAG_ROW, find, EVENT, BADGE, chatWords, SCHED, GROUPS, LEVELS, WHERE, PROVIDER, CASES, SIZES, N, WHAT, qualifies, tone, rings, limits, near, room, est, winWord, fig, usd, spendPct };
+  const tryEvent = (sev, n) => { const [e, about, meta, go] = TRY[sev]; return up('try-' + n, e, about, meta, 'now', 'Today', { go }); };
+  window.PulseModel = { BUDGET_RESETS, budgetGone, tryEvent, refreshed, withQuota, vitalsRuns, awayRow, awayLine, FINDS, FLAG_ROW, find, EVENT, BADGE, chatWords, SCHED, GROUPS, LEVELS, WHERE, PROVIDER, CASES, SIZES, N, WHAT, qualifies, tone, rings, limits, near, room, est, winWord, fig, usd, spendPct };
 })();

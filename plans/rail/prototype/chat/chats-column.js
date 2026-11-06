@@ -191,6 +191,7 @@
     if (c === 'refresh' && location.hash.startsWith('#chat')) say('Could not load the chats. The rows here may be out of date.');
   }
   document.getElementById('list-case')?.addEventListener('change', (e) => setCase(e.target.value));
+  window.RailWorld.onChange(() => setCase(listCase));   // another Pulse case: what waits on you follows it
   R.prefs.onChange(() => ctl.paint());
   window.RailChats = {
     show: (id) => { current = id || ''; ctl.paint(); return opened; },

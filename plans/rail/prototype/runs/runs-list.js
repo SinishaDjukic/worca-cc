@@ -2,7 +2,7 @@
 // every build. The library owns the behaviour (listController); this names the rows, the sentence and what an action does.
 // A row's state, word and section come from R.runState and R.sectionOf on its real run-page case, and it opens that case.
 (function () {
-  const R = window.RailUI, M = window.RunsListModel, RM = window.RunCardModel;
+  const R = window.RailUI, M = window.RunsListModel, RM = window.RunCardModel, W = window.RailWorld;
   const root = document.getElementById('runs-root');
   if (!root) return;
   const KEY = 'worca-rail.runs.view';
@@ -17,16 +17,13 @@
   // ---- what a row is, from its case ----
   const stateOf = (r) => (r.archived ? 'archived' : RM.stateOf(r.case));
   const wordOf = (r) => R.runState(stateOf(r)).word;
-  const sectionOfRun = (r) => (r.archived ? 'recent' : R.sectionOf(wordOf(r)));
+  const sectionOfRun = (r) => W.section(r);
   const openCase = (r) => (r.archived ? 'archived' : r.case);
   const NEEDS = () => R.runState('question').word;
   const markOf = (state) => { const st = R.runState(state); return R.statusDot({ tone: st.dot, sym: st.sym }); };
   const membersOf = (g) => data.runs.filter((r) => r.group === g.id).sort((a, b) => (a.pos || 0) - (b.pos || 0));
-  const liveMembers = (g) => membersOf(g).filter((r) => !r.archived);
   const groupState = (g) => RM.stateOf(g.case);
-  // a member that waits on a person raises its group; one that is simply ready ships with the group
-  const raises = (m) => sectionOfRun(m) === 'needs' && ![R.runState('ready').word, R.runState('approved').word].includes(wordOf(m));
-  const groupSection = (g) => (liveMembers(g).some(raises) ? 'needs' : R.sectionOf(R.runState(groupState(g)).word));
+  const raises = W.raises, groupSection = W.groupSection;   // where a group sorts is the world's, so Vitals counts it the same
   // what it is in the list: a run, or a group with its runs
   function tops() {
     const out = data.runs.filter((r) => !r.group).map((r) => ({ run: r, section: sectionOfRun(r), archived: r.archived, labels: r.labels, project: r.project, by: r.by, day: r.day, word: wordOf(r) }));
@@ -137,7 +134,7 @@
 
   // ---- actions ----
   const snapshot = () => JSON.stringify(data);
-  const undoTo = (snap, pick, words) => ({ tip: words, run: () => { data = JSON.parse(snap); ctl.restore(pick); ctl.paint(); say('Undone'); } });
+  const undoTo = (snap, pick, words) => ({ tip: words, run: () => { data = JSON.parse(snap); W.replace(data); ctl.restore(pick); ctl.paint(); say('Undone'); } });
   const rowsNow = (rows) => rows.map((x) => x._x);
   const byId = (id) => data.runs.find((r) => r.id === id);
   function bulkActions(rows0) {
@@ -230,6 +227,7 @@
     ctl.paint();
   }
   document.getElementById('list-case')?.addEventListener('change', (e) => setCase(e.target.value));
+  W.onChange(() => setCase(listCase));   // another Pulse case: another mock of who is running what
   R.prefs.onChange(() => ctl.paint());
   window.RailRunsList = {
     show: () => ctl.paint(),

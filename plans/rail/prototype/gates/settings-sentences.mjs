@@ -10,7 +10,7 @@ global.window.RailUI = { ...(await import('../../../../ui/public/design-system/c
 const R = global.window.RailUI;
 await import('../settings/settings-model.js');
 await import('../settings/settings.js');
-await import('../pulse/pulse-model.js');
+await import('../shell/world.js'); await import('../pulse/pulse-model.js');
 const SM = global.window.SettingsModel, SV = global.window.SettingsView, M = global.window.PulseModel;
 for (const f of SM.FLAGS) R.prefs.setFlag(f.key, true);
 

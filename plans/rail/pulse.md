@@ -40,8 +40,9 @@ Usage follows the same rule:
 ### 3.2 The Pulse panel (all of Pulse)
 Pulse is the panel under its button, over whatever page is open; there is no Pulse page (a page would hold the same
 two lists twice). On a narrow screen the panel is the window's width.
-- Head: tabs **Vitals** and **Updates**, each with its count as a caption (Rail: a count is a caption, never a chip), and
-  ⋯ at the right: Mark all read, Clear read, Notification settings. The body scrolls; the head stays.
+- Head: tabs **Vitals** and **Updates**, each with its count as a caption (Rail: a count is a caption, never a chip), and at the
+  right, on Updates ⋯ (Mark all read, Clear read: every read update but what still waits; Select; Notification settings), on
+  Vitals the one button to Notification settings. The body scrolls; the head stays.
 - **Vitals**: the groups that have rows, in this order: Needs you (amber dot), Limits (amber or red), Running (peach,
   pulses), Running actions (each with its Stop; it needs nobody, so its count stays out of the badge), Scheduled (hollow; a slice, queued or scheduled run says what it will do near a limit, §4.5). Above them,
   the same sentence as every list: `Showing [everything ▾] from [all projects ▾]`, each choice with its count. Shows:
@@ -59,14 +60,18 @@ two lists twice). On a narrow screen the panel is the window's width.
   unread. A problem clears when it is acted on: its step (Run now, Resume, Try again) sits on the row, and taking it
   marks the row Resolved. On a shared sign-in, read and cleared belong to each person.
 - The list's sentence picks what it shows: `Showing [unread ▾] from [all groups ▾]`. Shows: Unread, All, Needs you,
-  Problems, Cleared. Empty: "You are up to date."
+  Problems, Cleared. The Updates tab's count follows this sentence, as Vitals' does. Empty: "You are up to date."
 - Selection works exactly as in Runs and Chats: ⋯ › Select, ⌘ or Ctrl-click, Shift-click for a range, Space on a
   focused row, ⌘A, or a long-press on touch. Only then do tick boxes take the marks' place, and `Select all` sits at
   the sentence's right. The sentence stays. The Runs bar (`.runs-bulk`) sits at the panel's foot:
   `2 selected · Mark read 1 · Clear 2 · Cancel`. Each action shows how many updates it applies to and is disabled
   at 0. Cancel or Esc stops selecting, and so does unticking the last row. Clear is a soft dismiss with Undo in the toast; it does not confirm (it can be taken back).
   Clearing an open `needs` row leaves the run waiting; the bar's tooltip says so.
-- A row opens its one target (Pulse Center §6.5) and marks it read; a Limits row opens Usage and costs. A desktop or
+- A row opens its one target (Pulse Center §6.5) and marks it read, one destination per kind: a run's kinds that run, a
+  limit or the budget Usage and costs, lit on what it named, a schedule Schedules, a chat that chat, a project Projects.
+  The whole row is the target. A row's step goes further only by saying so (`Raise budget` opens Settings › Runs › Budget);
+  one that cannot work is not offered. A run paused at a limit that resumes by itself waits on nobody: it sorts under
+  Scheduled, After a reset, and stays out of the badge. Every count reads `plans/rail/prototype/shell/world.js`. A desktop or
   chat notice opens the panel at its row.
 
 ### 3.3 Settings › Notifications
@@ -195,7 +200,7 @@ since the menu opens up from the avatar and the bottom is nearest the hand:
 | `usage.reset` | a window resets after it was reached | info | `Codex week reset · 2 runs resumed` | the Limits row goes |
 | `usage.moved` | a slice or scheduled run started on another harness because of a limit (§4.5) | info | `Slice 2 of 4 moved to Codex · Rate limiting` | — |
 | `usage.held` | a slice or scheduled run waits for a reset (§4.5) | problem | `Slice 3 of 4 waits for 16:40 · Rate limiting` | Scheduled row says so |
-| `budget.threshold` / `exceeded` | spend crosses the warning line / 100% of a budget | problem | `Spend at 92% of $100 in October` | Limits row |
+| `budget.threshold` / `exceeded` | spend crosses the warning line / 100% of a budget | problem | `Budget at 92% of $100` | Limits row |
 
 `usage.reached` is the one notice for the harness; each paused run keeps its own pause notice on its page
 (`limit-notice.mjs`, unchanged) and does not raise its own `run.paused` update for the same limit.
@@ -255,7 +260,7 @@ against its own estimate when its turn comes, follows the setting, and says what
 
 ### 4.6 The profile menu around it
 Above the rows, only on a shared sign-in: the **Signed in as** card. In its first section, until looked at: **Your team
-updated the recommended setup** · Review. In Usage, while a budget has stopped runs: **Raise limit**, which lands on
+updated the recommended setup** · Review. In Usage, while a budget has stopped runs: **Raise budget**, which lands on
 Settings › Runs › Budget. The avatar wears the away dot while you are away; the Away row's hint and tip say where you
 stand (`away at 22:00`, `until 07:00`, `Away mode paused`), and it is disabled with why when away mode cannot be read.
 Interface mode writes `prefs.setMode`; the sidebar and every page follow it.

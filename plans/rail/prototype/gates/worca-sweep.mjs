@@ -48,6 +48,15 @@ for (const scheme of ['light', 'dark']) for (const w of [1280, 900, 760, 375]) {
     for (const [k, wh] of f) add(k, `${scheme}/${w}/${r}${wh ? ': ' + wh : ''}`);
     checks++;
   }
+  // one mock: in every Pulse case the badge and the Runs list's Needs you agree (build.one-mock)
+  await p.goto(`${URL_}#runs`); await p.waitForTimeout(100);
+  for (const pc of await p.evaluate(() => [...document.querySelectorAll('#pulse-case option')].map((o) => o.value))) {
+    const got = await p.evaluate((v) => { const s = document.getElementById('pulse-case'); s.value = v; s.dispatchEvent(new Event('change', { bubbles: true })); document.querySelector('#runs-root [data-menu="show"]')?.click();
+      const hint = document.querySelector('#runs-root [data-pick="show|needs"]')?.textContent.match(/\d+/)?.[0] || '0'; document.querySelector('#runs-root [data-menu="show"]')?.click(); return { list: +hint, badge: window.PulseModel && window.RailWorld.tops().filter((r) => r.section === 'needs').length, shown: +(document.querySelector('.pz-pulse-b .badge, .pz-pulse-b [class*="badge"]')?.textContent || 0) }; }, pc);
+    if (got.list !== got.badge) add('the badge and the Runs list disagree', `${pc}: ${JSON.stringify(got)}`);
+    checks++;
+  }
+  await p.evaluate(() => { const s = document.getElementById('pulse-case'); s.value = 'afternoon'; s.dispatchEvent(new Event('change', { bubbles: true })); });
   // the journeys
   const step = async (name, fn, expect) => { const ok = await p.evaluate(fn); await p.waitForTimeout(120); const got = await p.evaluate(expect); if (!got) add('a journey breaks', `${scheme}/${w}: ${name}`); checks++; };
   await p.goto(`${URL_}#runs`); await p.waitForTimeout(100);

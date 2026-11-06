@@ -1,7 +1,7 @@
 // The Chats column's mock: the chats and their topic groups. `state` is a chat state (R.chatState), `kind` what it did.
 (function () {
   const chat = (id, title, state, kind, project, time, day, o = {}) => ({ id, title, state, kind, project, time, day, cost: null, pinned: false, archived: false, unread: false, group: '', origin: null, rank: 0, ...o });
-  const seed = () => ({
+  const base = () => ({
     groups: [{ id: 't-bill', name: 'Billing export', total: 4 }, { id: 't-rel', name: 'Release 1.20', total: 2 }, { id: 't-ops', name: 'On call', total: 2 }],
     chats: [
       chat('c1', 'Ship the CSV export', 'needs-you', 'started', 'billing-api', '14:32', 'today', { cost: 1.2, unread: true, group: 't-bill' }),
@@ -22,5 +22,15 @@
       ...['Rename the env vars', 'Docker layer cache', 'Sentry noise', 'Fonts on Safari', 'Slow query on orders', 'Webhook retries', 'Cookie banner copy', 'Audit table index', 'Move to pnpm', 'Sitemap again', 'Backfill the stats'].map((t, i) => chat(`o${i}`, t, 'idle', i % 3 ? 'chat' : 'started', ['web-app', 'worca-cc', 'billing-api'][i % 3], ['Sep 12', 'Aug 30', 'Aug 2', 'Jul 18'][i % 4], 'older', { cost: i % 2 ? 0.3 + i / 10 : null })),
     ],
   });
+  // What waits on you and what is unread follow the Pulse case in view (shell/world.js), so Updates and the column agree.
+  const QUIET = { replying: 'idle', command: 'idle', following: 'idle' };
+  const seed = () => {
+    const d = base(), f = window.RailWorld.facts().chats;
+    for (const c of d.chats) {
+      c.unread = (f.unread || []).includes(c.id);
+      c.state = (f.needs || []).includes(c.id) ? 'needs-you' : c.state === 'needs-you' ? 'idle' : f.quiet ? QUIET[c.state] || c.state : c.state;
+    }
+    return d;
+  };
   window.ChatsListModel = { seed, DAYS: [['today', 'Today'], ['yesterday', 'Yesterday'], ['week', 'Previous 7 days'], ['month', 'Previous 30 days'], ['older', 'Older']] };
 })();

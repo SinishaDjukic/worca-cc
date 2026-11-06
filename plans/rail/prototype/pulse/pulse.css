@@ -44,13 +44,13 @@
 .pz-team .status-dot{flex:none;margin:0 3px;}
 .pz-sess{margin:0;color:var(--ink-2);}
 
-/* A ring that shades along its arc: --ink-2 at the start, --amber at the warning line (--w), --red at the limit; it
+/* A ring that shades along its arc: --ink-2 until just under the warning line, --amber at the warning line (--w), --red at the limit; it
    shows the first --p percent. Used up: full and solid red. The track is --line-2. Never violet, never green. */
 .pz-gring{--s:18px;--t:1.5px;position:relative;display:inline-block;flex:none;width:var(--s);height:var(--s);border-radius:50%;background:var(--line-2);
   -webkit-mask:radial-gradient(farthest-side,transparent calc(100% - var(--t) - .5px),#000 calc(100% - var(--t)));
   mask:radial-gradient(farthest-side,transparent calc(100% - var(--t) - .5px),#000 calc(100% - var(--t)));}
 .pz-gring::before{content:"";position:absolute;inset:0;border-radius:50%;
-  background:conic-gradient(var(--ink-2) 0%,var(--amber) calc(var(--w) * 1%),var(--red) 100%);
+  background:conic-gradient(var(--ink-2) calc((var(--w) - 6) * 1%),var(--amber) calc(var(--w) * 1%),var(--red) 100%);
   -webkit-mask:conic-gradient(#000 calc(var(--p) * 1%),transparent 0);mask:conic-gradient(#000 calc(var(--p) * 1%),transparent 0);}
 .pz-gring.is-over::before{background:var(--red);}
 .pz-ava-wrap .pz-gring{--t:1px;position:absolute;inset:0;margin:auto;}
@@ -102,6 +102,8 @@
 .pz-nr-h{margin:0;font:600 var(--fs-section)/1.3 var(--sans);color:var(--ink);}
 .pz-nr-task{min-height:56px;padding:8px 10px;border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--field);color:var(--ink);}
 .pz-nr .pz-sentence{margin-block:0;}
+.pz-newrun .pz-menu{min-width:min(340px,calc(100vw - 32px));}   /* a harness's name and its figures on one line */
+.viewer-modal:has(#pz-sess-t){place-items:center;}   /* the Session dialog sits where the other short dialogs do */
 .pz-advice{display:grid;grid-template-columns:var(--rail) minmax(0,1fr);column-gap:var(--gap);align-items:start;}
 .pz-advice .pz-rail{height:20px;}
 .pz-advice-t{margin:0;font-size:var(--fs-meta);line-height:1.5;color:var(--ink-2);}
@@ -135,17 +137,27 @@
 .pz-h-row{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:4px;}
 .pz-h-row .pz-h{margin-bottom:0;}
 .pz-list{display:flex;flex-direction:column;min-width:0;}
-.pz-row{position:relative;display:grid;grid-template-columns:var(--rail) minmax(0,1fr) auto;column-gap:var(--gap);align-items:start;padding:2px 0;}
+/* The whole row is its target and its tint: the text's button reaches over the rail and the time; the tick box and a step stay above it. */
+.pz-row{--btn-inset:11px;position:relative;display:grid;grid-template-columns:var(--rail) minmax(0,1fr) auto;column-gap:var(--gap);align-items:start;padding:2px 4px;margin-inline:-4px;border-radius:var(--r-sm);}
+.pz-row:hover{background:var(--hover);}
+.pz-row-main:hover{background:none;}
+.pz-row-main::after{content:"";position:absolute;inset:0;border-radius:var(--r-sm);}
+.pz-row-main:focus-visible{outline:none;}
+.pz-row-main:focus-visible::after{outline:2px solid var(--ink);outline-offset:-2px;}
+.pz-check,.pz-row-end .btn{z-index:1;}
+.pz-row-end .btn{position:relative;margin-right:calc(-1 * var(--btn-inset));}
 /* A list grouped by something (status, day): a line where a group starts, from the text edge; rows divide by space. */
 .pz-sec + .pz-sec{position:relative;margin-top:12px;padding-top:12px;}
 .pz-sec + .pz-sec::before{content:"";position:absolute;top:0;left:var(--edge);right:0;border-top:1px solid var(--line);}
 .pz-rail{position:relative;display:grid;place-items:center;width:var(--rail);height:40px;}
 .pz-row-main{display:flex;flex-direction:column;gap:1px;min-width:0;margin:0 0 0 -6px;padding:5px 6px;}
-.pz-row-t{min-width:0;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-.pz-row-m{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--fs-meta);color:var(--ink-2);}
+/* The name keeps one line and ends in an ellipsis; the state word beside it never shortens; the meta is the reason: a sentence, and it wraps. */
+.pz-row-t{display:flex;align-items:baseline;gap:8px;min-width:0;color:var(--ink);}
+.pz-row-tt{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.pz-row-m{min-width:0;font-size:var(--fs-meta);color:var(--ink-2);}
 .pz-row-end{display:flex;flex-direction:column;align-items:flex-end;gap:2px;}
 .pz-row-time{padding-top:7px;font-size:var(--fs-meta);color:var(--ink-2);white-space:nowrap;font-variant-numeric:tabular-nums;}
-.pz-resolved{margin-left:8px;font-size:var(--fs-caption);color:var(--ink-2);}
+.pz-resolved{flex:none;font-size:var(--fs-caption);color:var(--ink-2);}
 .pz-unread{width:8px;height:8px;border-radius:50%;background:var(--blue);}
 .pz-empty{margin:20px 0 0 var(--edge);color:var(--ink-2);}
 /* While selecting (as the Runs list), the tick box takes the mark's place on the rail. */
@@ -164,6 +176,9 @@
 
 /* A picker in its sentence: the chosen words in body type, a chevron; the menu opens under it. */
 .pz-pick{position:relative;display:inline-block;}
+/* A sentence breaks between its parts: a word stays with its picker. */
+.list-part{white-space:nowrap;}
+.list-part .menu{white-space:normal;}
 .pd-base.is-words{font:600 var(--fs-body)/1.4 var(--sans);color:var(--ink);white-space:nowrap;}
 .pz-menu{position:absolute;top:calc(100% + 4px);left:0;z-index:46;min-width:200px;}
 .pz-menu.is-right{left:auto;right:0;}
@@ -172,6 +187,15 @@
 /* The toast's Undo. */
 .rc-toast.is-on{pointer-events:auto;}
 .pz-undo{margin-left:12px;padding:0;border:0;background:none;color:inherit;font:600 var(--fs-meta)/1 var(--sans);text-decoration:underline;text-underline-offset:3px;cursor:pointer;}
+
+/* Narrow: a row's step stacks under its text on the text edge, as narrow.md stacks; the sentence's Select all takes its own line. */
+@media (max-width: 520px){
+  .pz-row-end{display:contents;}
+  .pz-row-time{grid-column:3;grid-row:1;}
+  .pz-row-end .btn{grid-column:2 / -1;grid-row:2;justify-self:start;margin:0 0 4px calc(-1 * var(--btn-inset));}
+  .pz-bar{grid-template-columns:var(--rail) minmax(0,1fr);}
+  .pz-bar > :nth-child(3){grid-column:2;justify-self:start;}
+}
 
 /* Narrow: the sidebar is the rail (icons and the avatar alone); the page and settings stack. */
 @media (max-width: 760px){

@@ -927,5 +927,5 @@ const onPage = () => !SHELL || SHELL.runActive();
 const repaint = () => { if (stale) { stale = false; render(); } };
 R.dismissOnOutside(document, { rank: 3, open: () => !!ui.menu && onPage(), inside: '.rc-pop, .menu, .spick, [data-tagzone]', back: () => `[data-key="menu:${CSS.escape(ui.menu === 'groups' ? 'more' : ui.menu)}"]`, close: () => { ui.menu = ''; stale = true; }, paint: repaint });
 R.dismissOnOutside(document, { dialog: true, open: () => onPage() && !ui.busy && !!document.querySelector('#card .viewer-modal'), inside: '#card .viewer-modal .card', back: () => '[data-key="act-main"]', close: () => { ui.form = null; ui.doc = null; ui.graphNode = null; ui.dialog = ''; if (ui.pr) { ui.pr.gen = false; ui.pr.genTitle = false; (ui.pr.prs || []).forEach((f) => { f.gen = false; f.genTitle = false; }); } stale = true; }, paint: repaint });
-{ const h = location.hash.slice(1); if (M.cases.some((c) => c.id === h)) { pick.value = h; pick.dispatchEvent(new Event('change')); } else render(); }
+{ const h = location.hash.slice(1); if (!SHELL && M.cases.some((c) => c.id === h)) { pick.value = h; pick.dispatchEvent(new Event('change')); } else render(); }
 })();

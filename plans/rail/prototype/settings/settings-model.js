@@ -60,7 +60,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
     if (sv.period !== 'month') return `**${own}**, and **${team}** (your team's)`;
     return +sv.total <= +sv.pol.capAll ? `**${own}**` : `**${team}** (your team's; yours is ${usd(sv.total)})`; };
   const SPENT = { day: ['today', 38], week: ['this week', 140], month: ['this month', 412] };
-  const spentWords = (sv) => { const own = sv.total ? sv.period : 'month', [when, n] = SPENT[own], of = sv.total && own !== 'month' ? +sv.total : sv.total ? Math.min(+sv.total, +sv.pol.capAll) : +sv.pol.capAll; return `Spent ${when}: $${n} of ${usd(of)}.`; };
+  const spentWords = (sv) => { const own = sv.total ? sv.period : 'month', [when, table] = SPENT[own], n = own === 'month' && sv.spentNow != null ? sv.spentNow : table, of = sv.total && own !== 'month' ? +sv.total : sv.total ? Math.min(+sv.total, +sv.pol.capAll) : +sv.pol.capAll; return `Spent ${when}: $${n} of ${usd(of)}.`; };
 
   // ---- Plugins and Chat › Channels read one fact from here: what is installed, and whether a channel has its token ----
   const installed = (sv, title) => !sv.gone[title];

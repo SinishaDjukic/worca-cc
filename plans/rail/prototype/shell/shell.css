@@ -49,13 +49,16 @@
 .rail-locked{padding:24px 32px;}
 
 /* Ask worca: 761 to 1080px it covers the page's right side at its own width, with its grip; push and window as the app.
-   It fades in, the page narrowing with it above 1080px; it closes at once. */
+   It fades in, the page narrowing with it above 1080px; at 1080px and below it covers the page and only fades, as Pulse
+   does; it closes at once. */
 @media (min-width: 761px) and (max-width: 1080px){
   .ask-side{width:var(--ask-side-w, 440px);border-left:1px solid var(--line);box-shadow:var(--shadow-pop);}
   .ask-side-grip{display:block;}
 }
 @media (min-width: 1081px){ .ask-side.is-in{animation:rail-ask-in var(--motion-quick) var(--ease);} }
+@media (max-width: 1080px){ .ask-side.is-in{animation:rail-ask-fade var(--motion-quick) var(--ease);} }
 @keyframes rail-ask-in{from{width:0;opacity:0;}}
+@keyframes rail-ask-fade{from{opacity:0;}}
 @media (prefers-reduced-motion: reduce){ .ask-side.is-in{animation:none;} }
 .rail-ask-body{height:100%;min-height:0;display:flex;flex-direction:column;}
 .rail-ask-body > section.view{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;}

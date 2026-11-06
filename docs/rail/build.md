@@ -4,6 +4,7 @@
 |---|---|---|---|
 | `build.pattern-first` | A page is built from a pattern and the lookup | Nobody invents a layout | by hand |
 | `build.teach` | What a page needed goes into the design system first: rule, catalog, component, test, gallery | A lesson taught once reaches every page | rail-docs |
+| `build.one-mock` | The prototype's Runs list, Pulse, Usage and costs and the run page's title read one mock per Pulse case: `plans/rail/prototype/shell/world.js` | Each kept its own figures, and the badge said 2 over 11 rows | worca-sweep |
 | `build.logic` | States, actions, the step flow and where the work goes come from the library | Chat rebuilt them once and lost two states | rail-gate |
 
 The lookup says which component meets a need; a pattern says where it sits. A page is one of these patterns, or a
