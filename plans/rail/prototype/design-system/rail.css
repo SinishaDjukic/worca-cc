@@ -399,7 +399,8 @@ html,body{height:auto;overflow:visible;margin:0;}
 .ch-row:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:var(--r-xs);}
 .ch-st{justify-self:center;font:600 var(--fs-caption)/1 var(--mono);color:var(--ink-2);}
 .ch-st.is-A{color:var(--green-ink-strong,var(--green));}
-.ch-name{font:400 var(--fs-meta)/var(--lh-title) var(--mono);color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.ch-name{display:flex;align-items:center;font:400 var(--fs-meta)/var(--lh-title) var(--mono);color:var(--ink);overflow:hidden;white-space:nowrap;}
+.ch-name .rc-mid{flex:0 1 auto;min-width:64px;color:inherit;}   /* a long file name loses its middle, never its end; its folder gives way first */
 .ch-notes{justify-self:end;font-size:var(--fs-caption);color:var(--ink-2);font-variant-numeric:tabular-nums;}
 .ch-notes:not(:empty)::before{content:'';display:inline-block;width:6px;height:6px;margin-right:4px;border-radius:50%;background:var(--blue);vertical-align:1px;}
 .ch-row .ct{justify-content:flex-end;min-width:88px;}
@@ -477,6 +478,7 @@ html,body{height:auto;overflow:visible;margin:0;}
 .ch-head{align-items:flex-start;}
 .ch-sum{display:flex;flex-direction:column;gap:2px;min-width:0;}
 .ch-sum > .rtab-dim{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.ch-sum > .rtab-dim .rc-place{display:inline-flex;align-items:center;max-width:100%;min-width:0;}
 .ch-act{flex:none;}
 .ov-after-t{font-size:var(--fs-body);color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 
@@ -764,7 +766,7 @@ html,body{height:auto;overflow:visible;margin:0;}
 .ch-group:first-child{padding-top:0;}
 .ch-gn{font:600 var(--fs-body)/var(--lh-title) var(--sans);color:var(--ink);}
 .ch-group .ct{display:inline-flex;gap:6px;font:400 var(--fs-meta)/1 var(--mono);}
-.ch-path{margin-left:8px;font:400 var(--fs-meta)/var(--lh-title) var(--sans);color:var(--ink-2);}
+.ch-path{flex:0 9999 auto;min-width:0;margin-left:8px;overflow:hidden;text-overflow:ellipsis;font:400 var(--fs-meta)/var(--lh-title) var(--sans);color:var(--ink-2);}
 .ch-gnote{padding:0 0 4px;font-size:var(--fs-meta);color:var(--ink-2);list-style:none;}
 .ch-doc{display:grid;grid-template-columns:20px minmax(0,1fr) auto;align-items:center;column-gap:12px;min-height:36px;}
 .ch-doc .ch-name{display:flex;align-items:baseline;min-width:0;}

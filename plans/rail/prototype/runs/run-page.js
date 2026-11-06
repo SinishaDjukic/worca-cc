@@ -10,7 +10,7 @@ const svg = (name, size) => R.icon(name, size);
 const esc = R.esc;
 
 // a case starts fresh: nothing from the case before it carries over
-const fresh = (caseId) => ({ caseId, askOpen: false, land: '', open: null, chips: [], ship: '', menu: '', tab: '', focus: '', view: 'steps', parent: null, back: null, dialog: '', after: [], away: '', askEach: false, answer: null, file: null, actFilter: 'all', rounds: [], ticks: [], taskOpen: false, stackSt: null, busy: null, broken: false, crash: null, offline: false, over: {}, restGone: false, watched: false, fixed: {}, outline: null, outlineEdited: false, marks: {}, markText: {}, lines: [], showMet: false, showEarlier: false, copy: false, services: {}, comments: {}, commentOn: null, picked: null, session: 0, doc: null, graphNode: null, graphZoom: '', form: null, log: { from: 'all', level: 'all', step: 'all', cycle: 'all', session: 'all', q: '', raw: false, follow: true } });
+const fresh = (caseId) => ({ caseId, run: null, groupRun: null, question: 0, pauseAfter: false, cmd: null, askOpen: false, land: '', open: null, chips: [], ship: '', menu: '', tab: '', focus: '', view: 'steps', parent: null, back: null, dialog: '', after: [], away: '', askEach: false, answer: null, file: null, actFilter: 'all', rounds: [], ticks: [], taskOpen: false, stackSt: null, busy: null, broken: false, crash: null, offline: false, over: {}, restGone: false, watched: null, fixed: {}, outline: null, outlineEdited: false, marks: {}, markText: {}, lines: [], showMet: false, showEarlier: false, copy: false, services: {}, comments: {}, commentOn: null, picked: null, session: 0, doc: null, graphNode: null, graphZoom: '', form: null, log: { from: 'all', level: 'all', step: 'all', cycle: 'all', session: 'all', q: '', raw: false, follow: true } });
 R.watchScrollbars(document);
 let ui = fresh('working');
 
@@ -18,7 +18,7 @@ const statusDot = (v) => R.statusDot({ tone: v.dot, sym: v.sym, glyph: R.ICONS[v
 // A menu: an optional line on what the main action does, then each item with its one-line help.
 // One compact menu everywhere, as the app's View menu: one line per item, a leading check for a choice, a hint on the
 // right (a count or a shortcut), the help in the tooltip; danger items come last, after a rule.
-const DANGER = /^(Discard|Stop|Stop the run|Stop run \d+|Archive|Delete|Cancel|Cancel the rest)$/;
+const DANGER = /^(Discard|Stop|Stop the run|Stop run \d+|Archive|Delete|Delete run|Cancel|Cancel the rest)$/;
 function menu(id, items) {
   if (ui.menu !== id) return '';
   return R.compactMenu({ items: items.map((it) => (it.sep || it.header ? it : Object.assign({ danger: DANGER.test(it.text) }, it))) });
@@ -49,8 +49,9 @@ let lastOpen = '';
 const wordPick = (id, text, tip, items, cls = '') => R.wordPicker({ text, tip, cls, chevron: svg('chevron', 12), open: ui.menu === id, menuHtml: menu(id, items), attrs: { 'data-menu': id, 'data-key': 'menu:' + id } });
 
 const logsShow = () => R.runPartShows('logs', R.prefs.mode());
+let logsGone = false;   // archived or deleted: the logs went with the worktree, so nothing offers them
 function rowHtml(r, full) {
-  const logs = logsShow();
+  const logs = logsShow() && !logsGone;
   const log = logs && full && !/is-next/.test(r.rowCls) && !r.evidence ? R.button({ label: 'Log', kind: 'quiet', cls: 'rtab-log', attrs: { 'data-key': 'log:' + r.akey, 'data-logstep': r.logStep || r.name } }) : '';
   // A failed or blocked step shows what broke, its last lines and a way into the log, in Activity only.
   const ev = r.evidence ? `<div class="rtab-ev"><p class="rtab-ev-t">${esc(r.evidence.title)}</p><pre class="rtab-ev-l">${r.evidence.lines.map(esc).join('\n')}</pre>${logs ? R.button({ label: r.evidence.log, attrs: { 'data-key': 'log:' + r.akey, 'data-logstep': r.logStep || r.name } }) : ''}</div>` : '';
@@ -62,7 +63,7 @@ const DOTS = svg('dots', 14);
 function outlineMenu(r) {
   const id = 'cut' + r.index; const last = r.index === r.total - 1; const two = r.total <= 2;
   const items = [{ id: `cut:merge|${r.index}`, text: 'Merge with next', off: last, help: last ? 'The last run has no next run' : 'Makes this run and the next one run' }]
-    .concat(ui.outlineEdited ? [{ id: 'cut:undo|0', text: 'Undo edits', help: 'Back to the cut as Worca wrote it' }] : [])
+    .concat(ui.outlineEdited ? [{ id: 'cut:undo|0', text: 'Undo edits', help: 'Back to the split as Worca wrote it' }] : [])
     .concat({ id: `cut:remove|${r.index}`, text: 'Remove', danger: true, off: two, help: two ? 'A cut has at least 2 runs; Don’t split builds it as one' : 'Leaves this run out of the plan' });
   return `<span class="rc-pop is-right">${R.button({ label: 'More for run ' + (r.index + 1), kind: 'quiet', iconOnly: true, title: false, icon: DOTS, attrs: { 'data-menu': id, 'data-key': 'menu:' + id, 'aria-haspopup': 'menu', 'aria-expanded': String(ui.menu === id) } })}${ui.menu === id ? R.compactMenu({ items }) : ''}</span>`;
 }
@@ -89,22 +90,21 @@ function focusHtml(v) {
 </section>`;
   }
   if (f.kind === 'criteria') {
-    return `<section class="rtab ov-focus" id="ov-focus"><h2 class="rtab-h">Requirements <span class="n">${f.items.length} agreed</span></h2><ul class="ov-issues">${f.items.map(([id, t]) => `<li>${R.chip({ text: id })}<span>${esc(t)}</span></li>`).join('')}</ul></section>`;
+    return `<section class="rtab ov-focus" id="ov-focus"><h2 class="rtab-h">Requirements <span class="n">${f.items.length} agreed</span></h2><ul class="ov-issues">${f.items.map(([, t]) => `<li><span>${esc(t)}</span></li>`).join('')}</ul></section>`;
   }
   if (f.kind === 'reqs') {
     // Each requirement is marked here; Not met and Dropped count once they say why. Create PR opens when none is left.
     const rows = f.items.map(([id, t]) => { const m = ui.marks[id];
       const why = m && m !== 'met' ? R.field({ id: 'mark-' + id, label: m === 'dropped' ? 'Why it is dropped' : 'Where it moved', value: ui.markText[id] || '', attrs: { 'data-key': 'mark-' + id, 'data-marktext': id } }) : '';
-      return `<li class="ov-req"><span>${R.chip({ text: id })} ${esc(t)}</span>${R.segmented({ label: id + ' mark', hook: 'mark', items: [['met', 'Met'], ['not-met', 'Not met'], ['dropped', 'Dropped']].map(([k, l]) => ({ id: id + '|' + k, label: l, pressed: m === k })) })}${why}</li>`; }).join('');
-    return `<section class="rtab ov-focus" id="ov-focus"><h2 class="rtab-h">Requirements <span class="n">${f.left ? f.left + ' left' : 'all marked'}</span></h2>${f.left ? `<p class="rl-note is-warn">Mark every requirement before you create the PR · ${f.left} left</p>` : ''}<ul class="ov-reqs">${rows}</ul></section>`;
+      return `<li class="ov-req"><span>${esc(t)}</span>${R.segmented({ label: id + ' mark', hook: 'mark', items: [['met', 'Met'], ['not-met', 'Not met'], ['dropped', 'Dropped']].map(([k, l]) => ({ id: id + '|' + k, label: l, pressed: m === k })) })}${why}</li>`; }).join('');
+    return `<section class="rtab ov-focus" id="ov-focus"><h2 class="rtab-h">Requirements <span class="n">${f.left ? f.left + ' left' : 'all marked'}</span></h2><ul class="ov-reqs">${rows}</ul></section>`;
   }
   if (f.kind === 'findings') {
-    return `<section class="rtab ov-focus" id="ov-focus"><h2 class="rtab-h">${esc(f.title)}</h2>${f.note ? `<p class="rl-note">${esc(f.note)}</p>` : ''}${issuesHtml(f.issues)}${rolesHtml(f.roles, 'ov')}</section>`;
+    return `<section class="rtab ov-focus" id="ov-focus"><h2 class="rtab-h">${esc(f.title)}</h2>${f.note ? `<p class="rl-note">${esc(f.note)}</p>` : ''}${issuesHtml(f.issues)}${f.roles.length ? rolesHtml(f.roles, 'ov') : ''}</section>`;
   }
   if (f.kind === 'broke') {
     return `<section class="rtab ov-focus" id="ov-focus"><h2 class="rtab-h">What broke</h2>
-      <div class="rtab-ev"><p class="rtab-ev-t">${esc(f.ev.title)}</p><pre class="rtab-ev-l">${f.ev.lines.map(esc).join('\n')}</pre>${logsShow() ? R.button({ label: f.ev.log, attrs: { 'data-key': 'ov-log', 'data-logstep': 'all' } }) : ''}</div>
-      ${f.next ? `<p class="rtab-dim rtab-p">${esc(f.next)} is the card’s action: ${esc((v.action || {}).help || '')}.</p>` : ''}</section>`;
+      <div class="rtab-ev"><p class="rtab-ev-t">${esc(f.ev.title)}</p><pre class="rtab-ev-l">${f.ev.lines.map(esc).join('\n')}</pre>${logsShow() && !logsGone ? R.button({ label: f.ev.log, attrs: { 'data-key': 'ov-log', 'data-logstep': 'all' } }) : ''}</div></section>`;
   }
   const rows = f.items.map((x, i) => {
     const st = typeof x === 'string' ? (ui.ticks.includes(i) ? 'done' : 'next') : x.state;
@@ -112,7 +112,7 @@ function focusHtml(v) {
     // A check says why it is here and, when there is one, its one way to act (to its home: Decisions, a file in Changes).
     const why = x.why ? `<span class="ov-why">${esc(x.why)}${x.act ? ' · ' + R.textLink({ label: x.act, attrs: { 'data-go': x.go, 'data-key': 'go:' + i } }) : ''}</span>` : '';
     if (f.kind === 'check') return `<li>${R.checkbox({ cls: 'ov-check', html: esc(t) + why, checked: st === 'done', attrs: { 'data-tick': i, 'data-key': 'tick:' + i } })}</li>`;
-    return R.row({ kind: 'route', cls: 'is-' + st, rail: R.stepDot({ dotCls: st === 'done' ? 'is-done' : st === 'now' ? 'is-working is-pulse' : 'is-future', word: st === 'done' ? 'Done' : st === 'now' ? 'In progress' : 'Not yet', icon: st === 'done' ? 'check' : st === 'now' ? 'now' : '' }), text: `<span class="rd-route-name">${esc(t)}</span>` });
+    return R.row({ kind: 'route', cls: 'is-' + st, rail: R.stepDot({ dotCls: st === 'done' ? 'is-done' : st === 'now' ? 'is-working is-pulse' : st === 'paused' ? 'is-closed' : 'is-future', word: st === 'done' ? 'Done' : st === 'now' ? 'In progress' : st === 'paused' ? 'Paused' : 'Not yet', icon: st === 'done' ? 'check' : st === 'now' ? 'now' : st === 'paused' ? 'pause' : '' }), text: `<span class="rd-route-name">${esc(t)}</span>` });
   }).join('');
   if (f.kind === 'check') {
     const n = f.items.length - ui.ticks.length;
@@ -125,7 +125,8 @@ function summaryPanel(v) {
   const extra = usedHtml(v) + checklistHtml(o.checklist) + (v.docsHere ? docsSection(v) : '');
   const after = ui.after.length ? `<section class="rtab"><h2 class="rtab-h">Runs after this <span class="n">${ui.after.length}</span></h2><ul class="ov-arts">${ui.after.map((x, i) => `<li><span class="ov-after-t" title="${esc(x.task)}">${esc(x.task)}</span><span class="rtab-dim">${esc(x.when)}</span>${R.button({ label: 'Cancel', kind: 'quiet', attrs: { 'data-unafter': i, 'data-key': 'unafter:' + i } })}</li>`).join('')}</ul></section>` : '';
   // Before it is built, the ask is all there is to say about the outcome.
-  if (!o.ask) return focusHtml(v) + after + `<section class="rtab"><h2 class="rtab-h">What you asked</h2><p class="rtab-p ov-task${ui.taskOpen ? ' is-open' : ''}">${esc(o.task)}</p></section>` + extra;
+  const evidence = () => (o.evidence ? `<section class="rtab"><ol class="rd-route-list ov-lines">${R.lineRow({ mark: R.stepDot({ dotCls: 'is-done', word: 'Done', icon: 'check' }), text: o.evidence, link: true, attrs: { 'data-tab': 'activity', 'data-key': 'ov-evidence', title: 'Opens Activity: the tests, the review\'s rounds and the manual test' } })}</ol></section>` : '');
+  if (!o.ask) return focusHtml(v) + after + evidence() + `<section class="rtab"><h2 class="rtab-h">What you asked</h2><p class="rtab-p ov-task${ui.taskOpen ? ' is-open' : ''}">${esc(o.task)}</p></section>` + extra;
   // What went fine, one line each (What opens): the ask opens its parts in place, its only home; the evidence goes to
   // Activity, where the rounds and the steps live.
   const ok = R.stepDot({ dotCls: 'is-done', word: 'Done', icon: 'check' });
@@ -159,15 +160,15 @@ function checklistHtml(c) {
 }
 // What the run used: the skills it mounted (Advanced), the memory it changed and where its worktree is (Expert).
 function usedHtml(v) {
-  if (!v.over.ask && !v.bar.stop) return '';
+  if ((!v.over.ask && !v.bar.stop) || !v.has.started) return '';
   const d = v.tabData; const rows = [];
   if (R.shows('advanced')) rows.push(lineRow('skills', okDot(), d.skills.length + ' skills mounted', `<ul class="ov-issues">${d.skills.map((x) => `<li><span>${esc(x)}</span></li>`).join('')}</ul>`));
-  if (R.shows('expert')) rows.push(lineRow('memory', okDot(), d.memory.length + ' memory changes', `<ul class="ov-issues">${d.memory.map((x) => `<li><span>${esc(x)}</span></li>`).join('')}</ul>`), lineRow('worktree', okDot(), 'Worktree', `<code>${esc(d.worktree)}</code>`));
+  if (R.shows('expert')) rows.push(...(v.has.changes ? [lineRow('memory', okDot(), d.memory.length + ' memory changes', `<ul class="ov-issues">${d.memory.map((x) => `<li><span>${esc(x)}</span></li>`).join('')}</ul>`)] : []), ...(v.has.worktree ? [lineRow('worktree', okDot(), 'Worktree', `<code>${esc(d.worktree)}</code>`)] : []));
   return rows.length ? `<section class="rtab"><ol class="rd-route-list ov-lines">${rows.join('')}</ol></section>` : '';
 }
 // A run with no Changes tab keeps its documents here.
 function docsSection(v) {
-  const arts = v.tabData.artifacts; if (!v.place.branch && !v.place.folder && v.stages.every((x) => x.key !== 'done')) return '';
+  const arts = v.over.artifacts; if (!arts.length) return '';
   return `<section class="rtab"><h2 class="rtab-h">Documents <span class="n">${arts.length}</span></h2><ul class="ov-issues">${arts.map(([doc, step], i) => `<li><span>${R.documentLink({ name: doc, attrs: { 'data-doc': i, 'data-key': 'ovdoc:' + i, title: 'Open ' + doc } })}<span class="ov-why">from ${esc(step)}</span></span></li>`).join('')}</ul></section>`;
 }
 // Changes' Actions, under Check out: the worktree's services, its ports and the patch; in a workspace, only the
@@ -200,7 +201,10 @@ function commentsHtml(path, d) {
     : R.button({ label: 'Comment on a line', kind: 'quiet', attrs: { 'data-cmt': 'open', 'data-path': path, 'data-key': 'cmt-open' } });
   return `${all.length ? `<ul class="ch-thread" aria-label="Comments">${all.map((c) => `<li><b>${esc(c.who)}</b> on <code>${esc(c.line)}</code><span class="ov-why">${esc(c.t)}</span></li>`).join('')}</ul>` : ''}${form}`;
 }
+// Discarded, archived or deleted: the page says so and offers no tools on what is not there.
+const GONE_WORDS = { discarded: ['The changes are gone', 'They were discarded; the run stays in history.'], archived: ['The local branch and worktree are gone', 'The remote branch and any PR stay.'], deleted: ['The changes are gone', 'The run was deleted.'] };
 function changesPanel(v) {
+  if (v.gone) return `<section class="rtab"><h2 class="rtab-h">${esc(GONE_WORDS[v.gone][0])}</h2><p class="rtab-p rtab-dim">${esc(GONE_WORDS[v.gone][1])}</p></section>`;
   const d = v.tabData; const f = d.files;
   const add = f.reduce((a, x) => a + x[1], 0); const del = f.reduce((a, x) => a + x[2], 0);
   // Grouped by what each file is (spec › The tabs): Code, Tests, then what is not in the code; largest first in each,
@@ -226,7 +230,7 @@ function changesPanel(v) {
   if (ui.copy) chItems.unshift({ id: 'ch:discard-copy', text: 'Discard the copy', help: 'Removes the local copy; the branch stays' });
   const tools = v.place.folder ? '' : R.splitButton({ main: { label: ui.copy ? 'Unlink' : 'Check out', title: coWhy || (ui.copy ? 'Lets go of the local copy; the branch stays' : 'Check the branch out on this machine'), attrs: { 'data-key': 'ch:checkout', 'data-checkout': true, disabled: !!coWhy } },
     moreLabel: 'More for these changes', chevron: svg('chevron', 14), open: ui.menu === 'ch', menuHtml: menu('ch', chItems), moreAttrs: { 'data-menu': 'ch', 'data-key': 'menu:ch' }, cls: 'rc-pop is-right ch-act' });
-  return `<section class="rtab"><div class="ch-head"><div class="ch-sum"><h2 class="rtab-h">${f.length} files <span class="ct"><span class="add">+${add}</span><span class="del">−${del}</span></span></h2><span class="rtab-dim" title="${esc(where)}">${esc(where)}</span></div>${tools}</div>
+  return `<section class="rtab"><div class="ch-head"><div class="ch-sum"><h2 class="rtab-h">${f.length} ${f.length === 1 ? 'file' : 'files'} <span class="ct"><span class="add">+${add}</span><span class="del">−${del}</span></span></h2><span class="rtab-dim" title="${esc(where)}">${v.place.folder ? esc(where) : R.workPlace({ branch: v.place.branch, base: v.place.base || 'dev' })}</span></div>${tools}</div>
     ${actionsHtml(v)}<ul class="ch-list">${rows}${docs}</ul></section>`;
 }
 function activityPanel(v) {
@@ -252,13 +256,14 @@ function activityPanel(v) {
     }).join('');
   }).join('');
   const graphBtn = R.runPartShows('graph', R.prefs.mode()) ? R.button({ label: 'Open the graph', kind: 'quiet', attrs: { 'data-key': 'graph', 'data-graph': true } }) : '';
-  return `<div class="rtab-bar">${seg}${graphBtn}</div><section class="rtab rtab-stage"><ol class="rd-route-list sc-subs is-full" aria-label="Steps">${rows || '<li class="sc-stage-row"><p class="rtab-dim rtab-p">No problems or questions in this run.</p></li>'}</ol></section>${logsHtml(v)}${agentsHtml(v)}${sessionsHtml(v)}${usageHtml(v)}${costHtml(v)}`;
+  return `<div class="rtab-bar">${seg}${logsGone ? '' : graphBtn}</div><section class="rtab rtab-stage"><ol class="rd-route-list sc-subs is-full" aria-label="Steps">${rows || '<li class="sc-stage-row"><p class="rtab-dim rtab-p">No problems or questions in this run.</p></li>'}</ol></section>${logsHtml(v)}${agentsHtml(v)}${sessionsHtml(v)}${usageHtml(v)}${costHtml(v)}`;
 }
 // Logs (Advanced): the sentence narrows them (Expert), Summaries or Raw (flag commandSummaries), search and copy.
 const LOG_FILTERS = (v) => { const uniq = (k) => [...new Set(v.logs.map((l) => String(l[k])))];
   return [{ id: 'log-from', key: 'from', all: 'every source', vals: uniq('from') }, { id: 'log-level', key: 'lvl', state: 'level', all: 'any level', vals: uniq('lvl') }, { id: 'log-step', key: 'step', all: 'every step', vals: uniq('step') }, { id: 'log-cycle', key: 'cycle', all: 'any cycle', vals: uniq('cycle') }, { id: 'log-session', key: 'session', all: 'any session', vals: uniq('session') }]; };
 function logsHtml(v) {
-  if (!logsShow()) return '';
+  if (!logsShow() || !v.has.started) return '';
+  if (logsGone) return `<section class="rtab rl-sec" id="act-logs"><h2 class="rtab-h">Logs</h2>${R.emptyState({ title: 'The logs are gone', text: 'They went with the worktree.' })}</section>`;
   const L = ui.log; const fs = LOG_FILTERS(v);
   const q = L.q.trim().toLowerCase(); const summaries = R.prefs.flag('commandSummaries'); const raw = !summaries || L.raw;
   const lines = v.logs.filter((l) => fs.every((f) => { const want = L[f.state || f.key]; return want === 'all' || String(l[f.key]) === want; }) && (!q || (l.sum + ' ' + l.raw).toLowerCase().includes(q)));
@@ -273,7 +278,7 @@ function agentsHtml(v) {
   return `<section class="rtab rl-sec"><h2 class="rtab-h">Agents <span class="n">${v.agents.length}</span></h2>${R.table({ label: 'Agents', columns: [{ id: 'name', label: 'Agent' }, { id: 'type', label: 'Type', narrow: false }, { id: 'model', label: 'Model', narrow: false }, { id: 'cycle', label: 'Cycle', num: true, narrow: false }, { id: 'skills', label: 'Skills', num: true, narrow: false }, { id: 'graph', label: 'Graph', num: true, narrow: false }, { id: 'tokens', label: 'Tokens', num: true }], rows: v.agents })}</section>`;
 }
 function sessionsHtml(v) {
-  if (!v.sessions.length) return '';
+  if (!R.runPartShows('sessions', R.prefs.mode()) || !v.sessions.length) return '';
   const k = Math.min(ui.session, v.sessions.length - 1); const x = v.sessions[k];
   return `<section class="rtab rl-sec"><h2 class="rtab-h">Sessions <span class="n">${v.sessions.length}</span></h2>${R.table({ label: 'Sessions', columns: [{ id: 'name', label: 'Session' }, { id: 'turns', label: 'Turns', num: true, narrow: false }, { id: 'in', label: 'In', num: true, narrow: false }, { id: 'out', label: 'Out', num: true, narrow: false }, { id: 'cache', label: 'Cache', num: true, narrow: false }, { id: 'cost', label: 'Cost', num: true }], rows: v.sessions })}
     <p class="rl-sentence">Session ${R.sentencePicker({ id: 'session', text: x.name, open: ui.menu === 'session', chevron: svg('chevron', 12), items: v.sessions.map((y, i) => ({ id: String(i), text: y.name, checked: i === k })) })}</p>
@@ -285,8 +290,11 @@ function usageHtml(v) {
 }
 // What it cost and who spent it: what is counted, then what is apart and never summed.
 function costHtml(v) {
-  const d = v.tabData; const fig = v.figs.find((f) => f.k === 'Cost'); if (!fig) return '';
-  const rows = [{ name: 'Agents', cost: v.agentsUnknown ? 'cost unknown' : fig.v }].concat(d.costOther.map(([name, cost]) => ({ name, cost }))).concat(v.agentsUnknown ? [] : [{ name: 'Total', cost: fig.v }]);
+  const d = v.tabData; const fig = v.figs.find((f) => f.k === 'Cost'); if (!fig || !v.has.started) return '';
+  // The rows add up to the total: what Worca's own calls took out of it is not on top of it.
+  const usd = (x) => parseFloat(String(x).replace(/[^0-9.]/g, '')) || 0;
+  const other = d.costOther.reduce((a, [, c]) => a + usd(c), 0); const total = usd(fig.v); const fits = total > other;
+  const rows = [{ name: 'Agents', cost: v.agentsUnknown ? 'cost unknown' : fits ? '$' + (total - other).toFixed(2) : fig.v }].concat(fits || v.agentsUnknown ? d.costOther.map(([name, cost]) => ({ name, cost })) : []).concat(v.agentsUnknown ? [] : [{ name: 'Total', cost: fig.v }]);
   return `<section class="rtab rl-sec"><h2 class="rtab-h">Cost</h2>${R.table({ label: 'Cost', columns: [{ id: 'name', label: 'Spent on' }, { id: 'cost', label: 'Cost', num: true }], rows })}${v.agentsUnknown ? '<p class="rl-note">This engine reports no cost, so the total is only Worca’s own calls.</p>' : ''}<p class="rl-note">Apart, not in the total: ${d.costApart.map(([a, b]) => esc(a) + ' ' + esc(b)).join(' · ')}</p></section>`;
 }
 // A view that only shows is a Dialog without a form (docs/rail/forms.md): the graph, a document, a transcript.
@@ -295,6 +303,8 @@ function viewDialogHtml(v) {
   if (ui.dialog === 'doc') {
     const d = ui.doc; return viewDialog(d.name, `<div class="rl-tools">${R.button({ label: 'Download', kind: 'quiet', attrs: { 'data-say': 'Downloading ' + d.name, 'data-key': 'doc-dl' } })}</div><div class="doc-view">${md(d.body)}</div>`);
   }
+  // Commands you run yourself stay until you close them, with a copy button: never a toast that fades.
+  if (ui.dialog === 'commands') return viewDialog('Git commands', `<p class="pd-hint">${esc(ui.cmd.label)}</p><div class="rl-tools">${R.copyButton({ text: ui.cmd.text, label: 'Copy the commands', attrs: { 'data-key': 'cmd-copy' } })}</div><pre class="rtab-ev-l">${esc(ui.cmd.text)}</pre>`);
   if (ui.dialog !== 'graph') return '';
   const expert = R.shows('expert'); const g = v.graph;
   const stages = expert ? g.stages : g.stages.map((st) => Object.assign({}, st, { nodes: st.nodes.map((n) => Object.assign({}, n, { meta: '', loops: 0 })) }));
@@ -308,8 +318,8 @@ function viewDialogHtml(v) {
 function formDialogHtml() {
   const F = ui.form; if (!F || ui.dialog !== F.id) return '';
   const def = F.def;
-  const body = (def.text ? `<p class="pd-hint">${esc(def.text)}</p>` : '') + (def.options ? R.optionList({ label: def.title, options: def.options, selected: F.pick, recommended: -1, optAttrs: (i) => ({ 'data-fopt': i, 'data-key': 'fopt:' + i }) })
-    : R.field({ id: 'fd-value', label: def.field.label, value: F.value, hint: def.field.hint || '', error: F.fieldErr || '', attrs: { 'data-key': 'fd-value' } }))
+  const body = (def.text ? `<p class="pd-hint">${esc(R.fill(def.text, F.ctx || {}))}</p>` : '') + (def.options ? R.optionList({ label: def.title, options: def.options, selected: F.pick, recommended: -1, optAttrs: (i) => ({ 'data-fopt': i, 'data-key': 'fopt:' + i }) })
+    : R.field({ id: 'fd-value', label: def.field.label, value: F.value, hint: def.field.hint || '', error: F.fieldErr || '', multiline: !!def.field.multiline, attrs: { 'data-key': 'fd-value' } }))
     + (F.err ? `<div class="pd-alert" role="alert"><b>${esc(F.err.title)}</b><span>${esc(F.err.detail)}</span></div>` : '');
   return R.dialog({ title: def.title, id: 'fd-h', close: svg('x', 14), body, yes: def.yes, busy: !!ui.busy, busyLabel: 'Working…', hooks: { close: { 'data-fd': 'cancel', 'data-key': 'fd-close' }, cancel: { 'data-fd': 'cancel', 'data-key': 'fd-cancel' }, yes: { 'data-fd': 'ok', 'data-key': 'fd-ok' } } });
 }
@@ -319,7 +329,7 @@ function decisionsPanel(v) {
   const ask = v.ask;
   const sum = [by('you') ? by('you') + ' by you' : '', by('away') ? by('away') + ' by Away mode' : '', by('default') ? by('default') + ' by default' : ''].filter(Boolean).join(' · ');
   const waiting = ask ? R.row({ kind: 'route', cls: 'is-ask', rail: R.stepDot({ dotCls: 'is-problem', word: 'Waiting for you', icon: 'question' }), text: `<div class="dc-body"><p class="rtab-q">${esc(ask.q)}</p><p class="rtab-dim">Waiting for you · ${R.textLink({ label: 'Answer it in the card', attrs: { 'data-goanswer': true, 'data-key': 'dc-answer' } })}</p></div>` }) : '';
-  return `<section class="rtab"><div class="ch-head"><h2 class="rtab-h">${ds.length} decisions</h2><span class="rtab-dim">${esc(sum)}</span></div>
+  return `<section class="rtab"><div class="ch-head"><h2 class="rtab-h">${ds.length ? ds.length + (ds.length === 1 ? ' decision' : ' decisions') : 'Nothing decided yet'}</h2><span class="rtab-dim">${esc(sum)}</span></div>
     <ol class="rd-route-list dc-list">${waiting}${ds.map((x) => R.row({ kind: 'route', cls: 'is-done', rail: R.stepDot({ dotCls: 'dc-who is-' + x.who, word: WHO[x.who], icon: ICON_WHO[x.who], size: 11 }), text: `<div class="dc-body"><p class="rtab-q">${esc(x.q)}</p><p class="dc-a">${esc(x.a)}</p><p class="rtab-dim">${esc([x.step, WHO[x.who], x.note, x.when].filter(Boolean).join(' · '))}</p></div>` })).join('')}</ol></section>`;
 }
 function panelHtml(v) {
@@ -343,6 +353,7 @@ function render() {
   const keep = pendingFocus || document.activeElement?.dataset?.key || '';
   pendingFocus = '';
   const v = M.view(ui.caseId, ui);
+  logsGone = v.has.logsGone;
   const a = v.action;
   // The run's controls sit together on the status line: its one action (with ▾), then ⋯ for everything else.
   const split = a ? R.splitButton({ main: { label: a.label, kind: a.primary ? 'primary' : '', icon: svg(a.icon, 14), title: a.offWhy || a.help, attrs: { 'data-key': 'act-main', 'data-label': a.label, disabled: !!a.offWhy } },
@@ -375,12 +386,12 @@ function render() {
 
   const o = v.open;
   const enter = o.key !== lastOpen; lastOpen = o.key;   // the steps fade in only when another stage opens, never on a repaint
-  const head = o.isRun ? `<div class="sc-head"><span class="sc-run" title="${esc(o.title)}">${esc(o.title)}</span>${v.independent ? R.chip({ text: 'Independent', title: 'It does not start from another run’s branch' }) : ''}${o.meta ? `<span class="rtab-dim sc-run-cost">${esc(o.meta)}</span>` : ''}${o.canOpen ? `${R.button({ label: 'Open run', attrs: { 'data-open-run': o.runIndex, 'data-key': 'open-run' } })}` : v.bar.stop ? R.button({ label: 'Re-plan from here', title: 'The planner re-cuts this run and the ones after it', attrs: { 'data-replan': o.runIndex, 'data-key': 'replan' } }) : ''}</div>`
+  const head = o.isRun ? `<div class="sc-head"><span class="sc-run" title="${esc(o.title)}">${esc(o.title)}</span>${v.independent ? R.chip({ text: 'Independent', title: 'It does not start from another run’s branch' }) : ''}${o.meta ? `<span class="rtab-dim sc-run-cost">${esc(o.meta)}</span>` : ''}${o.canOpen && !(a && a.label === 'Open run ' + (o.runIndex + 1)) ? `${R.button({ label: 'Open run', attrs: { 'data-open-run': o.runIndex, 'data-key': 'open-run' } })}` : v.bar.stop ? R.button({ label: 'Re-plan from here', title: 'The planner re-cuts this run and the ones after it', attrs: { 'data-replan': o.runIndex, 'data-key': 'replan' } }) : ''}</div>`
     : v.planHead ? `<div class="sc-head"><span class="sc-run">How the work was cut into runs</span>${R.button({ label: 'Open the plan', attrs: { 'data-key': 'open-plan', 'data-doc': 0 } })}</div>` : '';
   // the next run of a group, under the run it follows: starts by itself, or asks first
   const then = v.then ? `<div class="sc-then">Then <b title="${esc(v.then.title)}">Run ${v.then.n} · ${esc(v.then.title)}</b>${wordPick('then', ui.askEach ? 'asks me first' : 'starts by itself', `When run ${v.then.n} starts`, [{ id: 'group:go', text: 'Starts by itself', checked: !ui.askEach, help: 'Each run starts when the one before it is ready' }, { id: 'group:ask', text: 'Asks me first', checked: !!ui.askEach, help: 'Stops for your OK before the next run starts' }], 'pd-ship')}</div>` : '';
   const ask = v.ask && o.rows.some((r) => /is-ask/.test(r.rowCls)) ? answerHtml(v.ask) : v.under && o.rows.some((r) => /is-ask/.test(r.rowCls)) ? underHtml(v.under) : '';
-  const panel = o.stack ? stackHtml(Object.assign({}, o.stack, { enter })) + (v.under && v.id === 'outline' ? `<div class="sc-then">${esc(v.under.roles.length + ' roles reviewed the cut · 1 open issue')}</div>` : '') : `<ol class="rd-route-list sc-subs${enter ? ' is-enter' : ''}" aria-label="${esc(o.label)} steps" style="grid-column:1 / -1">${o.rows.map((r) => rowHtml(r) + (/is-ask/.test(r.rowCls) ? ask : '')).join('')}</ol>`;
+  const panel = o.stack ? stackHtml(Object.assign({}, o.stack, { enter })) + (v.under && v.id === 'outline' ? `<div class="sc-then">${esc(v.under.roles.length + ' roles reviewed the split · ' + (ui.fixed.outline ? 'no open issues' : '1 open issue'))}</div>` : '') : `<ol class="rd-route-list sc-subs${enter ? ' is-enter' : ''}" aria-label="${esc(o.label)} steps" style="grid-column:1 / -1">${o.rows.map((r) => rowHtml(r) + (/is-ask/.test(r.rowCls) ? ask : '')).join('')}</ol>`;
   const sel = (v.tabs.find((t) => t.sel) || v.tabs[0]).id;
 
   const scroller = document.scrollingElement || document.documentElement; const keepY = scroller.scrollTop;
@@ -408,7 +419,7 @@ function render() {
   if (scroller.scrollTop !== keepY) scroller.scrollTop = keepY;   // nothing moves by itself: a repaint never scrolls the page
   R.fitTags(document);
   fitMenus();
-  const nx = document.getElementById('next-event'); if (nx) { const to = ui.caseId === 'chain' ? (chainNext() >= 0 ? 'chain' : '') : (v.flow || {}).next; nx.disabled = !to; nx.title = to ? 'Event: ' + (v.event || EVENT[ui.caseId] || EVENT[v.state] || 'something happens outside the run') : 'Nothing outside the run happens next here; use the card'; }
+  const nx = document.getElementById('next-event'); if (nx) { const to = ui.caseId === 'chain' ? (chainNext() >= 0 ? 'chain' : '') : (ui.pauseAfter ? 'paused-you' : (v.flow || {}).next); nx.disabled = !to; nx.title = to ? 'Event: ' + (v.event || EVENT[ui.caseId] || EVENT[v.state] || 'something happens outside the run') : 'Nothing outside the run happens next here; use the card'; }
   const selTab = document.querySelector('.rc-tabs .tab[aria-selected="true"]'); const strip = selTab?.parentElement;
   if (strip) { const l = selTab.offsetLeft - strip.offsetLeft, r = l + selTab.offsetWidth; if (l < strip.scrollLeft) strip.scrollLeft = l; else if (r > strip.scrollLeft + strip.clientWidth) strip.scrollLeft = r - strip.clientWidth; }
   if (keep) {
@@ -464,13 +475,21 @@ pick.addEventListener('change', () => { if (SHELL) history.replaceState(null, ''
 const AWAY = [{ id: 'away:auto', text: 'As set up', help: 'Follows Settings and whether you marked this run' }, { id: 'away:on', text: 'Answer for me', help: 'Worca answers this run’s questions from now on, at any hour' }, { id: 'away:off', text: 'Never', help: 'Worca never answers on this run, whatever the settings' }];
 function moreItems(v) {
   const group = !!v.kind; const live = v.bar.stop;
+  const noun = group ? v.kind.toLowerCase() : 'run';
   const items = [];
+  // Discarded and archived things have no tools left; deleted things have nothing at all.
+  if (v.gone) {
+    if (v.gone === 'discarded') items.push({ id: 'more:archive', text: 'Archive', help: 'Takes it out of Runs; the history stays' });
+    if (v.gone === 'archived') items.push({ id: 'more:restore', text: 'Restore', help: 'Brings it back to Runs, as it was' });
+    items.push({ id: 'more:link', text: 'Copy link', help: 'Paste it in Chat or an issue' });
+    return items;
+  }
   if (live && !group) items.push({ header: 'Away mode' }, ...AWAY.map((x) => Object.assign({ checked: (ui.away || 'away:auto') === x.id }, x)), { sep: true });
   if (v.runAfter) items.push({ id: 'more:after', text: v.runAfter.label, help: v.runAfter.help });
   if (!group && !v.inGroup) items.push(v.addedGroup ? { id: 'ungroup', text: 'Leave ' + v.addedGroup, help: 'The run leaves the group; its labels and tags stay' } : { id: 'more:group', text: 'Move to group…', help: 'Tracks it with related runs on one page' });
   if (v.hasSetup) items.push({ id: 'more:preset', text: 'Save as preset', help: 'Starts the next run with this task’s setup' });
   // Try it: a local copy to run; another run can hold it, and once open it says so here and in Changes.
-  if (v.finished && !v.archived && v.place.branch && !v.place.folder) {
+  if (v.finished && !v.archived && v.place.branch && !v.place.folder && v.has.try) {
     const svc0 = v.tabData.services[0];
     if (ui.tryBusy || ui.copy) items.push({ header: ui.copy && !ui.tryBusy ? 'Local copy open · since 18:12' : 'Try it' }, ...R.tryStep({ checkingOut: ui.tryBusy === 'checkout', settingUp: ui.tryBusy === 'setup', service: svc0 ? { name: svc0.name, port: svc0.port, running: !!ui.services[svc0.id] } : null }).map((x) => Object.assign({}, x, { id: 'try:' + x.id })));
     if (ui.tryBusy) items.push({ sep: true });
@@ -478,33 +497,34 @@ function moreItems(v) {
     else items.push({ id: 'more:try', text: 'Try it', off: !!(v.heldBy || v.hosted), hint: v.heldBy ? 'Held' : '', help: v.hosted ? HOSTED_WHY : v.heldBy ? `Held by “${v.heldBy}”; it has the branch checked out` : 'Checks the branch out locally so you can run it' });
   }
   if (group) { const on = !!ui.askEach; if (v.bar.stop) items.push({ id: 'group:toggle', text: 'Ask before each run', checked: on, help: 'Stops for your OK before each later run starts; takes effect at once' }); }
-  items.push({ id: 'more:terminal', text: 'Terminal', hint: 'Ctrl+`', help: 'A shell in this run’s worktree' }, { id: 'more:link', text: 'Copy link', help: 'Paste it in Chat or an issue' });
-  if (v.finished && !v.archived) items.push({ id: 'more:report', text: 'Report this run', help: 'Sends the logs and a note to the Worca team' }, { id: 'more:archive', text: 'Archive', help: v.dependents ? v.dependents + ' runs wait on this one and will start without it. Removes the branch, worktree and logs' : 'Removes the branch, worktree and logs; the remote branch and PR stay' });
-  if (group && !v.archived && R.shows('advanced')) items.push({ id: 'more:delete', text: 'Delete', help: 'Removes it and its runs from Runs; their PRs stay' });
-  if (v.archived && v.word === 'Archived') items.push({ id: 'more:restore', text: 'Restore', help: 'Brings the run back to Runs' });
+  if (v.has.worktree && !group && R.shows(R.actionLevel('Terminal'))) items.push({ id: 'more:terminal', text: 'Terminal', hint: 'Ctrl+`', help: 'A shell in this run’s worktree' });
+  items.push({ id: 'more:link', text: 'Copy link', help: 'Paste it in Chat or an issue' });
+  if (v.finished && v.has.report) items.push({ id: 'more:report', text: 'Report this ' + noun, help: 'Asks for a note, then sends it with the logs to the Worca team' });
+  if (v.finished && !v.archived && v.has.started) items.push({ id: 'more:archive', text: 'Archive', help: v.dependents ? v.dependents + ' runs wait on this one and will start without it. Removes the branch, worktree and logs' : 'Removes the branch, worktree and logs; the remote branch and PR stay' });
+  if (group && !v.archived && !live && R.shows('advanced')) items.push({ id: 'more:delete', text: 'Delete', help: 'Removes it and its runs from Runs; their PRs stay' });
   return items;
 }
 const CH_SAY = { 'ch:refresh': () => 'Diff refreshed from the worktree', 'ch:patch': () => 'Downloading run.patch', 'ch:copy': (v) => 'Copied: git fetch && git switch ' + v.place.branch };
-const MORE_SAY = { 'more:link': 'Copied the link to this run', 'more:terminal': 'Terminal opened in the worktree', 'more:report': 'Report sent with the logs',
-};
+const MORE_SAY = { 'more:terminal': 'Terminal opened in the worktree' };
 let toastTimer = 0;
 // The toast fades out (Motion), then empties: its text stays while it fades.
 function toast(text) { ui.toast = text; clearTimeout(toastTimer); toastTimer = setTimeout(() => { ui.toast = ''; const el = document.querySelector('.rc-toast'); if (el) { el.classList.remove('is-on'); toastTimer = setTimeout(() => { if (!ui.toast) el.textContent = ''; }, 200); } }, 4000); }
-function goCase(id) {
-  // A run in a group stays in its group: what you did on its page is what the group now shows of it (memberKeeps).
+// An action moves this run: M.move keeps what is the run's own, and the case picker follows it.
+function landOn(moved) {
   const par = ui.parent;
-  if (par) { ui.over = Object.assign({}, ui.over, { [par.caseId + ':' + par.index]: id }); Object.assign(ui, { caseId: id, open: null, menu: '', focus: '', answer: null, confirm: null, dialog: '' }); pick.value = id; pendingFocus = 'act-main'; return; }
-  if (SHELL) history.replaceState(null, '', '#run/' + id);
-  Object.assign(ui, { caseId: id, open: null, ship: '', menu: '', tab: '', focus: '', parent: null, back: null, titleOpen: false, answer: null, file: null, rounds: [], ticks: [], actFilter: 'all', confirm: null, dialog: '' });
-  pick.value = id; pendingFocus = 'act-main';
+  if (par) { ui.over = Object.assign({}, ui.over, { [par.caseId + ':' + par.index]: moved }); Object.assign(ui, { run: moved, caseId: moved.id, open: null, menu: '', focus: '', answer: null, confirm: null, dialog: '', pauseAfter: false }); pick.value = moved.id; pendingFocus = 'act-main'; return; }
+  if (SHELL) history.replaceState(null, '', '#run/' + moved.id);
+  Object.assign(ui, { run: moved, caseId: moved.id, open: null, ship: '', menu: '', tab: '', focus: '', parent: null, back: null, titleOpen: false, answer: null, file: null, rounds: [], ticks: [], actFilter: 'all', confirm: null, dialog: '', pauseAfter: false, question: 0 });
+  pick.value = moved.id; pendingFocus = 'act-main';
 }
+function goCase(id, f) { landOn(M.move(ui, id, f || {})); }
 // One flow for every step (step-flow.mjs): its Dialog if it needs fields, the strip if it asks, its button says what is
 // happening, then the run moves on, or nothing changes and the place you acted says what failed and why.
 const follow = R.stepFlow({
   dialogShown: (f) => ui.dialog === f.dialog,
   openDialog(f, label) {
     ui.dialog = f.dialog; ui.dialogLabel = label; ui.dialogF = f; ui.menu = '';
-    if (f.dialog !== 'pr') { const def = M.forms[f.dialog]; ui.form = { id: f.dialog, def, pick: def.options ? def.pick : 0, value: def.field ? def.field.value : '', err: null, fieldErr: '' }; pendingFocus = def.options ? 'fopt:' + def.pick : 'fd-value'; return; }
+    if (f.dialog !== 'pr') { const def = M.forms[f.dialog]; ui.form = { id: f.dialog, def, ctx: M.view(ui.caseId, ui).formCtx, pick: def.options ? def.pick : 0, value: def.field ? def.field.value : '', err: null, fieldErr: '' }; pendingFocus = def.options ? 'fopt:' + def.pick : 'fd-value'; return; }
     if (f.dialog === 'pr') { const v = M.view(ui.caseId, ui); ui.pr = { title: v.title, desc: '', mode: 'write', gen: false, genTitle: false, titleN: 0, titleSuggested: false, draft: false, watch: true, base: 'dev' }; if (!v.runs.length || !/^Create \d/.test(label)) { generateTitle(); generate(); } else startStack(v); pendingFocus = v.runs.length ? 'pd-ok' : 'pd-close'; }
   },
   confirmed: () => !!(ui.confirm && ui.confirm.ok),
@@ -517,13 +537,15 @@ const follow = R.stepFlow({
 });
 function done(f, label) {
   ui.dialog = ''; ui.confirm = null; ui.menu = ''; ui.form = null;
-  if (f.member !== undefined) { const v = M.view(ui.caseId, ui); ui.over = Object.assign({}, ui.over, { [ui.caseId + ':' + v.holdIndex]: f.member }); toast(f.say); pendingFocus = 'act-main'; return; }
+  // Done on a group's page, it happens to the run it names, and the group reads from that run.
+  if (f.member !== undefined) { const v = M.view(ui.caseId, ui); const i = f.index !== undefined ? f.index : v.holdIndex; ui.over = Object.assign({}, ui.over, { [ui.caseId + ':' + i]: M.moveMember(ui.caseId, i, ui, f.member, f) }); toast(f.say); pendingFocus = 'act-main'; return; }
+  if (f.leave) { if (SHELL) { ui = fresh('starting'); SHELL.go('runs'); window.RailPulse?.say(f.say); } else { goCase('deleted', {}); toast(f.say); } return; }
   if (f.fix) { ui.fixed = Object.assign({}, ui.fixed, { [f.fix]: true }); toast(f.say); pendingFocus = 'act-main'; return; }
   if (f.run) { f.run(); toast(f.say); pendingFocus = 'act-main'; }
-  else if (f.to) { goCase(f.to); toast(f.say || 'Now: ' + M.view(f.to, {}).word); } else { toast(f.say); pendingFocus = pendingFocus || 'act-main'; }
+  else if (f.to) { goCase(f.to, f); toast(f.say); } else { toast(f.say); pendingFocus = pendingFocus || 'act-main'; }
 }
 // Why a step fails here (a mock's reasons); a failure keeps the state as it was.
-const REASON = { Resume: 'the schedule could not be saved', Raise: 'the budget settings could not be saved', Mark: 'GitHub did not answer', Apply: 'a terminal still has the folder open', Abort: 'the run did not answer; it may have just finished', Delete: 'a terminal still has the worktree open', Merge: 'GitHub says the branch is behind dev; update it and try again', Create: 'git push was rejected: the remote branch moved', Stop: 'the run did not answer; it may have just finished',
+const REASON = { Report: 'the report could not be sent', Link: 'the remote did not answer', Push: 'the remote rejected the push', Publish: 'the remote rejected the push', Fix: 'GitHub did not answer', Update: 'GitHub did not answer', Resume: 'the schedule could not be saved', Raise: 'the budget settings could not be saved', Mark: 'GitHub did not answer', Apply: 'a terminal still has the folder open', Abort: 'the run did not answer; it may have just finished', Delete: 'a terminal still has the worktree open', Merge: 'GitHub says the branch is behind dev; update it and try again', Create: 'git push was rejected: the remote branch moved', Stop: 'the run did not answer; it may have just finished',
   Archive: 'a terminal still has the worktree open', Discard: 'a terminal still has the worktree open', Cancel: 'run 3 had just started', 'Re-plan': 'the planner did not answer in time', Continue: 'the budget settings could not be saved' };
 function failed(err) {
   const why = err.reason.replace(/^./, (c) => c.toLowerCase());
@@ -564,7 +586,8 @@ function act(label) {
   if (label === 'Ask for changes' || label === 'Revise') { const v = M.view(ui.caseId, ui); ui.changesFor = label; ui.dialog = 'changes'; ui.changesText = ''; ui.menu = ''; if (v.id === 'plan' || v.id === 'outline') { draft('changes'); pendingFocus = 'draft-stop'; } else pendingFocus = 'changes-text'; return; }
   if (label === 'Full plan') { openDoc(0); return; }
   if (label === 'Review the workflow') { ui.dialog = 'graph'; ui.graphNode = null; ui.menu = ''; pendingFocus = 'vd-close'; return; }
-  if (label === 'Watch') { ui.watched = !ui.watched; ui.menu = ''; toast(ui.watched ? 'Worca watches the PR and fixes failing checks' : 'Worca stopped watching the PR'); pendingFocus = 'act-main'; return; }
+  if (label === 'Watch' || label === 'Watch PRs') { const it = M.view(ui.caseId, ui).action.items.find((x) => x.text === label); ui.watched = !(it && it.checked); ui.menu = ''; toast(ui.watched ? (label === 'Watch' ? 'Worca watches the PR and fixes failing checks' : 'Worca watches all three PRs') : 'Worca stopped watching'); pendingFocus = 'act-main'; return; }
+  if (label === 'Next question' || label === 'Previous question') { ui.question = (ui.question || 0) + (label === 'Next question' ? 1 : -1); ui.answer = null; ui.answerOwn = ''; ui.menu = ''; pendingFocus = 'act-main'; return; }
   if (/ (stacked PRs|one PR) instead$/.test(label)) {
     const v = M.view(ui.caseId, ui); const it = v.action.items.find((x) => x.text === label);
     if (it && it.off) { toast(it.help); ui.menu = ''; pendingFocus = 'menu:act'; return; }
@@ -572,7 +595,8 @@ function act(label) {
     const nv = M.view(ui.caseId, ui); return act(nv.action.label);
   }
   if (label === 'Cancel the rest') { follow({ say: 'The runs that had not started are cancelled; a running run keeps running', confirm: 'Cancel the rest? The runs that have not started are cancelled. A running run keeps running.', run: () => { ui.restGone = true; } }, label); return; }
-  if (label === 'Re-plan the rest') { follow({ to: 'outline', say: 'The waiting runs are cancelled; Worca planned what is left', confirm: 'Re-plan the rest? The waiting runs are cancelled and Worca plans what is left from the last finished run.' }, label); return; }
+  // What is left: the plan holds only the runs that have not finished.
+  if (label === 'Re-plan the rest') { const left = M.view(ui.caseId, ui).runs.filter((r) => !/^(Ready|Merged)$/.test(r.word)).map((r) => r.title); follow({ to: 'outline', say: 'The waiting runs are cancelled; Worca planned what is left', confirm: 'Re-plan the rest? The waiting runs are cancelled and Worca plans what is left from the last finished run.', run: () => { goCase('outline', {}); ui.outline = left.length ? left : null; } }, label); return; }
   // A stack in review merges one PR at a time; merging one moves the next onto dev, where its checks run again.
   const pm = ui.caseId === 'chain' && /^(Merge|Fix checks on) (#\d+)$/.exec(label);
   if (pm) {
@@ -580,24 +604,35 @@ function act(label) {
     const set = (fn) => () => { const st = (ui.stackSt || M.chainStart).slice(); fn(st); ui.stackSt = st; };
     if (pm[1] === 'Merge') follow({ confirm: 'Merge ' + pm[2] + ' into dev?' + (nx ? ' Worca then moves ' + nx + ' onto dev.' : ''), say: 'Merged ' + pm[2] + ' into dev' + (nx ? '; ' + nx + ' now goes into dev' : '; the whole stack is in dev'),
       run: set((st) => { st[i] = 'merged'; if (nx && st[i + 1] !== 'failing') st[i + 1] = 'checks'; }) }, label);
-    else follow({ say: 'A short run fixed ' + pm[2] + '’s checks; they run again', run: set((st) => { st[i] = 'checks'; }) }, label);
+    else follow({ confirm: 'Fix the failing checks on ' + pm[2] + '? Worca pushes the fix to the PR.', say: 'A short run is fixing ' + pm[2] + '’s checks', run: set((st) => { st[i] = 'fixing'; }) }, label);
     return;
   }
   const stopRun = /^Stop run (\d+)$/.exec(label);
-  if (stopRun) { follow({ to: 'feature-stopped', confirm: 'Stop run ' + stopRun[1] + '? Its branch and changes stay; the runs after it do not start.' }, label); return; }
+  if (stopRun) { follow({ member: 'stopped', index: +stopRun[1] - 1, say: 'Stopped run ' + stopRun[1] + '; its branch and changes stay', confirm: 'Stop run ' + stopRun[1] + '? Its branch and changes stay; the runs after it do not start.' }, label); return; }
   const flowNow = M.view(ui.caseId, ui).flow || {};
   const run = { Pause: 'pauseNow', 'Pause after this step': 'pauseAfter', 'Stop the run': 'stop' }[label];
-  if (run && !flowNow[label]) { follow(M.runFlow[run], label === 'Stop the run' ? 'Stop the run' : 'Pause'); return; }
+  if (run && !flowNow[label]) {
+    const vNow = M.view(ui.caseId, ui); const rf = vNow.runFlow[run];
+    // Pause after this step changes nothing yet: the run keeps working, and says so until the step ends.
+    if (rf.pauseAfter) { ui.pauseAfter = !ui.pauseAfter; ui.menu = ''; toast(ui.pauseAfter ? rf.say : 'It goes on after this step'); pendingFocus = 'act-main'; return; }
+    // On a group's page Pause and Stop are the running run's; the group stays where it is and reads from it.
+    if (vNow.liveRun >= 0 && run === 'pauseNow') { follow(Object.assign({}, rf, { to: undefined, member: rf.to, index: vNow.liveRun, say: 'Paused run ' + (vNow.liveRun + 1) + '; Resume goes on from where it was' }), 'Pause'); return; }
+    follow(rf, label === 'Stop the run' ? 'Stop the run' : 'Pause'); return;
+  }
   if (label === 'Try it' || label === 'Check out the whole feature') { toast(M.view(ui.caseId, ui).tryIt); ui.menu = ''; pendingFocus = 'act-main'; return; }
   const f = flowNow[label];
   if (f && f.openMember) { const v = M.view(ui.caseId, ui); ui.back = { caseId: ui.caseId, open: ui.open, tab: ui.tab }; goMember(ui.caseId, v.holdIndex); return; }
+  if (f && f.commands) { ui.cmd = { label, text: f.commands }; ui.dialog = 'commands'; ui.menu = ''; pendingFocus = 'vd-close'; return; }
   if (f) follow(f, label); else toast(label + ': not in this prototype');
 }
 const EVENT = { starting: 'Plan is under way', working: 'Review passed', checks: '2 checks failed', failing: 'dev moved on: 2 files conflict', conflicts: 'Checks green, a reviewer approved', feature: 'Runs 2 and 3 finished', chain: 'The next PR’s checks pass and a reviewer approves' };
-const chainNext = () => (ui.stackSt || M.chainStart).findIndex((x) => x === 'checks' || x === 'review');
+const chainNext = () => (ui.stackSt || M.chainStart).findIndex((x) => x === 'checks' || x === 'review' || x === 'fixing');
 function nextEvent() {
-  if (ui.caseId === 'chain') { const i = chainNext(); if (i < 0) return; const st = (ui.stackSt || M.chainStart).slice(); st[i] = 'ready'; ui.stackSt = st; toast('Event: ' + M.chainPrs[i] + ' checks passed and a reviewer approved'); render(); return; }
-  const v = M.view(ui.caseId, ui); const to = (v.flow || {}).next; if (!to) return; const say = v.event || EVENT[ui.caseId] || EVENT[v.state] || 'something happened outside the run'; goCase(to); toast('Event: ' + say); render(); }
+  if (ui.caseId === 'chain') { const i = chainNext(); if (i < 0) return; const st = (ui.stackSt || M.chainStart).slice(); const fx = st[i] === 'fixing'; st[i] = fx ? 'checks' : 'ready'; ui.stackSt = st; toast('Event: ' + M.chainPrs[i] + (fx ? ' fix is pushed; checks run again' : ' checks passed and a reviewer approved')); render(); return; }
+  const v = M.view(ui.caseId, ui); const flowNext = v.flow || {}; const to = flowNext.next;
+  // The step you asked it to pause after has ended.
+  if (ui.pauseAfter && v.bar.stop && v.liveRun < 0) { const step = v.formCtx.step; goCase('paused-you', { step: 'pause-after' }); toast('Event: ' + step + ' finished; the run paused, as you asked'); render(); return; }
+  if (!to) return; const say = v.event || EVENT[ui.caseId] || EVENT[v.state] || 'something happened outside the run'; if (flowNext.fixed) ui.fixed = Object.assign({}, ui.fixed, { [flowNext.fixed]: true }); goCase(to); toast('Event: ' + say); render(); }
 // The page asks you something in one place, under the bar: confirm a step that cannot be taken back, schedule a run
 // after this one, or set up the PR before it opens.
 function underHtml(u) {
@@ -618,7 +653,7 @@ function stripHtml(v) {
   if (ui.confirm) {
     const c = ui.confirm; const busy = !!ui.busy && !ui.dialog;
     const err = c.err && { title: c.err.title, detail: c.err.detail, extra: c.err.odd ? detailsLink() : '' };
-    return R.confirmStrip({ text: c.text, yes: c.yes, danger: c.danger, busy: busy ? R.workingWord(c.label) : '', err });
+    return R.confirmStrip({ text: c.text, yes: c.yes, no: c.no, danger: c.danger, busy: busy ? R.workingWord(c.label) : '', err });
   }
   return '';
 }
@@ -651,16 +686,16 @@ function prDialogHtml(v) {
   const rowLine = (f, i) => f.made ? `<span class="st-sum">Opened ${esc(f.made)}</span>` : f.gen || f.genTitle ? '<span class="st-writing">Writing…</span>'
     : (f.errDesc || f.errTitle) && !f.open ? '<span class="st-sum">Couldn’t write it; today’s text stays</span>'
     : v.tabData.prFlag[i] ? `<span class="st-flag">${esc(v.tabData.prFlag[i])}</span>` : `<span class="st-sum" title="${esc(v.tabData.prSum[i] || '')}">${esc(v.tabData.prSum[i] || '')}</span>`;
-  const rowsHtml = stacked && pr.prs ? `<div class="pd-f"><span class="pd-hint">Worca writes each title and description from its run. Open a row only to change it.</span><ol class="st-list">${pr.prs.map((f, i) => R.stackedPrRow({ n: i + 1, title: f.title, line: rowLine(f, i), meta: [`${(sh.sizes || [])[i] || ''} · ${v.tabData.prFiles[i] || 1} files`, i ? 'into PR ' + i : 'into ' + pr.base], open: f.open, made: f.made, body: f.open && !f.made ? fields(f, i) : '', attrs: { 'data-prrow': i, 'data-key': 'prrow:' + i } })).join('')}</ol></div>` : '';
+  const rowsHtml = stacked && pr.prs ? `<div class="pd-f"><span class="pd-hint">Worca writes each title and description from its run. Open a row only to change it.</span><ol class="st-list">${pr.prs.map((f, i) => R.stackedPrRow({ n: i + 1, title: f.title, line: rowLine(f, i), meta: [`${(sh.sizes || [])[i] || ''} · ${v.tabData.prFiles[i] || 1} files`, i && sh.word !== 'separate' ? 'into PR ' + i : 'into ' + pr.base], open: f.open, made: f.made, body: f.open && !f.made ? fields(f, i) : '', attrs: { 'data-prrow': i, 'data-key': 'prrow:' + i } })).join('')}</ol></div>` : '';
   const title = stacked ? '' : fields(pr, -1);
   const branch = v.place.branch || 'feat/unified-page-navigation';
   // The sentence says what opens, from where, into what; how many PRs is a picker in it, like the base.
-  const shipPick = sh ? `${wordPick('pdship', sh.pick === 'one' ? 'One PR' : sh.n + ' stacked PRs', 'How many PRs', [
-    { id: 'ship:stack', text: sh.n + ' stacked PRs', checked: sh.pick !== 'one', hint: sh.rec !== 'one' ? 'Suggested' : '', help: 'One PR per run, each into the one before' },
+  const shipPick = sh ? `${wordPick('pdship', sh.pick === 'one' ? 'One PR' : sh.n + ' ' + sh.word + ' PRs', 'How many PRs', [
+    { id: 'ship:stack', text: sh.n + ' ' + sh.word + ' PRs', checked: sh.pick !== 'one', hint: sh.rec !== 'one' ? 'Suggested' : '', help: sh.word === 'separate' ? 'One PR per run, each into dev' : 'One PR per run, each into the one before' },
     { id: 'ship:one', text: 'One PR', checked: sh.pick === 'one', hint: sh.rec === 'one' ? 'Suggested' : '', off: !!sh.oneBlocked, help: sh.oneBlocked || 'Every run in one review' }], 'pd-ship')}<span>from</span>` : '';
-  const shipHint = sh ? `<span class="pd-hint">${esc((sh.pick === sh.rec ? 'Worca suggests this: ' : 'Worca suggests ' + (sh.rec === 'one' ? 'one PR' : sh.n + ' stacked PRs') + ': ') + sh.reason)}</span>` : '';
+  const shipHint = sh ? `<span class="pd-hint">${esc((sh.pick === sh.rec ? 'Worca suggests this: ' : 'Worca suggests ' + (sh.rec === 'one' ? 'one PR' : sh.n + ' ' + sh.word + ' PRs') + ': ') + sh.reason)}</span>` : '';
   const into = `<div class="pd-f"><div class="pd-into">${shipPick}<code class="pd-br" title="${esc(branch)}">${esc(branch)}</code><span>into</span>${wordPick('pdbase', pr.base, 'Base branch · pushes to origin', ['dev', 'main'].map((x) => ({ id: 'base:' + x, text: x, checked: pr.base === x })))}</div>
-    ${shipHint}<span class="pd-hint${pr.base === 'main' ? ' is-warn' : ''}">${pr.base === 'main' ? 'main is 41 commits behind dev; the PR would carry them too' : 'dev has 2 new commits since the run started; they merge cleanly'}</span></div>`;
+    ${shipHint}${v.baseMoved && pr.base === 'dev' ? '' : `<span class="pd-hint${pr.base === 'main' ? ' is-warn' : ''}">${pr.base === 'main' ? 'main is 41 commits behind dev; the PR would carry them too' : 'dev has 2 new commits since the run started; they merge cleanly'}</span>`}</div>`;
   // Where it goes (Advanced): which remote it pushes to and which it opens against; another repository says so.
   const remotes = R.shows('advanced') ? `<div class="pd-f"><div class="pd-into"><span>Push to</span>${wordPick('pdpush', pr.push || 'origin', 'The remote the branch goes to', ['origin', 'fork'].map((x) => ({ id: 'pushr:' + x, text: x, checked: (pr.push || 'origin') === x })))}<span>open on</span>${wordPick('pdremote', pr.remote || 'origin', 'The remote the pull request opens on', ['origin', 'upstream'].map((x) => ({ id: 'baser:' + x, text: x, checked: (pr.remote || 'origin') === x })))}</div>${(pr.remote || 'origin') !== (pr.push || 'origin') ? `<span class="pd-hint">A pull request across repositories: ${esc(pr.push || 'origin')}’s branch into ${esc(pr.remote || 'origin')}’s ${esc(pr.base)}</span>` : ''}</div>` : '';
   const moved = v.baseMoved && pr.base === 'dev' ? `<span class="pd-hint is-warn">dev moved while the run worked: 12 new commits, 1 file overlaps. Update the branch first, or the PR opens with conflicts.</span>` : '';
@@ -694,15 +729,15 @@ function generateTitle(f = ui.pr, i = -1, delay = 700) {
 // Each stacked PR starts from today's text (the server's template) and Worca writes over it; all rows start closed.
 function startStack(v) {
   const titles = v.runs.map((r) => r.title);
-  ui.pr.prs = v.runs.map((r, i) => ({ title: r.title, desc: v.tabData.prTemplate(i, titles, v.title), gen: false, genTitle: false, titleSuggested: true, descSuggested: false, mode: 'write', open: false }));
-  ui.pr.prs.forEach((f, i) => generate(f, i, 900 + i * 600));
+  ui.pr.prs = v.runs.map((r, i) => ({ title: r.title, made: (v.ship.owned || {})[i] || '', desc: v.tabData.prTemplate(i, titles, v.title), gen: false, genTitle: false, titleSuggested: true, descSuggested: false, mode: 'write', open: false }));
+  ui.pr.prs.forEach((f, i) => { if (!f.made) generate(f, i, 900 + i * 600); });
 }
 // A question is answered where it is asked: under its step, Worca's pick checked, the other options and your own
 // words; the card's Send answer sends it. A multi-question Clarify shows the one it is on.
 function answerHtml(q) {
   if (q.kind === 'auto') {
     const d = M.view(ui.caseId, ui).tabData;
-    return `<li class="sc-answer"><p class="sc-ans-why">${esc(q.why)}</p><div class="rl-tools">${R.button({ label: 'Review the workflow', attrs: { 'data-act': 'Review the workflow', 'data-key': 'auto-review' } })}</div>${R.shows('expert') ? R.table({ label: 'What it tunes', columns: [{ id: 'name', label: 'Setting' }, { id: 'why', label: 'Why', narrow: false }, { id: 'val', label: 'Value', num: true }], rows: d.tunables.map(([name, val, why]) => ({ name, val, why })) }) : ''}</li>`;
+    return `<li class="sc-answer"><p class="sc-ans-why">${esc(q.why)}</p><div class="rl-tools">${R.button({ label: 'Review the workflow', attrs: { 'data-act': 'Review the workflow', 'data-key': 'auto-review' } })}</div>${R.shows('expert') ? R.table({ label: 'What it tunes', columns: [{ id: 'name', label: 'Setting' }, { id: 'why', label: 'Why', narrow: false, bare: true }, { id: 'val', label: 'Value', num: true }], rows: d.tunables.map(([name, val, why]) => ({ name, val, why })) }) : ''}</li>`;
   }
   const pick = ui.answer === null || ui.answer === undefined ? q.pick : ui.answer;
   const own = R.suggestionField({ id: 'answer-own', inputCls: 'input-sm', value: ui.answerOwn || '', placeholder: 'Or write your own answer', writingPlaceholder: 'Writing an answer from the review…', writing: ui.answerDraft, attrs: { 'aria-label': 'Your own answer', 'data-key': 'answer-own' },
@@ -712,7 +747,9 @@ function answerHtml(q) {
 }
 const v0 = () => M.view(ui.caseId, ui);
 function goMember(group, i) {
-  Object.assign(ui, { caseId: M.view(group, {}).runCases[i], parent: { caseId: group, index: i }, open: null, tab: '', focus: '', menu: '', titleOpen: false });
+  if (!ui.parent) ui.groupRun = ui.run;   // the group as it stands, for the way back up
+  const m = M.memberAt(group, i, ui);
+  Object.assign(ui, { caseId: m.id, run: m, parent: { caseId: group, index: i }, open: null, tab: '', focus: '', menu: '', titleOpen: false });
   pick.value = ui.caseId; pendingFocus = 'crumb:' + (M.view(ui.caseId, ui).crumbs.length - 1);
 }
 function addChip(text, kind) {
@@ -754,12 +791,13 @@ document.addEventListener('click', (e) => {
   if (!t && e.target.closest('[data-title]')) { ui.titleOpen = !ui.titleOpen; render(); return; }
   if (!t || !t.closest('#card')) return;
   const d = t.dataset;
+  if (d.copy) { try { navigator.clipboard.writeText(d.copy).catch(() => {}); } catch { /* the clipboard is the browser's call */ } R.copied(t); return; }
   if (d.fd) {
     const F = ui.form;
     if (d.fd === 'cancel') { ui.form = null; ui.dialog = ''; ui.busy = null; pendingFocus = 'act-main'; render(); return; }
     const val = F.def.options ? F.def.options[F.pick] : String(F.value).trim();
     if (F.def.field && F.def.field.required && !val) { F.fieldErr = F.def.field.label + ' is needed'; pendingFocus = 'fd-value'; render(); return; }
-    F.fieldErr = ''; const f = ui.dialogF; follow(Object.assign({}, f, { dialog: '', fromDialog: true, say: String(f.say || '').replace('{value}', val) }), ui.dialogLabel); render(); return;
+    F.fieldErr = ''; const f = ui.dialogF; follow(Object.assign({}, f, { dialog: '', fromDialog: true, value: val, say: String(f.say || '').replace('{value}', val) }), ui.dialogLabel); render(); return;
   }
   if (d.fopt !== undefined) { ui.form.pick = +d.fopt; pendingFocus = 'fopt:' + d.fopt; render(); return; }
   if (d.viewclose !== undefined) { ui.dialog = ''; ui.doc = null; ui.graphNode = null; pendingFocus = 'act-main'; render(); return; }
@@ -815,7 +853,7 @@ document.addEventListener('click', (e) => {
     else if (pid === 'cmtline') { ui.commentOn.line = pval; ui.menu = ''; pendingFocus = 'pick:cmtline'; }
     else if (pid === 'cut:merge' || pid === 'cut:remove' || pid === 'cut:undo') {
       const runs = (ui.outline || v0().outlineRuns).slice(); const i = +pval; ui.menu = '';
-      if (pid === 'cut:undo') { ui.outline = null; ui.outlineEdited = false; toast('Back to the cut as Worca wrote it'); }
+      if (pid === 'cut:undo') { ui.outline = null; ui.outlineEdited = false; toast('Back to the split as Worca wrote it'); }
       else if (pid === 'cut:merge') { runs.splice(i, 2, runs[i] + ' + ' + runs[i + 1]); ui.outline = runs; ui.outlineEdited = true; toast('Merged runs ' + (i + 1) + ' and ' + (i + 2)); }
       else { runs.splice(i, 1); ui.outline = runs; ui.outlineEdited = true; toast('Removed run ' + (i + 1)); }
       pendingFocus = 'act-main';
@@ -828,7 +866,9 @@ document.addEventListener('click', (e) => {
     else if (d.menuPick === 'try:actions') { ui.tab = 'changes'; ui.menu = ''; pendingFocus = 'menu:more'; }
     else if (d.menuPick === 'more:unlink' || d.menuPick === 'ch:discard-copy' || d.menuPick === 'more:discard-copy') { const unlink = d.menuPick === 'more:unlink'; ui.copy = false; ui.menu = ''; pendingFocus = 'menu:more'; toast(unlink ? 'Unlinked the local copy; the branch stays' : 'Discarded the local copy; the branch stays'); }
     else if (d.menuPick === 'more:preset') { ui.menu = ''; ui.dialogF = { dialog: 'preset', say: 'Saved as preset “{value}”' }; ui.dialogLabel = 'Save as preset'; follow(ui.dialogF, 'Save as preset'); }
-    else if (d.menuPick === 'more:delete') { follow({ to: 'deleted', say: 'Deleted', confirm: 'Delete this ' + v0().kind.toLowerCase() + ' and its runs? This cannot be undone; their PRs stay.' }, 'Delete'); }
+    else if (d.menuPick === 'more:delete') { const noun = v0().kind.toLowerCase(); follow({ leave: true, say: 'Deleted the ' + noun + ' and its runs; their PRs stay', confirm: 'Delete this ' + noun + ' and its runs? This cannot be undone; their PRs stay.' }, 'Delete'); }
+    else if (d.menuPick === 'more:report') { ui.menu = ''; follow(v0().runFlow.report, 'Report this ' + (v0().kind ? v0().kind.toLowerCase() : 'run')); }
+    else if (d.menuPick === 'more:link') { toast('Copied the link to this ' + (v0().kind ? v0().kind.toLowerCase() : 'run')); pendingFocus = 'menu:more'; ui.menu = ''; }
     else if (d.menuPick === 'group:toggle') { ui.askEach = !ui.askEach; ui.menu = ''; pendingFocus = 'menu:more'; toast(ui.askEach ? 'Worca asks before each run starts' : 'Each run starts by itself'); }
     else if (d.menuPick.startsWith('base:')) { ui.pr.base = d.menuPick.slice(5); ui.menu = ''; pendingFocus = 'menu:pdbase'; }
     else if (d.menuPick.startsWith('ship:')) {
@@ -840,8 +880,8 @@ document.addEventListener('click', (e) => {
     }
     else if (d.menuPick.startsWith('away:')) { ui.away = d.menuPick; ui.menu = ''; pendingFocus = 'menu:more'; toast('Away mode on this run: ' + AWAY.find((x) => x.id === d.menuPick).text); }
     else if (d.menuPick === 'more:after') { ui.dialog = 'after'; ui.menu = ''; pendingFocus = 'after-task'; }
-    else if (d.menuPick === 'more:archive') { const dep = v0().dependents; follow({ to: 'archived', confirm: (dep ? dep + ' runs wait on this one and will start without it. ' : '') + 'Archive this run? The local branch, worktree and logs are removed; the remote branch and any PR stay.' }, 'Archive'); }
-    else if (d.menuPick === 'more:restore') { goCase('merged'); toast('Restored to Runs'); }
+    else if (d.menuPick === 'more:archive') { const vm = v0(); const a = vm.runFlow.archive; follow(Object.assign({}, a, { confirm: (vm.dependents ? vm.dependents + ' runs wait on this one and will start without it. ' : '') + a.confirm.replace('this run', 'this ' + (vm.kind ? vm.kind.toLowerCase() : 'run')) }), 'Archive'); }
+    else if (d.menuPick === 'more:restore') { landOn(M.restored(ui)); toast('Restored to Runs, as it was'); }
     else if (d.menuPick === 'group:ask' || d.menuPick === 'group:go') { const ask = d.menuPick === 'group:ask'; ui.menu = ''; pendingFocus = 'menu:then';
       toast(ask === ui.askEach ? (ask ? 'Already asks first' : 'Already starts by itself') : ask ? 'Worca asks before each run starts' : 'Each run starts by itself'); ui.askEach = ask; }
     else if (CH_SAY[d.menuPick]) { toast(CH_SAY[d.menuPick](M.view(ui.caseId, ui))); pendingFocus = 'menu:ch'; ui.menu = ''; }
@@ -864,7 +904,7 @@ document.addEventListener('click', (e) => {
     // Up to the group: back where you left it if you came from there, else with this run's segment open.
     const go = M.view(ui.caseId, ui).crumbs[+d.crumb].go;
     const back = ui.back && ui.back.caseId === go.caseId ? ui.back : { caseId: go.caseId, open: go.open, tab: '' };
-    Object.assign(ui, { caseId: back.caseId, open: back.open, tab: back.tab, parent: null, back: null, menu: '' });
+    Object.assign(ui, { caseId: back.caseId, run: ui.groupRun && ui.groupRun.id === back.caseId ? ui.groupRun : null, open: back.open, tab: back.tab, parent: null, back: null, menu: '' });
     pick.value = ui.caseId; pendingFocus = 'open-run';
   }
   else if (d.stage) { ui.open = d.stage; ui.menu = ''; }
@@ -874,6 +914,7 @@ document.addEventListener('click', (e) => {
   else if (d.go) {
     const [kind, n] = d.go.split(':');
     if (kind === 'tab') ui.tab = n;
+    else if (kind === 'doc' && !v0().tabs.some((x) => x.id === 'changes')) { openDoc(+n); render(); return; }
     else { ui.tab = 'changes'; if (kind === 'file') ui.file = +n; ui.land = d.go; pendingFocus = kind === 'file' ? 'file:' + n : 'art:' + n; }
     render(); ui.land = '';
     document.querySelector('.ch-file.is-flash')?.scrollIntoView({ block: 'center', behavior: reduced() ? 'auto' : 'smooth' }); return;
