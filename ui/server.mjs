@@ -34,7 +34,7 @@ import { createUpdateChecker, fetchNpmLatest, isSourceBuild, parseVersion, relea
 import { UPDATE_EXIT_CODE, supervisorMatches, readUpdateRecord, writeUpdateRecord, startCommand } from '../src/core/ui-update.mjs';
 import { isSharedInstall, updateEligibility, probeNpmGlobal, UPDATE_MESSAGES } from '../src/core/update-eligibility.mjs';
 import { limitResumeDecision } from '../src/core/limit-resume.mjs';
-import { selectRunEngine } from '../src/core/engines/index.mjs';
+import { selectRunEngine, reapAgentGroupsAtBoot } from '../src/core/engines/index.mjs';
 import { mockSlowMs } from '../src/core/engines/mock.mjs';
 import { sweepStaleStagingDirs } from '../src/core/engines/claude.mjs';
 import { stopPausedRun, StopPausedError } from '../src/core/stop-paused.mjs';
@@ -46,7 +46,7 @@ import {
   folderApplyRetainFor,
   resolveIndexedArtifactFileForRow, openArtifactUnder, readPromptFile, runDirForRow, recordArtifact, appendAudit,
   persistMemberPrState, readMemberPrStates, readPipelineExtras,
-  checkoutRecordsFor, retainedWorkFor, runEngineOfRow, folderFacts,
+  checkoutRecordsFor, retainedWorkFor, runEngineOfRow, folderFacts, readRunResultsForRow,
 } from '../src/core/artifacts.mjs';
 import { FolderApplyError, folderMemberTarget, readFolderChanges, planFolderApply, applyFolderChanges, discardFolderChanges, releaseFolderCopy } from '../src/core/folder-apply.mjs';
 import { releaseFolderMember } from '../src/core/folder-members.mjs';
@@ -99,7 +99,7 @@ import {
   memoryDefragModel, setMemoryDefragModel, assertMemoryDefragModelInput,
   agentGenModel as storedAgentGenModel, setAgentGenModel, assertAgentGenModelInput,
   namingModel as storedNamingModel, setNamingModel, assertNamingModelInput,
-  commandSummaryModel as storedCommandSummaryModel, setCommandSummaryModel, assertCommandSummaryModelInput,
+  commandSummaryModel as storedCommandSummaryModel, setCommandSummaryModel, assertCommandSummaryModelInput, setSecondOpinionModel, assertSecondOpinionModelInput,
   workspaceScanModels, setWorkspaceScanModels, assertWorkspaceScanInput,
   scheduleDefaults, setScheduleDefaults,
   userTagDimensions, setUserTagDimensions, userEnforceTags, setUserEnforceTags,
@@ -167,7 +167,7 @@ import { askCatalog, validateModelEffort, chatEngine as askChatEngineOf, askEven
 import { buildCatalog as askBuildCatalog } from '../src/core/ask/catalog.mjs';
 import {
   buildSystemPrompt as askBuildSystemPrompt, buildComposerSystemPrompt as askBuildComposerSystemPrompt, buildContextHeader as askBuildContextHeader,
-  buildTurnPrompt as askBuildTurnPrompt, buildRestoredPrompt as askBuildRestoredPrompt,
+  buildTurnPrompt as askBuildTurnPrompt, buildRestoredPrompt as askBuildRestoredPrompt, renderChatContextPrompt as askRenderChatContextPrompt,
   buildHandoffPrompt as askBuildHandoffPrompt, handoffBudgetChars as askHandoffBudgetChars, needsHandoff as askNeedsHandoff,
   selectInlineAttachments as askSelectInlineAttachments, validateClientContext,
 } from '../src/core/ask/prompt.mjs';
@@ -339,6 +339,12 @@ import { applyWorkspaceChange } from '../src/core/ask/workspace-deps.mjs';
 import { actionsEventPrompt, actionsNoticeText } from '../src/core/ask/actions-proposal.mjs';
 import { applyActionsChange } from '../src/core/ask/actions-deps.mjs';
 import { webEventPrompt, webNoticeText, chatWebHosts } from '../src/core/ask/web-proposal.mjs';
+import { createConversationBridge } from '../src/core/chat/conversation-bridge.mjs';
+import { fetchChatFiles, fitChatContext, chatContextBlock } from '../src/core/chat/inbound-context.mjs';
+import { createReceipts, commandOutcome } from '../src/core/chat/receipts.mjs';
+import { conversationForThread, listActiveConversations } from '../src/core/chat/conversations.mjs';
+import { scopeSelectOptions } from '../src/core/chat/card-render.mjs';
+import { EventEmitter } from 'node:events';
 import { chatScopeOf, withChatScope, sameScope, scopeBody, targetInScope, scopeRefusalText, noProjectRunText, scopeEventPrompt, scopeNoticeText } from '../src/core/ask/scope.mjs';
 import { hostAllowed as askHostAllowed } from '../src/core/web-allowlist.mjs';
 import { registryPortsFn } from '../src/core/graph/registry-ports.mjs';
@@ -429,7 +435,7 @@ import { savePlanToCheckout } from '../src/core/shape/save.mjs';
 import { featureView, currentFeatureId, featureOfPipeline, featuresOfTickets, cancelRest, resumeFeature,
   rechainWaiting, replanRest, setApproveEach, recordShapePlan, listShapePlans, chainFeature,
   sliceOfPipeline, slicePrPreamble, featureShipSuggestion, recordSliceDraft, recordShip, clearShip, featureShipInput,
-  liveSliceFrom, shaperCard, featureThread, addFeatureNote, appendFeatureRun, liveRoundOf } from '../src/core/shape/features.mjs';
+  liveSliceFrom, shaperCard, featureThread, addFeatureNote, appendFeatureRun, liveRoundOf, acceptanceRefusal } from '../src/core/shape/features.mjs';
 import { roundsOf, roundOrigin, nextRound, setRoundOutcome } from '../src/core/shape/rounds.mjs';
 import { changesCard, applyChanges, applyRoute, landingFacts, landingFactsOfFeature, shapeToolCheck, threadWork, shapeThreadFacts } from '../src/core/shape/changes.mjs';
 import { defaultShapeToolDeps } from '../src/core/ask/shape-tool-deps.mjs';
@@ -1172,8 +1178,10 @@ function replayEntry(ws, entry) {
   sendStateSnapshot(ws, entry);
 }
 
+const askBus = new EventEmitter(); askBus.setMaxListeners(0);
 /** Broadcast an already-tagged event object to every open socket. */
 function broadcast(obj) {
+  if (obj && typeof obj.type === 'string' && obj.type.startsWith('ask-') && typeof obj.threadId === 'string') { try { askBus.emit(obj.threadId, obj); } catch { /* listener bug never breaks broadcast */ } }
   const text = JSON.stringify(obj);
   const owner = askFrameOwner(obj);
   const askFrame = !!(obj && typeof obj.type === 'string' && obj.type.startsWith('ask-'));
@@ -2862,7 +2870,7 @@ const startRunHandler = async (req, res) => {
     // plan at run start; here we only normalize + reject an unknown id up front
     // so the client gets a clean 400 instead of a mid-run error event.
     // Shape it first (spec D9/D12): `shape` and the shape workflows.
-    const shapeReq = resolveShapeRequest({ shape: body.shape, workflowId: body.workflowId }, { internal: !!internal });
+    const shapeReq = resolveShapeRequest({ shape: body.shape, workflowId: body.workflowId }, { internal: !!internal, requirementsOn: flagEnabled('shapeRequirements') });
     if (!shapeReq.ok) return badRequest(res, shapeReq.error);
     const { shape: askedShape } = shapeReq;
     // L7: a sliced Shape-it-first run chains tickets per slice, and a run without a project cannot be scheduled. So with
@@ -3562,6 +3570,7 @@ import * as runSkillHost from '../src/core/skills-registry/host.mjs';
 import * as runSkillTexts from '../src/core/skills-registry/texts.mjs';
 import * as runSkillPolicy from '../src/core/policy/effective.mjs';
 import { ROUTE_SEGMENTS } from './routes/index.mjs';
+import { askCardRoute } from './routes/chat/thread-cards.mjs';
 import { isPublicPart, publicRelPath } from '../src/core/public-assets.mjs';
 import { readIndexHtml } from '../src/core/read-index-html.mjs';
 import { readStyleCssEntry } from '../src/core/read-style-css.mjs';
@@ -3889,6 +3898,14 @@ function dropStagedOnceCopied(runId, drop) {
  *  a requirements start) are staged into the run's extras folder first and handed over as req._extrasPaths; a refused
  *  start removes them again (withStagedRunFiles), a started one once its pipeline has its own copy.
  *  A6 D15: `reportTo` (a requirements start's ticket) is handed over as req._reportTo. */
+/** Freeform chat: the cards route for an in-process caller acting as a bound worca identity (D2). */
+async function invokeAskCard({ threadId, cardId, body, actor }) {
+  let out = { status: 200, body: null };
+  const res = { statusCode: 200, status(c) { this.statusCode = c; return this; }, json(p) { out = { status: this.statusCode, body: p }; return this; } };
+  await askCardRoute({ ...chatActorReq(actor), params: { id: threadId, cardId }, body, _chatOrigin: true }, res);
+  return out;
+}
+
 async function invokeStartRun(body, internal, { startedBy = null, runId = null, prWatchRunId = null, roundOf = null, extrasFiles = null, reportTo = null, automation = false, workflowTest = null } = {}) {
   const files = Array.isArray(extrasFiles) && extrasFiles.length ? extrasFiles : null;
   const id = files ? (runId || randomUUID()) : runId;   // the extras folder is named by the run id
@@ -4536,29 +4553,203 @@ function enqueueChatWork(key, fn) {
 async function handleChatInbound({ plugin, channelId, platform, msg }) {
   const entry = channelHost.list().find((e) => e.plugin === plugin && e.channelId === channelId);
   if (!entry) return;
+  const interactive = entry.capabilities.interactive === true;
+  let routed = msg;
+  if (interactive) {
+    try {
+      if (await chatBridge.handleMessage({ plugin, channelId, platform, msg })) return;
+      // A command typed in a bound thread acts for the thread's PARENT channel (allowlist, /use context).
+      const parent = chatBridge.commandChatId({ plugin, channelId, chatId: msg.chatId });
+      if (parent !== msg.chatId) routed = { ...msg, chatId: parent };
+    } catch (err) { console.error(`[worca-ui] chat freeform failed: ${err && err.message ? err.message : err}`); return; }
+  }
+  // A command gets the same receipt as a freeform message (interactive channels only), and only once the router has
+  // accepted it (allowed chat, allowed sender, known command): never for chatter, refusals or unknown commands. The
+  // mark lives on the message itself, so it uses msg.chatId (a thread), never the routed parent.
+  const meta = msg.meta && typeof msg.meta === 'object' ? msg.meta : {};
+  const mark = interactive && meta.messageId ? { plugin, channelId, chatId: String(msg.chatId), messageId: String(meta.messageId) } : null;
+  let accepted = false;
   let replyMsg;
   try {
-    replyMsg = await chatRouter.handleIncoming({
-      plugin, channelId, platform,
-      channelConfig: readPluginConfig(plugin, entry.configSchema),
-      msg,
-    });
+    replyMsg = await chatRouter.handleIncoming({ plugin, channelId, platform, channelConfig: readPluginConfig(plugin, entry.configSchema), msg: routed,
+      onAccepted: () => { accepted = true; chatReceipts.ack(mark); } });
   } catch (err) {
     console.error(`[worca-ui] chat inbound failed: ${err && err.message ? err.message : err}`);
+    if (accepted) chatReceipts.settle(mark, 'fail');
     return;
   }
-  if (!replyMsg) return;
+  if (!replyMsg) { if (accepted) chatReceipts.settle(mark, 'ok'); return; }
   try {
     await channelHost.sendMessage({ plugin, channelId, chatId: msg.chatId, message: replyMsg });
+    if (accepted) chatReceipts.settle(mark, commandOutcome(replyMsg));
   } catch (err) {
     console.error(`[worca-ui] chat reply delivery failed: ${err && err.message ? err.message : err}`);
+    if (accepted) chatReceipts.settle(mark, 'fail');
   }
+}
+
+/** The bot's own reaction on each accepted inbound message (⏳ → ✅ / ❌ / ⏹️ / none), interactive channels only.
+ *  Memory only: a restart mid-turn can leave a stale ⏳ (plugins/discord-chat/README.md). */
+const chatReceipts = createReceipts({
+  react: (a) => channelHost.react(a),
+  log: (level, msg) => console.error(`[worca-ui] chat ${level}: ${msg}`),
+});
+const chatBridge = createConversationBridge({
+  host: { sendMessage: (a) => channelHost.sendMessage(a), replyInteraction: (a) => channelHost.replyInteraction(a), history: (a) => channelHost.history(a),
+    typing: (a) => channelHost.typing(a) },
+  receipts: chatReceipts,
+  // Live status messages (discord-chat 0.5.0): only a channel whose manifest declares capabilities.liveStatus.
+  liveStatus: (plugin, channelId) => channelHost.list().find((x) => x.plugin === plugin && x.channelId === channelId)?.capabilities?.liveStatus === true,
+  readConfig: (plugin, channelId) => { const e = channelHost.list().find((x) => x.plugin === plugin && x.channelId === channelId); return e ? readPluginConfig(plugin, e.configSchema) : null; },
+  linksFor: (threadId) => chatLinksFor(threadId),
+  now: () => Date.now(),
+  log: (level, msg) => console.error(`[worca-ui] chat ${level}: ${msg}`),
+  watch: (threadId) => watchChatThread(threadId),
+  ask: {
+    createThread: ({ createdBy, scope }) => { const t = askCreateThread({ createdBy }); askUpdateThread(t.id, { context: scopeBody(scope) }); return askGetThread(t.id); },
+    deleteThread: (id) => { try { askDeleteThread(id); } catch { /* best effort */ } },
+    getThread: (id) => askGetThread(id),
+    listMessages: (id) => askListMessages(id),
+    findCard: (threadId, cardId) => askFindCard(threadId, cardId),
+    initialScope: (platform, chatId) => chatInitialScope(platform, chatId),
+    threadScope: (id) => chatScopeOf(askGetThread(id)?.context ?? null),
+    // M3: askScopeLabel is async and reads the PATCH shape ({pinned, projectKey|workspaceId}).
+    scopeLabel: async (id) => askScopeLabel(scopeBody(chatScopeOf(askGetThread(id)?.context ?? null))),
+    scopeOptions: () => chatScopeOptions(),
+    refreshProjects: () => refreshChatProjectDirs(),
+    projectDirOf: (key) => chatProjectDirs.get(key) || null,
+    // A Discord message is a first-class USER turn (review M2): the send route's gates and its un-archive, as the
+    // bound identity; its signedIn/reader exactly as the browser on this deployment (chatTurnIdentity, cycle-3 M1).
+    // Only the scope (and the stored time zone) rides along, never the browser's last page context (review m3).
+    startTurn: async ({ threadId, text, actor, onUserRow, inbound = null }) => {
+      const thread = askGetThread(threadId);
+      if (!thread) return { ok: false, status: 404, error: 'thread not found' };
+      if (askDeleting.has(threadId)) return { ok: false, status: 409, error: 'thread is being deleted' };
+      const engineGate = askChatEngineGate(threadId, thread);
+      if (engineGate) return { ok: false, ...engineGate };
+      const mv = await askEventPick(threadId, thread);
+      if (!mv) return { ok: false, status: 503, error: 'no model available' };
+      const credGate = await askCredentialGate(chatActorReq(actor), mv.model);
+      if (credGate) return { ok: false, ...credGate };
+      const fresh = askGetThread(threadId) || thread;
+      const tz = fresh.context && typeof fresh.context.timeZone === 'string' ? { timeZone: fresh.context.timeZone } : {};
+      const ctx = withChatScope(tz, chatScopeOf(fresh.context ?? null));
+      // Chat context (discord-chat 0.4.0): after every gate, before the turn, the files are downloaded from the plugin's
+      // declared hosts only, under the chat caps, each validated like an upload; what this chat's engine cannot view is
+      // listed, not stored (the route's own refusal). A failure never blocks the turn: the file is listed with a note.
+      let files = [];
+      let chatContext = null;
+      if (inbound) {
+        if (askInFlight(threadId)) return { ok: false, status: 409, error: 'turn in flight' };   // no downloads for a 409
+        const fitted = fitChatContext(inbound);
+        const engine = askTurnEngine(threadId, fresh, mv.model);
+        const got = await fetchChatFiles(fitted, {
+          fetchFn: chatFileFetch,
+          allowedHosts: chatAttachmentHosts(inbound.plugin, inbound.channelId),
+          refuse: (cls, name) => { const r = chatAttachRefusal({ engine, kind: cls.kind, pdf: cls.mime === 'application/pdf' }); return r ? `${r}: ${name}` : null; },
+          log: (level, m) => console.error(`[worca-ui] chat ${level}: ${m}`),
+        });
+        files = got.files;
+        chatContext = { inbound: fitted, skipped: got.skipped };
+      }
+      if (fresh.archivedAt) askSetArchived(threadId, false);   // as the route: a message brings an archived chat back
+      return startAskTurn({ threadId, thread: fresh, ctx, model: mv.model, effort: mv.effort, text,
+        ...chatTurnIdentity(fresh, actor), onUserRow, ...(inbound ? { files, chatContext } : {}) });
+    },
+    applyCard: (a) => invokeAskCard(a),
+    takeDeferredReply: (cardId) => { const v = askDeferredReplies.get(cardId) || null; if (v) askDeferredReplies.delete(cardId); return v; },
+    startRun: ({ body, actor }) => invokeStartRun(body, null, { startedBy: actor }),
+    switchScope: async ({ threadId, value }) => {
+      const scope = await chatScopeFromValue(value);
+      if (scope === undefined) return { ok: false, status: 400, error: 'unknown scope' };
+      try { await switchThreadScope(threadId, scope, { divider: true }); return { ok: true }; }
+      catch (err) {
+        const status = { TURN_IN_FLIGHT: 409, BAD_SCOPE: 400, NOT_FOUND: 404 }[err && err.code] || 500;
+        return { ok: false, status, error: err && err.message ? err.message : String(err) };
+      }
+    },
+    stopTurn: (id) => { const job = askInFlight(id); try { job?.turn?.stop?.(); } catch { /* best effort */ } },
+  },
+});
+
+/** Chat context: the fetch the host downloads chat message files with (test seam: _testing.setChatFileFetch). */
+const defaultChatFileFetch = (url, init) => fetch(url, init);
+let chatFileFetch = defaultChatFileFetch;
+/** The CDN hosts a channel's manifest declares for its message files ([] = no downloads at all). */
+function chatAttachmentHosts(plugin, channelId) {
+  const e = channelHost.list().find((x) => x.plugin === plugin && x.channelId === channelId);
+  return Array.isArray(e?.attachmentHosts) ? e.attachmentHosts : [];
+}
+
+/** Open-in-worca links (D15): only an http(s) worcaUrl from the first interactive channel's config. */
+function chatLinksFor(threadId) {
+  let base = null;
+  for (const e of channelHost.list()) {
+    if (e.capabilities?.interactive !== true) continue;
+    const raw = String(readPluginConfig(e.plugin, e.configSchema)?.worcaUrl || '').trim();
+    if (!raw) continue;
+    try { const u = new URL(raw); if (u.protocol === 'https:' || u.protocol === 'http:') base = raw.replace(/\/+$/, ''); } catch { /* bad value = none */ }
+    break;
+  }
+  return { thread: base ? `${base}/#chat/${threadId}` : null, run: base ? (id) => `${base}/#running/${id}` : null };
+}
+
+/** D12: the header select's options ({options, hidden}); the pure builder caps them at 25. */
+async function chatScopeOptions() {
+  return scopeSelectOptions({ projects: await listProjects(), workspaces: await listWorkspaces() });
+}
+
+/** A select value → the PATCH scope body askValidateScope accepts (M3), or undefined for unknown/stale values. */
+async function chatScopeFromValue(v) {
+  if (v === 'none') return { pinned: false };
+  if (typeof v === 'string' && v.startsWith('p:')) { const key = v.slice(2); return (await listProjects()).some((p) => p.key === key) ? { pinned: true, projectKey: key } : undefined; }
+  if (typeof v === 'string' && v.startsWith('w:')) { const id = v.slice(2); return (await readWorkspace(id)) ? { pinned: true, workspaceId: id } : undefined; }
+  return undefined;
+}
+
+/** A new conversation's scope: the parent chat's `/use` project (a NAME in chat-context.json), when registered. */
+async function chatInitialScope(platform, chatId) {
+  const name = chatCtx().get(`${platform}:${chatId}`)?.active_project;
+  if (!name) return null;
+  const p = (await listProjects()).find((x) => x.name === name || x.key === name);
+  return p ? { pinned: true, projectKey: p.key } : null;
+}
+
+/** Sync project-dir lookup for runBodyFromCard, refreshed right before each Start (listProjects is async). */
+const chatProjectDirs = new Map();
+async function refreshChatProjectDirs() {
+  chatProjectDirs.clear();
+  for (const p of await listProjects()) if (p && p.key && p.path && p.exists) chatProjectDirs.set(p.key, p.path);
+}
+
+const chatWatched = new Set();
+function watchChatThread(threadId) {
+  if (chatWatched.has(threadId)) return;
+  chatWatched.add(threadId);
+  askBus.on(threadId, (f) => {
+    // A running turn's tool rows and text: the live status message's activity (the bridge throttles its edits).
+    if (f.type === 'ask-block' || f.type === 'ask-delta') {
+      try { chatBridge.progress(conversationForThread(threadId), f); } catch { /* progress is best effort */ }
+      return;
+    }
+    if (f.type !== 'ask-done' && f.type !== 'ask-error' && f.type !== 'ask-message') return;
+    const c = conversationForThread(threadId);
+    if (!c) return;
+    enqueueChatWork(`${c.platform}:${c.chatId}`, () => chatBridge.reconcile(c));
+  });
 }
 
 const channelHost = createChannelHost({
   logger: (level, msg) => console.error(`[worca-ui] ${msg}`),
   onInbound: (ev) => { enqueueChatWork(`${ev.platform}:${ev.msg.chatId}`, () => handleChatInbound(ev)); },
-  onStatus: (ev) => { try { broadcast({ type: 'channel-status', ...ev }); } catch { /* pre-listen */ } },
+  onInteraction: (ev) => { enqueueChatWork(`${ev.platform}:${ev.evt.chatId}`, () => chatBridge.handleInteraction(ev)); },
+  onStatus: (ev) => {
+    try { broadcast({ type: 'channel-status', ...ev }); } catch { /* pre-listen */ }
+    if (ev.state === 'connected') {
+      try { for (const c of listActiveConversations({ plugin: ev.plugin, channelId: ev.channelId })) enqueueChatWork(`${c.platform}:${c.chatId}`, () => chatBridge.reconcile(c)); }
+      catch (err) { console.error(`[worca-ui] chat reconcile on connect failed: ${err && err.message ? err.message : err}`); }
+    }
+  },
 });
 
 const chatNotifier = createNotifier({
@@ -4799,7 +4990,7 @@ async function refreshSliceBody(prUrl, pid, repoDir) {
   if (!cur.ok || !cur.body.startsWith('Part of ')) return null;
   // The preamble: the "Part of" line, a blank line, the "- Slice" list; it ends at the first blank line after the list.
   const lines = cur.body.split('\n');
-  let end = 1;
+  let end = lines[1]?.startsWith('Satisfies: ') ? 2 : 1;   // the slice's agreed ids, under the "Part of" line
   while (end < lines.length && lines[end] === '') end += 1;
   while (end < lines.length && lines[end].startsWith('- Slice ')) end += 1;
   const fresh = slicePrPreamble(pid);
@@ -4807,6 +4998,7 @@ async function refreshSliceBody(prUrl, pid, repoDir) {
   return editPrBody({ projectDir: repoDir, prUrl, body: [fresh, ...lines.slice(end)].join('\n') });
 }
 const SHIPPING = new Set();     // feature ids with a Ship as in flight (ship_mode is written only at the end)
+const featureShipping = (id) => SHIPPING.has(String(id));   // s3 (D9): the acceptance PUT refuses while one is in flight
 /** One ship flow: a PR a ship opened or marked ready is stored as an open, ready PR at once, so the group page and its
  *  Runs row stop reading Draft (or Ready to ship) before the next PR lookup. persistPrState keeps an old verdict
  *  unless it is given one; a different PR (a closed draft's row taking the one PR) starts from a fresh verdict. */
@@ -4829,6 +5021,9 @@ async function shipFeatureNow(id, mode, { actor = null, release = null, watch = 
     return { status: 409, body: { error: `a round of run ${s ? s.index : '?'} is still going` } };
   }
   if (!view.ship.ready) return { status: 409, body: { error: 'every slice must be done before the feature ships' } };
+  // Shaper requirements s3 (D8): every agreed requirement is marked before any PR, changelog, push or forge call.
+  const unmarked = flagEnabled('shapeRequirements') && acceptanceRefusal(view);
+  if (unmarked) return { status: 409, body: unmarked };
   SHIPPING.add(id);
   try {
     // One ship flow: stacked gives each slice without a PR its own, ready, on its stacked base, in merge order;
@@ -5010,7 +5205,7 @@ async function offerShipCard(pipelineId) {
   const ctx = shipCtxOf(view);
   const release = ctx.error ? null : await releaseVersionHint(ctx.target.repoDir);
   const card = { type: 'ship', featureId: fid, title: view.title, runs: view.total, files: stats.files,
-    added: stats.linesAdded, deleted: stats.linesRemoved, suggested: stats.suggested, release };
+    added: stats.linesAdded, deleted: stats.linesRemoved, suggested: stats.suggested, release, ...(flagEnabled('shapeRequirements') && view.ship.acceptance ? { acceptance: view.ship.acceptance } : {}) };
   const message = askAppendMessage(th.threadId, { role: 'assistant', text: '', status: 'done',
     blocks: [{ kind: 'card', id: newAskId('card'), state: 'proposed', card }] });
   broadcast({ type: 'ask-message', threadId: th.threadId, message });
@@ -5034,7 +5229,7 @@ function syncShipCard(featureId) {
     const view = featureView(featureId, { live: liveSliceOf });
     const th = view && view.ship.result ? featureThread(featureId) : null;
     const found = th ? findShipCardIn(th.threadId, featureId) : null;
-    if (found) flipCard(th.threadId, found.block.id, { state: 'applied', card: { result: view.ship.result } });
+    if (found) flipCard(th.threadId, found.block.id, { state: 'applied', card: { result: view.ship.result, ...(flagEnabled('shapeRequirements') && view.ship.acceptance ? { acceptance: view.ship.acceptance } : {}) } });
   } catch (err) { console.error(`[worca-ui] ship card sync failed: ${err?.message || err}`); }
 }
 
@@ -6384,6 +6579,7 @@ const activeActionSnaps = (runId) => actions.listFor(runId).filter((s) => ['star
  *  agent user, and a server-user shell would undo that). terminalEnabledHere(null) skips its agent-caller part
  *  and keeps only the hosted gate; per-request callers (the status route) add their req checks. */
 const askCommandsEnabled = () => !agentIdentity() && terminalEnabledHere();
+function chatAgentModeFor(threadId, bound = !!conversationForThread(threadId)) { return !bound && askCommandsEnabled(); }
 
 const askCommands = createAskCommands({
   terminals,
@@ -6416,7 +6612,7 @@ async function askCommandTarget(threadId, { runId = null, member = null, project
     if (!m) throw new Error(member ? 'that project is not part of this run' : 'this run has several projects: pass member');
     if (!m.cwd) {
       throw new Error(m.state === 'needs-checkout'
-        ? 'this finished run has no checkout yet: ask the user to check it out (Actions), then try again'
+        ? 'this finished run has no checkout yet: ask the user to open a terminal on it (or check it out in Actions), then try again'
         : (m.reason || 'this run has no folder'));
     }
     return { cwd: m.cwd, scope: 'run', label: `${row.title || row.id} · ${m.projectName}`, runId: row.id, member: m.projectKey,
@@ -6524,7 +6720,7 @@ function ensureSetup(runId, pk, { enabled, rerun = false }) {
 
 function sendCheckoutError(res, e) {
   const map = { NOT_FOUND: 404, BAD_REQUEST: 400, NOT_FINISHED: 409, RETAINED: 409, BRANCH_MISSING: 409,
-    BRANCH_CHECKED_OUT: 409, TARGET_EXISTS: 409, SNAPSHOT_FAILED: 409, TEST_TRY: 409 };
+    BRANCH_CHECKED_OUT: 409, TARGET_EXISTS: 409, SNAPSHOT_FAILED: 409, NOT_AFFECTED: 409, TEST_TRY: 409 };
   res.status(map[e?.code] || 500).json({ error: e?.message || String(e), code: e?.code || 'ERROR',
     ...(e?.holder ? { holder: e.holder, projectKey: e.projectKey || null } : {}) });
 }
@@ -7405,10 +7601,10 @@ function primaryMemberOf(paths) {
  * refuses — mock, an auth env var, or an unknown answer (an older CLI) all pass.
  * Sends the 409 and returns true when it refused.
  */
-async function refuseSignedOutClaude(res) {
+async function refuseSignedOutClaude(res, message = CLAUDE_SIGNED_OUT_MESSAGE) {
   const { state } = await probeClaudeAuth({ bin: configuredClaudeBin(), mock: serverMockMode() });
   if (state !== 'signed-out') return false;
-  res.status(409).json({ code: CLAUDE_SIGNED_OUT_CODE, error: CLAUDE_SIGNED_OUT_MESSAGE });
+  res.status(409).json({ code: CLAUDE_SIGNED_OUT_CODE, error: message });
   return true;
 }
 
@@ -7427,20 +7623,19 @@ function workspacePickUsable(pick, models) {
  *  'workspace' — captured at creation, reused by auto re-scans), else Settings › Runs › Workspaces,
  *  else the defaults (only when a known catalog offers the default) — checked against the primary
  *  member's catalog. Throws on a bad explicit pick (400) or when no model is available (D19).
- *  A RE-SCAN of a workspace with no usable stored pick — every legacy pre-v57 workspace, or one
- *  whose model left the catalog — is NOT silently resolved: scanModelsFor returns the marker
- *  { needsModel: true, models: <PRIMARY_CATALOG> } and the caller asks the user to pick a model
- *  (D20). An explicit body.models always wins (the prompted client sends one; API/CLI callers can
+ *  A RE-SCAN with no usable stored pick (legacy, created pick-less, or its model left the catalog) runs
+ *  silently only when the Everyday coding role covers it; else the marker { needsModel: true, models }
+ *  asks the user (D20). An explicit body.models always wins (the prompted client sends one; API/CLI callers can
  *  still force a pick). */
 async function scanModelsFor(body, projectPaths, workspace = null) {
   const models = await listModels(primaryMemberOf(projectPaths));
-  if (workspace && !(body && body.models) && !workspacePickUsable(workspace.scanModels, models)) {
+  if (workspace && !(body && body.models) && !workspacePickUsable(workspace.scanModels, models) && !workspacePickUsable(withScanRole(null, WORKSPACE_SCAN_DEFAULT_MODELS), models)) {
     return { needsModel: true, models };
   }
   return resolveScanModels({
     explicit: body && body.models,
-    // Model roles (D3): with no stored pick, the quick role is the scan model.
-    stored: withScanRole(workspaceScanModels(), WORKSPACE_SCAN_DEFAULT_MODELS),
+    // Model roles (D3): with no stored pick, the Everyday coding role is the scan model.
+    stored: withScanRole(workspaceScanModels(), WORKSPACE_SCAN_DEFAULT_MODELS), storedSource: workspaceScanModels() ? 'settings' : 'role',
     workspacePick: workspace && workspace.scanModels ? workspace.scanModels : null,
     models,
   });
@@ -7571,8 +7766,7 @@ async function askPrCardFacts(row) {
     : parse(row.branch) || {};
   let summary = null;
   try {
-    const dir = await runDirForRow(row);
-    const res = dir ? JSON.parse(await fsp.readFile(path.join(dir, 'results.json'), 'utf8')) : null;
+    const res = await readRunResultsForRow(row);
     summary = res && res.summary && typeof res.summary === 'object' ? res.summary : null;
     // P5: a workspace run's Folder members ship in no pull request (their changes wait for Apply): count the Git members only
     const folder = isWs ? new Set(((parse(row.workspace_meta) || {}).projects || []).filter((p) => p && p.workMode === 'folder').map((p) => p.projectKey)) : null;
@@ -7866,7 +8060,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
   const hasNamingModelKey = has('namingModel');
   const namingModels = hasNamingModelKey ? (autoModels || defragModels || agentGenModels || await listModels('')) : null;
   const hasCommandSummaryModelKey = has('commandSummaryModel');
-  const csModels = hasCommandSummaryModelKey ? (autoModels || defragModels || agentGenModels || namingModels || await listModels('')) : null;
+  const csModels = hasCommandSummaryModelKey ? (autoModels || defragModels || agentGenModels || namingModels || await listModels('')) : null; const secondOpinionModels = has('secondOpinionModel') ? (autoModels || defragModels || agentGenModels || namingModels || csModels || await listModels('')) : null;
   const hasWorkspaceScanKey = has('workspaceScan');
   const hasRunEngineKey = has('runEngine');
   const hasStepModelsKey = has('stepModels');
@@ -7901,7 +8095,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
   if (has('askMaxTurns')) ask.askMaxTurns = body.askMaxTurns ?? '';
   if (has('askMaxBudgetUsd')) ask.askMaxBudgetUsd = body.askMaxBudgetUsd === undefined ? '' : body.askMaxBudgetUsd;
   {   // was the route's try: a refusal now reaches the caller (the route maps it to 400, the chat to a notice)
-    for (const key of ['titleModel', 'autoWorkflowModel', 'prDescriptionModel', 'memoryDefrag', 'agentGenModel', 'namingModel', 'commandSummaryModel', 'workspaceScan', ...(hasRequirementsInterviewKey ? ['requirementsInterview'] : [])]) {
+    for (const key of ['titleModel', 'autoWorkflowModel', 'prDescriptionModel', 'memoryDefrag', 'agentGenModel', 'namingModel', 'commandSummaryModel', 'secondOpinionModel', 'workspaceScan', ...(hasRequirementsInterviewKey ? ['requirementsInterview'] : [])]) {
       if (has(key)) asSettingsField(key, () => refuseNonClaudeUtilityModel(key, body[key]));
     }
     // Each validator / setter that can refuse a value runs tagged with the body key it checks,
@@ -7941,7 +8135,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     if (hasMemoryDefragKey) asSettingsField('memoryDefrag', () => assertMemoryDefragModelInput(body.memoryDefrag, defragModels));
     if (hasAgentGenKey) asSettingsField('agentGenModel', () => assertAgentGenModelInput(body.agentGenModel, agentGenModels));
     if (hasNamingModelKey) asSettingsField('namingModel', () => assertNamingModelInput(body.namingModel, namingModels));
-    if (hasCommandSummaryModelKey) asSettingsField('commandSummaryModel', () => assertCommandSummaryModelInput(body.commandSummaryModel, csModels));
+    if (hasCommandSummaryModelKey) asSettingsField('commandSummaryModel', () => assertCommandSummaryModelInput(body.commandSummaryModel, csModels)); if (secondOpinionModels) asSettingsField('secondOpinionModel', () => assertSecondOpinionModelInput(body.secondOpinionModel, secondOpinionModels));
     if (hasWorkspaceScanKey) asSettingsField('workspaceScan', () => assertWorkspaceScanInput(body.workspaceScan, wsScanModels));
     if (hasRunEngineKey) asSettingsField('runEngine', () => assertRunEngineInput(body.runEngine));
     if (hasAskEngineKey) asSettingsField('askEngine', () => assertAskEngineInput(body.askEngine));
@@ -8026,7 +8220,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     if (hasMemoryDefragKey) await setMemoryDefragModel(body.memoryDefrag, { models: defragModels });
     if (hasAgentGenKey) await setAgentGenModel(body.agentGenModel, { models: agentGenModels });
     if (hasNamingModelKey) await setNamingModel(body.namingModel, { models: namingModels });
-    if (hasCommandSummaryModelKey) await setCommandSummaryModel(body.commandSummaryModel, { models: csModels });
+    if (hasCommandSummaryModelKey) await setCommandSummaryModel(body.commandSummaryModel, { models: csModels }); if (secondOpinionModels) await setSecondOpinionModel(body.secondOpinionModel, { models: secondOpinionModels });
     if (hasWorkspaceScanKey) await setWorkspaceScanModels(body.workspaceScan, { models: wsScanModels });
     if (hasRunEngineKey) await asSettingsField('runEngine', () => setRunEngineSetting(body.runEngine));
     if (hasStepModelsKey) await asSettingsField('stepModels', () => setStepModels(body.stepModels));
@@ -8050,7 +8244,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     // Other open tabs repaint their Settings cards (a stale tab could otherwise
     // "save" its old checkbox state over this one with no feedback to either).
     if (hasSmartNaming || hasNamingModelKey) cachedPick = undefined;
-    if (hasAskKey || hasAskWeb || hasSmartNaming || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasUiLevelKey || hasAutoKey || hasPrDescKey || hasAutoPrDescKey || hasHumanRateKey || hasMemoryDefragKey || hasAgentGenKey || hasNamingModelKey || hasCommandSummaryModelKey || hasWorkspaceScanKey || has('schedule') || has('sync') || has('tagDimensions') || has('enforceTags') || has('chat') || hasAskEngineKey || hasAskModelsKey || hasRequirementsInterviewKey || hasNetworkWaitKey || hasRunLimitsKey || hasActionsKey || hasNightKey || hasRunEngineKey || hasStepModelsKey || hasModelRolesKey || hasUtilityModelsKey || hasUpdateCheckKey || hasKeepAwakeKey) emitChanged('settings-changed');
+    if (hasAskKey || hasAskWeb || hasSmartNaming || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasUiLevelKey || hasAutoKey || hasPrDescKey || hasAutoPrDescKey || hasHumanRateKey || hasMemoryDefragKey || hasAgentGenKey || hasNamingModelKey || hasCommandSummaryModelKey || secondOpinionModels || hasWorkspaceScanKey || has('schedule') || has('sync') || has('tagDimensions') || has('enforceTags') || has('chat') || hasAskEngineKey || hasAskModelsKey || hasRequirementsInterviewKey || hasNetworkWaitKey || hasRunLimitsKey || hasActionsKey || hasNightKey || hasRunEngineKey || hasStepModelsKey || hasModelRolesKey || hasUtilityModelsKey || hasUpdateCheckKey || hasKeepAwakeKey) emitChanged('settings-changed');
     // Editor / Terminal: saved as typed; a program Worca cannot find comes back as a warning on its field.
     const actionsWarnings = hasActionsKey ? Object.fromEntries(['editor', 'terminal']
       .map((k) => [k, launcherWarning(actionsSettings()[k], { findOnPath: (n) => findOnPath(n) })]).filter(([, w]) => w)) : null;
@@ -8281,6 +8475,10 @@ const askDeleting = new Set();
 const askFollowers = new Map(); // threadId -> Set<{detach}>
 const ASK_JOB_MAX_BUFFER = 5000; // same arithmetic as MAX_BUFFER: deltas dominate; eviction ⇒ client seq-gap re-sync
 const askDeferred = new Map();  // threadId → Array<() => Promise>: workflow-card event turns that arrived while a turn was running (PD5/PD26), FIFO
+// Freeform chat receipts: what a question answer's QUEUED follow-up became, by card id — {assistantMessageId} or
+// {error} — taken once by the chat bridge (deps.ask.takeDeferredReply). Bounded: a browser answer is never taken.
+const askDeferredReplies = new Map();
+const ASK_DEFERRED_REPLIES_MAX = 200;
 
 /** A `role:'system'` notice row + its broadcast — the shape attachAskFollower posts. */
 function postAskSystemNotice(threadId, text) {
@@ -8568,10 +8766,10 @@ function askWebAccessFor(threadId, ctx) {
  *  (`edits`) — with the runtimes this host actually has (the python probe, cached 60 s); plus the web section when `web`
  *  (askWebAccess() for this turn) is on, and the MCP servers section when the turn has registry copies (`mcp`,
  *  askMcpPromptInput()). Memory is mounted, not rendered. */
-async function askSystemPromptFor(catalog, { web = null, mcp = null, commands = false, engine = 'claude' } = {}) {
+async function askSystemPromptFor(catalog, { web = null, mcp = null, commands = false, engine = 'claude', chat = null } = {}) {
   const scripts = { ...(await askScriptPromptInput({ enabled: true })), edits: scriptToolsEnabled() };
   return askBuildSystemPrompt(catalog, { scripts, deployment: DEPLOYMENT, web, mcp, commands, git: gitAvailable(),
-    ...(engine !== 'claude' ? { engine } : {}), shape: true });
+    ...(engine !== 'claude' ? { engine } : {}), shape: true, ...(chat ? { chat } : {}) });
 }
 
 /** The Workflows chat's system prompt (D10): composer rules + catalog + scripts/web — no MCP, no commands, no hosting rule. */
@@ -8848,7 +9046,58 @@ async function askEventPick(threadId, thread) {
   return mv;
 }
 
-async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, files = [], synthetic = null, signedIn = null, reader = null, mcpOff = undefined, agentMode = undefined, client = null }) {
+/** Gate 1 of a user message (POST …/messages and the chat bridge): the credential broker keeps Claude keys only, so
+ *  a chat locked to another engine would spend that engine's own sign-in, shared by everyone and readable by the
+ *  agent. → null | {status, error, code}. */
+function askChatEngineGate(id, thread) {
+  const chatEngine = askChatEngine(id, thread);
+  const refusal = brokerEngineRefusal(chatEngine);
+  return refusal ? { status: 409, error: `This chat runs on ${engineLabel(chatEngine)}: ${refusal}. Switch it to Claude from the Chat model picker.`, code: 'engine-broker' } : null;
+}
+
+/** Gate 2 of a user message: the sender's own provider key for `model` (multi-person broker), never in mock mode.
+ *  → Promise<null | {status, error, code}>. */
+async function askCredentialGate(req, model) {
+  if (mockEnabled({})) return null;
+  const refusal = await brokerStartRefusal(req, [String(model)]);
+  return refusal ? { status: 409, error: refusal, code: 'credential-missing' } : null;
+}
+
+/** The request a bound chat identity ACTS as (D2): resolveIdentity reads worcaUser.email first (identity.mjs:24),
+ *  so actorOf (card actions) and brokerStartRefusal (the bill-to: multi-person broker mode is a shared deployment)
+ *  see the operator-mapped worca identity. Never use it for what a turn SEES: that is chatTurnIdentity. */
+function chatActorReq(identity) {
+  return { headers: {}, worcaUser: { email: identity, provider: 'chat' } };
+}
+
+/** signedIn/reader for a chat-bridge turn (cycle-3 review M1): exactly what the browser on THIS deployment passes
+ *  on the send route. A shared deployment (askSharedOwner: a verified sign-in or a trusted identity header, and a
+ *  non-local owner) → the mapped identity, as that person's browser would carry it. A local or operator install →
+ *  a bare request, as the browser there: askViewer null (presets with owner null stay visible, no "me" filters),
+ *  askSignedIn the operator name (WORCA_IDENTITY_NAME) or null. */
+function chatTurnIdentity(thread, identity) {
+  const req = askSharedOwner(thread) ? chatActorReq(identity) : { headers: {} };
+  return { signedIn: askSignedIn(req), reader: askViewer(req) };
+}
+
+/**
+ * The ONE turn starter (spec §8.4): the typed-message route and the workflow-card event path both land here.
+ * SYNCHRONOUS until the first write — the §6.2.2 guards + the slot reservation run before any await, so two callers
+ * cannot interleave (the route's earlier checks are only the fast-path 4xx). Resolves {ok:false,status,error} for the
+ * 403/409/429 cases the message route maps to HTTP; {ok:true,…} once the turn is running.
+ * @param {{threadId:string, thread:object, ctx:object, model:string, effort:string, text:string,
+ *          files?:Array, synthetic?:{notice:string, quiet?:boolean}|null}} o
+ *   text      what the MODEL gets as the user message: the typed text, or the `[worca event] …` line (synthetic)
+ *   synthetic the user row renders as a notice (never a bubble) and never titles the thread (PD6); quiet: the
+ *             transcript shows nothing for it — the divider or the answered card already says it
+ */
+/** The identity Ask Worca's header shows: resolved like every other attribution, absent for 'local'. */
+function askSignedIn(req) {
+  const who = resolveIdentity(req);
+  return who.source === 'local' ? null : who.name;
+}
+
+async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, files = [], synthetic = null, signedIn = null, reader = null, mcpOff = undefined, agentMode = undefined, client = null, onUserRow = null, chatContext = null }) {
   // §6.2.2 ATOMIC re-check + slot reservation. Today every await between the
   // top 409/429 pair and here resolves in microtasks (validateModelEffort ->
   // composeCatalog; askBuildCatalog -> three synchronous better-sqlite3
@@ -8875,6 +9124,9 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
   if (askRunningCount() >= ASK_LIMITS.turnsGlobal) {
     return { ok: false, status: 429, error: `at most ${ASK_LIMITS.turnsGlobal} turns may run at once` };
   }
+  // Freeform chat: a thread mirrored to a chat app (its platform names what that thread can act on, in the prompt).
+  const chatConv = conversationForThread(id);
+  const chatBound = !!chatConv;
   const prev = askJobs.get(id);
   if (prev && prev.graceTimer) clearTimeout(prev.graceTimer); // atomic replace of a grace entry (§8.3)
   const job = {
@@ -8911,14 +9163,26 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
       ? { role: 'user', text, blocks: [{ kind: 'notice', synthetic: true, ...(synthetic.quiet ? { quiet: true } : {}), text: synthetic.notice }] }
       : { role: 'user', text, ...(whereBlocks.length ? { blocks: whereBlocks } : {}) });
     job.userMessageId = userMsg.id;
+    // Freeform chat (M4): the caller records where this row came from BEFORE any listener can see it — the broadcast
+    // below wakes the chat bridge's reconciler on another queue, and enqueueChatWork runs an idle queue on the next
+    // microtask. Synchronous; a hook failure never fails the turn.
+    if (typeof onUserRow === 'function') {
+      try { onUserRow(userMsg); } catch (e) { console.error(`[worca-ui] onUserRow failed: ${e && e.message ? e.message : e}`); }
+    }
     const attRows = files.map((f) => askAddAttachment(id, userMsg.id, { name: f.name, kind: f.kind, mime: f.mime, text: f.text, data: f.data }));
+    // Freeform chat (discord-chat 0.4.0): the quoted reply / history and the files left out ride the row as ONE block,
+    // apart from the person's words (the title, the restored prompt and the engine-switch handoff read `text` only).
+    const chatBlock = chatContext ? chatContextBlock(chatContext.inbound, {
+      saved: attRows.map((a, i) => ({ id: a.id, name: a.name, source: files[i].source || null })).filter((x) => x.source),
+      skipped: chatContext.skipped || [] }) : null;
+    const chatPlatform = chatContext ? String(chatContext.inbound.platform || 'chat') : null;
     // The decoded binary bodies are on disk now. `files` is captured by this
     // scope's closures (settleJob, the turn listeners, onOutOfTurn) for the whole
     // turn plus jobGraceMs, so up to 100 MB of dead Buffers would otherwise stay
     // reachable per running thread.
     for (const f of files) f.data = null;
     echoAttachments = attRows.map((a) => ({ id: a.id, name: a.name, bytes: a.bytes, kind: a.kind, mime: a.mime }));
-    if (attRows.length) {
+    if (attRows.length || chatBlock) {
       // `kind` is the BLOCK kind, so the attachment's own kind rides as attKind
       // (the UI keys image thumbnails off it, #398).
       // P3: keep the synthetic notice in front of the attachment blocks (unreachable today — event turns pass no files — but
@@ -8926,7 +9190,10 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
       askSetMessageBlocks(userMsg.id, [
         ...(synthetic ? [{ kind: 'notice', synthetic: true, ...(synthetic.quiet ? { quiet: true } : {}), text: synthetic.notice }] : []),
         ...whereBlocks,
-        ...attRows.map((a) => ({ kind: 'attachment', id: a.id, name: a.name, bytes: a.bytes, attKind: a.kind, mime: a.mime })),
+        ...(chatBlock ? [chatBlock] : []),
+        // A chat file keeps where it came from: the platform, which message (its own, the reply, history) and its link.
+        ...attRows.map((a, i) => ({ kind: 'attachment', id: a.id, name: a.name, bytes: a.bytes, attKind: a.kind, mime: a.mime,
+          ...(files[i].source ? { origin: { platform: chatPlatform, from: files[i].source.from, link: files[i].source.link ?? null } } : {}) })),
       ]);
     }
     broadcast({ type: 'ask-message', threadId: id, message: askGetMessage(userMsg.id) }); // echo for other tabs
@@ -8937,7 +9204,12 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
     // resolves the project FIRST so the turn can mount its memory (native rules).
     const catalog = await askBuildCatalog();
     const withText = attRows.map((a, i) => ({ id: a.id, name: a.name, bytes: a.bytes, kind: a.kind, mime: a.mime, text: files[i].text }));
-    const { inline, listed } = askSelectInlineAttachments(withText);
+    // A quoted message's text file is never inlined like the person's own upload: it is listed (read_attachment), and the
+    // chat-context block names it as untrusted.
+    const quotedIds = new Set(attRows.filter((a, i) => files[i].quoted === true).map((a) => a.id));
+    const ownSel = askSelectInlineAttachments(withText.filter((a) => !quotedIds.has(a.id)));
+    const inline = ownSel.inline;
+    const listed = [...ownSel.listed, ...withText.filter((a) => quotedIds.has(a.id))];
     const headerCtx = await resolveAskContext(id, ctx, listed, userMsg.id, { signedIn });
     // Browser extension (docs/browser-extension.md): server-stamped from the request's token, never client-supplied —
     // the header tells the model the page attachments (context, text, quote) are untrusted web content.
@@ -8963,17 +9235,19 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
     const skills = composerMode ? { result: null } : await resolveAskSkills({ ctx, threadId: id, off: mcpOff !== undefined ? mcpOff : thread.mcpOff });
     // Agent mode (#574; worca Chat R5): an Ask chat is ALWAYS in agent mode where the host allows commands at all.
     // The thread's agentMode column and a message's agentMode are still validated and stored — never read here.
-    const agentOn = !composerMode && askCommandsEnabled();
+    const agentOn = !composerMode && chatAgentModeFor(id, chatBound);
     const systemPrompt = composerMode
       ? await askComposerSystemPromptFor(catalog, { web, engine })
-      : await askSystemPromptFor(catalog, { web, mcp: await askMcpPromptInput(mcp), commands: agentOn, engine });
+      : await askSystemPromptFor(catalog, { web, mcp: await askMcpPromptInput(mcp), commands: agentOn, engine,
+        chat: chatConv ? { platform: chatConv.platform } : null });
     // Shared terminal: what the user ran in this chat's Ask tabs since its last user turn (their commands never wake
     // the chat; an event turn leaves them for the next user turn).
-    if (!synthetic && askCommandsEnabled()) headerCtx.personCommands = askCommands.takePersonCommands(id);
+    if (!synthetic && !chatBound && askCommandsEnabled()) headerCtx.personCommands = askCommands.takePersonCommands(id);
     const header = askBuildContextHeader(headerCtx);
     // The open canvas rides the composer chat's turn prompt (never the 1 KB context header, which clips).
     const composerBlock = composerMode ? await composerPromptBlock(askGetThread(id)) : '';
-    const prompt = askBuildTurnPrompt(composerBlock ? `${header}\n\n${composerBlock}` : header, text, inline);
+    const prompt = askBuildTurnPrompt(composerBlock ? `${header}\n\n${composerBlock}` : header, text, inline,
+      chatBlock ? askRenderChatContextPrompt(chatBlock) : '');
     const prior = askListMessages(id).filter((m) => m.seq < userMsg.seq);
     const restoredPrompt = askBuildRestoredPrompt(prior, prompt);
     // #943: no provider session but replies already — the first turn after an engine switch, or after a failed resume
@@ -9173,7 +9447,7 @@ function askGroupFor(req, res) {
 const factDeps = { readPrState, findPipelineRowById, readRunTags, readRunLabels, featureView: (fid) => featureView(fid, { live: liveSliceOf }) };
 /** Shaper (ordinary stays ordinary, D6): propose_changes / route_message, applied in the parent. Re-checked NOW with the
  *  live runs overlay (an open step the classic MCP child cannot see, D7); a refusal is a notice in the reply. */
-const shapeToolFactDeps = { live: (id) => liveSliceOf(id), readPrState, findPipelineRowById, readRunTags, readRunLabels };
+const shapeToolFactDeps = { live: (id) => liveSliceOf(id), readPrState, findPipelineRowById, readRunTags, readRunLabels, requirementsOn: () => flagEnabled('shapeRequirements') };
 function askShapeAction(req, threadId) {
   if (!threadId) return { ok: false, notice: 'Not applied: no chat to post to' };
   let r;
@@ -9280,7 +9554,7 @@ async function startMetricsEventTurn(threadId, block) {
 /** P4 (CONTRACT §4): switch the chat (when `scope` is given) and start the event turn that continues the user's
  *  message — or queue both while a reply runs (PD5/PD26), so the scope never changes under a running turn. The
  *  switch and the turn's reservation have no I/O between them. P2's create card uses it too (U7). */
-async function startScopeEventTurn(threadId, { scope = null, text, notice }) {
+async function startScopeEventTurn(threadId, { scope = null, text, notice, onDeferredStart = null }) {
   const thread = askGetThread(threadId);
   if (!thread) return null;
   const mv = await askEventPick(threadId, thread);
@@ -9297,7 +9571,14 @@ async function startScopeEventTurn(threadId, { scope = null, text, notice }) {
   };
   if (askInFlight(threadId)) {
     if (!askDeferred.has(threadId)) askDeferred.set(threadId, []);
-    askDeferred.get(threadId).push(start);
+    // A caller that must know what its queued turn became (a chat answer's receipt) hears it when the drain runs it.
+    const run = onDeferredStart ? async () => {
+      let r;
+      try { r = await start(); } catch (e) { r = { ok: false, error: e && e.message ? e.message : String(e) }; }
+      try { onDeferredStart(r); } catch { /* an observer never stops the drain */ }
+      return r;
+    } : start;
+    askDeferred.get(threadId).push(run);
     return { deferred: true };
   }
   const r = await start();
@@ -9819,6 +10100,7 @@ export async function bootMaintenance({ log } = {}) {
     summary.terminal = { orphans: 0, interrupted: 0, removed: 0, evicted: 0 };
     console.error(`[worca-ui] terminal boot maintenance failed: ${err?.message || err}`);
   }
+  summary.agentGroups = await reapAgentGroupsAtBoot({ home: worcaHome });   // #1144: agents a SIGKILLed server/CLI left running
 
   // Actions (issue #529): reap orphaned action processes, mark interrupted setups, release
   // until-pr checkouts whose PR closed (D11) and apply the checkout cap (D12).
@@ -10153,6 +10435,8 @@ if (isMain) {
     try { channelHost.start(); } catch (err) {
       console.error(`[worca-ui] chat channel host failed to start: ${err && err.message ? err.message : err}`);
     }
+    try { for (const c of listActiveConversations()) { watchChatThread(c.askThreadId); enqueueChatWork(`${c.platform}:${c.chatId}`, () => chatBridge.reconcile(c)); } }
+    catch (err) { console.error(`[worca-ui] chat reconcile at boot failed: ${err && err.message ? err.message : err}`); }
     try { startTeamMetricsBackground({ log: (m) => console.warn(m) }); }
     catch (err) { console.warn(`[worca-ui] team metrics background: ${err?.message || err}`); }
     try {
@@ -10214,10 +10498,13 @@ if (isMain) {
 }
 
 export { app, server, runs };
-export { AGENTS_DIR, APP_INFO, APP_REPO_URL, ASK_SCOPE_BUSY, ASK_TEXT_PREVIEW_MAX, BRANCH_SETTLED, BUGS_SLUG, CLONE_JOBS, HOST, MARKETPLACE_ID_RE, MARKET_JOBS, NO_PR_HOST, PKG_VERSION, PLAN_TEXT_MAX, PLUGIN_NAME_RE, PORT, PROJECT_ROOT, PR_TITLE_MAX, REMOTE_MODE, RUNNING_VERSION, ResumeError, SETTLED_RUN, SETUP_AGENT_TEXT, SETUP_JOBS, SKILLS_DIR, SKILL_FOLDER_IMPORTS, SKILL_MD_UNREACHABLE, STORE_ERROR_CODES, actions, actionsEnabledHere, activeActionSnaps, adoWebhookSecret, afterMembersChanged, afterProjectRegistered, agentErrorStatus, agentMayBeCaller, answerRun, applyProjectSettingsPatch, applySettingsPatch, askBusyReason, askChatActions, askChatEngine, askCommandBridges, askCommands, askCommandsEnabled, askContextTokens, askDeferred, askDeleting, askEngineSwitchText, askEventPick, askFilesRunDir, askFilesStoreDir, askFollowers, askGroupFor, askGroupThreads, askIdParam, askInFlight, askLiveRun, askProxyBridges, askRefResolver, askRelays, askRunFromPipelineRow, askRunningCount, askSwitchTranscript, askThreadVisible, askTrackingCount, askTurnEngine, askValidateScope, askViewer, askWebAccessFor, askWorktreesEnvelope, autoDetectedBuiltins, automationWorkspaceMembers, automations, awayPersonOf, badRequest, bareWorkspaceKey, bearerMatches, broadcast, broadcastFeature, brokerStartRefusal, builtins, busyActionRunIds, channelHost, chatGroupError, chatNotifier, chatRefusals, checkoutRecOf, commentIdParam, commentsCreate, commentsDelete, commentsFail, commentsList, commentsPatch, commentsReply, createRunPr, crosslinkMemberPrs, currentUpdateEligibility, defaultPrRemotes, deleteAskThreadFully, detectSystemProxyImpl, detectTeamMemorySoon, drainServer, effectiveUiLevel, egressNow, emitAskWorktrees, emitChanged, emitMemoryChanged, emitPluginsChanged, ensureSetup, extensionPairing, factDeps, failedEventTurn, findScheduleItem, flipCard, followCloneCard, forkPrRefusal, fsAllowedRoots, fsLimitedHere, gitMissing, invokeStartRun, isFinishingRun, isFreshInstall, isLiveRun, isPlainObject, isPrStoreKey, isTruthy, kickAutomations, kickPrWatch, labelsOn, lastUpdateResult, liveAutoRescan, liveDefragRun, liveDiffOf, livePr, liveProbe, liveRunEntry, liveRunIds, liveSliceOf, marketJobFailure, mcpRunPreview, mcpTargetOf, memberFor, memoryError, modelTestsInFlight, namingBucket, namingCatalog, namingOn, namingPick, noRawCommand, notifReader, openMemberPr, ownsWorkspaceTarget, parseMcpOptOut, pauseRun, pickPrRemotes, pinUiLevel, postAskSystemNotice, postDirection, prTargetFor, prWatchFrame, prWatcher, presetCheckCtx, presetScopeOf, primaryMemberOf, projectAutomationRepo, projectDirForKey, projectSettingsState, proxyHost, pruneMarketJobs, prunedNote, publicCloneJob, readInstalledManifest, refuseAgentCaller, refuseSignedOutClaude, registeredProjectForDir, rejectRawTerminalFields, removeRecommendation, requireActions, requireFsAllowed, requireTerminal, resolvePending, resolvePrPipeline, resolveProjectDir, resolveRunScope, resumeEngineOpts, resumeRun, resumeTargetDirs, runGroupIds, runSourceIssue, scanModelsFor, scanRequest, scheduleVerb, sendArtifactRaw, sendCheckoutError, sendMetricsError, sendPolicyError, sendPresetError, serveAskFile, serverMockMode, settleShipped, setupJobs, setupProbesOverride, shipChainNow, shipCtxOf, shipFeatureNow, skillRunPreview, snapshotFor, sockets, stackStates, stackTokens, startAgentGen, startAskTurn, startCloneJob, startMetricsEventTurn, startOrQueue, startRunAs, startRunHandler, startScopeEventTurn, startScriptBench, stopCheckoutServices, stopMemberServices, stopPausedPipeline, stopRun, switchThreadScope, syncMode, syncProjectAction, syncRoute, teamOriginOk, teamWarn, terminalCallerOk, terminalEnabledHere, terminalError, terminalSameOrigin, terminals, tmProject, uiControl, unsyncableBlock, updateChecker, updatePort, updatePreview, validateResumeTarget, versionLister, versionPayload, webhookSecret, withAfter, workspaceMembersBusy };
+export { AGENTS_DIR, APP_INFO, APP_REPO_URL, ASK_DEFERRED_REPLIES_MAX, ASK_SCOPE_BUSY, ASK_TEXT_PREVIEW_MAX, BRANCH_SETTLED, BUGS_SLUG, CLONE_JOBS, HOST, MARKETPLACE_ID_RE, MARKET_JOBS, NO_PR_HOST, PKG_VERSION, PLAN_TEXT_MAX, PLUGIN_NAME_RE, PORT, PROJECT_ROOT, PR_TITLE_MAX, REMOTE_MODE, RUNNING_VERSION, ResumeError, SETTLED_RUN, SETUP_AGENT_TEXT, SETUP_JOBS, SKILLS_DIR, SKILL_FOLDER_IMPORTS, SKILL_MD_UNREACHABLE, STORE_ERROR_CODES, actions, actionsEnabledHere, activeActionSnaps, adoWebhookSecret, afterMembersChanged, afterProjectRegistered, agentErrorStatus, agentMayBeCaller, answerRun, applyProjectSettingsPatch, applySettingsPatch, askBusyReason, askChatActions, askChatEngine, askChatEngineGate, askCommandBridges, askCommands, askCommandsEnabled, askContextTokens, askCredentialGate, askDeferred, askDeferredReplies, askDeleting, askEngineSwitchText, askEventPick, askFilesRunDir, askFilesStoreDir, askFollowers, askGroupFor, askGroupThreads, askIdParam, askInFlight, askLiveRun, askProxyBridges, askRefResolver, askRelays, askRunFromPipelineRow, askRunningCount, askSignedIn, askSwitchTranscript, askThreadVisible, askTrackingCount, askTurnEngine, askValidateScope, askViewer, askWebAccessFor, askWorktreesEnvelope, autoDetectedBuiltins, automationWorkspaceMembers, automations, awayPersonOf, badRequest, bareWorkspaceKey, bearerMatches, broadcast, broadcastFeature, brokerStartRefusal, builtins, busyActionRunIds, channelHost, chatGroupError, chatNotifier, chatRefusals, checkoutRecOf, commentIdParam, commentsCreate, commentsDelete, commentsFail, commentsList, commentsPatch, commentsReply, createRunPr, crosslinkMemberPrs, currentUpdateEligibility, defaultPrRemotes, deleteAskThreadFully, detectSystemProxyImpl, detectTeamMemorySoon, drainServer, effectiveUiLevel, egressNow, emitAskWorktrees, emitChanged, emitMemoryChanged, emitPluginsChanged, ensureSetup, extensionPairing, factDeps, failedEventTurn, featureShipping, findScheduleItem, findShipCardIn, flipCard, followCloneCard, forkPrRefusal, fsAllowedRoots, fsLimitedHere, gitMissing, invokeStartRun, isFinishingRun, isFreshInstall, isLiveRun, isPlainObject, isPrStoreKey, isTruthy, kickAutomations, kickPrWatch, labelsOn, lastUpdateResult, liveAutoRescan, liveDefragRun, liveDiffOf, livePr, liveProbe, liveRunEntry, liveRunIds, liveSliceOf, marketJobFailure, mcpRunPreview, mcpTargetOf, memberFor, memoryError, modelTestsInFlight, namingBucket, namingCatalog, namingOn, namingPick, noRawCommand, notifReader, openMemberPr, ownsWorkspaceTarget, parseMcpOptOut, pauseRun, pickPrRemotes, pinUiLevel, postAskSystemNotice, postDirection, prTargetFor, prWatchFrame, prWatcher, presetCheckCtx, presetScopeOf, primaryMemberOf, projectAutomationRepo, projectDirForKey, projectSettingsState, proxyHost, pruneMarketJobs, prunedNote, publicCloneJob, readInstalledManifest, refuseAgentCaller, refuseSignedOutClaude, registeredProjectForDir, rejectRawTerminalFields, removeRecommendation, requireActions, requireFsAllowed, requireTerminal, resolvePending, resolvePrPipeline, resolveProjectDir, resolveRunScope, resumeEngineOpts, resumeRun, resumeTargetDirs, runGroupIds, runSourceIssue, scanModelsFor, scanRequest, scheduleVerb, sendArtifactRaw, sendCheckoutError, sendMetricsError, sendPolicyError, sendPresetError, serveAskFile, serverMockMode, settleShipped, setupJobs, setupProbesOverride, shipChainNow, shipCtxOf, shipFeatureNow, skillRunPreview, snapshotFor, sockets, stackStates, stackTokens, startAgentGen, startAskTurn, startCloneJob, startMetricsEventTurn, startOrQueue, startRunAs, startRunHandler, startScopeEventTurn, startScriptBench, stopCheckoutServices, stopMemberServices, stopPausedPipeline, stopRun, switchThreadScope, syncMode, syncProjectAction, syncRoute, teamOriginOk, teamWarn, terminalCallerOk, terminalEnabledHere, terminalError, terminalSameOrigin, terminals, tmProject, uiControl, unsyncableBlock, updateChecker, updatePort, updatePreview, validateResumeTarget, versionLister, versionPayload, webhookSecret, withAfter, workspaceMembersBusy };
 export const _testing = {
+  chatBridge, invokeAskCard, askBus, chatAgentModeFor, chatTurnIdentity,
   settleStaleParkedEntries,
   updateChecker,
+  // Chat context: tests never reach a CDN (null = the real fetch again).
+  setChatFileFetch: (fn) => { chatFileFetch = typeof fn === 'function' ? fn : defaultChatFileFetch; },
   // The startEgressPolicy() result the /api/proxy routes read, or a startLiveEgress() that also applies saves.
   setEgress: (e) => { EGRESS = e; },
   setLiveEgress: (l) => { EGRESS_LIVE = l; },

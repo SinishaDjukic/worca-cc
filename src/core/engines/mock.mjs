@@ -9,6 +9,8 @@ import { dirname, join } from 'node:path';
 import { mockShapeFor } from '../auto/recipes.mjs';
 import { normalizeShape } from '../../shared/graph/assemble.mjs';
 import { extractChecklist } from '../../shared/shape/checklist.mjs';
+import { criteriaList } from '../../shared/review/coverage.mjs';
+import { uncoveredTitle } from '../../shared/review/requirements-coverage.mjs';
 import { extractText, extractResultCost } from './claude.mjs';
 import { writeMockSurvey, writeMockUsage, writeMockSynthesis } from '../workspace-scan-mock.mjs';
 import { safeEmit } from './spawn.mjs';
@@ -105,6 +107,7 @@ export const MOCK_WRITER_ROLES = new Set([
   'workspace-scan', 'agent-gen', 'workspace-reviewer', 'manual-tests-checklist', 'manual-web-ui-testing', 'memory-defrag',
   'generic-producer', 'generic-verifier', 'deck-builder', 'deck-audit', 'deck-export',
   'workspace-usage', 'workspace-synth', 'c4-architect',
+  'requirements-draft', 'requirements-review', 'requirements-refine',
 ]);
 
 /** Named so the executor's mock-role chain and the switch cannot drift apart. */
@@ -194,6 +197,9 @@ const COMPOSER_CANVAS_BLOCK_RE = /\[composer canvas\][\s\S]*?\[\/composer canvas
 // #943: the transcript a fresh session gets after an engine switch (ask/prompt.mjs buildHandoffPrompt) leads the
 // prompt; the mock answers the turn's own message, so it skips the transcript and its fence.
 const ASK_HANDOFF_BLOCK_RE = /^Conversation so far in this chat\.[^\n]*\n(`{4,})text\n[\s\S]*?\n\1\n\n/;
+// Freeform chat context (ask/prompt.mjs renderChatContextPrompt): someone else's quoted messages after the user's words;
+// the mock answers the user's own words (forged delimiters inside are neutralised, so the first end is its own).
+const ASK_CHAT_CONTEXT_BLOCK_RE = /\s*\[chat context\][\s\S]*?\[\/chat context\]/;
 
 /** Test seam: holdFrame(frame, index) may return a promise that holds a MOCK_SLOW turn after that
  *  frame until it settles (or the turn is aborted). Unset = the real 300 ms per frame. */
@@ -220,7 +226,7 @@ function untilSettledOrAborted(p, signal) {
  * `result` frame and then REJECT exactly like the real CLI (exit 1, empty stderr).
  */
 async function mockAsk({ markers, prompt, cwd, onEvent, signal, resumeSessionId }) {
-  const userText = String(prompt ?? '').replace(ASK_HANDOFF_BLOCK_RE, '').replace(ASK_CONTEXT_BLOCK_RE, '').replace(COMPOSER_CANVAS_BLOCK_RE, '');
+  const userText = String(prompt ?? '').replace(ASK_HANDOFF_BLOCK_RE, '').replace(ASK_CONTEXT_BLOCK_RE, '').replace(COMPOSER_CANVAS_BLOCK_RE, '').replace(ASK_CHAT_CONTEXT_BLOCK_RE, '');
   let card = {};
   try { card = markers.MOCK_ASK_CARD ? JSON.parse(markers.MOCK_ASK_CARD) : {}; } catch { card = {}; }
   if (!card || typeof card !== 'object' || Array.isArray(card)) card = {};
@@ -260,7 +266,11 @@ async function mockAsk({ markers, prompt, cwd, onEvent, signal, resumeSessionId 
   // <id>" its removal. The parent re-validates the INPUT against the real catalog and mints the card.
   const modelAdd = !wfEvent && !tmEvent && !trEvent && !scEvent && /\bllama\b/i.test(userText) && /\b(?:add|register)\b/i.test(userText);
   const modelRemove = !wfEvent && !tmEvent && !trEvent && !scEvent && !modelAdd ? /\bremove model ([A-Za-z0-9._-]+)/i.exec(userText) : null;
-  const propose = !wfEvent && !tmEvent && !trEvent && !scEvent && !workflow && !metrics && !policy && !scNew && !scChange && !modelAdd && !modelRemove && (!!taskKey || /\b(propose|start|run)\b/i.test(userText));
+  // Freeform chat (D5): MOCK_CHOICE / MOCK_TEXT_Q ask a question card; its answer event replies with the answer.
+  const qEvent = /^\s*\[worca event\] question card (card_[0-9a-f]{8}) answered: (.*)$/m.exec(userText);
+  const qChoice = !qEvent && /\bMOCK_CHOICE\b/.test(userText);
+  const qText = !qEvent && !qChoice && /\bMOCK_TEXT_Q\b/.test(userText);
+  const propose = !wfEvent && !tmEvent && !trEvent && !scEvent && !workflow && !metrics && !policy && !scNew && !scChange && !modelAdd && !modelRemove && !qEvent && !qChoice && !qText && (!!taskKey || /\b(propose|start|run)\b/i.test(userText));
   // The proposal both arms send: a brief, or the task reference instead of one.
   const proposal = () => {
     if (!taskKey) return { ...card, ...(wantsAuto ? { workflowId: 'wf_auto' } : {}) };
@@ -425,6 +435,19 @@ async function mockAsk({ markers, prompt, cwd, onEvent, signal, resumeSessionId 
         atool(MSG1, 'toolu_mock_model', 'mcp__worca__propose_model_change', mInput), uresult('toolu_mock_model', JSON.stringify({ ok: true })));
       answerMsg = MSG2;
     }
+    if (qChoice || qText) {
+      const qInput = qChoice
+        ? { answer: 'choice', question: 'Which branch should the run use?', options: [{ id: 'main', label: 'main' }, { id: 'dev', label: 'dev', description: 'the integration branch' }] }
+        : { answer: 'text', question: 'What should the run focus on?', placeholder: 'one sentence' };
+      frames.push(delta('[mock] '), delta('asking'), atext(MSG1, 'One question first.'),
+        atool(MSG1, 'toolu_mock_question', 'mcp__worca__ask_question', qInput),
+        uresult('toolu_mock_question', JSON.stringify({ ok: true, card: { type: 'question', ...qInput } })));
+      answerMsg = MSG2;
+    }
+    if (qEvent) {
+      frames.push(delta('[mock] '), delta('answered'), atext(MSG1, `Got it: ${qEvent[2].slice(0, 160)}`));
+      answerMsg = MSG2;
+    }
     if (propose) {
       frames.push(delta('[mock] '), delta('preparing '), delta('a run'), atext(MSG1, 'Preparing a run card.'), ...taskFrames(MSG1),
         atool(MSG1, 'toolu_mock_propose', 'mcp__worca__propose_run', proposal()), uresult('toolu_mock_propose', JSON.stringify({ ok: true })));
@@ -586,6 +609,15 @@ export async function runMock({ cwd, systemPrompt, prompt, onEvent, signal, resu
       break;
     case 'c4-architect':
       text = await mockC4Architect(m, cwd, onEvent);
+      break;
+    case 'requirements-draft':
+      text = await mockRequirementsDraft(m, onEvent);
+      break;
+    case 'requirements-review':
+      text = await mockPlanReview(m, cycle, onEvent, prompt);
+      break;
+    case 'requirements-refine':
+      text = await mockRequirementsRefine(m, cycle, onEvent);
       break;
     default:
       await emitLog(onEvent, `[mock] no side effects for unknown role`);
@@ -896,6 +928,23 @@ export const MOCK_OUTLINE_3 = Object.freeze({
   ],
 });
 
+/** The outline with the agreed ids dealt to its slices in order, in near-equal runs (the first slices take the extra);
+ *  the last id is left out. */
+function mockOutlineRequirements(outline, requirementsText) {
+  const ids = criteriaList(requirementsText).map((c) => c.id);
+  if (!ids.length) return outline;
+  const dealt = ids.slice(0, -1);
+  const n = outline.slices.length;
+  let at = 0;
+  const slices = outline.slices.map((s, i) => {
+    const take = Math.floor(dealt.length / n) + (i < dealt.length % n ? 1 : 0);
+    const requirements = dealt.slice(at, at + take);
+    at += take;
+    return { ...s, requirements };
+  });
+  return { ...outline, slices, leftOut: [{ id: ids.at(-1), reason: 'Moved to a later feature' }] };
+}
+
 async function mockPlannerPlan(m, onEvent, prompt = '') {
   const out = m.MOCK_OUT;
   const base = m.MOCK_BASE || 'feature';
@@ -903,14 +952,16 @@ async function mockPlannerPlan(m, onEvent, prompt = '') {
   // §3.8: a slicing prompt whose task says "plan this in slices" gets a two-slice outline and no plan (the real
   // Planner STOPs after the outline). The resumed spawn carries no MOCK_SLICES, so it writes the plan below.
   if (m.MOCK_SLICES && /\bplan this in (3 )?slices\b/i.test(prompt)) {
-    const outline = /\bplan this in 3 slices\b/i.test(prompt) ? MOCK_OUTLINE_3 : MOCK_OUTLINE;
+    const fixed = /\bplan this in 3 slices\b/i.test(prompt) ? MOCK_OUTLINE_3 : MOCK_OUTLINE;
+    const outline = m.MOCK_REQUIREMENTS ? mockOutlineRequirements(fixed, await readFile(m.MOCK_REQUIREMENTS, 'utf8').catch(() => '')) : fixed;
     await ensureDir(m.MOCK_SLICES);
     await writeFile(m.MOCK_SLICES, JSON.stringify(outline, null, 2) + '\n', 'utf8');
     safeEmit(onEvent, { type: 'tool_use', text: `wrote ${m.MOCK_SLICES}`, raw: { mock: true, file: m.MOCK_SLICES } });
     return `[mock] planner-plan: outline at ${m.MOCK_SLICES}`;
   }
   if (!out) return '[mock] planner-plan: no MOCK_OUT given';
-  const md = mockPlanMarkdown(base, 1, mockChecklistPrefixes(prompt));
+  const delivers = m.MOCK_REQUIREMENTS ? mockDeliveryLines(await readFile(m.MOCK_REQUIREMENTS, 'utf8').catch(() => '')) : '';
+  const md = mockPlanMarkdown(base, 1, mockChecklistPrefixes(prompt)).replace('\n## Code Snippets', `${delivers}\n## Code Snippets`);
   await ensureDir(out);
   await writeFile(out, md, 'utf8');
   safeEmit(onEvent, { type: 'tool_use', text: `wrote ${out}`, raw: { mock: true, file: out } });
@@ -948,6 +999,78 @@ export function mockPlanMarkdown(base, version, prefixes = []) {
     `- **Q:** How should the feature handle invalid input?\n` +
     `  - **A:** Fail fast with a clear error\n`
   );
+}
+
+/** The requirements stage's mock criteria and decisions: 8 criteria over 6 prefixes and 3 decisions (one plain, one
+ *  scope-token label with a plain twin, one without). */
+export const MOCK_REQUIREMENTS_CRITERIA = Object.freeze([
+  ['R-po-1', 'A person can export their own runs as CSV'],
+  ['R-po-2', 'The export names every run by its title'],
+  ['R-arch-1', 'The export reads the stored runs only'],
+  ['R-ux-1', 'The export button says what it downloads'],
+  ['R-qa-1', 'A test proves the CSV columns'],
+  ['R-sec-1', 'The export never includes secrets'],
+  ['R-sec-2', 'Only project members can export'],
+  ['R-ops-1', 'Turning the flag off removes the export'],
+]);
+export const MOCK_REQUIREMENTS_DECISIONS = Object.freeze({ decisions: [
+  { text: 'Email in export', options: [{ value: 'leave-out', label: 'Leave them out' }, { value: 'include', label: 'Include them' }],
+    recommended: 'leave-out', criteria: ['R-sec-1'] },
+  { text: 'Who may export: everyone with project:read?', plain: 'Who may export: everyone who can see the project?',
+    options: [{ value: 'members', label: 'Require project:read', plain: 'Anyone who can see the project' }, { value: 'owner', label: 'Owner only' }],
+    recommended: 'members', criteria: ['R-sec-2'] },
+  { text: 'Gate the export on project:read or project:write',
+    options: [{ value: 'read', label: 'project:read' }, { value: 'write', label: 'project:write' }], recommended: 'read' },
+] });
+
+/** Agreed `- **R-po-N** …` lines of the task text (a Requirements spec start), kept unchanged. */
+const specCriteria = (text) => [...String(text || '').matchAll(/^- \*\*(R-po-\d+)\*\* (.+)$/gm)].map((x) => [x[1], x[2]]);
+
+function mockRequirementsMarkdown(spec = []) {
+  const have = new Set(spec.map(([id]) => id));
+  const rows = [...spec, ...MOCK_REQUIREMENTS_CRITERIA.filter(([id]) => !have.has(id))];
+  return `# Requirements\n\n${rows.map(([id, text]) => `- **${id}** ${text}`).join('\n')}\n`;
+}
+
+/** One `Delivers:` line per criterion of the bound requirements, except the ids in WORCA_MOCK_UNCOVERED. */
+function mockDeliveryLines(requirementsText) {
+  const skip = new Set(String(process.env.WORCA_MOCK_UNCOVERED || '').split(',').map((x) => x.trim()).filter(Boolean));
+  const ids = [...String(requirementsText).matchAll(/^- \*\*(R-[a-z]+-\d+)\*\*/gm)].map((x) => x[1]).filter((id) => !skip.has(id));
+  if (!ids.length) return '';
+  return `\n## Delivery\n\n${ids.map((id) => `- Step 1 · Delivers: ${id}`).join('\n')}\n`;
+}
+
+async function mockRequirementsDraft(m, onEvent) {
+  if (!m.MOCK_OUT) return '[mock] requirements-draft: no MOCK_OUT given';
+  const task = m.MOCK_IN ? await readFile(m.MOCK_IN, 'utf8').catch(() => '') : '';
+  await ensureDir(m.MOCK_OUT);
+  await writeFile(m.MOCK_OUT, mockRequirementsMarkdown(specCriteria(task)), 'utf8');
+  safeEmit(onEvent, { type: 'tool_use', text: `wrote ${m.MOCK_OUT}`, raw: { mock: true, file: m.MOCK_OUT } });
+  return `[mock] requirements drafted to ${m.MOCK_OUT}`;
+}
+
+/** The requirements refiner: the reviewed draft as the agreed file, the fixed decisions, every finding fixed. Its own
+ *  review is minor only, so the stage holds once for the person. */
+async function mockRequirementsRefine(m, cycle, onEvent) {
+  const [out, decisionsPath] = [m.MOCK_OUT, String(m.MOCK_OUTS || '').split('|')[0]];
+  const draft = m.MOCK_REQUIREMENTS ? await readFile(m.MOCK_REQUIREMENTS, 'utf8').catch(() => '') : '';
+  if (out) {
+    await ensureDir(out);
+    await writeFile(out, draft || mockRequirementsMarkdown(), 'utf8');
+    safeEmit(onEvent, { type: 'tool_use', text: `wrote ${out}`, raw: { mock: true, file: out } });
+  }
+  if (decisionsPath) {
+    await ensureDir(decisionsPath);
+    await writeFile(decisionsPath, JSON.stringify(MOCK_REQUIREMENTS_DECISIONS, null, 2) + '\n', 'utf8');
+  }
+  const review = { summary: `[mock] requirements agreed (cycle ${cycle})`, issues: [{ severity: 'minor', title: 'Wording', detail: 'mock', location: 'Requirements' }] };
+  if (m.MOCK_FINDINGS) {
+    const findings = await readFile(m.MOCK_FINDINGS, 'utf8').catch(() => '');
+    review.addressed = (await mockDispositions(findings)) ?? [...findings.matchAll(FINDING_ID_RE)].map((x) => x[1]);
+  }
+  if (m.MOCK_JSON) { await ensureDir(m.MOCK_JSON); await writeFile(m.MOCK_JSON, JSON.stringify(review, null, 2) + '\n', 'utf8'); }
+  await emitLog(onEvent, `[mock] requirements refiner wrote ${out || 'nothing'}`);
+  return JSON.stringify(review);
 }
 
 async function mockRefiner(m, cycle, onEvent) {
@@ -1237,22 +1360,37 @@ export function fitDuplicates(planText, briefText) {
 }
 
 /** Role mode (spec §3): `WORCA_MOCK_ROLE_REVIEW='{"ux":{"1":"critical"}}'` picks a role's severity per round;
- *  'none' = no issue. Default: one minor finding (non-blocking), so mock shape runs do one round unless a test asks. */
+ *  'none' = no issue. Default: one minor finding (non-blocking), so mock shape runs do one round unless a test asks.
+ *  An object value `{"severity":"major","requirement":"R-po-1"}` also names the agreed requirement the finding
+ *  concerns (Shaper requirements s3, D15). */
 function roleSeverity(role, cycle) {
   let table = {};
   try { table = JSON.parse(process.env.WORCA_MOCK_ROLE_REVIEW || '{}') || {}; } catch { table = {}; }
-  return table?.[role]?.[String(cycle)] || 'minor';
+  const v = table?.[role]?.[String(cycle)];
+  if (v && typeof v === 'object') return { severity: v.severity || 'minor', requirement: typeof v.requirement === 'string' ? v.requirement : null };
+  return { severity: v || 'minor', requirement: null };
 }
 
 async function mockPlanReview(m, cycle, onEvent, prompt = '', { planChecklist = false } = {}) {
   const role = m.MOCK_PERSPECTIVE || null;
   if (role) {
-    const severity = roleSeverity(role, cycle);
+    const { severity, requirement } = roleSeverity(role, cycle);
     const blocking = severity === 'critical' || severity === 'major';
     const ids = String(m.MOCK_CHECKLIST || '').split(',').map((s) => s.trim()).filter(Boolean);
     // Project fit (slice 3): a plan that adds a second copy of a component the house brief lists.
     const dups = role === 'fit' && m.MOCK_IN ? fitDuplicates(await readFile(m.MOCK_IN, 'utf8').catch(() => ''), prompt) : [];
-    const review = dups.length
+    // The code review's Requirements role (checklist 'coverage'): every id met, except WORCA_MOCK_DIFF_UNCOVERED's in
+    // round 1, each filed as the fixed-title major issue, so the run passes in round 2.
+    const uncovered = role === 'requirements' && cycle <= 1
+      ? new Set(String(process.env.WORCA_MOCK_DIFF_UNCOVERED || '').split(',').map((x) => x.trim()).filter((id) => ids.includes(id)))
+      : new Set();
+    const review = role === 'requirements'
+      ? {
+        summary: `[mock] requirements coverage, round ${cycle}`,
+        issues: [...uncovered].map((id) => ({ severity: 'major', title: uncoveredTitle(id), section: id, fix: `Deliver ${id} in the diff.`, detail: 'mock' })),
+        checklist: ids.map((id) => (uncovered.has(id) ? { id, status: 'unmet', evidence: 'not in the diff' } : { id, status: 'met', evidence: 'mock' })),
+      }
+      : dups.length
       ? {
         summary: `[mock] ${role} review, round ${cycle}`,
         issues: dups.map((d) => ({ severity: 'major', title: `Second component: ${d.added} repeats ${d.existing}`, section: 'Fit',
@@ -1263,10 +1401,11 @@ async function mockPlanReview(m, cycle, onEvent, prompt = '', { planChecklist = 
       }
       : {
         summary: `[mock] ${role} review, round ${cycle}`,
-        issues: severity === 'none' ? [] : [{ severity, title: `${role}: mock finding`, section: 'Testing', fix: 'Add the missing case.', detail: 'mock' }],
+        issues: severity === 'none' ? [] : [{ severity, title: `${role}: mock finding`, section: 'Testing', fix: 'Add the missing case.', detail: 'mock',
+          ...(requirement ? { requirement } : {}) }],
         checklist: ids.map((id) => ({ id, status: blocking ? 'unmet' : 'met', evidence: 'mock' })),
       };
-    if (planChecklist) review.checklist = [...review.checklist, ...((await planChecklistReport(m, cycle)) || [])];
+    if (planChecklist && role !== 'requirements') review.checklist = [...review.checklist, ...((await planChecklistReport(m, cycle)) || [])];
     await emitLog(onEvent, `[mock] ${role} role review (round ${cycle})`);
     if (m.MOCK_JSON) { await ensureDir(m.MOCK_JSON); await writeFile(m.MOCK_JSON, JSON.stringify(review, null, 2) + '\n', 'utf8'); }
     if (m.MOCK_OUT) { await ensureDir(m.MOCK_OUT); await writeFile(m.MOCK_OUT, `# ${role} findings (mock)\n`, 'utf8'); }

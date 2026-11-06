@@ -668,7 +668,7 @@ test('collapsed pill: the still orb, one-line input with a rotating example, att
   const file = root.querySelector('input[type="file"]');
   assert.equal(file.multiple, true);
   assert.equal(file.hidden, true);
-  assert.equal(file.accept, '.md,.markdown,.txt,.json,.csv,.log,.html,.htm,.xml,.png,.jpg,.jpeg,.gif,.webp,.pdf,text/*');
+  assert.equal(file.hasAttribute('accept'), false, 'every file type is offered');
   assert.equal(root.querySelector('.wfc-files').hidden, true, 'no chips until a file is picked');
   assert.equal(root.querySelector('#wfc-send').getAttribute('aria-disabled'), 'true');
 });
@@ -1382,22 +1382,21 @@ test('Enter sends the chips as base64 with the text; a refused send keeps them, 
     [['wfc-upill', 'spec.md'], ['wfc-upill', 'flow.png']], 'this stub 202 returns no rows: the echo has no ids, so the image is a name pill');
 });
 
-test('Ask\'s early checks and messages in the dock: type, 100 MB text, 8 files; a Codex chat refuses PDFs', async () => {
+test('Ask\'s early checks and messages in the dock: 100 MB text, 8 files; a Codex chat refuses PDFs', async () => {
   const s = await bootDock();
   const root = s.g('wfc');
   const note = () => root.querySelector('.wfc-note');
   root.querySelector('#wfc-input').dispatchEvent(new s.win.Event('focus'));
   pickFiles(s, [mkFile(s, 'evil.exe', 'x')]);
   await settle();
-  assert.equal(note().textContent, 'attachment type not allowed: evil.exe');
-  assert.equal(note().hidden, false);
-  assert.match(root.querySelector('.wfc-sr').textContent, /attachment type not allowed: evil\.exe/, 'said once to a screen reader');
+  assert.equal(note().hidden, true, 'evil.exe is accepted');
+  assert.equal(root.querySelectorAll('.wfc-files > *').length > 0, true);
   pickFiles(s, [mkFile(s, 'big.md', 'x'.repeat(100 * 1024 * 1024 + 1))]);
   await settle();
   assert.equal(note().textContent, 'attachment over 104857600 bytes: big.md');
   pickFiles(s, [mkFile(s, 'spec.pdf', '%PDF-1.7', 'application/pdf')]);
   await settle();
-  assert.deepEqual(chipNames(root), ['spec.pdf'], 'a Claude chat takes a PDF');
+  assert.deepEqual(chipNames(root), ['evil.exe', 'spec.pdf'], 'a Claude chat takes a PDF');
   assert.equal(note().hidden, true, 'a new batch clears the last refusal');
   pickFiles(s, Array.from({ length: 9 }, (_, i) => mkFile(s, `f${i}.md`, 'x')));
   await settle();
@@ -1593,7 +1592,7 @@ test('Send clears the last refusal note', async () => {
   const s = await bootDock();
   const root = s.g('wfc');
   root.querySelector('#wfc-input').dispatchEvent(new s.win.Event('focus'));
-  pickFiles(s, [mkFile(s, 'evil.exe', 'x')]);
+  pickFiles(s, [mkFile(s, 'big.md', 'x'.repeat(100 * 1024 * 1024 + 1))]);
   await settle();
   assert.equal(root.querySelector('.wfc-note').hidden, false);
   typeEnter(s, 'Hello');

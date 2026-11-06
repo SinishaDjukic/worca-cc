@@ -52,6 +52,7 @@
 // is deliberately no in-module cache: worcaHome() is read fresh per operation,
 // so a saved root takes effect for new runs/listing without a server restart.
 
+import { isAnswererLead, ANSWERER_LEAD_KEYS } from '../shared/answerer.mjs';
 import { mkdir, writeFile, rename } from 'node:fs/promises';
 import { suggestModelHandle } from '../shared/connections.mjs';
 export { suggestModelHandle };
@@ -1281,6 +1282,7 @@ export const SETTINGS_POST_KEYS = Object.freeze([
   'agentGenModel',                           // the agent wizard's Generate: model + effort (Claude, user-level)
   'namingModel',                             // Smart run naming's model + effort (Models › Helper jobs, Claude, user-level)
   'commandSummaryModel',                     // Command summaries' model + effort (Models › Helper jobs, Claude, user-level)
+  'secondOpinionModel',                      // Second-opinion reviewer's model + effort (Models › Helper jobs, Claude, user-level)
   'workspaceScan',                           // Settings › Runs › Workspaces: the scan's models
   'schedule',                                // scheduled-run defaults { graceMin, ifMissed, maxFailures }
   'nightMode',                               // night mode user layer (night/config.mjs fields)
@@ -1304,7 +1306,7 @@ function projectOverride(id, scope) {
   try { return projectLayerReader(id, scope); } catch { return undefined; }
 }
 
-export const UTILITY_JOBS = Object.freeze(['title', 'classifier', 'overview', 'prDescription', 'memoryDefrag', 'workspaceScan']);
+export const UTILITY_JOBS = Object.freeze(['title', 'classifier', 'overview', 'prDescription', 'memoryDefrag', 'workspaceScan', 'secondOpinion']);
 const MODEL_PAIR_MAX_LEN = 200;
 const homeGuarded = () => !!process.env.NODE_TEST_CONTEXT && !process.env.WORCA_TEST_ALLOW_HOME_FALLBACK;
 export function runEngineSetting() {
@@ -1822,6 +1824,35 @@ export async function setCommandSummaryModel(input, { models = null } = {}) {
   else settings.commandSummaryModel = pair.effort ? pair : { model: pair.model };
   await persistSettings(settings);
   return { commandSummaryModel: commandSummaryModel() };
+}
+
+// ── Second-opinion reviewer (Models › Engines › Claude › Helper jobs › Second-opinion reviewer) ───
+// `secondOpinionModel`: the { model, effort } pair of the one role a role review names as `secondOpinion` (Shaper's
+// Product reviewer), so it judges on another model than its step. User-level only and no model role: mapped to a
+// role it would land on its step's model again. Codex's is `utilityModels.codex.secondOpinion`. Unset = Worca's factory
+// default (factory-models.mjs).
+
+/** The STORED pair, or null when unset or invalid. Sync and never throws. */
+export function secondOpinionModelSetting() {
+  if (homeGuarded()) return null;
+  const v = readSettings().secondOpinionModel;
+  const m = isObj(v) ? v.model : undefined;
+  if (typeof m !== 'string' || !m.trim() || m.length > DEFRAG_MODEL_MAX_LEN) return null;
+  return { model: m.trim(), effort: typeof v.effort === 'string' && EFFORTS.includes(v.effort) ? v.effort : null };
+}
+
+/** Validate a POST value exactly like assertNamingModelInput. */
+export function assertSecondOpinionModelInput(input, models = null) {
+  return assertModelPairInput('secondOpinionModel', input, models);
+}
+
+export async function setSecondOpinionModel(input, { models = null } = {}) {
+  const pair = assertSecondOpinionModelInput(input, models);
+  const settings = readSettings();
+  if (pair === null) delete settings.secondOpinionModel;
+  else settings.secondOpinionModel = pair.effort ? pair : { model: pair.model };
+  await persistSettings(settings);
+  return { secondOpinionModel: secondOpinionModelSetting() };
 }
 
 // ── Spawn-debug diagnostics toggle (the stored side of WORCA_DEBUG_SPAWN) ────
@@ -2845,6 +2876,31 @@ export async function setChatHomePinsFor(person, list) {
   settings.chatHomePins = map;
   await persistSettings(settings);
   return chatHomePinsFor(person);
+}
+
+/** The answerer profile (the lead a person shapes as): per person, keyed like the Chat home pins. It describes the
+ *  person, not a project, so it sits outside the user-to-project settings cascade. */
+function answererMap(settings) {
+  const m = settings.answererProfiles;
+  return Object.assign(Object.create(null), m && typeof m === 'object' && !Array.isArray(m) ? m : {});
+}
+
+/** The person's profile, `{ lead }` (null when never set or unknown). Never throws. */
+export function answererProfileFor(person) {
+  if (homeGuarded()) return { lead: null };
+  const lead = answererMap(readSettings())[pinsPersonKey(person)]?.lead;
+  return { lead: isAnswererLead(lead) ? lead : null };
+}
+
+/** Set the person's lead. Throws { code: 'BAD_LEAD' } before any write. */
+export async function setAnswererProfileFor(person, { lead } = {}) {
+  if (!isAnswererLead(lead)) throw Object.assign(new Error(`Pick one of: ${ANSWERER_LEAD_KEYS.join(', ')}`), { code: 'BAD_LEAD' });
+  const settings = readSettings();
+  const map = answererMap(settings);
+  map[pinsPersonKey(person)] = { lead };
+  settings.answererProfiles = map;
+  await persistSettings(settings);
+  return answererProfileFor(person);
 }
 
 /** Local tag dimensions (Settings › Tags): used when the run target's team policy sets none. Never throws. */

@@ -62,14 +62,18 @@ test('wf_workspace_scan is the reserved hybrid map pipeline, wired exactly as th
   ]);
   assert.deepEqual(GRAPH_WORKSPACE_SCAN_WORKFLOW.wires.map((w) => `${w.from.node}.${w.from.port}->${w.to.node}.${w.to.port}`), WIRES);
   const cfg = Object.fromEntries(GRAPH_WORKSPACE_SCAN_WORKFLOW.nodes.map((n) => [n.id, { ...n.config }]));
-  const M = WORKSPACE_SCAN_DEFAULT_MODELS;
-  const fan = { model: M.scanModel, effort: M.scanEffort, subagentModel: M.agentModel, subagentEffort: M.agentEffort };
-  assert.deepEqual(cfg.n_scan, fan);
-  assert.deepEqual(cfg.n_usage, fan);
-  assert.deepEqual(cfg.n_synth, { model: M.scanModel, effort: M.scanEffort });
+  for (const id of ['n_scan', 'n_usage', 'n_synth']) assert.deepEqual(cfg[id], {}, `${id}: no model pins in the template`);
   for (const id of ['n_catalog', 'n_join', 'n_render']) assert.deepEqual(cfg[id], { awaitAll: true }, id);
   assert.deepEqual(cfg.n_extract, {});
   assert.equal(Object.isFrozen(GRAPH_WORKSPACE_SCAN_WORKFLOW.nodes[2].config), true, 'deep-frozen');
+  // With no scan models named, the factory defaults resolve onto the scan's agent nodes exactly as the pins did.
+  const M = WORKSPACE_SCAN_DEFAULT_MODELS;
+  const resolved = await resolveScan();
+  for (const id of ['n_scan', 'n_usage']) {
+    const nc = resolved.nodes[id];
+    assert.deepEqual([nc.model, nc.effort, nc.subagentModel, nc.subagentEffort], [M.scanModel, M.scanEffort, M.agentModel, M.agentEffort], id);
+  }
+  assert.deepEqual([resolved.nodes.n_synth.model, resolved.nodes.n_synth.effort], [M.scanModel, M.scanEffort]);
 });
 
 test('wf_workspace_resynth: seed -> synth -> render, no code graph, reserved, a scan for every scan behaviour', async () => {

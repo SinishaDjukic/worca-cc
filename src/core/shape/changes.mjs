@@ -7,6 +7,7 @@ import { getDb } from '../db.mjs';
 import { readStoreMeta, projectDirOfRow } from '../artifacts.mjs';
 import { roundsOf, roundOrigin } from './rounds.mjs';
 import { featureOfPipeline, currentFeatureId, featureBase, featureView } from './features.mjs';
+import { changesRequirementsBlock } from '../../shared/shape/acceptance.mjs';
 
 const MAX = 4000;
 const clip = (t) => String(t || '').trim().slice(0, MAX);
@@ -19,8 +20,10 @@ const planNote = (featureId, text, deps) => {
   return n && n.runIndex != null ? { ok: true, result: { note: 'plan', index: n.runIndex } } : { ok: false, status: 409, error: NO_NEXT };
 };
 
-/** The `changes` card (state 'proposed'). `run` is the start body for a round or a plain follow-up (D3, D18). */
-export function changesCard({ text, facts }) {
+/** The `changes` card (state 'proposed'). `run` is the start body for a round or a plain follow-up (D3, D18).
+ *  Shaper requirements s3 (D12): with `requirementsOn`, a shipped feature with agreed requirements updates them first:
+ *  the card says so (`requirementsFirst`), a round runs shaped and its prompt lists the agreed requirements. */
+export function changesCard({ text, facts, requirementsOn = false }) {
   const landing = landingFor(facts);
   if (!landing) return null;
   const req = clip(text);
@@ -30,13 +33,19 @@ export function changesCard({ text, facts }) {
   const tags = (f && f.tags) || (r && r.tags) || [];          // D19: the origin's tags, so enforced tag rules pass
   const labels = (f && f.labels) || (r && r.labels) || [];    // s2: and its labels
   const withTags = (b) => ({ ...b, ...(tags.length ? { tags } : {}), ...(labels.length ? { labels } : {}) });
-  const run = landing.kind === 'round'
+  const first = requirementsOn === true && !!f && f.shipped === true && Array.isArray(f.agreed) && f.agreed.length > 0
+    && (landing.kind === 'round' || landing.kind === 'follow-up');
+  const run = landing.kind === 'round' && first
+    ? withTags({ prompt: `${req}\n\n${changesRequirementsBlock(f.agreed, f.acceptance)}`, projectDir, sourceBranch: landing.target.sourceBranch,
+      sameAsSource: true, syncBeforeStart: false, shape: { perspectives: [...(f.perspectives || [])], size: 'medium', slices: 'off' } })
+    : landing.kind === 'round'
     ? withTags({ prompt: req, projectDir, sourceBranch: landing.target.sourceBranch, sameAsSource: true, syncBeforeStart: false })
     : landing.kind === 'follow-up' && !landing.target.featureId
       ? withTags({ prompt: req, projectDir, ...(landing.target.sourceBranch ? { sourceBranch: landing.target.sourceBranch } : {}) })
       : null;
   return { type: 'changes', text: req, landing, ...(run ? { run } : {}),
-    featureId: (f && f.id) || null, pipelineId: (r && r.pipelineId) || null };
+    featureId: (f && f.id) || null, pipelineId: (r && r.pipelineId) || null,
+    ...(first ? { requirementsFirst: { count: f.agreed.length, block: changesRequirementsBlock(f.agreed, f.acceptance) } } : {}) };
 }
 
 /** Start on a changes card. @returns {Promise<{ok: true, result: object}|{ok: false, status: number, error: string}>} */
@@ -51,7 +60,9 @@ export async function applyChanges(card, deps) {
   }
   if (kind === 'next-plan') return planNote(target.featureId, card.text, deps);
   if (kind === 'extra-run' || (kind === 'follow-up' && target.featureId)) {
-    const a = deps.appendRun(target.featureId, { title: firstLine(card.text), goal: card.text, kind: kind === 'extra-run' ? 'extra' : 'follow-up' });
+    const first = kind === 'follow-up' && card.requirementsFirst ? card.requirementsFirst : null;   // s3 (D12)
+    const a = deps.appendRun(target.featureId, { title: firstLine(card.text), goal: first ? `${card.text}\n\n${first.block}` : card.text,
+      kind: kind === 'extra-run' ? 'extra' : 'follow-up', ...(first ? { requirementsFirst: true } : {}) });
     deps.tick();
     return { ok: true, result: { index: a.index, ticketId: a.ticketId } };
   }
@@ -112,7 +123,8 @@ export function landingFactsOfFeature(featureId, deps) {
   const v = deps.featureView(fid);
   if (!v) return null;
   const db = getDb();
-  const row = db.prepare('SELECT project_dir, origin_pipeline_id FROM shape_features WHERE id = ?').get(fid);
+  const row = db.prepare('SELECT project_dir, origin_pipeline_id, outline, perspectives FROM shape_features WHERE id = ?').get(fid);
+  const outline = parse(row && row.outline) || {};
   const branchOf = (pid) => (pid ? parse(db.prepare('SELECT branch FROM pipelines WHERE id = ?').get(pid)?.branch) : null);
   const slices = v.slices.map((s) => ({ index: s.index, state: s.state, pipelineId: s.pipelineId, title: s.title, goal: s.goal || '',
     branch: branchOf(s.pipelineId), pr: s.pr, rounds: 1 + (s.rounds || []).length }));
@@ -120,8 +132,11 @@ export function landingFactsOfFeature(featureId, deps) {
   const shipUrl = v.ship && v.ship.mode ? (v.ship.prUrl || v.ship.lastPrUrl) : null;
   const owner = shipUrl ? db.prepare('SELECT id FROM pipelines WHERE pr_url = ? LIMIT 1').get(shipUrl) : null;
   const shipPr = !shipUrl ? null : (owner && deps.readPrState(owner.id)) || (slices.length ? slices[slices.length - 1].pr : null);
+  // s3 (D12): shipped, and the agreed requirements with their marks, for a requirements-first Changes run.
   return { run: null, feature: { id: fid, title: v.title, status: v.status, base: featureBase(fid), projectDir: (row && row.project_dir) || null,
-    shipPr, tags: tagsOf(deps, row && row.origin_pipeline_id), labels: labelsOf(deps, row && row.origin_pipeline_id), slices } };
+    shipPr, tags: tagsOf(deps, row && row.origin_pipeline_id), labels: labelsOf(deps, row && row.origin_pipeline_id), slices,
+    shipped: !!(v.ship && v.ship.mode), agreed: Array.isArray(outline.agreed) ? outline.agreed.map(({ id, text }) => ({ id, text })) : [],
+    acceptance: Array.isArray(outline.acceptance) ? outline.acceptance : [], perspectives: parse(row && row.perspectives) || [] } };
 }
 
 // ---- the two Ask Worca tools (propose_changes, route_message): which work a thread follows, and the rule ----
@@ -165,8 +180,9 @@ export function linksOfWork(links, pipelineId) {
 
 /** D5: the thread rule both tools obey (what the removed thread reply decided), plus the ids and the card.
  *  kind 'changes': input { pipelineId, request }; kind 'route': input { featureId, text, guess, reason }.
- *  → { ok: true, card } | { ok: false, error } — the error is what the model reads. Pure over `work`. */
-export function shapeToolFit(kind, input, work) {
+ *  → { ok: true, card } | { ok: false, error } — the error is what the model reads. Pure over `work`.
+ *  `requirementsOn` (the parent's Labs flag shapeRequirements) mints a requirements-first card (s3, D12). */
+export function shapeToolFit(kind, input, work, { requirementsOn = false } = {}) {
   const no = (error) => ({ ok: false, error });
   const raw = String((kind === 'changes' ? input.request : input.text) || '').trim();
   const field = kind === 'changes' ? 'request' : 'text';
@@ -199,7 +215,7 @@ export function shapeToolFit(kind, input, work) {
     if (halted) return no(`Run ${halted.index} stopped: resume or re-plan it first`);
   } else if (!work.run) return no('this run has no single branch to change');
   else if (work.run.finished === false) return no('the run is still going');
-  const card = changesCard({ text: raw, facts: work.facts });
+  const card = changesCard({ text: raw, facts: work.facts, requirementsOn });
   return card ? { ok: true, card } : no('this run has no single branch to change');
 }
 
@@ -210,7 +226,7 @@ export function shapeToolCheck(kind, input, links, deps) {
   const pid = String(input.pipelineId || '');
   const mine = pid ? linksOfWork(links, pid) : [];
   if (!mine.length) return { ok: false, error: `this chat does not follow run ${pid || '(none)'}` };
-  return shapeToolFit(kind, input, threadWork(mine, deps));
+  return shapeToolFit(kind, input, threadWork(mine, deps), { requirementsOn: typeof deps.requirementsOn === 'function' && deps.requirementsOn() === true });
 }
 
 /** D9: the read-only facts Ask Worca gets in the turn context, or null. */

@@ -13,8 +13,9 @@
 import { gitOn, onGitChange, GIT_MISSING_TEXT } from './git-gate.mjs';
 import { makeSwitch } from './switch.mjs';
 import { icon as sharedIcon } from './icons.mjs';
+import { openRunSetupOverlay } from './run-setup-overlay.mjs';
 import {
-  ATTACH_BINARY, extOf, checkAttachment, bytesToBase64, carriesFiles, pastedFiles, createPasteNamer, REQ_ATTACH, reqLimits, reqTypeMessage,
+  ATTACH_BINARY, ATTACH_TEXT_EXT, extOf, checkAttachment, bytesToBase64, carriesFiles, pastedFiles, createPasteNamer, REQ_ATTACH, reqLimits,
 } from './attach-files.mjs';
 
 // The displayed state (A2 §4), always the server's `f.state`: the page never derives it. `started` is
@@ -137,7 +138,9 @@ function ageOld(iso) {
 }
 
 // ---- A8: files (plans/requirements-a8-design.md §6; design round 3, boards 15–21) ----
-const KIND_TITLE = Object.freeze({ text: 'Text', image: 'Image', binary: 'PDF' });
+const KIND_TITLE = Object.freeze({ text: 'Text', image: 'Image', binary: 'PDF', file: 'File' });
+/** A stored row's label: a generic binary (octet-stream) is a "File", not a PDF. */
+const rowTitle = (a) => (a.mime === 'application/octet-stream' ? KIND_TITLE.file : KIND_TITLE[a.kind] || 'Text');
 const READ_RANGE = '$0.05–0.20';   // a read's cost before any read has been made
 /** 640 B, 9 KB, 2.1 MB (the server's sizeLabel). */
 export function sizeText(bytes) {
@@ -146,6 +149,8 @@ export function sizeText(bytes) {
   if (v < 1024 * 1024) return `${Math.round(v / 1024)} KB`;
   return `${(v / (1024 * 1024)).toFixed(1)} MB`;
 }
+/** A picked file's label before upload: an extension off Ask's lists is a "File" (the server decides text or generic). */
+const nameTitle = (name) => { const e = extOf(name); return ATTACH_TEXT_EXT.includes(e) || ATTACH_BINARY[e] ? KIND_TITLE[kindOfName(name)] : KIND_TITLE.file; };
 const kindOfName = (name) => { const m = ATTACH_BINARY[extOf(name)]; return m ? (m.startsWith('image/') ? 'image' : 'binary') : 'text'; };
 /** The picks of the feature and brief pages, in requests of at most 100 MB each (D7). */
 export function uploadBatches(files) {
@@ -290,6 +295,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   // and the start-before-Ready dialog ({ wrap, trigger, triggerUi }).
   const choices = new Map();
   let workflows = null;      // null not loaded · 'loading' · [{ id, name }]
+  let workflowsP = null;     // the workflow list's load in flight, so a press while it loads waits for it
   const branchLists = new Map();   // projectDir -> 'loading' | { branches, current }
   let starting = false;
   let dialog = null;
@@ -337,13 +343,6 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   const errText = (err) => (err && err.status === 404 ? GONE
     : err && err.data && typeof err.data.error === 'string' && err.data.error ? err.data.error : 'Worca could not finish that. Try again.');
   const act = async (fn) => { say(''); try { await fn(); } catch (err) { fail(err); } };
-  // "Started build v<n>." with a link to the run (the page stays on the feature, D10).
-  const sayStarted = (version, runId) => {
-    if (!msgEl) return;
-    msgEl.className = 'form-msg ok';
-    msgEl.replaceChildren(`Started build v${version}. `, h('a', { class: 'req-msg-link', href: `#running/${runId}` }, 'Open the run'));
-  };
-
   async function loadTargets() {
     const [p, w] = await Promise.all([api('GET', '/api/projects').catch(() => ({})), api('GET', '/api/workspaces').catch(() => ({}))]);
     targets = { projects: p.projects || [], workspaces: w.workspaces || [] };
@@ -659,7 +658,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const refused = h('p', { class: 'req-file-refused', role: 'alert', hidden: true });
     const note = h('p', { class: 'hint req-new-files-note', hidden: true, text: 'Files stay on the feature. Which files go with a run is chosen later, on the feature page.' });
     const actions = h('div', { class: 'actions req-new-actions' });
-    const input = h('input', { type: 'file', id: 'req-new-files-input', multiple: true, accept: REQ_ATTACH.accept, hidden: true });
+    const input = h('input', { type: 'file', id: 'req-new-files-input', multiple: true, hidden: true });
     const choose = h('button', { type: 'button', class: 'link-btn', onclick: () => input.click() }, 'Choose files');
     const sync = () => {
       chips.replaceChildren(...picked.map((file) => {
@@ -667,7 +666,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         return h('span', { class: 'req-new-chip' },
           icon(kind === 'image' ? ICONS.image : ICONS.file, { size: 16 }),
           h('span', { class: 'req-new-chip-name', text: file.name }),
-          h('span', { class: 'hint', text: `${KIND_TITLE[kind]} · ${sizeText(file.size)}` }),
+          h('span', { class: 'hint', text: `${nameTitle(file.name)} · ${sizeText(file.size)}` }),
           icoBtn('remove', `Remove ${file.name}`, () => removePicked(file), { cls: 'req-new-chip-x' }));
       }));
       note.hidden = !picked.length;
@@ -685,7 +684,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const addPicked = (files) => {
       const errors = [];
       for (const file of files) {
-        const c = checkAttachment(file, { pending: picked.map((p) => ({ name: p.name, bytes: p.size })), limits: reqLimits({ create: true }), typeMessage: reqTypeMessage });
+        const c = checkAttachment(file, { pending: picked.map((p) => ({ name: p.name, bytes: p.size })), limits: reqLimits({ create: true }) });
         if (!c.ok) { errors.push(c.error); continue; }
         picked = [...picked.filter((p) => p.name !== file.name), file];
       }
@@ -1439,15 +1438,24 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   // The version the next start saves the spec as: the latest start's + 1 (1 before any start).
   const nextVersion = (f) => ((((f.starts || [])[0]) || {}).version || 0) + 1;
   const projectPath = (f) => (f.scopeType === 'project' ? targets.projects.find((p) => p.key === f.scopeKey)?.path || null : null);
+  // The project whose saved config a run's settings come from: a project's own, a workspace's primary member (the lowest
+  // project key, which the server lists first) — as the run itself resolves its graph. Null when none is known.
+  const setupProjectDir = (f) => (f.scopeType === 'workspace'
+    ? (targets.workspaces.find((w) => w.id === f.scopeKey)?.projectPaths || [])[0] || null : projectPath(f));
   const workflowName = (id) => (id === AUTO_WORKFLOW ? 'Auto' : (Array.isArray(workflows) && workflows.find((w) => w.id === id)?.name) || id);
   // Repaint for a list that just arrived, only while the Ready to build card is on screen.
   const redrawBuild = () => { if (current && host.querySelector('.req-build')) redraw(); };
-  function loadBuildOptions(f) {
+  // The workflow list, loaded once; the promise lets a Start pressed while it loads wait for the answer.
+  function loadWorkflows() {
     if (workflows == null) {
       workflows = 'loading';
-      api('GET', '/api/workflows').then((d) => { workflows = (d.workflows || []).filter((w) => w && w.id && !NOT_FOR_BUILDS.includes(w.id)); workflowsFailed = false; },
-        () => { workflows = []; workflowsFailed = true; }).then(redrawBuild);
+      workflowsP = api('GET', '/api/workflows').then((d) => { workflows = (d.workflows || []).filter((w) => w && w.id && !NOT_FOR_BUILDS.includes(w.id)); workflowsFailed = false; })
+        .catch(() => { workflows = []; workflowsFailed = true; }).finally(() => { workflowsP = null; redrawBuild(); });
     }
+    return workflowsP || Promise.resolve();
+  }
+  function loadBuildOptions(f) {
+    void loadWorkflows();
     const dir = projectPath(f);
     if (dir && !branchLists.has(dir)) {
       branchLists.set(dir, 'loading');
@@ -1456,6 +1464,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
           () => { branchLists.set(dir, { branches: [], current: null }); }).then(redrawBuild);
     }
   }
+  // The workflow a start uses: the remembered choice, or Auto while the list could not be loaded (the card says so).
+  const effectiveWorkflow = (c) => (workflowsFailed ? AUTO_WORKFLOW : c.workflowId || AUTO_WORKFLOW);
   function buildChoices(f, c, chipBranch) {
     const opt = (value, text) => h('option', { value, text });
     const wfs = Array.isArray(workflows) ? workflows : [];
@@ -1533,6 +1543,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   function buildCard(f) {
     const c = choiceOf(f);
     if (c.open) loadBuildOptions(f);
+    else if (c.workflowId !== AUTO_WORKFLOW) void loadWorkflows();   // a remembered workflow the list may no longer offer
     const version = nextVersion(f);
     const total = (f.readiness && f.readiness.total) || READY_CHECKS;
     const chipBranch = h('span', { class: 'chip', text: `Branch from · ${c.sourceBranch || 'default'}` });
@@ -1542,11 +1553,12 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         h('p', {}, `All ${total} checks pass. Starting saves this spec as version ${version} and starts a run on `, h('b', { text: targetName(f) }),
           ' with it as the task. The run plans, builds and reviews; its cost counts toward your limit like any run.'),
         h('div', { class: 'req-build-chips' },
-          h('span', { class: 'chip', text: `Workflow · ${workflowName(c.workflowId)}` }), chipBranch,
+          h('span', { class: 'chip', text: `Workflow · ${workflowName(effectiveWorkflow(c))}` }), chipBranch,
           h('button', { type: 'button', class: 'hint req-link', 'data-ui': 'build-change', 'aria-expanded': c.open ? 'true' : 'false',
-            'aria-label': 'Change the workflow and branch', 'data-min-level': 'advanced',   // docs/ui-levels.md: the chips show the values at every level
+            'aria-label': 'Change the workflow and branch',
             onclick: () => { c.open = !c.open; focusNext = c.open ? 'build-workflow' : 'build-change'; redraw(); } }, 'Change')),
         c.open ? buildChoices(f, c, chipBranch) : null,
+        workflowsFailed && !c.open ? h('p', { class: 'hint warn req-build-warn', role: 'status', text: 'Could not load workflows; only Auto is offered.' }) : null,
         filesForRun(f), reportRow(f, 'card')),   // A6 D15, board 29 (6)
       h('button', { type: 'button', class: 'btn btn-primary req-build-go', 'data-ui': 'start-go', 'data-start': '', disabled: starting,
         onclick: (e) => startFlow(f, { trigger: e.currentTarget }) }, icon(ICONS.play, { size: 14, fill: 'currentColor', stroke: 'none' }), 'Start in Worca'));
@@ -1755,9 +1767,20 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
 
   // ---- Start (A2 D5): a plain start, or with `override` the start-before-Ready dialog straight away.
   // A plain start the server refuses as NOT_READY opens the dialog too, naming the checks it reported. ----
-  function startFlow(f, { override = false, trigger = null } = {}) {
+  // A press while the workflow list loads waits for it. Auto starts at once (a Ready feature) or after its reason (an
+  // early start); any other workflow opens the run setup overlay first, after the reason for an early start.
+  async function startFlow(f, { override = false, trigger = null } = {}) {
     if (starting || dialog) return;
-    if (override) { openStartDialog(f, failingChecks(f), trigger); return; }
+    // Auto needs no list: it is what a failed list falls back to as well. Another remembered workflow waits for the answer.
+    if (choiceOf(f).workflowId !== AUTO_WORKFLOW && (workflows == null || workflows === 'loading')) {
+      await loadWorkflows();
+      if (starting || dialog || seqShown !== f.seq) return;
+      if (workflowsFailed) return;   // the list failed while we waited: the card now says only Auto is offered; the person presses again
+    }
+    const setup = effectiveWorkflow(choiceOf(f)) !== AUTO_WORKFLOW;
+    const early = override || (setup && !!f.readiness && f.readiness.ok === false);
+    if (early) { openStartDialog(f, failingChecks(f), trigger, { setup }); return; }
+    if (setup) { openRunSetup(f, { trigger }); return; }
     void startPlain(f, trigger);
   }
   // The checks that fail: the server's keys (NOT_READY) looked up in the readiness, else every failing one.
@@ -1769,25 +1792,24 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   function postStart(f, extra = {}) {
     const c = choiceOf(f);
     const branch = String(c.sourceBranch || '').trim();
-    return api('POST', `/api/requirements/${f.seq}/start`, { ...extra, workflowId: c.workflowId || AUTO_WORKFLOW, ...(branch ? { sourceBranch: branch } : {}),
+    return api('POST', `/api/requirements/${f.seq}/start`, { ...extra, workflowId: effectiveWorkflow(c), ...(branch ? { sourceBranch: branch } : {}),
       ...(linkOf(f) ? { reportBack: reportBack.get(f.seq) !== false } : {}) });   // A6 D15: only with a ticket
   }
-  // A start went through: the answer carries the feature, now started; repaint from it and say so.
+  // A start went through: the answer carries the feature, now started. The run is what the person wants next: go to it.
   function started(f, data) {
     starting = false;
     const c = choices.get(f.seq);
     if (c) c.open = false;
-    // Another feature is on screen now: its page keeps its paint and its focus (only its Start buttons,
-    // disabled while this start ran, come back).
-    if (seqShown !== f.seq) { redraw(); return; }
-    paintNo += 1;   // a fetch already under way would paint the feature as it was before the start
-    if (data && data.feature && seqShown === data.feature.seq) { paintFeature(data.feature, data.turns || []); paintedKey = `feature/${seqShown}`; }
-    sayStarted(data.version, data.runId);
-    // The control pressed is gone with the repaint: the focus goes to the message's run link, else the runs card.
-    const link = msgEl && msgEl.querySelector('a');
-    const to = link && link.isConnected ? link : host.querySelector('.req-runs a.req-run-row, .req-runs button:not(:disabled)');
-    if (to) to.focus();
+    if (seqShown === f.seq) {
+      paintNo += 1;   // a fetch already under way would paint the feature as it was before the start
+      if (data && data.feature && seqShown === data.feature.seq) { paintFeature(data.feature, data.turns || []); paintedKey = `feature/${seqShown}`; }
+    } else redraw();   // another feature is on screen: only its Start buttons, disabled while this start ran, come back
+    openRun(data.runId);
   }
+  const openRun = (runId) => {
+    if (typeof deps.openRun === 'function') deps.openRun(runId);
+    else location.hash = `#running/${runId}`;
+  };
   async function startPlain(f, trigger) {
     say('');
     starting = true;
@@ -1798,6 +1820,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     } catch (err) {
       starting = false;
       redraw();
+      if (seqShown !== f.seq) return;   // the person left this feature while it started: its dialog or message is not for this page
       if (err && err.status === 409 && err.data && Array.isArray(err.data.failing)) {
         const now = current && current.f.seq === f.seq ? current.f : f;
         openStartDialog(now, failingChecks(now, err.data.failing), host.querySelector(`[data-ui="${triggerUi}"]`) || trigger);
@@ -1808,8 +1831,16 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   // The start-before-Ready dialog (board StartAnyway.dc.html): the upstream modal overlay (.viewer-modal),
   // on <body> so a live repaint of the page never drops what is typed. Escape and Keep deciding close it;
   // Tab stays inside; the focus goes to the reason on open and back to the trigger on close.
-  function openStartDialog(f, failing, trigger) {
+  // FEAT-9: the reason is saved on the feature as soon as it is given (PUT early-start-reason) and kept through a cancel or
+  // a failed start; the dialog opens with what is kept. `setup`: the start goes on to the run setup overlay (the label is
+  // then "Continue"); `overlay`: an overlay already confirmed (the start was refused as not Ready after it), sent with the reason.
+  async function putReason(f, reason) {
+    const r = await api('PUT', `/api/requirements/${f.seq}/early-start-reason`, { reason });
+    if (current && current.f.seq === f.seq) current = { ...current, f: { ...current.f, earlyStartReason: r.earlyStartReason ?? null } };
+  }
+  function openStartDialog(f, failing, trigger, { setup = false, overlay = null } = {}) {
     closeDialog(false);
+    const kept = (current && current.f.seq === f.seq ? current.f : f).earlyStartReason || '';
     const openN = ((f.spec && f.spec.assumptions) || []).filter((a) => a.status === 'open').length;
     const assumptionsFail = failing.some((c) => c.key === 'assumptions');
     const who = (typeof deps.who === 'function' && deps.who()) || 'you';
@@ -1817,18 +1848,25 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const area = h('textarea', { id: 'req-dlg-reason', rows: '3', maxlength: String(REASON_MAX), 'aria-required': 'true', 'aria-describedby': 'req-dlg-count' });
     const count = h('span', { class: 'hint req-dlg-count', id: 'req-dlg-count', text: `0 / ${REASON_MAX}` });
     const msg = h('p', { class: 'form-msg err req-dlg-msg', role: 'alert' });
-    const go = h('button', { type: 'button', class: 'btn btn-primary', disabled: true }, assumptionsFail && openN ? `Start with ${openN} open` : 'Start anyway');
+    const go = h('button', { type: 'button', class: 'btn btn-primary', disabled: true },
+      setup ? 'Continue' : assumptionsFail && openN ? `Start with ${openN} open` : 'Start anyway');
     const sync = () => { count.textContent = `${area.value.length} / ${REASON_MAX}`; go.disabled = busy || !area.value.trim(); };
+    area.value = kept;
+    sync();
     area.addEventListener('input', sync);
     go.addEventListener('click', async () => {
       if (busy || !area.value.trim()) return;
       busy = true; starting = true; sync(); msg.textContent = '';
       try {
-        const data = await postStart(f, { reason: area.value.trim() });
+        const reason = area.value.trim();
+        await putReason(f, reason);
+        if (setup) { starting = false; if (seqShown === f.seq) openRunSetup(f, { trigger, reason }); return; }
+        const data = await postStart(f, { reason, ...(overlay ? { overlay } : {}) });
         closeDialog(false);
         started(f, data);
       } catch (err) {
         starting = false;
+        redraw();   // the PUT's live frame repainted the page with Start disabled; a failed start sends none to undo it
         msg.textContent = errText(err);
       } finally { busy = false; sync(); }
     });
@@ -1849,10 +1887,48 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         h('button', { type: 'button', class: 'btn', onclick: () => { if (!busy) closeDialog(true); } }, 'Keep deciding'), go));
     openModal(card, { trigger, first: area, canClose: () => !busy });
   }
+  // The run setup overlay (FEAT-9): the card's workflow is fixed; the person applies a preset and changes agents and loops for this
+  // run only. Confirm starts the run with that overlay (and the kept reason, for an early start) and goes to the run; a refusal
+  // stays in the overlay. A start refused as not Ready after the overlay closes it and asks for the reason, then sends the
+  // same confirmed overlay.
+  function openRunSetup(f, { trigger = null, reason = '' } = {}) {
+    closeDialog(false);
+    const c = choiceOf(f);
+    const wfId = effectiveWorkflow(c);
+    const ref = f.scopeKey;
+    let handle = null;
+    const confirm = async (overlay) => {
+      starting = true;
+      for (const b of host.querySelectorAll('[data-start]')) b.disabled = true;
+      try {
+        const data = await postStart(f, { ...(reason ? { reason } : {}), ...(overlay ? { overlay } : {}) });
+        handle.close();
+        started(f, data);
+        return {};
+      } catch (err) {
+        starting = false;
+        redraw();
+        if (seqShown !== f.seq) return {};   // the overlay closed with the page: nothing to open or say here
+        if (err && err.status === 409 && err.data && Array.isArray(err.data.failing)) {
+          const now = current && current.f.seq === f.seq ? current.f : f;
+          handle.close();
+          openStartDialog(now, failingChecks(now, err.data.failing), host.querySelector(`[data-ui="${trigger && trigger.getAttribute ? trigger.getAttribute('data-ui') : ''}"]`) || trigger, { overlay });
+          return {};
+        }
+        return { error: errText(err) };
+      }
+    };
+    handle = openRunSetupOverlay({
+      modal: { open: (card, o) => openModal(card, o), close: (restore) => closeDialog(restore) },
+      workflowId: wfId, workflowName: workflowName(wfId), projectDir: setupProjectDir(f),
+      scopeRef: { kind: f.scopeType === 'workspace' ? 'workspace' : 'project', ref, name: targetName(f) },
+      fetchers: deps.setupFetchers || null, trigger, onConfirm: confirm, onCancel: () => {},
+    });
+  }
   /** A modal on the page (the start dialog's pattern): Escape closes it when `canClose()`, Tab stays inside, the page
    *  behind is inert; `first` takes the focus, and `closeDialog(true)` hands it back to `trigger`. A6 (`page`): an export
    *  dialog — a full-screen sheet on a phone — makes every other child of <body> inert too, released on close. */
-  function openModal(card, { trigger = null, first = null, canClose = () => true, page = false } = {}) {
+  function openModal(card, { trigger = null, first = null, canClose = () => true, page = false, onClose = null } = {}) {
     const wrap = h('div', { class: `viewer-modal req-dlg-wrap${page ? ' req-dlg-sheet' : ''}` }, card);
     const triggerUi = trigger && trigger.getAttribute ? trigger.getAttribute('data-ui') : null;
     // On the document, in the capture phase: Escape and Tab work wherever the focus is, even after a click
@@ -1881,7 +1957,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     // the page behind cannot be reached while the dialog is open
     host.inert = true; host.setAttribute('inert', '');
     dlgGen += 1;
-    dialog = { wrap, trigger, triggerUi, onKey, canClose, page };
+    dialog = { wrap, trigger, triggerUi, onKey, canClose, page, onClose };
     syncExportInert();
     if (first) first.focus();
   }
@@ -1908,7 +1984,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   }
   function closeDialog(restore = true) {
     if (!dialog) return;
-    const { wrap, trigger, triggerUi, onKey } = dialog;
+    const { wrap, trigger, triggerUi, onKey, onClose } = dialog;
     dialog = null;
     dlgGen += 1;
     document.removeEventListener('keydown', onKey, true);
@@ -1918,6 +1994,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     // A3: a Feature chat phone sheet still open is modal again (while the dialog was open its page was already inert, so skipped)
     syncSheetInert();
     if (restore) restoreFocus(trigger, triggerUi);
+    if (onClose) onClose();   // however it closed (Escape, Cancel, a page leaving): the dialog's owner learns it is gone
   }
 
   // Ready to start? (A2 D1): the server's six checks, never derived here; every state but archived.
@@ -1960,7 +2037,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
 
   /** A hidden file input; `onFiles` gets the picked files. */
   function filePicker(onFiles, { multiple = true } = {}) {
-    const input = h('input', { type: 'file', accept: REQ_ATTACH.accept, hidden: true, multiple: multiple || null, tabindex: '-1', 'aria-hidden': 'true' });
+    const input = h('input', { type: 'file', hidden: true, multiple: multiple || null, tabindex: '-1', 'aria-hidden': 'true' });
     input.addEventListener('change', () => { const files = [...(input.files || [])]; input.value = ''; if (files.length) onFiles(files); });
     return input;
   }
@@ -1975,7 +2052,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const ok = [];
     const pending = existing.map((x) => ({ name: x.name, bytes: x.bytes }));
     for (const file of files) {
-      const c = checkAttachment(file, { pending, limits: reqLimits({ owner }), typeMessage: reqTypeMessage });
+      const c = checkAttachment(file, { pending, limits: reqLimits({ owner }) });
       if (!c.ok) { errors.push(c.error); continue; }
       ok.push(file);
       pending.push({ name: file.name, bytes: file.size });
@@ -2136,7 +2213,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   /** Replace with a newer version… (D11, board 21): the page's early checks of the new file (a refusal goes to the card's
    *  alert line), then the dialog; the choice of D11 only when the summary was edited; the server's refusals in it. */
   function openReplace(a, ctx, file) {
-    const c = checkAttachment(file, { pending: [], limits: reqLimits({ owner: ctx.doc ? 'brief' : 'feature' }), typeMessage: reqTypeMessage });
+    const c = checkAttachment(file, { pending: [], limits: reqLimits({ owner: ctx.doc ? 'brief' : 'feature' }) });
     if (!c.ok) { if (ctx.refuse) ctx.refuse(c.error); else say(c.error, 'err'); focusMore(a); return; }
     if (ctx.refuse) ctx.refuse('');
     closeDialog(false);
@@ -2167,7 +2244,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const card = h('section', { class: 'card req-dialog req-replace', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'req-dlg-title', 'aria-describedby': 'req-dlg-desc' },
       h('h2', { id: 'req-dlg-title', text: `Replace ${a.name}` }),
       h('p', { class: 'req-dlg-lead req-replace-lead', id: 'req-dlg-desc' }, 'New file: ', h('b', { text: file.name }),
-        ` · ${KIND_TITLE[c.attKind]} · ${sizeText(file.size)}. Worca reads it again (about ${est}); ${ctx.doc ? '“Send with every run”' : '“Send with the run”'} stays ${on ? 'on' : 'off'}.`),
+        ` · ${nameTitle(file.name)} · ${sizeText(file.size)}. Worca reads it again (about ${est}); ${ctx.doc ? '“Send with every run”' : '“Send with the run”'} stays ${on ? 'on' : 'off'}.`),
       choice,
       h('p', { class: 'hint req-replace-hint', text: ctx.doc ? "Interviews use the new version right away; the brief's sections change only when you Refresh it."
         : 'The next round uses the new version. A Ready feature gets one short follow-up round; after the start it counts as a change since the start.' }),
@@ -2254,7 +2331,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const replace = filePicker((files) => openReplace(a, ctx, files[0]), { multiple: false });
     const sendKey = ctx.doc ? 'sendWithEveryRun' : 'sendWithRun';
     const usesIt = ctx.doc ? 'Interviews use it once it is read.' : 'The next round uses it.';
-    const meta = [`${KIND_TITLE[a.kind] || 'Text'} · ${sizeText(a.bytes)}`, a.costUsd > 0 ? `read for ${usd(a.costUsd)}` : null].filter(Boolean).join(' · ');
+    const meta = [`${rowTitle(a)} · ${sizeText(a.bytes)}`, a.costUsd > 0 ? `read for ${usd(a.costUsd)}` : null].filter(Boolean).join(' · ');
     const top = h('div', { class: 'req-file-top' },
       h('a', { class: 'req-file-name', href: a.href, target: '_blank', rel: 'noopener', 'data-ui': `file-name-${a.id}`, text: a.name }),
       h('span', { class: 'hint req-file-meta', text: meta }),

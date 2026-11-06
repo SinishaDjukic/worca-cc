@@ -115,6 +115,7 @@
     "mcp-servers/server-fields.css",
     "skills/connector-skills.css",
     "actions/actions-run.css",
+    "actions/actions-workspace.css",
     "models/engine-settings.css",
     "projects/project-settings.css",
     "models/engine-status.css",

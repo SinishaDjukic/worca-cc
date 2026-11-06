@@ -64,7 +64,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 87;
+export const SCHEMA_VERSION = 89;
 
 /** store_meta row holding the install's default guardrail set id (JSON string). */
 export const GUARDRAILS_DEFAULT_META_KEY = 'guardrails:default';
@@ -841,6 +841,7 @@ ${STEP_QUESTIONS_DDL}
  */
 const INCREMENTAL_COLUMNS = {
   req_cost_ledger:        { brief_id: 'INTEGER', attachment_id: 'TEXT', helper_message_id: 'INTEGER' },   // v74: a brief look's spend (feature_seq is 0 then); v77: a file's read or ask; v78: a helper call (A3 D13)
+  req_features:           { early_start_reason: 'TEXT' },   // v85: the reason given for starting a feature before Ready, kept until a run starts; NULL = none
   req_starts:             { files_json: "TEXT NOT NULL DEFAULT '[]'" },   // v77: the files a start sent (A8 D14)
   run_groups:             { name_source: "TEXT NOT NULL DEFAULT 'user'" },   // v79: 'suggested' | 'user' (Smart naming), as ask_chat_groups
   pipelines:              { resume_point: 'TEXT', owner_pid: 'INTEGER', owner_host: 'TEXT', heartbeat_at: 'TEXT',
@@ -864,7 +865,7 @@ const INCREMENTAL_COLUMNS = {
                             release_at: 'TEXT',       // v66: when the draft release was claimed (set once; never cleared)
                             release_url: 'TEXT',      // v66: the draft release's URL
                             release_error: 'TEXT',    // v66: why creating it failed (not retried)
-                            is_test: 'INTEGER' },     // v86 (workflow tests D21/D22): 1 = a test try, hidden from lists, Statistics, metrics; NULL = a normal run
+                            is_test: 'INTEGER' },     // v88 (workflow tests D21/D22): 1 = a test try, hidden from lists, Statistics, metrics; NULL = a normal run
   pipeline_steps:         { session_id: 'TEXT', skills: 'TEXT', graphify_count: 'INTEGER',
                             execution_id: 'TEXT', exec_kind: 'TEXT', agent_key: 'TEXT', ended_at: 'TEXT',
                             exec_trigger: 'TEXT', exec_result: 'TEXT', exec_meta: 'TEXT',
@@ -872,9 +873,9 @@ const INCREMENTAL_COLUMNS = {
   sub_agents:             { ui_phase: 'TEXT', skills: 'TEXT', subagent_type: 'TEXT', graphify_count: 'INTEGER',
                             run_model: 'TEXT' },   // v25: the model the child actually ran on
   workflows:              { domain: 'TEXT', origin: 'TEXT', graph: 'TEXT', archived_at: 'TEXT',
-                            live_version_no: 'INTEGER' },   // v85: the named version new runs use (NULL = the row itself)
-  wf_test_tries:          { start_commit: 'TEXT', disk_bytes: 'INTEGER',   // v87 (workflow tests 3a): a project try's start and checkout size
-                            setup: 'TEXT', changes: 'TEXT' },              // v87: its setup run (JSON) and its change list (JSON)
+                            live_version_no: 'INTEGER' },   // v87: the named version new runs use (NULL = the row itself)
+  wf_test_tries:          { start_commit: 'TEXT', disk_bytes: 'INTEGER',   // v89 (workflow tests 3a): a project try's start and checkout size
+                            setup: 'TEXT', changes: 'TEXT' },              // v89: its setup run (JSON) and its change list (JSON)
   config_workflow_nodes:  { ask_questions: 'INTEGER', subagent_model: 'TEXT',   // v25: sub-agent model policy
                             roles: 'TEXT' },   // v84: JSON { roleKey: { model?, effort? } }, a role-review node's per-role picks; NULL = none
   ask_run_links:          { comment_ids: 'TEXT' },        // v22: JSON array of dc_ ids pending at launch
@@ -886,6 +887,7 @@ const INCREMENTAL_COLUMNS = {
                             // fallback once a run's worktree is gone; NULL = out folder, worktree or an older row
                             source_run_id: 'TEXT', source_project_key: 'TEXT', source_rel: 'TEXT' },
   ask_messages:           { engine: 'TEXT' },        // v83 (#943): the engine a reply ran on; NULL = a user/system row or before v83
+  chat_conversations:     { header_new_off: 'INTEGER NOT NULL DEFAULT 0' },   // v86: 1 = a scope pick retired the header's New conversation for good
   project_config:         { human_in_loop: 'INTEGER NOT NULL DEFAULT 1' },   // v28: the Auto entry's human-in-the-loop switch
   diff_comments:          { parent_id: 'TEXT REFERENCES diff_comments(id) ON DELETE CASCADE',  // v29: reply threads; NULL = thread root
                             author_name: 'TEXT' },   // v37: who wrote it (identity.mjs actor); NULL = before attribution / Ask
@@ -927,7 +929,7 @@ const INCREMENTAL_COLUMNS = {
                             resume_pipeline_id: 'TEXT',   // v44: a one-off "resume this paused run" ticket (NULL = starts a new run)
                             preset_id: 'TEXT' },   // v63: the run preset this run follows (read at fire time); NULL = none
   projects:               { vcs: 'TEXT' },   // v69: 'git' | 'none' (CONTRACT §1); NULL reads as 'git'
-  wf_test_example_projects: { project_name: 'TEXT' },   // v87 (3a): the pinned project's name, for a project no longer registered
+  wf_test_example_projects: { project_name: 'TEXT' },   // v89 (3a): the pinned project's name, for a project no longer registered
 };
 
 /** v23: per-loop-wire cycle budgets, the graph-engine twin of
@@ -1087,6 +1089,60 @@ CREATE TABLE IF NOT EXISTS pr_watch_runs (
 // v82 (#711): Git event automations. A rule starts a run when an issue or PR event in its project or workspace matches;
 // one automation_events row per (rule, subject) is the "never twice" guarantee and the Activity log; cursors hold
 // each project's poll position; deliveries drop webhook repeats. src/core/automations.mjs owns all four.
+// v85 freeform chat (Discord first): one row per platform thread bound to an Ask thread, the opaque control refs it
+// was sent, every delivered message part, and the platform event ids already handled (dedup across reconnects).
+const CHAT_CONVERSATIONS_DDL = `
+CREATE TABLE IF NOT EXISTS chat_conversations (
+  id             TEXT PRIMARY KEY,
+  plugin         TEXT NOT NULL,
+  channel_id     TEXT NOT NULL,
+  platform       TEXT NOT NULL,
+  guild_id       TEXT,
+  parent_chat_id TEXT NOT NULL,
+  chat_id        TEXT NOT NULL,
+  owner_user_id  TEXT NOT NULL,
+  worca_identity TEXT NOT NULL,
+  ask_thread_id  TEXT NOT NULL REFERENCES ask_threads(id) ON DELETE CASCADE,
+  header_message_id TEXT,
+  header_new_off INTEGER NOT NULL DEFAULT 0,
+  status         TEXT NOT NULL DEFAULT 'active',
+  created_at     TEXT NOT NULL,
+  updated_at     TEXT NOT NULL,
+  UNIQUE (plugin, channel_id, chat_id)
+);
+CREATE INDEX IF NOT EXISTS idx_chat_conversations_thread ON chat_conversations(ask_thread_id);
+CREATE TABLE IF NOT EXISTS chat_controls (
+  ref             TEXT PRIMARY KEY,
+  conversation_id TEXT NOT NULL REFERENCES chat_conversations(id) ON DELETE CASCADE,
+  card_id         TEXT,
+  action          TEXT NOT NULL,
+  issued_state    TEXT,
+  owner_user_id   TEXT NOT NULL,
+  single_use      INTEGER NOT NULL DEFAULT 1,
+  expires_at      TEXT NOT NULL,
+  used_at         TEXT,
+  created_at      TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_chat_controls_card ON chat_controls(conversation_id, card_id);
+CREATE TABLE IF NOT EXISTS chat_deliveries (
+  conversation_id     TEXT NOT NULL REFERENCES chat_conversations(id) ON DELETE CASCADE,
+  ask_message_id      TEXT NOT NULL,
+  part                TEXT NOT NULL,
+  platform_message_id TEXT,
+  shown_state         TEXT,
+  delivered_at        TEXT NOT NULL,
+  PRIMARY KEY (conversation_id, ask_message_id, part)
+);
+CREATE TABLE IF NOT EXISTS chat_inbound_seen (
+  plugin     TEXT NOT NULL,
+  channel_id TEXT NOT NULL,
+  event_id   TEXT NOT NULL,
+  seen_at    TEXT NOT NULL,
+  PRIMARY KEY (plugin, channel_id, event_id)
+);
+CREATE INDEX IF NOT EXISTS idx_chat_inbound_seen_at ON chat_inbound_seen(seen_at);
+`;
+
 const AUTOMATIONS_DDL = `
 CREATE TABLE IF NOT EXISTS automation_rules (
   id            TEXT PRIMARY KEY,
@@ -1452,7 +1508,7 @@ CREATE INDEX IF NOT EXISTS req_attachments_owner ON req_attachments(owner_type, 
 CREATE UNIQUE INDEX IF NOT EXISTS req_attachments_sha ON req_attachments(owner_type, owner_id, sha256);
 `;
 
-// v85 (plans/workflow-tests-plan.md, #721 workflow part): every save keeps the state it replaced (version_no NULL,
+// v87 (plans/workflow-tests-plan.md, #721 workflow part): every save keeps the state it replaced (version_no NULL,
 // the last 50 per workflow) and Save version keeps a numbered state (never pruned). Append-only and FK-free like
 // ask_cost_ledger, so history outlives a deleted workflows row. `graph` = {nodes, wires, canvas?, codeGraph?}.
 const WORKFLOW_REVISIONS_DDL = `
@@ -1526,7 +1582,7 @@ CREATE TABLE IF NOT EXISTS req_export_links (
 );
 `;
 
-// v86 (plans/workflow-tests-part2-plan.md D31): workflow tests. Examples (+ their files as BLOBs), test runs, tries and
+// v88 (plans/workflow-tests-part2-plan.md D31): workflow tests. Examples (+ their files as BLOBs), test runs, tries and
 // the tries a run shows (its own and the ones it reused). FK-free like workflow_revisions: a deleted workflow keeps its
 // examples, and they come back with a workflow saved again under the same id.
 const WORKFLOW_TESTS_DDL = `
@@ -1606,7 +1662,7 @@ CREATE TABLE IF NOT EXISTS wf_test_run_tries (
   PRIMARY KEY (run_id, try_id)
 );`;
 
-// v87 (plans/workflow-tests-part3a-plan.md D41, D53): an example's project and pinned start point. FK-free like the v78
+// v89 (plans/workflow-tests-part3a-plan.md D41, D53): an example's project and pinned start point. FK-free like the v78
 // tables. `changes` = the person's uncommitted changes at save time, as a binary patch (NULL = none); `start_commit` = the
 // commit tries start from (start_sha itself, or Worca's commit of start_sha + changes in its copy of the project).
 // `project_name` = the project's name when the start was pinned: shown when the project is no longer registered, never the
@@ -1665,14 +1721,18 @@ const INCREMENTAL_TABLES = {
   run_groups:        RUN_GROUPS_DDL,
   run_group_members: RUN_GROUPS_DDL,
   ask_chat_groups:   ASK_CHAT_GROUPS_DDL,      // v76 (#948 s3)
-  workflow_revisions: WORKFLOW_REVISIONS_DDL,  // v85 (workflow tests Part 1, #721)
-  wf_test_examples:      WORKFLOW_TESTS_DDL,   // v86 (workflow tests Part 2)
+  workflow_revisions: WORKFLOW_REVISIONS_DDL,  // v87 (workflow tests Part 1, #721)
+  wf_test_examples:      WORKFLOW_TESTS_DDL,   // v88 (workflow tests Part 2)
   wf_test_example_files: WORKFLOW_TESTS_DDL,
   wf_test_runs:          WORKFLOW_TESTS_DDL,
   wf_test_tries:         WORKFLOW_TESTS_DDL,
   wf_test_run_tries:     WORKFLOW_TESTS_DDL,
-  wf_test_example_projects: WORKFLOW_TEST_PROJECTS_DDL,   // v87 (workflow tests 3a)
+  wf_test_example_projects: WORKFLOW_TEST_PROJECTS_DDL,   // v89 (workflow tests 3a)
   night_decisions:   NIGHT_DECISIONS_DDL,
+  chat_conversations: CHAT_CONVERSATIONS_DDL,
+  chat_controls: CHAT_CONVERSATIONS_DDL,
+  chat_deliveries: CHAT_CONVERSATIONS_DDL,
+  chat_inbound_seen: CHAT_CONVERSATIONS_DDL,
   terminal_sessions:  TERMINAL_DDL,
   terminal_blocks:    TERMINAL_DDL,
   terminal_audit:     TERMINAL_DDL,
@@ -2862,29 +2922,40 @@ export function migrate(db) {
     if (current < 82) db.exec(AUTOMATIONS_DDL);   // v82 Git event automations (#711), project and workspace rules
     // v83 (#943): ask_messages.engine — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
     // v84 (#990): config_workflow_nodes.roles — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
-    // v85 workflow history + versions (this rung was v78, then v79, then v83, then v84, on feat/workflow-tests before dev took
-    // 78, 79, 83 and 84). A DB that branch stamped 84 has workflow_revisions but skips dev's v84 rung above, which has no step
-    // of its own: the hoisted repairSchemaGaps (current < SCHEMA_VERSION) adds config_workflow_nodes.roles (and
-    // pipelines.review_stats). A DB it stamped 83 also lacks ask_messages.engine, and one it stamped 79 also lacks
+    // v85 had two meanings: dev's req_features.early_start_reason (INCREMENTAL_COLUMNS) and this branch's chat tables.
+    // Both heal on either v85 DB: the hoisted repairSchemaGaps adds the missing column, and chat_conversations is in
+    // INCREMENTAL_TABLES, so a dev-v85 DB (which skips the step below) gets its chat tables there too.
+    if (current < 85) db.exec(CHAT_CONVERSATIONS_DDL);   // v85 freeform chat conversations (first written as v84; dev took 84)
+    // v86: chat_conversations.header_new_off — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps (a v85 DB) or
+    // by the v85 DDL above (an older DB)
+    // v87 workflow history + versions (this rung was v78, then v79, then v83, then v84, then v85, on feat/workflow-tests
+    // before dev took 78, 79, 83, 84, 85 and 86). A DB that branch stamped 85 has workflow_revisions but skips dev's v85
+    // chat rung above and dev's v86, which has no step of its own: the hoisted repairSchemaGaps (current < SCHEMA_VERSION)
+    // creates chat_conversations / chat_controls / chat_deliveries / chat_inbound_seen from INCREMENTAL_TABLES (with
+    // header_new_off) and adds req_features.early_start_reason. A DB it stamped 84 also lacks config_workflow_nodes.roles
+    // (and pipelines.review_stats); one it stamped 83 also lacks ask_messages.engine, and one it stamped 79 also lacks
     // run_groups.name_source: the same repair adds them, and the v80–v82 rungs above run. A DB it stamped 78 also gets
     // req_helper_messages and ledger.helper_message_id from INCREMENTAL_TABLES / INCREMENTAL_COLUMNS.
-    if (current < 85) db.exec(WORKFLOW_REVISIONS_DDL);   // v85 workflow history + versions; workflows.live_version_no comes from INCREMENTAL_COLUMNS
-    // v86 workflow tests (this rung was v78, then v80, then v85, on feat/workflow-tests-part2 before dev took 77/78, 80–83 and
-    // 84 and Part 1's revisions moved to 79, then 83, then 84, then 85). A DB that branch stamped 85 skips dev's v84 rung: the
-    // hoisted repairSchemaGaps adds config_workflow_nodes.roles. A DB it stamped 80 has workflow_revisions and the wf_test_*
-    // tables but skips dev's v80 rung above: the hoisted repairSchemaGaps (current < SCHEMA_VERSION) creates req_export_setups
-    // / req_export_links from INCREMENTAL_TABLES and adds run_groups.name_source and ask_messages.engine; the v81 / v82 rungs
-    // run. A DB it stamped 78 also gets req_attachments, req_helper_messages, ledger.attachment_id / helper_message_id and
-    // starts.files_json the same way. The v85 and v86 DDL are IF NOT EXISTS.
-    if (current < 86) db.exec(WORKFLOW_TESTS_DDL);   // v86 workflow tests; pipelines.is_test comes from INCREMENTAL_COLUMNS
-    // v87 workflow tests 3a (this rung was v81, then v86, on feat/workflow-tests-part3 before dev took 79–84 and Parts 1 and 2
-    // moved to 85 and 86). The repair runs again: a DB without the tests tables gets wf_test_tries from the hoisted repair's
-    // table pass or the v86 rung, without its v87 columns, so it gets them only from this call (v74's pattern). A DB that
-    // branch stamped 86 skips dev's v84 rung; the hoisted repair adds config_workflow_nodes.roles. A DB it stamped 81 skips
-    // dev's v81 rung above (the guardrail default row is not written, so it reads as a new install's Normal, the stricter
-    // default); the hoisted repair creates req_export_setups / req_export_links and adds run_groups.name_source and
-    // ask_messages.engine, the v82 rung runs, and the v85 / v86 / v87 DDL are IF NOT EXISTS.
-    if (current < 87) { db.exec(WORKFLOW_TEST_PROJECTS_DDL); repairSchemaGaps(db, schemaGaps(db)); }
+    if (current < 87) db.exec(WORKFLOW_REVISIONS_DDL);   // v87 workflow history + versions; workflows.live_version_no comes from INCREMENTAL_COLUMNS
+    // v88 workflow tests (this rung was v78, then v80, then v85, then v86, on feat/workflow-tests-part2 before dev took
+    // 77/78, 80–83, 84, 85 and 86 and Part 1's revisions moved to 79, then 83, then 84, then 85, then 87). A DB that branch
+    // stamped 86 skips dev's v85 and v86 rungs: the hoisted repairSchemaGaps creates the chat tables and adds
+    // req_features.early_start_reason. A DB it stamped 85 also lacks config_workflow_nodes.roles: the same repair adds it. A
+    // DB it stamped 80 has workflow_revisions and the wf_test_* tables but skips dev's v80 rung above: the hoisted
+    // repairSchemaGaps (current < SCHEMA_VERSION) creates req_export_setups / req_export_links from INCREMENTAL_TABLES and
+    // adds run_groups.name_source and ask_messages.engine; the v81 / v82 / v85 rungs run. A DB it stamped 78 also gets
+    // req_attachments, req_helper_messages, ledger.attachment_id / helper_message_id and starts.files_json the same way.
+    // The v87 and v88 DDL are IF NOT EXISTS.
+    if (current < 88) db.exec(WORKFLOW_TESTS_DDL);   // v88 workflow tests; pipelines.is_test comes from INCREMENTAL_COLUMNS
+    // v89 workflow tests 3a (this rung was v81, then v86, then v87, on feat/workflow-tests-part3 before dev took 79–86 and
+    // Parts 1 and 2 moved to 87 and 88). The repair runs again: a DB without the tests tables gets wf_test_tries from the
+    // hoisted repair's table pass or the v88 rung, without its v89 columns, so it gets them only from this call (v74's
+    // pattern). A DB that branch stamped 87 skips dev's v85 and v86 rungs; the hoisted repair creates the chat tables and adds
+    // req_features.early_start_reason. A DB it stamped 86 also lacks config_workflow_nodes.roles: the same repair adds it. A
+    // DB it stamped 81 skips dev's v81 rung above (the guardrail default row is not written, so it reads as a new install's
+    // Normal, the stricter default); the hoisted repair creates req_export_setups / req_export_links and adds
+    // run_groups.name_source and ask_messages.engine, the v82 and v85 rungs run, and the v87 / v88 / v89 DDL are IF NOT EXISTS.
+    if (current < 89) { db.exec(WORKFLOW_TEST_PROJECTS_DDL); repairSchemaGaps(db, schemaGaps(db)); }
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

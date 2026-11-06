@@ -2,10 +2,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import * as attachModule from '../ui/public/attach-files.mjs';
 import {
   ATTACH_TEXT_EXT, ATTACH_BINARY, ATTACH_MAX_TEXT_BYTES, ATTACH_MAX_BINARY_BYTES, ATTACH_MAX_MESSAGE_BYTES, ATTACH_MAX_FILES,
-  ATTACH_ACCEPT, extOf, checkAttachment, bytesToBase64, carriesFiles, pastedFiles, createPasteNamer,
-  REQ_ATTACH, reqLimits, reqTypeMessage,
+  extOf, checkAttachment, bytesToBase64, carriesFiles, pastedFiles, createPasteNamer,
+  REQ_ATTACH, reqLimits,
 } from '../ui/public/attach-files.mjs';
 import { TEXT_EXTENSIONS, BINARY_EXTENSIONS, classifyExtension } from '../src/shared/artifact-kinds.mjs';
 import { ASK_LIMITS } from '../src/core/ask/limits.mjs';
@@ -18,7 +19,8 @@ test('the tables and caps mirror the server (artifact-kinds allowlists, ASK_LIMI
   assert.equal(ATTACH_MAX_BINARY_BYTES, ASK_LIMITS.attachment.maxBytesPerBinaryFile);
   assert.equal(ATTACH_MAX_MESSAGE_BYTES, ASK_LIMITS.attachment.maxBytesPerMessage);
   assert.equal(ATTACH_MAX_FILES, ASK_LIMITS.attachment.maxFiles);
-  assert.equal(ATTACH_ACCEPT, '.md,.markdown,.txt,.json,.csv,.log,.html,.htm,.xml,.png,.jpg,.jpeg,.gif,.webp,.pdf,text/*');
+  assert.equal('ATTACH_ACCEPT' in attachModule, false, 'no picker accept filter');
+  assert.equal('reqTypeMessage' in attachModule, false);
   assert.equal(extOf('Spec.v2.MD'), '.md');
   assert.equal(extOf('README'), '');
 });
@@ -29,8 +31,13 @@ test('checkAttachment: Ask\'s checks in Ask\'s order, with its messages; a same-
   assert.equal(checkAttachment({ name: 'spec.pdf', size: 10 }).attKind, 'binary');
   assert.equal(checkAttachment({ name: 'feed.XML', size: 10 }).attKind, 'text');
   assert.equal(checkAttachment({ name: 'spec.pdf', size: 10 }).mime, 'application/pdf');
-  assert.equal(checkAttachment({ name: 'evil.exe', size: 1 }).error, 'attachment type not allowed: evil.exe');
-  assert.equal(checkAttachment({ name: 'README', size: 1 }).error, 'attachment type not allowed: README');
+  for (const name of ['evil.exe', 'README']) {
+    const r = checkAttachment({ name, size: 1 });
+    assert.equal(r.ok, true, name);
+    assert.equal(r.attKind, 'binary');
+    assert.equal(r.mime, null);
+  }
+  assert.equal(checkAttachment({ name: 'evil.exe', size: 100 * 1024 * 1024 + 1 }).error, 'attachment over 104857600 bytes: evil.exe');
   assert.equal(checkAttachment({ name: 'spec.pdf', size: 1 }, { engine: 'codex' }).error, 'a Codex chat cannot view PDFs (Claude, Copilot, Gemini CLI, OpenCode or Qwen Code chats can): spec.pdf');
   assert.equal(checkAttachment({ name: 'shot.png', size: 1 }, { engine: 'codex' }).ok, true);
   assert.equal(checkAttachment({ name: 'big.md', size: 100 * 1024 * 1024 + 1 }).error, 'attachment over 104857600 bytes: big.md');
@@ -80,12 +87,12 @@ test('the Ask panel takes its attachment rules from attach-files.mjs (one copy o
   assert.match(src, /\} from '\.\/attach-files\.mjs';/);
   assert.doesNotMatch(src, /ASK_ATTACH_EXT|ASK_ATTACH_BINARY|ASK_MAX_(TEXT|BINARY|MESSAGE)_BYTES|lastPasteStamp|attachRefusal/);
 });
-test("A8: the Requirements page's limits and messages through `limits` and `typeMessage`; Ask's defaults unchanged", () => {
+test("A8: the Requirements page's limits and messages through `limits`; Ask's defaults unchanged", () => {
   const MB = 1024 * 1024;
-  const req = { limits: reqLimits(), typeMessage: reqTypeMessage };
+  const req = { limits: reqLimits() };
   assert.deepEqual(checkAttachment({ name: 'big.pdf', size: 25 * MB + 1 }, req), { ok: false, error: 'big.pdf was not added: it is over 25 MB.' });
-  assert.equal(checkAttachment({ name: 'plan.docx', size: 1 }, req).error, 'plan.docx was not added: Worca reads text, images and PDF. Save it as PDF to attach it here.');
-  assert.equal(checkAttachment({ name: 'a.zip', size: 1 }, req).error, 'a.zip was not added: Worca reads text, images and PDF.');
+  assert.equal(checkAttachment({ name: 'plan.docx', size: 1 }, req).ok, true);
+  assert.equal(checkAttachment({ name: 'a.zip', size: 25 * MB + 1 }, req).error, 'a.zip was not added: it is over 25 MB.');
   const ten = Array.from({ length: 10 }, (_, i) => ({ name: `${i}.md`, bytes: 1 }));
   assert.equal(checkAttachment({ name: 'x.md', size: 1 }, { ...req, pending: ten }).error, 'x.md was not added: a feature takes up to 10 files.');
   assert.equal(checkAttachment({ name: 'x.md', size: 1 }, { ...req, limits: reqLimits({ owner: 'brief' }), pending: ten }).error, 'x.md was not added: a brief takes up to 10 documents.');
@@ -94,7 +101,7 @@ test("A8: the Requirements page's limits and messages through `limits` and `type
   assert.equal(checkAttachment({ name: 'b.pdf', size: 20 * MB }, { ...req, limits: reqLimits({ create: true }), pending: ninety }).error,
     "b.pdf was not added: a new feature's files can be up to 100 MB in all; add more on the feature page.");
   assert.equal(checkAttachment({ name: 'b.pdf', size: 20 * MB }, { ...req, pending: ninety }).ok, true, 'the feature page splits a larger pick into requests');
-  assert.deepEqual([REQ_ATTACH.maxFiles, REQ_ATTACH.maxBytes, REQ_ATTACH.maxRequestBytes, REQ_ATTACH.accept], [10, 25 * MB, 100 * MB, ATTACH_ACCEPT]);
-  assert.equal(checkAttachment({ name: 'a.exe', size: 1 }).error, 'attachment type not allowed: a.exe');
+  assert.deepEqual([REQ_ATTACH.maxFiles, REQ_ATTACH.maxBytes, REQ_ATTACH.maxRequestBytes], [10, 25 * MB, 100 * MB]);
+  assert.equal('accept' in REQ_ATTACH, false);
   assert.equal(checkAttachment({ name: 'a.md', size: ATTACH_MAX_TEXT_BYTES + 1 }).error, `attachment over ${ATTACH_MAX_TEXT_BYTES} bytes: a.md`);
 });

@@ -292,6 +292,65 @@ and is not retried.
 with their state. A sliced feature's row opens its card underneath. The tab shows
 only while Shaper is on.
 
+### Slices and code reviews carry the requirements
+
+Labs flag `shapeRequirements`. When a sliced run agreed its requirements first (the
+`R-po-1`, `R-ux-1`, … criteria), the outline cuts the runs by them:
+
+- **Satisfies.** Each run on the Split card lists the ids it delivers under its goal
+  (`Satisfies: R-po-1, R-ux-1`). The same line opens the run's task and its PR body,
+  under `Part of …`, and the one PR's body lists it under each run.
+- **Left out.** An id the Planner moved out of this feature shows on a `Left out:` line
+  with its reason. An id no run took fails the outline check's last row,
+  **Every agreed requirement is in one run or left out with a reason**. Approving anyway
+  is allowed: the id is then recorded as left out, "Not placed in a slice when the
+  outline was approved".
+- **The code review checks them.** The code review gains a **Requirements** role that
+  checks only that run's ids against the diff. An id the diff does not deliver is a
+  major finding (`R-ops-1 · not covered by the diff`), so the run goes back to the
+  implementer before you are asked to ship it. Once a run is reviewed, its row on the
+  feature card unfolds **Requirements 2/3 · 1 to fix**.
+
+Rollback: turn the flag off. Later runs of a feature then fire as plain Shaper runs;
+the Satisfies text in their task is only prose.
+
+### Requirement concerns
+
+Agreed requirements stay agreed. A plan reviewer that thinks one of them is itself wrong or cannot be met names it in
+its finding (`"requirement": "R-po-1"`). That finding does not send the plan back to the planner: no extra refine round
+runs for it. It rides the plan approval card as one note, **A reviewer says an agreed requirement is wrong or cannot be
+met:**, with one line per id and the role that raised it.
+
+- **Approve** keeps the requirement as agreed and builds the plan. The audit log reads
+  "Requirement concern overridden: R-po-1 kept as agreed."
+- **Ask for changes** sends your answer, with the concern, to the planner.
+- The concern stops the run even when "Approve each slice's plan" is off. Under `--yes` and in Away mode the plan is
+  approved and the requirement is kept.
+- Only a review of the plan raises a concern. A code review's or a requirements review's finding that names an id
+  blocks as before. Any workflow with a role review, a requirements input and a plan approval stop gets the same card.
+
+### Mark the requirements before the PR
+
+The Ship card lists every agreed requirement under **Requirements 3/4 · 1 to fix**, each with a **Met**, **Not met**
+and **Dropped** picker. Not met asks where it moved, Dropped asks why; a row counts as marked once its text is saved
+(Enter, or leaving the field). Nothing is marked for you: a row whose code review covered it says "covered by the
+diff". The chat card and the feature page save the same marks.
+
+While a row is unmarked, **Create PR** is not the main button and is disabled, and the card reads "Mark every
+requirement before you create the PR · 1 left". Worca checks the marks again when the PR is created, so a stale card
+is refused too. Once shipped, the card shows each requirement with its mark in words. A re-plan starts a new feature,
+and its marks start empty.
+
+### Changes after ship
+
+On a shipped feature with agreed requirements, **Ask for changes** updates the requirements first. The Changes card
+says so: "Requirements first: the 4 agreed requirements are updated before the plan." After Start, the run's first
+card is the requirements hold, with the agreed requirements and how each was marked; the plan approval comes after it.
+This holds for a round on the same PR and for a follow-up run after the PR merged.
+
+Rollback for all three: turn the flag off. Findings then block as before, the Ship card has no ledger and ships
+unmarked, and a Changes request runs as a plain round or follow-up. Saved marks stay stored, unread.
+
 ## Iterate in the chat (s5)
 
 Iterating is one action: say it in the chat. Every finished run card, finished feature card, Ship card (ready or
@@ -355,6 +414,36 @@ card is posted per fix run. When the watch gives up, the run card says so under 
 (`Watch stopped · 3 fix runs, checks still failing`) with **View PR** and **Ask for changes**. On the pull-request
 card the watch is only the PR link's tooltip (`PR #781 · watched`). With Shaper off, each fix run still gets its own
 `PR fix run` card.
+
+## Requirements first (Labs)
+
+Labs flag `shapeRequirements`. A medium or large Shaper task agrees its requirements before the plan is written. The
+Shaper's Requirements step is a hold, like the plan approval, and it has its own card. Three cards change:
+
+- **The Shaper card.** One facts line (`Large task · ≈ $31 · ~84 min`), then one sentence: `You lead as [Product ▾],
+  supported by [QA and Security ▾].` Each picker opens a menu: the lead is one of Product, Engineering, Design, QA,
+  Security and DevOps, and the supporters are switches (Product always reviews and is not listed). The first time, the
+  lead reads `pick a role` and **Shape requirements** stays off until you pick one; your pick is remembered for next
+  time. **Shape requirements** is the primary button and **Run as is** steps back. A small task keeps **Shaper** and
+  **Run as is**, with the facts line and the perspective chips. A card proposed directly as Shaper gets the same
+  sentence and **Shape requirements** when medium or large, and it has no **Run as is**; a small or unsized one keeps
+  its fields and **Start planning**, with the facts line.
+- **The Requirements card.** `6 agreed by the perspectives · 2 need you · as Product`, then the agreed requirements as
+  rows, then the decisions the perspectives could not settle. Each decision is one question with Worca's pick already
+  chosen and marked `recommended`; change any of them. Questions and answers are worded for the lead you picked: a
+  Product or Design lead never sees code terms such as `project:read`; a scope token with no plain wording reads
+  `read access`. **Agree and plan** is the only primary.
+  **Ask for changes** sends your words and your picks back. Agree and plan is off, with the reason beside it, when no
+  requirement was written or a requirement fails its check. If the requirements could not be loaded the card says so and
+  **Try again** is the primary.
+- **The plan card.** A **Requirements 7/8 · 1 to fix** fold sits above **Shape** and opens when a requirement has no
+  step that delivers it; the row reads `R-ops-1 · <the requirement>` and `not covered by any step`. While any row fails,
+  **Fix all** is the primary and **Approve and build** is a plain button; when everything is covered, **Approve and
+  build** is the primary again. The Chat run card says `Requirements 7/8 · 1 to fix · Plan ✓ · Refine ✓ while planning`
+  in place of `Clarify ✓` for such a run.
+
+Rollback: turn the flag off. New runs ask the old questions and show the old cards. A run already held at its
+requirements keeps asking, and its card stays answerable until it finishes.
 
 ## Limits
 

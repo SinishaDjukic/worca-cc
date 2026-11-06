@@ -21,6 +21,14 @@ project's working tree, so nothing is ever committed to your repo.
                                         status) and req_export_links (one row per feature: its current ticket, the
                                         spec and fields as last sent, the tracker's fingerprint of the description,
                                         a pending create's marker). Every export is also an `export` turn.
+                                        Freeform chat (v85): chat_conversations (one row per platform thread bound
+                                        to an Ask thread: plugin, channel, parent chat, owner user id, the worca
+                                        identity the operator mapped, header message id, header_new_off since v86),
+                                        chat_controls (opaque
+                                        button/select refs: action, card, issued state, expiry, used time),
+                                        chat_deliveries (one row per delivered message part with the platform
+                                        message id and the card state it shows) and chat_inbound_seen (handled
+                                        message/interaction ids, 2 days).
   backup-<ts>/                          legacy JSON archived on first upgrade (see below)
   store/no-project-00000000/            runs without a project: one store, the History group "No project";
                                         a run's work/ moves into its pipeline folder as work/ when it ends
@@ -171,7 +179,7 @@ Everything that used to be a per-run `.json`/`.md` control file —
 plan/review **markdown**, `prompt.md`, and `extras/` remain on disk (their
 existence is indexed in the database).
 
-### Workflow history and versions (v85)
+### Workflow history and versions (v87)
 
 Behind the experimental flag `workflowTests`; the data is kept either way.
 
@@ -198,7 +206,7 @@ Behind the experimental flag `workflowTests`; the data is kept either way.
   Never a path, a display name, a colour, an icon or the order.
 - A loop's limit is part of the graph: the stored wire keeps it in `config.maxCycles` (with `config.onExhausted`).
 
-### Workflow tests (v86)
+### Workflow tests (v88)
 
 Behind the experimental flag `workflowTests`; the data is kept either way. No foreign keys, like `workflow_revisions`:
 a deleted workflow keeps its examples, and they come back with a workflow saved again under the same id.
@@ -240,9 +248,9 @@ a deleted workflow keeps its examples, and they come back with a workflow saved 
 - `workflow-tests/seen-connectors.json` (worcaHome): the claude.ai connector names Worca saw when a run started, so
   Test a version can name the ones a pretend try switches off.
 
-### Workflow tests on a project (v87)
+### Workflow tests on a project (v89)
 
-Behind the flag `workflowTests`, like v86. FK-free like the v86 tables.
+Behind the flag `workflowTests`, like v88. FK-free like the v88 tables.
 
 - `wf_test_example_projects`: one row per example that works on a project:
   - the project's key and its name when the start was pinned (`project_name`: shown when the project is no longer

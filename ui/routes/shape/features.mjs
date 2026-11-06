@@ -2,10 +2,12 @@
 // the body of register() was moved verbatim from ui/server.mjs. Edit it here from now on.
 import { releaseVersionHint } from '../../../src/core/draft-release.mjs';
 import { actorOf } from '../../../src/core/identity.mjs';
-import { cancelRest, currentFeatureId, featureShipSuggestion, featureThread, featureView, listShapePlans, rechainWaiting, replanRest, resumeFeature, setApproveEach, shaperCard, sliceOfPipeline } from '../../../src/core/shape/features.mjs';
+import { cancelRest, currentFeatureId, featureShipSuggestion, featureThread, featureView, listShapePlans, rechainWaiting, replanRest, resumeFeature, setApproveEach, setFeatureAcceptance, shaperCard, sliceOfPipeline } from '../../../src/core/shape/features.mjs';
+import { normalizeAcceptance } from '../../../src/shared/shape/acceptance.mjs';
+import { flagEnabled } from '../../../src/core/flags.mjs';
 import { engineRefusalFor } from '../../../src/shared/engine-switch.mjs';
 import { parseReleaseChoice } from '../../../src/shared/release-version.mjs';
-import { ResumeError, badRequest, broadcastFeature, emitChanged, liveRunEntry, liveSliceOf, resumeRun, schedulerTick, shipCtxOf, shipFeatureNow } from '../../server.mjs';
+import { ResumeError, badRequest, broadcastFeature, emitChanged, featureShipping, findShipCardIn, flipCard, liveRunEntry, liveSliceOf, resumeRun, schedulerTick, shipCtxOf, shipFeatureNow } from '../../server.mjs';
 
 export function register(app) {
 /** F29: an async handler never lets a throw escape (Express 4, no unhandledRejection handler). /api/resume's mapping. */
@@ -29,6 +31,7 @@ app.get('/api/shape/features/:id', async (req, res) => {
     const cur = currentFeatureId(req.params.id);
     const view = featureView(cur, { live: liveSliceOf });
     if (!view) return res.status(404).json({ error: 'unknown feature' });
+    if (!flagEnabled('shapeRequirements')) delete view.ship.acceptance;   // Shaper requirements s3: the ledger is a Labs surface
     // P17: the Ship as default, once every slice is done (async: it reads each slice's results.json).
     // s4: and the release row's version hint (the repo's last tag / package.json).
     if (view.ship && view.ship.ready) {
@@ -122,6 +125,30 @@ app.post('/api/shape/features/:id/ship', async (req, res) => {
     const r = await shipFeatureNow(String(req.params.id), b.mode, { actor: actorOf(req), release: rel.value, watch: b.watch === true });
     res.status(r.status).json(r.body);
   } catch (err) { if (!res.headersSent) shapeRouteError(res, err); }
+});
+// Shaper requirements s3 (D9): the acceptance ledger, merged per id: the sent entries replace those ids' marks and the
+// other stored marks stay, so a card holding stale marks never reverts another card's save. A refusal stores nothing.
+// The feature's chat Ship card takes the new ledger too, so a reloaded thread never saves from stale marks.
+app.put('/api/shape/features/:id/acceptance', (req, res) => {
+  try {
+    const id = String(req.params.id);
+    const view = flagEnabled('shapeRequirements') ? featureView(id, { live: liveSliceOf }) : null;
+    if (!view) return res.status(404).json({ error: 'unknown feature' });
+    if (view.ship.mode) return res.status(409).json({ error: 'the feature already shipped' });
+    if (featureShipping(id)) return res.status(409).json({ error: 'this feature is already shipping' });
+    const agreed = (view.ship.acceptance?.items || []).map((i) => ({ id: i.id }));
+    const r = normalizeAcceptance((req.body || {}).entries, agreed);
+    if (!r.ok) return res.status(400).json({ error: r.error, code: 'ACCEPTANCE_INVALID' });
+    const sent = new Map(r.entries.map((e) => [e.id, e]));
+    const kept = new Map((view.ship.acceptance?.entries || []).map((e) => [e.id, e]));
+    setFeatureAcceptance(id, agreed.map(({ id: rid }) => sent.get(rid) || kept.get(rid)).filter(Boolean));
+    const acceptance = featureView(id, { live: liveSliceOf }).ship.acceptance || null;
+    const th = featureThread(id);
+    const found = th ? findShipCardIn(th.threadId, id) : null;
+    if (found && found.block.state === 'proposed') flipCard(th.threadId, found.block.id, { card: { acceptance } });
+    broadcastFeature(id);
+    res.json({ acceptance });
+  } catch (err) { shapeRouteError(res, err); }
 });
 
 /** A plan row's state when its run is not live: the pipelines row first, then the link row (follow.mjs). */

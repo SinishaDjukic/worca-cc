@@ -1,6 +1,6 @@
 {
   "src/cli/worca-cc.mjs": 3904,
-  "src/core/artifacts.mjs": 3330,
+  "src/core/artifacts.mjs": 3388,
   "src/core/ask/tools.mjs": 3106,
   "src/core/ask/turn.mjs": 1706,
   "src/core/automations.mjs": 1243,
@@ -8,7 +8,7 @@
   "src/core/db.mjs": 2811,
   "src/core/engines/claude.mjs": 1053,
   "src/core/engines/mock.mjs": 1465,
-  "src/core/git-info.mjs": 1482,
+  "src/core/git-info.mjs": 1491,
   "src/core/git-sync.mjs": 1078,
   "src/core/graph/executor.mjs": 1258,
   "src/core/graph/scheduler.mjs": 1327,
@@ -39,5 +39,5 @@
   "ui/public/script-bench-view.mjs": 1156,
   "ui/public/setup-assistant.mjs": 1138,
   "ui/public/team-policy-view.mjs": 1834,
-  "ui/server.mjs": 10251
+  "ui/server.mjs": 10543
 }

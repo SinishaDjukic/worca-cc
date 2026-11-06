@@ -149,6 +149,22 @@ test('the Ship card: the waiting line until every run is done, no buttons; the r
   setShipDialogOpener(null);
 });
 
+test('Shaper requirements s3: the feature page\'s ledger saves its marks through saveAcceptance (PUT acceptance)', async () => {
+  const acceptance = { agreed: [{ id: 'R-po-1', text: 'Export' }], entries: [], covered: [] };
+  const done = { ...PAGE(), status: 'done', done: 3, slices: PAGE().slices.map((s) => ({ ...s, state: 'done' })),
+    ship: { ready: true, mode: null, suggested: 'one', linesAdded: 1, linesRemoved: 0, files: 1, prUrl: null, hint: null, result: null, acceptance } };
+  const calls = [];
+  const was = globalThis.fetch;
+  globalThis.fetch = async (url, o) => { calls.push([url, o.method, JSON.parse(o.body)]); return { ok: true, status: 200, json: async () => ({ acceptance: { ...acceptance, entries: [{ id: 'R-po-1', mark: 'met' }] } }) }; };
+  try {
+    const { el } = mount(done, PLANS());
+    assert.equal(el.querySelector('[data-act="ship-create"]').disabled, true);
+    el.querySelector('[data-act="ship-mark-R-po-1-met"]').click(); await flush(); await flush();
+    assert.deepEqual(calls, [[`/api/shape/features/${done.id}/acceptance`, 'PUT', { entries: [{ id: 'R-po-1', mark: 'met' }] }]]);
+    assert.equal(el.querySelector('[data-act="ship-create"]').disabled, false);
+  } finally { globalThis.fetch = was; }
+});
+
 test('the Ship card once shipped: As stacked PRs with View PR on the last run\'s PR', () => {
   const done = { ...PAGE(), status: 'done', done: 3, slices: PAGE().slices.map((s) => ({ ...s, state: 'done', pr: s.pr && { ...s.pr, draft: false } })) };
   const shipped = mount({ ...done, ship: { ready: false, mode: 'stacked', prUrl: null, lastPrUrl: 'https://github.com/o/r/pull/2',

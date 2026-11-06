@@ -146,9 +146,10 @@ test('POST …/engine dryRun names the PDFs and the MCP servers the destination 
   store.appendMessage(th.id, { role: 'assistant', text: 'read', status: 'done', model: 'claude-opus-5-5', effort: 'high', engine: 'claude' });
   const pdf = store.addAttachment(th.id, user.id, { name: 'spec.pdf', kind: 'binary', mime: 'application/pdf', data: Buffer.from('%PDF-1.4\n') });
   store.addAttachment(th.id, user.id, { name: 'notes.txt', text: 'plain text travels' });
+  store.addAttachment(th.id, user.id, { name: 'bundle.zip', kind: 'binary', mime: 'application/octet-stream', data: Buffer.from([0x50, 0x4b, 3, 4, 0]) });
   const r = await SWITCH(th.id, { engine: 'codex', model: 'gpt-5.5', effort: 'low', dryRun: true });
   assert.equal(r.status, 200, JSON.stringify(r.body));
-  assert.deepEqual(r.body.attachments, [{ id: pdf.id, name: 'spec.pdf' }], 'the PDF only: Codex reads text');
+  assert.deepEqual(r.body.attachments, [{ id: pdf.id, name: 'spec.pdf' }], 'the PDF only: Codex reads text, a generic file needs no viewing');
   assert.deepEqual(r.body.mcpLost, ['docs'], 'the remote server Codex cannot start');
   assert.deepEqual(store.getThread(th.id).engine, 'claude');
 });
@@ -276,4 +277,17 @@ test('a chat with no reply yet whose model moved meanwhile still starts: it has 
   const r = await mod._testing.startAskTurn({ threadId: t.id, thread: stale, ctx: {}, model: 'gpt-5.5', effort: 'low', text: 'first' });
   assert.equal(r.ok, true, JSON.stringify(r));
   await idle(t.id);
+});
+
+test('credential broker on: a message in a Codex chat is refused 409 engine-broker before any row is written', async () => {
+  const id = codexChat();
+  const rows = store.listMessages(id).length;
+  const prev = process.env.WORCA_BROKER_URL;
+  process.env.WORCA_BROKER_URL = 'http://127.0.0.1:9';
+  try {
+    const r = await send('POST', `/api/ask/threads/${id}/messages`, { text: 'again', model: 'gpt-5.5', effort: 'low' });
+    assert.equal(r.status, 409, JSON.stringify(r.body));
+    assert.equal(r.body.code, 'engine-broker');
+  } finally { if (prev === undefined) delete process.env.WORCA_BROKER_URL; else process.env.WORCA_BROKER_URL = prev; }
+  assert.equal(store.listMessages(id).length, rows, 'nothing was stored');
 });

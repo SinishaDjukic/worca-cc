@@ -123,7 +123,7 @@ D41–D69 hold. These continue them. The `(technical)` rows are for the reviewer
   - Hook commands in proofs use forward slashes (`host-guard.mjs:38-47`).
   - Removals use `rm(…, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })` (`removeTree`) and never follow a junction.
   - A test that needs a POSIX shell, or a file symlink (EPERM on this laptop), skips on win32 with a named reason. A directory junction works without admin rights, so junction tests run.
-- **Schema:** none. `SCHEMA_VERSION` stays 3a's (v86 after the merge; v87 since the 2026-11-05 dev merge, when dev took 84). No task edits `src/core/db.mjs`.
+- **Schema:** none. `SCHEMA_VERSION` stays 3a's (v86 after the merge; v87 since the 2026-11-05 dev merge, when dev took 84; v89 since the 2026-11-06 dev merge, when dev took 85 and 86). No task edits `src/core/db.mjs`.
 
 ## Review Focus
 

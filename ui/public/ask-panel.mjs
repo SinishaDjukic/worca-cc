@@ -30,7 +30,7 @@ import { parseMcpToolName } from '../../src/shared/mcp-tool-name.mjs';
 import { mcpSkipView, mcpCopyNote, skillSkipView } from './mcp-run-picker.mjs';
 import { engineOfEntry, chatEngineOf, pickerGroups, ASK_CHAT_ENGINES, isEngineSetupNotice, engineSwitchConfirm, readEnginePicks, rememberEnginePick, engineLead, switchEffort, pickerEngineName } from './ask-engine.mjs';
 import { formatQuotedMessage, parseQuotedMessage } from './pinpoint-model.mjs';
-import { ATTACH_ACCEPT, ATTACH_MAX_MESSAGE_BYTES, bytesToBase64 as attachBase64, carriesFiles, checkAttachment, createPasteNamer, pastedFiles } from './attach-files.mjs';
+import { ATTACH_MAX_MESSAGE_BYTES, bytesToBase64 as attachBase64, carriesFiles, checkAttachment, createPasteNamer, pastedFiles } from './attach-files.mjs';
 import { notify } from './feedback.mjs';
 import { currentLevel, levelShows } from './ui-level.mjs';
 import { chatCardBuilder, composerAddons } from './chat/extensions.mjs';
@@ -41,6 +41,7 @@ import { CHATS_PAGE } from './chats-list.mjs';
 import { chatPageKeyAction, keyHint, isMac, LIST_FIELD } from './list-keys.mjs';
 import { openKeysSheet } from './keys-sheet.mjs';
 import { gitOn } from './git-gate.mjs';
+import { originMark } from './chat-origin.mjs';
 import { NO_PROJECT_KEY, NO_PROJECT_NAME, NEEDS_REPO_NOTE } from '../../src/shared/no-project.mjs';
 import { createTagInput, fetchTagVocabulary, createTagRulesLine } from './tag-input.mjs';
 import { INTENTS, splitIntentLead } from './chat/intent.mjs';
@@ -51,9 +52,12 @@ import { withoutChips } from './ask-page-chips.mjs';
 import { sideSuggestions } from './ask-side-suggest.mjs';
 import { makeSwitch } from './switch.mjs';
 import { shapeCardExtras, shapeWhatHappens, shapeAdvancedSummary } from './shape/proposal.mjs';
+import { button as railButton } from './design-system/components/button.mjs';
+import { toElement } from './design-system/components/html.mjs';
 import { createAskComposerCards, ASK_COMPOSER_CARD_TYPES } from './ask-composer-cards.mjs';
 import { cardKit, scriptApprovalCardView } from './workflows/card-views.mjs';
 import { applyPresetStart } from '../../src/shared/run-presets.mjs';
+import { subagentAliasLabel, subagentAliasTitle } from '../../src/shared/model-roles.mjs';
 import {
   fmtTokens, CTX_COMPACT_BUFFER, CTX_WARN, CTX_HIGH, CTX_COST_HINT, kTok,
   fmtWindow, ctxTrigger, ctxLevel, ctxPercent, fmtCtx, ctxTitle, fmtShare, ctxBreakdown, fmtUsd,
@@ -1535,7 +1539,6 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     el.fileInput = doc.createElement('input');
     el.fileInput.type = 'file';
     el.fileInput.multiple = true;
-    el.fileInput.accept = ATTACH_ACCEPT;
     el.fileInput.hidden = true;
     el.fileInput.addEventListener('change', () => { addFiles(el.fileInput.files); el.fileInput.value = ''; });
     row.appendChild(el.fileInput);
@@ -1952,7 +1955,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       const b = make('button', 'ask-side-recent-row');
       b.type = 'button';
       b.dataset.threadId = t.id;
-      b.appendChild(make('span', 'ask-side-recent-t', t.title || 'New chat'));
+      const title = make('span', 'ask-side-recent-t', t.title || 'New chat');
+      const mark = originMark(doc, t.origin);
+      if (mark) title.prepend(mark);
+      b.appendChild(title);
       b.appendChild(threadMeter(t));
       b.addEventListener('click', () => { showThread(t.id); route(t.id); focusComposer(); });   // the row leaves with the empty state
       return b;
@@ -4059,7 +4065,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       subWrap.appendChild(make('span', null, 'Sub-agents'));
       const subSel = rpSelect('ask-rp-subagent', `Sub-agent model for ${row.label}`);
       subSel.appendChild(opt('', 'subs: default (agent picks)'));
-      for (const v of lane.subagentModels) subSel.appendChild(opt(v, v === 'auto' ? 'subs: agent picks' : `subs: ${v}`));
+      for (const v of lane.subagentModels) { const o = opt(v, `subs: ${subagentAliasLabel(v)}`); const t = subagentAliasTitle(v); if (t) o.title = t; subSel.appendChild(o); }
       subSel.value = lane.subagentModels.includes(c.subagentModel) ? c.subagentModel : '';
       subSel.disabled = !lane.editable;
       subSel.title = 'Model for the sub-agents this node spawns (needs fan-out)';
@@ -5209,8 +5215,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     head.appendChild(tagRow);
     if (typeof card.note === 'string' && card.note) head.appendChild(make('p', 'ask-rp-why', card.note));
     // A shaped card follows card.shape; the nudge is advisory.
-    const shapeUi = card.shape || card.nudge ? shapeCardExtras(doc, card) : null;
+    const shapeUi = card.shape || card.nudge ? shapeCardExtras(doc, card, { fetch }) : null;
     local.shapeUi = shapeUi;
+    // A direct Shaper card on the requirements workflow: Shape requirements is its only start button.
+    const direct = !!(card.shape && shapeUi && shapeUi.requirements);
     rootEl.appendChild(head);
 
     // target section
@@ -5458,21 +5466,44 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       laterBtn.dataset.minLevel = 'advanced';
       laterBtn.addEventListener('click', async () => {
         const picked = await openScheduleSheet(sheetOpts());
-        if (picked) startCard(block, rootEl, local, picked);
+        if (!picked) return;
+        if (card.shape && shapeUi) shapeUi.commit();     // a direct card's lead is saved as Shape requirements saves it
+        startCard(block, rootEl, local, picked);
       });
     }
     // Shape it first: Start holds an icon and a text node, so only the text node is relabelled.
     let shapeBtn = null;
     if (shapeUi) {
       const setLabel = (b, t) => { const n = [...b.childNodes].find((x) => x.nodeType === 3); if (n) n.textContent = t; else b.append(t); };
-      if (card.shape) {
+      if (card.shape && !shapeUi.requirements) {
         setLabel(startBtn, 'Start planning');            // a shaped card is never scheduled
       } else {
-        shapeBtn = make('button', 'btn btn-sm', 'Shaper');
-        shapeBtn.type = 'button';
-        shapeBtn.dataset.askCardShape = '';
-        shapeBtn.addEventListener('click', () => startCard(block, rootEl, local, null, { shaped: true }));
-        setLabel(startBtn, 'Run as is');                 // D32: the choice card's own words, never "anyway"
+        if (shapeUi.requirements) {
+          // Medium or large with shapeRequirements on: Shape requirements is the one primary, Run as is steps back. Until a
+          // lead is picked it stays in the tab order, aria-disabled, described by "You lead as".
+          shapeBtn = toElement(doc, railButton({ label: 'Shape requirements', kind: 'primary', attrs: { 'data-ask-card-shape': '' } }));
+          if (!card.shape) startBtn.classList.replace('btn-primary', 'btn-quiet');
+          const syncLead = () => {
+            const blocked = shapeUi.blocked();
+            if (blocked) shapeBtn.setAttribute('aria-disabled', 'true'); else shapeBtn.removeAttribute('aria-disabled');
+            // described by "You lead as" only once that span exists (the profile is still loading before)
+            if (blocked && shapeUi.el.querySelector(`#${shapeUi.labelId}`)) shapeBtn.setAttribute('aria-describedby', shapeUi.labelId); else shapeBtn.removeAttribute('aria-describedby');
+            if (direct) laterBtn.disabled = blocked;     // Schedule… starts a run too: no requirements run without a lead
+          };
+          shapeUi.el.addEventListener('shape-lead-change', syncLead);
+          syncLead();
+          shapeBtn.addEventListener('click', () => {
+            if (shapeUi.blocked()) return;
+            shapeUi.commit();
+            startCard(block, rootEl, local, null, { shaped: true });
+          });
+        } else {
+          shapeBtn = make('button', 'btn btn-sm', 'Shaper');
+          shapeBtn.type = 'button';
+          shapeBtn.dataset.askCardShape = '';
+          shapeBtn.addEventListener('click', () => startCard(block, rootEl, local, null, { shaped: true }));
+        }
+        if (!card.shape) setLabel(startBtn, 'Run as is');   // D32: the choice card's own words, never "anyway"
       }
     }
     foot.append(openNp, summary, dismissBtn, laterBtn, ...(shapeBtn ? [shapeBtn] : []), startBtn);
@@ -5481,6 +5512,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // Shaper (D20, mock board 13): a shaped card shows the title, the brief clamped, Project, Base branch,
     // Perspectives and what happens; every other field MOVES, unchanged, into a collapsed Advanced. Moves only: each
     // control keeps its class, so collectCardBody / startCard read the same values and the request is unchanged.
+    // The requirements layout drops Perspectives and What happens: the lead sentence, in .shape-card above, says both.
     let paintAdvanced = () => {};
     if (card.shape && shapeUi) {
       const kicker = eyebrow.querySelector('.ask-rp-kicker');
@@ -5496,7 +5528,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       more.addEventListener('click', () => { preview.hidden = true; more.hidden = true; briefSec.hidden = false; grow(); });
       const what = make('div', 'ask-rp-shape-what');
       what.append(make('span', 'ask-rp-label', 'What happens'), make('span', null, shapeWhatHappens(card.shape)));
-      main.append(preview, more, briefSec, targetHost, rpField('Perspectives', shapeUi.el), what);
+      main.append(preview, more, briefSec, targetHost, ...(shapeUi.requirements ? [] : [rpField('Perspectives', shapeUi.chipsEl || shapeUi.el), what]));
       const adv = doc.createElement('details');
       adv.className = 'ask-rp-adv disclosure';
       adv.setAttribute('data-ask-card-advanced', '');
@@ -5514,7 +5546,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       rootEl.insertBefore(adv, err);
       openNp.classList.add('link-btn');
       delete openNp.dataset.minLevel;                       // one of the small card's own controls (D20)
-      foot.replaceChildren(openNp, dismissBtn, startBtn);   // the Advanced summary stands in for the lane summary
+      foot.replaceChildren(openNp, dismissBtn, direct ? shapeBtn : startBtn);   // the Advanced summary stands in for the lane summary
       let advLane = null;
       paintAdvanced = (lane = advLane) => {
         advLane = lane;
@@ -5717,7 +5749,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         const unseen = lane ? null : proposalOverlay(card, workflowId);
         if (unseen) {
           laneSec.dataset.levelKeep = '1';
-          const list = Object.entries(unseen.nodes).map(([id, p]) => `${id} → ${p.model}${p.effort ? ` · ${p.effort}` : ''}${p.subagentModel ? ` · sub-agents ${p.subagentModel}` : ''}`);
+          const list = Object.entries(unseen.nodes).map(([id, p]) => `${id} → ${p.model}${p.effort ? ` · ${p.effort}` : ''}${p.subagentModel ? ` · sub-agents ${subagentAliasLabel(p.subagentModel)}` : ''}`);
           laneSec.appendChild(make('div', 'ask-rp-lane-msg', `Start runs Chat's picks as proposed (checked again at Start): ${list.join(', ')}`));
         } else if (!lane) delete laneSec.dataset.levelKeep;
       });
@@ -5762,7 +5794,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       const line = createTagRulesLine(doc, tagInput);
       tagRow.appendChild(line.el);
       rootEl.__rp.tagRules = line;
-      const sync = () => { const why = line.blocked(); startBtn.disabled = !!why || !!local.workflowUnavailable; startBtn.title = why || ''; };   // a missing workflow keeps Start off
+      const gated = direct ? shapeBtn : startBtn;
+      const sync = () => { const why = line.blocked(); gated.disabled = !!why || !!local.workflowUnavailable; gated.title = why || ''; };   // a missing workflow keeps Start off
       line.onChange(sync);
       let gen = 0;
       let lastQ = null;
@@ -5848,7 +5881,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const err = rootEl.querySelector('.ask-card-err');
     const startBtn = rootEl.querySelector('[data-ask-card-start]');
     err.textContent = '';
-    startBtn.disabled = true;
+    if (startBtn) startBtn.disabled = true;               // a direct card's only start button is Shape requirements
     const shapeBtn = rootEl.querySelector('[data-ask-card-shape]');
     if (shapeBtn) shapeBtn.disabled = true;               // a double click must not post /api/run twice
     freezeTargetInputs(rootEl, true);
@@ -5911,7 +5944,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       // (beginRun is NEVER called — spec §10.5).
     } finally {
       const tagBlocked = !!rootEl.__rp?.tagRules?.blocked();   // an enforced tag still missing keeps Start off
-      startBtn.disabled = tagBlocked;
+      if (startBtn) startBtn.disabled = tagBlocked;
       if (shapeBtn) shapeBtn.disabled = tagBlocked;            // Shaper starts a run too: the same tag rule
       freezeTargetInputs(rootEl, false);
       // freezeTargetInputs re-enabled the select; a shaped card's workflow is fixed.
@@ -6796,6 +6829,43 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   /** #958: a user/system row's content, to tell a resync's same row from a changed one (null: treat as changed). */
   function shownKeyOf(r) { try { return JSON.stringify(r); } catch { return null; } }
 
+  /** Freeform chat (discord-chat 0.4.0): a user row's chat-context block — the message it replied to, the channel's
+   *  recent history and the files left out — as a collapsed <details>. Quoted text is DATA: text nodes only. */
+  function buildChatContext(b) {
+    const box = make('details', 'ask-user-context');
+    const parts = [];
+    if (b.replyTo && typeof b.replyTo.author === 'string') parts.push(`reply to ${b.replyTo.author}`);
+    const history = Array.isArray(b.history) ? b.history : [];
+    if (history.length) parts.push(`${history.length} earlier message${history.length === 1 ? '' : 's'}`);
+    const own = Array.isArray(b.files) ? b.files.filter((f) => f && typeof f.name === 'string') : [];
+    if (own.length) parts.push(`${own.length} file${own.length === 1 ? '' : 's'} not saved`);
+    const where = b.platform === 'discord' ? 'Discord' : 'chat';
+    box.appendChild(make('summary', 'ask-user-context-h', `Context from ${where}${parts.length ? `: ${parts.join(', ')}` : ''}`));
+    const fileLine = (f) => make('div', 'ask-user-context-f', f.note ? `${f.name} — ${String(f.note)}` : f.name);
+    const quote = (q) => {
+      if (!q || typeof q !== 'object') return;
+      const row = make('div', 'ask-user-context-q');
+      const when = typeof q.at === 'string' && Number.isFinite(Date.parse(q.at)) ? new Date(q.at).toLocaleString() : '';
+      const head = make('div', 'ask-user-context-by', `${String(q.author || '')}${when ? ` · ${when}` : ''}`);
+      if (typeof q.link === 'string' && q.link.startsWith('https://')) {
+        const a = make('a', 'ask-user-context-link', 'Open');
+        a.href = q.link;
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+        head.append(' · ', a);
+      }
+      row.appendChild(head);
+      if (typeof q.text === 'string' && q.text) row.appendChild(make('div', 'ask-user-context-t', q.text));
+      for (const f of Array.isArray(q.files) ? q.files : []) if (f && typeof f.name === 'string') row.appendChild(fileLine(f));
+      box.appendChild(row);
+    };
+    quote(b.replyTo);
+    for (const q of history) quote(q);
+    for (const f of own) box.appendChild(fileLine(f));
+    for (const n of Array.isArray(b.notes) ? b.notes : []) if (typeof n === 'string' && n) box.appendChild(make('div', 'ask-user-context-f', n));
+    return box;
+  }
+
   function buildMessage(row) {
     const wrap = make('div', `ask-msg ask-msg-${row.role}`);
     // The model REPLACES a row object on upsert (ask-model upsertRow), so every
@@ -6829,8 +6899,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
           card.append(make('div', 'ask-user-quote-h', quote.src ? `From ${quote.src}` : 'Quoted'), make('div', 'ask-user-quote-t', quote.text));
           wrap.appendChild(card);
         }
+        // Freeform chat: the quoted reply / history a chat message brought, collapsed above the person's own words.
+        const chatCtx = (row.blocks || []).find((b) => b && b.kind === 'chat-context');
+        if (chatCtx) wrap.appendChild(buildChatContext(chatCtx));
         const bubbleText = quote ? rest : own.text;
-        if (bubbleText || (!quote && !own.intent)) wrap.appendChild(make('div', 'ask-user-bubble', bubbleText));
+        // A chat message with only a reply or files has no words of its own: no empty bubble under its context.
+        if (bubbleText || (!quote && !own.intent && !chatCtx)) wrap.appendChild(make('div', 'ask-user-bubble', bubbleText));
         const atts = (row.blocks || []).filter((b) => b && b.kind === 'attachment');
         if (atts.length) {
           const pills = make('div', 'extras-pills ask-user-pills');

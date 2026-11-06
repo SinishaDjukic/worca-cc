@@ -82,6 +82,7 @@ test('every shipped sidecar: required fields, runnable runnerType, v2 typed port
     { name: 'shipped sidecars have progressStage exactly as specified', run: async () => {
       const expect = {
         clarify: 'plan', planner: 'plan', refiner: 'plan', planReviewer: 'plan',
+        requirementsDrafter: 'plan', requirementsReviewer: 'plan', requirementsRefiner: 'plan',
         architect: 'plan', architectSetup: 'plan',
         decomposer: 'build', implementer: 'build',
         reviewer: 'review', workspaceReviewer: 'review',

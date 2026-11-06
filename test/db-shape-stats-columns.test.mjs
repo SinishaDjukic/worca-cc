@@ -21,7 +21,8 @@ test('pipelines has shape_stats and run_size on a fresh DB and on a current DB m
 });
 
 // #990 slice 6: pipelines.review_stats (a run's per-role review counts) is healed the same way, with no version bump.
-// (It shipped at dev's SCHEMA_VERSION 84; feat/workflow-tests' rungs 85–87 sit above it, so the stamp is checked as current.)
+// (It shipped at dev's SCHEMA_VERSION 84; dev has since reached 86 and feat/workflow-tests' rungs 87–89 sit above it, so
+// the stamp is checked as current.)
 test('pipelines has review_stats on a fresh DB and on a current DB missing it; no version of its own', () => {
   assert.ok(SCHEMA_VERSION >= 84);
   const fresh = new DatabaseSync(':memory:');

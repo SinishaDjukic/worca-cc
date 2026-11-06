@@ -159,3 +159,15 @@ test('shipCardVerb (s4): ship-one / ship-stacked / not-now, every other body 400
     assert.equal(shipCardVerb(body).status, 400, JSON.stringify(body));
   }
 });
+
+test('onePrBody lists Satisfies under each slice with ids', () => {
+  const body = onePrBody([
+    { index: 1, title: 'One', summary: 'did one', pr: null, requirements: { ids: ['R-po-1', 'R-ux-1'], check: null } },
+    { index: 2, title: 'Two', summary: 'did two', pr: null, requirements: { ids: [], check: null } },
+    { index: 3, title: 'Three', summary: '', pr: null },
+  ]);
+  assert.ok(body.startsWith('## Slice 1: One\n\nSatisfies: R-po-1, R-ux-1\n\ndid one\n\n'), body);
+  assert.equal(body.match(/Satisfies:/g).length, 1);
+  const plain = [{ index: 1, title: 'One', summary: 'did one', pr: null }];
+  assert.equal(onePrBody([{ ...plain[0], requirements: { ids: [], check: null } }]), onePrBody(plain));
+});

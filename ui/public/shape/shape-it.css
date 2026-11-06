@@ -58,6 +58,8 @@
 .plan-check-row{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 8px;padding:3px 0;color:var(--ink);}
 .plan-check-mark{flex:none;width:1em;font-weight:700;color:var(--ink-3);}
 .plan-check-row:not(.ok) .plan-check-mark{color:var(--ink);}
+.shape-reqs .plan-check-row{flex-wrap:nowrap;}   /* a requirement is a sentence: its mark stays on its first line */
+.shape-reqs .plan-check-label{min-width:0;}
 .plan-fix-all{align-self:flex-start;margin-top:4px;}
 /* Slice 4: role review rows: Show unfolds the findings; a 2px severity chip (D14) */
 .plan-check-show{margin-left:auto;}

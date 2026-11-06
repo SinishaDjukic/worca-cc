@@ -35,6 +35,7 @@ import { materializeSkillMount } from '../skills-registry/mount.mjs';
 import { SIDELOAD_REFUSAL_RE as SIDELOAD_REFUSED_RE } from '../skills-registry/host.mjs';
 import { renderSkillsSection, renderCodexSkillsSection, codexSkillNames } from './prompt.mjs';
 import { validateProposal, proposalClaudeAuth } from './proposal.mjs';
+import { validateQuestion } from './question-card.mjs';
 import { validateMetricsChange } from './metrics-deps.mjs';
 import { validateAwayChange } from './away-deps.mjs';
 import { validatePolicyChange } from './policy-deps.mjs';
@@ -788,6 +789,21 @@ class AskTurn extends EventEmitter {
     this._persistBlocks();
   }
 
+  /** ask_question RESULT (freeform chat D5): the child validated for the model; the parent re-validates the same INPUT
+   *  and mints the card. One open question per turn: a second call in the same message adds nothing. */
+  async _onQuestion(input, text, isError) {
+    if (isError) return;
+    let out = null;
+    try { out = JSON.parse(text); } catch { out = null; }
+    if (!out || out.ok !== true) return;
+    const r = validateQuestion(input && typeof input === 'object' ? input : {});
+    if (!r.ok) return;
+    const snap = this.reducer.snapshot();
+    if ((snap.blocks || []).some((b) => b && b.kind === 'card' && b.card && b.card.type === 'question' && b.state === 'proposed')) return;
+    this.reducer.addBlock({ kind: 'card', id: this.deps.newAskId('card'), state: 'proposed', card: r.card });
+    this._persistBlocks();
+  }
+
   /**
    * propose_workspace_change RESULT: the model card's split — the child validated for the model, the parent
    * re-validates the same INPUT against the live registry and mints the card. The child's pinned-workspace
@@ -995,6 +1011,7 @@ class AskTurn extends EventEmitter {
       onWebProposal: ({ input, text, isError }) => this._onWebProposal(input, text, isError),
       onScriptApproval: ({ name, input }) => this._onScriptApproval(name, input),
       onScopeSwitch: this.composer ? null : ({ input, text, isError }) => this._onScopeSwitch(input, text, isError),
+      onQuestion: this.composer ? null : ({ input, text, isError }) => this._onQuestion(input, text, isError),
       // pause / resume / skip / mark-read in the child → the server's schedules-changed frames.
       onScheduleMutation: (e) => { try { this.deps.onScheduleMutation(e); } catch { /* a broken sink never breaks the turn */ } },
       // The MCP child cannot broadcast; the parent turns its comment writes into
