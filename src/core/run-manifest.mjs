@@ -26,7 +26,20 @@ export const RETAIN_REASONS = Object.freeze({ COMMIT_FAILED: 'commit_failed', CH
 /** Entries worca-cc itself owns at a run root. Anything else there is a STRAY (§8.11).
  *  `.cursor`, `.gemini`: a Cursor or Gemini CLI run's engine config at a workspace run root (engines/project-files.mjs,
  *  run-harness _registerEngineConfig). */
-export const RUN_ROOT_KNOWN_SET = new Set(['CLAUDE.md', 'mcp.json', RUN_MANIFEST_FILE, '.claude', '.cursor', '.gemini', 'repos', 'work']);
+/** A run's own temp folder: agents' throwaway clones and test homes go here, and it never outlives the run. */
+export const RUN_SCRATCH_DIR = '.scratch';   // hidden: an agent's own misplaced `scratch/` stays a rescued stray
+export const RUN_ROOT_KNOWN_SET = new Set(['CLAUDE.md', 'mcp.json', RUN_MANIFEST_FILE, '.claude', '.cursor', '.gemini', 'repos', 'work', RUN_SCRATCH_DIR]);
+
+/** The scratch folder of a detached run, null without a run root. PURE. */
+export function runScratchDir(runRoot) {
+  return typeof runRoot === 'string' && runRoot ? join(runRoot, RUN_SCRATCH_DIR) : null;
+}
+
+/** Removes a run's scratch folder, whatever else keeps the run root. Never throws. */
+export async function removeRunScratch(runRoot) {
+  const dir = runScratchDir(runRoot);
+  if (dir) await rm(dir, { recursive: true, force: true, maxRetries: 2 }).catch(() => {});
+}
 
 // The V3 CLAUDE.md fallback's delimiter-fenced section (§4.1). The begin marker
 // carries the pipelineId so two concurrent runs over the same real dir can never

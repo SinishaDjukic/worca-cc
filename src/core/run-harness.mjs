@@ -66,6 +66,7 @@ import {
   scanStrayEntries, copyRunManifestTo, removeInjectedPaths, stripClaudeMdFence,
   RETAIN_REASONS,
 } from './run-manifest.mjs';
+import { removeRunScratch } from './run-manifest.mjs';
 import { assembleRunContext, renderContextAudit, renderSkillAudit, MCP_GRANT_MODE, discoverProjectSettings, skillsRelFor, realDirsBelow } from './run-context.mjs';
 import { createRunLogWriter, RUN_LOG_FILE, RUN_LOG_KIND } from './run-log.mjs';
 import { createTelemetryRecorder, TELEMETRY_FILE } from './telemetry/recorder.mjs';
@@ -5544,6 +5545,8 @@ export class RunHarness extends EventEmitter {
         scope: 'runRoot', pipelineId: this.pipeline?.id,
       });
       for (const w of rootRescued) await this._recordRunWarning(w);
+      // A retained root keeps its checkouts for the person; the scratch folder is only the agents' throwaways.
+      await removeRunScratch(this.runRoot);
       // (7) §8.11 stray scan — nothing outside the known set is silently lost.
       const strays = await scanStrayEntries({ runRoot: this.runRoot, pipelineDir });
       for (const w of strays) await this._recordRunWarning(w);
