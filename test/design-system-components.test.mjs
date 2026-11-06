@@ -319,3 +319,69 @@ test('trail and pager: one depth up, never the page itself, the parent marked fo
   assert.ok(b.disabled);
   assert.equal(b.title, 'Run 3 hasn’t started');
 });
+
+test('row: four slots in order; an unknown kind throws; ListRow and SettingsRow are built on it', () => {
+  const r = dom(C.row({ rail: '<i></i>', text: '<b>t</b>', end: '<u>e</u>', more: '<s>m</s>', cls: 'is-x', attrs: { 'data-a': '1' } }));
+  assert.equal(r.className, 'list-row is-x'); assert.equal(r.dataset.a, '1');
+  assert.deepEqual([...r.children].map((e) => e.className || e.tagName), ['lr-rail', 'B', 'lr-end']);
+  assert.equal(r.querySelector('.lr-end').children.length, 2);
+  assert.throws(() => C.row({ kind: 'nope' }), /unknown kind/);
+  assert.equal(dom(C.listRow({ title: 'x' })).className, 'list-row');
+  assert.equal(dom(C.settingsRow({ name: 'x' })).className, 'set-row');
+  assert.equal(dom(C.row({ kind: 'step', text: '' })).tagName, 'LI');
+});
+
+test('chip and checkbox: a fact that never acts; a labelled box that says why when off', () => {
+  assert.equal(dom(C.chip({ text: 'Beta <1>' })).textContent, 'Beta <1>');
+  const b = dom(C.checkbox({ label: 'Draft', checked: true, disabled: true, why: 'Locked', attrs: { id: 'x' } }));
+  assert.equal(b.title, 'Locked'); const i = b.querySelector('input');
+  assert.ok(i.checked && i.disabled); assert.equal(i.id, 'x');
+});
+
+test('optionList: real radios, one tab stop, Worca\'s pick marked, your own answer under it', () => {
+  const box = new JSDOM(`<body><div>${C.optionList({ label: 'Q', options: ['a', 'b'], selected: 0, recommended: 1, own: '<input id="own">', optAttrs: (i) => ({ 'data-answer': i }) })}</div>`).window.document.body.firstElementChild;
+  const r = box.querySelectorAll('[role=radio]');
+  assert.equal(r[0].getAttribute('aria-checked'), 'true'); assert.equal(r[1].tabIndex, -1);
+  assert.ok(r[1].querySelector('.sc-ans-hint')); assert.ok(!r[0].querySelector('.sc-ans-hint'));
+  assert.ok(box.querySelector('#own'));
+});
+
+test('suggestionField: the shimmer and read only while it writes; the text stays when it could not', () => {
+  const w = dom(C.suggestionField({ id: 'x', value: 'kept', writing: true, writingPlaceholder: 'Writing…', placeholder: 'T' }));
+  assert.match(w.className, /is-writing/); const i = w.querySelector('input');
+  assert.equal(i.value, ''); assert.ok(i.readOnly); assert.equal(i.placeholder, 'Writing…');
+  const ta = dom(C.suggestionField({ id: 'y', value: 'a<b', rows: 3 })).querySelector('textarea');
+  assert.equal(ta.value, 'a<b');
+  assert.match(C.suggestionFail({ model: 'Haiku' }), /The text is as it was/);
+  assert.match(C.suggestButton({ tip: 'Draft' }), /title="Draft"/);
+});
+
+test('tagGroup and listEditor: one button, one editor; a name escaped; many or one pick', () => {
+  const g = dom(C.tagGroup({ items: [{ kind: 'label', text: 'u<i' }], open: true, editor: '<div id="ed"></div>' }));
+  assert.equal(g.querySelector('.rc-tag').firstChild.textContent, 'u<i'); assert.ok(g.querySelector('#ed'));
+  assert.equal(dom(C.tagGroup({ items: [], editor: '<div id="ed"></div>' })).querySelector('#ed'), null);
+  const e = dom(C.listEditor({ label: 'L', inputId: 'i', placeholder: 'p', sections: [{ title: 'T', kind: 'tag', many: true, rows: [{ text: 'a', n: 2, on: true }] }, { title: 'G', kind: 'group', many: false, rows: [{ text: 'b', n: 1, on: false }] }] }));
+  assert.equal(e.querySelector('[data-listtoggle="tag|a"]').getAttribute('role'), 'menuitemcheckbox');
+  assert.equal(e.querySelector('[data-listtoggle="group|b"]').getAttribute('role'), 'menuitemradio');
+});
+
+test('stepper and stepRow: a real tablist, one tab stop; a row\'s mark, rounds and second line', () => {
+  const box = new JSDOM(`<body><div>${C.stepper({ stages: [{ key: 'a', label: 'Plan', selected: true, cells: ['is-done'] }, { key: 'b', label: 'Build', cells: ['is-next', 'is-next'] }] })}</div>`).window.document.body.firstElementChild;
+  const tabs = box.querySelectorAll('[role=tab]'); assert.equal(tabs[0].tabIndex, 0); assert.equal(tabs[1].tabIndex, -1);
+  assert.equal(box.querySelectorAll('.sc-seg')[1].children.length, 2);
+  const look = C.stepLook({ state: 'now', name: 'Build', time: '2m', loops: 2, live: 'Editing', when: '3s ago' });
+  const r = dom(C.stepRow(Object.assign(look, { roundsKey: 'k' })));
+  assert.equal(r.tagName, 'LI'); assert.equal(r.querySelector('.rd-route-dot').getAttribute('aria-label'), 'In progress');
+  assert.equal(r.querySelector('.sc-loop.is-btn').dataset.rounds, 'k'); assert.match(r.querySelector('.sc-line').textContent, /Editing · 3s ago/);
+  assert.ok(dom(C.stepRow(look, { full: true, action: '<i id="a"></i>' })).querySelector('.sc-act #a'));
+});
+
+test('table: the name first, figures tabular, what drops on a narrow screen is in the row\'s detail', () => {
+  const t = dom(C.table({ label: 'Sessions', columns: [{ id: 'n', label: 'Name' }, { id: 'c', label: 'Cost', num: true }, { id: 'm', label: 'Model', narrow: false }], rows: [{ n: 'x', c: '$1', m: 'Opus' }] }));
+  assert.equal(t.querySelector('table').getAttribute('aria-label'), 'Sessions');
+  assert.match(t.querySelector('td.is-num').textContent, /\$1/); assert.match(t.querySelector('.rt-detail').textContent, /Model Opus/);
+});
+
+test('icon: one set; an unknown name draws nothing', () => {
+  assert.match(C.icon('check', 12), /width="12"/); assert.equal(C.icon('nope'), '');
+});

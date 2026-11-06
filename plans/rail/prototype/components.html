@@ -27,7 +27,7 @@
   .gl-show .rc-toast{position:static;transform:none;opacity:1;}
   .gl-show .toasts{position:static;}
   .gl-show > .rc-card{flex:1 1 100%;}
-  .gl-show > .set-sec,.gl-show > .list,.gl-show > .set-row{flex:1 1 100%;}
+  .gl-show > .set-sec,.gl-show > .list,.gl-show > .set-row,.gl-show > .rt-wrap{flex:1 1 100%;}
   .gl-show > .list{padding-left:32px;}   /* the rail hangs left of the text edge */
   .gl-show > .viewer-modal{position:static;inset:auto;display:block;padding:0;background:none;flex:1 1 100%;}
   .gl-show .fld{flex:1 1 100%;max-width:360px;}
@@ -83,6 +83,16 @@
     BackLink: [['One step up', R.backLink({ label: 'Settings', icon: P('M15 6l-6 6 6 6') })]],
     Trail: [['A run in a group: its place, then its group', R.trail({ items: [{ label: 'Runs' }, { label: 'worca-cc' }, { label: 'Unified page navigation' }] })]],
     Pager: [['A run among its group\'s', R.pager({ label: 'Runs in this group', index: 1, n: 3, noun: 'run', prev: { ok: true }, next: { ok: false, why: 'Run 3 hasn’t started' }, icons: { prev: P('M14.5 6l-6 6 6 6'), next: P('M9.5 6l6 6-6 6') } })]],
+    Row: [['Four slots: rail, text, end, ⋯', R.list({ groups: [{ rows: [R.row({ rail: R.statusDot({ tone: 'is-green' }), text: '<span class="lr-main"><span class="lr-t">The longest name gives way first</span></span>', end: '<span class="lr-fig">$84.10</span>' }), R.row({ rail: R.statusDot({ tone: 'is-grey' }), text: '<span class="lr-main"><span class="lr-t">Short</span></span>', end: '<span class="lr-fig">$1</span>' })] }] })]],
+    OptionList: [['Worca’s pick marked, your own answer under it', R.optionList({ label: 'Keep the trail on phones?', options: ['Keep it', 'Show only ‹ Parent'], selected: 1, recommended: 1, own: R.suggestionField({ id: 'g-ol', inputCls: 'input-sm', placeholder: 'Or write your own answer' }) })]],
+    Checkbox: [['On, off and disabled with its reason', R.checkbox({ label: 'Draft', checked: true }) + R.checkbox({ label: 'No cap' }) + R.checkbox({ label: 'Watch', disabled: true, why: 'Watch needs a remote' })]],
+    Chip: [['A short fact', R.chip({ text: 'Beta' }) + R.chip({ text: 'Official' }) + R.chip({ text: 'No API key' })]],
+    TagGroup: [['One line, one button', `<div class="rc-facts">${R.tagGroup({ items: [{ kind: 'label', text: 'ui' }, { kind: 'tag', text: 'team: web' }] })}</div>`]],
+    ListEditor: [['Find or create; many, or one', `<div style="min-height:220px">${R.listEditor({ label: 'Labels', inputId: 'g-le', placeholder: 'A label', hint: 'Cost tags split the cost in Statistics', sections: [{ title: 'Labels', kind: 'label', many: true, rows: [{ text: 'ui', n: 12, on: true }, { text: 'hotfix', n: 7, on: false }] }] })}</div>`]],
+    SuggestionField: [['Suggested', `<div style="flex:1">${R.suggestedChip()}${R.suggestionField({ id: 'g-sf1', value: 'One head for the run page', act: R.suggestButton({ tip: 'Suggest a title · writes with Haiku 5.5' }) })}</div>`], ['While Worca writes', `<div style="flex:1">${R.suggestionField({ id: 'g-sf2', writing: true, writingPlaceholder: 'Suggesting a title…', act: R.stopWriting({}) })}</div>`], ['When it could not', R.suggestionFail({ model: 'Haiku 5.5' })]],
+    Stepper: [['One segment per stage, one cell per step', `<div style="flex:1">${R.stepper({ stages: [{ key: 'g1', label: 'Plan', meta: '1h', selected: false, cells: ['is-done', 'is-done'] }, { key: 'g2', label: 'Build', meta: '2h', selected: true, cells: ['is-now'] }, { key: 'g3', label: 'Review', cells: ['is-next', 'is-next'] }] })}</div>`]],
+    StepRow: [['The rows of the open stage', `<ol class="rd-route-list sc-subs" style="flex:1">${[{ state: 'done', name: 'Clarify', time: '34s' }, { state: 'now', name: 'Implementation', time: '12m', live: 'Editing app.js', when: '3s ago' }, { state: 'next', name: 'Review' }].map((x) => R.stepRow(R.stepLook(x))).join('')}</ol>`]],
+    Table: [['The same figures across rows', R.table({ label: 'Sessions', columns: [{ id: 'n', label: 'Session' }, { id: 'm', label: 'Model', narrow: false }, { id: 'c', label: 'Cost', num: true }], rows: [{ n: 'Plan', m: 'Opus 5.5', c: '$14.65' }, { n: 'Build', m: 'Opus 5.5', c: '$31.18' }] })]],
     Dialog: [['A step that needs fields first', R.dialog({ title: 'Move the Worca folder', close: X, status: 'Runs pause while it moves', yes: 'Move it', body: R.field({ id: 'g-d1', label: 'New folder', value: '~/work/.worca', hint: 'Runs, history and settings move here' }) })]],
   };
   const g = document.getElementById('gallery');

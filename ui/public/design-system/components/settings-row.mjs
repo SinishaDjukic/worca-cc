@@ -5,6 +5,7 @@
 import { attrs, esc } from './html.mjs';
 import { compactMenu } from './compact-menu.mjs';
 import { button } from './button.mjs';
+import { row } from './row.mjs';
 
 /**
  * SentencePicker: the chosen words inside the sentence they change; a CompactMenu opens under them. It keeps the
@@ -55,7 +56,7 @@ export function settingsRow({ name, sentence = '', end = '', changed = false, he
   const foldBtn = fold ? button({ label: fold.open ? 'Done' : 'Customise', kind: 'quiet', attrs: { 'aria-expanded': String(!!fold.open), title: fold.help || null, ...(fold.attrs || {}) } }) : '';
   const all = (detailRows ? `<div class="set-rows">${detailRows}</div>` : '') + detail + (detailAction ? `<div class="set-foot">${detailAction}</div>` : '');
   const shown = fold ? (fold.open ? all : '') : all;
-  return `<div class="set-row"${attrs(a)}><span class="set-name"${attrs({ title: help || null })}>${esc(name)}</span><span class="set-text">${sentence}</span><span class="set-end">${changed ? '<span class="set-changed">Changed</span>' : ''}${end}${foldBtn}</span>${shown ? `<div class="set-detail" data-motion="open">${shown}</div>` : ''}</div>`;
+  return row({ kind: 'setting', text: `<span class="set-name"${attrs({ title: help || null })}>${esc(name)}</span><span class="set-text">${sentence}</span>`, end: `${changed ? '<span class="set-changed">Changed</span>' : ''}${end}${foldBtn}`, after: shown ? `<div class="set-detail" data-motion="open">${shown}</div>` : '', attrs: a });
 }
 
 /**

@@ -6,6 +6,7 @@
 import { attrs, esc } from './html.mjs';
 import { button } from './button.mjs';
 import { compactMenu } from './compact-menu.mjs';
+import { row } from './row.mjs';
 
 /**
  * The ⋯ that holds a thing's own actions: a quiet icon button and, when open, its CompactMenu at the right.
@@ -39,8 +40,7 @@ export function listRow({ title, meta = '', mark = '', end = '', endText = '', o
   const body = `<span class="lr-t">${esc(title)}</span>${meta ? `<span class="lr-m">${esc(meta)}</span>` : ''}`;
   const main = open ? `<button type="button" class="lr-main"${attrs(open)}>${body}</button>` : `<span class="lr-main">${body}</span>`;
   const more = menu ? moreMenu(menu) : '';
-  const right = endText || end || more ? `<span class="lr-end">${endText ? `<span class="lr-fig">${esc(endText)}</span>` : ''}${end}${more}</span>` : '';
-  return `<div class="list-row"${attrs(a)}><span class="lr-rail">${mark}</span>${main}${right}</div>`;
+  return row({ kind: 'list', rail: mark, text: main, end: `${endText ? `<span class="lr-fig">${esc(endText)}</span>` : ''}${end}`, more, attrs: a });
 }
 
 /**

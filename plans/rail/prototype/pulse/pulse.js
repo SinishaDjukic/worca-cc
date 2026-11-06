@@ -7,30 +7,8 @@ const M = window.PulseModel;
 const R = window.RailUI;
 const SHELL = window.RailShell || null;   // the one Worca: mount into today's shell instead of drawing a frame   // the Rail components (ui/public/design-system/components)
 const SM = window.SettingsModel, SV = window.SettingsView;   // Settings: its menu and every section but Notifications
-const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-const P = (d) => `<path d="${d}"></path>`;
-const ICON = {
-  signal: '<circle cx="12" cy="12" r="1.8" fill="currentColor" stroke="none"></circle>' + P('M8.5 8.5a5 5 0 0 0 0 7M15.5 8.5a5 5 0 0 1 0 7M5.6 5.6a9 9 0 0 0 0 12.8M18.4 5.6a9 9 0 0 1 0 12.8'),
-  runs: P('M4 6h16M4 12h16M4 18h10'),
-  chat: P('M5 5h14a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H10l-4 3v-3H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z'),
-  clock: '<circle cx="12" cy="12" r="8"></circle>' + P('M12 8v4l3 2'),
-  folder: P('M3 7.5A1.5 1.5 0 0 1 4.5 6h4l2 2.2H19.5A1.5 1.5 0 0 1 21 9.7v8.3A1.5 1.5 0 0 1 19.5 19.5h-15A1.5 1.5 0 0 1 3 18z'),
-  gear: '<circle cx="12" cy="12" r="3"></circle>' + P('M12 3v2.5M12 18.5V21M3 12h2.5M18.5 12H21M5.6 5.6l1.8 1.8M16.6 16.6l1.8 1.8M5.6 18.4l1.8-1.8M16.6 7.4l1.8-1.8'),
-  plus: P('M12 5v14M5 12h14'),
-  chevron: P('M6 9.5l6 6 6-6'),
-  more: '<circle cx="5" cy="12" r="1.4" fill="currentColor" stroke="none"></circle><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"></circle><circle cx="19" cy="12" r="1.4" fill="currentColor" stroke="none"></circle>',
-  x: P('M7 7l10 10M17 7 7 17'),
-  updown: P('M8 10l4-4 4 4M8 14l4 4 4-4'),
-  chevR: P('M9 6l6 6-6 6'), chevL: P('M15 6l-6 6 6 6'),
-  sliders: P('M4 7.5h9M17 7.5h3M4 16.5h3M11 16.5h9') + '<circle cx="15" cy="7.5" r="2"></circle><circle cx="9" cy="16.5" r="2"></circle>',
-  away: P('M14 2.2a1.8 1.8 0 1 1 0 3.6 1.8 1.8 0 0 1 0-3.6z') + P('M13 8l-1.5 5.5') + P('M8.5 12l2-3.2 2.5-.8 2.5 2.5 2.5 1') + P('M11.5 13.5l2.5 3 1 4.5') + P('M11.5 13.5l-1.5 3.5-3 3.5'),
-  cup: P('M5 9h11v5a5 5 0 0 1-5 5h-1a5 5 0 0 1-5-5z') + P('M16 10.5h1.5a2.5 2.5 0 0 1 0 5H16') + P('M9 3.5v2.5M12.5 3.5v2.5'),
-  monitor: P('M4 4.5h16a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1z') + P('M8.5 19.5h7M12 15.5v4'),
-  sun: '<circle cx="12" cy="12" r="4"></circle>' + P('M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4'),
-  moon: P('M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9z'),
-  contrast: '<circle cx="12" cy="12" r="8"></circle>' + '<path d="M12 4a8 8 0 0 1 0 16z" fill="currentColor" stroke="none"></path>',
-};
-const svg = (name, size, cls) => `<svg${cls ? ` class="${cls}"` : ''} width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[name]}</svg>`;
+const esc = R.esc;
+const svg = (name, size, cls) => R.icon(name, size, { cls, stroke: 1.8 });
 
 const caseOf = (id) => M.CASES.find((c) => c.id === id);
 const groupOf = (id) => M.GROUPS.find((g) => g.id === id);
@@ -124,12 +102,9 @@ function topbar() {
 // the tick box in its place: one text edge for every list.
 function row({ dot, title, meta, time, tip, key, check, unreadDot, resolved, flash }) {
   const mark = dot ? `<span class="status-dot ${dot}" aria-hidden="true"></span>` : unreadDot ? '<span class="pz-unread" title="Unread"></span>' : '';
-  return `<div class="pz-row${check !== undefined ? ' has-check' : ''}${check ? ' is-sel' : ''}${unreadDot ? ' is-unread' : ''}${flash ? ' is-flash' : ''}" data-row="${esc(key)}">
-    <span class="pz-rail">${mark}${check !== undefined ? `<label class="pz-check" title="Select"><input type="checkbox" data-sel="${esc(key)}"${check ? ' checked' : ''} aria-label="Select ${esc(title)}"></label>` : ''}</span>
-    <button type="button" class="pz-row-main row-btn" data-open="${esc(key)}" title="${esc(`${title}\n${meta}\n${tip}`)}">
-      <span class="pz-row-t${unreadDot ? ' is-unread' : ''}">${esc(title)}${resolved ? '<span class="pz-resolved">Resolved</span>' : ''}</span>
-      <span class="pz-row-m">${esc(meta)}</span></button>
-    <span class="pz-row-time">${esc(time)}</span></div>`;
+  return R.row({ kind: 'pulse', cls: `${check !== undefined ? 'has-check' : ''}${check ? ' is-sel' : ''}${unreadDot ? ' is-unread' : ''}${flash ? ' is-flash' : ''}`, attrs: { 'data-row': key },
+    rail: `${mark}${check !== undefined ? `<label class="pz-check" title="Select"><input type="checkbox" data-sel="${esc(key)}"${check ? ' checked' : ''} aria-label="Select ${esc(title)}"></label>` : ''}`,
+    text: `<button type="button" class="pz-row-main row-btn" data-open="${esc(key)}" title="${esc(`${title}\n${meta}\n${tip}`)}"><span class="pz-row-t${unreadDot ? ' is-unread' : ''}">${esc(title)}${resolved ? '<span class="pz-resolved">Resolved</span>' : ''}</span><span class="pz-row-m">${esc(meta)}</span></button><span class="pz-row-time">${esc(time)}</span>` });
 }
 const dotOf = (u) => (u.sev === 'needs' && u.open ? 'is-amber' : '');
 function updateRow(u, withCheck) {

@@ -52,10 +52,11 @@ shows it; sizes, colours and spacing come with the component. Names are the Desi
 | Something broke that nothing handles | Toast, error: stays until closed, a repeat counts on it | Something went wrong |
 | The connection dropped | a quiet line at the end of the top bar, grey dot, until it reconnects | Offline · retrying |
 
+**Rows.** Every row on a Rail page is `row()`: its mark on the rail, its text, its end, its ⋯. A list lays its rows on one grid, so every end shares one left and one right edge, as wide as the widest end (capped at 45% of the list) and the title gives way first. ListRow, StepRow, SettingsRow, Pulse rows and stack rows are built on it; a page never sets a row's columns.
+
 Building from it:
 - A page sets no look of its own: no colour, type size, corner or shadow that is not a token, no inline style but
   layout and data, no control that is not in the table. `plans/rail/prototype/gates/ds-check.mjs` checks it.
 - A spec names the need and the component (`the step's primary in the strip, destructive`), never a size or a colour.
 - When no row fits, stop and propose the addition here (a row, then its Design System page) before building it.
 - A choice is never a full-width toggle or radio cards, and a yes or no never covers the page.
-- The prototype's one-line ink toast (`.rc-toast`) is a stand-in for the shared Toast.

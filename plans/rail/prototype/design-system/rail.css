@@ -894,3 +894,23 @@ button.lr-main:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
 .rl-back{display:inline-flex;align-items:center;gap:2px;margin:0 0 8px;padding:0;border:0;background:none;color:var(--ink-2);font:inherit;font-size:var(--fs-meta);cursor:pointer;}
 .rl-back:hover{color:var(--ink);}
 .rl-back:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:var(--r-xs);}
+
+/* One rail, one end (docs/rail/components.md): a list's rows share one grid, so every end has one left and one right edge,
+   as wide as the widest end, capped; the title gives way first. */
+.list-rows{--lr-rail:var(--rail,20px);--lr-gap:var(--gap,12px);display:grid;grid-template-columns:var(--lr-rail) minmax(0,1fr) fit-content(45%);column-gap:var(--lr-gap);margin-left:calc(-1 * (var(--lr-rail) + var(--lr-gap)));}
+.list-rows > .list-row{grid-column:1 / -1;grid-template-columns:subgrid;margin-left:0;}
+.list-rows > .list-row > .lr-end{grid-column:3;justify-content:flex-end;}
+.list-rows > .list-row > .lr-main{grid-column:2;}
+
+/* Table: divided rows, tabular figures, no box per row. */
+.rt-wrap{min-width:0;}
+.rt{width:100%;border-collapse:collapse;font-size:var(--fs-meta);}
+.rt-c{padding:6px 12px 6px 0;text-align:left;border-bottom:1px solid var(--line);color:var(--ink);font-weight:400;}
+th.rt-c{color:var(--ink-2);font-weight:500;}
+.rt-c.is-num{text-align:right;font-variant-numeric:tabular-nums;}
+.rt-c:last-child{padding-right:0;}
+.rt-name{display:block;}
+.rt-detail{display:none;color:var(--ink-2);}
+@container (max-width: 520px){.rt-c.is-wide{display:none;}.rt-detail{display:block;}}
+.pd-wide{flex:1 0 100%;}
+.pd-wide .textarea{width:100%;font-size:var(--fs-body);}

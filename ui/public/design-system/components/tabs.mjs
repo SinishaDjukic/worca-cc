@@ -1,4 +1,4 @@
-// Tabs (docs/rail/ › Tabs): one question per tab, a count by exception. A real tablist: one
+// Tabs (docs/rail/components.md): one question per tab, a count by exception. A real tablist: one
 // Tab stop (the selected tab), arrows move, each tab names the panel it controls.
 import { attrs, esc } from './html.mjs';
 

@@ -1,4 +1,4 @@
-// EmptyState (docs/rail/ › EmptyState): what is not here and why, then the one way on. The
+// EmptyState (docs/rail/components.md): what is not here and why, then the one way on. The
 // error form is a part that could not be drawn: it says so in its own place, and the rest of the page keeps working.
 import { esc } from './html.mjs';
 

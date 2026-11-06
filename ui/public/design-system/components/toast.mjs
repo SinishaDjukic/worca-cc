@@ -1,4 +1,4 @@
-// Toast (docs/rail/ › Toast): says what just happened, once, and goes; it never holds a
+// Toast (docs/rail/components.md): says what just happened, once, and goes; it never holds a
 // decision. The error toast is for a break nobody planned for: what happened, that the work goes on, and its actions.
 import { attrs, esc } from './html.mjs';
 
