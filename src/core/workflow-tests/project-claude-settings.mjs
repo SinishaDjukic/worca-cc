@@ -9,7 +9,7 @@
 import { randomBytes } from 'node:crypto';
 import { lstat, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { parseDocument } from 'yaml';
+import { parseDocument, stringify } from 'yaml';
 import { isTryStrippedKey } from './try-guard-env.mjs';
 
 export const PROJECT_SETTINGS_FILES = Object.freeze(['.claude/settings.json', '.claude/settings.local.json']);
@@ -50,8 +50,59 @@ export function strippedSettingsText(text) {
 }
 
 // ── D72a: the frontmatter's top-level `hooks` key ───────────────────────────────────────────────────────────────────────
+// Task 5 re-review 2 (N-I1): Worca reads a frontmatter the way Claude Code 2.1.318 does (its `xd` and `pMn`), then errs toward
+// removing. The CLI: a leading BOM is dropped; no frontmatter unless a second `---` follows; the frontmatter is everything
+// up to the first `---` after the opening line (even mid-line); Bun.YAML.parse reads it, and when that fails, every
+// `key: value` line whose value has `: ` or one of {}[]*&#!|>%@` is quoted (`Bm`), leading tabs become two spaces each, and it
+// is parsed again; a value that is not a mapping counts as none. Re-check on a CLI update (real-call-proof-3b.md).
+const CLI_FRONTMATTER_RE = /^---\s*\n([\s\S]*?)---\s*\n?/d;
+const CLI_QUOTE_RE = /[{}[\]*&#!|>%@`]|: /;
 const HOOKS_KEY_RE = /^(?:hooks|"hooks"|'hooks')[ \t]*:(?=\s|$)/;
 const bare = (l) => l.replace(/\r?\n$/, '');
+
+/** The CLI's frontmatter in `text`: `{ bom, head, fm, tail }` (bom + head + fm + tail === text; `fm` is what the CLI parses), or
+ *  null when the CLI reads none. */
+function cliFrontmatter(text) {
+  const raw = String(text ?? '');
+  const bom = raw.charCodeAt(0) === 0xFEFF ? raw[0] : '';
+  const e = raw.slice(bom.length);
+  if (e.indexOf('---', 3) < 0) return null;
+  const m = CLI_FRONTMATTER_RE.exec(e);
+  if (!m) return null;
+  const [start, end] = m.indices[1];
+  return { bom, head: e.slice(0, start), fm: e.slice(start, end), tail: e.slice(end) };
+}
+
+/** One YAML reading of `src` (merge keys on, a repeated key allowed): `{ ok: true, value }` or `{ ok: false }`. */
+function yamlReading(src) {
+  try {
+    const doc = parseDocument(src.replace(/\r(?!\n)/g, '\n'), { merge: true, uniqueKeys: false });
+    if (doc.errors.length) return { ok: false };
+    return { ok: true, value: doc.toJS({ maxAliasCount: 1000 }) };
+  } catch { return { ok: false }; }
+}
+
+/** The CLI's fallback text (`Bm`, then its leading-tab change), line for line. */
+function cliQuotedText(fm) {
+  return fm.split('\n').map((s) => {
+    const h = s.match(/^([a-zA-Z_-]+):\s+(\S.*)$/);
+    if (!h) return s;
+    const [, k, w] = h;
+    if ((w.startsWith('"') && w.endsWith('"')) || (w.startsWith('\'') && w.endsWith('\''))) return s;
+    if (w.startsWith('[') && w.endsWith(']')) { const r = yamlReading(w); if (r.ok && Array.isArray(r.value)) return s; }
+    return CLI_QUOTE_RE.test(w) ? `${k}: "${w.replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"` : s;
+  }).join('\n').replace(/^\t+/gm, (t) => '  '.repeat(t.length));
+}
+
+const isMapping = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
+/** Both readings (the strict one and the CLI's fallback; both, because Worca's YAML parser is not Bun's): whether either
+ *  parses, whether either has a top-level `hooks` key, and the mapping to rewrite from (the strict one first). */
+function readings(fm) {
+  const all = [yamlReading(fm), yamlReading(cliQuotedText(fm))].filter((r) => r.ok);
+  const maps = all.map((r) => r.value).filter(isMapping);
+  return { parses: all.length > 0, hooks: maps.some((v) => Object.hasOwn(v, 'hooks')), mapping: maps[0] ?? null };
+}
+
 /** Whether a one-line YAML value closes every quote and bracket it opens (a `#` comment after whitespace ends it). */
 function closedOnItsLine(v) {
   let depth = 0;
@@ -71,72 +122,73 @@ function closedOnItsLine(v) {
   return !quote && depth === 0;
 }
 
+/** D72a's line strip of a frontmatter `fm`: every top-level `hooks:` line and its indented block (spaces or tabs: the CLI turns
+ *  leading tabs into spaces) removed, every other byte kept. null when there is no such line or the lines alone cannot say
+ *  where its value ends (a flow or quoted value spread over lines) or the block holds an anchor used outside it. */
+function lineStripped(fm) {
+  const lines = fm.match(/[^\n]*\n|[^\n]+$/g) || [];
+  const drop = new Set();
+  for (let i = 0; i < lines.length; i++) {
+    if (!HOOKS_KEY_RE.test(bare(lines[i]))) continue;
+    let last = i;
+    for (let j = i + 1; j < lines.length; j++) {
+      const b = bare(lines[j]);
+      if (!b.trim()) continue;
+      if (!/^[ \t]/.test(b)) break;
+      last = j;
+    }
+    const value = bare(lines[i]).replace(HOOKS_KEY_RE, '').trim().replace(/^&\S+\s*/, '');
+    if (/^[{["']/.test(value) && (last > i || !closedOnItsLine(value))) return null;
+    for (let j = i; j <= last; j++) drop.add(j);
+    i = last;
+  }
+  if (!drop.size) return null;
+  const block = lines.filter((_, j) => drop.has(j)).map(bare).join('\n');
+  const rest = lines.filter((_, j) => !drop.has(j)).map(bare).join('\n');
+  for (const m of block.matchAll(/(?:^|[\s[{,:])&([^\s,[\]{}]+)/g)) if (rest.includes(`*${m[1]}`)) return null;
+  return lines.filter((_, j) => !drop.has(j)).join('');
+}
+
+/** A frontmatter rewritten from a YAML reading without its `hooks` key (the line ending kept). */
+function rewrittenFrontmatter(mapping, fm) {
+  const { hooks: _hooks, ...rest } = mapping;
+  const y = Object.keys(rest).length ? stringify(rest, { lineWidth: 0 }) : '';
+  return fm.includes('\r\n') ? y.replace(/\n/g, '\r\n') : y;
+}
+
 /**
- * D72a: a skill's, agent's or command's text without the top-level `hooks:` key of its YAML frontmatter and that key's
- * indented block; every other byte (the BOM, line endings, other keys, the body) stays. `{ text }` when it changed, null when
- * there is nothing to change (no frontmatter, no such key), `{ unsafe: true }` when Worca cannot change it safely (no closing
- * line, two such keys, a tab in the block, a flow or quoted value spread over lines, an anchor used outside the block). Pure.
- * Task 5 fix review (m4): fail closed. The frontmatter left after the line strip (or the whole one, when the strip found no
- * key) is read by a YAML parser, merge keys on; a top-level `hooks` key still there (an indented root mapping, an explicit
- * `? hooks` key, a `<<:` merge bringing one in, a flow-style `{…}` frontmatter, an escaped key), or YAML that does not parse
- * and mentions `hooks` anywhere, is `{ unsafe: true }`.
+ * D72a: a skill's, agent's or command's text without the top-level `hooks` key of its YAML frontmatter, read the way Claude
+ * Code reads it (see above). Returns null when there is nothing to change (the CLI reads no frontmatter, or no `hooks` in
+ * it), `{ text }` when Worca removed it, and `{ text, unsafe: true }` when it wrote what it could but cannot be sure (named in
+ * a run warning). Pure. In order:
+ *  1. Neither reading has `hooks` and one parses: null (a `hooks:` line inside a string or a nested key is not one).
+ *  2. The line strip: the `hooks:` lines and their blocks go, every other byte stays. When a reading of the result parses and
+ *     has no `hooks`: `{ text }`.
+ *  3. A reading has `hooks` that the line strip cannot remove (review m4: an indented root mapping, a `? hooks` key, a `<<:`
+ *     merge, a flow-style `{…}` frontmatter, an escaped key, a quoted or flow value over lines, an anchor used elsewhere): the
+ *     frontmatter is rewritten from that reading without `hooks` (the same values; its comments and layout go), checked again.
+ *  4. Nothing parses (re-review 2, N-I1: when in doubt, remove): the line-stripped text when there is one, else, when it
+ *     mentions `hooks`, an empty frontmatter (the CLI reads such a frontmatter as empty anyway); `unsafe` either way.
  */
 export function strippedFrontmatterText(text) {
-  const r = lineStrippedFrontmatter(text);
-  if (r && r.unsafe) return r;
-  return hooksStillThere(r ? r.text : String(text ?? '')) ? { unsafe: true } : r;
-}
-
-/** m4: the text between a frontmatter's opening `---` line and its closing `---` / `...` line, or null (none, or no close). */
-function frontmatterBlock(text) {
-  const raw = String(text ?? '');
-  const lines = raw.slice(raw.charCodeAt(0) === 0xFEFF ? 1 : 0).match(/[^\n]*\n|[^\n]+$/g) || [];
-  if (!lines.length || bare(lines[0]).trimEnd() !== '---') return null;
-  for (let i = 1; i < lines.length; i++) if (/^(?:---|\.\.\.)\s*$/.test(bare(lines[i]))) return lines.slice(1, i).join('');
-  return null;
-}
-/** m4: whether a YAML reading of the frontmatter still has a top-level `hooks` key (or cannot be read and mentions one). */
-function hooksStillThere(text) {
-  const fm = frontmatterBlock(text);
-  if (fm === null) return false;
-  const src = fm.replace(/\r(?!\n)/g, '\n');
-  const mentions = /hooks/i.test(src);
-  try {
-    const doc = parseDocument(src, { merge: true, uniqueKeys: false });
-    if (doc.errors.length) return mentions;
-    const v = doc.toJS({ maxAliasCount: 1000 });
-    return !!v && typeof v === 'object' && !Array.isArray(v) && Object.hasOwn(v, 'hooks');
-  } catch { return mentions; }
-}
-
-/** D72a's line strip (strippedFrontmatterText before the m4 check). */
-function lineStrippedFrontmatter(text) {
-  const raw = String(text ?? '');
-  const bom = raw.charCodeAt(0) === 0xFEFF ? '﻿' : '';
-  const lines = raw.slice(bom.length).match(/[^\n]*\n|[^\n]+$/g) || [];
-  if (!lines.length || bare(lines[0]).trimEnd() !== '---') return null;
-  let close = -1;
-  for (let i = 1; i < lines.length; i++) if (/^(?:---|\.\.\.)\s*$/.test(bare(lines[i]))) { close = i; break; }
-  if (close < 0) return lines.slice(1).some((l) => HOOKS_KEY_RE.test(bare(l))) ? { unsafe: true } : null;
-  const fm = lines.slice(1, close);
-  const at = fm.flatMap((l, i) => (HOOKS_KEY_RE.test(bare(l)) ? [i] : []));
-  if (!at.length) return null;
-  if (at.length > 1) return { unsafe: true };
-  const i = at[0];
-  let last = i;
-  for (let j = i + 1; j < fm.length; j++) {
-    const b = bare(fm[j]);
-    if (!b.trim()) continue;
-    if (!/^[ \t]/.test(b)) break;
-    if (/^ *\t/.test(b)) return { unsafe: true };   // YAML has no tab indentation: the CLI's reading is unknown
-    last = j;
+  const f = cliFrontmatter(text);
+  if (!f) return null;
+  const at = (fm) => f.bom + f.head + fm + f.tail;
+  const before = readings(f.fm);
+  if (before.parses && !before.hooks) return null;
+  const ls = lineStripped(f.fm);
+  if (ls !== null) {
+    const after = readings(ls);
+    if (after.parses && !after.hooks) return { text: at(ls) };
   }
-  const value = bare(fm[i]).replace(HOOKS_KEY_RE, '').trim().replace(/^&\S+\s*/, '');
-  if (/^[{["']/.test(value) && (last > i || !closedOnItsLine(value))) return { unsafe: true };
-  const block = fm.slice(i, last + 1).map(bare).join('\n');
-  const rest = [...fm.slice(0, i), ...fm.slice(last + 1)].map(bare).join('\n');
-  for (const m of block.matchAll(/(?:^|[\s[{,:])&([^\s,[\]{}]+)/g)) if (rest.includes(`*${m[1]}`)) return { unsafe: true };
-  return { text: bom + lines[0] + fm.slice(0, i).join('') + fm.slice(last + 1).join('') + lines.slice(close).join('') };
+  if (before.mapping && before.hooks) {
+    const fm = rewrittenFrontmatter(before.mapping, f.fm);
+    const check = readings(fm);
+    if (check.parses && !check.hooks) return { text: at(fm) };
+  }
+  if (ls !== null) return { text: at(ls), unsafe: true };
+  if (before.hooks || /hooks/i.test(f.fm)) return { text: at(''), unsafe: true };
+  return null;
 }
 
 /** D72a: the trees (in a `.claude` folder) whose markdown files Claude Code reads frontmatter hooks from, and which files. */
@@ -195,7 +247,8 @@ async function nestedClaudeDirs(dir, rel, out, depth = 0) {
 }
 
 /** D72a in one `.claude` folder (`claudeRel`): its skills, agents and commands lose their frontmatter hooks; links in those
- *  trees are removed; unsafe files and folders too deep to walk are named. */
+ *  trees are removed; files Worca is not sure it fully stripped (written anyway), files not in UTF-8 (left) and folders too
+ *  deep to walk are named. */
 async function stripFrontmatterTrees(checkoutDir, claudeRel, { changed, links, unparsed }) {
   for (const [name, match] of FRONTMATTER_TREES) {
     const tree = `${claudeRel}/${name}`;
@@ -213,9 +266,10 @@ async function stripFrontmatterTrees(checkoutDir, claudeRel, { changed, links, u
       const text = buf.toString('utf8');
       const r = strippedFrontmatterText(text);
       if (r === null) continue;
-      if (r.unsafe || !Buffer.from(text, 'utf8').equals(buf)) { unparsed.push(rel); continue; }   // not UTF-8: not rewritten
-      await replaceFile(abs(checkoutDir, rel), r.text);
+      if (!Buffer.from(text, 'utf8').equals(buf)) { unparsed.push(rel); continue; }   // not UTF-8: not rewritten, named
+      await replaceFile(abs(checkoutDir, rel), r.text);   // N-I1: written even when unsure (as far as Worca could strip it)
       changed.push(rel);
+      if (r.unsafe) unparsed.push(rel);
     }
     unparsed.push(...deep);
   }
@@ -224,8 +278,9 @@ async function stripFrontmatterTrees(checkoutDir, claudeRel, { changed, links, u
 /**
  * D72: switch the project's hooks and plugins off in `checkoutDir`. `changed`: the files rewritten; `links`: the links
  * removed (`.claude` itself, a settings file, or a link inside the skills, agents or commands folders); `unparsed` (present
- * only when there is one): skill, agent or command files whose frontmatter Worca could not change safely (D72a), left as they
- * are, and folders too deep to walk. I-2 (Task 5 fix review): the skills, agents and commands of every `.claude` folder below
+ * only when there is one): skill, agent or command files Worca is not sure it removed every hook from (D72a; re-review 2 N-I1:
+ * written as far as Worca could strip them, and also in ), or could not read as UTF-8 (left as they are), and folders
+ * too deep to walk. I-2 (Task 5 fix review): the skills, agents and commands of every `.claude` folder below
  * the root (not in node_modules or .git) are treated the same way, and a nested `.claude` that is a link is removed; only the
  * root's settings files are ones the CLI loads. Throws only when a file cannot be read or written (the caller ends the try).
  * @returns {Promise<{changed: string[], links: string[], unparsed?: string[]}>}

@@ -133,6 +133,8 @@ test('M6: a settings file that is a hardlink to a file outside the checkout: the
 // ── Task 5 (security review I2, decision D72a): hooks in the frontmatter of the project's skills, agents and commands ─────
 const FM = (hooksBlock, rest = 'description: d\n') => `---\nname: x\n${hooksBlock}${rest}---\nBody with hooks: in it.\n\n---\nnot frontmatter\n`;
 const BLOCK = 'hooks:\n  PreToolUse:\n    - matcher: "Bash"\n\n      hooks:\n        - type: command\n          command: "node mark.js"\n';
+/** re-review 2: nothing parses (even with the CLI's quoting), it mentions hooks, no hooks line to cut: emptied and named. */
+const UNSURE = '---\nname: [x\n  hooks: { Stop: [] }\n---\nbody\n';
 
 test('D72a: the frontmatter loses its top-level hooks key and block; every other byte stays', () => {
   assert.equal(strippedFrontmatterText(FM(BLOCK)).text, FM(''));
@@ -142,33 +144,48 @@ test('D72a: the frontmatter loses its top-level hooks key and block; every other
   assert.equal(strippedFrontmatterText(FM(BLOCK, '')).text, FM('', ''), 'the last key');
   const crlf = `\uFEFF${FM(BLOCK)}`.replace(/\n/g, '\r\n');
   assert.equal(strippedFrontmatterText(crlf).text, `\uFEFF${FM('')}`.replace(/\n/g, '\r\n'), 'BOM and CRLF kept');
-  // (review m4: `description: hooks: none` unquoted is not YAML at all and now fails closed; quoted it is a plain value)
-  for (const t of [FM(''), 'no frontmatter\nhooks: x\n', '', FM('', 'description: "hooks: none"\nnested:\n  hooks: kept\n')]) {
+  // (`description: hooks: none` unquoted is not strict YAML, but the CLI's quoting fallback reads it: no hooks, nothing to do)
+  for (const t of [FM(''), 'no frontmatter\nhooks: x\n', '', FM('', 'description: "hooks: none"\nnested:\n  hooks: kept\n'), FM('', 'description: hooks: none\n'),
+    '---\nname: x\nhooks:\n  Stop: []\n', '---\nname: x\ndescription: a --- b\nhooks:\n  Stop: []\n---\nbody\n']) {
+    // (the last two: the CLI reads no frontmatter without a second `---`, and its frontmatter ends at the first `---`, even mid-line)
     assert.equal(strippedFrontmatterText(t), null, JSON.stringify(t.slice(0, 40)));
   }
 });
 
-test('D72a: a frontmatter Worca cannot change safely is left as it is and named', () => {
-  for (const [t, why] of [['---\nname: x\nhooks:\n  Stop: []\n', 'no closing line'], [FM('hooks: { PreToolUse: [\n  { matcher: "Bash" } ] }\n'), 'a flow value over lines'],
-    [FM('hooks:\n\tStop: []\n'), 'a tab'], [FM('hooks: &h\n  Stop: []\n', 'other: *h\n'), 'an anchor used elsewhere'], [FM('hooks: {}\nhooks: {}\n'), 'two hooks keys'],
-    [FM('hooks: "a\n  b"\n'), 'an open quote']]) {
-    assert.deepEqual(strippedFrontmatterText(t), { unsafe: true }, why);
+test('re-review 2: what the line strip cannot cut is rewritten from its YAML reading: the same values, no hooks, the body byte for byte', () => {
+  const NAMED = FM('');
+  for (const [t, want, why] of [[FM('hooks: { PreToolUse: [\n  { matcher: "Bash" } ] }\n'), NAMED, 'a flow value over lines'],
+    [FM('hooks:\n\tStop: []\n'), NAMED, 'a tab (line strip: the CLI turns leading tabs into spaces)'], [FM('hooks: {}\nhooks: {}\n'), NAMED, 'two hooks keys (both cut)'],
+    [FM('hooks: &h\n  Stop: []\n', 'other: *h\n'), FM('', 'other:\n  Stop: []\n'), 'an anchor used elsewhere'], [FM('hooks: "a\n  b"\n'), NAMED, 'a quoted value over lines']]) {
+    assert.deepEqual(strippedFrontmatterText(t), { text: want }, why);
   }
 });
 
-test('review m4: YAML forms that still carry a top-level hooks key fail closed (left as they are, named); one that parses without it is fine', () => {
-  for (const [t, why] of [
-    ['---\n  name: x\n  hooks:\n    Stop: []\n---\nbody\n', 'an indented root mapping'],
-    ['---\nname: x\n? hooks\n: { Stop: [] }\n---\nbody\n', 'an explicit ? key'],
-    ['---\nname: x\nbase: &b\n  hooks:\n    Stop: []\n<<: *b\n---\nbody\n', 'a merge key bringing hooks'],
-    ['---\n{ name: x, hooks: { Stop: [] } }\n---\nbody\n', 'a flow-style frontmatter'],
-    ['---\n"ho\\u006fks": { Stop: [] }\nname: x\n---\nbody\n', 'an escaped key'],
-    ['---\nname: [x\n  hooks: { Stop: [] }\n---\nbody\n', 'YAML that does not parse, mentioning hooks'],
-    [FM('', 'description: hooks: none\n'), 'not YAML (a plain value with ": " in it), mentioning hooks'],
-    [FM(BLOCK, 'base: &b\n  hooks:\n    Stop: []\n<<: *b\n'), 'a merge key bringing hooks back after the line strip'],
-  ]) assert.deepEqual(strippedFrontmatterText(t), { unsafe: true }, why);
+test('review m4 (kept safe in re-review 2): YAML forms that still carry a top-level hooks key lose it; one that parses without it is fine', () => {
+  for (const [t, want, why] of [
+    ['---\n  name: x\n  hooks:\n    Stop: []\n---\nbody\n', '---\nname: x\n---\nbody\n', 'an indented root mapping'],
+    ['---\nname: x\n? hooks\n: { Stop: [] }\n---\nbody\n', '---\nname: x\n---\nbody\n', 'an explicit ? key'],
+    ['---\nname: x\nbase: &b\n  hooks:\n    Stop: []\n<<: *b\n---\nbody\n', '---\nname: x\nbase:\n  hooks:\n    Stop: []\n---\nbody\n', 'a merge key bringing hooks'],
+    ['---\n{ name: x, hooks: { Stop: [] } }\n---\nbody\n', '---\nname: x\n---\nbody\n', 'a flow-style frontmatter'],
+    ['---\n"ho\u006fks": { Stop: [] }\nname: x\n---\nbody\n', '---\nname: x\n---\nbody\n', 'an escaped key'],
+    [FM(BLOCK, 'base: &b\n  hooks:\n    Stop: []\n<<: *b\n'), FM('', 'base:\n  hooks:\n    Stop: []\n').replace('description: d\n', ''), 'a merge key bringing hooks back after the line strip'],
+  ]) assert.deepEqual(strippedFrontmatterText(t), { text: want }, why);
+  // nothing parses, even with the CLI's quoting (so the CLI reads it as empty), mentioning hooks, and no hooks line to cut:
+  // the frontmatter goes (the CLI reads it as empty anyway), named
+  assert.deepEqual(strippedFrontmatterText('---\nname: [x\n  hooks: { Stop: [] }\n---\nbody\n'), { text: '---\n---\nbody\n', unsafe: true });
   assert.equal(strippedFrontmatterText('---\nname: x\nbase: &b\n  model: y\n<<: *b\n---\nbody\n'), null, 'a merge key with no hooks: nothing to do');
   assert.equal(strippedFrontmatterText('---\nname: [x\n---\nbody\n'), null, 'YAML that does not parse and never says hooks: nothing to do');
+});
+
+test('re-review 2 N-I1: a value that is not strict YAML but mentions hooks (the CLI quotes it and still loads the hooks block) never keeps the hooks', () => {
+  // Claude Code 2.1.318 (pMn): Bun.YAML.parse, else every `key: value` line whose value has `: ` (or one of {}[]*&#!|>%@`) is
+  // quoted, leading tabs become spaces, and it parses again: this skill loads, with its hooks.
+  const lenient = 'description: Git hooks: set up pre-commit\n';
+  assert.deepEqual(strippedFrontmatterText(FM(BLOCK, lenient)), { text: FM('', lenient) }, 'stripped, every other byte kept, nothing to warn about');
+  assert.deepEqual(strippedFrontmatterText(FM('hooks:\n\tStop: []\n', lenient)), { text: FM('', lenient) }, 'a tab-indented block (the CLI turns tabs into spaces)');
+  // still not YAML after the CLI's quoting, mentioning hooks: the line-stripped text is written anyway, and named
+  const broken = 'other:\n  - [broken: hooks\n';
+  assert.deepEqual(strippedFrontmatterText(FM(BLOCK, broken)), { text: FM('', broken), unsafe: true });
 });
 
 test('I-2: nested .claude folders below the checkout root (a monorepo package\'s skills load once the agent works there: probe nested-read-318) lose their hooks too', async () => {
@@ -179,7 +196,7 @@ test('I-2: nested .claude folders below the checkout root (a monorepo package\'s
   w('packages/web/.claude/commands/c.md', FM(BLOCK));
   w('packages/web/.claude/settings.json', JSON.stringify({ hooks: { Stop: [] } }));
   w('packages/web/src/.claude/skills/deeper/SKILL.md', FM(BLOCK));
-  w('packages/api/.claude/commands/broken.md', '---\nhooks:\n  Stop: []\n');
+  w('packages/api/.claude/commands/broken.md', UNSURE);
   w('node_modules/pkg/.claude/skills/s/SKILL.md', FM(BLOCK));
   w('.git/x/.claude/skills/s/SKILL.md', FM(BLOCK));
   const outside = tmp();
@@ -189,7 +206,7 @@ test('I-2: nested .claude folders below the checkout root (a monorepo package\'s
   symlinkSync(outside, join(d, 'packages', 'outside'), 'junction');                       // an ordinary link: never followed, kept
   symlinkSync(join(outside, '.claude'), join(d, 'packages', 'linked', '.claude'), 'junction');   // a nested .claude link: removed
   const r = await stripProjectClaudeSettings(d);
-  assert.deepEqual(r.changed, ['packages/web/.claude/skills/deploy/SKILL.md', 'packages/web/.claude/agents/a.md', 'packages/web/.claude/commands/c.md',
+  assert.deepEqual(r.changed, ['packages/api/.claude/commands/broken.md', 'packages/web/.claude/skills/deploy/SKILL.md', 'packages/web/.claude/agents/a.md', 'packages/web/.claude/commands/c.md',
     'packages/web/src/.claude/skills/deeper/SKILL.md']);
   assert.deepEqual(r.links, ['packages/linked/.claude']);
   assert.deepEqual(r.unparsed, ['packages/api/.claude/commands/broken.md']);
@@ -221,20 +238,22 @@ test('D72a: in a checkout: skills\' SKILL.md, agents and commands lose their fro
   w('.claude/skills/plain/SKILL.md', FM(''));
   w('.claude/agents/team/reviewer.md', FM('hooks: {}\n'));
   w('.claude/commands/ship.md', FM(BLOCK));
-  w('.claude/commands/broken.md', '---\nhooks:\n  Stop: []\n');
+  w('.claude/commands/broken.md', UNSURE);
+  w('.claude/commands/unclosed.md', '---\nhooks:\n  Stop: []\n');   // no second ---: the CLI reads no frontmatter
   const outside = tmp();
   mkdirSync(join(outside, 'evil'));
   writeFileSync(join(outside, 'evil', 'SKILL.md'), FM(BLOCK));
   symlinkSync(join(outside, 'evil'), join(d, '.claude', 'skills', 'evil'), 'junction');
   const r = await stripProjectClaudeSettings(d);
-  assert.deepEqual(r, { changed: ['.claude/skills/deploy/SKILL.md', '.claude/agents/team/reviewer.md', '.claude/commands/ship.md'],
+  assert.deepEqual(r, { changed: ['.claude/skills/deploy/SKILL.md', '.claude/agents/team/reviewer.md', '.claude/commands/broken.md', '.claude/commands/ship.md'],
     links: ['.claude/skills/evil'], unparsed: ['.claude/commands/broken.md'] });
   assert.equal(readFileSync(join(d, '.claude', 'skills', 'deploy', 'SKILL.md'), 'utf8'), FM(''));
   assert.equal(readFileSync(join(d, '.claude', 'skills', 'deploy', 'notes.md'), 'utf8'), FM(BLOCK), 'not a SKILL.md: not read by the CLI as a skill');
-  assert.equal(readFileSync(join(d, '.claude', 'commands', 'broken.md'), 'utf8'), '---\nhooks:\n  Stop: []\n');
+  assert.equal(readFileSync(join(d, '.claude', 'commands', 'broken.md'), 'utf8'), '---\n---\nbody\n', 're-review 2 N-I1: written as far as Worca could strip it, and named');
+  assert.equal(readFileSync(join(d, '.claude', 'commands', 'unclosed.md'), 'utf8'), '---\nhooks:\n  Stop: []\n');
   assert.equal(existsSync(join(d, '.claude', 'skills', 'evil')), false);
   assert.equal(readFileSync(join(outside, 'evil', 'SKILL.md'), 'utf8'), FM(BLOCK), 'the link target is untouched');
-  assert.deepEqual(await stripProjectClaudeSettings(d), { changed: [], links: [], unparsed: ['.claude/commands/broken.md'] }, 'a second pass');
+  assert.deepEqual(await stripProjectClaudeSettings(d), { changed: [], links: [] }, 'a second pass: nothing left to do');
 });
 
 test('D72a: the harness names an unsafe frontmatter in one run warning and keeps the changed tracked files out of the try', async () => {
@@ -242,11 +261,12 @@ test('D72a: the harness names an unsafe frontmatter in one run warning and keeps
   mkdirSync(join(d, '.claude', 'skills', 's'), { recursive: true });
   writeFileSync(join(d, '.claude', 'skills', 's', 'SKILL.md'), FM(BLOCK));
   mkdirSync(join(d, '.claude', 'agents'), { recursive: true });
-  writeFileSync(join(d, '.claude', 'agents', 'a.md'), '---\nhooks: [\n');
+  writeFileSync(join(d, '.claude', 'agents', 'a.md'), UNSURE);
   const warnings = [];
   const h = { workDirs: new Map([['k', d]]), members: [{ projectKey: 'k' }], pipeline: { dir: tmp() }, _setupStage() {},
     _git: async () => ({ ok: true, stdout: '.claude/skills/s/SKILL.md\0' }), _recordRunWarning: async (t) => { warnings.push(t); } };
   await RunHarness.prototype._pluginsOffInCheckout.call(h);
   assert.deepEqual(h._tryPluginPaths, ['.claude/skills/s/SKILL.md']);
-  assert.deepEqual(warnings, ['Worca could not safely remove the hooks from the project\'s .claude/agents/a.md, so any hooks in it may still run in this try.']);
+  assert.deepEqual(warnings, ['Worca could not be sure it removed every hook from the project\'s .claude/agents/a.md, so a hook in it may still run in this try.']);
+  assert.equal(readFileSync(join(d, '.claude', 'agents', 'a.md'), 'utf8'), '---\n---\nbody\n', 'written as far as Worca could strip it');
 });
