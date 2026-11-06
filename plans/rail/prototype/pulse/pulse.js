@@ -574,6 +574,7 @@ function holdFocus(paint) {
 function renderInShell() {
   const sideNow = ui.page === 'settings'; swapCls = sideWas !== null && sideWas !== sideNow ? ' is-swap' : ''; sideWas = sideNow;
   const scroller = document.scrollingElement || document.documentElement; const keepY = scroller.scrollTop;
+  const pageEl = document.querySelector('main.main'); const keepMain = pageEl?.scrollTop || 0;   // the page scrolls in main in the one Worca
   const keepP = document.querySelector('.pz-pbody')?.scrollTop || 0;
   document.getElementById('rail-pulse-slot').innerHTML = pulseButton();
   document.querySelector('#topnav-new')?.setAttribute('aria-expanded', String(!!ui.nr));
@@ -599,6 +600,7 @@ function renderInShell() {
   fitMenus();
   opening = '';
   if (scroller.scrollTop !== keepY) scroller.scrollTop = keepY;
+  if (pageEl && pageEl.isConnected && pageEl.scrollTop !== keepMain) pageEl.scrollTop = keepMain;
 }
 
 // The tab title's count follows Settings › Notifications › Badge.
@@ -648,6 +650,7 @@ function render() { stale = false; holdFocus(SHELL ? renderInShell : paintAlone)
 function paintAlone() {
   const sideNow = ui.page === 'settings'; swapCls = sideWas !== null && sideWas !== sideNow ? ' is-swap' : ''; sideWas = sideNow;
   const scroller = document.scrollingElement || document.documentElement; const keepY = scroller.scrollTop;
+  const pageEl = document.querySelector('main.main'); const keepMain = pageEl?.scrollTop || 0;   // the page scrolls in main in the one Worca
   const keepP = document.querySelector('.pz-pbody')?.scrollTop || 0;
   document.getElementById('app').innerHTML = `<div class="pz-app">${sidebar()}<div class="pz-main">${topbar()}<main class="pz-page">${unlockStrip() || settingsStrip()}${ui.page === 'settings' ? settingsPage() : runsPage()}</main></div>${popover()}${newRun()}${acctMenu()}</div>`;
   const t = toastEl(); t.innerHTML = ui.toast ? esc(ui.toast) + (undo ? R.toastUndo({ title: undo.tip }) : '') : ''; t.classList.toggle('is-on', !!ui.toast);
@@ -655,7 +658,8 @@ function paintAlone() {
   const pb = document.querySelector('.pz-pbody'); if (pb && !opening) pb.scrollTop = keepP;
   fitMenus();
   opening = '';
-  if (scroller.scrollTop !== keepY) scroller.scrollTop = keepY;   // nothing moves by itself: a repaint never scrolls the page
+  if (scroller.scrollTop !== keepY) scroller.scrollTop = keepY;
+  if (pageEl && pageEl.isConnected && pageEl.scrollTop !== keepMain) pageEl.scrollTop = keepMain;   // nothing moves by itself: a repaint never scrolls the page
 }
 // A menu opens under its picker; one that would leave the window opens to the left instead.
 function fitMenus() {
