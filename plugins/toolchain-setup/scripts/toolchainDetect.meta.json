@@ -1,0 +1,52 @@
+{
+  "metaVersion": 2,
+  "key": "toolchainDetect",
+  "displayName": "Toolchain: detect",
+  "description": "Reads the repo's version files and writes toolchain facts (tool, version, constraint, file:line) plus capability needs such as Docker or macOS. Deterministic; never runs project code.",
+  "color": "blue",
+  "icon": "",
+  "domain": "toolchains",
+  "order": 99,
+  "runtime": "node",
+  "file": "toolchainDetect.mjs",
+  "command": null,
+  "timeoutMs": 150000,
+  "params": [],
+  "portSummary": "Reads task; produces facts, ready, bootstrap.",
+  "inputs": [
+    {
+      "id": "task",
+      "type": "md",
+      "required": false
+    }
+  ],
+  "outputs": [
+    {
+      "id": "facts",
+      "type": "json",
+      "when": "always",
+      "filename": "toolchain-facts.json",
+      "store": "run",
+      "artifactKind": "facts"
+    },
+    {
+      "id": "ready",
+      "type": "json",
+      "when": "clean",
+      "filename": "toolchain-mise.json",
+      "store": "run",
+      "artifactKind": "mise"
+    },
+    {
+      "id": "bootstrap",
+      "type": "json",
+      "when": "blocking",
+      "filename": "toolchain-mise.json",
+      "store": "run",
+      "artifactKind": "mise"
+    }
+  ],
+  "verdict": {
+    "filename": "toolchain-detect-verdict.json"
+  }
+}

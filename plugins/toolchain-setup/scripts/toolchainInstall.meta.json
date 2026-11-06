@@ -1,0 +1,47 @@
+{
+  "metaVersion": 2,
+  "key": "toolchainInstall",
+  "displayName": "Toolchain: install",
+  "description": "Installs exactly the approved rows of the Resolve plan with mise into the shared toolchain root (no root, no sudo), plus approved Android SDK components via sdkmanager. Refuses anything not both approved and in the plan; one failure never stops the rest.",
+  "color": "blue",
+  "icon": "",
+  "domain": "toolchains",
+  "order": 99,
+  "runtime": "node",
+  "file": "toolchainInstall.mjs",
+  "command": null,
+  "timeoutMs": 5400000,
+  "params": [
+    {
+      "id": "itemTimeoutMin",
+      "type": "number",
+      "required": false,
+      "label": "Minutes per item",
+      "description": "A single tool install is stopped after this long and marked failed.",
+      "default": 30
+    }
+  ],
+  "portSummary": "Reads approved, plan; produces install.",
+  "inputs": [
+    {
+      "id": "approved",
+      "type": "json",
+      "required": true
+    },
+    {
+      "id": "plan",
+      "type": "json",
+      "required": true
+    }
+  ],
+  "outputs": [
+    {
+      "id": "install",
+      "type": "json",
+      "when": "always",
+      "filename": "toolchain-install.json",
+      "store": "run",
+      "artifactKind": "install"
+    }
+  ]
+}
