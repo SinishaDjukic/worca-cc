@@ -159,8 +159,8 @@
   document.addEventListener('pointerup', () => { if (drag) { drag = false; col.classList.remove('is-resizing'); } });
   col.addEventListener('keydown', (e) => { if (e.target.closest('.ask-side-grip') && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) { e.preventDefault(); e.stopPropagation(); setWidth(width + (e.key === 'ArrowRight' ? 20 : -20)); } });
   col.addEventListener('click', (e) => {
-    if (e.target.closest('[data-chats-new]')) { window.RailPulse?.dismiss(); newChat(); return; }
-    if (e.target.closest('[data-chats-close]')) { window.RailPulse?.dismiss(); toggle(false); }
+    if (e.target.closest('[data-chats-new]')) { newChat(); return; }
+    if (e.target.closest('[data-chats-close]')) { toggle(false); }
   });
   function toggle(on) { opened = on === undefined ? !opened : on; window.RailShell.chats?.(); }
   const neighbour = (dir) => { const ids = ctl.state.order.filter((k) => k.startsWith('chat:')).map((k) => k.slice(5)), i = ids.indexOf(current); return ids[i < 0 ? (dir > 0 ? 0 : ids.length - 1) : i + dir]; };
@@ -182,7 +182,7 @@
       else if (act === 'prev-chat' || act === 'next-chat') { const id = neighbour(act === 'next-chat' ? 1 : -1); if (id) openChat(id); }
     },
     say, active: () => !col.hidden || location.hash.startsWith('#chat') ? location.hash.startsWith('#chat') && !document.querySelector('.pz-popover, .keys-modal, #app .viewer-modal, #app .nav-fly') : false,
-    retry: () => setCase('full'), emptyAct: newChat, touched: () => window.RailPulse?.dismiss(),
+    retry: () => setCase('full'), emptyAct: newChat,
   } });
   function setCase(c) {
     listCase = c === 'shared' || c === 'refresh' ? 'full' : c; data = c === 'empty' ? { groups: [], chats: [] } : M.seed(); ctl.clear(); ctl.state.waited = false;

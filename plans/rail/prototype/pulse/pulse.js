@@ -594,7 +594,7 @@ setInterval(() => { if (!awayEl && R.awayShows({ away: isAway(), keepAwake: ui.k
 
 // ---- render ----
 let sideWas = null, swapCls = '';   // the sidebar's content fades only when it changes between Worca's and Settings'
-function render() { holdFocus(SHELL ? renderInShell : paintAlone); }
+function render() { stale = false; holdFocus(SHELL ? renderInShell : paintAlone); }
 function paintAlone() {
   const sideNow = ui.page === 'settings'; swapCls = sideWas !== null && sideWas !== sideNow ? ' is-swap' : ''; sideWas = sideNow;
   const scroller = document.scrollingElement || document.documentElement; const keepY = scroller.scrollTop;
@@ -651,7 +651,6 @@ function pick(id, v) {
 document.addEventListener('click', (e) => {
   if (SHELL && !SHELL.owns('pulse', e.target)) return;
   const tg = (sel) => e.target.closest(sel);
-  const hadMenu = ui.menu;
   let el;
   if ((el = tg('[aria-disabled="true"]'))) { toast(el.title); render(); return; }
   if ((el = tg('[data-pick]'))) { const [id, v] = el.dataset.pick.split('|'); pick(id, v); render(); return; }
@@ -662,15 +661,11 @@ document.addEventListener('click', (e) => {
   if ((el = tg('[data-svsw]'))) { const say = SV.toggle(ui.sv, el.dataset.svsw); if (say) toast(say); render(); return; }
   if ((el = tg('[data-svdo]'))) { const say = SV.act(ui.sv, el.dataset.svdo); if (say) toast(say); render(); return; }
   if ((el = tg('[data-menu]'))) { ui.menu = ui.menu === el.dataset.menu ? '' : el.dataset.menu; if (ui.menu) opening = 'menu'; render(); return; }
-  if (!tg('.pz-pick, .spick')) ui.menu = '';
-  if (ui.q && !tg('.rl-search, .tsearch-field, #tsearch-open')) { ui.q = ''; const r = document.querySelector('[data-search-res]'); if (r) r.innerHTML = ''; const i = document.querySelector('[data-search]'); if (i) i.value = ''; }
   if ((el = tg('[data-act-stop]'))) { const a = C().actions.find((x) => x.id === el.dataset.actStop); ui.stopped = ui.stopped.concat(a.id); toast(`Stopped ${a.label}`); render(); return; }
   if ((el = tg('[data-land]'))) { e.preventDefault(); const [sset, label, list] = el.dataset.land.split('|'); land({ sset, label, list: !!list }); return; }
   if ((el = tg('[data-unlock]'))) { window.RailPulse.unlock(el.dataset.unlock); return; }
   if ((el = tg('[data-fix]'))) { const u = C().updates.find((x) => x.id === el.dataset.fix); ui.fixed = ui.fixed.concat(u.id); toast(`${u.fix}: done, and the problem is resolved (mock)`); render(); return; }
   if ((el = tg('[data-team]'))) { ui.teamSeen = true; ui.acct = false; if (SHELL) { SHELL.closeDrawer(); SHELL.go('settings/team'); } else { ui.page = 'settings'; ui.sset = 'team'; } render(); return; }
-  // an open popover or account menu closes on a click outside it, and that click does nothing else
-  if ((ui.pop || ui.acct || ui.nr) && !tg('.pz-popover, .nav-fly, .pz-newrun, .rc-toast, [data-pop], [data-acct], [data-newrun]')) { ui.pop = false; ui.acct = false; ui.sub = ''; ui.nr = null; render(); return; }
   if ((el = tg('[data-pop]'))) { ui.pop = !ui.pop; ui.acct = false; ui.nr = null; if (ui.pop) opening = 'pop'; render(); return; }
   if ((el = tg('[data-acct]'))) { ui.acct = !ui.acct; ui.sub = ''; ui.pop = false; ui.nr = null; if (ui.acct) opening = 'acct'; render(); return; }
   if ((el = tg('[data-sub]'))) { const v = el.dataset.sub; ui.sub = v && ui.sub !== v ? v : ''; if (ui.sub) opening = 'sub'; render(); return; }
@@ -729,7 +724,6 @@ document.addEventListener('click', (e) => {
   if ((el = tg('[data-confirm]'))) { if (el.dataset.confirm === 'yes') { const d = ui.s.desktop; ui.s = freshSettings(C()); ui.s.desktop = d; ui.custom = ''; toast('Every group is back to its defaults'); } ui.confirm = ''; render(); return; }
   if ((el = tg('[data-test]'))) { toast('Test notification sent'); render(); return; }
   if ((el = tg('[data-how]'))) { toast(el.title); render(); return; }
-  if (hadMenu && !ui.menu) render();
 });
 const isUpdate = (id) => C().updates.some((u) => u.id === id);
 const undoClear = (ids, read) => ({ tip: 'Puts them back in the list', run: () => { ui.cleared = ui.cleared.filter((x) => !ids.includes(x)); if (read) ui.read = read; toast('Back in the list'); } });
@@ -767,7 +761,7 @@ document.addEventListener('keydown', (e) => {
   if (SHELL && SHELL.runActive() && !ui.pop && !ui.acct && !ui.nr && !ui.menu) return;   // the run page's keys
   if (act && act !== 'close' && act !== 'clear') { e.preventDefault(); panelKey(act, e); return; }
   if (!act) return;
-  if (ui.q) { ui.q = ''; const i = document.querySelector('[data-search]'); if (i) i.value = ''; } else if (ui.unlock?.strip) ui.unlock = null; else if (ui.menu) ui.menu = ''; else if (ui.sv.__dialog) ui.sv.__dialog = null; else if (ui.sv.__confirm) ui.sv.__confirm = null; else if (ui.sub) ui.sub = ''; else if (ui.pop && ui.pick.on) ui.pick = R.selectClear(); else if (ui.pop || ui.acct || ui.nr) { ui.pop = false; ui.acct = false; ui.nr = null; } else if (ui.confirm) ui.confirm = ''; else return;
+  if (ui.unlock?.strip) ui.unlock = null; else if (ui.sv.__confirm) ui.sv.__confirm = null; else if (ui.confirm) ui.confirm = ''; else return;
   render();
 });
 document.addEventListener('focusin', (e) => { const r = e.target.closest?.('.pz-popover [data-row]'); if (r) ui.rowKey = r.dataset.row; });
@@ -783,6 +777,18 @@ caseSel.addEventListener('change', () => {
 });
 if (!SHELL) R.prefs.setFlag('gitAutomations', true);   // the explorer shows every group
 R.watchScrollbars(document);
+// What lies over the page closes on a click outside or Esc (docs/rail/panels.md), and the focus goes back to what opened it.
+let stale = false;   // closed from outside: draw again, unless a handler already did
+const repaint = () => { if (stale) render(); };
+const shut = (fn) => () => { fn(); stale = true; };
+const layer = (o) => R.dismissOnOutside(document, { paint: repaint, ...o, close: shut(o.close) });
+layer({ rank: 3, open: () => !!ui.menu, inside: (t) => !!t.closest('.menu, .pz-menu, .spick-menu') || t.closest?.('[data-menu]')?.dataset.menu === ui.menu, back: () => `[data-menu="${CSS.escape(ui.menu)}"]`, close: () => { ui.menu = ''; } });
+layer({ rank: 3, open: () => !!ui.sub, inside: '.nav-fly, [data-sub]', back: () => `[data-sub="${CSS.escape(ui.sub)}"]`, close: () => { ui.sub = ''; } });
+layer({ open: () => !!ui.pop, inside: '.pz-popover, [data-pop]', back: () => '[data-pop]', close: () => { ui.pop = false; }, esc: () => { if (!ui.pick.on) return false; ui.pick = R.selectClear(); stale = true; return true; } });
+layer({ open: () => !!ui.acct, inside: '.nav-fly, [data-acct]', back: () => '[data-acct]', close: () => { ui.acct = false; ui.sub = ''; } });
+layer({ dialog: true, open: () => !!ui.nr, inside: '.pz-newrun, [data-newrun]', back: () => '[data-newrun]', close: () => { ui.nr = null; } });
+layer({ dialog: true, open: () => !!ui.sv.__dialog, inside: '.viewer-modal .card', back: () => null, close: () => { ui.sv.__dialog = null; } });
+layer({ rank: 2, open: () => !!(ui.q || '').trim(), inside: '.rl-search, .tsearch-field, #tsearch-open', back: () => '[data-search]', close: () => { ui.q = ''; const i = document.querySelector('[data-search]'); if (i) i.value = ''; } });
 R.prefs.onChange(() => { stepUnlock(); render(); });
 // Usage refreshes every minute; offline, the last figures stay with their time until the connection is back.
 setInterval(() => {
@@ -800,8 +806,7 @@ window.RailPulse = {
     if (landing) { const e = landing; landing = null; landRow(e); }
   },
   say: (text, canUndo) => { toast(text, canUndo); render(); },
-  // a click on a list page: what lies over it closes
-  dismiss: () => { if (ui.pop || ui.acct || ui.nr || ui.menu || ui.q) { ui.pop = false; ui.acct = false; ui.sub = ''; ui.nr = null; ui.menu = ''; render(); } },
+
   // A place or a section above the mode or behind Labs: its one way on (the page's EmptyState).
   unlock: (lock, to) => {
     const [kind, v] = lock.split(':');

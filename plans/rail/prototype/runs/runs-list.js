@@ -219,7 +219,7 @@
       view = { ...view, [id]: v }; store.set(view); return false;
     },
     say, active: () => !root.closest('[hidden]') && !document.querySelector('.pz-popover, .keys-modal, #app .viewer-modal, #app .nav-fly'),
-    retry: () => setCase('full'), emptyAct: () => document.getElementById('topnav-new')?.click(), touched: () => window.RailPulse?.dismiss(),
+    retry: () => setCase('full'), emptyAct: () => document.getElementById('topnav-new')?.click(),
   } });
 
   function setCase(c) {

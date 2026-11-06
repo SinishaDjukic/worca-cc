@@ -184,7 +184,7 @@
     if ((hit = on('[data-unlock]')) && on('#route-today')) { window.RailPulse?.unlock(hit.dataset.unlock, hit.dataset.to); return; }
     if (on('#side-toggle')) { collapsed = !collapsed; store.set(KEY_RAIL, collapsed ? '1' : '0'); syncRail(); return; }
     if (on('#mbar-menu')) { drawer(!document.body.classList.contains('nav-open')); return; }
-    if (on('#side-close, #nav-scrim')) { drawer(false); return; }
+    if (on('#side-close')) { drawer(false); return; }
     if (on('#tsearch-open')) { searchFold(true); return; }
     if (on('#tsearch-close')) { searchFold(false); return; }
     if (on('#topnav-ask')) { askOpen = !askOpen; syncAsk(routed.view); return; }
@@ -203,8 +203,6 @@
   document.addEventListener('pointerup', () => { if (drag) { drag = false; document.getElementById('ask-side').classList.remove('is-resizing'); } });
   document.addEventListener('keydown', (e) => {
     if (e.target.closest?.('#ask-side .ask-side-grip') && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) { e.preventDefault(); setAskW(askW + (e.key === 'ArrowLeft' ? 20 : -20)); return; }
-    if (e.key === 'Escape' && document.body.classList.contains('nav-open')) { drawer(false); document.getElementById('mbar-menu')?.focus(); return; }
-    if (e.key === 'Escape' && document.querySelector('#topnav .tsearch.is-open')) searchFold(false);
   });
   // The prototype's corner: what the connection does, and the screensaver.
   let conn = 'ok';
@@ -239,6 +237,9 @@
   };
   const RM = window.RunCardModel;
   let routed = { view: '', locked: false };
+  // the drawer and the narrow search close on a click outside or Esc (docs/rail/panels.md)
+  R.dismissOnOutside(document, { open: () => document.body.classList.contains('nav-open'), inside: '#side-rail, #mbar-menu', back: () => '#mbar-menu', close: () => drawer(false), paint: () => {} });
+  R.dismissOnOutside(document, { open: () => !!document.querySelector('#topnav .tsearch.is-open'), inside: '.tsearch, #tsearch-open', back: () => '#tsearch-open', close: () => searchFold(false), paint: () => {} });
   build();
   setAskW(askW);
   addEventListener('resize', () => { syncRail(); chats(); });

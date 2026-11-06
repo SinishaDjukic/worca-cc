@@ -86,6 +86,68 @@ for (const scheme of ['light', 'dark']) for (const w of [1280, 900, 760, 375]) {
   await step('a place above the mode unlocks', () => document.querySelector('#route-today [data-unlock]')?.click(), () => RailUI.prefs.mode() === 'advanced' && !document.querySelector('#route-today [data-unlock]'));
   await p.close();
 }
+// What lies over a page closes on a click outside and on Esc, at 1280 and 375 (panel.dismiss). Each entry opens one; a new
+// overlay goes here. A click on the top bar's title is a click on nothing.
+{
+  const up = (s) => (p) => p.evaluate((x) => !!document.querySelector(x), s);
+  const clicks = (...ss) => (p) => p.evaluate(async (list) => { for (const x of list) { document.querySelector(x)?.click(); await new Promise((r) => setTimeout(r, 30)); } }, ss);
+  const OVER = [
+    ['Pulse', 'runs', clicks('[data-pop]'), '.pz-popover'], ['Pulse on a run', 'run/ready', clicks('[data-pop]'), '.pz-popover'], ['Pulse on Settings', 'settings/general', clicks('[data-pop]'), '.pz-popover'],
+    ['Pulse\'s sentence', 'runs', clicks('[data-pop]', '[data-menu="nowShow"]'), '.pz-popover .pz-menu'],
+    ['the profile menu', 'runs', clicks('[data-acct]'), '#app .acct-menu'], ['Usage and costs', 'runs', clicks('[data-acct]', '[data-sub="usage"]'), '#app .pz-fly'],
+    ['New run', 'runs', clicks('[data-newrun]'), '.pz-newrun', '.viewer-modal'],
+    ['the Runs sentence', 'runs', clicks('#runs-root [data-menu="show"]'), '#runs-root .pz-menu'], ['the list\'s ⋯', 'runs', clicks('#runs-root [data-menu="tools"]'), '#runs-root .rc-pop > .menu'],
+    ['a run row\'s ⋯', 'runs', clicks('#runs-root [data-menu="row:run:r1"]'), '#runs-root .rc-pop > .menu'], ['Add to group', 'runs', clicks('#runs-root [data-menu="row:run:r1"]', '#runs-root [data-menu-pick="row:run:r1|add-to-group"]'), '#runs-root .list-pop'],
+    ['the Chats sentence', 'chat', clicks('#chats-root [data-menu="from"]'), '#chats-root .pz-menu'], ['Rename a chat', 'chat', clicks('#chats-root [data-menu="row:chat:c5"]', '#chats-root [data-menu-pick="row:chat:c5|rename"]'), '#chats-root .viewer-modal', '.viewer-modal'],
+    ['a run page ⋯', 'run/ready', clicks('#card [data-menu="more"]'), '#card .rc-pop > .menu'], ['a run page ▾', 'run/ready', clicks('#card [data-menu="act"]'), '#card .rc-pop > .menu'], ['the labels editor', 'run/labelled', clicks('#card [data-menu="tags"]'), '#card .rc-list-ed'],
+    ['Create PR', 'run/ready', clicks('#card [data-key="act-main"]'), '#card .viewer-modal', '.viewer-modal'],
+    ['search results', 'runs', async (p) => { await p.evaluate(() => { document.getElementById('tsearch-open')?.click(); const i = document.querySelector('[data-search]'); i.value = 'web'; i.dispatchEvent(new Event('input', { bubbles: true })); }); }, '.rl-search-res'],
+    ['a Settings picker', 'settings/runs', clicks('#route-settings .spick-b'), '.spick-menu'], ['a record\'s ⋯ in Settings', 'settings/models', clicks('#route-settings [data-menu^="svm"]'), '#route-settings .rc-pop > .menu'],
+  ];
+  for (const w of [1280, 375]) {
+    const p = await b.newPage({ viewport: { width: w, height: 860 }, reducedMotion: 'reduce' });
+    p.on('pageerror', (e) => add('script error', `over/${w}: ${e}`));
+    for (const [name, route, open, sel, scrim] of OVER) {
+      for (const how of ['click', 'esc']) {
+        await p.goto(`${URL_}#${route}`); await p.reload(); await p.waitForTimeout(60);
+        await open(p); await p.waitForTimeout(30);
+        if (!(await up(sel)(p))) { add('an overlay did not open', `${w}: ${name}`); break; }
+        const inside = await p.evaluate((s) => { const x = document.querySelector(s); (x.querySelector('.menu-h, .dlg-title, .pz-phead') || x).dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })); return !!document.querySelector(s); }, sel).catch(() => true);
+        checks++;
+        if (!inside) { add('a click inside closes it', `${w}: ${name}`); await open(p); await p.waitForTimeout(30); }
+        if (how === 'click') await p.evaluate((s) => { const t = s ? document.querySelector(s) : document.getElementById('topnav-title'); t.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })); }, scrim);
+        else await p.keyboard.press('Escape');
+        await p.waitForTimeout(40);
+        if (await up(sel)(p)) add(how === 'click' ? 'an overlay stays after a click outside' : 'an overlay stays after Esc', `${w}: ${name}`);
+        checks++;
+      }
+    }
+    // one click: the first closes and the second opens; a real control still acts
+    await p.goto(`${URL_}#runs`); await p.reload(); await p.waitForTimeout(60);
+    await p.evaluate(() => document.querySelector('[data-pop]').click()); await p.evaluate(() => document.querySelector('[data-newrun]').click()); await p.waitForTimeout(30);
+    if (await up('.pz-popover')(p) || !(await up('.pz-newrun')(p))) add('Pulse then New run is not one click', `${w}`);
+    await p.goto(`${URL_}#runs`); await p.reload(); await p.waitForTimeout(60);
+    await p.evaluate(() => document.querySelector('#runs-root [data-menu="show"]').click()); await p.evaluate(() => document.querySelector('#runs-root [data-menu="by"]').click()); await p.waitForTimeout(30);
+    if (await up('#runs-root [data-pick^="show|"]')(p) || !(await up('#runs-root [data-pick^="by|"]')(p))) add('one menu then another is not one click', `${w}`);
+    // focus returns; a Dialog keeps what was typed; the strip and the side column stay
+    await p.goto(`${URL_}#runs`); await p.reload(); await p.waitForTimeout(60);
+    await p.evaluate(() => document.querySelector('[data-pop]').click()); await p.evaluate(() => document.getElementById('topnav-title').click()); await p.waitForTimeout(30);
+    if (!(await p.evaluate(() => document.activeElement?.matches('[data-pop]')))) add('the focus does not return to what opened it', `${w}: Pulse`);
+    await p.goto(`${URL_}#chat`); await p.reload(); await p.waitForTimeout(60);
+    await p.evaluate(() => { document.querySelector('#chats-root [data-menu="row:chat:c5"]').click(); document.querySelector('#chats-root [data-menu-pick="row:chat:c5|rename"]').click(); });
+    await p.fill('[data-dlg-name]', 'Typed'); await p.evaluate(() => document.querySelector('#chats-root .viewer-modal').click()); await p.keyboard.press('Escape'); await p.waitForTimeout(30);
+    if (!(await up('#chats-root .viewer-modal')(p))) add('a Dialog lost what was typed', `${w}`);
+    if (w <= 760) {
+      await p.goto(`${URL_}#runs`); await p.reload(); await p.waitForTimeout(60);
+      await p.evaluate(() => document.getElementById('mbar-menu').click()); await p.evaluate(() => document.querySelector('.main').click()); await p.waitForTimeout(30);
+      if (await p.evaluate(() => document.body.classList.contains('nav-open'))) add('the drawer stays after a click outside', `${w}`);
+    }
+    await p.goto(`${URL_}#runs`); await p.reload(); await p.waitForTimeout(60);
+    await p.evaluate(() => { document.getElementById('topnav-ask').click(); document.getElementById('topnav-title').click(); }); await p.waitForTimeout(30);
+    if (await p.evaluate(() => document.getElementById('ask-side').hidden)) add('Ask worca closed on a click outside', `${w}`);
+    await p.close(); checks += 6;
+  }
+}
 // Usage: live, connected providers only, every minute (docs/rail/small-rules.md).
 {
   const p = await b.newPage({ viewport: { width: 1280, height: 860 }, reducedMotion: 'reduce' });

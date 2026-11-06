@@ -44,4 +44,5 @@ export { PRESS_MS, selectClear, selectStart, selectToggle, selectRange, selectAl
 export { listWord, listSentence, groupRow, roundRows, listState, originMark, chatKindIcon } from './list-parts.mjs';
 export { listController, LIST_SHOWN, fitMenu } from './list-page.mjs';
 export { planBulk, skipText } from '../../../../src/shared/run-bulk.mjs';
+export { dismissOnOutside, REAL_CONTROL } from './dismiss.mjs';
 export { selectionBar, selectAllBox, bindLongPress } from './selection-bar.mjs';

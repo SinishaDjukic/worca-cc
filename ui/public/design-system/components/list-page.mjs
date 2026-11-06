@@ -4,6 +4,7 @@
 import { attrs, esc } from './html.mjs';
 import { button } from './button.mjs';
 import { confirmStrip } from './confirm-strip.mjs';
+import { dismissOnOutside } from './dismiss.mjs';
 import { dialog } from './dialog.mjs';
 import { field } from './field.mjs';
 import { icon } from './icons.mjs';
@@ -47,7 +48,6 @@ export function fitMenu(m, vw) {
  * @param {() => boolean} o.spec.active  this list takes keys now
  * @param {() => void} [o.spec.retry]
  * @param {() => void} [o.spec.emptyAct]
- * @param {() => void} [o.spec.touched]  a click inside: what lies over the page closes
  * A row: { key, title, meta, mark, lead, end, tip, unread, current, holds, menu, members, open (a group's first state), noun, count, rounds }.
  */
 export function listController({ root, spec }) {
@@ -115,6 +115,7 @@ export function listController({ root, spec }) {
   }
 
   function paint({ focus = '' } = {}) {
+    stale = false;
     const a = doc.activeElement, inside = root.contains(a);
     const scroller = root.closest('.main, .rl-side-body'), y = scroller?.scrollTop || 0;
     const before = s.order, fromRow = a?.closest?.('[data-row]')?.dataset.row || s.focus;
@@ -137,7 +138,6 @@ export function listController({ root, spec }) {
     (keep && root.querySelector(keep) || rowEl(keepFocus(before, s.order, fromRow)))?.focus();
   }
   const rowEl = (k) => (k ? root.querySelector(`[data-open="${q(k)}"]`) : null);
-  const closeOver = () => { s.menu = ''; };
   const applyPick = (act, id) => { s.pick = selectApply(s.pick, act, { id, shown: s.order }); paint(); };
 
   // what a row's ⋯ or a key does: on a ticked row, it means every ticked row
@@ -150,7 +150,6 @@ export function listController({ root, spec }) {
   }
 
   root.addEventListener('click', (e) => {
-    spec.touched?.();
     const t = (sel) => e.target.closest(sel);
     let el;
     if ((el = t('[aria-disabled="true"]'))) { spec.say(el.title); return; }
@@ -179,7 +178,6 @@ export function listController({ root, spec }) {
     if ((el = t('[data-dialog]'))) { dialogStep(el.dataset.dialog); return; }
     if ((el = t('[data-listtoggle]'))) { const v = el.dataset.listtoggle, i = v.indexOf('|'); s.pop.pick(v.slice(0, i), v.slice(i + 1)); return; }
     if (t('.list-pop')) return;
-    if (s.pop) { closePop(); return; }
     if ((el = t('[data-fold]'))) { const r = s.rows.get(el.dataset.fold); s.groups.set(r.key, !groupOpen(r)); s.menu = ''; paint(); return; }
     if ((el = t('[data-rounds]'))) { const k = el.dataset.rounds; if (s.rounds.has(k)) s.rounds.delete(k); else s.rounds.add(k); s.menu = ''; paint(); return; }
     if ((el = t('[data-rounds-all]'))) { s.roundsAll.add(el.dataset.roundsAll); paint(); return; }
@@ -190,17 +188,16 @@ export function listController({ root, spec }) {
     if ((el = t('[data-open]'))) {
       const act = selectionAction({ click: true, button: e.button, metaKey: e.metaKey, ctrlKey: e.ctrlKey, shiftKey: e.shiftKey }, { selecting: s.pick.on });
       if (act) { e.preventDefault(); applyPick(act, el.dataset.open); return; }
-      s.menu = ''; s.focus = el.dataset.open;
+      s.focus = el.dataset.open;
       spec.open(s.rows.get(el.dataset.open));
       return;
     }
-    if (s.menu) { closeOver(); paint(); }
   });
-  // a click outside closes the list's own menu or editor
-  doc.addEventListener('click', (e) => {
-    if (root.contains(e.target) || !(s.menu || s.pop) || !doc.contains(e.target)) return;
-    s.menu = ''; s.pop = null; paint();
-  });
+  let stale = false;   // something closed from outside: draw again, unless a handler already did
+  const repaint = () => { if (stale) paint(); };
+  dismissOnOutside(doc, { rank: 3, open: () => !!s.menu, inside: (t) => !!t.closest('.menu') || t.closest?.('[data-menu]')?.dataset.menu === s.menu, back: () => root.querySelector(`[data-menu="${q(s.menu)}"]`), close: () => { s.menu = ''; stale = true; }, paint: repaint });
+  dismissOnOutside(doc, { rank: 3, open: () => !!s.pop, inside: '.list-pop', back: () => (s.pop ? root.querySelector(s.pop.anchor) : null), close: () => { s.pop = null; stale = true; }, paint: repaint });
+  dismissOnOutside(doc, { dialog: true, open: () => !!s.dialog, inside: (t) => root.contains(t) && !!t.closest('.viewer-modal .card'), back: () => (s.dialog?.back ? root.querySelector(s.dialog.back) : null), close: () => { s.dialog = null; stale = true; }, paint: repaint });
   root.addEventListener('input', (e) => {
     if (e.target.id === 'list-pop-q') { s.pop.q = e.target.value; paint(); }
     else if (e.target.hasAttribute('data-dlg-name') && s.dialog) { s.dialog.value = e.target.value; s.dialog.typed = true; }
@@ -211,7 +208,6 @@ export function listController({ root, spec }) {
   function openSheet() {
     openShortcutsSheet({ doc, scopes: ['anywhere', 'list', 'selecting', ...(spec.scopes || [])], can: spec.can(), fallback: () => rowEl(s.focus) || root.querySelector('[data-open]') });
   }
-  function closePop() { const back = s.pop?.anchor; s.pop = null; paint({ focus: back || '' }); }
   function dialogStep(step) {
     const d = s.dialog;
     if (step !== 'yes') { s.dialog = null; paint({ focus: d.back || '' }); return; }
@@ -229,18 +225,15 @@ export function listController({ root, spec }) {
   doc.addEventListener('keydown', (e) => {
     if (!spec.active()) return;
     if (s.dialog) {
-      if (e.key === 'Escape') { e.preventDefault(); dialogStep('cancel'); }
-      else if (e.key === 'Enter' && e.target.matches?.('[data-dlg-name]')) { e.preventDefault(); dialogStep('yes'); }
+      if (e.key === 'Enter' && e.target.matches?.('[data-dlg-name]')) { e.preventDefault(); dialogStep('yes'); }
       return;
     }
     if (s.pop) {
-      if (e.key === 'Escape') { e.preventDefault(); closePop(); return; }
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); const items = [...root.querySelectorAll('.list-pop .menu-item')], i = items.indexOf(doc.activeElement); if (items.length) items[(i + (e.key === 'ArrowDown' ? 1 : items.length - 1) + (i < 0 && e.key === 'ArrowUp' ? 1 : 0)) % items.length]?.focus(); return; }
       if (e.key === 'Enter' && e.target.id === 'list-pop-q') { e.preventDefault(); root.querySelector('.list-pop .menu-item')?.click(); }
       return;
     }
     if (s.menu) {
-      if (e.key === 'Escape') { e.preventDefault(); const m = s.menu; s.menu = ''; paint({ focus: `[data-menu="${q(m)}"]` }); return; }
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); moveMenu(e); }
       return;
     }

@@ -4,6 +4,7 @@
 |---|---|---|---|
 | `panel.over` | A panel opens over any page under its button; it has no page of its own | It never changes where you are | pulse-sweep |
 | `panel.side-column` | A side column pushes above 1080px, covers to 761px, takes the window below; one at a time | Same as the app's need, in Rail's motion | worca-sweep |
+| `panel.dismiss` | What lies over a page closes on a click or tap outside and on Esc; a click inside never does; focus returns to what opened it | One habit, on every page | worca-sweep |
 | `panel.conversation` | A conversation holds the person right, Worca on the page, work as cards on 760px | Readable at any width | by hand |
 
 **A panel** (Pulse, the account menu): opens under its top-bar button over any page, never as a page of its own.
@@ -22,3 +23,11 @@ list button brings it back.
 **A conversation** (Chat, a side column): the person's messages on the right on `--field`, Worca's text on the page,
 its work as cards on a 760px text column under the shared card head: a run card, a command group (folded to its head;
 a failure opens itself), a graph in its well.
+
+**What closes how.** A menu, a picker, a popover, a flyout, a panel (Pulse, the profile menu), search results and an editor
+close on a click or tap outside and on Esc, one layer at a time; a click inside never closes them. That click does nothing
+else, unless it lands on a real control: another menu's button or another top-bar button closes the first and opens the
+second, in one click. A Dialog closes on its scrim only when nothing was typed in it; with typed text it stays, since nothing
+typed is lost, and Esc follows the same rule. The ConfirmStrip and a side column stay: they are not over the page. The focus
+returns to the control that opened it. Every page calls `dismissOnOutside(doc, layer)` (`dismiss.mjs`), one registry per
+document, and keeps no outside-click code of its own.

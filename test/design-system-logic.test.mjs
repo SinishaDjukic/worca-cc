@@ -318,3 +318,24 @@ test('shortcutAction: Chat has its own keys, and they work in a field', () => {
   assert.equal(R.shortcutAction({ key: 'ArrowUp', altKey: true }, { scopes: ['chat'] }), 'prev-chat');
   assert.equal(R.shortcutAction({ key: 'ArrowUp', altKey: true, inField: true }, { scopes: ['chat'] }), null);
 });
+
+test('dismissOnOutside: a click outside closes; inside never; a real control also acts; a Dialog keeps what was typed; Esc and focus', async () => {
+  const { JSDOM } = await import('jsdom');
+  const win = new JSDOM('<body><div id="pane"><i id="in"></i></div><button id="open">o</button><button id="other">x</button><p id="page">p</p><div id="dlg"><input id="f"></div><p id="scrim">s</p></body>', { pretendToBeVisual: true }).window, d = win.document;
+  const click = (id) => d.getElementById(id).dispatchEvent(new win.MouseEvent('click', { bubbles: true, cancelable: true }));
+  const esc = () => d.getElementById('page').dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  let open = true, paints = 0, acted = 0, dlg = false;
+  d.getElementById('other').addEventListener('click', () => { acted++; });
+  d.getElementById('page').addEventListener('click', () => { acted += 100; });
+  const off = R.dismissOnOutside(d, { open: () => open, inside: '#pane, #open', back: () => '#open', close: () => { open = false; }, paint: () => { paints++; } });
+  R.dismissOnOutside(d, { dialog: true, open: () => dlg, inside: '#dlg', close: () => { dlg = false; }, paint: () => { paints++; } });
+  click('in'); assert.equal(open, true, 'inside stays'); click('open'); assert.equal(open, true, 'its own button is its own');
+  click('page'); assert.equal(open, false); assert.equal(acted, 0, 'a click on nothing does nothing else'); assert.equal(d.activeElement.id, 'open', 'the focus returns');
+  open = true; click('other'); assert.equal(open, false); assert.equal(acted, 1, 'a real control acts as well'); assert.equal(paints, 2, 'and it paints');
+  open = true; esc(); assert.equal(open, false, 'Esc closes');
+  dlg = true; click('dlg'); assert.equal(dlg, true);
+  click('scrim'); assert.equal(dlg, false, 'an untouched Dialog closes on its scrim');
+  dlg = true; d.getElementById('f').dispatchEvent(new win.Event('input', { bubbles: true }));
+  click('scrim'); assert.equal(dlg, true, 'typed text stays'); esc(); assert.equal(dlg, true, 'Esc too');
+  off();
+});

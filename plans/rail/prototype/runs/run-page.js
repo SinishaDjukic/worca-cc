@@ -752,7 +752,7 @@ document.addEventListener('click', (e) => {
     return;
   }
   if (!t && e.target.closest('[data-title]')) { ui.titleOpen = !ui.titleOpen; render(); return; }
-  if (!t || !t.closest('#card')) { if (ui.menu && !e.target.closest('.menu')) { ui.menu = ''; render(); } return; }
+  if (!t || !t.closest('#card')) return;
   const d = t.dataset;
   if (d.fd) {
     const F = ui.form;
@@ -921,5 +921,11 @@ document.addEventListener('keydown', (e) => {
 });
 // A case named in the address (#question) opens on load, so a review sheet can show every state at once.
 R.prefs.onChange(render);
+// A menu, a picker, an editor and a Dialog close on a click outside or Esc (docs/rail/panels.md).
+let stale = false;
+const onPage = () => !SHELL || SHELL.runActive();
+const repaint = () => { if (stale) { stale = false; render(); } };
+R.dismissOnOutside(document, { rank: 3, open: () => !!ui.menu && onPage(), inside: '.rc-pop, .menu, .spick, [data-tagzone]', back: () => `[data-key="menu:${CSS.escape(ui.menu === 'groups' ? 'more' : ui.menu)}"]`, close: () => { ui.menu = ''; stale = true; }, paint: repaint });
+R.dismissOnOutside(document, { dialog: true, open: () => onPage() && !ui.busy && !!document.querySelector('#card .viewer-modal'), inside: '#card .viewer-modal .card', back: () => '[data-key="act-main"]', close: () => { ui.form = null; ui.doc = null; ui.graphNode = null; ui.dialog = ''; if (ui.pr) { ui.pr.gen = false; ui.pr.genTitle = false; (ui.pr.prs || []).forEach((f) => { f.gen = false; f.genTitle = false; }); } stale = true; }, paint: repaint });
 { const h = location.hash.slice(1); if (M.cases.some((c) => c.id === h)) { pick.value = h; pick.dispatchEvent(new Event('change')); } else render(); }
 })();
