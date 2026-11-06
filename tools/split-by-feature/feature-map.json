@@ -1313,6 +1313,17 @@
       "html": []
     },
     {
+      "name": "worca-levels",
+      "doc": "docs/worca-levels.md",
+      "routes": [],
+      "css": [
+        "^Worca level"
+      ],
+      "html": [
+        "<!-- ===== VIEW: PROFILE"
+      ]
+    },
+    {
       "name": "ui-levels",
       "doc": "docs/ui-levels.md",
       "routes": [],

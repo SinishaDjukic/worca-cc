@@ -10,6 +10,14 @@ import { createWorkspaceWithHomes } from '../../../src/core/workspace-scan-run.m
 import { RESCAN_CHOICES, WORKSPACE_KEY_RE, addWorkspaceManualEdge, addWorkspaceMembers, checkNewWorkspace, deleteWorkspace, listWorkspaces, memoGitProbe, readWorkspace, readWorkspaceMap, readWorkspaceStacks, regenerateWorkspaceDescription, removeWorkspaceManualEdge, removeWorkspaceMember, scanMemberProblems, setWorkspaceEdgeState, setWorkspaceScanPick, updateWorkspace, updateWorkspaceStacks, workspaceMembers } from '../../../src/core/workspaces.mjs';
 import { effectiveEdges } from '../../../src/shared/workspace-map/overrides.mjs';
 import { afterMembersChanged, agentMayBeCaller, badRequest, emitChanged, liveAutoRescan, ownsWorkspaceTarget, primaryMemberOf, prunedNote, refuseAgentCaller, refuseSignedOutClaude, removeRecommendation, resolveProjectDir, runs, scanModelsFor, scanRequest, workspaceMembersBusy } from '../../server.mjs';
+import { personOf } from '../../../src/core/worca-levels/service.mjs';
+import { worcaLevelService } from '../worca-levels/worca-level.mjs';
+
+/** Worca levels: record a live event for the person behind `req`. Never fails the request it rides on. */
+async function noteWorcaSpace(req) {
+  try { await worcaLevelService().noteLiveEvent(personOf(req).person, { space: true }); }
+  catch (err) { console.error(`[worca-levels] live event not recorded: ${err?.message || err}`); }
+}
 
 export function register(app) {
 
@@ -110,6 +118,7 @@ app.post('/api/workspaces', async (req, res) => {
       metricsProject: body.metricsProject, policyProject: body.policyProject,
     });
     emitChanged('workspaces-changed', 'created');
+    await noteWorcaSpace(req);
     res.status(201).json({ workspace, metricsHomeAuto });
   } catch (err) {
     return workspaceFail(res, err);
@@ -210,6 +219,7 @@ app.post('/api/workspaces/:id/members', async (req, res) => {
       ...(before.policyProject && !workspace.policyProject ? ['policy'] : []),
     ];
     emitChanged('workspaces-changed', 'members');
+    await noteWorcaSpace(req);
     if (clearedHomes.includes('policy')) emitChanged('team-policy-changed', 'policy-home');
     res.json({ workspace, clearedHomes, rescan, ...(recommendation ? { recommendation } : {}) });
   } catch (err) {

@@ -144,6 +144,7 @@
     "runs/smart-naming.css",
     "network-proxy/proxy-settings.css",
     "settings/away-screensaver.css",
+    "worca-level/worca-level.css",
     "chat/card-nesting.css"
   ],
   "html": [
@@ -167,6 +168,7 @@
     "marketplace/marketplace.html",
     "mcp-servers/connectors.html",
     "models/models.html",
+    "profile/profile.html",
     "shell/main.html",
     "models/model-editor.html",
     "artifacts/saved-markdown-viewer.html",
@@ -196,6 +198,7 @@
     "models",
     "network-proxy",
     "new-run",
+    "profile",
     "projects",
     "requirements",
     "run-presets",

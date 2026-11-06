@@ -413,3 +413,61 @@ test('stylesheet: a switch row paints its inner .switch from the row\'s aria-che
   assert.doesNotMatch(css, /\.away-item\[data-state="away"\]\{background/, 'the switch shows the state; no row tint');
   assert.doesNotMatch(css, /\.sw-item\[aria-disabled="true"\]\{cursor/, 'a disabled row keeps .mi\'s default cursor (the unread away row still opens Settings)');
 });
+
+test('the corner avatar: an image in .acct-ava keeps the ring, the dot and the data attributes; the level joins the aria-label and the title goes', async () => {
+  const { paintAccountCorner, describeAccount } = await import('../ui/public/account-menu.mjs');
+  const { $ } = await boot({ width: 1000 });
+  const btn = $('side-acct');
+  const acct = describeAccount({ name: 'ada.lovelace@acme.dev', source: 'access', shared: true });
+  const avatar = { src: '/worca-levels/pod.svg', alt: 'Pod worca' };
+  const budget = BUDGET();
+  await checkRows([
+    { name: 'avatar: an <img> with src and alt fills .acct-ava; ring, dot and data attributes stay', run: () => {
+      paintAccountCorner(btn, acct, { budget, avatar });
+      const img = btn.querySelector('.acct-ava img');
+      assert.ok(img, 'the image is in the avatar circle');
+      assert.deepEqual([img.getAttribute('src'), img.getAttribute('alt')], [avatar.src, avatar.alt]);
+      assert.equal(btn.querySelector('.acct-ava').textContent, '', 'no initials beside the image');
+      assert.ok(btn.querySelector('.acct-ring-wrap .acct-ring') && btn.querySelector('.acct-ring-wrap .acct-dot'), 'ring and dot markup unchanged');
+      assert.deepEqual([btn.dataset.spend, btn.dataset.presence], ['ok', 'here']);
+      paintAccountCorner(btn, acct, { budget, avatar, away: true });
+      assert.equal(btn.dataset.presence, 'away');
+    } },
+    { name: 'avatar: no native title; aria-label keeps the spend text and adds the level name', run: () => {
+      paintAccountCorner(btn, acct, { budget, avatar });
+      assert.equal(btn.hasAttribute('title'), false);
+      const label = btn.getAttribute('aria-label');
+      assert.match(label, /ada\.lovelace@acme\.dev/);
+      assert.match(label, /\$20(\.00)? of \$50(\.00)? spent/);
+      assert.match(label, /Pod worca/);
+    } },
+    { name: 'repainting the same avatar keeps the same <img> node', run: () => {
+      paintAccountCorner(btn, acct, { budget, avatar });
+      const img = btn.querySelector('.acct-ava img');
+      paintAccountCorner(btn, acct, { budget, avatar: { ...avatar } });
+      assert.equal(btn.querySelector('.acct-ava img'), img);
+    } },
+    { name: 'avatar null: initials and the native title as before, after an image was shown', run: () => {
+      paintAccountCorner(btn, acct, { budget, avatar });
+      paintAccountCorner(btn, acct, { budget, avatar: null });
+      assert.equal(btn.querySelector('.acct-ava img'), null);
+      assert.equal(btn.querySelector('.acct-ava').textContent, acct.initials);
+      assert.ok(btn.title.startsWith('ada.lovelace@acme.dev'));
+      assert.doesNotMatch(btn.getAttribute('aria-label'), /Pod worca/);
+    } },
+  ]);
+});
+
+test('stylesheet: the avatar image fills the 30px circle and the dot stacks above it', () => {
+  const rule = (sel) => { const m = css.match(new RegExp(`(?:^|[\\s,}])${sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\{([^}]*)\\}`)); return m ? m[1] : null; };
+  assert.match(rule('.acct-ava img') || '', /width:100%;height:100%;/);
+  assert.match(rule('.acct-ava img') || '', /border-radius:50%;/);
+  assert.match(rule('.acct-ava img') || '', /object-fit:cover;/);
+  assert.match(rule('.acct-dot') || '', /z-index:1;/);
+});
+
+test('stylesheet: the collapsed rail keeps the level image in the avatar circle', () => {
+  assert.match(css, /\.acct-ava img\{[^}]*width:100%;[^}]*height:100%;/, 'the image fills the circle');
+  assert.doesNotMatch(css, /\.sidebar\.collapsed [^{]*\.acct-ava img[^{]*\{[^}]*display:none/, 'the rail never hides it');
+  assert.doesNotMatch(css, /\.sidebar\.collapsed [^{]*\.acct-ava[^{]*\{[^}]*display:none/);
+});

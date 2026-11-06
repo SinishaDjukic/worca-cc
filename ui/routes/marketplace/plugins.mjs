@@ -18,6 +18,14 @@ import { clearBindingsForProfile } from '../../../src/core/source-bindings.mjs';
 import { githubWebUrl } from '../../../src/shared/plugin-access.mjs';
 import { randomBytes } from 'node:crypto';
 import { MARKETPLACE_ID_RE, MARKET_JOBS, PLUGIN_NAME_RE, badRequest, broadcast, channelHost, emitPluginsChanged, isTruthy, marketJobFailure, pruneMarketJobs, readInstalledManifest, resolveProjectDir } from '../../server.mjs';
+import { personOf } from '../../../src/core/worca-levels/service.mjs';
+import { worcaLevelService } from '../worca-levels/worca-level.mjs';
+
+/** Worca levels: record a live event for the person behind `req`. Never fails the request it rides on. */
+async function noteWorcaAddon(req, addon) {
+  try { await worcaLevelService().noteLiveEvent(personOf(req).person, { addon }); }
+  catch (err) { console.error(`[worca-levels] live event not recorded: ${err?.message || err}`); }
+}
 
 export function register(app) {
 
@@ -297,6 +305,7 @@ app.post('/api/plugins/install', async (req, res) => {
     });
     reloadChatWorkers(body.name.trim());
     emitPluginsChanged('install');
+    await noteWorcaAddon(req, body.name.trim());
     res.json(out); // { ok: true, inventory, warnings, ignored }
   } catch (err) {
     sendPluginError(res, err);

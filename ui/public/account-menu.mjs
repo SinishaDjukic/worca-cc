@@ -6,6 +6,7 @@
 import { BUDGET_WARN_AT, DEFAULT_FMT, fmtResetAt, periodWord, windowSaved, signedUsd, SAVED_NOTE } from './stats-view.mjs';
 import { freeDailyRow } from './openrouter-free-view.mjs';
 import { ICONS, iconSvg } from './icons.mjs';
+import { tooltipModel } from './worca-level/model.mjs';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
@@ -163,8 +164,8 @@ function limitPhrase(b, fmt) {
 }
 
 /** The corner's accessible name and tooltip: who it is, then away and the limit, then what the menu holds. */
-export function accountLabel(acct, { away = false, budget = null, fmt = DEFAULT_FMT } = {}) {
-  const extra = [away ? 'away' : '', limitPhrase(budget, fmt)].filter(Boolean).join(' · ');
+export function accountLabel(acct, { away = false, budget = null, fmt = DEFAULT_FMT, level = '' } = {}) {
+  const extra = [away ? 'away' : '', limitPhrase(budget, fmt), level].filter(Boolean).join(' · ');
   const tail = extra ? ` · ${extra}` : '';
   const who = acct.kind === 'local' ? 'Profile' : acct.name;
   return {
@@ -173,9 +174,22 @@ export function accountLabel(acct, { away = false, budget = null, fmt = DEFAULT_
   };
 }
 
-/** Paint the corner button (#side-acct): the avatar's initials, the short name, the spend ring
- *  (data-spend none | ok | warn | over), the away badge with its walking person (data-presence) and the label. */
-export function paintAccountCorner(btn, acct, { budget = null, away = false, fmt = DEFAULT_FMT } = {}) {
+/** Fill .acct-ava with the level image (kept as is while its src is unchanged, so a repaint does not
+ *  flicker) or, without one, the person's initials. The only writer of .acct-ava. */
+function paintAvatar(ava, acct, avatar) {
+  if (!avatar) { ava.textContent = acct.initials; return; }
+  const cur = ava.firstElementChild;
+  const img = cur && cur.tagName === 'IMG' && ava.childNodes.length === 1 ? cur : ava.ownerDocument.createElement('img');
+  if (img.getAttribute('src') !== avatar.src) img.setAttribute('src', avatar.src);
+  img.setAttribute('alt', avatar.alt);
+  if (img.parentNode !== ava) ava.replaceChildren(img);
+}
+
+/** Paint the corner button (#side-acct): the avatar (the level image when `avatar` {src, alt} is given,
+ *  else the initials), the short name, the spend ring (data-spend none | ok | warn | over), the away
+ *  badge with its walking person (data-presence) and the label. With an image the native title goes and
+ *  the aria-label also names the level. */
+export function paintAccountCorner(btn, acct, { budget = null, away = false, fmt = DEFAULT_FMT, avatar = null } = {}) {
   if (!btn) return;
   const ring = spendRing(budget);
   btn.dataset.account = acct.kind;
@@ -186,12 +200,14 @@ export function paintAccountCorner(btn, acct, { budget = null, away = false, fmt
   const arc = btn.querySelector('.acct-ring .arc');
   if (arc) arc.setAttribute('stroke-dasharray', ringDash(ring ? ring.ratio : 0, RING_R));
   const ava = btn.querySelector('.acct-ava');
-  if (ava) ava.textContent = acct.initials;
+  const shown = avatar && typeof avatar.src === 'string' && avatar.src ? { src: avatar.src, alt: String(avatar.alt || '') } : null;
+  if (ava) paintAvatar(ava, acct, shown);
   const name = btn.querySelector('.acct-name');
   if (name) name.textContent = acct.short;
-  const { label, title } = accountLabel(acct, { away, budget, fmt });
+  const { label, title } = accountLabel(acct, { away, budget, fmt, level: shown ? shown.alt : '' });
   btn.setAttribute('aria-label', label);
-  btn.title = title;
+  if (shown) btn.removeAttribute('title');
+  else btn.title = title;
 }
 
 /** The identity card (#acct-id): "Signed in as", the full value and how; a shared identity only. */
@@ -203,6 +219,26 @@ export function paintIdentityCard(card, acct) {
   if (name) name.textContent = shared ? acct.name : '';
   const via = card.querySelector('.id-via');
   if (via) via.textContent = shared ? acct.via : '';
+}
+
+// ── Your level ───────────────────────────────────────────────────────────────
+
+/** The "Your level" row, placed after the identity card and before the other rows: the level name and
+ *  "Level n of 4", opening #profile/level. No data-min-level: every interface mode reaches it. null
+ *  until the level view has loaded. app.js mounts it and routes the click like the card's buttons. */
+export function renderLevelRow(view, { doc = globalThis.document } = {}) {
+  const level = view && view.level;
+  if (!level || typeof level.name !== 'string' || !level.name) return null;
+  const { name, levelLine } = tooltipModel(view);
+  const row = h(doc, 'button', 'mi menu-item');
+  row.type = 'button';
+  row.id = 'acct-level';
+  row.setAttribute('role', 'menuitem');
+  row.dataset.nav = 'profile';
+  row.dataset.hash = 'profile/level';
+  row.appendChild(h(doc, 'span', 'mi-lbl', 'Your level'));
+  row.appendChild(h(doc, 'span', 'mi-val', `${name} · ${levelLine}`));
+  return row;
 }
 
 // ── The away row ─────────────────────────────────────────────────────────────

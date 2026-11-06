@@ -1,0 +1,67 @@
+/* ---------- Worca level ---------- */
+/* The hover card beside the account corner, the welcome / celebration dialogs, the Profile
+   level page and the Getting started line. Display only, so there are no form-control styles here.
+   The section marker above is mapped to the worca-levels feature in tools/split-by-feature/feature-map.json. */
+
+/* The hover card: a non-modal popover that hover-card.mjs places next to the corner (position:fixed, z-index set inline). */
+.worca-hover-card{position:fixed;z-index:44;box-sizing:border-box;width:240px;max-width:calc(100vw - 24px);padding:12px 14px;
+  background:var(--panel);border:1px solid var(--line);border-radius:var(--r-md);box-shadow:var(--shadow-menu);
+  color:var(--ink);font-size:var(--fs-body);line-height:1.4;}
+.ohc-head{display:flex;align-items:center;gap:10px;margin-bottom:10px;}
+.ohc-ava{flex:none;width:40px;height:40px;border-radius:50%;object-fit:cover;background:var(--line-2);}
+.ohc-who{min-width:0;}
+.ohc-name{font-weight:600;}
+.ohc-level{color:var(--ink-2);font-size:var(--fs-meta);}
+.ohc-bar,.ol-bar{height:6px;border-radius:var(--r-xs);background:var(--line-2);overflow:hidden;}
+.ohc-fill,.ol-bar-fill{display:block;height:100%;border-radius:var(--r-xs);background:var(--blue);transition:width .3s ease;}
+.ol-bar-fill{width:0;}
+.ohc-prog{margin-top:6px;color:var(--ink-2);font-size:var(--fs-meta);}
+.ohc-top{margin:10px 0 0;color:var(--ink-2);}
+.ohc-next{display:flex;flex-direction:column;gap:2px;margin-top:10px;}
+.ohc-k{color:var(--ink-3);font-size:var(--fs-caption);font-weight:600;}
+.ohc-act,.ohc-profile{color:var(--ink);text-decoration:none;}
+.ohc-act:hover,.ohc-profile:hover{text-decoration:underline;}
+.ohc-act:focus-visible,.ohc-profile:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:var(--r-sm);}
+.ohc-profile{display:block;margin-top:10px;padding-top:8px;border-top:1px solid var(--line-2);color:var(--blue);font-weight:600;}
+
+/* The dialogs sit in the shared .viewer-modal and .card; these rules only centre the content and size the art. */
+.worca-dlg .worca-dlg-card{width:min(420px,100%);text-align:center;}
+.worca-dlg-avatar{display:block;width:96px;height:96px;margin:0 auto 6px;border-radius:50%;object-fit:cover;background:var(--line-2);}
+.worca-dlg-level{margin:0;color:var(--ink-2);font-size:var(--fs-meta);font-weight:600;}
+.worca-dlg-title{margin:4px 0 8px;}
+.worca-dlg-lead,.worca-dlg-next{margin:0 0 8px;color:var(--ink);}
+.worca-dlg-next{color:var(--ink-2);}
+.worca-dlg-actions{justify-content:center;}
+
+/* The Profile level page: hero, progress, the to-reach list and the grid of all four levels. */
+.ol-host{display:flex;flex-direction:column;gap:14px;max-width:760px;margin:0 auto;}
+.ol-hero{display:flex;align-items:center;gap:16px;}
+.ol-avatar{flex:none;border-radius:50%;object-fit:cover;background:var(--line-2);}
+.ol-hero-text h2{margin:0;}
+.ol-hero-line{margin:2px 0 0;color:var(--ink-2);}
+.ol-host .card h3{margin:0 0 10px;}
+.ol-progress-line{margin:6px 0 0;color:var(--ink-2);font-size:var(--fs-meta);}
+.ol-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px;}
+.ol-item{display:flex;align-items:flex-start;gap:10px;}
+.ol-glyph{flex:none;margin-top:2px;}
+.ol-glyph.done{color:var(--green-ink);}
+.ol-glyph.todo{color:var(--ink-3);}
+.ol-item-body{display:flex;flex-direction:column;gap:2px;min-width:0;}
+.ol-item-label{font-weight:600;}
+.ol-item-status{color:var(--ink-2);font-size:var(--fs-meta);}
+a.ol-item-status{color:var(--blue);}
+.ol-item-hint{color:var(--ink-3);font-size:var(--fs-meta);}
+.ol-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;}
+@media (max-width:640px){.ol-grid{grid-template-columns:repeat(2,minmax(0,1fr));}}
+.ol-level-card{display:flex;flex-direction:column;align-items:center;gap:6px;padding:12px 8px;text-align:center;
+  border:1.5px solid var(--line);border-radius:var(--r-ctrl);background:var(--surface);}
+.ol-level-card[data-state="current"]{border-color:var(--blue);background:var(--blue-bg);}
+.ol-level-card[data-state="later"] .ol-avatar{opacity:.45;filter:grayscale(1);}
+.ol-level-name{font-weight:600;}
+.ol-chip{padding:1px 8px;border-radius:var(--r-xs);background:var(--line-2);color:var(--ink-2);font-size:var(--fs-caption);font-weight:600;}
+.ol-level-card[data-state="current"] .ol-chip{background:var(--blue);color:var(--panel);}
+
+/* The Getting started line that points at the next level. */
+.gs-worca-line{display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin:0 0 12px;color:var(--ink-2);font-size:var(--fs-meta);}
+.gs-worca-avatar{width:16px;height:16px;border-radius:50%;object-fit:cover;}
+.gs-worca-link{color:var(--blue);font-weight:600;}

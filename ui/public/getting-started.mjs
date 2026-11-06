@@ -153,15 +153,40 @@ export function vignette(doc, id, { animate = true, delay = 0 } = {}) {
 
 /* ------------------------------------------------------------------ shelf */
 
+/** The one line that ties the checklist to the next Worca level (docs/worca-levels.md). Null when there is no usable next level. */
+function worcaNextLine(doc, worcaNext) {
+  if (!worcaNext || typeof worcaNext.name !== 'string' || !worcaNext.name) return null;
+  const line = doc.createElement('p');
+  line.className = 'gs-worca-line';
+  if (typeof worcaNext.avatar === 'string' && worcaNext.avatar) {
+    const img = doc.createElement('img');
+    img.className = 'gs-worca-avatar';
+    img.src = worcaNext.avatar;
+    img.alt = '';
+    img.setAttribute('width', '16');
+    img.setAttribute('height', '16');
+    line.append(img, ' ');
+  }
+  line.append(`Finishing these moves you toward ${worcaNext.name}, your next level. `);
+  const link = doc.createElement('a');
+  link.className = 'gs-worca-link';
+  link.href = '#profile/level';
+  link.textContent = 'See levels';
+  line.appendChild(link);
+  return line;
+}
+
 /**
  * Paint the shelf into `host` (emptied first). Nothing is painted when the
  * status is unusable or the user hid the checklist. Rows stay clickable after
  * they are done, so any guide can be replayed.
  * @param {Element} host
  * @param {{steps?:Record<string,boolean>, hidden?:boolean}|null} status
- * @param {{onStep?:(id:string)=>void, onHide?:()=>void, animate?:boolean, hideLabel?:string, level?:string}} [handlers]  `level`: the current interface mode
+ * @param {{onStep?:(id:string)=>void, onHide?:()=>void, animate?:boolean, hideLabel?:string, level?:string, worcaNext?:{name:string, avatar?:string, next?:number}|null}} [handlers]
+ *   `level`: the current interface mode. `worcaNext`: the person's next Worca level; when given, one line under the
+ *   header points to it (omit it at the top level). The steps and counts do not change.
  */
-export function renderGettingStarted(host, status, { onStep, onHide, animate = true, hideLabel = 'Hide', level = 'expert' } = {}) {
+export function renderGettingStarted(host, status, { onStep, onHide, animate = true, hideLabel = 'Hide', level = 'expert', worcaNext = null } = {}) {
   if (!host) return;
   const doc = host.ownerDocument;
   host.replaceChildren();
@@ -191,6 +216,8 @@ export function renderGettingStarted(host, status, { onStep, onHide, animate = t
   hide.addEventListener('click', () => onHide && onHide());
   head.append(h2, progress, hide);
   card.appendChild(head);
+  const worcaLine = worcaNextLine(doc, worcaNext);
+  if (worcaLine) card.appendChild(worcaLine);
 
   const tiles = doc.createElement('div');
   tiles.className = 'gs-tiles';

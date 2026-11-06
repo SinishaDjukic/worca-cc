@@ -341,6 +341,7 @@ import { openLabelPicker, closeLabelPickerFor, fetchLabels, labelChip } from './
 import { labelStates, applyLabelChange, normaliseLabel } from '../../src/shared/run-labels.mjs';
 import { renderLabelsSection, runCount } from './labels-settings.mjs';
 import { makeSwitch } from './switch.mjs';
+import { createWorcaLevelWiring, worcaNextFor } from './worca-level/app-wiring.mjs';
 
 // With site data blocked, Chrome throws SecurityError on merely reading `localStorage`. Every bare `localStorage` in
 // this module resolves here: the browser's storage, else an in-memory stand-in, so the page boots and forgets on reload.
@@ -1694,8 +1695,14 @@ const acctFly = createFlyout({ trigger: acctBtn, menu: acctMenu, mode: 'up', foc
 // Interface mode's side menu hangs off the menu (side-flyout closes it with the menu, and Escape
 // closes it first); ui-level.mjs fills it, and a pick there is a choose like a dialog card.
 createFlyout({ trigger: document.getElementById('acct-lvl'), menu: document.getElementById('lvl-menu'), mode: 'beside', parent: acctMenu });
+// The worca level (worca-level/app-wiring.mjs): the last served view feeds the corner avatar, the shelf and the menu row.
+const worca = createWorcaLevelWiring({ trigger: acctBtn, menu: acctMenu, repaint: () => { paintAccount(); paintShelf(); }, isSettled: () => gs.settled, setupOpen: () => !!setupDialog });
 function paintAccount() {
-  paintAccountCorner(acctBtn, acctState.account, { budget: budgetState.budget, away: acctState.away?.state === 'away', fmt: { usd: fmtUsd, usd4: fmtUsd4 } });
+  const level = worca.state.view && worca.state.view.level;
+  paintAccountCorner(acctBtn, acctState.account, {
+    budget: budgetState.budget, away: acctState.away?.state === 'away', fmt: { usd: fmtUsd, usd4: fmtUsd4 },
+    avatar: level ? { src: level.avatar, alt: level.name } : null,
+  });
 }
 paintAccount();                // the first paint: "Profile" until /api/whoami answers
 
@@ -1743,6 +1750,7 @@ function handleServerMessage(msg) {
     if (Array.isArray(msg.extensionPairs)) msg.extensionPairs.forEach((r) => void promptExtensionPair(r));
     return;
   }
+  worca.onServerMessage(msg.type);   // the level may have moved; the handlers below still run
   if (msg.type === 'flags') {                 // D6: a flag changed (Settings in any tab, or the API)
     applyFlags(msg.flags);
     if (flagsTabCtl && currentView() === 'settings' && currentSettingsTab === 'experimental') void flagsTabCtl.load();
@@ -38073,7 +38081,7 @@ function paintScheduleCounts(c) {
 // and PATH — never written here); this block only paints it and runs guides.
 // A guide is transient state: a reload clears it, the shelf re-summons it.
 // ---------------------------------------------------------------------------
-const gs = { status: null, guide: null, spot: null, seq: 0, navigating: false, welcomeShown: false, setupShown: false, refreshTimer: 0, poll: 0, startedRunId: "" };
+const gs = { status: null, settled: false, guide: null, spot: null, seq: 0, navigating: false, welcomeShown: false, setupShown: false, refreshTimer: 0, poll: 0, startedRunId: "" };
 let gsPillHost = null;
 let gsWelcomeUnbind = null;
 let setupDialog = null;
@@ -38083,6 +38091,7 @@ function openSetup({ entry = 'rerun', step = 'check', team = null, teamHash = nu
   setMobileNavOpen(false);
   setupDialog = openSetupAssistant({ doc: document, entry, step, team, onClose: (how) => {
     setupDialog = null;
+    queueMicrotask(worca.maybeDialog);   // after the branch below has shown (or not shown) the first-run welcome
     // A7: a first start always continues to the welcome; a finished re-run ends on the doors; a fix-it
     // run (entry 'fix') returns to the page it came from (product-1-2).
     if (entry === 'first') showWelcome();
@@ -38172,6 +38181,7 @@ function paintShelf({ entering = false } = {}) {
     hideLabel: gs.status.hidden ? 'Show in sidebar' : 'Hide from sidebar',
     animate: appearing,
     level: currentLevel(),
+    worcaNext: worcaNextFor(worca.state.view),
   });
 }
 
@@ -38226,7 +38236,7 @@ function showWelcome({ force = false } = {}) {
   gs.welcomeShown = true;
   if (gsWelcomeUnbind) { gsWelcomeUnbind(); gsWelcomeUnbind = null; }   // A6: never two sets of door listeners
   setMobileNavOpen(false);   // a phone drawer opened before the onboarding fetch landed must not stay up behind the dialog
-  const close = () => { modal.classList.add('hidden'); if (gsWelcomeUnbind) { gsWelcomeUnbind(); gsWelcomeUnbind = null; } };
+  const close = () => { modal.classList.add('hidden'); if (gsWelcomeUnbind) { gsWelcomeUnbind(); gsWelcomeUnbind = null; } worca.maybeDialog(); };
   gsWelcomeUnbind = bindWelcome(modal, {
     win: window,
     onDoor: (step) => { close(); setOnboardingPrefs({ welcomeSeen: true }); startGuide(step); },
@@ -38839,7 +38849,7 @@ function onboardingViewChanged(name) {
   document.querySelector('.gs-pill')?.classList.toggle('active', name === 'getting-started');
 }
 
-loadOnboarding();
+void loadOnboarding().finally(() => { gs.settled = true; worca.maybeDialog(); });   // the first answer (or its failure) lets the worca dialog know what the first-run welcome will do
 void paintTeamNotice();
 
 const views = $$('.view');
@@ -38850,7 +38860,7 @@ const navLinks = $$('.nav button[data-nav], #acct-settings');
 // guardrails LEFT this array: it is a Settings tab now, reached as #settings/guardrails
 // (old addresses redirect — see MOVED_ROUTES). The four Add-ons pages went the other way:
 // Settings tabs once, pages of their own now.
-const VIEW_NAMES = ['chat', 'new', 'getting-started', 'runs', 'running', 'schedules', 'history', 'stats', 'team-metrics', 'team-policy', 'workflows', 'requirements', 'workspaces', 'workspace-create', 'projects', 'settings', 'marketplace', 'connectors', 'models', 'providers', 'feature', 'group'];
+const VIEW_NAMES = ['chat', 'new', 'getting-started', 'runs', 'running', 'schedules', 'history', 'stats', 'team-metrics', 'team-policy', 'workflows', 'requirements', 'workspaces', 'workspace-create', 'projects', 'settings', 'marketplace', 'connectors', 'models', 'providers', 'profile', 'feature', 'group'];
 // One Runs page, five route names: the bare list (#runs), the two run routes every deep link already uses
 // (#running/<id>…, #history/<projectKey>/<id>…) and the group page's two (#feature/<id>…, #group/<id>…, run 3 D1).
 // All five render the `data-view="runs"` section and light the one Runs nav button.
@@ -39253,6 +39263,8 @@ function showView(name, param = '') {
     void loadModelsView().then(() => { if (modelId) revealModelCard(modelId, param); });
   }
   if (name === 'providers') void loadProvidersView().then(() => revealProviderRow(param));
+  if (name === 'stats' && prevView !== 'stats') worca.postStatsViewed();   // once per navigation, not per repaint
+  if (name === 'profile') worca.showProfile(document.getElementById('profile-level-host'), () => currentShownView === 'profile');   // #profile/level
   if (name === 'new') {
     loadTaskSources(); applyBudgetToNewView(); refreshMentionHighlights();
     paintNewRunAwayHint();
@@ -41158,7 +41170,7 @@ else showView(VIEW_NAMES.includes(bootView) ? bootView : 'chat', VIEW_NAMES.incl
 refreshAllCounts();
 refreshBudget();
 startBudgetTick();
-loadWhoami();
+void loadWhoami().then(worca.boot);
 void refreshVersionStatus();   // sidebar "Update available" marker (#841)
 // ...and again when the tab regains focus, so a tab left open for days still sees a new release. A GET
 // only: the server's cache decides whether npm is asked.

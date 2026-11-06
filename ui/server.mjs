@@ -3427,7 +3427,7 @@ const startRunHandler = async (req, res) => {
       entry.scheduledFor = internal.ticket.runAt;
     }
     runs.set(runId, entry);
-    wireRun(entry);
+    wireRun(entry); worcaNoteRunStarted(runs, entry, req);   // worca levels: this person's peak of live runs
     if (askLink) {
       // Card-state TOCTOU: awaits (source-ref check, budget) sit between Hunk
       // B's `proposed` check and here — a concurrent Start may have flipped
@@ -3513,6 +3513,7 @@ import * as runSkillHost from '../src/core/skills-registry/host.mjs';
 import * as runSkillTexts from '../src/core/skills-registry/texts.mjs';
 import * as runSkillPolicy from '../src/core/policy/effective.mjs';
 import { ROUTE_SEGMENTS } from './routes/index.mjs';
+import { noteRunStarted as worcaNoteRunStarted } from './routes/worca-levels/worca-level.mjs';
 import { isPublicPart, publicRelPath } from '../src/core/public-assets.mjs';
 import { readIndexHtml } from '../src/core/read-index-html.mjs';
 import { readStyleCssEntry } from '../src/core/read-style-css.mjs';

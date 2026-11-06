@@ -8,7 +8,7 @@ import { JSDOM } from 'jsdom';
 import { BUDGET_WARN_AT } from '../ui/public/stats-view.mjs';
 import {
   spendRing, ringDash, spendPeriod, renderSpendCard, RING_R, MINI_R,
-  personInitials, describeAccount, accountLabel, paintAccountCorner, paintIdentityCard, paintAwayRow,
+  personInitials, describeAccount, accountLabel, paintAccountCorner, paintIdentityCard, paintAwayRow, renderLevelRow,
 } from '../ui/public/account-menu.mjs';
 import { describeAwayRow } from '../src/shared/away-mode/describe.mjs';
 import { createLevelController, levelMenuHtml, LEVEL_SHORT, LEVEL_INFO, UI_LEVELS } from '../ui/public/ui-level.mjs';
@@ -16,6 +16,8 @@ import { freeDailyRow } from '../ui/public/openrouter-free-view.mjs';
 import { ICONS } from '../ui/public/icons.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { readStyleCss } from '../src/core/read-style-css.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
+import { readFileSync } from 'node:fs';
 
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
 // Local-calendar bounds, as costWindowStart/End build them, so the month reads the same in every zone.
@@ -427,4 +429,56 @@ test('a failed save while the dialog is up shows its own line and does not call 
   await ctl.choose('simple', { report: false });
   assert.equal(doc.documentElement.dataset.level, 'advanced');
   assert.deepEqual(errs, [], 'report: false — the caller says why itself (a tour\'s start opens the dialog)');
+});
+
+// ── Your level: the account menu row and the Profile route ──────────────────────
+
+const LEVEL_VIEW = { level: { index: 2, name: 'Swimmer' } };
+const APP_JS = readFileSync(new URL('../ui/public/app.js', import.meta.url), 'utf8');
+
+test('renderLevelRow: one "Your level" menu item with the level name and "Level n of 4", routed to #profile/level', () => {
+  const row = renderLevelRow(LEVEL_VIEW, { doc });
+  assert.equal(row.tagName, 'BUTTON');
+  assert.equal(row.getAttribute('type'), 'button');
+  assert.equal(row.getAttribute('role'), 'menuitem', 'keyboard reachable like the other rows');
+  assert.equal(row.id, 'acct-level');
+  assert.equal(row.dataset.nav, 'profile');
+  assert.equal(row.dataset.hash, 'profile/level');
+  assert.equal(row.querySelector('.mi-lbl').textContent, 'Your level');
+  assert.equal(row.querySelector('.mi-val').textContent, 'Swimmer · Level 2 of 4');
+});
+
+test('renderLevelRow: no role gate and no mode change, so Simple mode reaches it (R-po 16)', () => {
+  const row = renderLevelRow(LEVEL_VIEW, { doc });
+  assert.equal(row.hasAttribute('data-min-level'), false);
+  assert.equal(renderLevelRow({ level: { index: 4, name: 'Pod leader' } }, { doc }).querySelector('.mi-val').textContent, 'Pod leader · Level 4 of 4');
+});
+
+test('renderLevelRow: nothing to show without a level view', () => {
+  assert.equal(renderLevelRow(null, { doc }), null);
+  assert.equal(renderLevelRow({}, { doc }), null);
+});
+
+test('the profile route: VIEW_NAMES lists it', () => {
+  const names = APP_JS.match(/const VIEW_NAMES = \[([^\]]*)\];/)[1];
+  assert.match(names, /'profile'/);
+});
+
+test('the profile route: the shell declares one ungated data-view="profile" section holding the level host', () => {
+  const dom = new JSDOM(`<!doctype html><body>${readIndexHtml()}</body>`);
+  const sections = dom.window.document.querySelectorAll('section[data-view="profile"]');
+  assert.equal(sections.length, 1);
+  assert.equal(sections[0].hasAttribute('data-min-level'), false, 'reachable in Simple mode');
+  assert.ok(sections[0].querySelector('#profile-level-host'));
+});
+
+test('showView("profile") hands the level host to the wiring, which fetches once and paints it', () => {
+  const body = APP_JS.slice(APP_JS.indexOf('function showView('));
+  const arm = body.match(/if \(name === 'profile'\)[^\n]*/);
+  assert.ok(arm, 'showView has a profile arm');
+  assert.match(arm[0], /worca\.showProfile\(/);
+  assert.match(arm[0], /profile-level-host/);
+  assert.equal(APP_JS.split('fetchWorcaLevel(').length - 1, 0, 'app.js never fetches the level itself');
+  const wiring = readFileSync(new URL('../ui/public/worca-level/app-wiring.mjs', import.meta.url), 'utf8');
+  assert.match(wiring, /renderProfileLevel\(host, view\)/);
 });

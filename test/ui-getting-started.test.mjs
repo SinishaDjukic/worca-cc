@@ -111,6 +111,50 @@ test('the shelf paints nothing when hidden/foreign, replaces never stacks; all n
   ]);
 });
 
+test('the shelf shows one level line only when worcaNext is passed; it links to the level view and goes with the shelf', async () => {
+  const next = { name: 'Swimmer', avatar: '/assets/worca-levels/swimmer.svg', next: 2 };
+  await checkRows([
+    { name: 'with worcaNext: exactly one line, 16px avatar, name interpolated, See levels -> #profile/level, still nine tiles', run: () => {
+      const { window } = dom();
+      const host = window.document.getElementById('host');
+      renderGettingStarted(host, status(['claude']), { worcaNext: next });
+      const lines = host.querySelectorAll('.gs-worca-line');
+      assert.equal(lines.length, 1);
+      assert.equal(lines[0].textContent.replace(/\s+/g, ' ').trim(), 'Finishing these moves you toward Swimmer, your next level. See levels');
+      const img = lines[0].querySelector('img');
+      assert.equal(img.getAttribute('src'), next.avatar);
+      assert.equal(img.getAttribute('width'), '16');
+      assert.equal(img.getAttribute('height'), '16');
+      assert.equal(lines[0].querySelector('a').getAttribute('href'), '#profile/level');
+      assert.equal(lines[0].querySelector('a').textContent, 'See levels');
+      assert.ok(host.querySelector('.gs-card').contains(lines[0]), 'inside the shelf');
+      assert.equal(GETTING_STARTED_STEPS.length, 9);
+      assert.equal(host.querySelectorAll('.gs-tile').length, 9);
+      assert.equal(host.querySelector('.gs-progress').textContent, '1 of 9');
+    } },
+    { name: 'without worcaNext (or an unusable one): no line, and re-rendering never stacks it', run: () => {
+      const { window } = dom();
+      const host = window.document.getElementById('host');
+      renderGettingStarted(host, status(['claude']));
+      assert.equal(host.querySelector('.gs-worca-line'), null);
+      renderGettingStarted(host, status(['claude']), { worcaNext: null });
+      assert.equal(host.querySelector('.gs-worca-line'), null);
+      renderGettingStarted(host, status(['claude']), { worcaNext: {} });
+      assert.equal(host.querySelector('.gs-worca-line'), null);
+      renderGettingStarted(host, status(['claude']), { worcaNext: next });
+      renderGettingStarted(host, status(['claude']), { worcaNext: next });
+      assert.equal(host.querySelectorAll('.gs-worca-line').length, 1);
+    } },
+    { name: 'a dismissed shelf hides the line too', run: () => {
+      const { window } = dom();
+      const host = window.document.getElementById('host');
+      renderGettingStarted(host, status([], { hidden: true }), { worcaNext: next });
+      assert.equal(host.hidden, true);
+      assert.equal(host.querySelector('.gs-worca-line'), null);
+    } },
+  ]);
+});
+
 test('welcome bindings: doors hand over their step, Skip / backdrop / Esc skip', () => {
   const { window } = dom();
   const doc = window.document;
