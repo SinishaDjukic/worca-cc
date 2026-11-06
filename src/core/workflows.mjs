@@ -15,7 +15,10 @@ import { effortOn } from '../shared/connections.mjs';
 
 import { getDb, prepare, tx } from './db.mjs';
 import { worcaHome } from './projects.mjs';
-import { resolveRunConfig, readConfig, EFFORTS, stepSlotDefaults, modelForEngine, projectRolesFor } from './config.mjs';
+import { resolveRunConfig, readConfig, EFFORTS, stepSlotDefaults, modelForEngine, projectRolesFor, modelConnection, modelHasBaseUrlRouting, resolveModelEnv, listModels } from './config.mjs';
+import { claudeAuthFromEnv } from './preflight.mjs';
+import { factoryNodePick, factoryRolePick, needsClaudeSignIn, variedEffort } from './factory-models.mjs';
+import { utilityModelFor } from './settings-cascade.mjs';
 import { isSubagentModelValue, SUBAGENT_MODELS, ALL_EFFORTS, effortsForEngine, MODEL_ENGINES } from './model-env.mjs';
 
 /** Enum guard for one resolveGraph layer: a legal value passes, anything else
@@ -38,6 +41,8 @@ import {
   GRAPH_MEMORY_DEFRAG_WORKFLOW, MEMORY_DEFRAG_WORKFLOW_ID, MEMORY_DEFRAG_WORKFLOW_NAME, isReservedWorkflowId,
   GRAPH_WORKSPACE_SCAN_WORKFLOW, WORKSPACE_SCAN_WORKFLOW_ID, GRAPH_PR_FIX_WORKFLOW, PR_FIX_WORKFLOW_ID,
   SHAPE_WORKFLOW_ID, SHAPE_UX_WORKFLOW_ID, SHAPE_WORKFLOW_NAME, GRAPH_SHAPE_WORKFLOW, GRAPH_SHAPE_UX_WORKFLOW,
+  SHAPE_REQ_WORKFLOW_ID, SHAPE_UX_REQ_WORKFLOW_ID, GRAPH_SHAPE_REQ_WORKFLOW, GRAPH_SHAPE_UX_REQ_WORKFLOW, SHAPE_REQ_WORKFLOW_IDS,
+  SHAPE_SLICE_REQ_WORKFLOW_ID, SHAPE_UX_SLICE_REQ_WORKFLOW_ID, GRAPH_SHAPE_SLICE_REQ_WORKFLOW, GRAPH_SHAPE_UX_SLICE_REQ_WORKFLOW, SHAPE_SLICE_REQ_WORKFLOW_IDS,
   GRAPH_WORKSPACE_RESYNTH_WORKFLOW, WORKSPACE_RESYNTH_WORKFLOW_ID,
 } from './graph/builtin-workflows.mjs';
 export { GRAPH_DEFAULT_WORKFLOW, GRAPH_LEAN_WORKFLOW, LEAN_WORKFLOW_ID, AUTO_WORKFLOW_ID, GRAPH_MEMORY_DEFRAG_WORKFLOW, GRAPH_SHAPE_WORKFLOW, MEMORY_DEFRAG_WORKFLOW_ID, WORKSPACE_SCAN_WORKFLOW_ID, GRAPH_WORKSPACE_RESYNTH_WORKFLOW, WORKSPACE_RESYNTH_WORKFLOW_ID, isReservedWorkflowId };
@@ -325,7 +330,7 @@ export async function writeGraphWorkflow(tpl, opts = {}) {
   if (reserved(id)) {
     const which = id === AUTO_WORKFLOW_ID ? AUTO_WORKFLOW_NAME
       : id === MEMORY_DEFRAG_WORKFLOW_ID ? MEMORY_DEFRAG_WORKFLOW_NAME
-      : id === SHAPE_WORKFLOW_ID ? SHAPE_WORKFLOW_NAME
+      : id === SHAPE_WORKFLOW_ID || SHAPE_REQ_WORKFLOW_IDS.includes(id) || SHAPE_SLICE_REQ_WORKFLOW_IDS.includes(id) ? SHAPE_WORKFLOW_NAME
       : GRAPH_DEFAULT_WORKFLOW.name;
     throw Object.assign(
       new Error(`the name "${which}" is reserved — choose another name`),
@@ -388,6 +393,11 @@ export async function readWorkflow(id, opts = {}) {
   // No gate check: resuming a held shaped run must never be stranded.
   if (id === SHAPE_WORKFLOW_ID) return GRAPH_SHAPE_WORKFLOW;
   if (id === SHAPE_UX_WORKFLOW_ID) return GRAPH_SHAPE_UX_WORKFLOW;
+  // No flag check either: a run frozen on a requirements id resumes after the flag is turned off.
+  if (id === SHAPE_REQ_WORKFLOW_ID) return GRAPH_SHAPE_REQ_WORKFLOW;
+  if (id === SHAPE_UX_REQ_WORKFLOW_ID) return GRAPH_SHAPE_UX_REQ_WORKFLOW;
+  if (id === SHAPE_SLICE_REQ_WORKFLOW_ID) return GRAPH_SHAPE_SLICE_REQ_WORKFLOW;
+  if (id === SHAPE_UX_SLICE_REQ_WORKFLOW_ID) return GRAPH_SHAPE_UX_SLICE_REQ_WORKFLOW;
   return readRaw(id, opts);
 }
 
@@ -557,7 +567,7 @@ export async function deleteWorkflow(id) {
   if (id === LEAN_WORKFLOW_ID) return false;    // a constant, never a row
   if (id === MEMORY_DEFRAG_WORKFLOW_ID) return false; // a constant, never a row
   if (id === PR_FIX_WORKFLOW_ID) return false;  // a constant, never a row
-  if (id === SHAPE_WORKFLOW_ID || id === SHAPE_UX_WORKFLOW_ID) return false; // constants, never rows
+  if (id === SHAPE_WORKFLOW_ID || id === SHAPE_UX_WORKFLOW_ID || SHAPE_REQ_WORKFLOW_IDS.includes(id) || SHAPE_SLICE_REQ_WORKFLOW_IDS.includes(id)) return false; // constants, never rows
   if (!isSafeWorkflowId(id)) return false;      // SECURITY: reject unsafe ids
   getDb();
   let changed = 0;
@@ -725,6 +735,42 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
   const subPin = opts.subagentPin && SUBAGENT_MODELS.includes(opts.subagentPin.model)
     ? { model: opts.subagentPin.model, effort: EFFORTS.includes(opts.subagentPin.effort) ? opts.subagentPin.effort : '' }
     : null;
+  // Factory defaults (factory-models.mjs): a built-in graph pins no model; Worca's own default for the slot sits at the
+  // template's position. On Claude, one that needs the Claude Code sign-in is dropped while it is signed out (a note per
+  // setting); a user/team/project/run model that needs it is listed in `signInBlocked` for the engine gate instead.
+  // The sign-in probe is lazy: at most once per resolve, only on Claude, only when a candidate needs the sign-in.
+  let authP = null;
+  const authState = () => (authP ||= typeof opts.claudeAuth === 'function'
+    ? Promise.resolve().then(opts.claudeAuth).then((r) => r?.state || 'unknown', () => 'unknown')
+    : Promise.resolve('unknown'));
+  // A model whose own catalog env signs the CLI in (an API key, Bedrock) never needs the stored sign-in the probe reads:
+  // that env reaches only its spawn, so the probe cannot see it. resolveModelEnv is what the spawn gets. Remembered per
+  // resolve, so an unresolvable env key warns once.
+  const signInNeeds = new Map();
+  const ownAuth = (m) => { try { return !!claudeAuthFromEnv(resolveModelEnv(m) || {}); } catch { return false; } };
+  const needsSignIn = (id) => {
+    if (engine !== 'claude') return false;
+    if (!signInNeeds.has(id)) {
+      signInNeeds.set(id, needsClaudeSignIn(id, {
+        connection: (m) => modelConnection(m, { projectDir: projectDir || null }), routed: (m) => modelHasBaseUrlRouting(m) || ownAuth(m),
+      }));
+    }
+    return signInNeeds.get(id);
+  };
+  const signedOutFor = async (id) => needsSignIn(id) && (await authState()) === 'signed-out';
+  // A factory default on a reserved workflow rides exactly where its template pin did (source `template`); on a saved
+  // workflow it is nobody's pick (source `default`, never warned).
+  const factorySource = isReservedWorkflowId(stored.id) ? 'template' : 'default';
+  const secondOpinionSlot = ignore ? null : cleanPick(utilityModelFor(engine, 'secondOpinion', { projectDir: projectDir || null }));
+  let catalogRows = null;
+  const effortsOf = async (model) => {
+    catalogRows ||= await listModels(projectDir || '');
+    const row = model ? catalogRows.find((m) => m.id === model) : null;
+    return Array.isArray(row?.efforts) && row.efforts.length ? row.efforts : effortsForEngine(engine);
+  };
+  const named = (v) => typeof v === 'string' && v.trim() !== '';
+  const factoryNotes = [];
+  const sourceOf = {};   // nodeId → { model, modelRole?, factoryRole } — internal, never emitted on the node
 
   const nodes = {};
   const agentsByKey = {};
@@ -769,13 +815,33 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
     const cfg = node.config && typeof node.config === 'object' ? node.config : {};
     const selO = owned(sel);
     const legacyO = engine === 'claude' ? owned(legacy) : NO_PICK;
-    const cfgO = owned(cfg);
     const selP = selO.pick;
     const legacyP = legacyO.pick;
-    const cfgP = cfgO.pick;
     const teamSkipped = !!(selP.model || selP.effort || legacyP.model || legacyP.effort);
     const teamO = teamSkipped ? NO_PICK : owned(slotDefaults[authored]);
     const team = teamO.pick;
+    // The factory default at the template's position, when the authored config names neither model nor effort.
+    const rr = roleReviewOf(cfg);
+    const fac = factoryNodePick(authored, rr);
+    let cfgEff = cfg;
+    let factoryApplied = false;
+    let nodeDefaultWanted = null;
+    if (fac && !named(cfg.model) && !named(cfg.effort)) {
+      const higher = !!(selP.model || selP.effort || legacyP.model || legacyP.effort || team.model || team.effort);
+      // Your role beats Worca's factory default: the default only fills a slot no role covers (the role layer below
+      // then applies, as it does on any node no other layer names).
+      if (!pair && !higher && roleFor(authored, meta).pick.model) {
+        // nothing: the role applies
+      } else if (!pair && !higher && await signedOutFor(fac.pick.model)) {
+        nodeDefaultWanted = cleanPick(fac.pick);
+        factoryNotes.push({ setting: fac.setting, nodeId: node.id, wanted: nodeDefaultWanted });
+      } else {
+        cfgEff = { ...fac.pick, ...cfg };
+        factoryApplied = true;
+      }
+    }
+    const cfgO = owned(cfgEff);
+    const cfgP = cfgO.pick;
     const baseModel = firstDefined(selP.model, legacyP.model, team.model, cfgP.model);
     // An effort only travels with the model that advertises it: an override naming its own model must not
     // inherit a lower layer's effort — the legacy per-role effort included (a per-run overlay or a node pick
@@ -786,19 +852,58 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
     // No silent fallbacks: the winning layer's request, when the engine dropped it (only layers that were consulted;
     // the merged `sel` is the run overlay where it names the field itself, else the project). A pinned pair bypasses.
     const ownSel = cleanPick(over.nodes?.[node.id]);
-    const wanted = pair ? null : wantedOf([
+    const layerWanted = pair ? null : wantedOf([
       [sel, selO, (field) => (ownSel?.[field] ? 'run' : 'project')],
       [engine === 'claude' ? legacy : null, legacyO, 'project'],
       [teamSkipped ? null : slotDefaults[authored], teamO, 'slot'],
-      [cfg, cfgO, 'template'],
+      [cfgEff, cfgO, factoryApplied ? factorySource : 'template'],
       [roleO.raw, roleO, 'slot'],
     ]);
-    // A role-review node's per-role picks (run overlay > project > template); a pinned agentPair runs every role on it.
-    const spec = pair ? null : roleReviewOf(cfg);
+    // A dropped factory default is recorded as wanted when nothing else was.
+    const wanted = layerWanted || (!pair && nodeDefaultWanted ? { ...nodeDefaultWanted, source: 'default' } : null);
+    const nodeModel = pair ? pair.model : (roleP.model ?? baseModel);
+    const nodeEffort = pair ? pair.effort : (roleP.model ? roleP.effort : baseEffort);
+    if (nodeDefaultWanted) factoryNotes.at(-1).used = { model: nodeModel ?? runModel, effort: nodeEffort ?? null };
+    // A role-review node's per-role picks (run overlay > project > helper job > template); a pinned agentPair runs every
+    // role on it. The second-opinion role takes its factory default as its template layer.
+    const spec = pair ? null : rr;
+    const fr = spec ? factoryRolePick(spec) : null;
+    const overRoles = over.nodes?.[node.id]?.roles;
+    const projectRoles = runCfg.nodes?.[node.id]?.roles;
+    let specRoles = spec?.roles;
+    let roleDropped = false;
+    let factoryRole = null;
+    if (fr) {
+      const authoredRole = spec.roles.find((r) => r.key === fr.roleKey);
+      if (!named(authoredRole.model) && !named(authoredRole.effort)) {
+        const byKey = (map) => (map && typeof map === 'object' && Object.hasOwn(map, fr.roleKey) ? cleanPick(map[fr.roleKey]) : null);
+        const higher = !!(byKey(overRoles) || byKey(projectRoles) || secondOpinionSlot);
+        if (!higher && await signedOutFor(fr.pick.model)) roleDropped = true;
+        else {
+          specRoles = spec.roles.map((r) => (r.key === fr.roleKey ? { ...r, ...fr.pick } : r));
+          factoryRole = fr.roleKey;
+        }
+      }
+    }
     const rolePicks = spec ? resolveRolePicks({
-      roles: spec.roles, overlay: over.nodes?.[node.id]?.roles, project: runCfg.nodes?.[node.id]?.roles,
+      roles: specRoles, overlay: overRoles, project: projectRoles,
+      slot: fr && secondOpinionSlot ? { [fr.roleKey]: secondOpinionSlot } : undefined,
       engine, runs: engineRuns(engine, projectDir), efforts: effortsForEngine(engine), effortOn,
     }) : null;
+    // On a saved workflow the second opinion's factory default is nobody's pick: never warned when an engine drops it.
+    if (factoryRole && factorySource === 'default' && rolePicks[factoryRole]?.source === 'template') rolePicks[factoryRole].source = 'default';
+    if (roleDropped && !rolePicks[fr.roleKey]) {
+      // No different model: the role runs on the node's model, at another effort when the model offers one.
+      const eff = variedEffort(await effortsOf(nodeModel ?? runModel), nodeEffort);
+      rolePicks[fr.roleKey] = { ...(eff ? { effort: eff } : {}), source: 'default', wanted: fr.pick };
+      factoryNotes.push({ setting: fr.setting, nodeId: node.id, role: fr.roleKey, wanted: fr.pick, used: { model: nodeModel ?? runModel, effort: eff } });
+    }
+    sourceOf[node.id] = {
+      model: pair ? 'pair' : roleP.model ? 'role' : selP.model ? (ownSel?.model ? 'run' : 'project') : legacyP.model ? 'legacy'
+        : team.model ? 'slot' : cfgP.model ? (factoryApplied ? 'factory' : 'template') : null,
+      ...(roleP.model ? { modelRole: roleOf(`steps.${authored}`, { name: meta?.displayName || '' }) } : {}),
+      factoryRole,
+    };
     nodes[node.id] = {
       nodeId: node.id,
       kind: 'agent',
@@ -811,8 +916,8 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
       promptHints: typeof meta.promptHints === 'string' ? meta.promptHints : '',
       tools,
       config: { ...cfg },
-      model: pair ? pair.model : (roleP.model ?? baseModel),
-      effort: pair ? pair.effort : (roleP.model ? roleP.effort : baseEffort),
+      model: nodeModel,
+      effort: nodeEffort,
       // workspaceFanOut forces fan-out on a workspace run (the generic
       // replacement for the v1 FANOUT_ELIGIBLE key list).
       fanOut: isWorkspace && meta.workspaceFanOut
@@ -828,9 +933,9 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
       // never freeze verbatim into the run manifest.
       subagentModel: subPin ? subPin.model : (firstDefined(
         validSubagentModel(sel.subagentModel), validSubagentModel(legacy.subagentModel),
-        validSubagentModel(cfg.subagentModel), '') || ''),
-      // The investigator effort pin: the run-level pin or the template's own config only.
-      subagentEffort: subPin ? subPin.effort : (EFFORTS.includes(cfg.subagentEffort) ? cfg.subagentEffort : ''),
+        validSubagentModel(cfgEff.subagentModel), '') || ''),
+      // The investigator effort pin: the run-level pin or the template's own config (or its factory default) only.
+      subagentEffort: subPin ? subPin.effort : (EFFORTS.includes(cfgEff.subagentEffort) ? cfgEff.subagentEffort : ''),
       askQuestions: !meta.asksQuestions
         ? false
         : (meta.questionsLocked
@@ -861,5 +966,30 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
     const raw = Number(wireCfg[w.id]?.maxCycles ?? w.config?.maxCycles);
     wires[w.id] = { maxCycles: Number.isInteger(raw) && raw >= 1 ? raw : DEFAULT_MAX_CYCLES };
   }
-  return { template: tpl, ports: portsFn, loops, nodes, wires, agentsByKey, agentKeys, scriptsByKey, scriptKeys };
+  // The models a person (or team, project, run) set that need the Claude Code sign-in, while it is signed out: the engine
+  // gate refuses the start naming each. A factory default that survived is never listed (its drop rule ran above).
+  const signInBlocked = [];
+  if (engine === 'claude') {
+    const candidates = [];
+    for (const nc of Object.values(nodes)) {
+      if (nc.kind !== 'agent') continue;
+      const src = sourceOf[nc.nodeId] || {};
+      const node = nc.meta?.displayName || nc.key;
+      if (nc.model && src.model !== 'factory' && needsSignIn(nc.model)) {
+        candidates.push({ nodeId: nc.nodeId, node, model: nc.model, source: src.model, ...(src.modelRole ? { modelRole: src.modelRole } : {}) });
+      }
+      const spec = nc.roles ? roleReviewOf(nc.config) : null;
+      for (const [key, rec] of Object.entries(nc.roles || {})) {
+        if (!rec.model || (key === src.factoryRole && (rec.source === 'template' || rec.source === 'default')) || !needsSignIn(rec.model)) continue;
+        const label = spec?.roles.find((r) => r.key === key)?.label || key;
+        candidates.push({ nodeId: nc.nodeId, node, role: label, model: rec.model, source: rec.source });
+      }
+    }
+    if (runModel && needsSignIn(runModel)) candidates.push({ model: runModel, source: 'runModel' });
+    if (candidates.length && (await authState()) === 'signed-out') signInBlocked.push(...candidates);
+  }
+  return {
+    template: tpl, ports: portsFn, loops, nodes, wires, agentsByKey, agentKeys, scriptsByKey, scriptKeys,
+    ...(factoryNotes.length ? { factoryNotes } : {}), ...(signInBlocked.length ? { signInBlocked } : {}),
+  };
 }

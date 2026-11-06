@@ -17,6 +17,7 @@ import { formatInstant, formatCountdown } from '../../src/shared/schedule/recurr
 import { openScheduleSheet, browserTimeZone } from './schedule-sheet.mjs';
 import { splitMessage } from './feedback.mjs';
 import { actionError, httpError } from './action-errors.mjs';
+import { prRowText } from './pr-auto-view.mjs';
 
 const ICON = {
   clock: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="8.5"></circle><path d="M12 7.5V12l3 2"></path></svg>',
@@ -32,6 +33,7 @@ const KIND = {
   // Git event automations (#711): what a rule did with an issue or PR.
   automation_started: ['Started', 'blue'], automation_skipped: ['Skipped', 'grey'], automation_queued: ['Queued', 'grey'],
   'automation_awaiting-approval': ['Approve?', 'amber'], automation_done: ['Done', 'green'], automation_failed: ['Failed', 'red'],
+  pr_auto: ['Pull request', 'amber'],   // "Create a PR when a run finishes": a PR it could not open
 };
 const RESULT_WORD = { completed: 'completed', error: 'ended with an error', failed: 'could not start', missed: 'missed', skipped: 'skipped', paused: 'paused', stopped: 'stopped' };
 const RESULT_FAMILY = { completed: 'green', error: 'red', failed: 'red', missed: 'amber', skipped: 'grey', paused: 'amber', stopped: 'grey' };
@@ -179,6 +181,7 @@ export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repea
       row('Guardrails', item.summary.guardrailsId && item.summary.guardrailsId !== 'permissive' ? item.summary.guardrailsId : ''),
       row('Preset', item.presetId ? (item.presetName ? `${item.presetName} (read when the run starts)`
         : `${item.presetGoneName || 'A preset'} (deleted: the next run will fail)`) : ''),
+      row('Pull request', prRowText(item.summary.pr)),
       row('Extra files', item.summary.extras ? String(item.summary.extras) : ''),
       item.after ? null : row('If Worca is not running', item.ifMissed === 'skip' ? 'Skip it' : `Start it late, at most ${item.graceMin >= 60 && item.graceMin % 60 === 0 ? `${item.graceMin / 60} h` : `${item.graceMin} min`}`),
       item.kind === 'recurring' ? row('If the previous run is still going', { skip: 'Skip this one', queue: 'Wait, then start', start: 'Start anyway' }[item.overlap]) : null,

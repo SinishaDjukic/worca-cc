@@ -464,3 +464,28 @@ test('barLine: beside a stage bar a working run names only its step; nodes mode,
   assert.equal(runModel(R({ stepper, steps: [row('n_defrag', 'start')], active: [live('n_defrag')] }), OPTS).barLine, null,
     'nodes mode draws no stage names, so the line stays whole');
 });
+
+test('D8 (pr-fix-rounds-stacking): a round never needs you through its PR or its watch; its origin does', () => {
+  const pr947 = { url: 'https://github.com/SinishaDjukic/worca-cc/pull/947', number: 947, state: 'OPEN', mergeable: 'CONFLICTING' };
+  const done = R({ status: 'done', endReached: true, pr: pr947 });
+  const marker = { pipelineId: 'ba22d7fd', round: 8, request: 'merge dev in', by: 'watch', kinds: ['conflicts'] };
+  const round = runModel({ ...done, round: marker }, OPTS);
+  assert.notEqual(round.state, 'needs-you', 'a done round with a conflicting PR is not Needs you');
+  assert.equal(round.prNeeds, false);
+  assert.equal(round.pr.word, 'Conflicts', 'its PR chip stays');
+  assert.equal(finishedNeedsYou({ pr: pr947, round: marker }), false);
+  assert.equal(finishedNeedsYou({ pr: pr947, branch: { roundOf: marker } }), false, 'the raw marker reads the same');
+  const origin = runModel(done, OPTS);
+  assert.deepEqual([origin.state, origin.prNeeds], ['needs-you', true], 'the origin with the same PR needs you');
+  assert.equal(finishedNeedsYou({ pr: pr947 }), true);
+
+  const stopped = { status: 'needs-person', reason: 'cap', fixRuns: 6 };
+  const plainPr = { ...pr947, mergeable: 'MERGEABLE' };
+  const rw = runModel(R({ status: 'done', endReached: true, pr: plainPr, watch: stopped, round: marker }), OPTS);
+  assert.notEqual(rw.state, 'needs-you', 'a round with a stopped watch is not Needs you');
+  assert.equal(rw.prNeeds, false);
+  assert.equal(finishedNeedsYou({ pr: plainPr, watch: stopped, round: marker }), false);
+  const ow = runModel(R({ status: 'done', endReached: true, pr: plainPr, watch: stopped }), OPTS);
+  assert.equal(ow.state, 'needs-you');
+  assert.match(ow.line, /Watch stopped/);
+});

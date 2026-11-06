@@ -4,9 +4,9 @@
 // live report, the run-time check and the seed drift guard all come through
 // here, so it is pure, never throws on a malformed template, and every lookup
 // guards: a dangling endpoint or an unknown key is an issue to COLLECT.
-import { KINDS, KEYED_KINDS, NODE_ID_RE, LIMITS, PARAMS_PORT, SESSION_ID_RE, SESSION_MODES, SESSION_LABEL_MAX,
+import { PORT_ID_RE, KINDS, KEYED_KINDS, NODE_ID_RE, LIMITS, PARAMS_PORT, SESSION_ID_RE, SESSION_MODES, SESSION_LABEL_MAX,
   SESSION_SETTING_KEYS, MAX_SESSION_MEMBERS, SESSION_MIN_MEMBERS } from './constants.mjs';
-import { portsOf, findPort, resolveOrOutType } from './ports.mjs';
+import { portsOf, findPort, resolveOrOutType, EXTRA_INPUTS_MAX } from './ports.mjs';
 import { classifyLoops } from './loops.mjs';
 import { sessionsOf, consecutiveIssue } from './sessions.mjs';
 import { roleReviewOf, roleReviewIssues } from './role-review-step.mjs';
@@ -22,7 +22,7 @@ const AWAIT_PORT_ID = 'await';
  *  on a flow card. Unknown keys are PRESERVED and ignored, never stripped. */
 const KNOWN_CONFIG = {
   agent: new Set(['model', 'effort', 'fanOut', 'askQuestions', 'awaitAll', 'subagentModel', 'subagentEffort',
-    'approve', 'maxQuestions', 'promptHints', 'roleReview', 'timeLimitMinutes', 'idleLimitMinutes', 'verdictOptional', 'session']),
+    'approve', 'maxQuestions', 'promptHints', 'roleReview', 'timeLimitMinutes', 'idleLimitMinutes', 'verdictOptional', 'session', 'extraInputs']),
   script: new Set(['params', 'ports', 'timeoutMs', 'awaitAll', 'mock', 'paramsPort']),
   task: new Set(['planStoreSeed']),
   and: new Set(['arity']),
@@ -90,6 +90,31 @@ function limitIssue(template, limits) {
   if (n > limits.maxNodes) return { code: 'V1', message: `template has ${n} nodes — the limit is ${limits.maxNodes}` };
   if (w > limits.maxWires) return { code: 'V1', message: `template has ${w} wires — the limit is ${limits.maxWires}` };
   return null;
+}
+
+const APPROVE_KEYS = new Set(['kind', 'port', 'check', 'agreed', 'decisions', 'coverage']);
+const APPROVE_CHECKS = new Set(['criteria']);
+
+/** The optional `config.approve` keys: `check` (criteria), `agreed`/`coverage` (md inputs of the node, extra inputs
+ *  included) and `decisions` (a json output). Port checks need the node's ports (`ports` null: skipped). */
+function approveKeyIssues(id, approve, ports) {
+  const out = [];
+  const unknown = Object.keys(approve).filter((k) => !APPROVE_KEYS.has(k));
+  if (unknown.length) out.push(`node '${id}' config.approve has unknown key(s): ${unknown.join(', ')}`);
+  if (approve.check !== undefined && !APPROVE_CHECKS.has(approve.check)) out.push(`node '${id}' config.approve.check must be 'criteria'`);
+  const has = (list, k, type) => (list || []).some((p) => p && p.id === k && p.type === type);
+  for (const k of ['agreed', 'coverage']) {
+    const v = approve[k];
+    if (v === undefined) continue;
+    if (typeof v !== 'string' || !v) out.push(`node '${id}' config.approve.${k} must name an md input`);
+    else if (ports && !has(ports.inputs, v, 'md')) out.push(`node '${id}' config.approve.${k} '${v}' is not an md input of this agent`);
+  }
+  const d = approve.decisions;
+  if (d !== undefined) {
+    if (typeof d !== 'string' || !d) out.push(`node '${id}' config.approve.decisions must name a json output`);
+    else if (ports && !has(ports.outputs, d, 'json')) out.push(`node '${id}' config.approve.decisions '${d}' is not a json output of this agent`);
+  }
+  return out;
 }
 
 /** Resolve every node's ports ONCE and derive the views the rules read. */
@@ -603,7 +628,7 @@ export const RULES = [
 
   // Shape it first (spec D2/D3): the node approval stop and the Clarify cap. `approve` must name an md OUTPUT of
   // the node (the held file); maxQuestions is 1..8 (the protocol cap); promptHints is a string.
-  { code: 'V23', level: 'E', check({ nodes, metaOf, outputsOf }, add) {
+  { code: 'V23', level: 'E', check({ nodes, metaOf, inputsOf, outputsOf }, add) {
     for (const n of nodes) {
       if (n.kind !== 'agent' || !isObject(n.config)) continue;
       const { approve, maxQuestions, promptHints } = n.config;
@@ -613,6 +638,7 @@ export const RULES = [
         } else if (metaOf(n.id) && !outputsOf(n.id).some((p) => p && p.id === approve.port && p.type === 'md')) {
           add(`node '${n.id}' config.approve.port '${approve.port}' is not an md output of this agent`, { nodeId: n.id });
         }
+        if (isObject(approve)) approveKeyIssues(n.id, approve, metaOf(n.id) ? { inputs: inputsOf(n.id), outputs: outputsOf(n.id) } : null).forEach((m) => add(m, { nodeId: n.id }));
       }
       if (maxQuestions !== undefined && !(Number.isInteger(maxQuestions) && maxQuestions >= 1 && maxQuestions <= 8)) {
         add(`node '${n.id}' config.maxQuestions must be an integer from 1 to 8`, { nodeId: n.id });
@@ -751,6 +777,26 @@ export const RULES = [
     for (const n of nodes) {
       if (n.kind !== 'agent') continue;
       for (const issue of roleReviewIssues(n.config)) add(`node '${n.id}': ${issue}`, { nodeId: n.id });
+    }
+  } },
+
+  // Extra optional inputs (ports.mjs extraInputsOf): at most 4 md inputs, none clashing with the agent's own.
+  { code: 'V32', level: 'E', check({ nodes, portsFn }, add) {
+    for (const n of nodes) {
+      if (n.kind !== 'agent' || !isObject(n.config) || n.config.extraInputs === undefined) continue;
+      const list = n.config.extraInputs;
+      const at = { nodeId: n.id };
+      if (!Array.isArray(list)) { add(`node '${n.id}' config.extraInputs must be a list of { id, type: 'md' }`, at); continue; }
+      if (list.length > EXTRA_INPUTS_MAX) { add(`node '${n.id}' config.extraInputs holds at most ${EXTRA_INPUTS_MAX} inputs`, at); continue; }
+      const own = new Set(portsOf(portsFn, { ...n, config: { ...n.config, extraInputs: undefined } }).inputs.map((p) => p?.id));
+      const seen = new Set();
+      list.forEach((e, i) => {
+        if (!isObject(e) || typeof e.id !== 'string' || !PORT_ID_RE.test(e.id)) { add(`node '${n.id}' config.extraInputs[${i}] must be { id, type: 'md' }`, at); return; }
+        if (e.type !== 'md') add(`node '${n.id}' config.extraInputs '${e.id}' must be of type md`, at);
+        else if (own.has(e.id)) add(`node '${n.id}' config.extraInputs '${e.id}' clashes with an input of this agent`, at);
+        else if (seen.has(e.id)) add(`node '${n.id}' config.extraInputs '${e.id}' is declared twice`, at);
+        seen.add(e.id);
+      });
     }
   } },
 ];

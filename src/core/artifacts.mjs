@@ -24,6 +24,7 @@ import { listProjects, worcaHome, runOnboarded } from './projects.mjs';
 import { claimRunDir, claimRunExtras, shareFailureReason } from './agent-pool.mjs';
 import { branchExists, diffShortstat, anyPrHost, findPrForBranch, commitsAhead, withRefSnapshot } from './git-info.mjs';
 import { getDb, tx } from './db.mjs';
+import { cleanOutcome } from './shape/rounds.mjs';
 import { rollupMemberPrs, workspaceMembers, changedFileCount } from './workspace-prs.mjs';
 import { RUN_LOG_FILE } from './run-log.mjs';
 import { readRunLedger } from './metrics/ledger.mjs';
@@ -1167,6 +1168,7 @@ export async function readPromptFile(projectDir, promptFile) {
  * @param {object} [opts.sourceMeta]  { plugin, sourceId, taskId, url, title } | null
  * @param {string} [opts.guardrailsId] the run's selected guardrail set id (per-run)
  * @param {string|null} [opts.runSetup] JSON of the run's setup (pipelines.run_setup, v62); never on the state object
+ * @param {object|null} [opts.prAuto] the run's PR-when-done decision (pipelines.pr_auto, v86); same rule as runSetup
  * @param {string[]} [opts.extras]    paths to extra files copied into dir/extras
  * @param {string} [opts.title]       human title (defaults to derived text)
  * @param {string} [opts.workspaceKey]   opt-in: route to the workspace store
@@ -1180,7 +1182,7 @@ export async function createPipeline(projectDir, opts = {}) {
   const {
     prompt, promptFile, extras = [], title,
     promptText: precomputedPromptText = null, sourceType = null, sourceMeta = null,
-    guardrailsId = null, startedBy = null, prWatchRunId = null, tags = [], labels = [], runSetup = null,
+    guardrailsId = null, startedBy = null, prWatchRunId = null, tags = [], labels = [], runSetup = null, prAuto = null,
     workspaceKey = null, workspaceId = null, workspaceName = null,
     workspaceDescription = '', projects = null,
   } = opts;
@@ -1332,7 +1334,7 @@ export async function createPipeline(projectDir, opts = {}) {
   // no more state.json on disk. writeState also seeds the dir->id cache
   // (rememberDir) so appendAudit resolves this run without any call-site change
   // (A4). recordArtifact runs AFTER the row exists (FK -> pipelines).
-  await writeState(dir, state, { prWatchRunId, runSetup });
+  await writeState(dir, state, { prWatchRunId, runSetup, prAuto });
   // Run tags (#718): written once, after the row exists (FK) and after writeState's tx has
   // committed (tx cannot nest). writeState updates never touch them.
   insertRunTags(id, tags);
@@ -1440,7 +1442,7 @@ function rememberDir(dir, id) { if (dir && id) _dirIdCache.set(resolve(dir), id)
  * @param {object} stateObj
  * @returns {Promise<object>}
  */
-export async function writeState(pipelineDir, stateObj, { prWatchRunId = null, runSetup = null } = {}) {
+export async function writeState(pipelineDir, stateObj, { prWatchRunId = null, runSetup = null, prAuto = null } = {}) {
   const obj = { ...stateObj, updatedAt: new Date().toISOString() };
   const id = obj.id;
   if (!id) return obj; // pre-id state (constructor default): nothing to persist yet
@@ -1450,11 +1452,11 @@ export async function writeState(pipelineDir, stateObj, { prWatchRunId = null, r
       INSERT INTO pipelines (id, project_key, workspace_key, target, title, base_name,
         date_prefix, status, phase, cycle, started_at, updated_at, total_cost_usd,
         total_active_ms, prompt, branch, workspace_meta, stepper, tools, resume_point,
-        source_type, source_ref, guardrails_id, outcome, human_hours, started_by, shape_stats, run_size, run_setup, review_stats)
+        source_type, source_ref, guardrails_id, outcome, human_hours, started_by, shape_stats, run_size, run_setup, review_stats, pr_auto)
       VALUES (@id,@project_key,@workspace_key,@target,@title,@base_name,@date_prefix,
         @status,@phase,@cycle,@started_at,@updated_at,@total_cost_usd,@total_active_ms,
         @prompt,@branch,@workspace_meta,@stepper,@tools,@resume_point,
-        @source_type,@source_ref,@guardrails_id,@outcome,@human_hours,@started_by,@shape_stats,@run_size,@run_setup,@review_stats)
+        @source_type,@source_ref,@guardrails_id,@outcome,@human_hours,@started_by,@shape_stats,@run_size,@run_setup,@review_stats,@pr_auto)
       ON CONFLICT(id) DO UPDATE SET
         status=excluded.status, phase=excluded.phase, cycle=excluded.cycle,
         updated_at=excluded.updated_at, total_cost_usd=excluded.total_cost_usd,
@@ -1469,7 +1471,7 @@ export async function writeState(pipelineDir, stateObj, { prWatchRunId = null, r
         run_size=COALESCE(excluded.run_size, run_size),
         base_name=COALESCE(excluded.base_name, base_name),
         date_prefix=COALESCE(excluded.date_prefix, date_prefix)
-    `).run({ ...toPipelineRow(obj), run_setup: typeof runSetup === 'string' ? runSetup : null });
+    `).run({ ...toPipelineRow(obj), run_setup: typeof runSetup === 'string' ? runSetup : null, pr_auto: prAuto ? JSON.stringify(prAuto) : null });
 
     // A Watch PR fix run (#619): ownership lands in the same transaction that creates the row.
     if (prWatchRunId) attachWatchPipeline(prWatchRunId, id, obj.updatedAt);
@@ -2244,11 +2246,77 @@ async function readResultsJson(dir) {
   }
 }
 
-/** A finished run's results.json by pipeline id (null when the row, its dir or the file is missing). */
-export async function readRunResultsById(pipelineId) {
-  const row = getDb().prepare('SELECT * FROM pipelines WHERE id = ?').get(String(pipelineId));
+/** A finished run's results.json for a pipelines row in hand (null when its dir or the file is missing, or junk). */
+export async function readRunResultsForRow(row) {
   if (!row) return null;
   try { return await readResultsJson(await runDirForRow(row)); } catch { return null; }
+}
+
+/** A finished run's results.json by pipeline id (null when the row, its dir or the file is missing). */
+export async function readRunResultsById(pipelineId) {
+  return readRunResultsForRow(getDb().prepare('SELECT * FROM pipelines WHERE id = ?').get(String(pipelineId)));
+}
+
+/**
+ * One member's change evidence, as a TRI-STATE. Shared by workspaceMemberFacts (History rows) and
+ * memberChangeFacts (the Actions route) so the two can never drift apart.
+ *  - affected: true / false / null. `null` means nothing could decide it — no frozen summary, no
+ *    folder record, and no live git answer. A caller that must choose treats null as "changed", so a
+ *    legacy run keeps offering its members instead of silently hiding them.
+ *  - files / added / removed: null when that evidence carries no such count. In particular the live
+ *    path has NO file count: `git diff --shortstat` reports lines, and parseShortstat's shape is
+ *    pinned by test/git-info.test.mjs — widening it for a fallback is not worth it.
+ * `opts.live:false` skips the git fallback entirely (a run still going: its counts move anyway).
+ * @param {{projectDir:string|null, feature:string|null, source:string|null}} m
+ * @returns {Promise<{affected:boolean|null, files:number|null, added:number|null, removed:number|null, frozen:boolean}>}
+ */
+export async function memberChangeEvidence(m, { summary = null, counts = null, live = true } = {}) {
+  const unknown = { affected: null, files: null, added: null, removed: null, frozen: false };
+  if (summary) {
+    const files = changedFileCount(summary);
+    return { affected: files > 0, files, added: summary.linesAdded | 0, removed: summary.linesRemoved | 0, frozen: true };
+  }
+  if (counts) {
+    // A Folder member's record counts FILES (folder-copy.mjs scanChanges), never lines.
+    const files = (counts.added | 0) + (counts.modified | 0) + (counts.deleted | 0);
+    return { affected: files > 0, files, added: null, removed: null, frozen: false };
+  }
+  if (!live || !m.projectDir || !m.feature || !m.source) return unknown;
+  const n = await commitsAhead(m.projectDir, m.source, m.feature);
+  if (n == null) return unknown;                                        // git could not say
+  if (n === 0) return { affected: false, files: 0, added: 0, removed: 0, frozen: false };
+  const d = await diffShortstat(m.projectDir, m.source, m.feature);
+  return { affected: true, files: null, added: d.added, removed: d.removed, frozen: false };
+}
+
+/**
+ * Per-member change facts for the Actions route, keyed by `projectKey` (membersOfRow's name for what
+ * workspaceMembers calls `memberKey`: the same value, the results.json perProject key). Feed it
+ * `membersOfRow(row)`, or a subset of it, so single-project and workspace rows take the same path.
+ * @param {object} row  the pipelines row (read for workspace_meta.projects[].workMode only)
+ * @param {Array<{projectKey:string, projectDir:string|null, br:object|null}>} members
+ * @param {object|null} results  the parsed results.json, or null
+ * @returns {Promise<Map<string, {affected:boolean|null, files:number|null, added:number|null, removed:number|null, workMode:'git'|'folder'}>>}
+ */
+export async function memberChangeFacts(row, members, results, { live = true } = {}) {
+  const workspace = row.target === 'workspace';
+  const wm = workspace ? j(row.workspace_meta, null) || {} : {};
+  // Same detection the Ask card already uses (ui/server.mjs:11800).
+  const folderKeys = new Set((wm.projects || []).filter((p) => p && p.workMode === 'folder').map((p) => p.projectKey));
+  const perProject = results && results.perProject && typeof results.perProject === 'object' ? results.perProject : null;
+  const runSummary = results && results.summary && typeof results.summary === 'object' ? results.summary : null;
+  const out = new Map();
+  await Promise.all(members.map(async (m) => {
+    // A workspace row freezes one summary PER MEMBER; a single-project row freezes one for the run.
+    const summary = workspace ? perProject?.[m.projectKey]?.summary || null : runSummary;
+    const counts = m.br?.changes?.counts || null;
+    const ev = await memberChangeEvidence(
+      { projectDir: m.projectDir, feature: m.br?.feature || null, source: m.br?.source || null },
+      { summary, counts, live });
+    out.set(m.projectKey, { affected: ev.affected, files: ev.files, added: ev.added, removed: ev.removed,
+      workMode: folderKeys.has(m.projectKey) ? 'folder' : 'git' });
+  }));
+  return out;
 }
 
 /**
@@ -2280,21 +2348,13 @@ async function workspaceMemberFacts(row, results, opts = {}) {
     };
     if (m.projectDir && m.feature) out.survived = await branchExists(m.projectDir, m.feature);
     const sum = perProject && perProject[m.memberKey] ? perProject[m.memberKey].summary : null;
-    if (sum) {
-      out.diffFrozen = true;
-      out.affected = changedFileCount(sum) > 0;
-      out.added = sum.linesAdded | 0;
-      out.removed = sum.linesRemoved | 0;
-    } else if (ch) {
-      // a Folder member with no frozen summary: its record's counts (never git — it has no branch)
-      out.affected = ((ch.counts?.added | 0) + (ch.counts?.modified | 0) + (ch.counts?.deleted | 0)) > 0;
-    } else if (out.survived && m.source) {
-      out.affected = ((await commitsAhead(m.projectDir, m.source, m.feature)) || 0) > 0;
-      if (out.affected) {
-        const d = await diffShortstat(m.projectDir, m.source, m.feature);
-        out.added = d.added; out.removed = d.removed;
-      }
-    }
+    // `live` only when the branch is still there — today's code skipped git entirely otherwise, and
+    // spawning a doomed rev-list per dead branch would be a regression on big History pages.
+    const ev = await memberChangeEvidence(m, { summary: sum, counts: ch ? ch.counts : null, live: out.survived && !!m.source });
+    out.diffFrozen = ev.frozen;
+    out.affected = ev.affected === true;   // History's contract stays a plain boolean (app.js:36334 reads `!== false`)
+    out.added = ev.added | 0;
+    out.removed = ev.removed | 0;
     if (opts.withPr) {
       out.pr = gh && m.projectDir && m.feature
         ? withFixing(await findPrForBranch({ projectDir: m.projectDir, head: m.feature, prUrl: known[m.memberKey]?.url || null }))
@@ -2370,6 +2430,16 @@ export function resultsFilesCount(res) {
  * @param {string|null} repoDir git repo root for live branch facts
  * @param {object} opts { withPr?, lite? }
  */
+/** A round's marker on the History wire (shape/rounds.mjs, plan Task 1): { pipelineId, round, request, by?, kinds?,
+ *  outcome? } from branch.roundOf, or null for round 1, a plain run and a malformed marker. */
+function wireRoundOf(m) {
+  if (!m || typeof m !== 'object' || !m.pipelineId || !Number.isInteger(m.round) || m.round < 2) return null;
+  const outcome = cleanOutcome(m.outcome);
+  return { pipelineId: String(m.pipelineId), round: m.round, request: String(m.request || ''),
+    ...(m.by ? { by: String(m.by) } : {}), ...(Array.isArray(m.kinds) ? { kinds: m.kinds.map(String) } : {}),
+    ...(outcome ? { outcome } : {}) };
+}
+
 async function rowToHistoryEntry(row, repoDir = null, opts = {}) {
   const branchObj = j(row.branch, null);
   const feature = branchObj?.feature ?? (typeof branchObj === 'string' ? branchObj : null);
@@ -2430,6 +2500,9 @@ async function rowToHistoryEntry(row, repoDir = null, opts = {}) {
     totalActiveMs: active,
     mtime: row.updated_at ? (Date.parse(row.updated_at) || 0) : 0,
   };
+  // A round of another run (Runs list fold, plan D1): the key only when the marker is valid.
+  const roundOf = wireRoundOf(branchObj?.roundOf);
+  if (roundOf) entry.roundOf = roundOf;
   // Workspace rows: eligibility is decided across EVERY member, never the primary alone.
   // Computed BEFORE the PR lookup so a row WITH members skips the primary-only search.
   if (row.target === 'workspace' && !opts.lite) {

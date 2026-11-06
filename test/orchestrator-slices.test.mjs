@@ -391,3 +391,16 @@ test('starter after a resume: the feature and its ticket carry the original star
   h2.orch.stop();
   await h2.done;
 });
+
+test('outline approval saves the run\'s pr_auto on the feature; a run with none leaves the feature columns NULL', async () => {
+  const prAuto = { open: 'draft', slices: 'one', scope: 'project', source: { open: 'project', slices: 'team' } };
+  const withPr = start({ prAuto }, (q, orch) => orch.answer(q.id, { decision: 'approve' }));
+  assert.equal((await withPr.done).status, 'done');
+  const [f] = featuresOf(withPr.orch.getState().id);
+  assert.deepEqual([f.pr_open, f.pr_slices, JSON.parse(f.pr_source)], ['draft', 'one', { open: 'project', slices: 'team' }]);
+  assert.equal(JSON.parse(getDb().prepare('SELECT pr_auto FROM pipelines WHERE id = ?').get(withPr.orch.getState().id).pr_auto).open, 'draft');
+  const plain = start({}, (q, orch) => orch.answer(q.id, { decision: 'approve' }));
+  assert.equal((await plain.done).status, 'done');
+  const [g] = featuresOf(plain.orch.getState().id);
+  assert.deepEqual([g.pr_open, g.pr_slices, g.pr_source], [null, null, null]);
+});

@@ -19,7 +19,7 @@ app.post('/api/pipelines/:id/report-result', async (req, res) => {
     if (!readPipelineForResume(req.params.id)) {
       return res.status(404).json({ error: 'pipeline not found' });
     }
-    res.json(await retryWriteback(req.params.id)); // { ok:true, skipped?:true } | { ok:false, error: string }
+    res.json(await retryWriteback(req.params.id)); // { ok:true, skipped?:true, note?:string, moved?:{from,to} } | { ok:false, error: string }
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }

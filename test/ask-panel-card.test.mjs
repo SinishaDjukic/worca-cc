@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import { makePanel } from './helpers/ask-panel-harness.mjs';
 import { stampFrames } from './helpers/ask-frames.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { _resetAnswerer } from '../ui/public/answerer.mjs';
 
 const TID = 'ask_00000001';
 const MID = 'askm_00000001';
@@ -80,7 +81,7 @@ function apiHandler(recorder = {}) {
       if (recorder.configResponse) return recorder.configResponse;
       return { ok: true, status: 200, json: async () => ({ config: configBody().config }) };
     }
-    if (path === '/api/run-defaults') return { ok: true, status: 200, json: async () => ({ engine: { value: recorder.runEngine || 'claude', source: 'default' } }) };
+    if (path === '/api/run-defaults') return { ok: true, status: 200, json: async () => ({ engine: { value: recorder.runEngine || 'claude', source: 'default' }, ...(recorder.runPr ? { pr: recorder.runPr } : {}) }) };
     if (url === '/api/projects') return { ok: true, status: 200, json: async () => ({ projects: recorder.projects || [{ name: 'proj', path: '/repos/proj', exists: true }, { name: 'other', path: '/repos/other', exists: false }] }) };
     if (url === '/api/workflows') return { ok: true, status: 200, json: async () => ({ workflows: recorder.workflows || [{ id: 'wf_default', name: 'Default' }, { id: 'wf_review', name: 'Review only' }] }) };
     if (url === '/api/guardrails') return { ok: true, status: 200, json: async () => ({ guardrails: [{ id: 'permissive', name: 'Permissive' }, { id: 'normal', name: 'Normal' }, { id: 'strict', name: 'Strict' }] }) };
@@ -117,6 +118,7 @@ function apiHandler(recorder = {}) {
 async function openWithCard(card, recorder = {}, overrides = {}) {
   const ctx = makePanel({ fetchHandler: apiHandler(recorder), ...overrides });
   if (overrides.git) ctx.doc.documentElement.dataset.git = overrides.git;
+  if (overrides.flags) ctx.doc.documentElement.dataset.flags = overrides.flags;
   ctx.storage.setItem('worca-cc.ask.thread', TID);
   ctx.panel.open();
   await ctx.tick(); await ctx.tick(); await ctx.tick();
@@ -1282,6 +1284,46 @@ test('ask-panel-card: the Engine field — Default sends none, a proposed engine
       ctx.doc.querySelector('[data-ask-card-open-np]').click();
       for (let i = 0; i < 6; i++) await ctx.tick();
       assert.equal(handed[0].engine, 'codex');
+    } },
+  ]);
+});
+
+// Pull request when done: "Use the setting" sends nothing and names the project's value once the lane has read it;
+// a proposal's pr preselects its open value, and only an explicit pick (plus the proposal's slices on a project run) is sent.
+test('ask-panel-card: the Pull request field — Use the setting sends none; a proposed pr is preselected and sent', async () => {
+  await checkRows([
+    { name: 'ask-panel-card: Use the setting names the project value and its source; Start sends no pr', run: async () => {
+      const rec = { runPr: { scope: 'project', open: { value: 'draft', source: 'team' }, slices: { value: 'each', source: 'default' } } };
+      const ctx = await openWithCard(PROJECT_CARD, rec);
+      for (let i = 0; i < 10; i++) await ctx.tick();
+      const sel = ctx.doc.querySelector('.ask-card-pr');
+      assert.equal(sel.value, '');
+      assert.equal(sel.options[0].textContent, 'Use the setting: Create a draft PR (Team default)');
+      assert.deepEqual([...sel.options].slice(1).map((o) => o.value), ['none', 'draft', 'ready']);
+      assert.equal(sel.closest('.ask-rp-field').dataset.minLevel, 'advanced');
+      ctx.doc.querySelector('[data-ask-card-start]').click();
+      for (let i = 0; i < 6; i++) await ctx.tick();
+      assert.equal('pr' in rec.runBodies[0], false);
+    } },
+    { name: 'ask-panel-card: a proposed pr is preselected, stays visible at every mode and is sent with its slices mode', run: async () => {
+      const rec = {};
+      const ctx = await openWithCard({ ...PROJECT_CARD, pr: { open: 'ready', slices: 'one' } }, rec);
+      const sel = ctx.doc.querySelector('.ask-card-pr');
+      assert.equal(sel.value, 'ready');
+      assert.equal(sel.closest('.ask-rp-field').dataset.levelKeep, '1');
+      ctx.doc.querySelector('[data-ask-card-start]').click();
+      for (let i = 0; i < 6; i++) await ctx.tick();
+      assert.deepEqual(rec.runBodies[0].pr, { open: 'ready', slices: 'one' });
+    } },
+    { name: 'ask-panel-card: a pick on the card is sent as the run\'s own choice', run: async () => {
+      const rec = {};
+      const ctx = await openWithCard(PROJECT_CARD, rec);
+      const sel = ctx.doc.querySelector('.ask-card-pr');
+      sel.value = 'none';
+      sel.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
+      ctx.doc.querySelector('[data-ask-card-start]').click();
+      for (let i = 0; i < 6; i++) await ctx.tick();
+      assert.deepEqual(rec.runBodies[0].pr, { open: 'none' });
     } },
   ]);
 });
@@ -2599,8 +2641,9 @@ test('ask-panel-card: per-role Agents rows on a role-review node', async () => {
       const arch = roleTile(lane, 'architect');
       assert.equal(arch.querySelector('.ask-rp-model').options[0].textContent, "Node's model");
       assert.equal(arch.querySelector('.ask-rp-model').value, '');
-      assert.ok(arch.querySelectorAll('.ask-rp-eff button:not([disabled])').length > 0, "pills follow the node's model");
-      assert.equal(roleTile(lane, 'product').querySelector('.ask-rp-model').value, 'claude-opus-5-5', "the template's pick shows");
+      // The built-in Shaper pins no model (its Plan Review and Second-opinion reviewer models are Worca's factory defaults
+      // on the Models page), so the card has no template pick to show: every role reads the node's setting.
+      assert.equal(roleTile(lane, 'product').querySelector('.ask-rp-model').value, '', 'no template pick');
     }),
     shapeRow('Start posts an edited role pick as overlay.nodes.n_roles.roles; untouched rows post nothing; Reset clears it', async () => {
       const rec = {};
@@ -2642,5 +2685,273 @@ test('ask-panel-card: per-role Agents rows on a role-review node', async () => {
       await start(ctx);
       assert.equal(JSON.stringify(rec.runBodies[0].overlay || {}).includes('roles'), false);
     }),
+  ]);
+});
+
+// Requirements first (shapeRequirements on): a medium or large nudge shows Shape requirements (primary) and Run as is (quiet);
+// the first time, Shape requirements is aria-disabled and described by "You lead as" until a lead is picked.
+const REQ_NUDGE = { ...NUDGE, perspectives: ['architect', 'qa'] };
+const answererApi = (rec, { lead = null, putFails = false } = {}) => {
+  const base = apiHandler(rec);
+  return (url, opts) => {
+    if (url !== '/api/answerer') return base(url, opts);
+    if ((opts.method || 'GET').toUpperCase() === 'PUT') {
+      rec.puts = [...(rec.puts || []), JSON.parse(opts.body)];
+      return putFails ? { ok: false, status: 500, json: async () => ({ error: { message: 'disk full' } }) } : { ok: true, status: 200, json: async () => JSON.parse(opts.body) };
+    }
+    return { ok: true, status: 200, json: async () => ({ lead }) };
+  };
+};
+const openRequirements = async (nudge, rec, answerer) => {
+  _resetAnswerer();
+  const ctx = await openWithCard({ ...PROJECT_CARD, nudge }, rec, { fetchHandler: answererApi(rec, answerer), flags: 'shapeRequirements' });
+  for (let i = 0; i < 4; i++) await ctx.tick();
+  ctx.flush();
+  return ctx;
+};
+const settle = async (ctx) => { for (let i = 0; i < 8; i++) await ctx.tick(); };
+
+test('ask-panel-card: shapeRequirements on, large nudge, first time', async () => {
+  await checkRows([
+    shapeRow('Shape requirements is the one primary, aria-disabled and described by "You lead as"; a click posts nothing', async () => {
+      const rec = {};
+      const ctx = await openRequirements(REQ_NUDGE, rec, { lead: null });
+      const cardEl = ctx.doc.querySelector('.ask-card');
+      const shapeBtn = cardEl.querySelector('[data-ask-card-shape]');
+      const startBtn = cardEl.querySelector('[data-ask-card-start]');
+      assert.equal(shapeBtn.textContent, 'Shape requirements');
+      assert.ok(shapeBtn.classList.contains('btn-primary'));
+      assert.ok(startBtn.classList.contains('btn-quiet') && !startBtn.classList.contains('btn-primary'));
+      assert.equal(startLabel(startBtn), 'Run as is');
+      assert.equal(cardEl.querySelector('.shape-choice'), null);
+      assert.equal(shapeBtn.getAttribute('aria-disabled'), 'true');
+      assert.equal(ctx.doc.getElementById(shapeBtn.getAttribute('aria-describedby')).textContent, 'You lead as');
+      shapeBtn.click();
+      await settle(ctx);
+      assert.equal(rec.runBodies, undefined, 'blocked: nothing was started');
+    }),
+    shapeRow('picking a lead enables it; the click saves it once and starts with shape.lead', async () => {
+      const rec = {};
+      const ctx = await openRequirements(REQ_NUDGE, rec, { lead: null });
+      const cardEl = ctx.doc.querySelector('.ask-card');
+      cardEl.querySelector('.spick-b').click();
+      const items = [...ctx.doc.querySelectorAll('.wfv-menu [role="menuitemradio"]')];
+      items[1].click();
+      const shapeBtn = cardEl.querySelector('[data-ask-card-shape]');
+      assert.equal(shapeBtn.hasAttribute('aria-disabled'), false);
+      assert.equal(shapeBtn.hasAttribute('aria-describedby'), false);
+      assert.equal(rec.puts, undefined, 'a pick alone does not save');
+      shapeBtn.click();
+      await settle(ctx);
+      assert.deepEqual(rec.puts, [{ lead: 'architect' }]);
+      assert.equal(rec.runBodies[0].workflowId, 'wf_shape');
+      assert.deepEqual(rec.runBodies[0].shape, { lead: 'architect', perspectives: ['product', 'architect', 'qa'], size: 'large' });
+    }),
+    shapeRow('a saved lead needs no pick and no save; Run as is posts neither shape nor lead', async () => {
+      const rec = {};
+      const ctx = await openRequirements(REQ_NUDGE, rec, { lead: 'qa' });
+      const cardEl = ctx.doc.querySelector('.ask-card');
+      const shapeBtn = cardEl.querySelector('[data-ask-card-shape]');
+      assert.equal(shapeBtn.hasAttribute('aria-disabled'), false);
+      shapeBtn.click();
+      await settle(ctx);
+      assert.equal(rec.puts, undefined);
+      assert.equal(rec.runBodies[0].shape.lead, 'qa');
+      cardEl.querySelector('[data-ask-card-start]').click();
+      await settle(ctx);
+      assert.equal(rec.runBodies[1].workflowId, 'wf_default');
+      assert.equal('shape' in rec.runBodies[1], false);
+    }),
+    shapeRow('a failing save shows the error toast and the run still starts', async () => {
+      const rec = {};
+      const ctx = await openRequirements(REQ_NUDGE, rec, { lead: null, putFails: true });
+      const cardEl = ctx.doc.querySelector('.ask-card');
+      cardEl.querySelector('.spick-b').click();
+      [...ctx.doc.querySelectorAll('.wfv-menu [role="menuitemradio"]')][3].click();
+      cardEl.querySelector('[data-ask-card-shape]').click();
+      await settle(ctx);
+      assert.equal(rec.runBodies.length, 1);
+      assert.match(ctx.doc.querySelector('.toast.err .tt')?.textContent ?? '', /Could not save your lead role\. It is used for this run only\./);
+    }),
+    shapeRow('a small nudge keeps Shaper and Run as is (btn-primary), with the facts line', async () => {
+      const rec = {};
+      const ctx = await openRequirements({ ...REQ_NUDGE, size: 'small' }, rec, { lead: 'qa' });
+      const cardEl = ctx.doc.querySelector('.ask-card');
+      const shapeBtn = cardEl.querySelector('[data-ask-card-shape]');
+      const startBtn = cardEl.querySelector('[data-ask-card-start]');
+      assert.equal(shapeBtn.textContent, 'Shaper');
+      assert.ok(!shapeBtn.classList.contains('btn-primary'));
+      assert.ok(startBtn.classList.contains('btn-primary'));
+      assert.equal(startLabel(startBtn), 'Run as is');
+      assert.ok(cardEl.querySelector('.shape-facts'));
+      assert.ok(cardEl.querySelector('.shape-chips'));
+    }),
+  ]);
+});
+
+// Literal, captured before the direct-card change. tag-input-list-N: the tag input's datalist id is a per-process counter.
+const GOLDEN_DIRECT_ASK_CARD = `<div class="ask-card ask-rp"><header class="ask-rp-head"><div class="ask-rp-eyebrow"><span class="ask-rp-kicker ask-rp-kicker-shape">Shaper</span><span class="ask-rp-from">from this chat</span></div><div class="ask-rp-title"><input type="text" aria-label="Run title" placeholder="Run title"><span class="ask-rp-edit">✎ click to rename</span></div><div class="ask-rp-tags"><div class="tag-input"><span class="tag-input-chips"></span><input class="input tag-input-text" placeholder="client:acme, team:web…" aria-label="Cost tags" list="tag-input-list-N"><datalist id="tag-input-list-N"></datalist><span class="hint tag-input-hint" aria-live="polite"></span></div><span class="tag-rule-pickers"></span></div></header><div class="ask-rp-sec ask-rp-shape-main"><div class="ask-rp-brief-preview">Fix the login bug</div><button class="link-btn ask-rp-brief-more" type="button" data-ask-card-brief-more="">Show brief</button><div class="ask-rp-sec ask-rp-brief-host" hidden=""><div class="ask-rp-sec-head"><span class="ask-rp-sec-title">Task brief</span><span class="ask-rp-sec-sub">what the first agent reads · Markdown ok</span><div class="ask-rp-pills"></div></div><textarea class="ask-card-brief ask-rp-brief" aria-label="Task brief" style="height: 2px;"></textarea><div class="ask-rp-brief-foot"><span><kbd>@</kbd> mention an attached file</span><span class="ask-rp-count">17 chars</span></div></div><div class="ask-card-target"><div class="ask-rp-grid two"><div class="ask-rp-field"><span class="ask-rp-label">Project</span><select class="select ask-card-project-select" aria-label="Project"><option value="/repos/proj">proj</option><option value="/repos/other">other (missing)</option></select></div><div class="ask-rp-field" data-needs-git=""><span class="ask-rp-label">Base branch</span><select class="select ask-card-source" aria-label="Source branch"><option value="">current branch (auto)</option><option value="main">main</option><option value="dev">dev</option></select></div></div></div><div class="ask-rp-field"><span class="ask-rp-label">Perspectives</span><div class="shape-card"><div class="shape-chips" role="group" aria-label="Perspectives"><button type="button" class="shape-chip on" data-perspective="product" title="Problem, goal, users, success criteria, out of scope." aria-pressed="true" disabled="" data-locked="1">Product</button><button type="button" class="shape-chip on" data-perspective="qa" title="Acceptance criteria as testable checks, a test plan with file names." aria-pressed="true">QA</button><button type="button" class="shape-chip on" data-perspective="security" title="Trust boundaries, inputs, secrets, permissions, abuse cases." aria-pressed="true">Security</button><button type="button" class="shape-chip-more">+ 5 more</button></div></div></div><div class="ask-rp-shape-what"><span class="ask-rp-label">What happens</span><span>Up to 3 questions, then a plan you approve.</span></div></div><details class="ask-rp-adv disclosure" data-ask-card-advanced=""><summary class="ask-rp-adv-sum">Advanced · Claude · Normal guardrails · 3 agents on workflow defaults</summary><p class="ask-rp-why">UI-only change on one module.</p><div class="ask-rp-sec"><div class="ask-rp-sec-head"><span class="ask-rp-sec-title">Where it runs</span><span class="ask-rp-sec-sub">proj · branch current · feature worca/fix-login</span><div class="seg seg-sm ask-card-seg" role="tablist" data-min-level="advanced"><button class="ask-card-seg-btn" type="button" role="tab" data-ask-card-seg="none" aria-selected="false">No project</button><button class="ask-card-seg-btn on" type="button" role="tab" data-ask-card-seg="project" aria-selected="true">Project</button><button class="ask-card-seg-btn" type="button" role="tab" data-ask-card-seg="workspace" aria-selected="false">Workspace</button></div></div><div class="ask-rp-grid two ask-rp-adv-branch"><div class="ask-rp-field" data-min-level="advanced" data-level-keep="1" data-needs-git=""><span class="ask-rp-label">Feature branch<span class="ask-rp-hint"> · created for the run</span></span><input type="text" class="input ask-card-feature" aria-label="Feature branch" title="worca/fix-login"></div><div class="ask-rp-field" data-min-level="advanced" data-needs-git=""><span class="ask-rp-label">Run on the source branch<span class="ask-rp-hint"> · commits onto the source branch</span></span><label class="switch-row"><input type="checkbox" class="sw-input ask-card-same-source" role="switch" aria-label="Run on the source branch"><span class="switch" aria-hidden="true"></span><span class="switch-why" hidden=""></span></label></div></div><div class="ask-rp-grid wf-row"><div class="ask-rp-field"><span class="ask-rp-label">Workflow</span><select class="select ask-card-workflow" aria-label="Workflow" disabled=""><option value="wf_default">Default</option></select><span class="ask-rp-wfdesc" data-for="workflow">3 agents · 1 loop · Review → Implement, max 3 cycles</span></div><div class="ask-rp-field" data-min-level="advanced"><span class="ask-rp-label">Engine</span><select class="select ask-card-engine" aria-label="Engine"><option value="">Claude (default)</option><option value="claude" hidden="">Claude</option><option value="codex">Codex (Beta)</option><option value="copilot">Copilot (Beta)</option><option value="cursor">Cursor (Beta)</option><option value="gemini">Gemini CLI (Beta)</option><option value="goose">Goose (Beta)</option><option value="opencode">OpenCode (Beta)</option><option value="qwen">Qwen Code (Beta)</option></select></div><div class="ask-rp-field" data-min-level="advanced" data-level-keep="1"><span class="ask-rp-label">Guardrails</span><select class="select ask-card-guardrails" aria-label="Guardrails"><option value="permissive">Permissive</option><option value="normal">Normal</option><option value="strict">Strict</option></select><span class="ask-rp-wfdesc" data-for="guardrails">Applies to every agent in this run</span></div></div><div class="ask-rp-grid wf-row"><div class="ask-rp-field" data-min-level="advanced"><span class="ask-rp-label">Pull request when done</span><select class="select ask-card-pr" aria-label="Pull request when done"><option value="">Use the setting</option><option value="none">Don't create a PR</option><option value="draft">Create a draft PR</option><option value="ready">Create a PR ready for review</option></select></div></div></div><div class="ask-rp-sec ask-rp-lane" data-min-level="expert"><div class="ask-rp-sec-head"><span class="ask-rp-sec-title">Agents</span><span class="ask-rp-sec-sub">proposed by Worca · 0 overrides of the workflow defaults</span><button class="ask-rp-mini" type="button" hidden="">Reset to proposal</button></div><div class="ask-rp-agents"><div class="ask-rp-tile" data-node-id="n_plan"><div class="ask-rp-tile-l1"><span class="ask-rp-acc violet"></span><div class="ask-rp-name"><b>Plan</b><small>step 1 · workflow default</small></div><select class="select ask-rp-model" aria-label="Model for Plan"><option value="">inherit (workflow default)</option><optgroup label="Claude sign-in"><option value="claude-opus-5-5">Opus 5.5</option><option value="claude-fable-5-1">Fable 5.1 (1M)</option><option value="claude-haiku-4-5">Haiku 4.5</option></optgroup></select><div class="ask-rp-eff unset" role="radiogroup" aria-label="Effort for Plan"><button class="ask-rp-effbtn" type="button" role="radio" aria-checked="false" disabled="">medium</button><button class="ask-rp-effbtn" type="button" role="radio" aria-checked="false" disabled="">high</button><button class="ask-rp-effbtn" type="button" role="radio" aria-checked="false" disabled="">xhigh</button><button class="ask-rp-effbtn" type="button" role="radio" aria-checked="false" disabled="">max</button></div></div><div class="ask-rp-tile-l2"><label class="switch-row ask-rp-ctl"><input type="checkbox" class="sw-input" role="switch" aria-label="Fan-out" data-ctl="fanOut"><span class="switch" aria-hidden="true"></span><span class="switch-label">Fan-out</span><span class="switch-why" hidden=""></span></label><label class="ask-rp-ctl"><span>Sub-agents</span><select class="select ask-rp-subagent" aria-label="Sub-agent model for Plan" title="Model for the sub-agents this node spawns (needs fan-out)"><option value="">subs: default (agent picks)</option><option value="sonnet" title="Always Claude's Sonnet: sub-agents don't follow your model roles">subs: Sonnet (everyday coding)</option><option value="opus" title="Always Claude's Opus: sub-agents don't follow your model roles">subs: Opus (deep thinking)</option><option value="fable" title="Always Claude's Fable: sub-agents don't follow your model roles">subs: Fable (premium)</option><option value="auto">subs: agent picks</option><option value="inherit">subs: inherit</option></select></label><label class="switch-row ask-rp-ctl"><input type="checkbox" class="sw-input" role="switch" aria-label="Questions" data-ctl="questions"><span class="switch" aria-hidden="true"></span><span class="switch-label">Questions</span><span class="switch-why" hidden=""></span></label></div></div><div class="ask-rp-tile" data-node-id="n_impl"><div class="ask-rp-tile-l1"><span class="ask-rp-acc green"></span><div class="ask-rp-name"><b>Implement</b><small>step 2 · workflow default</small></div><select class="select ask-rp-model" aria-label="Model for Implement"><option value="">inherit (workflow default)</option><optgroup label="Claude sign-in"><option value="claude-opus-5-5">Opus 5.5</option><option value="claude-fable-5-1">Fable 5.1 (1M)</option><option value="claude-haiku-4-5">Haiku 4.5</option></optgroup></select><div class="ask-rp-eff" role="radiogroup" aria-label="Effort for Implement"><button class="ask-rp-effbtn" type="button" role="radio" aria-checked="false">medium</button><button class="ask-rp-effbtn on" type="button" role="radio" aria-checked="true">high</button><button class="ask-rp-effbtn" type="button" role="radio" aria-checked="false">xhigh</button><button class="ask-rp-effbtn" type="button" role="radio" aria-checked="false">max</button></div></div><div class="ask-rp-tile-l2"><label class="switch-row ask-rp-ctl"><input type="checkbox" class="sw-input" role="switch" aria-label="Fan-out" data-ctl="fanOut"><span class="switch" aria-hidden="true"></span><span class="switch-label">Fan-out</span><span class="switch-why" hidden=""></span></label><label class="ask-rp-ctl"><span>Sub-agents</span><select class="select ask-rp-subagent" aria-label="Sub-agent model for Implement" title="Model for the sub-agents this node spawns (needs fan-out)"><option value="">subs: default (agent picks)</option><option value="sonnet" title="Always Claude's Sonnet: sub-agents don't follow your model roles">subs: Sonnet (everyday coding)</option><option value="opus" title="Always Claude's Opus: sub-agents don't follow your model roles">subs: Opus (deep thinking)</option><option value="fable" title="Always Claude's Fable: sub-agents don't follow your model roles">subs: Fable (premium)</option><option value="auto">subs: agent picks</option><option value="inherit">subs: inherit</option></select></label><label class="switch-row ask-rp-ctl"><input type="checkbox" class="sw-input" role="switch" aria-label="Questions" data-ctl="questions"><span class="switch" aria-hidden="true"></span><span class="switch-label">Questions</span><span class="switch-why" hidden=""></span></label></div></div><div class="ask-rp-tile" data-node-id="n_rev"><div class="ask-rp-tile-l1"><span class="ask-rp-acc peach"></span><div class="ask-rp-name"><b>Review</b><small>step 3 · workflow default</small></div><select class="select ask-rp-model" aria-label="Model for Review"><option value="">inherit (workflow default)</option><optgroup label="Claude sign-in"><option value="claude-opus-5-5">Opus 5.5</option><option value="claude-fable-5-1">Fable 5.1 (1M)</option><option value="claude-haiku-4-5">Haiku 4.5</option></optgroup></select><div class="ask-rp-eff unset" role="radiogroup" aria-label="Effort for Review"><button class="ask-rp-effbtn" type="button" role="radio" aria-checked="false" disabled="">medium</button><button class="ask-rp-effbtn" type="button" role="radio" aria-checked="false" disabled="">high</button><button class="ask-rp-effbtn" type="button" role="radio" aria-checked="false" disabled="">xhigh</button><button class="ask-rp-effbtn" type="button" role="radio" aria-checked="false" disabled="">max</button></div></div><div class="ask-rp-tile-l2"><label class="switch-row ask-rp-ctl"><input type="checkbox" class="sw-input" role="switch" aria-label="Fan-out" data-ctl="fanOut"><span class="switch" aria-hidden="true"></span><span class="switch-label">Fan-out</span><span class="switch-why" hidden=""></span></label><label class="ask-rp-ctl"><span>Sub-agents</span><select class="select ask-rp-subagent" aria-label="Sub-agent model for Review" title="Model for the sub-agents this node spawns (needs fan-out)"><option value="">subs: default (agent picks)</option><option value="sonnet" title="Always Claude's Sonnet: sub-agents don't follow your model roles">subs: Sonnet (everyday coding)</option><option value="opus" title="Always Claude's Opus: sub-agents don't follow your model roles">subs: Opus (deep thinking)</option><option value="fable" title="Always Claude's Fable: sub-agents don't follow your model roles">subs: Fable (premium)</option><option value="auto">subs: agent picks</option><option value="inherit">subs: inherit</option></select></label></div></div><div class="ask-rp-agents-foot"><span class="ask-rp-foot-text">Runs on this project's agent settings</span><label class="switch-row ask-rp-ctl"><input type="checkbox" class="sw-input" role="switch" aria-label="Save as project defaults" data-ctl="saveDefaults"><span class="switch" aria-hidden="true"></span><span class="switch-label">Save as project defaults</span><span class="switch-why" hidden=""></span></label></div></div></div><div class="ask-rp-adv-sched"><button class="btn btn-sm btn-quiet ask-card-not-now ask-card-later" type="button" data-ask-card-schedule="" title="Start this run later" data-min-level="advanced">Schedule…</button></div></details><div class="ask-card-err"></div><footer class="ask-rp-foot"><button class="link-btn ask-card-open-np" type="button" data-ask-card-open-np="">↗ Open in New run</button><button class="btn btn-sm btn-quiet ask-card-not-now" type="button" data-ask-card-dismiss="">Not now</button><button class="btn btn-sm btn-primary" type="button" data-ask-card-start="" title=""><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8V4Z"></path></svg>Start planning</button></footer></div>`;
+
+test('ask-panel-card: flag off: golden direct card', async () => {
+  const ctx = await openWithCard({ ...PROJECT_CARD, shape: { perspectives: ['qa', 'security'], size: 'large' } }, {});
+  await settle(ctx);
+  ctx.flush();
+  const html = ctx.doc.querySelector('.ask-card').outerHTML.replace(/tag-input-list-\d+/g, 'tag-input-list-N');
+  assert.equal(html, GOLDEN_DIRECT_ASK_CARD);
+});
+
+// A direct Shaper card (card.shape) with shapeRequirements on, medium or large: Shape requirements is the only start
+// button, under today's small card without Perspectives and What happens. Small or no size: today's card plus the facts line.
+const DIRECT_SHAPE = { perspectives: ['qa', 'security'], size: 'large' };
+const openDirect = async (shape, rec, answerer) => {
+  _resetAnswerer();
+  const ctx = await openWithCard({ ...PROJECT_CARD, shape }, rec, { fetchHandler: answererApi(rec, answerer), flags: 'shapeRequirements' });
+  await settle(ctx);
+  ctx.flush();
+  return { ctx, cardEl: ctx.doc.querySelector('.ask-card') };
+};
+const pickLead = (ctx, cardEl, i = 1) => {
+  cardEl.querySelector('.spick-b').click();
+  [...ctx.doc.querySelectorAll('.wfv-menu [role="menuitemradio"]')][i].click();
+};
+const fieldLabels = (cardEl) => [...cardEl.querySelectorAll('.ask-rp-shape-main .ask-rp-label')].map((l) => l.textContent);
+
+test('ask-panel-card: direct card, flag on, medium or large', async () => {
+  await checkRows([
+    shapeRow('direct card, flag on, large: the requirements layout', async () => {
+      const { cardEl } = await openDirect(DIRECT_SHAPE, {}, { lead: 'architect' });
+      const shapeCard = cardEl.querySelector('.shape-card');
+      assert.equal(shapeCard.previousElementSibling.tagName, 'HEADER');
+      assert.ok(shapeCard.nextElementSibling.matches('.ask-rp-shape-main'));
+      assert.equal(shapeCard.querySelector('.shape-facts').textContent, 'Large task · no estimate yet');
+      assert.equal(shapeCard.querySelector('.shape-lead-line').textContent, 'You lead as Engineering, supported by QA and Security.');
+      assert.doesNotMatch(cardEl.textContent, /What happens|Up to 3 questions/);
+      assert.equal(cardEl.querySelector('.ask-rp-shape-what'), null);
+      assert.equal(cardEl.querySelector('.shape-chips'), null);
+      assert.equal(fieldLabels(cardEl).includes('Perspectives'), false);
+      assert.equal(cardEl.querySelector('[data-ask-card-start]'), null);
+      const shapeBtn = cardEl.querySelector('[data-ask-card-shape]');
+      assert.equal(shapeBtn.textContent, 'Shape requirements');
+      assert.ok(shapeBtn.classList.contains('btn-primary'));
+      assert.deepEqual([...cardEl.querySelector('.ask-rp-foot').children].map((b) => b.textContent), ['↗ Open in New run', 'Not now', 'Shape requirements']);
+      const main = cardEl.querySelector('.ask-rp-shape-main');
+      assert.ok(main.querySelector('.ask-rp-brief-preview') && main.querySelector('.ask-card-project-select') && main.querySelector('.ask-card-source'));
+      assert.ok(cardEl.querySelector('[data-ask-card-advanced]'));
+      assert.equal(cardEl.querySelector('.ask-card-workflow').disabled, true);
+    }),
+    shapeRow('direct card, flag on, medium: the same layout', async () => {
+      const { cardEl } = await openDirect({ ...DIRECT_SHAPE, size: 'medium' }, {}, { lead: 'architect' });
+      assert.equal(cardEl.querySelector('.shape-facts').textContent, 'Medium task · no estimate yet');
+      assert.equal(cardEl.querySelector('[data-ask-card-shape]').textContent, 'Shape requirements');
+      assert.equal(cardEl.querySelector('[data-ask-card-start]'), null);
+    }),
+    shapeRow('direct card: blocked until a lead; the pick starts the run', async () => {
+      const rec = {};
+      const { ctx, cardEl } = await openDirect(DIRECT_SHAPE, rec, { lead: null });
+      const shapeBtn = cardEl.querySelector('[data-ask-card-shape]');
+      assert.equal(cardEl.querySelector('.spick-b').textContent, 'pick a role');
+      assert.equal(shapeBtn.getAttribute('aria-disabled'), 'true');
+      assert.equal(ctx.doc.getElementById(shapeBtn.getAttribute('aria-describedby')).textContent, 'You lead as');
+      shapeBtn.click();
+      await settle(ctx);
+      assert.equal(rec.runBodies, undefined, 'blocked: nothing was started');
+      pickLead(ctx, cardEl);
+      assert.equal(shapeBtn.hasAttribute('aria-disabled'), false);
+      assert.equal(rec.puts, undefined, 'a pick alone does not save');
+      shapeBtn.click();
+      await settle(ctx);
+      assert.deepEqual(rec.puts, [{ lead: 'architect' }]);
+      assert.equal(rec.runBodies[0].workflowId, 'wf_shape');
+      assert.deepEqual(rec.runBodies[0].shape, { lead: 'architect', perspectives: ['product', 'architect', 'qa', 'security'], size: 'large' });
+    }),
+    shapeRow('direct card: a saved lead needs neither a pick nor a save', async () => {
+      const rec = {};
+      const { ctx, cardEl } = await openDirect(DIRECT_SHAPE, rec, { lead: 'qa' });
+      const shapeBtn = cardEl.querySelector('[data-ask-card-shape]');
+      assert.equal(shapeBtn.hasAttribute('aria-disabled'), false);
+      shapeBtn.click();
+      await settle(ctx);
+      assert.equal(rec.puts, undefined);
+      assert.equal(rec.runBodies[0].shape.lead, 'qa');
+    }),
+    shapeRow('direct card: start with no Start button', async () => {
+      const rec = {};
+      const { ctx, cardEl } = await openDirect(DIRECT_SHAPE, rec, { lead: 'qa' });
+      const shapeBtn = cardEl.querySelector('[data-ask-card-shape]');
+      shapeBtn.click();
+      assert.equal(shapeBtn.disabled, true);
+      shapeBtn.click();
+      await settle(ctx);
+      assert.equal(rec.runBodies.length, 1, 'a double click posts once');
+      assert.equal(shapeBtn.disabled, false);
+      const failing = { runResponse: { ok: false, status: 500, json: async () => ({ error: 'the server said no' }) } };
+      const f = await openDirect(DIRECT_SHAPE, failing, { lead: 'qa' });
+      const btn = f.cardEl.querySelector('[data-ask-card-shape]');
+      btn.click();
+      await settle(f.ctx);
+      assert.equal(f.cardEl.querySelector('.ask-card-err').textContent, 'the server said no');
+      assert.equal(btn.disabled, false);
+      assert.equal(f.cardEl.querySelector('.ask-card-workflow').disabled, true);
+    }),
+    shapeRow('direct card: an enforced tag blocks Shape requirements', async () => {
+      const rec = { tagRules: { source: 'settings', home: null, enforce: true, prefill: [], dims: [CC_DIM] } };
+      const { ctx, cardEl } = await openDirect(DIRECT_SHAPE, rec, { lead: 'qa' });
+      const shapeBtn = cardEl.querySelector('[data-ask-card-shape]');
+      assert.equal(shapeBtn.disabled, true);
+      assert.equal(shapeBtn.title, 'Add Cost centre to start');
+      const pick = cardEl.querySelector('.ask-rp-tags .tag-rule-pickers select');
+      pick.value = '4420'; pick.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
+      assert.equal(shapeBtn.disabled, false);
+      assert.equal(shapeBtn.title, '');
+      shapeBtn.click();
+      await settle(ctx);
+      assert.equal(rec.runBodies.length, 1);
+    }),
+    shapeRow('direct card: Schedule… is off until a lead, then saves it', async () => {
+      const rec = {};
+      const { ctx, cardEl } = await openDirect(DIRECT_SHAPE, rec, { lead: null });
+      const later = cardEl.querySelector('[data-ask-card-schedule]');
+      assert.equal(later.disabled, true);
+      pickLead(ctx, cardEl);
+      assert.equal(later.disabled, false);
+      // The sheet reads the page's globals.
+      const saved = globalThis.document;
+      globalThis.document = ctx.doc;
+      try {
+        later.click();
+        await ctx.tick();
+        ctx.doc.querySelector('.sched-ok').click();
+        await settle(ctx);
+      } finally { globalThis.document = saved; }
+      assert.deepEqual(rec.puts, [{ lead: 'architect' }]);
+      assert.ok(rec.runBodies[0].scheduledFor);
+      assert.equal(rec.runBodies[0].shape.lead, 'architect');
+    }),
+  ]);
+});
+
+test('ask-panel-card: direct card, flag on, small or no size', async () => {
+  const smallRule = (name, shape, facts, posted) => shapeRow(name, async () => {
+    const rec = {};
+    const { ctx, cardEl } = await openDirect(shape, rec, { lead: 'qa' });
+    const band = cardEl.querySelector('.shape-card');
+    assert.equal(band.querySelector('.shape-facts').textContent, facts);
+    assert.equal(band.closest('.ask-rp-shape-main'), null);
+    assert.ok(band.nextElementSibling.matches('.ask-rp-shape-main'));
+    assert.equal(band.querySelector('.shape-chips'), null);
+    assert.equal(cardEl.querySelector('.ask-rp-shape-main .ask-rp-field .shape-chips').closest('.ask-rp-field').querySelector('.ask-rp-label').textContent, 'Perspectives');
+    assert.equal(cardEl.querySelector('.ask-rp-shape-what').textContent, 'What happensUp to 3 questions, then a plan you approve.');
+    assert.equal(cardEl.querySelector('[data-ask-card-shape]'), null);
+    const startBtn = cardEl.querySelector('[data-ask-card-start]');
+    assert.equal(startLabel(startBtn), 'Start planning');
+    assert.ok(startBtn.classList.contains('btn-primary'));
+    startBtn.click();
+    await settle(ctx);
+    assert.deepEqual(rec.runBodies[0].shape, posted);
+    assert.equal(rec.puts, undefined);
+  });
+  await checkRows([
+    smallRule('direct card, flag on, small', { perspectives: ['qa'], size: 'small' }, 'Small task · no estimate yet', { perspectives: ['product', 'qa'], size: 'small' }),
+    smallRule('direct card, flag on, no size', { perspectives: ['qa'] }, 'This task · no estimate yet', { perspectives: ['product', 'qa'] }),
   ]);
 });

@@ -417,3 +417,15 @@ test('no silent fallbacks: a Codex run names a dropped Security pick once; the b
   assert.deepEqual(h.orch.resolved.nodeCtx.n_roles.wanted, { model: 'claude-sonnet-5-5', effort: 'medium', source: 'template' });
   assert.equal(auditOf(h.orch).filter((t) => t === `${line}.`).length, 1, 'one audit line');
 });
+
+test('a requirements role-review node fires its requirements output with the reviewed file\'s path; the plan node still fires plan', async () => {
+  const h = start({ workflowId: 'wf_shape_req', shape: { ...SHAPE, size: 'large' } });
+  const res = await h.done;
+  assert.equal(res.status, 'done', res.error);
+  const out = h.orch._graphSnapshot.outputs;
+  assert.ok(out['n_req.requirements']?.path, 'the drafter published');
+  assert.equal(out['n_reqroles.requirements'].path, out['n_req.requirements'].path, 'the reviewed draft passes on');
+  assert.ok(out['n_reqroles.findings'].path.endsWith('-requirements-findings-r1.md'));
+  assert.ok(out['n_roles.plan'].path, 'the plan role review still fires plan');
+  assert.ok(out['n_roles.findings'].path.endsWith('-role-findings-r1.md'));
+});

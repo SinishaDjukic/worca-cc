@@ -597,6 +597,23 @@ export function runGitCapture(cwd, args, { signal, timeoutMs = SLOW_GIT_TIMEOUT_
 }
 
 /**
+ * `paths` minus the ones an ignore rule already covers. `git add` exits 1 on an exclude pathspec under an ignored
+ * directory ("paths are ignored … use -f"): a project's own `.claude/` line over the memory mount fails every commit.
+ * `add -A` never stages an ignored path anyway, so dropping its exclude changes nothing else. `runGit(args)` resolves
+ * to `{ code, stdout }`; when check-ignore itself fails, every path is kept.
+ * @param {string[]} paths
+ * @param {(args:string[]) => Promise<{code:number, stdout:string}>} runGit
+ * @returns {Promise<string[]>}
+ */
+export async function withoutIgnored(paths, runGit) {
+  if (!paths.length) return paths;
+  const r = await runGit(['-c', 'core.quotePath=false', 'check-ignore', '--', ...paths]);
+  if (r.code !== 0) return paths;   // 1: none ignored; anything else: keep them all
+  const ignored = new Set(r.stdout.split('\n').map((l) => l.trim()).filter(Boolean));
+  return paths.filter((p) => !ignored.has(p));
+}
+
+/**
  * Commit a retained worktree's work onto its checked-out branch: the end-of-run commit that failed
  * (run-harness `_commitWork`), asked for again by Apply to branch. Same staging — each `exclude` path is
  * dropped from the index first (`git add -A` with an exclude never unstages) and excluded from `add -A`
@@ -636,7 +653,7 @@ export async function commitStagedWork(worktreeDir, { message, exclude = [], byp
     return { ok: false, step: 'add', message: `the worktree has unresolved conflicts (${files.slice(0, 5).join(', ')}${files.length > 5 ? ', and more' : ''}): resolve them or abort the merge, then apply again` };
   }
   for (const p of exclude) await indexWrite(['rm', '-r', '--cached', '-q', '--ignore-unmatch', '--', p]);
-  const present = exclude.filter((p) => existsSync(join(worktreeDir, p)));
+  const present = await withoutIgnored(exclude.filter((p) => existsSync(join(worktreeDir, p))), run);
   const add = await indexWrite(['add', '-A', '--', '.', ...present.map((p) => `:(exclude)${p}`)]);
   if (!add.ok) return { ok: false, step: 'add', message: msgOf(add) };
   const staged = await run(['diff', '--cached', '--quiet']);

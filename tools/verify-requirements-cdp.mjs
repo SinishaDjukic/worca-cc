@@ -252,7 +252,13 @@ if (!ONLY_A6) {   // --only=a6 skips to the A6 section
         && !c.querySelector('[data-ui="start-go"]').disabled; })()`)));
   const seqNo = await A.evalJs(`location.hash.split('/').pop()`);
   await A.evalJs(`document.querySelector('#requirements-host .req-build [data-ui="start-go"]').click()`);
-  check('Start in Worca: one run row links to #running/<id> and the API has starts[0].runId',
+  check('Start in Worca (Auto): the page goes to #running/<id>, and the API has that starts[0].runId',
+    await until(() => A.evalJs(`(async () => { if (!location.hash.startsWith('#running/')) return false;
+      const f = (await (await fetch('/api/requirements/${seqNo}')).json()).feature;
+      return !!f.starts?.[0]?.runId && location.hash === '#running/' + f.starts[0].runId && f.earlyStartReason === null; })()`), 15000));
+  // Back to the feature: its runs card lists the run the start made.
+  await A.evalJs(`location.hash = '#requirements/feature/${seqNo}'`);
+  check('back on the feature: one run row links to #running/<id> of the start',
     await until(() => A.evalJs(`(async () => { const rows = [...document.querySelectorAll('#requirements-host .req-runs a.req-run-row')];
       if (rows.length !== 1 || !rows[0].getAttribute('href').startsWith('#running/')) return false;
       const f = (await (await fetch('/api/requirements/${seqNo}')).json()).feature;

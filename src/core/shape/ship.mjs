@@ -13,7 +13,8 @@ export const SHIP_MODES = Object.freeze(['stacked', 'one']);
 export function onePrBody(slices, keptUrl = null, { maxChars = Infinity } = {}) {
   // One ship flow: a slice without a PR (the normal case now) has no Draft line.
   const draftLine = (s) => (!s.pr || !s.pr.url ? '' : s.pr.url === keptUrl ? 'Draft: this pull request' : `Draft: ${s.pr.url} (closed)`);
-  const build = (withLists) => slices.map((s) => `## Slice ${s.index}: ${s.title}\n\n${s.summary ? `${s.summary}\n\n` : ''}`
+  const satisfies = (s) => (s.requirements?.ids?.length ? `Satisfies: ${s.requirements.ids.join(', ')}\n\n` : '');
+  const build = (withLists) => slices.map((s) => `## Slice ${s.index}: ${s.title}\n\n${satisfies(s)}${s.summary ? `${s.summary}\n\n` : ''}`
     + `${withLists && s.checklistMd ? `${s.checklistMd}\n\n` : ''}${draftLine(s)}`.trimEnd()).join('\n\n');
   const full = build(true);
   const closedAny = slices.some((s) => s.pr && s.pr.url && s.pr.url !== keptUrl);

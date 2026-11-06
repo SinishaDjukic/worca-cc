@@ -4,6 +4,7 @@
 // the brief carry, and the spec ids that mention a file. The job (attachment-job.mjs) does the disk, the queue and calls.
 import { clip, RequirementsError } from './spec.mjs';
 import { asData, RoundError } from './round.mjs';
+import { isGenericBinary } from '../../shared/artifact-kinds.mjs';
 
 export const REQ_ATTACH_LIMITS = Object.freeze({
   files: 10,                        // per feature, and documents per brief (D7)
@@ -41,6 +42,9 @@ export function uniqueName(name, taken = []) {
 
 export const KIND_TITLES = Object.freeze({ text: 'Text', image: 'Image', binary: 'PDF' });   // the page; the read prompt's Kind
 export const KIND_WORDS = Object.freeze({ text: 'text', image: 'image', binary: 'PDF' });    // the <attachments> block
+/** A generic binary (octet-stream) is neither a PDF nor an image: it is a "File". */
+export const kindTitle = (row) => (isGenericBinary(row) ? 'File' : KIND_TITLES[row.kind] || 'Text');
+export const kindWord = (row) => (isGenericBinary(row) ? 'file' : KIND_WORDS[row.kind] || 'text');
 
 /** 640 B, 9 KB, 2.1 MB. */
 export function sizeLabel(bytes) {
@@ -53,14 +57,15 @@ export function sizeLabel(bytes) {
 // ---- uploads (D7) ----
 
 export const OFFICE_EXTENSIONS = Object.freeze(['.docx', '.xlsx', '.pptx']);
-const READS = 'Worca reads text, images and PDF.';
 // An upload without a usable name (an API caller's bare value) reads "A file was not added: …", not "file was not added".
 const shown = (name) => (String(name ?? '').trim() ? displayName(name) : 'A file');
 
-/** A type Worca does not read: Office files get the PDF hint. */
-export function officeRefusal(name, ext) {
-  const n = shown(name);
-  return OFFICE_EXTENSIONS.includes(String(ext || '').toLowerCase()) ? `${n} was not added: ${READS} Save it as PDF to attach it here.` : `${n} was not added: ${READS}`;
+/** The summary of a generic binary (D9): no model reads it. Office files get the PDF hint. */
+export function genericSummary(name) {
+  const dot = String(name ?? '').lastIndexOf('.');
+  const ext = dot > 0 ? String(name).slice(dot).toLowerCase() : '';
+  const base = "Worca can't read this kind of file. It keeps it as it is, and sends it with a run when that is switched on.";
+  return OFFICE_EXTENSIONS.includes(ext) ? `${base} Save it as PDF and Replace it so Worca can read it.` : base;
 }
 
 /** validateAttachmentUploads' options for a feature's files or a brief's documents; `create` is the New feature form. */
@@ -69,7 +74,6 @@ export function reqUploadOptions({ owner = 'feature', create = false } = {}) {
   const cap = owner === 'brief' ? `a brief takes up to ${L.files} documents.` : `a feature takes up to ${L.files} files.`;
   return {
     maxFiles: L.files, maxBytesPerFile: L.fileBytes, maxBytesPerBinaryFile: L.fileBytes, maxBytesTotal: L.requestBytes,
-    notAllowed: officeRefusal,
     messages: {
       notArray: () => 'attachments must be a list of files',
       tooMany: (_max, name) => `${shown(name)} was not added: ${cap}`,
@@ -106,7 +110,7 @@ export function buildReadPrompt({ feature = null, scopeName = null, file, text =
   const head = feature
     ? [`<feature>${asData(feature.title)}</feature>`, `<description>\n${asData(feature.description)}\n</description>`]
     : [`<scope>${asData(scopeName)}</scope>`];
-  const lines = `Name: ${file.name}\nKind: ${KIND_TITLES[file.kind] || 'Text'}\nSize: ${sizeLabel(file.bytes)}`;
+  const lines = `Name: ${file.name}\nKind: ${kindTitle(file)}\nSize: ${sizeLabel(file.bytes)}`;
   const body = text != null ? `${lines}\n\n${text}`
     : `${lines}\n\nThe working directory, ${dir}, holds only this file: ${path}. Open it with the Read tool.`;
   const ask = question != null
@@ -224,7 +228,7 @@ function entry(first, r) {
  *  A file whose read is not done says its state: with the product owner's text before it, else as "known by name only". */
 export function renderAttachmentsForPrompt(rows, { texts = new Map() } = {}) {
   return (rows || []).map((r) => {
-    const head = `${r.name} (${KIND_WORDS[r.kind] || 'text'}, ${sizeLabel(r.bytes)})`;
+    const head = `${r.name} (${kindWord(r)}, ${sizeLabel(r.bytes)})`;
     const done = r.status === 'done';
     const parts = [hasText(r)
       ? entry(`${done ? head : `${head}: ${stateNote(r)}.`}\nWhat Worca took from it${r.summaryEdited ? " (the product owner's words)" : ''}:\n${r.summary}`, r)

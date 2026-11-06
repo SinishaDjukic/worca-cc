@@ -36,7 +36,7 @@ import {
   assembleResults, persistResults, persistDiffPatch, buildPerProject, rollupSummary,
   retainedWorkPatchName, sizeOfChange,
 } from './results.mjs';
-import { resolveTaskInput, retryWriteback, sourcePlaceholderTitle, ticketRunTitle } from './sources.mjs';
+import { reportedAuditLine, resolveTaskInput, retryWriteback, sourcePlaceholderTitle, ticketRunTitle } from './sources.mjs';
 import { projectKey, projectStorePath, workspaceStorePath, noProjectWorkDir, isNoProjectWorkDir } from './store.mjs';
 import { NO_PROJECT_KEY, NO_PROJECT_NAME, NO_PROJECT_ERRORS, WORK_DIR_NAME, isNoProjectKey } from '../shared/no-project.mjs';
 import { harvestWork, ownWorkDir, WORK_ARTIFACT_KIND } from './no-project-work.mjs';
@@ -88,7 +88,7 @@ import { loadAgentRegistry, DEFAULT_AGENTS_DIR } from './agent-registry.mjs';
 import {
   createWorktree, removeWorktree, suggestBranchName, sanitizeBranchName, resolveDefaultBranch,
   isValidSourceRef, snapshotWorktreePatch, listLocalBranches, worktreeHead, deleteBranchIfAt,
-  reusedBranchBase, isAncestor,
+  reusedBranchBase, isAncestor, withoutIgnored,
 } from './worktree.mjs';
 import { deriveBranchName, uniqueBranch } from './naming.mjs';
 import { flagEnabled } from './flags.mjs';
@@ -132,6 +132,7 @@ import { readRunTags } from './run-tags-store.mjs';
 import { missingRequired } from '../shared/tag-dimensions.mjs';
 import { byActor } from './identity.mjs';
 import { isWorkspaceScanWorkflow, WORKSPACE_RESYNTH_WORKFLOW_ID, MEMORY_DEFRAG_WORKFLOW_ID, AUTO_WORKFLOW_ID } from './graph/builtin-workflows.mjs';
+import { signInRefusalText } from './factory-models.mjs';
 import { agentIdentity } from './agent-user.mjs';
 import { resolveRegistry, requiredOf, toolNameLimitFor, skipReasonText, cachedTeamFor } from './mcp/registry.mjs';
 import { loadCatalog } from './mcp/catalog.mjs';
@@ -1587,7 +1588,9 @@ export class RunHarness extends EventEmitter {
       // row says plugin, with the same source_ref a run started from that ticket would have, so write-back reports to it.
       const reportTo = source.type !== 'plugin' && this.opts.reportTo && typeof this.opts.reportTo === 'object' ? this.opts.reportTo : null;
       const reportMeta = reportTo ? { plugin: reportTo.plugin, sourceId: reportTo.sourceId, taskId: reportTo.taskId, profile: reportTo.profile || null,
-        inputs: reportTo.inputs && typeof reportTo.inputs === 'object' ? reportTo.inputs : null, url: reportTo.url ?? null, title: reportTo.title ?? null } : null;
+        inputs: reportTo.inputs && typeof reportTo.inputs === 'object' ? reportTo.inputs : null, url: reportTo.url ?? null, title: reportTo.title ?? null,
+        // Ticket updates (D6): a Requirements start names the link's tracker project, so write-back picks that project's rule
+        ...(typeof reportTo.project === 'string' && reportTo.project ? { project: reportTo.project } : {}) } : null;
       this.pipeline = await createPipeline(this.projectDir, {
         promptText: input.promptText,
         // ?? keeps the legacy both-set corner byte-identical: inline prompt wins the
@@ -1603,6 +1606,7 @@ export class RunHarness extends EventEmitter {
         tags: this.opts.tags || [],
         labels: this.opts.labels || [],
         runSetup: typeof this.opts.runSetup === 'string' ? this.opts.runSetup : null,
+        prAuto: this.opts.prAuto ?? null,
         ...(this.workMode === 'none' ? { id: this.opts.pipelineId } : {}),
         ...(this.isWorkspace ? {} : { projectKey: this.members[0].projectKey, ...(this.workMode !== 'git' ? { workMode: this.workMode } : {}) }),
         ...(this.isWorkspace ? {
@@ -3281,6 +3285,9 @@ export class RunHarness extends EventEmitter {
       // dropping it would run every node on the CLI default model, often the most expensive one.
       const why = foreignRunModel(this.claude.model, name, this.projectDir);
       if (why) throw engineRefusal(name, why);
+      // A model a person set that needs the Claude Code sign-in while it is signed out (resolveGraph signInBlocked):
+      // refused naming the setting and the model, before any spawn. Unset on resume, which never resolves.
+      if (this._signInBlocked?.length) throw engineRefusal(name, signInRefusalText(this._signInBlocked, this._signInLabels));
       return [];
     }
     const projectRules = this._engineProjectRules ?? null;
@@ -5869,8 +5876,9 @@ export class RunHarness extends EventEmitter {
       await this._gitIndexWrite(['rm', '-r', '--cached', '-q', '--ignore-unmatch', '--',
         ...excludePathspecs.map((s) => s.replace(/^:\(exclude\)/, ''))], gitOpts);
     }
-    const add = excludePathspecs.length
-      ? await this._gitIndexWrite(['add', '-A', '--', '.', ...excludePathspecs], gitOpts)
+    const addEx = await this._addableExcludes(excludePathspecs, gitOpts);
+    const add = addEx.length
+      ? await this._gitIndexWrite(['add', '-A', '--', '.', ...addEx], gitOpts)
       : await this._gitIndexWrite(['add', '-A'], gitOpts);
     if (!add.ok) {
       const message = add.stderr.trim() || `exit ${add.code}`;
@@ -7332,7 +7340,8 @@ export class RunHarness extends EventEmitter {
       if (outcome?.ok === false) {
         this._log('writeback', 'warn', `task-source write-back failed: ${outcome.error} — use "Report result" in the results view to retry`);
       } else if (outcome?.ok && !outcome.skipped) {
-        await appendAudit(this.pipeline.dir, 'Result reported back to the task source.').catch(() => {});
+        // Ticket updates (D11): the plugin's outcome line ends the audit line, quoted as data ("…: “Moved to Resolved.”")
+        await appendAudit(this.pipeline.dir, reportedAuditLine(outcome)).catch(() => {});
       }
     } catch (err) {
       this._log('writeback', 'warn', `task-source write-back failed: ${err?.message || err}`);
@@ -7459,7 +7468,7 @@ export class RunHarness extends EventEmitter {
       if (mode !== 'git') continue;                       // P3 'none': nothing to stage
       // §8.8: the exclusion set is the memory mount in both modes (and the skill mount under
       // detached); an empty set (a refused mount) reproduces the bare argv.
-      const ex = this._excludePathspecs(key);
+      const ex = await this._addableExcludes(this._excludePathspecs(key), { cwd: dir, ignoreAbort });
       const args = ex.length ? ['add', '-A', '-N', '--', '.', ...ex] : ['add', '-A', '-N'];
       const res = await this._gitIndexWrite(args, { cwd: dir, ignoreAbort });
       if (!res.ok && res.stderr && res.stderr.trim()) {
@@ -7495,6 +7504,13 @@ export class RunHarness extends EventEmitter {
     return entries
       .filter((e) => e && e.path && e.kind !== 'claudeMdSection' && e.kind !== 'engineConfig')
       .map((e) => `:(exclude)${e.path}`);
+  }
+
+  /** `ex` (`:(exclude)path` pathspecs) minus the paths an ignore rule already covers, which `git add` refuses (withoutIgnored). */
+  async _addableExcludes(ex, gitOpts) {
+    const paths = ex.map((s) => s.replace(/^:\(exclude\)/, ''));
+    const keep = new Set(await withoutIgnored(paths, (args) => this._git(args, gitOpts)));
+    return ex.filter((_, i) => keep.has(paths[i]));
   }
 
   /**

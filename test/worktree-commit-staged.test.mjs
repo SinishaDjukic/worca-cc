@@ -107,3 +107,15 @@ test('unresolved conflicts are refused before anything is staged or committed', 
   assert.equal(unresolved(), 'README.md', 'the conflict is still unresolved');
   assert.equal(g(['log', '-1', '--format=%s']).stdout.trim(), 'mine', 'nothing committed');
 });
+
+test('a project that ignores .claude/ commits: the mount exclude under the ignored directory is dropped', async () => {
+  const { wt } = await worktree();
+  await writeFile(join(wt.worktreeDir, '.gitignore'), '.claude/\n');
+  await mkdir(join(wt.worktreeDir, MOUNT), { recursive: true });
+  await writeFile(join(wt.worktreeDir, MOUNT, 'rule.md'), 'memory\n');
+  await writeFile(join(wt.worktreeDir, 'work.txt'), 'agent work\n');
+  const r = await commitStagedWork(wt.worktreeDir, { message: 'm', exclude: [MOUNT] });
+  assert.equal(r.ok, true, JSON.stringify(r));
+  const files = git(wt.worktreeDir, ['show', '--name-only', '--format=', 'HEAD']).stdout.trim().split('\n').sort();
+  assert.deepEqual(files, ['.gitignore', 'work.txt']);
+});
