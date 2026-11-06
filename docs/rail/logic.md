@@ -14,6 +14,7 @@ All of it is exported by `ui/public/design-system/components/index.mjs`.
 | Where a state sorts in a list of what waits on you | `sectionOf(word)` | `run-state.mjs` |
 | What an action does, in one line | `actionHelp(label, facts)` | `run-state.mjs` |
 | Where an action leads: another state, a sentence, a confirm, a Dialog | `actionFlow(id, facts)`, `runFlow()` | `run-state.mjs` |
+| The interface mode an action needs | `actionLevel(label)` | `run-state.mjs` |
 | What a run keeps on its own page when it is in a group | `memberKeeps(label)` | `run-state.mjs` |
 | A step's look and a stage's state | `stepLook`, `stageState`, `subState`, `stageMeta`, `defaultStage` | `run-state.mjs` |
 | Confirm, working, then done or failed | `stepFlow(hooks)`, `confirmOf`, `workingWord`, `failureOf` | `step-flow.mjs` |

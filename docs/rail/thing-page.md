@@ -35,6 +35,16 @@ what it belongs to.
 - **A list of what a run produced groups by what each item is** (Code, Tests, Not in the code), not by folder;
   largest first, the folder after the name, each group's head with its count.
 
+**The run page's cases** (each a prototype case; its state's word and action are in `run-state.mjs`):
+- **Paused says why, and offers only what can help.** A usage limit offers the other engine and `Resume at 14:00`; a total budget offers only Open Settings; a team cap asks for a reason and links its policy; `Resume at…` is off on a cost cap and says why. A restart, a time limit, an Away limit and an error are one state with their own detail line. An interrupted run resumes, or says it cannot and offers a new run.
+- **The word stays Rail's; the rest is the detail line:** `2 open issues`, `End not reached`, `Not in dev yet`, `Waiting for the network`, `Copying the folder`, a PR's `Draft`, `Out of date with dev`, `Blocked by branch rules`. Only a host's word for a closed PR changes the word (Closed, Abandoned, Declined).
+- **A PR's stage holds its Watch and its rounds as StepRows.** A round says its request and never raises Needs you; the run that opened the PR does. Create PR's step carries what the automatic PR did, in one line: Opened, `Not opened: why`, Waiting for the feature, Waiting for the requirements to be marked.
+- **Requirements still to mark are Overview's focus and lock Create PR,** which says why (`Mark every requirement … N left`); Not met and Dropped count once they say why.
+- **A review's findings** are under the asking step and in Overview's focus: the gate's issues, one line per role that opens its findings.
+- **A workflow without stages** has one Stepper segment per node. Parallel steps are several `now` rows.
+- **Activity** holds, under its steps: Logs, Agents, Sessions, Step usage (flag `runTelemetry`), Cost. The graph opens from its head, a Dialog without a form with a step log drawer under the graph. **Changes** holds Actions under Check out: services, ports, the patch; in a workspace only the projects that changed; off on a hosted Worca, saying why.
+- **A group reads from the run that holds it up** (`Run 2 of 3 · failed`, `Stopped at run 2`); what you do on a member's page stays in the group and the group follows. A kind `Group` is Independent, in any order. One PR says why it is off.
+
 **What opens, and what does not** (mocks: `plans/rail/mocks/run-expand-rules-*.png`):
 - **A row opens its own detail, in place:** the ask's parts, a file's diff, a step's rounds. Its › points right while
   closed and down while open; focus stays on the row.
