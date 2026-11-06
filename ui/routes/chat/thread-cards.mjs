@@ -535,12 +535,14 @@ async function askCardHandler(req, res) {
             // A new or changed member set: discover the new members and re-scan as chosen (adds: always full).
             const ws = await readWorkspace(result.workspaceId);
             if (ws) {
-              let rescan = await afterMembersChanged(ws, ws.projectPaths.filter((p) => !(before?.projectPaths || []).includes(p)), { rescan: rescanMode });
+              // A created workspace has no scan pick yet: its first scan takes Settings/defaults and keeps it (#1129).
+              let rescan = await afterMembersChanged(ws, ws.projectPaths.filter((p) => !(before?.projectPaths || []).includes(p)), { rescan: rescanMode, seedPick: card.kind === 'create' });
               const short = rescan.mode === 'none' ? prunedNote(rec) : null;
               if (short) rescan = { ...rescan, note: short };
               const what = rescan.mode === 'none' ? 'map pruned, not re-scanned'
                 : rescan.runId ? (rescan.mode === 'partial' ? 'partial re-scan (the overview and notes are rewritten)' : 're-scanning the workspace')
-                : `no re-scan (${rescan.skipped})`;
+                : rescan.needsModel ? 'no re-scan (the workspace has no scan model yet — pick one with Re-scan on its page)'
+                : `no re-scan (${rescan.skipped || 'it could not start'})`;
               result = { ...result, rescan: rescan.mode, ...(rescan.runId ? { rescanRunId: rescan.runId } : {}),
                 detail: `${result.detail} · ${what}${rescan.note ? ` — ${rescan.note}` : ''}` };
             }
