@@ -1538,3 +1538,20 @@ test('Share: a failed draft shows the server error in the err class', async () =
     assert.ok(h.status().classList.contains('err'));
   } finally { h.close(); }
 });
+
+test('Models step: roles for Claude and every engine the check found ready, with the engine switch at every level', async () => {
+  const engines = check('harnesses', 'warn', { label: 'Engines', line: '2 of 3 engines are ready.', facts: { engines: [
+    { name: 'claude', label: 'Claude', ready: true, line: 'Ready.' },
+    { name: 'copilot', label: 'Copilot', ready: true, line: 'Ready.' },
+    { name: 'goose', label: 'Goose', ready: false, line: 'Install the Goose CLI.' }] } });
+  const h = await open({ entry: 'rerun', detect: { checks: [check('claude', 'ok'), engines, check('git', 'ok')] } });
+  try {
+    await h.goTo('models');
+    const sw = h.$('.sa-roles .engine-switch');
+    assert.ok(sw, 'two engines: a switch');
+    assert.equal(sw.dataset.minLevel, undefined, 'shown at every interface level, not Expert only');
+    assert.deepEqual(h.$$('.sa-roles .engine-switch button').map((b) => b.dataset.engine), ['claude', 'copilot'], 'Goose is not ready: no roles step for it');
+    assert.ok(h.$('.inherit-field[data-setting="models.copilot.roles.deep"]'), 'the Copilot roles are there to set');
+    assert.equal(h.$('.inherit-field[data-setting="models.goose.roles.deep"]'), null);
+  } finally { h.close(); }
+});

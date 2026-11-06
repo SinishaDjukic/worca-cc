@@ -828,7 +828,11 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
     let nodeDefaultWanted = null;
     if (fac && !named(cfg.model) && !named(cfg.effort)) {
       const higher = !!(selP.model || selP.effort || legacyP.model || legacyP.effort || team.model || team.effort);
-      if (!pair && !higher && await signedOutFor(fac.pick.model)) {
+      // Your role beats Worca's factory default: the default only fills a slot no role covers (the role layer below
+      // then applies, as it does on any node no other layer names).
+      if (!pair && !higher && roleFor(authored, meta).pick.model) {
+        // nothing: the role applies
+      } else if (!pair && !higher && await signedOutFor(fac.pick.model)) {
         nodeDefaultWanted = cleanPick(fac.pick);
         factoryNotes.push({ setting: fac.setting, nodeId: node.id, wanted: nodeDefaultWanted });
       } else {

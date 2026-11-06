@@ -146,9 +146,10 @@ test('POST …/engine dryRun names the PDFs and the MCP servers the destination 
   store.appendMessage(th.id, { role: 'assistant', text: 'read', status: 'done', model: 'claude-opus-5-5', effort: 'high', engine: 'claude' });
   const pdf = store.addAttachment(th.id, user.id, { name: 'spec.pdf', kind: 'binary', mime: 'application/pdf', data: Buffer.from('%PDF-1.4\n') });
   store.addAttachment(th.id, user.id, { name: 'notes.txt', text: 'plain text travels' });
+  store.addAttachment(th.id, user.id, { name: 'bundle.zip', kind: 'binary', mime: 'application/octet-stream', data: Buffer.from([0x50, 0x4b, 3, 4, 0]) });
   const r = await SWITCH(th.id, { engine: 'codex', model: 'gpt-5.5', effort: 'low', dryRun: true });
   assert.equal(r.status, 200, JSON.stringify(r.body));
-  assert.deepEqual(r.body.attachments, [{ id: pdf.id, name: 'spec.pdf' }], 'the PDF only: Codex reads text');
+  assert.deepEqual(r.body.attachments, [{ id: pdf.id, name: 'spec.pdf' }], 'the PDF only: Codex reads text, a generic file needs no viewing');
   assert.deepEqual(r.body.mcpLost, ['docs'], 'the remote server Codex cannot start');
   assert.deepEqual(store.getThread(th.id).engine, 'claude');
 });

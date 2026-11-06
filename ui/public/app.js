@@ -83,6 +83,7 @@ const state = {
 const GROUP_PAGE = { host: null, route: '', id: '', tab: 'runs', featureId: '', gone: false, failed: false, resolving: false, reentered: false, paintQueued: false, unmarked: 0 };
 
 import { icon } from './icons.mjs';
+import { subagentAliasLabel, subagentAliasTitle } from '../../src/shared/model-roles.mjs';
 import { telemetrySlotHtml, paintTelemetry } from './run-telemetry-view.mjs';
 import { copyButton, copyFromButton, flashCopy, writeClipboard } from './copy-button.mjs';
 import { paintSessionsTab, sessionsTabVisible, sessionsBadge, sessionRowLine, sessionRowEl } from './run-sessions-view.mjs';
@@ -3913,7 +3914,7 @@ function agentSummaryText(row) {
   // counted it read as a contradiction. '' (unset -> auto at run time) shows
   // nothing, like every other unset tunable.
   if (row.subagentModel) {
-    parts.push(row.subagentModel === 'auto' ? 'subs: agent picks' : `subs: ${row.subagentModel}`);
+    parts.push(`subs: ${subagentAliasLabel(row.subagentModel)}`);
   }
   if (row.askQuestions) parts.push('questions');
   if (!parts.length) return 'default';
@@ -4713,10 +4714,10 @@ function renderAgentRows(rows) {
 // (children ride the CLI's own resolution: agent frontmatter, else this node's
 // model); 'auto' is the stored form of the default.
 function renderSubagentModelSelect(sel, value) {
-  const label = (v) => (v === 'auto' ? 'subs: agent picks' : `subs: ${v}`);
+  const label = (v) => `subs: ${subagentAliasLabel(v)}`;
   sel.innerHTML = '';
   sel.appendChild(option('', 'subs: default (agent picks)'));
-  for (const v of state.subagentModels) sel.appendChild(option(v, label(v)));
+  for (const v of state.subagentModels) { const o = option(v, label(v)); const t = subagentAliasTitle(v); if (t) o.title = t; sel.appendChild(o); }
   sel.value = state.subagentModels.includes(value) ? value : '';
 }
 
@@ -10515,7 +10516,7 @@ if (el.wsHowtoBtn) el.wsHowtoBtn.addEventListener('click', () => openWsGuide('le
 
 // ---- Workspace scan models (D15–D18): the scan agent (a catalog model + effort) and its project
 // agents (a sub-agent alias + effort). One painter for Create workspace and Settings › General.
-const SCAN_AGENT_ALIASES = [['sonnet', 'Sonnet'], ['opus', 'Opus'], ['fable', 'Fable']];
+const SCAN_AGENT_ALIASES = ['sonnet', 'opus', 'fable'];
 const SCAN_EFFORTS = ['medium', 'high', 'xhigh', 'max'];
 const SCAN_MODELS_FALLBACK = { scanModel: 'claude-sonnet-5', scanEffort: 'medium', agentModel: 'sonnet', agentEffort: 'medium' };
 const WIZ_MODEL_IDS = { scanModel: 'wiz-scan-model', scanEffort: 'wiz-scan-effort', agentModel: 'wiz-agent-model', agentEffort: 'wiz-agent-effort' };
@@ -10524,6 +10525,10 @@ let wizModelCatalog = [];
 // The wizard's Models column paint in flight (enterWizard): Scan awaits it, so a quick click never
 // sends the four still-empty selects (the scan route answers 400 to an empty pick).
 let wizModelsPainted = Promise.resolve();
+// The wizard stores a scan pick on the new workspace only when one is needed: the user changed a picker, or no
+// Everyday coding role covers the scan (a re-scan would then ask for a model). Otherwise its re-scans follow the role.
+let wizScanTouched = false;
+let wizScanPickNeeded = true;
 let wsScanCatalog = [];
 
 /** The pick a surface starts from: the stored one over the server's default (else Sonnet · medium). */
@@ -10560,7 +10565,7 @@ function paintScanModelPickers(ids, pick, catalog) {
   sm.value = pick.scanModel || '';
   paintScanEffort(ids, pick.scanEffort || '', catalog);
   am.innerHTML = '';
-  for (const [v, label] of SCAN_AGENT_ALIASES) am.appendChild(option(v, label));
+  for (const v of SCAN_AGENT_ALIASES) { const o = option(v, subagentAliasLabel(v)); const t = subagentAliasTitle(v); if (t) o.title = t; am.appendChild(o); }
   am.value = pick.agentModel;
   ae.innerHTML = '';
   for (const e of SCAN_EFFORTS) ae.appendChild(option(e, e));
@@ -10953,6 +10958,8 @@ async function paintWizardModels() {
     wizModelCatalog = catalog;
     if (res.ok) data = await safeJson(res);
   } catch { /* the fallback pick below */ }
+  wizScanTouched = false;
+  wizScanPickNeeded = !data.workspaceScanFromRole;
   let pick = scanModelsFrom(data);
   // A stored scan model that left the catalog is never offered as this scan's pick: the scan
   // route checks a SENT pick strictly (400), so it would refuse every scan. Start from the
@@ -10965,6 +10972,7 @@ async function paintWizardModels() {
   paintScanModelPickers(WIZ_MODEL_IDS, pick, wizModelCatalog);
 }
 if (el.wizScanModel) el.wizScanModel.addEventListener('change', () => paintScanEffort(WIZ_MODEL_IDS, el.wizScanEffort?.value || '', wizModelCatalog));
+for (const id of Object.values(WIZ_MODEL_IDS)) document.getElementById(id)?.addEventListener('change', () => { wizScanTouched = true; });
 
 // Render one checkbox per onboarded project (disabled for !exists). Pre-checks
 // anything already in selectedPaths (re-scan). Enables Start only at 2+.
@@ -11098,7 +11106,7 @@ async function startWizardScan() {
     if (state.wizard !== wiz) return;
     const res = await fetch('/api/workspaces/scan', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ projectPaths: paths, name, models: readScanModelPickers(WIZ_MODEL_IDS) }),
+      body: JSON.stringify({ projectPaths: paths, name, ...(wizScanTouched || wizScanPickNeeded ? { models: readScanModelPickers(WIZ_MODEL_IDS) } : {}) }),
     });
     const data = await safeJson(res);
     if (!res.ok || !data.runId) { if (state.wizard === wiz) setWizStep1Error(data.error || `Scan failed (${res.status})`, data.code); return; }
@@ -19223,7 +19231,8 @@ async function paintEngineSettings(data, { force = false } = {}) {
   for (const job of claudeJobs) fields[utilityId('claude', job)] = { own: claudeOwn[job], inherited: { value: undefined, source: 'default' } };
   // Worca's factory defaults (src/core/factory-models.mjs) read "(default)" on the Claude tab: the Second-opinion
   // reviewer and Memory defragment (unless the Quick jobs role, which it takes first, names a model). A step's applies to
-  // role reviews only, so its row keeps the role or default text and its hint names the factory default.
+  // role reviews only, and only when no role names a model, so its row keeps the role or default text and its hint
+  // names the factory default.
   const factory = data?.factoryModels?.claude;
   const factoryPair = (p) => (p && p.model ? { value: { model: p.model, ...(p.effort ? { effort: p.effort } : {}) }, source: 'default' } : null);
   const quickRole = data?.modelRoles?.claude?.quick?.model;
@@ -19235,7 +19244,7 @@ async function paintEngineSettings(data, { force = false } = {}) {
   for (const [key, pick] of Object.entries(factory?.steps || {})) {
     if (!pick?.model) continue;
     const label = catalog.find((m) => m.id === pick.model)?.label || pick.model;
-    claudeStepHints[key] = `Role reviews (Shaper) default to ${label}${pick.effort ? ` · ${pick.effort}` : ''}`;
+    claudeStepHints[key] = `Role reviews (Shaper) use your role; with none set, ${label}${pick.effort ? ` · ${pick.effort}` : ''}`;
   }
   // The interview's empty choices read "Opus 5.5 (default)" and "medium (default)" (the answer's requirementsInterviewDefault).
   const interviewDefault = data?.requirementsInterviewDefault;

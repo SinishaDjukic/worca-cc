@@ -86,19 +86,21 @@ Each group folds, with the count in its header; built-in models start folded.
 ## Model roles
 
 Every model slot that has no value of its own falls back to one of three
-roles. The Roles card on the Models page (above the Engines card) sets them:
+roles. Set them once in the setup assistant (its Models step), or on the Roles
+card of the Models page (above the Engines card). Everything else then follows
+them: you only set a model elsewhere to override a role.
 
 | Role | Setting key | What it covers |
 |---|---|---|
 | Deep thinking | `deep` | Plans and reviews: the Plan, Plan review, Refine plan, Review implementation, Deck review and Bug Root Cause steps, and Away mode's decider (`nightMode.deciderModel`) |
-| Everyday coding | `everyday` | Every other step, Chat (`askModels`), Agent generation (`agentGenModel`), the Requirements interview (`requirementsInterview`) and Claude's Auto classifier (`autoWorkflowModel`) |
-| Quick jobs | `quick` | Titles (`titleModel`), Run naming (`namingModel`), Command summaries (`commandSummaryModel`), PR description (`prDescriptionModel`), Memory defragment (`memoryDefrag`, including its step), Workspace scan (`workspaceScan`, the scan model only) and every `utilityModels.<engine>.*` job, Codex's Auto classifier included (not `secondOpinion`, which has no role) |
+| Everyday coding | `everyday` | Every other step, Chat (`askModels`), Agent generation (`agentGenModel`), the Requirements interview (`requirementsInterview`), Claude's Auto classifier (`autoWorkflowModel`) and the Workspace scan (`workspaceScan`, the scan agent; it surveys every member and writes the cross-project synthesis) |
+| Quick jobs | `quick` | Titles (`titleModel`), Run naming (`namingModel`), Command summaries (`commandSummaryModel`), PR description (`prDescriptionModel`), Memory defragment (`memoryDefrag`, including its step) and every other `utilityModels.<engine>.*` job, Codex's Auto classifier included (not `secondOpinion`, which has no role) |
 
 Where a slot looks, in order:
 
 - **Steps:** the node's own pick, the project's step model, your or the team's
-  step model, the workflow template's own model, else Worca's factory default
-  for that slot, then the role. A run started
+  step model, the workflow template's own model, then the role, else Worca's
+  factory default for that slot. A run started
   with its own model (`--model`) uses that model for every unset step instead
   of the role, and an Auto run skips the role, as it skips your step models.
 - **Helper jobs:** the job's own setting, then the role, then Worca's factory
@@ -106,10 +108,18 @@ Where a slot looks, in order:
   model, then the built-in Haiku). Memory defragment and the workspace scan read
   this way even as steps of their own run.
 
-Roles are kept per harness (`modelRoles.claude`, `modelRoles.codex`): a Claude
-run never reads the Codex roles, and a harness with no roles keeps today's
-fallbacks. With no `modelRoles` at all, every slot resolves exactly as it did
-before roles existed.
+Roles are kept per harness (`modelRoles.claude`, `modelRoles.codex`,
+`modelRoles.copilot`, … one per engine): a Claude run never reads the Codex
+roles, and a harness with no roles keeps today's fallbacks. With no
+`modelRoles` at all, every slot resolves exactly as it did before roles
+existed. Every engine has roles, so a Copilot, Cursor, Gemini CLI, Qwen Code,
+Goose or OpenCode run takes its steps' models from that engine's roles. Helper
+jobs still run on Claude or Codex only, so the other engines' roles cover
+steps and Chat. On OpenCode, which refuses a step that names no model, roles
+are the simple way to give every step one. The setup assistant shows roles for
+Claude, the engines it found ready and your run engine; the Models page's
+engine switch (Expert) shows every engine. A team policy's `models.roles` and a
+shared team setup carry Claude's and Codex's roles only.
 
 A role names a catalog model that runs on its harness; the server refuses any
 other and stores the catalog's own spelling of the id (`Claude-Opus-5-5` is
@@ -138,13 +148,13 @@ their hint, because it applies to role reviews only:
 | Step models › Requirements Review | role reviews of the requirements (Shaper with requirements first) | Sonnet 5.5 · medium |
 | Helper jobs › Second-opinion reviewer | the one role a role review names as its second opinion (Shaper's Product reviewer) | Opus 5.5 · medium |
 | Helper jobs › Memory defragment | the Memory defragment run | Sonnet 5 |
-| Settings › Runs › Workspaces | the workspace scan | Sonnet 5 · medium, project agents `sonnet` · medium |
+| Settings › Runs › Workspaces | the workspace scan | your Everyday coding role (else Sonnet 5 · medium), project agents `sonnet` · medium |
 
-The factory default sits where the template's own model used to, so a node
-pick, a project pick and your step model still win over it. On the Plan Review
-step it applies to role reviews only: a plain plan review step (Default, Auto)
-keeps your Deep thinking role. Memory defragment and the workspace scan take
-the Quick jobs role first, as before.
+The factory default comes after your role: a node pick, a project pick, your
+step model and your role all win over it, so it only fills a slot nothing else
+names. On the Plan Review step it applies to role reviews only: a plain plan
+review step (Default, Auto) keeps your Deep thinking role. Memory defragment
+takes the Quick jobs role first, and the workspace scan the Everyday coding role.
 
 **Second-opinion reviewer** (`secondOpinionModel` on Claude, a `{ model, effort }`
 pair; `utilityModels.codex.secondOpinion` on Codex) is a helper job of its own.

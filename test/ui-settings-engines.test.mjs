@@ -581,7 +581,7 @@ test('the Models page: the Plan Review row keeps the Deep role\'s text, and its 
   const row = stepRow(doc);
   assert.match(row.querySelector('.inherit-model option[value=""]').textContent, /^From Deep thinking/);
   assert.equal(row.dataset.role, 'deep', 'a Roles-card edit still repaints it');
-  assert.equal(row.querySelector('.label-row label').title, 'Role reviews (Shaper) default to Sonnet 5.5 · medium');
+  assert.equal(row.querySelector('.label-row label').title, 'Role reviews (Shaper) use your role; with none set, Sonnet 5.5 · medium');
   assert.equal(doc.querySelector('.engine-card[data-engine="claude"] [data-setting="models.claude.steps.reviewer"] .label-row label').title, '', 'other steps name no factory default');
   assert.equal(doc.querySelector('.engine-card[data-engine="codex"] [data-setting="models.codex.steps.planReviewer"] .label-row label').title, '', 'the factory default is Claude\'s');
   const noRole = (await boot({ factoryModels: FACTORY }, { hash: 'models', steps, catalog: FACTORY_CATALOG })).doc;

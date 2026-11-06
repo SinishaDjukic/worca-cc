@@ -64,7 +64,7 @@ export function fitChatContext(inbound) {
 }
 
 /** Which files to download, in priority order (the message's own, the replied-to message's, then history newest first),
- *  and which are refused before any download: an unsupported type, what the chat's engine cannot view (`refuse`, the
+ *  and which are refused before any download: what the chat's engine cannot view (`refuse`, the
  *  upload route's chatAttachRefusal), a declared size over the cap, past 4 per message or 8 per turn. */
 export function planChatFiles({ link = null, attachments = [], replyTo = null, history = [] }, limits = CHAT_FILE_LIMITS, { refuse = () => null } = {}) {
   const groups = [
@@ -81,8 +81,7 @@ export function planChatFiles({ link = null, attachments = [], replyTo = null, h
       const cls = classifyExtension(extOf(ref.name));
       let why = null;
       if (typeof ref.unavailable === 'string') why = `not saved: ${ref.unavailable}`;
-      else if (!cls) why = 'not saved: this file type cannot be attached';
-      else if (refuse(cls, ref.name)) why = `not saved: ${refuse(cls, ref.name)}`;
+      else if (cls && refuse(cls, ref.name)) why = `not saved: ${refuse(cls, ref.name)}`;
       else if (ref.size > limits.perFileBytes) why = `not saved: over the ${size(limits.perFileBytes)} limit per file`;
       else if (onMessage >= limits.perMessage) why = `not saved: only ${limits.perMessage} files per message are saved`;
       else if (take.length >= limits.perTurn) why = `not saved: only ${limits.perTurn} files are saved with one message and its context`;

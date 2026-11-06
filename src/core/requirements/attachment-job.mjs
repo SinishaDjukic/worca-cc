@@ -17,7 +17,7 @@ import { worcaHome, listProjects } from '../projects.mjs';
 import { workspaceTarget } from '../ask/workflow-deps.mjs';
 import { redactAskText } from '../ask/redact.mjs';
 import { REQUIREMENTS_READ_DENY_RULES } from '../ask/deny-rules.mjs';
-import { extensionForAttachment } from '../ask/attachment-kind.mjs';
+import { extensionForAttachment, isGenericBinary } from '../ask/attachment-kind.mjs';
 import { guardDecisionsCover, toolCalls } from '../file-read-guard.mjs';
 import { downloadFilename } from '../download-filename.mjs';
 import { RequirementsError, clip } from './spec.mjs';
@@ -25,7 +25,7 @@ import { RoundError } from './round.mjs';
 import {
   REQ_ATT_ID_RE, REQ_ATTACH_LIMITS, ATTACHMENT_SYSTEM_PROMPT, buildReadPrompt, buildAskPrompt, normalizeSummary, mockSummary, checkNewFiles,
   readRule, normalizeAnswer, mockAnswer, pushHistory, selectInlineAttachments, renderAttachmentsForPrompt, renderDocumentsForPrompt, sourceNames, hasText,
-  mentions, displayName,
+  mentions, displayName, genericSummary,
 } from './attachments.mjs';
 import {
   mintAttachmentId, insertAttachment, getAttachment, listAttachments, updateAttachment, addAttachmentCost, deleteAttachmentRow,
@@ -59,10 +59,10 @@ const iso = () => new Date().toISOString();
 export const attachmentsDir = () => join(worcaHome(), 'requirements', 'att');
 const readBase = () => { const d = join(worcaHome(), 'tmp', 'requirements'); mkdirSync(d, { recursive: true, mode: DIR_MODE }); return d; };
 
-/** A body's path, from the store-minted id and the kind's extension only (never the file's name). */
+/** A body's path, from the store-minted id and the kind's extension only; a generic binary adds its name's sanitised extension. */
 export function attachmentFile(row) {
   if (!row || typeof row.id !== 'string' || !REQ_ATT_ID_RE.test(row.id)) throw new Error('attachmentFile: refusing an id the store never minted');
-  return join(attachmentsDir(), `${row.id}${extensionForAttachment(row.kind, row.mime)}`);
+  return join(attachmentsDir(), `${row.id}${extensionForAttachment(row.kind, row.mime, row.name)}`);
 }
 function removeBody(row) {
   try { rmSync(attachmentFile(row), { force: true }); } catch (e) { console.error('requirements: could not remove a file body:', message(e)); }
@@ -214,7 +214,7 @@ async function readCall(e, row, { question = null } = {}) {
     if (!inline) {
       dir = join(readBase(), `att-read-${randomBytes(4).toString('hex')}`);
       mkdirSync(dir, { mode: DIR_MODE });
-      path = join(dir, `${row.id}${extensionForAttachment(row.kind, row.mime)}`);
+      path = join(dir, `${row.id}${extensionForAttachment(row.kind, row.mime, row.name)}`);
       if (text != null) writeFileSync(path, text, { encoding: 'utf8', mode: FILE_MODE });
       else { copyFileSync(attachmentFile(row), path); chmodSync(path, FILE_MODE); }
     }
@@ -253,6 +253,7 @@ async function runRead(e) {
   await null;
   const row = getAttachment(e.id);
   if (!row || row.status !== 'reading') return;
+  if (isGenericBinary(row)) { finishRead(e, { summary: genericSummary(row.name), costUsd: 0, model: null }); return; }   // D9: no model reads it
   const d = e.d;
   let cost = 0;
   let model = null;
@@ -459,6 +460,7 @@ export function readAgain(owner, id, { by = null } = {}, deps = {}) {
 export function askAttachment(owner, id, question, { by = null } = {}, deps = {}) {
   const d = { ...DEFAULTS, ...deps };
   const row = ownAttachment(owner, id);
+  if (isGenericBinary(row)) throw new RequirementsError('CONFLICT', "Worca can't read this kind of file, so it can't answer questions about it.");
   const q = typeof question === 'string' ? question.trim().replace(/\s+/g, ' ') : '';
   if (!q || q.length > REQ_ATTACH_LIMITS.question) throw new RequirementsError('BAD_REQUEST', `the question must be 1 to ${REQ_ATTACH_LIMITS.question} characters`);
   notIdle(row);
@@ -513,7 +515,7 @@ export function replaceAttachment(owner, id, upload, { keepSummary = false, by =
   const history = pushHistory(row.history, { at: iso(), by, reason: 'replaced', name: row.name, sha256: row.sha256,
     summary: row.summary, edited: row.summaryEdited, asks: row.asks });
   const oldFile = attachmentFile(row);
-  const newFile = attachmentFile({ id: row.id, kind: next.kind, mime: next.mime });
+  const newFile = attachmentFile({ id: row.id, kind: next.kind, mime: next.mime, name: next.name });
   // The new body goes to a temp file first and replaces the live one only after the row commits: a failed transaction
   // leaves the old body and row as they were, and a download in flight never reads a half-written body (D9, D10).
   mkdirSync(attachmentsDir(), { recursive: true, mode: DIR_MODE });
@@ -774,7 +776,7 @@ export function fileView(row, { spec = null, href, doc = false, estimates = null
     id: row.id, name: row.name, kind: row.kind, mime: row.mime, bytes: row.bytes, status: row.status, error: row.error,
     summary: row.summary, summaryEdited: row.summaryEdited, asks: row.asks, history: row.history,
     [doc ? 'sendWithEveryRun' : 'sendWithRun']: row.sendWithRun, costUsd: row.costUsd, readAt: row.readAt, readModel: row.readModel,
-    estimateUsd: estimates ? (estimates[row.kind] ?? null) : readEstimate(row.kind), mentions: spec ? mentions(spec, row.name) : [], href,
+    estimateUsd: isGenericBinary(row) ? 0 : estimates ? (estimates[row.kind] ?? null) : readEstimate(row.kind), mentions: spec ? mentions(spec, row.name) : [], href,
     asking: askingQuestion(row.id),
     sendable: bodyUsable(row),   // D14: Start would refuse it otherwise; the page lets it be switched off, not on
   };

@@ -448,7 +448,7 @@ test("sub-agent model writes: a value is PATCHed and marked, inherit is stored a
 
       const write = sink.find((w) => w.method === 'PATCH' && w.body && w.body.nodes && w.body.nodes.n0);
       assert.equal(write.body.nodes.n0.subagentModel, 'opus', 'the value reaches the node writer');
-      assert.match(doc.querySelector('.agent-sum[data-node-id="n0"]').textContent, /subs: opus/);
+      assert.match(doc.querySelector('.agent-sum[data-node-id="n0"]').textContent, /subs: Opus \(deep thinking\)/);
       assert.ok(doc.querySelector('.agent-row[data-node-id="n0"] .agent-mod'), 'it deviates from the default');
     } },
     { name: 'an explicit inherit is stored as a value, marked modified, and captioned', run: async () => {
