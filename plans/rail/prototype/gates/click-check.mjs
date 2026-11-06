@@ -71,16 +71,17 @@ for (const w of WIDTHS) {
     p.on('pageerror', (e) => add('script error', `${page} ${w}: ${e.message}`));
     const url = 'file://' + dir + page;
     await p.goto(url); await p.waitForTimeout(50);
-    const cases = await p.evaluate(() => [...document.querySelectorAll('#case option')].map((o) => o.value));
+    const cases = await p.evaluate(() => (document.querySelector('#case')?.getClientRects().length ? [...document.querySelectorAll('#case option')].map((o) => o.value) : []));   // the one Worca keeps its picker folded; it is read by route
     if (cases.length) {
       const list = SMALL ? cases.filter((_, i) => i % 5 === 0) : cases;
       for (const c of list) {
         const other = cases[(cases.indexOf(c) + 1) % cases.length];
-        await p.selectOption('#case', c);
+        const pick = (x) => p.evaluate((v) => { const s = document.querySelector('#case'); s.value = v; s.dispatchEvent(new Event('change', { bubbles: true })); }, x);
+        await pick(c);
         const tabs = await p.$$eval('.rc-tabs .tab', (x) => x.map((e) => e.dataset.tab));
         const seen = new Set();   // a control shared by a case's tabs counts once
         for (const t of tabs.length ? tabs : ['']) {
-          await sweep(p, `${page} ${w} ${c}${t ? '/' + t : ''}`, async () => { await p.selectOption('#case', other); await p.selectOption('#case', c); if (t) await p.evaluate((x) => document.querySelector(`.tab[data-tab="${x}"]`)?.click(), t); }, seen);
+          await sweep(p, `${page} ${w} ${c}${t ? '/' + t : ''}`, async () => { await pick(other); await pick(c); if (t) await p.evaluate((x) => document.querySelector(`.tab[data-tab="${x}"]`)?.click(), t); }, seen);
         }
       }
     } else {
