@@ -5,6 +5,7 @@
 // rev-list, ls-tree, cat-file, show, grep <tree>, for-each-ref, symbolic-ref and remote get-url, and uncommitted changes
 // are read with uncommittedPatch's scratch objects.
 import { execFile } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { existsSync, realpathSync } from 'node:fs';
 import { lstat, mkdir, mkdtemp, readdir, readFile, rename, rm, statfs, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -97,6 +98,11 @@ async function ownRepo(dir) {
 
 /** What every copy has set (D54): long paths on Windows, and no automatic gc or maintenance under a running try. */
 const COPY_SETTINGS = Object.freeze([['core.longpaths', 'true'], ['gc.auto', '0'], ['maintenance.auto', 'false']]);
+/** 3b (D75): the copy's stamp, written whenever the copy is made (also when it is made again): a before run kept for another
+ *  stamp is not used. A copy made before 3b has none ('none'). */
+export const COPY_STAMP_FILE = 'worca-copy-made';
+/** 3b (D75): where the before runs' clones and kept results live. */
+export const beforeRoot = (home = worcaHome()) => join(home, 'workflow-tests', 'before');
 /** Round 3: the settings `git init` makes for a repository on this disk, the only git settings the copy keeps besides
  *  COPY_SETTINGS and its object and ref format. */
 const INIT_KEYS = Object.freeze(['core.repositoryformatversion', 'core.filemode', 'core.bare', 'core.logallrefupdates', 'core.symlinks',
@@ -396,6 +402,8 @@ async function ensureTestCopyLocked(key, { projectDir, reset = true }) {
     if (!c.ok) throw testError(`Worca could not copy the project: ${firstLine(c.stderr)}`, 'NOT_READY');
     await setUp(tmp, [['remote', 'remove', 'origin']]);
     await resetCopyConfig(tmp, key);
+    await writeFile(join(tmp, '.git', COPY_STAMP_FILE), `${new Date().toISOString()} ${randomBytes(6).toString('hex')}
+`, 'utf8');
     await renameRetry(tmp, dir);
   } catch (e) {
     await rm(tmp, RM).catch(() => {});
@@ -801,6 +809,45 @@ export async function commitDate(projectDir, sha) {
   const r = await git(projectDir, ['show', '-s', '--format=%cI', sha]);
   const d = r.ok ? Date.parse(r.stdout.trim()) : NaN;
   return Number.isFinite(d) ? new Date(d).toISOString() : null;
+}
+
+/** 3b (D75): the copy's stamp, or 'none'. Never throws. */
+export async function copyStamp(key) {
+  try { return String(await readFile(join(testCopyDirFor(key), '.git', COPY_STAMP_FILE), 'utf8')).trim() || 'none'; } catch { return 'none'; }
+}
+
+/** git in a before run's clone, or in beforeRoot to make one: its walk up stops at beforeRoot; the try's safe args and env. */
+function beforeGit(cwd, args) {
+  const e = { ...process.env };
+  for (const k of GIT_DIR_ENV) delete e[k];
+  e.GIT_CEILING_DIRECTORIES = resolve(beforeRoot());
+  return git(cwd, withSafeGitArgs(args), { env: tryGitEnv({ env: e }) });
+}
+
+/**
+ * 3b (D75): a clone of Worca's copy at `dir`, detached at `startCommit`, for the command's run before the change. Not a
+ * checkout of the copy: nothing is registered in it, so the copy reset (P40) never meets it. `--local` hardlinks the copy's
+ * objects, the pinned start commit's included; if that commit is missing anyway, it is fetched from the copy. Takes the key's
+ * lock only for the clone itself. Throws NOT_READY with a sentence.
+ */
+export async function cloneForBefore({ key, startCommit, dir }) {
+  const copyDir = testCopyDirFor(key);
+  const fail = (r) => testError(`Worca could not copy the project to run the command before the change: ${firstLine(r.stderr)}`, 'NOT_READY');
+  if (!isSha(startCommit)) throw fail({ stderr: 'the start commit is not a commit id' });   // never an option or a ref expression
+  await mkdir(beforeRoot(), { recursive: true });
+  const c = await withKeyLock(key, () => beforeGit(beforeRoot(), ['clone', '--quiet', '--local', '--no-checkout', '--no-tags', '--', copyDir, dir]));
+  if (!c.ok) throw fail(c);
+  for (const args of [['remote', 'remove', 'origin'], ['config', 'core.longpaths', 'true'], ['config', 'gc.auto', '0'], ['config', 'maintenance.auto', 'false']]) {
+    const r = await beforeGit(dir, args);
+    if (!r.ok) throw fail(r);
+  }
+  let co = await beforeGit(dir, ['checkout', '--quiet', '--detach', startCommit]);
+  if (!co.ok) {
+    const f = await beforeGit(dir, ['fetch', '--quiet', '--no-tags', '--no-write-fetch-head', '--', copyDir, startCommit]);
+    if (!f.ok) throw fail(f);
+    co = await beforeGit(dir, ['checkout', '--quiet', '--detach', startCommit]);
+    if (!co.ok) throw fail(co);
+  }
 }
 
 /** Test seams. */

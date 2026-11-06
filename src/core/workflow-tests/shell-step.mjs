@@ -22,12 +22,15 @@ export function tryShellEnv({ logFile = null, keepRegistryAuth = false } = {}) {
     { logFile: logFile || scratchTryLog(), ...(keepRegistryAuth ? { keepRegistryAuth: true } : {}) });
 }
 
-/** @returns {Promise<{ok: boolean, exitCode: number|null, timedOut: boolean, ms: number, tail: string}>} never throws */
-export async function runShellStep({ command, cwd, env, timeoutMs = SETUP_TIMEOUT_MS, signal = null, spawnImpl = null } = {}) {
+/** `onLine(line)`: every output line as it comes (workflow tests 3b).
+ *  @returns {Promise<{ok: boolean, exitCode: number|null, timedOut: boolean, ms: number, tail: string}>} never throws */
+export async function runShellStep({ command, cwd, env, timeoutMs = SETUP_TIMEOUT_MS, signal = null, spawnImpl = null, onLine: tap = null } = {}) {
   const t0 = Date.now();
   const lines = [];
   let bytes = 0;
   const onLine = (_stream, line) => {
+    // 3b (D74): every line, as it comes, to a reader (the test names); the tail is kept as before.
+    if (tap) { try { tap(line); } catch { /* a reader's error never stops the command */ } }
     lines.push(line);
     bytes += line.length + 1;
     while (lines.length > TAIL_LINES || (bytes > TAIL_BYTES && lines.length > 1)) bytes -= lines.shift().length + 1;

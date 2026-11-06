@@ -18,6 +18,8 @@ import { scratchTryLog, isSettingsIgnoredFile } from './try-guard-env.mjs';
 import { runShellStep, readTrySetup, tryShellEnv, firstLine } from './shell-step.mjs';
 import { DEFAULT_TIMEOUT_MS } from '../../shared/graph/script-meta.mjs';
 import { runCheck, judgeTry, wordCount, checkLabel, TEXT_KINDS, SCOPE_KINDS, commandSummary } from '../../shared/workflow-tests/checks.mjs';
+import { createTestOutputParser } from './test-output.mjs';
+import { beforeAfter, commandMet } from '../../shared/workflow-tests/before-after.mjs';
 
 export const TEXT_EXTS = Object.freeze(new Set(['.md', '.markdown', '.txt', '.html', '.htm', '.csv', '.json', '.yaml', '.yml', '.xml']));
 export const RESULT_TEXT_MAX = 2 * 1024 * 1024;
@@ -209,12 +211,15 @@ export async function readCheckFile(outcome, rel) {
   return hit ? clip(hit.text) : null;
 }
 
-/** D57: "The command passes": in the checkout, with the try's guard env, within its time limit. */
+/** D57: "The command passes": in the checkout, with the try's guard env, within its time limit. 3b (D74): every line is read
+ *  for test names (`tests`), and the exit code and time come along. */
 export async function runCommandCheck(check, { cwd, logFile = null, run = runShellStep } = {}) {
   const n = check.timeoutMin;
-  const r = await run({ command: check.cmd, cwd, env: tryShellEnv({ logFile }), timeoutMs: n * 60_000 });
-  if (r.timedOut) return { met: false, value: `Stopped after ${n} ${n === 1 ? 'minute' : 'minutes'}`, output: r.tail, timedOut: true };
-  return { met: r.ok, value: commandSummary(r.tail) || (r.ok ? 'Met' : 'Ended with an error'), output: r.tail };
+  const reader = createTestOutputParser();
+  const r = await run({ command: check.cmd, cwd, env: tryShellEnv({ logFile }), timeoutMs: n * 60_000, onLine: (line) => reader.line(line) });
+  const more = { output: r.tail, exitCode: r.exitCode ?? null, ms: r.ms ?? null, tests: reader.result() };
+  if (r.timedOut) return { met: false, value: `Stopped after ${n} ${n === 1 ? 'minute' : 'minutes'}`, timedOut: true, ...more };
+  return { met: r.ok, value: commandSummary(r.tail) || (r.ok ? 'Met' : 'Ended with an error'), ...more };
 }
 
 /**
@@ -222,10 +227,11 @@ export async function runCommandCheck(check, { cwd, logFile = null, run = runShe
  * and Library scripts in the example's order (they may change a project try's checkout).
  * @param {{basics: object, checks: Array}} example
  * @param {object} outcome readTryOutcome's answer
- * @param {{runScript?: Function, runCommand?: Function, readText?: Function, scriptName?: (key: string) => string, onCommand?: (cmd: string) => void}} [opts]
+ * @param {{runScript?: Function, runCommand?: Function, readText?: Function, scriptName?: (key: string) => string, onCommand?: (cmd: string) => void, beforeOf?: (check: object) => object|null}} [opts]
+ *   `beforeOf(check)`: 3b (D75) the command's run on the start commit, or null.
  */
 export async function checkTry(example, outcome, { runScript = runScriptCheck, runCommand = runCommandCheck, readText = readCheckFile,
-  scriptName = (k) => k, onCommand = () => {} } = {}) {
+  scriptName = (k) => k, onCommand = () => {}, beforeOf = () => null } = {}) {
   const checks = example.checks || [];
   const results = new Array(checks.length);
   const later = [];
@@ -271,8 +277,20 @@ export async function checkTry(example, outcome, { runScript = runScriptCheck, r
       }
       // Board 36: a command its time limit stopped says so in the side by side (timedOut), not "ended with an error".
       // Round 2 (M5): the kind and the command travel with the result, so the side by side sets it in code from data.
-      results[i] = { id: check.id, kind: 'command', cmd: check.cmd, label, met: !!r.met, value: r.value, ...(r.output ? { output: r.output } : {}),
-        ...(r.timedOut ? { timedOut: true } : {}), ...(r.worcaProblem ? { error: r.error, worcaProblem: true } : {}) };
+      // 3b (D74, D76, D80): its time, the first failing names its output gave, and the run before the change classified.
+      // A runner that threw (worcaProblem) never ran the command: no before and after for it.
+      const fails = r.tests && r.tests.format && Array.isArray(r.tests.fail) && r.tests.fail.length ? r.tests.fail : null;
+      let before = null;
+      if (!r.worcaProblem) { try { before = beforeOf(check); } catch { before = null; } }
+      const ba = before ? beforeAfter(before, { ok: !!r.met, exitCode: r.exitCode ?? null, timedOut: !!r.timedOut, tests: r.tests || null }) : null;
+      // D82: met by the check's own rule; the default ('passes') is the exit code, as in 3a.
+      const judged = commandMet({ metWhen: check.metWhen || 'passes', afterOk: !!r.met, afterTimedOut: !!r.timedOut, ba });
+      const byRule = check.metWhen === 'breaks-nothing' ? { metWhen: 'breaks-nothing', ...(judged.why ? { metWhy: { why: judged.why,
+        ...(judged.n != null ? { n: judged.n } : {}), ...(judged.before != null ? { before: judged.before, after: judged.after } : {}) } } : {}) } : {};
+      results[i] = { id: check.id, kind: 'command', cmd: check.cmd, label, met: judged.met, value: r.value, ...(r.output ? { output: r.output } : {}),
+        ...(r.timedOut ? { timedOut: true } : {}), ...(typeof r.ms === 'number' ? { ms: r.ms } : {}),
+        ...(fails ? { failed: fails.slice(0, 3), failedCount: fails.length } : {}), ...byRule, ...(ba ? { before: ba } : {}),
+        ...(r.worcaProblem ? { error: r.error, worcaProblem: true } : {}) };
       continue;
     }
     const r = await runScript(check, { pipelineId: outcome.pipelineId, cwdDir, logFile: outcome.logFile });
