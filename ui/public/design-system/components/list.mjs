@@ -46,14 +46,17 @@ export function moreMenu({ id, label, icon, items, open = false }) {
  * @param {boolean} [o.holds]       a folded group holding the one open now
  * @param {boolean} [o.flash]       it just landed here: lights once
  * @param {string} [o.after]        under the row, in its text column: members, rounds (markup)
+ * @param {{open:boolean, attrs?:object, help?:string}} [o.fold]  a record's own fine-tuning: Customise shows `after`, Done hides it
  */
-export function listRow({ title, meta = '', mark = '', end = '', endText = '', open = null, menu = null, attrs: a = {}, check, boxAttrs = {}, lead = '', unread = false, current = false, holds = false, flash = false, after = '' }) {
+export function listRow({ title, meta = '', mark = '', end = '', endText = '', open = null, menu = null, attrs: a = {}, check, boxAttrs = {}, lead = '', unread = false, current = false, holds = false, flash = false, after = '', fold = null }) {
   const body = `<span class="lr-t">${lead}${esc(title)}</span>${meta ? `<span class="lr-m">${esc(meta)}</span>` : ''}`;
   const main = open ? `<button type="button" class="lr-main"${attrs(open)}>${body}</button>` : `<span class="lr-main">${body}</span>`;
   const more = menu ? moreMenu(menu) : '';
   const rail = check === undefined ? mark : checkbox({ cls: 'lr-check', why: 'Select', checked: !!check, attrs: { 'aria-label': `Select ${title}`, ...boxAttrs } });
+  const foldBtn = fold ? button({ label: fold.open ? 'Done' : 'Customise', kind: 'quiet', attrs: { 'aria-expanded': String(!!fold.open), title: fold.help || null, ...(fold.attrs || {}) } }) : '';
+  const shown = !fold || fold.open ? after : '';
   const state = [unread && 'is-unread', current && 'is-current', holds && 'is-holds', flash && 'is-flash', check && 'is-sel'].filter(Boolean).join(' ');
-  return row({ kind: 'list', rail, text: main, cls: state, end: `${endText ? `<span class="lr-fig">${esc(endText)}</span>` : ''}${end}`, more, attrs: current ? { 'aria-current': 'true', ...a } : a, after: after ? `<div class="lr-after">${after}</div>` : '' });
+  return row({ kind: 'list', rail, text: main, cls: state, end: `${endText ? `<span class="lr-fig">${esc(endText)}</span>` : ''}${end}${foldBtn}`, more, attrs: current ? { 'aria-current': 'true', ...a } : a, after: shown ? `<div class="lr-after">${shown}</div>` : '' });
 }
 
 /**
@@ -61,7 +64,7 @@ export function listRow({ title, meta = '', mark = '', end = '', endText = '', o
  * shows its first rows, then Show N more opens the rest in place (never folded).
  * @param {object} o
  * @param {string} [o.sentence]   the list's sentence, markup with SentencePickers ("Showing everything from all projects")
- * @param {{title?:string, count?:string|number, chip?:string, rows:string[], more?:{n:number, attrs:object}}[]} o.groups
+ * @param {{title?:string, meta?:string, count?:string|number, chip?:string, rows:string[], more?:{n:number, attrs:object}}[]} o.groups
  * @param {string} [o.empty]      EmptyState markup when every group is empty
  * @param {string} [o.tools]      at the sentence's right: Select all while selecting, the list's ⋯
  * @param {string} [o.foot]       at the list's foot: the SelectionBar
@@ -69,6 +72,6 @@ export function listRow({ title, meta = '', mark = '', end = '', endText = '', o
  */
 export function list({ sentence = '', groups, empty = '', tools = '', foot = '', attrs: a = {} }) {
   const shown = groups.filter((g) => g.rows.length);
-  const body = shown.length ? shown.map((g) => `<section class="list-group">${g.title ? `<h3 class="list-h">${esc(g.title)}${g.count !== undefined ? ` <span class="n">${esc(g.count)}</span>` : ''}${g.chip || ''}</h3>` : ''}<div class="list-rows">${g.rows.join('')}</div>${g.more ? `<button type="button" class="dc-link list-more"${attrs(g.more.attrs)}>Show ${esc(g.more.n)} more</button>` : ''}</section>`).join('') : empty;
+  const body = shown.length ? shown.map((g) => `<section class="list-group">${g.title ? `<h3 class="list-h">${esc(g.title)}${g.count !== undefined ? ` <span class="n">${esc(g.count)}</span>` : ''}${g.chip || ''}</h3>` : ''}${g.meta ? `<p class="list-m">${esc(g.meta)}</p>` : ''}<div class="list-rows">${g.rows.join('')}</div>${g.more ? `<button type="button" class="dc-link list-more"${attrs(g.more.attrs)}>Show ${esc(g.more.n)} more</button>` : ''}</section>`).join('') : empty;
   return `<div class="list"${attrs(a)}>${tools ? `<div class="list-head"><div class="list-sentence">${sentence}</div><span class="list-tools">${tools}</span></div>` : sentence ? `<div class="list-sentence">${sentence}</div>` : ''}${body}${foot}</div>`;
 }

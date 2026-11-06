@@ -76,6 +76,17 @@ export function settingsRow({ name, sentence = '', end = '', changed = false, he
 }
 
 /**
+ * SettingsGroup: rows of one kind inside a section (Labs' stages), under a small head on the rows' edge. A record's
+ * groups are a List's (list.mjs); this is the same head over SettingsRows.
+ * @param {object} o
+ * @param {string} o.title
+ * @param {string} o.rows      SettingsRow markup
+ */
+export function settingsGroup({ title, rows }) {
+  return `<section class="set-group"><h3 class="list-h">${esc(title)}</h3><div class="set-rows">${rows}</div></section>`;
+}
+
+/**
  * SettingsSection: a head (and the one action on the whole section, such as a reset), then its rows.
  * @param {object} o
  * @param {string} o.title

@@ -270,6 +270,24 @@ test('listRow menu: the row\'s own actions in its ⋯, the ones that cannot be t
   assert.equal(dom(C.listRow({ title: 'x', menu: { id: 'm', label: 'l', icon: '', items: ['Edit'] } })).querySelector('.menu'), null, 'closed: no menu');
 });
 
+test('settingsGroup: a small head over its own rows', () => {
+  const g = dom(C.settingsGroup({ title: 'Beta', rows: C.settingsRow({ name: 'Summaries' }) }));
+  assert.equal(g.querySelector('.list-h').textContent, 'Beta');
+  assert.equal(g.querySelector('.set-rows .set-name').textContent, 'Summaries');
+});
+
+test('listRow fold: Customise shows what is under the record, Done hides it; a List group has one meta line', () => {
+  const shut = dom(C.listRow({ title: 'Jira', after: '<p class="x"></p>', fold: { open: false, attrs: { 'data-f': 'j' } } }));
+  assert.equal(shut.querySelector('[data-f]').textContent, 'Customise');
+  assert.equal(shut.querySelector('.x'), null);
+  const open = dom(C.listRow({ title: 'Jira', after: '<p class="x"></p>', fold: { open: true } }));
+  assert.ok(open.querySelector('.lr-after .x'));
+  assert.equal(open.querySelector('[aria-expanded="true"]').textContent, 'Done');
+  assert.ok(dom(C.listRow({ title: 'Run', after: '<p class="x"></p>' })).querySelector('.x'), 'without a fold, after always shows');
+  const l = dom(C.list({ groups: [{ title: 'Blocked', meta: 'Recorded as off-policy', rows: ['<div></div>'] }] }));
+  assert.equal(l.querySelector('.list-h + .list-m').textContent, 'Recorded as off-policy');
+});
+
 test('settingsRow fold: Customise opens its rows, a small label over each sentence, and its one foot action; Done closes', () => {
   const closed = dom(C.settingsRow({ name: 'Network', sentence: 'A direct connection', fold: { open: false, attrs: { 'data-fold': 'net' } }, detailRows: C.settingsRow({ name: 'Proxy' }) }));
   const btn = closed.querySelector('.set-end .btn-quiet');
