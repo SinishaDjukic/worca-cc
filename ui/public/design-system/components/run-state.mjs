@@ -1139,6 +1139,29 @@ export const memberKeeps = (label) => !GROUP_OWNS.test(label);
 const SECTION = { 'Needs you': 'needs', Working: 'running', Starting: 'running', 'In review': 'running', Waiting: 'scheduled', Paused: 'needs', 'Ready to merge': 'needs', Ready: 'needs', Failed: 'needs' };
 export const sectionOf = (word) => SECTION[word] || 'recent';
 
+// A chat's states and kinds (docs/rail/lists.md): a chat is not a run, but its dot and word come from here too. `section`:
+// where it sorts in the Chats column. Busy chats pulse; an idle chat shows what it did, its kind's icon in the dot's place.
+const CHAT_STATES = {
+  'needs-you': { word: STATES.question.word, line: 'Run needs you', dot: STATES.question.dot, sym: STATES.question.sym, section: 'needs' },
+  replying: { word: 'Replying', line: 'Replying', dot: 'is-peach is-pulse', sym: '', section: 'running', busy: 'It is replying' },
+  command: { word: 'Running a command', line: 'Running a command', dot: 'is-peach is-pulse', sym: '', section: 'running', busy: 'A command is still running' },
+  following: { word: 'Following a run', line: 'Following a run', dot: 'is-peach is-pulse', sym: '', section: 'running', busy: 'It follows a run that is still going' },
+  idle: { word: 'Idle', line: '', dot: '', sym: '', section: 'recent' },
+};
+export function chatState(id) {
+  const s = CHAT_STATES[id];
+  if (!s) throw new Error(`chatState: unknown state ${id}`);
+  return s;
+}
+export const CHAT_KINDS = Object.freeze({
+  started: { label: 'Started a run', icon: 'runs' }, tracks: { label: 'Follows a run', icon: 'track' },
+  workflow: { label: 'Proposed a workflow', icon: 'workflow' }, chat: { label: 'Chat', icon: 'chat' },
+});
+
+// What a run's word is to the bulk table (src/shared/run-bulk.mjs): which run a Stop or an Archive applies to.
+const BULK_STATE = { Starting: 'starting', Working: 'working', Waiting: 'waiting', Paused: 'paused', Failed: 'failed', Stopped: 'stopped', Ready: 'ready', 'Ready to merge': 'in-review', 'In review': 'in-review', 'Needs you': 'needs-you' };
+export const bulkStateOf = (word) => BULK_STATE[word] || 'merged';
+
 // A step's look: its mark on the rail, its icon, the word a screen reader hears, and its cell in the stepper.
 const STEP = { done: ['is-done', 'check', 'Done'], now: ['is-working is-pulse', 'now', 'In progress'], ask: ['is-problem', 'question', 'Needs you'],
   problem: ['is-problem', 'alert', 'Needs attention'], failed: ['is-failed', 'alert', 'Failed'], paused: ['is-closed', 'pause', 'Paused'], review: ['is-review', 'pr', 'In review'], next: ['is-future', '', 'Not yet'], merged: ['is-merged', 'merge', 'Merged'] };

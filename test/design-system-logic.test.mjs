@@ -243,7 +243,7 @@ test('keys never fire while typing: only Esc and a menu\'s own way out work in a
     assert.equal(R.shortcutAction({ ...f, inField: true }, all), null, `${f.key} acts in a field`);
   }
   const inField = R.SHORTCUTS.flatMap((s) => s.rows).filter((r) => r.inField).map((r) => r.do).sort();
-  assert.deepEqual(inField, ['clear', 'close', 'first', 'last', 'next', 'prev']);
+  assert.deepEqual(inField, ['clear', 'close', 'first', 'focus-list', 'last', 'new-chat', 'next', 'prev', 'toggle-list']);
   assert.equal(R.shortcutAction({ key: 'Escape', inField: true }, { scopes: ['anywhere'] }), 'close');
   assert.equal(R.keyFacts({ key: 'j', target: { closest: (sel) => (sel === R.FIELD ? {} : null) } }).inField, true);
   assert.equal(R.keyFacts({ key: 'j', target: { closest: () => null } }, '.row').onRow, false);
@@ -286,4 +286,35 @@ test('a project with no remote offers Link remote, never Create PR; a mock run o
   assert.equal(R.runState('no-remote').action.label, 'Link remote');
   assert.ok(!R.runState('no-remote').action.items.includes('Create PR'));
   assert.equal(R.runState('mock-run').word, 'Mock run'); assert.equal(R.runState('mock-run').action, null);
+});
+
+test('sectionOf: a list reads a real case: Paused and Stopped are never Ready, and every state has its section', () => {
+  for (const id of R.stateIds()) assert.ok(['needs', 'running', 'scheduled', 'recent'].includes(R.sectionOf(R.runState(id).word)), id);
+  assert.equal(R.runState('paused').word, 'Paused'); assert.equal(R.sectionOf('Paused'), 'needs');
+  assert.equal(R.runState('stopped').word, 'Stopped'); assert.equal(R.sectionOf('Stopped'), 'recent');
+  assert.equal(R.sectionOf(R.runState('scheduled').word), 'scheduled');
+});
+
+test('chatState, bulkStateOf: a chat sorts Needs you, Running, Recent; an unknown one throws; a run\'s word to the bulk table', () => {
+  assert.equal(R.chatState('needs-you').word, R.runState('question').word);
+  assert.deepEqual(['needs-you', 'replying', 'command', 'following', 'idle'].map((s) => R.chatState(s).section), ['needs', 'running', 'running', 'running', 'recent']);
+  assert.throws(() => R.chatState('nope'));
+  assert.equal(R.planBulk('stop', [{ id: 'a', title: 'a', state: R.bulkStateOf(R.runState('working').word) }, { id: 'b', title: 'b', state: R.bulkStateOf(R.runState('stopped').word) }]).apply.length, 1);
+  assert.equal(R.planBulk('archive', [{ id: 'a', title: 'a', state: R.bulkStateOf('Merged') }]).apply.length, 1);
+});
+
+test('selectStep: a selection key as one step', () => {
+  const shown = ['a', 'b', 'c'];
+  assert.deepEqual(R.selectStep(R.selectClear(), 'toggle', { from: 'a', shown }).pick.ids, ['a']);
+  assert.deepEqual(R.selectStep(R.selectClear(), 'all', { shown }).pick.ids, shown);
+  const ex = R.selectStep({ on: true, ids: ['a'], anchor: 'a' }, 'extend-down', { from: 'a', shown });
+  assert.deepEqual([ex.pick.ids, ex.to], [['a', 'b'], 'b']);
+});
+
+test('shortcutAction: Chat has its own keys, and they work in a field', () => {
+  assert.equal(R.shortcutAction({ key: '˜', code: 'KeyN', metaKey: true, altKey: true, inField: true }, { scopes: ['chat'] }), 'new-chat');
+  assert.equal(R.shortcutAction({ key: '\\', metaKey: true }, { scopes: ['chat'] }), 'toggle-list');
+  assert.equal(R.shortcutAction({ key: 'L', metaKey: true, shiftKey: true, inField: true }, { scopes: ['chat'] }), 'focus-list');
+  assert.equal(R.shortcutAction({ key: 'ArrowUp', altKey: true }, { scopes: ['chat'] }), 'prev-chat');
+  assert.equal(R.shortcutAction({ key: 'ArrowUp', altKey: true, inField: true }, { scopes: ['chat'] }), null);
 });

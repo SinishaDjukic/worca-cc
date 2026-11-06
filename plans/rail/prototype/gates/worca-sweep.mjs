@@ -2,7 +2,7 @@
 // The one Worca's gate (index.html): today's shell and pages with Wave 1 in them. Every route, at 1280, 760 and 375px,
 // in both themes: no script error, no sideways scroll, the top bar one row, one way back at a time, the sidebar marking
 // where you are. Then the journeys between the pieces: a run row opens its run (same title), the trail goes back to
-// Runs, Pulse opens, the profile menu opens Settings, a Settings section opens, Back to Worca gives the sidebar back; the
+// Runs with its sentence kept, Pulse opens, the profile menu opens Settings, a Settings section opens, Back to Worca gives the sidebar back; the
 // sidebar's three widths (narrow.nav), the side column's three tiers (panel.side-column), and a deep link above the mode.
 // The run page and Pulse keep their own gates (run-page-sweep, pulse-sweep, ds-check); this one checks how they join.
 import { chromium } from 'playwright';
@@ -21,7 +21,7 @@ const issues = new Map(); const add = (k, w) => { if (!issues.has(k)) issues.set
 const b = await chromium.launch({ channel: 'chrome' });
 const scout = await b.newPage(); await scout.goto(URL_);
 const RUNS = await scout.evaluate(() => window.RunCardModel.cases.map((c) => c.id)); await scout.close();
-const ROUTES = [...TODAY, ...RUNS.map((c) => 'run/' + c), ...SECTIONS.map((s) => 'settings/' + s)];
+const ROUTES = ['runs', ...TODAY, ...RUNS.map((c) => 'run/' + c), ...SECTIONS.map((s) => 'settings/' + s)];
 let checks = 0;
 for (const scheme of ['light', 'dark']) for (const w of [1280, 900, 760, 375]) {
   const p = await b.newPage({ viewport: { width: w, height: 860 }, colorScheme: scheme, reducedMotion: 'reduce' });
@@ -40,7 +40,7 @@ for (const scheme of ['light', 'dark']) for (const w of [1280, 900, 760, 375]) {
       const locked = !!document.querySelector('#route-today [data-unlock]');
       if (view !== 'settings' && !locked && document.querySelector('#side-rail').offsetParent && (!cur || cur.dataset.nav !== place)) out.push(['the sidebar does not mark the place', `${place} (marked: ${cur ? cur.dataset.nav : 'none'})`]);
       if (view === 'settings' && document.querySelector('#side-rail').offsetParent && innerWidth > 1080 && !document.querySelector('#side-rail .side-menu')) out.push(['Settings without its menu', '']);
-      const shown = view === 'run' ? '#route-run' : view === 'settings' ? '#route-settings' : '#route-today';
+      const shown = view === 'run' ? '#route-run' : view === 'settings' ? '#route-settings' : view === 'runs' ? '#route-runs' : '#route-today';
       if (!document.querySelector(shown).textContent.trim()) out.push(['an empty page', '']);
       return out;
     }, r);
@@ -50,8 +50,10 @@ for (const scheme of ['light', 'dark']) for (const w of [1280, 900, 760, 375]) {
   // the journeys
   const step = async (name, fn, expect) => { const ok = await p.evaluate(fn); await p.waitForTimeout(120); const got = await p.evaluate(expect); if (!got) add('a journey breaks', `${scheme}/${w}: ${name}`); checks++; };
   await p.goto(`${URL_}#runs`); await p.waitForTimeout(100);
-  await step('a run row opens its run', () => document.querySelector('[data-rail-run="question"] .runs-row')?.click(), () => location.hash === '#run/question' && document.querySelector('#card .rc-heading')?.textContent === 'Add CSV export to billing');
-  await step('the trail goes back to Runs', () => document.querySelector('#card [data-key="crumb:0"]')?.click(), () => location.hash === '#runs' && !document.querySelector('#route-today').hidden);
+  await step('the sentence changes the list', () => { document.querySelector('#runs-root [data-menu="by"]')?.click(); document.querySelector('#runs-root [data-pick="by|day"]')?.click(); }, () => /by day/.test(document.querySelector('#runs-root .list-sentence')?.textContent || ''));
+  await step('a run row opens its run', () => document.querySelector('#runs-root [data-open="run:r1"]')?.click(), () => location.hash === '#run/question' && document.querySelector('#card .rc-heading')?.textContent === 'Add CSV export to billing');
+  await step('the trail goes back to Runs, the sentence kept', () => document.querySelector('#card [data-key="crumb:0"]')?.click(), () => location.hash === '#runs' && !document.querySelector('#route-runs').hidden && /by day/.test(document.querySelector('#runs-root .list-sentence')?.textContent || ''));
+  await step('the sentence back to state', () => { document.querySelector('#runs-root [data-menu="by"]')?.click(); document.querySelector('#runs-root [data-pick="by|state"]')?.click(); }, () => /by state/.test(document.querySelector('#runs-root .list-sentence')?.textContent || ''));
   await step('Pulse opens', () => document.querySelector('[data-pop]')?.click(), () => !!document.querySelector('.pz-popover'));
   await step('the profile menu opens', () => { document.body.click(); document.querySelector('[data-acct]')?.click(); }, () => !!document.querySelector('#app .acct-menu'));
   await step('the profile menu opens Settings', () => document.querySelector('#app [data-go="settings"]')?.click(), () => location.hash.startsWith('#settings') && !document.querySelector('#route-settings').hidden);
@@ -59,6 +61,11 @@ for (const scheme of ['light', 'dark']) for (const w of [1280, 900, 760, 375]) {
     await step('a Settings section opens', () => document.querySelector('#side-rail [data-sset="runs"]')?.click(), () => location.hash === '#settings/runs' && [...document.querySelectorAll('#route-settings .pz-title')].find((t) => t.offsetParent)?.textContent === 'Runs');
     await step('Back to Worca gives the sidebar back', () => document.querySelector('#side-rail .side-back')?.click(), () => !document.querySelector('#side-rail .side-menu') && !!document.querySelector('#side-rail [data-nav="runs"]'));
   }
+  // the Chats column: beside the conversation above 1080px, over it to 761px, the window below (panel.side-column)
+  await p.goto(`${URL_}#chat`); await p.waitForTimeout(120);
+  const cc = await p.evaluate(() => { const c = document.getElementById('chats-col').getBoundingClientRect(), m = document.querySelector('.main').getBoundingClientRect(); return { w: c.width, left: c.left, main: m.left, shown: !document.getElementById('chats-col').hidden }; });
+  if (!cc.shown || (w > 1080 ? cc.main < cc.left + cc.w - 1 : w > 760 ? cc.main > cc.left + 1 : cc.w !== w)) add('the Chats column is on the wrong tier', `${scheme}/${w}: ${JSON.stringify(cc)}`);
+  await step('a chat row opens its chat', () => document.querySelector('#chats-col [data-open="chat:c2"]')?.click(), () => location.hash === '#chat/c2' && (innerWidth <= 760 ? document.getElementById('chats-col').hidden : !!document.querySelector('#chats-col [data-row="chat:c2"].is-current')));
   // the sidebar's width
   await p.goto(`${URL_}#runs`); await p.waitForTimeout(350);
   const sideW = await p.evaluate(() => Math.round(document.getElementById('side-rail').getBoundingClientRect().width));

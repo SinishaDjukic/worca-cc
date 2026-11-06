@@ -801,6 +801,7 @@ html,body{height:auto;overflow:visible;margin:0;}
 .set-detail .set-text{grid-column:1;grid-row:2;}
 .set-detail .set-end{grid-column:2;grid-row:1 / span 2;align-self:center;}
 .set-foot{padding-top:4px;}   /* the fold's one action under its rows (Back to the group) */
+.set-end > .btn-icon.btn-quiet{--btn-inset:7px;}   /* an icon stands 7px inside its button */
 .set-foot > .btn-quiet{margin-left:calc(-1 * var(--btn-inset));}
 .spick{position:relative;}
 .spick-b{display:inline;margin:0;padding:0;border:0;border-radius:var(--r-xs);background:none;font:inherit;font-weight:600;line-height:inherit;color:var(--ink);white-space:nowrap;cursor:pointer;transition:background-color 100ms var(--ease),box-shadow 100ms var(--ease);}
@@ -840,6 +841,58 @@ button.lr-main:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
 .lr-end{display:flex;align-items:center;gap:8px;padding-top:4px;}
 .lr-fig{font-size:var(--fs-meta);color:var(--ink-2);white-space:nowrap;font-variant-numeric:tabular-nums;}
 .list-more{margin-top:4px;}
+/* The list's head: the sentence, and at its right Select all and the list's ⋯. */
+.list-head{display:flex;align-items:flex-start;gap:8px;margin-bottom:4px;}
+.list-head .list-sentence{flex:1;min-width:0;margin:0;}
+.list-tools{flex:none;display:flex;align-items:center;gap:8px;}
+.list-tools .rc-pop > .menu{min-width:220px;}
+/* A row's states. */
+.list-row.is-unread > .lr-main .lr-t{font-weight:500;}
+.list-row.is-current > .lr-main{background:var(--field);}
+.list-row.is-holds > .lr-main{background:var(--hover);}
+.lr-check{display:grid;place-items:center;width:100%;height:100%;cursor:pointer;}
+.lr-check input{margin:0;cursor:pointer;accent-color:var(--ink);}
+.lr-kind{display:grid;place-items:center;color:var(--ink-2);}
+.lr-origin{display:inline-flex;vertical-align:-1px;margin-right:6px;color:var(--ink-2);}
+/* What sits under a row, in its text column: a group's members, a run's stacked rounds. */
+.lr-after{grid-column:2 / -1;min-width:0;}
+.lr-members > .list-rows{margin-left:0;}
+.lr-round-line{display:flex;align-items:center;justify-content:space-between;gap:8px;min-width:0;}
+.lr-rounds > .list-rows{margin-left:0;grid-template-columns:0 minmax(0,1fr) fit-content(45%);column-gap:0;}
+.lr-rounds .lr-t{font-size:var(--fs-meta);color:var(--ink-2);}
+.lr-rounds > .btn{margin-left:calc(-1 * var(--btn-inset,8px));}
+/* The selection bar at the list's foot; the list's editor, under what opened it. */
+.list-foot{position:sticky;bottom:0;z-index:4;margin-top:12px;}
+.list-foot .runs-bulk{background:var(--bg);}
+.list-pop{position:fixed;z-index:46;}
+.list-pop .menu{max-height:min(420px,70vh);overflow-y:auto;}
+.list-pop .rc-list-ed{max-width:calc(100vw - 32px);}
+.list-dlg-t{margin:0 0 8px;color:var(--ink-2);}
+/* The Runs list as a page, its rail hanging left of the text edge. */
+#route-runs{padding-left:0;}
+#runs-root{max-width:880px;margin-inline:auto;padding:24px 32px 24px 32px;}
+/* Chat's capture fills the room beside the column. */
+body.view-chat #route-today:not([hidden]){flex:1 1 auto;min-height:0;display:flex;flex-direction:column;}
+/* The selection bar's and the side column's own hooks. */
+.runs-all{margin:0;}
+.runs-bulk-c{font-variant-numeric:tabular-nums;}
+.rl-side{min-width:0;}
+:root{--chats-w:360px;}
+/* The Chats column: beside the conversation above 1080px, over it from 761 to 1080px, the window below. */
+.ask-side.chats-side{width:var(--chats-w,360px);order:-1;border-left:0;border-right:1px solid var(--line);box-shadow:none;}
+.chats-side .ask-side-grip{left:auto;right:0;display:block;}
+.chats-side .ask-side-grip:is(:hover,:focus-visible)::after{left:auto;right:0;}
+.chats-side .rl-side-tools{display:flex;align-items:center;gap:2px;}
+.chats-side .rl-side-body{position:relative;margin-right:6px;}   /* a scrollbar's thumb never lies over the grip */
+#chats-root{padding:8px 12px 12px 40px;min-height:100%;}
+@media (min-width: 761px) and (max-width: 1080px){
+  .ask-side.chats-side{position:absolute;z-index:6;top:0;bottom:0;left:0;background:var(--bg);box-shadow:var(--shadow-pop);border-left:0;}
+}
+@media (max-width: 760px){
+  .ask-side.chats-side{position:absolute;z-index:6;inset:0;width:100%;border-right:0;background:var(--bg);}
+  .chats-side .ask-side-grip{display:none;}
+  #runs-root{padding:16px 12px 24px 32px;}
+}
 
 /* Field: the label above, the hint or the error one line under it. */
 .fld{display:flex;flex-direction:column;gap:4px;min-width:0;}

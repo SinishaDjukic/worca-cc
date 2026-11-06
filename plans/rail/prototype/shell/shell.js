@@ -1,8 +1,10 @@
 // The one Worca's shell: today's sidebar and top bar (today/, captured from the app), with Wave 1's decisions applied,
 // and a router over the pages. A place opens from the sidebar; today's pages show as captured, in the Rail colours; a
 // run opens as a full page (the Rail run page); Settings opens from the profile menu (the Rail Settings).
-//   #<view>            a place: chat, runs, schedules, stats, team-metrics, workflows, requirements, projects,
-//                      workspaces, marketplace (today's pages)
+//   #runs              the Rail Runs list
+//   #chat[/<id>]       the Rail Chats column, beside today's Chat page
+//   #<view>            a place: schedules, stats, team-metrics, workflows, requirements, projects, workspaces,
+//                      marketplace (today's pages)
 //   #run/<case>        the Rail run or group page, on one of its cases
 //   #settings[/<id>]   the Rail Settings, on one of its sections
 // pulse/pulse.js mounts Pulse, the profile menu, New run, the search and Settings into it; runs/run-page.js draws the
@@ -14,11 +16,6 @@
   const R = window.RailUI;
   const TITLES = { chat: 'Chat', runs: 'Runs', schedules: 'Schedules', stats: 'Statistics', 'team-metrics': 'Team metrics', workflows: 'Workflows',
     requirements: 'Requirements', projects: 'Projects', workspaces: 'Workspaces', marketplace: 'Marketplace' };
-  // Today's runs, opened as the Rail run page on the case that shows them best.
-  const RUN_CASE = { 'Add CSV export to billing': 'question', 'Migrate cron parser': 'gate', 'Fix flaky login test': 'working', 'Rename settings keys': 'checks', 'Unified page navigation': 'ready' };
-  const RUN_DOT = { question: 'is-amber', gate: 'is-amber', working: 'is-peach is-pulse', checks: 'is-peach', ready: 'is-green' };
-  const word = (id) => window.RailUI.runState(id).word;
-  const RUN_LINE = { question: `${word('question')} · Plan asks 2 questions`, gate: `${word('gate')} · Review gate`, working: `${word('working')} · Build`, checks: `${word('checks')} · checks running`, ready: `${word('ready')} · checks pass` };
   const el = (html) => { const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstElementChild; };
 
   // ---- the sidebar: places only (a setting or a place, docs/rail/settings.md) ----
@@ -116,7 +113,7 @@
     const app = document.getElementById('worca');
     app.innerHTML = '';
     const col = el('<div class="main-col"></div>');
-    col.append(topBar(), el('<div id="rail-strip"></div>'), el('<div id="main-row" class="main-row"><main class="main"><div id="route-today"></div><div id="route-run" class="rc-board" hidden><div id="card"></div></div><div id="route-settings" class="pz-app rail-page" hidden></div></main><aside id="ask-side" class="ask-side" aria-label="Ask worca" hidden></aside></div>'));
+    col.append(topBar(), el('<div id="rail-strip"></div>'), el('<div id="main-row" class="main-row"><aside id="chats-col" class="ask-side chats-side" aria-label="Chats" hidden></aside><main class="main"><div id="route-today"></div><div id="route-runs" class="pz-app rail-page" hidden><div id="runs-root"></div></div><div id="route-run" class="rc-board" hidden><div id="card"></div></div><div id="route-settings" class="pz-app rail-page" hidden></div></main><aside id="ask-side" class="ask-side" aria-label="Ask worca" hidden></aside></div>'));
     app.append(el('<div class="nav-scrim" id="nav-scrim" hidden></div>'), sidebar(), col);
     syncRail(); applyPrefs();
   }
@@ -129,14 +126,26 @@
     }
   }
 
+  // ---- the Chats column: beside the conversation; narrow, it takes the window until a chat opens ----
+  let chatArg = '', runsY = 0;
+  function chats(onChat = routed.view === 'chat' && !routed.locked) {
+    const col = document.getElementById('chats-col'); if (!col) return;
+    const opened = onChat && window.RailChats ? window.RailChats.show(chatArg) : false;
+    const narrow = innerWidth <= 760;
+    col.hidden = !onChat || !opened || (narrow && !!chatArg);
+    document.body.classList.toggle('chats-window', onChat && !col.hidden && narrow);
+  }
+
   // ---- the router ----
   function route() {
     const [kind, arg] = (location.hash.slice(1) || 'runs').split('/');
     const view = TITLES[kind] ? kind : kind === 'run' || kind === 'settings' ? kind : 'runs';
     drawer(false);
     const today = document.getElementById('route-today'), run = document.getElementById('route-run'), settings = document.getElementById('route-settings');
-    today.hidden = view === 'run' || view === 'settings'; run.hidden = view !== 'run'; settings.hidden = view !== 'settings';
-    document.body.className = view === 'run' ? 'view-run' : view === 'settings' ? 'view-settings' : (T.pages[view]?.body || '');
+    const main = document.querySelector('.main'), list = document.getElementById('route-runs');
+    if (routed.view === 'runs') runsY = main.scrollTop;   // coming back restores the scroll
+    today.hidden = view === 'run' || view === 'settings' || view === 'runs'; run.hidden = view !== 'run'; settings.hidden = view !== 'settings'; list.hidden = view !== 'runs';
+    document.body.className = view === 'run' ? 'view-run' : view === 'settings' ? 'view-settings' : view === 'runs' ? 'view-runs' : (T.pages[view]?.body || '');
     document.getElementById('topnav-title').textContent = view === 'run' ? 'Runs' : view === 'settings' ? 'Settings' : TITLES[view];
     window.RailPulse?.show(view === 'settings' ? 'settings' : 'page', view === 'settings' ? arg || '' : '', view);   // first: it may give the sidebar back
     markNav(view);
@@ -150,16 +159,11 @@
       scrollTo(0, 0);
     } else if (!today.hidden) {
       today.innerHTML = T.pages[view].html;
-      // today's run rows open the Rail run page; each shows the state of the case it opens
-      if (view === 'runs') for (const row of today.querySelectorAll('.runs-item')) {
-        const c = RUN_CASE[row.querySelector('.runs-row-title')?.textContent.trim()];
-        if (!c) continue;
-        row.dataset.railRun = c;
-        const sub = row.querySelector('.runs-row-sub'); if (sub) sub.textContent = RUN_LINE[c];
-        const dot = row.querySelector('.status-dot'); if (dot) dot.className = R.statusDotClass(RUN_DOT[c]);
-      }
       scrollTo(0, 0);
     }
+    chatArg = view === 'chat' ? arg || '' : '';
+    chats(view === 'chat' && !lock);
+    if (view === 'runs') { window.RailRunsList?.show(); main.scrollTop = runsY; window.RailRunsList?.focus(); }
     if (view === 'run') {
       const pick = document.getElementById('case');
       if (pick && arg && pick.value !== arg) { pick.value = arg; pick.dispatchEvent(new Event('change', { bubbles: true })); }
@@ -173,7 +177,9 @@
     const on = (sel) => e.target.closest(sel);
     let hit;
     if ((hit = on('#side-rail nav.nav [data-nav]'))) { e.preventDefault(); drawer(false); location.hash = hit.dataset.nav; return; }
-    if ((hit = on('#route-today [data-rail-run]'))) { e.preventDefault(); const c = hit.dataset.railRun; if (RM) RM.titles[c] = Object.keys(RUN_CASE).find((t) => RUN_CASE[t] === c); location.hash = 'run/' + c; return; }
+    // Chat's own head, on the capture: the list's toggle and New chat are real
+    if (on('#route-today .chat-history-toggle')) { e.preventDefault(); if (innerWidth <= 760) location.hash = 'chat'; else window.RailChats?.toggle(); return; }
+    if (on('#route-today [data-ask-new-btn], #route-today .chat-new-plus')) { e.preventDefault(); window.RailChats?.newChat(); return; }
     if ((hit = on('#side-rail .logo, #side-rail .logo-mark'))) { e.preventDefault(); drawer(false); location.hash = 'chat'; return; }
     if ((hit = on('[data-unlock]')) && on('#route-today')) { window.RailPulse?.unlock(hit.dataset.unlock, hit.dataset.to); return; }
     if (on('#side-toggle')) { collapsed = !collapsed; store.set(KEY_RAIL, collapsed ? '1' : '0'); syncRail(); return; }
@@ -192,11 +198,11 @@
   });
   // The column's grip: a drag, or the arrow keys, 20px a step.
   let drag = false;
-  document.addEventListener('pointerdown', (e) => { const g = e.target.closest?.('.ask-side-grip'); if (g) { drag = true; e.preventDefault(); document.getElementById('ask-side').classList.add('is-resizing'); } });
+  document.addEventListener('pointerdown', (e) => { const g = e.target.closest?.('#ask-side .ask-side-grip'); if (g) { drag = true; e.preventDefault(); document.getElementById('ask-side').classList.add('is-resizing'); } });
   document.addEventListener('pointermove', (e) => { if (drag) setAskW(innerWidth - e.clientX); });
   document.addEventListener('pointerup', () => { if (drag) { drag = false; document.getElementById('ask-side').classList.remove('is-resizing'); } });
   document.addEventListener('keydown', (e) => {
-    if (e.target.closest?.('.ask-side-grip') && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) { e.preventDefault(); setAskW(askW + (e.key === 'ArrowLeft' ? 20 : -20)); return; }
+    if (e.target.closest?.('#ask-side .ask-side-grip') && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) { e.preventDefault(); setAskW(askW + (e.key === 'ArrowLeft' ? 20 : -20)); return; }
     if (e.key === 'Escape' && document.body.classList.contains('nav-open')) { drawer(false); document.getElementById('mbar-menu')?.focus(); return; }
     if (e.key === 'Escape' && document.querySelector('#topnav .tsearch.is-open')) searchFold(false);
   });
@@ -214,9 +220,10 @@
   window.RailShell = {
     // which script answers a click or a key: the run page owns #card and its tools; Pulse owns the rest of the Rail pieces
     owns: (who, target) => {
+      if (!target?.isConnected) return false;   // a list page already answered it, and drew again
       const inRun = !!target?.closest?.('#card, [data-run-tools]');
       // today's pages and the sidebar's places are the shell's own: neither the run page nor Pulse answers there
-      const inShell = !!target?.closest?.('#route-today, #side-rail nav.nav, #ask-side');
+      const inShell = !!target?.closest?.('#route-today, #route-runs, #chats-col, #side-rail nav.nav, #ask-side');
       return who === 'run' ? inRun : !inRun && !inShell;
     },
     runActive: () => !document.getElementById('route-run')?.hidden,
@@ -226,14 +233,15 @@
     closeSearch: () => searchFold(false),
     connReset: () => { const sel = document.getElementById('conn'); if (sel) sel.value = 'ok'; conn = 'ok'; document.getElementById('rail-conn').innerHTML = ''; },
     closeDrawer: () => drawer(false),
+    chats: () => chats(),
+    // the list pages take their own `?`, with their own actions in the sheet
+    listKeys: () => routed.view === 'runs' || routed.view === 'chat',
   };
-  // In the one Worca a run's page carries the title its row shows (the run page's own cases keep theirs on run-page.html).
   const RM = window.RunCardModel;
-  for (const [title, id] of Object.entries(RUN_CASE)) if (RM) RM.titles[id] = title;
   let routed = { view: '', locked: false };
   build();
   setAskW(askW);
-  addEventListener('resize', syncRail);
+  addEventListener('resize', () => { syncRail(); chats(); });
   // A change of mode or a Labs flag: the sidebar follows, and the page if that changes whether it is locked.
   R.prefs.onChange(() => { applyPrefs(); if (routed.view && TITLES[routed.view] && !!lockOf(routed.view) !== routed.locked) route(); });
   addEventListener('hashchange', route);

@@ -15,6 +15,10 @@ it pushes the page; from 761 to 1080px it covers the page's right side; at 760px
 width is dragged between 360 and 680px and kept. It opens with Motion's fade, the page narrowing with it, and closes
 at once. One side column at a time.
 
+**The Chats column** is a side column on the page's other side, with its own width: beside the conversation on Chat,
+by the same three tiers and limits; at 760px and below it takes the window until a chat opens, and the conversation's
+list button brings it back.
+
 **A conversation** (Chat, a side column): the person's messages on the right on `--field`, Worca's text on the page,
 its work as cards on a 760px text column under the shared card head: a run card, a command group (folded to its head;
 a failure opens itself), a graph in its well.

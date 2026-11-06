@@ -48,6 +48,11 @@ shows it; sizes, colours and spacing come with the component. Names are the Desi
 | A PR of a stack in Create PR | StackedPrRow, opening its fields | PR 1 |
 | Time, cost, changes | Figures | Cost $84.10 of $120 |
 | Labels and cost tags | TagGroup | ui, team: web, +2 |
+| What a list shows | ListSentence: SentencePicker words, each choice with its count | `Showing [all ▾] from [all projects ▾] by [state ▾]` |
+| Things that belong together, in a list | GroupRow: its count and ⌄, its members under it | Unified page navigation 2/3 |
+| A run's PR fix rounds | RoundRows, under its row | Round 7 · merge dev in, 7 rounds |
+| A list with no rows | ListState: loading, offline, could not load, empty | Loading runs… |
+| What a chat is or did, on the rail | ChatKindIcon in the dot's place; OriginMark before its title | Started a run; Slack |
 | A list of things | ListRow on the rail, the whole row opens, never a box per item. Rows are split by space; a list grouped by something (status, day, section) draws one `--line` where each group after the first starts, from the text edge, and none between rows. Mock `plans/rail/mocks/now-dividers-compare-*.png` (option 4) | runs, files, decisions, Pulse's Now, a settings tab |
 | An update or a thing in Pulse | PulseRow, built on `row()`; while selecting, its tick box on the rail | Plan asks 2 questions |
 | What keeps running after a run | A PulseRow in Pulse's Now, under `Running actions`, with its Stop; never in the sidebar, which holds places only, and never in Pulse's badge, since it needs nobody | Dev server :4417 |

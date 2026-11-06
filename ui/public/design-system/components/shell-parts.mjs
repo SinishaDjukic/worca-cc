@@ -17,10 +17,12 @@ export function offlineLine({ text = 'Offline · retrying', tip = 'Worca lost it
  * @param {string} [o.close]     the Close icon's SVG
  * @param {number} [o.width]     what the grip reports to a screen reader
  * @param {object} [o.hooks]     the page's attrs: { close, grip }
+ * @param {string} [o.tools]     in its head, before Close
+ * @param {string} [o.closeLabel]
  */
-export function sideColumn({ title, body, close = '', width = 440, hooks = {} }) {
+export function sideColumn({ title, body, close = '', width = 440, hooks = {}, tools = '', closeLabel = 'Close' }) {
   const grip = `<div class="ask-side-grip" role="separator" aria-orientation="vertical" tabindex="0"${attrs({ 'aria-label': `Resize ${title}`, 'aria-valuemin': 360, 'aria-valuemax': 680, 'aria-valuenow': width, title: 'Drag to resize, 360 to 680px', ...(hooks.grip || {}) })}></div>`;
-  return `${grip}<div class="ask-side-in rl-side"><div class="rl-side-head"><h2 class="rl-side-title">${esc(title)}</h2>${button({ label: 'Close', kind: 'quiet', iconOnly: true, icon: close, attrs: hooks.close || {} })}</div><div class="rl-side-body">${body}</div></div>`;
+  return `${grip}<div class="ask-side-in rl-side"><div class="rl-side-head"><h2 class="rl-side-title">${esc(title)}</h2><span class="rl-side-tools">${tools}${button({ label: closeLabel, kind: 'quiet', iconOnly: true, icon: close, attrs: hooks.close || {} })}</span></div><div class="rl-side-body">${body}</div></div>`;
 }
 
 export const AWAY_IDLE_MS = 5 * 60 * 1000;

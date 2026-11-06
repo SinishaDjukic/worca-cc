@@ -73,9 +73,8 @@ function menu(id, items, align) {
   return R.compactMenu({ items: items.map((it) => (it.sep ? it : { ...it, id: `${id}|${it.id}` })), cls: `pz-menu${align === 'right' ? ' is-right' : ''}${inCls('menu')}`, pickAttr: 'data-pick', motion: false });
 }
 // A picker in the sentence it changes: the chosen words, a chevron, the menu under it.
-function picker(id, text, items, tip) {
-  return R.wordPicker({ text, tip, cls: 'is-words', wrapCls: 'pz-pick', chevron: svg('chevron', 12), open: ui.menu === id, menuHtml: menu(id, items), attrs: { 'data-menu': id } });
-}
+const picker = (id, text, items, tip) => R.listWord({ id, text, items, tip }, { open: ui.menu, chevron: svg('chevron', 12), menuCls: inCls('menu') });
+const sentence = (parts) => R.listSentence({ parts, open: ui.menu, chevron: svg('chevron', 12), menuCls: inCls('menu') });
 // A ring that shades along its arc: neutral at the start, amber at the warning line, red at the limit, so how far it
 // has filled shows which colours it has reached. Used up, it is full and solid red (a reached limit is never hidden).
 const gring = (pct, cls, t) => `<span class="pz-gring${cls ? ' ' + cls : ''}${t === 'over' ? ' is-over' : ''}" style="--p:${Math.max(0, Math.min(100, pct))};--w:${ui.s.warnAt}" aria-hidden="true"></span>`;
@@ -136,7 +135,9 @@ function updateRow(u, withCheck) {
 }
 function nowSections() {
   const c = nowShown(), lim = c.limits;
-  const bar = `<div class="pz-bar"><span class="pz-rail"></span><span class="pz-sentence">Showing ${picker('nowShow', NOW_SHOWS.find((x) => x.id === ui.nowShow).text, NOW_SHOWS.map((x) => ({ ...x, checked: x.id === ui.nowShow, hint: String(nowN(nowShown(x.id, ui.nowFrom))) })), 'Which of Now\'s sections the panel shows')} from ${picker('nowFrom', ui.nowFrom === 'all' ? 'all projects' : ui.nowFrom, [{ id: 'all', text: 'all projects', checked: ui.nowFrom === 'all', hint: String(nowN(nowShown(ui.nowShow, 'all'))) }, { sep: true }].concat(nowProjects().map((p) => ({ id: p, text: p, checked: ui.nowFrom === p, hint: String(nowN(nowShown(ui.nowShow, p))) }))), 'Which project\'s runs it shows; limits belong to a harness and show for every project')}</span></div>`;
+  const bar = `<div class="pz-bar"><span class="pz-rail"></span><span class="pz-sentence">${sentence([
+    { word: 'Showing', id: 'nowShow', text: NOW_SHOWS.find((x) => x.id === ui.nowShow).text, items: NOW_SHOWS.map((x) => ({ ...x, checked: x.id === ui.nowShow, hint: String(nowN(nowShown(x.id, ui.nowFrom))) })), tip: 'Which of Now\'s sections the panel shows' },
+    { word: 'from', id: 'nowFrom', text: ui.nowFrom === 'all' ? 'all projects' : ui.nowFrom, items: [{ id: 'all', text: 'all projects', checked: ui.nowFrom === 'all', hint: String(nowN(nowShown(ui.nowShow, 'all'))) }, { sep: true }].concat(nowProjects().map((p) => ({ id: p, text: p, checked: ui.nowFrom === p, hint: String(nowN(nowShown(ui.nowShow, p))) }))), tip: 'Which project\'s runs it shows; limits belong to a harness and show for every project' }])}</span></div>`;
   const sec = (h, n, rows) => (n ? `<section class="pz-sec"><h3 class="pz-h">${h} <span class="n">${n}</span></h3><div class="pz-list">${rows}</div></section>` : '');
   const out = sec(R.runState('question').word, c.needs.length, c.needs.map((r, i) => runRow(r, 'need' + i, 'Opens the run page at what it asks')).join(''))
     + sec('Limits', lim.length, lim.map((l, i) => row({ dot: l.tone === 'over' ? 'is-red' : 'is-amber', title: l.title, meta: l.detail, time: l.time, key: 'lim' + i, tip: `${l.tip} · opens the usage card` })).join(''))
@@ -328,7 +329,9 @@ function updatesPanel() {
   const list = shown();
   // While selecting, Select all sits at the sentence's right, as in the Runs list's head
   const all = ui.pick.on && list.length ? R.selectAllBox({ state: R.selectAllState(ui.pick, list.map((u) => u.id)) }) : '';
-  const bar = `<div class="pz-bar"><span class="pz-rail"></span><span class="pz-sentence">Showing ${picker('show', SHOWS.find((s) => s.id === ui.show).text, SHOWS.map((s) => ({ ...s, checked: s.id === ui.show, hint: String(shown(s.id, ui.from).length) })), 'Which updates the list shows')} from ${picker('from', ui.from === 'all' ? 'all groups' : groupOf(ui.from).name, [{ id: 'all', text: 'all groups', checked: ui.from === 'all', hint: String(shown(ui.show, 'all').length) }, { sep: true }].concat(groupsShown().map((g) => ({ id: g.id, text: g.name, checked: ui.from === g.id, hint: String(shown(ui.show, g.id).length) }))), 'Which group the updates come from')}</span>${all}</div>`;
+  const bar = `<div class="pz-bar"><span class="pz-rail"></span><span class="pz-sentence">${sentence([
+    { word: 'Showing', id: 'show', text: SHOWS.find((s) => s.id === ui.show).text, items: SHOWS.map((s) => ({ ...s, checked: s.id === ui.show, hint: String(shown(s.id, ui.from).length) })), tip: 'Which updates the list shows' },
+    { word: 'from', id: 'from', text: ui.from === 'all' ? 'all groups' : groupOf(ui.from).name, items: [{ id: 'all', text: 'all groups', checked: ui.from === 'all', hint: String(shown(ui.show, 'all').length) }, { sep: true }].concat(groupsShown().map((g) => ({ id: g.id, text: g.name, checked: ui.from === g.id, hint: String(shown(ui.show, g.id).length) }))), tip: 'Which group the updates come from' }])}</span>${all}</div>`;
   if (!list.length) return bar + `<p class="pz-empty">${ui.show === 'unread' ? 'You are up to date.' : ui.show === 'cleared' ? 'Nothing cleared.' : 'No updates here.'}</p>`;
   const days = [...new Set(list.map((u) => u.day))];
   return bar + days.map((d) => `<section class="pz-sec"><h3 class="pz-h pz-day">${d}</h3><div class="pz-list${ui.pick.on ? ' is-selecting' : ''}">${list.filter((u) => u.day === d).map((u) => updateRow(u, true)).join('')}</div></section>`).join('');
@@ -475,7 +478,7 @@ function land(e) {
 function goTo(e) {
   if (e.sset) { land(e); return; }
   closeOverlays();
-  if (SHELL) { if (e.kind === 'label') toast(`Runs with the label ${e.label}: the captured list shows them all`); if (e.go.startsWith('run/')) SHELL.openRun(e.go, e.label); else SHELL.go(e.go); render(); return; }
+  if (SHELL) { if (e.kind === 'label') window.RailRunsList?.label(e.label); if (e.go.startsWith('run/')) SHELL.openRun(e.go, e.label); else SHELL.go(e.go); render(); return; }
   toast(`Opens ${e.label} · ${e.where} (not in this prototype)`); render();
 }
 // The hand-off: a mode asks in the strip under the top bar; a flag goes to its row in Labs. Once nothing locks it, on to the result.
@@ -608,11 +611,7 @@ function paintAlone() {
 function fitMenus() {
   const vw = document.documentElement.clientWidth;
   fitSearch();
-  for (const m of document.querySelectorAll('.pz-menu, .spick-menu')) {
-    const r = m.getBoundingClientRect();
-    if (r.right > vw - 16) m.style.left = `${Math.min(0, vw - 16 - r.right)}px`;
-    const r2 = m.getBoundingClientRect(); if (r2.left < 16) m.style.left = `${parseFloat(m.style.left || 0) + 16 - r2.left}px`;
-  }
+  for (const m of document.querySelectorAll('.pz-menu, .spick-menu')) R.fitMenu(m, vw);
 }
 const toastEl = () => document.querySelector('body > .rc-toast');   // the page's own: the run page's sits in a route that may be hidden
 let toastTimer = 0, undo = null;   // { tip, run }: what the toast's Undo does
@@ -755,17 +754,15 @@ function panelKey(act, e) {
   const from = rowFrom(e.target);
   if (act === 'down' || act === 'up') { rowEl(R.listMove(rowIds(), from, act === 'down' ? 1 : -1))?.focus(); return; }
   if (act === 'open') { e.target.closest(ROW).click(); return; }
-  if (act === 'toggle') { pickRow(act, e.target.closest(ROW).dataset.open); return; }
-  if (act === 'all') { pickRow(act, ''); return; }
-  const { pick, to } = R.selectExtend(ui.pick, shownIds(), from, act === 'extend-down' ? 1 : -1);
-  ui.pick = pick; render(); rowEl(to)?.focus();
+  const { pick, to } = R.selectStep(ui.pick, act, { from: act === 'toggle' ? e.target.closest(ROW).dataset.open : from, shown: shownIds() });
+  ui.pick = pick; render(); if (to) rowEl(to)?.focus();
 }
 document.addEventListener('keydown', (e) => {
   const inPanel = ui.pop && !ui.menu && !ui.acct && !ui.nr && !ui.sub && !somethingUp();
   const scopes = [...(inPanel ? (ui.popTab === 'updates' ? ['selecting', 'list'] : ['list']) : []), 'anywhere'];
   const act = R.shortcutAction(R.keyFacts(e, ROW), { scopes, selecting: ui.pick.on });
   if (act === 'search') { if (somethingUp()) return; e.preventDefault(); if (SHELL && innerWidth <= 760) document.getElementById('tsearch-open')?.click(); document.querySelector('[data-search]')?.focus(); return; }
-  if (act === 'help') { if (somethingUp() || ui.menu || ui.acct) return; e.preventDefault(); openSheet(); return; }
+  if (act === 'help') { if (somethingUp() || ui.menu || ui.acct) return; if (SHELL?.listKeys?.() && !ui.pop) return; e.preventDefault(); openSheet(); return; }
   if (e.key === 'Enter' && e.target.matches?.('[data-search]') && ui.q) { document.querySelector('.rl-search-res [data-menu-pick]')?.click(); return; }
   if (SHELL && SHELL.runActive() && !ui.pop && !ui.acct && !ui.nr && !ui.menu) return;   // the run page's keys
   if (act && act !== 'close' && act !== 'clear') { e.preventDefault(); panelKey(act, e); return; }
@@ -802,7 +799,9 @@ window.RailPulse = {
     render();
     if (landing) { const e = landing; landing = null; landRow(e); }
   },
-  say: (text) => { toast(text); render(); },
+  say: (text, canUndo) => { toast(text, canUndo); render(); },
+  // a click on a list page: what lies over it closes
+  dismiss: () => { if (ui.pop || ui.acct || ui.nr || ui.menu || ui.q) { ui.pop = false; ui.acct = false; ui.sub = ''; ui.nr = null; ui.menu = ''; render(); } },
   // A place or a section above the mode or behind Labs: its one way on (the page's EmptyState).
   unlock: (lock, to) => {
     const [kind, v] = lock.split(':');

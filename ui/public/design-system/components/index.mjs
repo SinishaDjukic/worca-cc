@@ -27,7 +27,7 @@ export { suggestionField, suggestionFail, suggestButton, suggestedChip, stopWrit
 export { tagGroup, fitTags, listEditor } from './tag-group.mjs';
 export { stepper, stepDot, stepRow, stackRow, lineRow, fileRow, stackedPrRow } from './stepper.mjs';
 export { table } from './table.mjs';
-export { fill, runState, stateIds, actionHelp, actionLevel, actionFlow, runFlow, makeAction, memberKeeps, sectionOf, isDone, isLiveStep, stageState, subState, stepLook, defaultStage, stageMeta, toMin, fmtMin, STAGE_WORD, TRACKER_MOVES } from './run-state.mjs';
+export { fill, runState, stateIds, actionHelp, actionLevel, actionFlow, runFlow, makeAction, memberKeeps, chatState, CHAT_KINDS, bulkStateOf, sectionOf, isDone, isLiveStep, stageState, subState, stepLook, defaultStage, stageMeta, toMin, fmtMin, STAGE_WORD, TRACKER_MOVES } from './run-state.mjs';
 export { workingWord, confirmOf, failureOf, stepFlow } from './step-flow.mjs';
 export { foldMiddle, workParts, workPhrase, workPlace } from './work-place.mjs';
 export { MODES, atLevel, RUN_PAGE_LEVELS, runPartShows, prefs, shows } from './levels.mjs';
@@ -40,5 +40,8 @@ export { USAGE_REFRESH_MS, usageWindow, connectedUsage, usageTip } from './usage
 export { tryStep } from './run-state.mjs';
 export { watchScrollbars, thumbBox, SCROLL_SHOW_MS } from './scrollbars.mjs';
 export { SHORTCUTS, RESERVED, FIELD, chordId, isMac, keyGlyph, keyHint, keyFacts, shortcutAction, listMove, shortcutSections, shortcutsSheet, openShortcutsSheet } from './shortcuts.mjs';
-export { PRESS_MS, selectClear, selectStart, selectToggle, selectRange, selectAll, selectPrune, selectCount, selectAllState, selectExtend, selectionAction, selectApply, keepFocus } from './selection.mjs';
+export { PRESS_MS, selectClear, selectStart, selectToggle, selectRange, selectAll, selectPrune, selectCount, selectAllState, selectExtend, selectStep, selectionAction, selectApply, keepFocus } from './selection.mjs';
+export { listWord, listSentence, groupRow, roundRows, listState, originMark, chatKindIcon } from './list-parts.mjs';
+export { listController, LIST_SHOWN, fitMenu } from './list-page.mjs';
+export { planBulk, skipText } from '../../../../src/shared/run-bulk.mjs';
 export { selectionBar, selectAllBox, bindLongPress } from './selection-bar.mjs';

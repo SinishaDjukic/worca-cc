@@ -1,6 +1,9 @@
 // The line icons of a Rail page (docs/rail/components.md): one set, so no page keeps its own copy of a path.
 const P = (d) => `<path d="${d}"></path>`;
 export const ICONS = {
+  workflow: '<rect x="3" y="9" width="6" height="6" rx="1.6"></rect><rect x="15" y="4" width="6" height="5.5" rx="1.6"></rect><rect x="15" y="14.5" width="6" height="5.5" rx="1.6"></rect><path d="M9 12h3m0 0V7h3m-3 5v5h3"></path>',
+  track: P('M3 12h4l2.5-6 4 12 2.5-6H21'),
+  plug: P('M12 22v-5') + P('M9 8V2') + P('M15 8V2') + P('M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z'),
   check: P('M5 12.5l4.5 4.5L19 7.5'),
   now: '<circle cx="12" cy="12" r="4" fill="currentColor" stroke="none"></circle>',
   question: P('M9.2 9.2a2.9 2.9 0 1 1 4.2 2.6c-.9.5-1.4 1.1-1.4 2v.4') + P('M12 17.6h.01'),

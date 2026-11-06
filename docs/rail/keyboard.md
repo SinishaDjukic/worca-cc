@@ -16,12 +16,13 @@ The table is `SHORTCUTS` in `shortcuts.mjs`. A page names where the focus is, an
 | Anywhere | ⌘K Search or ask · `?` this sheet · Esc closes what is on top |
 | A list | ↑ ↓ or J K move · Enter opens; and, in a list that has the action (`can`): `.` row menu, ← → fold, S stop, E archive, R rename, P pin, G and ⇧G group, ⌫ delete |
 | A list with selecting | Space selects the row · ⇧↑ ⇧↓ extend · ⌘A selects all · Esc ends selecting, then closes the panel |
+| Chat | ⌥⌘N new chat · ⌘\\ show or hide the chats · ⌘⇧L go to the chats · ⌥↑ ⌥↓ previous and next chat |
 | The run page | L labels · Ctrl+` terminal · arrows, Home and End move through tabs, stages, the ship choice and a menu |
 
 ⌘ is Ctrl off a Mac, and either works everywhere; `keyGlyph` and `keyHint` write the right one. Space and Enter act only
 with the focus on a row, so a button keeps its own. A list whose rows cannot be acted on together (Pulse's Now) has moving and
-opening only. The two things allowed in a field are a field's own way out: Esc, and the arrows from a menu's own field
-into its items.
+opening only. The things allowed in a field are a field's own way out: Esc, the arrows from a menu's own field
+into its items, and Chat's ⌥⌘N, ⌘\\ and ⌘⇧L, since you are in its composer.
 
 A new key is a row in the table. The sheet is a Dialog with no form, only Close (`openShortcutsSheet`); while it is up it
 holds every key, and closing it puts the focus back. It lists the rows of where you are: a list's row with `can` only

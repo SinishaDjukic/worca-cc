@@ -5,12 +5,6 @@
     "main": "main",
     "row": "main-row"
   },
-  "runs": {
-    "root": "",
-    "body": "view-runs",
-    "main": "main",
-    "row": "main-row"
-  },
   "schedules": {
     "root": "",
     "body": "",

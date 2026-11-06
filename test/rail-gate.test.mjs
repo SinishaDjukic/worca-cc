@@ -34,7 +34,7 @@ test('the gate catches each thing by hand, and passes a page that calls the libr
 test('the prototype\'s pages write nothing the library owns: no frozen count for them', () => {
   const dir = join(ROOT, 'plans/rail/prototype');
   const hits = {};
-  for (const d of ['runs', 'pulse', 'settings', 'shell']) for (const f of readdirSync(join(dir, d))) if (f.endsWith('.js')) { const h = scanText(readFileSync(join(dir, d, f), 'utf8')); if (Object.keys(h).length) hits[`${d}/${f}`] = h; }
+  for (const d of ['runs', 'pulse', 'settings', 'shell', 'chat']) for (const f of readdirSync(join(dir, d))) if (f.endsWith('.js')) { const h = scanText(readFileSync(join(dir, d, f), 'utf8')); if (Object.keys(h).length) hits[`${d}/${f}`] = h; }
   assert.deepEqual(hits, {});
 });
 

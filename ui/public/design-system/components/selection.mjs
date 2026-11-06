@@ -73,6 +73,15 @@ export function selectApply(s, action, { id = '', shown = [] } = {}) {
   return s;
 }
 
+/**
+ * What a selection key does to a selection: 'toggle', 'all', 'extend-down' or 'extend-up'. { pick, to }: the selection and
+ * the row the focus moves to ('' stays).
+ */
+export function selectStep(s, act, { from = '', shown = [] } = {}) {
+  if (act === 'extend-down' || act === 'extend-up') return selectExtend(s, shown, from, act === 'extend-down' ? 1 : -1);
+  return { pick: selectApply(s, act, { id: from, shown }), to: '' };
+}
+
 /** Where the focus goes after a redraw: the same row, else the next one still there, else the one before, else ''. */
 export function keepFocus(before, after, id) {
   if (after.includes(id)) return id;

@@ -45,6 +45,13 @@ export const SHORTCUTS = Object.freeze([
     { do: 'all', label: 'Select all', keys: [['mod', 'A']] },
     { do: 'clear', label: 'End selecting', keys: [['Escape']], whenSelecting: true, inField: true },
   ] },
+  { scope: 'chat', title: 'Chat', col: 2, rows: [
+    { do: 'new-chat', label: 'New chat', keys: [['mod', 'alt', 'N']], inField: true },
+    { do: 'toggle-list', label: 'Toggle chats', keys: [['mod', '\\']], inField: true },
+    { do: 'focus-list', label: 'Focus chats', keys: [['mod', 'shift', 'L']], inField: true },
+    { do: 'prev-chat', label: 'Previous chat', keys: [['alt', 'ArrowUp']] },
+    { do: 'next-chat', label: 'Next chat', keys: [['alt', 'ArrowDown']] },
+  ] },
   { scope: 'run', title: 'Run page', col: 2, rows: [
     { do: 'labels', label: 'Labels', keys: [['L']] },
     { do: 'terminal', label: 'Terminal', keys: [['ctrl', '`']] },
@@ -80,14 +87,16 @@ export function keyHint(chord, mac) {
 
 /** What a key event says, for shortcutAction. `rowSel` names a list's rows, when the page has one. */
 export function keyFacts(e, rowSel = '') {
-  return { key: e.key, metaKey: e.metaKey, ctrlKey: e.ctrlKey, altKey: e.altKey, shiftKey: e.shiftKey,
+  return { key: e.key, code: e.code, metaKey: e.metaKey, ctrlKey: e.ctrlKey, altKey: e.altKey, shiftKey: e.shiftKey,
     inField: !!e.target?.closest?.(FIELD), onRow: !!(rowSel && e.target?.closest?.(rowSel)) };
 }
 
 const NAMED = { Space: ' ' };
 function hits(chord, f) {
   const key = chord[chord.length - 1], mods = chord.slice(0, -1);
-  if (String(f.key).toLowerCase() !== String(NAMED[key] || key).toLowerCase()) return false;
+  // ⌥ turns a letter into another character on a Mac: the key's place says which it is
+  const letter = mods.includes('alt') && /^[A-Z]$/.test(key) && f.code === `Key${key}`;
+  if (!letter && String(f.key).toLowerCase() !== String(NAMED[key] || key).toLowerCase()) return false;
   const mod = f.metaKey || f.ctrlKey;
   if (mods.includes('mod') ? !mod : mods.includes('ctrl') ? !f.ctrlKey || f.metaKey : mod) return false;
   if (!!f.altKey !== mods.includes('alt')) return false;

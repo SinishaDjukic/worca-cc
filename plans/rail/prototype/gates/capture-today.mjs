@@ -34,7 +34,7 @@ if (SERVE) {
   process.env.HOME = realHome;   // Chrome keeps its own home
 }
 const OUT = fileURLToPath(new URL('../today/', import.meta.url)); mkdirSync(OUT, { recursive: true });
-export const VIEWS = ['chat', 'runs', 'schedules', 'stats', 'team-metrics', 'workflows', 'requirements', 'projects', 'workspaces', 'marketplace'];
+export const VIEWS = ['chat', 'schedules', 'stats', 'team-metrics', 'workflows', 'requirements', 'projects', 'workspaces', 'marketplace'];
 const clean = (html) => html.replace(/<script[\s\S]*?<\/script>/g, '').replace(/\s(on[a-z]+)="[^"]*"/g, '')
   .replace(/\s(src|href)="(?!https?:|data:|#|\/\/)\/?([^"]+)"/g, (m, k, v) => ` ${k}="../../../ui/public/${v}"`);
 const b = await chromium.launch({ channel: 'chrome' }); const p = await b.newPage({ viewport: { width: 1280, height: 860 } });
@@ -47,7 +47,7 @@ for (const v of ONLY || VIEWS) {
   }, v);
   writeFileSync(`${OUT}${v}.html`, clean(got.html));
   pages[v] = { root: got.root, body: got.body, main: got.main, row: got.row };
-  if (v === 'runs' && !ONLY) {
+  if (v === 'chat' && !ONLY) {
     const shell = await p.evaluate(() => { const a = document.querySelector('#side-rail').cloneNode(true), t = document.querySelector('#topnav').cloneNode(true); a.querySelectorAll('[class*="mock"]').forEach((x) => x.remove()); t.querySelectorAll('[class*="mock"]').forEach((x) => x.remove()); return { side: a.outerHTML, top: t.outerHTML }; });
     writeFileSync(`${OUT}shell-sidebar.html`, clean(shell.side)); writeFileSync(`${OUT}shell-top-bar.html`, clean(shell.top));
   }

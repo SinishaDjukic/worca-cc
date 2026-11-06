@@ -26,6 +26,7 @@
     <span class="mk-row"><button type="button" class="btn btn-sm" id="next-event" title="Something outside the run happens: checks finish, a reviewer approves">Next event</button><button type="button" class="btn btn-sm btn-quiet" id="restart" title="Start again from a new run">Restart</button></span>
     <label class="pd-check" title="The next confirmed step or suggestion fails, to show how a failure reads"><input type="checkbox" id="fail-next"> Next one fails</label>
     <label title="What an error nobody planned for looks like">Break <select class="select select-sm" id="break"><option value="">Nothing</option><option value="step">The next step, unexpectedly</option><option value="part">This tab</option><option value="background">Something in the background</option><option value="offline">The connection</option></select></label>
+    <label title="What the Runs list and the Chats column have to show">Lists <select class="select select-sm" id="list-case"><option value="full">A full list</option><option value="shared">A shared sign-in</option><option value="empty">Nothing yet</option><option value="loading">Loading</option><option value="offline">Offline</option><option value="failed">Could not load</option><option value="refresh">A refresh fails</option></select></label>
     <label>Pulse <select class="select select-sm" id="pulse-case"></select></label>
     <label title="On a shared sign-in, read and cleared belong to each person; try the Every kind case">Person <select class="select select-sm" id="person"><option>Emil Angelov</option><option>Dana Ruiz</option></select></label>
     <label title="What the shell shows when the connection drops or the sign-in ends">Connection <select class="select select-sm" id="conn"><option value="ok">Connected</option><option value="offline">Offline</option><option value="session">Session expired</option></select></label>
@@ -40,9 +41,13 @@
 <script src="today.js"></script>
 <script src="runs/run-page-model.js"></script>
 <script src="pulse/pulse-model.js"></script>
+<script src="runs/runs-model.js"></script>
+<script src="chat/chats-model.js"></script>
 <script src="settings/settings-model.js"></script>
 <script src="settings/settings.js"></script>
 <script src="shell/shell.js"></script>
+<script src="runs/runs-list.js"></script>
+<script src="chat/chats-column.js"></script>
 <script src="runs/run-page.js"></script>
 <script src="pulse/pulse.js"></script>
 </body>

@@ -653,3 +653,64 @@ test('openShortcutsSheet: one at a time, holds the keys, Esc or Close closes and
   d.querySelector('[data-dialog="yes"]').click();
   assert.equal(d.querySelector('.keys-modal'), null); assert.equal(reached, 0, 'its click stays its own');
 });
+
+test('listSentence, listWord: its words, one menu open, a pick reports its id and each choice its count', () => {
+  const p = new JSDOM(`<div>${C.listSentence({ open: 'by', parts: [{ word: 'Showing', id: 'show', text: 'a<ll', items: [] }, { word: 'by', id: 'by', text: 'state', items: [{ id: 'day', text: 'day', hint: '5', checked: false }] }] })}</div>`).window.document.body.firstElementChild;
+  assert.match(p.textContent, /^Showing a<ll by state/);
+  assert.equal(p.querySelectorAll('[data-menu]').length, 2);
+  assert.equal(p.querySelector('[data-pick="by|day"] .mi-hint').textContent, '5');
+  assert.equal(dom(`<div>${C.listWord({ id: 'x', text: 't', items: [] })}</div>`).querySelector('.menu'), null);
+});
+
+test('listRow: while selecting its tick box takes the mark\'s place; unread, current, what sits under it', () => {
+  const m = dom(C.listRow({ title: 'a', mark: C.statusDot({ tone: 'is-green' }), open: {} }));
+  assert.ok(m.querySelector('.status-dot')); assert.equal(m.querySelector('input'), null);
+  const s = dom(C.listRow({ title: 'a', mark: C.statusDot({ tone: 'is-green' }), check: true, boxAttrs: { 'data-sel': 'a' }, unread: true, current: true, after: '<i>x</i>' }));
+  assert.equal(s.querySelector('.status-dot'), null); assert.ok(s.querySelector('input[data-sel="a"]').checked);
+  assert.match(s.className, /is-unread/); assert.equal(s.getAttribute('aria-current'), 'true');
+  assert.ok(s.querySelector('.lr-after i'));
+});
+
+test('groupRow, roundRows: its count and ⌄, members only while open; rounds, then +n earlier', () => {
+  const open = dom(C.groupRow({ title: 'g', count: '2/3', noun: 'runs', shown: true, open: { 'data-open': 'g' }, toggle: { 'data-fold': 'g' }, rows: C.listRow({ title: 'm' }) }));
+  assert.equal(open.querySelector('.lr-fig').textContent, '2/3');
+  assert.ok(open.querySelector('button.lr-main[data-open="g"]'), 'the row opens its target');
+  assert.equal(open.querySelector('[data-fold]').getAttribute('aria-expanded'), 'true');
+  assert.equal(open.querySelector('.lr-members .lr-t').textContent, 'm');
+  assert.equal(dom(C.groupRow({ title: 'g', count: '1', noun: 'runs', shown: false, toggle: {}, rows: C.listRow({ title: 'm' }) })).querySelector('.lr-members'), null);
+  const shut = dom(C.roundRows({ line: 'Round 7', n: 7, open: false, toggle: { 'data-rounds': 'r' } }));
+  assert.match(shut.textContent, /7 rounds/); assert.equal(shut.querySelector('.list-row'), null);
+  const rs = dom(C.roundRows({ line: 'Round 7', n: 7, open: true, toggle: {}, rounds: [{ n: 7, words: 'w', time: '11:20' }], more: { n: 2, attrs: { 'data-x': '1' } } }));
+  assert.equal(rs.querySelector('.lr-t').textContent, 'Round 7 · w'); assert.equal(rs.querySelector('[data-x]').textContent, '+2 earlier');
+});
+
+test('listState, originMark, chatKindIcon: a list with no rows; a chat\'s marks say what they are', () => {
+  assert.match(dom(C.listState({ state: 'loading', noun: 'runs' })).textContent, /Loading runs/);
+  const f = dom(C.listState({ state: 'failed', noun: 'runs', retry: { 'data-retry': '' } }));
+  assert.match(f.className, /is-err/); assert.ok(f.querySelector('[data-retry]'));
+  assert.equal(dom(C.listState({ state: 'empty', noun: 'runs', text: 'Nothing needs you.' })).querySelector('.el-t').textContent, 'Nothing needs you.');
+  assert.equal(dom(C.originMark({ platform: 'slack' })).title, 'From Slack');
+  assert.equal(dom(C.originMark({ platform: 'x', label: 'Matter' })).title, 'From Matter');
+  assert.equal(dom(C.chatKindIcon(C.CHAT_KINDS.started)).title, 'Started a run');
+});
+
+test('listController: draws what a page names; selecting, the sentence, Show N more and a confirm work by clicks', () => {
+  const d = new JSDOM('<body><div id="r"></div></body>', { pretendToBeVisual: true }).window.document, root = d.getElementById('r');
+  const rows = ['a', 'b', 'c', 'd'].map((k) => ({ key: k, title: k, meta: '', menu: [{ id: 'toggle', text: 'Select' }, { id: 'stop', text: 'Stop' }] }));
+  const said = [], did = []; let by = 'x';
+  const ctl = C.listController({ root, spec: { noun: 'runs', label: 'Selected', can: () => ['menu'], active: () => true, say: (t) => said.push(t),
+    view: () => ({ parts: [{ word: 'by', id: 'by', text: by, items: [{ id: 'y', text: 'y' }] }], tools: [{ id: 'select', text: 'Select' }], sections: [{ id: 's', title: 'S', limit: 2, rows }] }),
+    bulk: (r) => [{ id: 'stop', label: 'Stop', n: r.length, tip: 't' }], act: (id, r) => did.push([id, r.map((x) => x.key)]), open: (r) => did.push(['open', r.key]), word: (id, v) => { by = v; return false; } } });
+  ctl.paint();
+  const click = (sel, o = {}) => root.querySelector(sel).dispatchEvent(new d.defaultView.MouseEvent('click', { bubbles: true, ...o }));
+  assert.equal(root.querySelectorAll('.list-row').length, 2); assert.equal(root.querySelector('.list-more').textContent, 'Show 2 more');
+  click('[data-more]'); assert.equal(root.querySelectorAll('.list-row').length, 4);
+  click('[data-open="a"]'); assert.deepEqual(did.pop(), ['open', 'a']);
+  click('[data-open="a"]', { metaKey: true }); assert.deepEqual(ctl.state.pick.ids, ['a']); assert.ok(root.querySelector('.runs-bulk'));
+  click('[data-open="c"]', { shiftKey: true }); assert.deepEqual(ctl.state.pick.ids, ['a', 'b', 'c']);
+  click('[data-bulk="stop"]'); assert.deepEqual(did.pop(), ['stop', ['a', 'b', 'c']]);
+  click('[data-bulk="cancel"]'); assert.equal(root.querySelector('.runs-bulk'), null);
+  click('[data-menu="by"]'); click('[data-pick="by|y"]'); assert.equal(by, 'y');
+  let ran = 0; ctl.confirm({ text: 'Sure?', yes: 'Go', run: () => { ran++; } });
+  click('[data-confirm="yes"]'); assert.equal(ran, 1); assert.equal(root.querySelector('.rc-confirm'), null);
+});

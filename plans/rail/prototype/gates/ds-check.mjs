@@ -14,8 +14,9 @@ writeAppCss();   // the app's CSS, assembled from its parts
 writeComponentsJs();   // the Rail components, bundled for file://
 const here = (f) => fileURLToPath(new URL('../' + f, import.meta.url));   // the prototype's root
 const SHEETS = ['design-system/rail-look.css', 'design-system/rail.css', 'pulse/pulse.css'];
-const ALL = [APP_CSS, ...SHEETS.map(here), ...readdirSync(here('.')).filter((f) => f.endsWith('.html')).map(here)];
-const SCRIPTS = ['runs/run-page.js', 'pulse/pulse.js', 'runs/run-page-model.js', 'pulse/pulse-model.js', 'settings/settings.js', 'settings/settings-model.js'].map(here);
+const ALL = [APP_CSS, ...SHEETS.map(here), here('shell/shell.css'), ...readdirSync(here('.')).filter((f) => f.endsWith('.html')).map(here)];
+const FOLDERS = ['runs', 'pulse', 'settings', 'shell', 'chat'];
+const SCRIPTS = FOLDERS.flatMap((d) => readdirSync(here(d)).filter((f) => f.endsWith('.js')).map((f) => here(`${d}/${f}`)));
 const issues = new Map(); const add = (k, where) => { if (!issues.has(k)) issues.set(k, new Set()); issues.get(k).add(where); };
 
 // Every control a page may draw, by the design-system component it belongs to (docs/rail/components.md).
@@ -67,7 +68,7 @@ for (const name of SHEETS) {
 // --- the components ---
 // Every page writes none of their markup by hand: the component brings it, so a fix or an upgrade reaches every page.
 // The list reads itself: every script of every feature folder, by the same scan as npm test (tools/rail-gate.mjs).
-const PAGES_JS = ['runs', 'pulse', 'settings', 'shell'].flatMap((d) => readdirSync(here(d)).filter((f) => f.endsWith('.js')).map((f) => `${d}/${f}`));
+const PAGES_JS = FOLDERS.flatMap((d) => readdirSync(here(d)).filter((f) => f.endsWith('.js')).map((f) => `${d}/${f}`));
 for (const name of PAGES_JS) for (const [c, n] of Object.entries(scanText(readFileSync(here(name), 'utf8')))) add('markup or logic the library owns, written by hand (use the library)', `${name} ${c} × ${n}`);
 
 // --- names: a page, a menu item, a section head, a settings row (docs/rail/small-rules.md) ---
@@ -101,6 +102,20 @@ const HEADS = () => {
 };
 
 // --- the pages ---
+const READ = ([CONTROL_SEL, known]) => {
+      const out = []; const known_ = new Set(known);
+      const root = document.querySelector('.mk-wrap, .pz-app') ? document.body : document.body;
+      for (const e of root.querySelectorAll('*')) {
+        if (e.closest('.mk-bar, .mk-intro, .mk-proposed, .mk-tools, #route-today, #side-rail, #topnav, svg')) continue;
+        const st = e.getAttribute('style') || '';
+        if (/#[0-9a-f]{3,8}\b|\b(rgba?|hsla?)\(/i.test(st)) out.push(['an inline colour', e.className + ': ' + st]);
+        if (/(font|padding|margin|border|radius|shadow|color|background)[^:]*:\s*[^;]*\d+px/i.test(st)) out.push(['an inline style that sets a look', e.className + ': ' + st]);
+        for (const c of e.classList) if (!known_.has(c) && !/^is-/.test(c)) out.push(['a class no stylesheet styles', c]);   // is-* are state hooks
+        if (e.tagName === 'BUTTON' && !e.matches(CONTROL_SEL)) out.push(['a control the design system does not have', (e.className || '(no class)') + ' "' + e.textContent.trim().slice(0, 24) + '"']);
+        if (e.tagName === 'BUTTON' && /^[×+▾✕✓]$/.test(e.textContent.trim())) out.push(['a typed icon (use the line icon)', e.className + ' "' + e.textContent.trim() + '"']);
+      }
+      return out;
+    };
 const b = await chromium.launch({ channel: 'chrome' });
 const OPEN = ['break:part', 'break:background', 'break:offline', '[data-pop]', '[data-acct]', '[data-newrun]', '[data-key="act-main"]', '[data-menu]', '.rc-tabs .tab:nth-child(2)', '.rc-tabs .tab:nth-child(3)', '.rc-tabs .tab:nth-child(4)', '.rc-tabs .tab:nth-child(5)'];
 for (const page of readdirSync(here('.')).filter((f) => f.endsWith('.html') && f !== 'components.html')) {
@@ -112,25 +127,26 @@ for (const page of readdirSync(here('.')).filter((f) => f.endsWith('.html') && f
     await p.selectOption('#case', cases[(cases.indexOf(c) + 1) % cases.length]); await p.selectOption('#case', c);
     if (o && o.startsWith('break:')) { if (!(await p.$('#break'))) continue; await p.selectOption('#break', o.slice(6)); }   // the error cases
     else if (o) { const hit = await p.evaluate((s) => { const x = document.querySelector(s); x?.click(); return !!x; }, o); if (!hit) continue; }
-    const found = await p.evaluate(([CONTROL_SEL, known]) => {
-      const out = []; const known_ = new Set(known);
-      const root = document.querySelector('.mk-wrap, .pz-app') ? document.body : document.body;
-      for (const e of root.querySelectorAll('*')) {
-        if (e.closest('.mk-bar, .mk-intro, .mk-proposed, svg')) continue;
-        const st = e.getAttribute('style') || '';
-        if (/#[0-9a-f]{3,8}\b|\b(rgba?|hsla?)\(/i.test(st)) out.push(['an inline colour', e.className + ': ' + st]);
-        if (/(font|padding|margin|border|radius|shadow|color|background)[^:]*:\s*[^;]*\d+px/i.test(st)) out.push(['an inline style that sets a look', e.className + ': ' + st]);
-        for (const c of e.classList) if (!known_.has(c) && !/^is-/.test(c)) out.push(['a class no stylesheet styles', c]);   // is-* are state hooks
-        if (e.tagName === 'BUTTON' && !e.matches(CONTROL_SEL)) out.push(['a control the design system does not have', (e.className || '(no class)') + ' "' + e.textContent.trim().slice(0, 24) + '"']);
-        if (e.tagName === 'BUTTON' && /^[×+▾✕✓]$/.test(e.textContent.trim())) out.push(['a typed icon (use the line icon)', e.className + ' "' + e.textContent.trim() + '"']);
-      }
-      return out;
-    }, [CONTROL_SEL, [...classes]]);
+    const found = await p.evaluate(READ, [CONTROL_SEL, [...classes]]);
     for (const [k, wh] of found) add(k, `${page}: ${wh}`);
     for (const m of await p.evaluate(ALIGN)) add('misaligned (the components own alignment)', `${page} ${c}: ${m}`);
     for (const m of await p.evaluate(NAMES)) add('a name against the naming rule', `${page}: ${m}`);
     for (const m of await p.evaluate(HEADS)) add('a head smaller or weaker than what it heads', `${page}: ${m}`);
     await p.keyboard.press('Escape');
+  }
+  // the one Worca's own lists, in the states a click opens: read like a case
+  if (page === 'index.html') for (const [route, root] of [['runs', '#runs-root'], ['chat', '#chats-root']]) {
+    await p.goto(`file://${here(page)}#${route}`); await p.waitForTimeout(80);
+    for (const o of ['', '[data-menu="show"]', '[data-menu="tools"]', '[data-menu^="row:"]', '[data-fold]', '[data-rounds]', '[data-pick="tools|select"]']) {
+      if (o) await p.evaluate((s) => document.querySelector(s)?.click(), `${root} ${o}`);
+      const found = await p.evaluate(READ, [CONTROL_SEL, [...classes]]);
+      for (const [k, wh] of found) add(k, `${page}#${route}: ${wh}`);
+      for (const m of await p.evaluate(NAMES)) add('a name against the naming rule', `${page}#${route}: ${m}`);
+      for (const m of await p.evaluate(HEADS)) add('a head smaller or weaker than what it heads', `${page}#${route}: ${m}`);
+    }
+    await p.evaluate((s) => { document.querySelector(`${s} [data-menu="tools"]`)?.click(); document.querySelector(`${s} [data-menu-pick="tools|select"]`)?.click(); }, root);
+    await p.evaluate((s) => document.querySelector(`${s} [data-sel]`)?.click(), root);
+    for (const [k, wh] of await p.evaluate(READ, [CONTROL_SEL, [...classes]])) add(k, `${page}#${route} selecting: ${wh}`);
   }
   // every settings section, wide and narrow
   if (await p.$('[data-acct]')) {   // Settings opens from the profile menu

@@ -264,7 +264,7 @@
     F('workflow', 'Default', 'Workflow · 5 agents', 'workflows'), F('workflow', 'Lean', 'Workflow · 4 agents', 'workflows'), F('workflow', 'Shaper', 'Workflow · 6 agents', 'workflows'), F('workflow', 'Promo video', 'Workflow · 8 agents', 'workflows'), F('workflow', 'Architecture (C4)', 'Workflow · 2 agents', 'workflows'),
     F('schedule', 'Nightly dependency bump', 'Schedule · every day', 'schedules', { min: 'advanced' }), F('schedule', 'Weekly digest', 'Schedule · every Friday', 'schedules', { min: 'advanced' }),
     F('ticket', 'Deploy docs site', 'Scheduled once · after a run', 'schedules', { min: 'advanced' }), F('ticket', 'Tidy project memory', 'Scheduled once · today 18:00', 'schedules', { min: 'advanced' }),
-    F('label', 'ui', 'Label · Runs', 'runs', { flag: 'runLabels' }), F('label', 'billing', 'Label · Runs', 'runs', { flag: 'runLabels' }), F('label', 'backend', 'Label · Runs', 'runs', { flag: 'runLabels' }), F('label', 'tests', 'Label · Runs', 'runs', { flag: 'runLabels' }),
+    F('label', 'hotfix', 'Label · Runs', 'runs', { flag: 'runLabels' }), F('label', 'ui', 'Label · Runs', 'runs', { flag: 'runLabels' }), F('label', 'billing', 'Label · Runs', 'runs', { flag: 'runLabels' }), F('label', 'backend', 'Label · Runs', 'runs', { flag: 'runLabels' }), F('label', 'tests', 'Label · Runs', 'runs', { flag: 'runLabels' }),
     F('addon', 'Statistics', 'Place', 'stats', { min: 'advanced' }), F('addon', 'Team metrics', 'Place', 'team-metrics', { min: 'expert' }), F('addon', 'Requirements', 'Place · Labs', 'requirements', { flag: 'requirements' }), F('addon', 'Marketplace', 'Add-ons', 'marketplace', { min: 'advanced' }),
     F('plugin', 'github-source', 'Plugin · Marketplace', 'marketplace', { min: 'advanced' }), F('plugin', 'jira-source', 'Plugin · Marketplace', 'marketplace', { min: 'advanced' }), F('plugin', 'telegram-chat', 'Plugin · Marketplace', 'marketplace', { min: 'advanced' }),
     F('plugin', 'slack-chat', 'Plugin · Marketplace', 'marketplace', { min: 'advanced' }), F('plugin', 'discord-chat', 'Plugin · Marketplace', 'marketplace', { min: 'advanced' }),
@@ -275,7 +275,7 @@
   function find(q) {
     const raw = q.trim().toLowerCase();
     const m = raw.match(/^label:\s*(.*)$/);
-    if (m) return FINDS.filter((f) => f.kind === 'run' && (f.labels || []).some((l) => l.includes(m[1]))).map((f) => ({ ...f, flag: 'runLabels' }));
+    if (m) return [...FINDS.filter((f) => f.kind === 'label' && f.label.includes(m[1])), ...FINDS.filter((f) => f.kind === 'run' && (f.labels || []).some((l) => l.includes(m[1]))).map((f) => ({ ...f, flag: 'runLabels' }))];
     return FINDS.filter((f) => f.label.toLowerCase().includes(raw) || f.kind.startsWith(raw));
   }
 

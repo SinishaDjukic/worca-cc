@@ -87,7 +87,7 @@ for (const w of WIDTHS) {
       }
     } else {
       // The one Worca: the shell on one place (captured pages are not the design), and every section of Settings.
-      const routes = await p.evaluate(() => (window.SettingsModel ? ['runs', ...window.SettingsModel.GROUPS.flatMap((g) => g.items).map((s) => 'settings/' + s)] : ['']));
+      const routes = await p.evaluate(() => (window.SettingsModel ? ['runs', 'chat', ...window.SettingsModel.GROUPS.flatMap((g) => g.items).map((s) => 'settings/' + s)] : ['']));
       const list = SMALL ? routes.filter((_, i) => i % 5 === 0) : routes;
       for (const r of list) { const seen = new Set(); await sweep(p, `${page} ${w} #${r}`, async () => { await p.evaluate((x) => { location.hash = x; }, r); await p.reload(); }, seen); }
     }
