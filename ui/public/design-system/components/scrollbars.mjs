@@ -30,7 +30,8 @@ export function watchScrollbars(doc, { wait = setTimeout, clear = clearTimeout }
   };
   const thumb = (el, axis) => {
     const t = doc.createElement('div');
-    t.className = `rail-thumb is-${axis}`;
+    // A scroller in a panel, menu or dialog has its bar on top of it; any other bar stays under whatever opens over the page.
+    t.className = `rail-thumb is-${axis}${el.closest?.('[role="dialog"], [role="menu"], .menu') ? ' is-over' : ''}`;
     t.setAttribute('aria-hidden', 'true');
     t.addEventListener('pointerdown', (e) => {
       e.preventDefault(); t.setPointerCapture?.(e.pointerId);

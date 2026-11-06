@@ -29,7 +29,8 @@ body{-webkit-font-smoothing:antialiased;}
    styling and show only when it says so. The browser's own bar is hidden; scrolling itself is untouched. */
 *{scrollbar-width:none;}
 ::-webkit-scrollbar{display:none;}
-.rail-thumb{position:fixed;z-index:9000;border-radius:var(--r-xs);background:var(--line-2);opacity:0;transition:opacity var(--motion-quick) var(--ease),background-color 100ms var(--ease);}
+.rail-thumb{position:fixed;z-index:30;border-radius:var(--r-xs);background:var(--line-2);opacity:0;transition:opacity var(--motion-quick) var(--ease),background-color 100ms var(--ease);}
+.rail-thumb.is-over{z-index:9000;}
 .rail-thumb.is-on{opacity:1;}
 .rail-thumb:hover,.rail-thumb:active{background:var(--ink-3);}
 .rail-thumb.is-v{width:6px;}

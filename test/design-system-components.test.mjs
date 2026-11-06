@@ -294,6 +294,16 @@ test('listRow fold: Customise shows what is under the record, Done hides it; a L
   assert.equal(l.querySelector('.list-h + .list-m').textContent, 'Recorded as off-policy');
 });
 
+test('settingsRow fold.label names what a fold holds; settingsSection with no title has no head to repeat the tab', () => {
+  const r = dom(C.settingsRow({ name: 'Browser extension', sentence: 's', fold: { open: false, label: 'Paired browsers' } }));
+  assert.ok([...r.querySelectorAll('button')].some((b) => b.textContent === 'Paired browsers'));
+  const open = dom(C.settingsRow({ name: 'Browser extension', sentence: 's', detail: '<p></p>', fold: { open: true, label: 'Paired browsers' } }));
+  assert.ok([...open.querySelectorAll('button')].some((b) => b.textContent === 'Done'));
+  const s = dom(C.settingsSection({ rows: '<div class="x"></div>' }));
+  assert.equal(s.querySelector('.set-sec-head'), null);
+  assert.ok(s.querySelector('.x'));
+});
+
 test('settingsRow fold: Customise opens its rows, a small label over each sentence, and its one foot action; Done closes', () => {
   const closed = dom(C.settingsRow({ name: 'Network', sentence: 'A direct connection', fold: { open: false, attrs: { 'data-fold': 'net' } }, detailRows: C.settingsRow({ name: 'Proxy' }) }));
   const btn = closed.querySelector('.set-end .btn-quiet');
@@ -605,6 +615,11 @@ test('thumbBox and watchScrollbars: a bar sits where the scroller is, shows on a
   const th = d.querySelector('.rail-thumb.is-v'); assert.ok(th.classList.contains('is-on')); assert.equal(th.style.height, '25px');
   later.shift()(); assert.ok(!th.classList.contains('is-on'), 'gone when still');
   later.shift()(); assert.equal(d.querySelector('.rail-thumb'), null);
+  // A bar in a panel sits on top of that panel; a page's stays under what opens over it.
+  const m = d.body.appendChild(d.createElement('div')); m.setAttribute('role', 'dialog'); m.style.overflowY = 'auto';
+  Object.defineProperty(m, 'scrollHeight', { value: 100 }); Object.defineProperty(m, 'clientHeight', { value: 50 });
+  m.dispatchEvent(new d.defaultView.MouseEvent('mousemove', { bubbles: true }));
+  assert.ok(d.querySelector('.rail-thumb').classList.contains('is-over'));
 });
 
 test('selectionBar: how many, each action with its count, disabled at 0 with why, Cancel', () => {
