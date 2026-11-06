@@ -128,6 +128,8 @@
       const on = b.dataset.nav === (view === 'run' ? 'runs' : view);
       b.classList.toggle('active', on); if (on) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
     }
+    // the logo goes to Chat
+    for (const l of document.querySelectorAll('#side-rail .logo, #side-rail .logo-mark')) { if (view === 'chat') l.setAttribute('aria-current', 'page'); else l.removeAttribute('aria-current'); }
   }
 
   // ---- the Chats column: beside the conversation; narrow, it takes the window until a chat opens ----

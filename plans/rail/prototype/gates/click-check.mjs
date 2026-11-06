@@ -27,6 +27,7 @@ const CONTROLS = `(() => {
     const box = e.getBoundingClientRect(); if (box.right <= 0 || box.left >= innerWidth) continue;   // off the screen: a closed drawer
     const k = e.dataset.key || [...e.attributes].filter((a) => a.name.startsWith('data-') || a.name === 'id').map((a) => a.name + '=' + a.value).join('&') || (e.tagName + ':' + (e.getAttribute('aria-label') || e.textContent.trim().slice(0, 40)));
     if (seen.has(k)) continue; seen.add(k);
+    if (e.getAttribute('href') && e.getAttribute('href') === location.hash) continue;   // a link to where you already are
     if (e.matches('[aria-selected="true"], [aria-current], [aria-checked="true"][role="radio"], [aria-checked="true"][role="menuitemradio"], [aria-pressed="true"]')) continue;   // already chosen: choosing it again rightly does nothing
     out.push({ k, off: e.disabled || e.getAttribute('aria-disabled') === 'true', why: e.title || e.closest('[title]')?.title || '', name: (e.getAttribute('aria-label') || e.textContent.trim()).slice(0, 40), tag: e.tagName });
   }

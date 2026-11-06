@@ -27,7 +27,7 @@ export const ALIGN = () => {
     if (head) {
       const h = textBox(head.querySelector('.set-sec-h'));
       if (!near(h.left, L)) out.push(`the head starts ${Math.round(h.left - L)}px off its rows: ${head.textContent.trim().slice(0, 30)}`);
-      const act = head.querySelector(':scope > .btn');
+      const act = head.querySelector(':scope > .btn, :scope > .tip-wrap > .btn');
       if (act) { const r = act.matches('.btn-quiet') ? textBox(act).right : act.getBoundingClientRect().right; if (!near(r, R)) out.push(`the head's action ends ${Math.round(R - r)}px off the right edge: ${head.textContent.trim().slice(0, 30)}`); }
     }
     for (const row of rows) {

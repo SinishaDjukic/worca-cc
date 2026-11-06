@@ -555,7 +555,7 @@ const HELP = {
   "How to pull": "Shows the git command to bring in the remote’s commits",
   "Open project": "Goes to the project, to point it at its folder",
   "Fix requested changes": "Starts a short run on what the reviewer asked",
-  "Sign in": "Signs in to GitHub, so Worca can open the PR",
+  "Sign in": "Signs in to GitHub, so Worca can create the PR",
   "Accept as is": "Takes the review as it is and goes on to the manual tests",
   "Run another cycle": "One more Build and Review round",
   "Continue without cap": "Goes on with no cost cap for this run",
