@@ -236,6 +236,14 @@ test('dialog: head, the one scrolling body, a foot with its status, Cancel and t
   assert.ok(busy.querySelector('[data-dialog="yes"]').disabled);
 });
 
+test('dialog: a stepped setup has the Stepper at its head, Back in its foot; a view only closes', () => {
+  const d = dom(C.dialog({ title: 'Setup', body: '', yes: 'Next', back: true, steps: C.stepper({ stages: [{ key: 'a', label: 'Check', selected: true, cells: ['is-done'], attrs: { 'data-x': '1' } }] }) }));
+  assert.ok(d.querySelector('.dlg-head + .dlg-steps [data-x="1"]'));
+  assert.deepEqual([...d.querySelectorAll('.dlg-acts button')].map((b) => b.textContent), ['Cancel', 'Back', 'Next']);
+  const v = dom(C.dialog({ title: 'Default', body: '', yes: 'Close', view: true }));
+  assert.deepEqual([...v.querySelectorAll('.dlg-acts button')].map((b) => b.textContent), ['Close']);
+});
+
 test('field and tooltip: a label for its input, the error replaces the hint; a disabled control keeps its tooltip', () => {
   const f = dom(C.field({ id: 'root', label: 'Worca folder', value: '~/.worca', hint: 'Runs and history live here' }));
   assert.equal(f.querySelector('label').htmlFor, 'root');
@@ -384,4 +392,51 @@ test('table: the name first, figures tabular, what drops on a narrow screen is i
 
 test('icon: one set; an unknown name draws nothing', () => {
   assert.match(C.icon('check', 12), /width="12"/); assert.equal(C.icon('nope'), '');
+});
+
+test('copyButton: a quiet icon button; the tick and Copied for a moment, then back', () => {
+  const b = dom(C.copyButton({ text: 'feat/x', label: 'Copy branch' }));
+  assert.equal(b.dataset.copy, 'feat/x'); assert.match(b.className, /btn-quiet/); assert.equal(b.getAttribute('aria-label'), 'Copy branch');
+  let later = null; C.copied(b, { wait: (fn) => { later = fn; } });
+  assert.ok(b.classList.contains('is-copied')); assert.equal(b.title, 'Copied'); assert.equal(b.querySelector('[role=status]').textContent, 'Copied');
+  later(); assert.ok(!b.classList.contains('is-copied')); assert.equal(b.title, 'Copy branch');
+});
+
+test('the shell pieces: offline line, side column, action row, away screen', () => {
+  const off = dom(C.offlineLine());
+  assert.equal(off.getAttribute('role'), 'status');
+  assert.match(off.textContent, /Offline · retrying/);
+  assert.ok(off.title);
+  const side = new JSDOM(`<body>${C.sideColumn({ title: 'Ask <worca>', body: '<p>x</p>', hooks: { close: { 'data-side-close': '' } } })}</body>`).window.document;
+  assert.equal(side.querySelector('.ask-side-grip').getAttribute('aria-valuemax'), '680');
+  assert.equal(side.querySelector('.rl-side-title').textContent, 'Ask <worca>');
+  assert.ok(side.querySelector('[data-side-close]'));
+  const act = dom(C.actionRow({ text: 'web · Dev <server>', stop: 'Stop it', stopIcon: '<svg></svg>', open: { 'data-x': '1' } }));
+  assert.equal(act.querySelector('button.act-srow-name').textContent, 'web · Dev <server>');
+  assert.equal(act.querySelector('.act-stop').getAttribute('aria-label'), 'Stop it');
+  assert.equal(dom(C.actionRow({ text: 'a', stop: 's', stopIcon: '' })).querySelector('span.act-srow-name').textContent, 'a');
+  const on = { away: true, keepAwake: true, focused: true, idleMs: C.AWAY_IDLE_MS, reduced: false };
+  assert.equal(C.awayShows(on), true);
+  for (const off2 of [{ away: false }, { keepAwake: false }, { focused: false }, { idleMs: C.AWAY_IDLE_MS - 1 }, { reduced: true }]) assert.equal(C.awayShows({ ...on, ...off2 }), false);
+  assert.equal(dom(C.awayScreen({ line: 'All <quiet>' })).querySelector('.rl-away-line').textContent, 'All <quiet>');
+});
+
+test('workflowGraph: a lane per stage, a node acts and says its state, a gate has its pip', () => {
+  const g = dom(C.workflowGraph({ stages: [{ label: 'Plan', nodes: [{ key: 'a', name: 'Plan', state: 'done', gate: true, loops: 2, selected: true }] }], end: 'End · Ready' }));
+  assert.equal(g.querySelectorAll('.wg-stage').length, 2);
+  const n = g.querySelector('.wg-node');
+  assert.equal(n.dataset.node, 'a'); assert.equal(n.getAttribute('aria-pressed'), 'true'); assert.match(n.title, /Done · a gate/);
+  assert.ok(n.querySelector('.wg-pip')); assert.ok(n.querySelector('.wg-loop'));
+});
+
+test('logLines: one line per entry, a problem in its colour, words escaped', () => {
+  const l = dom(C.logLines({ label: 'Log', lines: [{ t: '1', from: 'Plan', text: '<b>' }, { t: '2', from: 'Plan', lvl: 'error', text: 'x' }] }));
+  assert.equal(l.querySelectorAll('.lg-row').length, 2);
+  assert.ok(l.querySelector('.lg-row.is-error'));
+  assert.equal(l.querySelector('.lg-text').textContent, '<b>');
+});
+
+test('stackRow: its own actions sit at its end', () => {
+  const r = dom(C.stackRow({ num: '1', title: 'A', word: 'Small', sub: 'x', state: 'next', rowCls: 'is-next', dotCls: 'is-future', icon: '', end: '<button id="m"></button>' }));
+  assert.ok(r.querySelector('#m'));
 });

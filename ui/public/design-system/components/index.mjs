@@ -27,7 +27,11 @@ export { suggestionField, suggestionFail, suggestButton, suggestedChip, stopWrit
 export { tagGroup, fitTags, listEditor } from './tag-group.mjs';
 export { stepper, stepDot, stepRow, stackRow } from './stepper.mjs';
 export { table } from './table.mjs';
-export { fill, runState, stateIds, actionHelp, actionFlow, runFlow, makeAction, memberKeeps, sectionOf, isDone, isLiveStep, stageState, subState, stepLook, defaultStage, stageMeta, toMin, fmtMin, STAGE_WORD } from './run-state.mjs';
+export { fill, runState, stateIds, actionHelp, actionLevel, actionFlow, runFlow, makeAction, memberKeeps, sectionOf, isDone, isLiveStep, stageState, subState, stepLook, defaultStage, stageMeta, toMin, fmtMin, STAGE_WORD } from './run-state.mjs';
 export { workingWord, confirmOf, failureOf, stepFlow } from './step-flow.mjs';
 export { foldMiddle, workParts, workPhrase, workPlace } from './work-place.mjs';
 export { MODES, atLevel, RUN_PAGE_LEVELS, runPartShows, prefs, shows } from './levels.mjs';
+export { copyButton, copied, COPIED_MS } from './copy-button.mjs';
+export { offlineLine, sideColumn, actionRow, awayScreen, awayShows, AWAY_IDLE_MS } from './shell-parts.mjs';
+export { workflowGraph } from './workflow-graph.mjs';
+export { logLines } from './log-lines.mjs';

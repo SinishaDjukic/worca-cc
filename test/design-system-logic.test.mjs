@@ -96,3 +96,18 @@ test('prefs: one mode and one set of Labs flags; a change tells who listens', ()
   assert.deepEqual(seen, ['simple', 'expert', 'expert']);
   assert.throws(() => R.prefs.setMode('nope'));
 });
+
+test('a run\'s other states: what each offers, and what it holds back', () => {
+  assert.deepEqual(R.runState('paused-budget', CTX).action.items, []);   // a total budget offers only Open Settings
+  assert.equal(R.runState('paused-budget', CTX).action.label, 'Open Settings');
+  assert.ok(R.runState('paused-limit', CTX).action.items.includes('Resume on Codex'));   // the other engine only after its limit
+  assert.ok(!R.runState('paused-reason', CTX).action.items.includes('Resume on Codex'));
+  assert.match(R.runState('capped', CTX).action.off['Resume at…'], /cost cap/);
+  assert.equal(R.runState('round', CTX).word, 'In review');   // a PR fix round never raises Needs you
+  assert.equal(R.runState('pr-closed', { host: 'azure' }).word, 'Abandoned');
+  assert.equal(R.runState('pr-closed', { host: 'bitbucket' }).word, 'Declined');
+  assert.equal(R.runState('pr-closed').word, 'Closed');
+  assert.equal(R.actionLevel('Open in New run'), 'advanced');
+  assert.equal(R.actionLevel('Resume now'), 'simple');
+  assert.ok(R.memberKeeps('Resume now') && R.memberKeeps('Retry') && !R.memberKeeps('Create PR again'));
+});

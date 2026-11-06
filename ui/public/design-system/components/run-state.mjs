@@ -413,6 +413,76 @@ const STATES = {
   }
 };
 
+// The rest of a run's states (docs/rail/thing-page.md: The run page's cases). `off` names a step that is shown but
+// cannot be taken now, with why; a word a git host renames sits in HOST_WORD.
+const off = (label, icon, primary, items, offs) => ({ label, icon, primary, items, off: offs });
+const act = (label, icon, primary, items = []) => ({ label, icon, primary, items });
+const CAP_OFF = { 'Resume at…': 'A cost cap does not lift with time: raise it or go on without it' };
+const VIEW_ITEMS = ['Watch', 'Copy PR link'];
+Object.assign(STATES, {
+  // Paused, and why. A usage limit offers the other engine; nothing else does.
+  'paused-limit': { word: 'Paused', dot: 'is-grey', action: act('Resume at 14:00', 'play', true, ['Resume now', 'Resume on Codex', 'Switch model…', 'Resume at…']) },
+  'paused-reset': { word: 'Paused', dot: 'is-grey', action: act('Resume now', 'play', true, ['Resume on Codex', 'Switch model…', 'Resume at…']) },
+  'paused-missed': { word: 'Paused', dot: 'is-grey', action: act('Resume now', 'play', true, ['Don’t resume at 14:00', 'Resume on Codex', 'Switch model…', 'Resume at…']) },
+  'paused-budget': { word: 'Paused', dot: 'is-grey', action: act('Open Settings', 'play', false) },
+  'paused-team': { word: 'Paused', dot: 'is-grey', action: act('Continue past team cap', 'play', false, ['Open Team policy']) },
+  'paused-reason': { word: 'Paused', dot: 'is-grey', action: act('Resume now', 'play', false, ['Switch model…', 'Resume at…']) },
+  interrupted: { word: 'Paused', dot: 'is-grey', action: act('Resume now', 'play', true, ['Archive']) },
+  'interrupted-dead': { word: 'Paused', dot: 'is-grey', action: act('Start a new run', 'play', false, ['Archive']) },
+  // Live, and in trouble
+  network: { word: 'Working', dot: 'is-peach is-pulse' },
+  recovery: { word: 'Needs you', sym: 'q', action: act('Retry', 'refresh', true, ['Pause', 'Abort']) },
+  // Tickets: a scheduled run before it is a run
+  'ticket-missed': { word: 'Waiting', dot: 'is-grey-ring', action: act('Start now', 'play', true, ['Cancel']) },
+  'ticket-firing': { word: 'Starting', dot: 'is-peach is-pulse' },
+  'ticket-failed': { word: 'Failed', sym: 'x', action: act('Start now', 'play', true, ['Cancel']) },
+  'ticket-ended': { word: 'Stopped', dot: 'is-grey', action: act('Start a new run', 'play', false) },
+  // A pull request's own states
+  'pr-draft': { word: 'In review', dot: 'is-grey', action: act('Mark ready for review', 'pr', true, ['View PR', ...VIEW_ITEMS]) },
+  'pr-changes': { word: 'Needs you', dot: 'is-amber', action: act('View PR', 'pr', true, ['Ask for changes', ...VIEW_ITEMS]) },
+  'pr-fixing': { word: 'In review', dot: 'is-peach is-pulse', action: act('View PR', 'pr', false, ['View fix run', ...VIEW_ITEMS]) },
+  'pr-closed': { word: 'Closed', dot: 'is-grey', hostWord: true, action: act('Create PR again', 'prc', true, ['View PR', 'Discard']) },
+  'pr-behind': { word: 'In review', dot: 'is-amber', action: act('Update branch', 'refresh', true, ['View PR', ...VIEW_ITEMS]) },
+  'pr-blocked': { word: 'In review', dot: 'is-amber', action: act('View PR', 'pr', false, VIEW_ITEMS) },
+  'watch-stopped': { word: 'Needs you', dot: 'is-amber', action: off('Fix conflicts', 'refresh', true, ['Ask for changes', 'View PR', 'Copy PR link'], { 'Ask for changes': 'Ask for changes from the run’s chat' }) },
+  round: { word: 'In review', dot: 'is-peach is-pulse', action: act('View PR', 'pr', false, ['Copy PR link']) },
+  'in-base': { word: 'Merged', dot: 'is-violet' },
+  pushed: { word: 'Merged', dot: 'is-violet' },
+  diverged: { word: 'Needs you', dot: 'is-amber', action: off('Push', 'up', true, ['Re-check', 'How to merge', 'Discard'], { Push: 'The branch and its remote have diverged: pull or rebase, then push' }) },
+  // A failed or stopped run that still holds work
+  'failed-kept': { word: 'Failed', sym: 'x', action: act('Apply to branch', 'check', true, ['Report this run', 'Download patch', 'Commit it yourself', 'Discard']) },
+  'failed-kept-wait': { word: 'Failed', sym: 'x', action: act('Report this run', 'alert', false, ['Start a new run']) },
+  'failed-folder': { word: 'Failed', sym: 'x', action: act('Apply to folder', 'folder', true, ['Report this run', 'Open the copy', 'Discard']) },
+  'stopped-folder': { word: 'Stopped', dot: 'is-grey', action: act('Apply to folder', 'folder', true, ['Open the copy', 'Discard']) },
+  deleted: { word: 'Deleted', dot: 'is-grey' },
+  // Before Build: what the plan answers to, and a workflow Worca proposes
+  requirements: { word: 'Needs you', sym: 'q', action: act('Agree and plan', 'check', true, ['Ask for changes']) },
+  auto: { word: 'Needs you', sym: 'q', action: act('Accept', 'check', true, ['Review the workflow', 'Revise']) },
+  // Ready, with its requirements still to mark
+  reqs: { word: 'Ready', dot: 'is-green', action: act('Create PR', 'prc', true, ['Publish branch', 'How to merge', 'Discard']) },
+  // A group, read from the run that holds it up
+  'group-failed': { word: 'Failed', sym: 'x', action: act('Open run {k}', 'alert', true, ['Re-plan the rest', 'Cancel the rest']) },
+  'group-paused': { word: 'Paused', dot: 'is-grey', action: act('Resume', 'play', true, ['Open run {k}', 'Re-plan the rest', 'Cancel the rest']) },
+  'group-needs': { word: 'Needs you', sym: 'q', action: act('Open run {k}', 'question', true, ['Re-plan the rest', 'Cancel the rest']) },
+  'group-stopped': { word: 'Stopped', dot: 'is-grey', action: act('Resume', 'play', true, ['Open run {k}', 'Re-plan the rest', 'Cancel the rest']) },
+  'group-asks': { word: 'Needs you', sym: 'q', action: act('Start run {k}', 'play', true, ['Re-plan the rest', 'Cancel the rest']) },
+  'ship-declined': { word: 'Ready', dot: 'is-green', action: act('Create {n} PRs', 'prc', true, ['Check out the whole feature', 'Discard']) },
+  'ship-applied': { word: 'Applied', dot: 'is-violet', action: act('View PR', 'merge', false, ['Ask for changes', 'Copy PR link']) },
+  'workspace-partly': { word: 'In review', dot: 'is-peach is-pulse', action: act('Create PR', 'prc', true, ['View PRs', 'Copy PR links']) },
+});
+STATES.capped.action = off('Continue without cap', 'play', false, ['Raise the cap', 'Open budget settings', 'Resume at…'], CAP_OFF);
+STATES.plan.action.items = ['Ask for changes', 'Full plan', 'Fix all', 'Save to plans/', 'Open in New run', 'Stop'];
+STATES.outline.action.items = ['Ask me before each run', 'Don’t split', 'Ask for changes', 'Fix all', 'Stop'];
+STATES.featureready.action.items = ['Check out the whole feature', 'Not now', 'Ask for changes', 'Discard'];
+
+// What a git host calls a pull request closed without merging.
+const HOST_WORD = { github: 'Closed', azure: 'Abandoned', bitbucket: 'Declined' };
+
+// An action a mode holds back (docs/ui-levels.md); a label not here shows in every mode.
+const ACTION_LEVEL = { 'Open in New run': 'advanced', Revise: 'advanced', Watch: 'advanced' };
+/** The interface mode an action needs. */
+export const actionLevel = (label) => ACTION_LEVEL[label] || 'simple';
+
 const HELP = {
   "Send answer": "Sends the answer you picked or wrote; the run goes on",
   "Use the default answer": "Goes on with what Worca would pick",
@@ -477,6 +547,34 @@ const HELP = {
   "Ask me before each run": "Stops for your OK before each later run starts",
   "Don’t split": "Builds it as one run and one PR"
 };
+
+Object.assign(HELP, {
+  'Resume at 14:00': 'Waits for the limit to reset, then goes on by itself; you can cancel it',
+  'Resume now': 'Goes on now from the step it paused in',
+  'Open Settings': 'The total budget is a setting: opens Settings › Runs › Budget',
+  'Continue past team cap': 'Goes on over your team’s cap; the reason you give is recorded',
+  'Open Team policy': 'Opens Settings › Team › Policy, where the cap is set',
+  Archive: 'Removes the branch, worktree and logs; the remote branch and PR stay',
+  Retry: 'Tries the step again now',
+  Abort: 'Ends the run; the branch and changes stay',
+  'Mark ready for review': 'Takes {pr} out of draft; reviewers are asked',
+  'View fix run': 'Opens the short run that is fixing {pr}',
+  'Create PR again': 'Opens a new pull request from this run’s branch into {base}',
+  'Agree and plan': 'Agrees the requirements, with your answer, and starts the plan',
+  Accept: 'Runs the workflow Worca proposes',
+  'Review the workflow': 'Shows the proposed workflow at full size',
+  Revise: 'Tells Worca what to change in the workflow',
+  'Fix all': 'Worca fixes every open issue in the plan or the cut, then shows it again',
+  'Save to plans/': 'Writes this plan to plans/ in the project',
+  'Open in New run': 'Starts a New run with this plan already in it',
+  'Not now': 'Leaves it unshipped; you can ship it from here later',
+  'Re-plan the rest': 'Cancels the waiting runs and plans what is left from the last finished run',
+  'Cancel the rest': 'Cancels the runs that have not started; a running run keeps running',
+  'Open run {k}': 'Opens the run that holds up the rest',
+  'Start run {k}': 'Your OK: the next run starts',
+  'Create {n} PRs': 'Opens one PR per run, each into the one before',
+  'Approve {n} runs': 'Creates the feature: these runs build one after another',
+});
 
 const FLOW = {
   starting: {
@@ -895,6 +993,66 @@ const FLOW = {
   }
 };
 
+const STOP = { to: 'stopped', confirm: 'Stop the run? The branch and changes stay.' };
+const OPEN_PR = { 'View PR': { say: 'Opens {pr} on GitHub' }, 'Copy PR link': { say: 'Copied the link to {pr}' }, Watch: { say: 'Worca watches {pr} and fixes failing checks' } };
+const DISCARD = { to: 'discarded', confirm: 'Discard the changes? The run stays in history.' };
+const SWITCH = { dialog: 'model', to: 'working', say: 'Resumed on {value}; every remaining step runs there' };
+const RESUME_AT = { dialog: 'resume-at', to: 'paused', say: 'Resumes at {value}' };
+const ON_CODEX = { to: 'working', say: 'Resumed on Codex; every remaining step runs there' };
+const RESUMED = { to: 'working', say: 'Resumed from Implementation' };
+const ARCHIVE = { to: 'archived', confirm: 'Archive this run? It cannot be resumed after this. The local branch, worktree and logs are removed; the remote branch and any PR stay.' };
+const NEW_RUN = { to: 'starting', say: 'A new run with the same task' };
+const REPORT = { say: 'Logs and a note sent to the Worca team' };
+const REPLAN = { to: 'outline', confirm: 'Re-plan the rest? The waiting runs are cancelled and Worca plans what is left from the last finished run.', say: 'The waiting runs are cancelled; Worca planned what is left' };
+const CANCEL_REST = { say: 'The runs that had not started are cancelled; a running run keeps running', confirm: 'Cancel the rest? The runs that have not started are cancelled. A running run keeps running.' };
+const RESUME_MEMBER = { member: 'slice', say: 'Resumed; run {k} goes on' };
+const OPEN_MEMBER = { openMember: true, say: 'Opens run {k}' };
+Object.assign(FLOW, {
+  'paused-limit': { 'Resume at 14:00': { to: 'paused', say: 'Resumes at 14:00, when the limit has reset' }, 'Resume now': RESUMED, 'Resume on Codex': ON_CODEX, 'Switch model…': SWITCH, 'Resume at…': RESUME_AT },
+  'paused-reset': { 'Resume now': RESUMED, 'Resume on Codex': ON_CODEX, 'Switch model…': SWITCH, 'Resume at…': RESUME_AT },
+  'paused-missed': { 'Resume now': RESUMED, 'Don’t resume at 14:00': { to: 'paused-reset', say: 'The 14:00 resume is cancelled' }, 'Resume on Codex': ON_CODEX, 'Switch model…': SWITCH, 'Resume at…': RESUME_AT },
+  'paused-budget': { 'Open Settings': { say: 'Goes to Settings › Runs › Budget; raise it there, then Resume' } },
+  'paused-team': { 'Continue past team cap': { dialog: 'team-cap', to: 'working', say: 'Going on past the team cap; your reason is recorded' }, 'Open Team policy': { say: 'Goes to Settings › Team › Policy' } },
+  'paused-reason': { 'Resume now': RESUMED, 'Switch model…': SWITCH, 'Resume at…': RESUME_AT },
+  interrupted: { 'Resume now': RESUMED, Archive: ARCHIVE },
+  'interrupted-dead': { 'Start a new run': NEW_RUN, Archive: ARCHIVE },
+  network: { next: 'working', event: 'The network is back; the step retries' },
+  recovery: { Retry: { to: 'working', say: 'Retrying Implementation' }, Pause: { to: 'paused-reason', say: 'Paused; Resume tries the step again' }, Abort: { to: 'stopped', confirm: 'Abort the run? The branch and changes stay.' } },
+  'ticket-missed': { 'Start now': { to: 'starting', say: 'Started now' }, Cancel: { to: 'discarded', confirm: 'Delete this scheduled run?' } },
+  'ticket-firing': { next: 'starting', event: 'The schedule fired; the run starts' },
+  'ticket-failed': { 'Start now': { to: 'starting', say: 'Started now' }, Cancel: { to: 'discarded', confirm: 'Delete this scheduled run?' } },
+  'ticket-ended': { 'Start a new run': NEW_RUN },
+  'pr-draft': { 'Mark ready for review': { to: 'checks', confirm: 'Mark {pr} ready for review? Reviewers are asked.', say: '{pr} is ready for review' }, ...OPEN_PR },
+  'pr-changes': { ...OPEN_PR, 'Ask for changes': { to: 'pr-fixing', say: 'A short run starts on what you asked' } },
+  'pr-fixing': { ...OPEN_PR, 'View fix run': { say: 'Opens the fix run: Runs › this run’s rounds' }, next: 'checks', event: 'The fix is pushed; checks run again' },
+  'pr-closed': { 'Create PR again': { to: 'checks', say: 'Opened {pr} into {base}', dialog: 'pr' }, 'View PR': { say: 'Opens the closed {pr} on GitHub' }, Discard: DISCARD },
+  'pr-behind': { 'Update branch': { to: 'checks', say: '{base} merged in; checks run again' }, ...OPEN_PR },
+  'pr-blocked': { ...OPEN_PR },
+  'watch-stopped': { 'Fix conflicts': { to: 'checks', say: '{base} merged in, 2 conflicts resolved; checks run again' }, 'Ask for changes': { say: 'Ask for changes from the run’s chat' }, 'View PR': OPEN_PR['View PR'], 'Copy PR link': OPEN_PR['Copy PR link'] },
+  round: { 'View PR': OPEN_PR['View PR'], 'Copy PR link': OPEN_PR['Copy PR link'], next: 'checks', event: 'The round pushed its fix; checks run again' },
+  diverged: { Push: { to: 'merged', say: 'Pushed to origin' }, 'Re-check': { to: 'source-ready', say: 'In step with the remote again; Push is back' }, 'How to merge': { say: 'git pull --rebase origin {source}' }, Discard: DISCARD },
+  'failed-kept': { 'Apply to branch': { to: 'failed', say: 'Committed to the branch; the failure stays' }, 'Report this run': REPORT, 'Download patch': { say: 'Downloading run.patch' }, 'Commit it yourself': { say: 'Commands: cd the worktree, git add -A, git commit --no-verify' }, Discard: { to: 'failed', confirm: 'Discard the kept work? A patch is saved first.', say: 'The kept work is gone; a patch was saved' } },
+  'failed-kept-wait': { 'Report this run': REPORT, 'Start a new run': NEW_RUN },
+  'failed-folder': { 'Apply to folder': { to: 'applied', confirm: 'Write 5 files into {folder}? The run failed, so check them first.' }, 'Report this run': REPORT, 'Open the copy': { say: 'Opened the copy in a terminal' }, Discard: DISCARD },
+  'stopped-folder': { 'Apply to folder': { to: 'applied', confirm: 'Write 5 files into {folder}? The run stopped early, so check them first.' }, 'Open the copy': { say: 'Opened the copy in a terminal' }, Discard: DISCARD },
+  requirements: { 'Agree and plan': { to: 'plan', say: 'Requirements agreed; the planner writes the plan' }, 'Ask for changes': { say: 'Sent; the requirements come back' } },
+  auto: { Accept: { to: 'starting', say: 'Workflow accepted; the run starts' }, 'Review the workflow': { say: 'Opens the workflow' }, Revise: { say: 'Sent; Worca proposes again' } },
+  reqs: { 'Create PR': { to: 'checks', say: 'Opened {pr} into {base}', dialog: 'pr' }, 'Publish branch': { say: 'Pushed the branch to origin; no PR' }, 'How to merge': { say: 'git switch {base} && git merge {branch}' }, Discard: DISCARD },
+  'group-failed': { 'Open run {k}': OPEN_MEMBER, 'Re-plan the rest': REPLAN, 'Cancel the rest': CANCEL_REST },
+  'group-paused': { Resume: RESUME_MEMBER, 'Open run {k}': OPEN_MEMBER, 'Re-plan the rest': REPLAN, 'Cancel the rest': CANCEL_REST },
+  'group-needs': { 'Open run {k}': OPEN_MEMBER, 'Re-plan the rest': REPLAN, 'Cancel the rest': CANCEL_REST },
+  'group-stopped': { Resume: RESUME_MEMBER, 'Open run {k}': OPEN_MEMBER, 'Re-plan the rest': REPLAN, 'Cancel the rest': CANCEL_REST },
+  'group-asks': { 'Start run {k}': { to: 'feature', say: 'Run {k} starts' }, 'Re-plan the rest': REPLAN, 'Cancel the rest': CANCEL_REST },
+  'ship-declined': { 'Create {n} PRs': { to: 'chain', say: 'Opened {pr}, {pr2} and {pr3}, each into the one before', dialog: 'pr' }, 'Try it': { say: 'Copied: git switch {groupBranch}' }, Discard: { to: 'discarded', confirm: 'Discard all 3 runs’ changes?' } },
+  'ship-applied': { 'View PR': OPEN_PR['View PR'], 'Ask for changes': { say: 'Sent; a run takes on what you asked' }, 'Copy PR link': OPEN_PR['Copy PR link'] },
+  'workspace-partly': { 'Create PR': { to: 'workspace', say: 'Opened worca-docs #31 into main', dialog: 'pr' }, 'View PRs': { say: 'Opens worca-api #212 on GitHub' }, 'Copy PR links': { say: 'Copied 1 PR link' } },
+});
+Object.assign(FLOW.paused, { 'Don’t resume at 14:00': { to: 'paused-limit', say: 'The 14:00 resume is cancelled' }, 'Switch model…': SWITCH, 'Resume at…': RESUME_AT });
+Object.assign(FLOW.capped, { 'Raise the cap': { dialog: 'cap', to: 'working', say: 'Cap raised to {value}; the run goes on' }, 'Open budget settings': { say: 'Goes to Settings › Runs › Budget' }, 'Resume at…': { say: 'A cost cap does not lift with time' } });
+Object.assign(FLOW.plan, { 'Full plan': { say: 'Opens plan.md' }, 'Fix all': { fix: 'plan', say: 'Worca fixed the 2 open issues' }, 'Save to plans/': { say: 'Saved plans/unified-page-navigation.md' }, 'Open in New run': { say: 'Goes to Runs › New run, with this plan in it' }, Stop: STOP });
+Object.assign(FLOW.outline, { 'Approve {n} runs': { to: 'feature', say: 'The feature has {n} runs; run 1 starts' }, 'Fix all': { fix: 'outline', say: 'Worca fixed the cut’s 1 open issue' }, Stop: STOP });
+Object.assign(FLOW.featureready, { 'Not now': { to: 'ship-declined', say: 'Not shipped yet; ship it from here when you want' }, 'Ask for changes': { say: 'Sent; a run takes on what you asked' } });
+
 // What a live run's own controls lead to, from any state.
 const RUN_FLOW = {
   pauseNow: {
@@ -918,8 +1076,8 @@ export const stateIds = () => Object.keys(STATES);
 export function runState(id, ctx = {}) {
   const s = STATES[id];
   if (!s) throw new Error(`runState: unknown state ${id}`);
-  const action = s.action ? { ...s.action, label: fill(s.action.label, ctx), items: [...(ctx.extraItems || []), ...s.action.items.map((x) => fill(x, ctx))] } : null;
-  return { word: s.word, dot: s.dot || '', sym: s.sym || '', action };
+  const action = s.action ? { ...s.action, label: fill(s.action.label, ctx), items: [...(ctx.extraItems || []), ...s.action.items.map((x) => fill(x, ctx))], off: s.action.off || {} } : null;
+  return { word: (s.hostWord && HOST_WORD[ctx.host]) || s.word, dot: s.dot || '', sym: s.sym || '', action };
 }
 
 /** One line on what an action does: the main button's tooltip, and each menu item's help. */

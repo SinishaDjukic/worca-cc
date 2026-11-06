@@ -12,7 +12,7 @@ import { row } from './row.mjs';
 export function stepper({ stages, label = 'Stages' }) {
   const cols = `grid-template-columns:repeat(${stages.length},minmax(0,1fr))`;
   const track = stages.map((st) => `<div class="sc-seg">${st.cells.map((c) => `<span class="sc-cell ${c}"></span>`).join('')}</div>`).join('');
-  const tabs = stages.map((st) => `<button type="button" class="sc-stage" role="tab" id="st-${esc(st.key)}" aria-controls="stage-panel" aria-selected="${!!st.selected}" tabindex="${st.selected ? 0 : -1}" data-stage="${esc(st.key)}" data-key="stage:${esc(st.key)}" aria-label="${esc(st.aria || st.label)}" title="${esc(st.aria || st.label)}"><span class="l">${esc(st.label)}</span><span class="m">${esc(st.meta || '')}</span></button>`).join('');
+  const tabs = stages.map((st) => `<button type="button" class="sc-stage" role="tab" id="st-${esc(st.key)}" aria-controls="stage-panel" aria-selected="${!!st.selected}" tabindex="${st.selected ? 0 : -1}" data-stage="${esc(st.key)}" data-key="stage:${esc(st.key)}" aria-label="${esc(st.aria || st.label)}" title="${esc(st.aria || st.label)}"${attrs(st.attrs || {})}><span class="l">${esc(st.label)}</span><span class="m">${esc(st.meta || '')}</span></button>`).join('');
   return `<div class="sc-track" style="${cols}" aria-hidden="true">${track}</div><div class="sc-stages" style="${cols}" role="tablist" aria-label="${esc(label)}">${tabs}</div>`;
 }
 
@@ -51,8 +51,8 @@ export function stepRow(r, { full = false, action = '', below = '' } = {}) {
     text: `${name}<span class="sc-time">${esc(r.time || '')}</span>${rest}${live}${below}` });
 }
 
-/** A PR or a slice in a stack: its mark, number, title and one line. */
+/** A PR or a slice in a stack: its mark, number, title and one line; its own actions (a ⋯) at the end. */
 export function stackRow(r) {
   return row({ kind: 'route', cls: r.rowCls, rail: stepDot({ ...r, size: 11 }),
-    text: `<div class="rd-route-main"><div class="rd-route-place"><span class="sk-num">${esc(r.num)}</span><span class="rd-route-name" title="${esc(r.title)}">${esc(r.title)}</span></div><div class="rd-route-second" title="${esc(`${r.word} · ${r.sub}`)}"><span class="sk-word is-${esc(r.state)}">${esc(r.word)}</span> · ${esc(r.sub)}</div></div>` });
+    text: `<div class="rd-route-main"><div class="rd-route-place"><span class="sk-num">${esc(r.num)}</span><span class="rd-route-name" title="${esc(r.title)}">${esc(r.title)}</span></div><div class="rd-route-second" title="${esc(`${r.word} · ${r.sub}`)}"><span class="sk-word is-${esc(r.state)}">${esc(r.word)}</span> · ${esc(r.sub)}</div></div>`, end: r.end || '' });
 }
