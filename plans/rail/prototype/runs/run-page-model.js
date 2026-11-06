@@ -24,6 +24,7 @@
   // A group's runs: each run is one segment, its four stages are the cells; the last segment is the PR stack.
   const member = (n, title, states, o) => ({ key: 'run' + n, label: 'Run ' + n, title, run: true,
     subs: ['Plan', 'Build', 'Review', 'Ready'].map((st, i) => s(st, states[i], (o && o.times && o.times[i]) || '', { live: (o && o.live && o.live[i]) || '', when: (o && o.when && o.when[i]) || '' })) });
+  const NEEDS_YOU = R.runState('question').word;
   const RUNS = ['One head for run and group pages', 'Breadcrumb in the top bar', 'Phone layout of the head'];
   const SLICE = [0.42, 0.31, 0.27];   // how much of a whole run each slice of a feature takes
   const SIZES = ['+278 \u221264', '+41 \u221258', '+39 \u221222'];   // each run's diff; a group's is their sum
@@ -46,7 +47,7 @@
       stages: run({ plan: [s('Clarify', 'now', '', { live: 'Setting up the worktree', when: 'now' }), next('Plan'), next('Refine plan'), next('Plan review')], build: allNext(BUILD), review: allNext(REVIEW) }) },
     { id: 'working', group: 'Running', label: 'Working', figs: LIVE_FIGS,
       stages: run({ review: [REVIEW[0], REVIEW[1], s('Manual web UI testing', 'now', '21m', { live: 'Opening the Runs page at 375px to check the breadcrumb', when: '8s ago' })] }) },
-    { id: 'question', group: 'Needs you', label: R.runState('question').word, figs: LIVE_FIGS,
+    { id: 'question', group: NEEDS_YOU, label: R.runState('question').word, figs: LIVE_FIGS,
       stages: run({ review: [s('Review implementation', 'ask', '12m', { live: 'Keep the breadcrumb on phones under 600px, or show only Back there?', when: '4m' }), next('Manual tests checklist'), next('Manual web UI testing')] }) },
     { id: 'paused', group: 'Paused', label: 'Paused', detail: 'Usage limit · resumes at 14:00', figs: [['Time', '2h 40m'], ['Cost', '$48.30']],
       stages: run({ build: [s('Implementation', 'paused', '1h 2m')], review: allNext(REVIEW) }) },
@@ -73,9 +74,9 @@
       title: 'Breadcrumb tests for saved runs', tabs: [['summary', 'Overview'], ['activity', 'Activity'], ['decisions', 'Decisions']], stages: run({ plan: allNext(PLAN), build: allNext(BUILD), review: allNext(REVIEW) }) },
     { id: 'waiting-interrupted', group: 'Waiting', label: 'Waiting on an interrupted run', detail: '“Unified page navigation” was interrupted and can still resume; this waits for it', figs: [['Time', '0m'], ['Cost', '$0.00']],
       title: 'Breadcrumb tests for saved runs', tabs: [['summary', 'Overview'], ['activity', 'Activity'], ['decisions', 'Decisions']], stages: run({ plan: allNext(PLAN), build: allNext(BUILD), review: allNext(REVIEW) }) },
-    { id: 'gate', group: 'Needs you', label: 'Review gate', detail: 'Review sent it back 3 times; the limit is 3', figs: LIVE_FIGS,
+    { id: 'gate', group: NEEDS_YOU, label: 'Review gate', detail: 'Review sent it back 3 times; the limit is 3', figs: LIVE_FIGS,
       stages: run({ review: [s('Review implementation', 'ask', '37m 21s', { loops: 3, live: 'Still 1 minor issue after 3 rounds: accept, or run another cycle?', when: '6m' }), next('Manual tests checklist'), next('Manual web UI testing')] }) },
-    { id: 'capped', group: 'Needs you', label: 'Paused at cost cap', detail: 'Reached the $120 cap for this run', figs: LIVE_FIGS,
+    { id: 'capped', group: NEEDS_YOU, label: 'Paused at cost cap', detail: 'Reached the $120 cap for this run', figs: LIVE_FIGS,
       stages: run({ review: [REVIEW[0], s('Manual tests checklist', 'paused', '1m 18s', { live: 'Paused at $120.00' }), next('Manual web UI testing')] }) },
     { id: 'kept', group: 'Ended', label: 'Work kept', detail: 'The last commit failed; the work is kept in a copy', over: true, figs: DONE_FIGS,
       stages: run({ review: [REVIEW[0], REVIEW[1], s('Manual web UI testing', 'problem', '21m 10s', { live: 'Commit failed: pre-commit hook exited 1' })] }) },
@@ -201,9 +202,9 @@
       stages: run({ plan: [s('Clarify', 'now', '', { live: 'Preflight: checking the copy', when: 'now' }), next('Plan'), next('Refine plan'), next('Plan review')], build: allNext(BUILD), review: allNext(REVIEW), tail: APPLY('next', 'Nothing changed yet') }) },
     { id: 'network', group: 'Running', label: 'Waiting for the network', detail: 'Waiting for the network · api.anthropic.com · retries by itself until 14:40', figs: LIVE_FIGS,
       stages: run({ review: [REVIEW[0], s('Manual tests checklist', 'now', '1m', { live: 'Waiting for the network', when: '40s' }), next('Manual web UI testing')] }) },
-    { id: 'recovery', group: 'Needs you', label: 'Cannot reach the model', detail: 'This step could not reach the model · it retries by itself until 14:40', figs: LIVE_FIGS, ev: REC_EV,
+    { id: 'recovery', group: NEEDS_YOU, label: 'Cannot reach the model', detail: 'This step could not reach the model · it retries by itself until 14:40', figs: LIVE_FIGS, ev: REC_EV,
       stages: run({ build: [s('Implementation', 'problem', '1h 2m', { live: R.failureOf('Reach the model').title })], review: allNext(REVIEW) }) },
-    { id: 'recovery-auth', state: 'recovery', group: 'Needs you', label: 'Sign-in expired', detail: 'The Claude token has expired · run claude setup-token, then Retry', figs: LIVE_FIGS, ev: AUTH_EV,
+    { id: 'recovery-auth', state: 'recovery', group: NEEDS_YOU, label: 'Sign-in expired', detail: 'The Claude token has expired · run claude setup-token, then Retry', figs: LIVE_FIGS, ev: AUTH_EV,
       stages: run({ build: [s('Implementation', 'problem', '1h 2m', { live: R.failureOf('Reach the model').title })], review: allNext(REVIEW) }) },
     { id: 'parallel', state: 'working', group: 'Running', label: 'Parallel steps', figs: LIVE_FIGS,
       stages: run({ review: [s('Review implementation', 'now', '12m', { live: 'Reading the diff', when: '2s ago' }), s('Manual tests checklist', 'now', '9m', { live: 'Writing the checklist', when: '5s ago' }), s('Manual web UI testing', 'now', '3m', { live: 'Opening the Runs page', when: '1s ago' })] }) },
@@ -747,6 +748,6 @@
   const TITLES = {};
   // A host page may name a case's run as the row that opens it (the one Worca's Runs list); empty here.
   // The case picker's groups, by what you check.
-  const CASE_GROUPS = ['Running', 'Needs you', 'Paused', 'Waiting', 'Pull requests', 'Ready', 'Done', 'Ended', 'Kinds', 'Shaper', 'Groups'];
+  const CASE_GROUPS = ['Running', NEEDS_YOU, 'Paused', 'Waiting', 'Pull requests', 'Ready', 'Done', 'Ended', 'Kinds', 'Shaper', 'Groups'];
   window.RunCardModel = { caseGroups: CASE_GROUPS, stateOf: (id) => { const c = CASES.find((x) => x.id === id); if (!c) throw new Error(`no run case ${id}`); return c.state || c.id; }, forms: FORMS, titles: TITLES, chainStart: CHAIN_START, chainPrs: CHAIN_PRS.map((x) => x[0]), proposed: PROPOSED, isNew: (t) => NEW.has(t), flow: FLOW, runFlow: RUN_FLOW, cases: CASES.map((c) => ({ id: c.id, label: c.label, group: c.group, chips: c.chips || [] })), view, add: ADD };
 })();
