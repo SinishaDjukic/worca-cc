@@ -43,7 +43,7 @@ export const ALIGN = () => {
       if (!stacked) {
         const y = base(name);
         if (text.textContent.trim() && !near(base(text), y)) out.push(`the sentence is ${Math.round(base(text) - y)}px off the name's baseline: ${label(row)}`);
-        for (const it of items) if ((it.matches('.btn') || it.matches('.set-changed')) && it.textContent.trim() && !near(base(it), y)) out.push(`${it.textContent.trim().slice(0, 16)} is ${Math.round(base(it) - y)}px off the name's baseline: ${label(row)}`);
+        for (const it of items) if (it.matches('.btn') && it.textContent.trim() && !near(base(it), y)) out.push(`${it.textContent.trim().slice(0, 16)} is ${Math.round(base(it) - y)}px off the name's baseline: ${label(row)}`);
       }
     }
     const sl = rows.filter((r) => !stacked && r.querySelector('.set-text').textContent.trim()).map((r) => textBox(r.querySelector('.set-text')).left);

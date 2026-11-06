@@ -99,7 +99,7 @@ Three sections, one rail. Every choice is a **picker in its sentence** (Rail: ne
 - Where: Pulse only · Desktop · Chat · Desktop and chat. **Pulse always gets everything** (it is the record, and Clear
   is for noise); needs-you always reaches Pulse and the badge.
 - **Customise** opens the group's events under it as divided rows, each with its own `on [desktop and chat ▾]`; a row
-  that differs from its group says **Changed**. Back to group resets that group's exceptions.
+  that differs from its group carries the Changed dot (`set.changed`). Back to group resets that group's exceptions.
 - **Reset to defaults** sits at the top of the section and confirms in the strip (it changes every group).
 - Groups and defaults:
 

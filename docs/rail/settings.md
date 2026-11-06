@@ -11,6 +11,7 @@
 | `set.fold` | Customise only fine-tunes its row; a list or a link farm gets its own place | A fold is not a junk drawer | by hand |
 | `set.records` | A record is a ListRow in a List after the rows, never a SettingsRow | Different things look different | by hand |
 | `set.search` | Search finds every row, folded row and record, and lands on it | Nothing is hard to find | pulse-sweep |
+| `set.changed` | A row with a value off Worca's default has one tiny neutral dot after its name; its tooltip says `Changed`, then each value with its default. A fold's row shows it if anything inside differs, and the exact row inside does too. No reset on a row | You see what you moved, and from what, without a word on every row or a button to mis-press | design-system-components |
 | `set.flags` | A Labs switch writes the one flag store; what it gates follows, and a section it gates says how to turn it on | A switch that changes nothing is a lie | by hand |
 | `set.read-level` | A section read at one mode and changed at a higher one shows its edits off, each saying why | You see the rule that binds you, and who can change it | by hand |
 
@@ -51,7 +52,7 @@ row its state hides lands on the row it folds under. Mocks:
 (SettingsSection). A row (SettingsRow) is its name on the left and one sentence beside it, the choice a SentencePicker in
 it (`Send [what needs you ▾] to [desktop ▾]`), and at its right end a Switch when it is only on or off, then its
 buttons; it takes effect at once. More detail
-folds under the row behind Customise, and a row that differs from its group says Changed. A reset of many rows sits in
+folds under the row behind Customise. A row off its default or its group carries the Changed dot (`Total: default $1,000 a month`); a record has none, the rows folded under it do. A reset of many rows sits in
 its section's head and confirms in the strip, under the top bar and on screen wherever the page is scrolled. **One row per decision a person makes**, saying the
 current state in words (`All runs pause at $1,000 a month; one run at $50 (your team's)`), built from the values, never a summary typed by hand; its fine-tuning folds under Customise,
 never a row of its own on the page. A folded row belongs to its row: it sits in the sentence's column, its name a small

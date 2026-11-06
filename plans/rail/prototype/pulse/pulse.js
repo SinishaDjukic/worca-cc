@@ -386,6 +386,9 @@ const levelText = (id) => M.LEVELS.find((l) => l.id === id).text;
 const whereText = (id) => M.WHERE.find((w) => w.id === id).text;
 const effWhere = (g, ev) => { const gs = ui.s.groups[g.id]; return gs.ex[ev[0]] || (M.qualifies(gs.level, ev[2]) ? gs.where : 'pulse'); };
 const quiet = (label, a) => R.button({ label, kind: 'quiet', attrs: a });
+// What differs from a value's start: the ChangedDot's lines (docs/rail/settings.md `set.changed`).
+const startOf = () => freshSettings(C());
+const changedFrom = (key, name, words) => (ui.s[key] !== startOf()[key] ? [{ name, was: words(startOf()[key]) }] : []);
 function notifications() {
   const s = ui.s;
   const BADGE = M.BADGE;
@@ -393,22 +396,24 @@ function notifications() {
     ? R.settingsRow({ name: 'Desktop', sentence: 'Desktop notifications are <b>blocked in this browser</b>', end: R.button({ label: 'How to allow', kind: 'quiet', attrs: { 'data-how': '', title: 'Allow notifications for this site in the browser\'s site settings, then come back' } }) })
     : s.desktop === 'unsupported' ? R.settingsRow({ name: 'Desktop', sentence: 'This browser does not support desktop notifications' })
     : s.desktop === 'insecure' ? R.settingsRow({ name: 'Desktop', sentence: 'Desktop notifications need a secure address: open Worca on https:// or localhost' })
-    : R.settingsRow({ name: 'Desktop', sentence: 'Desktop notifications in this browser', end: R.button({ label: 'Send test', kind: 'quiet', attrs: { 'data-test': '', disabled: s.desktop !== 'on', title: s.desktop === 'on' ? 'Sends one test notification' : 'Turn desktop notifications on to send a test' } })
+    : R.settingsRow({ name: 'Desktop', changed: changedFrom('desktop', 'Desktop', (v) => (v === 'on' ? 'on' : 'off')), sentence: 'Desktop notifications in this browser', end: R.button({ label: 'Send test', kind: 'quiet', attrs: { 'data-test': '', disabled: s.desktop !== 'on', title: s.desktop === 'on' ? 'Sends one test notification' : 'Turn desktop notifications on to send a test' } })
       + R.switchButton({ on: s.desktop === 'on', label: 'Desktop notifications in this browser', why: s.desktop === 'on' ? 'On: what a group sends to desktop shows as a notification' : 'Off: no desktop notifications from any group', attrs: { 'data-desk': '' } }) });
   const channels = desk
-    + R.settingsRow({ name: 'Badge', sentence: `The tab title ${sp('badge', BADGE.find((b) => b.id === s.badge).text, BADGE.map((b) => ({ ...b, checked: b.id === s.badge })), 'What the count in the tab title counts')}` })
-    + R.settingsRow({ name: 'Sound', sentence: `${sp('sound', R.SOUND_CHOICES.find((x) => x.id === s.sound).text, R.SOUND_CHOICES.map((x) => ({ ...x, checked: x.id === s.sound })), 'What makes a sound as it arrives. Never during away hours; a burst plays once')}` })
+    + R.settingsRow({ name: 'Badge', changed: changedFrom('badge', 'Badge', (v) => BADGE.find((b) => b.id === v).text), sentence: `The tab title ${sp('badge', BADGE.find((b) => b.id === s.badge).text, BADGE.map((b) => ({ ...b, checked: b.id === s.badge })), 'What the count in the tab title counts')}` })
+    + R.settingsRow({ name: 'Sound', changed: changedFrom('sound', 'Sound', (v) => R.SOUND_CHOICES.find((x) => x.id === v).text), sentence: `${sp('sound', R.SOUND_CHOICES.find((x) => x.id === s.sound).text, R.SOUND_CHOICES.map((x) => ({ ...x, checked: x.id === s.sound })), 'What makes a sound as it arrives. Never during away hours; a burst plays once')}` })
     + R.settingsRow({ name: 'Chat', sentence: esc(M.chatWords(SM.workingChannels(ui.sv))), end: R.shows('advanced', R.prefs.mode()) ? quiet('Channels', { 'data-sset': 'ask', title: 'Their switches and allow-lists are in Settings › Chat' }) : '' });
   const groups = groupsShown().map((g) => {
-    const gs = s.groups[g.id], open = ui.custom === g.id, nEx = Object.keys(gs.ex).length;
+    const gs = s.groups[g.id], g0 = startOf().groups[g.id], open = ui.custom === g.id, nEx = Object.keys(gs.ex).length;
+    const groupWhere = (ev) => (M.qualifies(gs.level, ev[2]) ? gs.where : 'pulse');
+    const evChange = (ev) => (gs.ex[ev[0]] ? [{ name: ev[1], was: whereText(groupWhere(ev)) }] : []);
     const detailRows = open ? g.events.map((ev) => {
       const w = effWhere(g, ev);
-      return R.settingsRow({ name: ev[1], help: `${ev[0]} · ${ev[2] === 'needs' ? 'needs you' : ev[2]}`, changed: !!gs.ex[ev[0]], sentence: `${w === 'pulse' ? '' : 'Goes to '}${sp('ev:' + ev[0], whereText(w), M.WHERE.map((x) => ({ ...x, checked: x.id === w })), `Where ${ev[1]} goes`)}` });
+      return R.settingsRow({ name: ev[1], help: `${ev[0]} · ${ev[2] === 'needs' ? 'needs you' : ev[2]}`, changed: evChange(ev), sentence: `${w === 'pulse' ? '' : 'Goes to '}${sp('ev:' + ev[0], whereText(w), M.WHERE.map((x) => ({ ...x, checked: x.id === w })), `Where ${ev[1]} goes`)}` });
     }).join('') : '';
     const detailAction = open && nEx ? quiet('Back to the group', { 'data-backgroup': g.id, title: 'Every event follows the group again' }) : '';
     // Usage's limits are Runs': one row, in the section that owns it (docs/rail/settings.md)
     const end = g.id === 'usage' ? quiet('Limits', { 'data-land': 'runs|Warning line', title: 'What a run does near a limit: Settings › Runs › Limits' }) : '';
-    return R.settingsRow({ name: g.name, end, detailRows, detailAction, changed: nEx > 0,
+    return R.settingsRow({ name: g.name, end, detailRows, detailAction, changed: [...(gs.level !== g0.level ? [{ name: 'How much', was: levelText(g0.level) }] : []), ...(gs.where !== g0.where ? [{ name: 'Where', was: whereText(g0.where) }] : []), ...g.events.flatMap(evChange)],
       // Pulse keeps everything, so with Pulse only there is no level to choose.
       sentence: gs.where === 'pulse' ? sp('whr:' + g.id, whereText(gs.where), M.WHERE.map((x) => ({ ...x, checked: x.id === gs.where })), `Where ${g.name} goes beyond Pulse`)
         : `Send ${sp('lvl:' + g.id, levelText(gs.level), M.LEVELS.map((l) => ({ ...l, checked: l.id === gs.level })), `How much of ${g.name} reaches you`)} to ${sp('whr:' + g.id, whereText(gs.where), M.WHERE.map((x) => ({ ...x, checked: x.id === gs.where })), `Where ${g.name} goes beyond Pulse`, true)}`,
@@ -422,9 +427,9 @@ function notifications() {
 // What a run does near a limit is a run's business, so it sits in Settings › Runs; Notifications only says how you hear of it.
 function limitsRows() {
   const s = ui.s;
-  const warnRow = R.settingsRow({ name: 'Warning line', sentence: `Warn at ${sp('warn', s.warnAt + '%', [70, 80, 90].map((v) => ({ id: String(v), text: v + '%', checked: s.warnAt === v, help: `Rings turn amber, Vitals shows the limit and an update is sent at ${v}%` })), 'The warning line for usage and spend')} of a limit` });
-  const limits = warnRow + R.settingsRow({ name: 'Manual starts', sentence: `New run and Resume near a limit ${sp('mine', MINE.find((m) => m.id === s.mine).text, MINE.map((m) => ({ ...m, checked: m.id === s.mine })), 'What New run and Resume do when the harness is near its limit')}` })
-    + R.settingsRow({ name: 'Automatic starts', sentence: `A slice or scheduled run near a limit ${sp('auto', AUTO.find((m) => m.id === s.auto).text, AUTO.map((m) => ({ ...m, checked: m.id === s.auto })), 'What a start with nobody there to ask does near a limit. One that waits never holds up the line: the next start that fits goes ahead')}` });
+  const warnRow = R.settingsRow({ name: 'Warning line', changed: changedFrom('warnAt', 'Warning line', (v) => v + '%'), sentence: `Warn at ${sp('warn', s.warnAt + '%', [70, 80, 90].map((v) => ({ id: String(v), text: v + '%', checked: s.warnAt === v, help: `Rings turn amber, Vitals shows the limit and an update is sent at ${v}%` })), 'The warning line for usage and spend')} of a limit` });
+  const limits = warnRow + R.settingsRow({ name: 'Manual starts', changed: changedFrom('mine', 'Manual starts', (v) => MINE.find((m) => m.id === v).text), sentence: `New run and Resume near a limit ${sp('mine', MINE.find((m) => m.id === s.mine).text, MINE.map((m) => ({ ...m, checked: m.id === s.mine })), 'What New run and Resume do when the harness is near its limit')}` })
+    + R.settingsRow({ name: 'Automatic starts', changed: changedFrom('auto', 'Automatic starts', (v) => AUTO.find((m) => m.id === v).text), sentence: `A slice or scheduled run near a limit ${sp('auto', AUTO.find((m) => m.id === s.auto).text, AUTO.map((m) => ({ ...m, checked: m.id === s.auto })), 'What a start with nobody there to ask does near a limit. One that waits never holds up the line: the next start that fits goes ahead')}` });
   return limits;
 }
 function settingsPage() {

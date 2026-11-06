@@ -57,6 +57,21 @@ for (const [why, change] of Object.entries({
   'a failed update': (sv) => { sv.upd = 'failed'; sv.latest = '1.20.0'; },
 })) read(why, change);
 
+// The Changed dot (set.changed): nothing at Worca's defaults; a moved value names itself and its default, on its row and
+// on the row it folds under; back at the default it goes.
+for (const f of SM.FLAGS) R.prefs.setFlag(f.key, f.on);
+const dotC = { level: 'expert', sv: base() }, top = Object.values(SM.SECTIONS).flatMap((x) => x.sections).flatMap((s) => [...(s.rows || []), ...(s.groups || []).flatMap((g) => g.rows || [])]);
+for (const r of rows) { const c = SV.changesOf(r, dotC.sv, dotC); if (c.length) found.set(`a dot at the defaults: ${r.name}: ${JSON.stringify(c)}`, 'fresh'); }
+for (const r of rows) for (const [k, p] of Object.entries(r.picks || {})) {
+  const other = (typeof p.options === 'function' ? p.options(dotC.sv) : p.options).find((o) => o[0] !== p.value); if (!other) continue;
+  const old = dotC.sv[k]; dotC.sv[k] = other[0];
+  const lines = SV.changesOf(r, dotC.sv, dotC);
+  if (lines.length !== 1 || /undefined|model:|\bnull\b/.test(lines[0].was)) found.set(`the dot's line for ${k}: ${JSON.stringify(lines)}`, 'a pick moved');
+  dotC.sv[k] = old;
+}
+dotC.sv.runId = true; if (!SV.changesOf(top.find((r) => r.name === 'Naming'), dotC.sv, dotC).some((x) => x.name === 'Add run id' && x.was === 'off')) found.set('a folded value does not reach its row', 'runId on'); dotC.sv.runId = false;
+dotC.sv.total = '500'; const budget = SV.changesOf(top.find((r) => r.name === 'Budget'), dotC.sv, dotC); if (budget.length !== 1 || budget[0].name !== 'Total' || budget[0].was !== '$1,000 a month') found.set(`Budget's line: ${JSON.stringify(budget)}`, 'total 500');
+
 // Notifications: pulse.js fills these from Pulse's model.
 for (const b of M.BADGE) check('Badge', `The tab title ${b.text}`, b.id);
 for (const s of R.SOUND_CHOICES) check('Sound', s.text, s.id);

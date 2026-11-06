@@ -55,12 +55,23 @@ export function switchButton({ on, label, why = '', disabled = false, attrs: a =
 }
 
 /**
- * SettingsRow: the name, one sentence, and its end (a Switch, a button, Changed). `detail` opens under the sentence.
+ * ChangedDot: a value in this row differs from Worca's default. A tiny neutral dot right after the row's name; its
+ * tooltip says Changed, then a line per value with its default (docs/rail/settings.md: `set.changed`). No reset here.
+ * @param {true|{name:string, was:string}[]} [changes]  each changed value and its default words; `true` when none can be named
+ */
+export function changedDot(changes) {
+  if (!changes || changes.length === 0) return '';
+  const lines = ['Changed', ...(changes === true ? [] : changes.map((c) => `${c.name}: default ${c.was}`))];
+  return `<span class="set-dot" role="img"${attrs({ title: lines.join('\n'), 'aria-label': lines.join('. ') })}></span>`;
+}
+
+/**
+ * SettingsRow: the name (and its ChangedDot), one sentence, and its end (a Switch, a button). `detail` opens under the sentence.
  * @param {object} o
  * @param {string} o.name
  * @param {string} [o.sentence] markup: escaped words and SentencePickers
  * @param {string} [o.end]      markup at the right: a Switch, buttons
- * @param {boolean} [o.changed] differs from its group or default: says Changed
+ * @param {boolean|{name:string, was:string}[]} [o.changed] what differs from its group or default, folded rows' values too: the ChangedDot
  * @param {string} [o.help]     the name's tooltip
  * @param {string} [o.detailRows] SettingsRows that open under the sentence (the row's fine-tuning)
  * @param {string} [o.detail]   other markup that opens after them (a List of records)
@@ -72,7 +83,7 @@ export function settingsRow({ name, sentence = '', end = '', changed = false, he
   const foldBtn = fold ? button({ label: fold.open ? 'Done' : fold.label || 'Customise', kind: 'quiet', attrs: { 'aria-expanded': String(!!fold.open), title: fold.help || null, ...(fold.attrs || {}) } }) : '';
   const all = (detailRows ? `<div class="set-rows">${detailRows}</div>` : '') + detail + (detailAction ? `<div class="set-foot">${detailAction}</div>` : '');
   const shown = fold ? (fold.open ? all : '') : all;
-  return row({ kind: 'setting', text: `<span class="set-name"${attrs({ title: help || null })}>${esc(name)}</span><span class="set-text">${sentence}</span>`, end: `${changed ? '<span class="set-changed">Changed</span>' : ''}${end}${foldBtn}`, after: shown ? `<div class="set-detail" data-motion="open">${shown}</div>` : '', attrs: a });
+  return row({ kind: 'setting', text: `<span class="set-name"${attrs({ title: help || null })}>${esc(name)}${changedDot(changed)}</span><span class="set-text">${sentence}</span>`, end: `${end}${foldBtn}`, after: shown ? `<div class="set-detail" data-motion="open">${shown}</div>` : '', attrs: a });
 }
 
 /**

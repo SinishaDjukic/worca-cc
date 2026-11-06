@@ -60,6 +60,25 @@
       return m;
     });
   }
+  // What differs from Worca's default, each value with its default's words: the row's own, then its folded rows' (the
+  // ChangedDot; docs/rail/settings.md `set.changed`). A pick's default is its start value; a value only a Dialog sets is
+  // in the model's STATE. A secret is never in the list.
+  const same = (a, b) => String(a ?? '') === String(b ?? '');
+  const defaultWords = (k, v, fallback) => (SM.VALUE_WORDS[k] ? SM.VALUE_WORDS[k](v, SM.STATE) : fallback ?? (v === '' || v == null ? 'none' : String(v)));
+  function changesOf(r, sv, c) {
+    const out = [], seen = new Set();
+    const add = (k, name, start, words) => { if (seen.has(k)) return; seen.add(k); if (!same(sv[k], start)) out.push({ name: SM.VALUE_NAMES[k] || name, was: defaultWords(k, start, words) }); };
+    for (const [k, p] of Object.entries(r.picks || {})) add(k, p.name || r.name, p.value, optText(p, p.value, sv));
+    for (const a of r.acts || []) for (const f of (a.edit && typeof a.edit !== 'function' && a.edit.fields) || []) {
+      if (!f.key || f.button || f.type === 'password') continue;
+      const start = r.vals && f.key in r.vals ? r.vals[f.key] : SM.STATE[f.key];
+      if (start !== undefined && typeof start !== 'function') add(f.key, f.label.replace(' (USD)', ''), start);
+    }
+    for (const [k, v] of Object.entries(r.vals || {})) if (typeof v !== 'function') add(k, r.name, v);
+    if (r.sw && r.sw.key) add(r.sw.key, r.name, !!r.sw.on, r.sw.on ? 'on' : 'off');
+    if (r.sw && r.sw.flag) { const on = !!(SM.FLAGS.find((f) => f.key === r.sw.flag) || {}).on; if (R.prefs.flag(r.sw.flag) !== on) out.push({ name: r.name, was: on ? 'on' : 'off' }); }
+    return [...out, ...(r.more || []).filter((m) => vis(m, c)).flatMap((m) => changesOf(m, sv, c))];
+  }
   // An action: a jump to another section (go), a Dialog (edit), a ConfirmStrip (confirm), a copy, a change (do), or a
   // place outside Settings (page, click), with a toast (say). What it needs when off: `off(sv)` says why.
   function act(a, where, c) {
@@ -84,7 +103,7 @@
     const inner = open ? (r.more || []).filter((m) => vis(m, c)).map((m) => row(m, sv, c, where + '/' + r.name)).join('') : '';
     const detail = open && r.moreList ? records(r.moreList, sv, c, where + '/' + r.name, r.empty) : '';
     const acts = (r.acts || []).filter((a) => vis(a, c)).map((a) => act(a, where + '/' + r.name, c)).join('');
-    return c.R.settingsRow({ name: r.name, help: r.help || '', sentence: sentence(r, sv, c), end: chipOf(r, sv, c) + acts + swOf(r, r.name, sv, c), detailRows: inner, detail, fold: folds ? { open, label: r.foldLabel, attrs: { 'data-svdo': key, 'data-key': 'sv:' + key } } : null });
+    return c.R.settingsRow({ name: r.name, help: r.help || '', changed: changesOf(r, sv, c), sentence: sentence(r, sv, c), end: chipOf(r, sv, c) + acts + swOf(r, r.name, sv, c), detailRows: inner, detail, fold: folds ? { open, label: r.foldLabel, attrs: { 'data-svdo': key, 'data-key': 'sv:' + key } } : null });
   }
 
   // ---- records: each list's own copy, so a rename or a delete holds until the case changes ----
@@ -274,5 +293,5 @@
     const c = sv.__confirm; sv.__confirm = null;
     return yes && c ? c.then(sv) || '' : '';
   }
-  window.SettingsView = { fresh, section, strip, sentenceText, rowsOf, pick, toggle, act: doAct, dialog, confirm };
+  window.SettingsView = { fresh, section, strip, sentenceText, changesOf, rowsOf, pick, toggle, act: doAct, dialog, confirm };
 })();

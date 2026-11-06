@@ -28,6 +28,7 @@ shows it; sizes, colours and spacing come with the component. Names are the Desi
 | A choice that changes a step | SentencePicker: a picker in the sentence it changes, opening a CompactMenu (in the app, wired to `toggleMenu`, so the menu has keys) | `dev ▾`, `3 stacked PRs ▾` |
 | A choice among a form's or a panel's words | WordPicker, opening a CompactMenu | `dev ▾` base branch, `One PR ▾` |
 | Answering Worca's question | OptionList: one line per answer, a radio dot, Worca's pick marked, your own answer under it (in the app, `buildChatQuestion` takes `preset` for Worca's pick and `recommended` on an option) | the asking step's answers |
+| A value off its default | ChangedDot on the SettingsRow (`changed`): a dot after the name, the defaults in its tooltip | Budget · |
 | A setting that is on or off | Switch: takes effect at once, no confirm; a failed change flips back and a toast says why | Watch on a PR |
 | Picking items from a list, an opt-out, a consent | Checkbox | the checklist, No cap, Draft |
 | Two or three views of the same thing | Segmented | Light and Dark, Summaries and Raw |

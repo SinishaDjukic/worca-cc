@@ -166,8 +166,9 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
   const roleRow = ([e, label]) => {
     const [models, efforts, set] = ENGINE_MODELS[e], picks = {};
     for (const [r, , help] of ROLES) {
-      picks[roleKey(e, r, 'm')] = P(set[r] || '', [NONE, ...models], help);
-      if (efforts) picks[roleKey(e, r, 'e')] = P(efforts.some((x) => x[0] === 'medium') ? 'medium' : efforts[0][0], efforts, 'Its effort');
+      const who = ROLE_WORDS[r].replace(' on', '');
+      picks[roleKey(e, r, 'm')] = { ...P(set[r] || '', [NONE, ...models], help), name: who };
+      if (efforts) picks[roleKey(e, r, 'e')] = { ...P(efforts.some((x) => x[0] === 'medium') ? 'medium' : efforts[0][0], efforts, 'Its effort'), name: who + ' effort' };
     }
     return { name: label.replace(' (beta)', ''), help: e === 'claude' || e === 'codex' ? 'Steps, Chat and helper jobs fall back to these. A team policy can also set them' : 'Steps and Chat fall back to these. Helper jobs run on Claude or Codex', picks,
       say: (sv) => ROLES.map(([r]) => `${ROLE_WORDS[r]} {${roleKey(e, r, 'm')}}${efforts && sv[roleKey(e, r, 'm')] ? ` at {${roleKey(e, r, 'e')}}` : ''}`).join('; ') };
@@ -749,8 +750,13 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
     { title: 'Worca', items: ['general', 'notifications', 'experimental'] },
   ];
   const NOTIFICATIONS = { title: 'Notifications', meta: 'Pulse keeps everything; these choices say what else reaches you.' };
+  // What the Changed dot's tooltip calls a value in a row with several, and the words of a default that is not an option's.
+  const VALUE_NAMES = { prOpen: 'Create a PR', prSlices: 'A feature\'s PRs', what: 'Suggests', when: 'When', remote: 'Remote', div: 'If diverged', late: 'Missed starts', lateMax: 'How late', fails: 'Failures',
+    which: 'Runs answered', byDay: 'By day', method: 'How it picks', sure: 'Sure at', lead: 'Lead', dmodel: 'Model', deffort: 'Effort', answers: 'Answers', spent: 'While away', extra: 'Fix rounds', exceed: 'At the team\'s cap',
+    keep: 'Checkout', coMax: 'Most kept', ct: 'Connect', lt: 'Sign in', it: 'Idle', auth: 'Signing in', wait: 'Wait', netWait: 'Wait for the network', web: 'Sites', webOn: 'Web access', proxy: 'Proxy', proxyHost: 'Host', proxyPort: 'Port', proxyLocal: 'Local proxy', period: 'Total starts again' };
+  const VALUE_WORDS = { perRun: usd, total: (v, d) => `${usd(v)} a ${d.period}`, period: (v) => ({ day: 'each day', week: 'each week', month: 'each month' })[v] || v, rate: (v) => `$${v} an hour`, capRun: usd, capAll: (v) => `${usd(v)} a month`, wsCap: usd };
   window.SettingsModel = {
-    GROUPS, SECTIONS, FLAGS, STATE, FIRST: 'runs', workingChannels,
+    GROUPS, SECTIONS, FLAGS, STATE, FIRST: 'runs', workingChannels, VALUE_NAMES, VALUE_WORDS,
     title: (id) => (id === 'notifications' ? NOTIFICATIONS : SECTIONS[id] || { title: id }).title,
     meta: (id) => (id === 'notifications' ? NOTIFICATIONS : SECTIONS[id] || { meta: '' }).meta,
     min: (id) => (SECTIONS[id] || {}).min || '',

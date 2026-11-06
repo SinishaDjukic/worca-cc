@@ -798,7 +798,9 @@ html,body{height:auto;overflow:visible;margin:0;}
 .set-end > .switch{align-self:center;flex:none;}
 
 .set-end > .btn-quiet:last-child,.set-end > .tip-wrap:last-child > .btn-quiet{margin-right:calc(-1 * var(--btn-inset));}
-.set-changed{font-size:var(--fs-caption);color:var(--ink-2);}
+/* The Changed dot: right after the name, its tooltip's reach wider than the dot. */
+.set-dot{position:relative;display:inline-block;width:5px;height:5px;margin-left:6px;border-radius:50%;background:var(--ink-3);vertical-align:middle;}
+.set-dot::before{content:"";position:absolute;inset:-6px;}
 .set-detail{grid-column:2 / -1;padding-top:8px;min-width:0;}
 /* A folded row belongs to its row: inside the sentence column, its name a small label over its sentence, its end at
    the right. It never repeats the page's name column. */
@@ -827,7 +829,14 @@ html,body{height:auto;overflow:visible;margin:0;}
   .set-end > .btn-quiet:first-child{margin-left:calc(-1 * var(--btn-inset));}
   .set-end > .btn-quiet:last-child,.set-end > .tip-wrap:last-child > .btn-quiet{margin-right:0;}
   .set-detail{grid-column:1;}
-  .spick-b{white-space:normal;}
+  .spick-b{white-space:normal;text-align:left;}
+  .set-sec-head{flex-wrap:wrap;}
+  .set-sec-head > .btn-quiet,.set-sec-head > .tip-wrap > .btn-quiet{margin-right:0;}
+  /* A record stacks as a row does: its name and meta take the width, its end goes under them. Nothing is cut. */
+  .set-sec .list-rows{grid-template-columns:var(--lr-rail) minmax(0,1fr);}
+  .set-sec .list-rows > .list-row > .lr-end{grid-column:2;justify-content:flex-start;}
+  .set-sec .lr-end > .btn-quiet:first-child{margin-left:calc(-1 * var(--btn-inset));}
+  .set-sec .lr-t{overflow:visible;white-space:normal;}
   .spick-menu.is-right{left:-4px;right:auto;}   /* a stacked row: every menu opens under its words */   /* a long choice wraps on a narrow screen, its ▾ with its last word */
 }
 

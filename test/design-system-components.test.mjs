@@ -186,11 +186,18 @@ test('switchButton, settingsRow and settingsSection: the row owns its parts, the
   const sw = dom(C.switchButton({ on: true, label: 'Desktop notifications', why: 'On', attrs: { 'data-desk': '' } }));
   assert.equal(sw.getAttribute('role'), 'switch');
   assert.equal(sw.getAttribute('aria-checked'), 'true');
-  const row = dom(C.settingsRow({ name: 'Badge <b>', sentence: 'The tab title counts <x>', end: '<button class="btn"></button>', changed: true, detail: '<p>more</p>' }));
+  const row = dom(C.settingsRow({ name: 'Badge <b>', sentence: 'The tab title counts <x>', end: '<button class="btn"></button>', changed: [{ name: 'Total', was: '$1,000 a month' }, { name: 'Per run', was: 'no limit' }], detail: '<p>more</p>' }));
   assert.equal(row.className, 'set-row');
   assert.equal(row.querySelector('.set-name').textContent, 'Badge <b>', 'the name is escaped');
   assert.ok(row.querySelector('.set-text x'), 'the sentence is markup, so it can hold pickers');
-  assert.equal(row.querySelector('.set-end .set-changed').textContent, 'Changed');
+  const dot = row.querySelector('.set-name .set-dot');   // right after the name, one however many values, no words on the row
+  assert.equal(dot.getAttribute('title'), 'Changed\nTotal: default $1,000 a month\nPer run: default no limit');
+  assert.equal(row.querySelectorAll('.set-dot').length, 1);
+  assert.equal(row.querySelector('.set-name').textContent, 'Badge <b>');
+  assert.equal(C.changedDot(), '');
+  assert.equal(C.settingsRow({ name: 'A' }).includes('set-dot'), false);
+  assert.equal(C.settingsRow({ name: 'A', changed: [] }).includes('set-dot'), false);
+  assert.equal(dom(C.settingsRow({ name: 'A', changed: true })).querySelector('.set-dot').getAttribute('title'), 'Changed');
   assert.equal(row.querySelector('.set-detail').dataset.motion, 'open');
   const sec = dom(C.settingsSection({ title: 'What reaches you', action: '<button class="btn btn-quiet">Reset</button>', meta: 'one line', rows: C.settingsRow({ name: 'a' }) }));
   assert.equal(sec.querySelector('h2.set-sec-h').textContent, 'What reaches you');

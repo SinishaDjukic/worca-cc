@@ -14,6 +14,9 @@
   const PR_OPEN = (checks, approval, extra) => [ok('Create PR', '', { live: 'Opened 25 Oct, 13:40' }), checks, approval].concat(extra || []);
   const LAND = (state, live) => [s('Into dev', state, '', { live: live || '' })];
 
+  // A short run with no project: its steps add up to its own 12m and $1.80, not a full run's.
+  const SHORT_RUN = (tail) => ({ plan: [ok('Clarify', '34s', { cost: '$0.12' }), ok('Plan', '3m', { cost: '$0.48' })], build: [ok('Implementation', '5m 26s', { cost: '$0.80' })], review: [ok('Review implementation', '2m', { cost: '$0.30' }), ok('Manual tests checklist', '1m', { cost: '$0.10' })], tail });
+  const SHORT_FACTS = (task, outcome) => ({ task, outcome, decisions: [], evidence: 'Review passed' });
   const run = (o) => [
     { key: 'plan', label: 'Plan', subs: o.plan || PLAN },
     { key: 'build', label: 'Build', subs: o.build || BUILD },
@@ -107,8 +110,8 @@
       stages: run({ tail: [{ key: 'apply', label: 'Apply', subs: [s('Into the folder', 'merged', '', { live: '5 files written · 25 Oct 14:05' })] }] }) },
     { id: 'workspace', group: 'Kinds', label: 'Workspace', extraItems: ['worca-api #212', 'worca-web #88', 'worca-docs #31'], detail: 'worca-docs #31 conflicts with main', branch: 'feat/billing-export', project: 'billing workspace', repos: ['worca-api', 'worca-web', 'worca-docs'], figs: [['Time', '3h 05m'], ['Cost', '$52.70']],
       stages: run({ tail: [{ key: 'pr', label: 'PRs', subs: [s('worca-api #212', 'merged', '', { live: 'Merged into main' }), s('worca-web #88', 'now', '', { live: 'Checks running · 5 of 7' }), s('worca-docs #31', 'problem', '', { live: 'Conflicts with main' })] }, { key: 'merged', label: 'Merged', subs: [s('1 of 3 repositories', 'next', '', { live: 'worca-api is in main' })] }] }) },
-    { id: 'noproject', group: 'Kinds', label: 'No project', project: '', branch: '', noDiff: true, figs: [['Time', '12m'], ['Cost', '$1.80']],
-      stages: run({ tail: [{ key: 'done', label: 'Done', subs: [ok('3 documents', '', { live: 'In Overview' })] }] }) },
+    { id: 'noproject', group: 'Kinds', label: 'No project', project: '', branch: '', noDiff: true, figs: [['Time', '12m'], ['Cost', '$1.80']], ...SHORT_FACTS('Summarise the incident notes into one page.', ['Wrote the summary and two supporting documents']),
+      stages: run(SHORT_RUN([{ key: 'done', label: 'Done', subs: [ok('3 documents', '', { live: 'In Overview' })] }])) },
 
     // Shaper
     { id: 'clarify', group: 'Shaper', label: 'Clarify', figs: [['Time', '2m'], ['Cost', '$0.76']],
@@ -170,7 +173,8 @@
   const groupOf = (id, group, label, cases3, o) => Object.assign({ id, group, label, runCases: cases3, kind: 'Feature', title: 'Unified page navigation', branch: '', figs: [['Time', '3h 20m'], ['Cost', '$61.10']], tabs: GROUP_TABS, follows: true, state: 'feature',
     stages: [{ key: 'plan', label: 'Plan', subs: RECEIPT_PLAN }, member(1, RUNS[0], ['done', 'done', 'done', 'done']), member(2, RUNS[1], ['done', 'now', 'next', 'next']), member(3, RUNS[2], ['next', 'next', 'next', 'next']), { key: 'pr', label: 'PRs', subs: [next('#1'), next('#2'), next('#3')] }] }, o || {});
   const GROUP_RUNS = ['Remove the old invoices page', 'Billing export as CSV'];
-  const userGroup = (id, label, runCases, o) => Object.assign({ id, group: 'Groups', label, runCases, runTitles: GROUP_RUNS, kind: 'Group', independent: true, sizes: ['+120 −40', '+38 −22'], title: 'Billing cleanup', branch: '', figs: [['Time', '1h 40m'], ['Cost', '$21.70']], tabs: GROUP_TABS,
+  const userGroup = (id, label, runCases, o) => Object.assign({ id, group: 'Groups', label, runCases, runTitles: GROUP_RUNS, kind: 'Group', independent: true, sizes: ['+120 −40', '+38 −22'], title: 'Billing cleanup', branch: '', figs: [['Time', '1h 40m'], ['Cost', '$21.70']], tabs: GROUP_TABS, task: 'Clean up billing: remove the old invoices page, and export billing as CSV.',
+    decisions: [{ step: 'Remove the old invoices page', q: 'Keep the old invoices address working?', a: 'Redirect it to Billing', who: 'you', when: '10:14' }, { step: 'Billing export as CSV', q: 'Which dates does the export use?', a: 'The invoice date', who: 'away', when: '11:02', note: 'Sonnet 5.5 · $0.21' }],
     stages: [member(1, GROUP_RUNS[0], ['done', 'done', 'done', 'done']), member(2, GROUP_RUNS[1], ['done', 'done', 'done', 'done']), { key: 'pr', label: 'PRs', subs: [next('#1'), next('#2')] }] }, o || {});
   const READY3 = (o) => Object.assign({ mode: 'create', runs: RUNS, rec: 'stack', sizes: ['+278 −64', '+41 −58', '+39 −22'], reason: '3 runs and 502 changed lines: three focused reviews go faster than one mixed one.' }, o || {});
   const READY_STAGES = [{ key: 'plan', label: 'Plan', subs: RECEIPT_PLAN }, member(1, RUNS[0], ['done', 'done', 'done', 'done'], { times: ['22m', '58m', '31m'] }), member(2, RUNS[1], ['done', 'done', 'done', 'done'], { times: ['18m', '1h 2m', '27m'] }), member(3, RUNS[2], ['done', 'done', 'done', 'done'], { times: ['12m', '44m', '19m'] }), { key: 'pr', label: 'PRs', subs: [next('#1'), next('#2'), next('#3')] }];
@@ -225,10 +229,10 @@
     { id: 'ready-deps', state: 'ready', group: 'Ready', label: 'Ready, runs wait on it', figs: DONE_FIGS, stages: run({}), dependents: 2 },
     { id: 'ready-nocost', state: 'ready', group: 'Ready', label: 'Ready, engine with no cost', figs: DONE_FIGS, stages: run({}), agentsUnknown: true },
     { id: 'hosted', state: 'ready', group: 'Ready', label: 'Ready, on a hosted Worca', figs: DONE_FIGS, stages: run({}), hosted: true },
-    { id: 'finished-nogit', state: 'noproject', group: 'Ready', label: 'Finished, no git', detail: 'Git is not set up here, so there is no branch or PR', branch: '', figs: [['Time', '12m'], ['Cost', '$1.80']], noDiff: true, noSetup: true,
-      stages: run({ tail: [{ key: 'done', label: 'Done', subs: [ok('Finished')] }] }) },
-    { id: 'folder-nochange', state: 'noproject', group: 'Ready', label: 'Folder, no files changed', detail: 'No files changed', ...FOLDER, figs: [['Time', '12m'], ['Cost', '$1.80']], noDiff: true,
-      stages: run({ tail: [{ key: 'done', label: 'Done', subs: [ok('Finished', '', { live: 'Nothing to apply' })] }] }) },
+    { id: 'finished-nogit', state: 'noproject', group: 'Ready', label: 'Finished, no git', detail: 'Git is not set up here, so there is no branch or PR', branch: '', figs: [['Time', '12m'], ['Cost', '$1.80']], noDiff: true, noSetup: true, ...SHORT_FACTS('Summarise the incident notes into one page.', ['Wrote the summary']),
+      stages: run(SHORT_RUN([{ key: 'done', label: 'Done', subs: [ok('Finished')] }])) },
+    { id: 'folder-nochange', state: 'noproject', group: 'Ready', label: 'Folder, no files changed', detail: 'No files changed', ...FOLDER, figs: [['Time', '12m'], ['Cost', '$1.80']], noDiff: true, ...SHORT_FACTS('Check the marketing site for broken links and fix any you find.', ['Found no broken links, so changed nothing']),
+      stages: run(SHORT_RUN([{ key: 'done', label: 'Done', subs: [ok('Finished', '', { live: 'Nothing to apply' })] }])) },
     { id: 'failed-kept', group: 'Ended', label: 'Failed, work kept', detail: 'Tests still failing · the work is kept in a copy', over: true, ev: KEPT_EV, figs: [['Time', '2h 12m'], ['Cost', '$41.30']], stages: FAILED_AT() },
     { id: 'failed-kept-wait', group: 'Ended', label: 'Failed, kept work settling', detail: 'Tests still failing · the kept work is still being saved', over: true, ev: KEPT_EV, figs: [['Time', '2h 12m'], ['Cost', '$41.30']], stages: FAILED_AT() },
     { id: 'failed-folder', group: 'Ended', label: 'Failed, folder copy pending', detail: 'Tests still failing · 5 files changed in a copy', over: true, ...FOLDER, ev: KEPT_EV, figs: [['Time', '52m'], ['Cost', '$9.15']],
@@ -560,7 +564,7 @@
     const max = Math.max(1, ...Object.values(areas).map((x) => x.add + x.del));
     const rounds = DETAIL.rounds['Review implementation'].length;
     const done = built && !live;
-    return { focus, checklist: c.shaped || c.id === 'gate' ? DETAIL.checklist : null, outcome: done ? DETAIL.outcome : [], task: DETAIL.task,   // what it did, once it is done
+    return { focus, checklist: c.shaped || c.id === 'gate' ? DETAIL.checklist : null, outcome: done ? c.outcome || DETAIL.outcome : [], task: c.task || DETAIL.task,   // what it did, once it is done
       // It says it did what you asked only when everything ran, nothing stayed open, and there is a change to show for it.
       ask: done && clean && !c.issues && !c.noDiff && !c.mock && !c.evidence && !/^(Archived|Discarded|Deleted)$/.test(c.word) ? { parts: DETAIL.ask, unasked: DETAIL.unasked } : null,
       evidence: !done || c.mock || (focus && focus.kind === 'broke') ? '' : c.evidence || (clean ? `Tests pass · Review passed on round ${rounds} · Manual test passed` : ''),
@@ -618,15 +622,15 @@
     return { stages, end: live ? '' : 'End · ' + c.word };
   }
   // A decision exists once its step has run; on a group, once the plan is done.
-  const decisionsOf = (c, runStages) => (runStages.length ? (runStages.some((x) => x.subs.some(isDone)) ? DETAIL.decisions : []) : DETAIL.decisions.filter((d) => c.stages.some((x) => x.subs.some((y) => y.name === d.step && isDone(y)))));
+  const decisionsOf = (c, runStages) => (c.decisions && (!runStages.length || runStages.some((x) => x.subs.some(isDone))) ? c.decisions : c.decisions ? [] : runStages.length ? (runStages.some((x) => x.subs.some(isDone)) ? DETAIL.decisions : []) : DETAIL.decisions.filter((d) => c.stages.some((x) => x.subs.some((y) => y.name === d.step && isDone(y)))));
   function prOpen(c) { return c.stages.some((x) => x.key === 'pr' && x.subs[0] && x.subs[0].name === 'Create PR' && isDone(x.subs[0])); }
 
 
   // An action moves THIS run (docs/rail/thing-page.md: One run, moving). The target case supplies only its state, its word,
   // its detail and what its state changes; the title, the time and cost its steps add up to, the branch and the PR are the
   // run's own, here and nowhere else. A run you paused remembers where it was, and an archived one what it was.
-  const RUN_FACTS = ['title', 'branch', 'folder', 'project', 'repos', 'onSource', 'hidden', 'host', 'noDiff', 'noSetup', 'noTry', 'mock', 'hosted', 'heldBy', 'agentsUnknown', 'dependents', 'shaped', 'budget', 'files', 'diff', 'figs', 'at', 'base', 'pr', 'shipLive', 'sizes', 'parent'];
-  const GROUP_FACTS = ['title', 'kind', 'runTitles', 'independent', 'n', 'figs', 'sizes'];
+  const RUN_FACTS = ['title', 'task', 'decisions', 'outcome', 'branch', 'folder', 'project', 'repos', 'onSource', 'hidden', 'host', 'noDiff', 'noSetup', 'noTry', 'mock', 'hosted', 'heldBy', 'agentsUnknown', 'dependents', 'shaped', 'budget', 'files', 'diff', 'figs', 'at', 'base', 'pr', 'shipLive', 'sizes', 'parent'];
+  const GROUP_FACTS = ['title', 'task', 'decisions', 'kind', 'runTitles', 'independent', 'n', 'figs', 'sizes'];
   const caseFor = (to) => CASES.find((x) => x.id === to) || CASES.find((x) => (x.state || x.id) === to);
   const stepMap = (stages, fn) => stages.map((st) => (SHIP.test(st.key) ? st : Object.assign({}, st, { subs: st.subs.map(fn) })));
   const STARTED = { live: 'Under way', when: 'now', time: '', cost: '$0.00' };
