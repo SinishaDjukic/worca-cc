@@ -14,8 +14,8 @@ and update the [catalogue](#catalogue).
 
 | Level | Who | What it shows |
 |---|---|---|
-| `simple` | New to Worca | The core loop: pick a project, describe the task, watch the run, answer its questions, read the result. Budget limits. The Workflows view: workflows, agents and scripts. Nothing here can break a run. |
-| `advanced` | Regular use | How a run executes and what it changed: branches, guardrails, per-agent model and effort, the live log, the diff, pull requests, plugins, memory files. |
+| `simple` | New to Worca | The core loop: pick a project, describe the task, watch the run, answer its questions, read the result and its diff. Budget limits. The Workflows view: workflows, agents and scripts. Nothing here can break a run. |
+| `advanced` | Regular use | How a run executes: branches, guardrails, per-agent model and effort, the live log, pull requests, plugins, memory files. |
 | `expert` | Authoring and team setup | Everything: model and guardrail authoring, routing env and secrets, fan-out and loop limits, log filters, per-node run detail, diagnostics, team metrics. |
 
 Levels are **cumulative**. Advanced shows everything Simple shows; Expert shows
@@ -78,8 +78,7 @@ Then check two things:
 - **Can it hold a non-default value?** If yes, keep it visible when it does
   (rule 2).
 - **Is it the only way to reach something a lower level needs?** If hiding it
-  strands a Simple user, either lower it or give Simple a plain substitute (the
-  "Files changed" list on the History overview stands in for the Diff tab).
+  strands a Simple user, either lower it or give Simple a plain substitute.
 
 Whole pages follow the same questions: tag the **entry points** (the nav item,
 the tab button), never the page container, so deep links keep working.
@@ -200,7 +199,7 @@ The **Auto** workflow option is available for both targets — a project and a w
 | Workflow graph with status colours, gate pip, End result; Workflow, Overview and Q&A tabs | S |
 | Run header cost and its breakdown (agents, Away mode, Auto workflow, run title; stopped reviews and stopped agent turns apart); the Overview cost card's Away mode share | S |
 | "Answered for you": one group per ask (kind · time · model · cost of its review, or "review stopped" and its lower bound), the answers, Check; the heading's answer count and what the Away mode reviews cost | S |
-| Diff tab (live worktree while running, the final patch after) | A |
+| Diff tab (live worktree while running, the final patch after) | S |
 | Folder run (a Folder project): Changes tab, the Folder chip, the "<n> files · on a copy" bar with Discard and Apply to folder, the Apply to folder dialog | S |
 | Run without a project (No project): the Artifacts tab, opened first; the No project chip | S |
 | Live log pane (run page › Logs), log search / copy / auto-scroll, Summaries / Raw switch (flag `commandSummaries`) | A |
@@ -223,11 +222,12 @@ The **Auto** workflow option is available for both targets — a project and a w
 | Save as preset (a run with a stored setup) | S |
 | Run page bar: Back (every layout) and ⋯ (Away mode while live, Save as preset, Terminal, Report this run, Archive / Restore) | S |
 | History: usage-limit notice | S |
-| "Files changed" list on the Overview | S — the stand-in for the Diff tab |
+| "Files changed" list on the Overview | S |
 | Folder run: Changes tab, the Folder chip, the Apply bar and dialog, Discard; the Git / Folder chip on a project's group in the Runs list | S |
 | Run without a project: the Artifacts tab, opened first; the No project group and its chip in the Runs list | S |
 | Overview: Perspective checklists, as on the run page (shaped runs) | S |
-| Diff tab, diff pill, inline comments; Create PR / View PR; "Push <source>" (a run on its source branch, instead of a PR); branch line; Artifacts tab | A |
+| Run page head on a project with no remote: Link remote, How to merge | S |
+| Diff pill, inline comments; Create PR / View PR; "Push <source>" (a run on its source branch, instead of a PR); branch line; Artifacts tab | A |
 | Actions tab, Overview actions strip, Create PR 'Try it first' button and strip | A |
 | Create PR dialog: Draft switch, "Will close owner/repo#N" line | A — ungated inside the modal (no `data-min-level`), so they show wherever the modal opens |
 | Running-action pill in the header, sidebar Running actions rows (one tile on the rail) | all — shown only while a service runs |
@@ -324,6 +324,7 @@ inside the view.
 | General: Appearance, Alerts, Interface mode, Getting started, About | S |
 | Runs tab: Budget & cost limits (incl. Resume runs automatically when a usage limit resets) | S |
 | Runs tab: Pull requests (Draft the PR description with AI automatically) | S |
+| Runs tab: the filter box above its cards | S |
 | Runs tab: Network proxy | S — timeouts and the local port under More |
 | Labs tab (feature flags) | S — flags are independent of levels (docs/feature-flags.md) |
 | General: root folders; Runs tab: Scheduled runs defaults, Workspaces (scan models), chat notifications; Chat tab (limits, tools, web access, chat history) | A |

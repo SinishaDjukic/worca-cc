@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import {
-  SETUP_STEPS, TEST_PASS_MS, LOGIN_RETRY_STEPS, proxyKey, initialAnswers, rolePatch, diffRows, buildApplyBody, nextGate,
+  SETUP_STEPS, TEST_PASS_MS, LOGIN_RETRY_STEPS, proxyKey, initialAnswers, rolePatch, diffRows, buildApplyBody, nextGate, networkAnswered, CLAUDE_MISSING_LINE,
   stepOfField, setupStepForSignIn, safeHttpUrl, openSetupAssistant, teamNotice, askEngineOf, NO_CHANGES_LINE,
 } from '../ui/public/setup-assistant.mjs';
 import { checkRows } from './helpers/rows.mjs';
@@ -1554,4 +1554,24 @@ test('Models step: roles for Claude and every engine the check found ready, with
     assert.ok(h.$('.inherit-field[data-setting="models.copilot.roles.deep"]'), 'the Copilot roles are there to set');
     assert.equal(h.$('.inherit-field[data-setting="models.goose.roles.deep"]'), null);
   } finally { h.close(); }
+});
+
+test('a signed-out Claude: the first start never says the setup works, and Review names it', () => {
+  const s0 = saved(); const a = initialAnswers({ saved: s0, entry: 'first' });
+  a.access.claude = true;
+  const line = (detect) => nextGate('review', a, { saved: s0, entry: 'first', detect }).reason;
+  assert.equal(line({ checks: [{ id: 'claude', state: 'no' }] }), CLAUDE_MISSING_LINE);
+  assert.equal(line({ checks: [{ id: 'claude', state: 'ok' }] }), 'Nothing to change: your current setup already works.');
+  const row = diffRows(s0, a, { detect: { checks: [{ id: 'claude', state: 'no' }] } }).find((r) => r.group === 'access');
+  assert.match(row.value, /Claude Code \(not signed in\)/);
+});
+
+test('networkAnswered: only a working direct connection, no proxy in the environment, none chosen', () => {
+  const a = { network: { mode: 'direct' } };
+  const d = (direct, proxyEnv) => ({ checks: [{ id: 'direct', state: direct }, { id: 'proxyEnv', state: proxyEnv }] });
+  assert.equal(networkAnswered(a, d('ok', 'no')), true);
+  assert.equal(networkAnswered(a, d('no', 'no')), false, 'direct failed: the proxy question is the point');
+  assert.equal(networkAnswered(a, d('ok', 'ok')), false, 'a proxy is set here');
+  assert.equal(networkAnswered({ network: { mode: 'proxy' } }, d('ok', 'no')), false);
+  assert.equal(networkAnswered(a, null), false, 'no check, no answer');
 });

@@ -473,7 +473,7 @@ import { onboardingPrefs, setOnboardingPrefs } from '../src/core/settings.mjs';
 import { settingsErrorReply, asSettingsField } from '../src/core/settings-errors.mjs';
 import { configuredClaudeBin, onboardingStatus } from '../src/core/onboarding.mjs';   // a THIRD settings import line (the two blocks above are unrelated readers)
 import { probeClaudeAuth, CLAUDE_SIGNED_OUT_CODE, CLAUDE_SIGNED_OUT_MESSAGE } from '../src/core/preflight.mjs';
-import { failedBecauseSignedOut, claudeChatSignedOut } from '../src/core/claude-auth.mjs';
+import { failedBecauseSignedOut, claudeChatSignedOut, claudeRunSignedOut } from '../src/core/claude-auth.mjs';
 import { createAgentGen, resolveAgentGenModel } from '../src/core/agent-gen.mjs';
 import { listAgents, readAgent, createAgent, updateAgent, deleteAgent, AGENT_KEY_RE } from '../src/core/agent-store.mjs';
 import {
@@ -2961,6 +2961,12 @@ const startRunHandler = async (req, res) => {
     const engineShape = runEngineOpts(body, hasWorkspace ? { workspace: true } : { projectDir: resolveProjectDir(body.projectDir) });
     if (engineShape.error) return badRequest(res, engineShape.error);
     const runEngine = engineShape.opts;
+    // Signed out with no routed model, a Claude run can only fail on its first call: say so now, not as a paused run.
+    if (!internal && !scanTarget && body.mock !== true && !mockEnabled({}) && (runEngine.engine || 'claude') === 'claude'
+      && workflowNeedsModel(workflowRow)
+      && await claudeRunSignedOut(hasWorkspace ? '' : (resolveProjectDir(body.projectDir) || ''))) {
+      return res.status(409).json({ code: CLAUDE_SIGNED_OUT_CODE, error: CLAUDE_SIGNED_OUT_MESSAGE });
+    }
 
     // Per-run agent picks (the Ask run card's lane; docs/models.md "Per-agent models for one run"): `overlay.nodes`
     // merges PER NODE over the project's saved agent settings for THIS run only and never writes them. Checked here
@@ -6864,6 +6870,7 @@ async function createRunPr({ id, state, target, base, memberKey = null, remotes:
   const picked = await pickPrRemotes(chosen, repoDir);
   if (picked.error) return { ok: false, status: picked.status, error: picked.error };
   const { remotes, pushRemote, baseRemote, pushR, baseR } = picked;
+  if (!remotes.length && (await listRemotes(repoDir)).ok) return { ok: false, status: 409, error: 'This project has no git remote, so there is nowhere to create a PR. Link a remote on its project page, or merge the branch locally.' };
   // A remote-tracking source (`origin/dev`) names the branch `dev` on the remote.
   base = await prBaseBranch(repoDir, base, remotes.map((r) => r.name));
   // Always target the chosen base repo explicitly (gh's default-repo guess prefers

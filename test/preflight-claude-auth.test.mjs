@@ -62,7 +62,7 @@ test('probeClaudeAuth: reads `claude auth status` whatever its exit code; a fail
 
 test('probeClaudeAuth: an auth env var counts as signed in without asking the CLI', async () => {
   for (const env of [
-    { ANTHROPIC_BASE_URL: 'http://127.0.0.1:9/m/x' },
+    { ANTHROPIC_BASE_URL: 'http://127.0.0.1:9/m/x', ANTHROPIC_AUTH_TOKEN: 'secret' },
     { ANTHROPIC_AUTH_TOKEN: 'secret' },
     { CLAUDE_CODE_USE_BEDROCK: '1' },
     { CLAUDE_CODE_USE_VERTEX: 'true' },
@@ -75,6 +75,7 @@ test('probeClaudeAuth: an auth env var counts as signed in without asking the CL
   }
   // An explicit off ('0' / 'false') or an empty value is not a sign-in.
   assert.equal(claudeAuthFromEnv({ CLAUDE_CODE_USE_BEDROCK: '0', CLAUDE_CODE_USE_VERTEX: 'false', ANTHROPIC_API_KEY: ' ' }), null);
+  assert.equal(claudeAuthFromEnv({ ANTHROPIC_BASE_URL: 'http://127.0.0.1:9' }), null, 'a base URL alone signs nothing in');
 });
 
 test('probeClaudeAuth: mock mode never starts claude', async () => {

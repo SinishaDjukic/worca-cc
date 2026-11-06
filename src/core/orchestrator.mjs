@@ -73,7 +73,7 @@ import { autoCandidates, findEquivalentWorkflow } from './auto/match.mjs';
 import { buildProposal, sanitizeProposalAnswer, remapTunables, mintAutoWorkflowId } from './auto/proposal.mjs';
 import { resolveAutoModel } from './auto/model.mjs';
 import { autoModelsFor } from './auto/runnable.mjs';
-import { probeClaudeAuth } from './preflight.mjs';
+import { probeClaudeAuth, isClaudeSignedOutError, CLAUDE_SIGNED_OUT_MESSAGE } from './preflight.mjs';
 import { configuredClaudeBin } from './cli-resolve.mjs';
 import { helperEngineFor } from './model-env.mjs';
 import {
@@ -446,6 +446,8 @@ export class GraphOrchestrator extends RunHarness {
           // pause, reason 'error', detail = the message) and the resume point keeps
           // auto.status 'deciding' + this loop's state, so resume() re-decides.
           this._log('orchestrator', 'warn', `auto: classifier failed: ${firstLine(err.detail || err.message)}`);
+          // The pause shows this message: signed out mid-run reads as what to do, not as a failed helper.
+          if (isClaudeSignedOutError(err.detail || err.message)) err.message = CLAUDE_SIGNED_OUT_MESSAGE;
         }
         throw err;
       }

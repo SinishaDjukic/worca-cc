@@ -308,6 +308,7 @@ export function histRow(p, now = Date.now()) {
     tags: Array.isArray(p.tags) ? p.tags.map(String) : [],
     labels: Array.isArray(p.labels) ? p.labels.map(String) : [],
     archived: !!(p && p.archived),
+    mock: p.mock === true,
     ...(p.resumable === false ? { resumable: false } : {}),   // an interrupted run that can never resume (Archive takes it)
     base: String(p.base || ''),                      // #620: "conflicts with dev" / "dev moved", else ''
     unread: false, needs: needsYou({ kind: 'hist', status, prNeeds: prNeedsOf(p.run || p) }),
@@ -464,7 +465,8 @@ export function listLine(row, { section = '', time = '' } = {}) {
   if (section === 'running' && (m.state === 'working' || m.state === 'starting')) return w || m.word;
   switch (m.state) {
     case 'failed': return and(w ? `Failed at ${w}` : 'Failed', time);
-    case 'stopped': case 'ready': return and(m.line, time);
+    case 'ready': return and(row.mock ? 'Mock run' : m.line, time);
+    case 'stopped': return and(m.line, time);
     case 'in-review': case 'merged': return m.pr && !m.pr.pending ? time : and(m.word, time);
     // A usage-limit pause keeps its reset / auto-resume note ("resets 18:00", liveRowState / histRowState detail).
     case 'paused': return and(m.line, row.detail);
