@@ -46,6 +46,29 @@ All upgrades; each is now in docs/rail/.
 | A workflow graph overlay | the run card's Expand (#999) | "A form": a view that only shows is a Dialog without a form |
 | A stepped setup | the setup assistant (#965) | "A form": one Dialog with the Stepper at its head, Back and Next in its foot |
 
+## Settings: names that differ, Rail's stay
+
+| In the app | In Rail |
+|---|---|
+| Developer rate | Hourly rate |
+| Per-pipeline cost limit | Per run |
+| Machine load | Capacity |
+| Sync before run | Sync |
+| Wait for the network | Offline |
+| Spawn diagnostics | Diagnostics |
+| Worca root, Projects root | Folders |
+| My credentials | Credentials |
+| Scheduled runs | Schedules |
+| Smart run naming (its Settings card) | Naming |
+| Workspaces | Scans |
+| Limits & access | Abilities |
+| Network proxy | Network › Proxy |
+| Chat notifications › Channels | Chat › Channels |
+| Engine for new chats | Chat › Engine |
+| Team memory's Share existing notes | Share notes |
+
+The Labs row keeps the registry's name, Git event automations.
+
 ## Already covered
 
 Pausing… and Resuming… at the click (#969); the one-line run title (#967); a closed shell says why (#977); ⌘ and
