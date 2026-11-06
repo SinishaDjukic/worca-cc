@@ -154,7 +154,7 @@ be skipped by forgetting it.
 |---|---|
 | Project, prompt, title, extra files, Start run; "Reuse last task" after a run starts (#687) | S |
 | Start run's caret menu (Schedule…) | A |
-| Workflow picker | S — lists Auto and Default only; the selected workflow always stays listed |
+| Workflow picker | S — lists Auto, Default and the workflows saved from Chat (Auto cards and Ask graph cards); every other saved workflow from A; the selected workflow always stays listed |
 | Mock mode | S — sits beside Start run, outside the Advanced disclosure |
 | Preset ▾ button and its menu (presets, Rename…, Delete…, Save as preset), its ✕, Update preset | S |
 | Preset picker's "Manage presets…" entry | A |

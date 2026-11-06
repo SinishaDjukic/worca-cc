@@ -2000,6 +2000,12 @@ function handleServerMessage(msg) {
     if (scriptsCtl) scriptsCtl.onChanged();
     return;
   }
+  // A workflow row written elsewhere (a Chat card's Save, #1126): an OPEN Workflows view re-reads its lists; any
+  // other page reloads them on entry anyway (initWorkflows; New run's re-entry refresh).
+  if (msg.type === 'workflows-changed') {
+    if (currentShownView === 'workflows' && gvComposer) void wfvRefreshWorkflows();
+    return;
+  }
   // Bench frames are tagged by benchId (not runId) and ride the same broadcast
   // socket. Handle them BEFORE the !msg.runId early-return below.
   if (typeof msg.type === 'string' && msg.type.startsWith('scriptbench-')) {
@@ -3268,6 +3274,7 @@ let wfvRuntimes = null;     // the script runtime probe (GET /api/scripts/runtim
 let wfvChat = null;         // the composer chat dock (workflows/chat-dock.mjs), mounted with the view
 const WFV_SESSION = mintId('cs_');   // this page load's composer session: the chat applies only cards stamped with it
 const wfvPendingDraft = { agent: null, script: null, build: null };   // a chat draft's Edit… (and Ask's graph card's Open in Workflows), handed to the route it opens
+let wfvRevealId = '';   // a chat card's Open (#1126): routeWorkflows shows this saved row in the Library once
 const gvNewIds = new Set(); // workflows imported this page session (a NEW pill until reload)
 // A saved workflow id, by the server's own rule (workflows.mjs isSafeWorkflowId): a minted `wf_<slug>` (no
 // length cap), a plugin's `wfp_<plugin>_<slug>`, or any safe id a POST /api/workflows body kept (`myflow`).
@@ -3380,6 +3387,15 @@ async function wfvRefreshWorkflows() {
   gvComposer?.setSavedDomains([...new Set(rows.map((w) => w.domain || 'general'))].sort());
   wfvLibrary?.setData({ workflows: rows, archived, newIds: gvNewIds });
   void loadHomePins();                           // the Library ⋯ and Workflows menu labels follow the viewer's pins
+}
+
+/** Show a saved workflow in the Library (#1126): re-read the list first — highlight() finds the row's folder in the
+ *  data it holds, and a row saved since the last read would open none — then open the Library on Workflows and let
+ *  highlight open the row's domain folder and flash it. */
+async function wfvRevealWorkflow(id) {
+  await wfvRefreshWorkflows();
+  wfvShellActions().openLibrary('workflows');
+  wfvLibrary?.highlight('workflow', id);
 }
 
 /** Mount the engine + chrome ONCE. Resolves true on the first mount. */
@@ -3591,13 +3607,13 @@ async function openBuildFromAsk(build) {
 
 /** Open a saved workflow on the canvas (#1127): the user's own in place (Edit: Save changes it); a built-in or plugin one,
  *  or any row with `copy`, as a new unsaved copy (Use as template). Asks before discarding (the composer's guard), and
- *  says why when the row cannot be read — never nothing. */
+ *  says why when the row cannot be read — never nothing. Resolves null when the row cannot be read, else whether it opened. */
 async function wfvOpenSaved(id, { copy = false } = {}) {
   let full = null;
   try { full = await gvApi.readWorkflow(id); } catch { full = null; }   // a refused fetch: say so below
   if (!full) {
     notify({ tone: 'err', title: 'Could not open the workflow', detail: `"${id}" was deleted or renamed, or Worca did not answer.` });
-    return false;
+    return null;
   }
   const opened = copy || isBuiltinWorkflow(full) ? await gvComposer.openCopy(full) : await gvComposer.openTemplate(full);
   if (opened) gvComposer.fit();
@@ -3640,12 +3656,15 @@ async function routeWorkflows(param = '') {
   if (!head) return;
   // Any other head names a saved workflow (Ask's "Open in Workflows", the top-bar search, a bookmark): open it as its Library row does (a built-in as a copy, #1127)
   // and normalise the hash, or say why not — never nothing.
+  const reveal = wfvRevealId === head;            // a chat card asked for this row (openWorkflowFromAsk reveal)
+  wfvRevealId = '';
   try { window.history.replaceState(null, '', '#workflows'); } catch { /* sandboxed */ }
   if (!WF_ID_RE.test(head)) {
     notify({ tone: 'err', title: 'Could not open the workflow', detail: `"${head}" is not a workflow id or a Workflows address.` });
     return;
   }
-  await wfvOpenSaved(head);
+  const opened = await wfvOpenSaved(head);
+  if (reveal && opened !== null) await wfvRevealWorkflow(head);   // also when the discard prompt kept the canvas (D2)
 }
 
 async function enterWorkflowsView(param = '', prevView = '') {
@@ -4279,11 +4298,12 @@ async function loadWorkflowsInto(selectId) {
   const list = [AUTO_WORKFLOW, ...(workflows.length ? workflows : [{ id: 'wf_default', name: 'Default' }])];
   const want = selectId || state.workflowId || AUTO_WORKFLOW_ID;
   sel.innerHTML = '';
-  // Simple mode (docs/ui-levels.md) offers Auto and Default only. The workflow already selected
-  // stays listed whatever it is: a non-default value is never hidden from the run it applies to.
+  // Simple mode (docs/ui-levels.md) offers Auto, Default and the workflows Chat saved (origin 'auto', #1126).
+  // The workflow already selected stays listed whatever it is: a non-default value is never hidden from the
+  // run it applies to.
   const simplePicker = !levelAtLeast('advanced');
   list.forEach((wf) => {
-    if (simplePicker && wf.id !== AUTO_WORKFLOW_ID && wf.id !== 'wf_default' && wf.id !== want) return;
+    if (simplePicker && wf.id !== AUTO_WORKFLOW_ID && wf.id !== 'wf_default' && wf.origin !== 'auto' && wf.id !== want) return;
     const o = option(wf.id, wf.id === AUTO_WORKFLOW_ID ? wf.name : (workflowPickerLabel(wf, enabledPluginNames) || wf.id));
     // Memory defragment holds exactly one scope, and a workspace run has no single project to
     // resolve `project` against (the server 400s) — so it is disabled on a workspace target.
@@ -39545,7 +39565,7 @@ void mcpApi('GET', '/api/flags').then((r) => {
 });
 // Renderers that branch on the mode. Registered here (after levelListeners exists); every callee
 // is a hoisted function declaration.
-onLevelChange(() => { refreshNewPipelinePickers(); });     // Simple lists Auto + Default only
+onLevelChange(() => { refreshNewPipelinePickers(); });     // Simple lists Auto, Default and chat-saved workflows
 onLevelChange(() => paintHiddenSettings());
 onLevelChange(() => repaintOpenRunGroupLine());               // the Group row's "Add to group…" is Advanced (D18)
 onLevelChange(() => scheduleGroupPagePaint());                // the group page's Logs tab is Expert
@@ -40039,8 +40059,10 @@ function openNewPipeline(prefill) {
 }
 
 /** Ask Worca's "Open in composer" and the top-bar search's workflow rows: the Workflows view opens the
- *  saved row by its address (#workflows/<id>); the view asks before discarding an unsaved canvas. */
-async function openWorkflowFromAsk(workflowId) {
+ *  saved row by its address (#workflows/<id>); the view asks before discarding an unsaved canvas.
+ *  `reveal` (a chat card's way in, #1126): the Library then opens on the row's folder and flashes it. */
+async function openWorkflowFromAsk(workflowId, { reveal = false } = {}) {
+  if (reveal) wfvRevealId = String(workflowId);
   location.hash = `workflows/${workflowId}`;
   return true;
 }
@@ -41144,7 +41166,7 @@ askPanel = createAskPanel({
   getPageContext,
   // Ask worca beside the page (R11): Open in New run from the chat is a page it opens, so a covering column steps aside.
   openNewPipeline: (prefill) => { askSide?.uncover(); openNewPipeline(prefill); },
-  openComposer: (id) => { openWorkflowFromAsk(id); },
+  openComposer: (id) => { openWorkflowFromAsk(id, { reveal: true }); },
   composerActions: askComposerActions(),        // Ask's draft and graph cards: the Workflows chat's actions (ask-composer-cards.mjs)
   openClaudeSetup: () => { openClaudeSetup(); },
   loadMarkdown: loadAskMarkdown,

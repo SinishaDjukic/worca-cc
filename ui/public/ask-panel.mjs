@@ -4294,6 +4294,22 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     };
   }
 
+  /** "Saved to Workflows: <name>" under a saved card's name (#1126). The name is a real link to the row's address;
+   *  with the app's openComposer the click takes the card's own way in (the Library then shows the row). */
+  function savedToLine(workflowId, name) {
+    const line = make('div', 'ask-wfcard-savedto', 'Saved to Workflows: ');
+    const a = make('a', 'ask-wfcard-savedlink', name || workflowId);
+    a.href = `#workflows/${encodeURIComponent(workflowId)}`;
+    a.setAttribute('data-ask-wf-link', '');
+    a.addEventListener('click', (e) => {
+      if (typeof openComposer !== 'function') return;      // a bare host: the href navigates
+      e.preventDefault();
+      openComposer(workflowId);
+    });
+    line.appendChild(a);
+    return line;
+  }
+
   function buildWorkflowCard(block, prev) {
     const card = block.card || {};
     const name = card.name || '';
@@ -4341,6 +4357,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       handle.parts.name.replaceWith(saved);
       // The chip says Saved and the tag says Auto: the line stays only when it says something new.
       if (card.adopted) saved.after(make('div', 'ask-wfcard-savedline', 'Uses a workflow you already had'));
+      else if (block.workflowId) saved.after(savedToLine(block.workflowId, name));   // a new row: say where it went (#1126)
     } else if (matched) {
       const hint = make('div', 'ask-wfcard-hint', 'Model and effort come from that saved workflow. Edit them in the Workflows view.');
       handle.parts.match.after(hint);

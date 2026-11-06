@@ -73,6 +73,8 @@
 .wfc-chips{display:flex;flex-wrap:wrap;gap:4px;}
 .wfc-chip{height:18px;padding:0 7px;border-radius:var(--r-xs);background:var(--field);color:var(--ink-2);font:500 11px/18px var(--sans);}
 .wfc-chip-ok{color:var(--green-ink-strong);font-weight:600;font-size:11px;}
+.wfc-savedto{margin:6px 0 4px;font-size:12px;line-height:1.5;color:var(--ink-2);}
+.wfc-savedlink{color:var(--ink);font-weight:600;text-decoration:underline;text-underline-offset:2px;}
 .wfc-ident{display:flex;align-items:center;gap:6px;}
 .wfc-iogrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;}
 .wfc-port{font-size:11px;color:var(--ink-2);}
