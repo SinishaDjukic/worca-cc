@@ -80,10 +80,11 @@ function cliFrontmatter(text) {
   return { bom, head: e.slice(0, start), fm: e.slice(start, end), tail: e.slice(end) };
 }
 
-/** One YAML reading of `src` (merge keys on, a repeated key allowed): `{ ok: true, value }` or `{ ok: false }`. */
-function yamlReading(src) {
+/** One YAML reading of `src` (merge keys on unless `merge` is false, a repeated key allowed): `{ ok: true, value }` or
+ *  `{ ok: false }`. */
+function yamlReading(src, { merge = true } = {}) {
   try {
-    const doc = parseDocument(src.replace(/\r(?!\n)/g, '\n'), { merge: true, uniqueKeys: false });
+    const doc = parseDocument(src.replace(/\r(?!\n)/g, '\n'), { merge, uniqueKeys: false });
     if (doc.errors.length) return { ok: false };
     return { ok: true, value: doc.toJS({ maxAliasCount: 1000 }) };
   } catch { return { ok: false }; }
@@ -103,11 +104,18 @@ function cliQuotedText(fm) {
 
 const isMapping = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
 /** Both readings (the strict one and the CLI's fallback; both, because Worca's YAML parser is not Bun's): whether either
- *  parses, whether either has a top-level `hooks` key, and the mapping to rewrite from (the strict one first). */
+ *  parses, whether either has a top-level `hooks` key (merge keys applied: erring toward removing), and the mapping to rewrite
+ *  from (the strict one first). Re-review 3 (m2): that mapping is read with merge keys off and without its `<<` entry, as the
+ *  CLI applies no merge (probe merge-nostrip-318): the rewrite never brings a merge's keys to the top level. */
 function readings(fm) {
-  const all = [yamlReading(fm), yamlReading(cliQuotedText(fm))].filter((r) => r.ok);
-  const maps = all.map((r) => r.value).filter(isMapping);
-  return { parses: all.length > 0, hooks: maps.some((v) => Object.hasOwn(v, 'hooks')), mapping: maps[0] ?? null };
+  const all = [fm, cliQuotedText(fm)].map((src) => ({ src, r: yamlReading(src) })).filter((x) => x.r.ok);
+  const maps = all.filter((x) => isMapping(x.r.value));
+  let mapping = null;
+  if (maps.length) {
+    const plain = yamlReading(maps[0].src, { merge: false });
+    if (plain.ok && isMapping(plain.value)) { const { '<<': _merge, ...rest } = plain.value; mapping = rest; }
+  }
+  return { parses: all.length > 0, hooks: maps.some((x) => Object.hasOwn(x.r.value, 'hooks')), mapping };
 }
 
 /** Whether a one-line YAML value closes every quote and bracket it opens (a `#` comment after whitespace ends it). */

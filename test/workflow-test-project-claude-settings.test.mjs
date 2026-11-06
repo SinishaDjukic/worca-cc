@@ -198,6 +198,13 @@ test('re-review 3 m1: a frontmatter that no reading parses stays unreadable: the
   assert.deepEqual(strippedFrontmatterText(FM(BLOCK, broken)), { text: FM('', broken), unsafe: true });
 });
 
+test('re-review 3 m2: the rewrite never brings a <<: merge\'s keys to the top level (the CLI does not apply the merge: probe merge-nostrip-318)', () => {
+  assert.deepEqual(strippedFrontmatterText('---\nname: x\nbase: &b {model: opus, hooks: {Stop: []}}\n<<: *b\n---\nbody\n'),
+    { text: '---\nname: x\nbase:\n  model: opus\n  hooks:\n    Stop: []\n---\nbody\n' }, 'the merge entry goes; base stays as written; no top-level model');
+  assert.deepEqual(strippedFrontmatterText('---\n{ name: x, "ho\\u006fks": { Stop: [] }, <<: { model: opus } }\n---\nbody\n'), { text: '---\nname: x\n---\nbody\n' },
+    'a merge in a rewritten flow frontmatter goes too');
+});
+
 test('I-2: nested .claude folders below the checkout root (a monorepo package\'s skills load once the agent works there: probe nested-read-318) lose their hooks too', async () => {
   const d = tmp();
   const w = (rel, text) => { mkdirSync(join(d, ...rel.split('/').slice(0, -1)), { recursive: true }); writeFileSync(join(d, ...rel.split('/')), text); };
