@@ -61,7 +61,7 @@ for (const scheme of ['dark', 'light']) for (const w of [375, 900]) {
       }
       // a state word is never cut, and a row's reason wraps (narrow.state-word)
       for (const e of app.querySelectorAll('.pz-resolved,.pz-row-m')) if (e.offsetParent && e.scrollWidth > e.clientWidth + 1) out.push(['a state word or a reason is cut', e.textContent.slice(0, 30)]);
-      for (const row of app.querySelectorAll('.pz-row,.pz-bar,.runs-bulk,.pz-srow,.pz-sv,.pz-urow,.pz-uhead,.pz-head,.pz-top,.pz-erow,.mc-head,.pz-advice,.pz-advice-acts,.mi,.pz-phead')) {
+      for (const row of app.querySelectorAll('.pz-row,.pz-bar,.runs-bulk,.pz-srow,.pz-sv,.pz-urow,.pz-uhead,.pz-head,.pz-top,.pz-erow,.mc-head,.pz-advice,.pz-advice-acts,.mi,.panel-head')) {
         const kids = [...row.children].filter((k) => k.offsetParent && getComputedStyle(k).position !== 'absolute');
         for (let i = 0; i < kids.length; i++) for (let j = i + 1; j < kids.length; j++) {
           const a = kids[i].getBoundingClientRect(), d = kids[j].getBoundingClientRect();

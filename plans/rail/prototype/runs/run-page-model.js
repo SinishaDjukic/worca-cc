@@ -915,6 +915,6 @@
   // A group's run as what happened on either page left it.
   const memberAt = (groupId, i, ui) => { const g = ui.groupRun && ui.groupRun.id === groupId ? ui.groupRun : CASES.find((x) => x.id === groupId); return memberRaw(g, i, ui); };
   const moveMember = (groupId, i, ui, to, f) => move(memberAt(groupId, i, ui), to, f);
-  const restored = (ui) => { const raw = rawOf(ui.caseId, ui); return raw.restoreTo || caseFor('merged'); };
+  const restored = (ui) => { const raw = rawOf(ui.caseId, ui); return Object.assign({}, raw.restoreTo || caseFor('merged'), { action: null, detail: 'Restored: its branch, worktree and logs were not brought back' }); };
   window.RunCardModel = { move: moveIn, memberAt, moveMember, restored, caseGroups: CASE_GROUPS, stateOf: (id) => { const c = CASES.find((x) => x.id === id); if (!c) throw new Error(`no run case ${id}`); return c.state || c.id; }, forms: FORMS, titles: TITLES, chainStart: CHAIN_START, chainPrs: CHAIN_PRS.map((x) => x[0]), proposed: PROPOSED, isNew: (t) => NEW.has(t), flow: FLOW, runFlow: RUN_FLOW, cases: CASES.map((c) => ({ id: c.id, label: c.label, group: c.group, chips: c.chips || [] })), view, add: ADD };
 })();

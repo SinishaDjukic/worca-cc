@@ -12,14 +12,14 @@
 How you move through Worca, the same everywhere. Mocks: `plans/rail/mocks/nav-*.png`.
 
 **Four depths, always in this order.** A **place** (Chat, Runs, Schedules, Statistics…: the sidebar) holds **things** (a
-run, a group, a schedule, a chat: its list's rows); a thing has **parts** (its tabs: Overview, Changes, Activity); a
+run, a group, a schedule, a chat: its list's rows); a thing has **parts** (its tabs: Overview, Changes, Activity, Decisions); a
 part holds **facts** (a file, a decision, a question, a setting). Everything else lays over a page without changing
 where you are: a panel (Pulse, the profile menu), a side column (Ask worca), a Dialog, the ConfirmStrip.
 
 **Five ways to move, each with one job.**
 | Way | Goes | Component |
 |---|---|---|
-| The sidebar | to a place | the sidebar; a place with its own sections (Settings) turns it into its SideMenu |
+| The sidebar | to a place | the sidebar; Settings, not a place but with its own sections, turns it into its SideMenu |
 | A row | to a thing, as a full page: a thing takes the page, never a pane beside its list (the run page needs its width) | ListRow |
 | The trail | one depth up: a thing to its place, a run to its group | Trail, in the top bar |
 | The pager | sideways, to a sibling: the next run in a group | Pager, at the top bar's right |

@@ -219,7 +219,7 @@ Rail's run page (`docs/rail/thing-page.md`) has one rule in place of the rows ab
 | Element | Level |
 |---|---|
 | All four tabs: Overview, Changes, Activity, Decisions | S |
-| Inside them: the Logs and the Workflow graph | A |
+| Inside them: the Logs, the Workflow graph, Sessions and Actions | A |
 | Inside them: Agents and the log filters | E |
 
 ### History

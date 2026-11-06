@@ -15,7 +15,7 @@ import { button } from './button.mjs';
 export function trail({ items, label = 'Breadcrumb' }) {
   const step = (it) => (it.button
     ? `<button type="button" class="rc-crumb"${attrs({ ...(it.attrs || {}), title: it.label })}>${esc(it.label)}</button>`
-    : `<a class="rc-crumb" href="#"${attrs({ ...(it.attrs || {}), title: it.label })}>${esc(it.label)}</a>`);
+    : `<a class="rc-crumb"${attrs({ href: it.href || '#', ...(it.attrs || {}), title: it.label })}>${esc(it.label)}</a>`);
   return `<nav class="rc-crumbs"${attrs({ 'aria-label': label })}><ol>${items.map((it, i) => `<li${i === items.length - 1 ? ' class="is-parent"' : ''}>${step(it)}</li>`).join('')}</ol></nav>`;
 }
 

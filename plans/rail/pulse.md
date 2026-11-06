@@ -4,7 +4,7 @@ Status: concept, prototype only (`prototype/pulse.html`). No product code. Date:
 Builds on [`plans/notification-hub-design.md`](../notification-hub-design.md) (Pulse Center, 22 Oct): its rule, event
 catalogue, data model and phases stand. This spec redraws it in the Rail rules
 ([`docs/rail/`](../../docs/rail/README.md)) and adds **usage limits**: session and weekly
-limit notifications, the usage rings on the avatar, the account menu's **Usage and costs** side menu, and what Worca
+limit notifications, the usage rings on the avatar, the profile menu's **Usage and costs** flyout, and what Worca
 does when a run would start near a limit, for every harness and provider Worca runs on (Claude, OpenAI and Gemini
 among them).
 
@@ -16,7 +16,7 @@ among them).
 | Desktop switches in Settings › General › Alerts, resume after a limit in Settings › Runs, chat switches in Settings › Chat | One tab, **Settings › Notifications** (after General): every notification setting and what a start does near a limit, one sentence per row |
 | A usage limit is known only when a run hits it and pauses | Usage is visible before it stops anything: **rings on the avatar**, a **Limits** row in Vitals when one is near, and an update when it crosses the warning line, is reached or resets |
 | The avatar ring shows spend against a budget | The avatar shows live usage only: **session** and the **long window** (week, day or month) of connected providers, refreshed every minute; each ring shades along its arc. A budget is set in Settings › Runs and read in Usage and costs |
-| The account menu opens on the spend card | The menu keeps its rows; the spend card moves into its last row, **Usage and costs ›**, a side menu with every harness's limits and the spend |
+| The profile menu opens on the spend card | The menu keeps its rows; the spend card moves into its last row, **Usage and costs ›**, a side menu with every harness's limits and the spend |
 | A run starts and pauses at the limit | Before it starts, Pulse checks the run's **estimate** (its size, and what runs like it used) against what is left: New run warns only when it will not fit and offers a harness with room or a start after the reset; slices, queued and scheduled runs move, wait, or let a smaller start that fits go first |
 
 ## 2. The rule that places everything
@@ -170,8 +170,8 @@ as fresh as the last turn that used the harness (`as of 14:28`). A harness no ru
 - A ring no harness in use reports is not drawn (with only Gemini in use there is no session ring).
 - The avatar's tooltip says it in words, two lines per ring: `Weekly · Claude Code: 55%`, then `Resets Wed 5:00 PM`.
 
-### 4.3 The account menu and its Usage and costs side menu
-The account menu keeps today's rows (`#acct-menu`) and becomes a panel in the Rail sense (it opens over any page from
+### 4.3 The profile menu and its Usage and costs flyout
+The profile menu keeps today's rows (`#acct-menu`) and becomes a panel in the Rail sense (it opens over any page from
 its corner). Its rows are grouped by what they are about and ordered by how often they are used, rarest at the top,
 since the menu opens up from the avatar and the bottom is nearest the hand:
 1. **Worca**: Interface mode ›, Appearance (System, Light, Dark), Settings. How Worca looks, and the door to

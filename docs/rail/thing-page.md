@@ -3,17 +3,17 @@
 | Rule | What | Why | Held by |
 |---|---|---|---|
 | `thing.slots` | Top bar, title, metadata line, StatusLine, progress, Figures, Tabs, in that order | Every thing reads the same | run-page-sweep |
-| `thing.work-phrase` | Where the work goes is one phrase that follows the run, never a badge | One fact, one place | design-system-components |
+| `thing.work-phrase` | Where the work goes is one phrase that follows the run, never a badge | One fact, one place | design-system-logic |
 | `thing.list-home` | A list about a step is Overview's focus; a list about the whole is a tab; never both | One place per list | by hand |
 | `thing.by-exception` | A tab draws in full what needs you; what went fine is one line | The exception is the news | by hand |
 | `thing.opens` | A row opens its detail in place; a problem opens itself once; sections never collapse | Nothing is hidden when it matters | by hand |
-| `thing.tabs-by-level` | Inside the tabs, Logs, the graph, Sessions and Actions are Advanced, Agents and log filters Expert; a mode never removes a tab | The page keeps its shape in every mode | design-system-components |
+| `thing.tabs-by-level` | Inside the tabs, Logs, the graph, Sessions and Actions are Advanced, Agents and log filters Expert; a mode never removes a tab | The page keeps its shape in every mode | design-system-logic |
 | `thing.follows-state` | Rows, tabs, figures and menus show only what the state makes true: no diff before Build runs, no decisions before anything is decided, and what is gone says gone and has no tools | A page never contradicts itself | run-page-model |
 
 **A thing's page** (a run, a group; the pattern for any page about one thing with a state), top to bottom:
 | Slot | Holds | Never holds |
 |---|---|---|
-| Top bar | The trail to the parent (the page itself is never a crumb; `‹ Parent` at 760px and below); at its right only quiet lines that are about the window, not the thing: the pager, `Offline · retrying` | Buttons for the thing |
+| Top bar | The trail to the parent (the page itself is never a crumb; `‹ Parent` at 760px and below); at its right nothing about the thing: quiet lines about the window (the pager, `Offline · retrying`), and the shell's own search, Pulse and New run | Buttons for the thing |
 | Title | The name, one line with an ellipsis | Chips, buttons |
 | Metadata line | Facts as short phrases (where it lives, its kind, when it runs), then its TagGroup; one line, the rest folds into `+N`. A fact that is also a setting is a SentencePicker in its phrase (`Runs [every weekday ▾] at [09:00 ▾]`) | Facts another slot shows, colour, a setting the page does not show |
 | StatusLine | The state word and one detail line; at its right the action slot: the one next step (main ▾), then ⋯. A state that calls for no step leaves the slot empty; ⋯ stays | A second primary |

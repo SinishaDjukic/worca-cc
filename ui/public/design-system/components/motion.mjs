@@ -110,6 +110,8 @@ export function land(el) {
   const reduced = !!view?.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
   el.setAttribute('data-landed', '');
   el.scrollIntoView?.({ block: 'center', behavior: reduced ? 'auto' : 'smooth' });
+  if (!el.hasAttribute('tabindex') && !el.matches?.('a[href],button,input,select,textarea')) el.setAttribute('tabindex', '-1');
+  el.focus?.({ preventScroll: true });   // the scroll above is the only movement
   const css = view?.getComputedStyle ? view.getComputedStyle(el) : { getPropertyValue: () => '' };
   view?.setTimeout?.(() => el.removeAttribute('data-landed'), ms(css, '--motion-flash', 1200) + 100);
 }

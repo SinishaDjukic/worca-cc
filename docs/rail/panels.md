@@ -7,7 +7,7 @@
 | `panel.dismiss` | What lies over a page closes on a click or tap outside and on Esc; a click inside never does; focus returns to what opened it | One habit, on every page | worca-sweep |
 | `panel.conversation` | A conversation holds the person right, Worca on the page, work as cards on 760px | Readable at any width | by hand |
 
-**A panel** (Pulse, the account menu): opens under its top-bar button over any page, never as a page of its own.
+**A panel** (Pulse, the profile menu): opens under its top-bar button over any page, never as a page of its own.
 Its head holds Tabs with each count as a caption and ⋯ at the right; the body scrolls and the head stays. On a narrow
 screen it is the window's width.
 
@@ -16,7 +16,7 @@ it pushes the page; from 761 to 1080px it covers the page's right side; at 760px
 width is dragged between 360 and 680px and kept. It opens with Motion's fade, the page narrowing with it, and closes
 at once. One side column at a time.
 
-**The Chats column** is a side column on the page's other side, with its own width: beside the conversation on Chat,
+**The Chats column** (reference for Wave 2) is a side column on the page's other side, with its own width: beside the conversation on Chat,
 by the same three tiers and limits; at 760px and below it takes the window until a chat opens, and the conversation's
 list button brings it back.
 
@@ -25,7 +25,7 @@ its work as cards on a 760px text column under the shared card head: a run card,
 a failure opens itself), a graph in its well.
 
 **What closes how.** A menu, a picker, a popover, a flyout, a panel (Pulse, the profile menu), search results and an editor
-close on a click or tap outside and on Esc, one layer at a time; a click inside never closes them. That click does nothing
+close on a click or tap outside and on Esc. A click closes every open layer it landed outside; Esc closes the top one only. A click inside never closes them. That click does nothing
 else, unless it lands on a real control: another menu's button or another top-bar button closes the first and opens the
 second, in one click. A Dialog closes on its scrim only when nothing was typed in it; with typed text it stays, since nothing
 typed is lost, and Esc follows the same rule. The ConfirmStrip and a side column stay: they are not over the page. The focus

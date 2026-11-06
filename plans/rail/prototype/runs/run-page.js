@@ -356,7 +356,7 @@ function render() {
   logsGone = v.has.logsGone;
   const a = v.action;
   // The run's controls sit together on the status line: its one action (with ▾), then ⋯ for everything else.
-  const split = a ? R.splitButton({ main: { label: a.label, kind: a.primary ? 'primary' : '', icon: svg(a.icon, 14), title: a.offWhy || a.help, attrs: { 'data-key': 'act-main', 'data-label': a.label, disabled: !!a.offWhy } },
+  const split = a ? R.splitButton({ main: { label: ui.busy && !ui.confirm && !ui.dialog ? R.workingWord(ui.busy.label) : a.label, kind: a.primary ? 'primary' : '', icon: svg(a.icon, 14), title: a.offWhy || a.help, attrs: { 'data-key': 'act-main', 'data-label': a.label, disabled: !!a.offWhy || !!ui.busy } },
     moreLabel: a.items.length ? 'More actions' : '', chevron: svg('chevron', 14), open: ui.menu === 'act', menuHtml: menu('act', a.items), moreAttrs: { 'data-menu': 'act', 'data-key': 'menu:act' }, cls: 'rc-action rc-pop is-right' }) : '';
   const action = `<div class="rc-side">${split}<span class="rc-pop is-right">${R.button({ label: 'More for this run', iconOnly: true, title: false, icon: DOTS, attrs: { 'aria-haspopup': 'menu', 'aria-expanded': String(ui.menu === 'more'), 'data-menu': 'more', 'data-key': 'menu:more' } })}${ui.menu === 'groups' ? groupEditorHtml() : menu('more', moreItems(v))}</span></div>`;
   // Many labels and tags, one group: a run already in a feature or chain, or a group page, joins none; a run you
@@ -365,7 +365,7 @@ function render() {
   // "branch merged into dev", "main to origin/main", "on source then to origin", "into ~/folder". The branch name copies itself on click and loses
   // its middle, never its end, so sibling runs (-2, -3) stay apart.
   const pl = v.place;
-  const where = R.workPlace(Object.assign({ finished: v.finished }, pl));
+  const where = R.workPlace(Object.assign({ finished: v.finished, copyAttrs: pl.branch ? { 'data-say': `Copied ${pl.hidden || pl.branch}` } : null, prAttrs: pl.pr ? { 'data-say': `Opens ${pl.pr} on GitHub` } : null }, pl));
   const pr = pl.pr ? `<a class="rc-pr" href="#" data-key="pr" data-say="Opens ${esc(pl.pr)} on GitHub" title="Open ${esc(pl.pr)} on GitHub">${esc(pl.pr)}</a>` : '';
   const repos = pl.repos.length ? `<span>${pl.repos.length} repositories</span>` : '';
   // + stays at the end of the place line; labels and tags, once added, get their own wrapping row under it.
@@ -480,7 +480,7 @@ function moreItems(v) {
   // Discarded and archived things have no tools left; deleted things have nothing at all.
   if (v.gone) {
     if (v.gone === 'discarded') items.push({ id: 'more:archive', text: 'Archive', help: 'Takes it out of Runs; the history stays' });
-    if (v.gone === 'archived') items.push({ id: 'more:restore', text: 'Restore', help: 'Brings it back to Runs, as it was' });
+    if (v.gone === 'archived') items.push({ id: 'more:restore', text: 'Restore', help: 'Brings the record back to Runs; its branch, worktree and logs stay gone' });
     items.push({ id: 'more:link', text: 'Copy link', help: 'Paste it in Chat or an issue' });
     return items;
   }
@@ -529,11 +529,19 @@ const follow = R.stepFlow({
   },
   confirmed: () => !!(ui.confirm && ui.confirm.ok),
   askConfirm(f, label) { ui.dialog = ''; ui.confirm = Object.assign(R.confirmOf(f, label), { f, label }); ui.menu = ''; pendingFocus = 'confirm:yes'; },
-  working(label) { ui.busy = { label }; ui.menu = ''; if (ui.confirm) ui.confirm.err = null; if (ui.pr) ui.pr.err = null; if (ui.form) ui.form.err = null; pendingFocus = ui.form && ui.dialog === ui.form.id ? 'fd-ok' : ui.dialog ? 'pd-ok' : 'confirm:yes'; },
-  after(fn) { const busy = ui.busy; setTimeout(() => { if (ui.busy !== busy) return; ui.busy = null; fn(); render(); }, 900); },
-  perform(f, label) { const odd = takeBreak('step'); return odd || takeFail() ? { ok: false, odd, why: REASON[label.split(' ')[0]] || 'GitHub did not answer' } : { ok: true }; },
-  done(f, label) { done(f, label); },
-  failed(label, err) { failed(err); document.querySelector('.pd-alert')?.scrollIntoView({ block: 'nearest' }); },
+  working(label) { ui.busy = { label }; ui.menu = ''; if (ui.confirm) ui.confirm.err = null; if (ui.pr) ui.pr.err = null; if (ui.form) ui.form.err = null; pendingFocus = ui.form && ui.dialog === ui.form.id ? 'fd-ok' : ui.dialog ? 'pd-ok' : ui.confirm ? 'confirm:yes' : pendingFocus; },
+  // The mock of the app's call: a step that asked takes its time and can fail; one that did not is quicker. Left behind (Cancel, another case), it never lands.
+  perform(f, label) {
+    const busy = ui.busy, asked = f.confirm || f.dialog || f.fromDialog;
+    return new Promise((answer) => setTimeout(() => {
+      if (ui.busy !== busy) return;
+      ui.busy = null;
+      const odd = asked && takeBreak('step');
+      answer(asked && (odd || takeFail()) ? { ok: false, odd, why: REASON[label.split(' ')[0]] || 'GitHub did not answer' } : { ok: true });
+    }, asked ? 900 : 250));
+  },
+  done(f, label) { done(f, label); render(); },
+  failed(label, err) { failed(err); render(); document.querySelector('.pd-alert')?.scrollIntoView({ block: 'nearest' }); },
 });
 function done(f, label) {
   ui.dialog = ''; ui.confirm = null; ui.menu = ''; ui.form = null;
@@ -881,7 +889,7 @@ document.addEventListener('click', (e) => {
     else if (d.menuPick.startsWith('away:')) { ui.away = d.menuPick; ui.menu = ''; pendingFocus = 'menu:more'; toast('Away mode on this run: ' + AWAY.find((x) => x.id === d.menuPick).text); }
     else if (d.menuPick === 'more:after') { ui.dialog = 'after'; ui.menu = ''; pendingFocus = 'after-task'; }
     else if (d.menuPick === 'more:archive') { const vm = v0(); const a = vm.runFlow.archive; follow(Object.assign({}, a, { confirm: (vm.dependents ? vm.dependents + ' runs wait on this one and will start without it. ' : '') + a.confirm.replace('this run', 'this ' + (vm.kind ? vm.kind.toLowerCase() : 'run')) }), 'Archive'); }
-    else if (d.menuPick === 'more:restore') { landOn(M.restored(ui)); toast('Restored to Runs, as it was'); }
+    else if (d.menuPick === 'more:restore') { landOn(M.restored(ui)); toast('The record is back in Runs; its branch, worktree and logs are not'); }
     else if (d.menuPick === 'group:ask' || d.menuPick === 'group:go') { const ask = d.menuPick === 'group:ask'; ui.menu = ''; pendingFocus = 'menu:then';
       toast(ask === ui.askEach ? (ask ? 'Already asks first' : 'Already starts by itself') : ask ? 'Worca asks before each run starts' : 'Each run starts by itself'); ui.askEach = ask; }
     else if (CH_SAY[d.menuPick]) { toast(CH_SAY[d.menuPick](M.view(ui.caseId, ui))); pendingFocus = 'menu:ch'; ui.menu = ''; }

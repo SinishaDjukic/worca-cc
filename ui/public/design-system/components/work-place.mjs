@@ -33,15 +33,19 @@ export const workPhrase = (p) => workParts(p).map((x) => x.text).join(' ');
 
 const mid = (t) => { const [a, b] = foldMiddle(t); return `<code class="rc-mid" title="${esc(t)}"><span class="rc-mid-a">${esc(a)}</span><span class="rc-mid-b">${esc(b)}</span></code>`; };
 
-/** The phrase for a thing's page: the branch copies itself on a click, the PR opens it. Empty when no work goes anywhere. */
+/**
+ * The phrase for a thing's page: the branch copies itself on a click, the PR opens it. Empty when no work goes anywhere.
+ * @param {object} p  workParts' fields, and: `copy` the branch copies itself; `prUrl`; `host` the PR's host's word (default GitHub);
+ *   `copyAttrs`, `prAttrs` what the page hooks on them
+ */
 export function workPlace(p) {
   const parts = workParts(p);
   if (!parts.length) return '';
-  const branch = (t) => (p.copy ? `<button type="button" class="rc-branch"${attrs({ 'data-key': 'copy', 'data-say': `Copied ${t}`, title: 'Copy branch name', 'aria-label': `Copy branch name ${t}` })}>${mid(t)}</button>` : mid(t));
+  const branch = (t) => (p.copy ? `<button type="button" class="rc-branch"${attrs({ 'data-key': 'copy', ...(p.copyAttrs || {}), title: 'Copy branch name', 'aria-label': `Copy branch name ${t}` })}>${mid(t)}</button>` : mid(t));
   const DRAW = {
     word: (t) => `<span class="rc-word-sm">${esc(t)}</span>`, branch, copy: mid, folder: mid,
     base: (t) => `<code class="rc-base">${esc(t)}</code>`,
-    pr: (t) => `<a class="rc-pr" href="#"${attrs({ 'data-key': 'pr', 'data-say': `Opens ${t} on GitHub`, title: `Open ${t} on GitHub` })}>${esc(t)}</a>`,
+    pr: (t) => `<a class="rc-pr"${attrs({ href: p.prUrl || '#', 'data-key': 'pr', ...(p.prAttrs || {}), title: `Open ${t} on ${p.host || 'GitHub'}` })}>${esc(t)}</a>`,
   };
   return `<span class="rc-place">${parts.map((x) => DRAW[x.kind](x.text)).join('')}</span>`;
 }

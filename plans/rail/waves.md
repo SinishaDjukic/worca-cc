@@ -1,6 +1,6 @@
 # Worca Rail: the waves after Wave 1
 
-Shaped 5 Nov 2026, while Wave 1 builds. The goal: the library, the tokens and the design system lead, and every page of
+Shaped 5 Nov 2026. The goal: the library, the tokens and the design system lead, and every page of
 Worca is built from them (`docs/rail/`). Each wave **redesigns** its pages from what they are for, and does not
 recolour or patch the old page: a page keeps only what earns its place, and everything on it comes from the library.
 
@@ -13,7 +13,7 @@ The same six steps, in order. A wave is not handed to Worca before step 4 is don
    sections, one action per state (One Rail › the philosophy).
 2. **Mock the open choices.** PNG or GIF for each real choice, decided before anything is built.
 3. **Into the one Worca prototype.** The page joins `plans/rail/prototype/index.html`, built only from the library, and
-   passes the gates (ds-check, the alignment check, the sweeps) at 375, 900 and 1280px in both themes.
+   passes the gates (`docs/rail/gate.md`).
 4. **The design system first.** Every need the page found and the DS lacked becomes a rule, a catalog entry, a component
    with its test and gallery example, and a check, before the page uses it. No page keeps a hand-built version.
 5. **One Feature to Worca's Shaper.** The pages and the missing functionality (each gap with its API, after the surface
@@ -25,7 +25,7 @@ The same six steps, in order. A wave is not handed to Worca before step 4 is don
 
 | Wave | Pages | Why now | Size |
 |---|---|---|---|
-| **1** (building) | Run and group pages, Pulse, Settings, the shell and navigation | The core of a run | 8 slices |
+| **1** | Run and group pages, Pulse, Settings, the shell and navigation | The core of a run | 3 Features |
 | **1.5 The DS holds** | No page: the design system's own consistency (below) | Every later wave builds on it; cheap now, costly later | small |
 | **2 The daily loop** | Runs list, New run, Chat home, a chat thread and its run cards, Ask worca's side column | Used every session; the Runs list's end column started this | large |
 | **3 Building blocks** | Workflows (list and canvas), Requirements and Shaper features (the Plans tab), Schedules, Projects, Workspaces (list, map, create) | Where work is set up | large |

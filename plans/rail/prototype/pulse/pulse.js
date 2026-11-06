@@ -82,7 +82,7 @@ const picker = (id, text, items, tip) => R.listWord({ id, text, items, tip }, { 
 const sentence = (parts) => R.listSentence({ parts, open: ui.menu, chevron: svg('chevron', 12), menuCls: inCls('menu') });
 // A ring that shades along its arc: neutral at the start, amber at the warning line, red at the limit, so how far it
 // has filled shows which colours it has reached. Used up, it is full and solid red (a reached limit is never hidden).
-const gring = (pct, cls, t) => `<span class="pz-gring${cls ? ' ' + cls : ''}${t === 'over' ? ' is-over' : ''}" style="--p:${Math.max(0, Math.min(100, pct))};--w:${ui.s.warnAt}" aria-hidden="true"></span>`;
+const gring = (pct, cls, t) => R.usageRing({ pct, warnAt: ui.s.warnAt, tone: t, cls });
 function avatar() {
   const rs = M.rings(C(), ui.s.warnAt);
   const c = C(), lines = rs.map((r) => r.line);
@@ -198,13 +198,10 @@ function popover() {
     { id: 'clearread', text: 'Clear read', help: 'Moves every read update to Cleared, in any view; what still waits for you stays' },
     { id: 'select', text: 'Select', help: 'Tick updates to mark read or clear several at once' }, { sep: true },
     { id: 'settings', text: 'Notification settings', help: 'Settings › Notifications: what reaches you' }], 'right')}</span>`;
-  return `<div class="pz-popover${inCls('pop')}" role="dialog" aria-label="Pulse">
-    <div class="pz-phead">${R.tabs({ cls: 'pz-ptabs', items: [{ id: 'vitals', label: 'Vitals', count: vitalsCount(), selected: ui.popTab === 'vitals', tip: 'What is true right now: it changes by itself and cannot be cleared' }, { id: 'updates', label: 'Updates', count: shown().length, selected: ui.popTab === 'updates', tip: `What happened: read, select and clear, like runs. The count follows the sentence below. Kept for 90 days${C().identity ? '. Read and cleared are yours; others on this sign-in keep their own' : ''}` }], hooks: (t) => ({ 'data-ptab': t.id, title: t.tip }) })}${more}</div>
-    <div class="pz-pbody">${ui.popTab === 'vitals' ? vitalsSections() : updatesPanel()}</div>${bulkBar()}
-  </div>`;
+  return R.panelFrame({ label: 'Pulse', cls: `pz-popover${inCls('pop')}`, head: `${R.tabs({ cls: 'pz-ptabs', items: [{ id: 'vitals', label: 'Vitals', count: vitalsCount(), selected: ui.popTab === 'vitals', tip: 'What is true right now: it changes by itself and cannot be cleared' }, { id: 'updates', label: 'Updates', count: shown().length, selected: ui.popTab === 'updates', tip: `What happened: read, select and clear, like runs. The count follows the sentence below. Kept for 90 days${C().identity ? '. Read and cleared are yours; others on this sign-in keep their own' : ''}` }], hooks: (t) => ({ 'data-ptab': t.id, title: t.tip }) })}${more}`, body: ui.popTab === 'vitals' ? vitalsSections() : updatesPanel(), foot: bulkBar() });
 }
 
-// ---- the account menu: Worca's own menu (index.html #acct-menu); its spend card is now Usage and costs, the last row ----
+// ---- the profile menu: Worca's own menu (index.html #acct-menu); its spend card is now Usage and costs, the last row ----
 const LEVELS_UI = [['simple', 'Simple', 'The essentials: start runs, answer them, see what shipped'], ['advanced', 'Advanced', 'Also schedules, statistics and the Marketplace'], ['expert', 'Expert', 'Everything: team metrics, agents and engines']];
 const cap = (w) => w[0].toUpperCase() + w.slice(1);
 function acctMenu() {
@@ -235,8 +232,8 @@ function acctMenu() {
     </div>
   ` }) + usageFly() + lvlFly();
 }
-// The side menus open beside the account menu (side-flyout.mjs 'beside'); on a narrow screen in its place, with a way back.
-const back = R.accountItem({ label: 'Account', cls: 'pz-subback', mark: svg('chevL', 14, 'mi-chev'), attrs: { 'data-sub': '', title: 'Back to the account menu' } });
+// The side menus open beside the profile menu (side-flyout.mjs 'beside'); on a narrow screen in its place, with a way back.
+const back = R.accountItem({ label: 'Account', cls: 'pz-subback', mark: svg('chevL', 14, 'mi-chev'), attrs: { 'data-sub': '', title: 'Back to the profile menu' } });
 function usageFly() {
   if (ui.sub !== 'usage') return '';
   const c = C(), w = ui.s.warnAt;
@@ -580,7 +577,7 @@ function renderInShell() {
   const sideNow = ui.page === 'settings'; swapCls = sideWas !== null && sideWas !== sideNow ? ' is-swap' : ''; sideWas = sideNow;
   const scroller = document.scrollingElement || document.documentElement; const keepY = scroller.scrollTop;
   const pageEl = document.querySelector('main.main'); const keepMain = pageEl?.scrollTop || 0;   // the page scrolls in main in the one Worca
-  const keepP = document.querySelector('.pz-pbody')?.scrollTop || 0;
+  const keepP = document.querySelector('.panel-body')?.scrollTop || 0;
   document.getElementById('rail-pulse-slot').innerHTML = pulseButton();
   document.querySelector('#topnav-new')?.setAttribute('aria-expanded', String(!!ui.nr));
   document.getElementById('side-foot').innerHTML = sideFoot();
@@ -601,7 +598,7 @@ function renderInShell() {
   document.getElementById('app').innerHTML = `${popover()}${newRun()}${acctMenu()}${sessionDialog()}`;
   const t = toastEl(); t.innerHTML = ui.toast ? esc(ui.toast) + (undo ? R.toastUndo({ title: undo.tip }) : '') : ''; t.classList.toggle('is-on', !!ui.toast);
   for (const b of document.querySelectorAll('[data-mixed]')) b.indeterminate = true;
-  const pb = document.querySelector('.pz-pbody'); if (pb && !opening) pb.scrollTop = keepP;
+  const pb = document.querySelector('.panel-body'); if (pb && !opening) pb.scrollTop = keepP;
   fitMenus();
   opening = '';
   if (scroller.scrollTop !== keepY) scroller.scrollTop = keepY;
@@ -656,11 +653,11 @@ function paintAlone() {
   const sideNow = ui.page === 'settings'; swapCls = sideWas !== null && sideWas !== sideNow ? ' is-swap' : ''; sideWas = sideNow;
   const scroller = document.scrollingElement || document.documentElement; const keepY = scroller.scrollTop;
   const pageEl = document.querySelector('main.main'); const keepMain = pageEl?.scrollTop || 0;   // the page scrolls in main in the one Worca
-  const keepP = document.querySelector('.pz-pbody')?.scrollTop || 0;
+  const keepP = document.querySelector('.panel-body')?.scrollTop || 0;
   document.getElementById('app').innerHTML = `<div class="pz-app">${sidebar()}<div class="pz-main">${topbar()}<main class="pz-page">${unlockStrip() || settingsStrip()}${ui.page === 'settings' ? settingsPage() : runsPage()}</main></div>${popover()}${newRun()}${acctMenu()}</div>`;
   const t = toastEl(); t.innerHTML = ui.toast ? esc(ui.toast) + (undo ? R.toastUndo({ title: undo.tip }) : '') : ''; t.classList.toggle('is-on', !!ui.toast);
   for (const b of document.querySelectorAll('[data-mixed]')) b.indeterminate = true;
-  const pb = document.querySelector('.pz-pbody'); if (pb && !opening) pb.scrollTop = keepP;
+  const pb = document.querySelector('.panel-body'); if (pb && !opening) pb.scrollTop = keepP;
   fitMenus();
   opening = '';
   if (scroller.scrollTop !== keepY) scroller.scrollTop = keepY;

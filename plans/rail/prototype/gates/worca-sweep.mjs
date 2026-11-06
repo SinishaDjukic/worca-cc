@@ -122,7 +122,7 @@ for (const scheme of ['light', 'dark']) for (const w of [1280, 900, 760, 375]) {
         await p.goto(`${URL_}#${route}`); await p.reload(); await p.waitForTimeout(60);
         await open(p); await p.waitForTimeout(30);
         if (!(await up(sel)(p))) { add('an overlay did not open', `${w}: ${name}`); break; }
-        const inside = await p.evaluate((s) => { const x = document.querySelector(s); (x.querySelector('.menu-h, .dlg-title, .pz-phead') || x).dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })); return !!document.querySelector(s); }, sel).catch(() => true);
+        const inside = await p.evaluate((s) => { const x = document.querySelector(s); (x.querySelector('.menu-h, .dlg-title, .panel-head') || x).dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })); return !!document.querySelector(s); }, sel).catch(() => true);
         checks++;
         if (!inside) { add('a click inside closes it', `${w}: ${name}`); await open(p); await p.waitForTimeout(30); }
         if (how === 'click') await p.evaluate((s) => { const t = s ? document.querySelector(s) : document.getElementById('topnav-title'); t.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })); }, scrim);
@@ -168,9 +168,9 @@ for (const scheme of ['light', 'dark']) for (const w of [1280, 900, 760, 375]) {
   if (/Spend/.test(t0)) add('money on a ring', t0);
   await p.clock.runFor(60_000); await p.waitForTimeout(50);
   if (await tip() === t0) add('usage did not refresh after a minute', t0);
-  const n0 = await p.evaluate(() => document.querySelectorAll('.pz-ava-wrap .pz-gring').length);
+  const n0 = await p.evaluate(() => document.querySelectorAll('.pz-ava-wrap .usage-ring').length);
   await p.evaluate(() => { for (const x of ['claude', 'codex', 'copilot', 'gemini', 'openrouter']) window.RailUI.prefs.setConnected(x, false); }); await p.clock.runFor(50);
-  if (!n0 || await p.evaluate(() => document.querySelectorAll('.pz-ava-wrap .pz-gring').length)) add('a disconnected provider keeps its ring', `${n0}`);
+  if (!n0 || await p.evaluate(() => document.querySelectorAll('.pz-ava-wrap .usage-ring').length)) add('a disconnected provider keeps its ring', `${n0}`);
   if ((await tip()) !== 'No provider connected') add('nothing connected is not said', await tip());
   await p.close(); checks += 4;
 }

@@ -46,14 +46,7 @@
 
 /* A ring that shades along its arc: --ink-2 until just under the warning line, --amber at the warning line (--w), --red at the limit; it
    shows the first --p percent. Used up: full and solid red. The track is --line-2. Never violet, never green. */
-.pz-gring{--s:18px;--t:1.5px;position:relative;display:inline-block;flex:none;width:var(--s);height:var(--s);border-radius:50%;background:var(--line-2);
-  -webkit-mask:radial-gradient(farthest-side,transparent calc(100% - var(--t) - .5px),#000 calc(100% - var(--t)));
-  mask:radial-gradient(farthest-side,transparent calc(100% - var(--t) - .5px),#000 calc(100% - var(--t)));}
-.pz-gring::before{content:"";position:absolute;inset:0;border-radius:50%;
-  background:conic-gradient(var(--ink-2) calc((var(--w) - 6) * 1%),var(--amber) calc(var(--w) * 1%),var(--red) 100%);
-  -webkit-mask:conic-gradient(#000 calc(var(--p) * 1%),transparent 0);mask:conic-gradient(#000 calc(var(--p) * 1%),transparent 0);}
-.pz-gring.is-over::before{background:var(--red);}
-.pz-ava-wrap .pz-gring{--t:1px;position:absolute;inset:0;margin:auto;}
+.pz-ava-wrap .usage-ring{--t:1px;position:absolute;inset:0;margin:auto;}
 /* The rings hug the avatar: 1px lines with 1.5px between them and the avatar, outside in: session, long window, spend. */
 .pz-ring-0{--s:38px;} .pz-ring-1{--s:33px;} .pz-ring-2{--s:28px;}
 .pz-mi-ring{--s:16px;--t:1.25px;}
@@ -110,12 +103,9 @@
 .pz-advice-acts{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;}
 
 /* The panel under the Pulse button is all of Pulse: Vitals and Updates with ⋯ beside them; the body scrolls. */
-.pz-popover{position:absolute;top:52px;right:8px;z-index:44;display:flex;flex-direction:column;width:min(420px,calc(100% - 16px));max-height:560px;
-  border:1px solid var(--line);border-radius:var(--r-card);background:var(--panel);box-shadow:var(--shadow-pop);}
-.pz-phead{flex:none;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:0 8px 0 16px;box-shadow:inset 0 -1px 0 var(--line);}
+.pz-popover{position:absolute;top:52px;right:8px;z-index:44;width:min(420px,calc(100% - 16px));max-height:560px;}
 .pz-ptabs{min-width:0;box-shadow:none;}
 .pz-popover .pz-bar{margin-top:4px;}
-.pz-pbody{flex:1 1 auto;min-height:0;overflow-y:auto;padding:4px 16px 8px;}
 .pz-pfoot{flex:none;display:flex;justify-content:flex-end;gap:8px;padding:8px 12px;border-top:1px solid var(--line);}
 .pz-popover .pz-sec{margin-top:12px;}
 

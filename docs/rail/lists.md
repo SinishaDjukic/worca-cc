@@ -6,11 +6,13 @@
 | `list.sections` | Sections in a fixed order; empty ones not drawn; a long one shows less, never folds | Nothing hides | design-system-components |
 | `list.row-one-target` | The whole row opens one target; a fact in it is text | No second links in a row | by hand |
 | `list.select` | Selecting works one way in every list that has it | One habit | design-system-logic |
-| `list.one-code` | Every list's sentence, selecting, keys and states are the library's | A list cannot drift | rail-gate |
+| `list.one-code` | A list calls the library for its sentence, selecting, keys and states; rail-gate sees its rows' markup only, the rest is by review | A list cannot drift | rail-gate |
 | `list.state-source` | A row's state and section come from runState and sectionOf on its real case | A list can never call Paused or Stopped Ready | design-system-logic |
 | `list.opens-page` | A row opens a full page; coming back restores the sentence, the scroll and the selection | One way to move | worca-sweep |
 
-**A list page** (Runs, Schedules): the top bar's trail, then the title row with the page's one action at its right
+**Reference for Wave 2.** The Runs list and Chats below describe the prototype's reference pages, not Wave 1's work: Wave 2 Shaping decides them. A list's sentence, selecting and bulk hold now for what Pulse uses.
+
+**A list page** (Runs, Schedules; reference for Wave 2): the top bar's trail, then the title row with the page's one action at its right
 (`New schedule`), then a list. **A list** (runs, updates, files, PRs): divided ListRows on the rail. A row is its state mark on the rail (a status
 dot, or a tick box while selecting), a title line, a meta line, its time or figure at the right; the whole row opens
 its one target, so a fact in the row is text, never a second link. The row's own actions are a ⋯ at its right end
@@ -49,12 +51,12 @@ that needs you raises its group into Needs you, and the group's meta says why (`
 `+n earlier`. A round whose run has gone lists alone as `… · Round 3`.
 
 **Bulk actions** read the shared table (`planBulk`, `skipText`), so a count is what will happen and its tooltip names
-what it skips. Archive, Restore, Label, Add to group and Pin take Undo; Stop and Delete ask in the strip. Delete and the
+what it skips. Archive (`act.archive`), Restore, Label, Add to group and Pin take Undo; Stop and Delete ask in the strip. Delete and the
 group actions need Advanced; Label needs `runLabels`.
 
 **States.** `listState`: nothing for 300ms, then `Loading runs…`; offline and could not load with Try again; empty in
 the filter's own words, or, with nothing at all, its one way on. Rows on screen stay when a refresh fails, and one Toast says so.
 
-**Chats** are this list in a side column ([panels.md](panels.md)): Needs you first, then Running, then Recent; an idle
+**Chats** (reference for Wave 2) are this list in a side column ([panels.md](panels.md)): Needs you first, then Running, then Recent; an idle
 chat shows its kind's icon in the dot's place (`chatState`, `CHAT_KINDS`), a chat a chat integration opened wears its logo
 (`originMark`). A pinned chat leads its section.

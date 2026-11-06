@@ -2,7 +2,7 @@
 
 | Rule | What | Why | Held by |
 |---|---|---|---|
-| `motion.timings` | Three timings, one curve; nothing slower, nothing bounces | Motion stays a signal | design-system-components |
+| `motion.timings` | Three timings, one curve; nothing slower, nothing bounces | Motion stays a signal | rail-docs |
 | `motion.fade` | Fade, never slide; nothing travels across the screen | What changed is clear without a trip | by hand |
 | `motion.morph` | A page redraws with morph(), never raw innerHTML | What stays keeps its element and focus | design-system-components |
 | `motion.reduced` | Under reduced motion every timing is 0 | Respects the person's setting | by hand |
@@ -39,7 +39,7 @@ curve; everything else is still. Filmed from the run page: `plans/rail/mocks/mot
   The one named exception is the away screensaver (`awayShows`, `awayScreen`): with Away and Keep awake on and the window
   focused, it starts after 5 idle minutes and is off under reduced motion; any input hides it and does not reach the page.
 - **Reduced motion** (`prefers-reduced-motion`): every timing is 0; the breathing is a still colour, the shimmer a still
-  wash, the flash a still outline that fades with the next click.
+  wash, the flash a still outline that stays for the length of `flash`, and the page jumps instead of scrolling.
 - **In code:** a page that draws itself again after a change draws with `morph(target, html)` from
   `ui/public/design-system/components/motion.mjs`, never innerHTML: what is still there stays the same element, so its
   colour eases by its CSS transition, and only what is new or changed moves. A component says how it moves with

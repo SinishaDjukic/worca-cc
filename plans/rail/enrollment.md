@@ -1,5 +1,7 @@
 # Worca Rail: run page enrollment
 
+Replaced by `wave-1.md`: there is one flag, `rail`, and no `runCardV2`. Kept for why the phases were chosen.
+
 From design to the only design, in five phases, on Worca's flag lifecycle (`docs/feature-flags.md`): one flag,
 `runCardV2`, moves `experimental` → `beta` (on by default) → `retiring` → graduated. Design: the "Run card redesign"
 canvas and `plans/rail/prototype/index.html`. Review and its P0 / P1 lists: `plans/rail/review.md`.

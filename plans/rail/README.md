@@ -9,7 +9,7 @@ The prototype's code here is the source. The **Worca Rail** page is generated fr
 
 | Page | Spec | Status |
 |---|---|---|
-| Run and group page | `spec.md` (review `review.md`, shipping plan `enrollment.md`) | In the prototype |
+| Run and group page | `spec.md` (review `review.md`; `enrollment.md` is the old shipping plan, replaced by `wave-1.md`) | In the prototype |
 | Pulse: the notification hub, usage rings, limit notifications and what a start does near a limit | `pulse.md` | Concept, in the prototype (`pulse.html`) |
 | Runs list and Chats column: dev's functions adapted to Rail, **for reference only**. Their real design is decided in Wave 2 Shaping | `lists-index.md`, `agreed/chat-and-runs-decisions.md` | In the prototype, as reference |
 | Settings: from the profile menu, the sidebar becomes its menu (five groups), one row per decision, records as Lists, search | `docs/rail/settings.md, mocks `mocks/settings-menu-*.png` | In the prototype (`pulse.html` › Settings; `settings/`) |
@@ -25,16 +25,14 @@ eye before accepting it: `review-agreed.md`.
   - `index.html` is **the one Worca**: today's shell and pages (`today/`, captured from the app in mock mode by
     `gates/capture-today.mjs`) with Wave 1 in them, joined by `shell/` (the router and the decisions on today's
     sidebar and top bar): a run row opens the Rail run page as a full page, Pulse sits in Activity's place, the profile
-    menu opens Settings, every other page keeps today's design in the Rail colours. The prototype's own controls fold
+    menu opens Settings, and every other page keeps today's design in the Rail colours, apart from the Runs list and the
+    Chats column, which are there as reference for Wave 2. The prototype's own controls fold
     into its Prototype corner.
   - `run-page.html` and `pulse.html` explore the run page's and Pulse's cases; `components.html` is the gallery.
   - Each feature in its folder: `runs/`, `pulse/`, `settings/`, `design-system/` (the Rail look and the components'
     CSS), `shell/`; `gates/` holds the checks and the builds (`app.css`, `components.js` and `today.js` are built, not
     committed).
-- The gates: `node plans/rail/prototype/gates/worca-sweep.mjs` (the one Worca: every route at three widths in both
-  themes, and the journeys between its pieces), `gates/run-page-sweep.mjs file://…/run-page.html`,
-  `gates/pulse-sweep.mjs file://…/pulse.html`, and `gates/ds-check.mjs` (everything from the design system; names, heads
-  and alignment; `gates/align-proof.mjs` shows the alignment check catches each fault).
+- The gates: `docs/rail/gate.md` holds the one table of commands, when they run and their widths.
 - `mocks/`: PNG mocks of decisions, named by page.
 
 A new page gets a spec here, a row above, and its model and renderer in `prototype/`, built on `rail.css` and the

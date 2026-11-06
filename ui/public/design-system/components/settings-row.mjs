@@ -1,4 +1,4 @@
-// A settings tab (docs/rail/build.md: "A settings tab"): sections of rows, each row its
+// A settings tab (docs/rail/settings.md: "A settings tab"): sections of rows, each row its
 // name, one sentence, and what acts on it at the right. The components own the alignment, so no page draws it by hand:
 // every text starts on one left edge (the dividers too), every action ends on one right edge (a quiet button's text,
 // not its padding), and the name, the sentence and the actions share one baseline. Under 560px of width a row stacks.

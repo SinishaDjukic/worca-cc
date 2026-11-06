@@ -8,7 +8,7 @@ export const suggestedChip = () => '<span class="pd-sug">Suggested</span>';
 
 /** The grey line when Worca could not write it: the text stays, Try again. */
 export function suggestionFail({ model = '', retry = {}, cls: c = '', attrs: a = {} }) {
-  return `<span class="${cls('pd-fail', c)}" role="status"${attrs(a)}>Couldn’t write it: no answer${model ? ` from ${esc(model)}` : ''} in 20s. The text is as it was. ${failureLink({ label: 'Try again', attrs: retry })}</span>`;
+  return `<span class="${cls('pd-fail', c)}" role="status"${attrs(a)}>Could not write it: no answer${model ? ` from ${esc(model)}` : ''} in 20s. The text is as it was. ${failureLink({ label: 'Try again', attrs: retry })}</span>`;
 }
 
 /** The way on from a failure's line: Try again, Details. */

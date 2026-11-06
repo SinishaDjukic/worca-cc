@@ -101,18 +101,25 @@ test('a step reads its stage: live, done, next, and how long', () => {
   assert.equal(R.stepLook({ state: 'ask', name: 'x' }).word, 'Needs you');
 });
 
-test('the step flow: Dialog, confirm, working, then done or a failure in its words', () => {
+test('act.archive: Archive says what goes and what stays', () => {
+  const f = R.actionFlow('interrupted', CTX).Archive;
+  assert.match(f.confirm, /local branch, worktree and logs are removed; the remote branch and any PR stay/);
+});
+
+test('the step flow: Dialog, confirm, always working, then what perform promises: done or a failure in its words', async () => {
   const log = []; let confirmed = false; let shown = false; let end = { ok: true };
   const follow = R.stepFlow({ dialogShown: () => shown, openDialog: () => log.push('dialog'), confirmed: () => confirmed, askConfirm: () => log.push('ask'), working: (l) => log.push(R.workingWord(l)),
-    perform: () => end, done: () => log.push('done'), failed: (l, e) => log.push(`${e.title} / ${e.detail}`), after: (fn) => fn() });
-  follow({ say: 'x' }, 'Pause'); assert.deepEqual(log.splice(0), ['done']);
-  follow({ dialog: 'pr' }, 'Create PR'); assert.deepEqual(log.splice(0), ['dialog']);
-  shown = true; follow({ dialog: 'pr' }, 'Create PR'); assert.deepEqual(log.splice(0), ['Creating…', 'done']);
-  follow({ confirm: 'Merge?' }, 'Merge PR'); assert.deepEqual(log.splice(0), ['ask']);
-  confirmed = true; end = { ok: false, why: 'the branch moved' }; follow({ confirm: 'Merge?' }, 'Merge PR');
-  assert.deepEqual(log.splice(0), ['Merging…', 'Could not merge PR / The branch moved. Nothing changed.']);
-  end = { ok: false, odd: true }; follow({ confirm: 'Merge?' }, 'Merge PR');
+    perform: async () => { log.push('call'); if (end === 'throws') throw new Error('x'); return end; }, done: () => log.push('done'), failed: (l, e) => log.push(`${e.title} / ${e.detail}`) });
+  await follow({ say: 'x' }, 'Pause'); assert.deepEqual(log.splice(0), ['Pausing…', 'call', 'done']);   // no confirm: it still says what is happening
+  await follow({ dialog: 'pr' }, 'Create PR'); assert.deepEqual(log.splice(0), ['dialog']);
+  shown = true; await follow({ dialog: 'pr' }, 'Create PR'); assert.deepEqual(log.splice(0), ['Creating…', 'call', 'done']);
+  await follow({ confirm: 'Merge?' }, 'Merge PR'); assert.deepEqual(log.splice(0), ['ask']);
+  confirmed = true; end = { ok: false, why: 'the branch moved' }; await follow({ confirm: 'Merge?' }, 'Merge PR');
+  assert.deepEqual(log.splice(0), ['Merging…', 'call', 'Could not merge PR / The branch moved. Nothing changed.']);
+  end = { ok: false, odd: true }; await follow({ confirm: 'Merge?' }, 'Merge PR');
   assert.match(log.at(-1), /Something went wrong on Worca’s side\. Nothing changed\.$/);
+  end = 'throws'; log.splice(0); await follow({ confirm: 'Merge?' }, 'Merge PR');   // a call that rejects is a failure, never a stuck button
+  assert.match(log.at(-1), /^Could not merge PR \/ Something went wrong/);
   assert.deepEqual(R.confirmOf({ confirm: 'Stop?' }, 'Stop the run'), { text: 'Stop?', yes: 'Stop', no: 'Cancel', danger: true });
   assert.equal(R.confirmOf({ confirm: 'Delete?', no: 'Keep' }, 'Delete run').no, 'Keep');
 });
@@ -371,6 +378,19 @@ test('shortcutAction: Chat has its own keys, and they work in a field', () => {
   assert.equal(R.shortcutAction({ key: 'L', metaKey: true, shiftKey: true, inField: true }, { scopes: ['chat'] }), 'focus-list');
   assert.equal(R.shortcutAction({ key: 'ArrowUp', altKey: true }, { scopes: ['chat'] }), 'prev-chat');
   assert.equal(R.shortcutAction({ key: 'ArrowUp', altKey: true, inField: true }, { scopes: ['chat'] }), null);
+});
+
+test('dismissOnOutside: a click closes every layer it landed outside, Esc only the top one; a page can name what closes nothing', async () => {
+  const { JSDOM } = await import('jsdom');
+  const win = new JSDOM('<body><p id="page">p</p><div id="tools">t</div></body>').window, d = win.document;
+  const click = (id) => d.getElementById(id).dispatchEvent(new win.MouseEvent('click', { bubbles: true, cancelable: true }));
+  let a = true, b = true;
+  R.dismissOnOutside(d, { rank: 1, open: () => a, inside: '#none', close: () => { a = false; }, paint: () => {} });
+  R.dismissOnOutside(d, { rank: 3, open: () => b, inside: '#none', close: () => { b = false; }, paint: () => {} });
+  R.neverOutside(d, '#tools');
+  click('tools'); assert.deepEqual([a, b], [true, true]);
+  d.getElementById('page').dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })); assert.deepEqual([a, b], [true, false]);
+  b = true; click('page'); assert.deepEqual([a, b], [false, false]);
 });
 
 test('dismissOnOutside: a click outside closes; inside never; a real control also acts; a Dialog keeps what was typed; Esc and focus', async () => {

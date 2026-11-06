@@ -46,7 +46,7 @@ test('a catalog entry with code is a real export, and every library component is
     coded.add(name);
   }
   // Every function the library exports is a catalog entry's, or a helper its entry's module names.
-  const HELPERS = /^(SOUND_CHOICES|BURST_MS|REAL_CONTROL|listWord|LIST_SHOWN|fitMenu|planBulk|skipText|selectStep|CHAT_KINDS|bulkStateOf|awayShows|AWAY_IDLE_MS|esc|attrs|cls|toElement|ICONS|icon|fill|stateIds|actionHelp|actionLevel|actionFlow|runFlow|makeAction|memberKeeps|sectionOf|isDone|isLiveStep|stageState|subState|stepLook|defaultStage|stageMeta|toMin|fmtMin|STAGE_WORD|workingWord|confirmOf|failureOf|foldMiddle|workParts|workPhrase|MODES|RUN_PAGE_LEVELS|runPartShows|prefs|shows|morph|land|splitButton|statusDot|confirmActions|figure|errorToast|moreMenu|searchResults|fitTags|stepDot|stackRow|suggestionFail|suggestButton|suggestedChip|stopWriting|copied|COPIED_MS|SCROLL_SHOW_MS|thumbBox|tryStep|USAGE_REFRESH_MS|usageWindow|connectedUsage|usageTip|menuItem|statusDotClass|confirmForm|figureBreakdown|toastUndo|documentLink|dialogFrame|failureLink|previewToggle|suggestionPreview|TRACKER_MOVES|navFlyout|themeChoice|cardTitleLink|SHORTCUTS|RESERVED|FIELD|chordId|isMac|keyGlyph|keyHint|keyFacts|listMove|shortcutSections|openShortcutsSheet|PRESS_MS|selectClear|selectStart|selectToggle|selectRange|selectAll|selectPrune|selectCount|selectAllState|selectExtend|selectApply|keepFocus|selectAllBox|bindLongPress)$/;
+  const HELPERS = /^(neverOutside|SOUND_CHOICES|BURST_MS|REAL_CONTROL|listWord|LIST_SHOWN|fitMenu|planBulk|skipText|selectStep|CHAT_KINDS|bulkStateOf|awayShows|AWAY_IDLE_MS|esc|attrs|cls|toElement|ICONS|icon|fill|stateIds|actionHelp|actionLevel|actionFlow|runFlow|makeAction|memberKeeps|sectionOf|isDone|isLiveStep|stageState|subState|stepLook|defaultStage|stageMeta|toMin|fmtMin|STAGE_WORD|workingWord|confirmOf|failureOf|foldMiddle|workParts|workPhrase|MODES|RUN_PAGE_LEVELS|runPartShows|prefs|shows|morph|land|splitButton|statusDot|confirmActions|figure|errorToast|moreMenu|searchResults|fitTags|stepDot|stackRow|suggestionFail|suggestButton|suggestedChip|stopWriting|copied|COPIED_MS|SCROLL_SHOW_MS|thumbBox|tryStep|USAGE_REFRESH_MS|usageWindow|connectedUsage|usageTip|menuItem|statusDotClass|confirmForm|figureBreakdown|toastUndo|documentLink|dialogFrame|failureLink|previewToggle|suggestionPreview|TRACKER_MOVES|navFlyout|themeChoice|cardTitleLink|SHORTCUTS|RESERVED|FIELD|chordId|isMac|keyGlyph|keyHint|keyFacts|listMove|shortcutSections|openShortcutsSheet|PRESS_MS|selectClear|selectStart|selectToggle|selectRange|selectAll|selectPrune|selectCount|selectAllState|selectExtend|selectApply|keepFocus|selectAllBox|bindLongPress)$/;
   for (const name of Object.keys(LIB)) assert.ok(coded.has(name) || HELPERS.test(name), `${name} is exported and not in the catalog`);
 });
 
@@ -63,6 +63,20 @@ test('every component in code is tested and drawn in the gallery', () => {
 test('contributors and agents are pointed at the design system', () => {
   for (const f of ['CONTRIBUTING.md', 'CLAUDE.md', 'AGENTS.md']) assert.match(read(f), /docs\/rail\/README\.md/, `${f} does not point to the design system`);
   for (const a of readdirSync(join(ROOT, '.claude/agents'))) assert.match(read(`.claude/agents/${a}`), /docs\/rail\/README\.md/, `${a} does not point to the design system`);
+});
+
+test('the plans point at what exists, and the one names stay', () => {
+  for (const f of readdirSync(join(ROOT, 'plans/rail'))) if (f.endsWith('.md')) assert.doesNotMatch(read(`plans/rail/${f}`), /rail-restart-handoff|docs\/rail-shaping/, f);
+  assert.match(read('plans/rail/wave-1.md'), /Base branch: `docs\/rail-agreed`/);
+  for (const f of ['CLAUDE.md', 'AGENTS.md', 'docs/rail/README.md']) assert.match(read(f), /Building Rail now/, f);
+  for (const f of [...chapters().map((c) => `${RAIL}/${c}`), 'docs/design-system-catalog.json']) assert.doesNotMatch(read(f), /account menu/i, `${f}: the name is the profile menu`);
+});
+
+test('the motion timings are the ones the catalog names', () => {
+  const look = read('plans/rail/prototype/design-system/rail-look.css'), t = catalog().motion.timings;
+  assert.match(look, /--motion-quick:150ms/); assert.match(t['--motion-quick'], /^150ms/);
+  assert.match(look, /--motion-change:200ms/); assert.match(t['--motion-change'], /^200ms/);
+  assert.match(look, /--motion-flash:1\.2s/);
 });
 
 test('no pointer to the deleted Shaping branch is left in what Agreed decided', () => {

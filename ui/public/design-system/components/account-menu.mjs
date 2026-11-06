@@ -1,9 +1,9 @@
-// The account menu's parts (docs/rail/components.md): a side menu opened from the avatar, its rows with an icon, a value
+// The profile menu's parts (docs/rail/components.md): a side menu opened from the avatar, its rows with an icon, a value
 // and sometimes a switch, its Appearance choice, and the link on the spend card.
 import { attrs, esc } from './html.mjs';
 
 /**
- * A row of the account menu.
+ * A row of the profile menu.
  * @param {object} o
  * @param {string} o.label
  * @param {string} [o.mark]   the icon or ring before the words

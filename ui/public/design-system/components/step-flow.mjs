@@ -2,7 +2,7 @@
 // or it cannot be taken back, then its button says what is happening, and either the thing moves on or the place you
 // acted says what failed and why. One flow on every page. Pure: a page gives it hooks and draws what they set.
 
-const WORKING = { Fix: 'Fixing…', Merge: 'Merging…', Create: 'Creating…', Stop: 'Stopping…', Discard: 'Discarding…', Archive: 'Archiving…', Cancel: 'Cancelling…', 'Re-plan': 'Re-planning…', Continue: 'Continuing…', Delete: 'Deleting…', Remove: 'Removing…', Reset: 'Resetting…', Push: 'Pushing…', Publish: 'Pushing…', Apply: 'Applying…', Link: 'Linking…', Update: 'Updating…', Report: 'Sending…' };
+const WORKING = { Pause: 'Pausing…', Resume: 'Resuming…', Restart: 'Restarting…', Fix: 'Fixing…', Merge: 'Merging…', Create: 'Creating…', Stop: 'Stopping…', Discard: 'Discarding…', Archive: 'Archiving…', Cancel: 'Cancelling…', 'Re-plan': 'Re-planning…', Continue: 'Continuing…', Delete: 'Deleting…', Remove: 'Removing…', Reset: 'Resetting…', Push: 'Pushing…', Publish: 'Pushing…', Apply: 'Applying…', Link: 'Linking…', Update: 'Updating…', Report: 'Sending…' };
 
 /** What a step's button says while it works. */
 export const workingWord = (label) => WORKING[String(label).split(' ')[0]] || 'Working…';
@@ -25,24 +25,18 @@ export function failureOf(label, why, { odd = false } = {}) {
  * @param {()=>boolean} h.confirmed      the person said yes in the strip
  * @param {(f:object, label:string)=>void} h.askConfirm
  * @param {(label:string)=>void} h.working
- * @param {(f:object, label:string)=>{ok:boolean, why?:string, odd?:boolean}} h.perform  decides how it ended
+ * @param {(f:object, label:string)=>Promise<{ok:boolean, why?:string, odd?:boolean}>|{ok:boolean, why?:string, odd?:boolean}} h.perform  does the step and says how it ended; a rejection is Worca's own failure
  * @param {(f:object, label:string)=>void} h.done
  * @param {(label:string, failure:object)=>void} h.failed
- * @param {(fn:()=>void)=>void} h.after  runs fn once the step has taken its time
- * @returns {(f:object, label:string)=>void}
+ * @returns {(f:object, label:string)=>Promise<void>}
  */
 export function stepFlow(h) {
-  return function follow(f, label) {
+  return async function follow(f, label) {
     if (f.dialog && !h.dialogShown(f, label)) { h.openDialog(f, label); return; }
     if (f.confirm && !h.confirmed()) { h.askConfirm(f, label); return; }
-    if (f.confirm || f.dialog || f.fromDialog) {
-      h.working(label);
-      h.after(() => {
-        const end = h.perform(f, label);
-        if (end.ok) h.done(f, label); else h.failed(label, failureOf(label, end.why, { odd: end.odd }));
-      });
-      return;
-    }
-    h.done(f, label);
+    h.working(label);
+    let end;
+    try { end = await h.perform(f, label); } catch { end = { ok: false, odd: true }; }
+    if (end.ok) h.done(f, label); else h.failed(label, failureOf(label, end.why, { odd: end.odd }));
   };
 }

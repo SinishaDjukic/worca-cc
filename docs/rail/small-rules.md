@@ -12,8 +12,8 @@
   in 1–3 words, a plain noun first (`Budget`, `Labels`, `Away mode`, `Team policy`). One thing, one name: never two
   things joined by `&` or `and` (two things get two names); never `Your …`, `My …` or `This …`; never a phrase or a
   question (`What it may do`, `Up to date`); never a word made up for the screen. The same thing keeps its name
-  everywhere: a menu item's name is its page's title. `ds-check` reads every name on a Rail page by this rule. The one
-  exception is `Vitals`, the Pulse tab: a made-up word for the screen, which only makes sense under Pulse.
+  everywhere: a menu item's name is its page's title. `ds-check` reads every name on a Rail page by this rule. Two
+  exceptions: `Vitals`, the Pulse tab, a made-up word which only makes sense under Pulse; and `Usage and costs`, which is one thing.
 - Money is a **budget**, a window is a **limit**: `Budget`, `Raise budget`, `Limit settings`, the Limits of Usage and costs.
   A run's own ceiling is its `Cost cap`.
 - Hover is a tint, never a lift.
@@ -34,7 +34,7 @@
   `Resets Wed 5:00 PM`. With nothing connected no ring is drawn and Usage and costs says so, with its link. Each ring shows
   its tightest harness and shades along its arc: `--ink-2` at the start, `--amber` at
   the warning line, `--red` at the limit; used up, full and solid red. Never green, never violet. Its figures live in
-  one place, the account menu's Usage and costs side menu; a limit warns before it is spent only in New run, Resume
+  one place, the profile menu's Usage and costs flyout; a limit interrupts a start only in New run, Resume
   and the confirm of a step that starts agent work, and only when the run's estimate does not fit in what is left
   (with no estimate, at the warning line).
 - The needs-you count lives on Pulse's badge alone; the Runs row stays a place.

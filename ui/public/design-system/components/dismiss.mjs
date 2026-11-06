@@ -1,7 +1,7 @@
 // What lies over a page and how it goes (docs/rail/panels.md): one registry per document, so every menu, picker, popover,
 // flyout, panel, search result, editor and Dialog closes the same way. A page says when a layer is open, what counts as
 // inside it, and how to close it; a click outside or Esc does the rest.
-const NEVER_OUTSIDE = '.rc-toast, .toasts, .keys-modal, .mk-tools';   // a notice, the keys' sheet, the prototype's corner
+const NEVER_OUTSIDE = '.rc-toast, .toasts, .keys-modal';   // a notice, the keys' sheet
 /** What a click on it still does, once what lay over it has closed. */
 export const REAL_CONTROL = 'button, a[href], input, select, textarea, label, summary, [role="button"], [role="tab"], [role="menuitem"], [role="menuitemradio"], [role="menuitemcheckbox"], [role="switch"], [role="radio"]';
 const TEXT = 'input:not([type="checkbox"]):not([type="radio"]), textarea, [contenteditable="true"]';
@@ -9,7 +9,7 @@ const stores = new WeakMap();
 
 function storeOf(doc) {
   if (stores.has(doc)) return stores.get(doc);
-  const s = { layers: [] }, win = doc.defaultView;
+  const s = { layers: [], never: NEVER_OUTSIDE }, win = doc.defaultView;
   const opened = () => s.layers.filter((l) => l.open()).sort((a, b) => b.rank - a.rank);
   const within = (l, t) => (typeof l.inside === 'string' ? !!t.closest?.(l.inside) : l.inside(t));
   const focusBack = (l) => {
@@ -22,7 +22,7 @@ function storeOf(doc) {
   doc.addEventListener('click', (e) => {
     const t = e.target;
     for (const l of s.layers) if (!l.open()) l.typed = false;
-    if (!t?.closest || t.closest(NEVER_OUTSIDE)) return;
+    if (!t?.closest || t.closest(s.never)) return;
     const gone = [];
     for (const l of opened()) {
       if (within(l, t)) { if (l.dialog) break; continue; }   // nothing under a Dialog is touched
@@ -56,6 +56,9 @@ function storeOf(doc) {
   stores.set(doc, s);
   return s;
 }
+
+/** What else a page says closes nothing when clicked: tools that live beside the page. */
+export function neverOutside(doc, selector) { const s = storeOf(doc); s.never += `, ${selector}`; }
 
 /**
  * @param {Document} doc

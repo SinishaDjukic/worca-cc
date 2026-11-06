@@ -242,6 +242,7 @@
   };
   const RM = window.RunCardModel;
   let routed = { view: '', locked: false };
+  R.neverOutside(document, '.mk-tools');   // the prototype's own corner closes nothing
   // the drawer and the narrow search close on a click outside or Esc (docs/rail/panels.md)
   R.dismissOnOutside(document, { open: () => document.body.classList.contains('nav-open'), inside: '#side-rail, #mbar-menu', back: () => '#mbar-menu', close: () => drawer(false), paint: () => {} });
   R.dismissOnOutside(document, { open: () => !!document.querySelector('#topnav .tsearch.is-open'), inside: '.tsearch, #tsearch-open', back: () => '#tsearch-open', close: () => searchFold(false), paint: () => {} });

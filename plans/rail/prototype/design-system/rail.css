@@ -1063,3 +1063,16 @@ th.rt-c{color:var(--ink-2);font-weight:500;}
 .doc-view h3{margin:12px 0 4px;font:600 var(--fs-body)/var(--lh-title) var(--sans);}
 .doc-view p,.doc-view ul{margin:0 0 8px;}
 .sk-list .rd-route-row:has(> .rc-pop){grid-template-columns:20px minmax(0,1fr) max-content;align-items:start;}   /* a cut's run: its own ⋯ at the end */
+
+/* A usage ring: fills through the warning colours, full and solid red when used up. */
+.usage-ring{--s:18px;--t:1.5px;position:relative;display:inline-block;flex:none;width:var(--s);height:var(--s);border-radius:50%;background:var(--line-2);
+  -webkit-mask:radial-gradient(farthest-side,transparent calc(100% - var(--t) - .5px),#000 calc(100% - var(--t)));
+  mask:radial-gradient(farthest-side,transparent calc(100% - var(--t) - .5px),#000 calc(100% - var(--t)));}
+.usage-ring::before{content:"";position:absolute;inset:0;border-radius:50%;
+  background:conic-gradient(var(--ink-2) calc(var(--w) * 1%),var(--amber) calc(var(--w) * 1%),var(--red) 100%);
+  -webkit-mask:conic-gradient(#000 calc(var(--p) * 1%),transparent 0);mask:conic-gradient(#000 calc(var(--p) * 1%),transparent 0);}
+.usage-ring.is-over::before{background:var(--red);}
+/* A panel over the page: its head stays, its body scrolls. Where it sits is the page's. */
+.panel-frame{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:var(--r-card);background:var(--panel);box-shadow:var(--shadow-pop);}
+.panel-head{flex:none;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:0 8px 0 16px;box-shadow:inset 0 -1px 0 var(--line);}
+.panel-body{flex:1 1 auto;min-height:0;overflow-y:auto;padding:4px 16px 8px;}

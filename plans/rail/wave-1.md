@@ -1,122 +1,103 @@
-# Worca Rail: Wave 1, the goal
+# Worca Rail: Wave 1, what Worca builds
 
-**Worca builds Wave 1 of the Rail redesign from one requirement, and every PR it delivers is checked against the design
-system by the same gates the prototype passes.**
+**Building Rail now starts here.** The design is `docs/rail/` and the prototype (`plans/rail/prototype/`). This file never
+restates them: it says what to build, in what order, from where, and how it is checked. Where Rail stands today:
+`game-plan.md` › Now.
 
-Shaped 4 Nov 2026. The steps: the Settings prototype (done), one prototype of all of Worca, then the requirement
-(this file grows into it). The rules live in `docs/rail/`; this file says what Wave 1 is.
+**Base branch: `docs/rail-agreed`.** Not `feat/rail-components`: that branch and its worktree are old. Do not take code
+from `backup/rail-wave-1-*`, except where this file says read-only.
 
-## Scope
+## Already done in Agreed: do not redo
 
-| In Wave 1 | How |
+**Before Agreed**, the library was incomplete, each page held its own logic and nothing failed a page that skipped the
+design system. **Now**, in Agreed: the library is complete in `ui/public/design-system/components/` (with its tests and
+gallery); the shared logic is in it (`runState`, `actionFlow`, `stepFlow`, `workPlace`, `shows`, `prefs`; `docs/rail/logic.md`);
+the gate is in `npm test` (`test/rail-gate.test.mjs`, `test/rail-docs.test.mjs`).
+
+**Not done: the Rail CSS move.** The Rail CSS is still in `plans/rail/prototype/`, so a library component in the app draws
+unstyled until step 3 below lands. The app has no `rail` flag and no Rail page yet.
+
+## The flag, and what the gates point at
+
+**The prototype has no `rail` flag and always shows Rail.** The app gets the flag in step 1. Wave 1 stops at Labs:
+`rail` is `experimental` and off (`docs/feature-flags.md`). Later stages are decided per wave.
+
+Until step 1 lands, the page checks run on the prototype over `file://`. Once it lands they also run on the app in mock mode
+with `rail` on, by URL (`run-page-sweep` and `pulse-sweep` already take one; step 1 gives `ds-check` and `worca-sweep` the
+same argument), and one pass with `rail` off shows nothing changed. Commands: `docs/rail/gate.md`.
+
+## Feature 1, tonight
+
+One Feature, in this order. Each step is one or more slices, one PR per slice, built on `docs/rail-agreed`:
+
+1. **The flag.** `rail` in `src/shared/flags/registry.mjs`: `experimental`, off. `ui/public/design-system/rail-retires.json`
+   with its freeze test: a slice that replaces an old part lists it, and a test fails any new use of a listed part.
+2. **The tokens.** A layer scoped under `:root[data-rail]`, with `--sans` left as Poppins until graduation
+   (`agreed/decisions-1.5b.md`, D6).
+3. **The Rail CSS moves** from `plans/rail/prototype/design-system/` into `ui/public/` parts, listed in `ui/public/parts.json`,
+   named by `docs/split-by-feature.md`. Scoped so **nothing changes with the flag off**: `rail-look.css` sets tokens on a
+   bare `:root` with `--sans:Inter`, and `rail.css` restyles shared classes (`.menu`, `.btn`, `.tabs`) at its top level, so
+   both move under `:root[data-rail]` and `--sans` is dropped; new classes (`set-row`, `list-row`, `side-menu`) need no scope.
+   The prototype reads the parts through `app.css` and sets `data-rail` on its own page, so it keeps showing Rail.
+4. **Rail colours on today's pages**, behind the flag: the palette and one surface for page and card.
+5. **The shell and navigation.** `docs/rail/navigation.md`, the prototype's `shell/`.
+6. **Settings.** `docs/rail/settings.md`, the prototype's `settings/`. A page draws Rail or its old self behind one
+   `flagOn('rail')` at its entry, never mixed inside a component. Needs: **daily budget reset** (today weekly or monthly,
+   `costLimitResetPeriod`); **Gemini quota** (set by the person, counted by Worca).
+
+| Today | Becomes |
 |---|---|
-| The run page and the group page | Rail, as in the prototype (`index.html`) |
-| Pulse: Vitals and Updates, the usage rings, Usage and costs, what a start does near a limit | Rail (`pulse.html`, `pulse.md`) |
-| Settings: every section, opened from the profile menu | Rail (`pulse.html` › Settings, `settings-model.js`) |
-| Every other page (Runs list, Chats, Schedules, Projects, Statistics, the Add-ons' own pages) | Today's design, with the Rail colours and surfaces: the palette and one surface for page and card; Poppins stays until graduation (`agreed/decisions-1.5b.md`, D6) |
-| What the design promises and the app cannot do yet | Built: each gap is its own slice, with its backend (new APIs, calls, events), after the surface that needs it; the surface ships with a clear stand-in until it lands |
+| `design-system/rail-look.css` | `ui/public/design-system/rail-look.css` |
+| `design-system/rail.css` › components | `ui/public/design-system/` parts by kind (`rail-controls.css`, `rail-rows.css`, `rail-feedback.css`) |
+| `design-system/rail.css` › the run and group page | `ui/public/runs/` parts (`rail-run-card.css`, `rail-run-tabs.css`, `rail-create-pr.css`) |
+| `pulse/pulse.css` › the panel, New run near a limit | `ui/public/pulse/` parts (a new feature folder) |
+| `pulse/pulse.css` › Settings' page | `ui/public/settings/` parts |
 
-Out of scope: anything the design does not cover.
+## The Features after it
 
-## How Worca receives it
+One each, only after the person has reviewed the one before. Worca does not continue to the next by itself.
 
-**One Feature, sliced.** One requirement; Worca's planner cuts it into ordered runs, one PR per slice, each passing
-the gates. The plan is approved once. Each PR follows the project's way: an issue, then a PR into `dev`, linked; a
-feature flag only for a big feature (the surfaces), never for a small one.
+- **Feature 2: Pulse.** `docs/rail/`, `plans/rail/pulse.md`, the prototype's `pulse/`. Needs: **usage feed**.
+- **Feature 3: the run and group pages.** `docs/rail/thing-page.md`, the prototype's `runs/`. Needs: **Merge**, **Fix checks**,
+  **Re-run checks**, **Restart Build**. Each gap ships after its surface, with a clear stand-in until then. The other
+  new actions are `PROPOSED` in `runs/run-page-model.js`.
 
-## Enrollment: one flag, opt-in first
+**Not in Wave 1: the Runs list and the Chats column.** They are in the prototype as reference for Wave 2. Today's design stays.
 
-One flag, `rail`, for the whole wave: the Rail colours everywhere and the three surfaces, so there are two states to
-test (today's Worca, or Wave 1), never a mix nobody designed. It follows Worca's flag lifecycle
-(`docs/feature-flags.md`):
+## Checks
 
-1. **Labs (opt-in):** `experimental`, off. A Worca turns it on in Settings › Labs (a Labs switch applies to everyone using
-   that Worca). Every slice merges into `dev` behind it while it is off; the team dogfoods it.
-2. **Switchover:** `beta`, on for everyone; Settings › Labs switches back, for one release cycle.
-3. **Retiring:** forced on, no way back.
-4. **Graduation:** one PR removes the flag and the old design (below).
+**Inside a run, small checks only:** the library's tests, `rail-gate`, `rail-docs`, and the checks of the page it touched.
+**Once per page, after it is built, never inside a run:**
+1. The prototype-vs-app comparison (below).
+2. The audit by looking: open every control and judge the page as a person would.
+3. A person's review.
 
-## The old design leaves in one PR
+**Nothing pushes or merges without the person's yes.**
 
-Wave 1 keeps the old and the new apart, so retiring the old is a deletion, not a hunt:
+**The comparison (a step for Wave 1, to build small).** Prototype against app, about 15 key cases, wide and narrow.
+It covers only what is enrolled in one small file, `plans/rail/compare-pages.json`: it starts with the shell and Settings,
+and a page joins when its Feature is built (Pulse, then the run and group pages). Later pages join only after their wave is
+shaped and built. Captured pages and the reference Runs list and Chats column are not compared: the prototype does not hold
+their final design. A gap outside the file is not a failure. Starting point, read-only: `tools/rail-compare-*.mjs` on
+`backup/rail-wave-1-fix-slice-1`. That version was too heavy.
 
-- **Rail is a layer.** The Rail colours and surfaces are a token layer on today's values; every Rail rule that restyles a
-  shared class (`.menu`, `.btn`, `.tabs`, a dialog's card) is scoped to `:root[data-rail]`. New classes (`set-row`,
-  `list-row`, `side-menu`…) need no scope: today's pages never use them.
-- **One branch per surface.** A page draws its Rail version or its old one behind one `flagOn('rail')` check at the
-  page's entry, never mixed inside a component.
-- **What retires is listed as it retires.** The slice that replaces an old part (a CSS part in `parts.json`, a markup part,
-  a view, a function) adds it to `ui/public/design-system/rail-retires.json` with the Rail part that replaces it. A test
-  fails any new use of a listed part, so the old design cannot grow during the wave.
-- **Graduation** deletes the flag and its checks (the flags tests already demand it), every listed part, and the
-  `:root[data-rail]` scopes; the Rail token values become the base tokens.
+## Wave 1's additions
 
-## The library and the files: aligned with the split
+Not yet in the library. A Feature adds each first, as `docs/rail/build.md` says: the drawer, the icon rail, a form's problem
+note, Sign in again.
 
-Rail follows the app's file layout (`docs/split-by-feature.md`, #919) like any other code; nothing lives beside it.
+## Open
 
-- **The components** are code in `ui/public/design-system/components/` (already), exported by its `index.mjs`, with their
-  tests in `test/`. The app imports them; the prototype bundles the same files. One source.
-- **The CSS** moves out of the prototype into `ui/public/FEATURE/PART.css` parts, listed in `ui/public/parts.json`, named by
-  the split's rules (what it holds, at least 2 words, no numbers, no generic words; 150–500 lines, cap 1,000; a section
-  under 40 lines joins its neighbour). The prototype then reads them through `app.css` like the rest. The map:
+Left out on purpose, each over an hour or needing a decision:
 
-  | Today (prototype) | Becomes |
-  |---|---|
-  | `rail-look.css` (tokens, surfaces, motion timings) | `ui/public/design-system/rail-look.css` |
-  | `rail.css` › components (status line, menus, strip, rows, lists, side menu, search, dialog, field, landing) | `ui/public/design-system/` parts by kind, such as `rail-controls.css`, `rail-rows.css`, `rail-feedback.css` |
-  | `rail.css` › the run and group page (card, stepper, tabs, Create PR) | `ui/public/runs/` parts, such as `rail-run-card.css`, `rail-run-tabs.css`, `rail-create-pr.css` |
-  | `pulse.css` (the panel, rings, New run near a limit) | `ui/public/pulse/` parts (a new feature folder) |
-  | `pulse.css` › Settings' page | `ui/public/settings/` parts |
-- **Markup** a Rail page needs is a part `ui/public/FEATURE/PART.html` named by its view; most Rail markup is built by the
-  components in JS.
-- **New APIs** for the missing functionality are routes in `ui/routes/FEATURE/AREA.mjs`, registered by the feature's
-  `index.mjs`, never in `ui/server.mjs`.
-- **The gates run in the app's test suite**, not only in the prototype: the component tests; the names, heads and
-  alignment checks on the Rail pages with the flag on; the freeze on retired parts; and the split's own checks
-  (`node tools/split-by-feature.mjs --check`, `test/split-by-feature-file-names.test.mjs`, `test/public-assets.test.mjs`).
-
-## Handed over (4 Nov)
-
-Note (6 Nov): Agreed now holds the library complete and the shared logic, so slice 2 below is done there; the Wave 1 redo starts from that base.
-
-The prototype of all of Worca (`plans/rail/prototype/index.html`) and the design system as the source (rules,
-catalog, the components in code with their tests and gallery, the gates) are on `feat/rail-components`. Wave 1 goes to
-Worca's Shaper from that branch as one Feature; Shaper writes the inventory of the missing functionality and the
-outline. The proposed slices, in order (the Planner may merge or reorder them; never more than 8):
-
-1. **Foundation:** the `rail` flag (Labs, off); the Rail tokens as a layer under `:root[data-rail]`;
-   `ui/public/design-system/rail-retires.json` with its freeze test; the gates (ds-check: controls, names, heads,
-   alignment) in the app's test suite with the flag on.
-2. **The library complete and in place:** the 7 catalog components not yet in code (OptionList, Checkbox, Chip,
-   ListEditor, SuggestionField, Stepper, TagGroup), each with its test and gallery example; the Rail CSS moved into
-   `ui/public/` parts by the split's rules (the map above), the prototype reading them through `app.css`.
-3. **Rail colours everywhere:** today's pages take the palette and the one surface for page and card, behind the flag.
-4. **The shell and navigation:** the sidebar holds places only; Settings opens from the profile menu; Pulse in the top
-   bar; the trail is the one way back; the address is the page (Navigation: one model).
-5. **Settings:** every section on SettingsSection, SettingsRow and SideMenu; its search lands on every row; Team policy,
-   Plugins, Connectors, Models and Providers move into it.
-6. **Pulse:** Vitals and Updates, the usage rings, Usage and costs, what a start does near a limit.
-7. **The run and group pages:** the Rail run page (status line, stepper, tabs by exception, Figures, Create PR, the place
-   line, including a run on its source branch).
-8. **The gaps:** each piece of missing functionality with its backend, after the surface that needs it (that surface
-   ships a clear stand-in until it lands).
-
-Each slice passes `npm test` and the gates, at 375 and 900px in both themes, with the flag on and off.
-
-## Decided
-
-- Hand-off: one Feature, sliced (4 Nov).
-- Pages outside the scope in the prototype: today's look in the new colours (4 Nov).
-- Rail colours everywhere: the colours and the one-surface look; the type stays (4 Nov).
-- Missing functionality: inventoried, one slice each with its backend, after its surface, with a stand-in until it
-  lands (4 Nov).
-- Enrollment: one `rail` flag for the wave, Labs opt-in first, then switchover, retiring, graduation (4 Nov).
-- The old design leaves in one PR: a scoped Rail layer, one flag check per surface, the retire list and its freeze test
-  (4 Nov).
-- The library and the Rail CSS follow the split's layout and names; the gates run in the app's test suite (4 Nov).
-- A setting or a place: the Marketplace store stays a place in the sidebar; installed plugins, Connectors, Models,
-  Providers and Team policy are Settings. The sidebar keeps the places: Chat, Runs, Schedules, Statistics, Team
-  metrics · Build: Workflows, Requirements, Marketplace · Manage: Projects, Workspaces (4 Nov).
-- Navigation: one model in the design system; a thing opens as a full page, never beside its list; the trail is the one
-  way back on screen, the browser's back returns from a jump (4 Nov).
+- **rail-gate's class list** is by hand: the catalog does not hold classes, so generating it means adding them there first.
+- **"Held by" proves a check exists, not that it holds the rule:** grepping each rule's subject in its check.
+- **The catalog restates `docs/rail/`** in its `patterns`, `actions` and `howToBuild`: cut it to need, component, code.
+- **Rows outside `row()`:** `fileRow`, `stackedPrRow`, and `pulseRow` (its time in the text, no ⋯).
+- **Pickers:** picks report as `data-menu-pick` or `data-pick`; one attribute means touching every page's handler.
+- **Toast:** `warn` and `error` that stay, and a `toast()` that takes Undo: `pulse.js` still writes it by hand.
+- **Exports outside the catalog** (about 130, by `HELPERS` in `test/rail-docs.test.mjs`): promote `moreMenu`, `splitButton`,
+  `statusDot`, `confirmForm`, `selectAllBox`, `toastUndo`; drop what no page calls (`isLiveStep`, `selectCount`, `chordId`).
+- **Library shape:** keys and the shortcuts sheet in one module, `prefs` a global store holding provider connection, icons
+  passed in as SVG with their own stroke widths, `pd-`/`rc-`/`pz-` classes on generic components.
+- **By-hand rules that could be checked cheaply:** `small.no-emoji`, `motion.fade`, `list.row-one-target`.

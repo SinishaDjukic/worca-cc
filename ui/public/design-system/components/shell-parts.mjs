@@ -55,7 +55,7 @@ export function navItem({ label, icon, current = false, off = false, title = '',
 }
 
 /**
- * The sidebar's foot: the avatar and name that open the account menu.
+ * The sidebar's foot: the avatar and name that open the profile menu.
  * @param {object} o
  * @param {string} o.name
  * @param {string} o.avatar   markup: the avatar and its rings
@@ -84,4 +84,18 @@ export function accountButton({ name, avatar, chevron, label, away = false, open
 export function topBarAction({ label, icon, labelCls, kind = '', full = false, badge = null, cls: c = '', title = '', attrs: a = {} }) {
   const look = cls('btn', !full && 'btn-sm', kind && `btn-${kind}`, c);
   return `<button type="button" class="${look}"${attrs({ ...a, title: title || null })}>${icon}<span class="${labelCls}">${esc(label)}</span>${badge ? `<span class="topnav-badge"${attrs({ 'data-tone': badge.tone })}>${esc(badge.n)}</span>` : ''}</button>`;
+}
+
+/**
+ * PanelFrame: what lies under a top-bar button, over any page: a head that stays, a body that scrolls, a foot if it has one.
+ * Where it sits is the page's (`cls`). Closing is dismissOnOutside's.
+ * @param {object} o
+ * @param {string} o.label  what it is (aria-label)
+ * @param {string} o.head   Tabs, and its ⋯ at the right
+ * @param {string} o.body
+ * @param {string} [o.foot]
+ * @param {string} [o.cls]
+ */
+export function panelFrame({ label, head, body, foot = '', cls = '' }) {
+  return `<div class="panel-frame${cls ? ' ' + cls : ''}" role="dialog"${attrs({ 'aria-label': label })}><div class="panel-head">${head}</div><div class="panel-body">${body}</div>${foot}</div>`;
 }

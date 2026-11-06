@@ -341,7 +341,23 @@ test('sideMenu, backLink, search: the place\'s menu with its current section, it
   assert.equal(dom(C.searchResults([], 'No setting matches')).querySelector('[aria-disabled="true"]').textContent, 'No setting matches');
 });
 
-test('land and dialog hooks: the target lights once and comes into view; a Dialog carries the page\'s hooks and class', () => {
+test('the library takes real addresses and knows no page: a Trail step and a PR link go where they are told', () => {
+  assert.equal(dom(C.trail({ items: [{ label: 'Runs', href: '#runs' }, { label: 'x' }] })).querySelector('a').getAttribute('href'), '#runs');
+  const place = dom(C.workPlace({ branch: 'feat/x', base: 'dev', pr: '#9', prUrl: 'https://git.example/9', host: 'GitLab', copy: true, prAttrs: { 'data-p': '1' } }));
+  const pr = place.querySelector('.rc-pr');
+  assert.equal(pr.getAttribute('href'), 'https://git.example/9'); assert.equal(pr.getAttribute('title'), 'Open #9 on GitLab'); assert.equal(pr.dataset.p, '1');
+  assert.equal(place.querySelector('[data-say]'), null);
+});
+
+test('usageRing and panelFrame: a ring shows its share and its warning line; a panel is its head and a body that scrolls', () => {
+  const ring = dom(C.usageRing({ pct: 130, warnAt: 80, tone: 'over', cls: 'x' }));
+  assert.match(ring.getAttribute('style'), /--p:100;--w:80/); assert.ok(ring.classList.contains('is-over')); assert.ok(ring.classList.contains('x'));
+  const p = dom(C.panelFrame({ label: 'Pulse', head: '<i></i>', body: '<b></b>', foot: '<u></u>', cls: 'y' }));
+  assert.equal(p.getAttribute('aria-label'), 'Pulse'); assert.ok(p.classList.contains('y'));
+  assert.ok(p.querySelector('.panel-head i') && p.querySelector('.panel-body b') && p.querySelector(':scope > u'));
+});
+
+test('land and dialog hooks: the target lights once, comes into view and takes focus; a Dialog carries the page\'s hooks and class', () => {
   const { window } = new JSDOM('<div id="t"></div>');
   let scrolled = null; const t = window.document.getElementById('t');
   t.scrollIntoView = (o) => { scrolled = o; };
@@ -349,6 +365,9 @@ test('land and dialog hooks: the target lights once and comes into view; a Dialo
   C.land(t);
   assert.ok(t.hasAttribute('data-landed'));
   assert.equal(scrolled.block, 'center');
+  assert.equal(window.document.activeElement, t);   // it takes the focus, and only scrollIntoView moves the page
+  let opts = null; const b = window.document.createElement('button'); window.document.body.append(b); b.focus = (o) => { opts = o; }; C.land(b);
+  assert.deepEqual(opts, { preventScroll: true });
   const d = dom(C.dialog({ title: 'Create PR', body: '', yes: 'Create PR', cls: 'is-wide', hooks: { yes: { 'data-pd': 'ok' }, cancel: { 'data-pd': 'cancel' } } }));
   assert.ok(d.querySelector('.card.dlg.rl-dialog.is-wide'));
   assert.equal(d.querySelector('[data-dialog="yes"]').dataset.pd, 'ok');

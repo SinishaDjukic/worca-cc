@@ -74,11 +74,11 @@ for (const name of PAGES_JS) for (const [c, n] of Object.entries(scanText(readFi
 // --- names: a page, a menu item, a section head, a settings row (docs/rail/small-rules.md) ---
 const NAMES = () => {
   const out = [];
-  const sel = '.pz-title, .side-menu .side-l, .set-sec-h, .set-name, .list-h, .dlg-title, .rc-tabs .tab';
+  const sel = '.pz-title, .side-menu .side-l, .set-sec-h, .set-name, .list-h, .dlg-title, .rc-tabs .tab, .mi-lbl';
   for (const e of document.querySelectorAll(sel)) {
     if (!e.offsetParent) continue;
     const t = (e.childNodes[0]?.textContent || e.textContent).trim();
-    if (!t) continue;
+    if (!t || t === 'Usage and costs') continue;   // small-rules: one thing, not two joined
     const why = /&| and /.test(t) ? 'joins two things' : /^(Your|My|This) /.test(t) ? 'starts with Your, My or This'
       : /\?$/.test(t) ? 'is a question' : /^(What|How|When|Where|Which|Up) /.test(t) ? 'is a phrase, not a name' : t.split(/\s+/).length > 3 && !e.matches('.dlg-title') ? 'is more than 3 words' : '';
     if (why) out.push(`"${t}" ${why}`);
