@@ -73,13 +73,15 @@ export function redactTryLog(file, redactor) {
   return redactTryLogOnce(file, redactor) === 'rewritten';
 }
 
-/** One rewrite, then on a refused rename the retries (RENAME_RETRY_DELAYS_MS). Never rejects.
- *  @returns {Promise<'rewritten'|'unchanged'|'failed'>} */
-export async function redactTryLogRetrying(file, redactor) {
+/** One rewrite, then on a refused rename the retries (RENAME_RETRY_DELAYS_MS). Never rejects. Re-review 2 (n3): `stop()`,
+ *  asked before each retry, ends them ('stopped'): a spawn that joined the log may be appending, and its end rewrites it.
+ *  @returns {Promise<'rewritten'|'unchanged'|'failed'|'stopped'>} */
+export async function redactTryLogRetrying(file, redactor, { stop = null } = {}) {
   let r = redactTryLogOnce(file, redactor);
   for (const ms of RENAME_RETRY_DELAYS_MS) {
     if (!r || typeof r !== 'object') break;
     await sleepFn()(ms);
+    if (stop && stop()) return 'stopped';
     r = redactTryLogOnce(file, redactor);
   }
   return r && typeof r === 'object' ? 'failed' : r;
@@ -93,11 +95,12 @@ const keyOf = (file) => { const p = resolve(file); return process.platform === '
 async function settle(key) {
   const e = logs.get(key);
   if (!e || e.active > 0) return;
+  if (!e.redactors.size) { if (!e.running) logs.delete(key); return; }   // n3: only spawns with nothing to redact
   if (e.running) { e.again = true; return; }
   let out;
   do {
     e.again = false;
-    e.running = redactTryLogRetrying(e.file, combined(e.redactors));   // its first try runs now, synchronously
+    e.running = redactTryLogRetrying(e.file, combined(e.redactors), { stop: () => e.active > 0 });   // its first try runs now, synchronously
     out = await e.running;
     e.running = null;
   } while (e.again && e.active === 0 && out !== 'failed');
@@ -115,15 +118,17 @@ async function settle(key) {
 /**
  * A spawn starts writing to the try log `file` with `redactor`: counted, its redactor held. Returns the release to call
  * once (more calls do nothing) when the spawn has ended; the release of the last active spawn rewrites the log through
- * every redactor held (synchronously on a first try that works, the retries later). Never throws.
+ * every redactor held (synchronously on a first try that works, the retries later). Never throws. Re-review 2 (n3): a spawn
+ * with no redactor (null: nothing of its own to redact) is counted too, since it may still append while another's end
+ * would rewrite the log; and the retries stop once a new spawn joins.
  * @returns {() => void}
  */
 export function openTryLog(file, redactor) {
-  if (typeof file !== 'string' || !file || !redactor) return () => {};
+  if (typeof file !== 'string' || !file) return () => {};
   const key = keyOf(file);
   const e = logs.get(key) || { file, active: 0, redactors: new Set(), running: null, again: false, warned: false };
   e.active++;
-  e.redactors.add(redactor);
+  if (redactor) e.redactors.add(redactor);
   logs.set(key, e);
   let released = false;
   return () => {

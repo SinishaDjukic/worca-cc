@@ -879,7 +879,8 @@ export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, perm
     let detachBridge = () => {};
     // Task 5 (M13): the try's connector-calls log, redacted like this spawn's transcript once the spawn ends.
     // Fix review I-1: counted per log file, so the log is rewritten once, when the LAST spawn writing to it has ended.
-    const redactLog = redactor && tryGuard && typeof tryGuard.logFile === 'string' ? openTryLog(tryGuard.logFile, redactor) : () => {};
+    // Re-review 2 (n3): every spawn writing to it is counted, one with no redactor too (it may still append).
+    const redactLog = tryGuard && typeof tryGuard.logFile === 'string' ? openTryLog(tryGuard.logFile, redactor) : () => {};
     try {
       if (plan.staged) {
         console.warn(`[worca] claude argv would be ${plan.inlineLength} chars (limit ${limit}): prompt on stdin, system prompt/settings as files`);

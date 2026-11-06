@@ -536,6 +536,65 @@ test('I-1: runClaudeProcess holds the log while a sibling spawn on it still runs
   } finally { _testing.reset(); }
 });
 
+test('re-review 2 n3: a spawn with no redactor still counts: the log is not rewritten while it may still append', async () => {
+  const log = join(tmp(), 'connector-calls.ndjson');
+  writeFileSync(log, callLine('a sk-ant-counted-secret-1'));
+  const relA = openTryLog(log, createRedactor(['sk-ant-counted-secret-1']));
+  const relB = openTryLog(log, null);   // a fan-out sibling with nothing to redact
+  relA();
+  await ticks();
+  assert.match(readFileSync(log, 'utf8'), /sk-ant-counted-secret-1/, 'B still runs: not rewritten yet');
+  appendFileSync(log, callLine('b plain'));
+  relB();
+  await ticks();
+  assert.deepEqual(readFileSync(log, 'utf8').trim().split('\n').map((l) => JSON.parse(l).arguments.text), ['a [redacted]', 'b plain']);
+  assert.equal(pendingTryLogRedactor(log), null);
+  const lone = openTryLog(log, null);   // only spawns with no redactor: nothing to rewrite, nothing held
+  lone();
+  await ticks();
+  assert.equal(pendingTryLogRedactor(log), null);
+});
+
+test('re-review 2 n3: runClaudeProcess counts a sibling spawn that has no redactor', async () => {
+  const d = tmp();
+  const log = join(d, 'connector-calls.ndjson');
+  writeFileSync(log, callLine('x sk-ant-nored-secret-01'));
+  const ends = [];
+  _testing.set({ superviseSpawn: (o) => new Promise((res) => { ends.push(() => { o.cleanup(); res({ text: '' }); }); }) });
+  try {
+    const a = runClaudeProcess({ cwd: d, prompt: 'p', allowedTools: ['Read'], tryGuard: { logFile: log }, redactValues: ['sk-ant-nored-secret-01'], onEvent: () => {} });
+    const b = runClaudeProcess({ cwd: d, prompt: 'p', allowedTools: ['Read'], tryGuard: { logFile: log }, onEvent: () => {} });
+    ends[0]();
+    await a;
+    await ticks();
+    assert.match(readFileSync(log, 'utf8'), /sk-ant-nored-secret-01/, 'the sibling with no redactor still runs: not rewritten');
+    ends[1]();
+    await b;
+    await ticks();
+    assert.doesNotMatch(readFileSync(log, 'utf8'), /sk-ant-nored-secret/);
+  } finally { _testing.reset(); }
+});
+
+test('re-review 2 n3: the rename retries stop once a new spawn joins (its end rewrites the log)', async () => {
+  const log = join(tmp(), 'connector-calls.ndjson');
+  writeFileSync(log, callLine('sk-ant-joined-secret-01'));
+  let calls = 0;
+  let busy = true;
+  let joined = null;
+  tryLogTesting.set({ rename: (a, b) => { calls++; if (busy) throw Object.assign(new Error('busy'), { code: 'EPERM' }); renameSync(a, b); },
+    sleep: async () => { if (!joined) joined = openTryLog(log, createRedactor(['sk-ant-joined-secret-02'])); } });
+  try {
+    openTryLog(log, createRedactor(['sk-ant-joined-secret-01']))();
+    await ticks();
+    assert.equal(calls, 1, 'no retry after the new spawn joined');
+    assert.match(readFileSync(log, 'utf8'), /sk-ant-joined-secret-01/);
+    busy = false;
+    joined();
+    await ticks();
+    assert.equal(JSON.parse(readFileSync(log, 'utf8')).arguments.text, '[redacted]', 'the joiner\'s end rewrote it, through both redactors');
+  } finally { tryLogTesting.reset(); }
+});
+
 // ── Task 5 fix review (concern 8): a canary catches a --settings file Claude Code silently dropped ────────────────────────
 const settingsOfArgs = (args) => { const v = args[args.indexOf('--settings') + 1]; return JSON.parse(v.startsWith('{') ? v : readFileSync(v, 'utf8')); };
 const canaryMarkOf = (settings) => {
