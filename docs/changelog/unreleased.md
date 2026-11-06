@@ -3,6 +3,20 @@
 Notes on merged features that have no release page yet. `/worca-changelog` folds
 them into the next page and empties this file.
 
+## A lighter Requirements card
+
+**The Shaper's Requirements card now says what each persona wants, and why.**
+
+The decisions come first, with their answers stacked under each question, and an answer a perspective asked for carries its reason: `Security: emails are personal data, and exports get forwarded`. The agreed requirements fold into one line, `8 agreed · Product 2 · Engineering 1 · …`, and open grouped by perspective with your own first; ids move to the tooltip and to screen readers. The disc, the question numbers, the `Answered` pill and `Worca's picks marked` are gone. When a requirement fails its check, the fold opens by itself with that row first and **Ask for changes** becomes the primary. While the field is open, **Send changes** is the only primary. It reads the same in the chat run card, on the run page and on the feature page.
+
+Chips: decisions first · persona and reason · agreed fold · grouped by persona · one primary · three hosts
+
+Read it: [Shape it first](../shape-it-first.md)
+
+Pull requests (add each number when it opens):
+
+- A lighter Requirements card
+
 ## Set your roles once
 
 **Pick your models in the setup assistant. Everything else follows.**

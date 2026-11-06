@@ -332,7 +332,7 @@ import { renderReleaseRow } from './shape/release-row.mjs';
 import { featureFocusOf, focusFeatureControl, featureMenuItems } from './shape/feature-actions.mjs';
 import { decorateShapingQuestions } from './shape/questions.mjs';
 import { isShapingRun, shaperWait } from './shape/plan-text.mjs';
-import { stepChip, stepTitle, isStepCard, renderGateCard, renderRecoveryCard, questionFocusTarget } from './shape/step-card.mjs';
+import { stepChip, stepTitle, isStepCard, renderGateCard, renderRecoveryCard, questionFocusTarget, answerFieldOpen } from './shape/step-card.mjs';
 import { installInputMode } from './input-mode.mjs';
 import { noteAnswer, forgetAnswer } from './shape/step-receipt.mjs';
 import { renderChecklistGroups } from './shape/checklist-view.mjs';
@@ -31712,7 +31712,7 @@ function runAction(ref0, id, btn = null, m = null) {
  *  click (stepSender's busy guard stops a second post). Any other Answer takes the person to the question. */
 function answerOrApprove(btn, ref = {}) {
   const root = (btn && btn.closest('.chat-rc, .gpage, .rd')) || document;
-  const own = root.querySelector('.qpanel:not(.hidden) .plan-actions .btn-primary:not([disabled])');
+  const own = root.querySelector('.qpanel:not(.hidden) .plan-actions:not([hidden]) .btn-primary:not([disabled])');
   if (own && btn && btn.textContent === own.textContent) { own.click(); return undefined; }
   return focusQuestionOf(btn, ref);
 }
@@ -36064,7 +36064,7 @@ function paintRdStatus(screen, r) {
 /** Run 4 (D2): the bar's Answer names the waiting card's own primary ("Approve 2 runs", "Approve and build"). Read from
  *  the card, so it follows the person's merges and removals; '' (→ "Answer") for a Clarify, gate or form ask. */
 function answerLabelOf(root) {
-  const own = root && root.querySelector('.qpanel:not(.hidden) .plan-actions .btn-primary');
+  const own = root && root.querySelector('.qpanel:not(.hidden) .plan-actions:not([hidden]) .btn-primary');
   return own ? own.textContent : '';
 }
 /** Slice 2: offer and gate the live ⋯'s Report this run, Archive and Save as preset. A finished run only (a live one
@@ -36120,6 +36120,7 @@ function paintRdActions(screen, r, m = rdModel(r)) {
     // The model reads pausing as paused, but chatRunControls.resume does nothing while the run is still live.
     disable: { 'ask-changes': "Ask for changes from the run's chat", ...(st === 'pausing' ? { resume: 'Pausing…' } : {}) },
     labels: { answer: answerLabelOf(screen.querySelector('.rd-questions')) },
+    plain: answerFieldOpen(screen.querySelector('.rd-questions')) ? ['answer'] : [],
     onAction: (id, b) => runAction({ runId: r.runId, pipelineId: r.pipelineId, title: r.title, status: st, workspaceId: r.workspaceId || null }, id, b, m),
   });
   if (split) split.hidden = !!pause && pause.hidden;      // the split wrapper follows its button

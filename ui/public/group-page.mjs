@@ -8,6 +8,7 @@ import { fmtUsd } from './graph/run-decor.mjs';
 import { groupKindWord, pageModel, paintCrumbs, buildFacts, setFactText, factRow, syncFacts, GROUP_FACTS } from './run-page-head.mjs';
 import { icon } from './icons.mjs';
 import { groupHead } from './run-head.mjs';
+import { answerFieldOpen } from './shape/step-card.mjs';
 
 export const GROUP_TABS = Object.freeze([['runs', 'Runs'], ['overview', 'Overview'], ['decisions', 'Decisions'], ['logs', 'Logs']]);
 const el = (doc, tag, cls, text = '') => { const e = doc.createElement(tag); if (cls) e.className = cls; if (text) e.textContent = text; return e; };
@@ -163,7 +164,8 @@ export function paintGroupPage(root, view, deps) {
   // Run 4 (D2): the question is mounted first, so the bar's Answer can name the card's own primary.
   deps.mountQuestion(root.querySelector('.gpage-question'), current);
   syncActions(root.querySelector('.gpage-actions'), headerActions(m), { own: { stop }, pool: [stop], onAction: deps.onAction,
-    disable: { 'ask-changes': "Ask for changes from the run's chat" }, labels: { answer: deps.answerLabel ? deps.answerLabel() : '' } });
+    disable: { 'ask-changes': "Ask for changes from the run's chat" }, labels: { answer: deps.answerLabel ? deps.answerLabel() : '' },
+    plain: answerFieldOpen(root.querySelector('.gpage-question')) ? ['answer'] : [] });
   if (deps.paintHead) {
     deps.paintHead(root.querySelector('.gpage-card .rd-head-acts'), root.querySelector('.gpage-card .rd-pr-slot'),
       groupHead({ state: m.state, prs: groupPrList(row), unmarked: view.unmarked || 0 }));

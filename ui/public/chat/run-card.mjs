@@ -30,7 +30,7 @@ import { paintStatusDot } from '../status-dot.mjs';
 import { levelAtLeast } from '../ui-level.mjs';
 import { featureCardModel, paintFeatureLog } from '../shape/feature-card.mjs';
 import { namedAnswer, forgetAnswer, REQUIREMENTS_AGREED } from '../shape/step-receipt.mjs';
-import { isRequirementsAsk } from '../shape/step-card.mjs';
+import { isRequirementsAsk, answerFieldOpen } from '../shape/step-card.mjs';
 import { renderChecklistGroups } from '../shape/checklist-view.mjs';
 import { checkLine, roundCheck } from '../shape/plan-text.mjs';
 import { paintFeatureActions } from '../shape/feature-actions.mjs';
@@ -430,6 +430,8 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     if (row) call(controls.act, ref(), 'stop', stopBtn, lastM, row);
     else call(controls.stop, ref(), () => call(refresh));
   });
+  // A Shaper card changed its primary (the Requirements card's Ask for changes opened or closed): Answer follows it.
+  qBody.addEventListener('step-primary', () => { if (!dead && lastM) paintActions(lastM, last); });
   qBody.addEventListener('plan-answer', (e) => {
     if (!painted) return;
     planSent = e.detail && e.detail.decision === 'approve' ? { id: painted.id, kind: painted.kind, payload: e.detail } : null;
@@ -910,6 +912,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     syncActions(footActions, m, {
       own,
       skip: s && s.sameAsSource && !own.ship ? ['ship'] : [],
+      plain: answerFieldOpen(qBody) ? ['answer'] : [],
       disable: { ...(st === 'pausing' ? { resume: 'Pausing…' } : {}), ...(changesWhy ? { 'ask-changes': changesWhy } : {}) },
       onAction: (aid, b) => (aid === 'ask-changes' ? askForChanges() : call(controls.act, target(), aid, b, m, curRow)),
     });
