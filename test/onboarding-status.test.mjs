@@ -20,7 +20,7 @@ after(() => { process.env.HOME = REAL_HOME; });
 const { claudeReady, onboardingStatus } = await import('../src/core/onboarding.mjs');
 const { onboardingPrefs, setOnboardingPrefs, assertOnboardingPrefsInput } = await import('../src/core/settings.mjs');
 const { addProject } = await import('../src/core/projects.mjs');
-const { createThread } = await import('../src/core/ask/store.mjs');
+const { createThread, appendMessage, finishMessage } = await import('../src/core/ask/store.mjs');
 const { setActiveWorkflow, writeTeamPolicyPrefs } = await import('../src/core/config.mjs');
 const { projectKey } = await import('../src/core/store.mjs');
 
@@ -94,11 +94,16 @@ test('derived ticks: project, run, realRun, ask, workflows, teamPolicy (one stor
       s = await onboardingStatus();
       assert.equal(s.steps.realRun, true, 'any spend is a real run, whatever its outcome');
     } },
-    { name: 'an Ask thread ticks "ask"; a picked workflow (the persisted picker choice) ticks "workflows"', run: async () => {
+    { name: 'an answer in a chat ticks "ask", a failed turn does not; a picked workflow (the persisted picker choice) ticks "workflows"', run: async () => {
       let s = await onboardingStatus();
       assert.equal(s.steps.ask, false);
       assert.equal(s.steps.workflows, false, 'nothing picked yet');
-      createThread({ title: 'hello' });
+      const thread = createThread({ title: 'hello' });
+      const failed = appendMessage(thread.id, { role: 'assistant', status: 'streaming' });
+      finishMessage(failed.id, { status: 'error' });
+      assert.equal((await onboardingStatus()).steps.ask, false, 'a turn that failed showed nothing');
+      const ok = appendMessage(thread.id, { role: 'assistant', status: 'streaming' });
+      finishMessage(ok.id, { status: 'done' });
       await setActiveWorkflow(join(home, 'proj'), 'wf_auto');
       s = await onboardingStatus();
       assert.equal(s.steps.ask, true);

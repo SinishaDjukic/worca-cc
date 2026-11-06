@@ -2669,6 +2669,19 @@ async function _folderSizeProblem(dir, { name } = {}) {
 /** An engine refusal's message on a preset start names the preset (#712). */
 const presetEngineMessage = (presetRow, runEngine, msg) => (presetRow ? `Preset "${presetRow.name}" cannot start: Engine ${runEngine.engine}: ${msg}` : msg);
 
+/** Would a Claude run in `dir` have nothing to call? Only a definite signed-out with no endpoint or provider model
+ *  says yes (a run with an agent user signs in as that user). A remembered signed-out is re-read, so a run started
+ *  right after /login is not refused. Never throws. */
+async function claudeRunSignedOut(dir) {
+  try {
+    if (agentIdentity()) return false;
+    const bin = configuredClaudeBin();
+    if ((await probeClaudeAuth({ bin })).state !== 'signed-out') return false;
+    if ((await probeClaudeAuth({ bin, force: true })).state !== 'signed-out') return false;
+    return !(await listModels(dir)).some((m) => m && !m.needsSignIn && modelHasBaseUrlRouting(m.id));
+  } catch { return false; }
+}
+
 const startRunHandler = async (req, res) => {
   // B2: a draining server starts nothing new (the scan arm and the scheduler come through here too).
   if (DRAIN.on) return res.status(503).json(DRAIN_REFUSAL);
@@ -2961,6 +2974,12 @@ const startRunHandler = async (req, res) => {
     const engineShape = runEngineOpts(body, hasWorkspace ? { workspace: true } : { projectDir: resolveProjectDir(body.projectDir) });
     if (engineShape.error) return badRequest(res, engineShape.error);
     const runEngine = engineShape.opts;
+    // Signed out with no routed model, a Claude run can only fail on its first call: say so now, not as a paused run.
+    if (!internal && !scanTarget && body.mock !== true && !mockEnabled({}) && (runEngine.engine || 'claude') === 'claude'
+      && workflowNeedsModel(workflowRow)
+      && await claudeRunSignedOut(hasWorkspace ? '' : (resolveProjectDir(body.projectDir) || ''))) {
+      return res.status(409).json({ code: CLAUDE_SIGNED_OUT_CODE, error: CLAUDE_SIGNED_OUT_MESSAGE });
+    }
 
     // Per-run agent picks (the Ask run card's lane; docs/models.md "Per-agent models for one run"): `overlay.nodes`
     // merges PER NODE over the project's saved agent settings for THIS run only and never writes them. Checked here
@@ -6728,6 +6747,10 @@ async function pickPrRemotes(body, repoDir) {
   return { remotes, pushRemote, baseRemote, pushR: byName.get(pushRemote) || null, baseR: byName.get(baseRemote) || null };
 }
 
+/** A PR needs somewhere to push. An unreadable remote list is not "none": that case keeps its own git error. */
+const NO_REMOTE_MESSAGE = 'This project has no git remote, so there is nowhere to create a PR. Link a remote on its project page, or merge the branch locally.';
+async function hasNoRemotes(repoDir) { const r = await listRemotes(repoDir); return r.ok && r.remotes.length === 0; }
+
 // Azure DevOps and Bitbucket (for now) cannot open a PR between forks: the refusal text when the branch would be
 // pushed to another repo than such a base remote, else null. Checked BEFORE anything is pushed.
 const FORK_REFUSALS = { azure: forkRefusal, bitbucket: bitbucketForkRefusal };
@@ -6862,6 +6885,7 @@ async function createRunPr({ id, state, target, base, memberKey = null, remotes:
   const picked = await pickPrRemotes(chosen, repoDir);
   if (picked.error) return { ok: false, status: picked.status, error: picked.error };
   const { remotes, pushRemote, baseRemote, pushR, baseR } = picked;
+  if (!remotes.length && await hasNoRemotes(repoDir)) return { ok: false, status: 409, error: NO_REMOTE_MESSAGE };
   // A remote-tracking source (`origin/dev`) names the branch `dev` on the remote.
   base = await prBaseBranch(repoDir, base, remotes.map((r) => r.name));
   // Always target the chosen base repo explicitly (gh's default-repo guess prefers

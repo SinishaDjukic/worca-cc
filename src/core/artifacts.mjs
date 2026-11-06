@@ -61,6 +61,11 @@ const DIR_ID_RE = /-([0-9a-f]{8})$/i;
  * @param {string} key
  * @returns {object|null}
  */
+/** Was this run started as a mock (pipelines.run_setup)? A row without the column, or unreadable JSON: no. */
+function isMockSetup(raw) {
+  try { return JSON.parse(raw || 'null')?.mock === true; } catch { return false; }
+}
+
 export function readStoreMeta(key) {
   const row = getDb().prepare('SELECT data FROM store_meta WHERE key = ?').get(key);
   return row ? j(row.data, null) : null;
@@ -2470,6 +2475,7 @@ async function rowToHistoryEntry(row, repoDir = null, opts = {}) {
     branch: feature,
     sourceBranch: source,
     guardrailsId: row.guardrails_id ?? null,
+    mock: isMockSetup(row.run_setup),
     startedBy: row.started_by ?? null,
     pauseReason: row.pause_reason ?? null,
     pauseDetail: row.pause_detail ?? null,
@@ -2586,7 +2592,7 @@ async function listPipelinesNow(projectDir, opts, workspaceKey) {
   const dirById = await runDirIndex(pipelinesDir);
   const rows = getDb().prepare(`
     SELECT id, project_key, workspace_key, target, title, status, started_at, updated_at, total_cost_usd, total_active_ms,
-           branch, workspace_meta, guardrails_id, started_by, pr_url,
+           branch, workspace_meta, guardrails_id, run_setup, started_by, pr_url,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseReason') AS pause_reason,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseDetail') AS pause_detail,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.limitEngine') AS limit_engine,
@@ -2634,7 +2640,7 @@ export function listAllPipelines(opts = {}, cfg = {}) {
 async function listAllPipelinesNow(opts, { batchSize = 16 } = {}) {
   const rows = getDb().prepare(`
     SELECT id, project_key, workspace_key, target, title, status, started_at, updated_at,
-           total_cost_usd, total_active_ms, branch, workspace_meta, guardrails_id, started_by, pr_url, archived_at,
+           total_cost_usd, total_active_ms, branch, workspace_meta, guardrails_id, run_setup, started_by, pr_url, archived_at,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseReason') AS pause_reason,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseDetail') AS pause_detail,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.limitEngine') AS limit_engine,
@@ -2877,6 +2883,7 @@ function rowToState(row) {
     stepper: j(row.stepper, null),
     tools: j(row.tools, null),
     guardrailsId: row.guardrails_id ?? null,
+    mock: isMockSetup(row.run_setup),
     startedBy: row.started_by ?? null,
     // v31 provenance: set when a schedule started this run (NULL = started by hand).
     scheduledFor: row.scheduled_for ?? null,

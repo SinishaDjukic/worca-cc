@@ -132,9 +132,16 @@ export function headModel(f) {
   if (f.push) return { ...NONE, key: 'push', status: { line: 'Ready to ship' }, before: tryIt, cta: { state: 'push', label: pushLabel(f.pushState), title: pushTip(f.source, f.pushState),
     disabled: f.pushState?.state === 'pushed' || f.pushState?.state === 'diverged' } };
   if (m.state !== 'ready') return { ...NONE, key: m.state };             // merged into its base without a PR (inBase)
+  // A mock run's change is a placeholder: it never reads as work that is ready.
+  const readyLine = f.mock ? 'Mock run · no model was called' : `Ready to ship · not in ${base} yet`;
+  // No remote: a PR has nowhere to go, so the head offers the way to get one and the way to land it without.
+  if (f.noRemote && !pr) {
+    return { ...NONE, key: 'no-remote', status: { line: readyLine },
+      before: [...tryIt, btn('merge-local', 'How to merge')], after: [btn('link-remote', 'Link remote', { primary: true })] };
+  }
   const cta = f.prInput === 'PENDING' ? { state: 'pending' } : f.canCreatePr ? { state: 'create' } : null;
   if (s === 'CLOSED') return { ...NONE, key: 'pr-closed', status: { line: 'Ready to ship · the PR was closed' }, before: tryIt, cta };
-  return { ...NONE, key: 'ready', status: { line: `Ready to ship · not in ${base} yet` }, before: tryIt, cta };
+  return { ...NONE, key: 'ready', status: { line: readyLine }, before: tryIt, cta };
 }
 
 function workspaceHead(f) {
@@ -311,7 +318,7 @@ function prRoute(f) {
     const line = ended || merged ? 'Not opened'
       : g ? `Opens from the ${g.kind}'s Ship card once all ${g.total} runs are done`
         : live ? 'Opens when the changes are done'
-          : f.prInput === 'PENDING' ? 'Opening' : f.canCreatePr ? `Not opened yet · ${CREATE_PR_LABEL} from the button above` : 'Not opened';
+          : f.prInput === 'PENDING' ? 'Opening' : f.noRemote ? 'Needs a git remote' : f.canCreatePr ? `Not opened yet · ${CREATE_PR_LABEL} from the button above` : 'Not opened';
     rows.push(row('pr', 'future', txt('Pull request'), txt(line)));
   }
   const tLine = merged ? 'Merged here'

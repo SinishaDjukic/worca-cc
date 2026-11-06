@@ -94,7 +94,7 @@ import { alreadyApplied, noteBoot } from './ws-seq.mjs';
 import { createAlerts, mountAlertsCard } from './alerts.mjs';
 import { createConnection, paintConnectionBanner } from './connection-state.mjs';
 import { actionError, httpError } from './action-errors.mjs';
-import { paintWhatsNew } from './whats-new.mjs';
+import { paintWhatsNew, markWhatsNewSeen } from './whats-new.mjs';
 import { createLogDrawer } from './log-drawer.mjs';
 import { mountRunsResize } from './runs-resize.mjs';
 import { decorFromState, applyDecor, isGraphManifest, ledgerRows } from './graph/run-decor.mjs';
@@ -8012,6 +8012,7 @@ function renderProjectOptions(selectName, { quiet = false } = {}) {
   const idx = state.projects.findIndex((p) => p.name === want);
   if (keepAdd) add.selected = true;
   else if (idx >= 0) el.projectSelect.selectedIndex = idx + 1; // +1 past the placeholder
+  else if (state.projects.length === 1 && state.projects[0].exists) el.projectSelect.selectedIndex = 1;   // nothing to choose between
   else placeholder.selected = true;
 
   // quiet: only New run's own project choice reloads its state (Workspace / No project hide the select)
@@ -12962,6 +12963,7 @@ setInterval(() => { if (document.querySelector('.sync-checked:not([hidden])')) p
 // Coalesced: Sync all and the background refresh emit one project-sync-changed per project.
 const SYNC_CHIPS_MS = 300;
 let syncChipsTimer = null;
+const syncChipsWaiters = new Set();   // open run heads waiting for the first status read
 let syncChipsLoaded = false;   // the Branch cards say "checking…" until the first status read lands
 const syncChipsAwait = new Set();   // keys converted by Use git whose new block has not landed yet
 let syncChipsBusy = false;
@@ -12981,6 +12983,8 @@ function refreshSyncChips() {
       syncChipsLoaded = true;
       syncChipsAwait.clear();
       paintSyncChips();
+      for (const repaint of syncChipsWaiters) repaint();
+      syncChipsWaiters.clear();
     } catch { /* the chips keep their last state */ }
     finally {
       syncChipsBusy = false;
@@ -14169,7 +14173,8 @@ function openProjectAddModal(path, { mode = 'folder', onAdded = null } = {}) {
   void refreshGit().then((on) => { if (!on && projAddMode === 'clone' && !cloneFollow) setProjAddMode('folder'); });
   el.projAddPath.value = path || '';
   el.projAddName.value = path ? basenameOf(path) : '';
-  el.projAddGit.checked = false;
+  el.projAddGit.checked = mode === 'new' && gitOn();
+  projAddAutoName = el.projAddName.value;
   el.projAddDetect.replaceChildren();
   el.projAddDetect.hidden = true;
   projAddAction = null; if (el.projAddRoot) el.projAddRoot.hidden = true;
@@ -14213,19 +14218,27 @@ let projAddRefused = false;  // the live check refused: Create project / Add pro
 let projAddSeq = 0;          // the live check's sequence: a stale answer is dropped
 let projAddTimer = null;
 let projAddProbed = null;    // the folder path the probe last answered for: Folder's Add waits for it
+let projAddAutoName = '';   // the Name the Folder path proposed: a name typed over it is the user's and stays
 let projAddAction = null;   // #693: the Folder pane's Add <root> / Open <name> action, or null
 
 function setProjAddMode(mode) {
   const prev = projAddMode;
   // A clone already running keeps its tab (its progress line) even when git went missing meanwhile.
   projAddMode = mode === 'clone' && el.projAddClonePane && (gitOn() || cloneFollow) ? 'clone' : mode === 'folder' ? 'folder' : 'new';
-  if (projAddMode !== prev) el.projAddGit.checked = false;   // Use git is off on every segment until asked there (U11)
+  // Use git starts on for a new project (runs get branches and PRs); a folder that exists is never turned into a repo unasked.
+  if (projAddMode !== prev) {
+    el.projAddGit.checked = projAddMode === 'new' && gitOn();
+    // The tab's own default is not an edit: an untouched dialog still closes without asking.
+    if (!el.projAddName.value.trim() && !el.projAddPath.value.trim()) projAddGuard?.markClean();
+  }
   if (!el.projAddTabs) return;
   for (const t of el.projAddTabs.querySelectorAll('.md-tab')) t.setAttribute('aria-selected', String(t.dataset.mode === projAddMode));
   const isNew = projAddMode === 'new';
   const isFolder = projAddMode === 'folder';
   const isClone = projAddMode === 'clone';
   el.projAddNameField.hidden = isClone;
+  // Folder asks where first, then proposes the name from it; New names first, which fills Location.
+  if (isFolder) el.projAddFolderPane.after(el.projAddNameField); else el.projAddNewPane.before(el.projAddNameField);
   el.projAddNewPane.hidden = !isNew;
   el.projAddFolderPane.hidden = !isFolder;
   el.projAddClonePane.hidden = !isClone;
@@ -14234,7 +14247,7 @@ function setProjAddMode(mode) {
   setProjAddMsg(isClone && cloneFollow ? `Cloning ${cloneFollow.url} …` : '');
   setProjAddRefused(false);                  // also syncs the controls (a running clone locks the Clone tab)
   projAddProbed = null;                      // the refusal is cleared: Folder's Add waits for the re-check again
-  if (isClone) { if (!cloneFollow) el.projCloneUrl.focus(); } else el.projAddName.focus();
+  if (isClone) { if (!cloneFollow) el.projCloneUrl.focus(); } else if (isFolder && !el.projAddPath.value.trim()) el.projAddPath.focus(); else el.projAddName.focus();
   if (isNew || (isFolder && el.projAddPath.value.trim())) scheduleProjAddCheck(0);
 }
 
@@ -14833,7 +14846,11 @@ if (el.projAddSave) {
   el.projAddName.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); if (!projAddRefused && !el.projAddSave.disabled) void saveProjectAdd(); }
   });
-  el.projAddPath.addEventListener('input', () => { if (projAddMode === 'folder') scheduleProjAddCheck(); });
+  el.projAddPath.addEventListener('input', () => {
+    if (projAddMode !== 'folder') return;
+    if (el.projAddName.value === projAddAutoName) { projAddAutoName = basenameOf(el.projAddPath.value.trim()) || ''; el.projAddName.value = projAddAutoName; }
+    scheduleProjAddCheck();
+  });
   el.projAddGit.addEventListener('change', () => { if (projAddMode === 'new') scheduleProjAddCheck(0); });
   // git found or lost while New or the Folder pane (with a path) shows: re-check, so the No git chip and Use git follow (S61).
   onGitFlip(() => { if (!el.projectAddModal.classList.contains('hidden') && (projAddMode === 'new' || (projAddMode === 'folder' && el.projAddPath.value.trim()))) scheduleProjAddCheck(0); });
@@ -15347,6 +15364,12 @@ el.form.addEventListener('submit', async (e) => {
         startSubmitInFlight = false;
         showEngineRefusal(data);
         return notStarted(data.overridable ? 'Tick Allow unguarded to run anyway, or pick Claude.' : (data.error || 'The engine cannot run this.'));
+      }
+      // Signed out with nothing else to run on: the sign-in steps, not a paused run.
+      if (res.status === 409 && data && data.code === 'claude-signed-out') {
+        startSubmitInFlight = false;
+        openClaudeSetup();
+        return notStarted(data.error);
       }
       // A preset whose references are gone (#712): the broken card names each one, Start waits for them.
       if (res.status === 409 && data && data.code === 'preset-broken' && state.preset) {
@@ -25202,6 +25225,11 @@ function wsRollupPr(p) {
 // run's Create-PR control) and the pendingShipIt consumer. A workspace run is eligible when at
 // least one MEMBER can still get a PR (histWsShippable) — POST /api/pr's workspace arm
 // takes that member's `memberKey`. A single-project run keeps its three clauses.
+/** A single-project run whose repository has no remote. Unknown until the status read lands, then a PR is simply offered. */
+function recHasNoRemote(p) {
+  const chip = syncChipsLoaded && p.target !== 'workspace' ? state.syncChips[p.projectKey] : null;
+  return !!chip && !chip.remote;
+}
 function histPrEligible(p) {
   if (!(prHostAvailable() && p)) return false;
   // Merged back (or still settling): the work is ON the source (head == base) and ships by Push (paintHdPush).
@@ -26052,7 +26080,7 @@ function paintHdHeaderMeta(screen, record, data) {
   const costFocus = costTriggerFocused(meta);
   meta.innerHTML = '';
   const { family, word } = histStatusMeta({ status: st.status });
-  const doneWord = st.status === 'done' ? doneStatusWord(hdDoneState(record, data)) : '';
+  const doneWord = st.status !== 'done' ? '' : record.mock ? 'Mock run' : doneStatusWord(hdDoneState(record, data));
   const w = document.createElement('span');
   w.className = `hd-status-word st-${family}`;
   w.textContent = doneWord || word;
@@ -27396,7 +27424,7 @@ const HD_TABS = [
   // get there, coarse to fine (Workflow · Q&A · Logs · Agents). "Details ›" opens the first shown tab; the trail
   // opens Workflow.
   { key: 'overview', label: 'Overview', level: 'simple', badge: () => null, visible: () => true, build: (...a) => buildHdOverview(...a) },
-  { key: 'diff', label: 'Diff', level: 'advanced', needsGit: true,
+  { key: 'diff', label: 'Diff', level: 'simple', needsGit: true,
     badge: (d) => { const r = gitOnlyResults(d.results, (d.folderMembers || []).map((m) => m.memberKey)); return r && r.summary ? String((r.summary.filesNew || 0) + (r.summary.filesChanged || 0)) : null; },
     visible: (d) => isGitRun(d.state), build: (...a) => buildHdDiff(...a) },
   // Folder runs (Projects, any way): what the run changed on its copy, in place of Diff and Actions (it made no
@@ -29468,7 +29496,7 @@ const RD_TABS = [
     build: (sec, ctx) => buildRdOverview(sec, ctx),
   },
   {
-    key: 'diff', label: 'Diff', icon: HD_TAB_ICONS.diff, level: 'advanced', needsGit: true,
+    key: 'diff', label: 'Diff', icon: HD_TAB_ICONS.diff, level: 'simple', needsGit: true,
     badge: (ctx) => rdDiffBadge(ctx.run),
     visible: (ctx) => isGitRun(ctx.run),
     build: (sec, ctx) => buildRdDiff(sec, ctx),
@@ -33891,6 +33919,7 @@ function runsHistItem(p) {
     pr: glancePrInput(p),
     archived: !!p.archived,
     roundOf: p.roundOf || null,   // a round folds into its origin (runs-list buildRunsModel, D2)
+    mock: p.mock === true,
     ...(p.resumable === false ? { resumable: false } : {}),   // histRow / rowTarget: the bar's Archive / Delete take it
     checks: typeof p.checks === 'number' ? p.checks : null,
     changes: folder ? { state: (p.changes && p.changes.state) || 'pending' } : null,
@@ -36675,6 +36704,8 @@ function paintPrCta(slot, { state = 'none', href = '', onClick = null, cls = '',
  *  Side effect: it starts the PR status reads it needs (the feed's, and each open workspace member's through
  *  ensurePrStatus); a landed member read calls `repaint`, which then finds it cached, so it cannot loop. */
 function headFactsOf(screen, rec, { m, mode, gitChrome, folder, canTry, kept, repaint, liveSource = '', liveBranch = '', pipelineId = '' }) {
+  // recHasNoRemote reads the status the Projects page loads: a run opened first asks for it, once, and repaints when it lands.
+  if (!syncChipsLoaded && rec && rec.target !== 'workspace' && typeof repaint === 'function') { syncChipsWaiters.add(repaint); refreshSyncChips(); }
   const ws = !!rec && rec.target === 'workspace' && hasWsMembers(rec);
   const own = !ws && rec && rec.pr && typeof rec.pr === 'object' && rec.pr.url ? rec.pr : null;
   const open = !!own && String(own.state || '').toUpperCase() === 'OPEN';
@@ -36707,7 +36738,9 @@ function headFactsOf(screen, rec, { m, mode, gitChrome, folder, canTry, kept, re
     group,
     groupPending: !group && routeGroupsPending(),   // D2: never guess the landing branch before the groups answer
     pr: own, prInput: glancePrInput(rec), prStatus, watch: (rec && rec.watch) || null,
-    canCreatePr: !!rec && histPrEligible(rec) && !(own && open),
+    mock: !!(rec && rec.mock),
+    canCreatePr: !!rec && histPrEligible(rec) && !(own && open) && !recHasNoRemote(rec),
+    noRemote: !!rec && recHasNoRemote(rec),
     push: !!rec && !!rec.sameAsSource && rec.target !== 'workspace' && rec.mergeBack?.merged === true && !!rec.sourceBranch,
     notMergedBack: !!rec && !!rec.sameAsSource && rec.mergeBack?.merged === false,
     pushState: (rec && rec.push) || null,
@@ -36779,6 +36812,8 @@ function headHandlers(screen, cur, { onCreate, kept, ctaCls = '', folderTotal = 
       if (id === 'push') return pushSourceFlow(b, rec);
       if (id === 'report') return openReportModal(rec.id);
       if (id === 'how-to-merge') return showViewer('How to merge', mergeBackText(rec));
+      if (id === 'merge-local') return showViewer('How to merge', `The work is on ${rec.branch}. To land it without a pull request, run this in the project's folder:\n\ngit switch ${rec.sourceBranch} && git merge ${rec.branch}`);
+      if (id === 'link-remote') return openProjectGitModal(rec.projectKey, 'link', b);
       if (id === 'fix-conflicts') return resolvePrFlow(b, scopeOf(''), feed());
       if (id === 'discard-kept') return kept && kept.onDiscard(b);
       if (id === 'apply-kept') return kept && kept.onApply(b);
@@ -38248,6 +38283,7 @@ function showWelcome({ force = false } = {}) {
   const modal = document.getElementById('welcome-modal');
   if (!modal || (!force && (gs.welcomeShown || gs.status?.welcomeSeen))) return;
   gs.welcomeShown = true;
+  try { markWhatsNewSeen(localStorage); } catch { /* blocked storage: the note just shows */ }   // nothing is "new" to a new install
   if (gsWelcomeUnbind) { gsWelcomeUnbind(); gsWelcomeUnbind = null; }   // A6: never two sets of door listeners
   setMobileNavOpen(false);   // a phone drawer opened before the onboarding fetch landed must not stay up behind the dialog
   const close = () => { modal.classList.add('hidden'); if (gsWelcomeUnbind) { gsWelcomeUnbind(); gsWelcomeUnbind = null; } };
@@ -38392,7 +38428,7 @@ const gsRunPageHops = (first) => {
     asking ? { id: 'ask', info: true, target: on('.rd-questions .rd-ask-head'),
       text: 'A question from the run lands here, below its panel. Answer, then Submit, and it carries on. The status line at the top leads here too.' } : null,
     { id: 'rows', info: true, nextLabel: 'Done', target: on('.rd-result'),
-      text: 'Each row opens a part of the run: its Overview, the Diff of the changes so far, the Workflow, the Logs and more. When it finishes, its row says how it ended.' },
+      text: 'Each row opens a part of the run: its Overview, the Diff of the changes so far, the Workflow and more. When it finishes, its row says how it ended.' },
   ].filter(Boolean);
 };
 // Test hook, added here: the object at the top of the file is built while this const is
@@ -38413,8 +38449,8 @@ function gsRunHops(g, mock) {
     mock ? null : {
       id: 'workflow', target: '#workflowSelect', lift: ['.select-wrap'],
       met: () => !(wf && !wf.hidden && (wf.value || '') === AUTO_WORKFLOW_ID),
-      text: 'Choose a built-in workflow for this run. Default is the loop you saw in Workflows. Auto would pick one for you.',
-      already: 'The workflow for this run is picked here. Default is the loop you saw in Workflows; Auto would pick one for you.',
+      text: 'Choose a built-in workflow for this run. Default plans, builds and reviews in a loop. Auto would pick one for you.',
+      already: 'The workflow for this run is picked here. Default plans, builds and reviews in a loop; Auto would pick one for you.',
     },
     { id: 'prompt', target: '#prompt', met: () => !(prompt && !prompt.hidden && !prompt.value.trim()),
       text: mock
@@ -38796,6 +38832,8 @@ function gsScrollTop() {
 // Declining leaves the mode and the page as they were. (gsRaiseLevelHop stays as the fallback for a
 // mode lowered while a tour runs.)
 async function startGuide(step) {
+  // A real run needs a model: signed out, show the sign-in steps first. Once per page, since an install on routed models has none to do.
+  if (step === 'realRun' && gs.status?.claude?.auth === 'signed-out' && !gs.claudeAsked) { gs.claudeAsked = true; openClaudeSetup(); return; }
   const def = GETTING_STARTED_STEPS.find((s) => s.id === step);
   const need = def && def.level;
   if (need && !levelAtLeast(need)) {
@@ -38931,6 +38969,15 @@ function paintLevelBanner() {
     const nav = b.dataset.nav;
     // Schedules is Advanced, but a run scheduled from Ask Worca in Simple keeps its entry (rule 2).
     keepVisible(b, (above && nav === currentShownView) || (nav === 'schedules' && schedulesInUse));
+  }
+  // Settings › Runs is long: type to keep only the cards that mention it.
+  const runsFilter = document.getElementById('settings-runs-filter');
+  if (runsFilter && !runsFilter.dataset.bound) {
+    runsFilter.dataset.bound = '1';
+    runsFilter.addEventListener('input', () => {
+      const q = runsFilter.value.trim().toLowerCase();
+      for (const card of document.querySelectorAll('.settings-pane[data-tab="runs"] .settings-card')) card.classList.toggle('settings-filtered-out', !!q && !card.textContent.toLowerCase().includes(q));
+    });
   }
   if (el.settingsTabs) {
     for (const b of el.settingsTabs.querySelectorAll('button[data-tab]')) {
