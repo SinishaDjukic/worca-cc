@@ -21,8 +21,8 @@ The type scale below, named by what it does on a Rail page.
 | Meta | `--fs-meta` 12 | 400, `--ink-2` | the metadata line, times, figure labels, details |
 | Caption | `--fs-caption` 11 | 400 | chips, hints; `--ink-3` only for marks and separators |
 
-A head is never smaller or weaker than what it heads: a step larger (a page's sections: Heading over Body rows), or the
-same size, heavier and in `--ink` (a list's or a menu's groups: Body 600 over Body 400 or 500 rows). Never a caption
+A head is never smaller or weaker than what it heads: a step larger (a page's sections, a side menu's groups: Heading
+over Body rows), or the same size, heavier and in `--ink` (a list's groups: Body 600 over Body 400 or 500 rows). Never a caption
 over the items it names. `ds-check` compares every head with its items.
 
 ## The Rail look
