@@ -473,6 +473,7 @@ export async function runGooseProcess({
   if (probe) Object.assign(env, probe.env);
   if (effort) env.GOOSE_THINKING_EFFORT = String(effort);
   // P3-D20: the run env stays out of this child's env, but the git ceiling of a run without a project must reach its git.
+  if (typeof runSpawnEnv?.TMPDIR === 'string') env.TMPDIR = runSpawnEnv.TMPDIR;   // the run's scratch folder, no secret
   if (typeof runSpawnEnv?.GIT_CEILING_DIRECTORIES === 'string') env.GIT_CEILING_DIRECTORIES = runSpawnEnv.GIT_CEILING_DIRECTORIES;
 
   const cap = Number.isInteger(maxTurns) && maxTurns > 0 ? maxTurns : null;
