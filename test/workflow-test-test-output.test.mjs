@@ -215,3 +215,50 @@ test('node:test (real output): a skip reason without the word SKIP is not part o
 `);
   assert.deepEqual([r.pass, r.skip], [['invoice totals > adds lines'], ['invoice totals > later']]);
 });
+
+test('long lines parse fast (no pathological regex time)', () => {
+  const ws = parseOnce(`TAP version 13\nok 1 - x${' '.repeat(100_000)}\n`);
+  const colons = parseOnce(`${'a::'.repeat(20_000)}a\n`);
+  assert.ok(ws.ms < 200, `whitespace run took ${ws.ms} ms`);
+  assert.ok(colons.ms < 200, `:: line took ${colons.ms} ms`);
+});
+function parseOnce(text) {
+  const t0 = performance.now();
+  parseTestOutput(text);
+  return { ms: performance.now() - t0 };
+}
+
+test('a suite that fails with no failing child (a failing hook) is in fail, TAP', () => {
+  const r = parseTestOutput(`TAP version 13
+# Subtest: db suite
+    # Subtest: inserts
+    ok 1 - inserts
+    1..1
+not ok 1 - db suite
+  ---
+  type: 'suite'
+  ...
+1..1
+`);
+  assert.ok(r.fail.includes('db suite'), JSON.stringify(r));
+  assert.ok(r.pass.includes('db suite > inserts'));
+});
+
+test('a suite that fails with no failing child (a failing hook) is in fail, node-spec', () => {
+  const r = parseTestOutput(`▶ db suite
+  ✔ inserts (0.2ms)
+✖ db suite (1.5ms)
+ℹ pass 1
+ℹ fail 1
+`);
+  assert.ok(r.fail.includes('db suite'), JSON.stringify(r));
+  assert.ok(r.pass.includes('db suite > inserts'));
+});
+
+test('a failing suite with a failing child does not add the suite to fail', () => {
+  const r = parseTestOutput(`▶ s
+  ✖ bad (0.2ms)
+✖ s (1.5ms)
+`);
+  assert.deepEqual(r.fail, ['s > bad']);
+});

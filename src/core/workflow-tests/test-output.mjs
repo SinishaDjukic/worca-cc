@@ -2,13 +2,15 @@
 // passes" before and after the change. Pure and line by line: a command's output can be large, so only the names are kept.
 // Reads TAP (node --test when piped on older Node, tape, mocha -R tap), node:test's spec reporter, pytest (-rA and -v name
 // every test; the default names the failures), Jest (verbose names every test; the default the failures) and Vitest
-// (likewise). Anything else: no format, and the command is compared by its exit code only. Best effort: no regex here can
-// backtrack badly on a long line.
+// (likewise). Anything else: no format, and the command is compared by its exit code only. Best effort. Some of the regexes
+// below can backtrack quadratically on a long line, so line() cuts every line to LINE_MAX characters before any regex runs;
+// that bound (names are cut at NAME_MAX anyway) is what keeps the parse fast.
 
 const ANSI_RE = /\u001b\[[0-?]*[ -/]*[@-~]/g;
 export const TEST_FORMATS = Object.freeze(['tap', 'node-spec', 'pytest', 'jest', 'vitest']);
 export const MAX_TESTS = 20_000;
 export const NAME_MAX = 300;
+const LINE_MAX = 2000;
 const PAREN_MS_RE = /\s+\(\d+(?:\.\d+)?\s?m?s\)\s*$/;   // " (1.2ms)", " (3 ms)"
 const BARE_MS_RE = /\s+\d+(?:\.\d+)?m?s\s*$/;           // " 3ms" (Vitest)
 const TEST_FILE_RE = /^\S+\.(?:test|spec)\.[cm]?[jt]sx?$/;
@@ -44,6 +46,10 @@ export function createTestOutputParser() {
     if (tests.size >= MAX_TESTS) { truncated = true; return; }
     tests.set(n, state);
   };
+  const putIn = (name, state) => {   // a test under the open suites: a failure marks them, so a suite failing alone is told apart
+    if (state === 'fail') for (const f of st.stack) f.bad = true;
+    put(name, state);
+  };
   const H = {
     tap(l) {
       const t = l.trim();
@@ -70,12 +76,18 @@ export function createTestOutputParser() {
         const top = st.stack.at(-1);
         if (top && top.indent === indent && top.name === name) {
           st.stack.pop();
-          if (top.kids) return;   // a suite's own line, not a test
+          if (top.kids) {   // a suite's own line, not a test; but a suite failing alone (a failing hook) is a failure
+            if (state === 'fail' && !top.bad) {
+              for (const f of st.stack) f.bad = true;
+              put([...st.stack.map((f) => f.name), name].join(' > '), 'fail');
+            }
+            return;
+          }
         }
         const parent = st.stack.at(-1);
         if (parent && parent.indent < indent) parent.kids = true;
         everyTest = true;
-        put([...st.stack.map((f) => f.name), name].join(' > '), state);
+        putIn([...st.stack.map((f) => f.name), name].join(' > '), state);
         return;
       }
       m = /^# (pass|fail|skipped|skip)\s+(\d+)\s*$/.exec(l);
@@ -104,10 +116,17 @@ export function createTestOutputParser() {
       const name = rest.replace(PAREN_MS_RE, '').trim();
       while (st.stack.length && st.stack.at(-1).indent > indent) st.stack.pop();
       const top = st.stack.at(-1);
-      if (top && top.indent === indent && top.name === name) { st.stack.pop(); return; }   // a suite's closing line
+      if (top && top.indent === indent && top.name === name) {   // a suite's closing line
+        st.stack.pop();
+        if (state === 'fail' && !top.bad) {   // failing alone (a failing hook): a failure
+          for (const f of st.stack) f.bad = true;
+          put([...st.stack.map((f) => f.name), name].join(' > '), 'fail');
+        }
+        return;
+      }
       if (m[2] === '▶') { st.stack.push({ indent, name }); return; }
       everyTest = true;
-      put([...st.stack.map((f) => f.name), name].join(' > '), state);
+      putIn([...st.stack.map((f) => f.name), name].join(' > '), state);
     },
     pytest(l) {
       let m = /^(PASSED|FAILED|ERROR|XPASS|XFAIL|SKIPPED) (.+?::.+?)(?: - .*)?$/.exec(l);
@@ -175,7 +194,7 @@ export function createTestOutputParser() {
     },
   };
   function line(raw) {
-    const l = String(raw ?? '').replace(ANSI_RE, '').replace(/\r$/, '');
+    const l = String(raw ?? '').slice(0, LINE_MAX).replace(ANSI_RE, '').replace(/\r$/, '');
     if (!format) {
       for (const [f, ok] of DETECT) if (ok(l)) { format = f; break; }
       if (!format) return;
