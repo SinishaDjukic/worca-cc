@@ -1,4 +1,4 @@
-// CompactMenu (docs/design-system.md › Worca Rail › CompactMenu): one line per item, a leading mark for a choice, a
+// CompactMenu (docs/rail/ › CompactMenu): one line per item, a leading mark for a choice, a
 // hint at the right (a count or a shortcut), the help in the tooltip. A header names a group of choices; danger items
 // come last, after one rule.
 import { attrs, esc } from './html.mjs';

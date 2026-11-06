@@ -1,4 +1,4 @@
-// StatusLine (docs/design-system.md › Worca Rail › StatusLine): the rail mark, the state word, the action slot (its
+// StatusLine (docs/rail/ › StatusLine): the rail mark, the state word, the action slot (its
 // one next step, alternatives behind ▾, then ⋯), and a detail line under the word.
 import { attrs, esc } from './html.mjs';
 

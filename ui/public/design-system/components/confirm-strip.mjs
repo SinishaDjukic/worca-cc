@@ -1,4 +1,4 @@
-// ConfirmStrip (docs/design-system.md › Worca Rail › ConfirmStrip): the one place a page asks before a step that
+// ConfirmStrip (docs/rail/ › ConfirmStrip): the one place a page asks before a step that
 // changes what others see or cannot be taken back. The question, then the step and Cancel. While the step works its
 // button says so and is disabled; a failure keeps the strip, says what failed and why, and offers Try again.
 import { button } from './button.mjs';

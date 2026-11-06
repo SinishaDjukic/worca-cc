@@ -1,4 +1,4 @@
-/* The Rail look (docs/design-system.md › The Rail look) and Motion, for every Rail page ahead of the app: one surface,
+/* The Rail look (docs/rail/look.md) and Motion, for every Rail page ahead of the app: one surface,
    one cool neutral family, running (lemon) and needs-you (orange) apart, a quiet step bar, a floating surface a step
    lighter in dark with a hairline. Inter is not bundled yet: the system face stands in for it, as in the refined mocks. */
 :root{
@@ -13,7 +13,7 @@
   --peach-bg:light-dark(#FBF2D2,#2E2914); --peach-ink:light-dark(#7F6408,#F2D27A); --h-peach-ink:light-dark(#6E5706,#F2D27A);   /* ds-ok: working's tints, Rail only */
   --peach:light-dark(#B39A0E,#ECD86A); --amber:light-dark(#E07A1F,#EE8A2C);   /* ds-ok: the Rail look's table */
   --step-done:light-dark(#C9C9CF,#4A4A52);   /* ds-ok: the Rail look's table: a finished step, quiet */
-  /* Motion (docs/design-system.md › Motion): three timings on one curve */
+  /* Motion (docs/rail/motion.md): three timings on one curve */
   --motion-quick:150ms; --motion-change:200ms; --motion-flash:1.2s; --ease:cubic-bezier(.2,0,0,1);
 }
 body{-webkit-font-smoothing:antialiased;}

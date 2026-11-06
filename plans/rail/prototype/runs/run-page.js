@@ -440,7 +440,7 @@ function failed(label, odd) {
 }
 // The prototype's "Next one fails" switch: the next confirmed step or suggestion fails, to show how a failure reads.
 function takeFail() { const box = document.getElementById('fail-next'); if (!box || !box.checked) return false; box.checked = false; return true; }
-// The prototype's "Break something" picker: what an error nobody planned for looks like (docs/design-system.md › When
+// The prototype's "Break something" picker: what an error nobody planned for looks like (docs/rail/failures.md: When
 // something breaks unexpectedly). A step waits for the next confirmed step; the others happen at once.
 function takeBreak(kind) { const s = document.getElementById('break'); if (!s || s.value !== kind) return false; s.value = ''; return true; }
 const DETAILS = 'Copied the error details: id E-7F3A, with the message and stack';

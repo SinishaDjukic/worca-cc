@@ -3,7 +3,7 @@
 Status: concept, prototype only (`prototype/pulse.html`). No product code. Date: 2026-10-30.
 Builds on [`plans/notification-hub-design.md`](../notification-hub-design.md) (Pulse Center, 22 Oct): its rule, event
 catalogue, data model and phases stand. This spec redraws it in the Rail rules
-([`docs/design-system.md`](../../docs/design-system.md) › Worca Rail) and adds **usage limits**: session and weekly
+([`docs/rail/`](../../docs/rail/README.md)) and adds **usage limits**: session and weekly
 limit notifications, the usage rings on the avatar, the account menu's **Usage and costs** side menu, and what Worca
 does when a run would start near a limit, for every harness and provider Worca runs on (Claude, OpenAI and Gemini
 among them).

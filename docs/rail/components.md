@@ -1,0 +1,61 @@
+# Which component: one per need
+
+| Rule | What | Why | Held by |
+|---|---|---|---|
+| `comp.one-per-need` | Each need has one component; a page names needs, not looks | One fix reaches every page | ds-check |
+| `comp.no-hand-markup` | A component in code is called, never rewritten by hand | Copies drift | rail-gate |
+| `comp.no-radio-cards` | A choice is never a full-width toggle or radio cards; a yes or no never covers the page | It stays in the sentence or place it changes | by hand |
+| `comp.row` | Every row is row(): rail, text, end, ⋯ | One rail and one end on every list | rail-gate |
+| `comp.end-column` | A list's ends share one column, as wide as the widest, capped; the title gives way first | Figures and buttons line up down a list | ds-check |
+
+A Rail page is built by naming needs, not looks. Find the need, use its component as its page in the Design System
+shows it; sizes, colours and spacing come with the component. Names are the Design System's pages.
+| Need | Component | For example |
+|---|---|---|
+| **Acting** | | |
+| The one next step of a state | the split button in the StatusLine: Button primary, its ▾ the alternatives | Merge PR ▾, Resume now ▾ |
+| Supporting actions | ⋯ next to it, a CompactMenu, danger last after a rule | Terminal, Copy link, Archive |
+| A yes or no, or a one-line answer | ConfirmStrip, in place under the top bar | Merge #959 into dev?, Run after |
+| A step that needs fields first | Dialog, the only one for a form | Create PR |
+| Going to another page or place | Text link, or a ListRow you open | Changes +358 −144, a file, a step |
+| Copying text | CopyButton: a quiet 28px icon button; a tick for 1.2s and `Copied` in its tooltip and the live region; its width never changes | a branch, a command, an id |
+| **Choosing** | | |
+| A choice that changes a step | SentencePicker: a picker in the sentence it changes, opening a CompactMenu (in the app, wired to `toggleMenu`, so the menu has keys) | `dev ▾`, `3 stacked PRs ▾` |
+| Answering Worca's question | OptionList: one line per answer, a radio dot, Worca's pick marked, your own answer under it (in the app, `buildChatQuestion` takes `preset` for Worca's pick and `recommended` on an option) | the asking step's answers |
+| A setting that is on or off | Switch: takes effect at once, no confirm; a failed change flips back and a toast says why | Watch on a PR |
+| Picking items from a list, an opt-out, a consent | Checkbox | the checklist, No cap, Draft |
+| Two or three views of the same thing | Segmented | Light and Dark, Summaries and Raw |
+| Sections of a page | Tabs | Overview, Changes, Decisions |
+| Narrowing a list | the list's sentence: SentencePicker words above the list, each choice with its count; never a filter button or a View menu | `Showing [ready to ship ▾] from [all projects ▾] by [day ▾]` |
+| Picking and adding names | ListEditor | labels and cost tags, groups |
+| A choice inside a confirm | OptionList inside the ConfirmStrip or the Dialog; never radio cards | Rescan now, Rescan after the next run |
+| One pick from a long list, or a new one | ListEditor, single pick: find or create, recent first | Add to group |
+| **Entering** | | |
+| Text, a number, a pick from a long list in a form | Field | Branch, Budget, Base branch |
+| Text Worca writes for you | SuggestionField | PR title and description, a drafted answer |
+| Finding anything | the top bar's search: runs, chats, settings, plugins; a result lands with the flash | Search or ask |
+| Context sent with a message | ListEditor's removable item, in the composer | This page × |
+| **Showing** | | |
+| What is happening | StatusLine: the status dot and the state word | Ready to merge, Paused |
+| How far along, and its steps | Stepper, then StepRow on the rail | Plan · Build · Review |
+| Time, cost, changes | Figures | Cost $84.10 of $120 |
+| Labels and cost tags | TagGroup | ui, team: web, +2 |
+| A list of things | ListRow on the rail, the whole row opens, never a box per item. Rows are split by space; a list grouped by something (status, day, section) draws one `--line` where each group after the first starts, from the text edge, and none between rows. Mock `plans/rail/mocks/now-dividers-compare-*.png` (option 4) | runs, files, decisions, Pulse's Now, a settings tab |
+| A short fact: a stage, a source, a slot to set up | Chip | Beta, Official, No API key |
+| Why a control is off, a cut-off text, an id | Tooltip | Checks are still running on #959 |
+| The same figures across many rows | Table: divided rows, tabular figures, no box per row, the name first; on a narrow screen the least needed columns go to the row's detail | sessions, cost by step |
+| **Telling** | | |
+| Something done, nothing to answer | Toast | PR merged |
+| Something failed | where you acted: the strip, the dialog's alert, the field's error line, the suggestion's grey line; a Toast only when there is no such place | Could not merge #959 |
+| Nothing here, loading, could not load | EmptyState: one line on the text edge; loading shows nothing for 300ms, then one line, never a spinner or skeleton | No runs yet |
+| A part of the page cannot be drawn | EmptyState's error, in that part only, with Reload this part | Could not show the changes |
+| Something broke that nothing handles | Toast, error: stays until closed, a repeat counts on it | Something went wrong |
+| The connection dropped | a quiet line at the end of the top bar, grey dot, until it reconnects | Offline · retrying |
+
+Building from it:
+- A page sets no look of its own: no colour, type size, corner or shadow that is not a token, no inline style but
+  layout and data, no control that is not in the table. `plans/rail/prototype/gates/ds-check.mjs` checks it.
+- A spec names the need and the component (`the step's primary in the strip, destructive`), never a size or a colour.
+- When no row fits, stop and propose the addition here (a row, then its Design System page) before building it.
+- A choice is never a full-width toggle or radio cards, and a yes or no never covers the page.
+- The prototype's one-line ink toast (`.rc-toast`) is a stand-in for the shared Toast.

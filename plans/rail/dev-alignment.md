@@ -1,13 +1,13 @@
 # Worca Rail: aligning with dev after the #919 split (4 Nov 2026)
 
-What landed on dev since `c5c3fee69` (about 40 UI changes), checked against `docs/design-system.md` › Worca Rail. The
+What landed on dev since `c5c3fee69` (about 40 UI changes), checked against `docs/rail/. The
 branch is merged with dev (`0d7cafe6d`); the prototype draws on the app's CSS parts (`prototype/app.css`); every gate
 passes. Rail rules hold for Rail pages; the app keeps its rules until each page moves to Rail, so a conflict below is
 fixed when that page moves, unless Rail decides to adopt the app's way.
 
 ## Decisions
 
-Decided by one rule (docs/design-system.md › Worca Rail, "When the app and Rail differ"): Rail is preferred; if the
+Decided by one rule (docs/rail/, "When the app and Rail differ"): Rail is preferred; if the
 app's way meets a real need, Rail takes it in; the result is Rail, upgraded. **Rail** below means the app changes when
 the page moves; **Upgraded** means the Rail rules changed to take the app's point in.
 
@@ -31,7 +31,7 @@ the page moves; **Upgraded** means the Rail rules changed to take the app's poin
 
 ## New needs: what Rail takes in
 
-All upgrades; each is now in docs/design-system.md.
+All upgrades; each is now in docs/rail/.
 
 | Need | In the app | In Rail now |
 |---|---|---|

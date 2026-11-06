@@ -1,13 +1,13 @@
 {
-  "about": "The Worca Rail design system as data: what a page can be built from, for a tool or an agent. The rules are docs/design-system.md › Worca Rail (Which component, Where things go); when this file and that section differ, the section wins and this file is fixed in the same change. Components are the Design System artifact's pages.",
+  "about": "The Worca Rail design system as data: what a page can be built from, for a tool or an agent. The rules are docs/rail/; when this file and those differ, the file there wins and this one is fixed in the same change. Components are the Design System artifact's pages.",
   "howToBuild": [
     "Pick the page's pattern.",
     "For each thing the person must see or do, find its need below; use that component in that pattern's slot.",
     "A component with `code` is built in code: import it from ui/public/design-system/components/index.mjs and call it; never write its markup. A need with no component in code: add the component there first, with its test and its `code` entry.",
-    "Write the words by the rules in docs/design-system.md: state words, labels of 1–3 words, failures as `Could not …`, the reason, `Nothing changed.`",
+    "Write the words by the rules in docs/rail/: state words, labels of 1–3 words, failures as `Could not …`, the reason, `Nothing changed.`",
     "Draw every state: empty, loading, could not load, a failed step, an unexpected break, a lost connection, and 375px.",
     "Set no look of your own: no size, colour, corner or shadow; they come with the component.",
-    "Lay it out narrow by docs/design-system.md › Narrow screens: at 520px of content side by side stacks on the same text edge, the action slot moves under the state word and its extra buttons fold into ⋯; nothing is dropped; names keep one line with an ellipsis and a tooltip; a branch or path loses its middle and keeps its start and last part (feat/unifi…-breadcrumb).",
+    "Lay it out narrow by docs/rail/narrow.md: at 520px of content side by side stacks on the same text edge, the action slot moves under the state word and its extra buttons fold into ⋯; nothing is dropped; names keep one line with an ellipsis and a tooltip; a branch or path loses its middle and keeps its start and last part (feat/unifi…-breadcrumb).",
     "Name every page, menu item, section head and row by Small rules › Names: the thing, 1–3 words, one thing one name; ds-check reads them.",
     "What a page needed and the design system did not have is added to it first: the rule, the catalog entry, the component in code with its test and gallery example; the page joins ds-check's BUILT list.",
     "Pass the gate: plans/rail/prototype/gates/ds-check.mjs and the page's sweep."
@@ -77,5 +77,5 @@
     { "kind": "how Worca behaves everywhere", "slot": "Settings; a thing's own settings are the thing's" },
     { "kind": "a row's own actions", "slot": "a ⋯ at the row's right end" }
   ],
-  "motion": { "rule": "docs/design-system.md › Motion: motion shows what changed, never decorates; fade, never slide", "timings": { "--motion-quick": "150ms: appears, opens, goes", "--motion-change": "200ms: becomes something else", "--motion-flash": "1.2s: the one flash after a jump", "--ease": "cubic-bezier(.2, 0, 0, 1)" }, "never": ["page or tab transitions", "slides", "springs or bounces", "count-ups", "spinners", "skeleton shimmer", "motion without a state change"], "moments": ["a link or a search lands: the target comes into view and lights once over flash (land)", "the sidebar becomes another menu: its content fades over change, the page changes at once"], "reducedMotion": "every timing 0; breathing and shimmer still" }
+  "motion": { "rule": "docs/rail/motion.md: motion shows what changed, never decorates; fade, never slide", "timings": { "--motion-quick": "150ms: appears, opens, goes", "--motion-change": "200ms: becomes something else", "--motion-flash": "1.2s: the one flash after a jump", "--ease": "cubic-bezier(.2, 0, 0, 1)" }, "never": ["page or tab transitions", "slides", "springs or bounces", "count-ups", "spinners", "skeleton shimmer", "motion without a state change"], "moments": ["a link or a search lands: the target comes into view and lights once over flash (land)", "the sidebar becomes another menu: its content fades over change, the page changes at once"], "reducedMotion": "every timing 0; breathing and shimmer still" }
 }

@@ -1,4 +1,4 @@
-// SideMenu and Search (docs/design-system.md › Worca Rail › Settings; Which component › Finding anything).
+// SideMenu and Search (docs/rail/ › Settings; Which component › Finding anything).
 import { attrs, esc } from './html.mjs';
 import { compactMenu } from './compact-menu.mjs';
 

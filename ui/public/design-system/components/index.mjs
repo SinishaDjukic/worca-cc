@@ -1,4 +1,4 @@
-// The Worca Rail components (docs/design-system.md › Worca Rail; docs/design-system-catalog.json names each one's
+// The Worca Rail components (docs/rail/; docs/design-system-catalog.json names each one's
 // module). Build a page from these: a component brings its look, so a page sets no size, colour, corner or shadow.
 export { esc, attrs, cls, toElement } from './html.mjs';
 export { button, splitButton } from './button.mjs';

@@ -4,7 +4,7 @@
 system by the same gates the prototype passes.**
 
 Shaped 4 Nov 2026. The steps: the Settings prototype (done), one prototype of all of Worca, then the requirement
-(this file grows into it). The rules live in `docs/design-system.md` › Worca Rail; this file says what Wave 1 is.
+(this file grows into it). The rules live in `docs/rail/; this file says what Wave 1 is.
 
 ## Scope
 

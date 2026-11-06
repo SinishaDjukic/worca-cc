@@ -19,7 +19,7 @@ What lives where:
 
 | What | Accepted | Shaping (and Agreed, once decided) |
 |---|---|---|
-| Rules (`docs/design-system.md`, later `docs/rail/`) | the rules that hold | proposed and changed rules, marked |
+| Rules (`docs/rail/`) | the rules that hold | proposed and changed rules, marked |
 | Catalog (`docs/design-system-catalog.json`) | what exists | proposed entries |
 | Library (`ui/public/design-system/components/`, tests, gallery) | what the app may import | proposed components with tests; never imported by app code |
 | Tokens and CSS parts | the values in use | proposed values |

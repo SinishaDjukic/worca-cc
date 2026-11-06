@@ -1,7 +1,7 @@
 # Worca Rail
 
-The redesign of Worca, one page at a time. The rules every Rail page follows live in `docs/design-system.md`
-› Worca Rail (the single source); this folder holds each page's spec, its review and the prototype.
+The redesign of Worca, one page at a time. The rules every Rail page follows live in `docs/rail/`
+(the single source); this folder holds each page's spec, its review and the prototype.
 
 Online: the [Design System](https://claude.ai/artifact/P38jGMS7jA9XQu2U2uP3HP) (a readable view built from
 `docs/design-system.md`, the app's CSS parts in `ui/public/` and the prototype) and the
@@ -11,7 +11,7 @@ Online: the [Design System](https://claude.ai/artifact/P38jGMS7jA9XQu2U2uP3HP) (
 |---|---|---|
 | Run and group page | `spec.md` (review `review.md`, shipping plan `enrollment.md`) | In the prototype |
 | Pulse: the notification hub, usage rings, limit notifications and what a start does near a limit | `pulse.md` | Concept, in the prototype (`pulse.html`) |
-| Settings: from the profile menu, the sidebar becomes its menu (four groups), one row per decision, records as Lists, search | `docs/design-system.md` › Settings, mocks `mocks/settings-menu-*.png` | In the prototype (`pulse.html` › Settings; `settings/`) |
+| Settings: from the profile menu, the sidebar becomes its menu (four groups), one row per decision, records as Lists, search | `docs/rail/settings.md, mocks `mocks/settings-menu-*.png` | In the prototype (`pulse.html` › Settings; `settings/`) |
 
 Wave 1 (the run and group pages, Pulse, Settings, the shell) is `wave-1.md`; the waves after it, and the design
 system's own consistency work between them, are `waves.md`.
@@ -34,4 +34,4 @@ Where it all stands, Accepted and Shaping, and the open decisions: `game-plan.md
 - `mocks/`: PNG mocks of decisions, named by page.
 
 A new page gets a spec here, a row above, and its model and renderer in `prototype/`, built on `rail.css` and the
-shared components; a rule that holds beyond one page goes to `docs/design-system.md` › Worca Rail.
+shared components; a rule that holds beyond one page goes to `docs/rail/.

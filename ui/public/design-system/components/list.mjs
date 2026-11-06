@@ -1,4 +1,4 @@
-// ListRow and List (docs/design-system.md › Worca Rail › Which component: "A list of things"; Patterns › A list).
+// ListRow and List (docs/rail/components.md: "A list of things"; Patterns › A list).
 // A row is one thing: its state mark on the rail (hanging left of the text edge, so every title starts on the page's
 // text edge), a title line, a meta line, and at its right a figure or time and the row's ⋯. The whole row opens its
 // one target. Rows are split by space; a list grouped by something draws one line where each group after the first

@@ -1,4 +1,4 @@
-// Button (docs/design-system.md › Worca Rail › Button): one look per role, never a size or colour of its own.
+// Button (docs/rail/ › Button): one look per role, never a size or colour of its own.
 // `kind` is the role: '' (secondary), 'primary' (the one main step of a state), 'quiet' (a step among many), 'danger'
 // (only inside the confirm of a step that cannot be taken back). An icon-only button names itself in `label`, which
 // becomes its aria-label; its tooltip is `title` (the label when not given).

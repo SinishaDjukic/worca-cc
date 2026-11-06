@@ -1,4 +1,4 @@
-// Figures (docs/design-system.md › Worca Rail › Figures): the few numbers of a thing (time, cost against its budget,
+// Figures (docs/rail/ › Figures): the few numbers of a thing (time, cost against its budget,
 // the diff), one line, the value bold. A figure with a home opens it.
 import { attrs, esc } from './html.mjs';
 

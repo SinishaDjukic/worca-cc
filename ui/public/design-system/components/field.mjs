@@ -1,4 +1,4 @@
-// Field and Tooltip (docs/design-system.md › Field; Worca Rail › Which component).
+// Field and Tooltip (docs/rail/components.md).
 import { attrs, esc } from './html.mjs';
 
 /**

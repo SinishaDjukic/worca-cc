@@ -1,4 +1,4 @@
-// Motion (docs/design-system.md › Worca Rail › Motion): a page that draws itself again after every change updates the
+// Motion (docs/rail/ › Motion): a page that draws itself again after every change updates the
 // DOM in place with morph(), so what stays is the same element and what changed can ease in. A component says how it
 // moves with data-motion; a page never animates by hand.
 //   data-motion="in"      fades in over --motion-quick when it appears (a menu, a popover, a dialog)

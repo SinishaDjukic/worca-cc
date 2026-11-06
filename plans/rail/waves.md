@@ -1,7 +1,7 @@
 # Worca Rail: the waves after Wave 1
 
 Shaped 5 Nov 2026, while Wave 1 builds. The goal: the library, the tokens and the design system lead, and every page of
-Worca is built from them (`docs/design-system.md`). Each wave **redesigns** its pages from what they are for, and does not
+Worca is built from them (`docs/rail/`). Each wave **redesigns** its pages from what they are for, and does not
 recolour or patch the old page: a page keeps only what earns its place, and everything on it comes from the library.
 
 ## How every wave works

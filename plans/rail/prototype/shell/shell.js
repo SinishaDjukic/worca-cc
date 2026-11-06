@@ -17,7 +17,7 @@
   const RUN_LINE = { question: 'Needs you · Plan asks 2 questions', gate: 'Needs you · Review gate', working: 'Working · Build', checks: 'In review · checks running', ready: 'Ready · checks pass' };
   const el = (html) => { const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstElementChild; };
 
-  // ---- the sidebar: places only (a setting or a place, docs/design-system.md › Settings) ----
+  // ---- the sidebar: places only (a setting or a place, docs/rail/settings.md) ----
   function sidebar() {
     const side = el(T.sidebar);
     const nav = side.querySelector('nav.nav');

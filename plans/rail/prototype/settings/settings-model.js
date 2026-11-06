@@ -1,4 +1,4 @@
-// Settings' content for the prototype, built strictly from the design system (docs/design-system.md › Settings and
+// Settings' content for the prototype, built strictly from the design system (docs/rail/settings.md and
 // › A settings tab; drawn by settings.js). From the app's Settings (ui/public/settings/settings.html and the views it
 // mounts), its Team policy page and its Add-ons pages; Notifications is Pulse's (pulse-model.js).
 //   - A decision is a row: its name, its state in words (pickers where it changes), its Switch or button. The

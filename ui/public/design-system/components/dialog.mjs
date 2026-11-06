@@ -1,4 +1,4 @@
-// Dialog (docs/design-system.md › Worca Rail › Which component; Modals › Dialog anatomy): a step that needs fields
+// Dialog (docs/rail/components.md; Modals › Dialog anatomy): a step that needs fields
 // first. The app's one anatomy: a .viewer-modal card with .dlg and three parts, the head (title, Close), the body (the
 // only scroller), the foot (a status line, then Cancel and the step naming what happens). It fades in (Motion) and
 // closes at once. A yes or no is a ConfirmStrip, never a Dialog.

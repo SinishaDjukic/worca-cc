@@ -17,7 +17,7 @@ const ALL = [APP_CSS, ...SHEETS.map(here), here('run-page.html'), here('pulse.ht
 const SCRIPTS = ['runs/run-page.js', 'pulse/pulse.js', 'runs/run-page-model.js', 'pulse/pulse-model.js', 'settings/settings.js', 'settings/settings-model.js'].map(here);
 const issues = new Map(); const add = (k, where) => { if (!issues.has(k)) issues.set(k, new Set()); issues.get(k).add(where); };
 
-// Every control a page may draw, by the design-system component it belongs to (docs/design-system.md › Which component).
+// Every control a page may draw, by the design-system component it belongs to (docs/rail/components.md).
 // A <button> that is not .btn must match one of these; anything else is a control the design system does not have.
 const CONTROLS = {
   Button: '.btn',
@@ -81,7 +81,7 @@ for (const name of BUILT) {
   });
 }
 
-// --- names: a page, a menu item, a section head, a settings row (docs/design-system.md › Small rules › Names) ---
+// --- names: a page, a menu item, a section head, a settings row (docs/rail/small-rules.md) ---
 const NAMES = () => {
   const out = [];
   const sel = '.pz-title, .side-menu .side-l, .set-sec-h, .set-name, .list-h, .dlg-title, .rc-tabs .tab';
@@ -96,7 +96,7 @@ const NAMES = () => {
   return out;
 };
 
-// --- heads: never smaller or weaker than what they head (docs/design-system.md › Type roles) ---
+// --- heads: never smaller or weaker than what they head (docs/rail/look.md) ---
 // A head is a step larger than its items (a page's sections), or the same size, heavier and in --ink (a list's or a
 // menu's groups).
 const HEADS = () => {

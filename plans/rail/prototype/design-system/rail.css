@@ -724,7 +724,7 @@ html,body{height:auto;overflow:visible;margin:0;}
 .sc-then .menu{min-width:180px;}
 .pd-into .rc-pop .menu:has([data-menu-pick^="ship:"]){min-width:220px;}
 
-/* When something breaks unexpectedly (docs/design-system.md): a part that cannot be drawn says so in its place, the
+/* When something breaks unexpectedly (docs/rail/failures.md): a part that cannot be drawn says so in its place, the
    background error is the shared error toast, a lost connection is a quiet line on the top bar. */
 .empty-line.is-err{flex-direction:column;align-items:flex-start;gap:2px;}
 .el-t{color:var(--ink);font-weight:500;}

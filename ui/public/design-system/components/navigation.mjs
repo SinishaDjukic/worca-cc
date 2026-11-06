@@ -1,4 +1,4 @@
-// Trail and Pager (docs/design-system.md › Worca Rail › Navigation: one model). The trail goes one depth up (a thing to
+// Trail and Pager (docs/rail/ › Navigation: one model). The trail goes one depth up (a thing to
 // its place, a run to its group): it never names the page itself, and on a narrow screen it is its parent alone,
 // ‹ Parent. The pager goes sideways, to a sibling (the next run in a group); one that has not started yet is disabled
 // and says why. Both sit in the top bar; the trail is the one way back on screen.

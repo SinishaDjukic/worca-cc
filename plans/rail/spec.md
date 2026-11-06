@@ -1,7 +1,7 @@
 # Worca Rail: the run page
 
 The run and group page on Worca Rail. The rules every Rail page follows (One Rail, type roles, the shared components,
-suggestions, steps that change state, the gate) are in `docs/design-system.md` › Worca Rail; this spec is only what
+suggestions, steps that change state, the gate) are in `docs/rail/; this spec is only what
 is particular to this page. A change is made here first, then in the prototype (`plans/rail/prototype/`). The review
 history is `plans/rail/review.md`; the way to ship it is `plans/rail/enrollment.md`.
 
