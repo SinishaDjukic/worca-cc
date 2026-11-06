@@ -29,7 +29,7 @@ const VIEWS = {
   // every other Settings section: their rows are the same components, each with its own pickers, switches and buttons
   ...Object.fromEntries(SECTION_IDS
     .map((id) => ['settings-' + id, async (p) => { await click(p, '[data-acct]'); await click(p, '[data-go="settings"]'); await click(p, `[data-sset="${id}"]`); }])),
-  settingsWait: async (p) => { await click(p, '[data-acct]'); await click(p, '[data-go="settings"]'); await click(p, '[data-sset="notifications"]'); await click(p, '[data-menu="auto"]'); await click(p, '[data-pick="auto|wait"]'); await click(p, '[data-menu="mine"]'); await click(p, '[data-pick="mine|wait"]'); await click(p, '[data-newrun]'); },
+  settingsWait: async (p) => { await click(p, '[data-acct]'); await click(p, '[data-go="settings"]'); await click(p, '[data-sset="runs"]'); await click(p, '[data-menu="auto"]'); await click(p, '[data-pick="auto|wait"]'); await click(p, '[data-menu="mine"]'); await click(p, '[data-pick="mine|wait"]'); await click(p, '[data-newrun]'); },
 };
 let clicks = 0;
 for (const scheme of ['dark', 'light']) for (const w of [375, 900]) {

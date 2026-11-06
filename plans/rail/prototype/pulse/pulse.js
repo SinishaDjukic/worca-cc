@@ -188,7 +188,7 @@ function popover() {
     { id: 'allread', text: 'Mark all read', help: un.length ? 'Marks every unread update read; nothing is cleared' : 'Nothing is unread' },
     { id: 'clearread', text: 'Clear read', help: 'Moves every read update in this view to Cleared' },
     ...(ui.popTab === 'updates' ? [{ id: 'select', text: 'Select', help: 'Tick updates to mark read or clear several at once' }] : []), { sep: true },
-    { id: 'settings', text: 'Notification settings', help: 'Settings › Notifications: what reaches you and what a start does near a limit' }], 'right')}</span>`;
+    { id: 'settings', text: 'Notification settings', help: 'Settings › Notifications: what reaches you' }], 'right')}</span>`;
   return `<div class="pz-popover${inCls('pop')}" role="dialog" aria-label="Pulse">
     <div class="pz-phead">${R.tabs({ cls: 'pz-ptabs', items: [{ id: 'now', label: 'Now', count: nowCount(), selected: ui.popTab === 'now', tip: 'What is true right now: it changes by itself and cannot be cleared' }, { id: 'updates', label: 'Updates', count: un.length, selected: ui.popTab === 'updates', tip: `What happened: read, select and clear, like runs. Kept for 90 days${C().identity ? '. Read and cleared are yours; others on this sign-in keep their own' : ''}` }], hooks: (t) => ({ 'data-ptab': t.id, title: t.tip }) })}${more}</div>
     <div class="pz-pbody">${ui.popTab === 'now' ? nowSections() : updatesPanel()}</div>${bulkBar()}
@@ -235,14 +235,14 @@ function usageFly() {
     const rows = u.win.length ? u.win.map((x) => {
       const t = M.tone(x.pct, w);
       return `<div class="pz-urow" title="${esc(`${M.winWord(x.k)} ${x.pct}% · ${pr.src} at ${u.asOf}`)}">${mini(x.pct, t)}<span class="pz-uk">${M.winWord(x.k)}</span><span class="pz-uv${t ? ' is-' + t : ''}">${x.pct >= 100 ? 'Reached' : M.fig(x)}</span><span class="pz-ur">resets ${esc(x.resets)}</span></div>`;
-    }).join('') : u.noQuota ? `<p class="pz-unote" title="${esc(pr.name)} reports no figures: Worca counts its requests against the quota you set">No quota set. ${R.textLink({ label: 'Set in Providers', attrs: { 'data-land': 'providers|Gemini CLI|list', title: 'Opens Settings › Providers, on its quota' } })}</p>`
+    }).join('') : u.noQuota ? `<p class="pz-unote" title="${esc(pr.name)} reports no figures: Worca counts its requests against the quota you set">No quota set. ${R.textLink({ label: 'Set in Sign-ins', attrs: { 'data-land': 'models|Gemini CLI|list', title: 'Opens Settings › Providers, on its quota' } })}</p>`
       : '<p class="pz-unote" title="An API key is billed per token: the spend below is its limit">Billed per token: no session or weekly limit</p>';
     const noSession = u.note ? `<p class="pz-unote" title="${esc(u.note.tip)}">${esc(u.note.text)}</p>` : '';
     return `<div class="pz-ublock"><div class="pz-uhead"><span class="pz-uname">${esc(pr.name)}</span><span class="pz-uplan" title="${esc(`${pr.vendor} · ${u.plan}`)}">${esc(pr.vendor)} · ${esc(u.plan)}</span><span class="pz-uas" title="As fresh as the last turn that used ${esc(pr.name)}">as of ${esc(u.asOf)}</span></div>${rows}${noSession}</div>`;
   };
   return R.navFlyout({ label: 'Usage and costs', cls: `pz-fly${inCls('sub')}`, body: `${back}
     <span class="nav-fly-k" title="What can stop a run, per harness: the rings around your avatar show the closest of each">Limits</span>
-    <div class="pz-ublocks">${c.usage.length ? c.usage.map(block).join('') : `<p class="pz-unote">No provider connected. ${R.textLink({ label: 'Open Providers', attrs: { 'data-land': 'providers|GitHub Copilot|list', title: 'Opens Settings › Providers' } })}</p>`}</div>${spendCard(c)}
+    <div class="pz-ublocks">${c.usage.length ? c.usage.map(block).join('') : `<p class="pz-unote">No provider connected. ${R.textLink({ label: 'Open Sign-ins', attrs: { 'data-land': 'models|GitHub Copilot|list', title: 'Opens Settings › Models › Sign-ins' } })}</p>`}</div>${spendCard(c)}
     <div class="msect" role="group">${R.accountItem({ label: 'Limit settings', mark: svg('gear', 16, 'mi-ic'), attrs: { 'data-go': 'settings', 'data-to': 'runs', title: 'The warning line, and what Worca does when a limit is near: Settings › Runs' } })}</div>
   ` });
 }
@@ -292,7 +292,7 @@ function newRun() {
   const sizeTip = tight ? `The median of ${M.N[sz]} done runs this size with the same agents, last 60 days. Shaper sized the task; change it if it is wrong` : 'Shaper sized the task; change it if it is wrong';
   let advice = '';
   const signedOut = !C().usage.some((u) => M.PROVIDER[u.p].runs);
-  if (signedOut) advice = note('is-amber', `Nothing that can run is signed in. Only mock runs work until you sign in.`, quiet('Open Providers', { 'data-land': 'providers|GitHub Copilot|list', title: 'Opens Settings › Providers' }));
+  if (signedOut) advice = note('is-amber', `Nothing that can run is signed in. Only mock runs work until you sign in.`, quiet('Open Sign-ins', { 'data-land': 'models|GitHub Copilot|list', title: 'Opens Settings › Models › Sign-ins' }));
   else if (ui.nr.moved) advice = note('', `${ui.nr.moved}.`);
   else if (lim) {
     const say = reached ? `${lim.name}'s ${lim.what} is used up until ${lim.resets}.`
@@ -360,7 +360,7 @@ function runsPage() {
 // from Pulse's model; every other section comes from settings-model.js through settings.js.
 const sp = (id, text, items, tip, right) => R.sentencePicker({ id, text, items, open: ui.menu === id, tip, chevron: svg('chevron', 12), right });
 const sectionId = () => ui.sset || SM.FIRST;
-const menuGroups = () => SM.GROUPS.map((g) => ({ title: g.title, items: g.items.filter((id) => SM.visible(id, R.prefs.mode())).map((id) => ({ label: SM.title(id), current: id === sectionId(), attrs: { 'data-sset': id } })) }));
+const menuGroups = () => SM.GROUPS.map((g) => ({ title: g.title, items: g.items.filter((id) => SM.visible(id, R.prefs.mode())).map((id) => ({ label: SM.title(id), current: id === sectionId(), attrs: { 'data-sset': id } })) })).filter((g) => g.items.length);   // a group with nothing at this mode has no head
 const settingsMenu = () => R.sideMenu({ label: 'Settings', cls: swapCls.trim(), back: { label: 'Back to Worca', icon: svg('chevL', 14), attrs: { 'data-go': 'runs', title: 'Back to the page you came from' } }, groups: menuGroups() });
 // The narrow screen's first view: the same menu as a list in the page.
 const settingsIndex = () => `<div class="cfg-index"><div class="pz-head"><h1 class="pz-title">Settings</h1></div>${R.sideMenu({ label: 'Settings', list: true, chevron: svg('chevR', 14), groups: menuGroups().map((g) => ({ ...g, items: g.items.map((x) => ({ ...x, current: false })) })) })}</div>`;
@@ -388,15 +388,16 @@ function notifications() {
       return R.settingsRow({ name: ev[1], help: `${ev[0]} · ${ev[2] === 'needs' ? 'needs you' : ev[2]}`, changed: !!gs.ex[ev[0]], sentence: `on ${sp('ev:' + ev[0], whereText(w), M.WHERE.map((x) => ({ ...x, checked: x.id === w })), `Where ${ev[1]} goes`)}` });
     }).join('') : '';
     const detailAction = open && nEx ? quiet('Back to the group', { 'data-backgroup': g.id, title: 'Every event follows the group again' }) : '';
-    return R.settingsRow({ name: g.name, detailRows, detailAction, changed: nEx > 0,
+    // Usage's limits are Runs': one row, in the section that owns it (docs/rail/settings.md)
+    const end = g.id === 'usage' ? quiet('Limits', { 'data-land': 'runs|Warning line', title: 'What a run does near a limit: Settings › Runs › Limits' }) : '';
+    return R.settingsRow({ name: g.name, end, detailRows, detailAction, changed: nEx > 0,
       sentence: `Tell me about ${sp('lvl:' + g.id, levelText(gs.level), M.LEVELS.map((l) => ({ ...l, checked: l.id === gs.level })), `How much of ${g.name} reaches you`)} on ${sp('whr:' + g.id, whereText(gs.where), M.WHERE.map((x) => ({ ...x, checked: x.id === gs.where })), `Where ${g.name} goes beyond Pulse`, true)}`,
       fold: { open, attrs: { 'data-custom': g.id }, help: open ? 'Close the events' : 'Choose per event: ' + g.events.map((e) => e[1]).join(', ') } });
   }).join('');
   const confirm = ui.confirm === 'reset' ? R.confirmStrip({ text: 'Reset every group to its defaults? Your channels stay as they are.', yes: 'Reset' }) : '';
   return confirm
     + R.settingsSection({ title: 'Channels', rows: channels })
-    + R.settingsSection({ title: 'Updates', meta: 'What each kind of update sends beyond Pulse. Pulse keeps everything for 90 days; a problem clears when you act on it.', rows: groups, action: quiet('Reset to defaults', { 'data-reset': '', title: 'Every group back to its defaults; asks first' }) })
-    + R.settingsSection({ title: 'Limits', rows: R.settingsRow({ name: 'Near a limit', sentence: 'What a run does near a limit is set in Runs', end: quiet('Open Runs', { 'data-land': 'runs|Warning line', title: 'Settings › Runs › Limits' }) }) });
+    + R.settingsSection({ title: 'Updates', meta: 'What each kind of update sends beyond Pulse. Pulse keeps everything for 90 days; a problem clears when you act on it.', rows: groups, action: quiet('Reset to defaults', { 'data-reset': '', title: 'Every group back to its defaults; asks first' }) });
 }
 // What a run does near a limit is a run's business, so it sits in Settings › Runs; Notifications only says how you hear of it.
 function limitsRows() {
@@ -426,18 +427,38 @@ const RUNS_LIMIT_ROWS = ['Warning line', 'Manual starts', 'Automatic starts'];
 const strict = (...ms) => ms.filter(Boolean).sort((a, b) => R.MODES.indexOf(b) - R.MODES.indexOf(a))[0] || '';
 function settingsFinds() {
   const out = [{ label: SM.title('notifications'), sset: 'notifications', where: 'Settings' }, ...NOTIF_ROWS.map((n) => ({ label: n, sset: 'notifications', where: 'Notifications' })), ...RUNS_LIMIT_ROWS.map((n) => ({ label: n, sset: 'runs', where: 'Runs › Limits' }))];
+  const text = (x) => (typeof x === 'function' ? x(ui.sv) : x);
   for (const g of SM.GROUPS) for (const id of g.items) {
     const sec = SM.SECTIONS[id]; if (!sec) continue;
     out.push({ label: sec.title, sset: id, min: sec.min, flag: sec.flag, where: 'Settings › ' + g.title });
     for (const s of sec.sections) {
-      for (const r of s.rows || []) {
-        const min = strict(sec.min, s.min, r.min), flag = sec.flag || s.flag || r.flag;
-        out.push({ label: r.name, words: r.say, sset: id, min, flag, where: `${sec.title} › ${s.title}` });
-        const open = 'more:' + id + '/' + s.title + '/' + r.name;
-        for (const m of r.more || []) out.push({ label: m.name, words: m.say, sset: id, open, min: strict(min, m.min), flag, where: `${sec.title} › ${r.name}` });
-        for (const it of r.moreList || []) out.push({ label: it.title, words: it.meta, sset: id, open, list: true, min, flag, where: `${sec.title} › ${r.name}` });
+      const smin = strict(sec.min, s.min), sflag = sec.flag || s.flag, base = id + '/' + s.title, here = `${sec.title} › ${s.title}`;
+      if (s.title !== sec.title) out.push({ label: s.title, words: text(s.meta), sset: id, head: true, min: smin, flag: sflag, where: sec.title });
+      const rowsIn = (rows, where, at, min, flag) => { for (const r of rows || []) {
+        const rmin = strict(min, r.min), rflag = flag || r.flag, open = 'more:' + at + '/' + r.name;
+        out.push({ label: r.name, words: r.say, sset: id, min: rmin, flag: rflag, where });
+        for (const m of r.more || []) out.push({ label: m.name, words: m.say, sset: id, open, parent: r.name, min: strict(rmin, m.min), flag: rflag, where: `${sec.title} › ${r.name}` });
+        for (const it of r.moreList || []) out.push({ label: it.title, words: it.meta, sset: id, open, parent: r.name, list: true, min: rmin, flag: rflag, where: `${sec.title} › ${r.name}` });
+      } };
+      const recsIn = (list, where, at, min, flag, extra = {}) => { for (const it of list || []) {
+        out.push({ label: it.title, words: it.meta, sset: id, list: true, min, flag, where, ...extra });
+        if (!it.more) continue;
+        const open = 'more:' + at + '/' + it.title, fflag = flag || it.foldFlag;
+        for (const m of it.more) out.push({ label: m.name, words: m.say, sset: id, open, parent: it.title, parentList: true, min: strict(min, m.min), flag: fflag, where: `${sec.title} › ${it.title}` });
+        for (const r of it.moreList || []) out.push({ label: r.title, words: r.meta, sset: id, open, parent: it.title, parentList: true, list: true, min, flag: fflag, where: `${sec.title} › ${it.title}` });
+      } };
+      rowsIn(s.rows, here, base, smin, sflag);
+      recsIn(s.list, here, base, smin, sflag);
+      for (const a of s.actions || []) if (a.list) {
+        const opens = `${base}/${a.id || a.label}`;
+        out.push({ label: a.label, sset: id, opens, min: smin, flag: sflag, where: here });
+        recsIn(a.list, `${sec.title} › ${a.label}`, base, smin, sflag, { opens });
       }
-      for (const it of s.list || []) out.push({ label: it.title, words: it.meta, sset: id, list: true, min: strict(sec.min, s.min), flag: sec.flag || s.flag, where: `${sec.title} › ${s.title}` });
+      for (const gr of s.groups || []) {
+        out.push({ label: gr.title, words: gr.meta, sset: id, head: true, min: smin, flag: sflag, where: here });
+        rowsIn(gr.rows, `${here} › ${gr.title}`, base, smin, sflag);
+        recsIn(gr.list, `${here} › ${gr.title}`, base + '/' + gr.title, smin, sflag);
+      }
     }
   }
   return out;
@@ -463,8 +484,12 @@ const closeOverlays = () => { ui.q = ''; ui.menu = ''; ui.pop = false; ui.acct =
 // Lands on a setting's row: goes to its section, and lights the row once it is drawn.
 let landing = null;
 function landRow(e) {
-  const row = [...document.querySelectorAll(e.list ? '.list-row' : '.set-row')].find((x) => x.offsetParent && (x.querySelector(e.list ? '.lr-t' : '.set-name')?.textContent || '') === e.label);
-  if (row) R.land(row); else scrollTo(0, 0);
+  if (e.opens) document.querySelector(`[data-svdo="${CSS.escape(e.opens)}"]`)?.click();   // what lives in a Dialog: its action opens it
+  const named = (label, list) => [...document.querySelectorAll(list ? '.list-row' : '.set-row')].find((x) => x.offsetParent && (x.querySelector(list ? '.lr-t' : '.set-name')?.textContent || '') === label);
+  const head = e.head && [...document.querySelectorAll('.set-sec-h, .list-h')].find((x) => x.offsetParent && x.textContent === e.label);
+  // a folded row its state hides right now (a speech URL, with no server chosen): the row it folds under
+  const at = head || named(e.label, e.list) || (e.parent && named(e.parent, e.parentList));
+  if (at) R.land(at); else scrollTo(0, 0);
 }
 function land(e) {
   if (!e) return;

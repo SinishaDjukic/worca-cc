@@ -16,8 +16,10 @@
 //   on: { label: (rec, x) → toast }, open: (rec, x) → toast }; Rename, Duplicate, Edit, Delete, Remove, Revoke, Uninstall
 //   and Reject are shared (settings.js). `x` is { sv, remove, add, dialog, confirm, go, page, click }.
 // A Dialog: { title, yes, note, facts, rows, fields, check(vals), then(vals, sv) → toast, done, view, steps: [{ label, … }] }.
-// A section: { title, meta, min, flag, actions: [action], rows, list, table }. `min` is a level; `flag` a Labs flag that
-// gates the thing too, on a section or a row.
+// A section: { title, meta, min, flag, actions: [action], rows, list, table, groups: [{ title, meta, rows | list, empty }] }.
+// `min` is a level; `flag` a Labs flag that gates the thing too, on a section or a row. A record may fold rows of its own:
+// `more`, with `foldFlag` when a Labs flag gates them. An action that opens records in a Dialog carries them as `list`,
+// so search finds them.
 // Loaded by the gates with an empty `window`: nothing here touches the library until it is called.
 (function () {
   const O = (...xs) => xs.map((x) => (Array.isArray(x) ? x : [x, x]));
@@ -46,7 +48,7 @@
 
   // ---- values that are not a row's own ----
   const STATE = { ver: '1.19.0', latest: '1.19.0', upd: 'latest', updTried: false, gsShown: false, proxyLogin: true, claudeIn: true, chats: 38, worktrees: 12, attach: '140 MB',
-    jobsAll: false, stepsAll: false, seeded: false, speechModels: true, gemQuota: '', gemUsed: 840, perRun: '', total: '1000', period: 'month', orLeft: 820 };
+    tidied: '3 days ago', jobsAll: false, stepsAll: false, seeded: false, speechModels: true, gemQuota: '', gemUsed: 840, perRun: '', total: '1000', period: 'month', orLeft: 820 };
   const NOTES = [note('architecture.md', 'How the server and the UI are split · today · from Chat'), note('conventions.md', 'Naming, commits and tests · 2 Oct · from run #398')];
   const COST_TAGS = [
     { title: 'Cost centre', meta: 'R&D, Platform, Support · required', menu: ['Edit', 'Remove'] },
@@ -55,7 +57,8 @@
 
   // ---- General › About: what `Check now`, `Update` and `Choose version…` do ----
   const cmd = (sv) => `npm install -g @worca/app@${sv.upd === 'failed' || sv.upd === 'available' ? sv.latest : sv.ver}`;
-  const updWords = (sv) => ({ latest: 'Latest', available: `Update available: ${sv.latest}`, failed: `Update available: ${sv.latest}`, back: `Back on an older version; ${sv.latest} is the latest` }[sv.upd]);
+  const short = (v) => v.replace(/\.0$/, '');   // 1.20.0 reads 1.20
+  const updWords = (sv) => ({ latest: 'Up to date', available: `New version: ${short(sv.latest)}`, failed: `Could not update to ${short(sv.latest)}`, back: `An older version; ${short(sv.latest)} is the latest` }[sv.upd]);
   const outdated = (sv) => sv.upd === 'available' || sv.upd === 'failed' || sv.upd === 'back';
   const canUpdate = (sv) => sv.upd === 'available' || sv.upd === 'back';
   const VERSIONS = O(['1.20.0', '1.20.0, the latest'], ['1.19.0', '1.19.0'], ['1.18.2', '1.18.2'], ['1.17.0', '1.17.0']);
@@ -160,11 +163,10 @@
       Manage: (r, x) => x.go('plugins'),
     } });
 
-  // ---- Plugins: the three trackers Ticket updates knows ----
-  const TRACKERS = O(['jira', 'Jira'], ['azure', 'Azure Boards'], ['github', 'GitHub Issues']);
+  // ---- Plugins: the trackers, each with its own Ticket updates ----
   const MOVES = window.RailUI?.TRACKER_MOVES || { jira: [] };   // the library's; the sweeps read this file for its section ids, without it
   const ruleWords = (m) => (m === 'none' ? 'Don\'t move' : m === 'done' ? 'Any Done status' : `Moves to ${m}`);
-  const rule = (title, tracker, move, gone) => ({ title, tracker, move, when: (sv, r) => r.tracker === sv.tuTracker, mark: gone ? 'is-amber' : '',
+  const rule = (title, move, gone) => ({ title, move, mark: gone ? 'is-amber' : '',
     meta: gone ? `${title} has no status named ${gone} any more: pick another; until then a run leaves its tickets where they are` : ruleWords(move),
     menu: ['Change rule', 'Remove'],
     on: { 'Change rule': (r, x) => x.dialog({ title: `Rule for ${r.title}`, yes: 'Save', fields: [{ key: 'to', label: 'Move its ticket', value: r.move, options: [['none', 'Don\'t move'], ['done', 'Any Done status'], ...MOVES[r.tracker].map((m) => [m, m])] }], then: (v) => { r.move = v.to; r.meta = ruleWords(v.to); r.mark = ''; return `${r.title}: ${r.meta}`; } }) } });
@@ -176,7 +178,23 @@
       'Set up…': (r, x) => x.dialog({ title: `Set up ${title}`, yes: 'Save', fields: [{ key: 'tok', label: 'Bot token', value: '', hint: 'Kept in a file only you can read' }], then: (v, sv) => { r.meta = 'A chat channel · bot token set'; r.menu = ['Settings', 'Uninstall']; sv[key] = true; return `${title} is set up`; } }),
     }, open: (r, x) => r.on[r.menu.includes('Set up…') ? 'Set up…' : 'Settings'](r, x) });
 
-  // ---- Providers ----
+  // A tracker plugin keeps its own projects and rules; they fold under it, with Labs › Ticket updates on.
+  const tracker = (title, id, meta, key, on, o, rules) => ({ ...plugin(title, meta, key, on, o), foldFlag: 'ticketUpdates', foldHelp: 'Ticket updates', moreList: rules.map((r) => ({ ...r, tracker: id })), empty: 'No project rules', more: [
+    { name: 'Ticket updates', help: 'A project\'s own rule wins over All projects', say: 'What a finished run does to its ticket', acts: [{ label: 'Add rule', edit: (sv) => ({ title: 'Add a project rule', yes: 'Add', fields: [{ key: 'proj', label: 'Project', value: '', hint: id === 'github' ? 'A repository: owner/repo' : 'A project you work on' }, { key: 'to', label: 'Move its ticket', value: 'done', options: [['none', 'Don\'t move'], ['done', 'Any Done status'], ...MOVES[id].map((m) => [m, m])] }], check: (v) => (v.proj.trim() ? '' : 'A rule needs a project'), then: (v) => { const k = `plugins/Installed/Trackers/${title}`; (sv.__recs[k] ||= rules.map((r, i) => ({ ...r, tracker: id, id: 'r' + i }))).push({ ...rule(v.proj, v.to), tracker: id, id: 'n' + Date.now() }); return `Rule added for ${v.proj}`; } }) }] },
+    { name: 'Projects', help: 'None picked means all projects', say: 'New run and Requirements list only **{tuProjects_' + id + '}**', vals: { ['tuProjects_' + id]: id === 'github' ? 'acme/worca' : id === 'azure' ? 'Billing' : 'WEB, API, INFRA' }, acts: [edit('Change your projects', [{ key: 'tuProjects_' + id, label: 'Projects you work on', hint: 'Comma-separated; none means all. Removing one keeps its rule' }], { done: 'Projects saved' })] },
+    { name: 'All projects', say: 'When a run finishes successfully, {tuAll_' + id + '}', picks: { ['tuAll_' + id]: P('done', O(['none', 'don\'t move its ticket'], ['done', 'move it to any Done status', 'One the ticket can reach, never Won\'t Do, Rejected or Duplicate']), 'Unless a project below says otherwise') } },
+  ] });
+  // Plugins › Sources: the head's action opens them; a source's row opens the store it fills.
+  function toStore(r, x) { x.sv.__dialog = null; return x.page('marketplace', 'Opens the Marketplace, the store in the sidebar'); }
+  const SOURCES = [
+    { title: 'worca-official', meta: '12 plugins', fig: 'synced 5 min ago', menu: ['Refresh'], open: toStore, on: { Refresh: (r) => { r.fig = 'synced just now'; return 'worca-official refreshed'; } } },
+    { title: 'team-internal', meta: 'Can\'t be reached · last synced yesterday', mark: 'is-amber', menu: ['Try again', 'Remove'], open: toStore, on: { 'Try again': (r) => { r.mark = ''; r.meta = '4 plugins'; r.fig = 'synced just now'; r.menu = ['Refresh', 'Remove']; r.on = { Refresh: (x) => { x.fig = 'synced just now'; return 'team-internal refreshed'; } }; return 'team-internal is back'; } } },
+  ];
+  const sourcesDialog = (sv) => ({ title: 'Sources', yes: 'Add marketplace', where: 'plugins/Sources', list: SOURCES, fields: [{ key: 'where', label: 'Add a marketplace', value: '', hint: 'A repository or a folder' }],
+    check: (v) => (v.where.trim() ? '' : 'Say where it is'),
+    then: (v) => { (sv.__recs['plugins/Sources'] ||= SOURCES.map((it, i) => ({ ...it, id: 'r' + i }))).push({ id: 'n' + Date.now(), title: v.where, meta: 'Synced just now', menu: ['Remove'], open: toStore }); return `Marketplace added: ${v.where}`; } });
+
+  // ---- Models › Sign-ins ----
   const orFree = (sv) => `OpenRouter · ${sv.orLeft} of 1,000 free requests left today · resets 00:00 UTC`;
   const OPENROUTER = { base: 'https://openrouter.ai/api/v1', key: '${OPENROUTER_KEY}' };
 
@@ -185,6 +203,12 @@
       { title: 'Setup', rows: [
         { name: 'Setup assistant', say: 'Checks this machine, the network, model access and your limits', acts: [{ label: 'Run setup', edit: setup }] },
         { name: 'Getting started', say: 'The first nine things to do, and the guided tour{gsWords}', vals: { gsWords: (sv) => (sv.gsShown ? ': back in the sidebar' : '') }, acts: [{ label: 'Show again', off: (sv) => (sv.gsShown ? 'The checklist is already showing' : ''), do: (sv) => { sv.gsShown = true; return 'The Getting started checklist is back in the sidebar'; } }] },
+        { name: 'Browser extension', help: 'Works with a local Worca only', say: 'Add Worca to {browser}', picks: { browser: P('chrome', O(['chrome', 'Chrome'], ['edge', 'Edge'], ['firefox', 'Firefox']), 'Which browser to install it in') },
+          acts: [{ label: 'Install', edit: (sv) => ({ title: `Install in ${{ chrome: 'Chrome', edge: 'Edge', firefox: 'Firefox' }[sv.browser]}`, view: true, yes: 'Close', note: 'Load the folder `~/.worca-cc/extension` in the browser\'s extensions page, or take the zip from the latest release. It pairs on first use.' }) }],
+          moreList: [
+            { title: 'MacBook · Chrome', meta: 'Paired 2 Oct · last used today', menu: ['Revoke'] },
+            { title: 'Work PC · Edge', meta: 'Paired 14 Sep · not used yet', menu: ['Revoke'] },
+          ], empty: 'No browser paired' },
       ] },
       { title: 'Storage', min: 'advanced', rows: [
         { name: 'Folders', say: 'Data lives in `{root}`; new projects go in `{projects}`', vals: { root: '~/.worca-cc', projects: '~/src' },
@@ -196,43 +220,30 @@
         { name: 'Model keys', say: 'Claude and OpenAI keys come from **the broker**', acts: [{ label: 'Manage keys', say: 'Opens your team\'s key page in a new tab' }] },
         { name: 'GitHub', say: 'Signed in as **@emil-angelov**' },
       ] },
-      { title: 'Browser extension', meta: 'Works with a local Worca only.', rows: [
-        { name: 'Install', say: 'Add Worca to {browser}', picks: { browser: P('chrome', O(['chrome', 'Chrome'], ['edge', 'Edge'], ['firefox', 'Firefox']), 'Which browser to install it in') },
-          acts: [{ label: 'Install', edit: (sv) => ({ title: `Install in ${{ chrome: 'Chrome', edge: 'Edge', firefox: 'Firefox' }[sv.browser]}`, view: true, yes: 'Close', note: 'Load the folder `~/.worca-cc/extension` in the browser\'s extensions page, or take the zip from the latest release. It pairs on first use.' }) }] },
-      ], list: [
-        { title: 'MacBook · Chrome', meta: 'Paired 2 Oct · last used today', menu: ['Revoke'] },
-        { title: 'Work PC · Edge', meta: 'Paired 14 Sep · not used yet', menu: ['Revoke'] },
-      ], empty: 'No browser paired' },
       { title: 'About', rows: [
-        { name: 'Version', help: 'From a source checkout this says Source build and offers no Update', say: 'Worca **{verNow}** · {updNow}', vals: { verNow: (sv) => sv.ver, updNow: updWords },
+        { name: 'Version', help: 'From a source checkout this says Source build and offers no Update', say: '**{verNow}** · {updNow}', vals: { verNow: (sv) => short(sv.ver), updNow: updWords },
           acts: [
-            { label: 'Update', kind: '', when: canUpdate, do: (sv) => { if (!sv.updTried) { sv.updTried = true; sv.upd = 'failed'; return ''; } sv.ver = sv.latest; sv.upd = 'latest'; return `Worca ${sv.ver} is running`; } },
-            { label: 'Check now', when: (sv) => sv.upd === 'latest', do: (sv) => { if (sv.ver === '1.20.0') return 'You have the latest version'; sv.latest = '1.20.0'; sv.upd = 'available'; return 'Worca 1.20.0 is available'; } },
+            { label: 'Update', kind: '', when: canUpdate, do: (sv) => { if (!sv.updTried) { sv.updTried = true; sv.upd = 'failed'; sv.__open = 'more:general/About/Version'; return ''; } sv.ver = sv.latest; sv.upd = 'latest'; return `Worca ${short(sv.ver)} is running`; } },
+            { label: 'Check now', when: (sv) => sv.upd === 'latest', do: (sv) => { if (sv.ver === '1.20.0') return 'You have the latest version'; sv.latest = '1.20.0'; sv.upd = 'available'; return `New version: ${short(sv.latest)}`; } },
           ],
           more: [
             { name: 'Other versions', say: 'Move to any released version, older ones too', acts: [{ label: 'Choose version…', edit: (sv) => ({ title: 'Choose a version', yes: 'Install it', fields: [{ key: 'to', label: 'Version', value: sv.ver, options: VERSIONS }], then: (v) => { if (v.to === sv.ver) return `Already on ${v.to}`; sv.latest = '1.20.0'; sv.ver = v.to; sv.upd = v.to === sv.latest ? 'latest' : 'back'; return `Worca ${v.to} is running`; } }) }] },
             { name: 'Updates', say: 'Look for new versions of Worca once a day', sw: { key: 'updates', on: true, why: 'Nothing installs by itself' } },
             { name: 'Release notes', say: '`docs.worca.dev/changelog`', acts: [opens('the changelog')] },
+            { name: 'Command', when: outdated, say: 'Or from a terminal: `{updCmd}`', vals: { updCmd: cmd }, acts: [{ label: 'Copy command', copy: cmd }] },
+            { name: 'Last update', when: (sv) => sv.upd === 'failed', say: 'Could not update to **{latestNow}**: npm could not write to the install folder. Update from a terminal instead', vals: { latestNow: (sv) => sv.latest }, acts: [{ label: 'Dismiss', do: (sv) => { sv.upd = 'available'; return ''; } }] },
+            { name: 'npm output', when: (sv) => sv.upd === 'failed', say: 'The last lines npm wrote', acts: [{ label: 'View', edit: { title: 'npm output', view: true, yes: 'Close', note: '`npm ERR! code EACCES` · `npm ERR! syscall rename` · `npm ERR! path /usr/local/lib/node_modules/@worca/app`' } }] },
+            { name: "What's new", when: outdated, say: 'What changed in **{latestShown}**', vals: { latestShown: (sv) => sv.latest }, acts: [{ label: 'Open', id: 'whats-new', say: 'Opens the 1.20.0 changelog page in a new tab' }] },
+            { name: 'Changes', help: 'Changes since this version', when: outdated, say: 'Changes since this version, on GitHub', acts: [{ label: 'Compare', say: 'Opens the compare view on GitHub in a new tab' }] },
+            { name: 'Repository', say: '`github.com/SinishaDjukic/worca-cc`', acts: [opens('the repository')] },
+            { name: 'Report a bug', say: 'Opens a new issue, labelled bug', acts: [{ label: 'Open', id: 'bug', say: 'Opens a new bug issue on GitHub in a new tab' }] },
+            { name: 'Suggest an improvement', say: 'Opens a new issue, labelled enhancement', acts: [{ label: 'Open', id: 'idea', say: 'Opens a new enhancement issue on GitHub in a new tab' }] },
           ] },
-        { name: 'Command', when: outdated, say: 'Or from a terminal: `{updCmd}`', vals: { updCmd: cmd }, acts: [{ label: 'Copy command', copy: cmd }] },
-        { name: 'Last update', when: (sv) => sv.upd === 'failed', say: 'Could not update to **{latestNow}**: npm could not write to the install folder. Update from a terminal instead', vals: { latestNow: (sv) => sv.latest }, acts: [{ label: 'Dismiss', do: (sv) => { sv.upd = 'available'; return ''; } }], more: [
-          { name: 'npm output', say: 'The last lines npm wrote', acts: [{ label: 'View', edit: { title: 'npm output', view: true, yes: 'Close', note: '`npm ERR! code EACCES` · `npm ERR! syscall rename` · `npm ERR! path /usr/local/lib/node_modules/@worca/app`' } }] },
-        ] },
-        { name: "What's new", when: outdated, say: 'What changed in **{latestShown}**', vals: { latestShown: (sv) => sv.latest }, acts: [{ label: 'Open', id: 'whats-new', say: 'Opens the 1.20.0 changelog page in a new tab' }] },
-        { name: 'Changes', help: 'Changes since this version', when: outdated, say: 'Changes since this version, on GitHub', acts: [{ label: 'Compare', say: 'Opens the compare view on GitHub in a new tab' }] },
-        { name: 'Repository', say: '`github.com/SinishaDjukic/worca-cc`', acts: [opens('the repository')] },
-        { name: 'Report a bug', say: 'Opens a new issue, labelled bug', acts: [{ label: 'Open', id: 'bug', say: 'Opens a new bug issue on GitHub in a new tab' }] },
-        { name: 'Suggest an improvement', say: 'Opens a new issue, labelled enhancement', acts: [{ label: 'Open', id: 'idea', say: 'Opens a new enhancement issue on GitHub in a new tab' }] },
       ] },
     ] },
 
     team: { min: 'advanced', title: 'Team policy', meta: 'What your team requires of every Worca that follows its policy.',
       lock: { level: 'expert', why: 'Expert mode changes the policy; here you can read it' }, sections: [
-      { title: 'Policy', rows: [
-        { name: 'Home', say: 'Follows **{policyHome}** · synced today', vals: { policyHome: 'acme/worca-policy' }, acts: [edit('Change the policy home', [{ key: 'policyHome', label: 'Repository', hint: 'The project whose marker branch carries the policy' }], { yes: 'Follow it', done: 'Now following the new policy home' })] },
-        { name: 'Consent', say: 'Accepted on 2 Oct; a change to it asks again', acts: [{ label: 'Review', read: true, edit: { title: 'Accepted policy', view: true, yes: 'Close', note: 'Policy version `4f2a91c`, published by @dana on 1 Oct: required plugins, spending caps, the Team policy guardrail set and one model.' } }] },
-        { name: 'Editing', say: '**{policyTitle}**; a change opens a pull request on `worca-policy`', vals: { policyTitle: 'Gateway team policy', policyNotes: 'Ask #platform' }, acts: [{ label: 'Edit policy', edit: { title: 'Edit the policy', yes: 'Open pull request', fields: [{ key: 'policyTitle', label: 'Title' }, { key: 'policyNotes', label: 'Notes', multiline: true, hint: 'Who to ask, and why' }], done: 'Pull request opened on worca-policy' } }] },
-      ] },
       { title: 'Effective policy', meta: 'What the next run on this machine will use.', table: { label: 'Effective policy', columns: [{ id: 'f', label: 'Field' }, { id: 't', label: 'Team', narrow: false }, { id: 'k', label: 'Kind', narrow: false }, { id: 'y', label: 'Yours', narrow: false }, { id: 'e', label: 'Effective' }],
         rows: (sv) => [
           { f: 'Per run limit', t: '$50', k: 'Soft', y: usd(sv.perRun), e: sv.perRun ? usd(Math.min(+sv.perRun, 50)) : '$50' },
@@ -246,24 +257,32 @@
         { name: 'Spending', say: 'Each run up to **{capRun}**, all runs **{capAll} a month**; a run may go past', vals: { capRun: '$50', capAll: '$2,000' }, acts: [edit('Change the spending caps', [{ key: 'capRun', label: 'Per run' }, { key: 'capAll', label: 'Total a month' }], { done: 'Pull request opened with the new caps' })] },
         { name: 'Workspace runs', say: 'These values replace the others for a run across a workspace: **{wsCap}** a run', vals: { wsCap: '$120' }, acts: [edit('Change for workspace runs', [{ key: 'wsCap', label: 'Per run' }], { done: 'Pull request opened for workspace runs' })] },
       ] },
-      { title: 'Required plugins', meta: 'Installing shows its source and what it ships, and waits for your click.', actions: [
-        { label: 'Install all…', read: true, off: (sv) => (sv.__recs['team/Required plugins']?.some((r) => r.missing) === false ? 'Everything required is installed' : ''),
-          edit: (sv) => ({ title: 'Install what is required', yes: 'Install', note: 'Slack, from worca-official at commit `c81d02e`: a chat channel, 1 skill, no agents.', then: () => { (sv.__recs['team/Required plugins'] || []).forEach((r) => { r.missing = false; r.mark = ''; r.meta = 'Installed'; r.menu = []; }); return 'Required plugins installed'; } }) },
-      ], list: [
-        { title: 'Jira', meta: 'Installed' },
-        { title: 'Slack', meta: 'Missing on this machine', mark: 'is-amber', missing: true },
+      { title: 'Allowed', actions: [
+        { label: 'Install all…', help: 'The required plugins', read: true, off: (sv) => (sv.__recs['team/Allowed/Required plugins']?.some((r) => r.missing) === false ? 'Everything required is installed' : ''),
+          edit: (sv) => ({ title: 'Install what is required', yes: 'Install', note: 'Slack, from worca-official at commit `c81d02e`: a chat channel, 1 skill, no agents.', then: () => { (sv.__recs['team/Allowed/Required plugins'] || []).forEach((r) => { r.missing = false; r.mark = ''; r.meta = 'Installed'; r.menu = []; }); return 'Required plugins installed'; } }) },
+      ], groups: [
+        { title: 'Required plugins', meta: 'Installing shows its source and what it ships, and waits for your click.', list: [
+          { title: 'Jira', meta: 'Installed' },
+          { title: 'Slack', meta: 'Missing on this machine', mark: 'is-amber', missing: true },
+        ] },
+        { title: 'Blocked', meta: 'A run with one of these enabled proceeds and is recorded as off-policy.', list: [
+          { title: 'Unknown MCP servers', meta: 'Blocked by acme/worca-policy', menu: ['Remove'] },
+        ] },
+        { title: 'Guardrail sets', meta: 'Read-only on every machine that follows this policy.', list: [
+          { title: 'Team policy', meta: '9 deny rules · read-only', open: (r, x) => x.go('guardrails') },
+        ] },
+        { title: 'Models', meta: 'Selectable everywhere a model is chosen.', list: [
+          { title: 'Opus via Acme gateway', meta: 'Through Anthropic-compatible · roles for Claude and Codex only', open: (r, x) => x.go('models') },
+        ] },
+        { title: 'MCP servers', meta: 'What the policy adds to every run. Each waits for your consent.', list: [
+          { title: 'github', meta: 'stdio · consented on 2 Oct', menu: ['Review'], on: { Review: (r, x) => x.dialog({ title: 'github', view: true, yes: 'Close', note: 'Runs `npx @modelcontextprotocol/server-github`, with `GITHUB_TOKEN` from your settings.' }) } },
+        ] },
       ] },
-      { title: 'Blocked', meta: 'A run with one of these enabled proceeds and is recorded as off-policy.', list: [
-        { title: 'Unknown MCP servers', meta: 'Blocked by acme/worca-policy', menu: ['Remove'] },
-      ], empty: 'Nothing is blocked' },
-      { title: 'Guardrail sets', meta: 'Read-only on every machine that follows this policy.', list: [
-        { title: 'Team policy', meta: '9 deny rules · read-only', open: (r, x) => x.go('guardrails') },
-      ] },
-      { title: 'Models', meta: 'Selectable everywhere a model is chosen.', list: [
-        { title: 'Opus via Acme gateway', meta: 'Through Anthropic-compatible · roles for Claude and Codex only', open: (r, x) => x.go('models') },
-      ] },
-      { title: 'MCP servers', meta: 'What the policy adds to every run. Each waits for your consent.', list: [
-        { title: 'github', meta: 'stdio · consented on 2 Oct', menu: ['Review'], on: { Review: (r, x) => x.dialog({ title: 'github', view: true, yes: 'Close', note: 'Runs `npx @modelcontextprotocol/server-github`, with `GITHUB_TOKEN` from your settings.' }) } },
+      { title: 'Editing', rows: [
+        { name: 'Policy', say: '**{policyTitle}**; a change opens a pull request on `worca-policy`', vals: { policyTitle: 'Gateway team policy', policyNotes: 'Ask #platform' }, acts: [{ label: 'Edit policy', edit: { title: 'Edit the policy', yes: 'Open pull request', fields: [{ key: 'policyTitle', label: 'Title' }, { key: 'policyNotes', label: 'Notes', multiline: true, hint: 'Who to ask, and why' }], done: 'Pull request opened on worca-policy' } }], more: [
+          { name: 'Home', say: 'Follows **{policyHome}** · synced today', vals: { policyHome: 'acme/worca-policy' }, acts: [edit('Change the policy home', [{ key: 'policyHome', label: 'Repository', hint: 'The project whose marker branch carries the policy' }], { yes: 'Follow it', done: 'Now following the new policy home' })] },
+          { name: 'Consent', say: 'Accepted on 2 Oct; a change to it asks again', acts: [{ label: 'Review', read: true, edit: { title: 'Accepted policy', view: true, yes: 'Close', note: 'Policy version `4f2a91c`, published by @dana on 1 Oct: required plugins, spending caps, the Team policy guardrail set and one model.' } }] },
+        ] },
       ] },
     ] },
 
@@ -273,8 +292,7 @@
           confirm: { text: 'Turn every Labs feature back to its default?', yes: 'Reset all', then: () => { for (const f of flagsChanged()) window.RailUI.prefs.setFlag(f.key, f.on); return 'Labs: back to its defaults'; } } },
       ], rows: [
         { name: 'Guide', say: 'How Labs works, and what a stage means', acts: [{ label: 'Open', say: 'Opens the Labs guide in a new tab' }] },
-        ...FLAGS.map((f) => ({ name: f.name, say: f.say, chip: f.stage, sw: { flag: f.key, on: f.on, why: f.why, locked: f.locked } })),
-      ] },
+      ], groups: ['Beta', 'Experimental'].map((stage) => ({ title: stage, rows: FLAGS.filter((f) => f.stage === stage).map((f) => ({ name: f.name, say: f.say, sw: { flag: f.key, on: f.on, why: f.why, locked: f.locked } })) })) },
     ] },
 
     runs: { title: 'Runs', meta: 'How runs spend, start and wait.', sections: [
@@ -293,7 +311,7 @@
           { name: 'Required', say: 'A run starts only with every required cost tag set', sw: { key: 'tagsReq', on: true } },
         ], moreList: COST_TAGS },
       ] },
-      { title: 'Start', rows: [
+      { title: 'Starting', rows: [
         { name: 'Naming', flag: 'smartRunNaming', say: 'Suggest a title and a branch name as you type', sw: { key: 'naming', on: true, why: 'Labs › Smart run naming' }, more: [
           { name: 'Suggestions', say: 'Suggest {what} for a new run, {when}', picks: { what: P('both', O(['both', 'a title and a branch name'], ['title', 'a title'], ['branch', 'a branch name']), 'What the model suggests'), when: P('typing', O(['typing', 'while you type the task'], ['ask', 'when you press Suggest']), 'When it suggests', true) } },
           { name: 'Branch', help: 'A project can override the pattern and the types in its own Settings', say: 'Branches are named `{pattern}`, the type one of {types}', vals: { pattern: '{type}/{slug}', types: 'feat, fix, chore, docs, refactor, test' }, acts: [edit('Change the branch pattern', [{ key: 'pattern', label: 'Pattern', hint: '{type}, {slug}, {ticket} and {id} are filled in' }, { key: 'types', label: 'Types', hint: 'The model picks one of these' }], { done: 'Branch pattern saved' })] },
@@ -307,6 +325,10 @@
         ] },
         { name: 'Pull requests', help: GIT_TIP, say: 'Draft the description with AI as the PR opens', sw: { key: 'prDraft', on: false }, more: [
           { name: 'Create a PR', min: 'advanced', say: 'A finished run follows the team default: **{prNow}**', vals: { prNow: (sv) => ({ none: 'no PR', draft: 'a draft PR', ready: 'a PR ready for review' }[sv.prOpen]) }, acts: [{ label: 'Open', id: 'team', go: 'team', help: 'Settings › Team policy › Defaults; a project or New run can change it' }] },
+        ] },
+        { name: 'Schedules', min: 'advanced', say: 'A missed start still runs, up to **{lateNow}** late', vals: { lateNow: (sv) => ({ '30m': '30 minutes', '1h': '1 hour', '6h': '6 hours', '24h': '24 hours' }[sv.lateMax]) }, more: [
+          { name: 'Missed starts', say: 'When Worca was not running, {late} up to {lateMax} late', picks: { late: P('late', O(['late', 'start it'], ['skip', 'skip it']), 'What a scheduled run does when its time passed'), lateMax: P('6h', O(['30m', '30 minutes'], ['1h', '1 hour'], ['6h', '6 hours'], ['24h', '24 hours']), 'How late it may still start', true) } },
+          { name: 'Failures', say: 'Pause a repeating schedule after {fails} failures in a row', picks: { fails: P('3', O('2', '3', '5', '10'), 'Failures in a row before it pauses') } },
         ] },
       ] },
       { title: 'Limits', meta: 'Near: the run’s estimate does not fit in what is left of a window; with no estimate, at the warning line.', rows: [
@@ -346,10 +368,6 @@
           { name: 'Timeouts', min: 'expert', say: 'Connect within {ct}, sign in within {lt}, drop idle after {it}', picks: { ct: P('60', O(['30', '30s'], ['60', '60s'], ['120', '120s']), 'Connect timeout'), lt: P('60', O(['30', '30s'], ['60', '60s'], ['120', '120s']), 'Login timeout'), it: P('300', O(['120', '2 minutes'], ['300', '5 minutes'], ['600', '10 minutes']), 'Idle timeout', true) } },
           { name: 'Offline', min: 'advanced', say: 'When the network drops, a run waits up to {wait}', picks: { wait: P('4h', O(['30m', '30 minutes'], ['1h', '1 hour'], ['4h', '4 hours'], ['12h', '12 hours'], ['24h', '24 hours']), 'How long it waits before it fails') }, sw: { key: 'netWait', on: true } },
         ] },
-        { name: 'Schedules', min: 'advanced', say: 'A missed start still runs, up to **{lateNow}** late', vals: { lateNow: (sv) => ({ '30m': '30 minutes', '1h': '1 hour', '6h': '6 hours', '24h': '24 hours' }[sv.lateMax]) }, more: [
-          { name: 'Missed starts', say: 'When Worca was not running, {late} up to {lateMax} late', picks: { late: P('late', O(['late', 'start it'], ['skip', 'skip it']), 'What a scheduled run does when its time passed'), lateMax: P('6h', O(['30m', '30 minutes'], ['1h', '1 hour'], ['6h', '6 hours'], ['24h', '24 hours']), 'How late it may still start', true) } },
-          { name: 'Failures', say: 'Pause a repeating schedule after {fails} failures in a row', picks: { fails: P('3', O('2', '3', '5', '10'), 'Failures in a row before it pauses') } },
-        ] },
       ] },
     ] },
 
@@ -370,13 +388,13 @@
     ] },
 
     automations: { min: 'advanced', flag: 'gitAutomations', title: 'Automations', meta: 'What runs by itself across projects; each project keeps its own rules.', sections: [
-      { title: 'Projects', list: [
-        { title: 'worca-cc', meta: 'Proposes a fix for new issues and reviews PRs · 3 rules' },
-        { title: 'billing workspace', meta: 'Every member repository · reviews PRs · 1 rule' },
-      ] },
       { title: 'Waiting', empty: 'Nothing is waiting', list: [
         { title: 'Issue #1088', meta: 'A fix is proposed · worca-cc', mark: 'is-amber', fig: '2h ago', menu: ['Approve', 'Skip'],
           on: { Approve: (r, x) => { x.remove(); x.add({ title: r.title, meta: 'Approved: a run started · worca-cc', fig: 'now' }, 'automations/Recent'); return 'Issue #1088: a run started'; }, Skip: (r, x) => { x.remove(); x.add({ title: r.title, meta: 'Skipped by you · worca-cc', fig: 'now' }, 'automations/Recent'); return 'Issue #1088: skipped'; } } },
+      ] },
+      { title: 'Projects', list: [
+        { title: 'worca-cc', meta: 'Proposes a fix for new issues and reviews PRs · 3 rules' },
+        { title: 'billing workspace', meta: 'Every member repository · reviews PRs · 1 rule' },
       ] },
       { title: 'Recent', list: [
         { title: 'PR #1087', meta: 'Reviewed · worca-cc', fig: '09:12' },
@@ -384,32 +402,20 @@
       ] },
     ] },
 
-    models: { min: 'expert', title: 'Models', meta: 'The models every project can pick from; sign-ins are on Providers.', sections: [
+    models: { min: 'expert', title: 'Models', meta: 'The models every project can pick from, and the sign-ins they run through.', sections: [
       { title: 'Defaults', rows: [
         { name: 'Roles', say: 'Every engine keeps its own: on Claude, **Opus** plans and reviews, **Sonnet** writes the code, **Haiku** does quick jobs', help: 'Roles open at Simple through the link from a run or the setup assistant', moreList: ENGINES.map(roleRecord) },
         { name: 'Engine', say: 'New runs use {eng}; each step and helper job uses its role', picks: { eng: P('claude', ENGINES, 'The engine a new run starts on') } },
-        { name: 'Claude sign-in', say: '{claudeWords}', vals: { claudeWords: (sv) => (sv.claudeIn ? 'Signed in to Claude Code; factory defaults show as (default)' : 'Not signed in to Claude Code: Memory defragment and Second-opinion reviewer lose their factory default. A run that needs one is refused, never given another model') },
-          chip: (sv) => (sv.claudeIn ? '' : 'Signed out'),
-          acts: [{ label: 'Sign out', when: (sv) => sv.claudeIn, do: (sv) => { sv.claudeIn = false; window.RailUI.prefs.setConnected('claude', false); return 'Signed out of Claude Code'; } }, { label: 'Sign in', when: (sv) => !sv.claudeIn, do: (sv) => { sv.claudeIn = true; window.RailUI.prefs.setConnected('claude', true); return 'Signed in to Claude Code'; } }] },
       ] },
       { title: 'Jobs', meta: 'A step or a helper job follows its role until you override it.', rows: [
         { name: 'Step models', say: '**{stepN}** set here; the others follow their role', vals: { stepN: (sv) => shownOf(STEPS, sv, 'Step models') }, acts: [{ label: (sv) => (sv.stepsAll ? 'Show set' : 'Show all 5'), id: 'steps-all', do: (sv) => { sv.stepsAll = !sv.stepsAll; sv.__open = 'more:models/Jobs/Step models'; return ''; } }], moreList: STEPS, empty: 'None overridden: Show all lists the steps' },
         { name: 'Helper jobs', say: '**{helperN}** have a model; the other {helperRest} follow their role', vals: { helperN: (sv) => shownOf(HELPERS, sv, 'Helper jobs'), helperRest: (sv) => HELPERS.length - shownOf(HELPERS, sv, 'Helper jobs') }, acts: [{ label: (sv) => (sv.jobsAll ? 'Show set' : 'Show all 11'), id: 'jobs-all', do: (sv) => { sv.jobsAll = !sv.jobsAll; sv.__open = 'more:models/Jobs/Helper jobs'; return ''; } }], moreList: HELPERS },
       ] },
-      { title: 'Catalogue', actions: [{ label: 'Add model', edit: (sv) => ({ title: 'Add a model', yes: 'Add', fields: [{ key: 'id', label: 'Model id', value: '', hint: 'Worca\'s handle for it' }, { key: 'lab', label: 'Label', value: '' }], check: (v) => (v.id.trim() ? '' : 'A model needs an id'), then: (v) => { (sv.__recs['models/Catalogue'] ||= recsSeed('models', 'Catalogue')).unshift({ id: 'n' + Date.now(), title: v.id, meta: v.lab || 'Added by you', menu: ['Edit', 'Remove'] }); return `Model added: ${v.id}`; } }) }], list: [
-        { title: 'claude-sonnet-5-5', meta: 'Your Claude login · priced by the CLI', menu: ['Edit', 'Remove'] },
-        { title: 'gpt-5', meta: 'Codex · your ChatGPT sign-in', menu: ['Edit', 'Remove'] },
-        { title: 'local-llama', meta: 'Through OpenAI-compatible · free', menu: ['Edit', 'Remove'] },
-      ], empty: 'No models yet' },
-      { title: 'Sources', rows: [
-        { name: 'Built-in models', say: 'Show the built-in Anthropic models', sw: { key: 'builtIn', on: true, why: 'Turn off when you don\'t use a first-party Anthropic account' } },
-        { name: 'Import', say: 'Bring models in from Copilot or a provider', acts: [{ label: 'Import…', edit: importModels('models/Catalogue') }] },
-        { name: 'Sharing', say: 'Share your models with the team as a plugin', acts: [{ label: 'Share…', edit: { title: 'Share your models', yes: 'Create plugin', note: 'Makes a plugin with your 3 models, with no keys in it.', done: 'Plugin created: team-models' } }] },
-      ] },
-    ] },
-
-    providers: { min: 'expert', title: 'Providers', meta: 'Sign-ins and keys for the models Worca runs through its own bridge.', sections: [
-      { title: 'Providers', list: [
+      { title: 'Sign-ins', meta: 'Sign-ins and keys for the models Worca runs through its own bridge.', rows: [
+        { name: 'Claude sign-in', say: '{claudeWords}', vals: { claudeWords: (sv) => (sv.claudeIn ? 'Signed in to Claude Code; factory defaults show as (default)' : 'Not signed in to Claude Code: Memory defragment and Second-opinion reviewer lose their factory default. A run that needs one is refused, never given another model') },
+          chip: (sv) => (sv.claudeIn ? '' : 'Signed out'),
+          acts: [{ label: 'Sign out', when: (sv) => sv.claudeIn, do: (sv) => { sv.claudeIn = false; window.RailUI.prefs.setConnected('claude', false); return 'Signed out of Claude Code'; } }, { label: 'Sign in', when: (sv) => !sv.claudeIn, do: (sv) => { sv.claudeIn = true; window.RailUI.prefs.setConnected('claude', true); return 'Signed in to Claude Code'; } }] },
+      ], list: [
         { title: 'GitHub Copilot', meta: 'Connected as @emil-angelov', mark: 'is-green', detail: 'Premium requests are read from GitHub, not counted by Worca, and reset on 1 Dec.',
           live: (sv, r) => (r.signedOut ? 'Not signed in' : `${r.account} · ${r.conc} at once · ${r.used} of 1,000 premium requests, from GitHub`), account: 'Business', conc: 4, used: 312,
           menu: (r) => (r.signedOut ? ['Sign in'] : ['Edit', 'Import models', 'Refresh usage', 'Sign out']),
@@ -447,13 +453,17 @@
             'Clear quota': (r, x) => { x.sv.gemQuota = ''; return 'Gemini quota cleared'; },
           } },
       ] },
-      { title: 'Speech', meta: 'Used by Chat\'s voice. The built-in engines run in your browser; audio never leaves this computer.', rows: [
-        { name: 'Listening', say: 'Chat listens with {stt}', picks: { stt: P('whisper', O(['whisper', 'Whisper, in the browser'], ['server', 'your speech server']), 'The speech-to-text engine') } },
-        { name: 'Listening URL', when: (sv) => sv.stt === 'server', say: '`{sttUrl}`', vals: { sttUrl: 'https://speech.corp.example/v1/audio/transcriptions' }, acts: [edit('Change the listening URL', [{ key: 'sttUrl', label: 'URL', type: 'url' }], { done: 'Listening URL saved' })] },
-        { name: 'Speaking', say: 'Replies are read aloud with {tts}', picks: { tts: P('kokoro', O(['kokoro', 'Kokoro, in the browser'], ['server', 'your speech server'], ['off', 'nothing: replies stay text']), 'The text-to-speech engine') } },
-        { name: 'Speaking URL', when: (sv) => sv.tts === 'server', say: '`{ttsUrl}`', vals: { ttsUrl: 'https://speech.corp.example/v1/audio/speech' }, acts: [edit('Change the speaking URL', [{ key: 'ttsUrl', label: 'URL', type: 'url' }], { done: 'Speaking URL saved' })] },
-        { name: 'Speech models', say: '{speechWords}', vals: { speechWords: (sv) =>  (sv.speechModels ? 'Downloaded: 480 MB; the next mic use fetches them again' : 'Not downloaded; the first mic use fetches them, up to 500 MB') }, acts: [{ label: 'Remove', off: (sv) => (sv.speechModels ? '' : 'Nothing is downloaded'), do: (sv) => { sv.speechModels = false; return 'Speech models removed'; } }] },
-      ] },
+      { title: 'Catalogue', actions: [{ label: 'Add model', edit: (sv) => ({ title: 'Add a model', yes: 'Add', fields: [{ key: 'id', label: 'Model id', value: '', hint: 'Worca\'s handle for it' }, { key: 'lab', label: 'Label', value: '' }], check: (v) => (v.id.trim() ? '' : 'A model needs an id'), then: (v) => { (sv.__recs['models/Catalogue'] ||= recsSeed('models', 'Catalogue')).unshift({ id: 'n' + Date.now(), title: v.id, meta: v.lab || 'Added by you', menu: ['Edit', 'Remove'] }); return `Model added: ${v.id}`; } }) }], rows: [
+        { name: 'Sources', say: 'Built-in models, import from a provider, sharing with the team', more: [
+          { name: 'Built-in models', say: 'Show the built-in Anthropic models', sw: { key: 'builtIn', on: true, why: 'Turn off when you don\'t use a first-party Anthropic account' } },
+          { name: 'Import', say: 'Bring models in from Copilot or a provider', acts: [{ label: 'Import…', edit: importModels('models/Catalogue') }] },
+          { name: 'Sharing', say: 'Share your models with the team as a plugin', acts: [{ label: 'Share…', edit: { title: 'Share your models', yes: 'Create plugin', note: 'Makes a plugin with your 3 models, with no keys in it.', done: 'Plugin created: team-models' } }] },
+        ] },
+      ], list: [
+        { title: 'claude-sonnet-5-5', meta: 'Your Claude login · priced by the CLI', menu: ['Edit', 'Remove'] },
+        { title: 'gpt-5', meta: 'Codex · your ChatGPT sign-in', menu: ['Edit', 'Remove'] },
+        { title: 'local-llama', meta: 'Through OpenAI-compatible · free', menu: ['Edit', 'Remove'] },
+      ], empty: 'No models yet' },
     ] },
 
     ask: { min: 'advanced', title: 'Chat', meta: 'Worca\'s own assistant: its engine, what it may do and where it may look.', sections: [
@@ -482,6 +492,15 @@
         channel('Slack', 'chSlack', { on: false, state: () => 'Not set up', meta: 'Needs a bot token: Plugins › Slack › Settings', fixed: 'Workspace bot' }),
         channel('Teams', 'chTeams', { on: false, state: () => 'Not set up', meta: 'Needs a bot token: Plugins › Teams › Settings', fixed: 'Team bot' }),
       ], empty: 'No chat channels installed' },
+      { title: 'Speech', min: 'expert', meta: 'Used by Chat\'s voice. The built-in engines run in your browser; audio never leaves this computer.', rows: [
+        { name: 'Listening', say: 'Chat listens with {stt}', picks: { stt: P('whisper', O(['whisper', 'Whisper, in the browser'], ['server', 'your speech server']), 'The speech-to-text engine') }, more: [
+          { name: 'Listening URL', when: (sv) => sv.stt === 'server', say: '`{sttUrl}`', vals: { sttUrl: 'https://speech.corp.example/v1/audio/transcriptions' }, acts: [edit('Change the listening URL', [{ key: 'sttUrl', label: 'URL', type: 'url' }], { done: 'Listening URL saved' })] },
+        ] },
+        { name: 'Speaking', say: 'Replies are read aloud with {tts}', picks: { tts: P('kokoro', O(['kokoro', 'Kokoro, in the browser'], ['server', 'your speech server'], ['off', 'nothing: replies stay text']), 'The text-to-speech engine') }, more: [
+          { name: 'Speaking URL', when: (sv) => sv.tts === 'server', say: '`{ttsUrl}`', vals: { ttsUrl: 'https://speech.corp.example/v1/audio/speech' }, acts: [edit('Change the speaking URL', [{ key: 'ttsUrl', label: 'URL', type: 'url' }], { done: 'Speaking URL saved' })] },
+        ] },
+        { name: 'Speech models', say: '{speechWords}', vals: { speechWords: (sv) =>  (sv.speechModels ? 'Downloaded: 480 MB; the next mic use fetches them again' : 'Not downloaded; the first mic use fetches them, up to 500 MB') }, acts: [{ label: 'Remove', off: (sv) => (sv.speechModels ? '' : 'Nothing is downloaded'), do: (sv) => { sv.speechModels = false; return 'Speech models removed'; } }] },
+      ] },
       { title: 'History', meta: 'Delete removes transcripts, attachments and the worktrees checked out for them. Runs started from a chat stay.', actions: [
         { label: 'Delete all chats', help: 'Asks first', off: (sv) => (sv.chats ? '' : 'No chats to delete'), confirm: (sv) => ({ text: `Delete all ${sv.chats} chats, with ${sv.worktrees} worktrees and ${sv.attach} of attachments? They cannot be brought back.`, yes: 'Delete all', danger: true, then: (s) => { s.chats = 0; s.worktrees = 0; s.attach = '0 MB'; return 'All chats deleted'; } }) },
       ], rows: [
@@ -498,13 +517,14 @@
     ] },
 
     memory: { min: 'advanced', title: 'Memory', meta: 'What agents remember between runs, as notes Worca keeps tidy.', sections: [
-      { title: 'Health', min: 'expert', rows: [
-        { name: 'Notes', say: '**{healthWords}** · tidied {tidied}', vals: { healthWords: (sv) => `Healthy · ${(sv.__recs['memory/Notes'] || NOTES).length} notes`, tidied: '3 days ago' }, acts: [{ label: 'Tidy now', do: (sv) => { sv.tidied = 'just now'; return 'Notes tidied'; } }] },
-      ] },
+      { title: 'Notes', meta: (sv) => `Healthy · ${(sv.__recs['memory/Notes'] || NOTES).length} notes · tidied ${sv.tidied}`, actions: [{ label: 'New note', edit: (sv) => ({ title: 'New note', yes: 'Create', fields: [{ key: 'name', label: 'Name', value: '', hint: 'A file name, such as testing.md' }, { key: 'body', label: 'Note', value: '', multiline: true }], check: (v) => (v.name.trim() ? '' : 'A note needs a name'), then: (v) => { (sv.__recs['memory/Notes'] ||= recsSeed('memory', 'Notes')).unshift({ ...note(v.name, 'Today · from you'), id: 'n' + Date.now() }); return `Note created: ${v.name}`; } }) }], rows: [
+        { name: 'History', say: 'What the notes were before each tidying', acts: [{ label: 'Tidy now', min: 'expert', do: (sv) => { sv.tidied = 'just now'; return 'Notes tidied'; } }], moreList: [
+          { title: 'Before tidying', meta: '3 days ago · 31 notes', menu: ['Restore'], on: { Restore: (r, x) => { x.remove(); return 'Notes restored from before tidying'; } } },
+        ], empty: 'Nothing to restore' },
+      ], empty: 'No notes yet', list: NOTES },
       { title: 'Proposals', meta: 'Changes runs suggest; nothing changes until you approve.', empty: 'Nothing to approve', list: [
         { title: 'testing.md', meta: 'Update · from run #412 · 2h ago', mark: 'is-amber', menu: ['Approve', 'Reject'], on: { Approve: (r, x) => { x.remove(); x.add({ ...note('testing.md', 'How we test · today · from run #412') }, 'memory/Notes'); return 'testing.md approved'; } } },
       ] },
-      { title: 'Notes', actions: [{ label: 'New note', edit: (sv) => ({ title: 'New note', yes: 'Create', fields: [{ key: 'name', label: 'Name', value: '', hint: 'A file name, such as testing.md' }, { key: 'body', label: 'Note', value: '', multiline: true }], check: (v) => (v.name.trim() ? '' : 'A note needs a name'), then: (v) => { (sv.__recs['memory/Notes'] ||= recsSeed('memory', 'Notes')).unshift({ ...note(v.name, 'Today · from you'), id: 'n' + Date.now() }); return `Note created: ${v.name}`; } }) }], empty: 'No notes yet', list: NOTES },
       { title: 'Team memory', rows: [
         { name: 'Load', help: 'Local is team memory off', say: 'Runs and chats load {teamLoad}', picks: { teamLoad: P('local', O(['local', 'this machine\'s notes'], ['team', 'the team\'s notes only'], ['both', 'yours and the team\'s']), 'Team and Both share this project\'s notes on the worca-memory branch') } },
         { name: 'Sync', when: (sv) => sv.teamLoad !== 'local', say: 'Branch `worca-memory` on origin · fetched {teamSync}', vals: { teamSync: '5 minutes ago' }, acts: [{ label: 'Sync now', do: (sv) => { sv.teamSync = 'just now'; return 'Team memory synced'; } }] },
@@ -519,47 +539,37 @@
         teamNote('release.md', 'Team only', 'From @dana · 2 Oct'),
         teamNote('secrets-howto.md', 'Held', 'Held back: it looks like it holds a secret'),
       ] },
-      { title: 'History', empty: 'Nothing to restore', list: [
-        { title: 'Before tidying', meta: '3 days ago · 31 notes', menu: ['Restore'], on: { Restore: (r, x) => { x.remove(); return 'Notes restored from before tidying'; } } },
-      ] },
     ] },
 
     plugins: { min: 'advanced', title: 'Plugins', meta: 'What you installed from the Marketplace, and where Worca looks for more.', sections: [
-      { title: 'Installed', actions: [{ label: 'Open Marketplace', page: 'marketplace', say: 'Opens the Marketplace, the store in the sidebar' }], empty: 'Nothing installed', list: [
-        plugin('Jira', 'A task source · worca-official · 1 update', 'pJira', true, { mark: 'is-amber', menu: ['Update', 'Settings', 'Uninstall'], url: 'https://acme.atlassian.net' }),
-        plugin('Azure Boards', 'A task source · worca-official', 'pAzure', true, { url: 'https://dev.azure.com/acme' }),
-        plugin('GitHub Issues', 'A task source · worca-official', 'pIssues', false, { url: 'https://github.com/acme' }),
-        plugin('Telegram', 'A chat channel · bot token set', 'pTg', true, { fields: [{ key: 'allowed', label: 'Allowed chat IDs', value: '', hint: 'Replies from these chats count' }] }),
-        plugin('Discord', 'A chat channel · bot token set', 'pDiscord', true, { fields: [{ key: 'allowed', label: 'Allowed chat IDs', value: '', hint: 'Replies from these chats count' }] }),
-        plugin('Slack', 'A chat channel · needs a bot token', 'pSlack', false, { menu: ['Set up…', 'Uninstall'] }),
-        plugin('Teams', 'A chat channel · needs a bot token', 'pTeams', false, { menu: ['Set up…', 'Uninstall'] }),
-      ] },
-      { title: 'Ticket updates', flag: 'ticketUpdates', meta: 'What a finished run does to its ticket. A project\'s own rule wins over All projects.', actions: [
-        { label: 'Add rule', edit: (sv) => ({ title: 'Add a project rule', yes: 'Add', fields: [{ key: 'proj', label: 'Project', value: '', hint: sv.tuTracker === 'github' ? 'A repository: owner/repo' : 'A project you work on' }, { key: 'to', label: 'Move its ticket', value: 'done', options: [['none', 'Don\'t move'], ['done', 'Any Done status'], ...MOVES[sv.tuTracker].map((m) => [m, m])] }], check: (v) => (v.proj.trim() ? '' : 'A rule needs a project'), then: (v) => { (sv.__recs['plugins/Ticket updates'] ||= recsSeed('plugins', 'Ticket updates')).push({ ...rule(v.proj, sv.tuTracker, v.to), id: 'n' + Date.now() }); return `Rule added for ${v.proj}`; } }) },
-      ], rows: [
-        { name: 'Tracker', say: 'Rules for {tuTracker}', picks: { tuTracker: P('jira', TRACKERS, 'A tracker plugin keeps its own projects and rules; for GitHub Issues a project is a repository') } },
-        { name: 'Projects', help: 'None picked means all projects', say: 'New run and Requirements list only **{tuProjects}**', vals: { tuProjects: 'WEB, API, INFRA' }, acts: [edit('Change your projects', [{ key: 'tuProjects', label: 'Projects you work on', hint: 'Comma-separated; none means all. Removing one keeps its rule' }], { done: 'Projects saved' })] },
-        { name: 'All projects', say: 'When a run finishes successfully, {tuAll}', picks: { tuAll: P('done', O(['none', 'don\'t move its ticket'], ['done', 'move it to any Done status', 'One the ticket can reach, never Won\'t Do, Rejected or Duplicate']), 'Unless a project below says otherwise') } },
-      ], list: [
-        rule('WEB', 'jira', MOVES.jira[0]),
-        rule('INFRA', 'jira', 'none', 'Resolved'),
-        rule('Billing', 'azure', 'Closed'),
-        rule('acme/worca', 'github', 'closed'),
-      ], empty: 'No project rules' },
-      { title: 'Sources', actions: [{ label: 'Add marketplace', edit: (sv) => ({ title: 'Add a marketplace', yes: 'Add', fields: [{ key: 'where', label: 'Repository or folder', value: '' }], check: (v) => (v.where.trim() ? '' : 'Say where it is'), then: (v) => { (sv.__recs['plugins/Sources'] ||= recsSeed('plugins', 'Sources')).push({ id: 'n' + Date.now(), title: v.where, meta: 'Synced just now', menu: ['Remove'] }); return `Marketplace added: ${v.where}`; } }) }], list: [
-        { title: 'worca-official', meta: '12 plugins', fig: 'synced 5 min ago', menu: ['Refresh'], on: { Refresh: (r) => { r.fig = 'synced just now'; return 'worca-official refreshed'; } } },
-        { title: 'team-internal', meta: 'Can\'t be reached · last synced yesterday', mark: 'is-amber', menu: ['Try again', 'Remove'], on: { 'Try again': (r) => { r.mark = ''; r.meta = '4 plugins'; r.fig = 'synced just now'; r.menu = ['Refresh', 'Remove']; r.on = { Refresh: (x) => { x.fig = 'synced just now'; return 'team-internal refreshed'; } }; return 'team-internal is back'; } } },
+      { title: 'Installed', actions: [{ label: 'Sources', help: 'Where Worca looks for plugins', list: SOURCES, edit: sourcesDialog }], rows: [
+        { name: 'Marketplace', say: 'More plugins are in the store', acts: [{ label: 'Open', id: 'store', page: 'marketplace', say: 'Opens the Marketplace, the store in the sidebar' }] },
+      ], empty: 'Nothing installed', groups: [
+        { title: 'Trackers', list: [
+          tracker('Jira', 'jira', 'A task source · worca-official · 1 update', 'pJira', true, { mark: 'is-amber', menu: ['Update', 'Settings', 'Uninstall'], url: 'https://acme.atlassian.net' }, [rule('WEB', MOVES.jira[0]), rule('INFRA', 'none', 'Resolved')]),
+          tracker('Azure Boards', 'azure', 'A task source · worca-official', 'pAzure', true, { url: 'https://dev.azure.com/acme' }, [rule('Billing', 'Closed')]),
+          tracker('GitHub Issues', 'github', 'A task source · worca-official', 'pIssues', false, { url: 'https://github.com/acme' }, [rule('acme/worca', 'closed')]),
+        ] },
+        { title: 'Chat channels', list: [
+          plugin('Telegram', 'A chat channel · bot token set', 'pTg', true, { fields: [{ key: 'allowed', label: 'Allowed chat IDs', value: '', hint: 'Replies from these chats count' }] }),
+          plugin('Discord', 'A chat channel · bot token set', 'pDiscord', true, { fields: [{ key: 'allowed', label: 'Allowed chat IDs', value: '', hint: 'Replies from these chats count' }] }),
+          plugin('Slack', 'A chat channel · needs a bot token', 'pSlack', false, { menu: ['Set up…', 'Uninstall'] }),
+          plugin('Teams', 'A chat channel · needs a bot token', 'pTeams', false, { menu: ['Set up…', 'Uninstall'] }),
+        ] },
+        { title: 'Others', list: [
+          plugin('Notion', 'An MCP server · worca-official', 'pNotion', true, { url: 'https://mcp.notion.com' }),
+        ] },
       ] },
     ] },
 
     connectors: { min: 'advanced', title: 'Connectors', meta: 'MCP servers and skills, grouped in sets that projects follow.', sections: [
-      { title: 'Sets', actions: [{ label: 'New set', edit: addTo('connectors/Sets', 'New set', 'Name', '0 servers · 0 skills · no project', ['Rename', 'Duplicate', 'Delete']) }], list: [
-        { title: 'General', meta: 'Built in · 3 servers · 2 skills · Chat and 5 projects', menu: ['Duplicate'], copy: { menu: ['Rename', 'Duplicate', 'Delete'], meta: '3 servers · 2 skills · no project' } },
-        { title: 'Frontend', meta: '2 servers · 1 skill · 2 projects', menu: ['Rename', 'Duplicate', 'Delete'] },
-      ] },
       { title: 'Servers', actions: [{ label: 'Add server', edit: addTo('connectors/Servers', 'Add a server', 'Name', 'stdio · in no set', ['Edit', 'Remove']) }], empty: 'No servers', list: [
         { title: 'github', meta: 'stdio · in 2 sets', menu: ['Edit', 'Remove'] },
         { title: 'postgres', meta: 'stdio · needs a secret in Frontend', mark: 'is-amber', menu: ['Edit', 'Remove'] },
+      ] },
+      { title: 'Sets', actions: [{ label: 'New set', edit: addTo('connectors/Sets', 'New set', 'Name', '0 servers · 0 skills · no project', ['Rename', 'Duplicate', 'Delete']) }], list: [
+        { title: 'General', meta: 'Built in · 3 servers · 2 skills · Chat and 5 projects', menu: ['Duplicate'], copy: { menu: ['Rename', 'Duplicate', 'Delete'], meta: '3 servers · 2 skills · no project' } },
+        { title: 'Frontend', meta: '2 servers · 1 skill · 2 projects', menu: ['Rename', 'Duplicate', 'Delete'] },
       ] },
       { title: 'Skills', actions: [{ label: 'Import skill', edit: addTo('connectors/Skills', 'Import a skill', 'Skill', 'From your Claude Code skills · in no set', ['Edit', 'Remove']) }], empty: 'No skills', list: [
         { title: 'pdf-tools', meta: 'From your Claude Code skills · in 1 set', menu: ['Edit', 'Remove'] },
@@ -637,14 +647,15 @@
   function recsSeed(id, title) { return SECTIONS[id].sections.find((s) => s.title === title).list.map((it, i) => ({ ...it, id: 'r' + i })); }
 
   const GROUPS = [
-    { title: 'Worca', items: ['general', 'notifications', 'team', 'experimental'] },
     { title: 'Work', items: ['runs', 'presets', 'labels', 'automations'] },
-    { title: 'AI', items: ['models', 'providers', 'ask', 'guardrails', 'memory'] },
+    { title: 'AI', items: ['models', 'ask', 'memory'] },
+    { title: 'Access', items: ['team', 'guardrails'] },
     { title: 'Add-ons', items: ['plugins', 'connectors'] },
+    { title: 'Worca', items: ['general', 'notifications', 'experimental'] },
   ];
-  const NOTIFICATIONS = { title: 'Notifications', meta: 'Pulse keeps everything; these choices say what else reaches you, and what a start does near a limit.' };
+  const NOTIFICATIONS = { title: 'Notifications', meta: 'Pulse keeps everything; these choices say what else reaches you.' };
   window.SettingsModel = {
-    GROUPS, SECTIONS, FLAGS, STATE, FIRST: 'general',
+    GROUPS, SECTIONS, FLAGS, STATE, FIRST: 'runs',
     title: (id) => (id === 'notifications' ? NOTIFICATIONS : SECTIONS[id] || { title: id }).title,
     meta: (id) => (id === 'notifications' ? NOTIFICATIONS : SECTIONS[id] || { meta: '' }).meta,
     min: (id) => (SECTIONS[id] || {}).min || '',

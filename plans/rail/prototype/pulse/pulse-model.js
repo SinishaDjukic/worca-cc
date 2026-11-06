@@ -54,7 +54,7 @@
 
   // Anything a run can spend against: a harness's own sign-in (Claude Code, Codex, Copilot, Cursor, the Gemini CLI) or a
   // provider through the bridge (OpenRouter's free models). Gemini reports no figures: the person sets its quota in
-  // Settings › Providers and Worca counts against it; with none set it has no ring and says where to set one. `runs`: it can be picked as where a run runs.
+  // Settings › Models › Sign-ins and Worca counts against it; with none set it has no ring and says where to set one. `runs`: it can be picked as where a run runs.
   // `src`: who reports the figures. Windows: a short one (session) and a long one (week, day or month). A plan may have
   // only the long one: Claude's Ultra (was Max 20x) has no 5-hour session once the account is verified (30 Oct 2026);
   // its week stays.
@@ -62,7 +62,7 @@
     claude: { name: 'Claude Code', vendor: 'Claude', runs: true, src: 'Reported by Claude Code' },
     codex: { name: 'Codex', vendor: 'OpenAI', runs: true, src: 'Reported by Codex' },
     copilot: { name: 'Copilot', vendor: 'GitHub', runs: true, src: 'Premium requests read from GitHub' },
-    gemini: { name: 'Gemini', vendor: 'Google', runs: true, src: 'Requests Worca counted today, against the quota set in Settings › Providers' },
+    gemini: { name: 'Gemini', vendor: 'Google', runs: true, src: 'Requests Worca counted today, against the quota set in Settings › Models › Sign-ins' },
     openrouter: { name: 'OpenRouter', vendor: 'free models', runs: false, src: 'Free requests Worca counted today' },
   };
   const WIN = { session: 'Session', week: 'Week', day: 'Day', month: 'Month' };
@@ -329,7 +329,7 @@
   // come from each provider; a Wave 1 question.
   const refreshed = (c, ticks, clock) => (ticks ? { ...c, usage: c.usage.map((u) => ({ ...u, asOf: clock, win: u.win.map((w) => { const pct = Math.min(100, w.pct + ticks); return w.of ? { ...w, pct, used: Math.min(w.of, w.used + ticks) } : { ...w, pct }; }) })) } : c);
 
-  // Gemini's window is the person's own: the quota set in Settings › Providers, what Worca counted against it.
+  // Gemini's window is the person's own: the quota set in Settings › Models › Sign-ins, what Worca counted against it.
   function withQuota(c, quota, used) {
     if (!c.usage.some((u) => u.p === 'gemini')) return c;
     const q = +quota;

@@ -11,7 +11,7 @@ The prototype's code here is the source. The **Worca Rail** page is generated fr
 |---|---|---|
 | Run and group page | `spec.md` (review `review.md`, shipping plan `enrollment.md`) | In the prototype |
 | Pulse: the notification hub, usage rings, limit notifications and what a start does near a limit | `pulse.md` | Concept, in the prototype (`pulse.html`) |
-| Settings: from the profile menu, the sidebar becomes its menu (four groups), one row per decision, records as Lists, search | `docs/rail/settings.md, mocks `mocks/settings-menu-*.png` | In the prototype (`pulse.html` › Settings; `settings/`) |
+| Settings: from the profile menu, the sidebar becomes its menu (five groups), one row per decision, records as Lists, search | `docs/rail/settings.md, mocks `mocks/settings-menu-*.png` | In the prototype (`pulse.html` › Settings; `settings/`) |
 
 Wave 1 (the run and group pages, Pulse, Settings, the shell) is `wave-1.md`; the waves after it, and the design
 system's own consistency work between them, are `waves.md`.

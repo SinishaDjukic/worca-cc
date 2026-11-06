@@ -12,17 +12,36 @@
 
 **Settings**: one place, opened from the profile menu (the sidebar holds places in Worca, never Settings; Interface
 mode, Appearance and going away live in the profile menu only). Opening it turns the sidebar into its menu, its content
-fading over `change` while the page changes at once: `‹ Back to Worca`, then the sections under four group heads
-(Worca: General, Notifications, Team policy, Labs · Work: Runs, Presets, Labels, Automations · AI: Models, Providers,
-Chat, Guardrails, Memory · Add-ons: Plugins, Connectors). **Levels:** Team policy can be read at Advanced and changed at Expert: everyone a policy constrains sees why a choice is
+fading over `change` while the page changes at once: `‹ Back to Worca`, then the sections under five group heads, in
+this order (Work: Runs, Presets, Labels, Automations · AI: Models, Chat, Memory · Access: Team policy, Guardrails ·
+Add-ons: Plugins, Connectors · Worca: General, Notifications, Labs). It opens on the first section the mode shows; a group
+with nothing at this mode has no head. **Levels:** a section's level is its most open content's, and what is above it
+inside says so by its own `min` (Models is Expert; Speech is Expert inside Chat). Team policy can be read at Advanced and changed at Expert: everyone a policy constrains sees why a choice is
 locked; only an admin changes it. **One row per decision, in the section that owns it:** limits are Runs': the warning line, what a start does near a
-limit, and what a paused run does. Notifications says only how you hear of them, and links there. **A setting or a place:** a setting is a choice about how
+limit, and what a paused run does. Notifications says only how you hear of them; its Usage row links to Runs › Limits. **A setting or a place:** a setting is a choice about how
 Worca behaves, set rarely, taking effect at once; a place is where you do work and come back to. So the Marketplace
-*store* is a place in the sidebar, while what you installed (Plugins), Connectors, Models, Providers and Team policy are
+*store* is a place in the sidebar, while what you installed (Plugins), Connectors, Models and Team policy are
 settings. On a narrow screen Worca's sidebar stays, Settings opens
-on its menu as a list, and a section has `‹ Settings` above its title. The top bar's search finds every row, folded
-row and record by its name or its words, and lands on it with the flash, opening its Customise. Mocks:
+on its menu as a list, and a section has `‹ Settings` above its title. The top bar's search finds every section head, group, row, folded
+row and record by its name or its words, and lands on it with the flash, opening its Customise (or its Dialog). A folded
+row its state hides lands on the row it folds under. Mocks:
 `plans/rail/mocks/settings-*.png`, `settings-open-light.gif`.
+
+**Sections, in order.** Moving a row never removes it: it stays reachable, and search finds it.
+- Runs: Spending · Starting (with Schedules) · Limits · Away mode · Machine (Capacity, Network).
+- Presets, Labels, Guardrails: one section each.
+- Automations: Waiting · Projects · Recent.
+- Models: Defaults · Jobs · Sign-ins (Claude sign-in and each provider's record) · Catalogue (Built-in models, Import and
+  Sharing fold under its Sources row).
+- Chat: Chat · Channels · Speech (each URL folds under its row) · History.
+- Memory: Notes (health is its meta line; History, with Tidy now, folds under it) · Proposals · Team memory.
+- Team policy: Effective policy · Defaults · Allowed (groups: Required plugins, Blocked, Guardrail sets, Models, MCP servers) ·
+  Editing (Home and Consent fold under its row).
+- Plugins: Installed (groups: Trackers, Chat channels, Others; Ticket updates folds under its tracker; Sources is the head's action).
+- Connectors: Servers · Sets · Skills.
+- General: Setup (Browser extension folds under it) · Storage · Credentials · About.
+- Notifications: Channels · Updates.
+- Labs: Features, grouped by stage, Beta first.
 
 **A settings tab** (a section of Settings): its title, then one meta line saying what it decides, then its sections
 (SettingsSection). A row (SettingsRow) is its name on the left and one sentence beside it, the choice a SentencePicker in
@@ -39,7 +58,7 @@ a Dialog with its Fields. **A record is not a setting**: a tab that keeps record
 rules, an event log) puts them as a List of ListRows after its rows, under its own head; the row opens the thing, its
 own actions are in its ⋯, never a SettingsRow per record.
 
-**Labs.** One row per flag: its name, what it does, its stage (Chip), its Switch. The section's meta says Labs features
+**Labs.** One row per flag, under its stage (SettingsGroup; Beta, then Experimental): its name, what it does, its Switch. The section's meta says Labs features
 may change, break or disappear in any release. A flag locked by `WORCA_FLAGS` has its Switch off, the tooltip saying
 `Locked by WORCA_FLAGS`. Reset all is off, saying why, while every feature is at its default. A row or section a flag
 gates carries `flag` in the model and follows the switch at once; Labels, Automations, Naming, Summaries and Ticket
@@ -53,20 +72,24 @@ updates do. Opened directly while off, a section says so and offers Open Labs.
 - Levels: Sync is Advanced, the proxy Simple, New guardrail set Expert. A row that needs git says so in its tip and is
   hidden on a machine without git; the same goes for a version from a source checkout, which offers no Update.
 
-**About** is a small state machine, one row per fact: Version (Update when there is one, Check now when not), Command
-(copyable), Last update (the failed result, with Dismiss; its npm output under Customise), What's new, Changes.
+**About** is one row: `Version 1.19 · Up to date` (or `New version: 1.20`, or what failed), Update when there is one, Check
+now when not. A small state machine under its Customise: Other versions, Updates, Release notes; when behind, Command
+(copyable), Last update (the failed result, with Dismiss, and its npm output; a failed Update opens the fold), What's new,
+Changes; then Repository and the two ways to report.
 
 **A stepped Dialog** (Forms): Setup assistant's Run setup: Check, Network, Access, Models, Limits, Review; the last step's
 button is Apply. Nothing changes until then. A choice inside it is an OptionList.
 
 **Team policy** reads at Advanced, its edits off with the reason; at Expert they act, and a change opens a pull request
-on the policy's repository. Sections: Policy, Effective policy (Table), Defaults (Create a PR when a run finishes, its
-spending caps, workspace runs), Required plugins, Blocked, Guardrail sets, Models, MCP servers.
+on the policy's repository. Sections: Effective policy (Table), Defaults (Create a PR when a run finishes, its
+spending caps, workspace runs), Allowed, Editing.
 
 **Models** keeps roles per engine, a record each. A step or helper job is a record that follows its role until
 overridden: Override, Test, Clear; Show all lists the rest. There are 11 helper jobs. A factory default says `(default)`;
 signed out of Claude Code, one line says which lose theirs, and a run that needs one is refused, never given another
 model. **Chat** lists its chat channels as records: Switch, state (Chip), Test, and what stops it working in its meta line.
-**Plugins** holds Ticket updates for a tracker: its projects, All projects, and a rule per project as records.
+**Plugins**: a tracker folds its Ticket updates under its record (ListRow `fold`, behind the flag): its projects, All
+projects, and a rule per project as records. **Sources** is the Installed head's action: a Dialog with its records.
+**Models › Sign-ins** holds what was Providers: every link about a sign-in, a key or a quota lands there.
 **Memory** has Team memory: which notes load, sync, sharing and undo, and each note's state.
 

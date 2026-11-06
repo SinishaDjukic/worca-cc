@@ -11,8 +11,11 @@
 
   const flat = (rows) => (rows || []).flatMap((r) => [r, ...flat(r.more)]);
   const allSections = () => Object.values(SM.SECTIONS).flatMap((x) => x.sections);
-  const rowsOf = () => allSections().flatMap((s) => flat(s.rows));
-  const listsOf = () => allSections().flatMap((s) => [...(s.list || []), ...flat(s.rows).flatMap((r) => r.moreList || [])]);
+  const secRows = (s) => [...(s.rows || []), ...(s.groups || []).flatMap((g) => g.rows || [])];
+  const secRecs = (s) => [...(s.list || []), ...(s.groups || []).flatMap((g) => g.list || []), ...(s.actions || []).flatMap((a) => a.list || [])];
+  const recordsOf = () => allSections().flatMap((s) => { const rs = secRecs(s); return [...rs, ...flat(secRows(s)).flatMap((r) => r.moreList || []), ...rs.flatMap((r) => r.moreList || [])]; });
+  const rowsOf = () => [...allSections().flatMap((s) => flat(secRows(s))), ...recordsOf().flatMap((r) => flat(r.more))];
+  const listsOf = recordsOf;
   const REG = new Map();   // the last drawing's actions, by key: what a click on data-svdo means
   let cur = null;          // the values on the page: what a keystroke in a Dialog's Field writes to
 
@@ -67,7 +70,7 @@
   const chipOf = (x, sv, c) => { const t = x.chip && textOf(x.chip, sv); return t ? c.R.chip({ text: t, title: x.chipTip || '' }) : ''; };
   function row(r, sv, c, where) {
     const key = 'more:' + where + '/' + r.name, open = sv.__open === key;
-    const folds = !!(r.more || r.moreList);
+    const folds = !!r.moreList || (r.more || []).some((m) => vis(m, c));   // nothing to open, no Customise
     const inner = open ? (r.more || []).filter((m) => vis(m, c)).map((m) => row(m, sv, c, where + '/' + r.name)).join('') : '';
     const detail = open && r.moreList ? records(r.moreList, sv, c, where + '/' + r.name, r.empty) : '';
     const acts = (r.acts || []).filter((a) => vis(a, c)).map((a) => act(a, where + '/' + r.name, c)).join('');
@@ -85,7 +88,7 @@
   }
   function recsFromModel(where) {
     const [id, ...rest] = where.split('/'), s = SM.SECTIONS[id].sections.find((x) => x.title === rest.join('/'));
-    return (s.list || []).map((it, i) => ({ ...it, id: 'r' + i }));
+    return (s?.list || []).map((it, i) => ({ ...it, id: 'r' + i }));
   }
   const goSection = (id) => setTimeout(() => { if (window.RailShell) window.RailShell.go('settings/' + id); else document.querySelector(`[data-sset="${id}"]`)?.click(); });
   const toPage = (p, say) => { if (window.RailShell) { setTimeout(() => window.RailShell.go(p)); return ''; } return say; };
@@ -98,9 +101,9 @@
     Reject: (r, x) => { x.remove(); return `Rejected: ${r.title}`; },
     ...Object.fromEntries(['Delete', 'Remove', 'Revoke', 'Uninstall'].map((w) => [w, (r, x) => x.confirm({ text: `${w} ${r.title}?`, yes: w, danger: true, then: () => { x.remove(); return `${w === 'Revoke' ? 'Revoked' : w === 'Uninstall' ? 'Uninstalled' : w === 'Delete' ? 'Deleted' : 'Removed'}: ${r.title}`; } })])),
   };
-  function records(items, sv, c, where, empty) {
+  function recordRows(items, sv, c, where) {
     const recs = recsOf(sv, where, items);
-    const rows = recs.filter((it) => !it.when || it.when(sv, it)).map((it) => {
+    return recs.filter((it) => !it.when || it.when(sv, it)).map((it) => {
       const k = where + '/' + it.id, mid = 'svm:' + k;
       const menu = c.locked ? [] : (typeof it.menu === 'function' ? it.menu(it, sv) : it.menu) || [];
       for (const m of menu) {
@@ -110,11 +113,24 @@
       }
       REG.set(k + '/open', { rec: it.open || ((r, x) => x.dialog({ title: r.title, view: true, yes: 'Close', note: r.detail || (r.live ? r.live(sv, r) : r.meta) })), it, where });
       const meta = (it.live ? it.live(sv, it) : it.meta) || '';
-      return c.R.listRow({ title: it.title, meta, mark: it.mark ? c.R.statusDot({ tone: it.mark }) : '', endText: it.fig || '', end: chipOf(it, sv, c) + swOf(it, it.title, sv, c),
+      // A record's own fine-tuning (a tracker's Ticket updates) folds under it, as a row's does.
+      const foldKey = 'more:' + where + '/' + it.title, foldOpen = sv.__open === foldKey;
+      const canFold = it.more && (!it.foldFlag || R.prefs.flag(it.foldFlag));
+      const under = canFold && foldOpen ? `<div class="set-detail" data-motion="open"><div class="set-rows">${it.more.filter((m) => vis(m, c)).map((m) => row(m, sv, c, where + '/' + it.title)).join('')}</div>${it.moreList ? records(it.moreList, sv, c, where + '/' + it.title, it.empty) : ''}</div>` : '';
+      return c.R.listRow({ title: it.title, meta, mark: it.mark ? c.R.statusDot({ tone: it.mark }) : '', endText: it.fig || '', end: chipOf(it, sv, c) + swOf(it, it.title, sv, c), after: under,
+        fold: canFold ? { open: foldOpen, help: it.foldHelp || '', attrs: { 'data-svdo': foldKey, 'data-key': 'sv:' + foldKey } } : null,
         open: { 'data-svdo': k + '/open', 'data-key': 'sv:' + k + '/open', title: meta || 'Open ' + it.title },
         menu: menu.length ? { id: mid, label: 'More for ' + it.title, icon: c.svg('more', 14), items: menu, open: c.open === mid } : null });
     });
-    return c.R.list({ groups: [{ rows }], empty: c.R.emptyState({ title: empty || 'Nothing here yet' }) });
+  }
+  const emptyOf = (c, empty) => c.R.emptyState({ title: empty || 'Nothing here yet' });
+  const records = (items, sv, c, where, empty) => c.R.list({ groups: [{ rows: recordRows(items, sv, c, where) }], empty: emptyOf(c, empty) });
+  // A section's groups: records under a List's group heads, or rows under SettingsGroups.
+  function groupsHtml(s, sv, c, where) {
+    if (!s.groups) return '';
+    const of = (g) => g.list !== undefined;
+    return (s.groups.some(of) ? c.R.list({ groups: s.groups.filter(of).map((g) => ({ title: g.title, meta: g.meta || '', rows: recordRows(g.list, sv, c, where + '/' + g.title) })), empty: emptyOf(c, s.empty) }) : '')
+      + s.groups.filter((g) => !of(g)).map((g) => c.R.settingsGroup({ title: g.title, rows: g.rows.filter((r) => vis(r, c)).map((r) => row(r, sv, c, where)).join('') })).join('');
   }
 
   // ---- the Dialog: Fields, an OptionList, a Checkbox, facts, rows; one screen per step when it has `steps` ----
@@ -140,7 +156,9 @@
     const s = d.steps ? d.steps[d.at] : d, last = !d.steps || d.at === d.steps.length - 1;
     const note = textOf(s.note, sv) || '';
     const facts = s.facts ? (typeof s.facts === 'function' ? s.facts(d.vals, sv) : s.facts) : null;
-    const body = (note ? `<p class="dlg-note">${words(note, c)}</p>` : '')
+    const strip = sv.__confirm ? c.R.confirmStrip({ text: sv.__confirm.text, yes: sv.__confirm.yes, danger: !!sv.__confirm.danger }) : '';
+    const body = strip + (note ? `<p class="dlg-note">${words(note, c)}</p>` : '')
+      + (s.list ? records(s.list, sv, c, s.where) : '')
       + (facts ? c.R.list({ groups: [{ rows: facts.map((x) => c.R.listRow({ title: x.title, meta: x.meta || '', mark: x.mark ? c.R.statusDot({ tone: x.mark }) : '' })) }] }) : '')
       + (s.rows || []).map((r) => row(r, sv, c, 'dlg')).join('')
       + (s.fields || []).map((f) => fieldHtml(f, d, sv, c)).join('');
@@ -162,13 +180,13 @@
       return c.R.emptyState({ title: `${f.name} is off`, text: 'Turn it on in Labs.', actions: c.R.button({ label: 'Open Labs', kind: 'quiet', attrs: { 'data-sset': 'experimental' } }) });
     }
     const locked = sec.lock && !R.atLevel(level, sec.lock.level) ? sec.lock.why : '';
-    const strip = sv.__confirm ? c.R.confirmStrip({ text: sv.__confirm.text, yes: sv.__confirm.yes, danger: !!sv.__confirm.danger }) : '';
+    const strip = sv.__confirm && !sv.__dialog ? c.R.confirmStrip({ text: sv.__confirm.text, yes: sv.__confirm.yes, danger: !!sv.__confirm.danger }) : '';
     return dialogHtml(sv, c) + strip + sec.sections.filter((s) => vis(s, c)).map((s) => {
       const where = id + '/' + s.title, cc = { ...c, locked };
       const head = (s.actions || []).filter((a) => vis(a, c)).map((a) => act(a, where, cc)).join('');
       const rows = ((c.extra && c.extra[s.title]) || '') + (s.rows || []).filter((r) => vis(r, c)).map((r) => row(r, sv, cc, where)).join('');
       const table = s.table ? c.R.table({ ...s.table, rows: textOf(s.table.rows, sv) }) : '';
-      return c.R.settingsSection({ title: s.title, meta: textOf(s.meta, sv) || '', action: head, rows: rows + table + (s.list ? records(s.list, sv, cc, where, s.empty) : '') });
+      return c.R.settingsSection({ title: s.title, meta: textOf(s.meta, sv) || '', action: head, rows: rows + table + (s.list ? records(s.list, sv, cc, where, s.empty) : '') + groupsHtml(s, sv, cc, where) });
     }).join('');
   }
 
