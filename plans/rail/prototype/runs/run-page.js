@@ -872,7 +872,7 @@ document.addEventListener('click', (e) => {
     document.querySelector('.ch-file.is-flash')?.scrollIntoView({ block: 'center', behavior: reduced() ? 'auto' : 'smooth' }); return;
   }
   else if ('askopen' in d) { ui.askOpen = !ui.askOpen; pendingFocus = 'ask-open'; }
-  else if ('goanswer' in d) { pendingFocus = 'answer:' + (ui.answer ?? v0().ask.pick); ui.flashAnswer = true; render(); ui.flashAnswer = false; document.querySelector('.sc-answer')?.scrollIntoView({ block: 'center', behavior: reduced() ? 'auto' : 'smooth' }); return; }
+  else if ('goanswer' in d) { pendingFocus = v0().ask.options ? 'answer:' + (ui.answer ?? v0().ask.pick) : 'act-main'; ui.flashAnswer = true; render(); ui.flashAnswer = false; document.querySelector('.sc-answer')?.scrollIntoView({ block: 'center', behavior: reduced() ? 'auto' : 'smooth' }); return; }
   else if (d.unafter !== undefined) { ui.after = ui.after.filter((_, i) => i !== +d.unafter); toast('Scheduled run cancelled'); pendingFocus = 'menu:more'; }
   else if (d.answer !== undefined) { ui.answer = +d.answer; pendingFocus = 'answer:' + d.answer; }
   else if (d.file !== undefined) { ui.file = ui.file === +d.file ? null : +d.file; pendingFocus = 'file:' + d.file; }

@@ -24,6 +24,7 @@ const CONTROLS = `(() => {
   for (const e of document.querySelectorAll(SEL)) {
     if (e.closest('.mk-bar, .mk-intro, .mk-proposed, #route-today, .rail-capture, [data-capture]')) continue;
     if (!e.getClientRects().length || getComputedStyle(e).visibility === 'hidden') continue;
+    const box = e.getBoundingClientRect(); if (box.right <= 0 || box.left >= innerWidth) continue;   // off the screen: a closed drawer
     const k = e.dataset.key || [...e.attributes].filter((a) => a.name.startsWith('data-') || a.name === 'id').map((a) => a.name + '=' + a.value).join('&') || (e.tagName + ':' + (e.getAttribute('aria-label') || e.textContent.trim().slice(0, 40)));
     if (seen.has(k)) continue; seen.add(k);
     if (e.matches('[aria-selected="true"], [aria-current], [aria-checked="true"][role="radio"], [aria-checked="true"][role="menuitemradio"], [aria-pressed="true"]')) continue;   // already chosen: choosing it again rightly does nothing
@@ -71,7 +72,7 @@ for (const w of WIDTHS) {
     p.on('pageerror', (e) => add('script error', `${page} ${w}: ${e.message}`));
     const url = 'file://' + dir + page;
     await p.goto(url); await p.waitForTimeout(50);
-    const cases = await p.evaluate(() => (document.querySelector('#case')?.getClientRects().length ? [...document.querySelectorAll('#case option')].map((o) => o.value) : []));   // the one Worca keeps its picker folded; it is read by route
+    const cases = page === 'index.html' ? [] : await p.evaluate(() => [...document.querySelectorAll('#case option')].map((o) => o.value));   // the one Worca is read by route
     if (cases.length) {
       const list = SMALL ? cases.filter((_, i) => i % 5 === 0) : cases;
       for (const c of list) {
