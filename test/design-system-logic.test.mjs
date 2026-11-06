@@ -34,6 +34,58 @@ test('one main action per state; names fill from the run; every main step leads 
   }
 });
 
+// A step others see or that cannot be taken back confirms (docs/rail/actions.md act.confirm). An exception needs its reason here.
+const OTHERS_SEE = /^(Push|Publish|Apply to|Fix |Merge|Mark ready|Link remote|Discard|Archive|Stop|Cancel the rest|Re-plan|Delete|Continue|Update branch|Create|Raise)/;
+const NO_CONFIRM = {
+  'Fix all': 'it rewrites a plan nobody else has seen yet; spending alone never confirms',
+  'ready-moved/Update branch': 'it merges into a branch only on this machine',
+};
+const everyAction = () => R.stateIds().flatMap((id) => Object.entries(R.actionFlow(id, CTX)).filter(([, f]) => f && typeof f === 'object').map(([label, f]) => ({ id, label, f })));
+
+test('act.confirm: every action others see or cannot take back asks first', () => {
+  for (const { id, label, f } of everyAction()) {
+    if (!OTHERS_SEE.test(label) || NO_CONFIRM[label] || NO_CONFIRM[`${id}/${label}`]) continue;
+    assert.ok(f.confirm || f.dialog || f.member, `${id}: ${label} goes ahead without asking`);
+  }
+  for (const l of ['stop', 'archive']) assert.ok(R.runFlow(CTX)[l].confirm, l);
+  assert.equal(R.runFlow(CTX).report.dialog, 'report');
+  assert.ok(!R.runFlow(CTX).pauseNow.confirm, 'Pause does not ask');
+});
+
+test('act.flow: a Fix shows a Fixing state first; a move says what happened; a Report takes a note; commands stay', () => {
+  for (const { id, label, f } of everyAction()) {
+    if (/^Fix /.test(label) && f.to) assert.match(f.to, /fixing/, `${id}: ${label} goes straight past a Fixing state`);
+    if (/^Fix /.test(label)) assert.doesNotMatch(f.say || '', /\bfixed\b/, `${id}: ${label} says done before it is`);
+    if (f.to) assert.ok(f.say, `${id}: ${label} moves on and says nothing`);
+    if (/^Report/.test(label)) assert.equal(f.dialog, 'report', `${id}: ${label} takes a note`);
+    assert.doesNotMatch(f.say || '', /^git /, `${id}: ${label} puts commands in a toast that fades`);
+    if (f.to) assert.ok(R.stateIds().includes(f.to) || /-/.test(f.to) || f.to === 'discarded', `${id}: ${label} leads to ${f.to}`);
+  }
+  assert.equal(R.actionFlow('scheduled', CTX)['Delete run'].no, 'Keep');
+  assert.ok(R.actionFlow('ready', CTX)['How to merge'].commands);
+});
+
+test('a table: a sentence on the narrow detail line carries no label', () => {
+  const html = R.table({ label: 't', columns: [{ id: 'a', label: 'A' }, { id: 'why', label: 'Why', narrow: false, bare: true }, { id: 'n', label: 'Model', narrow: false }], rows: [{ a: 'x', why: 'Because', n: 'M' }] });
+  assert.match(html, /rt-detail">Because · Model M</);
+});
+
+test('the main action is what the state needs, and a same-named main has one weight', () => {
+  const main = (id) => R.runState(id, CTX).action.label;
+  assert.equal(main('capped'), 'Raise the cap');
+  assert.equal(main('ticket-failed'), 'Open project');
+  assert.equal(main('auto-failed'), 'Sign in');
+  assert.equal(main('pr-changes'), 'Fix requested changes');
+  assert.equal(main('diverged'), 'Re-check');
+  assert.equal(main('failed-kept'), 'Restart Build');
+  assert.equal(main('ready-moved'), 'Update branch');
+  assert.ok(R.runState('paused-limit', CTX).action.off['Resume now'], 'nothing resumes before the limit resets');
+  assert.ok(!R.runState('ready', CTX).action.items.includes('Push main'), 'Push main is for a run on main');
+  const weight = new Map();
+  for (const id of R.stateIds()) { const a = R.runState(id, CTX).action; if (!a) continue;
+    if (weight.has(a.label)) assert.equal(a.primary, weight.get(a.label), `${id}: ${a.label} changes weight`); else weight.set(a.label, a.primary); }
+});
+
 test('a run inside a group keeps what gets it moving; shipping is the group\'s', () => {
   for (const l of ['Send answer', 'Accept as is', 'Resume now', 'Fix checks', 'Restart Build', 'Approve and build']) assert.ok(R.memberKeeps(l), l);
   for (const l of ['Create PR', 'Merge PR', 'View PR', 'Discard', 'Push']) assert.ok(!R.memberKeeps(l), l);
@@ -61,7 +113,8 @@ test('the step flow: Dialog, confirm, working, then done or a failure in its wor
   assert.deepEqual(log.splice(0), ['Merging…', 'Could not merge PR / The branch moved. Nothing changed.']);
   end = { ok: false, odd: true }; follow({ confirm: 'Merge?' }, 'Merge PR');
   assert.match(log.at(-1), /Something went wrong on Worca’s side\. Nothing changed\.$/);
-  assert.deepEqual(R.confirmOf({ confirm: 'Stop?' }, 'Stop the run'), { text: 'Stop?', yes: 'Stop', danger: true });
+  assert.deepEqual(R.confirmOf({ confirm: 'Stop?' }, 'Stop the run'), { text: 'Stop?', yes: 'Stop', no: 'Cancel', danger: true });
+  assert.equal(R.confirmOf({ confirm: 'Delete?', no: 'Keep' }, 'Delete run').no, 'Keep');
 });
 
 test('where the work goes: one phrase that follows the run', () => {
@@ -99,7 +152,8 @@ test('prefs: one mode and one set of Labs flags; a change tells who listens', ()
 });
 
 test('a run\'s other states: what each offers, and what it holds back', () => {
-  assert.deepEqual(R.runState('paused-budget', CTX).action.items, []);   // a total budget offers only Open Settings
+  assert.deepEqual(R.runState('paused-budget', CTX).action.items, ['Resume now']);   // a total budget: Settings, then Resume once there is room
+  assert.ok(R.runState('paused-budget', CTX).action.off['Resume now']);
   assert.equal(R.runState('paused-budget', CTX).action.label, 'Open Settings');
   assert.ok(R.runState('paused-limit', CTX).action.items.includes('Resume on Codex'));   // the other engine only after its limit
   assert.ok(!R.runState('paused-reason', CTX).action.items.includes('Resume on Codex'));

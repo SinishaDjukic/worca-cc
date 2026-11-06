@@ -2,14 +2,14 @@
 // or it cannot be taken back, then its button says what is happening, and either the thing moves on or the place you
 // acted says what failed and why. One flow on every page. Pure: a page gives it hooks and draws what they set.
 
-const WORKING = { Fix: 'Fixing…', Merge: 'Merging…', Create: 'Creating…', Stop: 'Stopping…', Discard: 'Discarding…', Archive: 'Archiving…', Cancel: 'Cancelling…', 'Re-plan': 'Re-planning…', Continue: 'Continuing…', Delete: 'Deleting…', Remove: 'Removing…', Reset: 'Resetting…' };
+const WORKING = { Fix: 'Fixing…', Merge: 'Merging…', Create: 'Creating…', Stop: 'Stopping…', Discard: 'Discarding…', Archive: 'Archiving…', Cancel: 'Cancelling…', 'Re-plan': 'Re-planning…', Continue: 'Continuing…', Delete: 'Deleting…', Remove: 'Removing…', Reset: 'Resetting…', Push: 'Pushing…', Publish: 'Pushing…', Apply: 'Applying…', Link: 'Linking…', Update: 'Updating…', Report: 'Sending…' };
 
 /** What a step's button says while it works. */
 export const workingWord = (label) => WORKING[String(label).split(' ')[0]] || 'Working…';
 
 const DANGER = /^(Stop|Discard|Cancel|Delete|Remove|Reset)/;
 /** The strip's words for a step that asks first. */
-export const confirmOf = (f, label) => ({ text: f.confirm, yes: label.replace(/ the run$/, '') || 'Confirm', danger: DANGER.test(label) });
+export const confirmOf = (f, label) => ({ text: f.confirm, yes: label.replace(/ the run$/, '') || 'Confirm', no: f.no || 'Cancel', danger: DANGER.test(label) });
 
 /** A failure in the design system's words: Could not …, the reason, Nothing changed. */
 export function failureOf(label, why, { odd = false } = {}) {

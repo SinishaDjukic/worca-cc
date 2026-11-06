@@ -1,5 +1,6 @@
 // Stepper and StepRow (docs/rail/components.md): how far along, and its steps. One segment per stage, one cell per step,
 // a real tablist under it; a stage's steps are rows on the rail, cells of their list's grid, so columns line up.
+import { foldMiddle } from './work-place.mjs';
 import { esc, attrs, cls } from './html.mjs';
 import { icon } from './icons.mjs';
 import { row } from './row.mjs';
@@ -89,7 +90,7 @@ export function lineRow({ mark, text, open = false, more = '', link = false, att
  * @param {object} [o.attrs]
  */
 export function fileRow({ status, name, dir, path, notes = 0, added, removed, blocks = '', open = false, attrs: a = {} }) {
-  return `<button type="button" class="ch-row"${attrs({ 'aria-expanded': String(open), ...a })}><span class="ch-st is-${esc(status)}"${attrs({ title: status === 'A' ? 'Added' : 'Modified' })}>${esc(status)}</span><span class="ch-name"${attrs({ title: path })}>${esc(name)}<span class="ch-path">${esc(dir)}</span></span>${notes ? `<span class="ch-notes"${attrs({ title: `${notes} review comments` })}>${esc(notes)}</span>` : '<span class="ch-notes"></span>'}<span class="ct"><span class="add">+${esc(added)}</span><span class="del">−${esc(removed)}</span></span><span class="ch-blocks" aria-hidden="true">${blocks}</span></button>`;
+  return `<button type="button" class="ch-row"${attrs({ 'aria-expanded': String(open), ...a })}><span class="ch-st is-${esc(status)}"${attrs({ title: status === 'A' ? 'Added' : 'Modified' })}>${esc(status)}</span><span class="ch-name"${attrs({ title: path })}><span class="rc-mid"><span class="rc-mid-a">${esc(foldMiddle(name)[0])}</span><span class="rc-mid-b">${esc(foldMiddle(name)[1])}</span></span><span class="ch-path">${esc(dir)}</span></span>${notes ? `<span class="ch-notes"${attrs({ title: `${notes} review comments` })}>${esc(notes)}</span>` : '<span class="ch-notes"></span>'}<span class="ct"><span class="add">+${esc(added)}</span><span class="del">−${esc(removed)}</span></span><span class="ch-blocks" aria-hidden="true">${blocks}</span></button>`;
 }
 
 /**

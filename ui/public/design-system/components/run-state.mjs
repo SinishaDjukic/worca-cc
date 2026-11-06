@@ -36,15 +36,16 @@ const STATES = {
     word: "Paused",
     dot: "is-grey",
     action: {
-      label: "Resume now",
-      icon: "play",
+      label: "Cancel {at}",
+      icon: "x",
       primary: false,
       items: [
-        "Don’t resume at 14:00",
+        "Resume now",
         "Resume on Codex",
         "Switch model…",
         "Resume at…"
-      ]
+      ],
+      off: { "Resume now": "The limit has not reset yet; Resume on Codex goes on now" }
     }
   },
   failed: {
@@ -55,7 +56,6 @@ const STATES = {
       icon: "refresh",
       primary: true,
       items: [
-        "Report this run",
         "Start a new run"
       ]
     }
@@ -70,7 +70,6 @@ const STATES = {
       items: [
         "Publish branch",
         "How to merge",
-        "Push main",
         "Discard"
       ]
     }
@@ -97,7 +96,6 @@ const STATES = {
       primary: true,
       items: [
         "Re-run checks",
-        VIEW_PR_LABEL,
         "Copy PR link"
       ]
     }
@@ -110,10 +108,8 @@ const STATES = {
       icon: "refresh",
       primary: true,
       items: [
-        "Update branch",
         "Resolve in a terminal",
         "Re-check",
-        VIEW_PR_LABEL,
         "Copy PR link"
       ]
     }
@@ -126,7 +122,6 @@ const STATES = {
       icon: "merge",
       primary: true,
       items: [
-        VIEW_PR_LABEL,
         "Watch",
         "Copy PR link"
       ]
@@ -142,7 +137,6 @@ const STATES = {
       items: [
         "Publish branch",
         "How to merge",
-        "Push main",
         "Discard"
       ]
     }
@@ -165,7 +159,7 @@ const STATES = {
       icon: "play",
       primary: false,
       items: [
-        "Cancel"
+        "Delete run"
       ]
     }
   },
@@ -177,7 +171,7 @@ const STATES = {
       icon: "play",
       primary: false,
       items: [
-        "Cancel"
+        "Delete run"
       ]
     }
   },
@@ -436,59 +430,71 @@ const STATES = {
 const off = (label, icon, primary, items, offs) => ({ label, icon, primary, items, off: offs });
 const act = (label, icon, primary, items = []) => ({ label, icon, primary, items });
 const CAP_OFF = { 'Resume at…': 'A cost cap does not lift with time: raise it or go on without it' };
+const LIMIT_OFF = { 'Resume now': 'The limit has not reset yet; Resume on Codex goes on now' };
 const VIEW_ITEMS = ['Watch', 'Copy PR link'];
 Object.assign(STATES, {
   // Paused, and why. A usage limit offers the other engine; nothing else does.
-  'paused-limit': { word: 'Paused', dot: 'is-grey', action: act('Resume at 14:00', 'play', true, ['Resume now', 'Resume on Codex', 'Switch model…', 'Resume at…']) },
+  'paused-limit': { word: 'Paused', dot: 'is-grey', action: off('Resume at 14:00', 'play', true, ['Resume now', 'Resume on Codex', 'Switch model…', 'Resume at…'], LIMIT_OFF) },
   'paused-reset': { word: 'Paused', dot: 'is-grey', action: act('Resume now', 'play', true, ['Resume on Codex', 'Switch model…', 'Resume at…']) },
-  'paused-missed': { word: 'Paused', dot: 'is-grey', action: act('Resume now', 'play', true, ['Don’t resume at 14:00', 'Resume on Codex', 'Switch model…', 'Resume at…']) },
-  'paused-budget': { word: 'Paused', dot: 'is-grey', action: act('Open Settings', 'play', false) },
+  'paused-missed': { word: 'Paused', dot: 'is-grey', action: act('Resume now', 'play', true, ['Resume on Codex', 'Switch model…', 'Resume at…']) },
+  'paused-budget': { word: 'Paused', dot: 'is-grey', action: off('Open Settings', 'gear', false, ['Resume now'], { 'Resume now': 'No room in the total budget yet: raise it in Settings first' }) },
   'paused-team': { word: 'Paused', dot: 'is-grey', action: act('Continue past team cap', 'play', false, ['Open Team policy']) },
-  'paused-reason': { word: 'Paused', dot: 'is-grey', action: act('Resume now', 'play', false, ['Switch model…', 'Resume at…']) },
+  'paused-reason': { word: 'Paused', dot: 'is-grey', action: act('Resume now', 'play', true, ['Switch model…', 'Resume at…']) },
+  // Paused by you, and a time you set: nothing else holds the run
+  'paused-you': { word: 'Paused', dot: 'is-grey', action: act('Resume now', 'play', true, ['Switch model…', 'Resume at…']) },
+  'paused-at': { word: 'Paused', dot: 'is-grey', action: act('Cancel {at}', 'x', false, ['Resume now', 'Switch model…', 'Resume at…']) },
   interrupted: { word: 'Paused', dot: 'is-grey', action: act('Resume now', 'play', true, ['Archive']) },
-  'interrupted-dead': { word: 'Paused', dot: 'is-grey', action: act('Start a new run', 'play', false, ['Archive']) },
+  'interrupted-dead': { word: 'Paused', dot: 'is-grey', action: act('Start a new run', 'play', false) },
   // Live, and in trouble
   network: { word: 'Working', dot: 'is-peach is-pulse' },
   recovery: { word: 'Needs you', sym: 'q', action: act('Retry', 'refresh', true, ['Pause', 'Stop']) },
   // Tickets: a scheduled run before it is a run
-  'ticket-missed': { word: 'Waiting', dot: 'is-grey-ring', action: act('Start now', 'play', true, ['Cancel']) },
+  'ticket-missed': { word: 'Waiting', dot: 'is-grey-ring', action: act('Start now', 'play', false, ['Delete run']) },
   'ticket-firing': { word: 'Starting', dot: 'is-peach is-pulse' },
-  'ticket-failed': { word: 'Failed', sym: 'x', action: act('Start now', 'play', true, ['Cancel']) },
+  'ticket-failed': { word: 'Failed', sym: 'x', action: off('Open project', 'folder', true, ['Start now'], { 'Start now': 'The project folder is gone: point the project at it first' }) },
   'ticket-ended': { word: 'Stopped', dot: 'is-grey', action: act('Start a new run', 'play', false) },
+  cancelled: { word: 'Cancelled', dot: 'is-grey', action: act('Start a new run', 'play', false) },
   // A pull request's own states
-  'pr-draft': { word: 'In review', dot: 'is-grey', action: act('Mark ready for review', 'pr', true, [VIEW_PR_LABEL, ...VIEW_ITEMS]) },
-  'pr-changes': { word: 'Needs you', dot: 'is-amber', action: act(VIEW_PR_LABEL, 'pr', true, ['Ask for changes', ...VIEW_ITEMS]) },
+  'pr-draft': { word: 'In review', dot: 'is-grey', action: act('Mark ready for review', 'pr', true, VIEW_ITEMS) },
+  'pr-changes': { word: 'Needs you', dot: 'is-amber', action: act('Fix requested changes', 'refresh', true, VIEW_ITEMS) },
   'pr-fixing': { word: 'In review', dot: 'is-peach is-pulse', action: act(VIEW_PR_LABEL, 'pr', false, ['View fix run', ...VIEW_ITEMS]) },
-  'pr-closed': { word: 'Closed', dot: 'is-grey', hostWord: true, action: act('Create PR again', 'prc', true, [VIEW_PR_LABEL, 'Discard']) },
-  'pr-behind': { word: 'In review', dot: 'is-amber', action: act('Update branch', 'refresh', true, [VIEW_PR_LABEL, ...VIEW_ITEMS]) },
+  'pr-closed': { word: 'Closed', dot: 'is-grey', hostWord: true, action: act('Create PR again', 'prc', true, ['Discard']) },
+  'pr-behind': { word: 'In review', dot: 'is-amber', action: act('Update branch', 'refresh', true, VIEW_ITEMS) },
   'pr-blocked': { word: 'In review', dot: 'is-amber', action: act(VIEW_PR_LABEL, 'pr', false, VIEW_ITEMS) },
-  'watch-stopped': { word: 'Needs you', dot: 'is-amber', action: off('Fix conflicts', 'refresh', true, ['Ask for changes', VIEW_PR_LABEL, 'Copy PR link'], { 'Ask for changes': 'Ask for changes from the run’s chat' }) },
+  'watch-stopped': { word: 'Needs you', dot: 'is-amber', action: off('Fix conflicts', 'refresh', true, ['Ask for changes', 'Copy PR link'], { 'Ask for changes': 'Ask for changes from the run’s chat' }) },
   round: { word: 'In review', dot: 'is-peach is-pulse', action: act(VIEW_PR_LABEL, 'pr', false, ['Copy PR link']) },
   'in-base': { word: 'Merged', dot: 'is-violet' },
   pushed: { word: 'Merged', dot: 'is-violet' },
-  diverged: { word: 'Needs you', dot: 'is-amber', action: off('Push', 'up', true, ['Re-check', 'How to merge', 'Discard'], { Push: 'The branch and its remote have diverged: pull or rebase, then push' }) },
+  diverged: { word: 'Needs you', dot: 'is-amber', action: off('Re-check', 'refresh', true, ['Push', 'How to pull', 'Discard'], { Push: 'The branch and its remote have diverged: pull or rebase, then Re-check' }) },
   // A failed or stopped run that still holds work
-  'failed-kept': { word: 'Failed', sym: 'x', action: act('Apply to branch', 'check', true, ['Report this run', 'Download patch', 'Commit it yourself', 'Discard']) },
-  'failed-kept-wait': { word: 'Failed', sym: 'x', action: act('Report this run', 'alert', false, ['Start a new run']) },
-  'failed-folder': { word: 'Failed', sym: 'x', action: act('Apply to folder', 'folder', true, ['Report this run', 'Open the copy', 'Discard']) },
+  'failed-kept': { word: 'Failed', sym: 'x', action: act('Restart Build', 'refresh', true, ['Apply to branch', 'Download patch', 'Commit it yourself', 'Discard']) },
+  'failed-kept-wait': { word: 'Failed', sym: 'x' },
+  'failed-folder': { word: 'Failed', sym: 'x', action: act('Apply to folder', 'folder', true, ['Open the copy', 'Discard']) },
   'stopped-folder': { word: 'Stopped', dot: 'is-grey', action: act('Apply to folder', 'folder', true, ['Open the copy', 'Discard']) },
   deleted: { word: 'Deleted', dot: 'is-grey' },
   // Before Build: what the plan answers to, and a workflow Worca proposes
   requirements: { word: 'Needs you', sym: 'q', action: act('Agree and plan', 'check', true, ['Ask for changes']) },
-  auto: { word: 'Needs you', sym: 'q', action: act('Accept', 'check', true, ['Review the workflow', 'Revise']) },
+  auto: { word: 'Needs you', sym: 'q', action: act('Accept', 'check', true, ['Revise']) },
   // Ready, with its requirements still to mark
   reqs: { word: 'Ready', dot: 'is-green', action: act(CREATE_PR_LABEL, 'prc', true, ['Publish branch', 'How to merge', 'Discard']) },
+  // Ready, but something has to happen before a PR can open
+  'ready-moved': { word: 'Ready', dot: 'is-green', action: act('Update branch', 'refresh', true, [CREATE_PR_LABEL, 'Publish branch', 'How to merge', 'Discard']) },
+  'auto-failed': { word: 'Ready', dot: 'is-green', action: act('Sign in', 'up', true, ['How to merge', 'Discard']) },
+  // Worca is fixing what was asked: live until it is done
+  'plan-fixing': { word: 'Working', dot: 'is-peach is-pulse' },
+  'outline-fixing': { word: 'Working', dot: 'is-peach is-pulse' },
+  'workspace-fixing': { word: 'In review', dot: 'is-peach is-pulse', action: act(VIEW_PRS_LABEL, 'pr', false, ['View fix run', 'Copy PR links']) },
   // A group, read from the run that holds it up
   'group-failed': { word: 'Failed', sym: 'x', action: act('Open run {k}', 'alert', true, ['Re-plan the rest', 'Cancel the rest']) },
-  'group-paused': { word: 'Paused', dot: 'is-grey', action: act('Resume', 'play', true, ['Open run {k}', 'Re-plan the rest', 'Cancel the rest']) },
+  'group-paused': { word: 'Paused', dot: 'is-grey', action: act('Resume', 'play', true, ['Re-plan the rest', 'Cancel the rest']) },
   'group-needs': { word: 'Needs you', sym: 'q', action: act('Open run {k}', 'question', true, ['Re-plan the rest', 'Cancel the rest']) },
-  'group-stopped': { word: 'Stopped', dot: 'is-grey', action: act('Resume', 'play', true, ['Open run {k}', 'Re-plan the rest', 'Cancel the rest']) },
+  'group-stopped': { word: 'Stopped', dot: 'is-grey', action: act('Restart run {k}', 'refresh', true, ['Re-plan the rest', 'Cancel the rest']) },
   'group-asks': { word: 'Needs you', sym: 'q', action: act('Start run {k}', 'play', true, ['Re-plan the rest', 'Cancel the rest']) },
   'ship-declined': { word: 'Ready', dot: 'is-green', action: act('Create {n} PRs', 'prc', true, ['Check out the whole feature', 'Discard']) },
   'ship-applied': { word: 'Applied', dot: 'is-violet', action: act(VIEW_PR_LABEL, 'merge', false, ['Ask for changes', 'Copy PR link']) },
-  'workspace-partly': { word: 'In review', dot: 'is-peach is-pulse', action: act(CREATE_PR_LABEL, 'prc', true, [VIEW_PRS_LABEL, 'Copy PR links']) },
+  'workspace-partly': { word: 'Ready', dot: 'is-green', action: act(CREATE_PR_LABEL, 'prc', true, [VIEW_PRS_LABEL, 'Copy PR links']) },
 });
-STATES.capped.action = off('Continue without cap', 'play', false, ['Raise the cap', 'Open budget settings', 'Resume at…'], CAP_OFF);
+STATES.capped.action = off('Raise the cap', 'play', true, ['Continue without cap', 'Open budget settings', 'Resume at…'], CAP_OFF);
 STATES.plan.action.items = ['Ask for changes', 'Full plan', 'Fix all', 'Save to plans/', 'Open in New run', 'Stop'];
 STATES.outline.action.items = ['Ask me before each run', 'Don’t split', 'Ask for changes', 'Fix all', 'Stop'];
 STATES.featureready.action.items = ['Check out the whole feature', 'Not now', 'Ask for changes', 'Discard'];
@@ -497,7 +503,7 @@ STATES.featureready.action.items = ['Check out the whole feature', 'Not now', 'A
 const HOST_WORD = { github: 'Closed', azure: 'Abandoned', bitbucket: 'Declined' };
 
 // An action a mode holds back (docs/ui-levels.md); a label not here shows in every mode.
-const ACTION_LEVEL = { 'Open in New run': 'advanced', Revise: 'advanced', Watch: 'advanced' };
+const ACTION_LEVEL = { 'Open in New run': 'advanced', Revise: 'advanced', Watch: 'advanced', Terminal: 'advanced' };
 /** The interface mode an action needs. */
 export const actionLevel = (label) => ACTION_LEVEL[label] || 'simple';
 
@@ -506,11 +512,11 @@ const HELP = {
   "Send answer": "Sends the answer you picked or wrote; the run goes on",
   "Use the default answer": "Goes on with what Worca would pick",
   "Use defaults": "Skips the questions; the planner picks sensible answers",
-  Resume: "Starts again from the step it paused in",
+  Resume: "Goes on from the step it paused in",
   "Resume when the limit resets": "Waits for the limit, then goes on by itself",
   Stop: "Ends the run; the branch and changes stay",
   "Restart Build": "Runs Build again with what Plan already made",
-  "Report this run": "Sends the logs and a note to the Worca team",
+  "Report this run": "Asks for a note, then sends it with the logs to the Worca team",
   "Start a new run": "A fresh run with the same task",
   [CREATE_PR_LABEL]: "Creates a PR from this run’s branch into {base}",
   "Create 3 PRs": "Creates one PR per run, each into the one before",
@@ -535,25 +541,29 @@ const HELP = {
   "Pause after this step": "Lets the current step finish, then pauses",
   "Stop the run": "Ends it; the branch and changes stay",
   "Open the folder": "Opens {folder} in your file manager",
-  "Don’t resume at 14:00": "Cancels the scheduled resume; Resume stays here",
   "Resume on Codex": "Goes on now on another engine, from the same step",
   "Switch model…": "Pick another model, then resume",
   "Resume at…": "Pick a time to resume",
   "Publish branch": "Pushes the branch to origin without creating a PR",
-  "How to merge": "Shows the git commands to merge it yourself",
-  "Update branch": "Merges {base} into the branch; it merges cleanly",
+  "How to merge": "Shows the git commands to merge it yourself, with a copy button",
+  "Update branch": "Merges {base} into the branch",
   "Resolve in a terminal": "Opens a terminal in the worktree with the conflicts",
   "Re-check": "Checks again whether the branch is up to date with {base}",
   "Start now": "Starts it now instead of waiting",
-  Cancel: "Deletes the scheduled run",
+  "Delete run": "Deletes the waiting run; it never starts",
+  "Cancel {at}": "Cancels the resume at {at}; the run stays paused",
+  "How to pull": "Shows the git command to bring in the remote’s commits",
+  "Open project": "Goes to the project, to point it at its folder",
+  "Fix requested changes": "Starts a short run on what the reviewer asked",
+  "Sign in": "Signs in to GitHub, so Worca can open the PR",
   "Accept as is": "Takes the review as it is and goes on to the manual tests",
   "Run another cycle": "One more Build and Review round",
   "Continue without cap": "Goes on with no cost cap for this run",
   "Raise the cap": "Sets a new cap for this run, then goes on",
   "Open budget settings": "Opens Settings › Runs › Budget",
-  "Apply to branch": "Commits the kept work to the branch, skipping the failed hook",
+  "Apply to branch": "Commits the kept work to the branch, skipping the hook that failed",
   "Download patch": "Saves the kept work as a .patch file",
-  "Commit it yourself": "Shows the commands to commit it by hand",
+  "Commit it yourself": "Shows the commands to commit it by hand, with a copy button",
   [VIEW_PRS_LABEL]: "Shows the PRs on GitHub",
   "Watch PRs": "Worca follows all three PRs",
   "Copy PR links": "Copies every PR’s address",
@@ -582,522 +592,157 @@ Object.assign(HELP, {
   Accept: 'Runs the workflow Worca proposes',
   'Review the workflow': 'Shows the proposed workflow at full size',
   Revise: 'Tells Worca what to change in the workflow',
-  'Fix all': 'Worca fixes every open issue in the plan or the cut, then shows it again',
+  'Fix all': 'Worca fixes every open issue in the plan or the split, then shows it again',
   'Save to plans/': 'Writes this plan to plans/ in the project',
   'Open in New run': 'Starts a New run with this plan already in it',
   'Not now': 'Leaves it unshipped; you can ship it from here later',
   'Re-plan the rest': 'Cancels the waiting runs and plans what is left from the last finished run',
   'Cancel the rest': 'Cancels the runs that have not started; a running run keeps running',
   'Open run {k}': 'Opens the run that holds up the rest',
+  'Restart run {k}': 'Runs its Build again; the runs after it follow',
   'Start run {k}': 'Your OK: the next run starts',
   'Create {n} PRs': 'Creates one PR per run, each into the one before',
   'Approve {n} runs': 'Creates the feature: these runs build one after another',
 });
 
-const FLOW = {
-  'no-remote': { 'Link remote': { to: 'ready', say: 'Linked origin; Create PR is now the next step' }, 'How to merge': { say: 'git switch {base} && git merge {branch}' }, Discard: { to: 'discarded', confirm: 'Discard the changes? The run stays in history.' } },
-  'mock-run': {},
-  starting: {
-    next: "working"
-  },
-  working: {
-    next: "ready"
-  },
-  question: {
-    "Send answer": {
-      to: "working",
-      say: "Answer sent; Review goes on"
-    },
-    "Use the default answer": {
-      to: "working",
-      say: "Worca’s pick sent; Review goes on"
-    }
-  },
-  paused: {
-    "Resume now": {
-      to: "working",
-      say: "Resumed from Implementation"
-    },
-    "Don’t resume at 14:00": {
-      say: "The 14:00 resume is cancelled"
-    },
-    "Resume on Codex": {
-      to: "working",
-      say: "Resumed on Codex"
-    },
-    "Switch model…": {
-      say: "Model picker: Opus 5.5, Sonnet 5.5, Haiku 5.5"
-    },
-    "Resume at…": {
-      say: "Time picker: resume at a time you choose"
-    }
-  },
-  scheduled: {
-    "Start now": {
-      to: "starting",
-      say: "Started now; it no longer waits"
-    },
-    Cancel: {
-      to: "discarded",
-      confirm: "Delete this scheduled run?"
-    }
-  },
-  'waiting-interrupted': {
-    "Start now": {
-      to: "starting",
-      say: "Started now; it no longer waits"
-    },
-    Cancel: {
-      to: "discarded",
-      confirm: "Delete this scheduled run?"
-    }
-  },
-  gate: {
-    "Accept as is": {
-      to: "working",
-      say: "Review accepted; manual tests start"
-    },
-    "Run another cycle": {
-      to: "working",
-      say: "One more Build and Review round"
-    },
-    Stop: {
-      to: "stopped",
-      confirm: "Stop the run? The branch and changes stay."
-    }
-  },
-  capped: {
-    "Continue without cap": {
-      to: "working",
-      confirm: "Go on with no cost cap for this run?"
-    },
-    "Raise the cap": {
-      say: "Cap raised to $180; the run goes on"
-    },
-    "Open budget settings": {
-      say: "Opens Settings › Runs › Budget"
-    }
-  },
-  kept: {
-    "Apply to branch": {
-      to: "ready",
-      say: "Committed to the branch"
-    },
-    "Download patch": {
-      say: "Downloading run.patch"
-    },
-    "Commit it yourself": {
-      say: "Commands: cd the worktree, git add -A, git commit --no-verify"
-    },
-    Discard: {
-      to: "discarded",
-      confirm: "Discard the kept work? A patch is saved first."
-    }
-  },
-  archived: {},
-  failed: {
-    "Restart Build": {
-      to: "working",
-      say: "Build runs again with what Plan made"
-    },
-    "Report this run": {
-      say: "Logs and a note sent to the Worca team"
-    },
-    "Start a new run": {
-      to: "starting",
-      say: "A new run with the same task"
-    }
-  },
-  ready: {
-    [CREATE_PR_LABEL]: {
-      to: "checks",
-      say: "Created {pr} into {base}",
-      dialog: "pr"
-    },
-    "Publish branch": {
-      say: "Pushed the branch to origin; no PR"
-    },
-    "How to merge": {
-      say: "git switch {base} && git merge {branch}"
-    },
-    "Try it": {
-      say: "Copied: git switch {branch}"
-    },
-    "Push main": {
-      to: "merged",
-      say: "Pushed to origin/main"
-    },
-    Discard: {
-      to: "discarded",
-      confirm: "Discard the changes? The run stays in history."
-    }
-  },
-  labelled: {
-    [CREATE_PR_LABEL]: {
-      to: "checks",
-      say: "Created {pr} into {base}",
-      dialog: "pr"
-    },
-    "Publish branch": {
-      say: "Pushed the branch to origin; no PR"
-    },
-    "How to merge": {
-      say: "git switch {base} && git merge {branch}"
-    },
-    "Try it": {
-      say: "Copied: git switch {branch}"
-    },
-    "Push main": {
-      to: "merged",
-      say: "Pushed to origin/main"
-    },
-    Discard: {
-      to: "discarded",
-      confirm: "Discard the changes? The run stays in history."
-    }
-  },
-  checks: {
-    [VIEW_PR_LABEL]: {
-      say: "Opens {pr} on GitHub"
-    },
-    Watch: {
-      say: "Worca watches {pr} and fixes failing checks"
-    },
-    "Copy PR link": {
-      say: "Copied the link to {pr}"
-    },
-    next: "failing"
-  },
-  failing: {
-    "Fix checks": {
-      to: "checks",
-      say: "A short run fixed unit and e2e; checks run again",
-      confirm: "Fix the 2 failing checks on {pr}? Worca pushes the fix to the PR."
-    },
-    "Re-run checks": {
-      to: "checks",
-      say: "Checks on {pr} run again"
-    },
-    [VIEW_PR_LABEL]: {
-      say: "Opens {pr} on GitHub"
-    },
-    "Copy PR link": {
-      say: "Copied the link to {pr}"
-    },
-    next: "conflicts"
-  },
-  conflicts: {
-    "Fix conflicts": {
-      to: "checks",
-      say: "{base} merged in, 2 conflicts resolved; checks run again"
-    },
-    "Update branch": {
-      say: "{base} does not merge cleanly: 2 files conflict. Use Fix conflicts"
-    },
-    "Resolve in a terminal": {
-      say: "Opens a terminal in the worktree"
-    },
-    "Re-check": {
-      say: "Still 2 conflicts with {base}"
-    },
-    [VIEW_PR_LABEL]: {
-      say: "Opens {pr} on GitHub"
-    },
-    "Copy PR link": {
-      say: "Copied the link to {pr}"
-    },
-    next: "approved"
-  },
-  approved: {
-    "Merge PR": {
-      to: "merged",
-      confirm: "Merge {pr} into {base}?"
-    },
-    [VIEW_PR_LABEL]: {
-      say: "Opens {pr} on GitHub"
-    },
-    Watch: {
-      say: "Worca watches {pr}"
-    },
-    "Copy PR link": {
-      say: "Copied the link to {pr}"
-    }
-  },
-  merged: {
-    [VIEW_PR_LABEL]: {
-      say: "Opens the merged {pr} on GitHub"
-    }
-  },
-  stopped: {
-    "Start a new run": {
-      to: "starting",
-      say: "A new run with the same task"
-    },
-    "Restart Build": {
-      to: "working",
-      say: "Build runs again from where it stopped"
-    }
-  },
-  discarded: {
-    "Start a new run": {
-      to: "starting",
-      say: "A new run with the same task"
-    }
-  },
-  push: {
-    "Push main": {
-      to: "merged",
-      say: "Pushed to origin/main"
-    },
-    "Create PR instead": {
-      to: "checks",
-      say: "Created {pr} into {base}",
-      dialog: "pr"
-    },
-    Discard: {
-      to: "discarded",
-      confirm: "Discard the changes? The run stays in history."
-    }
-  },
-  "source-ready": {
-    Push: {
-      to: "merged",
-      say: "Pushed to origin/{source}"
-    },
-    Discard: {
-      to: "discarded",
-      confirm: "Discard the changes? The run stays in history."
-    }
-  },
-  "source-unmerged": {
-    "How to merge": {
-      say: "git switch {source} && git merge {hidden}"
-    },
-    "Create PR instead": {
-      to: "checks",
-      say: "Created {pr} into {source}",
-      dialog: "pr"
-    },
-    Discard: {
-      to: "discarded",
-      confirm: "Discard the changes? The run stays in history."
-    }
-  },
-  folder: {
-    "Apply to folder": {
-      to: "applied",
-      confirm: "Write 5 files into {folder}?"
-    },
-    "Open the copy": {
-      say: "Opened the copy in a terminal"
-    },
-    Discard: {
-      to: "discarded",
-      confirm: "Discard the changes? The run stays in history."
-    }
-  },
-  applied: {
-    "Open the folder": {
-      say: "Opens {folder}"
-    }
-  },
-  workspace: {
-    "Fix conflicts": {
-      say: "A short run is fixing worca-docs #31"
-    },
-    "Copy PR links": {
-      say: "Copied 3 PR links"
-    }
-  },
-  clarify: {
-    "Send answer": {
-      to: "plan",
-      say: "Answers sent; the planner writes the plan"
-    },
-    "Use defaults": {
-      to: "plan",
-      say: "Defaults used; the planner writes the plan"
-    }
-  },
-  plan: {
-    "Approve and build": {
-      to: "working",
-      say: "Plan approved; Build starts"
-    },
-    "Ask for changes": {
-      say: "Sent to the planner; it plans again"
-    },
-    "Full plan": {
-      say: "Opens plan.md"
-    }
-  },
-  outline: {
-    "Approve 3 runs": {
-      to: "feature",
-      say: "The feature has 3 runs; run 1 starts"
-    },
-    "Ask me before each run": {
-      say: "Worca asks before runs 2 and 3 start"
-    },
-    "Don’t split": {
-      to: "plan",
-      say: "One run, one PR"
-    },
-    "Ask for changes": {
-      say: "Sent to the planner; it cuts again"
-    }
-  },
-  feature: {
-    next: "featureready"
-  },
-  featureready: {
-    "Create 3 PRs": {
-      to: "chain",
-      say: "Created {pr}, {pr2} and {pr3}, each into the one before",
-      dialog: "pr"
-    },
-    [CREATE_PR_LABEL]: {
-      to: "checks",
-      say: "Created {pr} for all 3 runs",
-      dialog: "pr"
-    },
-    "Try it": {
-      say: "Copied: git switch {groupBranch}"
-    },
-    Discard: {
-      to: "discarded",
-      confirm: "Discard all 3 runs’ changes?"
-    }
-  },
-  featureone: {
-    [CREATE_PR_LABEL]: {
-      to: "checks",
-      say: "Created {pr} for both runs",
-      dialog: "pr"
-    },
-    "Create 2 PRs": {
-      to: "chain",
-      say: "Created {pr} and {pr2}",
-      dialog: "pr"
-    },
-    "Try it": {
-      say: "Copied: git switch {groupBranch}"
-    },
-    Discard: {
-      to: "discarded",
-      confirm: "Discard both runs’ changes?"
-    }
-  },
-  featureblocked: {
-    "Create 3 PRs": {
-      to: "chain",
-      say: "Created {pr}, {pr2} and {pr3}, each into the one before",
-      dialog: "pr"
-    },
-    "Try it": {
-      say: "Copied: git switch {groupBranch}"
-    },
-    Discard: {
-      to: "discarded",
-      confirm: "Discard all 3 runs’ changes?"
-    }
-  },
-  chain: {
-    "Fix checks on {pr3}": {
-      say: "A short run is fixing {pr3}’s checks",
-      confirm: "Fix the failing checks on {pr3}? Worca pushes the fix to the PR."
-    },
-    "Merge {pr}": {
-      say: "Merged {pr} into {base}; {pr2} now points at {base}",
-      confirm: "Merge {pr} into {base}?"
-    },
-    [VIEW_PRS_LABEL]: {
-      say: "Opens {pr}, {pr2} and {pr3} on GitHub"
-    },
-    "Watch PRs": {
-      say: "Worca watches all three PRs"
-    },
-    "Copy PR links": {
-      say: "Copied 3 PR links"
-    }
-  }
-};
-
-const STOP = { to: 'stopped', confirm: 'Stop the run? The branch and changes stay.' };
-const OPEN_PR = { [VIEW_PR_LABEL]: { say: 'Opens {pr} on GitHub' }, 'Copy PR link': { say: 'Copied the link to {pr}' }, Watch: { say: 'Worca watches {pr} and fixes failing checks' } };
-const DISCARD = { to: 'discarded', confirm: 'Discard the changes? The run stays in history.' };
-const SWITCH = { dialog: 'model', to: 'working', say: 'Resumed on {value}; every remaining step runs there' };
-const RESUME_AT = { dialog: 'resume-at', to: 'paused', say: 'Resumes at {value}' };
+// Where each action leads (docs/rail/actions.md). `to` moves this run to another state; `say` is what happened, and the
+// toast's words; `confirm` asks in the strip, `no` names its safe side; `dialog` opens a form; `commands` opens the panel
+// with a copy button; `step` says what happens to the run's own steps when the state alone does not (`restart:build`, the
+// stage it starts again from; `advance:build`, the stage it goes on to; `fresh`, a new run; `land`, its work is on the
+// remote). `next` and `event` are what happens from outside. test/design-system-logic.test.mjs holds act.confirm and act.flow.
+const GONE_OK = 'The run stays in history';
+const DISCARD = { to: 'discarded', confirm: 'Discard the changes? The run stays in history.', say: `Discarded. ${GONE_OK}` };
+const DISCARD_ALL = (who) => ({ to: 'discarded', confirm: `Discard ${who}’ changes?`, say: 'Discarded. It stays in history' });
+const STOP = { to: 'stopped', confirm: 'Stop the run? The branch and changes stay.', say: 'Stopped. The branch and changes stay' };
+const NEW_RUN = { to: 'starting', step: 'fresh', say: 'A new run with the same task' };
+const RESUMED = { to: 'working', say: 'Resumed from {step}' };
 const ON_CODEX = { to: 'working', say: 'Resumed on Codex; every remaining step runs there' };
-const RESUMED = { to: 'working', say: 'Resumed from Implementation' };
-const ARCHIVE = { to: 'archived', confirm: 'Archive this run? It cannot be resumed after this. The local branch, worktree and logs are removed; the remote branch and any PR stay.' };
-const NEW_RUN = { to: 'starting', say: 'A new run with the same task' };
-const REPORT = { say: 'Logs and a note sent to the Worca team' };
+const SWITCH = { dialog: 'model', to: 'working', say: 'Resumed on {value}; every remaining step runs there' };
+const RESUME_AT = { dialog: 'resume-at', to: 'paused-at', say: 'Resumes at {value}' };
+const RESTART = (say) => ({ to: 'working', step: 'restart:build', say });
+const ARCHIVE = { to: 'archived', confirm: 'Archive this run? It cannot be resumed after this. The local branch, worktree and logs are removed; the remote branch and any PR stay.', say: 'Archived. The remote branch and any PR stay' };
+const REPORT = { dialog: 'report', say: 'Sent to the Worca team, with the logs and your note' };
 const REPLAN = { to: 'outline', confirm: 'Re-plan the rest? The waiting runs are cancelled and Worca plans what is left from the last finished run.', say: 'The waiting runs are cancelled; Worca planned what is left' };
 const CANCEL_REST = { say: 'The runs that had not started are cancelled; a running run keeps running', confirm: 'Cancel the rest? The runs that have not started are cancelled. A running run keeps running.' };
 const RESUME_MEMBER = { member: 'slice', say: 'Resumed; run {k} goes on' };
 const OPEN_MEMBER = { openMember: true, say: 'Opens run {k}' };
-Object.assign(FLOW, {
-  'paused-limit': { 'Resume at 14:00': { to: 'paused', say: 'Resumes at 14:00, when the limit has reset' }, 'Resume now': RESUMED, 'Resume on Codex': ON_CODEX, 'Switch model…': SWITCH, 'Resume at…': RESUME_AT },
-  'paused-reset': { 'Resume now': RESUMED, 'Resume on Codex': ON_CODEX, 'Switch model…': SWITCH, 'Resume at…': RESUME_AT },
-  'paused-missed': { 'Resume now': RESUMED, 'Don’t resume at 14:00': { to: 'paused-reset', say: 'The 14:00 resume is cancelled' }, 'Resume on Codex': ON_CODEX, 'Switch model…': SWITCH, 'Resume at…': RESUME_AT },
-  'paused-budget': { 'Open Settings': { say: 'Goes to Settings › Runs › Budget; raise it there, then Resume' } },
+const DELETE_RUN = { to: 'ticket-canceled', confirm: 'Delete this waiting run? It never starts.', no: 'Keep', say: 'Deleted; it will not start' };
+const VIEW = { say: 'Opens {pr} on GitHub' };
+const COPY_LINK = { say: 'Copied the link to {pr}' };
+const WATCH = { say: 'Worca watches {pr} and fixes failing checks' };
+const OPEN_PR = { [VIEW_PR_LABEL]: VIEW, 'Copy PR link': COPY_LINK, Watch: WATCH };
+const CREATE = (to, say) => ({ to, say, dialog: 'pr' });
+const CREATE_ONE = CREATE('checks', 'Created {pr} into {base}');
+const GROUP_ONE = (who) => CREATE('ship-applied', `Created {pr} for ${who}`);
+const STACK3 = CREATE('chain', 'Created {pr}, {pr2} and {pr3}, each into the one before');
+const PUBLISH = { fix: 'published', confirm: 'Push {branch} to origin? No PR opens.', say: 'Pushed the branch to origin; no PR' };
+const HOW_TO_MERGE = { commands: 'git switch {base}\ngit merge {branch}' };
+const COMMIT_BY_HAND = { commands: 'cd {worktree}\ngit add -A\ngit commit --no-verify' };
+const PATCH = { say: 'Downloading run.patch' };
+const OPEN_COPY = { say: 'Opened the copy in a terminal' };
+const FIX_CHECKS = { to: 'fixing-checks', confirm: 'Fix the 2 failing checks on {pr}? Worca pushes the fix to the PR.', say: 'A short run is fixing the checks' };
+const FIX_CONFLICTS = { to: 'fixing-conflicts', confirm: 'Merge {base} into {pr} and fix the 2 conflicts? Worca pushes the fix to the PR.', say: 'A short run is fixing the conflicts' };
+const APPLY_FOLDER = (why) => ({ to: 'applied', confirm: `Write 5 files into {folder}?${why}`, say: 'Wrote 5 files into {folder}' });
+const READY_FLOW = { [CREATE_PR_LABEL]: CREATE_ONE, 'Publish branch': PUBLISH, 'How to merge': HOW_TO_MERGE, Discard: DISCARD };
+const LIMITED = { 'Resume now': RESUMED, 'Resume on Codex': ON_CODEX, 'Switch model…': SWITCH, 'Resume at…': RESUME_AT };
+const WAITING = { 'Start now': { to: 'starting', say: 'Started now; it no longer waits' }, 'Delete run': DELETE_RUN };
+const REST = { 'Re-plan the rest': REPLAN, 'Cancel the rest': CANCEL_REST };
+
+const FLOW = {
+  'no-remote': { 'Link remote': { to: 'ready', confirm: 'Add origin as this project’s remote? Worca pushes there from now on.', say: 'Linked origin; Create PR is now the next step' }, 'How to merge': HOW_TO_MERGE, Discard: DISCARD },
+  'mock-run': {},
+  starting: { next: 'working' },
+  working: { next: 'ready' },
+  question: { 'Send answer': { to: 'working', say: 'Answer sent; the next step starts' }, 'Use the default answer': { to: 'working', say: 'Worca’s pick sent; the next step starts' } },
+  // A resume you set: its main takes it back; nothing can go on until the limit resets, or on the other engine
+  paused: { 'Cancel {at}': { to: 'paused-limit', say: 'The {at} resume is cancelled' }, ...LIMITED },
+  'paused-at': { 'Cancel {at}': { to: 'paused-you', say: 'The {at} resume is cancelled' }, 'Resume now': RESUMED, 'Switch model…': SWITCH, 'Resume at…': RESUME_AT },
+  'paused-you': { 'Resume now': RESUMED, 'Switch model…': SWITCH, 'Resume at…': RESUME_AT },
+  'paused-limit': { 'Resume at 14:00': { to: 'paused', say: 'Resumes at 14:00, when the limit has reset' }, ...LIMITED },
+  'paused-reset': { ...LIMITED },
+  'paused-missed': { ...LIMITED },
+  'paused-budget': { 'Open Settings': { say: 'Goes to Settings › Runs › Budget; Resume opens once there is room' }, 'Resume now': RESUMED },
   'paused-team': { 'Continue past team cap': { dialog: 'team-cap', to: 'working', say: 'Going on past the team cap; your reason is recorded' }, 'Open Team policy': { say: 'Goes to Settings › Team › Policy' } },
   'paused-reason': { 'Resume now': RESUMED, 'Switch model…': SWITCH, 'Resume at…': RESUME_AT },
   interrupted: { 'Resume now': RESUMED, Archive: ARCHIVE },
-  'interrupted-dead': { 'Start a new run': NEW_RUN, Archive: ARCHIVE },
-  network: { next: 'working', event: 'The network is back; the step retries' },
-  recovery: { Retry: { to: 'working', say: 'Retrying Implementation' }, Pause: { to: 'paused-reason', say: 'Paused; Resume tries the step again' }, Stop: { to: 'stopped', confirm: 'Abort the run? The branch and changes stay.' } },
-  'ticket-missed': { 'Start now': { to: 'starting', say: 'Started now' }, Cancel: { to: 'discarded', confirm: 'Delete this scheduled run?' } },
+  'interrupted-dead': { 'Start a new run': NEW_RUN },
+  capped: { 'Raise the cap': { dialog: 'cap', to: 'working', say: 'Cap raised to {value}; the run goes on' }, 'Continue without cap': { to: 'working', confirm: 'Go on with no cost cap for this run?', say: 'Going on with no cost cap' }, 'Open budget settings': { say: 'Goes to Settings › Runs › Budget' }, 'Resume at…': { say: 'A cost cap does not lift with time' } },
+  scheduled: WAITING,
+  'waiting-interrupted': WAITING,
+  'ticket-missed': WAITING,
   'ticket-firing': { next: 'starting', event: 'The schedule fired; the run starts' },
-  'ticket-failed': { 'Start now': { to: 'starting', say: 'Started now' }, Cancel: { to: 'discarded', confirm: 'Delete this scheduled run?' } },
+  'ticket-failed': { 'Open project': { say: 'Goes to Settings › Projects; point it at the folder, then Start now' }, 'Start now': { to: 'starting', say: 'Started now' } },
   'ticket-ended': { 'Start a new run': NEW_RUN },
-  'pr-draft': { 'Mark ready for review': { to: 'checks', confirm: 'Mark {pr} ready for review? Reviewers are asked.', say: '{pr} is ready for review' }, ...OPEN_PR },
-  'pr-changes': { ...OPEN_PR, 'Ask for changes': { to: 'pr-fixing', say: 'A short run starts on what you asked' } },
-  'pr-fixing': { ...OPEN_PR, 'View fix run': { say: 'Opens the fix run: Runs › this run’s rounds' }, next: 'checks', event: 'The fix is pushed; checks run again' },
-  'pr-closed': { 'Create PR again': { to: 'checks', say: 'Created {pr} into {base}', dialog: 'pr' }, [VIEW_PR_LABEL]: { say: 'Opens the closed {pr} on GitHub' }, Discard: DISCARD },
-  'pr-behind': { 'Update branch': { to: 'checks', say: '{base} merged in; checks run again' }, ...OPEN_PR },
-  'pr-blocked': { ...OPEN_PR },
-  'watch-stopped': { 'Fix conflicts': { to: 'checks', say: '{base} merged in, 2 conflicts resolved; checks run again' }, 'Ask for changes': { say: 'Ask for changes from the run’s chat' }, [VIEW_PR_LABEL]: OPEN_PR[VIEW_PR_LABEL], 'Copy PR link': OPEN_PR['Copy PR link'] },
-  round: { [VIEW_PR_LABEL]: OPEN_PR[VIEW_PR_LABEL], 'Copy PR link': OPEN_PR['Copy PR link'], next: 'checks', event: 'The round pushed its fix; checks run again' },
-  diverged: { Push: { to: 'merged', say: 'Pushed to origin' }, 'Re-check': { to: 'source-ready', say: 'In step with the remote again; Push is back' }, 'How to merge': { say: 'git pull --rebase origin {source}' }, Discard: DISCARD },
-  'failed-kept': { 'Apply to branch': { to: 'failed', say: 'Committed to the branch; the failure stays' }, 'Report this run': REPORT, 'Download patch': { say: 'Downloading run.patch' }, 'Commit it yourself': { say: 'Commands: cd the worktree, git add -A, git commit --no-verify' }, Discard: { to: 'failed', confirm: 'Discard the kept work? A patch is saved first.', say: 'The kept work is gone; a patch was saved' } },
-  'failed-kept-wait': { 'Report this run': REPORT, 'Start a new run': NEW_RUN },
-  'failed-folder': { 'Apply to folder': { to: 'applied', confirm: 'Write 5 files into {folder}? The run failed, so check them first.' }, 'Report this run': REPORT, 'Open the copy': { say: 'Opened the copy in a terminal' }, Discard: DISCARD },
-  'stopped-folder': { 'Apply to folder': { to: 'applied', confirm: 'Write 5 files into {folder}? The run stopped early, so check them first.' }, 'Open the copy': { say: 'Opened the copy in a terminal' }, Discard: DISCARD },
+  cancelled: { 'Start a new run': NEW_RUN },
+  gate: { 'Accept as is': { to: 'working', say: 'Review accepted; manual tests start' }, 'Run another cycle': RESTART('One more Build and Review round'), Stop: STOP },
+  kept: { 'Apply to branch': { to: 'ready', confirm: 'Commit the kept work to {branch}? It skips the hook that failed.', say: 'Committed to the branch' }, 'Download patch': PATCH, 'Commit it yourself': COMMIT_BY_HAND, Discard: { ...DISCARD, confirm: 'Discard the kept work? A patch is saved first.' } },
+  archived: {},
+  failed: { 'Restart Build': RESTART('Build runs again with what Plan made'), 'Start a new run': NEW_RUN },
+  'failed-kept': { 'Restart Build': RESTART('Build runs again with what Plan made'), 'Apply to branch': { to: 'failed', confirm: 'Commit the kept work to {branch}? It skips the hook, and the tests still fail.', say: 'Committed to the branch; the failure stays' }, 'Download patch': PATCH, 'Commit it yourself': COMMIT_BY_HAND, Discard: { to: 'failed', confirm: 'Discard the kept work? A patch is saved first.', say: 'The kept work is gone; a patch was saved' } },
+  'failed-kept-wait': { next: 'failed-kept', event: 'The kept work is saved' },
+  'failed-folder': { 'Apply to folder': APPLY_FOLDER(' The run failed, so check them first.'), 'Open the copy': OPEN_COPY, Discard: DISCARD },
+  'stopped-folder': { 'Apply to folder': APPLY_FOLDER(' The run stopped early, so check them first.'), 'Open the copy': OPEN_COPY, Discard: DISCARD },
+  ready: READY_FLOW,
+  labelled: READY_FLOW,
+  reqs: READY_FLOW,
+  'ready-moved': { 'Update branch': { to: 'ready', say: '{base} merged in; the branch is up to date' }, ...READY_FLOW },
+  'auto-failed': { 'Sign in': { to: 'ready', say: 'Signed in to GitHub; Create PR is next' }, 'How to merge': HOW_TO_MERGE, Discard: DISCARD },
+  checks: { ...OPEN_PR, next: 'failing' },
+  failing: { 'Fix checks': FIX_CHECKS, 'Re-run checks': { to: 'checks', say: 'Checks on {pr} run again' }, [VIEW_PR_LABEL]: VIEW, 'Copy PR link': COPY_LINK, next: 'conflicts' },
+  conflicts: { 'Fix conflicts': FIX_CONFLICTS, 'Resolve in a terminal': { say: 'Opens a terminal in the worktree' }, 'Re-check': { say: 'Still 2 conflicts with {base}' }, [VIEW_PR_LABEL]: VIEW, 'Copy PR link': COPY_LINK, next: 'approved' },
+  approved: { 'Merge PR': { to: 'merged', confirm: 'Merge {pr} into {base}?', say: 'Merged {pr} into {base}' }, [VIEW_PR_LABEL]: VIEW, Watch: { say: 'Worca watches {pr}' }, 'Copy PR link': COPY_LINK },
+  merged: { [VIEW_PR_LABEL]: { say: 'Opens the merged {pr} on GitHub' } },
+  stopped: { 'Start a new run': NEW_RUN, 'Restart Build': RESTART('Build runs again from where it stopped') },
+  discarded: { 'Start a new run': NEW_RUN },
+  push: { 'Push main': { to: 'pushed', step: 'land', confirm: 'Push the commits straight to origin/main? No PR opens.', say: 'Pushed to origin/main' }, 'Create PR instead': CREATE_ONE, Discard: DISCARD },
+  'source-ready': { Push: { to: 'pushed', step: 'land', confirm: 'Push {source} to origin? No PR opens.', say: 'Pushed to origin/{source}' }, Discard: DISCARD },
+  'source-unmerged': { 'How to merge': { commands: 'git switch {source}\ngit merge {hidden}' }, 'Create PR instead': CREATE('checks', 'Created {pr} into {source}'), Discard: DISCARD },
+  diverged: { 'Re-check': { to: 'source-ready', say: 'In step with the remote again; Push is back' }, Push: { to: 'pushed', step: 'land', confirm: 'Push {source} to origin? No PR opens.', say: 'Pushed to origin/{source}' }, 'How to pull': { commands: 'git switch {source}\ngit pull --rebase origin {source}' }, Discard: DISCARD },
+  folder: { 'Apply to folder': APPLY_FOLDER(''), 'Open the copy': OPEN_COPY, Discard: DISCARD },
+  applied: { 'Open the folder': { say: 'Opens {folder}' } },
+  workspace: { 'Fix conflicts': { to: 'workspace-fixing', confirm: 'Fix the conflicts on worca-docs #31? Worca pushes the fix to the PR.', say: 'A short run is fixing worca-docs #31' }, 'Copy PR links': { say: 'Copied 3 PR links' } },
+  'workspace-fixing': { [VIEW_PRS_LABEL]: { say: 'Opens worca-api #212, worca-web #88 and worca-docs #31 on GitHub' }, 'View fix run': { say: 'Opens the fix run: Runs › this run’s rounds' }, 'Copy PR links': { say: 'Copied 3 PR links' } },
+  'workspace-partly': { [CREATE_PR_LABEL]: CREATE('workspace', 'Opened worca-docs #31 into main'), [VIEW_PRS_LABEL]: { say: 'Opens worca-api #212 on GitHub' }, 'Copy PR links': { say: 'Copied 1 PR link' } },
+  clarify: { 'Next question': { nextQuestion: true }, 'Send answer': { to: 'plan', say: 'Answers sent; the planner writes the plan' }, 'Use defaults': { to: 'plan', say: 'Defaults used; the planner writes the plan' } },
   requirements: { 'Agree and plan': { to: 'plan', say: 'Requirements agreed; the planner writes the plan' }, 'Ask for changes': { say: 'Sent; the requirements come back' } },
   auto: { Accept: { to: 'starting', say: 'Workflow accepted; the run starts' }, 'Review the workflow': { say: 'Opens the workflow' }, Revise: { say: 'Sent; Worca proposes again' } },
-  reqs: { [CREATE_PR_LABEL]: { to: 'checks', say: 'Created {pr} into {base}', dialog: 'pr' }, 'Publish branch': { say: 'Pushed the branch to origin; no PR' }, 'How to merge': { say: 'git switch {base} && git merge {branch}' }, Discard: DISCARD },
-  'group-failed': { 'Open run {k}': OPEN_MEMBER, 'Re-plan the rest': REPLAN, 'Cancel the rest': CANCEL_REST },
-  'group-paused': { Resume: RESUME_MEMBER, 'Open run {k}': OPEN_MEMBER, 'Re-plan the rest': REPLAN, 'Cancel the rest': CANCEL_REST },
-  'group-needs': { 'Open run {k}': OPEN_MEMBER, 'Re-plan the rest': REPLAN, 'Cancel the rest': CANCEL_REST },
-  'group-stopped': { Resume: RESUME_MEMBER, 'Open run {k}': OPEN_MEMBER, 'Re-plan the rest': REPLAN, 'Cancel the rest': CANCEL_REST },
-  'group-asks': { 'Start run {k}': { to: 'feature', say: 'Run {k} starts' }, 'Re-plan the rest': REPLAN, 'Cancel the rest': CANCEL_REST },
-  'ship-declined': { 'Create {n} PRs': { to: 'chain', say: 'Created {pr}, {pr2} and {pr3}, each into the one before', dialog: 'pr' }, [CREATE_PR_LABEL]: { to: 'checks', say: 'Created {pr} for all 3 runs', dialog: 'pr' }, 'Check out the whole feature': { say: 'Copied: git switch {groupBranch}' }, 'Try it': { say: 'Copied: git switch {groupBranch}' }, Discard: { to: 'discarded', confirm: 'Discard all 3 runs’ changes?' } },
-  'ship-applied': { [VIEW_PR_LABEL]: OPEN_PR[VIEW_PR_LABEL], 'Ask for changes': { say: 'Sent; a run takes on what you asked' }, 'Copy PR link': OPEN_PR['Copy PR link'] },
-  'workspace-partly': { [CREATE_PR_LABEL]: { to: 'workspace', say: 'Opened worca-docs #31 into main', dialog: 'pr' }, [VIEW_PRS_LABEL]: { say: 'Opens worca-api #212 on GitHub' }, 'Copy PR links': { say: 'Copied 1 PR link' } },
-});
-Object.assign(FLOW.paused, { 'Don’t resume at 14:00': { to: 'paused-limit', say: 'The 14:00 resume is cancelled' }, 'Switch model…': SWITCH, 'Resume at…': RESUME_AT });
-Object.assign(FLOW.capped, { 'Raise the cap': { dialog: 'cap', to: 'working', say: 'Cap raised to {value}; the run goes on' }, 'Open budget settings': { say: 'Goes to Settings › Runs › Budget' }, 'Resume at…': { say: 'A cost cap does not lift with time' } });
-Object.assign(FLOW.plan, { 'Full plan': { say: 'Opens plan.md' }, 'Fix all': { fix: 'plan', say: 'Worca fixed the 2 open issues' }, 'Save to plans/': { say: 'Saved plans/unified-page-navigation.md' }, 'Open in New run': { say: 'Goes to Runs › New run, with this plan in it' }, Stop: STOP });
-Object.assign(FLOW.outline, { 'Approve {n} runs': { to: 'feature', say: 'The feature has {n} runs; run 1 starts' }, 'Fix all': { fix: 'outline', say: 'Worca fixed the cut’s 1 open issue' }, Stop: STOP });
-Object.assign(FLOW.featureready, { 'Not now': { to: 'ship-declined', say: 'Not shipped yet; ship it from here when you want' }, 'Ask for changes': { say: 'Sent; a run takes on what you asked' } });
+  plan: { 'Approve and build': { to: 'working', step: 'advance:build', say: 'Plan approved; Build starts' }, 'Ask for changes': { say: 'Sent to the planner; it plans again' }, 'Full plan': { say: 'Opens plan.md' }, 'Fix all': { to: 'plan-fixing', say: 'Worca is fixing the 2 open issues' }, 'Save to plans/': { say: 'Saved plans/unified-page-navigation.md' }, 'Open in New run': { say: 'Goes to Runs › New run, with this plan in it' }, Stop: STOP },
+  'plan-fixing': { next: 'plan', fixed: 'plan', event: 'The 2 open issues are fixed' },
+  outline: { 'Approve {n} runs': { to: 'feature', say: 'The feature has {n} runs; run 1 starts' }, 'Ask me before each run': { say: 'Worca asks before each later run starts' }, 'Don’t split': { to: 'plan', say: 'One run, one PR' }, 'Ask for changes': { say: 'Sent to the planner; it splits again' }, 'Fix all': { to: 'outline-fixing', say: 'Worca is fixing the 1 open issue' }, Stop: STOP },
+  'outline-fixing': { next: 'outline', fixed: 'outline', event: 'The 1 open issue is fixed' },
+  feature: { next: 'featureready' },
+  featureready: { 'Create {n} PRs': STACK3, [CREATE_PR_LABEL]: GROUP_ONE('all 3 runs'), 'Check out the whole feature': { say: 'Copied: git switch {groupBranch}' }, 'Not now': { to: 'ship-declined', say: 'Not shipped yet; ship it from here when you want' }, 'Ask for changes': { say: 'Sent; a run takes on what you asked' }, Discard: DISCARD_ALL('all 3 runs') },
+  featureone: { [CREATE_PR_LABEL]: GROUP_ONE('both runs'), 'Create 2 PRs': CREATE('group-shipped', 'Created {pr} and {pr2}'), 'Check out the whole feature': { say: 'Copied: git switch {groupBranch}' }, Discard: DISCARD_ALL('both runs') },
+  featureblocked: { 'Create {n} PRs': STACK3, [CREATE_PR_LABEL]: GROUP_ONE('all 3 runs'), 'Check out the whole feature': { say: 'Copied: git switch {groupBranch}' }, Discard: DISCARD_ALL('all 3 runs') },
+  chain: { 'Fix checks on {pr3}': { say: 'A short run is fixing {pr3}’s checks', confirm: 'Fix the failing checks on {pr3}? Worca pushes the fix to the PR.' }, 'Merge {pr}': { say: 'Merged {pr} into {base}; {pr2} now points at {base}', confirm: 'Merge {pr} into {base}?' }, [VIEW_PRS_LABEL]: { say: 'Opens {pr}, {pr2} and {pr3} on GitHub' }, 'Watch PRs': { say: 'Worca watches all three PRs' }, 'Copy PR links': { say: 'Copied 3 PR links' } },
+  network: { next: 'working', event: 'The network is back; the step retries' },
+  recovery: { Retry: { to: 'working', say: 'Retrying {step}' }, Pause: { to: 'paused-you', say: 'Paused; Resume tries {step} again' }, Stop: STOP },
+  'pr-draft': { 'Mark ready for review': { to: 'checks', confirm: 'Mark {pr} ready for review? Reviewers are asked.', say: '{pr} is ready for review' }, ...OPEN_PR },
+  'pr-changes': { 'Fix requested changes': { to: 'fixing-changes', confirm: 'Fix what the reviewer asked on {pr}? Worca pushes the fix to the PR.', say: 'A short run is fixing what was asked' }, ...OPEN_PR },
+  'pr-fixing': { ...OPEN_PR, 'View fix run': { say: 'Opens the fix run: Runs › this run’s rounds' }, next: 'checks', event: 'The fix is pushed; checks run again' },
+  'pr-closed': { 'Create PR again': CREATE_ONE, [VIEW_PR_LABEL]: { say: 'Opens the closed {pr} on GitHub' }, Discard: DISCARD },
+  'pr-behind': { 'Update branch': { to: 'checks', confirm: 'Merge {base} into {pr}? Checks run again.', say: '{base} merged in; checks run again' }, ...OPEN_PR },
+  'pr-blocked': { ...OPEN_PR },
+  'watch-stopped': { 'Fix conflicts': FIX_CONFLICTS, 'Ask for changes': { say: 'Ask for changes from the run’s chat' }, [VIEW_PR_LABEL]: VIEW, 'Copy PR link': COPY_LINK },
+  round: { [VIEW_PR_LABEL]: VIEW, 'Copy PR link': COPY_LINK, next: 'checks', event: 'The round pushed its fix; checks run again' },
+  'group-failed': { 'Open run {k}': OPEN_MEMBER, ...REST },
+  'group-paused': { Resume: RESUME_MEMBER, ...REST },
+  'group-needs': { 'Open run {k}': OPEN_MEMBER, ...REST },
+  'group-stopped': { 'Restart run {k}': { member: 'slice', step: 'restart:build', say: 'Run {k} runs its Build again' }, ...REST },
+  'group-asks': { 'Start run {k}': { to: 'feature', startsRun: true, say: 'Run {k} starts' }, ...REST },
+  'ship-declined': { 'Create {n} PRs': STACK3, [CREATE_PR_LABEL]: GROUP_ONE('all 3 runs'), 'Check out the whole feature': { say: 'Copied: git switch {groupBranch}' }, Discard: DISCARD_ALL('all 3 runs') },
+  'ship-applied': { [VIEW_PR_LABEL]: VIEW, 'Ask for changes': { say: 'Sent; a run takes on what you asked' }, 'Copy PR link': COPY_LINK },
+};
 
 // What a live run's own controls lead to, from any state.
 const RUN_FLOW = {
-  pauseNow: {
-    to: "paused",
-    say: "Paused; Resume goes on from Implementation"
-  },
-  pauseAfter: {
-    to: "paused",
-    say: "Pauses after the current step finishes"
-  },
-  stop: {
-    to: "stopped",
-    confirm: "Stop the run? The branch and changes stay."
-  }
+  pauseNow: { to: 'paused-you', say: 'Paused; Resume goes on from {step}' },
+  pauseAfter: { pauseAfter: true, say: 'Pauses after {step} finishes' },
+  stop: STOP,
+  report: REPORT,
+  archive: { ...ARCHIVE, confirm: 'Archive this run? The local branch, worktree and logs are removed; the remote branch and any PR stay.' },
 };
+const filled = (v, ctx) => Object.fromEntries(Object.entries(v).map(([a, b]) => [a, typeof b === 'string' ? fill(b, ctx) : b]));
 
 /** Every state's id. */
 export const stateIds = () => Object.keys(STATES);
@@ -1119,19 +764,19 @@ export function actionHelp(label, ctx = {}) {
 /** Where a state's actions lead: { label: { to, say, confirm, dialog } }, and `next` for what happens from outside. */
 export function actionFlow(id, ctx = {}) {
   const out = {};
-  for (const [k, v] of Object.entries(FLOW[id] || {})) out[fill(k, ctx)] = typeof v === 'string' ? v : Object.fromEntries(Object.entries(v).map(([a, b]) => [a, fill(b, ctx)]));
+  for (const [k, v] of Object.entries(FLOW[id] || {})) out[fill(k, ctx)] = typeof v === 'object' && v ? filled(v, ctx) : v;
   return out;
 }
 
 /** What Pause, Stop and the like lead to on a live run. */
-export const runFlow = () => RUN_FLOW;
+export const runFlow = (ctx = {}) => Object.fromEntries(Object.entries(RUN_FLOW).map(([k, v]) => [k, filled(v, ctx)]));
 
 /** An action as a state offers it. */
 export const makeAction = (label, icon, primary, items) => ({ label, icon, primary: !!primary, items: items || [] });
 
 // A run inside a group ships with its group, so creating, merging and opening PRs are the group page's; the steps that
 // get the run itself moving again stay on its page.
-const GROUP_OWNS = /^(Create|Merge|Push|Publish|Discard|Try it|View|Watch|Copy|How to merge|Apply to folder|Open the)/;
+const GROUP_OWNS = /^(Create|Merge|Push|Publish|Discard|Try it|View|Watch|Copy|How to merge|Apply to folder|Open the|Start a new run)/;
 export const memberKeeps = (label) => !GROUP_OWNS.test(label);
 
 // A state's section in a list of things that wait on you (Pulse's Vitals; Chat's list later): waiting on a person first,
@@ -1159,7 +804,7 @@ export const CHAT_KINDS = Object.freeze({
 });
 
 // What a run's word is to the bulk table (src/shared/run-bulk.mjs): which run a Stop or an Archive applies to.
-const BULK_STATE = { Starting: 'starting', Working: 'working', Waiting: 'waiting', Paused: 'paused', Failed: 'failed', Stopped: 'stopped', Ready: 'ready', 'Ready to merge': 'in-review', 'In review': 'in-review', 'Needs you': 'needs-you' };
+const BULK_STATE = { Starting: 'starting', Working: 'working', Waiting: 'waiting', Paused: 'paused', Failed: 'failed', Stopped: 'stopped', Cancelled: 'stopped', Ready: 'ready', 'Ready to merge': 'in-review', 'In review': 'in-review', 'Needs you': 'needs-you' };
 export const bulkStateOf = (word) => BULK_STATE[word] || 'merged';
 
 // A step's look: its mark on the rail, its icon, the word a screen reader hears, and its cell in the stepper.

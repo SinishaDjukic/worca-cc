@@ -7,7 +7,8 @@
 | `thing.list-home` | A list about a step is Overview's focus; a list about the whole is a tab; never both | One place per list | by hand |
 | `thing.by-exception` | A tab draws in full what needs you; what went fine is one line | The exception is the news | by hand |
 | `thing.opens` | A row opens its detail in place; a problem opens itself once; sections never collapse | Nothing is hidden when it matters | by hand |
-| `thing.tabs-by-level` | Four tabs in every interface mode; inside them, Logs, the graph and Actions are Advanced, Agents and log filters Expert | The page keeps its shape in every mode | design-system-components |
+| `thing.tabs-by-level` | Inside the tabs, Logs, the graph, Sessions and Actions are Advanced, Agents and log filters Expert; a mode never removes a tab | The page keeps its shape in every mode | design-system-components |
+| `thing.follows-state` | Rows, tabs, figures and menus show only what the state makes true: no diff before Build runs, no decisions before anything is decided, and what is gone says gone and has no tools | A page never contradicts itself | run-page-model |
 
 **A thing's page** (a run, a group; the pattern for any page about one thing with a state), top to bottom:
 | Slot | Holds | Never holds |
@@ -37,8 +38,12 @@ what it belongs to.
 - **A list of what a run produced groups by what each item is** (Code, Tests, Not in the code), not by folder;
   largest first, the folder after the name, each group's head with its count.
 
+**One run, moving.** An action moves this run on: `to` names the next state, and the run keeps its title, what its steps spent, its branch and its PR. Your own Pause is `Paused by you` on the step it was on, and Resume returns to where it was; Archive and Restore keep the real state; a group stays on its group page, and Pause or Stop on it are its running run's, which the group then reads from. Delete on a group returns to Runs with a Toast.
+
+**A tab shows only what exists.** Changes appears once Build has run, Decisions once something is decided; both can come with the run. Never started means nothing spent, made or decided. Discarded, Archived and Deleted say what is gone in the place it was, and keep no tools on it; the logs go with the worktree.
+
 **The run page's cases** (each a prototype case; its state's word and action are in `run-state.mjs`):
-- **Paused says why, and offers only what can help.** A usage limit offers the other engine and `Resume at 14:00`; a total budget offers only Open Settings; a team cap asks for a reason and links its policy; `Resume at…` is off on a cost cap and says why. A restart, a time limit, an Away limit and an error are one state with their own detail line. An interrupted run resumes, or says it cannot and offers a new run.
+- **Paused says why, and offers only what can help.** A usage limit offers the other engine and `Resume at 14:00`, and Resume now is off until it resets; a resume you set makes `Cancel 14:00` the main; a total budget offers Open Settings, and Resume once there is room; a team cap asks for a reason and links its policy; `Resume at…` is off on a cost cap and says why. A restart, a time limit, an Away limit and an error are one state with their own detail line. An interrupted run resumes, or says it cannot and offers a new run.
 - **The word stays Rail's; the rest is the detail line:** `2 open issues`, `End not reached`, `Not in dev yet`, `Waiting for the network`, `Copying the folder`, a PR's `Draft`, `Out of date with dev`, `Blocked by branch rules`. Only a host's word for a closed PR changes the word (Closed, Abandoned, Declined).
 - **A PR's stage holds its Watch and its rounds as StepRows.** A round says its request and never raises Needs you; the run that opened the PR does. Create PR's step carries what the automatic PR did, in one line: Opened, `Not opened: why`, Waiting for the feature, Waiting for the requirements to be marked.
 - **Requirements still to mark are Overview's focus and lock Create PR,** which says why (`Mark every requirement … N left`); Not met and Dropped count once they say why.

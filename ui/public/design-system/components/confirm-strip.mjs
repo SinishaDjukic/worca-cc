@@ -13,16 +13,16 @@ import { attrs, esc } from './html.mjs';
  * @param {{title:string, detail:string, extra?:string}} [o.err]  what failed; `extra` is markup after the detail
  * @param {string} [o.id]          the text's id, which labels the strip
  */
-export function confirmStrip({ text, yes, danger = false, busy = '', err = null, id = 'rc-strip-t' }) {
+export function confirmStrip({ text, yes, no = 'Cancel', danger = false, busy = '', err = null, id = 'rc-strip-t' }) {
   const t = err
     ? `<span class="rc-confirm-t is-err"${attrs({ id, role: 'alert' })}>${esc(err.title)}<span class="rc-confirm-why">${esc(err.detail)}${err.extra ? ' ' + err.extra : ''}</span></span>`
     : `<span class="rc-confirm-t"${attrs({ id })}>${esc(text)}</span>`;
-  return `<div class="rc-confirm" role="alertdialog"${attrs({ 'aria-labelledby': id, 'data-motion': 'open' })}>${t}${confirmActions({ yes: busy || (err ? 'Try again' : yes), danger, busy: !!busy })}</div>`;
+  return `<div class="rc-confirm" role="alertdialog"${attrs({ 'aria-labelledby': id, 'data-motion': 'open' })}>${t}${confirmActions({ yes: busy || (err ? 'Try again' : yes), no, danger, busy: !!busy })}</div>`;
 }
 
 /** The strip's two buttons, shared with a strip that holds a short form. */
-export function confirmActions({ yes, danger = false, busy = false, kind }) {
-  return `<span class="rc-confirm-acts">${button({ label: yes, kind: kind || (danger ? 'danger' : 'primary'), attrs: { 'data-confirm': 'yes', 'data-key': 'confirm:yes', 'data-motion': 'swap', disabled: busy } })}${button({ label: 'Cancel', kind: 'quiet', attrs: { 'data-confirm': 'no', 'data-key': 'confirm:no' } })}</span>`;
+export function confirmActions({ yes, no = 'Cancel', danger = false, busy = false, kind }) {
+  return `<span class="rc-confirm-acts">${button({ label: yes, kind: kind || (danger ? 'danger' : 'primary'), attrs: { 'data-confirm': 'yes', 'data-key': 'confirm:yes', 'data-motion': 'swap', disabled: busy } })}${button({ label: no, kind: 'quiet', attrs: { 'data-confirm': 'no', 'data-key': 'confirm:no' } })}</span>`;
 }
 
 /**
