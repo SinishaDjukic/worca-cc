@@ -39,6 +39,9 @@ const clearTables = () => {
 };
 beforeEach(clearTables);
 
+// A row a Resume can take on: the scheduler reads only `resume_point IS NOT NULL` (seedPipelineRow sets no point).
+const withPoint = (id) => getDb().prepare('UPDATE pipelines SET resume_point = ? WHERE id = ?').run(JSON.stringify({ version: 2 }), id);
+
 test('a one-shot ticket waits, fires once, and records its pipeline', async () => {
   const t = createTicket({ projectDir: DIR, title: 'Upgrade', runAtMs: T0 + HOUR, request: REQ, now: T0 });
   assert.equal(t.status, 'scheduled');
@@ -447,6 +450,100 @@ test('predecessorState follows a ticket into its pipeline and reads the outcome 
   const arch = predecessorState({ kind: 'pipeline', id: 'p0000001' }, { now: T0, policy: 'any' });
   assert.equal(arch.state, 'gone'); assert.equal(arch.reason, 'was archived'); assert.equal(arch.pipelineId, 'p0000001');
   assert.equal(predecessorState({ kind: 'ticket', id: fired.id }, { now: T0 + 10 * MIN }).state, 'gone', 'the ticket follows into the archived pipeline');
+});
+
+test('an interrupted predecessor with a resume point keeps its dependents waiting under either policy, then fires them on its branch once it finishes', async () => {
+  seedPipelineRow({ id: 'p0000091', title: 'Slice 1', status: 'interrupted', startedAt: new Date(T0).toISOString(), branch: { source: 'main', feature: 'worca-cc/slice-1' } });
+  withPoint('p0000091');
+  const on = { kind: 'pipeline', id: 'p0000091' };
+  const slice2 = createTicket({ projectDir: DIR, title: 'Slice 2', request: REQ, after: on, sourceFromPrevious: true, now: T0 });
+  const any = createTicket({ projectDir: DIR, title: 'Any', request: REQ, after: on, afterPolicy: 'any', now: T0 });
+  const forced = createTicket({ projectDir: DIR, title: 'Forced', request: REQ, after: on, now: T0 });
+  const gate = (policy) => predecessorState(on, { policy, now: T0 });
+  assert.deepEqual([gate('done').state, gate('any').state], ['waiting', 'waiting'], 'clarify: wait under any too, like a paused run');
+  assert.equal(gate('done').status, 'interrupted', 'the waiting answer carries the status the UI words as "waits for a Resume"');
+
+  const started = [];
+  const start = async (t) => {
+    const p = predecessorState(t.after, { policy: t.after.policy });
+    started.push({ id: t.id, from: t.sourceFromPrevious ? previousBranchesOf(p.pipelineId) : null });
+    return { ok: true };
+  };
+  requestRunNow(forced.id, { now: T0 });
+  let out = await runDueTickets({ now: T0 + MIN, start });
+  assert.deepEqual(out.fired, [forced.id], 'Run now still bypasses the gate');
+  assert.deepEqual(out.waiting.sort(), [slice2.id, any.id].sort());
+  assert.deepEqual(out.missed, [], 'the bug: interrupted no longer misses its dependents');
+  assert.equal(getTicket(slice2.id).status, 'scheduled');
+  assert.equal(getTicket(slice2.id).failReason, null);
+
+  // A Resume claims the row (`running`, claimForResume); the run then finishes `done` and drops its point.
+  getDb().prepare("UPDATE pipelines SET status = 'running' WHERE id = 'p0000091'").run();
+  out = await runDueTickets({ now: T0 + 2 * MIN, start });
+  assert.deepEqual(out.waiting.sort(), [slice2.id, any.id].sort(), 'still waiting while the resumed run runs');
+  getDb().prepare("UPDATE pipelines SET status = 'done', resume_point = NULL WHERE id = 'p0000091'").run();
+  out = await runDueTickets({ now: T0 + 3 * MIN, start });
+  assert.deepEqual(out.fired.sort(), [slice2.id, any.id].sort());
+  assert.deepEqual(started.find((s) => s.id === slice2.id).from, { sourceBranch: 'worca-cc/slice-1' }, 'sourceFromPrevious: the predecessor\'s branch');
+  assert.equal(getTicket(slice2.id).status, 'fired');
+});
+
+test('an interrupted predecessor releases its dependents once it really ends: stopped → missed, archived → gone, no resume point → ended', async () => {
+  const seedI = (id, point = true) => {
+    seedPipelineRow({ id, title: id, status: 'interrupted', startedAt: new Date(T0).toISOString(), branch: { source: 'main', feature: `worca-cc/${id}` } });
+    if (point) withPoint(id);
+    return id;
+  };
+  const after = (id, afterPolicy = 'done') => createTicket({ projectDir: DIR, title: `after ${id}`, request: REQ, after: { kind: 'pipeline', id }, afterPolicy, now: T0 });
+  const stops = seedI('p00000a1');
+  const archives = seedI('p00000a2');
+  const swept = seedI('p00000a3', false);   // sweepV1Runs / a restored archive: interrupted, resume_point NULL
+  const ts = after(stops), ta = after(archives), tn = after(swept), tnAny = after(swept, 'any');
+
+  let out = await runDueTickets({ now: T0 + MIN, start: okStart() });
+  assert.deepEqual(out.waiting.sort(), [ts.id, ta.id].sort(), 'both resumable runs hold their dependents');
+  assert.deepEqual(out.missed, [tn.id], 'clarify: no resume point = ended, missed under done');
+  assert.deepEqual(out.fired, [tnAny.id], 'clarify: no resume point = ended, started under any');
+  assert.equal(getTicket(tn.id).failReason, 'The run before it was interrupted.');
+
+  // Resumed, then stopped (an interrupted row itself cannot be stopped: stopPausedRun refuses it; the stop clears the point).
+  getDb().prepare("UPDATE pipelines SET status = 'stopped', resume_point = NULL WHERE id = ?").run(stops);
+  // Archive keeps status and, here, a point: archived_at must still win.
+  getDb().prepare('UPDATE pipelines SET archived_at = ? WHERE id = ?').run(new Date(T0).toISOString(), archives);
+  out = await runDueTickets({ now: T0 + 2 * MIN, start: okStart() });
+  assert.deepEqual(out.missed.sort(), [ts.id, ta.id].sort(), 'never a wait forever');
+  assert.equal(getTicket(ts.id).failReason, 'The run before it was stopped.');
+  assert.equal(getTicket(ta.id).failReason, 'The run before it was archived.');
+});
+
+test('error and stopped keep their gate under both policies, even with a stale resume point', () => {
+  for (const [status, reason] of [['error', 'ended with an error'], ['stopped', 'was stopped']]) {
+    const id = `x-${status}`;
+    seedPipelineRow({ id, title: id, status, startedAt: new Date(T0).toISOString() });
+    withPoint(id);   // only `interrupted` reads the point
+    const done = predecessorState({ kind: 'pipeline', id }, { now: T0 });
+    assert.deepEqual([done.state, done.reason], ['bad', reason], `${status} under done`);
+    assert.equal(predecessorState({ kind: 'pipeline', id }, { now: T0, policy: 'any' }).state, 'ok', `${status} under any`);
+  }
+});
+
+test('resolveAfterRef and afterRefOf: a resumable interrupted run is accepted under done, one without a point is refused as before; a cycle through its resume is refused', () => {
+  seedPipelineRow({ id: 'p00000b1', title: 'Parked', status: 'interrupted', startedAt: new Date(T0).toISOString() });
+  const on = { kind: 'pipeline', id: 'p00000b1' };
+  assert.equal(resolveAfterRef(on, {}).error, '‘Parked’ was interrupted — nothing to wait for', 'no point: refused under done');
+  assert.equal(resolveAfterRef(on, { policy: 'any' }).ok, true, 'no point: any still accepts it');
+  assert.equal(afterRefOf('p00000b1').resumable, false);
+  withPoint('p00000b1');
+  const r = resolveAfterRef(on, {});
+  assert.equal(r.ok, true, 'the chat\'s and the form\'s final gate accepts it now');
+  assert.equal(r.after.status, 'interrupted');
+  assert.equal(afterRefOf('p00000b1').resumable, true);
+  seedPipelineRow({ id: 'p00000b2', title: 'Done', status: 'done', startedAt: new Date(T0).toISOString() });
+  assert.equal('resumable' in afterRefOf('p00000b2'), false, 'the key exists only on an interrupted pipeline');
+  // waitReaches is status-free: T waits on the run, so the run's resume may not wait on T.
+  const t = createTicket({ projectDir: DIR, title: 'Next', request: REQ, after: on, now: T0 });
+  assert.throws(() => createTicket({ projectDir: DIR, title: 'Resume', request: {}, resumePipelineId: 'p00000b1', after: { kind: 'ticket', id: t.id }, now: T0 }),
+    /‘Next’ already waits for this run/);
 });
 
 test('previousBranchesOf: a member whose branch was dropped (unchanged) chains from its source', () => {
@@ -873,10 +970,22 @@ test('runChains: lists each open chain in pre-order with member states, links on
     { name: 'isLive turns a bad-status row current; without it the same row is failed', run: () => {
       clearTables();
       chainRun('p0000051', 'dev', 'nb1');
-      setStatus('p0000051', 'interrupted');
+      // `error`, not `interrupted`: an interrupted run with a resume point is parked (current), so it no longer tests the override.
+      setStatus('p0000051', 'error');
       createTicket({ projectDir: DIR, title: 'next', request: REQ, sourceFromPrevious: true, after: { kind: 'pipeline', id: 'p0000051' }, now: T0 });
       assert.equal(runChains({ isLive: (q) => q.pipelineId === 'p0000051' })[0].members[0].state, 'current');
       assert.equal(runChains()[0].members[0].state, 'failed');
+    } },
+    { name: 'an interrupted member is current while it keeps a resume point (as a paused one), failed without one', run: () => {
+      clearTables();
+      chainRun('p0000052', 'dev', 'nb1');
+      setStatus('p0000052', 'interrupted');
+      createTicket({ projectDir: DIR, title: 'next', request: REQ, sourceFromPrevious: true, after: { kind: 'pipeline', id: 'p0000052' }, now: T0 });
+      assert.equal(runChains()[0].members[0].state, 'failed', 'no resume point: it can never resume, so it ended');
+      withPoint('p0000052');
+      assert.deepEqual(runChains()[0].members.map((m) => m.state), ['current', 'waiting'], 'resumable: still going, its dependent waits');
+      setStatus('p0000052', 'error');
+      assert.equal(runChains()[0].members[0].state, 'failed', 'a stale point never makes an ended run current');
     } },
     { name: 'a purged predecessor ticket makes the dependent its own root', run: () => {
       clearTables();
@@ -1181,6 +1290,8 @@ test('a same-branch predecessor: the gate waits while its merge back is pending 
   const plain = seed('sab-plain', { source: 'main', feature: 'worca-cc/p-5' });
   // Resumable, so it gets no teardown until a resume: only a `done` run merges back.
   const interrupted = seed('sab-interrupted', { source: 'main', feature: 'worca-cc/h-6', worktreeDir: '/w/6', sameAsSource: true }, fresh, 'interrupted');
+  const parked = seed('sab-parked', { source: 'main', feature: 'worca-cc/h-7', worktreeDir: '/w/7', sameAsSource: true }, fresh, 'interrupted');
+  withPoint(parked);
   assert.deepEqual(previousBranchesOf(merged), { sourceBranch: 'main' });
   assert.deepEqual(previousBranchesOf(failed), { sourceBranch: 'worca-cc/h-2' });
   assert.deepEqual(previousBranchesOf(tearing), { pending: true });
@@ -1188,6 +1299,7 @@ test('a same-branch predecessor: the gate waits while its merge back is pending 
   assert.equal(previousBranchesOf(setupFailed), null, 'no worktree → nothing to wait for: "left no branch", never a wait forever');
   assert.deepEqual(previousBranchesOf(plain), { sourceBranch: 'worca-cc/p-5' }, 'unchanged for every other run');
   assert.deepEqual(previousBranchesOf(interrupted), { sourceBranch: 'worca-cc/h-6' }, 'never pending: an interrupted run merges nothing back');
+  assert.deepEqual(previousBranchesOf(parked), { sourceBranch: 'worca-cc/h-7' }, 'a resumable interrupted run is never pending either');
   const gate = (id) => predecessorState({ kind: 'pipeline', id }).state;
   assert.equal(gate(tearing), 'waiting', 'a done same-branch run still merging back holds EVERY dependent (no attempt, no retry_at)');
   assert.equal(gate(merged), 'ok');
@@ -1195,7 +1307,8 @@ test('a same-branch predecessor: the gate waits while its merge back is pending 
   assert.equal(gate(crashed), 'ok');
   assert.equal(gate(setupFailed), 'ok');
   assert.equal(gate(plain), 'ok', 'unchanged for every other run');
-  assert.equal(gate(interrupted), 'bad', 'answered at once, as for any interrupted predecessor today (BAD_PIPELINE_REASON)');
+  assert.equal(gate(interrupted), 'bad', 'no resume point: it can never resume, so it ended — the answer it always had');
+  assert.equal(gate(parked), 'waiting', 'resumable: it waits for its Resume like a paused run (was `bad` before this fix)');
 });
 
 test('summarizeRequest: sameAsSource only when set', () => {

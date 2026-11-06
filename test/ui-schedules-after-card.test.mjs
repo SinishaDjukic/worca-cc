@@ -25,6 +25,10 @@ const AFTER_T = { id: 'bbbbbbbb-0000-4000-8000-000000000002', kind: 'once', sche
 
 const MISSED_T = { ...AFTER_T, id: 'cccccccc-0000-4000-8000-000000000003', title: 'Docs', status: 'missed', failReason: 'The run before it ended with an error.',
   after: { ...AFTER_T.after, status: 'error' } };
+const PARKED_T = { ...AFTER_T, id: 'dddddddd-0000-4000-8000-000000000004', title: 'Slice 2', policy: 'done',
+  after: { ...AFTER_T.after, policy: 'done', title: 'Slice 1', status: 'interrupted' } };
+const MISSED_I_T = { ...MISSED_T, id: 'eeeeeeee-0000-4000-8000-000000000005', failReason: 'The run before it was interrupted.',
+  after: { ...MISSED_T.after, status: 'interrupted' } };
 
 async function boot(tickets = [AFTER_T]) {
   const dom = trackDom(new JSDOM('<!doctype html><body><div id="tabs"><button data-tab="activity"></button><button data-tab="once"></button><button data-tab="repeating"></button></div><div id="feed"></div><div id="once"></div><div id="rep"></div></body>', { url: 'http://localhost/#schedules/once' }));
@@ -75,6 +79,25 @@ test('an after-ticket card names the run it waits for (no countdown) and offers 
       assert.equal(card.querySelector('.sched-when').getAttribute('data-at'), '');
       assert.equal(card.querySelector('.sched-reason').textContent, 'The run before it ended with an error.');
       assert.equal([...card.querySelectorAll('button')].some((b) => b.textContent === 'Schedule next…'), false, 'a dead link: resolveAfterRef refuses a missed ticket');
+    } },
+  ]);
+});
+
+test('an after-ticket waiting on an interrupted run says it waits for a Resume; a missed one keeps the plain word', async () => {
+  await checkRows([
+    { name: 'waiting: interrupted, waits for a Resume (card and Details)', run: async () => {
+      const { doc } = await boot([PARKED_T]);
+      const card = doc.querySelector('#once .sched-item');
+      assert.equal(card.querySelector('.rc-status-word').textContent, 'Waiting for a run');
+      assert.equal(card.querySelector('.sched-when').textContent, 'After ‘Slice 1’ · interrupted, waits for a Resume');
+      const kv = Object.fromEntries([...card.querySelectorAll('.sched-kv')].map((r) => [r.querySelector('.sched-k').textContent, r.querySelector('.sched-v').textContent]));
+      assert.equal(kv.After, 'Slice 1 · interrupted, waits for a Resume');
+    } },
+    { name: 'missed (its predecessor could not resume): the plain word and the fail_reason', run: async () => {
+      const { doc } = await boot([MISSED_I_T]);
+      const card = doc.querySelector('#once .sched-item');
+      assert.equal(card.querySelector('.sched-when').textContent, 'After ‘Refactor’ · interrupted');
+      assert.equal(card.querySelector('.sched-reason').textContent, 'The run before it was interrupted.');
     } },
   ]);
 });

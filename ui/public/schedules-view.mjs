@@ -40,7 +40,10 @@ const RESULT_FAMILY = { completed: 'green', error: 'red', failed: 'red', missed:
 /** How the run an after-ticket waits for stands (its pipeline or ticket status). */
 const AFTER_WORD = { running: 'running', starting: 'starting', created: 'starting', pausing: 'pausing', paused: 'paused', scheduled: 'scheduled', firing: 'starting', fired: 'starting',
   done: 'finished', error: 'ended with an error', stopped: 'stopped', interrupted: 'interrupted', missed: 'missed', canceled: 'canceled', failed: 'could not start', skipped: 'skipped' };
-const afterWord = (a) => (a && a.status ? (AFTER_WORD[a.status] || a.status) : 'waiting');
+// A ticket still waiting on an interrupted run waits for its Resume (scheduler pipelineGate); a missed one keeps the plain word.
+const afterWord = (a, { waiting = false } = {}) => (a && a.status
+  ? (waiting && a.status === 'interrupted' ? 'interrupted, waits for a Resume' : (AFTER_WORD[a.status] || a.status))
+  : 'waiting');
 const afterName = (a) => `‘${(a && a.title) || 'the run before it'}’`;
 
 /** A constant SVG string from ICON as a node, parsed as XML. */
@@ -173,7 +176,7 @@ export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repea
       row('Task', src ? `${src.plugin} · ${src.taskId} (fetched when the run starts)` : (item.summary.prompt || '—')),
       row('Created by', shown(item.createdBy)),
       shown(item.updatedBy) && shown(item.updatedBy) !== shown(item.createdBy) ? row('Changed by', shown(item.updatedBy)) : null,
-      item.after ? row('After', `${(item.after.title || item.after.id.slice(0, 8))} · ${afterWord(item.after)}`) : null,
+      item.after ? row('After', `${(item.after.title || item.after.id.slice(0, 8))} · ${afterWord(item.after, { waiting: item.status === 'scheduled' })}`) : null,
       item.after ? row('If it fails', item.after.policy === 'any' ? 'Start anyway' : 'Do not start') : null,
       git && item.sourceFromPrevious ? row('Source branch', 'the run before it') : null,
       git ? row('Feature branch', item.summary.sameAsSource ? 'none (commits onto the source branch)'
@@ -214,7 +217,7 @@ export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repea
     // The word after the dot always describes the PREDECESSOR (running / finished / ended with an
     // error); a missed after-ticket says Missed in the status word and its fail_reason below.
     const timeText = chained
-      ? `After ${afterName(t.after)} · ${afterWord(t.after)}`
+      ? `After ${afterName(t.after)} · ${afterWord(t.after, { waiting: !missed })}`
       : (missed ? `was due ${when(t.runAt)}` : `${when(t.runAt)}${countdown(t.runAt) ? ` · in ${countdown(t.runAt)}` : ''}`);
     const acts = h('div', { class: 'sched-acts' });
     if (!firing) {
