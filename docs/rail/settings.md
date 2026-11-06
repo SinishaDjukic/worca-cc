@@ -15,8 +15,8 @@ mode, Appearance and going away live in the profile menu only). Opening it turns
 fading over `change` while the page changes at once: `‹ Back to Worca`, then the sections under four group heads
 (Worca: General, Notifications, Team policy, Labs · Work: Runs, Presets, Labels, Automations · AI: Models, Providers,
 Chat, Guardrails, Memory · Add-ons: Plugins, Connectors). **Levels:** Team policy can be read at Advanced and changed at Expert: everyone a policy constrains sees why a choice is
-locked; only an admin changes it. **One row per decision, in the section that owns it:** Paused runs is Runs' (what a run
-does when it pauses), and Notifications has a link row to it. **A setting or a place:** a setting is a choice about how
+locked; only an admin changes it. **One row per decision, in the section that owns it:** limits are Runs': the warning line, what a start does near a
+limit, and what a paused run does. Notifications says only how you hear of them, and links there. **A setting or a place:** a setting is a choice about how
 Worca behaves, set rarely, taking effect at once; a place is where you do work and come back to. So the Marketplace
 *store* is a place in the sidebar, while what you installed (Plugins), Connectors, Models, Providers and Team policy are
 settings. On a narrow screen Worca's sidebar stays, Settings opens

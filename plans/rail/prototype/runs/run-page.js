@@ -11,6 +11,7 @@ const esc = R.esc;
 
 // a case starts fresh: nothing from the case before it carries over
 const fresh = (caseId) => ({ caseId, askOpen: false, land: '', open: null, chips: [], ship: '', menu: '', tab: '', focus: '', view: 'steps', parent: null, back: null, dialog: '', after: [], away: '', askEach: false, answer: null, file: null, actFilter: 'all', rounds: [], ticks: [], taskOpen: false, stackSt: null, busy: null, broken: false, crash: null, offline: false, over: {}, restGone: false, watched: false, fixed: {}, outline: null, outlineEdited: false, marks: {}, markText: {}, lines: [], showMet: false, showEarlier: false, copy: false, services: {}, comments: {}, commentOn: null, picked: null, session: 0, doc: null, graphNode: null, graphZoom: '', form: null, log: { from: 'all', level: 'all', step: 'all', cycle: 'all', session: 'all', q: '', raw: false, follow: true } });
+R.watchScrollbars(document);
 let ui = fresh('working');
 
 const statusDot = (v) => R.statusDot({ tone: v.dot, sym: v.sym, glyph: R.ICONS[v.sym === 'q' ? 'question' : 'alert'] });

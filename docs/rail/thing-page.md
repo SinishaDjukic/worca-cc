@@ -20,6 +20,8 @@
 | Figures | Its numbers; each opens its own detail: its tab when it has one (Changes), else a breakdown under it (Cost) | Chips, lists |
 | Tabs | Sections of the thing; each tab's content starts on the tab text edge | A second list of what the page already lists |
 
+**On a wide window** the page's column is centred in the space beside the sidebar, never left against it.
+
 **Where a run's work goes** is one phrase in the metadata line that follows the run, never a badge: `branch into dev`, `#959 merges branch into dev`, `branch merged into dev`, `main to origin/main`, `into ~/folder`. A run started with Run on the source branch lands on the source itself, so it says so from the start: `on source then to origin` while it works (the agents' copy it commits on stays hidden), `source to origin` once merged back, with Push as its one step and never a pull request. When the merge back fails the copy shows, `copy not merged into source`, the state is Needs you and the step is How to merge. A branch is named once in the phrase, and its middle folds, never its end. Prototype cases `source`, `source-ready`, `source-unmerged`.
 
 **Where a list goes on a thing's page** (checks, a plan's steps, files, decisions): each list has one home, chosen by

@@ -98,6 +98,7 @@
     BackLink: [['One step up', R.backLink({ label: 'Settings', icon: P('M15 6l-6 6 6 6') })]],
     Trail: [['A run in a group: its place, then its group', R.trail({ items: [{ label: 'Runs' }, { label: 'worca-cc' }, { label: 'Unified page navigation' }] })]],
     Pager: [['A run among its group\'s', R.pager({ label: 'Runs in this group', index: 1, n: 3, noun: 'run', prev: { ok: true }, next: { ok: false, why: 'Run 3 hasn’t started' }, icons: { prev: P('M14.5 6l-6 6 6 6'), next: P('M9.5 6l6 6-6 6') } })]],
+    Scrollbar: [['Over it, or while it scrolls', `<div style="height:96px;overflow:auto;flex:1 1 100%">${Array.from({ length: 12 }, (_, i) => `<p>Line ${i + 1}</p>`).join('')}</div>`]],
     CopyButton: [['Copies, then a tick; its width never changes', R.copyButton({ text: 'feat/x', label: 'Copy branch name' })]],
     Row: [['Four slots: rail, text, end, ⋯', R.list({ groups: [{ rows: [R.row({ rail: R.statusDot({ tone: 'is-green' }), text: '<span class="lr-main"><span class="lr-t">The longest name gives way first</span></span>', end: '<span class="lr-fig">$84.10</span>' }), R.row({ rail: R.statusDot({ tone: 'is-grey' }), text: '<span class="lr-main"><span class="lr-t">Short</span></span>', end: '<span class="lr-fig">$1</span>' })] }] })]],
     OptionList: [['Worca’s pick marked, your own answer under it', R.optionList({ label: 'Keep the trail on phones?', options: ['Keep it', 'Show only ‹ Parent'], selected: 1, recommended: 1, own: R.suggestionField({ id: 'g-ol', inputCls: 'input-sm', placeholder: 'Or write your own answer' }) })]],
@@ -113,6 +114,7 @@
     LogLines: [['Time, where from, words', `<div style="flex:1">${R.logLines({ label: 'Log', lines: [{ t: '08:31:04', from: 'Plan', text: 'Read 12 files' }, { t: '08:31:09', from: 'Plan', lvl: 'warn', text: 'Retrying after a timeout' }, { t: '08:31:12', from: 'Build', lvl: 'error', text: '3 tests failed' }] })}</div>`]],
     Dialog: [['A setup of several steps: the Stepper at its head, Back and Next in its foot', R.dialog({ title: 'Setup assistant', close: X, yes: 'Next', back: true, body: '<p>One step per screen.</p>', steps: R.stepper({ label: 'Steps', stages: [{ key: 'd1', label: 'Check', cells: ['is-done'] }, { key: 'd2', label: 'Network', selected: true, cells: ['is-now'] }, { key: 'd3', label: 'Review', cells: ['is-next'] }] }) })], ['A view that only shows', R.dialog({ title: 'Default', close: X, yes: 'Close', view: true, body: '<p>6 deny rules, 3 protected paths.</p>' })], ['A step that needs fields first', R.dialog({ title: 'Move the Worca folder', close: X, status: 'Runs pause while it moves', yes: 'Move it', body: R.field({ id: 'g-d1', label: 'New folder', value: '~/work/.worca', hint: 'Runs, history and settings move here' }) })]],
   };
+  R.watchScrollbars(document);
   const g = document.getElementById('gallery');
   const coded = window.RailCatalog.components.filter((c) => c.code && EX[c.name]);
   g.insertAdjacentHTML('beforeend', coded.map((c) => `<section class="gl" id="${R.esc(c.name.replace(/\s/g, '-'))}">

@@ -24,3 +24,9 @@ body{-webkit-font-smoothing:antialiased;}
 .is-in{animation:rl-in var(--motion-quick) var(--ease);}
 @keyframes rl-in{from{opacity:0;}}
 @media (prefers-reduced-motion: reduce){.is-in{animation:none;}}
+
+/* Scrollbars: thin, and there only over a scroller under the pointer or while it scrolls (docs/rail/look.md). The page's own
+   bar shows only while it scrolls, since the pointer is always over the page. They take the same room shown or not. */
+*{scrollbar-width:thin;scrollbar-color:transparent transparent;transition:scrollbar-color var(--motion-quick) var(--ease);}
+:where(body *):hover,.is-scrolling{scrollbar-color:var(--line-2) transparent;}
+@media (prefers-reduced-motion: reduce){*{transition:none;}}

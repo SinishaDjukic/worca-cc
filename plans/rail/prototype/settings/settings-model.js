@@ -309,7 +309,7 @@
           { name: 'Create a PR', min: 'advanced', say: 'A finished run follows the team default: **{prNow}**', vals: { prNow: (sv) => ({ none: 'no PR', draft: 'a draft PR', ready: 'a PR ready for review' }[sv.prOpen]) }, acts: [{ label: 'Open', id: 'team', go: 'team', help: 'Settings › Team policy › Defaults; a project or New run can change it' }] },
         ] },
       ] },
-      { title: 'Limits', rows: [
+      { title: 'Limits', meta: 'Near: the run’s estimate does not fit in what is left of a window; with no estimate, at the warning line.', rows: [
         { name: 'Paused runs', say: 'A run paused at a usage limit {resume}', picks: { resume: P('auto', O(['auto', 'resumes after the reset', 'Worca schedules its resume for 5 minutes after the limit resets'], ['me', 'waits for you', 'It stays paused until you resume it']), 'What a run paused at a usage limit does when the limit resets') } },
       ] },
       { title: 'Away mode', min: 'advanced', meta: 'Going away is the Away switch in your profile menu.', rows: [

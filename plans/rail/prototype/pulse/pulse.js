@@ -248,7 +248,7 @@ function usageFly() {
   return R.navFlyout({ label: 'Usage and costs', cls: `pz-fly${inCls('sub')}`, body: `${back}
     <span class="nav-fly-k" title="What can stop a run, per harness: the rings around your avatar show the closest of each">Limits</span>
     <div class="pz-ublocks">${c.usage.length ? c.usage.map(block).join('') : `<p class="pz-unote">No provider connected. ${R.textLink({ label: 'Open Providers', attrs: { 'data-land': 'providers|GitHub Copilot|list', title: 'Opens Settings › Providers' } })}</p>`}</div>${spendCard(c)}
-    <div class="msect" role="group">${R.accountItem({ label: 'Limit settings', mark: svg('gear', 16, 'mi-ic'), attrs: { 'data-go': 'settings', 'data-to': 'notifications', title: 'The warning line, what reaches you, and what Worca does when a limit is near' } })}</div>
+    <div class="msect" role="group">${R.accountItem({ label: 'Limit settings', mark: svg('gear', 16, 'mi-ic'), attrs: { 'data-go': 'settings', 'data-to': 'runs', title: 'The warning line, and what Worca does when a limit is near: Settings › Runs' } })}</div>
   ` });
 }
 // The spend card as account-menu.mjs paints it today (renderSpendCard): figures, never a ring.
@@ -395,30 +395,34 @@ function notifications() {
     + R.settingsRow({ name: 'Chat', sentence: `Sent to ${M.CHANNELS.length} channels: ${M.CHANNELS.join(', ')}`, end: quiet('Manage', { 'data-sset': 'ask', title: 'Channels, mute and allow-lists are in Settings › Chat' }) });
   const groups = groupsShown().map((g) => {
     const gs = s.groups[g.id], open = ui.custom === g.id, nEx = Object.keys(gs.ex).length;
-    const warn = g.id === 'usage' ? ` · warn at ${sp('warn', s.warnAt + '%', [70, 80, 90].map((v) => ({ id: String(v), text: v + '%', checked: s.warnAt === v, help: `Rings turn amber, Now shows the limit and an update is sent at ${v}%` })), 'The warning line for usage and spend')}` : '';
     const detailRows = open ? g.events.map((ev) => {
       const w = effWhere(g, ev);
       return R.settingsRow({ name: ev[1], help: `${ev[0]} · ${ev[2] === 'needs' ? 'needs you' : ev[2]}`, changed: !!gs.ex[ev[0]], sentence: `on ${sp('ev:' + ev[0], whereText(w), M.WHERE.map((x) => ({ ...x, checked: x.id === w })), `Where ${ev[1]} goes`)}` });
     }).join('') : '';
     const detailAction = open && nEx ? quiet('Back to the group', { 'data-backgroup': g.id, title: 'Every event follows the group again' }) : '';
     return R.settingsRow({ name: g.name, detailRows, detailAction, changed: nEx > 0,
-      sentence: `Tell me about ${sp('lvl:' + g.id, levelText(gs.level), M.LEVELS.map((l) => ({ ...l, checked: l.id === gs.level })), `How much of ${g.name} reaches you`)} on ${sp('whr:' + g.id, whereText(gs.where), M.WHERE.map((x) => ({ ...x, checked: x.id === gs.where })), `Where ${g.name} goes beyond Pulse`, true)}${warn}`,
+      sentence: `Tell me about ${sp('lvl:' + g.id, levelText(gs.level), M.LEVELS.map((l) => ({ ...l, checked: l.id === gs.level })), `How much of ${g.name} reaches you`)} on ${sp('whr:' + g.id, whereText(gs.where), M.WHERE.map((x) => ({ ...x, checked: x.id === gs.where })), `Where ${g.name} goes beyond Pulse`, true)}`,
       fold: { open, attrs: { 'data-custom': g.id }, help: open ? 'Close the events' : 'Choose per event: ' + g.events.map((e) => e[1]).join(', ') } });
   }).join('');
-  const limits = R.settingsRow({ name: 'Manual starts', sentence: `New run and Resume near a limit ${sp('mine', MINE.find((m) => m.id === s.mine).text, MINE.map((m) => ({ ...m, checked: m.id === s.mine })), 'What New run and Resume do when the harness is near its limit')}` })
-    + R.settingsRow({ name: 'Automatic starts', sentence: `A slice or scheduled run near a limit ${sp('auto', AUTO.find((m) => m.id === s.auto).text, AUTO.map((m) => ({ ...m, checked: m.id === s.auto })), 'What a start with nobody there to ask does near a limit. One that waits never holds up the line: the next start that fits goes ahead')}` })
-    + R.settingsRow({ name: 'Paused runs', sentence: 'Set in Runs', end: quiet('Open Runs', { 'data-land': 'runs|Paused runs', title: 'What a run paused at a limit does when it resets: Settings › Runs, on that row' }) });
   const confirm = ui.confirm === 'reset' ? R.confirmStrip({ text: 'Reset every group to its defaults? Your channels stay as they are.', yes: 'Reset' }) : '';
   return confirm
     + R.settingsSection({ title: 'Channels', rows: channels })
     + R.settingsSection({ title: 'Updates', meta: 'What each kind of update sends beyond Pulse. Pulse keeps everything for 90 days; a problem clears when you act on it.', rows: groups, action: quiet('Reset to defaults', { 'data-reset': '', title: 'Every group back to its defaults; asks first' }) })
-    + R.settingsSection({ title: 'Limits', meta: `Near: the run's estimate does not fit in what is left of a window; with no estimate, at the warning line (${s.warnAt}%).`, rows: limits });
+    + R.settingsSection({ title: 'Limits', rows: R.settingsRow({ name: 'Near a limit', sentence: 'What a run does near a limit is set in Runs', end: quiet('Open Runs', { 'data-land': 'runs|Warning line', title: 'Settings › Runs › Limits' }) }) });
+}
+// What a run does near a limit is a run's business, so it sits in Settings › Runs; Notifications only says how you hear of it.
+function limitsRows() {
+  const s = ui.s;
+  const warnRow = R.settingsRow({ name: 'Warning line', sentence: `Warn at ${sp('warn', s.warnAt + '%', [70, 80, 90].map((v) => ({ id: String(v), text: v + '%', checked: s.warnAt === v, help: `Rings turn amber, Now shows the limit and an update is sent at ${v}%` })), 'The warning line for usage and spend')} of a limit` });
+  const limits = warnRow + R.settingsRow({ name: 'Manual starts', sentence: `New run and Resume near a limit ${sp('mine', MINE.find((m) => m.id === s.mine).text, MINE.map((m) => ({ ...m, checked: m.id === s.mine })), 'What New run and Resume do when the harness is near its limit')}` })
+    + R.settingsRow({ name: 'Automatic starts', sentence: `A slice or scheduled run near a limit ${sp('auto', AUTO.find((m) => m.id === s.auto).text, AUTO.map((m) => ({ ...m, checked: m.id === s.auto })), 'What a start with nobody there to ask does near a limit. One that waits never holds up the line: the next start that fits goes ahead')}` });
+  return limits;
 }
 function settingsPage() {
   const id = sectionId();
   const min = SM.min(id), need = min ? cap(min) : '';
   const body = !SM.shows(min, R.prefs.mode()) ? R.emptyState({ title: `${SM.title(id)} needs ${need}`, actions: R.button({ label: `Switch to ${need}`, kind: 'quiet', attrs: { 'data-unlock': 'mode:' + min } }) })
-    : id === 'notifications' ? notifications() : SV.section(id, ui.sv, { R, svg, open: ui.menu, esc, level: R.prefs.mode() });
+    : id === 'notifications' ? notifications() : SV.section(id, ui.sv, { R, svg, open: ui.menu, esc, level: R.prefs.mode(), extra: id === 'runs' ? { Limits: limitsRows() } : {} });
   return `<div class="cfg-page${ui.sset ? '' : ' is-index'}">${settingsIndex()}
     <div class="cfg-section">${R.backLink({ label: 'Settings', icon: svg('chevL', 14), attrs: { 'data-sset': '', class: null } })}
     <div class="pz-head"><h1 class="pz-title">${esc(SM.title(id))}</h1></div>
@@ -429,10 +433,11 @@ function settingsPage() {
 // ---- search: runs, projects, workspaces, workflows, schedules, tickets, labels (label:), settings, add-ons, plugins and
 // chats, each with where it lives. What the mode or Labs hides is still found, with its lock note; picking it hands you to
 // the unlock and then on to it. The last row asks Chat. ----
-const NOTIF_ROWS = ['Desktop', 'Badge', 'Chat', 'Runs', 'Schedules', 'Automations', 'Pull requests', 'Usage', 'Away mode', 'Projects', 'Manual starts', 'Automatic starts', 'Paused runs'];
+const NOTIF_ROWS = ['Desktop', 'Badge', 'Chat', 'Runs', 'Schedules', 'Automations', 'Pull requests', 'Usage', 'Away mode', 'Projects'];
+const RUNS_LIMIT_ROWS = ['Warning line', 'Manual starts', 'Automatic starts'];
 const strict = (...ms) => ms.filter(Boolean).sort((a, b) => R.MODES.indexOf(b) - R.MODES.indexOf(a))[0] || '';
 function settingsFinds() {
-  const out = [{ label: SM.title('notifications'), sset: 'notifications', where: 'Settings' }, ...NOTIF_ROWS.map((n) => ({ label: n, sset: 'notifications', where: 'Notifications' }))];
+  const out = [{ label: SM.title('notifications'), sset: 'notifications', where: 'Settings' }, ...NOTIF_ROWS.map((n) => ({ label: n, sset: 'notifications', where: 'Notifications' })), ...RUNS_LIMIT_ROWS.map((n) => ({ label: n, sset: 'runs', where: 'Runs › Limits' }))];
   for (const g of SM.GROUPS) for (const id of g.items) {
     const sec = SM.SECTIONS[id]; if (!sec) continue;
     out.push({ label: sec.title, sset: id, min: sec.min, flag: sec.flag, where: 'Settings › ' + g.title });
@@ -767,6 +772,7 @@ caseSel.addEventListener('change', () => {
   render();
 });
 if (!SHELL) R.prefs.setFlag('gitAutomations', true);   // the explorer shows every group
+R.watchScrollbars(document);
 R.prefs.onChange(() => { stepUnlock(); render(); });
 // Usage refreshes every minute; offline, the last figures stay with their time until the connection is back.
 setInterval(() => {

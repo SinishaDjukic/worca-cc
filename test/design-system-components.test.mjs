@@ -572,3 +572,15 @@ test('morph: a textarea shows the new text, even when its text node moves across
   C.morph(host, '<textarea id="x">new words</textarea>');
   assert.equal(host.querySelector('#x').value, 'new words');
 });
+
+test('watchScrollbars: what scrolls is marked for a moment, the page itself too; a document is watched once', () => {
+  const d = new JSDOM('<body><div id="a"></div></body>').window.document; const later = [];
+  C.watchScrollbars(d, { wait: (fn) => { later.push(fn); return later.length; }, clear: () => {} });
+  C.watchScrollbars(d, { wait: () => { throw new Error('watched twice'); } });
+  d.getElementById('a').dispatchEvent(new d.defaultView.Event('scroll'));
+  assert.ok(d.getElementById('a').classList.contains('is-scrolling'));
+  d.dispatchEvent(new d.defaultView.Event('scroll'));
+  assert.ok(d.documentElement.classList.contains('is-scrolling'));
+  later.forEach((fn) => fn());
+  assert.ok(!d.getElementById('a').classList.contains('is-scrolling'));
+});

@@ -38,3 +38,4 @@ export { workflowGraph } from './workflow-graph.mjs';
 export { logLines } from './log-lines.mjs';
 export { USAGE_REFRESH_MS, usageWindow, connectedUsage, usageTip } from './usage.mjs';
 export { tryStep } from './run-state.mjs';
+export { watchScrollbars, SCROLL_SHOW_MS } from './scrollbars.mjs';

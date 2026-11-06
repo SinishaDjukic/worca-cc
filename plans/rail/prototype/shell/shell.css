@@ -11,7 +11,7 @@
 
 /* The run page as a full page in the main column: the trail is its one way back. */
 #route-run{padding:24px 32px 56px;}
-#route-run #card{max-width:720px;}
+#route-run #card{max-width:720px;margin-inline:auto;}
 
 /* The sidebar as Settings' menu: on a wide screen the SideMenu shows instead of today's nav; below 760px the sidebar
    stays Worca's (its narrow rail) and Settings opens on its menu as a list in the page. */
