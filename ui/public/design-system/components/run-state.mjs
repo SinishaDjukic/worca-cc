@@ -1043,7 +1043,7 @@ Object.assign(FLOW, {
   'group-needs': { 'Open run {k}': OPEN_MEMBER, 'Re-plan the rest': REPLAN, 'Cancel the rest': CANCEL_REST },
   'group-stopped': { Resume: RESUME_MEMBER, 'Open run {k}': OPEN_MEMBER, 'Re-plan the rest': REPLAN, 'Cancel the rest': CANCEL_REST },
   'group-asks': { 'Start run {k}': { to: 'feature', say: 'Run {k} starts' }, 'Re-plan the rest': REPLAN, 'Cancel the rest': CANCEL_REST },
-  'ship-declined': { 'Create {n} PRs': { to: 'chain', say: 'Opened {pr}, {pr2} and {pr3}, each into the one before', dialog: 'pr' }, 'Try it': { say: 'Copied: git switch {groupBranch}' }, Discard: { to: 'discarded', confirm: 'Discard all 3 runs’ changes?' } },
+  'ship-declined': { 'Create {n} PRs': { to: 'chain', say: 'Opened {pr}, {pr2} and {pr3}, each into the one before', dialog: 'pr' }, 'Create PR': { to: 'checks', say: 'Opened {pr} for all 3 runs', dialog: 'pr' }, 'Check out the whole feature': { say: 'Copied: git switch {groupBranch}' }, 'Try it': { say: 'Copied: git switch {groupBranch}' }, Discard: { to: 'discarded', confirm: 'Discard all 3 runs’ changes?' } },
   'ship-applied': { 'View PR': OPEN_PR['View PR'], 'Ask for changes': { say: 'Sent; a run takes on what you asked' }, 'Copy PR link': OPEN_PR['Copy PR link'] },
   'workspace-partly': { 'Create PR': { to: 'workspace', say: 'Opened worca-docs #31 into main', dialog: 'pr' }, 'View PRs': { say: 'Opens worca-api #212 on GitHub' }, 'Copy PR links': { say: 'Copied 1 PR link' } },
 });

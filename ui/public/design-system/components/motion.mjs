@@ -29,10 +29,11 @@ function patch(a, b, out) {
   const mode = b.getAttribute('data-motion');
   const before = mode === 'change' || mode === 'swap' ? a.innerHTML : null;
   patchAttrs(a, b);
+  const text = a.tagName === 'TEXTAREA' ? b.value : null;   // read first: its text node may move across below
   patchChildren(a, b, out);
   // what the user sees, as a fresh innerHTML would set it
   if (a.tagName === 'INPUT') { if (a.value !== b.value) a.value = b.value; if (a.checked !== b.checked) a.checked = b.checked; }
-  else if (a.tagName === 'TEXTAREA') { if (a.value !== b.value) a.value = b.value; }
+  else if (a.tagName === 'TEXTAREA') { if (a.value !== text) a.value = text; }
   else if (a.tagName === 'SELECT') { if (a.selectedIndex !== b.selectedIndex) a.selectedIndex = b.selectedIndex; }
   if (before !== null && a.innerHTML !== before) out.changed.push(a);
 }

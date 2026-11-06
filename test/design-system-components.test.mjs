@@ -440,3 +440,9 @@ test('stackRow: its own actions sit at its end', () => {
   const r = dom(C.stackRow({ num: '1', title: 'A', word: 'Small', sub: 'x', state: 'next', rowCls: 'is-next', dotCls: 'is-future', icon: '', end: '<button id="m"></button>' }));
   assert.ok(r.querySelector('#m'));
 });
+
+test('morph: a textarea shows the new text, even when its text node moves across', () => {
+  const host = new JSDOM('<body><div id="t"><textarea id="x"></textarea></div></body>').window.document.getElementById('t');
+  C.morph(host, '<textarea id="x">new words</textarea>');
+  assert.equal(host.querySelector('#x').value, 'new words');
+});

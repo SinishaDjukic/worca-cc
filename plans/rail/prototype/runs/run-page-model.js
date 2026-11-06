@@ -120,7 +120,7 @@
         tail: [{ key: 'ship', label: 'Ship', subs: [next('With the feature', { live: 'One stacked PR each, from the feature page' })] }] }) },
 
     // Groups
-    { id: 'feature', group: 'Groups', runCases: ['ready', 'slice', ''], label: 'Feature, run 2', kind: 'Feature', title: 'Unified page navigation', branch: '', figs: [['Time', '3h 20m'], ['Cost', '$61.10'], ['Rate', '$18.30/h']], tabs: GROUP_TABS,
+    { id: 'feature', group: 'Groups', runCases: ['ready', 'slice', ''], follows: true, label: 'Feature, run 2', kind: 'Feature', title: 'Unified page navigation', branch: '', figs: [['Time', '3h 20m'], ['Cost', '$61.10'], ['Rate', '$18.30/h']], tabs: GROUP_TABS,
       stages: [{ key: 'plan', label: 'Plan', subs: [ok('Clarify', '34s'), ok('Plan', '33m 57s'), ok('Cut into runs', '7m', { live: '3 runs, one PR each' })] },
         member(1, RUNS[0], ['done', 'done', 'done', 'done'], { times: ['22m', '58m', '31m', ''] }),
         member(2, RUNS[1], ['done', 'now', 'next', 'next'], { times: ['18m', '40m'], live: ['', 'Editing app.js'], when: ['', '3s ago'] }),
@@ -128,7 +128,7 @@
         { key: 'pr', label: 'PRs', subs: [next('#1'), next('#2'), next('#3')] }] },
     { id: 'featureready', n: 3, group: 'Groups', runCases: ['ready', 'ready', 'ready'], label: 'Feature ready', kind: 'Feature', title: 'Unified page navigation', branch: '', figs: [['Time', '5h 02m'], ['Cost', '$92.40']], tabs: GROUP_TABS,
       stack: { mode: 'create', runs: RUNS, rec: 'stack', sizes: ['+278 \u221264', '+41 \u221258', '+39 \u221222'], reason: '3 runs and 502 changed lines, most of them in run 1: three focused reviews go faster than one mixed one.' },
-      stages: [{ key: 'plan', label: 'Plan', subs: [ok('Clarify', '34s'), ok('Plan', '33m 57s'), ok('Cut into runs', '7m')] },
+      stages: [{ key: 'plan', label: 'Plan', subs: [ok('Clarify', '34s'), ok('Plan', '33m 57s', { live: 'Plan accepted by you · pass 2' }), ok('Cut into runs', '7m', { live: '3 runs, one PR each · accepted by you' })] },
         member(1, RUNS[0], ['done', 'done', 'done', 'done'], { times: ['22m', '58m', '31m'] }), member(2, RUNS[1], ['done', 'done', 'done', 'done'], { times: ['18m', '1h 2m', '27m'] }),
         member(3, RUNS[2], ['done', 'done', 'done', 'done'], { times: ['12m', '44m', '19m'] }),
         { key: 'pr', label: 'PRs', subs: [next('#1'), next('#2'), next('#3')] }] },
@@ -149,15 +149,157 @@
         member(1, RUNS[0], ['done', 'done', 'done', 'done'], { times: ['22m', '58m', '31m'] }), member(2, RUNS[1], ['done', 'done', 'done', 'done'], { times: ['18m', '1h 2m', '27m'] }), member(3, RUNS[2], ['done', 'done', 'done', 'done'], { times: ['12m', '44m', '19m'] }),
         { key: 'pr', label: 'PRs', subs: [ok('#959'), s('#960', 'review'), s('#961', 'problem')] }] },
   ];
+
+  // The rest of what a run can be. A case names the state it shows (`state`); its detail line and steps are its own.
+  const PAUSED_AT = (live) => run({ build: [s('Implementation', 'paused', '1h 2m', { live: live || '' })], review: allNext(REVIEW) });
+  const P_FIGS = [['Time', '2h 40m'], ['Cost', '$48.30']];
+  const pausedCase = (id, state, label, detail, live, o) => Object.assign({ id, state, group: 'Paused', label, detail, figs: P_FIGS, stages: PAUSED_AT(live) }, o || {});
+  const TICKET = { title: 'Nightly dependency update', figs: [['Time', '0m'], ['Cost', '$0.00']], tabs: [['summary', 'Overview'], ['activity', 'Activity'], ['decisions', 'Decisions']] };
+  const ticket = (id, state, label, detail, o) => Object.assign({ id, state, group: 'Schedule', label, detail, stages: run({ plan: allNext(PLAN), build: allNext(BUILD), review: allNext(REVIEW) }) }, TICKET, o || {});
+  const prCase = (id, state, label, detail, pr, o) => Object.assign({ id, state, group: 'Pull request', label, detail, figs: DONE_FIGS, stages: run({ pr }) }, o || {});
+  const CHECKS_OK = ok('Checks', '', { live: '7 of 7 passed' });
+  const CHECKS_RUN = s('Checks', 'now', '', { live: '3 of 7 passed', when: 'running' });
+  const WATCH = (state, live, o) => s('Watch', state, '', Object.assign({ live }, o || {}));
+  const REVIEWING = next('Approval', { live: 'Waiting for a review' });
+  const RECEIPT_PLAN = [ok('Clarify', '34s'), ok('Plan', '33m 57s', { live: 'Plan accepted by you · pass 2' }), ok('Cut into runs', '7m', { live: '3 runs, one PR each · accepted by you' })];
+  const groupOf = (id, group, label, cases3, o) => Object.assign({ id, group, label, runCases: cases3, kind: 'Feature', title: 'Unified page navigation', branch: '', figs: [['Time', '3h 20m'], ['Cost', '$61.10']], tabs: GROUP_TABS, follows: true, state: 'feature',
+    stages: [{ key: 'plan', label: 'Plan', subs: RECEIPT_PLAN }, member(1, RUNS[0], ['done', 'done', 'done', 'done']), member(2, RUNS[1], ['done', 'now', 'next', 'next']), member(3, RUNS[2], ['next', 'next', 'next', 'next']), { key: 'pr', label: 'PRs', subs: [next('#1'), next('#2'), next('#3')] }] }, o || {});
+  const GROUP_RUNS = ['Remove the old invoices page', 'Billing export as CSV'];
+  const userGroup = (id, label, runCases, o) => Object.assign({ id, group: 'Groups', label, runCases, runTitles: GROUP_RUNS, kind: 'Group', independent: true, title: 'Billing cleanup', branch: '', figs: [['Time', '1h 40m'], ['Cost', '$21.70']], tabs: GROUP_TABS,
+    stages: [member(1, GROUP_RUNS[0], ['done', 'done', 'done', 'done']), member(2, GROUP_RUNS[1], ['done', 'done', 'done', 'done']), { key: 'pr', label: 'PRs', subs: [next('#1'), next('#2')] }] }, o || {});
+  const READY3 = (o) => Object.assign({ mode: 'create', runs: RUNS, rec: 'stack', sizes: ['+278 −64', '+41 −58', '+39 −22'], reason: '3 runs and 502 changed lines: three focused reviews go faster than one mixed one.' }, o || {});
+  const READY_STAGES = [{ key: 'plan', label: 'Plan', subs: RECEIPT_PLAN }, member(1, RUNS[0], ['done', 'done', 'done', 'done'], { times: ['22m', '58m', '31m'] }), member(2, RUNS[1], ['done', 'done', 'done', 'done'], { times: ['18m', '1h 2m', '27m'] }), member(3, RUNS[2], ['done', 'done', 'done', 'done'], { times: ['12m', '44m', '19m'] }), { key: 'pr', label: 'PRs', subs: [next('#1'), next('#2'), next('#3')] }];
+  const REC_EV = { title: 'This step could not reach the model', log: 'Open the log', lines: ['api.anthropic.com: connection reset, 3 tries', 'Retrying by itself until 14:40'] };
+  const AUTH_EV = { title: 'This step could not reach the model', log: 'Open the log', lines: ['401: the Claude token has expired', 'Run claude setup-token or /login, then Retry'] };
+  const KEPT_EV = { title: '3 tests failed in test/ui-run-head.test.mjs', log: 'Open log at line 1,284', lines: ['✖ breadcrumb hides under 600px (12ms)', 'hook exited 1 · the work is kept in a copy'] };
+  const FAILED_AT = (live) => run({ build: [s('Implementation', 'failed', '1h 30m', { loops: 3, live: live || 'Tests still failing after every retry' })], review: allNext(REVIEW) });
+  const APPLY = (state, live) => [{ key: 'apply', label: 'Apply', subs: [s('Into the folder', state, '', { live })] }];
+  const FOLDER = { branch: '', folder: '~/src/marketing-site' };
+
+  const GROUP_SHIP = { 'Create 2 PRs': { to: 'group-shipped', say: 'Opened #959 and #960', dialog: 'pr' }, 'Create PR': { to: 'group-shipped', say: 'A new branch combines both runs; opened #959', dialog: 'pr' } };
+  const CASES1 = [
+    // Paused, and why: each reason has its words and its own way on
+    pausedCase('paused-limit', 'paused-limit', 'Usage limit, resets soon', 'Claude Code’s usage limit · resets at 13:55, in 1h 12m'),
+    pausedCase('paused-reset', 'paused-reset', 'Usage limit, has reset', 'Claude Code’s usage limit · it reset at 13:55; Resume to go on'),
+    pausedCase('paused-missed', 'paused-missed', 'Usage limit, resume missed', 'Usage limit · the resume at 14:00 was missed'),
+    pausedCase('paused-free', 'paused-limit', 'Free requests used up', 'OpenRouter’s free-model requests are used up · they come back at 14:00'),
+    pausedCase('paused-budget', 'paused-budget', 'Total budget', 'Total budget reached · $500 of $500 this month', 'Paused at the total budget'),
+    pausedCase('paused-team', 'paused-team', 'Team cap', 'Reached your team’s cap of $200 for a run', 'Paused at the team cap'),
+    pausedCase('paused-restart', 'paused-reason', 'Worca restarted', 'Worca restarted · the worktree and progress are kept'),
+    pausedCase('paused-time', 'paused-reason', 'Time limit', 'Reached a step’s time limit of 1h · Resume runs the step again', 'Stopped at its 1h limit'),
+    pausedCase('paused-away', 'paused-reason', 'Away mode limit', 'Away mode limit reached · $20 of answers tonight'),
+    pausedCase('paused-error', 'paused-reason', 'Paused on an error', 'Paused on an error: no space left on device · fix it, then Resume', 'No space left on device'),
+    pausedCase('interrupted', 'interrupted', 'Interrupted', 'Worca stopped while it ran · Resume goes on from this step', 'Interrupted'),
+    pausedCase('interrupted-dead', 'interrupted-dead', 'Interrupted, cannot resume', 'Worca stopped while it ran · this run cannot resume', 'Interrupted', { over: true, noSetup: true }),
+
+    // Live, in trouble, or not in the usual shape
+    { id: 'copying', state: 'starting', group: 'Live', label: 'Copying the folder', detail: 'Copying the folder', figs: [['Time', '0m 12s'], ['Cost', '$0.00']], ...FOLDER,
+      stages: run({ plan: [s('Clarify', 'now', '', { live: 'Preflight: checking the copy', when: 'now' }), next('Plan'), next('Refine plan'), next('Plan review')], build: allNext(BUILD), review: allNext(REVIEW), tail: APPLY('next', 'Nothing changed yet') }) },
+    { id: 'network', group: 'Live', label: 'Waiting for the network', detail: 'Waiting for the network · api.anthropic.com · retries by itself until 14:40', figs: LIVE_FIGS,
+      stages: run({ review: [REVIEW[0], s('Manual tests checklist', 'now', '1m', { live: 'Waiting for the network', when: '40s' }), next('Manual web UI testing')] }) },
+    { id: 'recovery', group: 'Live', label: 'Cannot reach the model', detail: 'This step could not reach the model · it retries by itself until 14:40', figs: LIVE_FIGS, ev: REC_EV,
+      stages: run({ build: [s('Implementation', 'problem', '1h 2m', { live: 'Could not reach the model' })], review: allNext(REVIEW) }) },
+    { id: 'recovery-auth', state: 'recovery', group: 'Live', label: 'Sign-in expired', detail: 'The Claude token has expired · run claude setup-token, then Retry', figs: LIVE_FIGS, ev: AUTH_EV,
+      stages: run({ build: [s('Implementation', 'problem', '1h 2m', { live: 'Could not reach the model' })], review: allNext(REVIEW) }) },
+    { id: 'parallel', state: 'working', group: 'Live', label: 'Parallel steps', figs: LIVE_FIGS,
+      stages: run({ review: [s('Review implementation', 'now', '12m', { live: 'Reading the diff', when: '2s ago' }), s('Manual tests checklist', 'now', '9m', { live: 'Writing the checklist', when: '5s ago' }), s('Manual web UI testing', 'now', '3m', { live: 'Opening the Runs page', when: '1s ago' })] }) },
+    { id: 'roles-live', state: 'working', group: 'Live', label: 'Role reviews running', figs: LIVE_FIGS,
+      stages: run({ review: [s('Security review', 'done', '6m', { live: 'Passed · no findings' }), s('Design review', 'now', '4m', { live: 'Reading the diff', when: '3s ago' }), s('Backend review', 'now', '4m', { live: 'Checking the routes', when: '9s ago' }), next('Manual web UI testing')] }) },
+    { id: 'nodes', state: 'working', group: 'Live', label: 'A workflow without stages', title: 'Weekly issue triage', figs: LIVE_FIGS, tabs: [['summary', 'Overview'], ['activity', 'Activity'], ['decisions', 'Decisions']], noDiff: true, branch: '',
+      stages: [{ key: 'n1', label: 'Fetch issues', subs: [ok('Fetch issues', '4m')] }, { key: 'n2', label: 'Triage', subs: [s('Triage', 'now', '2m', { live: 'Sorting 41 issues', when: '3s ago' })] }, { key: 'n3', label: 'Write report', subs: [next('Write report')] }, { key: 'n4', label: 'Post report', subs: [next('Post report')] }] },
+    { id: 'noreview', state: 'working', group: 'Live', label: 'A stage not in the workflow', figs: LIVE_FIGS,
+      stages: run({ build: [s('Implementation', 'now', '12m', { live: 'Editing app.js', when: '3s ago' })], review: [next('Not in this workflow')] }) },
+
+    // Finished, with something to say
+    { id: 'ready-issues', state: 'ready', group: 'Finished', label: 'Ready, open issues', detail: '2 open issues · not in dev yet', figs: DONE_FIGS, stages: run({}), issues: true, shaped: true },
+    { id: 'ready-end', state: 'ready', group: 'Finished', label: 'Ready, end not reached', detail: 'End not reached · part of the workflow did not run', figs: DONE_FIGS, stages: run({}) },
+    { id: 'ready-moved', state: 'ready', group: 'Finished', label: 'Ready, base moved', detail: 'Not in dev yet · dev moved while it ran', figs: DONE_FIGS, stages: run({}), baseMoved: true },
+    { id: 'ready-held', state: 'ready', group: 'Finished', label: 'Ready, branch held', figs: DONE_FIGS, stages: run({}), heldBy: 'Breadcrumb tests for saved runs' },
+    { id: 'ready-deps', state: 'ready', group: 'Finished', label: 'Ready, runs wait on it', figs: DONE_FIGS, stages: run({}), dependents: 2 },
+    { id: 'ready-nocost', state: 'ready', group: 'Finished', label: 'Ready, engine with no cost', figs: DONE_FIGS, stages: run({}), agentsUnknown: true },
+    { id: 'hosted', state: 'ready', group: 'Finished', label: 'Ready, on a hosted Worca', figs: DONE_FIGS, stages: run({}), hosted: true },
+    { id: 'finished-nogit', state: 'noproject', group: 'Finished', label: 'Finished, no git', detail: 'Git is not set up here, so there is no branch or PR', branch: '', figs: [['Time', '12m'], ['Cost', '$1.80']], noDiff: true, noSetup: true, tabs: [['summary', 'Overview'], ['activity', 'Activity'], ['decisions', 'Decisions']],
+      stages: run({ tail: [{ key: 'done', label: 'Done', subs: [ok('Finished')] }] }) },
+    { id: 'folder-nochange', state: 'noproject', group: 'Finished', label: 'Folder, no files changed', detail: 'No files changed', ...FOLDER, figs: [['Time', '12m'], ['Cost', '$1.80']], noDiff: true, tabs: [['summary', 'Overview'], ['activity', 'Activity'], ['decisions', 'Decisions']],
+      stages: run({ tail: [{ key: 'done', label: 'Done', subs: [ok('Finished', '', { live: 'Nothing to apply' })] }] }) },
+    { id: 'failed-kept', group: 'Finished', label: 'Failed, work kept', detail: 'Tests still failing · the work is kept in a copy', over: true, ev: KEPT_EV, figs: [['Time', '2h 12m'], ['Cost', '$41.30']], stages: FAILED_AT() },
+    { id: 'failed-kept-wait', group: 'Finished', label: 'Failed, kept work settling', detail: 'Tests still failing · the kept work is still being saved', over: true, ev: KEPT_EV, figs: [['Time', '2h 12m'], ['Cost', '$41.30']], stages: FAILED_AT() },
+    { id: 'failed-folder', group: 'Finished', label: 'Failed, folder copy pending', detail: 'Tests still failing · 5 files changed in a copy', over: true, ...FOLDER, ev: KEPT_EV, figs: [['Time', '52m'], ['Cost', '$9.15']],
+      stages: run({ build: [s('Implementation', 'failed', '30m', { live: 'Tests still failing after every retry' })], review: allNext(REVIEW), tail: APPLY('next', '5 files changed in a copy') }) },
+    { id: 'stopped-folder', group: 'Finished', label: 'Stopped, folder copy pending', detail: 'Stopped by you · 5 files changed in a copy', over: true, ...FOLDER, figs: [['Time', '52m'], ['Cost', '$9.15']],
+      stages: run({ build: [s('Implementation', 'paused', '30m', { live: 'Stopped by you' })], review: allNext(REVIEW), tail: APPLY('next', '5 files changed in a copy') }) },
+    { id: 'in-base', group: 'Finished', label: 'Already in the base', detail: 'Already in dev through another branch · no PR of its own', noSetup: true, figs: DONE_FIGS, stages: run({ tail: [{ key: 'merged', label: 'Merged', subs: [s('Into dev', 'merged', '', { live: 'In dev · no PR of its own' })] }] }) },
+    { id: 'pushed', group: 'Finished', label: 'On its source, pushed', detail: SRC + ' is on origin', branch: SRC, onSource: true, figs: DONE_FIGS, stages: run({ tail: [{ key: 'push', label: 'Push', subs: [ok('Merge back', '', { live: 'Into ' + SRC }), s('To origin/' + SRC, 'merged', '', { live: 'Pushed' })] }] }) },
+    { id: 'diverged', group: 'Finished', label: 'On its source, diverged', detail: SRC + ' and origin have diverged: pull or rebase, then push', branch: SRC, onSource: true, figs: DONE_FIGS, stages: run({ tail: [{ key: 'push', label: 'Push', subs: [ok('Merge back', '', { live: 'Into ' + SRC }), s('To origin/' + SRC, 'problem', '', { live: 'Diverged' })] }] }) },
+    { id: 'deleted', group: 'Finished', label: 'Deleted', detail: 'Gone from Runs; only this page still knows it', figs: DONE_FIGS, noSetup: true, archived: true, stages: run({ tail: [{ key: 'done', label: 'Done', subs: [s('Deleted', 'paused', '', { live: 'By you' })] }] }) },
+
+    // A scheduled run before it is a run
+    ticket('ticket-missed', 'ticket-missed', 'Missed its start', 'Missed its 09:00 start · Worca was off'),
+    ticket('ticket-firing', 'ticket-firing', 'Its time has come', 'Starting from its schedule', { over: true }),
+    ticket('ticket-failed', 'ticket-failed', 'Could not start', 'Could not start at 09:00: the project folder is gone'),
+    ticket('ticket-canceled', 'ticket-ended', 'Cancelled', 'Cancelled before it started'),
+    ticket('ticket-skipped', 'ticket-ended', 'Skipped', 'Skipped: the last one was still running'),
+
+    // A pull request's own states
+    prCase('pr-draft', 'pr-draft', 'Draft', 'Draft · no one is asked to review yet', PR_OPEN(CHECKS_OK, next('Approval', { live: 'Not asked yet: it is a draft' }))),
+    prCase('pr-waiting', 'checks', 'Waiting for a review', 'Waiting for a review', PR_OPEN(CHECKS_OK, REVIEWING), { flow: { next: null } }),
+    prCase('pr-changes', 'pr-changes', 'Changes requested', 'Changes requested by a reviewer', PR_OPEN(CHECKS_OK, s('Approval', 'problem', '', { live: 'Changes requested by 1 reviewer' }))),
+    prCase('pr-fixing', 'pr-fixing', 'Fixing', 'Fixing · round 2 · fix the failing e2e check', PR_OPEN(s('Checks', 'problem', '', { live: '1 failed · e2e' }), REVIEWING, [WATCH('now', 'Fixing · round 2'), ok('Round 1', '6m', { live: 'Fixed the unit test' }), s('Round 2', 'now', '2m', { live: 'Fix the failing e2e check', when: '4s ago' })])),
+    prCase('pr-closed', 'pr-closed', 'Closed', 'The PR was closed without merging', [s('Create PR', 'paused', '', { live: '#959 was closed without merging' }), next('Checks'), next('Approval')]),
+    prCase('pr-abandoned', 'pr-closed', 'Closed, on Azure', 'The PR was abandoned', [s('Create PR', 'paused', '', { live: '#959 was abandoned' }), next('Checks'), next('Approval')], { host: 'azure' }),
+    prCase('pr-declined', 'pr-closed', 'Closed, on Bitbucket', 'The PR was declined', [s('Create PR', 'paused', '', { live: '#959 was declined' }), next('Checks'), next('Approval')], { host: 'bitbucket' }),
+    prCase('pr-behind', 'pr-behind', 'Out of date', 'Out of date with dev', PR_OPEN(CHECKS_OK, s('Up to date with dev', 'problem', '', { live: '4 commits behind; it merges cleanly' }))),
+    prCase('pr-blocked', 'pr-blocked', 'Blocked', 'Blocked by branch rules', PR_OPEN(CHECKS_OK, s('Approval', 'problem', '', { live: 'Branch rules need 2 approvals; it has 1' }))),
+    prCase('watching', 'checks', 'Watch on', '', PR_OPEN(CHECKS_RUN, next('Approval'), [WATCH('now', 'Watching · fixes failing checks and asked-for changes')])),
+    prCase('watch-merging', 'pr-fixing', 'Watch merging', 'Merging dev in', PR_OPEN(CHECKS_OK, s('Up to date with dev', 'problem', '', { live: '4 commits behind' }), [WATCH('now', 'Merging dev in')])),
+    prCase('watch-resolving', 'pr-fixing', 'Watch resolving', 'Resolving conflicts', PR_OPEN(CHECKS_OK, s('Up to date with dev', 'problem', '', { live: 'Conflicts in 2 files' }), [WATCH('now', 'Resolving conflicts')])),
+    prCase('watch-stopped', 'watch-stopped', 'Watch stopped', 'Watch stopped · 2 fix runs, conflicts remain', PR_OPEN(CHECKS_OK, s('Up to date with dev', 'problem', '', { live: 'Conflicts in 2 files' }), [WATCH('paused', 'Stopped · 2 fix runs, conflicts remain')])),
+    prCase('watch-off', 'checks', 'Watch unavailable', '', PR_OPEN(CHECKS_RUN, next('Approval'), [WATCH('paused', 'Unavailable: no token for this repository')]), { flow: { next: null } }),
+    prCase('watch-finishing', 'pr-fixing', 'Watch off, finishing', 'Watch is off; its last fix is finishing', PR_OPEN(CHECKS_OK, REVIEWING, [WATCH('now', 'Disabled (finishing)')])),
+    prCase('round', 'round', 'A fix round', 'Round 2 · fix the failing e2e check', PR_OPEN(CHECKS_RUN, next('Approval'), [ok('Round 1', '6m', { live: 'Fixed the unit test' }), s('Round 2', 'now', '2m', { live: 'Fix the failing e2e check', when: '4s ago' })])),
+    prCase('round-failing', 'round', 'A round, PR failing', 'Round 2 · checks still failing; the run that opened the PR raises it', PR_OPEN(s('Checks', 'review', '', { live: '1 failed · e2e' }), next('Approval'), [ok('Round 1', '6m', { live: 'Fixed the unit test' }), ok('Round 2', '2m', { live: 'Pushed its fix' })]), { flow: { next: null } }),
+    prCase('auto-opened', 'checks', 'PR opened by itself', '', [ok('Create PR', '', { live: 'Opened by itself when the run finished · 25 Oct, 13:40' }), CHECKS_RUN, next('Approval')], { flow: { next: null } }),
+    prCase('auto-failed', 'ready', 'PR not opened by itself', '', [next('Create PR', { live: 'Not opened: gh is not signed in' }), next('Checks'), next('Approval')], { openStage: 'pr' }),
+    prCase('reqs', 'reqs', 'Requirements to mark', '', [next('Create PR', { live: 'Waiting for the requirements to be marked' }), next('Checks'), next('Approval')], { reqsCheck: true, openStage: 'pr', shaped: true }),
+
+    // Shaper
+    { id: 'requirements', group: 'Shaper', label: 'Requirements', figs: [['Time', '2m'], ['Cost', '$0.76']],
+      stages: run({ plan: [ok('Clarify', '34s'), s('Requirements', 'ask', '1m', { live: '4 agreed · 1 needs you', when: '1m' }), next('Plan'), next('Refine plan'), next('Plan review')], build: allNext(BUILD), review: allNext(REVIEW) }) },
+    { id: 'auto', group: 'Shaper', label: 'Auto proposal', figs: [['Time', '1m'], ['Cost', '$0.12']],
+      stages: run({ plan: [s('Auto workflow', 'ask', '1m', { live: 'Proposes 7 steps for this task', when: '1m' }), next('Clarify'), next('Plan'), next('Plan review')], build: allNext(BUILD), review: allNext(REVIEW) }) },
+    { id: 'auto-feature', state: 'ready', group: 'Shaper', label: 'A slice, PR waits', parent: { caseId: 'feature', index: 0 }, branch: 'feat/head-breadcrumb-1', figs: DONE_FIGS, shipLive: 'Waiting for the feature',
+      stages: run({ tail: [{ key: 'ship', label: 'Ship', subs: [next('With the feature')] }] }) },
+
+    // Groups: what holds a group up, and how it ships
+    groupOf('feature-failed', 'Groups', 'Feature, a run failed', ['ready', 'failed', '']),
+    groupOf('feature-paused', 'Groups', 'Feature, a run paused', ['ready', 'paused', '']),
+    groupOf('feature-needs', 'Groups', 'Feature, a run asks', ['ready', 'question', '']),
+    groupOf('feature-stopped', 'Groups', 'Feature, stopped', ['ready', 'stopped', '']),
+    groupOf('feature-asks', 'Groups', 'Feature, asks before run 3', ['ready', 'ready', ''], { state: 'group-asks', k: 3, follows: false, detail: 'Run 2 is ready · run 3 waits for your OK', askEach: true }),
+    groupOf('ship-waiting', 'Groups', 'Ship, waiting for runs', ['ready', 'slice', ''], { shipWaiting: 'Waiting for run 2' }),
+    { id: 'ship-declined', n: 3, group: 'Groups', runCases: ['ready', 'ready', 'ready'], label: 'Ship, not now', kind: 'Feature', title: 'Unified page navigation', detail: 'Not shipped yet · ship it from here', branch: '', figs: [['Time', '5h 02m'], ['Cost', '$92.40']], tabs: GROUP_TABS, stack: READY3(), stages: READY_STAGES },
+    { id: 'ship-applied', group: 'Groups', runCases: ['approved', 'approved', 'approved'], runPRs: ['#959', '#959', '#959'], label: 'Ship, applied', kind: 'Feature', title: 'Unified page navigation', detail: 'Shipped as one PR · closed 3 drafts · release v1.20.0 drafted', branch: '', figs: [['Time', '5h 02m'], ['Cost', '$92.40']], tabs: GROUP_TABS,
+      stages: READY_STAGES.slice(0, -1).concat({ key: 'pr', label: 'PRs', subs: [ok('#959', '', { live: 'All 3 runs · into dev' })] }) },
+    { id: 'feature-reqs', state: 'featureblocked', n: 3, group: 'Groups', runCases: ['ready', 'ready', 'ready'], label: 'Feature, requirements to mark', kind: 'Feature', title: 'Unified page navigation', branch: '', figs: [['Time', '5h 02m'], ['Cost', '$92.40']], tabs: GROUP_TABS, reqsCheck: true, shaped: true, stack: READY3(), stages: READY_STAGES },
+    { id: 'chain-loose', state: 'featureblocked', n: 3, group: 'Groups', runCases: ['ready', 'ready', 'ready'], label: 'Chain, One PR off', kind: 'Chain', title: 'Unified page navigation', branch: '', figs: [['Time', '5h 02m'], ['Cost', '$92.40']], tabs: GROUP_TABS, stack: READY3({ oneBlocked: 'A run does not start from the previous run’s branch', reason: 'Stacked, each run lands on top of the one before.' }), stages: READY_STAGES },
+    { id: 'chain-owned', state: 'featureblocked', n: 3, group: 'Groups', runCases: ['ready', 'ready', 'ready'], label: 'Feature, a run has a PR', kind: 'Feature', title: 'Unified page navigation', branch: '', figs: [['Time', '5h 02m'], ['Cost', '$92.40']], tabs: GROUP_TABS, stack: READY3({ oneBlocked: 'A run already has a PR', reason: 'Run 1 already has its PR; the others stack on it.' }), stages: READY_STAGES },
+    userGroup('group-working', 'Group, in any order', ['ready', 'working'], { state: 'feature', detail: 'Any order · 1 of 2 running' }),
+    userGroup('group-shipped', 'Group, shipped', ['approved', 'approved'], { state: 'ship-applied', runPRs: ['#959', '#960'], detail: 'Shipped as 2 PRs', stages: [member(1, GROUP_RUNS[0], ['done', 'done', 'done', 'done']), member(2, GROUP_RUNS[1], ['done', 'done', 'done', 'done']), { key: 'pr', label: 'PRs', subs: [s('#959', 'review'), s('#960', 'review')] }] }),
+    userGroup('group-ready', 'Group, ready', ['ready', 'ready'], { state: 'featureone', n: 2, flow: GROUP_SHIP, stack: { mode: 'create', runs: GROUP_RUNS, rec: 'stack', sizes: ['+120 −40', '+38 −22'], reason: 'The two runs combine cleanly, so one PR is possible: a new branch combines their branches.' } }),
+    userGroup('group-checking', 'Group, One PR being checked', ['ready', 'ready'], { state: 'featureone', n: 2, flow: Object.assign({ next: 'group-ready', event: 'The runs combine cleanly' }, GROUP_SHIP), stack: { mode: 'create', runs: GROUP_RUNS, rec: 'stack', sizes: ['+120 −40', '+38 −22'], oneBlocked: 'Checking whether the runs combine…', reason: 'Each run has its own PR until the check says they combine.' } }),
+    { id: 'workspace-partly', group: 'Kinds', label: 'Workspace, partly shipped', detail: '1 of 2 merged · worca-docs has no PR yet', branch: 'feat/billing-export', project: 'billing workspace', repos: ['worca-api', 'worca-web', 'worca-docs'], figs: [['Time', '3h 05m'], ['Cost', '$52.70']],
+      stages: run({ tail: [{ key: 'pr', label: 'PRs', subs: [s('worca-api #212', 'merged', '', { live: 'Merged into main · Watch off' }), ok('worca-web', '', { live: 'No changes in this repository' }), next('worca-docs', { live: 'No PR yet' })] }, { key: 'merged', label: 'Merged', subs: [s('1 of 2 repositories', 'next', '', { live: 'worca-api is in main' })] }] }) },
+  ];
   // A case's facts are its own; its state's word, colour and one action are the library's.
   const CTX = { pr: '#959', pr2: '#960', pr3: '#961', base: 'dev', branch: 'feat/unified-page-navigation-one-head-breadcrumb', groupBranch: 'feat/unified-page-navigation', source: SRC, hidden: 'worca/run-7b0bfb1e', folder: '~/src/marketing-site' };
-  const ctxOf = (c) => Object.assign({}, CTX, c.n ? { n: c.n } : {}, c.extraItems ? { extraItems: c.extraItems } : {});
-  const CASES = CASES0.map((c) => Object.assign({}, R.runState(c.id, ctxOf(c)), c));
+  const ctxOf = (c) => Object.assign({}, CTX, c.n ? { n: c.n } : {}, c.k ? { k: c.k } : {}, c.host ? { host: c.host } : {}, c.extraItems ? { extraItems: c.extraItems } : {});
+  const CASES = CASES0.concat(CASES1).map((c) => Object.assign({}, R.runState(c.state || c.id, ctxOf(c)), c));
 
   // The stack: the PRs of a feature or chain, in merge order, each based on the one above it.
+  const outlineRows = (titles) => titles.map((t, i) => ({ num: String(i + 1), title: t, state: 'next', word: ['Small', 'Medium', 'Small'][i] || 'Small', sub: i ? 'Builds on run ' + i : 'Starts from dev', editable: true, index: i }));
   const STACKS = {
-    outline: { title: '3 runs, one PR each', note: 'Each run builds on the one before', rows: RUNS.map((t, i) => ({ num: String(i + 1), title: t, state: 'next', word: ['Small', 'Medium', 'Small'][i], sub: i ? 'Builds on run ' + i : 'Starts from dev' })) },
-    create: { title: 'Ship as', choice: true },
+    outline: (titles) => ({ title: titles.length + ' runs, one PR each', note: 'Each run builds on the one before', rows: outlineRows(titles) }),
+    create: () => ({ title: 'Ship as', choice: true }),
   };
   // A stack in review merges one PR at a time, in order. Each PR's state: ready, review, checks (moved onto dev, checks
   // running again), failing, merged. Merging one makes Worca move the next onto dev (today nothing does: it keeps
@@ -246,8 +388,30 @@
       question: { q: 'Keep the breadcrumb on phones under 600px, or show only Back there?', why: 'Review implementation found the trail wraps to two lines at 375px.',
         options: ['Keep the full breadcrumb, truncate the middle crumbs', 'Show only ‹ Parent under 600px', 'Hide the breadcrumb on phones'], pick: 1 },
       clarify: { q: 'Which pages get the breadcrumb?', why: 'The task names the run page; group and saved run pages share its head.', n: '1 of 3',
-        options: ['Run pages only', 'Run and group pages', 'Every page with a parent'], pick: 1 } },
+        options: ['Run pages only', 'Run and group pages', 'Every page with a parent'], pick: 1 },
+      requirements: { q: 'On phones, does the page keep its full trail?', why: 'Security and Design disagree · 4 requirements agreed by the perspectives', options: ['Keep the full trail', 'Show only ‹ Parent under 600px'], pick: 1 },
+      auto: { kind: 'auto', q: 'Run this workflow?', why: 'A medium change in two areas, with UI: Worca adds a plan review and a manual test, and leaves out the security review.' } },
     budget: 120,
+    // What the plan answers to: the requirements the perspectives agreed, and the one that needs you.
+    criteria: [['R-po-1', 'Run and group pages share one head'], ['R-po-2', 'The breadcrumb goes up one level, never to the page itself'], ['R-po-3', 'Under 760px the bar shows one link, ‹ Parent name'], ['R-sec-1', 'No route exposes another person’s run']],
+    // A review's findings, by role, and the issues a gate still holds open.
+    issues: [{ sev: 'Minor', t: 'The trail wraps to two lines at 375px', at: 'ui/public/run-head.mjs:41' }, { sev: 'Minor', t: 'Group pages keep an unused Back handler', at: 'ui/public/app.js:36,392' }],
+    roles: [{ role: 'Security', n: 0, t: 'Passed · no findings', findings: [] }, { role: 'Design', n: 1, t: '1 finding', findings: ['The trail wraps to two lines at 375px'] }, { role: 'Backend', n: 1, t: '1 finding', findings: ['Group pages keep an unused Back handler'] }],
+    // A perspective's checklist, one review cycle each: what is not met stays open, with its evidence.
+    checklist: { cycle: 3, met: ['Every route has a parent', 'The bar holds one primary', 'Saved runs fall back to Runs', 'Tests cover every page type'], unmet: [['Phone layout checked at 375px', 'The manual test ran at 390px only']], earlier: [['Cycle 2', '3 of 5 met'], ['Cycle 1', '2 of 5 met']] },
+    skills: ['frontend-design', 'testing', 'worca-pr-flow'],
+    memory: ['Added: the breadcrumb takes its parent from the route', 'Changed: phones under 600px show ‹ Parent'],
+    worktree: '~/.worca-cc/worktrees/run-7b0bfb1e',
+    services: [{ id: 'web', name: 'Web server', port: 3000 }, { id: 'api', name: 'API server', port: 8080 }],
+    builtins: ['Install dependencies', 'Run the tests'],
+    members: [{ name: 'worca-api', files: 12 }, { name: 'worca-docs', files: 3 }],
+    noChangeMembers: ['worca-web'],
+    comments: { 'ui/public/run-head.mjs': [{ line: 'el.append(breadcrumb(ROUTES.parentOf(run)));', who: 'Review implementation', t: 'parentOf can be null on a saved run' }, { line: 'el.append(titleRow(run), actions(run));', who: 'Review implementation', t: 'One primary only in actions' }], 'ui/public/nav/routes.mjs': [{ line: 'el.append(groupList(run));', who: 'Review implementation', t: 'Group list moves to the trail' }] },
+    tunables: [['Review cycles', '3', 'How many times Review may send it back'], ['Cost cap', '$120', 'Pauses the run here'], ['Step time limit', '1h', 'Pauses a step that runs longer'], ['Model for Build', 'Opus 5.5', 'From the task’s size']],
+    autoWhy: 'A medium change in two areas, with UI: Worca adds a plan review and a manual test, and leaves out the security review.',
+    costOther: [['Away mode', '$0.32'], ['Auto workflow', '$0.12'], ['Run title', '$0.01']],
+    costApart: [['Stopped reviews', 'at least $0.20'], ['Stopped agent turns', 'at least $1.10']],
+    docBody: { 'plan.md': '## The plan\n- Add ROUTES.parentOf for run, group and slice pages\n- Build the breadcrumb from the parent chain\n- Move Back, Pause and Stop into the top bar\n- One title row: title, kind chip, actions\n- Phone: ‹ Parent under 760px\n- Tests for every page type', 'review-3.md': '## Review, round 3\nPassed. One minor note: the trail wraps at 375px.', 'checklist.md': '## Manual tests\n- Run page at 375px\n- Group page at 900px\n- Saved run with no live parent' },
   };
   // What a failed or blocked step shows in Activity: what broke, the last lines, and where in the log.
   const EVIDENCE = {
@@ -260,11 +424,20 @@
     'pr/Up to date with dev': { title: 'Conflicts in 2 files', log: 'Open the conflicts',
       lines: ['ui/public/app.js  lines 36,380\u201336,412', 'ui/public/style.css  lines 5,210\u20135,214'] },
   };
-  const NO_DIFF = { scheduled: 1, starting: 1, clarify: 1, plan: 1, outline: 1, noproject: 1 };
+  const NO_DIFF = { scheduled: 1, starting: 1, clarify: 1, plan: 1, outline: 1, noproject: 1, copying: 1, requirements: 1, auto: 1, 'ticket-missed': 1, 'ticket-firing': 1, 'ticket-failed': 1, 'ticket-canceled': 1, 'ticket-skipped': 1 };
   const money = (v) => parseFloat(String(v).replace(/[^0-9.]/g, '')) || 0;
 
+  // A form behind a step: its words and its one field or choice (docs/rail/forms.md).
+  const FORMS = {
+    model: { title: 'Switch model', yes: 'Resume', text: 'Every remaining step runs on the model you pick; the run resumes from Implementation.', options: ['Opus 5.5', 'Sonnet 5.5', 'Haiku 5.5'], pick: 1 },
+    'resume-at': { title: 'Resume at a time', yes: 'Schedule the resume', text: 'The run stays paused until then, and you can cancel it.', field: { label: 'Time', value: '15:30', hint: 'Today, in your time zone' } },
+    cap: { title: 'Raise the cap', yes: 'Raise it and go on', text: 'A new cost cap for this run; it goes on from Manual tests checklist.', field: { label: 'New cap', value: '$180', hint: 'It is at $120' } },
+    'team-cap': { title: 'Continue past team cap', yes: 'Continue past the cap', text: 'Your team’s cap is $200 a run. Going past it is recorded with your reason.', field: { label: 'Reason', value: '', hint: 'Your team’s policy asks for one', required: true } },
+    preset: { title: 'Save as preset', yes: 'Save preset', text: 'The next run can start from this run’s setup: its workflow, models and budget.', field: { label: 'Name', value: 'Unified page navigation', required: true } },
+  };
+
   const INSTANCE_HELP = { 'worca-api #212': 'Merged into main', 'worca-web #88': 'Checks running', 'worca-docs #31': 'Conflicts with main' };
-  const HELP_OF = (t) => INSTANCE_HELP[t] || R.actionHelp(t, CTX);
+  const HELP_OF = (t, ctx) => INSTANCE_HELP[t] || R.actionHelp(t, ctx || CTX);
 
   // Actions this design proposes that today's app does not have (parity audit, 26 Oct): listed with why in the
   // prototype's intro, never marked on the buttons themselves.
@@ -289,26 +462,31 @@
   const SHIP = /^(pr|merged|push|apply|done|ship)$/;
     const BRANCH = 'feat/unified-page-navigation-one-head-breadcrumb';
   function asMember(c0, g, i) {
-    const chain = g.kind === 'Chain';
+    const chain = g.kind === 'Chain'; const groupWord = g.kind.toLowerCase(); const titles = g.runTitles || RUNS;
     let stages = chain ? c0.stages : c0.stages.filter((x) => !SHIP.test(x.key))
-      .concat({ key: 'ship', label: 'Ship', subs: [next('With the feature', { live: 'From the feature page, with the other runs' })] });
+      .concat({ key: 'ship', label: 'Ship', subs: [next('With the ' + groupWord, { live: c0.shipLive || 'From the ' + groupWord + ' page, with the other runs' })] });
+    // What gets the run moving stays on its page; what ships it is the group's, also in its ▾.
     const keep = c0.action && R.memberKeeps(c0.action.label);
+    const kept = keep ? Object.assign({}, c0.action, { items: c0.action.items.filter(R.memberKeeps) }) : null;
     const k = SLICE[i] || 0.3;
     const scaled = (c0.stages).map((st) => Object.assign({}, st, { subs: st.subs.map((x) => (x.time ? Object.assign({}, x, { time: fmtMin(toMin(x.time) * k) }) : x)) }));
     stages = chain ? scaled : scaled.filter((x) => !SHIP.test(x.key)).concat(stages.slice(-1));
-    return Object.assign({}, c0, { stages, scale: k, title: RUNS[i], kind: '', branch: BRANCH + '-' + (i + 1), diff: ((g.stack && g.stack.sizes) || SIZES)[i],
-      action: keep ? c0.action : null, detail: c0.detail || (keep ? '' : chain ? 'Merges in order, from the chain' : c0.word === 'Ready' ? 'Ships with the feature' : ''),
-      pr: chain ? g.runPRs[i] : '', base: chain ? (i ? g.runPRs[i - 1] : 'dev') : '', group: g, index: i });
+    return Object.assign({}, c0, { stages, scale: k, title: titles[i], kind: '', branch: BRANCH + '-' + (i + 1), diff: ((g.stack && g.stack.sizes) || SIZES)[i],
+      action: kept, detail: c0.detail || (keep ? '' : chain ? 'Merges in order, from the chain' : c0.word === 'Ready' ? 'Ships with the ' + groupWord : ''),
+      pr: chain && g.runPRs ? g.runPRs[i] : '', base: chain && g.runPRs ? (i ? g.runPRs[i - 1] : 'dev') : '', group: g, index: i });
   }
-  const memberOf = (g, i) => { const id = (g.runCases || [])[i]; return id ? asMember(CASES.find((x) => x.id === id), g, i) : null; };
+  // A member's case: the group's own, unless something done on the member's page moved it on (ui.over).
+    const memberCase = (g, i, ui) => ((ui && ui.over) || {})[g.id + ':' + i] || (g.runCases || [])[i] || '';
+    const memberOf = (g, i, ui) => { const id = memberCase(g, i, ui); return id ? asMember(CASES.find((x) => x.id === id), g, i) : null; };
   const subState = (st) => R.subState(st.subs);
   // A group's run segment: one cell per stage of that run, read from the run itself when it has a page.
-  function resolve(c) {
+  function resolve(c, ui) {
     if (!c.runCases) return c;
-    return Object.assign({}, c, { stages: c.stages.map((st) => {
+    const titles = c.runTitles || null;
+    return Object.assign({}, c, { stages: c.stages.filter((st) => !(ui && ui.restGone && st.run && !memberCase(c, +st.key.slice(3) - 1, ui))).map((st) => {
       if (!st.run) return st;
-      const m = memberOf(c, +st.key.slice(3) - 1);
-      if (!m) return st;
+      const m = memberOf(c, +st.key.slice(3) - 1, ui);
+      if (!m) return titles ? Object.assign({}, st, { title: titles[+st.key.slice(3) - 1] }) : st;
       return Object.assign({}, st, { member: m, subs: m.stages.filter((x) => !SHIP.test(x.key)).map((x) => {
         const lv = x.subs.find((y) => LIVE[y.state]);
         return s(x.label, subState(x), stageMeta(x), { live: lv ? lv.live : '', when: lv ? lv.when : '' });
@@ -326,28 +504,82 @@
   // broke, or what to check); a running run shows its plan's progress. What went fine is one line each once it is
   // built: the ask, and the evidence (left out when the focus is what broke: that is the evidence). Files and documents
   // are Changes'.
-  function overview(c, live) {
+  function overview(c, live, ui) {
     const built = c.stages.some((x) => x.key === 'build' && x.subs.some(isDone));
     const planDone = c.stages.some((x) => x.key === 'plan' && x.subs.every(isDone));
     const buildLive = c.stages.some((x) => x.key === 'build' && x.subs.some((y) => LIVE[y.state]));
-    const ev = c.id === 'kept' ? EVIDENCE['review/Manual web UI testing'] : c.id === 'failed' ? EVIDENCE['build/Implementation'] : c.id === 'failing' ? EVIDENCE['pr/Checks'] : /^(conflicts|workspace)$/.test(c.id) ? EVIDENCE['pr/Up to date with dev'] : null;
+    const ev = c.ev ? c.ev : c.id === 'kept' ? EVIDENCE['review/Manual web UI testing'] : c.id === 'failed' ? EVIDENCE['build/Implementation'] : c.id === 'failing' ? EVIDENCE['pr/Checks'] : /^(conflicts|workspace)$/.test(c.id) ? EVIDENCE['pr/Up to date with dev'] : null;
     let focus = null;
-    if (c.id === 'plan') focus = { kind: 'plan', items: DETAIL.plan.map((t) => ({ t, state: 'next' })), issues: DETAIL.planIssues };
+    if (c.id === 'plan') focus = { kind: 'plan', items: DETAIL.plan.map((t) => ({ t, state: 'next' })), issues: ui && ui.fixed && ui.fixed.plan ? [] : DETAIL.planIssues };
+    else if (c.reqsCheck) focus = { kind: 'reqs', items: DETAIL.criteria, left: reqLeft(ui) };
+    else if (c.id === 'requirements') focus = { kind: 'criteria', items: DETAIL.criteria };
+    else if (c.id === 'gate') focus = { kind: 'findings', title: 'What Review still holds open', issues: DETAIL.issues, roles: DETAIL.roles };
+    else if (c.issues) focus = { kind: 'findings', title: '2 open issues', note: 'A review ran out of cycles with these open, and the run went on past them', issues: DETAIL.issues, roles: DETAIL.roles };
     else if (ev) focus = { kind: 'broke', ev, next: c.action ? c.action.label : '' };
     else if (planDone && !c.runCases && (buildLive || c.stages.some((x) => x.key === 'review' && x.subs.some((y) => LIVE[y.state])))) {
       const doneN = buildLive ? 3 : DETAIL.plan.length;
       focus = { kind: 'progress', note: buildLive ? doneN + ' of ' + DETAIL.plan.length + ' built' : 'all ' + DETAIL.plan.length + ' built · now in Review', items: DETAIL.plan.map((t, i) => ({ t, state: i < doneN ? 'done' : i === doneN ? 'now' : 'next' })) };
     } else if (built && !c.runCases && !/^(Failed|Merged|Archived|Discarded|Applied|Stopped|Finished)$/.test(c.word)) focus = { kind: 'check', items: DETAIL.check, title: prOpen(c) ? 'Before you merge' : 'Before you ship' };
     const areas = {};
-    if (built && !NO_DIFF[c.id]) DETAIL.files.forEach(([f, a, d]) => { const k = f.slice(0, f.lastIndexOf('/') + 1); const x = areas[k] || (areas[k] = { dir: k, n: 0, add: 0, del: 0 }); x.n++; x.add += a; x.del += d; });
+    if (built && !NO_DIFF[c.id] && !c.noDiff) DETAIL.files.forEach(([f, a, d]) => { const k = f.slice(0, f.lastIndexOf('/') + 1); const x = areas[k] || (areas[k] = { dir: k, n: 0, add: 0, del: 0 }); x.n++; x.add += a; x.del += d; });
     const max = Math.max(1, ...Object.values(areas).map((x) => x.add + x.del));
     const rounds = DETAIL.rounds['Review implementation'].length;
     const done = built && !live;
-    return { focus, outcome: done ? DETAIL.outcome : [], task: DETAIL.task,   // what it did, once it is done
+    return { focus, checklist: c.shaped || c.id === 'gate' ? DETAIL.checklist : null, outcome: done ? DETAIL.outcome : [], task: DETAIL.task,   // what it did, once it is done
       ask: done ? { parts: DETAIL.ask, unasked: DETAIL.unasked } : null,
       evidence: done && (!focus || focus.kind !== 'broke') ? `Tests pass · Review passed on round ${rounds} · Manual test passed` : '',
       areas: Object.values(areas).map((x) => Object.assign(x, { pct: Math.round(((x.add + x.del) / max) * 100) })),
       artifacts: planDone || built ? DETAIL.artifacts : DETAIL.artifacts.slice(0, 0) };
+  }
+  // A feature reads from the run that holds it up: failed first, then one that asks, one paused, one stopped.
+  const HOLD = [['Failed', 'group-failed', (k, n) => 'Run ' + k + ' of ' + n + ' · failed'], ['Needs you', 'group-needs', (k, n) => 'Run ' + k + ' of ' + n + ' · needs you'],
+    ['Paused', 'group-paused', (k, n, m) => 'Run ' + k + ' of ' + n + ' · ' + ((m.detail || 'paused').split(' · ')[0].toLowerCase())], ['Stopped', 'group-stopped', (k) => 'Stopped at run ' + k]];
+  function groupHold(c) {
+    if (!c.follows) return null;
+    const runs = c.stages.filter((x) => x.run);
+    for (const [word, state, line] of HOLD) {
+      const i = runs.findIndex((x) => x.member && x.member.word === word);
+      if (i >= 0) return { state, k: i + 1, detail: line(i + 1, runs.length, runs[i].member) };
+    }
+    return null;
+  }
+  // The requirements a person still has to mark before anything ships; Not met and Dropped count once they say why.
+  const reqLeft = (ui) => DETAIL.criteria.filter(([id]) => { const m = ((ui && ui.marks) || {})[id]; return !m || (m !== 'met' && !(((ui && ui.markText) || {})[id] || '').trim()); }).length;
+  // A case's log, read from its steps: a line when it started, what its agent did, each round again, and what went wrong.
+  function logsOf(c) {
+    const out = []; let m = 31;
+    const stamp = () => { m += 1; return '08:' + String(m % 60).padStart(2, '0') + ':' + String((m * 7) % 60).padStart(2, '0'); };
+    c.stages.forEach((st) => st.subs.forEach((y) => {
+      if (y.state === 'next') return;
+      const step = st.run ? st.label + ' · ' + y.name : y.name; const model = MODEL_OF[y.name] || 'Sonnet 5.5'; const session = 's-' + String(step.length % 3 + 1);
+      const push = (from, lvl, cycle, sum, raw) => out.push({ t: stamp(), step, from, lvl, cycle, session, sum, raw });
+      push('worca', 'info', 1, 'Started ' + y.name, '[orchestrator] node="' + y.name + '" status=start model="' + model + '"');
+      push('agent', 'info', 1, 'Read 12 files, edited 3', '[agent] Read(ui/public/run-head.mjs) · Read(ui/public/app.js) · Edit(ui/public/style.css)');
+      push('tool', 'info', 1, 'Ran the tests: 214 passed', '[bash] node --test test/ui-run-head.test.mjs → 214 pass, 0 fail');
+      for (let i = 2; i <= (y.loops || 0); i++) push('worca', 'warn', i, 'Round ' + i + ': sent back', '[orchestrator] node="' + y.name + '" cycle=' + i + ' reason="review sent it back"');
+      if (y.state === 'problem' || y.state === 'failed') push('agent', 'error', y.loops || 1, y.live || 'It did not pass', '[agent] error: ' + (y.live || 'step failed'));
+      else if (y.live && y.state !== 'done') push('agent', 'info', y.loops || 1, y.live, '[agent] ' + y.live);
+    }));
+    return out;
+  }
+  // Who did the work, read from the same steps.
+  function agentsOf(c) {
+    const rows = [];
+    c.stages.forEach((st) => st.subs.forEach((y) => { if (y.state === 'next' || st.run) return;
+      rows.push({ name: y.name, type: /review/i.test(y.name) ? 'Reviewer' : /plan/i.test(y.name) ? 'Planner' : 'Builder', model: MODEL_OF[y.name] || 'Sonnet 5.5', cycle: String(y.loops || 1), tokens: Math.round(money(COST_OF[y.name] || '$0.40') * 41) + 'k', skills: /Impl/.test(y.name) ? '3' : '0', graph: /Impl|Plan/.test(y.name) ? '12' : '0' }); }));
+    return rows.concat([{ name: 'Away mode answers', type: 'Worca', model: 'Sonnet 5.5', cycle: '1', tokens: '4k', skills: '0', graph: '0' }, { name: 'Run title', type: 'Worca', model: 'Haiku 5.5', cycle: '1', tokens: '1k', skills: '0', graph: '0' }]);
+  }
+  function sessionsOf(c) {
+    return c.stages.flatMap((st) => st.subs.filter((y) => y.state !== 'next' && !st.run).map((y) => { const k = money(COST_OF[y.name] || '$0.40'); return { name: y.name, id: 'sess_' + y.name.toLowerCase().replace(/[^a-z]/g, '').slice(0, 8), turns: String(Math.max(2, Math.round(k * 3))), in: Math.round(k * 22) + 'k', out: Math.round(k * 6) + 'k', cache: Math.round(k * 80) + 'k', cost: COST_OF[y.name] || '$0.40' }; }));
+  }
+  function usageOf(c) {
+    return c.stages.flatMap((st) => st.subs.filter((y) => y.state !== 'next' && !st.run).map((y) => { const k = money(COST_OF[y.name] || '$0.40'); return { name: y.name, peak: Math.min(92, Math.round(20 + k * 3)) + '%', cache: Math.min(96, Math.round(50 + k * 2)) + '%', calls: String(Math.round(k * 9) + 1), retries: String(y.loops ? y.loops - 1 : 0), compact: String(k > 15 ? 1 : 0), errors: String(y.state === 'failed' || y.state === 'problem' ? 2 : 0), model: MODEL_OF[y.name] || 'Sonnet 5.5', time: y.time || '—' }; }));
+  }
+  // The graph is the steps again, drawn at full size; a proposal draws what it would run.
+  function graphOf(c, ui) {
+    const stages = c.stages.map((st) => ({ label: st.label + (st.title ? ' · ' + st.title : ''), nodes: st.subs.map((y) => ({ key: st.key + '/' + y.name, name: y.name, state: y.state, loops: y.loops || 0, gate: /review|Approval/i.test(y.name), meta: y.time || '', selected: ui && ui.graphNode === st.key + '/' + y.name })) }));
+    const live = c.stages.some((st) => st.subs.some((y) => LIVE[y.state]));
+    return { stages, end: live ? '' : 'End · ' + c.word };
   }
   function prOpen(c) { return c.stages.some((x) => x.key === 'pr' && x.subs[0] && x.subs[0].name === 'Create PR' && isDone(x.subs[0])); }
 
@@ -357,10 +589,20 @@
     const c0 = CASES.find((x) => x.id === caseId) || CASES[1];
     const par = ui.parent || c0.parent || null;
     const g = par ? CASES.find((x) => x.id === par.caseId) : null;
-    let c = resolve(g ? asMember(c0, g, par.index) : c0);
+    let c = resolve(g ? asMember(c0, g, par.index) : c0, ui);
+    // A group held up by one of its runs reads from that run, and says which.
+    const hold = groupHold(c);
+    let stateId = c.state || c.id;
+    if (hold) { const h = R.runState(hold.state, Object.assign({}, ctxOf(c), { k: hold.k })); stateId = hold.state; c = Object.assign({}, c, { word: h.word, dot: h.dot, sym: h.sym, action: h.action, detail: hold.detail, k: hold.k }); }
+    if (c.shipWaiting) c = Object.assign({}, c, { stages: c.stages.map((st) => (st.key === 'pr' ? Object.assign({}, st, { subs: st.subs.map((x) => Object.assign({}, x, { live: c.shipWaiting })) }) : st)) });
+    if (c.id === 'plan' && ui.fixed && ui.fixed.plan) c = Object.assign({}, c, { stages: c.stages.map((st) => Object.assign({}, st, { subs: st.subs.map((x) => (x.live ? Object.assign({}, x, { live: x.live.replace('2 open issues', 'issues fixed') }) : x)) })) });
+    const outlineN = c.stack && c.stack.mode === 'outline' ? (ui.outline || RUNS).length : 0;
+    const left = c.reqsCheck ? reqLeft(ui) : 0;
+    if (c.reqsCheck && left) c = Object.assign({}, c, { detail: 'Mark every requirement before you create the PR · ' + left + ' left' });
+    const liveCtx = Object.assign({}, ctxOf(c), outlineN ? { n: outlineN } : {}, c.k ? { k: c.k } : {});
     const chainSt = ui.stackSt || CHAIN_START;
     if (c.id === 'chain') c = chainLive(c, chainSt);
-    const now = defaultStage(c);
+    const now = c.openStage || defaultStage(c);
     const open = ui.open && c.stages.some((st) => st.key === ui.open) ? ui.open : now;
     const st = c.stages.find((x) => x.key === open);
     let stack = null;
@@ -370,7 +612,7 @@
     const pick = sh ? (ui.ship && !(ui.ship === 'one' && sh.oneBlocked) ? ui.ship : sh.rec) : '';
     const shipWord = (id) => (id === 'one' ? 'one PR' : sh.runs.length + ' stacked PRs');
     if (c.stack && (open === 'pr' || (c.stack.mode === 'outline' && open === 'plan'))) {
-      const src = c.stack.mode === 'review' ? reviewOf(chainSt) : STACKS[c.stack.mode];
+      const src = c.stack.mode === 'review' ? reviewOf(chainSt) : STACKS[c.stack.mode](ui.outline || RUNS);
       let rows = src.rows || [];
       let choice = null;
       if (src.choice) {
@@ -380,7 +622,7 @@
           : sh.runs.map((t, i) => ({ num: 'PR ' + (i + 1), title: t, state: 'next', word: 'Not opened', sub: (i ? 'Into PR ' + i + '’s branch' : 'Into dev') + (sh.sizes ? ' · ' + sh.sizes[i] : '') }));
         choice = { note: (pick === sh.rec ? 'Worca suggests ' + shipWord(sh.rec) : 'You picked ' + shipWord(pick) + '; Worca suggests ' + shipWord(sh.rec)) + ': ' + sh.reason };
       }
-      rows = rows.map((r) => Object.assign(rowOf({ state: r.state }), r, { rowCls: 'is-' + r.state + (r.isNext ? ' is-next-up' : '') }));
+      rows = rows.map((r) => Object.assign(rowOf({ state: r.state }), r, { rowCls: 'is-' + r.state + (r.isNext ? ' is-next-up' : ''), total: rows.length }));
       stack = { title: sh ? (pick === 'one' ? 'What it opens: one PR' : 'What it opens: ' + sh.runs.length + ' stacked PRs') : src.title, note: choice ? choice.note : src.note || '', choice: null, rows };
     }
     let action = null;
@@ -388,11 +630,16 @@
     const liveNow = !ENDED.test(c.word) && !c.over && !c.stages.filter((x) => !SHIP.test(x.key)).every((x) => x.subs.every(isDone));
     if (!c.action && liveNow && c.word !== 'Paused') c = Object.assign({}, c, { action: A('Pause', 'pause', false, ['Pause after this step']) });
     if (c.action) {
-      const label = sh ? (pick === 'one' ? 'Create PR' : 'Create ' + sh.runs.length + ' PRs') : c.action.label;
+      const label = sh ? (pick === 'one' ? 'Create PR' : 'Create ' + sh.runs.length + ' PRs') : outlineN ? 'Approve ' + outlineN + ' runs' : c.action.label;
+      const liveRun = c.stages.filter((x) => x.run).findIndex((x) => stageState(x.subs) === 'live');
+      const offs = Object.assign({}, c.action.off || {});
+      if (c.reqsCheck && left) offs[label] = 'Mark every requirement before you create the PR · ' + left + ' left';
       const alt = sh ? [pick === 'one' ? 'Create ' + sh.runs.length + ' stacked PRs instead' : 'Create one PR instead'] : [];
-      const items = alt.concat(c.action.items.filter((t) => !/^Create (PR|\d+ PRs)$/.test(t))).concat(liveNow && !c.action.items.includes('Stop') ? ['Stop the run'] : []).concat(liveNow && c.stages.some((x) => x.run) && c.stages.some((x) => x.run && x.subs.every((y) => y.state === 'next')) ? ['Cancel the rest'] : []);
-      const helpOf = (t) => HELP_OF(t) || (/^Merge #(\d+)$/.test(t) ? 'Merges ' + t.slice(6) + ' into dev; Worca then moves the next PR onto dev' : /^Fix checks on #/.test(t) ? 'Starts a short run that fixes ' + t.slice(14) + '’s failing checks' : '');
-      action = Object.assign({}, c.action, { label, isNew: NEW.has(label), help: helpOf(label), items: items.map((t) => ({ text: t, isNew: NEW.has(t), help: sh && / instead$/.test(t) ? (/one PR/.test(t) && sh.oneBlocked ? 'Not possible: ' + sh.oneBlocked.replace(/^Not possible: /, '') : sh.reason) : helpOf(t), off: /one PR instead/.test(t) && sh && !!sh.oneBlocked })) });
+      const rest = liveNow && c.stages.some((x) => x.run) && c.stages.some((x) => x.run && x.subs.every((y) => y.state === 'next'));
+      const stopWord = c.stages.some((x) => x.run) && liveRun >= 0 ? 'Stop run ' + (liveRun + 1) : 'Stop the run';
+      const items = alt.concat(c.action.items.filter((t) => !/^Create (PR|\d+ PRs)$/.test(t) && R.shows(R.actionLevel(t)))).concat(liveNow && !c.action.items.includes('Stop') && !c.action.items.includes('Abort') ? [stopWord] : []).concat(rest && !c.action.items.includes('Re-plan the rest') ? ['Re-plan the rest'] : []).concat(rest && !c.action.items.includes('Cancel the rest') ? ['Cancel the rest'] : []);
+      const helpOf = (t) => offs[t] || HELP_OF(t, liveCtx) || (/^Merge #(\d+)$/.test(t) ? 'Merges ' + t.slice(6) + ' into dev; Worca then moves the next PR onto dev' : /^Fix checks on #/.test(t) ? 'Starts a short run that fixes ' + t.slice(14) + '’s failing checks' : '');
+      action = Object.assign({}, c.action, { label, isNew: NEW.has(label), help: helpOf(label), items: items.map((t) => ({ text: t, isNew: NEW.has(t), help: sh && / instead$/.test(t) ? (/one PR/.test(t) && sh.oneBlocked ? 'Not possible: ' + sh.oneBlocked.replace(/^Not possible: /, '') : sh.reason) : helpOf(t), off: !!offs[t] || (/one PR instead/.test(t) && sh && !!sh.oneBlocked), checked: t === 'Watch' ? !!ui.watched : undefined })), offWhy: offs[label] || '' });
     }
     // The run is live while any work stage (everything before shipping) is unfinished and it has not failed;
     // waiting on CI, reviewers or a merge is the PR's business, not the run's, so Pause and Stop go. A run waiting on
@@ -452,8 +699,8 @@
         const cost = t.cost ? '$' + t.cost.toFixed(2) : v;
         const pct = Math.round((money(cost) / budget) * 100);
         return { k, v: cost, of: 'of $' + budget, warn: pct >= 80, title: pct + '% of the ' + (runStages.length ? c.kind.toLowerCase() : 'run') + '’s budget' };
-      }).concat(NO_DIFF[c.id] ? [] : [{ k: 'Changes', v: c.diff || '+358 −144', tab: (c.tabs || RUN_TABS).some((x) => x[0] === 'changes') ? 'changes' : '' }]),   // links only where a Changes tab exists
-      tabs: (c.tabs || RUN_TABS).map(([id, l], i, all) => ({ id, l, n: id === 'runs' ? String(runStages.length) : id === 'changes' ? String(DETAIL.files.length) + (overview(c, live).artifacts.length ? ' · ' + overview(c, live).artifacts.length + ' docs' : '') : id === 'decisions' ? String(DETAIL.decisions.length) : '',
+      }).concat(NO_DIFF[c.id] || c.noDiff ? [] : [{ k: 'Changes', v: c.diff || '+358 −144', tab: (c.tabs || RUN_TABS).some((x) => x[0] === 'changes') ? 'changes' : '' }]),   // links only where a Changes tab exists
+      tabs: (c.tabs || RUN_TABS).map(([id, l], i, all) => ({ id, l, n: id === 'runs' ? String(runStages.length) : id === 'changes' ? String(DETAIL.files.length) + (overview(c, live, ui).artifacts.length ? ' · ' + overview(c, live, ui).artifacts.length + ' docs' : '') : id === 'decisions' ? String(DETAIL.decisions.length) : '',
         sel: id === (all.some((x) => x[0] === ui.tab) ? ui.tab : all[0][0]) })),
       activity: c.stages.map((x) => {
         const cost = x.run ? (x.member ? totals(resolve(x.member)).cost : 0) : x.subs.reduce((a, y) => a + (y.state === 'next' ? 0 : money(COST_OF[y.name] || 0)), 0) * (c.scale || 1);
@@ -471,17 +718,22 @@
       })(),
       ship: sh ? { pick, rec: sh.rec, n: sh.runs.length, reason: sh.reason, oneBlocked: sh.oneBlocked || '', sizes: sh.sizes || [] } : null,
       // A group's next run, under the run it follows: whether it starts by itself or asks first is set right there.
-      then: (() => { const k = runStages.findIndex((x) => stageState(x.subs) === 'live'); const nx = k >= 0 && runStages[k + 1]; return nx && nx.subs.every((y) => y.state === 'next') && open === runStages[k].key ? { n: k + 2, title: nx.title } : null; })(),
+      then: c.independent || hold ? null : (() => { const k = runStages.findIndex((x) => stageState(x.subs) === 'live'); const nx = k >= 0 && runStages[k + 1]; return nx && nx.subs.every((y) => y.state === 'next') && open === runStages[k].key ? { n: k + 2, title: nx.title } : null; })(),
       planHead: runStages.length > 0 && open === 'plan',
-      runCases: c.runCases || [], parent: par, over: overview(c, live), ask: DETAIL.asks[c.id] || null, rounds: DETAIL.rounds,
+      runCases: c.runCases || [], parent: par, over: overview(c, live, ui), ask: DETAIL.asks[c.id] || null, under: /^(gate|plan|outline)$/.test(c.id) ? { issues: c.id === 'gate' ? DETAIL.issues : [], roles: DETAIL.roles } : null,
+      flow: flowOf(c, stateId, liveCtx), state: stateId, event: EVENT_OF(c, stateId, liveCtx),
+      hasSetup: !c.noSetup && !runStages.length, dependents: c.dependents || 0, heldBy: c.heldBy || '', hosted: !!c.hosted, baseMoved: !!c.baseMoved, independent: !!c.independent, reqsLeft: left, reqsCheck: !!c.reqsCheck, holdIndex: c.k ? c.k - 1 : -1,
+      logs: logsOf(c), agents: agentsOf(c), sessions: sessionsOf(c), usage: usageOf(c), graph: graphOf(c, ui), agentsUnknown: !!c.agentsUnknown, isWorkspace: !!(c.repos && c.repos.length), docsHere: !(c.tabs || RUN_TABS).some((x) => x[0] === 'changes'), outlineN, outlineRuns: ui.outline || RUNS, rounds: DETAIL.rounds,
       tabData: DETAIL,
     };
   }
 
   // An action either moves the run to another state (`to`) or does its job where it is and says so (`say`); `confirm`
   // asks first; events from outside (checks finish, a reviewer approves) are `next`. The table is the library's.
-  const FLOW = Object.fromEntries(CASES.map((c) => [c.id, R.actionFlow(c.id, ctxOf(c))]));
-  Object.assign(FLOW.workspace, { 'worca-api #212': { say: 'Opens worca-api #212' }, 'worca-web #88': { say: 'Opens worca-web #88' }, 'worca-docs #31': { say: 'Opens worca-docs #31' } });
+  const INSTANCE_FLOW = { workspace: { 'worca-api #212': { say: 'Opens worca-api #212' }, 'worca-web #88': { say: 'Opens worca-web #88' }, 'worca-docs #31': { say: 'Opens worca-docs #31' } } };
+  function flowOf(c, stateId, ctx) { return Object.assign(R.actionFlow(stateId, ctx), INSTANCE_FLOW[c.id] || {}, c.flow || {}); }
+  function EVENT_OF(c, stateId, ctx) { return flowOf(c, stateId, ctx).event || ''; }
+  const FLOW = Object.fromEntries(CASES.map((c) => [c.id, flowOf(c, c.state || c.id, ctxOf(c))]));
   const RUN_FLOW = R.runFlow();
 
   // The + menu: what each kind is for, a placeholder for typing one, and the existing values to pick from.
@@ -490,5 +742,5 @@
     { kind: 'group', menu: 'Add to group', help: 'Tracks it with related runs on one page', placeholder: 'New group name', suggest: ['Navigation', 'Billing export', 'Onboarding'] }];
   const TITLES = {};
   // A host page may name a case's run as the row that opens it (the one Worca's Runs list); empty here.
-  window.RunCardModel = { titles: TITLES, chainStart: CHAIN_START, chainPrs: CHAIN_PRS.map((x) => x[0]), proposed: PROPOSED, isNew: (t) => NEW.has(t), flow: FLOW, runFlow: RUN_FLOW, cases: CASES.map((c) => ({ id: c.id, label: c.label, group: c.group, chips: c.chips || [] })), view, add: ADD };
+  window.RunCardModel = { forms: FORMS, titles: TITLES, chainStart: CHAIN_START, chainPrs: CHAIN_PRS.map((x) => x[0]), proposed: PROPOSED, isNew: (t) => NEW.has(t), flow: FLOW, runFlow: RUN_FLOW, cases: CASES.map((c) => ({ id: c.id, label: c.label, group: c.group, chips: c.chips || [] })), view, add: ADD };
 })();

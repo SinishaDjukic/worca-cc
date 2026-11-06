@@ -26,6 +26,7 @@
   <div class="mk-bar">
     <label style="display:flex;align-items:center;gap:8px;font-size:var(--fs-meta);color:var(--ink-2)">Case <select class="select" id="case" style="width:220px"></select></label>
     <span style="display:flex;flex-wrap:wrap;align-items:center;gap:8px"><button type="button" class="btn btn-sm" id="next-event" title="Something outside the run happens: checks finish, a reviewer approves">Next event</button><button type="button" class="btn btn-sm btn-quiet" id="restart" title="Start again from a new run">Restart</button><label class="pd-check" style="font-size:var(--fs-meta);color:var(--ink-2)" title="The next confirmed step or suggestion fails, to show how a failure reads"><input type="checkbox" id="fail-next"> Next one fails</label><label style="display:flex;align-items:center;gap:8px;font-size:var(--fs-meta);color:var(--ink-2)" title="What an error nobody planned for looks like">Break <select class="select select-sm" id="break" style="width:190px"><option value="">Nothing</option><option value="step">The next step, unexpectedly</option><option value="part">This tab</option><option value="background">Something in the background</option><option value="offline">The connection</option></select></label></span>
+    <span style="display:flex;flex-wrap:wrap;align-items:center;gap:8px"><label style="display:flex;align-items:center;gap:8px;font-size:var(--fs-meta);color:var(--ink-2)" title="The interface mode: what the page shows at each level">Mode <select class="select select-sm" id="mode" style="width:110px"><option value="simple">Simple</option><option value="advanced">Advanced</option><option value="expert" selected>Expert</option></select></label><label class="pd-check" style="font-size:var(--fs-meta);color:var(--ink-2)" title="Labs flag: Step usage in Activity"><input type="checkbox" id="flag-runTelemetry"> runTelemetry</label><label class="pd-check" style="font-size:var(--fs-meta);color:var(--ink-2)" title="Labs flag: Summaries and Raw in Logs"><input type="checkbox" id="flag-commandSummaries"> commandSummaries</label></span>
     <div class="seg" role="group" aria-label="Theme">
       <button type="button" data-theme-pick="light">Light</button>
       <button type="button" data-theme-pick="dark" aria-pressed="true">Dark</button>
@@ -36,5 +37,9 @@
 <script src="components.js"></script>
 <script src="runs/run-page-model.js"></script>
 <script src="runs/run-page.js"></script>
+<script>
+  document.getElementById('mode').addEventListener('change', (e) => RailUI.prefs.setMode(e.target.value));
+  for (const k of ['runTelemetry', 'commandSummaries']) document.getElementById('flag-' + k).addEventListener('change', (e) => RailUI.prefs.setFlag(k, e.target.checked));
+</script>
 </body>
 </html>
