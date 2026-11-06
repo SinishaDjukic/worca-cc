@@ -456,14 +456,21 @@ Shaper's Requirements step is a hold, like the plan approval, and it has its own
   **Run as is**, with the facts line and the perspective chips. A card proposed directly as Shaper gets the same
   sentence and **Shape requirements** when medium or large, and it has no **Run as is**; a small or unsized one keeps
   its fields and **Start planning**, with the facts line.
-- **The Requirements card.** `6 agreed by the perspectives · 2 need you · as Product`, then the agreed requirements as
-  rows, then the decisions the perspectives could not settle. Each decision is one question with Worca's pick already
-  chosen and marked `recommended`; change any of them. Questions and answers are worded for the lead you picked: a
-  Product or Design lead never sees code terms such as `project:read`; a scope token with no plain wording reads
-  `read access`. **Agree and plan** is the only primary.
-  **Ask for changes** sends your words and your picks back. Agree and plan is off, with the reason beside it, when no
-  requirement was written or a requirement fails its check. If the requirements could not be loaded the card says so and
-  **Try again** is the primary.
+- **The Requirements card.** `3 decisions need you · as Product`, then the decisions the perspectives could not settle,
+  then the agreed requirements folded away, then the foot. Each decision is one question with its answers stacked under
+  it, Worca's pick already chosen and marked `recommended`; change any of them. An answer a perspective asked for says who
+  wants it and why, for example `Security: emails are personal data, and exports get forwarded`; an answer nobody asked for
+  stays one line. Questions, answers and reasons are worded for the lead you picked: a Product or Design lead never sees
+  code terms such as `project:read`; a scope token with no plain wording reads `read access`. The fold reads
+  `8 agreed · Product 2 · Engineering 1 · Design 1 · QA 1 · Security 2 · DevOps 1` and opens to the requirements grouped
+  by perspective, your own first; a requirement's id is in its tooltip and read out by screen readers. A prefix Worca does
+  not know goes under `Other`. **Agree and plan** is the only primary.
+  **Ask for changes** opens a field that sends your words and your picks back; the foot steps aside while it is open, so
+  **Send changes** is the only primary, and Cancel brings the foot back. When a requirement fails its check the fold reads
+  `7 agreed · 1 to fix · …` and opens by itself with the failing row first and its problem beside it, **Ask for changes**
+  becomes the primary, and **Agree and plan** is a plain, blocked button. If the requirements cannot be changed any more,
+  there is no primary and the foot says `1 to fix`. Agree and plan is also off, with the reason beside it, when no
+  requirement was written. If the requirements could not be loaded the card says so and **Try again** is the primary.
 - **The plan card.** A **Requirements 7/8 · 1 to fix** fold sits above **Shape** and opens when a requirement has no
   step that delivers it; the row reads `R-ops-1 · <the requirement>` and `not covered by any step`. While any row fails,
   **Fix all** is the primary and **Approve and build** is a plain button; when everything is covered, **Approve and

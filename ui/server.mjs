@@ -7257,7 +7257,7 @@ registerMemoryRoutes('/api/memory/global', { family: 'global' });
 registerMemoryRoutes('/api/memory/projects/:key', { family: 'projects' });
 
 // Requirements (plans/requirements-design.md): product-owner feature specs, behind the `requirements` flag.
-registerRequirementsRoutes(app, { broadcast, deps: {
+registerRequirementsRoutes(app, { broadcast, server, deps: {
   startRun: (body, opts) => invokeStartRun(body, null, opts),   // D6: through the run handler, as PR watch does
   runSummary: requirementsRunSummary,
 } });

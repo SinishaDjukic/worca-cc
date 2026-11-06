@@ -297,7 +297,8 @@ gated: the view shows the same controls at every level.
 | The canvas, the top bar (Back, Workflows ▾ with New canvas, Open…, Import… and Export…, the name and its validation chip, the Library toggle, Save), Auto-layout and the zoom menu | all |
 | The "+" menu: Task, End, AND, OR, Combine, Agent…, Script…, New agent…, New script… | all |
 | The selection toolbar and its More / Params popover: model, effort, fan-out, ask questions, await all inputs, input count, seed the plan store, loop max cycles; a script's params, timeout and port editor | all |
-| The Library: its Agents / Scripts / Workflows selector with each registry count, the domain folders that expand in place (Flow, Archived), the header search, every row action (Add to canvas, View, Edit, Duplicate, Delete, Open, Export), New agent and New script, legacy and archived rows | all |
+| The Library: its Workflows / Agents / Scripts selector with each registry count, the domain folders that expand in place (Flow; Workflows' Yours, Built-in and Archived), the header search, every row action (Add to canvas, View, Edit, Duplicate, Delete, Open, Use as template, Export), New agent and New script, legacy and archived rows | all |
+| The canvas badge beside the name: Editing / Unsaved copy / Built-in / Not saved | all |
 | The agent sheet: the full agent form (runner type, ports, side effect, mock role, workspace variants) and the agent wizard | all |
 | The script sheet: the runtime step, the workspace and the bench under its editor; the Import dialog's command list | all |
 | The composer chat in the dock | all |
@@ -372,6 +373,8 @@ Settings tabs once, pages of their own now. The old addresses (`#settings/plugin
 | Export to a tracker: Export ▾'s Export to Jira… and Export setup…, the setup dialog, the preview (fields, labels, the description, Export anyway), Export again and the comment preview, the failure states, the header's ticket chip, "Created SHOP-123", the History card, Report back on Ready to build, the start dialog and the runs card; on a phone (900 px and narrower) the dialogs as full-screen sheets | S — product owners are its users |
 | Connect a tracker… (the menu item and its dialog) | S |
 | Connect a tracker's Open the Marketplace page | A — the Marketplace page is Advanced |
+| Start from a ticket: New feature's From a ticket…, the pick and the preview and their phone sheets, the filled form (Starting from SHOP-124, Change ticket…, the criteria, the ticket's files), Downloading… and the download states on the Files card, "from SHOP-124", the criteria's ticket tag, History's import line, Export to Jira… on an imported feature | S — product owners are its users |
+| Start from a ticket's "Fix the connection on the Marketplace page (Installed › Jira), then try again." | A — the Marketplace page is Advanced |
 | A feature's interview: the question card (options, Recommended, your own answer, Finish now, Skip, use recommended, Submit), Earlier rounds and Change, the working line, the error line and Try again | S |
 | Feature chat: the header's Feature chat, Help me answer on each open question, the panel beside the spec and the phone sheet (Back), the first-open text and its three questions, the composer and its cost line, Answering… and Stop, the failed, stopped and spending-limit lines, Try again, ⋯ Clear chat | S — product owners are its users |
 | Feature chat's drafts in the question card (drafted by Worca, ×, "Worca's draft: …") and its proposal cards (Before / After, New, Remove, Confirm / Reject, Why, Reject / Accept / Ask again, Accepted, Rejected, "The spec changed since Worca proposed this.") | S |

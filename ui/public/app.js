@@ -218,9 +218,9 @@ import {
 import { renderStatsBody, renderStatsView, renderBudgetReadout, renderCostPauseBanner, statsQuery, groupsToCsv, statsRangeLabel, DEFAULT_FMT } from './stats-view.mjs';
 import { createCostReport } from './cost-report.mjs';
 import { personInitials, describeAccount, paintAccountCorner, paintIdentityCard, renderSpendCard, paintAwayRow } from './account-menu.mjs';
-import { createComposer, isReservedWorkflowId } from './graph/composer.mjs';
+import { createComposer, isReservedWorkflowId, isBuiltinWorkflow } from './graph/composer.mjs';
 import { createWorkflowsShell, toSpawnEntry } from './workflows/shell.mjs';
-import { createLibrary } from './workflows/library.mjs';
+import { createLibrary, folderLabel, folderKeys } from './workflows/library.mjs';
 import { createChatDock } from './workflows/chat-dock.mjs';
 import { mintId } from '../../src/shared/graph/template.mjs';
 // mountStaticGraph is NOT imported here: the New-Pipeline workflow picker is a
@@ -332,7 +332,7 @@ import { renderReleaseRow } from './shape/release-row.mjs';
 import { featureFocusOf, focusFeatureControl, featureMenuItems } from './shape/feature-actions.mjs';
 import { decorateShapingQuestions } from './shape/questions.mjs';
 import { isShapingRun, shaperWait } from './shape/plan-text.mjs';
-import { stepChip, stepTitle, isStepCard, renderGateCard, renderRecoveryCard, questionFocusTarget } from './shape/step-card.mjs';
+import { stepChip, stepTitle, isStepCard, renderGateCard, renderRecoveryCard, questionFocusTarget, answerFieldOpen } from './shape/step-card.mjs';
 import { installInputMode } from './input-mode.mjs';
 import { noteAnswer, forgetAnswer } from './shape/step-receipt.mjs';
 import { renderChecklistGroups } from './shape/checklist-view.mjs';
@@ -1916,6 +1916,7 @@ function handleServerMessage(msg) {
     return;
   }
   if (msg.type === 'projects-changed') {
+    requirementsView.targetsChanged();   // its projects and workspaces are read again at the next paint
     askPanel?.optionsChanged();
     scheduleOnboardingRefresh();
     refreshAllCounts();
@@ -1925,6 +1926,7 @@ function handleServerMessage(msg) {
     return;
   }
   if (msg.type === 'workspaces-changed') {
+    requirementsView.targetsChanged();
     askPanel?.optionsChanged();
     // The automatic re-scan after a member change (server afterMembersChanged) ends here.
     if (msg.workspaceId && WS_RESCAN_ENDS[msg.action]) endWsRescan(msg.workspaceId, WS_RESCAN_ENDS[msg.action], msg.runId || null);
@@ -1961,7 +1963,8 @@ function handleServerMessage(msg) {
   // A plugin or marketplace changed — another tab, the CLI, or this page's own action (CONTRACT §1.7): re-read while
   // the page is open; never a refresh (SM6). Off the page, the next entry loads anyway.
   if (msg.type === 'plugins-changed') {
-    topnavPluginsStale = true;                      // the top bar search reads the lists again on its next open
+    requirementsView.importChanged();               // what can import (and its connections) is asked again
+    topnavPluginsStale = true;                     // the top bar search reads the lists again on its next open
     if (currentView() === 'marketplace') void marketplacePage.load({ background: true });
     return;
   }
@@ -3342,7 +3345,7 @@ function wfvEls() {
   const g = (id) => document.getElementById(id);
   return {
     root: g('wfv'), stage: g('wfv-stage'), canvas: g('wfv-canvas'), chip: g('wfv-chip'), back: g('wfv-back'),
-    wfMenu: g('wfv-wf-menu'), name: g('wfv-name'), errors: g('wfv-errors'), importFile: g('wfv-import-file'),
+    wfMenu: g('wfv-wf-menu'), name: g('wfv-name'), docState: g('wfv-doc'), errors: g('wfv-errors'), importFile: g('wfv-import-file'),
     libToggle: g('wfv-lib-toggle'), saveWrap: g('wfv-savewrap'), save: g('wfv-save'), saveReason: g('wfv-save-reason'), add: g('wfv-add'),
     autolayout: g('wfv-autolayout'), zoom: g('wfv-zoom'), zoomLabel: g('wfv-zoom-label'), overlay: g('wfv-overlay'),
     library: g('wfv-library'), sheet: g('wfv-sheet'), sheetTitle: g('wfv-sheet-title'), sheetClose: g('wfv-sheet-close'),
@@ -3392,7 +3395,7 @@ async function initWorkflows() {
   insBody.className = 'wfv-ins';
   gvComposer = createComposer({
     canvas: els.canvas, chip: els.chip, name: els.name, errors: els.errors, autoBtn: els.autolayout,
-    saveBtn: els.save, saveWrap: els.saveWrap, saveReason: els.saveReason, insBody, dialogHost: els.dialogHost,
+    saveBtn: els.save, saveWrap: els.saveWrap, saveReason: els.saveReason, docState: els.docState, insBody, dialogHost: els.dialogHost,
   }, {
     doc: document, api: gvApi, portsFn: (node) => gvPortsFn(node),
     highlight: scriptHighlight,   // a script card's command/code params get the real editor
@@ -3498,7 +3501,7 @@ function wfvShellActions() {
       if (t.id && !gvComposer.isDirty()) { exportRow(t); return; }
       if (gvComposer.isPristine()) {
         wfvSetLibraryOpen(true); wfvLibrary?.open('workflows');
-        notify({ tone: 'info', title: 'Pick a pipeline to export', detail: 'Each saved pipeline has an Export button in the Library.' });
+        notify({ tone: 'info', title: 'Pick a pipeline to export', detail: 'Each saved pipeline has Export… in its ⋯ menu in the Library.' });
         return;
       }
       gvComposer.openSaveDialog({ then: exportRow });
@@ -3586,6 +3589,21 @@ async function openBuildFromAsk(build) {
   else location.hash = 'workflows';
 }
 
+/** Open a saved workflow on the canvas (#1127): the user's own in place (Edit: Save changes it); a built-in or plugin one,
+ *  or any row with `copy`, as a new unsaved copy (Use as template). Asks before discarding (the composer's guard), and
+ *  says why when the row cannot be read — never nothing. */
+async function wfvOpenSaved(id, { copy = false } = {}) {
+  let full = null;
+  try { full = await gvApi.readWorkflow(id); } catch { full = null; }   // a refused fetch: say so below
+  if (!full) {
+    notify({ tone: 'err', title: 'Could not open the workflow', detail: `"${id}" was deleted or renamed, or Worca did not answer.` });
+    return false;
+  }
+  const opened = copy || isBuiltinWorkflow(full) ? await gvComposer.openCopy(full) : await gvComposer.openTemplate(full);
+  if (opened) gvComposer.fit();
+  return Boolean(opened);
+}
+
 /** Route the view's param (D6). In-view hops (sheet ↔ canvas, tab ↔ tab) only route. */
 async function routeWorkflows(param = '') {
   const [head, ...rest] = String(param || '').split('/');
@@ -3620,20 +3638,14 @@ async function routeWorkflows(param = '') {
     return;
   }
   if (!head) return;
-  // Any other head names a saved workflow (Ask's "Open in Workflows", the top-bar search, a bookmark): open it
+  // Any other head names a saved workflow (Ask's "Open in Workflows", the top-bar search, a bookmark): open it as its Library row does (a built-in as a copy, #1127)
   // and normalise the hash, or say why not — never nothing.
   try { window.history.replaceState(null, '', '#workflows'); } catch { /* sandboxed */ }
   if (!WF_ID_RE.test(head)) {
     notify({ tone: 'err', title: 'Could not open the workflow', detail: `"${head}" is not a workflow id or a Workflows address.` });
     return;
   }
-  let full = null;
-  try { full = await gvApi.readWorkflow(head); } catch { full = null; }   // a refused fetch: say so below
-  if (!full) {
-    notify({ tone: 'err', title: 'Could not open the workflow', detail: `"${head}" was deleted or renamed, or Worca did not answer.` });
-    return;
-  }
-  if (await gvComposer.openTemplate(full)) gvComposer.fit();
+  await wfvOpenSaved(head);
 }
 
 async function enterWorkflowsView(param = '', prevView = '') {
@@ -3797,10 +3809,9 @@ function wfvLibraryActions() {
       const node = gvComposer.spawn(toSpawnEntry(payload));
       if (node) gvComposer.view.centerOn(node.id);
     },
-    openWorkflow: async (id) => {
-      const full = await gvApi.readWorkflow(id);
-      if (full && await gvComposer.openTemplate(full)) gvComposer.fit();
-    },
+    // #1127: a row of the user's opens to Edit (Save changes it); Use as template opens any row as a new unsaved copy.
+    editWorkflow: (id) => wfvOpenSaved(id),
+    useAsTemplate: (id) => wfvOpenSaved(id, { copy: true }),
     deleteWorkflow: async (wf) => {
       const schedNote = await scheduleDependentsNote(`workflowId=${encodeURIComponent(wf.id)}`, 'They will fail to start until you point them at another pipeline.');
       const ok = await confirmModal({ title: 'Delete pipeline', danger: true, confirmLabel: 'Delete',
@@ -7170,6 +7181,7 @@ async function mountPluginSourcePane(src) {
         const r = await pluginApi('PUT', '/api/source-bindings',
           { ...resolved.ref, plugin: src.plugin, sourceId: src.sourceId, profile });
         if (!r.ok) return notify({ tone: 'err', title: 'Could not save the profile binding', detail: r.data.error || '', key: 'profile-binding' });
+        requirementsView.importChanged();   // a binding moves the default connection of an import; no frame is sent for it
         mountPluginSourcePane(src);
       },
     }));
@@ -7192,6 +7204,7 @@ async function mountPluginSourcePane(src) {
       const r = await pluginApi('PUT', '/api/source-bindings',
         { ...ref, plugin: src.plugin, sourceId: src.sourceId, profile });
       if (!r.ok) return notify({ tone: 'err', title: 'Could not save the profile binding', detail: r.data.error || '', key: 'profile-binding' });
+      requirementsView.importChanged();
       mountPluginSourcePane(src);
     },
   }) : null;
@@ -31712,7 +31725,7 @@ function runAction(ref0, id, btn = null, m = null) {
  *  click (stepSender's busy guard stops a second post). Any other Answer takes the person to the question. */
 function answerOrApprove(btn, ref = {}) {
   const root = (btn && btn.closest('.chat-rc, .gpage, .rd')) || document;
-  const own = root.querySelector('.qpanel:not(.hidden) .plan-actions .btn-primary:not([disabled])');
+  const own = root.querySelector('.qpanel:not(.hidden) .plan-actions:not([hidden]) .btn-primary:not([disabled])');
   if (own && btn && btn.textContent === own.textContent) { own.click(); return undefined; }
   return focusQuestionOf(btn, ref);
 }
@@ -36064,7 +36077,7 @@ function paintRdStatus(screen, r) {
 /** Run 4 (D2): the bar's Answer names the waiting card's own primary ("Approve 2 runs", "Approve and build"). Read from
  *  the card, so it follows the person's merges and removals; '' (→ "Answer") for a Clarify, gate or form ask. */
 function answerLabelOf(root) {
-  const own = root && root.querySelector('.qpanel:not(.hidden) .plan-actions .btn-primary');
+  const own = root && root.querySelector('.qpanel:not(.hidden) .plan-actions:not([hidden]) .btn-primary');
   return own ? own.textContent : '';
 }
 /** Slice 2: offer and gate the live ⋯'s Report this run, Archive and Save as preset. A finished run only (a live one
@@ -36120,6 +36133,7 @@ function paintRdActions(screen, r, m = rdModel(r)) {
     // The model reads pausing as paused, but chatRunControls.resume does nothing while the run is still live.
     disable: { 'ask-changes': "Ask for changes from the run's chat", ...(st === 'pausing' ? { resume: 'Pausing…' } : {}) },
     labels: { answer: answerLabelOf(screen.querySelector('.rd-questions')) },
+    plain: answerFieldOpen(screen.querySelector('.rd-questions')) ? ['answer'] : [],
     onAction: (id, b) => runAction({ runId: r.runId, pipelineId: r.pipelineId, title: r.title, status: st, workspaceId: r.workspaceId || null }, id, b, m),
   });
   if (split) split.hidden = !!pause && pause.hidden;      // the split wrapper follows its button
@@ -38553,10 +38567,12 @@ function gsHops(step, g) {
       // Workflows: open the Library, open Default, read the canvas and the chat — then leave the editor
       // and start a run from New run (the pick persists the workflow: that is the derived tick).
       const lib = document.getElementById('wfv-library');
-      // The Library's selector picks Workflows; Default sits in its domain's folder (opened in place) whenever Workflows
-      // holds more than one domain. Once its row shows — there, or in a search's flat list — both hops are done.
-      // gsHops is re-derived on every reconsider, so `defFolder` follows the list as it loads.
-      const defFolder = (wfvLibrary ? wfvLibrary.folderOf('workflow', 'wf_default') : ['workflows']).join('/');
+      // The Library opens on Workflows (#1127); Default sits in its Built-in folder — in its domain's folder when the
+      // built-ins span more than one domain. Every folder on that path still folded is a target, outermost first: the
+      // first one showing is rung, and opening it moves the ring in. Once Default's row shows — there, or in a search's
+      // flat list — the hops are done. gsHops is re-derived on every reconsider, so the path follows the list as it loads.
+      const defPath = wfvLibrary ? wfvLibrary.folderOf('workflow', 'wf_default') : ['workflows'];
+      const defFolders = folderKeys(defPath);
       const defShown = () => !!lib && !!lib.querySelector('.wfl-wf[data-id="wf_default"]');
       const run = Object.fromEntries(gsRunHops(g, false).filter(Boolean).map((h) => [h.id.replace('nav:', ''), h]));
       return [
@@ -38567,13 +38583,13 @@ function gsHops(step, g) {
         { id: 'tab', target: '#wfv-library #wfl-tab-workflows', lift: ['.wfl'],
           met: () => !!lib && (lib.dataset.tab === 'workflows' || defShown()), skipWhenMet: true,
           text: 'Switch the Library to Workflows.' },
-        { id: 'folder', target: [`#wfv-library .wfl-folder[data-folder="${defFolder}"]`, '#wfv-library .wfl-head.is-searching #wfl-close'], lift: ['.wfl'],
-          met: () => !defFolder.includes('/') || defShown(), skipWhenMet: true,
-          text: [`Open “${defFolder.split('/').pop()}”: the built-in Default workflow lives in this folder.`, 'Close the search: the folders are under it.'] },
+        { id: 'folder', target: [...defFolders.map((f) => `#wfv-library .wfl-folder[data-folder="${f}"][aria-expanded="false"]`), '#wfv-library .wfl-head.is-searching #wfl-close'], lift: ['.wfl'],
+          met: () => defShown(), skipWhenMet: true,
+          text: [...defFolders.map((f, i) => `Open “${folderLabel(f.split('/'))}”: ${i === defFolders.length - 1 ? 'the built-in Default workflow lives in this folder.' : 'the workflows Worca ships live here.'}`), 'Close the search: the folders are under it.'] },
         { id: 'open', target: ['#wfv-library .wfl-wf[data-id="wf_default"]', '#wfv-library .wfl-wf'], lift: ['.wfl'],
           met: () => !!(document.getElementById('wfv-name')?.value || '').trim(),
-          text: 'Open Default: the built-in Plan → Refine → Implement → Review loop.',
-          already: 'A workflow is already on the canvas. Open Default to see the built-in Plan → Refine → Implement → Review loop.' },
+          text: 'Click Default: the built-in Plan → Refine → Implement → Review loop opens as a new copy you can change and save as your own.',
+          already: 'A workflow is already on the canvas. Click Default to open a copy of the built-in Plan → Refine → Implement → Review loop.' },
         { id: 'canvas', info: true, target: '#wfv-canvas', lift: ['.wfv-stage'],
           text: 'This is the whole workflow. Each card is an agent or a script; the wires carry plans, code and reviews from one to the next. Drag cards in from the Library, rewire them, or select one to tune it.' },
         { id: 'chat', info: true, target: '#wfc', lift: ['.wfv-float', '.wfv-stage'],

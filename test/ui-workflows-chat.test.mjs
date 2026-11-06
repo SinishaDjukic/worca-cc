@@ -181,12 +181,13 @@ function fakeComposer() {
   return {
     log,
     docToken: () => token, undoDepth: () => depth, gesture: () => null, isDirty: () => false, origin: () => '',
+    copyOf: () => null,
     template: () => ({ id: 'wf_x', name: 'Mine', nodes: [], wires: [] }),
     applyOps: (ops, label) => { log.push(['applyOps', ops.length, label]); depth += 1; return { ok: true, depth }; },
     undo: () => { log.push(['undo']); depth -= 1; },
     guardDiscard: async () => true,
     loadDraft: (d) => { log.push(['loadDraft', d.name]); token = 'd_newdoc01'; depth = 0; },
-    loadTemplate: (t) => { log.push(['loadTemplate', t.id]); token = 'd_back0001'; },
+    loadTemplate: (t, o) => { log.push(['loadTemplate', t.id, o]); token = 'd_back0001'; },
     setName: () => {}, fit: () => {}, openSaveDialog: () => log.push(['save']),
     serialize: () => ({ id: 'wf_x', nodes: [], wires: [] }),
     view: { world: null }, setTok: (t) => { token = t; },
@@ -1798,4 +1799,20 @@ test('card-views: one DOM for both chats — a draft card shows the state its ho
     { h, graph, actions: (row) => row.appendChild(h('span', 'x', 'act')) });
   assert.ok(build.querySelector('.my-graph'));
   assert.equal(build.querySelector('.wfc-actions').textContent, 'act');
+});
+
+test('#1127: the build\'s Undo brings back an unsaved Use as template copy as a copy', async () => {
+  const { createCardController } = await imp('chat-cards.mjs');
+  const dom = new JSDOM('<!doctype html><body></body>');
+  const composer = fakeComposer();
+  composer.copyOf = () => ({ id: 'wf_default', name: 'Default' });
+  const build = card('card_0000eeee', 'proposed', { type: 'workflow-build', name: 'Bug fix', counts: {}, workflow: { nodes: [{ id: 'n_a', kind: 'task' }], wires: [] }, drafts: [], loops: [] });
+  const cc = createCardController({ doc: dom.window.document, composer, sessionId: 'cs_ab12cd34', blocks: () => [build], client: { postCard: async () => ({ ok: true }) } });
+  [...cc.render(build).querySelectorAll('button')].find((b) => b.textContent === 'Apply to canvas').click();
+  await new Promise((r) => setTimeout(r, 0)); await new Promise((r) => setTimeout(r, 0));
+  [...cc.render({ ...build, state: 'applied' }).querySelectorAll('button')].find((b) => b.textContent === 'Undo').click();
+  await new Promise((r) => setTimeout(r, 0));
+  const back = composer.log.find((l) => l[0] === 'loadTemplate');
+  assert.ok(back, 'precondition: Undo reloaded the previous document');
+  assert.deepEqual(back[2], { copyOf: { id: 'wf_default', name: 'Default' } });
 });

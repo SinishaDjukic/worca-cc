@@ -3,13 +3,20 @@
 // the engine's role-review step reads for `checklist: 'requirements'`, and when a run takes the stage. Pure and
 // browser-safe.
 import { PERSPECTIVES, DEFAULT_PERSPECTIVES, FIT_KEY, normalizePerspectives, perspectiveByKey } from './perspectives.mjs';
-import { criteriaList, CRITERIA_MAX_PER_PREFIX } from '../review/coverage.mjs';
+import { criteriaList, CRITERION_ID_RE, CRITERIA_MAX_PER_PREFIX } from '../review/coverage.mjs';
 
 /** The criterion id prefix per perspective: `R-po-1` is Product's first criterion. */
 export const REQUIREMENT_PREFIX = Object.freeze({
   product: 'po', architect: 'arch', qa: 'qa', ux: 'ux', security: 'sec', devops: 'ops', release: 'rel',
 });
 export const REQUIREMENT_MAX_PER_PERSPECTIVE = CRITERIA_MAX_PER_PREFIX;
+
+/** The perspective a criterion id belongs to (`R-sec-2` is `security`); null for an unknown prefix or a malformed id. */
+export function criterionPerspective(id) {
+  if (typeof id !== 'string' || !CRITERION_ID_RE.test(id)) return null;
+  const prefix = id.split('-')[1];
+  return Object.keys(REQUIREMENT_PREFIX).find((key) => REQUIREMENT_PREFIX[key] === prefix) || null;
+}
 
 /** The perspectives that write requirements: every one with a prefix (not Project fit, not the Devil's advocate). */
 const REQUIREMENT_ROLES = PERSPECTIVES.filter((p) => Object.hasOwn(REQUIREMENT_PREFIX, p.key));

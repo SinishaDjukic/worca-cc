@@ -1014,13 +1014,20 @@ export const MOCK_REQUIREMENTS_CRITERIA = Object.freeze([
   ['R-ops-1', 'Turning the flag off removes the export'],
 ]);
 export const MOCK_REQUIREMENTS_DECISIONS = Object.freeze({ decisions: [
-  { text: 'Email in export', options: [{ value: 'leave-out', label: 'Leave them out' }, { value: 'include', label: 'Include them' }],
+  { text: 'Email in export', plain: 'Should exports include email addresses?',
+    options: [
+      { value: 'leave-out', label: 'Leave them out', persona: 'security', reason: 'emails are personal data, and exports get forwarded' },
+      { value: 'include', label: 'Include them', persona: 'ux', reason: 'people use them to tell who started a run' },
+    ],
     recommended: 'leave-out', criteria: ['R-sec-1'] },
   { text: 'Who may export: everyone with project:read?', plain: 'Who may export: everyone who can see the project?',
-    options: [{ value: 'members', label: 'Require project:read', plain: 'Anyone who can see the project' }, { value: 'owner', label: 'Owner only' }],
+    options: [
+      { value: 'members', label: 'Require project:read', plain: 'Anyone who can see the project', persona: 'security', reason: 'the export shows nothing they cannot already see' },
+      { value: 'owner', label: 'Owner only' },
+    ],
     recommended: 'members', criteria: ['R-sec-2'] },
-  { text: 'Gate the export on project:read or project:write',
-    options: [{ value: 'read', label: 'project:read' }, { value: 'write', label: 'project:write' }], recommended: 'read' },
+  { text: 'Gate the export on project:read or project:write', plain: 'What access does exporting need?',
+    options: [{ value: 'read', label: 'project:read', plain: 'View access' }, { value: 'write', label: 'project:write', plain: 'Edit access' }], recommended: 'read' },
 ] });
 
 /** Agreed `- **R-po-N** …` lines of the task text (a Requirements spec start), kept unchanged. */
