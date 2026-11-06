@@ -6,6 +6,7 @@ export const ICONS = {
   question: P('M9.2 9.2a2.9 2.9 0 1 1 4.2 2.6c-.9.5-1.4 1.1-1.4 2v.4') + P('M12 17.6h.01'),
   alert: P('M12 6.8v6.6') + P('M12 17.6h.01'),
   pause: P('M9 5v14M15 5v14'),
+  stop: '<rect x="7" y="7" width="10" height="10" rx="1.5"></rect>',
   merge: '<circle cx="6" cy="5.5" r="2.2"></circle><circle cx="6" cy="18.5" r="2.2"></circle><circle cx="18" cy="12" r="2.2"></circle>' + P('M6 7.7v8.6') + P('M6 7.7c0 2.4 2.5 4.3 9.8 4.3'),
   refresh: P('M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7'),
   copy: '<rect x="9" y="9" width="11" height="11" rx="2"></rect>' + P('M5 15V6a2 2 0 0 1 2-2h8'),

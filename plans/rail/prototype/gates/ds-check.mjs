@@ -32,6 +32,7 @@ const CONTROLS = {
   OptionList: '.sc-ans-opt',
   WorkflowGraph: '.wg-node',
   SideMenu: '.side-i',
+  ActionRow: '.act-stop, .act-srow-name, .act-tile',
   ListRow: '.lr-main, .row-btn, .sc-step, .ch-row, .st-head, .pz-nav-i, .pz-acct, .sc-loop.is-btn',
   'Text link': '.rc-fig-link, .rc-crumb, .rc-branch, .dc-link, .ov-art-name, .rl-back',
 };
