@@ -30,7 +30,7 @@ const RUNTIME = new Map([
   ['#projects-list .pl-row', ['app.js', /function buildProjectRow\(p\) \{[\s\S]{0,300}row\.className = 'pl-row';/]],
   ['#wfv-library .wfl-wf', ['workflows/library.mjs', /wfl-wf/]],                                // the Library's Workflows rows
   ['#wfv-library #wfl-tab-workflows', ['workflows/library.mjs', 'b.id = `wfl-tab-${t}`']],   // the selector's Workflows tab
-  ['#wfv-library .wfl-folder[data-folder]', ['workflows/library.mjs', 'row.dataset.folder = key']],   // a folder row (the one holding Default)
+  ['#wfv-library .wfl-folder[data-folder][aria-expanded="false"]', ['workflows/library.mjs', 'row.dataset.folder = key']],   // a folded folder on Default's path
   ['#wfv-library .wfl-head.is-searching #wfl-close', ['workflows/library.mjs', /closeBtn\.id = 'wfl-close';[\s\S]*head\.classList\.toggle\('is-searching'/]],   // ✕ on an open search
   ['.ask-input', ['ask-panel.mjs', "el.input.className = 'ask-input'"]],
   ['.ask-send', ['ask-panel.mjs', "make('button', 'btn btn-primary btn-icon ask-send')"]],
@@ -164,6 +164,7 @@ test('the Workflows tour reaches Default through the Library\'s selector and fol
   const tour = section.slice(at, section.indexOf("\n    case '", at + 1));
   assert.deepEqual([...tour.matchAll(/\{ id: '([\w-]+)'/g)].map((m) => m[1]).slice(0, 4), ['library', 'tab', 'folder', 'open']);
   assert.match(tour, /id: 'tab', target: '#wfv-library #wfl-tab-workflows'/);
-  assert.match(tour, /id: 'folder', target: \[`#wfv-library \.wfl-folder\[data-folder="\$\{defFolder\}"\]`, '#wfv-library \.wfl-head\.is-searching #wfl-close'\]/);
-  assert.match(tour, /const defFolder = \(wfvLibrary \? wfvLibrary\.folderOf\('workflow', 'wf_default'\) : \['workflows'\]\)\.join\('\/'\);/);
+  assert.match(tour, /id: 'folder', target: \[\.\.\.defFolders\.map\(\(f\) => `#wfv-library \.wfl-folder\[data-folder="\$\{f\}"\]\[aria-expanded="false"\]`\), '#wfv-library \.wfl-head\.is-searching #wfl-close'\]/);
+  assert.match(tour, /const defPath = wfvLibrary \? wfvLibrary\.folderOf\('workflow', 'wf_default'\) : \['workflows'\];/);
+  assert.match(tour, /const defFolders = folderKeys\(defPath\);/);
 });
