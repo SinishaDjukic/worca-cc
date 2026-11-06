@@ -123,3 +123,13 @@ test('usage: only connected providers count; a ring says what it shows; it refre
   R.prefs.setConnected('claude', false); assert.ok(!R.prefs.connected('claude')); assert.ok(R.prefs.connected('codex'));
   R.prefs.setConnected('claude', true); assert.ok(R.prefs.connected('claude'));
 });
+
+test('tryStep: says what is happening, then the next step; never a dead end', () => {
+  const svc = { name: 'Web', port: 3000 };
+  assert.deepEqual(R.tryStep({ checkingOut: true }).map((x) => [x.text, x.off]), [['Checking out…', true]]);
+  assert.equal(R.tryStep({ settingUp: true })[0].text, 'Setting up…');
+  assert.equal(R.tryStep({ setupFailed: 'npm install failed' })[0].help, 'npm install failed');
+  assert.equal(R.tryStep({ service: svc })[0].text, 'Start Web');
+  assert.deepEqual(R.tryStep({ service: { ...svc, running: true } }).map((x) => x.text), ['Open :3000', 'Stop Web']);
+  assert.equal(R.tryStep({})[0].text, 'Open Actions');
+});

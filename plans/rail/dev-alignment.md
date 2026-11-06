@@ -74,6 +74,17 @@ The Labs row keeps the registry's name, Git event automations.
 Pausing… and Resuming… at the click (#969); the one-line run title (#967); a closed shell says why (#977); ⌘ and
 Shift-click selection (#970); "Added to …" with Undo (#1004); credential slots as Chips (#1065, #1066).
 
+## Merged after Agreed caught up (6 Nov)
+
+| PR | In Rail |
+|---|---|
+| #1125 Try it's next step | The app's head buttons are not taken: Try it stays in ⋯ and says what is happening, then offers its next step (`tryStep`) |
+| #1121 Actions progress | Changes › Actions: a service's button says `Starting…` while it works |
+| #1123 Waiting on an interrupted run | Case `waiting-interrupted`: it keeps waiting while the run can resume |
+| #1122 A missed start that came right | Pulse's row reads Resolved, with its run |
+| #1149 Slack and Teams chat | Settings › Chat and Plugins; Pulse's channels |
+| #1168 and #1162 | No Rail page holds them |
+
 ## Usage and budget (6 Nov)
 
 The rings show live usage of connected providers only, refreshed every minute; money is not a ring. The app's budget resets weekly or monthly (`costLimitResetPeriod`); Rail adds a daily reset, which needs its backend in Wave 1. So does a usage feed: the app has none today.

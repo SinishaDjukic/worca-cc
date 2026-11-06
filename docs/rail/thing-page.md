@@ -45,6 +45,8 @@ what it belongs to.
 - **Activity** holds, under its steps: Logs, Agents, Sessions, Step usage (flag `runTelemetry`), Cost. The graph opens from its head, a Dialog without a form with a step log drawer under the graph. **Changes** holds Actions under Check out: services, ports, the patch; in a workspace only the projects that changed; off on a hosted Worca, saying why.
 - **A group reads from the run that holds it up** (`Run 2 of 3 · failed`, `Stopped at run 2`); what you do on a member's page stays in the group and the group follows. A kind `Group` is Independent, in any order. One PR says why it is off.
 
+**Try it never dead-ends.** It lives in ⋯: it says what is happening (`Checking out…`, `Setting up…`), then offers the next step: `Start Web`, then `Open :3000` and `Stop Web`, or `Open Actions` when there is no service (`tryStep`).
+
 **What opens, and what does not** (mocks: `plans/rail/mocks/run-expand-rules-*.png`):
 - **A row opens its own detail, in place:** the ask's parts, a file's diff, a step's rounds. Its › points right while
   closed and down while open; focus stays on the row.

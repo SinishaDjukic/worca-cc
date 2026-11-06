@@ -480,6 +480,7 @@
         channel('Telegram', 'chTelegram', { on: true, state: () => 'Connected', meta: 'Personal bot · last message 2h ago', fixed: 'Personal bot · last message 2h ago' }),
         channel('Discord', 'chDiscord', { on: true, state: () => 'Connected', mark: 'is-amber', warn: true, chatId: '99812', meta: 'Commands are off: no chat is in Allowed chat IDs, so replies like /approve are ignored', fixed: 'Team server · replies count from allowed chats' }),
         channel('Slack', 'chSlack', { on: false, state: () => 'Not set up', meta: 'Needs a bot token: Plugins › Slack › Settings', fixed: 'Workspace bot' }),
+        channel('Teams', 'chTeams', { on: false, state: () => 'Not set up', meta: 'Needs a bot token: Plugins › Teams › Settings', fixed: 'Team bot' }),
       ], empty: 'No chat channels installed' },
       { title: 'History', meta: 'Delete removes transcripts, attachments and the worktrees checked out for them. Runs started from a chat stay.', actions: [
         { label: 'Delete all chats', help: 'Asks first', off: (sv) => (sv.chats ? '' : 'No chats to delete'), confirm: (sv) => ({ text: `Delete all ${sv.chats} chats, with ${sv.worktrees} worktrees and ${sv.attach} of attachments? They cannot be brought back.`, yes: 'Delete all', danger: true, then: (s) => { s.chats = 0; s.worktrees = 0; s.attach = '0 MB'; return 'All chats deleted'; } }) },
@@ -531,6 +532,7 @@
         plugin('Telegram', 'A chat channel · bot token set', 'pTg', true, { fields: [{ key: 'allowed', label: 'Allowed chat IDs', value: '', hint: 'Replies from these chats count' }] }),
         plugin('Discord', 'A chat channel · bot token set', 'pDiscord', true, { fields: [{ key: 'allowed', label: 'Allowed chat IDs', value: '', hint: 'Replies from these chats count' }] }),
         plugin('Slack', 'A chat channel · needs a bot token', 'pSlack', false, { menu: ['Set up…', 'Uninstall'] }),
+        plugin('Teams', 'A chat channel · needs a bot token', 'pTeams', false, { menu: ['Set up…', 'Uninstall'] }),
       ] },
       { title: 'Ticket updates', flag: 'ticketUpdates', meta: 'What a finished run does to its ticket. A project\'s own rule wins over All projects.', actions: [
         { label: 'Add rule', edit: (sv) => ({ title: 'Add a project rule', yes: 'Add', fields: [{ key: 'proj', label: 'Project', value: '', hint: sv.tuTracker === 'github' ? 'A repository: owner/repo' : 'A project you work on' }, { key: 'to', label: 'Move its ticket', value: 'done', options: [['none', 'Don\'t move'], ['done', 'Any Done status'], ...MOVES[sv.tuTracker].map((m) => [m, m])] }], check: (v) => (v.proj.trim() ? '' : 'A rule needs a project'), then: (v) => { (sv.__recs['plugins/Ticket updates'] ||= recsSeed('plugins', 'Ticket updates')).push({ ...rule(v.proj, sv.tuTracker, v.to), id: 'n' + Date.now() }); return `Rule added for ${v.proj}`; } }) },

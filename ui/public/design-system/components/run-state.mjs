@@ -167,6 +167,18 @@ const STATES = {
       ]
     }
   },
+  'waiting-interrupted': {
+    word: "Waiting",
+    dot: "is-grey-ring",
+    action: {
+      label: "Start now",
+      icon: "play",
+      primary: false,
+      items: [
+        "Cancel"
+      ]
+    }
+  },
   gate: {
     word: "Needs you",
     sym: "q",
@@ -616,6 +628,16 @@ const FLOW = {
     }
   },
   scheduled: {
+    "Start now": {
+      to: "starting",
+      say: "Started now; it no longer waits"
+    },
+    Cancel: {
+      to: "discarded",
+      confirm: "Delete this scheduled run?"
+    }
+  },
+  'waiting-interrupted': {
     "Start now": {
       to: "starting",
       say: "Started now; it no longer waits"
@@ -1149,4 +1171,18 @@ export function stageMeta(st) {
   if (stageState(st.subs) === 'next') return '';
   const m = st.subs.reduce((a, x) => a + (x.time ? toMin(x.time) : 0), 0);
   return m ? fmtMin(m) : '';
+}
+
+/**
+ * Try it never goes dead-ended: it says what is happening, then offers the next step (docs/rail/thing-page.md).
+ * @param {object} f  { checkingOut, settingUp, setupFailed, service: { name, port, running } | null }
+ * @returns {{id:string, text:string, off?:boolean, help:string}[]}  items for the thing's ⋯
+ */
+export function tryStep({ checkingOut = false, settingUp = false, setupFailed = '', service = null }) {
+  if (checkingOut) return [{ id: 'busy', text: 'Checking out…', off: true, help: 'Worca is checking the branch out on this machine' }];
+  if (settingUp) return [{ id: 'busy', text: 'Setting up…', off: true, help: 'The project’s setup is running' }];
+  if (setupFailed) return [{ id: 'setup-again', text: 'Set up again', help: setupFailed }];
+  if (!service) return [{ id: 'actions', text: 'Open Actions', help: 'This project has no service to start; Actions lists what it can do' }];
+  if (service.running) return [{ id: 'open', text: `Open :${service.port}`, help: `Opens localhost:${service.port}` }, { id: 'stop', text: `Stop ${service.name}`, help: `Stops ${service.name}` }];
+  return [{ id: 'start', text: `Start ${service.name}`, help: `Starts ${service.name} on port ${service.port}` }];
 }

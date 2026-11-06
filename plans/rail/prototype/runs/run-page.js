@@ -177,7 +177,7 @@ function actionsHtml(v) {
   const d = v.tabData; const off = v.hosted;
   const hook = (o) => (off ? Object.assign({ disabled: true, title: HOSTED_WHY }, o) : o);
   const svc = d.services.map((x) => { const on = !!ui.services[x.id];
-    return R.listRow({ title: x.name, meta: on ? 'Running on port ' + x.port : 'Port ' + x.port, end: R.button({ label: on ? 'Stop' : 'Start', kind: 'quiet', attrs: hook({ 'data-service': x.id, 'data-key': 'svc:' + x.id }) }) + (on ? R.button({ label: 'Open', kind: 'quiet', attrs: { 'data-say': 'Opened localhost:' + x.port, 'data-key': 'svc-open:' + x.id } }) : '') }); });
+    return R.listRow({ title: x.name, meta: on ? 'Running on port ' + x.port : 'Port ' + x.port, end: R.button({ label: ui.svcBusy === x.id ? (on ? 'Stopping…' : 'Starting…') : on ? 'Stop' : 'Start', kind: 'quiet', attrs: ui.svcBusy === x.id ? { disabled: true, title: 'Waiting for the service', 'data-key': 'svc:' + x.id } : hook({ 'data-service': x.id, 'data-key': 'svc:' + x.id }) }) + (on ? R.button({ label: 'Open', kind: 'quiet', attrs: { 'data-say': 'Opened localhost:' + x.port, 'data-key': 'svc-open:' + x.id } }) : '') }); });
   const tools = d.builtins.map((t, i) => R.button({ label: t, attrs: hook({ 'data-say': t + ': running in the worktree', 'data-key': 'builtin:' + i }) })).concat(R.button({ label: 'Download patch', attrs: { 'data-say': 'Downloading run.patch', 'data-key': 'act-patch' } })).join('');
   let members = '';
   if (v.isWorkspace) {
@@ -470,7 +470,10 @@ function moreItems(v) {
   if (v.hasSetup) items.push({ id: 'more:preset', text: 'Save as preset', help: 'Starts the next run with this task’s setup' });
   // Try it: a local copy to run; another run can hold it, and once open it says so here and in Changes.
   if (v.finished && !v.archived && v.place.branch && !v.place.folder) {
-    if (ui.copy) items.push({ header: 'Local copy open · since 18:12' }, { id: 'more:unlink', text: 'Unlink', help: 'Lets go of the local copy; the branch stays' }, { id: 'more:discard-copy', text: 'Discard the copy', help: 'Removes the local copy; the branch stays' }, { sep: true });
+    const svc0 = v.tabData.services[0];
+    if (ui.tryBusy || ui.copy) items.push({ header: ui.copy && !ui.tryBusy ? 'Local copy open · since 18:12' : 'Try it' }, ...R.tryStep({ checkingOut: ui.tryBusy === 'checkout', settingUp: ui.tryBusy === 'setup', service: svc0 ? { name: svc0.name, port: svc0.port, running: !!ui.services[svc0.id] } : null }).map((x) => Object.assign({}, x, { id: 'try:' + x.id })));
+    if (ui.tryBusy) items.push({ sep: true });
+    else if (ui.copy) items.push({ id: 'more:unlink', text: 'Unlink', help: 'Lets go of the local copy; the branch stays' }, { id: 'more:discard-copy', text: 'Discard the copy', help: 'Removes the local copy; the branch stays' }, { sep: true });
     else items.push({ id: 'more:try', text: 'Try it', off: !!(v.heldBy || v.hosted), hint: v.heldBy ? 'Held' : '', help: v.hosted ? HOSTED_WHY : v.heldBy ? `Held by “${v.heldBy}”; it has the branch checked out` : 'Checks the branch out locally so you can run it' });
   }
   if (group) { const on = !!ui.askEach; if (v.bar.stop) items.push({ id: 'group:toggle', text: 'Ask before each run', checked: on, help: 'Stops for your OK before each later run starts; takes effect at once' }); }
@@ -770,7 +773,7 @@ document.addEventListener('click', (e) => {
   if (d.showearlier !== undefined) { ui.showEarlier = !ui.showEarlier; pendingFocus = 'show-earlier'; render(); return; }
   if (d.mark) { const [id, m] = d.mark.split('|'); ui.marks = Object.assign({}, ui.marks, { [id]: m }); pendingFocus = m === 'met' ? 'mark:' + d.mark : 'mark-' + id; render(); return; }
   if (d.logview) { ui.log = Object.assign({}, ui.log, { raw: d.logview === 'raw' }); pendingFocus = 'logview:' + d.logview; render(); return; }
-  if (d.service) { const on = !ui.services[d.service]; ui.services = Object.assign({}, ui.services, { [d.service]: on }); toast(on ? 'Started' : 'Stopped'); pendingFocus = 'svc:' + d.service; render(); return; }
+  if (d.service) { const id = d.service; const on = !ui.services[id]; ui.svcBusy = id; pendingFocus = 'svc:' + id; render(); setTimeout(() => { ui.svcBusy = ''; ui.services = Object.assign({}, ui.services, { [id]: on }); toast(on ? 'Started' : 'Stopped'); pendingFocus = 'svc:' + id; render(); }, 500); return; }
   if (d.checkout !== undefined) { ui.copy = !ui.copy; toast(ui.copy ? 'Checked out ' + (v0().place.branch || 'the branch') + ' on this machine' : 'Unlinked the local copy; the branch stays'); pendingFocus = 'ch:checkout'; render(); return; }
   if (d.cmt) {
     if (d.cmt === 'open') { const lines = v0().tabData.hunk.lines.filter(([k]) => k !== ' ').map(([, x]) => x.trim()); ui.commentOn = { path: d.path, line: lines[lines.length - 1], text: '', err: '' }; pendingFocus = 'cmt-text'; }
@@ -818,7 +821,10 @@ document.addEventListener('click', (e) => {
     }
     else if (d.menuPick.startsWith('pushr:')) { ui.pr.push = d.menuPick.slice(6); ui.menu = ''; pendingFocus = 'menu:pdpush'; }
     else if (d.menuPick.startsWith('baser:')) { ui.pr.remote = d.menuPick.slice(6); ui.menu = ''; pendingFocus = 'menu:pdremote'; }
-    else if (d.menuPick === 'more:try') { ui.copy = true; ui.menu = ''; pendingFocus = 'menu:more'; toast('Checked out on this machine · local copy open'); }
+    else if (d.menuPick === 'more:try') { ui.tryBusy = 'checkout'; ui.menu = 'more'; pendingFocus = 'menu:more'; setTimeout(() => { ui.tryBusy = 'setup'; render(); setTimeout(() => { ui.tryBusy = ''; ui.copy = true; toast('Checked out on this machine · local copy open'); render(); }, 500); }, 500); }
+    else if (/^try:(start|stop)$/.test(d.menuPick)) { const id = v0().tabData.services[0].id; const on = d.menuPick === 'try:start'; ui.services = Object.assign({}, ui.services, { [id]: on }); ui.menu = 'more'; pendingFocus = 'menu:more'; toast(on ? 'Started' : 'Stopped'); }
+    else if (d.menuPick === 'try:open') { ui.menu = ''; pendingFocus = 'menu:more'; toast('Opened localhost:' + v0().tabData.services[0].port); }
+    else if (d.menuPick === 'try:actions') { ui.tab = 'changes'; ui.menu = ''; pendingFocus = 'menu:more'; }
     else if (d.menuPick === 'more:unlink' || d.menuPick === 'ch:discard-copy' || d.menuPick === 'more:discard-copy') { const unlink = d.menuPick === 'more:unlink'; ui.copy = false; ui.menu = ''; pendingFocus = 'menu:more'; toast(unlink ? 'Unlinked the local copy; the branch stays' : 'Discarded the local copy; the branch stays'); }
     else if (d.menuPick === 'more:preset') { ui.menu = ''; ui.dialogF = { dialog: 'preset', say: 'Saved as preset “{value}”' }; ui.dialogLabel = 'Save as preset'; follow(ui.dialogF, 'Save as preset'); }
     else if (d.menuPick === 'more:delete') { follow({ to: 'deleted', say: 'Deleted', confirm: 'Delete this ' + v0().kind.toLowerCase() + ' and its runs? This cannot be undone; their PRs stay.' }, 'Delete'); }

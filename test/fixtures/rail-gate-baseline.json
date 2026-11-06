@@ -61,7 +61,7 @@
   "ui/public/report-run.mjs": 1,
   "ui/public/requirements-view.mjs": 10,
   "ui/public/run-glance.mjs": 2,
-  "ui/public/run-head.mjs": 10,
+  "ui/public/run-head.mjs": 9,
   "ui/public/run-kind.mjs": 1,
   "ui/public/run-presets-picker.mjs": 1,
   "ui/public/run-status-card.mjs": 4,

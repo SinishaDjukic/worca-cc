@@ -33,7 +33,7 @@
       ['project.sync_failed', 'Sync failed', 'problem'], ['project.sync_behind', 'Behind its remote', 'info']] },
   ];
   const EVENT = Object.fromEntries(GROUPS.flatMap((g) => g.events.map(([id, name, sev]) => [id, { id, name, sev, g: g.id }])));
-  const CHANNELS = ['Telegram', 'Discord'];
+  const CHANNELS = ['Telegram', 'Discord', 'Slack', 'Teams'];
   // Now › Scheduled, top to bottom.
   const SCHED = [['missed', 'Missed'], ['today', 'Today'], ['tomorrow', 'Tomorrow'], ['week', 'This week'], ['later', 'Later'], ['after', 'After a run']];
   const LEVELS = [
@@ -44,7 +44,7 @@
   const WHERE = [
     { id: 'pulse', text: 'Pulse only', help: 'Kept in Pulse; nothing leaves Worca' },
     { id: 'desktop', text: 'desktop', help: 'Also a desktop notification, in browsers that allow it' },
-    { id: 'chat', text: 'chat', help: 'Also a message to your chat channels (Telegram, Discord)' },
+    { id: 'chat', text: 'chat', help: 'Also a message to your chat channels (Telegram, Discord, Slack, Teams)' },
     { id: 'both', text: 'desktop and chat', help: 'Also a desktop notification and a chat message' },
   ];
   const RANK = { needs: 0, problem: 1, info: 2 };
@@ -110,6 +110,7 @@
         up('u5', 'run.done', 'Tidy the settings page', 'worca-cc · 18 min · $1.42', '08:40', 'Today', { go: 'run/ready' }),
         up('u6', 'usage.reset', '', 'OpenAI · Plus · Session', '17:05', 'Yesterday', { title: 'Codex session reset · 1 run resumed', to: 'the resumed run', go: 'run/working' }),
         up('u7', 'run.questions', 'Split the auth module', 'worca-cc · answered at 11:20', '11:02', 'Yesterday', { read: true, resolved: true, go: 'run/working' }),
+        up('u8', 'schedule.missed', 'Run after: Breadcrumb tests', 'worca-cc · started late, when the run before it resumed · Open run', '10:40', 'Yesterday', { read: true, resolved: true, go: 'run/working' }),
         up('u8', 'project.clone_done', 'acme/design-tokens', 'Projects · 2.1 MB', '10:15', 'Yesterday', { to: 'the project page', go: 'projects' })] },
     { id: 'near', label: 'Session near its limit', desktop: 'unsupported', task: { title: 'Add rate limiting to the public API', size: 'large' },
       away: { status: 'no-hours' }, actions: [],

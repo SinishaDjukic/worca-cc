@@ -69,6 +69,8 @@
     // States the app has today: a run waiting to start after another, a review gate, a cost cap, kept work, archived
     { id: 'scheduled', group: 'Run', label: 'Waiting (run after)', detail: 'Starts when “Unified page navigation” finishes', figs: [['Time', '0m'], ['Cost', '$0.00']],
       title: 'Breadcrumb tests for saved runs', tabs: [['summary', 'Overview'], ['activity', 'Activity'], ['decisions', 'Decisions']], stages: run({ plan: allNext(PLAN), build: allNext(BUILD), review: allNext(REVIEW) }) },
+    { id: 'waiting-interrupted', group: 'Run', label: 'Waiting on an interrupted run', detail: '“Unified page navigation” was interrupted and can still resume; this waits for it', figs: [['Time', '0m'], ['Cost', '$0.00']],
+      title: 'Breadcrumb tests for saved runs', tabs: [['summary', 'Overview'], ['activity', 'Activity'], ['decisions', 'Decisions']], stages: run({ plan: allNext(PLAN), build: allNext(BUILD), review: allNext(REVIEW) }) },
     { id: 'gate', group: 'Run', label: 'Review gate', detail: 'Review sent it back 3 times; the limit is 3', figs: LIVE_FIGS,
       stages: run({ review: [s('Review implementation', 'ask', '37m 21s', { loops: 3, live: 'Still 1 minor issue after 3 rounds: accept, or run another cycle?', when: '6m' }), next('Manual tests checklist'), next('Manual web UI testing')] }) },
     { id: 'capped', group: 'Run', label: 'Paused at cost cap', detail: 'Reached the $120 cap for this run', figs: LIVE_FIGS,
