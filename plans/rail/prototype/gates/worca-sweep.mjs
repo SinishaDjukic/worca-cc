@@ -2,7 +2,8 @@
 // The one Worca's gate (index.html): today's shell and pages with Wave 1 in them. Every route, at 1280, 760 and 375px,
 // in both themes: no script error, no sideways scroll, the top bar one row, one way back at a time, the sidebar marking
 // where you are. Then the journeys between the pieces: a run row opens its run (same title), the trail goes back to
-// Runs, Pulse opens, the profile menu opens Settings, a Settings section opens, Back to Worca gives the sidebar back.
+// Runs, Pulse opens, the profile menu opens Settings, a Settings section opens, Back to Worca gives the sidebar back; the
+// sidebar's three widths (narrow.nav), the side column's three tiers (panel.side-column), and a deep link above the mode.
 // The run page and Pulse keep their own gates (run-page-sweep, pulse-sweep, ds-check); this one checks how they join.
 import { chromium } from 'playwright';
 import { fileURLToPath } from 'node:url';
@@ -19,7 +20,7 @@ const ROUTES = [...TODAY, ...RUNS.map((c) => 'run/' + c), ...SECTIONS.map((s) =>
 const issues = new Map(); const add = (k, w) => { if (!issues.has(k)) issues.set(k, []); if (issues.get(k).length < 12) issues.get(k).push(w); };
 const b = await chromium.launch({ channel: 'chrome' });
 let checks = 0;
-for (const scheme of ['light', 'dark']) for (const w of [1280, 760, 375]) {
+for (const scheme of ['light', 'dark']) for (const w of [1280, 900, 760, 375]) {
   const p = await b.newPage({ viewport: { width: w, height: 860 }, colorScheme: scheme, reducedMotion: 'reduce' });
   p.on('pageerror', (e) => add('script error', `${scheme}/${w}: ${e}`));
   for (const r of ROUTES) {
@@ -33,8 +34,9 @@ for (const scheme of ['light', 'dark']) for (const w of [1280, 760, 375]) {
       if (backs.length > 1) out.push(['two ways back shown', backs.map((x) => x.className).join(' + ')]);
       const view = r.split('/')[0], place = view === 'run' ? 'runs' : view;
       const cur = document.querySelector('#side-rail nav.nav [aria-current="page"]');
-      if (view !== 'settings' && document.querySelector('#side-rail').offsetParent && (!cur || cur.dataset.nav !== place)) out.push(['the sidebar does not mark the place', `${place} (marked: ${cur ? cur.dataset.nav : 'none'})`]);
-      if (view === 'settings' && document.querySelector('#side-rail').offsetParent && innerWidth > 760 && !document.querySelector('#side-rail .side-menu')) out.push(['Settings without its menu', '']);
+      const locked = !!document.querySelector('#route-today [data-unlock]');
+      if (view !== 'settings' && !locked && document.querySelector('#side-rail').offsetParent && (!cur || cur.dataset.nav !== place)) out.push(['the sidebar does not mark the place', `${place} (marked: ${cur ? cur.dataset.nav : 'none'})`]);
+      if (view === 'settings' && document.querySelector('#side-rail').offsetParent && innerWidth > 1080 && !document.querySelector('#side-rail .side-menu')) out.push(['Settings without its menu', '']);
       const shown = view === 'run' ? '#route-run' : view === 'settings' ? '#route-settings' : '#route-today';
       if (!document.querySelector(shown).textContent.trim()) out.push(['an empty page', '']);
       return out;
@@ -50,10 +52,28 @@ for (const scheme of ['light', 'dark']) for (const w of [1280, 760, 375]) {
   await step('Pulse opens', () => document.querySelector('[data-pop]')?.click(), () => !!document.querySelector('.pz-popover'));
   await step('the profile menu opens', () => { document.body.click(); document.querySelector('[data-acct]')?.click(); }, () => !!document.querySelector('#app .acct-menu'));
   await step('the profile menu opens Settings', () => document.querySelector('#app [data-go="settings"]')?.click(), () => location.hash.startsWith('#settings') && !document.querySelector('#route-settings').hidden);
-  if (w > 760) {
+  if (w > 1080) {
     await step('a Settings section opens', () => document.querySelector('#side-rail [data-sset="runs"]')?.click(), () => location.hash === '#settings/runs' && [...document.querySelectorAll('#route-settings .pz-title')].find((t) => t.offsetParent)?.textContent === 'Runs');
     await step('Back to Worca gives the sidebar back', () => document.querySelector('#side-rail .side-back')?.click(), () => !document.querySelector('#side-rail .side-menu') && !!document.querySelector('#side-rail [data-nav="runs"]'));
   }
+  // the sidebar's width
+  await p.goto(`${URL_}#runs`); await p.waitForTimeout(350);
+  const sideW = await p.evaluate(() => Math.round(document.getElementById('side-rail').getBoundingClientRect().width));
+  if (w > 1080 ? sideW !== 224 : w > 760 ? sideW !== 60 : false) add('the sidebar has the wrong width', `${scheme}/${w}: ${sideW}`);
+  if (w <= 760) {
+    await step('the drawer opens', () => document.getElementById('mbar-menu').click(), () => document.body.classList.contains('nav-open') && getComputedStyle(document.getElementById('side-rail')).visibility === 'visible');
+    await step('the drawer closes', () => document.getElementById('nav-scrim').click(), () => !document.body.classList.contains('nav-open') && getComputedStyle(document.getElementById('side-rail')).visibility === 'hidden');
+  }
+  // the side column: push, cover, window; closes at once
+  await p.evaluate(() => document.getElementById('topnav-ask').click()); await p.waitForTimeout(250);
+  const ask = await p.evaluate(() => ({ w: document.getElementById('ask-side').getBoundingClientRect().width, main: document.querySelector('.main').getBoundingClientRect().width, mainAlone: innerWidth - document.getElementById('side-rail').getBoundingClientRect().width }));
+  if (w > 1080 ? ask.main > ask.mainAlone - ask.w + 1 : w > 760 ? ask.main < ask.mainAlone - 1 : ask.w !== w) add('the side column is on the wrong tier', `${scheme}/${w}: ${JSON.stringify(ask)}`);
+  await step('the side column closes', () => document.querySelector('[data-ask-close]').click(), () => document.getElementById('ask-side').hidden);
+  // a deep link above the mode: one line and its one way on; the search says the same
+  await p.evaluate(() => RailUI.prefs.setMode('simple'));
+  await p.evaluate(() => { location.hash = 'schedules'; }); await p.waitForTimeout(100);
+  if (await p.evaluate(() => !document.querySelector('[data-nav="schedules"]').hidden)) add('the sidebar ignores the mode', `${scheme}/${w}`);
+  await step('a place above the mode unlocks', () => document.querySelector('#route-today [data-unlock]')?.click(), () => RailUI.prefs.mode() === 'advanced' && !document.querySelector('#route-today [data-unlock]'));
   await p.close();
 }
 await b.close();

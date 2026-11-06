@@ -27,6 +27,9 @@
     <label class="pd-check" title="The next confirmed step or suggestion fails, to show how a failure reads"><input type="checkbox" id="fail-next"> Next one fails</label>
     <label title="What an error nobody planned for looks like">Break <select class="select select-sm" id="break"><option value="">Nothing</option><option value="step">The next step, unexpectedly</option><option value="part">This tab</option><option value="background">Something in the background</option><option value="offline">The connection</option></select></label>
     <label>Pulse <select class="select select-sm" id="pulse-case"></select></label>
+    <label title="On a shared sign-in, read and cleared belong to each person; try the Every kind case">Person <select class="select select-sm" id="person"><option>Emil Angelov</option><option>Dana Ruiz</option></select></label>
+    <label title="What the shell shows when the connection drops or the sign-in ends">Connection <select class="select select-sm" id="conn"><option value="ok">Connected</option><option value="offline">Offline</option><option value="session">Session expired</option></select></label>
+    <span class="mk-row"><button type="button" class="btn btn-sm" id="play-away" title="Plays the away screensaver now, without the 5 idle minutes; any input hides it">Play screensaver</button></span>
     <div class="seg" role="group" aria-label="Theme"><button type="button" data-theme-pick="light">Light</button><button type="button" data-theme-pick="dark">Dark</button></div>
     <p class="mk-note">Other pages keep today's design in the Rail colours. Explorers: <a href="run-page.html">run page cases</a> · <a href="pulse.html">Pulse cases</a> · <a href="components.html">components</a>.</p>
   </div>

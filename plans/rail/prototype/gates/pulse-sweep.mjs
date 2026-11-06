@@ -20,6 +20,8 @@ const VIEWS = {
   usage: async (p) => { await click(p, '[data-acct]'); await click(p, '[data-sub="usage"]'); },
   popSelect: async (p) => { await click(p, '[data-pop]'); await click(p, '[data-ptab="updates"]'); await click(p, '[data-menu="more"]'); await click(p, '[data-pick="more|select"]'); await click(p, '[data-sel]'); },
   popNowFiltered: async (p) => { await click(p, '[data-pop]'); await click(p, '[data-menu="nowShow"]'); await click(p, '[data-pick="nowShow|running"]'); },
+  actions: async (p) => click(p, '[data-act-tile]'),
+  levelFly: async (p) => { await click(p, '[data-acct]'); await click(p, '[data-sub="lvl"]'); },
   popMore: async (p) => { await click(p, '[data-pop]'); await click(p, '[data-ptab="updates"]'); await click(p, '[data-menu="more"]'); },
   newrun: async (p) => click(p, '[data-newrun]'),
   newrunSmall: async (p) => { await click(p, '[data-newrun]'); await click(p, '[data-menu="nr-size"]'); await click(p, '[data-pick="nr-size|small"]'); },
@@ -89,7 +91,7 @@ for (const scheme of ['dark', 'light']) for (const w of [375, 900]) {
         el.click();
         const after = document.getElementById('app').innerHTML.replace(/ data-k="k\d+"/g, '') + document.querySelector('.rc-toast').textContent;
         const maxY = document.documentElement.scrollHeight - window.innerHeight;   // a page that got shorter may have to give some back
-        const goes = el.matches('[data-sset], [data-go]');   // to another page: it opens at its top
+        const goes = el.matches('[data-sset], [data-go], [data-land], [data-team]');   // to another page: it opens at its top
         return { label, moved: !goes && Math.abs(window.scrollY - Math.min(y, maxY)) > 1, dead: after === before.replace(/ data-k="k\d+"/g, ''), side: document.documentElement.scrollWidth > document.documentElement.clientWidth + 1 };
       }, k);
       if (!r) continue; clicks++;
@@ -100,5 +102,9 @@ for (const scheme of ['dark', 'light']) for (const w of [375, 900]) {
   }
   await p.close();
 }
+// the catalogue reaches the page: every event of every group has a row in the case that holds them all
+const pc = await b.newPage(); await pc.goto(URL);
+for (const miss of await pc.evaluate(() => { const M = window.PulseModel, every = M.CASES.find((c) => c.id === 'every'); return Object.keys(M.EVENT).filter((e) => !every.updates.some((u) => u.e === e)); })) add('an event no case shows', miss);
+await pc.close();
 console.log(`${clicks} clicks · ` + (issues.size ? '\n' + [...issues].map(([k, v]) => `${k}\n   ${v.join('\n   ')}`).join('\n') : 'no glitches found'));
 await b.close();
