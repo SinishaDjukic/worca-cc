@@ -12,4 +12,19 @@
 .mcp-res-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(0,1.4fr);gap:12px;padding:8px 0;border-top:1px solid var(--line);}
 .mcp-res-skip{color:var(--amber-ink);}
 .mcp-resolution,.mcp-proj-sets{margin-bottom:14px;}
+/* Import from other tools (mcp-server-import.mjs): #plugin-modal sits outside [data-view="connectors"], so .mono again. */
+#plugin-modal .card:has(.mcp-imp){max-width:880px;width:min(94vw,880px);}
+.mcp-imp .mono{font-family:var(--mono);}
+.mcp-imp-project-field,.mcp-imp-name-field{display:flex;align-items:center;gap:8px;margin:8px 0;}
+.mcp-imp-files{margin:8px 0;padding-left:18px;font-size:12px;}
+.mcp-imp-files .err{color:var(--red-ink);}
+.mcp-imp-row{padding:10px 0;border-top:1px solid var(--line);}
+.mcp-imp-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.mcp-imp-target{display:block;margin-top:6px;font-size:12px;overflow-wrap:anywhere;}
+.mcp-imp-values{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:2px 12px;margin:6px 0 0;font-size:12px;}
+.mcp-imp-values dd{margin:0;display:flex;align-items:center;gap:6px;}
+.mcp-imp-name{max-width:220px;}
+.mcp-imp-warn{color:var(--amber-ink);padding-left:18px;}
+.mcp-imp-effects{padding-left:18px;}
+.mcp-imp-changes td{overflow-wrap:anywhere;}
 @media (max-width:760px){.mcp-sets{grid-template-columns:1fr;}}

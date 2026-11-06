@@ -278,6 +278,29 @@ reading a project `.codex/config.toml`. A wrong guess lists nothing for that fil
 JSONC files (VS Code, Gemini CLI) the line and column of a parse error are approximate, because comments are
 stripped before parsing.
 
+#### From the Servers view
+
+A person can do the same import without the chat. On Connectors › MCP servers, the Servers view has
+**Import from other tools**:
+
+- The dialog lists what the files above hold, with the same masking, flags and per-file errors. It scans this
+  machine's user-level files and, if you pick one, a registered project's files. On a container or hosted worca
+  the user-level files are not read, and the dialog says so: pick a project to scan its files.
+- Tick up to 10 servers. Each ticked row has a worca name, prefilled with the suggested one; change it when that
+  name is taken or none could be made. Servers already in worca, and servers that cannot be imported, cannot be
+  ticked.
+- **Review** shows the import card the chat would show: the definition rows, the empty secret fields, the
+  variable notes, the skipped servers and the ones already in worca. Nothing is written yet.
+- **Import** adds the definitions as Manual servers in no set. Turn them on in a set to use them. They are
+  written together: if another tab or the chat took one of the names meanwhile, none of them is added.
+- If the files or worca's servers changed since the review, Import answers that they changed and offers
+  **Review again**. The import writes only what you reviewed.
+
+The routes are `GET /api/mcp/discover?project=<key>` (read-only) and `POST /api/mcp/import`. The POST takes
+`{ projectKey, servers: [{ id, as }] }` and answers the review with a `digest`. The same body with `apply: true`
+and that `digest` writes. Under agent isolation both need the UI token, like every Connectors route. An apply
+from a caller that may be an agent is refused (`MCP_IMPORT_AGENT_BLOCKED`): a person confirms an import.
+
 ## One registry per worca
 
 The registry is per `WORCA_HOME`. On a shared instance every signed-in person edits the same sets

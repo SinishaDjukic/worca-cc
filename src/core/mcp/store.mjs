@@ -484,19 +484,41 @@ function checkManual(name, raw) {
   return def;
 }
 
+function checkFreeName(s, name, catalogNames) {
+  const held = Object.entries(s.bases).some(([id, base]) => base === name && id !== `manual:${name}`);
+  if (Object.hasOwn(s.manual, name) || held || catalogNames.includes(name)) {
+    fail(409, `the name "${name}" is taken — choose another`);
+  }
+}
+
 /** §4.1 manual definitions. `catalogNames` = the declared name of every catalog id (the caller's catalog). */
 export async function addManualServer(name, rawDef, { catalogNames = [] } = {}) {
   const def = checkManual(name, rawDef);
   return withMcpLock(async (tx) => {
     const s = tx.snapshot;
-    const held = Object.entries(s.bases).some(([id, base]) => base === name && id !== `manual:${name}`);
-    if (Object.hasOwn(s.manual, name) || held || catalogNames.includes(name)) {
-      fail(409, `the name "${name}" is taken — choose another`);
-    }
+    checkFreeName(s, name, catalogNames);
     s.manual[name] = def;
     Object.assign(s.bases, assignBaseNames(s.bases, [`manual:${name}`]));
     await tx.write('servers');
     return def;
+  });
+}
+
+/** Several manual definitions at once (`list` = [{name, def}]): every definition and name is checked first, then the
+ *  whole list is written in ONE locked servers write, so a refusal anywhere writes none of it. Returns the defs. */
+export async function addManualServers(list, { catalogNames = [] } = {}) {
+  if (!Array.isArray(list) || !list.length) fail(400, 'nothing to add');
+  const defs = list.map((x) => checkManual(x.name, x.def));
+  const names = list.map((x) => x.name);
+  const twice = names.find((n, i) => names.indexOf(n) !== i);
+  if (twice !== undefined) fail(409, `the name "${twice}" is taken — choose another`);
+  return withMcpLock(async (tx) => {
+    const s = tx.snapshot;
+    for (const n of names) checkFreeName(s, n, catalogNames);
+    names.forEach((n, i) => { s.manual[n] = defs[i]; });
+    Object.assign(s.bases, assignBaseNames(s.bases, names.map((n) => `manual:${n}`)));
+    await tx.write('servers');
+    return defs;
   });
 }
 

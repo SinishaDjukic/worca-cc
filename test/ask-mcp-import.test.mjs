@@ -5,7 +5,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { discoverMcpConfigs } from '../src/core/mcp/discover.mjs';
-import { createMcpImportValidator, suggestName, worcaMatch, MCP_IMPORT_ERRORS } from '../src/core/ask/mcp-import.mjs';
+import { createMcpImportValidator, suggestName, worcaMatch, MCP_IMPORT_ERRORS, MCP_IMPORT_UI_ERRORS } from '../src/core/ask/mcp-import.mjs';
 import { createMcpChangeValidator } from '../src/core/ask/mcp-proposal.mjs';
 import { validateMcpDefinition } from '../src/core/mcp/definitions.mjs';
 import { createAskTools } from '../src/core/ask/tools.mjs';
@@ -165,4 +165,38 @@ test('one-argument secret flags and command credentials are skipped; an auth val
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.deepEqual(r.card.change.servers[0].def.headers['X-Upstream'], { field: 'X_Upstream', prefix: 'Bearer ' });
   assert.equal(JSON.stringify(r).includes('hunter9'), false);
+});
+
+// Connectors › MCP servers' import (ui/routes/mcp-servers/servers.mjs) passes its own wording: no chat tool, no JSON.
+const uiValidate = createMcpImportValidator({ ...registry, errors: MCP_IMPORT_UI_ERRORS, discover: async () => disc });
+const CHAT_WORDS = /discover_mcp_servers|propose_mcp_change|"as"/;
+
+test('UI error table: no chat tool names', async () => {
+  assert.deepEqual(Object.keys(MCP_IMPORT_UI_ERRORS).sort(), Object.keys(MCP_IMPORT_ERRORS).sort());
+  assert.equal(Object.isFrozen(MCP_IMPORT_UI_ERRORS), true);
+  const cases = [
+    [{ servers: [] }, ['pick 1–10 servers to import']],
+    [{ servers: ['cursor:user:nope'] }, ["a picked server is no longer in the other tools' files (cursor:user:nope) — list them again"]],
+    [{ servers: [idOf('文書')] }, ['"文書" is not a worca name (1–20 lowercase letters, digits or -, starting with a letter) — change it']],
+    [{ servers: [idOf('files'), { id: idOf('openai'), as: 'files' }] }, ['two picked servers would both be named "files" — give one another name']],
+    [{ servers: [idOf('docs')] }, ['the name "docs" is taken — choose another']],
+    [{ servers: [idOf('github')] }, ['nothing to import: every picked server is already in worca or cannot be imported']],
+  ];
+  for (const [inp, errors] of cases) {
+    const r = await uiValidate(inp);
+    assert.equal(r.ok, false, JSON.stringify(inp));
+    assert.deepEqual(r.errors, errors);
+    assert.doesNotMatch(r.errors.join('\n'), CHAT_WORDS);
+  }
+});
+
+test('default errors unchanged (chat parity)', async () => {
+  const chat = createMcpImportValidator({ ...registry, discover: async () => disc });
+  assert.deepEqual((await chat({ servers: [] })).errors, [MCP_IMPORT_ERRORS.picks]);
+  assert.deepEqual((await chat({ servers: ['cursor:user:nope'] })).errors, [MCP_IMPORT_ERRORS.unknown('cursor:user:nope')]);
+  assert.deepEqual((await chat({ servers: [idOf('文書')] })).errors, [MCP_IMPORT_ERRORS.badName(idOf('文書'), '文書')]);
+  assert.deepEqual((await chat({ servers: [idOf('files'), { id: idOf('openai'), as: 'files' }] })).errors, [MCP_IMPORT_ERRORS.twice('files')]);
+  assert.deepEqual((await chat({ servers: [idOf('docs')] })).errors, [MCP_IMPORT_ERRORS.taken('docs', idOf('docs'))]);
+  assert.deepEqual((await chat({ servers: [idOf('github')] })).errors, [MCP_IMPORT_ERRORS.nothing]);
+  assert.match(MCP_IMPORT_ERRORS.picks, /discover_mcp_servers/);
 });

@@ -25,6 +25,15 @@ export const MCP_IMPORT_ERRORS = Object.freeze({
   taken: (n, id) => `${MCP_ERRORS.taken(n)}: pass {"id": "${idText(id)}", "as": "<new name>"}`,
   nothing: 'nothing to import: every picked server is already in worca or cannot be imported (see alreadyPresent and skipped)',
 });
+/** The same errors in a person's words, for Connectors › MCP servers' import (no chat tool, no JSON). */
+export const MCP_IMPORT_UI_ERRORS = Object.freeze({
+  picks: `pick 1–${MCP_IMPORT_MAX} servers to import`,
+  unknown: (id) => `a picked server is no longer in the other tools' files (${idText(id)}) — list them again`,
+  badName: (id, name) => `"${idText(name)}" is not a worca name (1–20 lowercase letters, digits or -, starting with a letter) — change it`,
+  twice: (n) => `two picked servers would both be named "${n}" — give one another name`,
+  taken: (n, _id) => `${MCP_ERRORS.taken(n)}`,
+  nothing: 'nothing to import: every picked server is already in worca or cannot be imported',
+});
 
 /** A worca name for a file's server name, or '' when none can be made. */
 export function suggestName(name) {
@@ -121,13 +130,15 @@ export function discoveryView(disc, catalog) {
 /**
  * kind "import" of propose_mcp_change (bound as createMcpChangeValidator's importChange).
  * @param {{ discover: (o:{pin:object|null}) => Promise<{servers:object[], files:object[]}>, catalog: () => Promise<object[]>,
- *   nameTaken: (name:string) => Promise<boolean>, engines: (name:string, def:object) => {on:string[], off:object[]} }} r
+ *   nameTaken: (name:string) => Promise<boolean>, engines: (name:string, def:object) => {on:string[], off:object[]},
+ *   errors?: typeof MCP_IMPORT_ERRORS }} r  errors: the wording table (default the chat's; MCP_IMPORT_UI_ERRORS for Settings)
  */
 export function createMcpImportValidator(r) {
+  const E = r.errors ?? MCP_IMPORT_ERRORS;
   const fail = (errors, extra) => ({ ok: false, errors: errors.map(scrub), ...extra });
   return async function validateMcpImport(inp, { pin = null } = {}) {
     const picks = Array.isArray(inp.servers) ? inp.servers : [];
-    if (!picks.length || picks.length > MCP_IMPORT_MAX) return fail([MCP_IMPORT_ERRORS.picks], {});
+    if (!picks.length || picks.length > MCP_IMPORT_MAX) return fail([E.picks], {});
     const [disc, cat] = await Promise.all([r.discover({ pin }), r.catalog()]);
     const byId = new Map(disc.servers.map((s) => [s.id, s]));
     const errors = []; const adds = []; const alreadyPresent = []; const skipped = []; const names = new Set();
@@ -135,15 +146,15 @@ export function createMcpImportValidator(r) {
       const id = typeof p === 'string' ? p.trim() : isObj(p) ? str(p.id) : '';
       const as = isObj(p) ? str(p.as) : '';
       const raw = byId.get(id);
-      if (!raw) { errors.push(MCP_IMPORT_ERRORS.unknown(id)); continue; }
+      if (!raw) { errors.push(E.unknown(id)); continue; }
       const from = fromLabel(raw);
       const name = as || suggestName(raw.name);
       const present = worcaMatch(raw, [name, suggestName(raw.name), raw.name], cat);
       if (present) { alreadyPresent.push({ id, name: present.base, from }); continue; }
-      if (!SERVER_NAME_RE.test(name) || name === 'worca') { errors.push(MCP_IMPORT_ERRORS.badName(id, name || raw.name)); continue; }
-      if (names.has(name)) { errors.push(MCP_IMPORT_ERRORS.twice(name)); continue; }
+      if (!SERVER_NAME_RE.test(name) || name === 'worca') { errors.push(E.badName(id, name || raw.name)); continue; }
+      if (names.has(name)) { errors.push(E.twice(name)); continue; }
       names.add(name);
-      if (await r.nameTaken(name)) { errors.push(MCP_IMPORT_ERRORS.taken(name, id)); continue; }
+      if (await r.nameTaken(name)) { errors.push(E.taken(name, id)); continue; }
       const { input, problems, notes } = importInput(raw);
       if (problems.length) { skipped.push({ id, name, from, reasons: problems.map((x) => clean(scrub(x), 200)) }); continue; }
       const built = buildDefinition(input, null);
@@ -154,7 +165,7 @@ export function createMcpImportValidator(r) {
     }
     const extra = { alreadyPresent, skipped };
     if (errors.length) return fail(errors, extra);
-    if (!adds.length) return fail([MCP_IMPORT_ERRORS.nothing], extra);
+    if (!adds.length) return fail([E.nothing], extra);
     const note = clip(str(inp.note), 200);
     const list = adds.map((a) => a.name).join(', ');
     const card = {
