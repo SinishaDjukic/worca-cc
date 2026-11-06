@@ -3,9 +3,9 @@
 The redesign of Worca, one page at a time. The rules every Rail page follows live in `docs/rail/`
 (the single source); this folder holds each page's spec, its review and the prototype.
 
-Online: the [Design System](https://claude.ai/artifact/P38jGMS7jA9XQu2U2uP3HP) (a readable view built from
-`docs/design-system.md`, the app's CSS parts in `ui/public/` and the prototype) and the
-[Prototype](https://claude.ai/artifact/3S1E6PBSDpnK9R2G7fVhfz).
+The prototype's code here is the source. The **Worca Rail** page is generated from the branch by
+`node tools/rail-artifact.mjs` (the rules, the catalog, the library's gallery) and never edited by hand. The old
+**Prototype** artifact is retired as a source: never build from it or edit it.
 
 | Page | Spec | Status |
 |---|---|---|

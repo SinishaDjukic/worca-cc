@@ -35,3 +35,4 @@ e2e/extension/playwright-report/
 tools/demo/extension-video/out/
 .gstack/
 .test-timings/
+plans/rail/generated/

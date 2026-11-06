@@ -40,6 +40,8 @@ test, today's Worca or Rail. Graduation (Wave 5) removes the flag, every part in
 
 ## Wave 1.5: the design system holds (after Wave 1 merges)
 
+Done in Agreed: all five items below. They stay here as the record of what was agreed.
+
 The consistency work we agreed on, in this order. It keeps the philosophy and makes "everything has one place" true of
 the design system itself.
 

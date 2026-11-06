@@ -7,6 +7,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as LIB from '../ui/public/design-system/components/index.mjs';
+import { catalogHtml, chapters as pageChapters } from '../tools/rail-artifact.mjs';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const read = (f) => readFileSync(join(ROOT, f), 'utf8');
@@ -66,4 +67,11 @@ test('contributors and agents are pointed at the design system', () => {
 
 test('no pointer to the deleted Shaping branch is left in what Agreed decided', () => {
   for (const f of readdirSync(join(ROOT, 'plans/rail/agreed'))) if (f.endsWith('.md')) assert.doesNotMatch(read(`plans/rail/agreed/${f}`), /rail-shaping|plans\/rail\/shaping/, f);
+});
+
+test('the generated page holds every chapter, rule and catalog entry, from the sources alone', () => {
+  const ch = pageChapters(); const html = ch.map((c) => c.html).join('') + catalogHtml();
+  for (const f of readdirSync(join(ROOT, RAIL))) { const id = f === 'README.md' ? 'rail' : f.replace('.md', ''); assert.ok(ch.some((c) => c.id === id), `${f} is not on the page`); }
+  for (const r of rules()) assert.ok(html.includes(r.id), `${r.id} is not on the page`);
+  for (const c of [...catalog().components, ...catalog().patterns, ...catalog().logic]) assert.ok(html.includes(c.name.replace(/&/g, '&amp;')), `${c.name} is not on the page`);
 });

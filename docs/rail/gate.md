@@ -26,3 +26,5 @@ fault.
   file that grows fails; a file that shrinks lowers its count in the same change, with `node tools/rail-gate.mjs --update`,
   which refuses a higher one.
 - **The docs, catalog, library and gallery agree** (`test/rail-docs.test.mjs`).
+- **The Worca Rail page is generated** from these files, the catalog and the library by `node tools/rail-artifact.mjs`, and
+  never edited by hand. Git is the source; nothing is copied.

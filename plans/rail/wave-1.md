@@ -78,6 +78,8 @@ Rail follows the app's file layout (`docs/split-by-feature.md`, #919) like any o
 
 ## Handed over (4 Nov)
 
+Note (6 Nov): Agreed now holds the library complete and the shared logic, so slice 2 below is done there; the Wave 1 redo starts from that base.
+
 The prototype of all of Worca (`plans/rail/prototype/index.html`) and the design system as the source (rules,
 catalog, the components in code with their tests and gallery, the gates) are on `feat/rail-components`. Wave 1 goes to
 Worca's Shaper from that branch as one Feature; Shaper writes the inventory of the missing functionality and the
