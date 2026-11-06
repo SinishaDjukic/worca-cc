@@ -17,7 +17,7 @@ function freshSettings(c) {
 }
 // a case starts fresh: nothing from the case before it carries over
 const fresh = (caseId) => ({ caseId, page: 'runs', pop: false, popTab: 'now', acct: false, sub: '', nr: null, menu: '', show: 'unread', from: 'all', nowShow: 'all', nowFrom: 'all',
-  sel: [], selecting: false, anchor: '', read: [], cleared: [], fixed: [], custom: '', confirm: '', toast: '', flash: '', awayStatus: caseOf(caseId).away.status, keep: true, s: freshSettings(caseOf(caseId)), sset: '', sv: SV.fresh(),
+  sel: [], selecting: false, anchor: '', read: [], cleared: [], fixed: [], custom: '', confirm: '', toast: '', flash: '', awayStatus: caseOf(caseId).away.status, keep: true, s: freshSettings(caseOf(caseId)), sset: '', sv: { ...SV.fresh(), gemQuota: caseOf(caseId).gemQuota || '' },
   stopped: [], fly: false, teamSeen: false, chatSeen: false, unlock: null, session: false, person: 0, people: {} });
 let ui = fresh('afternoon');
 // What opened with this click: only that fades in (a repaint of what was already open does not fade again).
@@ -31,7 +31,7 @@ function applyAppearance(m) {
   document.querySelectorAll('[data-theme-pick]').forEach((x) => x.setAttribute('aria-pressed', String(x.dataset.themePick === document.documentElement.dataset.theme)));
 }
 
-const C = () => caseOf(ui.caseId);
+const C = () => M.withQuota(caseOf(ui.caseId), ui.sv.gemQuota, ui.sv.gemUsed);
 // A row's read state is the person's own on a shared sign-in; a problem clears when it is acted on; info rows arrive read.
 const isFixed = (u) => ui.fixed.includes(u.id);
 const isUnread = (u) => u.unread && !isFixed(u) && !ui.read.includes(u.id);
@@ -243,7 +243,7 @@ function usageFly() {
     const rows = u.win.length ? u.win.map((x) => {
       const t = M.tone(x.pct, w);
       return `<div class="pz-urow" title="${esc(`${M.winWord(x.k)} ${x.pct}% · ${pr.src} at ${u.asOf}`)}">${mini(x.pct, t)}<span class="pz-uk">${M.winWord(x.k)}</span><span class="pz-uv${t ? ' is-' + t : ''}">${x.pct >= 100 ? 'Reached' : M.fig(x)}</span><span class="pz-ur">resets ${esc(x.resets)}</span></div>`;
-    }).join('') : u.noQuota ? `<p class="pz-unote" title="${esc(pr.name)} reports no figures: Worca counts its requests against the quota you set">No quota set. ${R.textLink({ label: 'Set in Providers', attrs: { 'data-land': 'providers|Gemini', title: 'Opens Settings › Providers, on its quota' } })}</p>`
+    }).join('') : u.noQuota ? `<p class="pz-unote" title="${esc(pr.name)} reports no figures: Worca counts its requests against the quota you set">No quota set. ${R.textLink({ label: 'Set in Providers', attrs: { 'data-land': 'providers|Gemini CLI|list', title: 'Opens Settings › Providers, on its quota' } })}</p>`
       : '<p class="pz-unote" title="An API key is billed per token: the spend below is its limit">Billed per token: no session or weekly limit</p>';
     const noSession = u.note ? `<p class="pz-unote" title="${esc(u.note.tip)}">${esc(u.note.text)}</p>` : '';
     return `<div class="pz-ublock"><div class="pz-uhead"><span class="pz-uname">${esc(pr.name)}</span><span class="pz-uplan" title="${esc(`${pr.vendor} · ${u.plan}`)}">${esc(pr.vendor)} · ${esc(u.plan)}</span><span class="pz-uas" title="As fresh as the last turn that used ${esc(pr.name)}">as of ${esc(u.asOf)}</span></div>${rows}${noSession}</div>`;
@@ -374,7 +374,7 @@ function runsPage() {
 // from Pulse's model; every other section comes from settings-model.js through settings.js.
 const sp = (id, text, items, tip, right) => R.sentencePicker({ id, text, items, open: ui.menu === id, tip, chevron: svg('chevron', 12), right });
 const sectionId = () => ui.sset || SM.FIRST;
-const menuGroups = () => SM.GROUPS.map((g) => ({ title: g.title, items: g.items.filter((id) => SM.shows(SM.min(id), R.prefs.mode())).map((id) => ({ label: SM.title(id), current: id === sectionId(), attrs: { 'data-sset': id } })) }));
+const menuGroups = () => SM.GROUPS.map((g) => ({ title: g.title, items: g.items.filter((id) => SM.visible(id, R.prefs.mode())).map((id) => ({ label: SM.title(id), current: id === sectionId(), attrs: { 'data-sset': id } })) }));
 const settingsMenu = () => R.sideMenu({ label: 'Settings', cls: swapCls.trim(), back: { label: 'Back to Worca', icon: svg('chevL', 14), attrs: { 'data-go': 'runs', title: 'Back to the page you came from' } }, groups: menuGroups() });
 // The narrow screen's first view: the same menu as a list in the page.
 const settingsIndex = () => `<div class="cfg-index"><div class="pz-head"><h1 class="pz-title">Settings</h1></div>${R.sideMenu({ label: 'Settings', list: true, chevron: svg('chevR', 14), groups: menuGroups().map((g) => ({ ...g, items: g.items.map((x) => ({ ...x, current: false })) })) })}</div>`;
@@ -437,16 +437,16 @@ function settingsFinds() {
   const out = [{ label: SM.title('notifications'), sset: 'notifications', where: 'Settings' }, ...NOTIF_ROWS.map((n) => ({ label: n, sset: 'notifications', where: 'Notifications' }))];
   for (const g of SM.GROUPS) for (const id of g.items) {
     const sec = SM.SECTIONS[id]; if (!sec) continue;
-    out.push({ label: sec.title, sset: id, min: sec.min, where: 'Settings › ' + g.title });
+    out.push({ label: sec.title, sset: id, min: sec.min, flag: sec.flag, where: 'Settings › ' + g.title });
     for (const s of sec.sections) {
       for (const r of s.rows || []) {
-        const min = strict(sec.min, s.min, r.min);
-        out.push({ label: r.name, words: r.say, sset: id, min, where: `${sec.title} › ${s.title}` });
+        const min = strict(sec.min, s.min, r.min), flag = sec.flag || s.flag || r.flag;
+        out.push({ label: r.name, words: r.say, sset: id, min, flag, where: `${sec.title} › ${s.title}` });
         const open = 'more:' + id + '/' + s.title + '/' + r.name;
-        for (const m of r.more || []) out.push({ label: m.name, words: m.say, sset: id, open, min: strict(min, m.min), where: `${sec.title} › ${r.name}` });
-        for (const it of r.moreList || []) out.push({ label: it.title, words: it.meta, sset: id, open, list: true, min, where: `${sec.title} › ${r.name}` });
+        for (const m of r.more || []) out.push({ label: m.name, words: m.say, sset: id, open, min: strict(min, m.min), flag, where: `${sec.title} › ${r.name}` });
+        for (const it of r.moreList || []) out.push({ label: it.title, words: it.meta, sset: id, open, list: true, min, flag, where: `${sec.title} › ${r.name}` });
       }
-      for (const it of s.list || []) out.push({ label: it.title, words: it.meta, sset: id, list: true, min: strict(sec.min, s.min), where: `${sec.title} › ${s.title}` });
+      for (const it of s.list || []) out.push({ label: it.title, words: it.meta, sset: id, list: true, min: strict(sec.min, s.min), flag: sec.flag || s.flag, where: `${sec.title} › ${s.title}` });
     }
   }
   return out;
@@ -668,7 +668,7 @@ document.addEventListener('click', (e) => {
   if ((el = tg('[data-act-stop]'))) { const a = C().actions.find((x) => x.id === el.dataset.actStop); ui.stopped = ui.stopped.concat(a.id); if (!runningActions().length) ui.fly = false; toast(`Stopped ${a.label}`); render(); return; }
   if ((el = tg('[data-act-open]'))) { const a = C().actions.find((x) => x.id === el.dataset.actOpen); ui.fly = false; if (SHELL) { SHELL.closeDrawer(); SHELL.openRun(a.go, a.run); } else toast(`Opens ${a.run} (not in this prototype)`); render(); return; }
   if (ui.fly && !tg('.act-fly')) { ui.fly = false; render(); return; }
-  if ((el = tg('[data-land]'))) { e.preventDefault(); const [sset, label] = el.dataset.land.split('|'); land({ sset, label }); return; }
+  if ((el = tg('[data-land]'))) { e.preventDefault(); const [sset, label, list] = el.dataset.land.split('|'); land({ sset, label, list: !!list }); return; }
   if ((el = tg('[data-unlock]'))) { window.RailPulse.unlock(el.dataset.unlock); return; }
   if ((el = tg('[data-fix]'))) { const u = C().updates.find((x) => x.id === el.dataset.fix); ui.fixed = ui.fixed.concat(u.id); toast(`${u.fix}: done, and the problem is resolved (mock)`); render(); return; }
   if ((el = tg('[data-team]'))) { ui.teamSeen = true; ui.acct = false; if (SHELL) { SHELL.closeDrawer(); SHELL.go('settings/team'); } else { ui.page = 'settings'; ui.sset = 'team'; } render(); return; }

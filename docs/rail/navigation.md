@@ -7,6 +7,7 @@
 | `nav.full-page` | A thing opens as a full page, never a pane beside its list | The run page needs its width | worca-sweep |
 | `nav.address` | The address holds place, thing, part and fact | Links and the browser's back just work | worca-sweep |
 | `nav.land` | A fact comes into view, lights once and takes focus | You see where you landed | design-system-components |
+| `nav.locked` | What the mode or Labs hides is never a dead end: the search finds it with its lock note, a deep link gets one line and its one way on | Nothing is lost by being in Simple | worca-sweep |
 
 How you move through Worca, the same everywhere. Mocks: `plans/rail/mocks/nav-*.png`.
 
@@ -37,3 +38,8 @@ so a link, a notification or a bookmark lands exactly there, and the browser's b
 
 **The words.** A link names where it goes (`Open Models`, `Runs`, `‹ worca-cc`), never `Click here` or a bare `More`;
 a link that leaves Worca says so (`View PR ↗`). A page changes at once (Motion: no page transition).
+
+**Above your mode, or behind Labs.** The sidebar shows what your mode and Labs show. The search still finds the rest, each
+with its note (`Switch to Advanced`, `Turn on Labs`); a pick hands you over: a mode asks in the ConfirmStrip under the top
+bar, a flag goes to its row in Settings › Labs, and once nothing locks it you land on the result. A deep link gets
+EmptyState's one line and its one way on (`Schedules needs Advanced` · Switch to Advanced), never a banner.

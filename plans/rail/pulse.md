@@ -35,6 +35,7 @@ Usage follows the same rule:
 - Label **Pulse**, the signal icon. One badge, in this order: amber = how many need you; else blue = unread updates;
   else nothing. Running runs do not badge it (they are not news); the button's tooltip says "2 running".
 - Tooltip: what the badge counts, in words ("2 need you · 5 unread · 2 running").
+- This badge is the one needs-you count: the Runs row in the sidebar carries none.
 
 ### 3.2 The Pulse panel (all of Pulse)
 Pulse is the panel under its button, over whatever page is open; there is no Pulse page (a page would hold the same
@@ -46,12 +47,17 @@ two lists twice). On a narrow screen the panel is the window's width.
   the same sentence as every list: `Showing [everything ▾] from [all projects ▾]`, each choice with its count. Shows:
   Everything, Needs you, Running, Scheduled, Limits. From: all projects or one project; a limit belongs to a harness,
   so it ignores the project and goes only with Everything or Limits. The Now tab's count follows the sentence; the
-  Pulse button's badge does not, so a filter never hides a run that waits. No selection: Now's rows are states and
+  Pulse button's badge does not, so a filter never hides a run that waits. A run's section follows its state
+  (`runState`, `sectionOf` in the library): Paused, Failed and Ready sort under Needs you, Waiting under Scheduled.
+  Scheduled groups its rows: Missed, Today, Tomorrow, This week, Later, After a run. No selection: Now's rows are states and
   leave by themselves, so there is nothing to mark read or clear. Empty: "Nothing needs you. Nothing is running.";
   narrowed: "Nothing here right now."
 - **Updates**: a divided list grouped by day (Today, Yesterday, Earlier), on the 20px rail: the unread dot, a title
   line, a meta line (group · project · detail), the time at the right. A `needs` row still open has the amber dot; once
   answered it reads Resolved.
+- **The log's rules.** Updates are kept 90 days. Info rows arrive read; only what needs you and problems count as
+  unread. A problem clears when it is acted on: its step (Run now, Resume, Try again) sits on the row, and taking it
+  marks the row Resolved. On a shared sign-in, read and cleared belong to each person.
 - The list's sentence picks what it shows: `Showing [unread ▾] from [all groups ▾]`. Shows: Unread, All, Needs you,
   Problems, Cleared. Empty: "You are up to date."
 - Selection works exactly as in Runs and Chats: ⋯ › Select, ⌘ or Ctrl-click, Shift-click for a range, Space on a
@@ -68,8 +74,8 @@ A tab of its own in Settings, after General, at every interface level. It holds 
 and what a start does near a limit, so nothing about notifications stays elsewhere:
 - **Alerts** leaves Settings › General: its Desktop notifications and Badge switches and Send test become the Desktop
   and Badge rows below (the same `alerts.mjs` values, per browser).
-- **Resume runs automatically when a usage limit resets** leaves Settings › Runs › Budget & cost limits: it becomes the
-  After a pause row. The cost limits themselves stay in Runs (they set spend; they do not notify).
+- **Resume runs automatically when a usage limit resets** stays in Settings › Runs, as its Paused runs row (it is how
+  runs behave, not what reaches you); Notifications has a link row to it. The cost limits stay in Runs too.
 - Chat channels stay in Settings › Chat (they are chat's own setup); the Chat row links there.
 
 Three sections, one rail. Every choice is a **picker in its sentence** (Rail: never a toggle row or radio cards).
@@ -77,9 +83,9 @@ Three sections, one rail. Every choice is a **picker in its sentence** (Rail: ne
 **How Worca reaches you** (the channels)
 | Row | Sentence | Notes |
 |---|---|---|
-| Desktop | Switch · `Desktop notifications in this browser` · Send test | only on or off, so a Switch (a settings tab); permission is per browser; when blocked, the row says so and how to allow it |
+| Desktop | Switch · `Desktop notifications in this browser` · Send test | only on or off, so a Switch (a settings tab); permission is per browser; when blocked, the row says so and how to allow it; a browser without them, or an address that is not https:// or localhost, says that instead |
 | Badge | `The tab title shows [what needs you ▾]` | choices: what needs you, what needs you and problems, nothing |
-| Chat | `Sent to 2 channels: Telegram, Slack` · Manage | channels stay in Settings › Chat |
+| Chat | `Sent to 2 channels: Telegram, Discord` · Manage | channels stay in Settings › Chat; Manage opens it |
 
 **What reaches you** (the groups): one row per group, one sentence:
 `Runs · tell me about [needs you and problems ▾] on [desktop and chat ▾]` · **Customise**
@@ -93,13 +99,20 @@ Three sections, one rail. Every choice is a **picker in its sentence** (Rail: ne
 
 | Group | Events (Pulse Center §4 ids) | Level | Where |
 |---|---|---|---|
-| Runs | needs_you, cost_cap, failed, paused, done, resumed | Needs you and problems | Desktop and chat |
-| Schedules | missed, late, skipped, self_paused, ended, completed | Needs you and problems | Desktop and chat |
-| Pull requests | fix_started, published, needs_person (watched PRs) | Needs you | Desktop and chat |
+| Runs | questions, gate, recovery, workflow, cost_cap; failed; paused_limit, paused_error, paused_night, paused_time, paused_stopped; done, resumed | Needs you and problems | Desktop and chat |
+| Schedules | missed, failed (could not start), run_error, run_paused, self_paused; late, retrying, skipped, canceled, ended, completed | Needs you and problems | Desktop and chat |
+| Automations (follows the Labs feature Git automations) | approval; failed; started, skipped, queued, done | Needs you and problems | Desktop and chat |
+| Chat (approvals) | run, web, workflow, schedule | Needs you | Desktop and chat |
+| Pull requests | needs_person (watched PRs); open_failed (could not open a PR); fix_started, published | Needs you | Desktop and chat |
 | **Usage** (new; usage limits and spend) | usage.near, usage.reached, usage.reset, usage.moved, usage.held, budget.threshold, budget.exceeded | Needs you and problems | Desktop and chat |
 | Away mode | started, ended | Everything | Chat |
 | Projects | clone, sync, scan | Needs you and problems | Pulse only |
 
+- **Each kind has its own title.** Runs' needs-you kinds: Questions waiting, Approval needed, Recovery decision needed,
+  Workflow to review, Cost cap reached. A pause says why: Usage limit reached (a harness that reports no window; one that
+  does raises `usage.reached` instead, §4.4), Paused on error, Cost cap reached (the same event as the needs-you kind),
+  Night guardrail reached, Time limit reached, Worca was stopped. Your own Pause and a drain (the server stopping) wait
+  on nobody and never notify.
 - Usage has one more picker in its sentence: `warn at [80% ▾]` (70, 80, 90%). It sets the line for the
   rings' amber, the Limits row in Now, the `usage.near` update and what "near" means below.
 
@@ -108,7 +121,7 @@ Three sections, one rail. Every choice is a **picker in its sentence** (Rail: ne
 |---|---|---|
 | You start it | `New run and Resume near a limit [suggest one with room ▾]` | suggest one with room · pick one with room · start after the reset · start as chosen |
 | Worca starts it | `A slice or scheduled run near a limit [moves to one with room ▾]` | moves to one with room (else waits) · waits for the reset · starts anyway |
-| After a pause | `A run paused at a limit [resumes after the reset ▾]` | resumes after the reset (5 minutes after, `limit-resume.mjs`) · waits for you |
+| Paused runs | `Set in Runs` · Open Runs | a link row: the choice lives in Settings › Runs › Paused runs (5 minutes after the reset, `limit-resume.mjs`), and the link lands on that row |
 
 ## 4. Usage: any harness, any window
 
@@ -121,9 +134,9 @@ a month where that is the only one).
 |---|---|---|---|
 | Claude Code (Claude) | 5-hour session; **none on Ultra** once the account is verified (Anthropic, 30 Oct 2026) | week (all models; Opus week when the plan has one); Ultra keeps it | the rate-limit figures Claude Code reports with each turn |
 | Codex (OpenAI) | 5-hour | week | the rate-limit figures Codex reports with each turn |
-| Copilot (GitHub) | none | month: premium requests | the requests Worca counts (it already pins them *Free* and counts them) |
+| Copilot (GitHub) | none | month: premium requests | read from the provider (used of entitlement) |
 | Cursor | none | month: requests, where the plan has a cap | not reported today: "Not reported by Cursor" |
-| Gemini (Google, through the bridge) | none | day: requests on a free tier | the requests Worca counts against the tier's daily quota |
+| Gemini (Google) | none | day: requests | reports nothing: the person sets its daily quota in Settings › Providers and Worca counts against it; with none set, no ring and a link to set it |
 | OpenRouter free models | none | day: free requests | the count the spend card shows today ("Free requests today") |
 | An API key (any vendor) | none | none: billed per token | the spend and its budget are its limit |
 
@@ -238,6 +251,13 @@ against its own estimate when its turn comes, follows the setting, and says what
   `Waits for 16:40: …`. With
   **Ask me before each run** on, the plan stop shows the same note as New run.
 - A run already running is not moved; its Running row and the Limits row say it may pause.
+
+### 4.6 The profile menu around it
+Above the rows, only on a shared sign-in: the **Signed in as** card. In its first section, until looked at: **Your team
+updated the recommended setup** · Review. In Usage, while a budget has stopped runs: **Raise limit**, which lands on
+Settings › Runs › Budget. The avatar wears the away dot while you are away; the Away row's hint and tip say where you
+stand (`away at 22:00`, `until 07:00`, `Away mode paused`), and it is disabled with why when away mode cannot be read.
+Interface mode writes `prefs.setMode`; the sidebar and every page follow it.
 
 ## 5. Page rules
 - Every row reads from one left edge on the 20px rail; the dot is the state (amber needs you or near, red reached,

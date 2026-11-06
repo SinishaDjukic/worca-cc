@@ -85,11 +85,13 @@ for (const scheme of ['dark', 'light']) for (const w of [375, 900]) {
       await reset(c, v);
       await p.evaluate(() => [...document.querySelectorAll('#app button, #app input[type=checkbox]')].filter((x) => x.offsetParent).forEach((x, i) => { x.dataset.k = 'k' + i; }));
       await p.evaluate(() => window.scrollTo(0, 200));
-      const r = await p.evaluate((key) => {
+      const r = await p.evaluate(async (key) => {
         const el = document.querySelector(`[data-k="${key}"]`); if (!el) return null;
         const before = document.getElementById('app').innerHTML + document.querySelector('.rc-toast').textContent, y = window.scrollY, label = el.getAttribute('aria-label') || el.textContent.trim().slice(0, 30) || el.className;
         el.click();
-        const after = document.getElementById('app').innerHTML.replace(/ data-k="k\d+"/g, '') + document.querySelector('.rc-toast').textContent;
+        const now = () => document.getElementById('app').innerHTML.replace(/ data-k="k\d+"/g, '') + document.querySelector('.rc-toast').textContent;
+        let after = now();
+        if (after === before.replace(/ data-k="k\d+"/g, '')) { await new Promise((res) => setTimeout(res, 20)); after = now(); }   // a Settings row's link goes next tick
         const maxY = document.documentElement.scrollHeight - window.innerHeight;   // a page that got shorter may have to give some back
         const goes = el.matches('[data-sset], [data-go], [data-land], [data-team]');   // to another page: it opens at its top
         return { label, moved: !goes && Math.abs(window.scrollY - Math.min(y, maxY)) > 1, dead: after === before.replace(/ data-k="k\d+"/g, ''), side: document.documentElement.scrollWidth > document.documentElement.clientWidth + 1 };

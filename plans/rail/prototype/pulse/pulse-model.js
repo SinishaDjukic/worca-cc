@@ -32,7 +32,7 @@
       ['project.sync_failed', 'Sync failed', 'problem'], ['project.sync_behind', 'Behind its remote', 'info']] },
   ];
   const EVENT = Object.fromEntries(GROUPS.flatMap((g) => g.events.map(([id, name, sev]) => [id, { id, name, sev, g: g.id }])));
-  const CHANNELS = ['Telegram', 'Slack', 'Discord'];
+  const CHANNELS = ['Telegram', 'Discord'];
   // Now › Scheduled, top to bottom.
   const SCHED = [['missed', 'Missed'], ['today', 'Today'], ['tomorrow', 'Tomorrow'], ['week', 'This week'], ['later', 'Later'], ['after', 'After a run']];
   const LEVELS = [
@@ -43,7 +43,7 @@
   const WHERE = [
     { id: 'pulse', text: 'Pulse only', help: 'Kept in Pulse; nothing leaves Worca' },
     { id: 'desktop', text: 'desktop', help: 'Also a desktop notification, in browsers that allow it' },
-    { id: 'chat', text: 'chat', help: 'Also a message to your chat channels (Telegram, Slack, Discord)' },
+    { id: 'chat', text: 'chat', help: 'Also a message to your chat channels (Telegram, Discord)' },
     { id: 'both', text: 'desktop and chat', help: 'Also a desktop notification and a chat message' },
   ];
   const RANK = { needs: 0, problem: 1, info: 2 };
@@ -145,10 +145,10 @@
       updates: [
         up('b1', 'run.cost_cap', 'Add CSV export to billing', 'billing-api · paused at $5.00 · raise the cap or stop', '10:12', 'Today', { open: true, to: 'the run page at its cost cap', go: 'run/capped' }),
         up('b2', 'budget.threshold', '', 'Budget · $80.40 of $100', '09:30', 'Today', { title: 'Spend at 80% of $100 in October', to: 'Statistics', go: 'stats' })] },
-    { id: 'gemini', label: 'Gemini only', desktop: 'insecure', task: { title: 'Write the API reference for v2', size: 'large' },
+    { id: 'gemini', label: 'Gemini only', desktop: 'insecure', gemQuota: '1000', task: { title: 'Write the API reference for v2', size: 'large' },
       away: { status: 'here', hours: ['20:00', '08:00'] }, actions: [],
       runs: [run('working', 'Write the API reference', 'docs-site', 'Build · step 2 of 4', '7 min')],
-      usage: [{ p: 'gemini', plan: 'Free tier', asOf: '14:02', win: [{ k: 'day', pct: 84, used: 840, of: 1000, resets: '02:00' }] }],
+      usage: [{ p: 'gemini', plan: 'Free tier', asOf: '14:02', win: [] }],
       budget: null,
       updates: [
         up('g1', 'usage.near', '', 'Gemini · Free · 800 of 1,000 requests', '13:44', 'Today', { title: 'Gemini daily requests at 80% · resets 02:00', to: 'the usage card', go: 'usage' })] },
@@ -173,7 +173,7 @@
       usage: [
         { p: 'claude', plan: 'Max', asOf: '14:28', win: [{ k: 'session', pct: 86, resets: '16:40' }, { k: 'week', pct: 52, resets: 'Mon 09:00' }] },
         { p: 'copilot', plan: 'Business', asOf: '14:05', win: [{ k: 'month', pct: 71, used: 212, of: 300, resets: 'Nov 1' }] },
-        { p: 'gemini', plan: 'CLI', asOf: '13:02', win: [], noQuota: true }],
+        { p: 'gemini', plan: 'CLI', asOf: '13:02', win: [] }],
       budget: { period: 'in November', spent: 100, limit: 100, blocked: true },
       updates: [
         up('e01', 'run.questions', 'Add CSV export to billing', 'billing-api · Plan asks 2 questions', '14:32', 'Today', { open: true, to: 'the run page at its questions', go: 'run/question' }),
@@ -265,7 +265,7 @@
     F('plugin', 'slack-chat', 'Plugin · Marketplace', 'marketplace', { min: 'advanced' }), F('plugin', 'discord-chat', 'Plugin · Marketplace', 'marketplace', { min: 'advanced' }),
     F('chat', 'Why did the build fail', 'Chat · today', 'chat'), F('chat', 'Plan the API rewrite', 'Chat · yesterday', 'chat'), F('chat', 'Release checklist', 'Chat · Oct 28', 'chat'),
   ];
-  const FLAG_ROW = { requirements: 'Requirements', runLabels: 'Run labels', gitAutomations: 'Git automations' };
+  const FLAG_ROW = { requirements: 'Requirements', runLabels: 'Run labels', gitAutomations: 'Git event automations' };
   // `label:ui`: the runs with that label. Otherwise the name, or a word of where it lives, anywhere in the text.
   function find(q) {
     const raw = q.trim().toLowerCase();
@@ -321,6 +321,13 @@
     return out;
   }
 
+  // Gemini's window is the person's own: the quota set in Settings › Providers, what Worca counted against it.
+  function withQuota(c, quota, used) {
+    if (!c.usage.some((u) => u.p === 'gemini')) return c;
+    const q = +quota;
+    return { ...c, usage: c.usage.map((u) => (u.p !== 'gemini' ? u : q ? { ...u, noQuota: false, win: [{ k: 'day', pct: Math.round((used / q) * 100), used, of: q, resets: '02:00' }] } : { ...u, noQuota: true, win: [] })) };
+  }
+
   // What a run of this size uses of each window on a harness, or null when it has no history.
   const est = (p, size) => (size && EST[p] && EST[p][size]) || null;
   // The window a start on this harness would run into, or null. With an estimate: one whose use plus the run's share is
@@ -340,5 +347,5 @@
       .sort((a, b) => Math.max(...a.win.map((w) => w.pct)) - Math.max(...b.win.map((w) => w.pct))).map((u) => u.p);
   }
 
-  window.PulseModel = { nowRuns, awayRow, awayLine, FINDS, FLAG_ROW, find, EVENT, CHANNELS, SCHED, GROUPS, LEVELS, WHERE, PROVIDER, CASES, SIZES, N, WHAT, qualifies, tone, rings, limits, near, room, est, winWord, fig, usd, spendPct };
+  window.PulseModel = { withQuota, nowRuns, awayRow, awayLine, FINDS, FLAG_ROW, find, EVENT, CHANNELS, SCHED, GROUPS, LEVELS, WHERE, PROVIDER, CASES, SIZES, N, WHAT, qualifies, tone, rings, limits, near, room, est, winWord, fig, usd, spendPct };
 })();

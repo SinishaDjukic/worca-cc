@@ -20,4 +20,7 @@ runs execute on their own, and the words say so.
 - **A lost connection is a state, not an error:** `Offline · retrying` with a grey dot at the end of the top bar, gone
   when it reconnects (a toast says `Back online`). Nothing you typed is lost and nothing is retried twice.
 
-The prototype's Break picker plays each case.
+- **A sign-in that ended** is a Dialog with its one step: `Session expired`, what still holds (`Your runs keep going`), and
+  Sign in again; no Cancel, since nothing works until then.
+
+The prototype's Break picker and its Connection picker play each case.

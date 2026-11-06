@@ -30,12 +30,14 @@ curve; everything else is still. Filmed from the run page: `plans/rail/mocks/mot
 | A Toast | fades in over `quick`, out over `change` |
 | A link or a search lands on a fact's home | the target comes into view, lights once and fades over `flash`; focus moves to it (`land()` in motion.mjs) |
 | The sidebar becomes another menu (Settings) | its content fades over `change`; the page changes at once |
+| The drawer (760px and below) | fades in over `quick`, never a slide; closes at once |
 | Working | the live dot and the live cell breathe: the one thing that moves on its own, because it means work is happening |
 | Worca writes in a field | the violet shimmer, while it writes |
 
 - **Never:** a transition between pages or tabs (they change at once), a slide, a spring, a bounce, a count-up, a
   spinner, a skeleton shimmer, a parallax, motion on scroll, or anything that runs without a state change.
-  The one named exception is the away screensaver: it starts after 5 idle minutes and is off under reduced motion.
+  The one named exception is the away screensaver (`awayShows`, `awayScreen`): with Away and Keep awake on and the window
+  focused, it starts after 5 idle minutes and is off under reduced motion; any input hides it and does not reach the page.
 - **Reduced motion** (`prefers-reduced-motion`): every timing is 0; the breathing is a still colour, the shimmer a still
   wash, the flash a still outline that fades with the next click.
 - **In code:** a page that draws itself again after a change draws with `morph(target, html)` from
