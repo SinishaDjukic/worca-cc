@@ -62,4 +62,4 @@ Violet has two meanings that never meet: the merged status dot (a state), and Wo
 (the sparkle, the Suggested chip, the shimmer). A dot never means AI, and a suggestion is never a dot or a badge.
 
 ## Scrollbars
-Thin, in `--line-2`, on a clear track. They appear as the mouse moves, on the page and on any scroller under the pointer, and while something scrolls; 0.8s after it stops, they fade out. They keep their room whether shown or not, so nothing shifts. `watchScrollbars(document)` marks what shows; the look is `rail-look.css`'s.
+Thin, in `--line-2`. They appear as the mouse moves, on the page and on any scroller under the pointer, and while something scrolls; 0.8s after it stops they fade out, unless the pointer is on one. They take no room, so nothing shifts, and they can be dragged. The library draws them (`watchScrollbars(document)`, `.rail-thumb` in `rail-look.css`), because an operating system's overlay bars take no styling and show only when it says so. Strips with their own controls (Tabs) have none.

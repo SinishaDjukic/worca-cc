@@ -38,7 +38,7 @@ export { workflowGraph } from './workflow-graph.mjs';
 export { logLines } from './log-lines.mjs';
 export { USAGE_REFRESH_MS, usageWindow, connectedUsage, usageTip } from './usage.mjs';
 export { tryStep } from './run-state.mjs';
-export { watchScrollbars, SCROLL_SHOW_MS } from './scrollbars.mjs';
+export { watchScrollbars, thumbBox, SCROLL_SHOW_MS } from './scrollbars.mjs';
 export { SHORTCUTS, RESERVED, FIELD, chordId, isMac, keyGlyph, keyHint, keyFacts, shortcutAction, listMove, shortcutSections, shortcutsSheet, openShortcutsSheet } from './shortcuts.mjs';
 export { PRESS_MS, selectClear, selectStart, selectToggle, selectRange, selectAll, selectPrune, selectCount, selectAllState, selectExtend, selectionAction, selectApply, keepFocus } from './selection.mjs';
 export { selectionBar, selectAllBox, bindLongPress } from './selection-bar.mjs';

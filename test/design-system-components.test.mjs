@@ -566,16 +566,21 @@ test('morph: a textarea shows the new text, even when its text node moves across
   assert.equal(host.querySelector('#x').value, 'new words');
 });
 
-test('watchScrollbars: what scrolls is marked for a moment, the page itself too; a document is watched once', () => {
-  const d = new JSDOM('<body><div id="a"></div></body>').window.document; const later = [];
+test('thumbBox and watchScrollbars: a bar sits where the scroller is, shows on a mouse move, goes when still, once per document', () => {
+  assert.deepEqual(C.thumbBox(0, 1000, 500), { offset: 0, length: 250 });
+  assert.deepEqual(C.thumbBox(500, 1000, 500), { offset: 250, length: 250 });
+  assert.equal(C.thumbBox(0, 500, 500), null, 'nothing overflows, no bar');
+  assert.equal(C.thumbBox(0, 100000, 100).length, 24, 'never too small to grab');
+  const d = new JSDOM('<body><div id="a" style="overflow-y:auto"><span id="in"></span></div><div id="b"></div></body>').window.document; const later = [];
   C.watchScrollbars(d, { wait: (fn) => { later.push(fn); return later.length; }, clear: () => {} });
   C.watchScrollbars(d, { wait: () => { throw new Error('watched twice'); } });
-  d.getElementById('a').dispatchEvent(new d.defaultView.Event('scroll'));
-  assert.ok(d.getElementById('a').classList.contains('is-scrolling'));
-  d.dispatchEvent(new d.defaultView.Event('scroll'));
-  assert.ok(d.documentElement.classList.contains('is-scrolling'));
-  later.forEach((fn) => fn());
-  assert.ok(!d.getElementById('a').classList.contains('is-scrolling'));
+  const a = d.getElementById('a'); Object.defineProperty(a, 'scrollHeight', { value: 100 }); Object.defineProperty(a, 'clientHeight', { value: 50 });
+  d.getElementById('b').dispatchEvent(new d.defaultView.MouseEvent('mousemove', { bubbles: true }));
+  assert.equal(d.querySelector('.rail-thumb'), null, 'what cannot scroll has no bar');
+  d.getElementById('in').dispatchEvent(new d.defaultView.MouseEvent('mousemove', { bubbles: true }));
+  const th = d.querySelector('.rail-thumb.is-v'); assert.ok(th.classList.contains('is-on')); assert.equal(th.style.height, '25px');
+  later.shift()(); assert.ok(!th.classList.contains('is-on'), 'gone when still');
+  later.shift()(); assert.equal(d.querySelector('.rail-thumb'), null);
 });
 
 test('selectionBar: how many, each action with its count, disabled at 0 with why, Cancel', () => {
