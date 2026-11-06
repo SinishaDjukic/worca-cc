@@ -6,7 +6,7 @@
 | `look.tokens` | Colours, sizes and corners come from tokens, one family of neutrals, one surface | A page has no look of its own | ds-check |
 | `look.running-needs-apart` | Running and needs-you are two colours that read apart at 8px | They ask for opposite things from you | by hand |
 | `look.inter-at-graduation` | Inter replaces Poppins at graduation, one switch for everyone | Two faces on screen at once reads as a mistake | by hand |
-| `look.scrollbars` | Scrollbars are thin and appear only over a scroller under the pointer or while it scrolls | A quiet page; nothing shifts when they show | design-system-components |
+| `look.scrollbars` | Scrollbars are thin and appear as the mouse moves or while something scrolls, then go | A quiet page; nothing shifts when they show | design-system-components |
 | `look.violet-apart` | Violet means merged, or Worca writing in a field; never both | A dot never means AI | by hand |
 
 ## Type roles
@@ -62,4 +62,4 @@ Violet has two meanings that never meet: the merged status dot (a state), and Wo
 (the sparkle, the Suggested chip, the shimmer). A dot never means AI, and a suggestion is never a dot or a badge.
 
 ## Scrollbars
-Thin, in `--line-2`, on a clear track. They appear over a scroller under the pointer and while it scrolls, and fade out after; the page's own bar shows only while it scrolls. They keep their room whether shown or not, so nothing shifts. `watchScrollbars(document)` marks what is scrolling; the look is `rail-look.css`'s.
+Thin, in `--line-2`, on a clear track. They appear as the mouse moves, on the page and on any scroller under the pointer, and while something scrolls; 0.8s after it stops, they fade out. They keep their room whether shown or not, so nothing shifts. `watchScrollbars(document)` marks what shows; the look is `rail-look.css`'s.
