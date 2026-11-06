@@ -38,6 +38,13 @@ The `rail` flag stays the one switch across the waves: each wave's pages join it
 test, today's Worca or Rail. Graduation (Wave 5) removes the flag, every part in `rail-retires.json` and the
 `:root[data-rail]` scopes, and the Rail tokens become the base tokens.
 
+## Wave 2: an idea to shape
+
+**Task estimation advisor.** A full AI feature, entirely about usage: a setting, and a helper job on Haiku in Models › Jobs. It
+reads the task, workflow, project and what is left of each limit, with similar runs' real usage as evidence, and says so when
+history is thin. In New run: size and share of the limit, plus a warning or a better provider. On the run card: estimated
+against used.
+
 ## Wave 1.5: the design system holds (after Wave 1 merges)
 
 Done in Agreed: all five items below. They stay here as the record of what was agreed.

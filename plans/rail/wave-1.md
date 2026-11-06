@@ -63,6 +63,7 @@ One each, only after the person has reviewed the one before. Worca does not cont
   new actions are `PROPOSED` in `runs/run-page-model.js`.
 
 **Not in Wave 1: the Runs list and the Chats column.** They are in the prototype as reference for Wave 2. Today's design stays.
+**Also out: run estimates.** Wave 2 (`waves.md`).
 
 ## Checks
 
