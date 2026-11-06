@@ -10,6 +10,8 @@ export const fill = (text, ctx = {}) => String(text).replace(/\{(\w+)\}/g, (m, k
 export const TRACKER_MOVES = { jira: ['In review', 'Resolved', 'Done'], azure: ['Resolved', 'Closed'], github: ['closed'] };
 
 const STATES = {
+  'no-remote': { word: 'Ready', dot: 'is-green', action: { label: 'Link remote', icon: 'up', primary: true, items: ['How to merge', 'Discard'] } },
+  'mock-run': { word: 'Mock run', dot: 'is-grey' },
   starting: {
     word: "Starting",
     dot: "is-peach is-pulse"
@@ -500,6 +502,7 @@ const ACTION_LEVEL = { 'Open in New run': 'advanced', Revise: 'advanced', Watch:
 export const actionLevel = (label) => ACTION_LEVEL[label] || 'simple';
 
 const HELP = {
+  'Link remote': 'Adds the git remote this project needs before it can have a PR',
   "Send answer": "Sends the answer you picked or wrote; the run goes on",
   "Use the default answer": "Goes on with what Worca would pick",
   "Use defaults": "Skips the questions; the planner picks sensible answers",
@@ -592,6 +595,8 @@ Object.assign(HELP, {
 });
 
 const FLOW = {
+  'no-remote': { 'Link remote': { to: 'ready', say: 'Linked origin; Create PR is now the next step' }, 'How to merge': { say: 'git switch {base} && git merge {branch}' }, Discard: { to: 'discarded', confirm: 'Discard the changes? The run stays in history.' } },
+  'mock-run': {},
   starting: {
     next: "working"
   },

@@ -280,3 +280,9 @@ test('listMove: on by one, stopping at the ends; from nowhere, the first row', (
   assert.equal(R.listMove(['a', 'b'], '', 1), 'a');
   assert.equal(R.listMove([], '', 1), '');
 });
+
+test('a project with no remote offers Link remote, never Create PR; a mock run offers nothing to ship', () => {
+  assert.equal(R.runState('no-remote').action.label, 'Link remote');
+  assert.ok(!R.runState('no-remote').action.items.includes('Create PR'));
+  assert.equal(R.runState('mock-run').word, 'Mock run'); assert.equal(R.runState('mock-run').action, null);
+});

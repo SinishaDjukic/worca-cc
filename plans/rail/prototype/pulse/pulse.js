@@ -295,7 +295,9 @@ function newRun() {
   const need = lim && !ui.nr.moved ? '' : tight ? ` · about ${e[tight.k]}% of its ${M.WHAT[tight.k]}, ${Math.max(0, 100 - tight.pct)}% left` : u.win.length ? ` · too few runs this size to estimate` : '';
   const sizeTip = tight ? `The median of ${M.N[sz]} done runs this size with the same agents, last 60 days. Shaper sized the task; change it if it is wrong` : 'Shaper sized the task; change it if it is wrong';
   let advice = '';
-  if (ui.nr.moved) advice = note('', `${ui.nr.moved}.`);
+  const signedOut = !C().usage.some((u) => M.PROVIDER[u.p].runs);
+  if (signedOut) advice = note('is-amber', `Nothing that can run is signed in. Only mock runs work until you sign in.`, quiet('Open Providers', { 'data-land': 'providers|GitHub Copilot|list', title: 'Opens Settings › Providers' }));
+  else if (ui.nr.moved) advice = note('', `${ui.nr.moved}.`);
   else if (lim) {
     const say = reached ? `${lim.name}'s ${lim.what} is used up until ${lim.resets}.`
       : lim.need != null ? `This run needs about ${lim.need}% of ${lim.name}'s ${lim.what}; ${lim.left}% is left until ${lim.resets}. It may pause before it finishes.`
@@ -312,7 +314,7 @@ function newRun() {
       <p class="pz-sentence">A ${picker('nr-size', sz, M.SIZES.map((x) => ({ id: x, text: x, checked: x === sz, help: SIZE_HELP[x] })), sizeTip)} task on ${picker('nr-on', pname(h), items, 'Which harness runs it: each shows how much of its limits is used, and +what this run needs')} in web-app${esc(need)}</p>
       <div class="pz-nr-task" title="The task (filled in for this prototype)">${esc(c.task.title)}</div>
       ${advice}</div>
-    <div class="pz-pfoot">${R.button({ label: 'Cancel', kind: 'quiet', title: 'Closes without starting', attrs: { 'data-nr-cancel': true } })}${R.button({ label: start, kind: 'primary', title: waits ? `Schedules it for ${lim.resets}` : `Starts it now on ${pname(h)}`, attrs: { 'data-nr-start': true } })}</div>
+    <div class="pz-pfoot">${R.button({ label: 'Cancel', kind: 'quiet', title: 'Closes without starting', attrs: { 'data-nr-cancel': true } })}${R.button({ label: start, kind: 'primary', title: signedOut ? 'Sign in first: nothing that can run is signed in' : waits ? `Schedules it for ${lim.resets}` : `Starts it now on ${pname(h)}`, attrs: { 'data-nr-start': true , disabled: signedOut } })}</div>
   ` });
 }
 
@@ -633,7 +635,7 @@ function pick(id, v) {
   else if (id === 'more') {
     if (v === 'settings') { ui.pop = false; if (SHELL) { SHELL.go('settings/notifications'); return; } ui.page = 'settings'; ui.sset = 'notifications'; }
     else if (v === 'select') ui.pick = R.selectStart(ui.pick);
-    else if (v === 'allread') { const n = unread().length; ui.read = ui.read.concat(unread().map((u) => u.id)); toast(n ? `Marked ${plural(n, 'update')} read` : 'Nothing is unread'); }
+    else if (v === 'allread') { const n = unread().length; const was = ui.read; ui.read = ui.read.concat(unread().map((u) => u.id)); toast(n ? `Marked ${plural(n, 'update')} read` : 'Nothing is unread', n ? { tip: 'Marks them unread again', run: () => { ui.read = was; toast('Unread again'); } } : null); }
     else { const ids = shown().filter((u) => !isUnread(u)).map((u) => u.id); ui.cleared = ui.cleared.concat(ids); ui.pick = R.selectPrune(ui.pick, []); toast(ids.length ? `Cleared ${plural(ids.length, 'read update')}` : 'Nothing read to clear', ids.length ? undoClear(ids) : null); }
   }
   else if (id === 'badge') s.badge = v;

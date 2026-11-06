@@ -87,7 +87,7 @@
         fields: [{ key: 'saRun', label: 'Per run (USD)', value: '', placeholder: 'No limit' }, { key: 'saTotal', label: 'Total a month (USD)', value: '1000', placeholder: 'No limit' }] },
       { label: 'Review', note: 'Nothing changes until you press Apply.', facts: (v) => [
         { title: 'Network', meta: v.saNet === 'proxy' ? `Through ${v.saHost}:${v.saPort}` : 'Direct' },
-        { title: 'Access', meta: [v.saClaude && 'Claude Code', v.saCopilot && 'Copilot'].filter(Boolean).join(', ') || 'None' },
+        { title: 'Access', meta: [v.saClaude && (window.RailUI.prefs.connected('claude') ? 'Claude Code' : 'Claude Code (not signed in)'), v.saCopilot && 'Copilot'].filter(Boolean).join(', ') || 'None' },
         { title: 'Roles', meta: { rec: 'Recommended', cheap: 'Cheaper', keep: 'As they are' }[v.saRoles] },
         { title: 'Limits', meta: `Each run ${usd(v.saRun)}, all runs ${usd(v.saTotal)} a month` },
       ] },

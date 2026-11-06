@@ -53,6 +53,8 @@
     { id: 'failed', group: 'Run', label: 'Failed', figs: [['Time', '2h 12m'], ['Cost', '$41.30']],
       stages: run({ build: [s('Implementation', 'failed', '1h 30m', { loops: 3, live: 'Tests still failing after every retry' })], review: allNext(REVIEW) }) },
     { id: 'ready', group: 'Run', label: 'Ready', figs: DONE_FIGS, stages: run({}) },
+    { id: 'no-remote', group: 'Run', label: 'Ready, no git remote', detail: 'This project has no git remote', figs: DONE_FIGS, stages: run({ pr: [next('Create PR', { live: 'Needs a git remote' }), next('Checks'), next('Approval')] }) },
+    { id: 'mock-run', group: 'Run', label: 'Mock run', detail: 'No model was called; it adds nothing to Saved', figs: [['Time', '2m'], ['Cost', '$0.00']], stages: run({ pr: [next('Create PR', { live: 'A mock run’s change is a placeholder' }), next('Checks'), next('Approval')] }) },
     { id: 'checks', group: 'Run', label: 'Checks running', figs: DONE_FIGS,
       stages: run({ pr: PR_OPEN(s('Checks', 'now', '', { live: '3 of 7 passed', when: 'running' }), next('Approval')) }) },
     { id: 'failing', group: 'Run', label: 'Checks failing', figs: DONE_FIGS,

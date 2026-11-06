@@ -83,7 +83,8 @@ Shift-click selection (#970); "Added to …" with Undo (#1004); credential slots
 | #1123 Waiting on an interrupted run | Case `waiting-interrupted`: it keeps waiting while the run can resume |
 | #1122 A missed start that came right | Pulse's row reads Resolved, with its run |
 | #1149 Slack and Teams chat | Settings › Chat and Plugins; Pulse's channels |
-| #1168 and #1162 | No Rail page holds them |
+| #1174 First-run fixes | Cases `no-remote` (Link remote, How to merge; Create PR needs a remote) and `mock-run`; New run says nothing that can run is signed in; setup's Review says not signed in. Its Settings › Runs filter box is not taken: Rail's search finds every row |
+| #1168, #1162 and #1175 | No Rail page holds them |
 
 ## Usage and budget (6 Nov)
 
