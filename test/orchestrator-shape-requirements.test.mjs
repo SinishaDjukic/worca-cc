@@ -74,6 +74,12 @@ test('a large task: one requirements hold, then one plan hold, no Clarify; 2 app
   assert.equal(reqAsk.criteria.ok, true);
   assert.equal(reqAsk.criteria.total, 8);
   assert.equal(reqAsk.decisions.length, 3);
+  assert.deepEqual(reqAsk.decisions[0].options.map((o) => [o.persona, o.reason]), [
+    ['security', 'emails are personal data, and exports get forwarded'], ['ux', 'people use them to tell who started a run'],
+  ]);
+  assert.deepEqual(reqAsk.decisions[1].options.map((o) => o.persona ?? null), ['security', null], 'an option nobody asked for stays bare');
+  assert.equal(reqAsk.decisions[2].plain, 'What access does exporting need?');
+  assert.deepEqual(reqAsk.decisions[2].options.map((o) => [o.plain, o.persona ?? null]), [['View access', null], ['Edit access', null]]);
   assert.equal(reqAsk.lead, 'security');
   assert.equal(reqAsk.check, undefined, 'the criteria hold skips the shape check');
   assert.deepEqual(plans[1].plan.coverage && [plans[1].plan.coverage.passed, plans[1].plan.coverage.total], [8, 8]);
