@@ -176,7 +176,7 @@
   const APPLY = (state, live) => [{ key: 'apply', label: 'Apply', subs: [s('Into the folder', state, '', { live })] }];
   const FOLDER = { branch: '', folder: '~/src/marketing-site' };
 
-  const GROUP_SHIP = { 'Create 2 PRs': { to: 'group-shipped', say: 'Opened #959 and #960', dialog: 'pr' }, 'Create PR': { to: 'group-shipped', say: 'A new branch combines both runs; opened #959', dialog: 'pr' } };
+  const GROUP_SHIP = { 'Create 2 PRs': { to: 'group-shipped', say: 'Created #959 and #960', dialog: 'pr' }, 'Create PR': { to: 'group-shipped', say: 'A new branch combines both runs; opened #959', dialog: 'pr' } };
   const CASES1 = [
     // Paused, and why: each reason has its words and its own way on
     pausedCase('paused-limit', 'paused-limit', 'Usage limit, resets soon', 'Claude Code’s usage limit · resets at 13:55, in 1h 12m'),
