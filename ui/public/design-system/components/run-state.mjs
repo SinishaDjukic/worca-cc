@@ -5,6 +5,9 @@
 /** Fills a text's {names} from the run's facts. */
 export const fill = (text, ctx = {}) => String(text).replace(/\{(\w+)\}/g, (m, k) => (ctx[k] !== undefined ? ctx[k] : m));
 
+/** The statuses a run can move its ticket to, in each tracker's own words. */
+export const TRACKER_MOVES = { jira: ['In review', 'Resolved', 'Done'], azure: ['Resolved', 'Closed'], github: ['closed'] };
+
 const STATES = {
   starting: {
     word: "Starting",

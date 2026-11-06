@@ -56,3 +56,54 @@ export function stackRow(r) {
   return row({ kind: 'route', cls: r.rowCls, rail: stepDot({ ...r, size: 11 }),
     text: `<div class="rd-route-main"><div class="rd-route-place"><span class="sk-num">${esc(r.num)}</span><span class="rd-route-name" title="${esc(r.title)}">${esc(r.title)}</span></div><div class="rd-route-second" title="${esc(`${r.word} · ${r.sub}`)}"><span class="sk-word is-${esc(r.state)}">${esc(r.word)}</span> · ${esc(r.sub)}</div></div>`, end: r.end || '' });
 }
+
+/**
+ * LineRow: one line that opens its detail in place, or goes to it: its mark, its words, a chevron.
+ * @param {object} o
+ * @param {string} o.mark     stepDot
+ * @param {string} o.text
+ * @param {boolean} [o.open]
+ * @param {string} [o.more]   markup: what it opens, shown while open
+ * @param {boolean} [o.link]  it goes elsewhere instead of opening
+ * @param {object} [o.attrs]  on its button: its hook, data-key, title
+ */
+export function lineRow({ mark, text, open = false, more = '', link = false, attrs: a = {} }) {
+  const expanded = link ? {} : { 'aria-expanded': String(open) };
+  return row({ kind: 'route', cls: cls('ov-line', open && 'is-open'), rail: mark,
+    text: `<button type="button" class="row-btn ov-line-btn${link ? ' is-link' : ''}"${attrs({ ...a, ...expanded })}><span>${esc(text)}</span>${icon('chevron', 14)}</button>`,
+    after: open ? `<div class="ov-line-more" data-motion="open">${more}</div>` : '' });
+}
+
+/**
+ * FileRow: a changed file, the row that opens its diff.
+ * @param {object} o
+ * @param {'A'|'M'} o.status
+ * @param {string} o.name
+ * @param {string} o.dir
+ * @param {string} o.path     its tooltip
+ * @param {number} [o.notes]  review comments on it
+ * @param {number} o.added
+ * @param {number} o.removed
+ * @param {string} [o.blocks] the size's small blocks
+ * @param {boolean} [o.open]
+ * @param {object} [o.attrs]
+ */
+export function fileRow({ status, name, dir, path, notes = 0, added, removed, blocks = '', open = false, attrs: a = {} }) {
+  return `<button type="button" class="ch-row"${attrs({ 'aria-expanded': String(open), ...a })}><span class="ch-st is-${esc(status)}"${attrs({ title: status === 'A' ? 'Added' : 'Modified' })}>${esc(status)}</span><span class="ch-name"${attrs({ title: path })}>${esc(name)}<span class="ch-path">${esc(dir)}</span></span>${notes ? `<span class="ch-notes"${attrs({ title: `${notes} review comments` })}>${esc(notes)}</span>` : '<span class="ch-notes"></span>'}<span class="ct"><span class="add">+${esc(added)}</span><span class="del">−${esc(removed)}</span></span><span class="ch-blocks" aria-hidden="true">${blocks}</span></button>`;
+}
+
+/**
+ * StackedPrRow: a PR of a stack in the Create PR dialog: the row that opens its fields, shown once.
+ * @param {object} o
+ * @param {number} o.n          its place, from 1
+ * @param {string} o.title
+ * @param {string} o.line       markup: its one line under the title
+ * @param {string[]} o.meta     its size, what it goes into
+ * @param {boolean} [o.open]
+ * @param {boolean} [o.made]    already opened: it no longer opens
+ * @param {string} [o.body]     its fields, while open
+ * @param {object} [o.attrs]
+ */
+export function stackedPrRow({ n, title, line, meta, open = false, made = false, body = '', attrs: a = {} }) {
+  return `<li class="st-row"><button type="button" class="st-head"${attrs({ ...a, 'aria-expanded': String(!!open), disabled: !!made })}>${icon(open ? 'chevron' : 'chevSide', 14)}<span class="st-num">PR ${esc(n)}</span><span class="st-mid"><span class="st-t"${attrs({ title })}>${esc(title)}</span>${line}</span><span class="st-meta">${meta.map((m) => `<span>${esc(m)}</span>`).join('')}</span></button>${open && !made ? `<div class="st-body">${body}</div>` : ''}</li>`;
+}

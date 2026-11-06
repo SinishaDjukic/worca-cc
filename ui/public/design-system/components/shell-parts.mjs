@@ -1,6 +1,6 @@
 // The shell's own pieces (docs/rail/components.md, panels.md, motion.md): the quiet offline line, a side column's frame,
 // a running action's row in the sidebar's foot, the away screensaver.
-import { attrs, esc } from './html.mjs';
+import { attrs, cls, esc } from './html.mjs';
 import { button } from './button.mjs';
 import { statusDot } from './status-line.mjs';
 
@@ -53,4 +53,61 @@ export const awayShows = ({ away, keepAwake, focused, idleMs, reduced }) => !!(a
  */
 export function awayScreen({ line, word = 'Worca' }) {
   return `<div class="rl-away" role="status"${attrs({ 'aria-label': `${word}: ${line}` })}><div class="rl-away-mark"><span class="rl-away-word">${esc(word)}</span><span class="rl-away-line">${esc(line)}</span></div></div>`;
+}
+
+/**
+ * A place in the sidebar: its icon, its name; off, it says why in its tooltip.
+ * @param {object} o
+ * @param {string} o.label
+ * @param {string} o.icon     SVG
+ * @param {boolean} [o.current]
+ * @param {boolean} [o.off]
+ * @param {string} [o.title]
+ * @param {object} [o.attrs]
+ */
+export function navItem({ label, icon, current = false, off = false, title = '', attrs: a = {} }) {
+  return `<button type="button" class="pz-nav-i${current ? ' is-on' : ''}"${attrs({ 'aria-current': current ? 'page' : null, 'aria-disabled': off ? 'true' : null, ...a, title: title || null })}>${icon}<span class="pz-nav-l">${esc(label)}</span></button>`;
+}
+
+/**
+ * The sidebar's foot: the avatar and name that open the account menu.
+ * @param {object} o
+ * @param {string} o.name
+ * @param {string} o.avatar   markup: the avatar and its rings
+ * @param {string} o.chevron  SVG
+ * @param {string} o.label    aria-label: what the rings say
+ * @param {boolean} [o.away]
+ * @param {boolean} [o.open]
+ */
+export function accountButton({ name, avatar, chevron, label, away = false, open = false }) {
+  return `<button type="button" class="pz-acct${open ? ' is-open' : ''}"${attrs({ 'data-acct': true, 'data-presence': away ? 'away' : 'here', 'aria-haspopup': 'menu', 'aria-expanded': String(open), 'aria-label': label })}>${avatar}<span class="pz-acct-name">${esc(name)}</span>${chevron}</button>`;
+}
+
+/**
+ * In the collapsed sidebar: how many actions run, the tile that opens them.
+ * @param {object} o
+ * @param {number} o.n
+ * @param {string} o.label
+ * @param {boolean} [o.open]
+ */
+export function actionTile({ n, label, open = false }) {
+  return `<button type="button" class="act-tile"${attrs({ 'data-act-tile': true, 'aria-haspopup': 'menu', 'aria-expanded': String(open), 'aria-label': label, title: label })}><span class="pdot" aria-hidden="true"></span><span class="act-tile-n">${esc(n)}</span></button>`;
+}
+
+/**
+ * A top bar's action: its words give way on a narrow screen, its icon and count stay.
+ * @param {object} o
+ * @param {string} o.label
+ * @param {string} o.icon      SVG
+ * @param {string} o.labelCls  what hides its words
+ * @param {string} [o.kind]    '' | 'primary' | 'quiet'
+ * @param {boolean} [o.full]   the top bar's full height, in the captured shell
+ * @param {{n:number, tone:string}|null} [o.badge]
+ * @param {string} [o.cls]
+ * @param {string} [o.title]
+ * @param {object} [o.attrs]
+ */
+export function topBarAction({ label, icon, labelCls, kind = '', full = false, badge = null, cls: c = '', title = '', attrs: a = {} }) {
+  const look = cls('btn', !full && 'btn-sm', kind && `btn-${kind}`, c);
+  return `<button type="button" class="${look}"${attrs({ ...a, title: title || null })}>${icon}<span class="${labelCls}">${esc(label)}</span>${badge ? `<span class="topnav-badge"${attrs({ 'data-tone': badge.tone })}>${esc(badge.n)}</span>` : ''}</button>`;
 }

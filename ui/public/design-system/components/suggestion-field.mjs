@@ -8,8 +8,17 @@ export const suggestedChip = () => '<span class="pd-sug">Suggested</span>';
 
 /** The grey line when Worca could not write it: the text stays, Try again. */
 export function suggestionFail({ model = '', retry = {}, cls: c = '', attrs: a = {} }) {
-  return `<span class="${cls('pd-fail', c)}" role="status"${attrs(a)}>Couldn’t write it: no answer${model ? ` from ${esc(model)}` : ''} in 20s. The text is as it was. <button type="button" class="pd-retry"${attrs(retry)}>Try again</button></span>`;
+  return `<span class="${cls('pd-fail', c)}" role="status"${attrs(a)}>Couldn’t write it: no answer${model ? ` from ${esc(model)}` : ''} in 20s. The text is as it was. ${failureLink({ label: 'Try again', attrs: retry })}</span>`;
 }
+
+/** The way on from a failure's line: Try again, Details. */
+export const failureLink = ({ label, attrs: a = {} }) => `<button type="button" class="pd-retry"${attrs(a)}>${esc(label)}</button>`;
+
+/** Write or preview a description: the eye beside its label. */
+export const previewToggle = ({ on = false, attrs: a = {} }) => `<button type="button" class="pd-eye${on ? ' is-on' : ''}"${attrs({ ...a, 'aria-pressed': String(on), title: 'Preview', 'aria-label': 'Preview' })}>${icon('eye', 14)}</button>`;
+
+/** The field's text as it will read, in the field's place. */
+export const suggestionPreview = ({ html, writing = false }) => `<div class="${cls('pd-adorn', writing && 'is-writing')}"><div class="pd-preview">${html}</div></div>`;
 
 /**
  * @param {object} o

@@ -24,3 +24,15 @@ export function figure({ k, v, of = '', warn = false, title, tab, current = fals
 
 /** The figures line; each entry is figure() markup (or a figure that opens a picker, built by the page). */
 export const figures = (parts) => `<div class="rc-figs">${parts.join('')}</div>`;
+
+/**
+ * What a figure opens: its parts, the total, one line of help.
+ * @param {object} o
+ * @param {string} o.label             the head and the name ("Cost by stage")
+ * @param {[string,string][]} o.rows   name, figure
+ * @param {string} o.total
+ * @param {string} [o.help]
+ */
+export function figureBreakdown({ label, rows, total, help = '' }) {
+  return `<div class="menu rc-cost" role="dialog" data-motion="in"${attrs({ 'aria-label': label })}><p class="menu-h">${esc(label)}</p><ul>${rows.map(([k, v]) => `<li><span>${esc(k)}</span><span class="ct">${esc(v)}</span></li>`).join('')}<li class="is-total"><span>Total</span><span class="ct">${esc(total)}</span></li></ul><p class="menu-help">${esc(help)}</p></div>`;
+}

@@ -27,3 +27,15 @@ export function dialog({ title, body, yes, status = '', busy = false, busyLabel 
   const foot = `<div class="dlg-foot"><span class="dlg-status" role="status">${status}</span><span class="dlg-acts">${view ? '' : button({ label: 'Cancel', kind: 'quiet', attrs: { 'data-dialog': 'cancel', 'data-key': 'dialog:cancel', ...(hooks.cancel || {}) } })}${back ? button({ label: 'Back', attrs: { 'data-dialog': 'back', 'data-key': 'dialog:back', ...(hooks.back || {}) } }) : ''}${button({ label: busy ? busyLabel || yes : yes, kind: 'primary', attrs: { 'data-dialog': 'yes', 'data-key': 'dialog:yes', 'data-motion': 'swap', disabled: busy, ...(hooks.yes || {}) } })}</span></div>`;
   return `<div class="viewer-modal" role="dialog" aria-modal="true"${attrs({ 'aria-labelledby': id, 'data-motion': 'in' })}><div class="card dlg rl-dialog${cls ? ' ' + cls : ''}"${attrs(a)}>${head}${steps ? `<div class="dlg-steps">${steps}</div>` : ''}<div class="dlg-body">${body}</div>${foot}</div></div>`;
 }
+
+/**
+ * A dialog whose card is the page's own anatomy (New run: a sentence, then the start): the same scrim, no head or foot.
+ * @param {object} o
+ * @param {string} o.label     aria-label
+ * @param {string} o.body      markup
+ * @param {string} [o.cls]     the card's class
+ * @param {string} [o.scrimCls] the scrim's hook class
+ */
+export function dialogFrame({ label, body, cls = '', scrimCls = '' }) {
+  return `<div class="viewer-modal${scrimCls ? ' ' + scrimCls : ''}"><div class="card${cls ? ' ' + cls : ''}" role="dialog" aria-modal="true"${attrs({ 'aria-label': label })}>${body}</div></div>`;
+}

@@ -26,6 +26,22 @@ export function sentencePicker({ id, text, items, open = false, tip = '', chevro
 }
 
 /**
+ * WordPicker: a picker among a form's or a panel's words (the base branch, the remote, how many PRs), its menu under it.
+ * @param {object} o
+ * @param {string} o.text        the chosen words
+ * @param {string} o.chevron     its ▾'s SVG
+ * @param {boolean} [o.open]
+ * @param {string} [o.menuHtml]  the CompactMenu, when open
+ * @param {string} [o.tip]
+ * @param {string} [o.cls]       the button's hook class (pd-ship, is-words)
+ * @param {string} [o.wrapCls]   what holds it and its menu
+ * @param {object} [o.attrs]     data-menu, data-key
+ */
+export function wordPicker({ text, chevron, open = false, menuHtml = '', tip = '', cls = '', wrapCls = 'rc-pop pd-basepop', attrs: a = {} }) {
+  return `<span class="${wrapCls}"><button type="button" class="pd-base${cls ? ' ' + cls : ''}"${attrs({ ...a, 'aria-haspopup': 'menu', 'aria-expanded': String(open), title: tip || null })}>${esc(text)}${chevron}</button>${menuHtml}</span>`;
+}
+
+/**
  * Switch: on or off, at once.
  * @param {object} o
  * @param {boolean} o.on

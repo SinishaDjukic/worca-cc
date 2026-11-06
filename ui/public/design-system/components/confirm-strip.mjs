@@ -24,3 +24,15 @@ export function confirmStrip({ text, yes, danger = false, busy = '', err = null,
 export function confirmActions({ yes, danger = false, busy = false, kind }) {
   return `<span class="rc-confirm-acts">${button({ label: yes, kind: kind || (danger ? 'danger' : 'primary'), attrs: { 'data-confirm': 'yes', 'data-key': 'confirm:yes', 'data-motion': 'swap', disabled: busy } })}${button({ label: 'Cancel', kind: 'quiet', attrs: { 'data-confirm': 'no', 'data-key': 'confirm:no' } })}</span>`;
 }
+
+/**
+ * A strip that holds a short form: the sentence, then its fields and confirmActions.
+ * @param {object} o
+ * @param {string} o.form     what the form is (data-form)
+ * @param {string} o.text
+ * @param {string} o.body     markup: the fields, then confirmActions
+ * @param {string} [o.id]
+ */
+export function confirmForm({ form, text, body, id = 'rc-strip-t' }) {
+  return `<form class="rc-confirm is-form" role="dialog"${attrs({ 'data-motion': 'open', 'aria-labelledby': id, 'data-form': form })}><span class="rc-confirm-t"${attrs({ id })}>${esc(text)}</span>${body}</form>`;
+}

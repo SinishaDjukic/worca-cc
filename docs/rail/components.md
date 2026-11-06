@@ -19,8 +19,13 @@ shows it; sizes, colours and spacing come with the component. Names are the Desi
 | A step that needs fields first | Dialog, the only one for a form | Create PR |
 | Going to another page or place | Text link, or a ListRow you open | Changes +358 −144, a file, a step |
 | Copying text | CopyButton: a quiet 28px icon button; a tick for 1.2s and `Copied` in its tooltip and the live region; its width never changes | a branch, a command, an id |
+| A place in the sidebar | NavItem | Runs, Chats |
+| The sidebar's foot, the door to the account menu | AccountButton, then AccountItem rows in a side menu | Interface mode, Away |
+| How many actions run, in the collapsed sidebar | ActionTile, opening their ActionRows | 2 running actions |
+| An action in the top bar whose words give way on a narrow screen | TopBarAction | Pulse, New run |
 | **Choosing** | | |
 | A choice that changes a step | SentencePicker: a picker in the sentence it changes, opening a CompactMenu (in the app, wired to `toggleMenu`, so the menu has keys) | `dev ▾`, `3 stacked PRs ▾` |
+| A choice among a form's or a panel's words | WordPicker, opening a CompactMenu | `dev ▾` base branch, `One PR ▾` |
 | Answering Worca's question | OptionList: one line per answer, a radio dot, Worca's pick marked, your own answer under it (in the app, `buildChatQuestion` takes `preset` for Worca's pick and `recommended` on an option) | the asking step's answers |
 | A setting that is on or off | Switch: takes effect at once, no confirm; a failed change flips back and a toast says why | Watch on a PR |
 | Picking items from a list, an opt-out, a consent | Checkbox | the checklist, No cap, Draft |
@@ -38,9 +43,13 @@ shows it; sizes, colours and spacing come with the component. Names are the Desi
 | **Showing** | | |
 | What is happening | StatusLine: the status dot and the state word | Ready to merge, Paused |
 | How far along, and its steps | Stepper, then StepRow on the rail | Plan · Build · Review |
+| One line that opens its detail in place | LineRow | Did all 3 parts you asked |
+| A changed file | FileRow, opening its diff | app.js +12 −3 |
+| A PR of a stack in Create PR | StackedPrRow, opening its fields | PR 1 |
 | Time, cost, changes | Figures | Cost $84.10 of $120 |
 | Labels and cost tags | TagGroup | ui, team: web, +2 |
 | A list of things | ListRow on the rail, the whole row opens, never a box per item. Rows are split by space; a list grouped by something (status, day, section) draws one `--line` where each group after the first starts, from the text edge, and none between rows. Mock `plans/rail/mocks/now-dividers-compare-*.png` (option 4) | runs, files, decisions, Pulse's Now, a settings tab |
+| An update or a thing in Pulse | PulseRow, built on `row()`; while selecting, its tick box on the rail | Plan asks 2 questions |
 | A short fact: a stage, a source, a slot to set up | Chip | Beta, Official, No API key |
 | Why a control is off, a cut-off text, an id | Tooltip | Checks are still running on #959 |
 | A workflow at full size | WorkflowGraph, the view in a Dialog without a form: a lane per stage, a node per step in its colour, a node opens its log under it | Open the graph |

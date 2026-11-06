@@ -441,6 +441,132 @@ test('stackRow: its own actions sit at its end', () => {
   assert.ok(r.querySelector('#m'));
 });
 
+test('compactMenu and menuItem: a page may name the attribute a pick reads, and animate what holds the menu', () => {
+  const m = dom(C.compactMenu({ items: [{ id: 'a|b', text: 'B', checked: true }], cls: 'x', pickAttr: 'data-pick', motion: false }));
+  assert.equal(m.hasAttribute('data-motion'), false);
+  assert.equal(m.querySelector('.menu-item').getAttribute('data-pick'), 'a|b');
+  const it = dom(C.menuItem({ text: 'Simple', checked: false, help: 'Why' }, { pickAttr: null, attrs: { 'data-level': 'simple' } }));
+  assert.equal(it.getAttribute('role'), 'menuitemradio');
+  assert.equal(it.getAttribute('data-level'), 'simple');
+  assert.equal(it.hasAttribute('data-menu-pick'), false);
+});
+
+test('statusDotClass, the button\'s count, the checkbox without words or with a link', () => {
+  assert.equal(C.statusDotClass('is-green'), 'status-dot is-green');
+  assert.equal(dom(C.statusDot({ tone: 'is-green' })).className, C.statusDotClass('is-green'));
+  assert.equal(dom(C.button({ label: 'Clear', count: 3 })).querySelector('.runs-bulk-c').textContent, '3');
+  assert.equal(dom(C.button({ label: 'Clear' })).querySelector('.runs-bulk-c'), null);
+  const bare = C.checkbox({ cls: 'pz-check', why: 'Select', attrs: { 'aria-label': 'Select a' } });
+  assert.match(bare, /<input[^>]*><\/label>$/);
+  assert.equal(dom(C.checkbox({ html: 'A <b>b</b>' })).querySelector('span b').textContent, 'b');
+});
+
+test('tabs with no panel: the page\'s hooks in place of the panel\'s', () => {
+  const t = dom(C.tabs({ items: [{ id: 'now', label: 'Now', count: 2, selected: true }], hooks: (x) => ({ 'data-ptab': x.id }) })).querySelector('.tab');
+  assert.equal(t.getAttribute('data-ptab'), 'now');
+  assert.equal(t.getAttribute('aria-selected'), 'true');
+  assert.equal(t.hasAttribute('data-tab'), false);
+  assert.equal(t.querySelector('.n').textContent, '2');
+});
+
+test('wordPicker: the chosen words, escaped, its menu under it', () => {
+  const p = dom(C.wordPicker({ text: 'a<b', chevron: '<svg></svg>', open: true, menuHtml: '<div class="menu"></div>', tip: 'Base', cls: 'pd-ship', attrs: { 'data-menu': 'x' } }));
+  const b = p.querySelector('button.pd-base.pd-ship');
+  assert.equal(b.textContent, 'a<b');
+  assert.equal(b.getAttribute('aria-expanded'), 'true');
+  assert.equal(b.title, 'Base');
+  assert.ok(p.querySelector('.menu'));
+});
+
+test('lineRow, fileRow and stackedPrRow: a row that opens says so; a made PR no longer opens', () => {
+  const l = dom(C.lineRow({ mark: '<i></i>', text: 'a<b', open: true, more: '<p>x</p>', attrs: { 'data-line': 'k' } }));
+  assert.ok(l.classList.contains('ov-line') && l.classList.contains('is-open'));
+  assert.equal(l.querySelector('button').getAttribute('aria-expanded'), 'true');
+  assert.equal(l.querySelector('button span').textContent, 'a<b');
+  assert.equal(l.querySelector('.ov-line-more p').textContent, 'x');
+  const go = dom(C.lineRow({ mark: '', text: 'x', link: true })).querySelector('button');
+  assert.ok(go.classList.contains('is-link'));
+  assert.equal(go.hasAttribute('aria-expanded'), false);
+  const f = dom(C.fileRow({ status: 'A', name: 'a.js', dir: 'ui', path: 'ui/a.js', notes: 2, added: 3, removed: 1, open: true }));
+  assert.equal(f.querySelector('.ch-st').title, 'Added');
+  assert.equal(f.querySelector('.ch-notes').title, '2 review comments');
+  assert.equal(f.querySelector('.del').textContent, '−1');
+  assert.equal(dom(C.fileRow({ status: 'M', name: 'a', dir: '', path: 'a', added: 0, removed: 0 })).querySelector('.ch-notes').textContent, '');
+  const pr = dom(C.stackedPrRow({ n: 2, title: 'T', line: '', meta: ['x', 'y'], open: true, body: '<p>f</p>' }));
+  assert.equal(pr.querySelector('.st-num').textContent, 'PR 2');
+  assert.equal(pr.querySelector('.st-body p').textContent, 'f');
+  const made = dom(C.stackedPrRow({ n: 1, title: 'T', line: '', meta: [], open: true, made: true, body: '<p>f</p>' }));
+  assert.ok(made.querySelector('.st-head').disabled);
+  assert.equal(made.querySelector('.st-body'), null);
+});
+
+test('pulseRow: its mark, the tick box on the rail while selecting, its text opens it', () => {
+  const r = dom(C.pulseRow({ title: 'a<b', meta: 'm', time: 't', tip: 'Opens', id: 'k', check: true, unread: true, resolved: true }));
+  assert.ok(r.classList.contains('pz-row') && r.classList.contains('is-sel') && r.classList.contains('is-unread'));
+  assert.ok(r.querySelector('.pz-rail .pz-unread'));
+  assert.equal(r.querySelector('.pz-check input').getAttribute('data-sel'), 'k');
+  assert.equal(r.querySelector('.pz-check input').checked, true);
+  assert.equal(r.querySelector('.pz-row-main').getAttribute('data-open'), 'k');
+  assert.ok(r.querySelector('.pz-resolved'));
+  assert.equal(dom(C.pulseRow({ mark: '<i></i>', title: 'a', meta: 'm', time: 't', tip: 'x', id: 'k' })).querySelector('.pz-check'), null);
+});
+
+test('navItem, accountButton, actionTile, topBarAction: the shell\'s own buttons', () => {
+  const n = dom(C.navItem({ label: 'Runs', icon: '', current: true, attrs: { 'data-go': 'runs' } }));
+  assert.ok(n.classList.contains('is-on'));
+  assert.equal(n.getAttribute('aria-current'), 'page');
+  const off = dom(C.navItem({ label: 'Chats', icon: '', off: true, title: 'Chats is not here' }));
+  assert.equal(off.getAttribute('aria-disabled'), 'true');
+  assert.ok(off.title);
+  const a = dom(C.accountButton({ name: 'A <b>', avatar: '', chevron: '', label: 'Account', away: true, open: true }));
+  assert.equal(a.dataset.presence, 'away');
+  assert.equal(a.getAttribute('aria-expanded'), 'true');
+  assert.equal(a.querySelector('.pz-acct-name').textContent, 'A <b>');
+  const t = dom(C.actionTile({ n: 2, label: '2 running actions' }));
+  assert.equal(t.querySelector('.act-tile-n').textContent, '2');
+  assert.equal(t.title, '2 running actions');
+  const top = dom(C.topBarAction({ label: 'Pulse', icon: '', labelCls: 'l', kind: 'quiet', badge: { n: 3, tone: 'need' } }));
+  assert.ok(top.classList.contains('btn-sm') && top.classList.contains('btn-quiet'));
+  assert.equal(top.querySelector('.topnav-badge').dataset.tone, 'need');
+  assert.equal(dom(C.topBarAction({ label: 'P', icon: '', labelCls: 'l', full: true })).classList.contains('btn-sm'), false);
+});
+
+test('accountItem, navFlyout, themeChoice, cardTitleLink: the account menu\'s parts', () => {
+  const i = dom(C.accountItem({ label: 'Mode', value: 'Expert', chev: '<svg></svg>', attrs: { 'data-sub': '' } }));
+  assert.equal(i.getAttribute('role'), 'menuitem');
+  assert.equal(i.querySelector('.mi-val').textContent, 'Expert');
+  assert.equal(i.getAttribute('data-sub'), '');
+  const sw = dom(C.accountItem({ label: 'Away', sw: true, hint: 'h', attrs: { role: 'menuitemcheckbox' } }));
+  assert.equal(sw.getAttribute('role'), 'menuitemcheckbox');
+  assert.ok(sw.querySelector('.switch'));
+  assert.equal(dom(C.accountItem({ label: 'x' })).querySelector('.mi-val'), null);
+  assert.ok(dom(C.accountItem({ label: 'x', valueAlways: true })).querySelector('.mi-val'));
+  const fl = dom(C.navFlyout({ label: 'Account', cls: 'acct-menu', body: '<p></p>' }));
+  assert.equal(fl.className, 'menu nav-fly acct-menu');
+  assert.equal(fl.getAttribute('aria-label'), 'Account');
+  const th = dom(C.themeChoice({ label: 'Dark', icon: '', on: true }));
+  assert.ok(th.classList.contains('on'));
+  assert.equal(th.getAttribute('aria-checked'), 'true');
+  assert.equal(dom(C.cardTitleLink({ label: 'Spend' })).getAttribute('role'), 'menuitem');
+});
+
+test('the small parts: confirmForm, figureBreakdown, dialogFrame, documentLink, toastUndo, failureLink, previewToggle, suggestionPreview', () => {
+  const f = dom(C.confirmForm({ form: 'after', text: 'a<b', body: '<input>' }));
+  assert.equal(f.tagName, 'FORM');
+  assert.equal(f.dataset.form, 'after');
+  assert.equal(f.querySelector('.rc-confirm-t').textContent, 'a<b');
+  const b = dom(C.figureBreakdown({ label: 'Cost', rows: [['Plan', '$1']], total: '$1', help: 'h' }));
+  assert.equal(b.querySelector('.is-total .ct').textContent, '$1');
+  assert.equal(b.getAttribute('role'), 'dialog');
+  assert.equal(dom(C.dialogFrame({ label: 'New run', cls: 'x', scrimCls: 'is-in', body: '<p></p>' })).firstElementChild.getAttribute('aria-modal'), 'true');
+  assert.equal(dom(C.documentLink({ name: 'a<b' })).querySelector('code').textContent, 'a<b');
+  assert.ok(dom(C.toastUndo({ title: 'Puts them back' })).hasAttribute('data-undo'));
+  assert.equal(dom(C.failureLink({ label: 'Details' })).textContent, 'Details');
+  assert.equal(dom(C.previewToggle({ on: true })).getAttribute('aria-pressed'), 'true');
+  assert.ok(dom(C.suggestionPreview({ html: '<p></p>', writing: true })).classList.contains('is-writing'));
+  assert.equal(C.TRACKER_MOVES.jira[0], 'In review');
+});
+
 test('morph: a textarea shows the new text, even when its text node moves across', () => {
   const host = new JSDOM('<body><div id="t"><textarea id="x"></textarea></div></body>').window.document.getElementById('t');
   C.morph(host, '<textarea id="x">new words</textarea>');

@@ -18,3 +18,6 @@ export function errorToast({ title, text, icon, count = '', actions = '', close 
   const n = count && +count > 1 ? ` <span class="badge"${attrs({ title: `It happened ${count} times` })}>${esc(count)}</span>` : '';
   return `<div class="toasts"><div class="toast err" role="alert"><span class="ti">${icon}</span><span class="tb"><span class="tt">${esc(title)}${n}</span><span class="td">${esc(text)}</span>${actions ? `<span class="el-acts">${actions}</span>` : ''}</span>${close}</div></div>`;
 }
+
+/** Undo inside the toast: puts back what the step just did. */
+export const toastUndo = ({ title = '', attrs: a = {} } = {}) => `<button type="button" class="pz-undo"${attrs({ 'data-undo': true, title: title || null, ...a })}>Undo</button>`;
