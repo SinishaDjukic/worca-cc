@@ -20,7 +20,7 @@ import { parseTag, formatTag, MAX_TAGS, TAG_KEY_RE } from '../shared/run-tags.mj
 import { actorLabel } from './identity.mjs';
 import { readTagsFor } from './run-tags-store.mjs';
 import {
-  budgetStatus, costWindowStart, costWindowEnd, allTimeTotals, roundUsd,
+  budgetStatus, costWindowStart, costWindowEnd, roundUsd,
   askWindowedSpendUsd, requirementsWindowedSpendUsd, utilityTotals,
 } from './cost-budget.mjs';
 import { savedUsd } from '../shared/human-estimate.mjs';
@@ -58,6 +58,9 @@ const EMPTY_ASK = Object.freeze({ spendUsd: 0, sessions: 0, turns: 0 });
 // Requirements spend (plans/requirements-design.md D9) is per feature, not per run: like Chat, a filter drops it.
 const EMPTY_REQUIREMENTS = Object.freeze({ spendUsd: 0, features: 0 });
 const isFiltered = (f) => f.tags.length > 0 || f.person != null;
+// Workflow tests (D21/D22, G14): a test try is never a run in Statistics, filtered or not. Its spend still counts in the
+// spending limit (budgetStatus reads cost_ledger directly); Part 5's Tests tile shows it.
+const NOT_TEST = ' AND p.is_test IS NULL';
 
 /** Request filter → { tags: normalised, deduplicated, person|null }. @throws {RangeError} */
 export function normaliseStatsFilter(filter = {}) {
@@ -76,7 +79,7 @@ export function normaliseStatsFilter(filter = {}) {
 /** AND-ed SQL over pipelines `p`. One fragment shape per tag ('' value = any value of the key),
  *  so prepare()'s statement cache grows with the tag COUNT only, never with the values. */
 function filterSql(filter) {
-  let sql = ''; const params = [];
+  let sql = NOT_TEST; const params = [];
   for (const t of filter.tags) {
     const { tag } = parseTag(t);
     sql += " AND EXISTS (SELECT 1 FROM run_tags ft WHERE ft.pipeline_id = p.id AND ft.key = ? AND (? = '' OR ft.value = ?))";
@@ -136,7 +139,7 @@ const SHAPING_SELECT = `
     FROM pipelines p
     LEFT JOIN (SELECT pipeline_id, SUM(cost_usd) sc, SUM(active_ms) sa
                FROM pipeline_steps GROUP BY pipeline_id) s ON s.pipeline_id = p.id
-    WHERE p.status = 'done' AND p.run_size IS NOT NULL
+    WHERE p.status = 'done' AND p.run_size IS NOT NULL AND p.is_test IS NULL
       AND COALESCE(p.started_at, p.updated_at) >= ?
       AND COALESCE(p.started_at, p.updated_at) <  ?
     GROUP BY p.run_size, shaped`;
@@ -159,9 +162,10 @@ export function shapingGroups(fromMs, toMs) {
 }
 
 // Review quality (#990 s6): the per-role review counts of finished runs started in the window, newest first.
+// Workflow test tries (is_test, D21/D22) are left out, like every other Statistics reader.
 const REVIEW_QUALITY_SELECT = `
     SELECT review_stats FROM pipelines
-    WHERE status = 'done' AND review_stats IS NOT NULL
+    WHERE status = 'done' AND review_stats IS NOT NULL AND is_test IS NULL
       AND COALESCE(started_at, updated_at) >= ?
       AND COALESCE(started_at, updated_at) <  ?
     ORDER BY COALESCE(started_at, updated_at) DESC`;
@@ -211,7 +215,8 @@ function updatedTotals(fromMs, toMs, filter = NO_FILTER) { return totalsRow(WIND
 /** Ledger spend in [fromMs, toMs); with a filter, only ledger rows of matching runs. */
 function ledgerSpend(fromMs, toMs, filter = NO_FILTER) {
   if (!isFiltered(filter)) {
-    const row = prepare('SELECT SUM(amount_usd) AS s FROM cost_ledger WHERE ts >= ? AND ts < ?').get(fromMs, toMs);
+    const row = prepare(`SELECT SUM(l.amount_usd) AS s FROM cost_ledger l LEFT JOIN pipelines p ON p.id = l.pipeline_id
+      WHERE l.ts >= ? AND l.ts < ?${NOT_TEST}`).get(fromMs, toMs);
     return roundUsd(row?.s || 0);
   }
   const f = filterSql(filter);
@@ -228,7 +233,7 @@ function filteredAllTime(filter) {
 
 /** Distinct named starters, for the person picker. */
 function peopleInUse() {
-  const names = prepare('SELECT DISTINCT started_by AS who FROM pipelines WHERE started_by IS NOT NULL').all()
+  const names = prepare('SELECT DISTINCT started_by AS who FROM pipelines WHERE started_by IS NOT NULL AND is_test IS NULL').all()
     .map((r) => actorLabel(r.who)).filter(Boolean);
   return [...new Set(names)].sort((a, b) => a.localeCompare(b));
 }
@@ -372,8 +377,8 @@ function factOf(r, inCohort) {
 /** Ledger spend per run in [fromMs, toMs); with a filter, only rows of matching runs. */
 function ledgerByRun(fromMs, toMs, filter) {
   if (!isFiltered(filter)) {
-    return prepare('SELECT pipeline_id AS id, SUM(amount_usd) AS usd FROM cost_ledger WHERE ts >= ? AND ts < ? GROUP BY pipeline_id')
-      .all(fromMs, toMs);
+    return prepare(`SELECT l.pipeline_id AS id, SUM(l.amount_usd) AS usd FROM cost_ledger l LEFT JOIN pipelines p ON p.id = l.pipeline_id
+      WHERE l.ts >= ? AND l.ts < ?${NOT_TEST} GROUP BY l.pipeline_id`).all(fromMs, toMs);
   }
   const f = filterSql(filter);
   return prepare(`SELECT l.pipeline_id AS id, SUM(l.amount_usd) AS usd FROM cost_ledger l JOIN pipelines p ON p.id = l.pipeline_id
@@ -462,6 +467,8 @@ function requirementsTotals(fromMs, toMs) {
  *  hours × rate − spent over the budget's own reset window. The same cohort (runs STARTED in
  *  [windowStartMs, windowEndMs), archived included), the same rate and the same spend as the
  *  Statistics "Saved" tile for the matching range, so the spend card and the tile never disagree.
+ *  Test tries (is_test) are left out of the hours AND of the spend subtracted here, like the tile: their spend
+ *  still counts in `budget.windowSpendUsd` and the spending limit, but a test must not make "Saved" go negative.
  *  A lean SUM rather than cohortTotals(): /api/budget is refetched on every tick while runs
  *  are live, and the pipeline_steps join TOTALS_SELECT carries is dead weight for one column.
  *  @param {{windowStartMs:number, windowEndMs:number, windowSpendUsd:number}} budget  budgetStatus()
@@ -471,12 +478,17 @@ export function budgetWindowSavings(budget) {
     SELECT COALESCE(SUM(p.human_hours), 0) AS humanHours
     FROM pipelines p
     WHERE COALESCE(p.started_at, p.updated_at) >= ?
-      AND COALESCE(p.started_at, p.updated_at) <  ?`)
+      AND COALESCE(p.started_at, p.updated_at) <  ?
+      AND p.is_test IS NULL`)
     .get(new Date(budget.windowStartMs).toISOString(), new Date(budget.windowEndMs).toISOString());
   const windowHumanHours = Math.round(Number(row?.humanHours || 0) * 100) / 100;
+  // Same window as cost-budget's windowedSpendUsd (ts >= windowStart), test tries only.
+  const testRow = prepare(`SELECT SUM(l.amount_usd) AS s FROM cost_ledger l JOIN pipelines p ON p.id = l.pipeline_id
+    WHERE l.ts >= ? AND p.is_test IS NOT NULL`).get(budget.windowStartMs);
+  const spendUsd = roundUsd(budget.windowSpendUsd - (testRow?.s || 0));
   return {
     windowHumanHours,
-    windowSavedUsd: savedUsd(windowHumanHours, effectiveHumanRateUsd(), budget.windowSpendUsd),
+    windowSavedUsd: savedUsd(windowHumanHours, effectiveHumanRateUsd(), spendUsd),
   };
 }
 
@@ -564,7 +576,7 @@ export function getStats({ range = 'month', now = new Date(), from = null, to = 
 
   let totals;
   if (range === 'all') {
-    const at = filtered ? filteredAllTime(filter) : allTimeTotals();
+    const at = filteredAllTime(filter);   // filterSql always leaves test tries out (NOT_TEST)
     const c = cohortTotals(0, windowEnd.getTime(), filter);
     const ask = filtered ? EMPTY_ASK : askTotals(0, windowEnd.getTime());
     const requirements = filtered ? EMPTY_REQUIREMENTS : requirementsTotals(0, windowEnd.getTime());

@@ -119,16 +119,16 @@ and pinned routes). See [split-by-feature.md](split-by-feature.md).
 | `ui/public/runs/welcome.html` | 103 |
 | `ui/public/runs/workflow-question.css` | 70 |
 | `ui/routes/runs/artifacts.mjs` | 184 |
-| `ui/routes/runs/checkout-and-actions.mjs` | 556 |
-| `ui/routes/runs/control.mjs` | 225 |
+| `ui/routes/runs/checkout-and-actions.mjs` | 581 |
+| `ui/routes/runs/control.mjs` | 226 |
 | `ui/routes/runs/drain-and-budget.mjs` | 31 |
 | `ui/routes/runs/folder-apply.mjs` | 90 |
 | `ui/routes/runs/labels-and-tags.mjs` | 148 |
 | `ui/routes/runs/naming.mjs` | 65 |
 | `ui/routes/runs/publish.mjs` | 117 |
-| `ui/routes/runs/report.mjs` | 93 |
+| `ui/routes/runs/report.mjs` | 95 |
 | `ui/routes/runs/run-groups.mjs` | 185 |
-| `ui/routes/runs/runs.mjs` | 395 |
+| `ui/routes/runs/runs.mjs` | 397 |
 
 ## history
 
@@ -182,14 +182,17 @@ and pinned routes). See [split-by-feature.md](split-by-feature.md).
 | `ui/public/workflows/agents-view.css` | 61 |
 | `ui/public/workflows/composer-chat.css` | 114 |
 | `ui/public/workflows/export-dialog.css` | 38 |
-| `ui/public/workflows/export.html` | 109 |
+| `ui/public/workflows/export.html` | 116 |
 | `ui/public/workflows/inspector-panels.css` | 86 |
 | `ui/public/workflows/node-graph.css` | 260 |
 | `ui/public/workflows/save-dialog.css` | 16 |
-| `ui/public/workflows/workflow-canvas.css` | 177 |
-| `ui/public/workflows/workflows.html` | 180 |
+| `ui/public/workflows/workflow-canvas.css` | 204 |
+| `ui/public/workflows/workflow-tests.css` | 406 |
+| `ui/public/workflows/workflows.html` | 190 |
 | `ui/routes/workflows/agents.mjs` | 125 |
-| `ui/routes/workflows/workflows.mjs` | 311 |
+| `ui/routes/workflows/versions.mjs` | 8 |
+| `ui/routes/workflows/workflow-tests.mjs` | 53 |
+| `ui/routes/workflows/workflows.mjs` | 331 |
 
 ## scripts ([scripts.md](scripts.md))
 

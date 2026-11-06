@@ -172,6 +172,7 @@ app.post('/api/pause', (req, res) => {
   } catch (err) {
     // `status`: what the run is instead, so a tab whose click lost to another pause keeps its Pausing… quietly.
     if (err?.code === 'CANNOT_PAUSE') return res.status(400).json({ error: err.message, code: 'CANNOT_PAUSE', status: runs.get(runId)?.status || null });
+    if (err?.code === 'TEST_TRY') return res.status(409).json({ error: err.message });
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
 });

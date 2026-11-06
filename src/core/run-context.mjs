@@ -181,10 +181,11 @@ const byProjectKey = (a, b) => (a.projectKey < b.projectKey ? -1 : a.projectKey 
 const repoRel = (m) => `repos/${m.worktreeDir ? basename(m.worktreeDir) : m.projectKey}`;
 
 /** `git -C dir <args>` stdout, or null. Sync + fail-safe (mirrors store.mjs). */
-function gitOut(dir, args) {
+function gitOut(dir, args, env = null) {
   if (!gitAvailable()) return null;
   try {
-    return execFileSync('git', ['-C', dir, ...args], { stdio: ['ignore', 'pipe', 'ignore'], env: guardedGitEnvSync(dir) })
+    // Security G2 (dev): the guarded env over the caller's (a try's tryGitEnv, workflow tests 3a) or process.env.
+    return execFileSync('git', ['-C', dir, ...args], { stdio: ['ignore', 'pipe', 'ignore'], env: guardedGitEnvSync(dir, env ? { env } : {}) })
       .toString().trim() || null;
   } catch {
     return null;
@@ -397,9 +398,9 @@ function rewriteSkillName(text, name) {
 export const skillsRelFor = (engine) => (engine && engine !== 'claude' ? join('.agents', 'skills') : join('.claude', 'skills'));
 
 /** Top-level entry names tracked under the skills folder `rel` in a checkout (§5.6 guard). */
-function trackedSkillNames(worktreeDir, rel = join('.claude', 'skills')) {
+function trackedSkillNames(worktreeDir, rel = join('.claude', 'skills'), env = null) {
   if (!worktreeDir) return new Set();
-  const out = gitOut(worktreeDir, ['ls-files', '--', rel]);
+  const out = gitOut(worktreeDir, ['ls-files', '--', rel], env);
   if (!out) return new Set();
   const prefix = `${rel}/`;
   return new Set(
@@ -623,7 +624,7 @@ function resolutionEntries(resolutions) {
 // ── §5.5 MCP merge ──────────────────────────────────────────────────────────
 
 /** Collapse `__` runs so `mcp__<server>__<tool>` can never mis-split (§5.5, §7.1). */
-function normalizeServerName(raw) {
+export function normalizeServerName(raw) {
   const n = String(raw ?? '').replace(/__+/g, '_').replace(/^_+|_+$/g, '');
   return n || 'mcp-server';
 }
@@ -1283,6 +1284,8 @@ export function generateClaudeMd({
  *        already uses; null (or a null answer) adds nothing
  * @param {object[]} [a.setSkills]  another engine's set skills (assembleSkills `setSkills`); the record's
  *        `setSkillNames` maps each mounted one's key to the name it got
+ * @param {((layer:{servers:object, copies:object[]}) => Promise<{servers:object, off:Array<{name:string, reason:string, why:string}>}>)|null} [a.mcpStandIn]
+ *        workflow tests (D35): a pretend try's swap of every server it would load for a stand-in; null for every other run
  * @returns {Promise<object>} the run-context record (also persisted into run.json)
  */
 export async function assembleRunContext({
@@ -1290,6 +1293,8 @@ export async function assembleRunContext({
   requiredSkillResolutions, graphInstructions, homeDir, honorByKey = null,
   platform = process.platform, agentIsolated = false, registry = null, settingsScope = null, engine = 'claude',
   setSkills = [],
+  mcpStandIn = null,
+  gitEnv = null,   // workflow tests 3a (final review I2): a try's git env (no hook or fsmonitor of the copy, the guard)
 }) {
   const warnings = [];
   // ENOENT/ENOTDIR stay silent (absence is normal, §8.20); every OTHER fs error on a
@@ -1400,7 +1405,7 @@ export async function assembleRunContext({
     skillsOut = await assembleSkills({
       target: skillMountDir, members: liveMembers, projectsRoot: rootUsable ? projectsRoot : null,
       resolutions: requiredSkillResolutions, homeDir, mount, skipRoot: rootIsHome, rel: skillsRel, linkUserSkills, setSkills,
-      trackedNames: primary.workMode && primary.workMode !== 'git' ? shippedSkillNames(primary.shippedFiles, skillsRel) : trackedSkillNames(primary.worktreeDir, skillsRel),
+      trackedNames: primary.workMode && primary.workMode !== 'git' ? shippedSkillNames(primary.shippedFiles, skillsRel) : trackedSkillNames(primary.worktreeDir, skillsRel, gitEnv),
     });
     if (skillsOut.records.length) injectedPaths[primary.projectKey] = skillsOut.records;
   } else if (primary) {
@@ -1479,6 +1484,13 @@ export async function assembleRunContext({
       mcp.roster.push({ name: c.name, text: `${text}${c.renamedFrom ? ` (renamed from \`${c.renamedFrom}\`)` : ''}` });
     }
     for (const w of registryWarnings(layer, reg.catalog, mcp.userScopeNames)) warnings.push(w);
+  }
+  // Workflow tests (plans/workflow-tests-part2-plan.md D35): a pretend try swaps every server it would load, the registry
+  // copies and the file servers, for a local stand-in under the same name; one it cannot pretend for is left out.
+  if (typeof mcpStandIn === 'function') {
+    const swap = await mcpStandIn({ servers: mcp.servers, copies: reg ? reg.result.copies : [] });
+    mcp.servers = swap.servers;
+    for (const o of swap.off) warnings.push(`MCP server \`${o.name}\` is switched off in this test try: ${o.why}`);
   }
   const written = Object.keys(mcp.servers).sort();
   let mcpConfigPath = null;

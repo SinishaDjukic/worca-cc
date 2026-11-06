@@ -56,7 +56,7 @@ app.get('/api/runs', async (req, res) => {
     // Also expose any live (in-memory) runs for this project that may not yet
     // be on disk, so the UI history reflects an active run too.
     const live = [...runs.values()]
-      .filter((r) => r.projectDir === projectDir)
+      .filter((r) => r.projectDir === projectDir && !r.isTest)   // D21: a try's work folder lists no live try
       .map((r) => ({
         // Surface the on-disk pipeline id as `id` once createPipeline has run, so
         // renderHistory's dedup-by-id merges this entry with its disk twin. The
@@ -352,6 +352,7 @@ app.post('/api/runs/:id/discard-worktree', async (req, res) => {
   } catch (e) {
     if (e && e.code === 'RUNNING') return res.status(409).json({ error: e.message });
     if (e && e.code === 'SNAPSHOT_FAILED') return res.status(409).json({ error: e.message });
+    if (e && e.code === 'TEST_TRY') return res.status(409).json({ error: e.message, code: 'TEST_TRY' });
     if (e && e.code === 'BAD_REQUEST') return badRequest(res, e.message);
     res.status(500).json({ error: e && e.message ? e.message : String(e) });
   }
@@ -388,6 +389,7 @@ app.post('/api/runs/:id/apply-retained', async (req, res) => {
     res.json(report);
   } catch (e) {
     if (e && e.code === 'RUNNING') return res.status(409).json({ error: e.message, code: 'RUNNING' });
+    if (e && e.code === 'TEST_TRY') return res.status(409).json({ error: e.message, code: 'TEST_TRY' });
     if (e && e.code === 'BAD_REQUEST') return badRequest(res, e.message);
     res.status(500).json({ error: e && e.message ? e.message : String(e) });
   }

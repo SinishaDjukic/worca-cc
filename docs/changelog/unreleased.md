@@ -3,6 +3,63 @@
 Notes on merged features that have no release page yet. `/worca-changelog` folds
 them into the next page and empties this file.
 
+## Workflow versions (Labs)
+
+**Save a workflow as a version, choose which one new runs use, and go back.**
+
+Workflow versions (Labs, flag `workflowTests`): Save version on a workflow, choose which version new runs use, see what changed, and restore any of the last 50 saves. Every save keeps the workflow as it was just before; a version keeps the workflow's steps and settings, and runs today's agent and script text from the Library.
+
+Export can export the version in use or your draft: the Export dialog's Version field picks which, and starts on the version new runs use. An exported skill or plugin keeps the workflow's name, so exporting an older version updates it.
+
+Chips: Save version · Versions · Use for new runs · Restore · experimental: turn it on in Settings › Labs
+
+Read it: [Where Worca keeps its state](../storage.md)
+
+Pull requests (add each number when it opens):
+
+- Workflow versions (#979)
+
+## Workflow tests (Labs)
+
+**Try a new version of a workflow on real examples, and see what got better or worse.**
+
+Workflow tests (Labs, flag `workflowTests`) add a Tests page to a workflow.
+- Keep real requests as examples, with their files and the answers to Worca's questions. Add one from a past run, or write one.
+- Say what a good result needs: the Basics (no error, no help needed, a cost limit, how often it is sent back for fixes) and automatic checks counted exactly, without AI (length, sections, must or must not mention, a file, a Library script).
+- Test a version: Worca tries every example 3 times on it and on the version you compare with, reuses earlier results when nothing changed, and stops at the cost limit you set.
+- Compare shows the tries passed, the cost and time per try, what got better or worse per example, and each example side by side.
+- Connectors: by default a test's tries use stand-ins for your connectors, so nothing is posted or sent, and one example's page shows what would have been sent. Choose Real to use your real connectors.
+- A test of a workflow runs one at a time; while it runs, Test a version and Try it once now wait.
+- Their runs stay out of the Runs list, Statistics and team metrics, but count in the spending limit.
+
+Chips: Tests · Test a version · Compare · experimental: turn it on in Settings › Labs
+
+Read it: [Where Worca keeps its state](../storage.md)
+
+Pull requests (add each number when it opens):
+
+- Workflow tests (#<PR>)
+
+## Workflow tests on a project (Labs, Part 3a)
+
+**Test workflows that change a project's code, without touching your folder.**
+
+- An example can name a Git project and a start point: a commit, kept the same until you change it, so two versions start from exactly the same code. Keep your changes that are not committed yet with it if you want. Worca says when the project has moved on, and Start from the latest moves the example.
+- Each try works in Worca's own copy of the project. Your folder and your branches are never touched, and the copy of each try is deleted after its checks. The list of changes and the full diff stay to look at.
+- Before each try, Worca can run a setup command (filled in from the project's setup, such as `npm ci`). If it fails, the test stops and no try counts as failed.
+- A new automatic check: The command passes (such as `npm test`), with its summary line. Text checks can read a file of the project.
+- Pushes, pull requests and issues are stopped, with any engine; common publish commands are stopped with Claude Code. The attempts Worca sees are listed under Would have sent. It is not a network block yet: a program's own web calls, a publish that signs in with a token kept in a file, a publish run from inside a script, or a push or web call with a token the agent reads from a file or from git's settings are not stopped.
+- Test a version says how much disk and time a test needs, and refuses to start when the disk is too full.
+- Add from a past run takes project runs too: the example starts where the run started.
+
+Chips: Tests · Where it starts · The command passes · experimental: turn it on in Settings › Labs
+
+Read it: [Where Worca keeps its state](../storage.md)
+
+Pull requests (add each number when it opens):
+
+- Workflow tests on a project (#<PR>)
+
 ## Set your roles once
 
 **Pick your models in the setup assistant. Everything else follows.**

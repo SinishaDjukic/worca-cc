@@ -323,7 +323,7 @@ export const CURSOR_RESUME_NOT_FOUND_RE = /(?:chat|conversation|session)[^.\n]*n
 export async function runCursorProcess({
   cwd = process.cwd(), systemPrompt = '', prompt = '', model, onEvent = () => {}, signal,
   bin = cursorDefaultBin(), resumeSessionId, sandbox, askLockdown, envScrub, envAllowlist, asAgent,
-  mcpConfigPath, spawnEnv: runSpawnEnv, redactValues, maxTurns, permissionRules, noGit = false,
+  mcpConfigPath, spawnEnv: runSpawnEnv, redactValues, maxTurns, permissionRules, noGit = false, tryGuard = null,
 } = {}) {
   if (signal?.aborted) { const e = new Error('aborted'); e.name = 'AbortError'; throw e; }
   if (askLockdown) throw new Error(`${bin}: Cursor cannot be locked down for a chat (no switch for its shell or file tools) — Chat on Cursor is unavailable`);
@@ -370,7 +370,9 @@ export async function runCursorProcess({
   }
 
   // CURSOR_API_KEY (and any CURSOR_ var) survives scrub; the run env carries the MCP servers' ${env:…} values.
-  const { env } = composeSpawnEnv({ envScrub, envAllowlist, prefixes: ['CURSOR_'], runEnv: cleanRunEnv(runSpawnEnv) ?? undefined, hostPid: guardOn ? process.pid : null });
+  // Workflow tests 3a (D56): a try's outward guard (stand-ins first on PATH, git with no sign-in); absent ⇒ unchanged.
+  const { env } = composeSpawnEnv({ envScrub, envAllowlist, prefixes: ['CURSOR_'], runEnv: cleanRunEnv(runSpawnEnv) ?? undefined, hostPid: guardOn ? process.pid : null,
+    ...(tryGuard ? { tryGuard } : {}) });
 
   // G14: what the agent changed in worca's .cursor files during a spawn is put back before the next one (or a retry).
   const restore = () => {

@@ -156,6 +156,11 @@ const JS_CHECKBOX_OK = [
   ['marketplace/browse.mjs', 'mk-hide-installed', 'Hide installed: an opt-in filter next to the list'],
   ['marketplace/remove-view.mjs', 'mk-purge-box', 'opt-in consent in the Remove dialog'],
   ['marketplace/update-view.mjs', 'mk-reviewed', 'acknowledges the reviewed changes'], ['marketplace/update-view.mjs', 'mk-include', 'picks updates'],
+  ['workflows/version-dialogs.mjs', 'wfv-sv-use', 'opt-in in the Save version dialog: also use the new version for new runs'],
+  ['workflows/tests-view.mjs', 'wft-pick-box', 'picks runs: the past runs to keep as test examples'],
+  ['workflows/test-dialogs.mjs', 'wft-keep-box', 'picks what to keep from the past run: its request and files, its answers'],
+  ['workflows/test-dialogs.mjs', 'wft-tv-optin', 'opt-ins next to the estimate: reuse earlier results, the free quick check'],
+  ['workflows/example-editor.mjs', 'wft-changes-box', 'opts in to keeping the uncommitted changes with the example, next to its start point (board 32)'],
 ].map(([file, token, reason]) => ({ file: `ui/public/${file}`, token, reason }));
 function checkboxEmitters(files) {
   const out = [];

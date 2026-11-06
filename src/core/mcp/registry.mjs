@@ -8,7 +8,7 @@ import { MCP_ENV_VAR_RE, URL_SAFE_SECRET_RE } from './definitions.mjs';
 import { QUERY_SECRET_RE, hasTokenShape } from '../mcp-secrets.mjs';
 import { copyName, secretEnvName } from './identity.mjs';
 import { collectSets } from './sets.mjs';
-import { readMcpStore, testFingerprint } from './store.mjs';
+import { readMcpStore, testFingerprint, toolNameOf } from './store.mjs';
 import { loadCatalog } from './catalog.mjs';
 import { WIN_CMD_METACHAR_RE, resolveWindowsCommand } from '../win-command.mjs';
 import { cachedPolicyFor, cachedPolicyForKey, cachedPolicyHomes } from '../policy/cache.mjs';
@@ -279,7 +279,7 @@ export function resolveMcpServers({
   const disallowedTools = [];
   const skippedTools = [];
   for (const s of started) {
-    for (const tool of s.tools) {
+    for (const tool of s.tools.map(toolNameOf)) {
       const full = `mcp__${s.name}__${String(tool).replace(/[^A-Za-z0-9_-]/g, '_')}`;
       if (full.length > toolNameLimit) { disallowedTools.push(full); skippedTools.push({ name: s.name, tool, reason: `tool-name-too-long:${tool}` }); }
     }

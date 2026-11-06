@@ -2,6 +2,7 @@
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { checkRows } from './helpers/rows.mjs';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
@@ -1951,4 +1952,971 @@ test('F-26: the Save reason shows as text, linked by aria-describedby, and hides
       { id: 'w4', from: { node: 'n_rev', port: 'pass' }, to: { node: 'n_end', port: 'result' } }] });
   await tick(); await tick();
   assert.equal(reason.hidden, true);
+});
+
+// ------------------------------------------------- Workflow versions (plans/workflow-tests-plan.md Part 1, Task 7)
+const VERSIONS_OVERVIEW = {
+  workflowId: 'wf_g', name: 'Graph one', liveVersionNo: 1,
+  draft: { changed: true, changes: ['Renamed since v1'], partsChanged: [], sinceLatest: { versionNo: 2, changes: ['New step Fact check'] } },
+  sinceLatest: { versionNo: 2, changes: ['New step Fact check'] },
+  versions: [{ id: 2, versionNo: 2, note: null, by: null, createdAt: '2026-10-25', inUse: false, runs: 0, changes: [],
+    changesFromInUse: ['New step Fact check'], libraryEdited: true },
+    { id: 1, versionNo: 1, note: null, by: null, createdAt: '2026-10-24', inUse: true, runs: 0, changes: ['First version'], changesFromInUse: [], libraryEdited: true }],
+  history: [],
+};
+async function bootVersions({ versions = () => Promise.resolve({ ok: true, status: 200, json: async () => VERSIONS_OVERVIEW }), workflows, extra = null } = {}) {
+  const calls = [];
+  const booted = await boot({
+    ...(workflows ? { workflows } : {}),
+    fetchHandler: (url, init) => {
+      if (extra) { const r = extra(url, init); if (r) { calls.push({ url, method: init.method || 'GET' }); return r; } }
+      if (!/\/api\/workflows\/[^/?]+\/versions(?:\/|$|\?)/.test(url)) return null;
+      calls.push({ url, method: init.method || 'GET' });
+      return versions(url, init);
+    },
+  });
+  booted.window.document.documentElement.dataset.flags = 'workflowTests';
+  return { ...booted, calls };
+}
+const clickEl = (w, el) => el.dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
+
+test('Versions page: focusable, takes the focus and clears the canvas selection, so Delete never edits the hidden graph', async () => {
+  const { window: w } = await bootVersions();
+  await go(w, 'workflows/wf_g');
+  await tick(4);
+  const doc = w.document;
+  const page = doc.getElementById('wfv-versions');
+  assert.equal(page.getAttribute('tabindex'), '-1');
+  assert.equal(page.getAttribute('role'), 'tabpanel');
+  const gv = w.__gv().c;
+  gv.select({ kind: 'node', id: 'n_end' });
+  assert.ok(gv.selection());
+  const nodes = doc.querySelectorAll('#wfv-canvas .gv-world .node').length;
+  clickEl(w, doc.querySelector('#wfv-pages [data-page="versions"]'));
+  await tick(4);
+  assert.equal(page.hidden, false);
+  assert.equal(doc.activeElement, page, 'the page holds the focus, inside the canvas-keys fence');
+  assert.equal(gv.selection(), null, 'nothing stays selected on the hidden canvas');
+  doc.activeElement.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Delete', bubbles: true }));
+  await tick();
+  assert.equal(doc.querySelectorAll('#wfv-canvas .gv-world .node').length, nodes);
+  assert.equal(page.querySelectorAll('.wfv-vt-row').length, 2, 'the page is painted once the overview arrives');
+  clickEl(w, doc.querySelector('#wfv-pages [data-page="canvas"]'));
+  assert.equal(page.hidden, true);
+});
+
+test('Save version on a saved, clean canvas: "Save version 3" lists what changed since the latest version (v2)', async () => {
+  const { window: w } = await bootVersions();
+  await go(w, 'workflows/wf_g');
+  await tick(4);
+  clickEl(w, w.document.getElementById('wfv-saveversion'));
+  await tick(4);
+  const doc = w.document;
+  assert.equal(doc.querySelector('#mk-dialog-title').textContent, 'Save version 3');
+  assert.equal(doc.querySelector('.wfv-sv-since').textContent, 'What changed since v2:');
+  assert.deepEqual([...doc.querySelectorAll('.wfv-changes li')].map((li) => li.textContent), ['New step Fact check']);
+});
+
+test('Save version on an unsaved canvas saves it first: the canvas Save dialog opens, no version dialog, no versions request', async () => {
+  const { window: w, calls } = await bootVersions();
+  await go(w, 'workflows');
+  await tick(2);
+  clickEl(w, w.document.getElementById('wfv-saveversion'));
+  await tick(4);
+  assert.ok(w.document.querySelector('#wfv-dialog-host dialog[open]'), 'the canvas Save dialog');
+  assert.equal(w.document.getElementById('mk-dialog'), null);
+  assert.deepEqual(calls.filter((c) => c.method === 'GET' && c.url.endsWith('/versions')).length, 0);
+});
+
+test('Save version on a plugin-owned or built-in canvas saves a copy first, never a version of the row that cannot have one', async () => {
+  const PLUGIN_ROW = { ...DEFAULT_ROW, id: 'wfp_demo_quick', name: 'Quick', origin: 'plugin:demo' };
+  for (const id of ['wfp_demo_quick', 'wf_default']) {
+    const { window: w, calls } = await bootVersions({ workflows: [DEFAULT_ROW, PLUGIN_ROW] });
+    await go(w, `workflows/${id}`);
+    await tick(4);
+    clickEl(w, w.document.getElementById('wfv-saveversion'));
+    await tick(4);
+    const dlg = w.document.querySelector('#wfv-dialog-host dialog[open]');
+    assert.ok(dlg, `${id}: the Save dialog`);
+    assert.equal(dlg.dataset.saveAs, '1', `${id}: as a copy`);
+    assert.equal(w.document.getElementById('mk-dialog'), null, id);
+    assert.equal(calls.filter((c) => c.method === 'POST').length, 0, id);
+  }
+});
+
+test('Save version when the versions cannot be read: an error toast, no "Save version 1" guess', async () => {
+  const { window: w } = await bootVersions({ versions: () => Promise.reject(new Error('down')) });
+  await go(w, 'workflows/wf_g');
+  await tick(4);
+  clickEl(w, w.document.getElementById('wfv-saveversion'));
+  await tick(4);
+  assert.equal(w.document.getElementById('mk-dialog'), null);
+  const t = lastToast(w.document);
+  assert.equal(t && t.title, 'Versions are not available');
+});
+
+test('source: wfvSaveVersion saves a dirty or unsaved canvas through openSaveDialog before any version, with a loop guard', () => {
+  const src = readFileSync(appPath, 'utf8');
+  const body = src.slice(src.indexOf('async function wfvSaveVersion('), src.indexOf('function wfvRenderVersionsPage('));
+  assert.ok(body.length > 0, 'wfvSaveVersion found');
+  const save = body.indexOf('gvComposer.openSaveDialog(');
+  assert.ok(save > 0, 'routes through openSaveDialog');
+  assert.match(body, /gvComposer\.isDirty\(\)/);
+  assert.ok(save < body.indexOf('openSaveVersionDialog('), 'the save comes before the version dialog');
+  assert.match(body, /afterSave/, 'a save that did not leave a versionable row does not reopen the dialog forever');
+});
+
+// ------------------------------------------------- The Versions page (plans/workflow-tests-plan.md Part 1, Task 8)
+const okJson = (v, status = 200) => Promise.resolve({ ok: status < 400, status, json: async () => v });
+const ctrlZ = (w, target, shiftKey = false) => target.dispatchEvent(new w.KeyboardEvent('keydown', { key: shiftKey ? 'Z' : 'z', ctrlKey: true, shiftKey, bubbles: true, cancelable: true }));
+
+test('Versions page: ⌘Z and ⇧⌘Z never reach the hidden canvas; back on Canvas they undo again', async () => {
+  const { window: w } = await bootVersions();
+  await go(w, 'workflows/wf_g');
+  await tick(4);
+  const doc = w.document;
+  const gv = w.__gv().c;
+  gv.select({ kind: 'node', id: 'n_end' });
+  doc.body.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Delete', bubbles: true }));
+  assert.equal(gv.template().nodes.length, 1, 'an edit to undo');
+  clickEl(w, doc.querySelector('#wfv-pages [data-page="versions"]'));
+  await tick(4);
+  const page = doc.getElementById('wfv-versions');
+  ctrlZ(w, page);
+  ctrlZ(w, doc.body);
+  assert.equal(gv.template().nodes.length, 1, 'no undo while the Versions page is shown');
+  ctrlZ(w, page, true);
+  assert.equal(gv.template().nodes.length, 1, 'no redo either');
+  clickEl(w, doc.querySelector('#wfv-pages [data-page="canvas"]'));
+  ctrlZ(w, doc.body);
+  assert.equal(gv.template().nodes.length, 2, 'the canvas undoes again');
+});
+
+test('Versions page: the version table, and Use for new runs asks first, then switches', async () => {
+  const used = { ...VERSIONS_OVERVIEW, liveVersionNo: 2, versions: VERSIONS_OVERVIEW.versions.map((v) => ({ ...v, inUse: v.versionNo === 2 })) };
+  let current = VERSIONS_OVERVIEW;                              // the server's state: Use switches it
+  const { window: w, calls } = await bootVersions({ versions: () => okJson(current),
+    extra: (url, init) => (/\/versions\/2\/use$/.test(url) && init.method === 'POST' ? ((current = used), okJson(used)) : null) });
+  await go(w, 'workflows/wf_g');
+  await tick(4);
+  const doc = w.document;
+  clickEl(w, doc.querySelector('#wfv-pages [data-page="versions"]'));
+  await tick(4);
+  const page = doc.getElementById('wfv-versions');
+  const rows = [...page.querySelectorAll('.wfv-vt-row')];
+  assert.deepEqual(rows.map((r) => r.querySelector('.wfv-vt-no').textContent), ['v2', 'v1']);
+  assert.match(page.querySelector('.wfv-vt-draft').textContent, /Renamed since v1/);
+  clickEl(w, [...rows[0].querySelectorAll('button')].find((b) => b.textContent === 'Use for new runs'));
+  await tick(2);
+  assert.equal(doc.querySelector('#mk-dialog-title').textContent, 'Use v2 for new runs?');
+  assert.deepEqual([...doc.querySelectorAll('#mk-dialog .wfv-changes li')].map((li) => li.textContent),
+    ['New step Fact check'], 'what changes for new runs: the version in use → v2');
+  // I4 / D6: a Library edit is no difference between versions; the dialog says once that every version uses it.
+  assert.equal(doc.querySelector('#mk-dialog .wfv-use-library').textContent, 'Agents and scripts edited in the Library since are used by every version.');
+  assert.doesNotMatch(doc.getElementById('mk-dialog').textContent, /changed in the Library/);
+  assert.doesNotMatch(doc.getElementById('mk-dialog').textContent, /From v1/);
+  assert.equal(calls.filter((c) => c.method === 'POST').length, 0, 'nothing switches before the confirm');
+  clickEl(w, [...doc.querySelectorAll('#mk-dialog button')].find((b) => b.textContent === 'Use v2'));
+  await tick(6);
+  assert.equal(calls.filter((c) => c.method === 'POST' && c.url.endsWith('/versions/2/use')).length, 1);
+  const after = [...doc.querySelectorAll('#wfv-versions .wfv-vt-row')];
+  assert.match(after[0].textContent, /New runs use this/, 'the page shows the switch');
+});
+
+test('M1: no version in use (a workflow deleted and saved again): the draft row and the Use dialog say so, never "vnull"', async () => {
+  const none = { ...VERSIONS_OVERVIEW, liveVersionNo: null, draft: null,
+    versions: [{ ...VERSIONS_OVERVIEW.versions[1], inUse: false, changesFromInUse: null, libraryEdited: false }] };
+  const { window: w } = await bootVersions({ versions: () => okJson(none) });
+  await go(w, 'workflows/wf_g');
+  await tick(4);
+  const doc = w.document;
+  clickEl(w, doc.querySelector('#wfv-pages [data-page="versions"]'));
+  await tick(4);
+  const page = doc.getElementById('wfv-versions');
+  assert.match(page.querySelector('.wfv-vt-draft').textContent, /No version in use yet/);
+  assert.doesNotMatch(page.textContent, /vnull|null/);
+  clickEl(w, [...page.querySelectorAll('.wfv-vt-row button')].find((b) => b.textContent === 'Use for new runs'));
+  await tick(2);
+  const dlg = doc.getElementById('mk-dialog');
+  assert.match(dlg.textContent, /No version is in use yet/);
+  assert.doesNotMatch(dlg.textContent, /Nothing differs/);
+  assert.equal(dlg.querySelector('.wfv-use-library'), null);
+});
+
+test('Versions page: Restore into draft on an edited canvas asks once, then loads the restored draft', async () => {
+  const restored = { ...V2_ROW, name: 'Graph one (restored)' };
+  const { window: w, calls } = await bootVersions({
+    extra: (url, init) => (/\/history\/1\/restore$/.test(url) && init.method === 'POST' ? okJson({ workflow: restored, warnings: [], overview: VERSIONS_OVERVIEW }) : null) });
+  await go(w, 'workflows/wf_g');
+  await tick(4);
+  const doc = w.document;
+  const gv = w.__gv().c;
+  gv.select({ kind: 'node', id: 'n_end' });
+  doc.body.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Delete', bubbles: true }));
+  assert.equal(gv.isDirty(), true);
+  clickEl(w, doc.querySelector('#wfv-pages [data-page="versions"]'));
+  await tick(4);
+  const v1 = [...doc.querySelectorAll('#wfv-versions .wfv-vt-row')][1];
+  clickEl(w, [...v1.querySelectorAll('button')].find((b) => b.textContent === 'Restore into draft'));
+  await tick(2);
+  const asking = () => !doc.getElementById('confirm-modal').classList.contains('hidden');
+  assert.equal(asking(), true, 'an edited canvas asks first');
+  assert.equal(calls.filter((c) => c.method === 'POST').length, 0);
+  doc.getElementById('confirm-ok').click();
+  await tick(6);
+  assert.equal(asking(), false, 'asked once, not again by the canvas');
+  assert.equal(calls.filter((c) => c.method === 'POST' && c.url.endsWith('/history/1/restore')).length, 1);
+  assert.equal(gv.template().name, 'Graph one (restored)');
+  assert.equal(gv.template().nodes.length, 2);
+  assert.equal(gv.isDirty(), false);
+  assert.equal(doc.getElementById('wfv-versions').hidden, false, 'the Versions page stays open');
+  assert.equal(lastToast(doc).title, 'Restored v1 into your draft');
+});
+
+test('Versions page when the versions cannot be read: it says why (the server\'s reason, or no answer)', async () => {
+  const reason = '"Graph one" cannot have versions: it comes from a plugin or is not a graph';
+  const { window: w } = await bootVersions({ versions: () => okJson({ error: reason }, 400) });
+  await go(w, 'workflows/wf_g');
+  await tick(4);
+  clickEl(w, w.document.querySelector('#wfv-pages [data-page="versions"]'));
+  await tick(4);
+  const page = w.document.getElementById('wfv-versions');
+  assert.match(page.textContent, /Versions are not available/);
+  assert.ok(page.textContent.includes(reason));
+  assert.equal(page.querySelectorAll('.wfv-vt-row').length, 0);
+  const { window: w2 } = await bootVersions({ versions: () => Promise.reject(new Error('down')) });
+  await go(w2, 'workflows/wf_g');
+  await tick(4);
+  clickEl(w2, w2.document.querySelector('#wfv-pages [data-page="versions"]'));
+  await tick(4);
+  assert.match(w2.document.getElementById('wfv-versions').textContent, /Worca did not answer/);
+});
+
+test('Save version: when the versions still answer 400 after the save, the toast gives the server\'s reason', async () => {
+  const reason = '"Graph one" cannot have versions: it comes from a plugin or is not a graph';
+  const { window: w } = await bootVersions({
+    versions: () => okJson({ error: reason }, 400),
+    extra: (url, init) => (url.split('?')[0].endsWith('/api/workflows') && init.method === 'POST' ? okJson({ workflow: V2_ROW }, 201) : null) });
+  await go(w, 'workflows/wf_g');
+  await tick(4);
+  const doc = w.document;
+  clickEl(w, doc.getElementById('wfv-saveversion'));
+  await tick(4);
+  const dlg = doc.querySelector('#wfv-dialog-host dialog[open]');
+  assert.ok(dlg, 'the canvas Save dialog');
+  dlg.querySelector('.sd-confirm').click();
+  await tick(8);
+  const t = lastToast(doc);
+  assert.equal(t.title, 'Save version did not start');
+  assert.equal(t.detail, reason);
+  assert.equal(doc.querySelector('#wfv-dialog-host dialog[open]'), null, 'no Save dialog again');
+});
+
+test('Library ⋯ Versions… opens that workflow on its Versions page; not for a built-in, a plugin\'s row, a format-1 row, or with the flag off', async () => {
+  const PLUGIN_ROW = { ...DEFAULT_ROW, id: 'wfp_demo_quick', name: 'Quick', origin: 'plugin:demo' };
+  const { window: w } = await bootVersions({ workflows: [DEFAULT_ROW, V2_ROW, PLUGIN_ROW, V1_ROW] });
+  await go(w, 'workflows');
+  await tick(4);
+  const doc = w.document;
+  clickEl(w, doc.querySelector('.wfl-seg .wfl-tab[data-tab="workflows"]'));
+  await tick();
+  const menuOf = (id) => {
+    const more = doc.querySelector(`.wfl-wf[data-id="${id}"] .wfl-more`);
+    assert.ok(more, `${id}: a ⋯ button`);
+    clickEl(w, more);
+    const items = [...doc.querySelectorAll('.wfv-menu-item')];
+    clickEl(w, more);                       // close it again (toggle)
+    return items;
+  };
+  for (const id of ['wf_default', 'wfp_demo_quick', 'wf_old']) assert.equal(menuOf(id).some((b) => b.textContent === 'Versions…'), false, id);
+  clickEl(w, doc.querySelector('.wfl-wf[data-id="wf_g"] .wfl-more'));
+  const pick = [...doc.querySelectorAll('.wfv-menu-item')].find((b) => b.textContent === 'Versions…');
+  assert.ok(pick, 'Versions… for a saved workflow of yours');
+  clickEl(w, pick);
+  await tick(6);
+  assert.equal(w.__gv().c.template().id, 'wf_g');
+  assert.equal(doc.getElementById('wfv-versions').hidden, false);
+  assert.equal(doc.getElementById('wfv-page-versions').getAttribute('aria-selected'), 'true');
+  doc.documentElement.dataset.flags = '';
+  assert.equal(menuOf('wf_g').some((b) => b.textContent === 'Versions…'), false, 'flag off');
+});
+
+test('Versions page: a repaint keeps the focus on the same button (never <body>)', async () => {
+  const restored = { ...V2_ROW, name: 'Graph one (restored)' };
+  const { window: w } = await bootVersions({
+    extra: (url, init) => (/\/history\/1\/restore$/.test(url) && init.method === 'POST' ? okJson({ workflow: restored, warnings: [], overview: VERSIONS_OVERVIEW }) : null) });
+  await go(w, 'workflows/wf_g');
+  await tick(4);
+  const doc = w.document;
+  clickEl(w, doc.querySelector('#wfv-pages [data-page="versions"]'));
+  await tick(4);
+  const b = doc.querySelector('#wfv-versions [data-focus-key="vp:restore:1"]');
+  b.focus();
+  clickEl(w, b);
+  await tick(8);
+  assert.equal(w.__gv().c.template().name, 'Graph one (restored)');
+  assert.equal(b.isConnected, false, 'the page was repainted');
+  assert.equal(doc.activeElement.dataset.focusKey, 'vp:restore:1');
+});
+
+test('Restore refused (422): plain words naming what no longer fits, never "invalid graph"', async () => {
+  const { window: w } = await bootVersions({
+    extra: (url, init) => (/\/history\/1\/restore$/.test(url) && init.method === 'POST'
+      ? okJson({ error: 'invalid graph', errors: [{ code: 'V4', message: 'unknown agent "factChecker" — no such key in the registry', nodeId: 'n_fc' },
+        { code: 'V4', message: 'agent "planner" has no v2 ports — port its sidecar to metaVersion 2', nodeId: 'n_plan' }], warnings: [] }, 422)
+      : null) });
+  await go(w, 'workflows/wf_g');
+  await tick(4);
+  const doc = w.document;
+  clickEl(w, doc.querySelector('#wfv-pages [data-page="versions"]'));
+  await tick(4);
+  clickEl(w, doc.querySelector('#wfv-versions [data-focus-key="vp:restore:1"]'));
+  await tick(6);
+  const t = lastToast(doc);
+  assert.equal(t.title, 'Not restored');
+  assert.equal(t.detail, 'This saved state no longer fits the agents it uses: factChecker, Plan.');
+  assert.doesNotMatch(t.detail, /invalid graph/);
+  assert.equal(w.__gv().c.template().name, 'Graph one', 'the canvas is unchanged');
+});
+
+test('another workflow opened while the Versions page shows: the page drops the old rows at once, then paints the new one', async () => {
+  const OTHER = { ...V2_ROW, id: 'wf_h', name: 'Graph two' };
+  let release;
+  const { window: w } = await bootVersions({ workflows: [DEFAULT_ROW, V2_ROW, OTHER],
+    versions: (url) => (url.includes('/wf_h/')
+      ? new Promise((r) => { release = () => r({ ok: true, status: 200, json: async () => ({ ...VERSIONS_OVERVIEW, workflowId: 'wf_h', name: 'Graph two' }) }); })
+      : okJson(VERSIONS_OVERVIEW)) });
+  await go(w, 'workflows/wf_g');
+  await tick(4);
+  const doc = w.document;
+  clickEl(w, doc.querySelector('#wfv-pages [data-page="versions"]'));
+  await tick(4);
+  const page = doc.getElementById('wfv-versions');
+  assert.equal(page.querySelectorAll('.wfv-vt-row').length, 2);
+  w.__gv().c.loadTemplate(OTHER);
+  await tick(2);
+  assert.equal(page.querySelectorAll('.wfv-vt-row').length, 0, 'no rows of the workflow that left');
+  assert.match(page.textContent, /Reading the versions…/);
+  release();
+  await tick(4);
+  assert.equal(page.querySelectorAll('.wfv-vt-row').length, 2);
+});
+
+test('a restore answered after another workflow opened: the toast names the workflow it restored into', async () => {
+  const OTHER = { ...V2_ROW, id: 'wf_h', name: 'Graph two' };
+  let release;
+  const { window: w } = await bootVersions({ workflows: [DEFAULT_ROW, V2_ROW, OTHER],
+    extra: (url, init) => (/\/history\/1\/restore$/.test(url) && init.method === 'POST'
+      ? new Promise((r) => { release = () => r({ ok: true, status: 200, json: async () => ({ workflow: V2_ROW, warnings: [], overview: VERSIONS_OVERVIEW }) }); })
+      : null) });
+  await go(w, 'workflows/wf_g');
+  await tick(4);
+  const doc = w.document;
+  clickEl(w, doc.querySelector('#wfv-pages [data-page="versions"]'));
+  await tick(4);
+  clickEl(w, doc.querySelector('#wfv-versions [data-focus-key="vp:restore:1"]'));
+  await tick(2);
+  w.__gv().c.loadTemplate(OTHER);
+  release();
+  await tick(6);
+  assert.equal(w.__gv().c.template().id, 'wf_h', 'the canvas keeps the workflow now open');
+  assert.equal(lastToast(doc).title, 'Restored v1 into the draft of "Graph one"');
+});
+
+test('the Versions page\'s undo guard holds only in the Workflows view: elsewhere ⌘Z is left alone', async () => {
+  const { window: w } = await bootVersions();
+  await go(w, 'workflows/wf_g');
+  await tick(4);
+  clickEl(w, w.document.querySelector('#wfv-pages [data-page="versions"]'));
+  await tick(4);
+  const ev = () => new w.KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true, cancelable: true });
+  const here = ev();
+  w.document.body.dispatchEvent(here);
+  assert.equal(here.defaultPrevented, true, 'held on the Versions page');
+  await go(w, 'runs');
+  const away = ev();
+  w.document.body.dispatchEvent(away);
+  assert.equal(away.defaultPrevented, false, 'another view keeps its own ⌘Z');
+});
+
+// ------------------------------------------------- Export picks what it exports (D17, canvas board 21 "Version")
+const EXPORT_OVERVIEW = {
+  workflowId: 'wf_g', name: 'Graph one', liveVersionNo: 1, latestVersionNo: 2,
+  draft: { changed: true, changes: ['New step Fact check'], partsChanged: [], sinceLatest: null },
+  versions: [{ id: 2, versionNo: 2, note: 'More audit rounds', by: null, createdAt: '2026-10-25', inUse: false, runs: 0, changes: [] },
+    { id: 1, versionNo: 1, note: 'First version for the team', by: null, createdAt: '2026-10-24', inUse: true, runs: 0, changes: ['First version'] }],
+  history: [],
+};
+/** Export… on wf_g with the flag on (or off); `versions` answers GET /versions; every export POST body and every
+ *  JSON download href is recorded. */
+async function openExportUse({ flag = true, versions = () => okJson(EXPORT_OVERVIEW) } = {}) {
+  const posts = [];
+  const downloads = [];
+  const versionReads = [];
+  const booted = await boot({ fetchHandler: (url, init) => {
+    if (/\/api\/workflows\/wf_g\/versions$/.test(url) && (init.method || 'GET') === 'GET') { versionReads.push(url); return versions(versionReads.length); }
+    if (url.endsWith('/export')) { posts.push(JSON.parse(init.body)); return exportReply(); }
+    return null;
+  } });
+  const win = booted.window;
+  if (flag) win.document.documentElement.dataset.flags = 'workflowTests';
+  win.HTMLAnchorElement.prototype.click = function () { if (this.hasAttribute('download')) downloads.push(this.getAttribute('href')); };
+  await go(win, 'workflows');
+  win.__wfv.library().open('workflows');
+  const doc = win.document;
+  const open = async () => { doc.querySelector('.wfl-wf[data-id="wf_g"] .wfl-export').click(); await tick(4); };
+  await open();
+  const g = (id) => doc.getElementById(id);
+  return { win, doc, g, open, posts, downloads, versionReads,
+    field: g('export-use-field'), select: g('export-use'), hint: g('export-use-hint') };
+}
+const pickUse = (win, select, value) => { select.value = value; select.dispatchEvent(new win.Event('change', { bubbles: true })); };
+
+test('Export… Version field: hidden with the flag off (no versions read, no use sent); with the flag on and no versions, hidden too', async () => {
+  await checkRows([
+    { name: 'flag off', run: async () => {
+      const { win, g, field, posts, downloads, versionReads, open } = await openExportUse({ flag: false });
+      assert.equal(field.classList.contains('hidden'), true);
+      assert.equal(field.dataset.flag, 'workflowTests', 'the shell gate hides it too');
+      assert.equal(versionReads.length, 0);
+      g('export-apply-btn').dispatchEvent(new win.Event('click'));
+      assert.deepEqual(downloads, ['/api/workflows/wf_g/json'], 'the download of before, no ?use');
+      g('export-done-close').dispatchEvent(new win.Event('click'));
+      await open();
+      pickFormat(win, win.document, 'skill');
+      g('export-plan-btn').dispatchEvent(new win.Event('click'));
+      await tick(3);
+      assert.equal('use' in posts.at(-1), false);
+    } },
+    { name: 'flag on, no versions yet', run: async () => {
+      const { win, g, field, posts, downloads, versionReads, open } = await openExportUse({ versions: () => okJson({ ...EXPORT_OVERVIEW, liveVersionNo: null, draft: null, versions: [] }) });
+      assert.equal(versionReads.length, 1);
+      assert.equal(field.classList.contains('hidden'), true);
+      g('export-apply-btn').dispatchEvent(new win.Event('click'));
+      assert.deepEqual(downloads, ['/api/workflows/wf_g/json']);
+      g('export-done-close').dispatchEvent(new win.Event('click'));
+      await open();
+      pickFormat(win, win.document, 'skill');
+      g('export-plan-btn').dispatchEvent(new win.Event('click'));
+      await tick(3);
+      assert.equal('use' in posts.at(-1), false);
+    } },
+    { name: 'flag on, the versions read fails: hidden', run: async () => {
+      const { field } = await openExportUse({ versions: () => Promise.resolve({ ok: false, status: 500, json: async () => ({ error: 'boom' }) }) });
+      assert.equal(field.classList.contains('hidden'), true);
+    } },
+  ]);
+});
+
+test('Export… Version field: shown under Format, newest first, the version in use selected; the draft hint only for a changed draft', async () => {
+  const { win, doc, field, select, hint } = await openExportUse();
+  assert.equal(field.classList.contains('hidden'), false);
+  assert.equal(field.querySelector('.export-label').textContent, 'Version');
+  assert.ok(field.previousElementSibling.querySelector('#export-format'), 'right after the Format field');
+  assert.ok(select.closest('.select-wrap'));
+  assert.deepEqual([...select.options].map((o) => o.textContent),
+    ['v2 · More audit rounds', 'v1 · First version for the team · new runs use this', 'Your draft (not saved as a version)']);
+  assert.equal(select.value, '1');
+  assert.equal(hint.classList.contains('hidden'), true);
+  pickUse(win, select, 'draft');
+  assert.equal(hint.textContent, 'Your draft differs from v1, which new runs use.');
+  assert.equal(hint.classList.contains('hidden'), false);
+  pickUse(win, select, '2');
+  assert.equal(hint.classList.contains('hidden'), true);
+  assert.equal(doc.getElementById('export-modal').classList.contains('hidden'), false);
+});
+
+test('Export… sends the chosen use: the JSON download URL, and the Preview and the Export of every other format', async () => {
+  await checkRows([
+    { name: 'JSON: the version in use by default; Your draft → ?use=draft', run: async () => {
+      const { win, g, select, downloads, open } = await openExportUse();
+      g('export-apply-btn').dispatchEvent(new win.Event('click'));
+      assert.equal(downloads.at(-1), '/api/workflows/wf_g/json?use=1');
+      g('export-done-close').dispatchEvent(new win.Event('click'));
+      await open();
+      pickUse(win, select, 'draft');
+      g('export-apply-btn').dispatchEvent(new win.Event('click'));
+      assert.equal(downloads.at(-1), '/api/workflows/wf_g/json?use=draft');
+    } },
+    { name: 'skill: Preview and Export (its own dry run + the write) carry use', run: async () => {
+      const { win, doc, g, select, posts } = await openExportUse();
+      pickFormat(win, doc, 'skill');
+      pickUse(win, select, '2');
+      g('export-plan-btn').dispatchEvent(new win.Event('click'));
+      await tick(3);
+      assert.deepEqual([posts.at(-1).use, posts.at(-1).dryRun], [2, true]);
+      pickUse(win, select, 'draft');
+      assert.equal(g('export-plan').classList.contains('hidden'), true, 'another pick drops the shown preview');
+      g('export-apply-btn').dispatchEvent(new win.Event('click'));
+      await tick(4);
+      assert.deepEqual(posts.slice(-2).map((p) => [p.use, !!p.dryRun]), [['draft', true], ['draft', false]]);
+    } },
+    { name: 'plugin to a folder: Export carries use', run: async () => {
+      const { win, doc, g, posts } = await openExportUse();
+      pickFormat(win, doc, 'plugin');
+      const folder = g('export-folder');
+      folder.value = '/tmp/my-plugin';
+      folder.dispatchEvent(new win.Event('input', { bubbles: true }));
+      g('export-apply-btn').dispatchEvent(new win.Event('click'));
+      await tick(4);
+      assert.ok(posts.length >= 1);
+      assert.ok(posts.every((p) => p.destination === 'plugin' && p.use === 1), JSON.stringify(posts));
+    } },
+  ]);
+});
+
+test('Export… a late versions read never lands in a re-opened dialog', async () => {
+  let release;
+  const held = new Promise((r) => { release = r; });
+  const { win, g, field, open, select } = await openExportUse({ versions: (n) => (n === 1
+    ? held.then(() => okJson(EXPORT_OVERVIEW))
+    : okJson({ ...EXPORT_OVERVIEW, liveVersionNo: null, draft: null, versions: [] })) });
+  assert.equal(field.classList.contains('hidden'), true, 'nothing until the read answers');
+  g('export-cancel').dispatchEvent(new win.Event('click'));
+  await tick();
+  await open();                                            // the second read answers at once: no versions
+  release();
+  await tick(4);
+  assert.equal(field.classList.contains('hidden'), true, 'the first open\'s answer is dropped');
+  assert.equal(select.options.length, 0);
+});
+
+test('Export… while the versions read is out: Download, Preview and Export wait (disabled, a click does nothing); then the version in use goes', async () => {
+  let release;
+  const held = new Promise((r) => { release = r; });
+  const { win, doc, g, posts, downloads } = await openExportUse({ versions: () => held.then(() => okJson(EXPORT_OVERVIEW)) });
+  const apply = g('export-apply-btn');
+  assert.equal(apply.disabled, true, 'Download waits for the versions');
+  apply.dispatchEvent(new win.Event('click'));                // a synthetic click reaches a disabled button
+  assert.deepEqual(downloads, [], 'never the draft while the default is still unknown');
+  pickFormat(win, doc, 'skill');
+  assert.deepEqual([g('export-plan-btn').disabled, apply.disabled], [true, true], 'a format switch keeps them waiting');
+  g('export-plan-btn').dispatchEvent(new win.Event('click'));
+  apply.dispatchEvent(new win.Event('click'));
+  await tick(3);
+  assert.deepEqual(posts, [], 'no Preview, no Export before the versions');
+  release();
+  await tick(4);
+  assert.deepEqual([g('export-plan-btn').disabled, apply.disabled], [false, false]);
+  apply.dispatchEvent(new win.Event('click'));               // the dry run and the write: ONE body per click
+  await tick(4);
+  assert.deepEqual(posts.map((p) => [p.use, !!p.dryRun]), [[1, true], [1, false]]);
+  assert.deepEqual(Object.keys(posts[0]).filter((k) => k !== 'dryRun').sort(), Object.keys(posts[1]).filter((k) => k !== 'resolutions').sort());
+});
+
+test('Export… a failed or empty versions read gives the buttons back at once (the draft, as before)', async () => {
+  for (const versions of [() => Promise.resolve({ ok: false, status: 500, json: async () => ({ error: 'boom' }) }),
+    () => okJson({ ...EXPORT_OVERVIEW, liveVersionNo: null, draft: null, versions: [] }), () => Promise.reject(new Error('down'))]) {
+    const { win, g, downloads } = await openExportUse({ versions });
+    assert.equal(g('export-apply-btn').disabled, false);
+    g('export-apply-btn').dispatchEvent(new win.Event('click'));
+    assert.deepEqual(downloads, ['/api/workflows/wf_g/json']);
+  }
+});
+
+test('Export… from the canvas (Workflows ▾ › Export…) shows the Version field and sends use', async () => {
+  const { win, doc, g, downloads } = await openExportUse();
+  g('export-cancel').dispatchEvent(new win.Event('click'));
+  await go(win, 'workflows/wf_g');
+  await tick(4);
+  clickEl(win, g('wfv-wf-menu'));
+  clickEl(win, [...doc.querySelectorAll('.wfv-menu-item')].find((b) => b.textContent.startsWith('Export')));
+  await tick(4);
+  assert.equal(g('export-modal').classList.contains('hidden'), false);
+  assert.equal(g('export-use-field').classList.contains('hidden'), false, 'the canvas entry passes a versionable row too');
+  assert.equal(g('export-use').value, '1');
+  g('export-apply-btn').dispatchEvent(new win.Event('click'));
+  assert.equal(downloads.at(-1), '/api/workflows/wf_g/json?use=1');
+});
+
+// ------------------------------------------------- The Tests page (plans/workflow-tests-part2-plan.md Task 10)
+const TESTS_OVERVIEW = {
+  workflowId: 'wf_g', name: 'Graph one', ctx: { liveVersionNo: 1, latestVersionNo: 2 },
+  columns: [{ use: 1, label: 'v1 · the team uses it' }, { use: 'draft', label: 'Your draft' }],
+  examples: [{ id: 1, name: 'Bulk invoice export', hasRequest: true, files: [], fromAt: null, note: null, tries: 3, basics: 2, checks: 0,
+    cells: { 1: null, draft: null } }],
+  running: null, latest: null, pastRuns: [],
+};
+async function bootTests() {
+  const reads = [];
+  const booted = await bootVersions({ extra: (url, init) => {
+    if (!/\/api\/workflows\/wf_g\/tests$/.test(url)) return null;
+    reads.push(init.method || 'GET');
+    return okJson(TESTS_OVERVIEW);
+  } });
+  return { ...booted, reads };
+}
+
+test('Tests page (Task 10): the Tests tab shows #wfv-tests over the canvas, reads the overview and paints the list; Canvas hides it', async () => {
+  const { window: w, reads } = await bootTests();
+  await go(w, 'workflows/wf_g');
+  await tick(4);
+  const doc = w.document;
+  const page = doc.getElementById('wfv-tests');
+  assert.equal(page.hidden, true);
+  clickEl(w, doc.querySelector('#wfv-pages [data-page="tests"]'));
+  await tick(6);
+  assert.equal(page.hidden, false);
+  assert.equal(doc.getElementById('wfv-versions').hidden, true);
+  assert.equal(doc.getElementById('wfv-page-tests').getAttribute('aria-selected'), 'true');
+  assert.equal(doc.activeElement, page, 'the page holds the focus, inside the canvas-keys fence');
+  assert.ok(reads.length >= 1, 'GET /api/workflows/wf_g/tests');
+  assert.deepEqual([...page.querySelectorAll('.wft-ex-open')].map((b) => b.textContent), ['Bulk invoice export']);
+  const here = new w.KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true, cancelable: true });
+  doc.body.dispatchEvent(here);
+  assert.equal(here.defaultPrevented, true, '⌘Z never reaches the hidden canvas from the Tests page');
+  clickEl(w, doc.querySelector('#wfv-pages [data-page="canvas"]'));
+  assert.equal(page.hidden, true);
+});
+
+test('Tests page (Task 10): #workflows/<id>/tests opens the workflow on its Tests page', async () => {
+  const { window: w } = await bootTests();
+  await go(w, 'workflows/wf_g/tests');
+  await tick(6);
+  const page = w.document.getElementById('wfv-tests');
+  assert.equal(page.hidden, false);
+  assert.equal(page.querySelectorAll('.wft-row:not(.wft-row-head)').length, 1);
+});
+
+test('Tests page (Task 10 fix 1): Workflows ▾ › New canvas while it shows: the page follows to C15, never the last workflow\'s examples', async () => {
+  const { window: w, reads } = await bootTests();
+  await go(w, 'workflows/wf_g');
+  await tick(4);
+  const doc = w.document;
+  clickEl(w, doc.querySelector('#wfv-pages [data-page="tests"]'));
+  await tick(6);
+  const page = doc.getElementById('wfv-tests');
+  assert.equal(page.querySelectorAll('.wft-ex-open').length, 1);
+  const before = reads.length;
+  clickEl(w, doc.getElementById('wfv-wf-menu'));
+  clickEl(w, [...doc.querySelectorAll('.wfv-menu-item')].find((b) => b.textContent.trim() === 'New canvas'));
+  await tick(8);
+  assert.equal(page.hidden, false);
+  assert.equal(page.querySelectorAll('.wft-ex-open').length, 0, 'the last workflow\'s examples are gone');
+  assert.match(page.textContent, /Save the workflow first: tests belong to a saved workflow\./);
+  assert.equal(reads.length, before, 'no read for a canvas that is not saved');
+});
+
+// ------------------------------------------------- The example editor (plans/workflow-tests-part2-plan.md Task 11)
+const exampleRow = (e) => ({ id: e.id, name: e.name, hasRequest: true, files: e.files, fromAt: null, note: null, tries: 3, basics: 2, checks: 0,
+  cells: { 1: null, draft: null } });
+const fullExample = (id, name) => ({ id, name, request: `The request of ${name}.`, answers: [], otherwise: 'pick',
+  basics: { noError: true, noHelp: true, maxCostUsd: null, maxSentBack: null }, checks: [], tries: 3, files: [], note: null });
+/** A small examples store behind /api/workflows/wf_g/tests; `holdFiles` keeps every file upload waiting until released. */
+async function bootEditor({ holdFiles = false } = {}) {
+  const store = { 4: fullExample(4, 'Bulk invoice export'), 7: fullExample(7, 'Weekly report') };
+  let nextId = 8;
+  const log = [];
+  const held = [];
+  const booted = await bootVersions({ extra: (url, init) => {
+    const m = /\/api\/workflows\/wf_g\/tests(\/[^?]*)?(?:\?.*)?$/.exec(url);
+    if (!m) return null;
+    const method = init.method || 'GET';
+    const rest = m[1] || '';
+    const body = init.body ? JSON.parse(init.body) : undefined;
+    log.push({ method, path: rest, body });
+    let x;
+    if (rest === '') return okJson({ ...TESTS_OVERVIEW, examples: Object.values(store).map(exampleRow) });
+    if (rest === '/plan') return okJson({ a: null, b: { use: 'draft', perTryUsd: 0.5 }, examples: 0, tries: 1 });
+    if (rest === '/examples' && method === 'POST') {
+      const e = { ...fullExample(nextId, body.name), ...body, id: nextId, files: [] };
+      nextId += 1;
+      store[e.id] = e;
+      return okJson({ example: { ...e } }, 201);
+    }
+    if ((x = /^\/examples\/(\d+)$/.exec(rest))) {
+      const e = store[x[1]];
+      if (method === 'PUT') Object.assign(e, body);
+      return okJson({ example: { ...e } });
+    }
+    if ((x = /^\/examples\/(\d+)\/files$/.exec(rest)) && method === 'POST') {
+      const e = store[x[1]];
+      const reply = () => { e.files = [...e.files, { name: body.name, size: 2, sha256: 'z' }]; return { ok: true, status: 200, json: async () => ({ example: { ...e } }) }; };
+      return holdFiles ? new Promise((r) => held.push(() => r(reply()))) : Promise.resolve(reply());
+    }
+    if ((x = /^\/examples\/(\d+)\/try-once$/.exec(rest))) return okJson({ run: { id: 31, status: 'running' } }, 201);
+    return null;
+  } });
+  return { ...booted, log, held, store };
+}
+const pickFiles = (w, page, files) => {
+  const picker = page.querySelector('#wft-ex-file');
+  Object.defineProperty(picker, 'files', { configurable: true, value: files });
+  picker.dispatchEvent(new w.Event('change'));
+};
+const fileOf = (name, text) => ({ name, arrayBuffer: async () => new TextEncoder().encode(text).buffer });
+const editorBtn = (page, text) => [...page.querySelectorAll('.wft-acts button')].find((b) => b.textContent === text);
+const writes = (log) => log.filter((c) => c.method !== 'GET').map((c) => `${c.method} ${c.path}`);
+
+test('Example editor (Task 11 fix 1): an upload that lands after Cancel never retargets the next editor: Save in example 7 saves example 7', async () => {
+  const { window: w, log, held } = await bootEditor({ holdFiles: true });
+  await go(w, 'workflows/wf_g/tests/4');
+  await tick(6);
+  const page = w.document.getElementById('wfv-tests');
+  assert.equal(page.querySelector('.wft-title').textContent, 'Example: Bulk invoice export');
+  pickFiles(w, page, [fileOf('notes.md', 'hi')]);
+  await tick(4);
+  assert.equal(held.length, 1, 'the upload is out');
+  assert.equal(editorBtn(page, 'Save example').disabled, true, 'Save waits while the upload runs');
+  clickEl(w, editorBtn(page, 'Cancel'));
+  await tick(6);
+  clickEl(w, [...page.querySelectorAll('.wft-ex-open')].find((b) => b.textContent === 'Weekly report'));
+  await tick(6);
+  assert.equal(page.querySelector('.wft-title').textContent, 'Example: Weekly report');
+  held[0]();
+  await tick(6);
+  assert.equal(page.querySelector('.wft-title').textContent, 'Example: Weekly report', 'the late upload does not repaint another editor');
+  clickEl(w, editorBtn(page, 'Save example'));
+  await tick(6);
+  assert.deepEqual(writes(log), ['POST /examples/4/files', 'PUT /examples/7']);
+  assert.equal(log.find((c) => c.method === 'PUT').body.name, 'Weekly report');
+});
+
+test('Example editor (Task 11 fix 1): a new example is saved first for its file (G17, POST once), then PUT; files go up as base64', async () => {
+  const { window: w, log, store } = await bootEditor();
+  await go(w, 'workflows/wf_g/tests');
+  await tick(6);
+  const page = w.document.getElementById('wfv-tests');
+  clickEl(w, [...page.querySelectorAll('button')].find((b) => b.textContent === 'New example'));
+  await tick(6);
+  assert.equal(page.querySelector('.wft-title').textContent, 'New example');
+  const name = page.querySelector('#wft-ex-name');
+  name.value = 'Fresh one'; name.dispatchEvent(new w.Event('input'));
+  pickFiles(w, page, [fileOf('notes.md', 'hi'), fileOf('data.csv', 'a,b')]);
+  await tick(8);
+  assert.deepEqual(writes(log), ['POST /examples', 'POST /examples/8/files', 'POST /examples/8/files']);
+  assert.equal(log.find((c) => c.path === '/examples').body.name, 'Fresh one');
+  assert.deepEqual(log.filter((c) => c.path === '/examples/8/files').map((c) => c.body), [{ name: 'notes.md', dataBase64: 'aGk=' }, { name: 'data.csv', dataBase64: 'YSxi' }]);
+  assert.deepEqual([...page.querySelectorAll('.wft-file > span')].map((s) => s.textContent), ['notes.md', 'data.csv']);
+  clickEl(w, editorBtn(page, 'Save example'));
+  await tick(6);
+  assert.deepEqual(writes(log).slice(3), ['PUT /examples/8'], 'the saved example is updated, never posted again');
+  assert.equal(store[8].name, 'Fresh one');
+  assert.equal(lastToast(w.document).title, 'Example saved');
+  assert.equal(page.querySelector('#wft-ex-name'), null, 'back on the list');
+});
+
+test('Example editor (Task 11 fix 1): Try it once now saves, starts the try and leaves the editor for the progress page', async () => {
+  const { window: w, log } = await bootEditor();
+  await go(w, 'workflows/wf_g/tests/4');
+  await tick(6);
+  const page = w.document.getElementById('wfv-tests');
+  clickEl(w, editorBtn(page, 'Try it once now'));
+  await tick(8);
+  assert.deepEqual(writes(log), ['PUT /examples/4', 'POST /examples/4/try-once']);
+  assert.equal(page.querySelector('#wft-ex-name'), null, 'the editor is gone');
+});
+
+// ------------------------------------------- Use a past run as a test example (plans/workflow-tests-part2-plan.md Task 12)
+const PAST_RUN = { pipelineId: 'p2', workflowId: 'wf_g', workflowName: 'Graph one', title: 'Saved filters', request: 'Write the brief.',
+  files: ['usage.csv'], qa: [], use: 1, useLabel: 'v1', testable: true, reason: null, reasonText: null };
+/** The Tests list with one past run; `holdPast` keeps GET past-run waiting until released. */
+async function bootFromRun({ holdPast = false } = {}) {
+  const log = [];
+  const held = [];
+  const booted = await bootVersions({ extra: (url, init) => {
+    const method = init.method || 'GET';
+    if (/\/api\/workflow-tests\/past-run\/p2$/.test(url)) {
+      log.push(`${method} past-run`);
+      return holdPast ? new Promise((r) => held.push(() => r({ ok: true, status: 200, json: async () => PAST_RUN }))) : okJson(PAST_RUN);
+    }
+    const m = /\/api\/workflows\/wf_g\/tests(\/[^?]*)?(?:\?.*)?$/.exec(url);
+    if (!m) return null;
+    const rest = m[1] || '';
+    if (method !== 'GET') log.push({ method, path: rest, body: init.body ? JSON.parse(init.body) : undefined });
+    if (rest === '') return okJson({ ...TESTS_OVERVIEW, pastRuns: [{ pipelineId: 'p2', title: 'Saved filters', at: '2026-10-14T10:00:00.000Z', status: 'done', files: 1, sameAs: null }] });
+    if (rest === '/plan') return okJson({ a: null, b: { use: 'draft', perTryUsd: 0.5 }, examples: 0, tries: 1 });
+    if (rest === '/examples/from-run' && method === 'POST') return okJson({ example: fullExample(9, 'Saved filters'), skipped: ['big.bin'] }, 201);
+    if (rest === '/examples/9') return okJson({ example: fullExample(9, 'Saved filters') });
+    return null;
+  } });
+  return { ...booted, log, held };
+}
+const dlgBtn = (doc, text) => [...doc.querySelectorAll('#mk-dialog button')].find((b) => b.textContent === text);
+
+test('Add from a past run (Task 12): pick the run, Next, say how it was, Add example: one POST, then the editor opens on it', async () => {
+  const { window: w, log } = await bootFromRun();
+  await go(w, 'workflows/wf_g/tests');
+  await tick(6);
+  const doc = w.document;
+  const page = doc.getElementById('wfv-tests');
+  const opener = [...page.querySelectorAll('button')].find((b) => b.textContent === 'Add from a past run');
+  assert.equal(opener.dataset.focusKey, 'wft-add-from-run', 'focus can come back after a repaint');
+  clickEl(w, opener);
+  assert.equal(doc.querySelector('#mk-dialog-title').textContent, 'Add from a past run');
+  doc.querySelector('#mk-dialog input[name="wft-pick-run"]').checked = true;
+  clickEl(w, dlgBtn(doc, 'Next'));
+  await tick(6);
+  assert.equal(doc.querySelector('#mk-dialog-title').textContent, 'Use this run as a test example');
+  assert.equal(doc.querySelector('#wft-fr-name').value, 'Saved filters');
+  clickEl(w, [...doc.querySelectorAll('#mk-dialog .seg button')].find((b) => b.textContent === 'Not good enough'));
+  const add = dlgBtn(doc, 'Add example');
+  clickEl(w, add);
+  assert.equal(add.disabled, true, 'busy while it posts: no second POST');
+  clickEl(w, add);
+  await tick(10);
+  assert.deepEqual(log.filter((c) => typeof c === 'object'), [{ method: 'POST', path: '/examples/from-run',
+    body: { pipelineId: 'p2', name: 'Saved filters', keepRequest: true, keepAnswers: false, verdict: 'not-good', note: null } }]);
+  assert.equal(doc.querySelector('#mk-dialog'), null);
+  assert.equal(page.querySelector('.wft-title').textContent, 'Example: Saved filters');
+  assert.equal(lastToast(doc).title, 'Some files were left out');
+});
+
+test('Add from a past run (Task 12): the run is read after the page went back to the canvas: no dialog over it', async () => {
+  const { window: w, log, held } = await bootFromRun({ holdPast: true });
+  await go(w, 'workflows/wf_g/tests');
+  await tick(6);
+  const doc = w.document;
+  clickEl(w, [...doc.getElementById('wfv-tests').querySelectorAll('button')].find((b) => b.textContent === 'Add from a past run'));
+  doc.querySelector('#mk-dialog input[name="wft-pick-run"]').checked = true;
+  clickEl(w, dlgBtn(doc, 'Next'));
+  await tick(2);
+  assert.deepEqual(log, ['GET past-run']);
+  clickEl(w, doc.querySelector('#wfv-pages [data-page="canvas"]'));
+  held[0]();
+  await tick(6);
+  assert.equal(doc.querySelector('#mk-dialog'), null, 'the canvas shows: board 3 does not open over it');
+});
+
+// ------------------------------- Compare and one example side by side (plans/workflow-tests-part2-plan.md Task 14)
+const CMP_RUN = { id: 7, kind: 'compare', a: 1, b: 'draft', tries: 3, status: 'done', finishedAt: '2026-10-26T10:00:00Z', capUsd: 15,
+  connectors: 'real', exampleIds: [1] };
+const cmpTile = (passed) => ({ passed: { passed, total: 3 }, costPerTry: 0.5, timePerTry: 60000, sentBack: 1, steady: { n: 1, of: 1 } });
+const CMP = { run: CMP_RUN, title: 'Your v3 draft compared with v1', labels: { a: 'v1', b: 'v3 draft' }, examples: 1, costUsd: 3, changes: [], fair: [],
+  model: { inShort: ['v3 draft is better on 1 example.'], look: null, counts: { better: 1, worse: 0, same: 0 }, tiles: { a: cmpTile(2), b: cmpTile(3) },
+    examples: [{ id: 1, name: 'Bulk invoice export', a: { passed: 2, total: 3 }, b: { passed: 3, total: 3 }, result: 'better', luck: true, why: null }] } };
+const SBS_TRY = (id) => ({ tryId: id, status: 'passed', name: 'brief.md', text: `Try ${id}`, truncated: false, connectors: 'real', wouldHaveSent: null, answeredReads: [],
+  verdict: { basics: [{ key: 'noError', label: 'Finishes without an error', met: true, value: 'Met' }], checks: [] } });
+const SBS = { run: CMP_RUN, compareTitle: CMP.title, example: { id: 1, name: 'Bulk invoice export' }, labels: CMP.labels, connectors: 'real',
+  row: CMP.model.examples[0], tries: [{ n: 1, a: SBS_TRY(1), b: SBS_TRY(4) }, { n: 2, a: SBS_TRY(2), b: SBS_TRY(5) }] };
+const PROGRESS_DONE = { run: { ...CMP_RUN }, title: CMP.title, done: 6, total: 6, costUsd: 3, estimateUsd: 3, capUsd: 15, quick: null, takenMs: 60000,
+  minutesLeft: null, rows: [{ exampleId: 1, name: 'Bulk invoice export', label: null, dots: ['passed', 'passed', 'passed'], summary: 'Done · 3 of 3 passed' }] };
+/** The progress page of test 7 (done), its Compare, example 1 side by side, a try's whole result; `holdPost` holds POST /runs,
+ *  `holdResult` the whole-result reads. */
+async function bootCompare({ holdPost = false, holdResult = false, sbs = SBS, changes = null } = {}) {
+  const log = [];
+  const held = [];
+  const booted = await bootVersions({ extra: (url, init) => {
+    const m = /\/api\/workflows\/wf_g\/tests(\/[^?]*)?(?:\?.*)?$/.exec(url);
+    if (!m) return null;
+    const method = init.method || 'GET';
+    const rest = m[1] || '';
+    let x;
+    log.push({ method, path: rest, body: init.body ? JSON.parse(init.body) : undefined });
+    if (rest === '') return okJson(TESTS_OVERVIEW);
+    if (rest === '/runs/7') return okJson(PROGRESS_DONE);
+    if (rest === '/runs/8') return okJson({ ...PROGRESS_DONE, run: { ...CMP_RUN, id: 8, status: 'running', exampleIds: [1], tries: 6 }, done: 3 });
+    if (rest === '/runs/7/compare') return okJson(CMP);
+    if (rest === '/runs/7/examples/1') return okJson(sbs);
+    if (changes && (x = /^\/runs\/7\/tries\/(\d+)\/changes$/.exec(rest))) return changes(Number(x[1]), held);
+    if ((x = /^\/runs\/7\/tries\/(\d+)\/result$/.exec(rest))) {
+      const reply = { ok: true, status: 200, json: async () => ({ name: 'brief.md', text: `All of try ${x[1]}.` }) };
+      return holdResult ? new Promise((r) => held.push(() => r(reply))) : Promise.resolve(reply);
+    }
+    if (rest === '/runs' && method === 'POST') {
+      const reply = () => ({ ok: true, status: 201, json: async () => ({ run: { id: 8, status: 'running' } }) });
+      return holdPost ? new Promise((r) => held.push(() => r(reply()))) : Promise.resolve(reply());
+    }
+    return null;
+  } });
+  await go(booted.window, 'workflows/wf_g/tests/run/7');
+  await tick(8);
+  const page = booted.window.document.getElementById('wfv-tests');
+  clickEl(booted.window, [...page.querySelectorAll('.wft-acts button')].find((b) => b.textContent === 'See what changed'));
+  await tick(6);
+  return { ...booted, log, held, page };
+}
+const gets = (log) => log.filter((e) => e.method === 'GET').map((e) => e.path);
+
+test('Compare (Task 14): See what changed reads and paints board 5; Try 3 more posts once, with the test\'s cap and connectors, then shows its progress', async () => {
+  const { window: w, page, log, held } = await bootCompare({ holdPost: true });
+  assert.ok(gets(log).includes('/runs/7/compare'));
+  assert.equal(page.querySelector('.wft-compare .wft-title').textContent, 'Your v3 draft compared with v1');
+  assert.ok(!page.textContent.includes('This page comes in a later step.'));
+  const more = () => page.querySelector('.wft-why button');
+  clickEl(w, more());
+  clickEl(w, more());
+  await tick(2);
+  const posts = log.filter((e) => e.method === 'POST');
+  assert.deepEqual(posts.map((e) => [e.path, e.body]), [['/runs', { a: 1, b: 'draft', exampleIds: [1], tries: 6, reuseA: true, reuseB: true, quickCheck: false,
+    capUsd: 15, connectors: 'real' }]], 'one post, G15');
+  assert.equal(more().disabled, true, 'busy while the post is out');
+  held[0]();
+  await tick(8);
+  assert.ok(gets(log).includes('/runs/8'));
+  assert.ok(page.querySelector('.wft-progress'), 'the new test\'s progress page');
+});
+
+test('Compare (Task 14): a Try 3 more answer that lands after Tests was opened leaves the list on screen', async () => {
+  const { window: w, page, held } = await bootCompare({ holdPost: true });
+  clickEl(w, page.querySelector('.wft-why button'));
+  await tick(2);
+  clickEl(w, page.querySelector('.wft-compare .wft-crumb'));
+  await tick(6);
+  assert.ok(page.querySelector('.wft-ex-open') && !page.querySelector('.wft-compare'), 'the Tests list');
+  held[0]();
+  await tick(8);
+  assert.equal(page.querySelector('.wft-progress'), null, 'no jump to the progress page');
+});
+
+test('Side by side (Task 14): an example opens board 6; Try 2 repaints with the focus on its tab; Read the whole result opens the dialog; back to Compare', async () => {
+  const { window: w, page, log } = await bootCompare();
+  const doc = w.document;
+  clickEl(w, page.querySelector('.wft-crow2:not(.is-head) .wft-ex-open'));
+  await tick(6);
+  assert.ok(gets(log).includes('/runs/7/examples/1'));
+  assert.equal(page.querySelector('.wft-detail .wft-title').textContent, 'Bulk invoice export');
+  const tab = (n) => [...page.querySelectorAll('[role="tab"]')][n];
+  tab(1).focus();
+  clickEl(w, tab(1));
+  assert.equal(tab(1).getAttribute('aria-selected'), 'true');
+  assert.equal(doc.activeElement, tab(1));
+  assert.deepEqual([...page.querySelectorAll('.wft-out')].map((n) => n.textContent), ['Try 2', 'Try 5']);
+  clickEl(w, [...page.querySelectorAll('.wft-outs button')][1]);
+  await tick(6);
+  assert.ok(gets(log).includes('/runs/7/tries/5/result'));
+  assert.equal(doc.querySelector('#mk-dialog .wft-whole').textContent, 'All of try 5.');
+  clickEl(w, [...doc.querySelectorAll('.mk-dialog-foot button')].find((b) => b.textContent === 'Close'));
+  clickEl(w, page.querySelector('.wft-detail .wft-crumb'));
+  await tick(6);
+  assert.ok(page.querySelector('.wft-compare'), 'back on Compare');
+});
+
+test('Side by side (Task 14 fix 4): a whole result that lands after another try was picked opens no dialog', async () => {
+  const { window: w, page, held } = await bootCompare({ holdResult: true });
+  clickEl(w, page.querySelector('.wft-crow2:not(.is-head) .wft-ex-open'));
+  await tick(6);
+  clickEl(w, [...page.querySelectorAll('.wft-outs button')][1]);   // try 1's v3 draft result: GET …/tries/4/result, held
+  await tick(2);
+  clickEl(w, [...page.querySelectorAll('[role="tab"]')][1]);
+  held[0]();
+  await tick(6);
+  assert.equal(w.document.querySelector('#mk-dialog'), null, 'try 2 shows now: no dialog of try 1');
+});
+
+test('Side by side (Task 13 step 0): a retried diff read is the only read: a repaint while it is out sends no second GET', async () => {
+  const PROJ_TRY = (id) => ({ ...SBS_TRY(id), text: null, name: null, project: { changes: { counts: { added: 0, changed: 1, removed: 0 }, total: 1,
+    files: [{ status: 'changed', path: 'a.mjs', added: 1, removed: 1 }] } } });
+  const sbs = { ...SBS, tries: [{ n: 1, a: PROJ_TRY(1), b: PROJ_TRY(4) }], start: { ref: 'main', short: 'abc1234', at: '2026-10-28T09:00:00Z' } };
+  const seen = [];
+  const { window: w, page, log, held } = await bootCompare({ sbs, changes: (tryId, h) => {
+    seen.push(tryId);
+    const n = seen.filter((t) => t === tryId).length;
+    if (n === 1) return okJson({ error: 'Not read.' }, 500);                 // the card's first read fails
+    return new Promise((r) => h.push(() => r({ ok: true, status: 200, json: async () => ({ patch: 'diff --git a/a.mjs b/a.mjs\n', cut: false }) })));
+  } });
+  clickEl(w, page.querySelector('.wft-crow2:not(.is-head) .wft-ex-open'));
+  await tick(8);
+  const reads = (id) => gets(log).filter((p) => p === `/runs/7/tries/${id}/changes`).length;
+  assert.deepEqual([reads(1), reads(4)], [1, 1], 'one read per try; both failed');
+  clickEl(w, page.querySelector('[aria-label="Read all the changes, v1"]'));   // the retry: GET held
+  await tick(2);
+  assert.equal(reads(1), 2);
+  clickEl(w, page.querySelector('.wft-fbtn'));                                 // pickFile repaints while the retry is out
+  await tick(4);
+  assert.equal(reads(1), 2, 'the repaint sends no second GET for the try being read');
+  assert.equal(reads(4), 1, 'a failed read is not tried again by a repaint alone');
+  held[0]();
+  await tick(8);
+  assert.ok(w.document.querySelector('#mk-dialog .wft-whole'), 'the retry opens the changes');
 });

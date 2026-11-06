@@ -36,11 +36,12 @@ import { isSharedInstall, updateEligibility, probeNpmGlobal, UPDATE_MESSAGES } f
 import { limitResumeDecision } from '../src/core/limit-resume.mjs';
 import { selectRunEngine, reapAgentGroupsAtBoot } from '../src/core/engines/index.mjs';
 import { mockSlowMs } from '../src/core/engines/mock.mjs';
+import { sweepStaleStagingDirs } from '../src/core/engines/claude.mjs';
 import { stopPausedRun, StopPausedError } from '../src/core/stop-paused.mjs';
 import {
   listPipelines, readPipeline, listAllPipelines, readPipelineByKey,
   enrichPipelinesPr, reconcileStaleRunning, foreignActiveWorkspaceRuns, readPipelineForResume, persistPrState, readPrState,
-  readRunLogText, readRunArtifactText, countPipelines, runRootSweepLookups, legacySweepLookups, slugify, newPipelineId,
+  readRunLogText, readRunArtifactText, countPipelines, isTestPipeline, runRootSweepLookups, legacySweepLookups, slugify, newPipelineId,
   listArtifacts, listRunArtifacts, lookupPipelineRow, findPipelineRowById, readPipelineStateById, resolveIndexedArtifact, resolveIndexedArtifactForRow,
   folderApplyRetainFor,
   resolveIndexedArtifactFileForRow, openArtifactUnder, readPromptFile, runDirForRow, recordArtifact, appendAudit,
@@ -351,6 +352,10 @@ import { sweepV1Runs, V1_RUN_RETIRED, getDb } from '../src/core/db.mjs';
 import {
   registerRequirementsRoutes, requirementsChangeNotifier, REQUIREMENTS_UPLOAD_ROUTES, REQUIREMENTS_UPLOAD_JSON_LIMIT, requirementsUploadSlots,
 } from '../src/core/requirements/routes.mjs';
+import { CONNECTOR_MODES, recoverInterruptedTestRuns } from '../src/core/workflow-tests/store.mjs';
+import { sweepTestCopies } from '../src/core/workflow-tests/project-copy.mjs';
+import { SETUP_TIMEOUT_MS } from '../src/core/workflow-tests/shell-step.mjs';
+import { TRY_NEVER_SHIPS_TEXT, TRY_STAYS_IN_COPY_TEXT, TRY_NEEDS_GIT_TEXT } from '../src/shared/workflow-tests/project-text.mjs';
 import { createRunEventHook } from '../src/core/requirements/start.mjs';
 import { recoverInterrupted as recoverRequirements, requirementsModel, DEFAULT_INTERVIEW_EFFORT } from '../src/core/requirements/interview.mjs';
 import { recoverBriefs } from '../src/core/requirements/brief-job.mjs';
@@ -359,7 +364,7 @@ import { drainTimeoutMs, autoResumeMode, autoResumeCandidates, DRAIN_ACTIVE_STAT
 import { exportWorkflow, exportWorkflowPlugin, ON_CONFLICT_MODES, RESOLUTION_CHOICES } from '../src/core/workflow-export.mjs';
 import { exportWorkflowToMarketplace, listPublishTargets } from '../src/core/marketplace-publish.mjs';
 import {
-  saveGraphWorkflow, importGraphWorkflow, exportGraphJson, workflowFileSlug, nodeDefaultsError,
+  saveGraphWorkflow, importGraphWorkflow, exportGraphJson, isExportUse, workflowFileSlug, nodeDefaultsError,
 } from '../src/core/workflow-share.mjs';
 import { loadAgentRegistry } from '../src/core/agent-registry.mjs';
 import { loadScriptRegistry } from '../src/core/script-registry.mjs';
@@ -449,7 +454,7 @@ import { dimensionsForTarget, allTagDimensions, applyTagRules, teamTagPolicy, pr
 import { generateOverview } from '../src/core/overview-agent.mjs';
 import { generatePrDescription, resolvePrDescriptionModel, PR_BODY_MAX } from '../src/core/pr-description.mjs';
 import { projectKey, PROJECT_KEY_RE } from '../src/core/store.mjs';
-import { runProjectDir, noProjectWorkDir, isNoProjectWorkDir, isNoProjectKey, NO_PROJECT_KEY } from '../src/core/store.mjs';   // P3 — its own line: test/api-memory.test.mjs pins the one above
+import { runProjectDir, noProjectWorkDir, isNoProjectWorkDir, isNoProjectKey, NO_PROJECT_KEY, testCopyKeyOf } from '../src/core/store.mjs';   // P3 — its own line: test/api-memory.test.mjs pins the one above
 import { WORK_ARTIFACT_KIND } from '../src/core/no-project-work.mjs';
 import { NO_PROJECT_NAME, NO_PROJECT_ERRORS } from '../src/shared/no-project.mjs';
 import { whereOf } from '../src/shared/ask-where.mjs';
@@ -1303,7 +1308,8 @@ function resolvePending(entry, { id = null, reason = 'resolved' } = {}) {
   const pq = entry && entry.pendingQuestion;
   if (!pq || (id && pq.id !== id)) return false;
   entry.pendingQuestion = null;
-  broadcast(bufferEvent(entry, { type: 'question-resolved', id: pq.id, reason }));
+  const resolved = bufferEvent(entry, { type: 'question-resolved', id: pq.id, reason });
+  if (!entry.isTest) broadcast(resolved);   // D21: the runner answers a try's questions; no tab hears of them
   syncKeepAwake();
   return true;
 }
@@ -1351,7 +1357,7 @@ function summarizeRuns() {
   // plumbing only — leaving it here puts "bench: <key>" in every hello and the
   // client's liveRuns() (which does NOT filter by kind) raises the rail's
   // Running badge over an empty Running list.
-  return [...runs.values()].filter((r) => r.kind !== 'scriptbench' && r.kind !== 'action').map((r) => ({
+  return [...runs.values()].filter((r) => r.kind !== 'scriptbench' && r.kind !== 'action' && !r.isTest).map((r) => ({
     runId: r.id,
     stepper: r.orch?.state?.stepper ?? null,
     pipelineId: r.pipelineId || null,
@@ -1447,7 +1453,7 @@ function wireRun(entry) {
   // Chat notifications ride the same per-run subscription (design §4.5): every
   // creation site that wires a run gets chat fan-out for free. Scans/agent-gens
   // use their own wire* helpers and are deliberately not notified.
-  if ((entry.kind || 'run') === 'run' || entry.kind === 'workspace-run') {
+  if (((entry.kind || 'run') === 'run' || entry.kind === 'workspace-run') && !entry.isTest) {   // D21: no chat notifications for a test try
     try { chatNotifier.attach(orch, { runId: id, entry }); }
     catch (err) { console.error(`[worca-ui] chat notifier attach failed: ${err && err.message ? err.message : err}`); }
   }
@@ -1458,7 +1464,7 @@ function wireRun(entry) {
     // (state.id = pipeline SHORT id, NOT this UUID); tagging the UUID last stops
     // the client spawning a phantom run.
     const tagged = bufferEvent(entry, event);
-    broadcast(tagged);
+    if (!entry.isTest) broadcast(tagged);   // D21: a tab upserts a run for any frame with a runId (app.js:1995); a try sends none
     return tagged;
   };
 
@@ -1577,7 +1583,7 @@ function wireRun(entry) {
           reason: 'the run was resumed or stopped by hand',
         });
       }
-      if (name === 'done' && entry.status === 'paused' && payload && payload.limitResetAt) {
+      if (name === 'done' && entry.status === 'paused' && payload && payload.limitResetAt && !entry.isTest) {   // no resume ticket for a try
         entry._limitResumeP = maybeScheduleLimitResume(entry, payload);   // never rejects
       }
       if (name === 'title' && payload && typeof payload.title === 'string') {
@@ -2679,6 +2685,29 @@ const startRunHandler = async (req, res) => {
     // Workspace scan (wf_workspace_scan): scanRequest hands the target in-process — a workspace
     // that may not exist yet ({ id, name, projectPaths, description:'' }, D3). Never from HTTP.
     const scanTarget = req._workspaceScan && typeof req._workspaceScan === 'object' ? req._workspaceScan : null;
+    // Workflow tests (plans/workflow-tests-part2-plan.md D20–D23): a test try, set in-process by the test runner through
+    // invokeStartRun only, never from HTTP. { use: 'draft' | n, connectors?: 'pretend' | 'real', onOrch?(orch, { runKey }) }.
+    const workflowTest = req._workflowTest && typeof req._workflowTest === 'object' ? req._workflowTest : null;
+    // 3a (D42): a project try runs in Worca's copy of the project it names (workflowTest.project.key), never in a person's
+    // folder; the copy is never a registered project, so the key travels in-process with it.
+    const tryProject = workflowTest && workflowTest.project && typeof workflowTest.project === 'object' ? workflowTest.project : null;
+    if (workflowTest && !(body.noProject === true
+      || (tryProject && typeof tryProject.key === 'string' && PROJECT_KEY_RE.test(tryProject.key)
+        && typeof body.projectDir === 'string' && testCopyKeyOf(body.projectDir) === tryProject.key))) {
+      return badRequest(res, "a test try runs without a project, or in Worca's copy of one");
+    }
+    if (workflowTest && (body.sameAsSource === true || body.scheduledFor != null || body.repeat != null || body.after != null || body.workspaceId)) {
+      return badRequest(res, 'a test try starts now, on a branch of its own');
+    }
+    if (tryProject && tryProject.setupCmd != null && (typeof tryProject.setupCmd !== 'string' || /[\r\n]/.test(tryProject.setupCmd))) {
+      return badRequest(res, 'a test try names its setup command on one line');
+    }
+    if (workflowTest && !(workflowTest.use === 'draft' || (Number.isInteger(workflowTest.use) && workflowTest.use > 0))) {
+      return badRequest(res, 'a test try names the draft or a version number');
+    }
+    if (workflowTest && workflowTest.connectors !== undefined && !CONNECTOR_MODES.includes(workflowTest.connectors)) {
+      return badRequest(res, 'a test try names its connectors: pretend or real');
+    }
     const stored = internal && body.internal && typeof body.internal === 'object' ? body.internal : {};
     // Who started it (identity.mjs): this request's resolved identity; a scheduled run keeps the
     // identity of whoever scheduled it (stored with the request, never taken from an HTTP body).
@@ -2856,7 +2885,7 @@ const startRunHandler = async (req, res) => {
     // routes it off the row's version.
     let workflowRow;
     try {
-      workflowRow = await assertRunnableWorkflow(workflowId);
+      workflowRow = await assertRunnableWorkflow(workflowId, workflowTest ? { use: workflowTest.use } : {});   // D23: check what runs
     } catch (err) {
       return badRequest(res, err && err.message ? err.message : String(err));
     }
@@ -2911,7 +2940,7 @@ const startRunHandler = async (req, res) => {
     // Enforced tags (D10): fired tickets were checked by fireTicket; system and follow-up starts keep today's behaviour.
     // Their tags are stored data (a ticket's request, a predecessor's or parent's tags, a changes/route card's origin
     // run's tags), so the key:value rule skips them too.
-    const tagExempt = !!internal?.ticket || !!scanTarget || !!req._resolveOf || !!req._prWatchRunId
+    const tagExempt = !!internal?.ticket || !!scanTarget || !!req._resolveOf || !!req._prWatchRunId || !!req._workflowTest   // review I2: a hidden try carries no run tags
       || req._startedBy === 'pr-watch' || !!req._automation || body.workflowId === MEMORY_DEFRAG_WORKFLOW_ID
       || req._cardStart === true;   // Shaper s5 (D19): a run started from a changes/route card; its tags are the origin's stored tags
     let tags = [];
@@ -3037,7 +3066,7 @@ const startRunHandler = async (req, res) => {
       onDiverged: body.syncOnDiverged === 'origin' || body.syncOnDiverged === 'fail' ? body.syncOnDiverged : null,  // schedules
     };
     // Scans are read-only (C10) and memory defrag is a reserved workflow: never sync them.
-    const syncAllowed = !scanTarget && !memoryScope;
+    const syncAllowed = !scanTarget && !memoryScope && !workflowTest;   // 3a: a try never syncs (Worca's copy has no remote)
 
     let orch, entry;
 
@@ -3079,10 +3108,14 @@ const startRunHandler = async (req, res) => {
         ...(nightMode ? { nightMode: true } : {}),
         tags,
         ...(shape ? { shape } : {}),
+        // D19/D21/D23: the version under test, the row's mark, no memory, and the fixed title (no smart naming spend).
+        ...(workflowTest ? { workflowUse: workflowTest.use, workflowTest: true, noMemory: true, titleLocked: true,
+          testConnectors: workflowTest.connectors === 'real' ? 'real' : 'pretend' } : {}),   // D35: pretend unless real is named
       });
       entry = {
         id: runId, orch, projectDir, projectKey: NO_PROJECT_KEY, workMode: 'none', kind: 'run', pipelineId,
         title, status: 'starting', startedAt: new Date().toISOString(), startedBy, tags, events: [], pendingQuestion: null,
+        ...(workflowTest ? { isTest: true } : {}),
       };
     } else if (hasWorkspace) {
       // ── Workspace target (§2.6) ────────────────────────────────────────────
@@ -3252,12 +3285,18 @@ const startRunHandler = async (req, res) => {
 
       // A-m5: a registered project whose effective mode is Folder and whose folder is gone is refused, never recreated
       // empty (with git installed a Git project keeps today's mkdir + git init). The stored row (S7), read once.
-      const projectRow = getProjectByPath(projectDir); const gitOn = (await gitState()).available;
+      const projectRow = getProjectByPath(projectDir); let gitOn = (await gitState()).available;
       if (projectRow && !fs.existsSync(projectDir) && effectiveWorkMode(projectRow.vcs, gitOn) === 'folder') return badRequest(res, `The folder is missing: ${projectDir}`);
       // P1 (CONTRACT §2, U3, L4, S3): a registered Folder project — or any project while git is missing — runs on a
       // copy; an unregistered dir keeps git mode while git is installed. Replaces P0's start guard for projects.
       // gitOn and projectRow were read before the mkdir (A-m5): the stored row (S7), never projectKey(dir)
-      const workMode = workModeForStart({ projectDir }, { getProjectByPath: () => projectRow, gitAvailable: gitOn });
+      let workMode = workModeForStart({ projectDir }, { getProjectByPath: () => projectRow, gitAvailable: gitOn });
+      // F3: a stored "no git" can be a minute old: a try asks git once more (a fresh probe) before it is refused.
+      if (workflowTest && workMode !== 'git' && !gitOn) {
+        gitOn = (await gitState({ fresh: true })).available;
+        workMode = workModeForStart({ projectDir }, { getProjectByPath: () => projectRow, gitAvailable: gitOn });
+      }
+      if (workflowTest && workMode !== 'git') return badRequest(res, TRY_NEEDS_GIT_TEXT);
       // #693: a git run in a folder inside a repository it is not the top of would `git init` there (or act on the
       // parent). Refused before the mkdir, a row or a ticket; a missing path counts by its nearest existing ancestor.
       if (workMode === 'git') {
@@ -3353,7 +3392,7 @@ const startRunHandler = async (req, res) => {
       const mcpOptOut = await knownMcpOptOut(optOut.list, { kind: 'project', key: runKey, name: path.basename(projectDir), rank: 0 });
       // Run presets slice 2 (#712): the run's setup, kept on the row for Save setup as preset. The RAW body
       // overlay (D4): the checked runOverlay carries effort '' for model-only picks, which a New run save drops.
-      const runSetup = scanTarget || memoryScope ? null
+      const runSetup = scanTarget || memoryScope || workflowTest ? null
         : await runSetupOf({ ...body, workflowId, guardrailsId }, { projectDir });
 
       // Scans and defrag never sync: skip the default-branch lookup and settings reads entirely, so
@@ -3403,6 +3442,11 @@ const startRunHandler = async (req, res) => {
         labels,
         ...(shape ? { shape } : {}),
         ...(runSetup ? { runSetup } : {}),
+        // 3a (D21, D43, D55): a project try is a hidden try like Part 2's. It keeps its checkout for its checks and runs its
+        // setup before any step. Its key is the real project's: projectKey() answers it for the copy (D52).
+        ...(workflowTest ? { workflowUse: workflowTest.use, workflowTest: true, noMemory: true, titleLocked: true,
+          testConnectors: workflowTest.connectors === 'real' ? 'real' : 'pretend', keepCheckout: true,
+          ...(tryProject && tryProject.setupCmd ? { trySetup: { cmd: tryProject.setupCmd, timeoutMs: SETUP_TIMEOUT_MS } } : {}) } : {}),
       });
 
       entry = {
@@ -3417,6 +3461,7 @@ const startRunHandler = async (req, res) => {
         tags,
         events: [],
         pendingQuestion: null,
+        ...(workflowTest ? { isTest: true } : {}),
       };
     }
 
@@ -3436,6 +3481,10 @@ const startRunHandler = async (req, res) => {
     }
     runs.set(runId, entry);
     wireRun(entry);
+    // The runner holds the orchestrator before orch.run() can ask anything (correction 7).
+    if (workflowTest && typeof workflowTest.onOrch === 'function') {
+      try { workflowTest.onOrch(orch, { runKey: runId }); } catch (err) { runs.delete(runId); syncKeepAwake(); throw err; }
+    }
     if (askLink) {
       // Card-state TOCTOU: awaits (source-ref check, budget) sit between Hunk
       // B's `proposed` check and here — a concurrent Start may have flipped
@@ -3481,7 +3530,7 @@ const startRunHandler = async (req, res) => {
         console.error(`[worca-ui] ask run link failed: ${err && err.message ? err.message : err}`);
       }
     }
-    announceRun(entry);
+    if (!entry.isTest) announceRun(entry);   // D21: never in a tab's run list
 
     // Fire-and-forget; all progress is surfaced through events. Kept on the entry: a Stop of the
     // run once it paused waits for its pause to finish unwinding (stopPausedPipelineOnce).
@@ -3491,7 +3540,7 @@ const startRunHandler = async (req, res) => {
         const event = { runId, type: 'error', message: err && err.message ? err.message : String(err) };
         entry.status = 'error';
         entry.events.push(event);
-        broadcast(event);
+        if (!entry.isTest) broadcast(event);   // review I7: a tab would upsert a phantom run from this runId (app.js:1973)
         syncKeepAwake();
       })
       // #620: the harness's post-run base check landed after the run's last frame; History re-reads it.
@@ -3857,7 +3906,7 @@ async function invokeAskCard({ threadId, cardId, body, actor }) {
   return out;
 }
 
-async function invokeStartRun(body, internal, { startedBy = null, runId = null, prWatchRunId = null, roundOf = null, extrasFiles = null, reportTo = null, automation = false } = {}) {
+async function invokeStartRun(body, internal, { startedBy = null, runId = null, prWatchRunId = null, roundOf = null, extrasFiles = null, reportTo = null, automation = false, workflowTest = null } = {}) {
   const files = Array.isArray(extrasFiles) && extrasFiles.length ? extrasFiles : null;
   const id = files ? (runId || randomUUID()) : runId;   // the extras folder is named by the run id
   const run = async (extrasPaths, staged = null) => {
@@ -3869,7 +3918,8 @@ async function invokeStartRun(body, internal, { startedBy = null, runId = null, 
     };
     await startRunHandler({ body, headers: {}, _internal: internal, _startedBy: startedBy, _runId: id,
       _prWatchRunId: prWatchRunId, ...(roundOf ? { _roundOf: roundOf } : {}), ...(extrasPaths ? { _extrasPaths: extrasPaths } : {}),
-      ...(reportTo ? { _reportTo: reportTo } : {}), ...(automation ? { _automation: true } : {}) }, res);
+      ...(reportTo ? { _reportTo: reportTo } : {}), ...(automation ? { _automation: true } : {}),
+      ...(workflowTest ? { _workflowTest: workflowTest } : {}) }, res);
     if (staged && out.status >= 200 && out.status <= 299) dropStagedOnceCopied(id, staged.drop);
     return out;
   };
@@ -4753,9 +4803,12 @@ async function stopRun(runId, by = 'local') {
   syncKeepAwake();
   return { ok: true };
 }
+/** A test try is never paused (a paused try is a failed try, runner.mjs pauseVerdict): its test is stopped instead. */
+const TEST_TRY_PAUSE_TEXT = 'A test try cannot be paused: stop its test instead.';
 function pauseRun(runId, by = 'local') {
   const entry = runs.get(runId);
   if (!entry) throw new Error('unknown runId');
+  if (entry.isTest) throw Object.assign(new Error(TEST_TRY_PAUSE_TEXT), { code: 'TEST_TRY' });
   const ok = typeof entry.orch?.pause === 'function' && entry.orch.pause(by || 'local');
   if (!ok) throw Object.assign(new Error('cannot pause in the current state'), { code: 'CANNOT_PAUSE' });
   entry.lastAction = { kind: 'pause', by: by || 'local', at: new Date().toISOString() };
@@ -4828,7 +4881,7 @@ async function stopPausedPipelineOnce(pipelineId, by = 'local') {
           entry._outcomeRecorded = false;
           entry._chainNudged = false;
           wireRun(entry);                     // tab frames + chat notifier, on the same runId
-        } else {
+        } else if (!isTestPipeline(pipelineId)) {   // D21: no chat notifier for a test try
           try { chatNotifier.attach(orch, { runId: pipelineId }); }
           catch (err) { console.error(`[worca-ui] chat notifier attach failed: ${err && err.message ? err.message : err}`); }
         }
@@ -4872,8 +4925,11 @@ function settleStaleParked(pipelineId) {
     e.pauseDetail = null;
     // A later subscribe snapshots the entry's orchestrator (sendStateSnapshot): it must read the same.
     if (e.orch && e.orch.state) e.orch.state.status = status;
-    broadcast(bufferEvent(e, { type: 'state', status, id: pipelineId }));
-    broadcast(bufferEvent(e, { type: 'done', status, pipelineDir: null }));
+    // A test try is hidden from every tab (D21): its status settles, nothing is sent.
+    if (!e.isTest) {
+      broadcast(bufferEvent(e, { type: 'state', status, id: pipelineId }));
+      broadcast(bufferEvent(e, { type: 'done', status, pipelineDir: null }));
+    }
   }
   syncKeepAwake();
 }
@@ -5300,6 +5356,9 @@ async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, past
   const engineOpts = resumeEngineOpts(engine, allowUnguardedEngine);
   const saved = readPipelineForResume(pipelineId);
   if (!saved) throw new ResumeError(404, { error: 'pipeline not found' });
+  // Workflow tests (D22, review I7): a try is driven by its test. "Finish the rest" makes it again; nothing resumes it
+  // (POST /api/resume, chat /resume, a stale tab), which would also give it a new entry without isTest.
+  if (saved.row.is_test) throw new ResumeError(409, { error: 'A test try cannot be resumed: finish the rest from its test.' });
   if (workModeOfRow(saved.row) === 'git' && !(await gitState()).available) throw new ResumeError(409, { error: GIT_MISSING.message, code: GIT_MISSING.code });
   // Resume with another model (a usage limit spent on one provider): every remaining step runs on it. It must be a
   // catalog model the run's harness — the one it resumes on — can run (src/shared/connections.mjs).
@@ -6661,7 +6720,7 @@ function ensureSetup(runId, pk, { enabled, rerun = false }) {
 
 function sendCheckoutError(res, e) {
   const map = { NOT_FOUND: 404, BAD_REQUEST: 400, NOT_FINISHED: 409, RETAINED: 409, BRANCH_MISSING: 409,
-    BRANCH_CHECKED_OUT: 409, TARGET_EXISTS: 409, SNAPSHOT_FAILED: 409, NOT_AFFECTED: 409 };
+    BRANCH_CHECKED_OUT: 409, TARGET_EXISTS: 409, SNAPSHOT_FAILED: 409, NOT_AFFECTED: 409, TEST_TRY: 409 };
   res.status(map[e?.code] || 500).json({ error: e?.message || String(e), code: e?.code || 'ERROR',
     ...(e?.holder ? { holder: e.holder, projectKey: e.projectKey || null } : {}) });
 }
@@ -6808,6 +6867,8 @@ async function resolvePrPipeline(src, res) {
     return null;
   }
   if (!state) { res.status(404).json({ error: 'pipeline not found' }); return null; }
+  // Workflow tests 3a (D45): a test try never leaves Worca. Every push, pull request and publish route comes through here.
+  if (isTestPipeline(state.id || id)) { res.status(409).json({ error: TRY_NEVER_SHIPS_TEXT }); return null; }
   return { id, state };
 }
 
@@ -6873,6 +6934,7 @@ async function openMemberPr(pipelineId, { actor = null } = {}) {
  */
 async function createRunPr({ id, state, target, base, memberKey = null, remotes: chosen = {}, description = '',
   draft = false, actor = null, title = null, preamble = true }) {
+  if (isTestPipeline(id)) return { ok: false, status: 409, error: TRY_NEVER_SHIPS_TEXT };   // 3a D45: also from the ship flows
   const { repoDir, feature, source } = target;
   if (!repoDir || !feature || !source) return { ok: false, status: 400, error: 'pipeline has no branch info to create a PR' };
   const picked = await pickPrRemotes(chosen, repoDir);
@@ -7884,7 +7946,7 @@ async function autoResumeOnBoot({ interruptedIds = [], env = process.env, mock =
   const mode = autoResumeMode(env);
   if (mode === 'off') return { enabled: false, resumed: [], failed: [] };
   const rows = getDb().prepare(`SELECT id, status, started_by, archived_at, resume_point FROM pipelines
-    WHERE status IN ('paused', 'interrupted') AND archived_at IS NULL ORDER BY started_at ASC`).all()
+    WHERE status IN ('paused', 'interrupted') AND archived_at IS NULL AND is_test IS NULL ORDER BY started_at ASC`).all()
     .map((r) => { let rp = null; try { rp = r.resume_point ? JSON.parse(r.resume_point) : null; } catch { /* unreadable point */ } return { ...r, resumePoint: rp }; });
   const picks = autoResumeCandidates(rows, {
     interruptedNow: new Set(interruptedIds),
@@ -9901,12 +9963,12 @@ app.use((err, _req, res, next) => {
  * everything up to the first `await` — including the reconcile — still runs before
  * `server.listen`, exactly as it did when this was an inline block.
  *
- * @param {{log?: (scope:'run-root'|'legacy'|'ask-worktrees'|'repo-look', level:string, msg:string) => void}} [args]
+ * @param {{log?: (scope:'run-root'|'workflow-tests'|'legacy'|'ask-worktrees'|'repo-look', level:string, msg:string) => void}} [args]
  *        optional sink for the per-candidate lines both sweeps emit; omitted, each
  *        sweep keeps its own console default.
  */
 export async function bootMaintenance({ log } = {}) {
-  const summary = { reconciled: 0, sweptV1: 0, recoveredBriefs: 0, recoveredAttachmentReads: 0, attachmentReadFolders: null, attachmentTempBodies: null, runRoots: null, legacy: null, ask: null, askWorktrees: null, repoLooks: null, requirementsRepoLooks: null, bench: null };
+  const summary = { reconciled: 0, sweptV1: 0, recoveredBriefs: 0, recoveredAttachmentReads: 0, attachmentReadFolders: null, attachmentTempBodies: null, runRoots: null, testCopies: null, legacy: null, ask: null, askWorktrees: null, repoLooks: null, requirementsRepoLooks: null, bench: null };
   const sink = (scope) => (typeof log === 'function' ? (level, msg) => log(scope, level, msg) : undefined);
 
   // Runs left 'running' by a previous process that died before writing a terminal
@@ -9937,6 +9999,14 @@ export async function bootMaintenance({ log } = {}) {
   } catch (err) {
     console.error(`[worca-ui] requirements sweep failed: ${err && err.message ? err.message : err}`);
   }
+  // Workflow tests (D27, review M4): a test this restart cut short is stopped; its tries keep their cost and their runs
+  // lose their resume points. Synchronous, like the requirements sweep: boot maintenance is not awaited before listen.
+  try {
+    const t = recoverInterruptedTestRuns();
+    if (t.runs) console.log(`[worca-ui] workflow tests: ${t.runs} interrupted test(s) stopped`);
+  } catch (err) {
+    console.error(`[worca-ui] workflow tests sweep failed: ${err && err.message ? err.message : err}`);
+  }
   // Requirements A7 (D15): a product brief left `making` by this restart gets INTERRUPTED. This runs before the
   // first await, but boot maintenance is not awaited before listen, so recoverBriefs skips a brief whose job runs.
   try {
@@ -9953,6 +10023,15 @@ export async function bootMaintenance({ log } = {}) {
     console.error(`[worca-ui] requirements file-read sweep failed: ${err && err.message ? err.message : err}`);
   }
 
+  // Workflow tests 3b, Task 5 (security review M2): Claude staging folders a killed Worca left in the OS temp folder (they
+  // may hold a Pretend try's carried sign-in helpers). Only folders older than a day: another Worca may share the folder.
+  try {
+    const gone = sweepStaleStagingDirs();
+    if (gone.length) console.log(`[worca-ui] removed ${gone.length} leftover Claude staging folder(s)`);
+  } catch (err) {
+    console.error(`[worca-ui] Claude staging folder sweep failed: ${err && err.message ? err.message : err}`);
+  }
+
   try {
     const r = await sweepRunRoots({
       worcaHome: worcaHome(), ...runRootSweepLookups(), log: sink('run-root'),
@@ -9967,6 +10046,13 @@ export async function bootMaintenance({ log } = {}) {
     }
   } catch (err) {
     console.error(`[worca-ui] run-root sweep failed: ${err && err.message ? err.message : err}`);
+  }
+  // Workflow tests 3a (D61): every copy of a project prunes the worktrees the sweep above removed and loses its leftover
+  // try branches. Nothing tries at boot.
+  try {
+    summary.testCopies = await sweepTestCopies({ log: sink('workflow-tests') });
+  } catch (err) {
+    console.error(`[worca-ui] workflow tests copy sweep failed: ${err && err.message ? err.message : err}`);
   }
 
   // The one-time legacy sweep (§6 Phase 7). A TOTAL no-op while the effective mode is
@@ -10412,9 +10498,10 @@ if (isMain) {
 }
 
 export { app, server, runs };
-export { AGENTS_DIR, APP_INFO, APP_REPO_URL, ASK_DEFERRED_REPLIES_MAX, ASK_SCOPE_BUSY, ASK_TEXT_PREVIEW_MAX, BRANCH_SETTLED, BUGS_SLUG, CLONE_JOBS, HOST, MARKETPLACE_ID_RE, MARKET_JOBS, NO_PR_HOST, PKG_VERSION, PLAN_TEXT_MAX, PLUGIN_NAME_RE, PORT, PROJECT_ROOT, PR_TITLE_MAX, REMOTE_MODE, RUNNING_VERSION, ResumeError, SETTLED_RUN, SETUP_AGENT_TEXT, SETUP_JOBS, SKILLS_DIR, SKILL_FOLDER_IMPORTS, SKILL_MD_UNREACHABLE, STORE_ERROR_CODES, actions, actionsEnabledHere, activeActionSnaps, adoWebhookSecret, afterMembersChanged, afterProjectRegistered, agentErrorStatus, agentMayBeCaller, answerRun, applyProjectSettingsPatch, applySettingsPatch, askBusyReason, askChatActions, askChatEngine, askChatEngineGate, askCommandBridges, askCommands, askCommandsEnabled, askContextTokens, askCredentialGate, askDeferred, askDeferredReplies, askDeleting, askEngineSwitchText, askEventPick, askFilesRunDir, askFilesStoreDir, askFollowers, askGroupFor, askGroupThreads, askIdParam, askInFlight, askLiveRun, askProxyBridges, askRefResolver, askRelays, askRunFromPipelineRow, askRunningCount, askSignedIn, askSwitchTranscript, askThreadVisible, askTrackingCount, askTurnEngine, askValidateScope, askViewer, askWebAccessFor, askWorktreesEnvelope, autoDetectedBuiltins, automationWorkspaceMembers, automations, awayPersonOf, badRequest, bareWorkspaceKey, bearerMatches, broadcast, broadcastFeature, brokerStartRefusal, builtins, busyActionRunIds, channelHost, chatGroupError, chatNotifier, chatRefusals, checkoutRecOf, commentIdParam, commentsCreate, commentsDelete, commentsFail, commentsList, commentsPatch, commentsReply, createRunPr, crosslinkMemberPrs, currentUpdateEligibility, defaultPrRemotes, deleteAskThreadFully, detectSystemProxyImpl, detectTeamMemorySoon, drainServer, effectiveUiLevel, egressNow, emitAskWorktrees, emitChanged, emitMemoryChanged, emitPluginsChanged, ensureSetup, extensionPairing, factDeps, failedEventTurn, featureShipping, findScheduleItem, findShipCardIn, flipCard, followCloneCard, forkPrRefusal, fsAllowedRoots, fsLimitedHere, gitMissing, isFinishingRun, isFreshInstall, isLiveRun, isPlainObject, isPrStoreKey, isTruthy, kickAutomations, kickPrWatch, labelsOn, lastUpdateResult, liveAutoRescan, liveDefragRun, liveDiffOf, livePr, liveProbe, liveRunEntry, liveRunIds, liveSliceOf, marketJobFailure, mcpRunPreview, mcpTargetOf, memberFor, memoryError, modelTestsInFlight, namingBucket, namingCatalog, namingOn, namingPick, noRawCommand, notifReader, openMemberPr, ownsWorkspaceTarget, parseMcpOptOut, pauseRun, pickPrRemotes, pinUiLevel, postAskSystemNotice, postDirection, prTargetFor, prWatchFrame, prWatcher, presetCheckCtx, presetScopeOf, primaryMemberOf, projectAutomationRepo, projectDirForKey, projectSettingsState, proxyHost, pruneMarketJobs, prunedNote, publicCloneJob, readInstalledManifest, refuseAgentCaller, refuseSignedOutClaude, registeredProjectForDir, rejectRawTerminalFields, removeRecommendation, requireActions, requireFsAllowed, requireTerminal, resolvePrPipeline, resolveProjectDir, resolveRunScope, resumeEngineOpts, resumeRun, resumeTargetDirs, runGroupIds, runSourceIssue, scanModelsFor, scanRequest, scheduleVerb, sendArtifactRaw, sendCheckoutError, sendMetricsError, sendPolicyError, sendPresetError, serveAskFile, serverMockMode, settleShipped, setupJobs, setupProbesOverride, shipChainNow, shipCtxOf, shipFeatureNow, skillRunPreview, snapshotFor, sockets, stackStates, stackTokens, startAgentGen, startAskTurn, startCloneJob, startMetricsEventTurn, startOrQueue, startRunAs, startRunHandler, startScopeEventTurn, startScriptBench, stopCheckoutServices, stopMemberServices, stopPausedPipeline, stopRun, switchThreadScope, syncMode, syncProjectAction, syncRoute, teamOriginOk, teamWarn, terminalCallerOk, terminalEnabledHere, terminalError, terminalSameOrigin, terminals, tmProject, uiControl, unsyncableBlock, updateChecker, updatePort, updatePreview, validateResumeTarget, versionLister, versionPayload, webhookSecret, withAfter, workspaceMembersBusy };
+export { AGENTS_DIR, APP_INFO, APP_REPO_URL, ASK_DEFERRED_REPLIES_MAX, ASK_SCOPE_BUSY, ASK_TEXT_PREVIEW_MAX, BRANCH_SETTLED, BUGS_SLUG, CLONE_JOBS, HOST, MARKETPLACE_ID_RE, MARKET_JOBS, NO_PR_HOST, PKG_VERSION, PLAN_TEXT_MAX, PLUGIN_NAME_RE, PORT, PROJECT_ROOT, PR_TITLE_MAX, REMOTE_MODE, RUNNING_VERSION, ResumeError, SETTLED_RUN, SETUP_AGENT_TEXT, SETUP_JOBS, SKILLS_DIR, SKILL_FOLDER_IMPORTS, SKILL_MD_UNREACHABLE, STORE_ERROR_CODES, actions, actionsEnabledHere, activeActionSnaps, adoWebhookSecret, afterMembersChanged, afterProjectRegistered, agentErrorStatus, agentMayBeCaller, answerRun, applyProjectSettingsPatch, applySettingsPatch, askBusyReason, askChatActions, askChatEngine, askChatEngineGate, askCommandBridges, askCommands, askCommandsEnabled, askContextTokens, askCredentialGate, askDeferred, askDeferredReplies, askDeleting, askEngineSwitchText, askEventPick, askFilesRunDir, askFilesStoreDir, askFollowers, askGroupFor, askGroupThreads, askIdParam, askInFlight, askLiveRun, askProxyBridges, askRefResolver, askRelays, askRunFromPipelineRow, askRunningCount, askSignedIn, askSwitchTranscript, askThreadVisible, askTrackingCount, askTurnEngine, askValidateScope, askViewer, askWebAccessFor, askWorktreesEnvelope, autoDetectedBuiltins, automationWorkspaceMembers, automations, awayPersonOf, badRequest, bareWorkspaceKey, bearerMatches, broadcast, broadcastFeature, brokerStartRefusal, builtins, busyActionRunIds, channelHost, chatGroupError, chatNotifier, chatRefusals, checkoutRecOf, commentIdParam, commentsCreate, commentsDelete, commentsFail, commentsList, commentsPatch, commentsReply, createRunPr, crosslinkMemberPrs, currentUpdateEligibility, defaultPrRemotes, deleteAskThreadFully, detectSystemProxyImpl, detectTeamMemorySoon, drainServer, effectiveUiLevel, egressNow, emitAskWorktrees, emitChanged, emitMemoryChanged, emitPluginsChanged, ensureSetup, extensionPairing, factDeps, failedEventTurn, featureShipping, findScheduleItem, findShipCardIn, flipCard, followCloneCard, forkPrRefusal, fsAllowedRoots, fsLimitedHere, gitMissing, invokeStartRun, isFinishingRun, isFreshInstall, isLiveRun, isPlainObject, isPrStoreKey, isTruthy, kickAutomations, kickPrWatch, labelsOn, lastUpdateResult, liveAutoRescan, liveDefragRun, liveDiffOf, livePr, liveProbe, liveRunEntry, liveRunIds, liveSliceOf, marketJobFailure, mcpRunPreview, mcpTargetOf, memberFor, memoryError, modelTestsInFlight, namingBucket, namingCatalog, namingOn, namingPick, noRawCommand, notifReader, openMemberPr, ownsWorkspaceTarget, parseMcpOptOut, pauseRun, pickPrRemotes, pinUiLevel, postAskSystemNotice, postDirection, prTargetFor, prWatchFrame, prWatcher, presetCheckCtx, presetScopeOf, primaryMemberOf, projectAutomationRepo, projectDirForKey, projectSettingsState, proxyHost, pruneMarketJobs, prunedNote, publicCloneJob, readInstalledManifest, refuseAgentCaller, refuseSignedOutClaude, registeredProjectForDir, rejectRawTerminalFields, removeRecommendation, requireActions, requireFsAllowed, requireTerminal, resolvePending, resolvePrPipeline, resolveProjectDir, resolveRunScope, resumeEngineOpts, resumeRun, resumeTargetDirs, runGroupIds, runSourceIssue, scanModelsFor, scanRequest, scheduleVerb, sendArtifactRaw, sendCheckoutError, sendMetricsError, sendPolicyError, sendPresetError, serveAskFile, serverMockMode, settleShipped, setupJobs, setupProbesOverride, shipChainNow, shipCtxOf, shipFeatureNow, skillRunPreview, snapshotFor, sockets, stackStates, stackTokens, startAgentGen, startAskTurn, startCloneJob, startMetricsEventTurn, startOrQueue, startRunAs, startRunHandler, startScopeEventTurn, startScriptBench, stopCheckoutServices, stopMemberServices, stopPausedPipeline, stopRun, switchThreadScope, syncMode, syncProjectAction, syncRoute, teamOriginOk, teamWarn, terminalCallerOk, terminalEnabledHere, terminalError, terminalSameOrigin, terminals, tmProject, uiControl, unsyncableBlock, updateChecker, updatePort, updatePreview, validateResumeTarget, versionLister, versionPayload, webhookSecret, withAfter, workspaceMembersBusy };
 export const _testing = {
   chatBridge, invokeAskCard, askBus, chatAgentModeFor, chatTurnIdentity,
+  settleStaleParkedEntries,
   updateChecker,
   // Chat context: tests never reach a CDN (null = the real fetch again).
   setChatFileFetch: (fn) => { chatFileFetch = typeof fn === 'function' ? fn : defaultChatFileFetch; },

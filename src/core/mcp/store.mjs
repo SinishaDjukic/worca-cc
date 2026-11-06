@@ -27,6 +27,8 @@ export class McpStoreError extends Error {
 const fail = (status, message) => { throw new McpStoreError(status, message); };
 
 export function mcpDir() { return join(worcaHome(), 'mcp'); }
+/** A stored tool's name: a Test result holds names (older) or records (workflow tests D35); '' for anything else. */
+export const toolNameOf = (t) => (typeof t === 'string' ? t : t && typeof t.name === 'string' ? t.name : '');
 
 const FILES = ['servers', 'sets', 'secrets', 'tests']; // read in this order: sets before secrets (§4.5 pending)
 const map = () => Object.create(null);
@@ -45,7 +47,9 @@ const dropNonMaps = (obj) => {
 // (`String(value.$env)`, `Date.parse(updatedAt)`, `String(tool)`), and the reviver's maps throw when coerced.
 const text = (v) => v === undefined || typeof v === 'string';
 const secretOk = (r) => ((typeof r.value === 'string' && r.value !== '') || (isMap(r.value) && typeof r.value.$env === 'string')) && text(r.updatedAt);
-const testOk = (t) => (t.tools === undefined || (Array.isArray(t.tools) && t.tools.every((x) => typeof x === 'string')))
+// A stored tool is its name (a Test written before workflow tests Part 2) or { name, description?, inputSchema?, annotations? }.
+const toolOk = (x) => typeof x === 'string' || (isMap(x) && typeof x.name === 'string');
+const testOk = (t) => (t.tools === undefined || (Array.isArray(t.tools) && t.tools.every(toolOk)))
   && text(t.at) && text(t.fingerprint) && (t.error === null || text(t.error));
 
 // A missing file reads as empty. A lock-free read never throws: a file that cannot be read or does not

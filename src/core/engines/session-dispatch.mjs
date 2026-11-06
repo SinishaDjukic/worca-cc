@@ -47,7 +47,10 @@ const HOST_DISPATCH_TOOLS = Object.freeze(['Agent', 'Task']);
 /** The member's run-level options a host spawn keeps unchanged; everything else is set below or dropped. */
 const RUN_LEVEL_FIELDS = Object.freeze(['cwd', 'mcpConfigPath', 'mcpServerGrants', 'mcpjsonProjectDir', 'noGit', 'workspaceWriteTargets',
   'permissionMode', 'addDirs', 'writableDirs', 'modelEnv', 'redactValues', 'disallowedTools', 'appendSubagentSystemPrompt', 'pluginDirs',
-  'memoryLoadLog', 'permissionRules', 'envScrub', 'envAllowlist', 'asAgent', 'bin', 'engine', 'mock']);
+  'memoryLoadLog', 'permissionRules', 'envScrub', 'envAllowlist', 'asAgent', 'bin', 'engine', 'mock',
+  // Workflow tests 3b, Task 5 (security review M5): a Pretend try's host spawn stays one (no user settings, the try guard, only
+  // its own MCP config, Worca's extra settings).
+  'pluginsOff', 'settingSources', 'runLoadsUserSettings', 'tryGuard', 'strictMcpConfig', 'extraSettings']);
 /** C32: a definition always carries these, whatever S2 asks to drop (`tools` is never omitted). */
 const KEEP_DEFINITION_FIELDS = new Set(['description', 'prompt', 'tools']);
 const uniq = (...lists) => [...new Set(lists.flat().filter((t) => typeof t === 'string' && t))];

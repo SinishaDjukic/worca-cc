@@ -176,7 +176,7 @@ app.get('/api/schedules/after-candidates', (req, res) => {
     // process's run is not in this host's runs Map at all. The Map only adds live runIds.
     const where = workspaceId ? 'workspace_key = ?' : "project_key = ? AND target = 'project'";
     const rows = getDb().prepare(`SELECT id, title, status FROM pipelines WHERE ${where}
-      AND status IN ('created', 'starting', 'running', 'pausing', 'paused') AND archived_at IS NULL ORDER BY started_at DESC LIMIT 50`)
+      AND status IN ('created', 'starting', 'running', 'pausing', 'paused') AND archived_at IS NULL AND is_test IS NULL ORDER BY started_at DESC LIMIT 50`)
       .all(workspaceId || projectKey(projectDir));
     const byPipeline = new Map(rows.map((r) => [r.id, { pipelineId: r.id, runId: null, title: r.title || null, status: r.status }]));
     for (const r of runs.values()) {

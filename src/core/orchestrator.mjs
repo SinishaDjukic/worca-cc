@@ -213,6 +213,7 @@ export class GraphOrchestrator extends RunHarness {
     const hasWires = Object.keys(overlayWires).length > 0;
     const overlay = hasNodes || hasWires ? { ...(hasNodes ? { nodes: overlayNodes } : {}), ...(hasWires ? { wires: overlayWires } : {}) } : null;
     const resolved = await resolveGraph(this.projectDir, this.workflowId, registry, this.agentsDir, {
+      use: this.opts && this.opts.workflowUse !== undefined ? this.opts.workflowUse : 'live',
       engine: this.claude.engine || 'claude', runModel: this.claude.model || null, isWorkspace: this.isWorkspace, scripts: this.scriptRegistry, ...(overlay ? { overlay } : {}), ...(defrag && defrag.pair ? { agentPair: defrag.pair } : {}),
       ...(scan ? { agentPair: scan.agentPair, subagentPin: scan.subagentPin } : {}), claudeAuth: this._resolveClaudeAuth(),
     });
@@ -255,6 +256,8 @@ export class GraphOrchestrator extends RunHarness {
     // What THIS run was told to use over the project's settings, beside the cells it resolved to (the run page marks
     // those pills "this run only"; resume reads the cells, never this).
     if (overlay) manifest.runOverlay = structuredClone(overlay);
+    // D8: the named version this run used (plans/workflow-tests-plan.md); absent = the workflow's row.
+    if (Number.isInteger(resolved.versionNo)) manifest.workflowVersion = { no: resolved.versionNo };
     return {
       manifest,
       agentKeys: new Set(this.resolved.agentKeys),
@@ -640,8 +643,11 @@ export class GraphOrchestrator extends RunHarness {
     const overlayNodes = {};
     for (const [nodeId, sel] of Object.entries(tunables || {})) overlayNodes[nodeId] = { ...sel };
     for (const [nodeId, sel] of Object.entries(answer.nodes || {})) overlayNodes[nodeId] = { ...(overlayNodes[nodeId] || {}), ...sel };
+    // I2: run exactly the graph the twin was matched on. autoCandidates offers a versioned row as its version in use
+    // (runnableOf); pinning that number keeps the node ids the tunables were remapped onto, even if Use moved meanwhile.
+    const use = match && Number.isInteger(match.candidate.versionNo) ? match.candidate.versionNo : 'live';
     const resolved = await resolveGraph(this.projectDir, workflowId, registry, this.agentsDir, {
-      engine: this.claude.engine || 'claude', runModel: this.claude.model || null, isWorkspace: this.isWorkspace, overlay: { nodes: overlayNodes }, ignoreProjectOverrides: true, scripts: this.scriptRegistry,
+      use, engine: this.claude.engine || 'claude', runModel: this.claude.model || null, isWorkspace: this.isWorkspace, overlay: { nodes: overlayNodes }, ignoreProjectOverrides: true, scripts: this.scriptRegistry,
       claudeAuth: this._resolveClaudeAuth(),
     });
     if (!this.humanInLoop) {
@@ -660,6 +666,8 @@ export class GraphOrchestrator extends RunHarness {
     manifest.auto = fallback
       ? { status: 'decided', via: 'fallback', saved: via, reason: fallback, rounds: round, humanInLoop: this.humanInLoop, workflowId }
       : { status: 'decided', via, rounds: round, humanInLoop: this.humanInLoop, workflowId };
+    // D8: the named version this run used, as the non-Auto path records it (_buildManifest).
+    if (Number.isInteger(resolved.versionNo)) manifest.workflowVersion = { no: resolved.versionNo };
     this._preflightAgentKeys(this.resolved.agentKeys);
     this._preflightScriptKeys(this.resolved.scriptKeys);
     await this._preflightScriptRuntimes();
@@ -2329,6 +2337,12 @@ export class GraphOrchestrator extends RunHarness {
       mcpEnv: this.mcpLayer?.env,
       mcpRedact: this.mcpLayer?.redact,
       mcpDisallowed: this.mcpLayer?.disallowed,
+      // Workflow tests (D35): a pretend try loads only its mcp.json; a script step learns it runs in a test. 3b (D70): a pretend
+      // try's spawns load no user settings either (runOpts: the run's sources minus user, D70a; the sign-in is carried over).
+      ...(this._testConnectors() ? { testConnectors: this._testConnectors(), mcpStrict: this._testConnectors() === 'pretend',
+        ...(this._testConnectors() === 'pretend' ? { pluginsOff: true } : {}) } : {}),
+      // Workflow tests 3a (D56): nothing leaves a try: its spawns carry the hook and the guard env, its script steps the env.
+      ...(this._tryGuard() ? { tryGuard: this._tryGuard() } : {}),
       // Skills registry (design §4.3): one --plugin-dir per set plugin of the run; undefined without
       // set skills, [] once the layer is blocked — runOpts emits nothing for either.
       skillPluginDirs: this.skillLayer?.pluginDirs,
@@ -2608,7 +2622,9 @@ export class GraphOrchestrator extends RunHarness {
     try {
       return await measureCodeCursor({
         workDirs: this.workDirs, checkpointRefs: this.checkpointRefs,
-        excludeFor: (k) => this._excludePathspecs(k), numstat: diffNumstat,
+        excludeFor: (k) => this._excludePathspecs(k),
+        // Workflow tests 3a (final review I2): a try's measure runs no fsmonitor of the copy, under the guard.
+        numstat: (d, b, h, p) => diffNumstat(d, b, h, p, this._tryGitEnv() ? { env: this._tryGitEnv() } : {}),
         stage: () => this._stageWorkingTree({ ignoreAbort: true, refreshFolders: false }),
       });
     } catch { return null; }

@@ -105,7 +105,7 @@ app.post('/api/projects/:key/actions/:actionId/try', async (req, res) => {
   if (!PROJECT_KEY_RE.test(req.params.key)) return badRequest(res, 'invalid project key');
   // `branch LIKE '%"feature"%'` also matches `"feature":null`, and SQL cannot see retained work or
   // liveness, so pick in JS from the newest few candidates.
-  const row = getDb().prepare(`SELECT * FROM pipelines WHERE project_key = ? AND target = 'project' AND archived_at IS NULL
+  const row = getDb().prepare(`SELECT * FROM pipelines WHERE project_key = ? AND target = 'project' AND archived_at IS NULL AND is_test IS NULL
       AND status IN ('done','stopped','error') ORDER BY started_at DESC LIMIT 25`).all(req.params.key)
     .find((r) => membersOfRow(r)[0]?.br?.feature && !retainedWorkFor(r) && !isLiveRun(r.id));
   if (!row) return res.status(404).json({ error: 'No finished run yet.', code: 'NO_FINISHED_RUN' });

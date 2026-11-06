@@ -20,8 +20,9 @@ import { join, isAbsolute } from 'node:path';
 import { projectKey, projectStorePath } from './store.mjs';
 import {
   listArtifacts, readPipelineByKey, persistPrState, retainedWorkFor, checkoutRecordsFor, branchRecordsOf,
-  recordArtifact, appendAudit, appendAuditById, findRunDir, readMemberPrStates, persistMemberPrState, folderApplyRetainFor,
+  recordArtifact, appendAudit, appendAuditById, findRunDir, readMemberPrStates, persistMemberPrState, folderApplyRetainFor, projectDirOfRow,
 } from './artifacts.mjs';
+import { TRY_STAYS_IN_COPY_TEXT } from '../shared/workflow-tests/project-text.mjs';
 import { workspaceMembers } from './workspace-prs.mjs';
 import { worcaHome } from './projects.mjs';
 import { getDb, tx } from './db.mjs';
@@ -226,9 +227,9 @@ export async function archivePipeline({ projectDir = null, key = null, workspace
   }
 
   // Final PR observation (spec §6.8.3); workspace runs per member — see refreshFinalPrs.
-  // A merge after archive is never observed — accepted.
+  // A merge after archive is never observed — accepted. A workflow-test try never had a pull request: no forge call.
   try {
-    await refreshFinalPrs(row, state);
+    if (!row.is_test) await refreshFinalPrs(row, state);
   } catch (e) {
     // Named `e`, not `err`: `err` is this module's error-factory helper and a catch
     // parameter would shadow it for the whole block.
@@ -274,7 +275,8 @@ export async function archivePipeline({ projectDir = null, key = null, workspace
       }
     }
   } else {
-    const repoDir = state?.projectDir || projectDir || null;
+    // 3a (final review round 2): a test try's branch and checkout live in Worca's copy; never the caller's folder.
+    const repoDir = row.is_test ? projectDirOfRow(row) : (state?.projectDir || projectDir || null);
     const feature = state?.branch?.feature || null;
     const wt = state?.branch?.worktreeDir || null;
     if (repoDir && (feature || wt)) {
@@ -518,6 +520,7 @@ export async function discardRetainedWorktrees({ projectDir = null, key = null, 
 
   const row = lookupRow(storeKey, id);
   if (!row) return null;
+  if (row.is_test) throw err(TRY_STAYS_IN_COPY_TEXT, 'TEST_TRY');   // 3a (final review round 2): the runner cleans a try's checkout
   if (ACTIVE.has(String(row.status || '').toLowerCase())) {
     throw err('cannot discard a running pipeline worktree', 'RUNNING');
   }
@@ -649,6 +652,7 @@ export async function applyRetainedWork({ projectDir = null, key = null, workspa
 async function applyRetainedUnderLock({ storeKey, id, projectDir, by }) {
   const row = lookupRow(storeKey, id);          // re-read under the lock: a Discard may have won the race
   if (!row) return null;
+  if (row.is_test) throw err(TRY_STAYS_IN_COPY_TEXT, 'TEST_TRY');   // 3a (final review round 2): a try's work never lands on a branch
   if (ACTIVE.has(String(row.status || '').toLowerCase())) {
     throw err('cannot apply the work of a running pipeline', 'RUNNING');
   }
