@@ -115,7 +115,7 @@ import { paintGroupShip, resetGroupShip } from './ship-group-dialog.mjs';
 import { setShipDialogOpener, shipReason } from './shape/ship-card.mjs';
 import { pageModel, runCrumbs, paintCrumbs, syncFacts } from './run-page-head.mjs';
 import { headModel, routeModel, routeGroupOf, renderHeadButtons, renderRoute, prMenuItems, canResolvePr, showsFixConflicts, HD_PR_WATCH_ACTIVE,
-  hdPrWatchLabel, WATCH_HELP, pushLabel, pushTip } from './run-head.mjs';
+  hdPrWatchLabel, WATCH_HELP, pushLabel, pushTip, tryServiceOf } from './run-head.mjs';
 import { delegateQuestion } from './question-delegate.mjs';
 import { loadRunsView, saveRunsView, viewChip, viewMenuItems } from './runs-view-menu.mjs';
 import { createRunsSelection, rowTarget, barModel, bulkBody, rangeKeys, labelTargets, pipelineTargets } from './runs-selection.mjs';
@@ -18322,13 +18322,15 @@ function rdScopeQuery(run) {
   return qs.toString();
 }
 
-/** Repaint every mounted strip for runId (Overview strip on either page, Ship It "Try it first") from the cache. */
+/** Repaint every mounted strip for runId (Overview strip on either page, Ship It "Try it first") from the cache, and
+ *  the open run heads whose Try it step reads it. */
 function paintActionsStrips(runId) {
   const model = actionsModelCache.get(runId);   // undefined when the model GET failed: the strip stays empty
   // Compare the dataset instead of building a selector: no CSS.escape needed (jsdom tests lack it).
   for (const el of [...document.querySelectorAll('.act-strip[data-run-id]')].filter((x) => x.dataset.runId === runId)) {
     el.replaceChildren(...(model ? [renderOverviewStrip(model, { doc: document, handlers: stripHandlers(el) })].filter(Boolean) : []));
   }
+  repaintTryHeads(runId);
 }
 /** Mount point: stamps the run id and scope, then paints from the cache or fetches the model once. */
 async function paintActionsStrip(strip, runId, scopeQuery) {
@@ -18353,8 +18355,11 @@ async function refreshActionsModel(runId, scopeQuery) {
  * Cached models of unmounted runs are dropped, so a revisit fetches instead of painting a stale state.
  */
 function refreshActionsStrips() {
+  tryModelAsked.clear();                       // a head whose model read failed may ask again on this frame
   const mounted = new Map();
   for (const el of document.querySelectorAll('.act-strip[data-run-id]')) mounted.set(el.dataset.runId, el.__scopeQuery);
+  // An open run head past Check out reads the model too (Start / Open / Stop): keep it cached and refetch it.
+  for (const [runId, scopeQuery] of openTryHeadScopes()) if (!mounted.has(runId)) mounted.set(runId, scopeQuery);
   for (const runId of [...actionsModelCache.keys()]) if (!mounted.has(runId)) actionsModelCache.delete(runId);
   const controlled = new Set([...actionControllers].map((c) => c.runId));
   for (const [runId, scopeQuery] of mounted) {
@@ -36674,7 +36679,7 @@ function paintPrCta(slot, { state = 'none', href = '', onClick = null, cls = '',
  *  a live run has none), `m` the page model, `kept` screen._headKept, `repaint` the page's head painter.
  *  Side effect: it starts the PR status reads it needs (the feed's, and each open workspace member's through
  *  ensurePrStatus); a landed member read calls `repaint`, which then finds it cached, so it cannot loop. */
-function headFactsOf(screen, rec, { m, mode, gitChrome, folder, canTry, kept, repaint, liveSource = '', liveBranch = '', pipelineId = '' }) {
+function headFactsOf(screen, rec, { m, mode, gitChrome, folder, canTry, tryIt = null, kept, repaint, liveSource = '', liveBranch = '', pipelineId = '' }) {
   const ws = !!rec && rec.target === 'workspace' && hasWsMembers(rec);
   const own = !ws && rec && rec.pr && typeof rec.pr === 'object' && rec.pr.url ? rec.pr : null;
   const open = !!own && String(own.state || '').toUpperCase() === 'OPEN';
@@ -36693,7 +36698,7 @@ function headFactsOf(screen, rec, { m, mode, gitChrome, folder, canTry, kept, re
   const source = (rec && rec.sourceBranch) || liveSource || '';
   const group = routeGroupOf(groupHomeOf((rec && rec.id) || pipelineId), { sourceBranch: source, histOf });
   return {
-    m, mode, gitChrome, folder, canTry, kept, level: currentLevel(),
+    m, mode, gitChrome, folder, canTry, tryIt, kept, level: currentLevel(),
     workspace: ws ? { members: histWsMembers(rec).map((x) => ({
       key: x.memberKey, name: (names && names[x.memberKey]) || String(x.projectKey || x.memberKey).replace(/-[0-9a-f]{8}$/, ''),
       pr: x.pr && typeof x.pr === 'object' ? x.pr : null,
@@ -36760,14 +36765,15 @@ function paintHdHead(screen, record, data) {
   const f = headFactsOf(glance, record, {
     m, mode, gitChrome: gitOn() && isGitRun(hdRunOf(record, data)), kept, repaint, pipelineId: record.id,
     folder: bar ? { state: bar.state, total: changesCounts(changes).total, dir: record.projectDir || '' } : null,
-    canTry: hdCanTry(record, st, held.retained, held.provisional) && !hdCheckoutFor(record),
+    canTry: hdCanTry(record, st, held.retained, held.provisional),
+    tryIt: tryFactsOf(rec),                             // past Check out: its setup, then the first service
   });
   paintRunHead(glance, f, headHandlers(glance, () => hdCurrentRecord(record), { kept, ctaCls: 'hd-g-pr', folderTotal: f.folder ? f.folder.total : 0,
-    onCreate: () => { const b = screen.querySelector('.hd-pr'); if (b) b.click(); } }));
+    onCreate: () => { const b = screen.querySelector('.hd-pr'); if (b) b.click(); }, onActions: () => hdGoDetails('actions') }));
 }
 
 /** Slice 3 (D11): the head buttons' and the route's calls. `cur()` re-reads the record at click time. */
-function headHandlers(screen, cur, { onCreate, kept, ctaCls = '', folderTotal = 0 }) {
+function headHandlers(screen, cur, { onCreate, kept, ctaCls = '', folderTotal = 0, onActions = null }) {
   const scopeOf = (memberKey) => { const rec = cur(); return { id: rec.id, projectKey: rec.projectKey, ...(memberKey ? { memberKey } : {}) }; };
   const feed = () => screen.querySelector('.rd-pr-feed');
   return {
@@ -36775,7 +36781,10 @@ function headHandlers(screen, cur, { onCreate, kept, ctaCls = '', folderTotal = 
     onHead: (id, b) => {
       const rec = cur();
       if (id === 'ship') return onCreate();
-      if (id === 'try') return tryItFlow(b, rec);
+      if (id === 'try') return tryItFlow(rec);
+      if (id === 'try-start') return tryStartFlow(rec);
+      if (id === 'try-stop') return tryStopFlow(rec);
+      if (id === 'try-actions') return onActions && onActions();
       if (id === 'push') return pushSourceFlow(b, rec);
       if (id === 'report') return openReportModal(rec.id);
       if (id === 'how-to-merge') return showViewer('How to merge', mergeBackText(rec));
@@ -36916,14 +36925,89 @@ async function copyPrLink(url) {
   try { await navigator.clipboard.writeText(url); notify({ tone: 'ok', title: 'PR link copied' }); }
   catch { notify({ tone: 'err', title: 'Could not copy the link' }); }
 }
-/** Try it (D11): today's Check out (stripHandlers().onCheckout); the History broadcast then repaints the head. */
-async function tryItFlow(btn, rec) {
+// Try it (D11) on the run heads: Check out, its setup, then the project's first service (run-head.mjs tryStep). A
+// request in flight is held per run, because every head repaint rebuilds its buttons; Check out's wait ends when
+// History's row shows the checkout (one pipelines-changed after the POST answers), or after TRY_WAIT_MS.
+const TRY_WAIT_MS = 15000;
+const tryBusy = new Map();          // runId -> { step: 'checkout' | 'start' | 'stop', timer }
+const tryModelAsked = new Set();    // runIds whose head asked for the Actions model since the last actions-changed
+function setTryBusy(id, step, wait = 0) {
+  clearTryBusy(id);
+  const timer = wait ? setTimeout(() => { if (tryBusy.get(id)?.timer === timer) { tryBusy.delete(id); repaintTryHeads(id); } }, wait) : null;
+  tryBusy.set(id, { step, timer });
+  repaintTryHeads(id);
+}
+function clearTryBusy(id) {
+  const b = tryBusy.get(id);
+  if (b && b.timer) clearTimeout(b.timer);
+  tryBusy.delete(id);
+}
+/** headModel's `tryIt` fact for `rec` (a History row): its checkout, the Actions model (asked for once while a checkout
+ *  exists) and the request in flight. Seeing the checkout ends Check out's wait. */
+function tryFactsOf(rec) {
+  if (!rec || !rec.id) return null;
+  const checkout = hdCheckoutFor(rec);
+  if (checkout && tryBusy.get(rec.id)?.step === 'checkout') clearTryBusy(rec.id);
+  if (checkout && !actionsModelCache.has(rec.id) && !tryModelAsked.has(rec.id)) {
+    tryModelAsked.add(rec.id);       // a failed read is not retried per paint (the reply repaints the head)
+    void refreshActionsModel(rec.id, runActionQuery(rec.projectDir || null, rec).toString());
+  }
+  return { checkout, actions: actionsModelCache.get(rec.id) || null, busy: tryBusy.get(rec.id)?.step || '' };
+}
+/** The open heads of run `runId` (History detail, run page): repaint them. */
+function repaintTryHeads(runId) {
+  const hd = histDetailState;
+  if (hd && hd.screen && hd.screen.isConnected && hd.data && hd.record && hd.record.id === runId) paintHdHead(hd.screen, hdCurrentRecord(hd.record), hd.data);
+  const r = rdOpenRun();
+  if (r && r.pipelineId === runId && runDetailState.screen && RD_TERMINAL.includes(r.status)) paintRdHead(runDetailState.screen, r);
+}
+/** [runId, scopeQuery] of each open head past Check out (refreshActionsStrips keeps and refetches their model). */
+function openTryHeadScopes() {
+  const out = [];
+  const add = (rec) => { if (rec && rec.id && hdCheckoutFor(rec)) out.push([rec.id, runActionQuery(rec.projectDir || null, rec).toString()]); };
+  if (histDetailState && histDetailState.screen && histDetailState.screen.isConnected && histDetailState.record) {
+    add((state.historyAll || []).find((x) => x && x.id === histDetailState.record.id) || histDetailState.record);
+  }
+  const r = rdOpenRun();
+  if (r && r.pipelineId && RD_TERMINAL.includes(r.status)) add(rdHistoryRecord(r));
+  return out;
+}
+async function tryItFlow(rec) {
   const scope = runActionQuery(rec.projectDir || null, rec).toString();
-  btn.disabled = true;
+  setTryBusy(rec.id, 'checkout', TRY_WAIT_MS);
   const r = await actionsCall('POST', actionsRunUrl(rec.id, '/checkout', scope), {});
-  if (btn.isConnected) btn.disabled = false;
-  if (!r.ok) notify({ tone: 'err', title: 'Could not check out', detail: (r.data && r.data.error) || `HTTP ${r.status}` });
-  await refreshActionsModel(rec.id, scope);
+  if (!r.ok) {
+    clearTryBusy(rec.id);
+    notify({ tone: 'err', title: 'Could not check out', detail: (r.data && r.data.error) || `HTTP ${r.status}` });
+  }
+  tryModelAsked.delete(rec.id);
+  await refreshActionsModel(rec.id, scope);   // repaints the heads (paintActionsStrips)
+}
+/** Start the project's first service (202: it starts after setup, whose row state then shows Setting up…). */
+async function tryStartFlow(rec) {
+  const t = tryServiceOf(hdCheckoutFor(rec), actionsModelCache.get(rec.id));
+  if (!t || !t.action) return;
+  const scope = runActionQuery(rec.projectDir || null, rec).toString();
+  setTryBusy(rec.id, 'start');
+  const r = await actionsCall('POST', actionsRunUrl(rec.id, `/actions/${encodeURIComponent(t.action.id)}/start`, scope), { member: t.member.projectKey });
+  if (!r.ok) notify({ tone: 'err', title: `Could not start ${t.action.label}`, detail: (r.data && r.data.error) || `HTTP ${r.status}` });
+  tryModelAsked.delete(rec.id);
+  await refreshActionsModel(rec.id, scope);   // still busy: the old model's step must not flash back before this lands
+  clearTryBusy(rec.id);
+  repaintTryHeads(rec.id);
+}
+/** Stop the service the head shows Open and Stop for. */
+async function tryStopFlow(rec) {
+  const t = tryServiceOf(hdCheckoutFor(rec), actionsModelCache.get(rec.id));
+  if (!t || !t.live) return;
+  const scope = runActionQuery(rec.projectDir || null, rec).toString();
+  setTryBusy(rec.id, 'stop');
+  const r = await actionsCall('POST', actionsRunUrl(rec.id, `/actions/${encodeURIComponent(t.live.actionId)}/stop`, scope), { member: t.live.member });
+  if (!r.ok) notify({ tone: 'err', title: `Could not stop ${t.live.label || 'the service'}`, detail: (r.data && r.data.error) || `HTTP ${r.status}` });
+  tryModelAsked.delete(rec.id);
+  await refreshActionsModel(rec.id, scope);   // still busy: the old model's step must not flash back before this lands
+  clearTryBusy(rec.id);
+  repaintTryHeads(rec.id);
 }
 
 function rdSheetGroup(title, rows) {
@@ -37296,9 +37380,10 @@ function paintRdHead(screen, r, m = rdModel(r)) {
     liveBranch: (r.branch && typeof r.branch === 'object' && r.branch.feature) || r.branchFeature || '',
     pipelineId: r.pipelineId || '',
     folder: bar ? { state: bar.state, total: changesCounts(changes).total, dir: r.projectDir || '' } : null,
-    canTry: !!(rec && rec.branch) && terminal && !kept && !!r.pipelineId && !hdCheckoutFor(rec),
+    canTry: !!(rec && rec.branch) && terminal && !kept && !!r.pipelineId,
+    tryIt: terminal && r.pipelineId ? tryFactsOf(rec) : null,
   });
-  paintRunHead(screen, f, headHandlers(screen, () => rdNoticeCarrier(r), { kept, ctaCls: 'rd-create-pr', folderTotal: f.folder ? f.folder.total : 0, onCreate: () => {
+  paintRunHead(screen, f, headHandlers(screen, () => rdNoticeCarrier(r), { kept, ctaCls: 'rd-create-pr', folderTotal: f.folder ? f.folder.total : 0, onActions: () => rdGoDetails('actions'), onCreate: () => {
     const key = historyKeyForRun(r);
     pendingShipIt = { id: r.pipelineId, projectKey: key };
     location.hash = `history/${key}/${r.pipelineId}`;

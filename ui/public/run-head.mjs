@@ -5,6 +5,7 @@
 import { icon } from './icons.mjs';
 import { copyButton } from './copy-button.mjs';
 import { CREATE_PR_LABEL, VIEW_PRS_LABEL, viewPrLabel } from './ship-words.mjs';
+import { isSafeHref } from './actions-view.mjs';
 
 // Watch PR (#619), moved from app.js: the route and the Overview's PR rows read one wording.
 export const HD_PR_WATCH_ACTIVE = new Set(['starting', 'fixing', 'publishing']);
@@ -70,6 +71,74 @@ const failedLine = (line) => {
   return m ? ['Failed', m[1], m[2]].filter(Boolean).join(' · ') : '';
 };
 
+// Try it (the head's local check-out): Check out, its setup, then the project's first service. The model is
+// GET /api/runs/:id/actions (actions-view.mjs reads the same one); the checkout is History's row (`checkout.members[0]`),
+// whose `setup` is the fresher source: ensureSetup writes it after the setup instance's last actions-changed frame.
+const SERVICE_ON = new Set(['starting', 'running', 'ready']);
+const TRY_TITLE = 'Check out the branch on this machine';
+
+/** The checked-out member's first service (configured order) in the Actions model, and its live instance, else any
+ *  live service of that member: what the head starts, opens and stops. Null without a checkout member or a model. */
+export function tryServiceOf(checkout, model) {
+  const co = checkout && Array.isArray(checkout.members) ? checkout.members[0] : null;
+  if (!co || !model || !Array.isArray(model.members)) return null;
+  const member = model.members.find((x) => x && x.projectKey === co.projectKey) || model.members.find((x) => x && x.branch) || null;
+  if (!member) return null;
+  const action = (Array.isArray(member.actions) ? member.actions : []).find((a) => a && a.kind === 'service') || null;
+  const mine = (Array.isArray(model.instances) ? model.instances : [])
+    .filter((s) => s && s.member === member.projectKey && s.kind === 'service' && SERVICE_ON.has(s.status));
+  const live = (action && mine.find((s) => s.actionId === action.id)) || mine[0] || null;
+  return { member, action, live };
+}
+
+/**
+ * The head's Try it step: the `before` items of a run Check out would accept (`f.canTry`) or that is checked out
+ * (`f.tryIt.checkout`). `f.tryIt`: { checkout: History's row checkout or null, actions: the Actions model or null while
+ * it loads, busy: '' | 'checkout' | 'start' | 'stop' (a request in flight) }. Progress is a busy button (aria-disabled:
+ * it keeps the focus); a failed setup is a note; the Actions tab link is Advanced only, like the tab.
+ */
+export function tryStep(f) {
+  const t = f.tryIt || {};
+  const co = t.checkout && Array.isArray(t.checkout.members) && t.checkout.members.length ? t.checkout.members[0] : null;
+  const item = (id, label, extra = {}) => btn(id, label, { group: 'try', ...extra });
+  const wait = (label, title = '') => item('try-wait', label, { busy: true, ...(title ? { title } : {}) });
+  const note = (label, tone = '') => ({ id: 'try-note', label, note: true, ...(tone ? { tone } : {}) });
+  if (!co) {
+    if (t.busy === 'checkout') return [wait('Checking out…', TRY_TITLE)];
+    return f.canTry ? [item('try', 'Try it', { title: TRY_TITLE })] : [];
+  }
+  const adv = ADV.has(f.level);
+  const tab = (title) => (adv ? [item('try-actions', 'Actions', { title })] : []);
+  const svc = tryServiceOf(t.checkout, t.actions);
+  const setup = co.setup && typeof co.setup === 'object' ? co.setup : { status: 'none' };
+  // `pending` alone is a kept checkout waiting for its first action; with the server's setup job in flight it runs.
+  if (setup.status === 'running' || (setup.status === 'pending' && svc && svc.member.setupQueued)) {
+    return [wait('Setting up…', svc && svc.member.setup ? `Running setup: ${svc.member.setup}` : 'Running the setup command')];
+  }
+  if (setup.status === 'failed' || setup.status === 'interrupted') {
+    const why = setup.status === 'interrupted' ? 'Setup was interrupted' : `Setup failed${setup.exitCode != null ? ` (exit ${setup.exitCode})` : ''}`;
+    return [note(why, 'bad'), ...tab("Open the run's Actions tab: the setup log and Run setup again")];
+  }
+  if (!t.actions) return [note('Checked out')];                    // the model is loading, or could not be read
+  if (t.busy === 'stop') return [wait('Stopping…')];
+  const live = svc && svc.live;
+  if (live) {
+    const name = live.label || (svc.action && svc.action.label) || 'the service';
+    const stop = item('try-stop', 'Stop', { title: `Stop ${name} and free its port` });
+    if (live.status !== 'ready' && !live.readyError) return [wait(`Starting ${name}…`), stop];
+    const port = Object.values(live.ports || {})[0];
+    const open = isSafeHref(live.url)
+      ? [item('try-open', port != null ? `Open :${port}` : 'Open', { href: live.url, title: live.readyError || `Open ${name} in a new tab` })] : [];
+    return [...open, stop];
+  }
+  const action = svc && svc.action;
+  if (t.busy === 'start') return [wait(`Starting ${action ? action.label : 'the service'}…`)];
+  if (action && t.actions.enabled !== false) {
+    return [item('try-start', `Start ${action.label}`, { title: `Start ${action.label}. Open shows here once it is ready.` })];
+  }
+  return adv ? tab("Open the run's Actions tab") : [note('Checked out')];
+}
+
 /**
  * The card head for one run: `status` overrides the page model's dot / word / line (null keeps the model's),
  * `before` and `after` are head buttons around the PR control `cta` (paintPrCta's state, or null).
@@ -103,7 +172,7 @@ export function headModel(f) {
   // D2: the merged / ready / closed lines say where the work lands; conflicts are with the PR's real base.
   const base = landingOf(f) || 'the base branch';
   const prBase = f.base || base;
-  const tryIt = f.canTry ? [btn('try', 'Try it', { title: 'Check out the branch on this machine' })] : [];
+  const tryIt = tryStep(f);
   const pr = f.pr && f.pr.url ? f.pr : null;
   const s = upper(pr);
   // The base branch is the route's: the head says only the state.
@@ -548,7 +617,9 @@ function routePart(doc, p, h, at = 0) {
 }
 
 /** Paint head.before, the PR slot (kept: paintPrCta owns it) and head.after into `host` (.rd-head-acts). `h.onHead(id, button)`
- *  runs a button's flow. Rebuilt only when the buttons change; a rebuilt button that had focus gets it back. */
+ *  runs a button's flow. Rebuilt only when the buttons change; a rebuilt button that had focus gets it back, else the
+ *  first item of its `group` (the Try it step changes id as it moves on), else the head's first control. Items: a button; `href` an http(s) link in a
+ *  new tab (the model checked it); `busy` an aria-disabled button that keeps the focus and runs nothing; `note` text. */
 export function renderHeadButtons(host, head, slot, h = {}) {
   if (!host) return;
   const doc = host.ownerDocument;
@@ -557,19 +628,31 @@ export function renderHeadButtons(host, head, slot, h = {}) {
   host.hidden = !all.length && !head.cta;
   if (host.dataset.sig === sig) return;
   host.dataset.sig = sig;
-  const had = doc.activeElement && host.contains(doc.activeElement) ? doc.activeElement.dataset.head || '' : '';
+  const act = doc.activeElement && host.contains(doc.activeElement) ? doc.activeElement : null;
+  const had = act ? act.dataset.head || '' : '';
+  const hadGroup = act ? act.dataset.headGroup || '' : '';
   const make = (b) => {
-    const el = doc.createElement('button');
-    el.type = 'button';
+    if (b.note) {
+      const s = doc.createElement('span');
+      s.className = `rd-head-note${b.tone ? ` is-${b.tone}` : ''}`;
+      s.dataset.head = b.id;
+      s.setAttribute('role', 'status');
+      s.textContent = b.label;
+      return s;
+    }
+    const el = doc.createElement(b.href ? 'a' : 'button');
+    if (b.href) { el.href = b.href; el.target = '_blank'; el.rel = 'noopener noreferrer'; } else el.type = 'button';
     el.className = b.primary ? 'btn btn-primary rd-head-btn' : 'btn rd-head-btn';
     el.dataset.head = b.id;
+    if (b.group) el.dataset.headGroup = b.group;
     if (b.icon) el.append(icon(doc, b.icon, 16));
     const tx = doc.createElement('span');
     tx.textContent = b.label;
     el.append(tx);
     if (b.title) el.title = b.title;
     if (b.disabled) el.disabled = true;
-    el.addEventListener('click', () => { if (!el.disabled && h.onHead) h.onHead(b.id, el); });
+    if (b.busy) el.setAttribute('aria-disabled', 'true');
+    if (!b.href) el.addEventListener('click', () => { if (!el.disabled && !b.busy && h.onHead) h.onHead(b.id, el); });
     return el;
   };
   if (slot && slot.parentNode === host) {
@@ -578,7 +661,9 @@ export function renderHeadButtons(host, head, slot, h = {}) {
     slot.before(...head.before.map(make));
     slot.after(...head.after.map(make));
   } else host.replaceChildren(...head.before.map(make), ...(slot ? [slot] : []), ...head.after.map(make));
-  if (had) { const back = host.querySelector(`[data-head="${had}"]`); if (back) back.focus(); }
+  const back = (had && host.querySelector(`[data-head="${had}"]`)) || (hadGroup && host.querySelector(`[data-head-group="${hadGroup}"]`))
+    || (act && !act.isConnected && host.querySelector('button, a[href]')) || null;   // a step that became a note
+  if (back) back.focus();
 }
 
 /**
