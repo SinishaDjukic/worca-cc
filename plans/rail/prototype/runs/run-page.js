@@ -588,7 +588,8 @@ function done(f, label) {
   if (f.leave) { if (SHELL) { ui = fresh('starting'); SHELL.go('runs'); window.RailPulse?.say(f.say); } else { goCase('deleted', {}); toast(f.say); } return; }
   if (f.fix) { ui.fixed = Object.assign({}, ui.fixed, { [f.fix]: true }); toast(f.say); pendingFocus = 'act-main'; return; }
   if (f.run) { f.run(); toast(f.say); pendingFocus = 'act-main'; }
-  else if (f.to) { goCase(f.to, f); toast(f.say); } else { toast(f.say); pendingFocus = pendingFocus || 'act-main'; }
+  else if (f.to) { const was = ui.caseId; goCase(f.to, f); toast(f.say); if (document.getElementById('card')?.classList.contains('is-lent')) document.dispatchEvent(new CustomEvent('rail:task-moved', { detail: { from: was, to: f.to, ask: M.asks?.[was] || '' } })); }   // lent to a card in a chat: the card, the bar and Pulse follow
+  else { toast(f.say); pendingFocus = pendingFocus || 'act-main'; }
 }
 // Why a step fails here (a mock's reasons); a failure keeps the state as it was.
 const REASON = { Report: 'the report could not be sent', Link: 'the remote did not answer', Push: 'the remote rejected the push', Publish: 'the remote rejected the push', Fix: 'GitHub did not answer', Update: 'GitHub did not answer', Resume: 'the schedule could not be saved', Raise: 'the budget settings could not be saved', Mark: 'GitHub did not answer', Apply: 'a terminal still has the folder open', Abort: 'the run did not answer; it may have just finished', Delete: 'a terminal still has the worktree open', Merge: 'GitHub says the branch is behind dev; update it and try again', Create: 'git push was rejected: the remote branch moved', Stop: 'the run did not answer; it may have just finished',

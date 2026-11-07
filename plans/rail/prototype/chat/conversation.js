@@ -151,7 +151,7 @@
     if (/^Resume/.test(label) && t.was) { t.case = t.was; t.detail = t.wasDetail; t.was = ''; }
     else if (f.to && RM.cases?.some?.((c) => c.id === f.to)) { t.case = f.to; t.detail = R.runState(RM.stateOf(f.to), CTX).word; }
     if (t.run) window.RailWorld?.move(t.run, t.case, t.detail);   // Tasks and Pulse read the same task
-    window.RailChats.refresh(); paint(); say(f.say || label);
+    window.RailChats.refresh(); paint(); window.RailPulse?.refresh?.(); say(f.say || label);
   }
   // The proposed task, at dev's run proposal's parity, in Rail's words: the composer's sentence (with when), the workflow
   // said in a line, the brief with its files, Shaper's perspectives, Customise (where it runs, branches, guardrails, labels,
@@ -166,9 +166,9 @@
     if (!qs.length || open.length) return;
     const from = qs[0].shaper; if (l.some((y) => y.t === 'plan' && y.from === from)) return;
     const at = l.indexOf(qs[qs.length - 1]) + 1, k = Date.now().toString(36);
-    const p = l.find((y) => y.id === from), task = p?.title || 'The task';
-    l.splice(at, 0, { t: 'notice', text: 'Requirements agreed' }, { t: 'plan', id: `pl${k}`, from, title: task, summary: `Three steps, then one PR into dev. Decided: ${qs.map((y) => y.answered).join('; ')}.`, decided: qs.map((y) => [y.text, y.answered]),
-      steps: ['Write the change behind its tests', 'Check it against what you decided', 'Review it, then open one PR into dev'], tests: ['Unit tests for the new code', 'The existing suite stays green'], v: 1, versions: 1, persp: p?.persp || ['Product'],
+    const p = l.find((y) => y.id === from), task = p?.ask || p?.title || 'The task';
+    l.splice(at, 0, { t: 'notice', text: 'Requirements agreed' }, { t: 'plan', id: `pl${k}`, from, title: task, summary: `Built in two slices, then one PR into dev. Decided: ${qs.map((y) => y.answered).join('; ')}.`, decided: qs.map((y) => [y.text, y.answered]),
+      steps: [`Build ${task} behind its tests`, 'Check it against what you decided', `Review it from ${(p?.persp || ['Product']).join(', ')}`, 'Open one PR into dev'], tests: ['Unit tests for the new code', 'The existing suite stays green'], v: 1, versions: 1, persp: p?.persp || ['Product'],
       roles: (p?.persp || ['Product']).map((name, j) => ({ name, ok: j !== 1, note: { Product: 'Matches what was asked', Security: 'Wants the export behind a permission check', UX: 'Wants the column names checked', Data: 'Dates and money stay exact', Performance: 'Streams large exports', Operations: 'Logs each export' }[name] || 'Fine as written' })) });
   }
   // One filled button on the screen (rail.one-action): only the newest card still asking keeps its primary; the rest go
@@ -186,7 +186,9 @@
     const shaper = x.workflow === 'Shaper', later = x.when && x.when !== 'now';
     const sentence = W('Task') + W('on') + pp('project', x.project, PROJECTS, 'Which project') + W('with') + pp('workflow', x.workflow, Object.keys(WORKFLOWS), 'Which workflow') + W('on') + pp('engine', x.engine, ENGINE_ITEMS, 'Which engine, then its model') + W('·') + pp('effort', x.effort || 'high', EFFORT, 'How hard it thinks') + pp('when', x.when || 'now', WHEN, 'When it starts: now, at a time, repeating, or after another task') + W('then') + pp('then', x.then, ['open a PR', 'leave a branch', 'merge into dev'], 'What happens when it is done');
     const brief = `<div class="tp-brief">${R.field({ id: `pp-brief-${x.id}`, label: 'Brief: what the first agent reads · Markdown', value: x.brief ?? x.why.replace(/^From this chat: /, ''), multiline: true, hint: `${(x.brief ?? x.why).length} characters`, attrs: { 'data-pp-brief': x.id } })}${(x.files || []).length ? `<span class="you-files">${x.files.map((f) => R.button({ label: f, kind: 'quiet', icon: R.icon('x', 11), attrs: { 'data-pp-unfile': `${x.id}|${f}`, title: `Removes ${f}` } })).join('')}</span>` : ''}</div>`;
-    const persp = shaper ? `<div class="tp-persp"><span class="tp-label">Perspectives</span>${PERSPECTIVES.map((v) => R.button({ label: v, kind: 'quiet', attrs: v === 'Product' ? { 'aria-pressed': 'true', 'aria-disabled': 'true', title: 'Product always reviews' } : { 'data-pp-persp': `${x.id}|${v}`, 'aria-pressed': String((x.persp || ['Product']).includes(v)), title: 'Adds or removes this perspective' } })).join('')}</div>` : '';
+    // Shaper's perspectives: a picker in the sentence ("reviewed by Product, Security"), each a tick; Product always reviews
+    const pl = x.persp || ['Product'];
+    const persp = shaper ? W('reviewed by') + R.sentencePicker({ id: `pp-${x.id}-persp`, text: pl.join(', '), tip: 'Who reviews the plan; Product always does', items: PERSPECTIVES.map((v) => ({ id: v, text: v, checked: pl.includes(v), off: v === 'Product', help: v === 'Product' ? 'Always reviews' : '' })), open: menu === `pp-${x.id}-persp`, chevron: R.icon('chevron', 10) }) : '';
     const what = `<p class="tp-what">${esc(WORKFLOWS[x.workflow] || '')}${later ? ` · starts ${esc(x.when)}` : ''}</p>`;
     const row = (k, v) => `<div class="cr"><span>${k}</span><span>${v}</span></div>`;
     const target = pp('target', x.target || 'Project', ['No project', 'Project', 'Workspace'], 'Where it runs');
@@ -204,7 +206,8 @@
     const nudge = x.nudge && !shaper ? `${R.kindMark({ kind: 'chat', tone: 'ask', size: 14 })}<span>This has open decisions: Shaper can ask them first (≈ $12 · ~40 min, against ≈ $8 · ~25 min as is).</span>` : '';
     const alts = x.nudge && !shaper ? { open: menu === `ppalt-${x.id}`, attrs: { 'data-menu': `ppalt-${x.id}` }, menu: R.compactMenu({ items: [{ id: `ppalt-${x.id}|asis`, text: 'Run as is', hint: '≈ $8 · ~25 min' }, { id: `ppalt-${x.id}|shape`, text: 'Shape it first', hint: '≈ $12 · ~40 min' }] }) } : null;
     const kicker = x.ticket ? `Proposed · from ${x.ticket}` : x.preset ? `Proposed · from preset ${x.preset}` : 'Proposed';
-    const card = R.taskProposal({ title: x.title, why: x.why, sentence: sentence + what + persp, more: brief + more, open: x.open, nudge, hooks: { title: { 'data-pp-title': x.id }, more: { 'data-pp-more': x.id }, start: { 'data-pp-start': x.id }, later: { 'data-pp-later': x.id } }, start: later ? 'Schedule' : shaper ? 'Start planning' : 'Start', alts, kicker, extra: R.button({ label: 'Edit in the composer', kind: 'quiet', attrs: { 'data-pp-composer': x.id, title: 'Puts all of it in the box to change; this card stays until you send' } }), attrs: { 'data-anchor': x.id } });
+    const ppMenu = R.moreMenu({ id: `ppm:${x.id}`, label: `More for ${x.title}`, icon: R.icon('more', 16), open: menu === `ppm:${x.id}`, items: [{ id: 'composer', text: 'Edit in the composer', help: 'Puts all of it in the box to change; this card stays until you send' }] });
+    const card = R.taskProposal({ menu: ppMenu, title: x.title, why: x.why, sentence: sentence + persp + what, more: brief + more, open: x.open, nudge, hooks: { title: { 'data-pp-title': x.id }, more: { 'data-pp-more': x.id }, start: { 'data-pp-start': x.id }, later: { 'data-pp-later': x.id } }, start: later ? 'Schedule' : shaper ? 'Start planning' : 'Start', alts, kicker, attrs: { 'data-anchor': x.id } });
     return card;
   }
 
@@ -247,9 +250,9 @@
       const full = `<h4>What it does</h4><p class="tr-text">${esc(x.summary)}</p>${list('Decided', (x.decided || []).map(([q, a]) => `${q} ${a}`))}${list('Steps', x.steps || ['Build it behind its tests', 'Review it', 'Open one PR into dev'], true)}${list('How it is checked', x.tests || ['The existing suite stays green'])}`;
       const version = R.sentencePicker({ id: `pv-${x.id}`, text: `v${x.v} of ${x.versions}`, tip: 'Earlier versions of the plan', items: Array.from({ length: x.versions }, (_, k) => ({ id: String(k + 1), text: `v${k + 1}${k + 1 === x.versions ? ' (latest)' : ''}`, checked: k + 1 === x.v })), open: menu === `pv-${x.id}`, chevron: R.icon('chevron', 10) });
       if (x.approved) return R.turnRow({ mark: R.icon('check', 14), text: `<b>Plan approved</b> v${x.v}: building it` });
-      const planMenu = R.moreMenu({ id: `plan:${x.id}`, label: 'More for the plan', icon: R.icon('more', 16), open: menu === `plan:${x.id}`, items: ['Fix all', 'Save to plans/', 'Open in the composer', 'Stop'] });
-      const extra = R.turnRow({ mark: R.icon('check', 14), text: '<b>Shape check</b> passed · scope, risks and tests are covered' }) + R.turnRow({ mark: R.icon('list', 14), text: `<b>Perspectives</b> ${esc((x.persp || ['Product', 'Security', 'UX', 'Data', 'Performance']).join(', '))}`, end: R.button({ label: 'Update plan', kind: 'quiet', attrs: { 'data-say': 'The plan is drafted again for these perspectives' } }) });
-      return askChanges(x) ? R.planCard({ menu: planMenu, extra, title: x.title, summary: x.summary, version, roles: x.roles, open: !!x.open, hooks: { roles: { 'data-plan-roles': x.id }, approve: { 'data-plan-approve': x.id }, changes: { 'data-plan-changes': x.id }, full: { 'data-plan-full': x.id } }, full, fullOpen: !!x.fullOpen, attrs: { 'data-anchor': x.id } }) + askChanges(x) : R.planCard({ menu: planMenu, extra, title: x.title, summary: x.summary, version, roles: x.roles, open: !!x.open, hooks: { roles: { 'data-plan-roles': x.id }, approve: { 'data-plan-approve': x.id }, changes: { 'data-plan-changes': x.id }, full: { 'data-plan-full': x.id } }, full, fullOpen: !!x.fullOpen, attrs: { 'data-anchor': x.id } });
+      const planMenu = R.moreMenu({ id: `plan:${x.id}`, label: 'More for the plan', icon: R.icon('more', 16), open: menu === `plan:${x.id}`, items: ['Fix all', 'Update for other perspectives', 'Save to plans/', 'Open in the composer', 'Stop'] });
+      const extra = '';   // one line before the actions: who reviewed it (the shape check and perspectives are in it, and in ⋯)
+      return askChanges(x) ? R.planCard({ menu: planMenu, extra, check: 'shape check passed', title: x.title, summary: x.summary, version, roles: x.roles, open: !!x.open, hooks: { roles: { 'data-plan-roles': x.id }, approve: { 'data-plan-approve': x.id }, changes: { 'data-plan-changes': x.id }, full: { 'data-plan-full': x.id } }, full, fullOpen: !!x.fullOpen, attrs: { 'data-anchor': x.id } }) + askChanges(x) : R.planCard({ menu: planMenu, extra, check: 'shape check passed', title: x.title, summary: x.summary, version, roles: x.roles, open: !!x.open, hooks: { roles: { 'data-plan-roles': x.id }, approve: { 'data-plan-approve': x.id }, changes: { 'data-plan-changes': x.id }, full: { 'data-plan-full': x.id } }, full, fullOpen: !!x.fullOpen, attrs: { 'data-anchor': x.id } });
     }
     if (x.t === 'filesgrid') return R.filesCard({ label: x.label || 'Files', files: x.files.map((f) => ({ ...f, view: { 'data-say': `Opens ${f.name}` }, download: { 'data-say': `Downloaded ${f.name}` } })) });
     if (x.t === 'words') return `<p class="convo-words">${x.html}</p>`;
@@ -263,12 +266,12 @@
     }
     if (x.t === 'change') {
       const STEPS = [['Plan', 'Plan the contract → Sign off'], ['Build', 'Slice 1: read → Slice 2: write → Slice 3: auth'], ['Review', 'Review each slice'], ['PR', 'One PR into dev']];
-      const graph = x.graph ? `<div class="tc-rows">${STEPS.map(([k, v]) => R.turnRow({ mark: R.icon('kind-workflow', 14), text: `<b>${k}</b> ${esc(v)}` })).join('')}</div>` : '';   // its steps on the rail; the full graph is Workflows'
+      const graph = '';   // a workflow's steps are the change card's own rows (step → what it does), as every change card's; the full graph is Workflows'
       const choice = x.choice ? `<p class="tp-sentence"><span>${esc(x.choice.label)}</span>${R.sentencePicker({ id: `cpch-${x.id}`, text: x.picked || x.choice.rec, tip: `${x.choice.label}: ${x.choice.rec} is what Worca recommends`, items: x.choice.items.map((v) => ({ id: v, text: v, help: v === x.choice.rec ? 'Worca recommends it' : '', checked: (x.picked || x.choice.rec) === v })), open: menu === `cpch-${x.id}`, chevron: R.icon('chevron', 10) })}</p>` : '';
       const acts = x.actions ? x.actions.map(([label, kind, done], k) => ({ label, kind, attrs: { 'data-cp-act': `${x.id}|${k}` } })) : null;
       if (x.done) return R.turnRow({ mark: R.icon('check', 14), text: `<b>${esc(x.title)}</b> ${esc(x.done)}` });
       const cpMenu = R.moreMenu({ id: `chg:${x.id}`, label: `More for ${x.title}`, icon: R.icon('more', 16), open: menu === `chg:${x.id}`, items: [...(x.menuItems || []), 'Ask about it', 'Not now'] });
-      return R.changeProposal({ menu: cpMenu, actions: acts, kind: x.kind, title: x.title, why: x.why || '', rows: x.rows || [], body: graph + choice, state: x.state, apply: x.apply || 'Apply', hooks: { apply: { 'data-cp-apply': x.id }, decline: { 'data-cp-decline': x.id }, revert: { 'data-cp-revert': x.id } }, attrs: { 'data-anchor': x.id } });
+      return R.changeProposal({ menu: cpMenu, actions: acts, kind: x.kind, title: x.title, why: x.why || '', rows: x.rows || (x.graph ? STEPS.map(([k, v]) => ({ name: k, before: '', after: v })) : []), body: graph + choice, state: x.state, apply: x.apply || 'Apply', hooks: { apply: { 'data-cp-apply': x.id }, decline: { 'data-cp-decline': x.id }, revert: { 'data-cp-revert': x.id } }, attrs: { 'data-anchor': x.id } });
     }
     if (x.t === 'think') return R.thinkingRow({ done: true, secs: (x.text.match(/\d+s/) || ['a moment'])[0], steps: x.steps || THOUGHT, open: opened.has(i), attrs: fold() });
     if (x.t === 'cmds') return R.turnRow({ mark: R.icon(opened.has(i) ? 'chevron' : 'chevR', 14), text: esc(x.text), end: x.end, body: esc(x.body), open: opened.has(i), attrs: fold() });
@@ -282,12 +285,14 @@
       if (x.answered) return R.turnRow({ mark: R.icon('check', 14), text: `<b>${esc(x.text)}</b> ${esc(x.answered)}` });
       return `<div data-anchor="${x.id}">${R.turnRow({ mark: R.kindMark({ kind: 'chat', tone: 'ask', stage: -1, size: 16 }), text: `<b>${esc(x.text)}</b>` })}<div class="convo-answer">${R.optionList({ label: x.text, options: x.options, selected: x.pick, recommended: 0, optAttrs: (n) => ({ 'data-answer': `${i}|${n}` }), own: `${R.field({ id: `own-${x.id}`, label: 'Your own answer', quietLabel: true, placeholder: 'Or write your own answer', attrs: { 'data-own': String(i) } })}<div class="convo-answer-go">${R.button({ label: 'Answer', attrs: { 'data-answer-go': String(i) } })}${x.many ? R.button({ label: 'Use Worca’s picks', kind: 'quiet', attrs: { 'data-answer-picks': String(i), title: 'Takes Worca’s pick for this and the next question' } }) : ''}</div>` })}</div></div>`;
     }
-    const st = stOf(t), tone = R.markTone(st), word = tone === 'ask' ? 'Asks you below' : st.word;
+    // "Asks you below" only when a question waits below it in this chat; else the decision is on the card itself (a gate's Accept as is)
+    const st = stOf(t), tone = R.markTone(st), at = turns().indexOf(x), below = tone === 'ask' && turns().some((y, j) => j > at && y.t === 'question' && !y.answered && !y.shaper);
+    const word = below ? 'Asks you below' : st.word;
     if (tone === 'wait' && !x.open) return openCard(x, t);   // one line until opened in place
     // Its one action and ⋯ are its state's own, as on its page; a question is answered under the card.
     // a live task with no step of its own to offer can always be paused or stopped from its card, as on dev's chat card
     const live = tone === 'run' && !st.action;
-    const main = tone === 'ask' ? '' : st.action ? R.button({ label: st.action.label, kind: st.action.primary ? 'primary' : '', attrs: { 'data-card-act': `${t.id}|${st.action.label}` } })
+    const main = below ? '' : st.action ? R.button({ label: st.action.label, kind: st.action.primary ? 'primary' : '', attrs: { 'data-card-act': `${t.id}|${st.action.label}` } })
       : live ? R.button({ label: 'Pause', attrs: { 'data-card-act': `${t.id}|Pause`, title: 'Stops at once; Resume starts the current step again' } }) : '';
     // the card's ⋯: its state's own steps, then what any task can do, named as on its page (one ⋯, the same words)
     const done = ['ok', 'merged', 'stop', 'closed', 'idle'].includes(tone);
@@ -454,6 +459,9 @@
     if (id === 'starter-track') { const [cs, title] = v.split('|'); menu = ''; window.RailShell.openTask(cs, '', title); return; }
     const pv = /^pv-(.+)$/.exec(id); if (pv) { const x = turns().find((y) => y.id === pv[1]); if (x) x.v = +v; menu = ''; paint(); return; }
     const pm = /^pp-(.+?)-(project|workflow|engine|effort|when|then|target|src|base|guard|labels|memory|asks|(model|eff|sub|fan)(Plan|Build|Review))$/.exec(id);
+    const pq = /^pp-(.+)-persp$/.exec(id);
+    if (pq) { const x = turns().find((y) => y.id === pq[1]); if (x && v !== 'Product') { const l = x.persp || ['Product']; x.persp = l.includes(v) ? l.filter((w) => w !== v) : [...l, v]; } paint(); return; }   // ticks stay open to pick several
+    if (id.startsWith('ppm:')) { menu = ''; const x = turns().find((y) => y.id === id.slice(4)); if (x && v === 'composer') { comp = { ...comp, mode: 'task', text: x.brief ?? x.title, project: x.project, workflow: x.workflow, engine: x.engine, then: x.then, more: true }; paint(); root.querySelector('[data-composer-t]')?.focus(); say('In the composer: change anything, then start it'); } else paint(); return; }
     if (pm) { const x = turns().find((y) => y.id === pm[1]); if (x) { if (pm[3]) { x.agents = x.agents || {}; const g = (x.agents[pm[4]] = x.agents[pm[4]] || {}); g[{ model: 'model', eff: 'effort', sub: 'sub', fan: 'fan' }[pm[3]]] = v; } else x[pm[2]] = v; } menu = ''; paint(); return; }
     if (id === 'cl-label') { const c = chat(); c.labels = (c.labels || []).includes(v) ? c.labels.filter((l) => l !== v) : [...(c.labels || []), v]; window.RailChats.refresh(); menu = ''; refreshAll(); return; }
     if (id === 'cp-mode') { comp.mode = v.toLowerCase(); if (comp.mode !== 'task') comp.more = false; }
@@ -521,7 +529,7 @@
     if ((px = pp('data-plan-approve'))) { px.approved = true; const l = turns(), i = l.indexOf(px);
       const own = l.find((y) => y.t === 'task' && y.id === px.from), t = own && taskOf(own.task);
       if (t) { Object.assign(t, { kind: 'feature', case: 'working', stage: 1, detail: 'Build · slice 1 of 2' }); l.splice(l.indexOf(own), 1); window.RailChats.refresh(); }   // its planning card gives way to the feature below
-      l.splice(l.indexOf(px) + 1, 0, { t: 'feature', id: `f${Date.now().toString(36)}`, title: px.title, slices: [{ title: 'Columns and order', case: 'working', stage: 1, detail: 'Build · step 1 of 2' }, { title: 'Dates and money', case: 'scheduled', stage: -1, detail: 'After the columns' }] }); paint(); say('Approved: the plan is being built'); return; }
+      l.splice(l.indexOf(px) + 1, 0, { t: 'feature', id: `f${Date.now().toString(36)}`, title: px.title, slices: [{ title: `${clip(px.title, 40)}: the change`, case: 'working', stage: 1, detail: 'Build' }, { title: `${clip(px.title, 40)}: its rollout`, case: 'scheduled', stage: -1, detail: 'After the change' }] }); paint(); say('Approved: the plan is being built'); return; }
     if ((px = pp('data-plan-changes'))) { px.asking = true; paint(); root.querySelector(`[data-ask-changes="${px.id}"]`)?.focus(); return; }
     if ((px = pp('data-changes-cancel'))) { px.asking = false; paint(); return; }
     if ((px = pp('data-changes-send'))) { const v = root.querySelector(`[data-ask-changes="${px.id}"]`)?.value.trim(); if (!v) { say('Say what should change first'); return; } px.asking = false; const l = turns();
@@ -561,8 +569,8 @@
       const t = { id: `t${n}`, title: px.title, case: 'starting', stage: 0, git: 'branch', branch: `feat/${slug(px.title)}`, detail: `Plan · ${px.workflow} on ${px.engine}` };
       if (px.when && px.when !== 'now') { t.case = 'scheduled'; t.stage = -1; t.git = ''; t.detail = `Starts ${px.when}`; }
       c.tasks = [...(c.tasks || []), t]; c.state = 'following';
-      l.splice(i, 1, { t: 'task', id: px.id, task: t.id });
-      if (px.workflow === 'Shaper' && t.case !== 'scheduled') { const k = Date.now().toString(36); l.splice(i + 1, 0, { t: 'words', html: 'A few questions before the plan:' }, { t: 'question', id: `q1${k}`, text: 'A · Which date format?', options: ['ISO 8601', 'The account’s locale'], pick: 0, many: `q2${k}`, shaper: px.id, when: 'now' }, { t: 'question', id: `q2${k}`, text: 'B · Which columns come first?', options: ['Date, number, total (Worca’s pick)', 'Customer first'], pick: 0, shaper: px.id, when: 'now' }); }
+      l.splice(i, 1, { t: 'task', id: px.id, task: t.id, persp: px.persp || ['Product'], ask: px.title });   // what was asked and who reviews it carry on to the plan
+      if (px.workflow === 'Shaper' && t.case !== 'scheduled') { const k = Date.now().toString(36); l.splice(i + 1, 0, { t: 'words', html: 'A few questions before the plan:' }, { t: 'question', id: `q1${k}`, text: `A · For “${clip(px.title, 48)}”, what matters most?`, options: ['The smallest change that works', 'Configurable from the start'], pick: 0, many: `q2${k}`, shaper: px.id, when: 'now' }, { t: 'question', id: `q2${k}`, text: 'B · How should it reach people?', options: [(px.persp || []).includes('Security') ? 'Behind a flag, after a security review' : 'Behind a flag first', 'To everyone at once'], pick: 0, shaper: px.id, when: 'now' }); }
       window.RailChats.refresh(); paint(); say(t.case === 'scheduled' ? `Scheduled: starts ${px.when}` : px.workflow === 'Shaper' ? 'Planning started' : 'Task started'); return;
     }
     if ((hit = on('[data-open-task]'))) { const x = turns().find((y) => y.task === hit.dataset.openTask && (y.t === 'task' || y.t === 'schedule')); if (x) { const was = x.open; turns().forEach((y) => { y.open = false; y.openSlice = -1; }); x.open = !was; paint(); if (x.open) requestAnimationFrame(() => root.querySelector(`[data-anchor="${x.id}"]`)?.scrollIntoView({ block: 'start', behavior: 'smooth' })); } return; }   // How it ran opens the card in place, one at a time
@@ -586,6 +594,13 @@
   root.addEventListener('contextmenu', (e) => { const p = e.target.closest('[data-pin]'); if (!p) return; e.preventDefault(); pins = pins.filter((w) => w !== p.dataset.pin); paint(); say(`Unpinned ${p.dataset.pin}`); });
   root.addEventListener('keydown', (e) => { const p = e.target.closest?.('[data-pin]'); if (p && (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10'))) { e.preventDefault(); pins = pins.filter((w) => w !== p.dataset.pin); paint(); say(`Unpinned ${p.dataset.pin}`); } });
   root.addEventListener('input', (e) => { if (e.target.matches('[data-composer-t]')) { comp.text = e.target.value; size(e.target); const at = /@[^@\s]*$/.test(comp.text); if (at !== (menu === 'cp-mention')) { menu = at ? 'cp-mention' : ''; paint(); } } if (e.target.matches('[data-pp-brief]')) { const x = turns().find((y) => y.id === e.target.dataset.ppBrief); if (x) x.brief = e.target.value; } if (e.target.matches('[data-pp-feature]')) { const x = turns().find((y) => y.id === e.target.dataset.ppFeature); if (x) x.feature = e.target.value; } if (e.target.matches('[data-pp-title]')) { const x = turns().find((y) => y.id === e.target.dataset.ppTitle); if (x) x.title = e.target.value; } });
+  // a step taken inside a card's open stages moves the task itself: its card's head and bar, the bar's row, Pulse
+  document.addEventListener('rail:task-moved', (e) => {
+    const { from, to, ask } = e.detail || {}, t = (chat()?.tasks || []).find((y) => y.case === from && (!ask || y.title === ask)); if (!t) return;
+    t.case = to; t.detail = R.runState(RM.stateOf(to), CTX).word; const st = RM.stageOf?.(to); if (st?.stage >= 0) t.stage = st.stage;
+    if (t.run) window.RailWorld?.move(t.run, t.case, t.detail);
+    window.RailChats.refresh(); refreshAll(); window.RailPulse?.refresh?.();
+  });
   // the Label picker's field: typing finds, Enter makes a new label and adds it to this chat
   function keepLabelQ() { const q = root.querySelector('#cl-label-q'); if (q) { q.value = labelQ; q.focus(); q.setSelectionRange(labelQ.length, labelQ.length); } }
   root.addEventListener('input', (e) => { if (e.target.id === 'cl-label-q') { labelQ = e.target.value; paint(false); keepLabelQ(); } });
@@ -659,7 +674,20 @@
 
   const main = mount(document.getElementById('route-chat'));
   setInterval(() => { for (const r of document.querySelectorAll('[data-think-at]')) { const now = thinkNow({ at: +r.dataset.thinkAt }), st = r.querySelector('.think-w'), t = r.querySelector('.think-t'); if (st && st.textContent !== now.step) st.textContent = now.step; if (t && t.textContent !== now.secs) t.textContent = now.secs; const orb = r.querySelector('canvas[data-orb]'); if (orb && orb.dataset.orb !== now.phase) orb.dataset.orb = now.phase; } }, 250);
+  // Away: Worca answered what waited, with its pick; coming back finds the questions answered and the tasks moving
+  function awayAnswer() {
+    const out = [];
+    for (const c of data().chats) {
+      const l = threads.get(c.id) || (threads.set(c.id, M.thread(c)), threads.get(c.id));
+      const qs = l.filter((y) => y.t === 'question' && !y.answered && !y.shaper); if (!qs.length) continue;
+      qs.forEach((q) => { q.answered = `${q.options[q.pick ?? 0]} (Worca, while you were away)`; });
+      const t = (c.tasks || []).find((y) => y.case && R.markTone(R.runState(RM.stateOf(y.case))) === 'ask');
+      if (t) { t.case = 'working'; t.detail = 'Carries on with Worca’s answer'; if (t.run) window.RailWorld?.move(t.run, t.case, t.detail); out.push(`${t.title}: ${qs[0].options[qs[0].pick ?? 0]}`); }
+    }
+    window.RailChats.refresh(); refreshAll(); return out;
+  }
   window.RailConversation = {
+    awayAnswer,
     show: main.show,
     focus: main.focus,
     start: main.start,

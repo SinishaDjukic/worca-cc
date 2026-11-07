@@ -19,7 +19,7 @@
     run('r7', 'failing', 'Retry on 502', 'web-app', 'Checks failing · 2 of 7: unit, e2e', '11:20', 'today', { pr: '#962', cost: 7.3, labels: ['hotfix'], rounds: ROUNDS }),
     run('r8', 'ready', 'Dark mode for the marketing site', 'marketing-site', 'Checks pass', '10:58', 'today', { cost: 9.9, labels: ['ui'] }),
     run('r9', 'approved', 'Add pager to the audit log', 'worca-cc', 'Approved · checks pass', '10:20', 'today', { pr: '#959', cost: 5.2 }),
-    run('r10', 'working', 'Fix flaky login test', 'web-app', 'Build · task 2 of 4', '12 min', 'today', { labels: ['ui', 'tests'], cost: 1.6 }),
+    run('r10', 'working', 'Fix flaky login test', 'web-app', 'Review · checking it in a browser', '12 min', 'today', { labels: ['ui', 'tests'], cost: 1.6 }),
     run('r11', 'checks', 'Rename settings keys', 'worca-cc', 'Checks running', '4 min', 'today', { pr: '#960', labels: ['backend'], cost: 2.7, rounds: { line: 'Round 2 · merge dev in · running', list: [round(2, 'merge dev in · running', '')] } }),
     run('r12', 'starting', 'Add rate limiting to the public API', 'billing-api', 'Plan is under way', 'now', 'today', { cost: 0 }),
     run('r13', 'network', 'Write the API reference', 'docs-site', 'Waiting for the network', '2 min', 'today', { kind: 'Folder', cost: 0.4 }),

@@ -31,7 +31,7 @@
   // What waits on you and what is unread follow the Pulse case in view (shell/world.js), so Updates and the column agree.
   const QUIET = { replying: 'idle', command: 'idle', following: 'idle' };
   // A chat's task that is also in Tasks and Pulse (its `run`) reads its name, state and line from there: one task, one truth.
-  const sync = (c) => { const walk = (t) => { const r = t.run && window.RailWorld.find(t.run); if (r) Object.assign(t, { title: r.title, case: r.case, detail: r.detail }); (t.after || []).forEach(walk); }; (c.tasks || []).forEach(walk); };
+  const sync = (c) => { const walk = (t) => { const r = t.run && window.RailWorld.find(t.run); if (r) { const st = window.RunCardModel?.stageOf?.(r.case) || {}; Object.assign(t, { title: r.title, case: r.case, detail: r.detail, ...(st.stage >= 0 ? { stage: st.stage } : {}) }); } /* its stage is its state's, so the bar and the line agree */ (t.after || []).forEach(walk); }; (c.tasks || []).forEach(walk); };
   const seed = () => {
     const d = base(), f = window.RailWorld.facts().chats;
     for (const c of d.chats) {

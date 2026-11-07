@@ -228,9 +228,10 @@ export function taskCard({ title, place = '', mark, word, detail = '', action = 
 
 /**
  * TaskProposal: a task Worca proposes, before anything starts; the running TaskCard's shape, so Start turns it into that
- * card in place. Its head: Proposed, the title (edited in place) and one line why. Its body: the composer's own sentence
- * (project · workflow · engine · then), Customise folding open to the composer's own rows, one quiet line offering to shape
- * it first when it has open decisions, and one action: Start, beside a quiet Not now.
+ * card in place. Its head: Proposed, the title (edited in place), one line why, its ⋯ (Edit in the composer). Its body: the
+ * composer's own sentence (project · workflow · engine · when · then; Shaper's perspectives a picker in it), one quiet line
+ * offering to shape it first when it has open decisions, and one action: Start, beside a quiet Not now. Its foot: Customise,
+ * folding open to the composer's own rows under the card, as a task card's Show its stages does.
  * @param {object} o
  * @param {string} o.title
  * @param {string} [o.why]
@@ -240,17 +241,18 @@ export function taskCard({ title, place = '', mark, word, detail = '', action = 
  * @param {string} [o.nudge]      the line offering to shape it first, as markup (its button inside)
  * @param {string} [o.start]      its primary's word: Start, Schedule, Start planning
  * @param {string} [o.kicker]     Proposed, or Proposed · from preset Hotfix
- * @param {string} [o.extra]      a quiet action at the row's far end (Edit in the composer)
+ * @param {string} [o.menu]       its ⋯ (Edit in the composer, Schedule…)
+ * @param {string} [o.extra]      a quiet action at the row's far end (kept for old callers; prefer the ⋯)
  * @param {{open:boolean, menu:string, attrs:object}} [o.alts]   other ways to start (Run as is, Shape it first): Start's ▾
  * @param {object} [o.hooks]      { title, more, start, later }: each control's attributes
  * @param {object} [o.attrs]
  */
-export function taskProposal({ title, why = '', sentence, more = '', open = false, nudge = '', start = 'Start', kicker = 'Proposed task', extra = '', alts = null, hooks = {}, attrs: a = {} }) {
+export function taskProposal({ title, why = '', sentence, more = '', open = false, nudge = '', start = 'Start', kicker = 'Proposed task', menu = '', extra = '', alts = null, hooks = {}, attrs: a = {} }) {
   const btn = (label, kind, h, extra = {}) => button({ label, kind, attrs: { ...extra, ...(h || {}) } });
-  return `<article class="task-card rc tp"${attrs(a)}>${cardHead({ mark: kindMark({ kind: 'task', tone: 'idle', size: 16 }), kicker, titleHtml: `<span class="tp-title-w"><input class="tp-title"${attrs({ value: title, 'aria-label': 'Task title', spellcheck: 'false', ...(hooks.title || {}) })}><span class="tp-edit" aria-hidden="true">${icon('edit', 13)}</span></span>`, why })}`
+  return `<article class="task-card rc tp"${attrs(a)}>${cardHead({ mark: kindMark({ kind: 'task', tone: 'idle', size: 16 }), kicker, titleHtml: `<span class="tp-title-w"><input class="tp-title"${attrs({ value: title, 'aria-label': 'Task title', spellcheck: 'false', ...(hooks.title || {}) })}><span class="tp-edit" aria-hidden="true">${icon('edit', 13)}</span></span>`, why, menu })}`
     + `<section class="rc-card tp-body"${attrs({ 'aria-label': `Proposed: ${title}` })}><div class="tp-sentence">${sentence}</div>${nudge ? `<p class="tp-nudge">${nudge}</p>` : ''}`
-    + `<div class="tp-more">${btn(open ? 'Hide Customise' : 'Customise', 'quiet', hooks.more, { 'aria-expanded': String(!!open), title: 'Title, labels, branch, memory, guardrails and more' })}${open && more ? `<div class="composer-more">${more}</div>` : ''}</div>`
-    + `<div class="tp-actions">${alts ? splitButton({ main: { label: start, kind: 'primary', attrs: hooks.start || {} }, moreLabel: 'Other ways to start', chevron: icon('chevron', 12), open: alts.open, menuHtml: alts.menu, moreAttrs: alts.attrs || {} }) : btn(start, 'primary', hooks.start)}${btn('Not now', 'quiet', hooks.later)}${extra ? `<span class="tp-extra">${extra}</span>` : ''}</div></section></article>`;
+    + `<div class="tp-actions">${alts ? splitButton({ main: { label: start, kind: 'primary', attrs: hooks.start || {} }, moreLabel: 'Other ways to start', chevron: icon('chevron', 12), open: alts.open, menuHtml: alts.menu, moreAttrs: alts.attrs || {} }) : btn(start, 'primary', hooks.start)}${btn('Not now', 'quiet', hooks.later)}${extra ? `<span class="tp-extra">${extra}</span>` : ''}</div></section>`
+    + `<div class="tc-foot">${button({ label: open ? 'Hide Customise' : 'Customise', kind: 'quiet', icon: icon(open ? 'chevron' : 'chevR', 12), attrs: { 'aria-expanded': String(!!open), title: 'Title, labels, branch, memory, guardrails and more', ...(hooks.more || {}) } })}</div>${open && more ? `<div class="tp-custom composer-more">${more}</div>` : ''}</article>`;
 }
 
 /**
@@ -292,7 +294,8 @@ export function turnDivider({ text }) {
 /**
  * PlanCard: the Shaper's plan, when it stops for you: its version (a picker of earlier ones), its title, one line on what
  * it does, "Reviewed by N roles · M open" folding open to one row per role (its mark, name, what it said), then Approve
- * and build beside Ask for changes and Full plan. A disagreement between roles comes after it as a question.
+ * and build beside Ask for changes; the plan itself folds open from its foot (Read the plan). A disagreement between roles
+ * comes after it as a question.
  * @param {object} o
  * @param {string} o.title
  * @param {string} [o.summary]
@@ -302,16 +305,18 @@ export function turnDivider({ text }) {
  * @param {string} [o.menu]           its ⋯ (Fix all, Save to plans/, Open in the composer, Stop)
  * @param {string} [o.extra]          lines above the review (the Shape check, Perspectives with Update plan)
  * @param {object} [o.hooks]          { roles, approve, changes, full }
+ * @param {string} [o.check]          the shape check's word, on the review line (shape check passed)
  * @param {string} [o.full]           the plan itself (markup: its sections), read before approving; Full plan folds it open here
  * @param {boolean} [o.fullOpen]
  * @param {object} [o.attrs]
  */
-export function planCard({ title, summary = '', version, roles, open = false, menu = '', extra = '', hooks = {}, full = '', fullOpen = false, attrs: a = {} }) {
+export function planCard({ title, summary = '', version, roles, open = false, menu = '', extra = '', check = '', hooks = {}, full = '', fullOpen = false, attrs: a = {} }) {
   const left = roles.filter((r) => !r.ok).length;
   const rows = roles.map((r) => turnRow({ mark: kindMark({ kind: 'chat', tone: r.ok ? 'ok' : 'ask', size: 16, keepType: false }), text: `<b>${esc(r.name)}</b> ${esc(r.note)}` })).join('');
-  const reviewed = turnRow({ mark: icon(open ? 'chevron' : 'chevR', 14), text: `Reviewed by ${roles.length} roles${left ? ` · ${left} open` : ''}`, body: `<span class="plan-roles">${rows}</span>`, open, attrs: { 'data-fold-turn': '', ...(hooks.roles || {}) } }).replace('class="tr-body"', 'class="tr-body is-steps"');
+  const reviewed = turnRow({ mark: icon(open ? 'chevron' : 'chevR', 14), text: `Reviewed by ${roles.length <= 3 ? esc(roles.map((r) => r.name).join(', ')) : `${roles.length} roles`}${left ? ` · ${left} open` : ''}${check ? ` · ${esc(check)}` : ''}`, body: `<span class="plan-roles">${rows}</span>`, open, attrs: { 'data-fold-turn': '', ...(hooks.roles || {}) } }).replace('class="tr-body"', 'class="tr-body is-steps"');
   return `<article class="task-card rc plan"${attrs(a)}>${cardHead({ mark: kindMark({ kind: 'task', tone: 'ask', size: 16 }), kicker: 'Plan', kickerHtml: `Plan · ${version}`, title, why: summary, menu })}`
-    + `<section class="rc-card tp-body"${attrs({ 'aria-label': `Plan: ${title}` })}>${fullOpen && full ? `<div class="plan-full">${full}</div>` : ''}${extra}${reviewed}<div class="tp-actions">${button({ label: 'Approve and build', kind: 'primary', attrs: hooks.approve || {} })}${button({ label: 'Ask for changes', kind: 'quiet', attrs: hooks.changes || {} })}${full ? button({ label: fullOpen ? 'Hide the plan' : 'Full plan', kind: 'quiet', icon: icon(fullOpen ? 'chevron' : 'chevR', 12), attrs: { 'aria-expanded': String(fullOpen), ...(hooks.full || {}) } }) : ''}</div></section></article>`;
+    + `<section class="rc-card tp-body"${attrs({ 'aria-label': `Plan: ${title}` })}>${extra}${reviewed}<div class="tp-actions">${button({ label: 'Approve and build', kind: 'primary', attrs: hooks.approve || {} })}${button({ label: 'Ask for changes', kind: 'quiet', attrs: hooks.changes || {} })}</div></section>`
+    + `${full ? `<div class="tc-foot">${button({ label: fullOpen ? 'Hide the plan' : 'Read the plan', kind: 'quiet', icon: icon(fullOpen ? 'chevron' : 'chevR', 12), attrs: { 'aria-expanded': String(fullOpen), ...(hooks.full || {}) } })}</div>${fullOpen ? `<div class="plan-full">${full}</div>` : ''}` : ''}</article>`;   // the plan itself is the card's foot, as a task's stages are
 }
 
 /**

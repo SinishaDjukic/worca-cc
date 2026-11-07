@@ -863,12 +863,12 @@ test('taskProposal: a picker opened in its sentence keeps its menu beside it (a 
   window.close();
 });
 
-test('planCard: Full plan folds the plan itself open, to read before approving', () => {
+test('planCard: Read the plan, its foot, folds the plan itself open, to read before approving', () => {
   const shut = C.planCard({ title: 'P', version: 'v1 of 1', roles: [], full: '<h4>Steps</h4>' });
-  assert.match(shut, /Full plan/); assert.doesNotMatch(shut, /plan-full/);
+  assert.match(shut, /Read the plan/); assert.doesNotMatch(shut, /plan-full/);
   const open = C.planCard({ title: 'P', version: 'v1 of 1', roles: [], full: '<h4>Steps</h4>', fullOpen: true });
-  assert.match(open, /class="plan-full"><h4>Steps/); assert.match(open, /Hide the plan/); assert.match(open, /aria-expanded="true"/);
-  assert.doesNotMatch(C.planCard({ title: 'P', version: 'v1', roles: [] }), /Full plan/, 'no plan to show: no button');
+  assert.match(open, /class="tc-foot">[\s\S]*class="plan-full"><h4>Steps/); assert.match(open, /Hide the plan/); assert.match(open, /aria-expanded="true"/);
+  assert.doesNotMatch(C.planCard({ title: 'P', version: 'v1', roles: [] }), /Read the plan/, 'no plan to show: no button');
 });
 
 test('topBarAction: its name is its words even when only its icon and badge show', () => {
@@ -995,7 +995,7 @@ test('changeProposal: before and after, Apply; applied, a receipt with Revert; d
 test('planCard, filesCard, youTurn: the Shaper plan folds its roles; files as tiles and rows; your words with what came with them', () => {
   const roles = [{ name: 'Security', ok: false, note: 'Flag first' }, { name: 'UX', ok: true, note: 'Fine' }];
   const shut = C.planCard({ title: 'Plan', version: 'v2 of 2', roles });
-  assert.match(shut, /Plan · v2 of 2/); assert.match(shut, /Reviewed by 2 roles · 1 open/); assert.doesNotMatch(shut, /Flag first/); assert.match(shut, />Approve and build</);
+  assert.match(shut, /Plan · v2 of 2/); assert.match(shut, /Reviewed by [^·<]+ · 1 open/);   // up to three reviewers are named assert.doesNotMatch(shut, /Flag first/); assert.match(shut, />Approve and build</);
   assert.match(C.planCard({ title: 'Plan', version: 'v2', roles, open: true }), /Security<\/b> Flag first/);
   const f = C.filesCard({ files: [{ name: 'a.png', image: true }, { name: 'b.txt', meta: '2 KB' }] });
   assert.match(f, /fc-tile[\s\S]*a\.png/); assert.match(f, /<b>b\.txt<\/b> 2 KB/); assert.match(f, /aria-label="Download b\.txt"/);

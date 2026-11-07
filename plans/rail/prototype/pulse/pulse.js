@@ -758,7 +758,7 @@ document.addEventListener('click', (e) => {
   if ((el = tg('[data-sw="away"]'))) {
     const back = isAway(); ui.awayStatus = back ? (C().away.hours ? 'here' : 'no-hours') : 'away-now';
     // coming back brings back what Worca did meanwhile: one update at the top of Updates, unread
-    if (back) ui.added = [{ ...M.tryEvent('info', ui.added.length), id: `away-${Date.now()}`, title: 'While you were away', meta: 'Worca answered 1 question: Add CSV export to billing (ISO 8601, its pick) · Update Node to 24 still waits for you', time: 'now', day: 'Today', unread: true }, ...ui.added];
+    if (back) { const did = window.RailConversation?.awayAnswer?.() || []; ui.added = [{ ...M.tryEvent('info', ui.added.length), id: `away-${Date.now()}`, title: 'While you were away', meta: did.length ? `Worca answered ${did.length === 1 ? 'a question' : `${did.length} questions`} with its pick: ${did.join(' · ')}` : 'Nothing waited on you', time: 'now', day: 'Today', unread: true }, ...ui.added]; }
     toast(back ? 'Back: what Worca did while you were away is in Pulse › Updates' : 'Away: Worca answers waiting task questions for you'); render(); return;
   }
   if ((el = tg('[data-sw="keep"]'))) { ui.keep = !ui.keep; render(); return; }
@@ -908,6 +908,7 @@ setInterval(() => {
 document.querySelectorAll('[data-theme-pick]').forEach((b) => b.addEventListener('click', () => { applyAppearance(b.dataset.themePick); render(); }));
 if (SHELL) { ui.bg = readBg(); setBg(ui.bg); }
 window.RailPulse = {
+  refresh: () => render(),   // a task moved elsewhere (a card in a chat): the badge and the lists read it again
   // The note a start near a limit shows, in the composer: what it means, and the ways out.
   startNote: () => { const c = startable(), first = c.usage.find((u) => M.PROVIDER[u.p].runs)?.p; if (!first) return { say: 'Nothing that can run is signed in. Only mock tasks work until you sign in.', blocked: true }; if (budgetGone()) return { say: 'The budget is used up until it resets.', blocked: true }; if (connOffline()) return { say: 'Offline: Worca cannot start a task until the connection is back.', blocked: true }; const lim = M.near(c, first, ui.s.warnAt); if (!lim) return null; const rm = M.room(c, ui.s.warnAt, first); return { say: `${lim.name}'s ${lim.what} is at ${lim.pct}% and resets ${lim.resets}. This task may pause.`, use: rm.length ? pname(rm[0]) : '', at: lim.resets }; },
   show: (page, sset, view) => {
