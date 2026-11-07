@@ -51,6 +51,7 @@ const state = {
   scriptsList: [],   // GET /api/scripts cache; dropped on every scripts-changed frame
   mockWriterRoles: [], // closed mock-role list from /api/agents (drives the agent form)
   historyAll: [],    // full /api/history dataset; client-side filter cache
+  teamRuns: [],      // run sharing s2: teammates' runs (GET /api/team-runs, teamRunItems), read-only rows
   historyArchived: null, // GET /api/history?archived=1 rows, lazy per Archived-chip activation (null = never loaded)
   historyArchivedError: '', // the last archived-feed load error, shown in the Runs list while it has no rows
   historyError: '',  // the last /api/history load error, shown in the Runs list while it has no rows
@@ -108,7 +109,8 @@ import { outcomeNote } from './run-outcome.mjs';
 import { CREATE_PR_LABEL, CREATE_PR_FAILED, CREATING_PR, PR_CREATED, VIEW_PR_LABEL, VIEW_PRS_LABEL, createPrLabel, doneStatusWord } from './ship-words.mjs';
 import { worktreeNoticeModel, worktreeRowState, retainedCommands, recoveryPatchKind, uncommittedPatchName, applyConfirmMessage, applyOutcome, checkoutRowValue, memberLabel } from './worktree-notice.mjs';
 import { limitNotice, resumeTicketOf, countdownText } from './limit-notice.mjs';
-import { buildRunsModel, countNeedsYou, isRowSelected, isMemberOpen, renderRunsList, paintStageBlocks, RECENT_PAGE, groupRow, memberPrsOf, prChip, memberCostUsd, whenLabel, isFolded, setFolded } from './runs-list.mjs';
+import { buildRunsModel, countNeedsYou, isRowSelected, isMemberOpen, renderRunsList, paintStageBlocks, RECENT_PAGE, groupRow, memberPrsOf, prChip, memberCostUsd, whenLabel, isFolded, setFolded, TEAM_EMPTY } from './runs-list.mjs';
+import { teamRunItems, renderTeamRunSummary } from './history-team-runs.mjs';
 import { paintRunStatus, syncActions, pauseResumeOwn } from './run-status-card.mjs';
 import { buildGroupPage, paintGroupPage, runReceipts, groupPrList } from './group-page.mjs';
 import { paintGroupShip, resetGroupShip } from './ship-group-dialog.mjs';
@@ -33465,7 +33467,7 @@ const runsUi = { view: loadRunsView(localStorage), collapsed: loadIdSet(RUNS_COL
   groupsToggled: new Map(), roundsAll: new Set(), recentShown: RECENT_PAGE, selecting: false, anchorKey: null,
   sel: createRunsSelection(), rowsByKey: new Map(), memos: new Map(), lastModel: null, listCounts: null,
   pendingSelect: null, focusKey: null,   // pendingSelect: the pipeline ids "Tag N runs" (Statistics › Cost) asked to tick
-  archivedTotal: null };   // /api/counts' archived rows: the Show › Archived count before its feed loads
+  archivedTotal: null, teamTimer: null };   // /api/counts' archived rows: the Show › Archived count before its feed loads
 // focusKey: the list's roving Tab stop across repaints, `row:KEY` or `sec:KEY` (list-keys.mjs, issue #948).
 const memoFor = (id) => { if (!runsUi.memos.has(id)) runsUi.memos.set(id, {}); return runsUi.memos.get(id); };
 
@@ -33980,7 +33982,7 @@ function runsSchedItem(t) {
 const roundsSig = (r) => (r.rounds && r.rounds.length ? [r.roundsLine || '', r.roundsOwnLine ? 1 : 0, r.rounds.length,
   runsUi.groupsToggled.get(`rounds:${r.roundsId}`) ? 1 : 0, runsUi.roundsAll.has(`rounds:${r.roundsId}`) ? 1 : 0,
   r.rounds.map((rd) => [rd.n, rd.status, rd.words || '', rd.time, rd.href])] : 0);
-const runsRowSig = (r) => [r.key, r.pipelineId, r.href, r.title, r.model.state, roundsSig(r), r.model.symbol || '', r.model.line, r.model.pulse ? 1 : 0, r.count || '',
+const runsRowSig = (r) => [r.key, r.kind, r.teamBy || '', r.team ? r.team.stale : 0, r.team ? r.team.prUrl || '' : '', r.pipelineId, r.href, r.title, r.model.state, roundsSig(r), r.model.symbol || '', r.model.line, r.model.pulse ? 1 : 0, r.count || '',
   r.model.pr ? [r.model.pr.id, r.model.pr.word, r.model.pr.title, r.model.pr.icon, r.model.pr.pending ? 1 : 0] : 0, r.model.progress && r.model.progress.mode === 'stages' ? [r.model.progress.stage, r.model.progress.label] : 0,
   r.activityMs || 0, r.groupName, r.cost ?? null, r.costUsd ?? null, r.needs ? 1 : 0,
   r.kind === 'chain' ? [r.open ? 1 : 0, r.members.map((m) => [m.key, m.model.state, m.model.line, m.title, m.href, m.cost ?? null, m.model.symbol || '', roundsSig(m),
@@ -34019,6 +34021,8 @@ function paintRunsList() {
     show: runsUi.view.show, groupBy: runsUi.view.groupBy, collapsed: runsUi.collapsed, toggled: runsUi.groupsToggled,
     recentShown: runsUi.recentShown, archivedCount: state.historyArchived ? state.historyArchived.length : null, now: Date.now(),
     archivedIds: new Set((state.historyArchived || []).map((p) => p && p.id).filter(Boolean)),   // D4: an archived run's rounds stay out
+    // Run sharing s2: teammates' read-only rows (buildRunsModel drops one whose run is listed here, D16) and the scope.
+    team: flagOn('runSharing') && !archivedView ? state.teamRuns : [], scope: flagOn('runSharing') ? runsUi.view.scope : 'all',
   });
   // D4: a stack whose run is not listed may belong to an archived run; the archived feed (loaded once) tells.
   if (!archivedView && model.orphans && state.historyArchived === null && !state.historyArchivedError) void loadHistoryArchived();
@@ -34065,12 +34069,15 @@ function paintRunsList() {
       const k = i.closest('.runs-row')?.dataset.rowKey;
       if (k && !lineFrom.has(k) && i.style.width) lineFrom.set(k, i.style.width);
     }
+    const teamScope = flagOn('runSharing') && runsUi.view.scope === 'team';   // run sharing s2 (D24): Team's own empty note
     host.replaceChildren(...renderRunsList(document, model, { checked, selecting: runsUi.selecting, emptyText: 'No runs yet. Start one from New run.', note, lineFrom,
+      ...(teamScope ? { emptyText: TEAM_EMPTY } : {}),
       loading, offline, retry: !!note, roundsOpen, roundsAll: runsUi.roundsAll }));
     if (lineFrom.size) void host.offsetWidth;   // commit the start widths, so the patch below transitions
   }
   paintRunsProgress(host, model);   // P2/P7: the group lines' fraction, in place
   paintRunsChip(model);
+  paintRunsScope();
   paintRunsBar();
   paintRunsSelection();   // before the focus restore: its last fallback is the selected row
   if (refocus) {
@@ -34176,6 +34183,8 @@ el.runsList?.addEventListener('click', (e) => {
   const a = e.target.closest && e.target.closest('a.runs-row');
   if (!a || e.defaultPrevented || (e.button || 0) !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
   e.preventDefault();
+  // Run sharing s2 (D20): a teammate's row opens its read-only summary; the hash stays.
+  if (a.dataset.kind === 'team') { openTeamRunSummary(runsUi.rowsByKey.get(a.dataset.rowKey)); return; }
   // Run 3 (D3): a group row's question opens in its own page, so the run shortcut is for run rows only.
   const ask = a.dataset.kind !== 'chain' && a.dataset.state === 'needs-you' && a.dataset.runId ? a.dataset.runId : '';
   const screen = runDetailState.screen;
@@ -34237,7 +34246,56 @@ function paintRunsChip(model) {
   paintRunsLabelFilter();
 }
 // The × clears what the chip names (the filter); the grouping is not on the chip, so it stays.
-document.querySelector('#runs-view-chip .runs-view-reset')?.addEventListener('click', () => setRunsView({ show: 'all', person: '', labels: [] }));
+document.querySelector('#runs-view-chip .runs-view-reset')?.addEventListener('click', () => setRunsView({ show: 'all', person: '', labels: [], scope: 'all' }));
+
+// ── Teammates' runs (run sharing s2): GET /api/team-runs on entering Runs and once a minute while it shows ──
+const TEAM_RUNS_EVERY_MS = 60_000;
+/** Fetch the teammates' rows; a failed or 404 answer keeps the last rows, silently (D21). Never while the flag is off. */
+async function loadTeamRuns() {
+  if (!flagOn('runSharing')) return;
+  let data = null;
+  try {
+    const r = await fetch('/api/team-runs');
+    if (!r.ok) return;
+    data = await r.json();
+  } catch { return; }
+  if (!flagOn('runSharing')) return;
+  const localIds = new Set([...(state.historyAll || []).map((p) => p && p.id), ...overviewRuns().map((x) => x && x.pipelineId)].filter(Boolean).map(String));
+  state.teamRuns = teamRunItems(data, { localIds });
+  if (inRunsView()) paintRunsList();
+}
+function startTeamRuns() {
+  if (!flagOn('runSharing')) return;
+  void loadTeamRuns();
+  if (!runsUi.teamTimer) runsUi.teamTimer = setInterval(() => { void loadTeamRuns(); }, TEAM_RUNS_EVERY_MS);
+}
+function stopTeamRuns() {
+  if (runsUi.teamTimer) clearInterval(runsUi.teamTimer);
+  runsUi.teamTimer = null;
+}
+onFlagChange('runSharing', (on) => {
+  if (on) { if (inRunsView()) startTeamRuns(); }
+  else { stopTeamRuns(); state.teamRuns = []; }
+  if (inRunsView()) paintRunsList();
+});
+/** The Mine / Team / All filter (D18): shown while the flag is on and a teammate's row loaded, or a scope is picked. */
+function paintRunsScope() {
+  const box = document.getElementById('runs-scope');
+  if (!box) return;
+  const scope = runsUi.view.scope || 'all';
+  box.hidden = !(flagOn('runSharing') && (state.teamRuns.length > 0 || scope !== 'all'));
+  for (const b of box.querySelectorAll('[data-runs-scope]')) b.setAttribute('aria-pressed', b.dataset.runsScope === scope ? 'true' : 'false');
+}
+document.getElementById('runs-scope')?.addEventListener('click', (e) => {
+  const b = e.target.closest && e.target.closest('[data-runs-scope]');
+  if (b) setRunsView({ scope: b.dataset.runsScope });
+});
+/** A teammate's run, read-only (D20): the summary in the generic dialog. Its head's own Close is the one button (a
+ *  footer Close action would be a second one). */
+function openTeamRunSummary(r) {
+  if (!r || !r.team) return;
+  pluginModal(`${r.teamBy} · ${r.title}`, renderTeamRunSummary(document, r.team), []);
+}
 
 // ── Run labels (slice 1): the Label filter, the selection bar's Label action ──
 async function sendJson(method, url, body) {
@@ -34281,8 +34339,12 @@ async function openRunsLabelPicker(anchor) {
 }
 
 // ── Selection, keys and the action bar (runs-selection.mjs, D19-D21) ──
-const visibleTopKeys = () => [...el.runsList.querySelectorAll('.runs-item[data-level="top"]')].map((n) => n.dataset.rowKey);
+// A teammate's row (run sharing s2, D22) is never selected: Select all, ⌘A, ranges and toggles all skip it.
+const isTeamRunKey = (key) => runsUi.rowsByKey.get(key)?.kind === 'team';
+const visibleTopKeys = () => [...el.runsList.querySelectorAll('.runs-item[data-level="top"]')]
+  .filter((n) => n.dataset.team !== '1').map((n) => n.dataset.rowKey);
 function toggleRunsKey(key) {
+  if (isTeamRunKey(key)) return;
   runsUi.sel.toggle(key);
   if (!runsUi.sel.size) runsUi.selecting = false;
   paintRunsList();
@@ -34366,6 +34428,7 @@ function runsLetterKey(action, item) {
   if (out && typeof out.then === 'function') void out.then(refocus);
 }
 const RUNS_ROW_ONLY_KEYS = new Set(['menu', 'archive', 'stop', 'add-to-group', 'leave-group', 'delete']);
+const TEAM_ROW_KEYS = new Set(['down', 'up', 'open', 'all']);
 document.getElementById('runs-list-pane')?.addEventListener('keydown', (e) => {
   const t = e.target;
   const action = listKeyAction({ key: e.key, metaKey: e.metaKey, ctrlKey: e.ctrlKey, altKey: e.altKey, shiftKey: e.shiftKey,
@@ -34377,6 +34440,8 @@ document.getElementById('runs-list-pane')?.addEventListener('keydown', (e) => {
   // keys (archive, stop, delete, group, ⋯) would act on the head, so they do nothing there. Arrows still move.
   if (RUNS_ROW_ONLY_KEYS.has(action) && t.closest?.('.runs-rounds, .runs-rounds-line')) return;
   const item = t.closest?.('.runs-item') || null;
+  // A teammate's row (D22): arrows move, Enter opens its summary; no letter, menu or selection key acts on it.
+  if (item?.dataset.team === '1' && !TEAM_ROW_KEYS.has(action)) return;
   const nav = t.closest?.(RUNS_NAV) || runsRowLink(item);
   e.preventDefault();
   e.stopPropagation();
@@ -39348,6 +39413,7 @@ function showView(name, param = '') {
   document.body.classList.toggle('view-workspaces', name === 'workspaces');
   document.body.classList.toggle('view-workflows', name === 'workflows');
   document.body.classList.toggle('view-chat', name === 'chat');   // worca Chat: the page fills the column (style.css)
+  if (RUNS_VIEWS.has(prevView) && !RUNS_VIEWS.has(name)) stopTeamRuns();   // run sharing s2: one timer, only while Runs shows
   if (RUNS_VIEWS.has(name)) {
     const entering = !RUNS_VIEWS.has(prevView);
     // The section is visible now (the toggle above): measure before anything opens, so the
@@ -39357,6 +39423,7 @@ function showView(name, param = '') {
       // No refetch on in-page hops (list <-> run <-> saved run): a reload re-runs PR
       // enrichment and blanks resolved PR words mid-navigation (was the History rule).
       loadHistoryView();
+      startTeamRuns();
       // The open run's Group row reads the chains too (a Run-after chain is a group, runs redesign slice 4 D18).
       void withWorkspaces().then(() => schedulesView.load()).then(() => { routeChainsSettled = true; if (inRunsView()) { paintRunsList(); repaintOpenRunGroupLine(); } repaintLimitNotices(); });
     }

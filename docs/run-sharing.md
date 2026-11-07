@@ -3,8 +3,8 @@
 Run sharing lets teammates see each other's runs without a server. Like team memory and
 [team metrics](team-metrics.md), it uses a dedicated branch of the project's `origin`: **`worca-runs`**.
 
-This first slice is the write side only. With it on, Worca keeps a small record of each of your runs on the branch.
-Teammates do not see the records in History yet; that comes with the next slice.
+With **Share my runs** on, Worca keeps a small record of each of your runs on the branch, and History lists your
+teammates' records next to your own runs (see [Teammates' runs in History](#teammates-runs-in-history)).
 
 Run sharing is a Labs feature (flag `runSharing`, off by default). It stays in Labs until the branch is pruned
 automatically. With the flag off, nothing is pushed, the Settings card is hidden and
@@ -59,6 +59,28 @@ again 30 seconds later, then after a wait that doubles up to 10 minutes, until i
 With team metrics' attribution set to **git user** (the default), `personKey` is a hash of your git email. Anyone who
 knows that email can compute the same hash. To stay anonymous, set the project's team-metrics attribution to **none**:
 `startedBy` is then `null`, the key is random for this machine, and the commits are authored by `Worca`.
+
+## Teammates' runs in History
+
+Whenever a registered git project's `origin` has a `worca-runs` branch, the Runs list shows your teammates' runs as
+read-only rows mixed with your own. Each one carries a badge with the name of the person who started it (or
+**Teammate** when the record names nobody). This works with **Share my runs** off: reading never needs the switch,
+but it happens only while the Labs flag is on.
+
+- **Mine / Team / All** in the Runs head picks whose runs the list shows (**All** by default). The filter appears
+  once a teammate's run has loaded. **Team** with nothing to show says "No teammates' runs yet."
+- Worca fetches the branch at most once a minute per project, while a Runs page is open.
+  A fetch times out after 30 seconds; after a failure Worca tries again 15 seconds later and keeps the last rows it read.
+- Opening a teammate's row shows a read-only summary: status, phase, cost, who started it, the project, when it
+  started and was last updated, and its pull request link. There is no stop, resume, delete or rerun, and a teammate's
+  row is never selected.
+- A running record that has had no update for over 20 minutes is marked stale (its machine stopped or crashed).
+- Rows from your own person key are never shown as a teammate's: the key from your git email and this machine's own
+  key are both left out.
+- A record that is not exactly the format above (an extra key, a non-https link, over 2048 bytes, a symlink, or a path
+  that does not match its record) is skipped.
+- Worca lists at most 500 records per project. Anyone with push access can fill them and so hide other records.
+- Teammates' records carry no labels, so a Label filter hides them.
 
 ## Branch protection
 

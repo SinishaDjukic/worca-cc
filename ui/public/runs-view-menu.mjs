@@ -3,13 +3,15 @@
 // per-browser record. app.js opens the menu and repaints.
 import { normaliseLabels } from '../../src/shared/run-labels.mjs';
 import { keyGlyph } from './list-keys.mjs';
-import { DATE_GROUP_TITLE } from './runs-list.mjs';
+import { DATE_GROUP_TITLE, RUNS_SCOPE } from './runs-list.mjs';
 
 export const VIEW_KEY = 'worca-cc.runs.view';
-export const DEFAULT_VIEW = Object.freeze({ show: 'all', groupBy: 'none', person: '', labels: Object.freeze([]) });
+export const DEFAULT_VIEW = Object.freeze({ show: 'all', groupBy: 'none', person: '', labels: Object.freeze([]), scope: 'all' });
 const SHOW = [['all', 'All'], ['needs', 'Needs you'], ['running', 'Running'], ['waiting', 'Waiting'], ['finished', 'Finished'], ['ready', 'Ready to ship'], ['archived', 'Archived']];
 // The Chats column's order and Date title (chats-list.mjs CHATS_GROUP, less Topic).
 const GROUP = [['date', 'Date', DATE_GROUP_TITLE], ['project', 'Project'], ['none', 'None']];
+// Whose runs (run sharing s2, D17): the Runs head's Mine / Team / All filter.
+const SCOPE_WORD = { mine: 'Mine', team: 'Team' };
 const OLD_SHOW = { all: 'all', live: 'running', finished: 'finished', needs: 'needs', archived: 'archived' };
 
 function clean(v) {
@@ -18,6 +20,7 @@ function clean(v) {
     groupBy: GROUP.some(([id]) => id === v?.groupBy) ? v.groupBy : 'none',
     person: typeof v?.person === 'string' ? v.person : '',
     labels: normaliseLabels(Array.isArray(v?.labels) ? v.labels.filter((l) => typeof l === 'string') : []).labels.slice(0, 20),
+    scope: RUNS_SCOPE.includes(v?.scope) ? v.scope : 'all',
   };
 }
 
@@ -40,13 +43,14 @@ export function saveRunsView(storage, v) {
   try { storage.setItem(VIEW_KEY, JSON.stringify(clean(v))); } catch { /* private mode: the view lasts the session */ }
 }
 
-const isUnfiltered = (v) => v.show === 'all' && !v.person && !(v.labels || []).length;
+const isUnfiltered = (v) => v.show === 'all' && !v.person && !(v.labels || []).length && (v.scope || 'all') === 'all';
 
 /** '' while nothing is filtered, else the filter's parts and "N of M runs". Grouping (by project, by date) only arranges
  *  the list and its section heads already say it, so it draws no chip. */
 export function viewChip(v, { shown, total, personName = '' }) {
   if (isUnfiltered(v)) return '';
   const parts = [];
+  if (SCOPE_WORD[v.scope]) parts.push(SCOPE_WORD[v.scope]);
   if (v.show !== 'all') parts.push(SHOW.find(([id]) => id === v.show)[1]);
   if (v.person) parts.push(personName || v.person);
   parts.push(v.show === 'archived' ? `${shown} run${shown === 1 ? '' : 's'}` : `${shown} of ${total} runs`);

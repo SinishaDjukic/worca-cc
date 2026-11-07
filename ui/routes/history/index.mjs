@@ -2,10 +2,11 @@
 // ui/server.mjs, in source order. ui/routes/index.mjs registers each list at its segment's barrier.
 import * as m_history_history from './history.mjs';
 import * as m_history_sync from './sync.mjs';
+import * as m_history_team_runs from './team-runs.mjs';
 import * as m_history_pull_requests from './pull-requests.mjs';
 import * as m_history_branches_and_push from './branches-and-push.mjs';
 export const SEGMENTS = Object.freeze([
-  Object.freeze([m_history_history, m_history_sync]),   // before app.use('/api/automations', requireFlag('gitAutomations'));
+  Object.freeze([m_history_history, m_history_team_runs, m_history_sync]),   // before app.use('/api/automations', requireFlag('gitAutomations'));
   Object.freeze([m_history_pull_requests, m_history_branches_and_push]),   // before app.use('/api/mcp', (req, res, next) => {
   Object.freeze([]),   // before app.use((req, res, next) => {
   Object.freeze([]),   // before app.use('/api/skills', (req, res, next) => {

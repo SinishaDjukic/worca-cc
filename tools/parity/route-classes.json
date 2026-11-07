@@ -231,6 +231,7 @@
   "GET /api/team-metrics": {"class": "probe", "reason": "400 without ?scope"},
   "GET /api/team-metrics/pr-events": {"class": "probe", "reason": "400 without ?scope"},
   "GET /api/team-metrics/scopes": {"class": "probe", "reason": "discover off by default, try/catch"},
+  "GET /api/team-runs": {"class": "skip", "reason": "fetches every registered project's worca-runs branch from origin while the flag is on (runs-share/read.mjs)"},
   "GET /api/terminal": {"class": "probe", "reason": "returns terminal status and session list"},
   "GET /api/terminal/audit": {"class": "probe", "reason": "terminal gate, DB audit list"},
   "GET /api/terminal/sessions/:id": {"class": "probe", "reason": "terminal gate, 404 for unknown session"},

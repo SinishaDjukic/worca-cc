@@ -9,6 +9,12 @@
                 <button type="button" class="btn btn-sm btn-quiet runs-view-btn" id="runs-view-btn" aria-haspopup="menu" aria-expanded="false">
                   View <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9.5l6 6 6-6"></path></svg>
                 </button>
+                <!-- Run sharing s2: whose runs the list shows (runs-view-menu.mjs scope). Hidden until a teammate's run loaded. -->
+                <div class="seg runs-scope" id="runs-scope" role="group" aria-label="Whose runs" hidden>
+                  <button type="button" data-runs-scope="mine" aria-pressed="false">Mine</button>
+                  <button type="button" data-runs-scope="team" aria-pressed="false">Team</button>
+                  <button type="button" data-runs-scope="all" aria-pressed="true">All</button>
+                </div>
                 <label class="runs-all-wrap" hidden><input type="checkbox" class="runs-check runs-all" id="runs-all" aria-label="Select all visible runs"> Select all</label>
               </div>
               <div class="runs-view-chip" id="runs-view-chip" hidden>

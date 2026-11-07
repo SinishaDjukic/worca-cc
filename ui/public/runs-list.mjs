@@ -30,6 +30,7 @@ import { fmtUsd } from './graph/run-decor.mjs';
 import { engineLabel } from '../../src/shared/engine-switch.mjs';
 import { runModel, groupModel, finishedNeedsYou, WATCH_WHY } from '../../src/shared/run-model.mjs';
 import { kindChip } from './run-kind.mjs';
+import { teamRunTitle } from './history-team-runs.mjs';
 
 const pad2 = (n) => String(n).padStart(2, '0');
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -332,6 +333,31 @@ export function schedRow(t, now = Date.now()) {
     dispatchMs: t.scheduleId ? undefined : timeMs(t.createdAt, now),
   }, t.after ? { at: now, time: '' } : { at: t.runAt }, now);   // an after-ticket's runAt is a far-future sentinel
 }
+
+/** A teammate's run from the worca-runs branch (run sharing s2, D15): read-only, never selectable, no local actions.
+ *  `t` is a teamRunItems item; `team` keeps it for the summary dialog. It carries no run id or pipeline id, so no local
+ *  path (selection, chains, the run page) ever takes it for one of this machine's runs. */
+export function teamRow(t, now = Date.now()) {
+  const pk = String(t.projectKey || '');
+  const status = String(t.status || '').toLowerCase();
+  const upd = timeMs(t.updatedAt, now);
+  return baseRow('team', histRowState({ status }), {
+    key: `team:${pk}/${t.personKey}/${t.runId}`, href: '#runs',
+    runId: '', pipelineId: '', projectKey: '',
+    title: teamRunTitle(t), status, teamBy: t.startedBy || 'Teammate',
+    groupKey: pk, groupName: String(t.projectName || pk || '(unknown project)'), groupKind: '', by: '',
+    tags: [], labels: [], unread: false, needs: false,
+    cost: typeof t.costUsd === 'number' && Number.isFinite(t.costUsd) ? t.costUsd : null,
+    activityMs: Number.isFinite(upd) ? upd : undefined,
+    team: t,
+  }, { at: t.startedAt || t.updatedAt }, now);
+}
+
+/** Whose runs the list shows (D17): everyone's, this machine's only, or teammates' only. */
+export const RUNS_SCOPE = Object.freeze(['all', 'mine', 'team']);
+/** The Team scope's empty note (D24). */
+export const TEAM_EMPTY = "No teammates' runs yet.";
+const TEAM_PR = Object.freeze({ id: 'open', icon: 'pull-request', word: 'PR', title: 'Pull request' });
 
 /** The day sections both lists share (Runs and Chats Group by Date), top to bottom: Today, Yesterday, 2–7 days ago,
  *  8–30 days ago, then the rest. The boundaries are local midnights, stepped with setDate so a DST day is still one day. */
@@ -703,8 +729,9 @@ function dedupeRows(rows0, groupRows, raw, stacked) {
 export function buildRunsModel({
   live = [], history = [], scheduled = [], groups = [], person = '', labels = [], show = 'all', groupBy = 'none',
   collapsed = new Set(), toggled = new Map(), recentShown = RECENT_PAGE, archivedCount = null, archivedIds = new Set(),
-  now = Date.now(),
+  team = [], scope = 'all', now = Date.now(),
 } = {}) {
+  const sc = RUNS_SCOPE.includes(scope) ? scope : 'all';
   const view = { show: RUNS_SHOW.includes(show) ? show : 'all', groupBy: RUNS_GROUP_BY.includes(groupBy) ? groupBy : 'none' };
   const raw = new WeakMap();   // row -> { run, memo }: what its model was built from (D5 rebuilds a stack head's model)
   const withModel = (r, run, memo) => {
@@ -723,8 +750,17 @@ export function buildRunsModel({
         after: t.after ? { index: t.after.index || null, group: t.after.group || '', title: t.after.title || '' } : null } })),
     ...history.filter((p) => p && p.id && !listed.has(String(p.id))).map((p) => withModel(histRow(p, now), p.run || { status: p.status })),
   ];
+  // D16: a teammate row of a run listed here (live or History) is dropped: the local row stands for it.
+  const localIds = new Set([...listed, ...history.map((p) => (p && p.id ? String(p.id) : '')).filter(Boolean)]);
+  for (const t of team) {
+    if (!t || !t.runId || localIds.has(String(t.runId))) continue;
+    const row = withModel(teamRow(t, now), { status: t.status });
+    row.model = { ...row.model, actions: [], prNeeds: false, pr: null };
+    all.push(row);
+  }
   // The person and label filters apply to a stack's head only: a round is filtered with the run it folds into.
-  const pass = (r) => (!person || r.by === person) && matchesLabels(r.labels, labels);
+  const pass = (r) => (!person || r.by === person) && matchesLabels(r.labels, labels)
+    && (sc === 'team' ? r.kind === 'team' : sc === 'mine' ? r.kind !== 'team' : true);
   const rows0 = all.filter((r) => !r.roundOf && pass(r));
   const { groups: groupsIn, stacked, orphans } = foldRounds({ all, rows0, groups, pass, raw, view, archivedIds, now });
   const buildGroup = (g, gi) => {
@@ -867,7 +903,7 @@ export function prChip(doc, pr, { link = false, number = false } = {}) {
   const s = doc.createElement(asLink ? 'a' : 'span');
   s.className = `runs-pr is-${pr.id}`;
   s.title = pr.title;
-  if (asLink) { s.setAttribute('href', pr.url); s.setAttribute('target', '_blank'); s.setAttribute('rel', 'noopener'); }
+  if (asLink) { s.setAttribute('href', pr.url); s.setAttribute('target', '_blank'); s.setAttribute('rel', 'noopener noreferrer'); }
   s.append(icon(doc, pr.icon, 14));
   if (number && pr.number != null) s.append(textEl(doc, 'span', 'runs-pr-num', `PR #${pr.number}`));
   s.append(textEl(doc, 'span', 'runs-pr-word', pr.word));
@@ -952,7 +988,9 @@ function renderItem(doc, r, { section = '', level = 'top', checked, selecting, s
   box.className = 'runs-check';
   box.checked = checked.has(r.key);
   box.setAttribute('aria-label', `Select ${r.title}`);
-  pick.append(renderStatusDot(doc, r.model), box);
+  const team = r.kind === 'team';
+  if (team) item.dataset.team = '1';
+  pick.append(...(team ? [renderStatusDot(doc, r.model)] : [renderStatusDot(doc, r.model), box]));
   const a = doc.createElement('a');
   a.className = `runs-row runs-row-${r.kind}`;
   a.setAttribute('href', r.href);
@@ -990,6 +1028,7 @@ function renderItem(doc, r, { section = '', level = 'top', checked, selecting, s
   const title = textEl(doc, 'span', 'runs-row-title', position ? `${position} · ${r.title}` : r.title);
   const mark = r.kind === 'chat' ? originMark(doc, r.origin) : null;   // a chat a chat integration opened: its platform's logo
   if (mark) title.prepend(mark);
+  if (team) title.prepend(textEl(doc, 'span', 'runs-team-badge', r.teamBy || 'Teammate'));
   const lab = level === 'top' ? rowLabels(doc, r.labels) : null;
   a.append(...[title, lab, right, stack && !r.roundsOwnLine ? null : textEl(doc, 'span', 'runs-row-sub', line)].filter(Boolean));
   if (r.kind === 'chain' && !ENDED_STATES.has(r.model.state) && r.model.progress) {
@@ -1016,10 +1055,15 @@ function renderItem(doc, r, { section = '', level = 'top', checked, selecting, s
     t.setAttribute('aria-expanded', r.open ? 'true' : 'false');
     tail.append(t);
   }
-  const more = iconButton(doc, 'runs-more', 'more', `More for ${r.title}`);
-  more.dataset.rowKey = r.key;
-  more.setAttribute('aria-haspopup', 'menu');
-  tail.append(more);
+  if (team) {
+    // The PR link sits outside the row link (a link in a link would open the summary instead).
+    if (r.team && r.team.prUrl) tail.append(prChip(doc, { ...TEAM_PR, url: r.team.prUrl }, { link: true }));
+  } else {
+    const more = iconButton(doc, 'runs-more', 'more', `More for ${r.title}`);
+    more.dataset.rowKey = r.key;
+    more.setAttribute('aria-haspopup', 'menu');
+    tail.append(more);
+  }
   item.append(pick, a, tail);
   if (stack) item.append(...renderRounds(doc, r, { roundsOpen, roundsAll, now }));
   if (grouped && r.open) {

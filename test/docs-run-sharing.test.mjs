@@ -6,7 +6,8 @@ import { readFileSync } from 'node:fs';
 const text = readFileSync(new URL('../docs/run-sharing.md', import.meta.url), 'utf8');
 
 test('the run-sharing doc names the branch, the protection exemption, the stop rule and staleness', () => {
-  for (const s of ['worca-runs', 'branch protection', 'git push origin --delete worca-runs', 'everyone must switch it off', 'Share my runs', 'stale', 'Include my runs']) {
+  for (const s of ['worca-runs', 'branch protection', 'git push origin --delete worca-runs', 'everyone must switch it off', 'Share my runs', 'stale', 'Include my runs',
+    'Mine / Team / All', 'once a minute', 'read-only', 'times out after 30 seconds', 'at most 500 records']) {
     assert.ok(text.includes(s), s);
   }
 });

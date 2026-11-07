@@ -31,6 +31,14 @@ body.view-runs .main{display:flex;flex-direction:column;overflow:hidden;padding:
 .runs-all-wrap{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-2);cursor:pointer;}
 .runs-view-chip{display:inline-flex;align-self:flex-start;gap:4px;align-items:center;margin:0 14px 8px 20px;font-size:12px;border:1px solid var(--line-2);border-radius:var(--r-xs);padding:0 0 0 6px;}
 .runs-view-chip[hidden]{display:none;}
+/* Run sharing s2: the Mine / Team / All filter, a teammate's badge and the read-only summary. */
+.runs-scope[hidden]{display:none;}
+.runs-team-badge{display:inline-flex;align-items:center;height:20px;padding:0 7px;margin-right:6px;border-radius:var(--r-xs);
+  background:var(--blue-wash);color:var(--ink-2);font-size:11px;font-weight:500;vertical-align:1px;white-space:nowrap;}
+.team-run-sum dl{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:6px 16px;margin:0;font-size:13px;}
+.team-run-sum dt{color:var(--ink-2);}
+.team-run-sum dd{margin:0;min-width:0;overflow-wrap:anywhere;}
+.team-run-stale{margin:12px 0 0;font-size:12px;color:var(--ink-2);}
 /* Runs list (runs redesign §3.1, §3.3a alignment): every row is the same 3-column grid, so the right column and the bars
    end at one x (Known bug 5); members indent inside their cells, never by changing the grid. */
 .runs-item{display:grid;grid-template-columns:28px minmax(0,1fr) 56px;align-items:start;border-bottom:1px solid var(--line);}
@@ -107,6 +115,7 @@ body.view-runs .main{display:flex;flex-direction:column;overflow:hidden;padding:
 .runs-row-chain > .runs-row-title,.runs-row-chat-group > .runs-row-title{font-weight:600;}
 .runs-pr{display:inline-flex;gap:4px;align-items:center;font-size:12px;}
 .runs-pr.is-draft{color:var(--ink-2);}
+.runs-pr.is-open{color:var(--ink-2);}
 .runs-pr.is-ready{color:var(--green-ink);}
 .runs-pr.is-changes{color:var(--amber-ink);}
 .runs-pr.is-merged{color:var(--slate-ink);}
