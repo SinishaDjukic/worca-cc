@@ -237,3 +237,54 @@ test('requirements first through propose_changes: the parent\'s requirementsOn r
   assert.equal(on.card.requirementsFirst.count, 2);
   assert.equal('requirementsFirst' in shapeToolFit('changes', { pipelineId: 'p1', request: 'make it blue' }, work).card, false);
 });
+
+// ── Guardrails: a Changes round, a follow-up and Own run now take the set of the run they change ───────────────────
+test('guardrails: a round and a plain follow-up carry the changed run\'s guardrailsId; a run with none sends none', async () => {
+  const round = changesCard({ text: 'x', facts: { run: { ...RUN, guardrailsId: 'normal' }, feature: null } });
+  assert.equal(round.landing.kind, 'round');
+  assert.equal(round.run.guardrailsId, 'normal');
+  const merged = { ...RUN, guardrailsId: 'secure', pr: { number: 41, url: 'https://x/pull/41', state: 'MERGED' } };
+  const fu = changesCard({ text: 'x', facts: { run: merged, feature: null } });
+  assert.equal(fu.landing.kind, 'follow-up');
+  assert.equal(fu.run.guardrailsId, 'secure');
+  assert.equal(Object.hasOwn(changesCard({ text: 'x', facts: { run: RUN, feature: null } }).run, 'guardrailsId'), false);
+  const bodies = [];
+  const startRun = async (b) => { bodies.push(b); return { status: 200, body: { runId: 'r' } }; };
+  await applyChanges(round, { startRun });
+  await applyChanges(fu, { startRun });
+  assert.deepEqual(bodies.map((b) => b.guardrailsId), ['normal', 'secure']);
+});
+
+test('guardrails: a feature round takes the set of the run it changes, else the feature\'s', () => {
+  const f = shippedFeature(false, { guardrailsId: 'normal',
+    slices: [{ index: 1, state: 'done', pipelineId: 'p1', guardrailsId: 'strict-x', branch: { source: 'dev', feature: 'worca/c-1' }, pr: null, rounds: 1 }] });
+  const card = changesCard({ text: 'x', facts: f });
+  assert.equal(card.landing.kind, 'round');
+  assert.equal(card.run.guardrailsId, 'strict-x');
+  const noSlice = shippedFeature(false, { guardrailsId: 'normal' });
+  assert.equal(changesCard({ text: 'x', facts: noSlice }).run.guardrailsId, 'normal');
+});
+
+test('guardrails: Own run now starts on the feature\'s set; a route card through the tool carries it', async () => {
+  const rc = routeCard({ text: 'hotfix', feature: { id: 'f1', title: 'Charts', base: 'dev', projectDir: '/p', guardrailsId: 'normal', slices: [] },
+    guess: { choice: 'own', reason: 'a fix' } });
+  assert.equal(rc.guardrailsId, 'normal');
+  let sent = null;
+  await applyRoute(rc, { verb: 'own' }, { startRun: async (b) => { sent = b; return { status: 200, body: { runId: 'r' } }; } });
+  assert.equal(sent.guardrailsId, 'normal');
+  const w = featWork('active', ['done', 'planned']);
+  w.facts.feature.guardrailsId = 'normal';
+  assert.equal(shapeToolFit('route', { ...ROUTE_IN, guess: 'own' }, w).card.guardrailsId, 'normal');
+  const bare = routeCard({ text: 'h', feature: { id: 'f1', title: 'C', slices: [] }, guess: { choice: 'own' } });
+  sent = null;
+  await applyRoute(bare, { verb: 'own' }, { startRun: async (b) => { sent = b; return { status: 200, body: { runId: 'r' } }; } });
+  assert.equal(Object.hasOwn(sent, 'guardrailsId'), false);
+});
+
+test('guardrails: the landing facts of a plain run read its stored guardrails_id', () => {
+  const deps = { findPipelineRowById: (id) => ({ id, target: 'project', status: 'done', title: 't', project_key: 'nope', branch: null, guardrails_id: 'normal' }),
+    readPrState: () => null, readRunTags: () => [], readRunLabels: () => [] };
+  assert.equal(threadWork([{ pipelineId: 'tw000002' }], deps).run.guardrailsId, 'normal');
+  const legacy = { ...deps, findPipelineRowById: (id) => ({ ...deps.findPipelineRowById(id), guardrails_id: null }) };
+  assert.equal(threadWork([{ pipelineId: 'tw000003' }], legacy).run.guardrailsId, null);
+});

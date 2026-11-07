@@ -402,7 +402,7 @@ const REST_PR_FORGES = new Set(['azure', 'bitbucket']);
 import { checkRunPrBody, resolveRunPr } from '../src/core/pr-auto.mjs';
 import { createPrAutoFinisher, setPrAutoFinisher, prAutoFinisher } from '../src/core/pr-auto-finish.mjs';
 import { workspaceMembers as prStateMembers, memberPrTarget, relatedPrsBlock, withRelatedPrsBlock, openWorkspaceRunPrs, createPrWithDraftRetry } from '../src/core/workspace-prs.mjs';
-import { isSyntacticRef } from '../src/core/ask/proposal.mjs';
+import { isSyntacticRef, permissiveCardNote, CARD_FALLBACK_GUARDRAILS, GUARDRAILS_CARD_ENGINE_CODE } from '../src/core/ask/proposal.mjs';
 import { createRefResolver } from '../src/core/ask/refs.mjs';
 import { REFS_MAX } from '../src/shared/chip-refs.mjs';
 import { archivePipeline, restorePipeline, purgePipeline, discardRetainedWorktrees, applyRetainedWork, archiveKeepsWork } from '../src/core/pipeline-delete.mjs';
@@ -2938,18 +2938,21 @@ const startRunHandler = async (req, res) => {
     // Optional guardrailsId selects the named guardrail set that IS this run's
     // policy (applied uniformly to every member — guardrails are per-run only).
     // Absent/blank/null normalizes to the install's default set (Normal on a
-    // fresh install, Permissive on one from before v81 — defaultGuardrailSetId).
+    // fresh install, Permissive on one from before v81 — defaultGuardrailSetId), except on a Chat-card start (below).
     // A NON-STRING value is a caller bug and 400s (normalizing it
     // away would silently drop the requested policy). Unknown ids 400 up
     // front, like workflowId.
     if (body.guardrailsId != null && typeof body.guardrailsId !== 'string') {
       return badRequest(res, 'guardrailsId must be a string');
     }
-    const guardrailsId =
-      typeof body.guardrailsId === 'string' && body.guardrailsId.trim() ? body.guardrailsId.trim() : defaultGuardrailSetId();
+    const pickedGuardrails = typeof body.guardrailsId === 'string' && body.guardrailsId.trim() ? body.guardrailsId.trim() : null;
+    let guardrailsId = pickedGuardrails || defaultGuardrailSetId();
     if (!(await readGuardrailSet(guardrailsId))) {
       return badRequest(res, `unknown guardrailsId "${guardrailsId}"`);
     }
+    // D9 / R-sec-2 (like fireTicket's scheduled-card guard): a Chat card start lands on Permissive only when picked on the card.
+    const guardrailsNote = permissiveCardNote({ askLink, cardStart: req._cardStart === true, picked: pickedGuardrails, resolved: guardrailsId });
+    if (guardrailsNote) guardrailsId = CARD_FALLBACK_GUARDRAILS;
     // MCP registry (§6.2, D16): the per-run opt-out. Shape-checked here; entries that are not a
     // membership of the target's sets are dropped per target below — a stored schedule keeps the
     // body as sent, so its firing drops what is unknown by then.
@@ -2961,6 +2964,12 @@ const startRunHandler = async (req, res) => {
     const engineShape = runEngineOpts(body, hasWorkspace ? { workspace: true } : { projectDir: resolveProjectDir(body.projectDir) });
     if (engineShape.error) return badRequest(res, engineShape.error);
     const runEngine = engineShape.opts;
+    // A Chat-card start moved to Normal (guardrailsNote) on an engine other than Claude: the engine gate would refuse
+    // Normal's rules, and the card has no set picker or consent to offer. Say so up front, with the way out.
+    if (guardrailsNote && runEngine.engine && runEngine.allowUnguardedEngine !== true) {
+      return res.status(409).json({ code: GUARDRAILS_CARD_ENGINE_CODE,
+        error: `this run would start on the Normal guardrail set, which ${runEngine.engine} cannot enforce — start it from New run and pick a guardrail set` });
+    }
     // Signed out with no routed model, a Claude run can only fail on its first call: say so now, not as a paused run.
     if (!internal && !scanTarget && body.mock !== true && !mockEnabled({}) && (runEngine.engine || 'claude') === 'claude'
       && workflowNeedsModel(workflowRow)
@@ -3225,6 +3234,7 @@ const startRunHandler = async (req, res) => {
         ...(scanTarget && scanTarget.models ? { scanModels: scanTarget.models } : {}),
         ...(runOverlay ? { overlay: runOverlay } : {}),
         guardrailsId,
+        ...(guardrailsNote ? { guardrailsNote } : {}),
         ...(mcpOptOut.length ? { mcpOptOut } : {}),
         startedBy,
         ...(req._prWatchRunId ? { prWatchRunId: req._prWatchRunId } : {}),
@@ -3395,6 +3405,7 @@ const startRunHandler = async (req, res) => {
         workflowId,
         template: workflowRow,
         guardrailsId,
+        ...(guardrailsNote ? { guardrailsNote } : {}),
         ...(mcpOptOut.length ? { mcpOptOut } : {}),
         startedBy,
         ...(req._prWatchRunId ? { prWatchRunId: req._prWatchRunId } : {}),

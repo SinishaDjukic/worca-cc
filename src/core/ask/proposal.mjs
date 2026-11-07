@@ -50,6 +50,22 @@ import { ensureHouseBrief } from '../house-brief.mjs';
 import { presetProposalInput, PRESET_PROPOSAL_ERRORS } from './proposal-preset.mjs';
 import { readPreset as readPresetRow } from '../run-presets-store.mjs';
 
+/** The set a Chat-card start uses instead of a Permissive it did not pick (permissiveCardNote). */
+export const CARD_FALLBACK_GUARDRAILS = 'normal';
+/** 409 code: such a start on an engine other than Claude, which cannot hold that set's rules (the card has no picker). */
+export const GUARDRAILS_CARD_ENGINE_CODE = 'GUARDRAILS_CARD_ENGINE';
+
+/** D9 / R-sec-2 for a run a Chat card starts (POST /api/run): its run line when the resolved set is Permissive without the
+ *  person picking it on the card, else null; the caller then uses Normal. A run proposal card (askLink) sends the set its
+ *  picker shows, so a sent Permissive is a pick. A Changes or Route card (cardStart: the in-process _cardStart) has no
+ *  picker: it sends the changed run's set, so Permissive there is never a pick. No card at all keeps the install default. */
+export function permissiveCardNote({ askLink, cardStart, picked, resolved }) {
+  if (resolved !== 'permissive' || (!askLink && !cardStart)) return null;
+  if (askLink && !cardStart && picked) return null;
+  const from = picked ? 'the run it changes is on Permissive' : 'the install default is Permissive';
+  return `Guardrails: Normal, not Permissive — ${from}, and a run started from a Chat card uses Permissive only when it is picked on the card`;
+}
+
 export const PROPOSAL_ERRORS = Object.freeze({
   bothTargets: 'provide workspaceId OR projectKey, not both',
   noTarget: 'workspaceId or projectKey is required',
