@@ -216,3 +216,13 @@ body.bar-hidden .bar-show{display:none;}
 .bar-list .lr-end > [data-fold]{order:1;width:20px;height:20px;min-height:0;padding:0;}
 /* In the bars a row's mark is a touch smaller than on a page (18 of 20px); its place stays, so the tree's elbows still meet it. */
 :is(.bar-list, .bar-back) .lr-rail .kind-mark{scale:.9;}
+
+/* The bar switching places: the list that comes in fades in, the quick timing (nav.bar-switch). */
+@keyframes bar-in{from{opacity:0;}}
+:is(.bar-list, .bar-back, #side-rail nav.nav).is-in{animation:bar-in var(--motion-quick) var(--ease) both;}
+/* The hidden bar opens under a resting pointer only: a pointer passing along the edge waits the quick timing, 150ms; closing never waits; a keyboard
+   focus opens it at once. */
+#side-rail.is-strip:not(.is-resting):hover:not(:focus-within){transition:clip-path var(--motion-change) var(--ease) 150ms,box-shadow var(--motion-change) var(--ease) 150ms;}
+#side-rail.is-strip:not(.is-resting):hover:not(:focus-within) :is(.side-scroll, .bar-title, .bar-head .btn, .pz-acct-name, .pz-updown){transition-delay:210ms;}
+#side-rail.is-strip:not(.is-resting):hover:not(:focus-within) .bar-mini{transition-delay:150ms;}
+@media (prefers-reduced-motion: reduce){ :is(.bar-list, .bar-back, #side-rail nav.nav).is-in{animation:none;} }

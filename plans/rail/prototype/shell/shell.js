@@ -143,7 +143,15 @@
     side.dataset.bar = which;
     const act = { chat: ['New chat', 'ask'], tasks: ['New task', 'task'], schedules: ['New schedule', 'schedule'] }[which];
     document.getElementById('bar-head').innerHTML = R.barHead({ title: BAR_TITLE[which], home: which === 'home', logo: R.icon('worca-w', 20), action: act ? R.button({ label: act[0], kind: 'quiet', iconOnly: true, icon: R.icon('plus', 15), attrs: { 'data-bar-new': act[1] } }) : '', hide: collapsed && innerWidth > 760 ? R.button({ label: 'Keep the bar open', kind: 'quiet', iconOnly: true, icon: R.icon('bar-show', 15), attrs: { 'data-bar-pin': '', title: `Keep the bar open (${R.keyHint(['mod', '\\'], R.isMac(window))})` } }) : R.button({ label: 'Hide the bar', kind: 'quiet', iconOnly: true, icon: R.icon('bar-hide', 15), attrs: { 'data-bar-hide': '', title: `Hide the bar: it opens under the pointer (${R.keyHint(['mod', '\\'], R.isMac(window))})` } }) });
-    for (const [id, b] of [['bar-chat', 'chat'], ['bar-tasks', 'tasks'], ['bar-schedules', 'schedules']]) document.getElementById(id).hidden = which !== b;
+    // the bar switching places cross-fades: the list that comes in fades in (nav.bar-switch)
+    for (const [id, b] of [['bar-chat', 'chat'], ['bar-tasks', 'tasks'], ['bar-schedules', 'schedules'], ['bar-back', 'home']]) {
+      const list = document.getElementById(id); if (!list) continue;
+      const show = which === b, came = show && !!side.dataset.was && side.dataset.was !== which;
+      if (b !== 'home') list.hidden = !show;
+      if (came) { list.classList.remove('is-in'); void list.offsetWidth; list.classList.add('is-in'); }
+    }
+    if (which === 'home' && side.dataset.was && side.dataset.was !== 'home') { const nav = side.querySelector('nav.nav'); nav.classList.remove('is-in'); void nav.offsetWidth; nav.classList.add('is-in'); }
+    side.dataset.was = which;
     // Pinned first: what you pinned in any list; then the one thing you came from.
     const pins = (window.RailChats?.data().chats || []).filter((c) => c.pinned && !c.archived).map((c) => R.listRow({ title: c.title, meta: c.project || 'No project', mark: R.kindMark({ kind: c.kind === 'workflow' ? 'workflow' : 'chat' }), open: { 'data-back-to': `chat/${c.id}`, title: `Opens ${c.title}` } }));
     // One section, Recent: what you pinned (a pin at its end), then where you were, newest first, never twice.
@@ -160,7 +168,7 @@
   // ---- In view: what you keep an eye on, from any ⋯ or a task's head; its marks live in the top bar only, named like tabs, five at
   // most (marks only below 1100px; one on a phone), then +N opens the rest; its marks are the top bar's 20px ----
   const inViewMax = () => (innerWidth <= 760 ? 1 : 5);   // five at most, named like tabs above 1100px; one on a phone
-  let inViewMenu = false;
+  let inViewMenu = false, inViewCur = '';
   addEventListener('resize', () => drawInView());
   let inViewList = [{ type: 'task', id: 't4', chat: 'c4', title: 'Fix the flaky login' }];
   const allTasksOf = (c) => { const out = []; const walk = (t) => { out.push(t); (t.after || []).forEach(walk); }; (c?.tasks || []).forEach(walk); return out; };
@@ -179,8 +187,12 @@
     if (!hidden.length) inViewMenu = false;
     const slot = document.getElementById('in-view-slot');
     if (slot) slot.innerHTML = R.inView({
-      items: shown.map(({ x, now }) => { const [title, line] = now.label.split('\n'); return { title, line, icon: now.mark, attrs: { 'data-in-view': key(x) }, drop: { 'data-in-view-drop': key(x) } }; }),
+      items: shown.map(({ x, now }) => { const [title, line] = now.label.split('\n'); return { title, line, icon: now.mark, current: location.hash === `#${now.hash}`, attrs: { 'data-in-view': key(x) }, drop: { 'data-in-view-drop': key(x) } }; }),
       more: hidden.length ? { n: hidden.length, open: inViewMenu, attrs: { 'data-in-view-more': '' }, items: hidden.map(({ x, now }) => ({ id: key(x), text: now.label.split('\n')[0], mark: now.mark.replace('--km:20px', '--km:18px') })) } : null });
+    // a tab that just became the one you are on grows its line from the centre: drawn without it, then given it
+    const cur = slot?.querySelector('.in-view-i.is-current'), curKey = cur?.dataset.inView || '';
+    if (cur && curKey !== inViewCur) { cur.classList.remove('is-current'); requestAnimationFrame(() => requestAnimationFrame(() => cur.classList.add('is-current'))); }
+    inViewCur = curKey;
     syncEye(live);
     return live;
   }

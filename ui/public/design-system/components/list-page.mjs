@@ -16,6 +16,10 @@ import { bindLongPress, selectAllBox, selectionBar } from './selection-bar.mjs';
 import { keyFacts, listMove, openShortcutsSheet, shortcutAction } from './shortcuts.mjs';
 import { listEditor } from './tag-group.mjs';
 
+/** How long a date section takes to fold before it is drawn folded: the Rail's change timing. */
+const FOLD_MS = 200;
+/** How long a new row's drop and tint last: the Rail's flash timing. */
+const ARRIVE_MS = 1200;
 /** How many live marks in a list may breathe at once; the rest hold still (docs/rail/lists.md, list.calm-motion). */
 export const BREATHE = 3;
 /**
@@ -70,7 +74,7 @@ export function fitMenu(m, vw) {
  */
 export function listController({ root, spec }) {
   const doc = root.ownerDocument, win = doc.defaultView;
-  const s = { pick: selectClear(), menu: '', more: new Set(), shut: new Set(), groups: new Map(), rounds: new Set(), roundsAll: new Set(), confirm: null, pop: null, dialog: null, focus: '', flash: '', order: [], rows: new Map() };
+  const s = { pick: selectClear(), menu: '', more: new Set(), shut: new Set(), opening: '', seen: new Set(), arrived: new Map(), groups: new Map(), rounds: new Set(), roundsAll: new Set(), confirm: null, pop: null, dialog: null, focus: '', flash: '', order: [], rows: new Map() };
   const dots = () => icon('more', 16);
   // folded date sections are kept per list, so Older stays folded when you come back
   const FOLD_KEY = `worca-rail.fold.${spec.noun}`;
@@ -148,11 +152,17 @@ export function listController({ root, spec }) {
     const picked = (a?.dataset?.menuPick || a?.dataset?.pick || '').split('|')[0];
     const keep = focus || (picked ? `[data-menu="${q(picked)}"]` : ['data-menu', 'data-bulk', 'data-selall', 'data-fold', 'data-rounds'].filter((k) => a?.hasAttribute?.(k)).map((k) => `[${k}${a.getAttribute(k) && a.getAttribute(k) !== 'true' ? `="${q(a.getAttribute(k))}"` : ''}]`)[0]);
     const typed = root.querySelector('#list-pop-q')?.value, name = root.querySelector('[data-dlg-name]')?.value;
-    const toneOf = (el) => (el.querySelector(':scope > .lr-rail .kind-mark, :scope > .lr-rail .status-dot')?.className || '');
+    const toneOf = (el) => { const m = el.querySelector(':scope > .lr-rail .kind-mark, :scope > .lr-rail .status-dot'); return m ? `${m.className.replace(/ ?is-(news|still)/g, '')}|${m.querySelectorAll('circle[style]').length}` : ''; };   // its state and how far its ring has filled
     const was = new Map([...root.querySelectorAll('[data-row]')].map((el) => [el.dataset.row, toneOf(el)]));
     root.innerHTML = html(spec.view());
     // a row whose state changed since the last paint says so once: its mark pulses (list.news)
-    for (const el of root.querySelectorAll('[data-row]')) { const k = el.dataset.row; if (was.has(k) && was.get(k) && was.get(k) !== toneOf(el)) el.querySelector(':scope > .lr-rail .kind-mark, :scope > .lr-rail .status-dot')?.classList.add('is-news'); }
+    // a row whose state or stage changed since the last paint says so once: its ring fills to where it is, then it pulses (list.news);
+    // a row never seen before drops into its place, briefly tinted (list.arrives); none of it on the first paint
+    for (const el of root.querySelectorAll('[data-row]')) { const k = el.dataset.row; if (was.has(k) && was.get(k) && was.get(k) !== toneOf(el)) el.querySelector(':scope > .lr-rail .kind-mark, :scope > .lr-rail .status-dot')?.classList.add('is-news'); else if (s.seen.size && !s.seen.has(k)) s.arrived.set(k, Date.now());
+      // an arrival lasts its whole drop, through any repaint in between: it carries on where it was
+      const at = s.arrived.get(k); if (at !== undefined) { const gone = Date.now() - at; if (gone < ARRIVE_MS) { el.classList.add('is-arrived'); el.style.animationDelay = `-${gone}ms`; } else s.arrived.delete(k); } }
+    for (const k of s.rows.keys()) s.seen.add(k);   // a row is new once: a filter or a fold showing it again is not an arrival
+    if (s.opening) { root.querySelector(`[data-fold-section="${q(s.opening)}"]`)?.closest('.list-group')?.classList.add('is-opening'); s.opening = ''; }
     for (const b of root.querySelectorAll('[data-mixed]')) b.indeterminate = true;
     for (const m of root.querySelectorAll('.pz-menu, .rc-pop > .menu')) fitMenu(m, doc.documentElement.clientWidth);
     placePop();
@@ -213,7 +223,14 @@ export function listController({ root, spec }) {
     if ((el = t('[data-rounds-all]'))) { s.roundsAll.add(el.dataset.roundsAll); paint(); return; }
     if ((el = t('[data-open-round]'))) { const [k, n] = el.dataset.openRound.split('|'); spec.openRound?.(s.rows.get(k), +n); return; }
     if ((el = t('[data-more]'))) { s.more.add(el.dataset.more); paint(); return; }
-    if ((el = t('[data-fold-section]'))) { const id = el.dataset.foldSection; if (s.shut.has(id)) s.shut.delete(id); else s.shut.add(id); keepShut(); paint(); return; }
+    if ((el = t('[data-fold-section]'))) {
+      // a date section folds smoothly: its rows rise and fade, then it is drawn folded; opening, its rows come down (list.fold-motion)
+      const id = el.dataset.foldSection, group = el.closest('.list-group'), still = win.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+      if (s.shut.has(id)) { s.shut.delete(id); s.opening = id; keepShut(); paint(); return; }
+      s.shut.add(id); keepShut();
+      if (still || !group) { paint(); return; }
+      group.classList.add('is-folding'); win.setTimeout(() => paint(), FOLD_MS); return;
+    }
     if ((el = t('[data-retry]'))) { spec.retry?.(); paint(); return; }
     if ((el = t('[data-empty]'))) { spec.emptyAct?.(); return; }
     if ((el = t('[data-open]'))) {

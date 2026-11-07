@@ -852,6 +852,16 @@ test('calmMarks: one breath per tree, three per list', () => {
   assert.deepEqual(still, ['chat', 'c']);
 });
 
+test('kindMark: a filled ring step carries its order, so a changed mark can fill in turn', () => {
+  const m = C.kindMark({ kind: 'task', tone: 'run', stage: 1 });
+  assert.match(m, /style="--k:0"/); assert.doesNotMatch(C.kindMark({ kind: 'chat' }), /--k:/);
+});
+
+test('inView: the tab you are on carries aria-current and is-current', () => {
+  const h = C.inView({ items: [{ title: 'A', icon: '', current: true }, { title: 'B', icon: '' }] });
+  assert.equal((h.match(/aria-current="page"/g) || []).length, 1); assert.match(h, /is-named is-current/);
+});
+
 test('askWorcaMark: the bubble and its W at rest, dots while writing, filled while open; writing wins', () => {
   assert.match(C.askWorcaMark(), /M7.4 8.7/); assert.doesNotMatch(C.askWorcaMark(), /circle|mask/);
   assert.match(C.askWorcaMark({ answering: true }), /<circle/);

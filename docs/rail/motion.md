@@ -3,7 +3,8 @@
 | Rule | What | Why | Held by |
 |---|---|---|---|
 | `motion.timings` | Three timings, one curve; nothing slower, nothing bounces | Motion stays a signal | rail-docs |
-| `motion.fade` | Fade, never slide; nothing travels across the screen | What changed is clear without a trip | by hand |
+| `motion.fade` | Fade; nothing travels across the screen. Only a thing arriving or leaving its own place may move a few pixels (a new row drops 4px, a folding section's rows rise 6px) | What changed is clear without a trip | by hand |
+| `motion.small` | Small motion says what changed, once, and only where you look: a changed mark's ring fills to its stage then pulses; a new row drops in, tinted for the flash timing, once ever (a filter or a fold showing it again is no arrival); a date section's rows rise and fade as it folds and come down as it opens; the bar's list fades in when it switches place; the tab you are on grows its line from the centre and a pressed tab dips. All on the three timings, none under reduced motion | The screen never changes under you without saying how | design-system-components |
 | `motion.morph` | A page redraws with morph(), never raw innerHTML | What stays keeps its element and focus | design-system-components |
 | `motion.reduced` | Under reduced motion every timing is 0 | Respects the person's setting | by hand |
 | `motion.live-holds` | A live update never moves what you are reading | You never lose your place | by hand |

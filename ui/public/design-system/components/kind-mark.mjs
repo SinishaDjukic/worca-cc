@@ -45,12 +45,12 @@ export function markTone(st = {}) {
 export function kindMark({ kind = 'task', tone = 'idle', stage = -1, stages = STAGES, size = 20, title = '', keepType = false } = {}) {
   const noRing = kind === 'event' || tone === 'idle' || (kind === 'schedule' && tone === 'wait');
   const reach = tone === 'wait' ? 0 : stage < 0 ? 1 : Math.min(1, (stage + 1) / stages);
-  const arc = (from, len, stroke) => `<circle cx="10" cy="10" r="${R}" fill="none" stroke="${stroke}" stroke-width="1.1" stroke-dasharray="${len.toFixed(2)} ${(L - len).toFixed(2)}" stroke-dashoffset="${(L / 4 - from).toFixed(2)}"></circle>`;
+  const arc = (from, len, stroke, k = -1) => `<circle cx="10" cy="10" r="${R}" fill="none" stroke="${stroke}" stroke-width="1.1" stroke-dasharray="${len.toFixed(2)} ${(L - len).toFixed(2)}" stroke-dashoffset="${(L / 4 - from).toFixed(2)}"${k >= 0 ? ` style="--k:${k}"` : ''}></circle>`;   // --k: a filled step's order, so a changed mark's ring can fill in turn
   let ring = '';
   if (!noRing) {
     ring = arc(0, L, 'var(--line-2)');
     const steps = Math.round(48 * reach);
-    for (let k = 0; k < steps; k++) ring += arc(k * (L / 48), L / 48 + 0.15, `color-mix(in srgb, currentColor ${Math.round(30 + 70 * (k + 1) / steps)}%, var(--line-2))`);
+    for (let k = 0; k < steps; k++) ring += arc(k * (L / 48), L / 48 + 0.15, `color-mix(in srgb, currentColor ${Math.round(30 + 70 * (k + 1) / steps)}%, var(--line-2))`, k);
   }
   const centre = !noRing && !keepType && CENTRE[tone] ? CENTRE[tone] : KINDS[kind] || KINDS.task;
   const glyph = icon(centre, Math.round((noRing ? 15 : centre === 'question' || centre === 'alert' ? 14 : 11) * size / 20));

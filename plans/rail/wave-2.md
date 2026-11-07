@@ -24,7 +24,7 @@ The daily loop, shaped toward Wave 6 so it isn't redesigned twice (`waves.md`).
 | # | Page or piece | Starts from | State |
 |---|---|---|---|
 | 1 | Runs list | The reference build in the prototype, `lists-index.md` | C3 decided; the rest to shape |
-| 2 | Chats column | The reference build, `lists-index.md` | To shape |
+| 2 | Chats column | The reference build, `lists-index.md` | Shaped: the Chat list moved into the one bar |
 | 3 | New run | Today's capture and the prototype's dialog | To shape; the Form pattern |
 | 4 | Task estimation advisor | `waves.md`, shaped together with New run | An idea |
 | 5 | Chat home | Today's capture | C1 decided |
@@ -53,9 +53,9 @@ From `waves.md`, with what Agreed taught:
 6. **The gates** read the page by themselves; its key cases join `compare-pages.json` when it is built in the app.
 7. **Move to Agreed,** then one Feature per page to Worca's Shaper, behind the `rail` flag.
 
-## Shaped so far (7 Nov), in mocks
+## Shaped so far (7 Nov), in mocks and the prototype
 
-Mocks: `mocks/wave-2/` (`node plans/rail/mocks/wave-2/render.mjs`). These are directions Emil chose; none is built, and each still moves to Agreed with its page, rule, catalog entry, component and test.
+Mocks: `mocks/wave-2/` (`node plans/rail/mocks/wave-2/render.mjs`). These are directions Emil chose; those marked built are in the Shaping prototype, and each still moves to Agreed with its page, rule, catalog entry, component and test.
 
 | Direction | Mock |
 |---|---|
@@ -82,6 +82,15 @@ Mocks: `mocks/wave-2/` (`node plans/rail/mocks/wave-2/render.mjs`). These are di
 | **The empty, loading, offline and failed bar** say it in one line, from `listState` | 11 |
 | **Places by mode** come from today's levels, with Tasks and Schedules moved to Expert | 12 |
 | **Rename everywhere:** runs and builds become tasks. The screen moves with Wave 2; docs, CLI, API and settings keys rename at the final stage (Wave 5) | all |
+| **Places:** Worca's W is home: Places in Work, Build, Manage, Insight (a group keeps its head in every mode), Recent with every pin (five, then Show more) and the one last chat | built |
+| **The hidden bar** is a strip with Chats, Tasks and Schedules and their counts; it opens over the page under a pointer resting 150ms, its head button keeps it open; dragged under 264px it snaps hidden | built |
+| **A task's parts sit under its stages** (Decisions on Plan, Changes on Build, Activity on Review), each saying what it holds before it opens; the part that matters opens by itself; `#run/<task>/<part>` links one | built |
+| **Keep in view** is the browser's tabs: from any ⋯ or a task's eye, a mark and a short name in the top bar only, five at most, a line under the one you are on; a card on hover with × | built |
+| **Every list groups by date by default** (what waits on you first), one picker and one set of words from the library; date sections fold and stay folded; schedules by their next run | built |
+| **Running is ink, not a colour;** light's state colours deepened so each holds 3:1; one mark breathes per tree and three per list | built |
+| **The top bar:** one 20px size for its icons; Pulse shakes once on news; Ask worca is a wide speech bubble with the W, dots while it writes, filled while open | built |
+| **Small motion** says what changed: a ring fills, a new row drops in, a section folds, the bar fades between places | built |
+| **Backgrounds:** full on Chat home and the away screen; on every other page only in its margins | built |
 
 Decided rules these change: C1 (Chat home's list moves to the bar), C3 (Expert only), "no drawn rails" (the tree), the quiet grey finished step, `thing.slots` (stages read as a stream), `form.dialog` (New run), the conversation's rail, "the sidebar holds places".
 

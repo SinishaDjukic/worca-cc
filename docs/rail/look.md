@@ -5,6 +5,7 @@
 | `look.type-roles` | Every text takes a role from the scale; a head is never weaker than what it heads | The hierarchy reads the same everywhere | ds-check |
 | `look.tokens` | Colours, sizes and corners come from tokens, one family of neutrals, one surface | A page has no look of its own | ds-check |
 | `look.running-needs-apart` | Running is ink, not a colour: a mark's ring, the stepper's live cell, the stage bar and the timeline's tick for running work are `--ink-2`, and their ring and breath say it works. Colour is kept for what asks for you or went wrong (`--amber`, `--red`), what landed (`--green`, `--violet`), so in both themes the loudest thing is what waits on you | Running and needs-you ask opposite things; in dark the old gold out-shouted needs-you (12:1 against 6.9:1), in light it fell under 3:1 | by hand |
+| `look.state-contrast` | Every state a mark, a ring or a step shows holds 3:1 or more on the page and the surface, in light and in dark: running is `--ink-2`; in light the colours are deeper (`--amber` #C96512, `--red` #D2473A, `--green` #3C8C40, `--violet` #7464CC, `--slate` #6C7884), dark keeps its own | No theme lets a state fade; in light, done fell to 2.7:1 | rail-state-contrast |
 | `look.inter-at-graduation` | Inter replaces Poppins at graduation, one switch for everyone | Two faces on screen at once reads as a mistake | by hand |
 | `look.scrollbars` | Scrollbars are thin and appear as the mouse moves or while something scrolls, then go | A quiet page; nothing shifts when they show | design-system-components |
 | `look.violet-apart` | Violet means merged, or Worca writing in a field; never both | A dot never means AI | by hand |
@@ -51,7 +52,7 @@ the Rail look, so it can be judged in use.
 | `--float`, `--float-line` (menus, panels, popovers) | #FFFFFF, `--line` | #1D1D21, #323238 |
 
 - **Running and needs-you stay apart:** running marks and bars are `--ink-2` #63636B / #A1A1A9; needs-you is `--amber`
-  #E07A1F / #EE8A2C. `--peach` (#B39A0E / #ECD86A) stays only for the Working word's tint until it is reviewed.
+  #C96512 / #EE8A2C. `--peach` (#B39A0E / #ECD86A) stays only for the Working word's tint until it is reviewed.
 - **The step bar is quiet:** 4px; a step to come is `--line`, a finished one #C9C9CF / #4A4A52; only the asking
   or failed cell has colour; the live cell is ink and breathes.
 - **The metadata line:** the branch is `--ink-2`, so the PR number and the phrase read first.

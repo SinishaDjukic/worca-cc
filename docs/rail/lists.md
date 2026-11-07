@@ -40,7 +40,7 @@ long-press or `Select`, and while selecting a tap on a row ticks it instead of o
 Empty is EmptyState's one sentence and, when there is one, the way forward as its one quiet action (`No schedules
 yet.` · New schedule).
 
-**The one code.** `listSentence` draws the sentence for Pulse's Vitals and Updates, the Runs list and the Chats column;
+**The one code.** `listSentence` draws the sentence for Pulse's Vitals and Updates, the Tasks list and the Chat list in the bar;
 `listController` (`list-page.mjs`) is what a list page does: it draws the list from the rows a page names, and owns its
 menus, selecting, keys, `Show N more`, a group's ⌄, the strip, a Dialog and its editor. A page only names its rows, its
 sentence and what an action does. A row's end column holds its PR, its time or its count; its labels are text in its meta.

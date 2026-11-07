@@ -19,7 +19,7 @@ it pushes the page; from 761 to 1080px it covers the page's right side; at 760px
 width is dragged between 360 and 680px and kept. It opens with Motion's fade, the page narrowing with it, and closes
 at once. One side column at a time.
 
-**The Chats column** (reference for Wave 2) is a side column on the page's other side, with its own width: beside the conversation on Chat,
+**The Chats column** (reference for Wave 2; in Wave 2's Shaping it is gone, the Chat list lives in the one bar, `nav.one-bar`) is a side column on the page's other side, with its own width: beside the conversation on Chat,
 by the same three tiers and limits; at 760px and below it takes the window until a chat opens, and the conversation's
 list button brings it back.
 

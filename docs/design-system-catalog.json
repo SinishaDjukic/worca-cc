@@ -1093,7 +1093,7 @@
       "code": "ui/public/design-system/components/shell-parts.mjs#inView",
       "kind": "moving",
       "needs": [
-        "what you keep an eye on, from any page: still marks with short names in the top bar, like tabs; a card on hover, a way out of view"
+        "what you keep an eye on, from any page: still marks with short names in the top bar, like tabs, a line under the one you are on; a card on hover, a way out of view"
       ],
       "rules": [
         "nav.in-view"
