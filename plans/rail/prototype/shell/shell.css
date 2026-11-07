@@ -103,7 +103,7 @@
 .bar-list .lr-main{padding:3px 4px;margin:0;}
 .bar-list .lr-end{padding-top:5px;position:relative;}
 .bar-list .lr-end .rc-pop{display:none;}
-.bar-list .list-row:is(:hover,:focus-within) > .lr-end .rc-pop,.bar-list .lr-end .rc-pop:has(.menu){display:inline-flex;position:absolute;right:calc(100% + 2px);top:1px;background:var(--side-bg);border-radius:var(--r-sm);}   /* ⋯ beside the end, never over it */
+.bar-list .list-row:is(:hover,:focus-within) > .lr-end .rc-pop,.bar-list .lr-end .rc-pop:has(.menu){display:inline-flex;position:absolute;right:calc(100% + 2px);top:-3px;background:var(--side-bg);border-radius:var(--r-sm);}   /* ⋯ beside the end, never over it */
 body.view-rail-chat .main{display:flex;flex-direction:column;overflow:hidden;}
 .convo-answer{margin:6px 0 0 32px;}.convo-answer-go{margin-top:8px;}
 .schedule-title{margin:0;font:600 var(--fs-subpage)/1.3 var(--sans);letter-spacing:-.02em;}

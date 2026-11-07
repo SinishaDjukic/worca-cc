@@ -20,7 +20,7 @@
 **A list page** (Runs, Schedules; reference for Wave 2): the top bar's trail, then the title row with the page's one action at its right
 (`New schedule`), then a list. **A list** (runs, updates, files, PRs): divided ListRows on the rail. A row is its state mark on the rail (a status
 dot, or a tick box while selecting), a title line, a meta line, its time or figure at the right; the whole row opens
-its one target, so a fact in the row is text, never a second link. The row's own actions are a ⋯ at its right end
+its one target, so a fact in the row is text, never a second link. The row's own actions are a small ⋯ (22px, a 14px mark, centred on its title's line, inside the row) at its right end
 (the Runs list's row ⋯), the same CompactMenu as on its page. Rows sit in sections in a fixed order, newest first in each; a section with no rows is not drawn. Every list groups
 the same way, from the library (`byPart`, `BY_CHOICES`): **by date by default** (`dateSections`: what waits on you first,
 then Today, Yesterday, Previous 7 days, Previous 30 days, Older; what is still to come by its next run: Today, Tomorrow,

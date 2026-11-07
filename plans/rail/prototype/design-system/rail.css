@@ -1439,3 +1439,8 @@ canvas.dot-orb[data-orb]{border-radius:50%;outline:1px solid light-dark(var(--li
 .composer-queue{display:flex;flex-direction:column;gap:4px;margin-bottom:8px;}
 .composer-at{position:relative;}
 .composer-at > .menu{position:absolute;bottom:4px;left:12px;z-index:30;}
+
+/* A row's ⋯ and a list's own ⋯ (beside its sentence) are small: 22px, a 14px mark, centred on the title's line; a row
+   gives its words the room, not its menu. Everywhere a ListRow or a list head is used. */
+:is(.list-row .lr-end .rc-pop, .list-tools .rc-pop, .list-tools) > .btn.btn-icon{width:22px;height:22px;min-height:0;padding:0;}
+:is(.list-row .lr-end .rc-pop, .list-tools .rc-pop, .list-tools) > .btn.btn-icon svg{width:14px;height:14px;}
