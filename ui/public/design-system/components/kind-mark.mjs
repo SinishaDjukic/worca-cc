@@ -228,15 +228,18 @@ export function taskCard({ title, place = '', mark, word, detail = '', action = 
  * @param {string} [o.more]       Customise's rows, as markup; open when given with `open`
  * @param {boolean} [o.open]
  * @param {string} [o.nudge]      the line offering to shape it first, as markup (its button inside)
+ * @param {string} [o.start]      its primary's word: Start, Schedule, Start planning
+ * @param {string} [o.kicker]     Proposed, or Proposed · from preset Hotfix
+ * @param {string} [o.extra]      a quiet action at the row's far end (Open in the composer)
  * @param {object} [o.hooks]      { title, more, start, later }: each control's attributes
  * @param {object} [o.attrs]
  */
-export function taskProposal({ title, why = '', sentence, more = '', open = false, nudge = '', hooks = {}, attrs: a = {} }) {
+export function taskProposal({ title, why = '', sentence, more = '', open = false, nudge = '', start = 'Start', kicker = 'Proposed', extra = '', hooks = {}, attrs: a = {} }) {
   const btn = (label, kind, h, extra = {}) => button({ label, kind, attrs: { ...extra, ...(h || {}) } });
-  return `<article class="task-card rc tp"${attrs(a)}>${cardHead({ mark: kindMark({ kind: 'task', tone: 'idle', size: 16 }), kicker: 'Proposed', titleHtml: `<input class="tp-title"${attrs({ value: title, 'aria-label': 'Task title', spellcheck: 'false', ...(hooks.title || {}) })}>`, why })}`
+  return `<article class="task-card rc tp"${attrs(a)}>${cardHead({ mark: kindMark({ kind: 'task', tone: 'idle', size: 16 }), kicker, titleHtml: `<input class="tp-title"${attrs({ value: title, 'aria-label': 'Task title', spellcheck: 'false', ...(hooks.title || {}) })}>`, why })}`
     + `<section class="rc-card tp-body"${attrs({ 'aria-label': `Proposed: ${title}` })}><p class="tp-sentence">${sentence}</p>${nudge ? `<p class="tp-nudge">${nudge}</p>` : ''}`
     + `<div class="tp-more">${btn(open ? 'Hide Customise' : 'Customise', 'quiet', hooks.more, { 'aria-expanded': String(!!open), title: 'Title, labels, branch, memory, guardrails and more' })}${open && more ? `<div class="composer-more">${more}</div>` : ''}</div>`
-    + `<div class="tp-actions">${btn('Start', 'primary', hooks.start)}${btn('Not now', 'quiet', hooks.later)}</div></section></article>`;
+    + `<div class="tp-actions">${btn(start, 'primary', hooks.start)}${btn('Not now', 'quiet', hooks.later)}${extra ? `<span class="tp-extra">${extra}</span>` : ''}</div></section></article>`;
 }
 
 /**

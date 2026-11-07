@@ -1416,3 +1416,14 @@ canvas.dot-orb[data-orb]{border-radius:50%;outline:1px solid light-dark(var(--li
 /* A home with its composer in the middle (Chat, Tasks, Schedules): the background surrounds it on every side and fades in
    toward the composer, joining at the centre, rather than stopping at a column's edge. (look.backgrounds) */
 .main:has(.chat-home[data-home]) .page-bg,.main:has(#route-runs:not([hidden]) .chat-home) .page-bg,.main:has(#route-schedule:not([hidden]) .chat-home) .page-bg{-webkit-mask-image:radial-gradient(ellipse 560px 300px at 50% 52%,transparent 0,transparent 55%,rgba(0,0,0,.35) 75%,#000 100%);mask-image:radial-gradient(ellipse 560px 300px at 50% 52%,transparent 0,transparent 55%,rgba(0,0,0,.35) 75%,#000 100%);}   /* ds-ok: a mask, not a colour */
+
+/* TaskProposal at parity: the workflow in a line, Shaper's perspectives, the brief, the agents lane, Open in the composer. */
+.tp-what{margin:0;font-size:var(--fs-meta);color:var(--ink-3);}
+.tp-label{font-size:var(--fs-meta);color:var(--ink-2);margin-right:4px;}
+.tp-persp{display:flex;flex-wrap:wrap;align-items:center;gap:4px;}
+.tp-brief{display:flex;flex-direction:column;gap:6px;margin-bottom:8px;}
+.tp-agents{display:flex;flex-direction:column;gap:4px;margin-top:6px;}
+.tp-links{display:flex;gap:4px;}
+.tp-extra{margin-left:auto;}
+.tp-persp .btn[aria-pressed="true"]{color:var(--ink);background:var(--hover);box-shadow:inset 0 0 0 1px var(--line-2);}
+.tp-persp .btn[aria-disabled="true"]{cursor:default;}

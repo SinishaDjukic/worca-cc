@@ -81,15 +81,40 @@
     if (f.to && RM.cases?.some?.((c) => c.id === f.to)) { t.case = f.to; t.detail = R.runState(RM.stateOf(f.to), CTX).word; }
     window.RailChats.refresh(); paint(); say(f.say || label);
   }
+  // The proposed task, at dev's run proposal's parity, in Rail's words: the composer's sentence (with when), the workflow
+  // said in a line, the brief with its files, Shaper's perspectives, Customise (where it runs, branches, guardrails, labels,
+  // memory, asks you, and in Expert the agents), then Start (Schedule, Start planning), Not now, Open in the composer.
+  const WORKFLOWS = { Default: 'Plan, build and review, then a PR', Lean: 'Build and a quick review', Shaper: 'Up to 3 questions, then a plan you approve', 'Architecture (C4)': 'A C4 model first, then the plan' };
+  const WHEN = ['now', 'at 17:00', 'tonight at 02:00', 'every weekday at 09:00', 'after Add CSV export'];
+  const PERSPECTIVES = ['Product', 'Security', 'UX', 'Data', 'Performance', 'Operations'];
+  const EFFORT = ['low', 'medium', 'high'];
   function proposalHtml(x) {
-    if (x.later) return R.turnRow({ mark: R.kindMark({ kind: 'task', tone: 'idle', size: 16 }), text: `Set aside: <b>${esc(x.title)}</b>`, end: R.button({ label: 'Bring back', kind: 'quiet', attrs: { 'data-pp-back': x.id } }) });
+    if (x.later) return R.turnRow({ mark: R.kindMark({ kind: 'task', tone: 'idle', size: 16 }), text: `Not now: <b>${esc(x.title)}</b>`, end: R.button({ label: 'Bring back', kind: 'quiet', attrs: { 'data-pp-back': x.id } }) });
     const pp = (f, text, items, tip) => R.sentencePicker({ id: `pp-${x.id}-${f}`, text, tip, items: items.map((v) => ({ id: v, text: v, checked: v === text })), open: menu === `pp-${x.id}-${f}`, chevron: R.icon('chevron', 10) });
-    const sentence = W('Task') + W('on') + pp('project', x.project, PROJECTS, 'Which project') + W('with') + pp('workflow', x.workflow, ['Default', 'Lean', 'Shaper', 'Architecture (C4)'], 'Which workflow') + W('on') + pp('engine', x.engine, ENGINES, 'Which engine and model') + W('then') + pp('then', x.then, ['open a PR', 'leave a branch', 'merge into dev'], 'What happens when it is done');
-    const cr = (k, v) => `<div class="cr"><span>${k}</span><span>${v}</span></div>`;
-    const more = cr('Labels', 'billing') + cr('New branch', `feat/${x.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 28)}`) + cr('Asks you', 'When the plan has open questions') + cr('Memory', 'This project') + cr('Guardrails', 'Team default');
-    const nudge = x.nudge && x.workflow !== 'Shaper' ? `${R.kindMark({ kind: 'chat', tone: 'ask', size: 14 })}<span>This has open decisions. Shaper asks them first, then writes the requirements.</span>${R.button({ label: 'Shape it first', kind: 'quiet', attrs: { 'data-pp-shape': x.id } })}` : '';
-    return R.taskProposal({ title: x.title, why: x.why, sentence, more, open: x.open, nudge, hooks: { title: { 'data-pp-title': x.id }, more: { 'data-pp-more': x.id }, start: { 'data-pp-start': x.id }, later: { 'data-pp-later': x.id } }, attrs: { 'data-anchor': x.id } });
+    const shaper = x.workflow === 'Shaper', later = x.when && x.when !== 'now';
+    const sentence = W('Task') + W('on') + pp('project', x.project, PROJECTS, 'Which project') + W('with') + pp('workflow', x.workflow, Object.keys(WORKFLOWS), 'Which workflow') + W('on') + pp('engine', x.engine, ENGINES, 'Which engine and model') + W('·') + pp('effort', x.effort || 'high', EFFORT, 'How hard it thinks') + pp('when', x.when || 'now', WHEN, 'When it starts: now, at a time, repeating, or after another task') + W('then') + pp('then', x.then, ['open a PR', 'leave a branch', 'merge into dev'], 'What happens when it is done');
+    const brief = `<div class="tp-brief">${R.field({ id: `pp-brief-${x.id}`, label: 'Brief: what the first agent reads · Markdown', value: x.brief ?? x.why.replace(/^From this chat: /, ''), multiline: true, hint: `${(x.brief ?? x.why).length} characters`, attrs: { 'data-pp-brief': x.id } })}${(x.files || []).length ? `<span class="you-files">${x.files.map((f) => R.button({ label: f, kind: 'quiet', icon: R.icon('x', 11), attrs: { 'data-pp-unfile': `${x.id}|${f}`, title: `Removes ${f}` } })).join('')}</span>` : ''}</div>`;
+    const persp = shaper ? `<div class="tp-persp"><span class="tp-label">Perspectives</span>${PERSPECTIVES.map((v) => R.button({ label: v, kind: 'quiet', attrs: v === 'Product' ? { 'aria-pressed': 'true', 'aria-disabled': 'true', title: 'Product always reviews' } : { 'data-pp-persp': `${x.id}|${v}`, 'aria-pressed': String((x.persp || ['Product']).includes(v)), title: 'Adds or removes this perspective' } })).join('')}</div>` : '';
+    const what = `<p class="tp-what">${esc(WORKFLOWS[x.workflow] || '')}${later ? ` · starts ${esc(x.when)}` : ''}</p>`;
+    const row = (k, v) => `<div class="cr"><span>${k}</span><span>${v}</span></div>`;
+    const target = R.segmented({ label: 'Where it runs', hook: 'pp-target', items: ['No project', 'Project', 'Workspace'].map((v) => ({ id: `${x.id}|${v}`, label: v, on: (x.target || 'Project') === v })) });
+    const agents = R.shows('expert') ? `<div class="tp-agents"><span class="tp-label">Agents</span>${['Plan', 'Build', 'Review'].map((a) => { const g = (x.agents || {})[a] || {}; return `<div class="cr"><span>${a}</span><span>${pp(`model${a}`, g.model || x.engine, ENGINES, `${a}'s model`)}${W('·')}${pp(`eff${a}`, g.effort || x.effort || 'high', EFFORT, `${a}'s effort`)}${W('·')}${pp(`sub${a}`, g.sub || 'no sub-agents', ['no sub-agents', '2 sub-agents', '4 sub-agents'], `${a}'s sub-agents`)}${W('·')}${pp(`fan${a}`, g.fan || 'one at a time', ['one at a time', 'fan out 3'], `${a}'s fan-out`)}</span></div>`; }).join('')}<span class="tp-links">${R.button({ label: 'Reset to proposal', kind: 'quiet', attrs: { 'data-pp-reset': x.id } })}${R.button({ label: 'Save as project defaults', kind: 'quiet', attrs: { 'data-pp-save': x.id } })}</span></div>` : '';
+    const more = row('Where it runs', target)
+      + row('Source branch', pp('src', x.src || 'dev', ['dev', 'main', 'origin · latest'], 'Where it starts from'))
+      + row('Feature branch', R.field({ id: `pp-feat-${x.id}`, label: 'Feature branch', value: x.feature || `feat/${x.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 28)}`, attrs: { 'data-pp-feature': x.id } }))
+      + row('Run on the source branch', R.switchButton({ on: !!x.onSource, label: 'Run on the source branch', attrs: { 'data-pp-onsource': x.id } }))
+      + row('Base branch', pp('base', x.base || 'dev', ['dev', 'main'], 'Where its PR goes'))
+      + row('Guardrails', pp('guard', x.guard || 'Team default', ['Team default', 'Strict', 'Read only'], 'Applies to every agent in this task'))
+      + row('Labels', pp('labels', x.labels || 'billing', ['billing', 'hotfix', 'export', 'no label'], 'Its labels'))
+      + row('Memory', pp('memory', x.memory || 'This project', ['This project', 'None'], 'What it remembers'))
+      + row('Asks you', pp('asks', x.asks || 'When the plan has open questions', ['When the plan has open questions', 'Never', 'Before every step'], 'When it stops to ask'))
+      + agents;
+    const nudge = x.nudge && !shaper ? `${R.kindMark({ kind: 'chat', tone: 'ask', size: 14 })}<span>This has open decisions.</span>${R.button({ label: 'Run as is · ≈ $8 · ~25 min', kind: 'quiet', attrs: { 'data-pp-asis': x.id } })}${R.button({ label: 'Shape it first · ≈ $12 · ~40 min', kind: 'quiet', attrs: { 'data-pp-shape': x.id } })}` : '';
+    const kicker = x.preset ? `Proposed · from preset ${x.preset}` : 'Proposed';
+    const card = R.taskProposal({ title: x.title, why: x.why, sentence: sentence + what + persp, more: brief + more, open: x.open, nudge, hooks: { title: { 'data-pp-title': x.id }, more: { 'data-pp-more': x.id }, start: { 'data-pp-start': x.id }, later: { 'data-pp-later': x.id } }, start: later ? 'Schedule' : shaper ? 'Start planning' : 'Start', kicker, extra: R.button({ label: 'Open in the composer', kind: 'quiet', attrs: { 'data-pp-composer': x.id, title: 'Everything here, in the composer, to change before it starts' } }), attrs: { 'data-anchor': x.id } });
+    return card;
   }
+
   function turnHtml(x, i) {
     const fold = () => ({ 'data-fold-turn': String(i), ...(x.id ? { 'data-anchor': x.id } : {}) });
     if (x.t === 'you') return R.youTurn({ text: x.text, quote: x.quote || '', files: x.files || [], refs: (x.refs || []).map((r) => ({ text: r.title, mark: R.kindMark({ kind: 'task', tone: R.markTone(R.runState(RM.stateOf(r.case))), size: 14 }), attrs: { 'data-open-ref': r.case } })), attrs: { 'data-anchor': x.id || '' } });
@@ -246,8 +271,8 @@
   // ---- what a click or a key means here ----
   function pickMenu(id, v) {
     const pv = /^pv-(.+)$/.exec(id); if (pv) { const x = turns().find((y) => y.id === pv[1]); if (x) x.v = +v; menu = ''; paint(); return; }
-    const pm = /^pp-(.+)-(project|workflow|engine|then)$/.exec(id);
-    if (pm) { const x = turns().find((y) => y.id === pm[1]); if (x) x[pm[2]] = v; menu = ''; paint(); return; }
+    const pm = /^pp-(.+?)-(project|workflow|engine|effort|when|then|src|base|guard|labels|memory|asks|(model|eff|sub|fan)(Plan|Build|Review))$/.exec(id);
+    if (pm) { const x = turns().find((y) => y.id === pm[1]); if (x) { if (pm[3]) { x.agents = x.agents || {}; const g = (x.agents[pm[4]] = x.agents[pm[4]] || {}); g[{ model: 'model', eff: 'effort', sub: 'sub', fan: 'fan' }[pm[3]]] = v; } else x[pm[2]] = v; } menu = ''; paint(); return; }
     if (id === 'cl-label') { const c = chat(); c.labels = (c.labels || []).includes(v) ? c.labels.filter((l) => l !== v) : [...(c.labels || []), v]; window.RailChats.refresh(); menu = ''; refreshAll(); return; }
     if (id === 'cp-mode') { comp.mode = v.toLowerCase(); if (comp.mode !== 'task') comp.more = false; }
     else if (id === 'cp-plus') {
@@ -296,14 +321,23 @@
     if ((px = pp('data-pp-more'))) { px.open = !px.open; paint(); return; }
     if ((px = pp('data-pp-later'))) { px.later = true; paint(); say('Set aside: bring it back from the chat'); return; }
     if ((px = pp('data-pp-back'))) { px.later = false; paint(); return; }
+    if ((px = pp('data-pp-asis'))) { px.nudge = false; paint(); say('Runs as is'); return; }
+    if ((hit = on('[data-pp-persp]'))) { const [id, v] = hit.dataset.ppPersp.split('|'), x = turns().find((y) => y.id === id); if (x) { const l = x.persp || ['Product']; x.persp = l.includes(v) ? l.filter((z) => z !== v) : [...l, v]; paint(); } return; }
+    if ((hit = on('[data-pp-unfile]'))) { const [id, f] = hit.dataset.ppUnfile.split('|'), x = turns().find((y) => y.id === id); if (x) { x.files = (x.files || []).filter((z) => z !== f); paint(); } return; }
+    if ((hit = on('[data-pp-target]'))) { const [id, v] = hit.dataset.ppTarget.split('|'), x = turns().find((y) => y.id === id); if (x) { x.target = v; paint(); } return; }
+    if ((px = pp('data-pp-onsource'))) { px.onSource = !px.onSource; paint(); return; }
+    if ((px = pp('data-pp-reset'))) { px.agents = {}; paint(); say('Agents back to the proposal'); return; }
+    if ((px = pp('data-pp-save'))) { say(`Saved as ${px.project}'s defaults`); return; }
+    if ((px = pp('data-pp-composer'))) { comp = { ...comp, mode: 'task', text: px.brief ?? px.title, project: px.project, workflow: px.workflow, engine: px.engine, then: px.then, more: true }; px.later = true; paint(); root.querySelector('[data-composer-t]')?.focus(); say('In the composer: change anything, then start it'); return; }
     if ((px = pp('data-pp-shape'))) { px.workflow = 'Shaper'; paint(); say('Shaper will ask first, then write the requirements'); return; }
     if ((px = pp('data-pp-start'))) {
       // Start: the proposal becomes the running task card in its place
       const c = chat(), l = turns(), i = l.indexOf(px), n = Date.now().toString(36);
       const t = { id: `t${n}`, title: px.title, case: 'working', stage: 0, git: 'branch', branch: `feat/${px.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 24)}`, detail: `Plan · step 1 of 2 · ${px.workflow} on ${px.engine}` };
+      if (px.when && px.when !== 'now') { t.case = 'scheduled'; t.stage = -1; t.git = ''; t.detail = `Starts ${px.when}`; }
       c.tasks = [...(c.tasks || []), t]; c.state = 'following';
       l.splice(i, 1, { t: 'task', id: px.id, task: t.id });
-      window.RailChats.refresh(); paint(); say('Task started'); return;
+      window.RailChats.refresh(); paint(); say(t.case === 'scheduled' ? `Scheduled: starts ${px.when}` : px.workflow === 'Shaper' ? 'Planning started' : 'Task started'); return;
     }
     if ((hit = on('[data-open-task]'))) { const x = turns().find((y) => y.task === hit.dataset.openTask && (y.t === 'task' || y.t === 'schedule')); if (x) { const was = x.open; turns().forEach((y) => { y.open = false; }); x.open = !was; paint(); if (x.open) requestAnimationFrame(() => root.querySelector(`[data-anchor="${x.id}"]`)?.scrollIntoView({ block: 'start', behavior: 'smooth' })); } return; }   // How it ran opens the card in place, one at a time
     if ((hit = on('[data-open-sched]'))) { window.RailShell.go(`schedule/${hit.dataset.openSched}`); return; }   // its runs, by day
@@ -322,7 +356,7 @@
   }
   root.addEventListener('pointerover', (e) => { const t = e.target.closest('[data-tick]'); const id = t ? t.dataset.tick : null; if (id !== hover) { hover = id; paintTimelineHover(); } });
   root.addEventListener('focusin', (e) => { const t = e.target.closest('[data-tick]'); if (t && t.dataset.tick !== hover) { hover = t.dataset.tick; paintTimelineHover(); } });
-  root.addEventListener('input', (e) => { if (e.target.matches('[data-composer-t]')) { comp.text = e.target.value; size(e.target); } if (e.target.matches('[data-pp-title]')) { const x = turns().find((y) => y.id === e.target.dataset.ppTitle); if (x) x.title = e.target.value; } });
+  root.addEventListener('input', (e) => { if (e.target.matches('[data-composer-t]')) { comp.text = e.target.value; size(e.target); } if (e.target.matches('[data-pp-brief]')) { const x = turns().find((y) => y.id === e.target.dataset.ppBrief); if (x) x.brief = e.target.value; } if (e.target.matches('[data-pp-feature]')) { const x = turns().find((y) => y.id === e.target.dataset.ppFeature); if (x) x.feature = e.target.value; } if (e.target.matches('[data-pp-title]')) { const x = turns().find((y) => y.id === e.target.dataset.ppTitle); if (x) x.title = e.target.value; } });
   root.addEventListener('keydown', (e) => { if (e.target.matches('[data-composer-t]') && e.key === 'Enter' && !e.shiftKey && comp.mode === 'ask') { e.preventDefault(); send(); } });
   document.addEventListener('keydown', (e) => {
     if (side || opts.where || (e.key !== '[' && e.key !== ']') || root.hidden || e.target.matches?.('input, textarea, select')) return;
