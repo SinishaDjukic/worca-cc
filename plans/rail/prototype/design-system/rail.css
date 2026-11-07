@@ -1250,9 +1250,9 @@ th.rt-c{color:var(--ink-2);font-weight:500;}
 .composer-chips{display:flex;flex-wrap:wrap;gap:4px;}
 
 /* Background B: home in full; other pages in the margins beside the reading column. */
-/* The background steps under the chat: full in the margins, half at the column's edge, a fifth 70px in, gone 150px in
-   (its column is 680px): the fade happens under the chat, faint enough to read over. It never moves. (look.backgrounds) */
-.page-bg{position:absolute;inset:0;pointer-events:none;-webkit-mask-image:linear-gradient(to right,#000 0,#000 calc(50% - 400px),rgba(0,0,0,.5) calc(50% - 340px),rgba(0,0,0,.2) calc(50% - 270px),transparent calc(50% - 190px),transparent calc(50% + 190px),rgba(0,0,0,.2) calc(50% + 270px),rgba(0,0,0,.5) calc(50% + 340px),#000 calc(50% + 400px),#000 100%);mask-image:linear-gradient(to right,#000 0,#000 calc(50% - 400px),rgba(0,0,0,.5) calc(50% - 340px),rgba(0,0,0,.2) calc(50% - 270px),transparent calc(50% - 190px),transparent calc(50% + 190px),rgba(0,0,0,.2) calc(50% + 270px),rgba(0,0,0,.5) calc(50% + 340px),#000 calc(50% + 400px),#000 100%);}   /* ds-ok: a mask, not a colour */
+/* The background fades into the chat: full in the margins, half 50px before the rail, a quarter just before it, and its
+   last faint dots end on the rail's marks (the column is 680px, its marks at its edge). It never moves. (look.backgrounds) */
+.page-bg{position:absolute;inset:0;pointer-events:none;-webkit-mask-image:linear-gradient(to right,#000 0,#000 calc(50% - 450px),rgba(0,0,0,.5) calc(50% - 400px),rgba(0,0,0,.25) calc(50% - 360px),transparent calc(50% - 322px),transparent calc(50% + 322px),rgba(0,0,0,.25) calc(50% + 360px),rgba(0,0,0,.5) calc(50% + 400px),#000 calc(50% + 450px),#000 100%);mask-image:linear-gradient(to right,#000 0,#000 calc(50% - 450px),rgba(0,0,0,.5) calc(50% - 400px),rgba(0,0,0,.25) calc(50% - 360px),transparent calc(50% - 322px),transparent calc(50% + 322px),rgba(0,0,0,.25) calc(50% + 360px),rgba(0,0,0,.5) calc(50% + 400px),#000 calc(50% + 450px),#000 100%);}   /* ds-ok: a mask, not a colour */
 .page-bg .chat-home-bg{position:absolute;inset:0;}
 @media (max-width: 1180px){ .page-bg{display:none;} }
 .stage-stream{display:flex;flex-direction:column;gap:8px;padding-top:10px;}
