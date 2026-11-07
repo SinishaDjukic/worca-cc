@@ -16,6 +16,24 @@ import { bindLongPress, selectAllBox, selectionBar } from './selection-bar.mjs';
 import { keyFacts, listMove, openShortcutsSheet, shortcutAction } from './shortcuts.mjs';
 import { listEditor } from './tag-group.mjs';
 
+/** How many live marks in a list may breathe at once; the rest hold still (docs/rail/lists.md, list.calm-motion). */
+export const BREATHE = 3;
+/**
+ * Calm motion: in a row with work under it, only the deepest live thing breathes (a chat running one task: the task);
+ * then only the first BREATHE live marks of the list breathe, the rest hold still, their rings still saying they run.
+ * It sets `is-still` on the marks of the sections' rows, in place.
+ * @param {{rows:object[]}[]} sections
+ */
+export function calmMarks(sections) {
+  const LIVE = 'kind-mark is-run', STILL = 'kind-mark is-run is-still';
+  const under = (r) => [...(r.tree || []), ...(r.members || [])];
+  const live = (r) => !!r.mark && r.mark.includes(LIVE) && !r.mark.includes(STILL);
+  const settle = (r) => { const kids = under(r).map(settle).some(Boolean), self = live(r); if (kids && self) r.mark = r.mark.replace(LIVE, STILL); return kids || self; };
+  let n = 0;
+  const walk = (r) => { if (live(r)) { n += 1; if (n > BREATHE) r.mark = r.mark.replace(LIVE, STILL); } under(r).forEach(walk); };
+  sections.forEach((x) => { x.rows.forEach(settle); x.rows.forEach(walk); });
+  return sections;
+}
 /** How many rows a long section shows before Show N more; a section may name its own (Older shows 3). */
 export const LIST_SHOWN = 8;
 const ROUNDS_SHOWN = 5;
@@ -81,6 +99,7 @@ export function listController({ root, spec }) {
 
   function html(v) {
     s.rows = new Map(); s.order = [];
+    calmMarks(v.sections || []);
     const note = (r) => { s.rows.set(r.key, r); (r.members || []).forEach(note); (r.tree || []).forEach(note); };
     v.sections.forEach((x) => x.rows.forEach(note));
     const ready = !v.state || v.state === 'ready';

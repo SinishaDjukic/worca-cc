@@ -51,7 +51,7 @@ A Rail page is built by naming needs, not looks. Find the need, use its componen
 | Context sent with a message | ListEditor's removable item, in the composer | This page × |
 | **Showing** | | |
 | What is happening | StatusLine: its KindMark and the state word | Ready to merge, Paused |
-| What a row is and how it stands | KindMark: the type's icon, a smooth ring by main stage in the state's colour, a question, problem, pause or stop in its centre; it breathes while work happens and pulses once when its state changes | a task at Review |
+| What a row is and how it stands | KindMark: the type's icon, a smooth ring by main stage in the state's colour, a question, problem, pause or stop in its centre; running is ink, not a colour; it breathes while work happens (one per tree, three per list) and pulses once when its state changes | a task at Review |
 | Git's status at a row's end | GitMark, git's own icon; it pulses while Watch fixes | PR #1180, checks failing |
 | A task or a schedule in a conversation | TaskCard: its page's anatomy, compact before it starts | Add CSV export |
 | A stage of a task, read down | StageLine, its parts at its end | Plan · Decisions 3 |

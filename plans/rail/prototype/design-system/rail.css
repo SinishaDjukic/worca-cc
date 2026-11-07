@@ -97,7 +97,7 @@ html,body{height:auto;overflow:visible;margin:0;}
 .sc-seg{display:flex;gap:2px;height:4px;}   /* quiet: only the live cell has colour */
 .sc-cell{flex:1 1 0;min-width:0;border-radius:var(--r-xs);background:var(--line);transition:background-color var(--motion-change) var(--ease);}
 .sc-cell.is-done{background:var(--step-done);}   /* finished steps step back; the live cell leads */
-.sc-cell.is-now{background:var(--peach);animation:sc-breathe 1.6s ease-in-out infinite;}
+.sc-cell.is-now{background:var(--ink-2);animation:sc-breathe 1.6s ease-in-out infinite;}   /* running is ink, not a colour: colour is kept for what needs you or went wrong */
 .sc-cell.is-ask,.sc-cell.is-problem{background:var(--amber);}
 .sc-cell.is-failed{background:var(--red);}
 .sc-cell.is-merged{background:var(--violet);}
@@ -1095,7 +1095,8 @@ th.rt-c{color:var(--ink-2);font-weight:500;}
 .kind-mark{position:relative;display:inline-flex;align-items:center;justify-content:center;flex:none;width:var(--km,20px);height:var(--km,20px);color:var(--ink-2);}   /* ds-ok: a size or count the component sets on itself */
 .kind-mark .km-ring{position:absolute;inset:0;}
 .kind-mark.is-wait{color:var(--ink-3);}
-.kind-mark.is-run{color:var(--peach);animation:wr-pulse 1.6s ease-in-out infinite;}
+.kind-mark.is-run{color:var(--ink-2);animation:wr-pulse 1.6s ease-in-out infinite;}   /* running: ink; its ring and breath say it works */
+.kind-mark.is-still{animation:none;}   /* a live mark that holds still: its ring says it runs; one breath per tree, three per list */
 .kind-mark.is-ask,.kind-mark.is-act{color:var(--amber);}
 .kind-mark.is-fail{color:var(--red);}
 .kind-mark.is-ok{color:var(--green);}
@@ -1197,7 +1198,7 @@ th.rt-c{color:var(--ink-2);font-weight:500;}
 .tl-tick:focus-visible{outline:0;}
 .tl-tick.is-ask i,.tl-tick.is-act i{background:var(--amber);}
 .tl-tick.is-fail i{background:var(--red);}
-.tl-tick.is-run i{background:var(--peach);}
+.tl-tick.is-run i{background:var(--ink-2);}
 .tl-tick.is-ok i{background:var(--green);}
 .tl-tick.is-merged i{background:var(--violet);}
 .tline-card{position:absolute;right:30px;z-index:4;width:max-content;display:flex;gap:8px;align-items:flex-start;max-width:260px;margin-top:-18px;padding:8px 10px;border:1px solid var(--float-line);border-radius:var(--r-md);background:var(--float);box-shadow:var(--shadow-pop);font-size:var(--fs-meta);line-height:1.4;}
@@ -1219,7 +1220,7 @@ th.rt-c{color:var(--ink-2);font-weight:500;}
   .convo-scroll{padding:16px;}.convo-dock{padding:0 12px 10px;}.convo-you{max-width:88%;}
   .timeline{display:none;}.tl-list-btn{display:inline-flex;margin-left:auto;}
 }
-.stage-bar{margin-top:10px;color:var(--peach);}
+.stage-bar{margin-top:10px;color:var(--ink-2);}
 .stage-bar.is-ask,.stage-bar.is-act{color:var(--amber);}.stage-bar.is-fail{color:var(--red);}.stage-bar.is-ok{color:var(--green);}.stage-bar.is-merged{color:var(--violet);}.stage-bar.is-pause,.stage-bar.is-stop,.stage-bar.is-closed,.stage-bar.is-wait{color:var(--ink-3);}
 .sb-cells,.sb-labels{display:grid;grid-template-columns:repeat(var(--n,5),1fr);gap:4px;}   /* ds-ok: a size or count the component sets on itself */
 .sb-cells i{display:block;height:4px;border-radius:2px;background:var(--line);}   /* ds-ok: a hairline's own end */
@@ -1235,7 +1236,7 @@ th.rt-c{color:var(--ink-2);font-weight:500;}
 .rail-tip{position:fixed;z-index:200;max-width:280px;padding:6px 8px;border:1px solid var(--float-line);border-radius:var(--r-sm);background:var(--float);box-shadow:var(--shadow-pop);font:var(--fs-meta)/1.4 var(--sans);color:var(--ink);white-space:pre-line;pointer-events:none;}
 
 /* A stepper that deepens by main stage (stepper.mjs). */
-.sc-track.is-deep{--sc-tone:var(--peach);}
+.sc-track.is-deep{--sc-tone:var(--ink-2);}
 .sc-track.is-deep.is-ask,.sc-track.is-deep.is-act{--sc-tone:var(--amber);}.sc-track.is-deep.is-fail{--sc-tone:var(--red);}.sc-track.is-deep.is-ok{--sc-tone:var(--green);}.sc-track.is-deep.is-merged{--sc-tone:var(--violet);}.sc-track.is-deep.is-pause,.sc-track.is-deep.is-stop,.sc-track.is-deep.is-closed{--sc-tone:var(--ink-3);}
 .sc-track.is-deep .sc-cell.is-done{background:color-mix(in srgb, var(--sc-tone) var(--sc-mix,100%), var(--line-2));}   /* ds-ok: --sc-mix and --sc-tone are the stepper's own */
 

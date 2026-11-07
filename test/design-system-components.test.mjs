@@ -842,6 +842,16 @@ test('stepper: deepen colours each main stage up to where it is', () => {
   assert.match(h, /--sc-mix:65%/); assert.match(h, /is-deep is-run/); assert.doesNotMatch(C.stepper({ stages }), /sc-mix/);
 });
 
+test('calmMarks: one breath per tree, three per list', () => {
+  assert.equal(C.BREATHE, 3);
+  const live = (t) => ({ key: t, title: t, mark: C.kindMark({ kind: 'task', tone: 'run' }) });
+  const chat = { ...live('chat'), tree: [live('task')] };
+  const rows = [chat, live('a'), live('b'), live('c')];
+  C.calmMarks([{ rows }]);
+  const still = rows.flatMap((r) => [r, ...(r.tree || [])]).filter((r) => r.mark.includes('is-still')).map((r) => r.key);
+  assert.deepEqual(still, ['chat', 'c']);
+});
+
 test('topBarAction: with news, it shakes once (a class the look animates)', () => {
   assert.match(C.topBarAction({ label: 'Pulse', icon: '<svg></svg>', labelCls: 'x', news: true }), /class="[^"]*is-news/);
   assert.doesNotMatch(C.topBarAction({ label: 'Pulse', icon: '<svg></svg>', labelCls: 'x' }), /is-news/);

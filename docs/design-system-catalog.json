@@ -1244,6 +1244,20 @@
       ]
     },
     {
+      "name": "How many marks breathe at once",
+      "code": "ui/public/design-system/components/list-page.mjs#BREATHE",
+      "needs": [
+        "a list where only the work that matters moves: one breath per tree, three per list"
+      ]
+    },
+    {
+      "name": "Which marks hold still",
+      "code": "ui/public/design-system/components/list-page.mjs#calmMarks",
+      "needs": [
+        "only the deepest live thing in a tree breathes, and three per list"
+      ]
+    },
+    {
       "name": "The sections of what is to come",
       "code": "ui/public/design-system/components/list-parts.mjs#NEXT_RUN_SECTIONS",
       "needs": [
