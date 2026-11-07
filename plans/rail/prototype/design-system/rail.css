@@ -1295,7 +1295,7 @@ th.rt-c{color:var(--ink-2);font-weight:500;}
 .in-view-w + .in-view-w{border-left:1px solid var(--line);padding-left:2px;margin-left:2px;}
 /* the tab you are on: a thin ink line along its foot, grown from the centre; a press dips the tab */
 .in-view-i{position:relative;transition:transform var(--motion-quick) var(--ease),background-color var(--motion-quick) var(--ease);}
-.in-view-i::after{content:"";position:absolute;left:6px;right:6px;bottom:0;height:2px;border-radius:1px;background:var(--ink);transform:scaleX(0);transition:transform var(--motion-change) var(--ease);}
+.in-view-i::after{content:"";position:absolute;left:6px;right:6px;bottom:0;height:2px;border-radius:var(--r-xs);background:var(--ink);transform:scaleX(0);transition:transform var(--motion-change) var(--ease);}
 .in-view-i.is-current::after{transform:scaleX(1);}
 .in-view-i.is-current,.in-view-i.is-current .in-view-n{color:var(--ink);}
 .in-view-i:active{transform:scale(.96);}
@@ -1324,7 +1324,7 @@ th.rt-c{color:var(--ink-2);font-weight:500;}
 /* ---- small motion (docs/rail/motion.md): each says what changed, none under reduced motion ---- */
 /* a changed mark's ring fills to its stage in turn, then the mark pulses once */
 @keyframes km-seg{from{opacity:0;}to{opacity:1;}}
-.kind-mark.is-news .km-ring circle[style]{animation:km-seg var(--motion-quick) linear both;animation-delay:calc(var(--k) * var(--motion-change) / 48);}   /* the ring fills over the change timing */
+.kind-mark.is-news .km-ring circle[style]{animation:km-seg var(--motion-quick) linear both;animation-delay:calc(var(--k) * var(--motion-change) / 48);}   /* ds-ok: --k is each ring step's own order, set by kindMark; the ring fills over the change timing */
 /* a row that just arrived drops 4px into its place, its tint fading after */
 @keyframes lr-arrive{from{opacity:0;transform:translateY(-4px);background-color:var(--hover);}60%{opacity:1;transform:none;background-color:var(--hover);}to{background-color:transparent;}}
 .list-row.is-arrived{animation:lr-arrive var(--motion-flash) var(--ease) both;border-radius:var(--r-sm);}
