@@ -138,7 +138,7 @@ export const FLAGS = Object.freeze([
   entry({
     key: 'runSharing',
     title: 'Run sharing',
-    description: 'A project\'s "Share my runs" switch: while a run is active, Worca keeps one small record of it (status, phase, cost, PR link, who started it; no prompt or logs) on the project\'s worca-runs branch. History then lists teammates\' runs as read-only rows. Stays in Labs until the branch is pruned.',
+    description: 'A project\'s "Share my runs" switch: while a run is active, Worca keeps one small record of it (status, phase, cost, PR link, who started it; no prompt or logs) on the project\'s worca-runs branch. History then lists teammates\' runs as read-only rows. Stays in Labs while the record format may still change.',
     stage: 'experimental',
     default: false,
     owner: 'Bulibas',

@@ -19,6 +19,8 @@ import {
   END_STATUSES, RECORD_MAX_BYTES, cleanPrUrl, recordFromHarness, recordFromRow, sameRecord, serializeRecord, shareProjectOf,
 } from './record.mjs';
 import { publishFiles, RUNS_BRANCH, RUNS_SHARE_PROTECTION_HINT } from './branch.mjs';
+import { recordExpired, expiredPaths } from './retention.mjs';
+import { compactIfNeeded, COMPACT_COMMIT_LIMIT, COMPACT_RETRY_MS } from './compact.mjs';
 
 export const SHARE_WINDOW_MS = 30_000;
 export const KEEPALIVE_MS = 600_000;
@@ -38,10 +40,11 @@ const realClock = {
 let clock = realClock;
 let gitOverride = null;
 let maxBytes = RECORD_MAX_BYTES;
+let compactLimit = COMPACT_COMMIT_LIMIT;
 
 /**
  * projectKey → { key, dir, dirty: Map(runId → {harness?, force}), lastFlushAt, retryMs, timer, deps, attached: Map,
- * pushed: Map (attached runs only), inflight }
+ * pushed: Map (attached runs only), inflight, compactAfter (ms; no compaction before it, s3 D12) }
  */
 const projects = new Map();
 let prListenerOff = null;
@@ -80,7 +83,7 @@ export async function assertRunsShareCanStart(projectDir) {
 function entryFor(projectKey, projectDir) {
   let e = projects.get(projectKey);
   if (!e) {
-    e = { key: projectKey, dir: projectDir, dirty: new Map(), lastFlushAt: 0, retryMs: 0, timer: null, deps: {}, attached: new Map(), pushed: new Map(), inflight: null };
+    e = { key: projectKey, dir: projectDir, dirty: new Map(), lastFlushAt: 0, retryMs: 0, timer: null, deps: {}, attached: new Map(), pushed: new Map(), inflight: null, compactAfter: 0 };
     projects.set(projectKey, e);
   }
   if (projectDir) e.dir = projectDir;
@@ -257,6 +260,8 @@ async function flushLocked(e) {
         rec = row ? recordFromRow(row, { personKey: id.personKey, startedBy, prUrl, now }) : null;
       }
       if (!rec) continue;
+      // s3 D6: never write a record retention would prune at once (a PR link found for a run finished 15+ days ago).
+      if (recordExpired(rec, nowOf(e))) continue;
       if (!item.force && sameRecord(rec, e.pushed.get(runId))) continue;
       try {
         files[`runs/${rec.personKey}/${rec.runId}.json`] = serializeRecord(rec, maxBytes);
@@ -272,7 +277,20 @@ async function flushLocked(e) {
       e.retryMs = 0;
       return tooLarge ? { ok: false, code: 'RECORD_TOO_LARGE', stderr: tooLarge, hint: null, attempts: 0 } : { ok: true, pushed: false };
     }
-    const r = await publishFiles(e.dir, { files, message: `worca-runs: ${built.size} run(s)`, identity: id.identity, git: gitOf(e), hooks: e.deps.hooks || {} });
+    // s3 retention (D1/D4/D5): every attempt prunes expired records of its own parent in the same commit; fail-soft.
+    const prune = async (parent) => {
+      const p = await expiredPaths(e.dir, parent, { now: nowOf(e), git: gitOf(e) });
+      if (!p.ok) warn(`retention skipped: ${shareErrorText(p.stderr)}`);
+      return p;
+    };
+    const r = await publishFiles(e.dir, {
+      files,
+      message: (k) => `worca-runs: ${built.size} run(s)${k ? `, ${k} expired` : ''}`,
+      identity: id.identity,
+      git: gitOf(e),
+      hooks: e.deps.hooks || {},
+      prune,
+    });
     if (r.ok) {
       e.retryMs = 0;
       // Only an attached run needs the in-memory copy (D9 between its own flushes); a detached run's later PR update is
@@ -296,6 +314,7 @@ async function flushLocked(e) {
         if (url !== (rec.prUrl ?? null)) markDirty(e, runId);
       }
       if (e.dirty.size) schedule(e);
+      if (r.pushed) await compactAfterPush(e, r.sha, id.identity);
     } else {
       writeFailure(e.key, r.code, r.stderr);
       warn(`${e.key}: ${r.code} ${shareErrorText(r.stderr)}`);
@@ -305,6 +324,23 @@ async function flushLocked(e) {
   } catch (err) {
     requeue(e, batch, [...batch.keys()].filter((runId) => !tooLargeIds.has(runId)));
     throw err;
+  }
+}
+
+/**
+ * s3 D9–D12: past the commit limit, squash the branch this machine just pushed to (still inside the project lock). A
+ * refusal never touches `lastError` (the publish succeeded): one warning line; a non-stale refusal backs this project
+ * off for COMPACT_RETRY_MS. Never throws.
+ */
+async function compactAfterPush(e, tip, identity) {
+  if (nowOf(e) < (e.compactAfter || 0)) return;
+  try {
+    const c = await compactIfNeeded(e.dir, { tip, limit: compactLimit, identity, git: gitOf(e), hooks: e.deps.hooks || {} });
+    if (c.ok) return;
+    if (c.code === 'COMPACT_REJECTED') e.compactAfter = nowOf(e) + COMPACT_RETRY_MS;
+    warn(`${e.key}: compaction ${c.code} ${shareErrorText(c.stderr)}${c.hint ? ` (${c.hint})` : ''}`);
+  } catch (err) {
+    warn(`${e.key}: compaction failed ${shareErrorText(String(err?.message))}`);
   }
 }
 
@@ -368,6 +404,7 @@ export const _testing = {
   setGit(fn) { gitOverride = fn || null; },
   setMaxBytes(n) { maxBytes = n; },
   setSharedMax(n) { sharedMax = n; },
+  setCompactLimit(n) { compactLimit = n; },
   reset() {
     for (const e of projects.values()) {
       if (e.timer) clearTimerOf(e)(e.timer);
@@ -378,6 +415,7 @@ export const _testing = {
     gitOverride = null;
     maxBytes = RECORD_MAX_BYTES;
     sharedMax = SHARED_MAX;
+    compactLimit = COMPACT_COMMIT_LIMIT;
   },
   /** Resolves once no flush is in flight (a wait that, unlike drainRunShare, starts no flush itself). */
   async idle() { for (let e = [...projects.values()].find((x) => x.inflight); e; e = [...projects.values()].find((x) => x.inflight)) await e.inflight.catch(() => {}); },

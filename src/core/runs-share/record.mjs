@@ -10,6 +10,8 @@ export const RECORD_KEYS = Object.freeze([
   'status', 'updatedAt', 'v', 'workflowId',
 ].sort());
 export const RECORD_MAX_BYTES = 2048;
+/** The only path a record may sit at: `runs/<personKey>/<runId>.json` (moved from read.mjs, D8). */
+export const RECORD_PATH_RE = /^runs\/([0-9a-f]{16})\/([0-9a-f]{8})\.json$/;
 export const TERMINAL_STATUSES = Object.freeze(['done', 'error', 'stopped', 'interrupted']);
 /** A run in one of these is flushed at once on its `done` event (D8). */
 export const END_STATUSES = Object.freeze([...TERMINAL_STATUSES, 'paused']);
@@ -169,4 +171,17 @@ export function sanitizeRecord(obj) {
     && isIsoOrNull(r.finishedAt)
     && (r.prUrl === null || (typeof r.prUrl === 'string' && cleanPrUrl(r.prUrl) === r.prUrl));
   return ok ? { ...r } : null;
+}
+
+/** `ls-tree -r -z -l` output → entries; a size of `-` (not a blob) is NaN. */
+export function parseTreeListing(stdout) {
+  const out = [];
+  for (const item of String(stdout || '').split('\0')) {
+    if (!item) continue;
+    const tab = item.indexOf('\t');
+    if (tab < 0) continue;
+    const [mode, type, sha, size] = item.slice(0, tab).trim().split(/\s+/);
+    out.push({ mode, type, sha, size: size === '-' ? NaN : Number(size), path: item.slice(tab + 1) });
+  }
+  return out;
 }

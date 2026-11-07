@@ -10,16 +10,18 @@ import { runGit, fetchTeamBranch, MISSING_REMOTE_REF } from '../metrics/sync.mjs
 import { personKey as personKeyOf, PERSON_KEY_RE } from '../metrics/record.mjs';
 import { FETCH_TTL_MS, FETCH_FAIL_TTL_MS } from '../metrics/read.mjs';
 import { mapWithCap } from '../fanout.mjs';
-import { sanitizeRecord, RECORD_MAX_BYTES } from './record.mjs';
+import { sanitizeRecord, parseTreeListing, RECORD_MAX_BYTES, RECORD_PATH_RE } from './record.mjs';
 import { RUNS_BRANCH, RUNS_REMOTE_REF } from './branch.mjs';
 import { runsShareStartError, shareErrorText } from './publish.mjs';
+
+export { parseTreeListing } from './record.mjs';
 
 export const TEAM_RUNS_FETCH_TTL_MS = FETCH_TTL_MS;
 export const TEAM_RUNS_FAIL_TTL_MS = FETCH_FAIL_TTL_MS;
 /** A running record without an update for this long is stale (the publisher's keep-alive is 10 minutes). */
 export const TEAM_RUN_STALE_MS = 1_200_000;
 export const MAX_TEAM_RECORDS = 500;
-export const TEAM_PATH_RE = /^runs\/([0-9a-f]{16})\/([0-9a-f]{8})\.json$/;
+export const TEAM_PATH_RE = RECORD_PATH_RE;
 
 const FETCH_TIMEOUT_MS = 30_000;
 const BLOB_CACHE_MAX = 2000;
@@ -57,19 +59,6 @@ export async function myPersonKeys(projectKey, projectDir, { git = gitOf() } = {
     if (pk) keys.add(pk);
   } catch { /* the keys found so far */ }
   return keys;
-}
-
-/** `ls-tree -r -z -l` output → entries; a size of `-` (not a blob) is NaN. */
-export function parseTreeListing(stdout) {
-  const out = [];
-  for (const item of String(stdout || '').split('\0')) {
-    if (!item) continue;
-    const tab = item.indexOf('\t');
-    if (tab < 0) continue;
-    const [mode, type, sha, size] = item.slice(0, tab).trim().split(/\s+/);
-    out.push({ mode, type, sha, size: size === '-' ? NaN : Number(size), path: item.slice(tab + 1) });
-  }
-  return out;
 }
 
 function rememberBlob(sha, value) {

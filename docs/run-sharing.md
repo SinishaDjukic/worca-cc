@@ -6,8 +6,8 @@ Run sharing lets teammates see each other's runs without a server. Like team mem
 With **Share my runs** on, Worca keeps a small record of each of your runs on the branch, and History lists your
 teammates' records next to your own runs (see [Teammates' runs in History](#teammates-runs-in-history)).
 
-Run sharing is a Labs feature (flag `runSharing`, off by default). It stays in Labs until the branch is pruned
-automatically. With the flag off, nothing is pushed, the Settings card is hidden and
+Run sharing is a Labs feature (flag `runSharing`, off by default). It stays in Labs while the record format may
+still change. With the flag off, nothing is pushed, the Settings card is hidden and
 `GET /api/projects/:key/runs-share` answers 404.
 
 ## The switch
@@ -82,11 +82,38 @@ but it happens only while the Labs flag is on.
 - Worca lists at most 500 records per project. Anyone with push access can fill them and so hide other records.
 - Teammates' records carry no labels, so a Label filter hides them.
 
+## Keeping the branch small
+
+Worca keeps both the files and the history of `worca-runs` bounded, from the sharers' own machines (there is no
+server-side job):
+
+- **Old records are deleted after 14 days.** A finished record (`done`, `error`, `stopped`, `interrupted`) is
+  deleted once its `finishedAt` is more than 14 days old. Any other record (`running`, `pausing`, `paused`) is deleted
+  once its `updatedAt` is more than 14 days old, so a run paused or idle for 14 days is hidden from teammates until it
+  next updates. The deletes ride along in a normal publish commit ("worca-runs: 1 run(s), 2 expired"): any sharer's
+  publish prunes everyone's old records, judged by the publisher's clock. A record Worca cannot read (another format,
+  a newer record version, a path that does not match its record) is never deleted.
+- **The history is compacted to a single commit.** After a push, when the branch has more than 200 commits, the
+  publisher replaces it with one commit holding exactly the current files, and pushes it with
+  `--force-with-lease=refs/heads/worca-runs:<tip>`. If a teammate pushed in the meantime, git refuses that push, the
+  teammate's commit stays, and a later publish tries again. If the push is refused for another reason (a rule that
+  blocks force pushes), each publisher waits an hour on its own before it tries again.
+- Teammates' fetches follow the rewrite: Worca always fetches the branch with a `+` refspec, and a publisher whose
+  copy is older rebuilds its commit on the new one. Each machine keeps the old commits in its own object store until
+  its next `git gc`.
+
 ## Branch protection
 
-Worca pushes to `worca-runs` directly, without a pull request, and only as fast-forwards (never a force push). A
-repository whose rules protect every branch rejects those pushes. The card then shows "Push rejected · branch
-protection" with the fix: exempt `worca-runs` from branch protection in the repository rules.
+Worca pushes to `worca-runs` directly, without a pull request. Normal pushes are fast-forwards; the compaction above
+is the one force push Worca makes, on this branch only. So `worca-runs` must be exempt from both rules: the one that
+requires pull requests and the one that blocks force pushes.
+
+- A repository whose rules protect every branch rejects the normal pushes. The card then shows "Push rejected ·
+  branch protection" with the fix: exempt `worca-runs` from branch protection in the repository rules.
+- A rule that only blocks force pushes stops the compaction, not the sharing: publishing goes on and the history keeps
+  growing. The Run sharing card does not warn about it (Worca logs one `run sharing:` line). Check with
+  `git rev-list --count origin/worca-runs` after a `git fetch origin worca-runs`: a count far above 200 means the
+  compaction is blocked.
 
 If your CI runs on every branch, exclude `worca-runs` from its branch triggers: each push is a commit there.
 
@@ -102,3 +129,7 @@ it on their next run: everyone must switch it off.
 - A push cut short when Worca shuts down (it waits up to 5 seconds) is lost; the record stays at its last pushed state
   until the run resumes.
 - Anyone with push access to the repository can write into any path of the branch.
+- Clock skew: a publisher whose clock runs fast deletes records early, by at most its skew. A record with a
+  far-future `finishedAt` is never deleted.
+- In a shallow clone the commit count stops at the shallow boundary and may never pass 200, so that machine never
+  compacts; any teammate with a full clone does.

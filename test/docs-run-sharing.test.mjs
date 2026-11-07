@@ -11,3 +11,10 @@ test('the run-sharing doc names the branch, the protection exemption, the stop r
     assert.ok(text.includes(s), s);
   }
 });
+
+test('the run-sharing doc names the retention, the compaction and the force-push exemption (s3)', () => {
+  for (const s of ['14 days', 'single commit', 'force push', '--force-with-lease', 'exempt', 'git rev-list --count origin/worca-runs']) {
+    assert.ok(text.includes(s), s);
+  }
+  assert.equal(text.includes('until the branch is pruned'), false);
+});

@@ -16,6 +16,7 @@ import { personKey } from '../src/core/metrics/record.mjs';
 import { runGit, fetchTeamBranch } from '../src/core/metrics/sync.mjs';
 import { serializeRecord } from '../src/core/runs-share/record.mjs';
 import { publishFiles } from '../src/core/runs-share/branch.mjs';
+import { compactIfNeeded } from '../src/core/runs-share/compact.mjs';
 import {
   listTeamRuns, readProjectTeamRuns, parseTreeListing, myPersonKeys, teamRunRow,
   TEAM_RUNS_FETCH_TTL_MS, TEAM_RUNS_FAIL_TTL_MS, TEAM_RUN_STALE_MS, MAX_TEAM_RECORDS, _testing,
@@ -422,4 +423,22 @@ test('GET /api/team-runs: an unexpected throw answers a fixed 500', async () => 
     assert.equal(r.status, 500);
     assert.deepEqual(r.body, { error: 'could not list team runs' });
   } finally { console.error = prevErr; console.warn = prevWarn; }
+});
+
+test('a compacted branch still lists every row', async () => {
+  const w = await world();
+  const recs = [rec(), rec(), rec(), rec()];
+  for (const r of recs) await publish(w.mate, [r]);
+  const before = await w.read();
+  assert.equal(before.state, 'ok');
+  const ids = before.rows.map((r) => r.runId).sort();
+  assert.deepEqual(ids, recs.map((r) => r.runId).sort());
+  const tip = git(w.mate, 'rev-parse', 'refs/remotes/origin/worca-runs');
+  const c = await compactIfNeeded(w.mate, { tip, limit: 1 });
+  assert.equal(c.compacted, true, JSON.stringify(c));
+  w.clock.advance(61_000);
+  const after = await w.read();
+  assert.equal(after.state, 'ok');
+  assert.deepEqual(after.rows.map((r) => r.runId).sort(), ids);
+  assert.equal(git(w.me, 'rev-parse', 'refs/remotes/origin/worca-runs'), c.sha, 'the + refspec follows the rewrite');
 });

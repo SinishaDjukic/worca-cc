@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { git, makeOrigin, cloneAs, branchFiles, rejectAllPushes, useGitSandbox } from './helpers/metrics-git.mjs';
-import { buildCommit, publishFiles, RUNS_BRANCH, RUNS_REMOTE_REF, RUNS_SHARE_PROTECTION_HINT, README_TEXT } from '../src/core/runs-share/branch.mjs';
+import { buildCommit, publishFiles, RUNS_BRANCH, RUNS_REMOTE_REF, RUNS_SHARE_PROTECTION_HINT, RUNS_SHARE_COMPACT_HINT, README_TEXT } from '../src/core/runs-share/branch.mjs';
 import { runGit, identityArgs } from '../src/core/metrics/sync.mjs';
 import { worcaHome } from '../src/core/projects.mjs';
 
@@ -173,4 +173,74 @@ test('an ambient GIT_AUTHOR_NAME never reaches the commit; the temp dir is left 
   }
   const ups = seen.filter((args) => args.includes('update-ref'));
   assert.ok(ups.length >= 1 && ups.every((args) => args.includes(RUNS_REMOTE_REF)));
+});
+
+const ids = (dir, sha) => git(dir, 'ls-tree', '-r', '--name-only', sha).split('\n').filter(Boolean).sort();
+
+test('buildCommit removes listed paths and keeps written ones', { skip }, async () => {
+  const { a } = world();
+  const r1 = await publish(a, { ...rec(PA, '11111111'), ...rec(PA, '22222222'), ...rec(PB, '33333333') });
+  const b = await buildCommit(a, {
+    parent: r1.sha, files: rec(PA, '22222222', ',"x":1'), remove: [`runs/${PA}/11111111.json`, `runs/${PA}/22222222.json`], message: 'm', identity: [], git: runGit,
+  });
+  assert.deepEqual([b.ok, b.unchanged, b.removed], [true, false, 1]);
+  assert.deepEqual(ids(a, b.sha), ['README.md', `runs/${PA}/22222222.json`, `runs/${PB}/33333333.json`]);
+  assert.equal(git(a, 'show', `${b.sha}:runs/${PA}/22222222.json`), '{"runId":"22222222","x":1}', 'a written path is never removed');
+});
+
+test('a commit that only removes paths is not unchanged', { skip }, async () => {
+  const { a } = world();
+  const r1 = await publish(a, { ...rec(PA, '11111111'), ...rec(PA, '22222222') });
+  const b = await buildCommit(a, { parent: r1.sha, files: {}, remove: [`runs/${PA}/11111111.json`], message: 'm', identity: [], git: runGit });
+  assert.deepEqual([b.ok, b.unchanged, b.removed], [true, false, 1]);
+  assert.equal(git(a, 'rev-parse', `${b.sha}^`), r1.sha);
+  assert.deepEqual(ids(a, b.sha), ['README.md', `runs/${PA}/22222222.json`]);
+});
+
+test('buildCommit ignores remove paths outside runs/', { skip }, async () => {
+  const { a } = world();
+  const r1 = await publish(a, { ...rec(PA, '11111111'), [`runs/${PA}/11111111.json.bak`]: 'x\n', [`runs/${PA}/notes.txt`]: 'y\n' });
+  const seen = [];
+  const counting = (cwd, args, o) => { seen.push(args); return runGit(cwd, args, o); };
+  const b = await buildCommit(a, {
+    parent: r1.sha, files: {}, remove: ['README.md', '-x', `runs/${PA}/11111111.json.bak`, `runs/${PA}/notes.txt`, `runs/${PA}/../README.md`], message: 'm', identity: [], git: counting,
+  });
+  assert.deepEqual([b.ok, b.unchanged, b.removed], [true, true, 0]);
+  assert.equal(seen.some((args) => args.includes('--force-remove')), false);
+});
+
+test('a root commit ignores remove', { skip }, async () => {
+  const { a } = world();
+  const b = await buildCommit(a, { parent: null, files: rec(PA, '11111111'), remove: [`runs/${PB}/33333333.json`, `runs/${PA}/11111111.json`], message: 'm', identity: [], git: runGit });
+  assert.deepEqual([b.ok, b.unchanged, b.removed], [true, false, 0]);
+  assert.deepEqual(ids(a, b.sha), ['README.md', `runs/${PA}/11111111.json`]);
+});
+
+test('a throwing prune still publishes without removals', { skip }, async () => {
+  const { bare, a } = world();
+  await publish(a, rec(PA, '11111111'));
+  const seen = [];
+  const r = await publish(a, rec(PA, '22222222'), { prune: async (parent) => { seen.push(parent); throw new Error('boom'); } });
+  assert.deepEqual([r.ok, r.pushed, r.removed], [true, true, 0], JSON.stringify(r));
+  assert.equal(seen.length, 1);
+  assert.deepEqual(branchFiles(bare, RUNS_BRANCH), ['README.md', `runs/${PA}/11111111.json`, `runs/${PA}/22222222.json`]);
+  const r3 = await publish(a, rec(PA, '33333333'), { prune: async () => ({ ok: false, stderr: 'x' }) });
+  assert.deepEqual([r3.ok, r3.removed], [true, 0]);
+  const r4 = await publish(a, rec(PA, '44444444'), { prune: async () => ({ ok: true, paths: [`runs/${PA}/11111111.json`] }), message: (k) => `worca-runs: 1 run(s)${k ? `, ${k} expired` : ''}` });
+  assert.deepEqual([r4.ok, r4.removed], [true, 1]);
+  assert.equal(git(bare, 'log', '-1', '--format=%s', RUNS_BRANCH), 'worca-runs: 1 run(s), 1 expired');
+  assert.equal(branchFiles(bare, RUNS_BRANCH).includes(`runs/${PA}/11111111.json`), false);
+});
+
+test('the compaction hint names worca-runs and force pushes', () => {
+  assert.equal(RUNS_SHARE_COMPACT_HINT, 'allow `worca-runs` to be force-pushed by Worca (exempt it from branch protection): it squashes the branch to one commit');
+});
+
+test('buildCommit counts only removed paths the parent held', { skip }, async () => {
+  const { a } = world();
+  const r1 = await publish(a, { ...rec(PA, '11111111'), ...rec(PA, '22222222') });
+  const b = await buildCommit(a, { parent: r1.sha, files: {}, remove: [`runs/${PA}/11111111.json`, `runs/${PB}/99999999.json`], message: 'm', identity: [], git: runGit });
+  assert.deepEqual([b.ok, b.unchanged, b.removed], [true, false, 1]);
+  const none = await buildCommit(a, { parent: r1.sha, files: {}, remove: [`runs/${PB}/99999999.json`], message: 'm', identity: [], git: runGit });
+  assert.deepEqual([none.ok, none.unchanged, none.removed], [true, true, 0]);
 });

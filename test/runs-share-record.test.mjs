@@ -139,3 +139,18 @@ test('sanitizeRecord: exact key set and types', () => {
   assert.equal(sanitizeRecord({ ...rec, progress: 2 }), null);
   assert.equal(sanitizeRecord(null), null);
 });
+
+test('parseTreeListing and RECORD_PATH_RE live in record.mjs', async () => {
+  const rec = await import('../src/core/runs-share/record.mjs');
+  const read = await import('../src/core/runs-share/read.mjs');
+  assert.equal(typeof rec.parseTreeListing, 'function');
+  assert.equal(read.parseTreeListing, rec.parseTreeListing, 'read.mjs re-exports the same function');
+  assert.equal(read.TEAM_PATH_RE, rec.RECORD_PATH_RE);
+  assert.match('runs/0123456789abcdef/a1b2c3d4.json', rec.RECORD_PATH_RE);
+  assert.doesNotMatch('runs/0123456789abcdef/a1b2c3d4.json.bak', rec.RECORD_PATH_RE);
+  const NUL = String.fromCharCode(0);
+  assert.deepEqual(rec.parseTreeListing(['100644 blob abc 12\truns/x.json', '040000 tree def -\truns', ''].join(NUL)), [
+    { mode: '100644', type: 'blob', sha: 'abc', size: 12, path: 'runs/x.json' },
+    { mode: '040000', type: 'tree', sha: 'def', size: NaN, path: 'runs' },
+  ]);
+});
