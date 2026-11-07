@@ -71,7 +71,7 @@ Mocks: `mocks/wave-2/` (`node plans/rail/mocks/wave-2/render.mjs`). These are di
 | **The conversation on one rail;** thinking and commands fold, a failure opens itself | 6 |
 | **No New run button or dialog:** the composer says Ask, Task or Schedule, you pick it, and every New run function has a place | 7 |
 | **A task or a schedule opens like a chat:** a reading column, marks, a composer that goes to its chat. Pulse stays | 8 |
-| **Anchors:** on hover first: marks on the right edge, named on hover, `[` and `]` between them | 9 |
+| **Anchors are a timeline:** the whole chat as a strip on the right edge, each tick where its moment is, the band showing what is on screen. Hover a tick to see what is there; `[` and `]` step between them | 9 |
 | Chat home's line always names Worca: "What's next for Worca?" | 5 |
 | **Every feature sits under the house:** inside Chat, everything is about Chat. No row of places in the bar | 1, 12 |
 | **Asking about a task or schedule with no chat** starts a new chat and links it | 8 |
