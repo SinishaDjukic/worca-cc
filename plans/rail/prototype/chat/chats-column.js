@@ -24,12 +24,13 @@
   const markOf = (state, kind) => R.kindMark({ kind: kind === 'workflow' && state === 'idle' ? 'workflow' : 'chat', tone: toneOf(state), title: state === 'idle' ? R.CHAT_KINDS[kind]?.label || 'Chat' : R.chatState(state).word });
   const RM = window.RunCardModel;
   const taskMenu = (t) => [{ id: 'open-task', text: t.kind === 'schedule' ? 'Open schedule' : 'Open task', help: 'Opens its card in its chat' }, { id: 'in-view', text: window.RailShell?.inView.has(t.kind === 'schedule' ? 'schedule' : 'task', t.id) ? 'Out of view' : 'Keep in view', help: 'Its live mark in the top bar, on every page' }, ...(t.git === 'open' || t.git === 'fail' ? [{ id: 'watch', text: t.watch ? 'Stop watching' : 'Watch', help: 'Worca follows the PR and fixes failing checks for you' }] : []), { id: 'label-task', text: 'Label…', hint: hint('L'), help: 'Adds a label to this task' }, ...(has('advanced') ? [{ id: 'add-to-group', text: 'Add to group…', hint: hint('G'), help: 'Find a group, or make a new one' }] : []), { sep: true }, { id: 'archive', text: 'Archive', hint: hint('E'), help: 'Undo in the notice' }];
+  const KIND_OF = { feature: 'feature', workflow: 'workflow' };   // what a chat started: a Shaper task, a workflow run, else a plain task
   // What hangs under a chat: its tasks and schedules, in their order of waiting.
   const treeOf = (c, list) => list.map((t) => {
     const x = { t, c, key: `task:${t.id}` };
     if (t.kind === 'schedule') return { key: x.key, _x: x, title: t.title, mark: R.kindMark({ kind: 'schedule', title: t.detail }), end: t.time, tip: `${t.title}\n${t.detail}\nOpens the schedule`, current: false, menu: taskMenu(t) };
     const st = R.runState(RM.stateOf(t.case));
-    return { key: x.key, _x: x, title: t.title, mark: R.kindMark({ kind: 'task', tone: R.markTone(st), stage: t.stage, title: `${st.word} · ${t.detail || ''}` }), endMark: t.git ? R.gitMark({ status: t.git, watch: t.watch || '', title: t.watch ? `Watching · ${t.detail}` : t.branch }) : '', end: t.git ? '' : t.endWord || '', tip: `${t.title}\n${st.word} · ${t.detail || ''}\nOpens the task`, tree: t.after ? treeOf(c, t.after) : undefined, menu: taskMenu(t) };
+    return { key: x.key, _x: x, title: t.title, mark: R.kindMark({ kind: KIND_OF[t.kind] || 'task', tone: R.markTone(st), stage: t.stage, title: `${st.word} · ${t.detail || ''}` }), endMark: t.git ? R.gitMark({ status: t.git, watch: t.watch || '', title: t.watch ? `Watching · ${t.detail}` : t.branch }) : '', end: t.git ? '' : t.endWord || '', tip: `${t.title}\n${st.word} · ${t.detail || ''}\nOpens the task`, tree: t.after ? treeOf(c, t.after) : undefined, menu: taskMenu(t) };
   });
 
   // ---- the view ----

@@ -786,6 +786,13 @@ test('KindMark: the type until the state matters more; the ring fills by stage; 
   const live = C.kindMark({ kind: 'task', tone: 'run', stage: 2 });
   assert.match(live, /is-run/); assert.match(live, /km-ring/);
   assert.doesNotMatch(C.kindMark({ kind: 'chat' }), /km-ring/, 'an idle chat wears no ring');
+  // a Shaper task or a workflow run keeps its type in the centre while it works; only a question or a failure takes it
+  assert.match(C.kindMark({ kind: 'feature', tone: 'run', stage: 1 }), /km-ring/, 'its ring still says how far');
+  assert.doesNotMatch(C.kindMark({ kind: 'feature', tone: 'run', stage: 1 }), /sym-x|question/);
+  assert.equal(C.kindMark({ kind: 'feature', tone: 'run', stage: 1 }), C.kindMark({ kind: 'feature', tone: 'run', stage: 1, keepType: true }), 'the type keeps the centre');
+  assert.notEqual(C.kindMark({ kind: 'feature', tone: 'ask', stage: 1 }), C.kindMark({ kind: 'feature', tone: 'ask', stage: 1, keepType: true }), 'a question takes the centre');
+  assert.notEqual(C.kindMark({ kind: 'workflow', tone: 'fail', stage: 1 }), C.kindMark({ kind: 'workflow', tone: 'fail', stage: 1, keepType: true }), 'a failure takes the centre');
+  assert.equal(C.partsWord(['ok', 'merged', 'run']), '2 of 3');
   assert.doesNotMatch(C.kindMark({ kind: 'event', tone: 'fail' }), /km-ring/, 'an event is a moment, with no progress');
   assert.equal(C.markTone({ word: 'Needs you', sym: 'q' }), 'ask'); assert.equal(C.markTone({ word: 'Needs you', dot: 'is-amber' }), 'act');
   assert.equal(C.markTone({ word: 'Failed', sym: 'x' }), 'fail'); assert.equal(C.markTone({ word: 'Paused' }), 'pause'); assert.equal(C.markTone({ word: 'Merged' }), 'merged'); assert.equal(C.markTone({ word: 'Working', dot: 'is-peach is-pulse' }), 'run');

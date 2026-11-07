@@ -412,7 +412,7 @@
     // chat gets one, named after it. The page stays as openTaskPage, only until the card holds everything it does.
     openTask: (cs, chat, title) => {
       if (RM && title) RM.titles[cs] = title;
-      let cid = window.RailConversation?.chatOfCase(cs) || chat || '';
+      let cid = chat || window.RailConversation?.chatOfCase(cs) || '';   // the chat a row names wins: a case alone can be in several
       if (!cid && window.RailChats) {
         cid = window.RailChats.newChat(title || RM?.titles?.[cs] || 'A task', '');
         const c = window.RailChats.data().chats.find((x) => x.id === cid), st = RM?.stageOf?.(cs) || {};

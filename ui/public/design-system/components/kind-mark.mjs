@@ -10,6 +10,7 @@ import { button, splitButton } from './button.mjs';
 const STAGES = 5;
 const R = 9, L = 2 * Math.PI * R;
 const CENTRE = { ask: 'question', act: 'alert', fail: 'sym-x', pause: 'pause', stop: 'sym-stop' };
+const TYPED = new Set(['feature', 'workflow']), NEEDS_YOU = new Set(['ask', 'act', 'fail']);
 const KINDS = { chat: 'kind-chat', task: 'kind-task', schedule: 'kind-schedule', event: 'kind-event', feature: 'kind-feature', group: 'kind-group', workflow: 'kind-workflow' };
 
 /**
@@ -54,9 +55,18 @@ export function kindMark({ kind = 'task', tone = 'idle', stage = -1, stages = ST
     const steps = Math.round(48 * reach);
     for (let k = 0; k < steps; k++) ring += arc(k * (L / 48), L / 48 + 0.15, `color-mix(in srgb, currentColor ${Math.round(30 + 70 * (k + 1) / steps)}%, var(--line-2))`, k);
   }
-  const centre = !noRing && !keepType && CENTRE[tone] ? CENTRE[tone] : KINDS[kind] || KINDS.task;
+  const typed = TYPED.has(kind) && !NEEDS_YOU.has(tone);   // a Shaper task or a workflow run says so; only what needs you takes its centre
+  const centre = !noRing && !keepType && !typed && CENTRE[tone] ? CENTRE[tone] : KINDS[kind] || KINDS.task;
   const glyph = icon(centre, Math.round((noRing ? 15 : centre === 'question' || centre === 'alert' ? 14 : 11) * size / 20));
   return `<span class="kind-mark is-${tone}"${attrs({ style: `--km:${size}px`, title: title || null, role: title ? 'img' : null, 'aria-label': title || null, 'aria-hidden': title ? null : 'true' })}>${ring ? `<svg class="km-ring" width="${size}" height="${size}" viewBox="0 0 20 20" aria-hidden="true">${ring}</svg>` : ''}${glyph}</span>`;
+}
+
+/**
+ * How far a thing made of parts is, in words: "2 of 3" (parts merged, ready or applied, of all).
+ * @param {string[]} parts  markTone answers
+ */
+export function partsWord(parts = []) {
+  return `${parts.filter((t) => t === 'ok' || t === 'merged').length} of ${parts.length}`;
 }
 
 // Git's own icons (Octicons, MIT, github.com/primer/octicons): a person reads these as git before they read anything else.

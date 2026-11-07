@@ -47,6 +47,6 @@ export { listController, LIST_SHOWN, BREATHE, calmMarks, fitMenu } from './list-
 export { planBulk, skipText } from '../../../../src/shared/run-bulk.mjs';
 export { dismissOnOutside, neverOutside, REAL_CONTROL } from './dismiss.mjs';
 export { selectionBar, selectAllBox, bindLongPress } from './selection-bar.mjs';
-export { markTone, kindMark, gitMark, timeline, timelineCard, barHead, turnRow, composer, stageBar, cardHead, taskCard, taskProposal, changeProposal, turnDivider, planCard, filesCard, youTurn, stageLine, stagePart, thinkingRow } from './kind-mark.mjs';
+export { markTone, kindMark, partsWord, gitMark, timeline, timelineCard, barHead, turnRow, composer, stageBar, cardHead, taskCard, taskProposal, changeProposal, turnDivider, planCard, filesCard, youTurn, stageLine, stagePart, thinkingRow } from './kind-mark.mjs';
 export { tipPlace, watchTooltips } from './tooltip.mjs';
 export { orbMark, watchOrbs } from './orb.mjs';

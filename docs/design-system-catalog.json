@@ -928,7 +928,8 @@
       "code": "ui/public/design-system/components/kind-mark.mjs#kindMark",
       "kind": "telling",
       "needs": [
-        "what a row is and how it stands: type, state and progress in one mark"
+        "what a row is and how it stands: type, state and progress in one mark",
+        "a Shaper task or a workflow run shows its type in the centre; only a question or a failure takes it"
       ],
       "rules": [
         "list.kind-mark"
@@ -1317,6 +1318,17 @@
       "kind": "telling",
       "needs": [
         "the tone a state wears in a KindMark, from what the library says about it"
+      ],
+      "rules": [
+        "list.kind-mark"
+      ]
+    },
+    {
+      "name": "partsWord",
+      "code": "ui/public/design-system/components/kind-mark.mjs#partsWord",
+      "kind": "telling",
+      "needs": [
+        "how far a thing made of parts is, in words: 2 of 3"
       ],
       "rules": [
         "list.kind-mark"

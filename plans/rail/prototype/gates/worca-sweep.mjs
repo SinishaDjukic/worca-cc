@@ -125,7 +125,7 @@ for (const scheme of ['light', 'dark']) for (const w of [1280, 900, 760, 375]) {
   if (w > 760) {
     await p.goto(`${URL_}#chat`); await p.waitForTimeout(150);
     await step('a starter arms the composer with its chip', () => document.querySelector('[data-starter="workflow"]')?.click(), () => /Build workflow/.test(document.querySelector('.composer-intent')?.textContent || ''));
-    await step('Build workflow proposes a workflow', () => { const t = document.querySelector('#route-chat [data-composer-t]'); t.value = 'Review every PR twice'; t.dispatchEvent(new Event('input', { bubbles: true })); document.querySelector('#route-chat [data-cp-send]').click(); }, async () => { await new Promise((r) => setTimeout(r, 1700)); return /Proposed change · Workflow/.test(document.querySelector('#route-chat').textContent); });
+    await step('Build workflow proposes a workflow', () => { const t = document.querySelector('#route-chat [data-composer-t]'); t.value = 'Review every PR twice'; t.dispatchEvent(new Event('input', { bubbles: true })); document.querySelector('#route-chat [data-cp-send]').click(); }, async () => { await new Promise((r) => setTimeout(r, 1700)); return /Proposed workflow · round 1/.test(document.querySelector('#route-chat').textContent); });
     await p.goto(`${URL_}#chat`); await p.waitForTimeout(150);
     await step('Shaper proposes, then plans', () => document.querySelector('[data-starter="pin:Shaper"]')?.click(), () => /Shaper/.test(document.querySelector('.composer-intent')?.textContent || ''));
     await step('its proposal starts planning', () => { const t = document.querySelector('#route-chat [data-composer-t]'); t.value = 'Add a CSV export'; t.dispatchEvent(new Event('input', { bubbles: true })); document.querySelector('#route-chat [data-cp-send]').click(); }, async () => { await new Promise((r) => setTimeout(r, 1700)); return document.querySelector('[data-pp-start]')?.textContent === 'Start planning'; });
@@ -134,6 +134,10 @@ for (const scheme of ['light', 'dark']) for (const w of [1280, 900, 760, 375]) {
     await p.goto(`${URL_}#chat/c7`); await p.waitForTimeout(150);
     await step('a settings kind has its own choices', () => document.querySelector('[data-cp-act="a2|0"]')?.click(), () => /Allowed in this chat/.test(document.querySelector('#route-chat').textContent));
   }
+  // what a chat started: every task its own row, its icon names the type; a Shaper slice leads to its feature's card
+  await p.goto(`${URL_}#chat/c1`); await p.waitForTimeout(150);
+  await step('a Shaper slice is its own row with its type in the icon', () => {}, () => ['f5a', 'f5b', 'f5c'].every((id) => !!document.querySelector(`#bar-chat [data-row="task:${id}"] .kind-mark`)) && !!document.querySelector('#bar-chat [data-row="task:f5b"] .kind-mark .km-ring') && document.querySelector('#bar-chat [data-row="task:f5b"] .kind-mark').innerHTML.includes(window.RailUI.icon('kind-feature', 11)));
+  await step('a Shaper slice leads to its feature card in its chat', () => document.querySelector('#bar-chat [data-row="task:f5c"] .lr-main')?.click(), async () => { await new Promise((r) => setTimeout(r, 400)); return location.hash === '#chat/c5' && /Unified page navigation/.test(document.querySelector('#route-chat .is-flash')?.textContent || ''); });
   // In view: from a row's ⋯ into the top bar; its mark opens it
   await p.goto(`${URL_}#chat/c1`); await p.waitForTimeout(150);
   await step('Keep in view puts a mark in the top bar', () => { document.querySelector('#bar-chat [data-menu="row:task:t1"]')?.click(); document.querySelector('#bar-chat [data-menu-pick="row:task:t1|in-view"]')?.click(); }, () => innerWidth <= 760 || !!document.querySelector('#in-view-slot [data-in-view="task:t1"]'));

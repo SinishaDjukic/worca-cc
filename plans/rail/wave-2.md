@@ -96,6 +96,7 @@ Mocks: `mocks/wave-2/` (`node plans/rail/mocks/wave-2/render.mjs`). These are di
 | **Dev parity, flow by flow** (`chat-cards.md` › Parity): the proposal, Chat home's starters, Shaper's steps, Build workflow, Schedule, Track, Explain a diff, scripts, project, away, metrics, model, workspace, remember, find tasks | built, a few open |
 | **The composer:** a starter's chip, effort, context meter, queue, @ mentions, hands-free | built |
 | **Thinking is one line** with Worca's orb, its W facing you; **Ask worca** is a boxy bubble with the W | built |
+| **The bar says what a chat started:** every task its own row; its icon's centre names the type (Shaper, workflow, task, schedule), the ring keeps stage and state, a question or a failure takes the centre; a Shaper slice leads to its feature's card | built |
 
 Decided rules these change: C1 (Chat home's list moves to the bar), C3 (Expert only), "no drawn rails" (the tree), the quiet grey finished step, `thing.slots` (stages read as a stream), `form.dialog` (New run), the conversation's rail, "the sidebar holds places".
 
