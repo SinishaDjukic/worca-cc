@@ -16,7 +16,9 @@
   const NEEDS = () => R.runState('question').word;
   const has = (need) => R.shows(need);
   const hint = (...k) => R.keyHint(k, R.isMac(window));
-  const sectionOfChat = (c) => R.chatState(c.state).section;
+  // a chat whose task waits on you stays under Needs you, whatever the chat itself is doing (a member that needs you raises its group)
+  const asksInside = (c) => { const walk = (t) => (t.case && R.markTone(R.runState(window.RunCardModel.stateOf(t.case))) === 'ask') || (t.after || []).some(walk); return (c.tasks || []).some(walk); };
+  const sectionOfChat = (c) => (asksInside(c) ? 'needs' : R.chatState(c.state).section);
   const busyOf = (c) => R.chatState(c.state).busy || '';
   const toneOf = (state) => (state === 'needs-you' ? 'ask' : state === 'idle' ? 'idle' : 'run');
   const markOf = (state, kind) => R.kindMark({ kind: kind === 'workflow' && state === 'idle' ? 'workflow' : 'chat', tone: toneOf(state), title: state === 'idle' ? R.CHAT_KINDS[kind]?.label || 'Chat' : R.chatState(state).word });

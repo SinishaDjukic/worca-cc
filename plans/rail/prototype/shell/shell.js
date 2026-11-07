@@ -418,6 +418,7 @@
         const c = window.RailChats.data().chats.find((x) => x.id === cid), st = RM?.stageOf?.(cs) || {};
         if (c) { c.tasks = [{ id: `t-${cs}`, title: title || RM?.titles?.[cs] || 'A task', case: cs, stage: st.stage ?? 0, detail: st.label || '' }]; c.state = 'following'; }
         window.RailChats.refresh();
+        window.RailPulse?.say(`Opened in a new chat: ${title || RM?.titles?.[cs] || 'this task'}`);   // a chat that appears by itself says so
       }
       if (!cid) { window.RailShell.openTaskPage(cs, chat, title); return; }
       window.RailShell.go(`chat/${cid}`);

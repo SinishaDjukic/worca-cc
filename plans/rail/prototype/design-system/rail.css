@@ -1390,7 +1390,6 @@ canvas.dot-orb[data-orb]{border-radius:50%;outline:1px solid light-dark(var(--li
 .you-files .kind-chip{display:inline-flex;align-items:center;gap:4px;}
 
 /* TaskCard in the cards' shape: How it ran opens the stage stream under the card, on the same rail. */
-.task-card.is-compact > .turn-row{padding:10px 12px;border:1px solid var(--line);border-radius:var(--r-md);}
 .tc-stream{margin-top:12px;}
 .tp-menu{margin-left:auto;}
 
@@ -1444,3 +1443,31 @@ canvas.dot-orb[data-orb]{border-radius:50%;outline:1px solid light-dark(var(--li
    gives its words the room, not its menu. Everywhere a ListRow or a list head is used. */
 :is(.list-row .lr-end .rc-pop, .list-tools .rc-pop, .list-tools) > .btn.btn-icon{width:22px;height:22px;min-height:0;padding:0;}
 :is(.list-row .lr-end .rc-pop, .list-tools .rc-pop, .list-tools) > .btn.btn-icon svg{width:14px;height:14px;}
+
+/* One rail for every chat card (rail.one-rail): its mark on the rail's column, its title, line and body on the text edge,
+   as a turn's are; a one-line card is a plain row. */
+.convo-col .task-card > .rc-head{position:relative;padding-left:32px;}
+.convo-col .task-card .tp-kicker > :first-child{position:absolute;left:0;width:20px;display:grid;place-items:center;}
+.convo-col .task-card > :is(.rc-card, .tc-foot, .tc-stream){margin-left:32px;}
+.tr-end{display:inline-flex;align-items:center;gap:4px;}
+/* A destructive action is quiet red words, never a filled red button (act.slots) */
+.btn.btn-quiet.is-danger{color:var(--red-ink);}
+.btn.btn-quiet.is-danger:hover{background:var(--red-bg);}
+.tp-title-w{position:relative;display:flex;align-items:center;gap:6px;}
+.tp-edit{color:var(--ink-3);opacity:0;transition:opacity var(--motion-quick) var(--ease);}
+.tp-title-w:is(:hover,:focus-within) .tp-edit{opacity:1;}
+/* A field's label kept for screen readers where its row already names it */
+.fld-l.is-quiet{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;}
+.tp-agents .cr > span:last-child{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 6px;}
+.tp-agents > .tp-label{display:flex;align-items:center;gap:8px;}
+.ask-changes{display:flex;flex-direction:column;gap:8px;margin:8px 0 0 32px;}
+/* Chat home's More opens upward and keeps inside the window; a row's words can be its one target (a feature's slice) */
+.home-starters .rc-pop > .menu{top:auto;bottom:calc(100% + 4px);max-height:min(60vh,520px);overflow:auto;}
+.tr-link{padding:0;border:0;background:none;font:inherit;color:inherit;cursor:pointer;text-align:left;}
+.tr-link:hover b{text-decoration:underline;text-underline-offset:3px;}
+.tr-link:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:var(--r-xs);}
+/* A menu with any toggle in it keeps its toggle's room on every item, so all its words start on one edge */
+:is(.rc,.pz-app) .menu:has(.menu-item:is([role="menuitemradio"],[role="menuitemcheckbox"])) .menu-item[role="menuitem"]{display:grid;grid-template-columns:12px minmax(0,1fr) auto;column-gap:10px;}
+:is(.rc,.pz-app) .menu:has(.menu-item:is([role="menuitemradio"],[role="menuitemcheckbox"])) .menu-item[role="menuitem"]::before{content:"";grid-column:1;}
+:is(.rc,.pz-app) .menu:has(.menu-item:is([role="menuitemradio"],[role="menuitemcheckbox"])) .menu-item[role="menuitem"] > .mi-l{grid-column:2;}
+:is(.rc,.pz-app) .menu:has(.menu-item:is([role="menuitemradio"],[role="menuitemcheckbox"])) .menu-item[role="menuitem"] > .mi-hint{grid-column:3;}

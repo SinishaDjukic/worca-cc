@@ -14,11 +14,11 @@ import { attrs, esc } from './html.mjs';
  * @param {string} [o.error]        replaces the hint; the field says it is invalid
  * @param {object} [o.attrs]        on the input
  */
-export function field({ id, label, value = '', placeholder = '', type = 'text', multiline = false, hint = '', error = '', attrs: a = {} }) {
+export function field({ id, label, value = '', placeholder = '', type = 'text', multiline = false, hint = '', error = '', quietLabel = false, attrs: a = {} }) {
   const note = error ? `<span class="fld-err" id="${esc(id)}-note" role="alert">${esc(error)}</span>` : hint ? `<span class="fld-hint" id="${esc(id)}-note">${esc(hint)}</span>` : '';
   const common = { id, placeholder: placeholder || null, 'aria-invalid': error ? 'true' : null, 'aria-describedby': note ? id + '-note' : null, ...a };
   const input = multiline ? `<textarea class="textarea"${attrs({ rows: 3, ...common })}>${esc(value)}</textarea>` : `<input class="input"${attrs({ type, value, ...common })}>`;
-  return `<div class="fld"><label class="fld-l"${attrs({ for: id })}>${esc(label)}</label>${input}${note}</div>`;
+  return `<div class="fld"><label class="fld-l${quietLabel ? ' is-quiet' : ''}"${attrs({ for: id })}>${esc(label)}</label>${input}${note}</div>`;   // quietLabel: read aloud, not shown, where the row already names it
 }
 
 /**

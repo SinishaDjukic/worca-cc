@@ -68,8 +68,8 @@
       { t: 'you', id: 'a3', text: 'Bump the version to 1.20.0', when: '11:42' },
       { t: 'change', id: 'a4', kind: 'Version', title: 'Version bumped', rows: [{ name: 'package.json', before: '1.19.4', after: '1.20.0' }], state: 'applied' },
       { t: 'task', id: 'a4b', task: 't9s' },
-      { t: 'you', id: 'a5', text: 'Stop the dependency bump, it can wait', when: '11:44' },
-      { t: 'act', id: 'a6', mark: 'ask', text: '<b>Stop Nightly dependency bump?</b> It has run 12 minutes of Review; stopping loses them', actions: [['Stop', 'danger', 'Stopped Nightly dependency bump'], ['Keep running', 'quiet', 'Kept running']] },
+      { t: 'you', id: 'a5', text: 'Stop the flaky login fix, it can wait', when: '11:44' },
+      { t: 'act', id: 'a6', mark: 'ask', text: '<b>Stop Fix flaky login test?</b> 12 minutes of Review are lost', actions: [['Stop', 'danger', 'Stopped Fix flaky login test'], ['Not now', 'quiet', 'Kept running']] },
     ];
     if (c.id === 'c11') return [
       { t: 'you', id: 'a1', text: 'Who owns the cron parser?', when: 'Mon' },
@@ -97,11 +97,11 @@
         roles: [{ name: 'Product', ok: true, note: 'Columns match what support gets asked for' }, { name: 'Security', ok: false, note: 'Wants it behind a flag for a week' }, { name: 'UX', ok: true, note: 'Header names read well in Excel' }, { name: 'Data', ok: true, note: 'Totals reconcile with the invoice' }, { name: 'Performance', ok: true, note: 'Streams; fine past 50k rows' }] },
       { t: 'question', id: 'a3', text: 'Security and UX disagree on the rollout', options: ['Behind a flag for a week (Security)', 'To everyone at once (UX)'], pick: 0, when: '13:12' },
       { t: 'question', id: 'a4', text: 'How should it ship?', options: ['One PR', 'A stack of three PRs', 'One PR behind a flag'], pick: 2, when: '13:12' },
-      { t: 'change', id: 'a5', kind: 'Changes', title: 'Proposed changes', why: 'What Build will change, before it does.', rows: [{ name: 'export.mjs', before: 'loads every row', after: 'streams rows' }, { name: 'columns.mjs', before: '8 columns', after: '12 columns' }, { name: 'flags.json', before: '', after: 'csvExport, off' }], apply: 'Build this', state: 'proposed' },
+      { t: 'change', id: 'a5', kind: 'Changes', title: 'Proposed changes', why: 'What Build will change, before it does.', rows: [{ name: 'export.mjs', before: 'loads every row', after: 'streams rows' }, { name: 'columns.mjs', before: '8 columns', after: '12 columns' }, { name: 'flags.json', before: '', after: 'csvExport, off' }], apply: 'Start building', state: 'proposed' },
       { t: 'cmds', text: 'Agreed requirements · 8, by perspective', end: '', body: 'Product: twelve columns in the invoice table’s order\nSecurity: behind a flag for a week\nUX: header names in plain words\nData: totals reconcile with the invoice\n…' },
-      { t: 'feature', id: 'a7', title: 'CSV export, in three runs', split: true, slices: [{ title: 'Columns and order', detail: 'Build, review', case: 'scheduled', stage: -1 }, { title: 'Dates and money', detail: 'Build, review', case: 'scheduled', stage: -1 }, { title: 'Behind a flag', detail: 'Build', case: 'scheduled', stage: -1 }] },
-      { t: 'gate', id: 'a8', title: 'A decision is needed', line: 'Review found 2 issues in Columns and order', actions: [['Accept as is', 'primary', 'Accepted as is: manual tests start'], ['Run another cycle', 'quiet', 'One more Build and Review round'], ['Stop', 'quiet', 'Stopped at the review']] },
-      { t: 'ship', id: 'a6', title: 'Ship CSV export', reqs: [{ text: 'Twelve columns in the table’s order', v: 'Met' }, { text: 'Dates in ISO 8601', v: 'Met' }, { text: 'Behind a flag for a week', v: 'Not met: moved to Run 4' }] },
+      { t: 'feature', id: 'a7', title: 'CSV export, in three tasks', split: true, slices: [{ title: 'Columns and order', detail: 'Build, review', case: 'scheduled', stage: -1 }, { title: 'Dates and money', detail: 'Build, review', case: 'scheduled', stage: -1 }, { title: 'Behind a flag', detail: 'Build', case: 'scheduled', stage: -1 }] },
+      { t: 'gate', id: 'a8', title: 'A decision is needed', line: '2 issues in Columns and order', actions: [['Accept as is', 'primary', 'Accepted as is: manual tests start'], ['Run another cycle', 'quiet', 'One more Build and Review round'], ['Stop', 'quiet', 'Stopped at the review']] },
+      { t: 'ship', id: 'a6', title: 'Ship CSV export', reqs: [{ text: 'Twelve columns in the table’s order', v: 'Met' }, { text: 'Dates in ISO 8601', v: 'Met' }, { text: 'Behind a flag for a week', v: 'Not met: moved to a later task' }] },
     ];
     if (c.id === 'c14') return [
       { t: 'you', id: 'a1', text: 'This is what the customer sent. Same bug as last year?', refs: [{ title: 'Add CSV export', case: 'question' }], quote: 'The total on invoice 4411 is off by one cent', files: ['invoice-4411.pdf', 'screenshot.png'], when: 'Oct 2' },
@@ -116,9 +116,9 @@
     ];
     if (c.id === 'c7') return [
       { t: 'you', id: 'a1', text: 'Check what Stripe says about CSV exports', when: 'Oct 3' },
-      { t: 'change', id: 'a2', kind: 'Web access', title: 'Read stripe.com/docs', why: 'This chat wants to read one page on the web.', rows: [{ name: 'Site', before: '', after: 'stripe.com' }], actions: [['Allow in chat', 'primary', 'Allowed in this chat'], ['Always allow', 'quiet', 'Always allowed'], ['Deny', 'quiet', 'Denied']], state: 'proposed' },
+      { t: 'change', id: 'a2', kind: 'Web access', title: 'Read stripe.com/docs', why: 'This chat wants to read one page on the web.', rows: [{ name: 'Site', before: '', after: 'stripe.com' }], actions: [['Allow in chat', 'primary', 'Allowed in this chat'], ['Always allow', 'quiet', 'Always allowed'], ['Not now', 'quiet', 'Not allowed']], state: 'proposed' },
       { t: 'you', id: 'a3', text: 'Move the nightly export check to 03:00', when: 'Oct 3' },
-      { t: 'change', id: 'a4', kind: 'Schedule', title: 'Nightly export check', why: 'Proposed schedule change.', rows: [{ name: 'Runs', before: 'every day at 02:00', after: 'every day at 03:00' }, { name: 'Next runs', before: '', after: 'tonight 03:00 · tomorrow 03:00' }], actions: [['Move', 'primary', 'Moved to 03:00'], ['Run now', 'quiet', 'Running now'], ['Delete', 'quiet', 'Deleted the schedule'], ['Not now', 'quiet', 'Not changed']], state: 'proposed' },
+      { t: 'change', id: 'a4', kind: 'Schedule', title: 'Nightly export check', rows: [{ name: 'Runs', before: 'every day at 02:00', after: 'every day at 03:00' }, { name: 'Next', before: '', after: 'tonight 03:00 · tomorrow 03:00' }], actions: [['Move', 'primary', 'Moved to 03:00'], ['Run now', 'quiet', 'Running now'], ['Not now', 'quiet', 'Not changed']], menuItems: ['Delete schedule'], state: 'proposed' },
       { t: 'you', id: 'a5', text: 'Take docs-site out of the Billing workspace', when: 'Oct 3' },
       { t: 'change', id: 'a6', kind: 'Workspace', title: 'Remove docs-site', rows: [{ name: 'Workspace', before: '', after: 'Billing' }, { name: 'Remove', before: '', after: 'docs-site' }], choice: { label: 'Re-scan after', items: ['No re-scan', 'Partial re-scan', 'Full re-scan'], rec: 'Partial re-scan' }, actions: [['Remove', 'danger', 'Removed docs-site'], ['Not now', 'quiet', 'Not changed']], state: 'proposed' },
     ];

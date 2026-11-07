@@ -23,7 +23,8 @@ export const ICONS = {
   pr: '<circle cx="6" cy="6" r="2.2"></circle><circle cx="6" cy="18" r="2.2"></circle><circle cx="18" cy="18" r="2.2"></circle>' + P('M6 8.2v7.6') + P('M18 15.8V9a3 3 0 0 0-3-3h-4') + P('M13 3.5 10.5 6 13 8.5'),
   up: P('M12 19V5M6 11l6-6 6 6'),
   download: P('M12 4v11M7 10.5l5 5 5-5M5 20h14'),
-  file: P('M7 3h7l4 4v14H7z') + P('M14 3v4h4'),   // a file, in the lean set: a page with its corner turned
+  file: P('M7 3h7l4 4v14H7z') + P('M14 3v4h4'),
+  edit: P('M4 20h4L18.5 9.5l-4-4L4 16z') + P('M13 7l4 4'),   // edit in place: a pencil, lean   // a file, in the lean set: a page with its corner turned
   play: P('M8 5.5v13l10.5-6.5z'),
   after: P('M5 12h11M12 7l5 5-5 5M20 5v14'),
   folder: P('M3 7.5A1.5 1.5 0 0 1 4.5 6h4l2 2.2H19.5A1.5 1.5 0 0 1 21 9.7v8.3A1.5 1.5 0 0 1 19.5 19.5h-15A1.5 1.5 0 0 1 3 18z'),

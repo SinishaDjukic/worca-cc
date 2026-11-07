@@ -5,7 +5,7 @@ import { attrs, esc } from './html.mjs';
 import { icon } from './icons.mjs';
 import { statusLine } from './status-line.mjs';
 import { orbMark } from './orb.mjs';
-import { button } from './button.mjs';
+import { button, splitButton } from './button.mjs';
 
 const STAGES = 5;
 const R = 9, L = 2 * Math.PI * R;
@@ -230,16 +230,17 @@ export function taskCard({ title, place = '', mark, word, detail = '', action = 
  * @param {string} [o.nudge]      the line offering to shape it first, as markup (its button inside)
  * @param {string} [o.start]      its primary's word: Start, Schedule, Start planning
  * @param {string} [o.kicker]     Proposed, or Proposed · from preset Hotfix
- * @param {string} [o.extra]      a quiet action at the row's far end (Open in the composer)
+ * @param {string} [o.extra]      a quiet action at the row's far end (Edit in the composer)
+ * @param {{open:boolean, menu:string, attrs:object}} [o.alts]   other ways to start (Run as is, Shape it first): Start's ▾
  * @param {object} [o.hooks]      { title, more, start, later }: each control's attributes
  * @param {object} [o.attrs]
  */
-export function taskProposal({ title, why = '', sentence, more = '', open = false, nudge = '', start = 'Start', kicker = 'Proposed', extra = '', hooks = {}, attrs: a = {} }) {
+export function taskProposal({ title, why = '', sentence, more = '', open = false, nudge = '', start = 'Start', kicker = 'Proposed task', extra = '', alts = null, hooks = {}, attrs: a = {} }) {
   const btn = (label, kind, h, extra = {}) => button({ label, kind, attrs: { ...extra, ...(h || {}) } });
-  return `<article class="task-card rc tp"${attrs(a)}>${cardHead({ mark: kindMark({ kind: 'task', tone: 'idle', size: 16 }), kicker, titleHtml: `<input class="tp-title"${attrs({ value: title, 'aria-label': 'Task title', spellcheck: 'false', ...(hooks.title || {}) })}>`, why })}`
+  return `<article class="task-card rc tp"${attrs(a)}>${cardHead({ mark: kindMark({ kind: 'task', tone: 'idle', size: 16 }), kicker, titleHtml: `<span class="tp-title-w"><input class="tp-title"${attrs({ value: title, 'aria-label': 'Task title', spellcheck: 'false', ...(hooks.title || {}) })}><span class="tp-edit" aria-hidden="true">${icon('edit', 13)}</span></span>`, why })}`
     + `<section class="rc-card tp-body"${attrs({ 'aria-label': `Proposed: ${title}` })}><p class="tp-sentence">${sentence}</p>${nudge ? `<p class="tp-nudge">${nudge}</p>` : ''}`
     + `<div class="tp-more">${btn(open ? 'Hide Customise' : 'Customise', 'quiet', hooks.more, { 'aria-expanded': String(!!open), title: 'Title, labels, branch, memory, guardrails and more' })}${open && more ? `<div class="composer-more">${more}</div>` : ''}</div>`
-    + `<div class="tp-actions">${btn(start, 'primary', hooks.start)}${btn('Not now', 'quiet', hooks.later)}${extra ? `<span class="tp-extra">${extra}</span>` : ''}</div></section></article>`;
+    + `<div class="tp-actions">${alts ? splitButton({ main: { label: start, kind: 'primary', attrs: hooks.start || {} }, moreLabel: 'Other ways to start', chevron: icon('chevron', 12), open: alts.open, menuHtml: alts.menu, moreAttrs: alts.attrs || {} }) : btn(start, 'primary', hooks.start)}${btn('Not now', 'quiet', hooks.later)}${extra ? `<span class="tp-extra">${extra}</span>` : ''}</div></section></article>`;
 }
 
 /**
@@ -255,16 +256,17 @@ export function taskProposal({ title, why = '', sentence, more = '', open = fals
  * @param {'proposed'|'applied'|'declined'|'failed'} [o.state]
  * @param {string} [o.apply]     Apply's word: Apply, Save
  * @param {{label:string, kind?:string, attrs?:object}[]} [o.actions]   instead, a kind's own choices (web access: Allow in chat, Always allow, Deny; a schedule: Run now, Move, Apply, Delete)
+ * @param {string} [o.menu]      its ⋯
  * @param {object} [o.hooks]     { apply, decline, revert }
  * @param {object} [o.attrs]
  */
-export function changeProposal({ kind, title, why = '', rows = [], body = '', state = 'proposed', apply = 'Apply', actions = null, hooks = {}, attrs: a = {} }) {
-  const btn = (label, k, h) => button({ label, kind: k, attrs: h || {} });
+export function changeProposal({ kind, title, why = '', rows = [], body = '', state = 'proposed', apply = 'Apply', actions = null, menu = '', hooks = {}, attrs: a = {} }) {
+  const btn = (label, k, h, c = '') => button({ label, kind: k, cls: c, attrs: h || {} });
   if (state === 'applied') return turnRow({ mark: icon('check', 14), text: `<b>${esc(title)}</b> ${esc(rows.map((r) => `${r.name}: ${r.after}`).join(' · ') || kind)}`, end: btn('Revert', 'quiet', hooks.revert), attrs: a });
   if (state !== 'proposed') return turnRow({ mark: kindMark({ kind: 'chat', tone: state === 'failed' ? 'fail' : 'idle', size: 16 }), text: `${state === 'failed' ? 'Could not change' : 'Not changed'}: <b>${esc(title)}</b>`, attrs: a });
   const list = rows.length ? `<dl class="cp-rows">${rows.map((r) => `<div class="cp-row"><dt>${esc(r.name)}</dt><dd>${r.before && r.before !== '—' ? `<s>${esc(r.before)}</s><span aria-hidden="true">→</span>` : ''}<b>${esc(r.after)}</b></dd></div>`).join('')}</dl>` : '';
-  return `<article class="task-card rc cp"${attrs(a)}>${cardHead({ mark: icon('set-general', 14), kicker: `Proposed change · ${kind}`, title, why })}`
-    + `<section class="rc-card tp-body"${attrs({ 'aria-label': `Proposed change: ${title}` })}>${list}${body}<div class="tp-actions">${actions ? actions.map((x) => btn(x.label, x.kind || 'quiet', x.attrs)).join('') : `${btn(apply, 'primary', hooks.apply)}${btn('Not now', 'quiet', hooks.decline)}`}</div></section></article>`;
+  return `<article class="task-card rc cp"${attrs(a)}>${cardHead({ mark: icon('set-general', 14), kicker: kind, title, why, menu })}`
+    + `<section class="rc-card tp-body"${attrs({ 'aria-label': `Proposed change: ${title}` })}>${list}${body}<div class="tp-actions">${actions ? actions.map((x) => (x.kind === 'danger' ? btn(x.label, 'quiet', x.attrs, 'is-danger') : btn(x.label, x.kind || 'quiet', x.attrs))).join('') : `${btn(apply, 'primary', hooks.apply)}${btn('Not now', 'quiet', hooks.decline)}`}</div></section></article>`;
 }
 
 /**

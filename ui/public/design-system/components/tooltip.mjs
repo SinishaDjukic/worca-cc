@@ -22,6 +22,8 @@ export function watchTooltips(doc) {
   const hide = () => { win.clearTimeout(timer); win.clearInterval(watch); tip?.remove(); tip = null; give(); el = null; };
   const show = () => {
     if (!el?.isConnected || !el.dataset.tipText) { hide(); return; }
+    // a menu open over the page owns the moment: nothing outside it shows a tooltip on top of it
+    const menuOpen = doc.querySelector('[role="menu"]'); if (menuOpen && !menuOpen.contains(el) && !el.closest('[aria-expanded="true"]')) { hide(); return; }
     tip = doc.createElement('div'); tip.className = 'rail-tip'; tip.setAttribute('role', 'tooltip'); tip.textContent = el.dataset.tipText;
     doc.body.append(tip);
     const at = tipPlace(el.getBoundingClientRect(), tip.getBoundingClientRect(), win.innerWidth, win.innerHeight);
