@@ -10,9 +10,9 @@
   const threads = new Map(), mounted = [];
   const data = () => window.RailChats.data();
   const fresh = (mode = 'ask') => ({ files: [], mode, text: '', project: 'billing-api', workflow: 'Default', engine: 'Opus 5.5', from: 'origin · latest', then: 'open a PR', every: 'every day', at: '02:00', preset: '', more: false, startAt: '', busy: false });
-  function mount(root, side = false) {
-  const where = side ? '#ask-convo' : '#route-chat';
-  let chatId = '', comp = fresh(), menu = '', hover = null, opened = new Set(), timer = 0;
+  function mount(root, side = false, opts = {}) {
+  const where = opts.where || (side ? '#ask-convo' : '#route-chat');
+  let chatId = '', comp = fresh(opts.mode), menu = '', hover = null, opened = new Set(), timer = 0;
   const chat = () => data().chats.find((c) => c.id === chatId);
   const turns = () => { const c = chat(); if (!c) return []; if (!threads.has(c.id)) threads.set(c.id, M.thread(c)); return threads.get(c.id); };
   const allTasks = (c) => { const out = []; const walk = (x) => { out.push(x); (x.after || []).forEach(walk); }; (c?.tasks || []).forEach(walk); return out; };
@@ -112,7 +112,7 @@
     if (had && keepText) comp.text = had.value;
     const c = chat();
     if (!chatId || !c) {
-      root.innerHTML = side ? `<div class="chat-home"><div class="chat-home-in">${composerHtml()}</div></div>` : `<div class="chat-home" data-home><div class="chat-home-bg"></div><div class="chat-home-in"><h1>What's next for Worca?</h1>${composerHtml()}</div></div>`;
+      root.innerHTML = side ? `<div class="chat-home"><div class="chat-home-in">${composerHtml()}</div></div>` : `<div class="chat-home" data-home><div class="chat-home-bg"></div><div class="chat-home-in"><h1>${esc(opts.title || 'What\'s next for Worca?')}</h1>${composerHtml()}${opts.note ? `<p class="convo-dock-note">${esc(opts.note)}</p>` : ''}</div></div>`;
     } else {
       const labels = (c.labels || []).map((l) => R.chip({ text: l })).join('');
       root.innerHTML = `<div class="convo"><div class="convo-scroll"><div class="convo-col"><div class="convo-head">${esc(c.project || 'No project')}${labels ? ` · ${labels}` : ''}${R.sentencePicker({ id: 'cl-label', text: '+ Label', tip: 'Adds or removes a label', items: ['hotfix', 'billing', 'infra', 'release'].map((l) => ({ id: l, text: l, checked: (c.labels || []).includes(l) })), open: menu === 'cl-label', chevron: '' })}<span class="tl-list-btn rc-pop" data-anchor-menu>${R.button({ label: 'Move through this chat', kind: 'quiet', iconOnly: true, icon: R.icon('list', 15), attrs: { 'data-anchor-open': '', 'aria-haspopup': 'menu', 'aria-expanded': String(menu === 'anchors') } })}</span></div>${turns().map(turnHtml).join('')}</div></div><div data-timeline></div><div class="convo-dock">${composerHtml()}</div></div>`;
@@ -158,9 +158,10 @@
       clearTimeout(timer);
       timer = setTimeout(() => { const i = list.findIndex((x) => x.t === 'working'); if (i >= 0) list.splice(i, 1, { t: 'words', html: 'Here is what I found. If you want this built, pick Task in the sentence below.' }); comp.busy = false; c.state = 'idle'; window.RailChats.refresh(); paint(); }, 1400);
     }
-    comp = { ...comp, text: '', startAt: '', more: false, mode: 'ask' };
+    comp = { ...comp, text: '', startAt: '', more: false, files: [], mode: opts.mode || 'ask' };
     if (had) had.value = '';
     window.RailChats.refresh();
+    if (opts.where && !side) { chatId = ''; comp = fresh(opts.mode); window.RailShell.go(`chat/${c.id}`); return; }
     if (!side && location.hash !== `#chat/${c.id}`) { window.RailShell.go(`chat/${c.id}`); return; }
     paint(false);
     const box = root.querySelector('.convo-scroll'); if (box) box.scrollTop = box.scrollHeight;
@@ -219,7 +220,7 @@
   root.addEventListener('input', (e) => { if (e.target.matches('[data-composer-t]')) { comp.text = e.target.value; size(e.target); } });
   root.addEventListener('keydown', (e) => { if (e.target.matches('[data-composer-t]') && e.key === 'Enter' && !e.shiftKey && comp.mode === 'ask') { e.preventDefault(); send(); } });
   document.addEventListener('keydown', (e) => {
-    if (side || (e.key !== '[' && e.key !== ']') || root.hidden || e.target.matches?.('input, textarea, select')) return;
+    if (side || opts.where || (e.key !== '[' && e.key !== ']') || root.hidden || e.target.matches?.('input, textarea, select')) return;
     const list = ticks(); if (!list.length) return;
     const box = root.querySelector('.convo-scroll'), now = box.scrollTop / (box.scrollHeight || 1);
     const next = e.key === ']' ? list.find((t) => t.at > now + 0.01) : [...list].reverse().find((t) => t.at < now - 0.01);
@@ -261,7 +262,7 @@
   window.RailConversation = {
     show: main.show,
     start: main.start,
-    mount: (el) => mount(el, true),
+    mount: (el, opts) => (opts ? mount(el, false, opts) : mount(el, true)),
     refresh: refreshAll,
     dock,
     chatOfCase: (cs) => { const allOf = (x) => { const out = []; const walk = (y) => { out.push(y); (y.after || []).forEach(walk); }; (x.tasks || []).forEach(walk); return out; }; const c = data().chats.find((x) => allOf(x).some((t) => t.case === cs)); return c?.id || ''; },

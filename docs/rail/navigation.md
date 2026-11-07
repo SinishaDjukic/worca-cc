@@ -8,7 +8,7 @@
 | `nav.address` | The address holds place, thing, part and fact | Links and the browser's back just work | worca-sweep |
 | `nav.land` | A fact comes into view, lights once and takes focus | You see where you landed | design-system-components |
 | `nav.locked` | What the mode or Labs hides is never a dead end: the search finds it with its lock note, a deep link gets one line and its one way on | Nothing is lost by being in Simple | worca-sweep |
-| `nav.one-bar` | One bar for every feature: the house, what it shows, its list, you. The house opens Pinned, the thing you came from, and the places under Settings-like group heads (Work, Build, Manage, Insight), each shown by its mode; inside a feature, everything is about that feature. It starts at 280px and is dragged between 240 and 420px, and kept | Settings' behaviour, everywhere | worca-sweep |
+| `nav.one-bar` | One bar for every feature: the house, what it shows, its list, you. Worca's W opens Recent (every pin, then the one chat you came from) and the places under Settings-like group heads (Work, Build, Manage, Insight), each shown by its mode; a Work place's + starts its own thing; the bar hides and comes back (⌘\\); inside a feature, everything is about that feature. It starts at 280px and is dragged between 240 and 420px, and kept | Settings' behaviour, everywhere | worca-sweep |
 | `nav.task-like-chat` | A task or a schedule opens like a conversation: a reading column, a timeline, a composer whose question goes to its chat, or starts one and links it | A task never changes while it runs; steering belongs to Chat | by hand |
 
 How you move through Worca, the same everywhere. Mocks: `plans/rail/mocks/nav-*.png`.

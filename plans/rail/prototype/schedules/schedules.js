@@ -5,11 +5,11 @@
   const bar = document.getElementById('bar-schedules'), page = document.getElementById('route-schedule');
   if (!bar || !page) return;
   const esc = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  let data = M.seed(), current = '', view = { show: 'all' }, ctl = null, menu = '';
+  let data = M.seed(), current = '', view = { show: 'all' }, ctl = null, menu = '', home = null;
   const say = (t, undo) => window.RailPulse?.say(t, undo);
   const st = (s) => R.runState(s.state), toneOf = (s) => (s.state === 'scheduled' ? 'idle' : R.markTone(st(s)));
   const SECTIONS = [['needs', R.runState('question').word], ['next', 'Next'], ['paused', R.runState('paused').word]];
-  const rowOf = (s) => ({ key: `sched:${s.id}`, _s: s, title: s.title, meta: [s.project || 'No project', s.section === 'needs' ? s.next : s.chat ? 'From a chat' : 'No chat'].join(' · '), mark: R.kindMark({ kind: 'schedule', tone: toneOf(s), title: `${st(s).word} · ${s.next}` }), end: s.time, current: s.id === current, tip: `${s.title}\n${s.next}\nOpens the schedule`,
+  const rowOf = (s) => ({ key: `sched:${s.id}`, _s: s, title: s.title, meta: '', mark: R.kindMark({ kind: 'schedule', tone: toneOf(s), title: `${st(s).word} · ${s.next}` }), end: s.time, current: s.id === current, tip: `${s.title}\n${s.project || 'No project'} · ${s.chat ? 'from a chat' : 'no chat'}\nRuns ${s.every} at ${s.at} · ${s.next}`,
     menu: [{ id: 'run', text: 'Run now', help: 'Starts a task now; the schedule keeps its times' }, { id: 'pause', text: s.state === 'paused' ? 'Resume' : 'Pause', help: s.state === 'paused' ? 'It runs at its next time again' : 'It stops starting tasks until you resume it' }] });
   function act(id, rows) {
     const s = rows[0]?._s; if (!s) return;
@@ -34,7 +34,8 @@
   function draw() {
     ctl.paint();
     const s = data.schedules.find((x) => x.id === current);
-    page.innerHTML = s ? pageHtml(s) : `<div class="chat-home"><div class="chat-home-in">${R.emptyState({ title: 'Pick a schedule from the list.', actions: R.button({ label: 'New schedule', kind: 'quiet', attrs: { 'data-sched-new': '' } }) })}</div></div>`;
+    if (!s) { home ||= window.RailConversation?.mount(page, { mode: 'schedule', where: '#route-schedule', title: 'Schedule a task', note: 'Every schedule is in the list beside; each time one runs, its task joins its chat.' }); home?.show(''); return; }
+    home = null; page.innerHTML = pageHtml(s);
     if (s) window.RailConversation?.dock(document.getElementById('sched-dock'), { kind: 'schedule', title: s.title, chat: s.chat });
   }
   page.addEventListener('click', (e) => {

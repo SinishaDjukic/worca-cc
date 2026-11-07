@@ -161,3 +161,19 @@ body:not(.view-rail-chat):not(.view-run):not(.view-settings) .page-bg{display:no
 #side-rail nav.nav .side-g:first-child{margin-top:8px;}
 #side-rail nav.nav .pz-nav-i svg,#side-rail nav.nav button svg{width:14px;height:14px;}
 .bar-back .list-group + .list-group{margin-top:4px;padding-top:0;border-top:0;}
+/* The product's mark is the way to the places; Hide and Show the bar. */
+.bar-house .logo-mark{display:block;width:20px;height:20px;}
+.bar-show{display:none;}
+.has-rail .bar-show{display:inline-flex;}
+@media (max-width: 760px){ .bar-show{display:none!important;} }
+/* A Work place starts its own thing from its row. */
+.place-row{position:relative;}
+.place-row > .btn{position:absolute;right:4px;top:50%;transform:translateY(-50%);opacity:0;}
+.place-row:is(:hover,:focus-within) > .btn{opacity:1;}
+/* One-line rows in the bar. */
+.bar-list .lr-rail{height:28px;}
+@media (min-width: 761px){ .has-rail .mk-tools{left:56px;} }
+body.view-runs .main{display:flex;flex-direction:column;overflow:hidden;padding:0;}
+#route-runs:not([hidden]){flex:1 1 auto;min-height:0;display:flex;flex-direction:column;}
+#route-runs.rail-page{max-width:none;margin:0;padding:0;}
+@media (min-width: 761px){ .has-rail .mk-tools .mk-stamp{display:none;} }

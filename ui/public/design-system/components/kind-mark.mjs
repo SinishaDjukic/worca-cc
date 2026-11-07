@@ -106,14 +106,18 @@ export function timelineCard({ mark, title, line = '', at = 0 }) {
 }
 
 /**
- * BarHead: the one bar's head on every feature: the house, what this bar is, its one action, its ⋯ when the list has one.
+ * BarHead: the one bar's head on every feature: the product's mark (the way to the places), what this bar is, its one
+ * action, and Hide.
  * @param {object} o
  * @param {string} o.title
  * @param {boolean} [o.home]    the bar is showing the places
  * @param {string} [o.action]   a button's markup
+ * @param {string} [o.logo]     the product's mark (markup); the house icon when none
+ * @param {string} [o.hide]     the Hide button's markup
  */
-export function barHead({ title, home = false, action = '' }) {
-  return `<div class="bar-head"><button type="button" class="bar-house${home ? ' is-on' : ''}"${attrs({ 'data-bar-house': '', title: home ? 'Close the places' : 'Places', 'aria-label': home ? 'Close the places' : 'Places', 'aria-expanded': String(home) })}>${icon('home', 16)}</button><h2 class="bar-title">${esc(title)}</h2>${action}</div>`;
+export function barHead({ title, home = false, action = '', logo = '', hide = '' }) {
+  const label = home ? 'Close the places' : 'Places';
+  return `<div class="bar-head"><button type="button" class="bar-house${home ? ' is-on' : ''}"${attrs({ 'data-bar-house': '', title: label, 'aria-label': label, 'aria-expanded': String(home) })}>${logo || icon('home', 16)}</button><h2 class="bar-title">${esc(title)}</h2>${action}${hide}</div>`;
 }
 
 /**

@@ -87,6 +87,8 @@ export const ICONS = {
   you: '<circle cx="12" cy="8" r="3.5"></circle>' + P('M5 20a7 7 0 0 1 14 0'),
   image: '<rect x="4" y="5" width="16" height="14" rx="1.5"></rect><circle cx="9" cy="10" r="1.5"></circle>' + P('M20 16l-4.5-4.5L7 19'),
   list: P('M5 7h14M5 12h14M5 17h14'),
+  'bar-hide': '<rect x="3.5" y="4.5" width="17" height="15" rx="2"></rect>' + P('M9 4.5v15') + P('M15 10l-2 2 2 2'),
+  'bar-show': '<rect x="3.5" y="4.5" width="17" height="15" rx="2"></rect>' + P('M9 4.5v15') + P('M13 10l2 2-2 2'),
   pin: P('M9 4h6l-1 6 3 3v1H7v-1l3-3z') + P('M12 14v6'),
   eye: P('M2.5 12s3.5-6.5 9.5-6.5S21.5 12 21.5 12s-3.5 6.5-9.5 6.5S2.5 12 2.5 12z') + '<circle cx="12" cy="12" r="2.5"></circle>',
 };

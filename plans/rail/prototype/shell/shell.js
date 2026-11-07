@@ -24,7 +24,8 @@
   function sidebar() {
     const side = el(T.sidebar);
     const nav = side.querySelector('nav.nav');
-    const place = ([id, label, min, flag]) => R.navItem({ label, icon: R.icon('nav-' + id, 14), attrs: { 'data-nav': id, 'data-min-level': min, 'data-flag': flag || null, 'aria-label': label } });
+    const NEW = { chat: ['New chat', 'ask'], runs: ['New task', 'task'], schedules: ['New schedule', 'schedule'] };
+    const place = ([id, label, min, flag]) => { const item = R.navItem({ label, icon: R.icon('nav-' + id, 14), attrs: { 'data-nav': id, 'data-min-level': min, 'data-flag': flag || null, 'aria-label': label } }); return NEW[id] ? `<div class="place-row" data-place="${id}">${item}${R.button({ label: NEW[id][0], kind: 'quiet', iconOnly: true, icon: R.icon('plus', 13), attrs: { 'data-bar-new': NEW[id][1], title: NEW[id][0] } })}</div>` : item; };
     nav.insertAdjacentHTML('beforebegin', '<div id="bar-back" class="bar-back pz-app rail-page"></div>');
     nav.innerHTML = PLACES.map(([g, list]) => `<p class="nav-sect side-g">${g}</p>${list.map(place).join('')}`).join('');
     const close = side.querySelector('#side-close');
@@ -41,11 +42,11 @@
   // The sidebar draws again when the interface mode or a Labs flag changes; a section with nothing left goes too.
   function applyPrefs() {
     const nav = document.querySelector('#side-rail nav.nav');
-    for (const b of nav.querySelectorAll('[data-nav]')) b.hidden = !!lockOf(b.dataset.nav);
+    for (const b of nav.querySelectorAll('[data-nav]')) { b.hidden = !!lockOf(b.dataset.nav); const w = b.closest('.place-row'); if (w) w.hidden = b.hidden; }
     let sect = null, any = 0;
     const close = () => { if (sect) sect.hidden = any < 2; };   // a head over one row says nothing: it goes, the row stays
     for (const x of nav.children) {
-      if (x.matches('.nav-sect')) { close(); sect = x; any = 0; } else if (x.matches('button') && !x.hidden) any++;
+      if (x.matches('.nav-sect')) { close(); sect = x; any = 0; } else if (x.matches('button, .place-row') && !x.hidden) any++;
     }
     close();
   }
@@ -56,6 +57,7 @@
     const act = top.querySelector('#topnav-activity');
     if (act) act.replaceWith(el('<span id="rail-pulse-slot"></span>'));
     top.querySelector('#topnav-new')?.remove();   // starting anything is the composer's now
+    top.querySelector('#side-toggle')?.insertAdjacentHTML('afterend', R.button({ label: 'Show the bar', kind: 'quiet', iconOnly: true, icon: R.icon('bar-show', 16), cls: 'bar-show', attrs: { id: 'bar-show' } }));
     const kbd = top.querySelector('.tsearch-kbd'); if (kbd) kbd.textContent = R.keyHint(['mod', 'K'], R.isMac(window));
     const input = top.querySelector('#tsearch-input');
     if (input) { input.setAttribute('data-search', ''); input.removeAttribute('role'); input.closest('.tsearch-field')?.insertAdjacentHTML('beforeend', '<div data-search-res></div>'); }
@@ -126,19 +128,19 @@
 
   // ---- the bar: what it holds now; the house opens the places over it ----
   const BAR_TITLE = { home: 'Worca', chat: 'Chat', tasks: 'Tasks', schedules: 'Schedules', settings: 'Settings' };
-  let homeOpen = false, taskChat = '', lastThing = null, visited = [];
+  let homeOpen = false, taskChat = '', lastThing = null, visited = [], taskHome = null;
   const barOf = (view) => (view === 'chat' ? 'chat' : view === 'runs' ? 'tasks' : view === 'run' ? (taskChat ? 'chat' : 'tasks') : view === 'schedules' || view === 'schedule' ? 'schedules' : view === 'settings' ? 'settings' : 'home');
   function drawBar() {
     const side = document.getElementById('side-rail'), own = barOf(routed.view), which = homeOpen ? 'home' : own;
     side.dataset.bar = which;
     const act = { chat: ['New chat', 'ask'], tasks: ['New task', 'task'], schedules: ['New schedule', 'schedule'] }[which];
-    document.getElementById('bar-head').innerHTML = R.barHead({ title: BAR_TITLE[which], home: which === 'home', action: act ? R.button({ label: act[0], kind: 'quiet', iconOnly: true, icon: R.icon('plus', 15), attrs: { 'data-bar-new': act[1] } }) : '' });
+    document.getElementById('bar-head').innerHTML = R.barHead({ title: BAR_TITLE[which], home: which === 'home', logo: '<span class="logo-mark" aria-hidden="true"></span>', action: act ? R.button({ label: act[0], kind: 'quiet', iconOnly: true, icon: R.icon('plus', 15), attrs: { 'data-bar-new': act[1] } }) : '', hide: R.button({ label: 'Hide the bar', kind: 'quiet', iconOnly: true, icon: R.icon('bar-hide', 15), attrs: { 'data-bar-hide': '', title: `Hide the bar (${R.keyHint(['mod', '\\'], R.isMac(window))})` } }) });
     for (const [id, b] of [['bar-chat', 'chat'], ['bar-tasks', 'tasks'], ['bar-schedules', 'schedules']]) document.getElementById(id).hidden = which !== b;
     // Pinned first: what you pinned in any list; then the one thing you came from.
     const pins = (window.RailChats?.data().chats || []).filter((c) => c.pinned && !c.archived).map((c) => R.listRow({ title: c.title, meta: c.project || 'No project', mark: R.kindMark({ kind: c.kind === 'workflow' ? 'workflow' : 'chat' }), open: { 'data-back-to': `chat/${c.id}`, title: `Opens ${c.title}` } }));
     // One section, Recent: what you pinned (a pin at its end), then where you were, newest first, never twice.
     const pinRows = (window.RailChats?.data().chats || []).filter((c) => c.pinned && !c.archived).map((c) => ({ hash: `chat/${c.id}`, title: c.title, meta: c.project || 'No project', mark: R.kindMark({ kind: c.kind === 'workflow' ? 'workflow' : 'chat' }), end: R.icon('pin', 13), tip: 'Pinned' }));
-    const seenRows = visited.filter((v) => !pinRows.some((p) => p.hash === v.hash)).slice(0, 3);
+    const seenRows = visited.filter((v) => !pinRows.some((p) => p.hash === v.hash)).slice(0, 1);
     const rows = [...pinRows, ...seenRows].map((x) => R.listRow({ title: x.title, meta: x.meta, mark: x.mark, end: x.end ? `<span class="lr-fig" title="${x.tip}">${x.end}</span>` : '', endText: x.end ? '' : x.when || '', open: { 'data-back-to': x.hash, title: `Opens ${x.title}` } }));
     document.getElementById('bar-back').innerHTML = rows.length ? R.list({ groups: [{ title: 'Recent', rows }] }) : '';
   }
@@ -183,7 +185,7 @@
       window.RailConversation?.show(arg || '');
       if (arg) { lastThing = { hash: `chat/${arg}`, title: window.RailConversation?.chatTitle(arg) || 'Chat', meta: 'Chat', when: 'now', mark: R.kindMark({ kind: 'chat' }) }; visited = [lastThing, ...visited.filter((v) => v.hash !== lastThing.hash).map((v) => ({ ...v, when: v.when === 'now' ? 'earlier' : v.when }))].slice(0, 6); }
     }
-    if (view === 'runs') { window.RailRunsList?.show(); pane.runs.innerHTML = `<div class="chat-home"><div class="chat-home-in">${R.emptyState({ title: 'Pick a task from the list.' })}</div></div>`; window.RailRunsList?.focus(); }
+    if (view === 'runs') { window.RailRunsList?.show(); taskHome ||= window.RailConversation?.mount(pane.runs, { mode: 'task', where: '#route-runs', title: 'Start a task', note: 'Every task you start is in the list beside, with its chat.' }); taskHome?.show(''); }
     if (view === 'schedules' || view === 'schedule') window.RailSchedules?.show(view === 'schedule' ? arg : '');
     if (view === 'run') {
       const pick = document.getElementById('case');
@@ -236,6 +238,8 @@
   document.addEventListener('click', (e) => {
     const on = (sel) => e.target.closest(sel);
     let hit;
+    if (on('[data-bar-hide]')) { collapsed = true; store.set(KEY_RAIL, '1'); syncRail(); document.getElementById('bar-show')?.focus(); return; }
+    if (on('#bar-show')) { collapsed = false; store.set(KEY_RAIL, '0'); syncRail(); return; }
     if (on('[data-bar-house]')) { homeOpen = !homeOpen && barOf(routed.view) !== 'home'; drawBar(); return; }
     if ((hit = on('[data-bar-new]'))) { window.RailConversation?.start(hit.dataset.barNew); return; }
     if ((hit = on('[data-back-to]'))) { drawer(false); window.RailShell.go(hit.dataset.backTo); return; }
@@ -273,6 +277,7 @@
   document.addEventListener('pointermove', (e) => { if (drag) setAskW(innerWidth - e.clientX); });
   document.addEventListener('pointerup', () => { if (drag) { drag = false; document.getElementById('ask-side').classList.remove('is-resizing'); } });
   document.addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === '\\' && innerWidth > 760) { e.preventDefault(); collapsed = !collapsed; store.set(KEY_RAIL, collapsed ? '1' : '0'); syncRail(); return; }
     if (e.target.closest?.('#ask-side .ask-side-grip') && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) { e.preventDefault(); setAskW(askW + (e.key === 'ArrowLeft' ? 20 : -20)); return; }
   });
   // The prototype's corner: what the connection does, and the screensaver.

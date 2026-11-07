@@ -42,8 +42,8 @@
   // ---- rows ----
   function chatRow(c, member) {
     const st = R.chatState(c.state), x = { c, key: `chat:${c.id}` };
-    const r = { key: x.key, _x: x, title: c.title, lead: c.origin ? R.originMark(c.origin) : '', mark: markOf(c.state, c.kind), unread: c.unread, current: current === c.id, tip: `${c.title}\nOpens the chat`, end: c.time, tree: c.tasks?.length ? treeOf(c, c.tasks) : undefined,
-      meta: [c.pinned ? 'Pinned' : '', !member && view.by !== 'project' ? c.project || 'No project' : '', st.line, ...(c.labels || []).slice(0, 1)].filter(Boolean).join(' · ') };
+    const r = { key: x.key, _x: x, title: c.title, lead: c.origin ? R.originMark(c.origin) : '', mark: markOf(c.state, c.kind), unread: c.unread, current: current === c.id, tip: [c.title, [c.project || 'No project', ...(c.labels || [])].join(' · '), [st.line || (c.state === 'idle' ? R.CHAT_KINDS[c.kind]?.label : ''), c.time].filter(Boolean).join(' · '), c.pinned ? 'Pinned' : ''].filter(Boolean).join('\n'), end: c.time, tree: c.tasks?.length ? treeOf(c, c.tasks) : undefined,
+      meta: '' };
     r.menu = [{ id: 'toggle', text: 'Select', hint: hint('Space') }, { id: 'rename', text: 'Rename…', hint: hint('R'), help: 'Give it another name' }, { id: 'pin', text: c.pinned ? 'Unpin' : 'Pin', hint: hint('P'), help: 'A pinned chat leads its section' },
       ...(has('advanced') ? [{ id: 'add-to-group', text: 'Add to group…', hint: hint('G'), help: 'Find a group, or make a new one' }, ...(c.group ? [{ id: 'leave-group', text: 'Remove from group', hint: hint('shift', 'G'), help: 'It stays in Chats, in no group' }] : [])] : []),
       { sep: true }, c.archived ? { id: 'archive', text: 'Restore', hint: hint('E'), help: 'Brings it back' } : { id: 'archive', text: 'Archive', hint: hint('E'), off: !!busyOf(c), help: busyOf(c) || 'Undo in the notice' },
@@ -58,8 +58,8 @@
     const ps = [...new Set(list.map((c) => c.project).filter(Boolean))];
     const where = ps.length > 1 ? `${ps.length} projects` : ps[0] || 'No project';
     const cost = list.reduce((a, c) => a + (c.cost || 0), 0), x = { g, key: `cgroup:${g.id}` };
-    return { key: x.key, _x: x, title: g.name, mark: markOf(state, kind), count: String(list.length), noun: 'chats', open: needs || !!busy, holds: list.some((c) => c.id === current), tip: `${g.name}\nShows or hides its chats`, end: list[0]?.time,
-      meta: [where, R.chatState(state).line].filter(Boolean).join(' · '), members: list.map((c) => chatRow(c, true)),
+    return { key: x.key, _x: x, title: g.name, mark: markOf(state, kind), count: String(list.length), noun: 'chats', open: needs || !!busy, holds: list.some((c) => c.id === current), tip: `${g.name}\n${where} · ${list.length} chats\n${R.chatState(state).line || ''}`.trim(), end: list[0]?.time,
+      meta: '', members: list.map((c) => chatRow(c, true)),
       menu: [{ id: 'rename', text: 'Rename…', hint: hint('R'), help: 'Give the group another name' }, { id: 'ungroup', text: 'Ungroup', help: 'The chats stay, in no group; Undo in the notice' }, { sep: true },
         { id: 'archive', text: 'Archive group', hint: hint('E'), off: !!busy, help: busy ? `“${busy.title}”: ${busyOf(busy).toLowerCase()}` : 'Undo in the notice' }, ...(has('advanced') ? [{ id: 'delete', text: 'Delete group…', hint: hint('Backspace'), danger: true, help: 'Removes the group and its chats for good; asks first' }] : [])] };
   }

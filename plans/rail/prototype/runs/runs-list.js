@@ -85,8 +85,8 @@
   const costTip = (r) => (r.cost == null ? 'Cost unknown' : `Cost ${usd(r.cost)}`);
   const row = (r, section, member) => {
     const x = { r };
-    const base = { key: `run:${r.id}`, _x: x, title: member && r.pos ? `${r.pos} · ${r.title}` : r.title, meta: metaOf(r, section, member), mark: markOf(stateOf(r), 'task', r.archived ? null : r.case), endMark: gitOf(r, stateOf(r)), end: gitOf(r, stateOf(r)) ? '' : r.time,
-      unread: r.unread, tip: `${r.title}\nOpens the task`, menu: null };
+    const base = { key: `run:${r.id}`, _x: x, title: member && r.pos ? `${r.pos} · ${r.title}` : r.title, meta: '', mark: markOf(stateOf(r), 'task', r.archived ? null : r.case), endMark: gitOf(r, stateOf(r)), end: gitOf(r, stateOf(r)) ? '' : r.time,
+      unread: r.unread, tip: [r.title, metaOf(r, section, member), r.time].filter(Boolean).join('\n'), menu: null };
     x.key = base.key;
     base.menu = menuOf(x);
     if (r.rounds) base.rounds = r.rounds;
@@ -100,8 +100,8 @@
     const kindWord = { feature: 'Feature', chain: 'Chain', user: 'Group' }[g.kind];
     const total = ms.reduce((a, m) => a + (m.cost || 0), 0);
     const x = { g, key: `group:${g.id}` };
-    return { key: x.key, _x: x, title: g.title, meta: [kindWord, why, view.by !== 'project' ? g.project : ''].filter(Boolean).join(' · '), mark: markOf(state, 'feature'), count: `${done}/${ms.length}`, noun: 'runs',
-      open: !(['Ready', 'Stopped', 'Merged', 'Failed'].includes(R.runState(groupState(g)).word)), tip: `${g.title}\nGroup total ${usd(total)}\nOpens the ${kindWord.toLowerCase()}`, menu: menuOf(x), members: ms.map((m) => row(m, '', true)) };
+    return { key: x.key, _x: x, title: g.title, meta: '', mark: markOf(state, 'feature'), count: `${done}/${ms.length}`, noun: 'runs',
+      open: !(['Ready', 'Stopped', 'Merged', 'Failed'].includes(R.runState(groupState(g)).word)), tip: [g.title, [kindWord, view.by !== 'project' ? g.project : ''].filter(Boolean).join(' · '), why].filter(Boolean).join('\n'), menu: menuOf(x), members: ms.map((m) => row(m, '', true)) };
   }
   const rowOf = (t, section) => (t.group ? groupRowOf(t.group, section) : row(t.run, section, false));
 
