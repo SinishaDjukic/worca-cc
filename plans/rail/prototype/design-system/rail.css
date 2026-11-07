@@ -1407,3 +1407,8 @@ canvas.dot-orb[data-orb]{border-radius:50%;outline:1px solid light-dark(var(--li
 .tc-run-slot #card.is-lent .rc-card > .rc-zone:first-child{display:flex;justify-content:flex-end;}
 .tc-run-slot #card.is-lent .rc-card > .rc-zone:first-child > :is(.rc-rail, .rc-word){display:none;}
 .tc-run-slot #card.is-lent .rc-card > .rc-zone:nth-child(2){display:none;}
+
+.tc-rows{display:flex;flex-direction:column;gap:6px;margin-top:4px;}
+.you-ref{border:0;cursor:pointer;display:inline-flex;align-items:center;gap:4px;font:inherit;}
+.you-ref:hover{background:var(--hover);}
+.you-ref:focus-visible{outline:2px solid var(--ink);outline-offset:1px;}

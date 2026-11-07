@@ -880,6 +880,13 @@ test('thinkingRow: live says, in one line, what it does and how long, politely; 
   assert.match(C.thinkingRow({ done: true, secs: '8s', steps: ['Read the chat'], open: true, attrs: { 'data-fold-turn': '3' } }), /tr-body is-steps[\s\S]*Read the chat/);
 });
 
+test('cardHead: the kicker with its mark and word, the title, one line, facts and ⋯; a feature lists its slices; your words carry task chips', () => {
+  const h = C.cardHead({ mark: '<i>m</i>', kicker: 'Running', title: 'Add', why: 'Plan · 1 of 2', facts: '<b>f</b>', menu: '<u>⋯</u>' });
+  assert.match(h, /tp-kicker"><i>m<\/i><span>Running<\/span><span class="tp-menu"><u>⋯<\/u>/); assert.match(h, /rc-heading tc-title[^>]*>Add</); assert.match(h, /rc-facts"><b>f<\/b>/); assert.match(h, /tp-why">Plan · 1 of 2/);
+  assert.match(C.taskCard({ title: 'F', mark: '', word: 'Running', rows: '<i>slice</i>' }), /tc-rows"><i>slice<\/i>/);
+  assert.match(C.youTurn({ text: 'x', refs: [{ text: 'Add CSV', attrs: { 'data-open-ref': 'question' } }] }), /you-ref[^>]*data-open-ref="question"[^>]*>Add CSV/);
+});
+
 test('taskProposal: the composer sentence, Customise folding, Start and Not now with their hooks', () => {
   const h = C.taskProposal({ title: 'Add export', why: 'From this chat', sentence: '<i>s</i>', more: '<i>m</i>', nudge: '<i>n</i>', hooks: { start: { 'data-s': '1' }, later: { 'data-l': '1' }, more: { 'data-m': '1' }, title: { 'data-t': '1' } } });
   assert.match(h, /Proposed/); assert.match(h, /class="tp-title"[^>]*value="Add export"[^>]*data-t="1"/); assert.match(h, /<i>s<\/i>/); assert.match(h, /<i>n<\/i>/);

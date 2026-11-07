@@ -60,6 +60,7 @@ A Rail page is built by naming needs, not looks. Find the need, use its componen
 | A task's stages on a card | StageBar, each deepening into the state's colour | Plan · Build · Review |
 | What Worca did in a conversation | TurnRow: folds; a failure opens itself | Ran 4 commands |
 | Worca thinking in a conversation | ThinkingRow: one line, what it does now, its seconds; done, Thought for 8s, its steps folded | Searching the code · 4s |
+| The head of every chat card | CardHead: kicker (mark and one word), title, one line, facts, ⋯ at its right | Asks you below · Add CSV export |
 | A task Worca proposes | TaskProposal: Proposed, the title in place, why; the composer's sentence and Customise; Start, Not now; Start becomes the running card | Add a CSV export |
 | Any other change Worca proposes | ChangeProposal: before → after or a WorkflowGraph; Apply, Not now; applied, a receipt with Revert | Quiet on weekends |
 | Where a conversation's ground changes | TurnDivider: a rule with a few words | Switched to worca-cc |

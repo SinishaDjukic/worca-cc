@@ -144,8 +144,9 @@ body.view-rail-chat .main,body.view-run .main{padding:0;}
 .bar-back.rail-page{padding-left:10px;}
 @media (max-width: 760px){ .mk-tools .mk-stamp{display:none;} }
 .main{position:relative;}
-.main:has(.chat-home[data-home]) .page-bg{display:none;}
-body:not(.view-rail-chat):not(.view-run):not(.view-settings) .page-bg{display:none;}
+/* One background rule (look.backgrounds): every reading page, Chat home, a chat, a task, the Tasks and Schedules homes and
+   Settings, shows the page's background faded into its column; only the away screen has it full. */
+body:not(.view-rail-chat):not(.view-run):not(.view-settings):not(.view-runs) .page-bg{display:none;}
 #route-chat,#route-schedule,#route-run,#route-settings,#route-runs{position:relative;z-index:1;}
 #route-run.rc-board,#route-settings,#route-settings .pz-page{background:transparent;}
 /* A row's ⋯: its own, never its parent's too. */

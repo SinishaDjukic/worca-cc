@@ -9,7 +9,7 @@
 | `look.inter-at-graduation` | Inter replaces Poppins at graduation, one switch for everyone | Two faces on screen at once reads as a mistake | by hand |
 | `look.scrollbars` | Scrollbars are thin and appear as the mouse moves or while something scrolls, then go | A quiet page; nothing shifts when they show | design-system-components |
 | `look.violet-apart` | Violet means merged, or Worca writing in a field; never both | A dot never means AI | by hand |
-| `look.backgrounds` | A background, Dots by default, chosen under Appearance, fills Chat home and the away screen; on other pages it fills the margins and fades into the reading column: its last faint dots end at the rail's marks, never under the text; it never moves. Never under rows or in the bar | Character everywhere, and nothing under work | by hand |
+| `look.backgrounds` | A background, Dots by default, chosen under Appearance, fills the away screen, which has nothing to read; on every other page (Chat home, a chat, a task, the Tasks and Schedules homes, Settings) it fills the margins and fades into the reading column, from one shared mask: its last faint dots end at the column's rail (Chat home's composer, a chat's marks), never under the text; it never moves. Never under rows or in the bar | Character everywhere, and nothing under work | by hand |
 
 ## Type roles
 The type scale below, named by what it does on a Rail page.

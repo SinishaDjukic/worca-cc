@@ -61,8 +61,8 @@ for (const scheme of ['light', 'dark']) for (const w of [1280, 900, 760, 375]) {
   const step = async (name, fn, expect) => { const ok = await p.evaluate(fn); await p.waitForTimeout(120); const got = await p.evaluate(expect); if (!got) add('a journey breaks', `${scheme}/${w}: ${name}`); checks++; };
   await p.goto(`${URL_}#runs`); await p.evaluate(() => localStorage.removeItem('worca-rail.runs.view')); await p.reload(); await p.waitForTimeout(100);
   await step('the sentence changes the list', () => { document.querySelector('#runs-root [data-menu="by"]')?.click(); document.querySelector('#runs-root [data-pick="by|project"]')?.click(); }, () => /by project/.test(document.querySelector('#runs-root .list-sentence')?.textContent || ''));
-  await step('a run row opens its run', () => document.querySelector('#runs-root [data-open="run:r1"]')?.click(), () => location.hash === '#run/question' && document.querySelector('#card .rc-heading')?.textContent === 'Add CSV export to billing');
-  await step('the trail goes back to Runs, the sentence kept', () => document.querySelector('#card [data-key="crumb:0"]')?.click(), () => location.hash === '#runs' && !document.querySelector('#route-runs').hidden && /by project/.test(document.querySelector('#runs-root .list-sentence')?.textContent || ''));
+  await step('a task row leads to its card in its chat', () => document.querySelector('#runs-root [data-open="run:r1"]')?.click(), () => location.hash === '#chat/c1' && !!document.querySelector('#route-chat .is-flash'));
+  await step('back on Tasks, the sentence kept', () => window.RailShell.go('runs'), () => location.hash === '#runs' && !document.querySelector('#route-runs').hidden && /by project/.test(document.querySelector('#runs-root .list-sentence')?.textContent || ''));
   await step('the sentence back to state', () => { document.querySelector('#runs-root [data-menu="by"]')?.click(); document.querySelector('#runs-root [data-pick="by|state"]')?.click(); }, () => /by state/.test(document.querySelector('#runs-root .list-sentence')?.textContent || ''));
   await step('Pulse opens', () => document.querySelector('[data-pop]')?.click(), () => !!document.querySelector('.pz-popover'));
   await step('the profile menu opens', () => { document.body.click(); document.querySelector('[data-acct]')?.click(); }, () => !!document.querySelector('#app .acct-menu'));
@@ -75,7 +75,10 @@ for (const scheme of ['light', 'dark']) for (const w of [1280, 900, 760, 375]) {
   await p.goto(`${URL_}#chat`); await p.waitForTimeout(120);
   if (await p.evaluate(() => document.getElementById('side-rail').dataset.bar !== 'chat' || document.getElementById('bar-chat').hidden)) add('Chat\'s list is not in the bar', `${scheme}/${w}`);
   await step('a chat row opens its chat', () => document.querySelector('#bar-chat [data-open="chat:c2"]')?.click(), () => location.hash === '#chat/c2' && !!document.querySelector('#route-chat .convo') && !!document.querySelector('#bar-chat [data-row="chat:c2"].is-current'));
-  await step('a task in the tree opens with its chat around it', () => document.querySelector('#bar-chat [data-open="task:t1"]')?.click(), () => location.hash === '#run/question' && document.getElementById('side-rail').dataset.bar === 'chat');
+  await step('a task in the tree leads to its card', () => document.querySelector('#bar-chat [data-open="task:t1"]')?.click(), () => location.hash === '#chat/c1' && document.getElementById('side-rail').dataset.bar === 'chat' && !!document.querySelector('#route-chat .is-flash'));
+  await step('How it ran opens the card in place', () => document.querySelector('#route-chat [data-open-task="t1"]')?.click(), () => !!document.querySelector('#route-chat .tc-run-slot #card .stage-stream'));
+  await step('and folds it, the page going home', () => document.querySelector('#route-chat [data-open-task="t1"]')?.click(), () => !document.querySelector('#route-chat #card') && !!document.getElementById('card'));
+  await step('its page is still there', () => window.RailShell.openTaskPage('question', 'c1', 'Add CSV export'), () => location.hash === '#run/question');
   await step('asking from a task goes to its chat', () => { const t = document.querySelector('#task-dock [data-composer-t]'); t.value = 'Why?'; document.querySelector('[data-dock-send]').click(); }, () => location.hash === '#chat/c1');
   // the hidden bar: a 56px strip with the work's summary, nothing sticking out; hover opens it over the page; a menu keeps it open
   if (w > 760) {
@@ -121,10 +124,11 @@ for (const scheme of ['light', 'dark']) for (const w of [1280, 900, 760, 375]) {
   // In view: from a row's ⋯ into the top bar; its mark opens it
   await p.goto(`${URL_}#chat/c1`); await p.waitForTimeout(150);
   await step('Keep in view puts a mark in the top bar', () => { document.querySelector('#bar-chat [data-menu="row:task:t1"]')?.click(); document.querySelector('#bar-chat [data-menu-pick="row:task:t1|in-view"]')?.click(); }, () => innerWidth <= 760 || !!document.querySelector('#in-view-slot [data-in-view="task:t1"]'));
-  if (w > 760) await step('a mark in view opens its task', () => document.querySelector('#in-view-slot [data-in-view="task:t1"]')?.click(), () => location.hash === '#run/question');
+  if (w > 760) await step('a mark in view leads to its card', () => document.querySelector('#in-view-slot [data-in-view="task:t1"]')?.click(), () => location.hash === '#chat/c1' && !!document.querySelector('#route-chat .is-flash'));
   if (w > 760) {
     await step('the tab you are on has its line', () => {}, () => document.querySelector('#in-view-slot [data-in-view="task:t1"]')?.getAttribute('aria-current') === 'page');
     await step('a mark in view holds still', () => {}, () => [...document.querySelectorAll('.in-view .kind-mark')].every((m) => getComputedStyle(m).animationName === 'none'));
+    await step('its page has the eye', () => window.RailShell.openTaskPage('question', 'c1', 'Add CSV export'), () => location.hash === '#run/question');
     await step('the eye on a task says it is in view', () => {}, () => document.querySelector('[data-keep-view]')?.getAttribute('aria-pressed') === 'true');
     await step('the eye takes it out of view', () => document.querySelector('[data-keep-view]').click(), () => !document.querySelector('#in-view-slot [data-in-view="task:t1"]') && document.querySelector('[data-keep-view]').getAttribute('aria-pressed') === 'false');
     await step('the eye keeps it in view again', () => document.querySelector('[data-keep-view]').click(), () => document.querySelectorAll('#in-view-slot .in-view-w').length === 2);

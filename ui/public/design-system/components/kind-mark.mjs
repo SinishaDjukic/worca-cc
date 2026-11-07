@@ -204,15 +204,16 @@ export function cardHead({ mark, kicker, kickerHtml = '', title = '', titleHtml 
  * @param {string} [o.action]   its one action (markup)
  * @param {string} [o.menu]     its ⋯ (markup), at its head's right
  * @param {string} [o.stages]   StageBar
+ * @param {string} [o.rows]     a feature's slices, one TurnRow each (markup)
  * @param {string} [o.foot]     How it ran (markup)
  * @param {string} [o.stream]   what How it ran opens (markup)
  * @param {boolean} [o.open]
  * @param {boolean} [o.compact]
  * @param {object} [o.attrs]
  */
-export function taskCard({ title, place = '', mark, word, detail = '', action = '', menu = '', stages = '', foot = '', stream = '', open = false, compact = false, attrs: a = {} }) {
+export function taskCard({ title, place = '', mark, word, detail = '', action = '', menu = '', stages = '', rows = '', foot = '', stream = '', open = false, compact = false, attrs: a = {} }) {
   if (compact) return `<article class="task-card rc is-compact"${attrs(a)}>${turnRow({ mark, text: `<b>${esc(title)}</b> ${esc(detail)}`, end: action })}</article>`;
-  return `<article class="task-card rc${open ? ' is-open' : ''}"${attrs(a)}>${cardHead({ mark, kicker: word, title, why: detail, facts: place, menu })}<section class="rc-card tp-body"${attrs({ 'aria-label': `${title}: ${word}` })}>${stages}${action ? `<div class="tp-actions">${action}</div>` : ''}</section>${foot ? `<div class="tc-foot">${foot}</div>` : ''}${open && stream ? `<div class="tc-stream">${stream}</div>` : ''}</article>`;
+  return `<article class="task-card rc${open ? ' is-open' : ''}"${attrs(a)}>${cardHead({ mark, kicker: word, title, why: detail, facts: place, menu })}<section class="rc-card tp-body"${attrs({ 'aria-label': `${title}: ${word}` })}>${stages}${rows ? `<div class="tc-rows">${rows}</div>` : ''}${action ? `<div class="tp-actions">${action}</div>` : ''}</section>${foot ? `<div class="tc-foot">${foot}</div>` : ''}${open && stream ? `<div class="tc-stream">${stream}</div>` : ''}</article>`;
 }
 
 /**
@@ -312,10 +313,12 @@ export function filesCard({ files, label = 'Files' }) {
  * @param {string} o.text
  * @param {string} [o.quote]
  * @param {string[]} [o.files]
+ * @param {{text:string, mark?:string, attrs?:object}[]} [o.refs]   tasks named in it: chips that lead to their cards
  * @param {object} [o.attrs]
  */
-export function youTurn({ text, quote = '', files = [], attrs: a = {} }) {
-  return `<div class="convo-you"${attrs(a)}>${quote ? `<blockquote class="you-quote">${esc(quote)}</blockquote>` : ''}${esc(text)}${files.length ? `<span class="you-files">${files.map((f) => `<span class="kind-chip">${icon('file', 12)}${esc(f)}</span>`).join('')}</span>` : ''}</div>`;
+export function youTurn({ text, quote = '', files = [], refs = [], attrs: a = {} }) {
+  const chips = refs.map((r) => `<button type="button" class="kind-chip you-ref"${attrs({ title: `Opens ${r.text} in its chat`, ...(r.attrs || {}) })}>${r.mark || ''}${esc(r.text)}</button>`).join('');
+  return `<div class="convo-you"${attrs(a)}>${quote ? `<blockquote class="you-quote">${esc(quote)}</blockquote>` : ''}${esc(text)}${files.length || chips ? `<span class="you-files">${files.map((f) => `<span class="kind-chip">${icon('file', 12)}${esc(f)}</span>`).join('')}${chips}</span>` : ''}</div>`;
 }
 
 /**

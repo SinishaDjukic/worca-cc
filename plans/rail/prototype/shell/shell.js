@@ -187,7 +187,7 @@
     if (!hidden.length) inViewMenu = false;
     const slot = document.getElementById('in-view-slot');
     if (slot) slot.innerHTML = R.inView({
-      items: shown.map(({ x, now }) => { const [title, line] = now.label.split('\n'); return { title, line, icon: now.mark, current: location.hash === `#${now.hash}`, attrs: { 'data-in-view': key(x) }, drop: { 'data-in-view-drop': key(x) } }; }),
+      items: shown.map(({ x, now }) => { const [title, line] = now.label.split('\n'); return { title, line, icon: now.mark, current: location.hash === `#${now.hash}` || (!!now.task && location.hash === `#chat/${window.RailConversation?.chatOfCase(now.task.cs) || now.task.chat}`), attrs: { 'data-in-view': key(x) }, drop: { 'data-in-view-drop': key(x) } }; }),
       more: hidden.length ? { n: hidden.length, open: inViewMenu, attrs: { 'data-in-view-more': '' }, items: hidden.map(({ x, now }) => ({ id: key(x), text: now.label.split('\n')[0], mark: now.mark.replace('--km:20px', '--km:18px') })) } : null });
     // a tab that just became the one you are on grows its line from the centre: drawn without it, then given it
     const cur = slot?.querySelector('.in-view-i.is-current'), curKey = cur?.dataset.inView || '';

@@ -1089,6 +1089,17 @@
       ]
     },
     {
+      "name": "CardHead",
+      "code": "ui/public/design-system/components/kind-mark.mjs#cardHead",
+      "kind": "showing",
+      "needs": [
+        "the one head every chat card has: its mark and word, its title, one line, its facts, its ⋯"
+      ],
+      "rules": [
+        "panel.conversation-cards"
+      ]
+    },
+    {
       "name": "TaskProposal",
       "code": "ui/public/design-system/components/kind-mark.mjs#taskProposal",
       "kind": "moving",

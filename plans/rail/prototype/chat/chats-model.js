@@ -14,7 +14,7 @@
       chat('c6', 'Export columns', 'idle', 'chat', 'billing-api', '11:40', 'today', { cost: 0.5, group: 't-bill' }),
       chat('c7', 'Export email wording', 'idle', 'started', 'billing-api', '10:10', 'today', { cost: 1.1, group: 't-bill' }),
       chat('c8', 'Incident in the Telegram room', 'idle', 'chat', '', '09:15', 'today', { origin: { platform: 'telegram' } }),
-      chat('c9', 'Release checklist', 'idle', 'started', 'worca-cc', 'Yesterday', 'yesterday', { cost: 3.3, group: 't-rel', tasks: [{ id: 't9', title: 'Write the notes', case: 'merged', stage: 4, git: 'merged', branch: 'docs/release-notes', detail: 'Merged #1101 into dev' }] }),
+      chat('c9', 'Release checklist', 'idle', 'started', 'worca-cc', 'Yesterday', 'yesterday', { cost: 3.3, group: 't-rel', tasks: [{ id: 't9s', title: 'Bump dependencies', case: 'scheduled', stage: -1, detail: 'Starts at 17:00, after the release' }, { id: 't9', title: 'Write the notes', case: 'merged', stage: 4, git: 'merged', branch: 'docs/release-notes', detail: 'Merged #1101 into dev' }] }),
       chat('c10', 'Changelog draft', 'idle', 'chat', 'docs-site', 'Yesterday', 'yesterday', { cost: 0.6, group: 't-rel' }),
       chat('c11', 'Who owns the cron parser', 'idle', 'tracks', 'worca-cc', 'Yesterday', 'yesterday', { origin: { platform: 'discord' }, group: 't-ops' }),
       chat('c12', 'Pager rota', 'idle', 'chat', 'web-app', 'Tue', 'week', { origin: { platform: 'teams' }, group: 't-ops' }),
@@ -67,6 +67,7 @@
       { t: 'act', id: 'a2', mark: 'git', text: '<b>Ready to open a PR</b> 12 files +540 −96 into main', actions: [['Create PR', 'primary', 'Opened PR #1104 into main'], ['View changes', 'quiet', 'Opens the changes']] },
       { t: 'you', id: 'a3', text: 'Bump the version to 1.20.0', when: '11:42' },
       { t: 'change', id: 'a4', kind: 'Version', title: 'Version bumped', rows: [{ name: 'package.json', before: '1.19.4', after: '1.20.0' }], state: 'applied' },
+      { t: 'task', id: 'a4b', task: 't9s' },
       { t: 'you', id: 'a5', text: 'Stop the dependency bump, it can wait', when: '11:44' },
       { t: 'act', id: 'a6', mark: 'ask', text: '<b>Stop Nightly dependency bump?</b> It has run 12 minutes of Review; stopping loses them', actions: [['Stop', 'danger', 'Stopped Nightly dependency bump'], ['Keep running', 'quiet', 'Kept running']] },
     ];
@@ -86,6 +87,7 @@
       { t: 'you', id: 'a1', text: 'Plan the API rewrite as a workflow I can reuse', when: '12:20' },
       { t: 'think', text: 'Thought for 9s' },
       { t: 'change', id: 'a2', kind: 'Workflow', title: 'API rewrite, in three slices', why: 'Plan once, then build each slice behind its own review; a person signs off the contract first.', graph: true, apply: 'Save', state: 'proposed' },
+      { t: 'feature', id: 'a3', title: 'Unified page navigation', slices: [{ title: 'Trail in the top bar', case: 'ready', stage: 2, detail: 'Ready' }, { title: 'Pager between runs', case: 'working', stage: 1, detail: 'Build · step 1 of 2' }, { title: 'Deep links', case: 'scheduled', stage: -1, detail: 'After the pager' }] },
     ];
     if (c.id === 'c6') return [
       { t: 'you', id: 'a1', text: 'Which columns should the CSV export have? Shape it first', when: '13:10' },
@@ -99,7 +101,7 @@
       { t: 'act', id: 'a6', mark: 'git', text: '<b>Ready to ship</b> checks 7 of 7 passed · 3 files +210 −64', actions: [['Create PR', 'primary', 'Opened PR #1107 into dev'], ['View changes', 'quiet', 'Opens the changes']] },
     ];
     if (c.id === 'c14') return [
-      { t: 'you', id: 'a1', text: 'This is what the customer sent. Same bug as last year?', quote: 'The total on invoice 4411 is off by one cent', files: ['invoice-4411.pdf', 'screenshot.png'], when: 'Oct 2' },
+      { t: 'you', id: 'a1', text: 'This is what the customer sent. Same bug as last year?', refs: [{ title: 'Add CSV export', case: 'question' }], quote: 'The total on invoice 4411 is off by one cent', files: ['invoice-4411.pdf', 'screenshot.png'], when: 'Oct 2' },
       { t: 'think', text: 'Thought for 7s' },
       { t: 'words', html: 'Yes: rounding per line, then summing. I put the two side by side:' },
       { t: 'filesgrid', label: 'What I compared', files: [{ name: 'invoice-4411.png', image: true }, { name: 'rounding-diff.png', image: true }, { name: 'repro.txt', meta: '2 KB' }] },
@@ -108,6 +110,13 @@
       { t: 'you', id: 'a1', text: 'Make an agent that drafts the changelog from merged PRs', when: 'Oct 1' },
       { t: 'change', id: 'a2', kind: 'Agent', title: 'Changelog writer', why: 'Reads the PRs merged since the last tag and writes one line per change, grouped by area.', rows: [{ name: 'Reads', before: '', after: 'Merged PRs since the last tag' }, { name: 'Writes', before: '', after: 'CHANGELOG.md, a draft' }, { name: 'Model', before: '', after: 'Sonnet 5.5' }], apply: 'Save', state: 'proposed' },
       { t: 'act', id: 'a3', mark: 'ask', text: '<b>Run scripts/release-notes.sh?</b> It reads git tags and writes nothing', actions: [['Run', 'primary', 'Ran scripts/release-notes.sh: 14 changes found'], ['Not now', 'quiet', 'Not run']] },
+    ];
+    if (c.id === 'c3') return [
+      { t: 'you', id: 'a1', text: 'Tidy the migrations folder', when: '14:12' },
+      { t: 'think', text: 'Thought for 4s' },
+      { t: 'cmd', cmd: 'ls migrations | wc -l', sum: '84 files', end: '1s', out: '84', done: true },
+      { t: 'words', html: '84 migrations; 61 are older than the squash point. Squashing them, first as a dry run:' },
+      { t: 'cmd', cmd: 'npm run db:squash -- --dry-run' },
     ];
     if (c.id === 'c13') return [
       { t: 'you', id: 'a1', text: 'Compare two queue libraries for the export jobs', when: 'Mon' },
