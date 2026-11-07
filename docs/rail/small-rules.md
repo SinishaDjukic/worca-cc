@@ -46,3 +46,5 @@
   problems, nothing. Only those play; info never does. A burst plays one sound. No sound during away hours. The chime is
   two soft notes generated in the browser (`playChime`), no audio file, and no error when the browser blocks it before
   the first click.
+
+**Menus.** A menu with any toggle keeps the toggle's room on every item, so its words start on one edge. While a menu is open over the page, nothing outside it shows a tooltip.

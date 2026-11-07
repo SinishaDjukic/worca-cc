@@ -880,6 +880,14 @@ test('thinkingRow: live says, in one line, what it does and how long, politely; 
   assert.match(C.thinkingRow({ done: true, secs: '8s', steps: ['Read the chat'], open: true, attrs: { 'data-fold-turn': '3' } }), /tr-body is-steps[\s\S]*Read the chat/);
 });
 
+test('the review\'s fixes in the library: a quiet field label, Start ▾ on a proposal, ⋯ on a change, danger as quiet words', () => {
+  assert.match(C.field({ id: 'x', label: 'Answer', quietLabel: true }), /fld-l is-quiet/);
+  const p = C.taskProposal({ title: 't', sentence: '', alts: { open: true, menu: '<i>alts</i>', attrs: { 'data-menu': 'a' } } });
+  assert.match(p, /btn-split/); assert.match(p, /<i>alts<\/i>/);
+  assert.match(C.changeProposal({ kind: 'Away', title: 'Q', menu: '<u>m</u>' }), /tp-menu"><u>m<\/u>/);
+  assert.match(C.changeProposal({ kind: 'X', title: 'Q', actions: [{ label: 'Remove', kind: 'danger' }] }), /btn-quiet[^"]*is-danger/);
+});
+
 test('intentChip: a starter armed in the composer: its icon, its name, and ✕ to clear it', () => {
   const h = C.intentChip({ icon: '<i>i</i>', label: 'Build workflow', clear: { 'data-intent-clear': '' } });
   assert.match(h, /kind-chip composer-intent"><i>i<\/i>Build workflow/); assert.match(h, /aria-label="Clear Build workflow"[^>]*data-intent-clear/);
@@ -911,7 +919,7 @@ test('taskProposal: the composer sentence, Customise folding, Start and Not now 
 test('changeProposal: before and after, Apply; applied, a receipt with Revert; declined, one quiet line', () => {
   const rows = [{ name: 'Away on', before: 'Never', after: 'Weekends' }];
   const h = C.changeProposal({ kind: 'Away', title: 'Quiet', rows });
-  assert.match(h, /Proposed change · Away/); assert.match(h, /<s>Never<\/s>/); assert.match(h, /<b>Weekends<\/b>/); assert.match(h, />Apply</);
+  assert.match(h, /tp-kicker">[\s\S]*?<span>Away<\/span>/); assert.match(h, /<s>Never<\/s>/); assert.match(h, /<b>Weekends<\/b>/); assert.match(h, />Apply</);
   assert.match(C.changeProposal({ kind: 'Away', title: 'Quiet', rows, state: 'applied' }), />Revert</);
   assert.match(C.changeProposal({ kind: 'Away', title: 'Quiet', rows, state: 'declined' }), /Not changed/);
   assert.match(C.turnDivider({ text: 'Switched to a' }), /role="separator"[^>]*aria-label="Switched to a"/);

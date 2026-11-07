@@ -1463,9 +1463,6 @@ canvas.dot-orb[data-orb]{border-radius:50%;outline:1px solid light-dark(var(--li
 .ask-changes{display:flex;flex-direction:column;gap:8px;margin:8px 0 0 32px;}
 /* Chat home's More opens upward and keeps inside the window; a row's words can be its one target (a feature's slice) */
 .home-starters .rc-pop > .menu{top:auto;bottom:calc(100% + 4px);max-height:min(60vh,520px);overflow:auto;}
-.tr-link{padding:0;border:0;background:none;font:inherit;color:inherit;cursor:pointer;text-align:left;}
-.tr-link:hover b{text-decoration:underline;text-underline-offset:3px;}
-.tr-link:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:var(--r-xs);}
 /* A menu with any toggle in it keeps its toggle's room on every item, so all its words start on one edge */
 :is(.rc,.pz-app) .menu:has(.menu-item:is([role="menuitemradio"],[role="menuitemcheckbox"])) .menu-item[role="menuitem"]{display:grid;grid-template-columns:12px minmax(0,1fr) auto;column-gap:10px;}
 :is(.rc,.pz-app) .menu:has(.menu-item:is([role="menuitemradio"],[role="menuitemcheckbox"])) .menu-item[role="menuitem"]::before{content:"";grid-column:1;}
