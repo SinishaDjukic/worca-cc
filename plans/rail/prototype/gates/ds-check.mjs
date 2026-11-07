@@ -164,6 +164,16 @@ for (const page of readdirSync(here('.')).filter((f) => f.endsWith('.html') && f
   }
   await p.close();
 }
+// --- the generated Worca Rail page draws every component, as the gallery does ---
+{
+  const { buildPage } = await import('../../../../tools/rail-artifact.mjs');
+  const p = await b.newPage({ viewport: { width: 1280, height: 800 } });
+  p.on('pageerror', (e) => add('the generated Worca Rail page has a script error', String(e)));
+  await p.setContent(buildPage({ sha: 'check' }), { waitUntil: 'load' });
+  const missing = await p.evaluate(() => [...document.querySelectorAll('.ra-tile')].filter((a) => !document.querySelector(a.getAttribute('href')) || !document.querySelector(a.getAttribute('href')).querySelector('.gl-show *')).map((a) => a.querySelector('b').textContent));
+  for (const m of missing) add('a component on the generated Worca Rail page is not drawn', m);
+  await p.close();
+}
 await b.close();
 console.log(issues.size ? [...issues].map(([k, v]) => `${k} (${v.size})\n   ${[...v].slice(0, 12).join('\n   ')}`).join('\n') : 'everything is from the design system');
 process.exitCode = issues.size ? 1 : 0;
