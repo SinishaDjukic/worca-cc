@@ -47,13 +47,48 @@
     return `<div>${R.button({ label: comp.more ? 'Hide Customise' : 'Customise', kind: 'quiet', icon: R.icon(comp.more ? 'chevron' : 'chevR', 12), attrs: { 'data-cp-more': '', 'aria-expanded': String(comp.more), title: 'Title, labels, branch, memory, guardrails and more' } })}</div>${more}${noteHtml}`;
   }
   const chipsHtml = () => (comp.files.length ? `<span class="composer-chips">${comp.files.map((f) => R.button({ label: f, kind: 'quiet', icon: R.icon('x', 11), attrs: { 'data-cp-unfile': f, title: `Removes ${f}` } })).join('')}</span>` : '');
+  // ---- starting: a starter only arms the composer (its chip and its placeholder); nothing is sent until you send ----
+  const STARTERS = [
+    { id: 'task', label: 'New task', icon: 'kind-task', ph: 'Describe the task…' },
+    { id: 'workflow', label: 'Build workflow', icon: 'kind-workflow', ph: 'Describe the workflow…' },
+    { id: 'schedule', label: 'Schedule a run', icon: 'clock', ph: 'What should run, and when?' },
+    { id: 'track', label: 'Track a run', icon: 'track', ph: 'Which task to follow?' },
+  ];
+  const MORE = [
+    { id: 'explain', label: 'Explain a diff', icon: 'pr', ph: 'Which task’s changes?' },
+    { id: 'script', label: 'Write a script', icon: 'list', ph: 'What should the script do?' },
+    { id: 'project', label: 'Add project', icon: 'folder', ph: 'Which folder or repository?' },
+    { id: 'away', label: 'Step away', icon: 'away', ph: 'I’m away now', text: 'I’m away now' },
+    { id: 'metrics', label: 'Team metrics', icon: 'signal', ph: 'What do you want to know?' },
+    { id: 'model', label: 'Add a model', icon: 'set-models', ph: 'Which model or provider?' },
+    { id: 'workspace', label: 'New workspace', icon: 'folder', ph: 'Which projects belong together?' },
+    { id: 'remember', label: 'Remember something', icon: 'set-memory', ph: 'What should Worca remember?' },
+    { id: 'find', label: 'Find tasks', icon: 'list', ph: 'Which tickets? (Jira, GitHub, Linear)' },
+  ];
+  const PRESETS = ['Hotfix', 'Docs only', 'Release notes', 'Dependency bump'];
+  let pins = ['Shaper'];   // pinned workflows lead the row; Shaper by default
+  const intentOf = (id) => [...STARTERS, ...MORE].find((x) => x.id === id) || (id?.startsWith('pin:') ? { id, label: id.slice(4), icon: 'kind-workflow', ph: id === 'pin:Shaper' ? 'Describe the problem…' : `What should ${id.slice(4)} do?` } : null);
+  function arm(id) {
+    const x = intentOf(id); if (!x) return;
+    menu = ''; comp = { ...comp, intent: id, mode: 'ask', text: x.text || '', preset: '' };
+    paint(); const t = root.querySelector('[data-composer-t]'); if (t) { t.focus(); t.setSelectionRange(t.value.length, t.value.length); }
+  }
+  function startersHtml() {
+    const tile = (x, pin) => R.button({ label: x.label, kind: 'quiet', icon: R.icon(x.icon, 14), attrs: { 'data-starter': x.id, ...(pin ? { 'data-pin': x.label, title: `Arms ${x.label}: right-click to unpin` } : { title: `Arms the composer: ${x.ph}` }) } });
+    const live = (window.RailChats?.data().chats || []).flatMap((c) => (c.tasks || []).filter((t) => t.case && t.kind !== 'schedule').map((t) => ({ t, c })));
+    const pick = (id, items, head) => (menu === id ? R.compactMenu({ label: head, items: [{ header: head }, ...items] }) : '');
+    const trackMenu = pick('starter-track', live.slice(0, 6).map(({ t }) => ({ id: `starter-track|${t.case}|${t.title}`, text: t.title, mark: taskMark(t, 14) })), live.length ? 'Live' : 'Nothing running');
+    const more = R.moreMenu({ id: 'starter-more', label: 'More', icon: R.icon('more', 16), open: menu === 'starter-more', items: [...MORE.map((x) => ({ id: `starter|${x.id}`, text: x.label, mark: R.icon(x.icon, 14) })), { sep: true }, { header: 'Start from a preset' }, ...PRESETS.map((p) => ({ id: `starter-preset|${p}`, text: p })), { sep: true }, { header: 'Pin a workflow' }, ...['Lean', 'Architecture (C4)'].filter((w) => !pins.includes(w)).map((w) => ({ id: `starter-pin|${w}`, text: w }))] });
+    return `<div class="home-starters" role="group" aria-label="Start something">${pins.map((w) => tile({ id: `pin:${w}`, label: w, icon: w === 'Shaper' ? 'kind-feature' : 'kind-workflow' }, true)).join('')}${STARTERS.map((x) => x.id === 'track' ? `<span class="rc-pop">${tile(x)}${trackMenu}</span>` : tile(x)).join('')}<span class="rc-pop">${more}</span></div>`;
+  }
+  const intentChip = () => { const x = comp.intent && intentOf(comp.intent); return x ? `<span class="kind-chip composer-intent">${R.icon(x.icon, 12)}${esc(x.label)}${R.button({ label: `Clear ${x.label}`, kind: 'quiet', iconOnly: true, icon: R.icon('x', 11), attrs: { 'data-intent-clear': '' } })}</span>` : ''; };
   function composerHtml() {
     const plus = `<span class="rc-pop">${R.button({ label: 'Add', kind: 'quiet', iconOnly: true, icon: R.icon('plus', 15), attrs: { 'data-menu': 'cp-plus', 'aria-haspopup': 'menu', 'aria-expanded': String(menu === 'cp-plus') } })}${menu === 'cp-plus' ? R.compactMenu({ items: [{ id: 'cp-plus|Files', text: 'Files', help: 'Adds files for it to read' }, { id: 'cp-plus|md', text: 'Markdown or a .md file', help: 'Writes the task as Markdown' }, { id: 'cp-plus|Ticket', text: 'A ticket from a tracker', help: 'Starts from a ticket' }, { id: 'cp-plus|Reuse', text: 'Reuse last task', help: 'Fills in the words of your last task' }, { id: 'cp-plus|Shape', text: 'Shape it first', help: 'Worca asks and writes the requirements before it builds' }, { sep: true }, { header: 'Preset' }, ...['Hotfix', 'Docs only'].map((x) => ({ id: `cp-preset|${x}`, text: x, checked: comp.preset === x, help: 'Fills the sentence; Start says it is used' }))] }) : ''}</span>`;
     const words = comp.mode === 'schedule' ? 'Schedule' : comp.startAt ? `Start at ${comp.startAt}` : 'Start task';
     const send = comp.busy ? R.button({ label: 'Stop', kind: 'primary', iconOnly: true, icon: R.icon('stop', 14), attrs: { 'data-cp-stop': '', title: 'Stops the reply' } })
       : comp.mode === 'ask' ? R.button({ label: 'Send', kind: 'primary', iconOnly: true, icon: R.icon('up', 14), attrs: { 'data-cp-send': '', title: 'Sends it to Worca' } })
         : R.button({ label: words, kind: 'primary', attrs: { 'data-cp-send': '', title: comp.mode === 'schedule' ? 'Saves the schedule' : 'Starts the task now' } });
-    return R.composer({ value: comp.text, placeholder: comp.mode === 'schedule' ? 'What should run each time?' : comp.mode === 'task' ? 'What should the task do?' : 'Ask Worca…', sentence: chipsHtml() + sentence(), detail: detail(), tools: plus, send: R.button({ label: 'Speak', kind: 'quiet', iconOnly: true, icon: R.icon('mic', 15), attrs: { 'data-cp-mic': '', title: 'Speak instead of typing' } }) + send, attrs: { 'data-composer': '' } });
+    return R.composer({ value: comp.text, placeholder: comp.intent ? intentOf(comp.intent)?.ph || 'Ask Worca…' : comp.mode === 'schedule' ? 'What should run each time?' : comp.mode === 'task' ? 'What should the task do?' : 'Ask Worca…', sentence: intentChip() + chipsHtml() + sentence(), detail: detail(), tools: plus, send: R.button({ label: 'Speak', kind: 'quiet', iconOnly: true, icon: R.icon('mic', 15), attrs: { 'data-cp-mic': '', title: 'Speak instead of typing' } }) + send, attrs: { 'data-composer': '' } });
   }
 
   // ---- a turn ----
@@ -110,7 +145,7 @@
       + row('Asks you', pp('asks', x.asks || 'When the plan has open questions', ['When the plan has open questions', 'Never', 'Before every step'], 'When it stops to ask'))
       + agents;
     const nudge = x.nudge && !shaper ? `${R.kindMark({ kind: 'chat', tone: 'ask', size: 14 })}<span>This has open decisions.</span>${R.button({ label: 'Run as is · ≈ $8 · ~25 min', kind: 'quiet', attrs: { 'data-pp-asis': x.id } })}${R.button({ label: 'Shape it first · ≈ $12 · ~40 min', kind: 'quiet', attrs: { 'data-pp-shape': x.id } })}` : '';
-    const kicker = x.preset ? `Proposed · from preset ${x.preset}` : 'Proposed';
+    const kicker = x.ticket ? `Proposed · from ${x.ticket}` : x.preset ? `Proposed · from preset ${x.preset}` : 'Proposed';
     const card = R.taskProposal({ title: x.title, why: x.why, sentence: sentence + what + persp, more: brief + more, open: x.open, nudge, hooks: { title: { 'data-pp-title': x.id }, more: { 'data-pp-more': x.id }, start: { 'data-pp-start': x.id }, later: { 'data-pp-later': x.id } }, start: later ? 'Schedule' : shaper ? 'Start planning' : 'Start', kicker, extra: R.button({ label: 'Open in the composer', kind: 'quiet', attrs: { 'data-pp-composer': x.id, title: 'Everything here, in the composer, to change before it starts' } }), attrs: { 'data-anchor': x.id } });
     return card;
   }
@@ -203,7 +238,7 @@
     if (had && keepText) comp.text = had.value;
     const c = chat();
     if (!chatId || !c) {
-      root.innerHTML = side ? `<div class="chat-home"><div class="chat-home-in">${composerHtml()}</div></div>` : `<div class="chat-home" data-home><div class="chat-home-in"><h1>${esc(opts.title || 'What\'s next for Worca?')}</h1>${composerHtml()}${opts.note ? `<p class="convo-dock-note">${esc(opts.note)}</p>` : ''}</div></div>`;
+      root.innerHTML = side ? `<div class="chat-home"><div class="chat-home-in">${composerHtml()}</div></div>` : `<div class="chat-home" data-home><div class="chat-home-in"><h1>${esc(opts.title || 'What\'s next for Worca?')}</h1>${composerHtml()}${opts.mode ? '' : startersHtml()}${opts.note ? `<p class="convo-dock-note">${esc(opts.note)}</p>` : ''}</div></div>`;
     } else {
       const labels = (c.labels || []).map((l) => R.chip({ text: l })).join('');
       root.innerHTML = `<div class="convo"><div class="convo-scroll"><div class="convo-col"><div class="convo-head">${esc(c.project || 'No project')}${labels ? ` · ${labels}` : ''}${R.sentencePicker({ id: 'cl-label', text: '+ Label', tip: 'Adds or removes a label', items: ['hotfix', 'billing', 'infra', 'release'].map((l) => ({ id: l, text: l, checked: (c.labels || []).includes(l) })), open: menu === 'cl-label', chevron: '' })}<span class="tl-list-btn rc-pop" data-anchor-menu>${R.button({ label: 'Move through this chat', kind: 'quiet', iconOnly: true, icon: R.icon('list', 15), attrs: { 'data-anchor-open': '', 'aria-haspopup': 'menu', 'aria-expanded': String(menu === 'anchors') } })}</span></div>${turns().map(turnHtml).join('')}</div></div><div data-timeline></div><div class="convo-dock">${composerHtml()}</div></div>`;
@@ -226,8 +261,28 @@
     chatId = id; threads.set(id, []);
     return chat();
   }
+  // Each starter's flow, as dev has it, in Rail's cards (plans/rail/chat-cards.md › Parity)
+  function flowFor(intent, text, n) {
+    const title = text.replace(/[?.!]+$/, '').slice(0, 48) || 'A new task';
+    const proposal = (o) => ({ t: 'proposal', id: `p${n}`, title: title.charAt(0).toUpperCase() + title.slice(1), why: `From this chat: ${text}`, project: comp.project, workflow: 'Default', engine: comp.engine, then: 'open a PR', open: false, nudge: false, ...o });
+    if (intent === 'task') return [{ t: 'words', html: 'Here is the task. Check it, then start it:' }, proposal({ nudge: /\b(or|which|should|whether)\b|\?/i.test(text) })];
+    if (intent.startsWith('pin:')) return [{ t: 'words', html: `A ${esc(intent.slice(4))} task. Check it, then start it:` }, proposal({ workflow: intent.slice(4), persp: ['Product', 'Security'] })];
+    if (intent === 'schedule') return [{ t: 'words', html: 'Here it is, scheduled. Change when, then schedule it:' }, proposal({ when: 'tonight at 02:00' })];
+    if (intent === 'workflow') return [{ t: 'think', text: 'Thought for 9s' }, { t: 'change', id: `w${n}`, kind: 'Workflow', title: title || 'New workflow', why: 'Proposed workflow · round 1: plan, build behind review, then a PR. Model and effort come from your defaults.', graph: true, apply: 'Save as workflow', state: 'proposed' }];
+    if (intent === 'explain') return [{ t: 'words', html: `What changed in <b>${esc(text || 'Add CSV export')}</b>: the export now streams rows, and the date column is ISO 8601. Five files, +358 −144:` }, { t: 'filesgrid', label: 'The diff', files: [{ name: 'export.mjs', meta: '+182 −64' }, { name: 'columns.mjs', meta: '+41 −58' }, { name: 'export.test.mjs', meta: '+96 −0' }] }];
+    if (intent === 'script') return [{ t: 'change', id: `s${n}`, kind: 'Script', title: title || 'New script', why: 'A new script, tested before it is saved.', rows: [{ name: 'Runtime', before: '', after: 'Shell' }, { name: 'Inputs', before: '', after: 'a branch name' }, { name: 'Outputs', before: '', after: 'release notes, Markdown' }, { name: 'Program', before: '', after: '3 test cases' }], apply: 'Save script', state: 'proposed' }, { t: 'act', id: `sa${n}`, mark: 'ask', text: `<b>Run ${esc((title || 'the script').toLowerCase().replace(/[^a-z0-9]+/g, '-'))}.sh?</b> It runs in the sandbox; it reads git and writes nothing`, actions: [['Run', 'primary', 'Done, exit 0'], ['Don’t run', 'quiet', 'Not run']] }];
+    if (intent === 'project') return [{ t: 'change', id: `j${n}`, kind: 'Project', title: 'Add a project', why: text || 'A folder on this machine', rows: [{ name: 'Name', before: '', after: 'billing-web' }, { name: 'Folder', before: '', after: '~/src/billing-web' }, { name: 'Kind', before: '', after: 'Folder, with git' }], apply: 'Add', state: 'proposed' }];
+    if (intent === 'away') return [{ t: 'change', id: `a${n}`, kind: 'Away mode', title: 'Away mode on', rows: [{ name: 'Away mode', before: 'Off', after: 'On now' }], state: 'applied' }];
+    if (intent === 'metrics') return [{ t: 'words', html: 'Last 7 days: 42 tasks, 31 merged, 4 failed; $412 spent, most on Review. Billing-api is busiest.' }];
+    if (intent === 'model') return [{ t: 'change', id: `m${n}`, kind: 'Model', title: 'Add a model', why: text || 'A model for Review', rows: [{ name: 'Provider', before: '', after: 'Anthropic' }, { name: 'Model', before: '', after: 'Sonnet 5.5' }, { name: 'Used for', before: '', after: 'Review' }], apply: 'Add', state: 'proposed' }];
+    if (intent === 'workspace') return [{ t: 'change', id: `k${n}`, kind: 'Workspace', title: 'Create a workspace', why: text || 'Projects that ship together', rows: [{ name: 'Workspace', before: '', after: 'Billing' }, { name: 'Members', before: '', after: 'billing-api, billing-web' }], apply: 'Create', state: 'proposed' }];
+    if (intent === 'remember') return [{ t: 'notice', text: `Remembered: ${text || 'that'}` }, { t: 'words', html: 'I’ll keep it in this project’s memory.' }];
+    if (intent === 'find') return [{ t: 'words', html: 'Three tickets in Jira match; the first fits best:' }, proposal({ title: 'Export totals are off by a cent', ticket: 'BILL-412' })];
+    return null;
+  }
   // An ask that sounds like work brings a proposed task, in the composer's own words; one with open decisions offers the Shaper.
-  function replyFor(text, n) {
+  function replyFor(text, n, intent = '') {
+    const flow = intent && flowFor(intent, text, n); if (flow) return flow;
     if (!/\b(add|fix|build|make|implement|create|change|update|remove|rename|migrate)\b/i.test(text)) return [{ t: 'words', html: 'Here is what I found. Tell me if you want it built.' }];
     const core = text.replace(/^(can you|could you|please|let's)\s+/i, '').split(/,?\s+(?:or|and should|should it)\b|[?.!]/i)[0].trim();
     const title = core.length <= 48 ? core : core.slice(0, 48).replace(/\s+\S*$/, '');   // a clause, cut at a word
@@ -240,6 +295,7 @@
     const c = ensureChat(text);
     if (!threads.has(c.id)) threads.set(c.id, M.thread(c));
     const list = threads.get(c.id), n = Date.now().toString(36);
+    const intent = comp.intent || '';
     list.push({ t: 'you', id: `y${n}`, text, when: 'now' });
     if (comp.mode === 'task') {
       const t = { id: `t${n}`, title: text.slice(0, 40), case: 'working', stage: 0, git: 'branch', branch: `feat/${text.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 24)}`, detail: `Plan · step 1 of 2 · ${comp.workflow} on ${comp.engine}` };
@@ -256,9 +312,9 @@
       list.push({ t: 'working', at: Date.now(), steps: THINKING }); comp.busy = true; c.state = 'replying';
       root.dispatchEvent(new CustomEvent('rail:replying', { bubbles: true, detail: { busy: true } }));   // Ask worca's icon writes while it does
       clearTimeout(timer);
-      timer = setTimeout(() => { const i = list.findIndex((x) => x.t === 'working'); if (i >= 0) list.splice(i, 1, { t: 'think', text: `Thought for ${thinkNow(list[i]).secs}`, steps: THOUGHT.slice(0, thinkNow(list[i]).n) }, ...replyFor(text, n)); comp.busy = false; c.state = 'idle'; root.dispatchEvent(new CustomEvent('rail:replying', { bubbles: true, detail: { busy: false } })); window.RailChats.refresh(); paint(); }, 1400);
+      timer = setTimeout(() => { const i = list.findIndex((x) => x.t === 'working'); if (i >= 0) list.splice(i, 1, { t: 'think', text: `Thought for ${thinkNow(list[i]).secs}`, steps: THOUGHT.slice(0, thinkNow(list[i]).n) }, ...replyFor(text, n, intent)); comp.busy = false; c.state = 'idle'; root.dispatchEvent(new CustomEvent('rail:replying', { bubbles: true, detail: { busy: false } })); window.RailChats.refresh(); paint(); }, 1400);
     }
-    comp = { ...comp, text: '', startAt: '', more: false, files: [], mode: opts.mode || 'ask' };
+    comp = { ...comp, text: '', startAt: '', more: false, files: [], intent: '', mode: opts.mode || 'ask' };
     if (had) had.value = '';
     window.RailChats.refresh();
     if (opts.where && !side) { chatId = ''; comp = fresh(opts.mode); window.RailShell.go(`chat/${c.id}`); return; }
@@ -270,6 +326,11 @@
 
   // ---- what a click or a key means here ----
   function pickMenu(id, v) {
+    if (id === 'starter-more') { const [k, ...rest] = v.split('|'); pickMenu(k, rest.join('|')); return; }   // More's items carry its id first
+    if (id === 'starter') { arm(v); return; }
+    if (id === 'starter-preset') { comp = { ...comp, intent: '', mode: 'task', preset: v, more: true }; menu = ''; paint(); root.querySelector('[data-composer-t]')?.focus(); say(`Preset ${v}: check it, then start`); return; }
+    if (id === 'starter-pin') { pins = [...pins, v]; menu = ''; paint(); say(`Pinned ${v}`); return; }
+    if (id === 'starter-track') { const [cs, title] = v.split('|'); menu = ''; window.RailShell.openTask(cs, '', title); return; }
     const pv = /^pv-(.+)$/.exec(id); if (pv) { const x = turns().find((y) => y.id === pv[1]); if (x) x.v = +v; menu = ''; paint(); return; }
     const pm = /^pp-(.+?)-(project|workflow|engine|effort|when|then|src|base|guard|labels|memory|asks|(model|eff|sub|fan)(Plan|Build|Review))$/.exec(id);
     if (pm) { const x = turns().find((y) => y.id === pm[1]); if (x) { if (pm[3]) { x.agents = x.agents || {}; const g = (x.agents[pm[4]] = x.agents[pm[4]] || {}); g[{ model: 'model', eff: 'effort', sub: 'sub', fan: 'fan' }[pm[3]]] = v; } else x[pm[2]] = v; } menu = ''; paint(); return; }
@@ -311,6 +372,8 @@
       if (!t) { x.answered = x.options[x.pick]; paint(); say('Answered'); return; }   // a question of the chat itself, not of a task
       x.answered = x.options[x.pick]; t.case = 'working'; t.detail = 'Review · step 3 of 3'; c.state = 'following'; window.RailChats.refresh(); paint(); say('Answered: the task carries on'); return;
     }
+    if ((hit = on('[data-starter]'))) { const id = hit.dataset.starter; if (id === 'track') { menu = menu === 'starter-track' ? '' : 'starter-track'; paint(); } else arm(id); return; }
+    if (on('[data-intent-clear]')) { comp.intent = ''; paint(); root.querySelector('[data-composer-t]')?.focus(); return; }
     const pp = (attr) => { const h = on(`[${attr}]`); return h ? turns().find((y) => y.id === h.getAttribute(attr)) : null; };
     let px;
     if ((px = pp('data-plan-roles'))) { px.open = !px.open; paint(); return; }
@@ -356,6 +419,8 @@
   }
   root.addEventListener('pointerover', (e) => { const t = e.target.closest('[data-tick]'); const id = t ? t.dataset.tick : null; if (id !== hover) { hover = id; paintTimelineHover(); } });
   root.addEventListener('focusin', (e) => { const t = e.target.closest('[data-tick]'); if (t && t.dataset.tick !== hover) { hover = t.dataset.tick; paintTimelineHover(); } });
+  root.addEventListener('contextmenu', (e) => { const p = e.target.closest('[data-pin]'); if (!p) return; e.preventDefault(); pins = pins.filter((w) => w !== p.dataset.pin); paint(); say(`Unpinned ${p.dataset.pin}`); });
+  root.addEventListener('keydown', (e) => { const p = e.target.closest?.('[data-pin]'); if (p && (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10'))) { e.preventDefault(); pins = pins.filter((w) => w !== p.dataset.pin); paint(); say(`Unpinned ${p.dataset.pin}`); } });
   root.addEventListener('input', (e) => { if (e.target.matches('[data-composer-t]')) { comp.text = e.target.value; size(e.target); } if (e.target.matches('[data-pp-brief]')) { const x = turns().find((y) => y.id === e.target.dataset.ppBrief); if (x) x.brief = e.target.value; } if (e.target.matches('[data-pp-feature]')) { const x = turns().find((y) => y.id === e.target.dataset.ppFeature); if (x) x.feature = e.target.value; } if (e.target.matches('[data-pp-title]')) { const x = turns().find((y) => y.id === e.target.dataset.ppTitle); if (x) x.title = e.target.value; } });
   root.addEventListener('keydown', (e) => { if (e.target.matches('[data-composer-t]') && e.key === 'Enter' && !e.shiftKey && comp.mode === 'ask') { e.preventDefault(); send(); } });
   document.addEventListener('keydown', (e) => {

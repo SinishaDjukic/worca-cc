@@ -1427,3 +1427,9 @@ canvas.dot-orb[data-orb]{border-radius:50%;outline:1px solid light-dark(var(--li
 .tp-extra{margin-left:auto;}
 .tp-persp .btn[aria-pressed="true"]{color:var(--ink);background:var(--hover);box-shadow:inset 0 0 0 1px var(--line-2);}
 .tp-persp .btn[aria-disabled="true"]{cursor:default;}
+
+/* Chat home's starters: one quiet row under the composer; each arms the composer with its chip. */
+.home-starters{display:flex;flex-wrap:wrap;gap:4px;margin-top:12px;}
+.home-starters .btn{color:var(--ink-2);}
+.composer-intent{display:inline-flex;align-items:center;gap:4px;padding-right:0;}
+.composer-intent .btn{height:18px;width:18px;min-height:0;padding:0;}
