@@ -62,13 +62,15 @@ async function gitOut(dir, args, deadline, { input, maxBuffer = 64 * 1024 * 1024
 }
 
 /** Never throws. Resolves a Facts object; partial on timeout. */
-export async function collectFacts(dir, { now = Date.now(), timeoutMs = INTERACTIVE_TIMEOUT_MS } = {}) {
+export async function collectFacts(dir, { now = Date.now(), timeoutMs = INTERACTIVE_TIMEOUT_MS, folder = false } = {}) {
   const deadline = now + timeoutMs;
   const f = {
     dir, isRepo: false, headSha: null, tracked: null, trackedSet: null,
     truncated: false, instructionStatus: {}, sizes: {}, manifests: {}, texts: {},
-    heavyIgnored: {}, heavyPresent: [], timedOut: false, error: null,
+    heavyIgnored: {}, heavyPresent: [], timedOut: false, error: null, folder,
   };
+  // A Folder project runs on a copy of the folder, and worca never runs git in it: read the files from disk only.
+  if (folder) { readFiles(dir, f); return f; }
   try {
     // 1) repo + HEAD
     const top = await gitOut(dir, ['rev-parse', '--show-toplevel', 'HEAD'], deadline);
@@ -148,7 +150,11 @@ export function fingerprintOf(facts) {
  * fingerprintOf(collectFacts(dir)) from two small async git calls (HEAD, the candidates' porcelain), without the
  * full collection: the cache's per-read check (cache.mjs). Never throws; a non-repo reads as collectFacts' does.
  */
-export async function quickFingerprint(dir, { timeoutMs = INTERACTIVE_TIMEOUT_MS } = {}) {
+export async function quickFingerprint(dir, { timeoutMs = INTERACTIVE_TIMEOUT_MS, folder = false } = {}) {
+  if (folder) {   // no git: the candidates' and manifests' sizes and mtimes
+    const parts = [...INSTRUCTION_CANDIDATES, ...MANIFESTS].map((c) => { try { const st = statSync(join(dir, c)); return `${c}:${st.size}:${st.mtimeMs}`; } catch { return ''; } });
+    return createHash('sha1').update(`folder\n${parts.join('\n')}`).digest('hex');
+  }
   const facts = { headSha: null, instructionStatus: {} };
   const deadline = Date.now() + timeoutMs;
   const small = { maxBuffer: 4 * 1024 * 1024 };
@@ -162,4 +168,13 @@ export async function quickFingerprint(dir, { timeoutMs = INTERACTIVE_TIMEOUT_MS
     }
   }
   return fingerprintOf(facts);
+}
+
+/** Sizes of the candidate instruction files, manifests and bounded instruction texts, read from disk (no git). */
+function readFiles(dir, f) {
+  for (const c of INSTRUCTION_CANDIDATES) {
+    try { const p = join(dir, c); if (existsSync(p)) f.sizes[c] = statSync(p).size; } catch { /* ignore */ }
+  }
+  for (const m of MANIFESTS) { try { f.manifests[m] = readFileSync(join(dir, m), 'utf8'); } catch { /* absent */ } }
+  for (const t of TEXT_CANDIDATES) { try { f.texts[t] = readFileSync(join(dir, t), 'utf8').slice(0, TEXT_READ_CAP); } catch { /* absent */ } }
 }

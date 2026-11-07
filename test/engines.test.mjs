@@ -394,6 +394,20 @@ describe('engines module', () => {
       });
     });
 
+    it('a Folder project: Git repository is skipped with its reason, and its CLAUDE.md makes Claude Code ready', async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'eng-folder-'));
+      try {
+        writeFileSync(join(dir, 'CLAUDE.md'), '# c');
+        const { checks, engines, repository } = evaluateEngines(await collectFacts(dir, { folder: true }), { env: NO_LOCKS });
+        const g = checks.find((c) => c.id === 'git.repo');
+        assert.equal(g.status, 'skip');
+        assert.match(g.detail, /Folder project/);
+        assert.notEqual(repository.level, 'unknown');
+        assert.equal(engines.claude.level, 'ready');
+        assert.equal(row(checks, 'instructions.committed', 'codex').status, 'skip');
+      } finally { rmSync(dir, { recursive: true, force: true }); }
+    });
+
     it('Cursor ignores a plain .md file in .cursor/rules and says how to fix it', async () => {
       await withRepo(async (dir) => {
         mkdirSync(join(dir, '.cursor', 'rules'), { recursive: true });

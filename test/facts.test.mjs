@@ -251,4 +251,39 @@ describe('facts: git calls are async and guarded', () => {
       assert.equal(r.checks.find((c) => c.id === 'git.repo')?.status === 'fail', false, 'not reported as "not a git repo"');
     } finally { rmRf(dir); }
   });
+
+});
+
+// A Folder project (vcs 'none', or no git installed) runs on a copy of the folder: worca never runs git in it.
+describe('facts: a Folder project runs no git', () => {
+  const POSIX = { skip: process.platform === 'win32' ? 'the git shim is a POSIX shell script' : false };
+  function withGitShim(fn) {
+    const shim = mkdtempSync(join(tmpdir(), 'readiness-gitshim-'));
+    const log = join(shim, 'calls.tsv');
+    const real = execSync('command -v git', { encoding: 'utf8' }).trim();
+    writeFileSync(join(shim, 'git'), `#!/bin/sh\nprintf '%s\\t%s\\n' "$PWD" "$*" >> '${log}'\nexec '${real}' "$@"\n`, { mode: 0o755 });
+    const prev = process.env.PATH; process.env.PATH = `${shim}:${prev}`;
+    const calls = () => (existsSync(log) ? execSync(`cat '${log}'`, { encoding: 'utf8' }).trim().split('\n').filter(Boolean) : []);
+    return Promise.resolve(fn(calls)).finally(() => { process.env.PATH = prev; rmSync(shim, { recursive: true, force: true }); });
+  }
+
+  it('collectFacts and quickFingerprint in folder mode spawn no git, and still read the instruction files', POSIX, async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'readiness-folder-'));
+    try {
+      writeFileSync(join(dir, 'CLAUDE.md'), '# c');
+      writeFileSync(join(dir, 'package.json'), '{"scripts":{"test":"node --test"}}');
+      await withGitShim(async (calls) => {
+        const f = await collectFacts(dir, { folder: true });
+        const fp1 = await quickFingerprint(dir, { folder: true });
+        writeFileSync(join(dir, 'CLAUDE.md'), '# changed, longer');
+        const fp2 = await quickFingerprint(dir, { folder: true });
+        assert.deepEqual(calls(), [], 'no git spawned');
+        assert.equal(f.folder, true);
+        assert.equal(f.isRepo, false);
+        assert.equal(f.sizes['CLAUDE.md'], 3);
+        assert.ok(f.manifests['package.json']);
+        assert.notEqual(fp1, fp2, 'an instruction file edit moves the folder fingerprint');
+      });
+    } finally { rmRf(dir); }
+  });
 });

@@ -233,7 +233,8 @@ export const CHECKS = Object.freeze([
     scope: 'repository',
     fix: 'Runs check out a git worktree. Run `git init` and commit.',
     run: (f) =>
-      f.isRepo
+      f.folder ? { status: 'skip', detail: 'Folder project: runs use a copy of the folder, not a git checkout' }
+      : f.isRepo
         ? { status: 'pass', detail: 'Runs check out a worktree of this repository' }
         : { status: 'fail', detail: 'not a git work tree' },
   },
