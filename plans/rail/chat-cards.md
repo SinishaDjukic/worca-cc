@@ -82,7 +82,7 @@ every action. Rail reproduces each flow in its card shape; a box is ticked when 
    - [x] Task brief, Markdown, @ pills, count; a tracker task shows a Task box instead (id, title, profile).
    - [x] Foot: Open in New run, Not now, Schedule…, Start. Open decisions: Run as is / Shaper, each with its estimate,
          perspective chips.
-2. [x] The running task card: steps, agents, cost, elapsed; Pause, Stop; waiting: the question under it; done: result,
+2. [ ] The running task card (review 2: cost, elapsed, agents, top files and artifacts are not on the card yet; Pause and Stop are): steps, agents, cost, elapsed; Pause, Stop; waiting: the question under it; done: result,
        top files, artifacts, Ask for changes (inline).
 3. [x] Then a PR offer, and a Changes card when you ask for changes.
 
@@ -106,7 +106,7 @@ every action. Rail reproduces each flow in its card shape; a box is ticked when 
 9. [x] Ship: Requirements N/M, each Met / Not met (where it moved) / Dropped (why); As one PR / As stacked PRs; Create PR
        (its dialog), Not now.
 10. [x] Changes: the quoted request; Start round 2 / Add to Run 3's plan / Add Run 4 / Start Run 4; Not now.
-11. [x] Route: Where does this go?, Worca's guess, three choices, Where in the feature; its named action, Not now; Open run.
+11. [ ] Route (review 2: no code yet; the tick did not hold): Where does this go?, Worca's guess, three choices, Where in the feature; its named action, Not now; Open run.
 
 ### Build workflow
 1. [x] Workflow proposal: building (a trace), then Proposed workflow · round N, target, editable name, the graph (Expand
@@ -114,15 +114,15 @@ every action. Rail reproduces each flow in its card shape; a box is ticked when 
        (Save & propose). Saved: Saved to Workflows, Open in Workflows; a TaskProposal follows if you asked to run it.
 
 ### Schedule a run (and Memory defragment)
-1. [x] TaskProposal with when: Scheduled / Repeats / After run, its time, Change…; Schedule, Start now.
-2. [x] Scheduled card: its kind, title, next time; Run now, Cancel / Delete schedule, Schedules.
-3. [x] Schedule change: Now → Becomes, next runs; Decline and Run now / Move / Apply / Cancel run / Delete.
+1. [ ] TaskProposal with when: Scheduled / Repeats / After run, its time, Change…; Schedule, Start now. (review 2: repeats make a real schedule; Change… and Start now as the alternative still missing)
+2. [x] Scheduled card: its kind, title, next time; Run now, Pause, Skip the next run, Delete (review 2), Open.
+3. [ ] Schedule change (review 2: lacks dev's per-action From/To, the error reason, the target's name and note; has a Revert dev lacks): Now → Becomes, next runs; Decline and Run now / Move / Apply / Cancel run / Delete.
 
 ### Track a run
-1. [x] A picker (Live / Nothing running) fills the composer; then the running task card.
+1. [ ] A picker (Live / Nothing running) fills the composer; then the running task card. (review 2: it opens the task instead of filling the composer)
 
 ### Explain a diff
-1. [x] A picker (Finished) fills the composer; a text answer; a FilesCard (Diff kind; Download, Show in folder) if shown.
+1. [ ] A picker (Finished) fills the composer (review 2: no picker yet); a text answer; a FilesCard (Diff kind; Download, Show in folder) if shown.
 
 ### Write a script
 1. [x] Script draft: name, runtime (Shell, Python, Node.js), key, description, inputs, outputs, params, program · N tests;
@@ -132,7 +132,7 @@ every action. Rail reproduces each flow in its card shape; a box is ticked when 
 3. [x] Command: Stop, Copy command, Copy output, Show in terminal, Show all.
 
 ### Add project
-1. [x] Add project (New: name, location, use git; Folder: choose, several; Clone: URL, branch, folder name). In chat: a
+1. [ ] Add project (review 2: arms a chat request; dev's New / Folder / Clone dialog is not there) (New: name, location, use git; Folder: choose, several; Clone: URL, branch, folder name). In chat: a
        ChangeProposal of kind Project (Create, Add) or Clone (Clone, Cloning…).
 
 ### Step away
@@ -155,19 +155,34 @@ every action. Rail reproduces each flow in its card shape; a box is ticked when 
 - [x] Create PR, Publish branch, Push, Link remote, Apply to branch or folder, Discard, Download patch, Commit it yourself,
       How to merge; Watch, Copy PR link, Fix checks, Re-run checks, Fix conflicts, Resolve in a terminal, Mark ready,
       Merge PR, View fix run.
-- [x] Ask for changes inline; Archive, Restore, Report, Save as preset, Away mode, Labels and cost tags, Terminal.
+- [x] Ask for changes inline (review 2: Start a follow-up, tied to the task); Archive, Restore, Report, Save as preset, Away mode, Labels and cost tags, Terminal.
 - [ ] And three dev lacks on its page too: Run after, Copy branch name, Sync log.
 
 ### Settings proposals, per kind
 - [x] Web access (Allow in chat, Always allow, Deny); proxy; actions; a setting's revert scope (This run only, Your settings).
 
 ### Still open (7 Nov, after the parity build)
-- Dialogs an action opens (Create PR, Raise the cap, Resume at…, Switch model…) still open on the task page; bring them
-  into the chat as a ChangeProposal or a sheet over it.
+- ~~Dialogs an action opens~~: done in review 2, as small forms under the card (Create PR, Switch model, Resume at, Raise
+  the cap, Report, Save as preset, Run after, Move to group).
 - Shaper with requirements first (the `shapeRequirements` flag): the lead role sentence and the Requirements card with
   Agree and plan; today requirements show as decisions and a folded agreed list.
 - Away mode's settings change (Keep as is, Apply), Team metrics' change kinds, the model kinds Edit, Remove, Provider,
   From Copilot, proxy, actions, and a setting's revert scope (This run only, Your settings).
 - Arrow keys between a question's options; Chat home's "More you can do" (Memory defragment) and the Plans and Workflows
   tabs, which live in Places today; run tiles with a mini graph.
-- The task page's own gaps: Run after, Copy branch name, Sync log.
+- ~~The task page's own gaps~~: Run after and Copy branch name were there; Sync log added in review 2.
+
+### Next pass: the rarer gaps from review 2 (plans/rail/review-2.md › C; dev references in the audits)
+- [ ] Shaper: the route card (`shape/route-card.mjs`), the requirements step (`shape/step-card.mjs:38`), the
+      requirements-first proposal (`shape/proposal.mjs:24-109`), the direction chip to a live run (`chat/direction.mjs`).
+- [ ] Questions: form widgets (text, slider, rank, table-select; `ask/widgets-*.mjs`) and arrow keys.
+- [ ] Workflow proposal at parity: rounds, name edit, model per node, loops, Save & propose, Open in Workflows.
+- [ ] Settings proposals with no card: Metrics or Policy, Proxy, Clone, Actions; Sets · N (MCP servers and skills).
+- [ ] The full schedule dialog (`schedule-sheet.mjs`): time zone, end date or run count, overlap, failure and missed-start
+      policies, After a run with its options; the schedule change card's From/To and error reason.
+- [ ] Task page depth: base-branch conflicts before a PR, refused-resume questions, the Archive block, Sync before run,
+      per-repository rows for a workspace PR, the Actions tab, the diff comment thread, the live graph, the full Report
+      dialog, Sessions and telemetry.
+- [ ] Answers: pinpoint (Copy, Explain, Alternatives, Disagree, Quote in reply), ref chips, the error with Sign in….
+- [ ] Ask worca's side column: its home and page chips. Chat home: the Plans tab, run tiles, "More you can do".
+- [ ] The task card's facts: cost, elapsed, agents, top files, artifacts (dev's chat card shows them).
