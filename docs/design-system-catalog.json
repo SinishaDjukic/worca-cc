@@ -1082,7 +1082,7 @@
       "code": "ui/public/design-system/components/shell-parts.mjs#inView",
       "kind": "moving",
       "needs": [
-        "what you keep an eye on, from any page: still marks in the top bar, a card on hover, a way out of view"
+        "what you keep an eye on, from any page: still marks with short names in the top bar, like tabs; a card on hover, a way out of view"
       ],
       "rules": [
         "nav.in-view"
@@ -1213,6 +1213,41 @@
       "code": "ui/public/design-system/components/list-parts.mjs#DAY_SECTIONS",
       "needs": [
         "a list grouped by day: Today, Yesterday, Previous 7 days, Previous 30 days, Older"
+      ]
+    },
+    {
+      "name": "How every list is grouped",
+      "code": "ui/public/design-system/components/list-parts.mjs#BY_CHOICES",
+      "needs": [
+        "every list's grouping, one order and one set of words: date, state, project, person, topic, AI topics"
+      ]
+    },
+    {
+      "name": "The grouping a list starts on",
+      "code": "ui/public/design-system/components/list-parts.mjs#BY_DEFAULT",
+      "needs": [
+        "a list grouped by date until you choose otherwise"
+      ]
+    },
+    {
+      "name": "A list's by word",
+      "code": "ui/public/design-system/components/list-parts.mjs#byPart",
+      "needs": [
+        "the sentence's by word, from the groupings a list has, in the one order"
+      ]
+    },
+    {
+      "name": "A list by date",
+      "code": "ui/public/design-system/components/list-parts.mjs#dateSections",
+      "needs": [
+        "a list by date: what waits on you first, then one folding section per day"
+      ]
+    },
+    {
+      "name": "The sections of what is to come",
+      "code": "ui/public/design-system/components/list-parts.mjs#NEXT_RUN_SECTIONS",
+      "needs": [
+        "a list of what is still to come by its next run: Today, Tomorrow, This week, Later"
       ]
     }
   ],

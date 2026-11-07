@@ -152,9 +152,9 @@
     document.getElementById('bar-back').innerHTML = R.list({ groups: [...(rows.length ? [{ title: 'Recent', rows, more: !pinsAll && morePins > 0 ? { n: morePins, attrs: { 'data-pins-all': '' } } : null }] : [])] });
   }
 
-  // ---- In view: what you keep an eye on, from any ⋯ or a task's head; its marks live in the top bar only, up to five (one on a
-  // phone), then +N opens the rest ----
-  const inViewMax = () => (innerWidth <= 760 ? 1 : 5);
+  // ---- In view: what you keep an eye on, from any ⋯ or a task's head; its marks live in the top bar only, named like tabs (three),
+  // marks only below 1100px (five; one on a phone), then +N opens the rest ----
+  const inViewMax = () => (innerWidth <= 760 ? 1 : innerWidth <= 1100 ? 5 : 3);   // named like tabs above 1100px, three of them
   let inViewMenu = false;
   addEventListener('resize', () => drawInView());
   let inViewList = [{ type: 'task', id: 't4', chat: 'c4', title: 'Fix the flaky login' }];

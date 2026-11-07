@@ -5,7 +5,7 @@
   const bar = document.getElementById('bar-schedules'), page = document.getElementById('route-schedule');
   if (!bar || !page) return;
   const esc = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  let data = M.seed(), current = '', view = { show: 'all' }, ctl = null, menu = '', home = null;
+  let data = M.seed(), current = '', view = { show: 'all', by: R.BY_DEFAULT }, ctl = null, menu = '', home = null;
   const say = (t, undo) => window.RailPulse?.say(t, undo);
   const st = (s) => R.runState(s.state), toneOf = (s) => (s.state === 'scheduled' ? 'idle' : R.markTone(st(s)));
   const SECTIONS = [['needs', R.runState('question').word], ['next', 'Next'], ['paused', R.runState('paused').word]];
@@ -18,14 +18,21 @@
     if (id === 'pause') { s.state = s.state === 'paused' ? 'scheduled' : 'paused'; s.section = s.state === 'paused' ? 'paused' : 'next'; s.next = s.state === 'paused' ? 'Paused by you' : `Next at ${s.at}`; draw(); say(st(s).word); }
   }
   ctl = R.listController({ root: bar, spec: { noun: 'schedules', label: 'Selected schedules', view: () => ({ state: 'ready',
-    parts: [{ word: 'Showing', id: 'show', text: view.show, tip: 'Which schedules the list shows', items: ['all', 'paused'].map((x) => ({ id: x, text: x, checked: view.show === x })) }],
-    sections: SECTIONS.map(([id, title]) => ({ id, title, rows: data.schedules.filter((s) => s.section === id && (view.show === 'all' || s.state === 'paused')).map(rowOf) })), empty: { text: 'No schedules yet.', action: 'New schedule' } }),
+    parts: [{ word: 'Showing', id: 'show', text: view.show, tip: 'Which schedules the list shows', items: ['all', 'paused'].map((x) => ({ id: x, text: x, checked: view.show === x })) },
+      R.byPart({ by: view.by, choices: [{ id: 'day', help: 'By the next run: Today, Tomorrow, This week, Later; paused ones last' }, { id: 'state', help: `${SECTIONS.map(([, t]) => t).join(', ')}` }] })],
+    sections: sections(), empty: { text: 'No schedules yet.', action: 'New schedule' } }),
     can: () => ['menu'], bulk: () => [], act, open: (r) => window.RailShell.go(`schedule/${r._s.id}`), word: (id, v) => { view = { ...view, [id]: v }; return false; }, say,
     active: () => /^#schedule/.test(location.hash) && !document.querySelector('.pz-popover, .keys-modal, #app .viewer-modal, #app .nav-fly'), emptyAct: () => window.RailConversation?.start('schedule') } });
+  // By date (the default): what waits on you first, then by the next run, each day folding; paused ones last, as they have none.
+  function sections() {
+    const list = data.schedules.filter((s) => view.show === 'all' || s.state === 'paused'), at = (id) => list.filter((s) => s.section === id);
+    if (view.by !== 'day') return SECTIONS.map(([id, title]) => ({ id, title, rows: at(id).map(rowOf) }));
+    const head = at('needs').length ? [{ id: 'needs', title: SECTIONS[0][1], rows: at('needs').map(rowOf) }] : [];
+    return [...R.dateSections({ rows: at('next'), dayOf: (s) => s.day, row: rowOf, head, days: R.NEXT_RUN_SECTIONS }), { id: 'paused', title: SECTIONS[2][1], rows: at('paused').map(rowOf) }];
+  }
   const runMark = (r) => R.kindMark({ kind: 'task', tone: R.markTone(R.runState(RM.stateOf(r.case))), stage: r.stage, title: r.meta });
   function pageHtml(s) {
-    const days = [...new Set(s.runs.map((r) => r.day))];
-    const groups = days.map((d) => ({ title: d, rows: s.runs.filter((r) => r.day === d).map((r) => R.listRow({ title: r.title, meta: r.meta, mark: runMark(r), end: R.gitMark({ status: r.git, title: r.meta }), open: { 'data-sched-run': r.case, title: 'Opens this task' }, after: r.log ? `<div class="tr-body">${esc(r.log)}</div>` : '' })) }));
+    const groups = R.DAY_SECTIONS.filter(([d]) => s.runs.some((r) => r.day === d)).map(([d, title]) => ({ title, rows: s.runs.filter((r) => r.day === d).map((r) => R.listRow({ title: r.title, meta: r.meta, mark: runMark(r), end: R.gitMark({ status: r.git, title: r.meta }), open: { 'data-sched-run': r.case, title: 'Opens this task' }, after: r.log ? `<div class="tr-body">${esc(r.log)}</div>` : '' })) }));
     const pick = (id, text, items) => R.sentencePicker({ id, text, items: items.map((x) => ({ id: x, text: x, checked: x === text })), open: menu === id, chevron: R.icon('chevron', 10) });
     return `<div class="convo"><div class="convo-scroll"><div class="convo-col"><div><h1 class="schedule-title">${esc(s.title)}</h1><div class="convo-head">${esc(s.project || 'No project')} · Runs ${pick('sc-every', s.every, ['every day', 'every weekday', 'every Monday', 'every Tuesday', 'every Friday'])} at ${pick('sc-at', s.at, ['02:00', '06:00', '09:00', '17:00'])}${(s.labels || []).map((l) => R.chip({ text: l })).join('')}</div></div>
       <div class="convo-card-line">${R.kindMark({ kind: 'schedule', tone: toneOf(s), title: st(s).word })}<span class="convo-card-w schedule-word">${esc(st(s).word)}<span>${esc(s.next)}${s.chat ? ' · from a chat' : ''}</span></span>${R.button({ label: 'Run now', attrs: { 'data-sched-now': s.id } })}</div>

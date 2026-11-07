@@ -20,9 +20,12 @@
 (`New schedule`), then a list. **A list** (runs, updates, files, PRs): divided ListRows on the rail. A row is its state mark on the rail (a status
 dot, or a tick box while selecting), a title line, a meta line, its time or figure at the right; the whole row opens
 its one target, so a fact in the row is text, never a second link. The row's own actions are a ⋯ at its right end
-(the Runs list's row ⋯), the same CompactMenu as on its page. Rows sit in sections in a fixed order (by day by default: what waits on you first, then Today, Yesterday, Previous 7 days, Older; or by urgency), newest first in each; a section with
-no rows is not drawn; the page's spec names the sections. A long section is never folded: it shows its newest rows,
-then one quiet row, `Show 21 more`, opens the rest in place (Older shows 3). What the list shows is a sentence above it (`Showing [unread ▾] from [all groups ▾]`), not a
+(the Runs list's row ⋯), the same CompactMenu as on its page. Rows sit in sections in a fixed order, newest first in each; a section with no rows is not drawn. Every list groups
+the same way, from the library (`byPart`, `BY_CHOICES`): **by date by default** (`dateSections`: what waits on you first,
+then Today, Yesterday, Previous 7 days, Previous 30 days, Older; what is still to come by its next run: Today, Tomorrow,
+This week, Later), then state, project, topic and AI topics where a list has them, always in that order and those words.
+A date section folds from its head (a chevron turns) and stays folded for that list; What waits on you never folds. A long
+section shows its newest rows, then one quiet row, `Show 21 more`, opens the rest in place (Older shows 3). What the list shows is a sentence above it (`Showing [unread ▾] from [all groups ▾]`), not a
 filter button; grouping is one more word in it (`by [day ▾]`), each choice in its menu with its count. Every
 list (Runs, Chats, Pulse's Vitals and Updates, Schedules) uses this one sentence, so a list is narrowed the same way everywhere. Selecting is only for a list whose rows a person can act on together (Runs, Chats, Pulse's Updates); a list of states that leave by themselves (Pulse's Vitals) has the sentence and no selection. Selecting works the same in every list that has it. You start it from the list's menu
 (`Select`), with ⌘ or Ctrl-click, with Shift-click for a range, with Space or ⌘A, or with a long-press on touch.

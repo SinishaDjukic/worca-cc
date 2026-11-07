@@ -7,7 +7,7 @@
   if (!root) return;
   const KEY = 'worca-rail.runs.view';
   const store = { get: () => { try { return JSON.parse(localStorage.getItem(KEY) || 'null'); } catch { return null; } }, set: (v) => { try { localStorage.setItem(KEY, JSON.stringify(v)); } catch { /* the view lasts the session */ } } };
-  const FRESH = { show: 'all', from: 'all', person: '', by: 'day', labels: [] };
+  const FRESH = { show: 'all', from: 'all', person: '', by: window.RailUI.BY_DEFAULT, labels: [] };
   let view = { ...FRESH, ...(store.get() || {}) }, data = M.seed(), listCase = 'full', recent = [], ctl = null;
   const say = (t, undo) => window.RailPulse?.say(t, undo);
   const cap = (w) => w[0].toUpperCase() + w.slice(1);
@@ -111,7 +111,7 @@
     const out = [{ word: 'Showing', id: 'show', text: showOf(view.show).text, tip: 'Which runs the list shows', items: SHOWS.map((x) => ({ id: x.id, text: x.text, help: x.help, checked: view.show === x.id, hint: count({ show: x.id }) })) }];
     if (shared()) out.push({ word: 'started by', id: 'person', text: view.person || 'everyone', tip: 'Whose runs it shows, on a shared sign-in', items: [{ id: '', text: 'everyone', checked: !view.person, hint: count({ person: '' }) }, { sep: true }, ...M.PEOPLE.map((p) => ({ id: p, text: p, checked: view.person === p, hint: count({ person: p }) }))] });
     out.push({ word: 'from', id: 'from', text: view.from === 'all' ? 'all projects' : view.from, tip: 'Which project they come from', items: [{ id: 'all', text: 'all projects', checked: view.from === 'all', hint: count({ from: 'all' }) }, { sep: true }, ...projects.map((p) => ({ id: p, text: p, checked: view.from === p, hint: count({ from: p }) }))] });
-    out.push({ word: 'by', id: 'by', text: view.by, tip: 'How the list is grouped', items: [{ id: 'state', text: 'state', help: `${NEEDS()}, Running, Waiting, Recent`, checked: view.by === 'state', hint: count({}) }, { id: 'project', text: 'project', help: 'One section per project', checked: view.by === 'project', hint: String(projects.length) }, { id: 'day', text: 'day', help: 'Upcoming, Today, Yesterday, Previous 7 days, Previous 30 days, Older', checked: view.by === 'day', hint: String(M.DAYS.filter(([d]) => tops().some((t) => t.day === d && passes(t, view))).length) }] });
+    out.push(R.byPart({ by: view.by, choices: [{ id: 'day', help: 'Upcoming, Today, Yesterday, Previous 7 days, Previous 30 days, Older', hint: String(M.DAYS.filter(([d]) => tops().some((t) => t.day === d && passes(t, view))).length) }, { id: 'state', help: `${NEEDS()}, Running, Waiting, Recent`, hint: count({}) }, { id: 'project', hint: String(projects.length) }] }));
     if (labelsOn() && view.labels.length) {
       const all = [...new Set(data.runs.flatMap((r) => r.labels))].sort();
       out.push({ word: 'labelled', id: 'labels', text: view.labels.join(', '), tip: 'Runs with any of these labels', items: [{ id: '', text: 'any label', help: 'Every label', hint: count({ labels: [] }) }, { sep: true }, ...all.map((l) => ({ id: l, text: l, checked: view.labels.includes(l), hint: count({ labels: [l] }) }))] });
@@ -129,7 +129,7 @@
       const names = [...new Set(rest.map((t) => t.project || 'No project'))];
       return [...head, ...names.map((p) => { const ts = rest.filter((t) => (t.project || 'No project') === p), kinds = ts.map((t) => t.run?.kind).filter(Boolean); return { id: `project:${p}`, title: p, chip: kinds.length ? R.chip({ text: kinds[0] }) : '', rows: rows(ts, '') }; })];
     }
-    if (view.by === 'day') return [...head, ...M.DAYS.map(([d, title]) => ({ id: `day:${d}`, title, limit: d === 'older' ? 3 : undefined, rows: rows(rest.filter((t) => t.day === d), '') }))];
+    if (view.by === 'day') return R.dateSections({ rows: rest, dayOf: (t) => t.day, row: (t) => rowOf(t, ''), head, days: M.DAYS });
     return [...head, { id: 'running', title: 'Running', rows: rows(rest.filter((t) => t.section === 'running'), 'running') }, { id: 'waiting', title: R.runState('scheduled').word, rows: rows(rest.filter((t) => t.section === 'scheduled'), '') }, { id: 'recent', title: 'Recent', rows: rows(rest.filter((t) => t.section === 'recent'), '') }];
   }
 

@@ -8,6 +8,7 @@ import { button } from './button.mjs';
 import { compactMenu } from './compact-menu.mjs';
 import { row } from './row.mjs';
 import { checkbox } from './checkbox.mjs';
+import { icon } from './icons.mjs';
 
 /**
  * The ⋯ that holds a thing's own actions: a quiet icon button and, when open, its CompactMenu at the right.
@@ -61,17 +62,27 @@ export function listRow({ title, meta = '', mark = '', end = '', endText = '', o
 
 /**
  * List: its sentence (what it shows), then its groups in a fixed order; an empty group is not drawn; a long group
- * shows its first rows, then Show N more opens the rest in place (never folded).
+ * shows its first rows, then Show N more opens the rest in place. A group by date folds: its head is a button with a
+ * chevron, and folded it keeps its head and count and hides its rows.
  * @param {object} o
  * @param {string} [o.sentence]   the list's sentence, markup with SentencePickers ("Showing everything from all projects")
- * @param {{title?:string, meta?:string, count?:string|number, chip?:string, rows:string[], more?:{n:number, attrs:object}}[]} o.groups
+ * @param {{title?:string, meta?:string, count?:string|number, chip?:string, rows:string[], more?:{n:number, attrs:object}, fold?:{open:boolean, attrs:object}}[]} o.groups
  * @param {string} [o.empty]      EmptyState markup when every group is empty
  * @param {string} [o.tools]      at the sentence's right: Select all while selecting, the list's ⋯
  * @param {string} [o.foot]       at the list's foot: the SelectionBar
  * @param {object} [o.attrs]
  */
+function groupHtml(g) {
+  const shut = g.fold && !g.fold.open, n = g.count !== undefined ? ` <span class="n">${esc(g.count)}</span>` : '';
+  const head = !g.title ? '' : g.fold
+    ? `<h3 class="list-h"><button type="button" class="list-h-b"${attrs({ ...g.fold.attrs, 'aria-expanded': String(!shut), title: shut ? `Shows ${g.title}` : `Folds ${g.title}` })}>${icon('chevron', 10)}${esc(g.title)}</button>${n}${g.chip || ''}</h3>`
+    : `<h3 class="list-h">${esc(g.title)}${n}${g.chip || ''}</h3>`;
+  if (shut) return `<section class="list-group is-shut">${head}</section>`;
+  return `<section class="list-group">${head}${g.meta ? `<p class="list-m">${esc(g.meta)}</p>` : ''}<div class="list-rows">${g.rows.join('')}</div>${g.more ? `<button type="button" class="dc-link list-more"${attrs(g.more.attrs)}>Show ${esc(g.more.n)} more</button>` : ''}</section>`;
+}
+
 export function list({ sentence = '', groups, empty = '', tools = '', foot = '', attrs: a = {} }) {
   const shown = groups.filter((g) => g.rows.length);
-  const body = shown.length ? shown.map((g) => `<section class="list-group">${g.title ? `<h3 class="list-h">${esc(g.title)}${g.count !== undefined ? ` <span class="n">${esc(g.count)}</span>` : ''}${g.chip || ''}</h3>` : ''}${g.meta ? `<p class="list-m">${esc(g.meta)}</p>` : ''}<div class="list-rows">${g.rows.join('')}</div>${g.more ? `<button type="button" class="dc-link list-more"${attrs(g.more.attrs)}>Show ${esc(g.more.n)} more</button>` : ''}</section>`).join('') : empty;
+  const body = shown.length ? shown.map((g) => groupHtml(g)).join('') : empty;
   return `<div class="list"${attrs(a)}>${tools ? `<div class="list-head"><div class="list-sentence">${sentence}</div><span class="list-tools">${tools}</span></div>` : sentence ? `<div class="list-sentence">${sentence}</div>` : ''}${body}${foot}</div>`;
 }

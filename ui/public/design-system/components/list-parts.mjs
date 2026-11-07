@@ -39,6 +39,45 @@ export function listSentence({ parts, open = '', chevron = '', menuCls = '' }) {
   return parts.map((p) => `<span class="list-part">${esc(p.word)} ${listWord(p, { open, chevron, menuCls })}</span>`).join(' ');
 }
 
+/**
+ * How every list may be grouped, in one order and one set of words: date first (the default), then state, project,
+ * person, topic, AI topics. A list offers the ones it has; byPart makes its sentence's `by` word from them.
+ */
+export const BY_CHOICES = Object.freeze([
+  ['day', 'date', 'Today, Yesterday, Previous 7 days, Previous 30 days, Older'],
+  ['state', 'state', 'What waits on you, then what runs, then the rest'],
+  ['project', 'project', 'One section per project'],
+  ['person', 'person', 'One section per person'],
+  ['topic', 'topic', 'Your own groups, one section each'],
+  ['ai', 'AI topics', 'A helper job names the topics; your groups are kept'],
+]);
+export const BY_DEFAULT = 'day';
+/**
+ * The sentence's `by` word for a list, from the choices it has, in the one order.
+ * @param {object} o
+ * @param {string} o.by                         the one chosen
+ * @param {{id:string, help?:string, hint?:string}[]} o.choices   the ones this list has; a help here says it for this list
+ */
+export function byPart({ by, choices }) {
+  const has = new Map(choices.map((c) => [c.id, c]));
+  const items = BY_CHOICES.filter(([id]) => has.has(id)).map(([id, text, help]) => ({ id, text, help: has.get(id).help || help, hint: has.get(id).hint, checked: by === id }));
+  return { word: 'by', id: 'by', text: (BY_CHOICES.find(([id]) => id === by) || [by, by])[1], tip: 'How the list is grouped', items };
+}
+/**
+ * A list by date: what waits on you first (head), then one section per day, each folding; Older shows 3.
+ * @param {object} o
+ * @param {object[]} o.rows        anything with a day
+ * @param {(r:object) => string} o.dayOf
+ * @param {(r:object) => any} [o.row]   what the section holds for each (the row as it is, by default)
+ * @param {object[]} [o.head]      sections above the days (What waits on you)
+ * @param {string[][]} [o.days]    DAY_SECTIONS, or NEXT_RUN_SECTIONS for what is still to come
+ */
+export function dateSections({ rows, dayOf, row = (r) => r, head = [], days = DAY_SECTIONS }) {
+  return [...head, ...days.map(([d, title]) => ({ id: `day:${d}`, title, fold: true, limit: d === 'older' || d === 'later' ? 3 : undefined, rows: rows.filter((r) => dayOf(r) === d).map(row) }))];
+}
+/** The sections of what is still to come, by when it next happens (a schedule's next run). */
+export const NEXT_RUN_SECTIONS = Object.freeze([['today', 'Today'], ['tomorrow', 'Tomorrow'], ['week', 'This week'], ['later', 'Later']]);
+
 /** The sections of a list by day, newest first (docs/rail/lists.md). */
 export const DAY_SECTIONS = Object.freeze([['upcoming', 'Upcoming'], ['today', 'Today'], ['yesterday', 'Yesterday'], ['week', 'Previous 7 days'], ['month', 'Previous 30 days'], ['older', 'Older']]);
 

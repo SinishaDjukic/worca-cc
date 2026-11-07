@@ -857,10 +857,34 @@ test('inView: still marks, a card with a way out of view, +N opens a menu of the
   assert.equal(C.inView({ items: [] }), '');
   const h = C.inView({ items: [{ title: 'Fix the login', line: 'Working', icon: '<i></i>', attrs: { 'data-in-view': 'task:t4' }, drop: { 'data-in-view-drop': 'task:t4' } }], more: { n: 2 } });
   assert.match(h, /data-in-view="task:t4"/); assert.match(h, /\+2/); assert.match(h, /aria-label="In view"/);
-  assert.match(h, /class="in-view-card" role="tooltip"/); assert.match(h, /aria-label="Out of view: Fix the login"/); assert.match(h, /aria-label="Fix the login: Working"/);
+  assert.match(h, /class="in-view-card" role="tooltip"/); assert.match(h, /is-named[\s\S]*class="in-view-n"[^>]*>Fix the login</); assert.match(h, /aria-label="Out of view: Fix the login"/); assert.match(h, /aria-label="Fix the login: Working"/);
   assert.doesNotMatch(h, /<div class="menu/);
   const open = C.inView({ items: [], more: { n: 1, open: true, items: [{ id: 'chat:c2', text: 'Release 1.20' }] } });
   assert.match(open, /aria-expanded="true"/); assert.match(open, /data-in-view="chat:c2"/);
+});
+
+test('byPart: one order and one set of words for every list; date first and the default', () => {
+  assert.equal(C.BY_DEFAULT, 'day');
+  const b = C.byPart({ by: 'day', choices: [{ id: 'project' }, { id: 'state', help: 'Mine' }, { id: 'day', hint: '4' }] });
+  assert.deepEqual(b.items.map((x) => x.text), ['date', 'state', 'project']);
+  assert.equal(b.text, 'date'); assert.equal(b.items[1].help, 'Mine'); assert.equal(b.items[0].hint, '4'); assert.ok(b.items[0].checked);
+  assert.equal(C.byPart({ by: 'ai', choices: [{ id: 'ai' }] }).text, 'AI topics');
+});
+
+test('dateSections: what waits on you first, then each day folding; Older and Later show 3', () => {
+  const rows = [{ k: 'a', d: 'today' }, { k: 'b', d: 'older' }];
+  const secs = C.dateSections({ rows, dayOf: (r) => r.d, row: (r) => r.k, head: [{ id: 'needs', rows: ['n'] }] });
+  assert.equal(secs[0].id, 'needs'); assert.equal(secs[0].fold, undefined);
+  const today = secs.find((x) => x.id === 'day:today'); assert.deepEqual(today.rows, ['a']); assert.equal(today.fold, true);
+  assert.equal(secs.find((x) => x.id === 'day:older').limit, 3);
+  assert.deepEqual(C.dateSections({ rows: [], dayOf: () => '', days: C.NEXT_RUN_SECTIONS }).map((x) => x.title), ['Today', 'Tomorrow', 'This week', 'Later']);
+});
+
+test('list: a date section folds from its head, keeping its title and count', () => {
+  const open = C.list({ groups: [{ title: 'Today', count: 2, rows: ['<i>r</i>'], fold: { open: true, attrs: { 'data-fold-section': 'day:today' } } }] });
+  assert.match(open, /class="list-h-b"[^>]*data-fold-section="day:today"[^>]*aria-expanded="true"/); assert.match(open, /<i>r<\/i>/);
+  const shut = C.list({ groups: [{ title: 'Today', count: 2, rows: [''], fold: { open: false, attrs: {} } }] });
+  assert.match(shut, /is-shut/); assert.match(shut, /aria-expanded="false"/); assert.doesNotMatch(shut, /list-rows/);
 });
 
 test('stagePart: what a part holds, said before it opens; open, its chevron turns', () => {

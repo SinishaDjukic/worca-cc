@@ -7,7 +7,7 @@
   const STORE_W = 'worca-rail.chats.width', STORE_V = 'worca-rail.chats.view';
   const get = (k) => { try { return localStorage.getItem(k); } catch { return null; } }, set = (k, v) => { try { localStorage.setItem(k, v); } catch { /* a remembered choice is a nicety */ } };
   const clampW = (px) => Math.min(680, Math.max(360, Math.round(+px) || 360));
-  const FRESH = { show: 'all', from: 'all', by: 'day', sort: 'activity' };
+  const FRESH = { show: 'all', from: 'all', by: R.BY_DEFAULT, sort: 'activity' };
   const parse = (t) => { try { return JSON.parse(t) || {}; } catch { return {}; } };
   let view = { ...FRESH, ...parse(get(STORE_V)) }, data = M.seed(), width = clampW(get(STORE_W)), current = '', listCase = 'full', recent = [], ctl = null, opened = true;
   const say = (t, undo) => window.RailPulse?.say(t, undo);
@@ -86,7 +86,7 @@
     if (flat) return [{ id: view.show, title: showOf(view.show).title || view.show[0].toUpperCase() + view.show.slice(1), rows: rows.map((x) => x.row) }];
     const needs = rows.filter((x) => sectionOfChat(x.c) === 'needs'), rest = rows.filter((x) => sectionOfChat(x.c) !== 'needs');
     const head = needs.length ? [{ id: 'needs', title: NEEDS(), rows: needs.map((x) => x.row) }] : [];
-    if (view.by === 'day') return [...head, ...M.DAYS.map(([d, title]) => ({ id: `day:${d}`, title, limit: d === 'older' ? 3 : undefined, rows: rest.filter((x) => x.c.day === d).map((x) => x.row) }))];
+    if (view.by === 'day') return R.dateSections({ rows: rest, dayOf: (x) => x.c.day, row: (x) => x.row, head, days: M.DAYS });
     if (view.by === 'project') {
       const name = (x) => { const ps = x.row.members ? [...new Set(x.row.members.map((m) => m._x.c.project).filter(Boolean))] : []; return ps.length > 1 ? 'Several projects' : x.c.project || 'No project'; };
       return [...head, ...[...new Set(rest.map(name))].map((p) => ({ id: `project:${p}`, title: p, rows: rest.filter((x) => name(x) === p).map((x) => x.row) }))];
@@ -97,16 +97,13 @@
   const AI_TOPICS = [['Billing', /bill|invoice|export|cost/i], ['Tests and builds', /flaky|build|test|ci\b|nightly|sentry/i], ['Releases', /release|changelog|notes/i], ['Infrastructure', /migrat|docker|queue|cron|pnpm|webhook|slow|index/i]];
   const aiTopic = (c) => (AI_TOPICS.find(([, re]) => re.test(c.title)) || ['Everything else'])[0];
   function parts() {
-    const out = parts0(); const by = out.find((p) => p.id === 'by');
-    by.text = view.by === 'ai' ? 'AI topics' : view.by;
-    by.items.push({ id: 'ai', text: 'AI topics', help: 'A helper job names the topics (Models › Jobs: Haiku); your groups are kept', checked: view.by === 'ai' });
-    return out;
+    return parts0();
   }
   function parts0() {
     const projects = [...new Set(data.chats.map((c) => c.project || 'No project'))].sort();
     return [{ word: 'Showing', id: 'show', text: showOf(view.show).text, tip: 'Which chats the list shows', items: SHOWS.map((x) => ({ id: x.id, text: x.text, help: x.help, checked: view.show === x.id, hint: count({ show: x.id }) })) },
       { word: 'from', id: 'from', text: view.from === 'all' ? 'all projects' : view.from, tip: 'Which project they belong to', items: [{ id: 'all', text: 'all projects', checked: view.from === 'all', hint: count({ from: 'all' }) }, { sep: true }, ...projects.map((p) => ({ id: p, text: p, checked: view.from === p, hint: count({ from: p }) }))] },
-      { word: 'by', id: 'by', text: view.by, tip: 'How the list is grouped', items: [{ id: 'state', text: 'state', help: `${NEEDS()}, Running, Recent`, checked: view.by === 'state', hint: count({}) }, { id: 'day', text: 'day', help: 'Today, Yesterday, Previous 7 days, Previous 30 days, Older', checked: view.by === 'day', hint: String(M.DAYS.filter(([d]) => data.chats.some((c) => c.day === d && passes(c, view))).length) }, { id: 'project', text: 'project', help: 'One section per project', checked: view.by === 'project', hint: String(projects.length) }, { id: 'topic', text: 'topic', help: 'One section per group, then Ungrouped', checked: view.by === 'topic', hint: String(data.groups.length) }] }];
+      R.byPart({ by: view.by, choices: [{ id: 'day', hint: String(M.DAYS.filter(([d]) => data.chats.some((c) => c.day === d && passes(c, view))).length) }, { id: 'state', help: `${NEEDS()}, Running, Recent`, hint: count({}) }, { id: 'project', hint: String(projects.length) }, { id: 'topic', help: 'One section per group, then Ungrouped', hint: String(data.groups.length) }, { id: 'ai', help: 'A helper job names the topics (Models › Jobs: Haiku); your groups are kept' }] })];
   }
   const SORTS = [['activity', 'Recent', 'Last activity first'], ['created', 'Created', 'Newest chat first'], ['title', 'A to Z', 'By title'], ['cost', 'Cost', 'Most spent first']];
 

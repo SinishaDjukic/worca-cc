@@ -34,6 +34,7 @@ const CONTROLS = {
   OptionList: '.sc-ans-opt',
   WorkflowGraph: '.wg-node',
   SideMenu: '.side-i',
+  'List by date': '.list-h-b',
   ListRow: '.lr-main, .row-btn, .sc-step, .ch-row, .st-head, .pz-nav-i, .pz-acct, .sc-loop.is-btn',
   TurnRow: '.tr-line',
   BarHead: '.bar-house',

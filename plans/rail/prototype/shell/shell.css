@@ -215,3 +215,5 @@ body.bar-hidden .bar-show{display:none;}
 /* A topic's fold in the bar sits on the line like a time: one line high, the count then its chevron. */
 .bar-list .lr-end:has(> [data-fold]){display:inline-flex;align-items:center;gap:2px;padding-top:2px;height:24px;}
 .bar-list .lr-end > [data-fold]{order:1;width:20px;height:20px;min-height:0;padding:0;}
+/* In the bars a row's mark is a touch smaller than on a page (18 of 20px); its place stays, so the tree's elbows still meet it. */
+:is(.bar-list, .bar-back) .lr-rail .kind-mark{scale:.9;}

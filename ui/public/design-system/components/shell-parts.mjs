@@ -95,8 +95,9 @@ export function countBadge({ n, tone = '', corner = false }) {
 }
 
 /**
- * InView: the things you keep in view, as their own marks in the top bar, on every page. A mark holds still and only
- * says where its thing stands (no pulse, no breathing); hovered or focused, a card says what it is, with a way out of
+ * InView: the things you keep in view, in the top bar, on every page, like a browser's tabs: each its mark and its name,
+ * cut short (a narrow window keeps the marks only). A mark holds still and only says where its thing stands (no pulse,
+ * no breathing); hovered or focused, a card says what it is, with a way out of
  * view; a click opens it; past the shown ones, one +N opens a menu of the rest.
  * @param {object} o
  * @param {{title:string, line?:string, icon:string, attrs?:object, drop?:object}[]} o.items
@@ -104,7 +105,7 @@ export function countBadge({ n, tone = '', corner = false }) {
  */
 export function inView({ items, more = null }) {
   if (!items.length && !more) return '';
-  const one = (x) => `<span class="in-view-w"><button type="button" class="in-view-i"${attrs({ ...(x.attrs || {}), 'aria-label': [x.title, x.line].filter(Boolean).join(': ') })}>${x.icon}</button><span class="in-view-card" role="tooltip">${x.icon}<span><b>${esc(x.title)}</b>${x.line ? `<span>${esc(x.line)}</span>` : ''}</span>${x.drop ? `<button type="button" class="in-view-x"${attrs({ ...x.drop, 'aria-label': `Out of view: ${x.title}`, title: 'Out of view' })}>${icon('sym-x', 12)}</button>` : ''}</span></span>`;
+  const one = (x) => `<span class="in-view-w"><button type="button" class="in-view-i is-named"${attrs({ ...(x.attrs || {}), 'aria-label': [x.title, x.line].filter(Boolean).join(': ') })}>${x.icon}<span class="in-view-n" aria-hidden="true">${esc(x.title)}</span></button><span class="in-view-card" role="tooltip">${x.icon}<span><b>${esc(x.title)}</b>${x.line ? `<span>${esc(x.line)}</span>` : ''}</span>${x.drop ? `<button type="button" class="in-view-x"${attrs({ ...x.drop, 'aria-label': `Out of view: ${x.title}`, title: 'Out of view' })}>${icon('sym-x', 12)}</button>` : ''}</span></span>`;
   const rest = more ? `<span class="rc-pop is-right in-view-more"><button type="button" class="in-view-i is-more"${attrs({ ...(more.attrs || {}), 'aria-haspopup': 'menu', 'aria-expanded': String(!!more.open), title: `${more.n} more in view`, 'aria-label': `${more.n} more in view` })}>+${esc(more.n)}</button>${more.open ? compactMenu({ label: 'More in view', items: more.items || [], pickAttr: more.pickAttr || 'data-in-view' }) : ''}</span>` : '';
   return `<nav class="in-view" aria-label="In view">${items.map(one).join('')}${rest}</nav>`;
 }

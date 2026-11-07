@@ -35,7 +35,7 @@ export function fitMenu(m, vw) {
  * @param {object} o.spec
  * @param {string} o.spec.noun           "runs": its words in Loading and Could not load
  * @param {string} o.spec.label          the selection bar's name
- * @param {() => object} o.spec.view     { parts, tools, sections: [{id,title,chip,limit,rows}], state, empty, retry }
+ * @param {() => object} o.spec.view     { parts, tools, sections: [{id,title,chip,limit,fold,rows}], state, empty, retry }; a section with fold folds from its head, and stays folded
  * @param {() => string[]} o.spec.can    the list's actions, for its keys and its sheet
  * @param {string[]} [o.spec.scopes]     more of the keys' table (Chat's)
  * @param {(rows) => object[]} o.spec.bulk   the selection bar's actions
@@ -52,8 +52,12 @@ export function fitMenu(m, vw) {
  */
 export function listController({ root, spec }) {
   const doc = root.ownerDocument, win = doc.defaultView;
-  const s = { pick: selectClear(), menu: '', more: new Set(), groups: new Map(), rounds: new Set(), roundsAll: new Set(), confirm: null, pop: null, dialog: null, focus: '', flash: '', order: [], rows: new Map() };
+  const s = { pick: selectClear(), menu: '', more: new Set(), shut: new Set(), groups: new Map(), rounds: new Set(), roundsAll: new Set(), confirm: null, pop: null, dialog: null, focus: '', flash: '', order: [], rows: new Map() };
   const dots = () => icon('more', 16);
+  // folded date sections are kept per list, so Older stays folded when you come back
+  const FOLD_KEY = `worca-rail.fold.${spec.noun}`;
+  try { JSON.parse(win.localStorage.getItem(FOLD_KEY) || '[]').forEach((id) => s.shut.add(id)); } catch { /* a remembered fold is a convenience */ }
+  const keepShut = () => { try { win.localStorage.setItem(FOLD_KEY, JSON.stringify([...s.shut])); } catch { /* as above */ } };
   const groupOpen = (r) => (s.groups.has(r.key) ? s.groups.get(r.key) : !!r.open);
 
   function rowHtml(r) {
@@ -81,9 +85,10 @@ export function listController({ root, spec }) {
     v.sections.forEach((x) => x.rows.forEach(note));
     const ready = !v.state || v.state === 'ready';
     const groups = ready ? v.sections.map((x) => {
-      const limit = x.limit || LIST_SHOWN, all = s.more.has(x.id) || x.rows.length <= limit, rows = all ? x.rows : x.rows.slice(0, limit);
+      const shut = x.fold && s.shut.has(x.id);
+      const limit = x.limit || LIST_SHOWN, all = s.more.has(x.id) || x.rows.length <= limit, rows = shut ? [] : all ? x.rows : x.rows.slice(0, limit);
       const walk = (r) => { s.order.push(r.key); (r.tree || []).forEach(walk); if (r.members && groupOpen(r)) r.members.forEach(walk); }; rows.forEach(walk);
-      return { title: x.title, count: x.rows.length, chip: x.chip, rows: rows.map(rowHtml), more: all ? null : { n: x.rows.length - limit, attrs: { 'data-more': x.id } } };
+      return { title: x.title, count: x.rows.length, chip: x.chip, rows: shut ? [''] : rows.map(rowHtml), fold: x.fold ? { open: !shut, attrs: { 'data-fold-section': x.id } } : null, more: all || shut ? null : { n: x.rows.length - limit, attrs: { 'data-more': x.id } } };
     }) : [];
     s.pick = selectPrune(s.pick, [...s.rows.keys()]);
     const shown = s.order;
@@ -189,6 +194,7 @@ export function listController({ root, spec }) {
     if ((el = t('[data-rounds-all]'))) { s.roundsAll.add(el.dataset.roundsAll); paint(); return; }
     if ((el = t('[data-open-round]'))) { const [k, n] = el.dataset.openRound.split('|'); spec.openRound?.(s.rows.get(k), +n); return; }
     if ((el = t('[data-more]'))) { s.more.add(el.dataset.more); paint(); return; }
+    if ((el = t('[data-fold-section]'))) { const id = el.dataset.foldSection; if (s.shut.has(id)) s.shut.delete(id); else s.shut.add(id); keepShut(); paint(); return; }
     if ((el = t('[data-retry]'))) { spec.retry?.(); paint(); return; }
     if ((el = t('[data-empty]'))) { spec.emptyAct?.(); return; }
     if ((el = t('[data-open]'))) {

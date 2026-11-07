@@ -59,10 +59,10 @@ for (const scheme of ['light', 'dark']) for (const w of [1280, 900, 760, 375]) {
   await p.evaluate(() => { const s = document.getElementById('pulse-case'); s.value = 'afternoon'; s.dispatchEvent(new Event('change', { bubbles: true })); });
   // the journeys
   const step = async (name, fn, expect) => { const ok = await p.evaluate(fn); await p.waitForTimeout(120); const got = await p.evaluate(expect); if (!got) add('a journey breaks', `${scheme}/${w}: ${name}`); checks++; };
-  await p.goto(`${URL_}#runs`); await p.waitForTimeout(100);
-  await step('the sentence changes the list', () => { document.querySelector('#runs-root [data-menu="by"]')?.click(); document.querySelector('#runs-root [data-pick="by|day"]')?.click(); }, () => /by day/.test(document.querySelector('#runs-root .list-sentence')?.textContent || ''));
+  await p.goto(`${URL_}#runs`); await p.evaluate(() => localStorage.removeItem('worca-rail.runs.view')); await p.reload(); await p.waitForTimeout(100);
+  await step('the sentence changes the list', () => { document.querySelector('#runs-root [data-menu="by"]')?.click(); document.querySelector('#runs-root [data-pick="by|project"]')?.click(); }, () => /by project/.test(document.querySelector('#runs-root .list-sentence')?.textContent || ''));
   await step('a run row opens its run', () => document.querySelector('#runs-root [data-open="run:r1"]')?.click(), () => location.hash === '#run/question' && document.querySelector('#card .rc-heading')?.textContent === 'Add CSV export to billing');
-  await step('the trail goes back to Runs, the sentence kept', () => document.querySelector('#card [data-key="crumb:0"]')?.click(), () => location.hash === '#runs' && !document.querySelector('#route-runs').hidden && /by day/.test(document.querySelector('#runs-root .list-sentence')?.textContent || ''));
+  await step('the trail goes back to Runs, the sentence kept', () => document.querySelector('#card [data-key="crumb:0"]')?.click(), () => location.hash === '#runs' && !document.querySelector('#route-runs').hidden && /by project/.test(document.querySelector('#runs-root .list-sentence')?.textContent || ''));
   await step('the sentence back to state', () => { document.querySelector('#runs-root [data-menu="by"]')?.click(); document.querySelector('#runs-root [data-pick="by|state"]')?.click(); }, () => /by state/.test(document.querySelector('#runs-root .list-sentence')?.textContent || ''));
   await step('Pulse opens', () => document.querySelector('[data-pop]')?.click(), () => !!document.querySelector('.pz-popover'));
   await step('the profile menu opens', () => { document.body.click(); document.querySelector('[data-acct]')?.click(); }, () => !!document.querySelector('#app .acct-menu'));
@@ -111,6 +111,11 @@ for (const scheme of ['light', 'dark']) for (const w of [1280, 900, 760, 375]) {
     await step('the drawer opens', () => document.getElementById('mbar-menu').click(), () => document.body.classList.contains('nav-open') && getComputedStyle(document.getElementById('side-rail')).visibility === 'visible');
     await step('the drawer closes', () => document.getElementById('nav-scrim').click(), () => !document.body.classList.contains('nav-open') && getComputedStyle(document.getElementById('side-rail')).visibility === 'hidden');
   }
+  // every list groups by date by default, and a date section folds and comes back
+  await p.goto(`${URL_}#chat/c1`); await p.waitForTimeout(150);
+  await step('the Chat list is by date', () => {}, () => /by\s*date/.test(document.querySelector('#bar-chat .list-sentence')?.textContent || '') && !!document.querySelector('#bar-chat [data-fold-section="day:today"]'));
+  await step('a date section folds', () => document.querySelector('#bar-chat [data-fold-section="day:today"]').click(), () => !!document.querySelector('#bar-chat .list-group.is-shut [data-fold-section="day:today"]'));
+  await step('and opens again', () => document.querySelector('#bar-chat [data-fold-section="day:today"]').click(), () => !document.querySelector('#bar-chat .list-group.is-shut'));
   // In view: from a row's ⋯ into the top bar; its mark opens it
   await p.goto(`${URL_}#chat/c1`); await p.waitForTimeout(150);
   await step('Keep in view puts a mark in the top bar', () => { document.querySelector('#bar-chat [data-menu="row:task:t1"]')?.click(); document.querySelector('#bar-chat [data-menu-pick="row:task:t1|in-view"]')?.click(); }, () => innerWidth <= 760 || !!document.querySelector('#in-view-slot [data-in-view="task:t1"]'));
