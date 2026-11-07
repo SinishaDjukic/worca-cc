@@ -60,10 +60,11 @@ Mocks: `mocks/wave-2/` (`node plans/rail/mocks/wave-2/render.mjs`). These are di
 | Direction | Mock |
 |---|---|
 | **One bar for every feature**, Settings' behaviour: head, what it shows, list, you. The house opens the places. The Chats column goes | 1 |
-| **Chat dispatches everything.** Tasks and schedules are cards in a conversation and a rounded dependency tree in the bar. Tasks and Schedules as places are Expert | 2 |
+| **Chat dispatches everything.** Tasks and schedules are cards in a conversation and a rounded dependency tree in the bar. Tasks and Schedules as places are Expert, listed with the others under Places | 2 |
 | **Builds become tasks** in every word a person reads. Substages can no longer be called tasks | all |
 | **The icon carries type, state and progress:** one smooth ring, the usage ring's look, filling by main stage and deepening into the state colour; substages in the tooltip. The card's step bar keeps its stages, in the same colours. A question, a problem, a pause or a stop takes the icon's centre | 3, 10 |
-| **Watch:** a thin ring around git's icon, grey waiting, lemon fixing, gone when it needs you. The eye on its switch, the refresh arrow on a round | 3, 10 |
+| **Watch:** git's icon itself pulses while it fixes, twice as fast as the mark; while it waits, its tooltip says so. The eye on its switch, the refresh arrow on a round | built |
+| **Appearance** is a submenu of the profile menu: theme and background. **Tooltips** are the library's, on hover, focus and long-press | built |
 | **A row's end holds one thing:** git's own icon if it has one, otherwise the time; the rest in the tooltip | 2, 3 |
 | Views stay: by state, day (Today, Yesterday, Previous 7 days, Previous 30 days, Older), project, AI topic with its helper named. Your groups, selecting and keys stay | 3 |
 | **One search at the top,** results under an area head. Lean icons on Settings' sections and sub-sections, one new set | 4 |

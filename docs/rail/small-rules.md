@@ -7,6 +7,7 @@
 | `small.no-emoji` | No emoji and no exclamation marks | Calm | by hand |
 | `small.sound` | A new event plays one soft chime for what the person chose; info never, a burst once, never in away hours | Hearing it is for what needs you; a sound that cries wolf gets turned off | design-system-logic |
 | `small.usage-rings` | Rings around the avatar show live usage of connected providers only, refreshed every minute; figures and money live in Usage and costs | What is drawn is what can stop a run now | worca-sweep |
+| `small.tooltip` | Every `title` is the library's Tooltip: quick on hover and on keyboard focus, a long-press on touch, inside the window | Help lives in tooltips, so they must be there when you look | design-system-components |
 
 - **Names** (a page, a menu item, a section head, a settings row): the thing itself, as the people who use it call it,
   in 1–3 words, a plain noun first (`Budget`, `Labels`, `Away mode`, `Team policy`). One thing, one name: never two

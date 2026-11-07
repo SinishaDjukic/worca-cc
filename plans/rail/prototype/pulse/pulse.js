@@ -219,8 +219,7 @@ function acctMenu() {
   return R.navFlyout({ label: 'Account', cls: `acct-menu${ui.sub ? ' has-sub' : ''}${inCls('acct')}`, body: `
     ${id}<div class="msect" role="group" aria-label="Worca">${team}
       ${R.accountItem({ label: 'Interface mode', mark: svg('sliders', 16, 'mi-ic'), value: lvl[1], chev: svg('chevR', 14, 'mi-chev'), attrs: { ...sub('lvl'), title: 'How much of Worca you see' } })}
-      <div class="theme-sect" role="group" aria-labelledby="pz-theme-k">${svg('contrast', 16, 'mi-ic')}<span class="theme-k" id="pz-theme-k">Appearance</span><div class="theme-seg">${[['system', 'monitor'], ['light', 'sun'], ['dark', 'moon']].map(([m, ic]) => R.themeChoice({ label: cap(m), icon: svg(ic, 14, 'mi-ic'), on: appearance === m, attrs: { 'data-appearance': m } })).join('')}</div></div>
-      ${SHELL ? R.accountItem({ label: 'Background', mark: svg('image', 16, 'mi-ic'), value: bgName(), chev: svg('chevR', 14, 'mi-chev'), attrs: { ...sub('bg'), title: 'On Chat home and the away screen only' } }) : ''}
+      ${SHELL ? R.accountItem({ label: 'Appearance', mark: svg('contrast', 16, 'mi-ic'), value: `${cap(appearance)} · ${bgName()}`, chev: svg('chevR', 14, 'mi-chev'), attrs: { ...sub('look'), title: 'Theme and background' } }) : `<div class="theme-sect" role="group" aria-labelledby="pz-theme-k">${svg('contrast', 16, 'mi-ic')}<span class="theme-k" id="pz-theme-k">Appearance</span><div class="theme-seg">${[['system', 'monitor'], ['light', 'sun'], ['dark', 'moon']].map(([m, ic]) => R.themeChoice({ label: cap(m), icon: svg(ic, 14, 'mi-ic'), on: appearance === m, attrs: { 'data-appearance': m } })).join('')}</div></div>`}
       ${R.accountItem({ label: 'Settings', mark: svg('gear', 16, 'mi-ic'), attrs: { 'data-go': 'settings', title: 'How Worca behaves everywhere' } })}
     </div>
     <div class="msect" role="group" aria-label="You">
@@ -230,7 +229,7 @@ function acctMenu() {
     <div class="msect" role="group" aria-label="Usage">${raise}
       ${R.accountItem({ label: 'Usage and costs', mark: gone ? gring(100, 'pz-mi-ring', 'over') : top ? gring(top.pct, 'pz-mi-ring', top.tone) : svg('signal', 16, 'mi-ic'), value: val, valueAlways: true, chev: svg('chevR', 14, 'mi-chev'), attrs: { ...sub('usage'), title: gone ? `Budget of ${M.usd(c.budget.limit)} used up: runs stay paused until it resets or you raise it` : top ? `Closest to its limit: ${top.line}` : 'Limits per harness and the spend' } })}
     </div>
-  ` }) + usageFly() + lvlFly() + bgFly();
+  ` }) + usageFly() + lvlFly() + lookFly();
 }
 // The side menus open beside the profile menu (side-flyout.mjs 'beside'); on a narrow screen in its place, with a way back.
 const back = R.accountItem({ label: 'Account', cls: 'pz-subback', mark: svg('chevL', 14, 'mi-chev'), attrs: { 'data-sub': '', title: 'Back to the profile menu' } });
@@ -266,9 +265,10 @@ const bgKey = 'worca-rail.background';
 const readBg = () => { try { return localStorage.getItem(bgKey) || 'dots'; } catch { return 'dots'; } };
 function setBg(v) { document.documentElement.dataset.bg = v; try { localStorage.setItem(bgKey, v); } catch { /* private mode: for this session */ } }
 const bgName = () => BACKGROUNDS.find((b) => b[0] === (ui.bg || 'dots'))?.[1] || 'Dots';
-function bgFly() {
-  if (ui.sub !== 'bg') return '';
-  return R.navFlyout({ label: 'Background', cls: `lvl-menu pz-fly${inCls('sub')}`, body: `${back}<span class="nav-fly-k">Background</span>${BACKGROUNDS.map(([id, t, h]) => R.menuItem({ text: t, checked: (ui.bg || 'dots') === id, help: h }, { pickAttr: null, attrs: { 'data-bg-pick': id } })).join('')}` });
+function lookFly() {
+  if (ui.sub !== 'look') return '';
+  const theme = `<span class="nav-fly-k">Theme</span><div class="theme-sect look-theme" role="group" aria-label="Theme"><div class="theme-seg">${[['system', 'monitor'], ['light', 'sun'], ['dark', 'moon']].map(([m, ic]) => R.themeChoice({ label: cap(m), icon: svg(ic, 14, 'mi-ic'), on: appearance === m, attrs: { 'data-appearance': m } })).join('')}</div></div>`;
+  return R.navFlyout({ label: 'Appearance', cls: `lvl-menu pz-fly${inCls('sub')}`, body: `${back}${theme}<span class="nav-fly-k">Background</span>${BACKGROUNDS.map(([id, t, h]) => R.menuItem({ text: t, checked: (ui.bg || 'dots') === id, help: h }, { pickAttr: null, attrs: { 'data-bg-pick': id } })).join('')}` });
 }
 function lvlFly() {
   if (ui.sub !== 'lvl') return '';
@@ -751,7 +751,7 @@ document.addEventListener('click', (e) => {
   if ((el = tg('[data-appearance]'))) { applyAppearance(el.dataset.appearance); render(); return; }
   if ((el = tg('[data-details]'))) { ui.acct = false; ui.sub = ''; if (SHELL) { SHELL.closeDrawer(); SHELL.go('stats'); } else toast('Opens Statistics (not in this prototype)'); render(); return; }
   if (SHELL && (el = tg('[data-newrun]'))) { window.RailConversation?.start('task'); return; }
-  if ((el = tg('[data-bg-pick]'))) { ui.bg = el.dataset.bgPick; setBg(ui.bg); ui.sub = ''; render(); return; }
+  if ((el = tg('[data-bg-pick]'))) { ui.bg = el.dataset.bgPick; setBg(ui.bg); render(); return; }
   if ((el = tg('[data-newrun]'))) { if (ui.nr) ui.nr = null; else { openNewRun(); opening = 'nr'; } ui.pop = false; ui.acct = false; render(); return; }
   if ((el = tg('[data-nr-use]'))) { ui.nr = { ...ui.nr, on: el.dataset.nrUse, wait: false, moved: '' }; render(); return; }
   if ((el = tg('[data-nr-wait]'))) { toast(`Scheduled: ${el.textContent.replace('Start at', 'starts at')} (not in this prototype)`); ui.nr = null; render(); return; }
@@ -892,6 +892,7 @@ setInterval(() => {
   render();
 }, R.USAGE_REFRESH_MS);
 document.querySelectorAll('[data-theme-pick]').forEach((b) => b.addEventListener('click', () => { applyAppearance(b.dataset.themePick); render(); }));
+if (SHELL) { ui.bg = readBg(); setBg(ui.bg); }
 window.RailPulse = {
   // The note a start near a limit shows, in the composer: what it means, and the ways out.
   startNote: () => { const c = startable(), first = c.usage.find((u) => M.PROVIDER[u.p].runs)?.p; if (!first) return { say: 'Nothing that can run is signed in. Only mock tasks work until you sign in.', blocked: true }; if (budgetGone()) return { say: 'The budget is used up until it resets.', blocked: true }; if (connOffline()) return { say: 'Offline: Worca cannot start a task until the connection is back.', blocked: true }; const lim = M.near(c, first, ui.s.warnAt); if (!lim) return null; const rm = M.room(c, ui.s.warnAt, first); return { say: `${lim.name}'s ${lim.what} is at ${lim.pct}% and resets ${lim.resets}. This task may pause.`, use: rm.length ? pname(rm[0]) : '', at: lim.resets }; },

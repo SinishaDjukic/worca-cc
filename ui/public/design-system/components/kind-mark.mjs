@@ -66,8 +66,8 @@ const OCT = {
 const GIT = { branch: ['branch', 'Branch only'], draft: ['draft', 'Draft'], open: ['pr', 'Open'], pass: ['pr', 'Checks pass'], fail: ['pr', 'Checks failing'], conflict: ['pr', 'Conflicts'], merged: ['merge', 'Merged'], closed: ['closed', 'Closed'] };
 
 /**
- * GitMark: git's status at a row's end, the rest in its tooltip. Watch is a thin ring around it: grey while it waits,
- * lemon while it fixes; when Watch stops and needs you the ring goes.
+ * GitMark: git's status at a row's end, the rest in its tooltip. While Watch fixes, the icon itself pulses, twice as fast as
+ * work on the row's mark, so the two read apart; while Watch only waits, its tooltip says so.
  * @param {object} o
  * @param {'branch'|'draft'|'open'|'pass'|'fail'|'conflict'|'merged'|'closed'} o.status
  * @param {''|'idle'|'fix'} [o.watch]
@@ -75,7 +75,7 @@ const GIT = { branch: ['branch', 'Branch only'], draft: ['draft', 'Draft'], open
  * @param {number} [o.size]
  */
 export function gitMark({ status, watch = '', title = '', size = 14 }) {
-  const [glyph, word] = GIT[status] || GIT.branch, inner = watch ? 11 : size;
+  const [glyph, word] = GIT[status] || GIT.branch, inner = size;
   const svg = `<svg class="gm-i is-${status}" width="${inner}" height="${inner}" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="${OCT[glyph]}"></path></svg>`;
   return `<span class="git-mark${watch ? ` is-watch is-${watch}` : ''}"${attrs({ title: title || word, role: 'img', 'aria-label': title || word })}>${svg}</span>`;
 }
@@ -131,7 +131,7 @@ export function turnRow({ mark, text, end = '', body = '', open = false, attrs: 
 }
 
 /**
- * Composer: the one way to start anything. You pick Ask, Task or Schedule; the sentence, Customise and any note open
+ * Composer: the one way to start anything; with no sentence, one line: the words and its send. You pick Ask, Task or Schedule; the sentence, Customise and any note open
  * under the words, and the button names what will happen.
  * @param {object} o
  * @param {string} o.value        the words
@@ -143,7 +143,7 @@ export function turnRow({ mark, text, end = '', body = '', open = false, attrs: 
  * @param {object} [o.attrs]
  */
 export function composer({ value = '', placeholder, sentence, detail = '', tools, send, attrs: a = {} }) {
-  return `<form class="composer"${attrs(a)}><textarea class="composer-t" rows="1" data-composer-t${attrs({ placeholder, 'aria-label': placeholder })}>${esc(value)}</textarea><div class="composer-s">${sentence}</div>${detail}<div class="composer-f"><span class="composer-tools">${tools}</span><span class="composer-send">${send}</span></div></form>`;
+  return `<form class="composer${sentence ? '' : ' is-plain'}"${attrs(a)}><textarea class="composer-t" rows="1" data-composer-t${attrs({ placeholder, 'aria-label': placeholder })}>${esc(value)}</textarea>${sentence ? `<div class="composer-s">${sentence}</div>` : ''}${detail}<div class="composer-f">${tools ? `<span class="composer-tools">${tools}</span>` : ''}<span class="composer-send">${send}</span></div></form>`;
 }
 
 /**

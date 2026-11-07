@@ -807,3 +807,25 @@ test('BarHead, TurnRow, Composer, StageBar', () => {
   assert.match(C.composer({ placeholder: 'Ask', sentence: 's', tools: '', send: 'b' }), /data-composer-t/);
   assert.match(C.stageBar({ labels: ['a', 'b'], stage: 0 }), /<b>a<\/b>/);
 });
+
+test('Tooltip: watchTooltips draws a title; tipPlace keeps it inside the window', async () => {
+  const at = C.tipPlace({ top: 700, bottom: 720, left: 1000, width: 20 }, { width: 200, height: 40 }, 1024, 730);
+  assert.ok(at.top < 700, 'no room under it: it goes above'); assert.ok(at.left + 200 <= 1024 - 8, 'inside the window');
+  const { window } = new JSDOM('<body><span id="a" title="What it does">x</span></body>', { pretendToBeVisual: true });
+  C.watchTooltips(window.document);
+  const a = window.document.getElementById('a');
+  a.dispatchEvent(new window.Event('pointerover', { bubbles: true }));
+  assert.equal(a.getAttribute('title'), null, 'the browser\'s own never shows');
+  await new Promise((r) => setTimeout(r, 220));
+  assert.equal(window.document.querySelector('.rail-tip')?.textContent, 'What it does');
+  window.document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape' }));
+  assert.equal(window.document.querySelector('.rail-tip'), null); assert.equal(a.getAttribute('title'), 'What it does');
+  window.close();
+});
+
+test('the Rail stylesheets close every rule: one open brace would swallow all that follows', () => {
+  for (const f of ['plans/rail/prototype/design-system/rail.css', 'plans/rail/prototype/design-system/rail-look.css', 'plans/rail/prototype/shell/shell.css', 'plans/rail/prototype/pulse/pulse.css']) {
+    const css = readFileSync(f, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+    assert.equal((css.match(/\{/g) || []).length, (css.match(/\}/g) || []).length, f);
+  }
+});

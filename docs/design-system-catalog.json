@@ -1010,6 +1010,17 @@
       "rules": [
         "list.kind-mark"
       ]
+    },
+    {
+      "name": "Tooltip",
+      "code": "ui/public/design-system/components/tooltip.mjs#watchTooltips",
+      "kind": "telling",
+      "needs": [
+        "help on any control, mark or clipped text"
+      ],
+      "rules": [
+        "small.tooltip"
+      ]
     }
   ],
   "logic": [
@@ -1122,6 +1133,13 @@
       ],
       "rules": [
         "list.kind-mark"
+      ]
+    },
+    {
+      "name": "Where a tooltip goes",
+      "code": "ui/public/design-system/components/tooltip.mjs#tipPlace",
+      "needs": [
+        "a tooltip inside the window"
       ]
     }
   ],

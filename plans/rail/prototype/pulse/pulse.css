@@ -227,3 +227,5 @@
 /* The sidebar's content fades when it becomes Settings' menu, and back; the page changes at once (Motion). */
 .pz-side .is-swap{animation:rl-in var(--motion-change) var(--ease);}
 @media (prefers-reduced-motion: reduce){.pz-side .is-swap{animation:none;}}
+.pz-fly .look-theme{padding:2px 9px 8px;}
+.pz-fly .look-theme .theme-seg{display:inline-flex;}

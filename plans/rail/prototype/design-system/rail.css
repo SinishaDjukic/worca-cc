@@ -1096,8 +1096,8 @@ th.rt-c{color:var(--ink-2);font-weight:500;}
 .git-mark{position:relative;display:inline-flex;align-items:center;justify-content:center;flex:none;color:var(--ink-2);}
 .git-mark .is-branch,.git-mark .is-draft,.git-mark .is-closed{color:var(--ink-3);}
 .git-mark .is-pass{color:var(--green);}.git-mark .is-fail{color:var(--red);}.git-mark .is-conflict{color:var(--amber);}.git-mark .is-merged{color:var(--violet);}
-.git-mark.is-watch{width:20px;height:20px;border-radius:50%;box-shadow:inset 0 0 0 1.1px var(--line-2);}
-.git-mark.is-watch.is-fix{box-shadow:inset 0 0 0 1.1px var(--peach);animation:wr-pulse 1.6s ease-in-out infinite;}
+.git-mark.is-watch.is-fix{animation:wr-pulse .8s ease-in-out infinite;}
+.git-mark.is-watch.is-fix{animation:wr-pulse .8s ease-in-out infinite;}
 @media (prefers-reduced-motion: reduce){.git-mark.is-watch.is-fix{animation:none;}}
 
 /* The rounded dependency tree: what hangs under a row in a list. */
@@ -1159,7 +1159,10 @@ th.rt-c{color:var(--ink-2);font-weight:500;}
 
 /* Composer: the one way to start anything. */
 .composer{display:flex;flex-direction:column;gap:8px;padding:10px 12px;border:1px solid var(--line-2);border-radius:var(--r-lg);background:var(--bg);}
-.composer-t{width:100%;min-height:22px;max-height:160px;padding:0;border:0;outline:0;resize:none;background:none;color:var(--ink);font:var(--fs-body)/1.5 var(--sans);}
+.composer-t,.composer-t:focus,.composer-t:focus-visible{width:100%;min-height:22px;max-height:160px;padding:0;border:0;outline:0;box-shadow:none;resize:none;background:none;color:var(--ink);font:var(--fs-body)/1.5 var(--sans);}
+.composer.is-plain{flex-direction:row;align-items:flex-end;gap:10px;}
+.composer.is-plain .composer-t{flex:1;align-self:center;}
+.composer.is-plain .composer-f{flex:none;}
 .composer-t::placeholder{color:var(--ink-3);}
 .composer:focus-within{border-color:var(--ink-3);}
 .composer-s{display:flex;flex-wrap:wrap;align-items:center;gap:4px 5px;font-size:var(--fs-meta);color:var(--ink-2);}
@@ -1217,3 +1220,6 @@ th.rt-c{color:var(--ink-2);font-weight:500;}
 .bar-back{padding:0 2px 8px;}
 .bar-back .list-row{margin-left:0;}
 #route-chat,#route-schedule{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;}
+
+/* Tooltip (tooltip.mjs). */
+.rail-tip{position:fixed;z-index:200;max-width:280px;padding:6px 8px;border:1px solid var(--float-line);border-radius:var(--r-sm);background:var(--float);box-shadow:var(--shadow-pop);font:var(--fs-meta)/1.4 var(--sans);color:var(--ink);white-space:pre-line;pointer-events:none;}

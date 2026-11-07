@@ -20,13 +20,13 @@
 
   // ---- the sidebar: places only (a setting or a place, docs/rail/settings.md) ----
   // The one bar: Settings' behaviour for every feature. The house opens the places; a place with a list holds its list.
-  const PLACES = [['chat', 'Chat', 'simple'], ['workflows', 'Workflows', 'simple'], ['requirements', 'Requirements', 'simple', 'requirements'], ['marketplace', 'Marketplace', 'advanced'], ['projects', 'Projects', 'simple'], ['workspaces', 'Workspaces', 'advanced'], ['stats', 'Statistics', 'advanced'], ['team-metrics', 'Team metrics', 'expert'], null, ['runs', 'Tasks', 'expert'], ['schedules', 'Schedules', 'expert']];
+  const PLACES = [['chat', 'Chat', 'simple'], ['runs', 'Tasks', 'expert'], ['schedules', 'Schedules', 'expert'], ['workflows', 'Workflows', 'simple'], ['requirements', 'Requirements', 'simple', 'requirements'], ['marketplace', 'Marketplace', 'advanced'], ['projects', 'Projects', 'simple'], ['workspaces', 'Workspaces', 'advanced'], ['stats', 'Statistics', 'advanced'], ['team-metrics', 'Team metrics', 'expert']];
   function sidebar() {
     const side = el(T.sidebar);
     const nav = side.querySelector('nav.nav');
     const place = ([id, label, min, flag]) => R.navItem({ label, icon: R.icon('nav-' + id, 16), attrs: { 'data-nav': id, 'data-min-level': min, 'data-flag': flag || null, 'aria-label': label } });
     nav.insertAdjacentHTML('beforebegin', '<div id="bar-back" class="bar-back pz-app rail-page"></div>');
-    nav.innerHTML = `<p class="nav-sect">Places</p>${PLACES.map((x) => (x ? place(x) : '<p class="nav-sect">Expert</p>')).join('')}`;
+    nav.innerHTML = `<p class="side-g">Places</p>${PLACES.map(place).join('')}`;
     const close = side.querySelector('#side-close');
     side.querySelector('.brand').innerHTML = '<div id="bar-head"></div>'; side.querySelector('.brand').append(close);
     side.querySelector('#acct-menu')?.remove();   // the Rail profile menu takes its place (pulse.js)
@@ -316,6 +316,7 @@
   R.dismissOnOutside(document, { open: () => !!document.querySelector('#topnav .tsearch.is-open'), inside: '.tsearch, #tsearch-open', back: () => '#tsearch-open', close: () => searchFold(false), paint: () => {} });
   build();
   setAskW(askW); setBarW(barW);
+  R.watchTooltips(document);
   addEventListener('resize', () => { syncRail(); });
   // A change of mode or a Labs flag: the sidebar follows, and the page if that changes whether it is locked.
   R.prefs.onChange(() => { applyPrefs(); if (routed.view && (TITLES[routed.view] || routed.view === 'schedule') && !!lockOf(routed.view) !== routed.locked) route(); });
