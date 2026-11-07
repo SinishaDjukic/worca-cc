@@ -198,6 +198,9 @@ test('labelForTool: representative worca labels, Task/Agent → null, web tools 
     { name: 'labelForTool table', run: () => {
       assert.equal(labelForTool('mcp__worca__list_runs', {}), 'Finding runs');
       assert.equal(labelForTool('mcp__worca__get_run', { id: 'abcdefghijklmnop' }), 'Reading run abcdefghijkl');
+      assert.equal(labelForTool('mcp__worca__list_mcp_servers', {}), 'Looking at MCP servers');
+      assert.equal(labelForTool('mcp__worca__propose_mcp_change', {}), 'Proposing an MCP server change');
+      assert.equal(labelForTool('mcp__worca__discover_mcp_servers', {}), 'Looking for MCP servers in other tools');
       assert.equal(labelForTool('mcp__worca__get_run', {}), 'Reading run');
       assert.equal(labelForTool('mcp__worca__read_attachment', { id: 'a' }, { a: 'x.md' }), 'Reading x.md');
       assert.equal(labelForTool('mcp__worca__read_memory', { name: 'testing' }), 'Reading memory: testing');
@@ -740,6 +743,7 @@ const RESULT_HOOKS = [
     'show_files', 'onShowFiles', { files: [{ path: '$WORCA_ASK_OUT/a.png' }] }],
   ['onProxyProposal fires on the propose_network_proxy_change result', 'propose_network_proxy_change', 'onProxyProposal', { upstream: 'proxy2.acme.test:3128' }],
   ['onProxyFlagProposal fires on the propose_corporate_proxy_on result', 'propose_corporate_proxy_on', 'onProxyFlagProposal', { note: 'office' }],
+  ['onMcpProposal fires on the propose_mcp_change result', 'propose_mcp_change', 'onMcpProposal', { kind: 'add', name: 'github', type: 'stdio', command: 'npx' }],
 ];
 
 test('RESULT hooks: each hooked tool (metrics, track_run, policy, clone, web, away switch, away proposal, workspace, scope switch, project, show_files, proxy change, proxy flag) reaches its hook on the main stream with {toolUseId,input,text,isError}; never for a sub-agent; a throwing hook is contained', async () => {

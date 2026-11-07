@@ -44,6 +44,8 @@ import { validateCloneProposal } from './clone-deps.mjs';
 import { validateProjectProposal } from './project-deps.mjs';
 import { validateWorkspaceChange } from './workspace-deps.mjs';
 import { validateActionsChange } from './actions-deps.mjs';
+import { validateMcpChange } from './mcp-deps.mjs';
+import { scrub } from './mcp-proposal.mjs';
 import { actionsProposalInput } from './actions-proposal.mjs';
 import { validateProxyChange, validateProxyFlagOn } from './proxy-deps.mjs';
 import { scriptApprovalCard } from './script-approval.mjs';
@@ -261,6 +263,7 @@ class AskTurn extends EventEmitter {
       validateProjectProposal: deps.validateProjectProposal ?? validateProjectProposal,
       validateWorkspaceChange: deps.validateWorkspaceChange ?? validateWorkspaceChange,
       validateActionsChange: deps.validateActionsChange ?? validateActionsChange,
+      validateMcpChange: deps.validateMcpChange ?? validateMcpChange,
       // The web card's authoritative check runs against THIS turn's resolved access (allowlist + team cap).
       claimAgentFile: deps.claimAgentFile ?? ((file) => claimFileForAgent(file, agentIdentityFor(currentOwner()))),
       // 1.4: the thread's folder goes to this turn's agent user's own group (store.mjs); throws on a planted one.
@@ -858,6 +861,28 @@ class AskTurn extends EventEmitter {
     this._persistBlocks();
   }
 
+  /** propose_mcp_change RESULT: an ok child result is re-validated against the registry before a card is minted
+   *  (the child's verdict is only the model's self-correction); a rejection becomes a notice. */
+  async _onMcpProposal(input, text, isError) {
+    if (isError) return;
+    let out = null;
+    try { out = JSON.parse(text); } catch { out = null; }
+    if (!out || out.ok !== true) return;
+    const d = this.deps;
+    try {
+      const r = await d.validateMcpChange(input && typeof input === 'object' ? input : {}, { pin: this.pinnedScope });
+      if (r && r.ok) this.reducer.addBlock({ kind: 'card', id: d.newAskId('card'), state: 'proposed', card: r.card });
+      else {
+        const errors = (r && Array.isArray(r.errors) && r.errors.length) ? r.errors : ['invalid proposal'];
+        this.reducer.addBlock({ kind: 'notice', text: `MCP server change rejected: ${errors.join('; ')}` });
+      }
+    } catch (err) {
+      // D19: a thrown reader error can quote a path, a name or a value; scrub it like the route's apply error.
+      this.reducer.addBlock({ kind: 'notice', text: `MCP server change rejected: ${scrub(err?.message || err)}` });
+    }
+    this._persistBlocks();
+  }
+
   /**
    * propose_network_proxy_change / propose_corporate_proxy_on RESULT: the child's {ok:true} is only a hint — the parent
    * re-validates the same INPUT against the flag and the stored settings now, and mints the card. A child {ok:false}
@@ -1006,6 +1031,7 @@ class AskTurn extends EventEmitter {
       onProjectProposal: ({ input, text, isError }) => this._onProjectProposal(input, text, isError),
       onWorkspaceProposal: ({ input, text, isError }) => this._onWorkspaceProposal(input, text, isError),
       onActionsProposal: ({ input, text, isError }) => this._onActionsProposal(input, text, isError),
+      onMcpProposal: ({ input, text, isError }) => this._onMcpProposal(input, text, isError),
       onProxyProposal: ({ input, text, isError }) => this._onProxyProposal('propose_network_proxy_change', input, text, isError),
       onProxyFlagProposal: ({ input, text, isError }) => this._onProxyProposal('propose_corporate_proxy_on', input, text, isError),
       onWebProposal: ({ input, text, isError }) => this._onWebProposal(input, text, isError),

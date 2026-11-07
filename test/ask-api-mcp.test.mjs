@@ -166,3 +166,131 @@ test('server wiring: a card-event turn recomputes from stored context/choices; t
     } },
   ]);
 });
+
+// ---- the MCP server card (docs/mcp-servers.md "Chat"): the cards route over the real registry ---------------------
+const snap = async (id) => (await fetch(`${base}/api/ask/threads/${id}`)).json();
+async function waitFor(pred, ms = 10000) {
+  const t0 = Date.now();
+  for (;;) {
+    const v = await pred();
+    if (v) return v;
+    if (Date.now() - t0 > ms) throw new Error('waitFor timed out');
+    await new Promise((r) => setTimeout(r, 25));
+  }
+}
+/** A proposed `mcp` card made by the real validator (the server shares WORCA_HOME), seeded as in ask-actions-card. */
+async function seedMcpCard(card) {
+  await idle();
+  const { appendMessage } = await import('../src/core/ask/store.mjs');
+  const { thread } = await (await post('/api/ask/threads', {})).json();
+  appendMessage(thread.id, { role: 'user', text: 'hi' });
+  const cardId = `card_${Math.random().toString(16).slice(2, 10).padEnd(8, '0')}`;
+  appendMessage(thread.id, { role: 'assistant', text: 'ok', status: 'done', blocks: [{ kind: 'card', id: cardId, state: 'proposed', card }] });
+  return { threadId: thread.id, cardId };
+}
+const mcpCard = async (input) => {
+  const { validateMcpChange } = await import('../src/core/ask/mcp-deps.mjs');
+  const r = await validateMcpChange(input);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  return r.card;
+};
+const eventOf = (threadId) => waitFor(async () => (await snap(threadId)).messages.find((m) => m.role === 'user' && /^\[worca event\] mcp card /.test(m.text || '')));
+const noticeOf = (threadId) => waitFor(async () => {
+  const n = (await snap(threadId)).messages.filter((m) => m.role === 'user' && (m.blocks || []).some((b) => b.kind === 'notice' && b.synthetic)).map((m) => m.blocks[0].text);
+  return n.length ? n : null;
+});
+const serversFile = async () => {
+  const { mcpDir } = await import('../src/core/mcp/store.mjs');
+  return join(mcpDir(), 'servers.json');
+};
+const setsHold = async (id) => {
+  const { readFileSync } = await import('node:fs');
+  const { mcpDir } = await import('../src/core/mcp/store.mjs');
+  return Object.values(JSON.parse(readFileSync(join(mcpDir(), 'sets.json'), 'utf8')).sets || {}).some((s) => s.members.some((m) => m.server === id));
+};
+const GH_ADD = { kind: 'add', name: 'github', type: 'stdio', command: 'npx', args: ['-y', '@modelcontextprotocol/server-github'], env: { GITHUB_TOKEN: { secret: true } } };
+
+test('mcp card: Apply adds the definition only and posts the event; Decline writes nothing; a second apply is 409; a bad state 400', async () => {
+  const { readFileSync } = await import('node:fs');
+  const a = await seedMcpCard(await mcpCard(GH_ADD));
+  assert.equal((await post(`/api/ask/threads/${a.threadId}/cards/${a.cardId}`, { state: 'started' })).status, 400);
+  const r = await post(`/api/ask/threads/${a.threadId}/cards/${a.cardId}`, { state: 'applied' });
+  assert.equal(r.status, 200, await r.clone().text());
+  const j = await r.json();
+  assert.equal(j.block.state, 'applied', JSON.stringify(j.block));
+  assert.match(j.block.card.result.detail, /Added github/);
+  assert.ok(JSON.parse(readFileSync(await serversFile(), 'utf8')).manual.github);
+  assert.equal(await setsHold('manual:github'), false, 'applying adds the server to no set');
+  assert.match((await eventOf(a.threadId)).text, /^\[worca event\] mcp card \S+ applied; "Add MCP server github \(stdio\)"/);
+  assert.ok((await noticeOf(a.threadId))[0].startsWith('Applied — '));
+  assert.equal((await post(`/api/ask/threads/${a.threadId}/cards/${a.cardId}`, { state: 'applied' })).status, 409, 'applied once');
+  await idle();
+
+  const d = await seedMcpCard(await mcpCard({ ...GH_ADD, name: 'other' }));
+  const before = readFileSync(await serversFile());
+  const dr = await post(`/api/ask/threads/${d.threadId}/cards/${d.cardId}`, { state: 'declined' });
+  assert.equal(dr.status, 200);
+  assert.equal((await dr.json()).block.state, 'declined');
+  assert.ok(readFileSync(await serversFile()).equals(before), 'declining leaves servers.json byte-identical');
+  assert.equal((await eventOf(d.threadId)).text, `[worca event] mcp card ${d.cardId} declined; "Add MCP server other (stdio)"`);
+  await idle();
+});
+
+test('mcp card: Apply while the chat replies is a 409 `turn in flight` that writes nothing and keeps the card proposed', async () => {
+  const { readFileSync } = await import('node:fs');
+  const s = await seedMcpCard(await mcpCard({ ...GH_ADD, name: 'busyx' }));
+  mod._testing.askJobs.set(s.threadId, { status: 'running' });
+  try {
+    const r = await post(`/api/ask/threads/${s.threadId}/cards/${s.cardId}`, { state: 'applied' });
+    assert.equal(r.status, 409);
+    assert.equal((await r.json()).error, 'turn in flight');
+  } finally { mod._testing.askJobs.delete(s.threadId); }
+  assert.equal(JSON.parse(readFileSync(await serversFile(), 'utf8')).manual.busyx, undefined, 'nothing saved');
+  const block = (await snap(s.threadId)).messages.flatMap((m) => m.blocks || []).find((b) => b.id === s.cardId);
+  assert.equal(block.state, 'proposed');
+  const ok = await post(`/api/ask/threads/${s.threadId}/cards/${s.cardId}`, { state: 'applied' });
+  assert.equal((await ok.json()).block.state, 'applied', 'applies once the reply has landed');
+  await idle();
+});
+
+test('mcp card: a stale edit card fails with the store\'s error and the event says so', async () => {
+  const { addManualServer, editManualServer, readMcpStore } = await import('../src/core/mcp/store.mjs');
+  await addManualServer('gh', { type: 'stdio', command: 'npx', args: ['-y'], env: {}, fields: [] });
+  const card = await mcpCard({ kind: 'edit', name: 'gh', type: 'stdio', command: 'npx', args: ['-y', '--read-only'] });
+  const stored = (await readMcpStore()).manual.gh;
+  await editManualServer('gh', { ...stored, description: 'changed in Settings' });
+  const s = await seedMcpCard(card);
+  const r = await post(`/api/ask/threads/${s.threadId}/cards/${s.cardId}`, { state: 'applied' });
+  assert.equal(r.status, 200, await r.clone().text());
+  const j = await r.json();
+  assert.equal(j.block.state, 'failed', JSON.stringify(j.block));
+  assert.match((await eventOf(s.threadId)).text, /mcp card \S+ failed: gh changed since this card was made/);
+  assert.equal((await readMcpStore()).manual.gh.description, 'changed in Settings');
+  await idle();
+});
+
+// The UI token marks a person (agentMayBeCaller is false with it), so an agent caller meets the global G1 gate first;
+// the route's own agentMayBeCaller line is the second layer behind it, as on the actions card.
+test('mcp card: an agent caller cannot apply, and with the UI token (a person) the same request applies', async () => {
+  const s = await seedMcpCard(await mcpCard({ ...GH_ADD, name: 'agentx' }));
+  const homeOs = await mkdtemp(join(tmpdir(), 'worca-cc-askmcp-agent-'));
+  process.env.WORCA_AGENT_USER = 'worca-agent';
+  process.env.WORCA_AGENT_HOME = join(homeOs, 'agent');
+  try {
+    const r = await post(`/api/ask/threads/${s.threadId}/cards/${s.cardId}`, { state: 'applied' });
+    assert.deepEqual([r.status, (await r.json()).code], [403, 'AGENT_CALLER_BLOCKED']);
+    const still = (await (await fetch(`${base}/api/ask/threads/${s.threadId}`, { headers: { 'x-worca-ui-token': mod._testing.uiToken() } })).json())
+      .messages.flatMap((m) => m.blocks || []).find((b) => b.id === s.cardId);
+    assert.equal(still.state, 'proposed');
+    const { readMcpStore } = await import('../src/core/mcp/store.mjs');
+    assert.equal((await readMcpStore()).manual.agentx, undefined);
+    const ok = await fetch(`${base}/api/ask/threads/${s.threadId}/cards/${s.cardId}`, { method: 'POST',
+      headers: { ...JSONH, 'x-worca-ui-token': mod._testing.uiToken() }, body: JSON.stringify({ state: 'applied' }) });
+    assert.equal(ok.status, 200);
+    assert.equal((await ok.json()).block.state, 'applied');
+  } finally {
+    delete process.env.WORCA_AGENT_USER; delete process.env.WORCA_AGENT_HOME;
+    await rm(homeOs, { recursive: true, force: true });
+  }
+  await idle();
+});

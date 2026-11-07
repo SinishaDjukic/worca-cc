@@ -362,6 +362,14 @@ function claudeConfigNames() {
   } catch { return []; }
 }
 
+/** What addManualServer refuses (store.mjs): a manual name in use, a base another id holds (a removed manual server
+ *  keeps its own base, so its name can be added again) or a catalog server's declared name. One rule for the
+ *  Settings form's live check and the chat's MCP card. */
+export function manualNameTaken({ snapshot, catalog }, name) {
+  const held = Object.entries(snapshot.bases).some(([sid, b]) => b === name && sid !== `manual:${name}`);
+  return Object.hasOwn(snapshot.manual, name) || held || catalog.some((e) => e.name === name);
+}
+
 /** Everything the builders read, from disk and the policy cache. */
 export async function viewContext() {
   const snapshot = await readMcpStore();

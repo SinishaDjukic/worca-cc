@@ -158,6 +158,7 @@ const JS_CHECKBOX_OK = [
   ['requirements-view.mjs', 'ipv-att-', 'picks the ticket attachments to add as files'],
   ['marketplace/remove-view.mjs', 'mk-purge-box', 'opt-in consent in the Remove dialog'],
   ['marketplace/update-view.mjs', 'mk-reviewed', 'acknowledges the reviewed changes'], ['marketplace/update-view.mjs', 'mk-include', 'picks updates'],
+  ['mcp-server-import.mjs', 'mcp-imp-pick', 'picks servers to import'],
 ].map(([file, token, reason]) => ({ file: `ui/public/${file}`, token, reason }));
 function checkboxEmitters(files) {
   const out = [];

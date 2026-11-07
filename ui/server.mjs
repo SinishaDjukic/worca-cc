@@ -336,7 +336,7 @@ import { applyProjectChange } from '../src/core/ask/project-deps.mjs';
 import { workspaceEventPrompt, workspaceNoticeText } from '../src/core/ask/workspace-proposal.mjs';
 import { applyWorkspaceChange } from '../src/core/ask/workspace-deps.mjs';
 import { actionsEventPrompt, actionsNoticeText } from '../src/core/ask/actions-proposal.mjs';
-import { applyActionsChange } from '../src/core/ask/actions-deps.mjs';
+import { mcpEventPrompt, mcpNoticeText } from '../src/core/ask/mcp-proposal.mjs';
 import { webEventPrompt, webNoticeText, chatWebHosts } from '../src/core/ask/web-proposal.mjs';
 import { createConversationBridge } from '../src/core/chat/conversation-bridge.mjs';
 import { fetchChatFiles, fitChatContext, chatContextBlock } from '../src/core/chat/inbound-context.mjs';
@@ -8894,7 +8894,7 @@ async function resolveAskContext(threadId, ctx = {}, listedAttachments = [], cur
         // Workflows chat (D13): a composer card names its type, state and name — never the run-card shape.
         const cc = composerHeaderCard(b);
         if (cc) { cards.push(cc); continue; }
-        if (b.card && (b.card.type === 'metrics' || b.card.type === 'policy' || b.card.type === 'clone' || b.card.type === 'web' || b.card.type === 'workspace' || b.card.type === 'actions' || b.card.type === 'away' || b.card.type === 'scope-switch' || b.card.type === 'project' || b.card.type === 'proxy')) {
+        if (b.card && (b.card.type === 'metrics' || b.card.type === 'policy' || b.card.type === 'clone' || b.card.type === 'web' || b.card.type === 'workspace' || b.card.type === 'actions' || b.card.type === 'mcp' || b.card.type === 'away' || b.card.type === 'scope-switch' || b.card.type === 'project' || b.card.type === 'proxy')) {
           cards.push({ id: b.id, type: b.card.type, state: b.state, summary: b.card.summary || '' });
           continue;
         }
@@ -9459,9 +9459,9 @@ async function startMetricsEventTurn(threadId, block) {
   const state = block.state === 'declined' ? 'declined' : block.state === 'failed' ? 'failed' : 'applied';
   const result = card.result || null;
   // One event turn for every non-workflow card; the type picks the wording. Metrics is the fallback.
-  const kind = card.type === 'policy' || card.type === 'schedule' || card.type === 'model' || card.type === 'clone' || card.type === 'web' || card.type === 'workspace' || card.type === 'actions' || card.type === 'away' || card.type === 'project' || card.type === 'proxy' || card.type === 'script-approval' ? card.type : 'metrics';
-  const eventPrompt = { policy: policyEventPrompt, schedule: scheduleEventPrompt, model: modelEventPrompt, clone: cloneEventPrompt, web: webEventPrompt, workspace: workspaceEventPrompt, actions: actionsEventPrompt, away: awayEventPrompt, project: projectEventPrompt, proxy: proxyEventPrompt, 'script-approval': scriptEventPrompt, metrics: metricsEventPrompt }[kind];
-  const noticeText = { policy: policyNoticeText, schedule: scheduleNoticeText, model: modelNoticeText, clone: cloneNoticeText, web: webNoticeText, workspace: workspaceNoticeText, actions: actionsNoticeText, away: awayNoticeText, project: projectNoticeText, proxy: proxyNoticeText, 'script-approval': scriptNoticeText, metrics: metricsNoticeText }[kind];
+  const kind = card.type === 'policy' || card.type === 'schedule' || card.type === 'model' || card.type === 'clone' || card.type === 'web' || card.type === 'workspace' || card.type === 'actions' || card.type === 'mcp' || card.type === 'away' || card.type === 'project' || card.type === 'proxy' || card.type === 'script-approval' ? card.type : 'metrics';
+  const eventPrompt = { policy: policyEventPrompt, schedule: scheduleEventPrompt, model: modelEventPrompt, clone: cloneEventPrompt, web: webEventPrompt, workspace: workspaceEventPrompt, actions: actionsEventPrompt, mcp: mcpEventPrompt, away: awayEventPrompt, project: projectEventPrompt, proxy: proxyEventPrompt, 'script-approval': scriptEventPrompt, metrics: metricsEventPrompt }[kind];
+  const noticeText = { policy: policyNoticeText, schedule: scheduleNoticeText, model: modelNoticeText, clone: cloneNoticeText, web: webNoticeText, workspace: workspaceNoticeText, actions: actionsNoticeText, mcp: mcpNoticeText, away: awayNoticeText, project: projectNoticeText, proxy: proxyNoticeText, 'script-approval': scriptNoticeText, metrics: metricsNoticeText }[kind];
   const text = eventPrompt({ cardId: block.id, state, card, result });
   const notice = noticeText({ state, card, result });
   const mv = await askEventPick(threadId, thread);
