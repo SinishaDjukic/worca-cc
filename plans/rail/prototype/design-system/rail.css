@@ -1286,7 +1286,7 @@ th.rt-c{color:var(--ink-2);font-weight:500;}
 .in-view{display:inline-flex;align-items:center;gap:2px;margin-right:6px;padding-right:8px;border-right:1px solid var(--line);}
 .in-view .kind-mark,.in-view .kind-mark *{animation:none!important;}
 .in-view-w{position:relative;display:inline-flex;}
-.in-view-i{display:grid;place-items:center;min-width:32px;height:32px;padding:0 4px;border:0;border-radius:var(--r-sm);background:none;color:var(--ink-2);font:500 var(--fs-caption)/1 var(--sans);cursor:pointer;}
+.in-view-i{display:grid;place-items:center;min-width:36px;height:36px;padding:0 4px;border:0;border-radius:var(--r-sm);background:none;color:var(--ink-2);font:500 var(--fs-caption)/1 var(--sans);cursor:pointer;}
 .in-view-i:hover,.in-view-i[aria-expanded="true"]{background:var(--hover);}
 /* named, like a tab: the mark, then the name cut short; thin rules between, no pill */
 .in-view-i.is-named{display:inline-flex;align-items:center;gap:6px;padding:0 8px 0 4px;}
@@ -1307,3 +1307,8 @@ th.rt-c{color:var(--ink-2);font-weight:500;}
 @media (max-width: 760px){ .in-view{margin-right:2px;padding-right:4px;} .in-view-card{display:none!important;} }
 /* A quiet icon button that stays on (Keep in view on a task's head) shows it. */
 .btn.btn-quiet.btn-icon[aria-pressed="true"]{color:var(--ink);background:var(--hover);}
+
+/* A top-bar action with news (Pulse, when something new arrives): its icon shakes once, its badge stays. */
+@keyframes tb-shake{0%,100%{transform:rotate(0);}15%{transform:rotate(-14deg);}30%{transform:rotate(12deg);}45%{transform:rotate(-9deg);}60%{transform:rotate(6deg);}75%{transform:rotate(-3deg);}}
+.topnav-act.is-news > svg{transform-origin:50% 20%;animation:tb-shake 700ms var(--ease) 1;}
+@media (prefers-reduced-motion: reduce){ .topnav-act.is-news > svg{animation:none;} }

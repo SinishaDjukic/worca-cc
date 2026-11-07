@@ -27,7 +27,7 @@ A Rail page is built by naming needs, not looks. Find the need, use its componen
 | What you keep an eye on | InView: a mark and a short name in the top bar only, like tabs; a card on hover with × for Out of view; +N opens a menu | Fix the flaky login, Working |
 | How many, on the corner of what it counts | CountBadge, `need` when any waits on you | Pulse 3 |
 | The sidebar's foot, the door to the profile menu | AccountButton, then AccountItem rows in its flyout | Interface mode, Away |
-| An action in the top bar | TopBarAction, an icon with its CountBadge; its name in the tooltip | Ask worca, Pulse |
+| An action in the top bar | TopBarAction, a 20px icon with its CountBadge; its name in the tooltip; with news (its count grew) the icon shakes once, never under reduced motion | Ask worca, Pulse |
 | Starting anything | Composer: the words, then one line with +, the Ask/Task/Schedule sentence, voice and send | Start task |
 | **Choosing** | | |
 | A choice that changes a step | SentencePicker: a picker in the sentence it changes, opening a CompactMenu (in the app, wired to `toggleMenu`, so the menu has keys) | `Send [what needs you ▾] to [desktop ▾]` |

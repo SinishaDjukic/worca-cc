@@ -579,11 +579,14 @@ document.addEventListener('input', (e) => { if (e.target.matches?.('[data-search
 function fitSearch() { const m = document.querySelector('.rl-search-res'); if (!m) return; m.style.left = ''; const r = m.getBoundingClientRect(), vw = document.documentElement.clientWidth; if (r.right > vw - 16) m.style.left = `${vw - 16 - r.right}px`; }
 
 // ---- in the one Worca: Pulse in Activity's place, the overlays above the shell, Settings in the page, its menu in the sidebar ----
+// Pulse's icon shakes once when something new arrives: the count it holds grew since it was last drawn.
+let pulseSeen = null, pulseShakeTill = 0;   // a redraw during the shake keeps it going, never starts it again
+const pulseNews = (n) => { if (pulseSeen !== null && n > pulseSeen) pulseShakeTill = Date.now() + 700; pulseSeen = n; return Date.now() < pulseShakeTill; };
 function pulseButton() {
-  const needs = vitalsRuns().needs.length, un = unread().length, run = vitalsRuns().running.length;
+  const needs = vitalsRuns().needs.length, un = unread().length, run = vitalsRuns().running.length, news = pulseNews(needs + un);
   const badge = needs ? { n: needs, tone: 'need' } : un ? { n: un, tone: 'run' } : null;
   const words = [needs && plural(needs, 'needs you', 'need you'), un && `${un} unread`, run && `${run} running`].filter(Boolean).join(' · ') || 'Nothing new';
-  return R.topBarAction({ label: 'Pulse', icon: svg('signal', 16), labelCls: 'pz-pulse-l', kind: 'quiet', full: true, cls: 'topnav-act pz-pulse-b', badge, title: 'Pulse: ' + words, attrs: { 'data-pop': true, 'aria-haspopup': 'dialog', 'aria-expanded': String(!!ui.pop) } });
+  return R.topBarAction({ label: 'Pulse', icon: svg('signal', 16), labelCls: 'pz-pulse-l', kind: 'quiet', full: true, cls: 'topnav-act pz-pulse-b', badge, news, title: 'Pulse: ' + words, attrs: { 'data-pop': true, 'aria-haspopup': 'dialog', 'aria-expanded': String(!!ui.pop) } });
 }
 // A redraw keeps the focus: on the same control, else on the row beside the one that left, else back on Pulse.
 const KEPT = ['data-open', 'data-sel', 'data-selall', 'data-ptab', 'data-menu', 'data-bulk', 'data-pop'];

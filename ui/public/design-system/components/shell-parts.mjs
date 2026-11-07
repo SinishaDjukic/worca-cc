@@ -115,13 +115,14 @@ export function inView({ items, more = null }) {
  * @param {object} o
  * @param {{label:string, icon:string, n:number, tone?:string, attrs?:object}[]} o.items
  * @param {string} [o.label]
+ * @param {boolean} [o.news]  something new just arrived: its icon shakes once (never while reduced motion is on)
  */
 export function barStrip({ items, label = 'Your work' }) {
   return `<nav class="bar-strip"${attrs({ 'aria-label': label })}>${items.map((x) => `<button type="button" class="bar-strip-i"${attrs({ ...(x.attrs || {}), title: x.label, 'aria-label': x.label })}>${x.icon}${x.n ? countBadge({ n: x.n, tone: x.tone, corner: true }) : ''}</button>`).join('')}</nav>`;
 }
 
-export function topBarAction({ label, icon, labelCls, kind = '', full = false, badge = null, cls: c = '', title = '', attrs: a = {} }) {
-  const look = cls('btn', !full && 'btn-sm', kind && `btn-${kind}`, c);
+export function topBarAction({ label, icon, labelCls, kind = '', full = false, badge = null, news = false, cls: c = '', title = '', attrs: a = {} }) {
+  const look = cls('btn', !full && 'btn-sm', kind && `btn-${kind}`, news && 'is-news', c);
   return `<button type="button" class="${look}"${attrs({ ...a, title: title || null })}>${icon}<span class="${labelCls}">${esc(label)}</span>${badge ? countBadge({ n: badge.n, tone: badge.tone }) : ''}</button>`;
 }
 

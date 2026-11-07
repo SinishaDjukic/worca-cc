@@ -40,12 +40,12 @@
   // What a place needs: the sidebar's own data-min-level and data-flag, as the app's sidebar.html has them.
   const needsOf = (view0) => { const view = view0 === 'schedule' ? 'schedules' : view0; const b = document.querySelector(`#side-rail nav.nav [data-nav="${view}"]`); return b ? { min: b.dataset.minLevel || '', flag: b.dataset.flag || '' } : {}; };
   const lockOf = (view) => { const n = needsOf(view); return !R.shows(n.min) ? { min: n.min } : n.flag && !R.prefs.flag(n.flag) ? { flag: n.flag } : null; };
-  // The sidebar draws again when the interface mode or a Labs flag changes; a section with nothing left goes too.
+  // The sidebar draws again when the interface mode or a Labs flag changes; a group with no place left goes, with its head.
   function applyPrefs() {
     const nav = document.querySelector('#side-rail nav.nav');
     for (const b of nav.querySelectorAll('[data-nav]')) { b.hidden = !!lockOf(b.dataset.nav); const w = b.closest('.place-row'); if (w) w.hidden = b.hidden; }
     let sect = null, any = 0;
-    const close = () => { if (sect) sect.hidden = any < 2; };   // a head over one row says nothing: it goes, the row stays
+    const close = () => { if (sect) sect.hidden = any < 1; };   // a group keeps its head while it shows a place: Work over Chat alone still says where you are
     for (const x of nav.children) {
       if (x.matches('.nav-sect')) { close(); sect = x; any = 0; } else if (x.matches('button, .place-row') && !x.hidden) any++;
     }
@@ -152,21 +152,21 @@
     document.getElementById('bar-back').innerHTML = R.list({ groups: [...(rows.length ? [{ title: 'Recent', rows, more: !pinsAll && morePins > 0 ? { n: morePins, attrs: { 'data-pins-all': '' } } : null }] : [])] });
   }
 
-  // ---- In view: what you keep an eye on, from any ⋯ or a task's head; its marks live in the top bar only, named like tabs (three),
-  // marks only below 1100px (five; one on a phone), then +N opens the rest ----
-  const inViewMax = () => (innerWidth <= 760 ? 1 : innerWidth <= 1100 ? 5 : 3);   // named like tabs above 1100px, three of them
+  // ---- In view: what you keep an eye on, from any ⋯ or a task's head; its marks live in the top bar only, named like tabs, five at
+  // most (marks only below 1100px; one on a phone), then +N opens the rest; its marks are the top bar's 20px ----
+  const inViewMax = () => (innerWidth <= 760 ? 1 : 5);   // five at most, named like tabs above 1100px; one on a phone
   let inViewMenu = false;
   addEventListener('resize', () => drawInView());
   let inViewList = [{ type: 'task', id: 't4', chat: 'c4', title: 'Fix the flaky login' }];
   const allTasksOf = (c) => { const out = []; const walk = (t) => { out.push(t); (t.after || []).forEach(walk); }; (c?.tasks || []).forEach(walk); return out; };
   function inViewNow(x) {
     const chats = window.RailChats?.data().chats || [];
-    if (x.type === 'chat') { const c = chats.find((y) => y.id === x.id); if (!c) return null; const st = R.chatState(c.state); return { label: `${c.title}\n${st.word}`, mark: R.kindMark({ kind: 'chat', tone: c.state === 'needs-you' ? 'ask' : c.state === 'idle' ? 'idle' : 'run', size: 22, title: '' }), hash: `chat/${c.id}` }; }
-    if (x.type === 'schedule') return { label: `${x.title}\nSchedule`, mark: R.kindMark({ kind: 'schedule', size: 22 }), hash: `schedule/${x.id}` };
+    if (x.type === 'chat') { const c = chats.find((y) => y.id === x.id); if (!c) return null; const st = R.chatState(c.state); return { label: `${c.title}\n${st.word}`, mark: R.kindMark({ kind: 'chat', tone: c.state === 'needs-you' ? 'ask' : c.state === 'idle' ? 'idle' : 'run', size: 20, title: '' }), hash: `chat/${c.id}` }; }
+    if (x.type === 'schedule') return { label: `${x.title}\nSchedule`, mark: R.kindMark({ kind: 'schedule', size: 20 }), hash: `schedule/${x.id}` };
     const t = x.chat ? allTasksOf(chats.find((c) => c.id === x.chat)).find((y) => y.id === x.id) : null, cs = t?.case || x.case;
     if (!cs) return null;
     const st = R.runState(RM.stateOf(cs));
-    return { label: `${x.title}\n${st.word}${t?.detail ? ` · ${t.detail}` : ''}`, mark: R.kindMark({ kind: 'task', tone: R.markTone(st), stage: t?.stage ?? RM.stageOf(cs).stage ?? -1, size: 22 }), hash: `run/${cs}`, task: { cs, chat: x.chat || '', title: x.title } };
+    return { label: `${x.title}\n${st.word}${t?.detail ? ` · ${t.detail}` : ''}`, mark: R.kindMark({ kind: 'task', tone: R.markTone(st), stage: t?.stage ?? RM.stageOf(cs).stage ?? -1, size: 20 }), hash: `run/${cs}`, task: { cs, chat: x.chat || '', title: x.title } };
   }
   function drawInView() {
     const live = inViewList.map((x) => ({ x, now: inViewNow(x) })).filter((y) => y.now);
@@ -175,7 +175,7 @@
     const slot = document.getElementById('in-view-slot');
     if (slot) slot.innerHTML = R.inView({
       items: shown.map(({ x, now }) => { const [title, line] = now.label.split('\n'); return { title, line, icon: now.mark, attrs: { 'data-in-view': key(x) }, drop: { 'data-in-view-drop': key(x) } }; }),
-      more: hidden.length ? { n: hidden.length, open: inViewMenu, attrs: { 'data-in-view-more': '' }, items: hidden.map(({ x, now }) => ({ id: key(x), text: now.label.split('\n')[0], mark: now.mark.replace('--km:22px', '--km:18px') })) } : null });
+      more: hidden.length ? { n: hidden.length, open: inViewMenu, attrs: { 'data-in-view-more': '' }, items: hidden.map(({ x, now }) => ({ id: key(x), text: now.label.split('\n')[0], mark: now.mark.replace('--km:20px', '--km:18px') })) } : null });
     syncEye(live);
     return live;
   }
@@ -206,7 +206,7 @@
     const kinds = [['chat', 'chat', 'Chats', { n: live.length, needs: chats.filter((c) => c.state === 'needs-you').length }], ['runs', 'task', 'Tasks', window.RailRunsList?.summary()], ['schedules', 'schedule', 'Schedules', window.RailSchedules?.summary()]];
     document.getElementById('bar-mini').innerHTML = R.barStrip({ items: kinds.filter(([place]) => !lockOf(place)).map(([place, kind, word, c]) => {
       const n = c?.n || 0, needs = c?.needs || 0;
-      return { label: [`${word}: ${n} open`, needs ? `${needs} need you` : ''].filter(Boolean).join(' · '), icon: R.kindMark({ kind, stage: -1, keepType: true, size: 22 }), n, tone: needs ? 'need' : '', attrs: { 'data-mini': place } };
+      return { label: [`${word}: ${n} open`, needs ? `${needs} need you` : ''].filter(Boolean).join(' · '), icon: R.kindMark({ kind, stage: -1, keepType: true, size: 20 }), n, tone: needs ? 'need' : '', attrs: { 'data-mini': place } };
     }) });
   }
 

@@ -842,6 +842,11 @@ test('stepper: deepen colours each main stage up to where it is', () => {
   assert.match(h, /--sc-mix:65%/); assert.match(h, /is-deep is-run/); assert.doesNotMatch(C.stepper({ stages }), /sc-mix/);
 });
 
+test('topBarAction: with news, it shakes once (a class the look animates)', () => {
+  assert.match(C.topBarAction({ label: 'Pulse', icon: '<svg></svg>', labelCls: 'x', news: true }), /class="[^"]*is-news/);
+  assert.doesNotMatch(C.topBarAction({ label: 'Pulse', icon: '<svg></svg>', labelCls: 'x' }), /is-news/);
+});
+
 test('countBadge, barStrip, stageLine, searchResults by area', () => {
   assert.match(C.countBadge({ n: 3, tone: 'need', corner: true }), /topnav-badge is-corner/);
   assert.match(C.topBarAction({ label: 'Pulse', icon: '', labelCls: 'l', badge: { n: 2, tone: 'need' } }), /topnav-badge/);
