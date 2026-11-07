@@ -877,7 +877,7 @@ test('thinkingRow: live says what it does and how long, politely; done folds wha
 });
 
 test('askWorcaMark: the bubble and its W at rest, dots while writing, filled while open; writing wins', () => {
-  assert.match(C.askWorcaMark(), /M7.4 8.7/); assert.doesNotMatch(C.askWorcaMark(), /circle|mask/);
+  assert.match(C.askWorcaMark(), /M5 4h14/); assert.match(C.askWorcaMark(), /M7.4 8.2/); assert.doesNotMatch(C.askWorcaMark(), /circle|mask/);
   assert.match(C.askWorcaMark({ answering: true }), /<circle/);
   assert.match(C.askWorcaMark({ open: true }), /mask="url\(#ask-worca-cut\)"/);
   assert.match(C.askWorcaMark({ open: true, answering: true }), /<circle/);

@@ -112,7 +112,7 @@ export function inView({ items, more = null }) {
 }
 
 /**
- * AskWorcaMark: Ask worca's icon in the top bar, saying what it does: the bubble with its W at rest, three dots while
+ * AskWorcaMark: Ask worca's icon in the top bar, saying what it does: a boxy chat bubble with its W at rest, three dots while
  * Worca writes, filled while its column is open (writing wins over open). A reply you have not read is its dot.
  * @param {object} o
  * @param {boolean} [o.answering]

@@ -88,7 +88,7 @@ Mocks: `mocks/wave-2/` (`node plans/rail/mocks/wave-2/render.mjs`). These are di
 | **Keep in view** is the browser's tabs: from any ⋯ or a task's eye, a mark and a short name in the top bar only, five at most, a line under the one you are on; a card on hover with × | built |
 | **Every list groups by date by default** (what waits on you first), one picker and one set of words from the library; date sections fold and stay folded; schedules by their next run | built |
 | **Running is ink, not a colour;** light's state colours deepened so each holds 3:1; one mark breathes per tree and three per list | built |
-| **The top bar:** one 20px size for its icons; Pulse shakes once on news; Ask worca is a wide speech bubble with the W, dots while it writes, filled while open | built |
+| **The top bar:** one 20px size for its icons; Pulse shakes once on news; Ask worca is a boxy chat bubble with the W, dots while it writes, filled while open | built |
 | **Small motion** says what changed: a ring fills, a new row drops in, a section folds, the bar fades between places | built |
 | **Backgrounds:** full on Chat home and the away screen; on every other page only in its margins | built |
 

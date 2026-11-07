@@ -28,7 +28,7 @@ A Rail page is built by naming needs, not looks. Find the need, use its componen
 | How many, on the corner of what it counts | CountBadge, `need` when any waits on you | Pulse 3 |
 | The sidebar's foot, the door to the profile menu | AccountButton, then AccountItem rows in its flyout | Interface mode, Away |
 | An action in the top bar | TopBarAction, a 20px icon with its CountBadge; its name in the tooltip; with news (its count grew) the icon shakes once, never under reduced motion | Ask worca, Pulse |
-| Ask worca in the top bar | AskWorcaMark: a wide speech bubble with the W for its text; three dots while Worca writes, filled with the W cut out while its column is open; an unread reply is its dot | Ask worca |
+| Ask worca in the top bar | AskWorcaMark: a boxy chat bubble with the W for its text; three dots while Worca writes, filled with the W cut out while its column is open; an unread reply is its dot | Ask worca |
 | Starting anything | Composer: the words, then one line with +, the Ask/Task/Schedule sentence, voice and send | Start task |
 | **Choosing** | | |
 | A choice that changes a step | SentencePicker: a picker in the sentence it changes, opening a CompactMenu (in the app, wired to `toggleMenu`, so the menu has keys) | `Send [what needs you ▾] to [desktop ▾]` |
