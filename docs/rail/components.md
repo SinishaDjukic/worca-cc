@@ -59,6 +59,7 @@ A Rail page is built by naming needs, not looks. Find the need, use its componen
 | A part of a task at its stage | StagePart: what is inside, said before it opens; its chevron turns open | Changes 5 files +358 −144 |
 | A task's stages on a card | StageBar, each deepening into the state's colour | Plan · Build · Review |
 | What Worca did in a conversation | TurnRow: folds; a failure opens itself | Ran 4 commands |
+| Worca thinking in a conversation | ThinkingRow: Thinking, what it does now, its seconds; done, Thought for 8s, its steps folded | Thinking · Searching the code · 4s |
 | Moving through a long conversation or a task | Timeline on the right edge, its TimelineCard on hover | Which date format? |
 | What hangs under a row | the rounded tree under it (`tree` on a list's row) | a chat's tasks |
 | How far along, and its steps | Stepper, then StepRow on the rail | Plan · Build · Review |

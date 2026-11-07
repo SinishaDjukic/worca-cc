@@ -1334,3 +1334,13 @@ th.rt-c{color:var(--ink-2);font-weight:500;}
 .list-group.is-folding > .list-rows,.list-group.is-folding > .list-more{animation:lr-fold var(--motion-change) var(--ease) both;}
 .list-group.is-opening > .list-rows{animation:lr-unfold var(--motion-change) var(--ease) both;}
 @media (prefers-reduced-motion: reduce){ .kind-mark.is-news .km-ring circle[style],.list-row.is-arrived,.list-group.is-folding > *,.list-group.is-opening > *{animation:none;} }
+
+/* ThinkingRow: a slow light passes through "Thinking"; what it does now follows, quieter; its seconds at the end; done, its steps
+   fold under it as plain lines on the rail, not code. */
+@keyframes think-light{from{background-position:120% 0;}to{background-position:-20% 0;}}
+.think-w{font-weight:500;color:var(--ink-3);background:linear-gradient(90deg,var(--ink-3) 35%,var(--ink) 50%,var(--ink-3) 65%) 0 0/250% 100% no-repeat;-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;animation:think-light 2s linear infinite;}
+.think-s{margin-left:8px;color:var(--ink-2);}
+.think-t{font-variant-numeric:tabular-nums;}
+.tr-body.is-steps{background:none;padding:0 0 0 10px;border-left:1px solid var(--line-2);border-radius:0;font:inherit;font-size:var(--fs-meta);color:var(--ink-2);}
+.think-steps{display:flex;flex-direction:column;gap:4px;}
+@media (prefers-reduced-motion: reduce){ .think-w{animation:none;background:none;-webkit-text-fill-color:var(--ink-2);} }

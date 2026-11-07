@@ -1067,6 +1067,17 @@
       ]
     },
     {
+      "name": "ThinkingRow",
+      "code": "ui/public/design-system/components/kind-mark.mjs#thinkingRow",
+      "kind": "showing",
+      "needs": [
+        "Worca thinking in a conversation: what it does now and for how long; done, what it did, folded"
+      ],
+      "rules": [
+        "panel.conversation-rail"
+      ]
+    },
+    {
       "name": "StagePart",
       "code": "ui/public/design-system/components/kind-mark.mjs#stagePart",
       "kind": "moving",

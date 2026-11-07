@@ -10,6 +10,10 @@
   const threads = new Map(), mounted = [];
   const data = () => window.RailChats.data();
   const fresh = (mode = 'ask') => ({ files: [], mode, text: '', project: 'billing-api', workflow: 'Default', engine: 'Opus 5.5', from: 'origin · latest', then: 'open a PR', every: 'every day', at: '02:00', preset: '', more: false, startAt: '', busy: false });
+  // Thinking: what it does now, in plain words, one step every 0.6s; its seconds; the row is updated in place, never redrawn
+  const THINKING = ['Reading the chat', 'Looking through the project', 'Searching the code', 'Writing the answer'];
+  const THOUGHT = ['Read the chat', 'Looked through the project', 'Searched the code', 'Wrote the answer'];   // the same steps, done
+  const thinkNow = (x) => { const ms = Date.now() - (x.at || Date.now()), steps = x.steps || THINKING, n = Math.min(steps.length, 1 + Math.floor(ms / 600)); return { step: steps[n - 1], secs: `${Math.max(1, Math.round(ms / 1000))}s`, n }; };
   function mount(root, side = false, opts = {}) {
   const where = opts.where || (side ? '#ask-convo' : '#route-chat');
   let chatId = '', comp = fresh(opts.mode), menu = '', hover = null, opened = new Set(), timer = 0;
@@ -61,10 +65,10 @@
     const fold = () => ({ 'data-fold-turn': String(i), ...(x.id ? { 'data-anchor': x.id } : {}) });
     if (x.t === 'you') return `<div class="convo-you" data-anchor="${x.id || ''}">${esc(x.text)}</div>`;
     if (x.t === 'words') return `<p class="convo-words">${x.html}</p>`;
-    if (x.t === 'think') return R.turnRow({ mark: R.icon('sparkle', 14), text: esc(x.text) });
+    if (x.t === 'think') return R.thinkingRow({ done: true, secs: (x.text.match(/\d+s/) || ['a moment'])[0], steps: x.steps || THOUGHT, open: opened.has(i), attrs: fold() });
     if (x.t === 'cmds') return R.turnRow({ mark: R.icon(opened.has(i) ? 'chevron' : 'chevR', 14), text: esc(x.text), end: x.end, body: esc(x.body), open: opened.has(i), attrs: fold() });
     if (x.t === 'fail') return R.turnRow({ mark: R.kindMark({ kind: 'chat', tone: 'fail', size: 16 }), text: `<b>${esc(x.cmd)}</b> failed`, end: x.end, body: esc(x.body), open: !opened.has(`shut${i}`), attrs: fold() });
-    if (x.t === 'working') return R.turnRow({ mark: R.kindMark({ kind: 'chat', tone: 'run', size: 16 }), text: esc(x.text), end: x.end || '' });
+    if (x.t === 'working') { const now = thinkNow(x); return R.thinkingRow({ step: now.step, secs: now.secs, attrs: { 'data-think-at': String(x.at || Date.now()) } }); }
     if (x.t === 'files') return R.turnRow({ mark: R.gitMark({ status: 'open' }), text: `<b>${esc(x.text)}</b> ${esc(x.meta)}`, end: R.button({ label: 'View', kind: 'quiet', attrs: { 'data-say': 'Opens the changes' } }) });
     if (x.t === 'code') return `<div class="convo-code"><p>${esc(x.file)}</p><pre>${esc(x.text)}</pre></div>`;
     const t = taskOf(x.task); if (!t) return '';
@@ -154,10 +158,10 @@
       list.push({ t: 'schedule', id: `k${n}`, task: s.id });
       say(`Scheduled ${comp.every} at ${comp.at}`);
     } else {
-      list.push({ t: 'working', text: 'Replying', end: '' }); comp.busy = true; c.state = 'replying';
+      list.push({ t: 'working', at: Date.now(), steps: THINKING }); comp.busy = true; c.state = 'replying';
       root.dispatchEvent(new CustomEvent('rail:replying', { bubbles: true, detail: { busy: true } }));   // Ask worca's icon writes while it does
       clearTimeout(timer);
-      timer = setTimeout(() => { const i = list.findIndex((x) => x.t === 'working'); if (i >= 0) list.splice(i, 1, { t: 'words', html: 'Here is what I found. If you want this built, pick Task in the sentence below.' }); comp.busy = false; c.state = 'idle'; root.dispatchEvent(new CustomEvent('rail:replying', { bubbles: true, detail: { busy: false } })); window.RailChats.refresh(); paint(); }, 1400);
+      timer = setTimeout(() => { const i = list.findIndex((x) => x.t === 'working'); if (i >= 0) list.splice(i, 1, { t: 'think', text: `Thought for ${thinkNow(list[i]).secs}`, steps: THOUGHT.slice(0, thinkNow(list[i]).n) }, { t: 'words', html: 'Here is what I found. If you want this built, pick Task in the sentence below.' }); comp.busy = false; c.state = 'idle'; root.dispatchEvent(new CustomEvent('rail:replying', { bubbles: true, detail: { busy: false } })); window.RailChats.refresh(); paint(); }, 1400);
     }
     comp = { ...comp, text: '', startAt: '', more: false, files: [], mode: opts.mode || 'ask' };
     if (had) had.value = '';
@@ -260,6 +264,7 @@
   }
 
   const main = mount(document.getElementById('route-chat'));
+  setInterval(() => { for (const r of document.querySelectorAll('[data-think-at]')) { const now = thinkNow({ at: +r.dataset.thinkAt }), st = r.querySelector('.think-s'), t = r.querySelector('.think-t'); if (st && st.textContent !== now.step) st.textContent = now.step; if (t && t.textContent !== now.secs) t.textContent = now.secs; } }, 250);
   window.RailConversation = {
     show: main.show,
     start: main.start,

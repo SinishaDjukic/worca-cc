@@ -862,6 +862,14 @@ test('inView: the tab you are on carries aria-current and is-current', () => {
   assert.equal((h.match(/aria-current="page"/g) || []).length, 1); assert.match(h, /is-named is-current/);
 });
 
+test('thinkingRow: live says what it does and how long, politely; done folds what it did', () => {
+  const live = C.thinkingRow({ step: 'Searching the code', secs: '4s' });
+  assert.match(live, /class="think-w">Thinking/); assert.match(live, /think-s">Searching the code/); assert.match(live, /think-t">4s/); assert.match(live, /aria-live="polite"/);
+  const shut = C.thinkingRow({ done: true, secs: '8s', steps: ['Read the chat'], attrs: { 'data-fold-turn': '3' } });
+  assert.match(shut, /Thought for 8s/); assert.match(shut, /aria-expanded="false"/); assert.doesNotMatch(shut, /Read the chat/);
+  assert.match(C.thinkingRow({ done: true, secs: '8s', steps: ['Read the chat'], open: true, attrs: { 'data-fold-turn': '3' } }), /tr-body is-steps[\s\S]*Read the chat/);
+});
+
 test('askWorcaMark: the bubble and its W at rest, dots while writing, filled while open; writing wins', () => {
   assert.match(C.askWorcaMark(), /M7.4 8.7/); assert.doesNotMatch(C.askWorcaMark(), /circle|mask/);
   assert.match(C.askWorcaMark({ answering: true }), /<circle/);
