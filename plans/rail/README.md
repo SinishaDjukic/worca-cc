@@ -14,7 +14,7 @@ The prototype's code here is the source. The **Worca Rail** page is generated fr
 | Runs list and Chats column: dev's functions adapted to Rail, **for reference only**. Their real design is decided in Wave 2 Shaping | `lists-index.md`, `agreed/chat-and-runs-decisions.md` | In the prototype, as reference |
 | Settings: from the profile menu, the sidebar becomes its menu (five groups), one row per decision, records as Lists, search | `docs/rail/settings.md, mocks `mocks/settings-menu-*.png` | In the prototype (`pulse.html` › Settings; `settings/`) |
 
-Wave 1 (the run and group pages, Pulse, Settings, the shell) is `wave-1.md`; the waves after it, and the design
+Wave 2 is being shaped: `wave-2.md`, on `docs/rail-shaping`. Wave 1 (the run and group pages, Pulse, Settings, the shell) is `wave-1.md`; the waves after it, and the design
 system's own consistency work between them, are `waves.md`.
 Where it all stands, Accepted and Shaping, and the open decisions: `game-plan.md`.
 
