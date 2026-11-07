@@ -227,3 +227,6 @@ body.bar-hidden .bar-show{display:none;}
 #side-rail.is-strip:not(.is-resting):hover:not(:focus-within) :is(.side-scroll, .bar-title, .bar-head .btn, .pz-acct-name, .pz-updown){transition-delay:210ms;}
 #side-rail.is-strip:not(.is-resting):hover:not(:focus-within) .bar-mini{transition-delay:150ms;}
 @media (prefers-reduced-motion: reduce){ :is(.bar-list, .bar-back, #side-rail nav.nav).is-in{animation:none;} }
+
+/* notices come in under the top bar, by Pulse: never over the composer's controls */
+body .toasts{top:60px;bottom:auto;}   /* ds-ok: just under the 48px top bar */

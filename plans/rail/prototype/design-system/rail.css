@@ -737,7 +737,7 @@ html,body{height:auto;overflow:visible;margin:0;}
 .el-t{color:var(--ink);font-weight:500;}
 .empty-line.is-err .el-t{color:var(--red-ink-strong);}   /* red only when a part could not be drawn */
 .el-acts{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px;}
-.rc .toasts{top:60px;bottom:auto;}   /* ds-ok: just under the 48px top bar */   /* notices come in under the top bar, by Pulse, never over the composer's controls */
+.rc .toasts{bottom:calc(24px + env(safe-area-inset-bottom, 0px));}   /* notices come in under the top bar, by Pulse, never over the composer's controls */
 .rc-conn{display:inline-flex;align-items:center;gap:6px;margin-left:auto;font-size:var(--fs-meta);color:var(--ink-2);white-space:nowrap;}
 .rc-conn + .rc-pager{margin-left:12px;}
 
@@ -1135,6 +1135,13 @@ th.rt-c{color:var(--ink-2);font-weight:500;}
 /* A conversation on one rail (docs/rail/panels.md). */
 .convo{position:relative;flex:1 1 auto;min-height:0;display:flex;flex-direction:column;}
 .convo-scroll{flex:1 1 auto;min-height:0;overflow:auto;padding:20px 56px 24px 24px;}
+/* motion.scroll-fade: the chat softens where it slides under the composer (and the top bar), only while there is more past that edge */
+@property --fade-b{syntax:'<length>';inherits:false;initial-value:0px;}
+@property --fade-t{syntax:'<length>';inherits:false;initial-value:0px;}
+:is(.convo-scroll,[data-scroll-fade]){--fade-b:0px;--fade-t:0px;transition:--fade-b var(--motion-change) var(--ease),--fade-t var(--motion-change) var(--ease);-webkit-mask-image:linear-gradient(to bottom,transparent 0,#000 var(--fade-t),#000 calc(100% - var(--fade-b)),transparent 100%);mask-image:linear-gradient(to bottom,transparent 0,#000 var(--fade-t),#000 calc(100% - var(--fade-b)),transparent 100%);}
+:is(.convo-scroll,[data-scroll-fade])[data-more-below]{--fade-b:48px;}   /* ds-ok: the fade's own reach */
+:is(.convo-scroll,[data-scroll-fade])[data-more-above]{--fade-t:36px;}   /* ds-ok: the fade's own reach */
+@media (prefers-reduced-motion: reduce){:is(.convo-scroll,[data-scroll-fade]){transition:none;}}
 .convo-col{max-width:680px;margin:0 auto;display:flex;flex-direction:column;gap:14px;font-size:var(--fs-body);line-height:1.55;color:var(--ink);}
 .convo-head{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:var(--fs-meta);color:var(--ink-2);}
 .convo-you{align-self:flex-end;max-width:72%;padding:6px 12px;border-radius:var(--r-md);background:var(--field);}
@@ -1166,8 +1173,11 @@ th.rt-c{color:var(--ink-2);font-weight:500;}
 .convo-steps i{display:block;height:4px;border-radius:2px;background:var(--line);}   /* ds-ok: a hairline's own end */
 .convo-steps-l{display:grid;grid-template-columns:repeat(var(--n,5),1fr);gap:4px;margin-top:4px;font-size:var(--fs-caption);color:var(--ink-3);}   /* ds-ok: a size or count the component sets on itself */
 .convo-steps-l b{font-weight:500;color:var(--ink);}
-.convo-dock{flex:none;padding:0 56px 14px 24px;}
-.convo-dock .composer{max-width:680px;margin:0 auto;}
+.convo-dock{flex:none;padding:0 56px 14px 24px;position:relative;}
+.jump-latest{position:absolute;left:50%;top:-44px;translate:-50% 4px;opacity:0;pointer-events:none;transition:opacity var(--motion-change) var(--ease),translate var(--motion-change) var(--ease);background:var(--bg);box-shadow:0 0 0 1px var(--line-2);}   /* ds-ok: floats just above the input */
+.convo:has(> .convo-scroll[data-more-below]) .jump-latest{opacity:1;translate:-50% 0;pointer-events:auto;}   /* only while there is more below: back to the latest */
+@media (prefers-reduced-motion: reduce){.jump-latest{transition:none;}}
+.convo-dock .composer{width:calc(100% - 32px);max-width:648px;margin:0 auto;translate:16px 0;}   /* ds-ok: on the cards' rail (32px in), as wide as the cards */
 .convo-dock-note{max-width:680px;margin:4px auto 0;font-size:var(--fs-caption);color:var(--ink-3);}
 
 /* Composer: the one way to start anything. */
@@ -1465,6 +1475,10 @@ canvas.dot-orb[data-orb]{border-radius:50%;outline:1px solid light-dark(var(--li
 .tp-agents .cr > span:last-child{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 6px;}
 .tp-agents > .tp-label{display:flex;align-items:center;gap:8px;}
 .ask-changes{display:flex;flex-direction:column;gap:8px;margin:8px 0 0 32px;}
+.card-form{margin:8px 0 0 32px;}
+.task-card [data-slice-head]{margin:12px 0 4px 32px;padding-top:12px;border-top:1px solid var(--line);}   /* an open slice's stages say whose they are */   /* dev's dialog, asked under its card on the card's rail: its words, its choices, its action */
+.card-form .fld{flex:1 1 100%;}
+.card-form .tp-sentence{flex:1 1 auto;}
 /* Chat home's More keeps inside the window; a row's words can be its one target (a feature's slice) */
 .home-starters .rc-pop > .menu{max-height:min(60vh,520px);overflow:auto;}   /* which way it opens is watchMenus' */
 /* A menu with any check mark in it keeps the mark's room on every item, so all its words start on one edge; a switch (the account menu's) sits at the end and needs no room */

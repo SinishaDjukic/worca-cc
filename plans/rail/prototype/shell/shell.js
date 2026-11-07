@@ -108,7 +108,9 @@
   document.addEventListener('rail:replying', (e) => { if (!e.target.closest?.('#ask-side')) return; askBusy = !!e.detail?.busy; drawAskMark(); });
   function syncAsk(view) {
     const side = document.getElementById('ask-side'), btn = document.getElementById('topnav-ask');
-    if (btn) { btn.hidden = false; btn.setAttribute('aria-expanded', String(askOpen)); }
+    // on Chat the page is the chat: Ask worca stays in its place, off, and says why (the top bar never shifts)
+    const here = view === 'chat'; if (here) askOpen = false;
+    if (btn) { btn.hidden = false; btn.setAttribute('aria-expanded', String(askOpen)); btn.setAttribute('aria-disabled', String(here)); btn.title = here ? 'You are in Chat: the box below asks Worca' : 'Ask worca, beside any page'; }
     drawAskMark();
     const show = askOpen;
     if (show && side.hidden) { if (!side.firstChild) drawAsk(side); side.classList.add('is-in'); setTimeout(() => side.classList.remove('is-in'), 300); }
@@ -343,7 +345,7 @@
     if (on('#side-close')) { drawer(false); return; }
     if (on('#tsearch-open')) { searchFold(true); return; }
     if (on('#tsearch-close')) { searchFold(false); return; }
-    if (on('#topnav-ask')) { askOpen = !askOpen; syncAsk(routed.view); return; }
+    if (on('#topnav-ask')) { if (routed.view === 'chat') { document.querySelector('#route-chat [data-composer-t]')?.focus(); return; } askOpen = !askOpen; syncAsk(routed.view); return; }   // on Chat it points to the box that asks
     if (on('[data-ask-close]')) { askOpen = false; syncAsk(routed.view); document.getElementById('topnav-ask')?.focus(); return; }
     // a control on a captured page says where it goes
     if ((hit = on('#route-today a[href], #route-today button'))) {
@@ -457,7 +459,7 @@
   R.dismissOnOutside(document, { open: () => !!document.querySelector('#topnav .tsearch.is-open'), inside: '.tsearch, #tsearch-open', back: () => '#tsearch-open', close: () => searchFold(false), paint: () => {} });
   build();
   setAskW(askW); setBarW(barW);
-  R.watchOrbs(document); R.watchTooltips(document); R.watchMenus(document);
+  R.watchOrbs(document); R.watchTooltips(document); R.watchMenus(document); R.watchScrollFades(document);
   // a new person starts in Simple; the mode they pick is remembered (docs/ui-levels.md)
   try { const m = localStorage.getItem('worca-rail.mode'); R.prefs.setMode(R.MODES.includes(m) ? m : 'simple'); } catch { R.prefs.setMode('simple'); }
   R.prefs.onChange(() => { try { localStorage.setItem('worca-rail.mode', R.prefs.mode()); } catch { /* remembering is a nicety */ } });

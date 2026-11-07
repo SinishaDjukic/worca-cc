@@ -755,7 +755,12 @@ document.addEventListener('click', (e) => {
   if ((el = tg('[data-sub]'))) { const v = el.dataset.sub; ui.sub = v && ui.sub !== v ? v : ''; if (ui.sub) opening = 'sub'; render(); return; }
   if ((el = tg('[data-desk]'))) { ui.s.desktop = ui.s.desktop === 'on' ? 'off' : 'on'; toast(ui.s.desktop === 'on' ? 'Desktop notifications on' : 'Desktop notifications off'); render(); return; }
   if ((el = tg('[data-level]'))) { ui.sub = ''; toast(`Interface mode: ${cap(el.dataset.level)}`); R.prefs.setMode(el.dataset.level); return; }
-  if ((el = tg('[data-sw="away"]'))) { ui.awayStatus = isAway() ? (C().away.hours ? 'here' : 'no-hours') : 'away-now'; toast(isAway() ? 'Away: Worca answers waiting run questions for you' : 'Back: Worca waits for you'); render(); return; }
+  if ((el = tg('[data-sw="away"]'))) {
+    const back = isAway(); ui.awayStatus = back ? (C().away.hours ? 'here' : 'no-hours') : 'away-now';
+    // coming back brings back what Worca did meanwhile: one update at the top of Updates, unread
+    if (back) ui.added = [{ ...M.tryEvent('info', ui.added.length), id: `away-${Date.now()}`, title: 'While you were away', meta: 'Worca answered 1 question: Add CSV export to billing (ISO 8601, its pick) · Update Node to 24 still waits for you', time: 'now', day: 'Today', unread: true }, ...ui.added];
+    toast(back ? 'Back: what Worca did while you were away is in Pulse › Updates' : 'Away: Worca answers waiting task questions for you'); render(); return;
+  }
   if ((el = tg('[data-sw="keep"]'))) { ui.keep = !ui.keep; render(); return; }
   if ((el = tg('[data-appearance]'))) { applyAppearance(el.dataset.appearance); render(); return; }
   if ((el = tg('[data-details]'))) { ui.acct = false; ui.sub = ''; if (SHELL) { SHELL.closeDrawer(); SHELL.go('stats'); } else toast('Opens Statistics (not in this prototype)'); render(); return; }

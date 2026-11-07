@@ -881,6 +881,15 @@ test('sentencePicker: a body (a ListEditor) opens in place of its menu, placed a
   assert.match(h, /class="menu spick-menu rc-list-ed"/); assert.match(h, /aria-haspopup="dialog"/); assert.match(h, /Find or make a label/);
 });
 
+test('ScrollFade: an edge fades only while there is more past it', () => {
+  assert.deepEqual(C.scrollEdges({ scrollTop: 0, scrollHeight: 1000, clientHeight: 400 }), { above: false, below: true });
+  assert.deepEqual(C.scrollEdges({ scrollTop: 600, scrollHeight: 1000, clientHeight: 400 }), { above: true, below: false }, 'at the end, the last line is never dimmed');
+  const { window } = new JSDOM('<body><div class="convo-scroll"></div></body>');
+  C.watchScrollFades(window.document);
+  assert.equal(window.document.querySelector('.convo-scroll').hasAttribute('data-more-below'), false, 'nothing past it: no fade');
+  window.close();
+});
+
 test('the Rail stylesheets close every rule: one open brace would swallow all that follows', () => {
   for (const f of ['plans/rail/prototype/design-system/rail.css', 'plans/rail/prototype/design-system/rail-look.css', 'plans/rail/prototype/shell/shell.css', 'plans/rail/prototype/pulse/pulse.css']) {
     const css = readFileSync(f, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');

@@ -535,6 +535,7 @@ function moreItems(v) {
   }
   if (group) { const on = !!ui.askEach; if (v.bar.stop) items.push({ id: 'group:toggle', text: 'Ask before each run', checked: on, help: 'Stops for your OK before each later run starts; takes effect at once' }); }
   if (v.has.worktree && !group && R.shows(R.actionLevel('Terminal'))) items.push({ id: 'more:terminal', text: 'Terminal', hint: 'Ctrl+`', help: 'A shell in this run’s worktree' });
+  if (!group && v.place.branch && R.shows('advanced')) items.push({ id: 'more:sync', text: 'Sync log', help: 'How its base was brought up to date before it started (dev: the header’s Sync)' });
   items.push({ id: 'more:link', text: 'Copy link', help: 'Paste it in Chat or an issue' });
   if (v.finished && v.has.report) items.push({ id: 'more:report', text: 'Report this ' + noun, help: 'Asks for a note, then sends it with the logs to the Worca team' });
   if (v.finished && !v.archived && v.has.started) items.push({ id: 'more:archive', text: 'Archive', help: v.dependents ? v.dependents + ' runs wait on this one and will start without it. Removes the branch, worktree and logs' : 'Removes the branch, worktree and logs; the remote branch and PR stay' });
@@ -542,7 +543,7 @@ function moreItems(v) {
   return items;
 }
 const CH_SAY = { 'ch:refresh': () => 'Diff refreshed from the worktree', 'ch:patch': () => 'Downloading run.patch', 'ch:copy': (v) => 'Copied: git fetch && git switch ' + v.place.branch };
-const MORE_SAY = { 'more:terminal': 'Terminal opened in the worktree' };
+const MORE_SAY = { 'more:terminal': 'Terminal opened in the worktree', 'more:sync': 'Synced 3 commits from origin/dev at 14:02, before it started · nothing diverged' };
 let toastTimer = 0;
 // The toast fades out (Motion), then empties: its text stays while it fades.
 function toast(text) { ui.toast = text; clearTimeout(toastTimer); toastTimer = setTimeout(() => { ui.toast = ''; const el = document.querySelector('.rc-toast'); if (el) { el.classList.remove('is-on'); toastTimer = setTimeout(() => { if (!ui.toast) el.textContent = ''; }, 200); } }, 4000); }

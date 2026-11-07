@@ -153,7 +153,11 @@ for (const scheme of ['light', 'dark']) for (const w of [1280, 900, 760, 375]) {
     await step('its card takes one out of view', () => document.querySelector('#in-view-slot .in-view-x').click(), () => document.querySelectorAll('#in-view-slot .in-view-w').length === 1);
     await step('In view lives only in the top bar', () => document.querySelector('#bar-head .bar-house')?.click(), () => !/\bIn view\b/.test(document.getElementById('bar-back')?.textContent || ''));
   }
-  // the side column: push, cover, window; closes at once
+  // on Chat, Ask worca is off (the page is the chat) and points to its box
+  await p.goto(`${URL_}#chat/c1`); await p.waitForTimeout(150);
+  await step('Ask worca is off on Chat and points to the box', () => document.getElementById('topnav-ask').click(), () => document.getElementById('topnav-ask').getAttribute('aria-disabled') === 'true' && document.getElementById('ask-side').hidden && document.activeElement?.matches('[data-composer-t]'));
+  // the side column: push, cover, window; closes at once (on a page that is not the chat)
+  await p.goto(`${URL_}#runs`); await p.waitForTimeout(150);
   await p.evaluate(() => document.getElementById('topnav-ask').click()); await p.waitForTimeout(250);
   const ask = await p.evaluate(() => ({ w: document.getElementById('ask-side').getBoundingClientRect().width, main: document.querySelector('.main').getBoundingClientRect().width, mainAlone: innerWidth - document.getElementById('side-rail').getBoundingClientRect().width }));
   if (w > 1080 ? ask.main > ask.mainAlone - ask.w + 1 : w > 760 ? ask.main < ask.mainAlone - 1 : ask.w !== w) add('the side column is on the wrong tier', `${scheme}/${w}: ${JSON.stringify(ask)}`);

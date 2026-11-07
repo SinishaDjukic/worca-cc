@@ -1013,6 +1013,17 @@
       ]
     },
     {
+      "name": "ScrollFade",
+      "code": "ui/public/design-system/components/scroll-fade.mjs#watchScrollFades",
+      "kind": "telling",
+      "needs": [
+        "a chat softens where it goes under the composer or the top bar, only while there is more past that edge (scrollEdges says which)"
+      ],
+      "rules": [
+        "motion.scroll-fade"
+      ]
+    },
+    {
       "name": "MenuPlace",
       "code": "ui/public/design-system/components/menu-place.mjs#watchMenus",
       "kind": "telling",
