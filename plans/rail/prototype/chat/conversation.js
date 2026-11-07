@@ -123,6 +123,14 @@
   const WHEN = ['now', 'at 17:00', 'tonight at 02:00', 'every weekday at 09:00', 'after Add CSV export'];
   const PERSPECTIVES = ['Product', 'Security', 'UX', 'Data', 'Performance', 'Operations'];
   const EFFORT = ['low', 'medium', 'high'];
+  // Shaper: once its questions are answered, a receipt names the decision and its plan follows
+  function afterClarify() {
+    const l = turns(), qs = l.filter((y) => y.t === 'question' && y.shaper), open = qs.filter((y) => !y.answered);
+    if (!qs.length || open.length) return;
+    const from = qs[0].shaper; if (l.some((y) => y.t === 'plan' && y.from === from)) return;
+    const at = l.indexOf(qs[qs.length - 1]) + 1, k = Date.now().toString(36);
+    l.splice(at, 0, { t: 'notice', text: 'Requirements agreed' }, { t: 'plan', id: `pl${k}`, from, title: 'The plan', summary: qs.map((y) => y.answered).join(' · '), v: 1, versions: 1, roles: [{ name: 'Product', ok: true, note: 'Matches what was asked' }, { name: 'Security', ok: true, note: 'Nothing exposed' }, { name: 'UX', ok: false, note: 'Wants the column names checked' }] });
+  }
   function proposalHtml(x) {
     if (x.later) return R.turnRow({ mark: R.kindMark({ kind: 'task', tone: 'idle', size: 16 }), text: `Not now: <b>${esc(x.title)}</b>`, end: R.button({ label: 'Bring back', kind: 'quiet', attrs: { 'data-pp-back': x.id } }) });
     const pp = (f, text, items, tip) => R.sentencePicker({ id: `pp-${x.id}-${f}`, text, tip, items: items.map((v) => ({ id: v, text: v, checked: v === text })), open: menu === `pp-${x.id}-${f}`, chevron: R.icon('chevron', 10) });
@@ -157,14 +165,33 @@
       if (!x.done) return R.turnRow({ mark: R.kindMark({ kind: 'chat', tone: 'run', size: 16 }), text: `<b>${esc(x.cmd)}</b>`, end: `<span class="think-t">1s</span>`, attrs: { 'data-think-at': String(x.at || (x.at = Date.now())) } });
       return R.turnRow({ mark: R.icon(opened.has(i) ? 'chevron' : 'chevR', 14), text: `<b>${esc(x.cmd)}</b> ${esc(x.sum || '')}`, end: x.end || '', body: esc(x.out || ''), open: opened.has(i), attrs: fold() });
     }
+    if (x.t === 'gate') {   // a step that needs a decision, or failed: its choices on one line
+      if (x.done) return R.turnRow({ mark: R.icon('check', 14), text: `<b>${esc(x.title)}</b> ${esc(x.done)}` });
+      return R.turnRow({ mark: R.kindMark({ kind: 'chat', tone: x.failed ? 'fail' : 'ask', size: 16 }), text: `<b>${esc(x.title)}</b> ${esc(x.line)}`, end: x.actions.map(([l, k], n) => R.button({ label: l, kind: k, attrs: { 'data-gate': `${x.id}|${n}` } })).join(''), attrs: { 'data-anchor': x.id } });
+    }
+    if (x.t === 'ship') {   // what ships: each requirement met, not met (where it moved) or dropped (why); one PR or stacked
+      if (x.done) return R.turnRow({ mark: R.gitMark({ status: 'open' }), text: `<b>${esc(x.done)}</b>` });
+      const pk = (n, v) => R.sentencePicker({ id: `ship-${x.id}-${n}`, text: v, tip: 'Met, not met (where it moved) or dropped (why)', items: ['Met', 'Not met: moved to Run 4', 'Dropped: not needed now'].map((o) => ({ id: o, text: o, checked: o === v })), open: menu === `ship-${x.id}-${n}`, chevron: R.icon('chevron', 10) });
+      const met = x.reqs.filter((r) => r.v === 'Met').length;
+      const rows = x.reqs.map((r, n) => R.turnRow({ mark: R.icon(r.v === 'Met' ? 'check' : 'x', 14), text: esc(r.text), end: pk(n, r.v) })).join('');
+      const how = R.segmented({ label: 'How it ships', hook: 'ship-how', items: ['As one PR', 'As stacked PRs'].map((v) => ({ id: `${x.id}|${v}`, label: v, on: (x.how || 'As one PR') === v })) });
+      return R.changeProposal({ kind: 'Ship', title: x.title, why: `Requirements ${met}/${x.reqs.length}`, body: `<div class="tc-rows">${rows}</div>${how}`, apply: 'Create PR', hooks: { apply: { 'data-ship': x.id }, decline: { 'data-ship-later': x.id } }, attrs: { 'data-anchor': x.id } });
+    }
     if (x.t === 'feature') {
       const rows = x.slices.map((sl) => R.turnRow({ mark: R.kindMark({ kind: 'task', tone: R.markTone(R.runState(RM.stateOf(sl.case))), stage: sl.stage, size: 16 }), text: `<b>${esc(sl.title)}</b> ${esc(sl.detail)}`, end: R.button({ label: 'Open', kind: 'quiet', attrs: { 'data-open-ref': sl.case } }) })).join('');
-      return R.taskCard({ title: x.title, mark: R.kindMark({ kind: 'feature', tone: 'run', stage: 1 }), word: 'Running', detail: `${x.slices.length} slices, one after another`, stages: R.stageBar({ labels: STAGES, stage: 1, tone: 'run' }), rows, attrs: { 'data-anchor': x.id } });
+      if (x.split) {
+        const srows = x.slices.map((sl, n) => R.turnRow({ mark: R.kindMark({ kind: 'task', tone: 'idle', size: 16 }), text: `<b>${n + 1} · ${esc(sl.title)}</b> ${esc(sl.detail)}`, end: R.moreMenu({ id: `slice:${x.id}:${n}`, label: `More for ${sl.title}`, icon: R.icon('more', 16), open: menu === `slice:${x.id}:${n}`, items: ['Merge with next', 'Remove'] }) })).join('');
+        return R.taskCard({ title: x.title, mark: R.kindMark({ kind: 'feature', tone: 'ask' }), word: 'Proposed split', detail: `${x.slices.length} runs, one after another · ask me before each run: ${x.askEach ? 'yes' : 'no'}`, rows: srows, action: R.button({ label: `Approve ${x.slices.length} runs`, kind: 'primary', attrs: { 'data-split-ok': x.id } }) + R.button({ label: 'Ask for changes', kind: 'quiet', attrs: { 'data-plan-changes': x.id } }), menu: R.moreMenu({ id: `split:${x.id}`, label: 'More for the split', icon: R.icon('more', 16), open: menu === `split:${x.id}`, items: ['Fix all', 'Plan it as one', 'Undo edits', x.askEach ? 'Don’t ask before each run' : 'Ask me before each run', 'Stop'] }), attrs: { 'data-anchor': x.id } });
+      }
+      const halted = !!x.halted;
+      return R.taskCard({ title: x.title, mark: R.kindMark({ kind: 'feature', tone: halted ? 'pause' : 'run', stage: 1 }), word: halted ? 'Paused' : 'Running', detail: `${x.slices.length} slices, one after another`, stages: R.stageBar({ labels: STAGES, stage: 1, tone: halted ? 'pause' : 'run' }), rows, action: halted ? R.button({ label: 'Resume', kind: 'primary', attrs: { 'data-feat': `${x.id}|resume` } }) + R.button({ label: 'Re-plan the rest', kind: 'quiet', attrs: { 'data-feat': `${x.id}|replan` } }) : R.button({ label: 'Pause', kind: '', attrs: { 'data-feat': `${x.id}|pause` } }) + R.button({ label: 'Stop', kind: 'quiet', attrs: { 'data-feat': `${x.id}|stop` } }), menu: R.moreMenu({ id: `feat:${x.id}`, label: 'More for the feature', icon: R.icon('more', 16), open: menu === `feat:${x.id}`, items: ['Re-plan the rest', 'Cancel the rest', 'Ask before each run', 'Open the plan'] }), attrs: { 'data-anchor': x.id } });
     }
     if (x.t === 'plan') {
       const version = R.sentencePicker({ id: `pv-${x.id}`, text: `v${x.v} of ${x.versions}`, tip: 'Earlier versions of the plan', items: Array.from({ length: x.versions }, (_, k) => ({ id: String(k + 1), text: `v${k + 1}${k + 1 === x.versions ? ' (latest)' : ''}`, checked: k + 1 === x.v })), open: menu === `pv-${x.id}`, chevron: R.icon('chevron', 10) });
       if (x.approved) return R.turnRow({ mark: R.icon('check', 14), text: `<b>Plan approved</b> v${x.v}: building it` });
-      return R.planCard({ title: x.title, summary: x.summary, version, roles: x.roles, open: !!x.open, hooks: { roles: { 'data-plan-roles': x.id }, approve: { 'data-plan-approve': x.id }, changes: { 'data-plan-changes': x.id }, full: { 'data-say': 'Opens the full plan' } }, attrs: { 'data-anchor': x.id } });
+      const planMenu = R.moreMenu({ id: `plan:${x.id}`, label: 'More for the plan', icon: R.icon('more', 16), open: menu === `plan:${x.id}`, items: ['Fix all', 'Save to plans/', 'Open in the composer', 'Stop'] });
+      const extra = R.turnRow({ mark: R.icon('check', 14), text: '<b>Shape check</b> passed · scope, risks and tests are covered' }) + R.turnRow({ mark: R.icon('list', 14), text: `<b>Perspectives</b> ${esc((x.persp || ['Product', 'Security', 'UX', 'Data', 'Performance']).join(', '))}`, end: R.button({ label: 'Update plan', kind: 'quiet', attrs: { 'data-say': 'The plan is drafted again for these perspectives' } }) });
+      return R.planCard({ menu: planMenu, extra, title: x.title, summary: x.summary, version, roles: x.roles, open: !!x.open, hooks: { roles: { 'data-plan-roles': x.id }, approve: { 'data-plan-approve': x.id }, changes: { 'data-plan-changes': x.id }, full: { 'data-say': 'Opens the full plan' } }, attrs: { 'data-anchor': x.id } });
     }
     if (x.t === 'filesgrid') return R.filesCard({ label: x.label || 'Files', files: x.files.map((f) => ({ ...f, view: { 'data-say': `Opens ${f.name}` }, download: { 'data-say': `Downloaded ${f.name}` } })) });
     if (x.t === 'words') return `<p class="convo-words">${x.html}</p>`;
@@ -190,7 +217,7 @@
     if (x.t === 'schedule') return openCard(x, t);
     if (x.t === 'question') {
       if (x.answered) return R.turnRow({ mark: R.icon('check', 14), text: `<b>${esc(x.text)}</b> ${esc(x.answered)}` });
-      return `<div data-anchor="${x.id}">${R.turnRow({ mark: R.kindMark({ kind: 'chat', tone: 'ask', stage: -1, size: 16 }), text: `<b>${esc(x.text)}</b>` })}<div class="convo-answer">${R.optionList({ label: x.text, options: x.options, selected: x.pick, recommended: 0, optAttrs: (n) => ({ 'data-answer': `${i}|${n}` }), own: `<div class="convo-answer-go">${R.button({ label: 'Answer', attrs: { 'data-answer-go': String(i) } })}${x.many ? R.button({ label: 'Use Worca’s picks', kind: 'quiet', attrs: { 'data-answer-picks': String(i), title: 'Takes Worca’s pick for this and the next question' } }) : ''}</div>` })}</div></div>`;
+      return `<div data-anchor="${x.id}">${R.turnRow({ mark: R.kindMark({ kind: 'chat', tone: 'ask', stage: -1, size: 16 }), text: `<b>${esc(x.text)}</b>` })}<div class="convo-answer">${R.optionList({ label: x.text, options: x.options, selected: x.pick, recommended: 0, optAttrs: (n) => ({ 'data-answer': `${i}|${n}` }), own: `<div class="convo-answer-go">${R.button({ label: 'Answer', attrs: { 'data-answer-go': String(i) } })}${x.many ? R.button({ label: x.shaper ? 'Use defaults' : 'Use Worca’s picks', kind: 'quiet', attrs: { 'data-answer-picks': String(i), title: 'Takes Worca’s pick for this and the next question' } }) : ''}</div>` })}</div></div>`;
     }
     const st = stOf(t), tone = R.markTone(st), word = tone === 'ask' ? 'Asks you below' : st.word;
     if (tone === 'wait' && !x.open) return openCard(x, t);   // one line until opened in place
@@ -326,6 +353,12 @@
 
   // ---- what a click or a key means here ----
   function pickMenu(id, v) {
+    if (/^(plan|split|feat|slice):/.test(id)) { menu = ''; const [, tid, n] = id.split(':'), x = turns().find((y) => y.id === tid);
+      if (x && id.startsWith('slice:')) { if (v === 'Remove') x.slices.splice(+n, 1); if (v === 'Merge with next' && x.slices[+n + 1]) { x.slices[+n].title += ` + ${x.slices[+n + 1].title}`; x.slices.splice(+n + 1, 1); } }
+      if (x && v.includes('before each run')) x.askEach = !x.askEach;
+      if (x && v === 'Plan it as one') { x.slices = [{ title: x.title, detail: 'one run', case: 'scheduled', stage: -1 }]; }
+      paint(); say(v); return; }
+    const sm = /^ship-(.+)-(\d+)$/.exec(id); if (sm) { const x = turns().find((y) => y.id === sm[1]); if (x) x.reqs[+sm[2]].v = v; menu = ''; paint(); return; }
     if (id === 'starter-more') { const [k, ...rest] = v.split('|'); pickMenu(k, rest.join('|')); return; }   // More's items carry its id first
     if (id === 'starter') { arm(v); return; }
     if (id === 'starter-preset') { comp = { ...comp, intent: '', mode: 'task', preset: v, more: true }; menu = ''; paint(); root.querySelector('[data-composer-t]')?.focus(); say(`Preset ${v}: check it, then start`); return; }
@@ -366,18 +399,24 @@
     if (on('[data-plan-roles]')) { const x = turns().find((y) => y.id === on('[data-plan-roles]').dataset.planRoles); if (x) { x.open = !x.open; paint(); } return; }
     if ((hit = on('[data-turn-toggle]'))) { const i = hit.closest('[data-fold-turn]').dataset.foldTurn, x = turns()[+i]; if (x.t === 'fail') { const k = `shut${i}`; if (opened.has(k)) opened.delete(k); else opened.add(k); } else { const n = +i; if (opened.has(n)) opened.delete(n); else opened.add(n); } paint(); return; }
     if ((hit = on('[data-answer]'))) { const [i, n] = hit.dataset.answer.split('|'); turns()[+i].pick = +n; paint(); return; }
-    if ((hit = on('[data-answer-picks]'))) { const l = turns(), x = l[+hit.dataset.answerPicks]; for (const y of [x, l.find((z) => z.id === x.many)]) if (y && !y.answered) y.answered = y.options[y.pick]; paint(); say('Took Worca’s picks'); return; }
+    if ((hit = on('[data-answer-picks]'))) { const l = turns(), x = l[+hit.dataset.answerPicks]; for (const y of [x, l.find((z) => z.id === x.many)]) if (y && !y.answered) y.answered = y.options[y.pick]; afterClarify(); paint(); say('Took Worca’s picks'); return; }
     if ((hit = on('[data-answer-go]'))) {
       const x = turns()[+hit.dataset.answerGo], t = taskOf(x.task), c = chat();
-      if (!t) { x.answered = x.options[x.pick]; paint(); say('Answered'); return; }   // a question of the chat itself, not of a task
+      if (!t) { x.answered = x.options[x.pick]; afterClarify(); paint(); say('Answered'); return; }   // a question of the chat itself, not of a task
       x.answered = x.options[x.pick]; t.case = 'working'; t.detail = 'Review · step 3 of 3'; c.state = 'following'; window.RailChats.refresh(); paint(); say('Answered: the task carries on'); return;
     }
     if ((hit = on('[data-starter]'))) { const id = hit.dataset.starter; if (id === 'track') { menu = menu === 'starter-track' ? '' : 'starter-track'; paint(); } else arm(id); return; }
     if (on('[data-intent-clear]')) { comp.intent = ''; paint(); root.querySelector('[data-composer-t]')?.focus(); return; }
     const pp = (attr) => { const h = on(`[${attr}]`); return h ? turns().find((y) => y.id === h.getAttribute(attr)) : null; };
     let px;
+    if ((hit = on('[data-gate]'))) { const [id, k] = hit.dataset.gate.split('|'), x = turns().find((y) => y.id === id); if (x) { x.done = x.actions[+k][2]; paint(); say(x.done); } return; }
+    if ((px = pp('data-ship'))) { px.done = `Opened PR #1107 into dev · ${px.how || 'As one PR'}`; paint(); say('Created the PR'); return; }
+    if ((px = pp('data-ship-later'))) { px.done = 'Not shipped yet: ship it from here'; paint(); return; }
+    if ((hit = on('[data-ship-how]'))) { const [id, v] = hit.dataset.shipHow.split('|'), x = turns().find((y) => y.id === id); if (x) { x.how = v; paint(); } return; }
+    if ((px = pp('data-split-ok'))) { px.split = false; paint(); say(`Approved ${px.slices.length} runs: the first starts`); return; }
+    if ((hit = on('[data-feat]'))) { const [id, a] = hit.dataset.feat.split('|'), x = turns().find((y) => y.id === id); if (x) { if (a === 'pause' || a === 'stop') x.halted = true; if (a === 'resume') x.halted = false; paint(); say({ pause: 'Pausing…', stop: 'Stopped after the running slice', resume: 'Resumed', replan: 'Re-planning the rest' }[a]); } return; }
     if ((px = pp('data-plan-roles'))) { px.open = !px.open; paint(); return; }
-    if ((px = pp('data-plan-approve'))) { px.approved = true; paint(); say('Approved: the plan is being built'); return; }
+    if ((px = pp('data-plan-approve'))) { px.approved = true; const l = turns(), i = l.indexOf(px); l.splice(i + 1, 0, { t: 'feature', id: `f${Date.now().toString(36)}`, title: px.title, slices: [{ title: 'Columns and order', case: 'working', stage: 1, detail: 'Build · step 1 of 2' }, { title: 'Dates and money', case: 'scheduled', stage: -1, detail: 'After the columns' }] }); paint(); say('Approved: the plan is being built'); return; }
     if ((px = pp('data-plan-changes'))) { const t = root.querySelector('[data-composer-t]'); if (t) { t.value = 'Change the plan: '; comp.text = t.value; t.focus(); } return; }
     if ((hit = on('[data-act]'))) { const [id, k] = hit.dataset.act.split('|'), x = turns().find((y) => y.id === id); if (x) { x.done = x.actions[+k][2]; paint(); say(x.done); } return; }
     if ((hit = on('[data-cp-apply], [data-cp-decline], [data-cp-revert]'))) { const id = hit.dataset.cpApply || hit.dataset.cpDecline || hit.dataset.cpRevert, x = turns().find((y) => y.id === id); if (x) { x.state = hit.dataset.cpApply ? 'applied' : hit.dataset.cpRevert ? 'proposed' : 'declined'; if (x.state === 'applied' && x.graph) x.rows = [{ name: 'Saved as', before: '', after: 'API rewrite' }]; paint(); say(x.state === 'applied' ? `${x.kind}: changed` : x.state === 'declined' ? 'Nothing changed' : 'Reverted'); } return; }
@@ -400,6 +439,7 @@
       if (px.when && px.when !== 'now') { t.case = 'scheduled'; t.stage = -1; t.git = ''; t.detail = `Starts ${px.when}`; }
       c.tasks = [...(c.tasks || []), t]; c.state = 'following';
       l.splice(i, 1, { t: 'task', id: px.id, task: t.id });
+      if (px.workflow === 'Shaper' && t.case !== 'scheduled') { const k = Date.now().toString(36); l.splice(i + 1, 0, { t: 'words', html: 'A few questions before the plan:' }, { t: 'question', id: `q1${k}`, text: 'A · Which date format?', options: ['ISO 8601 (Worca’s pick)', 'The account’s locale'], pick: 0, many: `q2${k}`, shaper: px.id, when: 'now' }, { t: 'question', id: `q2${k}`, text: 'B · Which columns come first?', options: ['Date, number, total (Worca’s pick)', 'Customer first'], pick: 0, shaper: px.id, when: 'now' }); }
       window.RailChats.refresh(); paint(); say(t.case === 'scheduled' ? `Scheduled: starts ${px.when}` : px.workflow === 'Shaper' ? 'Planning started' : 'Task started'); return;
     }
     if ((hit = on('[data-open-task]'))) { const x = turns().find((y) => y.task === hit.dataset.openTask && (y.t === 'task' || y.t === 'schedule')); if (x) { const was = x.open; turns().forEach((y) => { y.open = false; }); x.open = !was; paint(); if (x.open) requestAnimationFrame(() => root.querySelector(`[data-anchor="${x.id}"]`)?.scrollIntoView({ block: 'start', behavior: 'smooth' })); } return; }   // How it ran opens the card in place, one at a time

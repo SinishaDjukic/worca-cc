@@ -286,15 +286,17 @@ export function turnDivider({ text }) {
  * @param {string} o.version          its picker (a SentencePicker), or plain words: "v2 of 2"
  * @param {{name:string, ok:boolean, note:string}[]} o.roles
  * @param {boolean} [o.open]
+ * @param {string} [o.menu]           its ⋯ (Fix all, Save to plans/, Open in the composer, Stop)
+ * @param {string} [o.extra]          lines above the review (the Shape check, Perspectives with Update plan)
  * @param {object} [o.hooks]          { roles, approve, changes, full }
  * @param {object} [o.attrs]
  */
-export function planCard({ title, summary = '', version, roles, open = false, hooks = {}, attrs: a = {} }) {
+export function planCard({ title, summary = '', version, roles, open = false, menu = '', extra = '', hooks = {}, attrs: a = {} }) {
   const left = roles.filter((r) => !r.ok).length;
   const rows = roles.map((r) => turnRow({ mark: kindMark({ kind: 'chat', tone: r.ok ? 'ok' : 'ask', size: 16, keepType: false }), text: `<b>${esc(r.name)}</b> ${esc(r.note)}` })).join('');
   const reviewed = turnRow({ mark: icon(open ? 'chevron' : 'chevR', 14), text: `Reviewed by ${roles.length} roles${left ? ` · ${left} open` : ''}`, body: `<span class="plan-roles">${rows}</span>`, open, attrs: { 'data-fold-turn': '', ...(hooks.roles || {}) } }).replace('class="tr-body"', 'class="tr-body is-steps"');
-  return `<article class="task-card rc plan"${attrs(a)}>${cardHead({ mark: kindMark({ kind: 'task', tone: 'ask', size: 16 }), kicker: 'Plan', kickerHtml: `Plan · ${version}`, title, why: summary })}`
-    + `<section class="rc-card tp-body"${attrs({ 'aria-label': `Plan: ${title}` })}>${reviewed}<div class="tp-actions">${button({ label: 'Approve and build', kind: 'primary', attrs: hooks.approve || {} })}${button({ label: 'Ask for changes', kind: 'quiet', attrs: hooks.changes || {} })}${button({ label: 'Full plan', kind: 'quiet', attrs: hooks.full || {} })}</div></section></article>`;
+  return `<article class="task-card rc plan"${attrs(a)}>${cardHead({ mark: kindMark({ kind: 'task', tone: 'ask', size: 16 }), kicker: 'Plan', kickerHtml: `Plan · ${version}`, title, why: summary, menu })}`
+    + `<section class="rc-card tp-body"${attrs({ 'aria-label': `Plan: ${title}` })}>${extra}${reviewed}<div class="tp-actions">${button({ label: 'Approve and build', kind: 'primary', attrs: hooks.approve || {} })}${button({ label: 'Ask for changes', kind: 'quiet', attrs: hooks.changes || {} })}${button({ label: 'Full plan', kind: 'quiet', attrs: hooks.full || {} })}</div></section></article>`;
 }
 
 /**
