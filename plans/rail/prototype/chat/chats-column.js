@@ -2,8 +2,8 @@
 // you first, then Running, then Recent. The list is the library's (listController); the conversation is today's capture.
 (function () {
   const R = window.RailUI, M = window.ChatsListModel;
-  const col = document.getElementById('chats-col');
-  if (!col) return;
+  const bar = document.getElementById('bar-chat');
+  if (!bar) return;
   const STORE_W = 'worca-rail.chats.width', STORE_V = 'worca-rail.chats.view';
   const get = (k) => { try { return localStorage.getItem(k); } catch { return null; } }, set = (k, v) => { try { localStorage.setItem(k, v); } catch { /* a remembered choice is a nicety */ } };
   const clampW = (px) => Math.min(680, Math.max(360, Math.round(+px) || 360));
@@ -18,7 +18,16 @@
   const hint = (...k) => R.keyHint(k, R.isMac(window));
   const sectionOfChat = (c) => R.chatState(c.state).section;
   const busyOf = (c) => R.chatState(c.state).busy || '';
-  const markOf = (state, kind) => { const st = R.chatState(state); return state === 'idle' ? R.chatKindIcon(R.CHAT_KINDS[kind]) : R.statusDot({ tone: st.dot, sym: st.sym }); };
+  const toneOf = (state) => (state === 'needs-you' ? 'ask' : state === 'idle' ? 'idle' : 'run');
+  const markOf = (state, kind) => R.kindMark({ kind: kind === 'workflow' && state === 'idle' ? 'workflow' : 'chat', tone: toneOf(state), title: state === 'idle' ? R.CHAT_KINDS[kind]?.label || 'Chat' : R.chatState(state).word });
+  const RM = window.RunCardModel;
+  // What hangs under a chat: its tasks and schedules, in their order of waiting.
+  const treeOf = (c, list) => list.map((t) => {
+    const x = { t, c, key: `task:${t.id}` };
+    if (t.kind === 'schedule') return { key: x.key, _x: x, title: t.title, mark: R.kindMark({ kind: 'schedule', title: t.detail }), end: t.time, tip: `${t.title}\n${t.detail}\nOpens the schedule`, current: false };
+    const st = R.runState(RM.stateOf(t.case));
+    return { key: x.key, _x: x, title: t.title, mark: R.kindMark({ kind: 'task', tone: R.markTone(st), stage: t.stage, title: `${st.word} · ${t.detail || ''}` }), endMark: t.git ? R.gitMark({ status: t.git, watch: t.watch || '', title: t.watch ? `Watching · ${t.detail}` : t.branch }) : '', end: t.git ? '' : t.endWord || '', tip: `${t.title}\n${st.word} · ${t.detail || ''}\nOpens the task`, tree: t.after ? treeOf(c, t.after) : undefined };
+  });
 
   // ---- the view ----
   const SHOWS = [{ id: 'all', text: 'all', help: 'Every chat that is not archived', test: (c) => !c.archived }, { id: 'needs', text: NEEDS().toLowerCase(), title: NEEDS(), help: 'A run a chat follows asks you something', test: (c) => !c.archived && sectionOfChat(c) === 'needs' },
@@ -32,8 +41,8 @@
   // ---- rows ----
   function chatRow(c, member) {
     const st = R.chatState(c.state), x = { c, key: `chat:${c.id}` };
-    const r = { key: x.key, _x: x, title: c.title, lead: c.origin ? R.originMark(c.origin) : '', mark: markOf(c.state, c.kind), unread: c.unread, current: current === c.id, tip: `${c.title}\nOpens the chat`, end: c.time,
-      meta: [c.pinned ? 'Pinned' : '', !member && view.by !== 'project' ? c.project || 'No project' : '', st.line, c.cost != null ? usd(c.cost) : ''].filter(Boolean).join(' · ') };
+    const r = { key: x.key, _x: x, title: c.title, lead: c.origin ? R.originMark(c.origin) : '', mark: markOf(c.state, c.kind), unread: c.unread, current: current === c.id, tip: `${c.title}\nOpens the chat`, end: c.time, tree: c.tasks?.length ? treeOf(c, c.tasks) : undefined,
+      meta: [c.pinned ? 'Pinned' : '', !member && view.by !== 'project' ? c.project || 'No project' : '', st.line, ...(c.labels || []).slice(0, 1)].filter(Boolean).join(' · ') };
     r.menu = [{ id: 'toggle', text: 'Select', hint: hint('Space') }, { id: 'rename', text: 'Rename…', hint: hint('R'), help: 'Give it another name' }, { id: 'pin', text: c.pinned ? 'Unpin' : 'Pin', hint: hint('P'), help: 'A pinned chat leads its section' },
       ...(has('advanced') ? [{ id: 'add-to-group', text: 'Add to group…', hint: hint('G'), help: 'Find a group, or make a new one' }, ...(c.group ? [{ id: 'leave-group', text: 'Remove from group', hint: hint('shift', 'G'), help: 'It stays in Chats, in no group' }] : [])] : []),
       { sep: true }, c.archived ? { id: 'archive', text: 'Restore', hint: hint('E'), help: 'Brings it back' } : { id: 'archive', text: 'Archive', hint: hint('E'), off: !!busyOf(c), help: busyOf(c) || 'Undo in the notice' },
@@ -48,8 +57,8 @@
     const ps = [...new Set(list.map((c) => c.project).filter(Boolean))];
     const where = ps.length > 1 ? `${ps.length} projects` : ps[0] || 'No project';
     const cost = list.reduce((a, c) => a + (c.cost || 0), 0), x = { g, key: `cgroup:${g.id}` };
-    return { key: x.key, _x: x, title: g.name, mark: markOf(state, kind), count: String(list.length), noun: 'chats', open: needs || !!busy, holds: list.some((c) => c.id === current), tip: `${g.name}\nGroup total ${usd(cost)}\nShows or hides its chats`, end: list[0]?.time,
-      meta: [where, R.chatState(state).line, cost ? usd(cost) : ''].filter(Boolean).join(' · '), members: list.map((c) => chatRow(c, true)),
+    return { key: x.key, _x: x, title: g.name, mark: markOf(state, kind), count: String(list.length), noun: 'chats', open: needs || !!busy, holds: list.some((c) => c.id === current), tip: `${g.name}\nShows or hides its chats`, end: list[0]?.time,
+      meta: [where, R.chatState(state).line].filter(Boolean).join(' · '), members: list.map((c) => chatRow(c, true)),
       menu: [{ id: 'rename', text: 'Rename…', hint: hint('R'), help: 'Give the group another name' }, { id: 'ungroup', text: 'Ungroup', help: 'The chats stay, in no group; Undo in the notice' }, { sep: true },
         { id: 'archive', text: 'Archive group', hint: hint('E'), off: !!busy, help: busy ? `“${busy.title}”: ${busyOf(busy).toLowerCase()}` : 'Undo in the notice' }, ...(has('advanced') ? [{ id: 'delete', text: 'Delete group…', hint: hint('Backspace'), danger: true, help: 'Removes the group and its chats for good; asks first' }] : [])] };
   }
@@ -66,6 +75,7 @@
   }
   function sections() {
     const list = sorted(data.chats.filter((c) => passes(c, view)));
+    if (view.by === 'ai') { const names = [...new Set(list.map(aiTopic))]; return names.map((n, i) => ({ id: `ai:${n}`, title: n, chip: i === 0 ? R.chip({ text: 'Worca · Haiku', title: 'A helper job names the topics. Change the sentence to undo it' }) : '', rows: list.filter((c) => aiTopic(c) === n).map((c) => chatRow(c, false)) })); }
     if (view.by === 'topic') {
       const sec = data.groups.map((g) => ({ id: `topic:${g.id}`, title: g.name, rows: list.filter((c) => c.group === g.id).map((c) => chatRow(c, false)) }));
       return [...sec, { id: 'topic:none', title: 'Ungrouped', rows: list.filter((c) => !c.group || !data.groups.some((g) => g.id === c.group)).map((c) => chatRow(c, false)) }];
@@ -82,7 +92,16 @@
     }
     return [...head, { id: 'running', title: 'Running', rows: rest.filter((x) => sectionOfChat(x.c) === 'running').map((x) => x.row) }, { id: 'recent', title: 'Recent', rows: rest.filter((x) => sectionOfChat(x.c) === 'recent').map((x) => x.row) }];
   }
+  // AI topics: a helper names them; your own groups stay as they are. The mock's helper reads the titles' words.
+  const AI_TOPICS = [['Billing', /bill|invoice|export|cost/i], ['Tests and builds', /flaky|build|test|ci\b|nightly|sentry/i], ['Releases', /release|changelog|notes/i], ['Infrastructure', /migrat|docker|queue|cron|pnpm|webhook|slow|index/i]];
+  const aiTopic = (c) => (AI_TOPICS.find(([, re]) => re.test(c.title)) || ['Everything else'])[0];
   function parts() {
+    const out = parts0(); const by = out.find((p) => p.id === 'by');
+    by.text = view.by === 'ai' ? 'AI topics' : view.by;
+    by.items.push({ id: 'ai', text: 'AI topics', help: 'A helper job names the topics (Models › Jobs: Haiku); your groups are kept', checked: view.by === 'ai' });
+    return out;
+  }
+  function parts0() {
     const projects = [...new Set(data.chats.map((c) => c.project || 'No project'))].sort();
     return [{ word: 'Showing', id: 'show', text: showOf(view.show).text, tip: 'Which chats the list shows', items: SHOWS.map((x) => ({ id: x.id, text: x.text, help: x.help, checked: view.show === x.id, hint: count({ show: x.id }) })) },
       { word: 'from', id: 'from', text: view.from === 'all' ? 'all projects' : view.from, tip: 'Which project they belong to', items: [{ id: 'all', text: 'all projects', checked: view.from === 'all', hint: count({ from: 'all' }) }, { sep: true }, ...projects.map((p) => ({ id: p, text: p, checked: view.from === p, hint: count({ from: p }) }))] },
@@ -147,42 +166,30 @@
   }
   function openChat(id) { const c = data.chats.find((x) => x.id === id); if (c) c.unread = false; window.RailShell.go(`chat/${id}`); }
   const goHome = () => { current = ''; window.RailShell.go('chat'); };
-  function newChat() { const id = `n${Date.now().toString(36)}`; data.chats.unshift({ id, title: 'New chat', state: 'idle', kind: 'chat', project: '', time: 'now', day: 'today', cost: null, pinned: false, archived: false, unread: false, group: '', origin: null }); openChat(id); }
+  function newChat(title = 'New chat', project = '') { const id = `n${Date.now().toString(36)}`; data.chats.unshift({ id, title, state: 'idle', kind: 'chat', project, time: 'now', day: 'today', cost: null, pinned: false, archived: false, unread: false, group: '', origin: null, labels: [], tasks: [] }); ctl.paint(); return id; }
   // ---- the column ----
-  function setWidth(px) { width = clampW(px); document.documentElement.style.setProperty('--chats-w', `${width}px`); set(STORE_W, width); col.querySelector('.ask-side-grip')?.setAttribute('aria-valuenow', width); }
-  col.innerHTML = R.sideColumn({ title: 'Chats', width, close: R.icon('x', 14), closeLabel: 'Hide the chats', body: '<div id="chats-root" class="pz-app rail-page"></div>', tools: R.button({ label: 'New chat', kind: 'quiet', iconOnly: true, icon: R.icon('plus', 14), attrs: { 'data-chats-new': '' } }), hooks: { close: { 'data-chats-close': '' } } });
-  const root = col.querySelector('#chats-root');
-  setWidth(width);
-  let drag = false;
-  col.addEventListener('pointerdown', (e) => { if (e.target.closest('.ask-side-grip')) { drag = true; e.preventDefault(); col.classList.add('is-resizing'); } });
-  document.addEventListener('pointermove', (e) => { if (drag) setWidth(e.clientX - col.getBoundingClientRect().left); });
-  document.addEventListener('pointerup', () => { if (drag) { drag = false; col.classList.remove('is-resizing'); } });
-  col.addEventListener('keydown', (e) => { if (e.target.closest('.ask-side-grip') && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) { e.preventDefault(); e.stopPropagation(); setWidth(width + (e.key === 'ArrowRight' ? 20 : -20)); } });
-  col.addEventListener('click', (e) => {
-    if (e.target.closest('[data-chats-new]')) { newChat(); return; }
-    if (e.target.closest('[data-chats-close]')) { toggle(false); }
-  });
-  function toggle(on) { opened = on === undefined ? !opened : on; window.RailShell.chats?.(); }
+  bar.innerHTML = '<div id="chats-root"></div>';
+  const root = bar.querySelector('#chats-root');
+  function toggle() { /* the list is the bar now: nothing to hide it from */ }
   const neighbour = (dir) => { const ids = ctl.state.order.filter((k) => k.startsWith('chat:')).map((k) => k.slice(5)), i = ids.indexOf(current); return ids[i < 0 ? (dir > 0 ? 0 : ids.length - 1) : i + dir]; };
 
   ctl = R.listController({ root, spec: {
     noun: 'chats', label: 'Selected chats', scopes: ['chat'],
     view: () => ({ state: listCase === 'loading' ? (ctl?.state.waited ? 'loading' : 'waiting') : ['offline', 'failed'].includes(listCase) ? listCase : 'ready', parts: parts(),
-      tools: [{ id: 'select', text: 'Select', hint: `${R.keyHint(['mod'], R.isMac(window))} click`, help: 'Tick chats to act on several at once' }, { sep: true }, { header: 'Sort' }, ...SORTS.map(([id, text, help]) => ({ id: `sort:${id}`, text, help, checked: view.sort === id })), { sep: true }, { id: 'keys', text: 'Keyboard shortcuts', hint: '?', help: 'The keys of this list' }],
+      tools: [{ id: 'select', text: 'Select', hint: `${R.keyHint(['mod'], R.isMac(window))} click`, help: 'Tick chats to act on several at once' }, { id: 'reset', text: 'Reset view', off: JSON.stringify({ show: view.show, from: view.from, by: view.by, sort: view.sort }) === JSON.stringify({ show: FRESH.show, from: FRESH.from, by: FRESH.by, sort: FRESH.sort }), help: 'Back to all chats, from all projects, by state' }, { sep: true }, { header: 'Sort' }, ...SORTS.map(([id, text, help]) => ({ id: `sort:${id}`, text, help, checked: view.sort === id })), { sep: true }, { id: 'keys', text: 'Keyboard shortcuts', hint: '?', help: 'The keys of this list' }],
       sections: sections(), empty: { text: listCase === 'empty' ? 'No chats yet.' : view.show === 'needs' ? 'No chat needs you.' : view.show === 'archived' ? 'No archived chats.' : view.show === 'running' ? 'No chat is running.' : 'No chats yet.', action: listCase === 'empty' ? 'New chat' : '' } }),
     can: () => ['menu', 'fold', 'archive', 'rename', 'pin', ...(has('advanced') ? ['group', 'delete'] : [])],
     bulk: bulkActions, act,
-    open: (r) => { if (r._x.g) { ctl.toggleGroup(r.key); return; } openChat(r._x.c.id); },
+    open: (r) => { if (r._x.g) { ctl.toggleGroup(r.key); return; } if (r._x.t) { if (r._x.t.kind === 'schedule') window.RailShell.go('schedule/s1'); else window.RailShell.openTask(r._x.t.case, r._x.c.id, r._x.t.title); return; } openChat(r._x.c.id); },
     word: (id, v) => { view = { ...view, [id]: v }; set(STORE_V, JSON.stringify(view)); return false; },
-    tool: (v) => { if (v.startsWith('sort:')) { view = { ...view, sort: v.slice(5) }; set(STORE_V, JSON.stringify(view)); } },
+    tool: (v) => { if (v === 'reset') { view = { ...FRESH }; set(STORE_V, JSON.stringify(view)); say('View reset'); return; } if (v.startsWith('sort:')) { view = { ...view, sort: v.slice(5) }; set(STORE_V, JSON.stringify(view)); } },
     key: (act) => {
-      if (act === 'new-chat') newChat();
-      else if (act === 'toggle-list') toggle();
-      else if (act === 'focus-list') { if (!opened) toggle(true); ctl.focusList(); }
+      if (act === 'new-chat') window.RailConversation?.start('ask');
+      else if (act === 'focus-list') ctl.focusList();
       else if (act === 'prev-chat' || act === 'next-chat') { const id = neighbour(act === 'next-chat' ? 1 : -1); if (id) openChat(id); }
     },
-    say, active: () => !col.hidden || location.hash.startsWith('#chat') ? location.hash.startsWith('#chat') && !document.querySelector('.pz-popover, .keys-modal, #app .viewer-modal, #app .nav-fly') : false,
-    retry: () => setCase('full'), emptyAct: newChat,
+    say, active: () => (location.hash.startsWith('#chat') || !location.hash) && !document.querySelector('.pz-popover, .keys-modal, #app .viewer-modal, #app .nav-fly'),
+    retry: () => setCase('full'), emptyAct: () => window.RailConversation?.start('ask'),
   } });
   function setCase(c) {
     listCase = c === 'shared' || c === 'refresh' ? 'full' : c; data = c === 'empty' ? { groups: [], chats: [] } : M.seed(); ctl.clear(); ctl.state.waited = false;
@@ -194,10 +201,12 @@
   window.RailWorld.onChange(() => setCase(listCase));   // another Pulse case: what waits on you follows it
   R.prefs.onChange(() => ctl.paint());
   window.RailChats = {
-    show: (id) => { current = id || ''; ctl.paint(); return opened; },
-    opened: () => opened,
+    show: (id) => { current = id || ''; ctl.paint(); return true; },
+    opened: () => true,
     toggle,
     newChat,
+    data: () => data,
+    refresh: () => ctl.paint(),
   };
   ctl.paint();
 })();

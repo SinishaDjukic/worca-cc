@@ -756,7 +756,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
     which: 'Runs answered', byDay: 'By day', method: 'How it picks', sure: 'Sure at', lead: 'Lead', dmodel: 'Model', deffort: 'Effort', answers: 'Answers', spent: 'While away', extra: 'Fix rounds', exceed: 'At the team\'s cap',
     keep: 'Checkout', coMax: 'Most kept', ct: 'Connect', lt: 'Sign in', it: 'Idle', auth: 'Signing in', wait: 'Wait', netWait: 'Wait for the network', web: 'Sites', webOn: 'Web access', proxy: 'Proxy', proxyHost: 'Host', proxyPort: 'Port', proxyLocal: 'Local proxy', period: 'Total starts again' };
   const VALUE_WORDS = { perRun: usd, total: (v, d) => `${usd(v)} a ${d.period}`, period: (v) => ({ day: 'each day', week: 'each week', month: 'each month' })[v] || v, rate: (v) => `$${v} an hour`, capRun: usd, capAll: (v) => `${usd(v)} a month`, wsCap: usd };
-  window.SettingsModel = {
+  window.SettingsModel = { ICONS: { runs: 'nav-runs', presets: 'set-presets', labels: 'set-labels', automations: 'set-automations', models: 'set-models', ask: 'nav-chat', memory: 'set-memory', team: 'set-policy', guardrails: 'set-guardrails', plugins: 'set-plugins', connectors: 'set-connectors', general: 'set-general', notifications: 'set-notifications', experimental: 'set-labs' }, SECTION_ICONS: { Spending: 'set-spending', Starting: 'nav-runs', Limits: 'set-limits', 'Away mode': 'set-away', Machine: 'set-machine' },
     GROUPS, SECTIONS, FLAGS, STATE, FIRST: 'runs', workingChannels, VALUE_NAMES, VALUE_WORDS,
     title: (id) => (id === 'notifications' ? NOTIFICATIONS : SECTIONS[id] || { title: id }).title,
     meta: (id) => (id === 'notifications' ? NOTIFICATIONS : SECTIONS[id] || { meta: '' }).meta,

@@ -8,6 +8,7 @@
 | `look.inter-at-graduation` | Inter replaces Poppins at graduation, one switch for everyone | Two faces on screen at once reads as a mistake | by hand |
 | `look.scrollbars` | Scrollbars are thin and appear as the mouse moves or while something scrolls, then go | A quiet page; nothing shifts when they show | design-system-components |
 | `look.violet-apart` | Violet means merged, or Worca writing in a field; never both | A dot never means AI | by hand |
+| `look.backgrounds` | Chat home and the away screen may wear a background, Dots by default, chosen in the profile menu; a page you read work on stays plain | Character where no work is read | by hand |
 
 ## Type roles
 The type scale below, named by what it does on a Rail page.

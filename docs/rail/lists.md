@@ -9,6 +9,9 @@
 | `list.one-code` | A list calls the library for its sentence, selecting, keys and states; rail-gate sees its rows' markup only, the rest is by review | A list cannot drift | rail-gate |
 | `list.state-source` | A row's state and section come from runState and sectionOf on its real case | A list can never call Paused or Stopped Ready | design-system-logic |
 | `list.opens-page` | A row opens a full page; coming back restores the sentence, the scroll and the selection | One way to move | worca-sweep |
+| `list.kind-mark` | A row's mark says what it is and how it stands: the type's icon, a smooth ring by main stage in the state's colour; a question, a problem, a pause or a stop takes the centre; never a dot beside an icon | One thing to read, for every kind of row | design-system-components |
+| `list.one-end` | A row's end holds one thing: git's icon if it has one, otherwise its time; the rest is in its tooltip; cost never shows in the bar | Two facts side by side fight for one place | by hand |
+| `list.tree` | What hangs under a row (a chat's tasks, a task that waits on another) is a rounded tree, always open | You see what depends on what without opening anything | design-system-components |
 
 **Reference for Wave 2.** The Runs list and Chats below describe the prototype's reference pages, not Wave 1's work: Wave 2 Shaping decides them. A list's sentence, selecting and bulk hold now for what Pulse uses.
 
@@ -39,8 +42,8 @@ sentence and what an action does. A row's end column holds its PR, its time or i
 
 **The sentence's words.** `Showing [what ▾]`, then `started by [everyone ▾]` on a shared sign-in, `from [where ▾]`,
 `by [grouping ▾]`, and `labelled [hotfix ▾]` while a label narrows it: the top bar's search sets it (`label:hotfix`), and
-that menu's `any label` lifts it. An order is not what a list shows, so Sort is a choice in the list's ⋯, with `Select`
-and `Keyboard shortcuts`.
+that menu's `any label` lifts it. An order is not what a list shows, so Sort is a choice in the list's ⋯, with `Select`,
+`Reset view` (off at the defaults) and `Keyboard shortcuts`.
 
 **A group row** (a feature, a chain, a person's group, a chat group): its mark is its most urgent run's or chat's, its
 end its count (`2/3`) and ⌄. It is open while it is not finished, and the person's ⌄ wins for the session. A section

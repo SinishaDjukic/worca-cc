@@ -6,6 +6,8 @@
 | `panel.side-column` | A side column pushes above 1080px, covers to 761px, takes the window below; one at a time | Same as the app's need, in Rail's motion | worca-sweep |
 | `panel.dismiss` | What lies over a page closes on a click or tap outside and on Esc; a click inside never does; focus returns to what opened it | One habit, on every page | worca-sweep |
 | `panel.conversation` | A conversation holds the person right, Worca on the page, work as cards on 760px | Readable at any width | by hand |
+| `panel.conversation-rail` | What Worca does sits on one rail: a mark, one quiet line, what it took. Thinking and commands fold; a failure opens itself; Send becomes Stop | A long conversation stays readable | by hand |
+| `panel.timeline` | A long conversation has a thin timeline on its right edge, each tick where its moment is, the band what is on screen; it widens under the pointer; a tick's hover shows what is there, a click goes, `[` and `]` step | You move through it without scrolling to find things | design-system-components |
 
 **A panel** (Pulse, the profile menu): opens under its top-bar button over any page, never as a page of its own.
 Its head holds Tabs with each count as a caption and ⋯ at the right; the body scrolls and the head stays. On a narrow

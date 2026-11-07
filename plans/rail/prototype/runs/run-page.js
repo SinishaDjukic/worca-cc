@@ -14,7 +14,7 @@ const fresh = (caseId) => ({ caseId, run: null, groupRun: null, question: 0, pau
 R.watchScrollbars(document);
 let ui = fresh('working');
 
-const statusDot = (v) => R.statusDot({ tone: v.dot, sym: v.sym, glyph: R.ICONS[v.sym === 'q' ? 'question' : 'alert'] });
+const statusDot = (v) => (SHELL ? R.kindMark({ kind: 'task', tone: R.markTone(v), ...M.stageOf(ui.caseId), title: v.word }) : R.statusDot({ tone: v.dot, sym: v.sym, glyph: R.ICONS[v.sym === 'q' ? 'question' : 'alert'] }));
 // A menu: an optional line on what the main action does, then each item with its one-line help.
 // One compact menu everywhere, as the app's View menu: one line per item, a leading check for a choice, a hint on the
 // right (a count or a shortcut), the help in the tooltip; danger items come last, after a rule.
@@ -771,7 +771,7 @@ const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 document.addEventListener('click', (e) => {
   if (SHELL && !SHELL.owns('run', e.target)) return;
   // in the one Worca the trail's first step is the Runs list itself
-  if (SHELL && e.target.closest('#card [data-key="crumb:0"]')) { e.preventDefault(); SHELL.go('runs'); return; }
+  if (SHELL && e.target.closest('#card [data-key="crumb:0"]')) { e.preventDefault(); SHELL.back(); return; }
   const t = e.target.closest('button');
   if (t && t.id === 'next-event') { nextEvent(); return; }
   if (t && t.dataset.fixpart !== undefined) { ui.broken = false; pendingFocus = 'tab:' + ((M.view(ui.caseId, ui).tabs.find((x) => x.sel) || {}).id || ''); toast('Reloaded the part'); render(); return; }

@@ -48,7 +48,7 @@ export function fitMenu(m, vw) {
  * @param {() => boolean} o.spec.active  this list takes keys now
  * @param {() => void} [o.spec.retry]
  * @param {() => void} [o.spec.emptyAct]
- * A row: { key, title, meta, mark, lead, end, tip, unread, current, holds, menu, members, open (a group's first state), noun, count, rounds }.
+ * A row: { key, title, meta, mark, lead, end, endMark, tree (what hangs under it, always open), tip, unread, current, holds, menu, members, open (a group's first state), noun, count, rounds }.
  */
 export function listController({ root, spec }) {
   const doc = root.ownerDocument, win = doc.defaultView;
@@ -62,6 +62,8 @@ export function listController({ root, spec }) {
       open: { 'data-open': r.key, title: r.tip || r.title }, attrs: { 'data-row': r.key },
       menu: r.menu ? { id: `row:${r.key}`, label: `More for ${r.title}`, icon: dots(), items: r.menu, open: s.menu === `row:${r.key}` } : null,
       check: selecting ? s.pick.ids.includes(r.key) : undefined, boxAttrs: { 'data-sel': r.key } };
+    if (r.tree) base.after = `<div class="lr-members lr-tree" role="list"><div class="list-rows">${r.tree.map(rowHtml).join('')}</div></div>`;
+    if (r.endMark) base.end = r.endMark;
     if (r.members) return groupRow({ ...base, count: r.count, noun: r.noun, shown: groupOpen(r), toggle: { 'data-fold': r.key }, rows: r.members.map(rowHtml).join('') });
     let after = '';
     if (r.rounds) {
@@ -70,17 +72,17 @@ export function listController({ root, spec }) {
         rounds: (all ? r.rounds.list : r.rounds.list.slice(0, ROUNDS_SHOWN)).map((x) => ({ n: x.n, words: x.words, time: x.time, attrs: { 'data-open-round': `${k}|${x.n}`, title: `Opens round ${x.n}` } })),
         more: all ? null : { n: r.rounds.list.length - ROUNDS_SHOWN, attrs: { 'data-rounds-all': k } } });
     }
-    return listRow({ ...base, endText: r.end, after });
+    return listRow({ ...base, endText: r.end, after: base.after || after });
   }
 
   function html(v) {
     s.rows = new Map(); s.order = [];
-    const note = (r) => { s.rows.set(r.key, r); (r.members || []).forEach(note); };
+    const note = (r) => { s.rows.set(r.key, r); (r.members || []).forEach(note); (r.tree || []).forEach(note); };
     v.sections.forEach((x) => x.rows.forEach(note));
     const ready = !v.state || v.state === 'ready';
     const groups = ready ? v.sections.map((x) => {
       const limit = x.limit || LIST_SHOWN, all = s.more.has(x.id) || x.rows.length <= limit, rows = all ? x.rows : x.rows.slice(0, limit);
-      for (const r of rows) { s.order.push(r.key); if (r.members && groupOpen(r)) for (const m of r.members) s.order.push(m.key); }
+      const walk = (r) => { s.order.push(r.key); (r.tree || []).forEach(walk); if (r.members && groupOpen(r)) r.members.forEach(walk); }; rows.forEach(walk);
       return { title: x.title, count: x.rows.length, chip: x.chip, rows: rows.map(rowHtml), more: all ? null : { n: x.rows.length - limit, attrs: { 'data-more': x.id } } };
     }) : [];
     s.pick = selectPrune(s.pick, [...s.rows.keys()]);

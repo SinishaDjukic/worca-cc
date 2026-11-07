@@ -781,3 +781,29 @@ test('listController: draws what a page names; selecting, the sentence, Show N m
   let ran = 0; ctl.confirm({ text: 'Sure?', yes: 'Go', run: () => { ran++; } });
   click('[data-confirm="yes"]'); assert.equal(ran, 1); assert.equal(root.querySelector('.rc-confirm'), null);
 });
+
+test('KindMark: the type until the state matters more; the ring fills by stage; only live work breathes', () => {
+  const live = C.kindMark({ kind: 'task', tone: 'run', stage: 2 });
+  assert.match(live, /is-run/); assert.match(live, /km-ring/);
+  assert.doesNotMatch(C.kindMark({ kind: 'chat' }), /km-ring/, 'an idle chat wears no ring');
+  assert.doesNotMatch(C.kindMark({ kind: 'event', tone: 'fail' }), /km-ring/, 'an event is a moment, with no progress');
+  assert.equal(C.markTone({ word: 'Needs you', sym: 'q' }), 'ask'); assert.equal(C.markTone({ word: 'Needs you', dot: 'is-amber' }), 'act');
+  assert.equal(C.markTone({ word: 'Failed', sym: 'x' }), 'fail'); assert.equal(C.markTone({ word: 'Paused' }), 'pause'); assert.equal(C.markTone({ word: 'Merged' }), 'merged'); assert.equal(C.markTone({ word: 'Working', dot: 'is-peach is-pulse' }), 'run');
+});
+test('GitMark: its status in the tooltip, Watch as a ring', () => {
+  assert.match(C.gitMark({ status: 'fail' }), /Checks failing/);
+  assert.match(C.gitMark({ status: 'fail', watch: 'fix' }), /is-watch is-fix/);
+  assert.doesNotMatch(C.gitMark({ status: 'open' }), /is-watch/);
+});
+test('Timeline and TimelineCard: each tick where its moment is', () => {
+  const h = C.timeline({ ticks: [{ id: 'a', at: 0.5, kind: 'work', tone: 'ask', title: 'A question', line: 'now' }], view: [0, 0.5] });
+  assert.match(h, /top:50%/); assert.match(h, /is-ask/); assert.match(h, /data-tick="a"/); assert.match(h, /aria-label="A question, now"/);
+  assert.match(C.timelineCard({ mark: '', title: 'A question', at: 0.25 }), /top:25%/);
+});
+test('BarHead, TurnRow, Composer, StageBar', () => {
+  assert.match(C.barHead({ title: 'Chat' }), /data-bar-house/);
+  assert.match(C.turnRow({ mark: '', text: 'Ran', body: 'x', open: true, attrs: { 'data-fold-turn': '0' } }), /tr-body/);
+  assert.doesNotMatch(C.turnRow({ mark: '', text: 'Ran', body: 'x', attrs: { 'data-fold-turn': '0' } }), /tr-body/);
+  assert.match(C.composer({ placeholder: 'Ask', sentence: 's', tools: '', send: 'b' }), /data-composer-t/);
+  assert.match(C.stageBar({ labels: ['a', 'b'], stage: 0 }), /<b>a<\/b>/);
+});

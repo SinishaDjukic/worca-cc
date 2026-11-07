@@ -14,6 +14,7 @@ import { attrs, esc } from './html.mjs';
  * @property {boolean} [off]     disabled; its help says why
  * @property {string} [header]   a group heading instead of an item
  * @property {boolean} [sep]     a rule instead of an item
+ * @property {string} [mark]     a small mark before its words: an area's icon, a KindMark
  */
 
 /**
@@ -28,7 +29,7 @@ export function menuItem(it, { pickAttr = 'data-menu-pick', attrs: a = {} } = {}
   return `<button type="button" class="menu-item${it.danger ? ' is-danger' : ''}"${attrs({
     role: choice ? 'menuitemradio' : 'menuitem', 'aria-disabled': it.off ? 'true' : null,
     'aria-checked': choice ? String(!!it.checked) : null, ...(pickAttr ? { [pickAttr]: it.id || it.text } : {}), title: it.help || null, ...a,
-  })}><span class="mi-l">${esc(it.text)}</span>${it.hint ? `<span class="mi-hint">${esc(it.hint)}</span>` : ''}</button>`;
+  })}>${it.mark || ''}<span class="mi-l">${esc(it.text)}</span>${it.hint ? `<span class="mi-hint">${esc(it.hint)}</span>` : ''}</button>`;
 }
 
 /**
@@ -44,7 +45,7 @@ export function compactMenu({ items, role = 'menu', label, cls = '', pickAttr = 
   let ruled = false;
   const body = items.map((it, i) => {
     if (it.sep) return '<div class="menu-sep" role="separator"></div>';
-    if (it.header) return `<p class="menu-h">${esc(it.header)}</p>`;
+    if (it.header) return `<p class="menu-h">${it.mark || ''}${esc(it.header)}</p>`;
     const prev = items[i - 1];
     const rule = it.danger && !ruled && i > 0 && !(prev && prev.sep) ? '<div class="menu-sep" role="separator"></div>' : '';
     if (it.danger) ruled = true;

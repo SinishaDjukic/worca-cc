@@ -77,3 +77,66 @@
 .mk-tools .mk-stamp{color:var(--ink-2);font-weight:400;font-size:var(--fs-caption);}
 /* The corner sits over the foot of the window: a selection bar keeps clear of it. */
 #route-runs .runs-bulk{padding-right:120px;}
+
+/* The one bar: which of its lists is showing. */
+#side-rail nav.nav{display:none;}
+#side-rail[data-bar="home"] nav.nav{display:flex;}
+#side-rail[data-bar="home"] .rail-side-settings{display:none;}
+#side-rail:not([data-bar="settings"]) .rail-side-settings{display:none;}
+@media (min-width: 761px){ #side-rail.is-settings[data-bar="home"] nav.nav{display:flex;} }
+#side-rail .brand{padding:0;justify-content:flex-start;}
+#side-rail #bar-head{flex:1;min-width:0;}
+#side-rail{position:relative;width:var(--bar-w,280px);flex:0 0 var(--bar-w,280px);}
+#side-rail.collapsed{display:none;}
+#bar-back{display:none;flex:none;}
+#side-rail[data-bar="home"] #bar-back{display:block;}
+.bar-list.rail-page,.bar-back.rail-page{padding:0 8px 8px 8px;max-width:none;margin:0;--rail:20px;--gap:6px;font-size:var(--fs-body);}
+.bar-list{flex:1 1 auto;min-height:0;overflow:auto;}
+.bar-list .list-head{display:block;margin-left:0;}
+.bar-list .list-sentence,.bar-back .list-sentence{display:inline;margin:0;font-size:var(--fs-meta);line-height:22px;}
+.bar-list .list-tools{display:inline-flex;vertical-align:middle;margin-left:4px;}
+.bar-list .list-h,.bar-back .list-h{margin:0 0 2px;padding-left:2px;}
+.bar-list .list-group + .list-group{margin-top:8px;padding-top:8px;}
+.bar-list .list,.bar-list #runs-root,.bar-list #chats-root{padding:0;margin:0;}
+.bar-list .list-head + .list-group{margin-top:6px;}
+.bar-back .list-row{margin-left:0;grid-template-columns:20px minmax(0,1fr) auto;column-gap:6px;}
+.bar-back .lr-main{padding:3px 4px;margin:0;}
+.bar-list .list-row{margin-left:0;grid-template-columns:20px minmax(0,1fr) auto;column-gap:6px;}
+.bar-list .lr-rail{height:30px;}
+.bar-list .lr-main{padding:3px 4px;margin:0;}
+.bar-list .lr-end{padding-top:5px;position:relative;}
+.bar-list .lr-end .rc-pop{display:none;}
+.bar-list .list-row:is(:hover,:focus-within) > .lr-end .rc-pop,.bar-list .rc-pop:has(.menu){display:inline-flex;position:absolute;right:0;top:1px;background:var(--side-bg);}
+body.view-rail-chat .main{display:flex;flex-direction:column;overflow:hidden;}
+.convo-answer{margin:6px 0 0 32px;}.convo-answer-go{margin-top:8px;}
+.schedule-title{margin:0;font:600 var(--fs-subpage)/1.3 var(--sans);letter-spacing:-.02em;}
+#route-run{position:relative;}
+#task-dock{position:sticky;bottom:0;background:var(--bg);padding:10px 56px 12px 24px;}
+#task-timeline .timeline{position:fixed;top:60px;right:8px;bottom:110px;}
+@media (max-width: 760px){ #task-timeline{display:none;} #task-dock{padding:8px 12px;} }
+body.view-run .main{display:flex;flex-direction:column;overflow:hidden;}
+#route-run:not([hidden]){flex:1 1 auto;min-height:0;display:flex;flex-direction:column;padding:0;}
+#route-run > #card{flex:1 1 auto;min-height:0;overflow:auto;padding:32px 56px 32px 32px;}
+#task-dock{flex:none;position:static;}
+@media (max-width: 760px){ #route-run > #card{padding:16px;} }
+.bar-list .list-rows,.bar-list .list-row,.bar-back .list-row,.convo-col .list-rows,.convo-col .list-row{margin-left:0!important;}
+.convo-col .list-row{grid-template-columns:20px minmax(0,1fr) auto;column-gap:12px;}
+.convo-col .lr-end{padding-right:4px;}
+.bar-list .lr-tree{margin-left:-17px;}
+.lr-tree > .list-rows > .list-row{margin-left:0!important;}
+/* The bar already says where you are: the top bar holds the search and Pulse. On a phone, where the bar is a drawer, the title stays. */
+@media (min-width: 761px){ #side-toggle,#topnav-title{display:none;} }
+.bar-grip{position:absolute;top:0;right:-3px;bottom:0;width:6px;z-index:5;cursor:col-resize;}
+.bar-grip:is(:hover,:focus-visible)::after{content:"";position:absolute;top:0;bottom:0;left:2px;width:2px;background:var(--line-2);}
+.bar-grip:focus-visible{outline:0;}
+body.is-resizing-bar{cursor:col-resize;user-select:none;}
+@media (max-width: 760px){ .bar-grip{display:none;} #side-rail{width:280px;flex:none;} }
+body.view-rail-chat .main,body.view-run .main{padding:0;}
+#route-run > #card{width:100%;max-width:none;align-self:stretch;box-sizing:border-box;}
+#route-run > #card > *{width:100%;max-width:720px;margin-inline:auto;}
+#task-dock .composer,#task-dock .convo-dock-note{max-width:720px;}
+@media (max-width: 760px){ #side-rail{position:fixed;width:280px;flex:none;} }
+#task-timeline .timeline{right:4px;}
+/* The prototype's own corner sits in the top bar's free left, clear of the composer. */
+@media (min-width: 761px){ .mk-tools{top:6px;bottom:auto;right:auto;left:calc(var(--bar-w,280px) + 12px);} }
+@media (min-width: 761px) and (max-width: 1240px){ .mk-tools .mk-stamp{display:none;} }

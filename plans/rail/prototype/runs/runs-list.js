@@ -20,7 +20,8 @@
   const sectionOfRun = (r) => W.section(r);
   const openCase = (r) => (r.archived ? 'archived' : r.case);
   const NEEDS = () => R.runState('question').word;
-  const markOf = (state) => { const st = R.runState(state); return R.statusDot({ tone: st.dot, sym: st.sym }); };
+  const markOf = (state, kind = 'task', cs) => { const st = R.runState(state); return R.kindMark({ kind, tone: R.markTone(st), title: st.word, ...(cs ? RM.stageOf(cs) : {}) }); };
+  const gitOf = (r, state) => { if (!r.pr && (r.kind || 'Git') !== 'Git') return ''; const tone = R.markTone(R.runState(state)); const status = tone === 'merged' ? 'merged' : tone === 'closed' ? 'closed' : !r.pr ? 'branch' : /fail/.test(r.case) ? 'fail' : /conflict/.test(r.case) ? 'conflict' : state === 'approved' ? 'pass' : /draft/.test(r.case) ? 'draft' : 'open'; const watch = /round|pr-fixing/.test(r.case) ? 'fix' : ''; return R.gitMark({ status, watch, title: [r.pr, R.runState(state).word].filter(Boolean).join(' · ') }); };
   const membersOf = (g) => data.runs.filter((r) => r.group === g.id).sort((a, b) => (a.pos || 0) - (b.pos || 0));
   const groupState = (g) => RM.stateOf(g.case);
   const raises = W.raises, groupSection = W.groupSection;   // where a group sorts is the world's, so Vitals counts it the same
@@ -84,8 +85,8 @@
   const costTip = (r) => (r.cost == null ? 'Cost unknown' : `Cost ${usd(r.cost)}`);
   const row = (r, section, member) => {
     const x = { r };
-    const base = { key: `run:${r.id}`, _x: x, title: member && r.pos ? `${r.pos} · ${r.title}` : r.title, meta: metaOf(r, section, member), mark: markOf(stateOf(r)), end: [r.pr, r.time].filter(Boolean).join(' · '),
-      unread: r.unread, tip: `${r.title}\n${costTip(r)}\nOpens the run`, menu: null };
+    const base = { key: `run:${r.id}`, _x: x, title: member && r.pos ? `${r.pos} · ${r.title}` : r.title, meta: metaOf(r, section, member), mark: markOf(stateOf(r), 'task', r.archived ? null : r.case), endMark: gitOf(r, stateOf(r)), end: gitOf(r, stateOf(r)) ? '' : r.time,
+      unread: r.unread, tip: `${r.title}\nOpens the task`, menu: null };
     x.key = base.key;
     base.menu = menuOf(x);
     if (r.rounds) base.rounds = r.rounds;
@@ -99,7 +100,7 @@
     const kindWord = { feature: 'Feature', chain: 'Chain', user: 'Group' }[g.kind];
     const total = ms.reduce((a, m) => a + (m.cost || 0), 0);
     const x = { g, key: `group:${g.id}` };
-    return { key: x.key, _x: x, title: g.title, meta: [kindWord, why, view.by !== 'project' ? g.project : ''].filter(Boolean).join(' · '), mark: markOf(state), count: `${done}/${ms.length}`, noun: 'runs',
+    return { key: x.key, _x: x, title: g.title, meta: [kindWord, why, view.by !== 'project' ? g.project : ''].filter(Boolean).join(' · '), mark: markOf(state, 'feature'), count: `${done}/${ms.length}`, noun: 'runs',
       open: !(['Ready', 'Stopped', 'Merged', 'Failed'].includes(R.runState(groupState(g)).word)), tip: `${g.title}\nGroup total ${usd(total)}\nOpens the ${kindWord.toLowerCase()}`, menu: menuOf(x), members: ms.map((m) => row(m, '', true)) };
   }
   const rowOf = (t, section) => (t.group ? groupRowOf(t.group, section) : row(t.run, section, false));
@@ -206,7 +207,8 @@
 
   ctl = R.listController({ root, spec: {
     noun: 'runs', label: 'Selected runs',
-    view: () => ({ state: listCase === 'loading' ? (ctl?.state.waited ? 'loading' : 'waiting') : ['offline', 'failed'].includes(listCase) ? listCase : 'ready', parts: parts(), tools: [{ id: 'select', text: 'Select', hint: `${R.keyHint(['mod'], R.isMac(window))} click`, help: 'Tick runs to act on several at once' }, { id: 'keys', text: 'Keyboard shortcuts', hint: '?', help: 'The keys of this list' }],
+    tool: (v) => { if (v === 'reset') { view = { ...FRESH }; store.set(view); say('View reset'); } },
+    view: () => ({ state: listCase === 'loading' ? (ctl?.state.waited ? 'loading' : 'waiting') : ['offline', 'failed'].includes(listCase) ? listCase : 'ready', parts: parts(), tools: [{ id: 'select', text: 'Select', hint: `${R.keyHint(['mod'], R.isMac(window))} click`, help: 'Tick runs to act on several at once' }, { id: 'reset', text: 'Reset view', off: view.show === FRESH.show && view.from === FRESH.from && !view.person && view.by === FRESH.by && !view.labels.length, help: 'Back to all tasks, from all projects, by state' }, { id: 'keys', text: 'Keyboard shortcuts', hint: '?', help: 'The keys of this list' }],
       sections: sections(), empty: listCase === 'empty' ? { text: 'No runs yet.', action: 'Start a run' } : { text: EMPTY[view.show] || 'Nothing here with these words.' } }),
     can: () => ['menu', 'fold', 'stop', 'archive', ...(has('advanced') ? ['group', 'delete'] : [])],
     bulk: bulkActions, act, open: openThing,

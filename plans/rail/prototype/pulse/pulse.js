@@ -220,6 +220,7 @@ function acctMenu() {
     ${id}<div class="msect" role="group" aria-label="Worca">${team}
       ${R.accountItem({ label: 'Interface mode', mark: svg('sliders', 16, 'mi-ic'), value: lvl[1], chev: svg('chevR', 14, 'mi-chev'), attrs: { ...sub('lvl'), title: 'How much of Worca you see' } })}
       <div class="theme-sect" role="group" aria-labelledby="pz-theme-k">${svg('contrast', 16, 'mi-ic')}<span class="theme-k" id="pz-theme-k">Appearance</span><div class="theme-seg">${[['system', 'monitor'], ['light', 'sun'], ['dark', 'moon']].map(([m, ic]) => R.themeChoice({ label: cap(m), icon: svg(ic, 14, 'mi-ic'), on: appearance === m, attrs: { 'data-appearance': m } })).join('')}</div></div>
+      ${SHELL ? R.accountItem({ label: 'Background', mark: svg('image', 16, 'mi-ic'), value: bgName(), chev: svg('chevR', 14, 'mi-chev'), attrs: { ...sub('bg'), title: 'On Chat home and the away screen only' } }) : ''}
       ${R.accountItem({ label: 'Settings', mark: svg('gear', 16, 'mi-ic'), attrs: { 'data-go': 'settings', title: 'How Worca behaves everywhere' } })}
     </div>
     <div class="msect" role="group" aria-label="You">
@@ -229,7 +230,7 @@ function acctMenu() {
     <div class="msect" role="group" aria-label="Usage">${raise}
       ${R.accountItem({ label: 'Usage and costs', mark: gone ? gring(100, 'pz-mi-ring', 'over') : top ? gring(top.pct, 'pz-mi-ring', top.tone) : svg('signal', 16, 'mi-ic'), value: val, valueAlways: true, chev: svg('chevR', 14, 'mi-chev'), attrs: { ...sub('usage'), title: gone ? `Budget of ${M.usd(c.budget.limit)} used up: runs stay paused until it resets or you raise it` : top ? `Closest to its limit: ${top.line}` : 'Limits per harness and the spend' } })}
     </div>
-  ` }) + usageFly() + lvlFly();
+  ` }) + usageFly() + lvlFly() + bgFly();
 }
 // The side menus open beside the profile menu (side-flyout.mjs 'beside'); on a narrow screen in its place, with a way back.
 const back = R.accountItem({ label: 'Account', cls: 'pz-subback', mark: svg('chevL', 14, 'mi-chev'), attrs: { 'data-sub': '', title: 'Back to the profile menu' } });
@@ -258,6 +259,16 @@ function spendCard(c) {
   const pct = M.spendPct(b), t = pct == null ? '' : M.tone(pct, ui.s.warnAt);
   const rows = `${b.limit ? `<dt>Budget</dt><dd>${M.usd(b.limit)}</dd>` : ''}<dt>Spent</dt><dd class="${t}">${M.usd(b.spent)}</dd>${b.saved ? `<dt title="What these runs would have cost at API prices, less what you spent">Saved</dt><dd class="pos">${M.usd(b.saved)}</dd>` : ''}`;
   return `<div class="mcard spend-card" role="group" aria-label="Spend ${b.period}" title="Estimated spend ${b.period}: ${M.usd(b.spent)}${b.limit ? ` of ${M.usd(b.limit)}` : ''}. An estimate from Claude Code, not your bill"><div class="mc-head">${R.cardTitleLink({ label: `Spend ${b.period}`, attrs: { 'data-details': true, title: 'Opens Statistics: spend per run, model and day' } })}</div><dl class="mc-rows">${rows}</dl></div>`;
+}
+// A background on Chat home and the away screen: one family, built on the same dots.
+const BACKGROUNDS = [['dots', 'Dots', 'The quiet grid, fading down'], ['aurora-dots', 'Aurora dots', 'The same grid, cool at the top'], ['dusk-dots', 'Dusk dots', 'The same grid, warm from below'], ['mist', 'Mist', 'A faint wash under quiet dots'], ['none', 'None', 'A plain page']];
+const bgKey = 'worca-rail.background';
+const readBg = () => { try { return localStorage.getItem(bgKey) || 'dots'; } catch { return 'dots'; } };
+function setBg(v) { document.documentElement.dataset.bg = v; try { localStorage.setItem(bgKey, v); } catch { /* private mode: for this session */ } }
+const bgName = () => BACKGROUNDS.find((b) => b[0] === (ui.bg || 'dots'))?.[1] || 'Dots';
+function bgFly() {
+  if (ui.sub !== 'bg') return '';
+  return R.navFlyout({ label: 'Background', cls: `lvl-menu pz-fly${inCls('sub')}`, body: `${back}<span class="nav-fly-k">Background</span>${BACKGROUNDS.map(([id, t, h]) => R.menuItem({ text: t, checked: (ui.bg || 'dots') === id, help: h }, { pickAttr: null, attrs: { 'data-bg-pick': id } })).join('')}` });
 }
 function lvlFly() {
   if (ui.sub !== 'lvl') return '';
@@ -365,8 +376,8 @@ function runsPage() {
 // from Pulse's model; every other section comes from settings-model.js through settings.js.
 const sp = (id, text, items, tip, right) => R.sentencePicker({ id, text, items, open: ui.menu === id, tip, chevron: svg('chevron', 12), right });
 const sectionId = () => ui.sset || SM.FIRST;
-const menuGroups = () => SM.GROUPS.map((g) => ({ title: g.title, items: g.items.filter((id) => SM.visible(id, R.prefs.mode())).map((id) => ({ label: SM.title(id), current: id === sectionId(), attrs: { 'data-sset': id } })) })).filter((g) => g.items.length);   // a group with nothing at this mode has no head
-const settingsMenu = () => R.sideMenu({ label: 'Settings', cls: swapCls.trim(), back: { label: 'Back to Worca', icon: svg('chevL', 14), attrs: { 'data-go': 'runs', title: 'Back to the page you came from' } }, groups: menuGroups() });
+const menuGroups = () => SM.GROUPS.map((g) => ({ title: g.title, items: g.items.filter((id) => SM.visible(id, R.prefs.mode())).map((id) => ({ label: SM.title(id), icon: SM.ICONS?.[id] || '', current: id === sectionId(), attrs: { 'data-sset': id } })) })).filter((g) => g.items.length);   // a group with nothing at this mode has no head
+const settingsMenu = () => R.sideMenu({ label: 'Settings', cls: swapCls.trim(), back: SHELL ? null : { label: 'Back to Worca', icon: svg('chevL', 14), attrs: { 'data-go': 'runs', title: 'Back to the page you came from' } }, groups: menuGroups() });
 // The narrow screen's first view: the same menu as a list in the page.
 const settingsIndex = () => `<div class="cfg-index"><div class="pz-head"><h1 class="pz-title">Settings</h1></div>${R.sideMenu({ label: 'Settings', list: true, chevron: svg('chevR', 14), groups: menuGroups().map((g) => ({ ...g, items: g.items.map((x) => ({ ...x, current: false })) })) })}</div>`;
 
@@ -487,13 +498,28 @@ function searchHits() {
   const score = (e) => (plain(e.label).startsWith(q) ? 0 : plain(e.label).includes(q) ? 1 : 2) + (e.kind === 'place' ? -1 : 0);
   const set = settingsFinds().filter((e) => plain(e.label).includes(q) || plain(e.words).includes(q)).sort((a, b) => score(a) - score(b));
   const seen = new Set();
-  return [...M.find(q).slice(0, 14), ...set].sort((a, b) => score(a) - score(b)).filter((e) => { const k = plain(e.label); if (seen.has(k)) return false; seen.add(k); return true; }).slice(0, 8);
+  const own = [];
+  if (SHELL && window.RailChats) for (const c of window.RailChats.data().chats) {
+    if (plain(c.title).includes(q)) own.push({ label: c.title, where: c.project || 'No project', area: 'Chats', hash: `chat/${c.id}` });
+    const walk = (t) => { if (plain(t.title).includes(q)) own.push({ label: t.title, where: `in ${c.title}`, area: t.kind === 'schedule' ? 'Schedules' : 'Tasks', hash: t.kind === 'schedule' ? 'schedule/s1' : `run/${t.case}`, chat: c.id }); (t.after || []).forEach(walk); };
+    (c.tasks || []).forEach(walk);
+  }
+  return [...own, ...M.find(q).slice(0, 14), ...set].sort((a, b) => score(a) - score(b)).filter((e) => { const k = plain(e.label) + (e.area || ''); if (seen.has(k)) return false; seen.add(k); return true; }).slice(0, 14);
 }
+// One search, everything it finds under the area it belongs to.
+const AREAS = [['Settings', 'set-general'], ['Chats', 'kind-chat'], ['Tasks', 'kind-task'], ['Schedules', 'kind-schedule'], ['Places', 'home'], ['Other', 'list']];
+const areaOf = (e) => e.area || (e.sset ? 'Settings' : e.kind === 'place' ? 'Places' : /^(Runs|Run )/.test(e.where || '') || e.run ? 'Tasks' : /^Chat/.test(e.where || '') ? 'Chats' : /^Schedule/.test(e.where || '') ? 'Schedules' : 'Other');
 function searchResults() {
   if (!plain(ui.q).trim()) return '';
   found = searchHits();
-  const rows = found.map((e, i) => ({ id: 'srch|' + i, text: e.label, where: [e.sset ? `Settings › ${e.where.replace(/^Settings › /, '')}` : e.where, lockNote(e)].filter(Boolean).join(' · ') }));
-  return R.searchResults([...rows, { id: 'srch|ask', text: `Ask Chat: ${askWords()}`, where: 'Chat' }]);
+  const line = (e, i) => ({ id: 'srch|' + i, text: e.label, hint: [e.sset ? e.where.replace(/^Settings › /, '') : e.where, lockNote(e)].filter(Boolean).join(' · ') });
+  const items = [];
+  for (const [area, ic] of AREAS) {
+    const hits = found.map((e, i) => [e, i]).filter(([e]) => areaOf(e) === area);
+    if (hits.length) items.push({ header: area, mark: R.icon(ic, 13) }, ...hits.map(([e, i]) => line(e, i)));
+  }
+  items.push({ sep: true }, { id: 'srch|ask', text: `Ask Chat: ${askWords()}`, hint: 'Chat' });
+  return R.compactMenu({ cls: 'rl-search-res', label: 'Found', items });
 }
 const askWords = () => ui.q.trim().replace(/^label:\s*/i, '');
 const closeOverlays = () => { ui.nr = null; ui.q = ''; ui.menu = ''; ui.pop = false; ui.acct = false; ui.sub = ''; SHELL?.closeSearch(); const i = document.querySelector('[data-search]'); if (i) i.value = ''; };
@@ -533,6 +559,7 @@ function stepUnlock() {
 function pickResult(v) {
   if (v === 'ask') { const q = askWords(); closeOverlays(); if (SHELL) SHELL.go('chat'); toast(`Asks Chat: ${q}`); render(); return; }
   const e = found[+v]; if (!e) return;
+  if (e.hash) { closeOverlays(); if (e.chat) SHELL.openTask(e.hash.split('/')[1], e.chat); else SHELL.go(e.hash); render(); return; }
   const locked = locksOf(e).length;
   closeOverlays();
   if (locked) { ui.unlock = { e }; stepUnlock(); render(); return; }
@@ -723,6 +750,8 @@ document.addEventListener('click', (e) => {
   if ((el = tg('[data-sw="keep"]'))) { ui.keep = !ui.keep; render(); return; }
   if ((el = tg('[data-appearance]'))) { applyAppearance(el.dataset.appearance); render(); return; }
   if ((el = tg('[data-details]'))) { ui.acct = false; ui.sub = ''; if (SHELL) { SHELL.closeDrawer(); SHELL.go('stats'); } else toast('Opens Statistics (not in this prototype)'); render(); return; }
+  if (SHELL && (el = tg('[data-newrun]'))) { window.RailConversation?.start('task'); return; }
+  if ((el = tg('[data-bg-pick]'))) { ui.bg = el.dataset.bgPick; setBg(ui.bg); ui.sub = ''; render(); return; }
   if ((el = tg('[data-newrun]'))) { if (ui.nr) ui.nr = null; else { openNewRun(); opening = 'nr'; } ui.pop = false; ui.acct = false; render(); return; }
   if ((el = tg('[data-nr-use]'))) { ui.nr = { ...ui.nr, on: el.dataset.nrUse, wait: false, moved: '' }; render(); return; }
   if ((el = tg('[data-nr-wait]'))) { toast(`Scheduled: ${el.textContent.replace('Start at', 'starts at')} (not in this prototype)`); ui.nr = null; render(); return; }
@@ -864,6 +893,8 @@ setInterval(() => {
 }, R.USAGE_REFRESH_MS);
 document.querySelectorAll('[data-theme-pick]').forEach((b) => b.addEventListener('click', () => { applyAppearance(b.dataset.themePick); render(); }));
 window.RailPulse = {
+  // The note a start near a limit shows, in the composer: what it means, and the ways out.
+  startNote: () => { const c = startable(), first = c.usage.find((u) => M.PROVIDER[u.p].runs)?.p; if (!first) return { say: 'Nothing that can run is signed in. Only mock tasks work until you sign in.', blocked: true }; if (budgetGone()) return { say: 'The budget is used up until it resets.', blocked: true }; if (connOffline()) return { say: 'Offline: Worca cannot start a task until the connection is back.', blocked: true }; const lim = M.near(c, first, ui.s.warnAt); if (!lim) return null; const rm = M.room(c, ui.s.warnAt, first); return { say: `${lim.name}'s ${lim.what} is at ${lim.pct}% and resets ${lim.resets}. This task may pause.`, use: rm.length ? pname(rm[0]) : '', at: lim.resets }; },
   show: (page, sset, view) => {
     ui.page = page === 'settings' ? 'settings' : 'runs'; ui.sset = page === 'settings' ? sset : ui.sset; ui.sv.__confirm = null; ui.sv.__dialog = null; ui.menu = ''; opening = 'section';
     if (view === 'chat') ui.chatSeen = true;

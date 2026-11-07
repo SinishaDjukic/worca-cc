@@ -13,112 +13,1308 @@
     "Pass the gate: plans/rail/prototype/gates/ds-check.mjs and the page's sweep."
   ],
   "components": [
-    {"name": "OfflineLine", "code": "ui/public/design-system/components/shell-parts.mjs#offlineLine", "kind": "telling", "needs": ["the connection dropped"], "parts": ["grey status dot", "Offline · retrying"], "rules": ["at the end of the top bar, until it reconnects; a Toast then says Back online", "480px and below: the dot alone, the words in its tooltip"], "example": "Offline · retrying"},
-    {"name": "SideColumn", "code": "ui/public/design-system/components/shell-parts.mjs#sideColumn", "kind": "showing", "needs": ["a conversation beside the page"], "parts": ["the grip", "the head: title and Close", "the body, the only scroller"], "rules": ["pushes above 1080px, covers to 761px, takes the window below", "dragged between 360 and 680px and kept; fades in, closes at once; one at a time"], "example": "Ask worca"},
-    {"name": "NavItem", "code": "ui/public/design-system/components/shell-parts.mjs#navItem", "kind": "acting", "needs": ["a place in the sidebar"], "rules": ["a place not in the prototype is off and says so in its tooltip"], "example": "Runs, Chats, Schedules"},
-    {"name": "AccountButton", "code": "ui/public/design-system/components/shell-parts.mjs#accountButton", "kind": "acting", "needs": ["the sidebar's foot: who you are, the door to the profile menu"], "rules": ["its name for a screen reader says what the rings say"], "example": "Emil Angelov ⇅"},
-    {"name": "UsageRing", "code": "ui/public/design-system/components/usage.mjs#usageRing", "kind": "telling", "needs": ["how much of a limit is used, around the avatar or beside a row"], "notFor": "money: a budget is never a ring", "rules": ["its tooltip is its holder's (`usageTip`)", "used up: full and solid red"], "example": "the rings around the avatar"},
-    {"name": "PanelFrame", "code": "ui/public/design-system/components/shell-parts.mjs#panelFrame", "kind": "showing", "needs": ["a panel under a top-bar button, over any page"], "rules": ["its head stays, its body scrolls", "where it sits is the page's; closing is dismissOnOutside's"], "example": "Pulse"},
-    {"name": "AccountItem", "code": "ui/public/design-system/components/account-menu.mjs#accountItem", "kind": "acting", "needs": ["a row of the profile menu"], "parts": ["icon or ring", "words", "value or hint", "switch or chevron"], "rules": ["a side menu holds them in navFlyout"], "example": "Interface mode, Expert ›"},
-    {"name": "TopBarAction", "code": "ui/public/design-system/components/shell-parts.mjs#topBarAction", "kind": "acting", "needs": ["an action in the top bar whose words give way on a narrow screen"], "example": "Pulse 3, New run"},
-    {"name": "AwayScreen", "code": "ui/public/design-system/components/shell-parts.mjs#awayScreen", "kind": "showing", "needs": ["the window while you are away"], "parts": ["the wordmark", "one line on how runs stand"], "rules": ["Away, Keep awake, focused, 5 idle minutes (awayShows); off under reduced motion", "any input hides it and does not reach the page"], "example": "Worca · Everything is under control."},
-    { "name": "StatusLine", "code": "ui/public/design-system/components/status-line.mjs#statusLine", "kind": "showing", "needs": ["what is happening", "the one next step of a state"], "parts": ["status dot", "state word", "detail line", "action slot: Button primary with ▾ for alternatives", "⋯ CompactMenu"], "example": "Ready to merge · Merge PR ▾ ⋯", "notFor": "a second primary; buttons for the page in the top bar" },
-    { "name": "Button", "code": "ui/public/design-system/components/button.mjs#button", "kind": "acting", "needs": ["an action with a label"], "variants": ["primary", "default", "quiet", "danger (solid only inside a confirm)"], "notFor": "going somewhere (Text link); on or off (Switch)" },
-    { "name": "CompactMenu", "code": "ui/public/design-system/components/compact-menu.mjs#compactMenu", "kind": "acting", "needs": ["supporting actions", "the alternatives of a split button", "the choices of a SentencePicker"], "rules": ["opened from ⋯ or ▾", "danger last, after a rule"], "example": "Terminal, Copy link, Archive" },
-    { "name": "ConfirmStrip", "code": "ui/public/design-system/components/confirm-strip.mjs#confirmStrip", "kind": "acting", "needs": ["a yes or no", "a one-line answer"], "place": "under the top bar, in place", "rules": ["for a step that changes what other people see (a PR, a branch, a merge, a comment) or cannot be taken back; never for spending alone", "opens on the safe choice", "names what goes", "a provider at or past the warning line: a step that starts agent work adds the limit note in one line"], "example": "Merge #959 into dev?", "notFor": "a step that needs fields (Dialog); a step that can be undone (act, then Undo in a Toast)" },
-    { "name": "ListSentence", "code": "ui/public/design-system/components/list-parts.mjs#listSentence", "kind": "choosing", "needs": ["what a list shows"], "parts": ["Showing [what]", "from [where]", "by [grouping]"], "rules": ["a word stays with its picker; a sentence breaks between its parts", "each choice in its menu with its count", "one for every list"], "example": "Showing all from all projects by state" },
-    { "name": "GroupRow", "code": "ui/public/design-system/components/list-parts.mjs#groupRow", "kind": "showing", "needs": ["things that belong together, in a list"], "parts": ["mark", "title", "meta", "count", "⌄", "members"], "rules": ["open while not finished; the person's ⌄ wins", "a member that needs you raises it"], "example": "Unified page navigation 2/3" },
-    { "name": "RoundRows", "code": "ui/public/design-system/components/list-parts.mjs#roundRows", "kind": "showing", "needs": ["a run's PR fix rounds"], "rules": ["stacked under its row", "5, then +n earlier"], "example": "Round 7 · merge dev in, 7 rounds" },
-    { "name": "ListState", "code": "ui/public/design-system/components/list-parts.mjs#listState", "kind": "telling", "needs": ["a list with no rows"], "rules": ["loading, offline, could not load, empty", "Try again where it can"], "example": "Loading runs…" },
-    { "name": "OriginMark", "code": "ui/public/design-system/components/list-parts.mjs#originMark", "kind": "showing", "needs": ["where a chat came from"], "rules": ["before its title", "its name in the tooltip"], "example": "Slack" },
-    { "name": "ChatKindIcon", "code": "ui/public/design-system/components/list-parts.mjs#chatKindIcon", "kind": "showing", "needs": ["what an idle chat did"], "rules": ["in the dot's place"], "example": "Started a run" },
-    { "name": "SelectionBar", "code": "ui/public/design-system/components/selection-bar.mjs#selectionBar", "kind": "acting", "needs": ["acting on several rows of a list together"], "parts": ["how many are selected", "each action with how many it applies to", "Cancel"], "place": "at the list's foot, while selecting", "rules": ["an action is disabled at 0 and says why in its tooltip", "Cancel or Esc ends selecting", "an action that can be taken back offers Undo in its Toast; one that cannot confirms in the strip", "Select all joins the head: selectAllBox", "only for a list whose rows a person can act on together"], "example": "2 selected · Mark read 2 · Clear 2 · Cancel" },
-    { "name": "ShortcutsSheet", "code": "ui/public/design-system/components/shortcuts.mjs#shortcutsSheet", "kind": "showing", "needs": ["finding the keyboard shortcuts"], "parts": ["a section per place", "a row: what it does, its keys", "Close"], "rules": ["a Dialog with no form, opened with ?", "drawn from the table, never written by hand", "⌘ on a Mac, Ctrl elsewhere"], "example": "Search or ask ⌘K" },
-    { "name": "Dialog", "code": "ui/public/design-system/components/dialog.mjs#dialog", "kind": "acting", "needs": ["a step that needs fields first"], "parts": ["head", "the Stepper, in a stepped setup", "body (the only scroller)", "foot: status line and actions; Back in a stepped setup; only Close in a view"], "example": "Create PR", "notFor": "a yes or no (ConfirmStrip)" },
-    { "name": "Text link", "code": "ui/public/design-system/components/text-link.mjs#textLink", "kind": "acting", "needs": ["going to another page or place", "a fact's detail"], "example": "Changes +358 −144" },
-    { "name": "SentencePicker", "code": "ui/public/design-system/components/settings-row.mjs#sentencePicker", "kind": "choosing", "needs": ["a choice that changes a step", "a setting with several values", "what a list shows"], "rules": ["sits in the sentence it changes", "opens a CompactMenu", "on a page it takes effect at once; a failed change flips back and a Toast says why; in a Dialog it applies on submit"], "example": "Send what needs you ▾ to desktop ▾; Showing unread ▾", "notFor": "a full-width toggle; radio cards" },
-    {"name": "WordPicker", "code": "ui/public/design-system/components/settings-row.mjs#wordPicker", "kind": "choosing", "needs": ["a choice among a form's or a panel's words"], "notFor": "a settings sentence (SentencePicker)", "rules": ["opens a CompactMenu under it"], "example": "dev ▾ base branch, One PR ▾"},
-    { "name": "OptionList", "code": "ui/public/design-system/components/option-list.mjs#optionList", "kind": "choosing", "needs": ["answering Worca's question", "a choice inside a confirm"], "parts": ["one row per answer", "radio dot", "Worca's pick marked Recommended", "your own answer under it"], "notFor": "any other single choice (SentencePicker or Segmented)" },
-    { "name": "Switch", "code": "ui/public/design-system/components/settings-row.mjs#switchButton", "kind": "choosing", "needs": ["a setting that is on or off"], "rules": ["takes effect at once, no confirm", "a failed change flips back and a Toast says why"], "example": "Watch on a PR" },
-    { "name": "Checkbox", "code": "ui/public/design-system/components/checkbox.mjs#checkbox", "kind": "choosing", "needs": ["picking items from a list", "an opt-out", "a consent"], "example": "the checklist, No cap, Draft" },
-    { "name": "Segmented", "code": "ui/public/design-system/components/segmented.mjs#segmented", "kind": "choosing", "needs": ["two or three views of the same thing"], "example": "Light and Dark; Summaries and Raw" },
-    { "name": "Tabs", "code": "ui/public/design-system/components/tabs.mjs#tabs", "kind": "choosing", "needs": ["sections of a page"], "rules": ["each tab is in the address", "a count is a caption"], "example": "Overview, Changes, Decisions" },
-    { "name": "Chip", "code": "ui/public/design-system/components/chip.mjs#chip", "kind": "showing", "needs": ["a short fact: a stage, a source, a slot to set up"], "example": "Beta, Official, No API key; Running 4" },
-    { "name": "ListEditor", "code": "ui/public/design-system/components/tag-group.mjs#listEditor", "kind": "choosing", "needs": ["picking and adding names", "one pick from a long list, or a new one (single pick)", "context sent with a message (removable item)"], "example": "labels and cost tags, groups" },
-    { "name": "CopyButton", "code": "ui/public/design-system/components/copy-button.mjs#copyButton", "kind": "acting", "needs": ["copying text"], "rules": ["a quiet 28px icon button", "a tick for 1.2s, Copied in its tooltip and the live region", "its width never changes"], "example": "a branch, a command, an id" },
-    { "name": "WorkflowGraph", "code": "ui/public/design-system/components/workflow-graph.mjs#workflowGraph", "kind": "showing", "needs": ["a workflow at full size"], "parts": ["a lane per stage", "a node per step in its status colour", "gate pip", "rounds", "end result"], "rules": ["the view inside a Dialog without a form", "a node opens its step's log drawer under the graph", "wraps; never scrolls sideways"], "example": "Open the graph" },
-    { "name": "LogLines", "code": "ui/public/design-system/components/log-lines.mjs#logLines", "kind": "showing", "needs": ["a step's or a run's log"], "rules": ["one line per entry: time, where from, words", "a warning or an error in its colour", "its filters are a sentence of SentencePickers above it"], "example": "Activity's Logs" },
-    { "name": "Table", "code": "ui/public/design-system/components/table.mjs#table", "kind": "showing", "needs": ["the same figures across many rows"], "rules": ["divided rows, no box per row", "tabular figures, the name first", "on a narrow screen the least needed columns move to the row's detail"], "example": "sessions, cost by step" },
-    { "name": "Field", "code": "ui/public/design-system/components/field.mjs#field", "kind": "entering", "needs": ["text or a number in a form"], "rules": ["32px", "its error is a line under it"], "example": "Branch, Budget" },
-    { "name": "SuggestionField", "code": "ui/public/design-system/components/suggestion-field.mjs#suggestionField", "kind": "entering", "needs": ["text Worca writes for you"], "parts": ["sparkle inside the field", "Suggested chip", "violet shimmer while it writes", "grey line when it could not"], "example": "PR title and description" },
-    { "name": "Stepper", "code": "ui/public/design-system/components/stepper.mjs#stepper", "kind": "showing", "needs": ["how far along, and its steps"], "parts": ["one segment per stage", "StepRows of the open stage on the rail"], "example": "Plan · Build · Review" },
-    { "name": "StepRow", "code": "ui/public/design-system/components/stepper.mjs#stepRow", "kind": "showing", "needs": ["a step of a stage"], "parts": ["mark on the rail", "name", "time", "rounds", "second line"], "rules": ["cells of its list's grid, so columns line up", "in Activity also model, cost and its one action"], "example": "Review implementation 37m 3" },
-    {"name": "LineRow", "code": "ui/public/design-system/components/stepper.mjs#lineRow", "kind": "showing", "needs": ["one line that opens its detail in place, or goes to it"], "rules": ["its detail opens under it, on the text edge"], "example": "Did all 3 parts you asked"},
-    {"name": "FileRow", "code": "ui/public/design-system/components/stepper.mjs#fileRow", "kind": "showing", "needs": ["a changed file, opening its diff"], "example": "app.js +12 −3"},
-    {"name": "StackedPrRow", "code": "ui/public/design-system/components/stepper.mjs#stackedPrRow", "kind": "showing", "needs": ["a PR of a stack in Create PR, opening its fields"], "rules": ["one already opened no longer opens"], "example": "PR 1 · Add the rail"},
-    { "name": "Row", "code": "ui/public/design-system/components/row.mjs#row", "kind": "showing", "needs": ["any row on a Rail page"], "parts": ["rail", "text", "end", "⋯"], "rules": ["every row is built on it", "its list gives it one rail and one end", "never used for a box per item"], "example": "ListRow, StepRow, SettingsRow, Pulse rows" },
-    {"name": "PulseRow", "code": "ui/public/design-system/components/row.mjs#pulseRow", "kind": "showing", "needs": ["an update or a thing in Pulse"], "rules": ["the whole row is its target and tint", "the state word never shortens; the meta wraps", "built on row()", "while selecting, its tick box sits on the rail"], "example": "Plan asks 2 questions"},
-    { "name": "Figures", "code": "ui/public/design-system/components/figures.mjs#figures", "kind": "showing", "needs": ["time, cost, changes"], "rules": ["each opens its own detail", "numbers only"], "example": "Cost $84.10 of $120" },
-    { "name": "TagGroup", "code": "ui/public/design-system/components/tag-group.mjs#tagGroup", "kind": "showing", "needs": ["labels and cost tags"], "rules": ["one line, the rest in +N", "one button opens the ListEditor"], "example": "ui, team: web, +2" },
-    { "name": "ListRow", "code": "ui/public/design-system/components/list.mjs#listRow", "kind": "showing", "needs": ["a list of things"], "parts": ["state mark on the rail (dot, or tick box while selecting)", "title line", "meta line", "time or figure at the right"], "rules": ["never a box per item", "a record with fine-tuning of its own folds it under the row behind Customise (the `fold` option)", "no `open` when the row already shows all it has: no click, no Dialog repeating it", "its own actions in its ⋯ (the `menu` option: moreMenu): Remove, Revoke, Delete, Uninstall and Reject last, after one rule", "rows split by space; grouped by something (status, day, section), a line where each group after the first starts, from the text edge, none between rows", "the whole row opens its one target"], "example": "runs, updates, files, decisions" },
-    { "name": "SettingsRow", "code": "ui/public/design-system/components/settings-row.mjs#settingsRow", "kind": "choosing", "needs": ["a setting in a settings tab"], "parts": ["name, and its ChangedDot (`changed`)", "one sentence: words and SentencePickers, saying the current state", "end: a Switch or one quiet button, then Customise (`fold`)", "folded rows under the sentence (`detailRows`): a small label over each sentence", "a List of records (`detail`) and one quiet foot action (`detailAction`) in the fold"], "rules": ["one left edge for every text and section line, one right edge for every action, the name, the sentence and the end on one baseline: the component's, never the page's", "takes effect at once; only a reset of many rows confirms, in the strip", "under 560px of width it stacks (docs/rail/narrow.md)", "`fold.label` names a fold that holds a list instead of fine-tuning (Paired browsers)"], "example": "Badge · The tab title counts what needs you ▾" },
-    { "name": "ChangedDot", "code": "ui/public/design-system/components/settings-row.mjs#changedDot", "kind": "telling", "needs": ["a settings row off its default or its group"], "parts": ["a tiny neutral dot right after the name", "tooltip: Changed, then a line per value with its default"], "rules": ["one per row however many values; a fold's row shows it for anything inside, and the exact row inside does too", "no reset on a row: a section's reset stays in its head"], "example": "Budget · with a tooltip: Total: default $1,000 a month" },
-    { "name": "SideMenu", "code": "ui/public/design-system/components/side-menu.mjs#sideMenu", "kind": "choosing", "needs": ["Settings' own sections"], "parts": ["‹ back to where you came from", "group heads", "items, the current one marked"], "rules": ["it takes the sidebar's place; the sidebar's content fades over change", "on a narrow screen the page's first view, as a list (`list`): 44px rows with ›, a line where each group after the first starts"], "example": "Settings: see docs/rail/settings.md" },
-    { "name": "Search", "code": "ui/public/design-system/components/side-menu.mjs#search", "kind": "choosing", "needs": ["finding anything"], "parts": ["the top bar's field: Search or ask", "what it finds under it (searchResults), each with where it lives"], "rules": ["a pick lands on the thing (land): it comes into view and lights once"], "example": "proxy → Proxy · Runs › Network" },
-    { "name": "Trail", "code": "ui/public/design-system/components/navigation.mjs#trail", "kind": "acting", "needs": ["one depth up: a thing to its place, a run to its group"], "rules": ["never names the page itself", "the one way back on screen; on a narrow screen its parent alone, ‹ Parent"], "example": "Runs › worca-cc › Unified page navigation" },
-    { "name": "Pager", "code": "ui/public/design-system/components/navigation.mjs#pager", "kind": "acting", "needs": ["sideways, to a sibling"], "rules": ["at the top bar's right", "a sibling that cannot open yet is disabled and says why"], "example": "‹ 2 of 3 ›" },
-    { "name": "BackLink", "code": "ui/public/design-system/components/side-menu.mjs#backLink", "kind": "acting", "needs": ["one step up, on a narrow screen"], "example": "‹ Settings" },
-    { "name": "SettingsSection", "code": "ui/public/design-system/components/settings-row.mjs#settingsSection", "kind": "showing", "needs": ["a group of settings"], "parts": ["head", "its one action at the head's right (a reset)", "one meta line", "SettingsRows"], "rules": ["the head's action ends on the rows' right edge", "no title on a tab that is one list: the tab's title says it"], "example": "What reaches you · Reset to defaults" },
-    { "name": "SettingsGroup", "code": "ui/public/design-system/components/settings-row.mjs#settingsGroup", "kind": "showing", "needs": ["rows of one kind inside a settings section"], "parts": ["a small head on the rows' edge", "SettingsRows"], "rules": ["the same head a List's group has", "a group of records is a List's group, not this"], "example": "Beta, then Experimental, in Labs" },
-    { "name": "Scrollbar", "code": "ui/public/design-system/components/scrollbars.mjs#watchScrollbars", "kind": "showing", "needs": ["a part of a page that scrolls"], "rules": ["thin", "appears as the mouse moves and while it scrolls, then goes", "takes no room, so nothing shifts"], "example": "a long menu, the page" },
-    { "name": "Tooltip", "code": "ui/public/design-system/components/field.mjs#tooltip", "kind": "showing", "needs": ["why a control is off", "a cut-off text", "an id"], "example": "Checks are still running on #959" },
-    { "name": "Toast", "code": "ui/public/design-system/components/toast.mjs#toast", "kind": "telling", "needs": ["something done, nothing to answer", "something broke that nothing handles"], "rules": ["title at most 6 words", "never moves focus", "Undo for a step that can be taken back (`toastUndo`)"], "example": "PR merged; Something went wrong" },
-    { "name": "EmptyState", "code": "ui/public/design-system/components/empty-state.mjs#emptyState", "kind": "telling", "needs": ["nothing here", "loading", "could not load", "a part of the page cannot be drawn"], "rules": ["one line on the text edge", "loading: nothing for 300ms, then one line; never a spinner or skeleton", "could not load: Could not load …, the reason, Nothing changed., Try again, Details", "a part that cannot be drawn: Could not show …, Reload this part, Details", "empty: its one sentence, and the way forward as one quiet action"], "example": "No runs yet; Could not show the changes" }
+    {
+      "name": "OfflineLine",
+      "code": "ui/public/design-system/components/shell-parts.mjs#offlineLine",
+      "kind": "telling",
+      "needs": [
+        "the connection dropped"
+      ],
+      "parts": [
+        "grey status dot",
+        "Offline · retrying"
+      ],
+      "rules": [
+        "at the end of the top bar, until it reconnects; a Toast then says Back online",
+        "480px and below: the dot alone, the words in its tooltip"
+      ],
+      "example": "Offline · retrying"
+    },
+    {
+      "name": "SideColumn",
+      "code": "ui/public/design-system/components/shell-parts.mjs#sideColumn",
+      "kind": "showing",
+      "needs": [
+        "a conversation beside the page"
+      ],
+      "parts": [
+        "the grip",
+        "the head: title and Close",
+        "the body, the only scroller"
+      ],
+      "rules": [
+        "pushes above 1080px, covers to 761px, takes the window below",
+        "dragged between 360 and 680px and kept; fades in, closes at once; one at a time"
+      ],
+      "example": "Ask worca"
+    },
+    {
+      "name": "NavItem",
+      "code": "ui/public/design-system/components/shell-parts.mjs#navItem",
+      "kind": "acting",
+      "needs": [
+        "a place in the sidebar"
+      ],
+      "rules": [
+        "a place not in the prototype is off and says so in its tooltip"
+      ],
+      "example": "Runs, Chats, Schedules"
+    },
+    {
+      "name": "AccountButton",
+      "code": "ui/public/design-system/components/shell-parts.mjs#accountButton",
+      "kind": "acting",
+      "needs": [
+        "the sidebar's foot: who you are, the door to the profile menu"
+      ],
+      "rules": [
+        "its name for a screen reader says what the rings say"
+      ],
+      "example": "Emil Angelov ⇅"
+    },
+    {
+      "name": "UsageRing",
+      "code": "ui/public/design-system/components/usage.mjs#usageRing",
+      "kind": "telling",
+      "needs": [
+        "how much of a limit is used, around the avatar or beside a row"
+      ],
+      "notFor": "money: a budget is never a ring",
+      "rules": [
+        "its tooltip is its holder's (`usageTip`)",
+        "used up: full and solid red"
+      ],
+      "example": "the rings around the avatar"
+    },
+    {
+      "name": "PanelFrame",
+      "code": "ui/public/design-system/components/shell-parts.mjs#panelFrame",
+      "kind": "showing",
+      "needs": [
+        "a panel under a top-bar button, over any page"
+      ],
+      "rules": [
+        "its head stays, its body scrolls",
+        "where it sits is the page's; closing is dismissOnOutside's"
+      ],
+      "example": "Pulse"
+    },
+    {
+      "name": "AccountItem",
+      "code": "ui/public/design-system/components/account-menu.mjs#accountItem",
+      "kind": "acting",
+      "needs": [
+        "a row of the profile menu"
+      ],
+      "parts": [
+        "icon or ring",
+        "words",
+        "value or hint",
+        "switch or chevron"
+      ],
+      "rules": [
+        "a side menu holds them in navFlyout"
+      ],
+      "example": "Interface mode, Expert ›"
+    },
+    {
+      "name": "TopBarAction",
+      "code": "ui/public/design-system/components/shell-parts.mjs#topBarAction",
+      "kind": "acting",
+      "needs": [
+        "an action in the top bar whose words give way on a narrow screen"
+      ],
+      "example": "Pulse 3, New run"
+    },
+    {
+      "name": "AwayScreen",
+      "code": "ui/public/design-system/components/shell-parts.mjs#awayScreen",
+      "kind": "showing",
+      "needs": [
+        "the window while you are away"
+      ],
+      "parts": [
+        "the wordmark",
+        "one line on how runs stand"
+      ],
+      "rules": [
+        "Away, Keep awake, focused, 5 idle minutes (awayShows); off under reduced motion",
+        "any input hides it and does not reach the page"
+      ],
+      "example": "Worca · Everything is under control."
+    },
+    {
+      "name": "StatusLine",
+      "code": "ui/public/design-system/components/status-line.mjs#statusLine",
+      "kind": "showing",
+      "needs": [
+        "what is happening",
+        "the one next step of a state"
+      ],
+      "parts": [
+        "status dot",
+        "state word",
+        "detail line",
+        "action slot: Button primary with ▾ for alternatives",
+        "⋯ CompactMenu"
+      ],
+      "example": "Ready to merge · Merge PR ▾ ⋯",
+      "notFor": "a second primary; buttons for the page in the top bar"
+    },
+    {
+      "name": "Button",
+      "code": "ui/public/design-system/components/button.mjs#button",
+      "kind": "acting",
+      "needs": [
+        "an action with a label"
+      ],
+      "variants": [
+        "primary",
+        "default",
+        "quiet",
+        "danger (solid only inside a confirm)"
+      ],
+      "notFor": "going somewhere (Text link); on or off (Switch)"
+    },
+    {
+      "name": "CompactMenu",
+      "code": "ui/public/design-system/components/compact-menu.mjs#compactMenu",
+      "kind": "acting",
+      "needs": [
+        "supporting actions",
+        "the alternatives of a split button",
+        "the choices of a SentencePicker"
+      ],
+      "rules": [
+        "opened from ⋯ or ▾",
+        "danger last, after a rule"
+      ],
+      "example": "Terminal, Copy link, Archive"
+    },
+    {
+      "name": "ConfirmStrip",
+      "code": "ui/public/design-system/components/confirm-strip.mjs#confirmStrip",
+      "kind": "acting",
+      "needs": [
+        "a yes or no",
+        "a one-line answer"
+      ],
+      "place": "under the top bar, in place",
+      "rules": [
+        "for a step that changes what other people see (a PR, a branch, a merge, a comment) or cannot be taken back; never for spending alone",
+        "opens on the safe choice",
+        "names what goes",
+        "a provider at or past the warning line: a step that starts agent work adds the limit note in one line"
+      ],
+      "example": "Merge #959 into dev?",
+      "notFor": "a step that needs fields (Dialog); a step that can be undone (act, then Undo in a Toast)"
+    },
+    {
+      "name": "ListSentence",
+      "code": "ui/public/design-system/components/list-parts.mjs#listSentence",
+      "kind": "choosing",
+      "needs": [
+        "what a list shows"
+      ],
+      "parts": [
+        "Showing [what]",
+        "from [where]",
+        "by [grouping]"
+      ],
+      "rules": [
+        "a word stays with its picker; a sentence breaks between its parts",
+        "each choice in its menu with its count",
+        "one for every list"
+      ],
+      "example": "Showing all from all projects by state"
+    },
+    {
+      "name": "GroupRow",
+      "code": "ui/public/design-system/components/list-parts.mjs#groupRow",
+      "kind": "showing",
+      "needs": [
+        "things that belong together, in a list"
+      ],
+      "parts": [
+        "mark",
+        "title",
+        "meta",
+        "count",
+        "⌄",
+        "members"
+      ],
+      "rules": [
+        "open while not finished; the person's ⌄ wins",
+        "a member that needs you raises it"
+      ],
+      "example": "Unified page navigation 2/3"
+    },
+    {
+      "name": "RoundRows",
+      "code": "ui/public/design-system/components/list-parts.mjs#roundRows",
+      "kind": "showing",
+      "needs": [
+        "a run's PR fix rounds"
+      ],
+      "rules": [
+        "stacked under its row",
+        "5, then +n earlier"
+      ],
+      "example": "Round 7 · merge dev in, 7 rounds"
+    },
+    {
+      "name": "ListState",
+      "code": "ui/public/design-system/components/list-parts.mjs#listState",
+      "kind": "telling",
+      "needs": [
+        "a list with no rows"
+      ],
+      "rules": [
+        "loading, offline, could not load, empty",
+        "Try again where it can"
+      ],
+      "example": "Loading runs…"
+    },
+    {
+      "name": "OriginMark",
+      "code": "ui/public/design-system/components/list-parts.mjs#originMark",
+      "kind": "showing",
+      "needs": [
+        "where a chat came from"
+      ],
+      "rules": [
+        "before its title",
+        "its name in the tooltip"
+      ],
+      "example": "Slack"
+    },
+    {
+      "name": "ChatKindIcon",
+      "code": "ui/public/design-system/components/list-parts.mjs#chatKindIcon",
+      "kind": "showing",
+      "needs": [
+        "what an idle chat did"
+      ],
+      "rules": [
+        "in the dot's place"
+      ],
+      "example": "Started a run"
+    },
+    {
+      "name": "SelectionBar",
+      "code": "ui/public/design-system/components/selection-bar.mjs#selectionBar",
+      "kind": "acting",
+      "needs": [
+        "acting on several rows of a list together"
+      ],
+      "parts": [
+        "how many are selected",
+        "each action with how many it applies to",
+        "Cancel"
+      ],
+      "place": "at the list's foot, while selecting",
+      "rules": [
+        "an action is disabled at 0 and says why in its tooltip",
+        "Cancel or Esc ends selecting",
+        "an action that can be taken back offers Undo in its Toast; one that cannot confirms in the strip",
+        "Select all joins the head: selectAllBox",
+        "only for a list whose rows a person can act on together"
+      ],
+      "example": "2 selected · Mark read 2 · Clear 2 · Cancel"
+    },
+    {
+      "name": "ShortcutsSheet",
+      "code": "ui/public/design-system/components/shortcuts.mjs#shortcutsSheet",
+      "kind": "showing",
+      "needs": [
+        "finding the keyboard shortcuts"
+      ],
+      "parts": [
+        "a section per place",
+        "a row: what it does, its keys",
+        "Close"
+      ],
+      "rules": [
+        "a Dialog with no form, opened with ?",
+        "drawn from the table, never written by hand",
+        "⌘ on a Mac, Ctrl elsewhere"
+      ],
+      "example": "Search or ask ⌘K"
+    },
+    {
+      "name": "Dialog",
+      "code": "ui/public/design-system/components/dialog.mjs#dialog",
+      "kind": "acting",
+      "needs": [
+        "a step that needs fields first"
+      ],
+      "parts": [
+        "head",
+        "the Stepper, in a stepped setup",
+        "body (the only scroller)",
+        "foot: status line and actions; Back in a stepped setup; only Close in a view"
+      ],
+      "example": "Create PR",
+      "notFor": "a yes or no (ConfirmStrip)"
+    },
+    {
+      "name": "Text link",
+      "code": "ui/public/design-system/components/text-link.mjs#textLink",
+      "kind": "acting",
+      "needs": [
+        "going to another page or place",
+        "a fact's detail"
+      ],
+      "example": "Changes +358 −144"
+    },
+    {
+      "name": "SentencePicker",
+      "code": "ui/public/design-system/components/settings-row.mjs#sentencePicker",
+      "kind": "choosing",
+      "needs": [
+        "a choice that changes a step",
+        "a setting with several values",
+        "what a list shows"
+      ],
+      "rules": [
+        "sits in the sentence it changes",
+        "opens a CompactMenu",
+        "on a page it takes effect at once; a failed change flips back and a Toast says why; in a Dialog it applies on submit"
+      ],
+      "example": "Send what needs you ▾ to desktop ▾; Showing unread ▾",
+      "notFor": "a full-width toggle; radio cards"
+    },
+    {
+      "name": "WordPicker",
+      "code": "ui/public/design-system/components/settings-row.mjs#wordPicker",
+      "kind": "choosing",
+      "needs": [
+        "a choice among a form's or a panel's words"
+      ],
+      "notFor": "a settings sentence (SentencePicker)",
+      "rules": [
+        "opens a CompactMenu under it"
+      ],
+      "example": "dev ▾ base branch, One PR ▾"
+    },
+    {
+      "name": "OptionList",
+      "code": "ui/public/design-system/components/option-list.mjs#optionList",
+      "kind": "choosing",
+      "needs": [
+        "answering Worca's question",
+        "a choice inside a confirm"
+      ],
+      "parts": [
+        "one row per answer",
+        "radio dot",
+        "Worca's pick marked Recommended",
+        "your own answer under it"
+      ],
+      "notFor": "any other single choice (SentencePicker or Segmented)"
+    },
+    {
+      "name": "Switch",
+      "code": "ui/public/design-system/components/settings-row.mjs#switchButton",
+      "kind": "choosing",
+      "needs": [
+        "a setting that is on or off"
+      ],
+      "rules": [
+        "takes effect at once, no confirm",
+        "a failed change flips back and a Toast says why"
+      ],
+      "example": "Watch on a PR"
+    },
+    {
+      "name": "Checkbox",
+      "code": "ui/public/design-system/components/checkbox.mjs#checkbox",
+      "kind": "choosing",
+      "needs": [
+        "picking items from a list",
+        "an opt-out",
+        "a consent"
+      ],
+      "example": "the checklist, No cap, Draft"
+    },
+    {
+      "name": "Segmented",
+      "code": "ui/public/design-system/components/segmented.mjs#segmented",
+      "kind": "choosing",
+      "needs": [
+        "two or three views of the same thing"
+      ],
+      "example": "Light and Dark; Summaries and Raw"
+    },
+    {
+      "name": "Tabs",
+      "code": "ui/public/design-system/components/tabs.mjs#tabs",
+      "kind": "choosing",
+      "needs": [
+        "sections of a page"
+      ],
+      "rules": [
+        "each tab is in the address",
+        "a count is a caption"
+      ],
+      "example": "Overview, Changes, Decisions"
+    },
+    {
+      "name": "Chip",
+      "code": "ui/public/design-system/components/chip.mjs#chip",
+      "kind": "showing",
+      "needs": [
+        "a short fact: a stage, a source, a slot to set up"
+      ],
+      "example": "Beta, Official, No API key; Running 4"
+    },
+    {
+      "name": "ListEditor",
+      "code": "ui/public/design-system/components/tag-group.mjs#listEditor",
+      "kind": "choosing",
+      "needs": [
+        "picking and adding names",
+        "one pick from a long list, or a new one (single pick)",
+        "context sent with a message (removable item)"
+      ],
+      "example": "labels and cost tags, groups"
+    },
+    {
+      "name": "CopyButton",
+      "code": "ui/public/design-system/components/copy-button.mjs#copyButton",
+      "kind": "acting",
+      "needs": [
+        "copying text"
+      ],
+      "rules": [
+        "a quiet 28px icon button",
+        "a tick for 1.2s, Copied in its tooltip and the live region",
+        "its width never changes"
+      ],
+      "example": "a branch, a command, an id"
+    },
+    {
+      "name": "WorkflowGraph",
+      "code": "ui/public/design-system/components/workflow-graph.mjs#workflowGraph",
+      "kind": "showing",
+      "needs": [
+        "a workflow at full size"
+      ],
+      "parts": [
+        "a lane per stage",
+        "a node per step in its status colour",
+        "gate pip",
+        "rounds",
+        "end result"
+      ],
+      "rules": [
+        "the view inside a Dialog without a form",
+        "a node opens its step's log drawer under the graph",
+        "wraps; never scrolls sideways"
+      ],
+      "example": "Open the graph"
+    },
+    {
+      "name": "LogLines",
+      "code": "ui/public/design-system/components/log-lines.mjs#logLines",
+      "kind": "showing",
+      "needs": [
+        "a step's or a run's log"
+      ],
+      "rules": [
+        "one line per entry: time, where from, words",
+        "a warning or an error in its colour",
+        "its filters are a sentence of SentencePickers above it"
+      ],
+      "example": "Activity's Logs"
+    },
+    {
+      "name": "Table",
+      "code": "ui/public/design-system/components/table.mjs#table",
+      "kind": "showing",
+      "needs": [
+        "the same figures across many rows"
+      ],
+      "rules": [
+        "divided rows, no box per row",
+        "tabular figures, the name first",
+        "on a narrow screen the least needed columns move to the row's detail"
+      ],
+      "example": "sessions, cost by step"
+    },
+    {
+      "name": "Field",
+      "code": "ui/public/design-system/components/field.mjs#field",
+      "kind": "entering",
+      "needs": [
+        "text or a number in a form"
+      ],
+      "rules": [
+        "32px",
+        "its error is a line under it"
+      ],
+      "example": "Branch, Budget"
+    },
+    {
+      "name": "SuggestionField",
+      "code": "ui/public/design-system/components/suggestion-field.mjs#suggestionField",
+      "kind": "entering",
+      "needs": [
+        "text Worca writes for you"
+      ],
+      "parts": [
+        "sparkle inside the field",
+        "Suggested chip",
+        "violet shimmer while it writes",
+        "grey line when it could not"
+      ],
+      "example": "PR title and description"
+    },
+    {
+      "name": "Stepper",
+      "code": "ui/public/design-system/components/stepper.mjs#stepper",
+      "kind": "showing",
+      "needs": [
+        "how far along, and its steps"
+      ],
+      "parts": [
+        "one segment per stage",
+        "StepRows of the open stage on the rail"
+      ],
+      "example": "Plan · Build · Review"
+    },
+    {
+      "name": "StepRow",
+      "code": "ui/public/design-system/components/stepper.mjs#stepRow",
+      "kind": "showing",
+      "needs": [
+        "a step of a stage"
+      ],
+      "parts": [
+        "mark on the rail",
+        "name",
+        "time",
+        "rounds",
+        "second line"
+      ],
+      "rules": [
+        "cells of its list's grid, so columns line up",
+        "in Activity also model, cost and its one action"
+      ],
+      "example": "Review implementation 37m 3"
+    },
+    {
+      "name": "LineRow",
+      "code": "ui/public/design-system/components/stepper.mjs#lineRow",
+      "kind": "showing",
+      "needs": [
+        "one line that opens its detail in place, or goes to it"
+      ],
+      "rules": [
+        "its detail opens under it, on the text edge"
+      ],
+      "example": "Did all 3 parts you asked"
+    },
+    {
+      "name": "FileRow",
+      "code": "ui/public/design-system/components/stepper.mjs#fileRow",
+      "kind": "showing",
+      "needs": [
+        "a changed file, opening its diff"
+      ],
+      "example": "app.js +12 −3"
+    },
+    {
+      "name": "StackedPrRow",
+      "code": "ui/public/design-system/components/stepper.mjs#stackedPrRow",
+      "kind": "showing",
+      "needs": [
+        "a PR of a stack in Create PR, opening its fields"
+      ],
+      "rules": [
+        "one already opened no longer opens"
+      ],
+      "example": "PR 1 · Add the rail"
+    },
+    {
+      "name": "Row",
+      "code": "ui/public/design-system/components/row.mjs#row",
+      "kind": "showing",
+      "needs": [
+        "any row on a Rail page"
+      ],
+      "parts": [
+        "rail",
+        "text",
+        "end",
+        "⋯"
+      ],
+      "rules": [
+        "every row is built on it",
+        "its list gives it one rail and one end",
+        "never used for a box per item"
+      ],
+      "example": "ListRow, StepRow, SettingsRow, Pulse rows"
+    },
+    {
+      "name": "PulseRow",
+      "code": "ui/public/design-system/components/row.mjs#pulseRow",
+      "kind": "showing",
+      "needs": [
+        "an update or a thing in Pulse"
+      ],
+      "rules": [
+        "the whole row is its target and tint",
+        "the state word never shortens; the meta wraps",
+        "built on row()",
+        "while selecting, its tick box sits on the rail"
+      ],
+      "example": "Plan asks 2 questions"
+    },
+    {
+      "name": "Figures",
+      "code": "ui/public/design-system/components/figures.mjs#figures",
+      "kind": "showing",
+      "needs": [
+        "time, cost, changes"
+      ],
+      "rules": [
+        "each opens its own detail",
+        "numbers only"
+      ],
+      "example": "Cost $84.10 of $120"
+    },
+    {
+      "name": "TagGroup",
+      "code": "ui/public/design-system/components/tag-group.mjs#tagGroup",
+      "kind": "showing",
+      "needs": [
+        "labels and cost tags"
+      ],
+      "rules": [
+        "one line, the rest in +N",
+        "one button opens the ListEditor"
+      ],
+      "example": "ui, team: web, +2"
+    },
+    {
+      "name": "ListRow",
+      "code": "ui/public/design-system/components/list.mjs#listRow",
+      "kind": "showing",
+      "needs": [
+        "a list of things"
+      ],
+      "parts": [
+        "state mark on the rail (dot, or tick box while selecting)",
+        "title line",
+        "meta line",
+        "time or figure at the right"
+      ],
+      "rules": [
+        "never a box per item",
+        "a record with fine-tuning of its own folds it under the row behind Customise (the `fold` option)",
+        "no `open` when the row already shows all it has: no click, no Dialog repeating it",
+        "its own actions in its ⋯ (the `menu` option: moreMenu): Remove, Revoke, Delete, Uninstall and Reject last, after one rule",
+        "rows split by space; grouped by something (status, day, section), a line where each group after the first starts, from the text edge, none between rows",
+        "the whole row opens its one target"
+      ],
+      "example": "runs, updates, files, decisions"
+    },
+    {
+      "name": "SettingsRow",
+      "code": "ui/public/design-system/components/settings-row.mjs#settingsRow",
+      "kind": "choosing",
+      "needs": [
+        "a setting in a settings tab"
+      ],
+      "parts": [
+        "name, and its ChangedDot (`changed`)",
+        "one sentence: words and SentencePickers, saying the current state",
+        "end: a Switch or one quiet button, then Customise (`fold`)",
+        "folded rows under the sentence (`detailRows`): a small label over each sentence",
+        "a List of records (`detail`) and one quiet foot action (`detailAction`) in the fold"
+      ],
+      "rules": [
+        "one left edge for every text and section line, one right edge for every action, the name, the sentence and the end on one baseline: the component's, never the page's",
+        "takes effect at once; only a reset of many rows confirms, in the strip",
+        "under 560px of width it stacks (docs/rail/narrow.md)",
+        "`fold.label` names a fold that holds a list instead of fine-tuning (Paired browsers)"
+      ],
+      "example": "Badge · The tab title counts what needs you ▾"
+    },
+    {
+      "name": "ChangedDot",
+      "code": "ui/public/design-system/components/settings-row.mjs#changedDot",
+      "kind": "telling",
+      "needs": [
+        "a settings row off its default or its group"
+      ],
+      "parts": [
+        "a tiny neutral dot right after the name",
+        "tooltip: Changed, then a line per value with its default"
+      ],
+      "rules": [
+        "one per row however many values; a fold's row shows it for anything inside, and the exact row inside does too",
+        "no reset on a row: a section's reset stays in its head"
+      ],
+      "example": "Budget · with a tooltip: Total: default $1,000 a month"
+    },
+    {
+      "name": "SideMenu",
+      "code": "ui/public/design-system/components/side-menu.mjs#sideMenu",
+      "kind": "choosing",
+      "needs": [
+        "Settings' own sections"
+      ],
+      "parts": [
+        "‹ back to where you came from",
+        "group heads",
+        "items, the current one marked"
+      ],
+      "rules": [
+        "it takes the sidebar's place; the sidebar's content fades over change",
+        "on a narrow screen the page's first view, as a list (`list`): 44px rows with ›, a line where each group after the first starts"
+      ],
+      "example": "Settings: see docs/rail/settings.md"
+    },
+    {
+      "name": "Search",
+      "code": "ui/public/design-system/components/side-menu.mjs#search",
+      "kind": "choosing",
+      "needs": [
+        "finding anything"
+      ],
+      "parts": [
+        "the top bar's field: Search or ask",
+        "what it finds under it (searchResults), each with where it lives"
+      ],
+      "rules": [
+        "a pick lands on the thing (land): it comes into view and lights once"
+      ],
+      "example": "proxy → Proxy · Runs › Network"
+    },
+    {
+      "name": "Trail",
+      "code": "ui/public/design-system/components/navigation.mjs#trail",
+      "kind": "acting",
+      "needs": [
+        "one depth up: a thing to its place, a run to its group"
+      ],
+      "rules": [
+        "never names the page itself",
+        "the one way back on screen; on a narrow screen its parent alone, ‹ Parent"
+      ],
+      "example": "Runs › worca-cc › Unified page navigation"
+    },
+    {
+      "name": "Pager",
+      "code": "ui/public/design-system/components/navigation.mjs#pager",
+      "kind": "acting",
+      "needs": [
+        "sideways, to a sibling"
+      ],
+      "rules": [
+        "at the top bar's right",
+        "a sibling that cannot open yet is disabled and says why"
+      ],
+      "example": "‹ 2 of 3 ›"
+    },
+    {
+      "name": "BackLink",
+      "code": "ui/public/design-system/components/side-menu.mjs#backLink",
+      "kind": "acting",
+      "needs": [
+        "one step up, on a narrow screen"
+      ],
+      "example": "‹ Settings"
+    },
+    {
+      "name": "SettingsSection",
+      "code": "ui/public/design-system/components/settings-row.mjs#settingsSection",
+      "kind": "showing",
+      "needs": [
+        "a group of settings"
+      ],
+      "parts": [
+        "head",
+        "its one action at the head's right (a reset)",
+        "one meta line",
+        "SettingsRows"
+      ],
+      "rules": [
+        "the head's action ends on the rows' right edge",
+        "no title on a tab that is one list: the tab's title says it"
+      ],
+      "example": "What reaches you · Reset to defaults"
+    },
+    {
+      "name": "SettingsGroup",
+      "code": "ui/public/design-system/components/settings-row.mjs#settingsGroup",
+      "kind": "showing",
+      "needs": [
+        "rows of one kind inside a settings section"
+      ],
+      "parts": [
+        "a small head on the rows' edge",
+        "SettingsRows"
+      ],
+      "rules": [
+        "the same head a List's group has",
+        "a group of records is a List's group, not this"
+      ],
+      "example": "Beta, then Experimental, in Labs"
+    },
+    {
+      "name": "Scrollbar",
+      "code": "ui/public/design-system/components/scrollbars.mjs#watchScrollbars",
+      "kind": "showing",
+      "needs": [
+        "a part of a page that scrolls"
+      ],
+      "rules": [
+        "thin",
+        "appears as the mouse moves and while it scrolls, then goes",
+        "takes no room, so nothing shifts"
+      ],
+      "example": "a long menu, the page"
+    },
+    {
+      "name": "Tooltip",
+      "code": "ui/public/design-system/components/field.mjs#tooltip",
+      "kind": "showing",
+      "needs": [
+        "why a control is off",
+        "a cut-off text",
+        "an id"
+      ],
+      "example": "Checks are still running on #959"
+    },
+    {
+      "name": "Toast",
+      "code": "ui/public/design-system/components/toast.mjs#toast",
+      "kind": "telling",
+      "needs": [
+        "something done, nothing to answer",
+        "something broke that nothing handles"
+      ],
+      "rules": [
+        "title at most 6 words",
+        "never moves focus",
+        "Undo for a step that can be taken back (`toastUndo`)"
+      ],
+      "example": "PR merged; Something went wrong"
+    },
+    {
+      "name": "EmptyState",
+      "code": "ui/public/design-system/components/empty-state.mjs#emptyState",
+      "kind": "telling",
+      "needs": [
+        "nothing here",
+        "loading",
+        "could not load",
+        "a part of the page cannot be drawn"
+      ],
+      "rules": [
+        "one line on the text edge",
+        "loading: nothing for 300ms, then one line; never a spinner or skeleton",
+        "could not load: Could not load …, the reason, Nothing changed., Try again, Details",
+        "a part that cannot be drawn: Could not show …, Reload this part, Details",
+        "empty: its one sentence, and the way forward as one quiet action"
+      ],
+      "example": "No runs yet; Could not show the changes"
+    },
+    {
+      "name": "KindMark",
+      "code": "ui/public/design-system/components/kind-mark.mjs#kindMark",
+      "kind": "telling",
+      "needs": [
+        "what a row is and how it stands: type, state and progress in one mark"
+      ],
+      "rules": [
+        "list.kind-mark"
+      ]
+    },
+    {
+      "name": "GitMark",
+      "code": "ui/public/design-system/components/kind-mark.mjs#gitMark",
+      "kind": "telling",
+      "needs": [
+        "git's status at a row's end, and Watch as a ring around it"
+      ],
+      "rules": [
+        "list.one-end"
+      ]
+    },
+    {
+      "name": "Timeline",
+      "code": "ui/public/design-system/components/kind-mark.mjs#timeline",
+      "kind": "showing",
+      "needs": [
+        "moving through a long conversation or a thing's stages"
+      ],
+      "rules": [
+        "panel.timeline"
+      ]
+    },
+    {
+      "name": "TimelineCard",
+      "code": "ui/public/design-system/components/kind-mark.mjs#timelineCard",
+      "kind": "showing",
+      "needs": [
+        "what a timeline's tick holds, on hover"
+      ],
+      "rules": [
+        "panel.timeline"
+      ]
+    },
+    {
+      "name": "BarHead",
+      "code": "ui/public/design-system/components/kind-mark.mjs#barHead",
+      "kind": "moving",
+      "needs": [
+        "the head of the one bar: the house, its title, its one action"
+      ],
+      "rules": [
+        "nav.one-bar"
+      ]
+    },
+    {
+      "name": "TurnRow",
+      "code": "ui/public/design-system/components/kind-mark.mjs#turnRow",
+      "kind": "showing",
+      "needs": [
+        "what Worca did in a conversation, on the rail"
+      ],
+      "rules": [
+        "panel.conversation-rail"
+      ]
+    },
+    {
+      "name": "Composer",
+      "code": "ui/public/design-system/components/kind-mark.mjs#composer",
+      "kind": "entering",
+      "needs": [
+        "starting anything: Ask, Task or Schedule"
+      ],
+      "rules": [
+        "form.composer"
+      ]
+    },
+    {
+      "name": "StageBar",
+      "code": "ui/public/design-system/components/kind-mark.mjs#stageBar",
+      "kind": "telling",
+      "needs": [
+        "a thing's main stages on a card"
+      ],
+      "rules": [
+        "list.kind-mark"
+      ]
+    }
   ],
   "logic": [
-    { "name": "Closing what lies over a page", "code": "ui/public/design-system/components/dismiss.mjs#dismissOnOutside", "needs": ["a menu, picker, popover, flyout, panel, search result, editor or Dialog that closes on a click outside or Esc"], "example": "dismissOnOutside(document, { open, inside, close, paint, back })" },
-    { "name": "The sound of a new event", "code": "ui/public/design-system/components/sound.mjs#soundFor", "needs": ["whether a new event plays a chime: the choice, a burst, away hours"], "example": "soundFor({ choice, events, away, at, lastAt })" },
-    { "name": "The chime", "code": "ui/public/design-system/components/sound.mjs#playChime", "needs": ["two soft notes from Web Audio, silent where the browser blocks it"], "example": "playChime(window)" },
-    { "name": "A list page's behaviour", "code": "ui/public/design-system/components/list-page.mjs#listController", "needs": ["a list with its sentence, selecting, keys and states"], "example": "listController({ root, spec })" },
-    { "name": "A chat's state", "code": "ui/public/design-system/components/run-state.mjs#chatState", "needs": ["a chat's word, dot and section"], "example": "chatState('replying')" },
-    { "name": "States", "code": "ui/public/design-system/components/run-state.mjs#runState", "needs": ["a thing's state word, colour and one action", "where a state sorts in a list"], "example": "runState('paused'); sectionOf('Paused')" },
-    { "name": "Actions", "code": "ui/public/design-system/components/run-state.mjs#actionFlow", "needs": ["where an action leads", "what an action does, in one line"], "example": "actionFlow('approved')['Merge PR']; actionHelp('Merge PR')" },
-    { "name": "Step flow", "code": "ui/public/design-system/components/step-flow.mjs#stepFlow", "needs": ["a step that confirms, works, then moves on or fails"], "example": "stepFlow(hooks)(flow, 'Merge PR')" },
-    { "name": "Where the work goes", "code": "ui/public/design-system/components/work-place.mjs#workPlace", "needs": ["the phrase for where a run's work lands"], "example": "workPhrase({ branch, base, pr })" },
-    { "name": "Interface modes", "code": "ui/public/design-system/components/levels.mjs#atLevel", "needs": ["whether a part shows in a mode"], "example": "runPartShows('logs', mode)" },
-    { "name": "Selection", "code": "ui/public/design-system/components/selection.mjs#selectionAction", "needs": ["what a click, a long-press or a key means for a list's selection", "toggling, a range from the anchor, all, clear, a count"], "example": "selectApply(pick, selectionAction({ click: true, shiftKey: true }), { id, shown })" },
-    { "name": "Shortcuts", "code": "ui/public/design-system/components/shortcuts.mjs#shortcutAction", "needs": ["what a key does here", "⌘ or Ctrl in the words"], "example": "shortcutAction(keyFacts(e, rowSelector), { scopes: ['selecting', 'list', 'anywhere'], selecting })" }
+    {
+      "name": "Closing what lies over a page",
+      "code": "ui/public/design-system/components/dismiss.mjs#dismissOnOutside",
+      "needs": [
+        "a menu, picker, popover, flyout, panel, search result, editor or Dialog that closes on a click outside or Esc"
+      ],
+      "example": "dismissOnOutside(document, { open, inside, close, paint, back })"
+    },
+    {
+      "name": "The sound of a new event",
+      "code": "ui/public/design-system/components/sound.mjs#soundFor",
+      "needs": [
+        "whether a new event plays a chime: the choice, a burst, away hours"
+      ],
+      "example": "soundFor({ choice, events, away, at, lastAt })"
+    },
+    {
+      "name": "The chime",
+      "code": "ui/public/design-system/components/sound.mjs#playChime",
+      "needs": [
+        "two soft notes from Web Audio, silent where the browser blocks it"
+      ],
+      "example": "playChime(window)"
+    },
+    {
+      "name": "A list page's behaviour",
+      "code": "ui/public/design-system/components/list-page.mjs#listController",
+      "needs": [
+        "a list with its sentence, selecting, keys and states"
+      ],
+      "example": "listController({ root, spec })"
+    },
+    {
+      "name": "A chat's state",
+      "code": "ui/public/design-system/components/run-state.mjs#chatState",
+      "needs": [
+        "a chat's word, dot and section"
+      ],
+      "example": "chatState('replying')"
+    },
+    {
+      "name": "States",
+      "code": "ui/public/design-system/components/run-state.mjs#runState",
+      "needs": [
+        "a thing's state word, colour and one action",
+        "where a state sorts in a list"
+      ],
+      "example": "runState('paused'); sectionOf('Paused')"
+    },
+    {
+      "name": "Actions",
+      "code": "ui/public/design-system/components/run-state.mjs#actionFlow",
+      "needs": [
+        "where an action leads",
+        "what an action does, in one line"
+      ],
+      "example": "actionFlow('approved')['Merge PR']; actionHelp('Merge PR')"
+    },
+    {
+      "name": "Step flow",
+      "code": "ui/public/design-system/components/step-flow.mjs#stepFlow",
+      "needs": [
+        "a step that confirms, works, then moves on or fails"
+      ],
+      "example": "stepFlow(hooks)(flow, 'Merge PR')"
+    },
+    {
+      "name": "Where the work goes",
+      "code": "ui/public/design-system/components/work-place.mjs#workPlace",
+      "needs": [
+        "the phrase for where a run's work lands"
+      ],
+      "example": "workPhrase({ branch, base, pr })"
+    },
+    {
+      "name": "Interface modes",
+      "code": "ui/public/design-system/components/levels.mjs#atLevel",
+      "needs": [
+        "whether a part shows in a mode"
+      ],
+      "example": "runPartShows('logs', mode)"
+    },
+    {
+      "name": "Selection",
+      "code": "ui/public/design-system/components/selection.mjs#selectionAction",
+      "needs": [
+        "what a click, a long-press or a key means for a list's selection",
+        "toggling, a range from the anchor, all, clear, a count"
+      ],
+      "example": "selectApply(pick, selectionAction({ click: true, shiftKey: true }), { id, shown })"
+    },
+    {
+      "name": "Shortcuts",
+      "code": "ui/public/design-system/components/shortcuts.mjs#shortcutAction",
+      "needs": [
+        "what a key does here",
+        "⌘ or Ctrl in the words"
+      ],
+      "example": "shortcutAction(keyFacts(e, rowSelector), { scopes: ['selecting', 'list', 'anywhere'], selecting })"
+    },
+    {
+      "name": "markTone",
+      "code": "ui/public/design-system/components/kind-mark.mjs#markTone",
+      "kind": "telling",
+      "needs": [
+        "the tone a state wears in a KindMark, from what the library says about it"
+      ],
+      "rules": [
+        "list.kind-mark"
+      ]
+    }
   ],
   "telling": [
-    { "need": "something failed", "place": "where you acted: the strip, the dialog's alert, the field's error line, the suggestion's grey line; a Toast only when there is no such place" },
-    { "need": "the connection dropped", "place": "a quiet line at the end of the top bar, grey dot: Offline · retrying; then a Toast: Back online" }
+    {
+      "need": "something failed",
+      "place": "where you acted: the strip, the dialog's alert, the field's error line, the suggestion's grey line; a Toast only when there is no such place"
+    },
+    {
+      "need": "the connection dropped",
+      "place": "a quiet line at the end of the top bar, grey dot: Offline · retrying; then a Toast: Back online"
+    }
   ],
   "patterns": [
-    { "name": "A thing's page", "for": "any page about one thing with a state: a run, a group", "slots": ["top bar: trail; at its right nothing about the thing: the pager, the connection line, the shell's own search, Pulse and New run", "title", "metadata line: facts as phrases, then TagGroup; a fact that is also a setting is a SentencePicker in its phrase", "StatusLine with the action slot and ⋯ (empty slot when the state calls for no step)", "progress: Stepper and StepRows; questions as OptionList under their step", "Figures", "Tabs"] },
-    { "name": "A list page", "for": "Runs, Schedules", "slots": ["top bar: trail", "title row with the page's one action at its right (New schedule)", "A list"] },
-    { "name": "A list", "code": "ui/public/design-system/components/list.mjs#list", "for": "runs, updates, files, PRs", "slots": ["the sentence of what it shows (SentencePicker): Showing [what ▾] from [where ▾] by [grouping ▾], each choice with its count; the same in every list, never a filter button or View menu", "sections in a fixed order, empty sections not drawn, a line where each section after the first starts; a long section shows its newest rows, then Show N more opens the rest in place; never folded", "ListRows; a fact in a row is text, never a second link; the row's own actions in a ⋯ at its right end", "EmptyState when empty"] },
-    { "name": "A side column", "for": "Ask worca, a Feature chat", "slots": ["beside the page, opened from its top-bar button", "pushes the page above 1080px, covers its right side from 761 to 1080px, takes the window at 760px and below", "width dragged between 360 and 680px and kept", "opens with the fade, closes at once; one at a time"] },
-    { "name": "A conversation", "for": "Chat, a side column", "slots": ["the person's messages right, on --field", "Worca's text on the page", "its work as cards on a 760px column under the shared card head: run card, command group (a failure opens itself), graph well"] },
-    { "name": "A panel", "for": "Pulse, the profile menu", "slots": ["under its top-bar button, over any page", "head: Tabs with counts as captions, ⋯ at the right", "body that scrolls under a head that stays"] },
-    { "name": "A settings tab", "for": "every section of Settings", "slots": ["its title, one meta line saying what it decides", "SettingsSections, each a Heading (15/600) and its one head action", "SettingsRows: one per decision, its state in words, a Switch or one quiet button, then Customise; folded rows under it", "a record is a ListRow in a List after the rows, its actions in its ⋯; Change… opens a Dialog with Fields", "a reset or a step that cannot be taken back is the head's action and asks first in the ConfirmStrip"] },
-    { "name": "Navigation", "for": "moving through Worca", "slots": ["four depths: place (sidebar), thing (a row opens it as a full page), part (tabs), fact (a link, a search result, a Pulse row lands on it)", "the trail goes one depth up; the pager goes to a sibling; one way back on screen, the browser's back for where you came from", "a thing opens on its state, a part at its top, a fact lit once (land)", "the address holds place, thing, part and fact"] },
-    { "name": "Settings", "for": "how Worca behaves everywhere", "slots": ["opened from the profile menu only", "SideMenu in the sidebar's place: ‹ Back to Worca, then the groups in docs/rail/settings.md", "each section is A settings tab", "Search finds every row, folded row and record and lands on it"] },
-    { "name": "A form", "for": "New run, Create PR", "slots": ["Dialog", "the one framing sentence with SentencePickers", "Fields and SuggestionFields", "a problem note on the rail with an amber dot, its ways out as buttons", "foot: Cancel (quiet), then the start button naming what happens"] }
+    {
+      "name": "A thing's page",
+      "for": "any page about one thing with a state: a run, a group",
+      "slots": [
+        "top bar: trail; at its right nothing about the thing: the pager, the connection line, the shell's own search, Pulse and New run",
+        "title",
+        "metadata line: facts as phrases, then TagGroup; a fact that is also a setting is a SentencePicker in its phrase",
+        "StatusLine with the action slot and ⋯ (empty slot when the state calls for no step)",
+        "progress: Stepper and StepRows; questions as OptionList under their step",
+        "Figures",
+        "Tabs"
+      ]
+    },
+    {
+      "name": "A list page",
+      "for": "Runs, Schedules",
+      "slots": [
+        "top bar: trail",
+        "title row with the page's one action at its right (New schedule)",
+        "A list"
+      ]
+    },
+    {
+      "name": "A list",
+      "code": "ui/public/design-system/components/list.mjs#list",
+      "for": "runs, updates, files, PRs",
+      "slots": [
+        "the sentence of what it shows (SentencePicker): Showing [what ▾] from [where ▾] by [grouping ▾], each choice with its count; the same in every list, never a filter button or View menu",
+        "sections in a fixed order, empty sections not drawn, a line where each section after the first starts; a long section shows its newest rows, then Show N more opens the rest in place; never folded",
+        "ListRows; a fact in a row is text, never a second link; the row's own actions in a ⋯ at its right end",
+        "EmptyState when empty"
+      ]
+    },
+    {
+      "name": "A side column",
+      "for": "Ask worca, a Feature chat",
+      "slots": [
+        "beside the page, opened from its top-bar button",
+        "pushes the page above 1080px, covers its right side from 761 to 1080px, takes the window at 760px and below",
+        "width dragged between 360 and 680px and kept",
+        "opens with the fade, closes at once; one at a time"
+      ]
+    },
+    {
+      "name": "A conversation",
+      "for": "Chat, a side column",
+      "slots": [
+        "the person's messages right, on --field",
+        "Worca's text on the page",
+        "its work as cards on a 760px column under the shared card head: run card, command group (a failure opens itself), graph well"
+      ]
+    },
+    {
+      "name": "A panel",
+      "for": "Pulse, the profile menu",
+      "slots": [
+        "under its top-bar button, over any page",
+        "head: Tabs with counts as captions, ⋯ at the right",
+        "body that scrolls under a head that stays"
+      ]
+    },
+    {
+      "name": "A settings tab",
+      "for": "every section of Settings",
+      "slots": [
+        "its title, one meta line saying what it decides",
+        "SettingsSections, each a Heading (15/600) and its one head action",
+        "SettingsRows: one per decision, its state in words, a Switch or one quiet button, then Customise; folded rows under it",
+        "a record is a ListRow in a List after the rows, its actions in its ⋯; Change… opens a Dialog with Fields",
+        "a reset or a step that cannot be taken back is the head's action and asks first in the ConfirmStrip"
+      ]
+    },
+    {
+      "name": "Navigation",
+      "for": "moving through Worca",
+      "slots": [
+        "four depths: place (sidebar), thing (a row opens it as a full page), part (tabs), fact (a link, a search result, a Pulse row lands on it)",
+        "the trail goes one depth up; the pager goes to a sibling; one way back on screen, the browser's back for where you came from",
+        "a thing opens on its state, a part at its top, a fact lit once (land)",
+        "the address holds place, thing, part and fact"
+      ]
+    },
+    {
+      "name": "Settings",
+      "for": "how Worca behaves everywhere",
+      "slots": [
+        "opened from the profile menu only",
+        "SideMenu in the sidebar's place: ‹ Back to Worca, then the groups in docs/rail/settings.md",
+        "each section is A settings tab",
+        "Search finds every row, folded row and record and lands on it"
+      ]
+    },
+    {
+      "name": "A form",
+      "for": "New run, Create PR",
+      "slots": [
+        "Dialog",
+        "the one framing sentence with SentencePickers",
+        "Fields and SuggestionFields",
+        "a problem note on the rail with an amber dot, its ways out as buttons",
+        "foot: Cancel (quiet), then the start button naming what happens"
+      ]
+    }
   ],
   "actions": [
-    { "kind": "the one step the state calls for", "slot": "the action slot's main; alternatives in its ▾; Stop or Cancel last, after a rule" },
-    { "kind": "supporting actions on the whole thing", "slot": "⋯ next to the action slot; tools, then Report, then Archive or Delete after a rule" },
-    { "kind": "actions on one section", "slot": "that section's head, at its right" },
-    { "kind": "a fact's detail", "slot": "the fact itself, as a Figure or Text link; ⋯ only when no fact names it" },
-    { "kind": "a yes or no, or a one-line answer", "slot": "ConfirmStrip under the top bar" },
-    { "kind": "a step that needs fields", "slot": "Dialog" },
-    { "kind": "a choice that changes a step", "slot": "SentencePicker in the sentence it changes" },
-    { "kind": "a row's own detail (the ask's parts, a diff, a step's rounds)", "slot": "opens in place under the row, › right when closed and down when open; a problem opens by itself, once (a failing test, a failed command in Chat with its output), and stays folded once the person folds it; a fact with a home elsewhere links there instead; sections never collapse" },
-    { "kind": "a list on a thing's page that is part of a step (checks, a plan)", "slot": "one line on its StepRow (a count and the names that matter); the whole list in Overview's first section, the state's focus (What broke, The plan)" },
-    { "kind": "a list about the thing as a whole (files, decisions, activity)", "slot": "its own tab, the count a caption on the tab; never also in the card" },
-    { "kind": "a thing's own setting (a schedule's times, a run's budget)", "slot": "the fact itself where the page shows it, as a SentencePicker; settings that must change together: a Dialog from ⋯ (Edit schedule…); where it belongs (its group): ⋯" },
-    { "kind": "how Worca behaves everywhere", "slot": "Settings; a thing's own settings are the thing's" },
-    { "kind": "a row's own actions", "slot": "a ⋯ at the row's right end" }
+    {
+      "kind": "the one step the state calls for",
+      "slot": "the action slot's main; alternatives in its ▾; Stop or Cancel last, after a rule"
+    },
+    {
+      "kind": "supporting actions on the whole thing",
+      "slot": "⋯ next to the action slot; tools, then Report, then Archive or Delete after a rule"
+    },
+    {
+      "kind": "actions on one section",
+      "slot": "that section's head, at its right"
+    },
+    {
+      "kind": "a fact's detail",
+      "slot": "the fact itself, as a Figure or Text link; ⋯ only when no fact names it"
+    },
+    {
+      "kind": "a yes or no, or a one-line answer",
+      "slot": "ConfirmStrip under the top bar"
+    },
+    {
+      "kind": "a step that needs fields",
+      "slot": "Dialog"
+    },
+    {
+      "kind": "a choice that changes a step",
+      "slot": "SentencePicker in the sentence it changes"
+    },
+    {
+      "kind": "a row's own detail (the ask's parts, a diff, a step's rounds)",
+      "slot": "opens in place under the row, › right when closed and down when open; a problem opens by itself, once (a failing test, a failed command in Chat with its output), and stays folded once the person folds it; a fact with a home elsewhere links there instead; sections never collapse"
+    },
+    {
+      "kind": "a list on a thing's page that is part of a step (checks, a plan)",
+      "slot": "one line on its StepRow (a count and the names that matter); the whole list in Overview's first section, the state's focus (What broke, The plan)"
+    },
+    {
+      "kind": "a list about the thing as a whole (files, decisions, activity)",
+      "slot": "its own tab, the count a caption on the tab; never also in the card"
+    },
+    {
+      "kind": "a thing's own setting (a schedule's times, a run's budget)",
+      "slot": "the fact itself where the page shows it, as a SentencePicker; settings that must change together: a Dialog from ⋯ (Edit schedule…); where it belongs (its group): ⋯"
+    },
+    {
+      "kind": "how Worca behaves everywhere",
+      "slot": "Settings; a thing's own settings are the thing's"
+    },
+    {
+      "kind": "a row's own actions",
+      "slot": "a ⋯ at the row's right end"
+    }
   ],
-  "motion": { "rule": "docs/rail/motion.md: motion shows what changed, never decorates; fade, never slide", "timings": { "--motion-quick": "150ms: appears, opens, goes", "--motion-change": "200ms: becomes something else", "--motion-flash": "1.2s: the one flash after a jump", "--ease": "cubic-bezier(.2, 0, 0, 1)" }, "never": ["page or tab transitions", "slides", "springs or bounces", "count-ups", "spinners", "skeleton shimmer", "motion without a state change"], "moments": ["a link or a search lands: the target comes into view and lights once over flash (land)", "the sidebar becomes another menu: its content fades over change, the page changes at once"], "reducedMotion": "every timing 0; breathing and shimmer still" }
+  "motion": {
+    "rule": "docs/rail/motion.md: motion shows what changed, never decorates; fade, never slide",
+    "timings": {
+      "--motion-quick": "150ms: appears, opens, goes",
+      "--motion-change": "200ms: becomes something else",
+      "--motion-flash": "1.2s: the one flash after a jump",
+      "--ease": "cubic-bezier(.2, 0, 0, 1)"
+    },
+    "never": [
+      "page or tab transitions",
+      "slides",
+      "springs or bounces",
+      "count-ups",
+      "spinners",
+      "skeleton shimmer",
+      "motion without a state change"
+    ],
+    "moments": [
+      "a link or a search lands: the target comes into view and lights once over flash (land)",
+      "the sidebar becomes another menu: its content fades over change, the page changes at once"
+    ],
+    "reducedMotion": "every timing 0; breathing and shimmer still"
+  }
 }

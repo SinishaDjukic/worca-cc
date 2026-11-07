@@ -41,7 +41,7 @@ for (const scheme of ['light', 'dark']) for (const w of [1280, 900, 760, 375]) {
       if (view !== 'settings' && !locked && document.querySelector('#side-rail').offsetParent && (!cur || cur.dataset.nav !== place)) out.push(['the sidebar does not mark the place', `${place} (marked: ${cur ? cur.dataset.nav : 'none'})`]);
       for (const s of document.querySelectorAll('#side-rail nav.nav button[data-nav] svg')) if (s.getAttribute('stroke-width') !== '1.8') out.push(['a sidebar icon not from the library', s.parentElement.dataset.nav]);
       if (view === 'settings' && document.querySelector('#side-rail').offsetParent && innerWidth > 1080 && !document.querySelector('#side-rail .side-menu')) out.push(['Settings without its menu', '']);
-      const shown = view === 'run' ? '#route-run' : view === 'settings' ? '#route-settings' : view === 'runs' ? '#route-runs' : '#route-today';
+      const shown = view === 'run' ? '#route-run' : view === 'settings' ? '#route-settings' : view === 'runs' ? '#route-runs' : view === 'chat' ? '#route-chat' : view === 'schedules' || view === 'schedule' ? '#route-schedule' : '#route-today';
       if (!document.querySelector(shown).textContent.trim()) out.push(['an empty page', '']);
       return out;
     }, r);
@@ -68,18 +68,19 @@ for (const scheme of ['light', 'dark']) for (const w of [1280, 900, 760, 375]) {
   await step('the profile menu opens', () => { document.body.click(); document.querySelector('[data-acct]')?.click(); }, () => !!document.querySelector('#app .acct-menu'));
   await step('the profile menu opens Settings', () => document.querySelector('#app [data-go="settings"]')?.click(), () => location.hash.startsWith('#settings') && !document.querySelector('#route-settings').hidden);
   if (w > 1080) {
-    await step('a Settings section opens', () => document.querySelector('#side-rail [data-sset="runs"]')?.click(), () => location.hash === '#settings/runs' && [...document.querySelectorAll('#route-settings .pz-title')].find((t) => t.offsetParent)?.textContent === 'Runs');
-    await step('Back to Worca gives the sidebar back', () => document.querySelector('#side-rail .side-back')?.click(), () => !document.querySelector('#side-rail .side-menu') && !!document.querySelector('#side-rail [data-nav="runs"]'));
+    await step('a Settings section opens', () => document.querySelector('#side-rail [data-sset="runs"]')?.click(), () => location.hash === '#settings/runs' && [...document.querySelectorAll('#route-settings .pz-title')].find((t) => t.offsetParent)?.textContent === 'Tasks');
+    await step('the house opens the places', () => document.querySelector('[data-bar-house]')?.click(), () => document.getElementById('side-rail').dataset.bar === 'home' && !!document.querySelector('#side-rail [data-nav="chat"]').offsetParent);
   }
-  // the Chats column: beside the conversation above 1080px, over it to 761px, the window below (panel.side-column)
+  // the one bar: Chat's list is in it; a row opens its conversation, and a task opens from its tree (nav.one-bar)
   await p.goto(`${URL_}#chat`); await p.waitForTimeout(120);
-  const cc = await p.evaluate(() => { const c = document.getElementById('chats-col').getBoundingClientRect(), m = document.querySelector('.main').getBoundingClientRect(); return { w: c.width, left: c.left, main: m.left, shown: !document.getElementById('chats-col').hidden }; });
-  if (!cc.shown || (w > 1080 ? cc.main < cc.left + cc.w - 1 : w > 760 ? cc.main > cc.left + 1 : cc.w !== w)) add('the Chats column is on the wrong tier', `${scheme}/${w}: ${JSON.stringify(cc)}`);
-  await step('a chat row opens its chat', () => document.querySelector('#chats-col [data-open="chat:c2"]')?.click(), () => location.hash === '#chat/c2' && (innerWidth <= 760 ? document.getElementById('chats-col').hidden : !!document.querySelector('#chats-col [data-row="chat:c2"].is-current')));
+  if (await p.evaluate(() => document.getElementById('side-rail').dataset.bar !== 'chat' || document.getElementById('bar-chat').hidden)) add('Chat\'s list is not in the bar', `${scheme}/${w}`);
+  await step('a chat row opens its chat', () => document.querySelector('#bar-chat [data-open="chat:c2"]')?.click(), () => location.hash === '#chat/c2' && !!document.querySelector('#route-chat .convo') && !!document.querySelector('#bar-chat [data-row="chat:c2"].is-current'));
+  await step('a task in the tree opens with its chat around it', () => document.querySelector('#bar-chat [data-open="task:t1"]')?.click(), () => location.hash === '#run/question' && document.getElementById('side-rail').dataset.bar === 'chat');
+  await step('asking from a task goes to its chat', () => { const t = document.querySelector('#task-dock [data-composer-t]'); t.value = 'Why?'; document.querySelector('[data-dock-send]').click(); }, () => location.hash === '#chat/c1');
   // the sidebar's width
   await p.goto(`${URL_}#runs`); await p.waitForTimeout(350);
   const sideW = await p.evaluate(() => Math.round(document.getElementById('side-rail').getBoundingClientRect().width));
-  if (w > 1080 ? sideW !== 224 : w > 760 ? sideW !== 60 : false) add('the sidebar has the wrong width', `${scheme}/${w}: ${sideW}`);
+  if (w > 760 && sideW !== 280) add('the sidebar has the wrong width', `${scheme}/${w}: ${sideW}`);
   if (w <= 760) {
     await step('the drawer opens', () => document.getElementById('mbar-menu').click(), () => document.body.classList.contains('nav-open') && getComputedStyle(document.getElementById('side-rail')).visibility === 'visible');
     await step('the drawer closes', () => document.getElementById('nav-scrim').click(), () => !document.body.classList.contains('nav-open') && getComputedStyle(document.getElementById('side-rail')).visibility === 'hidden');
@@ -93,7 +94,7 @@ for (const scheme of ['light', 'dark']) for (const w of [1280, 900, 760, 375]) {
   await p.evaluate(() => RailUI.prefs.setMode('simple'));
   await p.evaluate(() => { location.hash = 'schedules'; }); await p.waitForTimeout(100);
   if (await p.evaluate(() => !document.querySelector('[data-nav="schedules"]').hidden)) add('the sidebar ignores the mode', `${scheme}/${w}`);
-  await step('a place above the mode unlocks', () => document.querySelector('#route-today [data-unlock]')?.click(), () => RailUI.prefs.mode() === 'advanced' && !document.querySelector('#route-today [data-unlock]'));
+  await step('a place above the mode unlocks', () => document.querySelector('#route-today [data-unlock]')?.click(), () => RailUI.prefs.mode() === 'expert' && !document.querySelector('#route-today [data-unlock]'));
   await p.close();
 }
 // What lies over a page closes on a click outside and on Esc, at 1280 and 375 (panel.dismiss). Each entry opens one; a new
@@ -105,7 +106,6 @@ for (const scheme of ['light', 'dark']) for (const w of [1280, 900, 760, 375]) {
     ['Pulse', 'runs', clicks('[data-pop]'), '.pz-popover'], ['Pulse on a run', 'run/ready', clicks('[data-pop]'), '.pz-popover'], ['Pulse on Settings', 'settings/general', clicks('[data-pop]'), '.pz-popover'],
     ['Pulse\'s sentence', 'runs', clicks('[data-pop]', '[data-menu="vitalsShow"]'), '.pz-popover .pz-menu'],
     ['the profile menu', 'runs', clicks('[data-acct]'), '#app .acct-menu'], ['Usage and costs', 'runs', clicks('[data-acct]', '[data-sub="usage"]'), '#app .pz-fly'],
-    ['New run', 'runs', clicks('[data-newrun]'), '.pz-newrun', '.viewer-modal'],
     ['the Runs sentence', 'runs', clicks('#runs-root [data-menu="show"]'), '#runs-root .pz-menu'], ['the list\'s ⋯', 'runs', clicks('#runs-root [data-menu="tools"]'), '#runs-root .rc-pop > .menu'],
     ['a run row\'s ⋯', 'runs', clicks('#runs-root [data-menu="row:run:r1"]'), '#runs-root .rc-pop > .menu'], ['Add to group', 'runs', clicks('#runs-root [data-menu="row:run:r1"]', '#runs-root [data-menu-pick="row:run:r1|add-to-group"]'), '#runs-root .list-pop'],
     ['the Chats sentence', 'chat', clicks('#chats-root [data-menu="from"]'), '#chats-root .pz-menu'], ['Rename a chat', 'chat', clicks('#chats-root [data-menu="row:chat:c5"]', '#chats-root [data-menu-pick="row:chat:c5|rename"]'), '#chats-root .viewer-modal', '.viewer-modal'],
@@ -134,8 +134,8 @@ for (const scheme of ['light', 'dark']) for (const w of [1280, 900, 760, 375]) {
     }
     // one click: the first closes and the second opens; a real control still acts
     await p.goto(`${URL_}#runs`); await p.reload(); await p.waitForTimeout(60);
-    await p.evaluate(() => document.querySelector('[data-pop]').click()); await p.evaluate(() => document.querySelector('[data-newrun]').click()); await p.waitForTimeout(30);
-    if (await up('.pz-popover')(p) || !(await up('.pz-newrun')(p))) add('Pulse then New run is not one click', `${w}`);
+    await p.evaluate(() => document.querySelector('[data-pop]').click()); await p.evaluate(() => document.querySelector('[data-acct]').click()); await p.waitForTimeout(30);
+    if (await up('.pz-popover')(p) || !(await up('#app .acct-menu')(p))) add('Pulse then the profile menu is not one click', `${w}`);
     await p.goto(`${URL_}#runs`); await p.reload(); await p.waitForTimeout(60);
     await p.evaluate(() => document.querySelector('#runs-root [data-menu="show"]').click()); await p.evaluate(() => document.querySelector('#runs-root [data-menu="by"]').click()); await p.waitForTimeout(30);
     if (await up('#runs-root [data-pick^="show|"]')(p) || !(await up('#runs-root [data-pick^="by|"]')(p))) add('one menu then another is not one click', `${w}`);
@@ -144,7 +144,7 @@ for (const scheme of ['light', 'dark']) for (const w of [1280, 900, 760, 375]) {
     await p.evaluate(() => document.querySelector('[data-pop]').click()); await p.evaluate(() => document.getElementById('topnav-title').click()); await p.waitForTimeout(30);
     if (!(await p.evaluate(() => document.activeElement?.matches('[data-pop]')))) add('the focus does not return to what opened it', `${w}: Pulse`);
     await p.goto(`${URL_}#chat`); await p.reload(); await p.waitForTimeout(60);
-    await p.evaluate(() => { document.querySelector('#chats-root [data-menu="row:chat:c5"]').click(); document.querySelector('#chats-root [data-menu-pick="row:chat:c5|rename"]').click(); });
+    await p.evaluate(() => { if (innerWidth <= 760) document.getElementById('mbar-menu').click(); document.querySelector('#chats-root [data-menu="row:chat:c5"]').click(); document.querySelector('#chats-root [data-menu-pick="row:chat:c5|rename"]').click(); });
     await p.fill('[data-dlg-name]', 'Typed'); await p.evaluate(() => document.querySelector('#chats-root .viewer-modal').click()); await p.keyboard.press('Escape'); await p.waitForTimeout(30);
     if (!(await up('#chats-root .viewer-modal')(p))) add('a Dialog lost what was typed', `${w}`);
     if (w <= 760) {

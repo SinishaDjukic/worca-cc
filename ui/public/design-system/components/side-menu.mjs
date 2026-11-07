@@ -1,6 +1,7 @@
 // SideMenu and Search (docs/rail/settings.md, docs/rail/components.md).
 import { attrs, esc } from './html.mjs';
 import { compactMenu } from './compact-menu.mjs';
+import { icon } from './icons.mjs';
 
 /**
  * SideMenu: a place's own menu in the sidebar (Settings): ‹ back to where you came from, then its sections under small
@@ -9,13 +10,13 @@ import { compactMenu } from './compact-menu.mjs';
  * @param {object} o
  * @param {string} o.label                     what it is (aria-label: "Settings")
  * @param {{label:string, icon?:string, attrs?:object}} [o.back]
- * @param {{title:string, items:{label:string, current?:boolean, attrs?:object}[]}[]} o.groups
+ * @param {{title:string, items:{label:string, icon?:string, current?:boolean, attrs?:object}[]}[]} o.groups
  * @param {boolean} [o.list]                   the narrow screen's list
  * @param {string} [o.chevron]                 the › SVG, for the list
  * @param {string} [o.cls]
  */
 export function sideMenu({ label, back = null, groups, list = false, chevron = '', cls = '' }) {
-  const item = (it) => `<button type="button" class="side-i"${attrs({ 'aria-current': it.current ? 'page' : null, ...(it.attrs || {}) })}><span class="side-l">${esc(it.label)}</span>${list ? chevron : ''}</button>`;
+  const item = (it) => `<button type="button" class="side-i"${attrs({ 'aria-current': it.current ? 'page' : null, ...(it.attrs || {}) })}>${it.icon ? icon(it.icon, 16, { cls: 'side-ic' }) : ''}<span class="side-l">${esc(it.label)}</span>${list ? chevron : ''}</button>`;
   const head = back ? `<button type="button" class="side-i side-back"${attrs(back.attrs || {})}>${back.icon || ''}<span class="side-l">${esc(back.label)}</span></button>` : '';
   return `<nav class="side-menu${list ? ' is-list' : ''}${cls ? ' ' + cls : ''}"${attrs({ 'aria-label': label })}>${head}${groups.map((g) => `<div class="side-group"><p class="side-g">${esc(g.title)}</p>${g.items.map(item).join('')}</div>`).join('')}</nav>`;
 }

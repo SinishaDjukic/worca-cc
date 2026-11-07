@@ -104,8 +104,9 @@ export function settingsGroup({ title, rows }) {
  * @param {string} o.rows      SettingsRow markup
  * @param {string} [o.action]  a quiet button at the head's right
  * @param {string} [o.meta]    one line under the head
+ * @param {string} [o.icon]    one small line icon before the head
  * @param {object} [o.attrs]
  */
-export function settingsSection({ title = '', rows, action = '', meta = '', attrs: a = {} }) {
-  return `<section class="set-sec"${attrs(a)}>${title || action ? `<div class="set-sec-head">${title ? `<h2 class="set-sec-h">${esc(title)}</h2>` : ''}${action}</div>` : ''}${meta ? `<p class="set-sec-meta">${esc(meta)}</p>` : ''}<div class="set-rows">${rows}</div></section>`;
+export function settingsSection({ title = '', rows, action = '', meta = '', icon: mark = '', attrs: a = {} }) {
+  return `<section class="set-sec"${attrs(a)}>${title || action ? `<div class="set-sec-head">${title ? `<h2 class="set-sec-h">${mark}${esc(title)}</h2>` : ''}${action}</div>` : ''}${meta ? `<p class="set-sec-meta">${esc(meta)}</p>` : ''}<div class="set-rows">${rows}</div></section>`;
 }
