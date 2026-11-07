@@ -8,7 +8,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { ASK_LIMITS } from '../src/core/ask/limits.mjs';
-import { createProposalValidator, isSyntacticRef, PROPOSAL_ERRORS, pickCardAttachments } from '../src/core/ask/proposal.mjs';
+import { createProposalValidator, isSyntacticRef, PROPOSAL_ERRORS, pickCardAttachments, cardEngineRefusal } from '../src/core/ask/proposal.mjs';
 import { GRAPH_SHAPE_WORKFLOW, GRAPH_SHAPE_UX_WORKFLOW } from '../src/core/graph/builtin-workflows.mjs';
 
 const dirA = mkdtempSync(join(tmpdir(), 'worca-ask-prop-a-'));
@@ -444,4 +444,13 @@ test('propose_run pr: validated into errors, carried on the card, slices dropped
   assert.deepEqual(ok(await validateProposal({ workspaceId: 'wks-team-0000abcd', brief: 'x', pr: { open: 'ready', slices: 'one' } })).pr, { open: 'ready' });
   assert.equal('pr' in ok(await validateProposal({ workspaceId: 'wks-team-0000abcd', brief: 'x', pr: { slices: 'one' } })), false);
   assert.equal('pr' in ok(await validateProposal({ noProject: true, brief: 'x', pr: { open: 'draft' } })), false);
+});
+
+test('cardEngineRefusal: a card start moved to Normal on a non-Claude engine is refused unless unguarded is allowed', () => {
+  const note = 'Guardrails: Normal, not Permissive';
+  assert.deepEqual(cardEngineRefusal(note, { engine: 'codex' }), { code: 'GUARDRAILS_CARD_ENGINE',
+    error: 'this run would start on the Normal guardrail set, which codex cannot enforce — start it from New run and pick a guardrail set' });
+  assert.equal(cardEngineRefusal(null, { engine: 'codex' }), null);
+  assert.equal(cardEngineRefusal(note, {}), null);
+  assert.equal(cardEngineRefusal(note, { engine: 'codex', allowUnguardedEngine: true }), null);
 });
