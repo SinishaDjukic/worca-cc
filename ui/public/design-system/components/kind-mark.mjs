@@ -175,25 +175,44 @@ export function composer({ value = '', placeholder, sentence, detail = '', tools
 }
 
 /**
- * TaskCard: a task or a schedule in a conversation, in the anatomy of its own page: title and place above, then the card
- * with the status line (its one action, ⋯) and its stages; what follows opens the page. `compact`: what has not started
- * or has no stages is the status line alone, its title for the word.
+ * CardHead: the one head every chat card has: its kicker (its mark and one word: Proposed, Running, Plan), its title, at most
+ * one line under it, and its facts (a branch, a place). TaskCard, TaskProposal, ChangeProposal and PlanCard all use it.
+ * @param {object} o
+ * @param {string} o.mark
+ * @param {string} o.kicker
+ * @param {string} [o.kickerHtml]   instead, markup (the plan's version picker inside it)
+ * @param {string} [o.title]        plain words; or titleHtml (TaskProposal's input)
+ * @param {string} [o.titleHtml]
+ * @param {string} [o.why]
+ * @param {string} [o.facts]        markup
+ * @param {string} [o.menu]         its ⋯, at the head's right
+ */
+export function cardHead({ mark, kicker, kickerHtml = '', title = '', titleHtml = '', why = '', facts = '', menu = '' }) {
+  return `<div class="rc-head"><p class="tp-kicker">${mark}<span>${kickerHtml || esc(kicker)}</span>${menu ? `<span class="tp-menu">${menu}</span>` : ''}</p>${titleHtml || `<h3 class="rc-heading tc-title"${attrs({ title })}>${esc(title)}</h3>`}${facts ? `<div class="rc-facts">${facts}</div>` : ''}${why ? `<p class="tp-why">${esc(why)}</p>` : ''}</div>`;
+}
+
+/**
+ * TaskCard: a task in a conversation, in every chat card's shape: its head (its mark and state word, its title, one line
+ * where it is, its branch), its stage bar, its one action and ⋯, then How it ran, which opens its whole stage stream in
+ * place (`stream`, when `open`). Compact (waiting, scheduled, a schedule): one line, its action at its end.
  * @param {object} o
  * @param {string} o.title
- * @param {string} [o.place]    the place line (markup)
+ * @param {string} [o.place]    its facts: the branch, into dev, git's icon (markup)
  * @param {string} o.mark       KindMark
  * @param {string} o.word       its state word
- * @param {string} [o.detail]   one line under the word
- * @param {string} [o.action]   its one action, then ⋯ (markup)
+ * @param {string} [o.detail]   one line under the title
+ * @param {string} [o.action]   its one action (markup)
+ * @param {string} [o.menu]     its ⋯ (markup), at its head's right
  * @param {string} [o.stages]   StageBar
- * @param {string} [o.foot]     under the card: the way to its page (markup)
+ * @param {string} [o.foot]     How it ran (markup)
+ * @param {string} [o.stream]   what How it ran opens (markup)
+ * @param {boolean} [o.open]
  * @param {boolean} [o.compact]
  * @param {object} [o.attrs]
  */
-export function taskCard({ title, place = '', mark, word, detail = '', action = '', stages = '', foot = '', compact = false, attrs: a = {} }) {
-  const side = action ? `<div class="rc-side">${action}</div>` : '';
-  if (compact) return `<article class="task-card rc is-compact"${attrs(a)}><section class="rc-card"${attrs({ 'aria-label': title })}>${statusLine({ dot: mark, word: title, action: side, detail })}</section></article>`;
-  return `<article class="task-card rc"${attrs(a)}><div class="rc-head"><h3 class="rc-heading tc-title"${attrs({ title })}>${esc(title)}</h3>${place ? `<div class="rc-facts">${place}</div>` : ''}</div><section class="rc-card"${attrs({ 'aria-label': `${title}: ${word}` })}>${statusLine({ dot: mark, word, action: side, detail })}${stages ? `<div class="rc-zone"><div class="rc-span">${stages}</div></div>` : ''}</section>${foot ? `<div class="tc-foot">${foot}</div>` : ''}</article>`;
+export function taskCard({ title, place = '', mark, word, detail = '', action = '', menu = '', stages = '', foot = '', stream = '', open = false, compact = false, attrs: a = {} }) {
+  if (compact) return `<article class="task-card rc is-compact"${attrs(a)}>${turnRow({ mark, text: `<b>${esc(title)}</b> ${esc(detail)}`, end: action })}</article>`;
+  return `<article class="task-card rc${open ? ' is-open' : ''}"${attrs(a)}>${cardHead({ mark, kicker: word, title, why: detail, facts: place, menu })}<section class="rc-card tp-body"${attrs({ 'aria-label': `${title}: ${word}` })}>${stages}${action ? `<div class="tp-actions">${action}</div>` : ''}</section>${foot ? `<div class="tc-foot">${foot}</div>` : ''}${open && stream ? `<div class="tc-stream">${stream}</div>` : ''}</article>`;
 }
 
 /**
@@ -213,8 +232,7 @@ export function taskCard({ title, place = '', mark, word, detail = '', action = 
  */
 export function taskProposal({ title, why = '', sentence, more = '', open = false, nudge = '', hooks = {}, attrs: a = {} }) {
   const btn = (label, kind, h, extra = {}) => button({ label, kind, attrs: { ...extra, ...(h || {}) } });
-  return `<article class="task-card rc tp"${attrs(a)}><div class="rc-head"><p class="tp-kicker">${kindMark({ kind: 'task', tone: 'idle', size: 16 })}<span>Proposed</span></p>`
-    + `<input class="tp-title"${attrs({ value: title, 'aria-label': 'Task title', spellcheck: 'false', ...(hooks.title || {}) })}>${why ? `<p class="tp-why">${esc(why)}</p>` : ''}</div>`
+  return `<article class="task-card rc tp"${attrs(a)}>${cardHead({ mark: kindMark({ kind: 'task', tone: 'idle', size: 16 }), kicker: 'Proposed', titleHtml: `<input class="tp-title"${attrs({ value: title, 'aria-label': 'Task title', spellcheck: 'false', ...(hooks.title || {}) })}>`, why })}`
     + `<section class="rc-card tp-body"${attrs({ 'aria-label': `Proposed: ${title}` })}><p class="tp-sentence">${sentence}</p>${nudge ? `<p class="tp-nudge">${nudge}</p>` : ''}`
     + `<div class="tp-more">${btn(open ? 'Hide Customise' : 'Customise', 'quiet', hooks.more, { 'aria-expanded': String(!!open), title: 'Title, labels, branch, memory, guardrails and more' })}${open && more ? `<div class="composer-more">${more}</div>` : ''}</div>`
     + `<div class="tp-actions">${btn('Start', 'primary', hooks.start)}${btn('Not now', 'quiet', hooks.later)}</div></section></article>`;
@@ -240,7 +258,7 @@ export function changeProposal({ kind, title, why = '', rows = [], body = '', st
   if (state === 'applied') return turnRow({ mark: icon('check', 14), text: `<b>${esc(title)}</b> ${esc(rows.map((r) => `${r.name}: ${r.after}`).join(' · ') || kind)}`, end: btn('Revert', 'quiet', hooks.revert), attrs: a });
   if (state !== 'proposed') return turnRow({ mark: kindMark({ kind: 'chat', tone: state === 'failed' ? 'fail' : 'idle', size: 16 }), text: `${state === 'failed' ? 'Could not change' : 'Not changed'}: <b>${esc(title)}</b>`, attrs: a });
   const list = rows.length ? `<dl class="cp-rows">${rows.map((r) => `<div class="cp-row"><dt>${esc(r.name)}</dt><dd>${r.before && r.before !== '—' ? `<s>${esc(r.before)}</s><span aria-hidden="true">→</span>` : ''}<b>${esc(r.after)}</b></dd></div>`).join('')}</dl>` : '';
-  return `<article class="task-card rc cp"${attrs(a)}><div class="rc-head"><p class="tp-kicker">${icon('set-general', 14)}<span>Proposed change · ${esc(kind)}</span></p><h3 class="rc-heading tc-title">${esc(title)}</h3>${why ? `<p class="tp-why">${esc(why)}</p>` : ''}</div>`
+  return `<article class="task-card rc cp"${attrs(a)}>${cardHead({ mark: icon('set-general', 14), kicker: `Proposed change · ${kind}`, title, why })}`
     + `<section class="rc-card tp-body"${attrs({ 'aria-label': `Proposed change: ${title}` })}>${list}${body}<div class="tp-actions">${btn(apply, 'primary', hooks.apply)}${btn('Not now', 'quiet', hooks.decline)}</div></section></article>`;
 }
 
@@ -271,7 +289,7 @@ export function planCard({ title, summary = '', version, roles, open = false, ho
   const left = roles.filter((r) => !r.ok).length;
   const rows = roles.map((r) => turnRow({ mark: kindMark({ kind: 'chat', tone: r.ok ? 'ok' : 'ask', size: 16, keepType: false }), text: `<b>${esc(r.name)}</b> ${esc(r.note)}` })).join('');
   const reviewed = turnRow({ mark: icon(open ? 'chevron' : 'chevR', 14), text: `Reviewed by ${roles.length} roles${left ? ` · ${left} open` : ''}`, body: `<span class="plan-roles">${rows}</span>`, open, attrs: { 'data-fold-turn': '', ...(hooks.roles || {}) } }).replace('class="tr-body"', 'class="tr-body is-steps"');
-  return `<article class="task-card rc plan"${attrs(a)}><div class="rc-head"><p class="tp-kicker">${kindMark({ kind: 'task', tone: 'ask', size: 16 })}<span>Plan · ${version}</span></p><h3 class="rc-heading tc-title">${esc(title)}</h3>${summary ? `<p class="tp-why">${esc(summary)}</p>` : ''}</div>`
+  return `<article class="task-card rc plan"${attrs(a)}>${cardHead({ mark: kindMark({ kind: 'task', tone: 'ask', size: 16 }), kicker: 'Plan', kickerHtml: `Plan · ${version}`, title, why: summary })}`
     + `<section class="rc-card tp-body"${attrs({ 'aria-label': `Plan: ${title}` })}>${reviewed}<div class="tp-actions">${button({ label: 'Approve and build', kind: 'primary', attrs: hooks.approve || {} })}${button({ label: 'Ask for changes', kind: 'quiet', attrs: hooks.changes || {} })}${button({ label: 'Full plan', kind: 'quiet', attrs: hooks.full || {} })}</div></section></article>`;
 }
 

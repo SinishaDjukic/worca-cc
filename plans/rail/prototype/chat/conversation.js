@@ -109,7 +109,7 @@
     // Its one action and ⋯ are its state's own, as on its page; a question is answered under the card.
     const main = tone === 'ask' || !st.action ? '' : R.button({ label: st.action.label, kind: st.action.primary ? 'primary' : '', attrs: { 'data-card-act': t.id, title: tone === 'run' || tone === 'pause' ? null : 'Opens the task, where this happens' } });
     const more = cardMore(t, [...(st.action?.items || []).filter((w) => typeof w === 'string'), { id: 'open', text: 'Open task', help: 'Opens its page' }]);
-    return R.taskCard({ title: t.title, place: `<span class="rc-mid"><span class="rc-mid-a">${esc(t.branch || '')}</span></span><span>into dev</span>${gitOf(t)}`, mark: taskMark(t), word, detail: t.detail || '', action: main + more, stages: R.stageBar({ labels: STAGES, stage: t.stage, tone }), foot: R.button({ label: 'How it ran', kind: 'quiet', icon: R.icon('chevR', 12), attrs: { 'data-open-task': t.id, title: 'Opens this task' } }), attrs: { 'data-anchor': x.id } });
+    return R.taskCard({ title: t.title, place: `<span class="rc-mid"><span class="rc-mid-a">${esc(t.branch || '')}</span></span><span>into dev</span>${gitOf(t)}`, mark: taskMark(t), word, detail: t.detail || '', action: main, menu: more, stages: R.stageBar({ labels: STAGES, stage: t.stage, tone }), foot: R.button({ label: 'How it ran', kind: 'quiet', icon: R.icon('chevR', 12), attrs: { 'data-open-task': t.id, title: 'Opens this task' } }), attrs: { 'data-anchor': x.id } });
   }
 
   // ---- the timeline: what is worth finding, where it really is ----

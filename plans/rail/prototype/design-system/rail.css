@@ -1351,7 +1351,7 @@ canvas.dot-orb[data-orb]{border-radius:50%;outline:1px solid light-dark(var(--li
 
 /* TaskProposal: a proposed task in the running card's shape; quiet head, the composer's sentence, Start. */
 .tp .rc-head{gap:4px;}
-.tp-kicker{margin:0;display:flex;align-items:center;gap:8px;font-size:var(--fs-meta);font-weight:500;color:var(--ink-2);}
+.tp-kicker{margin:0;display:flex;align-items:center;gap:8px;min-height:24px;font-size:var(--fs-meta);font-weight:500;color:var(--ink-2);}
 .tp-title{display:block;width:100%;margin:2px 0 0;padding:2px 0;border:0;border-bottom:1px solid transparent;background:none;color:var(--ink);font:600 var(--fs-section)/var(--lh-title) var(--sans);letter-spacing:-.01em;}
 .tp-title:hover{border-bottom-color:var(--line-2);}
 .tp-title:focus-visible{outline:none;border-bottom-color:var(--ink);}
@@ -1388,3 +1388,8 @@ canvas.dot-orb[data-orb]{border-radius:50%;outline:1px solid light-dark(var(--li
 .you-quote{margin:0 0 6px;padding-left:8px;border-left:2px solid var(--line-2);color:var(--ink-2);font-size:var(--fs-meta);}
 .you-files{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;}
 .you-files .kind-chip{display:inline-flex;align-items:center;gap:4px;}
+
+/* TaskCard in the cards' shape: How it ran opens the stage stream under the card, on the same rail. */
+.task-card.is-compact > .turn-row{padding:10px 12px;border:1px solid var(--line);border-radius:var(--r-md);}
+.tc-stream{margin-top:12px;}
+.tp-menu{margin-left:auto;}
