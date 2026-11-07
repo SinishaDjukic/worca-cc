@@ -86,7 +86,7 @@
   const meter = () => { const c = chat(); if (!c) return ''; const pct = Math.min(96, 8 + turns().length * 3); return `<span class="composer-meter" title="This chat has used ${pct}% of its context (200k tokens); older turns are summarised past 90%">${pct}%</span>`; };
   const queueHtml = () => ((comp.queue || []).length ? `<div class="composer-queue">${comp.queue.map((q, k) => R.turnRow({ mark: R.icon('clock', 14), text: `<b>Queued</b> ${esc(q)}`, end: R.button({ label: 'Edit', kind: 'quiet', attrs: { 'data-q-edit': String(k) } }) + R.button({ label: `Remove ${q}`, kind: 'quiet', iconOnly: true, icon: R.icon('x', 12), attrs: { 'data-q-drop': String(k) } }) })).join('')}</div>` : '');
   // @ mentions: a task named in what you write becomes a chip that leads to its card
-  const mentionMenu = () => { if (menu !== 'cp-at') return ''; const q = (comp.text.match(/@([^@\s]*)$/) || [, ''])[1].toLowerCase(); const all = (window.RailChats?.data().chats || []).flatMap((c) => (c.tasks || []).filter((t) => t.case && t.title.toLowerCase().includes(q))).slice(0, 6); return `<div class="composer-at">${R.compactMenu({ label: 'Mention a task', items: all.length ? all.map((t) => ({ id: `cp-at|${t.case}|${t.title}`, text: t.title, mark: taskMark(t, 14) })) : [{ header: 'No task by that name' }] })}</div>`; };
+  const mentionMenu = () => { if (menu !== 'cp-mention') return ''; const q = (comp.text.match(/@([^@\s]*)$/) || [, ''])[1].toLowerCase(); const all = (window.RailChats?.data().chats || []).flatMap((c) => (c.tasks || []).filter((t) => t.case && t.title.toLowerCase().includes(q))).slice(0, 6); return `<div class="composer-at">${R.compactMenu({ label: 'Mention a task', items: all.length ? all.map((t) => ({ id: `cp-at|${t.case}|${t.title}`, text: t.title, mark: taskMark(t, 14) })) : [{ header: 'No task by that name' }] })}</div>`; };
   function composerHtml() {
     const plus = `<span class="rc-pop">${R.button({ label: 'Add', kind: 'quiet', iconOnly: true, icon: R.icon('plus', 15), attrs: { 'data-menu': 'cp-plus', 'aria-haspopup': 'menu', 'aria-expanded': String(menu === 'cp-plus') } })}${menu === 'cp-plus' ? R.compactMenu({ items: [{ id: 'cp-plus|Files', text: 'Files', help: 'Adds files for it to read' }, { id: 'cp-plus|md', text: 'Markdown or a .md file', help: 'Writes the task as Markdown' }, { id: 'cp-plus|Ticket', text: 'A ticket from a tracker', help: 'Starts from a ticket' }, { id: 'cp-plus|Reuse', text: 'Reuse last task', help: 'Fills in the words of your last task' }, { id: 'cp-plus|Shape', text: 'Shape it first', help: 'Worca asks and writes the requirements before it builds' }, { sep: true }, { header: 'Preset' }, ...['Hotfix', 'Docs only'].map((x) => ({ id: `cp-preset|${x}`, text: x, checked: comp.preset === x, help: 'Fills the sentence; Start says it is used' }))] }) : ''}</span>`;
     const words = comp.mode === 'schedule' ? 'Schedule' : 'Continue';
@@ -111,14 +111,17 @@
   const CTX = { base: 'dev', pr: '#1180', reset: '17:00', branch: 'feat/billing-csv-export', at: '14:00', value: '$40' };
   function cardAct(t, label) {
     if (!label) return;
-    const f = R.actionFlow(RM.stateOf(t.case), CTX)[label];
+    const ctx = { ...CTX, step: STAGES[t.stage] || 'the current step' }, live = R.runFlow(ctx), f = R.actionFlow(RM.stateOf(t.case), ctx)[label] || { Pause: live.pauseNow, Stop: live.stop }[label];
     if (!f) { say(label); return; }
     if (f.dialog) { t.confirm = { label, text: f.say || `${label} for ${t.title}`, flow: f }; paint(); return; }   // what its page asked in a dialog, asked here
     if (f.confirm) { t.confirm = { label, text: f.confirm, flow: f }; paint(); return; }
     doAct(t, label, f);
   }
   function doAct(t, label, f) {
-    if (f.to && RM.cases?.some?.((c) => c.id === f.to)) { t.case = f.to; t.detail = R.runState(RM.stateOf(f.to), CTX).word; }
+    if (f.to === 'paused-you' && !t.was) { t.was = t.case; t.wasDetail = t.detail; }   // Resume goes back to where it was
+    if (/^Resume/.test(label) && t.was) { t.case = t.was; t.detail = t.wasDetail; t.was = ''; }
+    else if (f.to && RM.cases?.some?.((c) => c.id === f.to)) { t.case = f.to; t.detail = R.runState(RM.stateOf(f.to), CTX).word; }
+    if (t.run) window.RailWorld?.move(t.run, t.case, t.detail);   // Tasks and Pulse read the same task
     window.RailChats.refresh(); paint(); say(f.say || label);
   }
   // The proposed task, at dev's run proposal's parity, in Rail's words: the composer's sentence (with when), the workflow
@@ -134,7 +137,9 @@
     if (!qs.length || open.length) return;
     const from = qs[0].shaper; if (l.some((y) => y.t === 'plan' && y.from === from)) return;
     const at = l.indexOf(qs[qs.length - 1]) + 1, k = Date.now().toString(36);
-    l.splice(at, 0, { t: 'notice', text: 'Requirements agreed' }, { t: 'plan', id: `pl${k}`, from, title: 'The plan', summary: qs.map((y) => y.answered).join(' · '), v: 1, versions: 1, roles: [{ name: 'Product', ok: true, note: 'Matches what was asked' }, { name: 'Security', ok: true, note: 'Nothing exposed' }, { name: 'UX', ok: false, note: 'Wants the column names checked' }] });
+    const p = l.find((y) => y.id === from), task = p?.title || 'The task';
+    l.splice(at, 0, { t: 'notice', text: 'Requirements agreed' }, { t: 'plan', id: `pl${k}`, from, title: task, summary: `Three steps, then one PR into dev. Decided: ${qs.map((y) => y.answered).join('; ')}.`, decided: qs.map((y) => [y.text, y.answered]),
+      steps: ['Write the change behind its tests', 'Check it against what you decided', 'Review it, then open one PR into dev'], tests: ['Unit tests for the new code', 'The existing suite stays green'], v: 1, versions: 1, roles: [{ name: 'Product', ok: true, note: 'Matches what was asked' }, { name: 'Security', ok: true, note: 'Nothing exposed' }, { name: 'UX', ok: false, note: 'Wants the column names checked' }] });
   }
   // One filled button on the screen (rail.one-action): only the newest card still asking keeps its primary; the rest go
   // quiet, so what waits on you is the loudest thing here.
@@ -205,11 +210,13 @@
       return R.taskCard({ title: x.title, mark: R.kindMark({ kind: 'feature', tone: halted ? 'pause' : 'run', stage: 1 }), word: halted ? 'Paused' : 'Running', detail: `${R.partsWord(parts)} tasks done, one after another`, stages: R.stageBar({ labels: STAGES, stage: 1, tone: halted ? 'pause' : 'run' }), rows, action: halted ? R.button({ label: 'Resume', kind: 'primary', attrs: { 'data-feat': `${x.id}|resume` } }) + R.button({ label: 'Re-plan the rest', kind: 'quiet', attrs: { 'data-feat': `${x.id}|replan` } }) : R.button({ label: 'Pause', kind: '', attrs: { 'data-feat': `${x.id}|pause` } }) + R.button({ label: 'Stop', kind: 'quiet', attrs: { 'data-feat': `${x.id}|stop` } }), menu: R.moreMenu({ id: `feat:${x.id}`, label: 'More for the feature', icon: R.icon('more', 16), open: menu === `feat:${x.id}`, items: ['Re-plan the rest', 'Cancel the rest', 'Ask before each run', 'Open the plan'] }), attrs: { 'data-anchor': x.id } });
     }
     if (x.t === 'plan') {
+      const list = (h, items, ordered) => items?.length ? `<h4>${esc(h)}</h4><${ordered ? 'ol' : 'ul'}>${items.map((w) => `<li>${esc(w)}</li>`).join('')}</${ordered ? 'ol' : 'ul'}>` : '';
+      const full = `<h4>What it does</h4><p class="tr-text">${esc(x.summary)}</p>${list('Decided', (x.decided || []).map(([q, a]) => `${q} ${a}`))}${list('Steps', x.steps || ['Build it behind its tests', 'Review it', 'Open one PR into dev'], true)}${list('How it is checked', x.tests || ['The existing suite stays green'])}`;
       const version = R.sentencePicker({ id: `pv-${x.id}`, text: `v${x.v} of ${x.versions}`, tip: 'Earlier versions of the plan', items: Array.from({ length: x.versions }, (_, k) => ({ id: String(k + 1), text: `v${k + 1}${k + 1 === x.versions ? ' (latest)' : ''}`, checked: k + 1 === x.v })), open: menu === `pv-${x.id}`, chevron: R.icon('chevron', 10) });
       if (x.approved) return R.turnRow({ mark: R.icon('check', 14), text: `<b>Plan approved</b> v${x.v}: building it` });
       const planMenu = R.moreMenu({ id: `plan:${x.id}`, label: 'More for the plan', icon: R.icon('more', 16), open: menu === `plan:${x.id}`, items: ['Fix all', 'Save to plans/', 'Open in the composer', 'Stop'] });
       const extra = R.turnRow({ mark: R.icon('check', 14), text: '<b>Shape check</b> passed · scope, risks and tests are covered' }) + R.turnRow({ mark: R.icon('list', 14), text: `<b>Perspectives</b> ${esc((x.persp || ['Product', 'Security', 'UX', 'Data', 'Performance']).join(', '))}`, end: R.button({ label: 'Update plan', kind: 'quiet', attrs: { 'data-say': 'The plan is drafted again for these perspectives' } }) });
-      return askChanges(x) ? R.planCard({ menu: planMenu, extra, title: x.title, summary: x.summary, version, roles: x.roles, open: !!x.open, hooks: { roles: { 'data-plan-roles': x.id }, approve: { 'data-plan-approve': x.id }, changes: { 'data-plan-changes': x.id }, full: { 'data-say': 'Opens the full plan' } }, attrs: { 'data-anchor': x.id } }) + askChanges(x) : R.planCard({ menu: planMenu, extra, title: x.title, summary: x.summary, version, roles: x.roles, open: !!x.open, hooks: { roles: { 'data-plan-roles': x.id }, approve: { 'data-plan-approve': x.id }, changes: { 'data-plan-changes': x.id }, full: { 'data-say': 'Opens the full plan' } }, attrs: { 'data-anchor': x.id } });
+      return askChanges(x) ? R.planCard({ menu: planMenu, extra, title: x.title, summary: x.summary, version, roles: x.roles, open: !!x.open, hooks: { roles: { 'data-plan-roles': x.id }, approve: { 'data-plan-approve': x.id }, changes: { 'data-plan-changes': x.id }, full: { 'data-plan-full': x.id } }, full, fullOpen: !!x.fullOpen, attrs: { 'data-anchor': x.id } }) + askChanges(x) : R.planCard({ menu: planMenu, extra, title: x.title, summary: x.summary, version, roles: x.roles, open: !!x.open, hooks: { roles: { 'data-plan-roles': x.id }, approve: { 'data-plan-approve': x.id }, changes: { 'data-plan-changes': x.id }, full: { 'data-plan-full': x.id } }, full, fullOpen: !!x.fullOpen, attrs: { 'data-anchor': x.id } });
     }
     if (x.t === 'filesgrid') return R.filesCard({ label: x.label || 'Files', files: x.files.map((f) => ({ ...f, view: { 'data-say': `Opens ${f.name}` }, download: { 'data-say': `Downloaded ${f.name}` } })) });
     if (x.t === 'words') return `<p class="convo-words">${x.html}</p>`;
@@ -245,8 +252,11 @@
     const st = stOf(t), tone = R.markTone(st), word = tone === 'ask' ? 'Asks you below' : st.word;
     if (tone === 'wait' && !x.open) return openCard(x, t);   // one line until opened in place
     // Its one action and ⋯ are its state's own, as on its page; a question is answered under the card.
-    const main = tone === 'ask' || !st.action ? '' : R.button({ label: st.action.label, kind: st.action.primary ? 'primary' : '', attrs: { 'data-card-act': t.id, title: tone === 'run' || tone === 'pause' ? null : 'Opens the task, where this happens' } });
-    const more = cardMore(t, [...(st.action?.items || []).filter((w) => typeof w === 'string'), { id: 'open', text: 'Open its page', help: 'The task page, while the card does not hold everything yet' }]);
+    // a live task with no step of its own to offer can always be paused or stopped from its card, as on dev's chat card
+    const live = tone === 'run' && !st.action;
+    const main = tone === 'ask' ? '' : st.action ? R.button({ label: st.action.label, kind: st.action.primary ? 'primary' : '', attrs: { 'data-card-act': `${t.id}|${st.action.label}` } })
+      : live ? R.button({ label: 'Pause', attrs: { 'data-card-act': `${t.id}|Pause`, title: 'Stops at once; Resume starts the current step again' } }) : '';
+    const more = cardMore(t, [...(st.action?.items || []).filter((w) => typeof w === 'string'), ...(live ? [{ id: 'Stop', text: 'Stop', danger: true, help: 'Asks first; the branch and changes stay' }] : []), { id: 'open', text: 'Open its page', help: 'The task page, while the card does not hold everything yet' }]);
     const confirm = t.confirm ? R.turnRow({ mark: R.kindMark({ kind: 'chat', tone: 'ask', size: 16 }), text: `<b>${esc(t.confirm.label)}?</b> ${esc(t.confirm.text)}`, end: R.button({ label: t.confirm.label, kind: /discard|delete|stop|remove/i.test(t.confirm.label) ? 'quiet' : 'primary', cls: /discard|delete|stop|remove/i.test(t.confirm.label) ? 'is-danger' : '', attrs: { 'data-card-yes': t.id } }) + R.button({ label: 'Cancel', kind: 'quiet', attrs: { 'data-card-no': t.id } }) }) : '';
     return R.taskCard({ title: t.title, place: `<span class="rc-mid"><span class="rc-mid-a">${esc(t.branch || '')}</span></span><span>into dev</span>${gitOf(t)}`, mark: taskMark(t), word, detail: t.detail || '', action: main, menu: more, stages: R.stageBar({ labels: STAGES, stage: t.stage, tone }), foot: R.button({ label: x.open ? 'Hide its stages' : 'Show its stages', kind: 'quiet', icon: R.icon(x.open ? 'chevron' : 'chevR', 12), attrs: { 'data-open-task': t.id, 'aria-expanded': String(!!x.open), title: x.open ? 'Folds its stages' : 'Opens its stages here, as its page has them' } }), open: !!x.open, stream: `<div class="tc-run-slot" data-run-slot="${esc(t.case)}"></div>`, attrs: { 'data-anchor': x.id } }) + confirm;
   }
@@ -390,7 +400,7 @@
     if (id.startsWith('shiphow-')) { const x = turns().find((y) => y.id === id.slice(8)); if (x) x.how = v; menu = ''; paint(); return; }
     if (id.startsWith('cpch-')) { const x = turns().find((y) => y.id === id.slice(5)); if (x) x.picked = v; menu = ''; paint(); return; }
     const sm = /^ship-(.+)-(\d+)$/.exec(id); if (sm) { const x = turns().find((y) => y.id === sm[1]); if (x) x.reqs[+sm[2]].v = v; menu = ''; paint(); return; }
-    if (id === 'cp-at') { const [cs, title] = v.split('|'); comp.refs = [...(comp.refs || []), { case: cs, title }]; comp.text = comp.text.replace(/@[^@\s]*$/, `@${title} `); menu = ''; paint(false); root.querySelector('[data-composer-t]')?.focus(); return; }
+    if (id === 'cp-mention') { const [cs, title] = v.split('|'); comp.refs = [...(comp.refs || []), { case: cs, title }]; comp.text = comp.text.replace(/@[^@\s]*$/, `@${title} `); menu = ''; paint(false); root.querySelector('[data-composer-t]')?.focus(); return; }
     if (id === 'cp-voice') { comp.handsFree = !comp.handsFree; menu = ''; paint(); say(comp.handsFree ? 'Hands-free: listening' : 'Hands-free off'); return; }
     if (id === 'starter-more') { const [k, ...rest] = v.split('|'); pickMenu(k, rest.join('|')); return; }   // More's items carry its id first
     if (id === 'starter') { arm(v); return; }
@@ -419,7 +429,7 @@
     const on = (q) => e.target.closest(q); let hit;
     if ((hit = on('[data-tick]'))) { goTo(hit.dataset.tick); return; }
     if ((hit = on('[data-menu-pick]'))) { const [id, ...r] = hit.dataset.menuPick.split('|'); if (id === 'tick') goTo(r.join('|')); else if (id.startsWith('card:')) { menu = ''; const t = taskOf(id.slice(5)), label = r.join('|'); if (t) { if (label === 'open' || !label) window.RailShell.openTaskPage(t.case, chatId, t.title); else cardAct(t, label); } } else pickMenu(id, r.join('|')); return; }
-    if ((hit = on('[data-card-act]'))) { const t = taskOf(hit.dataset.cardAct), tone = R.markTone(stOf(t)); if (tone === 'run') { t.was = t.case; t.wasDetail = t.detail; t.case = 'paused-you'; t.detail = 'Paused by you'; say('Paused'); } else if (tone === 'pause' && t.was) { t.case = t.was; t.detail = t.wasDetail; say('Resumed'); } else { cardAct(t, stOf(t).action?.label || ''); return; } window.RailChats.refresh(); refreshAll(); return; }
+    if ((hit = on('[data-card-act]'))) { const [id, ...l] = hit.dataset.cardAct.split('|'), t = taskOf(id); if (t) cardAct(t, l.join('|')); return; }   // the button's own label, never its tone: View PR opens the PR
     if ((hit = on('[data-card-yes], [data-card-no]'))) { const t = taskOf(hit.dataset.cardYes || hit.dataset.cardNo); if (t) { const c = t.confirm; t.confirm = null; if (hit.dataset.cardYes && c) doAct(t, c.label, c.flow); else paint(); } return; }
     if ((hit = on('[data-cp-unfile]'))) { e.preventDefault(); comp.files = comp.files.filter((f) => f !== hit.dataset.cpUnfile); paint(); return; }
     if ((hit = on('[data-menu]'))) { e.preventDefault(); menu = menu === hit.dataset.menu ? '' : hit.dataset.menu; paint(); return; }
@@ -430,6 +440,7 @@
     if (on('[data-cp-mic]')) { e.preventDefault(); say('Listening…'); return; }
     if ((hit = on('[data-cp-use]'))) { e.preventDefault(); comp.engine = hit.dataset.cpUse; comp.startAt = ''; paint(); return; }
     if ((hit = on('[data-cp-at]'))) { e.preventDefault(); comp.startAt = hit.dataset.cpAt; paint(); return; }
+    if (on('[data-plan-full]')) { const x = turns().find((y) => y.id === on('[data-plan-full]').dataset.planFull); if (x) { x.fullOpen = !x.fullOpen; paint(); } return; }
     if (on('[data-plan-roles]')) { const x = turns().find((y) => y.id === on('[data-plan-roles]').dataset.planRoles); if (x) { x.open = !x.open; paint(); } return; }
     if ((hit = on('[data-turn-toggle]'))) { const i = hit.closest('[data-fold-turn]').dataset.foldTurn, x = turns()[+i]; if (x.t === 'fail') { const k = `shut${i}`; if (opened.has(k)) opened.delete(k); else opened.add(k); } else { const n = +i; if (opened.has(n)) opened.delete(n); else opened.add(n); } paint(); return; }
     if ((hit = on('[data-answer]'))) { const [i, n] = hit.dataset.answer.split('|'); turns()[+i].pick = +n; paint(); return; }
@@ -504,7 +515,7 @@
   root.addEventListener('focusin', (e) => { const t = e.target.closest('[data-tick]'); if (t && t.dataset.tick !== hover) { hover = t.dataset.tick; paintTimelineHover(); } });
   root.addEventListener('contextmenu', (e) => { const p = e.target.closest('[data-pin]'); if (!p) return; e.preventDefault(); pins = pins.filter((w) => w !== p.dataset.pin); paint(); say(`Unpinned ${p.dataset.pin}`); });
   root.addEventListener('keydown', (e) => { const p = e.target.closest?.('[data-pin]'); if (p && (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10'))) { e.preventDefault(); pins = pins.filter((w) => w !== p.dataset.pin); paint(); say(`Unpinned ${p.dataset.pin}`); } });
-  root.addEventListener('input', (e) => { if (e.target.matches('[data-composer-t]')) { comp.text = e.target.value; size(e.target); const at = /@[^@\s]*$/.test(comp.text); if (at !== (menu === 'cp-at')) { menu = at ? 'cp-at' : ''; paint(); } } if (e.target.matches('[data-pp-brief]')) { const x = turns().find((y) => y.id === e.target.dataset.ppBrief); if (x) x.brief = e.target.value; } if (e.target.matches('[data-pp-feature]')) { const x = turns().find((y) => y.id === e.target.dataset.ppFeature); if (x) x.feature = e.target.value; } if (e.target.matches('[data-pp-title]')) { const x = turns().find((y) => y.id === e.target.dataset.ppTitle); if (x) x.title = e.target.value; } });
+  root.addEventListener('input', (e) => { if (e.target.matches('[data-composer-t]')) { comp.text = e.target.value; size(e.target); const at = /@[^@\s]*$/.test(comp.text); if (at !== (menu === 'cp-mention')) { menu = at ? 'cp-mention' : ''; paint(); } } if (e.target.matches('[data-pp-brief]')) { const x = turns().find((y) => y.id === e.target.dataset.ppBrief); if (x) x.brief = e.target.value; } if (e.target.matches('[data-pp-feature]')) { const x = turns().find((y) => y.id === e.target.dataset.ppFeature); if (x) x.feature = e.target.value; } if (e.target.matches('[data-pp-title]')) { const x = turns().find((y) => y.id === e.target.dataset.ppTitle); if (x) x.title = e.target.value; } });
   root.addEventListener('keydown', (e) => { if (e.target.matches('[data-composer-t]') && e.key === 'Enter' && !e.shiftKey && comp.mode === 'ask') { e.preventDefault(); send(); } });
   document.addEventListener('keydown', (e) => {
     if (side || opts.where || (e.key !== '[' && e.key !== ']') || root.hidden || e.target.matches?.('input, textarea, select')) return;
@@ -518,8 +529,11 @@
   const api = {
     paint,
     // Everything leads to its card in its chat: scroll to the card of a task (by its case or id) or a schedule, and flash it once
-    focus: ({ cs = '', id = '' }) => {
-      const x = turns().find((y) => ((y.t === 'task' || y.t === 'schedule') && (y.task === id || (cs && taskOf(y.task)?.case === cs))) || (cs && y.t === 'feature' && !y.split && y.slices.some((sl) => sl.case === cs)));   // a Shaper slice leads to its feature's card
+    focus: ({ cs = '', id = '', title = '' }) => {
+      const l = turns(), card = (y) => y.t === 'task' || y.t === 'schedule', feat = (y) => y.t === 'feature' && !y.split;
+      // by the task itself, then by its name (a feature, a slice inside one), and only then by a case, which many share
+      const x = l.find((y) => card(y) && id && y.task === id) || (title && (l.find((y) => card(y) && taskOf(y.task)?.title === title) || l.find((y) => feat(y) && (y.title === title || y.slices.some((sl) => sl.title === title)))))
+        || l.find((y) => card(y) && cs && taskOf(y.task)?.case === cs) || l.find((y) => feat(y) && cs && y.slices.some((sl) => sl.case === cs));   // a Shaper slice leads to its feature's card
       const el = x && root.querySelector(`[data-anchor="${x.id}"]`);
       if (!el) return false;
       el.scrollIntoView({ block: 'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
@@ -563,6 +577,7 @@
     mount: (el, opts) => (opts ? mount(el, false, opts) : mount(el, true)),
     refresh: refreshAll,
     dock,
+    chatOfTask: ({ run = '', title = '' }) => { const allOf = (x) => { const out = []; const walk = (y) => { out.push(y); (y.after || []).forEach(walk); }; (x.tasks || []).forEach(walk); return out; }; const c = data().chats.find((x) => allOf(x).some((t) => (run && t.run === run) || (title && t.title === title))); return c?.id || ''; },
     chatOfCase: (cs) => { const allOf = (x) => { const out = []; const walk = (y) => { out.push(y); (y.after || []).forEach(walk); }; (x.tasks || []).forEach(walk); return out; }; const c = data().chats.find((x) => allOf(x).some((t) => t.case === cs)); return c?.id || ''; },
     chatTitle: (id) => data().chats.find((x) => x.id === id)?.title || '',
   };

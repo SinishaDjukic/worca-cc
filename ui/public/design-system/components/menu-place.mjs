@@ -1,31 +1,60 @@
-// Menus keep inside the window (docs/rail/small-rules.md › Menus): a menu opens under what opened it, and above when there
-// is no room under it and more room above; taller than its room, it scrolls inside. A page draws its menus as it always did; one watcher places them all.
+// Menus keep inside what shows them (docs/rail/small-rules.md › Menus): a menu opens under what opened it, and above when
+// there is no room under it and more room above; it slides sideways to stay inside, and taller than its room it scrolls
+// inside. "Inside" is the window and every box around it that clips (a sidebar, a scrolling list). A page draws its menus
+// as it always did; one watcher places them all.
 const GAP = 6, EDGE = 8;
 const seen = new WeakSet();
 
 /**
- * Whether a menu opens above what opened it: only when it would leave the window below and has more room above.
+ * Whether a menu opens above what opened it: only when it would leave its room below and has more room above.
  * @param {{top:number, bottom:number}} anchor
  * @param {number} height  the menu's height
- * @param {number} vh      the window's height
+ * @param {number} vh      the bottom of the room (the window's height, or a clipping box's bottom)
+ * @param {number} [top]   the top of the room
  */
-export function menuUp(anchor, height, vh) {
-  const below = vh - EDGE - (anchor.bottom + GAP), above = anchor.top - GAP - EDGE;
+export function menuUp(anchor, height, vh, top = 0) {
+  const below = vh - EDGE - (anchor.bottom + GAP), above = anchor.top - GAP - EDGE - top;
   return height > below && above > below;
 }
 
-/** Places every pop-up menu in a document (a `.rc-pop > .menu`), now and whenever one opens. */
+/**
+ * How far a menu slides sideways to stay inside its room: 0 when it fits.
+ * @param {{left:number, right:number}} menu
+ * @param {{left:number, right:number}} room
+ */
+export function menuShift(menu, room) {
+  if (menu.right > room.right - EDGE) return Math.max(room.left + EDGE - menu.left, room.right - EDGE - menu.right);
+  if (menu.left < room.left + EDGE) return room.left + EDGE - menu.left;
+  return 0;
+}
+
+// the room a menu has: the window, cut by every ancestor that clips its overflow
+function roomOf(m, win) {
+  const r = { left: 0, top: 0, right: win.innerWidth, bottom: win.innerHeight };
+  for (let e = m.parentElement?.parentElement; e && e !== m.ownerDocument.body; e = e.parentElement) {
+    const cs = win.getComputedStyle(e);
+    if (!/(hidden|clip|auto|scroll)/.test(cs.overflowX + cs.overflowY)) continue;
+    const b = e.getBoundingClientRect();
+    r.left = Math.max(r.left, b.left); r.top = Math.max(r.top, b.top); r.right = Math.min(r.right, b.right); r.bottom = Math.min(r.bottom, b.bottom);
+  }
+  return r;
+}
+
+/** Places every pop-up menu in a document (any `.menu` that floats: a ⋯, a picker, a list's own), now and whenever one opens. */
 export function watchMenus(doc) {
   if (seen.has(doc)) return;
   seen.add(doc);
   const win = doc.defaultView;
   const place = () => {
-    for (const m of doc.querySelectorAll('.rc-pop > .menu:not([data-placed])')) {
+    for (const m of doc.querySelectorAll('.menu[role="menu"]:not([data-placed])')) {
       m.dataset.placed = '';
-      const a = m.parentElement.getBoundingClientRect(), h = m.getBoundingClientRect().height, vh = win.innerHeight;
-      const up = menuUp(a, h, vh), room = Math.floor(up ? a.top - GAP - EDGE : vh - EDGE - a.bottom - GAP);
-      if (up) m.classList.add('is-up');
-      if (h > room && room > 0) { m.style.maxHeight = `${room}px`; m.style.overflowY = 'auto'; }   // no room either way: it scrolls inside
+      if (win.getComputedStyle(m).position !== 'absolute') continue;   // a menu in the flow (a panel's own list) is not a pop-up
+      const a = m.parentElement.getBoundingClientRect(), room = roomOf(m, win), h = m.getBoundingClientRect().height;
+      const up = menuUp(a, h, room.bottom, room.top), space = Math.floor(up ? a.top - GAP - EDGE - room.top : room.bottom - EDGE - a.bottom - GAP);
+      if (up) { m.classList.add('is-up'); m.style.top = 'auto'; m.style.bottom = `calc(100% + ${GAP}px)`; }
+      if (h > space && space > 0) { m.style.maxHeight = `${space}px`; m.style.overflowY = 'auto'; }   // no room either way: it scrolls inside
+      const dx = menuShift(m.getBoundingClientRect(), room);
+      if (dx) m.style.translate = `${Math.round(dx)}px 0`;
     }
   };
   place();

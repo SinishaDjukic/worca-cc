@@ -5,12 +5,14 @@
     groups: [{ id: 't-bill', name: 'Billing export', total: 4 }, { id: 't-rel', name: 'Release 1.20', total: 2 }, { id: 't-ops', name: 'On call', total: 2 }],
     chats: [
       chat('c1', 'Billing CSV export', 'needs-you', 'started', 'billing-api', '14:32', 'today', { cost: 1.2, unread: true, labels: ['hotfix', 'billing'], tasks: [
-        { id: 't1', title: 'Add CSV export', case: 'question', stage: 2, git: 'open', watch: 'idle', branch: 'feat/billing-csv-export', detail: 'Review · step 2 of 3', after: [{ id: 't2', title: 'Invoices export', case: 'scheduled', stage: 0, branch: 'feat/invoices-export', detail: 'Starts after Add CSV export', endWord: 'after it' }] },
+        { id: 't1', run: 'r1', title: 'Add CSV export to billing', case: 'question', stage: 2, git: 'open', watch: 'idle', branch: 'feat/billing-csv-export', detail: 'Review · step 2 of 3', after: [{ id: 't2', title: 'Invoices export', case: 'scheduled', stage: 0, branch: 'feat/invoices-export', detail: 'Starts after Add CSV export', endWord: 'after it' }] },
         { id: 's1', kind: 'schedule', title: 'Nightly export check', time: '02:00', detail: 'Every day at 02:00 · Next in 11h' }] }),
+      chat('c16', 'Migrate the cron parser', 'idle', 'started', 'worca-cc', '13:40', 'today', { cost: 6.1, tasks: [{ id: 't16', run: 'r2', title: 'Migrate cron parser', case: 'gate', stage: 2, git: 'branch', branch: 'refactor/cron-parser', detail: 'Review gate' }] }),
+      chat('c17', 'Node 24', 'idle', 'started', 'web-app', '12:40', 'today', { cost: 4.2, labels: ['hotfix'], tasks: [{ id: 't17', run: 'r5', title: 'Update Node to 24', case: 'failed', stage: 1, git: 'branch', branch: 'chore/node-24', detail: 'Test step · 3 tests failed' }] }),
       chat('c2', 'Why did the build fail', 'replying', 'chat', 'web-app', '14:30', 'today', { cost: 0.4 }),
       chat('c3', 'Tidy the migrations', 'command', 'workflow', 'worca-cc', '14:12', 'today', { cost: 0.9, tasks: [{ id: 't3', kind: 'workflow', title: 'Tidy the migrations', case: 'working', stage: 1, git: 'branch', branch: 'chore/tidy-migrations', detail: 'Build · step 1 of 2' }] }),
-      chat('c4', 'Watch the nightly run', 'following', 'tracks', 'web-app', '13:58', 'today', { cost: 0.2, origin: { platform: 'slack' }, tasks: [{ id: 't4', title: 'Fix the flaky login', case: 'checks', stage: 3, git: 'fail', watch: 'fix', branch: 'fix/flaky-login', detail: 'Round 3 · Fixing 2 failed checks' }] }),
-      chat('c5', 'Plan the API rewrite', 'idle', 'workflow', 'worca-cc', '12:20', 'today', { cost: 2.4, pinned: true, tasks: [{ id: 'f5a', kind: 'feature', title: 'Trail in the top bar', case: 'ready', stage: 3, git: 'pass', branch: 'feat/trail', detail: 'Ready · Shaper slice 1 of 3' }, { id: 'f5b', kind: 'feature', title: 'Pager between runs', case: 'working', stage: 1, git: 'branch', branch: 'feat/pager', detail: 'Build · Shaper slice 2 of 3' }, { id: 'f5c', kind: 'feature', title: 'Deep links', case: 'scheduled', stage: 0, detail: 'Shaper slice 3 of 3 · after the pager', endWord: 'after it' }] }),
+      chat('c4', 'Track the flaky login fix', 'following', 'tracks', 'web-app', '13:58', 'today', { cost: 0.2, origin: { platform: 'slack' }, tasks: [{ id: 't4', run: 'r10', title: 'Fix flaky login test', case: 'checks', stage: 3, git: 'branch', branch: 'fix/flaky-login', detail: 'Round 3 · Fixing 2 failed checks' }] }),
+      chat('c5', 'Plan the API rewrite', 'idle', 'workflow', 'worca-cc', '12:20', 'today', { cost: 2.4, pinned: true, tasks: [{ id: 'f5a', run: 'm1', kind: 'feature', title: 'Trail in the top bar', case: 'ready', stage: 3, git: 'pass', branch: 'feat/trail', detail: 'Ready · Shaper slice 1 of 3' }, { id: 'f5b', run: 'm2', kind: 'feature', title: 'Pager between runs', case: 'working', stage: 1, git: 'branch', branch: 'feat/pager', detail: 'Build · Shaper slice 2 of 3' }, { id: 'f5c', run: 'm3', kind: 'feature', title: 'Deep links', case: 'scheduled', stage: 0, detail: 'Shaper slice 3 of 3 · after the pager', endWord: 'after it' }] }),
       chat('c6', 'Export columns', 'idle', 'chat', 'billing-api', '11:40', 'today', { cost: 0.5, group: 't-bill' }),
       chat('c7', 'Export email wording', 'idle', 'started', 'billing-api', '10:10', 'today', { cost: 1.1, group: 't-bill' }),
       chat('c8', 'Incident in the Telegram room', 'idle', 'chat', '', '09:15', 'today', { origin: { platform: 'telegram' } }),
@@ -26,9 +28,12 @@
   });
   // What waits on you and what is unread follow the Pulse case in view (shell/world.js), so Updates and the column agree.
   const QUIET = { replying: 'idle', command: 'idle', following: 'idle' };
+  // A chat's task that is also in Tasks and Pulse (its `run`) reads its name, state and line from there: one task, one truth.
+  const sync = (c) => { const walk = (t) => { const r = t.run && window.RailWorld.find(t.run); if (r) Object.assign(t, { title: r.title, case: r.case, detail: r.detail }); (t.after || []).forEach(walk); }; (c.tasks || []).forEach(walk); };
   const seed = () => {
     const d = base(), f = window.RailWorld.facts().chats;
     for (const c of d.chats) {
+      sync(c);
       c.unread = (f.unread || []).includes(c.id);
       c.state = (f.needs || []).includes(c.id) ? 'needs-you' : c.state === 'needs-you' ? 'idle' : f.quiet ? QUIET[c.state] || c.state : c.state;
     }
@@ -36,6 +41,7 @@
   };
   // A conversation's turns: what a person said, what Worca said, what it did. Work points at its task.
   const thread = (c) => {
+    if (c.fromTask) return (c.tasks || []).map((x, i) => ({ t: 'task', id: `b${i}`, task: x.id }));   // opened from Tasks or Pulse: its card, nothing made up
     if (c.id === 'c1') return [
       { t: 'you', id: 'a1', text: 'Add a CSV export to the billing page', when: '14:02' },
       { t: 'think', text: 'Thought for 8s' },
@@ -140,5 +146,5 @@
     if (['replying', 'command', 'following'].includes(c.state)) out.push({ t: 'working', text: window.RailUI.chatState(c.state).line, end: '12s' });
     return out;
   };
-  window.ChatsListModel = { thread, seed, DAYS: window.RailUI.DAY_SECTIONS.filter(([d]) => d !== 'upcoming') };
+  window.ChatsListModel = { thread, seed, sync, DAYS: window.RailUI.DAY_SECTIONS.filter(([d]) => d !== 'upcoming') };
 })();

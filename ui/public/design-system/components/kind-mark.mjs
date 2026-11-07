@@ -248,7 +248,7 @@ export function taskCard({ title, place = '', mark, word, detail = '', action = 
 export function taskProposal({ title, why = '', sentence, more = '', open = false, nudge = '', start = 'Start', kicker = 'Proposed task', extra = '', alts = null, hooks = {}, attrs: a = {} }) {
   const btn = (label, kind, h, extra = {}) => button({ label, kind, attrs: { ...extra, ...(h || {}) } });
   return `<article class="task-card rc tp"${attrs(a)}>${cardHead({ mark: kindMark({ kind: 'task', tone: 'idle', size: 16 }), kicker, titleHtml: `<span class="tp-title-w"><input class="tp-title"${attrs({ value: title, 'aria-label': 'Task title', spellcheck: 'false', ...(hooks.title || {}) })}><span class="tp-edit" aria-hidden="true">${icon('edit', 13)}</span></span>`, why })}`
-    + `<section class="rc-card tp-body"${attrs({ 'aria-label': `Proposed: ${title}` })}><p class="tp-sentence">${sentence}</p>${nudge ? `<p class="tp-nudge">${nudge}</p>` : ''}`
+    + `<section class="rc-card tp-body"${attrs({ 'aria-label': `Proposed: ${title}` })}><div class="tp-sentence">${sentence}</div>${nudge ? `<p class="tp-nudge">${nudge}</p>` : ''}`
     + `<div class="tp-more">${btn(open ? 'Hide Customise' : 'Customise', 'quiet', hooks.more, { 'aria-expanded': String(!!open), title: 'Title, labels, branch, memory, guardrails and more' })}${open && more ? `<div class="composer-more">${more}</div>` : ''}</div>`
     + `<div class="tp-actions">${alts ? splitButton({ main: { label: start, kind: 'primary', attrs: hooks.start || {} }, moreLabel: 'Other ways to start', chevron: icon('chevron', 12), open: alts.open, menuHtml: alts.menu, moreAttrs: alts.attrs || {} }) : btn(start, 'primary', hooks.start)}${btn('Not now', 'quiet', hooks.later)}${extra ? `<span class="tp-extra">${extra}</span>` : ''}</div></section></article>`;
 }
@@ -302,14 +302,16 @@ export function turnDivider({ text }) {
  * @param {string} [o.menu]           its ⋯ (Fix all, Save to plans/, Open in the composer, Stop)
  * @param {string} [o.extra]          lines above the review (the Shape check, Perspectives with Update plan)
  * @param {object} [o.hooks]          { roles, approve, changes, full }
+ * @param {string} [o.full]           the plan itself (markup: its sections), read before approving; Full plan folds it open here
+ * @param {boolean} [o.fullOpen]
  * @param {object} [o.attrs]
  */
-export function planCard({ title, summary = '', version, roles, open = false, menu = '', extra = '', hooks = {}, attrs: a = {} }) {
+export function planCard({ title, summary = '', version, roles, open = false, menu = '', extra = '', hooks = {}, full = '', fullOpen = false, attrs: a = {} }) {
   const left = roles.filter((r) => !r.ok).length;
   const rows = roles.map((r) => turnRow({ mark: kindMark({ kind: 'chat', tone: r.ok ? 'ok' : 'ask', size: 16, keepType: false }), text: `<b>${esc(r.name)}</b> ${esc(r.note)}` })).join('');
   const reviewed = turnRow({ mark: icon(open ? 'chevron' : 'chevR', 14), text: `Reviewed by ${roles.length} roles${left ? ` · ${left} open` : ''}`, body: `<span class="plan-roles">${rows}</span>`, open, attrs: { 'data-fold-turn': '', ...(hooks.roles || {}) } }).replace('class="tr-body"', 'class="tr-body is-steps"');
   return `<article class="task-card rc plan"${attrs(a)}>${cardHead({ mark: kindMark({ kind: 'task', tone: 'ask', size: 16 }), kicker: 'Plan', kickerHtml: `Plan · ${version}`, title, why: summary, menu })}`
-    + `<section class="rc-card tp-body"${attrs({ 'aria-label': `Plan: ${title}` })}>${extra}${reviewed}<div class="tp-actions">${button({ label: 'Approve and build', kind: 'primary', attrs: hooks.approve || {} })}${button({ label: 'Ask for changes', kind: 'quiet', attrs: hooks.changes || {} })}${button({ label: 'Full plan', kind: 'quiet', attrs: hooks.full || {} })}</div></section></article>`;
+    + `<section class="rc-card tp-body"${attrs({ 'aria-label': `Plan: ${title}` })}>${fullOpen && full ? `<div class="plan-full">${full}</div>` : ''}${extra}${reviewed}<div class="tp-actions">${button({ label: 'Approve and build', kind: 'primary', attrs: hooks.approve || {} })}${button({ label: 'Ask for changes', kind: 'quiet', attrs: hooks.changes || {} })}${full ? button({ label: fullOpen ? 'Hide the plan' : 'Full plan', kind: 'quiet', icon: icon(fullOpen ? 'chevron' : 'chevR', 12), attrs: { 'aria-expanded': String(fullOpen), ...(hooks.full || {}) } }) : ''}</div></section></article>`;
 }
 
 /**

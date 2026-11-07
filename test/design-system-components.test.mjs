@@ -827,6 +827,11 @@ test('Tooltip: watchTooltips draws a title; tipPlace keeps it inside the window'
   assert.equal(window.document.querySelector('.rail-tip')?.textContent, 'What it does');
   window.document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape' }));
   assert.equal(window.document.querySelector('.rail-tip'), null); assert.equal(a.getAttribute('title'), 'What it does');
+  // the trigger of an open menu shows no tooltip: it would cover the menu's first item
+  a.setAttribute('aria-expanded', 'true'); window.document.body.insertAdjacentHTML('beforeend', '<div role="menu"><button>One</button></div>');
+  a.dispatchEvent(new window.Event('pointerover', { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 220));
+  assert.equal(window.document.querySelector('.rail-tip'), null, 'no tooltip over an open menu');
   window.close();
 });
 
@@ -834,6 +839,8 @@ test('watchMenus: a menu with no room under it opens above; menuUp says when', (
   assert.equal(C.menuUp({ top: 700, bottom: 720 }, 200, 760), true, 'no room under, more above: up');
   assert.equal(C.menuUp({ top: 100, bottom: 120 }, 200, 760), false, 'room under: down');
   assert.equal(C.menuUp({ top: 80, bottom: 100 }, 900, 760), false, 'no room either way: down, where there is more');
+  assert.equal(C.menuShift({ left: 200, right: 420 }, { left: 0, right: 280 }), -148, 'past a sidebar\'s edge: it slides back inside');
+  assert.equal(C.menuShift({ left: 20, right: 200 }, { left: 0, right: 280 }), 0, 'inside: it stays');
   const { window } = new JSDOM('<body><span class="rc-pop"><button>+</button></span></body>', { pretendToBeVisual: true });
   C.watchMenus(window.document);
   window.document.querySelector('.rc-pop').insertAdjacentHTML('beforeend', '<div class="menu" role="menu"></div>');
@@ -845,6 +852,23 @@ test('menus keep one edge only for check marks: a switch item (the account menu)
   const lines = css.split('\n').filter((l) => l.includes('.menu:has(.menu-item:is([role="menuitemradio"]'));
   assert.ok(lines.length > 0);
   for (const l of lines) assert.match(l, /:not\(\.sw-item\)/, 'a switch never turns its menu into the check-mark grid');
+});
+
+test('taskProposal: a picker opened in its sentence keeps its menu beside it (a sentence is never a <p>, which a menu would close)', () => {
+  const pick = C.sentencePicker({ id: 'w', text: 'Default', items: [{ text: 'Lean' }], open: true });
+  const { window } = new JSDOM(`<body>${C.taskProposal({ title: 'A', sentence: `Task with ${pick} now` })}</body>`);
+  const menu = window.document.querySelector('.spick-menu');
+  assert.ok(menu.closest('.spick'), 'the menu stays in its picker');
+  assert.match(window.document.querySelector('.tp-sentence').textContent, /Task with Default[\s\S]*now/, 'the sentence stays whole');
+  window.close();
+});
+
+test('planCard: Full plan folds the plan itself open, to read before approving', () => {
+  const shut = C.planCard({ title: 'P', version: 'v1 of 1', roles: [], full: '<h4>Steps</h4>' });
+  assert.match(shut, /Full plan/); assert.doesNotMatch(shut, /plan-full/);
+  const open = C.planCard({ title: 'P', version: 'v1 of 1', roles: [], full: '<h4>Steps</h4>', fullOpen: true });
+  assert.match(open, /class="plan-full"><h4>Steps/); assert.match(open, /Hide the plan/); assert.match(open, /aria-expanded="true"/);
+  assert.doesNotMatch(C.planCard({ title: 'P', version: 'v1', roles: [] }), /Full plan/, 'no plan to show: no button');
 });
 
 test('the Rail stylesheets close every rule: one open brace would swallow all that follows', () => {

@@ -17,7 +17,9 @@
   const has = (need) => R.shows(need);
   const hint = (...k) => R.keyHint(k, R.isMac(window));
   // a chat whose task waits on you stays under Needs you, whatever the chat itself is doing (a member that needs you raises its group)
-  const asksInside = (c) => { const walk = (t) => (t.case && R.markTone(R.runState(window.RunCardModel.stateOf(t.case))) === 'ask') || (t.after || []).some(walk); return (c.tasks || []).some(walk); };
+  // a task that waits on you (a question, a gate, a failure, a pause, a cap) lifts its chat, as it counts in Pulse
+  const NEEDS_TONES = ['ask', 'act', 'fail', 'pause'];
+  const asksInside = (c) => { const walk = (t) => (t.case && t.case !== 'scheduled' && NEEDS_TONES.includes(R.markTone(R.runState(window.RunCardModel.stateOf(t.case))))) || (t.after || []).some(walk); return (c.tasks || []).some(walk); };
   const sectionOfChat = (c) => (asksInside(c) ? 'needs' : R.chatState(c.state).section);
   const busyOf = (c) => R.chatState(c.state).busy || '';
   const toneOf = (state) => (state === 'needs-you' ? 'ask' : state === 'idle' ? 'idle' : 'run');
@@ -175,7 +177,7 @@
   }
   function openChat(id) { const c = data.chats.find((x) => x.id === id); if (c) c.unread = false; window.RailShell.go(`chat/${id}`); }
   const goHome = () => { current = ''; window.RailShell.go('chat'); };
-  function newChat(title = 'New chat', project = '') { const id = `n${Date.now().toString(36)}`; data.chats.unshift({ id, title, state: 'idle', kind: 'chat', project, time: 'now', day: 'today', cost: null, pinned: false, archived: false, unread: false, group: '', origin: null, labels: [], tasks: [] }); ctl.paint(); return id; }
+  function newChat(title = 'New chat', project = '', o = {}) { const id = `n${Date.now().toString(36)}`; data.chats.unshift({ id, title, state: 'idle', kind: 'chat', project, time: 'now', day: 'today', cost: null, pinned: false, archived: false, unread: false, group: '', origin: null, labels: [], tasks: [], ...o }); ctl.paint(); return id; }
   // ---- the column ----
   bar.innerHTML = '<div id="chats-root"></div>';
   const root = bar.querySelector('#chats-root');

@@ -203,7 +203,7 @@
   function openThing(row) {
     const x = row._x;
     if (x.r) x.r.unread = false;
-    window.RailShell.openRun(`run/${x.g ? x.g.case : openCase(x.r)}`, x.g ? x.g.title : x.r.title);
+    window.RailShell.openRun(`run/${x.g ? x.g.case : openCase(x.r)}`, x.g ? x.g.title : x.r.title, x.g ? window.RailWorld.membersOf(x.g)[0]?.id : x.r.id);   // the task itself, so its own chat opens
   }
 
   ctl = R.listController({ root, spec: {

@@ -403,26 +403,27 @@
     runActive: () => !document.getElementById('route-run')?.hidden,
     go: (hash) => { if (location.hash.slice(1) === hash) route(); else location.hash = hash; },
     // a run opened from Pulse or the search carries its own title
-    openRun: (hash, title) => window.RailShell.openTask(hash.split('/')[1], '', title),   // Pulse and search: its card in its chat
+    openRun: (hash, title, run) => window.RailShell.openTask(hash.split('/')[1], '', title, run),   // Pulse and search: its card in its chat
     closeSearch: () => searchFold(false),
     connReset: () => { const sel = document.getElementById('conn'); if (sel) sel.value = 'ok'; conn = 'ok'; document.getElementById('rail-conn').innerHTML = ''; },
     closeDrawer: () => drawer(false),
     inView: { toggle: toggleInView, has: isInView, draw: () => drawInView() },
     // Everything leads to its card in its chat (plans/rail/chat-cards.md): a task's link opens its chat at its card; a task with no
     // chat gets one, named after it. The page stays as openTaskPage, only until the card holds everything it does.
-    openTask: (cs, chat, title) => {
+    openTask: (cs, chat, title, run) => {
       if (RM && title) RM.titles[cs] = title;
-      let cid = chat || window.RailConversation?.chatOfCase(cs) || '';   // the chat a row names wins: a case alone can be in several
+      const w = run && window.RailWorld?.find(run);
+      // the chat a row names wins; else the chat that holds this very task (by its run, else its name); a case alone is shared by many
+      let cid = chat || window.RailConversation?.chatOfTask({ run, title }) || (!title && !run ? window.RailConversation?.chatOfCase(cs) : '') || '';
       if (!cid && window.RailChats) {
-        cid = window.RailChats.newChat(title || RM?.titles?.[cs] || 'A task', '');
-        const c = window.RailChats.data().chats.find((x) => x.id === cid), st = RM?.stageOf?.(cs) || {};
-        if (c) { c.tasks = [{ id: `t-${cs}`, title: title || RM?.titles?.[cs] || 'A task', case: cs, stage: st.stage ?? 0, detail: st.label || '' }]; c.state = 'following'; }
+        const name = title || RM?.titles?.[cs] || 'A task', st = RM?.stageOf?.(cs) || {};
+        cid = window.RailChats.newChat(name, w?.project || '', { fromTask: true, tasks: [{ id: `t-${run || cs}`, run: run || '', title: name, case: cs, stage: st.stage ?? 0, detail: w?.detail || st.label || '', branch: '' }] });
         window.RailChats.refresh();
-        window.RailPulse?.say(`Opened in a new chat: ${title || RM?.titles?.[cs] || 'this task'}`);   // a chat that appears by itself says so
+        window.RailPulse?.say(`Opened in a new chat: ${name}`);   // a chat that appears by itself says so
       }
       if (!cid) { window.RailShell.openTaskPage(cs, chat, title); return; }
       window.RailShell.go(`chat/${cid}`);
-      requestAnimationFrame(() => requestAnimationFrame(() => window.RailConversation?.focus({ cs })));
+      requestAnimationFrame(() => requestAnimationFrame(() => window.RailConversation?.focus({ cs, title })));
     },
     // A card opened in place borrows the task page itself (#card), so every stage, part and control works as on the page.
     embedRun: (slot, cs) => {

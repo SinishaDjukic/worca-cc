@@ -286,6 +286,7 @@ export function listController({ root, spec }) {
       return;
     }
     if (s.confirm && e.key === 'Escape') { e.preventDefault(); s.confirm = null; paint(); return; }
+    if (doc.querySelector('[role="menu"]')) return;   // a menu open anywhere on the page owns the keys: typing in it never renames or archives a row
     const scopes = ['selecting', 'list', ...(spec.scopes || []), 'anywhere'];
     const act = shortcutAction(keyFacts(e, '[data-open]'), { scopes, selecting: s.pick.on, can: spec.can() });
     if (!act || act === 'search' || act === 'close') return;

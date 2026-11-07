@@ -47,4 +47,4 @@
   two soft notes generated in the browser (`playChime`), no audio file, and no error when the browser blocks it before
   the first click.
 
-**Menus.** A menu opens under what opened it, and above when there is no room under it and more room above, so it never runs out of the window (watchMenus places them all). A menu with any toggle keeps the toggle's room on every item, so its words start on one edge. While a menu is open over the page, nothing outside it shows a tooltip.
+**Menus.** A menu opens under what opened it, and above when there is no room under it and more room above; it slides sideways to stay inside, and scrolls inside when taller than its room. Its room is the window and every box around it that clips, such as a sidebar (watchMenus places them all). A menu with any toggle keeps the toggle's room on every item, so its words start on one edge. While a menu is open over the page, nothing outside it shows a tooltip.
