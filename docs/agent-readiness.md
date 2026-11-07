@@ -71,6 +71,13 @@ or above it, and a Worca run writes its own `CLAUDE.md` above the checkout. So i
 
 Claude Code's files are read from the project folder itself, so for Claude Code an uncommitted file is fine.
 
+## Folder projects
+
+A Folder project (a plain folder without git, or any project when git is not installed) runs on a copy of the
+folder, and Worca never runs git in it. Its check reads the files from disk: **Git repository** is skipped, and so
+are the checks that need git (committed, ignored, tracked names). Uncommitted instruction files count, since the copy
+holds them.
+
 ## Skipping a check
 
 Switch a check on in **Settings › Agent readiness** to skip it for this project. It stays in the report as

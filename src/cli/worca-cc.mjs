@@ -1274,9 +1274,10 @@ async function cmdReadiness(argv) {
   let dir = process.cwd();
   let name = null;
   let key = null;
+  let vcs = null;
   if (opts.project) {
     const found = (await listProjects()).find((p) => p.key === opts.project || p.name.toLowerCase() === opts.project.toLowerCase());
-    if (found) ({ path: dir, name, key } = found);
+    if (found) ({ path: dir, name, key, vcs } = found);
     else dir = resolve(opts.project);
   }
   if (!existsSync(dir) || !statSync(dir).isDirectory()) return err(`project not found: ${opts.project || dir} (not a registered project or an existing directory)`);
@@ -1285,7 +1286,11 @@ async function cmdReadiness(argv) {
 
   let base;
   try {
-    base = await evaluateReadiness({ dir, projectKey: key, ignore: readinessIgnore({ projectDir: dir, projectKey: key }), timeoutMs: 8000 });
+    // A registered Folder project runs on a copy of the folder: no git runs in it (an unregistered folder keeps git mode).
+    const { effectiveWorkMode } = await import('../core/project-kind.mjs');
+    const { gitState } = await import('../core/git-available.mjs');
+    const folder = vcs !== null && effectiveWorkMode(vcs, (await gitState()).available) === 'folder';
+    base = await evaluateReadiness({ dir, projectKey: key, ignore: readinessIgnore({ projectDir: dir, projectKey: key }), timeoutMs: 8000, folder });
   } catch (e) {
     return err(e?.message || String(e));
   }

@@ -11,6 +11,8 @@ import { INTERACTIVE_TIMEOUT_MS } from '../git-sync.mjs';
 import { engineLabel } from '../../shared/engine-switch.mjs';
 import { cache, getCachedOrEvaluate, readinessSummary, usageInputs } from './cache.mjs';
 import { readinessEnabled } from './evaluate.mjs';
+import { effectiveWorkMode } from '../project-kind.mjs';
+import { gitState } from '../git-available.mjs';
 
 const runEngineOf = (p) => resolveRunEngine({ projectDir: p.path, projectKey: p.key }).engine || 'claude';
 
@@ -20,8 +22,10 @@ const runEngineOf = (p) => resolveRunEngine({ projectDir: p.path, projectKey: p.
  */
 export async function getReadiness(p, { refresh = false } = {}) {
   try {
+    // A Folder project (vcs 'none', or no git installed) runs on a copy of the folder: no git runs in it.
+    const folder = effectiveWorkMode(p.vcs, (await gitState()).available) === 'folder';
     return await getCachedOrEvaluate({
-      dir: p.path, projectKey: p.key, timeoutMs: INTERACTIVE_TIMEOUT_MS, force: refresh,
+      dir: p.path, projectKey: p.key, timeoutMs: INTERACTIVE_TIMEOUT_MS, force: refresh, folder,
       ignore: readinessIgnore({ projectDir: p.path, projectKey: p.key }),
       usage: () => usageInputs({ projectKey: p.key, projectDir: p.path, runEngine: runEngineOf(p) }),
     });

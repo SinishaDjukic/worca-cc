@@ -28,9 +28,9 @@ function unknownReport() {
  * Evaluate agent readiness of `dir`. Always resolves with the base report
  * `{catalogVersion, checks, repository, engines, files, partial?}`; `files` are the tool-specific instruction files (used.mjs).
  */
-export async function evaluateReadiness({ dir, projectKey, ignore = [], timeoutMs = INTERACTIVE_TIMEOUT_MS } = {}) {
+export async function evaluateReadiness({ dir, projectKey, ignore = [], timeoutMs = INTERACTIVE_TIMEOUT_MS, folder = false } = {}) {
   try {
-    const facts = await collectFacts(dir, { timeoutMs });
+    const facts = await collectFacts(dir, { timeoutMs, folder });   // folder: a Folder project, no git in it
     if (facts.error) logError(projectKey, 'facts', facts.error);
     const { checks, repository, engines } = evaluateEngines(facts, { ignore });
     // `partial`: a timed-out or failed collection; the cache serves it but never keeps it.

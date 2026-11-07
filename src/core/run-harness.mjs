@@ -2899,6 +2899,7 @@ export class RunHarness extends EventEmitter {
     if (detached) await writeReadinessSnapshot({
       runRoot: this.runRoot, projectDir: primary.projectDir,
       projectKey: primary.projectKey, engine: this.claude.engine,
+      folder: this._memberWorkMode(primary.projectKey) === 'folder',   // a Folder member: no git in it
     });
     // P5: a Folder member's copy warnings land AFTER the minimal manifest, which replaces run.json (P1's order).
     for (const w of folderWarns) await this._recordRunWarning(w);

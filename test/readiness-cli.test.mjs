@@ -103,6 +103,17 @@ describe('worca readiness', () => {
     assert.equal(report.engines.codex.level, 'unused');
   });
 
+  it('a registered Folder project is checked without git: Git repository is skipped, not failed', async () => {
+    const dir = tmp();
+    writeFileSync(join(dir, 'CLAUDE.md'), '# c\n');
+    const add = await runCli(['add'], { cwd: dir });
+    assert.equal(add.code, 0, add.stderr);
+    const r = await runCli(['readiness', '--project', dir.split('/').pop(), '--json']);
+    const report = JSON.parse(r.stdout);
+    assert.equal(report.checks.find((c) => c.id === 'git.repo').status, 'skip');
+    assert.equal(report.engines.claude.level, 'ready');
+  });
+
   it('--engine judges only the named engine', async () => {
     const r = await runCli(['readiness', '--project', notReady, '--engine', 'codex']);
     assert.equal(r.code, 2, r.stderr);

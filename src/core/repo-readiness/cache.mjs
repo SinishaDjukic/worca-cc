@@ -21,8 +21,8 @@ export function _setEvaluateForTest(fn) { evaluate = fn || realEvaluate; }
 const entries = new Map();    // projectKey → {fingerprint, base, evaluatedAt, report}
 const inflight = new Map();   // projectKey → Promise<base>
 
-async function cacheKey(dir, ignore, timeoutMs) {
-  return `${await quickFingerprint(dir, { timeoutMs })}\n${dir}\n${[...ignore].sort().join(',')}`;
+async function cacheKey(dir, ignore, timeoutMs, folder) {
+  return `${await quickFingerprint(dir, { timeoutMs, folder })}\n${dir}\n${folder ? 'folder' : 'git'}\n${[...ignore].sort().join(',')}`;
 }
 
 // No usage given: judge the default run engine only.
@@ -67,19 +67,20 @@ export async function getCachedOrEvaluate({
   usage,
   timeoutMs = INTERACTIVE_TIMEOUT_MS,
   force = false,
+  folder = false,
 } = {}) {
   const previous = entries.get(projectKey)?.report ?? null;
   let pending = inflight.get(projectKey);
   if (!pending) {
     // Two small async git calls: a hit never runs the full fact collection.
-    const fingerprint = await cacheKey(dir, ignore, timeoutMs);
+    const fingerprint = await cacheKey(dir, ignore, timeoutMs, folder);
     pending = inflight.get(projectKey);   // another reader may have started one while this one awaited
     const hit = entries.get(projectKey);
     if (!pending && hit && !force && hit.fingerprint === fingerprint) {
       return finish(projectKey, hit.base, hit.evaluatedAt, usage, previous);
     }
     if (!pending) {
-      pending = evaluate({ dir, projectKey, ignore, timeoutMs })
+      pending = evaluate({ dir, projectKey, ignore, timeoutMs, folder })
         .then((base) => {
           const evaluatedAt = Date.now();
           // A partial fact collection must not pin a degraded report to a fingerprint.

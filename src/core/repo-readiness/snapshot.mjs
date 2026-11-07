@@ -14,13 +14,13 @@ const RANK = { ready: 0, partial: 1, 'not-ready': 2, unknown: 3 };
  * Best-effort: never throws, and records nothing when disabled or when evaluation yields no row
  * for `engine`. Resolves to the recorded snapshot, or null.
  */
-export async function writeReadinessSnapshot({ runRoot, projectDir, projectKey, engine, ignore } = {}) {
+export async function writeReadinessSnapshot({ runRoot, projectDir, projectKey, engine, ignore, folder = false } = {}) {
   try {
     const dir = projectDir && resolve(projectDir);
     if (!dir || !runRoot || !readinessEnabled()) return null;
     // The project's own ignore list, as the Projects chip applies it.
     const skip = ignore ?? readinessIgnore({ projectDir: dir, projectKey });
-    const base = await evaluateReadiness({ dir, projectKey, ignore: skip, timeoutMs: INTERACTIVE_TIMEOUT_MS });
+    const base = await evaluateReadiness({ dir, projectKey, ignore: skip, timeoutMs: INTERACTIVE_TIMEOUT_MS, folder });
     const tool = base?.engines?.[engine];
     if (!tool) return null;
     const level = [tool.level, base.repository.level].reduce((a, b) => (RANK[b] > RANK[a] ? b : a));
