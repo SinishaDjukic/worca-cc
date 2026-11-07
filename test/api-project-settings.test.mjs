@@ -148,3 +148,84 @@ test('pr.open / pr.slices: a PATCH round-trips; a bad value is a 400 naming the 
   const clear = await call('PATCH', url, { 'pr.open': null, 'pr.slices': null });
   assert.deepEqual(clear.body.effective['pr.open'], { value: 'none', source: 'default' });
 });
+
+// ── Run sharing (s1): the status route behind the runSharing Labs flag, and the switch's start check ──
+const withFlag = async (value, fn) => {
+  const prev = process.env.WORCA_FLAGS;
+  process.env.WORCA_FLAGS = value;
+  try { return await fn(); } finally { if (prev === undefined) delete process.env.WORCA_FLAGS; else process.env.WORCA_FLAGS = prev; }
+};
+
+test('runs-share: 404 with the flag off; the status names the worca-runs branch with it on', async () => {
+  await withFlag('-runSharing', async () => {
+    assert.equal((await call('GET', `/api/projects/${key}/runs-share`)).status, 404);
+  });
+  await withFlag('runSharing', async () => {
+    const r = await call('GET', `/api/projects/${key}/runs-share`);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.status.branch, 'worca-runs');
+    assert.equal(r.body.status.enabled, false);
+    assert.equal(r.body.status.flag, true);
+    assert.deepEqual([r.body.status.canStart, r.body.status.startError?.code], [false, 'NO_ORIGIN']);
+    assert.equal(r.body.status.hint, null);
+  });
+});
+
+test('runs.share: switching on a project with no origin is a 400 NO_ORIGIN and writes nothing', async () => {
+  const url = `/api/projects/${key}/settings`;
+  const r = await call('PATCH', url, { 'runs.share': true });
+  assert.equal(r.status, 400);
+  assert.equal(r.body.code, 'NO_ORIGIN');
+  assert.match(r.body.error, /origin/);
+  assert.deepEqual((await call('GET', url)).body.effective['runs.share'], { value: false, source: 'default' });
+  const bad = await call('PATCH', url, { 'runs.share': 'yes' });
+  assert.equal(bad.status, 400);
+  assert.equal(bad.body.error, 'runs.share must be true or false');
+  const off = await call('PATCH', url, { 'runs.share': false });
+  assert.equal(off.status, 200, 'switching off needs no origin');
+});
+
+test('runs-share status shows the protection hint after a rejected push, and a later success clears it', { skip: process.platform === 'win32' ? 'sh hooks' : false }, async () => {
+  const { makeOrigin, cloneAs, rejectAllPushes } = await import('./helpers/metrics-git.mjs');
+  const { shareHarness } = await import('./helpers/runs-share.mjs');
+  const { addProject } = await import('../src/core/projects.mjs');
+  const { projectKey } = await import('../src/core/store.mjs');
+  const { writeRunsSharePrefs } = await import('../src/core/config.mjs');
+  const { attachRunShare, flushProject, _testing } = await import('../src/core/runs-share/publish.mjs');
+  const { unlinkSync } = await import('node:fs');
+  const root = await mkdtemp(join(tmpdir(), 'worca-cc-runs-share-api-'));
+  const prevMock = process.env.WORCA_MOCK;
+  try {
+    await withFlag('runSharing', async () => {
+      const bare = makeOrigin(root, 'shared');
+      const dir = cloneAs(root, 'm', bare, 'shared');
+      await addProject({ name: 'shared', path: dir });
+      const k = projectKey(dir);
+      const on = await call('PATCH', `/api/projects/${k}/settings`, { 'runs.share': true });
+      assert.equal(on.status, 200, JSON.stringify(on.body));
+      rejectAllPushes(bare);
+      delete process.env.WORCA_MOCK;
+      const h = shareHarness({ projectDir: dir, projectKey: k, runId: 'c0ffee01' });
+      assert.ok(attachRunShare(h));
+      await flushProject(k);
+      const rej = (await call('GET', `/api/projects/${k}/runs-share`)).body.status;
+      assert.equal(rej.enabled, true);
+      assert.equal(rej.lastErrorCode, 'PUSH_REJECTED');
+      assert.match(rej.hint, /worca-runs/);
+      assert.match(rej.lastError, /hook declined/);
+      unlinkSync(join(bare, 'hooks', 'pre-receive'));
+      h.emitState({ totalCostUsd: 1 });
+      await flushProject(k);
+      const ok = (await call('GET', `/api/projects/${k}/runs-share`)).body.status;
+      assert.deepEqual([ok.lastErrorCode, ok.lastError, ok.hint], [null, null, null]);
+      assert.ok(ok.lastPushAt);
+      writeRunsSharePrefs(k, { lastError: 'fatal: no route', lastErrorCode: 'FETCH_FAILED', lastErrorAt: new Date().toISOString() });
+      const ff = (await call('GET', `/api/projects/${k}/runs-share`)).body.status;
+      assert.deepEqual([ff.lastErrorCode, ff.hint], ['FETCH_FAILED', null]);
+      _testing.reset();
+    });
+  } finally {
+    if (prevMock === undefined) delete process.env.WORCA_MOCK; else process.env.WORCA_MOCK = prevMock;
+    await rm(root, { recursive: true, force: true });
+  }
+});

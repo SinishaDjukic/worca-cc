@@ -1,0 +1,82 @@
+# Run sharing
+
+Run sharing lets teammates see each other's runs without a server. Like team memory and
+[team metrics](team-metrics.md), it uses a dedicated branch of the project's `origin`: **`worca-runs`**.
+
+This first slice is the write side only. With it on, Worca keeps a small record of each of your runs on the branch.
+Teammates do not see the records in History yet; that comes with the next slice.
+
+Run sharing is a Labs feature (flag `runSharing`, off by default). It stays in Labs until the branch is pruned
+automatically. With the flag off, nothing is pushed, the Settings card is hidden and
+`GET /api/projects/:key/runs-share` answers 404.
+
+## The switch
+
+Open a project's **Settings › Run sharing** and set **Share my runs** to On. The switch is:
+
+- **off by default**, and per developer and per project (it lives in this machine's Worca, not in the repository);
+- separate from team metrics' **Include my runs** switch: one does not turn on the other;
+- refused when the project cannot reach a `worca-runs` branch: git must be installed, the project must be a git
+  project (not a Folder project), and it must have an `origin` remote.
+
+Turning it **on** takes effect with the next run: a run that is already running when you switch it on is not shared.
+Turning it **off** stops pushes at the next flush. Records already pushed stay on the branch. A run that was still
+running keeps its last record (often `running`) and gets no more updates, so it shows as **stale**, the same as a run
+whose machine crashed.
+
+## What is stored
+
+One JSON file per run at `runs/<personKey>/<runId>.json`, at most 2048 bytes, with exactly these keys:
+
+| Key | What it holds |
+|---|---|
+| `v` | `1`, the record version |
+| `runId` | the run's 8-character id |
+| `personKey` | 16 hex characters that identify you (see below) |
+| `workflowId` | the workflow's id, or `null` |
+| `status` | `running`, `pausing`, `paused`, `done`, `error`, `stopped` or `interrupted` |
+| `phase` | the run's phase, or `null` |
+| `stage` | `plan`, `build`, `review`, `ready` or `null` |
+| `progress` | 0 to 1, or `null` |
+| `costUsd` | the run's cost so far |
+| `startedBy` | your git name (or the person who started the run), or `null` |
+| `startedAt` | when the run started |
+| `updatedAt` | when Worca wrote this record |
+| `finishedAt` | when the run ended (`done`, `error`, `stopped`, `interrupted`), else `null` |
+| `prUrl` | the run's pull request link (https, without query or login), or `null` |
+
+There is no prompt, title, branch name, file path, node label or log. The branch's first commit also adds a
+`README.md`; nothing else is ever written.
+
+While a run is active its record is pushed at most once every 30 seconds per project, only when something changed,
+and at once when the run ends. A run that changes nothing gets one keep-alive push every 10 minutes, so a record that
+stops changing for more than 20 minutes belongs to a run that is gone. A PR link found after the run ended adds one
+more push, but only for a run this machine already shared: older runs are never published. A failed push is tried
+again 30 seconds later, then after a wait that doubles up to 10 minutes, until it lands.
+
+### Your person key
+
+With team metrics' attribution set to **git user** (the default), `personKey` is a hash of your git email. Anyone who
+knows that email can compute the same hash. To stay anonymous, set the project's team-metrics attribution to **none**:
+`startedBy` is then `null`, the key is random for this machine, and the commits are authored by `Worca`.
+
+## Branch protection
+
+Worca pushes to `worca-runs` directly, without a pull request, and only as fast-forwards (never a force push). A
+repository whose rules protect every branch rejects those pushes. The card then shows "Push rejected · branch
+protection" with the fix: exempt `worca-runs` from branch protection in the repository rules.
+
+If your CI runs on every branch, exclude `worca-runs` from its branch triggers: each push is a commit there.
+
+## Stopping run sharing
+
+Each person switches **Share my runs** off for themselves. Deleting the branch
+(`git push origin --delete worca-runs`) clears every record, but each teammate whose 'Share my runs' is on recreates
+it on their next run: everyone must switch it off.
+
+## Known gaps
+
+- Workspace runs and runs without a project are not shared.
+- A push cut short when Worca shuts down (it waits up to 5 seconds) is lost; the record stays at its last pushed state
+  until the run resumes.
+- Anyone with push access to the repository can write into any path of the branch.

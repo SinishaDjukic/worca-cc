@@ -1,6 +1,7 @@
 import { renderInheritField, readDirtyFields, inheritedOf } from './inherit-field.mjs';
 import { renderEngineSection, utilityId } from './engine-settings-view.mjs';
 import { notify, cardAlert } from './feedback.mjs';
+import { renderRunsShareStatus } from './runs-share-status.mjs';
 import { ENGINE_NAMES } from '../../src/shared/engine-switch.mjs';
 import { PR_OPEN_LABELS, PR_SLICES_LABELS } from '../../src/shared/pr-auto.mjs';
 
@@ -32,6 +33,12 @@ export const PROJECT_CARDS = Object.freeze([
     options: [{ value: 'on', label: 'On' }, { value: 'off', label: 'Off' }],
     toValue: (value) => value === 'on', fromValue: (value) => (value ? 'on' : 'off'), format: (value) => (value ? 'On' : 'Off'),
     hint: 'Create PR opens with Watch PR on for this project. A workspace run needs it on in every repository.' }] },
+  // Run sharing (Labs): project layer only, per developer; the card hides with the flag (data-flag), its status line
+  // comes from GET /api/projects/:key/runs-share. "Share my runs" is not team metrics' "Include my runs" (D25).
+  { key: 'share', title: 'Run sharing', flag: 'runSharing', fields: [{ id: 'runs.share', label: 'Share my runs', kind: 'select',
+    options: [{ value: 'on', label: 'On' }, { value: 'off', label: 'Off' }],
+    toValue: (value) => value === 'on', fromValue: (value) => (value ? 'on' : 'off'), format: (value) => (value ? 'On' : 'Off'),
+    hint: 'Shares status, phase, cost, PR link and your git name on the worca-runs branch. No prompt or logs. Turning it off stops new pushes; records already pushed stay, and a running one shows as stale.' }] },
 ]);
 const JOBS = ['title', 'classifier', 'overview', 'prDescription', 'memoryDefrag'];
 // src/core/model-env.mjs HELPER_ENGINES (the browser cannot load /src/core): the sign-in engines' helper jobs run on Claude.
@@ -43,9 +50,17 @@ export function mountProjectSettings(host, { projectKey, projectDir, fetchFn = (
     current = data; host.replaceChildren(); const field = (id) => ({ own: data.own[id], inherited: inheritedOf(data.layers[id]) }); const roles = data.roles || [];
     const models = makeCard(doc, 'models', 'Engine and models'); const ids = ['run.engine']; for (const engine of ENGINE_NAMES) { for (const role of roles) ids.push(`models.${engine}.steps.${role.key}`); if (HELPER_ENGINES.includes(engine)) for (const job of JOBS) ids.push(utilityId(engine, job)); }
     renderEngineSection(models.body, { level: 'project', roles, catalog, fields: Object.fromEntries(ids.map((id) => [id, field(id)])), jobs: { claude: JOBS, codex: JOBS, cursor: [], goose: [], opencode: [] }, status: models.msg, onTest, notes: { claude: 'Claude step models set here apply to the Default workflow; other workflows keep their own node picks.' } }); host.append(models.card);
-    for (const spec of PROJECT_CARDS) { const item = makeCard(doc, spec.key, spec.title); for (const row of spec.fields) item.body.append(renderInheritField(doc, { ...row, level: 'project', ...field(row.id) })); host.append(item.card); item.save.addEventListener('click', () => void save(item)); }
+    for (const spec of PROJECT_CARDS) { const item = makeCard(doc, spec.key, spec.title); if (spec.flag) item.card.setAttribute('data-flag', spec.flag); for (const row of spec.fields) item.body.append(renderInheritField(doc, { ...row, level: 'project', ...field(row.id) })); if (spec.key === 'share') void paintShareStatus(item.body); host.append(item.card); item.save.addEventListener('click', () => void save(item)); }
     models.save.addEventListener('click', () => void save(models));
     const naming = namingCard(data); host.append(naming.card); naming.save.addEventListener('click', () => void save(naming));
+  };
+  // Run sharing: this machine's push status under the switch; nothing when the route is off (404) or unreachable.
+  const paintShareStatus = async (body) => {
+    try {
+      const r = await fetchFn(`/api/projects/${encodeURIComponent(projectKey)}/runs-share`);
+      const data = r.ok ? await r.json() : null;
+      if (data?.status && body.isConnected !== false) body.append(renderRunsShareStatus(doc, data.status));
+    } catch { /* the status line is optional */ }
   };
   // Smart run naming (Labs): one stored block per project ({pattern, types}), edited as two inherit fields.
   const namingCard = (data) => {

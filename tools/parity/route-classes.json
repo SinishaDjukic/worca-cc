@@ -150,6 +150,7 @@
   "GET /api/projects/:key/actions": {"class": "probe", "reason": "tmProject lookup, then local action config read"},
   "GET /api/projects/:key/house-brief": {"class": "probe", "reason": "local file hashing only (house-brief.mjs), try/catch"},
   "GET /api/projects/:key/policy": {"class": "probe", "reason": "discover off without ?discover=1; local status"},
+  "GET /api/projects/:key/runs-share": {"class": "probe", "reason": "flag-gated (404 off); tmProject lookup, local status, try/catch"},
   "GET /api/projects/:key/settings": {"class": "probe", "reason": "tmProject lookup, local settings read"},
   "GET /api/projects/:key/sync": {"class": "probe", "reason": "mode 'status' never touches network (project-sync.mjs:63)"},
   "GET /api/projects/:key/sync/settings": {"class": "probe", "reason": "reads sync prefs only"},

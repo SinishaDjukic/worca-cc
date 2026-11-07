@@ -119,6 +119,7 @@ import {
   chatHomePinsFor, setChatHomePinsFor,
 } from '../src/core/settings.mjs';
 import { resolveSetting, resolveAll, writeProjectSettings, assertProjectSettingsPatch, resolveRunEngine, defragSlotPair } from '../src/core/settings-cascade.mjs';
+import { assertRunsShareCanStart, drainRunShare, ensurePrListener } from '../src/core/runs-share/publish.mjs';
 import { resolveNightConfig, validateNightPatch } from '../src/core/night/config.mjs';
 import { effectiveNightConfig, nightLayers } from '../src/core/night/effective.mjs';
 import { readNightDecisions, nightAnsweredSince } from '../src/core/night/store.mjs';
@@ -5877,6 +5878,9 @@ async function applyProjectSettingsPatch(project, patch) {
   await assertSlotModels(items.filter(({ entry, value }) => entry.family && value).map(({ entry, value }) => ({ id: entry.id, engine: entry.engine, value })), { projectDir: project.path });
   const teamSwitch = items.find(({ entry }) => entry.id === 'memory.team');
   const write = () => writeProjectSettings({ projectDir: project.path }, patch, { roles });
+  // Run sharing (s1): a switch from off to on needs git, a git project and an origin first (NO_GIT / FOLDER_PROJECT / NO_ORIGIN).
+  const shareSwitch = items.find(({ entry }) => entry.id === 'runs.share');
+  if (shareSwitch?.value === true && resolveSetting('runs.share', { projectKey: project.key }).value !== true) await assertRunsShareCanStart(project.path);
   // `true` (load local and team notes) or "only" (team notes only) — team-memory-load-choice.md. Only a switch from
   // off is a switch-on; Team ↔ Both changes what loads, nothing else.
   const wasOn = teamSwitch ? isTeamMemoryOn(project.key) : false;
@@ -10312,7 +10316,7 @@ if (isMain) {
     }, drainTimeoutMs() + SHUTDOWN_STEPS_MS + 5_000);
     // B2: pause the active runs first (bounded), so they come back paused with a resume point.
     drainServer({ reason: signal })
-      .then(() => settleShutdownSteps({ chat: () => channelHost.stop(), actions: () => actions.stopAll(), terminals: () => terminals.closeAll(), prWatch: () => prWatcher.runner.stop(), automations: () => automations.runner.stop() }))
+      .then(() => settleShutdownSteps({ chat: () => channelHost.stop(), actions: () => actions.stopAll(), terminals: () => terminals.closeAll(), prWatch: () => prWatcher.runner.stop(), automations: () => automations.runner.stop(), runShare: () => drainRunShare({ timeoutMs: 5000 }) }))
       .finally(() => { clearTimeout(hardExit); keepAwake.stop(); process.exit(exitCodeFor(signal)); });
   };
   process.on('SIGINT', () => shutdown('SIGINT'));
@@ -10344,6 +10348,8 @@ if (isMain) {
     }
     try { for (const c of listActiveConversations()) { watchChatThread(c.askThreadId); enqueueChatWork(`${c.platform}:${c.chatId}`, () => chatBridge.reconcile(c)); } }
     catch (err) { console.error(`[worca-ui] chat reconcile at boot failed: ${err && err.message ? err.message : err}`); }
+    try { ensurePrListener(); }   // run sharing: a PR found after a restart updates its shared record (D12)
+    catch (err) { console.warn(`[worca-ui] run sharing: ${err?.message || err}`); }
     try { startTeamMetricsBackground({ log: (m) => console.warn(m) }); }
     catch (err) { console.warn(`[worca-ui] team metrics background: ${err?.message || err}`); }
     try {

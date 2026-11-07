@@ -8,7 +8,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { resolveSetting, resolveAll, settingIds, settingEntry, utilityModelFor } from '../src/core/settings-cascade.mjs';
-import { writeTeamPolicyPrefs } from '../src/core/config.mjs';
+import { writeTeamPolicyPrefs, readRunsSharePrefs, writeRunsSharePrefs, readTeamMetricsPrefs, writeTeamMetricsPrefs } from '../src/core/config.mjs';
+import { assertProjectSettingsPatch } from '../src/core/settings-cascade.mjs';
 import { getDb, prepare } from '../src/core/db.mjs';
 import { projectKey } from '../src/core/store.mjs';
 
@@ -199,4 +200,28 @@ test('pr.open: project > team default > none; no user layer (settings.json is ig
   const r = resolveSetting('pr.open', { projectDir: dir });
   assert.deepEqual(pick(r), { value: 'draft', source: 'project' });
   assert.equal(r.layers.user, undefined);
+});
+
+test('runs.share (run sharing s1, D3): project layer only, false by default, booleans only', () => {
+  assert.deepEqual(pick(resolveSetting('runs.share', { projectDir: dir })), { value: false, source: 'default' });
+  writeUser({ runs: { share: true } });
+  assert.deepEqual(pick(resolveSetting('runs.share', { projectDir: dir })), { value: false, source: 'default' }, 'no user layer');
+  writeProjectRow({ extra: { settings: { runs: { share: true } } } });
+  assert.deepEqual(pick(resolveSetting('runs.share', { projectDir: dir })), { value: true, source: 'project' });
+  assert.throws(() => assertProjectSettingsPatch({ 'runs.share': 'yes' }), /^Error: runs\.share must be true or false$/);
+  assert.equal(assertProjectSettingsPatch({ 'runs.share': true })[0].value, true);
+});
+
+test('run-sharing prefs (project_config.extra.runsShare) sit beside the team-metrics prefs, keyed by project key', () => {
+  const key = projectKey(dir);
+  assert.throws(() => readRunsSharePrefs(dir), TypeError, 'a directory is refused');
+  assert.throws(() => writeRunsSharePrefs(dir, { a: 1 }), TypeError);
+  assert.equal(readRunsSharePrefs(key), null);
+  assert.deepEqual(writeTeamMetricsPrefs(key, { enabled: true }), { enabled: true });
+  assert.deepEqual(writeRunsSharePrefs(key, { machineKey: 'ab' }), { machineKey: 'ab' });
+  assert.deepEqual(writeRunsSharePrefs(key, { lastPushAt: 't' }), { machineKey: 'ab', lastPushAt: 't' });
+  assert.deepEqual(readRunsSharePrefs(key), { machineKey: 'ab', lastPushAt: 't' });
+  assert.deepEqual(readTeamMetricsPrefs(key), { enabled: true }, 'team metrics untouched');
+  assert.deepEqual(writeTeamMetricsPrefs(key, { slug: 's' }), { enabled: true, slug: 's' });
+  assert.deepEqual(readRunsSharePrefs(key), { machineKey: 'ab', lastPushAt: 't' });
 });

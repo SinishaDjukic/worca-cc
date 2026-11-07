@@ -135,6 +135,18 @@ export const FLAGS = Object.freeze([
     reviewBy: '2027-02-01',
     docs: 'docs/shape-it-first.md',
   }),
+  entry({
+    key: 'runSharing',
+    title: 'Run sharing',
+    description: 'A project\'s "Share my runs" switch: while a run is active, Worca keeps one small record of it (status, phase, cost, PR link, who started it; no prompt or logs) on the project\'s worca-runs branch. Stays in Labs until the branch is pruned.',
+    stage: 'experimental',
+    default: false,
+    owner: 'Bulibas',
+    since: '1.19.0',
+    added: '2026-11-07',
+    reviewBy: '2027-02-05',
+    docs: 'docs/run-sharing.md',
+  }),
 ]);
 
 const BY_KEY = new Map(FLAGS.map((f) => [f.key, f]));

@@ -3,7 +3,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { seedPipeline } from './helpers/db-seed.mjs';
-import { recordArtifact } from '../src/core/artifacts.mjs';
+import { recordArtifact, persistPrState, readPrState, onPrStatePersisted } from '../src/core/artifacts.mjs';
 import { getDb } from '../src/core/db.mjs';
 
 useTempHome(after);
@@ -51,4 +51,19 @@ test('recordArtifact without attribution never erases the attribution already th
   assert.equal(row.step_key, 'exec-1');
   assert.equal(row.node_id, 'planner');
   assert.equal(row.cycle, 0);
+});
+
+test('onPrStatePersisted: a listener gets the id and the PR after the write; a throwing one breaks nothing', async () => {
+  const { id } = await seedPipeline(process.cwd(), { title: 'PR', status: 'done' });
+  const seen = [];
+  const offBad = onPrStatePersisted(() => { throw new Error('boom'); });
+  const off = onPrStatePersisted((pid, pr) => seen.push([pid, pr.url, readPrState(pid)?.url]));
+  try {
+    persistPrState(id, { url: 'https://github.com/o/r/pull/3', number: 3 });
+    assert.deepEqual(seen, [[id, 'https://github.com/o/r/pull/3', 'https://github.com/o/r/pull/3']]);
+    assert.equal(readPrState(id).url, 'https://github.com/o/r/pull/3');
+    off();
+    persistPrState(id, { url: 'https://github.com/o/r/pull/4' });
+    assert.equal(seen.length, 1, 'unsubscribed');
+  } finally { off(); offBad(); }
 });

@@ -3366,13 +3366,14 @@ async function cmdPolicy(argv) {
   }
 }
 
-/** Await in-flight team-branch pushes (metrics records, team-memory notes) before the CLI exits (decision 24). Never
+/** Await in-flight team-branch pushes (metrics records, team-memory notes, shared run records) before the CLI exits (decision 24). Never
  *  blocks past its own budget and never changes the exit code — team data must not gate the CLI. */
 async function drainTeamPushes() {
   // Both at once: the exit waits 30 s at most, not one budget per branch kind.
   await Promise.all([
     import('../core/metrics/sync.mjs').then((m) => m.drainFlushes({ timeoutMs: 30_000 })).catch(() => { /* never blocks the exit */ }),
     import('../core/memory-team.mjs').then((m) => m.drainTeamMemoryFlushes({ timeoutMs: 30_000 })).catch(() => { /* never blocks the exit */ }),
+    import('../core/runs-share/publish.mjs').then((m) => m.drainRunShare({ timeoutMs: 30_000 })).catch(() => { /* never blocks the exit */ }),
   ]);
 }
 

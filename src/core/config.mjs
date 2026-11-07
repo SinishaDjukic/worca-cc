@@ -1507,25 +1507,25 @@ function assertProjectKey(key) {
   return key;
 }
 
-/** @returns {object|null} the cached team-metrics state for a project key */
-export function readTeamMetricsPrefs(key) {
+/** One object key of a project's `extra` blob, or null (the team-metrics and run-sharing prefs share it). */
+function readExtraObject(key, name) {
   assertProjectKey(key);
   const row = prepare('SELECT extra FROM project_config WHERE project_key = ?').get(key);
   const extra = row ? parseJson(row.extra, {}) : {};
-  const v = extra[TEAM_METRICS_KEY];
+  const v = extra[name];
   return v && typeof v === 'object' && !Array.isArray(v) ? v : null;
 }
 
-/** Shallow-merge `patch` into extra.teamMetrics; returns the merged object. */
-export function writeTeamMetricsPrefs(key, patch) {
+/** Shallow-merge `patch` into `extra[name]` in one transaction; returns the merged object. */
+function mergeExtraObject(key, name, patch) {
   assertProjectKey(key);
   let next = null;
   tx(() => {
     const row = prepare('SELECT extra FROM project_config WHERE project_key = ?').get(key);
     const extra = row ? parseJson(row.extra, {}) : {};
-    const cur = extra[TEAM_METRICS_KEY] && typeof extra[TEAM_METRICS_KEY] === 'object' ? extra[TEAM_METRICS_KEY] : {};
+    const cur = extra[name] && typeof extra[name] === 'object' ? extra[name] : {};
     next = { ...cur, ...patch };
-    extra[TEAM_METRICS_KEY] = next;
+    extra[name] = next;
     prepare(`
       INSERT INTO project_config (project_key, steps, custom_models, active_workflow_id, extra)
       VALUES (?, '{}', '[]', NULL, ?)
@@ -1534,6 +1534,23 @@ export function writeTeamMetricsPrefs(key, patch) {
   });
   return next;
 }
+
+/** @returns {object|null} the cached team-metrics state for a project key */
+export function readTeamMetricsPrefs(key) { return readExtraObject(key, TEAM_METRICS_KEY); }
+
+/** Shallow-merge `patch` into extra.teamMetrics; returns the merged object. */
+export function writeTeamMetricsPrefs(key, patch) { return mergeExtraObject(key, TEAM_METRICS_KEY, patch); }
+
+// ── Run-sharing status (project_config.extra.runsShare, run sharing s1 D15) ────
+// This machine's push status for the worca-runs branch (lastPushAt, lastError*, machineKey, and `shared`: runId → the PR link last pushed). Takes the KEY, like the
+// team-metrics pair above.
+export const RUNS_SHARE_KEY = 'runsShare';
+
+/** @returns {object|null} this machine's run-sharing status for a project key */
+export function readRunsSharePrefs(key) { return readExtraObject(key, RUNS_SHARE_KEY); }
+
+/** Shallow-merge `patch` into extra.runsShare; returns the merged object. */
+export function writeRunsSharePrefs(key, patch) { return mergeExtraObject(key, RUNS_SHARE_KEY, patch); }
 
 // ── Typed team repository (project_config.extra.teamRepo, P6) ─────
 // The GitHub 'Owner/Name' a Folder without git keeps its team branches on (typed once in the setup dialog).

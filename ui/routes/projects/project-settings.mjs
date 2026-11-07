@@ -10,6 +10,8 @@ import { enableTeamPolicy, projectPolicyStatus } from '../../../src/core/policy/
 import { effectiveSyncSettings, projectSyncBlock, projectSyncEvents } from '../../../src/core/project-sync.mjs';
 import { DEFAULT_SYNC_SETTINGS, assertSyncSettingsInput, syncDefaults } from '../../../src/core/settings.mjs';
 import { normaliseTags } from '../../../src/shared/run-tags.mjs';
+import { requireFlag } from '../../../src/core/flags.mjs';
+import { runsShareStatus } from '../../../src/core/runs-share/publish.mjs';
 import { applyProjectSettingsPatch, badRequest, projectSettingsState, sendMetricsError, sendPolicyError, syncProjectAction, syncRoute, tmProject, unsyncableBlock } from '../../server.mjs';
 
 export function register(app) {
@@ -31,6 +33,12 @@ function withTeamSetup(p, fn) {
   return run;
 }
 
+// Run sharing (s1): this machine's push status for the worca-runs branch. Read-only; the switch is the settings PATCH.
+app.get('/api/projects/:key/runs-share', requireFlag('runSharing'), async (req, res) => {
+  const p = await tmProject(req, res); if (!p) return;
+  try { res.json({ status: await runsShareStatus(p.key, p.path) }); }
+  catch (err) { res.status(500).json({ error: err?.message || String(err) }); }
+});
 app.get('/api/projects/:key/team-metrics', async (req, res) => {
   const p = await tmProject(req, res); if (!p) return;
   try { res.json({ status: await projectMetricsStatus(p, { discover: req.query.discover === '1' }) }); }

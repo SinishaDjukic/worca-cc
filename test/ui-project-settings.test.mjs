@@ -43,7 +43,7 @@ const field = (host, id) => host.querySelector(`[data-setting="${id}"]`);
 test('every field says what it inherits and from where; an override shows Project', async () => {
   const { host } = harness();
   for (let i = 0; i < 4; i++) await tick();
-  assert.deepEqual([...host.querySelectorAll('.pd-settings-card')].map((c) => c.dataset.card), ['models', 'cost', 'ask', 'context', 'pr', 'smartNaming']);
+  assert.deepEqual([...host.querySelectorAll('.pd-settings-card')].map((c) => c.dataset.card), ['models', 'cost', 'ask', 'context', 'pr', 'share', 'smartNaming']);
   const turns = field(host, 'askMaxTurns');
   assert.equal(turns.querySelector('.inherit-input').value, '9');
   assert.equal(turns.querySelector('.inherit-input').placeholder, '30 (your setting)');
@@ -206,4 +206,53 @@ test('Pull requests card: with no team value pr.open inherits "Worca default"', 
   for (let i = 0; i < 4; i++) await tick();
   assert.equal(field(host, 'pr.open').querySelector('.inherit-input').options[0].textContent, "Don't create a PR (default)");
   assert.equal(field(host, 'pr.slices').querySelector('.inherit-input').options[0].textContent, 'A PR per slice, stacked (default)');
+});
+
+test('Run sharing: a Labs card (data-flag runSharing, hidden by the gate CSS) whose "Share my runs" PATCHes runs.share', async () => {
+  const view = { ...VIEW, own: {}, layers: { ...VIEW.layers, 'runs.share': { default: false } } };
+  const { window, host, calls } = harness({ settings: () => ({ status: 200, body: view }), patch: () => ({ status: 200, body: view }) });
+  for (let i = 0; i < 6; i++) await tick();
+  const card = host.querySelector('.pd-settings-card[data-card="share"]');
+  assert.ok(card);
+  assert.equal(card.querySelector('h3').textContent, 'Run sharing');
+  assert.equal(card.getAttribute('data-flag'), 'runSharing');
+  const style = window.document.createElement('style');
+  const { flagGateCss } = await import('../src/shared/flags/resolve.mjs');
+  const { FLAGS } = await import('../src/shared/flags/registry.mjs');
+  style.textContent = flagGateCss(FLAGS, {});
+  window.document.head.append(style);
+  assert.equal(window.getComputedStyle(card).display, 'none', 'flag off: hidden');
+  style.textContent = flagGateCss(FLAGS, { runSharing: true });
+  assert.notEqual(window.getComputedStyle(card).display, 'none', 'flag on: shown');
+  assert.doesNotMatch(card.textContent, /Include my runs/);
+  const row = field(host, 'runs.share');
+  assert.equal(row.querySelector('label').textContent, 'Share my runs');
+  assert.match(row.textContent, /No prompt or logs/);
+  assert.match(row.textContent, /a running one shows as stale/);
+  assert.ok(calls.some((c) => c.url === '/api/projects/proj-1/runs-share'), 'the status is loaded from the route');
+  const select = row.querySelector('.inherit-input');
+  select.value = 'on';
+  select.dispatchEvent(new window.Event('change', { bubbles: true }));
+  card.querySelector('.pd-settings-save').click();
+  for (let i = 0; i < 4; i++) await tick();
+  assert.deepEqual(calls.filter((c) => c.method === 'PATCH').at(-1).body, { 'runs.share': true });
+});
+
+test('Run sharing: the status line from the route paints under the card', async () => {
+  const { JSDOM: J } = await import('jsdom');
+  const { window } = new J('<!doctype html><div id="host"></div>');
+  const status = { enabled: true, flag: true, branch: 'worca-runs', lastPushAt: null, lastError: 'remote: protected branch hook declined', lastErrorCode: 'PUSH_REJECTED', hint: 'exempt `worca-runs` from branch protection', canStart: true, startError: null };
+  const fetchFn = async (url, opts = {}) => {
+    const u = String(url);
+    const body = u.endsWith('/runs-share') ? { status } : u.includes('/settings') ? VIEW : { models: CATALOG };
+    void opts;
+    return { ok: true, status: 200, json: async () => body };
+  };
+  const host = window.document.getElementById('host');
+  mountProjectSettings(host, { projectKey: 'proj-1', projectDir: '/repos/proj', fetchFn });
+  for (let i = 0; i < 8; i++) await tick();
+  const line = host.querySelector('.pd-settings-card[data-card="share"] .runs-share-status');
+  assert.ok(line, 'painted');
+  assert.match(line.textContent, /Push rejected · branch protection/);
+  assert.match(line.textContent, /To fix: exempt `worca-runs`/);
 });

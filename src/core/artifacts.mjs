@@ -1611,7 +1611,17 @@ export function persistPrState(pipelineId, pr) {
       ).run(pr.url, pr.number ?? null, pr.state ?? 'OPEN', new Date().toISOString(),
         pr.verdict ? JSON.stringify(pr.verdict) : null, pipelineId);   // the verdict is written when the lookup read one, kept otherwise
     });
-  } catch { /* best-effort */ }
+  } catch { return; /* best-effort */ }
+  for (const fn of [..._prStateListeners]) {
+    try { fn(pipelineId, pr); } catch { /* a listener never breaks the write */ }
+  }
+}
+
+const _prStateListeners = new Set();
+/** Call `fn(pipelineId, pr)` after every persistPrState write (run sharing s1, D12). @returns {() => void} unsubscribe */
+export function onPrStatePersisted(fn) {
+  _prStateListeners.add(fn);
+  return () => { _prStateListeners.delete(fn); };
 }
 
 /**

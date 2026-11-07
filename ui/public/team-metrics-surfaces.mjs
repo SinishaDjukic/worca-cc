@@ -27,6 +27,12 @@ function withRef(doc, text, name) {
 }
 function btn(doc, cls, text) { const b = h(doc, 'button', `btn btn-sm ${cls}`, text); b.type = 'button'; return b; }
 
+/** The push-failure wording of every team-branch status (team metrics, run sharing): a protection rejection with its
+ *  hint, else a plain failure. */
+export function pushFailLabel({ lastErrorCode, hint } = {}) {
+  return lastErrorCode === 'PUSH_REJECTED' && hint ? 'Push rejected · branch protection' : 'Push failed';
+}
+
 /** Classify a project status (from /api/team-metrics/scopes → projects[]) into a cell variant. */
 export function projectTmState(s) {
   if (s.hasOrigin === false) return { kind: 'no-origin' };
@@ -140,7 +146,7 @@ export function renderProjectTmCell(s, { doc = globalThis.document, heading = tr
       break;
     case 'rejected': {
       line.append(dot(doc, 'red'));
-      status.textContent = s.lastErrorCode === 'PUSH_REJECTED' && s.lastErrorHint ? 'Push rejected · branch protection' : 'Push failed';
+      status.textContent = pushFailLabel({ lastErrorCode: s.lastErrorCode, hint: s.lastErrorHint });
       actions.append(btn(doc, 'tm-push', 'Retry'));
       break;
     }

@@ -312,3 +312,17 @@ test('P5: a Folder primary\'s record takes the actor from a Git member, never gi
     assert.ok(cwds.includes(g), 'the spy is live: the Git member was asked');
   } finally { gitInfoTesting.reset(); syncTesting.reset(); }
 });
+
+test('run sharing: _startRunShare attaches once per run, and a throwing attach leaves the run done', async () => {
+  const orch = createOrchestrator({ projectDir: repo(), prompt: 'x', workflowId: WF, auto: true, claude: { mock: true }, branch: { source: 'main' } });
+  let calls = 0;
+  const spy = () => { calls += 1; return { detach() {} }; };
+  orch._startRunShare(spy);
+  orch._startRunShare(spy);
+  assert.equal(calls, 1);
+  const bad = createOrchestrator({ projectDir: repo(), prompt: 'x', workflowId: WF, auto: true, claude: { mock: true }, branch: { source: 'main' } });
+  assert.doesNotThrow(() => bad._startRunShare(() => { throw new Error('boom'); }));
+  assert.equal(bad._runShare, null);
+  const res = await bad.run();
+  assert.equal(res.status, 'done');
+});

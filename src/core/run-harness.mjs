@@ -118,6 +118,7 @@ import {
   REASON, pauseConsequences, describePauseReason, RECOVERY_MAX_AUTO_ATTEMPTS,
 } from './failure-policy.mjs';
 import { recordRunMetrics } from './metrics/record.mjs';
+import { attachRunShare } from './runs-share/publish.mjs';
 // Team policy (team-policy design §6–§7): the document a run's cost gates fold in, its
 // per-run state, and the off-policy findings the run log names at start.
 import { resolveProjectPolicy, resolveWorkspacePolicy } from './policy/sync.mjs';
@@ -1688,6 +1689,7 @@ export class RunHarness extends EventEmitter {
       this.state.datePrefix = this.planDatePrefix;
       await this._persist();
       this._startHeartbeat(); // claim ownership + begin liveness heartbeat (crash detection)
+      this._startRunShare();
       this._artifact('pipeline', this.pipeline.dir);
       await appendAudit(this.pipeline.dir, `Pipeline created (id ${this.pipeline.id}).`);
       if (tools.tool) {
@@ -2016,6 +2018,7 @@ export class RunHarness extends EventEmitter {
       // the run's earlier incarnation NOW. A command mailed from here on is meant for this run: the
       // control poller holds it until the run is rehydrated (_checkControlSlot), then executes it.
       this._startHeartbeat();
+      this._startRunShare();
       this._nightSyncCounts();              // night counters continue from the DB, not from 0
       this.logWriter.bind(rp.pipelineDir);
       this._bindTelemetry(rp.pipelineDir);
@@ -2085,6 +2088,7 @@ export class RunHarness extends EventEmitter {
       this._setStatus('running');
       await this._persist();
       this._startHeartbeat();
+      this._startRunShare();
       await this._auditAction('resume', String(rehydrated.audit || '').replace(/\.\s*$/, ''));
       if (this.opts.resumeCause === 'network') this._log('orchestrator', 'info', 'network back — resumed');
       this._emit('state', this.getState());
@@ -9022,6 +9026,19 @@ export class RunHarness extends EventEmitter {
     try { row = pipelineRowStamp(this.pipeline.id); } catch { return false; }
     this._handedOff = !row || row.status !== 'paused' || row.pausedBy !== this._pauseToken;
     return this._handedOff;
+  }
+
+  /**
+   * Run sharing (s1, D11): attach the worca-runs publisher where ownership starts. Idempotent (one attempt per
+   * instance) and fail-soft: a throw is a log line, never a run failure (D21). `attach` is a test seam.
+   */
+  _startRunShare(attach = attachRunShare) {
+    if (this._runShareStarted) return;
+    this._runShareStarted = true;
+    try { this._runShare = attach(this); } catch (err) {
+      this._runShare = null;
+      try { this._log('runs-share', 'warn', `run sharing: ${err?.message || err}`); } catch { /* logging never throws */ }
+    }
   }
 
   /**

@@ -1390,12 +1390,18 @@ export function dismissTeamMemoryOffer(projectKey) {
  *  answers from `.git/config` or a typed team repo when git is missing, which is no remote team memory can reach.
  *  @returns {Promise<Error|null>} code NO_GIT | FOLDER_PROJECT | NO_ORIGIN, status 400 */
 export async function teamMemoryStartError(projectDir) {
-  if (!(await gitState()).available) return teamError('NO_GIT', 'team memory needs git on this machine: the team layer is fetched and pushed with git (install git, then switch it on)', { status: 400 });
+  return gitTeamBranchStartError(projectDir, { feature: 'team memory', branch: 'worca-memory' });
+}
+/** The git / git-project / origin checks of a feature that lives on a team branch of the project's origin (team
+ *  memory, run sharing). `subject` names what the branch holds in the messages.
+ *  @returns {Promise<Error|null>} code NO_GIT | FOLDER_PROJECT | NO_ORIGIN, status 400 */
+export async function gitTeamBranchStartError(projectDir, { feature, branch, subject = 'the team layer' }) {
+  if (!(await gitState()).available) return teamError('NO_GIT', `${feature} needs git on this machine: ${subject} is fetched and pushed with git (install git, then switch it on)`, { status: 400 });
   if (!projectDir || !existsSync(join(projectDir, '.git')) || getProjectByPath(projectDir)?.vcs === 'none') {
-    return teamError('FOLDER_PROJECT', 'team memory needs a git project: this is a Folder project, and the team layer lives on a worca-memory branch of its repository', { status: 400 });
+    return teamError('FOLDER_PROJECT', `${feature} needs a git project: this is a Folder project, and ${subject} lives on a ${branch} branch of its repository`, { status: 400 });
   }
   const { remotes } = await listRemotes(projectDir);
-  if (!remotes.some((r) => r.name === 'origin')) return teamError('NO_ORIGIN', 'team memory needs an `origin` remote: the team layer lives on its worca-memory branch', { status: 400 });
+  if (!remotes.some((r) => r.name === 'origin')) return teamError('NO_ORIGIN', `${feature} needs an \`origin\` remote: ${subject} lives on its ${branch} branch`, { status: 400 });
   return null;
 }
 /** Refuse the switch (decision D8). @throws {Error} code NO_GIT | FOLDER_PROJECT | NO_ORIGIN, status 400 */
