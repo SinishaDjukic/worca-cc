@@ -73,6 +73,12 @@ Mocks: `mocks/wave-2/` (`node plans/rail/mocks/wave-2/render.mjs`). These are di
 | **A task or a schedule opens like a chat:** a reading column, marks, a composer that goes to its chat. Pulse stays | 8 |
 | **Anchors:** on hover first: marks on the right edge, named on hover, `[` and `]` between them | 9 |
 | Chat home's line: "What should Worca do?" goes; the mocks say "What's next?" for now | 5 |
+| **Status words:** all 19 stay. The icon breathes while work happens: dot and icon merge, so no dot sits beside an icon | 10 |
+| **Every kind of row** has one shape: chats by kind and channel, chains, features, watched tasks and rounds, schedules, events; bold is unread. Cost never shows in the bar: it stays on cards and pages | 11 |
+| **Touch:** a long-press shows a tooltip; anchors open from a list button | to mock |
+| **The empty, loading, offline and failed bar** say it in one line, from `listState` | 11 |
+| **Places by mode** come from today's levels, with Tasks and Schedules moved to Expert | 12 |
+| **Rename everywhere:** runs and builds become tasks. The screen moves with Wave 2; docs, CLI, API and settings keys rename at the final stage (Wave 5) | all |
 
 Decided rules these change: C1 (Chat home's list moves to the bar), C3 (Expert only), "no drawn rails" (the tree), the quiet grey finished step, `thing.slots` (stages read as a stream), `form.dialog` (New run), the conversation's rail, "the sidebar holds places".
 
@@ -85,6 +91,7 @@ Decided rules these change: C1 (Chat home's list moves to the bar), C3 (Expert o
 - **The advisor:** what it reads, how sure it says it is, what happens when a start doesn't fit.
 - **Old Shaping's five,** never decided; each needs asking before it comes in (New run off the top bar is now mock 7): PlaceRow, no title from
   1081px, a 288px sidebar, a kind icon with a state dot. Ideas only, read-only: `backup/rail-shaping-final`.
+- **Shared sign-ins:** whose task a row is. Not today's problem; the list's `started by` stays.
 - **Parked, only if wanted:** backgrounds on Chat home and the away screen; an icon redraw.
 
 ## When
