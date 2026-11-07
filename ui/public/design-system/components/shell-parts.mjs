@@ -81,9 +81,30 @@ export function accountButton({ name, avatar, chevron, label, away = false, open
  * @param {string} [o.title]
  * @param {object} [o.attrs]
  */
+/**
+ * CountBadge: how many, on the corner of what it counts: Pulse, the hidden bar's kinds of work. `need` when any waits on you.
+ * @param {object} o
+ * @param {number|string} o.n
+ * @param {''|'need'|'run'} [o.tone]
+ * @param {boolean} [o.corner]   on the corner of its icon
+ */
+export function countBadge({ n, tone = '', corner = false }) {
+  return `<span class="topnav-badge${corner ? ' is-corner' : ''}"${attrs({ 'data-tone': tone || null })}>${esc(n)}</span>`;
+}
+
+/**
+ * BarStrip: the hidden bar, as a strip: one icon per kind of work, its count as a CountBadge on its corner; each opens its place.
+ * @param {object} o
+ * @param {{label:string, icon:string, n:number, tone?:string, attrs?:object}[]} o.items
+ * @param {string} [o.label]
+ */
+export function barStrip({ items, label = 'Your work' }) {
+  return `<nav class="bar-strip"${attrs({ 'aria-label': label })}>${items.map((x) => `<button type="button" class="bar-strip-i"${attrs({ ...(x.attrs || {}), title: x.label, 'aria-label': x.label })}>${x.icon}${x.n ? countBadge({ n: x.n, tone: x.tone, corner: true }) : ''}</button>`).join('')}</nav>`;
+}
+
 export function topBarAction({ label, icon, labelCls, kind = '', full = false, badge = null, cls: c = '', title = '', attrs: a = {} }) {
   const look = cls('btn', !full && 'btn-sm', kind && `btn-${kind}`, c);
-  return `<button type="button" class="${look}"${attrs({ ...a, title: title || null })}>${icon}<span class="${labelCls}">${esc(label)}</span>${badge ? `<span class="topnav-badge"${attrs({ 'data-tone': badge.tone })}>${esc(badge.n)}</span>` : ''}</button>`;
+  return `<button type="button" class="${look}"${attrs({ ...a, title: title || null })}>${icon}<span class="${labelCls}">${esc(label)}</span>${badge ? countBadge({ n: badge.n, tone: badge.tone }) : ''}</button>`;
 }
 
 /**

@@ -71,7 +71,26 @@ the design system itself.
 5. **The type.** The DS names Inter in place of Poppins; Wave 1 keeps Poppins. Decide when the type moves: with
    graduation (one switch for everyone) or a wave earlier behind the flag.
 
-## Wave 6: Chat is the product, builds are the engine (to shape)
+## Wave 3: what Emil set for it (7 Nov), to shape
+
+1. **Onboarding, reworked.** A persona first (who you are and what you want from Worca), and from it the setup it leads you
+   through: only the steps that persona needs, in its order (sign-ins, a project, a first task, Away, the team).
+2. **First-run tips, with focus.** What is what, pointed at on the real page: the bar, the W, the composer's sentence, a
+   task's ring, the timeline, Pulse. One at a time, the page dimmed around it; skipped once, never forced; found again later
+   in the profile menu.
+3. **Inventory first, then redesign everything left.** A list of every page and part not yet on Rail (Workflows, Requirements,
+   Marketplace, Projects, Workspaces, Statistics, Team metrics, the browser extension, docs and changelog, empty and error
+   pages), each with what it does, its states and levels, as `lists-index.md` did for the lists; then each redesigned on
+   the one bar, with the library.
+4. **Also worth shaping (Claude's suggestions):**
+   - **Empty states that teach:** a place with nothing in it says what it is for and offers its one first step.
+   - **Narrow screens and touch for everything new:** the bar's strip, long-press tooltips, the timeline's list button.
+   - **Keyboard first:** one shortcut sheet for the whole app (places, the composer's modes, `[` `]`, ⌘\\).
+   - **Accessibility pass:** colour-blind check of the ring colours, focus order, screen-reader words for every mark.
+   - **Settings, finished:** every tab on the new icons, search by area, and the Changed dot everywhere.
+   - **A what's-new tour** for people moving from today's Worca: what moved where (New run → the composer, Runs → Tasks).
+
+, builds are the engine (to shape)
 
 The final product stage: people talk to Worca in Chat, and the build (today's run, with its workflow, steps, branch and
 PR) becomes a hidden engine inside the conversation. Nobody should have to manage builds. It is not shaped yet; these

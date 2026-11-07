@@ -37,6 +37,7 @@ const CONTROLS = {
   ListRow: '.lr-main, .row-btn, .sc-step, .ch-row, .st-head, .pz-nav-i, .pz-acct, .sc-loop.is-btn',
   TurnRow: '.tr-line',
   BarHead: '.bar-house',
+  BarStrip: '.bar-strip-i',
   Timeline: '.tl-tick',
   'Text link': '.rc-fig-link, .rc-crumb, .rc-branch, .dc-link, .ov-art-name, .rl-back',
 };

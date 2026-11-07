@@ -1032,6 +1032,39 @@
       "rules": [
         "panel.task-card"
       ]
+    },
+    {
+      "name": "CountBadge",
+      "code": "ui/public/design-system/components/shell-parts.mjs#countBadge",
+      "kind": "telling",
+      "needs": [
+        "how many, on the corner of what it counts: Pulse, the hidden bar's kinds of work"
+      ],
+      "rules": [
+        "nav.one-bar"
+      ]
+    },
+    {
+      "name": "BarStrip",
+      "code": "ui/public/design-system/components/shell-parts.mjs#barStrip",
+      "kind": "moving",
+      "needs": [
+        "the hidden bar: one icon per kind of work and its count"
+      ],
+      "rules": [
+        "nav.one-bar"
+      ]
+    },
+    {
+      "name": "StageLine",
+      "code": "ui/public/design-system/components/kind-mark.mjs#stageLine",
+      "kind": "showing",
+      "needs": [
+        "a stage of a task, read down, its parts at its end"
+      ],
+      "rules": [
+        "thing.parts-in-stages"
+      ]
     }
   ],
   "logic": [

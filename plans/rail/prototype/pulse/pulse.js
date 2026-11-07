@@ -514,14 +514,18 @@ const areaOf = (e) => e.area || (e.sset ? 'Settings' : e.kind === 'place' ? 'Pla
 function searchResults() {
   if (!plain(ui.q).trim()) return '';
   found = searchHits();
-  const line = (e, i) => ({ id: 'srch|' + i, text: e.label, hint: [e.sset ? e.where.replace(/^Settings › /, '') : e.where, lockNote(e)].filter(Boolean).join(' · ') });
-  const items = [];
-  for (const [area, ic] of AREAS) {
-    const hits = found.map((e, i) => [e, i]).filter(([e]) => areaOf(e) === area);
-    if (hits.length) items.push({ header: area, mark: R.icon(ic, 13) }, ...hits.map(([e, i]) => line(e, i)));
-  }
-  items.push({ sep: true }, { id: 'srch|ask', text: `Ask Chat: ${askWords()}`, hint: 'Chat' });
-  return R.compactMenu({ cls: 'rl-search-res', label: 'Found', items });
+  // each result wears its own mark: a chat's, a task's state, a setting's section, a place's icon
+  const RMM = window.RunCardModel;
+  const markOf = (e, area) => {
+    if (area === 'Chats') return R.kindMark({ kind: 'chat', size: 16 });
+    if (area === 'Tasks') { const cs = e.hash?.startsWith('run/') ? e.hash.slice(4) : e.case || e.run?.case; try { return R.kindMark({ kind: 'task', tone: cs ? R.markTone(R.runState(RMM.stateOf(cs))) : 'idle', stage: -1, size: 16 }); } catch { return R.kindMark({ kind: 'task', size: 16 }); } }
+    if (area === 'Schedules') return R.kindMark({ kind: 'schedule', size: 16 });
+    if (area === 'Settings') return R.icon(SM.ICONS?.[(e.sset || '').split('|')[0]] || 'set-general', 14);
+    if (area === 'Places') return R.icon(`nav-${e.go || e.id || ''}`, 14) || R.icon('home', 14);
+    return R.icon('list', 14);
+  };
+  const line = (e, i) => ({ id: 'srch|' + i, text: e.label, mark: markOf(e, areaOf(e)), hint: [e.sset ? e.where.replace(/^Settings › /, '') : e.where, lockNote(e)].filter(Boolean).join(' · ') });
+  return R.searchResults(found.map((e, i) => ({ ...line(e, i), text: e.label, where: line(e, i).hint, area: areaOf(e) })), 'Nothing matches', { areas: AREAS.map(([a, ic]) => [a, R.icon(ic, 13)]), tail: [{ id: 'srch|ask', text: `Ask Chat: ${askWords()}`, hint: 'Chat' }] });
 }
 const askWords = () => ui.q.trim().replace(/^label:\s*/i, '');
 const closeOverlays = () => { ui.nr = null; ui.q = ''; ui.menu = ''; ui.pop = false; ui.acct = false; ui.sub = ''; SHELL?.closeSearch(); const i = document.querySelector('[data-search]'); if (i) i.value = ''; };

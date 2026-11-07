@@ -28,7 +28,7 @@ export function sideMenu({ label, back = null, groups, list = false, chevron = '
  * @param {string} [o.value]
  * @param {string} [o.placeholder]
  * @param {string} [o.label]        aria-label
- * @param {string} [o.results]      searchResults markup
+ * @param {string} [o.results]      searchResults markup (its items may carry `area` and `mark`; `areas` orders the heads)
  */
 export function search({ value = '', placeholder = 'Search or ask', label = 'Search', results = '' }) {
   return `<div class="rl-search rc-pop"><input class="input input-sm" type="search" data-search autocomplete="off"${attrs({ value, placeholder, 'aria-label': label, 'data-key': 'search' })}><div data-search-res>${results}</div></div>`;
@@ -39,8 +39,12 @@ export function search({ value = '', placeholder = 'Search or ask', label = 'Sea
  * @param {{id:string, text:string, where?:string}[]} items
  * @param {string} [empty]
  */
-export function searchResults(items, empty = 'Nothing matches') {
-  return compactMenu({ cls: 'rl-search-res', label: 'Found', items: items.length ? items.map((x) => ({ id: x.id, text: x.text, hint: x.where })) : [{ id: 'none', text: empty, off: true }] });
+export function searchResults(items, empty = 'Nothing matches', { areas = [], tail = [] } = {}) {
+  const line = (x) => ({ id: x.id, text: x.text, hint: x.where, mark: x.mark });
+  if (!items.length) return compactMenu({ cls: 'rl-search-res', label: 'Found', items: [{ id: 'none', text: empty, off: true }, ...tail] });
+  // what it finds, under the area it belongs to, each with its own mark (set.search)
+  const grouped = areas.length ? areas.flatMap(([area, mark]) => { const hits = items.filter((x) => x.area === area); return hits.length ? [{ header: area, mark }, ...hits.map(line)] : []; }) : items.map(line);
+  return compactMenu({ cls: 'rl-search-res', label: 'Found', items: [...grouped, ...(tail.length ? [{ sep: true }, ...tail] : [])] });
 }
 
 /**

@@ -841,3 +841,14 @@ test('stepper: deepen colours each main stage up to where it is', () => {
   const h = C.stepper({ stages, deepen: 'run' });
   assert.match(h, /--sc-mix:65%/); assert.match(h, /is-deep is-run/); assert.doesNotMatch(C.stepper({ stages }), /sc-mix/);
 });
+
+test('countBadge, barStrip, stageLine, searchResults by area', () => {
+  assert.match(C.countBadge({ n: 3, tone: 'need', corner: true }), /topnav-badge is-corner/);
+  assert.match(C.topBarAction({ label: 'Pulse', icon: '', labelCls: 'l', badge: { n: 2, tone: 'need' } }), /topnav-badge/);
+  const strip = C.barStrip({ items: [{ label: 'Chats: 4 open', icon: '', n: 4 }, { label: 'Tasks', icon: '', n: 0 }] });
+  assert.match(strip, /aria-label="Chats: 4 open"/); assert.equal((strip.match(/topnav-badge/g) || []).length, 1, 'no badge at 0');
+  assert.match(C.stageLine({ mark: '', label: 'Plan', parts: '<b>x</b>' }), /stage-tools/);
+  assert.match(C.stageLine({ mark: '', label: 'PR', next: true }), /is-next/);
+  const res = C.searchResults([{ id: 'a', text: 'Export', where: 'billing', area: 'Chats', mark: '<i></i>' }], 'None', { areas: [['Settings', ''], ['Chats', '']] });
+  assert.match(res, /menu-h">Chats/); assert.doesNotMatch(res, /Settings/);
+});

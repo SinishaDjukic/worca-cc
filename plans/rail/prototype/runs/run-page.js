@@ -438,7 +438,7 @@ function stageStream(v, open) {
     const live = st.live, done = st.cells.every((c) => /is-(done|merged)/.test(c)), next = st.cells.every((c) => /is-next/.test(c));
     const mark = live ? R.kindMark({ kind: 'task', tone: R.markTone(v), stage: -1, size: 16 }) : svg(done ? 'check' : 'now', 14);
     const parts = Object.entries(PART_STAGE).filter(([, k]) => k === st.key).map(([id]) => partBtn(id)).join('');
-    return `<div class="stage-line${st.selected ? ' is-open' : ''}${next ? ' is-next' : ''}"><div class="stage-head">${R.turnRow({ mark, text: `<b>${esc(st.label)}</b>`, end: esc(st.meta || ''), attrs: { 'data-fold-turn': st.key, 'data-stage-line': st.key } })}${parts ? `<span class="stage-tools">${parts}</span>` : ''}</div>${st.selected ? `<div class="rc-zone" role="tabpanel" id="stage-panel" aria-labelledby="st-${esc(st.key)}">${open}</div>` : ''}${partAt === st.key ? `<div class="rtab-panel stage-part" id="rtab-panel" tabindex="0">${panelHtml(v)}</div>` : ''}</div>`;
+    return R.stageLine({ mark, label: st.label, meta: st.meta || '', parts, next, attrs: { 'data-stage-line': st.key }, body: (st.selected ? `<div class="rc-zone" role="tabpanel" id="stage-panel" aria-labelledby="st-${esc(st.key)}">${open}</div>` : '') + (partAt === st.key ? `<div class="rtab-panel stage-part" id="rtab-panel" tabindex="0">${panelHtml(v)}</div>` : '') });
   };
   // what has no stage of its own (a group's runs) sits after the stages, as links
   const rest = v.tabs.slice(1).filter((t) => !(PART_STAGE[t.id] && v.stages.some((st) => st.key === PART_STAGE[t.id]))).map((t) => partBtn(t.id)).join('');

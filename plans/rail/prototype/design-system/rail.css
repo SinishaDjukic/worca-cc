@@ -1262,3 +1262,4 @@ th.rt-c{color:var(--ink-2);font-weight:500;}
 .stage-tools{flex:none;display:inline-flex;gap:2px;}
 .stage-part{margin:6px 0 0 32px;}
 .stage-parts{display:flex;gap:4px;flex-wrap:wrap;margin:6px 0 0 30px;}
+.rl-search-res .menu-item > .kind-mark,.rl-search-res .menu-item > svg{flex:none;margin-right:8px;color:var(--ink-2);}

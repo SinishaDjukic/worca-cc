@@ -77,6 +77,28 @@ for (const scheme of ['light', 'dark']) for (const w of [1280, 900, 760, 375]) {
   await step('a chat row opens its chat', () => document.querySelector('#bar-chat [data-open="chat:c2"]')?.click(), () => location.hash === '#chat/c2' && !!document.querySelector('#route-chat .convo') && !!document.querySelector('#bar-chat [data-row="chat:c2"].is-current'));
   await step('a task in the tree opens with its chat around it', () => document.querySelector('#bar-chat [data-open="task:t1"]')?.click(), () => location.hash === '#run/question' && document.getElementById('side-rail').dataset.bar === 'chat');
   await step('asking from a task goes to its chat', () => { const t = document.querySelector('#task-dock [data-composer-t]'); t.value = 'Why?'; document.querySelector('[data-dock-send]').click(); }, () => location.hash === '#chat/c1');
+  // the hidden bar: a 56px strip with the work's summary, nothing sticking out; hover opens it over the page; a menu keeps it open
+  if (w > 760) {
+    await p.goto(`${URL_}#chat/c1`); await p.waitForTimeout(150);
+    await p.evaluate(() => document.querySelector('[data-bar-hide]').click()); await p.mouse.move(w - 40, 400); await p.waitForTimeout(260);
+    const strip = await p.evaluate(() => { const r = document.getElementById('side-rail').getBoundingClientRect(), out = [...document.querySelectorAll('#side-rail *')].filter((e) => e.offsetParent && e.getClientRects().length).filter((e) => { const b = e.getBoundingClientRect(); return b.width && (b.right > r.right + 1 || b.left < r.left - 1); }).map((e) => e.className || e.tagName); return { w: Math.round(r.width), mini: document.querySelectorAll('#bar-mini .bar-strip-i').length, out: [...new Set(out)].slice(0, 4) }; });
+    if (strip.w !== 56 || !strip.mini || strip.out.length) add('the hidden bar is not a clean strip', `${scheme}/${w}: ${JSON.stringify(strip)}`);
+    await p.mouse.move(20, 300); await p.waitForTimeout(260);
+    if (await p.evaluate(() => Math.round(document.getElementById('side-rail').getBoundingClientRect().width) < 264)) add('the hidden bar does not open under the pointer', `${scheme}/${w}`);
+    await p.evaluate(() => document.querySelector('#bar-chat [data-menu^="row:chat:"]')?.click()); await p.mouse.move(w - 40, 400); await p.waitForTimeout(260);
+    if (await p.evaluate(() => !!document.querySelector('#bar-chat .menu') && document.getElementById('side-rail').getBoundingClientRect().width < 264)) add('the hidden bar closes over an open menu', `${scheme}/${w}`);
+    await p.keyboard.press('Escape'); await p.evaluate(() => { document.getElementById('bar-show')?.click(); localStorage.removeItem('worca-rail.sidebar.collapsed'); });
+    // the resize has a floor: dragged under it the bar keeps 264px; past the snap it hides
+    await p.goto(`${URL_}#chat/c1`); await p.reload(); await p.waitForTimeout(150);
+    const g = await p.evaluate(() => { const r = document.querySelector('.bar-grip').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + 200 }; });
+    await p.mouse.move(g.x, g.y); await p.mouse.down(); await p.mouse.move(230, g.y, { steps: 4 }); await p.mouse.up();
+    const floor = await p.evaluate(() => Math.round(document.getElementById('side-rail').getBoundingClientRect().width));
+    if (floor !== 264) add('the bar resizes under its floor', `${scheme}/${w}: ${floor}`);
+    await p.mouse.move(g.x - 16, g.y); await p.mouse.down(); await p.mouse.move(120, g.y, { steps: 4 }); await p.mouse.up(); await p.mouse.move(w - 40, 400); await p.waitForTimeout(260);
+    if (await p.evaluate(() => !document.getElementById('side-rail').classList.contains('collapsed'))) add('dragging past the floor does not hide the bar', `${scheme}/${w}`);
+    await p.evaluate(() => { localStorage.removeItem('worca-rail.sidebar.collapsed'); localStorage.removeItem('worca-rail.bar.width'); }); await p.reload(); await p.waitForTimeout(120);
+    checks += 5;
+  }
   // the sidebar's width
   await p.goto(`${URL_}#runs`); await p.waitForTimeout(350);
   const sideW = await p.evaluate(() => Math.round(document.getElementById('side-rail').getBoundingClientRect().width));

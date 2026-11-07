@@ -47,5 +47,5 @@
     if ((hit = on('[data-menu]'))) { menu = menu === hit.dataset.menu ? '' : hit.dataset.menu; draw(); }
   });
   R.dismissOnOutside(document, { open: () => !!menu, inside: '#route-schedule .spick', back: () => null, close: () => { menu = ''; }, paint: draw });
-  window.RailSchedules = { show: (id) => { current = id || ''; draw(); } };
+  window.RailSchedules = { show: (id) => { current = id || ''; draw(); }, summary: () => ({ n: data.schedules.filter((s) => s.state !== 'paused').length, needs: data.schedules.filter((s) => s.section === 'needs').length }) };
 })();

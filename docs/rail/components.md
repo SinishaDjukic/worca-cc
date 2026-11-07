@@ -21,9 +21,13 @@ A Rail page is built by naming needs, not looks. Find the need, use its componen
 | Going to another page or place | Text link, or a ListRow you open | Changes +358 −144, a file, a step |
 | Copying text | CopyButton: a quiet 28px icon button; a tick for 1.2s and `Copied` in its tooltip and the live region; its width never changes | a branch, a command, an id |
 | A line icon | `icon` from the library's one set, at its one weight (1.8px); no page draws a path or picks a weight, and the sidebar's places are `nav-<view>` | ✓ on a menu item, Runs in the sidebar |
-| A place in the sidebar | NavItem | Runs, Chats |
+| A place in the bar's places | NavItem, under Settings-like group heads; a Work place's + starts its own thing | Chat, Tasks, Schedules |
+| The head of the one bar | BarHead: Worca's W (the way to the places), its title, its one action, Hide | Chat + |
+| The hidden bar | BarStrip: one icon per kind of work, its CountBadge; opens its place | Chats 4, Tasks 7 |
+| How many, on the corner of what it counts | CountBadge, `need` when any waits on you | Pulse 3 |
 | The sidebar's foot, the door to the profile menu | AccountButton, then AccountItem rows in its flyout | Interface mode, Away |
-| An action in the top bar whose words give way on a narrow screen | TopBarAction | Pulse, New run |
+| An action in the top bar | TopBarAction, an icon with its CountBadge; its name in the tooltip | Ask worca, Pulse |
+| Starting anything | Composer: the words, then one line with +, the Ask/Task/Schedule sentence, voice and send | Start task |
 | **Choosing** | | |
 | A choice that changes a step | SentencePicker: a picker in the sentence it changes, opening a CompactMenu (in the app, wired to `toggleMenu`, so the menu has keys) | `Send [what needs you ▾] to [desktop ▾]` |
 | A choice among a form's or a panel's words | WordPicker, opening a CompactMenu | `dev ▾` base branch, `One PR ▾` |
@@ -34,7 +38,7 @@ A Rail page is built by naming needs, not looks. Find the need, use its componen
 | A setting that is on or off | Switch: takes effect at once, no confirm; a failed change flips back and a toast says why | Watch on a PR |
 | Picking items from a list, an opt-out, a consent | Checkbox | the checklist, No cap, Draft |
 | Two or three views of the same thing | Segmented | Light and Dark, Summaries and Raw |
-| Sections of a page | Tabs | Overview, Changes, Activity, Decisions |
+| Sections of a page | Tabs; on a task in the one Worca, none: each part opens under its StageLine | Overview, Changes, Activity, Decisions |
 | Narrowing a list | the list's sentence: SentencePicker words above the list, each choice with its count; never a filter button or a View menu | `Showing [ready to ship ▾] from [all projects ▾] by [day ▾]` |
 | Picking and adding names | ListEditor | labels and cost tags, groups |
 | A choice inside a confirm | OptionList inside the ConfirmStrip or the Dialog; never radio cards | Rescan now, Rescan after the next run |
@@ -42,10 +46,18 @@ A Rail page is built by naming needs, not looks. Find the need, use its componen
 | **Entering** | | |
 | Text or a number in a form | Field | Branch, Budget |
 | Text Worca writes for you | SuggestionField | PR title and description, a drafted answer |
-| Finding anything | the top bar's search: runs, chats, settings, plugins; a result lands with the flash | Search or ask |
+| Finding anything | the top bar's search (`searchResults` with areas): settings, chats, tasks, schedules, places, each under its area's head with its own mark; a result lands with the flash | Search or ask |
 | Context sent with a message | ListEditor's removable item, in the composer | This page × |
 | **Showing** | | |
-| What is happening | StatusLine: the status dot and the state word | Ready to merge, Paused |
+| What is happening | StatusLine: its KindMark and the state word | Ready to merge, Paused |
+| What a row is and how it stands | KindMark: the type's icon, a smooth ring by main stage in the state's colour, a question, problem, pause or stop in its centre; it breathes while work happens and pulses once when its state changes | a task at Review |
+| Git's status at a row's end | GitMark, git's own icon; it pulses while Watch fixes | PR #1180, checks failing |
+| A task or a schedule in a conversation | TaskCard: its page's anatomy, compact before it starts | Add CSV export |
+| A stage of a task, read down | StageLine, its parts at its end | Plan · Decisions 3 |
+| A task's stages on a card | StageBar, each deepening into the state's colour | Plan · Build · Review |
+| What Worca did in a conversation | TurnRow: folds; a failure opens itself | Ran 4 commands |
+| Moving through a long conversation or a task | Timeline on the right edge, its TimelineCard on hover | Which date format? |
+| What hangs under a row | the rounded tree under it (`tree` on a list's row) | a chat's tasks |
 | How far along, and its steps | Stepper, then StepRow on the rail | Plan · Build · Review |
 | One line that opens its detail in place | LineRow | Did all 3 parts you asked |
 | A changed file | FileRow, opening its diff | app.js +12 −3 |
@@ -61,7 +73,7 @@ A Rail page is built by naming needs, not looks. Find the need, use its componen
 | An update or a thing in Pulse | PulseRow, built on `row()`; while selecting, its tick box on the rail | Plan asks 2 questions |
 | What keeps running after a run | A PulseRow in Pulse's Vitals, under `Running actions`, with its Stop; never in the sidebar, which holds places only, and never in Pulse's badge, since it needs nobody | Dev server :4417 |
 | A short fact: a stage, a source, a slot to set up | Chip | Beta, Official, No API key |
-| Why a control is off, a cut-off text, an id | Tooltip | Checks are still running on #959 |
+| Why a control is off, a cut-off text, an id, a row's facts | Tooltip (`watchTooltips`): every `title`, quick, on hover, focus and long-press | web-app · Replying · 14:30 |
 | A workflow at full size | WorkflowGraph, the view in a Dialog without a form: a lane per stage, a node per step in its colour, a node opens its log under it | Open the graph |
 | A step's or a run's log | LogLines: time, where from, words; its filters are a sentence of SentencePickers above it | Activity's Logs |
 | The same figures across many rows | Table: divided rows, tabular figures, no box per row, the name first; on a narrow screen the least needed columns go to the row's detail | sessions, cost by step |

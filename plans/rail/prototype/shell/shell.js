@@ -32,8 +32,8 @@
     side.querySelector('.brand').innerHTML = '<div id="bar-head"></div>'; side.querySelector('.brand').append(close);
     side.querySelector('#acct-menu')?.remove();   // the Rail profile menu takes its place (pulse.js)
     side.querySelector('#side-foot').innerHTML = '';   // the avatar: pulse.js draws it
-    nav.insertAdjacentHTML('afterend', '<div id="bar-chat" class="bar-list pz-app rail-page" hidden></div><div id="bar-tasks" class="bar-list pz-app rail-page" hidden><div id="runs-root"></div></div><div id="bar-schedules" class="bar-list pz-app rail-page" hidden></div>');
-    side.insertAdjacentHTML('beforeend', '<div class="bar-grip" role="separator" aria-orientation="vertical" aria-label="Resize the bar" aria-valuemin="240" aria-valuemax="420" tabindex="0" title="Drag to resize; double-click for the default width"></div>');
+    nav.insertAdjacentHTML('afterend', '<nav id="bar-mini" class="bar-mini" aria-label="Your work"></nav><div id="bar-chat" class="bar-list pz-app rail-page" hidden></div><div id="bar-tasks" class="bar-list pz-app rail-page" hidden><div id="runs-root"></div></div><div id="bar-schedules" class="bar-list pz-app rail-page" hidden></div>');
+    side.insertAdjacentHTML('beforeend', '<div class="bar-grip" role="separator" aria-orientation="vertical" aria-label="Resize the bar" aria-valuemin="264" aria-valuemax="420" tabindex="0" title="Drag to resize; past the edge it hides. Double-click for the default width"></div>');
     return side;
   }
   // What a place needs: the sidebar's own data-min-level and data-flag, as the app's sidebar.html has them.
@@ -63,6 +63,7 @@
     if (input) { input.setAttribute('data-search', ''); input.removeAttribute('role'); input.closest('.tsearch-field')?.insertAdjacentHTML('beforeend', '<div data-search-res></div>'); }
     top.querySelector('#tsearch-pop')?.remove();
     top.querySelector('#topnav-ask')?.removeAttribute('hidden');
+    top.querySelector('#topnav-ask')?.insertAdjacentHTML('afterbegin', `<span class="ask-ic" aria-hidden="true">${R.icon('ask-worca', 18)}</span>`);
     top.querySelector('.topnav-r')?.insertAdjacentHTML('beforeend', '<span id="rail-conn"></span>');
     return top;
   }
@@ -75,7 +76,7 @@
   function syncRail() {
     const w = innerWidth, side = document.getElementById('side-rail'), rail = w <= 760 ? false : collapsed;
     side.classList.toggle('collapsed', rail);
-    document.getElementById('worca').classList.toggle('has-rail', rail);
+    document.getElementById('worca').classList.toggle('has-rail', rail); document.body.classList.toggle('bar-hidden', rail);
     const t = document.getElementById('side-toggle');
     if (t) { t.setAttribute('aria-expanded', String(!rail)); const word = rail ? 'Expand menu' : 'Collapse menu'; t.title = word; t.setAttribute('aria-label', word); }
     if (w > 760) drawer(false);
@@ -134,7 +135,7 @@
     const side = document.getElementById('side-rail'), own = barOf(routed.view), which = homeOpen ? 'home' : own;
     side.dataset.bar = which;
     const act = { chat: ['New chat', 'ask'], tasks: ['New task', 'task'], schedules: ['New schedule', 'schedule'] }[which];
-    document.getElementById('bar-head').innerHTML = R.barHead({ title: BAR_TITLE[which], home: which === 'home', logo: '<span class="logo-mark" aria-hidden="true"></span>', action: act ? R.button({ label: act[0], kind: 'quiet', iconOnly: true, icon: R.icon('plus', 15), attrs: { 'data-bar-new': act[1] } }) : '', hide: R.button({ label: 'Hide the bar', kind: 'quiet', iconOnly: true, icon: R.icon('bar-hide', 15), attrs: { 'data-bar-hide': '', title: `Hide the bar (${R.keyHint(['mod', '\\'], R.isMac(window))})` } }) });
+    document.getElementById('bar-head').innerHTML = R.barHead({ title: BAR_TITLE[which], home: which === 'home', logo: R.icon('worca-w', 20), action: act ? R.button({ label: act[0], kind: 'quiet', iconOnly: true, icon: R.icon('plus', 15), attrs: { 'data-bar-new': act[1] } }) : '', hide: R.button({ label: 'Hide the bar', kind: 'quiet', iconOnly: true, icon: R.icon('bar-hide', 15), attrs: { 'data-bar-hide': '', title: `Hide the bar (${R.keyHint(['mod', '\\'], R.isMac(window))})` } }) });
     for (const [id, b] of [['bar-chat', 'chat'], ['bar-tasks', 'tasks'], ['bar-schedules', 'schedules']]) document.getElementById(id).hidden = which !== b;
     // Pinned first: what you pinned in any list; then the one thing you came from.
     const pins = (window.RailChats?.data().chats || []).filter((c) => c.pinned && !c.archived).map((c) => R.listRow({ title: c.title, meta: c.project || 'No project', mark: R.kindMark({ kind: c.kind === 'workflow' ? 'workflow' : 'chat' }), open: { 'data-back-to': `chat/${c.id}`, title: `Opens ${c.title}` } }));
@@ -144,7 +145,18 @@
     const PINS = 5, morePins = pinRows.length - PINS;
     if (!pinsAll && morePins > 0) pinRows.length = PINS;
     const rows = [...pinRows, ...seenRows].map((x) => R.listRow({ title: x.title, meta: x.meta, mark: x.mark, end: x.end ? `<span class="lr-fig" title="${x.tip}">${x.end}</span>` : '', endText: x.end ? '' : x.when || '', open: { 'data-back-to': x.hash, title: `Opens ${x.title}` } }));
+    drawMini();
     document.getElementById('bar-back').innerHTML = rows.length ? R.list({ groups: [{ title: 'Recent', rows, more: !pinsAll && morePins > 0 ? { n: morePins, attrs: { 'data-pins-all': '' } } : null }] }) : '';
+  }
+
+  // Hidden, the bar is a strip: the W, then one icon per kind of work with how many are open; each opens its place.
+  function drawMini() {
+    const chats = (window.RailChats?.data().chats || []).filter((c) => !c.archived), live = chats.filter((c) => c.state !== 'idle');
+    const kinds = [['chat', 'chat', 'Chats', { n: live.length, needs: chats.filter((c) => c.state === 'needs-you').length }], ['runs', 'task', 'Tasks', window.RailRunsList?.summary()], ['schedules', 'schedule', 'Schedules', window.RailSchedules?.summary()]];
+    document.getElementById('bar-mini').innerHTML = R.barStrip({ items: kinds.filter(([place]) => !lockOf(place)).map(([place, kind, word, c]) => {
+      const n = c?.n || 0, needs = c?.needs || 0;
+      return { label: [`${word}: ${n} open`, needs ? `${needs} need you` : ''].filter(Boolean).join(' · '), icon: R.kindMark({ kind, stage: -1, keepType: true, size: 22 }), n, tone: needs ? 'need' : '', attrs: { 'data-mini': place } };
+    }) });
   }
 
   // ---- the router ----
@@ -198,6 +210,7 @@
       scrollTo(0, 0);
     }
     drawBar();
+    document.body.classList.toggle('bar-hidden', document.getElementById('side-rail').classList.contains('collapsed'));
   }
 
   // ---- a task's page: its trail goes back through its chat; its timeline is its stages ----
@@ -240,8 +253,9 @@
   document.addEventListener('click', (e) => {
     const on = (sel) => e.target.closest(sel);
     let hit;
+    if ((hit = on('[data-mini]'))) { window.RailShell.go(hit.dataset.mini); return; }
     if (on('[data-pins-all]')) { pinsAll = true; drawBar(); return; }
-    if (on('[data-bar-hide]')) { collapsed = true; store.set(KEY_RAIL, '1'); syncRail(); document.activeElement?.blur(); return; }
+    if (on('[data-bar-hide]')) { hideBar(); return; }
     if (on('#bar-show')) { collapsed = false; store.set(KEY_RAIL, '0'); syncRail(); return; }
     if (on('[data-bar-house]')) { homeOpen = !homeOpen && barOf(routed.view) !== 'home'; drawBar(); return; }
     if ((hit = on('[data-bar-new]'))) { window.RailConversation?.start(hit.dataset.barNew); return; }
@@ -266,11 +280,12 @@
   // From a chat, the trail goes back to it.
   document.addEventListener('click', (e) => { if (taskChat && routed.view === 'run' && e.target.closest('#card .rc-crumbs .rc-crumb')) { e.preventDefault(); e.stopPropagation(); window.RailShell.back(); } }, true);
   // The bar's grip: a drag or the arrow keys, 240 to 420px, kept; a double-click goes back to the default.
-  const BAR_W = 280, KEY_BAR = 'worca-rail.bar.width', clampBar = (px) => Math.min(420, Math.max(240, Math.round(+px) || BAR_W));
+  const BAR_W = 280, BAR_MIN = 264, BAR_SNAP = 200, KEY_BAR = 'worca-rail.bar.width', clampBar = (px) => Math.min(420, Math.max(BAR_MIN, Math.round(+px) || BAR_W));
+  function hideBar() { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); collapsed = true; store.set(KEY_RAIL, '1'); syncRail(); document.activeElement?.blur(); drawMini(); }
   let barW = clampBar(store.get(KEY_BAR)), barDrag = false;
   const setBarW = (px) => { barW = clampBar(px); document.documentElement.style.setProperty('--bar-w', `${barW}px`); store.set(KEY_BAR, barW); document.querySelector('.bar-grip')?.setAttribute('aria-valuenow', barW); };
   document.addEventListener('pointerdown', (e) => { if (e.target.closest?.('.bar-grip')) { barDrag = true; e.preventDefault(); document.body.classList.add('is-resizing-bar'); } });
-  document.addEventListener('pointermove', (e) => { if (barDrag) setBarW(e.clientX); });
+  document.addEventListener('pointermove', (e) => { if (!barDrag) return; if (e.clientX < BAR_SNAP) { barDrag = false; document.body.classList.remove('is-resizing-bar'); hideBar(); return; } setBarW(e.clientX); });
   document.addEventListener('pointerup', () => { if (barDrag) { barDrag = false; document.body.classList.remove('is-resizing-bar'); } });
   document.addEventListener('dblclick', (e) => { if (e.target.closest?.('.bar-grip')) setBarW(BAR_W); });
   document.addEventListener('keydown', (e) => { if (e.target.closest?.('.bar-grip') && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) { e.preventDefault(); setBarW(barW + (e.key === 'ArrowRight' ? 20 : -20)); } });
@@ -280,7 +295,7 @@
   document.addEventListener('pointermove', (e) => { if (drag) setAskW(innerWidth - e.clientX); });
   document.addEventListener('pointerup', () => { if (drag) { drag = false; document.getElementById('ask-side').classList.remove('is-resizing'); } });
   document.addEventListener('keydown', (e) => {
-    if ((e.metaKey || e.ctrlKey) && e.key === '\\' && innerWidth > 760) { e.preventDefault(); collapsed = !collapsed; store.set(KEY_RAIL, collapsed ? '1' : '0'); syncRail(); return; }
+    if ((e.metaKey || e.ctrlKey) && e.key === '\\' && innerWidth > 760) { e.preventDefault(); if (collapsed) { collapsed = false; store.set(KEY_RAIL, '0'); syncRail(); } else hideBar(); return; }
     if (e.target.closest?.('#ask-side .ask-side-grip') && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) { e.preventDefault(); setAskW(askW + (e.key === 'ArrowLeft' ? 20 : -20)); return; }
   });
   // The prototype's corner: what the connection does, and the screensaver.
@@ -326,7 +341,7 @@
   R.watchTooltips(document);
   addEventListener('resize', () => { syncRail(); });
   // A change of mode or a Labs flag: the sidebar follows, and the page if that changes whether it is locked.
-  R.prefs.onChange(() => { applyPrefs(); if (routed.view && (TITLES[routed.view] || routed.view === 'schedule') && !!lockOf(routed.view) !== routed.locked) route(); });
+  R.prefs.onChange(() => { applyPrefs(); drawMini(); if (routed.view && (TITLES[routed.view] || routed.view === 'schedule') && !!lockOf(routed.view) !== routed.locked) route(); });
   addEventListener('hashchange', route);
   // another Pulse case: the run page in view takes its title from it
   window.RailWorld.onChange(() => { if (routed.view === 'run') { reopen = true; route(); } });

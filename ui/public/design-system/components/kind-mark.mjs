@@ -40,8 +40,9 @@ export function markTone(st = {}) {
  * @param {number} [o.stages]
  * @param {number} [o.size]
  * @param {string} [o.title]   the tooltip: its word, then its step
+ * @param {boolean} [o.keepType]  the type stays in the centre whatever the state (a summary of many)
  */
-export function kindMark({ kind = 'task', tone = 'idle', stage = -1, stages = STAGES, size = 20, title = '' } = {}) {
+export function kindMark({ kind = 'task', tone = 'idle', stage = -1, stages = STAGES, size = 20, title = '', keepType = false } = {}) {
   const noRing = kind === 'event' || tone === 'idle' || (kind === 'schedule' && tone === 'wait');
   const reach = tone === 'wait' ? 0 : stage < 0 ? 1 : Math.min(1, (stage + 1) / stages);
   const arc = (from, len, stroke) => `<circle cx="10" cy="10" r="${R}" fill="none" stroke="${stroke}" stroke-width="1.1" stroke-dasharray="${len.toFixed(2)} ${(L - len).toFixed(2)}" stroke-dashoffset="${(L / 4 - from).toFixed(2)}"></circle>`;
@@ -51,7 +52,7 @@ export function kindMark({ kind = 'task', tone = 'idle', stage = -1, stages = ST
     const steps = Math.round(48 * reach);
     for (let k = 0; k < steps; k++) ring += arc(k * (L / 48), L / 48 + 0.15, `color-mix(in srgb, currentColor ${Math.round(30 + 70 * (k + 1) / steps)}%, var(--line-2))`);
   }
-  const centre = !noRing && CENTRE[tone] ? CENTRE[tone] : KINDS[kind] || KINDS.task;
+  const centre = !noRing && !keepType && CENTRE[tone] ? CENTRE[tone] : KINDS[kind] || KINDS.task;
   const glyph = icon(centre, Math.round((noRing ? 15 : centre === 'question' || centre === 'alert' ? 14 : 11) * size / 20));
   return `<span class="kind-mark is-${tone}"${attrs({ style: `--km:${size}px`, title: title || null, role: title ? 'img' : null, 'aria-label': title || null, 'aria-hidden': title ? null : 'true' })}>${ring ? `<svg class="km-ring" width="${size}" height="${size}" viewBox="0 0 20 20" aria-hidden="true">${ring}</svg>` : ''}${glyph}</span>`;
 }
@@ -172,6 +173,22 @@ export function taskCard({ title, place = '', mark, word, detail = '', action = 
   const side = action ? `<div class="rc-side">${action}</div>` : '';
   if (compact) return `<article class="task-card rc is-compact"${attrs(a)}><section class="rc-card"${attrs({ 'aria-label': title })}>${statusLine({ dot: mark, word: title, action: side, detail })}</section></article>`;
   return `<article class="task-card rc"${attrs(a)}><div class="rc-head"><h3 class="rc-heading tc-title"${attrs({ title })}>${esc(title)}</h3>${place ? `<div class="rc-facts">${place}</div>` : ''}</div><section class="rc-card"${attrs({ 'aria-label': `${title}: ${word}` })}>${statusLine({ dot: mark, word, action: side, detail })}${stages ? `<div class="rc-zone"><div class="rc-span">${stages}</div></div>` : ''}</section>${foot ? `<div class="tc-foot">${foot}</div>` : ''}</article>`;
+}
+
+/**
+ * StageLine: a stage of a task, read down like a conversation: its mark, its name and time, its parts at its end
+ * (Decisions, Changes, Activity), and what it opens under it.
+ * @param {object} o
+ * @param {string} o.mark
+ * @param {string} o.label
+ * @param {string} [o.meta]
+ * @param {string} [o.parts]   buttons
+ * @param {string} [o.body]    what is open under it
+ * @param {boolean} [o.next]   not started: quiet
+ * @param {object} [o.attrs]   on its line (the click that opens it)
+ */
+export function stageLine({ mark, label, meta = '', parts = '', body = '', next = false, attrs: a = {} }) {
+  return `<div class="stage-line${body ? ' is-open' : ''}${next ? ' is-next' : ''}"><div class="stage-head">${turnRow({ mark, text: `<b>${esc(label)}</b>`, end: esc(meta), attrs: { 'data-fold-turn': '', ...a } })}${parts ? `<span class="stage-tools">${parts}</span>` : ''}</div>${body}</div>`;
 }
 
 /**

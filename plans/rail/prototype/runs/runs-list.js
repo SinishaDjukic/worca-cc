@@ -233,6 +233,7 @@
   R.prefs.onChange(() => ctl.paint());
   window.RailRunsList = {
     show: () => ctl.paint(),
+    summary: () => { const t = tops().filter((x) => !x.archived); return { n: t.filter((x) => x.section === 'running' || x.section === 'needs').length, needs: t.filter((x) => x.section === 'needs').length }; },
     focus: () => ctl.focusRow(),
     // from the search: the runs with this label
     label: (l) => { view = { ...view, labels: [l], show: 'all', from: 'all', person: '' }; store.set(view); ctl.clear(); ctl.paint(); },
