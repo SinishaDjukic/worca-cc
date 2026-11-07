@@ -90,7 +90,12 @@ Mocks: `mocks/wave-2/` (`node plans/rail/mocks/wave-2/render.mjs`). These are di
 | **Running is ink, not a colour;** light's state colours deepened so each holds 3:1; one mark breathes per tree and three per list | built |
 | **The top bar:** one 20px size for its icons; Pulse shakes once on news; Ask worca is a boxy chat bubble with the W, dots while it writes, filled while open | built |
 | **Small motion** says what changed: a ring fills, a new row drops in, a section folds, the bar fades between places | built |
-| **Backgrounds:** full on Chat home and the away screen; on every other page only in its margins | built |
+| **Backgrounds:** full on the away screen only; around Chat home's composer, fading in toward it; on reading pages they fade into the column, their last dots ending at the rail | built |
+| **Every chat card in one Rail shape** (CardHead: mark and word, title, one line, facts, ⋯; then its body; then one primary): proposals, changes, plans, files, your words, dividers; the plan in `chat-cards.md` | built |
+| **Everything leads to its card in its chat;** a task's card opens in place with its page's own stream; its actions act there | built |
+| **Dev parity, flow by flow** (`chat-cards.md` › Parity): the proposal, Chat home's starters, Shaper's steps, Build workflow, Schedule, Track, Explain a diff, scripts, project, away, metrics, model, workspace, remember, find tasks | built, a few open |
+| **The composer:** a starter's chip, effort, context meter, queue, @ mentions, hands-free | built |
+| **Thinking is one line** with Worca's orb, its W facing you; **Ask worca** is a boxy bubble with the W | built |
 
 Decided rules these change: C1 (Chat home's list moves to the bar), C3 (Expert only), "no drawn rails" (the tree), the quiet grey finished step, `thing.slots` (stages read as a stream), `form.dialog` (New run), the conversation's rail, "the sidebar holds places".
 
