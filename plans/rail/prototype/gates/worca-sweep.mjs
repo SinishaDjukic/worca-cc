@@ -121,6 +121,19 @@ for (const scheme of ['light', 'dark']) for (const w of [1280, 900, 760, 375]) {
   await step('the Chat list is by date', () => {}, () => /by\s*date/.test(document.querySelector('#bar-chat .list-sentence')?.textContent || '') && !!document.querySelector('#bar-chat [data-fold-section="day:today"]'));
   await step('a date section folds', () => document.querySelector('#bar-chat [data-fold-section="day:today"]').click(), () => !!document.querySelector('#bar-chat .list-group.is-shut [data-fold-section="day:today"]'));
   await step('and opens again', () => document.querySelector('#bar-chat [data-fold-section="day:today"]').click(), () => !document.querySelector('#bar-chat .list-group.is-shut'));
+  // the flows, as dev has them (plans/rail/chat-cards.md › Parity): a starter arms the composer and sends into its flow
+  if (w > 760) {
+    await p.goto(`${URL_}#chat`); await p.waitForTimeout(150);
+    await step('a starter arms the composer with its chip', () => document.querySelector('[data-starter="workflow"]')?.click(), () => /Build workflow/.test(document.querySelector('.composer-intent')?.textContent || ''));
+    await step('Build workflow proposes a workflow', () => { const t = document.querySelector('#route-chat [data-composer-t]'); t.value = 'Review every PR twice'; t.dispatchEvent(new Event('input', { bubbles: true })); document.querySelector('#route-chat [data-cp-send]').click(); }, async () => { await new Promise((r) => setTimeout(r, 1700)); return /Proposed change · Workflow/.test(document.querySelector('#route-chat').textContent); });
+    await p.goto(`${URL_}#chat`); await p.waitForTimeout(150);
+    await step('Shaper proposes, then plans', () => document.querySelector('[data-starter="pin:Shaper"]')?.click(), () => /Shaper/.test(document.querySelector('.composer-intent')?.textContent || ''));
+    await step('its proposal starts planning', () => { const t = document.querySelector('#route-chat [data-composer-t]'); t.value = 'Add a CSV export'; t.dispatchEvent(new Event('input', { bubbles: true })); document.querySelector('#route-chat [data-cp-send]').click(); }, async () => { await new Promise((r) => setTimeout(r, 1700)); return document.querySelector('[data-pp-start]')?.textContent === 'Start planning'; });
+    await step('clarify, then Use defaults brings the plan', () => { document.querySelector('[data-pp-start]').click(); }, async () => { await new Promise((r) => setTimeout(r, 150)); document.querySelector('[data-answer-picks]')?.click(); await new Promise((r) => setTimeout(r, 150)); return !!document.querySelector('#route-chat .plan') && /Requirements agreed/.test(document.querySelector('#route-chat').textContent); });
+    await step('a card acts in place', () => window.RailShell.openRun('run/failed', 'Fix the invoice export'), async () => { await new Promise((r) => setTimeout(r, 300)); document.querySelector('#route-chat [data-card-act]')?.click(); await new Promise((r) => setTimeout(r, 150)); return /^#chat\//.test(location.hash) && /Working/.test(document.querySelector('#route-chat .task-card .tp-kicker')?.textContent || ''); });
+    await p.goto(`${URL_}#chat/c7`); await p.waitForTimeout(150);
+    await step('a settings kind has its own choices', () => document.querySelector('[data-cp-act="a2|0"]')?.click(), () => /Allowed in this chat/.test(document.querySelector('#route-chat').textContent));
+  }
   // In view: from a row's ⋯ into the top bar; its mark opens it
   await p.goto(`${URL_}#chat/c1`); await p.waitForTimeout(150);
   await step('Keep in view puts a mark in the top bar', () => { document.querySelector('#bar-chat [data-menu="row:task:t1"]')?.click(); document.querySelector('#bar-chat [data-menu-pick="row:task:t1|in-view"]')?.click(); }, () => innerWidth <= 760 || !!document.querySelector('#in-view-slot [data-in-view="task:t1"]'));

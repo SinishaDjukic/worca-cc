@@ -1188,6 +1188,17 @@
       ]
     },
     {
+      "name": "IntentChip",
+      "code": "ui/public/design-system/components/shell-parts.mjs#intentChip",
+      "kind": "moving",
+      "needs": [
+        "a starter armed in the composer: its name, and a way to clear it; nothing is sent until you send"
+      ],
+      "rules": [
+        "form.composer"
+      ]
+    },
+    {
       "name": "InView",
       "code": "ui/public/design-system/components/shell-parts.mjs#inView",
       "kind": "moving",

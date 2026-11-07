@@ -880,11 +880,25 @@ test('thinkingRow: live says, in one line, what it does and how long, politely; 
   assert.match(C.thinkingRow({ done: true, secs: '8s', steps: ['Read the chat'], open: true, attrs: { 'data-fold-turn': '3' } }), /tr-body is-steps[\s\S]*Read the chat/);
 });
 
+test('intentChip: a starter armed in the composer: its icon, its name, and ✕ to clear it', () => {
+  const h = C.intentChip({ icon: '<i>i</i>', label: 'Build workflow', clear: { 'data-intent-clear': '' } });
+  assert.match(h, /kind-chip composer-intent"><i>i<\/i>Build workflow/); assert.match(h, /aria-label="Clear Build workflow"[^>]*data-intent-clear/);
+});
+
 test('cardHead: the kicker with its mark and word, the title, one line, facts and ⋯; a feature lists its slices; your words carry task chips', () => {
   const h = C.cardHead({ mark: '<i>m</i>', kicker: 'Running', title: 'Add', why: 'Plan · 1 of 2', facts: '<b>f</b>', menu: '<u>⋯</u>' });
   assert.match(h, /tp-kicker"><i>m<\/i><span>Running<\/span><span class="tp-menu"><u>⋯<\/u>/); assert.match(h, /rc-heading tc-title[^>]*>Add</); assert.match(h, /rc-facts"><b>f<\/b>/); assert.match(h, /tp-why">Plan · 1 of 2/);
   assert.match(C.taskCard({ title: 'F', mark: '', word: 'Running', rows: '<i>slice</i>' }), /tc-rows"><i>slice<\/i>/);
   assert.match(C.youTurn({ text: 'x', refs: [{ text: 'Add CSV', attrs: { 'data-open-ref': 'question' } }] }), /you-ref[^>]*data-open-ref="question"[^>]*>Add CSV/);
+});
+
+test('the cards at parity: a proposal\'s own start word, kicker and extra; a change\'s own choices; a plan\'s ⋯ and lines above its review', () => {
+  const p = C.taskProposal({ title: 't', sentence: '', start: 'Start planning', kicker: 'Proposed · from BILL-412', extra: '<i>e</i>' });
+  assert.match(p, />Start planning</); assert.match(p, /Proposed · from BILL-412/); assert.match(p, /tp-extra"><i>e<\/i>/);
+  const c = C.changeProposal({ kind: 'Web access', title: 'Read a page', actions: [{ label: 'Allow in chat', kind: 'primary', attrs: { 'data-x': '1' } }, { label: 'Deny' }] });
+  assert.match(c, />Allow in chat</); assert.match(c, /data-x="1"/); assert.match(c, />Deny</); assert.doesNotMatch(c, />Apply</);
+  const pl = C.planCard({ title: 'P', version: 'v1', roles: [], menu: '<u>m</u>', extra: '<i>shape check</i>' });
+  assert.match(pl, /tp-menu"><u>m<\/u>/); assert.match(pl, /<i>shape check<\/i>[\s\S]*Reviewed by/);
 });
 
 test('taskProposal: the composer sentence, Customise folding, Start and Not now with their hooks', () => {

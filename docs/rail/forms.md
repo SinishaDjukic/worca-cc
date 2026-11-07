@@ -4,7 +4,7 @@
 |---|---|---|---|
 | `form.dialog` | A step that needs fields is one Dialog: framing sentence, Fields, a foot that names what happens | You know what the button does | by hand |
 | `form.suggest` | Worca's text runs on a helper job; if it cannot write, the field keeps its text and says so | A suggestion never blocks you | by hand |
-| `form.composer` | Starting anything is one composer: you pick Ask, Task or Schedule; the sentence and Customise open under the words; its button names what will happen. A message is never read as a task | One way in, and ordinary stays ordinary | by hand |
+| `form.composer` | Starting anything is one composer: you pick Ask, Task or Schedule; the sentence and Customise open under the words; its button names what will happen. Its engine carries its effort; a meter says how full the chat's context is; while Worca replies, what you write can be queued (Edit, remove) and goes when the reply ends; @ names a task, which becomes a chip leading to its card; voice has a hands-free mode. On Chat home a row of starters (pinned workflows first, Shaper by default, then New task, Build workflow, Schedule a run, Track a run, More with the rest, presets and Pin a workflow) only arms the composer: a chip with its name and ✕, and its placeholder; nothing is sent until you send, and each starter sends into its own flow of cards. A message is never read as a task | One way in, and ordinary stays ordinary | worca-sweep |
 
 **A form** (New run, Create PR): a Dialog. It opens with the one sentence that frames the step, its choices as
 SentencePickers (`A [large ▾] task`, `branch into dev ▾`), then its Fields. Text Worca can write is a SuggestionField.

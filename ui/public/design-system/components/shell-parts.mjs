@@ -124,6 +124,18 @@ export function askWorcaMark({ answering = false, open = false, size = 20 } = {}
 }
 
 /**
+ * IntentChip: a starter armed in the composer (New task, Build workflow, Shaper…): its icon, its name, and ✕ to clear it.
+ * Nothing is sent until you send.
+ * @param {object} o
+ * @param {string} o.icon      SVG
+ * @param {string} o.label
+ * @param {object} [o.clear]   the ✕'s attributes
+ */
+export function intentChip({ icon: ic, label, clear = {} }) {
+  return `<span class="kind-chip composer-intent">${ic}${esc(label)}${button({ label: `Clear ${label}`, kind: 'quiet', iconOnly: true, icon: icon('x', 11), attrs: clear })}</span>`;
+}
+
+/**
  * BarStrip: the hidden bar, as a strip: one icon per kind of work, its count as a CountBadge on its corner; each opens its place.
  * @param {object} o
  * @param {{label:string, icon:string, n:number, tone?:string, attrs?:object}[]} o.items
