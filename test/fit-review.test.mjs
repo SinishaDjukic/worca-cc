@@ -7,7 +7,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runMock, fitDuplicates } from '../src/core/engines/mock.mjs';
-import { roleBriefBlock, houseBriefBlock, roleItems, roleRecord } from '../src/shared/shape/role-review.mjs';
+import { roleBriefBlock, houseBriefBlock, roleItems } from '../src/shared/shape/role-review.mjs';
+import { roleRecord } from '../src/shared/graph/role-review-step.mjs';
+import { perspectiveByKey } from '../src/shared/shape/perspectives.mjs';
 import { renderHouseBrief } from '../src/core/house-brief.mjs';
 import { checkShape } from '../src/shared/shape/shape.mjs';
 
@@ -26,7 +28,7 @@ async function review(brief, tag) {
     `MOCK_IN: ${FIXTURE}`, `MOCK_JSON: ${json}`, `MOCK_OUT: ${join(dir, `${tag}.md`)}`,
   ].join('\n') + '\n';
   await runMock({ cwd: dir, prompt, onEvent: () => {} });
-  return roleRecord('fit', 1, JSON.parse(readFileSync(json, 'utf8')), ids);
+  return roleRecord({ key: 'fit', label: perspectiveByKey('fit').label }, 1, JSON.parse(readFileSync(json, 'utf8')), ids);
 }
 
 test('the 17 Oct fixture carries R-fit-1..5 and passes the shape check for Product, Architect, QA and Project fit', () => {

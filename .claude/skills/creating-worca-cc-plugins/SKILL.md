@@ -132,15 +132,32 @@ export default function createTaskSource(ctx) {
 | `validateConfig` | `()` | `{ok:true, identity?}` \| `{ok:false, errors:[{field,message}]}` — gates the whole pane |
 | `listTasks` | `({inputs, search, cursor})` | `{tasks:[{id,title,url,state,labels,updatedAt}], cursor?}` |
 | `getTask` | `(id)` — **positional** | `{...summary, body /* markdown */, meta}` |
-| `reportResult` | `(id, {status, summary, links, inputs})` — **positional** | anything |
-| `capabilities` | `({inputs})` — optional | `{writeBack, incrementalSync, export?}`; missing → `writeBack: true`; `export: true` turns on the export ops below |
+| `reportResult` | `(id, {status, summary, links, inputs, move?})` — **positional** | anything; with `move` (Ticket updates): `{moved: {from, to} \| null, note}` |
+| `capabilities` | `({inputs})` — optional | `{writeBack, incrementalSync, export?, import?, ticketUpdates?}`; missing → `writeBack: true`; `export: true` turns on the export ops below, `import: true` the import ops, `ticketUpdates: true` the Ticket updates ops |
 | `exportOptions` | `({project?, issueType?})` — optional, export | `{projects:[{value,label}], issueTypes?, priorities?, criteriaFields?, doneStatus, tooOld?}` — `issueTypes` with a project, the last two with both |
 | `createTicket` | `({ticket})` — optional, export | `{key, url, fingerprint}` \| `{refused:{field, message}}` |
 | `updateTicket` | `({key, ticket})` — optional, export | `{key, url, fingerprint}` \| `{gone:true}` \| `{refused}` |
 | `commentTicket` | `({key, body})` — optional, export | `{ok:true}` \| `{gone:true}` |
 | `ticketState` | `({key})` — optional, export | `{exists:true, url, fingerprint}` \| `{exists:false}` |
 | `findTicket` | `({project, label, marker})` — optional, export | `{key, url, fingerprint, lastLine, marker, labels}` \| `null` |
+| `importOptions` | `({})` — optional, import | `{projects:[{value,label}]}` — may be the same list as `exportOptions({})`'s projects; it is its own op because a source may import without exporting |
+| `searchTickets` | `({project?, search?, cursor?})` — optional, import | `{tickets:[{key,title,url,type,status,updatedAt}], cursor?}` — no search: most recently updated first; a pasted key or ticket link finds that ticket in any project |
+| `importTicket` | `({key, criteriaField?})` — optional, import | `{key, url, title, description, criteria, comments, commentsTotal, restrictedComments, attachments, meta, fingerprint}` \| `{gone:true}` |
+| `downloadAttachment` | `({key, id, maxBytes, dest})` — optional, import | the body written to `dest`, and `{name, mime, bytes}` \| `{tooLarge:true, bytes}` \| `{gone:true, forbidden?}` |
+| `listProjects` | `({})` — the project input's `optionsFrom` | `[{value, label, name?}]`; `name` (optional) is the project's name alone, for Ticket updates' chips; `value` is the project's key: at most one `/` (GitHub's `owner/repo`), each part 1 to 100 characters and never `.` or `..`; control characters, `\`, `?`, `#` and `%` are refused |
+| `listStatuses` | `({project})` — optional, Ticket updates | `[{value, label, category}]`, every status of the project once; `category` one of `todo`, `in_progress`, `done`, `cancelled` |
+| `legacyMove` | `({})` — optional, Ticket updates | `{field, target}`: your old "on completion" config key and what it means: `{category: 'done'}`, `{typed: '<text>'}` or `null` |
 | custom | `(args)` | whatever the widget needs |
+
+**Ticket updates (`move`).** With `capabilities().ticketUpdates`, Worca decides what a finished run does to its ticket and
+passes it as `reportResult`'s `move`: `{category: 'done'}` (any status of the done category the ticket can reach, never a
+cancelled one), `{status: '<listStatuses value>', name?}` (one status; without `name` it is the typed text of your old
+setting, matched as before: a transition's name first, then a target status's name) or `{none: true}`. Without `move`, keep
+doing exactly what your old setting does. Move first, then post one comment ending with `note`, the line saying what happened
+(`''` when nothing was to be done), and answer `{moved, note}`. A move the tracker refuses (Jira: a 4xx other than 401 and
+429) is a `note` ("Not moved: …"), and the comment is still posted; throw on a refused token (401), a rate limit (429), a
+server error, a network error or a timeout, so the write-back fails and can be retried. `getTask`'s `meta.project` names the
+ticket's project as a `listProjects` value, so Worca can pick the project's rule without parsing your ids.
 
 The export ops (Requirements' **Export to a tracker**) receive a tool-neutral ticket: `{project, issueType, title, description
 (Markdown), labels (already normalised, never with spaces), priority (id or null), criteria: {target:'description'} |
@@ -150,6 +167,19 @@ create (Worca finds a ticket whose create answer was lost by it), add labels on 
 always gives the same string. Worca compares fingerprints only. A field the tracker refuses and a ticket that is gone are
 results (`refused`, `gone`), not throws; every call runs in the host, never from the browser, with a 60 s limit. The
 reference implementation is `plugins/jira-source`.
+
+The import ops (Requirements' **New feature › From a ticket…**) only read. `importTicket` answers the ticket tool-neutrally:
+`description` and comment bodies as Markdown (never HTML), `criteria` only from a field (`{field:{id,name}, items}`, else
+`null`: Worca finds a criteria section in the description itself), the newest 50 comments oldest first with the author's
+display name and `authorKind: 'person' | 'app'` only (never an email, account id or avatar; profile links and mentions become
+plain names), comments restricted to a group or role left out and counted in `restrictedComments`, attachments as metadata
+`{id, name, mime, bytes, created}`, `meta: {project, projectName, type:{id,name}, status, priority}` and the description's
+`fingerprint` as `ticketState` computes it. A ticket the connection cannot see is `{gone:true}`. `downloadAttachment` checks the
+attachment belongs to `key`, refuses before downloading when its size is over `maxBytes` (`{tooLarge}`), downloads only from the
+site's own address (one redirect at most, `https:` only and without the Authorization header when it leaves the site), streams
+the body into `dest` — a fixed file name inside a fresh private folder the host made — creating it exclusively, deletes what it
+wrote on any failure or once the body grows past `maxBytes`, and never writes anywhere else. Worca checks the file before it
+trusts it.
 
 `ctx` = `{ apiVersion, profile, config, state: {get, set}, log }` — `apiVersion` is the negotiated highest version your range admits.
 

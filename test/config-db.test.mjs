@@ -182,6 +182,44 @@ test('setNodeModel upserts a normalized row, and a blank model+effort clears it'
   ]);
 });
 
+test('setNodeModel roles: a role-review node\'s per-role picks round-trip, inherit when omitted, clear on {}', async () => {
+  const p = await freshProject();
+  const node = async () => (await resolveRunConfig(p, 'wf_x')).nodes.n_rev;
+  await setNodeModel(p, 'wf_x', 'n_rev', { roles: { security: { model: 'claude-opus-4-8', effort: 'high' }, qa: { model: ' ' } } });
+  assert.deepEqual(await node(), { roles: { security: { model: 'claude-opus-4-8', effort: 'high' } } }, 'a row with only roles is kept; a blank pick dropped');
+  await setNodeModel(p, 'wf_x', 'n_rev', { model: 'claude-opus-4-8', effort: '' });
+  assert.deepEqual(await node(), { model: 'claude-opus-4-8', roles: { security: { model: 'claude-opus-4-8', effort: 'high' } } }, 'omitted: inherited');
+  await setNodeModel(p, 'wf_x', 'n_rev', { model: 'claude-opus-4-8', roles: {} });
+  assert.deepEqual(await node(), { model: 'claude-opus-4-8' }, '{} clears them');
+  await setNodeModel(p, 'wf_x', 'n_rev', { model: '', roles: {} });
+  assert.equal(await node(), undefined, 'nothing left: the row is gone');
+});
+
+test('setNodeModel roles: each bad pick is refused with its message and no row is written', async () => {
+  const p = await freshProject();
+  const count = () => getDb().prepare('SELECT count(*) AS n FROM config_workflow_nodes WHERE project_key = ?').get(projectKey(p)).n;
+  const cases = [
+    [{ security: { model: 'no-such-model' } }, /unknown model "no-such-model"/],
+    [{ security: { model: 'claude-opus-4-8', effort: 'loud' } }, /unknown effort "loud"/],
+    [{ security: { effort: 'high' } }, /select a model before choosing an effort/],
+    [{ 'Sec-1': { model: 'claude-opus-4-8' } }, /role key "Sec-1" must be 1–24 lowercase letters/],
+    [['security'], /roles must be an object keyed by role/],
+  ];
+  for (const [roles, re] of cases) {
+    await assert.rejects(setNodeModel(p, 'wf_x', 'n_rev', { model: 'claude-opus-4-8', roles }), re);
+    assert.equal(count(), 0, `no row written for ${JSON.stringify(roles)}`);
+  }
+});
+
+test('readWorkflowsMap skips an unparseable roles column and never throws', async () => {
+  const p = await freshProject();
+  await setNodeModel(p, 'wf_x', 'n_rev', { model: 'claude-opus-4-8' });
+  getDb().prepare("UPDATE config_workflow_nodes SET roles = '{not json' WHERE project_key = ?").run(projectKey(p));
+  assert.deepEqual((await resolveRunConfig(p, 'wf_x')).nodes.n_rev, { model: 'claude-opus-4-8' });
+  getDb().prepare('UPDATE config_workflow_nodes SET roles = \'{"Bad":{"model":"x"},"qa":7}\' WHERE project_key = ?').run(projectKey(p));
+  assert.deepEqual((await resolveRunConfig(p, 'wf_x')).nodes.n_rev, { model: 'claude-opus-4-8' }, 'nothing usable: no roles key');
+});
+
 test('setNodeModel fanOut: stored, preserved across a model-only change, explicit override; fanOut=false alone keeps the row', async () => {
   const p = await freshProject();
   await checkRows([

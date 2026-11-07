@@ -231,6 +231,7 @@ export function labelForTool(name, input = {}, attachmentNames = {}) {
     case 'web_search': return 'Searching the web';
     case 'propose_web_access': return 'Asking to read a new site';
     case 'propose_scope_switch': return 'Asking which project';
+    case 'ask_question': return 'Asking a question';
     case 'Skill': return typeof input?.skill === 'string' && input.skill ? `Using ${input.skill.slice(0, 80)}` : 'Using a skill';   // skills registry §4.4
     default: return `Using ${n}`;
   }
@@ -313,6 +314,7 @@ export function createTurnReducer({
   onMcpProposal = null,          // propose_mcp_change RESULT (MCP card; the parent re-validates the input)
   onWebProposal = null,          // propose_web_access RESULT (web card; same split)
   onScopeSwitch = null,          // propose_scope_switch RESULT (P4: the scope ask card; same split)
+  onQuestion = null,             // ask_question RESULT (freeform chat D5: the question card; same split)
   onScheduleMutation = null,     // a direct schedule write succeeded in the MCP child
   onTrackRun = null,
   onRunCommand = null,           // run_command RESULT (#574): the command card
@@ -786,6 +788,13 @@ export function createTurnReducer({
         // Same split as the web card: the parent re-checks the INPUT against this turn's scope and the thread's scope cards (scope.mjs).
         try {
           const ret = onScopeSwitch({ toolUseId: b.id, input: fullInputs.get(b.id) ?? {}, text, isError: !!c.is_error });
+          if (ret && typeof ret.then === 'function') pendingHooks.push(ret.then(() => {}, () => { reducerErrors += 1; }));
+        } catch { reducerErrors += 1; }
+      }
+      if (b.name === 'mcp__worca__ask_question' && typeof onQuestion === 'function') {
+        // Same split as the scope card: the parent re-validates the INPUT and mints the question card (question-card.mjs).
+        try {
+          const ret = onQuestion({ toolUseId: b.id, input: fullInputs.get(b.id) ?? {}, text, isError: !!c.is_error });
           if (ret && typeof ret.then === 'function') pendingHooks.push(ret.then(() => {}, () => { reducerErrors += 1; }));
         } catch { reducerErrors += 1; }
       }

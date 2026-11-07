@@ -39,6 +39,9 @@ export const PERSPECTIVES = Object.freeze([
   perspective({ key: 'devops', label: 'DevOps and infrastructure', icon: 'D', help: 'Environments, CI/CD changes, infrastructure as code, monitoring and alerts. Adds no stage.', checklist: 'ops', checklistHint: 'CI and infra changes', sections: ['infra'], effect: {} }),
   perspective({ key: 'release', label: 'Release', icon: 'R', help: 'Migration, feature flag, rollout, rollback.', checklist: 'rel', checklistHint: 'flag wired, rollback works', sections: ['rollout'], effect: {} }),
   perspective({ key: FIT_KEY, label: 'Project fit', icon: 'F', help: 'What the plan reuses and what it adds, each with a reason, checked against the house brief.', checklist: 'fit', checklistHint: 'fits the house brief', sections: ['fit'], rules: FIT_RULES, effect: {} }),
+  // A reviewer only: no section, no checklist, so the shape check asks nothing of the plan for it. `roleRule` replaces
+  // the "no checklist" sentence of its role brief (role-review.mjs roleBriefBlock).
+  perspective({ key: 'devil', label: "Devil's advocate", icon: 'V', help: "Argues the strongest case that the plan's core approach is wrong, and names the simpler alternative. Adds no plan section.", roleRule: "Your role has no checklist: challenge the plan's main decision and its riskiest assumption.", sections: [], effect: {} }),
 ]);
 
 export const PERSPECTIVE_KEYS = Object.freeze(PERSPECTIVES.map((p) => p.key));

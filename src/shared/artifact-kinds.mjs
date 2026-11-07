@@ -95,7 +95,8 @@ export function isBrowsableKind(kind) {
 const has = (table, key) => Object.prototype.hasOwnProperty.call(table, key);
 const kindForMime = (mime) => (mime.startsWith('image/') ? 'image' : 'binary');
 
-/** Ask attachments: lower-cased extension WITH the dot → {kind: text|image|binary, mime} | null. */
+/** Ask attachments: lower-cased extension WITH the dot → {kind: text|image|binary, mime} | null
+ *  (null = not on the lists: uploads classify it by content). */
 export function classifyExtension(ext) {
   if (typeof ext !== 'string') return null;
   const e = ext.toLowerCase();
@@ -105,15 +106,42 @@ export function classifyExtension(ext) {
 }
 
 /** On-disk extensions for show_files snapshots whose mime is not an upload type (never offered by classifyExtension:
- *  uploads keep refusing SVG and media). Without them an SVG or a clip would be stored as `.bin`. */
+ *  uploads never assign these mimes — they store SVG as text and media as generic binary). Without them an SVG or a
+ *  clip snapshot would be stored as `.bin`. */
 const SNAPSHOT_TYPES = Object.freeze({
   'image/svg+xml': '.svg', 'image/avif': '.avif', 'video/mp4': '.mp4', 'video/webm': '.webm',
   'audio/mpeg': '.mp3', 'audio/wav': '.wav', 'audio/ogg': '.ogg',
 });
 
-/** The on-disk extension for a stored Ask body (unchanged behaviour). */
-export function extensionForAttachment(kind, mime) {
+/** The mime of an upload that is neither a listed text/image/PDF type nor UTF-8 text. */
+export const GENERIC_BINARY_MIME = 'application/octet-stream';
+
+/** The sanitised original extension of a file name: the last dot-segment of its basename, lower-cased, matching
+ *  /^\.[a-z0-9]{1,16}$/. '' when there is no usable one (callers fall back to `.bin`). Pure, never throws. */
+export function safeAttachmentExt(name) {
+  if (typeof name !== 'string') return '';
+  const base = name.split(/[\\/]/).pop() || '';
+  const dot = base.lastIndexOf('.');
+  if (dot <= 0) return '';
+  const ext = base.slice(dot).toLowerCase();
+  return /^\.[a-z0-9]{1,16}$/.test(ext) ? ext : '';
+}
+
+/** A stored attachment that is a non-text file of no known type (never produced by show_files or by listed types). */
+export function isGenericBinary(att) {
+  return !!att && att.kind !== 'text' && att.mime === GENERIC_BINARY_MIME;
+}
+
+/** Is this mime one an upload/snapshot binary is served inline under (image, PDF, media, SVG snapshot)? */
+export function isInlineServableMime(mime) {
+  return Object.values(BINARY_TYPES).includes(mime) || has(SNAPSHOT_TYPES, mime);
+}
+
+/** The on-disk extension for a stored Ask body. `name` (the persisted name) only matters for a generic binary,
+ *  which keeps its original extension; every other (kind, mime) is independent of it. */
+export function extensionForAttachment(kind, mime, name) {
   if (kind === 'text' || kind == null) return '.txt';
+  if (mime === GENERIC_BINARY_MIME) return safeAttachmentExt(name) || '.bin';
   for (const [ext, m] of Object.entries(BINARY_TYPES)) if (m === mime) return ext;
   if (has(SNAPSHOT_TYPES, mime)) return SNAPSHOT_TYPES[mime];
   return '.bin';

@@ -107,8 +107,8 @@ export function describeRun({ config, toggle = 'auto', now, run = {}, localZone 
     const cfg = { ...config, timeZone: tz };
     const st = nightState({ config: cfg, toggle, optIn: run.optIn === true, override: run.override || 'auto', now, hereSince });
     if (run.override === 'off') return { state: 'never', pill: pillText('never'), reason: 'You set this run to "Never on this run".' };
-    // An open question with no openedAt is on an always-wait kind: it waits, whatever the hour (spec §3.1).
-    if (run.waiting === true && !run.openedAt) return { state: 'wait', pill: pillText('wait'), reason: 'This kind of question is on your "Always wait for me on…" list.' };
+    // An open question with no openedAt is one Away never answers: it waits, whatever the hour (spec §3.1).
+    if (run.waiting === true && !run.openedAt) return { state: 'wait', pill: pillText('wait'), reason: 'This question waits for you, even while you are away.' };
     if (!st.eligible) return { state: 'wait', pill: pillText('wait'), reason: toggle === 'off' ? 'Away mode is paused.' : 'This run is not marked and your settings allow only marked runs.' };
     if (st.active) return { state: 'now', pill: pillText('now'), reason: run.override === 'on' ? 'You set this run to "Answer for me now".' : toggle === 'on' ? 'You said "I\'m away now".' : 'You are inside your away hours.' };
     const openedAt = run.openedAt ? Date.parse(run.openedAt) : now;

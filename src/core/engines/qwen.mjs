@@ -42,7 +42,7 @@
 //   there starts a memory agent with file tools, QWEN_CODE_SAFE_MODE=1 drops the core allowlist. The chat's env sets
 //   every such switch (QWEN_ASK_ENV) to a non-empty value, and the self-test runs with the user's real files.
 import { readFileSync, writeFileSync } from 'node:fs';
-import { execFile } from 'node:child_process';
+import { QWEN_CLI } from './cli-specs.mjs';
 import { join } from 'node:path';
 import { CAPABILITY_KEYS } from './capabilities.mjs';
 import { createClaudeNormalizer } from './claude-events.mjs';
@@ -277,13 +277,14 @@ export function qwenEnvPrefixes(given = process.env) {
 
 /** The run-start check (engines/index.mjs `preflight`). Never rejects: {refusal} | {warning} | {}. */
 export function qwenPreflight({ bin = qwenDefaultBin(), timeoutMs = 10000, env = process.env } = {}) {
-  return familyPreflight({ bin, env, timeoutMs, label: 'Qwen Code (npm i -g @qwen-code/qwen-code)', binEnv: 'WORCA_QWEN_BIN',
+  return familyPreflight({ bin, cli: QWEN_CLI, env, timeoutMs, label: 'Qwen Code (npm i -g @qwen-code/qwen-code)', binEnv: 'WORCA_QWEN_BIN',
     signedIn: qwenSignedIn, signInHint: QWEN_SIGNED_OUT_HINT });
 }
 
 // ── spawn ────────────────────────────────────────────────────────────────────
 
 const QWEN_SPEC = Object.freeze({
+  cli: QWEN_CLI,
   name: 'qwen', label: 'Qwen Code', prefix: QWEN_SESSION_PREFIX,
   // Qwen signs in through whichever provider it is set to: that provider's env names survive scrub too, no other's.
   envPrefixes: qwenEnvPrefixes,
@@ -327,7 +328,7 @@ export function runQwenProcess(opts = {}) {
 /** Can this qwen be locked down for a chat? Every flag in QWEN_ASK_FLAGS, and the version the lockdown was verified on.
  *  Never rejects: {refusal} or {}. */
 export function qwenAskSupport({ bin = qwenDefaultBin(), timeoutMs = 15000 } = {}) {
-  return familyAskSupport({ bin, timeoutMs, flags: QWEN_ASK_FLAGS, minVersion: QWEN_ASK_MIN_VERSION, label: 'Qwen Code', install: 'npm i -g @qwen-code/qwen-code', binEnv: 'WORCA_QWEN_BIN' });
+  return familyAskSupport({ bin, cli: QWEN_CLI, timeoutMs, flags: QWEN_ASK_FLAGS, minVersion: QWEN_ASK_MIN_VERSION, label: 'Qwen Code', install: 'npm i -g @qwen-code/qwen-code', binEnv: 'WORCA_QWEN_BIN' });
 }
 
 /** The user config files a Qwen Code chat reads (a change re-runs the self-test). */

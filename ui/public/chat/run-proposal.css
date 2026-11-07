@@ -36,6 +36,8 @@
 .ask-rp-tile{display:flex;flex-direction:column;gap:8px;padding:10px 14px;border-top:1px solid var(--line);background:var(--panel);}
 .ask-rp-tile:first-child{border-top:0;}
 .ask-rp-tile.mod{background:var(--amber-wash);}
+/* A review-role row (a role of the node above it) sits indented under the node tiles. */
+.ask-rp-tile.ask-rp-role{padding-left:var(--pad-card);}
 .ask-rp-tile-l1{display:flex;align-items:center;gap:10px;min-width:0;flex-wrap:wrap;}
 .ask-rp-tile-l2{display:flex;align-items:center;gap:6px 18px;flex-wrap:wrap;padding-left:16px;}
 .ask-rp-acc{width:6px;height:26px;border-radius:var(--r-xs);flex:0 0 auto;background:var(--ink-3);}
@@ -108,7 +110,9 @@
 .ask-wfcard-saved svg{flex:0 0 auto;stroke:var(--green);}
 .ask-wfcard-saved span{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .ask-wfcard-savedline{margin-top:4px;font-size:13px;line-height:1.55;color:var(--ink-2);}
-.ask-wfcard-savedline+.ask-wfcard-graph,.ask-wfcard-saved+.ask-wfcard-graph{margin-top:16px;}
+.ask-wfcard-savedto{margin-top:4px;font-size:13px;line-height:1.55;color:var(--ink-2);}
+.ask-wfcard-savedlink{color:var(--ink);font-weight:600;text-decoration:underline;text-underline-offset:2px;}
+.ask-wfcard-savedline+.ask-wfcard-graph,.ask-wfcard-savedto+.ask-wfcard-graph,.ask-wfcard-saved+.ask-wfcard-graph{margin-top:16px;}
 .ask-wfcard .ask-card-err{margin-top:8px;}
 .ask-wfcard-actions{display:flex;align-items:center;gap:8px;margin-top:20px;}
 /* .ask-pop-chip itself lives with the other popover panels (below .ask-pop): both

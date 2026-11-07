@@ -2,6 +2,7 @@
 // (C §5: the run card's renderClarifyBody is run-bound). It uses the Runs page's ask-card grammar, which style.css
 // draws white under `:is(.rd-questions,.chat-rc-q)`: the heading outside the card with the `?` disc, one white
 // `.qblock` per question with keyed `.qopt` tiles, and the pill footer. Never an amber wash. Pure: DOM only through `doc`.
+import { wordsFor } from '../../../src/shared/answerer.mjs';
 
 const nonEmpty = (v) => typeof v === 'string' && v !== '';
 const isNode = (v) => !!v && typeof v === 'object' && typeof v.nodeType === 'number';
@@ -9,8 +10,15 @@ const isNode = (v) => !!v && typeof v === 'object' && typeof v.nodeType === 'num
 /** spec = { id, heading, questions: [{ id, text, why?, options: [{ value, label, chip?: Node, sub?: string }] }],
  *          submitLabel(picks: Map<qid,value>) -> string, onSubmit(picks: Map<qid,value>) -> void | Promise<void>,
  *          answered?: Map<qid,value> }   // answered: the card stays, its picks marked, nothing left to press (B9)
+ *  Opt-in (absent = the markup above): an option's `recommended: true` appends `span.qrec` (Worca's pick);
+ *  `preset: Map<qid,value>` pre-picks a tile and marks it `data-preset="1"` until a person picks in that block;
+ *  `foot: false` drops the footer (the host owns the submit), and Enter then picks without submitting;
+ *  `head: false` draws no heading (and so no `?` disc), and `heading` names the section through aria-label;
+ *  `numbers: false` drops each question's number.
+ *  opts = { lead?, strip?, register? }: the reader's lead perspective (src/shared/answerer.mjs wordsFor); none = the
+ *  entry's words, unless `register: 'plain'`
  *  → { el, picks: () => Map, destroy: () => void } */
-export function buildChatQuestion(doc, spec) {
+export function buildChatQuestion(doc, spec, { lead = null, strip = false, register } = {}) {
   const h = (tag, cls, text) => {
     const n = doc.createElement(tag);
     if (cls) n.className = cls;
@@ -24,7 +32,9 @@ export function buildChatQuestion(doc, spec) {
 
   const el = h('section', answered ? 'chat-rc-q chat-q is-answered' : 'chat-rc-q chat-q');
   const headId = `${spec.id}-h`;
-  el.setAttribute('aria-labelledby', headId);
+  const headed = spec.head !== false;
+  if (headed) el.setAttribute('aria-labelledby', headId);
+  else el.setAttribute('aria-label', spec.heading);
   const head = h('h3', 'chat-rc-q-head', spec.heading);
   head.id = headId;
   const body = h('div', 'chat-rc-qbody');
@@ -36,11 +46,13 @@ export function buildChatQuestion(doc, spec) {
     const block = h('div', 'qblock');
     block.dataset.q = q.id;
     const text = h('div', 'qtext');
-    text.append(h('span', 'qn', String(i + 1)), h('span', 'qtext-t', q.text));
+    const qText = wordsFor(q, 'text', lead, { strip, register });
+    if (spec.numbers !== false) text.appendChild(h('span', 'qn', String(i + 1)));
+    text.appendChild(h('span', 'qtext-t', qText));
     if (nonEmpty(q.why)) text.appendChild(h('span', 'qwhy', q.why));
     const group = h('div', 'qopts');
     group.setAttribute('role', 'group');
-    group.setAttribute('aria-label', q.text);
+    group.setAttribute('aria-label', qText);
     const tiles = (Array.isArray(q.options) ? q.options : []).map((o, k) => {
       const btn = h('button', 'qopt');
       btn.type = 'button';
@@ -48,12 +60,13 @@ export function buildChatQuestion(doc, spec) {
       btn.dataset.value = o.value;
       btn.setAttribute('aria-pressed', 'false');
       const name = h('span', 'chat-q-opt-name');
-      name.appendChild(h('span', 'chat-q-opt-label', o.label));
+      name.appendChild(h('span', 'chat-q-opt-label', wordsFor(o, 'label', lead, { strip, register, n: k + 1 })));
       if (isNode(o.chip)) name.appendChild(o.chip);
       const txt = h('span', 'qopt-txt');
       txt.appendChild(name);
       if (nonEmpty(o.sub)) txt.appendChild(h('span', 'chat-q-opt-sub', o.sub));
       btn.appendChild(txt);
+      if (o.recommended === true) btn.appendChild(h('span', 'qrec', 'recommended'));
       group.appendChild(btn);
       return btn;
     });
@@ -65,7 +78,8 @@ export function buildChatQuestion(doc, spec) {
   const err = h('div', 'chat-rc-q-err');
   err.setAttribute('role', 'status');
   err.hidden = true;
-  el.append(head, body, err);
+  if (headed) el.appendChild(head);
+  el.append(body, err);
 
   function mark(entry, btn) {
     for (const t of entry.tiles) {
@@ -93,7 +107,18 @@ export function buildChatQuestion(doc, spec) {
   go.type = 'button';
   go.dataset.qpanelSubmit = '';
   foot.append(count, go);
-  panel.appendChild(foot);
+  const footed = spec.foot !== false;
+  if (footed) panel.appendChild(foot);
+  if (spec.preset instanceof Map) {
+    for (const entry of blocks) {
+      if (!spec.preset.has(entry.q.id)) continue;
+      const tile = entry.tiles.find((t) => t.dataset.value === String(spec.preset.get(entry.q.id)));
+      if (!tile) continue;
+      picks.set(entry.q.id, tile.dataset.value);
+      mark(entry, tile);
+      tile.dataset.preset = '1';
+    }
+  }
 
   const complete = () => questions.every((q) => picks.has(q.id));
   function paint() {
@@ -106,6 +131,7 @@ export function buildChatQuestion(doc, spec) {
     if (busy) return;
     picks.set(entry.q.id, btn.dataset.value);
     mark(entry, btn);
+    for (const t of entry.tiles) delete t.dataset.preset;
     paint();
   }
   function submit() {
@@ -141,11 +167,19 @@ export function buildChatQuestion(doc, spec) {
       e.preventDefault();
       return;
     }
+    if (e.key === 'Home' || e.key === 'End') {
+      if (!entry) return;
+      const edge = e.key === 'Home' ? entry.tiles[0] : entry.tiles[entry.tiles.length - 1];
+      pick(entry, edge);
+      edge.focus();
+      e.preventDefault();
+      return;
+    }
     if (e.key === 'Enter') {
       if (!entry) return;
       pick(entry, tile);
       e.preventDefault();
-      submit();
+      if (footed) submit();
       return;
     }
     if (/^[a-z]$/i.test(e.key)) {

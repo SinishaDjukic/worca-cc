@@ -25,7 +25,7 @@
   border-bottom:1px solid transparent;transition:border-color .15s;}
 .sidebar.under-top .brand{border-bottom-color:var(--line);}
 .brand .logo{display:block;height:32px;aspect-ratio:512/190;background:var(--ink);
-  -webkit-mask:url(/assets/worca-logo-mask.png) center/contain no-repeat;mask:url(/assets/worca-logo-mask.png) center/contain no-repeat;}
+  -webkit-mask:url(/assets/worca-logo.svg) center/contain no-repeat;mask:url(/assets/worca-logo.svg) center/contain no-repeat;}
 /* The scrolling band. A column flex box so .nav can grow to the band's full height. */
 .side-scroll{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;
   overflow-y:auto;overflow-x:hidden;padding:11px 10px 10px;scrollbar-width:thin;}

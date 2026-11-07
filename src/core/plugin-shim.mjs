@@ -18,7 +18,6 @@
 
 import { redactAskText } from './ask/redact.mjs';
 import { spawn } from 'node:child_process';
-import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -53,60 +52,17 @@ export class PluginOpError extends Error {
 // ── WORCA_MOCK=1: canned responses, never spawns ─────────────────────────────
 
 let _mockResponses = null; // op -> value | (args) => value; null = defaults only
+// The canned answers (plugin-shim-mock.mjs), imported on the first mock call only: a real run never loads the fixtures.
+let _mockModule = null;
+const mockFixtures = () => (_mockModule ??= import('./plugin-shim-mock.mjs'));
 
 /** Tests: override/extend the canned per-op responses. Pass null to reset (A6: the mock ticket numbers restart at 123). */
 export function setMockSourceResponses(map) {
   _mockResponses = map && typeof map === 'object' ? map : null;
-  if (!_mockResponses) resetMockTickets();
+  // fixtures not loaded yet have nothing to reset; once loaded the reset runs before any later mock call reads them
+  if (!_mockResponses && _mockModule) _mockModule.then((m) => m.resetMockTickets());
 }
 
-const MOCK_TASKS = [
-  { id: 'MOCK-1', title: 'Fix the login redirect', url: 'https://mock.test/MOCK-1', state: 'open', labels: ['bug'], updatedAt: '2026-07-12T00:00:00.000Z' },
-  { id: 'MOCK-2', title: 'Add CSV export to reports', url: 'https://mock.test/MOCK-2', state: 'open', labels: ['feature'], updatedAt: '2026-07-12T00:00:00.000Z' },
-];
-// A6 (plans/requirements-a6-design.md §4, D19): the export ops' canned answers, so the Requirements browser proof runs
-// offline. Tickets are numbered <project>-123, -124, … in one sequence; the fingerprint is the description's sha256 and
-// ticketState returns the last one written.
-let mockTicketNo = 123;
-const mockFingerprints = new Map();
-function resetMockTickets() { mockTicketNo = 123; mockFingerprints.clear(); }
-const mockFingerprint = (text) => createHash('sha256').update(String(text ?? '')).digest('hex');
-const mockUrl = (key) => `https://mock.test/browse/${key}`;
-const MOCK_DEFAULTS = {
-  listTasks: () => ({ tasks: MOCK_TASKS.map((t) => ({ ...t })) }),
-  getTask: (args) => ({
-    ...MOCK_TASKS[0],
-    id: args?.id || MOCK_TASKS[0].id,
-    body: 'Mock task body.\n\n1. reproduce\n2. fix\n3. verify',
-    meta: { mock: true },
-  }),
-  reportResult: () => ({ ok: true }),
-  validateConfig: () => ({ ok: true }),
-  // Write-back stays on (what a missing capabilities op defaulted to before A6), and the mock source can export.
-  capabilities: () => ({ writeBack: true, export: true }),
-  exportOptions: (args = {}) => ({
-    projects: [{ value: 'SHOP', label: 'SHOP — Shop web' }, { value: 'OPS', label: 'OPS — Operations' }],
-    ...(args.project ? { issueTypes: [{ value: '10001', label: 'Story' }, { value: '10002', label: 'Task' }, { value: '10003', label: 'Bug' }] } : {}),
-    ...(args.project && args.issueType ? {
-      priorities: [{ value: '1', label: 'Highest' }, { value: '2', label: 'High' }, { value: '3', label: 'Medium' }, { value: '4', label: 'Low' }],
-      criteriaFields: [{ value: 'customfield_10070', label: 'Acceptance Criteria' }, { value: 'customfield_10071', label: 'Definition of Done' }],
-    } : {}),
-    doneStatus: 'Done',
-  }),
-  createTicket: (args = {}) => {
-    const t = args.ticket || {};
-    const key = `${t.project || 'MOCK'}-${mockTicketNo++}`;
-    mockFingerprints.set(key, mockFingerprint(t.description));
-    return { key, url: mockUrl(key), fingerprint: mockFingerprints.get(key) };
-  },
-  updateTicket: (args = {}) => {
-    mockFingerprints.set(args.key, mockFingerprint(args.ticket && args.ticket.description));
-    return { key: args.key, url: mockUrl(args.key), fingerprint: mockFingerprints.get(args.key) };
-  },
-  commentTicket: () => ({ ok: true }),
-  ticketState: (args = {}) => ({ exists: true, url: mockUrl(args.key), fingerprint: mockFingerprints.get(args.key) ?? null }),
-  findTicket: () => null,
-};
 
 /** Same env-flag semantics as claude-runner.mjs#mockEnabled — one shared rule. */
 function mockMode() {
@@ -114,7 +70,7 @@ function mockMode() {
 }
 
 async function mockCall(op, args) {
-  const entry = _mockResponses && op in _mockResponses ? _mockResponses[op] : MOCK_DEFAULTS[op];
+  const entry = _mockResponses && op in _mockResponses ? _mockResponses[op] : (await mockFixtures()).MOCK_DEFAULTS[op];
   if (entry === undefined) {
     // Mirror the real child's answer for an unimplemented op — Task 13's
     // capabilities tolerant-default keys on exactly this kind.
@@ -243,10 +199,12 @@ export function killPluginChild(child, user, killGroup = killAgentGroup) {
  *  profile passes a presence check, silently runs against an EMPTY bucket
  *  (false "not configured" verdicts) and then persists state into a phantom
  *  bucket the DELETE route can never purge — so membership in the roster is
- *  checked here too. `allowLegacyDefault` is the ONE host-internal exception:
+ *  checked here too. `allowLegacyDefault` is the host-internal exception, used twice:
  *  write-back for a pipeline row that predates profiles targets the
  *  DEFAULT_PROFILE bucket, because that is where the pre-upgrade flat config
- *  migrated — i.e. the instance the task actually came from (sources.mjs). */
+ *  migrated — i.e. the instance the task actually came from (sources.mjs). The
+ *  Ticket updates GET also uses it to ask `capabilities` before the first profile
+ *  exists (ticket-updates-routes.mjs). */
 function assertProfileInvariant({ plugin, sourceId, source, profile, allowLegacyDefault }) {
   if (source.multiProfile === true) {
     if (!profile) {
@@ -286,9 +244,10 @@ function completeFrame(stdout) {
  * Run ONE connector op in an ephemeral child. Resolves with the op result;
  * rejects with PluginOpError. `logger(level, msg)` is optional — connector
  * ctx.log lines route there (default: console.error, since stdout is the UI's).
- * `allowLegacyDefault` (host-internal, never surfaced to CLI/routes) lets the
- * legacy write-back path name DEFAULT_PROFILE on a multiProfile source — see
- * assertProfileInvariant.
+ * `allowLegacyDefault` (host-internal, never surfaced to CLI or a request) lets the
+ * legacy write-back path name DEFAULT_PROFILE on a multiProfile source, and lets the
+ * Ticket updates GET probe `capabilities` for a source whose roster is still empty
+ * (plans/ticket-updates-plan.md Deviation 2) — see assertProfileInvariant.
  * @returns {Promise<any>}
  */
 export async function callSource({ plugin, sourceId, op, args = {}, profile, timeoutMs = 30000, logger, allowLegacyDefault = false } = {}) {

@@ -13,7 +13,7 @@ export const PRESET_PROPOSAL_ERRORS = Object.freeze({
   pinned: (name, scope) => `Preset "${name}" is pinned to ${scope.kind} ${scope.ref} — propose it for that ${scope.kind}`,
 });
 
-const FILL_KEYS = ['workflowId', 'engine', 'guardrailsId', 'tags', 'sameAsSource', 'sourceBranch', 'sourceBranchByKey'];
+const FILL_KEYS = ['workflowId', 'engine', 'guardrailsId', 'tags', 'sameAsSource', 'sourceBranch', 'sourceBranchByKey', 'pr'];
 const CARD_SETUP_KEYS = ['humanInLoop', 'nightMode', 'mcpOptOut', 'syncBeforeStart', 'mock'];
 const given = (v) => v !== undefined && v !== null && v !== '';
 

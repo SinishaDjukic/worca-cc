@@ -629,3 +629,16 @@ test('V24 role reviews: roleReview is a known agent key; onExhausted is clean|ga
   assert.match(v24(withWire({ onExhausted: 'nope' }))[0].message, /onExhausted must be 'clean' or 'gate'/);
   assert.match(v24(withWire({ onExhausted: 'clean' }, 'w2'))[0].message, /onExhausted but is not a loop wire/);
 });
+
+test('V31 role-review spec: a malformed roleReview object fails; true and a valid object pass', () => {
+  const withRole = (rr) => { const t = ok(); t.nodes = t.nodes.map((n) => (n.id === 'n_rev' ? A('n_rev', 'reviewer', { roleReview: rr }) : n)); return t; };
+  const v31 = (rr) => V(withRole(rr)).errors.filter((e) => e.code === 'V31').map((e) => e.message);
+  const SPEC = { roles: [{ key: 'correctness', label: 'Correctness' }, { key: 'security', label: 'Security' }], source: 'declared', target: 'plan', sink: 'refiner' };
+  assert.deepEqual(v31(true), []);
+  assert.deepEqual(v31(SPEC), []);
+  assert.deepEqual(v31({ ...SPEC, target: 'diff', sink: 'implementer' }), [], 'a diff target (#990 slice 4)');
+  assert.deepEqual(v31({ ...SPEC, target: 'code' }), ['node \'n_rev\': roleReview.target "code" is not supported yet (plan or diff or requirements)']);
+  assert.deepEqual(v31({ ...SPEC, roles: [{ key: 'Sec-1', label: 'Security' }] }), ['node \'n_rev\': roleReview.roles[0].key "Sec-1" must be 1–24 lowercase letters']);
+  assert.deepEqual(v31({ ...SPEC, checklist: 'x' }), ['node \'n_rev\': roleReview.checklist "x" is unknown (known: perspectives, requirements, coverage)']);
+  assert.equal(V(withRole({ ...SPEC, target: 'code' })).ok, false);
+});

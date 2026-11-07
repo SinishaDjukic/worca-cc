@@ -878,7 +878,7 @@ async function until2(expr, tag, tries = 150) {
   throw new Error(`timeout waiting for ${tag}`);
 }
 const READY = `(async()=>{await document.fonts.ready;
-  await Promise.all(['/assets/worca-logo-mask.png','/assets/worca-mark-mask.png','/assets/worca-favicon.png'].map((src)=>new Promise((r)=>{const i=new Image();i.onload=i.onerror=r;i.src=src;})));return 1;})()`;
+  await Promise.all(['/assets/worca-logo.svg','/assets/worca-favicon.svg','/assets/worca-favicon.png'].map((src)=>new Promise((r)=>{const i=new Image();i.onload=i.onerror=r;i.src=src;})));return 1;})()`;
 const FREEZE_CSS = '*,*::before,*::after{transition:none!important;animation:none!important;caret-color:transparent!important}';
 async function freeze(tag) {
   await ev(`(()=>{let s=document.getElementById('shot-freeze');if(!s){s=document.createElement('style');s.id='shot-freeze';s.textContent=${JSON.stringify(FREEZE_CSS)};document.head.appendChild(s);}
@@ -964,8 +964,8 @@ const SHOTS = [
   { name: 'composer', level: 'advanced', hash: () => 'workflows',
     prep: async () => { await until2('document.querySelector(\'#wfv-library #wfl-tab-workflows\')', 'the Library selector'); await click('#wfv-library #wfl-tab-workflows');
       await until2('document.querySelector(\'#wfv-library .wfl-folder[data-folder^="workflows/"], #wfv-library .wfl-wf[data-id="wf_default"]\')', 'the Workflows section');
-      // Default sits in its domain's folder whenever Workflows holds more than one domain: expand it in place (a click folds an open one).
-      await ev("(()=>{const p=window.__wfv.library().folderOf('workflow','wf_default');const e=p.length>1&&[...document.querySelectorAll('#wfv-library .wfl-folder')].find((f)=>f.dataset.folder===p.join('/'));if(e&&e.getAttribute('aria-expanded')!=='true')e.click();return 1;})()");
+      // Default sits in Workflows › Built-in (in its domain's folder when the built-ins span several): open every folder on its path.
+      await ev("(()=>{const L=window.__wfv.library();L.openFolder(L.folderOf('workflow','wf_default'));return 1;})()");
       await until2('document.querySelector(\'#wfv-library .wfl-wf[data-id="wf_default"] .wfl-main\')', 'workflow list'); await click('#wfv-library .wfl-wf[data-id="wf_default"] .wfl-main');
       await until2("document.querySelectorAll('#wfv-canvas .gv-world .node').length >= 4", 'agent nodes'); } },
   { name: 'stats', level: 'advanced', hash: () => 'stats',

@@ -754,14 +754,15 @@ test('E4: an agent node that runs past its wall-clock or goes silent past its id
 
 test('E9/E10: each spawn appends a manifest line (prompt hashes, model, effort, settings, memory) and names paths outside the checkout', async () => {
   const { createHash } = await import('node:crypto');
-  const { mkdirSync } = await import('node:fs');
+  const { mkdirSync, existsSync } = await import('node:fs');
   const rules = tmp('worca-exec-rules-');
   mkdirSync(join(rules, 'worca'), { recursive: true });
   writeFileSync(join(rules, 'worca', 'note.md'), 'a rule\n');
   const events = [];
   const c = ctx8({ claudeOpts: { mock: true, model: 'claude-opus-5-5', effort: 'high' }, memoryRules: rules, cliVersion: '2.1.400',
     onEvent: (e) => events.push(e) });
-  const scratch = '/private/tmp/claude-501/other-session/scratchpad/tree/a.mjs';
+  // A Bash path counts only when its first segment exists: /private on macOS, /tmp elsewhere.
+  const scratch = `${existsSync('/private/tmp') ? '/private/tmp' : '/tmp'}/claude-501/other-session/scratchpad/tree/a.mjs`;
   _testing.runClaude = async (opts) => {
     opts.onEvent({ type: 'session', sessionId: 's-1', model: 'claude-opus-5-5-20261001', init: true });
     opts.onEvent({ type: 'tool', parentId: null, calls: [
@@ -793,6 +794,56 @@ test('E9/E10: each spawn appends a manifest line (prompt hashes, model, effort, 
     assert.equal(m.outcome, 'ok');
     assert.ok(events.some((e) => e.type === 'scope' && e.paths.length === 1), 'telemetry gets the outside paths');
   } finally { _testing.runClaude = null; }
+});
+
+test('E9: the node\'s own port files and Bash words that are not paths are not "outside"; real outside paths still are', async () => {
+  const { existsSync } = await import('node:fs');
+  const store = tmp('worca-exec-store-');                     // stands in for ~/.worca-cc/store/<project>
+  const planOut = join(store, 'plans', '05-11-26-x.md');
+  const planIn = join(store, 'plans', 'in.md');
+  const verdictFile = join(store, 'verdict.json');
+  const asks = join(store, 'asks', 'q.json');
+  const slices = join(store, 'slices', 's.json');
+  const scratchRoot = existsSync('/private/tmp') ? '/private/tmp' : '/tmp';
+  const scratchFile = `${scratchRoot}/other/scratch/x.mjs`;
+  const elsewhere = join(store, 'other-project', 'src', 'a.mjs');
+  const run = async (calls) => {
+    const c = ctx8({ outputs: { review: { path: planOut, store: 'project' } }, verdict: { path: verdictFile },
+      bindings: { plan: { type: 'md', path: planIn } }, questionsFile: asks, shapeSlicing: { file: slices } });
+    _testing.runClaude = async (opts) => {
+      opts.onEvent({ type: 'tool', parentId: null, calls });
+      writeFileSync(verdictFile, JSON.stringify({ issues: [], summary: 'ok' }), 'utf8');
+      return { text: 'done' };
+    };
+    try {
+      const r = await runAgentExecution(c);
+      return r.warnings.filter((w) => w.includes('outside its checkout'));
+    } finally { _testing.runClaude = null; }
+  };
+  // (a) its output, input, verdict, questions and slicing files are its own, wherever worca put them
+  assert.deepEqual(await run([
+    { name: 'Write', input: { file_path: planOut, content: 'x' } },
+    { name: 'Read', input: { file_path: planIn } },
+    { name: 'Bash', input: { command: `cat ${planIn} > /dev/null` } },
+    { name: 'Write', input: { file_path: verdictFile, content: '{}' } },
+    { name: 'Write', input: { file_path: asks, content: '{}' } },
+    { name: 'Write', input: { file_path: slices, content: '{}' } },
+  ]), []);
+  // (b) a route, URL path or grep pattern in a command is not a file
+  assert.deepEqual(await run([
+    { name: 'Bash', input: { command: "grep -rn '/files' src && echo /api/runs/x/files" } },
+  ]), []);
+  // (c) another session's scratch tree still warns
+  const c3 = await run([{ name: 'Bash', input: { command: `cat ${scratchFile}` } }]);
+  assert.equal(c3.length, 1);
+  assert.ok(c3[0].includes(scratchFile), c3[0]);
+  // (d) a file tool's path outside the roots still warns, even when its first segment does not exist
+  const c4 = await run([
+    { name: 'Read', input: { file_path: elsewhere } },
+    { name: 'Read', input: { file_path: '/files/x.md' } },
+  ]);
+  assert.equal(c4.length, 1);
+  assert.ok(c4[0].includes(elsewhere) && c4[0].includes('/files/x.md'), c4[0]);
 });
 
 test('E10: the run\'s frozen memory manifest wins over listing the rules copy', async () => {

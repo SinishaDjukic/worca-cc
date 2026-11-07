@@ -178,3 +178,7 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .switch-label,.switch-row > .txt{font:500 var(--fs-body)/var(--lh-body) var(--sans);color:var(--ink);}
 .switch-why{font-size:var(--fs-meta);color:var(--ink-2);}
 .switch-why[hidden]{display:none;}
+
+/* Settings › Runs filter: a card with no match is out of the way until the filter changes. */
+.settings-filter{display:block;margin-top:8px;max-width:320px;}
+.settings-card.settings-filtered-out{display:none;}

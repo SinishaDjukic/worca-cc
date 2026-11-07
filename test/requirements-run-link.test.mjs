@@ -397,6 +397,7 @@ test('server: Start with Report back makes a plugin pipeline row; write-back rep
     const ref = JSON.parse(row.source_ref);
     assert.deepEqual([ref.plugin, ref.sourceId, ref.profile, ref.taskId, ref.url, ref.inputs], ['jira-source', 'jira', 'acme', 'SHOP-123',
       'https://mock.test/browse/SHOP-123', { writeBack: 'yes' }]);
+    assert.equal(ref.project, 'SHOP', "Ticket updates (D6): the link's tracker project is pinned on the row");
     const out = await reportResultForPipeline({ ...row, status: 'done' }, { results: null, branch: null, prUrl: null });
     assert.deepEqual(out, { ok: true });
     const last = JSON.parse(readPluginState('jira-source', 'acme').lastReport);
@@ -415,4 +416,11 @@ test('server: Start with Report back makes a plugin pipeline row; write-back rep
 test('server: the browser cannot drive an export op (D18): /api/sources/call refuses createTicket', async () => {
   const r = await call('POST', '/api/sources/call', { plugin: 'jira-source', sourceId: 'jira', op: 'createTicket', profile: 'acme', args: { ticket: {} } });
   assert.deepEqual([r.status, r.json.error], [400, 'op "createTicket" is not allowed for this source']);
+});
+
+test('server (a guard: it passes before A6.1 too): the browser cannot drive an import op (A6.1 D2): /api/sources/call refuses all four', async () => {
+  for (const op of ['importOptions', 'searchTickets', 'importTicket', 'downloadAttachment']) {
+    const r = await call('POST', '/api/sources/call', { plugin: 'jira-source', sourceId: 'jira', op, profile: 'acme', args: {} });
+    assert.deepEqual([r.status, r.json.error], [400, `op "${op}" is not allowed for this source`], op);
+  }
 });

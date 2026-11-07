@@ -91,6 +91,17 @@ test('overlayStepModels: the overlay models the run\'s cells really run, as devi
   }
 });
 
+test('overlayStepModels: a role pick from the run overlay is recorded under its node and role label (off-policy check)', () => {
+  const roleReview = { roles: [{ key: 'correctness', label: 'Correctness' }, { key: 'security', label: 'Security' }], source: 'declared', target: 'plan', sink: 'refiner' };
+  const cell = { id: 'n_rev', kind: 'agent', key: 'reviewer', model: 'claude-opus-5-5', effort: '', config: { roleReview },
+    roles: { security: { model: 'claude-haiku-4-5', effort: 'high', source: 'run' }, correctness: { model: 'claude-sonnet-5-5', source: 'project' } } };
+  const manifest = { graph: { nodes: [cell] }, runOverlay: { nodes: { n_rev: { roles: { security: { model: 'claude-haiku-4-5' } } } } } };
+  assert.deepEqual(overlayStepModels(manifest), [{ role: 'reviewer · Security', model: 'claude-haiku-4-5' }],
+    'a project pick is the project\'s own setting; a run pick the resolver dropped (wanted, no model) ran nothing');
+  const dropped = { ...cell, roles: { security: { source: 'run', wanted: { model: 'gpt-5.5' } } } };
+  assert.deepEqual(overlayStepModels({ ...manifest, graph: { nodes: [dropped] } }), []);
+});
+
 test('an effort or sub-agent value no model could name is refused with a short error (never echoed whole, at any length)', () => {
   const BIG = 'e'.repeat(100_000);
   for (const entry of [{ model: 'claude-opus-5-5', effort: BIG }, { model: 'claude-opus-5-5', subagentModel: BIG }]) {
@@ -118,4 +129,37 @@ test('checkRunOverlay: a wire must be a wire of the workflow', () => {
   assert.deepEqual([ok.errors, ok.wires], [[], { w9: { maxCycles: 2 } }]);
   const bad = checkRunOverlay(null, { workflow, wires: { w_gone: { maxCycles: 2 } } });
   assert.deepEqual(bad.errors, ['wire "w_gone" is not a wire of workflow wf_x']);
+});
+
+const ROLE_WF = { id: 'wf_roles', name: 'Roles', version: 2, nodes: [
+  { id: 'n_task', kind: 'task' }, { id: 'n_plan', kind: 'agent', key: 'planner' },
+  { id: 'n_rev', kind: 'agent', key: 'planReviewer', config: { roleReview: { roles: [{ key: 'correctness', label: 'Correctness' }, { key: 'security', label: 'Security' }], target: 'plan', sink: 'refiner' } } }] };
+
+test('parseRunOverlay: a node\'s roles map is typed and trimmed; a malformed one is refused with its path', () => {
+  assert.deepEqual(parseRunOverlay({ nodes: { n_rev: { roles: { security: { model: ' claude-opus-5-5 ', effort: 'high' }, correctness: { model: '' } } } } }),
+    { overlay: { nodes: { n_rev: { roles: { security: { model: 'claude-opus-5-5', effort: 'high' } } } } } });
+  for (const [roles, re] of [
+    [[], /^overlay\.nodes\.n_rev\.roles must be an object keyed by role$/],
+    [{ 'Sec-1': {} }, /^overlay\.nodes\.n_rev\.roles: role key "Sec-1" must be 1–24 lowercase letters$/],
+    [{ security: { model: 'm'.repeat(201) } }, /^overlay\.nodes\.n_rev\.roles\.security: model must be a string of at most 200 characters$/],
+    [{ security: { effort: 7 } }, /^overlay\.nodes\.n_rev\.roles\.security: effort must be a string of at most 32 characters$/],
+    [{ security: { fanOut: true } }, /^overlay\.nodes\.n_rev\.roles\.security: unknown key "fanOut"$/],
+    [Object.fromEntries('abcdefghijklm'.split('').map((k) => [k, {}])), /names more than 12 roles/],
+  ]) assert.match(parseRunOverlay({ nodes: { n_rev: { roles } } }).error, re, JSON.stringify(roles));
+  assert.match(parseOverlayNodes({ n_plan: { roles: {} } }, { what: 'nodes', keys: ['model', 'effort'] }).error, /unknown key "roles"/, 'a proposal takes none');
+});
+
+test('checkRunOverlay: roles only on a role-review node, only for its declared roles, each pick checked like a node pick', () => {
+  const ok = checkRunOverlay({ n_rev: { roles: { security: { model: 'CLAUDE-OPUS-5-5', effort: 'high' } } } }, { workflow: ROLE_WF, models: MODELS, engine: 'claude' });
+  assert.deepEqual(ok, { nodes: { n_rev: { roles: { security: { model: 'claude-opus-5-5', effort: 'high' } } } }, wires: {}, errors: [] });
+  assert.deepEqual(checkRunOverlay({ n_plan: { roles: { security: { model: 'claude-opus-5-5' } } } }, { workflow: ROLE_WF, models: MODELS }).errors,
+    ['node n_plan has no role review; roles are not allowed']);
+  assert.deepEqual(checkRunOverlay({ n_rev: { roles: { perf: { model: 'claude-opus-5-5' } } } }, { workflow: ROLE_WF, models: MODELS }).errors,
+    ["node n_rev declares no role 'perf'"]);
+  assert.deepEqual(checkRunOverlay({ n_rev: { roles: { security: { model: 'claude-haiku-4-5', effort: 'max' }, correctness: { model: 'gone' } } } }, { workflow: ROLE_WF, models: MODELS }).errors, [
+    'node "n_rev.roles.security": model claude-haiku-4-5 has no effort "max"',
+    'node "n_rev.roles.correctness": unknown model "gone"',
+  ]);
+  assert.deepEqual(checkRunOverlay({ n_rev: { roles: { security: { model: 'gpt-5.5' } } } }, { workflow: ROLE_WF, models: MODELS, engine: 'claude' }).errors,
+    ['node "n_rev.roles.security": gpt-5.5 runs on Codex, not on Claude — pick a model this run\'s engine runs']);
 });

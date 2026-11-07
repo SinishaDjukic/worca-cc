@@ -4,7 +4,7 @@ import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { WHATS_NEW, WHATS_NEW_KEY, paintWhatsNew } from '../ui/public/whats-new.mjs';
+import { WHATS_NEW, WHATS_NEW_KEY, paintWhatsNew, markWhatsNewSeen } from '../ui/public/whats-new.mjs';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
@@ -114,4 +114,10 @@ test('app: the note shows on #runs, Got it, and after a reload it is gone', asyn
   assert.equal(saved.get(WHATS_NEW_KEY), '1');
   const b = await boot(saved);
   assert.equal(b.doc.querySelector('#runs-whats-new aside.whats-new'), null, 'stays dismissed after a reload');
+});
+
+test('markWhatsNewSeen: a first start never gets the note', () => {
+  const store = new Map();
+  markWhatsNewSeen({ setItem: (k, v) => store.set(k, v) });
+  assert.equal(store.get(WHATS_NEW_KEY), '1');
 });

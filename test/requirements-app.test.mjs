@@ -23,6 +23,10 @@ test('leaving the Requirements view tells it to release the Feature chat sheet (
   const app = readFileSync(join(root, 'app.js'), 'utf8');
   assert.ok(app.replace(/\r?\n\s*/g, ' ').includes("if (name === 'requirements') void requirementsView.show(param); else requirementsView.leave();"));
 });
+test('app.js hands the Requirements view openRun: a started run opens on #running/<runId>', () => {
+  const app = readFileSync(join(root, 'app.js'), 'utf8').replace(/\r?\n\s*/g, ' ');
+  assert.ok(app.includes("openRun: (runId) => { location.hash = `#running/${runId}`; }"));
+});
 const hidden = (doc, view) => doc.querySelector(`[data-view="${view}"]`).classList.contains('hidden');
 
 async function boot(flags) {

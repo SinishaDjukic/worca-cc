@@ -18,9 +18,10 @@ import { createRunProgressCard, snapshotFromState, PROGRESS_CARD_TYPE } from './
 import { createCommandCard, createCommandGroup, COMMAND_CARD_TYPE } from './ask-command-card.mjs';
 import { commandRuns } from './ask-command-group.mjs';
 import { buildTrace, scheduleTrace, playAssembly } from './auto-build.mjs';
-import { buildNodeConfigRows, pruneNodeSelection, modifiedFieldsOf, healForEngine } from './node-tunables.mjs';
+import { buildNodeConfigRows, buildRoleRows, pruneNodeSelection, modifiedFieldsOf, healForEngine } from './node-tunables.mjs';
 import { ENGINE_EFFORTS } from './engine-settings-view.mjs';
 import { ENGINE_NAMES, engineLabel, isBetaEngine } from '../../src/shared/engine-switch.mjs';
+import { PR_OPEN, PR_OPEN_LABELS, prSourceText } from '../../src/shared/pr-auto.mjs';
 import { lockEngineOptions } from './engine-locks.mjs';
 import { runsOn, modelGroups } from '../../src/shared/connections.mjs';
 import { appendModelGroups, modelOptionText } from './model-options.mjs';
@@ -30,7 +31,7 @@ import { parseMcpToolName } from '../../src/shared/mcp-tool-name.mjs';
 import { mcpSkipView, mcpCopyNote, skillSkipView } from './mcp-run-picker.mjs';
 import { engineOfEntry, chatEngineOf, pickerGroups, ASK_CHAT_ENGINES, isEngineSetupNotice, engineSwitchConfirm, readEnginePicks, rememberEnginePick, engineLead, switchEffort, pickerEngineName } from './ask-engine.mjs';
 import { formatQuotedMessage, parseQuotedMessage } from './pinpoint-model.mjs';
-import { ATTACH_ACCEPT, ATTACH_MAX_MESSAGE_BYTES, bytesToBase64 as attachBase64, carriesFiles, checkAttachment, createPasteNamer, pastedFiles } from './attach-files.mjs';
+import { ATTACH_MAX_MESSAGE_BYTES, bytesToBase64 as attachBase64, carriesFiles, checkAttachment, createPasteNamer, pastedFiles } from './attach-files.mjs';
 import { notify } from './feedback.mjs';
 import { currentLevel, levelShows } from './ui-level.mjs';
 import { chatCardBuilder, composerAddons } from './chat/extensions.mjs';
@@ -41,6 +42,7 @@ import { CHATS_PAGE } from './chats-list.mjs';
 import { chatPageKeyAction, keyHint, isMac, LIST_FIELD } from './list-keys.mjs';
 import { openKeysSheet } from './keys-sheet.mjs';
 import { gitOn } from './git-gate.mjs';
+import { originMark, platformName } from './chat-origin.mjs';
 import { NO_PROJECT_KEY, NO_PROJECT_NAME, NEEDS_REPO_NOTE } from '../../src/shared/no-project.mjs';
 import { createTagInput, fetchTagVocabulary, createTagRulesLine } from './tag-input.mjs';
 import { INTENTS, splitIntentLead } from './chat/intent.mjs';
@@ -51,9 +53,12 @@ import { withoutChips } from './ask-page-chips.mjs';
 import { sideSuggestions } from './ask-side-suggest.mjs';
 import { makeSwitch } from './switch.mjs';
 import { shapeCardExtras, shapeWhatHappens, shapeAdvancedSummary } from './shape/proposal.mjs';
+import { button as railButton } from './design-system/components/button.mjs';
+import { toElement } from './design-system/components/html.mjs';
 import { createAskComposerCards, ASK_COMPOSER_CARD_TYPES } from './ask-composer-cards.mjs';
 import { cardKit, scriptApprovalCardView } from './workflows/card-views.mjs';
 import { applyPresetStart } from '../../src/shared/run-presets.mjs';
+import { subagentAliasLabel, subagentAliasTitle } from '../../src/shared/model-roles.mjs';
 import {
   fmtTokens, CTX_COMPACT_BUFFER, CTX_WARN, CTX_HIGH, CTX_COST_HINT, kTok,
   fmtWindow, ctxTrigger, ctxLevel, ctxPercent, fmtCtx, ctxTitle, fmtShare, ctxBreakdown, fmtUsd,
@@ -1535,7 +1540,6 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     el.fileInput = doc.createElement('input');
     el.fileInput.type = 'file';
     el.fileInput.multiple = true;
-    el.fileInput.accept = ATTACH_ACCEPT;
     el.fileInput.hidden = true;
     el.fileInput.addEventListener('change', () => { addFiles(el.fileInput.files); el.fileInput.value = ''; });
     row.appendChild(el.fileInput);
@@ -1952,7 +1956,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       const b = make('button', 'ask-side-recent-row');
       b.type = 'button';
       b.dataset.threadId = t.id;
-      b.appendChild(make('span', 'ask-side-recent-t', t.title || 'New chat'));
+      const title = make('span', 'ask-side-recent-t', t.title || 'New chat');
+      const mark = originMark(doc, t.origin);
+      if (mark) title.prepend(mark);
+      b.appendChild(title);
       b.appendChild(threadMeter(t));
       b.addEventListener('click', () => { showThread(t.id); route(t.id); focusComposer(); });   // the row leaves with the empty state
       return b;
@@ -3718,14 +3725,23 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // them as its defaults ("Save as project defaults", saveLaneEdits). `explicit`: a workspace card's rows are the
     // built-in defaults, not the run's baseline (laneOverlay names its picks outright). `proposal` / `proposed` /
     // `warnings`: Ask Worca's per-agent picks (card.nodes) once applyProposal lays them in as the lane's baseline.
-    return { wf, registry, runConfig, rows, edits: {}, editable: true, explicit: !projectDir, engine, defaultEngine, allModels, proposal: {}, proposed: {}, warnings: [],
+    // `reviewRoleRows`: a role-review node's declared roles (node-tunables buildRoleRows); their edits live apart from
+    // the node rows' in `reviewRoleEdits[nodeId][roleKey]` (`row.role` already names Default's legacy step role).
+    return { wf, registry, runConfig, rows, edits: {}, reviewRoleRows: buildRoleRows(wf, rows, runConfig), reviewRoleEdits: {},
+      editable: true, explicit: !projectDir, engine, defaultEngine, allModels, proposal: {}, proposed: {}, warnings: [],
+      prDefault: defaults && defaults.pr && defaults.pr.scope === 'project' ? defaults.pr : null,
       models, efforts: engine === 'claude' ? (Array.isArray(cfg.efforts) ? cfg.efforts : []) : [...(ENGINE_EFFORTS[engine] || [])],
       subagentModels: Array.isArray(cfg.subagentModels) ? cfg.subagentModels : [] };
   }
   const laneEffective = (lane, row) => ({ ...row, ...(lane.edits[row.nodeId] || {}) });
   const laneCaps = (row) => ({ asksQuestions: row.askQuestions !== null, questionsLocked: row.questionsLocked });
-  const laneEditedRows = (lane) => lane.rows.filter((r) => lane.edits[r.nodeId]);
-  const laneOverrideCount = (lane) => lane.rows.filter((r) => modifiedFieldsOf(laneEffective(lane, r), r.def, laneCaps(r)).length).length;
+  const laneReviewRoleEdit = (lane, rr) => (lane.reviewRoleEdits[rr.nodeId] || {})[rr.roleKey] || null;
+  const laneReviewRoleEffective = (lane, rr) => ({ ...rr, ...(laneReviewRoleEdit(lane, rr) || {}) });
+  const laneReviewRoleChanged = (lane, rr) => { const c = laneReviewRoleEffective(lane, rr); return (c.model || '') !== (rr.def.model || '') || (c.effort || '') !== (rr.def.effort || ''); };
+  const laneReviewRoleEdited = (lane) => (lane.reviewRoleRows || []).filter((rr) => laneReviewRoleEdit(lane, rr));
+  const laneEditedRows = (lane) => lane.rows.filter((r) => lane.edits[r.nodeId] || laneReviewRoleEdited(lane).some((rr) => rr.nodeId === r.nodeId));
+  const laneOverrideCount = (lane) => lane.rows.filter((r) => modifiedFieldsOf(laneEffective(lane, r), r.def, laneCaps(r)).length).length
+    + (lane.reviewRoleRows || []).filter((rr) => laneReviewRoleChanged(lane, rr)).length;
   const modelLabel = (lane, id) => { const m = lane.models.find((x) => x.id === id); return m ? (m.label || m.id).replace(' (1M)', '') : id; };
   function laneSummary(lane) {
     const counts = new Map();
@@ -3743,6 +3759,24 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const next = { ...(lane.edits[row.nodeId] || {}), ...patch };
     for (const k of Object.keys(next)) if (next[k] === row[k]) delete next[k];   // back to the proposal = no edit
     if (Object.keys(next).length) lane.edits[row.nodeId] = next; else delete lane.edits[row.nodeId];
+  }
+  /** laneSet for a review-role row: the same "back to the row = no edit" rule, keyed by node and role. */
+  function laneReviewRoleSet(lane, rr, patch) {
+    const byRole = { ...(lane.reviewRoleEdits[rr.nodeId] || {}) };
+    const next = { ...(byRole[rr.roleKey] || {}), ...patch };
+    for (const k of Object.keys(next)) if (next[k] === rr[k]) delete next[k];
+    if (Object.keys(next).length) byRole[rr.roleKey] = next; else delete byRole[rr.roleKey];
+    if (Object.keys(byRole).length) lane.reviewRoleEdits[rr.nodeId] = byRole; else delete lane.reviewRoleEdits[rr.nodeId];
+  }
+  /** What a review-role row runs as a pick `{ model?, effort? }`, or null for "the node's setting". "Node's model" over
+   *  a template or project pick names the node's own model, since a pick cannot be cleared by naming nothing. */
+  function laneReviewRolePick(lane, rr) {
+    const c = laneReviewRoleEffective(lane, rr);
+    const node = lane.rows.find((r) => r.nodeId === rr.nodeId);
+    const n = node ? laneEffective(lane, node) : {};
+    const pair = c.model ? { model: c.model, effort: c.effort } : (rr.def.model && n.model ? { model: n.model, effort: c.effort || n.effort } : { effort: c.effort });
+    const out = { ...(pair.model ? { model: pair.model } : {}), ...(pair.effort ? { effort: pair.effort } : {}) };
+    return Object.keys(out).length ? out : null;
   }
   // Ask Worca's per-agent picks (card.nodes) are the lane's BASELINE edits: "changed" means the user moved a row off
   // them; with no proposal that is exactly "the row has an edit", as before.
@@ -3816,6 +3850,14 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       if ((c.subagentModel || '') !== (row.subagentModel || '')) e.subagentModel = c.subagentModel || row.def.subagentModel || 'auto';
       if (Object.keys(e).length) nodes[row.nodeId] = e;
     }
+    // Edited review-role rows that differ from the project's (or template's) pick ride as `nodes[id].roles[key]`; a
+    // node entry may carry roles only.
+    for (const rr of laneReviewRoleEdited(lane)) {
+      if (!laneReviewRoleChanged(lane, rr)) continue;
+      const pick = laneReviewRolePick(lane, rr);
+      if (!pick) continue;
+      nodes[rr.nodeId] = { ...(nodes[rr.nodeId] || {}), roles: { ...((nodes[rr.nodeId] || {}).roles || {}), [rr.roleKey]: pick } };
+    }
     return { nodes };
   }
   /** Ask Worca's picks as proposed (card.nodes), for a Start whose lane has not loaded (still loading, or it could
@@ -3846,7 +3888,15 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (!lane || !lane.editable || !projectDir) return null;
     const workflowId = local.workflowId();
     for (const row of laneEditedRows(lane)) {
-      const patch = pruneNodeSelection(row, lane.edits[row.nodeId]);
+      const patch = pruneNodeSelection(row, lane.edits[row.nodeId] || {});
+      // The node's role picks are written whole (setNodeModel replaces the map): the stored ones, the edits over them.
+      const roleRows = (lane.reviewRoleRows || []).filter((rr) => rr.nodeId === row.nodeId);
+      if (roleRows.some((rr) => laneReviewRoleEdit(lane, rr))) {
+        const stored = (((lane.runConfig || {}).nodes || {})[row.nodeId] || {}).roles || {};
+        patch.roles = Object.fromEntries(roleRows
+          .map((rr) => [rr.roleKey, laneReviewRoleEdit(lane, rr) ? laneReviewRolePick(lane, rr) : (Object.hasOwn(stored, rr.roleKey) ? stored[rr.roleKey] : null)])
+          .filter(([, pick]) => pick));
+      }
       const body = row.role
         ? { projectDir, step: row.role, ...patch }
         : { projectDir, workflowId, nodes: { [row.nodeId]: patch } };
@@ -3908,7 +3958,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       return;
     }
     // "changed" = rows the user moved off the proposal (Ask Worca's picks are the baseline, not the user's edits).
-    const edited = lane.rows.filter((r) => laneDiverged(lane, r)).length;
+    const edited = lane.rows.filter((r) => laneDiverged(lane, r)).length + laneReviewRoleEdited(lane).length;
     const picked = laneProposedCount(lane);
     const over = laneOverrideCount(lane);
     const overText = `${over} override${over === 1 ? '' : 's'} of the workflow defaults`;
@@ -3917,7 +3967,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       : picked ? `Chat picked ${picked} agent${picked > 1 ? 's' : ''} for this run · ${overText}`
         : `proposed by Worca · ${overText}`;
     reset.hidden = !edited;
-    reset.addEventListener('click', () => { lane.edits = cloneEdits(lane.proposal); if (lane.dropped) lane.dropped.clear(); renderLane(laneSec, lane, lc); });
+    reset.addEventListener('click', () => { lane.edits = cloneEdits(lane.proposal); lane.reviewRoleEdits = {}; if (lane.dropped) lane.dropped.clear(); renderLane(laneSec, lane, lc); });
     // The lane shows at every mode while Ask Worca's picks are laid in (data-level-keep, set when the card is built);
     // healed away on another engine, or on another workflow, it is Expert-only again — and the team policy's word on
     // the picks (card.warnings, soft: the run still starts) goes with them.
@@ -4016,7 +4066,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       subWrap.appendChild(make('span', null, 'Sub-agents'));
       const subSel = rpSelect('ask-rp-subagent', `Sub-agent model for ${row.label}`);
       subSel.appendChild(opt('', 'subs: default (agent picks)'));
-      for (const v of lane.subagentModels) subSel.appendChild(opt(v, v === 'auto' ? 'subs: agent picks' : `subs: ${v}`));
+      for (const v of lane.subagentModels) { const o = opt(v, `subs: ${subagentAliasLabel(v)}`); const t = subagentAliasTitle(v); if (t) o.title = t; subSel.appendChild(o); }
       subSel.value = lane.subagentModels.includes(c.subagentModel) ? c.subagentModel : '';
       subSel.disabled = !lane.editable;
       subSel.title = 'Model for the sub-agents this node spawns (needs fan-out)';
@@ -4042,6 +4092,54 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       tile.appendChild(l2);
       box.appendChild(tile);
     });
+    // A role-review node's declared roles, below the node tiles: a model select and effort pills, nothing else.
+    for (const rr of lane.reviewRoleRows || []) {
+      const node = lane.rows.find((r) => r.nodeId === rr.nodeId);
+      const c = laneReviewRoleEffective(lane, rr);
+      const tile = make('div', `ask-rp-tile ask-rp-role${laneReviewRoleEdit(lane, rr) ? ' mod' : ''}`);
+      tile.dataset.nodeId = rr.nodeId;
+      tile.dataset.role = rr.roleKey;
+      const l1 = make('div', 'ask-rp-tile-l1');
+      l1.appendChild(make('span', `ask-rp-acc${node && RP_ACC.has(node.color) ? ` ${node.color}` : ''}`));
+      const name = make('div', 'ask-rp-name');
+      name.appendChild(make('b', null, rr.label));
+      l1.appendChild(name);
+      const sel = rpSelect('ask-rp-model', `Model for ${rr.label}`);
+      sel.appendChild(opt('', "Node's model"));
+      appendModelGroups(sel, lane.models.filter((m) => (!m.hidden && !m.needsSignIn) || m.id === c.model), {
+        engine: lane.engine, text: (m) => modelOptionText(m) + (m.needsSignIn ? ' (needs sign-in)' : '') });
+      sel.value = c.model || '';
+      sel.disabled = !lane.editable;
+      sel.addEventListener('change', () => {
+        const mid = sel.value;
+        const list = (lane.models.find((m) => m.id === mid) || {}).efforts || [];
+        const keep = list.includes(c.effort) ? c.effort : (list[1] || list[0] || '');
+        laneReviewRoleSet(lane, rr, { model: mid, effort: mid ? keep : '' });
+        renderLane(laneSec, lane, lc);
+      });
+      l1.appendChild(sel);
+      if (lane.efforts.length) {
+        // A role naming no model runs on the node's: its pills follow the node tile's model.
+        const runsOnModel = c.model || (node ? laneEffective(lane, node).model : '');
+        const eff = make('div', `ask-rp-eff${c.model ? '' : ' unset'}`);
+        eff.setAttribute('role', 'radiogroup');
+        eff.setAttribute('aria-label', `Effort for ${rr.label}`);
+        const offered = (lane.models.find((m) => m.id === runsOnModel) || {}).efforts || [];
+        for (const e of lane.efforts) {
+          const b = make('button', `ask-rp-effbtn${e === c.effort ? ' on' : ''}`, e);
+          b.type = 'button';
+          b.setAttribute('role', 'radio');
+          b.setAttribute('aria-checked', String(e === c.effort));
+          b.disabled = !lane.editable || !offered.includes(e);
+          if (!offered.includes(e) && runsOnModel) b.title = `Not offered by ${modelLabel(lane, runsOnModel)}`;
+          b.addEventListener('click', () => { laneReviewRoleSet(lane, rr, { effort: e }); renderLane(laneSec, lane, lc); });
+          eff.appendChild(b);
+        }
+        l1.appendChild(eff);
+      }
+      tile.appendChild(l1);
+      box.appendChild(tile);
+    }
     // A per-run lane: changes (and Ask Worca's picks) apply to THIS run only, unless the user saves them as the
     // project's defaults — a project target only (agent defaults are per project).
     const foot = make('div', 'ask-rp-agents-foot');
@@ -4196,6 +4294,22 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     };
   }
 
+  /** "Saved to Workflows: <name>" under a saved card's name (#1126). The name is a real link to the row's address;
+   *  with the app's openComposer the click takes the card's own way in (the Library then shows the row). */
+  function savedToLine(workflowId, name) {
+    const line = make('div', 'ask-wfcard-savedto', 'Saved to Workflows: ');
+    const a = make('a', 'ask-wfcard-savedlink', name || workflowId);
+    a.href = `#workflows/${encodeURIComponent(workflowId)}`;
+    a.setAttribute('data-ask-wf-link', '');
+    a.addEventListener('click', (e) => {
+      if (typeof openComposer !== 'function') return;      // a bare host: the href navigates
+      e.preventDefault();
+      openComposer(workflowId);
+    });
+    line.appendChild(a);
+    return line;
+  }
+
   function buildWorkflowCard(block, prev) {
     const card = block.card || {};
     const name = card.name || '';
@@ -4243,6 +4357,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       handle.parts.name.replaceWith(saved);
       // The chip says Saved and the tag says Auto: the line stays only when it says something new.
       if (card.adopted) saved.after(make('div', 'ask-wfcard-savedline', 'Uses a workflow you already had'));
+      else if (block.workflowId) saved.after(savedToLine(block.workflowId, name));   // a new row: say where it went (#1126)
     } else if (matched) {
       const hint = make('div', 'ask-wfcard-hint', 'Model and effort come from that saved workflow. Edit them in the Workflows view.');
       handle.parts.match.after(hint);
@@ -5200,8 +5315,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     head.appendChild(tagRow);
     if (typeof card.note === 'string' && card.note) head.appendChild(make('p', 'ask-rp-why', card.note));
     // A shaped card follows card.shape; the nudge is advisory.
-    const shapeUi = card.shape || card.nudge ? shapeCardExtras(doc, card) : null;
+    const shapeUi = card.shape || card.nudge ? shapeCardExtras(doc, card, { fetch }) : null;
     local.shapeUi = shapeUi;
+    // A direct Shaper card on the requirements workflow: Shape requirements is its only start button.
+    const direct = !!(card.shape && shapeUi && shapeUi.requirements);
     rootEl.appendChild(head);
 
     // target section
@@ -5263,6 +5380,13 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     lvTag(engineField, 'advanced', !!card.engine && card.engine !== 'claude');
     wfRow.append(wfField, engineField, guardField);
     targetSec.appendChild(wfRow);
+    // Pull request when the run finishes: "Use the setting" sends nothing (the project's or workspace's value, with its source, once the lane has read it); a pick is this run's own choice.
+    const prSel = rpSelect('ask-card-pr', 'Pull request when done');
+    fillSelect(prSel, [{ value: '', label: 'Use the setting' }, ...PR_OPEN.map((v) => ({ value: v, label: PR_OPEN_LABELS[v] }))], (card.pr && card.pr.open) || '');
+    const prField = lvTag(rpField('Pull request when done', prSel), 'advanced', !!(card.pr && card.pr.open));
+    const prRow = make('div', 'ask-rp-grid wf-row');
+    prRow.appendChild(prField);
+    targetSec.appendChild(prRow);
     if (shapeUi) rootEl.appendChild(shapeUi.el);
     rootEl.appendChild(targetSec);
     engineSel.addEventListener('change', () => reloadLane());   // the agent rows offer the engine's models
@@ -5449,21 +5573,44 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       laterBtn.dataset.minLevel = 'advanced';
       laterBtn.addEventListener('click', async () => {
         const picked = await openScheduleSheet(sheetOpts());
-        if (picked) startCard(block, rootEl, local, picked);
+        if (!picked) return;
+        if (card.shape && shapeUi) shapeUi.commit();     // a direct card's lead is saved as Shape requirements saves it
+        startCard(block, rootEl, local, picked);
       });
     }
     // Shape it first: Start holds an icon and a text node, so only the text node is relabelled.
     let shapeBtn = null;
     if (shapeUi) {
       const setLabel = (b, t) => { const n = [...b.childNodes].find((x) => x.nodeType === 3); if (n) n.textContent = t; else b.append(t); };
-      if (card.shape) {
+      if (card.shape && !shapeUi.requirements) {
         setLabel(startBtn, 'Start planning');            // a shaped card is never scheduled
       } else {
-        shapeBtn = make('button', 'btn btn-sm', 'Shaper');
-        shapeBtn.type = 'button';
-        shapeBtn.dataset.askCardShape = '';
-        shapeBtn.addEventListener('click', () => startCard(block, rootEl, local, null, { shaped: true }));
-        setLabel(startBtn, 'Run as is');                 // D32: the choice card's own words, never "anyway"
+        if (shapeUi.requirements) {
+          // Medium or large with shapeRequirements on: Shape requirements is the one primary, Run as is steps back. Until a
+          // lead is picked it stays in the tab order, aria-disabled, described by "You lead as".
+          shapeBtn = toElement(doc, railButton({ label: 'Shape requirements', kind: 'primary', attrs: { 'data-ask-card-shape': '' } }));
+          if (!card.shape) startBtn.classList.replace('btn-primary', 'btn-quiet');
+          const syncLead = () => {
+            const blocked = shapeUi.blocked();
+            if (blocked) shapeBtn.setAttribute('aria-disabled', 'true'); else shapeBtn.removeAttribute('aria-disabled');
+            // described by "You lead as" only once that span exists (the profile is still loading before)
+            if (blocked && shapeUi.el.querySelector(`#${shapeUi.labelId}`)) shapeBtn.setAttribute('aria-describedby', shapeUi.labelId); else shapeBtn.removeAttribute('aria-describedby');
+            if (direct) laterBtn.disabled = blocked;     // Schedule… starts a run too: no requirements run without a lead
+          };
+          shapeUi.el.addEventListener('shape-lead-change', syncLead);
+          syncLead();
+          shapeBtn.addEventListener('click', () => {
+            if (shapeUi.blocked()) return;
+            shapeUi.commit();
+            startCard(block, rootEl, local, null, { shaped: true });
+          });
+        } else {
+          shapeBtn = make('button', 'btn btn-sm', 'Shaper');
+          shapeBtn.type = 'button';
+          shapeBtn.dataset.askCardShape = '';
+          shapeBtn.addEventListener('click', () => startCard(block, rootEl, local, null, { shaped: true }));
+        }
+        if (!card.shape) setLabel(startBtn, 'Run as is');   // D32: the choice card's own words, never "anyway"
       }
     }
     foot.append(openNp, summary, dismissBtn, laterBtn, ...(shapeBtn ? [shapeBtn] : []), startBtn);
@@ -5472,6 +5619,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // Shaper (D20, mock board 13): a shaped card shows the title, the brief clamped, Project, Base branch,
     // Perspectives and what happens; every other field MOVES, unchanged, into a collapsed Advanced. Moves only: each
     // control keeps its class, so collectCardBody / startCard read the same values and the request is unchanged.
+    // The requirements layout drops Perspectives and What happens: the lead sentence, in .shape-card above, says both.
     let paintAdvanced = () => {};
     if (card.shape && shapeUi) {
       const kicker = eyebrow.querySelector('.ask-rp-kicker');
@@ -5487,7 +5635,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       more.addEventListener('click', () => { preview.hidden = true; more.hidden = true; briefSec.hidden = false; grow(); });
       const what = make('div', 'ask-rp-shape-what');
       what.append(make('span', 'ask-rp-label', 'What happens'), make('span', null, shapeWhatHappens(card.shape)));
-      main.append(preview, more, briefSec, targetHost, rpField('Perspectives', shapeUi.el), what);
+      main.append(preview, more, briefSec, targetHost, ...(shapeUi.requirements ? [] : [rpField('Perspectives', shapeUi.chipsEl || shapeUi.el), what]));
       const adv = doc.createElement('details');
       adv.className = 'ask-rp-adv disclosure';
       adv.setAttribute('data-ask-card-advanced', '');
@@ -5505,7 +5653,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       rootEl.insertBefore(adv, err);
       openNp.classList.add('link-btn');
       delete openNp.dataset.minLevel;                       // one of the small card's own controls (D20)
-      foot.replaceChildren(openNp, dismissBtn, startBtn);   // the Advanced summary stands in for the lane summary
+      foot.replaceChildren(openNp, dismissBtn, direct ? shapeBtn : startBtn);   // the Advanced summary stands in for the lane summary
       let advLane = null;
       paintAdvanced = (lane = advLane) => {
         advLane = lane;
@@ -5698,6 +5846,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         }
         if (lane) {
           engineSel.options[0].textContent = `${engineLabel(lane.defaultEngine)} (default)`;
+          prSel.options[0].textContent = lane.prDefault && local.target === 'project' ? `Use the setting: ${PR_OPEN_LABELS[lane.prDefault.open.value]} (${prSourceText(lane.prDefault.open.source)})` : 'Use the setting';
           for (const o of engineSel.options) o.hidden = o.value !== '' && o.value === lane.defaultEngine && engineSel.value !== o.value;   // listed once
         }
         wfDesc.textContent = lane ? workflowDesc(lane.wf, lane.registry, lane.runConfig) : '';
@@ -5708,7 +5857,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         const unseen = lane ? null : proposalOverlay(card, workflowId);
         if (unseen) {
           laneSec.dataset.levelKeep = '1';
-          const list = Object.entries(unseen.nodes).map(([id, p]) => `${id} → ${p.model}${p.effort ? ` · ${p.effort}` : ''}${p.subagentModel ? ` · sub-agents ${p.subagentModel}` : ''}`);
+          const list = Object.entries(unseen.nodes).map(([id, p]) => `${id} → ${p.model}${p.effort ? ` · ${p.effort}` : ''}${p.subagentModel ? ` · sub-agents ${subagentAliasLabel(p.subagentModel)}` : ''}`);
           laneSec.appendChild(make('div', 'ask-rp-lane-msg', `Start runs Chat's picks as proposed (checked again at Start): ${list.join(', ')}`));
         } else if (!lane) delete laneSec.dataset.levelKeep;
       });
@@ -5753,7 +5902,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       const line = createTagRulesLine(doc, tagInput);
       tagRow.appendChild(line.el);
       rootEl.__rp.tagRules = line;
-      const sync = () => { const why = line.blocked(); startBtn.disabled = !!why || !!local.workflowUnavailable; startBtn.title = why || ''; };   // a missing workflow keeps Start off
+      const gated = direct ? shapeBtn : startBtn;
+      const sync = () => { const why = line.blocked(); gated.disabled = !!why || !!local.workflowUnavailable; gated.title = why || ''; };   // a missing workflow keeps Start off
       line.onChange(sync);
       let gen = 0;
       let lastQ = null;
@@ -5790,6 +5940,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (tags.length) body.tags = tags;                      // none: a legacy body, byte for byte
     const engine = (rootEl.querySelector('.ask-card-engine') || {}).value;
     if (engine) body.engine = engine;                       // none: /api/run's default engine
+    // Pull request when done: only an explicit pick (and the proposal's slices mode on a project run); none: the setting decides.
+    const prOpen = (rootEl.querySelector('.ask-card-pr') || {}).value;
+    const pr = { ...(prOpen ? { open: prOpen } : {}), ...(card.pr && card.pr.slices && local.target === 'project' ? { slices: card.pr.slices } : {}) };
+    if (local.target !== 'none' && Object.keys(pr).length) body.pr = pr;
     // A tracker task: the reference, never a prompt (POST /api/run takes source OR prompt).
     if (card.source) {
       delete body.prompt;
@@ -5839,7 +5993,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const err = rootEl.querySelector('.ask-card-err');
     const startBtn = rootEl.querySelector('[data-ask-card-start]');
     err.textContent = '';
-    startBtn.disabled = true;
+    if (startBtn) startBtn.disabled = true;               // a direct card's only start button is Shape requirements
     const shapeBtn = rootEl.querySelector('[data-ask-card-shape]');
     if (shapeBtn) shapeBtn.disabled = true;               // a double click must not post /api/run twice
     freezeTargetInputs(rootEl, true);
@@ -5902,7 +6056,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       // (beginRun is NEVER called — spec §10.5).
     } finally {
       const tagBlocked = !!rootEl.__rp?.tagRules?.blocked();   // an enforced tag still missing keeps Start off
-      startBtn.disabled = tagBlocked;
+      if (startBtn) startBtn.disabled = tagBlocked;
       if (shapeBtn) shapeBtn.disabled = tagBlocked;            // Shaper starts a run too: the same tag rule
       freezeTargetInputs(rootEl, false);
       // freezeTargetInputs re-enabled the select; a shaped card's workflow is fixed.
@@ -6789,6 +6943,43 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   /** #958: a user/system row's content, to tell a resync's same row from a changed one (null: treat as changed). */
   function shownKeyOf(r) { try { return JSON.stringify(r); } catch { return null; } }
 
+  /** Freeform chat (discord-chat 0.4.0): a user row's chat-context block — the message it replied to, the channel's
+   *  recent history and the files left out — as a collapsed <details>. Quoted text is DATA: text nodes only. */
+  function buildChatContext(b) {
+    const box = make('details', 'ask-user-context');
+    const parts = [];
+    if (b.replyTo && typeof b.replyTo.author === 'string') parts.push(`reply to ${b.replyTo.author}`);
+    const history = Array.isArray(b.history) ? b.history : [];
+    if (history.length) parts.push(`${history.length} earlier message${history.length === 1 ? '' : 's'}`);
+    const own = Array.isArray(b.files) ? b.files.filter((f) => f && typeof f.name === 'string') : [];
+    if (own.length) parts.push(`${own.length} file${own.length === 1 ? '' : 's'} not saved`);
+    const where = platformName(b.platform) || 'chat';
+    box.appendChild(make('summary', 'ask-user-context-h', `Context from ${where}${parts.length ? `: ${parts.join(', ')}` : ''}`));
+    const fileLine = (f) => make('div', 'ask-user-context-f', f.note ? `${f.name} — ${String(f.note)}` : f.name);
+    const quote = (q) => {
+      if (!q || typeof q !== 'object') return;
+      const row = make('div', 'ask-user-context-q');
+      const when = typeof q.at === 'string' && Number.isFinite(Date.parse(q.at)) ? new Date(q.at).toLocaleString() : '';
+      const head = make('div', 'ask-user-context-by', `${String(q.author || '')}${when ? ` · ${when}` : ''}`);
+      if (typeof q.link === 'string' && q.link.startsWith('https://')) {
+        const a = make('a', 'ask-user-context-link', 'Open');
+        a.href = q.link;
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+        head.append(' · ', a);
+      }
+      row.appendChild(head);
+      if (typeof q.text === 'string' && q.text) row.appendChild(make('div', 'ask-user-context-t', q.text));
+      for (const f of Array.isArray(q.files) ? q.files : []) if (f && typeof f.name === 'string') row.appendChild(fileLine(f));
+      box.appendChild(row);
+    };
+    quote(b.replyTo);
+    for (const q of history) quote(q);
+    for (const f of own) box.appendChild(fileLine(f));
+    for (const n of Array.isArray(b.notes) ? b.notes : []) if (typeof n === 'string' && n) box.appendChild(make('div', 'ask-user-context-f', n));
+    return box;
+  }
+
   function buildMessage(row) {
     const wrap = make('div', `ask-msg ask-msg-${row.role}`);
     // The model REPLACES a row object on upsert (ask-model upsertRow), so every
@@ -6822,8 +7013,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
           card.append(make('div', 'ask-user-quote-h', quote.src ? `From ${quote.src}` : 'Quoted'), make('div', 'ask-user-quote-t', quote.text));
           wrap.appendChild(card);
         }
+        // Freeform chat: the quoted reply / history a chat message brought, collapsed above the person's own words.
+        const chatCtx = (row.blocks || []).find((b) => b && b.kind === 'chat-context');
+        if (chatCtx) wrap.appendChild(buildChatContext(chatCtx));
         const bubbleText = quote ? rest : own.text;
-        if (bubbleText || (!quote && !own.intent)) wrap.appendChild(make('div', 'ask-user-bubble', bubbleText));
+        // A chat message with only a reply or files has no words of its own: no empty bubble under its context.
+        if (bubbleText || (!quote && !own.intent && !chatCtx)) wrap.appendChild(make('div', 'ask-user-bubble', bubbleText));
         const atts = (row.blocks || []).filter((b) => b && b.kind === 'attachment');
         if (atts.length) {
           const pills = make('div', 'extras-pills ask-user-pills');

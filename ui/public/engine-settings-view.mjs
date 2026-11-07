@@ -14,13 +14,13 @@ export const ENGINE_EFFORTS = Object.freeze({ claude: Object.freeze(['medium', '
 const engineName = (v) => (v == null ? null : engineLabel(v));
 const helpersNote = (engine) => (engine === 'copilot' ? "Copilot runs its helper jobs (titles, overview, PR description, Auto classifier, Away mode's decider) on its own default model."
   : `${engineLabel(engine)} runs its helper jobs (titles, overview, PR description, Auto classifier, Away mode's decider) on Claude. See the Claude tab.`);
-export const JOB_LABELS = Object.freeze({ title: 'Titles', classifier: 'Auto workflow classifier', overview: 'Run overview', prDescription: 'PR description', memoryDefrag: 'Memory defragment', agentGen: 'Agent generation', naming: 'Run naming', commandSummary: 'Command summaries', workspaceScan: 'Workspace scan', requirementsInterview: 'Requirements interview' });
+export const JOB_LABELS = Object.freeze({ title: 'Titles', classifier: 'Auto workflow classifier', overview: 'Run overview', prDescription: 'PR description', memoryDefrag: 'Memory defragment', agentGen: 'Agent generation', naming: 'Run naming', commandSummary: 'Command summaries', workspaceScan: 'Workspace scan', requirementsInterview: 'Requirements interview', secondOpinion: 'Second-opinion reviewer' });
 // The setting id of an engine's helper slot, as settings-cascade.mjs names it: memory defragment
 // and workspace scan are runs of their own (spec §3.1 "own-run models"), the rest are utility jobs.
 // Agent generation, Run naming and Command summaries have no cascade entry (user-only, Claude-only); their ids are the
 // Chat registry's (Command summaries has no registry entry: only the Models page sets it). The requirements interview
 // is a bare id: a user-only slot of its own, not a cascade utility job.
-const OWN_RUN_JOBS = new Set(['memoryDefrag', 'workspaceScan', 'requirementsInterview']);
+const OWN_RUN_JOBS = new Set(['memoryDefrag', 'workspaceScan', 'requirementsInterview', 'secondOpinion']);
 export const utilityId = (engine, job) => (OWN_RUN_JOBS.has(job) ? `models.${engine}.${job}` : `models.${engine}.utility.${job}`);
 const EMPTY = Object.freeze({ own: undefined, inherited: { value: undefined, source: 'default' } });
 // What each helper job does, as the hover hint on its row's name.
@@ -35,6 +35,7 @@ export const JOB_HINTS = Object.freeze({
   commandSummary: 'Writes the one-line summary of a chat command when the chat gave none, from the command alone (secrets hidden, never its output). Turn it off in Settings › Chat › Summarise commands. Unset: the cheapest ready Claude model; with none ready, commands keep their raw text.',
   workspaceScan: 'Runs the workspace scan that maps how member projects connect.',
   requirementsInterview: 'Makes product briefs, looks at the code for a feature and runs the interview rounds on the Requirements page.',
+  secondOpinion: 'The one role review that runs on another model than its step, so one reviewer judges on its own (Shaper\'s Product reviewer).',
 });
 
 /** One section of an engine tab (level 3): a heading with its controls on the right, a Model / Effort table (level 4)
@@ -118,7 +119,7 @@ function slotTable(doc, cls, title, rows, { what, from, onTest = null, always = 
  *  the default engine, then one engine at a time (the switch is Expert's; Advanced sees the default engine's tab),
  *  each tab the same skeleton: a readiness line, Step models, Helper jobs. `options.status`: an element that says how
  *  many changes are unsaved. `options.onTest(modelId, button)`: a row's Test. `options.noEffort`: setting ids whose
- *  slot stores a model only. Returns {} (kept for callers that read engine extras). */
+ *  slot stores a model only. `options.stepHints`: { engine: { stepKey: hover hint } }. Returns {} (kept for callers that read engine extras). */
 export function renderEngineSection(host, options) {
   const doc = host.ownerDocument; host.replaceChildren(); const field = (id) => options.fields?.[id] || EMPTY;
   const run = field('run.engine'); host.append(renderInheritField(doc, { id: 'run.engine', label: 'Default engine', kind: 'select', level: options.level, hint: 'New run starts on this engine. You can still switch per run.', options: ENGINE_NAMES.map((e) => ({ value: e, label: engineChoiceLabel(e) })), own: run.own, inherited: run.inherited, format: engineName }));
@@ -157,7 +158,7 @@ export function renderEngineSection(host, options) {
       if (role && !ownInherited) { el.dataset.role = role; el.dataset.defaultLabel = defaultLabel; el.dataset.roleSet = rolePick && rolePick.model ? '1' : ''; }
       return { id, label, hint, set: value.own !== undefined && value.own !== null, el };
     };
-    const steps = (options.roles || []).map((role) => row(`models.${engine}.steps.${role.key}`, role.label || role.key, options.defaultLabels?.steps || (SIGN_IN_ENGINE_NAMES.includes(engine) ? `${engineLabel(engine)}'s default model` : "the workflow's model")));
+    const steps = (options.roles || []).map((role) => row(`models.${engine}.steps.${role.key}`, role.label || role.key, options.defaultLabels?.steps || (SIGN_IN_ENGINE_NAMES.includes(engine) ? `${engineLabel(engine)}'s default model` : "the workflow's model"), options.stepHints?.[engine]?.[role.key] || null));
     card.append(slotTable(doc, 'engine-steps', 'Step models', steps, { what: 'step', from, onTest: options.onTest }));
     const jobs = options.jobs?.[engine] || [];
     if (jobs.length) {
@@ -190,10 +191,11 @@ function bindStatusOnce(host, paint, events) {
 }
 export const readEngineSection = (host) => readDirtyFields(host);
 
-/** The Claude / Codex / … engine switch (Expert). Used by the Engines card and the Roles card. `onPick(engine)`
- *  is called on a click; returns { el, pick } where pick(engine) sets the pressed button. */
-export function engineSwitch(doc, engines, onPick) {
-  const sw = doc.createElement('div'); sw.className = 'seg engine-switch'; sw.setAttribute('role', 'group'); sw.setAttribute('aria-label', 'Engine'); sw.dataset.minLevel = 'expert';
+/** The Claude / Codex / … engine switch (Expert unless `minLevel` says otherwise; null = every level). Used by the
+ *  Engines card and the Roles card. `onPick(engine)` is called on a click; returns { el, pick } where pick(engine)
+ *  sets the pressed button. */
+export function engineSwitch(doc, engines, onPick, { minLevel = 'expert' } = {}) {
+  const sw = doc.createElement('div'); sw.className = 'seg engine-switch'; sw.setAttribute('role', 'group'); sw.setAttribute('aria-label', 'Engine'); if (minLevel) sw.dataset.minLevel = minLevel;
   for (const engine of engines) {
     const btn = doc.createElement('button'); btn.type = 'button'; btn.dataset.engine = engine; btn.textContent = engineLabel(engine);
     if (isBetaEngine(engine)) { const beta = doc.createElement('span'); beta.className = 'flag-chip flag-chip-beta beta-badge'; beta.textContent = 'Beta'; btn.append(beta); }
@@ -204,15 +206,19 @@ export function engineSwitch(doc, engines, onPick) {
 }
 
 const ROLES_HOST = new WeakMap();
-/** The Roles card body (Models page): per harness, one model + effort row per role. Binds its listeners once per host. */
-export function renderRolesSection(host, { roles = {}, catalog = [], engine = 'claude', status = null, onChange = null } = {}) {
+/** The Roles card body (Models page, setup assistant): per harness, one model + effort row per role. Binds its
+ *  listeners once per host. `engines`: the harnesses to show (every engine with roles by default; the setup assistant
+ *  passes the ready ones); `switchLevel`: the engine switch's level (Expert on the Models page, every level in setup). */
+export function renderRolesSection(host, { roles = {}, catalog = [], engine = 'claude', engines = ROLE_HARNESSES, switchLevel = 'expert', status = null, onChange = null } = {}) {
   const doc = host.ownerDocument; host.replaceChildren();
-  const first = ROLE_HARNESSES.includes(engine) ? engine : 'claude';
+  const shown = ROLE_HARNESSES.filter((h) => engines.includes(h));
+  if (!shown.length) shown.push('claude');
+  const first = shown.includes(engine) ? engine : shown[0];
   const panels = {};
   const show = (h) => { for (const [e, p] of Object.entries(panels)) p.hidden = e !== h; sw.pick(h); };
-  const sw = engineSwitch(doc, ROLE_HARNESSES, show);
-  host.append(sw.el);
-  for (const h of ROLE_HARNESSES) {
+  const sw = engineSwitch(doc, shown, show, { minLevel: switchLevel });
+  if (shown.length > 1) host.append(sw.el);
+  for (const h of shown) {
     const panel = doc.createElement('section'); // Not .engine-card: that class names the Engines card's own panels.
     panel.className = 'roles-engine'; panel.dataset.engine = h;
     panel.append(Object.assign(doc.createElement('h3'), { className: 'engine-card-name', textContent: engineLabel(h) }));
@@ -272,21 +278,21 @@ export function paintRoleFallbacks(engineHost, roles, catalog = []) {
   }
   for (const box of engineHost.querySelectorAll('.engine-slots')) box.dispatchEvent(new (engineHost.ownerDocument.defaultView.Event)('roles-changed'));
 }
-const CLAUDE_HELPER_KEYS = Object.freeze({ title: 'titleModel', classifier: 'autoWorkflowModel', prDescription: 'prDescriptionModel', memoryDefrag: 'memoryDefrag', agentGen: 'agentGenModel', naming: 'namingModel', commandSummary: 'commandSummaryModel' });
-const CLAUDE_PAIR_KEYS = new Set(['memoryDefrag', 'agentGenModel', 'namingModel', 'commandSummaryModel']);
+const CLAUDE_HELPER_KEYS = Object.freeze({ title: 'titleModel', classifier: 'autoWorkflowModel', prDescription: 'prDescriptionModel', memoryDefrag: 'memoryDefrag', agentGen: 'agentGenModel', naming: 'namingModel', commandSummary: 'commandSummaryModel', secondOpinion: 'secondOpinionModel' });
+const CLAUDE_PAIR_KEYS = new Set(['memoryDefrag', 'agentGenModel', 'namingModel', 'commandSummaryModel', 'secondOpinionModel']);
 export function enginePatchToSettingsBody(patch) {
   const body = {};
   for (const [id, value] of Object.entries(patch || {})) {
     if (id === 'run.engine') { body.runEngine = value; continue; }
     let match = new RegExp(`^models\\.(${MODEL_ENGINE_NAMES.join('|')})\\.steps\\.(.+)$`).exec(id); if (match) { ((body.stepModels ||= {})[match[1]] ||= {})[match[2]] = value; continue; }
-    match = /^models\.(codex)\.(?:utility\.)?(title|classifier|overview|prDescription|memoryDefrag|workspaceScan)$/.exec(id); if (match) ((body.utilityModels ||= {})[match[1]] ||= {})[match[2]] = value;
+    match = /^models\.(codex)\.(?:utility\.)?(title|classifier|overview|prDescription|memoryDefrag|workspaceScan|secondOpinion)$/.exec(id); if (match) ((body.utilityModels ||= {})[match[1]] ||= {})[match[2]] = value;
     // Claude's helper slots live in their own settings keys: a model id (title, Auto, PR description), and the
     // Memory defragment, Agent generation and Run naming pairs; the Requirements interview pair is its own key.
     if (id === 'models.claude.requirementsInterview') {
       const pair = {}; if (value && value.model) pair.model = value.model; if (value && value.effort) pair.effort = value.effort;
       body.requirementsInterview = Object.keys(pair).length ? pair : null; continue;
     }
-    match = /^models\.claude\.(?:utility\.)?(title|classifier|prDescription|memoryDefrag|agentGen|naming|commandSummary)$/.exec(id);
+    match = /^models\.claude\.(?:utility\.)?(title|classifier|prDescription|memoryDefrag|agentGen|naming|commandSummary|secondOpinion)$/.exec(id);
     if (match) { const key = CLAUDE_HELPER_KEYS[match[1]]; body[key] = CLAUDE_PAIR_KEYS.has(key) ? (value && value.model ? { model: value.model, effort: value.effort || '' } : null) : (value && value.model) || ''; }
   }
   return body;
@@ -303,10 +309,21 @@ export function renderAskEngineSection(host, { catalog = [], askEngine, askModel
   // card says to add one.
   const others = CHAT_ENGINE_NAMES.filter((e) => e !== 'claude');
   const offered = Object.fromEntries(others.map((e) => [e, catalog.some((m) => m && m.engine === e)]));
-  const unavailable = (e) => (engineLock(e) !== null ? `Chat on ${engineLabel(e)} is off while the credential broker is on, so new chats start on Claude.`
-    : ENGINES[e].signin ? `Chat on ${engineLabel(e)} needs a ${engineLabel(e)} model: add one on the Models page.`
-      : `Chat on ${engineLabel(e)} is unavailable on this ${e} version, so new chats start on Claude.`);
-  const notes = others.filter((e) => !offered[e]).map(unavailable).join(' ');
+  // One sentence per reason, the engines named in a natural list; "new chats start on Claude" is said once at the end.
+  const list = (names) => (names.length < 2 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`);
+  const missing = others.filter((e) => !offered[e]);
+  const broker = missing.filter((e) => engineLock(e) !== null);
+  const rest = missing.filter((e) => engineLock(e) === null);
+  const needModel = rest.filter((e) => ENGINES[e].signin);
+  const sentences = [];
+  if (broker.length) sentences.push(`Chat on ${list(broker.map(engineLabel))} is off while the credential broker is on.`);
+  if (needModel.length === 1) sentences.push(`Chat on ${engineLabel(needModel[0])} needs a ${engineLabel(needModel[0])} model: add one on the Models page.`);
+  else if (needModel.length > 1) sentences.push(`Chat on ${list(needModel.map(engineLabel))} needs a model of their own: add one for each on the Models page.`);
+  const oldVersion = rest.filter((x) => !ENGINES[x].signin);
+  if (oldVersion.length === 1) sentences.push(`Chat on ${engineLabel(oldVersion[0])} is unavailable on this ${oldVersion[0]} version.`);
+  else if (oldVersion.length > 1) sentences.push(`Chat on ${list(oldVersion.map(engineLabel))} is unavailable on these engine versions.`);
+  if (broker.length || rest.length > needModel.length) sentences.push('New chats start on Claude.');
+  const notes = sentences.join(' ');
   host.append(renderInheritField(doc, { id: 'askEngine', label: 'Engine for new chats', kind: 'select', level: 'user',
     hint: `New chats start here. A chat can move to another engine later, from its model picker.${notes ? ` ${notes}` : ''}`,
     options: [{ value: 'claude', label: 'Claude' }, ...others.map((e) => ({ value: e, label: offered[e] ? engineChoiceLabel(e) : `${engineLabel(e)} (unavailable)` }))],

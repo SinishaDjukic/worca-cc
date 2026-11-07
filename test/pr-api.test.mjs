@@ -206,6 +206,7 @@ test('POST /api/pr pushes, creates the PR, returns url + mergeable', async () =>
   gitInfo.setRunner((cmd, args) => {
     seen.push([cmd, ...args]);
     if (cmd === 'gh' && args[0] === '--version') return Promise.resolve({ ok: true, stdout: 'gh 2.x', stderr: '', code: 0 });
+    if (cmd === 'git' && args[0] === 'remote') return Promise.resolve({ ok: true, stdout: 'origin\thttps://github.com/x/y.git (fetch)\norigin\thttps://github.com/x/y.git (push)\n', stderr: '', code: 0 });
     if (cmd === 'git' && args[0] === 'push') return Promise.resolve({ ok: true, stdout: '', stderr: '', code: 0 });
     if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'create')
       return Promise.resolve({ ok: true, stdout: 'https://github.com/x/y/pull/7\n', stderr: '', code: 0 });
@@ -596,19 +597,19 @@ test('chain ship: One on a forked chain answers 409 before the PR host is asked'
   assert.equal(seen.filter((c) => c[0] === 'gh' && c[1] === 'pr').length, 0);
 });
 
-test('chain ship: One on a chain whose run started from its own branch answers 409 before the PR host is asked', async () => {
+test('chain ship: a Run after that started from its own branch is no chain (#1096): ship answers 404 before the PR host is asked', async () => {
   const r1 = (await seedPipeline(betaRepo, { title: 'cl1', status: 'done', startedAt: '2026-06-02T00:00:00Z',
     branch: { source: 'dev', feature: 'worca-cc/cl1', branchKept: true } })).id;
   const r2 = (await seedPipeline(betaRepo, { title: 'cl2', status: 'done', startedAt: '2026-06-02T00:00:00Z',
     branch: { source: 'dev', feature: 'worca-cc/cl2', branchKept: true } })).id;
   const t = createTicket({ projectDir: betaRepo, title: 'next', request: { projectDir: betaRepo, prompt: 'next' },
-    after: { kind: 'pipeline', id: r1 } });               // Run after, but from its own branch: One would hold only run 2
+    after: { kind: 'pipeline', id: r1 } });               // Run after, but from its own branch: a timing-only wait, no chain
   markTicketFired(t.id, { pipelineId: r2 });
   const seen = [];
   stubForkRepo(seen);
   const r = await shipChain(`p:${r1}`, { mode: 'one' });
-  assert.equal(r.status, 409);
-  assert.match((await r.json()).error, /does not start from the previous run's branch/);
+  assert.equal(r.status, 404);
+  await r.body?.cancel();
   assert.equal(seen.filter((c) => c[0] === 'gh' && c[1] === 'pr').length, 0);
   assert.equal(readPrState(r1), null);
 });
@@ -1049,7 +1050,7 @@ test('POST /api/pr names the host in a create failure: Azure DevOps and GitHub',
     gitInfo.setRunner((cmd, args) => Promise.resolve(
       cmd === 'gh' && args[0] === 'pr' && args[1] === 'create'
         ? { ok: false, stdout: '', stderr: 'no such base\n', code: 1 }
-        : { ok: true, stdout: cmd === 'gh' ? 'gh 2.x' : '', stderr: '', code: 0 }));
+        : { ok: true, stdout: cmd === 'gh' ? 'gh 2.x' : cmd === 'git' && args[0] === 'remote' ? 'origin\thttps://github.com/x/y.git (push)\n' : '', stderr: '', code: 0 }));
     const r = await post({ projectKey: betaKey, id: betaId });
     assert.equal(r.status, 500);
     assert.equal((await r.json()).error, 'GitHub pull request failed: no such base');
@@ -1507,4 +1508,47 @@ test('a slice pipeline\'s PR body starts with "Part of FEATURE: slice 1 of 2"', 
     const body = bodyOf(seen);
     assert.ok(body.startsWith('Part of Charts: slice 1 of 2\n\n- Slice 2, Slice 2: not opened yet\n\n'), body);
   });
+});
+
+test('a requirements slice\'s PR body says which R-ids it satisfies', async () => {
+  const { createSliceFeature } = await import('../src/core/shape/features.mjs');
+  const { runMock, MOCK_REQUIREMENTS_CRITERIA } = await import('../src/core/engines/mock.mjs');
+  const { normalizeOutline, settleLeftOut } = await import('../src/shared/shape/slices.mjs');
+  const { criteriaList } = await import('../src/shared/review/coverage.mjs');
+  const { readFile } = await import('node:fs/promises');
+  const dir = await mkdtemp(join(tmpdir(), 'worca-pr-req-'));
+  const req = join(dir, 'requirements.md');
+  const slicesFile = join(dir, 'slices.json');
+  const text = `# Requirements\n\n${MOCK_REQUIREMENTS_CRITERIA.map(([id, t]) => `- **${id}** ${t}`).join('\n')}\n`;
+  writeFileSync(req, text);
+  await runMock({ cwd: dir, systemPrompt: '', onEvent: () => {},
+    prompt: `MOCK_ROLE: planner-plan\nMOCK_BASE: demo\nMOCK_OUT: ${join(dir, 'plan.md')}\nMOCK_SLICES: ${slicesFile}\nMOCK_REQUIREMENTS: ${req}\nPlan this in slices.` });
+  const outline = settleLeftOut(normalizeOutline(JSON.parse(await readFile(slicesFile, 'utf8')), { agreed: criteriaList(text) }).outline);
+  const seeded = await seedPipeline(betaRepo, { title: 'Export · 1/2: Store', status: 'done', startedAt: '2026-06-03T00:00:00Z',
+    branch: { source: 'main', feature: 'worca-cc/export-s1', branchKept: true, commit: 'abc' } });
+  createSliceFeature({ pipelineId: seeded.id, projectDir: betaRepo, title: 'Export', outline, perspectives: ['product'], workflowId: 'wf_shape' });
+  await withEnv(NO_ADO, async () => {
+    const seen = [];
+    stubForkRepo(seen);
+    const r = await post({ id: seeded.id, projectKey: seeded.key });
+    assert.equal(r.status, 200, await r.clone().text());
+    const c = seen.find((a) => a[0] === 'gh' && a[1] === 'pr' && a[2] === 'create');
+    const body = c[c.indexOf('--body') + 1];
+    assert.ok(body.startsWith('Part of Export: slice 1 of 2\nSatisfies: R-po-1, R-po-2, R-arch-1, R-ux-1\n\n'), body);
+  });
+  await rm(dir, { recursive: true, force: true });
+});
+
+test('POST /api/pr with no remote at all: a 409 that says so, and nothing is pushed', async () => {
+  const seen = [];
+  gitInfo.setRunner((cmd, args) => {
+    seen.push([cmd, ...args]);
+    if (cmd === 'gh' && args[0] === '--version') return Promise.resolve({ ok: true, stdout: 'gh 2.x', stderr: '', code: 0 });
+    return Promise.resolve({ ok: true, stdout: '', stderr: '', code: 0 });
+  });
+  const r = await post({ id: betaId, projectKey: betaKey });
+  const body = await r.json();
+  assert.equal(r.status, 409, JSON.stringify(body));
+  assert.match(body.error, /no git remote/);
+  assert.equal(seen.some((a) => a[1] === 'push'), false);
 });

@@ -4,9 +4,12 @@
 // test fixture. `fixtures.mjs` re-exports it as FIXTURE_DEFAULT so the engine
 // tests and the shipping default can never drift apart.
 //
-// Pure data + one pure helper — no IO, no dependency on the registry. The one import is the pure
-// role-review round cap, a shared shape constant.
+// Pure data + one pure helper — no IO, no dependency on the registry. The imports are pure shared shape constants:
+// the role-review round cap and the perspectives Shaper declares as its role reviews' roles.
 import { ROLE_REVIEW_MAX_ROUNDS } from '../../shared/shape/role-review.mjs';
+import { PERSPECTIVES } from '../../shared/shape/perspectives.mjs';
+import { SHAPE_CODE_ROLES } from '../../shared/review/requirements-coverage.mjs';
+export { WORKSPACE_SCAN_DEFAULT_MODELS } from '../factory-models.mjs';
 
 /** Recursively freeze a value and everything reachable from it, returning the
  *  same reference. A shallow `Object.freeze` is NOT enough here: it passes
@@ -124,22 +127,15 @@ export const GRAPH_MEMORY_DEFRAG_WORKFLOW = deepFreeze({
   updatedAt: '1970-01-01T00:00:00.000Z',
   nodes: [
     { id: 'n_task', kind: 'task', x: 40, y: 200, config: {} },
-    // Sonnet 5 by default: a bounded restructure of a few markdown files. The template layer
-    // is the lowest (workflows.mjs resolveGraph), so a per-role or per-node pick still wins.
-    { id: 'n_defrag', kind: 'agent', key: 'memoryDefragmenter', x: 320, y: 200, config: { model: 'claude-sonnet-5' } },
+    // No model pin: Models › Helper jobs › Memory defragment, else Worca's factory default
+    // (factory-models.mjs), which resolveGraph applies at the template's position.
+    { id: 'n_defrag', kind: 'agent', key: 'memoryDefragmenter', x: 320, y: 200, config: {} },
     { id: 'n_end', kind: 'end', x: 600, y: 200, config: {} },
   ],
   wires: [
     { id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_defrag', port: 'task' } },
     { id: 'w2', from: { node: 'n_defrag', port: 'report' }, to: { node: 'n_end', port: 'result' } },
   ],
-});
-
-/** What a Workspace scan runs on when nothing else is named (D15/D16): the scan agent on Sonnet 5
- *  at medium effort, its per-project investigators on the `sonnet` alias at medium effort. The
- *  scan node's template config carries the same values, so every path agrees. */
-export const WORKSPACE_SCAN_DEFAULT_MODELS = deepFreeze({
-  scanModel: 'claude-sonnet-5', scanEffort: 'medium', agentModel: 'sonnet', agentEffort: 'medium',
 });
 
 /** The Workspace scan workflow — the hybrid interconnection map (wsmap spec D5, "v3" of the scan):
@@ -156,13 +152,8 @@ export const WORKSPACE_SCAN_DEFAULT_MODELS = deepFreeze({
  *  `version: 2` is the TEMPLATE FORMAT (resolveGraph runs version 2 only), not the scan's revision. */
 export const WORKSPACE_SCAN_WORKFLOW_ID = 'wf_workspace_scan';
 export const WORKSPACE_SCAN_WORKFLOW_NAME = 'Workspace scan';
-/** The model config of the scan's fan-out agents (survey, usage): the D15/D16 defaults. */
-const SCAN_FANOUT_CONFIG = {
-  model: WORKSPACE_SCAN_DEFAULT_MODELS.scanModel,
-  effort: WORKSPACE_SCAN_DEFAULT_MODELS.scanEffort,
-  subagentModel: WORKSPACE_SCAN_DEFAULT_MODELS.agentModel,
-  subagentEffort: WORKSPACE_SCAN_DEFAULT_MODELS.agentEffort,
-};
+// The scan's agent nodes pin no model: the D15/D16 defaults (WORKSPACE_SCAN_DEFAULT_MODELS, factory-models.mjs) are
+// Worca's factory default, applied by resolveGraph at the template's position.
 export const GRAPH_WORKSPACE_SCAN_WORKFLOW = deepFreeze({
   id: WORKSPACE_SCAN_WORKFLOW_ID,
   name: WORKSPACE_SCAN_WORKFLOW_NAME,
@@ -173,15 +164,12 @@ export const GRAPH_WORKSPACE_SCAN_WORKFLOW = deepFreeze({
   nodes: [
     { id: 'n_task', kind: 'task', x: 40, y: 200, config: {} },
     { id: 'n_extract', kind: 'script', key: 'workspaceMapExtract', x: 280, y: 200, config: {} },
-    { id: 'n_scan', kind: 'agent', key: 'workspaceScanner', x: 520, y: 80, config: { ...SCAN_FANOUT_CONFIG } },
+    { id: 'n_scan', kind: 'agent', key: 'workspaceScanner', x: 520, y: 80, config: {} },
     // The two-input stages wait for BOTH inputs (awaitAll): the V18 double-fire guard.
     { id: 'n_catalog', kind: 'script', key: 'workspaceMapCatalog', x: 760, y: 200, config: { awaitAll: true } },
-    { id: 'n_usage', kind: 'agent', key: 'workspaceUsageMapper', x: 1000, y: 80, config: { ...SCAN_FANOUT_CONFIG } },
+    { id: 'n_usage', kind: 'agent', key: 'workspaceUsageMapper', x: 1000, y: 80, config: {} },
     { id: 'n_join', kind: 'script', key: 'workspaceMapJoin', x: 1240, y: 200, config: { awaitAll: true } },
-    { id: 'n_synth', kind: 'agent', key: 'workspaceSynthesizer', x: 1480, y: 80, config: {
-      model: WORKSPACE_SCAN_DEFAULT_MODELS.scanModel,
-      effort: WORKSPACE_SCAN_DEFAULT_MODELS.scanEffort,
-    } },
+    { id: 'n_synth', kind: 'agent', key: 'workspaceSynthesizer', x: 1480, y: 80, config: {} },
     { id: 'n_render', kind: 'script', key: 'workspaceMapRender', x: 1720, y: 200, config: { awaitAll: true } },
     { id: 'n_end', kind: 'end', x: 1960, y: 200, config: {} },
   ],
@@ -219,10 +207,7 @@ export const GRAPH_WORKSPACE_RESYNTH_WORKFLOW = deepFreeze({
   nodes: [
     { id: 'n_task', kind: 'task', x: 40, y: 200, config: {} },
     { id: 'n_seed', kind: 'script', key: 'workspaceMapResynth', x: 280, y: 200, config: {} },
-    { id: 'n_synth', kind: 'agent', key: 'workspaceSynthesizer', x: 520, y: 80, config: {
-      model: WORKSPACE_SCAN_DEFAULT_MODELS.scanModel,
-      effort: WORKSPACE_SCAN_DEFAULT_MODELS.scanEffort,
-    } },
+    { id: 'n_synth', kind: 'agent', key: 'workspaceSynthesizer', x: 520, y: 80, config: {} },
     { id: 'n_render', kind: 'script', key: 'workspaceMapRender', x: 760, y: 200, config: { awaitAll: true } },
     { id: 'n_end', kind: 'end', x: 1000, y: 200, config: {} },
   ],
@@ -283,7 +268,26 @@ export const SHAPE_CLARIFY_HINTS = 'Shaping: ask at most 3 questions — only de
   + 'and that the repo can\'t answer. Give each question a recommended option.';
 const SHAPE_CLARIFY_CONFIG = { maxQuestions: 3, promptHints: SHAPE_CLARIFY_HINTS };
 const SHAPE_APPROVE_CONFIG = { approve: { kind: 'plan', port: 'plan' } };
-const SHAPE_ROLES_CONFIG = { roleReview: true, model: 'claude-sonnet-5-5', effort: 'medium' };   // spec decision 1
+/** Shaper's plan review is the engine role-review step, configured: the perspectives as roles, the run's picked ones
+ *  running, each judged on its own checklist items (the `perspectives` provider), the findings handed to Refine. */
+/** The second opinion: Product (locked, so in every Shaper run) is the role review's `secondOpinion`, so it reviews on
+ *  another model than the node's (Models › Helper jobs › Second-opinion reviewer, else Worca's factory
+ *  default) and one plan role always judges independently. The node and the role pin no model. */
+export const SHAPE_DIVERSE_ROLE = Object.freeze({ key: 'product' });
+const SHAPE_ROLES_CONFIG = {
+  roleReview: {
+    roles: PERSPECTIVES.map(({ key, label }) => ({ key, label })),
+    source: 'picked', target: 'plan', checklist: 'perspectives', sink: 'refiner', secondOpinion: SHAPE_DIVERSE_ROLE.key,
+  },
+};
+/** Shaper's code review is the same engine step on the diff: three declared roles, each an independent reviewer, their
+ *  merged findings handed to the implementer's fix. No node model and no diversity pick: the node keeps its default. */
+export const SHAPE_CODE_ROLES_CONFIG = deepFreeze({
+  roleReview: {
+    roles: SHAPE_CODE_ROLES.map(({ key, label }) => ({ key, label })),
+    source: 'declared', target: 'diff', sink: 'implementer',
+  },
+});
 /** Refine waits for the reviewed plan AND its findings, both from n_roles (one publish), so it fires once per round. */
 const SHAPE_REFINE_CONFIG = { ...SHAPE_APPROVE_CONFIG, awaitAll: true };
 /** Spec §3: plan → role reviews → refine, one loop of at most 2 rounds that ends at the plan approval. Default's
@@ -314,7 +318,7 @@ export const GRAPH_SHAPE_WORKFLOW = deepFreeze({
     { id: 'n_plan', kind: 'agent', key: 'planner', x: 600, y: 200, config: {} },
     { id: 'n_refine', kind: 'agent', key: 'refiner', x: 880, y: 200, config: { ...SHAPE_REFINE_CONFIG } },
     { id: 'n_impl', kind: 'agent', key: 'implementer', x: 1160, y: 200, config: {} },
-    { id: 'n_review', kind: 'agent', key: 'reviewer', x: 1440, y: 200, config: {} },
+    { id: 'n_review', kind: 'agent', key: 'reviewer', x: 1440, y: 200, config: { ...SHAPE_CODE_ROLES_CONFIG } },
     { id: 'n_end', kind: 'end', x: 1720, y: 200, config: {} },
     { ...SHAPE_ROLES_NODE, config: { ...SHAPE_ROLES_CONFIG } },
   ],
@@ -339,7 +343,7 @@ export const GRAPH_SHAPE_UX_WORKFLOW = deepFreeze({
     { id: 'n_plan', kind: 'agent', key: 'planner', x: 600, y: 200, config: {} },
     { id: 'n_refine', kind: 'agent', key: 'refiner', x: 880, y: 200, config: { ...SHAPE_REFINE_CONFIG } },
     { id: 'n_impl', kind: 'agent', key: 'implementer', x: 1160, y: 200, config: {} },
-    { id: 'n_review', kind: 'agent', key: 'reviewer', x: 1440, y: 200, config: {} },
+    { id: 'n_review', kind: 'agent', key: 'reviewer', x: 1440, y: 200, config: { ...SHAPE_CODE_ROLES_CONFIG } },
     { id: 'n_check', kind: 'agent', key: 'manualTestsChecklist', x: 1720, y: 200, config: {} },
     { id: 'n_webui', kind: 'agent', key: 'manualWebUiTesting', x: 2000, y: 200, config: {} },
     { id: 'n_end', kind: 'end', x: 2280, y: 200, config: {} },
@@ -361,6 +365,87 @@ export const GRAPH_SHAPE_UX_WORKFLOW = deepFreeze({
   ],
 });
 
+/** Shaper's requirements stage (Labs flag shapeRequirements): the same workflows with Clarify replaced by three nodes
+ *  that mirror the plan head (draft, role reviews, refine) and hold for the person on the agreed requirements. The
+ *  agreed file is an extra `requirements` input of Plan, its role reviews and Refine; Refine's hold shows coverage. */
+export const SHAPE_REQ_WORKFLOW_ID = 'wf_shape_req';
+export const SHAPE_UX_REQ_WORKFLOW_ID = 'wf_shape_ux_req';
+const REQUIREMENTS_INPUT = Object.freeze({ id: 'requirements', type: 'md' });
+const SHAPE_REQ_NODES = [
+  { id: 'n_req', kind: 'agent', key: 'requirementsDrafter', x: 320, y: 200, config: {} },
+  { id: 'n_reqroles', kind: 'agent', key: 'requirementsReviewer', x: 320, y: 380, config: {
+    roleReview: { source: 'picked', target: 'requirements', checklist: 'requirements', sink: 'refiner' },
+  } },
+  { id: 'n_reqrefine', kind: 'agent', key: 'requirementsRefiner', x: 460, y: 200, config: {
+    approve: { kind: 'plan', port: 'requirements', check: 'criteria', agreed: 'task', decisions: 'decisions' },
+  } },
+];
+/** Mirrors SHAPE_HEAD_WIRES: draft → role reviews → refine, one loop of at most 2 rounds that ends at the hold. The
+ *  drafter's `revise` has no wire: the person's Ask for changes reaches it through the scheduler's revise target. The
+ *  refiner takes no awaitAll: its `task` fires once, so it could never re-fire; n_reqroles publishes its two inputs
+ *  in one completion, which fires it once per round. */
+const SHAPE_REQ_WIRES = [
+  { id: 'wr1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_req', port: 'task' } },
+  { id: 'wr2', from: { node: 'n_task', port: 'task' }, to: { node: 'n_reqrefine', port: 'task' } },
+  { id: 'wr3', from: { node: 'n_req', port: 'requirements' }, to: { node: 'n_reqroles', port: 'requirements' } },
+  { id: 'wr4', from: { node: 'n_reqroles', port: 'requirements' }, to: { node: 'n_reqrefine', port: 'requirements' } },
+  { id: 'wr5', from: { node: 'n_reqroles', port: 'findings' }, to: { node: 'n_reqrefine', port: 'findings' } },
+  { id: 'wr6', from: { node: 'n_reqrefine', port: 'revise' }, to: { node: 'n_reqroles', port: 'revise' },
+    config: { maxCycles: ROLE_REVIEW_MAX_ROUNDS, onExhausted: 'clean' } },
+  { id: 'wr7', from: { node: 'n_reqrefine', port: 'requirements' }, to: { node: 'n_plan', port: 'requirements' } },
+  { id: 'wr8', from: { node: 'n_reqrefine', port: 'requirements' }, to: { node: 'n_roles', port: 'requirements' } },
+  { id: 'wr9', from: { node: 'n_reqrefine', port: 'requirements' }, to: { node: 'n_refine', port: 'requirements' } },
+  { id: 'wr10', from: { node: 'n_reqrefine', port: 'requirements' }, to: { node: 'n_review', port: 'requirements' } },
+];
+const REQ_TAKERS = new Set(['n_plan', 'n_roles', 'n_refine', 'n_review']);
+/** The code review of a run with agreed requirements: the coverage provider supplies the three code roles plus
+ *  Requirements, which checks the bound R-ids against the diff. */
+const SHAPE_REQ_CODE_REVIEW = Object.freeze({ source: 'declared', target: 'diff', checklist: 'coverage', sink: 'implementer' });
+
+/** The requirements takers of a Shaper graph, each with the `requirements` extra input (Refine's hold shows coverage,
+ *  the code review checks it). */
+const withRequirementsInput = (nodes) => nodes.map((n) => {
+  if (!REQ_TAKERS.has(n.id)) return n;
+  if (n.id === 'n_review') return { ...n, config: { roleReview: { ...SHAPE_REQ_CODE_REVIEW }, extraInputs: [{ ...REQUIREMENTS_INPUT }] } };
+  const config = { ...n.config, extraInputs: [{ ...REQUIREMENTS_INPUT }] };
+  if (n.id === 'n_refine') config.approve = { ...n.config.approve, coverage: 'requirements' };
+  return { ...n, config };
+});
+
+/** A Shaper graph with the requirements stage in place of Clarify. Pure: every other node and wire keeps its id. */
+export function requirementsVariant(graph, id) {
+  return deepFreeze({
+    ...graph,
+    id,
+    nodes: [...withRequirementsInput(graph.nodes.filter((n) => n.id !== 'n_clarify')), ...SHAPE_REQ_NODES.map((n) => ({ ...n, config: structuredClone(n.config) }))],
+    wires: [...graph.wires.filter((w) => w.id !== 'w1' && w.id !== 'w3'), ...SHAPE_REQ_WIRES.map(copyWire)],
+  });
+}
+
+/** A slice run of a feature with agreed requirements: the Shaper graph as is (Clarify kept), with the slice's task,
+ *  which lists only its own criteria, as the `requirements` input of the same four takers. Pure. */
+export function sliceRequirementsVariant(graph, id) {
+  const wires = ['n_plan', 'n_roles', 'n_refine', 'n_review'].map((to, i) => (
+    { id: `ws${i + 1}`, from: { node: 'n_task', port: 'task' }, to: { node: to, port: 'requirements' } }));
+  return deepFreeze({
+    ...graph,
+    id,
+    nodes: withRequirementsInput(graph.nodes),
+    wires: [...graph.wires.map(copyWire), ...wires],
+  });
+}
+
+export const GRAPH_SHAPE_REQ_WORKFLOW = requirementsVariant(GRAPH_SHAPE_WORKFLOW, SHAPE_REQ_WORKFLOW_ID);
+export const GRAPH_SHAPE_UX_REQ_WORKFLOW = requirementsVariant(GRAPH_SHAPE_UX_WORKFLOW, SHAPE_UX_REQ_WORKFLOW_ID);
+/** Reserved apart from RESERVED_WORKFLOW_IDS (whose members are pinned): never listed, never saved over, never deleted. */
+export const SHAPE_REQ_WORKFLOW_IDS = Object.freeze([SHAPE_REQ_WORKFLOW_ID, SHAPE_UX_REQ_WORKFLOW_ID]);
+export const SHAPE_SLICE_REQ_WORKFLOW_ID = 'wf_shape_slice_req';
+export const SHAPE_UX_SLICE_REQ_WORKFLOW_ID = 'wf_shape_ux_slice_req';
+export const GRAPH_SHAPE_SLICE_REQ_WORKFLOW = sliceRequirementsVariant(GRAPH_SHAPE_WORKFLOW, SHAPE_SLICE_REQ_WORKFLOW_ID);
+export const GRAPH_SHAPE_UX_SLICE_REQ_WORKFLOW = sliceRequirementsVariant(GRAPH_SHAPE_UX_WORKFLOW, SHAPE_UX_SLICE_REQ_WORKFLOW_ID);
+/** Reserved and hidden like SHAPE_REQ_WORKFLOW_IDS: a slice ticket picks one when it fires (never listed, never a row). */
+export const SHAPE_SLICE_REQ_WORKFLOW_IDS = Object.freeze([SHAPE_SLICE_REQ_WORKFLOW_ID, SHAPE_UX_SLICE_REQ_WORKFLOW_ID]);
+
 /** The ids no saved row may claim: writeGraphWorkflow re-mints them, listWorkflows hides them,
  *  DELETE refuses them. wf_workspace_scan and wf_pr_fix are reserved but never listed anywhere;
  *  wf_shape is listed only while the Shape it first gate is on, and wf_shape_ux is never listed. Order is NOT
@@ -369,4 +454,4 @@ export const GRAPH_SHAPE_UX_WORKFLOW = deepFreeze({
  *  NOTE: `ui/public/graph/composer.mjs` keeps a twin of this list as a `Set` (`.has`), not an
  *  Array (`.includes`) — the two are not interchangeable. */
 export const RESERVED_WORKFLOW_IDS = Object.freeze([GRAPH_DEFAULT_WORKFLOW.id, LEAN_WORKFLOW_ID, AUTO_WORKFLOW_ID, MEMORY_DEFRAG_WORKFLOW_ID, WORKSPACE_SCAN_WORKFLOW_ID, PR_FIX_WORKFLOW_ID, SHAPE_WORKFLOW_ID, SHAPE_UX_WORKFLOW_ID, WORKSPACE_RESYNTH_WORKFLOW_ID]);
-export function isReservedWorkflowId(id) { return RESERVED_WORKFLOW_IDS.includes(id); }
+export function isReservedWorkflowId(id) { return RESERVED_WORKFLOW_IDS.includes(id) || SHAPE_REQ_WORKFLOW_IDS.includes(id) || SHAPE_SLICE_REQ_WORKFLOW_IDS.includes(id); }

@@ -74,7 +74,9 @@ test('roleOf: every D4 setting key', () => {
     'nightMode.deciderModel': 'deep',
     askModels: 'everyday', agentGenModel: 'everyday', requirementsInterview: 'everyday', autoWorkflowModel: 'everyday',
     titleModel: 'quick', namingModel: 'quick', commandSummaryModel: 'quick', prDescriptionModel: 'quick',
-    memoryDefrag: 'quick', workspaceScan: 'quick', 'utilityModels.overview': 'quick',
+    memoryDefrag: 'quick', workspaceScan: 'everyday', 'utilityModels.overview': 'quick',
+    // The workspace scan's agent surveys every member and writes the synthesis: everyday on every engine.
+    'utilityModels.workspaceScan': 'everyday',
   };
   for (const [slot, role] of Object.entries(table)) assert.equal(roleOf(slot), role, slot);
   assert.equal(roleOf('unknownKey'), null);
@@ -114,11 +116,12 @@ test('withRole: an own pair wins; else the slot role on that engine; else the pa
   assert.equal(withRole(null, 'claude', 'unknownKey', { roles }), null);
 });
 
-test('withScanRole: the quick role is the scan model; the sub-agent alias keeps its default', () => {
-  const roles = { claude: { quick: QUICK } };
+test('withScanRole: the everyday role is the scan model; the sub-agent alias keeps its default', () => {
+  const roles = { claude: { quick: QUICK, everyday: { model: 'claude-sonnet-5-5', effort: 'high' } } };
   const got = withScanRole(null, WORKSPACE_SCAN_DEFAULT_MODELS, { roles });
-  assert.equal(got.scanModel, 'claude-haiku-5-5');
-  assert.equal(got.scanEffort, 'medium');
+  assert.equal(got.scanModel, 'claude-sonnet-5-5');
+  assert.equal(got.scanEffort, 'high');
+  assert.equal(withScanRole(null, WORKSPACE_SCAN_DEFAULT_MODELS, { roles: { claude: { quick: QUICK } } }), null, 'the quick role is not the scan model');
   assert.equal(got.agentModel, WORKSPACE_SCAN_DEFAULT_MODELS.agentModel);
   const stored = { scanModel: 'claude-sonnet-5-5', scanEffort: 'high', agentModel: 'sonnet', agentEffort: 'medium' };
   assert.equal(withScanRole(stored, WORKSPACE_SCAN_DEFAULT_MODELS, { roles }), stored);
@@ -367,4 +370,32 @@ test('projectRolesFor: a signed-out Claude login skips the built-in; a refused t
   assert.equal(logs.length, 1);
   assert.doesNotMatch(logs[0], /sk-ant-/);
   _resetRoleAuthForTests();
+});
+
+test('sub-agent alias labels name the Claude model, with the role words as a hint; stored values are untouched', async () => {
+  const { SUBAGENT_ALIAS_LABELS, subagentAliasLabel, subagentAliasTitle } = await import('../src/shared/model-roles.mjs');
+  // Sub-agents do not follow the roles, so a label never names a role on its own.
+  assert.equal(subagentAliasLabel('opus'), 'Opus (deep thinking)');
+  assert.equal(subagentAliasLabel('sonnet'), 'Sonnet (everyday coding)');
+  assert.equal(subagentAliasLabel('fable'), 'Fable (premium)');
+  assert.equal(subagentAliasLabel('auto'), 'agent picks');
+  assert.equal(subagentAliasLabel('inherit'), 'inherit');
+  assert.equal(subagentAliasLabel('haiku'), 'haiku', 'an unknown value passes through');
+  assert.equal(subagentAliasLabel('toString'), 'toString', 'no prototype lookups');
+  assert.deepEqual(Object.keys(SUBAGENT_ALIAS_LABELS).sort(), ['auto', 'fable', 'inherit', 'opus', 'sonnet']);
+  assert.equal(subagentAliasTitle('opus'), "Always Claude's Opus: sub-agents don't follow your model roles");
+  assert.equal(subagentAliasTitle('auto'), '');
+});
+
+test('roles exist on every engine with models; a team policy carries Claude\'s and Codex\'s only', async () => {
+  const { ROLE_HARNESSES, TEAM_ROLE_HARNESSES } = await import('../src/shared/model-roles.mjs');
+  const { MODEL_ENGINE_NAMES } = await import('../src/shared/engine-switch.mjs');
+  assert.deepEqual([...ROLE_HARNESSES], [...MODEL_ENGINE_NAMES]);
+  for (const e of ['claude', 'codex', 'copilot', 'cursor', 'opencode']) assert.ok(ROLE_HARNESSES.includes(e), e);
+  assert.deepEqual([...TEAM_ROLE_HARNESSES], ['claude', 'codex']);
+  // resolveRoleModel reads any engine's roles; the owner check keeps a model on its own engine.
+  const roles = { copilot: { deep: { model: 'copilot/claude-fable-5.1', effort: 'xhigh' } } };
+  const owners = (id) => (id.startsWith('copilot/') ? ['copilot'] : ['claude']);
+  assert.deepEqual(resolveRoleModel('copilot', 'deep', { roles, owners }), { model: 'copilot/claude-fable-5.1', effort: 'xhigh', role: 'deep', source: 'role' });
+  assert.equal(resolveRoleModel('claude', 'deep', { roles, owners }), null, 'a Claude run never reads the Copilot roles');
 });

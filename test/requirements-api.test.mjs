@@ -101,6 +101,42 @@ test('the whole flow in mock mode, with frames', async () => {
   } finally { ws.close(); }
 });
 
+test('PUT early-start-reason: sets, trims, clears; refuses long, non-text, archived and unknown; survives a re-read; updatedAt stays', async () => {
+  const ws = new WebSocket(`${base.replace('http', 'ws')}/ws`, { headers: { host: '127.0.0.1', origin: 'http://127.0.0.1' } });
+  const frames = [];
+  ws.on('message', (d) => { try { const m = JSON.parse(String(d)); if (m.type === 'requirements-changed') frames.push(m); } catch {} });
+  await new Promise((res, rej) => { ws.on('open', res); ws.on('error', rej); });
+  try {
+    const c = await call('POST', '/api/requirements', { scopeType: 'project', scopeKey: projKey, title: 'Reason note', description: 'd' });
+    const seq = c.json.feature.seq;
+    await waitFor(async () => (await call('GET', `/api/requirements/${seq}`)).json.feature.status === 'your_turn');
+    const view = async () => (await call('GET', `/api/requirements/${seq}`)).json.feature;
+    const before = await view();
+    assert.equal(before.earlyStartReason, null);
+    const url = `/api/requirements/${seq}/early-start-reason`;
+    const seen = frames.length;
+    const set = await call('PUT', url, { reason: '  Demo on Friday  ' });
+    assert.deepEqual([set.status, set.json], [200, { earlyStartReason: 'Demo on Friday' }]);
+    await waitFor(() => frames.length > seen);
+    const after = await view();
+    assert.equal(after.earlyStartReason, 'Demo on Friday');
+    assert.equal(after.updatedAt, before.updatedAt);
+    assert.equal((await call('PUT', url, { reason: 'x'.repeat(500) })).status, 200);
+    const long = await call('PUT', url, { reason: 'x'.repeat(501) });
+    assert.deepEqual([long.status, long.json.error], [400, 'the reason must be at most 500 characters']);
+    for (const bad of [7, {}, undefined]) assert.equal((await call('PUT', url, bad === undefined ? {} : { reason: bad })).status, 400, String(bad));
+    assert.equal((await view()).earlyStartReason, 'x'.repeat(500), 'refusals change nothing');
+    assert.deepEqual((await call('PUT', url, { reason: '   ' })).json, { earlyStartReason: null });
+    assert.equal((await call('PUT', url, { reason: 'again' })).status, 200);
+    assert.deepEqual((await call('PUT', url, { reason: null })).json, { earlyStartReason: null });
+    assert.equal((await view()).earlyStartReason, null);
+    assert.equal((await call('PUT', '/api/requirements/999999/early-start-reason', { reason: 'x' })).status, 404);
+    await call('POST', `/api/requirements/${seq}/archive`, {});
+    const arch = await call('PUT', url, { reason: 'x' });
+    assert.deepEqual([arch.status, arch.json.error], [409, 'this feature is archived; restore it first']);
+  } finally { ws.close(); }
+});
+
 // The route table is the one list both the registration and this test use, so a new route cannot be
 // added without the flag-off check covering it.
 const fill = (path) => path.replace(':scopeType/:scopeKey', `project/${projKey}`).replace(':seq', '1')

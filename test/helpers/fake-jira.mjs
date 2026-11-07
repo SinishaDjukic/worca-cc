@@ -17,29 +17,95 @@ const BASE_FIELDS = [
     schema: { type: 'string', custom: 'com.atlassian.jira.plugin.system.customfieldtypes:textfield' } },
 ];
 
+const SYSTEM_NAMES = { summary: 'Summary', description: 'Description', issuetype: 'Issue Type', priority: 'Priority', status: 'Status', project: 'Project',
+  attachment: 'Attachment', comment: 'Comment' };
+/** A6.1: a seeded issue's GET /rest/api/2/issue/<key>, with only the fields asked for, renderedFields and names when expanded.
+ *  `contentOf(attachment)` names an attachment's content address (Task 5). */
+function seededAnswer(s, url, contentOf = () => undefined) {
+  const want = new Set((url.searchParams.get('fields') || '').split(','));
+  const expand = url.searchParams.get('expand') || '';
+  const fields = {}; const rendered = {}; const names = {};
+  if (want.has('summary')) fields.summary = s.summary;
+  if (want.has('description')) { fields.description = s.description; rendered.description = s.rendered ?? null; }
+  if (want.has('issuetype')) fields.issuetype = { id: s.type.id, name: s.type.name };
+  if (want.has('priority')) fields.priority = s.priority || null;
+  if (want.has('status')) fields.status = { name: s.status };
+  if (want.has('project')) fields.project = { key: s.project, name: s.projectName };
+  if (want.has('updated')) fields.updated = s.updated;
+  if (want.has('attachment')) fields.attachment = (s.attachments || []).map((a) => ({ id: a.id, filename: a.filename, mimeType: a.mimeType, size: a.size,
+    created: a.created, content: contentOf(a) }));
+  if (want.has('comment')) {
+    const list = s.comments.slice(0, s.embedded ?? s.comments.length);
+    fields.comment = { total: s.comments.length, maxResults: list.length, startAt: 0, comments: list.map((c) => ({ id: c.id, author: c.author, created: c.created,
+      body: c.body, ...(c.visibility ? { visibility: c.visibility } : {}) })) };
+    rendered.comment = { comments: list.map((c) => ({ id: c.id, body: c.rendered })) };
+  }
+  for (const [id, c] of Object.entries(s.custom || {})) if (want.has(id)) { fields[id] = c.value; rendered[id] = c.rendered; names[id] = c.name; }
+  for (const k of Object.keys(fields)) names[k] = names[k] || SYSTEM_NAMES[k] || k;
+  return { key: s.key, fields, ...(/renderedFields/.test(expand) ? { renderedFields: rendered } : {}), ...(/names/.test(expand) ? { names } : {}) };
+}
+
 export async function startFakeJira(o = {}) {
   // refusePropertyPut: a role that may create issues but not edit them (403 on the property PUT); failReadBack: a description
   // read fails (500); refuseIssuetypeEdit: an edit naming issuetype is refused; fail: one request answers that status and body.
   // version: what serverInfo says (Data Center 8.4 added create metadata per project); hangPropertyPut / hangReadBack: that
   // request never gets an answer; staleSearch: a search answers a description that differs from the issue's own;
   // brokenReadBack: a description read answers 200 with a body that is not JSON; noVersionNumbers: serverInfo names only `version`.
+  // A6.1: seed — issues the import ops read (SeededIssue in the A6.1 plan); forbid — keys whose read answers 403;
+  // extraFields — more entries for /rest/api/2/field (same shape as BASE_FIELDS). Cloud's /search/jql refuses a JQL with no clause
+  // before ORDER BY, as Jira Cloud does ("Unbounded JQL queries are not allowed here").
   const opt = { deployment: 'cloud', token: 'tok', email: 'ann@acme.test', refuseToken: false, refuseProperties: false, refusePropertyPut: false,
     failReadBack: false, refuseIssuetypeEdit: false, fail: null, oldCreatemeta: false, requiredField: null, refuseOnUpdate: null, storeCrlf: false,
     version: o.deployment === 'datacenter' ? '9.12.0' : '1001.0.0-SNAPSHOT', hangPropertyPut: false, hangReadBack: false, staleSearch: false,
-    brokenReadBack: false, noVersionNumbers: false, ...o };
+    brokenReadBack: false, noVersionNumbers: false, seed: [], forbid: [], extraFields: [],
+    // Ticket updates: projectStatuses — a project's statuses per issue type; transitionSeed — issues with a status and the transitions
+    // they offer (kept apart from A6.1's `seed`, whose issues have another shape); refuseTransition / refuseTransitionsRead — that
+    // request answers { status, body }.
+    projectStatuses: {}, transitionSeed: [], refuseTransition: null, refuseTransitionsRead: null,
+    // A6.1 downloads: redirectTwice — the signed address redirects again; contentElsewhere — an attachment's content URL on another origin; contentStatus — the content route answers that status.
+    // mediaStatus — Cloud's signed address answers that status.
+    redirectTwice: false, contentElsewhere: false, contentStatus: null, mediaStatus: null, ...o };
   const cloud = opt.deployment === 'cloud';
   const auth = cloud ? `Basic ${Buffer.from(`${opt.email}:${opt.token}`).toString('base64')}` : `Bearer ${opt.token}`;
   const fields = [...BASE_FIELDS, ...(opt.requiredField ? [{ fieldId: opt.requiredField.id, name: opt.requiredField.name, required: true,
     schema: { type: 'option', custom: 'com.atlassian.jira.plugin.system.customfieldtypes:select' } }] : [])];
   const issues = new Map();   // key → { key, project, fields, properties, comments }
+  const seeded = new Map((opt.seed || []).map((s) => [s.key, s]));
   const requests = [];
   let next = 101;
+  // Ticket updates: issues that exist from the start, each with a status and the transitions it offers
+  for (const s of opt.transitionSeed) {
+    issues.set(s.key, { key: s.key, project: s.project, fields: { summary: s.summary || s.key, description: '', labels: [], status: s.status },
+      properties: {}, comments: [], transitions: s.transitions || [] });
+  }
   // Cloud keeps descriptions as ADF and answers v2 reads in wiki markup it re-renders: storeCrlf mimics a re-render that is
   // not byte-equal (CRLF, trailing spaces), which the fingerprint must not count as an edit.
   const stored = (text) => (opt.storeCrlf ? `${String(text ?? '').split('\n').join('  \r\n')}\r\n` : String(text ?? ''));
   const send = (res, status, body) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(body === undefined ? '' : JSON.stringify(body)); };
   const gone = (res) => send(res, 404, { errorMessages: ['Issue does not exist or you do not have permission to see it.'], errors: {} });
   let base = '';
+  // A6.1: Cloud answers an attachment's content with a 303 to a signed address on another origin, which wants no Authorization header.
+  const mediaRequests = [];
+  let mediaBase = '';
+  const findAttachment = (id) => [...seeded.values()].flatMap((s) => s.attachments || []).find((x) => x.id === id);
+  const stream = (res, a) => {   // no content-length: the stream cap is what stops a body larger than its metadata said
+    res.writeHead(200, { 'content-type': a.mimeType });
+    res.write(a.body.subarray(0, Math.ceil(a.body.length / 2)));
+    return res.end(a.body.subarray(Math.ceil(a.body.length / 2)));
+  };
+  const media = createServer((req, res) => {
+    mediaRequests.push({ path: req.url, auth: req.headers.authorization || null });
+    if (req.headers.authorization) return send(res, 400, { error: 'An Authorization header is not allowed here.' });
+    const id = (/^\/file\/(\d+)/.exec(req.url) || [])[1];
+    if (opt.redirectTwice) { res.writeHead(302, { location: `${mediaBase}/file/${id}?again=1` }); return res.end(); }
+    if (opt.mediaStatus) return send(res, opt.mediaStatus, { error: 'The signed address was refused.' });
+    const a = findAttachment(id);
+    return a ? stream(res, a) : send(res, 404, {});
+  });
+  await new Promise((r) => media.listen(0, '127.0.0.1', r));
+  mediaBase = `http://127.0.0.1:${media.address().port}`;
+  const contentOf = (a) => (opt.contentElsewhere ? `${mediaBase}/file/${a.id}`
+    : cloud ? `${base}/rest/api/2/attachment/content/${a.id}` : `${base}/secure/attachment/${a.id}/${encodeURIComponent(a.filename)}`);
   const server = createServer(async (req, res) => {
     const url = new URL(req.url, 'http://fake');
     let raw = '';
@@ -52,10 +118,29 @@ export async function startFakeJira(o = {}) {
         ...(opt.noVersionNumbers ? {} : { versionNumbers: String(opt.version).split('-')[0].split('.').map(Number) }) });
     }
     if (opt.refuseToken || req.headers.authorization !== auth) return send(res, 401, { errorMessages: ['You are not authenticated.'] });
+    let m;
+    m = /^\/rest\/api\/2\/attachment\/content\/(\d+)$/.exec(p) || /^\/secure\/attachment\/(\d+)\/.+$/.exec(p);
+    if (m) {
+      if (opt.contentStatus) return send(res, opt.contentStatus, { errorMessages: ['Not allowed.'], errors: {} });
+      const a = findAttachment(m[1]);
+      if (!a) return send(res, 404, {});
+      if (cloud) { res.writeHead(303, { location: `${mediaBase}/file/${a.id}?token=signed` }); return res.end(); }
+      return stream(res, a);
+    }
     if (opt.fail && req.method === opt.fail.method && p === opt.fail.path) return send(res, opt.fail.status, opt.fail.body);
     if (cloud && p === '/rest/api/2/project/search') return send(res, 200, { values: PROJECTS, isLast: true });
     if (!cloud && p === '/rest/api/2/project') return send(res, 200, PROJECTS);
-    let m = /^\/rest\/api\/2\/issue\/createmeta\/([^/]+)\/issuetypes(?:\/([^/]+))?$/.exec(p);
+    // Ticket updates: a project's statuses per issue type (GET /rest/api/2/project/{key}/statuses), the same on Cloud and Data Center
+    const ps = /^\/rest\/api\/2\/project\/([^/]+)\/statuses$/.exec(p);
+    if (ps) {
+      const types = opt.projectStatuses[decodeURIComponent(ps[1])];
+      if (!types) return send(res, 404, { errorMessages: [`No project could be found with key '${ps[1]}'.`], errors: {} });
+      return send(res, 200, types.map((statuses, i) => ({ id: String(10001 + i), name: `Type ${i + 1}`, subtask: false, statuses })));
+    }
+    if (p === '/rest/api/2/field') {
+      return send(res, 200, [...BASE_FIELDS, ...(opt.extraFields || [])].map((f) => ({ id: f.fieldId, name: f.name, custom: /^customfield_/.test(f.fieldId), schema: f.schema })));
+    }
+    m = /^\/rest\/api\/2\/issue\/createmeta\/([^/]+)\/issuetypes(?:\/([^/]+))?$/.exec(p);
     if (m) {
       if (opt.oldCreatemeta) return send(res, 404, { errorMessages: ['null for uri'], errors: {} });
       const list = m[2] ? fields : TYPES;
@@ -86,7 +171,29 @@ export async function startFakeJira(o = {}) {
       }
       return m[2] in i.properties ? send(res, 200, { key: m[2], value: i.properties[m[2]] }) : send(res, 404, { errorMessages: ['The property was not found.'] });
     }
+    m = /^\/rest\/api\/2\/issue\/([^/]+)\/transitions$/.exec(p);
+    if (m) {
+      const i = issues.get(m[1]);
+      if (!i) return gone(res);
+      if (req.method === 'GET') {
+        if (opt.refuseTransitionsRead) return send(res, opt.refuseTransitionsRead.status, opt.refuseTransitionsRead.body);
+        return send(res, 200, { transitions: i.transitions || [] });
+      }
+      if (opt.refuseTransition) return send(res, opt.refuseTransition.status, opt.refuseTransition.body);
+      const t = (i.transitions || []).find((x) => x.id === body?.transition?.id);
+      if (!t) return send(res, 400, { errorMessages: ['Transition id is not valid for this issue.'], errors: {} });
+      i.fields.status = t.to;
+      if (body.fields?.resolution) i.fields.resolution = body.fields.resolution;
+      return send(res, 204);
+    }
     m = /^\/rest\/api\/2\/issue\/([^/]+)\/comment$/.exec(p);
+    if (m && req.method === 'GET' && seeded.has(m[1])) {
+      const s = seeded.get(m[1]);
+      const newest = [...s.comments].reverse().slice(0, Number(url.searchParams.get('maxResults')) || 50);
+      return send(res, 200, { total: s.comments.length, startAt: 0, maxResults: newest.length, comments: newest.map((c) => ({ id: c.id, author: c.author,
+        created: c.created, body: c.body, ...(c.visibility ? { visibility: c.visibility } : {}),
+        ...(/renderedBody/.test(url.searchParams.get('expand') || '') ? { renderedBody: c.rendered } : {}) })) });
+    }
     if (m) {
       const i = issues.get(m[1]);
       if (!i) return gone(res);
@@ -95,6 +202,8 @@ export async function startFakeJira(o = {}) {
     }
     m = /^\/rest\/api\/2\/issue\/([^/]+)$/.exec(p);
     if (m) {
+      if ((opt.forbid || []).includes(m[1])) return send(res, 403, { errorMessages: ['You do not have the permission to see the specified issue.'], errors: {} });
+      if (seeded.has(m[1]) && req.method === 'GET') return send(res, 200, seededAnswer(seeded.get(m[1]), url, contentOf));
       const i = issues.get(m[1]);
       if (!i) return gone(res);
       if (req.method === 'PUT') {
@@ -115,9 +224,26 @@ export async function startFakeJira(o = {}) {
       }
       if (opt.failReadBack && /description/.test(url.searchParams.get('fields') || '')) return send(res, 500, { errorMessages: [], errors: {} });
       return send(res, 200, { key: i.key, fields: { description: i.fields.description, labels: i.fields.labels, summary: i.fields.summary,
-        issuetype: i.fields.issuetype } });
+        issuetype: i.fields.issuetype, status: i.fields.status, project: { key: i.project } } });
     }
     if ((cloud && p === '/rest/api/2/search/jql') || (!cloud && p === '/rest/api/2/search')) {
+      if (cloud && !/\S/.test((url.searchParams.get('jql') || '').replace(/\bORDER\s+BY\b[\s\S]*$/i, ''))) {
+        return send(res, 400, { errorMessages: ['Unbounded JQL queries are not allowed here. Please add a search restriction to your query.'], errors: {} });
+      }
+      if (seeded.size) {
+        const q = url.searchParams.get('jql') || '';
+        const project = (/project = "([^"]+)"/.exec(q) || [])[1];
+        const text = ((/text ~ "([^"]+)"/.exec(q) || [])[1] || '').toLowerCase();
+        const all = [...seeded.values()].filter((s) => (!project || s.project === project) && (!text || s.summary.toLowerCase().includes(text)))
+          .sort((a, b) => b.updated.localeCompare(a.updated));
+        const max = Number(url.searchParams.get('maxResults')) || 50;
+        const start = cloud ? Number(url.searchParams.get('nextPageToken') || 0) : Number(url.searchParams.get('startAt') || 0);
+        const page = all.slice(start, start + max).map((s) => ({ key: s.key, fields: { summary: s.summary, status: { name: s.status },
+          issuetype: { id: s.type.id, name: s.type.name }, updated: s.updated } }));
+        const more = start + page.length < all.length;
+        return send(res, 200, cloud ? { issues: page, isLast: !more, ...(more ? { nextPageToken: String(start + page.length) } : {}) }
+          : { issues: page, startAt: start, maxResults: max, total: all.length });
+      }
       const jql = url.searchParams.get('jql') || '';
       const project = (/project = "([^"]+)"/.exec(jql) || [])[1];
       const label = (/labels = "([^"]+)"/.exec(jql) || [])[1];
@@ -129,5 +255,6 @@ export async function startFakeJira(o = {}) {
   });
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${server.address().port}`;
-  return { base, issues, requests, close: () => new Promise((r) => { server.closeAllConnections?.(); server.close(r); }) };
+  return { base, issues, requests, media: { get base() { return mediaBase; }, requests: mediaRequests },
+    close: () => new Promise((r) => { server.closeAllConnections?.(); media.closeAllConnections?.(); media.close(() => server.close(r)); }) };
 }

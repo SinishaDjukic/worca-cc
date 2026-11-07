@@ -3,7 +3,6 @@
 // the CSS cut from style.css styles it unchanged. test/extension-sidebar-markup.test.mjs pins it against makePanel.
 // The composer is Ask's (ask-panel.mjs buildComposer) minus voice and Sets, plus the area-capture button.
 import { parseQuotedMessage } from '../../../ui/public/pinpoint-model.mjs';
-import { ATTACH_ACCEPT } from '../../../ui/public/attach-files.mjs';
 import { ctxPercent, ctxLevel, fmtCtx, fmtUsd, fmtWindow, ctxBreakdown, fmtShare, kTok, CTX_COST_HINT } from '../../../ui/public/ask-meter.mjs';
 import { pickerGroups } from '../../../ui/public/ask-engine.mjs';
 import { modelGroups } from '../../../src/shared/connections.mjs';
@@ -478,7 +477,6 @@ export function buildComposer(doc, o) {
   const file = doc.createElement('input');
   file.type = 'file';
   file.multiple = true;
-  file.accept = ATTACH_ACCEPT;
   file.hidden = true;
   file.addEventListener('change', () => { const fs = [...(file.files || [])]; file.value = ''; if (fs.length) call(o.onFiles, fs); });
   const attach = buildIconButton(doc, 'btn btn-quiet btn-icon', 'Attach files', ICON.plus, () => file.click());

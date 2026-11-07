@@ -83,7 +83,7 @@ and pinned routes). See [split-by-feature.md](split-by-feature.md).
 | `ui/public/new-run/pluggable-source.css` | 34 |
 | `ui/public/new-run/target-branches.css` | 63 |
 | `ui/routes/new-run/run-defaults.mjs` | 26 |
-| `ui/routes/new-run/sources.mjs` | 149 |
+| `ui/routes/new-run/sources.mjs` | 152 |
 
 ## runs
 
@@ -119,7 +119,7 @@ and pinned routes). See [split-by-feature.md](split-by-feature.md).
 | `ui/public/runs/welcome.html` | 103 |
 | `ui/public/runs/workflow-question.css` | 70 |
 | `ui/routes/runs/artifacts.mjs` | 184 |
-| `ui/routes/runs/checkout-and-actions.mjs` | 479 |
+| `ui/routes/runs/checkout-and-actions.mjs` | 556 |
 | `ui/routes/runs/control.mjs` | 225 |
 | `ui/routes/runs/drain-and-budget.mjs` | 31 |
 | `ui/routes/runs/folder-apply.mjs` | 90 |
@@ -240,6 +240,7 @@ and pinned routes). See [split-by-feature.md](split-by-feature.md).
 | `ui/public/marketplace/installed-plugin.css` | 67 |
 | `ui/public/marketplace/installed-tab.css` | 44 |
 | `ui/public/marketplace/marketplace-dialogs.css` | 15 |
+| `ui/public/marketplace/marketplace-ticket.css` | 84 |
 | `ui/public/marketplace/marketplace.html` | 8 |
 | `ui/public/marketplace/marketplaces-tab.css` | 44 |
 | `ui/public/marketplace/plugin-icons.css` | 141 |
@@ -247,7 +248,7 @@ and pinned routes). See [split-by-feature.md](split-by-feature.md).
 | `ui/public/marketplace/plugin-sheet.css` | 55 |
 | `ui/public/marketplace/plugin.html` | 18 |
 | `ui/public/marketplace/plugins-view.css` | 24 |
-| `ui/routes/marketplace/plugins.mjs` | 622 |
+| `ui/routes/marketplace/plugins.mjs` | 627 |
 
 ## guardrails ([guardrails.md](guardrails.md))
 
@@ -352,7 +353,7 @@ and pinned routes). See [split-by-feature.md](split-by-feature.md).
 
 | File | Lines |
 |---|---|
-| `ui/public/requirements/requirements.css` | 725 |
+| `ui/public/requirements/requirements.css` | 829 |
 | `ui/public/requirements/requirements.html` | 10 |
 
 ## shape ([shape-it-first.md](shape-it-first.md))
@@ -391,7 +392,8 @@ and pinned routes). See [split-by-feature.md](split-by-feature.md).
 
 | File | Lines |
 |---|---|
-| `ui/public/actions/actions-run.css` | 122 |
+| `ui/public/actions/actions-run.css` | 121 |
+| `ui/public/actions/actions-workspace.css` | 63 |
 | `ui/routes/actions/launchers.mjs` | 72 |
 
 ## run-presets ([run-presets.md](run-presets.md))
