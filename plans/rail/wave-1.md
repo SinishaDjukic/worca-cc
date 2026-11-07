@@ -19,8 +19,9 @@ unstyled until step 3 below lands. The app has no `rail` flag and no Rail page y
 
 ## The flag, and what the gates point at
 
-**The prototype has no `rail` flag and always shows Rail.** The app gets the flag in step 1. Wave 1 stops at Labs:
-`rail` is `experimental` and off (`docs/feature-flags.md`). Later stages are decided per wave.
+**The prototype has no `rail` flag and always shows Rail.** The app gets the flag in step 1. **One `rail` flag holds the whole new
+design: every planned wave enrolls under it, gradually, and nothing ships outside it.** Wave 1 stops at Labs: `rail` is
+`experimental` and off (`docs/feature-flags.md`). Later stages are decided per wave.
 
 Until step 1 lands, the page checks run on the prototype over `file://`. Once it lands they also run on the app in mock mode
 with `rail` on, by URL (`run-page-sweep` and `pulse-sweep` already take one; step 1 gives `ds-check` and `worca-sweep` the
@@ -30,6 +31,9 @@ same argument), and one pass with `rail` off shows nothing changed. Commands: `d
 
 One Feature, in this order. Each step is one or more slices, one PR per slice, built on `docs/rail-agreed`:
 
+0. **CI holds the design system.** `npm test`, with `test/rail-gate.test.mjs` and `test/rail-docs.test.mjs` in it, runs on
+   every PR into `dev` (`.github/workflows/ci.yml`): confirm it, and fix the workflow if they are skipped. Making that job a
+   required check is a repository setting, a person's step when Agreed lands on `dev`; a run never changes repository rules.
 1. **The flag.** `rail` in `src/shared/flags/registry.mjs`: `experimental`, off. `ui/public/design-system/rail-retires.json`
    with its freeze test: a slice that replaces an old part lists it, and a test fails any new use of a listed part.
 2. **The tokens.** A layer scoped under `:root[data-rail]`, with `--sans` left as Poppins until graduation
