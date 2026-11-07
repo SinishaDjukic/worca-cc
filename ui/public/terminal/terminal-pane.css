@@ -208,6 +208,10 @@ code .ask-file-link{font-family:inherit;}
 .tov-stop:focus-visible,.tov-more:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
 .tov-stop:disabled{opacity:.5;cursor:default;}
 .tov-more{align-self:flex-start;margin-left:28px;}
+/* A run's auto-fix runs: indented child rows under it (↳). The Mentioned group: muted, collapsed by default. */
+.tov-item.is-child .tov-row{height:26px;padding-left:18px;font-size:var(--fs-meta);color:var(--ink-2);}
+.tov-child{flex:none;color:var(--ink-2);}
+.tov-sec.is-quiet .tov-row{color:var(--ink-2);}
 .tov-note,.tov-empty{margin:4px 6px 0;color:var(--ink-2);font-size:var(--fs-meta);}
 .tov-empty{margin:8px 6px;}
 .tov-body{padding:4px 6px 0;font-size:13px;}

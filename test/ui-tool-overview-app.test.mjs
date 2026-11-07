@@ -1,8 +1,13 @@
 // test/ui-tool-overview-app.test.mjs — the tool panel's Overview in the real app (issue 1064): app.js + index.html under
 // jsdom (chat-panel-boot). One row per app.js wiring line: the strip's Overview icon, the head meter's route, the overview
 // fetch, and the deps the sections reach (runs, files, out files, Stop, Actions, the setting, a no-project chat, a run).
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, writeFileSync, realpathSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { buildThreadOverview } from '../src/core/ask/overview.mjs';
+import { NO_PREVIEW } from '../ui/public/artifacts/stage.mjs';
 
 const PK = 'app-0000aaaa';
 const TID = 'ask_0000ab0e';
@@ -21,8 +26,28 @@ const OVERVIEW = {
   ],
   artifactsTotal: 3,
 };
+const PDF_TEXT = '%PDF-1.4\n%%EOF\n';
+const outDirs = [];
+after(() => { for (const d of outDirs) rmSync(d, { recursive: true, force: true }); });
+/** The Overview built by the REAL builder (D7) over rows shaped the way show_files stores them (store.mjs rowToAttachment):
+ *  report.pdf shown AND saved in the out folder, live.pdf only saved, shot.png shown. A server regression reddens the
+ *  jsdom rows too. */
+async function realOverview() {
+  const out = realpathSync(mkdtempSync(join(tmpdir(), 'worca-ovapp-')));
+  outDirs.push(out);
+  writeFileSync(join(out, 'report.pdf'), PDF_TEXT);
+  writeFileSync(join(out, 'live.pdf'), PDF_TEXT);
+  const att = (id, name, kind, mime) => ({ id, threadId: TID, messageId: null, name, bytes: PDF_TEXT.length, kind, mime, hasSource: true, createdAt: '2026-10-05T00:00:00.000Z' });
+  return buildThreadOverview(TID, {
+    listRunLinks: () => [], isPrFix: () => false, findPipelineRowById: () => null, scheduleRunIds: () => [], readPrState: () => null,
+    listMessages: () => [], followedRunOf: () => null,
+    listAttachments: () => [att('att_00000001', 'report.pdf', 'binary', 'application/pdf'), att('att_00000002', 'shot.png', 'image', 'image/png')],
+    outDir: () => out,
+    sourcePathOf: (tid, id) => (id === 'att_00000001' ? join(out, 'report.pdf') : null),
+  });
+}
 
-async function boot({ url = `http://localhost:4317/#chat/${TID}`, settings = () => ({}), blocks = [], running = () => [], more = null, rows, detail, local = null, runArtifacts = [] } = {}) {
+async function boot({ url = `http://localhost:4317/#chat/${TID}`, settings = () => ({}), blocks = [], running = () => [], more = null, rows, detail, local = null, runArtifacts = [], overview = OVERVIEW } = {}) {
   const { bootChat, ok } = await import('./helpers/chat-panel-boot.mjs');
   const rec = { overview: [], att: [], file: [], stops: [], actionStops: [], askRuns: [], resolve: [] };
   const thread = (id) => ({ id, title: id === NOPROJ ? 'Loose' : 'Overview chat', createdAt: 't', updatedAt: 't',
@@ -37,7 +62,7 @@ async function boot({ url = `http://localhost:4317/#chat/${TID}`, settings = () 
         return ok({ thread: thread(id), attachments: [], runLinks: [], worktrees: [], inFlight: null,
           messages: [{ id: 'askm_00000001', threadId: id, seq: 1, role: 'assistant', text: 'Done.', blocks, status: 'done', createdAt: 't' }] });
       }
-      if (path.endsWith(`/api/ask/threads/${id}/overview`)) { rec.overview.push(id); return ok(id === TID ? OVERVIEW : { environment: { followedRun: null }, runs: [], prs: [], artifacts: [], artifactsTotal: 0 }); }
+      if (path.endsWith(`/api/ask/threads/${id}/overview`)) { rec.overview.push(id); return ok(id === TID ? overview : { environment: { followedRun: null }, runs: [], prs: [], artifacts: [], artifactsTotal: 0 }); }
     }
     if (path.includes('/api/ask/runs/')) { rec.askRuns.push(path); return ok({ state: { status: 'done', branch: { feature: 'feat/run-page' } }, live: null, extras: { pr: { url: 'https://github.com/o/r/pull/9', state: 'OPEN' }, artifacts: runArtifacts } }); }
     if (path.endsWith('/api/ask/refs/resolve')) { rec.resolve.push(JSON.parse(opts.body)); return ok({ refs: {} }); }
@@ -46,6 +71,7 @@ async function boot({ url = `http://localhost:4317/#chat/${TID}`, settings = () 
     if (path.endsWith('/api/workspaces')) return ok({ workspaces: [{ id: 'wks-shop', name: 'Shop', members: [] }] });
     if (path.endsWith('/api/terminal') && m === 'GET') return ok({ enabled: true, pty: { available: true, reason: null }, maxSessions: 16,
       sessions: [{ id: 't-0000000001', scope: 'project', projectKey: PK, createdBy: `ask:${TID}`, label: 'app', status: 'running', mode: 'pty', createdAt: '2026-10-03T10:00:00.000Z' }] });
+    if (path.endsWith('/api/tools/file') && /path=live\.pdf/.test(u)) { rec.file.push(u); return ok({ path: 'live.pdf', size: PDF_TEXT.length, text: PDF_TEXT, binary: false, truncated: false, root: { label: 'Output' } }); }
     if (path.endsWith('/api/tools/file')) { rec.file.push(u); return ok({ path: 'report.md', size: 3, text: '# r', truncated: false, root: { label: 'Chat output' } }); }
     if (path.endsWith('/api/tools/files')) return ok({ entries: [], root: { label: 'app' } });
     if (path.endsWith('/api/tools/tabs')) return ok({ tabs: m === 'PUT' ? JSON.parse(opts.body).tabs : [] });
@@ -139,7 +165,96 @@ test('in the real app: a run row routes to the run page; an artifact opens a Fil
   assert.equal(files.length, 1, 'an open copy focuses its tab (I8)');
 });
 
-test('in the real app: an out file opens with root=out; an image opens the pop-up; the setting off keeps the pop-up', async () => {
+/** Overview › Runs built by the REAL builder: Parent (PR 7) with two watch fix rounds; Other with three; a fix card whose
+ *  origin was not started here; a tracked run with a PR; a run a reply named. */
+async function runsOverview() {
+  const row = (id, title, over = {}) => ({ id, title, status: 'done', phase: 'done', total_cost_usd: 1, started_at: '2026-10-01T00:00:00.000Z', project_key: PK, target: 'project',
+    branch: JSON.stringify({ source: 'dev', feature: `feat/${id}` }), outcome: null, resume_point: null, deleted_at: null, ...over });
+  const round = (origin, n, over = {}) => row(`f${origin.at(-1)}00000${n}`, 'fix', { branch: JSON.stringify({ roundOf: { pipelineId: origin, round: n, by: 'watch' } }), total_cost_usd: 0.25 * n, ...over });
+  const rows = [row('aaaa0001', 'Parent', { total_cost_usd: 2, started_at: '2026-10-03T00:00:00.000Z' }), row('aaaa0002', 'Other'),
+    round('aaaa0001', 2), round('aaaa0001', 3, { status: 'running', phase: 'implement' }), round('aaaa0002', 2), round('aaaa0002', 3), round('aaaa0002', 4),
+    row('cccc0001', 'Origin elsewhere'), row('cccc0002', 'card fix'), row('dddd0001', 'Tracked one', { status: 'running', phase: 'test' }), row('dddd0002', 'Named one')];
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  return buildThreadOverview(TID, {
+    listRunLinks: () => [{ threadId: TID, runId: 'r-1', pipelineId: 'aaaa0001', cardId: 'card_1' }, { threadId: TID, runId: 'r-2', pipelineId: 'aaaa0002', cardId: 'card_2' },
+      { threadId: TID, runId: 'r-cf', pipelineId: 'cccc0002', cardId: 'card_fix' }, { threadId: TID, runId: 'r-t', pipelineId: 'dddd0001', cardId: null }],
+    isPrFix: (l) => l.cardId === 'card_fix', prFixOf: (l) => (l.cardId === 'card_fix' ? { originPipelineId: 'cccc0001', prUrl: 'https://github.com/o/r/pull/30' } : null),
+    findPipelineRowById: (id) => byId.get(id) || null, scheduleRunIds: () => [],
+    readPrState: (id) => (id === 'aaaa0001' ? { url: 'https://github.com/o/r/pull/7', state: 'OPEN' } : id === 'dddd0001' ? { url: 'https://github.com/o/r/pull/31', state: 'OPEN' } : null),
+    roundsOf: (ids) => { const out = new Map(); for (const r of rows) { const m = JSON.parse(r.branch).roundOf; if (m && ids.includes(m.pipelineId)) out.set(m.pipelineId, [...(out.get(m.pipelineId) || []), { pipelineId: r.id, round: m.round, by: m.by }]); } return out; },
+    listMessages: () => [{ id: 'm1', role: 'assistant', text: 'The earlier attempt was dddd0002.', blocks: [] }], followedRunOf: () => null,
+    listAttachments: () => [], outDir: () => join(tmpdir(), 'worca-ovapp-none-0000'),
+  });
+}
+
+test('in the real app: Overview › Runs nests auto-fix runs under their run (own cost, more than 2 folded) and ends with a collapsed Mentioned group whose PRs are not listed', async () => {
+  const a = await boot({ overview: await runsOverview() });
+  await a.openOverview();
+  assert.ok(await until(() => a.rowsOf('runs').length === 5), JSON.stringify(a.rowsOf('runs')));
+  const metas = (id) => [...a.sec(id).querySelectorAll('.tov-item:not([hidden]) .tov-meta')].map((n) => n.textContent);
+  assert.deepEqual(a.rowsOf('runs'), ['Parent', 'Auto-fix 1', 'Auto-fix 2', 'Other', '3 auto-fixes']);
+  assert.deepEqual(metas('runs'), ['Done · $2.00', 'Done · $0.50', 'Running · implement · $0.75', 'Done · $1.00', 'Latest: Done']);
+  assert.equal(a.sec('runs').querySelectorAll('.tov-item.is-child .tov-child').length, 3, 'the child rows carry the arrow');
+  const m = a.sec('mentioned');
+  const order = [...a.doc.querySelectorAll('.tool-panel .tov-sec')].map((x) => x.dataset.tovSection);
+  assert.equal(order.indexOf('mentioned'), order.indexOf('runs') + 1);
+  assert.equal(m.hidden, false);
+  assert.ok(m.classList.contains('is-collapsed') && m.classList.contains('is-quiet'));
+  assert.equal(m.querySelector('.tov-count').textContent, '4');
+  assert.deepEqual(a.rowsOf('mentioned').sort(), ['Auto-fix 1', 'Named one', 'Origin elsewhere', 'Tracked one']);
+  assert.ok(metas('mentioned').every((t) => !/\$/.test(t)), JSON.stringify(metas('mentioned')));
+  assert.ok(await until(() => a.rowsOf('prs').length === 1));
+  assert.deepEqual(a.rowsOf('prs'), ['o/r#7'], 'neither the tracked run\'s PR nor the fix card\'s');
+  m.querySelector('.tov-head').click();
+  assert.equal(m.querySelector('.tov-box').hidden, false);
+  [...m.querySelectorAll('.tov-row')].find((r) => r.textContent.includes('Named one')).click();
+  await a.settle(6);
+  assert.match(a.window.location.hash, /^#history\/app-0000aaaa\/dddd0002/, a.window.location.hash);
+});
+
+test('in the real app: the Overview\'s shown PDF opens its chat copy in a Files tab and renders it (no NO_PREVIEW); a never-shown out PDF renders from the tool route', async () => {
+  const a = await boot({ overview: await realOverview() });
+  await a.openOverview();
+  assert.ok(await until(() => a.rowsOf('artifacts').length === 3), JSON.stringify(a.rowsOf('artifacts')));
+  assert.deepEqual([...a.rowsOf('artifacts')].sort(), ['live.pdf', 'report.pdf', 'shot.png'], 'the shown report.pdf is listed once');
+  const rowOf = (name) => [...a.sec('artifacts').querySelectorAll('.tov-row')].find((r) => r.querySelector('.tov-text').textContent === name);
+  rowOf('report.pdf').click();
+  await a.settle(12);
+  const tab = () => a.model().tabs.find((t) => t.kind === 'files' && t.state.att === 'att_00000001');
+  assert.ok(tab(), JSON.stringify(a.model().tabs));
+  assert.equal(tab().state.attKind, 'pdf');
+  assert.ok(await until(() => /Chat copy/.test(a.panel().textContent)), a.panel().textContent.slice(0, 300));
+  assert.ok(await until(() => a.panel().querySelector('embed[type="application/pdf"]')), a.panel().querySelector('.tool-body')?.innerHTML.slice(0, 400));
+  assert.ok(a.panel().querySelector('embed[type="application/pdf"]').getAttribute('src').startsWith(`/api/ask/threads/${TID}/attachments/`));
+  assert.ok(!a.panel().textContent.includes(NO_PREVIEW), 'no NO_PREVIEW');
+  await a.openOverview();
+  assert.ok(await until(() => a.rowsOf('artifacts').length === 3));
+  rowOf('live.pdf').click();
+  await a.settle(12);
+  assert.ok(a.model().tabs.some((t) => t.kind === 'files' && t.state.root === 'out'), JSON.stringify(a.model().tabs));
+  assert.ok(await until(() => a.panel().querySelector('embed[type="application/pdf"]')?.getAttribute('src')?.startsWith('/api/tools/raw/')),
+    a.panel().querySelector('.tool-body')?.innerHTML.slice(0, 400));
+});
+
+test('in the real app: the Overview row and the card open the same tab for the same file', async () => {
+  const item = { attId: 'att_00000001', name: 'report.pdf', kind: 'pdf', mime: 'application/pdf', bytes: PDF_TEXT.length, source: true };
+  const a = await boot({ overview: await realOverview(), blocks: [{ kind: 'card', id: 'card_00000001', state: 'shown', card: { type: 'files', title: 'report.pdf', items: [item] } }] });
+  assert.ok(await until(() => a.doc.querySelector('.ask-filescard-name')));
+  a.doc.querySelector('.ask-filescard-name').click();
+  await a.settle(12);
+  assert.equal(a.model().tabs.filter((t) => t.kind === 'files').length, 1, JSON.stringify(a.model().tabs));
+  await a.openOverview();
+  assert.ok(await until(() => a.rowsOf('artifacts').length === 3));
+  [...a.sec('artifacts').querySelectorAll('.tov-row')].find((r) => r.querySelector('.tov-text').textContent === 'report.pdf').click();
+  await a.settle(12);
+  const files = a.model().tabs.filter((t) => t.kind === 'files' && t.state.att === 'att_00000001');
+  assert.equal(files.length, 1, 'one tab per file (I7)');
+  assert.equal(files[0].state.attKind, 'pdf', 'the card\'s tab keeps its kind');
+  assert.ok(await until(() => a.panel().querySelector('embed[type="application/pdf"]')), a.panel().querySelector('.tool-body')?.innerHTML.slice(0, 400));
+  assert.ok(!a.panel().textContent.includes(NO_PREVIEW));
+});
+
+test('in the real app: an out file opens with root=out; an image opens the pop-up; the setting off still opens a Files tab for a shown non-image (clarify answer 2), and an image still opens the pop-up', async () => {
   const a = await boot();
   await a.openOverview();
   assert.ok(await until(() => a.rowsOf('artifacts').length === 3));
@@ -155,9 +270,14 @@ test('in the real app: an out file opens with root=out; an image opens the pop-u
   await off.openOverview();
   assert.ok(await until(() => off.rowsOf('artifacts').length === 3));
   off.sec('artifacts').querySelectorAll('.tov-row')[0].click();
+  await off.settle(12);
+  assert.equal(off.doc.querySelector('.viewer-modal.apv:not(.hidden)'), null, 'setting off: no pop-up for a non-image');
+  assert.deepEqual(off.model().tabs.filter((t) => t.kind === 'files').map((t) => t.state.att), ['att_00000001'], 'setting off: a Files tab');
+  await off.openOverview();
+  assert.ok(await until(() => off.rowsOf('artifacts').length === 3));
+  off.sec('artifacts').querySelectorAll('.tov-row')[1].click();
   await off.settle(8);
-  assert.ok(off.doc.querySelector('.viewer-modal.apv:not(.hidden)'), 'setting off: the pop-up');
-  assert.equal(off.model().tabs.filter((t) => t.kind === 'files').length, 0);
+  assert.ok(off.doc.querySelector('.viewer-modal.apv:not(.hidden)'), 'setting off: an image still opens the pop-up');
 });
 
 test('in the real app: Background lists the chat\'s running command (Stop posts the stop route) and its run\'s Actions (Stop posts the instance stop)', async () => {

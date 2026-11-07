@@ -56,6 +56,21 @@ export function showFileKindFor(mime, name) {
 }
 
 /**
+ * The card kind (a SHOW_FILE_KINDS `kind`, what itemOf put on the card) of a stored show_files copy, from its
+ * attachment row's storage kind, mime and name. A binary or image copy keeps its sniffed mime, so the table decides
+ * again; a text copy stores its entry's label as its mime (an older or odd mime falls back to the name's extension,
+ * then to plain text). Pure; junk → null, never throws.
+ */
+export function shownKindOf(row) {
+  const { kind, mime, name } = row && typeof row === 'object' ? row : {};
+  if (kind === 'image' || kind === 'binary') return showFileKindFor(mime, name)?.kind ?? null;
+  if (kind !== 'text') return null;
+  const texts = SHOW_FILE_KINDS.filter((k) => k.store === 'text');
+  const ext = extOf(name);
+  return (texts.find((k) => k.label === mime) || texts.find((k) => k.exts && ext && k.exts.includes(ext)))?.kind ?? 'text';
+}
+
+/**
  * Sniff the bytes that were read, look the kind up and apply its cap. Magic bytes are judged on the head; text (and
  * SVG, which is text) on the WHOLE body, so it is capped before it is decoded. sniffMime refuses markup whose root is
  * not <svg> (an HTML page): here such a body is still TEXT, shown as source. → { mime, entry } | { error }.

@@ -98,8 +98,46 @@ function prRow(pr, title, upgrade = null) {
     pill: pillOf(state), href: pr.url, title: pr.url };
 }
 
+/** More auto-fix runs than this under one run fold into one "N auto-fixes" line. */
+export const FIX_ROWS_MAX = 2;
+const MENTION_WHY = { link: 'Followed by this chat', followed: 'The run this chat follows', reply: 'Named in a reply', fix: 'Its PR auto-fix reported here' };
+/** A run's saved status and phase as one meta text; the live store wins (R2). */
+function liveOf(rs, r) { return rs ? (rs.byPipeline(r.pipelineId) || (r.runId ? rs.get(r.runId) : null)) : null; }
+function statusText(snap, r) {
+  const pill = runPill(snap || { status: r.status, source: 'rest' });
+  return !snap && r.status === 'running' && r.phase && r.phase !== r.status ? `${pill.text} · ${r.phase}` : pill.text;
+}
+/**
+ * A run's auto-fix runs as child rows (↳ dot, "Auto-fix N", status/phase, its OWN cost when `cost`), or one
+ * "N auto-fixes" line past FIX_ROWS_MAX. `known` collects the run ids a live poke redraws.
+ */
+function fixRows(parent, deps, known, { cost }) {
+  const list = Array.isArray(parent.fixes) ? parent.fixes : [];
+  if (!list.length) return [];
+  const rs = deps.runStore;
+  if (list.length > FIX_ROWS_MAX) {
+    for (const f of list) { known.add(f.runId); const snap = liveOf(rs, f); if (snap?.runId) known.add(snap.runId); }
+    const last = list.at(-1);
+    const snap = liveOf(rs, last);
+    return [{ key: `fixes:${parent.pipelineId}`, child: true, dot: runModel(snap?.run || { status: last.status }), text: `${list.length} auto-fixes`,
+      meta: `Latest: ${statusText(snap, last)}`, title: `PR auto-fix runs of ${parent.title || parent.pipelineId}`,
+      open: () => deps.go(parent.href || progressRoute({ runId: parent.runId, pipelineId: parent.pipelineId }, null)) }];
+  }
+  return list.map((f) => {
+    const snap = liveOf(rs, f);
+    known.add(f.runId);
+    if (snap?.runId) known.add(snap.runId);
+    const ident = { runId: f.runId, pipelineId: f.pipelineId };
+    const own = cost ? runCostLabel(f.runEngine, snap ? snap.costUsd : f.costUsd, fmtUsd) : '';
+    return { key: `run:${f.pipelineId}`, child: true, dot: runModel(snap?.run || { status: f.status }), text: `Auto-fix ${f.n}`,
+      meta: [statusText(snap, f), own].filter(Boolean).join(' · '), title: `PR auto-fix run ${f.pipelineId}`,
+      open: () => deps.go(snap ? progressRoute(ident, snap) : (f.href || progressRoute(ident, null))) };
+  });
+}
+
 // ── a chat ─────────────────────────────────────────────────────────────────────────────────────────────
-/** The chat Overview's sections (D6-D9): Environment, Context, Runs, Pull requests, Artifacts, Background. */
+/** The chat Overview's sections (D6-D9): Environment, Context, Runs (then its quiet Mentioned group), Pull requests,
+ *  Artifacts, Background. */
 export function chatOverviewSections(threadId, deps) {
   const ap = deps.askPanel;
   const data = sharedFetch(`/api/ask/threads/${encodeURIComponent(threadId)}/overview`, deps);
@@ -159,18 +197,19 @@ export function chatOverviewSections(threadId, deps) {
       const list = (await data.get(signal))?.runs || [];
       known.clear();
       const rs = deps.runStore;
-      return list.map((r) => {
+      return list.flatMap((r) => {
         // The live store wins over the saved facts at draw time (R2: a fetch that lands after a poke never undoes it).
-        const snap = rs ? (rs.byPipeline(r.pipelineId) || (r.runId ? rs.get(r.runId) : null)) : null;
+        const snap = liveOf(rs, r);
         known.add(r.runId);
         if (snap?.runId) known.add(snap.runId);
         const pill = runPill(snap || { status: r.status, source: 'rest' });
         const cost = snap ? snap.costUsd : r.costUsd;
         const costText = runCostLabel(r.runEngine, cost, fmtUsd);   // "cost unknown" on an engine that reports none
         const ident = { runId: r.runId, pipelineId: r.pipelineId };
-        return { key: `run:${r.pipelineId}`, icon: 'run', dot: runModel(snap?.run || { status: r.status, title: r.title }),
+        return [{ key: `run:${r.pipelineId}`, icon: 'run', dot: runModel(snap?.run || { status: r.status, title: r.title }),
           text: snap?.title || r.title, meta: [pill.text, costText].filter(Boolean).join(' · '), title: r.branch ? `Branch ${r.branch}` : undefined,
-          open: () => deps.go(snap ? progressRoute(ident, snap) : (r.href || progressRoute(ident, null))) };
+          open: () => deps.go(snap ? progressRoute(ident, snap) : (r.href || progressRoute(ident, null))) },
+        ...fixRows(r, deps, known, { cost: true })];
       });
     },
     subscribe(redraw) {
@@ -180,6 +219,33 @@ export function chatOverviewSections(threadId, deps) {
         if (known.has(runId)) redraw();          // a live status: drawn from the store, no fetch
       }) : null;
       return all(data.hook(redraw), unStore, watch(['links'], () => data.refetchSoon()));
+    },
+  };
+
+  // Mentioned (at the end of Runs): the runs the chat followed, tracked or named but did not start. Quiet, collapsed by
+  // default with a count; status, no cost; a mentioned run's auto-fixes under it.
+  const knownMentioned = new Set();
+  const mentioned = {
+    id: 'mentioned', label: 'Mentioned', collapsed: true, quiet: true,
+    async rows(signal) {
+      const list = (await data.get(signal))?.mentioned || [];
+      knownMentioned.clear();
+      const rs = deps.runStore;
+      return list.flatMap((r) => {
+        const snap = liveOf(rs, r);
+        knownMentioned.add(r.runId);
+        if (snap?.runId) knownMentioned.add(snap.runId);
+        const ident = { runId: r.runId, pipelineId: r.pipelineId };
+        return [{ key: `run:${r.pipelineId}`, dot: runModel(snap?.run || { status: r.status, title: r.title }), text: snap?.title || r.title,
+          meta: statusText(snap, r), title: MENTION_WHY[r.source] || undefined,
+          open: () => deps.go(snap ? progressRoute(ident, snap) : (r.href || progressRoute(ident, null))) },
+        ...fixRows(r, deps, knownMentioned, { cost: false })];
+      });
+    },
+    subscribe(redraw) {
+      const rs = deps.runStore;
+      const unStore = rs && typeof rs.subscribe === 'function' ? rs.subscribe((runId) => { if (knownMentioned.has(runId)) redraw(); }) : null;
+      return all(data.hook(redraw), unStore);
     },
   };
 
@@ -220,7 +286,9 @@ export function chatOverviewSections(threadId, deps) {
         const item = items[index];
         return { key: `att:${a.attId}`, icon: 'file', text: a.name, meta, title: 'Shown in the chat',
           open: () => {
-            const action = fileCardAction({ preview: filePreviewOf(item), enabled: deps.linksInPanel() === true });
+            // The Overview sits in the panel and reads no setting (clarify answer 2): a non-image opens the chat copy in a
+            // Files tab, an image or svg the pop-up, exactly as the files card does with the setting on.
+            const action = fileCardAction({ preview: filePreviewOf(item), enabled: true });
             if (action === 'panel') deps.openInPanel({ threadId, item });
             else deps.openFiles({ threadId, items, index });
           } };
@@ -248,7 +316,7 @@ export function chatOverviewSections(threadId, deps) {
     },
   };
 
-  return [environment, context, runs, prs, artifacts, background];
+  return [environment, context, runs, mentioned, prs, artifacts, background];
 }
 
 // ── a run ──────────────────────────────────────────────────────────────────────────────────────────────

@@ -12,7 +12,8 @@ const FOCUSABLE = '.tov-head, .tov-row, .tov-stop, .tov-more';
 let idSeq = 0;
 
 /**
- * `source(view)` → Section[] | null (null: this view has no Overview). Section, Row: plan §3.2.
+ * `source(view)` → Section[] | null (null: this view has no Overview). Section, Row: plan §3.2. A section with
+ * `quiet: true` is drawn muted; a row with `child: true` is indented under the row before it with a ↳.
  * Collapsed and "Show all" choices are kept per section id in memory for the controller's lifetime (D11).
  */
 export function createOverview({ doc, win, source }) {
@@ -70,7 +71,7 @@ export function createOverview({ doc, win, source }) {
 
   // ── one section ──────────────────────────────────────────────────────────────────────────────────
   function buildSlot(sec) {
-    const el = make('section', 'tov-sec');
+    const el = make('section', sec.quiet === true ? 'tov-sec is-quiet' : 'tov-sec');
     el.dataset.tovSection = sec.id;
     el.hidden = true;
     const label = make('h3', 'tov-label');
@@ -194,7 +195,7 @@ export function createOverview({ doc, win, source }) {
     syncEmpty(cur);
   }
   function rowItem(r) {
-    const li = make('li', 'tov-item');
+    const li = make('li', r.child === true ? 'tov-item is-child' : 'tov-item');
     li.dataset.tovKey = String(r.key);
     let row;
     if (typeof r.href === 'string' && /^https?:\/\//i.test(r.href)) {   // a link only to the web: never javascript: or data:
@@ -210,6 +211,7 @@ export function createOverview({ doc, win, source }) {
       row = make('span', 'tov-row is-static');
     }
     if (r.title) row.title = r.title;
+    if (r.child === true) { const arrow = make('span', 'tov-child', '\u21b3'); arrow.setAttribute('aria-hidden', 'true'); row.append(arrow); }
     if (r.dot) { const d = make('span'); paintStatusDot(d, r.dot); const w = make('span', 'tov-dot'); w.append(d); row.append(w); }
     else row.append(icon(doc, r.icon || 'none', 14, 'ic tov-ic'));
     row.append(make('span', 'tov-text', r.text == null ? '' : String(r.text)));

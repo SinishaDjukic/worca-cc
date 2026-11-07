@@ -188,6 +188,84 @@ test('row 12: a show_files card\'s name opens the chat copy (the setting is on: 
   assert.ok(a.rec.att.some((u) => u.includes(`/api/ask/threads/${TID}/attachments/att_00000001?as=text`)), a.calls.filter((c) => /attach|tools/.test(c.url)).map((c) => (c.opts.method||'GET') + ' ' + c.url).join(' | ') + ' body: ' + a.doc.querySelector('.tool-panel .tool-body')?.innerHTML.slice(0, 600));
 });
 
+test('row 12d: a card click before the settings read lands (setting unset) opens the Files tab, not the pop-up', async () => {
+  const block = { kind: 'card', id: 'card_00000001', state: 'shown', card: { type: 'files', items: [{ attId: 'att_00000001', name: 'report.pdf', kind: 'pdf', bytes: 120, mime: 'application/pdf' }] } };
+  const a = await boot({ blocks: [block], settings: () => ({}), settingsDelay: 400 });
+  assert.ok(await until(() => a.doc.querySelector('.ask-filescard-name')), 'the file row is there');
+  a.doc.querySelector('.ask-filescard-name').click();   // the settings read is still held
+  await a.settle(12);
+  const files = a.model().tabs.filter((t) => t.kind === 'files');
+  assert.deepEqual(files.map((t) => [t.state.att, t.state.attKind]), [['att_00000001', 'pdf']], JSON.stringify(a.model().tabs));
+  assert.equal(a.doc.querySelector('.viewer-modal.apv:not(.hidden)'), null, 'no pop-up');
+  await wait(450);   // the held arm resolves inside the test
+});
+
+// One files card holding every kind a card shows (row 12b / 12c / 12e).
+const KIND_ITEMS = [
+  ['report.pdf', 'pdf', 'application/pdf'], ['deck.docx', 'office', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
+  ['notes.md', 'markdown', 'text/markdown'], ['data.csv', 'csv', 'text/csv'], ['data.json', 'json', 'application/json'],
+  ['change.diff', 'diff', 'text/x-diff'], ['page.html', 'html', 'text/html'], ['app.js', 'text', 'text/plain'],
+  ['shot.png', 'image', 'image/png'], ['logo.svg', 'svg', 'image/svg+xml'],
+].map(([name, kind, mime], i) => ({ attId: `att_0000000${i}`, name, kind, mime, bytes: 120 }));
+const KIND_CARD = { kind: 'card', id: 'card_00000001', state: 'shown', card: { type: 'files', title: 'Every kind', items: KIND_ITEMS } };
+const IMAGES = new Set(['image', 'svg']);
+/** Click each item's main control in turn; → per item 'popup' or the new Files tab's attKind. The pop-up is closed after each. */
+async function clickEveryKind(a) {
+  const seen = [];
+  for (const item of KIND_ITEMS) {
+    const before = a.model().tabs.filter((t) => t.kind === 'files').length;
+    const el = IMAGES.has(item.kind)
+      ? a.doc.querySelector(`.ask-filescard-thumb[title="${item.name}"]`)
+      : [...a.doc.querySelectorAll('.ask-filescard-name')].find((n) => n.textContent === item.name);
+    assert.ok(el, item.name);
+    el.click();
+    await a.settle(12);
+    const files = a.model().tabs.filter((t) => t.kind === 'files');
+    const popup = a.doc.querySelector('.viewer-modal.apv:not(.hidden)');
+    if (popup) {
+      assert.equal(files.length, before, `${item.name}: a pop-up adds no Files tab`);
+      popup.querySelector('.apv-close').click();
+      await a.settle(6);
+      assert.equal(a.doc.querySelector('.viewer-modal.apv:not(.hidden)'), null, 'the pop-up closed');
+      seen.push('popup');
+    } else {
+      assert.equal(files.length, before + 1, `${item.name}: exactly one new Files tab`);
+      const tab = files.find((t) => t.state.att === item.attId);
+      assert.ok(tab, `${item.name}: its own tab`);
+      seen.push(tab.state.attKind);
+    }
+  }
+  return seen;
+}
+
+test('row 12b: setting unset and on: each non-image name opens its own Files tab with the card\'s kind; image and svg tiles open the pop-up', async () => {
+  for (const settings of [() => ({}), () => ({ chatLinksInPanel: true })]) {
+    const a = await boot({ blocks: [KIND_CARD], settings });
+    assert.ok(await until(() => a.doc.querySelectorAll('.ask-filescard-name').length >= 8), 'the card is there');
+    assert.deepEqual(await clickEveryKind(a), ['pdf', 'office', 'markdown', 'csv', 'json', 'diff', 'code', 'code', 'popup', 'popup'], JSON.stringify(settings()));
+  }
+});
+
+test('row 12c: setting off: every kind opens the pop-up; no Files tab', async () => {
+  const a = await boot({ blocks: [KIND_CARD], settings: () => ({ chatLinksInPanel: false }), settingsDelay: 50 });
+  await wait(120); await a.settle(12);
+  assert.ok(await until(() => a.doc.querySelectorAll('.ask-filescard-name').length >= 8), 'the card is there');
+  assert.deepEqual(await clickEveryKind(a), KIND_ITEMS.map(() => 'popup'));
+  assert.equal(a.model().tabs.filter((t) => t.kind === 'files').length, 0);
+});
+
+test('row 12e: the card\'s PDF Files tab renders the PDF', async () => {
+  const { NO_PREVIEW } = await import('../ui/public/artifacts/stage.mjs');
+  const a = await boot({ blocks: [KIND_CARD] });
+  assert.ok(await until(() => a.doc.querySelector('.ask-filescard-name')));
+  [...a.doc.querySelectorAll('.ask-filescard-name')].find((n) => n.textContent === 'report.pdf').click();
+  await a.settle(12);
+  const panel = a.doc.querySelector('.tool-panel');
+  assert.ok(await until(() => panel.querySelector('embed[type="application/pdf"]')), panel.querySelector('.tool-body')?.innerHTML.slice(0, 400));
+  assert.ok(panel.querySelector('embed[type="application/pdf"]').getAttribute('src').startsWith(`/api/ask/threads/${TID}/attachments/att_00000000`));
+  assert.ok(!panel.textContent.includes(NO_PREVIEW), 'no NO_PREVIEW');
+});
+
 test('row 13: the settings card shows the switch and saves it', async () => {
   const a = await boot();
   a.go('settings/ask'); await a.settle(12);

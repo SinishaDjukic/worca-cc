@@ -123,7 +123,8 @@ test('files card: an Office copy previews as office (the viewer frames its PDF f
 test('Open in panel (issue 1064): each row and tile has it; a click reaches openInPanel and never the viewer; none without the dep', () => {
   registerBuiltinFileRenderers();
   const got = [];
-  const { opened, ctx } = ctxOf({ openInPanel: (o) => got.push(o) });
+  // D1: an absent linksInPanel dep counts as on; this row pins the off-mode icon, so it says off.
+  const { opened, ctx } = ctxOf({ openInPanel: (o) => got.push(o), linksInPanel: () => false });
   const { el } = buildFilesCard({ id: 'card_00000009', state: 'shown', card: { type: 'files', items: ITEMS } }, ctx);
   ctx.doc.body.append(el);
   const btns = [...el.querySelectorAll('.ask-filescard-panel')];
@@ -147,6 +148,22 @@ function matrix(on) {
   const tile = el.querySelector('.ask-filescard-tile');
   return { el, panel, opened, setting, row, tile };
 }
+
+test('the setting is on unless the dep answers false', () => {
+  const PDF = { attId: 'att_0000000p', name: 'report.pdf', kind: 'pdf', mime: 'application/pdf', bytes: 120 };
+  const route = (over) => {
+    const panel = [];
+    const { opened, ctx } = ctxOf({ openInPanel: (o) => panel.push(o.item.attId), ...over });
+    const { el } = buildFilesCard({ id: 'card_0000000d', state: 'shown', card: { type: 'files', items: [PDF] } }, ctx);
+    ctx.doc.body.append(el);
+    el.querySelector('.ask-filescard-name').click();
+    return panel.length ? 'panel' : opened.length ? 'popup' : 'nothing';
+  };
+  assert.equal(route({}), 'panel', 'no linksInPanel dep');
+  assert.equal(route({ linksInPanel: () => undefined }), 'panel', 'undefined');
+  assert.equal(route({ linksInPanel: () => null }), 'panel', 'null (not read yet)');
+  assert.equal(route({ linksInPanel: () => false }), 'popup', 'explicitly off');
+});
 
 test('non-image on: the name opens the panel; Quick look opens the pop-up', () => {
   const m = matrix(true);

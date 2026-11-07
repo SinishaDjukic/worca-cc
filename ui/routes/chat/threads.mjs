@@ -6,9 +6,10 @@ import { validateMcpOff } from '../../../src/core/ask/mcp.mjs';
 import { validateModelEffort } from '../../../src/core/ask/models.mjs';
 import { chatScopeOf, sameScope } from '../../../src/core/ask/scope.mjs';
 import { revealTargetFor as askRevealTargetFor } from '../../../src/core/ask/show-files-deps.mjs';
-import { THREAD_SORTS, askOutDir, attachmentPath as askAttachmentPath, countThreads as askCountThreads, createThread as askCreateThread, getAttachment as askGetAttachment, getThread as askGetThread, listAttachments as askListAttachments, listMessages as askListMessages, listRunLinks as askListRunLinks, listThreadIds as askListThreadIds, listThreads as askListThreads, listThreadsPage as askListThreadsPage, readAttachmentText as askReadAttachmentText, setArchived as askSetArchived, setPinned as askSetPinned, updateThread as askUpdateThread } from '../../../src/core/ask/store.mjs';
+import { THREAD_SORTS, askOutDir, findCard as askFindCard, attachmentPath as askAttachmentPath, attachmentSourcePath as askAttachmentSourcePath, countThreads as askCountThreads, createThread as askCreateThread, getAttachment as askGetAttachment, getThread as askGetThread, listAttachments as askListAttachments, listMessages as askListMessages, listRunLinks as askListRunLinks, listThreadIds as askListThreadIds, listThreads as askListThreads, listThreadsPage as askListThreadsPage, readAttachmentText as askReadAttachmentText, setArchived as askSetArchived, setPinned as askSetPinned, updateThread as askUpdateThread } from '../../../src/core/ask/store.mjs';
 import { removeAskWorktree as askRemoveWorktree } from '../../../src/core/ask/worktrees.mjs';
 import { buildThreadOverview } from '../../../src/core/ask/overview.mjs';
+import { roundsOf } from '../../../src/core/shape/rounds.mjs';
 import { findPipelineRowById, readPrState } from '../../../src/core/artifacts.mjs';
 import { getDb } from '../../../src/core/db.mjs';
 import { chatOrigins } from '../../../src/core/chat/conversations.mjs';
@@ -26,6 +27,12 @@ import fsp from 'node:fs/promises';
 function scheduleRunIds(threadId, limit) {
   return getDb().prepare(`SELECT id FROM pipelines WHERE schedule_id IN (SELECT id FROM schedules WHERE ask_thread_id = ?)
     AND deleted_at IS NULL ORDER BY started_at DESC LIMIT ?`).all(threadId, limit).map((r) => r.id);
+}
+
+/** A PR fix-run card's `card.fix` (askPostPrFixCards: { prUrl, memberKey, originPipelineId, … }), or null. */
+function prFixOf(link) {
+  if (!link || !link.cardId) return null;
+  try { const fix = askFindCard(link.threadId, link.cardId)?.block?.card?.fix; return fix && typeof fix === 'object' ? fix : null; } catch { return null; }
 }
 
 export function register(app) {
@@ -204,8 +211,8 @@ app.get('/api/ask/threads/:id', (req, res) => {
   }
 });
 
-// The tool panel's Overview (issue 1064): the chat's started runs, their PRs and its applied PR cards, the files it
-// showed and saved, the followed run's branch. Another person's chat is a 404 (the askThreadVisible middleware).
+// The tool panel's Overview (issue 1064): the chat's started runs with their PR watch fix runs, the runs it only
+// mentioned, the started runs' PRs and its applied PR cards, the files it showed and saved, the followed run's branch. Another person's chat is a 404 (the askThreadVisible middleware).
 app.get('/api/ask/threads/:id/overview', async (req, res) => {
   const id = askIdParam(res, req.params.id, 'thread');
   if (!id) return;
@@ -215,6 +222,7 @@ app.get('/api/ask/threads/:id/overview', async (req, res) => {
     res.json(await buildThreadOverview(id, {
       listRunLinks: askListRunLinks, isPrFix: askLinkIsPrFix, findPipelineRowById, scheduleRunIds, readPrState,
       listMessages: askListMessages, listAttachments: askListAttachments, outDir: askOutDir, followedRunOf,
+      sourcePathOf: askAttachmentSourcePath, prFixOf, roundsOf,
     }));
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });

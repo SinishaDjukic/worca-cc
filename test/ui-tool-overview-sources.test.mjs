@@ -62,7 +62,7 @@ function fakeStore() {
 function makeDeps(over = {}) {
   const calls = { fetch: [], go: [], panel: [], files: [], out: [], session: [], stopAction: [], service: [], resolve: [], artifact: [] };
   const actionSubs = new Set();
-  const state = { overview: OVERVIEW(), actions: [], links: true };
+  const state = { overview: OVERVIEW(), actions: [] };
   const deps = {
     fetch: async (url) => { calls.fetch.push(url); if (url.endsWith('/overview')) return ok(structuredClone(state.overview)); if (url.startsWith('/api/ask/runs/')) return ok(state.run || {}); return ok({}); },
     askPanel: fakeAsk(),
@@ -77,7 +77,6 @@ function makeDeps(over = {}) {
     go: (h) => calls.go.push(h),
     openInPanel: (a) => calls.panel.push(a.item.attId),
     openFiles: (a) => calls.files.push([a.items.map((i) => i.attId), a.index]),
-    linksInPanel: () => state.links,
     openOutFile: (tid, path) => calls.out.push([tid, path]),
     openRunArtifact: (ref, a) => calls.artifact.push([ref.pipelineId, a.relPath]),
     historyRows: () => state.history || [],
@@ -108,7 +107,7 @@ test('environment filled / no project / workspace / no branch; sections in the c
   const { deps, calls } = makeDeps();
   const o = mount(CHAT_VIEW, deps);
   await tick();
-  assert.deepEqual([...o.host.querySelectorAll('.tov-sec')].map((s) => s.dataset.tovSection), ['environment', 'context', 'runs', 'prs', 'artifacts', 'background']);
+  assert.deepEqual([...o.host.querySelectorAll('.tov-sec')].map((s) => s.dataset.tovSection), ['environment', 'context', 'runs', 'mentioned', 'prs', 'artifacts', 'background']);
   assert.deepEqual(o.rows('environment'), [['app', '~/code/app'], ['Claude · Sonnet 5.5', ''], ['feat/x', 'Followed']]);
   assert.equal(calls.fetch.filter((u) => u === `/api/ask/threads/${TID}/overview`).length, 1, 'one fetch shared by the sections');
   const none = makeDeps();
@@ -179,6 +178,65 @@ test('runs: live overlay without a fetch; a done poke → one debounced refetch;
   assert.equal(fetches(), 3, 'unmounted: nothing more');
 });
 
+const fix = (pid, n, over = {}) => ({ runId: pid, pipelineId: pid, n, status: 'done', phase: 'done', costUsd: 0.25 * n, runEngine: 'claude', startedAt: 't', href: `#history/app-0000aaaa/${pid}`, ...over });
+test('runs: auto-fix runs are indented child rows under their run (↳, dot, Auto-fix N, status/phase, own cost; the parent\'s cost untouched); more than 2 fold into one line', async () => {
+  const { deps, calls, state } = makeDeps();
+  state.overview.runs[0].fixes = [fix('bbbb0001', 1), fix('bbbb0002', 2, { status: 'running', phase: 'implement', costUsd: 0.1 })];
+  state.overview.runs[1].fixes = [fix('bbbb0003', 1), fix('bbbb0004', 2), fix('bbbb0005', 3, { status: 'error' })];
+  const o = mount(CHAT_VIEW, deps);
+  await tick();
+  assert.deepEqual(o.rows('runs'), [['First', 'Done · $1.25'], ['Auto-fix 1', 'Done · $0.25'], ['Auto-fix 2', 'Running · implement · $0.10'],
+    ['Second', 'Done · cost unknown'], ['3 auto-fixes', 'Latest: Error']]);
+  const items = [...o.sec('runs').querySelectorAll('.tov-item')];
+  assert.deepEqual(items.map((li) => li.classList.contains('is-child')), [false, true, true, false, true]);
+  assert.ok(items.filter((li) => li.classList.contains('is-child')).every((li) => li.querySelector('.tov-child')?.textContent === '\u21b3' && li.querySelector('.tov-dot .status-dot')),
+    'each child row: the arrow and a status dot');
+  assert.equal(items[0].querySelector('.tov-child'), null, 'a parent row has no arrow');
+  items[2].querySelector('.tov-row').click();
+  assert.deepEqual(calls.go, ['#history/app-0000aaaa/bbbb0002'], 'a fix row opens its own run');
+  items[4].querySelector('.tov-row').click();
+  assert.deepEqual(calls.go.at(-1), '#history/app-0000aaaa/aaaa0002', 'the folded line opens the parent');
+  deps.runStore.live.set('bbbb0002', { source: 'live', runId: 'bbbb0002', pipelineId: 'bbbb0002', title: 'fix', status: 'running', active: [], costUsd: 0.3, run: { status: 'running' } });
+  deps.runStore.poke('bbbb0002', 'state');
+  await tick();
+  assert.deepEqual(o.rows('runs')[2], ['Auto-fix 2', 'Running · $0.30'], 'a live fix run redraws from the store');
+});
+
+test('mentioned: a quiet group after Runs, collapsed by default with a count; status, no cost; a mentioned run\'s auto-fixes under it; rows route', async () => {
+  const { deps, calls, state } = makeDeps();
+  state.overview.mentioned = [
+    { runId: 'r-9', pipelineId: 'aaaa0009', title: 'Followed one', status: 'running', phase: 'test', href: '#history/app-0000aaaa/aaaa0009', source: 'link', fixes: [] },
+    { runId: 'aaaa0006', pipelineId: 'aaaa0006', title: 'Elsewhere', status: 'done', phase: 'done', href: '#history/app-0000aaaa/aaaa0006', source: 'fix',
+      fixes: [{ runId: 'r-f5', pipelineId: 'bbbb0005', n: 1, status: 'done', phase: 'done', startedAt: 't', href: '#history/app-0000aaaa/bbbb0005' }] },
+  ];
+  const o = mount(CHAT_VIEW, deps);
+  await tick();
+  const sec = o.sec('mentioned');
+  const order = [...o.host.querySelectorAll('.tov-sec')].map((x) => x.dataset.tovSection);
+  assert.equal(order.indexOf('mentioned'), order.indexOf('runs') + 1, 'right after Runs');
+  assert.equal(sec.hidden, false);
+  assert.ok(sec.classList.contains('is-quiet') && sec.classList.contains('is-collapsed'), 'quiet and collapsed');
+  assert.equal(sec.querySelector('.tov-head').getAttribute('aria-expanded'), 'false');
+  assert.equal(sec.querySelector('.tov-box').hidden, true);
+  assert.equal(sec.querySelector('.tov-name').textContent, 'Mentioned');
+  assert.equal(sec.querySelector('.tov-count').textContent, '3', 'the count: every row drawn');
+  assert.deepEqual(o.rows('mentioned'), [['Followed one', 'Running · test'], ['Elsewhere', 'Done'], ['Auto-fix 1', 'Done']], 'no cost anywhere');
+  assert.equal(sec.querySelectorAll('.tov-item.is-child').length, 1);
+  assert.equal(sec.querySelector('.tov-row').title, 'Followed by this chat');
+  sec.querySelector('.tov-head').click();
+  assert.equal(sec.querySelector('.tov-box').hidden, false, 'opens on a click');
+  sec.querySelectorAll('.tov-row')[2].click();
+  assert.deepEqual(calls.go, ['#history/app-0000aaaa/bbbb0005']);
+  deps.runStore.live.set('aaaa0009', { source: 'live', runId: 'r-9', pipelineId: 'aaaa0009', title: 'Followed one', status: 'done', active: [], run: { status: 'done' } });
+  deps.runStore.poke('r-9', 'state');
+  await tick();
+  assert.deepEqual(o.rows('mentioned')[0], ['Followed one', 'Done'], 'a live mentioned run redraws from the store');
+  const none = makeDeps();
+  const e = mount(CHAT_VIEW, none.deps);
+  await tick();
+  assert.equal(e.sec('mentioned').hidden, true, 'no mentioned runs: the group is hidden');
+});
+
 test('fetch after poke keeps live status (the store wins at draw time)', async () => {
   const { deps } = makeDeps();
   let release;
@@ -210,19 +268,20 @@ test('pr pill upgraded by resolve; resolve failure keeps the stored state; the r
   assert.ok(x.sec('prs').querySelector('.tov-pill').classList.contains('tone-green'));
 });
 
-test('artifacts: routing by kind and setting; out files always open in the panel; Show all and the note', async () => {
-  const { deps, calls, state } = makeDeps();
+test('artifacts: routing by kind (the section reads no setting); out files always open in the panel; Show all and the note', async () => {
+  const { deps, calls } = makeDeps();
   const o = mount(CHAT_VIEW, deps);
   await tick();
   assert.deepEqual(o.rows('artifacts').map((r) => r[0]), ['plan.md', 'shot.png', 'out/report.md']);
   assert.match(o.rows('artifacts')[0][1], /^2(\.0)? KB · 1 h ago$|^2(\.0)? KB · /);
   o.row('artifacts', 0).click();
-  assert.deepEqual(calls.panel, ['att_1'], 'markdown with the setting on: a Files tab');
+  assert.deepEqual(calls.panel, ['att_1'], 'markdown: a Files tab');
   o.row('artifacts', 1).click();
   assert.deepEqual(calls.files, [[['att_1', 'att_2'], 1]], 'an image: the pop-up at its index');
-  state.links = false;
+  assert.equal('linksInPanel' in deps, false, 'no setting dep');
   o.row('artifacts', 0).click();
-  assert.deepEqual(calls.files.at(-1), [['att_1', 'att_2'], 0], 'setting off: the pop-up');
+  assert.deepEqual(calls.panel, ['att_1', 'att_1'], 'the section reads no setting: a non-image always opens the panel (clarify answer 2)');
+  assert.equal(calls.files.length, 1);
   o.row('artifacts', 2).click();
   assert.deepEqual(calls.out, [[TID, 'out/report.md']], 'an out file: always the panel (root out)');
   const big = makeDeps();
@@ -308,7 +367,7 @@ test('project sections: live runs first, then History (at most 10); their pull r
   assert.equal(o.sec('prs').querySelector('.tov-pill').textContent, 'Merged');
   assert.equal(overviewSourceFor({ project: null, side: null, blocked: 'x' }, deps), null);
   assert.equal(overviewSourceFor(null, deps), null);
-  assert.equal(chatOverviewSections(TID, deps).length, 6);
+  assert.equal(chatOverviewSections(TID, deps).length, 7);
 });
 
 const RUN_VIEW = { project: 'app-0000aaaa', side: { type: 'run', id: 'cccc0001', projectKey: 'app-0000aaaa' } };

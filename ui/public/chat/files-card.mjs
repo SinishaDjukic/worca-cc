@@ -151,12 +151,12 @@ export function buildFilesCard(block, ctx) {
   head.append(make(doc, 'span', 'ask-mcard-title', title), make(doc, 'span', 'ask-mcard-kind', 'Files'));
   root.appendChild(head);
   const open = (index) => { if (tid && typeof ctx.openFiles === 'function') ctx.openFiles({ threadId: tid, items, index }); };
-  // Issue 1064: with "Open chat links in the panel" on, a file that is not an image opens its copy in a Files tab of the
-  // chat (fileCardAction). Read when the card is built (which icon shows) and again on every click (where it goes);
-  // the panel rebuilds the files cards when the setting changes.
+  // Issue 1064: with "Open chat links in the panel" on (on unless the setting is explicitly off), a file that is not an
+  // image opens its copy in a Files tab of the chat (fileCardAction). Read when the card is built (which icon shows) and
+  // again on every click (where it goes); the panel rebuilds the files cards when the setting changes.
   const panelOk = (item) => !!tid && !!item.attId && typeof ctx.openInPanel === 'function';
   const routeOf = (item) => (panelOk(item)
-    ? fileCardAction({ preview: filePreviewOf(item), enabled: typeof ctx.linksInPanel === 'function' && ctx.linksInPanel() === true })
+    ? fileCardAction({ preview: filePreviewOf(item), enabled: !(typeof ctx.linksInPanel === 'function' && ctx.linksInPanel() === false) })
     : 'popup');
   const activate = (item, index) => { if (routeOf(item) === 'panel') ctx.openInPanel({ threadId: tid, item }); else open(index); };
   const grid = make(doc, 'div', 'ask-filescard-grid');

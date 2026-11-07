@@ -661,8 +661,9 @@ let activityMenu = null;       // the top bar's Activity (activity-menu.mjs) —
 let awayScreensaver = null;    // the away screensaver easter egg (away-screensaver.mjs) — assigned beside Activity; timerTick uses awayScreensaver?.
 let terminalTool = null;   // the Terminal tool (issues 573, 1064) — assigned by the boot mount; seams use terminalTool?.
 let toolPanel = null;      // the tool panel (issue 1064) — assigned by the boot mount; seams use toolPanel?.
-// "Open chat links in the panel" (issue 1064 §4): read at boot and on every settings paint. null until the boot read
-// lands = off (no resolve POST, no labels): the thread snapshot renders before /api/settings answers (D17 "off = today").
+// "Open chat links in the panel" (issue 1064 §4): read at boot and on every settings paint. null = not read yet, and it
+// counts as on (chatLinksOn): only an explicit false turns the setting off. The file links' resolve POST still waits for
+// the read (chatDeps.linksRead), so someone with the setting off never sends one.
 let chatLinksPref = null;
 // The preview port rule as the page knows it (D16, mirrors preview-proxy.mjs portRefusal): range mode (a hosted Worca, or
 // Settings › Actions "Preview ports: range") allows the Actions range and the running Actions' ports only.
@@ -673,6 +674,8 @@ function setChatLinksPref(on) {
   chatLinksPref = next;
   askPanel?.refreshAnswers?.();
 }
+/** The one reading of the setting: on unless it is explicitly off (null, not read yet, counts as on). */
+function chatLinksOn() { return chatLinksPref !== false; }
 let toolMirror = null;      // the tool panel's server mirror (issue 1064 slice 3) — assigned by the boot mount
 let newPipelinePrefill = null; // one-shot card → New Pipeline handoff (§10.2 seam 7, consumed by Task 11)
 // Engine readiness (GET /api/engines): which engines a usage-limit pause offers. Fetched on demand, refreshed after
@@ -17088,7 +17091,7 @@ function paintChatLinksSettings(data) {
   const cb = document.getElementById('chatLinksInPanel');
   setChatLinksPref(!(data && data.chatLinksInPanel === false));
   if (!cb) return;
-  cb.checked = chatLinksPref === true;
+  cb.checked = chatLinksOn();
   settingsCardPainted('chatLinksSave');
 }
 document.getElementById('chatLinksSave')?.addEventListener('click', (e) => postSettingsCard({ chatLinksInPanel: !!document.getElementById('chatLinksInPanel')?.checked },
@@ -41173,7 +41176,7 @@ Promise.resolve().then(() => fetch('/api/settings')).then((r) => safeJson(r)).th
   paintKeepAwakeRow(!(d && d.keepAwake === false));
   setChatLinksPref(!(d && d.chatLinksInPanel === false));
   setPreviewPortGate(d);
-}).catch(() => { setChatLinksPref(true); /* keep: on (the chat links pref is null = off until here) */ });
+}).catch(() => { setChatLinksPref(true); /* null (not read yet) already counts as on; this marks the setting read */ });
 onFlagChange('commandSummaries', () => { askPanel?.refreshCommandCards(); void paintHelperModelCards(); });
 // One delegated handler for every Summaries / Raw switch (Logs tab, History Logs, both drawers, Chat's run
 // panel): they are cloned on every build, so per-node listeners would be lost on each rebuild.
@@ -41282,7 +41285,6 @@ const overviewDeps = {
   go: (hash) => { window.location.hash = hash; },
   openInPanel: (o) => chatDeps.openInPanel(o),
   openFiles: (o) => chatDeps.openFiles(o),
-  linksInPanel: () => chatLinksPref === true,
   openOutFile: (threadId, path) => openChatFile({ threadId, path, root: 'out' }),
   openRunArtifact: (ref, artifact) => openRunArtifactPopup(ref, artifact),
   historyRows: (key) => projectHistoryRows(key),
@@ -41349,7 +41351,7 @@ function setPreviewPortGate(data) {
   const next = { range: !!gate.previewPortsLocked || gate.previewPorts === 'range', low: n(a.portLow), high: n(a.portHigh) };
   const changed = next.range !== previewPortGate.range || next.low !== previewPortGate.low || next.high !== previewPortGate.high;
   previewPortGate = next;
-  if (changed && chatLinksPref) askPanel?.refreshAnswers?.();   // a loopback link's accessible name may change
+  if (changed && chatLinksOn()) askPanel?.refreshAnswers?.();   // a loopback link's accessible name may change
 }
 /** May the preview proxy show this loopback port? (worca's own port never gets here: it is worca's own origin.) */
 function previewPortAllowed(port) {
@@ -41360,9 +41362,10 @@ function previewPortAllowed(port) {
 }
 /** The fields every chat link decision shares (the click and the accessible name). */
 function chatLinkContext(href) {
-  return { href, origin: window.location.origin, enabled: chatLinksPref === true, refused: (o) => frameVerdicts.refused(o), portAllowed: previewPortAllowed };
+  return { href, origin: window.location.origin, enabled: chatLinksOn(), refused: (o) => frameVerdicts.refused(o), portAllowed: previewPortAllowed };
 }
-chatDeps.linksInPanel = () => chatLinksPref === true;
+chatDeps.linksInPanel = () => chatLinksOn();
+chatDeps.linksRead = () => chatLinksPref !== null;
 chatDeps.linkHint = (href) => linkHint(chatLinkContext(href));
 chatDeps.openFileLink = (t) => openChatFile(t);
 // The composer's context meter on the Chat page (issue 1064 D5): the panel's Overview with Context open (false: the popover).

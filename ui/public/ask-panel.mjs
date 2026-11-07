@@ -297,9 +297,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   // the run store like the run cards; lookups go out once an answer is done (renderAnswerPiece).
   const refChips = createRefChips({ doc, fetch, runStore, now, root: () => el.transcript || null, visible: () => st.open });
   // File links (issue 1064 §2): paths an answer names that exist in the chat's root open a Files tab of the tool panel.
-  // Off with the "Open chat links in the panel" setting (chatDeps.linksInPanel).
+  // Off with the "Open chat links in the panel" setting (chatDeps.linksInPanel), and not before the host has read it
+  // (chatDeps.linksRead, issue 1064 D2): someone with the setting off never sends a resolve POST.
   const fileLinks = createFileLinks({ doc, fetch, now, threadId: () => st.threadId || null, root: () => el.transcript || null,
-    enabled: () => chatDep('linksInPanel') !== false, onOpen: (t) => chatDep('openFileLink', t),
+    enabled: () => chatDep('linksInPanel') !== false && chatDep('linksRead') !== false, onOpen: (t) => chatDep('openFileLink', t),
     webHint: (href) => chatDep('linkHint', href) ?? null });
   const orbs = createDotOrbs({ doc, win });   // the live turn's orb (ensureThinking), the Workflows chat's dot sphere
 
@@ -6003,8 +6004,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     openFiles: (o) => chatDep('openFiles', o),
     revealInfo: () => chatDep('revealInfo'),
     revealFile: (o) => chatDep('revealFile', o),
-    openInPanel: (o) => chatDep('openInPanel', o),
-    linksInPanel: () => chatDep('linksInPanel') === true,   // issue 1064: files cards open non-images in a Files tab
+    // A getter: the host assigns chatDeps.openInPanel after the panel is built. No panel → undefined, and the files
+    // card opens the pop-up (D3: a click is never swallowed).
+    get openInPanel() { return typeof chatDeps?.openInPanel === 'function' ? (o) => chatDep('openInPanel', o) : undefined; },
+    linksInPanel: () => chatDep('linksInPanel') !== false,   // issue 1064: files cards open non-images in a Files tab (on unless explicitly off)
     openShipIt: (ref, link) => chatDep('openShipIt', ref, link),
     runLinkFor: (ref) => runLinkFor(ref || {}),
     appendToComposer: (text) => appendToComposer(text),
