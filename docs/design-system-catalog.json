@@ -1065,6 +1065,17 @@
       "rules": [
         "thing.parts-in-stages"
       ]
+    },
+    {
+      "name": "InView",
+      "code": "ui/public/design-system/components/shell-parts.mjs#inView",
+      "kind": "moving",
+      "needs": [
+        "what you keep an eye on, live, from any page"
+      ],
+      "rules": [
+        "nav.in-view"
+      ]
     }
   ],
   "logic": [

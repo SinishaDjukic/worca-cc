@@ -21,7 +21,7 @@
   const toneOf = (state) => (state === 'needs-you' ? 'ask' : state === 'idle' ? 'idle' : 'run');
   const markOf = (state, kind) => R.kindMark({ kind: kind === 'workflow' && state === 'idle' ? 'workflow' : 'chat', tone: toneOf(state), title: state === 'idle' ? R.CHAT_KINDS[kind]?.label || 'Chat' : R.chatState(state).word });
   const RM = window.RunCardModel;
-  const taskMenu = (t) => [{ id: 'open-task', text: t.kind === 'schedule' ? 'Open schedule' : 'Open task', help: 'Opens its page' }, ...(t.git === 'open' || t.git === 'fail' ? [{ id: 'watch', text: t.watch ? 'Stop watching' : 'Watch', help: 'Worca follows the PR and fixes failing checks for you' }] : []), { id: 'label-task', text: 'Label…', hint: hint('L'), help: 'Adds a label to this task' }, ...(has('advanced') ? [{ id: 'add-to-group', text: 'Add to group…', hint: hint('G'), help: 'Find a group, or make a new one' }] : []), { sep: true }, { id: 'archive', text: 'Archive', hint: hint('E'), help: 'Undo in the notice' }];
+  const taskMenu = (t) => [{ id: 'open-task', text: t.kind === 'schedule' ? 'Open schedule' : 'Open task', help: 'Opens its page' }, { id: 'in-view', text: window.RailShell?.inView.has(t.kind === 'schedule' ? 'schedule' : 'task', t.id) ? 'Out of view' : 'Keep in view', help: 'Its live mark in the top bar, on every page' }, ...(t.git === 'open' || t.git === 'fail' ? [{ id: 'watch', text: t.watch ? 'Stop watching' : 'Watch', help: 'Worca follows the PR and fixes failing checks for you' }] : []), { id: 'label-task', text: 'Label…', hint: hint('L'), help: 'Adds a label to this task' }, ...(has('advanced') ? [{ id: 'add-to-group', text: 'Add to group…', hint: hint('G'), help: 'Find a group, or make a new one' }] : []), { sep: true }, { id: 'archive', text: 'Archive', hint: hint('E'), help: 'Undo in the notice' }];
   // What hangs under a chat: its tasks and schedules, in their order of waiting.
   const treeOf = (c, list) => list.map((t) => {
     const x = { t, c, key: `task:${t.id}` };
@@ -44,7 +44,7 @@
     const st = R.chatState(c.state), x = { c, key: `chat:${c.id}` };
     const r = { key: x.key, _x: x, title: c.title, lead: c.origin ? R.originMark(c.origin) : '', mark: markOf(c.state, c.kind), unread: c.unread, current: current === c.id, tip: [c.title, [c.project || 'No project', ...(c.labels || [])].join(' · '), [st.line || (c.state === 'idle' ? R.CHAT_KINDS[c.kind]?.label : ''), c.time].filter(Boolean).join(' · '), c.pinned ? 'Pinned' : ''].filter(Boolean).join('\n'), end: c.time, tree: c.tasks?.length ? treeOf(c, c.tasks) : undefined,
       meta: '' };
-    r.menu = [{ id: 'toggle', text: 'Select', hint: hint('Space') }, { id: 'rename', text: 'Rename…', hint: hint('R'), help: 'Give it another name' }, { id: 'pin', text: c.pinned ? 'Unpin' : 'Pin', hint: hint('P'), help: 'A pinned chat leads its section' },
+    r.menu = [{ id: 'toggle', text: 'Select', hint: hint('Space') }, { id: 'in-view', text: window.RailShell?.inView.has('chat', c.id) ? 'Out of view' : 'Keep in view', help: 'Its live mark in the top bar, on every page' }, { id: 'rename', text: 'Rename…', hint: hint('R'), help: 'Give it another name' }, { id: 'pin', text: c.pinned ? 'Unpin' : 'Pin', hint: hint('P'), help: 'A pinned chat leads its section' },
       ...(has('advanced') ? [{ id: 'add-to-group', text: 'Add to group…', hint: hint('G'), help: 'Find a group, or make a new one' }, ...(c.group ? [{ id: 'leave-group', text: 'Remove from group', hint: hint('shift', 'G'), help: 'It stays in Chats, in no group' }] : [])] : []),
       { sep: true }, c.archived ? { id: 'archive', text: 'Restore', hint: hint('E'), help: 'Brings it back' } : { id: 'archive', text: 'Archive', hint: hint('E'), off: !!busyOf(c), help: busyOf(c) || 'Undo in the notice' },
       ...(has('advanced') ? [{ id: 'delete', text: 'Delete…', hint: hint('Backspace'), danger: true, help: 'Removes it for good; asks first' }] : [])];
@@ -122,6 +122,7 @@
   }
   function act(id, rows0, { bulk, viaKey } = {}) {
     const rows = rows0.map((r) => r._x), x = rows[0], snap = snapshot(), pick = ctl.state.pick;
+    if (id === 'in-view' && x) { if (x.t) window.RailShell.inView.toggle({ type: x.t.kind === 'schedule' ? 'schedule' : 'task', id: x.t.id, chat: x.c.id, title: x.t.title, case: x.t.case }); else if (x.c) window.RailShell.inView.toggle({ type: 'chat', id: x.c.id, title: x.c.title }); ctl.paint(); return; }
     if (x?.t && !bulk && id !== 'add-to-group') {
       const t = x.t;
       if (id === 'open-task') { if (t.kind === 'schedule') window.RailShell.go('schedule/s1'); else window.RailShell.openTask(t.case, x.c.id, t.title); return; }
@@ -214,7 +215,7 @@
     toggle,
     newChat,
     data: () => data,
-    refresh: () => { ctl.paint(); },
+    refresh: () => { ctl.paint(); window.RailShell?.inView.draw(); },
   };
   ctl.paint();
 })();

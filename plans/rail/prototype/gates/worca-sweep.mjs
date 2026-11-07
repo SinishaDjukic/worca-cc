@@ -81,12 +81,16 @@ for (const scheme of ['light', 'dark']) for (const w of [1280, 900, 760, 375]) {
   if (w > 760) {
     await p.goto(`${URL_}#chat/c1`); await p.waitForTimeout(150);
     await p.evaluate(() => document.querySelector('[data-bar-hide]').click()); await p.mouse.move(w - 40, 400); await p.waitForTimeout(260);
-    const strip = await p.evaluate(() => { const r = document.getElementById('side-rail').getBoundingClientRect(), out = [...document.querySelectorAll('#side-rail *')].filter((e) => e.offsetParent && e.getClientRects().length).filter((e) => { const b = e.getBoundingClientRect(); return b.width && (b.right > r.right + 1 || b.left < r.left - 1); }).map((e) => e.className || e.tagName); return { w: Math.round(r.width), mini: document.querySelectorAll('#bar-mini .bar-strip-i').length, out: [...new Set(out)].slice(0, 4) }; });
+    const strip = await p.evaluate(() => { const b0 = document.getElementById('side-rail').getBoundingClientRect(), r = { left: b0.left, width: (() => { const s = document.getElementById('side-rail'), m = /inset\(0px (-?[\d.]+)px/.exec(getComputedStyle(s).clipPath); return s.getBoundingClientRect().width - (m ? Math.max(0, +m[1]) : 0); })(), get right() { return this.left + this.width; } }, out = [...document.querySelectorAll('#side-rail *')].filter((e) => e.checkVisibility?.({ opacityProperty: true, visibilityProperty: true }) && e.getClientRects().length && (e.nodeName === 'svg' || [...e.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim()))).filter((e) => { const b = e.getBoundingClientRect(); return b.width && (b.right > r.right + 1 || b.left < r.left - 1); }).map((e) => e.className || e.tagName); return { w: Math.round(r.width), mini: document.querySelectorAll('#bar-mini .bar-strip-i').length, out: [...new Set(out)].slice(0, 4) }; });
     if (strip.w !== 56 || !strip.mini || strip.out.length) add('the hidden bar is not a clean strip', `${scheme}/${w}: ${JSON.stringify(strip)}`);
-    await p.mouse.move(20, 300); await p.waitForTimeout(260);
-    if (await p.evaluate(() => Math.round(document.getElementById('side-rail').getBoundingClientRect().width) < 264)) add('the hidden bar does not open under the pointer', `${scheme}/${w}`);
+    const left0 = await p.evaluate(() => Math.round(document.querySelector('.main').getBoundingClientRect().left));
+    await p.mouse.move(20, 300); await p.waitForTimeout(80);
+    if (await p.evaluate((x) => Math.round(document.querySelector('.main').getBoundingClientRect().left) !== x, left0)) add('the page moves while the hidden bar opens', `${scheme}/${w}`);
+    await p.waitForTimeout(260);
+    if (await p.evaluate(() => Math.round((() => { const s = document.getElementById('side-rail'), m = /inset\(0px (-?[\d.]+)px/.exec(getComputedStyle(s).clipPath); return s.getBoundingClientRect().width - (m ? Math.max(0, +m[1]) : 0); })()) < 264)) add('the hidden bar does not open under the pointer', `${scheme}/${w}`);
+    if (await p.evaluate(() => !document.querySelector('#bar-head [data-bar-pin]'))) add('the opened strip cannot be kept open', `${scheme}/${w}`);
     await p.evaluate(() => document.querySelector('#bar-chat [data-menu^="row:chat:"]')?.click()); await p.mouse.move(w - 40, 400); await p.waitForTimeout(260);
-    if (await p.evaluate(() => !!document.querySelector('#bar-chat .menu') && document.getElementById('side-rail').getBoundingClientRect().width < 264)) add('the hidden bar closes over an open menu', `${scheme}/${w}`);
+    if (await p.evaluate(() => !!document.querySelector('#bar-chat .menu') && (() => { const s = document.getElementById('side-rail'), m = /inset\(0px (-?[\d.]+)px/.exec(getComputedStyle(s).clipPath); return s.getBoundingClientRect().width - (m ? Math.max(0, +m[1]) : 0); })() < 264)) add('the hidden bar closes over an open menu', `${scheme}/${w}`);
     await p.keyboard.press('Escape'); await p.evaluate(() => { document.getElementById('bar-show')?.click(); localStorage.removeItem('worca-rail.sidebar.collapsed'); });
     // the resize has a floor: dragged under it the bar keeps 264px; past the snap it hides
     await p.goto(`${URL_}#chat/c1`); await p.reload(); await p.waitForTimeout(150);
@@ -95,7 +99,7 @@ for (const scheme of ['light', 'dark']) for (const w of [1280, 900, 760, 375]) {
     const floor = await p.evaluate(() => Math.round(document.getElementById('side-rail').getBoundingClientRect().width));
     if (floor !== 264) add('the bar resizes under its floor', `${scheme}/${w}: ${floor}`);
     await p.mouse.move(g.x - 16, g.y); await p.mouse.down(); await p.mouse.move(120, g.y, { steps: 4 }); await p.mouse.up(); await p.mouse.move(w - 40, 400); await p.waitForTimeout(260);
-    if (await p.evaluate(() => !document.getElementById('side-rail').classList.contains('collapsed'))) add('dragging past the floor does not hide the bar', `${scheme}/${w}`);
+    if (await p.evaluate(() => !document.getElementById('side-rail').classList.contains('is-strip'))) add('dragging past the floor does not hide the bar', `${scheme}/${w}`);
     await p.evaluate(() => { localStorage.removeItem('worca-rail.sidebar.collapsed'); localStorage.removeItem('worca-rail.bar.width'); }); await p.reload(); await p.waitForTimeout(120);
     checks += 5;
   }
@@ -107,6 +111,10 @@ for (const scheme of ['light', 'dark']) for (const w of [1280, 900, 760, 375]) {
     await step('the drawer opens', () => document.getElementById('mbar-menu').click(), () => document.body.classList.contains('nav-open') && getComputedStyle(document.getElementById('side-rail')).visibility === 'visible');
     await step('the drawer closes', () => document.getElementById('nav-scrim').click(), () => !document.body.classList.contains('nav-open') && getComputedStyle(document.getElementById('side-rail')).visibility === 'hidden');
   }
+  // In view: from a row's ⋯ into the top bar; its mark opens it
+  await p.goto(`${URL_}#chat/c1`); await p.waitForTimeout(150);
+  await step('Keep in view puts a mark in the top bar', () => { document.querySelector('#bar-chat [data-menu="row:task:t1"]')?.click(); document.querySelector('#bar-chat [data-menu-pick="row:task:t1|in-view"]')?.click(); }, () => innerWidth <= 760 || !!document.querySelector('#in-view-slot [data-in-view="task:t1"]'));
+  if (w > 760) await step('a mark in view opens its task', () => document.querySelector('#in-view-slot [data-in-view="task:t1"]')?.click(), () => location.hash === '#run/question');
   // the side column: push, cover, window; closes at once
   await p.evaluate(() => document.getElementById('topnav-ask').click()); await p.waitForTimeout(250);
   const ask = await p.evaluate(() => ({ w: document.getElementById('ask-side').getBoundingClientRect().width, main: document.querySelector('.main').getBoundingClientRect().width, mainAlone: innerWidth - document.getElementById('side-rail').getBoundingClientRect().width }));

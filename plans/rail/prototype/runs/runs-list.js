@@ -65,7 +65,7 @@
     const r = x.r, g = x.g;
     const stop = plan('stop', [x]), arch = plan('archive', [x]), del = plan('delete', [x]);
     const isArchived = g ? membersOf(g).every((m) => m.archived) : r.archived;
-    const items = [{ id: 'toggle', text: 'Select', hint: hint('Space') },
+    const items = [{ id: 'toggle', text: 'Select', hint: hint('Space') }, ...(r ? [{ id: 'in-view', text: window.RailShell?.inView.has('task', `run:${r.id}`) ? 'Out of view' : 'Keep in view', help: 'Its live mark in the top bar, on every page' }] : []),
       { id: 'stop', text: 'Stop', hint: hint('S'), off: !n(stop), help: n(stop) ? 'Stops it; the branch and changes stay' : R.skipText(stop) },
       isArchived ? { id: 'archive', text: 'Restore', hint: hint('E'), help: 'Brings the record back to Runs; its branch, worktree and logs stay gone' } : { id: 'archive', text: 'Archive', hint: hint('E'), off: !n(arch), help: n(arch) ? 'Removes its local branch, worktree and logs; Undo brings back the record' : R.skipText(arch) }];
     if (has('advanced') && r && !(r.group && !r.adhoc)) items.push({ sep: true }, { id: 'add-to-group', text: 'Add to group…', hint: hint('G'), help: 'Find a group, or make a new one' });
@@ -152,6 +152,7 @@
   function act(id, rows0, { bulk } = {}) {
     const rows = rowsNow(rows0), pick = ctl.state.pick, snap = snapshot(), names = rows.length === 1 ? `“${(rows[0].r || rows[0].g).title}”` : plural(rows.length, 'run');
     const backTo = rows.length === 1 && !bulk ? `[data-open="${CSS.escape(rows[0].key)}"]` : '';
+    if (id === 'in-view' && rows[0]?.r) { const r = rows[0].r; window.RailShell.inView.toggle({ type: 'task', id: `run:${r.id}`, title: r.title, case: r.case }); ctl.paint(); return; }
     if (id === 'stop') { const p = plan('stop', rows), c = n(p); if (!c) { say(R.skipText(p)); return; } ctl.confirm({ text: `Stop ${rows.length === 1 ? names : plural(c, 'run')}? Its branch and changes stay.${p.skip.length ? ` ${R.skipText(p)}` : ''}`, yes: `Stop ${c}`, danger: true, back: backTo, run: () => { p.apply.forEach((t) => { byId(t.id).case = 'stopped'; }); p.cancel.forEach((t) => { byId(t.id).case = 'ticket-canceled'; }); ctl.clear(); say(`Stopped ${plural(c, 'run')}`); } }); return; }
     if (id === 'archive') {
       const back = view.show === 'archived' || rows.every((x) => (x.g ? membersOf(x.g).every((m) => m.archived) : x.r.archived));

@@ -33,8 +33,6 @@
 }
 /* The sidebar's foot: the Rail avatar and its rings in the corner, the rows above it. */
 .side-foot .pz-acct{--rail:20px;}
-.sidebar.collapsed .pz-acct{justify-content:center;padding:0;}
-.sidebar.collapsed .pz-acct-name,.sidebar.collapsed .pz-updown{display:none;}
 
 /* Search in the top bar: what it finds hangs under the field; on a phone it takes the field's width. */
 .tsearch-field{position:relative;}
@@ -137,7 +135,6 @@ body.view-rail-chat .main,body.view-run .main{padding:0;}
 @media (max-width: 760px){ #side-rail{position:fixed;width:280px;flex:none;} }
 #task-timeline .timeline{right:4px;}
 /* The prototype's own corner sits in the top bar's free left, clear of the composer. */
-@media (min-width: 761px){ .mk-tools{top:6px;bottom:auto;right:auto;left:calc(var(--bar-w,280px) + 12px);} }
 @media (min-width: 761px) and (max-width: 1240px){ .mk-tools .mk-stamp{display:none;} }
 #side-rail nav.nav .side-g{margin:12px 0 4px;}
 .bar-back .list-h{font:600 var(--fs-section)/var(--lh-title) var(--sans);letter-spacing:-.01em;padding:12px 9px 4px;margin:0;}
@@ -145,7 +142,7 @@ body.view-rail-chat .main,body.view-run .main{padding:0;}
 .bar-back .list-rows{margin-left:0!important;}
 .bar-back .list-h{margin-left:-6px;}
 .bar-back.rail-page{padding-left:10px;}
-@media (max-width: 760px){ .mk-tools{top:52px;bottom:auto;right:8px;} .mk-tools .mk-stamp{display:none;} }
+@media (max-width: 760px){ .mk-tools .mk-stamp{display:none;} }
 .main{position:relative;}
 .main:has(.chat-home[data-home]) .page-bg{display:none;}
 body:not(.view-rail-chat):not(.view-run):not(.view-settings) .page-bg{display:none;}
@@ -163,7 +160,6 @@ body:not(.view-rail-chat):not(.view-run):not(.view-settings) .page-bg{display:no
 /* The product's mark is the way to the places; Hide and Show the bar. */
 .bar-house svg{display:block;}
 .bar-show{display:none;}
-.has-rail .bar-show{display:inline-flex;}
 @media (max-width: 760px){ .bar-show{display:none!important;} }
 /* A Work place starts its own thing from its row. */
 .place-row{position:relative;}
@@ -171,25 +167,29 @@ body:not(.view-rail-chat):not(.view-run):not(.view-settings) .page-bg{display:no
 .place-row:is(:hover,:focus-within) > .btn{opacity:1;}
 /* One-line rows in the bar. */
 .bar-list .lr-rail{height:28px;}
-@media (min-width: 761px){ body.bar-hidden .mk-tools{left:68px;} }
 body.view-runs .main{display:flex;flex-direction:column;overflow:hidden;padding:0;}
 #route-runs:not([hidden]){flex:1 1 auto;min-height:0;display:flex;flex-direction:column;}
 #route-runs.rail-page{max-width:none;margin:0;padding:0;}
-@media (min-width: 761px){ body.bar-hidden .mk-tools .mk-stamp{display:none;} }
-/* Hidden, the bar is a strip: the W, one icon per kind of work and its count, you. Under the pointer, or while something in it
-   is open, it opens over the page, and nothing moves. */
+/* Hidden, the bar is a strip: its content keeps its full width and is clipped, so nothing reflows while it opens or
+   closes; the strip (the kinds of work and their counts) is its own layer over the left 56px, and they cross-fade. Under the
+   pointer, or while something in it is open, it opens over the page, and nothing moves. */
+#side-rail{--bar-open:0;}
+/* The hidden bar keeps its full box over the page (the page never moves); a clip shows its first 56px and opens to all of it. */
+#side-rail.is-strip{width:var(--bar-w,280px);flex:0 0 var(--bar-w,280px);margin-right:calc(56px - var(--bar-w,280px));overflow:hidden;z-index:40;clip-path:inset(0 calc(var(--bar-w,280px) - 56px) 0 0);transition:clip-path var(--motion-change) var(--ease),box-shadow var(--motion-change) var(--ease);}
+#side-rail.is-strip > :not(.bar-mini):not(.bar-grip){width:var(--bar-w,280px);min-width:var(--bar-w,280px);}
+#side-rail.is-strip:not(.is-resting):is(:hover,:focus-within,:has(.rc-pop > .menu, .pz-pick .menu, .viewer-modal, .list-pop)){clip-path:inset(0 -32px 0 0);box-shadow:var(--shadow-pop);}
 .bar-mini{display:none;}
-#side-rail.collapsed{display:flex;width:56px;flex:0 0 56px;transition:width var(--motion-quick) var(--ease),margin var(--motion-quick) var(--ease);z-index:40;}
-#side-rail.collapsed:is(:hover,:focus-within,:has(.rc-pop > .menu, .pz-pick .menu, .viewer-modal, .list-pop)){width:var(--bar-w,280px);flex-basis:var(--bar-w,280px);margin-right:calc(56px - var(--bar-w,280px));box-shadow:var(--shadow-pop);}
-#side-rail.collapsed:not(:hover):not(:focus-within):not(:has(.rc-pop > .menu, .pz-pick .menu, .viewer-modal, .list-pop)){overflow:hidden;}
-#side-rail.collapsed:not(:hover):not(:focus-within):not(:has(.rc-pop > .menu, .pz-pick .menu, .viewer-modal, .list-pop)) :is(.bar-title, .bar-head .btn, .bar-list, .bar-back, nav.nav, .rail-side-settings, .side-scroll > :not(.bar-mini), .pz-acct-name, .pz-updown, .bar-grip){display:none!important;}
-#side-rail.collapsed:not(:hover):not(:focus-within):not(:has(.rc-pop > .menu, .pz-pick .menu, .viewer-modal, .list-pop)) .bar-mini{display:flex;flex-direction:column;align-items:center;gap:10px;padding:8px 0;}
-#side-rail.collapsed:not(:hover):not(:focus-within):not(:has(.rc-pop > .menu, .pz-pick .menu, .viewer-modal, .list-pop)) .bar-head{justify-content:center;padding:0;}
-#side-rail.collapsed:not(:hover):not(:focus-within):not(:has(.rc-pop > .menu, .pz-pick .menu, .viewer-modal, .list-pop)) .pz-acct{justify-content:center;padding:0;}
-.has-rail .bar-show{display:none;}
-@media (prefers-reduced-motion: reduce){ #side-rail.collapsed{transition:none;} }
-#side-rail.collapsed:is(:hover,:focus-within,:has(.rc-pop > .menu, .pz-pick .menu, .viewer-modal, .list-pop)) :is(.pz-acct-name, .pz-updown){display:revert;}
-#side-rail.collapsed:is(:hover,:focus-within,:has(.rc-pop > .menu, .pz-pick .menu, .viewer-modal, .list-pop)) .pz-acct{justify-content:flex-start;}
+#side-rail.is-strip .bar-mini{display:block;position:absolute;left:0;top:48px;bottom:56px;width:56px;padding-top:12px;background:var(--side-bg);transition:opacity 120ms var(--ease) 120ms;}   /* closing: the strip comes back once the bar's words have gone */
+#side-rail.is-strip :is(.side-scroll, .bar-title, .bar-head .btn, .pz-acct-name, .pz-updown){transition:opacity 90ms var(--ease);}
+#side-rail.is-strip:not(.is-resting):is(:hover,:focus-within,:has(.rc-pop > .menu, .pz-pick .menu, .viewer-modal, .list-pop)) :is(.side-scroll, .bar-title, .bar-head .btn, .pz-acct-name, .pz-updown){transition:opacity 140ms var(--ease) 60ms;}   /* opening: the words follow the width */
+#side-rail.is-strip:is(.is-resting, :not(:hover):not(:focus-within):not(:has(.rc-pop > .menu, .pz-pick .menu, .viewer-modal, .list-pop))) :is(.side-scroll, .bar-title, .bar-head .btn, .pz-acct-name, .pz-updown){opacity:0;pointer-events:none;}
+#side-rail.is-strip:not(.is-resting):is(:hover,:focus-within,:has(.rc-pop > .menu, .pz-pick .menu, .viewer-modal, .list-pop)) .bar-mini{opacity:0;pointer-events:none;transition:opacity 60ms var(--ease);}
+#side-rail.is-strip .bar-grip{display:none;}
+#side-rail.is-strip .bar-head{padding-left:14px;}
+#side-rail.is-strip .pz-acct{padding-left:12px;justify-content:flex-start;}
+@media (prefers-reduced-motion: reduce){ #side-rail.is-strip, #side-rail.is-strip *{transition:none!important;} }
+body.bar-hidden .bar-show{display:none;}
+@media (prefers-reduced-motion: reduce){ #side-rail.is-strip{transition:none;} }
 /* The top bar's own buttons are icons: Ask worca is Worca's W in a bubble; Pulse's count sits on its corner. */
 #topnav-ask .topnav-ask-label,.pz-pulse-l{display:none;}
 #topnav-ask{position:relative;width:32px;padding:0;justify-content:center;}
@@ -208,3 +208,15 @@ body.view-runs .main{display:flex;flex-direction:column;overflow:hidden;padding:
 #topnav-ask .ask-ic,#topnav-ask .ask-ic svg{width:20px;height:20px;}
 .pz-pulse-b svg{width:20px;height:20px;}
 #topnav-ask,.pz-pulse-b{width:36px;height:36px;}
+/* In view: what you keep an eye on, live, in the top bar. */
+#in-view-slot{display:inline-flex;}
+.in-view{display:inline-flex;align-items:center;gap:2px;margin-right:6px;padding-right:8px;border-right:1px solid var(--line);}
+.in-view-i{display:grid;place-items:center;min-width:32px;height:32px;padding:0 4px;border:0;border-radius:var(--r-sm);background:none;color:var(--ink-2);font:500 var(--fs-caption)/1 var(--sans);cursor:pointer;}
+.in-view-i:hover{background:var(--hover);}
+.in-view-i:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+@media (max-width: 760px){ .in-view{display:none;} }
+/* The prototype's own corner: bottom right, its build in its own panel, so it never covers the composer. */
+.mk-tools > summary .mk-stamp{display:none;}
+/* A topic's fold in the bar sits on the line like a time: one line high, the count then its chevron. */
+.bar-list .lr-end:has(> [data-fold]){display:inline-flex;align-items:center;gap:2px;padding-top:2px;height:24px;}
+.bar-list .lr-end > [data-fold]{order:1;width:20px;height:20px;min-height:0;padding:0;}

@@ -19,7 +19,7 @@
 
 <!-- The prototype's own controls (not Worca): which case each Rail piece shows, what happens next, the theme. -->
 <details class="mk-tools" data-run-tools>
-  <summary>Prototype <span class="mk-stamp" id="mk-stamp"></span></summary>
+  <summary title="Prototype">Prototype <span class="mk-stamp" id="mk-stamp"></span></summary>
   <div class="mk-bar">
     <p class="mk-rev" id="mk-rev"></p>
     <label>Run <select class="select select-sm" id="case"></select></label>
@@ -40,7 +40,7 @@
 
 <script>(function () { const dark = matchMedia('(prefers-color-scheme: dark)').matches; document.querySelectorAll('[data-theme-pick]').forEach((b) => b.setAttribute('aria-pressed', String((b.dataset.themePick === 'dark') === dark))); })();</script>
 <script src="components.js"></script>
-<script>(function () { const s = window.RailStamp; if (!s) return; const when = new Date(s.at).toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }); document.getElementById('mk-stamp').textContent = `· ${s.branch} · ${when}`; const rev = document.getElementById('mk-rev'); rev.textContent = `Last update ${when} · ${s.branch} at ${s.sha}${s.dirty ? ', with uncommitted work' : ''}`; })();</script>
+<script>(function () { const s = window.RailStamp; if (!s) return; const when = new Date(s.at).toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }); document.getElementById('mk-stamp').textContent = `· ${s.branch} · ${when}`; document.querySelector('.mk-tools > summary').title = `Prototype · ${s.branch} · ${when}`; const rev = document.getElementById('mk-rev'); rev.textContent = `Last update ${when} · ${s.branch} at ${s.sha}${s.dirty ? ', with uncommitted work' : ''}`; })();</script>
 <script src="today.js"></script>
 <script src="runs/run-page-model.js"></script>
 <script src="shell/world.js"></script>

@@ -93,6 +93,18 @@ export function countBadge({ n, tone = '', corner = false }) {
 }
 
 /**
+ * InView: the things you keep in view, as their own live marks in the top bar, on every page; a click opens one, the
+ * tooltip says where it stands; past `max`, one +N opens the rest.
+ * @param {object} o
+ * @param {{label:string, icon:string, attrs?:object}[]} o.items
+ * @param {{n:number, attrs?:object}} [o.more]
+ */
+export function inView({ items, more = null }) {
+  if (!items.length) return '';
+  return `<nav class="in-view" aria-label="In view">${items.map((x) => `<button type="button" class="in-view-i"${attrs({ ...(x.attrs || {}), title: x.label, 'aria-label': x.label })}>${x.icon}</button>`).join('')}${more ? `<button type="button" class="in-view-i is-more"${attrs({ ...(more.attrs || {}), title: `${more.n} more in view`, 'aria-label': `${more.n} more in view` })}>+${esc(more.n)}</button>` : ''}</nav>`;
+}
+
+/**
  * BarStrip: the hidden bar, as a strip: one icon per kind of work, its count as a CountBadge on its corner; each opens its place.
  * @param {object} o
  * @param {{label:string, icon:string, n:number, tone?:string, attrs?:object}[]} o.items

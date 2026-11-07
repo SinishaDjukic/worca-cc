@@ -38,6 +38,7 @@ const CONTROLS = {
   TurnRow: '.tr-line',
   BarHead: '.bar-house',
   BarStrip: '.bar-strip-i',
+  InView: '.in-view-i',
   Timeline: '.tl-tick',
   'Text link': '.rc-fig-link, .rc-crumb, .rc-branch, .dc-link, .ov-art-name, .rl-back',
 };

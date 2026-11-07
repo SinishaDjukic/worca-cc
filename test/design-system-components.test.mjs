@@ -852,3 +852,9 @@ test('countBadge, barStrip, stageLine, searchResults by area', () => {
   const res = C.searchResults([{ id: 'a', text: 'Export', where: 'billing', area: 'Chats', mark: '<i></i>' }], 'None', { areas: [['Settings', ''], ['Chats', '']] });
   assert.match(res, /menu-h">Chats/); assert.doesNotMatch(res, /Settings/);
 });
+
+test('inView: live marks with their state in the tooltip; +N past them; nothing when empty', () => {
+  assert.equal(C.inView({ items: [] }), '');
+  const h = C.inView({ items: [{ label: 'Fix the login\nWorking', icon: '<i></i>', attrs: { 'data-in-view': 'task:t4' } }], more: { n: 2 } });
+  assert.match(h, /data-in-view="task:t4"/); assert.match(h, /\+2/); assert.match(h, /aria-label="In view"/);
+});

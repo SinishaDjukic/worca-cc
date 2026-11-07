@@ -32,7 +32,8 @@
     side.querySelector('.brand').innerHTML = '<div id="bar-head"></div>'; side.querySelector('.brand').append(close);
     side.querySelector('#acct-menu')?.remove();   // the Rail profile menu takes its place (pulse.js)
     side.querySelector('#side-foot').innerHTML = '';   // the avatar: pulse.js draws it
-    nav.insertAdjacentHTML('afterend', '<nav id="bar-mini" class="bar-mini" aria-label="Your work"></nav><div id="bar-chat" class="bar-list pz-app rail-page" hidden></div><div id="bar-tasks" class="bar-list pz-app rail-page" hidden><div id="runs-root"></div></div><div id="bar-schedules" class="bar-list pz-app rail-page" hidden></div>');
+    side.insertAdjacentHTML('beforeend', '<div id="bar-mini" class="bar-mini"></div>');
+    nav.insertAdjacentHTML('afterend', '<div id="bar-chat" class="bar-list pz-app rail-page" hidden></div><div id="bar-tasks" class="bar-list pz-app rail-page" hidden><div id="runs-root"></div></div><div id="bar-schedules" class="bar-list pz-app rail-page" hidden></div>');
     side.insertAdjacentHTML('beforeend', '<div class="bar-grip" role="separator" aria-orientation="vertical" aria-label="Resize the bar" aria-valuemin="264" aria-valuemax="420" tabindex="0" title="Drag to resize; past the edge it hides. Double-click for the default width"></div>');
     return side;
   }
@@ -56,6 +57,7 @@
     top.querySelector('#activity-pop')?.remove();
     const act = top.querySelector('#topnav-activity');
     if (act) act.replaceWith(el('<span id="rail-pulse-slot"></span>'));
+    top.querySelector('#topnav-ask')?.insertAdjacentHTML('beforebegin', '<span id="in-view-slot"></span>');
     top.querySelector('#topnav-new')?.remove();   // starting anything is the composer's now
     top.querySelector('#side-toggle')?.insertAdjacentHTML('afterend', R.button({ label: 'Show the bar', kind: 'quiet', iconOnly: true, icon: R.icon('bar-show', 16), cls: 'bar-show', attrs: { id: 'bar-show' } }));
     const kbd = top.querySelector('.tsearch-kbd'); if (kbd) kbd.textContent = R.keyHint(['mod', 'K'], R.isMac(window));
@@ -75,8 +77,8 @@
   let collapsed = store.get(KEY_RAIL) === '1';
   function syncRail() {
     const w = innerWidth, side = document.getElementById('side-rail'), rail = w <= 760 ? false : collapsed;
-    side.classList.toggle('collapsed', rail);
-    document.getElementById('worca').classList.toggle('has-rail', rail); document.body.classList.toggle('bar-hidden', rail);
+    side.classList.toggle('is-strip', rail);   // not the app's own `collapsed`: its 60px rail rules would fight the strip
+    document.body.classList.toggle('bar-hidden', rail);
     const t = document.getElementById('side-toggle');
     if (t) { t.setAttribute('aria-expanded', String(!rail)); const word = rail ? 'Expand menu' : 'Collapse menu'; t.title = word; t.setAttribute('aria-label', word); }
     if (w > 760) drawer(false);
@@ -135,7 +137,7 @@
     const side = document.getElementById('side-rail'), own = barOf(routed.view), which = homeOpen ? 'home' : own;
     side.dataset.bar = which;
     const act = { chat: ['New chat', 'ask'], tasks: ['New task', 'task'], schedules: ['New schedule', 'schedule'] }[which];
-    document.getElementById('bar-head').innerHTML = R.barHead({ title: BAR_TITLE[which], home: which === 'home', logo: R.icon('worca-w', 20), action: act ? R.button({ label: act[0], kind: 'quiet', iconOnly: true, icon: R.icon('plus', 15), attrs: { 'data-bar-new': act[1] } }) : '', hide: R.button({ label: 'Hide the bar', kind: 'quiet', iconOnly: true, icon: R.icon('bar-hide', 15), attrs: { 'data-bar-hide': '', title: `Hide the bar (${R.keyHint(['mod', '\\'], R.isMac(window))})` } }) });
+    document.getElementById('bar-head').innerHTML = R.barHead({ title: BAR_TITLE[which], home: which === 'home', logo: R.icon('worca-w', 20), action: act ? R.button({ label: act[0], kind: 'quiet', iconOnly: true, icon: R.icon('plus', 15), attrs: { 'data-bar-new': act[1] } }) : '', hide: collapsed && innerWidth > 760 ? R.button({ label: 'Keep the bar open', kind: 'quiet', iconOnly: true, icon: R.icon('bar-show', 15), attrs: { 'data-bar-pin': '', title: `Keep the bar open (${R.keyHint(['mod', '\\'], R.isMac(window))})` } }) : R.button({ label: 'Hide the bar', kind: 'quiet', iconOnly: true, icon: R.icon('bar-hide', 15), attrs: { 'data-bar-hide': '', title: `Hide the bar: it opens under the pointer (${R.keyHint(['mod', '\\'], R.isMac(window))})` } }) });
     for (const [id, b] of [['bar-chat', 'chat'], ['bar-tasks', 'tasks'], ['bar-schedules', 'schedules']]) document.getElementById(id).hidden = which !== b;
     // Pinned first: what you pinned in any list; then the one thing you came from.
     const pins = (window.RailChats?.data().chats || []).filter((c) => c.pinned && !c.archived).map((c) => R.listRow({ title: c.title, meta: c.project || 'No project', mark: R.kindMark({ kind: c.kind === 'workflow' ? 'workflow' : 'chat' }), open: { 'data-back-to': `chat/${c.id}`, title: `Opens ${c.title}` } }));
@@ -146,7 +148,36 @@
     if (!pinsAll && morePins > 0) pinRows.length = PINS;
     const rows = [...pinRows, ...seenRows].map((x) => R.listRow({ title: x.title, meta: x.meta, mark: x.mark, end: x.end ? `<span class="lr-fig" title="${x.tip}">${x.end}</span>` : '', endText: x.end ? '' : x.when || '', open: { 'data-back-to': x.hash, title: `Opens ${x.title}` } }));
     drawMini();
-    document.getElementById('bar-back').innerHTML = rows.length ? R.list({ groups: [{ title: 'Recent', rows, more: !pinsAll && morePins > 0 ? { n: morePins, attrs: { 'data-pins-all': '' } } : null }] }) : '';
+    const kept = drawInView().map(({ x, now }) => R.listRow({ title: x.title, mark: now.mark.replace('--km:22px', '--km:20px'), open: { 'data-in-view': `${x.type}:${x.id}`, title: now.label } }));
+    document.getElementById('bar-back').innerHTML = R.list({ groups: [...(kept.length ? [{ title: 'In view', rows: kept }] : []), ...(rows.length ? [{ title: 'Recent', rows, more: !pinsAll && morePins > 0 ? { n: morePins, attrs: { 'data-pins-all': '' } } : null }] : [])] });
+  }
+
+  // ---- In view: what you keep an eye on, from any ⋯; up to five live marks in the top bar, all of them on the W screen ----
+  const IN_VIEW_MAX = 5;
+  let inViewList = [{ type: 'task', id: 't4', chat: 'c4', title: 'Fix the flaky login' }];
+  const allTasksOf = (c) => { const out = []; const walk = (t) => { out.push(t); (t.after || []).forEach(walk); }; (c?.tasks || []).forEach(walk); return out; };
+  function inViewNow(x) {
+    const chats = window.RailChats?.data().chats || [];
+    if (x.type === 'chat') { const c = chats.find((y) => y.id === x.id); if (!c) return null; const st = R.chatState(c.state); return { label: `${c.title}\n${st.word}`, mark: R.kindMark({ kind: 'chat', tone: c.state === 'needs-you' ? 'ask' : c.state === 'idle' ? 'idle' : 'run', size: 22, title: '' }), hash: `chat/${c.id}` }; }
+    if (x.type === 'schedule') return { label: `${x.title}\nSchedule`, mark: R.kindMark({ kind: 'schedule', size: 22 }), hash: `schedule/${x.id}` };
+    const t = x.chat ? allTasksOf(chats.find((c) => c.id === x.chat)).find((y) => y.id === x.id) : null, cs = t?.case || x.case;
+    if (!cs) return null;
+    const st = R.runState(RM.stateOf(cs));
+    return { label: `${x.title}\n${st.word}${t?.detail ? ` · ${t.detail}` : ''}`, mark: R.kindMark({ kind: 'task', tone: R.markTone(st), stage: t?.stage ?? RM.stageOf(cs).stage ?? -1, size: 22 }), hash: `run/${cs}`, task: { cs, chat: x.chat || '', title: x.title } };
+  }
+  function drawInView() {
+    const live = inViewList.map((x) => ({ x, now: inViewNow(x) })).filter((y) => y.now);
+    const shown = live.slice(0, IN_VIEW_MAX);
+    const slot = document.getElementById('in-view-slot');
+    if (slot) slot.innerHTML = R.inView({ items: shown.map(({ x, now }) => ({ label: now.label, icon: now.mark, attrs: { 'data-in-view': `${x.type}:${x.id}` } })), more: live.length > IN_VIEW_MAX ? { n: live.length - IN_VIEW_MAX, attrs: { 'data-in-view-more': '' } } : null });
+    return live;
+  }
+  const isInView = (type, id) => inViewList.some((x) => x.type === type && x.id === id);
+  function toggleInView(item) {
+    const had = isInView(item.type, item.id);
+    inViewList = had ? inViewList.filter((x) => !(x.type === item.type && x.id === item.id)) : [item, ...inViewList];
+    drawInView(); drawBar();
+    window.RailPulse?.say(had ? `${item.title}: out of view` : `${item.title}: in view, in the top bar`);
   }
 
   // Hidden, the bar is a strip: the W, then one icon per kind of work with how many are open; each opens its place.
@@ -210,7 +241,7 @@
       scrollTo(0, 0);
     }
     drawBar();
-    document.body.classList.toggle('bar-hidden', document.getElementById('side-rail').classList.contains('collapsed'));
+    document.body.classList.toggle('bar-hidden', document.getElementById('side-rail').classList.contains('is-strip'));
   }
 
   // ---- a task's page: its trail goes back through its chat; its timeline is its stages ----
@@ -253,10 +284,13 @@
   document.addEventListener('click', (e) => {
     const on = (sel) => e.target.closest(sel);
     let hit;
+    if ((hit = on('[data-in-view]'))) { const [type, id] = hit.dataset.inView.split(':'), x = inViewList.find((y) => y.type === type && y.id === id), now = x && inViewNow(x); if (now?.task) window.RailShell.openTask(now.task.cs, now.task.chat, now.task.title); else if (now) window.RailShell.go(now.hash); return; }
+    if (on('[data-in-view-more]')) { homeOpen = true; if (collapsed) { collapsed = false; syncRail(); } drawBar(); return; }
     if ((hit = on('[data-mini]'))) { window.RailShell.go(hit.dataset.mini); return; }
     if (on('[data-pins-all]')) { pinsAll = true; drawBar(); return; }
     if (on('[data-bar-hide]')) { hideBar(); return; }
-    if (on('#bar-show')) { collapsed = false; store.set(KEY_RAIL, '0'); syncRail(); return; }
+    if (on('[data-bar-pin]')) { collapsed = false; store.set(KEY_RAIL, '0'); syncRail(); drawBar(); return; }
+    if (on('#bar-show')) { collapsed = false; store.set(KEY_RAIL, '0'); syncRail(); drawBar(); return; }
     if (on('[data-bar-house]')) { homeOpen = !homeOpen && barOf(routed.view) !== 'home'; drawBar(); return; }
     if ((hit = on('[data-bar-new]'))) { window.RailConversation?.start(hit.dataset.barNew); return; }
     if ((hit = on('[data-back-to]'))) { drawer(false); window.RailShell.go(hit.dataset.backTo); return; }
@@ -281,7 +315,14 @@
   document.addEventListener('click', (e) => { if (taskChat && routed.view === 'run' && e.target.closest('#card .rc-crumbs .rc-crumb')) { e.preventDefault(); e.stopPropagation(); window.RailShell.back(); } }, true);
   // The bar's grip: a drag or the arrow keys, 240 to 420px, kept; a double-click goes back to the default.
   const BAR_W = 280, BAR_MIN = 264, BAR_SNAP = 200, KEY_BAR = 'worca-rail.bar.width', clampBar = (px) => Math.min(420, Math.max(BAR_MIN, Math.round(+px) || BAR_W));
-  function hideBar() { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); collapsed = true; store.set(KEY_RAIL, '1'); syncRail(); document.activeElement?.blur(); drawMini(); }
+  function hideBar() {
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    collapsed = true; store.set(KEY_RAIL, '1'); syncRail(); document.activeElement?.blur(); drawMini(); drawBar();
+    // just hidden, it stays a strip until the pointer has left it once, so the click that hid it is seen to work
+    const side = document.getElementById('side-rail'); side.classList.add('is-resting');
+    const away = (e) => { if (side.contains(e.target)) return; side.classList.remove('is-resting'); document.removeEventListener('pointermove', away); };
+    document.addEventListener('pointermove', away);
+  }
   let barW = clampBar(store.get(KEY_BAR)), barDrag = false;
   const setBarW = (px) => { barW = clampBar(px); document.documentElement.style.setProperty('--bar-w', `${barW}px`); store.set(KEY_BAR, barW); document.querySelector('.bar-grip')?.setAttribute('aria-valuenow', barW); };
   document.addEventListener('pointerdown', (e) => { if (e.target.closest?.('.bar-grip')) { barDrag = true; e.preventDefault(); document.body.classList.add('is-resizing-bar'); } });
@@ -295,7 +336,7 @@
   document.addEventListener('pointermove', (e) => { if (drag) setAskW(innerWidth - e.clientX); });
   document.addEventListener('pointerup', () => { if (drag) { drag = false; document.getElementById('ask-side').classList.remove('is-resizing'); } });
   document.addEventListener('keydown', (e) => {
-    if ((e.metaKey || e.ctrlKey) && e.key === '\\' && innerWidth > 760) { e.preventDefault(); if (collapsed) { collapsed = false; store.set(KEY_RAIL, '0'); syncRail(); } else hideBar(); return; }
+    if ((e.metaKey || e.ctrlKey) && e.key === '\\' && innerWidth > 760) { e.preventDefault(); if (collapsed) { collapsed = false; store.set(KEY_RAIL, '0'); syncRail(); drawBar(); } else hideBar(); return; }
     if (e.target.closest?.('#ask-side .ask-side-grip') && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) { e.preventDefault(); setAskW(askW + (e.key === 'ArrowLeft' ? 20 : -20)); return; }
   });
   // The prototype's corner: what the connection does, and the screensaver.
@@ -315,7 +356,7 @@
       if (!target?.isConnected) return false;   // a list page already answered it, and drew again
       const inRun = !!target?.closest?.('#card, [data-run-tools]');
       // today's pages and the sidebar's places are the shell's own: neither the run page nor Pulse answers there
-      const inShell = !!target?.closest?.('#bar-back, #route-today, #route-runs, #route-chat, #route-schedule, #task-dock, #task-timeline, #side-rail nav.nav, #bar-head, #bar-chat, #bar-tasks, #bar-schedules, #ask-side');
+      const inShell = !!target?.closest?.('#in-view-slot, #bar-back, #route-today, #route-runs, #route-chat, #route-schedule, #task-dock, #task-timeline, #side-rail nav.nav, #bar-head, #bar-chat, #bar-tasks, #bar-schedules, #ask-side');
       return who === 'run' ? inRun : !inRun && !inShell;
     },
     runActive: () => !document.getElementById('route-run')?.hidden,
@@ -325,6 +366,7 @@
     closeSearch: () => searchFold(false),
     connReset: () => { const sel = document.getElementById('conn'); if (sel) sel.value = 'ok'; conn = 'ok'; document.getElementById('rail-conn').innerHTML = ''; },
     closeDrawer: () => drawer(false),
+    inView: { toggle: toggleInView, has: isInView, draw: () => drawInView() },
     openTask: (cs, chat, title) => { taskChat = chat || ''; if (RM && title) RM.titles[cs] = title; reopen = true; window.RailShell.go(`run/${cs}`); },
     back: () => window.RailShell.go(taskChat ? `chat/${taskChat}` : 'runs'),
     // the list pages take their own `?`, with their own actions in the sheet
@@ -344,6 +386,6 @@
   R.prefs.onChange(() => { applyPrefs(); drawMini(); if (routed.view && (TITLES[routed.view] || routed.view === 'schedule') && !!lockOf(routed.view) !== routed.locked) route(); });
   addEventListener('hashchange', route);
   // another Pulse case: the run page in view takes its title from it
-  window.RailWorld.onChange(() => { if (routed.view === 'run') { reopen = true; route(); } });
+  window.RailWorld.onChange(() => { drawInView(); if (routed.view === 'run') { reopen = true; route(); } });
   window.RailShell.start = route;
 })();

@@ -24,6 +24,7 @@ A Rail page is built by naming needs, not looks. Find the need, use its componen
 | A place in the bar's places | NavItem, under Settings-like group heads; a Work place's + starts its own thing | Chat, Tasks, Schedules |
 | The head of the one bar | BarHead: Worca's W (the way to the places), its title, its one action, Hide | Chat + |
 | The hidden bar | BarStrip: one icon per kind of work, its CountBadge; opens its place | Chats 4, Tasks 7 |
+| What you keep an eye on | InView: live marks in the top bar, their state in the tooltip, +N past five | Fix the flaky login, Working |
 | How many, on the corner of what it counts | CountBadge, `need` when any waits on you | Pulse 3 |
 | The sidebar's foot, the door to the profile menu | AccountButton, then AccountItem rows in its flyout | Interface mode, Away |
 | An action in the top bar | TopBarAction, an icon with its CountBadge; its name in the tooltip | Ask worca, Pulse |
