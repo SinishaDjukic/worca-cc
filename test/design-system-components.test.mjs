@@ -862,6 +862,12 @@ test('inView: the tab you are on carries aria-current and is-current', () => {
   assert.equal((h.match(/aria-current="page"/g) || []).length, 1); assert.match(h, /is-named is-current/);
 });
 
+test('orbMark: a canvas in its phase, its size kept; an unknown phase rests', () => {
+  assert.match(C.orbMark({ phase: 'write', size: 18 }), /<canvas class="dot-orb" data-orb="write" data-s="18"/);
+  assert.match(C.orbMark({ phase: 'dance' }), /data-orb="rest"/);
+  assert.match(C.thinkingRow({ step: 'x', secs: '1s' }), /data-orb="think"/);
+});
+
 test('thinkingRow: live says what it does and how long, politely; done folds what it did', () => {
   const live = C.thinkingRow({ step: 'Searching the code', secs: '4s' });
   assert.match(live, /class="think-w">Thinking/); assert.match(live, /think-s">Searching the code/); assert.match(live, /think-t">4s/); assert.match(live, /aria-live="polite"/);

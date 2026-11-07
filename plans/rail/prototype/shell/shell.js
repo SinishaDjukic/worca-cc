@@ -421,7 +421,7 @@
   R.dismissOnOutside(document, { open: () => !!document.querySelector('#topnav .tsearch.is-open'), inside: '.tsearch, #tsearch-open', back: () => '#tsearch-open', close: () => searchFold(false), paint: () => {} });
   build();
   setAskW(askW); setBarW(barW);
-  R.watchTooltips(document);
+  R.watchOrbs(document); R.watchTooltips(document);
   addEventListener('resize', () => { syncRail(); });
   // A change of mode or a Labs flag: the sidebar follows, and the page if that changes whether it is locked.
   R.prefs.onChange(() => { applyPrefs(); drawMini(); if (routed.view && (TITLES[routed.view] || routed.view === 'schedule') && !!lockOf(routed.view) !== routed.locked) route(); });

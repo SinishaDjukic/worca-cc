@@ -1067,6 +1067,17 @@
       ]
     },
     {
+      "name": "OrbMark",
+      "code": "ui/public/design-system/components/orb.mjs#orbMark",
+      "kind": "showing",
+      "needs": [
+        "Worca at work: its orb of dots, still at rest, moving while it thinks, calls a tool or writes"
+      ],
+      "rules": [
+        "panel.conversation-rail"
+      ]
+    },
+    {
       "name": "ThinkingRow",
       "code": "ui/public/design-system/components/kind-mark.mjs#thinkingRow",
       "kind": "showing",
@@ -1277,6 +1288,13 @@
       "code": "ui/public/design-system/components/list-page.mjs#calmMarks",
       "needs": [
         "only the deepest live thing in a tree breathes, and three per list"
+      ]
+    },
+    {
+      "name": "Bringing orbs to life",
+      "code": "ui/public/design-system/components/orb.mjs#watchOrbs",
+      "needs": [
+        "every OrbMark on a page drawn and moving in its phase, from one shared loop"
       ]
     },
     {

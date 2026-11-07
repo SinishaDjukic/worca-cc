@@ -1250,7 +1250,9 @@ th.rt-c{color:var(--ink-2);font-weight:500;}
 .composer-chips{display:flex;flex-wrap:wrap;gap:4px;}
 
 /* Background B: home in full; other pages in the margins beside the reading column. */
-.page-bg{position:absolute;inset:0;pointer-events:none;-webkit-mask-image:linear-gradient(to right,#000 0,#000 calc(50% - 470px),transparent calc(50% - 400px),transparent calc(50% + 400px),#000 calc(50% + 470px),#000 100%);mask-image:linear-gradient(to right,#000 0,#000 calc(50% - 470px),transparent calc(50% - 400px),transparent calc(50% + 400px),#000 calc(50% + 470px),#000 100%);}   /* ds-ok: a mask, not a colour */
+/* The background steps under the chat: full in the margins, then 35% and 12% under the column's edge (the composer's too),
+   gone before the text (its column is 680px). It never moves. (look.backgrounds) */
+.page-bg{position:absolute;inset:0;pointer-events:none;-webkit-mask-image:linear-gradient(to right,#000 0,#000 calc(50% - 480px),rgba(0,0,0,.35) calc(50% - 400px),rgba(0,0,0,.12) calc(50% - 370px),transparent calc(50% - 345px),transparent calc(50% + 345px),rgba(0,0,0,.12) calc(50% + 370px),rgba(0,0,0,.35) calc(50% + 400px),#000 calc(50% + 480px),#000 100%);mask-image:linear-gradient(to right,#000 0,#000 calc(50% - 480px),rgba(0,0,0,.35) calc(50% - 400px),rgba(0,0,0,.12) calc(50% - 370px),transparent calc(50% - 345px),transparent calc(50% + 345px),rgba(0,0,0,.12) calc(50% + 370px),rgba(0,0,0,.35) calc(50% + 400px),#000 calc(50% + 480px),#000 100%);}   /* ds-ok: a mask, not a colour */
 .page-bg .chat-home-bg{position:absolute;inset:0;}
 @media (max-width: 1180px){ .page-bg{display:none;} }
 .stage-stream{display:flex;flex-direction:column;gap:8px;padding-top:10px;}

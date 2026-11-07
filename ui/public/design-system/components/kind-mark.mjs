@@ -4,6 +4,7 @@
 import { attrs, esc } from './html.mjs';
 import { icon } from './icons.mjs';
 import { statusLine } from './status-line.mjs';
+import { orbMark } from './orb.mjs';
 
 const STAGES = 5;
 const R = 9, L = 2 * Math.PI * R;
@@ -137,7 +138,7 @@ export function turnRow({ mark, text, end = '', body = '', open = false, attrs: 
 }
 
 /**
- * ThinkingRow: Worca thinking, as one turn on the rail. While it thinks: the chat mark breathing, "Thinking" with a slow
+ * ThinkingRow: Worca thinking, as one turn on the rail. While it thinks: Worca's orb (OrbMark) turning, "Thinking" with a slow
  * light passing through the word, what it does now in plain words, and its seconds. Done, the same row reads "Thought for
  * 8s" and folds its steps under it, one line each; the row never moves.
  * @param {object} o
@@ -145,11 +146,12 @@ export function turnRow({ mark, text, end = '', body = '', open = false, attrs: 
  * @param {string} [o.step]      now: what it does, "Searching the code for “export”"
  * @param {string} [o.secs]      now: "4s"; done: the whole time, "8s"
  * @param {string[]} [o.steps]   done: what it did
+ * @param {'think'|'tool'|'write'} [o.phase]  now: the orb's phase; writing the answer spins it
  * @param {boolean} [o.open]
  * @param {object} [o.attrs]     done: the fold's hook (data-fold-turn)
  */
-export function thinkingRow({ done = false, step = '', secs = '', steps = [], open = false, attrs: a = {} } = {}) {
-  if (!done) return turnRow({ mark: kindMark({ kind: 'chat', tone: 'run', size: 16 }), text: `<span class="think-w">Thinking</span>${step ? `<span class="think-s">${esc(step)}</span>` : ''}`, end: `<span class="think-t">${esc(secs)}</span>`, attrs: { 'aria-live': 'polite', ...a } });
+export function thinkingRow({ done = false, step = '', secs = '', steps = [], phase = 'think', open = false, attrs: a = {} } = {}) {
+  if (!done) return turnRow({ mark: orbMark({ phase, size: 18 }), text: `<span class="think-w">Thinking</span>${step ? `<span class="think-s">${esc(step)}</span>` : ''}`, end: `<span class="think-t">${esc(secs)}</span>`, attrs: { 'aria-live': 'polite', ...a } });
   const body = steps.length ? `<span class="think-steps">${steps.map((x) => `<span>${esc(x)}</span>`).join('')}</span>` : '';
   return turnRow({ mark: icon(open ? 'chevron' : 'chevR', 14), text: `Thought for ${esc(secs)}`, body, open, attrs: a }).replace('class="tr-body"', 'class="tr-body is-steps"');
 }

@@ -49,3 +49,4 @@ export { dismissOnOutside, neverOutside, REAL_CONTROL } from './dismiss.mjs';
 export { selectionBar, selectAllBox, bindLongPress } from './selection-bar.mjs';
 export { markTone, kindMark, gitMark, timeline, timelineCard, barHead, turnRow, composer, stageBar, taskCard, stageLine, stagePart, thinkingRow } from './kind-mark.mjs';
 export { tipPlace, watchTooltips } from './tooltip.mjs';
+export { orbMark, watchOrbs } from './orb.mjs';
