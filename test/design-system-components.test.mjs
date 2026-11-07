@@ -830,6 +830,16 @@ test('Tooltip: watchTooltips draws a title; tipPlace keeps it inside the window'
   window.close();
 });
 
+test('watchMenus: a menu with no room under it opens above; menuUp says when', () => {
+  assert.equal(C.menuUp({ top: 700, bottom: 720 }, 200, 760), true, 'no room under, more above: up');
+  assert.equal(C.menuUp({ top: 100, bottom: 120 }, 200, 760), false, 'room under: down');
+  assert.equal(C.menuUp({ top: 80, bottom: 100 }, 900, 760), false, 'no room either way: down, where there is more');
+  const { window } = new JSDOM('<body><span class="rc-pop"><button>+</button></span></body>', { pretendToBeVisual: true });
+  C.watchMenus(window.document);
+  window.document.querySelector('.rc-pop').insertAdjacentHTML('beforeend', '<div class="menu" role="menu"></div>');
+  return new Promise((r) => setTimeout(r, 0)).then(() => { assert.ok(window.document.querySelector('.menu').hasAttribute('data-placed'), 'a menu that opens is placed'); window.close(); });
+});
+
 test('the Rail stylesheets close every rule: one open brace would swallow all that follows', () => {
   for (const f of ['plans/rail/prototype/design-system/rail.css', 'plans/rail/prototype/design-system/rail-look.css', 'plans/rail/prototype/shell/shell.css', 'plans/rail/prototype/pulse/pulse.css']) {
     const css = readFileSync(f, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');

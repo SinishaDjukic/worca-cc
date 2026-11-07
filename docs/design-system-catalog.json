@@ -1013,6 +1013,17 @@
       ]
     },
     {
+      "name": "MenuPlace",
+      "code": "ui/public/design-system/components/menu-place.mjs#watchMenus",
+      "kind": "telling",
+      "needs": [
+        "a menu near the window's bottom opens upward, never cut off (menuUp says when)"
+      ],
+      "rules": [
+        "small.tooltip"
+      ]
+    },
+    {
       "name": "Tooltip",
       "code": "ui/public/design-system/components/tooltip.mjs#watchTooltips",
       "kind": "telling",

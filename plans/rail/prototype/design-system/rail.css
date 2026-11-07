@@ -157,6 +157,7 @@ html,body{height:auto;overflow:visible;margin:0;}
 .rc-pop{position:relative;display:inline-flex;}
 .rc-pop > .menu{position:absolute;z-index:5;top:calc(100% + 6px);left:0;min-width:180px;}
 .rc-pop.is-right > .menu{left:auto;right:0;}
+.rc-pop > .menu.is-up{top:auto;bottom:calc(100% + 6px);}   /* no room under it: it opens above (watchMenus) */
 .menu-h{padding:6px 9px 2px;font-size:var(--fs-meta);font-weight:600;color:var(--ink-2);}
 
 /* A run segment of a group opens as that run: its title and a way into it. */
