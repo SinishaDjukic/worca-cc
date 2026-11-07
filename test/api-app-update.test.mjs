@@ -44,7 +44,7 @@ afterEach(() => {
   T.setSourceBuild(null);
   T.resetUpdateRequest();
   T.uiControl.token = null; T.uiControl.onShutdown = null;
-  for (const k of ['WORCA_UI_SUPERVISOR', 'WORCA_IDENTITY_HEADER', 'WORCA_AGENT_USER', 'WORCA_AGENT_HOME']) delete process.env[k];
+  for (const k of ['WORCA_UI_SUPERVISOR', 'WORCA_IDENTITY_HEADER', 'WORCA_AGENT_USER', 'WORCA_AGENT_HOME', 'WORCA_DESKTOP']) delete process.env[k];
 });
 
 const post = (body, headers = {}) => fetch(`${base}/api/app/update`, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body) });
@@ -105,6 +105,17 @@ test('bad / unknown / same version → 400; not supervised → 409 with reason',
     const j = await r.json();
     assert.deepEqual([r.status, j.code, j.reason], [409, 'UPDATE_UNAVAILABLE', 'not-supervised'], String(flag));
   }
+  assert.deepEqual(shutdowns, []);
+});
+
+test('WORCA_DESKTOP=1 → GET says desktop, POST 409 UPDATE_UNAVAILABLE reason desktop, nothing shut down', async () => {
+  eligibleRig();
+  process.env.WORCA_DESKTOP = '1';
+  const g = await (await fetch(`${base}/api/app/update`)).json();
+  assert.deepEqual([g.canUpdate, g.reason], [false, 'desktop']);
+  const r = await post({ version: '9.1.0' });
+  const j = await r.json();
+  assert.deepEqual([r.status, j.code, j.reason], [409, 'UPDATE_UNAVAILABLE', 'desktop']);
   assert.deepEqual(shutdowns, []);
 });
 

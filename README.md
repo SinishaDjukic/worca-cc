@@ -87,6 +87,7 @@ for it, which you review before it runs. More in [Runs](docs/runs.md).
 | `/worca` skill | `worca --install <project>`, then `/worca <task>` inside Claude Code | [CLI › skill](docs/cli.md#the-worca-skill-inside-claude-code) |
 | Chat channels | Answer questions and steer runs from Telegram, Slack, Discord or Teams | [Plugins](docs/plugins.md) |
 | Browser extension | A Worca chat beside the page you are reading | [Browser extension](docs/browser-extension.md) |
+| Desktop app | The same Worca in a window and a tray icon (Electron; macOS, Windows, Linux) | [Desktop app](docs/desktop.md) |
 
 ## Features
 

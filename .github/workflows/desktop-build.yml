@@ -1,0 +1,65 @@
+name: Desktop build
+
+# The optional Worca desktop app (Electron, docs/desktop.md), built on demand only: never on push or pull request,
+# and it publishes nothing. Each job builds natively on its own platform and arch (node-pty is native: no cross
+# builds) and uploads the installers as workflow artifacts. Builds are unsigned unless the signing secrets exist:
+# a missing secret arrives as '' and tools/build.mjs treats it as absent.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-15, platform: mac, arch: arm64 }
+          - { os: macos-15-intel, platform: mac, arch: x64 }
+          - { os: windows-2025, platform: win, arch: x64 }
+          - { os: ubuntu-24.04, platform: linux, arch: x64 }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: |
+            npm-shrinkwrap.json
+            desktop/package-lock.json
+      - run: npm ci
+      - run: npm ci --prefix desktop
+      - name: Build the desktop app (stages the server, smokes it, packages, smokes the packaged app)
+        run: node tools/build.mjs --target desktop --platform ${{ matrix.platform }} --arch ${{ matrix.arch }}
+        # Each certificate reaches its own platform only: electron-builder reads CSC_LINK on Windows too, and an
+        # Apple .p12 must never Authenticode-sign the .exe. tools/build.mjs keeps them from npm and install scripts.
+        env:
+          CSC_LINK: ${{ matrix.platform == 'mac' && secrets.MAC_CSC_LINK || '' }}
+          CSC_KEY_PASSWORD: ${{ matrix.platform == 'mac' && secrets.MAC_CSC_KEY_PASSWORD || '' }}
+          APPLE_API_KEY: ${{ matrix.platform == 'mac' && secrets.APPLE_API_KEY || '' }}
+          APPLE_API_KEY_ID: ${{ matrix.platform == 'mac' && secrets.APPLE_API_KEY_ID || '' }}
+          APPLE_API_ISSUER: ${{ matrix.platform == 'mac' && secrets.APPLE_API_ISSUER || '' }}
+          APPLE_ID: ${{ matrix.platform == 'mac' && secrets.APPLE_ID || '' }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ matrix.platform == 'mac' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
+          APPLE_TEAM_ID: ${{ matrix.platform == 'mac' && secrets.APPLE_TEAM_ID || '' }}
+          WIN_CSC_LINK: ${{ matrix.platform == 'win' && secrets.WIN_CSC_LINK || '' }}
+          WIN_CSC_KEY_PASSWORD: ${{ matrix.platform == 'win' && secrets.WIN_CSC_KEY_PASSWORD || '' }}
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: worca-desktop-${{ matrix.platform }}-${{ matrix.arch }}
+          path: |
+            desktop/dist/*.dmg
+            desktop/dist/*.zip
+            desktop/dist/*.exe
+            desktop/dist/*.AppImage
+            desktop/dist/*.deb
+          if-no-files-found: error
+          retention-days: 14

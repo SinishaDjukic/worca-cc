@@ -1,0 +1,9 @@
+{
+  "version": "24.22.2",
+  "assets": {
+    "darwin-arm64": { "file": "node-v24.22.2-darwin-arm64.tar.gz", "sha256": "aa9549349e47dffaa42dcf95d6e06ade8c4bdafc980979883b88767670df385a" },
+    "darwin-x64": { "file": "node-v24.22.2-darwin-x64.tar.gz", "sha256": "d5e336d588c45be0c37dbd52cc29895593009ca4997a77a1fd02815131ed0e52" },
+    "linux-x64": { "file": "node-v24.22.2-linux-x64.tar.gz", "sha256": "361718c444e49af2ca5a110c83ba6a8901143f23ab285ebbef0341f391f482a9" },
+    "win32-x64": { "file": "node-v24.22.2-win-x64.zip", "sha256": "ca1bff5d8ead13c9f2ea404a176db46bd430704d5b5113734049fa365e7799e2" }
+  }
+}

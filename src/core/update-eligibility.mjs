@@ -18,7 +18,24 @@ export const UPDATE_MESSAGES = Object.freeze({
   'not-writable': "npm's global folder is not writable without sudo, so Worca cannot update itself. Update from a terminal:",
   'npm-missing': 'npm was not found, so Worca cannot update itself. Update from a terminal:',
   mock: 'Updates are off in mock mode.',
+  desktop: 'This is the Worca desktop app, so it cannot update itself. Download and install a newer build of the app to update.',
 });
+
+/** Set by the desktop app (desktop/src/server-process.mjs) on the server it starts: the bundle cannot npm-update itself. */
+export const DESKTOP_ENV = 'WORCA_DESKTOP';
+export function isDesktopBuild(env = process.env) {
+  return truthy(env[DESKTOP_ENV]);
+}
+
+const CLOSED_OUTPUT = new Set(['EPIPE', 'ERR_STREAM_DESTROYED']);
+
+/** The desktop app pipes the server's stdout and stderr; a server it leaves running (the app crashed or quit during a
+ *  start) must outlive those pipes, so a write to a closed one is dropped, not an uncaught 'error'. Web: unchanged. */
+export function ignoreClosedDesktopOutput({ env = process.env, streams = [process.stdout, process.stderr] } = {}) {
+  if (!isDesktopBuild(env)) return false;
+  for (const s of streams) s.on('error', (err) => { if (!CLOSED_OUTPUT.has(err && err.code)) throw err; });
+  return true;
+}
 
 /** Shared = not a local deployment, or a trusted-header shared sign-in. WORCA_IDENTITY_NAME does not count. */
 export function isSharedInstall({ deployment, env = process.env }) {
@@ -30,6 +47,7 @@ const refuse = (reason, extra = '') => ({ canUpdate: false, reason, message: ext
 export function updateEligibility({ deployment, env = process.env, sourceBuild, supervised, npm, mock }) {
   if (isSharedInstall({ deployment, env })) return refuse('shared');
   if (sourceBuild) return refuse('source');
+  if (isDesktopBuild(env)) return refuse('desktop');
   if (!supervised) return refuse('not-supervised');
   if (truthy(env[DRY_RUN_ENV])) return { canUpdate: true, reason: null, message: '', dryRun: true };
   if (mock) return refuse('mock');

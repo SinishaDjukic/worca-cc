@@ -62,6 +62,7 @@ Start with the [project README](../README.md) for what Worca is and a quick star
 
 - [Worca in a container](docker.md) — Worca and every `claude` it spawns in a disposable Linux container
 - [Deploy on Railway](deploy-railway.md) — the container as a hosted service behind Cloudflare Access
+- [Desktop app](desktop.md) — the optional Electron build: building it, how it shares a running Worca, unsigned builds and signing
 - [Remote access](remote-access.md) — opt-in, behind Cloudflare Access, with Worca checking the token
 - [Credential broker](credential-broker.md) — model keys stay out of Worca's container behind short-lived tokens
 - [Network proxy](network-proxy.md) — Worca behind a corporate proxy that asks for a login
