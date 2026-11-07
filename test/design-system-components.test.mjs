@@ -852,6 +852,13 @@ test('calmMarks: one breath per tree, three per list', () => {
   assert.deepEqual(still, ['chat', 'c']);
 });
 
+test('askWorcaMark: the bubble and its W at rest, dots while writing, filled while open; writing wins', () => {
+  assert.match(C.askWorcaMark(), /M7.4 8.7/); assert.doesNotMatch(C.askWorcaMark(), /circle|mask/);
+  assert.match(C.askWorcaMark({ answering: true }), /<circle/);
+  assert.match(C.askWorcaMark({ open: true }), /mask="url\(#ask-worca-cut\)"/);
+  assert.match(C.askWorcaMark({ open: true, answering: true }), /<circle/);
+});
+
 test('topBarAction: with news, it shakes once (a class the look animates)', () => {
   assert.match(C.topBarAction({ label: 'Pulse', icon: '<svg></svg>', labelCls: 'x', news: true }), /class="[^"]*is-news/);
   assert.doesNotMatch(C.topBarAction({ label: 'Pulse', icon: '<svg></svg>', labelCls: 'x' }), /is-news/);

@@ -155,8 +155,9 @@
       say(`Scheduled ${comp.every} at ${comp.at}`);
     } else {
       list.push({ t: 'working', text: 'Replying', end: '' }); comp.busy = true; c.state = 'replying';
+      root.dispatchEvent(new CustomEvent('rail:replying', { bubbles: true, detail: { busy: true } }));   // Ask worca's icon writes while it does
       clearTimeout(timer);
-      timer = setTimeout(() => { const i = list.findIndex((x) => x.t === 'working'); if (i >= 0) list.splice(i, 1, { t: 'words', html: 'Here is what I found. If you want this built, pick Task in the sentence below.' }); comp.busy = false; c.state = 'idle'; window.RailChats.refresh(); paint(); }, 1400);
+      timer = setTimeout(() => { const i = list.findIndex((x) => x.t === 'working'); if (i >= 0) list.splice(i, 1, { t: 'words', html: 'Here is what I found. If you want this built, pick Task in the sentence below.' }); comp.busy = false; c.state = 'idle'; root.dispatchEvent(new CustomEvent('rail:replying', { bubbles: true, detail: { busy: false } })); window.RailChats.refresh(); paint(); }, 1400);
     }
     comp = { ...comp, text: '', startAt: '', more: false, files: [], mode: opts.mode || 'ask' };
     if (had) had.value = '';

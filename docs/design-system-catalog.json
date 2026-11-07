@@ -1078,6 +1078,17 @@
       ]
     },
     {
+      "name": "AskWorcaMark",
+      "code": "ui/public/design-system/components/shell-parts.mjs#askWorcaMark",
+      "kind": "showing",
+      "needs": [
+        "Ask worca's icon, saying whether Worca is writing or its column is open"
+      ],
+      "rules": [
+        "nav.one-bar"
+      ]
+    },
+    {
       "name": "InView",
       "code": "ui/public/design-system/components/shell-parts.mjs#inView",
       "kind": "moving",

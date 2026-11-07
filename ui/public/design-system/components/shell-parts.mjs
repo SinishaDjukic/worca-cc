@@ -111,6 +111,18 @@ export function inView({ items, more = null }) {
 }
 
 /**
+ * AskWorcaMark: Ask worca's icon in the top bar, saying what it does: the bubble with its W at rest, three dots while
+ * Worca writes, filled while its column is open (writing wins over open). A reply you have not read is its dot.
+ * @param {object} o
+ * @param {boolean} [o.answering]
+ * @param {boolean} [o.open]
+ * @param {number} [o.size]
+ */
+export function askWorcaMark({ answering = false, open = false, size = 20 } = {}) {
+  return icon(answering ? 'ask-worca-answering' : open ? 'ask-worca-open' : 'ask-worca', size);
+}
+
+/**
  * BarStrip: the hidden bar, as a strip: one icon per kind of work, its count as a CountBadge on its corner; each opens its place.
  * @param {object} o
  * @param {{label:string, icon:string, n:number, tone?:string, attrs?:object}[]} o.items

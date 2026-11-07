@@ -196,7 +196,6 @@ body.bar-hidden .bar-show{display:none;}
 #topnav-ask > svg{display:none;}
 .ask-ic{position:relative;display:inline-flex;width:18px;height:18px;}
 .ask-ic > svg{position:absolute;inset:0;}
-.ask-ic > svg + svg{inset:auto;left:4.5px;top:3px;}
 .pz-pulse-b{position:relative;width:32px;padding:0;justify-content:center;}
 /* A count on the corner of what it counts: Pulse and the strip share one badge. */
 .bar-strip{display:flex;flex-direction:column;align-items:center;gap:12px;}

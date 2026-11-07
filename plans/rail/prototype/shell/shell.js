@@ -65,7 +65,7 @@
     if (input) { input.setAttribute('data-search', ''); input.removeAttribute('role'); input.closest('.tsearch-field')?.insertAdjacentHTML('beforeend', '<div data-search-res></div>'); }
     top.querySelector('#tsearch-pop')?.remove();
     top.querySelector('#topnav-ask')?.removeAttribute('hidden');
-    top.querySelector('#topnav-ask')?.insertAdjacentHTML('afterbegin', `<span class="ask-ic" aria-hidden="true">${R.icon('ask-worca', 18)}</span>`);
+    top.querySelector('#topnav-ask')?.insertAdjacentHTML('afterbegin', `<span class="ask-ic" aria-hidden="true">${R.askWorcaMark()}</span>`);
     top.querySelector('.topnav-r')?.insertAdjacentHTML('beforeend', '<span id="rail-conn"></span>');
     return top;
   }
@@ -102,9 +102,14 @@
     side.innerHTML = R.sideColumn({ title: 'Ask worca', width: askW, close: R.icon('x', 14), body: '<div class="rail-ask-body side-col-convo" id="ask-convo"></div>', hooks: { close: { 'data-ask-close': '' } } });
     window.RailConversation?.mount(document.getElementById('ask-convo'));
   }
+  // Ask worca's icon says what it does: three dots while Worca writes in its column, filled while the column is open
+  let askBusy = false;
+  function drawAskMark() { const ic = document.querySelector('#topnav-ask .ask-ic'); if (ic) ic.innerHTML = R.askWorcaMark({ answering: askBusy, open: askOpen }); }
+  document.addEventListener('rail:replying', (e) => { if (!e.target.closest?.('#ask-side')) return; askBusy = !!e.detail?.busy; drawAskMark(); });
   function syncAsk(view) {
     const side = document.getElementById('ask-side'), btn = document.getElementById('topnav-ask');
     if (btn) { btn.hidden = false; btn.setAttribute('aria-expanded', String(askOpen)); }
+    drawAskMark();
     const show = askOpen;
     if (show && side.hidden) { if (!side.firstChild) drawAsk(side); side.classList.add('is-in'); setTimeout(() => side.classList.remove('is-in'), 300); }
     side.hidden = !show;
