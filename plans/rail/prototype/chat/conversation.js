@@ -108,8 +108,8 @@
     if (tone === 'wait') return openCard(x, t);
     // Its one action and ⋯ are its state's own, as on its page; a question is answered under the card.
     const main = tone === 'ask' || !st.action ? '' : R.button({ label: st.action.label, kind: st.action.primary ? 'primary' : '', attrs: { 'data-card-act': t.id, title: tone === 'run' || tone === 'pause' ? null : 'Opens the task, where this happens' } });
-    const more = cardMore(t, [...(st.action?.items || []).filter((w) => typeof w === 'string'), { id: 'open', text: 'Open task', help: 'Opens its page' }]);
-    return R.taskCard({ title: t.title, place: `<span class="rc-mid"><span class="rc-mid-a">${esc(t.branch || '')}</span></span><span>into dev</span>${gitOf(t)}`, mark: taskMark(t), word, detail: t.detail || '', action: main, menu: more, stages: R.stageBar({ labels: STAGES, stage: t.stage, tone }), foot: R.button({ label: 'How it ran', kind: 'quiet', icon: R.icon('chevR', 12), attrs: { 'data-open-task': t.id, title: 'Opens this task' } }), attrs: { 'data-anchor': x.id } });
+    const more = cardMore(t, [...(st.action?.items || []).filter((w) => typeof w === 'string'), { id: 'open', text: 'Open its page', help: 'The task page, while the card does not hold everything yet' }]);
+    return R.taskCard({ title: t.title, place: `<span class="rc-mid"><span class="rc-mid-a">${esc(t.branch || '')}</span></span><span>into dev</span>${gitOf(t)}`, mark: taskMark(t), word, detail: t.detail || '', action: main, menu: more, stages: R.stageBar({ labels: STAGES, stage: t.stage, tone }), foot: R.button({ label: x.open ? 'Hide how it ran' : 'How it ran', kind: 'quiet', icon: R.icon(x.open ? 'chevron' : 'chevR', 12), attrs: { 'data-open-task': t.id, 'aria-expanded': String(!!x.open), title: x.open ? 'Folds its stages' : 'Opens its stages here, as its page has them' } }), open: !!x.open, stream: `<div class="tc-run-slot" data-run-slot="${esc(t.case)}"></div>`, attrs: { 'data-anchor': x.id } });
   }
 
   // ---- the timeline: what is worth finding, where it really is ----
@@ -139,6 +139,12 @@
 
   // ---- the page ----
   function paint(keepText = true) {
+    window.RailShell?.unembedRun?.(root);   // the task page lent to an open card goes home before the chat redraws
+    paintOnly(keepText);
+    const slot = root.querySelector('[data-run-slot]');
+    if (slot) window.RailShell?.embedRun?.(slot, slot.dataset.runSlot);   // and comes back into the card that is open
+  }
+  function paintOnly(keepText = true) {
     const had = root.querySelector('[data-composer-t]'), caret = had && document.activeElement === had, y = root.querySelector('.convo-scroll')?.scrollTop;
     if (had && keepText) comp.text = had.value;
     const c = chat();
@@ -227,9 +233,10 @@
     paint();
   }
   root.addEventListener('click', (e) => {
+    if (e.target.closest('#card')) return;   // inside an open card's stages: the task page answers its own clicks
     const on = (q) => e.target.closest(q); let hit;
     if ((hit = on('[data-tick]'))) { goTo(hit.dataset.tick); return; }
-    if ((hit = on('[data-menu-pick]'))) { const [id, ...r] = hit.dataset.menuPick.split('|'); if (id === 'tick') goTo(r.join('|')); else if (id.startsWith('card:')) { menu = ''; const t = taskOf(id.slice(5)); if (t) window.RailShell.openTask(t.case, chatId, t.title); } else pickMenu(id, r.join('|')); return; }
+    if ((hit = on('[data-menu-pick]'))) { const [id, ...r] = hit.dataset.menuPick.split('|'); if (id === 'tick') goTo(r.join('|')); else if (id.startsWith('card:')) { menu = ''; const t = taskOf(id.slice(5)); if (t) window.RailShell.openTaskPage(t.case, chatId, t.title); } else pickMenu(id, r.join('|')); return; }
     if ((hit = on('[data-card-act]'))) { const t = taskOf(hit.dataset.cardAct), tone = R.markTone(stOf(t)); if (tone === 'run') { t.was = t.case; t.wasDetail = t.detail; t.case = 'paused-you'; t.detail = 'Paused by you'; say('Paused'); } else if (tone === 'pause' && t.was) { t.case = t.was; t.detail = t.wasDetail; say('Resumed'); } else { window.RailShell.openTask(t.case, chatId, t.title); return; } window.RailChats.refresh(); refreshAll(); return; }
     if ((hit = on('[data-cp-unfile]'))) { e.preventDefault(); comp.files = comp.files.filter((f) => f !== hit.dataset.cpUnfile); paint(); return; }
     if ((hit = on('[data-menu]'))) { e.preventDefault(); menu = menu === hit.dataset.menu ? '' : hit.dataset.menu; paint(); return; }
@@ -268,8 +275,8 @@
       l.splice(i, 1, { t: 'task', id: px.id, task: t.id });
       window.RailChats.refresh(); paint(); say('Task started'); return;
     }
-    if ((hit = on('[data-open-task]'))) { const t = taskOf(hit.dataset.openTask); if (t) window.RailShell.openTask(t.case, chatId, t.title); return; }
-    if ((hit = on('[data-open-sched]'))) { window.RailShell.go(`schedule/s1`); return; }
+    if ((hit = on('[data-open-task]'))) { const x = turns().find((y) => y.task === hit.dataset.openTask && (y.t === 'task' || y.t === 'schedule')); if (x) { const was = x.open; turns().forEach((y) => { y.open = false; }); x.open = !was; paint(); if (x.open) requestAnimationFrame(() => root.querySelector(`[data-anchor="${x.id}"]`)?.scrollIntoView({ block: 'start', behavior: 'smooth' })); } return; }   // How it ran opens the card in place, one at a time
+    if ((hit = on('[data-open-sched]'))) { window.RailShell.openSchedule(hit.dataset.openSched); return; }
     if ((hit = on('[data-say]'))) say(hit.dataset.say);
   });
   root.addEventListener('submit', (e) => { e.preventDefault(); });
@@ -295,6 +302,15 @@
 
   const api = {
     paint,
+    // Everything leads to its card in its chat: scroll to the card of a task (by its case or id) or a schedule, and flash it once
+    focus: ({ cs = '', id = '' }) => {
+      const x = turns().find((y) => (y.t === 'task' || y.t === 'schedule') && (y.task === id || (cs && taskOf(y.task)?.case === cs)));
+      const el = x && root.querySelector(`[data-anchor="${x.id}"]`);
+      if (!el) return false;
+      el.scrollIntoView({ block: 'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+      el.classList.remove('is-flash'); void el.offsetWidth; el.classList.add('is-flash');
+      return true;
+    },
     show: (id) => { if (id !== chatId) { opened = new Set(); hover = null; menu = ''; comp = { ...fresh(), project: id ? data().chats.find((c) => c.id === id)?.project || 'billing-api' : 'billing-api' }; } chatId = id || ''; paint(); if (id) { const box = root.querySelector('.convo-scroll'); if (box) { box.scrollTop = 0; paintTimeline(); } } },
     start: (mode, text) => { chatId = ''; comp = { ...fresh(mode), text: text || '' }; if (!side) window.RailShell.go('chat'); paint(); root.querySelector('[data-composer-t]')?.focus(); },
   };
@@ -327,6 +343,7 @@
   setInterval(() => { for (const r of document.querySelectorAll('[data-think-at]')) { const now = thinkNow({ at: +r.dataset.thinkAt }), st = r.querySelector('.think-w'), t = r.querySelector('.think-t'); if (st && st.textContent !== now.step) st.textContent = now.step; if (t && t.textContent !== now.secs) t.textContent = now.secs; const orb = r.querySelector('canvas[data-orb]'); if (orb && orb.dataset.orb !== now.phase) orb.dataset.orb = now.phase; } }, 250);
   window.RailConversation = {
     show: main.show,
+    focus: main.focus,
     start: main.start,
     mount: (el, opts) => (opts ? mount(el, false, opts) : mount(el, true)),
     refresh: refreshAll,

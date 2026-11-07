@@ -270,6 +270,7 @@
     if (view === 'runs') { window.RailRunsList?.show(); taskHome ||= window.RailConversation?.mount(pane.runs, { mode: 'task', where: '#route-runs', title: 'Start a task', note: 'Every task you start is in the list beside, with its chat.' }); taskHome?.show(''); }
     if (view === 'schedules' || view === 'schedule') window.RailSchedules?.show(view === 'schedule' ? arg : '');
     if (view === 'run') {
+      window.RailShell.unembedRun();
       const pick = document.getElementById('case');
       if (pick && arg && (pick.value !== arg || reopen)) { reopen = false; pick.value = arg; pick.dispatchEvent(new Event('change', { bubbles: true })); }
       if (taskChat) window.RailChats?.show(taskChat); else window.RailRunsList?.show();
@@ -324,7 +325,7 @@
     let hit;
     if ((hit = on('[data-in-view-drop]'))) { const [type, id] = hit.dataset.inViewDrop.split(':'), x = inViewList.find((y) => y.type === type && y.id === id); if (x) toggleInView(x); return; }
     if ((hit = on('[data-keep-view]'))) { toggleCaseInView(hit.dataset.keepView, document.querySelector('#card [data-title]')?.textContent); return; }
-    if ((hit = on('[data-in-view]'))) { inViewMenu = false; const [type, id] = hit.dataset.inView.split(':'), x = inViewList.find((y) => y.type === type && y.id === id), now = x && inViewNow(x); if (now?.task) window.RailShell.openTask(now.task.cs, now.task.chat, now.task.title); else if (now) window.RailShell.go(now.hash); return; }
+    if ((hit = on('[data-in-view]'))) { inViewMenu = false; const [type, id] = hit.dataset.inView.split(':'), x = inViewList.find((y) => y.type === type && y.id === id), now = x && inViewNow(x); if (now?.task) window.RailShell.openTask(now.task.cs, now.task.chat, now.task.title); else if (x?.type === 'schedule') window.RailShell.openSchedule(x.id); else if (now) window.RailShell.go(now.hash); return; }
     if (on('[data-in-view-more]')) { inViewMenu = !inViewMenu; drawInView(); return; }
     if ((hit = on('[data-mini]'))) { window.RailShell.go(hit.dataset.mini); return; }
     if (on('[data-pins-all]')) { pinsAll = true; drawBar(); return; }
@@ -402,17 +403,47 @@
     runActive: () => !document.getElementById('route-run')?.hidden,
     go: (hash) => { if (location.hash.slice(1) === hash) route(); else location.hash = hash; },
     // a run opened from Pulse or the search carries its own title
-    openRun: (hash, title) => { const c = hash.split('/')[1]; if (RM && title) RM.titles[c] = title; reopen = true; window.RailShell.go(hash); },
+    openRun: (hash, title) => window.RailShell.openTask(hash.split('/')[1], '', title),   // Pulse and search: its card in its chat
     closeSearch: () => searchFold(false),
     connReset: () => { const sel = document.getElementById('conn'); if (sel) sel.value = 'ok'; conn = 'ok'; document.getElementById('rail-conn').innerHTML = ''; },
     closeDrawer: () => drawer(false),
     inView: { toggle: toggleInView, has: isInView, draw: () => drawInView() },
-    openTask: (cs, chat, title) => { taskChat = chat || ''; if (RM && title) RM.titles[cs] = title; reopen = true; window.RailShell.go(`run/${cs}`); },
+    // Everything leads to its card in its chat (plans/rail/chat-cards.md): a task's link opens its chat at its card; a task with no
+    // chat gets one, named after it. The page stays as openTaskPage, only until the card holds everything it does.
+    openTask: (cs, chat, title) => {
+      if (RM && title) RM.titles[cs] = title;
+      let cid = window.RailConversation?.chatOfCase(cs) || chat || '';
+      if (!cid && window.RailChats) {
+        cid = window.RailChats.newChat(title || RM?.titles?.[cs] || 'A task', '');
+        const c = window.RailChats.data().chats.find((x) => x.id === cid), st = RM?.stageOf?.(cs) || {};
+        if (c) { c.tasks = [{ id: `t-${cs}`, title: title || RM?.titles?.[cs] || 'A task', case: cs, stage: st.stage ?? 0, detail: st.label || '' }]; c.state = 'following'; }
+        window.RailChats.refresh();
+      }
+      if (!cid) { window.RailShell.openTaskPage(cs, chat, title); return; }
+      window.RailShell.go(`chat/${cid}`);
+      requestAnimationFrame(() => requestAnimationFrame(() => window.RailConversation?.focus({ cs })));
+    },
+    // A card opened in place borrows the task page itself (#card), so every stage, part and control works as on the page.
+    embedRun: (slot, cs) => {
+      const card = document.getElementById('card'), pick = document.getElementById('case'); if (!card || !slot) return;
+      if (!runAnchor) { runAnchor = document.createComment('the task page lives here'); card.before(runAnchor); }
+      if (pick && pick.value !== cs) { const at = location.hash; pick.value = cs; pick.dispatchEvent(new Event('change', { bubbles: true })); if (location.hash !== at) history.replaceState(null, '', at); }
+      slot.append(card); card.classList.add('is-lent');
+    },
+    unembedRun: (from) => { const card = document.getElementById('card'); if (card && runAnchor && (!from || from.contains(card))) { runAnchor.after(card); card.classList.remove('is-lent'); } },
+    openTaskPage: (cs, chat, title) => { taskChat = chat || ''; if (RM && title) RM.titles[cs] = title; reopen = true; window.RailShell.go(`run/${cs}`); },
+    openSchedule: (sid) => {
+      const s = window.RailSchedules?.find?.(sid), cid = s?.chat || '';
+      if (!cid) { window.RailShell.go(`schedule/${sid}`); return; }
+      window.RailShell.go(`chat/${cid}`);
+      requestAnimationFrame(() => requestAnimationFrame(() => window.RailConversation?.focus({ id: sid })));
+    },
     back: () => window.RailShell.go(taskChat ? `chat/${taskChat}` : 'runs'),
     // the list pages take their own `?`, with their own actions in the sheet
     listKeys: () => routed.view === 'runs' || routed.view === 'chat' || routed.view === 'schedule' || routed.view === 'schedules',
   };
   const RM = window.RunCardModel;
+  let runAnchor = null;
   let routed = { view: '', locked: false };
   R.neverOutside(document, '.mk-tools');   // the prototype's own corner closes nothing
   // the drawer and the narrow search close on a click outside or Esc (docs/rail/panels.md)

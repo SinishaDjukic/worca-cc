@@ -21,7 +21,7 @@
     parts: [{ word: 'Showing', id: 'show', text: view.show, tip: 'Which schedules the list shows', items: ['all', 'paused'].map((x) => ({ id: x, text: x, checked: view.show === x })) },
       R.byPart({ by: view.by, choices: [{ id: 'day', help: 'By the next run: Today, Tomorrow, This week, Later; paused ones last' }, { id: 'state', help: `${SECTIONS.map(([, t]) => t).join(', ')}` }] })],
     sections: sections(), empty: { text: 'No schedules yet.', action: 'New schedule' } }),
-    can: () => ['menu'], bulk: () => [], act, open: (r) => window.RailShell.go(`schedule/${r._s.id}`), word: (id, v) => { view = { ...view, [id]: v }; return false; }, say,
+    can: () => ['menu'], bulk: () => [], act, open: (r) => window.RailShell.openSchedule(r._s.id), word: (id, v) => { view = { ...view, [id]: v }; return false; }, say,
     active: () => /^#schedule/.test(location.hash) && !document.querySelector('.pz-popover, .keys-modal, #app .viewer-modal, #app .nav-fly'), emptyAct: () => window.RailConversation?.start('schedule') } });
   // By date (the default): what waits on you first, then by the next run, each day folding; paused ones last, as they have none.
   function sections() {
@@ -55,5 +55,5 @@
     if ((hit = on('[data-menu]'))) { menu = menu === hit.dataset.menu ? '' : hit.dataset.menu; draw(); }
   });
   R.dismissOnOutside(document, { open: () => !!menu, inside: '#route-schedule .spick', back: () => null, close: () => { menu = ''; }, paint: draw });
-  window.RailSchedules = { show: (id) => { current = id || ''; draw(); }, summary: () => ({ n: data.schedules.filter((s) => s.state !== 'paused').length, needs: data.schedules.filter((s) => s.section === 'needs').length }) };
+  window.RailSchedules = { find: (id) => data.schedules.find((s) => s.id === id), show: (id) => { current = id || ''; draw(); }, summary: () => ({ n: data.schedules.filter((s) => s.state !== 'paused').length, needs: data.schedules.filter((s) => s.section === 'needs').length }) };
 })();

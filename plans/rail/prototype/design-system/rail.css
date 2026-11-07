@@ -1393,3 +1393,17 @@ canvas.dot-orb[data-orb]{border-radius:50%;outline:1px solid light-dark(var(--li
 .task-card.is-compact > .turn-row{padding:10px 12px;border:1px solid var(--line);border-radius:var(--r-md);}
 .tc-stream{margin-top:12px;}
 .tp-menu{margin-left:auto;}
+
+/* A card you were led to flashes once where it is (everything leads to its card in its chat). */
+@keyframes card-flash{0%,40%{box-shadow:0 0 0 2px var(--ink-3);}100%{box-shadow:0 0 0 2px transparent;}}
+.is-flash{animation:card-flash var(--motion-flash) var(--ease) 1;border-radius:var(--r-md);}
+@media (prefers-reduced-motion: reduce){ .is-flash{animation:none;} }
+
+/* A task card opened in place holds its task page's stage stream: the page's own head, trail and status are the card's already. */
+.tc-run-slot #card.is-lent :is(.rc-bar, .rc-head, .rc-figs){display:none;}
+.tc-run-slot #card.is-lent .rc{padding:0;border:0;background:none;}
+/* the card already says its state and draws its stage bar: the page keeps only its controls (Send answer, ⋯) and its stream */
+.tc-run-slot #card.is-lent .rc-card{border:0;padding:0;background:none;box-shadow:none;}
+.tc-run-slot #card.is-lent .rc-card > .rc-zone:first-child{display:flex;justify-content:flex-end;}
+.tc-run-slot #card.is-lent .rc-card > .rc-zone:first-child > :is(.rc-rail, .rc-word){display:none;}
+.tc-run-slot #card.is-lent .rc-card > .rc-zone:nth-child(2){display:none;}
