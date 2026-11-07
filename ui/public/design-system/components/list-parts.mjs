@@ -39,6 +39,9 @@ export function listSentence({ parts, open = '', chevron = '', menuCls = '' }) {
   return parts.map((p) => `<span class="list-part">${esc(p.word)} ${listWord(p, { open, chevron, menuCls })}</span>`).join(' ');
 }
 
+/** The sections of a list by day, newest first (docs/rail/lists.md). */
+export const DAY_SECTIONS = Object.freeze([['upcoming', 'Upcoming'], ['today', 'Today'], ['yesterday', 'Yesterday'], ['week', 'Previous 7 days'], ['month', 'Previous 30 days'], ['older', 'Older']]);
+
 /**
  * A group row: a feature, a chain, a person's group, a chat group. A ListRow with its count, its ⌄, and its members under
  * it while open.

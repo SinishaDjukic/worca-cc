@@ -3,6 +3,7 @@
 // happens the whole mark breathes. A question, a problem, a pause or a stop takes the centre.
 import { attrs, esc } from './html.mjs';
 import { icon } from './icons.mjs';
+import { statusLine } from './status-line.mjs';
 
 const STAGES = 5;
 const R = 9, L = 2 * Math.PI * R;
@@ -66,7 +67,7 @@ const OCT = {
 const GIT = { branch: ['branch', 'Branch only'], draft: ['draft', 'Draft'], open: ['pr', 'Open'], pass: ['pr', 'Checks pass'], fail: ['pr', 'Checks failing'], conflict: ['pr', 'Conflicts'], merged: ['merge', 'Merged'], closed: ['closed', 'Closed'] };
 
 /**
- * GitMark: git's status at a row's end, the rest in its tooltip. While Watch fixes, the icon itself pulses, twice as fast as
+ * GitMark: git's status at a row's end, the rest in its tooltip. While Watch fixes, the icon itself pulses, a little faster than
  * work on the row's mark, so the two read apart; while Watch only waits, its tooltip says so.
  * @param {object} o
  * @param {'branch'|'draft'|'open'|'pass'|'fail'|'conflict'|'merged'|'closed'} o.status
@@ -101,7 +102,7 @@ export function timeline({ ticks, view = [0, 1], label = 'Timeline' }) {
  * @param {number} [o.at]    how far down its strip, 0 to 1
  */
 export function timelineCard({ mark, title, line = '', at = 0 }) {
-  return `<div class="tl-card" role="status" style="top:${at * 100}%">${mark}<span><b>${esc(title)}</b>${line ? `<span>${esc(line)}</span>` : ''}</span></div>`;
+  return `<div class="tline-card" role="status" style="top:${at * 100}%">${mark}<span><b>${esc(title)}</b>${line ? `<span>${esc(line)}</span>` : ''}</span></div>`;
 }
 
 /**
@@ -131,7 +132,8 @@ export function turnRow({ mark, text, end = '', body = '', open = false, attrs: 
 }
 
 /**
- * Composer: the one way to start anything; with no sentence, one line: the words and its send. You pick Ask, Task or Schedule; the sentence, Customise and any note open
+ * Composer: the one way to start anything: its words, then one line with +, the sentence, voice and send; with no
+ * sentence, one line: the words and its send. You pick Ask, Task or Schedule; the sentence, Customise and any note open
  * under the words, and the button names what will happen.
  * @param {object} o
  * @param {string} o.value        the words
@@ -143,7 +145,29 @@ export function turnRow({ mark, text, end = '', body = '', open = false, attrs: 
  * @param {object} [o.attrs]
  */
 export function composer({ value = '', placeholder, sentence, detail = '', tools, send, attrs: a = {} }) {
-  return `<form class="composer${sentence ? '' : ' is-plain'}"${attrs(a)}><textarea class="composer-t" rows="1" data-composer-t${attrs({ placeholder, 'aria-label': placeholder })}>${esc(value)}</textarea>${sentence ? `<div class="composer-s">${sentence}</div>` : ''}${detail}<div class="composer-f">${tools ? `<span class="composer-tools">${tools}</span>` : ''}<span class="composer-send">${send}</span></div></form>`;
+  return `<form class="composer${sentence ? '' : ' is-plain'}"${attrs(a)}><textarea class="composer-t" rows="2" data-composer-t${attrs({ placeholder, 'aria-label': placeholder })}>${esc(value)}</textarea>${detail}<div class="composer-f">${tools ? `<span class="composer-tools">${tools}</span>` : ''}${sentence ? `<div class="composer-s">${sentence}</div>` : ''}<span class="composer-send">${send}</span></div></form>`;
+}
+
+/**
+ * TaskCard: a task or a schedule in a conversation, in the anatomy of its own page: title and place above, then the card
+ * with the status line (its one action, ⋯) and its stages; what follows opens the page. `compact`: what has not started
+ * or has no stages is the status line alone, its title for the word.
+ * @param {object} o
+ * @param {string} o.title
+ * @param {string} [o.place]    the place line (markup)
+ * @param {string} o.mark       KindMark
+ * @param {string} o.word       its state word
+ * @param {string} [o.detail]   one line under the word
+ * @param {string} [o.action]   its one action, then ⋯ (markup)
+ * @param {string} [o.stages]   StageBar
+ * @param {string} [o.foot]     under the card: the way to its page (markup)
+ * @param {boolean} [o.compact]
+ * @param {object} [o.attrs]
+ */
+export function taskCard({ title, place = '', mark, word, detail = '', action = '', stages = '', foot = '', compact = false, attrs: a = {} }) {
+  const side = action ? `<div class="rc-side">${action}</div>` : '';
+  if (compact) return `<article class="task-card rc is-compact"${attrs(a)}><section class="rc-card"${attrs({ 'aria-label': title })}>${statusLine({ dot: mark, word: title, action: side, detail })}</section></article>`;
+  return `<article class="task-card rc"${attrs(a)}><div class="rc-head"><h3 class="rc-heading tc-title"${attrs({ title })}>${esc(title)}</h3>${place ? `<div class="rc-facts">${place}</div>` : ''}</div><section class="rc-card"${attrs({ 'aria-label': `${title}: ${word}` })}>${statusLine({ dot: mark, word, action: side, detail })}${stages ? `<div class="rc-zone"><div class="rc-span">${stages}</div></div>` : ''}</section>${foot ? `<div class="tc-foot">${foot}</div>` : ''}</article>`;
 }
 
 /**

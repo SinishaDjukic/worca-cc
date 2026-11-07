@@ -63,5 +63,5 @@
     if (['replying', 'command', 'following'].includes(c.state)) out.push({ t: 'working', text: window.RailUI.chatState(c.state).line, end: '12s' });
     return out;
   };
-  window.ChatsListModel = { thread, seed, DAYS: [['today', 'Today'], ['yesterday', 'Yesterday'], ['week', 'Previous 7 days'], ['month', 'Previous 30 days'], ['older', 'Older']] };
+  window.ChatsListModel = { thread, seed, DAYS: window.RailUI.DAY_SECTIONS.filter(([d]) => d !== 'upcoming') };
 })();

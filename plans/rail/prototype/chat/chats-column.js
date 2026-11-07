@@ -21,12 +21,13 @@
   const toneOf = (state) => (state === 'needs-you' ? 'ask' : state === 'idle' ? 'idle' : 'run');
   const markOf = (state, kind) => R.kindMark({ kind: kind === 'workflow' && state === 'idle' ? 'workflow' : 'chat', tone: toneOf(state), title: state === 'idle' ? R.CHAT_KINDS[kind]?.label || 'Chat' : R.chatState(state).word });
   const RM = window.RunCardModel;
+  const taskMenu = (t) => [{ id: 'open-task', text: t.kind === 'schedule' ? 'Open schedule' : 'Open task', help: 'Opens its page' }, ...(t.git === 'open' || t.git === 'fail' ? [{ id: 'watch', text: t.watch ? 'Stop watching' : 'Watch', help: 'Worca follows the PR and fixes failing checks for you' }] : []), { id: 'label-task', text: 'Label…', hint: hint('L'), help: 'Adds a label to this task' }, ...(has('advanced') ? [{ id: 'add-to-group', text: 'Add to group…', hint: hint('G'), help: 'Find a group, or make a new one' }] : []), { sep: true }, { id: 'archive', text: 'Archive', hint: hint('E'), help: 'Undo in the notice' }];
   // What hangs under a chat: its tasks and schedules, in their order of waiting.
   const treeOf = (c, list) => list.map((t) => {
     const x = { t, c, key: `task:${t.id}` };
-    if (t.kind === 'schedule') return { key: x.key, _x: x, title: t.title, mark: R.kindMark({ kind: 'schedule', title: t.detail }), end: t.time, tip: `${t.title}\n${t.detail}\nOpens the schedule`, current: false };
+    if (t.kind === 'schedule') return { key: x.key, _x: x, title: t.title, mark: R.kindMark({ kind: 'schedule', title: t.detail }), end: t.time, tip: `${t.title}\n${t.detail}\nOpens the schedule`, current: false, menu: taskMenu(t) };
     const st = R.runState(RM.stateOf(t.case));
-    return { key: x.key, _x: x, title: t.title, mark: R.kindMark({ kind: 'task', tone: R.markTone(st), stage: t.stage, title: `${st.word} · ${t.detail || ''}` }), endMark: t.git ? R.gitMark({ status: t.git, watch: t.watch || '', title: t.watch ? `Watching · ${t.detail}` : t.branch }) : '', end: t.git ? '' : t.endWord || '', tip: `${t.title}\n${st.word} · ${t.detail || ''}\nOpens the task`, tree: t.after ? treeOf(c, t.after) : undefined };
+    return { key: x.key, _x: x, title: t.title, mark: R.kindMark({ kind: 'task', tone: R.markTone(st), stage: t.stage, title: `${st.word} · ${t.detail || ''}` }), endMark: t.git ? R.gitMark({ status: t.git, watch: t.watch || '', title: t.watch ? `Watching · ${t.detail}` : t.branch }) : '', end: t.git ? '' : t.endWord || '', tip: `${t.title}\n${st.word} · ${t.detail || ''}\nOpens the task`, tree: t.after ? treeOf(c, t.after) : undefined, menu: taskMenu(t) };
   });
 
   // ---- the view ----
@@ -121,6 +122,13 @@
   }
   function act(id, rows0, { bulk, viaKey } = {}) {
     const rows = rows0.map((r) => r._x), x = rows[0], snap = snapshot(), pick = ctl.state.pick;
+    if (x?.t && !bulk && id !== 'add-to-group') {
+      const t = x.t;
+      if (id === 'open-task') { if (t.kind === 'schedule') window.RailShell.go('schedule/s1'); else window.RailShell.openTask(t.case, x.c.id, t.title); return; }
+      if (id === 'watch') { t.watch = t.watch ? '' : 'idle'; ctl.paint(); say(t.watch ? 'Watching: Worca fixes failing checks' : 'Stopped watching', undoTo(snap, pick, 'As it was')); return; }
+      if (id === 'label-task') { x.c.labels = [...new Set([...(x.c.labels || []), 'hotfix'])]; ctl.paint(); say(`Labelled ${t.title}: hotfix`, undoTo(snap, pick, 'As it was')); return; }
+      if (id === 'archive') { const drop = (l) => l.filter((y) => y !== t).map((y) => (y.after ? { ...y, after: drop(y.after) } : y)); x.c.tasks = drop(x.c.tasks); ctl.paint(); say(`Archived ${t.title}`, undoTo(snap, pick, 'Puts it back')); window.RailConversation?.refresh(); return; }
+    }
     const back = !bulk && x ? `[data-open="${CSS.escape(x.key)}"]` : '';
     if (id === 'rename') {
       const name = x.g ? x.g.name : x.c.title;
@@ -206,7 +214,7 @@
     toggle,
     newChat,
     data: () => data,
-    refresh: () => ctl.paint(),
+    refresh: () => { ctl.paint(); },
   };
   ctl.paint();
 })();

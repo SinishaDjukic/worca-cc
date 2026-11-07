@@ -1096,8 +1096,8 @@ th.rt-c{color:var(--ink-2);font-weight:500;}
 .git-mark{position:relative;display:inline-flex;align-items:center;justify-content:center;flex:none;color:var(--ink-2);}
 .git-mark .is-branch,.git-mark .is-draft,.git-mark .is-closed{color:var(--ink-3);}
 .git-mark .is-pass{color:var(--green);}.git-mark .is-fail{color:var(--red);}.git-mark .is-conflict{color:var(--amber);}.git-mark .is-merged{color:var(--violet);}
-.git-mark.is-watch.is-fix{animation:wr-pulse .8s ease-in-out infinite;}
-.git-mark.is-watch.is-fix{animation:wr-pulse .8s ease-in-out infinite;}
+.git-mark.is-watch.is-fix{animation:wr-pulse 1.1s ease-in-out infinite;}
+.git-mark.is-watch.is-fix{animation:wr-pulse 1.1s ease-in-out infinite;}
 @media (prefers-reduced-motion: reduce){.git-mark.is-watch.is-fix{animation:none;}}
 
 /* The rounded dependency tree: what hangs under a row in a list. */
@@ -1159,14 +1159,16 @@ th.rt-c{color:var(--ink-2);font-weight:500;}
 
 /* Composer: the one way to start anything. */
 .composer{display:flex;flex-direction:column;gap:8px;padding:10px 12px;border:1px solid var(--line-2);border-radius:var(--r-lg);background:var(--bg);}
-.composer-t,.composer-t:focus,.composer-t:focus-visible{width:100%;min-height:22px;max-height:160px;padding:0;border:0;outline:0;box-shadow:none;resize:none;background:none;color:var(--ink);font:var(--fs-body)/1.5 var(--sans);}
+.composer-t,.composer-t:focus,.composer-t:focus-visible{width:100%;min-height:44px;max-height:200px;padding:0;border:0;outline:0;box-shadow:none;resize:none;background:none;color:var(--ink);font:var(--fs-body)/1.5 var(--sans);}
 .composer.is-plain{flex-direction:row;align-items:flex-end;gap:10px;}
-.composer.is-plain .composer-t{flex:1;align-self:center;}
+.composer.is-plain .composer-t{flex:1;align-self:center;min-height:22px;}
 .composer.is-plain .composer-f{flex:none;}
 .composer-t::placeholder{color:var(--ink-3);}
 .composer:focus-within{border-color:var(--ink-3);}
 .composer-s{display:flex;flex-wrap:wrap;align-items:center;gap:4px 5px;font-size:var(--fs-meta);color:var(--ink-2);}
-.composer-f{display:flex;align-items:center;justify-content:space-between;gap:10px;}
+.composer-f{display:flex;align-items:center;gap:8px;}
+.composer-f > .composer-s{flex:1 1 auto;min-width:0;}
+.composer-f > .composer-send{margin-left:auto;}
 .composer-tools,.composer-send{display:inline-flex;align-items:center;gap:6px;}
 .composer-more{padding-top:8px;border-top:1px solid var(--line);font-size:var(--fs-meta);}
 .composer-more .cr{display:grid;grid-template-columns:110px minmax(0,1fr);line-height:24px;}
@@ -1190,9 +1192,9 @@ th.rt-c{color:var(--ink-2);font-weight:500;}
 .tl-tick.is-run i{background:var(--peach);}
 .tl-tick.is-ok i{background:var(--green);}
 .tl-tick.is-merged i{background:var(--violet);}
-.tl-card{position:absolute;right:30px;z-index:4;width:max-content;display:flex;gap:8px;align-items:flex-start;max-width:260px;margin-top:-18px;padding:8px 10px;border:1px solid var(--float-line);border-radius:var(--r-md);background:var(--float);box-shadow:var(--shadow-pop);font-size:var(--fs-meta);line-height:1.4;}
-.tl-card b{display:block;font-weight:600;}
-.tl-card span span{color:var(--ink-2);}
+.tline-card{position:absolute;right:30px;z-index:4;width:max-content;display:flex;gap:8px;align-items:flex-start;max-width:260px;margin-top:-18px;padding:8px 10px;border:1px solid var(--float-line);border-radius:var(--r-md);background:var(--float);box-shadow:var(--shadow-pop);font-size:var(--fs-meta);line-height:1.4;}
+.tline-card b{display:block;font-weight:600;}
+.tline-card span span{color:var(--ink-2);}
 .tl-list-btn{display:none;}
 
 /* Chat home, with its background. */
@@ -1223,3 +1225,29 @@ th.rt-c{color:var(--ink-2);font-weight:500;}
 
 /* Tooltip (tooltip.mjs). */
 .rail-tip{position:fixed;z-index:200;max-width:280px;padding:6px 8px;border:1px solid var(--float-line);border-radius:var(--r-sm);background:var(--float);box-shadow:var(--shadow-pop);font:var(--fs-meta)/1.4 var(--sans);color:var(--ink);white-space:pre-line;pointer-events:none;}
+
+/* A stepper that deepens by main stage (stepper.mjs). */
+.sc-track.is-deep{--sc-tone:var(--peach);}
+.sc-track.is-deep.is-ask,.sc-track.is-deep.is-act{--sc-tone:var(--amber);}.sc-track.is-deep.is-fail{--sc-tone:var(--red);}.sc-track.is-deep.is-ok{--sc-tone:var(--green);}.sc-track.is-deep.is-merged{--sc-tone:var(--violet);}.sc-track.is-deep.is-pause,.sc-track.is-deep.is-stop,.sc-track.is-deep.is-closed{--sc-tone:var(--ink-3);}
+.sc-track.is-deep .sc-cell.is-done{background:color-mix(in srgb, var(--sc-tone) var(--sc-mix,100%), var(--line-2));}   /* ds-ok: --sc-mix and --sc-tone are the stepper's own */
+
+/* TaskCard (kind-mark.mjs): the run page's anatomy, smaller. */
+.task-card{gap:8px;}
+.task-card .tc-title{font-size:var(--fs-section);letter-spacing:-.01em;}
+.task-card .rc-card{--pad-card:12px 14px;}
+.task-card .rc-word{font-size:var(--fs-section);}
+.task-card.is-compact .rc-word{font-size:var(--fs-body);}
+.tc-foot{margin-top:-2px;}
+.composer-chips{display:flex;flex-wrap:wrap;gap:4px;}
+
+/* Background B: home in full; other pages in the margins beside the reading column. */
+.page-bg{position:absolute;inset:0;pointer-events:none;-webkit-mask-image:linear-gradient(to right,#000 0,#000 calc(50% - 470px),transparent calc(50% - 400px),transparent calc(50% + 400px),#000 calc(50% + 470px),#000 100%);mask-image:linear-gradient(to right,#000 0,#000 calc(50% - 470px),transparent calc(50% - 400px),transparent calc(50% + 400px),#000 calc(50% + 470px),#000 100%);}   /* ds-ok: a mask, not a colour */
+.page-bg .chat-home-bg{position:absolute;inset:0;}
+@media (max-width: 1180px){ .page-bg{display:none;} }
+.stage-stream{display:flex;flex-direction:column;gap:8px;padding-top:10px;}
+.stage-line.is-next .tr-text b{font-weight:400;color:var(--ink-3);}
+.stage-line .rc-zone{margin-top:6px;}
+.stage-line > .rc-zone > *{grid-column:1 / -1;}
+
+.timeline .tline-card{flex-direction:row;align-items:flex-start;}
+.timeline .tline-card > .kind-mark,.timeline .tline-card > svg{margin-top:1px;}

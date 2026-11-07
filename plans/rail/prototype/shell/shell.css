@@ -147,3 +147,17 @@ body.view-rail-chat .main,body.view-run .main{padding:0;}
 .bar-back .list-h{margin-left:-6px;}
 .bar-back.rail-page{padding-left:10px;}
 @media (max-width: 760px){ .mk-tools{top:52px;bottom:auto;right:8px;} .mk-tools .mk-stamp{display:none;} }
+.main{position:relative;}
+.main:has(.chat-home[data-home]) .page-bg{display:none;}
+body:not(.view-rail-chat):not(.view-run):not(.view-settings) .page-bg{display:none;}
+#route-chat,#route-schedule,#route-run,#route-settings,#route-runs{position:relative;z-index:1;}
+#route-run.rc-board,#route-settings,#route-settings .pz-page{background:transparent;}
+/* A row's ⋯: its own, never its parent's too. */
+.bar-list .list-row:has(.lr-tree .list-row:is(:hover,:focus-within)) > .lr-end .rc-pop:not(:has(.menu)){display:none;}
+.side-col-convo{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;height:100%;}
+.side-col-convo .convo-scroll{padding:14px 28px 14px 14px;}.side-col-convo .convo-dock{padding:0 12px 10px;}
+.side-col-convo .chat-home{padding:14px;justify-content:flex-end;}
+#side-rail nav.nav .side-g{margin:16px 0 4px;padding:0 9px;}
+#side-rail nav.nav .side-g:first-child{margin-top:8px;}
+#side-rail nav.nav .pz-nav-i svg,#side-rail nav.nav button svg{width:14px;height:14px;}
+.bar-back .list-group + .list-group{margin-top:4px;padding-top:0;border-top:0;}

@@ -20,13 +20,13 @@
 
   // ---- the sidebar: places only (a setting or a place, docs/rail/settings.md) ----
   // The one bar: Settings' behaviour for every feature. The house opens the places; a place with a list holds its list.
-  const PLACES = [['chat', 'Chat', 'simple'], ['runs', 'Tasks', 'expert'], ['schedules', 'Schedules', 'expert'], ['workflows', 'Workflows', 'simple'], ['requirements', 'Requirements', 'simple', 'requirements'], ['marketplace', 'Marketplace', 'advanced'], ['projects', 'Projects', 'simple'], ['workspaces', 'Workspaces', 'advanced'], ['stats', 'Statistics', 'advanced'], ['team-metrics', 'Team metrics', 'expert']];
+  const PLACES = [['Work', [['chat', 'Chat', 'simple'], ['runs', 'Tasks', 'expert'], ['schedules', 'Schedules', 'expert']]], ['Build', [['workflows', 'Workflows', 'simple'], ['requirements', 'Requirements', 'simple', 'requirements'], ['marketplace', 'Marketplace', 'advanced']]], ['Manage', [['projects', 'Projects', 'simple'], ['workspaces', 'Workspaces', 'advanced']]], ['Insight', [['stats', 'Statistics', 'advanced'], ['team-metrics', 'Team metrics', 'expert']]]];
   function sidebar() {
     const side = el(T.sidebar);
     const nav = side.querySelector('nav.nav');
-    const place = ([id, label, min, flag]) => R.navItem({ label, icon: R.icon('nav-' + id, 16), attrs: { 'data-nav': id, 'data-min-level': min, 'data-flag': flag || null, 'aria-label': label } });
+    const place = ([id, label, min, flag]) => R.navItem({ label, icon: R.icon('nav-' + id, 14), attrs: { 'data-nav': id, 'data-min-level': min, 'data-flag': flag || null, 'aria-label': label } });
     nav.insertAdjacentHTML('beforebegin', '<div id="bar-back" class="bar-back pz-app rail-page"></div>');
-    nav.innerHTML = `<p class="side-g">Places</p>${PLACES.map(place).join('')}`;
+    nav.innerHTML = PLACES.map(([g, list]) => `<p class="nav-sect side-g">${g}</p>${list.map(place).join('')}`).join('');
     const close = side.querySelector('#side-close');
     side.querySelector('.brand').innerHTML = '<div id="bar-head"></div>'; side.querySelector('.brand').append(close);
     side.querySelector('#acct-menu')?.remove();   // the Rail profile menu takes its place (pulse.js)
@@ -94,15 +94,8 @@
     document.querySelector('#ask-side .ask-side-grip')?.setAttribute('aria-valuenow', askW);
   };
   function drawAsk(side) {
-    side.innerHTML = R.sideColumn({ title: 'Ask worca', width: askW, close: R.icon('x', 14), body: `<div class="rail-ask-body">${T.pages.chat.html}</div>`, hooks: { close: { 'data-ask-close': '' } } });
-    side.querySelector('section.view')?.classList.add('active');
-    side.querySelector('.chat-page')?.setAttribute('data-host', 'dock');
-    // as the app does: the composer sits in the dock, and the column's own Close replaces the capture's
-    const dock = side.querySelector('[data-chat-dock]'), composer = side.querySelector('.ask-composer');
-    if (dock && composer) dock.append(composer);
-    // the column's head already says Ask worca: the capture's empty state does not say it again
-    side.querySelectorAll('.rl-side-body h1, .rl-side-body h2, .rl-side-body h3').forEach((h) => { if (h.textContent.trim() === 'Ask worca') h.remove(); });
-    side.querySelectorAll('.ask-side-btn').forEach((b) => { if (/hide|close/i.test(b.getAttribute('aria-label') || b.title || '')) b.remove(); });
+    side.innerHTML = R.sideColumn({ title: 'Ask worca', width: askW, close: R.icon('x', 14), body: '<div class="rail-ask-body side-col-convo" id="ask-convo"></div>', hooks: { close: { 'data-ask-close': '' } } });
+    window.RailConversation?.mount(document.getElementById('ask-convo'));
   }
   function syncAsk(view) {
     const side = document.getElementById('ask-side'), btn = document.getElementById('topnav-ask');
@@ -117,7 +110,7 @@
     const app = document.getElementById('worca');
     app.innerHTML = '';
     const col = el('<div class="main-col"></div>');
-    col.append(topBar(), el('<div id="rail-strip"></div>'), el('<div id="main-row" class="main-row"><main class="main"><div id="route-today"></div><div id="route-chat" hidden></div><div id="route-schedule" hidden></div><div id="route-runs" class="pz-app rail-page" hidden></div><div id="route-run" class="rc-board" hidden><div id="card"></div><div id="task-dock" class="convo-dock"></div><div id="task-timeline"></div></div><div id="route-settings" class="pz-app rail-page" hidden></div></main><aside id="ask-side" class="ask-side" aria-label="Ask worca" hidden></aside></div>'));
+    col.append(topBar(), el('<div id="rail-strip"></div>'), el('<div id="main-row" class="main-row"><main class="main"><div class="page-bg" aria-hidden="true"><div class="chat-home-bg"></div></div><div id="route-today"></div><div id="route-chat" hidden></div><div id="route-schedule" hidden></div><div id="route-runs" class="pz-app rail-page" hidden></div><div id="route-run" class="rc-board" hidden><div id="card"></div><div id="task-dock" class="convo-dock"></div><div id="task-timeline"></div></div><div id="route-settings" class="pz-app rail-page" hidden></div></main><aside id="ask-side" class="ask-side" aria-label="Ask worca" hidden></aside></div>'));
     app.append(el('<div class="nav-scrim" id="nav-scrim" hidden></div>'), sidebar(), col);
     syncRail(); applyPrefs();
   }
@@ -133,7 +126,7 @@
 
   // ---- the bar: what it holds now; the house opens the places over it ----
   const BAR_TITLE = { home: 'Worca', chat: 'Chat', tasks: 'Tasks', schedules: 'Schedules', settings: 'Settings' };
-  let homeOpen = false, taskChat = '', lastThing = null;
+  let homeOpen = false, taskChat = '', lastThing = null, visited = [];
   const barOf = (view) => (view === 'chat' ? 'chat' : view === 'runs' ? 'tasks' : view === 'run' ? (taskChat ? 'chat' : 'tasks') : view === 'schedules' || view === 'schedule' ? 'schedules' : view === 'settings' ? 'settings' : 'home');
   function drawBar() {
     const side = document.getElementById('side-rail'), own = barOf(routed.view), which = homeOpen ? 'home' : own;
@@ -141,7 +134,13 @@
     const act = { chat: ['New chat', 'ask'], tasks: ['New task', 'task'], schedules: ['New schedule', 'schedule'] }[which];
     document.getElementById('bar-head').innerHTML = R.barHead({ title: BAR_TITLE[which], home: which === 'home', action: act ? R.button({ label: act[0], kind: 'quiet', iconOnly: true, icon: R.icon('plus', 15), attrs: { 'data-bar-new': act[1] } }) : '' });
     for (const [id, b] of [['bar-chat', 'chat'], ['bar-tasks', 'tasks'], ['bar-schedules', 'schedules']]) document.getElementById(id).hidden = which !== b;
-    document.getElementById('bar-back').innerHTML = lastThing ? R.list({ groups: [{ title: 'Back to', rows: [R.listRow({ title: lastThing.title, meta: lastThing.meta, mark: lastThing.mark, open: { 'data-back-to': lastThing.hash, title: `Opens ${lastThing.title}` } })] }] }) : '';
+    // Pinned first: what you pinned in any list; then the one thing you came from.
+    const pins = (window.RailChats?.data().chats || []).filter((c) => c.pinned && !c.archived).map((c) => R.listRow({ title: c.title, meta: c.project || 'No project', mark: R.kindMark({ kind: c.kind === 'workflow' ? 'workflow' : 'chat' }), open: { 'data-back-to': `chat/${c.id}`, title: `Opens ${c.title}` } }));
+    // One section, Recent: what you pinned (a pin at its end), then where you were, newest first, never twice.
+    const pinRows = (window.RailChats?.data().chats || []).filter((c) => c.pinned && !c.archived).map((c) => ({ hash: `chat/${c.id}`, title: c.title, meta: c.project || 'No project', mark: R.kindMark({ kind: c.kind === 'workflow' ? 'workflow' : 'chat' }), end: R.icon('pin', 13), tip: 'Pinned' }));
+    const seenRows = visited.filter((v) => !pinRows.some((p) => p.hash === v.hash)).slice(0, 3);
+    const rows = [...pinRows, ...seenRows].map((x) => R.listRow({ title: x.title, meta: x.meta, mark: x.mark, end: x.end ? `<span class="lr-fig" title="${x.tip}">${x.end}</span>` : '', endText: x.end ? '' : x.when || '', open: { 'data-back-to': x.hash, title: `Opens ${x.title}` } }));
+    document.getElementById('bar-back').innerHTML = rows.length ? R.list({ groups: [{ title: 'Recent', rows }] }) : '';
   }
 
   // ---- the router ----
@@ -182,7 +181,7 @@
     if (view === 'chat') {
       window.RailChats?.show(arg || '');
       window.RailConversation?.show(arg || '');
-      if (arg) lastThing = { hash: `chat/${arg}`, title: window.RailConversation?.chatTitle(arg) || 'Chat', meta: 'Chat', mark: R.kindMark({ kind: 'chat' }) };
+      if (arg) { lastThing = { hash: `chat/${arg}`, title: window.RailConversation?.chatTitle(arg) || 'Chat', meta: 'Chat', when: 'now', mark: R.kindMark({ kind: 'chat' }) }; visited = [lastThing, ...visited.filter((v) => v.hash !== lastThing.hash).map((v) => ({ ...v, when: v.when === 'now' ? 'earlier' : v.when }))].slice(0, 6); }
     }
     if (view === 'runs') { window.RailRunsList?.show(); pane.runs.innerHTML = `<div class="chat-home"><div class="chat-home-in">${R.emptyState({ title: 'Pick a task from the list.' })}</div></div>`; window.RailRunsList?.focus(); }
     if (view === 'schedules' || view === 'schedule') window.RailSchedules?.show(view === 'schedule' ? arg : '');
@@ -251,7 +250,7 @@
     if (on('#topnav-ask')) { askOpen = !askOpen; syncAsk(routed.view); return; }
     if (on('[data-ask-close]')) { askOpen = false; syncAsk(routed.view); document.getElementById('topnav-ask')?.focus(); return; }
     // a control on a captured page says where it goes
-    if ((hit = on('#route-today a[href], #route-today button, #ask-side a[href], #ask-side button'))) {
+    if ((hit = on('#route-today a[href], #route-today button'))) {
       e.preventDefault();
       const name = (hit.getAttribute('aria-label') || hit.textContent).trim().replace(/\s+/g, ' ').slice(0, 40);
       window.RailPulse?.say(`${name ? name + ': ' : ''}on today's page, as captured; it does not act here`);

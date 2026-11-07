@@ -402,8 +402,8 @@ function render() {
     <div class="rc-head"><div class="rc-title-row"><h1 class="rc-heading${ui.titleOpen ? ' is-open' : ''}" title="${esc(v.title)}" data-title>${esc(v.title)}</h1></div>${facts ? `<div class="rc-facts">${facts}</div>` : ''}</div>
     <section class="rc-card" aria-label="Run status">
       ${R.statusLine({ dot: statusDot(v), word: v.word, action, detail: v.detail })}
-      <div class="rc-zone"><div class="rc-span">${R.stepper({ stages: v.stages })}</div></div>
-      <div class="rc-zone is-ruled" role="tabpanel" id="stage-panel" aria-labelledby="st-${o.key}">${head}${panel}${then}</div>
+      <div class="rc-zone"><div class="rc-span">${R.stepper({ stages: v.stages, deepen: SHELL ? R.markTone(v) : '' })}</div></div>
+      ${SHELL ? stageStream(v, `${head}${panel}${then}`) : `<div class="rc-zone is-ruled" role="tabpanel" id="stage-panel" aria-labelledby="st-${o.key}">${head}${panel}${then}</div>`}
       <div class="rc-zone is-ruled">${R.figures(v.figs.map((f) => figHtml(f, v)))}</div>
     </section>
     ${R.tabs({ label: 'Run detail', controls: 'rtab-panel', cls: 'rc-tabs', items: v.tabs.map((t) => ({ id: t.id, label: t.l, count: t.n, selected: t.sel })) })}
@@ -426,6 +426,16 @@ function render() {
     const el = keep === 'menu-first' ? document.querySelector('.menu .menu-item') : document.querySelector(`[data-key="${CSS.escape(keep)}"]`) || (keep.startsWith('lst:') ? document.getElementById('tag-input') : null);   // a removed custom label has no row left
     el?.focus({ preventScroll: true });
   }
+}
+
+// In the one Worca a task reads down like a conversation: finished stages one line, the open one in full, what is to come quiet.
+function stageStream(v, open) {
+  const line = (st) => {
+    const live = st.live, done = st.cells.every((c) => /is-(done|merged)/.test(c)), next = st.cells.every((c) => /is-next/.test(c));
+    const mark = live ? R.kindMark({ kind: 'task', tone: R.markTone(v), stage: -1, size: 16 }) : svg(done ? 'check' : 'now', 14);
+    return `<div class="stage-line${st.selected ? ' is-open' : ''}${next ? ' is-next' : ''}">${R.turnRow({ mark, text: `<b>${esc(st.label)}</b>`, end: esc(st.meta || ''), attrs: { 'data-fold-turn': st.key, 'data-stage-line': st.key } })}${st.selected ? `<div class="rc-zone" role="tabpanel" id="stage-panel" aria-labelledby="st-${esc(st.key)}">${open}</div>` : ''}</div>`;
+  };
+  return `<div class="stage-stream">${v.stages.map(line).join('')}</div>`;
 }
 
 // An open menu or picker stays inside the window: shifted back from whichever edge it would cross, 16px gutter.
@@ -769,6 +779,8 @@ function addTag(text) { const t = String(text).trim(); if (!t) return; addChip(t
 
 const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 document.addEventListener('click', (e) => {
+  const sl = SHELL && e.target.closest?.('#card [data-stage-line]');
+  if (sl && !e.target.closest('.rc-zone')) { document.querySelector(`#card .sc-stage[data-stage="${CSS.escape(sl.dataset.stageLine)}"]`)?.click(); return; }
   if (SHELL && !SHELL.owns('run', e.target)) return;
   // in the one Worca the trail's first step is the Runs list itself
   if (SHELL && e.target.closest('#card [data-key="crumb:0"]')) { e.preventDefault(); SHELL.back(); return; }

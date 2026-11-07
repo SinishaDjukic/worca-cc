@@ -1021,6 +1021,17 @@
       "rules": [
         "small.tooltip"
       ]
+    },
+    {
+      "name": "TaskCard",
+      "code": "ui/public/design-system/components/kind-mark.mjs#taskCard",
+      "kind": "showing",
+      "needs": [
+        "a task or a schedule in a conversation"
+      ],
+      "rules": [
+        "panel.task-card"
+      ]
     }
   ],
   "logic": [
@@ -1140,6 +1151,13 @@
       "code": "ui/public/design-system/components/tooltip.mjs#tipPlace",
       "needs": [
         "a tooltip inside the window"
+      ]
+    },
+    {
+      "name": "The sections of a list by day",
+      "code": "ui/public/design-system/components/list-parts.mjs#DAY_SECTIONS",
+      "needs": [
+        "a list grouped by day: Today, Yesterday, Previous 7 days, Previous 30 days, Older"
       ]
     }
   ],

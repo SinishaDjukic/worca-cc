@@ -829,3 +829,15 @@ test('the Rail stylesheets close every rule: one open brace would swallow all th
     assert.equal((css.match(/\{/g) || []).length, (css.match(/\}/g) || []).length, f);
   }
 });
+
+test('taskCard: its page\'s anatomy; compact is the status line alone', () => {
+  const full = C.taskCard({ title: 'Add CSV', place: 'a into dev', mark: '<i></i>', word: 'Working', detail: 'Plan', stages: C.stageBar({ labels: ['a'], stage: 0 }) });
+  assert.match(full, /rc-heading/); assert.match(full, /rc-facts/); assert.match(full, /rc-card/); assert.match(full, /stage-bar/);
+  const small = C.taskCard({ compact: true, title: 'Add CSV', mark: '', word: 'Waiting' });
+  assert.match(small, /is-compact/); assert.doesNotMatch(small, /rc-heading/);
+});
+test('stepper: deepen colours each main stage up to where it is', () => {
+  const stages = [{ key: 'a', label: 'A', cells: ['is-done'] }, { key: 'b', label: 'B', cells: ['is-now'] }, { key: 'c', label: 'C', cells: ['is-next'] }];
+  const h = C.stepper({ stages, deepen: 'run' });
+  assert.match(h, /--sc-mix:65%/); assert.match(h, /is-deep is-run/); assert.doesNotMatch(C.stepper({ stages }), /sc-mix/);
+});

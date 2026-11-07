@@ -10,11 +10,13 @@ import { row } from './row.mjs';
  * @param {{key:string, label:string, meta?:string, selected?:boolean, aria?:string, cells:string[]}[]} o.stages
  * @param {string} [o.label]
  */
-export function stepper({ stages, label = 'Stages' }) {
+export function stepper({ stages, label = 'Stages', deepen = '' }) {
+  // `deepen`: each main stage up to the live one a shade further into the state's colour (--sc-tone on the card)
+  const reach = deepen ? stages.reduce((n, st, i) => (st.cells.some((c) => !/is-next/.test(c)) ? i : n), 0) : 0;
   const cols = `grid-template-columns:repeat(${stages.length},minmax(0,1fr))`;
-  const track = stages.map((st) => `<div class="sc-seg">${st.cells.map((c) => `<span class="sc-cell ${c}"></span>`).join('')}</div>`).join('');
+  const track = stages.map((st) => `<div class="sc-seg"${deepen ? ` style="--sc-mix:${Math.round(30 + 70 * (Math.min(stages.indexOf(st), reach) + 1) / (reach + 1))}%"` : ''}>${st.cells.map((c) => `<span class="sc-cell ${c}"></span>`).join('')}</div>`).join('');
   const tabs = stages.map((st) => `<button type="button" class="sc-stage" role="tab" id="st-${esc(st.key)}" aria-controls="stage-panel" aria-selected="${!!st.selected}" tabindex="${st.selected ? 0 : -1}" data-stage="${esc(st.key)}" data-key="stage:${esc(st.key)}" aria-label="${esc(st.aria || st.label)}" title="${esc(st.aria || st.label)}"${attrs(st.attrs || {})}><span class="l">${esc(st.label)}</span><span class="m">${esc(st.meta || '')}</span></button>`).join('');
-  return `<div class="sc-track" style="${cols}" aria-hidden="true">${track}</div><div class="sc-stages" style="${cols}" role="tablist" aria-label="${esc(label)}">${tabs}</div>`;
+  return `<div class="sc-track${deepen ? ` is-deep is-${deepen}` : ''}" style="${cols}" aria-hidden="true">${track}</div><div class="sc-stages" style="${cols}" role="tablist" aria-label="${esc(label)}">${tabs}</div>`;
 }
 
 /** A step's mark on the rail: its circle and icon, and the word a screen reader hears. */

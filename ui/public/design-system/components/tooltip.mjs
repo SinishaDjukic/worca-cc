@@ -18,13 +18,15 @@ export function watchTooltips(doc) {
   const win = doc.defaultView;
   let el = null, tip = null, timer = 0;
   const give = () => { if (el && el.dataset.tipText !== undefined) { el.setAttribute('title', el.dataset.tipText); delete el.dataset.tipText; } };
-  const hide = () => { win.clearTimeout(timer); tip?.remove(); tip = null; give(); el = null; };
+  let watch = 0;
+  const hide = () => { win.clearTimeout(timer); win.clearInterval(watch); tip?.remove(); tip = null; give(); el = null; };
   const show = () => {
     if (!el?.isConnected || !el.dataset.tipText) { hide(); return; }
     tip = doc.createElement('div'); tip.className = 'rail-tip'; tip.setAttribute('role', 'tooltip'); tip.textContent = el.dataset.tipText;
     doc.body.append(tip);
     const at = tipPlace(el.getBoundingClientRect(), tip.getBoundingClientRect(), win.innerWidth, win.innerHeight);
     tip.style.top = `${at.top}px`; tip.style.left = `${at.left}px`;
+    watch = win.setInterval(() => { if (!el?.isConnected) hide(); }, 250);   // what it belongs to was drawn away
   };
   const start = (target, wait) => {
     const next = target?.closest?.('[title]');

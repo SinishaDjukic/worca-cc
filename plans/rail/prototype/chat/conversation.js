@@ -3,20 +3,21 @@
 // runs: asking about one goes to its chat.
 (function () {
   const R = window.RailUI, M = window.ChatsListModel, RM = window.RunCardModel;
-  const root = document.getElementById('route-chat');
-  if (!root) return;
+  if (!document.getElementById('route-chat')) return;
   const esc = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const say = (t, undo) => window.RailPulse?.say(t, undo);
   const STAGES = ['Plan', 'Build', 'Review', 'PR', 'Merged'];
-  const threads = new Map();
-  const fresh = (mode = 'ask') => ({ mode, text: '', project: 'billing-api', workflow: 'Default', engine: 'Opus 5.5', from: 'origin · latest', then: 'open a PR', every: 'every day', at: '02:00', preset: '', more: false, startAt: '', busy: false });
-  let chatId = '', comp = fresh(), menu = '', hover = null, opened = new Set(), timer = 0;
+  const threads = new Map(), mounted = [];
   const data = () => window.RailChats.data();
+  const fresh = (mode = 'ask') => ({ files: [], mode, text: '', project: 'billing-api', workflow: 'Default', engine: 'Opus 5.5', from: 'origin · latest', then: 'open a PR', every: 'every day', at: '02:00', preset: '', more: false, startAt: '', busy: false });
+  function mount(root, side = false) {
+  const where = side ? '#ask-convo' : '#route-chat';
+  let chatId = '', comp = fresh(), menu = '', hover = null, opened = new Set(), timer = 0;
   const chat = () => data().chats.find((c) => c.id === chatId);
   const turns = () => { const c = chat(); if (!c) return []; if (!threads.has(c.id)) threads.set(c.id, M.thread(c)); return threads.get(c.id); };
   const allTasks = (c) => { const out = []; const walk = (x) => { out.push(x); (x.after || []).forEach(walk); }; (c?.tasks || []).forEach(walk); return out; };
   const taskOf = (id) => allTasks(chat()).find((t) => t.id === id);
-  const stOf = (t) => R.runState(RM.stateOf(t.case));
+  const stOf = (t) => R.runState(RM.stateOf(t.case), { base: 'dev', pr: '#1180', reset: '17:00' });
 
   // ---- the composer ----
   const pk = (id, text, items, tip) => R.sentencePicker({ id: `cp-${id}`, text, tip, items: items.map((x) => (typeof x === 'string' ? { id: x, text: x, checked: x === text } : { ...x, checked: x.id === text })), open: menu === `cp-${id}`, chevron: R.icon('chevron', 10) });
@@ -30,7 +31,8 @@
     const engine = pk('engine', comp.engine, ENGINES, 'Which engine and model');
     if (comp.mode === 'ask') return mode + project + engine;
     if (comp.mode === 'schedule') return mode + project + pk('every', comp.every, ['every day', 'every weekday', 'every Monday', 'once'], 'When it repeats') + W('at') + pk('at', comp.at, ['02:00', '06:00', '09:00', '17:00'], 'What time');
-    return mode + project + W('with') + pk('workflow', comp.workflow, ['Default', 'Lean', 'Shaper', 'Architecture (C4)'], 'Which workflow') + W('on') + engine + W('from') + pk('from', comp.from, ['origin · latest', 'local copy', 'the source branch'], 'Where it starts') + W('then') + pk('then', comp.then, ['open a PR', 'leave a branch', 'push to the source'], 'What happens when it is done');
+    const preset = comp.preset ? W('·') + pk('preset', comp.preset, ['No preset', 'Hotfix', 'Docs only'], 'The preset that filled it') : '';
+    return mode + project + W('with') + pk('workflow', comp.workflow, ['Default', 'Lean', 'Shaper', 'Architecture (C4)'], 'Which workflow') + W('on') + engine + W('from') + pk('from', comp.from, ['origin · latest', 'local copy', 'the source branch'], 'Where it starts') + W('then') + pk('then', comp.then, ['open a PR', 'leave a branch', 'push to the source'], 'What happens when it is done') + preset;
   }
   function detail() {
     if (comp.mode !== 'task') return '';
@@ -40,20 +42,21 @@
     const more = comp.more ? `<div class="composer-more">${cr('Title', 'Worca names it')}${cr('Labels', 'hotfix, billing')}${cr('New branch', 'feat/billing-csv-export')}${cr('Asks you', 'When the plan has open questions')}${cr('Memory', 'This project')}${cr('Guardrails', 'Team default')}${R.shows('expert') ? cr('Agents', 'As the workflow says') + cr('MCP servers', 'Project defaults') : ''}</div>` : '';
     return `<div>${R.button({ label: comp.more ? 'Hide Customise' : 'Customise', kind: 'quiet', icon: R.icon(comp.more ? 'chevron' : 'chevR', 12), attrs: { 'data-cp-more': '', 'aria-expanded': String(comp.more), title: 'Title, labels, branch, memory, guardrails and more' } })}</div>${more}${noteHtml}`;
   }
+  const chipsHtml = () => (comp.files.length ? `<span class="composer-chips">${comp.files.map((f) => R.button({ label: f, kind: 'quiet', icon: R.icon('x', 11), attrs: { 'data-cp-unfile': f, title: `Removes ${f}` } })).join('')}</span>` : '');
   function composerHtml() {
-    const plus = `<span class="rc-pop">${R.button({ label: 'Add', kind: 'quiet', iconOnly: true, icon: R.icon('plus', 15), attrs: { 'data-menu': 'cp-plus', 'aria-haspopup': 'menu', 'aria-expanded': String(menu === 'cp-plus') } })}${menu === 'cp-plus' ? R.compactMenu({ items: [{ id: 'cp-plus|Files', text: 'Files', help: 'Adds files for it to read' }, { id: 'cp-plus|md', text: 'Markdown or a .md file', help: 'Writes the task as Markdown' }, { id: 'cp-plus|Ticket', text: 'A ticket from a tracker', help: 'Starts from a ticket' }, { id: 'cp-plus|Reuse', text: 'Reuse last task', help: 'Fills in the words of your last task' }, { id: 'cp-plus|Shape', text: 'Shape it first', help: 'Worca asks and writes the requirements before it builds' }] }) : ''}</span>`;
-    const preset = comp.mode === 'task' ? pk('preset', comp.preset || 'No preset', ['No preset', 'Hotfix', 'Docs only'], 'A preset fills the sentence') : '';
+    const plus = `<span class="rc-pop">${R.button({ label: 'Add', kind: 'quiet', iconOnly: true, icon: R.icon('plus', 15), attrs: { 'data-menu': 'cp-plus', 'aria-haspopup': 'menu', 'aria-expanded': String(menu === 'cp-plus') } })}${menu === 'cp-plus' ? R.compactMenu({ items: [{ id: 'cp-plus|Files', text: 'Files', help: 'Adds files for it to read' }, { id: 'cp-plus|md', text: 'Markdown or a .md file', help: 'Writes the task as Markdown' }, { id: 'cp-plus|Ticket', text: 'A ticket from a tracker', help: 'Starts from a ticket' }, { id: 'cp-plus|Reuse', text: 'Reuse last task', help: 'Fills in the words of your last task' }, { id: 'cp-plus|Shape', text: 'Shape it first', help: 'Worca asks and writes the requirements before it builds' }, { sep: true }, { header: 'Preset' }, ...['Hotfix', 'Docs only'].map((x) => ({ id: `cp-preset|${x}`, text: x, checked: comp.preset === x, help: 'Fills the sentence; Start says it is used' }))] }) : ''}</span>`;
     const words = comp.mode === 'schedule' ? 'Schedule' : comp.startAt ? `Start at ${comp.startAt}` : 'Start task';
     const send = comp.busy ? R.button({ label: 'Stop', kind: 'primary', iconOnly: true, icon: R.icon('stop', 14), attrs: { 'data-cp-stop': '', title: 'Stops the reply' } })
       : comp.mode === 'ask' ? R.button({ label: 'Send', kind: 'primary', iconOnly: true, icon: R.icon('up', 14), attrs: { 'data-cp-send': '', title: 'Sends it to Worca' } })
         : R.button({ label: words, kind: 'primary', attrs: { 'data-cp-send': '', title: comp.mode === 'schedule' ? 'Saves the schedule' : 'Starts the task now' } });
-    return R.composer({ value: comp.text, placeholder: comp.mode === 'schedule' ? 'What should run each time?' : comp.mode === 'task' ? 'What should the task do?' : 'Ask Worca…', sentence: sentence(), detail: detail(), tools: plus + preset, send: R.button({ label: 'Speak', kind: 'quiet', iconOnly: true, icon: R.icon('mic', 15), attrs: { 'data-cp-mic': '', title: 'Speak instead of typing' } }) + send, attrs: { 'data-composer': '' } });
+    return R.composer({ value: comp.text, placeholder: comp.mode === 'schedule' ? 'What should run each time?' : comp.mode === 'task' ? 'What should the task do?' : 'Ask Worca…', sentence: chipsHtml() + sentence(), detail: detail(), tools: plus, send: R.button({ label: 'Speak', kind: 'quiet', iconOnly: true, icon: R.icon('mic', 15), attrs: { 'data-cp-mic': '', title: 'Speak instead of typing' } }) + send, attrs: { 'data-composer': '' } });
   }
 
   // ---- a turn ----
   const taskMark = (t, size) => (t.kind === 'schedule' ? R.kindMark({ kind: 'schedule', size, title: t.detail }) : R.kindMark({ kind: 'task', tone: R.markTone(stOf(t)), stage: t.stage, size, title: `${stOf(t).word} · ${t.detail || ''}` }));
   const gitOf = (t) => (t.git ? R.gitMark({ status: t.git, watch: t.watch || '', title: t.watch ? `Watching · ${t.detail}` : `${t.branch || ''}` }) : '');
-  const openCard = (x, t) => `<div class="convo-card is-compact" data-anchor="${x.id}"><div class="convo-card-line">${taskMark(t)}<span class="convo-card-w">${esc(t.title)}<span>${esc(t.detail)}</span></span>${R.button({ label: 'Open', kind: 'quiet', attrs: t.kind === 'schedule' ? { 'data-open-sched': t.id } : { 'data-open-task': t.id } })}</div></div>`;
+  const cardMore = (t, items) => R.moreMenu({ id: `card:${t.id}`, label: `More for ${t.title}`, icon: R.icon('more', 16), open: menu === `card:${t.id}`, items });
+  const openCard = (x, t) => R.taskCard({ compact: true, title: t.title, mark: taskMark(t), word: t.title, detail: t.detail, action: R.button({ label: 'Open', kind: 'quiet', attrs: t.kind === 'schedule' ? { 'data-open-sched': t.id } : { 'data-open-task': t.id } }), attrs: { 'data-anchor': x.id } });
   function turnHtml(x, i) {
     const fold = () => ({ 'data-fold-turn': String(i), ...(x.id ? { 'data-anchor': x.id } : {}) });
     if (x.t === 'you') return `<div class="convo-you" data-anchor="${x.id || ''}">${esc(x.text)}</div>`;
@@ -72,7 +75,10 @@
     }
     const st = stOf(t), tone = R.markTone(st), word = tone === 'ask' ? 'Asks you below' : st.word;
     if (tone === 'wait') return openCard(x, t);
-    return `<div class="convo-card" data-anchor="${x.id}"><p class="convo-card-t">${esc(t.title)}</p><p class="convo-card-p">${esc(t.branch || '')} into dev &nbsp;${gitOf(t)}</p><div class="convo-card-line">${taskMark(t)}<span class="convo-card-w">${esc(word)}<span>${esc(t.detail || '')}</span></span>${tone === 'run' ? R.button({ label: 'Pause', kind: 'quiet', attrs: { 'data-task-pause': t.id } }) : ''}</div>${R.stageBar({ labels: STAGES, stage: t.stage, tone })}${R.button({ label: 'How it ran', kind: 'quiet', attrs: { 'data-open-task': t.id, title: 'Opens this task' } })}</div>`;
+    // Its one action and ⋯ are its state's own, as on its page; a question is answered under the card.
+    const main = tone === 'ask' || !st.action ? '' : R.button({ label: st.action.label, kind: st.action.primary ? 'primary' : '', attrs: { 'data-card-act': t.id, title: tone === 'run' || tone === 'pause' ? null : 'Opens the task, where this happens' } });
+    const more = cardMore(t, [...(st.action?.items || []).filter((w) => typeof w === 'string'), { id: 'open', text: 'Open task', help: 'Opens its page' }]);
+    return R.taskCard({ title: t.title, place: `<span class="rc-mid"><span class="rc-mid-a">${esc(t.branch || '')}</span></span><span>into dev</span>${gitOf(t)}`, mark: taskMark(t), word, detail: t.detail || '', action: main + more, stages: R.stageBar({ labels: STAGES, stage: t.stage, tone }), foot: R.button({ label: 'How it ran', kind: 'quiet', icon: R.icon('chevR', 12), attrs: { 'data-open-task': t.id, title: 'Opens this task' } }), attrs: { 'data-anchor': x.id } });
   }
 
   // ---- the timeline: what is worth finding, where it really is ----
@@ -106,10 +112,10 @@
     if (had && keepText) comp.text = had.value;
     const c = chat();
     if (!chatId || !c) {
-      root.innerHTML = `<div class="chat-home" data-home><div class="chat-home-bg"></div><div class="chat-home-in"><h1>What's next for Worca?</h1>${composerHtml()}</div></div>`;
+      root.innerHTML = side ? `<div class="chat-home"><div class="chat-home-in">${composerHtml()}</div></div>` : `<div class="chat-home" data-home><div class="chat-home-bg"></div><div class="chat-home-in"><h1>What's next for Worca?</h1>${composerHtml()}</div></div>`;
     } else {
       const labels = (c.labels || []).map((l) => R.chip({ text: l })).join('');
-      root.innerHTML = `<div class="convo"><div class="convo-scroll"><div class="convo-col"><div class="convo-head">${esc(c.project || 'No project')}${labels ? ` · ${labels}` : ''}${R.button({ label: 'Label', kind: 'quiet', icon: R.icon('plus', 11), attrs: { 'data-say': 'Adds a label to this chat' } })}<span class="tl-list-btn rc-pop" data-anchor-menu>${R.button({ label: 'Move through this chat', kind: 'quiet', iconOnly: true, icon: R.icon('list', 15), attrs: { 'data-anchor-open': '', 'aria-haspopup': 'menu', 'aria-expanded': String(menu === 'anchors') } })}</span></div>${turns().map(turnHtml).join('')}</div></div><div data-timeline></div><div class="convo-dock">${composerHtml()}</div></div>`;
+      root.innerHTML = `<div class="convo"><div class="convo-scroll"><div class="convo-col"><div class="convo-head">${esc(c.project || 'No project')}${labels ? ` · ${labels}` : ''}${R.sentencePicker({ id: 'cl-label', text: '+ Label', tip: 'Adds or removes a label', items: ['hotfix', 'billing', 'infra', 'release'].map((l) => ({ id: l, text: l, checked: (c.labels || []).includes(l) })), open: menu === 'cl-label', chevron: '' })}<span class="tl-list-btn rc-pop" data-anchor-menu>${R.button({ label: 'Move through this chat', kind: 'quiet', iconOnly: true, icon: R.icon('list', 15), attrs: { 'data-anchor-open': '', 'aria-haspopup': 'menu', 'aria-expanded': String(menu === 'anchors') } })}</span></div>${turns().map(turnHtml).join('')}</div></div><div data-timeline></div><div class="convo-dock">${composerHtml()}</div></div>`;
       const box = root.querySelector('.convo-scroll');
       if (y != null) box.scrollTop = y;
       if (menu === 'anchors') root.querySelector('[data-anchor-menu]').insertAdjacentHTML('beforeend', R.compactMenu({ items: ticks().map((t) => ({ id: `tick|${t.id}`, text: t.title, hint: t.line })) }));
@@ -120,7 +126,7 @@
     if (t && caret) { t.focus(); t.setSelectionRange(t.value.length, t.value.length); }
     size(t);
   }
-  const size = (t) => { if (t) { t.style.height = 'auto'; t.style.height = `${t.scrollHeight}px`; } };
+  const size = (t) => { if (t) { t.style.height = 'auto'; t.style.height = `${Math.max(t.scrollHeight, t.closest('.is-plain') ? 0 : 44)}px`; } };
 
   // ---- starting things ----
   function ensureChat(title) {
@@ -155,7 +161,7 @@
     comp = { ...comp, text: '', startAt: '', more: false, mode: 'ask' };
     if (had) had.value = '';
     window.RailChats.refresh();
-    if (location.hash !== `#chat/${c.id}`) { window.RailShell.go(`chat/${c.id}`); return; }
+    if (!side && location.hash !== `#chat/${c.id}`) { window.RailShell.go(`chat/${c.id}`); return; }
     paint(false);
     const box = root.querySelector('.convo-scroll'); if (box) box.scrollTop = box.scrollHeight;
     paintTimeline();
@@ -163,11 +169,14 @@
 
   // ---- what a click or a key means here ----
   function pickMenu(id, v) {
+    if (id === 'cl-label') { const c = chat(); c.labels = (c.labels || []).includes(v) ? c.labels.filter((l) => l !== v) : [...(c.labels || []), v]; window.RailChats.refresh(); menu = ''; refreshAll(); return; }
     if (id === 'cp-mode') { comp.mode = v.toLowerCase(); if (comp.mode !== 'task') comp.more = false; }
     else if (id === 'cp-plus') {
       if (v === 'Reuse') comp.text = 'Add a CSV export to the billing page';
       else if (v === 'Shape') { comp.mode = 'task'; comp.workflow = 'Shaper'; say('Worca will ask first, then write the requirements'); }
-      else say({ Files: 'Adds files for it to read', md: 'Writes the task as Markdown', Ticket: 'Starts from a ticket' }[v]);
+      else if (v === 'Files') comp.files = [...new Set([...comp.files, 'notes.md'])];
+      else if (v === 'md') comp.files = [...new Set([...comp.files, 'Markdown'])];
+      else if (v === 'Ticket') { comp.files = [...new Set([...comp.files, 'SHOP-124'])]; comp.text = 'Export button does nothing on Safari'; comp.mode = 'task'; }
     } else if (id === 'cp-preset') { comp.preset = v === 'No preset' ? '' : v; if (v === 'Hotfix') { comp.workflow = 'Lean'; comp.then = 'open a PR'; comp.mode = 'task'; } if (v === 'Docs only') comp.workflow = 'Lean'; }
     else comp[id.slice(3)] = v;
     menu = '';
@@ -176,7 +185,9 @@
   root.addEventListener('click', (e) => {
     const on = (q) => e.target.closest(q); let hit;
     if ((hit = on('[data-tick]'))) { goTo(hit.dataset.tick); return; }
-    if ((hit = on('[data-menu-pick]'))) { const [id, ...r] = hit.dataset.menuPick.split('|'); if (id === 'tick') goTo(r.join('|')); else pickMenu(id, r.join('|')); return; }
+    if ((hit = on('[data-menu-pick]'))) { const [id, ...r] = hit.dataset.menuPick.split('|'); if (id === 'tick') goTo(r.join('|')); else if (id.startsWith('card:')) { menu = ''; const t = taskOf(id.slice(5)); if (t) window.RailShell.openTask(t.case, chatId, t.title); } else pickMenu(id, r.join('|')); return; }
+    if ((hit = on('[data-card-act]'))) { const t = taskOf(hit.dataset.cardAct), tone = R.markTone(stOf(t)); if (tone === 'run') { t.was = t.case; t.wasDetail = t.detail; t.case = 'paused-you'; t.detail = 'Paused by you'; say('Paused'); } else if (tone === 'pause' && t.was) { t.case = t.was; t.detail = t.wasDetail; say('Resumed'); } else { window.RailShell.openTask(t.case, chatId, t.title); return; } window.RailChats.refresh(); refreshAll(); return; }
+    if ((hit = on('[data-cp-unfile]'))) { e.preventDefault(); comp.files = comp.files.filter((f) => f !== hit.dataset.cpUnfile); paint(); return; }
     if ((hit = on('[data-menu]'))) { e.preventDefault(); menu = menu === hit.dataset.menu ? '' : hit.dataset.menu; paint(); return; }
     if (on('[data-anchor-open]')) { menu = menu === 'anchors' ? '' : 'anchors'; paint(); return; }
     if (on('[data-cp-send]')) { e.preventDefault(); send(); return; }
@@ -193,7 +204,6 @@
     }
     if ((hit = on('[data-open-task]'))) { const t = taskOf(hit.dataset.openTask); if (t) window.RailShell.openTask(t.case, chatId, t.title); return; }
     if ((hit = on('[data-open-sched]'))) { window.RailShell.go(`schedule/s1`); return; }
-    if ((hit = on('[data-task-pause]'))) { const t = taskOf(hit.dataset.taskPause); t.case = 'paused-you'; t.detail = 'Paused by you'; window.RailChats.refresh(); paint(); say('Paused'); return; }
     if ((hit = on('[data-say]'))) say(hit.dataset.say);
   });
   root.addEventListener('submit', (e) => { e.preventDefault(); });
@@ -209,13 +219,24 @@
   root.addEventListener('input', (e) => { if (e.target.matches('[data-composer-t]')) { comp.text = e.target.value; size(e.target); } });
   root.addEventListener('keydown', (e) => { if (e.target.matches('[data-composer-t]') && e.key === 'Enter' && !e.shiftKey && comp.mode === 'ask') { e.preventDefault(); send(); } });
   document.addEventListener('keydown', (e) => {
-    if ((e.key !== '[' && e.key !== ']') || root.hidden || e.target.matches?.('input, textarea, select')) return;
+    if (side || (e.key !== '[' && e.key !== ']') || root.hidden || e.target.matches?.('input, textarea, select')) return;
     const list = ticks(); if (!list.length) return;
     const box = root.querySelector('.convo-scroll'), now = box.scrollTop / (box.scrollHeight || 1);
     const next = e.key === ']' ? list.find((t) => t.at > now + 0.01) : [...list].reverse().find((t) => t.at < now - 0.01);
     if (next) { e.preventDefault(); goTo(next.id); }
   });
-  R.dismissOnOutside(document, { open: () => !!menu, inside: '#route-chat .spick, #route-chat .rc-pop, #route-chat [data-anchor-menu]', back: () => null, close: () => { menu = ''; }, paint: () => paint() });
+  R.dismissOnOutside(document, { open: () => !!menu, inside: `${where} .spick, ${where} .rc-pop, ${where} [data-anchor-menu]`, back: () => null, close: () => { menu = ''; }, paint: () => paint() });
+
+  const api = {
+    paint,
+    show: (id) => { if (id !== chatId) { opened = new Set(); hover = null; menu = ''; comp = { ...fresh(), project: id ? data().chats.find((c) => c.id === id)?.project || 'billing-api' : 'billing-api' }; } chatId = id || ''; paint(); if (id) { const box = root.querySelector('.convo-scroll'); if (box) { box.scrollTop = 0; paintTimeline(); } } },
+    start: (mode, text) => { chatId = ''; comp = { ...fresh(mode), text: text || '' }; if (!side) window.RailShell.go('chat'); paint(); root.querySelector('[data-composer-t]')?.focus(); },
+  };
+  mounted.push(api);
+  paint();
+  return api;
+  }
+  const refreshAll = () => mounted.forEach((m) => m.paint());
 
   // ---- a task's or a schedule's own page: its question goes to its chat, or starts one ----
   function dock(host, { kind, title, chat: linked }) {
@@ -236,11 +257,14 @@
     host.querySelector('form').addEventListener('submit', (e) => { e.preventDefault(); go(); });
   }
 
+  const main = mount(document.getElementById('route-chat'));
   window.RailConversation = {
-    show: (id) => { if (id !== chatId) { opened = new Set(); hover = null; menu = ''; comp = { ...fresh(), project: id ? data().chats.find((c) => c.id === id)?.project || 'billing-api' : 'billing-api' }; } chatId = id || ''; paint(); if (id) { const box = root.querySelector('.convo-scroll'); if (box) { box.scrollTop = 0; paintTimeline(); } } },
-    start: (mode, text) => { chatId = ''; comp = { ...fresh(mode), text: text || '' }; window.RailShell.go('chat'); paint(); root.querySelector('[data-composer-t]')?.focus(); },
+    show: main.show,
+    start: main.start,
+    mount: (el) => mount(el, true),
+    refresh: refreshAll,
     dock,
-    chatOfCase: (cs) => { const c = data().chats.find((x) => allTasks(x).some((t) => t.case === cs)); return c?.id || ''; },
+    chatOfCase: (cs) => { const allOf = (x) => { const out = []; const walk = (y) => { out.push(y); (y.after || []).forEach(walk); }; (x.tasks || []).forEach(walk); return out; }; const c = data().chats.find((x) => allOf(x).some((t) => t.case === cs)); return c?.id || ''; },
     chatTitle: (id) => data().chats.find((x) => x.id === id)?.title || '',
   };
 })();
