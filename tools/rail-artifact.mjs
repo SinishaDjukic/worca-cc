@@ -61,18 +61,21 @@ function selfContained(css) {
   });
 }
 
+// When a build was made, as the prototype's corner says it: 7 Nov 2026, 16:40.
+const whenOf = (at) => new Date(at).toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+
 // The cover: the rail itself, 20px rings at a 32px pitch on the ink slab, the live one in the working colour, beside the state colours.
-function cover(sha) {
+function cover(sha, stamp = null) {
   const rows = [24, 56, 88, 120, 152, 184, 216];
   const wires = rows.slice(0, -1).map((y, i) => `<line class="ra-w${i >= 4 ? ' is-next' : ''}" x1="34" y1="${y + 10}" x2="34" y2="${y + 22}"></line>`).join('');
   const rings = rows.map((y, i) => `<circle class="${i === 4 ? 'ra-live' : `ra-r${i > 4 ? ' is-next' : ''}`}" cx="34" cy="${y}" r="10"></circle>`).join('');
   return `<header class="ra-cover"><svg class="ra-art" viewBox="0 0 480 288" aria-hidden="true"><rect class="ra-ink" x="0" y="-8" width="184" height="264" rx="8"></rect>${wires}${rings}<rect class="ra-seq" x="200" y="40" width="56" height="64" rx="4"></rect><rect class="ra-green" x="264" y="64" width="56" height="40" rx="4"></rect><rect class="ra-peach" x="200" y="120" width="120" height="136" rx="8"></rect><rect class="ra-violet" x="336" y="40" width="160" height="216" rx="8"></rect></svg>
 <div class="ra-words"><div class="ra-name">Worca<br>Rail</div><p class="ra-tag">Every screen reads down one rail, and everything has one place on it.</p></div></header>
-<p class="ra-src">Generated from the branch at ${esc(sha)}. The source is the repository; this page is never edited by hand.</p>`;
+<p class="ra-src">${stamp ? `Built from <b>${esc(stamp.branch)}</b> at ${esc(stamp.sha)}${stamp.dirty ? ' with changes not yet committed' : ''}, last updated ${esc(whenOf(stamp.at))}` : `Generated from the branch at ${esc(sha)}`}. The source is the repository; this page is never edited by hand.</p>`;
 }
 
 /** The whole page. Needs the prototype's generated files (the gates write them). */
-export function buildPage({ sha = '' } = {}) {
+export function buildPage({ sha = '', stamp = null } = {}) {
   const ch = chapters(); const g = gallery();
   const css = selfContained([read('plans/rail/prototype/app.css'), read('plans/rail/prototype/design-system/rail-look.css'), read('plans/rail/prototype/design-system/rail.css')].join('\n'));
   const lib = read('plans/rail/prototype/components.js').replace(/<\/script>/g, '<\\/script>');
@@ -121,7 +124,7 @@ export function buildPage({ sha = '' } = {}) {
 <body class="rc-board">
 <div class="ra"><nav class="ra-nav" aria-label="Chapters">${nav.map(([id, t]) => `<a href="#${id}">${esc(t)}</a>`).join('')}</nav>
 <main class="ra-main">
-${cover(sha)}
+${cover(sha, stamp)}
 ${ch.slice(0, 1).map((c) => `<section class="ra-doc" id="${c.id}">${c.html}</section>`).join('')}
 <section id="gallery-sec"><div class="ra-doc"><h1>Components</h1><p>Every piece of the library, drawn by its own code. Pick one to see its states and rules.</p></div>${tilesHtml()}<div class="mk-wrap rc" id="gallery"></div></section>
 ${ch.slice(1).map((c) => `<section class="ra-doc" id="${c.id}">${c.html}</section>`).join('\n')}
@@ -136,10 +139,10 @@ ${ch.slice(1).map((c) => `<section class="ra-doc" id="${c.id}">${c.html}</sectio
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const out = process.argv[2] || join(ROOT, 'plans/rail/generated/worca-rail.html');
   const { writeAppCss } = await import('../plans/rail/prototype/gates/app-css.mjs');
-  const { writeComponentsJs } = await import('../plans/rail/prototype/gates/components-js.mjs');
+  const { writeComponentsJs, railStamp } = await import('../plans/rail/prototype/gates/components-js.mjs');
   writeAppCss(); writeComponentsJs();
-  const sha = execFileSync('git', ['rev-parse', '--short', 'HEAD'], { cwd: ROOT, encoding: 'utf8' }).trim();
-  const html = buildPage({ sha });
+  const stamp = railStamp();   // the branch, the commit and when, as the prototype's corner has them
+  const html = buildPage({ sha: stamp.sha, stamp });
   mkdirSync(dirname(out), { recursive: true }); writeFileSync(out, html);
   console.log(`${out} · ${(html.length / 1048576).toFixed(1)} MB · ${readdirSync(join(ROOT, 'docs/rail')).length} chapters`);
 }

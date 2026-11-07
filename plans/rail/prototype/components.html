@@ -34,15 +34,18 @@
   .gl-show .fld{flex:1 1 100%;max-width:360px;}
   .gl-sel{flex:1 1 100%;display:flex;flex-direction:column;gap:8px;}
   .gl-show .list{min-height:220px;}
+  .mk-stamp-line b{font-weight:600;color:var(--ink);}
 </style>
 <div class="rc-board mk-page">
 <div class="mk-wrap rc" id="gallery">
+  <p class="mk-intro mk-stamp-line" id="ds-stamp" hidden></p>
   <p class="mk-intro">What lies over a page (a menu, a picker, a popover, a panel, an editor, a Dialog) closes on a click outside and on Esc through one library call, <code>dismissOnOutside</code>; see docs/rail/panels.md. The menus below are drawn open, so they do not close here.</p>
   <p class="mk-intro">A new event in Pulse may play a chime: <code>soundFor</code> decides (the choice, a burst, away hours), <code>playChime</code> plays two soft notes from Web Audio, with no audio file. <button type="button" class="btn btn-sm btn-quiet" id="try-chime">Play the chime</button></p>
   <p class="mk-intro">Every Worca Rail component built in code, drawn by the code itself (<code>ui/public/design-system/components/</code>) in its states, with what the catalog says it is for. The rules: <code>docs/rail/</code>. The pages built from them: <a href="run-page.html" style="color:var(--ink)">the run page</a>.</p>
 </div>
 </div>
 <script src="components.js"></script>
+<script>(function () { const s = window.RailStamp, el = document.getElementById('ds-stamp'); if (!s || !el) return; const when = new Date(s.at).toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }); el.innerHTML = `Built from <b>${s.branch}</b> at ${s.sha}${s.dirty ? ' with changes not yet committed' : ''}, last updated ${when}.`; el.hidden = false; })();</script>
 <script>
   // Each component's examples: what the code draws for each of its states.
   const R = window.RailUI;
