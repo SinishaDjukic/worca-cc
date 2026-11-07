@@ -125,3 +125,93 @@
 #sameAsSourceHint[hidden]{display:none;}   /* .hint{display:block} beats the UA [hidden] rule */
 #featureBranch:disabled{opacity:.65;cursor:not-allowed;}   /* no global .input:disabled rule exists */
 
+/* Agent readiness: the row chip, its popover and the settings card. Labels are the app's state chip (4px corners,
+   11px, weight 500): no dot, no border, no ring (also on hover). The count is a solid number chip, regular weight. */
+.pl-rd{display:inline-flex;align-items:center;gap:5px;height:20px;padding:0 7px;border-radius:var(--r-xs);font:500 var(--fs-caption)/1 var(--sans);
+  cursor:pointer;user-select:none;}
+.pl-rd:focus-visible{outline:2px solid var(--blue);outline-offset:2px;}
+.rd-ready{background:var(--green-bg);color:var(--green-ink);}
+.rd-partial{background:var(--amber-bg);color:var(--amber-ink-strong);}
+.rd-not-ready{background:var(--red-bg);color:var(--red-ink);}
+.rd-unused{background:var(--field);color:var(--ink-2);}
+.pl-rd .rd-n{display:inline-grid;place-items:center;min-width:14px;height:14px;margin-right:-4px;padding:0 3px;border-radius:var(--r-xs);
+  font-size:var(--fs-caption);font-weight:500;font-variant-numeric:tabular-nums;color:var(--panel);}
+.rd-partial .rd-n{background:var(--amber-ink-strong);}
+.rd-not-ready .rd-n{background:var(--red-ink);}
+.rd-lbl{display:inline-flex;align-items:center;flex:none;height:20px;padding:0 7px;border-radius:var(--r-xs);font:500 var(--fs-caption)/1 var(--sans);white-space:nowrap;}
+
+/* The project page header: the name, then its chip; the slot takes the free width so the header's buttons stay right. */
+.pd-row1:has(.pd-rd-slot) .pd-title{flex:0 1 auto;}
+.pd-row1 .pd-rd-slot{display:inline-flex;align-items:center;flex:1;min-width:0;}
+/* The Settings card's head: its title, and "View report" (the header chip's popover) on the right. */
+.rs-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;}
+.rs-head h3{margin:0;}
+.rs-view{flex:none;padding:0;border:0;background:none;color:var(--blue-ink-strong);font:500 var(--fs-meta)/1.5 var(--sans);cursor:pointer;}
+.rs-view:hover{text-decoration:underline;}
+.rs-view:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:var(--r-xs);}
+
+.readiness-pop{width:460px;display:flex;flex-direction:column;}
+.rp-head{flex:none;display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:14px 16px 12px;border-bottom:1px solid var(--line);}
+.rp-head-end{flex:none;display:flex;align-items:center;gap:6px;margin-right:-6px;}
+.rp-title{font-weight:600;font-size:var(--fs-section);}
+.rp-sub{display:block;font-weight:400;font-size:12px;color:var(--ink-3);}
+.rp-count{display:block;margin-top:2px;border:0;background:none;padding:0;font:inherit;font-size:12px;font-weight:500;color:var(--blue-ink-strong);cursor:pointer;text-align:left;}
+.rp-count:hover{text-decoration:underline;}
+.rp-body{flex:1 1 auto;min-height:0;overflow:auto;padding-bottom:8px;}
+.rp-sec{display:flex;align-items:baseline;justify-content:space-between;gap:10px;padding:14px 16px 4px;}
+.rp-sec h3{margin:0;font-size:var(--fs-meta);font-weight:600;color:var(--ink-2);}
+.rp-sec span{font-size:var(--fs-caption);color:var(--ink-3);}
+.rp-tool{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 12px;align-items:center;padding:8px 16px;}
+.rp-tool-n{font-weight:600;font-size:13px;}
+.rp-tool-n small{font-weight:500;font-size:12px;color:var(--ink-3);}
+.rp-tool-d,.rp-tool-f,.rp-hint{grid-column:1 / -1;font-size:var(--fs-meta);}
+.rp-tool-d{color:var(--ink-2);}
+.rp-hint{font-size:12px;color:var(--ink-3);}
+.rp-act{grid-column:1 / -1;justify-self:start;border:0;background:none;padding:0;font:inherit;font-size:12px;color:var(--blue-ink-strong);cursor:pointer;}
+.rp-act:hover{text-decoration:underline;}
+.rp-notjudged{padding:4px 16px 2px;font-size:12px;color:var(--ink-3);}
+.rp-notjudged a{color:var(--blue-ink-strong);text-decoration:none;font-weight:500;}
+.rp-notjudged a:hover{text-decoration:underline;}
+.rp-chk{display:grid;grid-template-columns:14px minmax(0,1fr) auto;gap:2px 10px;padding:8px 16px;}
+.rp-chk:hover{background:var(--field);}
+.rp-sevdot{margin-top:5px;width:10px;height:10px;border-radius:50%;border:2px solid currentColor;}
+.rp-sevdot.blocker{color:var(--red);background:var(--red);}
+.rp-sevdot.warn{color:var(--amber);}
+.rp-sevdot.info{color:var(--ink-3);}
+.rp-chk-t{font-weight:600;font-size:13px;}
+.rp-chk-d{grid-column:2;font-size:var(--fs-meta);color:var(--ink-2);}
+.rp-chk-f{grid-column:2;font-size:var(--fs-meta);}
+.rp-ign{grid-row:1;grid-column:3;align-self:start;border:0;background:none;font:inherit;font-size:12px;color:var(--ink-3);cursor:pointer;padding:2px 4px;border-radius:var(--r-sm);}
+.rp-ign:hover{color:var(--ink);background:var(--hover);}
+.rp-more{margin:8px 16px 0;border-radius:var(--r-md);background:var(--field);}
+.rp-more + .rp-more{margin-top:6px;}
+.rp-more summary{display:flex;align-items:center;gap:8px;padding:8px 10px;font-size:var(--fs-meta);font-weight:500;color:var(--ink-2);cursor:pointer;list-style:none;border-radius:var(--r-md);}
+.rp-more summary::-webkit-details-marker{display:none;}
+.rp-more summary:hover{color:var(--ink);}
+.rp-more summary .rp-chev{margin-left:auto;flex:none;width:8px;height:8px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:rotate(45deg) translateY(-2px);}
+.rp-more[open] summary .rp-chev{transform:rotate(225deg) translateY(-1px);}
+.rp-tick{flex:none;position:relative;width:7px;height:12px;}
+.rp-tick::before{content:"";position:absolute;left:2px;top:0;width:4px;height:9px;border-right:1.6px solid var(--green);border-bottom:1.6px solid var(--green);transform:rotate(45deg);}
+.rp-gdot{flex:none;width:7px;height:7px;border-radius:50%;background:var(--ink-3);}
+.rp-more ul{list-style:none;margin:0 10px;padding:0 0 8px;}
+.rp-more li{margin-left:15px;padding:6px 0;border-top:1px solid var(--line-2);}
+.rp-more li b{display:block;font-weight:600;font-size:var(--fs-meta);}
+.rp-more li span{display:block;font-size:12px;color:var(--ink-2);}
+.rp-more li .rp-ign{display:inline;padding:0;margin-top:2px;}
+.rp-foot{flex:none;display:flex;align-items:center;gap:10px;padding:10px 12px 10px 16px;border-top:1px solid var(--line);font-size:12px;color:var(--ink-3);}
+.rp-foot .rp-sp{flex:1;}
+.rp-foot a{color:var(--blue-ink-strong);text-decoration:none;font-weight:500;}
+
+.readiness-settings-card{padding:16px;border:1px solid var(--line);border-radius:var(--r-card);margin-bottom:16px;
+  scroll-margin-top:90px;}   /* the pinned .pd-tabs (~74px) plus air: "Change in Settings" lands the head below them */
+.readiness-settings-card h3{margin:0 0 4px;font-size:13px;font-weight:600;}
+.rs-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 16px;align-items:center;padding:12px 0;border-top:1px solid var(--line);}
+.rs-row:first-of-type{border-top:0;}
+.rs-name{font-weight:600;font-size:13px;}
+.rs-find{grid-column:1;font-size:12px;color:var(--ink-2);}
+.rs-row .seg{grid-row:1 / span 2;grid-column:2;}
+.rs-row .seg button:disabled{color:var(--ink-3);cursor:not-allowed;opacity:.6;}
+.rs-note{grid-column:1 / -1;font-size:12px;color:var(--ink-3);}
+.readiness-settings-card .rs-skip{display:block;margin:12px 0 8px;padding-top:12px;border-top:1px solid var(--line);}
+.readiness-settings-card .qtune-sw{display:flex;align-items:center;gap:8px;margin-bottom:8px;}
+@media (max-width:560px){.rs-row{grid-template-columns:minmax(0,1fr);}.rs-row .seg{grid-row:auto;grid-column:1;justify-self:start;}}

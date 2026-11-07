@@ -12,6 +12,9 @@ import { discoverPolicy } from '../../../src/core/policy/sync.mjs';
 import { PROJECT_ADD_STATUS, ProjectAddError, addProjectFolder, createProject, makeGitProject, probeFolder } from '../../../src/core/project-create.mjs';
 import { effectiveWorkMode, samePath } from '../../../src/core/project-kind.mjs';
 import { addProject, addProjects, displayPath, getProjectByName, listProjects, normalizeProjectPath, ownsProjectFolder, removeProject, removeProjectAndFolder, worcaHome, worcaNestedRepoHint, worcaNestedRepoOf } from '../../../src/core/projects.mjs';
+import { readinessSummary } from '../../../src/core/repo-readiness/cache.mjs';
+import { evaluateAddedProject } from '../../../src/core/repo-readiness/projects.mjs';
+import { readinessEnabled } from '../../../src/core/repo-readiness/evaluate.mjs';
 import { cancelForTarget } from '../../../src/core/scheduler.mjs';
 import { getProjectsRoot } from '../../../src/core/settings.mjs';
 import { projectKey } from '../../../src/core/store.mjs';
@@ -36,7 +39,10 @@ async function projectsForApi(list) {
 app.get('/api/projects', async (_req, res) => {
   try {
     const runsRoot = path.join(worcaHome(), 'runs');
-    res.json({ projects: await projectsForApi(await listProjects()), runsRoot, runsRootDisplay: displayPath(runsRoot) });
+    // readiness: cache-only peek (no evaluation, no I/O) — null until a report is cached.
+    const on = readinessEnabled();
+    const projects = (await projectsForApi(await listProjects())).map((p) => ({ ...p, readiness: on ? readinessSummary(p.key) : null }));
+    res.json({ projects, runsRoot, runsRootDisplay: displayPath(runsRoot) });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
@@ -64,6 +70,7 @@ app.post('/api/projects', async (req, res) => {
     // Its team policy at once too (MCP registry spec §11.2): removing a project drops its policy cache, so a re-added or
     // re-cloned project's home must not read "no project here follows" (a greyed Team set) until the background discovery.
     discoverPolicy(normalizeProjectPath(body.path), { force: true }).catch(() => { /* offline: the background discovery retries */ });
+    void evaluateAddedProject(normalizeProjectPath(body.path));
     detectTeamMemorySoon(normalizeProjectPath(body.path));
     res.json({ projects: await projectsForApi(projects) });
   } catch (err) {
@@ -99,6 +106,7 @@ app.post('/api/projects/bulk', async (req, res) => {
             emitChanged('team-metrics-changed', 'discovered');
           } catch { /* offline or not a git repo: discovery retries hourly */ }
           await discoverPolicy(p, { force: true }).catch(() => { /* offline: the background discovery retries */ });
+          await evaluateAddedProject(p);
         }
       })();
       // Team memory's check (E10) on its own queue, one remote at a time too: a slow origin never holds the discovery.

@@ -55,7 +55,7 @@ test('chatEngine: the stored engine wins over the model, so a model that left th
 test('eventPick: a Codex chat whose model left the catalog gets the Codex default and a notice naming both', async () => {
   const pick = await mk().eventPick({ model: 'gpt-retired-9', effort: 'low', engine: 'codex' }, 'codex');
   assert.deepEqual(pick, { ok: true, model: 'gpt-6-astra', effort: 'medium', fallback: { from: 'gpt-retired-9', engine: 'codex' } });
-  assert.equal(eventFallbackNotice(pick), "This chat's model gpt-retired-9 is not available any more, so this reply uses Codex's default, gpt-6-astra (medium).");
+  assert.equal(eventFallbackNotice(pick), "This chat's model gpt-retired-9 is not available any more, so this reply uses OpenAI Codex's default, gpt-6-astra (medium).");
   const ok = await mk().eventPick({ model: 'gpt-5.5', effort: 'low' }, 'codex');
   assert.deepEqual(ok, { ok: true, model: 'gpt-5.5', effort: 'low' });
   assert.equal(eventFallbackNotice(ok), null);
@@ -84,9 +84,9 @@ test('validateModelEffort: any engine before the first turn; inside a chat only 
   const m = mk();
   assert.deepEqual(await m.validateModelEffort('gpt-5.5', 'low'), { ok: true, model: 'gpt-5.5', effort: 'low' });
   assert.deepEqual(await m.validateModelEffort('claude-opus-5-5', 'high', { engine: 'codex' }),
-    { ok: false, error: 'this chat runs on Codex; switch it to Claude from the Chat model picker first' });
+    { ok: false, error: 'this chat runs on OpenAI Codex; switch it to Claude Code from the Chat model picker first' });
   assert.deepEqual(await m.validateModelEffort('gpt-5.5', 'low', { engine: 'claude' }),
-    { ok: false, error: 'this chat runs on Claude; switch it to Codex from the Chat model picker first' });
+    { ok: false, error: 'this chat runs on Claude Code; switch it to OpenAI Codex from the Chat model picker first' });
   assert.deepEqual(await m.validateModelEffort('gpt-5.5', 'max'), { ok: false, error: 'effort "max" is not available for model "gpt-5.5"' });
 });
 

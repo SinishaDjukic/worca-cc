@@ -69,6 +69,9 @@ import { chatSelfTest } from './chat-selftest.mjs';
 /** Read at call time (not import time), so a test or a server child can point it at a fake after import. */
 export const gooseDefaultBin = () => process.env.WORCA_GOOSE_BIN || 'goose';
 export const GOOSE_SESSION_PREFIX = 'goose:';
+/** The context files goose reads from its cwd up to the repository root by default, combined (`CONTEXT_FILE_NAMES`;
+ *  github.com/aaif-goose/goose › documentation/docs/guides/context-engineering/using-goosehints.md). */
+export const GOOSE_INSTRUCTION_FILES = Object.freeze(['AGENTS.md', '.goosehints']);
 const SESSION_NAME_RE = /^worca-[A-Za-z0-9-]+$/;
 
 /** The goose session name in a stored session id, or null when the id is not one worca gave goose. */
