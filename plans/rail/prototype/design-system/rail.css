@@ -1345,3 +1345,6 @@ th.rt-c{color:var(--ink-2);font-weight:500;}
 .tr-body.is-steps{background:none;padding:0 0 0 10px;border-left:1px solid var(--line-2);border-radius:0;font:inherit;font-size:var(--fs-meta);color:var(--ink-2);}
 .think-steps{display:flex;flex-direction:column;gap:4px;}
 @media (prefers-reduced-motion: reduce){ .think-w{animation:none;background:none;-webkit-text-fill-color:var(--ink-2);} }
+
+/* OrbMark: in light, a hairline ring holds the orb's pale dots against the page; dark needs none. */
+canvas.dot-orb[data-orb]{border-radius:50%;outline:1px solid light-dark(var(--line-2),transparent);outline-offset:0;}   /* ds-ok: light-dark of two tokens */
