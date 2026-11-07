@@ -863,7 +863,8 @@ test('inView: the tab you are on carries aria-current and is-current', () => {
 });
 
 test('orbMark: a canvas in its phase, its size kept; an unknown phase rests', () => {
-  assert.match(C.orbMark({ phase: 'write', size: 18 }), /<canvas class="dot-orb" data-orb="write" data-s="18"/);
+  assert.match(C.orbMark(), /data-pattern="w"/); assert.doesNotMatch(C.orbMark({ w: false }), /data-pattern/);
+  assert.match(C.orbMark({ phase: 'write', size: 18 }), /<canvas class="dot-orb" data-orb="write" data-pattern="w" data-s="18"/);
   assert.match(C.orbMark({ phase: 'dance' }), /data-orb="rest"/);
   assert.match(C.thinkingRow({ step: 'x', secs: '1s' }), /data-orb="think"/);
 });

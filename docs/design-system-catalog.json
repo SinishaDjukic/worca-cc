@@ -1071,7 +1071,7 @@
       "code": "ui/public/design-system/components/orb.mjs#orbMark",
       "kind": "showing",
       "needs": [
-        "Worca at work: its orb of dots, still at rest, moving while it thinks, calls a tool or writes"
+        "Worca at work: its orb of dots with the W facing you, still at rest, moving while it thinks, calls a tool or writes"
       ],
       "rules": [
         "panel.conversation-rail"
