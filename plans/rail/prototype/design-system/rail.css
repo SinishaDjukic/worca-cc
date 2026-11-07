@@ -1464,8 +1464,8 @@ canvas.dot-orb[data-orb]{border-radius:50%;outline:1px solid light-dark(var(--li
 .ask-changes{display:flex;flex-direction:column;gap:8px;margin:8px 0 0 32px;}
 /* Chat home's More opens upward and keeps inside the window; a row's words can be its one target (a feature's slice) */
 .home-starters .rc-pop > .menu{top:auto;bottom:calc(100% + 4px);max-height:min(60vh,520px);overflow:auto;}
-/* A menu with any toggle in it keeps its toggle's room on every item, so all its words start on one edge */
-:is(.rc,.pz-app) .menu:has(.menu-item:is([role="menuitemradio"],[role="menuitemcheckbox"])) .menu-item[role="menuitem"]{display:grid;grid-template-columns:12px minmax(0,1fr) auto;column-gap:10px;}
-:is(.rc,.pz-app) .menu:has(.menu-item:is([role="menuitemradio"],[role="menuitemcheckbox"])) .menu-item[role="menuitem"]::before{content:"";grid-column:1;}
-:is(.rc,.pz-app) .menu:has(.menu-item:is([role="menuitemradio"],[role="menuitemcheckbox"])) .menu-item[role="menuitem"] > .mi-l{grid-column:2;}
-:is(.rc,.pz-app) .menu:has(.menu-item:is([role="menuitemradio"],[role="menuitemcheckbox"])) .menu-item[role="menuitem"] > .mi-hint{grid-column:3;}
+/* A menu with any check mark in it keeps the mark's room on every item, so all its words start on one edge; a switch (the account menu's) sits at the end and needs no room */
+:is(.rc,.pz-app) .menu:has(.menu-item:is([role="menuitemradio"],[role="menuitemcheckbox"]):not(.sw-item)) .menu-item[role="menuitem"]{display:grid;grid-template-columns:12px minmax(0,1fr) auto;column-gap:10px;}
+:is(.rc,.pz-app) .menu:has(.menu-item:is([role="menuitemradio"],[role="menuitemcheckbox"]):not(.sw-item)) .menu-item[role="menuitem"]::before{content:"";grid-column:1;}
+:is(.rc,.pz-app) .menu:has(.menu-item:is([role="menuitemradio"],[role="menuitemcheckbox"]):not(.sw-item)) .menu-item[role="menuitem"] > .mi-l{grid-column:2;}
+:is(.rc,.pz-app) .menu:has(.menu-item:is([role="menuitemradio"],[role="menuitemcheckbox"]):not(.sw-item)) .menu-item[role="menuitem"] > .mi-hint{grid-column:3;}

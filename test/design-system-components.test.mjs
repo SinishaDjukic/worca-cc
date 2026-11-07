@@ -840,6 +840,13 @@ test('watchMenus: a menu with no room under it opens above; menuUp says when', (
   return new Promise((r) => setTimeout(r, 0)).then(() => { assert.ok(window.document.querySelector('.menu').hasAttribute('data-placed'), 'a menu that opens is placed'); window.close(); });
 });
 
+test('menus keep one edge only for check marks: a switch item (the account menu) keeps its own layout', () => {
+  const css = readFileSync('plans/rail/prototype/design-system/rail.css', 'utf8');
+  const lines = css.split('\n').filter((l) => l.includes('.menu:has(.menu-item:is([role="menuitemradio"]'));
+  assert.ok(lines.length > 0);
+  for (const l of lines) assert.match(l, /:not\(\.sw-item\)/, 'a switch never turns its menu into the check-mark grid');
+});
+
 test('the Rail stylesheets close every rule: one open brace would swallow all that follows', () => {
   for (const f of ['plans/rail/prototype/design-system/rail.css', 'plans/rail/prototype/design-system/rail-look.css', 'plans/rail/prototype/shell/shell.css', 'plans/rail/prototype/pulse/pulse.css']) {
     const css = readFileSync(f, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
