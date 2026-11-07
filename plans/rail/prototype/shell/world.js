@@ -16,7 +16,7 @@
     run('r4', 'capped', 'Rebuild the search index', 'docs-site', 'Cost cap · reached $120', '12:58', 'today', { cost: 120 }),
     run('r5', 'failed', 'Update Node to 24', 'web-app', 'Test step · 3 tests failed', '12:40', 'today', { cost: 4.2, unread: true, labels: ['hotfix'] }),
     run('r6', 'interrupted', 'Move sessions to Redis', 'worca-cc', 'Worca was stopped', '11:58', 'today', { cost: 2.1 }),
-    run('r7', 'failing', 'Retry on 502', 'web-app', 'Checks failing', '11:20', 'today', { pr: '#962', cost: 7.3, labels: ['hotfix'], rounds: ROUNDS }),
+    run('r7', 'failing', 'Retry on 502', 'web-app', 'Checks failing · 2 of 7: unit, e2e', '11:20', 'today', { pr: '#962', cost: 7.3, labels: ['hotfix'], rounds: ROUNDS }),
     run('r8', 'ready', 'Dark mode for the marketing site', 'marketing-site', 'Checks pass', '10:58', 'today', { cost: 9.9, labels: ['ui'] }),
     run('r9', 'approved', 'Add pager to the audit log', 'worca-cc', 'Approved · checks pass', '10:20', 'today', { pr: '#959', cost: 5.2 }),
     run('r10', 'working', 'Fix flaky login test', 'web-app', 'Build · task 2 of 4', '12 min', 'today', { labels: ['ui', 'tests'], cost: 1.6 }),

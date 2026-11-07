@@ -46,7 +46,7 @@ export function watchMenus(doc) {
   seen.add(doc);
   const win = doc.defaultView;
   const place = () => {
-    for (const m of doc.querySelectorAll('.menu[role="menu"]:not([data-placed])')) {
+    for (const m of doc.querySelectorAll('.menu:is([role="menu"], [role="dialog"]):not([data-placed])')) {
       m.dataset.placed = '';
       if (win.getComputedStyle(m).position !== 'absolute') continue;   // a menu in the flow (a panel's own list) is not a pop-up
       const a = m.parentElement.getBoundingClientRect(), room = roomOf(m, win), h = m.getBoundingClientRect().height;

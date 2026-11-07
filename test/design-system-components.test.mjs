@@ -876,6 +876,11 @@ test('topBarAction: its name is its words even when only its icon and badge show
   assert.match(C.topBarAction({ label: 'Pulse', icon: '', labelCls: 'x' }), /aria-label="Pulse"/);
 });
 
+test('sentencePicker: a body (a ListEditor) opens in place of its menu, placed as a menu', () => {
+  const h = C.sentencePicker({ id: 'l', text: '+ Label', open: true, body: C.listEditor({ label: 'Labels', inputId: 'q', placeholder: 'Find or make a label', sections: [{ title: 'Labels', kind: 'label', many: true, rows: [{ text: 'infra', n: '', on: false }] }] }) });
+  assert.match(h, /class="menu spick-menu rc-list-ed"/); assert.match(h, /aria-haspopup="dialog"/); assert.match(h, /Find or make a label/);
+});
+
 test('the Rail stylesheets close every rule: one open brace would swallow all that follows', () => {
   for (const f of ['plans/rail/prototype/design-system/rail.css', 'plans/rail/prototype/design-system/rail-look.css', 'plans/rail/prototype/shell/shell.css', 'plans/rail/prototype/pulse/pulse.css']) {
     const css = readFileSync(f, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');

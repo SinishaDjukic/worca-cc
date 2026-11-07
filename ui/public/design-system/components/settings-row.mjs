@@ -19,10 +19,12 @@ import { row } from './row.mjs';
  * @param {string} [o.tip]     what the choice decides (the tooltip)
  * @param {string} [o.chevron] the ▾ icon's SVG
  * @param {boolean} [o.right]  the menu opens to the left (a picker at the row's end)
+ * @param {string} [o.body]    in place of a menu, what opens under it (a ListEditor: find or make one)
  */
-export function sentencePicker({ id, text, items, open = false, tip = '', chevron = '', right = false }) {
+export function sentencePicker({ id, text, items = [], open = false, tip = '', chevron = '', right = false, body = '' }) {
   const its = items.map((it) => (it.sep || it.header ? it : { ...it, id: `${id}|${it.id ?? it.text}` }));
-  return `<span class="spick"><button type="button" class="spick-b"${attrs({ 'data-menu': id, 'data-key': 'pick:' + id, 'aria-haspopup': 'menu', 'aria-expanded': String(open), title: tip || null })}>${esc(text)}${chevron}</button>${open ? compactMenu({ items: its, cls: 'spick-menu' + (right ? ' is-right' : '') }) : ''}</span>`;
+  const pop = body ? body.replace(/^<div class="menu /, `<div class="menu spick-menu${right ? ' is-right' : ''} `) : compactMenu({ items: its, cls: 'spick-menu' + (right ? ' is-right' : '') });
+  return `<span class="spick"><button type="button" class="spick-b"${attrs({ 'data-menu': id, 'data-key': 'pick:' + id, 'aria-haspopup': body ? 'dialog' : 'menu', 'aria-expanded': String(open), title: tip || null })}>${esc(text)}${chevron}</button>${open ? pop : ''}</span>`;
 }
 
 /**

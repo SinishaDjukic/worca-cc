@@ -428,9 +428,10 @@
     // A card opened in place borrows the task page itself (#card), so every stage, part and control works as on the page.
     embedRun: (slot, cs, ask) => {
       const card = document.getElementById('card'), pick = document.getElementById('case'); if (!card || !slot) return;
-      if (RM) { RM.asks = RM.asks || {}; if (ask) RM.asks[cs] = ask; }   // the lent page says what this task was asked, not its mock's words
+      if (RM) { RM.asks = RM.asks || {}; if (ask) { RM.asks[cs] = ask; RM.titles[cs] = ask; } }   // the lent page is this task's: its name and what it was asked   // the lent page says what this task was asked, not its mock's words
       if (!runAnchor) { runAnchor = document.createComment('the task page lives here'); card.before(runAnchor); }
-      if (pick && pick.value !== cs) { const at = location.hash; pick.value = cs; pick.dispatchEvent(new Event('change', { bubbles: true })); if (location.hash !== at) history.replaceState(null, '', at); }
+      const lent = `${cs}|${ask || ''}`, again = lent !== lastLent; lastLent = lent;
+      if (pick && (pick.value !== cs || again)) { /* drawn again for this task even when another task shares its case */ const at = location.hash; pick.value = cs; pick.dispatchEvent(new Event('change', { bubbles: true })); if (location.hash !== at) history.replaceState(null, '', at); }
       slot.append(card); card.classList.add('is-lent');
     },
     unembedRun: (from) => { const card = document.getElementById('card'); if (card && runAnchor && (!from || from.contains(card))) { runAnchor.after(card); card.classList.remove('is-lent'); } },
@@ -446,6 +447,7 @@
     listKeys: () => routed.view === 'runs' || routed.view === 'chat' || routed.view === 'schedule' || routed.view === 'schedules',
   };
   const RM = window.RunCardModel;
+  let lastLent = '';
   let runAnchor = null;
   let routed = { view: '', locked: false };
   R.neverOutside(document, '.mk-tools');   // the prototype's own corner closes nothing
