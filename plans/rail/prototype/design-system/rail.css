@@ -1433,3 +1433,9 @@ canvas.dot-orb[data-orb]{border-radius:50%;outline:1px solid light-dark(var(--li
 .home-starters .btn{color:var(--ink-2);}
 .composer-intent{display:inline-flex;align-items:center;gap:4px;padding-right:0;}
 .composer-intent .btn{height:18px;width:18px;min-height:0;padding:0;}
+
+/* The composer: its context meter, what waits to be sent, and the tasks you can mention. */
+.composer-meter{font-size:var(--fs-caption);color:var(--ink-3);font-variant-numeric:tabular-nums;margin-right:4px;}
+.composer-queue{display:flex;flex-direction:column;gap:4px;margin-bottom:8px;}
+.composer-at{position:relative;}
+.composer-at > .menu{position:absolute;bottom:4px;left:12px;z-index:30;}

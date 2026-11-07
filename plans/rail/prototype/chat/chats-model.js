@@ -114,6 +114,14 @@
       { t: 'change', id: 'a2', kind: 'Agent', title: 'Changelog writer', why: 'Reads the PRs merged since the last tag and writes one line per change, grouped by area.', rows: [{ name: 'Reads', before: '', after: 'Merged PRs since the last tag' }, { name: 'Writes', before: '', after: 'CHANGELOG.md, a draft' }, { name: 'Model', before: '', after: 'Sonnet 5.5' }], apply: 'Save', state: 'proposed' },
       { t: 'act', id: 'a3', mark: 'ask', text: '<b>Run scripts/release-notes.sh?</b> It reads git tags and writes nothing', actions: [['Run', 'primary', 'Ran scripts/release-notes.sh: 14 changes found'], ['Not now', 'quiet', 'Not run']] },
     ];
+    if (c.id === 'c7') return [
+      { t: 'you', id: 'a1', text: 'Check what Stripe says about CSV exports', when: 'Oct 3' },
+      { t: 'change', id: 'a2', kind: 'Web access', title: 'Read stripe.com/docs', why: 'This chat wants to read one page on the web.', rows: [{ name: 'Site', before: '', after: 'stripe.com' }], actions: [['Allow in chat', 'primary', 'Allowed in this chat'], ['Always allow', 'quiet', 'Always allowed'], ['Deny', 'quiet', 'Denied']], state: 'proposed' },
+      { t: 'you', id: 'a3', text: 'Move the nightly export check to 03:00', when: 'Oct 3' },
+      { t: 'change', id: 'a4', kind: 'Schedule', title: 'Nightly export check', why: 'Proposed schedule change.', rows: [{ name: 'Runs', before: 'every day at 02:00', after: 'every day at 03:00' }, { name: 'Next runs', before: '', after: 'tonight 03:00 · tomorrow 03:00' }], actions: [['Move', 'primary', 'Moved to 03:00'], ['Run now', 'quiet', 'Running now'], ['Delete', 'quiet', 'Deleted the schedule'], ['Not now', 'quiet', 'Not changed']], state: 'proposed' },
+      { t: 'you', id: 'a5', text: 'Take docs-site out of the Billing workspace', when: 'Oct 3' },
+      { t: 'change', id: 'a6', kind: 'Workspace', title: 'Remove docs-site', rows: [{ name: 'Workspace', before: '', after: 'Billing' }, { name: 'Remove', before: '', after: 'docs-site' }], choice: { label: 'Re-scan after', items: ['No re-scan', 'Partial re-scan', 'Full re-scan'], rec: 'Partial re-scan' }, actions: [['Remove', 'danger', 'Removed docs-site'], ['Not now', 'quiet', 'Not changed']], state: 'proposed' },
+    ];
     if (c.id === 'c3') return [
       { t: 'you', id: 'a1', text: 'Tidy the migrations folder', when: '14:12' },
       { t: 'think', text: 'Thought for 4s' },

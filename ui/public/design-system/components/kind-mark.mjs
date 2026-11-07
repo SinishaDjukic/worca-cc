@@ -254,16 +254,17 @@ export function taskProposal({ title, why = '', sentence, more = '', open = fals
  * @param {string} [o.body]      instead of rows, markup (a WorkflowGraph)
  * @param {'proposed'|'applied'|'declined'|'failed'} [o.state]
  * @param {string} [o.apply]     Apply's word: Apply, Save
+ * @param {{label:string, kind?:string, attrs?:object}[]} [o.actions]   instead, a kind's own choices (web access: Allow in chat, Always allow, Deny; a schedule: Run now, Move, Apply, Delete)
  * @param {object} [o.hooks]     { apply, decline, revert }
  * @param {object} [o.attrs]
  */
-export function changeProposal({ kind, title, why = '', rows = [], body = '', state = 'proposed', apply = 'Apply', hooks = {}, attrs: a = {} }) {
+export function changeProposal({ kind, title, why = '', rows = [], body = '', state = 'proposed', apply = 'Apply', actions = null, hooks = {}, attrs: a = {} }) {
   const btn = (label, k, h) => button({ label, kind: k, attrs: h || {} });
   if (state === 'applied') return turnRow({ mark: icon('check', 14), text: `<b>${esc(title)}</b> ${esc(rows.map((r) => `${r.name}: ${r.after}`).join(' · ') || kind)}`, end: btn('Revert', 'quiet', hooks.revert), attrs: a });
   if (state !== 'proposed') return turnRow({ mark: kindMark({ kind: 'chat', tone: state === 'failed' ? 'fail' : 'idle', size: 16 }), text: `${state === 'failed' ? 'Could not change' : 'Not changed'}: <b>${esc(title)}</b>`, attrs: a });
   const list = rows.length ? `<dl class="cp-rows">${rows.map((r) => `<div class="cp-row"><dt>${esc(r.name)}</dt><dd>${r.before && r.before !== '—' ? `<s>${esc(r.before)}</s><span aria-hidden="true">→</span>` : ''}<b>${esc(r.after)}</b></dd></div>`).join('')}</dl>` : '';
   return `<article class="task-card rc cp"${attrs(a)}>${cardHead({ mark: icon('set-general', 14), kicker: `Proposed change · ${kind}`, title, why })}`
-    + `<section class="rc-card tp-body"${attrs({ 'aria-label': `Proposed change: ${title}` })}>${list}${body}<div class="tp-actions">${btn(apply, 'primary', hooks.apply)}${btn('Not now', 'quiet', hooks.decline)}</div></section></article>`;
+    + `<section class="rc-card tp-body"${attrs({ 'aria-label': `Proposed change: ${title}` })}>${list}${body}<div class="tp-actions">${actions ? actions.map((x) => btn(x.label, x.kind || 'quiet', x.attrs)).join('') : `${btn(apply, 'primary', hooks.apply)}${btn('Not now', 'quiet', hooks.decline)}`}</div></section></article>`;
 }
 
 /**

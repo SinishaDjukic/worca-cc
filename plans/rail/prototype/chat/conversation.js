@@ -32,7 +32,7 @@
   function sentence() {
     const mode = pk('mode', comp.mode === 'ask' ? 'Ask' : comp.mode === 'task' ? 'Task' : 'Schedule', MODES, 'Ask, start a task, or schedule one');
     const project = W('on') + pk('project', comp.project, PROJECTS, 'Which project');
-    const engine = pk('engine', comp.engine, ENGINES, 'Which engine and model');
+    const engine = pk('engine', comp.engine, ENGINES, 'Which engine and model') + pk('effort', comp.effort || 'high', ['low', 'medium', 'high'], 'How hard it thinks');
     if (comp.mode === 'ask') return mode + project + engine;
     if (comp.mode === 'schedule') return mode + project + pk('every', comp.every, ['every day', 'every weekday', 'every Monday', 'once'], 'When it repeats') + W('at') + pk('at', comp.at, ['02:00', '06:00', '09:00', '17:00'], 'What time');
     const preset = comp.preset ? W('·') + pk('preset', comp.preset, ['No preset', 'Hotfix', 'Docs only'], 'The preset that filled it') : '';
@@ -82,13 +82,18 @@
     return `<div class="home-starters" role="group" aria-label="Start something">${pins.map((w) => tile({ id: `pin:${w}`, label: w, icon: w === 'Shaper' ? 'kind-feature' : 'kind-workflow' }, true)).join('')}${STARTERS.map((x) => x.id === 'track' ? `<span class="rc-pop">${tile(x)}${trackMenu}</span>` : tile(x)).join('')}<span class="rc-pop">${more}</span></div>`;
   }
   const intentChip = () => { const x = comp.intent && intentOf(comp.intent); return x ? `<span class="kind-chip composer-intent">${R.icon(x.icon, 12)}${esc(x.label)}${R.button({ label: `Clear ${x.label}`, kind: 'quiet', iconOnly: true, icon: R.icon('x', 11), attrs: { 'data-intent-clear': '' } })}</span>` : ''; };
+  // how full this chat's context is, and what waits to be sent
+  const meter = () => { const c = chat(); if (!c) return ''; const pct = Math.min(96, 8 + turns().length * 3); return `<span class="composer-meter" title="This chat has used ${pct}% of its context (200k tokens); older turns are summarised past 90%">${pct}%</span>`; };
+  const queueHtml = () => ((comp.queue || []).length ? `<div class="composer-queue">${comp.queue.map((q, k) => R.turnRow({ mark: R.icon('clock', 14), text: `<b>Queued</b> ${esc(q)}`, end: R.button({ label: 'Edit', kind: 'quiet', attrs: { 'data-q-edit': String(k) } }) + R.button({ label: `Remove ${q}`, kind: 'quiet', iconOnly: true, icon: R.icon('x', 12), attrs: { 'data-q-drop': String(k) } }) })).join('')}</div>` : '');
+  // @ mentions: a task named in what you write becomes a chip that leads to its card
+  const mentionMenu = () => { if (menu !== 'cp-at') return ''; const q = (comp.text.match(/@([^@\s]*)$/) || [, ''])[1].toLowerCase(); const all = (window.RailChats?.data().chats || []).flatMap((c) => (c.tasks || []).filter((t) => t.case && t.title.toLowerCase().includes(q))).slice(0, 6); return `<div class="composer-at">${R.compactMenu({ label: 'Mention a task', items: all.length ? all.map((t) => ({ id: `cp-at|${t.case}|${t.title}`, text: t.title, mark: taskMark(t, 14) })) : [{ header: 'No task by that name' }] })}</div>`; };
   function composerHtml() {
     const plus = `<span class="rc-pop">${R.button({ label: 'Add', kind: 'quiet', iconOnly: true, icon: R.icon('plus', 15), attrs: { 'data-menu': 'cp-plus', 'aria-haspopup': 'menu', 'aria-expanded': String(menu === 'cp-plus') } })}${menu === 'cp-plus' ? R.compactMenu({ items: [{ id: 'cp-plus|Files', text: 'Files', help: 'Adds files for it to read' }, { id: 'cp-plus|md', text: 'Markdown or a .md file', help: 'Writes the task as Markdown' }, { id: 'cp-plus|Ticket', text: 'A ticket from a tracker', help: 'Starts from a ticket' }, { id: 'cp-plus|Reuse', text: 'Reuse last task', help: 'Fills in the words of your last task' }, { id: 'cp-plus|Shape', text: 'Shape it first', help: 'Worca asks and writes the requirements before it builds' }, { sep: true }, { header: 'Preset' }, ...['Hotfix', 'Docs only'].map((x) => ({ id: `cp-preset|${x}`, text: x, checked: comp.preset === x, help: 'Fills the sentence; Start says it is used' }))] }) : ''}</span>`;
     const words = comp.mode === 'schedule' ? 'Schedule' : comp.startAt ? `Start at ${comp.startAt}` : 'Start task';
     const send = comp.busy ? R.button({ label: 'Stop', kind: 'primary', iconOnly: true, icon: R.icon('stop', 14), attrs: { 'data-cp-stop': '', title: 'Stops the reply' } })
       : comp.mode === 'ask' ? R.button({ label: 'Send', kind: 'primary', iconOnly: true, icon: R.icon('up', 14), attrs: { 'data-cp-send': '', title: 'Sends it to Worca' } })
         : R.button({ label: words, kind: 'primary', attrs: { 'data-cp-send': '', title: comp.mode === 'schedule' ? 'Saves the schedule' : 'Starts the task now' } });
-    return R.composer({ value: comp.text, placeholder: comp.intent ? intentOf(comp.intent)?.ph || 'Ask Worca…' : comp.mode === 'schedule' ? 'What should run each time?' : comp.mode === 'task' ? 'What should the task do?' : 'Ask Worca…', sentence: intentChip() + chipsHtml() + sentence(), detail: detail(), tools: plus, send: R.button({ label: 'Speak', kind: 'quiet', iconOnly: true, icon: R.icon('mic', 15), attrs: { 'data-cp-mic': '', title: 'Speak instead of typing' } }) + send, attrs: { 'data-composer': '' } });
+    return queueHtml() + mentionMenu() + R.composer({ value: comp.text, placeholder: comp.intent ? intentOf(comp.intent)?.ph || 'Ask Worca…' : comp.mode === 'schedule' ? 'What should run each time?' : comp.mode === 'task' ? 'What should the task do?' : 'Ask Worca…', sentence: intentChip() + chipsHtml() + sentence(), detail: detail(), tools: plus, send: meter() + R.button({ label: comp.handsFree ? 'Hands-free on' : 'Speak', kind: 'quiet', iconOnly: true, icon: R.icon('mic', 15), attrs: { 'data-cp-mic': '', 'aria-pressed': String(!!comp.handsFree), title: 'Speak instead of typing' } }) + `<span class="rc-pop">${R.button({ label: 'Voice options', kind: 'quiet', iconOnly: true, icon: R.icon('chevron', 10), attrs: { 'data-menu': 'cp-voice', 'aria-haspopup': 'menu', 'aria-expanded': String(menu === 'cp-voice') } })}${menu === 'cp-voice' ? R.compactMenu({ items: [{ id: 'cp-voice|hands', text: comp.handsFree ? 'Hands-free off' : 'Hands-free', help: 'Listens and answers aloud until you stop it' }] }) : ''}</span>` + (comp.busy && comp.text ? R.button({ label: 'Queue it', kind: 'quiet', attrs: { 'data-cp-queue': '', title: 'Sends it when this reply is done' } }) : '') + send, attrs: { 'data-composer': '' } });
   }
 
   // ---- a turn ----
@@ -162,8 +167,10 @@
     const fold = () => ({ 'data-fold-turn': String(i), ...(x.id ? { 'data-anchor': x.id } : {}) });
     if (x.t === 'you') return R.youTurn({ text: x.text, quote: x.quote || '', files: x.files || [], refs: (x.refs || []).map((r) => ({ text: r.title, mark: R.kindMark({ kind: 'task', tone: R.markTone(R.runState(RM.stateOf(r.case))), size: 14 }), attrs: { 'data-open-ref': r.case } })), attrs: { 'data-anchor': x.id || '' } });
     if (x.t === 'cmd') {   // a command running now: its seconds live; done, it folds its output like any command
-      if (!x.done) return R.turnRow({ mark: R.kindMark({ kind: 'chat', tone: 'run', size: 16 }), text: `<b>${esc(x.cmd)}</b>`, end: `<span class="think-t">1s</span>`, attrs: { 'data-think-at': String(x.at || (x.at = Date.now())) } });
-      return R.turnRow({ mark: R.icon(opened.has(i) ? 'chevron' : 'chevR', 14), text: `<b>${esc(x.cmd)}</b> ${esc(x.sum || '')}`, end: x.end || '', body: esc(x.out || ''), open: opened.has(i), attrs: fold() });
+      const cmdMenu = R.moreMenu({ id: `cmd:${i}`, label: `More for ${x.cmd}`, icon: R.icon('more', 16), open: menu === `cmd:${i}`, items: ['Copy command', 'Copy output', 'Show in terminal', 'Show all'] });
+      if (!x.done && !x.stopped) return R.turnRow({ mark: R.kindMark({ kind: 'chat', tone: 'run', size: 16 }), text: `<b>${esc(x.cmd)}</b>`, end: `<span class="think-t">1s</span>${R.button({ label: 'Stop', kind: 'quiet', attrs: { 'data-cmd-stop': String(i) } })}${cmdMenu}`, attrs: { 'data-think-at': String(x.at || (x.at = Date.now())) } });
+      if (x.stopped) return R.turnRow({ mark: R.kindMark({ kind: 'chat', tone: 'stop', size: 16 }), text: `<b>${esc(x.cmd)}</b> stopped by you`, end: cmdMenu });
+      return R.turnRow({ mark: R.icon(opened.has(i) ? 'chevron' : 'chevR', 14), text: `<b>${esc(x.cmd)}</b> ${esc(x.sum || '')}`, end: `${esc(x.end || '')}${cmdMenu}`, body: esc(x.out || ''), open: opened.has(i), attrs: fold() });
     }
     if (x.t === 'gate') {   // a step that needs a decision, or failed: its choices on one line
       if (x.done) return R.turnRow({ mark: R.icon('check', 14), text: `<b>${esc(x.title)}</b> ${esc(x.done)}` });
@@ -205,7 +212,10 @@
     }
     if (x.t === 'change') {
       const graph = x.graph ? R.workflowGraph({ label: x.title, stages: [{ label: 'Plan', nodes: [{ key: 'p1', name: 'Plan the contract', state: 'next' }, { key: 'p2', name: 'Sign off', state: 'next' }] }, { label: 'Build', nodes: [{ key: 'b1', name: 'Slice 1: read', state: 'next' }, { key: 'b2', name: 'Slice 2: write', state: 'next' }, { key: 'b3', name: 'Slice 3: auth', state: 'next' }] }, { label: 'Review', nodes: [{ key: 'r1', name: 'Review each slice', state: 'next' }] }], end: 'PR' }) : '';
-      return R.changeProposal({ kind: x.kind, title: x.title, why: x.why || '', rows: x.rows || [], body: graph, state: x.state, apply: x.apply || 'Apply', hooks: { apply: { 'data-cp-apply': x.id }, decline: { 'data-cp-decline': x.id }, revert: { 'data-cp-revert': x.id } }, attrs: { 'data-anchor': x.id } });
+      const choice = x.choice ? R.segmented({ label: x.choice.label, hook: 'cp-choice', items: x.choice.items.map((v) => ({ id: `${x.id}|${v}`, label: v + (v === x.choice.rec ? ' (recommended)' : ''), on: (x.picked || x.choice.rec) === v })) }) : '';
+      const acts = x.actions ? x.actions.map(([label, kind, done], k) => ({ label, kind, attrs: { 'data-cp-act': `${x.id}|${k}` } })) : null;
+      if (x.done) return R.turnRow({ mark: R.icon('check', 14), text: `<b>${esc(x.title)}</b> ${esc(x.done)}` });
+      return R.changeProposal({ actions: acts, kind: x.kind, title: x.title, why: x.why || '', rows: x.rows || [], body: graph + choice, state: x.state, apply: x.apply || 'Apply', hooks: { apply: { 'data-cp-apply': x.id }, decline: { 'data-cp-decline': x.id }, revert: { 'data-cp-revert': x.id } }, attrs: { 'data-anchor': x.id } });
     }
     if (x.t === 'think') return R.thinkingRow({ done: true, secs: (x.text.match(/\d+s/) || ['a moment'])[0], steps: x.steps || THOUGHT, open: opened.has(i), attrs: fold() });
     if (x.t === 'cmds') return R.turnRow({ mark: R.icon(opened.has(i) ? 'chevron' : 'chevR', 14), text: esc(x.text), end: x.end, body: esc(x.body), open: opened.has(i), attrs: fold() });
@@ -217,7 +227,7 @@
     if (x.t === 'schedule') return openCard(x, t);
     if (x.t === 'question') {
       if (x.answered) return R.turnRow({ mark: R.icon('check', 14), text: `<b>${esc(x.text)}</b> ${esc(x.answered)}` });
-      return `<div data-anchor="${x.id}">${R.turnRow({ mark: R.kindMark({ kind: 'chat', tone: 'ask', stage: -1, size: 16 }), text: `<b>${esc(x.text)}</b>` })}<div class="convo-answer">${R.optionList({ label: x.text, options: x.options, selected: x.pick, recommended: 0, optAttrs: (n) => ({ 'data-answer': `${i}|${n}` }), own: `<div class="convo-answer-go">${R.button({ label: 'Answer', attrs: { 'data-answer-go': String(i) } })}${x.many ? R.button({ label: x.shaper ? 'Use defaults' : 'Use Worca’s picks', kind: 'quiet', attrs: { 'data-answer-picks': String(i), title: 'Takes Worca’s pick for this and the next question' } }) : ''}</div>` })}</div></div>`;
+      return `<div data-anchor="${x.id}">${R.turnRow({ mark: R.kindMark({ kind: 'chat', tone: 'ask', stage: -1, size: 16 }), text: `<b>${esc(x.text)}</b>` })}<div class="convo-answer">${R.optionList({ label: x.text, options: x.options, selected: x.pick, recommended: 0, optAttrs: (n) => ({ 'data-answer': `${i}|${n}` }), own: `${R.field({ id: `own-${x.id}`, label: 'Or write your own answer', placeholder: 'Your answer', attrs: { 'data-own': String(i) } })}<div class="convo-answer-go">${R.button({ label: 'Answer', attrs: { 'data-answer-go': String(i) } })}${x.many ? R.button({ label: x.shaper ? 'Use defaults' : 'Use Worca’s picks', kind: 'quiet', attrs: { 'data-answer-picks': String(i), title: 'Takes Worca’s pick for this and the next question' } }) : ''}</div>` })}</div></div>`;
     }
     const st = stOf(t), tone = R.markTone(st), word = tone === 'ask' ? 'Asks you below' : st.word;
     if (tone === 'wait' && !x.open) return openCard(x, t);   // one line until opened in place
@@ -323,7 +333,7 @@
     if (!threads.has(c.id)) threads.set(c.id, M.thread(c));
     const list = threads.get(c.id), n = Date.now().toString(36);
     const intent = comp.intent || '';
-    list.push({ t: 'you', id: `y${n}`, text, when: 'now' });
+    list.push({ t: 'you', id: `y${n}`, text, when: 'now', refs: comp.refs || [] });
     if (comp.mode === 'task') {
       const t = { id: `t${n}`, title: text.slice(0, 40), case: 'working', stage: 0, git: 'branch', branch: `feat/${text.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 24)}`, detail: `Plan · step 1 of 2 · ${comp.workflow} on ${comp.engine}` };
       if (comp.startAt) { t.case = 'scheduled'; t.detail = `Starts at ${comp.startAt}`; t.git = ''; }
@@ -339,9 +349,9 @@
       list.push({ t: 'working', at: Date.now(), steps: THINKING }); comp.busy = true; c.state = 'replying';
       root.dispatchEvent(new CustomEvent('rail:replying', { bubbles: true, detail: { busy: true } }));   // Ask worca's icon writes while it does
       clearTimeout(timer);
-      timer = setTimeout(() => { const i = list.findIndex((x) => x.t === 'working'); if (i >= 0) list.splice(i, 1, { t: 'think', text: `Thought for ${thinkNow(list[i]).secs}`, steps: THOUGHT.slice(0, thinkNow(list[i]).n) }, ...replyFor(text, n, intent)); comp.busy = false; c.state = 'idle'; root.dispatchEvent(new CustomEvent('rail:replying', { bubbles: true, detail: { busy: false } })); window.RailChats.refresh(); paint(); }, 1400);
+      timer = setTimeout(() => { const i = list.findIndex((x) => x.t === 'working'); if (i >= 0) list.splice(i, 1, { t: 'think', text: `Thought for ${thinkNow(list[i]).secs}`, steps: THOUGHT.slice(0, thinkNow(list[i]).n) }, ...replyFor(text, n, intent)); comp.busy = false; c.state = 'idle'; root.dispatchEvent(new CustomEvent('rail:replying', { bubbles: true, detail: { busy: false } })); if ((comp.queue || []).length) { const next = comp.queue.shift(); setTimeout(() => { comp.text = next; send(); }, 300); } window.RailChats.refresh(); paint(); }, 1400);
     }
-    comp = { ...comp, text: '', startAt: '', more: false, files: [], intent: '', mode: opts.mode || 'ask' };
+    comp = { ...comp, text: '', startAt: '', more: false, files: [], intent: '', refs: [], mode: opts.mode || 'ask' };
     if (had) had.value = '';
     window.RailChats.refresh();
     if (opts.where && !side) { chatId = ''; comp = fresh(opts.mode); window.RailShell.go(`chat/${c.id}`); return; }
@@ -353,12 +363,15 @@
 
   // ---- what a click or a key means here ----
   function pickMenu(id, v) {
+    if (id.startsWith('cmd:')) { menu = ''; paint(); say(v === 'Show in terminal' ? 'Opens it in the terminal' : v === 'Show all' ? 'Shows every line' : `${v.replace('Copy ', 'Copied the ')}`); return; }
     if (/^(plan|split|feat|slice):/.test(id)) { menu = ''; const [, tid, n] = id.split(':'), x = turns().find((y) => y.id === tid);
       if (x && id.startsWith('slice:')) { if (v === 'Remove') x.slices.splice(+n, 1); if (v === 'Merge with next' && x.slices[+n + 1]) { x.slices[+n].title += ` + ${x.slices[+n + 1].title}`; x.slices.splice(+n + 1, 1); } }
       if (x && v.includes('before each run')) x.askEach = !x.askEach;
       if (x && v === 'Plan it as one') { x.slices = [{ title: x.title, detail: 'one run', case: 'scheduled', stage: -1 }]; }
       paint(); say(v); return; }
     const sm = /^ship-(.+)-(\d+)$/.exec(id); if (sm) { const x = turns().find((y) => y.id === sm[1]); if (x) x.reqs[+sm[2]].v = v; menu = ''; paint(); return; }
+    if (id === 'cp-at') { const [cs, title] = v.split('|'); comp.refs = [...(comp.refs || []), { case: cs, title }]; comp.text = comp.text.replace(/@[^@\s]*$/, `@${title} `); menu = ''; paint(false); root.querySelector('[data-composer-t]')?.focus(); return; }
+    if (id === 'cp-voice') { comp.handsFree = !comp.handsFree; menu = ''; paint(); say(comp.handsFree ? 'Hands-free: listening' : 'Hands-free off'); return; }
     if (id === 'starter-more') { const [k, ...rest] = v.split('|'); pickMenu(k, rest.join('|')); return; }   // More's items carry its id first
     if (id === 'starter') { arm(v); return; }
     if (id === 'starter-preset') { comp = { ...comp, intent: '', mode: 'task', preset: v, more: true }; menu = ''; paint(); root.querySelector('[data-composer-t]')?.focus(); say(`Preset ${v}: check it, then start`); return; }
@@ -402,9 +415,13 @@
     if ((hit = on('[data-answer-picks]'))) { const l = turns(), x = l[+hit.dataset.answerPicks]; for (const y of [x, l.find((z) => z.id === x.many)]) if (y && !y.answered) y.answered = y.options[y.pick]; afterClarify(); paint(); say('Took Worca’s picks'); return; }
     if ((hit = on('[data-answer-go]'))) {
       const x = turns()[+hit.dataset.answerGo], t = taskOf(x.task), c = chat();
+      const own = root.querySelector(`[data-own="${hit.dataset.answerGo}"]`)?.value.trim(); if (own) { x.options = [...x.options, own]; x.pick = x.options.length - 1; }
       if (!t) { x.answered = x.options[x.pick]; afterClarify(); paint(); say('Answered'); return; }   // a question of the chat itself, not of a task
       x.answered = x.options[x.pick]; t.case = 'working'; t.detail = 'Review · step 3 of 3'; c.state = 'following'; window.RailChats.refresh(); paint(); say('Answered: the task carries on'); return;
     }
+    if (on('[data-cp-queue]')) { const t = root.querySelector('[data-composer-t]'); comp.queue = [...(comp.queue || []), (t?.value || comp.text).trim()]; comp.text = ''; paint(); say('Queued: it goes when this reply is done'); return; }
+    if ((hit = on('[data-q-edit]'))) { const k = +hit.dataset.qEdit; comp.text = comp.queue[k]; comp.queue.splice(k, 1); paint(); root.querySelector('[data-composer-t]')?.focus(); return; }
+    if ((hit = on('[data-q-drop]'))) { comp.queue.splice(+hit.dataset.qDrop, 1); paint(); return; }
     if ((hit = on('[data-starter]'))) { const id = hit.dataset.starter; if (id === 'track') { menu = menu === 'starter-track' ? '' : 'starter-track'; paint(); } else arm(id); return; }
     if (on('[data-intent-clear]')) { comp.intent = ''; paint(); root.querySelector('[data-composer-t]')?.focus(); return; }
     const pp = (attr) => { const h = on(`[${attr}]`); return h ? turns().find((y) => y.id === h.getAttribute(attr)) : null; };
@@ -418,6 +435,9 @@
     if ((px = pp('data-plan-roles'))) { px.open = !px.open; paint(); return; }
     if ((px = pp('data-plan-approve'))) { px.approved = true; const l = turns(), i = l.indexOf(px); l.splice(i + 1, 0, { t: 'feature', id: `f${Date.now().toString(36)}`, title: px.title, slices: [{ title: 'Columns and order', case: 'working', stage: 1, detail: 'Build · step 1 of 2' }, { title: 'Dates and money', case: 'scheduled', stage: -1, detail: 'After the columns' }] }); paint(); say('Approved: the plan is being built'); return; }
     if ((px = pp('data-plan-changes'))) { const t = root.querySelector('[data-composer-t]'); if (t) { t.value = 'Change the plan: '; comp.text = t.value; t.focus(); } return; }
+    if ((hit = on('[data-cmd-stop]'))) { const x = turns()[+hit.dataset.cmdStop]; if (x) { x.stopped = true; paint(); say('Stopped the command'); } return; }
+    if ((hit = on('[data-cp-act]'))) { const [id, k] = hit.dataset.cpAct.split('|'), x = turns().find((y) => y.id === id); if (x) { x.done = x.actions[+k][2] + (x.choice ? ` · ${x.picked || x.choice.rec}` : ''); paint(); say(x.done); } return; }
+    if ((hit = on('[data-cp-choice]'))) { const [id, v] = hit.dataset.cpChoice.split('|'), x = turns().find((y) => y.id === id); if (x) { x.picked = v; paint(); } return; }
     if ((hit = on('[data-act]'))) { const [id, k] = hit.dataset.act.split('|'), x = turns().find((y) => y.id === id); if (x) { x.done = x.actions[+k][2]; paint(); say(x.done); } return; }
     if ((hit = on('[data-cp-apply], [data-cp-decline], [data-cp-revert]'))) { const id = hit.dataset.cpApply || hit.dataset.cpDecline || hit.dataset.cpRevert, x = turns().find((y) => y.id === id); if (x) { x.state = hit.dataset.cpApply ? 'applied' : hit.dataset.cpRevert ? 'proposed' : 'declined'; if (x.state === 'applied' && x.graph) x.rows = [{ name: 'Saved as', before: '', after: 'API rewrite' }]; paint(); say(x.state === 'applied' ? `${x.kind}: changed` : x.state === 'declined' ? 'Nothing changed' : 'Reverted'); } return; }
     if ((px = pp('data-pp-more'))) { px.open = !px.open; paint(); return; }
@@ -461,7 +481,7 @@
   root.addEventListener('focusin', (e) => { const t = e.target.closest('[data-tick]'); if (t && t.dataset.tick !== hover) { hover = t.dataset.tick; paintTimelineHover(); } });
   root.addEventListener('contextmenu', (e) => { const p = e.target.closest('[data-pin]'); if (!p) return; e.preventDefault(); pins = pins.filter((w) => w !== p.dataset.pin); paint(); say(`Unpinned ${p.dataset.pin}`); });
   root.addEventListener('keydown', (e) => { const p = e.target.closest?.('[data-pin]'); if (p && (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10'))) { e.preventDefault(); pins = pins.filter((w) => w !== p.dataset.pin); paint(); say(`Unpinned ${p.dataset.pin}`); } });
-  root.addEventListener('input', (e) => { if (e.target.matches('[data-composer-t]')) { comp.text = e.target.value; size(e.target); } if (e.target.matches('[data-pp-brief]')) { const x = turns().find((y) => y.id === e.target.dataset.ppBrief); if (x) x.brief = e.target.value; } if (e.target.matches('[data-pp-feature]')) { const x = turns().find((y) => y.id === e.target.dataset.ppFeature); if (x) x.feature = e.target.value; } if (e.target.matches('[data-pp-title]')) { const x = turns().find((y) => y.id === e.target.dataset.ppTitle); if (x) x.title = e.target.value; } });
+  root.addEventListener('input', (e) => { if (e.target.matches('[data-composer-t]')) { comp.text = e.target.value; size(e.target); const at = /@[^@\s]*$/.test(comp.text); if (at !== (menu === 'cp-at') || (comp.busy && !!comp.text.trim() !== !!root.querySelector('[data-cp-queue]'))) { if (at !== (menu === 'cp-at')) menu = at ? 'cp-at' : ''; paint(); } } if (e.target.matches('[data-pp-brief]')) { const x = turns().find((y) => y.id === e.target.dataset.ppBrief); if (x) x.brief = e.target.value; } if (e.target.matches('[data-pp-feature]')) { const x = turns().find((y) => y.id === e.target.dataset.ppFeature); if (x) x.feature = e.target.value; } if (e.target.matches('[data-pp-title]')) { const x = turns().find((y) => y.id === e.target.dataset.ppTitle); if (x) x.title = e.target.value; } });
   root.addEventListener('keydown', (e) => { if (e.target.matches('[data-composer-t]') && e.key === 'Enter' && !e.shiftKey && comp.mode === 'ask') { e.preventDefault(); send(); } });
   document.addEventListener('keydown', (e) => {
     if (side || opts.where || (e.key !== '[' && e.key !== ']') || root.hidden || e.target.matches?.('input, textarea, select')) return;
