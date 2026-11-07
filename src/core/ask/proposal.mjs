@@ -66,6 +66,14 @@ export function permissiveCardNote({ askLink, cardStart, picked, resolved }) {
   return `Guardrails: Normal, not Permissive — ${from}, and a run started from a Chat card uses Permissive only when it is picked on the card`;
 }
 
+/** The 409 body for a Chat-card start moved to Normal (a permissiveCardNote) on an engine other than Claude, else null:
+ *  the engine gate would refuse Normal's rules, and the card has no set picker or consent to offer, so say so up front. */
+export function cardEngineRefusal(guardrailsNote, runEngine) {
+  if (!guardrailsNote || !runEngine.engine || runEngine.allowUnguardedEngine === true) return null;
+  return { code: GUARDRAILS_CARD_ENGINE_CODE,
+    error: `this run would start on the Normal guardrail set, which ${runEngine.engine} cannot enforce — start it from New run and pick a guardrail set` };
+}
+
 export const PROPOSAL_ERRORS = Object.freeze({
   bothTargets: 'provide workspaceId OR projectKey, not both',
   noTarget: 'workspaceId or projectKey is required',

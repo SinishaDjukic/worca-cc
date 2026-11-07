@@ -402,7 +402,7 @@ const REST_PR_FORGES = new Set(['azure', 'bitbucket']);
 import { checkRunPrBody, resolveRunPr } from '../src/core/pr-auto.mjs';
 import { createPrAutoFinisher, setPrAutoFinisher, prAutoFinisher } from '../src/core/pr-auto-finish.mjs';
 import { workspaceMembers as prStateMembers, memberPrTarget, relatedPrsBlock, withRelatedPrsBlock, openWorkspaceRunPrs, createPrWithDraftRetry } from '../src/core/workspace-prs.mjs';
-import { isSyntacticRef, permissiveCardNote, CARD_FALLBACK_GUARDRAILS, GUARDRAILS_CARD_ENGINE_CODE } from '../src/core/ask/proposal.mjs';
+import { isSyntacticRef, permissiveCardNote, CARD_FALLBACK_GUARDRAILS, cardEngineRefusal } from '../src/core/ask/proposal.mjs';
 import { createRefResolver } from '../src/core/ask/refs.mjs';
 import { REFS_MAX } from '../src/shared/chip-refs.mjs';
 import { archivePipeline, restorePipeline, purgePipeline, discardRetainedWorktrees, applyRetainedWork, archiveKeepsWork } from '../src/core/pipeline-delete.mjs';
@@ -2964,12 +2964,8 @@ const startRunHandler = async (req, res) => {
     const engineShape = runEngineOpts(body, hasWorkspace ? { workspace: true } : { projectDir: resolveProjectDir(body.projectDir) });
     if (engineShape.error) return badRequest(res, engineShape.error);
     const runEngine = engineShape.opts;
-    // A Chat-card start moved to Normal (guardrailsNote) on an engine other than Claude: the engine gate would refuse
-    // Normal's rules, and the card has no set picker or consent to offer. Say so up front, with the way out.
-    if (guardrailsNote && runEngine.engine && runEngine.allowUnguardedEngine !== true) {
-      return res.status(409).json({ code: GUARDRAILS_CARD_ENGINE_CODE,
-        error: `this run would start on the Normal guardrail set, which ${runEngine.engine} cannot enforce — start it from New run and pick a guardrail set` });
-    }
+    const cardRefusal = cardEngineRefusal(guardrailsNote, runEngine);   // a moved card start on an engine Normal cannot hold
+    if (cardRefusal) return res.status(409).json(cardRefusal);
     // Signed out with no routed model, a Claude run can only fail on its first call: say so now, not as a paused run.
     if (!internal && !scanTarget && body.mock !== true && !mockEnabled({}) && (runEngine.engine || 'claude') === 'claude'
       && workflowNeedsModel(workflowRow)
