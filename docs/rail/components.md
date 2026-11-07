@@ -73,7 +73,7 @@ A Rail page is built by naming needs, not looks. Find the need, use its componen
 | Something broke that nothing handles | Toast, error: stays until closed, a repeat counts on it | Something went wrong |
 | The connection dropped | a quiet line at the end of the top bar, grey dot, until it reconnects | Offline · retrying |
 
-**Rows.** Every row on a Rail page is `row()`: its mark on the rail, its text, its end, its ⋯. A list lays its rows on one grid, so every end shares one left and one right edge, as wide as the widest end (capped at 45% of the list) and the title gives way first. ListRow, StepRow, SettingsRow, Pulse rows and stack rows are built on it; a page never sets a row's columns.
+**Rows.** Every row on a Rail page is `row()`: its mark on the rail, its text, its end, its ⋯. A list lays its rows on one grid, so every end shares one left and one right edge, as wide as the widest end (capped at 45% of the list) and the title gives way first. Inside a list's end there are four columns, in order: facts (a figure, a chip), actions, a Switch, the ⋯, each on one edge whichever a row has. ListRow, StepRow, SettingsRow, Pulse rows and stack rows are built on it; a page never sets a row's columns.
 
 Building from it:
 - A page sets no look of its own: no colour, type size, corner or shadow that is not a token, no inline style but

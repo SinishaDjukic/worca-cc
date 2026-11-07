@@ -833,7 +833,7 @@ html,body{height:auto;overflow:visible;margin:0;}
   .set-sec-head{flex-wrap:wrap;}
   /* A record stacks as a row does: its name and meta take the width, its end goes under them. Nothing is cut. */
   .set-sec .list-rows{grid-template-columns:var(--lr-rail) minmax(0,1fr);}
-  .set-sec .list-rows > .list-row > .lr-end{grid-column:2;justify-content:flex-start;}
+  .set-sec .list-rows > .list-row > .lr-end{grid-column:2;display:flex;justify-content:flex-start;}
   .set-sec .lr-end > .btn-quiet:first-child{margin-left:calc(-1 * var(--btn-inset));}
   .set-sec .lr-t{overflow:visible;white-space:normal;}
   .spick-menu.is-right{left:-4px;right:auto;}   /* a stacked row: every menu opens under its words */   /* a long choice wraps on a narrow screen, its ▾ with its last word */
@@ -974,9 +974,16 @@ body.view-chat #route-today:not([hidden]){flex:1 1 auto;min-height:0;display:fle
 
 /* One rail, one end (docs/rail/components.md): a list's rows share one grid, so every end has one left and one right edge,
    as wide as the widest end, capped; the title gives way first. */
-.list-rows{--lr-rail:var(--rail,20px);--lr-gap:var(--gap,12px);display:grid;grid-template-columns:var(--lr-rail) minmax(0,1fr) fit-content(45%);column-gap:var(--lr-gap);margin-left:calc(-1 * (var(--lr-rail) + var(--lr-gap)));}
+.list-rows{--lr-rail:var(--rail,20px);--lr-gap:var(--gap,12px);display:grid;grid-template-columns:var(--lr-rail) minmax(0,1fr) repeat(4,auto);column-gap:var(--lr-gap);margin-left:calc(-1 * (var(--lr-rail) + var(--lr-gap)));}
 .list-rows > .list-row{grid-column:1 / -1;grid-template-columns:subgrid;margin-left:0;}
-.list-rows > .list-row > .lr-end{grid-column:3;justify-content:flex-end;}
+.list-rows > .list-row > .lr-end{grid-column:3 / -1;display:grid;grid-template-columns:subgrid;justify-items:end;align-items:center;gap:0 var(--lr-gap);}
+/* Every row's end has the same four columns, so a list's facts, actions, switches and ⋯ each stand on one edge, whichever a row has. */
+.list-rows > .list-row > .lr-end > .lr-fig,.list-rows > .list-row > .lr-end > .kind-chip{grid-column:1;grid-row:1;}
+.list-rows > .list-row > .lr-end > .btn,.list-rows > .list-row > .lr-end > .tip-wrap{grid-column:2;grid-row:1;}
+/* Two actions in one row: the first takes the column before. */
+.list-rows > .list-row > .lr-end > :is(.btn,.tip-wrap):has(+ :is(.btn,.tip-wrap)){grid-column:1;}
+.list-rows > .list-row > .lr-end > .switch{grid-column:3;grid-row:1;}
+.list-rows > .list-row > .lr-end > .rc-pop{grid-column:4;grid-row:1;}
 .list-rows > .list-row > .lr-main{grid-column:2;}
 
 /* Table: divided rows, tabular figures, no box per row. */

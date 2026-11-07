@@ -60,6 +60,18 @@ export const ALIGN = () => {
       if ((what === 'end' || what === 'endR') && xs.some((x) => !near(x.right, xs[0].right))) out.push(`${box}: its rows' ends stop on ${new Set(xs.map((x) => Math.round(x.right))).size} edges`);
     }
   }
+  // The end's columns: in a list, its switches stand on one edge, and so do its ⋯ and its chips; nothing in an end overlaps.
+  for (const list of document.querySelectorAll('.list-rows')) {
+    if (getComputedStyle(list).gridTemplateColumns.split(' ').length < 6) continue;
+    for (const [what, sel] of [['switches', ':scope > .list-row > .lr-end > .switch'], ['⋯', ':scope > .list-row > .lr-end > .rc-pop']]) {
+      const xs = [...list.querySelectorAll(sel)].filter((e) => e.offsetParent).map((e) => e.getBoundingClientRect().right);
+      if (xs.some((x) => !near(x, xs[0]))) out.push(`a list's ${what} stop on ${new Set(xs.map(Math.round)).size} edges`);
+    }
+    for (const end of list.querySelectorAll(':scope > .list-row > .lr-end')) {
+      const kids = [...end.children].filter((e) => e.offsetParent).map((e) => e.getBoundingClientRect());
+      for (let i = 1; i < kids.length; i++) if (kids[i].left < kids[i - 1].right - 1 && kids[i].right > kids[i - 1].left + 1) out.push(`two things overlap in a row's end: ${end.textContent.trim().slice(0, 30)}`);
+    }
+  }
   // a record's title starts on its section's text edge: its mark hangs left of it
   for (const sec of document.querySelectorAll('.set-sec')) {
     const h = sec.querySelector(':scope > .set-sec-head .set-sec-h'); if (!h || !h.offsetParent) continue;

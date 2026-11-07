@@ -211,7 +211,8 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
   const channel = (title, key, o) => ({ title, sw: { key, on: o.on, off: (sv) => (sv.chToken[title] ? '' : 'Set it up in Plugins first') }, meta: o.meta, chip: (sv) => channelState(sv, title, key), when: (sv) => installed(sv, title),
     live: (sv) => (!sv.chToken[title] ? 'Needs a bot token: set it up in Plugins' : o.warn && !sv.chAllowed[title] ? o.warn : o.meta),
     mark: (sv) => (sv.chToken[title] && o.warn && !sv.chAllowed[title] ? 'is-amber' : ''),
-    menu: (r, sv) => (!sv.chToken[title] ? ['Set up'] : [sv[key] ? 'Test' : { text: 'Test', off: true, help: 'Turn it on to send a test' }, ...(o.warn && !sv.chAllowed[title] ? ['Allow chat'] : [])]),
+    // A row's one step: a problem's way out first; Test once nothing is wrong.
+    menu: (r, sv) => (!sv.chToken[title] ? ['Set up'] : o.warn && !sv.chAllowed[title] ? ['Allow chat'] : [sv[key] ? 'Test' : { text: 'Test', off: true, help: 'Turn it on to send a test' }]),
     on: {
       Test: () => `Test sent to ${title}`,
       'Set up': (r, x) => x.go('plugins'),
