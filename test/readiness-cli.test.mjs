@@ -66,7 +66,7 @@ describe('worca readiness', () => {
     assert.match(r.stdout, /Blocker failures:/);
     assert.match(r.stdout, /^Result: Not ready\. 1 must fix/m);
     assert.match(r.stdout, /instructions\.present \(Claude Code\): /);
-    assert.match(r.stdout, /instructions\.present \(Claude Code\): Add CLAUDE\.md\. If the project already has an AGENTS\.md, a line `@AGENTS\.md` in CLAUDE\.md pulls it in\./);
+    assert.match(r.stdout, /instructions\.present \(Claude Code\): Add CLAUDE\.md\. If the project already has an AGENTS\.md, a line @AGENTS\.md in CLAUDE\.md pulls it in\./);
   });
 
   it('applies the project readiness.ignore list, so a muted blocker no longer fails the exit code', async () => {

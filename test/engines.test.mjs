@@ -136,7 +136,7 @@ describe('engines module', () => {
       await withRepo(null, async (dir) => {
         const { checks } = evaluateEngines(await collectFacts(dir), { env: NO_LOCKS });
         assert.equal(row(checks, 'instructions.present', 'claude').fix,
-          'Add CLAUDE.md. If the project already has an AGENTS.md, a line `@AGENTS.md` in CLAUDE.md pulls it in.');
+          'Add CLAUDE.md. If the project already has an AGENTS.md, a line @AGENTS.md in CLAUDE.md pulls it in.');
         assert.equal(row(checks, 'instructions.present', 'codex').fix, 'Add AGENTS.md.');
         assert.equal(row(checks, 'instructions.present', 'copilot').fix, 'Add AGENTS.md or .github/copilot-instructions.md.');
         for (const r of perEngineRows(checks).filter((c) => c.id === 'instructions.present')) {

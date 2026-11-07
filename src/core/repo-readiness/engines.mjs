@@ -26,7 +26,7 @@ const LOCAL_ONLY_FILES = Object.freeze(['CLAUDE.local.md']);
 const SOURCES = Object.freeze({
   claude: {
     files: CLAUDE_INSTRUCTION_FILES, globs: CLAUDE_INSTRUCTION_GLOBS, committedExempt: true,
-    missingFix: 'Add CLAUDE.md. If the project already has an AGENTS.md, a line `@AGENTS.md` in CLAUDE.md pulls it in.',
+    missingFix: 'Add CLAUDE.md. If the project already has an AGENTS.md, a line @AGENTS.md in CLAUDE.md pulls it in.',
   },
   codex: { files: CODEX_INSTRUCTION_FILES, globs: [], firstNonEmpty: true, missingFix: 'Add AGENTS.md.' },
   copilot: {
