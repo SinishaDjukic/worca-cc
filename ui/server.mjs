@@ -355,6 +355,9 @@ import { createRunEventHook } from '../src/core/requirements/start.mjs';
 import { recoverInterrupted as recoverRequirements, requirementsModel, DEFAULT_INTERVIEW_EFFORT } from '../src/core/requirements/interview.mjs';
 import { recoverBriefs } from '../src/core/requirements/brief-job.mjs';
 import { recoverAttachmentReads, sweepReadFolders, sweepTempBodies, withStagedRunFiles } from '../src/core/requirements/attachment-job.mjs';
+import { createDesignBuilds } from '../src/core/design/registry.mjs';
+import { registerDesignRoutes } from '../src/core/design/routes.mjs';
+import { recoverDesignBuilds } from '../src/core/design/recover.mjs';
 import { drainTimeoutMs, autoResumeMode, autoResumeCandidates, DRAIN_ACTIVE_STATUSES } from '../src/core/drain.mjs';
 import { exportWorkflow, exportWorkflowPlugin, ON_CONFLICT_MODES, RESOLUTION_CHOICES } from '../src/core/workflow-export.mjs';
 import { exportWorkflowToMarketplace, listPublishTargets } from '../src/core/marketplace-publish.mjs';
@@ -747,9 +750,10 @@ const identityCheck = REMOTE_ACCESS_CHECK.errors.length ? null : createIdentityC
 // system sleep while any pipeline run has agents working. syncKeepAwake() is cheap and idempotent: call it
 // wherever a run's status or pendingQuestion changes, and when the setting changes.
 const keepAwake = createKeepAwake({ deployment: DEPLOYMENT, log: (line) => console.warn(line) });
+const designBuilds = createDesignBuilds({ broadcast: (f) => broadcast(f), hosted: DEPLOYMENT === 'hosted', draining: () => DRAIN.on, onLiveChange: () => syncKeepAwake() });
 const KEEP_AWAKE_EVENTS = new Set(['question', 'night-decision', 'done', 'error', 'exec', 'state']);
 function syncKeepAwake() {
-  try { keepAwake.update(keepAwakeEnabled() ? countWorking(runs.values()) : 0); }
+  try { keepAwake.update(keepAwakeEnabled() ? countWorking(runs.values()) + designBuilds.liveAgentCount() : 0); }
   catch (err) { console.error(`[worca-ui] keep-awake update failed: ${err && err.message ? err.message : err}`); }
 }
 const SEEN_SIGN_INS = new Set();
@@ -1096,6 +1100,7 @@ wss.on('connection', (ws, req) => {
 
   send(ws, { type: 'hello', bootId: BOOT_ID, serverMock: serverMockMode(), flags: allFlags(), runs: summarizeRuns(), ask: askHello(ws),
     git: { available: gitAvailable() },
+    design: (() => { try { return designBuilds.live({ viewer: ws.worcaViewer }); } catch { return []; } })(),
     extensionPairs: REMOTE_MODE ? [] : extensionPairing.pendingPublic() });
 
   if (id && runs.has(id)) {
@@ -1127,6 +1132,8 @@ wss.on('connection', (ws, req) => {
     if (askThreadId && askJobs.has(askThreadId) && askSocketSees(ws, askThreadId)) {
       replayAskJob(ws, askJobs.get(askThreadId));
     }
+    const designBuildId = msg && msg.type === 'subscribe' && typeof msg.designBuildId === 'string' ? msg.designBuildId : null;
+    if (designBuildId) { try { const snap = designBuilds.snapshotFor(designBuildId, { viewer: ws.worcaViewer }); if (snap) send(ws, snap); } catch (err) { console.error(`[worca-ui] design snapshot: ${err?.message || err}`); } }
   });
 });
 
@@ -1178,7 +1185,7 @@ const askBus = new EventEmitter(); askBus.setMaxListeners(0);
 function broadcast(obj) {
   if (obj && typeof obj.type === 'string' && obj.type.startsWith('ask-') && typeof obj.threadId === 'string') { try { askBus.emit(obj.threadId, obj); } catch { /* listener bug never breaks broadcast */ } }
   const text = JSON.stringify(obj);
-  const owner = askFrameOwner(obj);
+  const owner = askFrameOwner(obj) ?? designBuilds.frameOwner(obj);
   const askFrame = !!(obj && typeof obj.type === 'string' && obj.type.startsWith('ask-'));
   let composer;                                                        // computed lazily, only if an extension socket is open
   for (const ws of sockets) {
@@ -7277,6 +7284,7 @@ registerRequirementsRoutes(app, { broadcast, deps: {
   startRun: (body, opts) => invokeStartRun(body, null, opts),   // D6: through the run handler, as PR watch does
   runSummary: requirementsRunSummary,
 } });
+registerDesignRoutes(app, { broadcast, deps: { designBuilds, brokerStartRefusal } });
 /** These routes push notes off the machine or rewrite them: a browser page must be served by THIS Worca —
  *  isLocalRequest checks the hostname, never the port, and a body-less POST needs no CORS preflight (decision E8).
  *  A possible agent is refused too, as on the Update routes: seeding is the person's consent (E3). */
@@ -7840,6 +7848,7 @@ function drainServer({ timeoutMs = drainTimeoutMs(), reason = 'stop' } = {}) {
   DRAIN.promise = (async () => {
     const pausedIds = new Set();
     const pauseNow = () => {
+      try { designBuilds.pauseAll(); } catch (err) { console.error(`[worca-ui] drain: could not pause design builds: ${err?.message || err}`); }
       for (const e of drainActiveEntries()) {
         if (pausedIds.has(e.id) || e.orch.state?.status !== 'running') continue;
         try {
@@ -7856,7 +7865,7 @@ function drainServer({ timeoutMs = drainTimeoutMs(), reason = 'stop' } = {}) {
     if (active) console.log(`[worca-ui] drain (${reason}): pausing ${active} active run(s), waiting up to ${Math.round(timeoutMs / 1000)} s`);
     pauseNow();
     const deadline = DRAIN.startedAt + timeoutMs;
-    while (drainActiveEntries().length && Date.now() < deadline) {
+    while ((drainActiveEntries().length || designBuilds.busy()) && Date.now() < deadline) {
       await new Promise((r) => setTimeout(r, DRAIN_POLL_MS));
       pauseNow();
     }
@@ -9946,6 +9955,7 @@ export async function bootMaintenance({ log } = {}) {
   } catch (err) {
     console.error(`[worca-ui] product brief sweep failed: ${err && err.message ? err.message : err}`);
   }
+  try { summary.recoveredDesignBuilds = recoverDesignBuilds({ isLive: (id) => !!designBuilds.get(id) }); } catch (err) { console.error(`[worca-ui] design sweep failed: ${err?.message || err}`); }
   // Requirements A8 (D5): a file left `reading` by this restart fails with INTERRUPTED; Try again reads it again.
   try {
     summary.recoveredAttachmentReads = recoverAttachmentReads();
@@ -10413,7 +10423,7 @@ if (isMain) {
 }
 
 export { app, server, runs };
-export { AGENTS_DIR, APP_INFO, APP_REPO_URL, ASK_DEFERRED_REPLIES_MAX, ASK_SCOPE_BUSY, ASK_TEXT_PREVIEW_MAX, BRANCH_SETTLED, BUGS_SLUG, CLONE_JOBS, HOST, MARKETPLACE_ID_RE, MARKET_JOBS, NO_PR_HOST, PKG_VERSION, PLAN_TEXT_MAX, PLUGIN_NAME_RE, PORT, PROJECT_ROOT, PR_TITLE_MAX, REMOTE_MODE, RUNNING_VERSION, ResumeError, SETTLED_RUN, SETUP_AGENT_TEXT, SETUP_JOBS, SKILLS_DIR, SKILL_FOLDER_IMPORTS, SKILL_MD_UNREACHABLE, STORE_ERROR_CODES, actions, actionsEnabledHere, activeActionSnaps, adoWebhookSecret, afterMembersChanged, afterProjectRegistered, agentErrorStatus, agentMayBeCaller, answerRun, applyProjectSettingsPatch, applySettingsPatch, askBusyReason, askChatActions, askChatEngine, askChatEngineGate, askCommandBridges, askCommands, askCommandsEnabled, askContextTokens, askCredentialGate, askDeferred, askDeferredReplies, askDeleting, askEngineSwitchText, askEventPick, askFilesRunDir, askFilesStoreDir, askFollowers, askGroupFor, askGroupThreads, askIdParam, askInFlight, askLiveRun, askProxyBridges, askRefResolver, askRelays, askRunFromPipelineRow, askRunningCount, askSignedIn, askSwitchTranscript, askThreadVisible, askTrackingCount, askTurnEngine, askValidateScope, askViewer, askWebAccessFor, askWorktreesEnvelope, autoDetectedBuiltins, automationWorkspaceMembers, automations, awayPersonOf, badRequest, bareWorkspaceKey, bearerMatches, broadcast, broadcastFeature, brokerStartRefusal, builtins, busyActionRunIds, channelHost, chatGroupError, chatNotifier, chatRefusals, checkoutRecOf, commentIdParam, commentsCreate, commentsDelete, commentsFail, commentsList, commentsPatch, commentsReply, createRunPr, crosslinkMemberPrs, currentUpdateEligibility, defaultPrRemotes, deleteAskThreadFully, detectSystemProxyImpl, detectTeamMemorySoon, drainServer, effectiveUiLevel, egressNow, emitAskWorktrees, emitChanged, emitMemoryChanged, emitPluginsChanged, ensureSetup, extensionPairing, factDeps, failedEventTurn, featureShipping, findScheduleItem, findShipCardIn, flipCard, followCloneCard, forkPrRefusal, fsAllowedRoots, fsLimitedHere, gitMissing, isFinishingRun, isFreshInstall, isLiveRun, isPlainObject, isPrStoreKey, isTruthy, kickAutomations, kickPrWatch, labelsOn, lastUpdateResult, liveAutoRescan, liveDefragRun, liveDiffOf, livePr, liveProbe, liveRunEntry, liveRunIds, liveSliceOf, marketJobFailure, mcpRunPreview, mcpTargetOf, memberFor, memoryError, modelTestsInFlight, namingBucket, namingCatalog, namingOn, namingPick, noRawCommand, notifReader, openMemberPr, ownsWorkspaceTarget, parseMcpOptOut, pauseRun, pickPrRemotes, pinUiLevel, postAskSystemNotice, postDirection, prTargetFor, prWatchFrame, prWatcher, presetCheckCtx, presetScopeOf, primaryMemberOf, projectAutomationRepo, projectDirForKey, projectSettingsState, proxyHost, pruneMarketJobs, prunedNote, publicCloneJob, readInstalledManifest, refuseAgentCaller, refuseSignedOutClaude, registeredProjectForDir, rejectRawTerminalFields, removeRecommendation, requireActions, requireFsAllowed, requireTerminal, resolvePrPipeline, resolveProjectDir, resolveRunScope, resumeEngineOpts, resumeRun, resumeTargetDirs, runGroupIds, runSourceIssue, scanModelsFor, scanRequest, scheduleVerb, sendArtifactRaw, sendCheckoutError, sendMetricsError, sendPolicyError, sendPresetError, serveAskFile, serverMockMode, settleShipped, setupJobs, setupProbesOverride, shipChainNow, shipCtxOf, shipFeatureNow, skillRunPreview, snapshotFor, sockets, stackStates, stackTokens, startAgentGen, startAskTurn, startCloneJob, startMetricsEventTurn, startOrQueue, startRunAs, startRunHandler, startScopeEventTurn, startScriptBench, stopCheckoutServices, stopMemberServices, stopPausedPipeline, stopRun, switchThreadScope, syncMode, syncProjectAction, syncRoute, teamOriginOk, teamWarn, terminalCallerOk, terminalEnabledHere, terminalError, terminalSameOrigin, terminals, tmProject, uiControl, unsyncableBlock, updateChecker, updatePort, updatePreview, validateResumeTarget, versionLister, versionPayload, webhookSecret, withAfter, workspaceMembersBusy };
+export { AGENTS_DIR, APP_INFO, APP_REPO_URL, ASK_DEFERRED_REPLIES_MAX, ASK_SCOPE_BUSY, ASK_TEXT_PREVIEW_MAX, BRANCH_SETTLED, BUGS_SLUG, CLONE_JOBS, HOST, MARKETPLACE_ID_RE, MARKET_JOBS, NO_PR_HOST, PKG_VERSION, PLAN_TEXT_MAX, PLUGIN_NAME_RE, PORT, PROJECT_ROOT, PR_TITLE_MAX, REMOTE_MODE, RUNNING_VERSION, ResumeError, SETTLED_RUN, SETUP_AGENT_TEXT, SETUP_JOBS, SKILLS_DIR, SKILL_FOLDER_IMPORTS, SKILL_MD_UNREACHABLE, STORE_ERROR_CODES, actions, actionsEnabledHere, activeActionSnaps, adoWebhookSecret, afterMembersChanged, afterProjectRegistered, agentErrorStatus, agentMayBeCaller, answerRun, applyProjectSettingsPatch, applySettingsPatch, askBusyReason, askChatActions, askChatEngine, askChatEngineGate, askCommandBridges, askCommands, askCommandsEnabled, askContextTokens, askCredentialGate, askDeferred, askDeferredReplies, askDeleting, askEngineSwitchText, askEventPick, askFilesRunDir, askFilesStoreDir, askFollowers, askGroupFor, askGroupThreads, askIdParam, askInFlight, askLiveRun, askProxyBridges, askRefResolver, askRelays, askRunFromPipelineRow, askRunningCount, askSignedIn, askSwitchTranscript, askThreadVisible, askTrackingCount, askTurnEngine, askValidateScope, askViewer, askWebAccessFor, askWorktreesEnvelope, autoDetectedBuiltins, automationWorkspaceMembers, automations, awayPersonOf, badRequest, bareWorkspaceKey, bearerMatches, broadcast, broadcastFeature, brokerStartRefusal, builtins, busyActionRunIds, channelHost, chatGroupError, chatNotifier, chatRefusals, checkoutRecOf, commentIdParam, commentsCreate, commentsDelete, commentsFail, commentsList, commentsPatch, commentsReply, createRunPr, crosslinkMemberPrs, currentUpdateEligibility, defaultPrRemotes, deleteAskThreadFully, designBuilds, detectSystemProxyImpl, detectTeamMemorySoon, drainServer, effectiveUiLevel, egressNow, emitAskWorktrees, emitChanged, emitMemoryChanged, emitPluginsChanged, ensureSetup, extensionPairing, factDeps, failedEventTurn, featureShipping, findScheduleItem, findShipCardIn, flipCard, followCloneCard, forkPrRefusal, fsAllowedRoots, fsLimitedHere, gitMissing, isFinishingRun, isFreshInstall, isLiveRun, isPlainObject, isPrStoreKey, isTruthy, kickAutomations, kickPrWatch, labelsOn, lastUpdateResult, liveAutoRescan, liveDefragRun, liveDiffOf, livePr, liveProbe, liveRunEntry, liveRunIds, liveSliceOf, marketJobFailure, mcpRunPreview, mcpTargetOf, memberFor, memoryError, modelTestsInFlight, namingBucket, namingCatalog, namingOn, namingPick, noRawCommand, notifReader, openMemberPr, ownsWorkspaceTarget, parseMcpOptOut, pauseRun, pickPrRemotes, pinUiLevel, postAskSystemNotice, postDirection, prTargetFor, prWatchFrame, prWatcher, presetCheckCtx, presetScopeOf, primaryMemberOf, projectAutomationRepo, projectDirForKey, projectSettingsState, proxyHost, pruneMarketJobs, prunedNote, publicCloneJob, readInstalledManifest, refuseAgentCaller, refuseSignedOutClaude, registeredProjectForDir, rejectRawTerminalFields, removeRecommendation, requireActions, requireFsAllowed, requireTerminal, resolvePrPipeline, resolveProjectDir, resolveRunScope, resumeEngineOpts, resumeRun, resumeTargetDirs, runGroupIds, runSourceIssue, scanModelsFor, scanRequest, scheduleVerb, sendArtifactRaw, sendCheckoutError, sendMetricsError, sendPolicyError, sendPresetError, serveAskFile, serverMockMode, settleShipped, setupJobs, setupProbesOverride, shipChainNow, shipCtxOf, shipFeatureNow, skillRunPreview, snapshotFor, sockets, stackStates, stackTokens, startAgentGen, startAskTurn, startCloneJob, startMetricsEventTurn, startOrQueue, startRunAs, startRunHandler, startScopeEventTurn, startScriptBench, stopCheckoutServices, stopMemberServices, stopPausedPipeline, stopRun, switchThreadScope, syncMode, syncProjectAction, syncRoute, teamOriginOk, teamWarn, terminalCallerOk, terminalEnabledHere, terminalError, terminalSameOrigin, terminals, tmProject, uiControl, unsyncableBlock, updateChecker, updatePort, updatePreview, validateResumeTarget, versionLister, versionPayload, webhookSecret, withAfter, workspaceMembersBusy };
 export const _testing = {
   chatBridge, invokeAskCard, askBus, chatAgentModeFor, chatTurnIdentity,
   updateChecker,

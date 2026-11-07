@@ -16,6 +16,7 @@ import { writeMockSurvey, writeMockUsage, writeMockSynthesis } from '../workspac
 import { safeEmit } from './spawn.mjs';
 import { writeMockC4 } from '../c4-mock.mjs';
 import { demoAskReply, demoChunks } from '../demo-scenario.mjs';
+import { runMockDesign } from './mock-design.mjs';
 
 export const MOCK_SPAWN_LOG_MAX = 500;
 export const mockSpawnLog = [];
@@ -505,6 +506,11 @@ export async function runMock({ cwd, systemPrompt, prompt, onEvent, signal, resu
   const sysMarkers = parseMarkers('', systemPrompt);
   if (sysMarkers.MOCK_ROLE === 'ask' || permissionMode === 'dontAsk') {
     return mockAsk({ markers: sysMarkers, prompt, cwd, onEvent, signal, resumeSessionId });
+  }
+  // The Design roles (mock-design.mjs), the same way: from the system prompt only, before the writer switch, so they
+  // stay out of MOCK_WRITER_ROLES and a chat message can never pick one.
+  if (String(sysMarkers.MOCK_ROLE || '').startsWith('design-')) {
+    return runMockDesign({ role: sysMarkers.MOCK_ROLE, cwd, prompt, onEvent, signal, resumeSessionId, emit: (f) => emitRaw(onEvent, f) });
   }
   const m = parseMarkers(prompt, systemPrompt);
   const role = m.MOCK_ROLE || inferRole(prompt, systemPrompt);

@@ -13,6 +13,13 @@ export const WRITE_GUARD_MATCHER = 'Write|Edit|MultiEdit|NotebookEdit';
 const WRITE_TOOLS = WRITE_GUARD_MATCHER.split('|');
 const PATH_FIELDS = ['file_path', 'notebook_path'];
 const HEAD = 'design write guard: ';
+/** Instruction files Claude Code loads as memory from an agent's cwd, every folder above it and any folder it reads, and
+ *  that other engines load (P8): one written by an agent would be instructions to every other agent and every later
+ *  round (C1). Refused in any case, since APFS and NTFS fold it, at every segment. */
+const MEMORY_FILES = new Set(['claude.md', 'claude.local.md', 'agents.md']);
+/** A Windows 8.3 short name (`CLAUDE~1.MD`): the alias of a long name, which only the real-path check can expand, and
+ *  only once that file exists. No design file is named like one. */
+const SHORT_NAME = /^[^~.]{1,6}~\d+(\.[^.]{0,3})?$/i;
 
 // Forward slashes, JSON-quoted, and `$` and backtick escaped too (L1.6): inside the hook shell's double quotes a folder
 // holding either would otherwise run a substitution, or make a command the shell cannot launch, which runs the tool.
@@ -41,7 +48,7 @@ const defaultReal = (p) => realpathSync.native(p);
 function refusal(allowedDirs) {
   const names = Array.isArray(allowedDirs) ? allowedDirs.filter((d) => typeof d === 'string' && d) : [];
   if (!names.length) return `${HEAD}no folder is open for writing here, so this write is refused.`;
-  return `${HEAD}writes may go only to files inside ${names.join(', ')}, and never into a name starting with a dot there (only a first-level .asks folder is allowed).`;
+  return `${HEAD}writes may go only to files inside ${names.join(', ')}, and never into a name starting with a dot there (only a first-level .asks folder is allowed), nor into a CLAUDE.md, CLAUDE.local.md or AGENTS.md.`;
 }
 
 /** What follows `base` in `p`, bounded at a segment; null when `p` is not strictly inside `base`. */
@@ -51,16 +58,17 @@ function below(p, base) {
 }
 
 /** L1.4 and the Windows name rules, on a lexical remainder below an allowed dir (lower-cased on win32 by lexicalPath):
- *  no empty segment, no dot entry except a first-level `.asks` folder, and on win32 no trailing dot or space, no stream
- *  (`:`), and no device name before the first dot. */
+ *  no empty segment, no dot entry except a first-level `.asks` folder, no instruction file (C1), and on win32 no trailing
+ *  dot or space, no stream (`:`), no device name before the first dot and no 8.3 short name. */
 function remainderOk(rest, platform) {
   if (rest == null) return false;
   const segs = rest.split('/');
   return segs.every((s, i) => {
     if (!s) return false;
     if (s.startsWith('.') && !(i === 0 && s === '.asks' && segs.length > 1)) return false;
+    if (MEMORY_FILES.has(s.toLowerCase())) return false;
     if (platform !== 'win32') return true;
-    return !/[. ]$/.test(s) && !s.includes(':') && !WINDOWS_RESERVED.test(s.split('.')[0].trimEnd());
+    return !/[. ]$/.test(s) && !s.includes(':') && !WINDOWS_RESERVED.test(s.split('.')[0].trimEnd()) && !SHORT_NAME.test(s);
   });
 }
 

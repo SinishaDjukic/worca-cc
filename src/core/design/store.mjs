@@ -291,6 +291,14 @@ function cleanEndedAt(v) {
   return v;
 }
 
+/** `started_at` is NOT NULL: a time, never null (a Continue shifts it forward by the pause, L2.11). */
+function cleanStartedAt(v) {
+  if (typeof v !== 'string' || !Number.isFinite(Date.parse(v))) {
+    throw new DesignError('BAD_REQUEST', 'startedAt must be a time');
+  }
+  return v;
+}
+
 function cleanSections(v) {
   if (!Array.isArray(v) || v.some((s) => s === null || typeof s !== 'object' || Array.isArray(s))) {
     throw new DesignError('BAD_REQUEST', 'sections must be a list of objects');
@@ -392,6 +400,7 @@ const BUILD_PATCH = Object.freeze({
   agentsTotal: ['agents_total', (v) => cleanCount(v, 'agentsTotal')],
   layers: ['layers', (v) => cleanCount(v, 'layers')],
   costUsd: ['cost_usd', (v) => cleanUsd(v, 'costUsd')],
+  startedAt: ['started_at', cleanStartedAt],
   endedAt: ['ended_at', cleanEndedAt],
 });
 

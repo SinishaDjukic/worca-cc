@@ -36,6 +36,38 @@ test('dot segments below an allowed dir are refused, except .asks as the first o
     `${WORK}/.ASKS/x.json`, `${WORK}/.asks/.hidden`, `${WORK}/sections/.asks/x.json`]) assert.match(evaluateWrite(W(p), [WORK], o), NO, p);
 });
 
+test('C1: CLAUDE.md, CLAUDE.local.md and AGENTS.md are refused in any case, at any depth, in every allowed dir', () => {
+  for (const name of ['CLAUDE.md', 'claude.md', 'Claude.MD', 'CLAUDE.local.md', 'claude.LOCAL.md', 'AGENTS.md', 'agents.md']) {
+    for (const p of [`${WORK}/${name}`, `${WORK}/sections/${name}`, `${WORK}/sections/hero/${name}`, `${WORK}/.asks/${name}`]) assert.match(evaluateWrite(W(p), [WORK], o), NO, p);
+    for (const p of [`${HERO}/${name}`, `${HERO}/assets/${name}`, `${ASKS}/${name}`]) assert.match(evaluateWrite(W(p), [HERO, ASKS], o), NO, p);
+    for (const t of ['Edit', 'MultiEdit']) assert.match(evaluateWrite(W(`${WORK}/${name}`, t), [WORK], o), NO, t);
+  }
+  assert.match(evaluateWrite({ tool_name: 'NotebookEdit', tool_input: { notebook_path: `${HERO}/AGENTS.md` } }, [HERO], o), NO);
+  assert.match(evaluateWrite(W(`${HERO}/CLAUDE.md/a.html`), [HERO], o), NO, 'a folder by that name too');
+  for (const p of [`${WORK}/brand.md`, `${WORK}/CLAUDE.md.html`, `${WORK}/my-CLAUDE.md`, `${HERO}/AGENTS.mdx`]) assert.equal(evaluateWrite(W(p), [WORK, HERO], o), null, p);
+});
+
+test('C1 on Windows: any case, the Git Bash form, a trailing dot, a stream and an 8.3 short name are refused', () => {
+  const win = { platform: 'win32', real: same, lstat: () => ({}) };
+  const dir = 'C:\\Users\\a\\.worca-cc\\design\\d_0123456789ab\\work';
+  for (const p of [`${dir}\\Claude.Md`, `${dir}\\sections\\hero\\AGENTS.MD`, '/c/Users/a/.worca-cc/design/d_0123456789ab/work/claude.local.md',
+    `${dir}\\CLAUDE.md.`, `${dir}\\CLAUDE.md::$DATA`, `${dir}\\CLAUDE~1.MD`, `${dir}\\sections\\AGENTS~2.MD`]) assert.match(evaluateWrite(W(p), [dir], win), NO, p);
+  assert.equal(evaluateWrite(W(`${dir}\\sections\\hero\\index.html`), [dir], win), null);
+  assert.equal(evaluateWrite(W(`${HERO}/CLAUDE~1.MD`), [HERO], o), null, 'a short name is a Windows form only');
+});
+
+test('C1: a link inside the dir that lands on an instruction file is refused by the real-path check', POSIX, () => {
+  const d = realpathSync.native(mkdtempSync(join(tmpdir(), 'dwg-')));
+  try {
+    writeFileSync(join(d, 'CLAUDE.md'), '');
+    symlinkSync(join(d, 'CLAUDE.md'), join(d, 'x.html'));
+    assert.match(evaluateWrite(W(join(d, 'x.html')), [d]), NO);
+    assert.equal(evaluateWrite(W(join(d, 'y.html')), [d]), null);
+  } finally {
+    rmSync(d, { recursive: true, force: true });
+  }
+});
+
 test('Windows forms: separators, case and /c/ pass; other drives, UNC, device, 8.3, reserved names, trailing dot or space and streams are refused', () => {
   const win = { platform: 'win32', real: same, lstat: () => ({}) };
   const dir = 'C:\\Users\\First Last\\.worca-cc\\design\\d_0123456789ab\\work';
