@@ -87,7 +87,6 @@
 #side-rail .brand{padding:0;justify-content:flex-start;}
 #side-rail #bar-head{flex:1;min-width:0;}
 #side-rail{position:relative;width:var(--bar-w,280px);flex:0 0 var(--bar-w,280px);}
-#side-rail.collapsed{display:none;}
 #bar-back{display:none;flex:none;}
 #side-rail[data-bar="home"] #bar-back{display:block;}
 .bar-list.rail-page,.bar-back.rail-page{padding:0 8px 8px 8px;max-width:none;margin:0;--rail:20px;--gap:6px;font-size:var(--fs-body);}
@@ -177,3 +176,17 @@ body.view-runs .main{display:flex;flex-direction:column;overflow:hidden;padding:
 #route-runs:not([hidden]){flex:1 1 auto;min-height:0;display:flex;flex-direction:column;}
 #route-runs.rail-page{max-width:none;margin:0;padding:0;}
 @media (min-width: 761px){ .has-rail .mk-tools .mk-stamp{display:none;} }
+/* Hidden, the bar keeps its icons; under the pointer (or with focus inside) it opens over the page, and nothing moves. */
+#side-rail.collapsed{display:flex;width:56px;flex:0 0 56px;transition:width var(--motion-quick) var(--ease),margin var(--motion-quick) var(--ease);z-index:40;}
+#side-rail.collapsed:is(:hover,:focus-within){width:var(--bar-w,280px);flex-basis:var(--bar-w,280px);margin-right:calc(56px - var(--bar-w,280px));box-shadow:var(--shadow-pop);}
+#side-rail.collapsed:not(:hover):not(:focus-within) :is(.bar-title, .bar-head .btn, .list-sentence, .list-tools, .list-h, .lr-main, .lr-end, .lr-tree, .side-g, .pz-nav-i > span, .place-row > .btn, .list-more, .bar-back, .pz-acct-name, .pz-updown, .side-l, .bar-grip){display:none!important;}
+#side-rail.collapsed:not(:hover):not(:focus-within) :is(.list-row){grid-template-columns:28px;padding:0;}
+#side-rail.collapsed:not(:hover):not(:focus-within) .bar-list.rail-page{padding:0 0 8px 10px;overflow:hidden;}
+#side-rail.collapsed:not(:hover):not(:focus-within) .list-group + .list-group{margin-top:6px;padding-top:6px;}
+#side-rail.collapsed:not(:hover):not(:focus-within) .pz-nav-i{justify-content:center;padding:0;}
+#side-rail.collapsed .rail-side-settings .side-i{overflow:hidden;}
+.has-rail .bar-show{display:none;}
+@media (prefers-reduced-motion: reduce){ #side-rail.collapsed{transition:none;} }
+#side-rail.collapsed .brand{justify-content:flex-start;}
+#side-rail.collapsed:is(:hover,:focus-within) .pz-acct{justify-content:flex-start;padding:revert;}
+#side-rail.collapsed:is(:hover,:focus-within) :is(.pz-acct-name, .pz-updown){display:revert;}

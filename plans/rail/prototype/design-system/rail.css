@@ -1202,11 +1202,11 @@ th.rt-c{color:var(--ink-2);font-weight:500;}
 .chat-home-bg{position:absolute;inset:0;pointer-events:none;}
 .chat-home-in{position:relative;width:100%;max-width:640px;}
 .chat-home h1{margin:0 0 14px;font:600 var(--fs-page)/1.2 var(--sans);letter-spacing:-.02em;color:var(--ink);}
-[data-bg="dots"] .chat-home-bg{background-image:radial-gradient(light-dark(#D4D4DA,#35353B) 1px,transparent 1.2px);background-size:18px 18px;-webkit-mask-image:linear-gradient(to bottom,#000,transparent 92%);mask-image:linear-gradient(to bottom,#000,transparent 92%);}   /* ds-ok: a background's own colours, on Chat home only */
-[data-bg="aurora-dots"] .chat-home-bg,[data-bg="dusk-dots"] .chat-home-bg{-webkit-mask-size:18px 18px;mask-size:18px 18px;-webkit-mask-image:radial-gradient(#000 1.1px,transparent 1.4px);mask-image:radial-gradient(#000 1.1px,transparent 1.4px);}   /* ds-ok: a background's own colours, on Chat home only */
-[data-bg="aurora-dots"] .chat-home-bg{background:radial-gradient(70% 70% at 15% 0%,light-dark(#6E93E8,#5C86E0) 0%,transparent 100%),radial-gradient(60% 70% at 100% 10%,light-dark(#4FBF9C,#46B592) 0%,transparent 100%),linear-gradient(light-dark(#D4D4DA,#35353B),light-dark(#E2E2E6,#26262B));}   /* ds-ok: a background's own colours, on Chat home only */
-[data-bg="dusk-dots"] .chat-home-bg{background:radial-gradient(90% 70% at 50% 105%,light-dark(#E5944F,#E08A3F) 0%,transparent 100%),linear-gradient(light-dark(#D4D4DA,#35353B),light-dark(#D4D4DA,#35353B));}   /* ds-ok: a background's own colours, on Chat home only */
-[data-bg="mist"] .chat-home-bg{background:radial-gradient(light-dark(#D4D4DA,#35353B) 1px,transparent 1.2px) 0 0/18px 18px,radial-gradient(70% 60% at 15% 0%,light-dark(#EDF2FD,#141C30) 0%,transparent 100%),radial-gradient(60% 60% at 100% 100%,light-dark(#FBF4EA,#211A10) 0%,transparent 100%);}   /* ds-ok: a background's own colours, on Chat home only */
+[data-bg="dots"] .chat-home-bg:not([class*=" is-"]),.chat-home-bg.is-dots{background-image:radial-gradient(light-dark(#D4D4DA,#35353B) 1px,transparent 1.2px);background-size:18px 18px;-webkit-mask-image:linear-gradient(to bottom,#000,transparent 92%);mask-image:linear-gradient(to bottom,#000,transparent 92%);}   /* ds-ok: a background's own colours, on Chat home only */
+[data-bg="aurora-dots"] .chat-home-bg:not([class*=" is-"]),[data-bg="dusk-dots"] .chat-home-bg:not([class*=" is-"]),.chat-home-bg.is-aurora-dots,.chat-home-bg.is-dusk-dots{-webkit-mask-size:18px 18px;mask-size:18px 18px;-webkit-mask-image:radial-gradient(#000 1.1px,transparent 1.4px);mask-image:radial-gradient(#000 1.1px,transparent 1.4px);}   /* ds-ok: a background's own colours, on Chat home only */
+[data-bg="aurora-dots"] .chat-home-bg:not([class*=" is-"]),.chat-home-bg.is-aurora-dots{background:radial-gradient(70% 70% at 15% 0%,light-dark(#6E93E8,#5C86E0) 0%,transparent 100%),radial-gradient(60% 70% at 100% 10%,light-dark(#4FBF9C,#46B592) 0%,transparent 100%),linear-gradient(light-dark(#D4D4DA,#35353B),light-dark(#E2E2E6,#26262B));}   /* ds-ok: a background's own colours, on Chat home only */
+[data-bg="dusk-dots"] .chat-home-bg:not([class*=" is-"]),.chat-home-bg.is-dusk-dots{background:radial-gradient(90% 70% at 50% 105%,light-dark(#E5944F,#E08A3F) 0%,transparent 100%),linear-gradient(light-dark(#D4D4DA,#35353B),light-dark(#D4D4DA,#35353B));}   /* ds-ok: a background's own colours, on Chat home only */
+[data-bg="mist"] .chat-home-bg:not([class*=" is-"]),.chat-home-bg.is-mist{background:radial-gradient(light-dark(#D4D4DA,#35353B) 1px,transparent 1.2px) 0 0/18px 18px,radial-gradient(70% 60% at 15% 0%,light-dark(#EDF2FD,#141C30) 0%,transparent 100%),radial-gradient(60% 60% at 100% 100%,light-dark(#FBF4EA,#211A10) 0%,transparent 100%);}   /* ds-ok: a background's own colours, on Chat home only */
 @media (max-width: 760px){
   .convo-scroll{padding:16px;}.convo-dock{padding:0 12px 10px;}.convo-you{max-width:88%;}
   .timeline{display:none;}.tl-list-btn{display:inline-flex;margin-left:auto;}
@@ -1251,3 +1251,14 @@ th.rt-c{color:var(--ink-2);font-weight:500;}
 
 .timeline .tline-card{flex-direction:row;align-items:flex-start;}
 .timeline .tline-card > .kind-mark,.timeline .tline-card > svg{margin-top:1px;}
+
+/* A row whose state just changed: its mark pulses once (list.news). */
+@keyframes km-news{0%{transform:scale(1);}30%{transform:scale(1.35);}100%{transform:scale(1);}}
+.kind-mark.is-news,.status-dot.is-news{animation:km-news var(--motion-flash) var(--ease) 1;}
+@media (prefers-reduced-motion: reduce){.kind-mark.is-news,.status-dot.is-news{animation:none;}}
+/* A task's parts (Changes, Decisions, Activity) open under the stage they belong to. */
+.stage-head{display:flex;align-items:center;gap:8px;}
+.stage-head > .turn-row{flex:1 1 auto;min-width:0;}
+.stage-tools{flex:none;display:inline-flex;gap:2px;}
+.stage-part{margin:6px 0 0 32px;}
+.stage-parts{display:flex;gap:4px;flex-wrap:wrap;margin:6px 0 0 30px;}

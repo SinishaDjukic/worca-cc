@@ -229,3 +229,6 @@
 @media (prefers-reduced-motion: reduce){.pz-side .is-swap{animation:none;}}
 .pz-fly .look-theme{padding:2px 9px 8px;}
 .pz-fly .look-theme .theme-seg{display:inline-flex;}
+.look-bgs .theme-ic{width:auto;padding:3px;}
+.bg-sw{position:relative;display:block;width:30px;height:20px;overflow:hidden;border:1px solid var(--line-2);border-radius:var(--r-xs);background:var(--bg);}
+.bg-sw .chat-home-bg{position:absolute;inset:0;background-size:6px 6px;-webkit-mask-size:6px 6px;mask-size:6px 6px;}

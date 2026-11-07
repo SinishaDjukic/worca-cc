@@ -124,7 +124,11 @@ export function listController({ root, spec }) {
     const picked = (a?.dataset?.menuPick || a?.dataset?.pick || '').split('|')[0];
     const keep = focus || (picked ? `[data-menu="${q(picked)}"]` : ['data-menu', 'data-bulk', 'data-selall', 'data-fold', 'data-rounds'].filter((k) => a?.hasAttribute?.(k)).map((k) => `[${k}${a.getAttribute(k) && a.getAttribute(k) !== 'true' ? `="${q(a.getAttribute(k))}"` : ''}]`)[0]);
     const typed = root.querySelector('#list-pop-q')?.value, name = root.querySelector('[data-dlg-name]')?.value;
+    const toneOf = (el) => (el.querySelector(':scope > .lr-rail .kind-mark, :scope > .lr-rail .status-dot')?.className || '');
+    const was = new Map([...root.querySelectorAll('[data-row]')].map((el) => [el.dataset.row, toneOf(el)]));
     root.innerHTML = html(spec.view());
+    // a row whose state changed since the last paint says so once: its mark pulses (list.news)
+    for (const el of root.querySelectorAll('[data-row]')) { const k = el.dataset.row; if (was.has(k) && was.get(k) && was.get(k) !== toneOf(el)) el.querySelector(':scope > .lr-rail .kind-mark, :scope > .lr-rail .status-dot')?.classList.add('is-news'); }
     for (const b of root.querySelectorAll('[data-mixed]')) b.indeterminate = true;
     for (const m of root.querySelectorAll('.pz-menu, .rc-pop > .menu')) fitMenu(m, doc.documentElement.clientWidth);
     placePop();

@@ -406,10 +406,10 @@ function render() {
       ${SHELL ? stageStream(v, `${head}${panel}${then}`) : `<div class="rc-zone is-ruled" role="tabpanel" id="stage-panel" aria-labelledby="st-${o.key}">${head}${panel}${then}</div>`}
       <div class="rc-zone is-ruled">${R.figures(v.figs.map((f) => figHtml(f, v)))}</div>
     </section>
-    ${R.tabs({ label: 'Run detail', controls: 'rtab-panel', cls: 'rc-tabs', items: v.tabs.map((t) => ({ id: t.id, label: t.l, count: t.n, selected: t.sel })) })}
+    ${SHELL ? '' : R.tabs({ label: 'Run detail', controls: 'rtab-panel', cls: 'rc-tabs', items: v.tabs.map((t) => ({ id: t.id, label: t.l, count: t.n, selected: t.sel })) })}
     ${prDialogHtml(v)}${viewDialogHtml(v)}${formDialogHtml()}
     ${R.toast({ text: ui.toast || '' })}
-    <div class="rtab-panel" role="tabpanel" id="rtab-panel" aria-labelledby="tab-${sel}" tabindex="0">${panelHtml(v)}</div>
+    ${SHELL && PART_STAGE[ui.tab] && v.stages.some((st) => st.key === PART_STAGE[ui.tab]) ? '' : `<div class="rtab-panel" role="tabpanel" id="rtab-panel" aria-labelledby="tab-${sel}" tabindex="0">${panelHtml(v)}</div>`}
     ${ui.crash ? R.errorToast({ title: 'Something went wrong', text: 'Worca hit an error it did not expect. Your runs keep going.', icon: svg('alert', 15), count: ui.crash.n,
     actions: R.button({ label: 'Reload', attrs: { 'data-crash': 'reload', 'data-key': 'crash-reload' } }) + R.button({ label: 'Copy details', kind: 'quiet', attrs: { 'data-say': DETAILS, 'data-key': 'crash-details' } }),
     close: R.button({ label: 'Close', kind: 'quiet', iconOnly: true, title: false, icon: svg('x', 14), attrs: { 'data-crash': 'close', 'data-key': 'crash-close' } }) }) : ''}
@@ -429,13 +429,20 @@ function render() {
 }
 
 // In the one Worca a task reads down like a conversation: finished stages one line, the open one in full, what is to come quiet.
+const PART_STAGE = { decisions: 'plan', changes: 'build', activity: 'review' };
 function stageStream(v, open) {
+  const tab = (id) => v.tabs.find((t) => t.id === id);
+  const partAt = PART_STAGE[ui.tab] && tab(ui.tab) ? PART_STAGE[ui.tab] : '';
+  const partBtn = (id) => { const t = tab(id); return t ? R.button({ label: `${t.l}${t.n ? ` ${t.n}` : ''}`, kind: 'quiet', attrs: { 'data-tab': ui.tab === id ? v.tabs[0].id : id, 'aria-expanded': String(ui.tab === id), title: ui.tab === id ? `Closes ${t.l}` : `Opens ${t.l} under this stage` } }) : ''; };
   const line = (st) => {
     const live = st.live, done = st.cells.every((c) => /is-(done|merged)/.test(c)), next = st.cells.every((c) => /is-next/.test(c));
     const mark = live ? R.kindMark({ kind: 'task', tone: R.markTone(v), stage: -1, size: 16 }) : svg(done ? 'check' : 'now', 14);
-    return `<div class="stage-line${st.selected ? ' is-open' : ''}${next ? ' is-next' : ''}">${R.turnRow({ mark, text: `<b>${esc(st.label)}</b>`, end: esc(st.meta || ''), attrs: { 'data-fold-turn': st.key, 'data-stage-line': st.key } })}${st.selected ? `<div class="rc-zone" role="tabpanel" id="stage-panel" aria-labelledby="st-${esc(st.key)}">${open}</div>` : ''}</div>`;
+    const parts = Object.entries(PART_STAGE).filter(([, k]) => k === st.key).map(([id]) => partBtn(id)).join('');
+    return `<div class="stage-line${st.selected ? ' is-open' : ''}${next ? ' is-next' : ''}"><div class="stage-head">${R.turnRow({ mark, text: `<b>${esc(st.label)}</b>`, end: esc(st.meta || ''), attrs: { 'data-fold-turn': st.key, 'data-stage-line': st.key } })}${parts ? `<span class="stage-tools">${parts}</span>` : ''}</div>${st.selected ? `<div class="rc-zone" role="tabpanel" id="stage-panel" aria-labelledby="st-${esc(st.key)}">${open}</div>` : ''}${partAt === st.key ? `<div class="rtab-panel stage-part" id="rtab-panel" tabindex="0">${panelHtml(v)}</div>` : ''}</div>`;
   };
-  return `<div class="stage-stream">${v.stages.map(line).join('')}</div>`;
+  // what has no stage of its own (a group's runs) sits after the stages, as links
+  const rest = v.tabs.slice(1).filter((t) => !(PART_STAGE[t.id] && v.stages.some((st) => st.key === PART_STAGE[t.id]))).map((t) => partBtn(t.id)).join('');
+  return `<div class="stage-stream">${v.stages.map(line).join('')}${rest ? `<div class="stage-parts">${rest}</div>` : ''}</div>`;
 }
 
 // An open menu or picker stays inside the window: shifted back from whichever edge it would cross, 16px gutter.

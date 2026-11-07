@@ -2,6 +2,7 @@
 
 | Rule | What | Why | Held by |
 |---|---|---|---|
+| `thing.parts-in-stages` | In the one Worca a task has no tab strip: its stages read down, and each part opens under the stage it belongs to (Decisions under Plan, Changes under Build, Activity under Review); Overview is what shows when no part is open | One way to move through a task, as through a conversation | by hand |
 | `thing.slots` | Top bar, title, metadata line, StatusLine, progress, Figures, Tabs, in that order | Every thing reads the same | run-page-sweep |
 | `thing.work-phrase` | Where the work goes is one phrase that follows the run, never a badge | One fact, one place | design-system-logic |
 | `thing.list-home` | A list about a step is Overview's focus; a list about the whole is a tab; never both | One place per list | by hand |

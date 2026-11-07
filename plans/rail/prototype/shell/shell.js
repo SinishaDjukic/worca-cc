@@ -128,7 +128,7 @@
 
   // ---- the bar: what it holds now; the house opens the places over it ----
   const BAR_TITLE = { home: 'Worca', chat: 'Chat', tasks: 'Tasks', schedules: 'Schedules', settings: 'Settings' };
-  let homeOpen = false, taskChat = '', lastThing = null, visited = [], taskHome = null;
+  let homeOpen = false, taskChat = '', lastThing = null, visited = [], taskHome = null, pinsAll = false;
   const barOf = (view) => (view === 'chat' ? 'chat' : view === 'runs' ? 'tasks' : view === 'run' ? (taskChat ? 'chat' : 'tasks') : view === 'schedules' || view === 'schedule' ? 'schedules' : view === 'settings' ? 'settings' : 'home');
   function drawBar() {
     const side = document.getElementById('side-rail'), own = barOf(routed.view), which = homeOpen ? 'home' : own;
@@ -141,8 +141,10 @@
     // One section, Recent: what you pinned (a pin at its end), then where you were, newest first, never twice.
     const pinRows = (window.RailChats?.data().chats || []).filter((c) => c.pinned && !c.archived).map((c) => ({ hash: `chat/${c.id}`, title: c.title, meta: c.project || 'No project', mark: R.kindMark({ kind: c.kind === 'workflow' ? 'workflow' : 'chat' }), end: R.icon('pin', 13), tip: 'Pinned' }));
     const seenRows = visited.filter((v) => !pinRows.some((p) => p.hash === v.hash)).slice(0, 1);
+    const PINS = 5, morePins = pinRows.length - PINS;
+    if (!pinsAll && morePins > 0) pinRows.length = PINS;
     const rows = [...pinRows, ...seenRows].map((x) => R.listRow({ title: x.title, meta: x.meta, mark: x.mark, end: x.end ? `<span class="lr-fig" title="${x.tip}">${x.end}</span>` : '', endText: x.end ? '' : x.when || '', open: { 'data-back-to': x.hash, title: `Opens ${x.title}` } }));
-    document.getElementById('bar-back').innerHTML = rows.length ? R.list({ groups: [{ title: 'Recent', rows }] }) : '';
+    document.getElementById('bar-back').innerHTML = rows.length ? R.list({ groups: [{ title: 'Recent', rows, more: !pinsAll && morePins > 0 ? { n: morePins, attrs: { 'data-pins-all': '' } } : null }] }) : '';
   }
 
   // ---- the router ----
@@ -238,7 +240,8 @@
   document.addEventListener('click', (e) => {
     const on = (sel) => e.target.closest(sel);
     let hit;
-    if (on('[data-bar-hide]')) { collapsed = true; store.set(KEY_RAIL, '1'); syncRail(); document.getElementById('bar-show')?.focus(); return; }
+    if (on('[data-pins-all]')) { pinsAll = true; drawBar(); return; }
+    if (on('[data-bar-hide]')) { collapsed = true; store.set(KEY_RAIL, '1'); syncRail(); document.activeElement?.blur(); return; }
     if (on('#bar-show')) { collapsed = false; store.set(KEY_RAIL, '0'); syncRail(); return; }
     if (on('[data-bar-house]')) { homeOpen = !homeOpen && barOf(routed.view) !== 'home'; drawBar(); return; }
     if ((hit = on('[data-bar-new]'))) { window.RailConversation?.start(hit.dataset.barNew); return; }
@@ -297,7 +300,7 @@
       if (!target?.isConnected) return false;   // a list page already answered it, and drew again
       const inRun = !!target?.closest?.('#card, [data-run-tools]');
       // today's pages and the sidebar's places are the shell's own: neither the run page nor Pulse answers there
-      const inShell = !!target?.closest?.('#route-today, #route-runs, #route-chat, #route-schedule, #task-dock, #task-timeline, #side-rail nav.nav, #bar-head, #bar-chat, #bar-tasks, #bar-schedules, #ask-side');
+      const inShell = !!target?.closest?.('#bar-back, #route-today, #route-runs, #route-chat, #route-schedule, #task-dock, #task-timeline, #side-rail nav.nav, #bar-head, #bar-chat, #bar-tasks, #bar-schedules, #ask-side');
       return who === 'run' ? inRun : !inRun && !inShell;
     },
     runActive: () => !document.getElementById('route-run')?.hidden,

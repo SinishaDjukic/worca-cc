@@ -11,6 +11,7 @@
 | `list.opens-page` | A row opens a full page; coming back restores the sentence, the scroll and the selection | One way to move | worca-sweep |
 | `list.kind-mark` | A row's mark says what it is and how it stands: the type's icon, a smooth ring by main stage in the state's colour; a question, a problem, a pause or a stop takes the centre; never a dot beside an icon | One thing to read, for every kind of row | design-system-components |
 | `list.one-end` | A row in the bar is one line: its mark, its title, one thing at its end (git's icon, or its time); the rest (project, labels, state, time) is its tooltip, one fact a line; cost never shows in the bar | Two facts side by side fight for one place | by hand |
+| `list.news` | A row whose state changes pulses its mark once, and its title stays bold until you open it; no new symbol | You notice a change without a badge to clear | design-system-components |
 | `list.tree` | What hangs under a row (a chat's tasks, a task that waits on another) is a rounded tree, always open | You see what depends on what without opening anything | design-system-components |
 
 **Reference for Wave 2.** The Runs list and Chats below describe the prototype's reference pages, not Wave 1's work: Wave 2 Shaping decides them. A list's sentence, selecting and bulk hold now for what Pulse uses.

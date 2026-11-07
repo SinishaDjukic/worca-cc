@@ -219,7 +219,7 @@ function acctMenu() {
   return R.navFlyout({ label: 'Account', cls: `acct-menu${ui.sub ? ' has-sub' : ''}${inCls('acct')}`, body: `
     ${id}<div class="msect" role="group" aria-label="Worca">${team}
       ${R.accountItem({ label: 'Interface mode', mark: svg('sliders', 16, 'mi-ic'), value: lvl[1], chev: svg('chevR', 14, 'mi-chev'), attrs: { ...sub('lvl'), title: 'How much of Worca you see' } })}
-      ${SHELL ? R.accountItem({ label: 'Appearance', mark: svg('contrast', 16, 'mi-ic'), value: `${cap(appearance)} · ${bgName()}`, chev: svg('chevR', 14, 'mi-chev'), attrs: { ...sub('look'), title: 'Theme and background' } }) : `<div class="theme-sect" role="group" aria-labelledby="pz-theme-k">${svg('contrast', 16, 'mi-ic')}<span class="theme-k" id="pz-theme-k">Appearance</span><div class="theme-seg">${[['system', 'monitor'], ['light', 'sun'], ['dark', 'moon']].map(([m, ic]) => R.themeChoice({ label: cap(m), icon: svg(ic, 14, 'mi-ic'), on: appearance === m, attrs: { 'data-appearance': m } })).join('')}</div></div>`}
+      ${SHELL ? R.accountItem({ label: 'Appearance', mark: svg('contrast', 16, 'mi-ic'), chev: svg('chevR', 14, 'mi-chev'), attrs: { ...sub('look'), title: 'Theme and background' } }) : `<div class="theme-sect" role="group" aria-labelledby="pz-theme-k">${svg('contrast', 16, 'mi-ic')}<span class="theme-k" id="pz-theme-k">Appearance</span><div class="theme-seg">${[['system', 'monitor'], ['light', 'sun'], ['dark', 'moon']].map(([m, ic]) => R.themeChoice({ label: cap(m), icon: svg(ic, 14, 'mi-ic'), on: appearance === m, attrs: { 'data-appearance': m } })).join('')}</div></div>`}
       ${R.accountItem({ label: 'Settings', mark: svg('gear', 16, 'mi-ic'), attrs: { 'data-go': 'settings', title: 'How Worca behaves everywhere' } })}
     </div>
     <div class="msect" role="group" aria-label="You">
@@ -268,7 +268,9 @@ const bgName = () => BACKGROUNDS.find((b) => b[0] === (ui.bg || 'dots'))?.[1] ||
 function lookFly() {
   if (ui.sub !== 'look') return '';
   const theme = `<span class="nav-fly-k">Theme</span><div class="theme-sect look-theme" role="group" aria-label="Theme"><div class="theme-seg">${[['system', 'monitor'], ['light', 'sun'], ['dark', 'moon']].map(([m, ic]) => R.themeChoice({ label: cap(m), icon: svg(ic, 14, 'mi-ic'), on: appearance === m, attrs: { 'data-appearance': m } })).join('')}</div></div>`;
-  return R.navFlyout({ label: 'Appearance', cls: `lvl-menu pz-fly${inCls('sub')}`, body: `${back}${theme}<span class="nav-fly-k">Background</span>${BACKGROUNDS.map(([id, t, h]) => R.menuItem({ text: t, checked: (ui.bg || 'dots') === id, help: h }, { pickAttr: null, attrs: { 'data-bg-pick': id } })).join('')}` });
+  // the backgrounds as the theme is chosen: one small picture each, its name in the tooltip
+  const bgs = `<span class="nav-fly-k">Background</span><div class="theme-sect look-theme" role="group" aria-label="Background"><div class="theme-seg look-bgs">${BACKGROUNDS.map(([id, t, h]) => R.themeChoice({ label: t, icon: `<span class="bg-sw" aria-hidden="true"><span class="chat-home-bg is-${id}"></span></span>`, on: (ui.bg || 'dots') === id, attrs: { 'data-bg-pick': id, title: `${t}: ${h}` } })).join('')}</div></div>`;
+  return R.navFlyout({ label: 'Appearance', cls: `lvl-menu pz-fly${inCls('sub')}`, body: `${back}${theme}${bgs}` });
 }
 function lvlFly() {
   if (ui.sub !== 'lvl') return '';
