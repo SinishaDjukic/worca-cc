@@ -58,3 +58,105 @@ nothing to read, keeps it full.
    your messages.
 5. The background fades into every reading column, from one shared mask.
 6. Rules, catalog, tests, gallery examples; the sweeps walk each card and each link to its card.
+
+## Parity: every flow, every card, every action (from dev, 7 Nov)
+
+Two read-only audits of dev's code (ask-panel.mjs, chat/*, shape/*, run-state.mjs, home*.mjs) listed every starter's flow and
+every action. Rail reproduces each flow in its card shape; a box is ticked when the prototype has it and a sweep walks it.
+
+### How starting works
+- [ ] A starter only arms the composer: an intent chip (icon, name, ✕) and its placeholder; nothing is sent until you send.
+- [ ] Chat home: the composer, then one row of starters: New task, Shaper, Build workflow, Schedule, Track a run, More ▾
+      (Explain a diff, Write a script, Add project, Step away, Team metrics, Add a model, New workspace, Remember something,
+      Find tasks). Pinned workflows lead the row (right-click or Shift+F10: Unpin; Shaper pinned by default). More you can
+      do: Memory defragment (Schedule it), All workflows. Start from a preset, by scope (any, this project, this workspace).
+- [ ] The composer: + (files, a ticket, reuse), the sentence, engine with model and effort as one picker, voice with its
+      hands-free ▾, send; Stop while replying; queued messages (edit, resume); the context meter; @ mentions of tasks and PRs.
+
+### New task (and a pinned workflow, and Find tasks)
+1. [ ] TaskProposal: Proposed · from this chat; title (rename in place); From preset X; labels; why.
+   - [ ] Where it runs: No project / Project / Workspace; project; source branch; feature branch; Run on the source branch;
+         base branch; per-member source branches (workspace).
+   - [ ] Workflow (with its description), Engine (Default …), Guardrails (every agent), Pull request when done.
+   - [ ] Agents (Expert): per agent model, effort, sub-agents, fan-out; Reset to proposal; Save as project defaults.
+   - [ ] Task brief, Markdown, @ pills, count; a tracker task shows a Task box instead (id, title, profile).
+   - [ ] Foot: Open in New run, Not now, Schedule…, Start. Open decisions: Run as is / Shaper, each with its estimate,
+         perspective chips.
+2. [ ] The running task card: steps, agents, cost, elapsed; Pause, Stop; waiting: the question under it; done: result,
+       top files, artifacts, Ask for changes (inline).
+3. [ ] Then a PR offer, and a Changes card when you ask for changes.
+
+### Shaper
+1. [ ] Proposal, Shaper's: clamped brief (Show brief), target, Perspectives (Product locked, + N more), What happens
+       ("Up to 3 questions, then a plan you approve"), Advanced folded (engine, guardrails, agents); Open in New run,
+       Not now, Start planning. With requirements first: Large task · ≈ $31 · ~84 min; "You lead as [role], supported by
+       [no one else]"; Shape requirements (needs a lead role).
+2. [ ] Clarify: "A few questions before the plan", up to 3, lettered, Worca's pick; Answer, Use defaults.
+3. [ ] Step receipt: one line naming what was decided (Requirements agreed, Changes asked · Plan, Stopped at the plan).
+4. [ ] Requirements (requirements first): N decisions need you · as Product; agreed ones folded by perspective; Agree and
+       plan, Ask for changes (Send changes, Cancel), Try again.
+5. [ ] Split (outline): the runs, each ⋯ Merge with next, Remove; Undo edits; Ask me before each run; Ask for changes,
+       Approve N runs, ⋯ Fix all, Plan it as one, Stop.
+6. [x] Plan card (PlanCard) — still to add: Shape check line, Perspectives with Update plan, Requirements fold, per-role
+       Show/Hide, Decisions needed, implementer and requirement concerns (Approve, Ask for changes), ⋯ Fix all, Save to
+       plans/, Open in New run, Stop.
+7. [ ] Gate and recovery step: A decision is needed / A step failed; Accept as is, Run another cycle, Retry, Abort, Pause.
+8. [ ] Feature card: step log (Show/Hide), Pause (Pausing…), Stop, Resume, Re-plan the rest; ⋯ Re-plan the rest, Cancel
+       the rest, Ask before each run, Open the plan.
+9. [ ] Ship: Requirements N/M, each Met / Not met (where it moved) / Dropped (why); As one PR / As stacked PRs; Create PR
+       (its dialog), Not now.
+10. [ ] Changes: the quoted request; Start round 2 / Add to Run 3's plan / Add Run 4 / Start Run 4; Not now.
+11. [ ] Route: Where does this go?, Worca's guess, three choices, Where in the feature; its named action, Not now; Open run.
+
+### Build workflow
+1. [ ] Workflow proposal: building (a trace), then Proposed workflow · round N, target, editable name, the graph (Expand
+       opens Workflows), model chips per node, loops, "uses a workflow you already had"; Decline, Save as workflow
+       (Save & propose). Saved: Saved to Workflows, Open in Workflows; a TaskProposal follows if you asked to run it.
+
+### Schedule a run (and Memory defragment)
+1. [ ] TaskProposal with when: Scheduled / Repeats / After run, its time, Change…; Schedule, Start now.
+2. [ ] Scheduled card: its kind, title, next time; Run now, Cancel / Delete schedule, Schedules.
+3. [ ] Schedule change: Now → Becomes, next runs; Decline and Run now / Move / Apply / Cancel run / Delete.
+
+### Track a run
+1. [ ] A picker (Live / Nothing running) fills the composer; then the running task card.
+
+### Explain a diff
+1. [ ] A picker (Finished) fills the composer; a text answer; a FilesCard (Diff kind; Download, Show in folder) if shown.
+
+### Write a script
+1. [ ] Script draft: name, runtime (Shell, Python, Node.js), key, description, inputs, outputs, params, program · N tests;
+       Edit…, Decline, Save script; Saved to your scripts.
+2. [ ] Script approval: a sandbox note, folds (Command, Program, Exit codes, Test cases); Don't run, Run (Don't save,
+       Save); done, exit N.
+3. [ ] Command: Stop, Copy command, Copy output, Show in terminal, Show all.
+
+### Add project
+1. [ ] Add project (New: name, location, use git; Folder: choose, several; Clone: URL, branch, folder name). In chat: a
+       ChangeProposal of kind Project (Create, Add) or Clone (Clone, Cloning…).
+
+### Step away
+1. [ ] A receipt: Away mode, before → after, Revert. Changing its settings: Change Away mode? Now / After; Keep as is, Apply.
+
+### Team metrics, Add a model, New workspace
+1. [ ] Team metrics: a text answer; a ChangeProposal only to change it (Enable, Include my runs, Metrics home, Route
+       members).
+2. [ ] Add a model: Proposed model change (Add, Edit, Remove, Provider, From Copilot); before → after, warnings; Decline,
+       Add / Apply / Remove (red) / Import; then Models.
+3. [ ] New workspace: Create / Add members / Remove member / Rename; rows; removing asks for a re-scan (No, Partial,
+       Full, the recommended named); Decline, its action; then Open the workspace.
+
+### Remember something, Find tasks, plain Ask
+1. [ ] Remember: a text answer, the tool as a row. Find tasks: a list, then a TaskProposal with the Task box.
+2. [ ] Plain Ask: words; a question (Answer, your own answer, arrow keys) or a project switch (Switch, Continue without).
+
+### On the card, not the page (everything the task page does today)
+- [ ] Stop; Retry, Restart Build, Start a new run; Resume at…, on another engine, Switch model.
+- [ ] Create PR, Publish branch, Push, Link remote, Apply to branch or folder, Discard, Download patch, Commit it yourself,
+      How to merge; Watch, Copy PR link, Fix checks, Re-run checks, Fix conflicts, Resolve in a terminal, Mark ready,
+      Merge PR, View fix run.
+- [ ] Ask for changes inline; Archive, Restore, Report, Save as preset, Away mode, Labels and cost tags, Terminal.
+- [ ] And three dev lacks on its page too: Run after, Copy branch name, Sync log.
+
+### Settings proposals, per kind
+- [ ] Web access (Allow in chat, Always allow, Deny); proxy; actions; a setting's revert scope (This run only, Your settings).
