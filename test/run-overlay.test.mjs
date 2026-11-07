@@ -161,5 +161,5 @@ test('checkRunOverlay: roles only on a role-review node, only for its declared r
     'node "n_rev.roles.correctness": unknown model "gone"',
   ]);
   assert.deepEqual(checkRunOverlay({ n_rev: { roles: { security: { model: 'gpt-5.5' } } } }, { workflow: ROLE_WF, models: MODELS, engine: 'claude' }).errors,
-    ['node "n_rev.roles.security": gpt-5.5 runs on Codex, not on Claude — pick a model this run\'s engine runs']);
+    ['node "n_rev.roles.security": gpt-5.5 runs on OpenAI Codex, not on Claude Code — pick a model this run\'s engine runs']);
 });
