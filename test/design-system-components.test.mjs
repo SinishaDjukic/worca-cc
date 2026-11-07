@@ -869,9 +869,10 @@ test('orbMark: a canvas in its phase, its size kept; an unknown phase rests', ()
   assert.match(C.thinkingRow({ step: 'x', secs: '1s' }), /data-orb="think"/);
 });
 
-test('thinkingRow: live says what it does and how long, politely; done folds what it did', () => {
+test('thinkingRow: live says, in one line, what it does and how long, politely; done folds what it did', () => {
   const live = C.thinkingRow({ step: 'Searching the code', secs: '4s' });
-  assert.match(live, /class="think-w">Thinking/); assert.match(live, /think-s">Searching the code/); assert.match(live, /think-t">4s/); assert.match(live, /aria-live="polite"/);
+  assert.match(live, /class="think-w">Searching the code</); assert.doesNotMatch(live, />Thinking</);
+  assert.match(C.thinkingRow({ secs: '1s' }), /class="think-w">Thinking</); assert.match(live, /think-t">4s/); assert.match(live, /aria-live="polite"/);
   const shut = C.thinkingRow({ done: true, secs: '8s', steps: ['Read the chat'], attrs: { 'data-fold-turn': '3' } });
   assert.match(shut, /Thought for 8s/); assert.match(shut, /aria-expanded="false"/); assert.doesNotMatch(shut, /Read the chat/);
   assert.match(C.thinkingRow({ done: true, secs: '8s', steps: ['Read the chat'], open: true, attrs: { 'data-fold-turn': '3' } }), /tr-body is-steps[\s\S]*Read the chat/);

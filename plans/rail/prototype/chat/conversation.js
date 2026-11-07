@@ -264,7 +264,7 @@
   }
 
   const main = mount(document.getElementById('route-chat'));
-  setInterval(() => { for (const r of document.querySelectorAll('[data-think-at]')) { const now = thinkNow({ at: +r.dataset.thinkAt }), st = r.querySelector('.think-s'), t = r.querySelector('.think-t'); if (st && st.textContent !== now.step) st.textContent = now.step; if (t && t.textContent !== now.secs) t.textContent = now.secs; const orb = r.querySelector('canvas[data-orb]'); if (orb && orb.dataset.orb !== now.phase) orb.dataset.orb = now.phase; } }, 250);
+  setInterval(() => { for (const r of document.querySelectorAll('[data-think-at]')) { const now = thinkNow({ at: +r.dataset.thinkAt }), st = r.querySelector('.think-w'), t = r.querySelector('.think-t'); if (st && st.textContent !== now.step) st.textContent = now.step; if (t && t.textContent !== now.secs) t.textContent = now.secs; const orb = r.querySelector('canvas[data-orb]'); if (orb && orb.dataset.orb !== now.phase) orb.dataset.orb = now.phase; } }, 250);
   window.RailConversation = {
     show: main.show,
     start: main.start,
