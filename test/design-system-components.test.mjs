@@ -853,8 +853,19 @@ test('countBadge, barStrip, stageLine, searchResults by area', () => {
   assert.match(res, /menu-h">Chats/); assert.doesNotMatch(res, /Settings/);
 });
 
-test('inView: live marks with their state in the tooltip; +N past them; nothing when empty', () => {
+test('inView: still marks, a card with a way out of view, +N opens a menu of the rest; nothing when empty', () => {
   assert.equal(C.inView({ items: [] }), '');
-  const h = C.inView({ items: [{ label: 'Fix the login\nWorking', icon: '<i></i>', attrs: { 'data-in-view': 'task:t4' } }], more: { n: 2 } });
+  const h = C.inView({ items: [{ title: 'Fix the login', line: 'Working', icon: '<i></i>', attrs: { 'data-in-view': 'task:t4' }, drop: { 'data-in-view-drop': 'task:t4' } }], more: { n: 2 } });
   assert.match(h, /data-in-view="task:t4"/); assert.match(h, /\+2/); assert.match(h, /aria-label="In view"/);
+  assert.match(h, /class="in-view-card" role="tooltip"/); assert.match(h, /aria-label="Out of view: Fix the login"/); assert.match(h, /aria-label="Fix the login: Working"/);
+  assert.doesNotMatch(h, /<div class="menu/);
+  const open = C.inView({ items: [], more: { n: 1, open: true, items: [{ id: 'chat:c2', text: 'Release 1.20' }] } });
+  assert.match(open, /aria-expanded="true"/); assert.match(open, /data-in-view="chat:c2"/);
+});
+
+test('stagePart: what a part holds, said before it opens; open, its chevron turns', () => {
+  const h = C.stagePart({ label: 'Changes', says: '5 files +358 −144', attrs: { 'data-tab': 'changes' } });
+  assert.match(h, /<b>Changes<\/b><span>5 files \+358 −144<\/span>/); assert.match(h, /aria-expanded="false"/); assert.match(h, /data-tab="changes"/);
+  assert.match(C.stagePart({ label: 'Decisions', open: true }), /is-open[^>]*aria-expanded="true"/);
+  assert.doesNotMatch(C.stagePart({ label: 'Activity' }), /<span>/);
 });

@@ -115,6 +115,14 @@ for (const scheme of ['light', 'dark']) for (const w of [1280, 900, 760, 375]) {
   await p.goto(`${URL_}#chat/c1`); await p.waitForTimeout(150);
   await step('Keep in view puts a mark in the top bar', () => { document.querySelector('#bar-chat [data-menu="row:task:t1"]')?.click(); document.querySelector('#bar-chat [data-menu-pick="row:task:t1|in-view"]')?.click(); }, () => innerWidth <= 760 || !!document.querySelector('#in-view-slot [data-in-view="task:t1"]'));
   if (w > 760) await step('a mark in view opens its task', () => document.querySelector('#in-view-slot [data-in-view="task:t1"]')?.click(), () => location.hash === '#run/question');
+  if (w > 760) {
+    await step('a mark in view holds still', () => {}, () => [...document.querySelectorAll('.in-view .kind-mark')].every((m) => getComputedStyle(m).animationName === 'none'));
+    await step('the eye on a task says it is in view', () => {}, () => document.querySelector('[data-keep-view]')?.getAttribute('aria-pressed') === 'true');
+    await step('the eye takes it out of view', () => document.querySelector('[data-keep-view]').click(), () => !document.querySelector('#in-view-slot [data-in-view="task:t1"]') && document.querySelector('[data-keep-view]').getAttribute('aria-pressed') === 'false');
+    await step('the eye keeps it in view again', () => document.querySelector('[data-keep-view]').click(), () => document.querySelectorAll('#in-view-slot .in-view-w').length === 2);
+    await step('its card takes one out of view', () => document.querySelector('#in-view-slot .in-view-x').click(), () => document.querySelectorAll('#in-view-slot .in-view-w').length === 1);
+    await step('In view lives only in the top bar', () => document.querySelector('#bar-head .bar-house')?.click(), () => !/\bIn view\b/.test(document.getElementById('bar-back')?.textContent || ''));
+  }
   // the side column: push, cover, window; closes at once
   await p.evaluate(() => document.getElementById('topnav-ask').click()); await p.waitForTimeout(250);
   const ask = await p.evaluate(() => ({ w: document.getElementById('ask-side').getBoundingClientRect().width, main: document.querySelector('.main').getBoundingClientRect().width, mainAlone: innerWidth - document.getElementById('side-rail').getBoundingClientRect().width }));

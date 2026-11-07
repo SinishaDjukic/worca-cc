@@ -148,12 +148,15 @@
     if (!pinsAll && morePins > 0) pinRows.length = PINS;
     const rows = [...pinRows, ...seenRows].map((x) => R.listRow({ title: x.title, meta: x.meta, mark: x.mark, end: x.end ? `<span class="lr-fig" title="${x.tip}">${x.end}</span>` : '', endText: x.end ? '' : x.when || '', open: { 'data-back-to': x.hash, title: `Opens ${x.title}` } }));
     drawMini();
-    const kept = drawInView().map(({ x, now }) => R.listRow({ title: x.title, mark: now.mark.replace('--km:22px', '--km:20px'), open: { 'data-in-view': `${x.type}:${x.id}`, title: now.label } }));
-    document.getElementById('bar-back').innerHTML = R.list({ groups: [...(kept.length ? [{ title: 'In view', rows: kept }] : []), ...(rows.length ? [{ title: 'Recent', rows, more: !pinsAll && morePins > 0 ? { n: morePins, attrs: { 'data-pins-all': '' } } : null }] : [])] });
+    drawInView();
+    document.getElementById('bar-back').innerHTML = R.list({ groups: [...(rows.length ? [{ title: 'Recent', rows, more: !pinsAll && morePins > 0 ? { n: morePins, attrs: { 'data-pins-all': '' } } : null }] : [])] });
   }
 
-  // ---- In view: what you keep an eye on, from any ⋯; up to five live marks in the top bar, all of them on the W screen ----
-  const IN_VIEW_MAX = 5;
+  // ---- In view: what you keep an eye on, from any ⋯ or a task's head; its marks live in the top bar only, up to five (one on a
+  // phone), then +N opens the rest ----
+  const inViewMax = () => (innerWidth <= 760 ? 1 : 5);
+  let inViewMenu = false;
+  addEventListener('resize', () => drawInView());
   let inViewList = [{ type: 'task', id: 't4', chat: 'c4', title: 'Fix the flaky login' }];
   const allTasksOf = (c) => { const out = []; const walk = (t) => { out.push(t); (t.after || []).forEach(walk); }; (c?.tasks || []).forEach(walk); return out; };
   function inViewNow(x) {
@@ -167,12 +170,29 @@
   }
   function drawInView() {
     const live = inViewList.map((x) => ({ x, now: inViewNow(x) })).filter((y) => y.now);
-    const shown = live.slice(0, IN_VIEW_MAX);
+    const max = inViewMax(), shown = live.slice(0, max), hidden = live.slice(max), key = (x) => `${x.type}:${x.id}`;
+    if (!hidden.length) inViewMenu = false;
     const slot = document.getElementById('in-view-slot');
-    if (slot) slot.innerHTML = R.inView({ items: shown.map(({ x, now }) => ({ label: now.label, icon: now.mark, attrs: { 'data-in-view': `${x.type}:${x.id}` } })), more: live.length > IN_VIEW_MAX ? { n: live.length - IN_VIEW_MAX, attrs: { 'data-in-view-more': '' } } : null });
+    if (slot) slot.innerHTML = R.inView({
+      items: shown.map(({ x, now }) => { const [title, line] = now.label.split('\n'); return { title, line, icon: now.mark, attrs: { 'data-in-view': key(x) }, drop: { 'data-in-view-drop': key(x) } }; }),
+      more: hidden.length ? { n: hidden.length, open: inViewMenu, attrs: { 'data-in-view-more': '' }, items: hidden.map(({ x, now }) => ({ id: key(x), text: now.label.split('\n')[0], mark: now.mark.replace('--km:22px', '--km:18px') })) } : null });
+    syncEye(live);
     return live;
   }
+  // the eye on a task's head says whether it is kept in view; set only when it changes, so the page's observer stays quiet
+  function syncEye(live = inViewList.map((x) => ({ x, now: inViewNow(x) })).filter((y) => y.now)) {
+    const eye = document.querySelector('[data-keep-view]'); if (!eye) return;
+    const on = String(live.some(({ now }) => now.task?.cs === eye.dataset.keepView));
+    if (eye.getAttribute('aria-pressed') === on) return;
+    eye.setAttribute('aria-pressed', on); eye.setAttribute('aria-label', on === 'true' ? 'Out of view' : 'Keep in view');
+    eye.title = on === 'true' ? 'Out of view: its mark leaves the top bar' : 'Keep in view: its mark stays in the top bar, on every page';
+  }
   const isInView = (type, id) => inViewList.some((x) => x.type === type && x.id === id);
+  // a task's own page keeps it in view by its case: the one already kept from its chat counts, never twice
+  function toggleCaseInView(cs, title) {
+    const had = inViewList.find((x) => inViewNow(x)?.task?.cs === cs);
+    toggleInView(had || { type: 'task', id: `case-${cs}`, case: cs, chat: '', title: title || RM?.titles?.[cs] || 'This task' });
+  }
   function toggleInView(item) {
     const had = isInView(item.type, item.id);
     inViewList = had ? inViewList.filter((x) => !(x.type === item.type && x.id === item.id)) : [item, ...inViewList];
@@ -246,6 +266,7 @@
 
   // ---- a task's page: its trail goes back through its chat; its timeline is its stages ----
   function drawTaskParts() {
+    syncEye();
     const crumbs = [...document.querySelectorAll('#card .rc-crumbs .rc-crumb')];
     if (crumbs.length) { const first = taskChat ? 'Chat' : 'Tasks'; if (crumbs[0].textContent !== first) crumbs[0].textContent = first; }
     if (taskChat && crumbs.length > 1) { const word = window.RailConversation?.chatTitle(taskChat) || 'Chat', last = crumbs[crumbs.length - 1]; if (last.textContent !== word) { last.textContent = word; last.title = word; } }
@@ -284,8 +305,10 @@
   document.addEventListener('click', (e) => {
     const on = (sel) => e.target.closest(sel);
     let hit;
-    if ((hit = on('[data-in-view]'))) { const [type, id] = hit.dataset.inView.split(':'), x = inViewList.find((y) => y.type === type && y.id === id), now = x && inViewNow(x); if (now?.task) window.RailShell.openTask(now.task.cs, now.task.chat, now.task.title); else if (now) window.RailShell.go(now.hash); return; }
-    if (on('[data-in-view-more]')) { homeOpen = true; if (collapsed) { collapsed = false; syncRail(); } drawBar(); return; }
+    if ((hit = on('[data-in-view-drop]'))) { const [type, id] = hit.dataset.inViewDrop.split(':'), x = inViewList.find((y) => y.type === type && y.id === id); if (x) toggleInView(x); return; }
+    if ((hit = on('[data-keep-view]'))) { toggleCaseInView(hit.dataset.keepView, document.querySelector('#card [data-title]')?.textContent); return; }
+    if ((hit = on('[data-in-view]'))) { inViewMenu = false; const [type, id] = hit.dataset.inView.split(':'), x = inViewList.find((y) => y.type === type && y.id === id), now = x && inViewNow(x); if (now?.task) window.RailShell.openTask(now.task.cs, now.task.chat, now.task.title); else if (now) window.RailShell.go(now.hash); return; }
+    if (on('[data-in-view-more]')) { inViewMenu = !inViewMenu; drawInView(); return; }
     if ((hit = on('[data-mini]'))) { window.RailShell.go(hit.dataset.mini); return; }
     if (on('[data-pins-all]')) { pinsAll = true; drawBar(); return; }
     if (on('[data-bar-hide]')) { hideBar(); return; }
@@ -376,6 +399,7 @@
   let routed = { view: '', locked: false };
   R.neverOutside(document, '.mk-tools');   // the prototype's own corner closes nothing
   // the drawer and the narrow search close on a click outside or Esc (docs/rail/panels.md)
+  R.dismissOnOutside(document, { open: () => inViewMenu, inside: '#in-view-slot', back: () => '[data-in-view-more]', close: () => { inViewMenu = false; }, paint: () => drawInView() });
   R.dismissOnOutside(document, { open: () => document.body.classList.contains('nav-open'), inside: '#side-rail, #mbar-menu', back: () => '#mbar-menu', close: () => drawer(false), paint: () => {} });
   R.dismissOnOutside(document, { open: () => !!document.querySelector('#topnav .tsearch.is-open'), inside: '.tsearch, #tsearch-open', back: () => '#tsearch-open', close: () => searchFold(false), paint: () => {} });
   build();

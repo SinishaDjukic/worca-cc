@@ -1262,4 +1262,35 @@ th.rt-c{color:var(--ink-2);font-weight:500;}
 .stage-tools{flex:none;display:inline-flex;gap:2px;}
 .stage-part{margin:6px 0 0 32px;}
 .stage-parts{display:flex;gap:4px;flex-wrap:wrap;margin:6px 0 0 30px;}
+/* StagePart: a part at its stage's end, saying what is inside; its chevron turns when it is open under the stage. */
+.stage-part-b{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 8px;border:0;border-radius:var(--r-sm);background:none;color:var(--ink-3);font:400 var(--fs-caption)/1 var(--sans);cursor:pointer;white-space:nowrap;}
+.stage-part-b b{font-weight:500;color:var(--ink-2);}
+.stage-part-b svg{flex:none;transition:transform var(--motion-quick) var(--ease);}
+.stage-part-b:hover{background:var(--hover);color:var(--ink-2);}
+.stage-part-b:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+.stage-part-b.is-open{background:var(--hover);}
+.stage-part-b.is-open b{color:var(--ink);}
+.stage-part-b.is-open svg{transform:rotate(180deg);}
+@media (max-width: 600px){ .stage-part-b span{display:none;} }
 .rl-search-res .menu-item > .kind-mark,.rl-search-res .menu-item > svg{flex:none;margin-right:8px;color:var(--ink-2);}
+
+/* InView: what you keep in view, in the top bar. Its marks hold still: they say where a thing stands, never pulse. */
+.in-view{display:inline-flex;align-items:center;gap:2px;margin-right:6px;padding-right:8px;border-right:1px solid var(--line);}
+.in-view .kind-mark,.in-view .kind-mark *{animation:none!important;}
+.in-view-w{position:relative;display:inline-flex;}
+.in-view-i{display:grid;place-items:center;min-width:32px;height:32px;padding:0 4px;border:0;border-radius:var(--r-sm);background:none;color:var(--ink-2);font:500 var(--fs-caption)/1 var(--sans);cursor:pointer;}
+.in-view-i:hover,.in-view-i[aria-expanded="true"]{background:var(--hover);}
+.in-view-i:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+.in-view-card{position:absolute;top:calc(100% + 6px);right:0;z-index:60;display:none;gap:8px;align-items:flex-start;width:max-content;max-width:280px;padding:8px 8px 8px 10px;border:1px solid var(--float-line);border-radius:var(--r-md);background:var(--float);box-shadow:var(--shadow-pop);font:400 var(--fs-caption)/1.35 var(--sans);color:var(--ink);text-align:left;}
+.in-view-card::before{content:"";position:absolute;left:0;right:0;top:-8px;height:8px;}   /* the pointer crosses into the card without closing it */
+.in-view-card > span{flex:1 1 auto;min-width:0;}
+.in-view-card b{display:block;font-weight:600;}
+.in-view-card span span{display:block;color:var(--ink-2);}
+.in-view-w:is(:hover,:focus-within) > .in-view-card{display:flex;}
+.in-view-x{flex:none;display:grid;place-items:center;width:22px;height:22px;margin:-2px -2px 0 4px;border:0;border-radius:var(--r-sm);background:none;color:var(--ink-3);cursor:pointer;}
+.in-view-x:hover{background:var(--hover);color:var(--ink);}
+.in-view-x:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+.in-view-more .menu-item .kind-mark{animation:none!important;}
+@media (max-width: 760px){ .in-view{margin-right:2px;padding-right:4px;} .in-view-card{display:none!important;} }
+/* A quiet icon button that stays on (Keep in view on a task's head) shows it. */
+.btn.btn-quiet.btn-icon[aria-pressed="true"]{color:var(--ink);background:var(--hover);}

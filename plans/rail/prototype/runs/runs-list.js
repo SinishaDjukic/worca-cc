@@ -7,7 +7,7 @@
   if (!root) return;
   const KEY = 'worca-rail.runs.view';
   const store = { get: () => { try { return JSON.parse(localStorage.getItem(KEY) || 'null'); } catch { return null; } }, set: (v) => { try { localStorage.setItem(KEY, JSON.stringify(v)); } catch { /* the view lasts the session */ } } };
-  const FRESH = { show: 'all', from: 'all', person: '', by: 'state', labels: [] };
+  const FRESH = { show: 'all', from: 'all', person: '', by: 'day', labels: [] };
   let view = { ...FRESH, ...(store.get() || {}) }, data = M.seed(), listCase = 'full', recent = [], ctl = null;
   const say = (t, undo) => window.RailPulse?.say(t, undo);
   const cap = (w) => w[0].toUpperCase() + w.slice(1);

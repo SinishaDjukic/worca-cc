@@ -47,5 +47,5 @@ export { listController, LIST_SHOWN, fitMenu } from './list-page.mjs';
 export { planBulk, skipText } from '../../../../src/shared/run-bulk.mjs';
 export { dismissOnOutside, neverOutside, REAL_CONTROL } from './dismiss.mjs';
 export { selectionBar, selectAllBox, bindLongPress } from './selection-bar.mjs';
-export { markTone, kindMark, gitMark, timeline, timelineCard, barHead, turnRow, composer, stageBar, taskCard, stageLine } from './kind-mark.mjs';
+export { markTone, kindMark, gitMark, timeline, timelineCard, barHead, turnRow, composer, stageBar, taskCard, stageLine, stagePart } from './kind-mark.mjs';
 export { tipPlace, watchTooltips } from './tooltip.mjs';

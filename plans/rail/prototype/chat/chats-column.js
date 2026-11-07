@@ -7,7 +7,7 @@
   const STORE_W = 'worca-rail.chats.width', STORE_V = 'worca-rail.chats.view';
   const get = (k) => { try { return localStorage.getItem(k); } catch { return null; } }, set = (k, v) => { try { localStorage.setItem(k, v); } catch { /* a remembered choice is a nicety */ } };
   const clampW = (px) => Math.min(680, Math.max(360, Math.round(+px) || 360));
-  const FRESH = { show: 'all', from: 'all', by: 'state', sort: 'activity' };
+  const FRESH = { show: 'all', from: 'all', by: 'day', sort: 'activity' };
   const parse = (t) => { try { return JSON.parse(t) || {}; } catch { return {}; } };
   let view = { ...FRESH, ...parse(get(STORE_V)) }, data = M.seed(), width = clampW(get(STORE_W)), current = '', listCase = 'full', recent = [], ctl = null, opened = true;
   const say = (t, undo) => window.RailPulse?.say(t, undo);

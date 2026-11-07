@@ -399,7 +399,7 @@ function render() {
   <div class="rc">
     <div class="rc-bar">${crumbs}${ui.offline ? `<span class="rc-conn" role="status" title="Worca lost its connection to the server; your runs keep going and it reconnects by itself">${R.statusDot({ tone: 'is-grey' })}Offline · retrying</span>` : ''}${pager}</div>
     ${stripHtml(v)}
-    <div class="rc-head"><div class="rc-title-row"><h1 class="rc-heading${ui.titleOpen ? ' is-open' : ''}" title="${esc(v.title)}" data-title>${esc(v.title)}</h1></div>${facts ? `<div class="rc-facts">${facts}</div>` : ''}</div>
+    <div class="rc-head"><div class="rc-title-row"><h1 class="rc-heading${ui.titleOpen ? ' is-open' : ''}" title="${esc(v.title)}" data-title>${esc(v.title)}</h1>${SHELL ? R.button({ label: 'Keep in view', kind: 'quiet', iconOnly: true, icon: R.icon('eye', 16), attrs: { 'data-keep-view': ui.caseId, 'aria-pressed': 'false', title: 'Keep in view: its mark stays in the top bar, on every page' } }) : ''}</div>${facts ? `<div class="rc-facts">${facts}</div>` : ''}</div>
     <section class="rc-card" aria-label="Run status">
       ${R.statusLine({ dot: statusDot(v), word: v.word, action, detail: v.detail })}
       <div class="rc-zone"><div class="rc-span">${R.stepper({ stages: v.stages, deepen: SHELL ? R.markTone(v) : '' })}</div></div>
@@ -430,10 +430,24 @@ function render() {
 
 // In the one Worca a task reads down like a conversation: finished stages one line, the open one in full, what is to come quiet.
 const PART_STAGE = { decisions: 'plan', changes: 'build', activity: 'review' };
+// What a part holds, said before it opens: the files and lines, the decisions and the one open, the steps.
+function partSays(v, t) {
+  if (t.id === 'changes') { const [files, docs] = String(t.n || '').split(' · '), diff = (v.figs.find((f) => f.k === 'Changes') || {}).v || ''; return [files ? `${files} files ${diff}`.trim() : diff, docs].filter(Boolean).join(' · '); }
+  if (t.id === 'decisions') return t.n ? `${t.n}${v.ask ? ' · 1 open' : ''}` : '';
+  if (t.id === 'activity') { const n = v.activity.reduce((a, st) => a + st.rows.filter((r) => !/\bis-next\b/.test(r.rowCls)).length, 0); return n ? `${n} ${n === 1 ? 'step' : 'steps'} so far` : ''; }
+  return t.n || '';
+}
+// The part that matters now opens by itself: Decisions while Plan waits on you, Changes once the task is ready.
+function partNow(v, caseId) {
+  const live = v.stages.find((st) => st.live), has = (id) => v.tabs.some((t) => t.id === id);
+  if (v.ask && live?.key === 'plan' && has('decisions')) return 'decisions';
+  if (/^(ready|approved)$/.test(M.stateOf(caseId)) && has('changes')) return 'changes';
+  return '';
+}
 function stageStream(v, open) {
   const tab = (id) => v.tabs.find((t) => t.id === id);
   const partAt = PART_STAGE[ui.tab] && tab(ui.tab) ? PART_STAGE[ui.tab] : '';
-  const partBtn = (id) => { const t = tab(id); return t ? R.button({ label: `${t.l}${t.n ? ` ${t.n}` : ''}`, kind: 'quiet', attrs: { 'data-tab': ui.tab === id ? v.tabs[0].id : id, 'aria-expanded': String(ui.tab === id), title: ui.tab === id ? `Closes ${t.l}` : `Opens ${t.l} under this stage` } }) : ''; };
+  const partBtn = (id) => { const t = tab(id); return t ? R.stagePart({ label: t.l, says: partSays(v, t), open: ui.tab === id, attrs: { 'data-tab': ui.tab === id ? v.tabs[0].id : id, 'data-key': `tab:${id}`, title: ui.tab === id ? `Closes ${t.l}` : `Opens ${t.l} under this stage` } }) : ''; };
   const line = (st) => {
     const live = st.live, done = st.cells.every((c) => /is-(done|merged)/.test(c)), next = st.cells.every((c) => /is-next/.test(c));
     const mark = live ? R.kindMark({ kind: 'task', tone: R.markTone(v), stage: -1, size: 16 }) : svg(done ? 'check' : 'now', 14);
@@ -486,7 +500,13 @@ document.addEventListener('change', (e) => {
 const pick = document.getElementById('case');
 const groups = M.caseGroups;   // by what you check
 pick.innerHTML = groups.map((g) => `<optgroup label="${g}">${M.cases.filter((c) => c.group === g).map((c) => `<option value="${c.id}"${c.id === ui.caseId ? ' selected' : ''}>${esc(c.label)}</option>`).join('')}</optgroup>`).join('');
-pick.addEventListener('change', () => { if (SHELL) history.replaceState(null, '', '#run/' + pick.value); jump = true; ui = Object.assign(fresh(pick.value), { chips: (M.cases.find((c) => c.id === pick.value) || {}).chips || [] }); render(); });
+pick.addEventListener('change', () => {
+  // #run/<case>/<part> opens that part under its stage; with none named, the part that matters now
+  const named = SHELL ? (location.hash.match(/^#run\/[^/]+\/(\w+)/) || [])[1] : '';
+  if (SHELL) history.replaceState(null, '', '#run/' + pick.value); jump = true; ui = Object.assign(fresh(pick.value), { chips: (M.cases.find((c) => c.id === pick.value) || {}).chips || [] });
+  if (SHELL) { const v0 = M.view(ui.caseId, ui); ui.tab = v0.tabs.some((t) => t.id === named) ? named : partNow(v0, ui.caseId); }
+  render();
+});
 // The prototype's flow (RunCardModel.flow): an action moves the run to its next case or does its job in place and
 // says so in the toast; a destructive or outward one (Stop, Discard, Merge, Apply) asks first in a confirm strip.
 const AWAY = [{ id: 'away:auto', text: 'As set up', help: 'Follows Settings and whether you marked this run' }, { id: 'away:on', text: 'Answer for me', help: 'Worca answers this run’s questions from now on, at any hour' }, { id: 'away:off', text: 'Never', help: 'Worca never answers on this run, whatever the settings' }];

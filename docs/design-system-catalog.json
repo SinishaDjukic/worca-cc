@@ -1067,11 +1067,22 @@
       ]
     },
     {
+      "name": "StagePart",
+      "code": "ui/public/design-system/components/kind-mark.mjs#stagePart",
+      "kind": "moving",
+      "needs": [
+        "a part of a task at its stage's end, saying what is inside before it opens"
+      ],
+      "rules": [
+        "thing.parts-in-stages"
+      ]
+    },
+    {
       "name": "InView",
       "code": "ui/public/design-system/components/shell-parts.mjs#inView",
       "kind": "moving",
       "needs": [
-        "what you keep an eye on, live, from any page"
+        "what you keep an eye on, from any page: still marks in the top bar, a card on hover, a way out of view"
       ],
       "rules": [
         "nav.in-view"

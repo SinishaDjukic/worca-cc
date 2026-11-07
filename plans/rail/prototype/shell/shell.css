@@ -95,7 +95,7 @@
 .bar-list .list-h,.bar-back .list-h{margin:0 0 2px;padding-left:2px;}
 .bar-list .list-group + .list-group{margin-top:8px;padding-top:8px;}
 .bar-list .list,.bar-list #runs-root,.bar-list #chats-root{padding:0;margin:0;}
-.bar-list .list-head + .list-group{margin-top:6px;}
+.bar-list .list-head + .list-group{margin-top:16px;}   /* the filter line breathes before the first section */
 .bar-back .list-row{margin-left:0;grid-template-columns:20px minmax(0,1fr) auto;column-gap:6px;}
 .bar-back .lr-main{padding:3px 4px;margin:0;}
 .bar-list .list-row{margin-left:0;grid-template-columns:20px minmax(0,1fr) auto;column-gap:6px;}
@@ -210,11 +210,6 @@ body.bar-hidden .bar-show{display:none;}
 #topnav-ask,.pz-pulse-b{width:36px;height:36px;}
 /* In view: what you keep an eye on, live, in the top bar. */
 #in-view-slot{display:inline-flex;}
-.in-view{display:inline-flex;align-items:center;gap:2px;margin-right:6px;padding-right:8px;border-right:1px solid var(--line);}
-.in-view-i{display:grid;place-items:center;min-width:32px;height:32px;padding:0 4px;border:0;border-radius:var(--r-sm);background:none;color:var(--ink-2);font:500 var(--fs-caption)/1 var(--sans);cursor:pointer;}
-.in-view-i:hover{background:var(--hover);}
-.in-view-i:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
-@media (max-width: 760px){ .in-view{display:none;} }
 /* The prototype's own corner: bottom right, its build in its own panel, so it never covers the composer. */
 .mk-tools > summary .mk-stamp{display:none;}
 /* A topic's fold in the bar sits on the line like a time: one line high, the count then its chevron. */

@@ -20,7 +20,7 @@
 (`New schedule`), then a list. **A list** (runs, updates, files, PRs): divided ListRows on the rail. A row is its state mark on the rail (a status
 dot, or a tick box while selecting), a title line, a meta line, its time or figure at the right; the whole row opens
 its one target, so a fact in the row is text, never a second link. The row's own actions are a ⋯ at its right end
-(the Runs list's row ⋯), the same CompactMenu as on its page. Rows sit in sections in a fixed order (by urgency, or by day), newest first in each; a section with
+(the Runs list's row ⋯), the same CompactMenu as on its page. Rows sit in sections in a fixed order (by day by default: what waits on you first, then Today, Yesterday, Previous 7 days, Older; or by urgency), newest first in each; a section with
 no rows is not drawn; the page's spec names the sections. A long section is never folded: it shows its newest rows,
 then one quiet row, `Show 21 more`, opens the rest in place (Older shows 3). What the list shows is a sentence above it (`Showing [unread ▾] from [all groups ▾]`), not a
 filter button; grouping is one more word in it (`by [day ▾]`), each choice in its menu with its count. Every

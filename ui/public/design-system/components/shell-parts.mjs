@@ -3,6 +3,8 @@
 import { attrs, cls, esc } from './html.mjs';
 import { button } from './button.mjs';
 import { statusDot } from './status-line.mjs';
+import { icon } from './icons.mjs';
+import { compactMenu } from './compact-menu.mjs';
 
 /** The connection dropped: a quiet line at the end of the top bar, grey dot, until it reconnects. */
 export function offlineLine({ text = 'Offline · retrying', tip = 'Worca lost its connection to the server. Your runs keep going there; this page catches up by itself.' } = {}) {
@@ -93,15 +95,18 @@ export function countBadge({ n, tone = '', corner = false }) {
 }
 
 /**
- * InView: the things you keep in view, as their own live marks in the top bar, on every page; a click opens one, the
- * tooltip says where it stands; past `max`, one +N opens the rest.
+ * InView: the things you keep in view, as their own marks in the top bar, on every page. A mark holds still and only
+ * says where its thing stands (no pulse, no breathing); hovered or focused, a card says what it is, with a way out of
+ * view; a click opens it; past the shown ones, one +N opens a menu of the rest.
  * @param {object} o
- * @param {{label:string, icon:string, attrs?:object}[]} o.items
- * @param {{n:number, attrs?:object}} [o.more]
+ * @param {{title:string, line?:string, icon:string, attrs?:object, drop?:object}[]} o.items
+ * @param {{n:number, open?:boolean, attrs?:object, items?:{id:string, text:string, mark?:string}[], pickAttr?:string}} [o.more]
  */
 export function inView({ items, more = null }) {
-  if (!items.length) return '';
-  return `<nav class="in-view" aria-label="In view">${items.map((x) => `<button type="button" class="in-view-i"${attrs({ ...(x.attrs || {}), title: x.label, 'aria-label': x.label })}>${x.icon}</button>`).join('')}${more ? `<button type="button" class="in-view-i is-more"${attrs({ ...(more.attrs || {}), title: `${more.n} more in view`, 'aria-label': `${more.n} more in view` })}>+${esc(more.n)}</button>` : ''}</nav>`;
+  if (!items.length && !more) return '';
+  const one = (x) => `<span class="in-view-w"><button type="button" class="in-view-i"${attrs({ ...(x.attrs || {}), 'aria-label': [x.title, x.line].filter(Boolean).join(': ') })}>${x.icon}</button><span class="in-view-card" role="tooltip">${x.icon}<span><b>${esc(x.title)}</b>${x.line ? `<span>${esc(x.line)}</span>` : ''}</span>${x.drop ? `<button type="button" class="in-view-x"${attrs({ ...x.drop, 'aria-label': `Out of view: ${x.title}`, title: 'Out of view' })}>${icon('sym-x', 12)}</button>` : ''}</span></span>`;
+  const rest = more ? `<span class="rc-pop is-right in-view-more"><button type="button" class="in-view-i is-more"${attrs({ ...(more.attrs || {}), 'aria-haspopup': 'menu', 'aria-expanded': String(!!more.open), title: `${more.n} more in view`, 'aria-label': `${more.n} more in view` })}>+${esc(more.n)}</button>${more.open ? compactMenu({ label: 'More in view', items: more.items || [], pickAttr: more.pickAttr || 'data-in-view' }) : ''}</span>` : '';
+  return `<nav class="in-view" aria-label="In view">${items.map(one).join('')}${rest}</nav>`;
 }
 
 /**

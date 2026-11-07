@@ -24,7 +24,7 @@ A Rail page is built by naming needs, not looks. Find the need, use its componen
 | A place in the bar's places | NavItem, under Settings-like group heads; a Work place's + starts its own thing | Chat, Tasks, Schedules |
 | The head of the one bar | BarHead: Worca's W (the way to the places), its title, its one action, Hide | Chat + |
 | The hidden bar | BarStrip: one icon per kind of work, its CountBadge; opens its place | Chats 4, Tasks 7 |
-| What you keep an eye on | InView: live marks in the top bar, their state in the tooltip, +N past five | Fix the flaky login, Working |
+| What you keep an eye on | InView: still marks in the top bar only; a card on hover with × for Out of view; +N past five opens a menu | Fix the flaky login, Working |
 | How many, on the corner of what it counts | CountBadge, `need` when any waits on you | Pulse 3 |
 | The sidebar's foot, the door to the profile menu | AccountButton, then AccountItem rows in its flyout | Interface mode, Away |
 | An action in the top bar | TopBarAction, an icon with its CountBadge; its name in the tooltip | Ask worca, Pulse |
@@ -55,6 +55,7 @@ A Rail page is built by naming needs, not looks. Find the need, use its componen
 | Git's status at a row's end | GitMark, git's own icon; it pulses while Watch fixes | PR #1180, checks failing |
 | A task or a schedule in a conversation | TaskCard: its page's anatomy, compact before it starts | Add CSV export |
 | A stage of a task, read down | StageLine, its parts at its end | Plan · Decisions 3 |
+| A part of a task at its stage | StagePart: what is inside, said before it opens; its chevron turns open | Changes 5 files +358 −144 |
 | A task's stages on a card | StageBar, each deepening into the state's colour | Plan · Build · Review |
 | What Worca did in a conversation | TurnRow: folds; a failure opens itself | Ran 4 commands |
 | Moving through a long conversation or a task | Timeline on the right edge, its TimelineCard on hover | Which date format? |

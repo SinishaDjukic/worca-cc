@@ -192,6 +192,18 @@ export function stageLine({ mark, label, meta = '', parts = '', body = '', next 
 }
 
 /**
+ * StagePart: a part of a task at its stage's end, saying what is inside before it opens; open, it shows under the stage.
+ * @param {object} o
+ * @param {string} o.label   the part: Decisions, Changes, Activity
+ * @param {string} [o.says]  what is inside, in a few words: 5 files +358 −144
+ * @param {boolean} [o.open]
+ * @param {object} [o.attrs]
+ */
+export function stagePart({ label, says = '', open = false, attrs: a = {} }) {
+  return `<button type="button" class="stage-part-b${open ? ' is-open' : ''}"${attrs({ 'aria-expanded': String(!!open), ...a })}><b>${esc(label)}</b>${says ? `<span>${esc(says)}</span>` : ''}${icon('chevron', 10)}</button>`;
+}
+
+/**
  * StageBar: a thing's main stages on a card, each deepening into the state's colour up to where it is.
  * @param {object} o
  * @param {string[]} o.labels
