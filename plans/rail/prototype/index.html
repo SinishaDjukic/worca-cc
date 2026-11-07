@@ -19,9 +19,9 @@
 
 <!-- The prototype's own controls (not Worca): which case each Rail piece shows, what happens next, the theme. -->
 <details class="mk-tools" data-run-tools>
-  <summary>Prototype</summary>
+  <summary>Prototype <span class="mk-stamp" id="mk-stamp"></span></summary>
   <div class="mk-bar">
-    <p class="mk-rev" title="Prototype revision, when it was published and the commit it was built from">Rev 41 · 4 Nov 2026 · built on feat/rail-components</p>
+    <p class="mk-rev" id="mk-rev"></p>
     <label>Run <select class="select select-sm" id="case"></select></label>
     <span class="mk-row"><button type="button" class="btn btn-sm" id="next-event" title="Something outside the run happens: checks finish, a reviewer approves">Next event</button><button type="button" class="btn btn-sm btn-quiet" id="restart" title="Start again from a new run">Restart</button></span>
     <label class="pd-check" title="The next confirmed step or suggestion fails, to show how a failure reads"><input type="checkbox" id="fail-next"> Next one fails</label>
@@ -40,6 +40,7 @@
 
 <script>(function () { const dark = matchMedia('(prefers-color-scheme: dark)').matches; document.querySelectorAll('[data-theme-pick]').forEach((b) => b.setAttribute('aria-pressed', String((b.dataset.themePick === 'dark') === dark))); })();</script>
 <script src="components.js"></script>
+<script>(function () { const s = window.RailStamp; if (!s) return; const when = new Date(s.at).toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }); document.getElementById('mk-stamp').textContent = `· ${s.branch} · ${when}`; const rev = document.getElementById('mk-rev'); rev.textContent = `Last update ${when} · ${s.branch} at ${s.sha}${s.dirty ? ', with uncommitted work' : ''}`; })();</script>
 <script src="today.js"></script>
 <script src="runs/run-page-model.js"></script>
 <script src="shell/world.js"></script>

@@ -6,7 +6,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { writeAppCss } from '../plans/rail/prototype/gates/app-css.mjs';
-import { writeComponentsJs } from '../plans/rail/prototype/gates/components-js.mjs';
+import { railStamp, writeComponentsJs } from '../plans/rail/prototype/gates/components-js.mjs';
 import { writeTodayJs } from '../plans/rail/prototype/gates/today-js.mjs';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
@@ -21,6 +21,8 @@ export function buildPrototypePage() {
   let html = readFileSync(join(DIR, 'index.html'), 'utf8');
   html = html.replace(/<link rel="stylesheet" href="([^"]+)">/g, (_, f) => `<style>${inlineAssets(readFileSync(join(DIR, f), 'utf8'))}</style>`);
   html = html.replace(/<script src="([^"]+)"><\/script>/g, (_, f) => `<script>${inlineAssets(readFileSync(join(DIR, f), 'utf8')).replace(/<\/script/g, '<\\/script')}</script>`);
+  // Agreed and Shaping publish as two pages: the name says which
+  if (railStamp().branch === 'docs/rail-shaping') html = html.replace('<title>Worca Rail · Prototype</title>', '<title>Worca Rail · Shaping</title>');
   return inlineAssets(html);
 }
 

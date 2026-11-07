@@ -29,7 +29,7 @@ What lives where:
 | Artifacts | Worca Rail, generated from `dev` | generated from the branch |
 
 - **Promotion:** decided ideas move to Agreed; an enrolled Feature reaches `dev` as PRs, carrying its page, rule, catalog entry, component and test, check,
-  plan and deciding mock together. Agreed and Shaping are then rebased.
+  plan and deciding mock together. `dev` then merges into Agreed, and Agreed into Shaping; never a rebase.
 - **Generated, never copied:** `tools/rail-artifact.mjs` builds the Worca Rail page from a branch.
 
 ## 2. Now

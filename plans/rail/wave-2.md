@@ -53,6 +53,27 @@ From `waves.md`, with what Agreed taught:
 6. **The gates** read the page by themselves; its key cases join `compare-pages.json` when it is built in the app.
 7. **Move to Agreed,** then one Feature per page to Worca's Shaper, behind the `rail` flag.
 
+## Shaped so far (7 Nov), in mocks
+
+Mocks: `mocks/wave-2/` (`node plans/rail/mocks/wave-2/render.mjs`). These are directions Emil chose; none is built, and each still moves to Agreed with its page, rule, catalog entry, component and test.
+
+| Direction | Mock |
+|---|---|
+| **One bar for every feature**, Settings' behaviour: head, what it shows, list, you. The house opens the places. The Chats column goes | 1 |
+| **Chat dispatches everything.** Tasks and schedules are cards in a conversation and a rounded dependency tree in the bar. Tasks and Schedules as places are Expert | 2 |
+| **Builds become tasks** in every word a person reads. Substages can no longer be called tasks | all |
+| **The icon carries type, state and progress:** the usage ring's look, one segment per main stage, deepening towards the state colour; substages in the tooltip. The card's step bar follows | 3 |
+| **A row's end holds one thing:** git's own icon if it has one, otherwise the time; the rest in the tooltip | 2, 3 |
+| Views stay: by state, day (Today, Yesterday, Previous 7 days, Previous 30 days, Older), project, AI topic with its helper named. Your groups, selecting and keys stay | 3 |
+| **One search at the top,** results under an area head. Lean icons on Settings' sections and sub-sections, one new set | 4 |
+| **Backgrounds:** Dots by default, one family with Aurora dots, Dusk dots, Mist. Chat home and away only | 5 |
+| **The conversation on one rail;** thinking and commands fold, a failure opens itself | 6 |
+| **No New run button or dialog:** the composer says Ask, Task or Schedule, you pick it, and every New run function has a place | 7 |
+| **A task or a schedule opens like a chat:** a reading column, marks, a composer that goes to its chat. Pulse stays | 8 |
+| **Anchors:** marks on the right edge, named on hover, `[` and `]` between them | 9 |
+
+Decided rules these change: C1 (Chat home's list moves to the bar), C3 (Expert only), "no drawn rails" (the tree), the quiet grey finished step, `thing.slots` (stages read as a stream), `form.dialog` (New run), the conversation's rail, "the sidebar holds places".
+
 ## Open questions, to answer while shaping
 
 - **C5:** what does a build with no conversation belong to: schedules, re-runs, PR fix runs?
@@ -60,7 +81,7 @@ From `waves.md`, with what Agreed taught:
 - **Chats:** Delete and group actions: Advanced like Runs, or every level as dev does? Where does sort live?
 - **Run panel:** a run from Chat opens beside the conversation today, but "a thing opens as a full page" holds everywhere else (C4).
 - **The advisor:** what it reads, how sure it says it is, what happens when a start doesn't fit.
-- **Old Shaping's five,** never decided; each needs asking before it comes in: PlaceRow, New run off the top bar, no title from
+- **Old Shaping's five,** never decided; each needs asking before it comes in (New run off the top bar is now mock 7): PlaceRow, no title from
   1081px, a 288px sidebar, a kind icon with a state dot. Ideas only, read-only: `backup/rail-shaping-final`.
 - **Parked, only if wanted:** backgrounds on Chat home and the away screen; an icon redraw.
 
