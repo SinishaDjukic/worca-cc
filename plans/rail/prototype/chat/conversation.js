@@ -66,6 +66,21 @@
       : R.button({ label: 'Open', kind: 'quiet', attrs: t.kind === 'schedule' ? { 'data-open-sched': t.id } : { 'data-open-task': t.id } });
     return R.taskCard({ compact: true, title: t.title, mark: taskMark(t), word: t.title, detail: t.detail, action, attrs: { 'data-anchor': x.id } });
   };
+  // A task card's actions act here, from the same table the task page reads (run-state's actionFlow): a move to its next
+  // state, a confirm under the card, or (a dialog) its page, which still holds the dialogs.
+  const CTX = { base: 'dev', pr: '#1180', reset: '17:00', branch: 'feat/billing-csv-export', at: '14:00', value: '$40' };
+  function cardAct(t, label) {
+    if (!label) return;
+    const f = R.actionFlow(RM.stateOf(t.case), CTX)[label];
+    if (!f) { say(label); return; }
+    if (f.dialog) { window.RailShell.openTaskPage(t.case, chatId, t.title); return; }
+    if (f.confirm) { t.confirm = { label, text: f.confirm, flow: f }; paint(); return; }
+    doAct(t, label, f);
+  }
+  function doAct(t, label, f) {
+    if (f.to && RM.cases?.some?.((c) => c.id === f.to)) { t.case = f.to; t.detail = R.runState(RM.stateOf(f.to), CTX).word; }
+    window.RailChats.refresh(); paint(); say(f.say || label);
+  }
   function proposalHtml(x) {
     if (x.later) return R.turnRow({ mark: R.kindMark({ kind: 'task', tone: 'idle', size: 16 }), text: `Set aside: <b>${esc(x.title)}</b>`, end: R.button({ label: 'Bring back', kind: 'quiet', attrs: { 'data-pp-back': x.id } }) });
     const pp = (f, text, items, tip) => R.sentencePicker({ id: `pp-${x.id}-${f}`, text, tip, items: items.map((v) => ({ id: v, text: v, checked: v === text })), open: menu === `pp-${x.id}-${f}`, chevron: R.icon('chevron', 10) });
@@ -122,7 +137,8 @@
     // Its one action and ⋯ are its state's own, as on its page; a question is answered under the card.
     const main = tone === 'ask' || !st.action ? '' : R.button({ label: st.action.label, kind: st.action.primary ? 'primary' : '', attrs: { 'data-card-act': t.id, title: tone === 'run' || tone === 'pause' ? null : 'Opens the task, where this happens' } });
     const more = cardMore(t, [...(st.action?.items || []).filter((w) => typeof w === 'string'), { id: 'open', text: 'Open its page', help: 'The task page, while the card does not hold everything yet' }]);
-    return R.taskCard({ title: t.title, place: `<span class="rc-mid"><span class="rc-mid-a">${esc(t.branch || '')}</span></span><span>into dev</span>${gitOf(t)}`, mark: taskMark(t), word, detail: t.detail || '', action: main, menu: more, stages: R.stageBar({ labels: STAGES, stage: t.stage, tone }), foot: R.button({ label: x.open ? 'Hide how it ran' : 'How it ran', kind: 'quiet', icon: R.icon(x.open ? 'chevron' : 'chevR', 12), attrs: { 'data-open-task': t.id, 'aria-expanded': String(!!x.open), title: x.open ? 'Folds its stages' : 'Opens its stages here, as its page has them' } }), open: !!x.open, stream: `<div class="tc-run-slot" data-run-slot="${esc(t.case)}"></div>`, attrs: { 'data-anchor': x.id } });
+    const confirm = t.confirm ? R.turnRow({ mark: R.kindMark({ kind: 'chat', tone: 'ask', size: 16 }), text: `<b>${esc(t.confirm.label)}?</b> ${esc(t.confirm.text)}`, end: R.button({ label: t.confirm.label, kind: /discard|delete|stop/i.test(t.confirm.label) ? 'danger' : 'primary', attrs: { 'data-card-yes': t.id } }) + R.button({ label: 'Cancel', kind: 'quiet', attrs: { 'data-card-no': t.id } }) }) : '';
+    return R.taskCard({ title: t.title, place: `<span class="rc-mid"><span class="rc-mid-a">${esc(t.branch || '')}</span></span><span>into dev</span>${gitOf(t)}`, mark: taskMark(t), word, detail: t.detail || '', action: main, menu: more, stages: R.stageBar({ labels: STAGES, stage: t.stage, tone }), foot: R.button({ label: x.open ? 'Hide how it ran' : 'How it ran', kind: 'quiet', icon: R.icon(x.open ? 'chevron' : 'chevR', 12), attrs: { 'data-open-task': t.id, 'aria-expanded': String(!!x.open), title: x.open ? 'Folds its stages' : 'Opens its stages here, as its page has them' } }), open: !!x.open, stream: `<div class="tc-run-slot" data-run-slot="${esc(t.case)}"></div>`, attrs: { 'data-anchor': x.id } }) + confirm;
   }
 
   // ---- the timeline: what is worth finding, where it really is ----
@@ -249,8 +265,9 @@
     if (e.target.closest('#card')) return;   // inside an open card's stages: the task page answers its own clicks
     const on = (q) => e.target.closest(q); let hit;
     if ((hit = on('[data-tick]'))) { goTo(hit.dataset.tick); return; }
-    if ((hit = on('[data-menu-pick]'))) { const [id, ...r] = hit.dataset.menuPick.split('|'); if (id === 'tick') goTo(r.join('|')); else if (id.startsWith('card:')) { menu = ''; const t = taskOf(id.slice(5)); if (t) window.RailShell.openTaskPage(t.case, chatId, t.title); } else pickMenu(id, r.join('|')); return; }
-    if ((hit = on('[data-card-act]'))) { const t = taskOf(hit.dataset.cardAct), tone = R.markTone(stOf(t)); if (tone === 'run') { t.was = t.case; t.wasDetail = t.detail; t.case = 'paused-you'; t.detail = 'Paused by you'; say('Paused'); } else if (tone === 'pause' && t.was) { t.case = t.was; t.detail = t.wasDetail; say('Resumed'); } else { window.RailShell.openTask(t.case, chatId, t.title); return; } window.RailChats.refresh(); refreshAll(); return; }
+    if ((hit = on('[data-menu-pick]'))) { const [id, ...r] = hit.dataset.menuPick.split('|'); if (id === 'tick') goTo(r.join('|')); else if (id.startsWith('card:')) { menu = ''; const t = taskOf(id.slice(5)), label = r.join('|'); if (t) { if (label === 'open' || !label) window.RailShell.openTaskPage(t.case, chatId, t.title); else cardAct(t, label); } } else pickMenu(id, r.join('|')); return; }
+    if ((hit = on('[data-card-act]'))) { const t = taskOf(hit.dataset.cardAct), tone = R.markTone(stOf(t)); if (tone === 'run') { t.was = t.case; t.wasDetail = t.detail; t.case = 'paused-you'; t.detail = 'Paused by you'; say('Paused'); } else if (tone === 'pause' && t.was) { t.case = t.was; t.detail = t.wasDetail; say('Resumed'); } else { cardAct(t, stOf(t).action?.label || ''); return; } window.RailChats.refresh(); refreshAll(); return; }
+    if ((hit = on('[data-card-yes], [data-card-no]'))) { const t = taskOf(hit.dataset.cardYes || hit.dataset.cardNo); if (t) { const c = t.confirm; t.confirm = null; if (hit.dataset.cardYes && c) doAct(t, c.label, c.flow); else paint(); } return; }
     if ((hit = on('[data-cp-unfile]'))) { e.preventDefault(); comp.files = comp.files.filter((f) => f !== hit.dataset.cpUnfile); paint(); return; }
     if ((hit = on('[data-menu]'))) { e.preventDefault(); menu = menu === hit.dataset.menu ? '' : hit.dataset.menu; paint(); return; }
     if (on('[data-anchor-open]')) { menu = menu === 'anchors' ? '' : 'anchors'; paint(); return; }
