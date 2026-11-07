@@ -127,6 +127,7 @@ const b = await chromium.launch({ channel: 'chrome' });
 const OPEN = ['break:part', 'break:background', 'break:offline', '[data-pop]', '[data-acct]', '[data-newrun]', '[data-key="act-main"]', '[data-menu]', '.rc-tabs .tab:nth-child(2)', '.rc-tabs .tab:nth-child(3)', '.rc-tabs .tab:nth-child(4)', '.rc-tabs .tab:nth-child(5)'];
 for (const page of readdirSync(here('.')).filter((f) => f.endsWith('.html') && f !== 'components.html')) {
   const p = await b.newPage({ viewport: { width: 900, height: 900 } });
+  await p.addInitScript(() => { try { localStorage.setItem('worca-rail.mode', 'expert'); } catch { /* none */ } });   // the gates walk every place: Expert
   p.on('pageerror', (e) => add('script error', String(e)));
   await p.goto('file://' + here(page));
   const cases = page === 'index.html' ? [] : await p.evaluate(() => [...document.querySelectorAll('#case option')].map((o) => o.value));   // the one Worca's pages are read by route, below
@@ -175,6 +176,7 @@ for (const page of readdirSync(here('.')).filter((f) => f.endsWith('.html') && f
 {
   const { buildPage } = await import('../../../../tools/rail-artifact.mjs');
   const p = await b.newPage({ viewport: { width: 1280, height: 800 } });
+  await p.addInitScript(() => { try { localStorage.setItem('worca-rail.mode', 'expert'); } catch { /* none */ } });   // the gates walk every place: Expert
   p.on('pageerror', (e) => add('the generated Worca Rail page has a script error', String(e)));
   await p.setContent(buildPage({ sha: 'check' }), { waitUntil: 'load' });
   const missing = await p.evaluate(() => [...document.querySelectorAll('.ra-tile')].filter((a) => !document.querySelector(a.getAttribute('href')) || !document.querySelector(a.getAttribute('href')).querySelector('.gl-show *')).map((a) => a.querySelector('b').textContent));

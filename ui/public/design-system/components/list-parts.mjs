@@ -78,6 +78,11 @@ export function dateSections({ rows, dayOf, row = (r) => r, head = [], days = DA
 /** The sections of what is still to come, by when it next happens (a schedule's next run). */
 export const NEXT_RUN_SECTIONS = Object.freeze([['today', 'Today'], ['tomorrow', 'Tomorrow'], ['week', 'This week'], ['later', 'Later']]);
 
+/** How often a schedule repeats, in the words every schedule picker offers. */
+export const REPEATS = Object.freeze(['every day', 'every weekday', 'every Monday', 'every Tuesday', 'every Wednesday', 'every Thursday', 'every Friday', 'every month on the 1st', 'every hour', 'once']);
+/** The times a schedule picker offers: every half hour of the day. */
+export const TIMES_OF_DAY = Object.freeze(Array.from({ length: 48 }, (_, i) => `${String(Math.floor(i / 2)).padStart(2, '0')}:${i % 2 ? '30' : '00'}`));
+
 /** The sections of a list by day, newest first (docs/rail/lists.md). */
 export const DAY_SECTIONS = Object.freeze([['upcoming', 'Upcoming'], ['today', 'Today'], ['yesterday', 'Yesterday'], ['week', 'Previous 7 days'], ['month', 'Previous 30 days'], ['older', 'Older']]);
 

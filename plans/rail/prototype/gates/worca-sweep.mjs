@@ -19,12 +19,13 @@ const SECTIONS = window.SettingsModel.GROUPS.flatMap((g) => g.items);
 const TODAY = Object.keys(JSON.parse(readFileSync(fileURLToPath(new URL('../today/pages.json', import.meta.url)), 'utf8')));
 const issues = new Map(); const add = (k, w) => { if (!issues.has(k)) issues.set(k, []); if (issues.get(k).length < 12) issues.get(k).push(w); };
 const b = await chromium.launch({ channel: 'chrome' });
-const scout = await b.newPage(); await scout.goto(URL_);
+const scout = await b.newPage(); await scout.addInitScript(() => { try { localStorage.setItem('worca-rail.mode', 'expert'); } catch { /* none */ } }); await scout.goto(URL_);
 const RUNS = await scout.evaluate(() => window.RunCardModel.cases.map((c) => c.id)); await scout.close();
 const ROUTES = ['runs', ...TODAY, ...RUNS.map((c) => 'run/' + c), ...SECTIONS.map((s) => 'settings/' + s)];
 let checks = 0;
 for (const scheme of ['light', 'dark']) for (const w of [1280, 900, 760, 375]) {
   const p = await b.newPage({ viewport: { width: w, height: 860 }, colorScheme: scheme, reducedMotion: 'reduce' });
+  await p.addInitScript(() => { try { localStorage.setItem('worca-rail.mode', 'expert'); } catch { /* none */ } });   // the gates walk every place: Expert
   p.on('pageerror', (e) => add('script error', `${scheme}/${w}: ${e}`));
   for (const r of ROUTES) {
     await p.goto(`${URL_}#${r}`); await p.waitForTimeout(80);
@@ -183,6 +184,7 @@ for (const scheme of ['light', 'dark']) for (const w of [1280, 900, 760, 375]) {
   ];
   for (const w of [1280, 375]) {
     const p = await b.newPage({ viewport: { width: w, height: 860 }, reducedMotion: 'reduce' });
+    await p.addInitScript(() => { try { localStorage.setItem('worca-rail.mode', 'expert'); } catch { /* none */ } });   // the gates walk every place: Expert
     p.on('pageerror', (e) => add('script error', `over/${w}: ${e}`));
     for (const [name, route, open, sel, scrim] of OVER) {
       for (const how of ['click', 'esc']) {
@@ -228,6 +230,7 @@ for (const scheme of ['light', 'dark']) for (const w of [1280, 900, 760, 375]) {
 // Usage: live, connected providers only, every minute (docs/rail/small-rules.md).
 {
   const p = await b.newPage({ viewport: { width: 1280, height: 860 }, reducedMotion: 'reduce' });
+  await p.addInitScript(() => { try { localStorage.setItem('worca-rail.mode', 'expert'); } catch { /* none */ } });   // the gates walk every place: Expert
   await p.clock.install(); await p.goto(`${URL_}#runs`); await p.clock.runFor(200);
   const tip = () => p.evaluate(() => document.querySelector('.pz-ava-wrap')?.title || '');
   const t0 = await tip();

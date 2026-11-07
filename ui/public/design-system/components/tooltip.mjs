@@ -24,6 +24,7 @@ export function watchTooltips(doc) {
     if (!el?.isConnected || !el.dataset.tipText) { hide(); return; }
     // a menu open over the page owns the moment: nothing outside it shows a tooltip, its own trigger least of all (it would cover the first item)
     if (doc.querySelector('[role="menu"]') && !el.closest('[role="menu"]')) { hide(); return; }
+    if (el.closest('[aria-expanded="true"]')) { hide(); return; }   // a trigger whose own popup is open (Pulse, a picker): the popup speaks for it
     tip = doc.createElement('div'); tip.className = 'rail-tip'; tip.setAttribute('role', 'tooltip'); tip.textContent = el.dataset.tipText;
     doc.body.append(tip);
     const at = tipPlace(el.getBoundingClientRect(), tip.getBoundingClientRect(), win.innerWidth, win.innerHeight);

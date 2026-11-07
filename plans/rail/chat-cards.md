@@ -127,7 +127,7 @@ every action. Rail reproduces each flow in its card shape; a box is ticked when 
 ### Write a script
 1. [x] Script draft: name, runtime (Shell, Python, Node.js), key, description, inputs, outputs, params, program · N tests;
        Edit…, Decline, Save script; Saved to your scripts.
-2. [x] Script approval: a sandbox note, folds (Command, Program, Exit codes, Test cases); Don't run, Run (Don't save,
+2. [x] Script approval: dev's note ("on this machine with your access and no sandbox", where, how long), folds (Command, Program, Exit codes, Test cases); Don't run, Run (Don't save,
        Save); done, exit N.
 3. [x] Command: Stop, Copy command, Copy output, Show in terminal, Show all.
 

@@ -737,7 +737,7 @@ html,body{height:auto;overflow:visible;margin:0;}
 .el-t{color:var(--ink);font-weight:500;}
 .empty-line.is-err .el-t{color:var(--red-ink-strong);}   /* red only when a part could not be drawn */
 .el-acts{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px;}
-.rc .toasts{bottom:calc(24px + env(safe-area-inset-bottom, 0px));}
+.rc .toasts{top:60px;bottom:auto;}   /* ds-ok: just under the 48px top bar */   /* notices come in under the top bar, by Pulse, never over the composer's controls */
 .rc-conn{display:inline-flex;align-items:center;gap:6px;margin-left:auto;font-size:var(--fs-meta);color:var(--ink-2);white-space:nowrap;}
 .rc-conn + .rc-pager{margin-left:12px;}
 

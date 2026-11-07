@@ -15,7 +15,7 @@
     const s = rows[0]?._s; if (!s) return;
     if (id === 'in-view') { window.RailShell.inView.toggle({ type: 'schedule', id: s.id, title: s.title }); draw(); return; }
     if (id === 'run') { say(`Started ${s.title}`); return; }
-    if (id === 'pause') { s.state = s.state === 'paused' ? 'scheduled' : 'paused'; s.section = s.state === 'paused' ? 'paused' : 'next'; s.next = s.state === 'paused' ? 'Paused by you' : `Next at ${s.at}`; draw(); say(st(s).word); }
+    if (id === 'pause') { s.state = s.state === 'paused' ? 'scheduled' : 'paused'; s.section = s.state === 'paused' ? 'paused' : 'next'; s.next = s.state === 'paused' ? 'Paused by you' : `Next at ${s.at}`; follow(s); draw(); say(s.state === 'paused' ? `Paused ${s.title}` : `Resumed ${s.title}`); }
   }
   ctl = R.listController({ root: bar, spec: { noun: 'schedules', label: 'Selected schedules', view: () => ({ state: 'ready',
     parts: [{ word: 'Showing', id: 'show', text: view.show, tip: 'Which schedules the list shows', items: ['all', 'paused'].map((x) => ({ id: x, text: x, checked: view.show === x })) },
@@ -34,8 +34,8 @@
   function pageHtml(s) {
     const groups = R.DAY_SECTIONS.filter(([d]) => s.runs.some((r) => r.day === d)).map(([d, title]) => ({ title, rows: s.runs.filter((r) => r.day === d).map((r) => R.listRow({ title: r.title, meta: r.meta, mark: runMark(r), end: R.gitMark({ status: r.git, title: r.meta }), open: { 'data-sched-run': r.case, title: 'Opens this task' }, after: r.log ? `<div class="tr-body">${esc(r.log)}</div>` : '' })) }));
     const pick = (id, text, items) => R.sentencePicker({ id, text, items: items.map((x) => ({ id: x, text: x, checked: x === text })), open: menu === id, chevron: R.icon('chevron', 10) });
-    return `<div class="convo"><div class="convo-scroll"><div class="convo-col"><div><h1 class="schedule-title">${esc(s.title)}</h1><div class="convo-head">${esc(s.project || 'No project')} · Runs ${pick('sc-every', s.every, ['every day', 'every weekday', 'every Monday', 'every Tuesday', 'every Friday'])} at ${pick('sc-at', s.at, ['02:00', '06:00', '09:00', '17:00'])}${(s.labels || []).map((l) => R.chip({ text: l })).join('')}</div></div>
-      <div class="convo-card-line">${R.kindMark({ kind: 'schedule', tone: toneOf(s), title: st(s).word })}<span class="convo-card-w schedule-word">${esc(st(s).word)}<span>${esc(s.next)}${s.chat ? ' · from a chat' : ''}</span></span>${R.button({ label: 'Run now', attrs: { 'data-sched-now': s.id } })}</div>
+    return `<div class="convo"><div class="convo-scroll"><div class="convo-col"><div><h1 class="schedule-title">${esc(s.title)}</h1><div class="convo-head">${esc(s.project || 'No project')} · Runs ${pick('sc-every', s.every, R.REPEATS.filter((x) => x !== 'once'))} at ${pick('sc-at', s.at, R.TIMES_OF_DAY)}${(s.labels || []).map((l) => R.chip({ text: l })).join('')}</div></div>
+      <div class="convo-card-line">${R.kindMark({ kind: 'schedule', tone: toneOf(s), title: st(s).word })}<span class="convo-card-w schedule-word">${esc(st(s).word)}<span>${esc(s.next)}${s.chat ? ' · from a chat' : ''}</span></span>${R.button({ label: 'Run now', attrs: { 'data-sched-now': s.id } })}${R.moreMenu({ id: 'sc-more', label: `More for ${s.title}`, icon: R.icon('more', 16), open: menu === 'sc-more', items: [{ id: 'pause', text: s.state === 'paused' ? 'Resume' : 'Pause', help: s.state === 'paused' ? 'Runs at its times again' : 'Skips its times until you resume it' }, { id: 'skip', text: 'Skip the next run', help: 'Only the next one; the times stay' }, { sep: true }, { id: 'delete', text: 'Delete', danger: true, help: 'Removes the schedule; the tasks it ran stay. Undo in the notice' }] })}</div>
       ${groups.length ? R.list({ groups }) : R.emptyState({ title: 'It has not run yet.' })}
     </div></div><div class="convo-dock" id="sched-dock"></div></div>`;
   }
@@ -46,14 +46,36 @@
     home = null; page.innerHTML = pageHtml(s);
     if (s) window.RailConversation?.dock(document.getElementById('sched-dock'), { kind: 'schedule', title: s.title, chat: s.chat });
   }
+  // the chat's schedule row and card read the same schedule: a time changed here is the bar's time too
+  function follow(s) {
+    const c = s.chat && window.RailChats?.data().chats.find((x) => x.id === s.chat), t = c?.tasks?.find((x) => x.kind === 'schedule' && x.title === s.title);
+    if (t) { t.time = s.state === 'paused' ? 'Paused' : s.time; t.detail = s.state === 'paused' ? 'Paused by you' : `${s.every.charAt(0).toUpperCase()}${s.every.slice(1)} at ${s.at} · ${s.next}`; window.RailChats.refresh(); }
+    ctl.paint();
+  }
+  function more(s, v) {
+    if (v === 'pause') act('pause', [{ _s: s }]);
+    if (v === 'skip') { s.next = 'Skips the next run, then as usual'; say(`Skips the next run of ${s.title}`); }
+    if (v === 'delete') {
+      const i = data.schedules.indexOf(s), c = s.chat && window.RailChats?.data().chats.find((x) => x.id === s.chat), row = c?.tasks?.find((x) => x.kind === 'schedule' && x.title === s.title);
+      data.schedules.splice(i, 1); if (current === s.id) current = ''; if (row) { row.time = 'Deleted'; row.detail = 'Deleted · the tasks it ran stay'; row.gone = true; window.RailChats.refresh(); }
+      say(`Deleted ${s.title}`, () => { data.schedules.splice(i, 0, s); if (row) { row.gone = false; follow(s); } draw(); }); draw(); return;
+    }
+    follow(s); draw();
+  }
   page.addEventListener('click', (e) => {
     const on = (q) => e.target.closest(q); let hit;
     if ((hit = on('[data-sched-run]'))) { window.RailShell.openTask(hit.dataset.schedRun, data.schedules.find((x) => x.id === current)?.chat || ''); return; }
     if ((hit = on('[data-sched-now]'))) { say('Started: it runs as a task now, and the schedule keeps its times'); return; }
     if (on('[data-sched-new]')) { window.RailConversation?.start('schedule'); return; }
-    if ((hit = on('[data-menu-pick]'))) { const [id, v] = hit.dataset.menuPick.split('|'); const s = data.schedules.find((x) => x.id === current); if (id === 'sc-every') s.every = v; if (id === 'sc-at') s.at = v; menu = ''; draw(); say(`Runs ${s.every} at ${s.at}`); return; }
+    if ((hit = on('[data-menu-pick]'))) {
+      const [id, v] = hit.dataset.menuPick.split('|'); const s = data.schedules.find((x) => x.id === current); menu = '';
+      if (id === 'sc-more') { more(s, v); return; }
+      if (id === 'sc-every') s.every = v; if (id === 'sc-at') s.at = v;
+      if (s.state !== 'paused') { s.next = `Next ${s.every === 'every day' ? 'at' : s.every.replace(/^every /, 'on ')} ${s.at}`; if (s.every === 'every day') s.time = s.at; }
+      follow(s); draw(); say(`Runs ${s.every} at ${s.at}`); return;
+    }
     if ((hit = on('[data-menu]'))) { menu = menu === hit.dataset.menu ? '' : hit.dataset.menu; draw(); }
   });
-  R.dismissOnOutside(document, { open: () => !!menu, inside: '#route-schedule .spick', back: () => null, close: () => { menu = ''; }, paint: draw });
-  window.RailSchedules = { find: (id) => data.schedules.find((s) => s.id === id), show: (id) => { current = id || ''; draw(); }, summary: () => ({ n: data.schedules.filter((s) => s.state !== 'paused').length, needs: data.schedules.filter((s) => s.section === 'needs').length }) };
+  R.dismissOnOutside(document, { open: () => !!menu, inside: '#route-schedule .spick, #route-schedule .rc-pop', back: () => null, close: () => { menu = ''; }, paint: draw });
+  window.RailSchedules = { find: (id) => data.schedules.find((s) => s.id === id), add: (s) => { data.schedules.unshift(s); ctl.paint(); }, act: (id, v) => { const s = data.schedules.find((x) => x.id === id); if (s && v) more(s, v); }, show: (id) => { current = id || ''; draw(); }, summary: () => ({ n: data.schedules.filter((s) => s.state !== 'paused').length, needs: data.schedules.filter((s) => s.section === 'needs').length }) };
 })();

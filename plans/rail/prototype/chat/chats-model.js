@@ -141,9 +141,10 @@
       { t: 'question', id: 'a2', text: 'How many jobs a minute at peak?', options: ['Under 100', '100 to 10,000', 'More than 10,000'], pick: 1, many: 'a3', when: 'Mon' },
       { t: 'question', id: 'a3', text: 'Can jobs be lost if the server restarts?', options: ['No, every job must survive', 'A few is fine'], pick: 0, when: 'Mon' },
     ];
-    const out = [{ t: 'you', id: 'a1', text: c.title, when: c.time }, { t: 'think', text: 'Thought for 6s' }, { t: 'words', html: c.state === 'idle' ? 'Here is what I found. Tell me if you want it as a task.' : 'On it.' }];
+    const out = [{ t: 'you', id: 'a1', text: c.title, when: c.time }, { t: 'think', text: 'Thought for 6s' }, { t: 'words', html: c.state === 'idle' ? 'Here is what I found, with the files it comes from.' : 'On it.' }];
     (c.tasks || []).forEach((x, i) => out.push({ t: x.kind === 'schedule' ? 'schedule' : 'task', id: `b${i}`, task: x.id }));
-    if (['replying', 'command', 'following'].includes(c.state)) out.push({ t: 'working', text: window.RailUI.chatState(c.state).line, end: '12s' });
+    // a chat that follows a task shows the task's card, which is live; one replying or running a command finishes soon after you look
+    if (['replying', 'command'].includes(c.state)) out.push({ t: 'working', text: window.RailUI.chatState(c.state).line, end: '12s', settle: 'Done: the answer is above, with the files it read.' });
     return out;
   };
   window.ChatsListModel = { thread, seed, sync, DAYS: window.RailUI.DAY_SECTIONS.filter(([d]) => d !== 'upcoming') };

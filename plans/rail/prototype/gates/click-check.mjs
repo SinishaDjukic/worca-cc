@@ -70,6 +70,7 @@ const HTML = readdirSync(dir).filter((f) => f.endsWith('.html') && f !== 'compon
 for (const w of WIDTHS) {
   for (const page of HTML) {
     const p = await b.newPage({ viewport: { width: w, height: 900 }, reducedMotion: 'reduce', permissions: [] });
+    await p.addInitScript(() => { try { localStorage.setItem('worca-rail.mode', 'expert'); } catch { /* none */ } });   // the gates walk every place: Expert
     p.on('pageerror', (e) => add('script error', `${page} ${w}: ${e.message}`));
     const url = 'file://' + dir + page;
     await p.goto(url); await p.waitForTimeout(50);

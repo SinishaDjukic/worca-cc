@@ -378,7 +378,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
       ], groups: ['Beta', 'Experimental'].map((stage) => ({ title: stage, rows: FLAGS.filter((f) => f.stage === stage).map((f) => ({ name: f.name, say: f.say, sw: { flag: f.key, on: f.on, why: f.why, locked: f.locked } })) })) },
     ] },
 
-    runs: { title: 'Runs', meta: 'How runs spend, start and wait.', sections: [
+    runs: { title: 'Runs', meta: 'How tasks spend, start and wait.', sections: [
       { title: 'Spending', meta: spentWords, rows: [
         { name: 'Budget', say: (sv) => `All runs pause at ${totalCap(sv)}; one run at ${runCap(sv)}`,
           acts: [{ label: 'Change…', edit: { title: 'Change the budget', yes: 'Save', note: 'Empty means only your team\'s cap applies. The tighter of the two wins.', check: (v) => (/^\d*(\.\d+)?$/.test(v.perRun) && /^\d*(\.\d+)?$/.test(v.total) ? '' : 'A limit is an amount in dollars'), fields: [

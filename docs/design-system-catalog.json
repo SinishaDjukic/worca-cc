@@ -1414,6 +1414,20 @@
       "needs": [
         "a list of what is still to come by its next run: Today, Tomorrow, This week, Later"
       ]
+    },
+    {
+      "name": "How often a schedule repeats",
+      "code": "ui/public/design-system/components/list-parts.mjs#REPEATS",
+      "needs": [
+        "every schedule picker offers the same repeats: every day, weekday, a weekday, monthly, hourly, once"
+      ]
+    },
+    {
+      "name": "The times of day",
+      "code": "ui/public/design-system/components/list-parts.mjs#TIMES_OF_DAY",
+      "needs": [
+        "any time a schedule can run, every half hour"
+      ]
     }
   ],
   "telling": [

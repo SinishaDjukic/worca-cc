@@ -871,6 +871,11 @@ test('planCard: Full plan folds the plan itself open, to read before approving',
   assert.doesNotMatch(C.planCard({ title: 'P', version: 'v1', roles: [] }), /Full plan/, 'no plan to show: no button');
 });
 
+test('topBarAction: its name is its words even when only its icon and badge show', () => {
+  assert.match(C.topBarAction({ label: 'Pulse', icon: '', labelCls: 'x', badge: { n: 3 }, title: 'Pulse: 3 need you' }), /aria-label="Pulse: 3 need you"/);
+  assert.match(C.topBarAction({ label: 'Pulse', icon: '', labelCls: 'x' }), /aria-label="Pulse"/);
+});
+
 test('the Rail stylesheets close every rule: one open brace would swallow all that follows', () => {
   for (const f of ['plans/rail/prototype/design-system/rail.css', 'plans/rail/prototype/design-system/rail-look.css', 'plans/rail/prototype/shell/shell.css', 'plans/rail/prototype/pulse/pulse.css']) {
     const css = readFileSync(f, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
@@ -1032,6 +1037,7 @@ test('dateSections: what waits on you first, then each day folding; Older and La
   assert.equal(secs[0].id, 'needs'); assert.equal(secs[0].fold, undefined);
   const today = secs.find((x) => x.id === 'day:today'); assert.deepEqual(today.rows, ['a']); assert.equal(today.fold, true);
   assert.equal(secs.find((x) => x.id === 'day:older').limit, 3);
+  assert.ok(C.REPEATS.includes('every day') && C.REPEATS.includes('once')); assert.equal(C.TIMES_OF_DAY.length, 48); assert.equal(C.TIMES_OF_DAY[5], '02:30');
   assert.deepEqual(C.dateSections({ rows: [], dayOf: () => '', days: C.NEXT_RUN_SECTIONS }).map((x) => x.title), ['Today', 'Tomorrow', 'This week', 'Later']);
 });
 

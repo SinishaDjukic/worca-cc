@@ -148,7 +148,7 @@ export function barStrip({ items, label = 'Your work' }) {
 
 export function topBarAction({ label, icon, labelCls, kind = '', full = false, badge = null, news = false, cls: c = '', title = '', attrs: a = {} }) {
   const look = cls('btn', !full && 'btn-sm', kind && `btn-${kind}`, news && 'is-news', c);
-  return `<button type="button" class="${look}"${attrs({ ...a, title: title || null })}>${icon}<span class="${labelCls}">${esc(label)}</span>${badge ? countBadge({ n: badge.n, tone: badge.tone }) : ''}</button>`;
+  return `<button type="button" class="${look}"${attrs({ 'aria-label': title || label, ...a, title: title || null })}>${icon}<span class="${labelCls}">${esc(label)}</span>${badge ? countBadge({ n: badge.n, tone: badge.tone }) : ''}</button>`;
 }
 
 /**

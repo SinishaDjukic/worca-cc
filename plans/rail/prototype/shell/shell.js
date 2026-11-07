@@ -426,8 +426,9 @@
       requestAnimationFrame(() => requestAnimationFrame(() => window.RailConversation?.focus({ cs, title })));
     },
     // A card opened in place borrows the task page itself (#card), so every stage, part and control works as on the page.
-    embedRun: (slot, cs) => {
+    embedRun: (slot, cs, ask) => {
       const card = document.getElementById('card'), pick = document.getElementById('case'); if (!card || !slot) return;
+      if (RM) { RM.asks = RM.asks || {}; if (ask) RM.asks[cs] = ask; }   // the lent page says what this task was asked, not its mock's words
       if (!runAnchor) { runAnchor = document.createComment('the task page lives here'); card.before(runAnchor); }
       if (pick && pick.value !== cs) { const at = location.hash; pick.value = cs; pick.dispatchEvent(new Event('change', { bubbles: true })); if (location.hash !== at) history.replaceState(null, '', at); }
       slot.append(card); card.classList.add('is-lent');
@@ -455,6 +456,9 @@
   build();
   setAskW(askW); setBarW(barW);
   R.watchOrbs(document); R.watchTooltips(document); R.watchMenus(document);
+  // a new person starts in Simple; the mode they pick is remembered (docs/ui-levels.md)
+  try { const m = localStorage.getItem('worca-rail.mode'); R.prefs.setMode(R.MODES.includes(m) ? m : 'simple'); } catch { R.prefs.setMode('simple'); }
+  R.prefs.onChange(() => { try { localStorage.setItem('worca-rail.mode', R.prefs.mode()); } catch { /* remembering is a nicety */ } });
   addEventListener('resize', () => { syncRail(); });
   // A change of mode or a Labs flag: the sidebar follows, and the page if that changes whether it is locked.
   R.prefs.onChange(() => { applyPrefs(); drawMini(); if (routed.view && (TITLES[routed.view] || routed.view === 'schedule') && !!lockOf(routed.view) !== routed.locked) route(); });

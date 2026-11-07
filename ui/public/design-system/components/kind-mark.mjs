@@ -370,13 +370,15 @@ export function stagePart({ label, says = '', open = false, attrs: a = {} }) {
 }
 
 /**
- * StageBar: a thing's main stages on a card, each deepening into the state's colour up to where it is.
+ * StageBar: a thing's main stages on a card, filled up to where it is; the state's colour marks the stage it is on (a failed Build
+ * is red, the Plan before it is not), and done or merged wear theirs all along.
  * @param {object} o
  * @param {string[]} o.labels
  * @param {number} o.stage    the one it is on, from 0
  * @param {string} [o.tone]   markTone's answer
  */
 export function stageBar({ labels, stage, tone = 'run' }) {
-  const n = labels.length;
-  return `<div class="stage-bar is-${tone}" style="--n:${n}"><div class="sb-cells" aria-hidden="true">${labels.map((_, i) => `<i${i <= stage ? ` style="background:color-mix(in srgb, currentColor ${Math.round(30 + 70 * (i + 1) / (stage + 1))}%, var(--line-2))"` : ''}></i>`).join('')}</div><div class="sb-labels">${labels.map((l, i) => (i === stage ? `<b>${esc(l)}</b>` : `<span>${esc(l)}</span>`)).join('')}</div></div>`;
+  const n = labels.length, whole = tone === 'ok' || tone === 'merged';   // done and merged wear their colour all along; a failure, a question, a pause only where it is
+  const fill = (i) => (whole || i === stage ? `color-mix(in srgb, currentColor ${Math.round(30 + 70 * (i + 1) / (stage + 1))}%, var(--line-2))` : `color-mix(in srgb, var(--ink-3) ${Math.round(30 + 50 * (i + 1) / (stage + 1))}%, var(--line-2))`);
+  return `<div class="stage-bar is-${tone}" style="--n:${n}"><div class="sb-cells" aria-hidden="true">${labels.map((_, i) => `<i${i <= stage ? ` style="background:${fill(i)}"` : ''}></i>`).join('')}</div><div class="sb-labels">${labels.map((l, i) => (i === stage ? `<b>${esc(l)}</b>` : `<span>${esc(l)}</span>`)).join('')}</div></div>`;
 }

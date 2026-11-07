@@ -8,7 +8,7 @@
   const GROUPS = [
     { id: 'runs', name: 'Runs', level: 'problems', where: 'both', events: [
       ['run.questions', 'Questions waiting', 'needs'], ['run.gate', 'Approval needed', 'needs'], ['run.recovery', 'Recovery decision needed', 'needs'],
-      ['run.workflow', 'Workflow to review', 'needs'], ['run.cost_cap', 'Cost cap reached', 'needs'], ['run.failed', 'Run failed', 'problem'],
+      ['run.workflow', 'Workflow to review', 'needs'], ['run.cost_cap', 'Cost cap reached', 'needs'], ['run.failed', 'Task failed', 'problem'],
       ['run.paused_limit', 'Usage limit reached', 'problem'], ['run.paused_error', 'Paused on error', 'problem'], ['run.paused_night', 'Night guardrail reached', 'problem'],
       ['run.paused_time', 'Time limit reached', 'problem'], ['run.paused_stopped', 'Worca was stopped', 'problem'], ['run.done', 'Run finished', 'info'], ['run.resumed', 'Resumed after limit', 'info']] },
     { id: 'schedules', name: 'Schedules', level: 'problems', where: 'both', events: [
@@ -19,7 +19,7 @@
       ['automation.approval', 'Waiting for approval', 'needs'], ['automation.failed', 'Automation failed', 'problem'], ['automation.started', 'Automation started', 'info'],
       ['automation.skipped', 'Automation skipped', 'info'], ['automation.queued', 'Automation queued', 'info'], ['automation.done', 'Automation done', 'info']] },
     { id: 'chat', name: 'Chat', level: 'needs', where: 'both', events: [
-      ['chat.run', 'Run to approve', 'needs'], ['chat.web', 'Web access to approve', 'needs'], ['chat.workflow', 'Workflow to review', 'needs'], ['chat.schedule', 'Schedule to approve', 'needs']] },
+      ['chat.run', 'Task to approve', 'needs'], ['chat.web', 'Web access to approve', 'needs'], ['chat.workflow', 'Workflow to review', 'needs'], ['chat.schedule', 'Schedule to approve', 'needs']] },
     { id: 'prs', name: 'Pull requests', level: 'needs', where: 'both', events: [
       ['pr.needs_person', 'PR needs you', 'needs'], ['pr.open_failed', 'Could not open PR', 'problem'], ['pr.fix_started', 'Fix started', 'info'], ['pr.published', 'Fix published', 'info']] },
     { id: 'usage', name: 'Usage', level: 'problems', where: 'both', events: [
@@ -89,7 +89,7 @@
       away: { status: 'here', hours: ['22:00', '07:00'] }, newVersion: '1.20.0', chatUnread: true,
       updates: [
         NEW_VERSION('u-upd'),
-        ofRun('u1', 'run.questions', 'r1', 'Plan asks 2 questions', '14:32', 'Today', { open: true, to: 'the run page at its questions' }),
+        ofRun('u1', 'run.questions', 'r1', 'Review asks which date format', '14:32', 'Today', { open: true, to: 'its card in its chat, at its question' }),
         up('u10', 'chat.run', 'Ship the CSV export', 'a run waits for your OK', '14:05', 'Today', { open: true, chat: 'c1' }),
         ofRun('u2', 'run.failed', 'r5', 'Test step · 3 tests failed', '12:40', 'Today', { to: 'the run page, on the step that stopped', fix: 'Try again' }),
         up('u3', 'pr.published', '#962 Retry on 502', 'web-app · watched PR · checks running', '13:10', 'Today', { run: 'r7', to: 'the fix run' }),
@@ -137,7 +137,7 @@
       away: { status: 'away-hours', hours: ['18:00', '08:00'] },
       updates: [
         NEW_VERSION('e-upd'),
-        ofRun('e01', 'run.questions', 'r1', 'Plan asks 2 questions', '14:32', 'Today', { open: true, to: 'the run page at its questions' }),
+        ofRun('e01', 'run.questions', 'r1', 'Review asks which date format', '14:32', 'Today', { open: true, to: 'its card in its chat, at its question' }),
         ofRun('e02', 'run.gate', 'r2', 'approve the plan', '13:40', 'Today', { open: true, to: 'the run page at its gate' }),
         ofRun('e03', 'run.recovery', 'r29', 'the same step failed three times', '14:10', 'Today', { open: true }),
         ofRun('e04', 'run.workflow', 'r30', 'Shaper proposes a workflow', '14:02', 'Today', { open: true }),
@@ -237,7 +237,7 @@
   const FLAG_ROW = { requirements: 'Requirements', runLabels: 'Run labels', gitAutomations: 'Git event automations' };
   // `label:ui`: the runs with that label. Otherwise the name, or a word of where it lives, anywhere in the text.
   // The runs are the world's, as they are now.
-  const runFinds = () => W.rows().filter((r) => !r.archived).map((r) => F('run', r.title, `Run · ${r.project || 'No project'}`, `run/${r.case}`, { labels: r.labels }));
+  const runFinds = () => W.rows().filter((r) => !r.archived).map((r) => F('run', r.title, `Task · ${r.project || 'No project'}`, `run/${r.case}`, { labels: r.labels }));
   function find(q) {
     const raw = q.trim().toLowerCase();
     const m = raw.match(/^label:\s*(.*)$/), runs = runFinds();
