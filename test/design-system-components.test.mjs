@@ -894,6 +894,18 @@ test('changeProposal: before and after, Apply; applied, a receipt with Revert; d
   assert.match(C.turnDivider({ text: 'Switched to a' }), /role="separator"[^>]*aria-label="Switched to a"/);
 });
 
+test('planCard, filesCard, youTurn: the Shaper plan folds its roles; files as tiles and rows; your words with what came with them', () => {
+  const roles = [{ name: 'Security', ok: false, note: 'Flag first' }, { name: 'UX', ok: true, note: 'Fine' }];
+  const shut = C.planCard({ title: 'Plan', version: 'v2 of 2', roles });
+  assert.match(shut, /Plan · v2 of 2/); assert.match(shut, /Reviewed by 2 roles · 1 open/); assert.doesNotMatch(shut, /Flag first/); assert.match(shut, />Approve and build</);
+  assert.match(C.planCard({ title: 'Plan', version: 'v2', roles, open: true }), /Security<\/b> Flag first/);
+  const f = C.filesCard({ files: [{ name: 'a.png', image: true }, { name: 'b.txt', meta: '2 KB' }] });
+  assert.match(f, /fc-tile[\s\S]*a\.png/); assert.match(f, /<b>b\.txt<\/b> 2 KB/); assert.match(f, /aria-label="Download b\.txt"/);
+  const y = C.youTurn({ text: 'Same bug?', quote: 'Off by a cent', files: ['x.pdf'] });
+  assert.match(y, /you-quote">Off by a cent/); assert.match(y, /x\.pdf/);
+  assert.doesNotMatch(C.changeProposal({ kind: 'Agent', title: 'New', rows: [{ name: 'Reads', before: '', after: 'PRs' }] }), /→/);
+});
+
 test('askWorcaMark: the bubble and its W at rest, dots while writing, filled while open; writing wins', () => {
   assert.match(C.askWorcaMark(), /M5 4h14/); assert.match(C.askWorcaMark(), /M7.4 8.2/); assert.doesNotMatch(C.askWorcaMark(), /circle|mask/);
   assert.match(C.askWorcaMark({ answering: true }), /<circle/);

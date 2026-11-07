@@ -63,6 +63,9 @@ A Rail page is built by naming needs, not looks. Find the need, use its componen
 | A task Worca proposes | TaskProposal: Proposed, the title in place, why; the composer's sentence and Customise; Start, Not now; Start becomes the running card | Add a CSV export |
 | Any other change Worca proposes | ChangeProposal: before → after or a WorkflowGraph; Apply, Not now; applied, a receipt with Revert | Quiet on weekends |
 | Where a conversation's ground changes | TurnDivider: a rule with a few words | Switched to worca-cc |
+| The Shaper's plan, stopped for you | PlanCard: version, Reviewed by N roles · M open, one row per role; Approve and build | CSV export: columns and rollout |
+| Files Worca shows you | FilesCard: pictures as tiles, files as rows, Download | invoice-4411.png |
+| What you said | YouTurn: your words, the quote you answered, your files | This is what the customer sent |
 | Worca at work | OrbMark: the app's sphere of dots with Worca's W facing you, a hairline ring around it in light, lit while the sphere turns under it; still at rest; think, tool and write move it; `watchOrbs` brings every one to life | Thinking |
 | Moving through a long conversation or a task | Timeline on the right edge, its TimelineCard on hover | Which date format? |
 | What hangs under a row | the rounded tree under it (`tree` on a list's row) | a chat's tasks |

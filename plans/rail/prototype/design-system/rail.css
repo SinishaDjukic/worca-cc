@@ -1373,3 +1373,18 @@ canvas.dot-orb[data-orb]{border-radius:50%;outline:1px solid light-dark(var(--li
 .cp-row b{font-weight:500;}
 .turn-div{display:flex;align-items:center;gap:12px;color:var(--ink-3);font-size:var(--fs-meta);}
 .turn-div::before,.turn-div::after{content:"";flex:1 1 auto;height:1px;background:var(--line);}
+
+/* PlanCard: the roles' rows hang under "Reviewed by" on the rail. FilesCard: pictures as tiles, files as rows. YouTurn: a
+   quote above your words, attachments under them. */
+.plan-roles{display:flex;flex-direction:column;gap:6px;}
+.files-card{display:flex;flex-direction:column;gap:8px;}
+.fc-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;}
+.fc-tile{margin:0;display:flex;flex-direction:column;gap:4px;min-width:0;}
+.fc-pic{display:grid;place-items:center;aspect-ratio:4/3;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--surface);color:var(--ink-3);cursor:zoom-in;}
+.fc-pic:hover{border-color:var(--line-2);}
+.fc-pic:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.fc-tile figcaption{display:flex;align-items:center;gap:4px;min-width:0;font-size:var(--fs-meta);color:var(--ink-2);}
+.fc-tile figcaption > span{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.you-quote{margin:0 0 6px;padding-left:8px;border-left:2px solid var(--line-2);color:var(--ink-2);font-size:var(--fs-meta);}
+.you-files{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;}
+.you-files .kind-chip{display:inline-flex;align-items:center;gap:4px;}

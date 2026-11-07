@@ -1122,6 +1122,39 @@
       ]
     },
     {
+      "name": "PlanCard",
+      "code": "ui/public/design-system/components/kind-mark.mjs#planCard",
+      "kind": "moving",
+      "needs": [
+        "the Shaper's plan when it stops for you: version, the roles' review, Approve and build"
+      ],
+      "rules": [
+        "panel.conversation-cards"
+      ]
+    },
+    {
+      "name": "FilesCard",
+      "code": "ui/public/design-system/components/kind-mark.mjs#filesCard",
+      "kind": "moving",
+      "needs": [
+        "files Worca shows in a conversation: pictures as tiles, files as rows, each with Download"
+      ],
+      "rules": [
+        "panel.conversation-cards"
+      ]
+    },
+    {
+      "name": "YouTurn",
+      "code": "ui/public/design-system/components/kind-mark.mjs#youTurn",
+      "kind": "showing",
+      "needs": [
+        "what you said in a conversation, with the quote you answered and the files you attached"
+      ],
+      "rules": [
+        "panel.conversation-cards"
+      ]
+    },
+    {
       "name": "StagePart",
       "code": "ui/public/design-system/components/kind-mark.mjs#stagePart",
       "kind": "moving",

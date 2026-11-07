@@ -87,6 +87,28 @@
       { t: 'think', text: 'Thought for 9s' },
       { t: 'change', id: 'a2', kind: 'Workflow', title: 'API rewrite, in three slices', why: 'Plan once, then build each slice behind its own review; a person signs off the contract first.', graph: true, apply: 'Save', state: 'proposed' },
     ];
+    if (c.id === 'c6') return [
+      { t: 'you', id: 'a1', text: 'Which columns should the CSV export have? Shape it first', when: '13:10' },
+      { t: 'think', text: 'Thought for 12s' },
+      { t: 'words', html: 'Shaper drafted a plan and five roles reviewed it. One thing is still open:' },
+      { t: 'plan', id: 'a2', title: 'CSV export: columns and rollout', summary: 'Twelve columns in the invoice table’s order, dates in ISO 8601, money in the account’s currency.', v: 2, versions: 2,
+        roles: [{ name: 'Product', ok: true, note: 'Columns match what support gets asked for' }, { name: 'Security', ok: false, note: 'Wants it behind a flag for a week' }, { name: 'UX', ok: true, note: 'Header names read well in Excel' }, { name: 'Data', ok: true, note: 'Totals reconcile with the invoice' }, { name: 'Performance', ok: true, note: 'Streams; fine past 50k rows' }] },
+      { t: 'question', id: 'a3', text: 'Security and UX disagree on the rollout', options: ['Behind a flag for a week (Security)', 'To everyone at once (UX)'], pick: 0, when: '13:12' },
+      { t: 'question', id: 'a4', text: 'How should it ship?', options: ['One PR', 'A stack of three PRs', 'One PR behind a flag'], pick: 2, when: '13:12' },
+      { t: 'change', id: 'a5', kind: 'Changes', title: 'Proposed changes', why: 'What Build will change, before it does.', rows: [{ name: 'export.mjs', before: 'loads every row', after: 'streams rows' }, { name: 'columns.mjs', before: '8 columns', after: '12 columns' }, { name: 'flags.json', before: '', after: 'csvExport, off' }], apply: 'Build this', state: 'proposed' },
+      { t: 'act', id: 'a6', mark: 'git', text: '<b>Ready to ship</b> checks 7 of 7 passed · 3 files +210 −64', actions: [['Create PR', 'primary', 'Opened PR #1107 into dev'], ['View changes', 'quiet', 'Opens the changes']] },
+    ];
+    if (c.id === 'c14') return [
+      { t: 'you', id: 'a1', text: 'This is what the customer sent. Same bug as last year?', quote: 'The total on invoice 4411 is off by one cent', files: ['invoice-4411.pdf', 'screenshot.png'], when: 'Oct 2' },
+      { t: 'think', text: 'Thought for 7s' },
+      { t: 'words', html: 'Yes: rounding per line, then summing. I put the two side by side:' },
+      { t: 'filesgrid', label: 'What I compared', files: [{ name: 'invoice-4411.png', image: true }, { name: 'rounding-diff.png', image: true }, { name: 'repro.txt', meta: '2 KB' }] },
+    ];
+    if (c.id === 'c10') return [
+      { t: 'you', id: 'a1', text: 'Make an agent that drafts the changelog from merged PRs', when: 'Oct 1' },
+      { t: 'change', id: 'a2', kind: 'Agent', title: 'Changelog writer', why: 'Reads the PRs merged since the last tag and writes one line per change, grouped by area.', rows: [{ name: 'Reads', before: '', after: 'Merged PRs since the last tag' }, { name: 'Writes', before: '', after: 'CHANGELOG.md, a draft' }, { name: 'Model', before: '', after: 'Sonnet 5.5' }], apply: 'Save', state: 'proposed' },
+      { t: 'act', id: 'a3', mark: 'ask', text: '<b>Run scripts/release-notes.sh?</b> It reads git tags and writes nothing', actions: [['Run', 'primary', 'Ran scripts/release-notes.sh: 14 changes found'], ['Not now', 'quiet', 'Not run']] },
+    ];
     if (c.id === 'c13') return [
       { t: 'you', id: 'a1', text: 'Compare two queue libraries for the export jobs', when: 'Mon' },
       { t: 'words', html: 'Two things decide it. Answer them, or take my picks for both:' },

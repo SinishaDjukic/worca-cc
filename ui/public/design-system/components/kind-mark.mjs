@@ -239,7 +239,7 @@ export function changeProposal({ kind, title, why = '', rows = [], body = '', st
   const btn = (label, k, h) => button({ label, kind: k, attrs: h || {} });
   if (state === 'applied') return turnRow({ mark: icon('check', 14), text: `<b>${esc(title)}</b> ${esc(rows.map((r) => `${r.name}: ${r.after}`).join(' · ') || kind)}`, end: btn('Revert', 'quiet', hooks.revert), attrs: a });
   if (state !== 'proposed') return turnRow({ mark: kindMark({ kind: 'chat', tone: state === 'failed' ? 'fail' : 'idle', size: 16 }), text: `${state === 'failed' ? 'Could not change' : 'Not changed'}: <b>${esc(title)}</b>`, attrs: a });
-  const list = rows.length ? `<dl class="cp-rows">${rows.map((r) => `<div class="cp-row"><dt>${esc(r.name)}</dt><dd><s>${esc(r.before)}</s><span aria-hidden="true">→</span><b>${esc(r.after)}</b></dd></div>`).join('')}</dl>` : '';
+  const list = rows.length ? `<dl class="cp-rows">${rows.map((r) => `<div class="cp-row"><dt>${esc(r.name)}</dt><dd>${r.before && r.before !== '—' ? `<s>${esc(r.before)}</s><span aria-hidden="true">→</span>` : ''}<b>${esc(r.after)}</b></dd></div>`).join('')}</dl>` : '';
   return `<article class="task-card rc cp"${attrs(a)}><div class="rc-head"><p class="tp-kicker">${icon('set-general', 14)}<span>Proposed change · ${esc(kind)}</span></p><h3 class="rc-heading tc-title">${esc(title)}</h3>${why ? `<p class="tp-why">${esc(why)}</p>` : ''}</div>`
     + `<section class="rc-card tp-body"${attrs({ 'aria-label': `Proposed change: ${title}` })}>${list}${body}<div class="tp-actions">${btn(apply, 'primary', hooks.apply)}${btn('Not now', 'quiet', hooks.decline)}</div></section></article>`;
 }
@@ -252,6 +252,52 @@ export function changeProposal({ kind, title, why = '', rows = [], body = '', st
  */
 export function turnDivider({ text }) {
   return `<div class="turn-div" role="separator"${attrs({ 'aria-label': text })}><span>${esc(text)}</span></div>`;
+}
+
+/**
+ * PlanCard: the Shaper's plan, when it stops for you: its version (a picker of earlier ones), its title, one line on what
+ * it does, "Reviewed by N roles · M open" folding open to one row per role (its mark, name, what it said), then Approve
+ * and build beside Ask for changes and Full plan. A disagreement between roles comes after it as a question.
+ * @param {object} o
+ * @param {string} o.title
+ * @param {string} [o.summary]
+ * @param {string} o.version          its picker (a SentencePicker), or plain words: "v2 of 2"
+ * @param {{name:string, ok:boolean, note:string}[]} o.roles
+ * @param {boolean} [o.open]
+ * @param {object} [o.hooks]          { roles, approve, changes, full }
+ * @param {object} [o.attrs]
+ */
+export function planCard({ title, summary = '', version, roles, open = false, hooks = {}, attrs: a = {} }) {
+  const left = roles.filter((r) => !r.ok).length;
+  const rows = roles.map((r) => turnRow({ mark: kindMark({ kind: 'chat', tone: r.ok ? 'ok' : 'ask', size: 16, keepType: false }), text: `<b>${esc(r.name)}</b> ${esc(r.note)}` })).join('');
+  const reviewed = turnRow({ mark: icon(open ? 'chevron' : 'chevR', 14), text: `Reviewed by ${roles.length} roles${left ? ` · ${left} open` : ''}`, body: `<span class="plan-roles">${rows}</span>`, open, attrs: { 'data-fold-turn': '', ...(hooks.roles || {}) } }).replace('class="tr-body"', 'class="tr-body is-steps"');
+  return `<article class="task-card rc plan"${attrs(a)}><div class="rc-head"><p class="tp-kicker">${kindMark({ kind: 'task', tone: 'ask', size: 16 })}<span>Plan · ${version}</span></p><h3 class="rc-heading tc-title">${esc(title)}</h3>${summary ? `<p class="tp-why">${esc(summary)}</p>` : ''}</div>`
+    + `<section class="rc-card tp-body"${attrs({ 'aria-label': `Plan: ${title}` })}>${reviewed}<div class="tp-actions">${button({ label: 'Approve and build', kind: 'primary', attrs: hooks.approve || {} })}${button({ label: 'Ask for changes', kind: 'quiet', attrs: hooks.changes || {} })}${button({ label: 'Full plan', kind: 'quiet', attrs: hooks.full || {} })}</div></section></article>`;
+}
+
+/**
+ * FilesCard: files Worca shows you: pictures as tiles, other files as rows, each with Download; View opens it.
+ * @param {object} o
+ * @param {{name:string, meta?:string, image?:boolean, view?:object, download?:object}[]} o.files
+ * @param {string} [o.label]
+ */
+export function filesCard({ files, label = 'Files' }) {
+  const pics = files.filter((f) => f.image), docs = files.filter((f) => !f.image);
+  const tile = (f) => `<figure class="fc-tile"><button type="button" class="fc-pic"${attrs({ 'aria-label': `View ${f.name}`, ...(f.view || {}) })}>${icon('image', 20)}</button><figcaption><span>${esc(f.name)}</span>${button({ label: `Download ${f.name}`, kind: 'quiet', iconOnly: true, icon: icon('download', 14), attrs: f.download || {} })}</figcaption></figure>`;
+  const row = (f) => turnRow({ mark: icon('file', 14), text: `<b>${esc(f.name)}</b> ${esc(f.meta || '')}`, end: button({ label: 'View', kind: 'quiet', attrs: f.view || {} }) + button({ label: `Download ${f.name}`, kind: 'quiet', iconOnly: true, icon: icon('download', 14), attrs: f.download || {} }) });
+  return `<div class="files-card"${attrs({ role: 'group', 'aria-label': label })}>${pics.length ? `<div class="fc-grid">${pics.map(tile).join('')}</div>` : ''}${docs.map(row).join('')}</div>`;
+}
+
+/**
+ * YouTurn: what you said, on the right: your words, then what came with them (a quote you answered, files you attached).
+ * @param {object} o
+ * @param {string} o.text
+ * @param {string} [o.quote]
+ * @param {string[]} [o.files]
+ * @param {object} [o.attrs]
+ */
+export function youTurn({ text, quote = '', files = [], attrs: a = {} }) {
+  return `<div class="convo-you"${attrs(a)}>${quote ? `<blockquote class="you-quote">${esc(quote)}</blockquote>` : ''}${esc(text)}${files.length ? `<span class="you-files">${files.map((f) => `<span class="kind-chip">${icon('file', 12)}${esc(f)}</span>`).join('')}</span>` : ''}</div>`;
 }
 
 /**

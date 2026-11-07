@@ -72,7 +72,13 @@
   }
   function turnHtml(x, i) {
     const fold = () => ({ 'data-fold-turn': String(i), ...(x.id ? { 'data-anchor': x.id } : {}) });
-    if (x.t === 'you') return `<div class="convo-you" data-anchor="${x.id || ''}">${esc(x.text)}</div>`;
+    if (x.t === 'you') return R.youTurn({ text: x.text, quote: x.quote || '', files: x.files || [], attrs: { 'data-anchor': x.id || '' } });
+    if (x.t === 'plan') {
+      const version = R.sentencePicker({ id: `pv-${x.id}`, text: `v${x.v} of ${x.versions}`, tip: 'Earlier versions of the plan', items: Array.from({ length: x.versions }, (_, k) => ({ id: String(k + 1), text: `v${k + 1}${k + 1 === x.versions ? ' (latest)' : ''}`, checked: k + 1 === x.v })), open: menu === `pv-${x.id}`, chevron: R.icon('chevron', 10) });
+      if (x.approved) return R.turnRow({ mark: R.icon('check', 14), text: `<b>Plan approved</b> v${x.v}: building it` });
+      return R.planCard({ title: x.title, summary: x.summary, version, roles: x.roles, open: !!x.open, hooks: { roles: { 'data-plan-roles': x.id }, approve: { 'data-plan-approve': x.id }, changes: { 'data-plan-changes': x.id }, full: { 'data-say': 'Opens the full plan' } }, attrs: { 'data-anchor': x.id } });
+    }
+    if (x.t === 'filesgrid') return R.filesCard({ label: x.label || 'Files', files: x.files.map((f) => ({ ...f, view: { 'data-say': `Opens ${f.name}` }, download: { 'data-say': `Downloaded ${f.name}` } })) });
     if (x.t === 'words') return `<p class="convo-words">${x.html}</p>`;
     if (x.t === 'proposal') return proposalHtml(x);
     if (x.t === 'divider') return R.turnDivider({ text: x.text });
@@ -204,6 +210,7 @@
 
   // ---- what a click or a key means here ----
   function pickMenu(id, v) {
+    const pv = /^pv-(.+)$/.exec(id); if (pv) { const x = turns().find((y) => y.id === pv[1]); if (x) x.v = +v; menu = ''; paint(); return; }
     const pm = /^pp-(.+)-(project|workflow|engine|then)$/.exec(id);
     if (pm) { const x = turns().find((y) => y.id === pm[1]); if (x) x[pm[2]] = v; menu = ''; paint(); return; }
     if (id === 'cl-label') { const c = chat(); c.labels = (c.labels || []).includes(v) ? c.labels.filter((l) => l !== v) : [...(c.labels || []), v]; window.RailChats.refresh(); menu = ''; refreshAll(); return; }
@@ -233,6 +240,7 @@
     if (on('[data-cp-mic]')) { e.preventDefault(); say('Listening…'); return; }
     if ((hit = on('[data-cp-use]'))) { e.preventDefault(); comp.engine = hit.dataset.cpUse; comp.startAt = ''; paint(); return; }
     if ((hit = on('[data-cp-at]'))) { e.preventDefault(); comp.startAt = hit.dataset.cpAt; paint(); return; }
+    if (on('[data-plan-roles]')) { const x = turns().find((y) => y.id === on('[data-plan-roles]').dataset.planRoles); if (x) { x.open = !x.open; paint(); } return; }
     if ((hit = on('[data-turn-toggle]'))) { const i = hit.closest('[data-fold-turn]').dataset.foldTurn, x = turns()[+i]; if (x.t === 'fail') { const k = `shut${i}`; if (opened.has(k)) opened.delete(k); else opened.add(k); } else { const n = +i; if (opened.has(n)) opened.delete(n); else opened.add(n); } paint(); return; }
     if ((hit = on('[data-answer]'))) { const [i, n] = hit.dataset.answer.split('|'); turns()[+i].pick = +n; paint(); return; }
     if ((hit = on('[data-answer-picks]'))) { const l = turns(), x = l[+hit.dataset.answerPicks]; for (const y of [x, l.find((z) => z.id === x.many)]) if (y && !y.answered) y.answered = y.options[y.pick]; paint(); say('Took Worca’s picks'); return; }
@@ -242,9 +250,12 @@
       x.answered = x.options[x.pick]; t.case = 'working'; t.detail = 'Review · step 3 of 3'; c.state = 'following'; window.RailChats.refresh(); paint(); say('Answered: the task carries on'); return;
     }
     const pp = (attr) => { const h = on(`[${attr}]`); return h ? turns().find((y) => y.id === h.getAttribute(attr)) : null; };
+    let px;
+    if ((px = pp('data-plan-roles'))) { px.open = !px.open; paint(); return; }
+    if ((px = pp('data-plan-approve'))) { px.approved = true; paint(); say('Approved: the plan is being built'); return; }
+    if ((px = pp('data-plan-changes'))) { const t = root.querySelector('[data-composer-t]'); if (t) { t.value = 'Change the plan: '; comp.text = t.value; t.focus(); } return; }
     if ((hit = on('[data-act]'))) { const [id, k] = hit.dataset.act.split('|'), x = turns().find((y) => y.id === id); if (x) { x.done = x.actions[+k][2]; paint(); say(x.done); } return; }
     if ((hit = on('[data-cp-apply], [data-cp-decline], [data-cp-revert]'))) { const id = hit.dataset.cpApply || hit.dataset.cpDecline || hit.dataset.cpRevert, x = turns().find((y) => y.id === id); if (x) { x.state = hit.dataset.cpApply ? 'applied' : hit.dataset.cpRevert ? 'proposed' : 'declined'; if (x.state === 'applied' && x.graph) x.rows = [{ name: 'Saved as', before: '', after: 'API rewrite' }]; paint(); say(x.state === 'applied' ? `${x.kind}: changed` : x.state === 'declined' ? 'Nothing changed' : 'Reverted'); } return; }
-    let px;
     if ((px = pp('data-pp-more'))) { px.open = !px.open; paint(); return; }
     if ((px = pp('data-pp-later'))) { px.later = true; paint(); say('Set aside: bring it back from the chat'); return; }
     if ((px = pp('data-pp-back'))) { px.later = false; paint(); return; }
