@@ -1254,9 +1254,9 @@ test('ask-panel-card: the Engine field — Default sends none, a proposed engine
       for (let i = 0; i < 10; i++) await ctx.tick();
       const sel = ctx.doc.querySelector('.ask-card-engine');
       assert.equal(sel.value, '');
-      assert.equal(sel.options[0].textContent, 'Codex (default)');
-      assert.deepEqual([...sel.options].slice(1).map((o) => o.textContent), ['Claude', 'Codex (Beta)', 'Copilot (Beta)', 'Cursor (Beta)', 'Gemini CLI (Beta)', 'Goose (Beta)', 'OpenCode (Beta)', 'Qwen Code (Beta)']);
-      assert.deepEqual([...sel.options].filter((o) => !o.hidden).map((o) => o.value), ['', 'claude', 'copilot', 'cursor', 'gemini', 'goose', 'opencode', 'qwen'], 'Codex is listed once, as the default');
+      assert.equal(sel.options[0].textContent, 'OpenAI Codex (default)');
+      assert.deepEqual([...sel.options].slice(1).map((o) => o.textContent), ['Claude Code', 'OpenAI Codex (Beta)', 'GitHub Copilot (Beta)', 'Cursor (Beta)', 'Gemini CLI (Beta)', 'Goose (Beta)', 'OpenCode (Beta)', 'Qwen Code (Beta)']);
+      assert.deepEqual([...sel.options].filter((o) => !o.hidden).map((o) => o.value), ['', 'claude', 'copilot', 'cursor', 'gemini', 'goose', 'opencode', 'qwen'], 'OpenAI Codex is listed once, as the default');
       ctx.doc.querySelector('[data-ask-card-start]').click();
       for (let i = 0; i < 6; i++) await ctx.tick();
       assert.equal(rec.runBodies.length, 1);
@@ -1488,7 +1488,7 @@ test('ask-panel-card: Shape it first on the run proposal card', async () => {
       assert.equal(main.querySelector('.ask-rp-shape-what').textContent, 'What happensUp to 3 questions, then a plan you approve.');
       const adv = cardEl.querySelector('details[data-ask-card-advanced]');
       assert.equal(adv.open, false, 'Advanced starts collapsed');
-      assert.match(adv.querySelector('summary').textContent, /^Advanced · Claude · Normal guardrails/);
+      assert.match(adv.querySelector('summary').textContent, /^Advanced · Claude Code · Normal guardrails/);
       for (const sel of ['.ask-card-feature', '.ask-card-same-source', '.ask-card-workflow', '.ask-card-engine',
         '.ask-card-guardrails', '.ask-rp-lane', '[data-ask-card-schedule]', '[data-ask-card-seg]']) {
         assert.ok(adv.querySelector(sel), `${sel} is inside Advanced`);

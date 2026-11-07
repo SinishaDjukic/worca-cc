@@ -74,6 +74,12 @@ export const CURSOR_RULE_TERMS = Object.freeze({
 /** The project files Cursor reads from its cwd, relative to it. */
 export const CURSOR_PROJECT_FILES = ENGINE_PROJECT_FILES.cursor;
 
+/** The instruction files the Cursor CLI reads at the project root, alongside its rules
+ *  (cursor.com/docs/cli/using#rules). */
+export const CURSOR_INSTRUCTION_FILES = Object.freeze(['AGENTS.md', 'CLAUDE.md']);
+/** Project rules: `.mdc` files only; Cursor ignores a plain `.md` there (cursor.com/docs/rules). */
+export const CURSOR_INSTRUCTION_GLOBS = Object.freeze(['.cursor/rules/**/*.mdc']);
+
 // ── permission rules ─────────────────────────────────────────────────────────
 
 /** `Bash(curl)`, `Bash(curl:*)`, `Bash(curl *)` -> 'curl'; null for anything Cursor's first-word Shell token cannot say. */

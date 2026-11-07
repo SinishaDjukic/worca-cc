@@ -820,6 +820,12 @@ level and has no **Diff**, **Changes** or **Actions**.
   Team metrics.
 - **Keep awake** — stops the computer sleeping while a run has agents working;
   a switch in the account menu. See [`docs/keep-awake.md`](docs/keep-awake.md).
+- **Agent readiness** — a chip next to each project's name says whether it is
+  ready for the coding agents it uses (instruction files present, committed and
+  within budget; test command, lockfile, ignored build output, no secret-looking
+  files), and its report says how to fix each gap. Only the tools a project uses
+  are judged; `worca readiness` prints the same from the terminal. See
+  [`docs/agent-readiness.md`](docs/agent-readiness.md).
 
 ### Labs features
 
@@ -1053,6 +1059,10 @@ worca plugin validate ./my-plugin --run-cases
 # the browser extension packaged with Worca
 worca extension --open          # the packaged browser extension folder
 
+# is this project ready for its coding agents? (exit 2: not ready)
+worca readiness
+worca readiness --project shop --engine codex
+
 # feature flags
 worca flags                     # list them
 worca flags on smartRunNaming   # a Labs feature, off by default
@@ -1062,7 +1072,7 @@ Run `worca --help` for every subcommand — the project registry (`add`,
 `list`, `remove`, top-level: `worca list`, not `worca projects list`), `ui`,
 `resume`, `runs`, `logs`, `stop`, `pause`, `schedule`, `workflow`, `script`,
 `plugin`, `marketplace`, `models`, `config`, `flags`, `metrics`, `policy`,
-`container`, `broker`, `extension`, `doctor` — and flag; most have their own
+`container`, `broker`, `extension`, `readiness`, `doctor` — and flag; most have their own
 `worca <subcommand> help`.
 
 Exit codes, for scripts and CI wrappers: `0` the run finished (or an

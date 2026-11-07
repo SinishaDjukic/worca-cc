@@ -62,7 +62,7 @@ test('list_settings rows: user scope lists the Settings page, never a secret, a 
   for (const id of ids) assert.ok(!/^(root|projectsRoot|actions|askWeb|chat\.scriptTools|chat\.channels|nightMode|providers|speech)(\.|$)/.test(id), `never listed: ${id}`);
   const theme = out.settings.find((r) => r.id === 'theme');
   assert.deepEqual(theme, { id: 'theme', label: 'Theme', group: 'General', value: 'System (default)', stored: null, allowed: '"system" | "light" | "dark" | null (default)' });
-  assert.equal(out.settings.find((r) => r.id === 'models.claude.steps.planner').label, 'Planner model (Claude)');   // engineLabel('claude')
+  assert.equal(out.settings.find((r) => r.id === 'models.claude.steps.planner').label, 'Planner model (Claude Code)');   // engineLabel('claude')
   assert.deepEqual(out.excluded, SETTING_EXCLUSIONS.map((e) => e.what));
   assert.deepEqual((await reg.list({ scope: 'user', query: 'sync.' })).settings.map((r) => r.id), ['sync.beforeRun', 'sync.onDiverged', 'sync.remote', 'sync.refreshMinutes']);
 });
@@ -422,7 +422,7 @@ test('models.claude.utility.agentGen: a user-scope Claude pair on agentGenModel,
   const row = (await reg.list({ scope: 'user', query: 'agentGen' })).settings;
   assert.deepEqual(row.map((r) => [r.id, r.label, r.group, r.value, r.stored]),
     [['models.claude.utility.agentGen', 'Agent generation model', 'Models', 'Default', null]]);
-  assert.match(row[0].allowed, /a model from list_models that runs on Claude, "effort": "medium" \| "high" \| "xhigh" \| "max"/);
+  assert.match(row[0].allowed, /a model from list_models that runs on Claude Code, "effort": "medium" \| "high" \| "xhigh" \| "max"/);
   let r = await reg.apply({ id: 'models.claude.utility.agentGen', scope: 'user', value: { model: 'CLAUDE-OPUS-5-5', effort: 'high' } });
   assert.equal(r.ok, true, r.error);
   assert.deepEqual(bodies.at(-1), { agentGenModel: { model: 'claude-opus-5-5', effort: 'high' } }, 'the catalog casing, on the Settings page\'s own key');
@@ -448,7 +448,7 @@ test('models.claude.utility.naming: a user-scope Claude pair on namingModel, nev
   const row = (await reg.list({ scope: 'user', query: 'naming' })).settings;
   assert.deepEqual(row.map((r) => [r.id, r.label, r.group, r.value, r.stored]),
     [['models.claude.utility.naming', 'Run naming model', 'Models', 'Default', null]]);
-  assert.match(row[0].allowed, /a model from list_models that runs on Claude, "effort": "medium" \| "high" \| "xhigh" \| "max"/);
+  assert.match(row[0].allowed, /a model from list_models that runs on Claude Code, "effort": "medium" \| "high" \| "xhigh" \| "max"/);
   let r = await reg.apply({ id: 'models.claude.utility.naming', scope: 'user', value: { model: 'CLAUDE-OPUS-5-5', effort: 'high' } });
   assert.equal(r.ok, true, r.error);
   assert.deepEqual(bodies.at(-1), { namingModel: { model: 'claude-opus-5-5', effort: 'high' } }, 'the catalog casing, on the Settings page\'s own key');

@@ -75,7 +75,7 @@ test('efforts: a model on two harnesses keeps its own list; the other harness ta
 test('the editor words: a suggested id and what a connection runs on', () => {
   assert.equal(suggestModelHandle('gpt-5.5', 'openai'), 'openai-gpt-5.5');
   assert.equal(suggestModelHandle('Org/Model X'), 'gw-org-model-x');
-  assert.match(runsOnText({ kind: 'signin', engine: 'codex' }), /^Runs on Codex only/);
+  assert.match(runsOnText({ kind: 'signin', engine: 'codex' }), /^Runs on OpenAI Codex only/);
   assert.match(runsOnText({ kind: 'env' }), /^Runs on Claude Code only/);
   assert.equal(runsOnText({ kind: 'provider', provider: 'openai', api: 'openai-responses', codex: true }), "Runs on Claude Code (through worca's bridge) and Codex (directly).");
 });

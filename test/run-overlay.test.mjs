@@ -49,7 +49,7 @@ test('checkRunOverlay: agent node ids only; checkShapeModels on the catalog; the
   ]);
   assert.deepEqual(checkRunOverlay({ n_plan: { effort: 'high' } }, { workflow: WF, models: MODELS }).errors, ['node "n_plan": an effort needs a model']);
   assert.deepEqual(checkRunOverlay({ n_plan: { model: 'gpt-5.5' } }, { workflow: WF, models: MODELS, engine: 'claude' }).errors,
-    ['node "n_plan": gpt-5.5 runs on Codex, not on Claude — pick a model this run\'s engine runs']);
+    ['node "n_plan": gpt-5.5 runs on OpenAI Codex, not on Claude Code — pick a model this run\'s engine runs']);
   assert.deepEqual(checkRunOverlay({ n_plan: { model: 'gpt-5.5', effort: 'low' } }, { workflow: WF, models: MODELS, engine: 'codex' }).errors, []);
   assert.deepEqual(checkRunOverlay({ n_plan: { model: 'claude-opus-5-5' } }, { workflow: WF, models: MODELS, requireModel: true }).errors,
     ['node "n_impl": needs a model — this install has no default model (Claude Code is not signed in)']);
