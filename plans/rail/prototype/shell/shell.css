@@ -186,7 +186,7 @@ body.view-runs .main{display:flex;flex-direction:column;overflow:hidden;padding:
 #side-rail.is-strip:not(.is-resting):is(:hover,:focus-within,:has(.rc-pop > .menu, .pz-pick .menu, .viewer-modal, .list-pop)) .bar-mini{opacity:0;pointer-events:none;transition:opacity 60ms var(--ease);}
 #side-rail.is-strip .bar-grip{display:none;}
 #side-rail.is-strip .bar-head{padding-left:14px;}
-#side-rail.is-strip .pz-acct{padding-left:12px;justify-content:flex-start;}
+#side-rail.is-strip .pz-acct{padding-left:0;margin-left:-1px;justify-content:flex-start;}   /* the avatar and its usage ring (38px) centred on the 56px strip, never cut */
 @media (prefers-reduced-motion: reduce){ #side-rail.is-strip, #side-rail.is-strip *{transition:none!important;} }
 body.bar-hidden .bar-show{display:none;}
 @media (prefers-reduced-motion: reduce){ #side-rail.is-strip{transition:none;} }

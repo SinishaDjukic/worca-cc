@@ -60,6 +60,9 @@ A Rail page is built by naming needs, not looks. Find the need, use its componen
 | A task's stages on a card | StageBar, each deepening into the state's colour | Plan · Build · Review |
 | What Worca did in a conversation | TurnRow: folds; a failure opens itself | Ran 4 commands |
 | Worca thinking in a conversation | ThinkingRow: one line, what it does now, its seconds; done, Thought for 8s, its steps folded | Searching the code · 4s |
+| A task Worca proposes | TaskProposal: Proposed, the title in place, why; the composer's sentence and Customise; Start, Not now; Start becomes the running card | Add a CSV export |
+| Any other change Worca proposes | ChangeProposal: before → after or a WorkflowGraph; Apply, Not now; applied, a receipt with Revert | Quiet on weekends |
+| Where a conversation's ground changes | TurnDivider: a rule with a few words | Switched to worca-cc |
 | Worca at work | OrbMark: the app's sphere of dots with Worca's W facing you, a hairline ring around it in light, lit while the sphere turns under it; still at rest; think, tool and write move it; `watchOrbs` brings every one to life | Thinking |
 | Moving through a long conversation or a task | Timeline on the right edge, its TimelineCard on hover | Which date format? |
 | What hangs under a row | the rounded tree under it (`tree` on a list's row) | a chat's tasks |

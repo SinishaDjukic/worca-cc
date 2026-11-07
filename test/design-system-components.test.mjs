@@ -878,6 +878,22 @@ test('thinkingRow: live says, in one line, what it does and how long, politely; 
   assert.match(C.thinkingRow({ done: true, secs: '8s', steps: ['Read the chat'], open: true, attrs: { 'data-fold-turn': '3' } }), /tr-body is-steps[\s\S]*Read the chat/);
 });
 
+test('taskProposal: the composer sentence, Customise folding, Start and Not now with their hooks', () => {
+  const h = C.taskProposal({ title: 'Add export', why: 'From this chat', sentence: '<i>s</i>', more: '<i>m</i>', nudge: '<i>n</i>', hooks: { start: { 'data-s': '1' }, later: { 'data-l': '1' }, more: { 'data-m': '1' }, title: { 'data-t': '1' } } });
+  assert.match(h, /Proposed/); assert.match(h, /class="tp-title"[^>]*value="Add export"[^>]*data-t="1"/); assert.match(h, /<i>s<\/i>/); assert.match(h, /<i>n<\/i>/);
+  assert.match(h, />Start</); assert.match(h, /data-s="1"/); assert.match(h, />Not now</); assert.doesNotMatch(h, /<i>m<\/i>/);
+  assert.match(C.taskProposal({ title: 'x', sentence: '', more: '<i>m</i>', open: true }), /<i>m<\/i>[\s\S]*Hide Customise|Hide Customise[\s\S]*<i>m<\/i>/);
+});
+
+test('changeProposal: before and after, Apply; applied, a receipt with Revert; declined, one quiet line', () => {
+  const rows = [{ name: 'Away on', before: 'Never', after: 'Weekends' }];
+  const h = C.changeProposal({ kind: 'Away', title: 'Quiet', rows });
+  assert.match(h, /Proposed change · Away/); assert.match(h, /<s>Never<\/s>/); assert.match(h, /<b>Weekends<\/b>/); assert.match(h, />Apply</);
+  assert.match(C.changeProposal({ kind: 'Away', title: 'Quiet', rows, state: 'applied' }), />Revert</);
+  assert.match(C.changeProposal({ kind: 'Away', title: 'Quiet', rows, state: 'declined' }), /Not changed/);
+  assert.match(C.turnDivider({ text: 'Switched to a' }), /role="separator"[^>]*aria-label="Switched to a"/);
+});
+
 test('askWorcaMark: the bubble and its W at rest, dots while writing, filled while open; writing wins', () => {
   assert.match(C.askWorcaMark(), /M5 4h14/); assert.match(C.askWorcaMark(), /M7.4 8.2/); assert.doesNotMatch(C.askWorcaMark(), /circle|mask/);
   assert.match(C.askWorcaMark({ answering: true }), /<circle/);

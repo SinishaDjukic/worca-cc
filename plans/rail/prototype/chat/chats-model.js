@@ -58,6 +58,41 @@
       { t: 'files', text: '2 files changed', meta: '+42 −8' },
       { t: 'working', text: 'Replying', end: '42s' },
     ];
+    // The rest of a chat's cards, each where it comes up: a PR to open, a receipt, a stop warning; a project switch and its
+    // divider; a settings change; a workflow; questions with Worca's picks.
+    if (c.id === 'c9') return [
+      { t: 'you', id: 'a1', text: 'Is the release branch ready?', when: '11:40' },
+      { t: 'think', text: 'Thought for 5s' },
+      { t: 'words', html: 'Everything for 1.20 is in and the checks passed.' },
+      { t: 'act', id: 'a2', mark: 'git', text: '<b>Ready to open a PR</b> 12 files +540 −96 into main', actions: [['Create PR', 'primary', 'Opened PR #1104 into main'], ['View changes', 'quiet', 'Opens the changes']] },
+      { t: 'you', id: 'a3', text: 'Bump the version to 1.20.0', when: '11:42' },
+      { t: 'change', id: 'a4', kind: 'Version', title: 'Version bumped', rows: [{ name: 'package.json', before: '1.19.4', after: '1.20.0' }], state: 'applied' },
+      { t: 'you', id: 'a5', text: 'Stop the dependency bump, it can wait', when: '11:44' },
+      { t: 'act', id: 'a6', mark: 'ask', text: '<b>Stop Nightly dependency bump?</b> It has run 12 minutes of Review; stopping loses them', actions: [['Stop', 'danger', 'Stopped Nightly dependency bump'], ['Keep running', 'quiet', 'Kept running']] },
+    ];
+    if (c.id === 'c11') return [
+      { t: 'you', id: 'a1', text: 'Who owns the cron parser?', when: 'Mon' },
+      { t: 'act', id: 'a2', mark: 'ask', text: '<b>This sounds like worca-cc.</b> Use it for this chat?', actions: [['Use worca-cc', 'primary', 'This chat is on worca-cc now'], ['Keep no project', 'quiet', 'This chat stays without a project']] },
+      { t: 'divider', text: 'Switched to worca-cc' },
+      { t: 'notice', text: 'Read CODEOWNERS and the last 20 commits on src/cron' },
+      { t: 'words', html: 'Dana Ruiz owns <code>src/cron</code>: CODEOWNERS names her, and she wrote 14 of its last 20 commits.' },
+    ];
+    if (c.id === 'c12') return [
+      { t: 'you', id: 'a1', text: 'Mute me on weekends, unless something needs me', when: 'Sun' },
+      { t: 'words', html: 'Here is the change. Nothing changes until you apply it.' },
+      { t: 'change', id: 'a2', kind: 'Away', title: 'Quiet on weekends', why: 'Saturdays and Sundays you only hear about what needs you.', rows: [{ name: 'Away on', before: 'Never', after: 'Saturdays and Sundays' }, { name: 'While away', before: 'Every update', after: 'Only what needs you' }], state: 'proposed' },
+    ];
+    if (c.id === 'c5') return [
+      { t: 'you', id: 'a1', text: 'Plan the API rewrite as a workflow I can reuse', when: '12:20' },
+      { t: 'think', text: 'Thought for 9s' },
+      { t: 'change', id: 'a2', kind: 'Workflow', title: 'API rewrite, in three slices', why: 'Plan once, then build each slice behind its own review; a person signs off the contract first.', graph: true, apply: 'Save', state: 'proposed' },
+    ];
+    if (c.id === 'c13') return [
+      { t: 'you', id: 'a1', text: 'Compare two queue libraries for the export jobs', when: 'Mon' },
+      { t: 'words', html: 'Two things decide it. Answer them, or take my picks for both:' },
+      { t: 'question', id: 'a2', text: 'How many jobs a minute at peak?', options: ['Under 100', '100 to 10,000', 'More than 10,000'], pick: 1, many: 'a3', when: 'Mon' },
+      { t: 'question', id: 'a3', text: 'Can jobs be lost if the server restarts?', options: ['No, every job must survive', 'A few is fine'], pick: 0, when: 'Mon' },
+    ];
     const out = [{ t: 'you', id: 'a1', text: c.title, when: c.time }, { t: 'think', text: 'Thought for 6s' }, { t: 'words', html: c.state === 'idle' ? 'Here is what I found. Tell me if you want it as a task.' : 'On it.' }];
     (c.tasks || []).forEach((x, i) => out.push({ t: x.kind === 'schedule' ? 'schedule' : 'task', id: `b${i}`, task: x.id }));
     if (['replying', 'command', 'following'].includes(c.state)) out.push({ t: 'working', text: window.RailUI.chatState(c.state).line, end: '12s' });

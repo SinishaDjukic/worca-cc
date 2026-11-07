@@ -1348,3 +1348,28 @@ th.rt-c{color:var(--ink-2);font-weight:500;}
 
 /* OrbMark: in light, a hairline ring holds the orb's pale dots against the page; dark needs none. */
 canvas.dot-orb[data-orb]{border-radius:50%;outline:1px solid light-dark(var(--line-2),transparent);outline-offset:0;}   /* ds-ok: light-dark of two tokens */
+
+/* TaskProposal: a proposed task in the running card's shape; quiet head, the composer's sentence, Start. */
+.tp .rc-head{gap:4px;}
+.tp-kicker{margin:0;display:flex;align-items:center;gap:8px;font-size:var(--fs-meta);font-weight:500;color:var(--ink-2);}
+.tp-title{display:block;width:100%;margin:2px 0 0;padding:2px 0;border:0;border-bottom:1px solid transparent;background:none;color:var(--ink);font:600 var(--fs-section)/var(--lh-title) var(--sans);letter-spacing:-.01em;}
+.tp-title:hover{border-bottom-color:var(--line-2);}
+.tp-title:focus-visible{outline:none;border-bottom-color:var(--ink);}
+.tp-why{margin:0;font-size:var(--fs-meta);color:var(--ink-2);max-width:66ch;}
+.tp-body{display:flex;flex-direction:column;gap:10px;}
+.tp-sentence{margin:0;display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 6px;color:var(--ink-2);}
+.tp-nudge{margin:0;display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:var(--fs-meta);color:var(--ink-2);}
+.tp-actions{display:flex;gap:8px;align-items:center;}
+.tp-more > .btn,.tp-nudge > .btn{margin-left:-8px;}   /* quiet buttons keep the text edge */
+.tp-nudge > .btn{margin-left:0;}
+
+/* ChangeProposal: before → after, the old value struck quietly, the new one plain. TurnDivider: a rule with words on it. */
+.cp-rows{margin:0;display:flex;flex-direction:column;gap:6px;}
+.cp-row{display:grid;grid-template-columns:minmax(0,160px) minmax(0,1fr);gap:12px;align-items:baseline;}
+.cp-row dt{color:var(--ink-2);font-size:var(--fs-meta);}
+.cp-row dd{margin:0;display:flex;flex-wrap:wrap;gap:6px;align-items:baseline;}
+.cp-row s{color:var(--ink-3);text-decoration-color:var(--ink-3);}
+.cp-row dd > span{color:var(--ink-3);}
+.cp-row b{font-weight:500;}
+.turn-div{display:flex;align-items:center;gap:12px;color:var(--ink-3);font-size:var(--fs-meta);}
+.turn-div::before,.turn-div::after{content:"";flex:1 1 auto;height:1px;background:var(--line);}

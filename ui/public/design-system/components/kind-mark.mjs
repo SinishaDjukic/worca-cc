@@ -5,6 +5,7 @@ import { attrs, esc } from './html.mjs';
 import { icon } from './icons.mjs';
 import { statusLine } from './status-line.mjs';
 import { orbMark } from './orb.mjs';
+import { button } from './button.mjs';
 
 const STAGES = 5;
 const R = 9, L = 2 * Math.PI * R;
@@ -193,6 +194,64 @@ export function taskCard({ title, place = '', mark, word, detail = '', action = 
   const side = action ? `<div class="rc-side">${action}</div>` : '';
   if (compact) return `<article class="task-card rc is-compact"${attrs(a)}><section class="rc-card"${attrs({ 'aria-label': title })}>${statusLine({ dot: mark, word: title, action: side, detail })}</section></article>`;
   return `<article class="task-card rc"${attrs(a)}><div class="rc-head"><h3 class="rc-heading tc-title"${attrs({ title })}>${esc(title)}</h3>${place ? `<div class="rc-facts">${place}</div>` : ''}</div><section class="rc-card"${attrs({ 'aria-label': `${title}: ${word}` })}>${statusLine({ dot: mark, word, action: side, detail })}${stages ? `<div class="rc-zone"><div class="rc-span">${stages}</div></div>` : ''}</section>${foot ? `<div class="tc-foot">${foot}</div>` : ''}</article>`;
+}
+
+/**
+ * TaskProposal: a task Worca proposes, before anything starts; the running TaskCard's shape, so Start turns it into that
+ * card in place. Its head: Proposed, the title (edited in place) and one line why. Its body: the composer's own sentence
+ * (project · workflow · engine · then), Customise folding open to the composer's own rows, one quiet line offering to shape
+ * it first when it has open decisions, and one action: Start, beside a quiet Not now.
+ * @param {object} o
+ * @param {string} o.title
+ * @param {string} [o.why]
+ * @param {string} o.sentence     the composer's SentencePickers, as markup
+ * @param {string} [o.more]       Customise's rows, as markup; open when given with `open`
+ * @param {boolean} [o.open]
+ * @param {string} [o.nudge]      the line offering to shape it first, as markup (its button inside)
+ * @param {object} [o.hooks]      { title, more, start, later }: each control's attributes
+ * @param {object} [o.attrs]
+ */
+export function taskProposal({ title, why = '', sentence, more = '', open = false, nudge = '', hooks = {}, attrs: a = {} }) {
+  const btn = (label, kind, h, extra = {}) => button({ label, kind, attrs: { ...extra, ...(h || {}) } });
+  return `<article class="task-card rc tp"${attrs(a)}><div class="rc-head"><p class="tp-kicker">${kindMark({ kind: 'task', tone: 'idle', size: 16 })}<span>Proposed</span></p>`
+    + `<input class="tp-title"${attrs({ value: title, 'aria-label': 'Task title', spellcheck: 'false', ...(hooks.title || {}) })}>${why ? `<p class="tp-why">${esc(why)}</p>` : ''}</div>`
+    + `<section class="rc-card tp-body"${attrs({ 'aria-label': `Proposed: ${title}` })}><p class="tp-sentence">${sentence}</p>${nudge ? `<p class="tp-nudge">${nudge}</p>` : ''}`
+    + `<div class="tp-more">${btn(open ? 'Hide Customise' : 'Customise', 'quiet', hooks.more, { 'aria-expanded': String(!!open), title: 'Title, labels, branch, memory, guardrails and more' })}${open && more ? `<div class="composer-more">${more}</div>` : ''}</div>`
+    + `<div class="tp-actions">${btn('Start', 'primary', hooks.start)}${btn('Not now', 'quiet', hooks.later)}</div></section></article>`;
+}
+
+/**
+ * ChangeProposal: a change Worca proposes to something that is not a task (a setting, a workflow, a schedule): what it is,
+ * one line why, each change as before → after (or a body such as a WorkflowGraph), then Apply beside a quiet Not now. Once
+ * applied it is a one-line receipt with Revert; declined or failed, one quiet line. The TaskProposal's family.
+ * @param {object} o
+ * @param {string} o.kind        what it changes: Models, Away, Schedule, Workflow
+ * @param {string} o.title
+ * @param {string} [o.why]
+ * @param {{name:string, before:string, after:string}[]} [o.rows]
+ * @param {string} [o.body]      instead of rows, markup (a WorkflowGraph)
+ * @param {'proposed'|'applied'|'declined'|'failed'} [o.state]
+ * @param {string} [o.apply]     Apply's word: Apply, Save
+ * @param {object} [o.hooks]     { apply, decline, revert }
+ * @param {object} [o.attrs]
+ */
+export function changeProposal({ kind, title, why = '', rows = [], body = '', state = 'proposed', apply = 'Apply', hooks = {}, attrs: a = {} }) {
+  const btn = (label, k, h) => button({ label, kind: k, attrs: h || {} });
+  if (state === 'applied') return turnRow({ mark: icon('check', 14), text: `<b>${esc(title)}</b> ${esc(rows.map((r) => `${r.name}: ${r.after}`).join(' · ') || kind)}`, end: btn('Revert', 'quiet', hooks.revert), attrs: a });
+  if (state !== 'proposed') return turnRow({ mark: kindMark({ kind: 'chat', tone: state === 'failed' ? 'fail' : 'idle', size: 16 }), text: `${state === 'failed' ? 'Could not change' : 'Not changed'}: <b>${esc(title)}</b>`, attrs: a });
+  const list = rows.length ? `<dl class="cp-rows">${rows.map((r) => `<div class="cp-row"><dt>${esc(r.name)}</dt><dd><s>${esc(r.before)}</s><span aria-hidden="true">→</span><b>${esc(r.after)}</b></dd></div>`).join('')}</dl>` : '';
+  return `<article class="task-card rc cp"${attrs(a)}><div class="rc-head"><p class="tp-kicker">${icon('set-general', 14)}<span>Proposed change · ${esc(kind)}</span></p><h3 class="rc-heading tc-title">${esc(title)}</h3>${why ? `<p class="tp-why">${esc(why)}</p>` : ''}</div>`
+    + `<section class="rc-card tp-body"${attrs({ 'aria-label': `Proposed change: ${title}` })}>${list}${body}<div class="tp-actions">${btn(apply, 'primary', hooks.apply)}${btn('Not now', 'quiet', hooks.decline)}</div></section></article>`;
+}
+
+/**
+ * TurnDivider: a quiet rule across the conversation with a few words on it, where its ground changes ("Switched to
+ * billing-api").
+ * @param {object} o
+ * @param {string} o.text
+ */
+export function turnDivider({ text }) {
+  return `<div class="turn-div" role="separator"${attrs({ 'aria-label': text })}><span>${esc(text)}</span></div>`;
 }
 
 /**

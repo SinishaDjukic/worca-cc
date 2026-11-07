@@ -1089,6 +1089,39 @@
       ]
     },
     {
+      "name": "TaskProposal",
+      "code": "ui/public/design-system/components/kind-mark.mjs#taskProposal",
+      "kind": "moving",
+      "needs": [
+        "a task Worca proposes in a conversation, checked and started in place"
+      ],
+      "rules": [
+        "panel.conversation-cards"
+      ]
+    },
+    {
+      "name": "ChangeProposal",
+      "code": "ui/public/design-system/components/kind-mark.mjs#changeProposal",
+      "kind": "moving",
+      "needs": [
+        "a change to a setting, workflow or schedule Worca proposes: before and after, Apply, then a receipt with Revert"
+      ],
+      "rules": [
+        "panel.conversation-cards"
+      ]
+    },
+    {
+      "name": "TurnDivider",
+      "code": "ui/public/design-system/components/kind-mark.mjs#turnDivider",
+      "kind": "showing",
+      "needs": [
+        "where a conversation's ground changes, as a rule with a few words"
+      ],
+      "rules": [
+        "panel.conversation-cards"
+      ]
+    },
+    {
       "name": "StagePart",
       "code": "ui/public/design-system/components/kind-mark.mjs#stagePart",
       "kind": "moving",
