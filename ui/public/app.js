@@ -41204,6 +41204,22 @@ askPanel = createAskPanel({
   doc: document,
   win: window,
   fetch: (...args) => fetch(...args),
+  // Cross-chat slice 2: a run's question posted into a chat shows the Runs page's form there, only while that run's
+  // live question IS the posted one (a stale record keeps its "Open run" link instead).
+  paintRunQuestion: (ref, host) => {
+    const r = chatLiveRun(ref);
+    if (!r || r.pendingQuestion?.id !== ref.askId) return false;
+    // The record's Submit answers through the one question delegate (as the run card and the group page do), only while
+    // the run's live question is still the posted one; bound once per record host.
+    if (!host.__offQ) {
+      const cur = () => { const c = chatLiveRun(ref); return c && c.pendingQuestion?.id === ref.askId ? c : null; };
+      host.__offQ = delegateQuestion(host, {
+        question: () => { const c = cur(); return c ? c.pendingQuestion : null; },
+        send: (payload) => { const c = cur(); if (c) void postAnswer(c, payload); },
+      });
+    }
+    return !!chatPaintQuestion(ref, host);
+  },
   // Shared terminal (#574): a click on a command card's folder shows its tab in the pane below (Ask's own commands never do).
   showTerminal: (sessionId) => terminalPane?.showSession(sessionId),
   sendWs: (obj) => {

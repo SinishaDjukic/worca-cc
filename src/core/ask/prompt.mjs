@@ -421,6 +421,7 @@ export function renderChatMessagesSection() {
     '- At most one reply per message (send_to_chat with replyTo). A conversation ends after 6 messages.',
     '- The answer never comes back in the same call: never claim a reply arrived until a "[worca event] chat message" says so.',
     '- While answering a chat message only read tools and send_to_chat are available: no commands, web, cards or changes.',
+    '- Runs may post updates and questions here ("from run <id>"). You cannot reply to a run; only the user, with the record\'s answer form, or Away mode answers a run question.',
   ].join('\n');
 }
 
@@ -888,7 +889,8 @@ function handoffBlockLine(b, to) {
   }
   // Cross-chat messaging D19: the record is named, its body never replayed (only the fenced event row holds it).
   if (b.kind === 'chat-message') {
-    const other = b.direction === 'out' ? `to ${label(b.to?.chatId || '?')}` : `from ${label(b.from?.chatId || '?')}`;
+    const other = b.direction === 'out' ? `to ${label(b.to?.chatId || '?')}`
+      : b.from?.kind === 'run' ? `from run ${label(b.from?.runId || '?')}` : `from ${label(b.from?.chatId || '?')}`;
     return `[chat message ${label(b.id || '?')} ${other} — body not replayed]`;
   }
   return null;

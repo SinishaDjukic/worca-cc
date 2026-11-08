@@ -621,3 +621,115 @@ test('a Chat card built before the run groups load becomes a group card once the
   assert.match(doc.getElementById('confirm-modal').textContent, /Stop 2 runs\?/);
   built.dispose();
 });
+
+test('in the real app: a run question posted into a chat paints the Runs page form while the run\'s live question is that askId, else the Open run fallback', async () => {
+  const TID = 'ask_0000c0de';
+  const LIVE_Q = { id: 'questions-x:n_plan:2-r1', kind: 'questions', questions: [{ id: 'q1', question: 'Which storage?', options: ['Redis', 'Postgres'], allowFreeText: true }], agent: 'Planner', nodeId: 'n_plan' };
+  const block = (id, askId) => ({ kind: 'chat-message', id, direction: 'in', intent: 'question', text: '1. Which storage?', conversationId: 'cxm_0000c0de',
+    hop: 1, maxHops: 6, replyTo: null, repliedWith: null,
+    from: { kind: 'run', runId: PID, liveRunId: RUN_ID, title: 'Fix login', scope: { kind: 'project', key: 'k1', label: 'worca-cc' }, owner: null },
+    to: { chatId: TID, title: 'T' }, sentAt: 't',
+    question: { askId, kind: 'questions', questions: LIVE_Q.questions, state: 'open', answer: null } });
+  const msg = (n, b) => ({ id: `askm_c000000${n}`, threadId: TID, seq: n, role: 'system', text: `Message from run ${PID} (Question, untrusted)`, blocks: [b], status: null, createdAt: 't' });
+  const ctx = await bootApp({ fetchHandler: (url) => (url.startsWith(`/api/ask/threads/${TID}`) ? Promise.resolve({ ok: true, status: 200, json: async () => ({
+    thread: { id: TID, title: 'T', createdAt: 't', updatedAt: 't', model: null, effort: null, sessionId: null, context: null, totals: {} },
+    messages: [msg(1, block('cmsg_0000c001', LIVE_Q.id)), msg(2, block('cmsg_0000c002', 'questions-x:n_plan:1-r1'))],
+    attachments: [], runLinks: [], worktrees: [], inFlight: null }) }) : null) });
+  helloRun(ctx, { runId: RUN_ID, pipelineId: PID, title: 'Fix login' });
+  ctx.dispatch(STATE());
+  ctx.dispatch({ type: 'question', runId: RUN_ID, ...LIVE_Q });
+  await ctx.settle();
+  ctx.go(`chat/${TID}`);
+  await ctx.settle(20);
+  const doc = ctx.window.document;
+  const recs = [...doc.querySelectorAll('.ask-chat-msg.ask-chat-msg-run')];
+  assert.equal(recs.length, 2, 'both records render in the real panel');
+  const [live, stale] = recs;
+  const panel = live.querySelector('.ask-chat-msg-q .qpanel');
+  assert.equal(panel.classList.contains('hidden'), false, 'the matching record paints the run page form');
+  assert.ok(panel.children.length > 0);
+  assert.equal(live.querySelector('.ask-chat-msg-body').hidden, true);
+  assert.equal(live.querySelector('.ask-chat-msg-q-fallback'), null);
+  assert.equal(stale.querySelector('.ask-chat-msg-q .qpanel').children.length, 0, 'a different askId paints nothing');
+  assert.match(stale.querySelector('.ask-chat-msg-q-fallback').textContent, /^Answer it on the run page:/);
+  assert.equal(stale.querySelector('.ask-chat-msg-body').hidden, false);
+});
+
+test('in the real app: the question frame arriving AFTER the record (the server order) still paints the form', async () => {
+  const TID = 'ask_0000c0df';
+  const LIVE_Q = { id: 'questions-x:n_plan:3-r1', kind: 'questions', questions: [{ id: 'q1', question: 'Which storage?', options: ['Redis', 'Postgres'], allowFreeText: true }], agent: 'Planner', nodeId: 'n_plan' };
+  const b = { kind: 'chat-message', id: 'cmsg_0000c003', direction: 'in', intent: 'question', text: '1. Which storage?', conversationId: 'cxm_0000c0df',
+    hop: 1, maxHops: 6, replyTo: null, repliedWith: null,
+    from: { kind: 'run', runId: PID, liveRunId: RUN_ID, title: 'Fix login', scope: { kind: 'project', key: 'k1', label: 'worca-cc' }, owner: null },
+    to: { chatId: TID, title: 'T' }, sentAt: 't',
+    question: { askId: LIVE_Q.id, kind: 'questions', questions: LIVE_Q.questions, state: 'open', answer: null } };
+  const ctx = await bootApp({ fetchHandler: (url) => (url.startsWith(`/api/ask/threads/${TID}`) ? Promise.resolve({ ok: true, status: 200, json: async () => ({
+    thread: { id: TID, title: 'T', createdAt: 't', updatedAt: 't', model: null, effort: null, sessionId: null, context: null, totals: {} },
+    messages: [{ id: 'askm_c0000003', threadId: TID, seq: 1, role: 'system', text: `Message from run ${PID} (Question, untrusted)`, blocks: [b], status: null, createdAt: 't' }],
+    attachments: [], runLinks: [], worktrees: [], inFlight: null }) }) : null) });
+  helloRun(ctx, { runId: RUN_ID, pipelineId: PID, title: 'Fix login' });
+  ctx.dispatch(STATE());
+  await ctx.settle();
+  ctx.go(`chat/${TID}`);
+  await ctx.settle(20);
+  const doc = ctx.window.document;
+  const rec = doc.querySelector('.ask-chat-msg.ask-chat-msg-run');
+  assert.match(rec.querySelector('.ask-chat-msg-q-fallback').textContent, /^Answer it on the run page:/, 'no live question yet: the fallback');
+  ctx.dispatch({ type: 'question', runId: RUN_ID, ...LIVE_Q });
+  await ctx.settle(8);
+  const now = doc.querySelector('.ask-chat-msg.ask-chat-msg-run');
+  const panel = now.querySelector('.ask-chat-msg-q .qpanel');
+  assert.equal(panel.classList.contains('hidden'), false, 'the later question frame paints the run page form');
+  assert.ok(panel.children.length > 0);
+  assert.equal(now.querySelector('.ask-chat-msg-q-fallback'), null);
+  assert.equal(now.querySelector('.ask-chat-msg-body').hidden, true);
+});
+
+test('in the real app: Submit in a chat run question record posts the answer to the run, once; a record whose askId is no longer the live question posts nothing', async () => {
+  const TID = 'ask_0000c0e0';
+  const LIVE_Q = { id: 'questions-x:n_plan:4-r1', kind: 'questions', questions: [{ id: 'q1', question: 'Which storage?', options: ['Redis', 'Postgres'], allowFreeText: true }], agent: 'Planner', nodeId: 'n_plan' };
+  const b = { kind: 'chat-message', id: 'cmsg_0000c004', direction: 'in', intent: 'question', text: '1. Which storage?', conversationId: 'cxm_0000c0e0',
+    hop: 1, maxHops: 6, replyTo: null, repliedWith: null,
+    from: { kind: 'run', runId: PID, liveRunId: RUN_ID, title: 'Fix login', scope: { kind: 'project', key: 'k1', label: 'worca-cc' }, owner: null },
+    to: { chatId: TID, title: 'T' }, sentAt: 't',
+    question: { askId: LIVE_Q.id, kind: 'questions', questions: LIVE_Q.questions, state: 'open', answer: null } };
+  const ctx = await bootApp({ fetchHandler: (url) => (url.startsWith(`/api/ask/threads/${TID}`) ? Promise.resolve({ ok: true, status: 200, json: async () => ({
+    thread: { id: TID, title: 'T', createdAt: 't', updatedAt: 't', model: null, effort: null, sessionId: null, context: null, totals: {} },
+    messages: [{ id: 'askm_c0000004', threadId: TID, seq: 1, role: 'system', text: `Message from run ${PID} (Question, untrusted)`, blocks: [b], status: null, createdAt: 't' }],
+    attachments: [], runLinks: [], worktrees: [], inFlight: null }) }) : null) });
+  helloRun(ctx, { runId: RUN_ID, pipelineId: PID, title: 'Fix login' });
+  ctx.dispatch(STATE());
+  ctx.dispatch({ type: 'question', runId: RUN_ID, ...LIVE_Q });
+  await ctx.settle();
+  ctx.go(`chat/${TID}`);
+  await ctx.settle(20);
+  const doc = ctx.window.document;
+  const answers = () => ctx.calls.filter((c) => c.url.includes('/api/answer'));
+  const clickEl = (el) => el.dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
+  const panel = doc.querySelector('.ask-chat-msg.ask-chat-msg-run .ask-chat-msg-q .qpanel');
+  assert.equal(panel.classList.contains('hidden'), false, 'the form is painted');
+  clickEl(panel.querySelector('.qopt'));
+  // The run moved on to another question: the old record's Submit must not answer it.
+  ctx.dispatch({ type: 'question', runId: RUN_ID, ...LIVE_Q, id: 'questions-x:n_plan:5-r1' });
+  await ctx.settle(4);
+  const stalePanel = doc.querySelector('.ask-chat-msg.ask-chat-msg-run .ask-chat-msg-q .qpanel');
+  const staleSubmit = stalePanel && stalePanel.querySelector('[data-qpanel-submit]');
+  if (staleSubmit) clickEl(staleSubmit);
+  await ctx.settle(4);
+  assert.equal(answers().length, 0, 'a record for another question posts nothing');
+  // Back on the posted question: Submit posts it.
+  ctx.dispatch({ type: 'question', runId: RUN_ID, ...LIVE_Q });
+  await ctx.settle(4);
+  const live = doc.querySelector('.ask-chat-msg.ask-chat-msg-run .ask-chat-msg-q .qpanel');
+  clickEl(live.querySelector('.qopt'));
+  clickEl(live.querySelector('[data-qpanel-submit]'));
+  await ctx.settle(4);
+  assert.equal(answers().length, 1, 'Submit posts /api/answer');
+  const sent = JSON.parse(answers()[0].opts.body);
+  assert.equal(sent.runId, RUN_ID);
+  assert.equal(sent.id, LIVE_Q.id);
+  assert.ok(sent.payload && typeof sent.payload === 'object');
+  clickEl(live.querySelector('[data-qpanel-submit]'));
+  await ctx.settle(4);
+  assert.equal(answers().length, 1, 'a second press while the answer is in flight posts nothing more');
+});

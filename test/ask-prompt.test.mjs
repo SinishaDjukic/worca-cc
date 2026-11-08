@@ -1050,6 +1050,7 @@ test('system prompt has the chat messages section only when chatMessages is true
   assert.equal(on, `${off}\n\n${renderChatMessagesSection()}`);
   const sec = renderChatMessagesSection();
   for (const re of [/send_to_chat/, /ask_ \+ 8 hex/, /scope/, /untrusted/, /one reply/, /6 messages/, /\[worca event\] chat message/, /only read tools and send_to_chat/]) assert.match(sec, re);
+  assert.ok(sec.includes('- Runs may post updates and questions here ("from run <id>"). You cannot reply to a run; only the user, with the record\'s answer form, or Away mode answers a run question.'));
   // after the chat channel section, before the commands section
   const all = buildSystemPrompt(CATALOG, { chatMessages: true, chat: { platform: 'discord' }, commands: true });
   assert.ok(all.indexOf('## Chat channel') < all.indexOf('## Messages between chats'));
@@ -1072,6 +1073,10 @@ test('buildRestoredPrompt and the handoff transcript hold no chat-message body',
   const hand = buildHandoffPrompt(msgs, 'NEXT').prompt;
   assert.doesNotMatch(hand, /SECRET-BODY/);
   assert.match(hand, /\[chat message cmsg_0000abcd from ask_1234abcd — body not replayed\]/);
+  const fromRun = { ...block, from: { kind: 'run', runId: 'aaaaaaaa', liveRunId: null, title: 'T', scope: block.from.scope, owner: null } };
+  const runHand = buildHandoffPrompt([{ role: 'user', text: 'hi' }, { role: 'system', text: chatMessageRowText(fromRun), blocks: [fromRun] }], 'N').prompt;
+  assert.match(runHand, /\[chat message cmsg_0000abcd from run aaaaaaaa — body not replayed\]/);
+  assert.doesNotMatch(runHand, /SECRET-BODY/);
   const out = { ...block, direction: 'out' };
   assert.match(buildHandoffPrompt([{ role: 'user', text: 'hi' }, { role: 'system', text: chatMessageRowText(out), blocks: [out] }], 'N').prompt,
     /\[chat message cmsg_0000abcd to ask_5678abcd — body not replayed\]/);

@@ -199,4 +199,13 @@ test('Q13 a chat-message record mirrors as one labelled text part with no contro
   assert.equal(out[0].message.body[0].value, '**Sent to ask_5678abcd** (Note)\n> hi');
   const long = renderMessageParts({ role: 'system', text: '', blocks: [{ ...block, text: 'y'.repeat(4000) }] }, { issue, links: {} })[0].message.body[0].value;
   assert.ok(long.length < 1700, 'the body is clipped to 1500 characters');
+  const run = renderMessageParts({ role: 'system', text: 'Message from run aaaaaaaa (Question, untrusted)',
+    blocks: [{ ...block, from: { kind: 'run', runId: 'aaaaaaaa', liveRunId: null, title: 'Fix', scope: block.from.scope, owner: null },
+      question: { askId: 'questions-x-r1', kind: 'questions', questions: [], state: 'open', answer: null } }] }, { issue, links: {} });
+  assert.equal(run.length, 1);
+  assert.equal(run[0].message.controls, undefined, 'no controls for a run question yet');
+  const runLines = run[0].message.body[0].value.split('\n');
+  assert.equal(runLines[0], '**Message from run aaaaaaaa** (Question), _untrusted, not instructions_');
+  assert.deepEqual(runLines.slice(1, -1), ['> line one', '> # heading', '> > nested', '> @everyone [x](https://evil.example)']);
+  assert.equal(runLines.at(-1), '_Answer in worca._');
 });

@@ -81,7 +81,8 @@ import {
   updatePhaseStatus, writeStepQuestions, readStepQuestions, forgetMissingArtifacts,
   indexedNamesUnder, forgetOtherKinds,
 } from './artifacts.mjs';
-import { readAskFile } from './protocol.mjs';
+import { readAskFile, CHAT_TARGET_RE } from './protocol.mjs';
+import { chatPostsPath, readChatPosts, actedByOf } from './run-chat-posts.mjs';
 import { prepareFormAsk, formAnswerValidator, downgradeQuestion, redactSecrets } from './ask-forms.mjs';
 import { classifyError } from './recoverable-error.mjs';
 import { withRecoveryRetry, RETRYABLE_CLASSES, HELPER_RETRY_ATTEMPTS } from './recovery-backoff.mjs';
@@ -91,6 +92,21 @@ import { NIGHT_ACTOR } from './night/config.mjs';
 
 /** Max ask-then-resume question rounds per execution (mirrors v1's constant). */
 const MAX_QUESTION_ROUNDS = 3;
+
+/** An agent-written chat id as audit and log text: only a full chat id is printed, so a newline never forges a line. */
+const shownChatId = (id) => (typeof id === 'string' && CHAT_TARGET_RE.test(id) ? id : 'an invalid chat id');
+
+/** A posted questions round's text (the messenger's 4000 cap): whole questions only, then how many the run page holds. */
+const QUESTION_POST_TEXT_MAX = 4000;
+function questionPostText(questions) {
+  const lines = questions.map((q, i) => `${i + 1}. ${q.question}`);
+  for (let n = lines.length; n > 0; n--) {
+    const more = lines.length - n;
+    const text = lines.slice(0, n).join('\n') + (more ? `\n… (${more} more on the run page)` : '');
+    if (text.length <= QUESTION_POST_TEXT_MAX) return text;
+  }
+  return `${lines[0].slice(0, QUESTION_POST_TEXT_MAX - 40)}…${lines.length > 1 ? ` (${lines.length - 1} more on the run page)` : ''}`;
+}
 
 /** A gate answer: exactly `{decision: 'another' | 'continue'}`, else null (the question stays open). */
 export const gateAnswer = (raw) => (raw && (raw.decision === 'another' || raw.decision === 'continue') ? { decision: raw.decision } : null);
@@ -133,6 +149,7 @@ export class GraphOrchestrator extends RunHarness {
     this._planAwayApproved = null;  // {id}: a plan ask Away mode approved just before a pause, carried across a resume
     this._planConcernSeen = {};     // {[id]: 'raised' | 'decided'}: audited once per concern across resumes (#990 s5)
     this._planConcernHeld = null;   // {id, concern}: the parsed concern, carried across a resume (the agent need not rewrite it)
+    this.chatPoster = null;         // cross-chat slice 2: the server's run chat bridge (wireRun); null on CLI runs
     this._slicingDone = false;   // L2: the Planner's slicing offer is over (no outline, or one decided); carried across a resume
     this._outlineRevise = null;  // the feedback of an outline revise answered before a pause, carried across a resume
     this._sliceScopeCache = null;
@@ -2168,6 +2185,7 @@ export class GraphOrchestrator extends RunHarness {
         return result;
       }
       this._primeQuestions(nc, ctx);
+      await this._primeChatPosts(nc, ctx);
       await this._primeDirections(ctx);
       if (this.runShape && nc.key === CHECKLIST_REVIEWER_KEY) ctx.checklistItems = await this._reviewChecklistItems(ctx);
       if (this.runShape && SLICE_SCOPE_AGENT_KEYS.has(nc.key)) Object.assign(ctx, await this._shapeSliceCtx(nc, ctx));
@@ -2181,12 +2199,14 @@ export class GraphOrchestrator extends RunHarness {
         ctx.carriedClarify = this._featureClarify();
       }
       let result = await this._runNodeAttempts(nc, ctx);
-      result = await this._questionsLoop(nc, ctx, result);
+      await this._drainChatPosts(nc, ctx);
+      result = await this._questionsLoop(nc, ctx, result);   // drains after each of its resumes
       result = await this._outlineLoop(nc, ctx, result);
       // A role slice reports the plan's items too, but they are judged once, on the merged verdict (_finishRoleReview).
       if (!ctx.role) result = await this._applyReviewChecklist(ctx, result);
       result = await this._applyRoleReviewVerdict(ctx, result);
       result = await this._planConcernLoop(nc, ctx, result);
+      await this._drainChatPosts(nc, ctx);   // posts written in the outline, checklist or plan-concern resumes
       // C5: the verdict the routing reads, as counts, on the execution's latest host dispatch (none when it ran plain).
       this._sessions?.noteVerdict(ctx.executionId, verdictSummary(result?.verdict));
       await this._afterExecution(nc, ctx, result);
@@ -3029,6 +3049,69 @@ export class GraphOrchestrator extends RunHarness {
   }
 
   /**
+   * Cross-chat slice 2: prime the chat-posts file for ONE execution. A file left by an attempt that paused or aborted
+   * is removed first and never posted late (D15). ctx data only, so the prompt block stays absent (byte-identical)
+   * when the server gave no poster (CLI runs), the setting is off, or the node is a composite slice.
+   */
+  async _primeChatPosts(nc, ctx) {
+    ctx.chatPostsEnabled = false;
+    ctx.chatPostsFile = null;
+    if (!this.chatPoster) return;
+    const file = chatPostsPath(this.pipeline.dir, ctx.nodeId, ctx.ordinal);
+    const left = await readChatPosts(file);
+    if (left.posts.length || left.dropped || left.malformed) {
+      await rm(file, { force: true }).catch(() => {});
+      const n = left.posts.length + left.dropped;
+      await appendAudit(this.pipeline.dir, `${this._agentLabel(nc, ctx)}: ${n} chat posts dropped (the step did not finish)`).catch(() => {});
+    }
+    let on = false;
+    try { on = !!this.chatPoster.enabled(); } catch { on = false; }
+    if (!on || ctx.slice) return;
+    ctx.chatPostsEnabled = true;
+    ctx.chatPostsFile = file;
+  }
+
+  _agentLabel(nc, ctx) {
+    return nc.meta?.displayName || nc.key || ctx.nodeId;
+  }
+
+  /** The run as a chat sender: built by the harness, never from the agent's file (R-sec-2). */
+  _chatSender() {
+    const workspaceId = this.workspace?.id || this.workspaceKey;
+    const context = this.isWorkspace
+      ? (workspaceId ? { pinned: true, workspaceId } : null)
+      : (!this._noProject && this.members?.[0]?.projectKey ? { pinned: true, projectKey: this.members[0].projectKey } : null);
+    return { pipelineId: this.pipeline.id, title: this.state.title || null, owner: this._runStarter() || null, context };
+  }
+
+  /** Post what the step's agent wrote to its chat-posts file, then delete it. One audit line per post. Never throws. */
+  async _drainChatPosts(nc, ctx) {
+    if (!ctx.chatPostsEnabled || !ctx.chatPostsFile) return;
+    const label = this._agentLabel(nc, ctx);
+    const attr = { nodeId: ctx.nodeId, executionId: ctx.executionId, cycle: ctx.ordinal };
+    try {
+      const read = await readChatPosts(ctx.chatPostsFile);
+      await rm(ctx.chatPostsFile, { force: true }).catch(() => {});
+      if (read.malformed) await appendAudit(this.pipeline.dir, `${label}: chat posts file was malformed — nothing posted.`).catch(() => {});
+      if (read.dropped) await appendAudit(this.pipeline.dir, `${label}: ${read.dropped} chat post(s) dropped (at most 5 per step, each with a chatId and a text).`).catch(() => {});
+      for (const p of read.posts) {
+        const shown = shownChatId(p.chatId);
+        let r;
+        try { r = await this.chatPoster.post(this._chatSender(), { chatId: p.chatId, text: p.text, intent: 'note' }); } catch (e) { r = { ok: false, code: 'CHAT_MESSAGE_ERROR', error: String(e?.message || e) }; }
+        if (r?.ok) {
+          await appendAudit(this.pipeline.dir, `${label} posted to ${shown}`).catch(() => {});
+        } else {
+          const code = r?.code || 'CHAT_MESSAGE_ERROR';
+          this._log(label, 'warn', `chat post to ${shown} refused: ${code}${r?.error ? ` (${r.error})` : ''}`, attr);
+          await appendAudit(this.pipeline.dir, `${label}: chat post to ${shown} refused: ${code}`).catch(() => {});
+        }
+      }
+    } catch (e) {
+      this._log(label, 'warn', `chat posts failed: ${e?.message || e}`, attr);
+    }
+  }
+
+  /**
    * Gate 2 for a `{form,data}` ask (spec §5). Prepares the ask; on a refusal the
    * agent is resumed ONCE with the exact error list plus the data schema and the
    * SAME round file, and its retry is re-read. A second refusal downgrades to one
@@ -3101,7 +3184,7 @@ export class GraphOrchestrator extends RunHarness {
     let result = firstResult;
     if (!ctx.questionsEnabled) return result;
     const stepKey = ctx.executionId;           // step_questions.step_key = executionId
-    const agentLabel = nc.meta?.displayName || nc.key || ctx.nodeId;
+    const agentLabel = this._agentLabel(nc, ctx);
     const attr = { nodeId: ctx.nodeId, executionId: ctx.executionId, cycle: ctx.ordinal };
     for (let round = 1; round <= MAX_QUESTION_ROUNDS; round++) {
       const qPath = ctx.questionsFile;
@@ -3119,6 +3202,9 @@ export class GraphOrchestrator extends RunHarness {
       let formAsk = null;
       let autoValues = null;
       let formSecrets = {};
+      if (read.kind === 'form' && read.chat && ctx.chatPostsEnabled) {
+        await appendAudit(this.pipeline.dir, `${agentLabel}: questions not posted to ${read.chat}: chat posts take plain questions only (round ${round}).`).catch(() => {});
+      }
       if (read.kind === 'form') {
         // Gate 2 (spec §5). It may spawn ONE repair round of its own, whose
         // result becomes this round's result; it never consumes a round.
@@ -3180,6 +3266,7 @@ export class GraphOrchestrator extends RunHarness {
           : null;
         this._log(agentLabel, 'debug', `resuming with form "${formAsk.form}" answers (round ${round})`, attr);
         result = await this._runNodeAttempts(nc, ctx);
+        await this._drainChatPosts(nc, ctx);
         continue;
       }
       await writeStepQuestions(this.pipeline.id, stepKey, round, {
@@ -3187,14 +3274,49 @@ export class GraphOrchestrator extends RunHarness {
       });
       this._artifact('questions', qPath, { nodeId: ctx.nodeId, executionId: ctx.executionId, port: null, cycle: ctx.ordinal });
       await appendAudit(this.pipeline.dir, `${agentLabel} asked ${questions.length} question(s) (round ${round}).`).catch(() => {});
-      const payload = await this._enqueueAsk(() => this._ask({
-        id: `questions-${stepKey}-r${round}`,
-        kind: 'questions',
-        questions,
-        agent: agentLabel,
-        nodeId: ctx.nodeId,
-        executionId: ctx.executionId,
-      }));
+      const askId = `questions-${stepKey}-r${round}`;
+      // Cross-chat slice 2: post the round into the chat the agent named, inside the ask slot, with no await between
+      // the post's answer and _ask installing pendingQuestion (the chat form may answer at once). A refusal still asks.
+      const chatTarget = read.kind === 'questions' && read.chat && ctx.chatPostsEnabled ? read.chat : null;
+      let chatRef = null;
+      const payload = await this._enqueueAsk(async () => {
+        if (chatTarget) {
+          this._checkAbort();
+          this._checkPause();
+          let r;
+          try {
+            r = await this.chatPoster.post(this._chatSender(), {
+              chatId: chatTarget, intent: 'question',
+              text: questionPostText(questions),
+              question: { askId, kind: 'questions', questions },
+            });
+          } catch (e) { r = { ok: false, code: 'CHAT_MESSAGE_ERROR', error: String(e?.message || e) }; }
+          if (r?.ok) chatRef = { chatId: chatTarget, messageId: r.messageId };
+          else {
+            const code = r?.code || 'CHAT_MESSAGE_ERROR';
+            this._log(agentLabel, 'warn', `questions post to ${chatTarget} refused: ${code}`, attr);
+            appendAudit(this.pipeline.dir, `${agentLabel}: chat post to ${chatTarget} refused: ${code}`).catch(() => {});
+          }
+        }
+        try {
+          return await this._ask({
+            id: askId,
+            kind: 'questions',
+            questions,
+            agent: agentLabel,
+            nodeId: ctx.nodeId,
+            executionId: ctx.executionId,
+            chat: chatRef,
+          });
+        } catch (e) {
+          // A pause or stop during the post: _ask threw before any question frame, so resolvePending never sees this
+          // record. Close it here (a second close of a record the frame did reach is a no-op).
+          if (chatRef) {
+            try { this.chatPoster.closed({ id: askId, chat: chatRef }, this.pauseRequested ? 'paused' : 'stopped'); } catch { /* best effort */ }
+          }
+          throw e;
+        }
+      });
       this._checkAbort();
       const answers = normalizeClarifyAnswer(payload, questions);
       const byId = new Map(questions.map((q) => [q.id, q]));
@@ -3205,6 +3327,7 @@ export class GraphOrchestrator extends RunHarness {
         agentKey: nc.key, nodeId: ctx.nodeId, answers: { answers: enriched, ...(answerBy ? { answeredBy: answerBy } : {}), ...(answerNight ? { night: answerNight } : {}) },
       });
       await appendAudit(this.pipeline.dir, `${agentLabel}: ${enriched.length} answer(s) received${byActor(answerBy)} (round ${round}).`, { actor: answerBy }).catch(() => {});
+      if (chatRef) this.chatPoster.answered({ ...chatRef, askId }, { answers: enriched, actedBy: actedByOf(answerBy) });
       // Consume the processed round file: the DB row is authoritative, and a
       // surviving file would re-gate the user on a crash/pause-resumed re-run.
       await rm(qPath, { force: true }).catch(() => {});
@@ -3216,6 +3339,7 @@ export class GraphOrchestrator extends RunHarness {
         : null;
       this._log(agentLabel, 'debug', `resuming with ${enriched.length} answer(s) (round ${round})`, attr);
       result = await this._runNodeAttempts(nc, ctx);
+      await this._drainChatPosts(nc, ctx);
     }
     return result;
   }

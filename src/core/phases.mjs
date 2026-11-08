@@ -19,6 +19,7 @@ import { SUBAGENT_AUTO, SUBAGENT_INHERIT, SUBAGENT_MODELS, EFFORTS, effectiveSub
 import { readClarify, readReview } from './protocol.mjs';
 import { writeClarify, readClarifyRow } from './artifacts.mjs';
 import { renderDirectionsBlock } from './directions.mjs';
+import { chatPostsPromptBlock } from './run-chat-posts.mjs';
 import { basename, dirname, join } from 'node:path';
 import { LIMITS } from '../shared/workspace-map/limits.mjs';
 import { QUOTED_TEXT_NOTE, ROLE_QUOTE_LABELS } from '../shared/workspace-map/render.mjs';
@@ -895,7 +896,7 @@ export function runOpts(ctx, { role, prompt, systemPrompt, allowedTools }) {
     cwd: ctx.projectDir,
     systemPrompt,
     prompt: promptHeaderFor(ctx) + prompt
-      + questionsPromptBlock(ctx) + formRepairBlock(ctx) + directionsPromptBlock(ctx),
+      + questionsPromptBlock(ctx) + chatPostsPromptBlock(ctx) + formRepairBlock(ctx) + directionsPromptBlock(ctx),
     resumeSessionId: ctx.resumeSessionId,
     // Grant the role's baseline tools PLUS whatever the agent declared in its
     // frontmatter (e.g. the Playwright MCP browser_* tools). ctx.node is present

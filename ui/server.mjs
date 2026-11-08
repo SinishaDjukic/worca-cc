@@ -346,6 +346,7 @@ import { scopeSelectOptions } from '../src/core/chat/card-render.mjs';
 import { EventEmitter } from 'node:events';
 import { chatScopeOf, withChatScope, sameScope, scopeBody, targetInScope, scopeRefusalText, noProjectRunText, scopeEventPrompt, scopeNoticeText } from '../src/core/ask/scope.mjs';
 import { createChatMessenger } from '../src/core/ask/chat-messages.mjs';
+import { createRunChatBridge } from '../src/core/ask/run-chat-bridge.mjs';
 import { hostAllowed as askHostAllowed } from '../src/core/web-allowlist.mjs';
 import { registryPortsFn } from '../src/core/graph/registry-ports.mjs';
 import { sweepV1Runs, V1_RUN_RETIRED, getDb } from '../src/core/db.mjs';
@@ -1307,6 +1308,7 @@ function resolvePending(entry, { id = null, reason = 'resolved' } = {}) {
   if (!pq || (id && pq.id !== id)) return false;
   entry.pendingQuestion = null;
   broadcast(bufferEvent(entry, { type: 'question-resolved', id: pq.id, reason }));
+  if (pq.chat) runChatBridge.closed(pq, reason);   // a question posted into a chat closes there unless answered
   syncKeepAwake();
   return true;
 }
@@ -1453,6 +1455,7 @@ function wireRun(entry) {
   if ((entry.kind || 'run') === 'run' || entry.kind === 'workspace-run') {
     try { chatNotifier.attach(orch, { runId: id, entry }); }
     catch (err) { console.error(`[worca-ui] chat notifier attach failed: ${err && err.message ? err.message : err}`); }
+    orch.chatPoster = runChatBridge;   // cross-chat slice 2: the run's agents may post into chats
   }
 
   const record = (event) => {
@@ -9568,6 +9571,7 @@ async function startScopeEventTurn(threadId, { scope = null, text, notice, onDef
 
 // ---- cross-chat messaging (slice 1): wiring only; every guard lives in src/core/ask/chat-messages.mjs ----
 const askChatMessageQueued = new Map();   // threadId -> chat-message event turns waiting in askDeferred
+const askChatMessageQueuedFrom = new Map();   // `<threadId> <origin>` -> those of them a run post queued (slice 2)
 
 /** D20: a chat-message wake spends the target's engine and its owner's key, so it runs the user-message send gates
  *  that other event turns skip. → Promise<null | {status, error}>. */
@@ -9583,12 +9587,15 @@ const chatMessageGateDeps = { credentialGate: askCredentialGate };
  *  The wake's queue slot is reserved before the first await: send() calls this straight after its commit section, so
  *  the next send's CHAT_MESSAGE_QUEUE_MAX check already counts it while the gate awaits. A wake that starts or fails
  *  releases it; a queued one keeps it until the drain runs it (onDeferredStart). */
-async function chatMessageStartEvent(threadId, { text, notice, cause }) {
+async function chatMessageStartEvent(threadId, { text, notice, cause, origin = null }) {
+  const key = origin ? `${threadId} ${origin}` : null;
+  const bump = (map, k, d) => { const n = (map.get(k) || 0) + d; if (n > 0) map.set(k, n); else map.delete(k); };
   const release = () => {
-    const n = (askChatMessageQueued.get(threadId) || 0) - 1;
-    if (n > 0) askChatMessageQueued.set(threadId, n); else askChatMessageQueued.delete(threadId);
+    bump(askChatMessageQueued, threadId, -1);
+    if (key) bump(askChatMessageQueuedFrom, key, -1);
   };
-  askChatMessageQueued.set(threadId, (askChatMessageQueued.get(threadId) || 0) + 1);
+  bump(askChatMessageQueued, threadId, 1);
+  if (key) bump(askChatMessageQueuedFrom, key, 1);
   let r;
   try { r = await startScopeEventTurn(threadId, { scope: null, text, notice, cause, gate: chatMessageGate, onDeferredStart: release }); }
   catch (e) { release(); return { delivery: 'failed', error: e && e.message ? e.message : String(e) }; }
@@ -9609,9 +9616,15 @@ const chatMessenger = createChatMessenger({
   sharedOwner: (t) => askSharedOwner(t),
   turnCause: (id) => askInFlight(id)?.cause ?? null,
   queuedCount: (id) => askChatMessageQueued.get(id) || 0,
+  queuedFrom: (id, origin) => askChatMessageQueuedFrom.get(`${id} ${origin}`) || 0,
   startEvent: chatMessageStartEvent,
   newId: (prefix) => newAskId(prefix),
   now: () => Date.now(),
+});
+const runChatBridge = createRunChatBridge({
+  messenger: chatMessenger,
+  findLiveRun: (pid) => [...runs.values()].find((e) => e.pipelineId === pid && !SETTLED_RUN.has(e.status)) || null,
+  log: (level, msg) => console.warn(`[worca-ui] ${msg}`),
 });
 
 /** Follow a clone card's job to its end: flip the card to applied | failed and start the event turn.
@@ -10504,7 +10517,8 @@ if (isMain) {
 export { app, server, runs };
 export { AGENTS_DIR, APP_INFO, APP_REPO_URL, ASK_DEFERRED_REPLIES_MAX, ASK_SCOPE_BUSY, ASK_TEXT_PREVIEW_MAX, BRANCH_SETTLED, BUGS_SLUG, CLONE_JOBS, HOST, MARKETPLACE_ID_RE, MARKET_JOBS, NO_PR_HOST, PKG_VERSION, PLAN_TEXT_MAX, PLUGIN_NAME_RE, PORT, PROJECT_ROOT, PR_TITLE_MAX, REMOTE_MODE, RUNNING_VERSION, ResumeError, SETTLED_RUN, SETUP_AGENT_TEXT, SETUP_JOBS, SKILLS_DIR, SKILL_FOLDER_IMPORTS, SKILL_MD_UNREACHABLE, STORE_ERROR_CODES, actions, actionsEnabledHere, activeActionSnaps, adoWebhookSecret, afterMembersChanged, afterProjectRegistered, agentErrorStatus, agentMayBeCaller, answerRun, applyProjectSettingsPatch, applySettingsPatch, askBusyReason, askChatActions, askChatEngine, askChatEngineGate, askChatMessageBridges, askCommandBridges, askCommands, askCommandsEnabled, askContextTokens, askCredentialGate, askDeferred, askDeferredReplies, askDeleting, askEngineSwitchText, askEventPick, askFilesRunDir, askFilesStoreDir, askFollowers, askGroupFor, askGroupThreads, askIdParam, askInFlight, askLiveRun, askProxyBridges, askRefResolver, askRelays, askRunFromPipelineRow, askRunningCount, askSignedIn, askSwitchTranscript, askThreadVisible, askTrackingCount, askTurnEngine, askValidateScope, askViewer, askWebAccessFor, askWorktreesEnvelope, autoDetectedBuiltins, automationWorkspaceMembers, automations, awayPersonOf, badRequest, bareWorkspaceKey, bearerMatches, broadcast, broadcastFeature, brokerStartRefusal, builtins, busyActionRunIds, channelHost, chatGroupError, chatMessenger, chatNotifier, chatRefusals, checkoutRecOf, commentIdParam, commentsCreate, commentsDelete, commentsFail, commentsList, commentsPatch, commentsReply, createRunPr, crosslinkMemberPrs, currentUpdateEligibility, defaultPrRemotes, deleteAskThreadFully, detectSystemProxyImpl, detectTeamMemorySoon, drainServer, effectiveUiLevel, egressNow, emitAskWorktrees, emitChanged, emitMemoryChanged, emitPluginsChanged, ensureSetup, extensionPairing, factDeps, failedEventTurn, featureShipping, findScheduleItem, findShipCardIn, flipCard, followCloneCard, forkPrRefusal, fsAllowedRoots, fsLimitedHere, gitMissing, isFinishingRun, isFreshInstall, isLiveRun, isPlainObject, isPrStoreKey, isTruthy, kickAutomations, kickPrWatch, labelsOn, lastUpdateResult, liveAutoRescan, liveDefragRun, liveDiffOf, livePr, liveProbe, liveRunEntry, liveRunIds, liveSliceOf, marketJobFailure, mcpRunPreview, mcpTargetOf, memberFor, memoryError, modelTestsInFlight, namingBucket, namingCatalog, namingOn, namingPick, noRawCommand, notifReader, openMemberPr, ownsWorkspaceTarget, parseMcpOptOut, pauseRun, pickPrRemotes, pinUiLevel, postAskSystemNotice, postDirection, prTargetFor, prWatchFrame, prWatcher, presetCheckCtx, presetScopeOf, primaryMemberOf, projectAutomationRepo, projectDirForKey, projectSettingsState, proxyHost, pruneMarketJobs, prunedNote, publicCloneJob, readInstalledManifest, refuseAgentCaller, refuseSignedOutClaude, registeredProjectForDir, rejectRawTerminalFields, removeRecommendation, requireActions, requireFsAllowed, requireTerminal, resolvePrPipeline, resolveProjectDir, resolveRunScope, resumeEngineOpts, resumeRun, resumeTargetDirs, runGroupIds, runSourceIssue, scanModelsFor, scanRequest, scheduleVerb, sendArtifactRaw, sendCheckoutError, sendMetricsError, sendPolicyError, sendPresetError, serveAskFile, serverMockMode, settleShipped, setupJobs, setupProbesOverride, shipChainNow, shipCtxOf, shipFeatureNow, skillRunPreview, snapshotFor, sockets, stackStates, stackTokens, startAgentGen, startAskTurn, startCloneJob, startMetricsEventTurn, startOrQueue, startRunAs, startRunHandler, startScopeEventTurn, startScriptBench, stopCheckoutServices, stopMemberServices, stopPausedPipeline, stopRun, switchThreadScope, syncMode, syncProjectAction, syncRoute, teamOriginOk, teamWarn, terminalCallerOk, terminalEnabledHere, terminalError, terminalSameOrigin, terminals, tmProject, uiControl, unsyncableBlock, updateChecker, updatePort, updatePreview, validateResumeTarget, versionLister, versionPayload, webhookSecret, withAfter, workspaceMembersBusy };
 export const _testing = {
-  askChatMessageBridge, askChatMessageExtraDeps, askChatMessageQueued, chatMessageStartEvent, chatMessageGate,
+  runChatBridge,
+  askChatMessageBridge, askChatMessageExtraDeps, askChatMessageQueued, askChatMessageQueuedFrom, chatMessageStartEvent, chatMessageGate,
   chatMessageGateDeps, askTurnResolvers,
   chatBridge, invokeAskCard, askBus, chatAgentModeFor, chatTurnIdentity,
   updateChecker,

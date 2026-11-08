@@ -291,3 +291,58 @@ test('Q22 a chat-message system row renders through buildChatMessage; an unknown
   assert.match(ctx.doc.querySelector('.ask-msg-system .ask-chat-msg-foot').textContent, /Replied/, 'the patched row rebuilt with no reload');
   ctx.panel.destroy();
 });
+
+// ── cross-chat messaging slice 2: a run's record in the real panel (the run chip, the forwarded painter, U7) ─────────
+test('a run record decorates its chip into a run chip and forwards paintRunQuestion; U7 a typed draft survives a row rebuild while the question stays open', async () => {
+  const TID = 'ask_00000002';
+  const Q = { askId: 'questions-x:n_plan:1-r1', kind: 'questions', questions: [{ id: 'q1', question: 'Which storage?', options: ['Redis', 'Postgres'], allowFreeText: true }], state: 'open', answer: null };
+  const BLOCK = { kind: 'chat-message', id: 'cmsg_0000beef', direction: 'in', intent: 'question', text: '1. Which storage?', conversationId: 'cxm_0000beef',
+    hop: 1, maxHops: 6, replyTo: null, repliedWith: null,
+    from: { kind: 'run', runId: 'aaaaaaaa', liveRunId: '11111111-2222-3333-4444-555555555555', title: 'Fix login', scope: { kind: 'project', key: 'k1', label: 'worca-cc' }, owner: null },
+    to: { chatId: TID, title: 'T' }, sentAt: 't', question: Q };
+  const row = (b, createdAt = 't') => ({ id: 'askm_s0000002', threadId: TID, seq: 1, role: 'system', text: 'Message from run aaaaaaaa (Question, untrusted)', blocks: [b], status: null, createdAt });
+  const resolves = [];
+  const painted = [];
+  const paintRunQuestion = (ref, host) => {
+    painted.push(ref);
+    const panel = host.querySelector('.qpanel');
+    if (!panel.querySelector('textarea')) { panel.classList.remove('hidden'); panel.appendChild(host.ownerDocument.createElement('textarea')); }
+    return true;
+  };
+  const ctx = makePanel({ deps: { paintRunQuestion }, fetchHandler: (url, opts) => {
+    const method = ((opts || {}).method || 'GET').toUpperCase();
+    if (url === `/api/ask/threads/${TID}` && method === 'GET') {
+      return { ok: true, status: 200, json: async () => ({ thread: { id: TID, title: 'T', createdAt: 't', updatedAt: 't', model: null, effort: null, sessionId: null, context: null, totals: {} },
+        messages: [row(BLOCK)], attachments: [], runLinks: [], worktrees: [], inFlight: null }) };
+    }
+    if (url === '/api/ask/refs/resolve') {
+      const body = JSON.parse(opts.body);
+      resolves.push(body);
+      return { ok: true, status: 200, json: async () => ({ refs: Object.fromEntries(body.refs.filter((r) => r === 'run:aaaaaaaa').map((r) => [r, { ok: true, kind: 'run', id: 'aaaaaaaa', runId: null, title: 'Fix login', status: 'running', home: 'k1' }])) }) };
+    }
+    return { ok: true, status: 200, json: async () => ({}) };
+  } });
+  ctx.storage.setItem('worca-cc.ask.thread', TID);
+  ctx.panel.open();
+  for (let i = 0; i < 8; i++) await ctx.tick();
+  ctx.flush();
+  const rec = ctx.doc.querySelector('.ask-msg-system .ask-chat-msg.ask-chat-msg-in');
+  assert.ok(rec);
+  assert.ok(resolves.some((b) => b.refs.includes('run:aaaaaaaa')), 'the bare run id went to the ref chips');
+  for (let i = 0; i < 4; i++) await ctx.tick();
+  ctx.flush();
+  assert.ok(ctx.doc.querySelector('.ask-msg-system .ask-chat-msg-head a.ask-ref-chip-run'), 'decorated into a run chip');
+  assert.deepEqual(painted[0], { runId: BLOCK.from.liveRunId, pipelineId: 'aaaaaaaa', askId: Q.askId }, 'the panel forwards its painter');
+  ctx.doc.querySelector('.ask-chat-msg-q .qpanel textarea').value = 'my draft';
+
+  // U7: the same row comes again with the question still open (another field changed, so the row itself rebuilds).
+  ctx.panel.pushServerFrame({ type: 'ask-message', threadId: TID, message: row(BLOCK, 't2') });
+  ctx.flush(); await ctx.tick(); ctx.flush();
+  assert.equal(ctx.doc.querySelector('.ask-chat-msg-q .qpanel textarea')?.value, 'my draft', 'the draft survives');
+
+  ctx.panel.pushServerFrame({ type: 'ask-message', threadId: TID, message: row({ ...BLOCK, question: { ...Q, state: 'answered', answer: { actedBy: { kind: 'person', label: 'ada@x' }, answers: [], at: 't' } } }, 't3') });
+  ctx.flush(); await ctx.tick(); ctx.flush();
+  assert.equal(ctx.doc.querySelector('.ask-chat-msg-q .qpanel'), null, 'the form is gone');
+  assert.equal(ctx.doc.querySelector('.ask-chat-msg-q [role="status"]').textContent, 'Answered by ada@x');
+  ctx.panel.destroy();
+});

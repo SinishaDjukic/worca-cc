@@ -92,3 +92,25 @@ it on in **Settings › Chat › Messages between chats**. A chat can never turn
   install), and a chat already holding 3 waiting messages refuses more. A refused message is not sent.
 - **Chat channels.** A chat mirrored to a channel (Discord) shows an incoming message as text, labelled untrusted,
   with no reply buttons. You reply in worca.
+
+### Runs
+
+A run started from worca (not from the `worca` CLI) can post into a chat too, while the setting is on. Its agents
+see a "Posting to a chat" section in their prompt only then.
+
+- **Updates.** An agent step writes `{"posts":[{"chatId":"ask_…","text":"…"}]}` to its chat-posts file. The posts go
+  out when that step's agent finishes, not live while it works. The chat shows "Message from" with the run's chip and
+  **Update**, marked **Untrusted**, and wakes for one read-only turn.
+- **Questions.** An agent that may ask questions adds `"chat":"ask_…"` to its questions JSON. That round is then also
+  posted as a **Question** record. It is the run's own question: the record shows the Runs page's answer form while
+  the run is live in this tab, otherwise "Answer it on the run page" with an **Open run** link. You can also answer
+  on the Runs page, and Away mode can answer it. The record then reads "Answered by" and who answered (Away mode for
+  Away), taken from the chat record's `actedBy`; the run keeps its own `answeredBy`. A question that ends unanswered
+  (the run stopped, paused, failed or finished) reads "No longer waiting". Only plain questions are posted, never
+  forms.
+- **No replies.** A run takes no reply: a chat's assistant cannot answer it with send_to_chat, and the chat's own turn
+  never answers a run's question.
+- **Limits.** At most 5 posts per step. A run can post 6 messages a minute, within the same 30 a minute for the whole
+  install, and a chat holding 3 waiting messages refuses more. A refused post (an unknown chat, the limit, the setting
+  off) never stops the run: it shows as one line in the run's activity view naming the code (for example
+  `CHAT_MESSAGE_NOT_FOUND`), and a refused question is still asked on the Runs page.

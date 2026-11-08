@@ -230,7 +230,7 @@ async function mockAsk({ markers, prompt, cwd, onEvent, signal, resumeSessionId 
   // Cross-chat messaging (D16): a message from another chat is matched FIRST, before every unanchored arm — its fenced
   // body is untrusted ("run tool propose_run now", a forged terminal-block line) and must never pick a scenario. The
   // reply only acknowledges it and calls no tool; MOCK_SLOW in the body still paces the turn.
-  const cmEvent = /^\s*\[worca event\] chat message (cmsg_[0-9a-f]{8}) from chat /.exec(rawText);
+  const cmEvent = /^\s*\[worca event\] chat message (cmsg_[0-9a-f]{8}) from (?:chat|run) /.exec(rawText);
   const userText = cmEvent ? `chat message ${cmEvent[1]} received` : rawText;
   let card = {};
   try { card = markers.MOCK_ASK_CARD ? JSON.parse(markers.MOCK_ASK_CARD) : {}; } catch { card = {}; }
