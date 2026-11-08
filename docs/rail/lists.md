@@ -4,6 +4,7 @@
 |---|---|---|---|
 | `list.sentence` | What a list shows is a sentence above it, never a filter button | Narrowed the same way everywhere | by hand |
 | `list.sections` | Sections in a fixed order; empty ones not drawn; a long one shows less, never folds | Nothing hides | design-system-components |
+| `list.fold-keeps-current` | The row you are on never folds behind Show N more; a group that holds it starts open | You never lose your place | worca-sweep |
 | `list.row-one-target` | The whole row opens one target; a fact in it is text | No second links in a row | by hand |
 | `list.select` | Selecting works one way in every list that has it | One habit | design-system-logic |
 | `list.one-code` | A list calls the library for its sentence, selecting, keys and states; rail-gate sees its rows' markup only, the rest is by review | A list cannot drift | rail-gate |
@@ -26,7 +27,7 @@ the same way, from the library (`byPart`, `BY_CHOICES`): **by date by default** 
 then Today, Yesterday, Previous 7 days, Previous 30 days, Older; what is still to come by its next run: Today, Tomorrow,
 This week, Later), then state, project, topic and AI topics where a list has them, always in that order and those words.
 A date section folds from its head (a chevron turns) and stays folded for that list; What waits on you never folds. A long
-section shows its newest rows, then one quiet row, `Show 21 more`, opens the rest in place (Older shows 3). What the list shows is a sentence above it (`Showing [unread ▾] from [all groups ▾]`), not a
+section shows its newest rows, then one quiet row, `Show 21 more`, opens the rest in place (Older shows 3). The row you are on never folds behind it: it stays under the first rows, so a chat that moved (merged, answered) is still where you look (`list.fold-keeps-current`). What the list shows is a sentence above it (`Showing [unread ▾] from [all groups ▾]`), not a
 filter button; grouping is one more word in it (`by [day ▾]`), each choice in its menu with its count. Every
 list (Runs, Chats, Pulse's Now and Updates, Schedules) uses this one sentence, so a list is narrowed the same way everywhere. Selecting is only for a list whose rows a person can act on together (Runs, Chats, Pulse's Updates); a list of states that leave by themselves (Pulse's Now) has the sentence and no selection. Selecting works the same in every list that has it. You start it from the list's menu
 (`Select`), with ⌘ or Ctrl-click, with Shift-click for a range, with Space or ⌘A, or with a long-press on touch.

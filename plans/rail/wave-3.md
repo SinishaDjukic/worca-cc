@@ -203,7 +203,9 @@ Still open from round 5 (next pass):
 - The full page's mock facts (cost, time, plan, activity) still come from its case's sample; the card is the truth.
   Retire the page into the card (its functions as card rows) rather than patch the sample.
 - The card's ⋯ and the page's ⋯ offer different actions: one list, from the library.
-- Merge's confirm repeats the Merge PR button under the card; a merged chat folds into Show more and is lost.
-- A failed task offers only Restart: add Ask Worca to fix it and Show the log as the card's own actions.
 - Appearance: unlabelled theme and background swatches; Settings has no Appearance section and no way back but the menu.
-- New here: nothing on the first screen points to Getting started (it is pinned, but under Needs you).
+
+Since: while a confirm asks, its row holds the one button (no second Merge PR); the row you are on never folds behind
+Show N more (`list.fold-keeps-current`, in the sweep); a failed card's ⋯ leads with Ask Worca to fix it (a follow-up
+with what failed already written) and Show the log; the first screen says "What's next?" and, until you have signed in,
+points to Getting started; a follow-up's box is the card's width.

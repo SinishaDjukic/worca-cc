@@ -80,7 +80,7 @@ export function listController({ root, spec }) {
   const FOLD_KEY = `worca-rail.fold.${spec.noun}`;
   try { JSON.parse(win.localStorage.getItem(FOLD_KEY) || '[]').forEach((id) => s.shut.add(id)); } catch { /* a remembered fold is a convenience */ }
   const keepShut = () => { try { win.localStorage.setItem(FOLD_KEY, JSON.stringify([...s.shut])); } catch { /* as above */ } };
-  const groupOpen = (r) => (s.groups.has(r.key) ? s.groups.get(r.key) : !!r.open);
+  const groupOpen = (r) => (s.groups.has(r.key) ? s.groups.get(r.key) : !!r.open || !!r.holds);   // a group that holds the row you are on starts open (list.fold-keeps-current)
 
   function rowHtml(r) {
     const selecting = s.pick.on;
@@ -109,9 +109,11 @@ export function listController({ root, spec }) {
     const ready = !v.state || v.state === 'ready';
     const groups = ready ? v.sections.map((x) => {
       const shut = x.fold && s.shut.has(x.id);
-      const limit = x.limit || LIST_SHOWN, all = s.more.has(x.id) || x.rows.length <= limit, rows = shut ? [] : all ? x.rows : x.rows.slice(0, limit);
+      const limit = x.limit || LIST_SHOWN, all = s.more.has(x.id) || x.rows.length <= limit;
+      // the row you are on never folds behind Show N more: it stays under the first ones (docs/rail/lists.md › list.fold-keeps-current)
+      const rows = shut ? [] : all ? x.rows : [...x.rows.slice(0, limit), ...x.rows.slice(limit).filter((r) => r.current || r.holds)];
       const walk = (r) => { s.order.push(r.key); (r.tree || []).forEach(walk); if (r.members && groupOpen(r)) r.members.forEach(walk); }; rows.forEach(walk);
-      return { title: x.title, count: x.rows.length, chip: x.chip, rows: shut ? [''] : rows.map(rowHtml), fold: x.fold ? { open: !shut, attrs: { 'data-fold-section': x.id } } : null, more: all || shut ? null : { n: x.rows.length - limit, attrs: { 'data-more': x.id } } };
+      return { title: x.title, count: x.rows.length, chip: x.chip, rows: shut ? [''] : rows.map(rowHtml), fold: x.fold ? { open: !shut, attrs: { 'data-fold-section': x.id } } : null, more: all || shut || rows.length >= x.rows.length ? null : { n: x.rows.length - rows.length, attrs: { 'data-more': x.id } } };
     }) : [];
     s.pick = selectPrune(s.pick, [...s.rows.keys()]);
     const shown = s.order;

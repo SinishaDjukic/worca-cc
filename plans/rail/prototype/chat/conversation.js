@@ -40,6 +40,8 @@
   const where = opts.where || (side ? '#ask-convo' : '#route-chat');
   let chatId = '', comp = fresh(opts.mode), menu = '', hover = null, opened = new Set(), timer = 0;
   const chat = () => data().chats.find((c) => c.id === chatId);
+  // the first screen points a newcomer to Getting started until its sign-in is done; then it says nothing
+  const newHere = () => { const gs = data().chats.find((c) => c.id === 'c0' && !c.archived); if (!gs || threads.get('c0')?.find((y) => y.id === 'g1')?.done) return ''; return `<p class="chat-home-new">New here? ${R.textLink({ label: 'Getting started', attrs: { 'data-back-to': 'chat/c0', title: 'Opens Getting started: sign in, add a project, then your first task' } })} signs you in and adds your first project.</p>`; };
   const turns = () => { const c = chat(); if (!c) return []; if (!threads.has(c.id)) threads.set(c.id, M.thread(c)); return threads.get(c.id); };
   const allTasks = (c) => { const out = []; const walk = (x) => { out.push(x); (x.after || []).forEach(walk); }; (c?.tasks || []).forEach(walk); return out; };
   const taskOf = (id) => allTasks(chat()).find((t) => t.id === id);
@@ -162,10 +164,11 @@
   function cardAct(t, label) {
     if (!label) return;
     const ctx = { ...CTX, step: STAGES[t.stage] || 'the current step', value: '{value}' }, live = R.runFlow(ctx);   // {value} is the form's choice, filled when you act
-    const ANY = { Pause: live.pauseNow, Stop: live.stop, 'Report this task': live.report, Archive: live.archive, 'Save as preset': { dialog: 'preset', say: `Saved as a preset: ${t.title}` }, 'Run after…': { dialog: 'after', say: `Runs after ${t.title}` }, 'Start a follow-up': { followUp: true }, 'Label…': { label: true }, 'Move to group…': { dialog: 'group', say: `${t.title} moved to the group` } };
+    const ANY = { Pause: live.pauseNow, Stop: live.stop, 'Report this task': live.report, Archive: live.archive, 'Save as preset': { dialog: 'preset', say: `Saved as a preset: ${t.title}` }, 'Run after…': { dialog: 'after', say: `Runs after ${t.title}` }, 'Start a follow-up': { followUp: true }, 'Ask Worca to fix it': { followUp: true, fix: true }, 'Show the log': { page: true }, 'Label…': { label: true }, 'Move to group…': { dialog: 'group', say: `${t.title} moved to the group` } };
     const f = R.actionFlow(RM.stateOf(t.case), ctx)[label] || ANY[label];
     if (!f) { say(label); return; }
-    if (f.followUp) { const x = turns().find((y) => y.task === t.id && y.t === 'task'); if (x) { x.asking = true; paint(); root.querySelector(`[data-ask-changes="${x.id}"]`)?.focus(); } return; }   // a follow-up is asked under the card, tied to this task
+    if (f.page) { window.RailShell.openTaskPage(t.case, chatId, t.title); return; }   /* the log lives on its page, under What broke */
+    if (f.followUp) { const x = turns().find((y) => y.task === t.id && y.t === 'task'); if (x) { x.asking = true; if (f.fix) x.askValue = `Fix what failed: ${(t.why || []).map((w) => w.replace(/^✗\s*/, '')).join('; ') || t.detail}`; paint(); root.querySelector(`[data-ask-changes="${x.id}"]`)?.focus(); } return; }   // a follow-up is asked under the card, tied to this task
     if (f.dialog) { taskList().forEach((y) => { y.form = null; }); t.confirm = null; t.form = { label, kind: f.dialog, flow: f, value: FORMS[f.dialog]?.value(t) ?? '' }; paint(); root.querySelector(`[data-card-form="${t.id}"] input, [data-card-form="${t.id}"] textarea`)?.focus(); return; }   // what dev asks in a dialog, asked under the card, with its choices
     if (f.confirm) { t.confirm = { label, text: f.confirm, flow: f }; paint(); return; }
     doAct(t, label, f);
@@ -220,7 +223,7 @@
     return l.map((y, k) => { const h = turnHtml(y, k); return k === last ? h : h.replace(/ btn-primary"/g, '"'); }).join('');
   }
   // Ask for changes, under the card it is about: a field, Send changes, Not now
-  const askChanges = (x) => (x.asking ? `<div class="ask-changes">${R.field({ id: `chg-${x.id}`, label: 'What should change', quietLabel: true, placeholder: 'What should change?', multiline: true, attrs: { 'data-ask-changes': x.id } })}<span class="tp-actions">${R.button({ label: 'Send changes', kind: 'primary', attrs: { 'data-changes-send': x.id } })}${R.button({ label: 'Not now', kind: 'quiet', attrs: { 'data-changes-cancel': x.id } })}</span></div>` : '');
+  const askChanges = (x) => (x.asking ? `<div class="ask-changes">${R.field({ id: `chg-${x.id}`, label: 'What should change', quietLabel: true, placeholder: 'What should change?', value: x.askValue || '', multiline: true, attrs: { 'data-ask-changes': x.id } })}<span class="tp-actions">${R.button({ label: 'Send changes', kind: 'primary', attrs: { 'data-changes-send': x.id } })}${R.button({ label: 'Not now', kind: 'quiet', attrs: { 'data-changes-cancel': x.id } })}</span></div>` : '');
   function proposalHtml(x) {
     if (x.later) return R.turnRow({ mark: R.kindMark({ kind: 'task', tone: 'idle', size: 16 }), text: `Not now: <b>${esc(x.title)}</b>`, end: R.button({ label: 'Bring back', kind: 'quiet', attrs: { 'data-pp-back': x.id } }) });
     const pp = (f, text, items, tip) => R.sentencePicker({ id: `pp-${x.id}-${f}`, text, tip, items: items.map((v) => (typeof v === 'string' ? { id: v, text: v, checked: v === text } : v.id ? { ...v, checked: v.id === text } : v)), open: menu === `pp-${x.id}-${f}`, chevron: R.icon('chevron', 10) });
@@ -357,11 +360,11 @@
     // Its one action and ⋯ are its state's own, as on its page; a question is answered under the card.
     // a live task with no step of its own to offer can always be paused or stopped from its card, as on dev's chat card
     const live = tone === 'run' && !st.action;
-    const main = below ? '' : st.action ? R.button({ label: st.action.label, kind: (st.action.primary || taskWaits(x)) && !t.confirm && !t.form ? 'primary' : '', attrs: { 'data-card-act': `${t.id}|${st.action.label}` } })
+    const main = below || t.confirm ? '' : st.action ?   /* while a confirm asks, its row holds the one button */ R.button({ label: st.action.label, kind: (st.action.primary || taskWaits(x)) && !t.confirm && !t.form ? 'primary' : '', attrs: { 'data-card-act': `${t.id}|${st.action.label}` } })
       : live ? R.button({ label: 'Pause', attrs: { 'data-card-act': `${t.id}|Pause`, title: 'Stops at once; Resume starts the current step again' } }) : '';
     // the card's ⋯: its state's own steps, then what any task can do, named as on its page (one ⋯, the same words)
     const done = ['ok', 'merged', 'stop', 'closed', 'idle'].includes(tone);
-    const more = cardMore(t, [...(st.action?.items || []).filter((w) => typeof w === 'string'), ...(live ? [{ id: 'Stop', text: 'Stop', danger: true, help: 'Asks first; the branch and changes stay' }] : []), { sep: true },
+    const more = cardMore(t, [...(tone === 'fail' ? [{ id: 'Ask Worca to fix it', text: 'Ask Worca to fix it', help: 'A follow-up on its branch, with what failed already written' }, { id: 'Show the log', text: 'Show the log', help: 'Opens its page at What broke, with the log' }] : []), ...(st.action?.items || []).filter((w) => typeof w === 'string'), ...(live ? [{ id: 'Stop', text: 'Stop', danger: true, help: 'Asks first; the branch and changes stay' }] : []), { sep: true },
       ...(done ? [{ id: 'Start a follow-up', text: 'Start a follow-up', help: 'A new task on this one’s branch, with what you ask' }] : []), { id: 'Run after…', text: 'Run after…', help: 'Another task starts when this one finishes' },
       { id: 'Label…', text: 'Label…', help: 'Adds a label to this task' }, { id: 'Move to group…', text: 'Move to group…', help: 'Tracks it with related tasks' }, { id: 'Save as preset', text: 'Save as preset', help: 'Starts the next task with this one’s setup' },
       ...(done ? [{ id: 'Report this task', text: 'Report this task', help: 'Asks for a note, then sends it with the logs to the Worca team' }, { id: 'Archive', text: 'Archive', help: 'Removes the branch, worktree and logs; the remote branch and PR stay' }] : []),
@@ -409,7 +412,7 @@
     if (had && keepText) comp.text = had.value;
     const c = chat();
     if (!chatId || !c) {
-      root.innerHTML = side ? `<div class="chat-home"><div class="chat-home-in">${composerHtml()}</div></div>` : `<div class="chat-home" data-home><div class="chat-home-in"><h1>${esc(opts.title || 'What\'s next for Worca?')}</h1>${composerHtml()}${opts.mode ? '' : startersHtml()}</div></div>`;
+      root.innerHTML = side ? `<div class="chat-home"><div class="chat-home-in">${composerHtml()}</div></div>` : `<div class="chat-home" data-home><div class="chat-home-in"><h1>${esc(opts.title || 'What\'s next?')}</h1>${composerHtml()}${opts.mode ? '' : startersHtml() + newHere()}</div></div>`;
     } else {
       const labels = (c.labels || []).map((l) => R.chip({ text: l })).join('');
       root.innerHTML = `<div class="convo"><div class="convo-scroll"><div class="convo-col"><div class="convo-head">${esc(c.project || 'No project')}${labels ? ` · ${labels}` : ''}${R.sentencePicker({ id: 'cl-label', text: '+ Label', tip: 'Adds or removes a label', body: R.listEditor({ label: 'Labels', inputId: 'cl-label-q', placeholder: 'Find or make a label', sections: [{ title: 'Labels', kind: 'label', many: true, rows: LABELS.filter((l) => l.includes(labelQ.toLowerCase())).map((l) => ({ text: l, n: '', on: (c.labels || []).includes(l) })) }], hint: labelQ && !LABELS.includes(labelQ.toLowerCase()) ? `Enter makes “${labelQ.toLowerCase()}”` : '' }), open: menu === 'cl-label', chevron: '' })}<span class="tl-list-btn rc-pop" data-anchor-menu>${R.button({ label: 'Move through this chat', kind: 'quiet', iconOnly: true, icon: R.icon('list', 15), attrs: { 'data-anchor-open': '', 'aria-haspopup': 'menu', 'aria-expanded': String(menu === 'anchors') } })}</span></div>${calmCards(turns())}</div></div><div data-timeline></div><div class="convo-dock">${R.button({ label: 'Latest', kind: 'quiet', icon: R.icon('chevron', 12), cls: 'jump-latest', attrs: { 'data-jump-latest': '', title: 'Back to the newest turn' } })}${composerHtml()}</div></div>`;
@@ -609,8 +612,8 @@
       if (t) { Object.assign(t, { kind: 'feature', case: 'working', stage: 1, detail: 'Build · slice 1 of 2' }); l.splice(l.indexOf(own), 1); put(chat(), t); }   // its planning card gives way to the feature below
       l.splice(l.indexOf(px) + 1, 0, { t: 'feature', id: `f${Date.now().toString(36)}`, title: px.title, slices: [{ title: `${clip(px.title, 40)}: the change`, case: 'working', stage: 1, detail: 'Build' }, { title: `${clip(px.title, 40)}: its rollout`, case: 'scheduled', stage: -1, detail: 'After the change' }] }); paint(); say('Approved: the plan is being built'); return; }
     if ((px = pp('data-plan-changes'))) { px.asking = true; paint(); root.querySelector(`[data-ask-changes="${px.id}"]`)?.focus(); return; }
-    if ((px = pp('data-changes-cancel'))) { px.asking = false; paint(); return; }
-    if ((px = pp('data-changes-send'))) { const v = root.querySelector(`[data-ask-changes="${px.id}"]`)?.value.trim(); if (!v) { say('Say what should change first'); return; } px.asking = false; const l = turns();
+    if ((px = pp('data-changes-cancel'))) { px.asking = false; px.askValue = ''; paint(); return; }
+    if ((px = pp('data-changes-send'))) { const v = root.querySelector(`[data-ask-changes="${px.id}"]`)?.value.trim(); if (!v) { say('Say what should change first'); return; } px.asking = false; px.askValue = ''; const l = turns();
       if (px.kind === 'Requirements') {   // your change goes into the requirements, which wait for your OK again
         px.rows = [...(px.rows || []), { name: 'Your change', before: '', after: v }];
         l.splice(l.indexOf(px) + 1, 0, { t: 'you', id: `y${Date.now().toString(36)}`, text: v, when: 'now' });
