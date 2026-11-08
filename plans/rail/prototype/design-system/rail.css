@@ -1157,7 +1157,7 @@ th.rt-c{color:var(--ink-2);font-weight:500;}
 .turn-row button.tr-line:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 .tr-mark{display:grid;place-items:center;color:var(--ink-3);}
 .tr-text{min-width:0;color:var(--ink-2);}.tr-text b{font-weight:500;color:var(--ink);}
-.tr-end{font-size:var(--fs-meta);color:var(--ink-3);white-space:nowrap;}
+.tr-end{font-size:var(--fs-meta);color:var(--ink-2);white-space:nowrap;}   /* readable: never ink-3 (look.type-roles) */
 .tr-body{margin:6px 0 0 32px;padding:8px 10px;border-radius:var(--r-sm);background:var(--field);font:12px/18px var(--mono,'JetBrains Mono',ui-monospace,monospace);white-space:pre-wrap;}
 .convo-acts{display:flex;gap:12px;margin-left:32px;font-size:var(--fs-meta);color:var(--ink-3);}
 .convo-card{padding:12px 14px;border:1px solid var(--line);border-radius:var(--r-md);}
@@ -1238,7 +1238,7 @@ th.rt-c{color:var(--ink-2);font-weight:500;}
 .stage-bar.is-ask,.stage-bar.is-act{color:var(--amber);}.stage-bar.is-fail{color:var(--red);}.stage-bar.is-ok{color:var(--green);}.stage-bar.is-merged{color:var(--violet);}.stage-bar.is-pause,.stage-bar.is-stop,.stage-bar.is-closed,.stage-bar.is-wait{color:var(--ink-3);}
 .sb-cells,.sb-labels{display:grid;grid-template-columns:repeat(var(--n,5),1fr);gap:4px;}   /* ds-ok: a size or count the component sets on itself */
 .sb-cells i{display:block;height:4px;border-radius:2px;background:var(--line);}   /* ds-ok: a hairline's own end */
-.sb-labels{margin-top:4px;font-size:var(--fs-caption);color:var(--ink-3);}
+.sb-labels{margin-top:4px;font-size:var(--fs-caption);color:var(--ink-2);}
 .sb-labels b{font-weight:500;color:var(--ink);}
 .schedule-page{max-width:680px;margin:0 auto;padding:20px 56px 24px 24px;}
 .schedule-page .tt{margin:0;font:600 var(--fs-subpage)/1.3 var(--sans);letter-spacing:-.02em;}
@@ -1270,7 +1270,7 @@ th.rt-c{color:var(--ink-2);font-weight:500;}
 .page-bg .chat-home-bg{position:absolute;inset:0;}
 @media (max-width: 1180px){ .page-bg{display:none;} }
 .stage-stream{display:flex;flex-direction:column;gap:8px;padding-top:10px;}
-.stage-line.is-next .tr-text b{font-weight:400;color:var(--ink-3);}
+.stage-line.is-next .tr-text b{font-weight:400;color:var(--ink-2);}   /* a stage still to come reads quieter, never ink-3 */
 .stage-line .rc-zone{margin-top:6px;}
 .stage-line > .rc-zone > *{grid-column:1 / -1;}
 
@@ -1288,8 +1288,8 @@ th.rt-c{color:var(--ink-2);font-weight:500;}
 .stage-part{margin:6px 0 0 32px;}
 .stage-parts{display:flex;gap:4px;flex-wrap:wrap;margin:6px 0 0 30px;}
 /* StagePart: a part at its stage's end, saying what is inside; its chevron turns when it is open under the stage. */
-.stage-part-b{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 8px;border:0;border-radius:var(--r-sm);background:none;color:var(--ink-3);font:400 var(--fs-caption)/1 var(--sans);cursor:pointer;white-space:nowrap;}
-.stage-part-b b{font-weight:500;color:var(--ink-2);}
+.stage-part-b{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 8px;border:0;border-radius:var(--r-sm);background:none;color:var(--ink-2);font:400 var(--fs-caption)/1 var(--sans);cursor:pointer;white-space:nowrap;}
+.stage-part-b b{font-weight:500;color:var(--ink);}
 .stage-part-b svg{flex:none;transition:transform var(--motion-quick) var(--ease);}
 .stage-part-b:hover{background:var(--hover);color:var(--ink-2);}
 .stage-part-b:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
@@ -1354,7 +1354,7 @@ th.rt-c{color:var(--ink-2);font-weight:500;}
 /* ThinkingRow: one line, what it does now, a slow light passing through it; its seconds at the end; done, its steps
    fold under it as plain lines on the rail, not code. */
 @keyframes think-light{from{background-position:120% 0;}to{background-position:-20% 0;}}
-.think-w{font-weight:500;color:var(--ink-3);background:linear-gradient(90deg,var(--ink-3) 35%,var(--ink) 50%,var(--ink-3) 65%) 0 0/250% 100% no-repeat;-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;animation:think-light 2s linear infinite;}
+.think-w{font-weight:500;color:var(--ink-2);background:linear-gradient(90deg,var(--ink-2) 35%,var(--ink) 50%,var(--ink-2) 65%) 0 0/250% 100% no-repeat;-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;animation:think-light 2s linear infinite;}
 .think-t{font-variant-numeric:tabular-nums;}
 .tr-body.is-steps{background:none;padding:0 0 0 10px;border-left:1px solid var(--line-2);border-radius:0;font:inherit;font-size:var(--fs-meta);color:var(--ink-2);}
 .think-steps{display:flex;flex-direction:column;gap:4px;}
@@ -1382,8 +1382,8 @@ canvas.dot-orb[data-orb]{border-radius:50%;outline:1px solid light-dark(var(--li
 .cp-row{display:grid;grid-template-columns:minmax(0,160px) minmax(0,1fr);gap:12px;align-items:baseline;}
 .cp-row dt{color:var(--ink-2);font-size:var(--fs-meta);}
 .cp-row dd{margin:0;display:flex;flex-wrap:wrap;gap:6px;align-items:baseline;}
-.cp-row s{color:var(--ink-3);text-decoration-color:var(--ink-3);}
-.cp-row dd > span{color:var(--ink-3);}
+.cp-row s{color:var(--ink-2);text-decoration-color:var(--ink-3);}
+.cp-row dd > span{color:var(--ink-2);}
 .cp-row b{font-weight:500;}
 .turn-div{display:flex;align-items:center;gap:12px;color:var(--ink-3);font-size:var(--fs-meta);}
 .turn-div::before,.turn-div::after{content:"";flex:1 1 auto;height:1px;background:var(--line);}
@@ -1452,7 +1452,7 @@ canvas.dot-orb[data-orb]{border-radius:50%;outline:1px solid light-dark(var(--li
 .composer-intent .btn{height:18px;width:18px;min-height:0;padding:0;}
 
 /* The composer: its context meter, what waits to be sent, and the tasks you can mention. */
-.composer-meter{font-size:var(--fs-caption);color:var(--ink-3);font-variant-numeric:tabular-nums;margin-right:4px;}
+.composer-meter{font-size:var(--fs-caption);color:var(--ink-2);white-space:nowrap;font-variant-numeric:tabular-nums;margin-right:4px;}
 .composer-queue{display:flex;flex-direction:column;gap:4px;margin-bottom:8px;}
 .composer-at{position:relative;}
 .composer-at > .menu{position:absolute;bottom:4px;left:12px;z-index:30;}
@@ -1484,7 +1484,7 @@ canvas.dot-orb[data-orb]{border-radius:50%;outline:1px solid light-dark(var(--li
 .cmd-line{display:flex;align-items:center;gap:8px;}
 .cmd-line > .tr-line{flex:1 1 auto;min-width:0;}
 .cmd-s{color:var(--ink-2);}
-.cmd-row.is-fail .cmd-s,.cmd-failed{color:var(--red);}
+.cmd-row.is-fail .cmd-s,.cmd-failed{color:var(--red-ink-strong);}   /* red words hold 4.5:1; the mark red is for marks */
 .cmd-row.is-run .cmd-s{color:var(--ink);}
 .cmd-row.is-stopped .cmd-s{color:var(--ink-3);}
 .cmd-rows{display:flex;flex-direction:column;gap:10px;margin:8px 0 0 32px;}
@@ -1492,9 +1492,9 @@ canvas.dot-orb[data-orb]{border-radius:50%;outline:1px solid light-dark(var(--li
 .cmd-code{position:relative;padding:8px 40px 8px 10px;border-radius:var(--r-sm);background:var(--field);font:12px/18px var(--mono);color:var(--ink-2);white-space:pre-wrap;word-break:break-word;}
 .cmd-d,.cmd-op{color:var(--ink-3);}
 .cmd-code > .rail-copy{position:absolute;top:3px;right:3px;}
-.cmd-where{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:var(--fs-meta);color:var(--ink-3);}
+.cmd-where{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:var(--fs-meta);color:var(--ink-2);}
 .cmd-out{border-radius:var(--r-sm);background:var(--field);}
-.cmd-out-h{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:4px 3px 0 10px;font-size:var(--fs-meta);color:var(--ink-3);}
+.cmd-out-h{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:4px 3px 0 10px;font-size:var(--fs-meta);color:var(--ink-2);}
 .cmd-out pre{margin:0;padding:4px 10px 8px;font:12px/18px var(--mono);color:var(--ink-2);white-space:pre-wrap;word-break:break-word;}
 .task-card [data-slice-head]{margin:12px 0 4px 32px;padding-top:12px;border-top:1px solid var(--line);}   /* an open slice's stages say whose they are */   /* dev's dialog, asked under its card on the card's rail: its words, its choices, its action */
 .card-form .fld{flex:1 1 100%;}
@@ -1506,3 +1506,8 @@ canvas.dot-orb[data-orb]{border-radius:50%;outline:1px solid light-dark(var(--li
 :is(.rc,.pz-app) .menu:has(.menu-item:is([role="menuitemradio"],[role="menuitemcheckbox"]):not(.sw-item)) .menu-item[role="menuitem"]::before{content:"";grid-column:1;}
 :is(.rc,.pz-app) .menu:has(.menu-item:is([role="menuitemradio"],[role="menuitemcheckbox"]):not(.sw-item)) .menu-item[role="menuitem"] > .mi-l{grid-column:2;}
 :is(.rc,.pz-app) .menu:has(.menu-item:is([role="menuitemradio"],[role="menuitemcheckbox"]):not(.sw-item)) .menu-item[role="menuitem"] > .mi-hint{grid-column:3;}
+
+/* look.type-roles: readable words are never ink-3 (marks and separators only); the task page's times and future steps read in ink-2 */
+.rd-route-row .tr-end,.sc-subs .rd-route-row b,.rd-route-name{color:var(--ink-2);}
+.rd-route-row.is-now .rd-route-name,.rd-route-row.is-ask .rd-route-name,.rd-route-row.is-failed .rd-route-name{color:var(--ink);}
+.btn.btn-quiet.is-danger{color:var(--red-ink-strong);}

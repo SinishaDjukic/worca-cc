@@ -10,8 +10,10 @@
   --ink:light-dark(#18181B,#EDEDEF); --ink-2:light-dark(#63636B,#A1A1A9); --ink-3:light-dark(#A1A1A9,#6E6E76);   /* ds-ok: the Rail look's table */
   --line:light-dark(#EEEEF0,#26262B); --line-2:light-dark(#E2E2E6,#35353B);   /* ds-ok: the Rail look's table */
   --float:light-dark(#FFFFFF,#1D1D21); --float-line:light-dark(#EEEEF0,#323238);   /* ds-ok: the Rail look's table */
-  --peach-bg:light-dark(#FBF2D2,#2E2914); --peach-ink:light-dark(#7F6408,#F2D27A); --h-peach-ink:light-dark(#6E5706,#F2D27A);   /* ds-ok: working's tints, Rail only */
-  --peach:light-dark(#B39A0E,#ECD86A); --amber:light-dark(#C96512,#EE8A2C);   /* ds-ok: the Rail look's table */
+  /* running is ink, never a colour (look.running-needs-apart): the old working gold and the app's blue map to ink, so no page brings them back */
+  --peach-bg:var(--field); --peach-ink:var(--ink-2); --h-peach-ink:var(--ink);
+  --peach:var(--ink-2); --amber:light-dark(#C96512,#EE8A2C);   /* ds-ok: the Rail look's table */
+  --blue:var(--ink-2); --blue-bg:var(--field); --blue-ink:var(--ink-2); --blue-ink-strong:var(--ink);   /* Rail has no blue */
   /* the states a mark or a step shows, deeper in light so each holds 3:1 or more on the page in both themes (look.state-contrast) */
   --green:light-dark(#3C8C40,#5BAE5B); --red:light-dark(#D2473A,#E76A5A); --violet:light-dark(#7464CC,#8C7FD6); --slate:light-dark(#6C7884,#8A96A3);   /* ds-ok: the Rail look's table */
   --step-done:light-dark(#C9C9CF,#4A4A52);   /* ds-ok: the Rail look's table: a finished step, quiet */

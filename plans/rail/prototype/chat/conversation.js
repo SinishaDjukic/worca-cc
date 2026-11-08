@@ -363,7 +363,7 @@
     if (had && keepText) comp.text = had.value;
     const c = chat();
     if (!chatId || !c) {
-      root.innerHTML = side ? `<div class="chat-home"><div class="chat-home-in">${composerHtml()}</div></div>` : `<div class="chat-home" data-home><div class="chat-home-in"><h1>${esc(opts.title || 'What\'s next for Worca?')}</h1>${composerHtml()}${opts.mode ? '' : startersHtml()}${opts.note ? `<p class="convo-dock-note">${esc(opts.note)}</p>` : ''}</div></div>`;
+      root.innerHTML = side ? `<div class="chat-home"><div class="chat-home-in">${composerHtml()}</div></div>` : `<div class="chat-home" data-home><div class="chat-home-in"><h1>${esc(opts.title || 'What\'s next for Worca?')}</h1>${composerHtml()}${opts.mode ? '' : startersHtml()}</div></div>`;
     } else {
       const labels = (c.labels || []).map((l) => R.chip({ text: l })).join('');
       root.innerHTML = `<div class="convo"><div class="convo-scroll"><div class="convo-col"><div class="convo-head">${esc(c.project || 'No project')}${labels ? ` · ${labels}` : ''}${R.sentencePicker({ id: 'cl-label', text: '+ Label', tip: 'Adds or removes a label', body: R.listEditor({ label: 'Labels', inputId: 'cl-label-q', placeholder: 'Find or make a label', sections: [{ title: 'Labels', kind: 'label', many: true, rows: LABELS.filter((l) => l.includes(labelQ.toLowerCase())).map((l) => ({ text: l, n: '', on: (c.labels || []).includes(l) })) }], hint: labelQ && !LABELS.includes(labelQ.toLowerCase()) ? `Enter makes “${labelQ.toLowerCase()}”` : '' }), open: menu === 'cl-label', chevron: '' })}<span class="tl-list-btn rc-pop" data-anchor-menu>${R.button({ label: 'Move through this chat', kind: 'quiet', iconOnly: true, icon: R.icon('list', 15), attrs: { 'data-anchor-open': '', 'aria-haspopup': 'menu', 'aria-expanded': String(menu === 'anchors') } })}</span></div>${calmCards(turns())}</div></div><div data-timeline></div><div class="convo-dock">${R.button({ label: 'Latest', kind: 'quiet', icon: R.icon('chevron', 12), cls: 'jump-latest', attrs: { 'data-jump-latest': '', title: 'Back to the newest turn' } })}${composerHtml()}</div></div>`;
@@ -696,7 +696,7 @@
   function dock(host, { kind, title, chat: linked }) {
     if (!host) return;
     const name = linked ? data().chats.find((c) => c.id === linked)?.title : '';
-    host.innerHTML = `${R.composer({ placeholder: kind === 'schedule' ? 'Ask about this schedule, or change it…' : 'Ask about this task…', sentence: '', tools: '', send: R.button({ label: 'Send', kind: 'primary', iconOnly: true, icon: R.icon('up', 14), attrs: { 'data-dock-send': '', title: name ? `Goes to ${name}` : 'Starts a chat about it' } }), attrs: { 'data-dock': '' } })}<p class="convo-dock-note">${esc(name ? `Goes to ${name}` : `Starts a new chat about ${title}, and links it`)}</p>`;
+    host.innerHTML = `${R.composer({ placeholder: `${kind === 'schedule' ? 'Ask about this schedule, or change it' : 'Ask about this task'} · ${name ? `in ${name}` : 'in a new chat'}`, sentence: '', tools: '', send: R.button({ label: 'Send', kind: 'primary', iconOnly: true, icon: R.icon('up', 14), attrs: { 'data-dock-send': '', title: name ? `Goes to ${name}` : 'Starts a chat about it' } }), attrs: { 'data-dock': '' } })}`;
     const go = () => {
       const t = host.querySelector('[data-composer-t]'), text = t.value.trim();
       if (!text) { t.focus(); return; }

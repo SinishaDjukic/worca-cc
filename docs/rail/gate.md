@@ -6,6 +6,7 @@
 | `gate.controls` | Every control acts, or is disabled and says why | No dead controls | click-check |
 | `gate.new-code` | New UI code that skips the library fails npm test; old pages shrink by a ratchet | The design system has force | rail-gate |
 | `gate.docs` | Docs, catalog, library and gallery agree | One source, no drift | rail-docs |
+| `gate.colour` | Nothing wears a colour Rail does not have (no blue, no gold: running is ink); readable text holds 4.5:1 (3:1 large); every state's ring holds 3:1, in both themes | Colour means state, and everyone can read it | colour-check |
 
 ## The checks
 
@@ -19,6 +20,7 @@ The one table: each check, its command, when it runs and the widths it owes. Fro
 | Run page's model | `node --test test/run-page-model.test.mjs` | A change to the run page's cases; in `npm test` | none |
 | `settings-sentences` | `node G/settings-sentences.mjs` | A change to Settings' model | none |
 | `ds-check`, with `align-check` | `node G/ds-check.mjs` | A change to a Rail page, inside its run | 900, 400 |
+| `colour-check` | `node G/colour-check.mjs` (`--list` to see all) | A change to a colour, a token or a page's text | 1280, light and dark |
 | `worca-sweep` | `node G/worca-sweep.mjs` | A change to the shell or to what joins pages | 1280, 900, 760, 375 |
 | `run-page-sweep` | `node G/run-page-sweep.mjs file://$PWD/plans/rail/prototype/run-page.html` | A change to the run or group page | 900, 375 |
 | `pulse-sweep` | `node G/pulse-sweep.mjs file://$PWD/plans/rail/prototype/pulse.html` | A change to Pulse or Settings | 900, 375 |
