@@ -286,5 +286,8 @@ the canvas; the chat's proposals draw with the same renderer. About 15,000 lines
 3. Hand-building is Expert (docs/ui-levels.md); Simple sees the view and Change it in a chat. A wide screen only; a
    narrow one reads What each step does.
 4. The view draws fitted on its auto layout; the wrapped flow layout crosses its wires (seen in graph-try).
+Agreed (Emil, 8 Nov): the graph editor is kept for Expert (advanced) mode, and everything stays backwards compatible: one
+workflow format for a chat, the canvas and Import/Export, every saved and built-in workflow opens and runs as it does today,
+and the engine and its tests are kept, with Rail as its skin.
 5. Auto-align (Emil, 8 Nov) stays: dev's Auto-layout tidies the canvas in one click; in Rail it is one quiet button
    beside zoom, and the view always opens aligned.
