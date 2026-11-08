@@ -113,7 +113,7 @@ export function groupRow({ count, shown, noun, toggle, rows = '', end = '', ...r
  */
 export function roundRows({ line, n, open, toggle, rounds = [], more = null }) {
   const word = `${n} ${n === 1 ? 'round' : 'rounds'}`;
-  const head = `<div class="lr-round-line"><span class="lr-m"${attrs({ title: line })}>${esc(line)}</span>${button({ label: word, kind: 'quiet', icon: icon(open ? 'chevron' : 'chevR', 12), attrs: { 'aria-expanded': String(open), 'aria-label': `${open ? 'Hide' : 'Show'} the ${word}`, ...toggle } })}</div>`;
+  const head = `<button type="button" class="lr-round-line"${attrs({ 'aria-expanded': String(open), 'aria-label': `${open ? 'Hide' : 'Show'} the ${word}`, title: line, ...toggle })}><span class="lr-m">${esc(line)}</span><span class="lr-round-end">${esc(word)}${icon(open ? 'chevron' : 'chevR', 12)}</span></button>`;
   if (!open) return `<div class="lr-rounds">${head}</div>`;
   return `<div class="lr-rounds">${head}<div class="list-rows">${rounds.map((r) => listRow({ title: `Round ${r.n} · ${r.words}`, endText: r.time || '', open: r.attrs || null })).join('')}</div>${more ? button({ label: `+${more.n} earlier`, kind: 'quiet', attrs: more.attrs }) : ''}</div>`;
 }

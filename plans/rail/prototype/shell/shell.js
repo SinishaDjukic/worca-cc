@@ -36,7 +36,7 @@
     const side = el(T.sidebar);
     const nav = side.querySelector('nav.nav');
     const NEW = { chat: ['New chat', 'ask'] };   // Tasks and Schedules only reference what was dispatched (rail.chat-first)
-    const place = ([id, label, min, flag]) => { const item = R.navItem({ label, icon: R.icon('nav-' + id, 14), attrs: { 'data-nav': id, 'data-min-level': min, 'data-flag': flag || null, 'aria-label': label } }); return NEW[id] ? `<div class="place-row" data-place="${id}">${item}${R.button({ label: NEW[id][0], kind: 'quiet', iconOnly: true, icon: R.icon('plus', 13), attrs: { 'data-bar-new': NEW[id][1], title: NEW[id][0] } })}</div>` : item; };
+    const place = ([id, label, min, flag]) => { const item = R.navItem({ label, icon: R.icon('nav-' + id, 14), lab: !!flag, attrs: { 'data-nav': id, 'data-min-level': min, 'data-flag': flag || null, 'aria-label': label } }); return NEW[id] ? `<div class="place-row" data-place="${id}">${item}${R.button({ label: NEW[id][0], kind: 'quiet', iconOnly: true, icon: R.icon('plus', 13), attrs: { 'data-bar-new': NEW[id][1], title: NEW[id][0] } })}</div>` : item; };
     nav.insertAdjacentHTML('beforebegin', '<div id="bar-back" class="bar-back pz-app rail-page"></div>');
     nav.innerHTML = PLACES.map(([g, list]) => `<p class="nav-sect side-g">${g}</p>${list.map(place).join('')}`).join('');
     const close = side.querySelector('#side-close');
@@ -166,6 +166,8 @@
 
   // ---- the bar: what it holds now; the house opens the places over it ----
   const BAR_TITLE = { home: 'Worca', chat: 'Chat', tasks: 'Tasks', schedules: 'Schedules', settings: 'Settings' };
+  let quickNav = false;   // nav.quick: the ▾ beside a bar's name
+  const quickItems = () => [...document.querySelectorAll('#side-rail nav.nav [data-nav]')].filter((b) => !b.hidden && !b.closest('[hidden]') && b.style.display !== 'none').map((b) => ({ id: `bar-go|${b.dataset.nav}`, text: b.querySelector('.nav-label, span')?.textContent.trim() || b.textContent.trim(), checked: b.dataset.nav === routed.view }));
   let barMenu = false;   // the + as a menu, where a place makes things more than one way (list.bar-model)
   let homeOpen = false, taskChat = '', lastThing = null, visited = [], taskHome = null, pinsAll = false;
   const barOf = (view) => (placeMod(view) ? (lockOf(view) ? 'home' : 'place') : view === 'chat' ? 'chat' : view === 'runs' ? 'tasks' : view === 'run' ? (taskChat ? 'chat' : 'tasks') : view === 'schedules' || view === 'schedule' ? 'schedules' : view === 'settings' ? 'settings' : 'home');
@@ -173,7 +175,7 @@
     const side = document.getElementById('side-rail'), own = barOf(routed.view), which = homeOpen ? 'home' : own;
     side.dataset.bar = which;
     const act = which === 'place' ? (placeMod(routed.view)?.newLabel ? [placeMod(routed.view).newLabel, 'place'] : null) : { chat: ['New chat', 'ask'] }[which];
-    document.getElementById('bar-head').innerHTML = R.barHead({ title: which === 'place' ? TITLES[routed.view] : BAR_TITLE[which], home: which === 'home', logo: R.icon('worca-w', 20), action: act ? `<span class="rc-pop">${R.button({ label: act[0], kind: 'quiet', iconOnly: true, icon: R.icon('plus', 15), attrs: { 'data-bar-new': act[1], ...(act[1] === 'place' && placeMod(routed.view)?.newMenu ? { 'aria-haspopup': 'menu', 'aria-expanded': String(barMenu) } : {}) } })}${barMenu && act[1] === 'place' && placeMod(routed.view)?.newMenu ? R.compactMenu({ label: act[0], items: placeMod(routed.view).newMenu() }) : ''}</span>` : '', hide: collapsed && innerWidth > 760 ? R.button({ label: 'Keep the bar open', kind: 'quiet', iconOnly: true, icon: R.icon('bar-show', 15), attrs: { 'data-bar-pin': '', title: `Keep the bar open (${R.keyHint(['mod', '\\'], R.isMac(window))})` } }) : R.button({ label: 'Hide the bar', kind: 'quiet', iconOnly: true, icon: R.icon('bar-hide', 15), attrs: { 'data-bar-hide': '', title: `Hide the bar: it opens under the pointer (${R.keyHint(['mod', '\\'], R.isMac(window))})` } }) });
+    document.getElementById('bar-head').innerHTML = R.barHead({ title: which === 'place' ? TITLES[routed.view] : BAR_TITLE[which], home: quickNav, menu: quickNav ? R.compactMenu({ items: quickItems() }) : '', logo: R.icon('worca-w', 20), action: act ? `<span class="rc-pop">${R.button({ label: act[0], kind: 'quiet', iconOnly: true, icon: R.icon('plus', 15), attrs: { 'data-bar-new': act[1], ...(act[1] === 'place' && placeMod(routed.view)?.newMenu ? { 'aria-haspopup': 'menu', 'aria-expanded': String(barMenu) } : {}) } })}${barMenu && act[1] === 'place' && placeMod(routed.view)?.newMenu ? R.compactMenu({ label: act[0], items: placeMod(routed.view).newMenu() }) : ''}</span>` : '', hide: collapsed && innerWidth > 760 ? R.button({ label: 'Keep the bar open', kind: 'quiet', iconOnly: true, icon: R.icon('bar-show', 15), attrs: { 'data-bar-pin': '', title: `Keep the bar open (${R.keyHint(['mod', '\\'], R.isMac(window))})` } }) : R.button({ label: 'Hide the bar', kind: 'quiet', iconOnly: true, icon: R.icon('bar-hide', 15), attrs: { 'data-bar-hide': '', title: `Hide the bar: it opens under the pointer (${R.keyHint(['mod', '\\'], R.isMac(window))})` } }) });
     // the bar switching places cross-fades: the list that comes in fades in (nav.bar-switch)
     for (const [id, b] of [['bar-chat', 'chat'], ['bar-tasks', 'tasks'], ['bar-schedules', 'schedules'], ['bar-place', 'place'], ['bar-back', 'home']]) {
       const list = document.getElementById(id); if (!list) continue;
@@ -184,9 +186,9 @@
     if (which === 'home' && side.dataset.was && side.dataset.was !== 'home') { const nav = side.querySelector('nav.nav'); nav.classList.remove('is-in'); void nav.offsetWidth; nav.classList.add('is-in'); }
     side.dataset.was = which;
     // Pinned first: what you pinned in any list; then the one thing you came from.
-    const pins = (window.RailChats?.data().chats || []).filter((c) => c.pinned && !c.archived).map((c) => R.listRow({ title: c.title, meta: c.project || 'No project', mark: R.kindMark({ kind: c.kind === 'workflow' ? 'workflow' : 'chat' }), open: { 'data-back-to': `chat/${c.id}`, title: `Opens ${c.title}` } }));
+    const pins = (window.RailChats?.data().chats || []).filter((c) => c.pinned && !c.archived).map((c) => R.listRow({ title: c.title, mark: R.kindMark({ kind: c.kind === 'workflow' ? 'workflow' : 'chat' }), open: { 'data-back-to': `chat/${c.id}`, title: `Opens ${c.title}` } }));
     // One section, Recent: what you pinned (a pin at its end), then where you were, newest first, never twice.
-    const pinRows = (window.RailChats?.data().chats || []).filter((c) => c.pinned && !c.archived).map((c) => ({ hash: `chat/${c.id}`, title: c.title, meta: c.project || 'No project', mark: R.kindMark({ kind: c.kind === 'workflow' ? 'workflow' : 'chat' }), end: R.icon('pin', 13), tip: 'Pinned' }));
+    const pinRows = (window.RailChats?.data().chats || []).filter((c) => c.pinned && !c.archived).map((c) => ({ hash: `chat/${c.id}`, title: c.title, mark: R.kindMark({ kind: c.kind === 'workflow' ? 'workflow' : 'chat' }), end: R.icon('pin', 13), tip: 'Pinned' }));
     const seenRows = visited.filter((v) => !pinRows.some((p) => p.hash === v.hash)).slice(0, 1);
     const PINS = 5, morePins = pinRows.length - PINS;
     if (!pinsAll && morePins > 0) pinRows.length = PINS;
@@ -372,7 +374,10 @@
     if (on('[data-bar-hide]')) { hideBar(); return; }
     if (on('[data-bar-pin]')) { collapsed = false; store.set(KEY_RAIL, '0'); syncRail(); drawBar(); return; }
     if (on('#bar-show')) { collapsed = false; store.set(KEY_RAIL, '0'); syncRail(); drawBar(); return; }
-    if (on('[data-bar-house]')) { if (barOf(routed.view) === 'home') { window.RailShell.go('chat'); return; } homeOpen = !homeOpen; drawBar(); return; }   /* a page with no list of its own (a locked place): closing the places goes back to Chat */
+    if (on('[data-bar-home]')) { quickNav = false; homeOpen = false; window.RailShell.go('chat'); drawBar(); return; }   /* nav.one-bar: the W is home */
+    if ((hit = on('[data-menu-pick^="bar-go|"]'))) { quickNav = false; location.hash = hit.dataset.menuPick.split('|')[1]; drawBar(); return; }
+    if (on('[data-bar-house]')) { quickNav = !quickNav; drawBar(); return; }
+    if (quickNav) { quickNav = false; drawBar(); }   /* a page with no list of its own (a locked place): closing the places goes back to Chat */
     if ((hit = on('[data-menu-pick^="bar-new|"]'))) { barMenu = false; drawBar(); placeMod(routed.view)?.newPick?.(hit.dataset.menuPick.split('|')[1]); return; }
     if (barMenu && !on('[data-bar-new]')) { barMenu = false; drawBar(); }
     if ((hit = on('[data-bar-new]'))) { if (hit.dataset.barNew === 'place' && placeMod(routed.view)?.newMenu) { barMenu = !barMenu; drawBar(); return; } if (hit.dataset.barNew === 'place') placeMod(routed.view)?.newAct?.(); else window.RailConversation?.start(hit.dataset.barNew); return; }

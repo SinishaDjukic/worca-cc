@@ -36,7 +36,7 @@
   };
   const TEAM = 5, MARKET = 24;
   const kindOfWay = { workflows: 'workflow', agents: 'agent', scripts: 'script' };
-  let current = '', menu = '', confirm = null, ctl = null, bar = null, page = null, sort = 'most used', show = 'the graph';
+  let wide = false, current = '', menu = '', confirm = null, ctl = null, bar = null, page = null, sort = 'most used', show = 'the graph';
   let ed = null, edMore = false;   // the canvas: { id, wf (a working copy), g, picked, more, saved, past:[], next:[] }
   const find = (k) => { const [kind, id] = k.split(':'); return { kind, x: data[kind === 'edit' ? 'workflow' : kind]?.find((y) => y.id === id) }; };
   const titleOf = (id) => data.agent.find((a) => a.id === id)?.title || data.script.find((s) => s.id === id)?.title || id;
@@ -64,7 +64,7 @@
       ...(loop ? [{ title: `${loop[0]} finds something`, meta: `Back to ${loop[1]} once or twice · each round about ${roundMin} min, ${money(round)} · ${half} of ${w.tasks} tasks`, tone: 'act', stage: 2 },
         { title: `Still not right after ${loop[2]} ${+loop[2] === 1 ? 'round' : 'rounds'}`, meta: 'It stops and asks you what to do · never yet', tone: 'ask', stage: 2 }] : [])];
     return R.workflowStory({ steps: w.steps.map(([name, ref, , , min, cost], i) => ({ name, says: SAYS[ref] || `${titleOf(ref)}.`, meta: `about ${min} min · ${money(cost || 0)}`, check: i === from })),
-      loop: loop ? { from, to, text: `found something? back to ${loop[1]}, at most ${+loop[2] === 1 ? 'once' : +loop[2] === 2 ? 'twice' : `${loop[2]} times`}` } : null, ways: !atLeast('advanced') || waysOpen ? ways : [], byline: atLeast('advanced') ? `Told by Haiku 5.5 from this workflow and its last ${w.tasks} ${w.tasks === 1 ? 'task' : 'tasks'}` : '' })
+      loop: loop ? { from, to, text: `found something? back to ${loop[1]}, at most ${+loop[2] === 1 ? 'once' : +loop[2] === 2 ? 'twice' : `${loop[2]} times`}` } : null, ways: !atLeast('advanced') || waysOpen ? ways : [], byline: atLeast('advanced') ? `Told by Haiku 5.5 from this workflow${w.tasks ? ` and its last ${w.tasks} ${w.tasks === 1 ? 'task' : 'tasks'}` : ''}` : '' })
       + (atLeast('advanced') ? `<div class="wf-acts open-line">${R.button({ label: waysOpen ? 'Fold how a task goes through it' : `How a task goes through it · ${ways.length} ${ways.length === 1 ? 'way' : 'ways'}`, kind: 'quiet', icon: R.icon(waysOpen ? 'chevron' : 'chevR', 12), attrs: { 'data-wf-ways': '', 'aria-expanded': String(waysOpen), 'data-folds': '.ws .list' } })}</div>` : '');
   }
 
@@ -106,11 +106,11 @@
         why: x.running ? `${money(4.8)} so far` : `${x.id === 'default' ? 'what every task runs' : `${money(Math.abs(delta))} ${delta >= 0 ? 'more' : 'less'} than Default`} · ${x.merged}% merged`,
         action: chat + (atLeast('expert') ? R.button({ label: 'Edit by hand', kind: 'quiet', attrs: { 'data-wf-edit': x.id, title: 'The graph, on the canvas' } }) : ''), menu: more }) + draft;
       const toggle = atLeast('advanced') ? `<div class="wf-sent">Showing ${pick('wf-show', show, ['the graph', 'the story only'], 'The real graph under the story, or the story alone')}</div>` : '';
-      const well = atLeast('advanced') && show === 'the graph' ? '<div class="wf-well gv-skin is-view" id="wf-graph"></div>' : '';
+      const well = atLeast('advanced') && show === 'the graph' ? R.expandFrame({ open: wide, name: 'the graph', body: '<div class="wf-well gv-skin is-view" id="wf-graph"></div>', attrs: { 'data-wf-wide': '' } }) : '';
       const steps = atLeast('advanced') ? R.settingsSection({ title: 'What each step does', meta: ro ? 'A built-in reads as it is; Use as a template to change it.' : 'Change a step’s model and effort here, or anything in a chat.',
         rows: x.steps.map(([name, ref, model, effort, , cost], i) => R.settingsRow({ name: `${i + 1}. ${name}`, sentence: `${esc(SAYS[ref] || titleOf(ref))}<br><span class="wf-who">${model ? `An agent on ${ro ? `<b>${esc(model)}</b>, ${esc(effort)}` : `${pick(`wfm-${i}`, model, MODELS, 'Its model')} ${pick(`wfe-${i}`, effort, EFFORTS, 'How hard it thinks')}`}` : 'A script'} · ${money(cost || 0)} a task</span>` })).join('')
           + x.loops.map(([from, to, n], i) => R.settingsRow({ name: 'Loop', sentence: `${esc(from)} sends fixes back to ${esc(to)}, up to ${ro ? `<b>${n}</b>` : pick(`wfl-${i}`, String(n), ['1', '2', '3', '5'], 'How many rounds')} times` })).join('') }) : '';
-      return `<div class="convo"><div class="convo-scroll"><div class="convo-col">${head}${strip}${exp}${storyOf(x)}${toggle}</div>${well}<div class="convo-col">${steps}<div class="wf-acts">${R.button({ label: 'Use it', attrs: { 'data-wf-use': x.id, disabled: x0.fresh ? true : null, title: x0.fresh ? 'Save it first: nothing can run a draft' : 'Starts a task in a chat with this workflow in its sentence' } })}</div></div></div><div class="convo-dock" id="wf-dock"></div></div>`;
+      return `<div class="convo"><div class="convo-scroll"><div class="convo-col">${head}${strip}${exp}${storyOf(x)}${toggle}${well}${steps}<div class="wf-acts">${R.button({ label: 'Use it', attrs: { 'data-wf-use': x.id, disabled: x0.fresh ? true : null, title: x0.fresh ? 'Save it first: nothing can run a draft' : 'Starts a task in a chat with this workflow in its sentence' } })}</div></div></div><div class="convo-dock" id="wf-dock"></div></div>`;
     }
     const head = R.placeHead({ title: x.title, facts: esc(`${x.own ? 'Yours' : 'Built-in'} · ${x.domain} · ${kind === 'agent' ? x.type : x.runtime}`), mark: markOf(kind), word: x.own ? 'Yours' : 'Built-in', why: usedIn(x.id).length ? `In ${usedIn(x.id).join(', ')}` : 'In no workflow yet', action: chat, menu: more }) + draft;
     let body;
@@ -168,7 +168,7 @@
     window.RailConversation?.dock(document.getElementById('wf-dock'), { kind, title: x.title, chat: '' });
   }
   function act(id, kind, x) {
-    if (id === 'use') { window.RailConversation?.start('task', ''); say(`${x.title} is in the task’s sentence`); return; }
+    if (id === 'use') { window.RailConversation?.handOver({ mode: 'task', workflow: x.title, about: { kind: 'Workflow', name: x.title } }); return; }
     if (id === 'copy') { const c = { ...structuredClone(x), id: `${x.id}-copy`, title: `${x.title} copy`, own: true, pinned: false, from: 'A copy of yours' }; data[kind].push(c); window.RailShell.go(`workflows/${kind}:${c.id}`); say(`${c.title}: yours to change`); return; }
     if (id === 'pin') { x.pinned = !x.pinned; draw(); say(x.pinned ? `${x.title} is a starter on Chat` : `${x.title} left Chat's starters`); return; }
     if (id === 'export') { menu = 'wf-export'; draw(); return; }
@@ -182,8 +182,8 @@
     const flow = ['Task', 'End', 'AND: waits for all', 'OR: the first wins', 'Combine'].map((t) => ({ key: `lib:flow:${t}`, _lib: ['flow', { title: t }], title: t, mark: R.kindMark({ kind: 'workflow' }), tip: `${t}: drop it between two steps` }));
     ctl = R.listController({ root: bar, spec: { noun: 'workflows', label: 'Selected', view: () => ({ state: 'ready', parts: [],
       sections: current.startsWith('edit:') ? [{ id: 'lib-a', title: 'Agents · add to the canvas', rows: data.agent.map((x) => lib('agent', x)) }, { id: 'lib-s', title: 'Scripts', rows: data.script.map((x) => lib('script', x)) }, { id: 'lib-f', title: 'Flow', rows: flow }]
-        : [{ id: 'yours', title: 'Yours', noCount: true, rows: [way('workflows', 'Workflows', markOf('workflow'), data.workflow.length), way('agents', 'Agents', markOf('agent'), data.agent.length), way('scripts', 'Scripts', markOf('script'), data.script.length), ...(allDrafts().length ? [way('drafts', 'Drafts', R.kindMark({ kind: 'plugin', icon: 'edit', tone: 'act' }), allDrafts().length)] : [])] },
-          { id: 'browse', title: 'Browse', noCount: true, rows: [way('for-you', 'For you', R.kindMark({ kind: 'plugin', icon: 'sparkle' }), data.workflow.filter((w) => !w.own && w.tasks < 5).length), way('team', 'Your team’s', R.kindMark({ kind: 'group' }), TEAM), way('market', 'From the Marketplace', R.kindMark({ kind: 'plugin', icon: 'nav-marketplace' }), MARKET)] },
+        : [{ id: 'yours', title: 'Yours', noCount: true, rows: [way('workflows', 'All workflows', markOf('workflow'), data.workflow.length), way('agents', 'Agents', markOf('agent'), data.agent.length), way('scripts', 'Scripts', markOf('script'), data.script.length), ...(allDrafts().length ? [way('drafts', 'Drafts', R.kindMark({ kind: 'plugin', icon: 'edit', tone: 'act' }), allDrafts().length)] : [])] },
+          { id: 'browse', title: 'Browse', noCount: true, rows: [way('for-you', 'For you', R.kindMark({ kind: 'plugin', icon: 'sparkle' }), data.workflow.filter((w) => !w.own && w.tasks < 5).length), way('team', 'Your team’s', R.kindMark({ kind: 'group' }), TEAM), way('market', 'Marketplace workflows', R.kindMark({ kind: 'plugin', icon: 'nav-marketplace' }), MARKET)] },
           ] }),
       can: () => [], bulk: () => [], act: () => {}, word: () => false, say, active: () => /^#workflows/.test(location.hash),
       open: (r) => {
@@ -196,8 +196,9 @@
     page.addEventListener('click', (e) => {
       if (!here()) return;   /* another place's page is showing */
       const on = (q) => e.target.closest(q); let hit;
+      if (on('[data-wf-wide]')) { wide = !wide; draw(); return; }
       if ((hit = on('[data-wf-use]'))) { const x = data.workflow.find((w) => w.id === hit.dataset.wfUse); if (x) act('use', 'workflow', x); return; }
-      if ((hit = on('[data-wf-chat]'))) { const { x } = find(hit.dataset.wfChat); if (x) window.RailConversation?.start('ask', `Change ${x.title}: `); return; }
+      if ((hit = on('[data-wf-chat]'))) { const { kind: k, x } = find(hit.dataset.wfChat); if (x) window.RailConversation?.handOver({ about: { kind: k.charAt(0).toUpperCase() + k.slice(1), name: x.title }, ph: `What should change in ${x.title}?` }); return; }
       if (on('[data-wf-ways]')) { waysOpen = !waysOpen; draw(); return; }
       if ((hit = on('[data-wf-edit]'))) { window.RailShell.go(`workflows/edit:${hit.dataset.wfEdit}`); return; }
       if (current.startsWith('edit:') && ed) {
@@ -245,6 +246,7 @@
       }
     });
     R.dismissOnOutside(document, { open: () => here() && !!menu && menu !== 'wf-export', inside: '#route-place .spick, #route-place .rc-pop', back: () => null, close: () => { menu = ''; }, paint: draw });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && wide && here()) { wide = false; draw(); } });
     R.prefs?.onChange?.(() => { if (here()) draw(); });   // the mode decides the graph, the pickers and the canvas
   }
   window.RailPlaces = window.RailPlaces || {};

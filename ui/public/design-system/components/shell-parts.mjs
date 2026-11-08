@@ -49,11 +49,12 @@ export function awayScreen({ line, word = 'Worca' }) {
  * @param {string} o.icon     SVG
  * @param {boolean} [o.current]
  * @param {boolean} [o.off]
+ * @param {boolean} [o.lab]    a Labs feature: says so at its end (nav.labs)
  * @param {string} [o.title]
  * @param {object} [o.attrs]
  */
-export function navItem({ label, icon, current = false, off = false, title = '', attrs: a = {} }) {
-  return `<button type="button" class="pz-nav-i${current ? ' is-on' : ''}"${attrs({ 'aria-current': current ? 'page' : null, 'aria-disabled': off ? 'true' : null, ...a, title: title || null })}>${icon}<span class="pz-nav-l">${esc(label)}</span></button>`;
+export function navItem({ label, icon, current = false, off = false, lab = false, title = '', attrs: a = {} }) {
+  return `<button type="button" class="pz-nav-i${current ? ' is-on' : ''}"${attrs({ 'aria-current': current ? 'page' : null, 'aria-disabled': off ? 'true' : null, ...a, title: title || null })}>${icon}<span class="pz-nav-l">${esc(label)}</span>${lab ? '<span class="nav-lab">Labs</span>' : ''}</button>`;
 }
 
 /**

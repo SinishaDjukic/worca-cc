@@ -20,6 +20,7 @@ The one table: each check, its command, when it runs and the widths it owes. Fro
 | Run page's model | `node --test test/run-page-model.test.mjs` | A change to the run page's cases; in `npm test` | none |
 | `settings-sentences` | `node G/settings-sentences.mjs` | A change to Settings' model | none |
 | `ds-check`, with `align-check` | `node G/ds-check.mjs` | A change to a Rail page, inside its run | 900, 400 |
+| `handover-check` | `node G/handover-check.mjs` | A change to anything that sends to Chat | 1280 |
 | `colour-check` | `node G/colour-check.mjs` (`--list` to see all) | A change to a colour, a token or a page's text | 1280, light and dark |
 | `worca-sweep` | `node G/worca-sweep.mjs` | A change to the shell or to what joins pages | 1280, 900, 760, 375 |
 | `run-page-sweep` | `node G/run-page-sweep.mjs file://$PWD/plans/rail/prototype/run-page.html` | A change to the run or group page | 900, 375 |

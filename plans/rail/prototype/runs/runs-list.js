@@ -87,7 +87,7 @@
   const costTip = (r) => (r.cost == null ? 'Cost unknown' : `Cost ${usd(r.cost)}`);
   const row = (r, section, member) => {
     const x = { r };
-    const base = { key: `run:${r.id}`, _x: x, title: member && r.pos ? `${r.pos} · ${r.title}` : r.title, meta: '', mark: markOf(stateOf(r), 'task', r.archived ? null : r.case, r.id), endMark: gitOf(r, stateOf(r)), end: gitOf(r, stateOf(r)) ? '' : r.time,
+    const base = { key: `run:${r.id}`, _x: x, title: member && r.pos ? `${r.pos} · ${r.title}` : r.title, meta: '', mark: markOf(stateOf(r), 'task', r.archived ? null : r.case, r.id), endMark: section === 'needs' ? '' : gitOf(r, stateOf(r)), end: section === 'needs' ? R.needsReason(stateOf(r)) : gitOf(r, stateOf(r)) ? '' : r.time,
       unread: r.unread, tip: [r.title, metaOf(r, section, member), r.time].filter(Boolean).join('\n'), menu: null };
     x.key = base.key;
     base.menu = menuOf(x);

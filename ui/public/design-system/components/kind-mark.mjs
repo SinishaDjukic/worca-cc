@@ -125,14 +125,14 @@ export function timelineCard({ mark, title, line = '', at = 0 }) {
  * a ▾ saying it opens the places too), its one action, and Hide.
  * @param {object} o
  * @param {string} o.title
- * @param {boolean} [o.home]    the bar is showing the places
+ * @param {boolean} [o.home]    the quick navigation is open
+ * @param {string} [o.menu]    the quick navigation's markup, when open
  * @param {string} [o.action]   a button's markup
  * @param {string} [o.logo]     the product's mark (markup); the house icon when none
  * @param {string} [o.hide]     the Hide button's markup
  */
-export function barHead({ title, home = false, action = '', logo = '', hide = '' }) {
-  const label = home ? 'Close the places' : 'Places';
-  return `<div class="bar-head"><button type="button" class="bar-house${home ? ' is-on' : ''}"${attrs({ 'data-bar-house': '', title: label, 'aria-label': label, 'aria-expanded': String(home) })}>${logo || icon('home', 16)}</button><h2 class="bar-title"><button type="button" class="bar-title-b"${attrs({ 'data-bar-house': '', 'aria-expanded': String(home), title: home ? 'Close the places' : 'Places: Chat, Tasks, Schedules, Workflows, Projects and more' })}>${esc(title)}${icon('chevron', 12)}</button></h2>${action}${hide}</div>`;
+export function barHead({ title, home = false, menu = '', action = '', logo = '', hide = '' }) {
+  return `<div class="bar-head"><button type="button" class="bar-house"${attrs({ 'data-bar-home': '', title: 'Home', 'aria-label': 'Home' })}>${logo || icon('home', 16)}</button><h2 class="bar-title"><button type="button" class="bar-title-b"${attrs({ 'data-bar-house': '', 'aria-haspopup': 'menu', 'aria-expanded': String(home), title: 'Go to another place' })}>${esc(title)}${icon('chevron', 12)}</button></h2>${menu ? `<span class="rc-pop bar-quick">${menu}</span>` : ''}${action}${hide}</div>`;
 }
 
 /**
@@ -439,4 +439,27 @@ export function stageBar({ labels, stage, tone = 'run', step = null }) {
   const notches = m ? Array.from({ length: m }, (_, j) => `<i class="sl-step${j < k - 1 ? ' is-done' : j === k - 1 ? ' is-now' : ''}" style="left:calc(${at(stage) + 1.5 + (j * (W - 3)) / m}% + 6px);width:calc(${(W - 3) / m}% - 9px)"></i>`).join('') : '';
   const knots = labels.map((_, i) => `<i class="sl-knot${whole || i < stage ? ' is-done' : i === stage ? ' is-now' : ''}" style="left:${at(i)}%"></i>`).join('');
   return `<div class="stage-bar is-${tone}" style="--n:${n}"><div class="sl" aria-hidden="true"><i class="sl-base"></i><i class="sl-done${whole ? ' is-whole' : ''}" style="width:${whole ? 100 : at(Math.max(0, stage))}%"></i>${notches}${knots}</div><div class="sb-labels">${labels.map((l, i) => (i === stage ? `<b>${esc(l)}${m ? `<small>${k} of ${m}</small>` : ''}</b>` : `<span>${esc(l)}</span>`)).join('')}</div></div>`;
+}
+
+/**
+ * What another place handed to Chat, in the composer: its kind and name, removable (rail.hand-to-chat).
+ * @param {object} o
+ * @param {string} o.kind   Workflow, Project, Page…
+ * @param {string} o.name
+ * @param {object} [o.attrs]
+ */
+export function handedChip({ kind, name, attrs: a = {} }) {
+  return button({ label: `${kind} · ${name}`, kind: 'quiet', icon: icon('x', 11), attrs: { title: `Worca reads ${name} with what you write. Removes it`, ...a } });
+}
+
+/**
+ * A wide drawing that stays in its column and can open over its page, never past the page's edges (panel.expand).
+ * @param {object} o
+ * @param {string} o.body        the drawing's markup
+ * @param {boolean} [o.open]
+ * @param {string} [o.name]      what it shows, for the button's words
+ * @param {object} [o.attrs]     hooks for the button
+ */
+export function expandFrame({ body, open = false, name = 'it', attrs: a = {} }) {
+  return `<div class="xf${open ? ' is-open' : ''}">${button({ label: open ? 'Close' : 'Expand', kind: 'quiet', attrs: { title: open ? `Back to the page (Esc)` : `Shows ${name} across the page`, 'aria-pressed': String(open), ...a } })}<div class="xf-body">${body}</div></div>`;
 }

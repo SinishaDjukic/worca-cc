@@ -35,7 +35,7 @@ function build(wf, says) {
     { id: 'w_end', from: { node: `n${wf.steps.length - 1}`, port: outOf(wf.steps.length - 1) }, to: { node: 'n_end', port: 'result' } },
     ...wf.loops.map(([from, to, n], k) => ({ id: `wl${k}`, from: { node: `n${names.indexOf(from)}`, port: 'fix' }, to: { node: `n${names.indexOf(to)}`, port: 'back' }, config: { maxCycles: +n } }))];
   const m = buildGraphManifest({ id: `wf_${wf.id}`, name: wf.title, version: 2, domain: 'coding', nodes, wires }, agents);
-  const meta = manifestAgents(m); wf.steps.forEach(([, ref], i) => { if (meta[`s${i}`]) meta[`s${i}`].description = says?.(ref) || ''; });
+  const meta = manifestAgents(m); wf.steps.forEach(([, ref], i) => { if (meta[`s${i}`]) { meta[`s${i}`].description = says?.(ref) || ''; meta[`s${i}`].icon = meta[`s${i}`].icon || '<circle cx="12" cy="8" r="3.6"/><path d="M5 20c1.2-5.4 12.8-5.4 14 0"/>'; } });
   return { tpl: manifestTemplate(m), portsFn: manifestPortsFn(m), agents: meta };
 }
 

@@ -15,7 +15,7 @@
   // the dimensions of "by", grouped; a page offers those it has data for
   const DIM_GROUPS = [
     ['Where', [['project', 'project'], ['workspace', 'workspace'], ['branch', 'branch'], ['ticket', 'ticket'], ['pr', 'pull request']]],
-    ['What did the work', [['workflow', 'workflow'], ['stage', 'stage'], ['agent', 'step and agent'], ['subagents', 'sub-agents'], ['role', 'review role']]],
+    ['What did the work', [['workflow', 'workflow'], ['stage', 'stage'], ['agent', 'step and agent'], ['subagents', 'sub-agents']]],
     ['What it ran on', [['model', 'model'], ['engine', 'engine'], ['effort', 'effort'], ['cache', 'cache read or write'], ['tokens', 'tokens in or out']]],
     ['Why it cost', [['why', 'why'], ['rework', 'rework'], ['retries', 'retries'], ['fixes', 'fix rounds'], ['failed', 'failed or stopped'], ['reason', 'what went wrong']]],
     ['Who and how', [['person', 'person'], ['origin', 'chat, task, schedule'], ['requirements', 'Requirements'], ['away', 'Away or at the desk'], ['status', 'status'], ['billing', 'API or subscription']]],
@@ -26,9 +26,9 @@
   const TIME = new Set(['day', 'week', 'month']), ORDERED = new Set(['stage', 'timeofday', ...TIME]);
   const FILTERS = ['project', 'workspace', 'workflow', 'model', 'origin', 'client', 'label'];
 
-  // a source: its fields, each field's day series for 1-8 Nov and for the same weekdays before, and its rows by dimension
+  // a source: its fields, each field's day series for 1-8 Nov and for the same days last month, and its rows by dimension
   function source(def) {
-    const { fields, series, before = {}, dims } = def, first = fields[0];
+    const { fields, series, before = {}, dims, lastK = {} } = def, first = fields[0];
     const totals = {};
     for (const f of fields) {
       const rowsOf = Object.values(dims)[0], k = fields.indexOf(f) + 1;
@@ -46,7 +46,7 @@
       });
       rows[dim] = out;
     }
-    return { fields, series, before, rows };
+    return { fields, series, before, rows, lastK };
   }
 
   const money = source({
@@ -107,11 +107,11 @@
     },
   });
   const review = source({
-    fields: ['rounds', 'tasks', 'reviews', 'fixed', 'disputed', 'open'],
+    fields: ['rounds', 'tasks', 'reviews', 'fixed', 'disputed', 'open', 'first'],
     series: { rounds: [6, 8, 3, 11, 7, 1, 10, 7], tasks: [4, 6, 2, 7, 5, 1, 8, 5] }, before: { rounds: [4, 6, 4, 7, 6, 3, 8, 5], tasks: [3, 4, 3, 5, 4, 2, 6, 4] },
+    lastK: { rounds: 3.45 },   // October ran 1.5 rounds a task
     dims: {
-      role: [['Review of the change', 28, 20, 38, 49, 6, 2], ['Review of the plan', 16, 11, 22, 17, 2, 0], ['Security check of the change', 9, 7, 11, 12, 1, 1]],
-      project: [['billing-api', 23, 16, 31, 33, 4, 1], ['web-app', 18, 12, 24, 29, 3, 2], ['worca-cc', 9, 7, 12, 13, 1, 0], ['docs-site', 3, 3, 4, 3, 1, 0]],
+      project: [['billing-api', 21, 15, 31, 33, 4, 1, 11], ['web-app', 21, 14, 24, 29, 3, 2, 8], ['worca-cc', 8, 6, 12, 13, 1, 0, 5], ['docs-site', 3, 3, 4, 3, 1, 0, 3]],
     },
   });
   const fails = source({
@@ -183,6 +183,16 @@
     },
   });
 
+  // what a round back costs and what Opus would change on web-app: "Review sent it back" over the rounds past each task's first
+  const webApp = review.rows.project.find((r) => r.name === 'web-app'), webBack = webApp.rounds - webApp.tasks;
+  const roundBack = waste.rows.why.find((r) => r.name === 'Review sent it back').spend / (sum(review.series.rounds) - sum(review.series.tasks));
+  const OPUS_MORE = 1.9;   // what each of web-app's Builds would cost more, at Opus 5.5's prices
+  const webSaved = (webBack / webApp.tasks) * roundBack - OPUS_MORE, noOwner = money.rows.client.find((r) => r.name === 'No client');
+  const STANDS = {
+    why: { outcome: `on Opus 5.5 would save about ${usd2(webSaved)} a task, ${usd2(webSaved * webApp.tasks)} over its ${webApp.tasks} tasks this month.`, because: `Review sends web-app's code back more than any other project's, on Sonnet 5.5. Opus 5.5 costs about ${usd2(OPUS_MORE)} more a task and saves about one round every two tasks, at about ${usd2(roundBack)} a round.` },
+    review: `takes the most, ${(webApp.rounds / webApp.tasks).toFixed(1)} rounds a task: ${webBack} rounds back over its ${webApp.tasks} tasks, ${(webBack / webApp.tasks).toFixed(1)} back per task, about ${usd(webBack * roundBack)} this month. ${pct(webApp.first / webApp.tasks)} pass the first time.`,
+  };
+
   // ---- the periods of the time word ----
   const NOV = ['Nov 1', 'Nov 2', 'Nov 3', 'Nov 4', 'Nov 5', 'Nov 6', 'Nov 7', 'Nov 8'];
   const SPAN = { today: [7, 7], 'this week': [1, 7], 'this month': [0, 7] };
@@ -192,8 +202,8 @@
   function periodSeries(src, f, when) {
     const now = src.series[f], before = src.before[f], total = sum(now);
     if (SPAN[when]) { const [a, b] = SPAN[when]; return { labels: NOV.slice(a, b + 1), days: NOV.slice(a, b + 1).map(() => 1), now: now.slice(a, b + 1), before: before.slice(a, b + 1) }; }
-    if (when === 'last month') return { ...WEEKS, now: allocate(WEEKS.w, Math.round(total * 3.2)), before: allocate(WEEKS.w, Math.round(total * 3.2 * 0.85)) };
-    return { ...MONTHS, now: [...MONTHS.k.map((k) => Math.round(total * k)), total], before: null };
+    if (when === 'last month') return { ...WEEKS, now: allocate(WEEKS.w, Math.round(total * (src.lastK[f] ?? 3.2))), before: allocate(WEEKS.w, Math.round(total * 3.2 * 0.85)) };
+    return { ...MONTHS, now: [...MONTHS.k.map((k, i) => Math.round(total * (i === 3 && src.lastK[f] || k))), total], before: null };
   }
   function filterShare(src, filter, f) {
     const by = {};
@@ -210,8 +220,8 @@
   // ---- the sub-features ----
   const moneyCols = (mid = ['Cost per hour saved', (r) => (r.hours ? usd2(r.spend / r.hours) : '-')]) => [['AI spend', (r) => usd(r.spend)], ['Hours saved', (r) => `${r.hours} h`], ['Saved', (r) => usd(r.saved)], mid, ['Tasks', (r) => String(r.tasks)]];
   const wasteCols = [['AI spend', (r) => usd(r.spend)], ['Tasks', (r) => String(r.tasks)]];
-  const SUM = ['bars', 'lines', 'running', 'mix', 'table'], COUNT = ['bars', 'lines', 'mix', 'table'], RATE = ['bars', 'lines', 'table'];
-  const cmp = (c, sub, w = 'in the same weekdays before') => {
+  const SUM = ['bars', 'lines', 'running', 'table'], COUNT = ['bars', 'lines', 'table'], RATE = ['bars', 'lines', 'table'];
+  const cmp = (c, sub, w = 'in the period before') => {
     if (c.p == null || !isFinite(c.p)) return '';
     const up = c.v > c.p, near = !c.p || Math.abs(c.v - c.p) / c.p < 0.03;
     if (near) return `About the same as ${sub.text(c.p)} ${w}`;
@@ -219,49 +229,49 @@
   };
   const SUBS = [
     { id: 'spend', title: 'Spend', group: 'Cost', icon: 'set-spending', noun: 'AI spend', src: money, num: 'spend', text: usd, forms: SUM, budget: 2000, cols: moneyCols(), share: 'spend',
-      word: (c) => `${usd(c.v)} of $2,000`, why: (c) => (c.st.by === 'client' ? `${usd(148)} has no client` : `Saved about ${usd(c.T.saved)}, 3× what it cost · on pace for $1,545`) },
+      word: (c) => `${usd(c.v)} of $2,000`, why: (c) => (c.st.by === 'client' ? `${usd(noOwner.spend)} has no client` : `Saved about ${usd(c.T.saved)}, 3× what it cost · on pace for $1,545 · ${usd(noOwner.spend)} has no owner`) },
     { id: 'per-task', title: 'Per task', group: 'Cost', icon: 'kind-task', noun: 'cost a task', src: money, num: 'spend', den: 'tasks', text: usd2, forms: RATE, cols: moneyCols(['Per task', (r) => (r.tasks ? usd2(r.spend / r.tasks) : '-')]), share: 'spend',
-      word: (c) => `${usd2(c.v)} a task`, why: (c) => `${usd(c.T.spend)} across ${c.T.tasks} tasks · ${usd2(c.p)} in the same weekdays before` },
-    { id: 'why', title: 'Why it cost', group: 'Cost', icon: 'question', noun: 'rework and waste', src: waste, by: 'why', num: 'spend', text: usd, forms: SUM, cols: wasteCols, share: 'base',
-      wordAlways: (c) => `${usd(c.v)} of ${usd(c.base)} went on rework and waste`, whyAlways: (c) => (c.P ? `${pct(c.v / c.base)}, up from ${pct(c.P.spend / c.pbase)} in the same weekdays before` : pct(c.v / c.base)) },
+      word: (c) => `${usd2(c.v)} a task`, why: (c) => `${usd(c.T.spend)} across ${c.T.tasks} tasks · ${usd2(c.p)} in the same days last month` },
+    { id: 'why', title: 'Why it cost', group: 'Cost', icon: 'refresh', noun: 'rework and waste', src: waste, by: 'why', num: 'spend', text: usd, forms: SUM, cols: wasteCols, share: 'base',
+      wordAlways: (c) => `${usd(c.v)} of ${usd(c.base)} went on rework and waste`, whyAlways: (c) => (c.P ? `${pct(c.v / c.base)}, up from ${pct(c.P.spend / c.pbase)} ${c.whole && c.st.when === 'this month' ? 'last month' : 'in the period before'}` : pct(c.v / c.base)) },
     { id: 'budget', title: 'Budget', group: 'Cost', icon: 'set-limits', noun: 'AI spend', src: money, num: 'spend', text: usd, forms: SUM, as: 'running', against: 'budget', budget: 2000, cols: moneyCols(), share: 'spend',
       word: (c) => `${Math.round((c.v / 2000) * 100)}% of $2,000 used`, why: (c) => `${usd(c.v)} so far · on pace for $1,545, $455 under · 8 of 30 days gone` },
     { id: 'time-saved', title: 'Time saved', group: 'Value', icon: 'clock', noun: 'money saved', src: money, num: 'saved', text: usd, forms: SUM, cols: moneyCols(), share: 'saved',
-      word: (c) => `${usd(c.v)} saved`, why: (c) => `About ${c.T.hours} hours of work · ${usd(c.P.saved)} in the same weekdays before` },
+      word: (c) => `${usd(c.v)} saved`, why: (c) => `About ${c.T.hours} hours of work · ${usd(c.P.saved)} in the same days last month` },
     { id: 'value', title: 'Value for spend', group: 'Value', icon: 'sparkle', noun: 'saved for each dollar', src: money, num: 'saved', den: 'spend', text: (n) => `${n.toFixed(1)}×`, forms: RATE, cols: moneyCols(), share: 'spend',
       word: (c) => `${c.v.toFixed(1)}× what it cost`, why: (c) => `${usd(c.T.saved)} saved on ${usd(c.T.spend)} · ${usd2(c.T.spend / c.T.hours)} for each hour saved` },
     { id: 'ends', title: 'How tasks end', group: 'Quality', icon: 'check', noun: 'finished tasks', src: ends, num: 'finished', text: (n) => plural(n, 'task'), forms: COUNT, share: 'finished',
       cols: [['Tasks', (r) => String(r.finished + r.failed + r.stopped)], ['Finished', (r) => String(r.finished)], ['Failed', (r) => String(r.failed)], ['Stopped', (r) => String(r.stopped)]],
       word: (c) => `${c.T.finished} of ${c.T.finished + c.T.failed + c.T.stopped} finished`, why: (c) => `${c.T.failed} failed, ${c.T.stopped} stopped · ${pct(c.T.finished / (c.T.finished + c.T.failed + c.T.stopped))} finish` },
-    { id: 'review', title: 'Review', group: 'Quality', icon: 'edit', noun: 'rounds a task', src: review, by: 'role', num: 'rounds', den: 'tasks', text: (n) => `${n.toFixed(1)} rounds`, forms: RATE, share: 'reviews',
-      cols: [['Reviews', (r) => String(r.reviews)], ['Raised', (r) => String(r.fixed + r.disputed + r.open)], ['Fixed', (r) => String(r.fixed)], ['Disputed', (r) => String(r.disputed)], ['Open', (r) => String(r.open)]],
-      word: (c) => `${c.v.toFixed(1)} rounds a task`, why: () => 'About the same as before · 71% pass the first time' },
-    { id: 'fails', title: 'Where it fails', group: 'Quality', icon: 'alert', noun: 'tasks that did not finish', src: fails, by: 'stage', num: 'count', text: (n) => plural(n, 'task'), forms: COUNT, share: 'count',
+    { id: 'review', title: 'Review', group: 'Quality', icon: 'edit', noun: 'rounds a task', src: review, note: "all projects together. A round is one review and its fixes; a round back is any after a task's first", num: 'rounds', den: 'tasks', text: (n) => `${n.toFixed(1)} rounds`, forms: RATE, share: 'reviews', noShare: true,
+      cols: [['Rounds a task', (r) => (r.tasks ? (r.rounds / r.tasks).toFixed(1) : '-')], ['First-time pass', (r) => (r.tasks ? pct(r.first / r.tasks) : '-')], ['Raised', (r) => String(r.fixed + r.disputed + r.open)], ['Fixed', (r) => String(r.fixed)], ['You rejected', (r) => String(r.disputed)], ['Open', (r) => String(r.open)]],
+      word: (c) => `${c.T.rounds} rounds over ${c.T.tasks} reviewed tasks, ${c.v.toFixed(1)} a task`, why: (c) => { const oct = (f) => sum(periodSeries(review, f, 'last month').now), was = (oct('rounds') / oct('tasks')).toFixed(1), now = c.v.toFixed(1), back = c.T.rounds - c.T.tasks; return `${now === was ? 'Same as' : +now < +was ? 'Better than' : 'Worse than'} October · ${back} rounds back, about ${usd(back * roundBack)}`; } },
+    { id: 'fails', title: 'Where it fails', group: 'Quality', icon: 'stop', noun: 'tasks that did not finish', src: fails, by: 'stage', num: 'count', text: (n) => plural(n, 'task'), forms: COUNT, share: 'count',
       cols: [['Did not finish', (r) => String(r.count)], ['AI spend', (r) => usd(r.spend)]],
-      word: (c) => `${c.T.count} tasks did not finish, ${usd(c.T.spend)}`, why: (c) => `Most at Build: 3 of ${c.T.count} · ${c.P.count} in the same weekdays before` },
+      word: (c) => `${c.T.count} tasks did not finish, ${usd(c.T.spend)}`, why: (c) => `Most at Build: 3 of ${c.T.count} · ${c.P.count} in the same days last month` },
     { id: 'autonomy', title: 'Autonomy', group: 'Quality', icon: 'away', noun: 'tasks that ran without you', src: alone, num: 'alone', den: 'tasks', text: pct, forms: RATE, share: 'alone',
       cols: [['Tasks', (r) => String(r.tasks)], ['Without you', (r) => String(r.alone)], ['Asked you', (r) => String(r.tasks - r.alone)], ['Rate', (r) => (r.tasks ? pct(r.alone / r.tasks) : '-')]],
-      word: (c) => `${c.T.alone} of ${c.T.tasks} ran without you`, why: (c) => `${pct(c.v)}, up from ${pct(c.p)} in the same weekdays before` },
+      word: (c) => `${c.T.alone} of ${c.T.tasks} ran without you`, why: (c) => `${pct(c.v)}, up from ${pct(c.p)} in the same days last month` },
     { id: 'cache', title: 'Cache', group: 'Quality', icon: 'set-memory', noun: 'input from the cache', src: cache, by: 'model', num: 'read', den: 'input', text: pct, forms: RATE, share: 'read',
       cols: [['From the cache', (r) => `${(r.read / 10).toFixed(1)}M`], ['All input', (r) => `${(r.input / 10).toFixed(1)}M`], ['Rate', (r) => (r.input ? pct(r.read / r.input) : '-')]],
-      word: (c) => `${pct(c.v)} of input from the cache`, why: (c) => `${(c.T.read / 10).toFixed(1)}M of ${(c.T.input / 10).toFixed(1)}M tokens · ${pct(c.p)} in the same weekdays before` },
+      word: (c) => `${pct(c.v)} of input from the cache`, why: (c) => `${(c.T.read / 10).toFixed(1)}M of ${(c.T.input / 10).toFixed(1)}M tokens · ${pct(c.p)} in the same days last month` },
     { id: 'shipped', title: 'Shipped', group: 'Flow', icon: 'merge', noun: 'PRs merged', src: prs, num: 'prs', text: (n) => plural(n, 'PR'), forms: COUNT, share: 'prs',
       cols: [['PRs merged', (r) => String(r.prs)], ['Days each', (r) => (r.prs ? (r.days / r.prs / 10).toFixed(1) : '-')]],
-      word: (c) => `${c.T.prs} PRs merged`, why: (c) => `6 in review, 3 need attention · ${c.P.prs} in the same weekdays before` },
+      word: (c) => `${c.T.prs} PRs merged`, why: (c) => `6 in review, 3 need attention · ${c.P.prs} in the same days last month` },
     { id: 'merge', title: 'Start to merge', group: 'Flow', icon: 'after', noun: 'days to merge', src: prs, num: 'days', den: 'prs', text: (n) => `${(n / 10).toFixed(1)} days`, forms: RATE, share: 'prs',
       cols: [['PRs merged', (r) => String(r.prs)], ['Days each', (r) => (r.prs ? (r.days / r.prs / 10).toFixed(1) : '-')]],
-      word: (c) => `${(c.v / 10).toFixed(1)} days from start to merge`, why: (c) => `Down from ${(c.p / 10).toFixed(1)} days in the same weekdays before` },
+      word: (c) => `${(c.v / 10).toFixed(1)} days from start to merge`, why: (c) => `Down from ${(c.p / 10).toFixed(1)} days in the same days last month` },
     { id: 'throughput', title: 'Throughput', group: 'Flow', icon: 'track', noun: 'tasks finished', src: done, num: 'finished', text: (n) => plural(n, 'task'), forms: COUNT, share: 'finished',
       cols: [['Finished', (r) => String(r.finished)], ['A day', (r, c) => (r.finished / c.days).toFixed(1)]],
-      word: (c) => `${(c.v / c.days).toFixed(1)} tasks finished a day`, why: (c) => `${c.v} in ${c.days} days · ${(c.p / c.days).toFixed(1)} a day in the same weekdays before` },
+      word: (c) => `${(c.v / c.days).toFixed(1)} tasks finished a day`, why: (c) => `${c.v} in ${c.days} days · ${(c.p / c.days).toFixed(1)} a day in the same days last month` },
     { id: 'waiting', title: 'Waiting on you', group: 'Flow', icon: 'pause', noun: 'minutes a question', src: waits, by: 'stage', num: 'mins', den: 'waits', text: (n) => `${Math.round(n)} min`, forms: RATE, share: 'mins',
       cols: [['Times', (r) => String(r.waits)], ['Waited', (r) => `${Math.floor(r.mins / 60)} h ${r.mins % 60} min`], ['Each', (r) => (r.waits ? `${Math.round(r.mins / r.waits)} min` : '-')]],
-      word: (c) => `${Math.round(c.v)} min a question`, why: (c) => `${c.T.waits} times, ${Math.floor(c.T.mins / 60)} h ${c.T.mins % 60} min in all · ${Math.round(c.p)} min in the same weekdays before` },
+      word: (c) => `${Math.round(c.v)} min a question`, why: (c) => `${c.T.waits} times, ${Math.floor(c.T.mins / 60)} h ${c.T.mins % 60} min in all · ${Math.round(c.p)} min in the same days last month` },
     { id: 'team', title: 'By person', group: 'Team', team: true, icon: 'nav-team-metrics', noun: 'team spend', src: team, by: 'person', num: 'spend', text: usd, forms: SUM, budget: 12000, cols: moneyCols(), share: 'spend',
       word: (c) => `${usd(c.v)} of $12,000`, why: () => 'Five people · on pace for $10,725 · pooled budget at 24%' },
     { id: 'untagged', title: 'Missing cost tags', group: 'Team', team: true, count: 18, icon: 'tag', noun: 'tasks without a client', src: untagged, num: 'tasks', text: (n) => plural(n, 'task'), forms: COUNT, share: 'tasks',
       cols: [['Tasks', (r) => String(r.tasks)], ['AI spend', (r) => usd(r.spend)]],
-      word: (c) => `${c.T.tasks} tasks without a client`, why: (c) => `${usd(c.T.spend)} not counted to anyone · ${c.P.tasks} in the same weekdays before` },
+      word: (c) => `${c.T.tasks} tasks without a client`, why: (c) => `${usd(c.T.spend)} not counted to anyone · ${c.P.tasks} in the same days last month` },
   ];
   const SUB = Object.fromEntries(SUBS.map((s) => [s.id, s]));
 
@@ -328,5 +338,5 @@
     const [ma, da] = a.split(' '), [mb, db] = b.split(' ');
     return ma === mb && da && db && !/-/.test(da + db) ? `${ma} ${da}-${db}` : `${a} to ${b}`;
   }
-  window.RailInsightsModel = { SUBS, SUB, DIM, DIM_GROUPS, TIME, FILTERS, WHEN, usd, cmp, compute, defaults, dimsOf, allocate, sum, rangeWord };
+  window.RailInsightsModel = { STANDS, SUBS, SUB, DIM, DIM_GROUPS, TIME, FILTERS, WHEN, usd, cmp, compute, defaults, dimsOf, allocate, sum, rangeWord };
 })();

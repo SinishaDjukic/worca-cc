@@ -12,16 +12,30 @@ import { attrs, esc } from './html.mjs';
  * @param {number} [o.height]                 the plot's height in px
  * @param {boolean} [o.play]                  it is read and narrowed under the hand (watchChart)
  * @param {string} [o.hint]                   one quiet line under it
+ * @param {string} [o.caption]                what it shows, above the plot, when the rows under it are not by time: "Per day, by project"
+ * @param {{label:string, values:number[], texts?:string[]}[]} [o.parts]   what each bar is made of, at most four, the largest first; ink shades and a legend (look.chart-play)
+ * @param {{value:number, text:string}} [o.limit]   a thin line across the plot, named once in the legend: the budget's daily pace
  */
-export function barChart({ label, bars, current = -1, height = 120, play = false, hint = '' }) {
-  const max = Math.max(1, ...bars.map((b) => b.value)), top = bars.findIndex((b) => b.value === max);
+export function barChart({ label, bars, current = -1, height = 120, play = false, hint = '', caption = '', parts = null, limit = null }) {
+  const high = Math.max(1, ...bars.map((b) => b.value)), max = Math.max(high, limit ? limit.value : 0), top = bars.findIndex((b) => b.value === high);
+  const segs = (i) => parts.filter((p) => p.values[i]).map((p) => `<i class="ch-seg is-s${parts.indexOf(p)}" style="flex-grow:${p.values[i]}"></i>`).join('');
+  const partWords = (i) => parts.map((p) => `${p.label} ${p.texts ? p.texts[i] : p.values[i]}`).join(' · ');
+  const noted = (b, i) => (parts ? { ...b, note: [partWords(i), b.note].filter(Boolean).join(' · ') } : b);
+  const lineAt = limit ? Math.round((limit.value / max) * (height - 18)) : 0;
   const cols = bars.map((b, i) => {
     const h = Math.max(b.value ? 3 : 0, Math.round((b.value / max) * (height - 18)));
     const shown = i === top || i === current;
-    return `<span class="bc-col${i === current ? ' is-now' : ''}" data-i="${i}" tabindex="0"${play ? attrs({ 'data-read': readOf(b) }) : attrs({ title: `${b.label}: ${b.text}` })}><span class="bc-v">${shown ? esc(b.text) : ''}</span><span class="bc-bar" style="height:${h}px"></span><span class="bc-x">${esc(b.label)}</span></span>`;
+    // a number that would sit on the limit line goes beside its bar, under the line, so it never reads as the line's value
+    const onLine = shown && limit && h <= lineAt && lineAt <= h + 20;
+    const beside = onLine ? ` class="bc-v is-beside${i === 0 ? ' is-after' : ''}" style="bottom:${Math.max(0, h - 14)}px"` : ' class="bc-v"';
+    return `<span class="bc-col${i === current ? ' is-now' : ''}" data-i="${i}" tabindex="0"${play ? attrs({ 'data-read': readOf(noted(b, i)) }) : attrs({ title: `${b.label}: ${b.text}` })}><span${beside}>${shown ? esc(b.text) : ''}</span><span class="bc-bar${parts ? ' is-stack' : ''}" style="height:${h}px">${parts ? segs(i) : ''}</span><span class="bc-x">${esc(b.label)}</span></span>`;
   }).join('');
-  const table = `<table class="bc-table"><caption>${esc(label)}</caption><tbody>${bars.map((b) => `<tr><th scope="row">${esc(b.label)}</th><td>${esc(b.text)}</td></tr>`).join('')}</tbody></table>`;
-  return `<figure class="bar-chart${play ? ' is-read-able' : ''}" style="--bc-h:${height}px"${play ? ` data-chart data-n="${bars.length}"` : ''}>${play ? '<div class="ch-read" hidden></div>' : ''}<div class="bc-plot" aria-hidden="true">${cols}</div>${hintOf(hint)}${table}</figure>`;
+  const table = parts
+    ? srTable(label, ['All', ...parts.map((p) => p.label)], bars.map((b, i) => [b.label, b.text, ...parts.map((p) => (p.texts ? p.texts[i] : String(p.values[i])))]))
+    : `<table class="bc-table"><caption>${esc(label)}</caption><tbody>${bars.map((b) => `<tr><th scope="row">${esc(b.label)}</th><td>${esc(b.text)}</td></tr>`).join('')}</tbody></table>`;
+  const line = limit ? `<span class="bc-limit" style="bottom:${lineAt}px"></span>` : '';
+  const legend = legendOf([...(parts || []).map((p, k) => ({ cls: `is-s${k}`, text: p.label })), ...(limit ? [{ cls: 'is-limit', text: limit.text }] : [])]);
+  return `<figure class="bar-chart${play ? ' is-read-able' : ''}" style="--bc-h:${height}px"${play ? ` data-chart data-n="${bars.length}"` : ''}>${capOf(caption)}${play ? '<div class="ch-read" hidden></div>' : ''}<div class="bc-plot${limit ? ' has-limit' : ''}" aria-hidden="true">${cols}${line}</div>${legend}${hintOf(hint)}${table}</figure>`;
 }
 
 // ---- Chart play (docs/rail/look.md › look.chart-play): other forms appear only when you ask for them ----
@@ -36,6 +50,7 @@ export function diffWords(now, before, text = (n) => String(n)) {
 
 const srTable = (label, columns, rows) => `<table class="bc-table"><caption>${esc(label)}</caption><thead><tr><th scope="col"></th>${columns.map((c) => `<th scope="col">${esc(c)}</th>`).join('')}</tr></thead><tbody>${rows.map(([head, ...cells]) => `<tr><th scope="row">${esc(head)}</th>${cells.map((c) => `<td>${esc(c)}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
 const legendOf = (items) => (items.length ? `<div class="ch-legend">${items.map((l) => `<span class="ch-key"><i class="ch-swatch ${l.cls}"></i>${esc(l.text)}</span>`).join('')}</div>` : '');
+const capOf = (caption) => (caption ? `<p class="ch-cap">${esc(caption)}</p>` : '');
 const hintOf = (hint) => (hint ? `<p class="ch-hint">${esc(hint)}</p>` : '');
 // the bottom words, thinned when there are many; each sits under its column
 const axisOf = (labels) => { const step = labels.length > 12 ? 5 : 1; return `<div class="ch-xs" style="--ch-n:${labels.length}" aria-hidden="true">${labels.map((l, i) => `<span class="ch-x${step > 1 && i === labels.length - 1 ? ' is-end' : ''}">${(i + 1) % step === 0 || i === 0 ? esc(l) : ''}</span>`).join('')}</div>`; };
@@ -52,8 +67,9 @@ const readOf = (p) => [p.label, p.text, p.diff, p.note].filter(Boolean).join('|'
  * @param {number} [o.current]  the index of the period you are in
  * @param {number} [o.height]
  * @param {string} [o.hint]     one quiet line under it
+ * @param {string} [o.caption]  what it shows, above the plot
  */
-export function lineChart({ label, labels, series, limit = null, current = -1, height = 140, hint = '' }) {
+export function lineChart({ label, labels, series, limit = null, current = -1, height = 140, hint = '', caption = '' }) {
   const n = labels.length, x = (i) => ((i + 0.5) / n) * 100;
   const top = Math.max(1, limit ? limit.value : 0, ...series.flatMap((s) => s.points.map((p) => (p ? p.value : 0)))) * 1.12, y = (v) => 100 - (v / top) * 100;
   const path = (s) => { const pts = s.points.map((p, i) => (p ? [x(i), y(p.value)] : null)).filter(Boolean); return pts.length ? `<path class="ch-l${s.dashed ? ' is-before' : ''}" vector-effect="non-scaling-stroke" d="${pts.map(([a, b], i) => `${i ? 'L' : 'M'}${a.toFixed(2)} ${b.toFixed(2)}`).join('')}"/>` : ''; };
@@ -64,7 +80,7 @@ export function lineChart({ label, labels, series, limit = null, current = -1, h
   const hits = labels.map((l, i) => (main[i] ? `<span class="ch-hit" data-i="${i}" tabindex="0" role="img" aria-label="${esc([l, main[i].text, main[i].diff].filter(Boolean).join(', '))}" data-read="${esc(readOf({ ...main[i], label: l }))}"></span>` : '<span class="ch-none"></span>')).join('');
   const legend = series.length > 1 || limit ? legendOf([...series.map((s) => ({ cls: s.dashed ? 'is-before' : 'is-main', text: s.label })), ...(limit ? [{ cls: 'is-limit', text: limit.text }] : [])]) : '';
   const rows = labels.flatMap((l, i) => (main[i] ? [[l, ...series.map((s) => (s.points[i] ? s.points[i].text : ''))]] : []));
-  return `<figure class="chart" style="--ch-h:${height}px" data-chart data-n="${n}" data-last="${known[known.length - 1] ?? 0}"><div class="ch-read" hidden></div><div class="ch-plot"><svg class="ch-svg" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">${lim}${series.slice(1).map(path).join('')}${path(series[0])}</svg>${dots}${nums}<div class="ch-hits" style="--ch-n:${n}">${hits}</div></div>${axisOf(labels)}${legend}${hintOf(hint)}${srTable(label, series.map((s) => s.label), rows)}</figure>`;
+  return `<figure class="chart" style="--ch-h:${height}px" data-chart data-n="${n}" data-last="${known[known.length - 1] ?? 0}">${capOf(caption)}<div class="ch-read" hidden></div><div class="ch-plot"><svg class="ch-svg" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">${lim}${series.slice(1).map(path).join('')}${path(series[0])}</svg>${dots}${nums}<div class="ch-hits" style="--ch-n:${n}">${hits}</div></div>${axisOf(labels)}${legend}${hintOf(hint)}${srTable(label, series.map((s) => s.label), rows)}</figure>`;
 }
 
 /**
@@ -76,12 +92,13 @@ export function lineChart({ label, labels, series, limit = null, current = -1, h
  * @param {string[]} [o.reads]  each column's words after its label ("$93 · 10 tasks")
  * @param {number} [o.height]
  * @param {string} [o.hint]
+ * @param {string} [o.caption]
  */
-export function mixChart({ label, labels, parts, reads = [], height = 120, hint = '' }) {
+export function mixChart({ label, labels, parts, reads = [], height = 120, hint = '', caption = '' }) {
   const totals = labels.map((_, i) => parts.reduce((a, p) => a + (p.values[i] || 0), 0)), max = Math.max(1, ...totals);
   const cols = labels.map((l, i) => `<span class="ch-col" data-i="${i}" tabindex="0" role="img" aria-label="${esc(`${l}: ${parts.map((p) => `${p.label} ${p.texts ? p.texts[i] : p.values[i]}`).join(', ')}`)}" data-read="${esc(readOf({ label: l, text: reads[i] || String(totals[i]), note: parts.map((p) => `${p.label} ${p.texts ? p.texts[i] : p.values[i]}`).join(' · ') }))}"><span class="ch-stack" style="height:${((totals[i] / max) * 100).toFixed(2)}%">${parts.map((p, k) => `<i class="ch-seg is-s${k}" style="flex-grow:${p.values[i] || 0}"></i>`).join('')}</span></span>`).join('');
   const rows = labels.map((l, i) => [l, ...parts.map((p) => (p.texts ? p.texts[i] : String(p.values[i])))]);
-  return `<figure class="chart" style="--ch-h:${height}px" data-chart data-n="${labels.length}" data-last="${labels.length - 1}"><div class="ch-read" hidden></div><div class="ch-plot"><div class="ch-hits is-cols" style="--ch-n:${labels.length}">${cols}</div></div>${axisOf(labels)}${legendOf(parts.map((p, k) => ({ cls: `is-s${k}`, text: p.label })))}${hintOf(hint)}${srTable(label, parts.map((p) => p.label), rows)}</figure>`;
+  return `<figure class="chart" style="--ch-h:${height}px" data-chart data-n="${labels.length}" data-last="${labels.length - 1}">${capOf(caption)}<div class="ch-read" hidden></div><div class="ch-plot"><div class="ch-hits is-cols" style="--ch-n:${labels.length}">${cols}</div></div>${axisOf(labels)}${legendOf(parts.map((p, k) => ({ cls: `is-s${k}`, text: p.label })))}${hintOf(hint)}${srTable(label, parts.map((p) => p.label), rows)}</figure>`;
 }
 
 /**
@@ -95,6 +112,7 @@ export function mixChart({ label, labels, parts, reads = [], height = 120, hint 
 export function watchChart(fig, { open, narrow } = {}) {
   const plot = fig?.querySelector('.ch-plot, .bc-plot'), read = fig?.querySelector('.ch-read');
   if (!plot) return;
+  if (narrow && (+fig.dataset.n || 0) > 2) plot.title = 'Drag across to narrow';
   const doc = plot.ownerDocument, hits = [...plot.querySelectorAll('[data-i]')], n = +fig.dataset.n || hits.length, last = fig.dataset.last ? +fig.dataset.last : n - 1;
   const hitAt = (i) => hits.find((h) => +h.dataset.i === i);
   const at = (clientX) => { const r = plot.getBoundingClientRect(), w = r.width / n; return Math.min(last, Math.max(0, Math.floor((clientX - r.left) / w))); };

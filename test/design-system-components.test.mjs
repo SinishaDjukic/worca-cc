@@ -901,6 +901,24 @@ test('workspace map: boxes say only what is wrong; one opens in place; arrows by
   assert.deepEqual(C.workspaceOrder(['w', 'p', 'e'], [{ from: 'w', to: 'p' }, { from: 'p', to: 'e' }]), ['e', 'p', 'w']);
   assert.equal(C.workspaceOrder(['a', 'b'], [{ from: 'a', to: 'b' }, { from: 'b', to: 'a' }]).length, 2, 'a cycle still ends');
 });
+test('navItem lab: a Labs feature says so at its end, and only then (nav.labs)', () => {
+  assert.equal(dom(C.navItem({ label: 'Requirements', icon: '<svg></svg>', lab: true })).querySelector('.nav-lab').textContent, 'Labs');
+  assert.equal(dom(C.navItem({ label: 'Tasks', icon: '<svg></svg>' })).querySelector('.nav-lab'), null);
+});
+test('handedChip: says what was handed over, and can be removed (rail.hand-to-chat)', () => {
+  const b = dom(C.handedChip({ kind: 'Workflow', name: 'Lean', attrs: { 'data-x': '' } }));
+  assert.match(b.textContent, /Workflow · Lean/);
+  assert.ok(b.hasAttribute('data-x'));
+});
+test('expandFrame: closed in its column, open over its page, one button either way (panel.expand)', () => {
+  assert.equal(dom(C.expandFrame({ body: '<i></i>' })).classList.contains('is-open'), false);
+  const open = dom(C.expandFrame({ body: '<i></i>', open: true }));
+  assert.ok(open.classList.contains('is-open')); assert.match(open.textContent, /Close/);
+});
+test('barHead: the W goes home; the ▾ opens the quick navigation inside the bar (nav.quick)', () => {
+  const h = C.barHead({ title: 'Workflows', home: true, menu: '<div class="menu"></div>' });
+  assert.match(h, /data-bar-home/); assert.match(h, /data-bar-house/); assert.match(h, /bar-quick/);
+});
 test('watchFolds: opening animates the new part; closing fades a copy that then goes (motion.fold)', () => {
   const w = new JSDOM('<body><div id="r"></div></body>', { pretendToBeVisual: true }).window, r = w.document.getElementById('r'); let open = false; const seen = [];
   w.Element.prototype.getBoundingClientRect = () => ({ height: 40 });
@@ -1038,11 +1056,6 @@ test('ScrollFade: an edge fades only while there is more past it', () => {
   C.watchScrollFades(window.document);
   assert.equal(window.document.querySelector('.convo-scroll').hasAttribute('data-more-below'), false, 'nothing past it: no fade');
   window.close();
-});
-
-test('barHead: its name opens the places too, with a ▾ that says so', () => {
-  const h = C.barHead({ title: 'Chat' });
-  assert.match(h, /class="bar-title-b"[^>]*data-bar-house/); assert.match(h, /Places: Chat, Tasks, Schedules/);
 });
 
 test('commands: dev\'s group head, rows with no mark, Copy on the command and its output', () => {
@@ -1235,4 +1248,42 @@ test('stagePart: what a part holds, said before it opens; open, its chevron turn
   assert.match(h, /<b>Changes<\/b><span>5 files \+358 −144<\/span>/); assert.match(h, /aria-expanded="false"/); assert.match(h, /data-tab="changes"/);
   assert.match(C.stagePart({ label: 'Decisions', open: true }), /is-open[^>]*aria-expanded="true"/);
   assert.doesNotMatch(C.stagePart({ label: 'Activity' }), /<span>/);
+});
+
+test('charts: a caption says what the chart shows, and none is drawn without one', () => {
+  const bars = [{ label: 'Mon', value: 1, text: '$1' }];
+  assert.equal(dom(C.barChart({ label: 'x', bars, caption: 'Per day' })).querySelector('.ch-cap').textContent, 'Per day');
+  assert.equal(dom(C.barChart({ label: 'x', bars })).querySelector('.ch-cap'), null);
+  assert.equal(dom(C.mixChart({ label: 'x', labels: ['Mon'], parts: [{ label: 'a', values: [1] }], caption: 'Per day' })).querySelector('.ch-cap').textContent, 'Per day');
+  assert.equal(dom(C.lineChart({ label: 'x', labels: ['Mon'], series: [{ label: 'a', points: [{ value: 1, text: '$1' }] }], caption: 'Per day' })).querySelector('.ch-cap').textContent, 'Per day');
+});
+
+test('barChart by a dimension: bars stack in ink shades with a legend, a limit is one thin line named once', () => {
+  const c = dom(C.barChart({ label: 'x', play: true, limit: { value: 67, text: 'Budget pace $67 a day' }, parts: [{ label: 'a', values: [6, 0] }, { label: 'b', values: [4, 20] }], bars: [{ label: 'd1', value: 10, text: '$10' }, { label: 'd2', value: 20, text: '$20' }] }));
+  assert.equal(c.querySelectorAll('.bc-bar.is-stack').length, 2); assert.equal(c.querySelectorAll('.bc-col')[1].querySelectorAll('.ch-seg').length, 1);
+  assert.deepEqual([...c.querySelectorAll('.ch-key')].map((k) => k.textContent), ['a', 'b', 'Budget pace $67 a day']);
+  assert.equal(c.querySelectorAll('.bc-limit').length, 1); assert.match(c.querySelector('.bc-col').dataset.read, /a 6 · b 4/);
+  assert.equal(c.querySelectorAll('.bc-table thead th').length, 4);
+});
+test('barChart: a number that would sit on the limit line goes beside its bar', () => {
+  const bars = [{ label: 'd1', value: 93, text: '$93' }, { label: 'd2', value: 60, text: '$60' }];
+  const c = dom(C.barChart({ label: 'x', limit: { value: 67, text: 'pace' }, bars, current: 1 }));
+  assert.ok(c.querySelectorAll('.bc-v')[1].classList.contains('is-beside'));
+  assert.ok(!c.querySelectorAll('.bc-v')[0].classList.contains('is-beside'), 'clear of the line, it stays on top');
+});
+test('workspaceMap: links leaving one box turn at their own place', () => {
+  const map = dom(C.workspaceMap({ label: 'M', nodes: [{ id: 'a', title: 'a' }, { id: 'b', title: 'b' }, { id: 'c', title: 'c' }], links: [{ from: 'a', to: 'b' }, { from: 'a', to: 'c', unsure: true }] }));
+  const [p, q] = [...map.querySelectorAll('.wm-w')].map((w) => w.getAttribute('d').match(/H([\d.]+)V/)[1]);
+  assert.notEqual(p, q);
+});
+test('needsReason: a task under Needs you says why in a word or two', () => {
+  assert.equal(C.needsReason('question'), 'Question'); assert.equal(C.needsReason('failed'), 'Failed');
+});
+test('roundRows: one line, one end', () => {
+  const shut = dom(C.roundRows({ line: 'Round 2', n: 1, open: false, toggle: { 'data-rounds': 'r' } }));
+  assert.equal(shut.querySelectorAll('button').length, 1); assert.equal(shut.querySelector('button[data-rounds]').querySelector('.lr-round-end').textContent, '1 round');
+});
+test('watchChart: a chart that narrows keeps the drag in its tooltip', () => {
+  const fig = dom(C.barChart({ label: 'x', play: true, bars: [1, 2, 3].map((v) => ({ label: `d${v}`, value: v, text: `$${v}` })) }));
+  C.watchChart(fig, { narrow: () => {} }); assert.equal(fig.querySelector('.bc-plot').title, 'Drag across to narrow');
 });

@@ -239,3 +239,22 @@ body .toasts{top:60px;bottom:auto;}   /* ds-ok: just under the 48px top bar */
 /* list.bar-model: the same air under every bar's sentence */
 .bar-list .list-head{margin-bottom:12px;}
 .bar-list > .list > .list-sentence{display:block;margin-bottom:12px;}
+
+/* list.bar-model: one left edge for every bar, side menus and sentences too (rail.one-rail) */
+#side-rail .bar-list .list-sentence{margin-left:2px;}
+#side-rail .side-menu{margin-left:0;padding-left:8px;padding-right:8px;}
+#side-rail .bar-list .side-menu{padding-left:0;}
+#side-rail .side-g{margin-left:0;padding-left:2px;}
+#side-rail .side-i{margin-left:-6px;padding-left:8px;}
+
+/* list.bar-model: the same section heads and right edge in every bar */
+#side-rail .side-g{font:600 var(--fs-body)/1.3 var(--sans);color:var(--ink);}
+#side-rail .bar-list .side-menu{padding-right:0;}
+/* list.bar-model: side menus start where list bars start; a selected row's fill ends at the same right edge on every bar */
+#side-rail .side-menu{padding-top:0;}
+#side-rail .side-group:first-child .side-g{margin-top:0;}
+#side-rail .rail-side-settings .side-menu{padding-right:12px;}
+.bar-list .list-row.is-current{position:relative;isolation:isolate;}
+.bar-list .list-row.is-current > .lr-main{position:static;background:none;}
+.bar-list .list-row.is-current > .lr-main::after{content:'';position:absolute;z-index:-1;left:26px;right:0;top:0;height:28px;background:var(--field);border-radius:var(--r-sm);}
+.bar-list .lr-tree .list-row.is-current > .lr-main::after{left:40px;}

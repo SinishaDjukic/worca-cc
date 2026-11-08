@@ -28,7 +28,7 @@ export { suggestionField, suggestionFail, suggestButton, suggestedChip, stopWrit
 export { tagGroup, fitTags, listEditor } from './tag-group.mjs';
 export { stepper, stepDot, stepRow, stackRow, lineRow, fileRow, stackedPrRow } from './stepper.mjs';
 export { table } from './table.mjs';
-export { fill, runState, stateIds, actionHelp, actionLevel, actionFlow, runFlow, makeAction, memberKeeps, chatState, CHAT_KINDS, bulkStateOf, sectionOf, isDone, isLiveStep, stageState, subState, stepLook, defaultStage, stageMeta, toMin, fmtMin, STAGE_WORD, TRACKER_MOVES } from './run-state.mjs';
+export { fill, runState, needsReason, stateIds, actionHelp, actionLevel, actionFlow, runFlow, makeAction, memberKeeps, chatState, CHAT_KINDS, bulkStateOf, sectionOf, isDone, isLiveStep, stageState, subState, stepLook, defaultStage, stageMeta, toMin, fmtMin, STAGE_WORD, TRACKER_MOVES } from './run-state.mjs';
 export { workingWord, confirmOf, failureOf, stepFlow } from './step-flow.mjs';
 export { foldMiddle, workParts, workPhrase, workPlace } from './work-place.mjs';
 export { MODES, atLevel, RUN_PAGE_LEVELS, runPartShows, prefs, shows } from './levels.mjs';
@@ -55,7 +55,7 @@ export { selectionBar, selectAllBox, bindLongPress } from './selection-bar.mjs';
 export { barChart, lineChart, mixChart, figureRows, watchChart, diffWords } from './chart.mjs';
 export { sliderPick, rankList, pickRows, factsLine } from './question-forms.mjs';
 export { stageStep } from './kind-mark.mjs';
-export { markTone, kindMark, partsWord, gitMark, timeline, timelineCard, barHead, turnRow, composer, stageBar, cardHead, taskCard, taskProposal, changeProposal, turnDivider, planCard, filesCard, youTurn, stageLine, stagePart, thinkingRow, placeHead, pluginCard } from './kind-mark.mjs';
+export { handedChip, expandFrame, markTone, kindMark, partsWord, gitMark, timeline, timelineCard, barHead, turnRow, composer, stageBar, cardHead, taskCard, taskProposal, changeProposal, turnDivider, planCard, filesCard, youTurn, stageLine, stagePart, thinkingRow, placeHead, pluginCard } from './kind-mark.mjs';
 export { tipPlace, watchTooltips } from './tooltip.mjs';
 export { menuUp, menuShift, watchMenus } from './menu-place.mjs';
 export { scrollEdges, watchScrollFades } from './scroll-fade.mjs';

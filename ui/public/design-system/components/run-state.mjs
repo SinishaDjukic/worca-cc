@@ -748,6 +748,10 @@ const filled = (v, ctx) => Object.fromEntries(Object.entries(v).map(([a, b]) => 
 export const stateIds = () => Object.keys(STATES);
 
 /** A state's word, dot, symbol and one action, with its names filled in. An unknown id throws: a state is never guessed. */
+/** Why a task is under Needs you, in a word or two: a row's one end (list.bar-model). */
+const NEEDS_REASON = { question: 'Question', gate: 'Your OK', failed: 'Failed', approved: 'Ready to merge' };
+export const needsReason = (id) => NEEDS_REASON[id] || runState(id).word;
+
 export function runState(id, ctx = {}) {
   const s = STATES[id];
   if (!s) throw new Error(`runState: unknown state ${id}`);

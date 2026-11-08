@@ -71,7 +71,7 @@
     if (comp.mode === 'ask') return mode + project + engine;
     if (comp.mode === 'schedule') return mode + project + pk('every', comp.every, R.REPEATS, 'When it repeats') + W('at') + pk('at', comp.at, R.TIMES_OF_DAY, 'What time');
     const preset = comp.preset ? W('·') + pk('preset', comp.preset, ['No preset', 'Hotfix', 'Docs only'], 'The preset that filled it') : '';
-    return mode + project + W('with') + pk('workflow', comp.workflow, ['Default', 'Lean', 'Shaper', 'Architecture (C4)'], 'Which workflow') + W('on') + engine + W('from') + pk('from', comp.from, ['origin · latest', 'local copy', 'the source branch'], 'Where it starts') + W('then') + pk('then', comp.then, ['open a PR', 'leave a branch', 'push to the source'], 'What happens when it is done') + preset;
+    return mode + project + W('with') + pk('workflow', comp.workflow, [...new Set(['Default', 'Lean', 'Shaper', 'Architecture (C4)', comp.workflow])], 'Which workflow') + W('on') + engine + W('from') + pk('from', comp.from, ['origin · latest', 'local copy', 'the source branch'], 'Where it starts') + W('then') + pk('then', comp.then, ['open a PR', 'leave a branch', 'push to the source'], 'What happens when it is done') + preset;
   }
   function detail() {
     if (comp.mode !== 'task') return '';
@@ -83,7 +83,8 @@
     const more = comp.more ? `<div class="composer-more">${cr('Title', field('title', 'Title', comp.title, 'Worca names it'))}${cr('Labels', pk('labels', comp.labels || 'no label', ['no label', 'hotfix', 'billing', 'export', 'infra'], 'Its labels'))}${cr('New branch', field('branch', 'New branch', comp.branch, 'Worca names it from the task'))}${cr('Asks you', pk('asks', comp.asks || 'When the plan has open questions', ['When the plan has open questions', 'Never', 'Before every step'], 'When it stops to ask'))}${cr('Memory', pk('memory', comp.memory || 'This project', ['This project', 'None'], 'What it remembers'))}${cr('Guardrails', pk('guard', comp.guard || 'Team default', ['Team default', 'Strict', 'Read only'], 'Applies to every agent in this task'))}${R.shows('expert') ? cr('Agents', pk('agents', comp.agents || 'As the workflow says', ['As the workflow says', 'One agent', 'A reviewer for each step'], 'Who works on it')) + cr('MCP servers', pk('mcp', comp.mcp || 'Project defaults', ['Project defaults', 'None', 'All I have'], 'Which tools it can use')) : ''}</div>` : '';
     return `<div>${R.button({ label: comp.more ? 'Hide Customise' : 'Customise', kind: 'quiet', icon: R.icon(comp.more ? 'chevron' : 'chevR', 12), attrs: { 'data-cp-more': '', 'aria-expanded': String(comp.more), title: 'Title, labels, branch, memory, guardrails and more' } })}</div>${more}${noteHtml}`;
   }
-  const chipsHtml = () => (comp.files.length ? `<span class="composer-chips">${comp.files.map((f) => R.button({ label: f, kind: 'quiet', icon: R.icon('x', 11), attrs: { 'data-cp-unfile': f, title: `Removes ${f}` } })).join('')}</span>` : '');
+  const aboutNow = () => (comp.about && (!comp.about.binds || comp[comp.about.binds] === comp.about.name) ? comp.about : null);   // rail.hand-to-chat: changing the sentence drops the chip it set
+  const chipsHtml = () => (comp.files.length || aboutNow() ? `<span class="composer-chips">${aboutNow() ? R.handedChip({ kind: comp.about.kind, name: comp.about.name, attrs: { 'data-cp-unabout': '' } }) : ''}${comp.files.map((f) => R.button({ label: f, kind: 'quiet', icon: R.icon('x', 11), attrs: { 'data-cp-unfile': f, title: `Removes ${f}` } })).join('')}</span>` : '');
   // ---- starting: a starter only arms the composer (its chip and its placeholder); nothing is sent until you send ----
   const STARTERS = [
     { id: 'task', label: 'New task', icon: 'kind-task', ph: 'Describe the task…' },
@@ -130,7 +131,7 @@
     const send = comp.busy ? R.button({ label: 'Stop', kind: 'primary', iconOnly: true, icon: R.icon('stop', 14), attrs: { 'data-cp-stop': '', title: 'Stops the reply' } })
       : comp.mode === 'ask' ? R.button({ label: 'Send', kind: 'primary', iconOnly: true, icon: R.icon('up', 14), attrs: { 'data-cp-send': '', title: 'Sends it to Worca' } })
         : R.button({ label: words, kind: 'primary', attrs: { 'data-cp-send': '', title: comp.mode === 'schedule' ? 'Saves the schedule' : 'Shows the task to check; you start it there' } });
-    return queueHtml() + mentionMenu() + R.composer({ value: comp.text, placeholder: comp.intent ? intentOf(comp.intent)?.ph || 'Ask Worca…' : comp.mode === 'schedule' ? 'What should run each time?' : comp.mode === 'task' ? 'What should the task do?' : 'Ask Worca…', sentence: intentChip() + chipsHtml() + sentence(), detail: detail(), tools: plus, send: meter() + R.button({ label: comp.handsFree ? 'Hands-free on' : 'Speak', kind: 'quiet', iconOnly: true, icon: R.icon('mic', 15), attrs: { 'data-cp-mic': '', 'aria-pressed': String(!!comp.handsFree), title: 'Speak instead of typing' } }) + `<span class="rc-pop">${R.button({ label: 'Voice options', kind: 'quiet', iconOnly: true, icon: R.icon('chevron', 10), attrs: { 'data-menu': 'cp-voice', 'aria-haspopup': 'menu', 'aria-expanded': String(menu === 'cp-voice') } })}${menu === 'cp-voice' ? R.compactMenu({ items: [{ id: 'cp-voice|hands', text: comp.handsFree ? 'Hands-free off' : 'Hands-free', help: 'Listens and answers aloud until you stop it' }] }) : ''}</span>` + send, attrs: { 'data-composer': '' } });
+    return queueHtml() + mentionMenu() + R.composer({ value: comp.text, placeholder: comp.intent ? intentOf(comp.intent)?.ph || 'Ask Worca…' : aboutNow()?.ph ? aboutNow().ph : comp.mode === 'schedule' ? 'What should run each time?' : comp.mode === 'task' ? 'What should the task do?' : 'Ask Worca…', sentence: intentChip() + chipsHtml() + sentence(), detail: detail(), tools: plus, send: meter() + R.button({ label: comp.handsFree ? 'Hands-free on' : 'Speak', kind: 'quiet', iconOnly: true, icon: R.icon('mic', 15), attrs: { 'data-cp-mic': '', 'aria-pressed': String(!!comp.handsFree), title: 'Speak instead of typing' } }) + `<span class="rc-pop">${R.button({ label: 'Voice options', kind: 'quiet', iconOnly: true, icon: R.icon('chevron', 10), attrs: { 'data-menu': 'cp-voice', 'aria-haspopup': 'menu', 'aria-expanded': String(menu === 'cp-voice') } })}${menu === 'cp-voice' ? R.compactMenu({ items: [{ id: 'cp-voice|hands', text: comp.handsFree ? 'Hands-free off' : 'Hands-free', help: 'Listens and answers aloud until you stop it' }] }) : ''}</span>` + send, attrs: { 'data-composer': '' } });
   }
 
   // ---- a turn ----
@@ -544,7 +545,7 @@
     if (!threads.has(c.id)) threads.set(c.id, M.thread(c));
     const list = threads.get(c.id), n = Date.now().toString(36);
     const intent = comp.intent || '';
-    list.push({ t: 'you', id: `y${n}`, text, when: 'now', refs: comp.refs || [] });
+    const handed = aboutNow(); list.push({ t: 'you', id: `y${n}`, text, when: 'now', refs: comp.refs || [], files: handed ? [`${handed.kind} · ${handed.name}`] : [] }); comp.about = null;
     if (comp.mode === 'task') {   // one way to start a task: the proposal, checked, then Start
       list.push({ t: 'words', html: 'Here it is. Check it, then start it:' }, { t: 'proposal', id: `p${n}`, title: comp.title || clip(text.charAt(0).toUpperCase() + text.slice(1)), feature: comp.branch || undefined, labels: comp.labels, asks: comp.asks, memory: comp.memory, guard: comp.guard, why: whyOf(text), project: comp.project, workflow: comp.workflow, engine: comp.engine, effort: comp.effort, then: comp.then, when: comp.startAt ? `at ${comp.startAt}` : 'now', preset: comp.preset, files: comp.files, open: false, nudge: false });
     } else if (false) {
@@ -653,6 +654,7 @@
     if ((hit = on('[data-sched-card]'))) { const [id] = hit.dataset.schedCard.split('|'), t = taskOf(id); say(`Started ${t?.title || 'it'}: it runs as a task now, and the schedule keeps its times`); return; }
     if ((hit = on('[data-card-act]'))) { const [id, ...l] = hit.dataset.cardAct.split('|'), t = taskOf(id); if (t) cardAct(t, l.join('|')); return; }   // the button's own label, never its tone: View PR opens the PR
     if ((hit = on('[data-card-yes], [data-card-no]'))) { const t = taskOf(hit.dataset.cardYes || hit.dataset.cardNo); if (t) { const c = t.confirm; t.confirm = null; if (hit.dataset.cardYes && c) doAct(t, c.label, c.flow); else paint(); } return; }
+    if (on('[data-cp-unabout]')) { e.preventDefault(); const a = comp.about; if (a?.binds) comp[a.binds] = a.was; comp.about = null; paint(); return; }
     if ((hit = on('[data-cp-unfile]'))) { e.preventDefault(); comp.files = comp.files.filter((f) => f !== hit.dataset.cpUnfile); paint(); return; }
     if ((hit = on('[data-menu]'))) { e.preventDefault(); menu = menu === hit.dataset.menu ? '' : hit.dataset.menu; if (menu !== 'cl-label') labelQ = ''; paint(); if (menu === 'cl-label') keepLabelQ(); return; }
     if (on('[data-anchor-open]')) { menu = menu === 'anchors' ? '' : 'anchors'; paint(); return; }
@@ -845,6 +847,11 @@
     },
     show: (id) => { setTimeout(() => settle(id), 0); if (id !== chatId) { opened = new Set(); hover = null; menu = ''; comp = { ...fresh(), project: id ? data().chats.find((c) => c.id === id)?.project || 'No project' : lastProject };   /* a new chat starts on the project you added last */ } chatId = id || ''; paint(); if (id) { const box = root.querySelector('.convo-scroll'); if (box) { box.scrollTop = 0; paintTimeline(); } } },
     start: (mode, text, project) => { chatId = ''; comp = { ...fresh(mode), text: text || '', ...(project ? { project } : {}) }; if (!side) window.RailShell.go('chat'); paint(false); root.querySelector('[data-composer-t]')?.focus(); },   /* what another place hands over stays in the box, on its project */
+    handOver: ({ mode = 'ask', about, text = '', ph = '', project, workflow }) => {   // rail.hand-to-chat: the one way a place sends something to Chat
+      chatId = ''; comp = fresh(mode); const binds = workflow ? 'workflow' : project && about?.kind !== 'Page' ? 'project' : ''; const was = binds ? comp[binds] : '';
+      Object.assign(comp, { text, ...(project ? { project } : {}), ...(workflow ? { workflow } : {}), about: about ? { ...about, ph, binds, was } : null });
+      if (!side) window.RailShell.go('chat'); paint(false); root.querySelector('[data-composer-t]')?.focus();
+    },
     arm,   /* a starter armed from another place (Projects' New: Add project) */
   };
   mounted.push(api);
@@ -901,6 +908,7 @@
     sideRefresh: () => mounted.forEach((m) => m.isSide && m.paint()),
     focus: main.focus,
     start: main.start,
+    handOver: main.handOver,
     starter: (id) => { main.start('ask'); setTimeout(() => main.arm(id), 0); },   // Chat with a starter armed: a place's New that is a conversation (Add project)
     mount: (el, opts) => (opts ? mount(el, false, opts) : mount(el, true)),
     refresh: refreshAll,

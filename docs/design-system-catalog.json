@@ -258,6 +258,7 @@
       ],
       "rules": [
         "stacked under its row",
+        "one line, one end: the newest round and its count",
         "5, then +n earlier"
       ],
       "example": "Round 7 · merge dev in, 7 rounds"
@@ -1063,6 +1064,28 @@
       ]
     },
     {
+      "name": "HandedChip",
+      "code": "ui/public/design-system/components/kind-mark.mjs#handedChip",
+      "kind": "entering",
+      "needs": [
+        "what another place sent to Chat, shown in the composer"
+      ],
+      "rules": [
+        "rail.hand-to-chat"
+      ]
+    },
+    {
+      "name": "ExpandFrame",
+      "code": "ui/public/design-system/components/kind-mark.mjs#expandFrame",
+      "kind": "showing",
+      "needs": [
+        "a drawing wider than its column that can open over its page"
+      ],
+      "rules": [
+        "panel.expand"
+      ]
+    },
+    {
       "name": "Composer",
       "code": "ui/public/design-system/components/kind-mark.mjs#composer",
       "kind": "entering",
@@ -1353,10 +1376,14 @@
       "code": "ui/public/design-system/components/chart.mjs#barChart",
       "kind": "showing",
       "needs": [
-        "one number over time, in Insights: one question, one series"
+        "one number over time, in Insights: one question, one series; a caption says what it shows when the rows are not by time",
+        "each period's bar cut by the top rows of a dimension, in ink shades",
+        "a budget's daily pace as one thin line across the bars",
+        "a bar's number that would sit on that line moves beside its bar"
       ],
       "rules": [
-        "look.chart"
+        "look.chart",
+        "look.chart-play"
       ]
     },
     {
@@ -1410,7 +1437,7 @@
       "code": "ui/public/design-system/components/chart.mjs#figureRows",
       "kind": "showing",
       "needs": [
-        "the same figures across rows where each whole row opens one target, a second level under its parent"
+        "the same figures across rows where each whole row opens one target, a second level under its parent; each column as wide as its head, on one line"
       ],
       "rules": [
         "list.row-one-target"
@@ -1542,6 +1569,14 @@
         "where a state sorts in a list"
       ],
       "example": "runState('paused'); sectionOf('Paused')"
+    },
+    {
+      "name": "Needs reason",
+      "code": "ui/public/design-system/components/run-state.mjs#needsReason",
+      "needs": [
+        "why a task is under Needs you, in a word or two: its row's one end"
+      ],
+      "example": "needsReason('question')"
     },
     {
       "name": "Actions",
