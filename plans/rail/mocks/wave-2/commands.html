@@ -1,0 +1,61 @@
+<!doctype html>
+<!-- Mock: dev's command group and row (ask-command-group.mjs, ask-command-card.mjs) on Rail's rail, from the library's own
+     pieces. Not the build: what the build will be. Render: node plans/rail/mocks/wave-2/commands-render.mjs -->
+<html lang="en"><head><meta charset="utf-8"><title>Commands in a chat</title>
+<link rel="stylesheet" href="../../prototype/app.css">
+<link rel="stylesheet" href="../../prototype/design-system/rail-look.css">
+<link rel="stylesheet" href="../../prototype/design-system/rail.css">
+<style>
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);}
+  #m{display:grid;grid-template-columns:repeat(2,680px);gap:40px 48px;padding:32px 40px;}
+  h1{grid-column:1/-1;margin:0;font:600 18px/1.3 var(--sans);} h1 + p{grid-column:1/-1;margin:-28px 0 0;color:var(--ink-3);font-size:13px;}
+  .case{display:flex;flex-direction:column;gap:10px;} .case > h2{margin:0;font:600 12px/1.4 var(--sans);color:var(--ink-3);text-transform:none;}
+  /* the mock's own pieces for what the library does not have yet: the command block, its where-line, the output head */
+  .cmd-detail{margin:6px 0 0 32px;display:flex;flex-direction:column;gap:6px;}
+  .cmd-code{position:relative;padding:8px 36px 8px 10px;border-radius:var(--r-sm);background:var(--field);font:12px/18px var(--mono,ui-monospace,monospace);color:var(--ink-2);white-space:pre-wrap;word-break:break-word;}
+  .cmd-code .d{color:var(--ink-3);} .cmd-code .op{color:var(--ink-3);}
+  .cmd-where{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--ink-3);}
+  .cmd-where .sp{flex:1;}
+  .cmd-out{border-radius:var(--r-sm);background:var(--field);}
+  .cmd-out-h{display:flex;align-items:center;gap:8px;padding:6px 6px 0 10px;font-size:12px;color:var(--ink-3);}
+  .cmd-out-h .sp{flex:1;}
+  .cmd-out pre{margin:0;padding:4px 10px 8px;font:12px/18px var(--mono,ui-monospace,monospace);color:var(--ink-2);white-space:pre-wrap;}
+  .cmd-out pre .bad{color:var(--red);}
+  .copy{position:absolute;top:5px;right:5px;} .cmd-out-h .copy{position:static;}
+  .copy.btn{width:24px;height:24px;min-height:0;padding:0;justify-content:center;}
+  .group-rows{display:flex;flex-direction:column;gap:10px;margin:8px 0 0 32px;}
+  .red-w{color:var(--red);}
+  .turn-row .rd-route-dot{width:16px;height:16px;flex-basis:16px;}   /* Rail's step mark at the rail's size */
+  .note{font-size:12px;color:var(--ink-3);margin:0;}
+  .dark{color-scheme:dark;}
+</style></head>
+<body><div id="m"></div>
+<script src="../../prototype/components.js"></script>
+<script>
+  const R = window.RailUI, esc = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+  const _TERM = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 17l6-5-6-5"/><path d="M12 19h8"/></svg>';
+  const copy = (name) => R.button({ label: name, kind: 'quiet', iconOnly: true, icon: R.icon('copy', 13), cls: 'copy', attrs: { title: name } });
+  // Rail's step mark, as the task page's steps wear it: done a ring with a check, failed red with an x, running a live ring
+  const STEP = { ok: ['is-done', 'Done', 'check'], fail: ['is-failed', 'Failed', 'sym-x'], run: ['is-working is-pulse', 'Running', 'now'] };
+  const mark = (tone) => { const [dotCls, word, icon] = STEP[tone]; return R.stepDot({ dotCls, word, icon, size: 10 }); };
+  const code = (cmd) => `<div class="cmd-code"><span class="d">$ </span>${esc(cmd).replace(/(\|\||&amp;&amp;|\||;)/g, '<span class="op">$1</span>')}${copy('Copy command')}</div>`;
+  const where = (dir) => `<div class="cmd-where"><span>in ${esc(dir)}</span><span class="sp"></span>${R.button({ label: 'Show in terminal', kind: 'quiet' })}</div>`;
+  const out = (lines, n, last) => `<div class="cmd-out"><div class="cmd-out-h"><span>Output · ${last ? 'last ' : ''}${n} line${n === 1 ? '' : 's'}</span><span class="sp"></span>${copy('Copy output')}</div><pre>${lines}</pre></div>`;
+  // a command row: its state, its summary in plain words (the command in its tooltip), its time or exit code; one fold
+  const row = (o) => R.turnRow({ mark: mark(o.tone), text: `${esc(o.sum)}`, end: `<span class="think-t">${esc(o.end)}</span>${o.stop ? R.button({ label: 'Stop', kind: 'quiet', cls: 'is-danger' }) : ''}${R.icon(o.open ? 'chevron' : 'chevR', 12)}`,
+    attrs: {} }) + (o.open ? `<div class="cmd-detail">${code(o.cmd)}${where(o.dir)}${out(o.out, o.n, o.last)}</div>` : '');
+  const head = (o) => R.turnRow({ mark: R.icon(o.open ? 'chevron' : 'chevR', 14), text: o.text, end: `${o.stop ? R.button({ label: 'Stop', kind: 'quiet', cls: 'is-danger' }) : ''}` });
+  const ROWS = (openFail) => [
+    row({ tone: 'ok', sum: 'Checked what changed', cmd: 'git status --short', end: '0.3s' }),
+    row({ tone: 'ok', sum: 'Found where the export is built', cmd: 'rg "exportCsv" src', end: '0.9s' }),
+    row({ tone: 'fail', sum: 'Ran the billing tests', cmd: 'npm test -- billing && npm run lint', end: 'exit 1 · 4.2s', open: openFail, dir: 'billing-api', n: 3, out: '✗ exports 50k rows under 2s\n  <span class="bad">expected 1980ms, got 11240ms</span>\n  at test/export.test.mjs:42' }),
+  ].join('');
+  const cases = [
+    ['Folded: a group of commands, one line', head({ text: '<b>Ran 3 commands</b> · <span class="red-w">1 failed</span> · 5.4s' })],
+    ['Opened: each command its row; a failure opens itself, its output with Copy', head({ open: true, text: '<b>Ran 3 commands</b> · <span class="red-w">1 failed</span> · 5.4s' }) + `<div class="group-rows">${ROWS(true)}</div>`],
+    ['Running: the running command leads the head, Stop beside it', head({ text: '<b>Running the billing tests</b> · 3 commands · 2.1s', stop: true })],
+    ['One command alone, opened: the command with Copy, where it ran, its output with Copy', row({ tone: 'ok', sum: 'Counted the migrations', cmd: 'ls migrations | wc -l', end: '0.4s', open: true, dir: 'worca-cc', n: 1, out: '84' })],
+  ];
+  const html = (theme) => cases.map(([h, body]) => `<section class="case"><h2>${h}</h2><div class="convo-col" style="margin:0">${body}</div></section>`).join('');
+  document.getElementById('m').innerHTML = `<h1>Commands in a chat · dev's logic on Rail's rail</h1><p>Rows, marks, buttons and icons are the library's; the command block, the where-line and the output head are new pieces the build adds to it.</p>` + html();
+</script></body></html>
