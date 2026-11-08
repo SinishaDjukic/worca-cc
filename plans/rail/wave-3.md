@@ -267,6 +267,7 @@ Questions to settle before mocks:
 Direction (Emil, 8 Nov): everything is defined in a chat; the places are views.
 - Workflows, agents and scripts are browsed as the Marketplace is (ways in with counts, cards, yours first); opening one
   leads to Change it in a chat; Build it by hand is the one manual way in, quiet, never the lead.
-- Tasks and Schedules pages show what a chat defined; nothing is made or edited there. Proposed (to confirm): controls that
-  act on what exists (Pause, Run now, Stop, Approve) stay, since they define nothing.
+- Tasks and Schedules pages show what a chat defined; nothing is made or edited there. Agreed: what exists stays
+  controllable on its page (Pause, Run now, Stop, Approve); defining moves to the chat, a gradual, smooth transition.
+- Mock: plans/rail/mocks/wave-3/workflows-2 (explore as the Marketplace, one opened as a view).
 - Open: do Projects' and Workspaces' settings follow the same rule (shown on the page, changed in a chat)?

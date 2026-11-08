@@ -1,0 +1,56 @@
+<!doctype html>
+<!-- Mock (Wave 3, second pass): Workflows explored as the Marketplace is (Emil, 8 Nov: "exploring the marketplace for the
+     ones that were built … option for manual build, else everything defined via the chat"). The bar holds only ways in,
+     each with its count: yours (workflows, agents, scripts), your team's, more from the Marketplace; Build it by hand is
+     the quiet last line. The page is cards; a card's action uses it in a chat. Below: one workflow opened, a view of its
+     steps and what it costs, with Change it in a chat. Library pieces: List, ListRow, PlaceHead, PluginCard, SettingsRow,
+     the list sentence; new: none. Render: node plans/rail/mocks/wave-3/render.mjs workflows-2 1280 -->
+<html lang="en"><head><meta charset="utf-8"><title>Workflows explored</title>
+<link rel="stylesheet" href="../../prototype/app.css">
+<link rel="stylesheet" href="../../prototype/design-system/rail-look.css">
+<link rel="stylesheet" href="../../prototype/design-system/rail.css">
+<link rel="stylesheet" href="../../prototype/shell/shell.css">
+<style>
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);}
+  #m{width:1280px;}
+  .fr{display:grid;grid-template-columns:280px 1fr;min-height:760px;border-bottom:1px solid var(--line);}
+  .bar{background:var(--side,var(--panel));border-right:1px solid var(--line);padding:16px 12px;box-sizing:border-box;}
+  .bar h1{margin:4px 8px 14px;font:600 15px/1.2 var(--sans);display:flex;gap:8px;align-items:center;}
+  .main{padding:28px 0 36px;display:flex;justify-content:center;}
+  .col{width:680px;}
+  .sent{display:flex;gap:6px;align-items:center;font-size:var(--fs-meta);color:var(--ink-2);margin:18px 0 6px;}
+  .more{margin:14px 0 0;}
+  .cap{margin:0 0 4px;font:600 12px/1.4 var(--sans);color:var(--ink-3);}
+  .note{margin:22px 0 0;font-size:12px;color:var(--ink-3);}
+  .acts{display:flex;gap:6px;margin:14px 0 0;}
+</style></head>
+<body><div id="m"></div>
+<script src="../../prototype/components.js"></script>
+<script>
+  const R = window.RailUI;
+  const row = (title, mark, end, cur = false) => R.listRow({ title, mark, endText: end, open: { 'data-x': title }, current: cur });
+  const wf = (tone) => R.kindMark({ kind: 'workflow', tone: tone || 'idle' });
+  const bar = (cur) => `<h1>${R.icon('nav-workflows', 18)} Workflows</h1>${R.list({ groups: [
+    { title: 'Yours', rows: [row('Workflows', wf(), '6', cur === 'w'), row('Agents', R.kindMark({ kind: 'agent' }), '9'), row('Scripts', R.kindMark({ kind: 'script' }), '4')] },
+    { title: 'Browse', rows: [row('For you', R.kindMark({ kind: 'event' }), '2'), row('Your team’s', R.kindMark({ kind: 'group' }), '5'), row('From the Marketplace', R.kindMark({ kind: 'plugin', icon: 'nav-marketplace' }), '24')] },
+    { title: '', rows: [row('Build it by hand', R.kindMark({ kind: 'plugin', icon: 'edit' }), '')] }] })}`;
+  const W = [
+    ['Default', 'Plan, build, review, PR: what every task runs unless you pick another.', '4 steps · used by 41 tasks', '$0.62 a task · 18 min · 92% merged', 'Made with Worca'],
+    ['Security-first review', 'A security pass before each PR; it sends the build back up to twice.', '4 steps · a loop · used by 6', '$1.02 a task · 24 min · 100% merged', 'From the chat Release checklist'],
+    ['Hotfix', 'Skips the plan; one review; straight to a PR into main.', '3 steps · used by 9', '$0.31 a task · 7 min · 89% merged', 'From the chat Node 24'],
+    ['Docs only', 'Writes and checks docs; never touches code.', '2 steps · used by 12', '$0.18 a task · 5 min · 100% merged', 'From the chat Changelog draft'],
+    ['API rewrite', 'Plans the contract, builds it in slices, reviews each slice.', '5 steps · slices · used by 1', '$4.80 so far · running', 'From the chat Plan the API rewrite'],
+    ['Data migration', 'A dry run on a copy, a check you sign off, then the real run.', '4 steps · asks you once · used by 2', '$0.95 a task · 31 min · 100% merged', 'From the chat Tidy the migrations']];
+  const cards = W.map(([t, what, kicker, facts, from], k) => R.pluginCard({ mark: wf(k === 4 ? 'run' : 'idle'), kicker: `${kicker}`, title: t, what, facts: `${facts} · ${from}`, action: R.button({ label: 'Use it', kind: '' }), more: R.button({ label: 'Change it in a chat', kind: 'quiet' }) })).join('');
+  const browse = `<div class="col convo-col" style="margin:0"><p class="cap">1 · Explore: what you built, as the Marketplace shows plugins</p>${R.placeHead({ title: 'Your workflows', facts: '6 workflows · each made in a chat · cost and outcomes from Insights' })}
+    <div class="sent">Showing ${R.sentencePicker({ id: 's', text: 'most used', items: [], chevron: R.icon('chevron', 10) })} from ${R.sentencePicker({ id: 'f', text: 'every project', items: [], chevron: R.icon('chevron', 10) })}</div>
+    <div class="pg-grid">${cards}</div>
+    <p class="note">Mock. Use it starts a task in a chat with this workflow in the sentence; Change it in a chat opens a chat that proposes the change as a card (as Security-first review was). Making one: say it in any chat, or Build it by hand (the bar's last line), the one manual way in. Your team's and From the Marketplace open here the same way; installing one is the Marketplace's Install.</p></div>`;
+  const step = (n, name, who, m, e, cost) => R.settingsRow({ name: `${n}. ${name}`, sentence: `${who} on <b>${m}</b>, ${e} · ${cost}` });
+  const page = `<div class="col convo-col" style="margin:0"><p class="cap">2 · One opened: a view of it; changing it is a chat</p>${R.placeHead({ title: 'Security-first review', facts: '4 steps · a loop · used by 6 tasks · from the chat Release checklist', mark: wf(), word: 'Ready', why: '$1.02 a task, $0.40 more than Default · 100% merged', action: R.button({ label: 'Change it in a chat', kind: '' }), menu: R.moreMenu({ id: 'x', label: 'More', icon: R.icon('more', 16), open: false, items: [] }) })}
+    ${R.settingsSection({ title: 'Its steps', rows: step(1, 'Plan', 'Planner', 'Opus 5.5', 'high', '$0.40') + step(2, 'Build', 'Implementation', 'Sonnet 5.5', 'high', '$0.31') + step(3, 'Security', 'Security review', 'Opus 5.5', 'high', '$0.19') + step(4, 'Review', 'Review', 'Opus 5.5', 'medium', '$0.12') + R.settingsRow({ name: 'Loop', sentence: 'Security sends it back to Build up to <b>2</b> times · it did 3 times in 6 tasks' }) })}
+    ${R.list({ groups: [{ title: 'Tasks that used it · 6', rows: [R.listRow({ title: 'Add CSV export to billing', meta: 'Review · $1.84 so far', mark: R.kindMark({ kind: 'task', tone: 'ask', stage: 2 }), open: {} }), R.listRow({ title: 'Write the notes', meta: 'Merged · $0.96', mark: R.kindMark({ kind: 'task', tone: 'ok', stage: 4 }), open: {} })] }] })}
+    <div class="acts">${R.button({ label: 'Use it', kind: 'quiet' })}${R.button({ label: 'Edit by hand', kind: 'quiet' })}</div>
+    <p class="note">Mock. No pickers on the page: its steps read as sentences with what each costs a task (Insights). Change it in a chat leads; Use it and Edit by hand are quiet. An agent's and a script's page read the same way.</p></div>`;
+  document.getElementById('m').innerHTML = `<div class="fr"><aside class="bar pz-app rail-page">${bar('w')}</aside><main class="main">${browse}</main></div><div class="fr"><aside class="bar pz-app rail-page">${bar('')}</aside><main class="main">${page}</main></div>`;
+</script></body></html>
