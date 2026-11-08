@@ -824,7 +824,7 @@ document.addEventListener('click', (e) => {
 const isUpdate = (id) => C().updates.some((u) => u.id === id);
 const undoClear = (ids, read) => ({ tip: 'Puts them back in the list', run: () => { ui.cleared = ui.cleared.filter((x) => !ids.includes(x)); if (read) ui.read = read; toast('Back in the list'); } });
 // A row's step: it does what it says on the mock's run, so every list reads the same.
-const STEP_MOVES = { 'Try again': ['working', 'Tried again · back at work'], Resume: ['working', 'Resumed · back at work'], 'Run now': ['starting', 'Started by you'] };
+const STEP_MOVES = { 'Restart Build': ['working', 'Build runs again'], 'Try again': ['working', 'Tried again · back at work'], Resume: ['working', 'Resumed · back at work'], 'Run now': ['starting', 'Started by you'] };
 function takeStep(u) {
   ui.fixed = ui.fixed.concat(u.id);
   const move = STEP_MOVES[u.fix], r = u.run && W.find(u.run);

@@ -1520,3 +1520,6 @@ canvas.dot-orb[data-orb]{border-radius:50%;outline:1px solid light-dark(var(--li
 .convo-col .task-card > .rc-card{background:none;border:0;border-radius:0;padding:0;margin-top:10px;}
 /* motion.attention: the breath takes the state's colour (failed red, ready green); amber is for what asks */
 .is-attn[data-attn="fail"]{--attn:var(--red);} .is-attn[data-attn="ok"]{--attn:var(--green);}
+
+/* a task Worca watches says so in its facts, in words (not only in the PR mark's tooltip) */
+.rc-watch{color:var(--ink-2);font-size:var(--fs-meta);}
