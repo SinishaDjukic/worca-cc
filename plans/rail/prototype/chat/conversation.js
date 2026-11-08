@@ -66,7 +66,7 @@
     { id: 'task', label: 'New task', icon: 'kind-task', ph: 'Describe the task…' },
     { id: 'workflow', label: 'Build workflow', icon: 'kind-workflow', ph: 'Describe the workflow…' },
     { id: 'schedule', label: 'Schedule a run', icon: 'clock', ph: 'What should run, and when?' },
-    { id: 'track', label: 'Track a run', icon: 'track', ph: 'Which task to follow?' },
+    { id: 'track', label: 'Follow a task', icon: 'track', ph: 'Which task to follow?' },
   ];
   const MORE = [
     { id: 'explain', label: 'Explain a diff', icon: 'pr', ph: 'Which task’s changes?' },

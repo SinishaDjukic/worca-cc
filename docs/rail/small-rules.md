@@ -16,7 +16,7 @@
   things joined by `&` or `and` (two things get two names); never `Your …`, `My …` or `This …`; never a phrase or a
   question (`What it may do`, `Up to date`); never a word made up for the screen. The same thing keeps its name
   everywhere: a menu item's name is its page's title. `ds-check` reads every name on a Rail page by this rule. Two
-  exceptions: `Vitals`, the Pulse tab, a made-up word which only makes sense under Pulse; and `Usage and costs`, which is one thing.
+  exceptions: `Now`, the Pulse tab, a made-up word which only makes sense under Pulse; and `Usage and costs`, which is one thing.
 - Money is a **budget**, a window is a **limit**: `Budget`, `Raise budget`, `Limit settings`, the Limits of Usage and costs.
   A run's own ceiling is its `Cost cap`.
 - Hover is a tint, never a lift.

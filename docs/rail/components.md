@@ -82,9 +82,9 @@ A Rail page is built by naming needs, not looks. Find the need, use its componen
 | A run's PR fix rounds | RoundRows, under its row | Round 7 · merge dev in, 7 rounds |
 | A list with no rows | ListState: loading, offline, could not load, empty | Loading runs… |
 | What a chat is or did, on the rail | ChatKindIcon in the dot's place; OriginMark before its title | Started a run; Slack |
-| A list of things | ListRow on the rail, the whole row opens, never a box per item. Rows are split by space; a list grouped by something (status, day, section) draws one `--line` where each group after the first starts, from the text edge, and none between rows. Mock `plans/rail/mocks/now-dividers-compare-*.png` (option 4) | runs, files, decisions, Pulse's Vitals, a settings tab |
+| A list of things | ListRow on the rail, the whole row opens, never a box per item. Rows are split by space; a list grouped by something (status, day, section) draws one `--line` where each group after the first starts, from the text edge, and none between rows. Mock `plans/rail/mocks/now-dividers-compare-*.png` (option 4) | runs, files, decisions, Pulse's Now, a settings tab |
 | An update or a thing in Pulse | PulseRow, built on `row()`; while selecting, its tick box on the rail | Plan asks 2 questions |
-| What keeps running after a run | A PulseRow in Pulse's Vitals, under `Running actions`, with its Stop; never in the sidebar, which holds places only, and never in Pulse's badge, since it needs nobody | Dev server :4417 |
+| What keeps running after a run | A PulseRow in Pulse's Now, under `Running actions`, with its Stop; never in the sidebar, which holds places only, and never in Pulse's badge, since it needs nobody | Dev server :4417 |
 | A short fact: a stage, a source, a slot to set up | Chip | Beta, Official, No API key |
 | Why a control is off, a cut-off text, an id, a row's facts | Tooltip (`watchTooltips`): every `title`, quick, on hover, focus and long-press | web-app · Replying · 14:30 |
 | A workflow at full size | WorkflowGraph, the view in a Dialog without a form: a lane per stage, a node per step in its colour, a node opens its log under it | Open the graph |

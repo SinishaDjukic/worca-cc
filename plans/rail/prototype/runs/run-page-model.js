@@ -77,7 +77,7 @@
       title: 'Breadcrumb tests for saved runs', stages: run({ plan: allNext(PLAN), build: allNext(BUILD), review: allNext(REVIEW) }) },
     { id: 'waiting-interrupted', group: 'Waiting', label: 'Waiting on an interrupted run', detail: '“Unified page navigation” was interrupted and can still resume; this waits for it', figs: [['Time', '0m'], ['Cost', '$0.00']],
       title: 'Breadcrumb tests for saved runs', stages: run({ plan: allNext(PLAN), build: allNext(BUILD), review: allNext(REVIEW) }) },
-    { id: 'gate', group: NEEDS_YOU, label: 'Review gate', detail: 'Review sent it back 3 times; the limit is 3', figs: LIVE_FIGS,
+    { id: 'gate', group: NEEDS_YOU, label: 'Waits for your OK', detail: 'Review sent it back 3 times; the limit is 3', figs: LIVE_FIGS,
       stages: run({ review: [s('Review implementation', 'ask', '37m 21s', { loops: 3, live: 'Still 2 minor issues after 3 rounds: accept, or run another cycle?', when: '6m' }), next('Manual tests checklist'), next('Manual web UI testing')] }) },
     { id: 'capped', group: NEEDS_YOU, label: 'Paused at cost cap', detail: 'Reached the $120 cap for this run', figs: LIVE_FIGS,
       stages: run({ build: [ok('Implementation', '2h 4m', { loops: 3, cost: '$67.73' })], review: [REVIEW[0], s('Manual tests checklist', 'paused', '1m 18s', { live: 'Paused at $120.00' }), next('Manual web UI testing')] }) },

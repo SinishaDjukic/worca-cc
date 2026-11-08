@@ -11,7 +11,7 @@
   const ROUNDS = { line: 'Round 7 · fix checks · nothing pushed: tests still fail', list: [round(7, 'fix checks · nothing pushed', '11:20', 'round-failing'), round(6, 'merge dev in · pushed 3e4f5a6', '10:41'), round(5, 'fix checks · pushed 19ab20c', '09:50'), round(4, 'merge dev in · pushed 77d1e02', 'Thu'), round(3, 'fix checks · pushed a1b2c3d', 'Thu'), round(2, 'merge dev in · pushed 0f0e0d0', 'Wed')] };
   const table = () => Object.fromEntries([
     run('r1', 'question', 'Add CSV export to billing', 'billing-api', 'Review asks which date format', '14:32', 'today', { labels: ['billing', 'ui'], cost: 3.4, unread: true }),
-    run('r2', 'gate', 'Migrate cron parser', 'worca-cc', 'Review gate', '13:40', 'today', { labels: ['backend'], cost: 6.1 }),
+    run('r2', 'gate', 'Migrate cron parser', 'worca-cc', 'Waits for your OK on the review', '13:40', 'today', { labels: ['backend'], cost: 6.1 }),
     run('r3', 'paused-limit', 'Refactor auth middleware', 'web-app', 'Usage limit · Gemini refused: daily quota', '13:12', 'today', { cost: 11.8 }),
     run('r4', 'capped', 'Rebuild the search index', 'docs-site', 'Cost cap · reached $120', '12:58', 'today', { cost: 120 }),
     run('r5', 'failed', 'Update Node to 24', 'web-app', 'Test step · 3 tests failed', '12:40', 'today', { cost: 4.2, unread: true, labels: ['hotfix'] }),

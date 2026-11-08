@@ -180,7 +180,7 @@ for (const scheme of ['light', 'dark']) for (const w of [1280, 900, 760, 375]) {
   await p.evaluate(() => RailUI.prefs.setMode('simple'));
   await p.evaluate(() => { location.hash = 'schedules'; }); await p.waitForTimeout(100);
   if (await p.evaluate(() => !document.querySelector('[data-nav="schedules"]').hidden)) add('the sidebar ignores the mode', `${scheme}/${w}`);
-  await step('a place above the mode unlocks', () => document.querySelector('#route-today [data-unlock]')?.click(), () => RailUI.prefs.mode() === 'expert' && !document.querySelector('#route-today [data-unlock]'));
+  await step('a place above the mode unlocks', () => document.querySelector('#route-today [data-unlock]')?.click(), () => RailUI.prefs.mode() === 'advanced' && !document.querySelector('#route-today [data-unlock]'));   // Schedules is Advanced's (Wave 3 decision)
   await p.close();
 }
 // What lies over a page closes on a click outside and on Esc, at 1280 and 375 (panel.dismiss). Each entry opens one; a new

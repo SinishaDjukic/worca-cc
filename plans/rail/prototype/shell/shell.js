@@ -14,13 +14,20 @@
 (function () {
   const T = window.Today;
   const R = window.RailUI;
+  // places Rail redesigns in Wave 3 (plans/rail/wave-3.md): until then, what each will hold, said plainly
+  const SOON = {
+    workflows: ['Workflows: being redesigned with Rail', 'Your workflows, agents and scripts as one list beside the chat; building one happens in Chat today (Build workflow).'],
+    projects: ['Projects: being redesigned with Rail', 'Your projects as one list, each with its settings and memory; add one from Chat today (Add project).'],
+    workspaces: ['Workspaces: being redesigned with Rail', 'Sets of projects that ship together, and the map of how they connect.'],
+    requirements: ['Requirements: being redesigned with Rail', 'Feature specs by perspective, before a task starts; Shaper writes them in Chat today.'],
+  };
   const TITLES = { chat: 'Chat', runs: 'Tasks', schedules: 'Schedules', stats: 'Statistics', 'team-metrics': 'Team metrics', workflows: 'Workflows',
     requirements: 'Requirements', projects: 'Projects', workspaces: 'Workspaces', marketplace: 'Marketplace' };
   const el = (html) => { const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstElementChild; };
 
   // ---- the sidebar: places only (a setting or a place, docs/rail/settings.md) ----
   // The one bar: Settings' behaviour for every feature. The house opens the places; a place with a list holds its list.
-  const PLACES = [['Work', [['chat', 'Chat', 'simple'], ['runs', 'Tasks', 'expert'], ['schedules', 'Schedules', 'expert']]], ['Build', [['workflows', 'Workflows', 'simple'], ['requirements', 'Requirements', 'simple', 'requirements'], ['marketplace', 'Marketplace', 'advanced']]], ['Manage', [['projects', 'Projects', 'simple'], ['workspaces', 'Workspaces', 'advanced']]], ['Insight', [['stats', 'Statistics', 'advanced'], ['team-metrics', 'Team metrics', 'expert']]]];
+  const PLACES = [['Work', [['chat', 'Chat', 'simple'], ['runs', 'Tasks', 'simple'], ['schedules', 'Schedules', 'advanced']]], ['Build', [['workflows', 'Workflows', 'simple'], ['requirements', 'Requirements', 'simple', 'requirements'], ['marketplace', 'Marketplace', 'advanced']]], ['Manage', [['projects', 'Projects', 'simple'], ['workspaces', 'Workspaces', 'advanced']]], ['Insight', [['stats', 'Statistics', 'advanced'], ['team-metrics', 'Team metrics', 'expert']]]];
   function sidebar() {
     const side = el(T.sidebar);
     const nav = side.querySelector('nav.nav');
@@ -260,6 +267,10 @@
       const name = TITLES[view] || 'Schedules', need = lock.min ? lock.min[0].toUpperCase() + lock.min.slice(1) : '';
       pane.today.innerHTML = `<div class="rail-locked">${R.emptyState({ title: lock.min ? `${name} needs ${need}` : `${name} is in Labs`, actions: R.button({ label: lock.min ? `Switch to ${need}` : 'Turn on Labs', kind: 'quiet', attrs: { 'data-unlock': lock.min ? 'mode:' + lock.min : 'flag:' + lock.flag, 'data-to': view } }) })}</div>`;
       scrollTo(0, 0);
+    } else if (!pane.today.hidden && SOON[view]) {   // nav.locked: a place not yet in Rail draws a true page, never a blank one, and the bar stays
+      document.body.className = 'view-place';
+      pane.today.innerHTML = `<div class="rail-locked">${R.emptyState({ title: SOON[view][0], text: SOON[view][1], actions: R.button({ label: 'Back to Chat', kind: 'quiet', attrs: { 'data-nav': 'chat' } }) })}</div>`;
+      scrollTo(0, 0);
     } else if (!pane.today.hidden) {
       pane.today.innerHTML = T.pages[view].html;
       scrollTo(0, 0);
@@ -348,6 +359,7 @@
     if (on('#topnav-ask')) { if (routed.view === 'chat') { document.querySelector('#route-chat [data-composer-t]')?.focus(); return; } askOpen = !askOpen; syncAsk(routed.view); return; }   // on Chat it points to the box that asks
     if (on('[data-ask-close]')) { askOpen = false; syncAsk(routed.view); document.getElementById('topnav-ask')?.focus(); return; }
     // a control on a captured page says where it goes
+    if ((hit = on('#route-today [data-nav]'))) { e.preventDefault(); location.hash = hit.dataset.nav; return; }   // a not-yet place's way on
     if ((hit = on('#route-today a[href], #route-today button'))) {
       e.preventDefault();
       const name = (hit.getAttribute('aria-label') || hit.textContent).trim().replace(/\s+/g, ' ').slice(0, 40);

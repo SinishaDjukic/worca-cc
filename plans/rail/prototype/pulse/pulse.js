@@ -199,7 +199,7 @@ function popover() {
     { id: 'clearread', text: 'Clear read', help: 'Moves every read update to Cleared, in any view; what still waits for you stays' },
     { id: 'select', text: 'Select', help: 'Tick updates to mark read or clear several at once' }, { sep: true },
     { id: 'settings', text: 'Notification settings', help: 'Settings › Notifications: what reaches you' }], 'right')}</span>`;
-  return R.panelFrame({ label: 'Pulse', cls: `pz-popover${inCls('pop')}`, head: `${R.tabs({ cls: 'pz-ptabs', items: [{ id: 'vitals', label: 'Vitals', count: vitalsCount(), selected: ui.popTab === 'vitals', tip: 'What is true right now: it changes by itself and cannot be cleared' }, { id: 'updates', label: 'Updates', count: shown().length, selected: ui.popTab === 'updates', tip: `What happened: read, select and clear, like runs. The count follows the sentence below. Kept for 90 days${C().identity ? '. Read and cleared are yours; others on this sign-in keep their own' : ''}` }], hooks: (t) => ({ 'data-ptab': t.id, title: t.tip }) })}${more}`, body: ui.popTab === 'vitals' ? vitalsSections() : updatesPanel(), foot: bulkBar() });
+  return R.panelFrame({ label: 'Pulse', cls: `pz-popover${inCls('pop')}`, head: `${R.tabs({ cls: 'pz-ptabs', items: [{ id: 'vitals', label: 'Now', count: vitalsCount(), selected: ui.popTab === 'vitals', tip: 'What is true right now: it changes by itself and cannot be cleared' }, { id: 'updates', label: 'Updates', count: shown().length, selected: ui.popTab === 'updates', tip: `What happened: read, select and clear, like runs. The count follows the sentence below. Kept for 90 days${C().identity ? '. Read and cleared are yours; others on this sign-in keep their own' : ''}` }], hooks: (t) => ({ 'data-ptab': t.id, title: t.tip }) })}${more}`, body: ui.popTab === 'vitals' ? vitalsSections() : updatesPanel(), foot: bulkBar() });
 }
 
 // ---- the profile menu: Worca's own menu (index.html #acct-menu); its spend card is now Usage and costs, the last row ----
@@ -364,7 +364,7 @@ function bulkBar() {
   const openNeeds = ups.filter((u) => u.sev === 'needs' && u.open).length;
   const actions = ui.show === 'cleared' ? [{ id: 'restore', label: 'Restore', n: ups.length, tip: 'Puts them back in All; Undo in the notice' }]
     : [{ id: 'read', label: 'Mark read', n: unreadN, tip: unreadN < ups.length ? `Skips ${ups.length - unreadN} already read` : 'Marks them read; Undo in the notice', why: 'All of them are read already' },
-      { id: 'clear', label: 'Clear', n: ups.length, tip: openNeeds ? `${plural(openNeeds, 'run')} still ${openNeeds === 1 ? 'waits' : 'wait'} for you in Vitals: clearing does not answer it` : 'Moves them to Cleared; Undo in the notice' }];
+      { id: 'clear', label: 'Clear', n: ups.length, tip: openNeeds ? `${plural(openNeeds, 'run')} still ${openNeeds === 1 ? 'waits' : 'wait'} for you in Now: clearing does not answer it` : 'Moves them to Cleared; Undo in the notice' }];
   return R.selectionBar({ label: 'Selected updates', count: ups.length, actions });
 }
 // The page behind Pulse: Runs is not in this prototype; Pulse opens over any page.
@@ -724,7 +724,7 @@ function pick(id, v) {
   else if (id === 'auto') { if (s.auto !== v) toast(`Automatic starts: a slice or scheduled run near a limit ${AUTO.find((m) => m.id === v).text}`); s.auto = v; }
   else if (id === 'nr-on') ui.nr = { ...ui.nr, on: v, wait: false, moved: '' };
   else if (id === 'nr-project') ui.nr = { ...ui.nr, project: v };
-  else if (id === 'warn') { if (s.warnAt !== +v) toast(`Warning line at ${v}%: rings, Vitals and updates follow it`); s.warnAt = +v; }
+  else if (id === 'warn') { if (s.warnAt !== +v) toast(`Warning line at ${v}%: rings, Now and updates follow it`); s.warnAt = +v; }
   else if (id.startsWith('lvl:')) { const g = s.groups[id.slice(4)]; if (g.level !== v) { g.level = v; toast(`${M.GROUPS.find((x) => x.id === id.slice(4)).name}: ${g.where === 'pulse' ? whereText(g.where) : `send ${levelText(v)} to ${whereText(g.where)}`}`); } }
   else if (id.startsWith('whr:')) { const g = s.groups[id.slice(4)]; if (g.where !== v) { g.where = v; toast(`${M.GROUPS.find((x) => x.id === id.slice(4)).name}: ${v === 'pulse' ? whereText(v) : `send ${levelText(g.level)} to ${whereText(v)}`}`); } }
   else if (id.startsWith('ev:')) {

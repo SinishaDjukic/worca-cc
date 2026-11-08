@@ -45,6 +45,8 @@ Rail finding, **D** is a dev area.
    - Every state's mark meets 3:1 in both themes.
 8. **Calm motion:** a fade, a breath for what needs you, and nothing that travels across the screen.
 9. **Keep it simple.** Offer cuts before additions; when a page and Rail disagree, Rail's way wins, adapted.
+10. **Ease of use first** (Emil, 8 Nov): every slice is judged by how easy and how simple it is for a person, then by Rail;
+    the two personas score it, and under 8 it goes back.
 
 ## The order, after two users challenged the plan (8 Nov)
 
@@ -118,8 +120,14 @@ Artifacts and their viewers, the live workflow graph with its step log, telemetr
 | Slice | What | Areas | Size |
 |---|---|---|---|
 | 4.1 Marketplace | A list (no card per plugin), the plugin's page and its install as a form; installed plugins already in Settings. | D45–47 | M |
-| 4.2 Insight | Statistics, the cost report and team metrics as one Insight place: numbers said in sentences, one chart per question, the list sentence for ranges (no pill filters, no stat-tile boxes). | D54–56, 51 | L |
+| 4.2 Insights | **One place, Insights** (Emil, 8 Nov), replacing Statistics, the cost report and Team metrics with no overlap: one sentence picks what you look at ("Showing **cost** of **all projects** by **label**, **this month**") instead of three pages that repeat the same numbers. Two parts under it: **Yours** (your tasks: how many, how they went, what they cost, what they saved) and **Team** (Advanced/Expert, with team policy: throughput, cost by person, the work items on a calendar). Numbers are said in sentences, one chart per question, the list sentence for ranges (no pill filters, no stat-tile boxes). | D54–56, 51 | L |
 | 4.3 Settings' leftovers | Model editor and import, the manual server form, the model bridge, spawn diagnostics, machine load and sync before run. | D48–50, 52, 53 | M |
+
+**Labels and tags, and Insights (proposal for Emil):** labels (on chats and tasks) and cost tags are how you *organise*
+work, not something you look at; they are kept and edited where you organise (a task's or chat's Label…, and Settings ›
+Labels for the list of them), and Insights *reads* them as one of its "by" choices (by label, by tag). So they are not a
+third part of Insights. One question for Emil: merge labels and cost tags into one thing ("labels"), since a person
+rarely knows the difference? Recommended: yes, one word, one list, in Settings.
 
 ## Phase 5: rare, specialist and edges
 
@@ -145,7 +153,7 @@ command pattern (D1, 43, 60), scripts, the agent editor, C4 and the code editor 
 - **The usual gates:** the design-system tests, the gate, the sweep with a step per new flow, the design-system check,
   both click-throughs, and the full suite.
 - **The new colour and contrast gate (0.1)**, in both themes.
-- **User agents after each phase:** a daily user and a newcomer, read-only, scoring every task. The aim is everything at
+- **Two personas in every challenge and every evaluation:** a daily user (Expert, the seeded store) and a **new user** (the default mode, an empty store, never told how it works). Read-only, scoring every task. The aim is everything at
   8 or above. What scores under 8 goes back into the phase.
 - **One store checks:** every surface agrees after each action, for each new place that holds things.
 
@@ -155,3 +163,10 @@ command pattern (D1, 43, 60), scripts, the agent editor, C4 and the code editor 
    state's colour (components.md)? I recommend look.md.
 2. **The enhancements above:** take all, some, or none.
 3. **Order:** Phase 0 first and whole, then 1, 2, 3, 4, 5? Or interleave the daily dev areas (1.1, 1.2) with Phase 0?
+
+## Decided (8 Nov, Emil: "as per you")
+
+- The order: the challengers' (0.0 and 1.0 first, interleaved).
+- StageBar: finished stages quiet, only the stage it is on in its state's colour (look.md); components.md follows.
+- Simple mode: Tasks shows in Simple, Schedules from Advanced; a locked place always says what it needs and its way on.
+- Names: Vitals → **Now**, Track a task → **Follow a task**, Review gate → **Waits for your OK**.
