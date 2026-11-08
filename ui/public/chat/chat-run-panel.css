@@ -74,9 +74,11 @@
   .chat-page .ask-composer-row{gap:4px;}
   .chat-page .ask-composer-row > .ask-meter{display:none;}
 }
-/* A narrow panel: the bar's buttons go icon-only (their words stay for screen readers), then the tab badges go. */
+/* A narrow panel: the bar's buttons go icon-only (their words stay for screen readers), then the tab badges go.
+   Resume keeps its word: a paused run's one way on, and a bare ▶ beside ■ does not read as a button. */
 @container crp (max-width:560px){
   .crp :is(.rd-bar,.hd-bar) :is(.rd-btn-label,.hd-btn-label){position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;}
+  .crp :is(.rd-bar,.hd-bar) :is(.hd-resume .hd-btn-label,.rd-pause[data-action="resume"] .rd-btn-label){position:static;width:auto;height:auto;overflow:visible;clip-path:none;}
   .crp :is(.rd-tab,.hd-tab) > svg{display:none;}
 }
 @container crp (max-width:420px){

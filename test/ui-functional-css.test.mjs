@@ -262,3 +262,27 @@ test('run page bar: every .rd-bar-end button is one height, font size and paddin
   }
   document.body.innerHTML = '';
 });
+
+test('narrow chat run panel: Resume keeps its word, the other bar buttons go icon-only', () => {
+  // The rules inside `@container crp (max-width:560px)`, in order; the cascade replayed for `position`.
+  const narrow = flat.map((r, i) => ({ r, i }))
+    .filter(({ r }) => /crp\s*\(max-width:\s*560px\)/.test(r.parentRule?.conditionText || r.parentRule?.cssText?.split('{')[0] || ''));
+  assert.ok(narrow.length, 'the narrow crp container rules are found');
+  const position = (el) => {
+    const hits = narrow.filter(({ r }) => r.style.getPropertyValue('position'))
+      .flatMap(({ r, i }) => sels(r).filter((s) => { try { return el.matches(s); } catch { return false; } })
+        .map((s) => ({ r, i, spec: specificity(s) })));
+    hits.sort((x, y) => cmp(x.spec, y.spec) || (x.i - y.i));
+    return hits.at(-1)?.r.style.getPropertyValue('position');
+  };
+  document.body.innerHTML = `<div class="crp">
+    <div class="rd-bar"><button class="btn rd-pause" data-action="resume"><span class="rd-btn-label" data-k="rd-resume">Resume</span></button>
+      <button class="btn rd-pause" data-action="pause"><span class="rd-btn-label" data-k="rd-pause">Pause</span></button>
+      <button class="btn rd-stop"><span class="rd-btn-label" data-k="rd-stop">Stop</span></button></div>
+    <div class="hd-bar"><button class="btn hd-resume"><span class="hd-btn-label" data-k="hd-resume">Resume</span></button>
+      <button class="btn hd-stop"><span class="hd-btn-label" data-k="hd-stop">Stop</span></button></div></div>`;
+  const q = (k) => document.querySelector(`[data-k="${k}"]`);
+  for (const k of ['rd-resume', 'hd-resume']) assert.equal(position(q(k)), 'static', `${k}: the word shows`);
+  for (const k of ['rd-pause', 'rd-stop', 'hd-stop']) assert.equal(position(q(k)), 'absolute', `${k}: icon-only`);
+  document.body.innerHTML = '';
+});
