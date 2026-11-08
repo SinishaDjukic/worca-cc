@@ -55,7 +55,9 @@
     const cr = (n, v) => `<div class="cr"><span>${n}</span><span>${v}</span></div>`;
     const note = window.RailPulse?.startNote?.();
     const noteHtml = note ? `<div class="composer-note">${R.kindMark({ kind: 'task', tone: note.blocked ? 'fail' : 'act', size: 16 })}<span>${esc(note.say)} ${note.use ? R.button({ label: `Use ${note.use}`, kind: 'quiet', attrs: { 'data-cp-use': note.use } }) : ''}${note.at ? R.button({ label: `Start at ${note.at}`, kind: 'quiet', attrs: { 'data-cp-at': note.at } }) : ''}</span></div>` : '';
-    const more = comp.more ? `<div class="composer-more">${cr('Title', 'Worca names it')}${cr('Labels', 'hotfix, billing')}${cr('New branch', 'feat/billing-csv-export')}${cr('Asks you', 'When the plan has open questions')}${cr('Memory', 'This project')}${cr('Guardrails', 'Team default')}${R.shows('expert') ? cr('Agents', 'As the workflow says') + cr('MCP servers', 'Project defaults') : ''}</div>` : '';
+    // every row is a choice, as on a proposal's Customise: a picker, or a field for what you name
+    const field = (id, label, v, ph) => R.field({ id: `cp-${id}-f`, label, quietLabel: true, value: v || '', placeholder: ph, attrs: { 'data-cp-field': id } });
+    const more = comp.more ? `<div class="composer-more">${cr('Title', field('title', 'Title', comp.title, 'Worca names it'))}${cr('Labels', pk('labels', comp.labels || 'no label', ['no label', 'hotfix', 'billing', 'export', 'infra'], 'Its labels'))}${cr('New branch', field('branch', 'New branch', comp.branch, 'Worca names it from the task'))}${cr('Asks you', pk('asks', comp.asks || 'When the plan has open questions', ['When the plan has open questions', 'Never', 'Before every step'], 'When it stops to ask'))}${cr('Memory', pk('memory', comp.memory || 'This project', ['This project', 'None'], 'What it remembers'))}${cr('Guardrails', pk('guard', comp.guard || 'Team default', ['Team default', 'Strict', 'Read only'], 'Applies to every agent in this task'))}${R.shows('expert') ? cr('Agents', pk('agents', comp.agents || 'As the workflow says', ['As the workflow says', 'One agent', 'A reviewer for each step'], 'Who works on it')) + cr('MCP servers', pk('mcp', comp.mcp || 'Project defaults', ['Project defaults', 'None', 'All I have'], 'Which tools it can use')) : ''}</div>` : '';
     return `<div>${R.button({ label: comp.more ? 'Hide Customise' : 'Customise', kind: 'quiet', icon: R.icon(comp.more ? 'chevron' : 'chevR', 12), attrs: { 'data-cp-more': '', 'aria-expanded': String(comp.more), title: 'Title, labels, branch, memory, guardrails and more' } })}</div>${more}${noteHtml}`;
   }
   const chipsHtml = () => (comp.files.length ? `<span class="composer-chips">${comp.files.map((f) => R.button({ label: f, kind: 'quiet', icon: R.icon('x', 11), attrs: { 'data-cp-unfile': f, title: `Removes ${f}` } })).join('')}</span>` : '');
@@ -352,6 +354,7 @@
   function paint(keepText = true) {
     window.RailShell?.unembedRun?.(root);   // the task page lent to an open card goes home before the chat redraws
     paintOnly(keepText);
+    attention();   // what waits on you breathes after every redraw, until you have seen it
     const slot = root.querySelector('[data-run-slot]');
     if (slot) window.RailShell?.embedRun?.(slot, slot.dataset.runSlot, slot.dataset.runAsk);   // and comes back into the card that is open
   }
@@ -425,7 +428,7 @@
     const intent = comp.intent || '';
     list.push({ t: 'you', id: `y${n}`, text, when: 'now', refs: comp.refs || [] });
     if (comp.mode === 'task') {   // one way to start a task: the proposal, checked, then Start
-      list.push({ t: 'words', html: 'Here it is. Check it, then start it:' }, { t: 'proposal', id: `p${n}`, title: clip(text.charAt(0).toUpperCase() + text.slice(1)), why: `From this chat: ${text}`, project: comp.project, workflow: comp.workflow, engine: comp.engine, effort: comp.effort, then: comp.then, when: comp.startAt ? `at ${comp.startAt}` : 'now', preset: comp.preset, files: comp.files, open: false, nudge: false });
+      list.push({ t: 'words', html: 'Here it is. Check it, then start it:' }, { t: 'proposal', id: `p${n}`, title: comp.title || clip(text.charAt(0).toUpperCase() + text.slice(1)), feature: comp.branch || undefined, labels: comp.labels, asks: comp.asks, memory: comp.memory, guard: comp.guard, why: `From this chat: ${text}`, project: comp.project, workflow: comp.workflow, engine: comp.engine, effort: comp.effort, then: comp.then, when: comp.startAt ? `at ${comp.startAt}` : 'now', preset: comp.preset, files: comp.files, open: false, nudge: false });
     } else if (false) {
       const t = { id: `t${n}`, title: clip(text), case: 'starting', stage: 0, git: 'branch', branch: `feat/${slug(text)}`, detail: `Plan · ${comp.workflow} on ${comp.engine}` };
       if (comp.startAt) { t.case = 'scheduled'; t.detail = `Starts at ${comp.startAt}`; t.git = ''; }
@@ -616,7 +619,19 @@
   root.addEventListener('contextmenu', (e) => { const p = e.target.closest('[data-pin]'); if (!p) return; e.preventDefault(); pins = pins.filter((w) => w !== p.dataset.pin); paint(); say(`Unpinned ${p.dataset.pin}`); });
   root.addEventListener('keydown', (e) => { const p = e.target.closest?.('[data-pin]'); if (p && (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10'))) { e.preventDefault(); pins = pins.filter((w) => w !== p.dataset.pin); paint(); say(`Unpinned ${p.dataset.pin}`); } });
   root.addEventListener('input', (e) => { if (e.target.matches('[data-composer-t]')) { comp.text = e.target.value; size(e.target); const at = /@[^@\s]*$/.test(comp.text); if (at !== (menu === 'cp-mention')) { menu = at ? 'cp-mention' : ''; paint(); } } if (e.target.matches('[data-pp-brief]')) { const x = turns().find((y) => y.id === e.target.dataset.ppBrief); if (x) x.brief = e.target.value; } if (e.target.matches('[data-pp-feature]')) { const x = turns().find((y) => y.id === e.target.dataset.ppFeature); if (x) x.feature = e.target.value; } if (e.target.matches('[data-pp-title]')) { const x = turns().find((y) => y.id === e.target.dataset.ppTitle); if (x) x.title = e.target.value; } });
-  // the store changed (here, in Tasks, in Pulse, from Away): read every chat's tasks again and draw
+  // motion.attention: what needs you in this chat glows once, when you arrive and when it starts to wait
+  const asksBelow = (y) => { const l = turns(), at = l.indexOf(y); return l.some((z, j) => j > at && ((z.t === 'question' && !z.answered) || (z.t === 'plan' && !z.approved))); };   // a question under a card speaks for it: one thing breathes
+  const waitsOnYou = (y) => (y.t === 'question' && !y.answered) || (y.t === 'plan' && !y.approved) || (y.t === 'gate' && !y.done) || ((y.t === 'task') && !asksBelow(y) && (() => { const t = taskOf(y.task), r = t?.run && window.RailWorld.find(t.run); return !!r && window.RailWorld.section(r) === 'needs'; })());
+  // it breathes until you focus it or act on it, like an unread mark; seen ones stay quiet across redraws
+  const seenAttn = new Set();
+  function attention() {
+    const one = [...turns()].reverse().find((y) => y.id && waitsOnYou(y) && !seenAttn.has(y.id));   // the newest that waits on you, alone, as one filled button
+    root.querySelectorAll('.is-attn').forEach((el) => { if (el.dataset.anchor !== one?.id) el.classList.remove('is-attn'); });
+    if (one) root.querySelector(`[data-anchor="${one.id}"]`)?.classList.add('is-attn');
+  }
+  const quiet = (e) => { const el = e.target.closest?.('.is-attn[data-anchor]'); if (el) { seenAttn.add(el.dataset.anchor); el.classList.remove('is-attn'); } };
+  root.addEventListener('focusin', quiet); root.addEventListener('pointerdown', quiet);
+  // the store changed (here, in Tasks, in Pulse, from Away): read every chat's tasks again and draw; what now waits glows
   window.RailWorld.onMove(() => { for (const c of data().chats) M.sync(c); window.RailChats?.refresh(); paint(); });
   // a step taken inside a card's open stages moves the task itself: its card's head and bar, the bar's row, Pulse
   document.addEventListener('rail:task-moved', (e) => {
@@ -626,6 +641,7 @@
   });
   // the Label picker's field: typing finds, Enter makes a new label and adds it to this chat
   function keepLabelQ() { const q = root.querySelector('#cl-label-q'); if (q) { q.value = labelQ; q.focus(); q.setSelectionRange(labelQ.length, labelQ.length); } }
+  root.addEventListener('input', (e) => { const f = e.target.dataset?.cpField; if (f) comp[f] = e.target.value; });   // Customise's fields keep what you type
   root.addEventListener('input', (e) => { if (e.target.id === 'cl-label-q') { labelQ = e.target.value; paint(false); keepLabelQ(); } });
   root.addEventListener('keydown', (e) => {
     if (e.target.id !== 'cl-label-q' || e.key !== 'Enter') return;

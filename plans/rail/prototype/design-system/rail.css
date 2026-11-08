@@ -1221,9 +1221,9 @@ th.rt-c{color:var(--ink-2);font-weight:500;}
 .tl-list-btn{display:none;}
 
 /* Chat home, with its background. */
-.chat-home{position:relative;flex:1 1 auto;min-height:0;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px 24px 15vh;}
+.chat-home{position:relative;flex:1 1 auto;min-height:0;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;padding:28vh 56px 24px 24px;}   /* form.composer: every home in one place, the conversation's own box; the input at one height under the heading, whatever comes under it */
 .chat-home-bg{position:absolute;inset:0;pointer-events:none;}
-.chat-home-in{position:relative;width:100%;max-width:640px;}
+.chat-home-in{position:relative;width:100%;max-width:680px;padding-left:32px;box-sizing:border-box;}   /* the column, on the cards' rail: the input and its words on the cards' text edge */
 .chat-home h1{margin:0 0 14px;font:600 var(--fs-page)/1.2 var(--sans);letter-spacing:-.02em;color:var(--ink);}
 [data-bg="dots"] .chat-home-bg:not([class*=" is-"]),.chat-home-bg.is-dots{background-image:radial-gradient(light-dark(#D4D4DA,#35353B) 1px,transparent 1.2px);background-size:18px 18px;-webkit-mask-image:linear-gradient(to bottom,#000,transparent 92%);mask-image:linear-gradient(to bottom,#000,transparent 92%);}   /* ds-ok: a background's own colours, on Chat home only */
 [data-bg="aurora-dots"] .chat-home-bg:not([class*=" is-"]),[data-bg="dusk-dots"] .chat-home-bg:not([class*=" is-"]),.chat-home-bg.is-aurora-dots,.chat-home-bg.is-dusk-dots{-webkit-mask-size:18px 18px;mask-size:18px 18px;-webkit-mask-image:radial-gradient(#000 1.1px,transparent 1.4px);mask-image:radial-gradient(#000 1.1px,transparent 1.4px);}   /* ds-ok: a background's own colours, on Chat home only */
@@ -1411,6 +1411,10 @@ canvas.dot-orb[data-orb]{border-radius:50%;outline:1px solid light-dark(var(--li
 @keyframes card-flash{0%,40%{box-shadow:0 0 0 2px var(--ink-3);}100%{box-shadow:0 0 0 2px transparent;}}
 .is-flash{animation:card-flash var(--motion-flash) var(--ease) 1;border-radius:var(--r-md);}
 @media (prefers-reduced-motion: reduce){ .is-flash{animation:none;} }
+/* motion.attention: what needs you breathes softly in Rail's amber, like an unread mark, until you focus it or act on it; never a shake */
+@keyframes card-attn{0%,100%{box-shadow:0 0 0 0 transparent;background:transparent;}50%{box-shadow:0 0 0 6px color-mix(in srgb,var(--amber) 14%,transparent);background:color-mix(in srgb,var(--amber) 5%,transparent);}}
+.is-attn{animation:card-attn 2.4s var(--ease) infinite;border-radius:var(--r-md);}   /* ds-ok: an unread mark's slow breath */
+@media (prefers-reduced-motion: reduce){ .is-attn{animation:none;box-shadow:0 0 0 2px color-mix(in srgb,var(--amber) 30%,transparent);} }
 
 /* A task card opened in place holds its task page's stage stream: the page's own head, trail and status are the card's already. */
 .tc-run-slot #card.is-lent :is(.rc-bar, .rc-head, .rc-figs){display:none;}
