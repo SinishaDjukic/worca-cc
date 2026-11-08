@@ -44,7 +44,9 @@
   const showOf = (id) => SHOWS.find((x) => x.id === id);
   const passes = (c, v) => showOf(v.show).test(c) && (v.from === 'all' || (c.project || 'No project') === v.from);
   const count = (p) => String(data.chats.filter((c) => passes(c, { ...view, ...p })).length);
-  const KEYS = { activity: (a, b) => data.chats.indexOf(a) - data.chats.indexOf(b), created: (a, b) => data.chats.indexOf(b) - data.chats.indexOf(a), title: (a, b) => a.title.localeCompare(b.title), cost: (a, b) => (b.cost || 0) - (a.cost || 0) };
+  // the newest first: by its time when it has one (14:32 before 12:20), else as the list holds it (Yesterday, Mon, Oct 12)
+  const clock = (c) => (/^\d\d:\d\d$/.test(c.time) ? +c.time.replace(':', '') : c.time === 'now' ? 9999 : -1);
+  const KEYS = { activity: (a, b) => (clock(b) - clock(a)) || (data.chats.indexOf(a) - data.chats.indexOf(b)), created: (a, b) => data.chats.indexOf(b) - data.chats.indexOf(a), title: (a, b) => a.title.localeCompare(b.title), cost: (a, b) => (b.cost || 0) - (a.cost || 0) };
   const sorted = (list) => [...list.filter((c) => c.pinned).sort(KEYS[view.sort]), ...list.filter((c) => !c.pinned).sort(KEYS[view.sort])];
 
   // ---- rows ----
