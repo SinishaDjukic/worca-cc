@@ -345,7 +345,7 @@ import { conversationForThread, listActiveConversations } from '../src/core/chat
 import { scopeSelectOptions } from '../src/core/chat/card-render.mjs';
 import { EventEmitter } from 'node:events';
 import { chatScopeOf, withChatScope, sameScope, scopeBody, targetInScope, scopeRefusalText, noProjectRunText, scopeEventPrompt, scopeNoticeText } from '../src/core/ask/scope.mjs';
-import { createChatMessenger } from '../src/core/ask/chat-messages.mjs';
+import { createChatMessenger, CHAT_MESSAGE_CODES } from '../src/core/ask/chat-messages.mjs';
 import { createRunChatBridge } from '../src/core/ask/run-chat-bridge.mjs';
 import { hostAllowed as askHostAllowed } from '../src/core/web-allowlist.mjs';
 import { registryPortsFn } from '../src/core/graph/registry-ports.mjs';
@@ -4572,6 +4572,8 @@ const chatBridge = createConversationBridge({
   receipts: chatReceipts,
   // Live status messages (discord-chat 0.5.0): only a channel whose manifest declares capabilities.liveStatus.
   liveStatus: (plugin, channelId) => channelHost.list().find((x) => x.plugin === plugin && x.channelId === channelId)?.capabilities?.liveStatus === true,
+  // Cross-chat slice 3: chat-message posts carry reply / answer controls only where the channel shows controls.
+  interactive: (plugin, channelId) => channelHost.list().find((e) => e.plugin === plugin && e.channelId === channelId)?.capabilities?.interactive === true,
   readConfig: (plugin, channelId) => { const e = channelHost.list().find((x) => x.plugin === plugin && x.channelId === channelId); return e ? readPluginConfig(plugin, e.configSchema) : null; },
   linksFor: (threadId) => chatLinksFor(threadId),
   now: () => Date.now(),
@@ -4631,6 +4633,13 @@ const chatBridge = createConversationBridge({
         ...chatTurnIdentity(fresh, actor), onUserRow, ...(inbound ? { files, chatContext } : {}) });
     },
     applyCard: (a) => invokeAskCard(a),
+    // Cross-chat slice 3. chatMessenger / runChatBridge are declared further down: these arrows read them at call time.
+    findChatMessage: (t, id) => chatMessenger.readIncoming(t, id),
+    answerRunQuestion: ({ threadId, messageId, choices, by }) => runChatBridge.answerFromChat({ chatId: threadId, messageId, choices, by }),
+    replyToChatMessage: async ({ threadId, messageId, text, by }) => {
+      const r = await chatMessenger.send(threadId, { replyTo: messageId, text, intent: 'note' }, { actedBy: { kind: 'person', label: by } });
+      return r.ok ? { status: 200, body: r } : { status: CHAT_MESSAGE_CODES[r.code] || 400, body: { error: r.error, code: r.code } };
+    },
     takeDeferredReply: (cardId) => { const v = askDeferredReplies.get(cardId) || null; if (v) askDeferredReplies.delete(cardId); return v; },
     startRun: ({ body, actor }) => invokeStartRun(body, null, { startedBy: actor }),
     switchScope: async ({ threadId, value }) => {
@@ -9624,6 +9633,7 @@ const chatMessenger = createChatMessenger({
 const runChatBridge = createRunChatBridge({
   messenger: chatMessenger,
   findLiveRun: (pid) => [...runs.values()].find((e) => e.pipelineId === pid && !SETTLED_RUN.has(e.status)) || null,
+  answerRun,
   log: (level, msg) => console.warn(`[worca-ui] ${msg}`),
 });
 

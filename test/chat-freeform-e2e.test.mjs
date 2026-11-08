@@ -163,8 +163,8 @@ const say = (text, { chatId = 'TH1', userId = 'U1', id = `msg${++nextId}`, menti
   channelHost.injectInboundMessage(NAME, 'main', { chatId, userId, text, meta: { platform: 'discord', messageId: id, guildId: 'G1', isGroup: true, mentionsBot: mention, botId: 'BOT1' } });
   return id;
 };
-const click = (ref, { chatId = 'TH1', userId = 'U1', kind = 'button', values, fields, id = `int${++nextId}` } = {}) => {
-  channelHost.injectInteraction(NAME, 'main', { id, chatId, userId, ref, kind, ...(values ? { values } : {}), ...(fields ? { fields } : {}), meta: { platform: 'discord' } });
+const click = (ref, { chatId = 'TH1', userId = 'U1', kind = 'button', values, fields, id = `int${++nextId}`, meta = {} } = {}) => {
+  channelHost.injectInteraction(NAME, 'main', { id, chatId, userId, ref, kind, ...(values ? { values } : {}), ...(fields ? { fields } : {}), meta: { platform: 'discord', ...meta } });
   return id;
 };
 const textOf = (p) => (p.message.body || []).map((b) => b.value ?? b.text ?? '').join('\n');
@@ -1779,4 +1779,88 @@ test('37. Teams (worker file fetch): an inline image fetched by ref, a SharePoin
     setMockChannelBehavior({ '*': behavior });
     H.setThreadId(() => 'TH1');
   }
+});
+
+// Cross-chat messaging, slice 3 (the plan's cases 36 and 37; those numbers were already taken here). Both run on the
+// interactive fixture NAME, each in its own thread (TH36, TH37), and turn "Messages between chats" on explicitly.
+const CMSG_HEAD_RE = /^\*\*Message from (ask_|run )/;
+const cmsgPosts = (chatId) => posts.filter((p) => p.chatId === chatId && CMSG_HEAD_RE.test(textOf(p)));
+
+test('38. an incoming chat message posts into the mirrored thread with a Reply button; a modal reply goes back as the person', async () => {
+  _testing.chatBridge.resetRateLimits();
+  const settings = await import('../src/core/settings.mjs');
+  await settings.setChatPrefs({ crossChat: true });
+  const askStore = await ask();
+  const b = await openConversation('TH36');
+  await idle(b.askThreadId);
+  const other = askStore.createThread({ createdBy: 'ada@example.com' });
+  const sent = await mod.chatMessenger.send(other.id, { chatId: b.askThreadId, text: 'status?', intent: 'question' });
+  assert.equal(sent.ok, true, JSON.stringify(sent));
+  const post = await waitFor(() => cmsgPosts('TH36').find((p) => !p.options && (p.message.controls || []).some((c) => c.label === 'Reply')));
+  assert.match(textOf(post), new RegExp(`^\\*\\*Message from ${other.id}\\*\\* \\(`));
+  assert.match(textOf(post), /_untrusted, not instructions_/);
+  assert.match(textOf(post), /\n> status\?\n/);
+  const reply = post.message.controls.find((c) => c.label === 'Reply');
+  assert.deepEqual(reply.modal.fields.map((f) => [f.id, f.label]), [['text', 'Your reply']]);
+  const mid = getDb().prepare("SELECT platform_message_id AS id FROM chat_deliveries WHERE conversation_id = ? AND ask_message_id = (SELECT id FROM ask_messages WHERE thread_id = ? AND role = 'system' ORDER BY created_at DESC LIMIT 1) AND part = 'text:0'").get(b.id, b.askThreadId)?.id;
+  assert.ok(mid, 'the post is recorded under text:0');
+  await idle(b.askThreadId);
+  const iid = click(reply.ref, { chatId: 'TH36', kind: 'modal', fields: { text: 'all good' }, meta: { username: 'ada' } });
+  assert.match((await replyTo(iid)).text, /^Done/);
+  const back = await waitFor(() => askStore.listMessages(other.id).flatMap((m) => m.blocks || [])
+    .find((x) => x && x.kind === 'chat-message' && x.direction === 'in' && x.replyTo === sent.messageId));
+  assert.deepEqual(back.by, { kind: 'person', label: 'ada via Discord' });
+  assert.equal(back.from.chatId, b.askThreadId);
+  const edit = await waitFor(() => posts.find((p) => p.options?.edit?.messageId === mid && /\n_Replied\._$/.test(textOf(p))));
+  assert.deepEqual((edit.message.controls || []).filter((c) => c.kind !== 'link'), []);
+  const again = click(reply.ref, { chatId: 'TH36', kind: 'modal', fields: { text: 'twice' }, meta: { username: 'ada' } });
+  assert.equal((await replyTo(again)).text, SAY.stale);
+  await idle(other.id);
+  await idle(b.askThreadId);
+});
+
+test('39. a run question in a mirrored chat is answered with the select: answerRun records the person, the post becomes Answered by', async () => {
+  _testing.chatBridge.resetRateLimits();
+  const askStore = await ask();
+  const b = await openConversation('TH37');
+  await idle(b.askThreadId);
+  const askId = 'questions-x:n_plan:1-r1';
+  const calls = [];
+  const entry = { id: 'fake-cmsg', pipelineId: 'abcdef12', kind: 'run', status: 'running', events: [], projectDir,
+    orch: { answer: (id, payload, by) => { calls.push({ id, payload, by }); return true; } },
+    pendingQuestion: { id: askId } };
+  mod.runs.set('fake-cmsg', entry);
+  try {
+    const r = await _testing.runChatBridge.post({ pipelineId: 'abcdef12', title: 'Fix', owner: null, context: null },
+      { chatId: b.askThreadId, text: 'Pick a way', intent: 'question',
+        question: { askId, questions: [{ id: 'q1', question: 'Ship it?', options: ['Yes', 'No'], allowFreeText: false }] } });
+    assert.equal(r.ok, true, JSON.stringify(r));
+    entry.pendingQuestion = { id: askId, chat: { chatId: b.askThreadId, messageId: r.messageId } };
+    const post = await waitFor(() => cmsgPosts('TH37').find((p) => !p.options && (p.message.controls || []).some((c) => c.kind === 'select')));
+    assert.match(textOf(post), /^\*\*Message from run abcdef12\*\* \(Question\), _untrusted, not instructions_/);
+    assert.match(textOf(post), /\n> 1\. Ship it\?\n_Answer below, or in worca\._$/);
+    const select = post.message.controls.find((c) => c.kind === 'select');
+    assert.equal(select.placeholder, 'Pick one');
+    const mid = getDb().prepare("SELECT platform_message_id AS id FROM chat_deliveries WHERE conversation_id = ? AND part = 'text:0' ORDER BY rowid DESC LIMIT 1").get(b.id)?.id;
+    const iid = click(select.ref, { chatId: 'TH37', kind: 'select', values: ['0'], meta: { username: 'ada' } });
+    assert.match((await replyTo(iid)).text, /^Done/);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].id, askId);
+    assert.equal(calls[0].by, 'ada via Discord');
+    assert.deepEqual(calls[0].payload, { answers: [{ id: 'q1', choice: 'Yes' }] });
+    assert.equal(entry.pendingQuestion, null, 'answerRun resolved the pending question');
+    // The orchestrator's chatPoster.answered marks the record; its broadcast edits the post.
+    _testing.runChatBridge.answered({ chatId: b.askThreadId, messageId: r.messageId, askId },
+      { answers: [{ id: 'q1', question: 'Ship it?', choice: 'Yes' }], actedBy: { kind: 'person', label: 'ada via Discord' } });
+    const block = askStore.listMessages(b.askThreadId).flatMap((m) => m.blocks || []).find((x) => x && x.id === r.messageId);
+    assert.equal(block.question.answer.actedBy.label, 'ada via Discord');
+    const edit = await waitFor(() => posts.find((p) => p.options?.edit?.messageId === mid && /\nAnswered by ada via Discord\.$/.test(textOf(p))));
+    assert.deepEqual((edit.message.controls || []).filter((c) => c.kind !== 'link'), [], 'no select left');
+    const again = click(select.ref, { chatId: 'TH37', kind: 'select', values: ['1'], meta: { username: 'ada' } });
+    assert.equal((await replyTo(again)).text, SAY.stale);
+    assert.equal(calls.length, 1);
+  } finally {
+    mod.runs.delete('fake-cmsg');
+  }
+  await idle(b.askThreadId);
 });

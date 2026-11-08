@@ -139,11 +139,11 @@ export function collectScriptToolsToggle(root) {
   return { scriptTools: cb ? cb.checked : true };
 }
 
-/** Settings → Ask Worca "Messages between chats" (cross-chat messaging D1): `chat.crossChat`, default OFF. Mounted beside
+/** Settings → Ask Worca "Messages between chats" (cross-chat messaging D1): `chat.crossChat`, default ON (only a stored false turns it off). Mounted beside
  *  "Create and run scripts" and saved with the Ask Worca card's {chat} patch. */
 export function renderCrossChatToggle({ prefs } = {}, { doc = globalThis.document } = {}) {
   const wrap = h(doc, 'div', 'ask-cross-chat');
-  const { row, input } = makeSwitch(doc, { label: 'Messages between chats', checked: prefs?.crossChat === true, inputClass: 'ask-cross-chat' });
+  const { row, input } = makeSwitch(doc, { label: 'Messages between chats', checked: prefs?.crossChat !== false, inputClass: 'ask-cross-chat' });
   input.id = 'askCrossChat';
   wrap.append(row, h(doc, 'small', 'hint drow-help', "Lets your chats' assistants send messages to each other. Incoming messages are shown as untrusted and never run tools on their own."));
   return wrap;

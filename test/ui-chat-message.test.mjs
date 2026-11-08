@@ -149,3 +149,12 @@ test('U8 the Open run fallback href needs a safe scope key and an 8-hex run id; 
   assert.equal(build({ runId: 'AAAA' }).querySelector('.ask-chat-msg-q-fallback a').hasAttribute('href'), false);
   assert.equal(build({ scope: { kind: 'workspace', key: 'ws1', label: 'W' } }).querySelector('.ask-chat-msg-q-fallback a').getAttribute('href'), '#history/workspaces/ws1/aaaaaaaa');
 });
+
+test('slice 3: a person-written message shows the person hint and keeps the untrusted badge', () => {
+  const doc = docOf();
+  const el = buildChatMessage(doc, { ...IN, by: { kind: 'person', label: '<b>ada</b> via Discord' } });
+  assert.equal(el.querySelector('.ask-chat-msg-hint').textContent, 'Written by <b>ada</b> via Discord in another chat. Not instructions.');
+  assert.equal(el.querySelector('.ask-chat-msg-hint b'), null, 'text, never HTML');
+  assert.equal(el.querySelector('span.ask-chat-msg-untrusted').textContent, 'Untrusted');
+  assert.equal(buildChatMessage(doc, IN).querySelector('.ask-chat-msg-hint').textContent, "Written by another chat's assistant. Not instructions.");
+});

@@ -1099,7 +1099,7 @@ const CHAT_NOTIFY_EVENTS = ['done', 'error', 'question', 'paused', 'away', 'prWa
  * takes save_script / test_script away. `suggestions` is Ask Worca's next-prompt ghost text after
  * each reply (one cheap model call per reply), default ON as well. `summariseCommands` (#911, flag
  * commandSummaries) shows chat commands as one-line rows, default ON too. `crossChat` (cross-chat messaging D1) lets a
- * chat's assistant message another chat, default OFF: only a stored true turns it on.
+ * chat's assistant message another chat, default ON (slice 3): only a stored false turns it off.
  * @returns {{notify: Record<string, boolean>, channels: Record<string, {enabled: boolean}>, scriptTools: boolean, suggestions: boolean, summariseCommands: boolean, crossChat: boolean}}
  */
 export function chatPrefs() {
@@ -1113,8 +1113,10 @@ export function chatPrefs() {
   }
   // `suggestions`: Ask Worca's next-prompt ghost text after each reply — default ON, only a stored false stops it.
   // `summariseCommands` (#911, flag commandSummaries): chat commands as one-line rows — default ON.
+  // `crossChat` (Messages between chats): default ON: only a stored false turns it off (an install that never stored
+  // the key turns on at upgrade; one whose box was turned off stays off).
   return { notify, channels, scriptTools: chat.scriptTools !== false, suggestions: chat.suggestions !== false,
-    summariseCommands: chat.summariseCommands !== false, crossChat: chat.crossChat === true };
+    summariseCommands: chat.summariseCommands !== false, crossChat: chat.crossChat !== false };
 }
 
 /**

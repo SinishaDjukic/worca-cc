@@ -10,6 +10,9 @@ import { NETWORK_ACTOR } from './network-wait.mjs';
 /** At most this many posts are taken per read; the rest are dropped and counted. */
 export const RUN_CHAT_POSTS_MAX = 5;
 
+/** A run question keeps at most this many options (chat-messages.mjs stores them, card-render.mjs offers them). */
+export const RUN_QUESTION_OPTIONS_MAX = 16;
+
 /** `resolvePending` reasons that mean "answered, or not ours to close": the chat record stays as it is. */
 export const RUN_QUESTION_KEEP_REASONS = new Set(['answered', 'night-mode', 'network-back', 'resolved']);
 

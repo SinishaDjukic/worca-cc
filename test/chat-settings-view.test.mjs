@@ -72,10 +72,11 @@ test('chat settings render and round-trip, including the Chat script toggle', as
       assert.deepEqual(collectScriptToolsToggle(off), { scriptTools: true });
       assert.deepEqual(collectScriptToolsToggle(doc.createElement('div')), { scriptTools: true }, 'a host with no control means ON');
     } },
-    { name: 'cross chat switch renders off by default and collects a boolean', run: () => {
-      const off = renderCrossChatToggle({ prefs: {} }, { doc });
+    { name: 'cross chat switch renders on by default and collects a boolean', run: () => {
+      const off = renderCrossChatToggle({ prefs: { crossChat: false } }, { doc });
       const cb = off.querySelector('input#askCrossChat');
-      assert.equal(cb.checked, false, 'an absent pref is OFF (D1)');
+      assert.equal(cb.checked, false, 'a stored false is OFF');
+      assert.equal(renderCrossChatToggle({ prefs: {} }, { doc }).querySelector('input#askCrossChat').checked, true, 'an absent pref is ON (slice 3 D14)');
       assert.ok(off.querySelector('label.switch-row input.sw-input.ask-cross-chat'), 'a switch row holding the input');
       assert.ok(off.querySelector('small.hint.drow-help'), 'the hint line under the switch');
       assert.match(off.textContent, /Messages between chats/);

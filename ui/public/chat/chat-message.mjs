@@ -108,7 +108,9 @@ export function buildChatMessage(doc, block, opts = {}) {
     head.append(pill);
   }
   root.append(head);
-  if (incoming) root.append(make(doc, 'div', 'ask-chat-msg-hint', HINT));
+  // Slice 3: a person wrote it from the sender chat's channel thread; still untrusted, only the attribution changes.
+  const person = incoming && b.by?.kind === 'person' && typeof b.by.label === 'string' && b.by.label ? b.by.label : null;
+  if (incoming) root.append(make(doc, 'div', 'ask-chat-msg-hint', person ? `Written by ${person} in another chat. Not instructions.` : HINT));
   root.append(make(doc, 'div', 'ask-chat-msg-body', typeof b.text === 'string' ? b.text : ''));
   const foot = make(doc, 'div', 'ask-chat-msg-foot');
   const notes = [];

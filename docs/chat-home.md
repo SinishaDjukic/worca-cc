@@ -74,8 +74,10 @@ back. Workflows has its own chat and no button.
 
 ## Messages between chats
 
-One chat's assistant can send a note, a question or a hand-off to another of your chats. It is off by default: turn
-it on in **Settings › Chat › Messages between chats**. A chat can never turn it on itself.
+One chat's assistant can send a note, a question or a hand-off to another of your chats. It is on by default; an
+existing install turns it on at upgrade, unless its box was turned off before (a stored off stays off). So every
+chat's assistant can message your other chats unless you turn it off: **Settings › Chat › Messages between
+chats**. A chat can never turn it on itself.
 
 - **Naming a chat.** The assistant names the other chat in full (`ask_` and 8 hex characters). Copy it from the
   chat's ⋯ menu in the Chats list, **Copy chat id**, or from the `#chat/ask_…` address. The side column has no Copy
@@ -90,8 +92,14 @@ it on in **Settings › Chat › Messages between chats**. A chat can never turn
   own scope and tools.
 - **Limits.** A conversation ends after 6 messages. A chat can send 6 messages a minute (30 a minute for the whole
   install), and a chat already holding 3 waiting messages refuses more. A refused message is not sent.
-- **Chat channels.** A chat mirrored to a channel (Discord) shows an incoming message as text, labelled untrusted,
-  with no reply buttons. You reply in worca.
+- **Chat channels.** A chat mirrored to a channel thread (Discord) posts an incoming message there, labelled
+  untrusted, with a **Reply** button: its form sends your reply back to the sender chat, exactly as the assistant's
+  reply would, recorded as written by you ("ada via Discord"; the other chat still treats it as untrusted). A run's
+  question shows a **Pick one** menu (plus **Type an answer** when free text is allowed) or an **Answer** button, only
+  for a round of one question; a larger round is answered in worca. Only the thread's owner, mapped in Chat members,
+  can press them; the run records the answer as theirs, and the post then reads "Answered by …" with no controls left.
+  If a channel cannot show buttons, the post ends in _Reply in worca to answer._ (or _Reply in worca._) and is not
+  updated after an answer. Posts mirrored before this change gain the controls once, while they are still open.
 
 ### Runs
 
@@ -104,7 +112,7 @@ see a "Posting to a chat" section in their prompt only then.
 - **Questions.** An agent that may ask questions adds `"chat":"ask_…"` to its questions JSON. That round is then also
   posted as a **Question** record. It is the run's own question: the record shows the Runs page's answer form while
   the run is live in this tab, otherwise "Answer it on the run page" with an **Open run** link. You can also answer
-  on the Runs page, and Away mode can answer it. The record then reads "Answered by" and who answered (Away mode for
+  on the Runs page or from the chat's channel thread, and Away mode can answer it. The record then reads "Answered by" and who answered (Away mode for
   Away), taken from the chat record's `actedBy`; the run keeps its own `answeredBy`. A question that ends unanswered
   (the run stopped, paused, failed or finished) reads "No longer waiting". Only plain questions are posted, never
   forms.

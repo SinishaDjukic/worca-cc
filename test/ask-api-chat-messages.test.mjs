@@ -88,6 +88,36 @@ after(async () => {
   await rm(homeDir, { recursive: true, force: true, maxRetries: 3 });
 });
 
+test('Q0 a fresh home: Messages between chats is ON with nothing stored, the bridge mints, send_to_chat is listed, a turn gets the section', async () => {
+  const { readFileSync, writeFileSync, existsSync } = await import('node:fs');
+  const file = join(homeDir, '.worca-cc', 'settings.json');
+  if (existsSync(file)) {
+    const s = JSON.parse(readFileSync(file, 'utf8'));
+    if (s.chat && 'crossChat' in s.chat) { delete s.chat.crossChat; writeFileSync(file, JSON.stringify(s)); }
+  }
+  assert.equal(settings.readSettings().chat?.crossChat, undefined, 'nothing stored');
+  assert.equal(settings.chatPrefs().crossChat, true);
+  const a = chat();
+  const br = mod._testing.askChatMessageBridge({ threadId: a.id });
+  assert.ok(br, 'the classic-mode bridge is minted (the turn then carries WORCA_ASK_MESSAGES)');
+  br.dispose();
+  const { createAskTools } = await import('../src/core/ask/tools.mjs');
+  const { ASK_LIMITS } = await import('../src/core/ask/limits.mjs');
+  const names = createAskTools({ limits: ASK_LIMITS, chatMessages: mod._testing.askChatMessageExtraDeps(a.id).chatMessages }).list().map((d) => d.name);
+  assert.ok(names.includes('send_to_chat'), 'relay mode lists send_to_chat');
+  const hold = holdTurns();
+  try {
+    const r = await fetch(`${base}/api/ask/threads/${a.id}/messages`, { method: 'POST', headers: JSONH,
+      body: JSON.stringify({ text: 'MOCK_SLOW hello', model: 'claude-opus-5-5', effort: 'high', context: {} }) });
+    assert.equal(r.status, 202, await r.text());
+    const job = await waitFor(() => mod._testing.askJobs.get(a.id)?.turn && mod._testing.askJobs.get(a.id));
+    await waitFor(() => hold.count() >= 1);
+    assert.match(job.turn.systemPrompt, /## Messages between chats/);
+    assert.ok(job.turn.messageBridge, 'the turn holds a message bridge, so its spawn env carries WORCA_ASK_MESSAGES');
+  } finally { hold.dispose(); }
+  await idle(a.id);
+});
+
 test('Q17 the bridge is minted only with the setting on', async () => {
   const a = chat();
   await setCross(false);
