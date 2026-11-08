@@ -26,7 +26,14 @@
   const sectionOfChat = (c) => (asksInside(c) ? 'needs' : R.chatState(c.state).section);
   const busyOf = (c) => R.chatState(c.state).busy || '';
   const toneOf = (state) => (state === 'needs-you' ? 'ask' : state === 'idle' ? 'idle' : 'run');
-  const markOf = (state, kind) => R.kindMark({ kind: kind === 'workflow' && state === 'idle' ? 'workflow' : 'chat', tone: toneOf(state), title: state === 'idle' ? R.CHAT_KINDS[kind]?.label || 'Chat' : R.chatState(state).word });
+  // motion.attention: what needs you breathes in its colour until you open it; opening a chat sees it and its tasks as they stand
+  const seen = new Set(), seenKey = (c) => `${c.id}:${c.state}:${(c.tasks || []).map((t) => t.case).join(',')}`;
+  // only the level that needs you breathes: a task that waits breathes, its chat and group hold still; a chat breathes only
+  // when the attention is its own (nothing under it waits)
+  const ATTN = ['ask', 'act', 'fail'];
+  const unseen = (c) => ATTN.includes(toneOf(c.state)) && !seen.has(seenKey(c));
+  const ownAttn = (c) => unseen(c) && !(c.tasks || []).some(waits);   /* waits: the store's own rule for a task that needs you */
+  const markOf = (state, kind, breathe = false) => R.kindMark({ breathe, kind: kind === 'workflow' && state === 'idle' ? 'workflow' : 'chat', tone: toneOf(state), title: state === 'idle' ? R.CHAT_KINDS[kind]?.label || 'Chat' : R.chatState(state).word });
   const RM = window.RunCardModel;
   const taskMenu = (t) => [{ id: 'open-task', text: t.kind === 'schedule' ? 'Open schedule' : 'Open task', help: 'Opens its card in its chat' }, { id: 'in-view', text: window.RailShell?.inView.has(t.kind === 'schedule' ? 'schedule' : 'task', t.id) ? 'Out of view' : 'Keep in view', help: 'Its live mark in the top bar, on every page' }, ...(t.git === 'open' || t.git === 'fail' ? [{ id: 'watch', text: t.watch ? 'Stop watching' : 'Watch', help: 'Worca follows the PR and fixes failing checks for you' }] : []), { id: 'label-task', text: 'Label…', hint: hint('L'), help: 'Adds a label to this task' }, ...(has('advanced') ? [{ id: 'add-to-group', text: 'Add to group…', hint: hint('G'), help: 'Find a group, or make a new one' }] : []), { sep: true }, { id: 'archive', text: 'Archive', hint: hint('E'), help: 'Undo in the notice' }];
   const KIND_OF = { feature: 'feature', workflow: 'workflow' };   // what a chat started: a Shaper task, a workflow run, else a plain task
@@ -35,7 +42,7 @@
     const x = { t, c, key: `task:${t.id}` };
     if (t.kind === 'schedule') return { key: x.key, _x: x, title: t.title, mark: R.kindMark({ kind: 'schedule', title: t.detail }), end: t.time, tip: `${t.title}\n${t.detail}\nOpens the schedule`, current: false, menu: taskMenu(t) };
     const st = R.runState(RM.stateOf(t.case));
-    return { key: x.key, _x: x, title: t.title, mark: R.kindMark({ kind: KIND_OF[t.kind] || 'task', tone: R.markTone(st), stage: t.stage, title: `${st.word} · ${t.detail || ''}` }), endMark: t.git ? R.gitMark({ status: t.git, watch: t.watch || '', title: t.watch ? `Watching · ${t.detail}` : t.branch }) : '', end: t.git ? '' : t.endWord || '', tip: `${t.title}\n${st.word} · ${t.detail || ''}\nOpens the task`, tree: t.after ? treeOf(c, t.after) : undefined, menu: taskMenu(t) };
+    return { key: x.key, _x: x, title: t.title, mark: R.kindMark({ breathe: !seen.has(seenKey(c)), kind: KIND_OF[t.kind] || 'task', tone: R.markTone(st), stage: t.stage, title: `${st.word} · ${t.detail || ''}` }), endMark: t.git ? R.gitMark({ status: t.git, watch: t.watch || '', title: t.watch ? `Watching · ${t.detail}` : t.branch }) : '', end: t.git ? '' : t.endWord || '', tip: `${t.title}\n${st.word} · ${t.detail || ''}\nOpens the task`, tree: t.after ? treeOf(c, t.after) : undefined, menu: taskMenu(t) };
   });
 
   // ---- the view ----
@@ -52,7 +59,7 @@
   // ---- rows ----
   function chatRow(c, member) {
     const st = R.chatState(c.state), x = { c, key: `chat:${c.id}` };
-    const r = { key: x.key, _x: x, title: c.title, lead: c.origin ? R.originMark(c.origin) : '', mark: markOf(c.state, c.kind), unread: c.unread, current: current === c.id, tip: [c.title, [c.project || 'No project', ...(c.labels || [])].join(' · '), [st.line || (c.state === 'idle' ? R.CHAT_KINDS[c.kind]?.label : ''), c.time].filter(Boolean).join(' · '), c.pinned ? 'Pinned' : ''].filter(Boolean).join('\n'), end: c.time, tree: c.tasks?.length ? treeOf(c, c.tasks) : undefined,
+    const r = { key: x.key, _x: x, title: c.title, lead: c.origin ? R.originMark(c.origin) : '', mark: markOf(c.state, c.kind, ownAttn(c)), unread: c.unread, current: current === c.id, tip: [c.title, [c.project || 'No project', ...(c.labels || [])].join(' · '), [st.line || (c.state === 'idle' ? R.CHAT_KINDS[c.kind]?.label : ''), c.time].filter(Boolean).join(' · '), c.pinned ? 'Pinned' : ''].filter(Boolean).join('\n'), end: c.time, tree: c.tasks?.length ? treeOf(c, c.tasks) : undefined,
       meta: '' };
     r.menu = [{ id: 'toggle', text: 'Select', hint: hint('Space') }, { id: 'in-view', text: window.RailShell?.inView.has('chat', c.id) ? 'Out of view' : 'Keep in view', help: 'Its live mark in the top bar, on every page' }, { id: 'rename', text: 'Rename…', hint: hint('R'), help: 'Give it another name' }, { id: 'pin', text: c.pinned ? 'Unpin' : 'Pin', hint: hint('P'), help: 'A pinned chat leads its section' },
       ...(has('advanced') ? [{ id: 'add-to-group', text: 'Add to group…', hint: hint('G'), help: 'Find a group, or make a new one' }, ...(c.group ? [{ id: 'leave-group', text: 'Remove from group', hint: hint('shift', 'G'), help: 'It stays in Chats, in no group' }] : [])] : []),
@@ -68,7 +75,7 @@
     const ps = [...new Set(list.map((c) => c.project).filter(Boolean))];
     const where = ps.length > 1 ? `${ps.length} projects` : ps[0] || 'No project';
     const cost = list.reduce((a, c) => a + (c.cost || 0), 0), x = { g, key: `cgroup:${g.id}` };
-    return { key: x.key, _x: x, title: g.name, mark: markOf(state, kind), count: String(list.length), noun: 'chats', open: needs || !!busy, holds: list.some((c) => c.id === current), tip: `${g.name}\n${where} · ${list.length} chats\n${R.chatState(state).line || ''}`.trim(), end: list[0]?.time,
+    return { key: x.key, _x: x, title: g.name, mark: markOf(state, kind, false), count: String(list.length), noun: 'chats', open: needs || !!busy, holds: list.some((c) => c.id === current), tip: `${g.name}\n${where} · ${list.length} chats\n${R.chatState(state).line || ''}`.trim(), end: list[0]?.time,
       meta: '', members: list.map((c) => chatRow(c, true)),
       menu: [{ id: 'rename', text: 'Rename…', hint: hint('R'), help: 'Give the group another name' }, { id: 'ungroup', text: 'Ungroup', help: 'The chats stay, in no group; Undo in the notice' }, { sep: true },
         { id: 'archive', text: 'Archive group', hint: hint('E'), off: !!busy, help: busy ? `“${busy.title}”: ${busyOf(busy).toLowerCase()}` : 'Undo in the notice' }, ...(has('advanced') ? [{ id: 'delete', text: 'Delete group…', hint: hint('Backspace'), danger: true, help: 'Removes the group and its chats for good; asks first' }] : [])] };
@@ -218,7 +225,7 @@
   window.RailWorld.onMove(() => { data.chats.forEach(M.sync); ctl?.paint(); });   // a task moved anywhere: its row and its chat's place in Needs you follow
   R.prefs.onChange(() => ctl.paint());
   window.RailChats = {
-    show: (id) => { current = id || ''; ctl.paint(); return true; },
+    show: (id) => { current = id || ''; const c = id && data.chats.find((x) => x.id === id); if (c) seen.add(seenKey(c)); ctl.paint(); return true; },
     opened: () => true,
     toggle,
     newChat,

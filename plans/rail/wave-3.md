@@ -209,3 +209,16 @@ Since: while a confirm asks, its row holds the one button (no second Merge PR); 
 Show N more (`list.fold-keeps-current`, in the sweep); a failed card's ⋯ leads with Ask Worca to fix it (a follow-up
 with what failed already written) and Show the log; the first screen says "What's next?" and, until you have signed in,
 points to Getting started; a follow-up's box is the card's width.
+
+Wave 3, second run (8 Nov, "continue with the rest"):
+- 0.5 a schedule's runs as the chat's task cards; 0.6 Pulse rows on the sidebar's marks, unread as weight; 0.7 Settings
+  without section icons or loose dots, one end edge.
+- Attention (Emil): a mark keeps its type; needing you is colour and a slow, soft breath, never ? or !; in a bar the whole
+  row (its mark and name) breathes until you open it; in a chat the whole card fades in and out. Rules: list.kind-mark,
+  motion.attention.
+- One way for a place to give the shell its bar list and page (RailPlaces); PlaceHead and BarChart in the library.
+- 3.1 Projects, 3.2 Workflows (agents and scripts in the same list), 3.3 Requirements, 4.1 Marketplace, 4.2 Insights (one
+  place for Statistics, the cost report and Team metrics: questions in the bar, one sentence of pickers, one chart, a
+  breakdown; labels and cost tags are what "by" reads), Phase 5 Workspaces.
+- Still to do: 1.2's rest, 1.3–1.5, Phase 2 (artifact viewers, the live graph), 4.3 Settings' leftovers, Phase 5's rest
+  (Actions, scripts' editor, onboarding, edges), and a persona round on the new places.

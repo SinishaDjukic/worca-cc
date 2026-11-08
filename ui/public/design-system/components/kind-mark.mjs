@@ -9,9 +9,9 @@ import { button, splitButton } from './button.mjs';
 
 const STAGES = 5;
 const R = 9, L = 2 * Math.PI * R;
-const CENTRE = { ask: 'question', act: 'alert', fail: 'sym-x', pause: 'pause', stop: 'sym-stop' };
+const CENTRE = { pause: 'pause', stop: 'sym-stop' };   // attention is colour and a breath, never a ? or ! (list.kind-mark); a pause or a stop is a state, so it keeps its sign
 const TYPED = new Set(['feature', 'workflow']), NEEDS_YOU = new Set(['ask', 'act', 'fail']);
-const KINDS = { chat: 'kind-chat', task: 'kind-task', schedule: 'kind-schedule', event: 'kind-event', feature: 'kind-feature', group: 'kind-group', workflow: 'kind-workflow' };
+const KINDS = { chat: 'kind-chat', task: 'kind-task', schedule: 'kind-schedule', event: 'kind-event', feature: 'kind-feature', group: 'kind-group', workflow: 'kind-workflow', project: 'folder', workspace: 'nav-workspaces', requirement: 'list', agent: 'you', script: 'sliders', plugin: 'plug' };
 
 /**
  * The tone of a state, from what the library says about it (runState, chatState): never a page's own reading of a word.
@@ -44,8 +44,9 @@ export function markTone(st = {}) {
  * @param {number} [o.size]
  * @param {string} [o.title]   the tooltip: its word, then its step
  * @param {boolean} [o.keepType]  the type stays in the centre whatever the state (a summary of many)
+ * @param {boolean} [o.breathe]   it needs you and you have not opened it yet: it breathes in its state's colour (motion.attention)
  */
-export function kindMark({ kind = 'task', tone = 'idle', stage = -1, stages = STAGES, size = 20, title = '', keepType = false } = {}) {
+export function kindMark({ kind = 'task', tone = 'idle', stage = -1, stages = STAGES, size = 20, title = '', keepType = false, breathe = false } = {}) {
   const noRing = kind === 'event' || tone === 'idle' || (kind === 'schedule' && tone === 'wait');
   const reach = tone === 'wait' ? 0 : stage < 0 ? 1 : Math.min(1, (stage + 1) / stages);
   const arc = (from, len, stroke, k = -1) => `<circle cx="10" cy="10" r="${R}" fill="none" stroke="${stroke}" stroke-width="1.1" stroke-dasharray="${len.toFixed(2)} ${(L - len).toFixed(2)}" stroke-dashoffset="${(L / 4 - from).toFixed(2)}"${k >= 0 ? ` style="--k:${k}"` : ''}></circle>`;   // --k: a filled step's order, so a changed mark's ring can fill in turn
@@ -57,8 +58,8 @@ export function kindMark({ kind = 'task', tone = 'idle', stage = -1, stages = ST
   }
   const typed = TYPED.has(kind) && !NEEDS_YOU.has(tone);   // a Shaper task or a workflow run says so; only what needs you takes its centre
   const centre = !noRing && !keepType && !typed && CENTRE[tone] ? CENTRE[tone] : KINDS[kind] || KINDS.task;
-  const glyph = icon(centre, Math.round((noRing ? 15 : centre === 'question' || centre === 'alert' ? 14 : 11) * size / 20));
-  return `<span class="kind-mark is-${tone}"${attrs({ style: `--km:${size}px`, title: title || null, role: title ? 'img' : null, 'aria-label': title || null, 'aria-hidden': title ? null : 'true' })}>${ring ? `<svg class="km-ring" width="${size}" height="${size}" viewBox="0 0 20 20" aria-hidden="true">${ring}</svg>` : ''}${glyph}</span>`;
+  const glyph = icon(centre, Math.round((noRing ? 15 : 11) * size / 20));
+  return `<span class="kind-mark is-${tone}${breathe && NEEDS_YOU.has(tone) ? ' is-breathe' : ''}"${attrs({ style: `--km:${size}px`, title: title || null, role: title ? 'img' : null, 'aria-label': title || null, 'aria-hidden': title ? null : 'true' })}>${ring ? `<svg class="km-ring" width="${size}" height="${size}" viewBox="0 0 20 20" aria-hidden="true">${ring}</svg>` : ''}${glyph}</span>`;
 }
 
 /**
@@ -224,6 +225,24 @@ export function cardHead({ mark, kicker, kickerHtml = '', title = '', titleHtml 
 export function taskCard({ title, place = '', mark, word, detail = '', action = '', menu = '', stages = '', rows = '', foot = '', stream = '', open = false, compact = false, attrs: a = {} }) {
   if (compact) return `<article class="task-card rc is-compact"${attrs(a)}>${turnRow({ mark, text: `<b>${esc(title)}</b> ${esc(detail)}`, end: action })}</article>`;
   return `<article class="task-card rc${open ? ' is-open' : ''}"${attrs(a)}>${cardHead({ mark, kicker: word, title, why: detail, facts: place, menu })}<section class="rc-card tp-body"${attrs({ 'aria-label': `${title}: ${word}` })}>${stages}${rows ? `<div class="tc-rows">${rows}</div>` : ''}${action ? `<div class="tp-actions">${action}</div>` : ''}</section>${foot ? `<div class="tc-foot">${foot}</div>` : ''}${open && stream ? `<div class="tc-stream">${stream}</div>` : ''}</article>`;
+}
+
+/**
+ * PlaceHead: the head of a thing's own page (a schedule, a project, a workflow, a feature, a workspace): its title, its
+ * facts on one line (words and SentencePickers), then its state on the cards' rail: its KindMark, the state word with one
+ * line why, its one action and its ⋯. Never a box, never a second title (docs/rail/panels.md › panel.place-head).
+ * @param {object} o
+ * @param {string} o.title
+ * @param {string} [o.facts]   markup: escaped words, SentencePickers, chips
+ * @param {string} [o.mark]    its KindMark
+ * @param {string} [o.word]    its state word
+ * @param {string} [o.why]     one line after the word
+ * @param {string} [o.action]  its one action (a Button)
+ * @param {string} [o.menu]    its ⋯ (a MoreMenu)
+ */
+export function placeHead({ title, facts = '', mark = '', word = '', why = '', action = '', menu = '' }) {
+  const head = `<div class="place-head"><h1 class="place-title">${esc(title)}</h1>${facts ? `<div class="convo-head">${facts}</div>` : ''}</div>`;
+  return head + (word ? `<div class="convo-card-line">${mark}<span class="convo-card-w">${esc(word)}${why ? `<span>${esc(why)}</span>` : ''}</span>${action}${menu}</div>` : '');
 }
 
 /**

@@ -20,8 +20,10 @@ const TODAY = Object.keys(JSON.parse(readFileSync(fileURLToPath(new URL('../toda
 const issues = new Map(); const add = (k, w) => { if (!issues.has(k)) issues.set(k, []); if (issues.get(k).length < 12) issues.get(k).push(w); };
 const b = await chromium.launch({ channel: 'chrome' });
 const scout = await b.newPage(); await scout.addInitScript(() => { try { localStorage.setItem('worca-rail.mode', 'expert'); } catch { /* none */ } }); await scout.goto(URL_);
-const RUNS = await scout.evaluate(() => window.RunCardModel.cases.map((c) => c.id)); await scout.close();
-const ROUTES = ['runs', ...TODAY, ...RUNS.map((c) => 'run/' + c), ...SECTIONS.map((s) => 'settings/' + s)];
+const RUNS = await scout.evaluate(() => window.RunCardModel.cases.map((c) => c.id));
+const PLACES = await scout.evaluate(() => Object.entries(window.RailPlaces || {}).flatMap(([k, m]) => (m.sample ? [`${k}/${m.sample}`] : []))); await scout.close();   // each place built on Rail: one of its pages too
+const MOVED = new Set(['stats', 'team-metrics']);   // Insights now: an old link lands there (its own step below)
+const ROUTES = ['runs', ...TODAY.filter((t) => !MOVED.has(t)), ...PLACES, ...RUNS.map((c) => 'run/' + c), ...SECTIONS.map((s) => 'settings/' + s)];
 let checks = 0;
 for (const scheme of ['light', 'dark']) for (const w of [1280, 900, 760, 375]) {
   const p = await b.newPage({ viewport: { width: w, height: 860 }, colorScheme: scheme, reducedMotion: 'reduce' });
@@ -42,7 +44,7 @@ for (const scheme of ['light', 'dark']) for (const w of [1280, 900, 760, 375]) {
       if (view !== 'settings' && !locked && document.querySelector('#side-rail').offsetParent && (!cur || cur.dataset.nav !== place)) out.push(['the sidebar does not mark the place', `${place} (marked: ${cur ? cur.dataset.nav : 'none'})`]);
       for (const s of document.querySelectorAll('#side-rail nav.nav button[data-nav] svg')) if (s.getAttribute('stroke-width') !== '1.8') out.push(['a sidebar icon not from the library', s.parentElement.dataset.nav]);
       if (view === 'settings' && document.querySelector('#side-rail').offsetParent && innerWidth > 1080 && !document.querySelector('#side-rail .side-menu')) out.push(['Settings without its menu', '']);
-      const shown = view === 'run' ? '#route-run' : view === 'settings' ? '#route-settings' : view === 'runs' ? '#route-runs' : view === 'chat' ? '#route-chat' : view === 'schedules' || view === 'schedule' ? '#route-schedule' : '#route-today';
+      const shown = window.RailPlaces?.[view] ? '#route-place' : view === 'run' ? '#route-run' : view === 'settings' ? '#route-settings' : view === 'runs' ? '#route-runs' : view === 'chat' ? '#route-chat' : view === 'schedules' || view === 'schedule' ? '#route-schedule' : '#route-today';
       if (!document.querySelector(shown).textContent.trim()) out.push(['an empty page', '']);
       return out;
     }, r);
@@ -155,6 +157,8 @@ for (const scheme of ['light', 'dark']) for (const w of [1280, 900, 760, 375]) {
   await step('a slice opens its own stages in its feature card', () => { location.hash = 'chat/c5'; }, async () => { await new Promise((r) => setTimeout(r, 300)); document.querySelector('#route-chat [data-slice-open$="|1"]')?.click(); await new Promise((r) => setTimeout(r, 300)); return document.querySelectorAll('#route-chat .own-stages .stage-line').length === 5; });
   await step('the chat you are on never folds behind Show N more', () => {}, async () => { for (const c of window.RailChats.data().chats.filter((x) => !x.archived)) { location.hash = `chat/${c.id}`; await new Promise((r) => setTimeout(r, 120)); if (!document.querySelector('#bar-chat [aria-current="true"]')) return false; } return true; });   // docs/rail/lists.md › list.fold-keeps-current
   await step('a Shaper slice leads to its feature card in its chat', () => document.querySelector('#bar-chat [data-row="task:f5c"] .lr-main')?.click(), async () => { await new Promise((r) => setTimeout(r, 400)); return location.hash === '#chat/c5' && /Unified page navigation/.test(document.querySelector('#route-chat .is-flash')?.textContent || ''); });
+  await step('an old link to Statistics lands in Insights', () => { location.hash = 'stats'; }, async () => { await new Promise((r) => setTimeout(r, 300)); return location.hash === '#insights/spend' && !!document.querySelector('#route-place .bar-chart'); });
+  await step('a place built on Rail: its bar list, its page, its PlaceHead', () => { location.hash = 'projects/billing-api'; }, async () => { await new Promise((r) => setTimeout(r, 300)); return !!document.querySelector('#bar-place .list-row[aria-current]') && !!document.querySelector('#route-place .place-title') && document.querySelector('#bar-head')?.textContent.includes('Projects'); });
   // In view: from a row's ⋯ into the top bar; its mark opens it
   await p.goto(`${URL_}#chat/c1`); await p.waitForTimeout(150);
   await step('Keep in view puts a mark in the top bar', () => { document.querySelector('#bar-chat [data-menu="row:task:t1"]')?.click(); document.querySelector('#bar-chat [data-menu-pick="row:task:t1|in-view"]')?.click(); }, () => innerWidth <= 760 || !!document.querySelector('#in-view-slot [data-in-view="task:t1"]'));

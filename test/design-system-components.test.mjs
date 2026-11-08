@@ -790,12 +790,30 @@ test('KindMark: the type until the state matters more; the ring fills by stage; 
   assert.match(C.kindMark({ kind: 'feature', tone: 'run', stage: 1 }), /km-ring/, 'its ring still says how far');
   assert.doesNotMatch(C.kindMark({ kind: 'feature', tone: 'run', stage: 1 }), /sym-x|question/);
   assert.equal(C.kindMark({ kind: 'feature', tone: 'run', stage: 1 }), C.kindMark({ kind: 'feature', tone: 'run', stage: 1, keepType: true }), 'the type keeps the centre');
-  assert.notEqual(C.kindMark({ kind: 'feature', tone: 'ask', stage: 1 }), C.kindMark({ kind: 'feature', tone: 'ask', stage: 1, keepType: true }), 'a question takes the centre');
-  assert.notEqual(C.kindMark({ kind: 'workflow', tone: 'fail', stage: 1 }), C.kindMark({ kind: 'workflow', tone: 'fail', stage: 1, keepType: true }), 'a failure takes the centre');
+  // attention is colour and a breath, never a ? or ! in the centre (list.kind-mark): the type stays, the ring takes the state's colour
+  assert.doesNotMatch(C.kindMark({ kind: 'task', tone: 'ask', stage: 1 }), /question|alert|sym-x/, 'a question keeps the type');
+  assert.equal(C.kindMark({ kind: 'workflow', tone: 'fail', stage: 1 }), C.kindMark({ kind: 'workflow', tone: 'fail', stage: 1, keepType: true }), 'a failure keeps the type');
+  assert.match(C.kindMark({ kind: 'chat', tone: 'ask', breathe: true }), /is-breathe/, 'unopened, what needs you breathes');
+  assert.doesNotMatch(C.kindMark({ kind: 'task', tone: 'run', breathe: true }), /is-breathe/, 'only what needs you breathes so');
+  assert.match(C.kindMark({ kind: 'task', tone: 'pause' }), /pause/, 'a pause keeps its sign');
   assert.equal(C.partsWord(['ok', 'merged', 'run']), '2 of 3');
   assert.doesNotMatch(C.kindMark({ kind: 'event', tone: 'fail' }), /km-ring/, 'an event is a moment, with no progress');
   assert.equal(C.markTone({ word: 'Needs you', sym: 'q' }), 'ask'); assert.equal(C.markTone({ word: 'Needs you', dot: 'is-amber' }), 'act');
   assert.equal(C.markTone({ word: 'Failed', sym: 'x' }), 'fail'); assert.equal(C.markTone({ word: 'Paused' }), 'pause'); assert.equal(C.markTone({ word: 'Merged' }), 'merged'); assert.equal(C.markTone({ word: 'Working', dot: 'is-peach is-pulse' }), 'run');
+});
+test('placeHead: a thing\'s page starts with its title, its facts, then its state with one action and ⋯', () => {
+  const h = C.placeHead({ title: 'a<b', facts: 'Git · ~/src', mark: '<i class="m"></i>', word: '3 behind', why: 'since today', action: '<button>Sync</button>', menu: '<span class="more"></span>' });
+  assert.match(h, /<h1 class="place-title">a&lt;b<\/h1>/); assert.match(h, /convo-head">Git · ~\/src/);
+  assert.match(h, /convo-card-line"><i class="m"><\/i><span class="convo-card-w">3 behind<span>since today<\/span><\/span><button>Sync<\/button><span class="more"><\/span>/);
+  assert.doesNotMatch(C.placeHead({ title: 'x' }), /convo-card-line/, 'no state, no state line');
+});
+test('barChart: one series, numbers only on the highest and the current, a table for a screen reader', () => {
+  const c = dom(C.barChart({ label: 'Spend by day', bars: [{ label: 'Mon', value: 10, text: '$10' }, { label: 'Tue', value: 40, text: '$40' }, { label: 'Wed', value: 5, text: '$5' }], current: 2 }));
+  assert.equal(c.querySelectorAll('.bc-col').length, 3);
+  assert.deepEqual([...c.querySelectorAll('.bc-v')].map((v) => v.textContent), ['', '$40', '$5'], 'the highest and the current carry their number');
+  assert.ok(c.querySelectorAll('.bc-col')[2].classList.contains('is-now'));
+  assert.equal(c.querySelector('.bc-plot').getAttribute('aria-hidden'), 'true'); assert.equal(c.querySelectorAll('.bc-table tr').length, 3);
+  assert.match(c.querySelector('.bc-col').getAttribute('title'), /Mon: \$10/);
 });
 test('GitMark: its status in the tooltip, Watch as a ring', () => {
   assert.match(C.gitMark({ status: 'fail' }), /Checks failing/);

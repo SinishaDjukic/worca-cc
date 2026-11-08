@@ -1245,7 +1245,7 @@ th.rt-c{color:var(--ink-2);font-weight:500;}
 .schedule-page .tt{margin:0;font:600 var(--fs-subpage)/1.3 var(--sans);letter-spacing:-.02em;}
 .bar-back{padding:0 2px 8px;}
 .bar-back .list-row{margin-left:0;}
-#route-chat,#route-schedule{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;}
+#route-chat,#route-schedule,#route-place{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;}
 
 /* Tooltip (tooltip.mjs). */
 .rail-tip{position:fixed;z-index:200;max-width:280px;padding:6px 8px;border:1px solid var(--float-line);border-radius:var(--r-sm);background:var(--float);box-shadow:var(--shadow-pop);font:var(--fs-meta)/1.4 var(--sans);color:var(--ink);white-space:pre-line;pointer-events:none;}
@@ -1413,9 +1413,13 @@ canvas.dot-orb[data-orb]{border-radius:50%;outline:1px solid light-dark(var(--li
 .is-flash{animation:card-flash var(--motion-flash) var(--ease) 1;border-radius:var(--r-md);}
 @media (prefers-reduced-motion: reduce){ .is-flash{animation:none;} }
 /* motion.attention: what needs you breathes softly in Rail's amber, like an unread mark, until you focus it or act on it; never a shake */
-@keyframes card-attn{0%,100%{box-shadow:-3px 0 0 0 transparent;}50%{box-shadow:-3px 0 0 0 color-mix(in srgb,var(--attn,var(--amber)) 70%,transparent);}}   /* an edge that breathes beside it, not a filled panel */
-.is-attn{animation:card-attn 2.4s var(--ease) infinite;}   /* ds-ok: an unread mark's slow breath */
-@media (prefers-reduced-motion: reduce){ .is-attn{animation:none;box-shadow:-3px 0 0 0 color-mix(in srgb,var(--attn,var(--amber)) 60%,transparent);} }
+/* motion.attention, one breath for a card and a row: a layer behind it in its mark's own colour (amber asks or waits, red
+   failed, green is ready) swells and settles slowly, never fading to nothing, so it reads as calm rather than a flicker;
+   the tint is a little stronger in dark, where a tint reads weaker */
+@keyframes attn-breath{0%,100%{opacity:.28;}50%{opacity:1;}}   /* the whole card fades in its colour and out again, softly: a breath, not a panel */
+.is-attn{position:relative;isolation:isolate;}
+.is-attn::before{content:'';position:absolute;inset:-12px -20px;--attn-fx:20px;--attn-fy:12px;-webkit-mask-image:linear-gradient(to right,transparent,#000 var(--attn-fx),#000 calc(100% - var(--attn-fx)),transparent),linear-gradient(to bottom,transparent,#000 var(--attn-fy),#000 calc(100% - var(--attn-fy)),transparent);-webkit-mask-composite:source-in;mask-image:linear-gradient(to right,transparent,#000 var(--attn-fx),#000 calc(100% - var(--attn-fx)),transparent),linear-gradient(to bottom,transparent,#000 var(--attn-fy),#000 calc(100% - var(--attn-fy)),transparent);mask-composite:intersect;z-index:-1;background:light-dark(color-mix(in srgb,var(--attn,var(--amber)) 11%,transparent),color-mix(in srgb,var(--attn,var(--amber)) 17%,transparent));animation:attn-breath 4.8s cubic-bezier(.45,0,.55,1) infinite;pointer-events:none;}   /* ds-ok: an unread card's slow breath; the 8px spread is the card's own breathing room */
+@media (prefers-reduced-motion: reduce){ .is-attn::before{animation:none;opacity:.7;} }
 
 /* A task card opened in place holds its task page's stage stream: the page's own head, trail and status are the card's already. */
 .tc-run-slot #card.is-lent :is(.rc-bar, .rc-head, .rc-figs){display:none;}
@@ -1433,7 +1437,7 @@ canvas.dot-orb[data-orb]{border-radius:50%;outline:1px solid light-dark(var(--li
 
 /* A home with its composer in the middle (Chat, Tasks, Schedules): the background surrounds it on every side and fades in
    toward the composer, joining at the centre, rather than stopping at a column's edge. (look.backgrounds) */
-.main:has(.chat-home[data-home]) .page-bg,.main:has(#route-runs:not([hidden]) .chat-home) .page-bg,.main:has(#route-schedule:not([hidden]) .chat-home) .page-bg{-webkit-mask-image:radial-gradient(ellipse 560px 300px at 50% 52%,transparent 0,transparent 55%,rgba(0,0,0,.35) 75%,#000 100%);mask-image:radial-gradient(ellipse 560px 300px at 50% 52%,transparent 0,transparent 55%,rgba(0,0,0,.35) 75%,#000 100%);}   /* ds-ok: a mask, not a colour */
+.main:has(.chat-home[data-home]) .page-bg,.main:has(#route-runs:not([hidden]) .chat-home) .page-bg,.main:has(#route-schedule:not([hidden]) .chat-home),.main:has(#route-place:not([hidden]) .chat-home) .page-bg{-webkit-mask-image:radial-gradient(ellipse 560px 300px at 50% 52%,transparent 0,transparent 55%,rgba(0,0,0,.35) 75%,#000 100%);mask-image:radial-gradient(ellipse 560px 300px at 50% 52%,transparent 0,transparent 55%,rgba(0,0,0,.35) 75%,#000 100%);}   /* ds-ok: a mask, not a colour */
 
 /* TaskProposal at parity: the workflow in a line, Shaper's perspectives, the brief, the agents lane, Open in the composer. */
 .tp-what{margin:0;flex:1 0 100%;font-size:var(--fs-meta);color:var(--ink-3);}   /* its own line under the sentence */
@@ -1521,7 +1525,7 @@ canvas.dot-orb[data-orb]{border-radius:50%;outline:1px solid light-dark(var(--li
 /* panel.conversation-cards: one shape, never a box inside a box: a card's body sits on its rail under its head, with no frame of its own */
 .convo-col .task-card > .rc-card{background:none;border:0;border-radius:0;padding:0;margin-top:10px;}
 /* motion.attention: the breath takes the state's colour (failed red, ready green); amber is for what asks */
-.is-attn[data-attn="fail"]{--attn:var(--red);} .is-attn[data-attn="ok"]{--attn:var(--green);}
+.is-attn[data-attn="fail"]{--attn:var(--red);} .is-attn[data-attn="ok"]{--attn:var(--green);} .is-attn[data-attn="merged"]{--attn:var(--violet);}
 
 /* a task Worca watches says so in its facts, in words (not only in the PR mark's tooltip) */
 .rc-watch{color:var(--ink-2);font-size:var(--fs-meta);}
@@ -1540,3 +1544,21 @@ canvas.dot-orb[data-orb]{border-radius:50%;outline:1px solid light-dark(var(--li
 .spick-menu{min-width:max-content;max-width:min(420px,calc(100vw - 16px));}
 .spick-menu .menu-item > .mi-l{overflow:visible;text-overflow:clip;white-space:normal;}
 .chat-home-new{margin:14px 0 0;color:var(--ink-2);font-size:var(--fs-meta);}   /* a newcomer's one pointer, quiet: under the starters */
+/* motion.attention in a list: the row that needs you and you have not opened breathes as a whole, softly, in its state's
+   colour (as a card in a chat does); its mark keeps that colour and holds still. Running breathes in ink, on its mark. */
+.list-row:has(> .lr-rail > .kind-mark.is-breathe) > .lr-main{position:relative;isolation:isolate;}
+.list-row:has(> .lr-rail > .kind-mark.is-breathe) > .lr-main::before{content:'';position:absolute;inset:-2px -14px -2px -44px;--attn-fx:16px;--attn-fy:4px;-webkit-mask-image:linear-gradient(to right,transparent,#000 var(--attn-fx),#000 calc(100% - var(--attn-fx)),transparent),linear-gradient(to bottom,transparent,#000 var(--attn-fy),#000 calc(100% - var(--attn-fy)),transparent);-webkit-mask-composite:source-in;mask-image:linear-gradient(to right,transparent,#000 var(--attn-fx),#000 calc(100% - var(--attn-fx)),transparent),linear-gradient(to bottom,transparent,#000 var(--attn-fy),#000 calc(100% - var(--attn-fy)),transparent);mask-composite:intersect;z-index:-1;background:light-dark(color-mix(in srgb,var(--attn,var(--amber)) 11%,transparent),color-mix(in srgb,var(--attn,var(--amber)) 17%,transparent));animation:attn-breath 4.8s cubic-bezier(.45,0,.55,1) infinite;pointer-events:none;}   /* ds-ok: the breath takes in its mark: one thing, its mark and its name (the rail is 26px, 4px air) */
+.list-row:has(> .lr-rail > .kind-mark.is-breathe.is-fail){--attn:var(--red);}   /* the breath is its mark's colour: amber asks or waits (the default), red failed */
+@media (prefers-reduced-motion: reduce){.list-row:has(> .lr-rail > .kind-mark.is-breathe) > .lr-main::before{animation:none;opacity:.7;}}
+
+/* look.chart: BarChart, one series in ink; the period you are in darkest; numbers only where they matter */
+.bar-chart{margin:12px 0 4px;padding-bottom:20px;}
+.bc-plot{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);gap:2px;align-items:end;height:var(--bc-h);border-bottom:1px solid var(--line);}   /* ds-ok: --bc-h is the height BarChart sets on its figure */
+.bc-col{display:grid;align-content:end;justify-items:center;height:100%;outline:none;}
+.bc-bar{width:min(14px,70%);background:var(--line-2);border-radius:4px 4px 0 0;}   /* ds-ok: a data end's own rounding */
+.bc-col:hover .bc-bar,.bc-col:focus-visible .bc-bar{background:var(--ink-3);}
+.bc-col.is-now .bc-bar{background:var(--ink-2);}
+.bc-v{font-size:var(--fs-caption);color:var(--ink-2);margin-bottom:4px;font-variant-numeric:tabular-nums;min-height:1em;}
+.bc-x{position:relative;top:6px;height:0;font-size:var(--fs-caption);color:var(--ink-2);white-space:nowrap;}
+.bc-table{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;}
+@media (max-width: 760px){.is-attn::before{inset:-10px -16px;--attn-fx:16px;--attn-fy:10px;}}   /* on a phone the feather stays inside the screen */

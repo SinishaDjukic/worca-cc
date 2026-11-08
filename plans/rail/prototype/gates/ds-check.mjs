@@ -15,7 +15,7 @@ writeComponentsJs();   // the Rail components, bundled for file://
 const here = (f) => fileURLToPath(new URL('../' + f, import.meta.url));   // the prototype's root
 const SHEETS = ['design-system/rail-look.css', 'design-system/rail.css', 'pulse/pulse.css'];
 const ALL = [APP_CSS, ...SHEETS.map(here), here('shell/shell.css'), ...readdirSync(here('.')).filter((f) => f.endsWith('.html')).map(here)];
-const FOLDERS = ['runs', 'pulse', 'settings', 'shell', 'chat', 'schedules'];
+const FOLDERS = ['runs', 'pulse', 'settings', 'shell', 'chat', 'schedules', 'projects', 'workflows', 'requirements', 'marketplace', 'insights', 'workspaces'];
 const SCRIPTS = FOLDERS.flatMap((d) => readdirSync(here(d)).filter((f) => f.endsWith('.js')).map((f) => here(`${d}/${f}`)));
 const issues = new Map(); const add = (k, where) => { if (!issues.has(k)) issues.set(k, new Set()); issues.get(k).add(where); };
 

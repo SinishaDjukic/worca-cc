@@ -1079,6 +1079,17 @@
       ]
     },
     {
+      "name": "PlaceHead",
+      "code": "ui/public/design-system/components/kind-mark.mjs#placeHead",
+      "kind": "showing",
+      "needs": [
+        "the head of a thing's own page: a schedule, a project, a workflow, a feature, a workspace"
+      ],
+      "rules": [
+        "panel.place-head"
+      ]
+    },
+    {
       "name": "CountBadge",
       "code": "ui/public/design-system/components/shell-parts.mjs#countBadge",
       "kind": "telling",
@@ -1252,6 +1263,17 @@
       ],
       "rules": [
         "nav.in-view"
+      ]
+    },
+    {
+      "name": "BarChart",
+      "code": "ui/public/design-system/components/chart.mjs#barChart",
+      "kind": "showing",
+      "needs": [
+        "one number over time, in Insights: one question, one series"
+      ],
+      "rules": [
+        "look.chart"
       ]
     }
   ],

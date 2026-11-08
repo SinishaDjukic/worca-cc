@@ -766,7 +766,7 @@ document.addEventListener('click', (e) => {
   }
   if ((el = tg('[data-sw="keep"]'))) { ui.keep = !ui.keep; render(); return; }
   if ((el = tg('[data-appearance]'))) { applyAppearance(el.dataset.appearance); render(); return; }
-  if ((el = tg('[data-details]'))) { ui.acct = false; ui.sub = ''; if (SHELL) { SHELL.closeDrawer(); SHELL.go('stats'); } else toast('Opens Statistics (not in this prototype)'); render(); return; }
+  if ((el = tg('[data-details]'))) { ui.acct = false; ui.sub = ''; if (SHELL) { SHELL.closeDrawer(); SHELL.go('insights/spend'); } else toast('Opens Statistics (not in this prototype)'); render(); return; }
   if (SHELL && (el = tg('[data-newrun]'))) { window.RailConversation?.start('task'); return; }
   if ((el = tg('[data-bg-pick]'))) { ui.bg = el.dataset.bgPick; setBg(ui.bg); render(); return; }
   if ((el = tg('[data-newrun]'))) { if (ui.nr) ui.nr = null; else { openNewRun(); opening = 'nr'; } ui.pop = false; ui.acct = false; render(); return; }

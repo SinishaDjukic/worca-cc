@@ -106,7 +106,6 @@
 .bar-list .list-row:is(:hover,:focus-within) > .lr-end .rc-pop,.bar-list .lr-end .rc-pop:has(.menu){display:inline-flex;position:absolute;right:calc(100% + 2px);top:-3px;background:var(--side-bg);border-radius:var(--r-sm);}   /* ⋯ beside the end, never over it */
 body.view-rail-chat .main{display:flex;flex-direction:column;overflow:hidden;}
 .convo-answer{margin:6px 0 0 32px;}.convo-answer-go{margin-top:8px;}
-.schedule-title{margin:0;font:600 var(--fs-subpage)/1.3 var(--sans);letter-spacing:-.02em;}
 #route-run{position:relative;}
 #task-dock{position:sticky;bottom:0;background:var(--bg);padding:10px 56px 12px 24px;}
 #task-timeline .timeline{position:fixed;top:60px;right:8px;bottom:110px;}
@@ -147,7 +146,7 @@ body.view-rail-chat .main,body.view-run .main{padding:0;}
 /* One background rule (look.backgrounds): every reading page, Chat home, a chat, a task, the Tasks and Schedules homes and
    Settings, shows the page's background faded into its column; only the away screen has it full. */
 body:not(.view-rail-chat):not(.view-run):not(.view-settings):not(.view-runs) .page-bg{display:none;}
-#route-chat,#route-schedule,#route-run,#route-settings,#route-runs{position:relative;z-index:1;}
+#route-chat,#route-schedule,#route-place,#route-run,#route-settings,#route-runs{position:relative;z-index:1;}
 #route-run.rc-board,#route-settings,#route-settings .pz-page{background:transparent;}
 /* A row's ⋯: its own, never its parent's too. */
 .bar-list .list-row:has(.lr-tree .list-row:is(:hover,:focus-within)) > .lr-end .rc-pop:not(:has(.menu)){display:none;}
@@ -235,3 +234,4 @@ body .toasts{top:60px;bottom:auto;}   /* ds-ok: just under the 48px top bar */
 .bar-title-b{display:inline-flex;align-items:center;gap:6px;padding:2px 6px;margin-left:-6px;border:0;border-radius:var(--r-sm);background:none;color:inherit;font:inherit;cursor:pointer;}
 .bar-title-b:hover{background:var(--hover);}
 .bar-title-b svg{color:var(--ink-3);}
+.place-title{margin:0;font:600 var(--fs-subpage)/1.3 var(--sans);letter-spacing:-.02em;}   /* panel.place-head: a thing's page's title */

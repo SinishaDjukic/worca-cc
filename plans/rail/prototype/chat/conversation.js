@@ -635,7 +635,7 @@
     if ((hit = on('[data-cp-apply], [data-cp-decline], [data-cp-revert]'))) { const id = hit.dataset.cpApply || hit.dataset.cpDecline || hit.dataset.cpRevert, x = turns().find((y) => y.id === id); if (x && x.kind === 'Project' && x.how && hit.dataset.cpApply) {   // the project is added: its name joins every project picker, and the next words offer the first task
       const f = x.f || {}, name = (f.name || f.dir || (f.url || '').split('/').pop()?.replace(/\.git$/, '') || (f.path || '~/src/billing-web').split('/').pop() || 'billing-web').trim();
       if (!PROJECTS.includes(name)) PROJECTS.splice(PROJECTS.length - 1, 0, name);
-      comp.project = name; lastProject = name; const ch = chat(); if (ch && !ch.project) { ch.project = name; window.RailChats.refresh(); } x.done = `${name} added${x.how === 'Clone' ? ', cloned' : ''}`; const l = turns(); l.splice(l.indexOf(x) + 1, 0, { t: 'words', html: `<b>${esc(name)}</b> is in. Tell me the first thing to do in it, and I'll propose it as a task you check before it starts.` });
+      comp.project = name; lastProject = name; window.RailProjects?.add({ id: name, path: f.path || f.dir || (f.url ? `~/src/${name}` : `~/Projects/${name}`) });   /* one store: Projects lists it */ const ch = chat(); if (ch && !ch.project) { ch.project = name; window.RailChats.refresh(); } x.done = `${name} added${x.how === 'Clone' ? ', cloned' : ''}`; const l = turns(); l.splice(l.indexOf(x) + 1, 0, { t: 'words', html: `<b>${esc(name)}</b> is in. Tell me the first thing to do in it, and I'll propose it as a task you check before it starts.` });
       paint(); say(`Added ${name}`); return; }
     if (x && x.kind === 'Sign-in' && hit.dataset.cpApply) { x.done = `Claude Code is signed in, with ${x.picked || x.choice?.rec || 'your Claude subscription'}`; paint(); say('Signed in'); return; }
     if (x) { x.state = hit.dataset.cpApply ? 'applied' : hit.dataset.cpRevert ? 'proposed' : 'declined'; if (x.state === 'applied' && x.graph) x.rows = [{ name: 'Saved as', before: '', after: 'API rewrite' }]; paint(); say(x.state === 'applied' ? `${x.kind}: changed` : x.state === 'declined' ? 'Nothing changed' : 'Reverted'); } return; }
@@ -748,6 +748,7 @@
     },
     show: (id) => { setTimeout(() => settle(id), 0); if (id !== chatId) { opened = new Set(); hover = null; menu = ''; comp = { ...fresh(), project: id ? data().chats.find((c) => c.id === id)?.project || 'No project' : lastProject };   /* a new chat starts on the project you added last */ } chatId = id || ''; paint(); if (id) { const box = root.querySelector('.convo-scroll'); if (box) { box.scrollTop = 0; paintTimeline(); } } },
     start: (mode, text) => { chatId = ''; comp = { ...fresh(mode), text: text || '' }; if (!side) window.RailShell.go('chat'); paint(); root.querySelector('[data-composer-t]')?.focus(); },
+    arm,   /* a starter armed from another place (Projects' New: Add project) */
   };
   mounted.push(api);
   paint();
@@ -768,10 +769,10 @@
   function dock(host, { kind, title, chat: linked }) {
     if (!host) return;
     const name = linked ? data().chats.find((c) => c.id === linked)?.title : '';
-    host.innerHTML = `${R.composer({ placeholder: `${kind === 'schedule' ? 'Ask about this schedule, or change it' : 'Ask about this task'} · ${name ? `in ${name}` : 'in a new chat'}`, sentence: '', tools: '', send: R.button({ label: 'Send', kind: 'primary', iconOnly: true, icon: R.icon('up', 14), attrs: { 'data-dock-send': '', title: name ? `Goes to ${name}` : 'Starts a chat about it' } }), attrs: { 'data-dock': '' } })}`;
+    host.innerHTML = `${R.composer({ placeholder: `${kind === 'schedule' ? 'Ask about this schedule, or change it' : kind === 'task' ? 'Ask about this task' : `Ask about this ${kind}, or change it`} · ${name ? `in ${name}` : 'in a new chat'}`, sentence: '', tools: '', send: R.button({ label: 'Send', kind: 'primary', iconOnly: true, icon: R.icon('up', 14), attrs: { 'data-dock-send': '', title: name ? `Goes to ${name}` : 'Starts a chat about it' } }), attrs: { 'data-dock': '' } })}`;
     const go = () => {
       const t = host.querySelector('[data-composer-t]'), text = t.value.trim();
-      if (!text) { t.focus(); return; }
+      if (!text) { t.focus(); say('Say what to ask first'); return; }
       let id = linked;
       if (!id) { id = window.RailChats.newChat(`About ${title}`, ''); threads.set(id, []); }
       const c = data().chats.find((x) => x.id === id);
@@ -802,6 +803,7 @@
     show: main.show,
     focus: main.focus,
     start: main.start,
+    starter: (id) => { main.start('ask'); setTimeout(() => main.arm(id), 0); },   // Chat with a starter armed: a place's New that is a conversation (Add project)
     mount: (el, opts) => (opts ? mount(el, false, opts) : mount(el, true)),
     refresh: refreshAll,
     dock,
