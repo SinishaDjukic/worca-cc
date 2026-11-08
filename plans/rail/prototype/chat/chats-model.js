@@ -5,7 +5,7 @@
     groups: [{ id: 't-bill', name: 'Billing export', total: 4 }, { id: 't-rel', name: 'Release 1.20', total: 2 }, { id: 't-ops', name: 'On call', total: 2 }],
     chats: [
       chat('c1', 'Billing CSV export', 'needs-you', 'started', 'billing-api', '14:32', 'today', { cost: 1.2, unread: true, labels: ['hotfix', 'billing'], tasks: [
-        { id: 't1', run: 'r1', title: 'Add CSV export to billing', case: 'question', stage: 2, git: 'open', watch: 'idle', branch: 'feat/billing-csv-export', detail: 'Review · step 2 of 3', after: [{ id: 't2', title: 'Invoices export', case: 'scheduled', stage: 0, branch: 'feat/invoices-export', detail: 'Starts after Add CSV export', endWord: 'after it' }] },
+        { id: 't1', run: 'r1', title: 'Add CSV export to billing', facts: { cost: '$1.84', time: '23 min', agents: 3, files: 5, artifacts: 2 }, case: 'question', stage: 2, git: 'open', watch: 'idle', branch: 'feat/billing-csv-export', detail: 'Review · step 2 of 3', after: [{ id: 't2', title: 'Invoices export', case: 'scheduled', stage: 0, branch: 'feat/invoices-export', detail: 'Starts after Add CSV export', endWord: 'after it' }] },
         { id: 's1', kind: 'schedule', title: 'Nightly export check', time: '02:00', detail: 'Every day at 02:00 · Next in 11h' }] }),
       chat('c0', 'Getting started', 'idle', 'chat', '', 'now', 'today', { pinned: true }),
       chat('c16', 'Migrate the cron parser', 'idle', 'started', 'worca-cc', '13:40', 'today', { cost: 6.1, tasks: [{ id: 't16', run: 'r2', title: 'Migrate cron parser', case: 'gate', stage: 2, git: 'branch', branch: 'refactor/cron-parser', detail: 'Waits for your OK on the review', why: ['Review sent it back 3 times; the limit is 3', '2 small things left: a name in parser.mjs, a leap-year test'] }] }),
@@ -103,6 +103,12 @@
       { t: 'change', id: 'a4', kind: 'Version', title: 'Version bumped', rows: [{ name: 'package.json', before: '1.19.4', after: '1.20.0' }], state: 'applied' },
       { t: 'task', id: 'a4b', task: 't9s' },
       { t: 'you', id: 'a5', text: 'Stop the flaky login fix, it can wait', when: '11:44' },
+      { t: 'you', id: 'a7', text: 'Plan the follow-ups for 1.20 with me', when: '11:50' },
+      { t: 'form', id: 'f1', kind: 'slider', text: 'How many review rounds before a follow-up asks you?', min: 1, max: 6, value: 3, pick: 4, unit: 'rounds' },
+      { t: 'form', id: 'f2', kind: 'rank', text: 'What matters most in the release notes? Put them in order.', items: [{ id: 'i1', text: 'What changed for users' }, { id: 'i2', text: 'How to upgrade' }, { id: 'i3', text: 'Fixed issues by number' }] },
+      { t: 'form', id: 'f3', kind: 'rows', text: 'Which tickets should become tasks?', cols: ['Ticket', 'Estimate', 'Priority'], rows: [{ id: 'r1', cells: ['REL-88 · Changelog page', '2 h', 'High'], checked: true }, { id: 'r2', cells: ['REL-90 · Docs for 1.20', '1 day', 'High'], checked: true }, { id: 'r3', cells: ['REL-93 · Old flags clean-up', '3 days', 'Low'], checked: false }] },
+      { t: 'change', id: 'w9', kind: 'Workflow', title: 'Security-first review', why: 'Proposed from this chat · you asked for a security pass before each PR', steps: [['Plan', 'Plan', 'Opus 5.5', 'high'], ['Build', 'Implementation', 'Sonnet 5.5', 'high'], ['Security', 'Security review', 'Opus 5.5', 'high'], ['Review', 'Review', 'Opus 5.5', 'medium']], loop: ['Security', 'Build', '2'], cost: 'Each task costs about $0.40 more and 6 minutes longer than Default', apply: 'Save', state: 'proposed' },
+      { t: 'change', id: 'p9', kind: 'Settings', title: 'Route tasks through the company proxy', why: 'You said downloads fail on the VPN', rows: [{ name: 'Proxy', before: 'None', after: 'proxy.corp.example:3128' }, { name: 'Skips', before: '', after: 'localhost, *.internal' }], apply: 'Apply', state: 'proposed' },
       { t: 'act', id: 'a6', mark: 'ask', text: '<b>Stop Fix flaky login test?</b> 12 minutes of Review are lost', actions: [['Stop', 'danger', 'Stopped Fix flaky login test'], ['Not now', 'quiet', 'Kept running']] },
     ];
     if (c.id === 'c11') return [
