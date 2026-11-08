@@ -821,6 +821,23 @@ test('pluginCard: its brand, kind and version, what it does, Worca\'s reason, fa
   assert.match(c.querySelector('.pg-k').textContent, /Task source · 0.2.0 · update 0.3.0/); assert.ok(c.querySelector('.pg-why svg')); assert.equal(c.querySelector('.pg-a button').textContent, 'Install');
   assert.notEqual(C.kindMark({ kind: 'plugin', icon: 'brand-github' }), C.kindMark({ kind: 'plugin' }), 'a brand takes the centre');
 });
+test('listRow markFold: the mark folds what is under the row; its name still opens it (list.fold-by-mark)', () => {
+  const open = dom(C.listRow({ title: 'Chat', mark: '<i class="m"></i>', open: { 'data-open': 'c' }, markFold: { open: true, attrs: { 'data-fold-tree': 'c' } }, after: '<b>tasks</b>' }));
+  const b = open.querySelector('.lr-mark-fold'); assert.ok(b && b.querySelector('.m')); assert.equal(b.getAttribute('aria-expanded'), 'true'); assert.equal(b.dataset.foldTree, 'c');
+  assert.ok(open.querySelector('.lr-after b')); assert.ok(open.querySelector('.lr-main[data-open="c"]'));
+  const shut = dom(C.listRow({ title: 'Chat', mark: '<i></i>', markFold: { open: false, attrs: {} }, after: '<b>tasks</b>' }));
+  assert.equal(shut.querySelector('.lr-after'), null, 'folded: nothing under it');
+});
+test('question forms: a slider with Worca\'s pick, an order with Up and Down, rows to tick, a facts line (panel.question-forms)', () => {
+  const s = dom(C.sliderPick({ id: 'r', label: 'Rounds', min: 1, max: 6, value: 3, pick: 4, words: (n) => `${n} rounds` }));
+  assert.equal(s.querySelector('input[type="range"]').value, '3'); assert.match(s.querySelector('.q-slide-pick').textContent, /4 rounds/);
+  const r = dom(C.rankList({ label: 'Order', items: [{ id: 'a', text: 'A' }, { id: 'b', text: 'B' }], move: (id, d) => ({ 'data-rank': `${id}|${d}` }) }));
+  assert.equal(r.querySelectorAll('.q-rank-r').length, 2); assert.ok(r.querySelector('[data-rank="a|up"]').disabled, 'the first cannot go up');
+  const p = dom(C.pickRows({ cols: ['Ticket', 'Estimate'], rows: [{ id: 't1', cells: ['BILL-1', '1 day'], checked: true }], tick: (id) => ({ 'data-tick-row': id }) }));
+  assert.ok(p.querySelector('[data-tick-row="t1"]')); assert.equal(p.querySelectorAll('.q-rows-h span').length, 3);
+  const f = dom(C.factsLine([{ n: '$1.84', word: 'so far', attrs: { 'data-cost': '' } }, { n: '23 min', word: '' }]));
+  assert.ok(f.querySelector('button[data-cost]')); assert.equal(f.querySelectorAll('.q-fact').length, 2);
+});
 test('GitMark: its status in the tooltip, Watch as a ring', () => {
   assert.match(C.gitMark({ status: 'fail' }), /Checks failing/);
   assert.match(C.gitMark({ status: 'fail', watch: 'fix' }), /is-watch is-fix/);

@@ -1579,3 +1579,36 @@ canvas.dot-orb[data-orb]{border-radius:50%;outline:1px solid light-dark(var(--li
 .pg-why{display:flex;gap:6px;align-items:center;}
 .pg-a{grid-column:2;display:flex;gap:6px;align-items:center;margin-top:8px;}
 @media (max-width: 760px){.pg-grid{grid-template-columns:minmax(0,1fr);}}
+
+/* list.fold-by-mark: a row's mark folds what is under it; it reads as the mark, with a hover like the row's */
+.lr-mark-fold{display:inline-grid;place-items:center;padding:0;margin:0;border:0;background:none;color:inherit;cursor:pointer;border-radius:50%;}
+.lr-mark-fold:hover{background:var(--hover,var(--line));}
+.lr-mark-fold:focus-visible{outline:2px solid var(--ink-2);outline-offset:1px;}
+
+/* panel.question-forms: a question's small form, on the card's text edge */
+.q-slide{margin:6px 0 0 32px;display:grid;gap:6px;max-width:420px;}
+.q-slide-t{display:flex;justify-content:space-between;font-size:var(--fs-meta);color:var(--ink-2);} .q-slide-t b{color:var(--ink);font-size:var(--fs-body);font-weight:600;}
+.q-slide-track{position:relative;padding:0 0 18px;}
+.q-slide-track input[type=range]{width:100%;accent-color:var(--ink-2);margin:0;}
+.q-slide-tick{position:absolute;top:2px;width:2px;height:12px;margin-left:-1px;background:var(--amber);pointer-events:none;}
+.q-slide-pick{position:absolute;bottom:0;transform:translateX(-50%);font-size:var(--fs-caption);color:var(--ink-2);white-space:nowrap;}
+.q-rank{list-style:none;margin:6px 0 0 32px;padding:0;max-width:540px;}
+.q-rank-r{display:grid;grid-template-columns:18px minmax(0,1fr) auto auto;gap:10px;align-items:center;padding:6px 0;border-top:1px solid var(--line);font-size:var(--fs-body);}
+.q-rank-r:last-child{border-bottom:1px solid var(--line);}
+.q-rank-n{color:var(--ink-2);font-size:var(--fs-meta);font-variant-numeric:tabular-nums;} .q-rank-h{color:var(--ink-3);display:flex;} .q-rank-a{display:flex;}
+.q-rows{margin:6px 0 0 32px;max-width:560px;}
+.q-rows-h,.q-rows-r{display:grid;grid-template-columns:var(--q-cols);gap:8px;align-items:center;}   /* ds-ok: the columns PickRows sets */
+.q-rows-h{font-size:var(--fs-meta);color:var(--ink-2);padding:0 0 4px;}
+.q-rows-r{padding:6px 0;border-top:1px solid var(--line);font-size:var(--fs-body);}
+.q-rows-r > span:nth-child(n+3){color:var(--ink-2);font-size:var(--fs-meta);font-variant-numeric:tabular-nums;}
+.q-facts{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:var(--fs-meta);color:var(--ink-2);margin:4px 0 0;}
+.q-fact{padding:0;border:0;background:none;font:inherit;color:inherit;} .q-fact b{font-weight:500;color:var(--ink);}
+button.q-fact{cursor:pointer;text-decoration:underline;text-decoration-color:var(--line-2);text-underline-offset:3px;} button.q-fact:hover{color:var(--ink);}
+
+/* look.background-breathes: the chosen background, slowly brighter and quieter; the still one stays the default */
+@keyframes bg-breathe{0%,100%{opacity:.6;}50%{opacity:1;}}
+[data-bg-breathe="1"] .page-bg .chat-home-bg,[data-bg-breathe="1"] .chat-home .chat-home-bg{animation:bg-breathe 10s ease-in-out infinite;}   /* ds-ok: a slow breath, ten seconds */
+@media (prefers-reduced-motion: reduce){[data-bg-breathe="1"] .chat-home-bg{animation:none;}}
+.lvl-menu .menu-item .bg-sw{flex:none;width:22px;height:16px;margin-right:2px;border-radius:var(--r-sm);overflow:hidden;position:relative;box-shadow:0 0 0 1px var(--line);}
+.lvl-menu.pz-fly{min-width:220px;}
+.lvl-menu .bg-line .mi-val{color:var(--ink);}   /* the chosen background's ✓ */

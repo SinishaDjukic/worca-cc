@@ -1286,6 +1286,50 @@
       "rules": [
         "look.chart"
       ]
+    },
+    {
+      "name": "SliderPick",
+      "code": "ui/public/design-system/components/question-forms.mjs#sliderPick",
+      "kind": "asking",
+      "needs": [
+        "a question whose answer is a number in a range, with Worca’s pick"
+      ],
+      "rules": [
+        "panel.question-forms"
+      ]
+    },
+    {
+      "name": "RankList",
+      "code": "ui/public/design-system/components/question-forms.mjs#rankList",
+      "kind": "asking",
+      "needs": [
+        "a question whose answer is an order"
+      ],
+      "rules": [
+        "panel.question-forms"
+      ]
+    },
+    {
+      "name": "PickRows",
+      "code": "ui/public/design-system/components/question-forms.mjs#pickRows",
+      "kind": "asking",
+      "needs": [
+        "a question whose answer is some rows of a table"
+      ],
+      "rules": [
+        "panel.question-forms"
+      ]
+    },
+    {
+      "name": "FactsLine",
+      "code": "ui/public/design-system/components/question-forms.mjs#factsLine",
+      "kind": "showing",
+      "needs": [
+        "a task card’s facts: cost, time, agents, files, artifacts, each a way to its detail"
+      ],
+      "rules": [
+        "panel.question-forms"
+      ]
     }
   ],
   "logic": [

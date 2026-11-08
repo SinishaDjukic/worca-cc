@@ -7,7 +7,6 @@
   const R = window.RailUI;
   const esc = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const say = (t, undo) => window.RailPulse?.say(t, undo);
-  const KINDS = ['Task sources', 'Chat channels', 'MCP servers', 'Models', 'Agents', 'Scripts', 'Skills', 'Workflows'];
   const data = {
     markets: [{ id: 'official', name: 'Worca CC Official', url: 'github.com/SinishaDjukic/worca-cc', branch: 'dev', sha: '42eb305', synced: 'just now' }],
     plugins: [
@@ -21,9 +20,12 @@
       { id: 'promo-video', name: 'Promo video', ver: '0.3.0', kind: 'Workflows', market: 'official', what: 'From a feature to a 30-second video: script, shots, cut.', adds: ['A workflow and 3 agents'], asks: [], installed: false },
     ],
   };
-  const view = { adds: 'all', from: 'all' };
+  const view = { sort: 'used' };
   let current = '', form = null, ctl = null, home = null, bar = null, page = null, menu = '';
   const stOf = (p) => (p.update ? { word: 'Update available', tone: 'act', act: `Update to ${p.update}` } : p.installed ? { word: 'Installed', tone: 'ok', act: 'Set it up' } : { word: 'Not installed', tone: 'idle', act: 'Install' });
+  const SHELF_ICON = ['list', 'kind-chat', 'plug', 'kind-workflow'];
+  const SORTS = { used: 'most used', new: 'newest', az: 'A–Z' };
+  const shown = {};   // how many of a view's plugins are shown: six, then Show N more
   const SHELVES = [['Bring tasks in', 'Tickets become tasks; the result goes back to the ticket.', ['Task sources']], ['Talk to Worca from', 'Answer what needs you without opening Worca.', ['Chat channels']], ['Give tasks tools', 'MCP servers and models a task can call.', ['MCP servers', 'Models']], ['New agents and workflows', 'Steps and whole flows for your workflows.', ['Agents', 'Workflows', 'Scripts', 'Skills']]];
   const nameOf = (p) => p.name || p.id;
   const markOf = (p, size = 20) => R.kindMark({ kind: 'plugin', icon: p.brand || '', tone: stOf(p).tone, size, title: stOf(p).word });   // its brand in Rail's line; a plug without one
@@ -50,6 +52,24 @@
       + R.settingsSection({ title: 'Where it comes from', rows: R.settingsRow({ name: 'Source', sentence: esc(`${data.markets[0].url} on ${data.markets[0].branch} · ${data.markets[0].sha}`) }) });
     return `<div class="convo"><div class="convo-scroll"><div class="convo-col">${head}${install}${rows}</div></div><div class="convo-dock" id="mk-dock"></div></div>`;
   }
+  function wayOf(key) {
+    if (key === 'updates') return { title: 'Updates', meta: 'What can be updated; nothing new is asked for unless it says so', list: data.plugins.filter((p) => p.update) };
+    if (key === 'installed') return { title: 'Installed', meta: 'Turn one off, remove it or set it up in Settings › Plugins', list: data.plugins.filter((p) => p.installed) };
+    if (key === 'for-you') return { title: 'For you', meta: 'Worca suggests these from how you work; each says why', list: data.plugins.filter((p) => p.why && !p.installed), why: true };
+    if (key === 'all') return { title: 'Everything', meta: 'Every plugin from every source', list: data.plugins.slice() };
+    if (key.startsWith('shelf-')) { const [t, meta, kinds] = SHELVES[+key.slice(6)]; return { title: t, meta, list: data.plugins.filter((p) => kinds.includes(p.kind)) }; }
+    if (key.startsWith('src-')) { const m = data.markets.find((x) => x.id === key.slice(4)); return { title: m?.name || 'Source', meta: m ? `${m.url} · synced ${m.synced}` : '', list: data.plugins.filter((p) => p.market === m?.id) }; }
+    return null;
+  }
+  function wayHtml(key) {
+    const w = wayOf(key); if (!w) return homeHtml();
+    const sort = view.sort || 'used', list = w.list.sort((a, b) => (sort === 'az' ? nameOf(a).localeCompare(nameOf(b)) : sort === 'new' ? b.ver.localeCompare(a.ver) : (b.installed ? 1 : 0) - (a.installed ? 1 : 0))), n = shown[key] || 6;
+    const ups = key === 'updates' && list.length ? R.button({ label: list.length === 1 ? `Update ${nameOf(list[0])}` : `Update all ${list.length}`, attrs: { 'data-mk-update-all': '' } }) : '';
+    return `<div class="convo"><div class="convo-scroll"><div class="convo-col">${R.placeHead({ title: w.title, facts: esc(`${list.length} ${list.length === 1 ? 'plugin' : 'plugins'} · ${w.meta}`), ...(ups ? { mark: R.kindMark({ kind: 'plugin', icon: 'refresh', tone: 'act' }), word: `${list.length} to update`, why: 'Each asks for nothing new', action: ups } : {}) })}
+      <p class="convo-head">Showing ${R.sentencePicker({ id: 'mk-sort', text: SORTS[sort], items: Object.entries(SORTS).map(([id, text]) => ({ id, text, checked: id === sort })), open: menu === 'mk-sort', chevron: R.icon('chevron', 10) })} first</p>
+      ${list.length ? `<div class="pg-grid">${list.slice(0, n).map((p) => cardOf(p, w.why)).join('')}</div>${list.length > n ? `<div style="margin:12px 0 0">${R.button({ label: `Show ${list.length - n} more`, kind: 'quiet', attrs: { 'data-mk-more': key } })}</div>` : ''}` : R.emptyState({ title: key === 'updates' ? 'Everything is up to date.' : 'Nothing here yet.' })}
+    </div></div></div>`;
+  }
   function homeHtml() {
     const m = data.markets, ups = data.plugins.filter((p) => p.update), forYou = data.plugins.filter((p) => p.why && !p.installed), rest = data.plugins.filter((p) => !forYou.includes(p));   // each plugin once
     const shelf = (title, meta, list, cls = '') => (list.length ? `<section class="pg-shelf ${cls}"><h2 class="pg-shelf-h">${esc(title)} <span class="n">${list.length}</span></h2>${meta ? `<p class="pg-shelf-m">${esc(meta)}</p>` : ''}<div class="pg-grid">${list.map((p) => cardOf(p, cls === 'pg-for')).join('')}</div></section>` : '');
@@ -64,23 +84,24 @@
     if (!bar || !page || !here()) return;
     ctl?.paint();
     const p = data.plugins.find((x) => x.id === current);
-    page.innerHTML = p ? pageHtml(p) : homeHtml();
+    page.innerHTML = p ? pageHtml(p) : current.startsWith('~') ? wayHtml(current.slice(1)) : homeHtml();
     if (p) window.RailConversation?.dock(document.getElementById('mk-dock'), { kind: 'plugin', title: p.id, chat: '' });
   }
   function wire(b, pg) {
     bar = b; page = pg;
-    const shown = () => data.plugins.filter((p) => (view.adds === 'all' || p.kind === view.adds) && (view.from === 'all' || p.market === view.from));
-    ctl = R.listController({ root: bar, spec: { noun: 'plugins', label: 'Selected plugins', view: () => ({ state: 'ready',
-      parts: [{ word: 'Showing', id: 'adds', text: view.adds === 'all' ? 'all plugins' : view.adds.toLowerCase(), tip: 'What a plugin adds', items: [{ id: 'all', text: 'all plugins', checked: view.adds === 'all' }, { sep: true }, ...KINDS.map((k) => ({ id: k, text: k.toLowerCase(), checked: view.adds === k, hint: String(data.plugins.filter((p) => p.kind === k).length) }))] },
-        { word: 'from', id: 'from', text: view.from === 'all' ? 'every marketplace' : data.markets.find((m) => m.id === view.from)?.name, tip: 'Where it comes from', items: [{ id: 'all', text: 'every marketplace', checked: view.from === 'all' }, ...data.markets.map((m) => ({ id: m.id, text: m.name, checked: view.from === m.id }))] }],
-      sections: [{ id: 'update', title: 'Updates', rows: shown().filter((p) => p.update).map(rowOf) }, { id: 'new', title: 'Not installed', rows: shown().filter((p) => !p.installed).map(rowOf) }, { id: 'in', title: 'Installed', rows: shown().filter((p) => p.installed && !p.update).map(rowOf) }],
-      empty: { text: 'No plugins like that.', action: 'Show all plugins' } }),
-      can: () => ['menu'], bulk: () => [], act: (id, rows) => { const p = rows[0]?._p; if (!p) return; if (id === 'step') step(p); else say(`${p.id}: ${data.markets[0].url} at ${data.markets[0].sha}`); },
-      open: (r) => window.RailShell.go(`marketplace/${r._p.id}`), word: (id, v) => { view[id] = v; return false; }, say, active: () => /^#marketplace/.test(location.hash), emptyAct: () => { view.adds = 'all'; view.from = 'all'; draw(); } } });
+    const way = (key, title, mark, n) => ({ key: `way:${key}`, _way: key, title, mark, end: String(n), current: current === `~${key}`, tip: `${title} · ${n}` });
+    ctl = R.listController({ root: bar, spec: { noun: 'plugins', label: 'Selected plugins', view: () => ({ state: 'ready', parts: [],
+      sections: [{ id: 'yours', title: 'Yours', rows: [way('updates', 'Updates', R.kindMark({ kind: 'plugin', icon: 'refresh', tone: data.plugins.some((p) => p.update) ? 'act' : 'idle' }), data.plugins.filter((p) => p.update).length), way('installed', 'Installed', R.kindMark({ kind: 'plugin', icon: 'check', tone: 'ok' }), data.plugins.filter((p) => p.installed).length)] },
+        { id: 'browse', title: 'Browse', rows: [way('for-you', 'For you', R.kindMark({ kind: 'plugin', icon: 'sparkle' }), data.plugins.filter((p) => p.why && !p.installed).length), ...SHELVES.map(([t, , kinds], n) => way(`shelf-${n}`, t, R.kindMark({ kind: 'plugin', icon: SHELF_ICON[n] }), data.plugins.filter((p) => kinds.includes(p.kind)).length)), way('all', 'Everything', R.kindMark({ kind: 'plugin', icon: 'list' }), data.plugins.length)] },
+        { id: 'sources', title: 'Sources', rows: data.markets.map((m) => way(`src-${m.id}`, m.name, R.kindMark({ kind: 'plugin', icon: 'brand-github' }), data.plugins.filter((p) => p.market === m.id).length)) }] }),
+      can: () => [], bulk: () => [], act: () => {}, open: (r) => window.RailShell.go(`marketplace/~${r._way}`), word: () => false, say, active: () => /^#marketplace/.test(location.hash) } });
     page.addEventListener('click', (e) => {
       if (!here()) return;   /* another place's page is showing */
       const on = (q) => e.target.closest(q); let hit; const p = data.plugins.find((x) => x.id === current);
       if ((hit = on('[data-mk-sync]'))) { data.markets.find((m) => m.id === hit.dataset.mkSync).synced = 'just now'; draw(); say('Synced: 6 plugins, nothing new'); return; }
+      if ((hit = on('[data-mk-more]'))) { shown[hit.dataset.mkMore] = Infinity; draw(); return; }
+      if ((hit = on('[data-menu-pick^="mk-sort|"]'))) { view.sort = hit.dataset.menuPick.split('|')[1]; menu = ''; draw(); return; }
+      if (!p && (hit = on('[data-menu]'))) { menu = menu === hit.dataset.menu ? '' : hit.dataset.menu; draw(); return; }
       if ((hit = on('[data-mk-card]'))) { step(data.plugins.find((x) => x.id === hit.dataset.mkCard)); return; }
       if ((hit = on('[data-mk-open]'))) { window.RailShell.go(`marketplace/${hit.dataset.mkOpen}`); return; }
       if (on('[data-mk-update-all]')) { const ups = data.plugins.filter((x) => x.update); ups.forEach((x) => { x.ver = x.update; delete x.update; }); draw(); say(`Updated ${ups.map(nameOf).join(', ')}`); return; }
@@ -92,8 +113,8 @@
       if ((hit = on('[data-menu-pick]'))) { const [, v] = hit.dataset.menuPick.split('|'); menu = ''; if (v === 'remove') form = { k: 'remove', id: p.id }; else say(`${p.id}: ${data.markets[0].url} at ${data.markets[0].sha}`); draw(); return; }
       if ((hit = on('[data-menu]'))) { menu = menu === hit.dataset.menu ? '' : hit.dataset.menu; draw(); }
     });
-    R.dismissOnOutside(document, { open: () => here() && !!menu, inside: '#route-place .rc-pop', back: () => null, close: () => { menu = ''; }, paint: draw });
+    R.dismissOnOutside(document, { open: () => here() && !!menu, inside: '#route-place .rc-pop, #route-place .spick', back: () => null, close: () => { menu = ''; }, paint: draw });
   }
   window.RailPlaces = window.RailPlaces || {};
-  window.RailPlaces.marketplace = { sample: 'slack-chat', show: ({ bar: b, page: pg, arg }) => { if (b !== bar) wire(b, pg); if (current !== arg) menu = ''; if (form && form.id !== arg) form = null; current = arg || ''; draw(); } };
+  window.RailPlaces.marketplace = { search: (q) => data.plugins.filter((p) => `${nameOf(p)} ${p.id} ${p.what}`.toLowerCase().includes(q)).map((p) => ({ label: nameOf(p), where: `${p.kind.replace(/s$/, '')}${p.installed ? ' · installed' : ''}`, hash: `marketplace/${p.id}` })), sample: 'slack-chat', show: ({ bar: b, page: pg, arg }) => { if (b !== bar) wire(b, pg); if (current !== arg) menu = ''; if (form && form.id !== arg) form = null; current = arg || ''; draw(); } };
 })();

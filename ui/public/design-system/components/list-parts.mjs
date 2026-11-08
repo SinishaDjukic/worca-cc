@@ -98,7 +98,7 @@ export const DAY_SECTIONS = Object.freeze([['upcoming', 'Upcoming'], ['today', '
  */
 export function groupRow({ count, shown, noun, toggle, rows = '', end = '', ...row }) {
   const fold = button({ label: `${shown ? 'Hide' : 'Show'} the ${noun} in ${row.title}`, kind: 'quiet', iconOnly: true, title: false, icon: icon(shown ? 'chevron' : 'chevR', 14), attrs: { 'aria-expanded': String(shown), ...toggle } });
-  return listRow({ ...row, endText: count, end: fold + end, after: shown && rows ? `<div class="lr-members" role="list"><div class="list-rows">${rows}</div></div>` : '' });
+  return listRow({ ...row, endText: count, end: fold + end, markFold: { open: shown, attrs: toggle }, after: shown && rows ? `<div class="lr-members" role="list"><div class="list-rows">${rows}</div></div>` : '' });   // its mark folds it too
 }
 
 /**

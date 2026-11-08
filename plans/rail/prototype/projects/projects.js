@@ -117,6 +117,6 @@
   window.RailProjects = { list: () => data.projects, add: (p) => { if (!data.projects.some((x) => x.id === p.id)) data.projects.push({ kind: 'Git', origin: 'local', branch: 'main', ...p }); ctl?.paint(); } };
   if (window.RailFirstRun) data.projects = [];   // the first run: nothing added yet
   window.RailPlaces = window.RailPlaces || {};
-  window.RailPlaces.projects = { sample: 'billing-api', newLabel: 'Add project', newAct: () => window.RailConversation?.starter('project'),
+  window.RailPlaces.projects = { search: (q) => data.projects.filter((p) => `${p.id} ${p.path}`.toLowerCase().includes(q)).map((p) => ({ label: p.id, where: wordOf(p), hash: `projects/${p.id}` })), sample: 'billing-api', newLabel: 'Add project', newAct: () => window.RailConversation?.starter('project'),
     show: ({ bar: b, page: pg, arg }) => { if (b !== bar) wire(b, pg); if (current !== arg) { menu = ''; if (confirm?.p?.id !== arg) confirm = null; } current = arg || ''; draw(); } };
 })();

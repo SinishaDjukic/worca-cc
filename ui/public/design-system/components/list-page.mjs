@@ -74,7 +74,7 @@ export function fitMenu(m, vw) {
  */
 export function listController({ root, spec }) {
   const doc = root.ownerDocument, win = doc.defaultView;
-  const s = { pick: selectClear(), menu: '', more: new Set(), shut: new Set(), opening: '', seen: new Set(), arrived: new Map(), groups: new Map(), rounds: new Set(), roundsAll: new Set(), confirm: null, pop: null, dialog: null, focus: '', flash: '', order: [], rows: new Map() };
+  const s = { pick: selectClear(), menu: '', more: new Set(), shut: new Set(), treeShut: new Set(), opening: '', seen: new Set(), arrived: new Map(), groups: new Map(), rounds: new Set(), roundsAll: new Set(), confirm: null, pop: null, dialog: null, focus: '', flash: '', order: [], rows: new Map() };
   const dots = () => icon('more', 16);
   // folded date sections are kept per list, so Older stays folded when you come back
   const FOLD_KEY = `worca-rail.fold.${spec.noun}`;
@@ -88,7 +88,7 @@ export function listController({ root, spec }) {
       open: { 'data-open': r.key, title: r.tip || r.title }, attrs: { 'data-row': r.key },
       menu: r.menu ? { id: `row:${r.key}`, label: `More for ${r.title}`, icon: dots(), items: r.menu, open: s.menu === `row:${r.key}` } : null,
       check: selecting ? s.pick.ids.includes(r.key) : undefined, boxAttrs: { 'data-sel': r.key } };
-    if (r.tree) base.after = `<div class="lr-members lr-tree" role="list"><div class="list-rows">${r.tree.map(rowHtml).join('')}</div></div>`;
+    if (r.tree) { base.after = `<div class="lr-members lr-tree" role="list"><div class="list-rows">${r.tree.map(rowHtml).join('')}</div></div>`; if (r.tree.length) base.markFold = { open: !s.treeShut.has(r.key), attrs: { 'data-fold-tree': r.key } }; }
     if (r.endMark) base.end = r.endMark;
     if (r.members) return groupRow({ ...base, count: r.count, noun: r.noun, shown: groupOpen(r), toggle: { 'data-fold': r.key }, rows: r.members.map(rowHtml).join('') });
     let after = '';
@@ -220,6 +220,7 @@ export function listController({ root, spec }) {
     if ((el = t('[data-dialog]'))) { dialogStep(el.dataset.dialog); return; }
     if ((el = t('[data-listtoggle]'))) { const v = el.dataset.listtoggle, i = v.indexOf('|'); s.pop.pick(v.slice(0, i), v.slice(i + 1)); return; }
     if (t('.list-pop')) return;
+    if ((el = t('[data-fold-tree]'))) { const k = el.dataset.foldTree; if (s.treeShut.has(k)) s.treeShut.delete(k); else s.treeShut.add(k); s.menu = ''; paint(); return; }   // list.fold-by-mark
     if ((el = t('[data-fold]'))) { const r = s.rows.get(el.dataset.fold); s.groups.set(r.key, !groupOpen(r)); s.menu = ''; paint(); return; }
     if ((el = t('[data-rounds]'))) { const k = el.dataset.rounds; if (s.rounds.has(k)) s.rounds.delete(k); else s.rounds.add(k); s.menu = ''; paint(); return; }
     if ((el = t('[data-rounds-all]'))) { s.roundsAll.add(el.dataset.roundsAll); paint(); return; }

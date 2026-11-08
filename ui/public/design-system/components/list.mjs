@@ -49,13 +49,15 @@ export function moreMenu({ id, label, icon, items, open = false }) {
  * @param {string} [o.after]        under the row, in its text column: members, rounds (markup)
  * @param {{open:boolean, attrs?:object, help?:string}} [o.fold]  a record's own fine-tuning: Customise shows `after`, Done hides it
  */
-export function listRow({ title, meta = '', mark = '', end = '', endText = '', open = null, menu = null, attrs: a = {}, check, boxAttrs = {}, lead = '', unread = false, current = false, holds = false, flash = false, after = '', fold = null }) {
+export function listRow({ title, meta = '', mark = '', end = '', endText = '', open = null, menu = null, attrs: a = {}, check, boxAttrs = {}, lead = '', unread = false, current = false, holds = false, flash = false, after = '', fold = null, markFold = null }) {
   const body = `<span class="lr-t">${lead}${esc(title)}</span>${meta ? `<span class="lr-m">${esc(meta)}</span>` : ''}`;
   const main = open ? `<button type="button" class="lr-main"${attrs(open)}>${body}</button>` : `<span class="lr-main">${body}</span>`;
   const more = menu ? moreMenu(menu) : '';
-  const rail = check === undefined ? mark : checkbox({ cls: 'lr-check', why: 'Select', checked: !!check, attrs: { 'aria-label': `Select ${title}`, ...boxAttrs } });
+  // a row with rows under it folds from its mark (list.fold-by-mark): the root icon is the trigger, its name still opens it
+  const railMark = markFold ? `<button type="button" class="lr-mark-fold"${attrs({ 'aria-expanded': String(!!markFold.open), title: `${markFold.open ? 'Fold' : 'Show'} what is under ${title}`, 'aria-label': `${markFold.open ? 'Fold' : 'Show'} what is under ${title}`, ...(markFold.attrs || {}) })}>${mark}</button>` : mark;
+  const rail = check === undefined ? railMark : checkbox({ cls: 'lr-check', why: 'Select', checked: !!check, attrs: { 'aria-label': `Select ${title}`, ...boxAttrs } });
   const foldBtn = fold ? button({ label: fold.open ? 'Done' : 'Customise', kind: 'quiet', attrs: { 'aria-expanded': String(!!fold.open), title: fold.help || null, ...(fold.attrs || {}) } }) : '';
-  const shown = !fold || fold.open ? after : '';
+  const shown = (!fold || fold.open) && (!markFold || markFold.open) ? after : '';
   const state = [unread && 'is-unread', current && 'is-current', holds && 'is-holds', flash && 'is-flash', check && 'is-sel'].filter(Boolean).join(' ');
   return row({ kind: 'list', rail, text: main, cls: state, end: `${endText ? `<span class="lr-fig">${esc(endText)}</span>` : ''}${foldBtn}${end}`, more, attrs: current ? { 'aria-current': 'true', ...a } : a, after: shown ? `<div class="lr-after">${shown}</div>` : '' });
 }

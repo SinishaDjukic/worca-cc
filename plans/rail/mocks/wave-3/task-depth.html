@@ -22,6 +22,7 @@
   .mk-view-h{display:flex;gap:6px;align-items:center;margin:0 0 0 32px;font-size:var(--fs-meta);color:var(--ink-2);}
   .mk-view-h .sp{flex:1;}
   .mk-sev{font-size:var(--fs-meta);color:var(--amber-ink);} .mk-sev.min{color:var(--ink-2);}
+  .mk-ln{color:inherit;text-decoration:underline;text-decoration-color:var(--line-2);text-underline-offset:3px;}
   .note{margin:6px 0 0 32px;font-size:12px;color:var(--ink-3);}
 </style></head>
 <body><div id="m"></div>
@@ -32,22 +33,22 @@
   const live = [
     R.stageLine({ mark: dot('is-done', 'Done', 'check'), label: 'Plan', meta: '3 min · $0.40' }),
     R.stageLine({ mark: dot('is-done', 'Done', 'check'), label: 'Build', meta: '2 cycles · 9 min · $1.06', parts: R.stagePart({ label: 'cycle 2 · fix', says: '6 min · $0.88' }) }),
-    R.stageLine({ mark: dot('is-working is-pulse', 'In progress', 'now'), label: 'Review', meta: 'cycle 2 of 3 · 4 agents running · $0.31 so far', next: true }),
+    R.stageLine({ mark: dot('is-working is-pulse', 'In progress', 'now'), label: 'Review · now', meta: 'cycle 2 of 3 · 4 agents running · $0.31 so far' }),
     R.stageLine({ mark: dot('is-future', 'Not yet', ''), label: 'PR', meta: '' }),
   ].join('');
-  const log = `<div class="mk-log-h">Review's log · showing ${R.sentencePicker({ id: 'l', text: 'summaries', items: [], chevron: R.icon('chevron', 10) })} of ${R.sentencePicker({ id: 'c', text: 'cycle 2', items: [], chevron: R.icon('chevron', 10) })}<span class="sp"></span>${R.button({ label: 'Copy', kind: 'quiet' })}${R.button({ label: 'All logs', kind: 'quiet' })}</div>
+  const log = `<div class="mk-log-h">Review's log · showing ${R.sentencePicker({ id: 'l', text: 'summaries', items: [], chevron: R.icon('chevron', 10) })} of ${R.sentencePicker({ id: 'c', text: 'cycle 2', items: [], chevron: R.icon('chevron', 10) })} by ${R.sentencePicker({ id: 'a', text: 'every agent', items: [], chevron: R.icon('chevron', 10) })}<span class="sp"></span>${R.button({ label: 'First error', kind: 'quiet' })}${R.button({ label: 'Copy', kind: 'quiet' })}</div><div class="mk-log-h">${R.switchButton({ on: true, label: 'Follow live' })}<span>Follow live · find a line with the top bar's search: this page's matches come first</span></div>
     <div class="mk-log"><div><span class="t">14:02:11 [reviewer]</span> Reading export.mjs and columns.mjs</div><div><span class="t">14:02:40 [reviewer ▸ security]</span> Checking the CSV for formula injection</div><div><span class="t">14:03:05 [reviewer ▸ browser]</span> <span class="s">Exporting 50k rows in the browser</span></div></div>`;
   const arts = R.list({ groups: [{ title: 'Artifacts · 4', rows: [
-    R.listRow({ title: 'plan.md', meta: 'Plan · 4 KB', mark: R.kindMark({ kind: 'event' }), endText: '', open: {} }),
-    R.listRow({ title: 'review-cycle-2.md', meta: 'Review · cycle 2 · 2 KB', mark: R.kindMark({ kind: 'event' }), open: {}, current: true }),
-    R.listRow({ title: 'export-50k.png', meta: 'Review · screenshot · 180 KB', mark: R.kindMark({ kind: 'event' }), open: {} }),
-    R.listRow({ title: 'timings.csv', meta: 'Review · 12 KB', mark: R.kindMark({ kind: 'event' }), open: {} })] }] });
-  const viewer = `<div class="mk-view-h">review-cycle-2.md · Review · cycle 2<span class="sp"></span>${R.button({ label: 'Previous', kind: 'quiet', iconOnly: true, icon: R.icon('chevron', 12) })}${R.button({ label: 'Next', kind: 'quiet', iconOnly: true, icon: R.icon('chevron', 12) })}${R.button({ label: 'Open full', kind: 'quiet' })}${R.button({ label: 'Download', kind: 'quiet' })}</div>
+    R.listRow({ title: 'plan.md', meta: 'Plan · 4 KB', mark: R.kindMark({ kind: 'plugin', icon: 'file' }), open: {} }),
+    R.listRow({ title: 'review-cycle-2.md', meta: 'Review · cycle 2 · 2 KB', mark: R.kindMark({ kind: 'plugin', icon: 'file' }), open: {}, current: true }),
+    R.listRow({ title: 'export-50k.png', meta: 'Review · screenshot · 180 KB', mark: R.kindMark({ kind: 'plugin', icon: 'image' }), open: {} }),
+    R.listRow({ title: 'timings.csv', meta: 'Review · a table · 12 KB', mark: R.kindMark({ kind: 'plugin', icon: 'list' }), open: {} })] }] });
+  const viewer = `<div class="mk-view-h">review-cycle-2.md · Review · cycle 2<span class="sp"></span>${R.button({ label: 'Previous', kind: 'quiet', iconOnly: true, icon: `<span style="display:inline-flex;transform:rotate(180deg)">${R.icon('after', 13)}</span>` })}${R.button({ label: 'Next', kind: 'quiet', iconOnly: true, icon: R.icon('after', 13) })}${R.button({ label: 'Open full', kind: 'quiet' })}${R.button({ label: 'Download', kind: 'quiet' })}</div>
     <div class="mk-view"><h3>Review, cycle 2</h3>The export streams rows and the totals match. Two things to confirm: the retry lives in the caller, and the empty-list branch has no test.</div>`;
   const findings = `${R.turnRow({ mark: R.kindMark({ kind: 'chat', tone: 'ask', size: 16 }), text: '<b>Confirm these findings</b>' })}
-    ${R.settingsSection({ rows: [R.settingsRow({ name: 'Major', sentence: 'Plan deviation: the retry lives in the caller', end: R.button({ label: 'Confirm', kind: 'quiet' }) + R.button({ label: 'Dismiss', kind: 'quiet' }) }), R.settingsRow({ name: 'Minor', sentence: 'No unit test for the empty-list branch', end: R.button({ label: 'Confirm', kind: 'quiet' }) + R.button({ label: 'Dismiss', kind: 'quiet' }) })].join('') })}
-    <div style="margin:4px 0 0 32px">${R.field({ id: 'n', label: 'Notes', quietLabel: true, placeholder: 'Anything the next cycle should know (optional)', multiline: true })}</div><div style="margin:8px 0 0 32px">${R.button({ label: 'Send to Review', kind: 'primary' })}</div>`;
-  const apply = R.changeProposal({ kind: 'Changes', title: '3 files changed on a copy of docs-site', why: 'A folder without git: the task worked on a copy; apply it to the folder, or discard it', rows: [{ name: 'Adds', before: '', after: 'guides/export.md' }, { name: 'Updates', before: '', after: 'index.md, nav.yml' }, { name: 'Skips', before: '', after: 'nothing changed in the folder since it started' }], state: 'proposed', apply: 'Apply 3 files' });
+    ${R.settingsSection({ rows: [R.settingsRow({ name: 'Major', sentence: 'Plan deviation: the retry lives in the caller · <a class="mk-ln" href="#">export.mjs:41</a>', end: R.button({ label: 'Confirm', kind: 'quiet' }) + R.button({ label: 'Dismiss', kind: 'quiet' }) }), R.settingsRow({ name: 'Minor', sentence: 'No unit test for the empty-list branch · <a class="mk-ln" href="#">columns.mjs:88</a>', end: R.button({ label: 'Confirm', kind: 'quiet' }) + R.button({ label: 'Dismiss', kind: 'quiet' }) })].join('') })}
+    <div style="margin:4px 0 0 32px">${R.field({ id: 'n', label: 'Notes', quietLabel: true, placeholder: 'Anything the next cycle should know (optional)', multiline: true })}</div><div style="margin:8px 0 0 32px">${R.button({ label: 'Send to Review', kind: 'primary' })} ${R.button({ label: 'Confirm all', kind: 'quiet' })}</div>`;
+  const apply = R.changeProposal({ kind: 'Changes', title: '3 files changed on a copy of docs-site', why: 'A folder without git: the task worked on a copy; apply it to the folder, or discard it', rows: [{ name: 'Adds', before: '', after: 'guides/export.md' }, { name: 'Updates', before: '', after: 'index.md, nav.yml' }, { name: 'Skips', before: '', after: 'nothing changed in the folder since it started' }], state: 'proposed', apply: 'Apply 3 files' }).replace('Not now', 'Show the diff');
   document.getElementById('m').innerHTML = `<div class="convo-col" style="margin:0">
     <section class="case"><h2>The live workflow, opened from the card (Show its stages): steps, cycles, cost, the step running now</h2><ol class="rd-route-list">${live}</ol></section>
     <section class="case"><h2>A step's log, opened from its row: summaries or raw, by cycle, Copy, All logs</h2>${log}</section>

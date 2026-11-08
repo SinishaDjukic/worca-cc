@@ -5,6 +5,8 @@
 | `list.sentence` | What a list shows is a sentence above it, never a filter button | Narrowed the same way everywhere | by hand |
 | `list.sections` | Sections in a fixed order; empty ones not drawn; a long one shows less, never folds | Nothing hides | design-system-components |
 | `list.fold-keeps-current` | The row you are on never folds behind Show N more; a group that holds it starts open | You never lose your place | worca-sweep |
+| `list.fold-by-mark` | A row with rows under it (a chat's tasks, a group's chats) folds and opens from its mark; its name still opens it | One trigger for folding in every bar, where the eye already is | design-system-components |
+| `list.ways-in` | A bar whose items can grow without end (plugins, a catalogue) lists no items: only ways in, each with its count (Updates 12, Installed 40, a shelf, a source); each opens on the page, sorted, six at a time with Show N more. Lists you work through one by one (chats, tasks, schedules) stay lists | A bar stays the same size at ten items or a thousand | by hand |
 | `list.row-one-target` | The whole row opens one target; a fact in it is text | No second links in a row | by hand |
 | `list.select` | Selecting works one way in every list that has it | One habit | design-system-logic |
 | `list.one-code` | A list calls the library for its sentence, selecting, keys and states; rail-gate sees its rows' markup only, the rest is by review | A list cannot drift | rail-gate |

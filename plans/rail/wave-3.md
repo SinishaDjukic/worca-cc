@@ -222,3 +222,21 @@ Wave 3, second run (8 Nov, "continue with the rest"):
   breakdown; labels and cost tags are what "by" reads), Phase 5 Workspaces.
 - Still to do: 1.2's rest, 1.3–1.5, Phase 2 (artifact viewers, the live graph), 4.3 Settings' leftovers, Phase 5's rest
   (Actions, scripts' editor, onboarding, edges), and a persona round on the new places.
+
+Next (Emil, 8 Nov), after the approved builds (chat cards, Ask beside a page, task depth, ⌘J): the second pass on
+Workflows, Projects and Workspaces, and a heavy one on **Insights**, through the loop (mock, both users, Emil, build).
+Insights is one feature in the places menu; its bar holds the sub-features in groups, lean and smooth, every metric dev
+already records and nothing invented:
+- Cost: spend, cost per task (middle, slowest tenth), by model, chat and requirements spend, budget pace.
+- Value: time saved, value against spend.
+- Quality: how tasks end, review cycles, the stage that fails most, autonomy (how often you stepped in), cache use.
+- Flow: shipped PRs, start to merge, throughput, time waiting on you.
+- Team (Expert): the same by person, missing cost tags, the work items on a calendar.
+Each sub-feature: one sentence answer, one chart, one "by" picker, its breakdown as rows; no tiles; the one search finds it.
+Insights' cost dimensions (Emil, 8 Nov: "we need all possible dimensions because costs are super important for the AI"):
+every dimension dev records is a "by" (and a filter), offered only when it has data, one level deeper when asked:
+where (project, workspace, branch, ticket, PR) · what did the work (workflow, stage, step and agent role, sub-agents) ·
+what it ran on (model, engine or provider, effort, cache read vs write, tokens in and out) · why it cost (review cycles,
+retries, fix rounds: rework; failed or stopped tasks: waste) · who and how (person, chat vs task vs scheduled vs
+requirements, Away vs at the desk) · how you organise (each cost tag key, labels) · when (hour, day, week, month, time of
+day). Each row leads to the tasks behind it.

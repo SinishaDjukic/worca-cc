@@ -714,10 +714,15 @@
   function attention() {
     const one = [...turns()].reverse().find((y) => y.id && waitsOnYou(y) && !seenAttn.has(y.id));   // the newest that waits on you, alone, as one filled button
     root.querySelectorAll('.is-attn').forEach((el) => { if (el.dataset.anchor !== one?.id) el.classList.remove('is-attn'); });
-    const el = one && root.querySelector(`[data-anchor="${one.id}"]`); if (el) { el.classList.add('is-attn'); const t = one.t === 'task' && taskOf(one.task); const tone = t ? R.markTone(R.runState(RM.stateOf(t.case))) : 'ask'; el.dataset.attn = tone === 'fail' ? 'fail' : tone === 'ok' || tone === 'merged' ? 'ok' : 'ask'; }
+    const el = one && root.querySelector(`[data-anchor="${one.id}"]`); if (el) { el.classList.add('is-attn'); const t = one.t === 'task' && taskOf(one.task); const tone = t ? R.markTone(R.runState(RM.stateOf(t.case))) : 'ask'; el.dataset.attn = tone === 'fail' ? 'fail' : tone === 'ok' || tone === 'merged' ? 'ok' : 'ask'; if (chatId && root.offsetParent) quietSoon({ target: el }); }   /* opened: it breathes its while, then counts as seen */
   }
-  const quiet = (e) => { const el = e.target.closest?.('.is-attn[data-anchor]'); if (el) { seenAttn.add(el.dataset.anchor); el.classList.remove('is-attn'); } };
-  root.addEventListener('focusin', quiet); root.addEventListener('pointerdown', quiet);
+  // opened, it keeps breathing for the time Settings › Notifications says (3 seconds), then counts as seen; acting on it
+  // (a click inside it) is seen at once. "Until you act on it": only acting counts.
+  const seeing = new Set();
+  const seeNow = (el) => { if (!el) return; seenAttn.add(el.dataset.anchor); el.classList.remove('is-attn'); };
+  function quietSoon(e) { const el = e.target.closest?.('.is-attn[data-anchor]'); if (!el) return; const v = window.RailAttnFor || '3'; if (v === 'act') return; const id = el.dataset.anchor; if (seeing.has(id)) return; seeing.add(id); setTimeout(() => { const now = root.querySelector(`[data-anchor="${CSS.escape(id)}"]`); seenAttn.add(id); if (now) now.classList.remove('is-attn'); }, +v * 1000); }
+  root.addEventListener('focusin', quietSoon);
+  root.addEventListener('pointerdown', (e) => { if (e.target.closest?.('button, input, textarea, [role="radio"], [role="menuitem"]')) seeNow(e.target.closest('.is-attn[data-anchor]')); else quietSoon(e); });
   // the store changed (here, in Tasks, in Pulse, from Away): read every chat's tasks again and draw; what now waits glows
   window.RailWorld.onMove(() => { for (const c of data().chats) M.sync(c); window.RailChats?.refresh(); paint(); });
   // a step taken inside a card's open stages moves the task itself: its card's head and bar, the bar's row, Pulse

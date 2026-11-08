@@ -14,7 +14,7 @@ const svg = (name, size, cls) => R.icon(name, size, { cls });
 const caseOf = (id) => { const c = M.CASES.find((x) => x.id === id); return window.RailFirstRun && c ? { ...c, updates: [], teamSetup: false, actions: [] } : c; };   // the first run: nothing has happened yet
 const groupOf = (id) => M.GROUPS.find((g) => g.id === id);
 function freshSettings(c) {
-  return { desktop: c.desktop, badge: 'needs', sound: 'needs', warnAt: 80, mine: 'suggest', auto: 'move', groups: Object.fromEntries(M.GROUPS.map((g) => [g.id, { level: g.level, where: g.where, ex: {} }])) };
+  return { desktop: c.desktop, badge: 'needs', sound: 'needs', attnFor: '3', warnAt: 80, mine: 'suggest', auto: 'move', groups: Object.fromEntries(M.GROUPS.map((g) => [g.id, { level: g.level, where: g.where, ex: {} }])) };
 }
 // a case starts fresh: nothing from the case before it carries over
 // Settings › Runs › Budget reads the case's figures too.
@@ -266,12 +266,18 @@ const BACKGROUNDS = [['dots', 'Dots', 'The quiet grid, fading down'], ['aurora-d
 const bgKey = 'worca-rail.background';
 const readBg = () => { try { return localStorage.getItem(bgKey) || 'dots'; } catch { return 'dots'; } };
 function setBg(v) { document.documentElement.dataset.bg = v; try { localStorage.setItem(bgKey, v); } catch { /* private mode: for this session */ } }
+// the background can breathe: the same picture, slowly brighter and quieter (Emil, 8 Nov); still by default and when motion is reduced
+const breatheKey = 'worca-rail.background-breathes';
+const readBreathe = () => { try { return localStorage.getItem(breatheKey) === '1'; } catch { return false; } };
+function setBreathe(on) { document.documentElement.dataset.bgBreathe = on ? '1' : '0'; try { localStorage.setItem(breatheKey, on ? '1' : '0'); } catch { /* for this session */ } }
 const bgName = () => BACKGROUNDS.find((b) => b[0] === (ui.bg || 'dots'))?.[1] || 'Dots';
 function lookFly() {
   if (ui.sub !== 'look') return '';
   const theme = `<span class="nav-fly-k">Theme</span><div class="theme-sect look-theme" role="group" aria-label="Theme"><div class="theme-seg">${[['system', 'monitor'], ['light', 'sun'], ['dark', 'moon']].map(([m, ic]) => R.themeChoice({ label: cap(m), icon: svg(ic, 14, 'mi-ic'), on: appearance === m, attrs: { 'data-appearance': m } })).join('')}</div></div>`;
   // the backgrounds as the theme is chosen: one small picture each, its name in the tooltip
-  const bgs = `<span class="nav-fly-k">Background</span><div class="theme-sect look-theme" role="group" aria-label="Background"><div class="theme-seg look-bgs">${BACKGROUNDS.map(([id, t, h]) => R.themeChoice({ label: t, icon: `<span class="bg-sw" aria-hidden="true"><span class="chat-home-bg is-${id}"></span></span>`, on: (ui.bg || 'dots') === id, attrs: { 'data-bg-pick': id, title: `${t}: ${h}` } })).join('')}</div></div>`;
+  // each background on its own line: its picture, its name, what it is; then whether it breathes
+  const bgs = `<span class="nav-fly-k">Background</span>${BACKGROUNDS.map(([id, t, h]) => R.accountItem({ label: t, cls: 'bg-line', mark: `<span class="bg-sw" aria-hidden="true"><span class="chat-home-bg is-${id}"></span></span>`, value: (ui.bg || 'dots') === id ? 'On' : '', attrs: { 'data-bg-pick': id, 'aria-current': (ui.bg || 'dots') === id ? 'true' : null, title: h } })).join('')}
+    ${R.accountItem({ label: 'Breathing', sw: true, cls: 'sw-item', mark: svg('sparkle', 16, 'mi-ic'), attrs: { 'data-bg-breathes': '', role: 'menuitemcheckbox', 'aria-checked': String(readBreathe()), title: 'The same picture, slowly brighter and quieter; still when your system reduces motion' } })}`;
   return R.navFlyout({ label: 'Appearance', cls: `lvl-menu pz-fly${inCls('sub')}`, body: `${back}${theme}${bgs}` });
 }
 function lvlFly() {
@@ -392,6 +398,7 @@ const quiet = (label, a) => R.button({ label, kind: 'quiet', attrs: a });
 // What differs from a value's start: the ChangedDot's lines (docs/rail/settings.md `set.changed`).
 const startOf = () => freshSettings(C());
 const changedFrom = (key, name, words) => (ui.s[key] !== startOf()[key] ? [{ name, was: words(startOf()[key]) }] : []);
+const ATTN_FOR = [{ id: '1', text: 'for 1 second' }, { id: '3', text: 'for 3 seconds' }, { id: '5', text: 'for 5 seconds' }, { id: 'act', text: 'until you act on it' }];
 function notifications() {
   const s = ui.s;
   const BADGE = M.BADGE;
@@ -404,6 +411,7 @@ function notifications() {
   const channels = desk
     + R.settingsRow({ name: 'Badge', changed: changedFrom('badge', 'Badge', (v) => BADGE.find((b) => b.id === v).text), sentence: `The tab title ${sp('badge', BADGE.find((b) => b.id === s.badge).text, BADGE.map((b) => ({ ...b, checked: b.id === s.badge })), 'What the count in the tab title counts')}` })
     + R.settingsRow({ name: 'Sound', changed: changedFrom('sound', 'Sound', (v) => R.SOUND_CHOICES.find((x) => x.id === v).text), sentence: `${sp('sound', R.SOUND_CHOICES.find((x) => x.id === s.sound).text, R.SOUND_CHOICES.map((x) => ({ ...x, checked: x.id === s.sound })), 'What makes a sound as it arrives. Never during away hours; a burst plays once')}` })
+    + R.settingsRow({ name: 'Breathing', changed: changedFrom('attnFor', 'Breathing', (v) => ATTN_FOR.find((x) => x.id === v).text), sentence: `What needs you keeps breathing ${sp('attnFor', ATTN_FOR.find((x) => x.id === s.attnFor).text, ATTN_FOR.map((x) => ({ ...x, checked: x.id === s.attnFor })), 'How long it breathes once you open it, before it counts as seen')} once you open it` })
     + R.settingsRow({ name: 'Chat', sentence: esc(M.chatWords(SM.workingChannels(ui.sv))), end: R.shows('advanced', R.prefs.mode()) ? quiet('Channels', { 'data-sset': 'ask', title: 'Their switches and allow-lists are in Settings › Chat' }) : '' });
   const groups = groupsShown().map((g) => {
     const gs = s.groups[g.id], g0 = startOf().groups[g.id], open = ui.custom === g.id, nEx = Object.keys(gs.ex).length;
@@ -450,7 +458,7 @@ function settingsPage() {
 // ---- search: runs, projects, workspaces, workflows, schedules, tickets, labels (label:), settings, add-ons, plugins and
 // chats, each with where it lives. What the mode or Labs hides is still found, with its lock note; picking it hands you to
 // the unlock and then on to it. The last row asks Chat. ----
-const NOTIF_ROWS = ['Desktop', 'Badge', 'Sound', 'Chat', 'Runs', 'Schedules', 'Automations', 'Pull requests', 'Usage', 'Away mode', 'Projects', 'Worca'];
+const NOTIF_ROWS = ['Desktop', 'Badge', 'Sound', 'Breathing', 'Chat', 'Runs', 'Schedules', 'Automations', 'Pull requests', 'Usage', 'Away mode', 'Projects', 'Worca'];
 const RUNS_LIMIT_ROWS = ['Warning line', 'Manual starts', 'Automatic starts'];
 const strict = (...ms) => ms.filter(Boolean).sort((a, b) => R.MODES.indexOf(b) - R.MODES.indexOf(a))[0] || '';
 function settingsFinds() {
@@ -508,10 +516,21 @@ function searchHits() {
     const walk = (t) => { if (plain(t.title).includes(q)) own.push({ label: t.title, where: `in ${c.title}`, area: t.kind === 'schedule' ? 'Schedules' : 'Tasks', hash: t.kind === 'schedule' ? 'schedule/s1' : `run/${t.case}`, chat: c.id }); (t.after || []).forEach(walk); };
     (c.tasks || []).forEach(walk);
   }
-  return [...own, ...M.find(q).slice(0, 14), ...set].sort((a, b) => score(a) - score(b)).filter((e) => { const k = plain(e.label) + (e.area || ''); if (seen.has(k)) return false; seen.add(k); return true; }).slice(0, 14);
+  const page = [];
+  const main = document.querySelector('#main-row main');
+  if (main) for (const el of main.querySelectorAll('.place-title, .pg-t, .set-name, .lr-t, .rc-card .rc-title, .rc-title, .convo-you, .turn-row b, .set-sec-h, .pg-shelf-h')) {
+    if (!el.getClientRects().length || el.closest('[hidden], #bar-place')) continue;
+    const t = (el.firstChild?.nodeType === 3 ? el.firstChild.textContent : el.textContent).trim(); if (!t || !plain(t).includes(q)) continue;
+    const head = el.closest('section, .set-sec, .pg-shelf')?.querySelector('.set-sec-h, .pg-shelf-h, h2')?.firstChild?.textContent?.trim();
+    page.push({ label: t.slice(0, 60), where: head && head !== t ? head : 'This page', area: 'On this page', el });
+    if (page.length >= 5) break;
+  }
+  const places = Object.entries(window.RailPlaces || {}).flatMap(([k, m]) => (m.search ? m.search(q).slice(0, 4).map((x) => ({ ...x, area: m.area || k.charAt(0).toUpperCase() + k.slice(1) })) : []));
+  const rest = [...own, ...places, ...M.find(q).slice(0, 14), ...set].sort((a, b) => score(a) - score(b));
+  return [...page, ...rest].filter((e) => { const k = plain(e.label) + (e.area || ''); if (seen.has(k)) return false; seen.add(k); return true; }).slice(0, 14);
 }
 // One search, everything it finds under the area it belongs to.
-const AREAS = [['Settings', 'set-general'], ['Chats', 'kind-chat'], ['Tasks', 'kind-task'], ['Schedules', 'kind-schedule'], ['Places', 'home'], ['Other', 'list']];
+const AREAS = [['On this page', 'eye'], ['Marketplace', 'nav-marketplace'], ['Projects', 'nav-projects'], ['Workflows', 'nav-workflows'], ['Settings', 'set-general'], ['Chats', 'kind-chat'], ['Tasks', 'kind-task'], ['Schedules', 'kind-schedule'], ['Places', 'home'], ['Other', 'list']];
 const areaOf = (e) => e.area || (e.sset ? 'Settings' : e.kind === 'place' ? 'Places' : /^(Runs|Run )/.test(e.where || '') || e.run ? 'Tasks' : /^Chat/.test(e.where || '') ? 'Chats' : /^Schedule/.test(e.where || '') ? 'Schedules' : 'Other');
 function searchResults() {
   if (!plain(ui.q).trim()) return '';
@@ -519,6 +538,8 @@ function searchResults() {
   // each result wears its own mark: a chat's, a task's state, a setting's section, a place's icon
   const RMM = window.RunCardModel;
   const markOf = (e, area) => {
+    if (area === 'On this page') return R.icon('eye', 14);
+    if (['Marketplace', 'Projects', 'Workflows'].includes(area)) return R.icon(`nav-${area.toLowerCase()}`, 14);
     if (area === 'Chats') return R.kindMark({ kind: 'chat', size: 16 });
     if (area === 'Tasks') { const cs = e.hash?.startsWith('run/') ? e.hash.slice(4) : e.case || e.run?.case; try { return R.kindMark({ kind: 'task', tone: cs ? R.markTone(R.runState(RMM.stateOf(cs))) : 'idle', stage: -1, size: 16 }); } catch { return R.kindMark({ kind: 'task', size: 16 }); } }
     if (area === 'Schedules') return R.kindMark({ kind: 'schedule', size: 16 });
@@ -567,6 +588,7 @@ function stepUnlock() {
 function pickResult(v) {
   if (v === 'ask') { const q = askWords(); closeOverlays(); if (SHELL) SHELL.go('chat'); toast(`Asks Chat: ${q}`); render(); return; }
   const e = found[+v]; if (!e) return;
+  if (e.el) { closeOverlays(); render(); R.land(e.el.closest('.pg-card, .list-row, .set-row, .rc, .place-head, section') || e.el); return; }   // on this page: it lands where it is
   if (e.hash) { closeOverlays(); if (e.chat) SHELL.openTask(e.hash.split('/')[1], e.chat); else SHELL.go(e.hash); render(); return; }
   const locked = locksOf(e).length;
   closeOverlays();
@@ -718,6 +740,7 @@ function pick(id, v) {
     else if (v === 'allread') { const n = unread().length; const was = ui.read; ui.read = ui.read.concat(unread().map((u) => u.id)); toast(n ? `Marked ${plural(n, 'update')} read` : 'Nothing is unread', n ? { tip: 'Marks them unread again', run: () => { ui.read = was; toast('Unread again'); } } : null); }
     else { const read = live().filter((u) => !isUnread(u)), waits = read.filter((u) => u.sev === 'needs' && u.open && !u.resolved && !isFixed(u)), ids = read.filter((u) => !waits.includes(u)).map((u) => u.id); ui.cleared = ui.cleared.concat(ids); ui.pick = R.selectPrune(ui.pick, []); toast(ids.length ? `Cleared ${plural(ids.length, 'read update')}${waits.length ? `; ${waits.length} still ${waits.length === 1 ? 'waits' : 'wait'} for you` : ''}` : waits.length ? `Nothing to clear: ${waits.length} read still ${waits.length === 1 ? 'waits' : 'wait'} for you` : 'Nothing read to clear', ids.length ? undoClear(ids) : null); }
   }
+  else if (id === 'attnFor') { s.attnFor = v; window.RailAttnFor = v; toast(`What needs you breathes ${ATTN_FOR.find((x) => x.id === v).text} once you open it`); }
   else if (id === 'badge') { if (s.badge !== v) toast(`Badge: the tab title ${M.BADGE.find((b) => b.id === v).text}`); s.badge = v; }
   else if (id === 'sound') { if (s.sound !== v) toast(`Sound: ${R.SOUND_CHOICES.find((x) => x.id === v).text}`); s.sound = v; }
   else if (id === 'mine') { if (s.mine !== v) toast(`Manual starts: New run and Resume near a limit ${MINE.find((m) => m.id === v).text}`); s.mine = v; }
@@ -769,6 +792,7 @@ document.addEventListener('click', (e) => {
   if ((el = tg('[data-details]'))) { ui.acct = false; ui.sub = ''; if (SHELL) { SHELL.closeDrawer(); SHELL.go('insights/spend'); } else toast('Opens Statistics (not in this prototype)'); render(); return; }
   if (SHELL && (el = tg('[data-newrun]'))) { window.RailConversation?.start('task'); return; }
   if ((el = tg('[data-bg-pick]'))) { ui.bg = el.dataset.bgPick; setBg(ui.bg); render(); return; }
+  if ((el = tg('button[data-bg-breathes]'))) { setBreathe(!readBreathe()); render(); return; }
   if ((el = tg('[data-newrun]'))) { if (ui.nr) ui.nr = null; else { openNewRun(); opening = 'nr'; } ui.pop = false; ui.acct = false; render(); return; }
   if ((el = tg('[data-nr-use]'))) { ui.nr = { ...ui.nr, on: el.dataset.nrUse, wait: false, moved: '' }; render(); return; }
   if ((el = tg('[data-nr-wait]'))) { toast(`Scheduled: ${el.textContent.replace('Start at', 'starts at')} (not in this prototype)`); ui.nr = null; render(); return; }
@@ -909,7 +933,7 @@ setInterval(() => {
   render();
 }, R.USAGE_REFRESH_MS);
 document.querySelectorAll('[data-theme-pick]').forEach((b) => b.addEventListener('click', () => { applyAppearance(b.dataset.themePick); render(); }));
-if (SHELL) { ui.bg = readBg(); setBg(ui.bg); }
+if (SHELL) { ui.bg = readBg(); setBg(ui.bg); setBreathe(readBreathe()); }
 window.RailPulse = {
   refresh: () => render(),   // a task moved elsewhere (a card in a chat): the badge and the lists read it again
   // The note a start near a limit shows, in the composer: what it means, and the ways out.
