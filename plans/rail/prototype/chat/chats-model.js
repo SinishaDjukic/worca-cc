@@ -5,7 +5,7 @@
     groups: [{ id: 't-bill', name: 'Billing export', total: 4 }, { id: 't-rel', name: 'Release 1.20', total: 2 }, { id: 't-ops', name: 'On call', total: 2 }],
     chats: [
       chat('c1', 'Billing CSV export', 'needs-you', 'started', 'billing-api', '14:32', 'today', { cost: 1.2, unread: true, labels: ['hotfix', 'billing'], tasks: [
-        { id: 't1', run: 'r1', title: 'Add CSV export to billing', depth: { steps: [{ meta: '3 min · $0.40', arts: ['plan.md'] }, { meta: '2 cycles · 9 min · $1.06' }, { meta: 'cycle 2 of 3 · 4 agents running · $0.31 so far', arts: ['review-cycle-2.md', 'export-50k.png', 'timings.csv'] }],
+        { id: 't1', run: 'r1', title: 'Add CSV export to billing', step: [2, 3], depth: { steps: [{ meta: '3 min · $0.40', arts: ['plan.md'] }, { meta: '2 cycles · 9 min · $1.06' }, { meta: 'cycle 2 of 3 · 4 agents running · $0.31 so far', arts: ['review-cycle-2.md', 'export-50k.png', 'timings.csv'] }],
           log: [{ s: 0, c: 1, t: '13:38:02', from: 'planner', text: 'Read the billing module and its tests', sum: true }, { s: 0, c: 1, t: '13:40:47', from: 'planner', text: 'Wrote plan.md: 4 steps, streaming the rows', sum: true },
             { s: 1, c: 1, t: '13:41:10', from: 'implementer', text: 'Added export.mjs and columns.mjs', sum: true }, { s: 1, c: 1, t: '13:44:31', from: 'implementer', text: 'npm test: 3 failed in export.test.mjs', lvl: 'error', sum: true }, { s: 1, c: 1, t: '13:44:32', from: 'implementer', text: 'expected 50000 rows, got 49999 (the header counted)', lvl: 'error' },
             { s: 1, c: 2, t: '13:45:02', from: 'implementer', text: 'Fixed the off-by-one: the header is not a row', sum: true }, { s: 1, c: 2, t: '13:50:40', from: 'implementer', text: 'npm test: 214 passed', sum: true },

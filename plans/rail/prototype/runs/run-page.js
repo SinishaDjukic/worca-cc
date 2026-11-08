@@ -515,7 +515,8 @@ const AWAY = [{ id: 'away:auto', text: 'As set up', help: 'Follows Settings and 
 // the task page's stages are its card's StageBar: the main stages, the one it is on in its state's colour (panel.task-card)
 function stageBarOf(v) {
   const reach = v.stages.reduce((n, st, i) => (st.cells.some((c) => !/is-next/.test(c)) ? i : n), 0);
-  return R.stageBar({ labels: v.stages.map((st) => st.label), stage: reach, tone: R.markTone(v) });
+  const cells = v.stages[reach]?.cells || [], k = cells.filter((c) => !/is-next/.test(c)).length;   // its steps: those begun, of all
+  return R.stageBar({ labels: v.stages.map((st) => st.label), stage: reach, tone: R.markTone(v), step: cells.length > 1 ? [Math.max(1, k), cells.length] : null });
 }
 function moreItems(v) {
   const group = !!v.kind; const live = v.bar.stop;

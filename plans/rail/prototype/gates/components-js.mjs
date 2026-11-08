@@ -21,6 +21,8 @@ export function railStamp() {
 export function writeComponentsJs() {
   buildSync({ entryPoints: [here('../../../../ui/public/design-system/components/index.mjs')], bundle: true, format: 'iife',
     globalName: 'RailUI', outfile: COMPONENTS_JS, legalComments: 'none', logLevel: 'error' });
+  // dev's graph renderer and its auto-layout, for the workflows' graph (window.RailGraph); generated beside components.js
+  buildSync({ entryPoints: [here('../graph/graph-entry.mjs')], bundle: true, format: 'iife', outfile: here('../graph.js'), legalComments: 'none', logLevel: 'error' });
   appendFileSync(COMPONENTS_JS, `window.RailCatalog = ${readFileSync(here('../../../../docs/design-system-catalog.json'), 'utf8').trim()};\nwindow.RailStamp = ${JSON.stringify(railStamp())};\n`);
 }
 

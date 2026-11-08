@@ -1,0 +1,82 @@
+<!doctype html>
+<!-- Mock (Wave 3): the task card's stage bar as one line (Emil, 8 Nov: "one single line, every stage in the spirit of
+     Rail, sub-steps as pulsating progress"), and a gentle line under an open toggle. Three ways, each in four states,
+     beside today's bar. The step it is on breathes in its state's colour (a slow ease-in-out, as attention breathes, but
+     faint: progress, not a call). Render: node plans/rail/mocks/wave-3/render.mjs stage-line 900 -->
+<html lang="en"><head><meta charset="utf-8"><title>Stage line</title>
+<link rel="stylesheet" href="../../prototype/app.css">
+<link rel="stylesheet" href="../../prototype/design-system/rail-look.css">
+<link rel="stylesheet" href="../../prototype/design-system/rail.css">
+<style>
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);}
+  #m{width:900px;padding:26px 40px 30px;box-sizing:border-box;}
+  h2{margin:26px 0 4px;font:600 13px/1.4 var(--sans);} h2:first-child{margin-top:0;} .why{margin:0 0 10px;font-size:12px;color:var(--ink-2);max-width:760px;}
+  .row{display:grid;grid-template-columns:120px 1fr;gap:18px;align-items:start;margin:0 0 16px;} .row > span{font-size:12px;color:var(--ink-3);padding-top:2px;}
+  .tone-run{--c:var(--ink-2);} .tone-ask{--c:var(--amber);} .tone-fail{--c:var(--red);} .tone-merged{--c:var(--violet);}
+  /* the state's colour marks only the stage it is on (a failed Build is red, the Plan before it is not); merged wears its colour all along */
+  .row{--d:var(--ink-3);} .row.tone-merged{--d:var(--violet);}
+  @keyframes sub-breath{0%,100%{opacity:.35;}50%{opacity:1;}}
+  @keyframes edge-glow{0%,100%{opacity:.25;transform:scaleX(.6);}50%{opacity:.9;transform:scaleX(1);}}
+  .labels{display:grid;grid-template-columns:repeat(5,1fr);margin-top:6px;font-size:var(--fs-caption);color:var(--ink-2);} .labels b{font-weight:500;color:var(--ink);} .labels small{color:var(--ink-3);font-size:var(--fs-caption);margin-left:4px;}
+
+  /* A · the rail line: one hairline, a knot at each stage; the stage it is on holds its steps as notches, the one now breathes */
+  .a{position:relative;height:14px;}
+  .a .base{position:absolute;left:0;right:0;top:6px;height:2px;border-radius:1px;background:var(--line-2);}
+  .a .done{position:absolute;left:0;top:6px;height:2px;border-radius:1px;background:var(--d);}
+  .a .knot{position:absolute;top:2px;width:10px;height:10px;margin-left:-1px;border-radius:50%;background:var(--bg);border:1.5px solid var(--line-2);box-sizing:border-box;}
+  .a .knot.is-done{background:var(--d);border-color:transparent;}
+  .a .knot.is-now{border-color:var(--c);}
+  .a .sub{position:absolute;top:5px;height:4px;border-radius:2px;background:var(--line-2);}
+  .a .sub.is-done{background:var(--c);} .a .sub.is-now{background:var(--c);animation:sub-breath 2.4s ease-in-out infinite;}
+  .a + .labels{grid-template-columns:repeat(5,1fr);}
+
+  /* B · one bar, no gaps: stages as hairline joins; the stage it is on fills by its steps, its leading edge glows */
+  .b{position:relative;height:4px;border-radius:2px;background:var(--line);overflow:hidden;}
+  .b .fill{position:absolute;left:0;top:0;bottom:0;background:var(--d);}
+  .b .cur{position:absolute;top:0;bottom:0;background:var(--c);}
+  .b .edge{position:absolute;top:0;bottom:0;width:18%;background:linear-gradient(90deg,transparent,var(--c));transform-origin:left;animation:edge-glow 2.4s ease-in-out infinite;}
+  .b .join{position:absolute;top:0;bottom:0;width:1px;background:var(--bg);}
+
+  /* C · stations on the rail: five dots on one line, the step dots of the stage it is on between its dot and the next */
+  .c{position:relative;height:16px;}
+  .c .base{position:absolute;left:5px;right:5px;top:7px;height:1px;background:var(--line-2);}
+  .c .done{position:absolute;left:5px;top:7px;height:1px;background:var(--d);}
+  .c .st{position:absolute;top:3px;width:10px;height:10px;margin-left:-5px;border-radius:50%;background:var(--bg);border:1px solid var(--ink-3);box-sizing:border-box;}
+  .c .st.is-done{background:var(--d);border-color:var(--d);} .c .st.is-now{border:2px solid var(--c);}
+  .c .dot{position:absolute;top:6px;width:4px;height:4px;margin-left:-2px;border-radius:50%;background:var(--line-2);}
+  .c .dot.is-done{background:var(--c);} .c .dot.is-now{background:var(--c);animation:sub-breath 2.4s ease-in-out infinite;}
+  .c + .labels > *{margin-left:-0px;}
+
+  /* the gentle line under an open toggle (proposed: an open toggle draws a hairline to the column's edge) */
+  .tg{display:flex;align-items:center;gap:8px;margin:8px 0 0;}
+  .tg .btn{flex:none;} .tg i{flex:1;height:1px;background:var(--line);}
+  .stream{margin:10px 0 0 0;padding:10px 0 0;font-size:12px;color:var(--ink-3);}
+  @media (prefers-reduced-motion: reduce){.a .sub.is-now,.b .edge,.c .dot.is-now{animation:none;}}
+</style></head>
+<body><div id="m"></div>
+<script src="../../prototype/components.js"></script>
+<script>
+  const R = window.RailUI;
+  const L = ['Plan', 'Build', 'Review', 'PR', 'Merged'];
+  const S = [['tone-run', 2, [2, 3], 'Running · Review, step 2 of 3'], ['tone-ask', 2, [2, 3], 'Asks you · Review, step 2 of 3'], ['tone-fail', 1, [3, 4], 'Failed · Build, step 3 of 4'], ['tone-merged', 4, [1, 1], 'Merged']];
+  const labels = (stage, step) => `<div class="labels">${L.map((l, i) => (i === stage ? `<b>${l}${step && step[1] > 1 ? `<small>${step[0]} of ${step[1]}</small>` : ''}</b>` : `<span>${l}</span>`)).join('')}</div>`;
+  const pct = (x) => `${x}%`;
+  const A = (stage, [k, n], tone) => { const W = 100 / 5, at = (i) => i * W, merged = tone === 'tone-merged';
+    const subs = merged ? '' : Array.from({ length: n }, (_, j) => { const w = (W - 4) / n; return `<i class="sub ${j < k - 1 ? 'is-done' : j === k - 1 ? 'is-now' : ''}" style="left:${pct(at(stage) + 2 + j * w)};width:calc(${pct(w)} - 3px)"></i>`; }).join('');
+    return `<div class="a"><i class="base"></i><i class="done" style="width:${pct(merged ? 100 : at(stage))}"></i>${subs}${L.map((_, i) => `<i class="knot ${merged || i < stage ? 'is-done' : i === stage ? 'is-now' : ''}" style="left:${pct(at(i))}"></i>`).join('')}</div>`; };
+  const B = (stage, [k, n], tone) => { const W = 20, merged = tone === 'tone-merged', cw = merged ? 0 : W * (k - 0.5) / n;
+    return `<div class="b"><i class="fill" style="width:${pct(merged ? 100 : stage * W)}"></i>${merged ? '' : `<i class="cur" style="left:${pct(stage * W)};width:${pct(cw)}"></i><i class="edge" style="left:${pct(stage * W + cw - 3)}"></i>`}${[1, 2, 3, 4].map((i) => `<i class="join" style="left:${pct(i * W)}"></i>`).join('')}</div>`; };
+  const C = (stage, [k, n], tone) => { const W = 100 / 5, x = (i) => `calc(${i * W}% + 5px)`, merged = tone === 'tone-merged';
+    const dots = merged ? '' : Array.from({ length: n }, (_, j) => `<i class="dot ${j < k - 1 ? 'is-done' : j === k - 1 ? 'is-now' : ''}" style="left:calc(${stage * W + (W * (j + 1)) / (n + 1)}% + 5px)"></i>`).join('');
+    return `<div class="c"><i class="base"></i><i class="done" style="width:calc(${merged ? 100 : stage * W}% - 5px)"></i>${dots}${L.map((_, i) => `<i class="st ${merged || i < stage ? 'is-done' : i === stage ? 'is-now' : ''}" style="left:${x(i)}"></i>`).join('')}</div>`; };
+  const block = (name, why, fn) => `<h2>${name}</h2><p class="why">${why}</p>${S.map(([tone, stage, step, word]) => `<div class="row ${tone}"><span>${word}</span><div>${fn(stage, step, tone)}${labels(stage, tone === 'tone-merged' ? null : step)}</div></div>`).join('')}`;
+  const today = `<h2>Today</h2><p class="why">Five separate bars.</p>${S.map(([tone, stage, step, word]) => `<div class="row"><span>${word}</span><div>${R.stageBar({ labels: L, stage, tone: { 'tone-run': 'run', 'tone-ask': 'ask', 'tone-fail': 'fail', 'tone-merged': 'merged' }[tone] })}</div></div>`).join('')}`;
+  const toggle = `<h2>The gentle line under an open toggle</h2><p class="why">Closed, the toggle is its words. Open, a hairline runs from its words to the column's edge, so you see where the opened part starts; it goes when it closes. The same for every toggle that opens something in place (Show its stages, More settings, How a task goes through it).</p>
+    <div class="row"><span>Closed</span><div class="tg">${R.button({ label: 'Show its stages', kind: 'quiet', icon: R.icon('chevR', 12) })}</div></div>
+    <div class="row"><span>Open</span><div><div class="tg">${R.button({ label: 'Hide its stages', kind: 'quiet', icon: R.icon('chevron', 12) })}<i></i></div><div class="stream">its stages, as they open under it…</div></div></div>`;
+  document.getElementById('m').innerHTML = today
+    + block('A · The rail line', 'One hairline; a knot at each stage, filled when done. The stage it is on holds its steps as short notches: done ones solid, the one now breathes, the rest wait. The step count beside its name.', A)
+    + block('B · One bar, no gaps', 'Today’s bar made one: stages meet at hairline joins. The stage it is on fills by its steps; its leading edge glows and fades.', B)
+    + block('C · Stations', 'Five dots on one thin line, like the steps on Rail’s own rail; between the stage it is on and the next, small dots are its steps, the one now breathes.', C)
+    + toggle;
+</script></body></html>

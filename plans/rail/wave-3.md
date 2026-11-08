@@ -325,3 +325,7 @@ Decided (Emil, 8 Nov):
   bounce, all at once with reduced motion. Mock: mocks/wave-3/story-craft.html; GIFs generated/story-craft-{light,dark}.gif.
 - Crafting in the library (Emil, 8 Nov: a generic animation while Worca makes something): motion.crafting, Crafting
   (crafting.mjs; a workflow, an image, a document), its test, catalog entry and gallery; mocks/wave-3/crafting.html.
+
+Built (8 Nov): Workflows from the agreed mock: ways in with counts, cards, WorkflowStory, dev's real graph from Advanced (bundled to graph.js; Rail's skin .gv-skin), model and effort in place, the Expert canvas (the bar becomes the Library, Auto-align is dev's auto-layout, Undo, Redo, Import, Export), Crafting in a chat. Personas on the build: new user 6, 8, 4; daily user 7, 6, 7; their fixes are in.
+Drafts (Emil, 8 Nov: a philosophy for everything the user edits): rail.drafts, DraftBar; workflows and agents have them, scripts when their editor exists.
+The stage bar is one line (Emil chose A of mocks/wave-3/stage-line): look.stage-line; an open toggle draws a gentle line: panel.open-line. Ideas offered, not decided: the line as the toggle (click a stage opens it), hover a stage for its time and cost.

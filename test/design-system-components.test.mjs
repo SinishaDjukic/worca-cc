@@ -850,6 +850,20 @@ test('listController: every period but Today starts folded; the one holding your
   assert.deepEqual(shown(), ['a', 'b', 'c'], 'opened, it shows');
   root.remove();
 });
+test('draftBar: a draft, its changes, that the saved one still runs, Discard and Save (rail.drafts)', () => {
+  const d = dom(C.draftBar({ changes: 2, hooks: { save: { 'data-s': '' }, discard: { 'data-d': '' } } }));
+  assert.equal(d.getAttribute('role'), 'status'); assert.match(d.textContent, /Draft/); assert.match(d.textContent, /2 changes · tasks still run the saved one/);
+  assert.ok(d.querySelector('[data-s]').classList.contains('btn-primary') || /primary/.test(d.querySelector('[data-s]').className)); assert.ok(d.querySelector('[data-d]'));
+  assert.match(dom(C.draftBar({ changes: 1 })).textContent, /1 change ·/);
+  assert.match(dom(C.draftBar({ changes: 0, fresh: true })).textContent, /never saved · nothing can run it yet/);
+});
+test('workflowStory: a panel a step, the loop drawn back in words under the steps it joins, how a task goes (panel.workflow-story)', () => {
+  const s = dom(C.workflowStory({ steps: [{ name: 'Plan', says: 'Thinks', meta: '3 min' }, { name: 'Build', says: 'Makes' }, { name: 'Check', says: 'Looks', check: true }, { name: 'Review', says: 'Reads' }], loop: { from: 2, to: 1, text: 'back to Build' }, ways: [{ title: 'Straight through', meta: '18 min', tone: 'ok', stage: 4 }], byline: 'Told by a small model' }));
+  assert.equal(s.querySelectorAll('.ws-p').length, 4); assert.ok(s.querySelectorAll('.ws-p')[2].classList.contains('is-check'));
+  const loop = s.querySelector('.ws-loop'); assert.equal(loop.style.left, '37.5%'); assert.equal(loop.style.width, '25%'); assert.match(loop.textContent, /back to Build/);
+  assert.match(s.querySelector('.list').textContent, /Straight through/); assert.match(s.querySelector('.ws-by').textContent, /small model/);
+  assert.equal(dom(C.workflowStory({ steps: [{ name: 'A', says: 'a' }] })).querySelector('.ws-loop'), null, 'no loop, no arc');
+});
 test('crafting: a sketch of its kind that draws itself, and what is being made (motion.crafting)', () => {
   const c = dom(C.crafting({ kind: 'workflow', label: 'Making the workflow', detail: 'from this chat' }));
   assert.equal(c.getAttribute('role'), 'status'); assert.ok(c.querySelectorAll('.craft-art path[pathLength="1"]').length > 3);
@@ -879,6 +893,12 @@ test('BarHead, TurnRow, Composer, StageBar', () => {
   assert.doesNotMatch(C.turnRow({ mark: '', text: 'Ran', body: 'x', attrs: { 'data-fold-turn': '0' } }), /tr-body/);
   assert.match(C.composer({ placeholder: 'Ask', sentence: 's', tools: '', send: 'b' }), /data-composer-t/);
   assert.match(C.stageBar({ labels: ['a', 'b'], stage: 0 }), /<b>a<\/b>/);
+  const line = dom(C.stageBar({ labels: ['Plan', 'Build', 'Review', 'PR', 'Merged'], stage: 2, tone: 'ask', step: [2, 3] }));   // look.stage-line
+  assert.equal(line.querySelectorAll('.sl-knot').length, 5); assert.equal(line.querySelectorAll('.sl-knot.is-done').length, 2); assert.ok(line.querySelectorAll('.sl-knot')[2].classList.contains('is-now'));
+  assert.equal(line.querySelectorAll('.sl-step').length, 3); assert.equal(line.querySelectorAll('.sl-step.is-done').length, 1); assert.ok(line.querySelectorAll('.sl-step')[1].classList.contains('is-now'));
+  assert.match(line.querySelector('.sb-labels b').textContent, /Review2 of 3/);
+  assert.equal(dom(C.stageBar({ labels: ['a', 'b'], stage: 1, tone: 'merged', step: [1, 3] })).querySelectorAll('.sl-step').length, 0, 'merged: no steps, the whole line in its colour');
+  assert.deepEqual(C.stageStep('Review · step 2 of 3'), [2, 3]); assert.equal(C.stageStep('Waiting'), null);
 });
 
 test('Tooltip: watchTooltips draws a title; tipPlace keeps it inside the window', async () => {

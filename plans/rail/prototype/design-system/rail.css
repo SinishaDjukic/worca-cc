@@ -1236,9 +1236,21 @@ th.rt-c{color:var(--ink-2);font-weight:500;}
   .timeline{display:none;}.tl-list-btn{display:inline-flex;margin-left:auto;}
 }
 .stage-bar{margin-top:10px;color:var(--ink-2);}
+.stage-bar.is-run{color:var(--ink-2);}
 .stage-bar.is-ask,.stage-bar.is-act{color:var(--amber);}.stage-bar.is-fail{color:var(--red);}.stage-bar.is-ok{color:var(--green);}.stage-bar.is-merged{color:var(--violet);}.stage-bar.is-pause,.stage-bar.is-stop,.stage-bar.is-closed,.stage-bar.is-wait{color:var(--ink-3);}
-.sb-cells,.sb-labels{display:grid;grid-template-columns:repeat(var(--n,5),1fr);gap:4px;}   /* ds-ok: a size or count the component sets on itself */
-.sb-cells i{display:block;height:4px;border-radius:2px;background:var(--line);}   /* ds-ok: a hairline's own end */
+.sb-labels{display:grid;grid-template-columns:repeat(var(--n,5),1fr);gap:4px;}   /* ds-ok: a size or count the component sets on itself */
+/* StageBar as the rail line (look.stage-line): one hairline, a knot a stage, the stage it is on holds its steps; the one now breathes */
+.sl{position:relative;height:14px;}
+.sl-base{position:absolute;left:0;right:0;top:6px;height:2px;border-radius:1px;background:var(--line-2);}   /* ds-ok: a hairline's own end */
+.sl-done{position:absolute;left:0;top:6px;height:2px;border-radius:1px;background:var(--ink-3);} .sl-done.is-whole{background:currentColor;}   /* ds-ok: as above */
+.sl-knot{position:absolute;top:2px;width:10px;height:10px;border-radius:50%;background:var(--bg);border:1.5px solid var(--line-2);box-sizing:border-box;}
+.sl-knot.is-done{background:var(--ink-3);border-color:transparent;} .is-ok .sl-knot.is-done,.is-merged .sl-knot.is-done{background:currentColor;}
+.sl-knot.is-now{border-color:currentColor;}
+.sl-step{position:absolute;top:5px;height:4px;border-radius:2px;background:var(--line-2);}   /* ds-ok: a notch's own end */
+.sl-step.is-done{background:currentColor;} .sl-step.is-now{background:currentColor;animation:sl-breath 2.4s ease-in-out infinite;}
+@keyframes sl-breath{0%,100%{opacity:.35;}50%{opacity:1;}}
+@media (prefers-reduced-motion: reduce){.sl-step.is-now{animation:none;}}
+.sb-labels small{margin-left:4px;font-size:var(--fs-caption);font-weight:400;color:var(--ink-2);}
 .sb-labels{margin-top:4px;font-size:var(--fs-caption);color:var(--ink-2);}
 .sb-labels b{font-weight:500;color:var(--ink);}
 .schedule-page{max-width:680px;margin:0 auto;padding:20px 56px 24px 24px;}
@@ -1642,3 +1654,59 @@ button.q-fact{cursor:pointer;text-decoration:underline;text-decoration-color:var
 @keyframes craft-draw{0%{stroke-dashoffset:1;opacity:1;}30%{stroke-dashoffset:0;}78%{stroke-dashoffset:0;opacity:1;}96%,100%{stroke-dashoffset:0;opacity:0;}}
 .craft-t{margin:0;display:grid;gap:2px;font-size:var(--fs-body);min-width:0;} .craft-t b{font-weight:600;} .craft-t span{font-size:var(--fs-meta);color:var(--ink-2);}
 @media (prefers-reduced-motion: reduce){.craft-art path{animation:none;stroke-dashoffset:0;}}
+
+/* WorkflowStory (panel.workflow-story): a workflow as a storyboard, a panel a step, the loop drawn back in words */
+.ws{margin:14px 0 6px;}
+.ws-board{position:relative;display:grid;grid-template-columns:repeat(var(--ws-n),minmax(0,1fr));gap:22px;margin:0 0 14px;}   /* ds-ok: --ws-n is the story's own count of steps */
+.ws-board.has-loop{margin-bottom:58px;}
+.ws-p{position:relative;display:grid;gap:4px;align-content:start;min-width:0;}
+.ws-p + .ws-p::before{content:'';position:absolute;left:-18px;top:11px;width:14px;border-top:1px solid var(--ink-3);}
+.ws-n{display:flex;align-items:center;gap:8px;font:600 var(--fs-body)/1.3 var(--sans);min-width:0;}
+.ws-k{width:22px;height:22px;border-radius:50%;border:1px solid var(--line-2);display:grid;place-items:center;font:500 var(--fs-meta)/1 var(--sans);color:var(--ink-2);flex:none;}
+.ws-p.is-check .ws-k{border-color:var(--amber-ink);color:var(--amber-ink);}
+.ws-t{font-size:var(--fs-body);line-height:var(--lh-body);overflow-wrap:anywhere;} .ws-m{font-size:var(--fs-meta);color:var(--ink-3);font-variant-numeric:tabular-nums;}
+.ws-loop{position:absolute;bottom:-40px;height:30px;font-size:var(--fs-meta);color:var(--amber-ink);text-align:center;}
+.ws-loop svg{position:absolute;inset:0 0 auto 0;width:100%;height:16px;overflow:visible;} .ws-loop path{fill:none;stroke:var(--amber-ink);stroke-dasharray:2 2;}
+.ws-loop span{position:absolute;left:-40%;right:-40%;top:16px;white-space:nowrap;}
+.ws-by{margin:8px 0 0;font-size:var(--fs-meta);color:var(--ink-3);display:flex;gap:6px;align-items:center;}
+@media (max-width:720px){.ws-board{grid-template-columns:1fr;gap:12px;} .ws-p + .ws-p::before{display:none;} .ws-board.has-loop{margin-bottom:14px;} .ws-loop{position:static;height:auto;text-align:left;} .ws-loop svg{display:none;} .ws-loop span{position:static;white-space:normal;}}
+
+/* Workflows (Wave 3): a way's sentence, the graph's well wider than the reading column, the Expert canvas */
+.wf-sent{display:flex;gap:6px;align-items:center;font-size:var(--fs-meta);color:var(--ink-2);margin:14px 0 8px;}
+.wf-who{color:var(--ink-2);font-size:var(--fs-meta);} .wf-acts{display:flex;gap:6px;flex-wrap:wrap;margin:12px 0 0;}
+.wf-well{position:relative;box-sizing:border-box;width:min(940px,calc(100% - 32px));margin:6px auto 10px;border:1px solid var(--line);border-radius:var(--r-md);background:var(--panel);overflow:hidden;}
+/* dev's graph in Rail's skin: on the view, plain words (no port types, no await rows, no conditions); on the canvas, ports show */
+.gv-skin .prow .pt,.gv-skin.is-view .prow.gate,.gv-skin.is-view .cond{display:none;}
+.gv-skin .node.is-picked{outline:2px solid var(--ink-2);outline-offset:3px;border-radius:var(--r-sm);}
+.gv-skin.is-edit .node{cursor:pointer;}
+.wf-ed{display:grid;grid-template-rows:auto 1fr;min-height:100%;}
+.wf-ed-top{display:flex;align-items:center;gap:6px;padding:8px 16px;border-bottom:1px solid var(--line);font-size:var(--fs-meta);color:var(--ink-2);min-width:0;}
+.wf-ed-top b{color:var(--ink);font-size:var(--fs-body);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;} .wf-ed-sp{flex:1;}
+.wf-ed-body{display:grid;grid-template-columns:minmax(0,1fr) 320px;min-height:0;}
+.wf-canvas{position:relative;min-height:460px;padding:24px;background-image:radial-gradient(var(--line-2) 1px,transparent 1px);background-size:18px 18px;}   /* ds-ok: the canvas's dot grid, as dev's */
+.wf-canvas #wf-canvas-g{position:relative;}
+.wf-ed-tools{position:absolute;right:16px;bottom:12px;display:flex;gap:4px;align-items:center;font-size:var(--fs-meta);color:var(--ink-2);}
+.wf-insp{border-left:1px solid var(--line);padding:18px;overflow:auto;}
+.wf-ed-h{margin:0 0 2px;font:600 var(--fs-section)/1.3 var(--sans);} .wf-ed-m{margin:0 0 10px;font-size:var(--fs-meta);color:var(--ink-2);}
+@media (max-width:900px){.wf-ed-body{grid-template-columns:1fr;} .wf-insp{border-left:0;border-top:1px solid var(--line);}}
+.craft-turn{margin:6px 0 6px 32px;}
+.wf-canvas{display:grid;place-items:center;overflow:auto;} .wf-canvas #wf-canvas-g{align-self:center;}
+.gv-skin.is-view .ncap{display:none;}   /* the story says what each step does; the graph shows how they connect */
+
+/* DraftBar (rail.drafts): a draft on the thing it changes */
+.draft-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 12px;margin:10px 0;border-radius:var(--r-sm);background:var(--amber-bg);color:var(--ink);font-size:var(--fs-meta);}
+.draft-bar b{color:var(--amber-ink);font-weight:600;} .draft-bar span{color:var(--ink-2);} .draft-sp{flex:1;}
+.wf-ed-top .draft-bar{margin:0;padding:4px 4px 4px 10px;}
+/* the story's quiet lines readable; dev's graph in Rail's colours: ink wires and dots, the loop in amber */
+.ws-m,.ws-by{color:var(--ink-2);}
+.gv-skin .prow .dot,.gv-skin .prow .dot.md,.gv-skin .prow.wired .dot{background:var(--ink-2);border-color:var(--ink-2);} .gv-skin .ltile{color:var(--ink-2);background:var(--field);}
+.gv-skin .wire.w-md{stroke:var(--ink-3);} .gv-skin .wire.loop{stroke:var(--amber-ink);}
+.gv-skin .chip.am{color:var(--amber-ink);background:var(--amber-bg);font-size:var(--fs-meta);}
+/* the skin over dev's graph (.gv-world): Rail's ink for every port and tile, the loop's word in amber on the card */
+.gv-skin .gv-world .dot.md,.gv-skin .gv-world .prow.wired .dot.md{background:var(--ink-2);border-color:var(--ink-2);}
+.gv-skin .gv-world .ltile[class*="h-"]{background:var(--field);color:var(--ink-2);}
+.gv-skin .gv-world .prow .chip.am{background:none;color:var(--amber-ink);font-weight:600;}
+
+/* panel.open-line: an open toggle draws a gentle hairline from its words to the column's edge */
+.tc-foot:has(> .btn[aria-expanded="true"]),.open-line:has(> .btn[aria-expanded="true"]){display:flex;align-items:center;gap:8px;}
+.tc-foot:has(> .btn[aria-expanded="true"])::after,.open-line:has(> .btn[aria-expanded="true"])::after{content:'';flex:1;height:1px;background:var(--line);}

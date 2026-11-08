@@ -529,6 +529,30 @@
       "example": "Activity's Logs"
     },
     {
+      "name": "DraftBar",
+      "code": "ui/public/design-system/components/draft-bar.mjs#draftBar",
+      "kind": "acting",
+      "needs": [
+        "a thing you changed by hand that is not saved yet: a draft, its changes, Discard and Save"
+      ],
+      "rules": [
+        "rail.drafts"
+      ],
+      "example": "A workflow's page after changing a step's model"
+    },
+    {
+      "name": "WorkflowStory",
+      "code": "ui/public/design-system/components/workflow-story.mjs#workflowStory",
+      "kind": "showing",
+      "needs": [
+        "a workflow told in plain words: its steps, its loop, how a task goes through it"
+      ],
+      "rules": [
+        "panel.workflow-story"
+      ],
+      "example": "A workflow's page"
+    },
+    {
       "name": "Crafting",
       "code": "ui/public/design-system/components/crafting.mjs#crafting",
       "kind": "showing",
@@ -1357,6 +1381,14 @@
     }
   ],
   "logic": [
+    {
+      "name": "The step a stage is on",
+      "code": "ui/public/design-system/components/kind-mark.mjs#stageStep",
+      "needs": [
+        "a StageBar's step, from a task's detail (Review · step 2 of 3)"
+      ],
+      "example": "stageBar({ labels, stage, tone, step: stageStep(t.detail) })"
+    },
     {
       "name": "Closing what lies over a page",
       "code": "ui/public/design-system/components/dismiss.mjs#dismissOnOutside",

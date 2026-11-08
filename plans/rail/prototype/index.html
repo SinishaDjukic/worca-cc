@@ -11,6 +11,7 @@
 <link rel="stylesheet" href="design-system/rail.css">
 <link rel="stylesheet" href="pulse/pulse.css">
 <link rel="stylesheet" href="shell/shell.css">
+<link rel="stylesheet" href="../../../ui/public/workflows/node-graph.css">
 </head>
 <body>
 <div class="app" id="worca"></div>
@@ -40,6 +41,7 @@
 
 <script>(function () { const dark = matchMedia('(prefers-color-scheme: dark)').matches; document.querySelectorAll('[data-theme-pick]').forEach((b) => b.setAttribute('aria-pressed', String((b.dataset.themePick === 'dark') === dark))); })();</script>
 <script src="components.js"></script>
+<script src="graph.js"></script>
 <script>(function () { const s = window.RailStamp; if (!s) return; const when = new Date(s.at).toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }); document.getElementById('mk-stamp').textContent = `· ${s.branch} · ${when}`; document.querySelector('.mk-tools > summary').title = `Prototype · ${s.branch} · ${when}`; const rev = document.getElementById('mk-rev'); rev.textContent = `Last update ${when} · ${s.branch} at ${s.sha}${s.dirty ? ', with uncommitted work' : ''}`; })();</script>
 <script src="today.js"></script>
 <script src="runs/run-page-model.js"></script>

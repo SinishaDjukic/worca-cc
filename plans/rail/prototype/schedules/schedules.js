@@ -39,7 +39,7 @@
   const STAGES = ['Plan', 'Build', 'Review', 'PR', 'Merged'];
   const runCard = (r, day) => { const st = R.runState(RM.stateOf(r.case)), tone = R.markTone(st);
     const why = r.log ? r.log.split('\n').map((w) => R.turnRow({ mark: '', text: `<span class="cmd-s">${esc(w.trim())}</span>` })).join('') : '';
-    return R.taskCard({ title: r.title, mark: runMark(r), word: `${st.word} · ${day}`, detail: r.meta === st.word ? '' : r.meta, place: R.gitMark({ status: r.git, title: r.meta }), rows: why, stages: R.stageBar({ labels: STAGES, stage: r.stage, tone }), action: R.button({ label: 'Open', kind: 'quiet', attrs: { 'data-sched-run': r.case, title: 'Opens this task in its chat' } }) }); };
+    return R.taskCard({ title: r.title, mark: runMark(r), word: `${st.word} · ${day}`, detail: r.meta === st.word ? '' : r.meta, place: R.gitMark({ status: r.git, title: r.meta }), rows: why, stages: R.stageBar({ labels: STAGES, stage: r.stage, tone, step: R.stageStep(r.meta) }), action: R.button({ label: 'Open', kind: 'quiet', attrs: { 'data-sched-run': r.case, title: 'Opens this task in its chat' } }) }); };
   function pageHtml(s) {
     const dayOf = Object.fromEntries(R.DAY_SECTIONS), cards = R.DAY_SECTIONS.flatMap(([d]) => s.runs.filter((r) => r.day === d)).map((r) => runCard(r, dayOf[r.day])).join('');   // one stream, newest first, as a chat's
     const pick = (id, text, items) => R.sentencePicker({ id, text, items: items.map((x) => ({ id: x, text: x, checked: x === text })), open: menu === id, chevron: R.icon('chevron', 10) });

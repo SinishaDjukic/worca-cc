@@ -57,7 +57,7 @@ A Rail page is built by naming needs, not looks. Find the need, use its componen
 | A task or a schedule in a conversation | TaskCard: its page's anatomy, compact before it starts | Add CSV export |
 | A stage of a task, read down | StageLine, its parts at its end | Plan · Decisions 3 |
 | A part of a task at its stage | StagePart: what is inside, said before it opens; its chevron turns open | Changes 5 files +358 −144 |
-| A task's stages on a card | StageBar, each deepening into the state's colour | Plan · Build · Review |
+| A task's stages on a card | StageBar: one line, a knot a stage, the stage it is on holding its steps, the one now breathing (look.stage-line) | Plan · Build · Review 2 of 3 |
 | What Worca did in a conversation | TurnRow: folds; a failure opens itself | Ran 4 commands |
 | Worca thinking in a conversation | ThinkingRow: one line, what it does now, its seconds; done, Thought for 8s, its steps folded | Searching the code · 4s |
 | A starter armed in the composer | IntentChip: its icon, its name, ✕ | Build workflow ✕ |
