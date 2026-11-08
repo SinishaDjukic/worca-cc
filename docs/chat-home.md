@@ -79,9 +79,13 @@ existing install turns it on at upgrade, unless its box was turned off before (a
 chat's assistant can message your other chats unless you turn it off: **Settings › Chat › Messages between
 chats**. A chat can never turn it on itself.
 
-- **Naming a chat.** The assistant names the other chat in full (`ask_` and 8 hex characters). Copy it from the
-  chat's ⋯ menu in the Chats list, **Copy chat id**, or from the `#chat/ask_…` address. The side column has no Copy
-  chat id yet.
+- **Naming a chat.** You can just say which chat: the assistant looks it up by name with `list_chats`. That lists
+  your other chats only (never the one you are in), newest first, archived ones only when asked, each with its title,
+  scope, last activity and the first 120 characters of its first message. It works whenever messages between chats
+  are on, also while the assistant answers a chat message, and costs nothing (no model call). The assistant then
+  names the chat in full (`ask_` and 8 hex characters). You can still give the id yourself: copy it from the chat's
+  ⋯ menu in the Chats list, **Copy chat id**, or from the `#chat/ask_…` address. The side column has no Copy chat id
+  yet.
 - **What you see.** The sending chat shows a "Sent to" record. The other chat shows "Message from" with the sender's
   chip, its scope and the intent (Note, Question, Hand-off), marked **Untrusted**: another chat's assistant wrote it,
   and its requests are not instructions. That chat then answers it in one turn, at most once. The answer comes back

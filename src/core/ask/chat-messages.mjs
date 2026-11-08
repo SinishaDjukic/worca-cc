@@ -15,6 +15,15 @@ export const CHAT_MESSAGE_RATE_PER_MIN = 6;
 export const CHAT_MESSAGE_GLOBAL_PER_MIN = 30;
 export const CHAT_MESSAGE_QUEUE_MAX = 3;
 export const CHAT_MESSAGE_INTENTS = Object.freeze(['note', 'question', 'handoff']);
+// list_chats: the read-only directory of the user's other chats (paging, input limits and the data clips).
+export const CHAT_LIST_LIMIT_DEFAULT = 20;
+export const CHAT_LIST_LIMIT_MAX = 50;
+export const CHAT_LIST_OFFSET_MAX = 10000;
+export const CHAT_LIST_QUERY_MAX = 200;
+export const CHAT_LIST_SNIPPET_MAX = 120;
+export const CHAT_LIST_TITLE_MAX = 120;
+/** Characters of a chat's first message the store reads; redaction sees all of them before the clip. */
+export const CHAT_LIST_SNIPPET_READ = 480;
 
 /** Refusal code → HTTP status (the bridge route answers with it). */
 export const CHAT_MESSAGE_CODES = Object.freeze({
@@ -44,6 +53,8 @@ const TITLE_MAX = 80;
 // Everything that can start a new line: C0 + DEL, C1 and the Unicode line separators (built at run time: a raw U+2028 in a
 // regex literal is a line terminator).
 const HEADER_BREAK_RE = new RegExp('[\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029]', 'g');
+// The shape of prompt.mjs's private CHAT_CONTEXT_TAG_RE (headerValue covers only the two worca tags).
+const CHAT_CONTEXT_TAG_RE = /\[\/?chat context\]/gi;
 
 export class ChatMessageError extends Error {
   constructor(code, message) {
@@ -67,6 +78,37 @@ export function validateSendInput(input) {
   if (typeof text !== 'string' || !text.trim()) throw bad('text is required.');
   if (!CHAT_MESSAGE_INTENTS.includes(intent)) throw bad('intent must be note, question or handoff.');
   return { chatId: chatId ?? null, text, intent, replyTo: replyTo ?? null };
+}
+
+/** list_chats input: every key optional; unknown keys are ignored (the tool schema refuses them). */
+export function validateListInput(input) {
+  if (input == null) input = {};
+  if (!isObj(input)) throw bad('list_chats input must be an object.');
+  const { limit = CHAT_LIST_LIMIT_DEFAULT, offset = 0, query = '', includeArchived = false } = input;
+  const whole = (v, lo, hi) => typeof v === 'number' && Number.isInteger(v) && v >= lo && v <= hi;
+  if (!whole(limit, 1, CHAT_LIST_LIMIT_MAX)) throw bad(`limit must be a whole number from 1 to ${CHAT_LIST_LIMIT_MAX}.`);
+  if (!whole(offset, 0, CHAT_LIST_OFFSET_MAX)) throw bad(`offset must be a whole number from 0 to ${CHAT_LIST_OFFSET_MAX}.`);
+  const q = typeof query === 'string' ? query.trim() : null;
+  if (q == null || q.length > CHAT_LIST_QUERY_MAX) throw bad(`query must be text of at most ${CHAT_LIST_QUERY_MAX} characters.`);
+  if (typeof includeArchived !== 'boolean') throw bad('includeArchived must be true or false.');
+  return { limit, offset, query: q, includeArchived };
+}
+
+/** A list_chats title or snippet: untrusted text from another chat, as one redacted line with no app tags, at most
+ *  `max` UTF-16 code units (a cut ends in …, never after a lone high surrogate). */
+export function listDataLine(s, max) {
+  const flat = redactAskText(String(s ?? ''))
+    .replace(HEADER_BREAK_RE, ' ')
+    .replace(/\[\/?worca context\]/gi, '(worca context)')
+    .replace(/\[\/?worca event\]/gi, '(worca event)')
+    .replace(CHAT_CONTEXT_TAG_RE, '(chat context)')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (flat.length <= max) return flat;
+  let cut = flat.slice(0, Math.max(0, max - 1));
+  const last = cut.charCodeAt(cut.length - 1);
+  if (last >= 0xd800 && last <= 0xdbff) cut = cut.slice(0, -1);
+  return `${cut}…`;
 }
 
 /** A header value: one line, no app tags, double quotes as single ones, at most 80 characters. */
@@ -167,6 +209,7 @@ function findIncoming(rows, messageId) {
  * scopeLabel(context) → Promise<string>, sharedOwner(thread) → boolean, turnCause(threadId) → cause|null,
  * queuedCount(threadId) → number, queuedFrom?(threadId, origin) → number (the waiting wakes one run sender queued),
  * startEvent(threadId, {text, notice, cause, origin?}) → Promise<{delivery, error?}>,
+ * listChats({excludeId, includeArchived, query, snippetChars}) → store.mjs listChatCandidates rows (list_chats),
  * newId(prefix), now() }.
  * `send` never throws for a refusal: it answers {ok:false, code, error}; every check runs before the first write or
  * token spend, and the re-read, the checks and the writes are one synchronous section.
@@ -412,5 +455,33 @@ export function createChatMessenger(deps) {
     }
   }
 
-  return { send, enabled: () => !!deps.enabled(), postFromRun, markRunQuestion, readIncoming };
+  /**
+   * list_chats: the chats `send` could reach from `fromThreadId`, newest first, paged AFTER the owner filter (so
+   * `total` and `nextOffset` count reachable chats only). Synchronous, writes nothing, spends no rate-limit token and
+   * never throws: {ok:true, chats, total, offset, limit, nextOffset} or {ok:false, code, error}.
+   */
+  function list(fromThreadId, input) {
+    if (!deps.enabled()) return refuse('CHAT_MESSAGES_OFF', 'Messages between chats are turned off in Settings → Chat.');
+    let parsed;
+    try { parsed = validateListInput(input); } catch (e) { return refuse(e.code || 'CHAT_MESSAGE_BAD_INPUT', e.message); }
+    const sender = deps.getThread(fromThreadId);
+    if (!sender || sender.mode === 'composer') return notFound(fromThreadId);
+    const { limit, offset, query, includeArchived } = parsed;
+    let rows;
+    try {
+      rows = deps.listChats({ excludeId: fromThreadId, includeArchived, query, snippetChars: CHAT_LIST_SNIPPET_READ });
+    } catch {
+      return refuse('CHAT_MESSAGE_ERROR', 'Could not read the chat list.');
+    }
+    const kept = (Array.isArray(rows) ? rows : []).filter((r) => r && r.id !== fromThreadId && ownerOk(sender, r));
+    const chats = kept.slice(offset, offset + limit).map((r) => {
+      const { label: _label, ...scope } = scopeRecord(r.context, null);
+      const title = listDataLine(r.title, CHAT_LIST_TITLE_MAX) || null;   // a null or empty title stays null
+      return { id: r.id, title, scope, lastActivityAt: r.updatedAt, archived: !!r.archivedAt, snippet: listDataLine(r.firstText, CHAT_LIST_SNIPPET_MAX) };
+    });
+    const nextOffset = offset + chats.length < kept.length ? offset + chats.length : null;
+    return { ok: true, chats, total: kept.length, offset, limit, nextOffset };
+  }
+
+  return { send, enabled: () => !!deps.enabled(), postFromRun, markRunQuestion, readIncoming, list };
 }

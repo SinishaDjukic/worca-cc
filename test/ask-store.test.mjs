@@ -18,7 +18,7 @@ import {
   addAttachment, listAttachments, getAttachment, readAttachmentText, readAttachmentRaw,
   attachmentPath, attachmentSourcePath, attachmentSourceOrigin,
   linkRun, updateRunLink, listRunLinks,
-  listThreadsPage, setArchived, setPinned, THREAD_SORTS, switchThreadEngine,
+  listThreadsPage, setArchived, setPinned, THREAD_SORTS, switchThreadEngine, listChatCandidates,
 } from '../src/core/ask/store.mjs';
 
 const HOME = useTempHome(after);
@@ -836,4 +836,102 @@ test('a generic binary keeps its original extension on disk; attachmentPath and 
   assert.ok(existsSync(join(attachmentsDir(t.id), `${bare.id}.bin`)));
   assert.equal(attachmentPath(t.id, z.id), join(attachmentsDir(t.id), `${z.id}.zip`));
   assert.deepEqual(readAttachmentRaw(t.id, z.id).buffer, data);
+});
+
+// ---- list_chats: the candidate reader (listChatCandidates) ---------------------------------------------------------------
+// The file shares one database: every fixture title carries a unique tag and order/count asserts pass `query: tag`.
+const setUpdated = (id, iso) => getDb().prepare('UPDATE ask_threads SET updated_at = ? WHERE id = ?').run(iso, id);
+
+test('S1 listChatCandidates: newest first, the excluded id and composer chats left out, archived only with includeArchived', () => {
+  const tag = `zq${newAskId('x').slice(2)}`;
+  const oldest = createThread({ title: `${tag} oldest`, createdBy: 'ann@x.io' });
+  const middle = createThread({ title: `${tag} middle` });
+  const newest = createThread({ title: `${tag} newest` });
+  const caller = createThread({ title: `${tag} caller` });
+  const composer = createThread({ title: `${tag} composer`, mode: 'composer' });
+  const archived = createThread({ title: `${tag} archived` });
+  updateThread(oldest.id, { context: { pinned: true, projectKey: 'demo-0000abcd' } });
+  setUpdated(oldest.id, '2026-01-01T00:00:00.000Z');
+  setUpdated(middle.id, '2026-01-02T00:00:00.000Z');
+  setUpdated(newest.id, '2026-01-03T00:00:00.000Z');
+  setUpdated(caller.id, '2026-01-09T00:00:00.000Z');
+  setUpdated(composer.id, '2026-01-08T00:00:00.000Z');
+  setArchived(archived.id, true);
+  setUpdated(archived.id, '2026-01-04T00:00:00.000Z');
+  const ids = (rows) => rows.map((r) => r.id);
+  assert.deepEqual(ids(listChatCandidates({ excludeId: caller.id, query: tag })), [newest.id, middle.id, oldest.id]);
+  assert.deepEqual(ids(listChatCandidates({ query: tag })), [caller.id, newest.id, middle.id, oldest.id], 'no excludeId: the caller too');
+  assert.deepEqual(ids(listChatCandidates({ excludeId: caller.id, includeArchived: true, query: tag })), [archived.id, newest.id, middle.id, oldest.id]);
+  const row = listChatCandidates({ excludeId: caller.id, query: tag }).find((r) => r.id === oldest.id);
+  assert.deepEqual(Object.keys(row).sort(), ['archivedAt', 'context', 'createdBy', 'firstText', 'id', 'title', 'updatedAt']);
+  assert.deepEqual([row.title, row.createdBy, row.archivedAt, row.updatedAt, row.firstText], [`${tag} oldest`, 'ann@x.io', null, '2026-01-01T00:00:00.000Z', '']);
+  assert.deepEqual(row.context, { pinned: true, projectKey: 'demo-0000abcd' });
+  const arch = listChatCandidates({ includeArchived: true, query: tag }).find((r) => r.id === archived.id);
+  assert.equal(typeof arch.archivedAt, 'string');
+  const all = ids(listChatCandidates({ excludeId: caller.id }));
+  assert.ok(!all.includes(caller.id) && !all.includes(composer.id) && !all.includes(archived.id));
+  assert.ok(all.indexOf(newest.id) < all.indexOf(middle.id) && all.indexOf(middle.id) < all.indexOf(oldest.id), 'unfiltered: same relative order');
+});
+
+test('S2 listChatCandidates query matches the title case-insensitively and escapes % and _', () => {
+  const tag = `zq${newAskId('x').slice(2)}`;
+  const pct = createThread({ title: `${tag} Coverage 100% done` });
+  const thousand = createThread({ title: `${tag} coverage 1000 lines` });
+  const under = createThread({ title: `${tag} snake_case names` });
+  const plain = createThread({ title: `${tag} snakeXcase names` });
+  const ids = (q) => listChatCandidates({ query: q }).map((r) => r.id).sort();
+  assert.deepEqual(ids(`${tag} COVERAGE 100%`), [pct.id]);
+  assert.deepEqual(ids(`  ${tag} coverage  `), [pct.id, thousand.id].sort(), 'the query is trimmed');
+  assert.deepEqual(ids(`${tag} snake_case`), [under.id]);
+  assert.ok(ids(`${tag} snake`).includes(plain.id));
+  assert.equal(listChatCandidates({ query: '   ' }).length >= 4, true, 'a blank query is no filter');
+});
+
+test('S3 listChatCandidates query matches the first user message, never a later one', () => {
+  const tag = `zq${newAskId('x').slice(2)}`;
+  const first = createThread({ title: 'First hit' });
+  appendMessage(first.id, { role: 'user', text: `please look at the ${tag}Widget crash` });
+  appendMessage(first.id, { role: 'assistant', text: 'ok' });
+  const later = createThread({ title: 'Later hit' });
+  appendMessage(later.id, { role: 'user', text: 'hello there' });
+  appendMessage(later.id, { role: 'user', text: `and the ${tag}widget too` });
+  const reply = createThread({ title: 'Reply hit' });
+  appendMessage(reply.id, { role: 'user', text: 'nothing' });
+  appendMessage(reply.id, { role: 'assistant', text: `the ${tag}widget` });
+  const rows = listChatCandidates({ query: `${tag}WIDGET` });
+  assert.deepEqual(rows.map((r) => r.id), [first.id]);
+  assert.equal(rows[0].firstText, `please look at the ${tag}Widget crash`);
+});
+
+test('S4 listChatCandidates: a synthetic first user row is skipped for the snippet and the query', () => {
+  const tag = `zq${newAskId('x').slice(2)}`;
+  const t = createThread({ title: `${tag} synthetic` });
+  appendMessage(t.id, { role: 'user', text: `[worca event] workflow card card_0000ab01 saved; project=${tag}event`,
+    blocks: [{ kind: 'notice', synthetic: true, text: 'Saved "Release flow".' }] });
+  appendMessage(t.id, { role: 'user', text: 'the typed one' });
+  const [row] = listChatCandidates({ query: tag });
+  assert.equal(row.id, t.id);
+  assert.equal(row.firstText, 'the typed one');
+  assert.deepEqual(listChatCandidates({ query: `${tag}event` }), []);
+  // An incoming chat message or a run post lands as a system row (the OTHER chat's text), a reply as an assistant row:
+  // neither is the first message the person typed, even when it comes first.
+  const inbox = createThread({ title: `${tag} inbox` });
+  appendMessage(inbox.id, { role: 'system', text: `message from another chat about ${tag}incoming` });
+  appendMessage(inbox.id, { role: 'assistant', text: `reply about ${tag}answer` });
+  appendMessage(inbox.id, { role: 'user', text: 'what I typed' });
+  const [got] = listChatCandidates({ query: `${tag} inbox` });
+  assert.equal(got.id, inbox.id);
+  assert.equal(got.firstText, 'what I typed');
+  assert.deepEqual(listChatCandidates({ query: `${tag}incoming` }), []);
+  assert.deepEqual(listChatCandidates({ query: `${tag}answer` }), []);
+});
+
+test('S5 listChatCandidates reads at most snippetChars of the first message', () => {
+  const tag = `zq${newAskId('x').slice(2)}`;
+  const t = createThread({ title: `${tag} long` });
+  appendMessage(t.id, { role: 'user', text: 'x'.repeat(5000) });
+  assert.equal(listChatCandidates({ query: tag })[0].firstText.length, 480);
+  assert.equal(listChatCandidates({ query: tag, snippetChars: 10 })[0].firstText.length, 10);
+  assert.equal(listChatCandidates({ query: tag, snippetChars: 0 })[0].firstText.length, 1, 'coerced into 1..4000');
+  assert.equal(listChatCandidates({ query: tag, snippetChars: 1e9 })[0].firstText.length, 4000);
 });

@@ -482,3 +482,160 @@ test('D20 a wake that fails (its gate throws) gives back the slot it reserved', 
   assert.equal(mod._testing.askChatMessageQueued.has(b.id), false, 'no slot left reserved');
   await idleAll();
 });
+
+// ---- list_chats over the bridge (op:'list') and the relay deps ---------------------------------------------------------
+// The file keeps one database: every fixture title carries a unique tag, and order/count asserts pass `query: tag`.
+const listTag = () => `zq${store.newAskId('x').slice(4)}`;
+async function postList(token, input, extra = {}) {
+  const r = await fetch(`${base}/api/ask/chat-messages`, { method: 'POST', headers: { ...JSONH, ...(token ? { 'x-worca-ask-message': token } : {}), ...extra },
+    body: JSON.stringify({ op: 'list', input }) });
+  return { status: r.status, body: await r.json() };
+}
+async function setUpdated(id, iso) {
+  const { getDb } = await import('../src/core/db.mjs');
+  getDb().prepare('UPDATE ask_threads SET updated_at = ? WHERE id = ?').run(iso, id);
+}
+
+test('A1 list_chats over the bridge: the calling chat is excluded, rows newest first carry id/title/scope/lastActivityAt/archived/snippet, a long first message is clipped to 120', async () => {
+  await setCross(true);
+  const tag = listTag();
+  const a = chat({ title: `${tag} caller` });
+  const b = chat({ title: `${tag} long` });
+  const c = chat({ title: `${tag} project`, projectKey: key });
+  store.appendMessage(b.id, { role: 'user', text: `begin ${'y'.repeat(5000)}` });
+  await setUpdated(a.id, '2026-03-09T00:00:00.000Z');
+  await setUpdated(b.id, '2026-03-02T00:00:00.000Z');
+  await setUpdated(c.id, '2026-03-03T00:00:00.000Z');
+  const br = mod._testing.askChatMessageBridge({ threadId: a.id });
+  try {
+    const { status, body } = await postList(br.token, { query: tag });
+    assert.equal(status, 200, JSON.stringify(body));
+    const r = body.result;
+    assert.equal(r.ok, true);
+    assert.deepEqual(r.chats.map((x) => x.id), [c.id, b.id], 'newest first, the caller left out');
+    for (const row of r.chats) assert.deepEqual(Object.keys(row), ['id', 'title', 'scope', 'lastActivityAt', 'archived', 'snippet']);
+    assert.deepEqual(r.chats[0].scope, { kind: 'project', key });
+    assert.deepEqual(r.chats[1].scope, { kind: 'none', key: null });
+    assert.equal(r.chats[0].lastActivityAt, '2026-03-03T00:00:00.000Z');
+    assert.equal(r.chats[1].title, `${tag} long`);
+    assert.ok(r.chats[1].snippet.length <= 120 && r.chats[1].snippet.endsWith('…') && r.chats[1].snippet.startsWith('begin y'), r.chats[1].snippet);
+    assert.equal(r.chats[0].snippet, '');
+    assert.deepEqual([r.total, r.offset, r.limit, r.nextOffset], [2, 0, 20, null]);
+    const all = await postList(br.token, {});
+    assert.ok(!all.body.result.chats.some((x) => x.id === a.id), 'unfiltered: still not the caller');
+  } finally { br.dispose(); }
+});
+
+test('A2 list_chats paging and archived: limit/offset/nextOffset; an archived chat appears only with includeArchived', async () => {
+  await setCross(true);
+  const tag = listTag();
+  const a = chat({ title: 'pager' });
+  const [x, y, z, old] = [1, 2, 3, 4].map((i) => chat({ title: `${tag} n${i}` }));
+  await setUpdated(x.id, '2026-04-04T00:00:00.000Z');
+  await setUpdated(y.id, '2026-04-03T00:00:00.000Z');
+  await setUpdated(z.id, '2026-04-02T00:00:00.000Z');
+  store.setArchived(old.id, true);
+  await setUpdated(old.id, '2026-04-05T00:00:00.000Z');
+  const br = mod._testing.askChatMessageBridge({ threadId: a.id });
+  try {
+    const p1 = (await postList(br.token, { query: tag, limit: 2 })).body.result;
+    assert.deepEqual([p1.chats.map((c) => c.id), p1.total, p1.nextOffset], [[x.id, y.id], 3, 2]);
+    const p2 = (await postList(br.token, { query: tag, limit: 2, offset: p1.nextOffset })).body.result;
+    assert.deepEqual([p2.chats.map((c) => c.id), p2.offset, p2.nextOffset], [[z.id], 2, null]);
+    const arch = (await postList(br.token, { query: tag, includeArchived: true })).body.result;
+    assert.deepEqual(arch.chats.map((c) => [c.id, c.archived]), [[old.id, true], [x.id, false], [y.id, false], [z.id, false]]);
+    const bad = await postList(br.token, { limit: 99 });
+    assert.deepEqual([bad.status, bad.body.code, bad.body.error], [400, 'CHAT_MESSAGE_BAD_INPUT', 'limit must be a whole number from 1 to 50.']);
+  } finally { br.dispose(); }
+});
+
+test('A3 list_chats query: a title hit and a first-message hit, a later-message hit is not listed', async () => {
+  await setCross(true);
+  const tag = listTag();
+  const word = `${tag}Gizmo`;
+  const a = chat({ title: 'asker' });
+  const byTitle = chat({ title: `About the ${word} release` });
+  const byFirst = chat({ title: 'Plain title' });
+  store.appendMessage(byFirst.id, { role: 'user', text: `the ${word} broke` });
+  const byLater = chat({ title: 'Other title' });
+  store.appendMessage(byLater.id, { role: 'user', text: 'hello' });
+  store.appendMessage(byLater.id, { role: 'user', text: `and the ${word}` });
+  const br = mod._testing.askChatMessageBridge({ threadId: a.id });
+  try {
+    const r = (await postList(br.token, { query: word.toLowerCase() })).body.result;
+    assert.deepEqual(r.chats.map((c) => c.id).sort(), [byTitle.id, byFirst.id].sort());
+    assert.equal(r.chats.find((c) => c.id === byFirst.id).snippet, `the ${word} broke`);
+  } finally { br.dispose(); }
+});
+
+test('A4 list_chats changes nothing: the caller\'s and targets\' updatedAt and message counts are unchanged across scopes', async () => {
+  await setCross(true);
+  const tag = listTag();
+  const a = chat({ title: `${tag} caller`, projectKey: key });
+  const none = chat({ title: `${tag} none` });
+  const other = store.createThread();
+  store.updateThread(other.id, { title: `${tag} other`, context: { pinned: true, projectKey: 'other-0000beef' } });
+  for (const t of [a, none, other]) store.appendMessage(t.id, { role: 'user', text: 'first' });
+  const snap = () => [a, none, other].map((t) => [store.getThread(t.id).updatedAt, store.listMessages(t.id).length, JSON.stringify(store.getThread(t.id).context)]);
+  const before = snap();
+  const br = mod._testing.askChatMessageBridge({ threadId: a.id });
+  try {
+    const r = (await postList(br.token, { query: tag })).body.result;
+    assert.deepEqual(r.chats.map((c) => c.scope.kind).sort(), ['none', 'project']);
+    assert.deepEqual(r.chats.find((c) => c.id === other.id).scope, { kind: 'project', key: 'other-0000beef' });
+    const rel = (await mod._testing.askChatMessageExtraDeps(a.id).chatMessages.list({ query: tag }));
+    assert.equal(rel.total, 2);
+  } finally { br.dispose(); }
+  assert.deepEqual(snap(), before);
+  assert.equal(running(a.id) || running(none.id) || running(other.id), false, 'no turn started');
+});
+
+test('A5 list op: 403 without a token / with a disposed token / with the setting off; unknown op 400; relay deps carry list exactly when they carry send', async () => {
+  await setCross(true);
+  const a = chat({ title: 'gates' }); const b = chat({ title: 'gates target' });
+  const br = mod._testing.askChatMessageBridge({ threadId: a.id });
+  try {
+    const none = await postList(null, {});
+    assert.equal(none.status, 403);
+    const unknownOp = await post(br.token, { op: 'delete', input: {} });
+    assert.deepEqual([unknownOp.status, unknownOp.body], [400, { error: 'chat messages: unknown op', code: 'CHAT_MESSAGE_BAD_INPUT' }]);
+    assert.equal(blocksOf(b.id).length, 0, 'an unknown op sends nothing');
+    const send = await post(br.token, { op: 'send', input: { chatId: b.id, text: 'explicit send' } });
+    assert.equal(send.status, 200, JSON.stringify(send.body));
+    assert.equal(blocksOf(b.id, 'in').length, 1, "op:'send' is a send");
+    await setCross(false);
+    const off = await postList(br.token, {});
+    assert.deepEqual([off.status, off.body.code], [403, 'CHAT_MESSAGES_OFF']);
+  } finally { await setCross(true); br.dispose(); }
+  const gone = await postList(br.token, {});
+  assert.equal(gone.status, 403, 'a disposed token');
+  await setCross(false);
+  try {
+    assert.equal(mod._testing.askChatMessageExtraDeps(a.id).chatMessages, undefined, 'off: neither send nor list');
+  } finally { await setCross(true); }
+  const deps = mod._testing.askChatMessageExtraDeps(a.id).chatMessages;
+  assert.deepEqual(Object.keys(deps).sort(), ['list', 'send']);
+  const r = await deps.list({ query: 'gates target' });
+  assert.deepEqual(r.chats.map((c) => c.id), [b.id], 'list answers for this chat');
+  await idleAll();
+});
+
+test('A6 list_chats on a shared install lists only the caller\'s own chats', async () => {
+  await setCross(true);
+  const tag = listTag();
+  process.env.WORCA_IDENTITY_HEADER = 'x-test-user';
+  process.env.WORCA_IDENTITY_TRUSTED_PROXIES = '127.0.0.1,::1';
+  try {
+    const a = chat({ createdBy: 'ann@example.com', title: `${tag} ann one` });
+    const a2 = chat({ createdBy: 'ann@example.com', title: `${tag} ann two` });
+    chat({ createdBy: 'bob@example.com', title: `${tag} bob` });
+    chat({ title: `${tag} nobody` });
+    const br = mod._testing.askChatMessageBridge({ threadId: a.id });
+    try {
+      const { status, body } = await postList(br.token, { query: tag }, { 'x-test-user': 'ann@example.com' });
+      assert.equal(status, 200, JSON.stringify(body));
+      assert.deepEqual(body.result.chats.map((c) => c.id), [a2.id]);
+      assert.equal(body.result.total, 1);
+    } finally { br.dispose(); }
+  } finally { delete process.env.WORCA_IDENTITY_HEADER; delete process.env.WORCA_IDENTITY_TRUSTED_PROXIES; }
+});

@@ -1,6 +1,7 @@
 // ui/routes/chat/chat-messages.mjs — feature "chat" (docs/chat-home.md, "Messages between chats"): the cross-chat
 // message bridge's loopback route. The classic MCP child (src/core/ask/chat-message-deps.mjs) posts send_to_chat here
-// with its turn's token; the calling chat is the token's thread, never a body field. Not an AGENT_OPEN_ROUTES route:
+// with its turn's token; the calling chat is the token's thread, never a body field. `op: 'list'` serves list_chats (the
+// same gates; no op, or 'send', is send_to_chat). Not an AGENT_OPEN_ROUTES route:
 // under agent isolation the relay passes in-process deps and no bridge is minted.
 import { CHAT_MESSAGE_CODES } from '../../../src/core/ask/chat-messages.mjs';
 import { isInContainer } from '../../../src/core/remote-access.mjs';
@@ -16,8 +17,10 @@ app.post('/api/ask/chat-messages', async (req, res) => {
   if (!chatMessenger.enabled()) {
     return res.status(403).json({ error: 'Messages between chats are turned off in Settings → Chat.', code: 'CHAT_MESSAGES_OFF' });
   }
+  const op = req.body?.op;
+  if (op !== undefined && op !== 'send' && op !== 'list') return res.status(400).json({ error: 'chat messages: unknown op', code: 'CHAT_MESSAGE_BAD_INPUT' });
   try {
-    const result = await chatMessenger.send(threadId, req.body && req.body.input);
+    const result = op === 'list' ? chatMessenger.list(threadId, req.body.input) : await chatMessenger.send(threadId, req.body && req.body.input);
     if (result && result.ok) return res.json({ result });
     return res.status(CHAT_MESSAGE_CODES[result?.code] || 400).json({ error: result?.error || 'refused', code: result?.code || 'CHAT_MESSAGE_BAD_INPUT' });
   } catch (err) {

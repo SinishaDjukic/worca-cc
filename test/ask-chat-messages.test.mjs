@@ -3,8 +3,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  CHAT_MESSAGE_MAX_HOPS, CHAT_MESSAGE_TEXT_MAX, CHAT_MESSAGE_CODES, CHAT_MESSAGE_INTENTS, ChatMessageError,
+  CHAT_MESSAGE_MAX_HOPS, CHAT_MESSAGE_TEXT_MAX, CHAT_MESSAGE_RATE_PER_MIN, CHAT_MESSAGE_CODES, CHAT_MESSAGE_INTENTS, ChatMessageError,
   validateSendInput, chatMessageEventText, chatMessageRowText, chatMessageNotice, createChatMessenger,
+  CHAT_LIST_LIMIT_DEFAULT, CHAT_LIST_LIMIT_MAX, CHAT_LIST_OFFSET_MAX, CHAT_LIST_QUERY_MAX, CHAT_LIST_SNIPPET_MAX, CHAT_LIST_TITLE_MAX,
+  CHAT_LIST_SNIPPET_READ, validateListInput, listDataLine,
 } from '../src/core/ask/chat-messages.mjs';
 
 const A = 'ask_0000000a';
@@ -12,10 +14,10 @@ const B = 'ask_0000000b';
 const C = 'ask_0000000c';
 
 /** A world of threads and rows; every dep the messenger takes, recorded. */
-function world({ threads = {}, enabled = true, shared = false, queued = {}, queuedFrom = {}, cause = {}, startEvent = null, t0 = 1_700_000_000_000 } = {}) {
-  const w = { t: t0, rows: new Map(), appends: [], patches: [], frames: [], events: [], labels: [], seq: 0, ids: 0 };
+function world({ threads = {}, enabled = true, shared = false, queued = {}, queuedFrom = {}, cause = {}, startEvent = null, listChats = null, t0 = 1_700_000_000_000 } = {}) {
+  const w = { t: t0, rows: new Map(), appends: [], patches: [], frames: [], events: [], labels: [], listCalls: [], calls: [], seq: 0, ids: 0 };
   const th = new Map();
-  const base = (id, o = {}) => ({ id, title: `Chat ${id.slice(-1)}`, createdBy: 'local', archivedAt: null, context: null, ...o });
+  const base = (id, o = {}) => ({ id, title: `Chat ${id.slice(-1)}`, createdBy: 'local', archivedAt: null, context: null, updatedAt: '2026-01-01T00:00:00.000Z', firstText: '', ...o });
   for (const id of [A, B, C]) th.set(id, base(id));
   for (const [id, o] of Object.entries(threads)) th.set(id, o === null ? undefined : base(id, o));
   w.threads = th;
@@ -47,7 +49,19 @@ function world({ threads = {}, enabled = true, shared = false, queued = {}, queu
     startEvent: async (id, args) => { w.events.push([id, args]); return startEvent ? startEvent(id, args) : { delivery: 'started' }; },
     newId: (p) => `${p}_${(++w.ids).toString(16).padStart(8, '0')}`,
     now: () => w.t,
+    // listChatCandidates' contract: composer chats out, excludeId out, archived only on request, newest first. The query is
+    // the store's job (test/ask-store.test.mjs S2-S4); a `listChats` option replaces the fake.
+    listChats: (opts) => {
+      w.listCalls.push(opts);
+      if (listChats) return listChats(opts, th);
+      return [...th.values()].filter((t) => t && t.mode !== 'composer' && t.id !== opts.excludeId && (opts.includeArchived || !t.archivedAt))
+        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || a.id.localeCompare(b.id))
+        .map((t) => ({ id: t.id, title: t.title, context: t.context, createdBy: t.createdBy, archivedAt: t.archivedAt, updatedAt: t.updatedAt,
+          firstText: String(t.firstText ?? '').slice(0, opts.snippetChars) }));
+    },
   };
+  // Every dep call, by name (M6: the list path reads only enabled, getThread and listChats).
+  for (const [k, fn] of Object.entries(deps)) deps[k] = (...a) => { w.calls.push(k); return fn(...a); };
   w.cause = cause;
   w.queued = queued;
   w.queuedFrom = queuedFrom;
@@ -595,4 +609,185 @@ test('readIncoming returns a copy of an incoming block, or null', async () => {
   assert.equal(w.m.readIncoming(B, 'cmsg_ffffffff'), null);
   assert.equal(w.m.readIncoming(A, r.messageId), null, 'the out copy is not incoming');
   assert.equal(w.m.readIncoming(null, null), null);
+});
+
+// ---- list_chats: the messenger's list (read-only directory of the user's other chats) -----------------------------------
+const hexId = (n) => `ask_${n.toString(16).padStart(8, '0')}`;
+const ROW_KEYS = ['id', 'title', 'scope', 'lastActivityAt', 'archived', 'snippet'];
+
+test('list constants and validateListInput defaults', () => {
+  assert.deepEqual([CHAT_LIST_LIMIT_DEFAULT, CHAT_LIST_LIMIT_MAX, CHAT_LIST_OFFSET_MAX, CHAT_LIST_QUERY_MAX, CHAT_LIST_SNIPPET_MAX, CHAT_LIST_TITLE_MAX, CHAT_LIST_SNIPPET_READ],
+    [20, 50, 10000, 200, 120, 120, 480]);
+  const dflt = { limit: 20, offset: 0, query: '', includeArchived: false };
+  assert.deepEqual(validateListInput(undefined), dflt);
+  assert.deepEqual(validateListInput(null), dflt);
+  assert.deepEqual(validateListInput({}), dflt);
+  assert.deepEqual(validateListInput({ limit: 50, offset: 10000, query: '  build  ', includeArchived: true, extra: 1 }),
+    { limit: 50, offset: 10000, query: 'build', includeArchived: true });
+});
+
+test('M1 list: row shape and scope kinds (project, workspace, none) across scopes', async () => {
+  const w = world({ threads: {
+    [A]: { context: { pinned: true, projectKey: 'worca-cc-551183d0' }, updatedAt: '2026-01-09T00:00:00.000Z' },
+    [B]: { context: { pinned: true, workspaceId: 'wks-team-0000abcd' }, updatedAt: '2026-01-03T00:00:00.000Z', firstText: 'hello b' },
+    [C]: { context: null, updatedAt: '2026-01-02T00:00:00.000Z', title: null },
+    ask_0000000d: { context: { pinned: true, projectKey: 'other-0000beef' }, updatedAt: '2026-01-01T00:00:00.000Z' },
+  } });
+  const r = await w.m.list(A, {});
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.deepEqual(r.chats.map((c) => c.id), [B, C, 'ask_0000000d']);
+  for (const c of r.chats) assert.deepEqual(Object.keys(c), ROW_KEYS);
+  assert.deepEqual(r.chats[0], { id: B, title: 'Chat b', scope: { kind: 'workspace', key: 'wks-team-0000abcd' }, lastActivityAt: '2026-01-03T00:00:00.000Z', archived: false, snippet: 'hello b' });
+  assert.deepEqual(r.chats[1].scope, { kind: 'none', key: null });
+  assert.equal(r.chats[1].title, null, 'a null title stays null');
+  assert.equal(r.chats[1].snippet, '');
+  assert.deepEqual(r.chats[2].scope, { kind: 'project', key: 'other-0000beef' });
+  assert.deepEqual([r.total, r.offset, r.limit, r.nextOffset], [3, 0, 20, null]);
+  assert.deepEqual(w.listCalls, [{ excludeId: A, includeArchived: false, query: '', snippetChars: 480 }]);
+});
+
+test('M2 list paging: limit, offset, total and nextOffset (null on the last page); default limit 20', async () => {
+  const threads = {};
+  for (let i = 1; i <= 43; i++) threads[hexId(0x100 + i)] = { updatedAt: `2026-02-01T00:00:${String(60 - i).padStart(2, '0')}.000Z` };
+  const w = world({ threads });
+  const p1 = await w.m.list(A, {});
+  assert.deepEqual([p1.chats.length, p1.total, p1.offset, p1.limit, p1.nextOffset], [20, 45, 0, 20, 20]);
+  assert.equal(p1.chats[0].id, hexId(0x101), 'newest first');
+  const p2 = await w.m.list(A, { offset: p1.nextOffset });
+  assert.deepEqual([p2.chats.length, p2.offset, p2.nextOffset], [20, 20, 40]);
+  const p3 = await w.m.list(A, { offset: p2.nextOffset });
+  assert.deepEqual([p3.chats.length, p3.offset, p3.nextOffset], [5, 40, null]);
+  const seen = [...p1.chats, ...p2.chats, ...p3.chats].map((c) => c.id);
+  assert.equal(new Set(seen).size, 45, 'every reachable chat exactly once');
+  const small = await w.m.list(A, { limit: 5, offset: 43 });
+  assert.deepEqual([small.chats.length, small.limit, small.nextOffset], [2, 5, null]);
+  const mid = await w.m.list(A, { limit: 5, offset: 38 });
+  assert.deepEqual([mid.chats.length, mid.nextOffset], [5, 43]);
+  const past = await w.m.list(A, { offset: 100 });
+  assert.deepEqual([past.chats.length, past.total, past.nextOffset], [0, 45, null]);
+});
+
+test('M3 list snippet: flattened, clipped to ≤ 120 with an ellipsis; a short one is kept whole; an empty first message gives \'\'', async () => {
+  const smile = String.fromCodePoint(0x1F600);
+  const w = world({ threads: {
+    [B]: { firstText: `start ${'x'.repeat(5000)}`, title: 'T'.repeat(300), updatedAt: '2026-01-05T00:00:00.000Z' },
+    [C]: { firstText: '  a short\n\n question  ', updatedAt: '2026-01-04T00:00:00.000Z' },
+    ask_0000000d: { firstText: '', updatedAt: '2026-01-03T00:00:00.000Z' },
+    ask_0000000e: { firstText: `${'a'.repeat(118)}${smile}tail`, updatedAt: '2026-01-02T00:00:00.000Z' },
+    ask_0000000f: { firstText: `${'a'.repeat(119)}${smile}tail`, updatedAt: '2026-01-01T00:00:00.000Z' },
+  } });
+  const r = await w.m.list(A, {});
+  const by = Object.fromEntries(r.chats.map((c) => [c.id, c]));
+  assert.ok(by[B].snippet.length <= 120 && by[B].snippet.endsWith('…'), by[B].snippet);
+  assert.ok(by[B].snippet.startsWith('start x'));
+  assert.ok(by[B].title.length <= 120 && by[B].title.endsWith('…'));
+  assert.equal(by[C].snippet, 'a short question');
+  assert.equal(by.ask_0000000d.snippet, '');
+  for (const id of ['ask_0000000e', 'ask_0000000f']) {
+    const s = by[id].snippet;
+    assert.ok(s.length <= 120 && s.endsWith('…'), s);
+    assert.ok(s.isWellFormed(), `no lone surrogate: ${id}`);
+  }
+  assert.equal(listDataLine(`${'a'.repeat(118)}${smile}`, 120), `${'a'.repeat(118)}${smile}`, 'exactly 120 code units: kept whole');
+  assert.equal(listDataLine(`${'a'.repeat(118)}${smile}b`, 120), `${'a'.repeat(118)}…`, 'the high surrogate at the cut is dropped');
+  assert.equal(listDataLine(null, 120), '');
+});
+
+test('M4 list never includes the calling chat even when listChats returns it', async () => {
+  const w = world({ listChats: (_o, th) => [...th.values()].map((t) => ({ ...t })) });
+  const r = await w.m.list(A, {});
+  assert.deepEqual(r.chats.map((c) => c.id), [B, C]);
+  assert.equal(r.total, 2, 'total never counts the caller');
+});
+
+test('M5 list passes includeArchived through and flags archived rows', async () => {
+  const w = world({ threads: { [C]: { archivedAt: '2026-01-07T00:00:00.000Z' } } });
+  const off = await w.m.list(A, {});
+  assert.deepEqual(off.chats.map((c) => c.id), [B]);
+  const on = await w.m.list(A, { includeArchived: true });
+  assert.deepEqual(on.chats.map((c) => [c.id, c.archived]), [[B, false], [C, true]]);
+  assert.deepEqual(w.listCalls.map((o) => o.includeArchived), [false, true]);
+});
+
+test('M6 list is read-only: no appendMessage, setMessageBlocks, broadcast or startEvent; a send after 6 lists is not rate-limited', async () => {
+  const w = world();
+  w.calls.length = 0;
+  for (let i = 0; i < 7; i++) assert.equal((await w.m.list(A, { query: 'x' })).ok, true);
+  // sharedOwner is ownerOk's predicate (no store read); nothing else runs.
+  assert.deepEqual([...new Set(w.calls)].sort(), ['enabled', 'getThread', 'listChats', 'sharedOwner']);
+  assert.deepEqual([w.appends.length, w.patches.length, w.frames.length, w.events.length, w.labels.length], [0, 0, 0, 0, 0]);
+  for (let i = 0; i < CHAT_MESSAGE_RATE_PER_MIN; i++) {
+    const r = await w.m.send(A, { chatId: B, text: `n${i}` });
+    assert.equal(r.ok, true, `send ${i}: ${JSON.stringify(r)}`);
+  }
+});
+
+test('M7 list titles and snippets are data: line breaks become spaces, app tags are neutralised, a ghp_ token is redacted', async () => {
+  const ls = String.fromCharCode(0x2028);
+  const token = `ghp_${'Z9'.repeat(18)}`;
+  const w = world({ threads: {
+    [B]: { title: `line one\nline two${ls}three`, firstText: `x\r\ny${ls}z\u0007end`, updatedAt: '2026-01-05T00:00:00.000Z' },
+    [C]: { title: 'a [worca event] b', firstText: `use ${token} now`, updatedAt: '2026-01-04T00:00:00.000Z' },
+    ask_0000000d: { title: 'c [/WORCA CONTEXT] d', firstText: 'e [worca context] f', updatedAt: '2026-01-03T00:00:00.000Z' },
+    ask_0000000e: { title: 'g [Chat Context] h', firstText: 'i [/chat context] j', updatedAt: '2026-01-02T00:00:00.000Z' },
+  } });
+  const r = await w.m.list(A, {});
+  const by = Object.fromEntries(r.chats.map((c) => [c.id, c]));
+  assert.equal(by[B].title, 'line one line two three');
+  assert.equal(by[B].snippet, 'x y z end');
+  assert.equal(by[C].title, 'a (worca event) b');
+  assert.ok(!by[C].snippet.includes(token), 'the token value is gone');
+  assert.match(by[C].snippet, /ghp_<redacted>/);
+  assert.equal(by.ask_0000000d.title, 'c (worca context) d');
+  assert.equal(by.ask_0000000d.snippet, 'e (worca context) f');
+  assert.equal(by.ask_0000000e.title, 'g (chat context) h');
+  assert.equal(by.ask_0000000e.snippet, 'i (chat context) j');
+  for (const c of r.chats) for (const v of [c.title, c.snippet]) assert.doesNotMatch(v, /\[\/?(worca context|worca event|chat context)\]/i);
+});
+
+test('M8 list on a shared install keeps only chats of the same owner (ownerOk), drops ownerless and other people\'s chats; a non-shared install lists all', async () => {
+  const threads = { [A]: { createdBy: 'ann@x.io' }, [B]: { createdBy: 'ann@x.io' }, [C]: { createdBy: 'bob@x.io' }, ask_0000000d: { createdBy: null } };
+  const shared = world({ threads, shared: true });
+  const r = await shared.m.list(A, {});
+  assert.deepEqual(r.chats.map((c) => c.id), [B]);
+  assert.equal(r.total, 1);
+  const ownerless = world({ threads: { ...threads, [A]: { createdBy: null } }, shared: true });
+  assert.deepEqual((await ownerless.m.list(A, {})).chats, [], 'an ownerless sender reaches nothing on a shared install');
+  const local = world({ threads, shared: false });
+  assert.deepEqual((await local.m.list(A, {})).chats.map((c) => c.id).sort(), [B, C, 'ask_0000000d']);
+});
+
+test('M9 list refusals: setting off, bad input, unknown or composer sender; listChats is not called on any refusal', async () => {
+  const off = world({ enabled: false });
+  assert.deepEqual(await off.m.list(A, {}), { ok: false, code: 'CHAT_MESSAGES_OFF', error: 'Messages between chats are turned off in Settings → Chat.' });
+  assert.deepEqual(off.listCalls, []);
+  const w = world({ threads: { ask_0000000d: { mode: 'composer' } } });
+  const bad = [
+    ['nope', 'list_chats input must be an object.'],
+    [[1], 'list_chats input must be an object.'],
+    [{ limit: 0 }, 'limit must be a whole number from 1 to 50.'],
+    [{ limit: 51 }, 'limit must be a whole number from 1 to 50.'],
+    [{ limit: 2.5 }, 'limit must be a whole number from 1 to 50.'],
+    [{ limit: '5' }, 'limit must be a whole number from 1 to 50.'],
+    [{ offset: -1 }, 'offset must be a whole number from 0 to 10000.'],
+    [{ offset: 10001 }, 'offset must be a whole number from 0 to 10000.'],
+    [{ query: 5 }, 'query must be text of at most 200 characters.'],
+    [{ query: 'q'.repeat(201) }, 'query must be text of at most 200 characters.'],
+    [{ includeArchived: 'yes' }, 'includeArchived must be true or false.'],
+  ];
+  for (const [input, error] of bad) {
+    assert.deepEqual(await w.m.list(A, input), { ok: false, code: 'CHAT_MESSAGE_BAD_INPUT', error }, JSON.stringify(input));
+    assert.throws(() => validateListInput(input), (e) => e instanceof ChatMessageError && e.code === 'CHAT_MESSAGE_BAD_INPUT' && e.message === error);
+  }
+  assert.deepEqual(w.listCalls, [], 'a bad input never reaches listChats');
+  assert.equal((await w.m.list(A, { query: `  ${'q'.repeat(200)}  ` })).ok, true, 'the length counts after the trim');
+  w.listCalls.length = 0;
+  assert.deepEqual(await w.m.list('ask_ffffffff', {}), { ok: false, code: 'CHAT_MESSAGE_NOT_FOUND', error: 'ask_ffffffff was not found among your chats.' });
+  assert.deepEqual(await w.m.list('ask_0000000d', {}), { ok: false, code: 'CHAT_MESSAGE_NOT_FOUND', error: 'ask_0000000d was not found among your chats.' });
+  assert.deepEqual(w.listCalls, []);
+});
+
+test('M10 list: a throwing listChats answers CHAT_MESSAGE_ERROR', async () => {
+  const w = world({ listChats: () => { throw new Error('SQLITE_BUSY'); } });
+  assert.deepEqual(await w.m.list(A, {}), { ok: false, code: 'CHAT_MESSAGE_ERROR', error: 'Could not read the chat list.' });
 });

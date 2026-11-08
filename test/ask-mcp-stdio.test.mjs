@@ -266,8 +266,13 @@ test('Q37b WORCA_ASK_TOOLSET=chat-message makes the child list only the event al
     return JSON.parse(out[0]).result.tools.map((d) => d.name);
   };
   const full = await names(env);
-  for (const n of ['run_command', 'remember', 'send_to_chat']) assert.ok(full.includes(n), n);
+  for (const n of ['run_command', 'remember', 'send_to_chat', 'list_chats']) assert.ok(full.includes(n), n);
   const ev = await names({ ...env, WORCA_ASK_TOOLSET: 'chat-message' });
   assert.ok(!ev.includes('run_command') && !ev.includes('remember'));
   assert.ok(ev.includes('send_to_chat') && ev.includes('list_runs'));
+  assert.ok(ev.includes('list_chats'), 'list_chats is a read tool of the event turn');
+  // No bridge env: neither cross-chat tool.
+  const { WORCA_ASK_MESSAGES: _m, ASK_MESSAGE_TOKEN: _t, ...noBridge } = env;
+  const bare = await names(noBridge);
+  assert.ok(!bare.includes('send_to_chat') && !bare.includes('list_chats'), bare.join(','));
 });

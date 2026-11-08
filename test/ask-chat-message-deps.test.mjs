@@ -36,3 +36,28 @@ test('Q18 send posts {input} with the token header and returns the result; a ref
   assert.equal(r.ok, false);
   assert.match(r.error, /HTTP 500/);
 });
+
+test('Q18 the bundle carries list beside send; list posts {op:\'list\', input} with the token header; a refusal comes back as {ok:false, code, error}', async () => {
+  const calls = [];
+  let answer = { status: 200, body: { result: { ok: true, chats: [], total: 0, offset: 0, limit: 20, nextOffset: null } } };
+  const fetchImpl = async (url, opts) => {
+    calls.push([url, opts]);
+    return { ok: answer.status < 300, status: answer.status, json: async () => answer.body };
+  };
+  const deps = defaultChatMessageDeps({ env: env(), fetchImpl });
+  assert.deepEqual(Object.keys(deps.chatMessages).sort(), ['list', 'send']);
+  const input = { query: 'release', limit: 5 };
+  assert.deepEqual(await deps.chatMessages.list(input), answer.body.result);
+  assert.equal(calls[0][0], URL);
+  assert.equal(calls[0][1].method, 'POST');
+  assert.equal(calls[0][1].headers['x-worca-ask-message'], 'tok-1');
+  assert.deepEqual(JSON.parse(calls[0][1].body), { op: 'list', input });
+  answer = { status: 403, body: { error: 'Messages between chats are turned off in Settings → Chat.', code: 'CHAT_MESSAGES_OFF' } };
+  assert.deepEqual(await deps.chatMessages.list({}), { ok: false, code: 'CHAT_MESSAGES_OFF', error: 'Messages between chats are turned off in Settings → Chat.' });
+  answer = { status: 502, body: {} };
+  assert.deepEqual(await deps.chatMessages.list({}), { ok: false, code: 'CHAT_MESSAGE_ERROR', error: 'worca answered HTTP 502' });
+  // send's wire body stays exactly {input}: no op key.
+  answer = { status: 200, body: { result: { ok: true } } };
+  await deps.chatMessages.send({ chatId: 'ask_0000000b', text: 'hi' });
+  assert.deepEqual(JSON.parse(calls.at(-1)[1].body), { input: { chatId: 'ask_0000000b', text: 'hi' } });
+});

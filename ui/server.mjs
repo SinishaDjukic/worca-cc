@@ -137,7 +137,7 @@ import {
   ASK_ID_RE, createThread as askCreateThread, getThread as askGetThread,
   listThreads as askListThreads, updateThread as askUpdateThread, addThreadContexts as askAddThreadContexts,
   deleteThread as askDeleteThread, sweepEmptyThreads, sweepStreamingMessages, sweepCloningCards,
-  countThreads as askCountThreads, listThreadIds as askListThreadIds,
+  countThreads as askCountThreads, listThreadIds as askListThreadIds, listChatCandidates as askListChatCandidates,
   countWorktrees as askCountWorktrees, countAttachments as askCountAttachments,
   appendMessage as askAppendMessage, getMessage as askGetMessage,
   listMessages as askListMessages, setMessageBlocks as askSetMessageBlocks,
@@ -8339,11 +8339,11 @@ function askChatMessageBridge({ threadId }) {
   const port = server.address()?.port || PORT;
   return { url: `http://127.0.0.1:${port}/api/ask/chat-messages`, token, dispose: () => askChatMessageBridges.delete(token) };
 }
-/** Relay mode's in-process share of the same: send_to_chat bound to this turn's chat, and a chat-message event turn's
+/** Relay mode's in-process share of the same: send_to_chat and list_chats bound to this turn's chat, and an event turn's
  *  read-only toolset (D22). */
 function askChatMessageExtraDeps(threadId, { toolset = null } = {}) {
   return {
-    ...(chatPrefs().crossChat ? { chatMessages: { send: (input) => chatMessenger.send(threadId, input) } } : {}),
+    ...(chatPrefs().crossChat ? { chatMessages: { send: (input) => chatMessenger.send(threadId, input), list: (input) => chatMessenger.list(threadId, input) } } : {}),
     ...(toolset === 'chat-message' ? { askMode: 'chat-message' } : {}),
   };
 }
@@ -9616,7 +9616,7 @@ async function chatMessageStartEvent(threadId, { text, notice, cause, origin = n
 
 const chatMessenger = createChatMessenger({
   enabled: () => chatPrefs().crossChat,
-  getThread: askGetThread,
+  getThread: askGetThread, listChats: askListChatCandidates,
   listMessages: askListMessages,
   appendMessage: askAppendMessage,
   setMessageBlocks: askSetMessageBlocks,

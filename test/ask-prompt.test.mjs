@@ -1051,6 +1051,11 @@ test('system prompt has the chat messages section only when chatMessages is true
   const sec = renderChatMessagesSection();
   for (const re of [/send_to_chat/, /ask_ \+ 8 hex/, /scope/, /untrusted/, /one reply/, /6 messages/, /\[worca event\] chat message/, /only read tools and send_to_chat/]) assert.match(sec, re);
   assert.ok(sec.includes('- Runs may post updates and questions here ("from run <id>"). You cannot reply to a run; only the user, with the record\'s answer form, or Away mode answers a run question.'));
+  // list_chats: find the target by name, never guess an id; its titles and snippets are untrusted data.
+  assert.ok(sec.includes('Use list_chats to find a chat by name; never guess an id.'));
+  assert.match(sec, /list_chats .*untrusted data/);
+  assert.match(sec, /Copy chat id/);
+  assert.doesNotMatch(off, /list_chats/, 'only with chatMessages');
   // after the chat channel section, before the commands section
   const all = buildSystemPrompt(CATALOG, { chatMessages: true, chat: { platform: 'discord' }, commands: true });
   assert.ok(all.indexOf('## Chat channel') < all.indexOf('## Messages between chats'));
