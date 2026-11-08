@@ -116,3 +116,54 @@ export function land(el) {
   view?.setTimeout?.(() => el.removeAttribute('data-landed'), ms(css, '--motion-flash', 1200) + 100);
 }
 
+
+// Folds (motion.fold): every toggle that opens something in place moves the same way, whether its page morphs or draws
+// itself whole. Opening, the new part fades in as its space opens; closing, a copy of what was there fades as its space
+// closes; the chevron turns. Pages do nothing: a toggle is a button with aria-expanded, and what it opens is the part its
+// kind of row holds (or what its data-folds selector names).
+const FOLD_PARTS = [['.cmd-row', '.cmd-detail'], ['.cmd-group', '.cmd-rows'], ['.list-row', '.lr-after'], ['.stage-line', '.td-body'], ['.turn-row', '.tr-body'], ['.task-card', '.tc-stream']];
+const FOLD_TOGGLE = '[aria-expanded]:not([aria-haspopup]):not([data-menu]):not([data-fold-section])';
+
+/** What finds a toggle again after its page has drawn itself: its data attributes. */
+export function foldKey(toggle) {
+  const data = [...toggle.attributes].filter((a) => a.name.startsWith('data-')).map((a) => `[${a.name}="${a.value.replace(/["\\]/g, '\\$&')}"]`).join('');
+  return `${data}[aria-expanded]`;
+}
+function foldPart(root, toggle) {
+  if (toggle.dataset.folds) return { part: root.querySelector(toggle.dataset.folds), named: true };
+  for (const [scope, part] of FOLD_PARTS) { const s = toggle.closest(scope); if (s) return { scope: s, part: s.querySelector(part) }; }
+  return {};
+}
+
+/** Watches root for toggles and moves what they open and close (motion.fold). */
+export function watchFolds(root, { win = globalThis } = {}) {
+  let was = null;
+  const timing = () => ({ duration: 200, easing: 'cubic-bezier(.2,0,0,1)' });
+  const still = () => !!win.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+  const move = (el, h, open, done) => {
+    const prior = el.style.overflow; el.style.overflow = 'hidden';
+    const a = el.animate([{ height: `${open ? 0 : h}px`, opacity: open ? 0 : 1 }, { height: `${open ? h : 0}px`, opacity: open ? 1 : 0 }], timing());
+    a.onfinish = () => { el.style.overflow = prior; done?.(); };
+  };
+  root.addEventListener('click', (e) => {
+    was = null;
+    const t = e.target.closest?.(FOLD_TOGGLE); if (!t || t.disabled || still()) return;
+    const sel = foldKey(t); if (sel === '[aria-expanded]') return;
+    const { part } = foldPart(root, t);
+    was = { sel, at: [...root.querySelectorAll(sel)].indexOf(t), open: t.getAttribute('aria-expanded') === 'true', part, h: part ? part.getBoundingClientRect().height : 0, copy: part ? part.cloneNode(true) : null };
+  }, true);
+  root.addEventListener('click', () => {   // after the page's own handlers have drawn it
+    const w = was; was = null; if (!w) return;
+    const t = root.querySelectorAll(w.sel)[w.at]; if (!t) return;
+    const open = t.getAttribute('aria-expanded') === 'true'; if (open === w.open) return;
+    const { scope, part, named } = foldPart(root, t);
+    if (open && part && part !== w.part && part.animate && !part.hasAttribute('data-motion')) move(part, part.getBoundingClientRect().height, true);
+    if (!open && w.copy && !part && w.h && w.copy.animate) {
+      const g = w.copy; g.setAttribute('aria-hidden', 'true'); g.setAttribute('inert', ''); g.style.pointerEvents = 'none';
+      if (named) t.parentElement.before(g); else scope?.append(g);
+      if (g.isConnected) move(g, w.h, false, () => g.remove());
+    }
+    const icon = t.matches('.lr-mark-fold, .stage-part-b') ? null : t.querySelector('svg');
+    icon?.animate?.([{ transform: `rotate(${open ? -90 : 90}deg)` }, { transform: 'none' }], timing());
+  });
+}

@@ -1,0 +1,73 @@
+<!doctype html>
+<!-- Mock (Wave 3): two ideas for Projects and Workspaces. 1: a workspace comes from use: Worca suggests one, as a card, when
+     a task touches projects that look connected. 2: the Projects home is one map from Advanced: every project on it, a
+     workspace a named outline around a part of it, a project in two where the outlines overlap; one picked lights its
+     part. Simple keeps the list. Library: ChangeProposal, PlaceHead, ListRow, the list sentence; the map would be new.
+     Render: node plans/rail/mocks/wave-3/render.mjs scope-2 1280 -->
+<html lang="en"><head><meta charset="utf-8"><title>One map</title>
+<link rel="stylesheet" href="../../prototype/app.css">
+<link rel="stylesheet" href="../../prototype/design-system/rail-look.css">
+<link rel="stylesheet" href="../../prototype/design-system/rail.css">
+<link rel="stylesheet" href="../../prototype/shell/shell.css">
+<style>
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);}
+  #m{width:1280px;}
+  .fr{display:grid;grid-template-columns:280px 1fr;border-bottom:1px solid var(--line);}
+  .bar{background:var(--side,var(--panel));border-right:1px solid var(--line);padding:16px 12px;box-sizing:border-box;}
+  .bar h1{margin:4px 8px 14px;font:600 15px/1.2 var(--sans);display:flex;gap:8px;align-items:center;}
+  .main{padding:28px 0 32px;display:flex;justify-content:center;}
+  .col{width:680px;} .wide{width:920px;}
+  .cap{margin:0 0 10px;font:600 12px/1.4 var(--sans);color:var(--ink-3);}
+  .note{margin:18px 0 0;font-size:12px;color:var(--ink-3);}
+  .sent{display:flex;gap:6px;align-items:center;font-size:var(--fs-meta);color:var(--ink-2);margin:14px 0 8px;}
+  .map{border:1px solid var(--line);border-radius:var(--r-md);background:var(--panel);}
+  .map svg{display:block;width:100%;height:auto;}
+  .map text{font-family:var(--sans);fill:var(--ink);}
+  .n{fill:var(--bg);stroke:var(--line-2);} .n.ask{stroke:var(--amber-ink);} .n.fail{stroke:var(--red);}
+  .t{font-size:13px;font-weight:600;} .s{font-size:11px;fill:var(--ink-2)!important;} .s.ask{fill:var(--amber-ink)!important;} .s.fail{fill:var(--red-ink,var(--red))!important;}
+  .w{fill:none;stroke:var(--ink-3);}
+  .o{fill:none;stroke:var(--line-2);stroke-dasharray:5 4;} .on{fill:color-mix(in srgb,var(--ink) 4%,transparent);stroke:var(--ink-2);stroke-dasharray:none;}
+  .ol{font-size:12px;font-weight:600;fill:var(--ink-2)!important;} .ol.pick{fill:var(--ink)!important;}
+  .dim{opacity:.32;}
+</style></head>
+<body><div id="m"></div>
+<script src="../../prototype/components.js"></script>
+<script>
+  const R = window.RailUI;
+  const pj = (tone) => R.kindMark({ kind: 'project', tone: tone || 'idle' }), ws = (tone) => R.kindMark({ kind: 'workspace', tone: tone || 'idle' });
+  const row = (title, mark, end, cur = false) => R.listRow({ title, mark, endText: end, open: { 'data-x': title }, current: cur });
+  const bar = (cur, adv = true) => `<h1>${R.icon('nav-projects', 18)} Projects</h1>${R.list({ groups: [
+    { title: 'Needs you', rows: [row('web-app', pj('ask'), 'Diverged'), row('legacy-billing', pj('fail'), 'Missing')] },
+    { title: 'Projects', rows: [row('billing-api', pj(), 'Behind 3'), row('worca-cc', pj(), 'Up to date'), row('docs-site', pj(), 'A folder')] },
+    ...(adv ? [{ title: 'Workspaces', rows: [row('Web shop', ws(), '5', cur === 'web'), row('IoT SP Platform', ws(), '3'), row('Legacy billing', ws(), '2')] }] : [])] })}`;
+  const chatBar = `<h1>${R.icon('nav-chat', 18)} Chat</h1>${R.list({ groups: [{ title: 'Today', rows: [row('Export invoices from the shop', R.kindMark({ kind: 'chat' }), '14:40', true), row('Billing CSV export', R.kindMark({ kind: 'chat', tone: 'ask' }), '14:32')] }] })}`;
+  const pick = (t) => R.sentencePicker({ id: t, text: t, items: [], chevron: R.icon('chevron', 10) });
+  const you = (t) => `<div style="display:flex;justify-content:flex-end;margin:0 0 14px"><div style="background:var(--field);border-radius:var(--r-md);padding:8px 12px">${t}</div></div>`;
+  const suggest = R.changeProposal({ kind: 'Workspace', title: 'web-app and billing-api work together', why: 'This task touches both, and web-app calls billing-api in 14 places. Kept together, every task here knows how they fit and changes them in the right order.', rows: [{ name: 'It would hold', before: '', after: 'web-app, billing-api' }, { name: 'Worca reads them', before: '', after: 'about 3 minutes, about $0.40, changes nothing' }], actions: [{ label: 'Keep them together', kind: 'primary' }, { label: 'Just this task', kind: 'quiet' }] });
+  const f1 = `<div class="col convo-col" style="margin:0"><p class="cap">1 · A workspace comes from use: Worca suggests it when a task needs it</p>${you('Add a tax line to invoices in the shop and in billing')}${suggest}
+    <p class="note">Mock. Shown once per set of projects, only when a task touches two that look connected; Just this task runs it without keeping anything, and it does not ask again for those two. No one has to know the word first; asking for a workspace in a chat still works. It names the cost before it scans.</p></div>`;
+  const node = (x, y, t, s, tone = '', cls = '') => `<g class="${cls}"><rect class="n ${tone}" x="${x}" y="${y}" width="150" height="48" rx="4"/><text class="t" x="${x + 12}" y="${y + 20}">${t}</text><text class="s ${tone}" x="${x + 12}" y="${y + 37}">${s}</text></g>`;
+  const line = (d, cls = '') => `<path class="w ${cls}" d="${d}"/>`;
+  const outline = (x, y, w, h, name, on, cls = '') => `<rect class="o ${on ? 'on' : ''} ${cls}" x="${x}" y="${y}" width="${w}" height="${h}" rx="10"/><text class="ol ${on ? 'pick' : ''} ${cls}" x="${name.startsWith('Legacy') ? x + w - 110 : x + 14}" y="${y + 22}">${name}</text>`;
+  const mapOf = (pickWeb) => { const d = pickWeb ? 'dim' : '';
+    return `<div class="map"><svg viewBox="0 0 1000 490" role="img" aria-label="Your projects and how they fit together">
+      ${outline(30, 30, 560, 290, 'Web shop · 5 projects', pickWeb)}${outline(370, 225, 370, 165, 'Legacy billing · 2', false, d)}${outline(770, 30, 200, 360, 'IoT SP Platform · 3', false, d)}
+      ${line('M210 104H330')}${line('M405 128V170')}${line('M135 128V210')}${line('M480 110H520V250')}${line('M610 290H570', d)}${line('M860 128V190', d)}${line('M860 290V238', d)}
+      ${node(60, 80, 'web-app', 'Diverged', 'ask')}${node(330, 80, 'payments-api', 'Up to date')}${node(330, 170, 'email-service', 'Up to date')}${node(60, 210, 'design-kit', 'Up to date')}${node(420, 250, 'billing-api', 'Behind 3')}
+      ${node(610, 300, 'legacy-billing', 'Missing', 'fail', d)}${node(785, 80, 'ingest-gateway', 'Up to date', '', d)}${node(785, 190, 'telemetry-db', 'Up to date', '', d)}${node(785, 290, 'ops-dashboard', 'Up to date', '', d)}
+      <text class="ol ${d}" x="44" y="424">Not in a workspace</text>${node(44, 432, 'worca-cc', 'Up to date', '', d)}${node(214, 432, 'docs-site', 'A folder', '', d)}
+    </svg></div>`; };
+  // chat first: every page ends with the composer; the manual way is second and quiet, as on Workflows
+  const dock = (PH) => `<div style="margin:14px 0 0">${R.composer({ value: '', placeholder: PH, sentence: '', tools: R.button({ label: 'Add', kind: 'quiet', iconOnly: true, icon: R.icon('plus', 15) }), send: R.button({ label: 'Send', kind: 'primary', iconOnly: true, icon: R.icon('up', 14) }) })}</div>`;
+  const hand = (...l) => `<div style="display:flex;gap:6px;margin:10px 0 0">${l.map((t) => R.button({ label: t, kind: 'quiet' })).join('')}</div>`;
+  const more = R.moreMenu({ id: 'm', label: 'More', icon: R.icon('more', 16), open: false, items: [] });
+  const f2 = `<div class="wide"><p class="cap">2 · Advanced and Expert: the Projects home is one map; a workspace is an outline around a part of it</p>${R.placeHead({ title: 'Your projects', facts: '11 projects · 3 workspaces', mark: pj('ask'), word: '2 need you', why: 'web-app has moved apart from origin; legacy-billing is missing', action: R.button({ label: 'Open web-app' }), menu: more })}
+    <div class="sent">Showing ${pick('the map')}</div>${mapOf(false)}${hand('Add a project by hand', 'New workspace by hand')}${dock('Add a project, group some, or ask about them…')}
+    <p class="note">Mock. Lines are the links Worca has read, inside each workspace it has scanned; a project outside any workspace stands alone until it joins one. A project in two workspaces sits where they overlap. A project opens its page; an outline opens its workspace. The chat is the main way to add and group; by hand stays, quiet, as on Workflows. Worca draws it; Auto-align, zoom and Fit as on a workflow's canvas when it grows.</p></div>`;
+  const f3 = `<div class="wide"><p class="cap">3 · A workspace picked: its part lights, the rest steps back; its page goes on below the map</p>${R.placeHead({ title: 'Web shop', facts: '5 projects that work together · its map is from yesterday', mark: ws('act'), word: '1 question for you', why: 'One project has moved apart', action: R.button({ label: 'Change it in a chat' }) + R.button({ label: 'Edit by hand', kind: 'quiet' }), menu: more })}<div class="sent">Showing ${pick('the map')}</div>${mapOf(true)}${dock('Ask about Web shop, or change it…')}
+    <p class="note">Mock. The same map, the same place: you never lose the whole. Under it, as in the last mock, the question, the words, the order a change goes in. Change it in a chat leads; Edit by hand is the manual way: drag a project into its outline or out, rename, remove, each a draft until saved.</p></div>`;
+  const rowsS = [['web-app', pj('ask'), 'Diverged · 2 commits here, 3 on origin'], ['legacy-billing', pj('fail'), 'Missing on disk'], ['billing-api', pj(), 'Behind by 3'], ['worca-cc', pj(), 'Up to date'], ['docs-site', pj(), 'A folder']];
+  const f4 = `<div class="col convo-col" style="margin:0"><p class="cap">4 · Simple: the list, no map, no workspaces</p>${R.placeHead({ title: 'Your projects', facts: '5 projects' })}<div class="sp" style="height:10px"></div>${R.list({ groups: [{ rows: rowsS.map(([t, m, s]) => R.listRow({ title: t, meta: s, mark: m, open: {} })) }] })}${hand('Add a project by hand')}${dock('Add a project, or ask about one…')}</div>`;
+  const fr = (b, x) => `<div class="fr"><aside class="bar pz-app rail-page">${b}</aside><main class="main">${x}</main></div>`;
+  document.getElementById('m').innerHTML = fr(chatBar, f1) + fr(bar(''), f2) + fr(bar('web'), f3) + fr(bar('', false), f4);
+</script></body></html>

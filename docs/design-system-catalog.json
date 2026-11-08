@@ -1382,6 +1382,22 @@
   ],
   "logic": [
     {
+      "name": "What a toggle opens, moving",
+      "code": "ui/public/design-system/components/motion.mjs#watchFolds",
+      "needs": [
+        "a toggle (aria-expanded) that opens something in place, on a page that draws itself whole"
+      ],
+      "example": "watchFolds(document), once, in the shell"
+    },
+    {
+      "name": "Finding a toggle after a redraw",
+      "code": "ui/public/design-system/components/motion.mjs#foldKey",
+      "needs": [
+        "watchFolds finding the same toggle once its page has drawn itself again"
+      ],
+      "example": "foldKey(toggle)"
+    },
+    {
       "name": "The step a stage is on",
       "code": "ui/public/design-system/components/kind-mark.mjs#stageStep",
       "needs": [

@@ -850,6 +850,19 @@ test('listController: every period but Today starts folded; the one holding your
   assert.deepEqual(shown(), ['a', 'b', 'c'], 'opened, it shows');
   root.remove();
 });
+test('watchFolds: opening animates the new part; closing fades a copy that then goes (motion.fold)', () => {
+  const w = new JSDOM('<body><div id="r"></div></body>', { pretendToBeVisual: true }).window, r = w.document.getElementById('r'); let open = false; const seen = [];
+  w.Element.prototype.getBoundingClientRect = () => ({ height: 40 });
+  w.Element.prototype.animate = function (k) { seen.push([this.className, k[0].opacity]); const a = {}; this._a = a; return a; };
+  const draw = () => { r.innerHTML = `<article class="task-card"><div class="tc-foot"><button data-t="1" aria-expanded="${open}">x</button></div>${open ? '<div class="tc-stream">s</div>' : ''}</article>`; };
+  draw(); r.addEventListener('click', (e) => { if (e.target.closest('[data-t]')) { open = !open; draw(); } });
+  C.watchFolds(r, { win: w });
+  r.querySelector('[data-t]').click(); assert.deepEqual(seen[0], ['tc-stream', 0], 'opens from nothing');
+  seen.length = 0; r.querySelector('[data-t]').click(); const g = r.querySelector('.tc-stream');
+  assert.ok(g && g.getAttribute('aria-hidden') === 'true', 'a copy stands in while it closes'); assert.deepEqual(seen[0], ['tc-stream', 1]);
+  g._a.onfinish(); assert.equal(r.querySelector('.tc-stream'), null, 'and goes');
+  assert.equal(C.foldKey(r.querySelector('[data-t]')), '[data-t="1"][aria-expanded]');
+});
 test('draftBar: a draft, its changes, that the saved one still runs, Discard and Save (rail.drafts)', () => {
   const d = dom(C.draftBar({ changes: 2, hooks: { save: { 'data-s': '' }, discard: { 'data-d': '' } } }));
   assert.equal(d.getAttribute('role'), 'status'); assert.match(d.textContent, /Draft/); assert.match(d.textContent, /2 changes · tasks still run the saved one/);

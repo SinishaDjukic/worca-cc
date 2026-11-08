@@ -1,0 +1,66 @@
+<!doctype html>
+<!-- Mock (Wave 3, second pass): Projects and Workspaces as supporting scope (Emil, 8 Nov: integrated into Chat, more
+     supporting, like tasks and schedules). 1: the one scope picker in the composer, a project or a workspace; a project's
+     trouble comes to the chat that runs on it. 2: a project's page: its state, what runs on it, its settings as sentences.
+     3: a workspace's page: told in plain words, its map, its links to confirm, a task across it in change order. Library:
+     Composer, SentencePicker, CompactMenu, ChangeProposal, PlaceHead, ListRow, SettingsRow. Render: node
+     plans/rail/mocks/wave-3/render.mjs scope 1280 -->
+<html lang="en"><head><meta charset="utf-8"><title>Projects and Workspaces</title>
+<link rel="stylesheet" href="../../prototype/app.css">
+<link rel="stylesheet" href="../../prototype/design-system/rail-look.css">
+<link rel="stylesheet" href="../../prototype/design-system/rail.css">
+<link rel="stylesheet" href="../../prototype/shell/shell.css">
+<style>
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);}
+  #m{width:1280px;}
+  .fr{display:grid;grid-template-columns:280px 1fr;min-height:640px;border-bottom:1px solid var(--line);}
+  .bar{background:var(--side,var(--panel));border-right:1px solid var(--line);padding:16px 12px;box-sizing:border-box;}
+  .bar h1{margin:4px 8px 14px;font:600 15px/1.2 var(--sans);display:flex;gap:8px;align-items:center;}
+  .main{padding:28px 0 36px;display:flex;justify-content:center;}
+  .col{width:680px;}
+  .cap{margin:0 0 10px;font:600 12px/1.4 var(--sans);color:var(--ink-3);}
+  .note{margin:20px 0 0;font-size:12px;color:var(--ink-3);}
+  .pop{position:relative;margin:0 0 8px 150px;width:320px;}
+  .sp{height:14px;}
+  .map{position:relative;margin:14px -130px 10px;border:1px solid var(--line);border-radius:var(--r-md);background:var(--panel);}
+  .map svg{display:block;width:100%;height:auto;}
+  .map text{font-family:var(--sans);fill:var(--ink);} .map .m{fill:var(--ink-2);font-size:11px;} .map .n{fill:var(--bg);stroke:var(--line-2);} .map .w{fill:none;stroke:var(--ink-3);} .map .q{fill:none;stroke:var(--amber-ink);stroke-dasharray:3 3;} .map .l{fill:var(--ink-2);font-size:11px;} .map .la{fill:var(--amber-ink);font-size:11px;}
+  .order{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:var(--fs-body);margin:6px 0 2px;} .order i{font-style:normal;color:var(--ink-3);}
+</style></head>
+<body><div id="m"></div>
+<script src="../../prototype/components.js"></script>
+<script>
+  const R = window.RailUI;
+  const pj = (tone) => R.kindMark({ kind: 'project', tone: tone || 'idle' }), ws = (tone) => R.kindMark({ kind: 'workspace', tone: tone || 'idle' });
+  const row = (title, mark, end, cur = false, meta = '') => R.listRow({ title, meta, mark, endText: end, open: { 'data-x': title }, current: cur });
+  const pick = (t) => R.sentencePicker({ id: t, text: t, items: [], chevron: R.icon('chevron', 10) });
+  const chatBar = `<h1>${R.icon('nav-chat', 18)} Chat</h1>${R.list({ groups: [
+    { title: 'billing-api', rows: [row('Billing CSV export', R.kindMark({ kind: 'chat', tone: 'ask' }), '14:32'), row('Retry on 502', R.kindMark({ kind: 'chat' }), '11:20')] },
+    { title: 'web-app', rows: [row('Checkout redesign', R.kindMark({ kind: 'chat', tone: 'ask' }), '13:05', true), row('Fonts on Safari', R.kindMark({ kind: 'chat' }), 'Oct 2')] },
+    { title: 'Web shop · a workspace', rows: [row('Add tax to the receipts', R.kindMark({ kind: 'chat' }), '10:40')] }] })}`;
+  const menu = R.compactMenu({ label: 'Where it runs', items: [{ header: 'Projects' }, { id: 'a', text: 'billing-api', hint: 'Behind 3' }, { id: 'b', text: 'web-app', hint: 'Diverged', checked: true }, { id: 'c', text: 'docs-site', hint: 'A folder' }, { sep: true }, { header: 'Workspaces · projects that work together' }, { id: 'd', text: 'Web shop', hint: '4 projects' }, { id: 'e', text: 'IoT SP Platform', hint: '5 projects' }, { sep: true }, { id: 'f', text: 'Add a project…', help: 'A folder, a repository or a new one' }] });
+  const trouble = R.changeProposal({ kind: 'Project', title: 'web-app has moved apart from origin', why: 'Tasks here would start from an old base.', rows: [{ name: 'Only here', before: '', after: 'a1b2c3 Fix rounding · d4e5f6 Add retry' }, { name: 'Only on origin', before: '', after: '9f8e7d Bump deps and 2 more' }, { name: 'Reconcile', before: '', after: 'Worca merges origin into your branch and shows you first' }, { name: 'Start from origin', before: '', after: 'This task starts from origin; your 2 commits stay on your branch' }], actions: [{ label: 'Ask Worca to reconcile', kind: 'primary' }, { label: 'Start from origin', kind: 'quiet' }] });
+  const composer = R.composer({ value: '', placeholder: 'What should the task do?', sentence: `<span class="tp-sentence">Task on ${pick('web-app')} with ${pick('Default')} on ${pick('Opus 5.5')}</span>`, tools: R.button({ label: 'Add', kind: 'quiet', iconOnly: true, icon: R.icon('plus', 15) }), send: R.button({ label: 'Continue', kind: 'primary' }) });
+  const f1 = `<div class="col convo-col" style="margin:0"><p class="cap">1 · In a chat: one picker for where it runs; a project's trouble comes to the chat that runs on it</p>${R.youTurn ? '' : ''}${trouble}<div class="sp"></div><div class="pop">${menu}</div>${composer}
+    <p class="note">Mock. The bar can group chats by project (its "by"), and a workspace is a group like a project. The composer's "on" picks a project or, from Advanced, a workspace, in one menu. When a project moves apart, goes missing or falls behind, the chat about to run on it says so as a card, with one way forward: nobody has to go and look at Projects.</p></div>`;
+  // one entry, one bar: what needs you, projects, and from Advanced workspaces, each its own row (a project can be in several, so nothing nests)
+  const prBar = (cur) => `<h1>${R.icon('nav-projects', 18)} Projects</h1>${R.list({ groups: [
+    { title: 'Needs you', rows: [row('web-app', pj('ask'), 'Diverged', cur === 'web-app'), row('legacy-billing', pj('fail'), 'Missing'), row('Web shop', ws('act'), '1 question', cur === 'web-shop')] },
+    { title: 'Projects', rows: [row('billing-api', pj(), 'Behind 3', cur === 'billing-api'), row('worca-cc', pj(), 'Up to date'), row('docs-site', pj(), 'A folder')] },
+    { title: 'Workspaces', rows: [row('IoT SP Platform', ws(), '5 projects'), row('Legacy billing', ws(), '2 projects')] }] })}`;
+  const set = (n, s, from) => R.settingsRow({ name: n, sentence: `${s}<span style="color:var(--ink-3)"> · ${from}</span>` });
+  const f2 = `<div class="col convo-col" style="margin:0"><p class="cap">2 · A project: how it stands, what runs on it, its own settings</p>${R.placeHead({ title: 'billing-api', facts: '~/src/billing-api · main into origin/main · checked 1 min ago', mark: pj(), word: 'Behind by 3', why: 'Only your copy is older; new tasks start from origin', action: R.button({ label: 'Sync', kind: 'quiet', attrs: { title: 'Fast-forwards main by 3 commits: no conflicts' } }), menu: R.moreMenu({ id: 'a', label: 'More', icon: R.icon('more', 16), open: false, items: [] }) })}
+    ${R.list({ groups: [{ title: 'On it now · 2', rows: [R.listRow({ title: 'Add CSV export to billing', meta: 'Billing CSV export · Review · asks you', mark: R.kindMark({ kind: 'task', tone: 'ask', stage: 2 }), open: {} }), R.listRow({ title: 'Nightly export check', meta: 'Repeats at 02:00', mark: R.kindMark({ kind: 'schedule' }), open: {} })] }] })}
+    ${R.settingsSection({ title: 'Its settings', meta: 'Yours unless it says otherwise; each can go back to yours.', rows: set('Pull requests', `When a task finishes ${pick('create a draft PR')}`, 'only here') + set('Cost', `A task pauses at ${pick('$50')}`, 'as in Settings') + set('Workflow', `Its tasks run ${pick('Default')}`, 'as in Settings') + set('Memory', `Its tasks read ${pick('its own and the team’s notes')}`, 'only here') })}
+    <p class="note">Mock. A project is a view: how it stands with its one way forward, what runs on it (each row leads to its card in its chat), what it costs (Insights), and its settings, each saying where its value comes from, every one dev has, with Back to yours when it differs. Behind is no alarm: only moved-apart and missing are, and each has its way forward (Missing: Find it, or Remove). Adding one is a chat card first; Add by hand stays as the second way, as on Workflows. One menu entry, Projects; its bar holds what needs you, the projects and, from Advanced, the workspaces, each its own row, since a project can be in several.</p></div>`;
+  const node = (x, y, t, m) => `<rect class="n" x="${x}" y="${y}" width="170" height="52" rx="4"/><text x="${x + 12}" y="${y + 22}" font-size="13" font-weight="600">${t}</text><text class="m" x="${x + 12}" y="${y + 40}">${m}</text>`;
+  const map = `<div class="map"><svg viewBox="0 0 940 250" role="img" aria-label="How the projects connect">${node(40, 40, 'web-app', 'the shop front')}${node(385, 40, 'payments-api', 'takes the money')}${node(730, 40, 'email-service', 'mails the receipts')}${node(385, 165, 'design-kit', 'shared components')}
+    <path class="w" d="M210 66H385"/><text class="l" x="262" y="58">calls its REST API</text><path class="q" d="M555 66H730"/><text class="la" x="580" y="58">a queue · confirm?</text><path class="w" d="M125 92V191H385"/><text class="l" x="170" y="184">builds on this package</text></svg></div>`;
+  const f3 = `<div class="col convo-col" style="margin:0"><p class="cap">3 · A workspace: what it is, how its projects connect, what to confirm</p>${R.placeHead({ title: 'Web shop', facts: '4 projects that work together · 12 tasks · its map is from yesterday, 2 commits old', mark: ws('act'), word: '1 question for you', why: 'All 4 projects up to date', action: R.button({ label: 'Change it in a chat' }) + R.button({ label: 'Edit by hand', kind: 'quiet' }), menu: R.moreMenu({ id: 'b', label: 'More', icon: R.icon('more', 16), open: false, items: [] }) })}
+    ${R.turnRow({ mark: R.kindMark({ kind: 'chat', tone: 'ask', size: 16 }), text: '<b>Does payments-api send receipts to email-service through a queue?</b> Fairly sure (72%) · ' + R.textLink({ label: 'payments/receipts.ts:41', attrs: {} }) + ' · ' + R.textLink({ label: 'queue/send.ts:12', attrs: {} }), end: R.button({ label: 'Yes' }) + R.button({ label: 'No', kind: 'quiet' }) })}
+    <p style="margin:14px 0 0;line-height:1.55">A shop front that calls a payments service, which mails the receipts; both are built with one design kit. Worca tells every task here how they fit together.</p>
+    ${map}
+    <div class="sp"></div><p style="margin:0;font:600 var(--fs-body)/1.3 var(--sans)">A change across it goes in this order</p><div class="order"><b>design-kit</b><i>then</i><b>email-service</b><i>then</i><b>payments-api</b><i>then</i><b>web-app</b></div><p style="margin:2px 0 0;font-size:var(--fs-meta);color:var(--ink-2)">What is used goes before what uses it. email-service before payments-api rests on the question above.</p>
+    <p class="note">Mock. Told in words first, then the map, wider than the reading column as the workflow graph is. In Simple the map's links read as sentences; from Advanced it is the drawn map (dev's Map view in Rail's skin when built). What the scan was unsure of comes first as yes-or-no questions (many after a first scan: Confirm all that are sure). Every link on the map opens under it: its evidence, how sure, Yes or No in place, so a wrong one is one click; the number shows from Expert. A task on a workspace splits per project in the order shown, each its own card. Change it in a chat leads and Edit by hand is the manual way; Scan again, Sync and its models sit in ⋯.</p></div>`;
+  document.getElementById('m').innerHTML = `<div class="fr"><aside class="bar pz-app rail-page">${chatBar}</aside><main class="main">${f1}</main></div><div class="fr"><aside class="bar pz-app rail-page">${prBar('billing-api')}</aside><main class="main">${f2}</main></div><div class="fr"><aside class="bar pz-app rail-page">${prBar('web-shop')}</aside><main class="main">${f3}</main></div>`;
+</script></body></html>

@@ -11,7 +11,7 @@ export { figure, figures, figureBreakdown } from './figures.mjs';
 export { toast, errorToast, toastUndo } from './toast.mjs';
 export { emptyState } from './empty-state.mjs';
 export { textLink, documentLink } from './text-link.mjs';
-export { morph, land } from './motion.mjs';
+export { morph, land, watchFolds, foldKey } from './motion.mjs';
 export { sentencePicker, wordPicker, switchButton, changedDot, settingsRow, settingsGroup, settingsSection } from './settings-row.mjs';
 export { listRow, list, moreMenu } from './list.mjs';
 export { sideMenu, search, searchResults, backLink } from './side-menu.mjs';
