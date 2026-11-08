@@ -709,7 +709,7 @@
       el.classList.remove('is-flash'); void el.offsetWidth; el.classList.add('is-flash');
       return true;
     },
-    show: (id) => { setTimeout(() => settle(id), 0); if (id !== chatId) { opened = new Set(); hover = null; menu = ''; comp = { ...fresh(), project: id ? data().chats.find((c) => c.id === id)?.project || 'billing-api' : 'billing-api' }; } chatId = id || ''; paint(); if (id) { const box = root.querySelector('.convo-scroll'); if (box) { box.scrollTop = 0; paintTimeline(); } } },
+    show: (id) => { setTimeout(() => settle(id), 0); if (id !== chatId) { opened = new Set(); hover = null; menu = ''; comp = { ...fresh(), project: id ? data().chats.find((c) => c.id === id)?.project || 'No project' : 'billing-api' }; } chatId = id || ''; paint(); if (id) { const box = root.querySelector('.convo-scroll'); if (box) { box.scrollTop = 0; paintTimeline(); } } },
     start: (mode, text) => { chatId = ''; comp = { ...fresh(mode), text: text || '' }; if (!side) window.RailShell.go('chat'); paint(); root.querySelector('[data-composer-t]')?.focus(); },
   };
   mounted.push(api);

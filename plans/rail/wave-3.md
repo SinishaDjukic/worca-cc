@@ -173,3 +173,16 @@ command pattern (D1, 43, 60), scripts, the agent editor, C4 and the code editor 
 - StageBar: finished stages quiet, only the stage it is on in its state's colour (look.md); components.md follows.
 - Simple mode: Tasks shows in Simple, Schedules from Advanced; a locked place always says what it needs and its way on.
 - Names: Vitals → **Now**, Track a task → **Follow a task**, Review gate → **Waits for your OK**.
+
+## Progress (8 Nov, autonomous run while Emil is away)
+
+Built, each through every gate (sweep, DS check, the new colour gate, both click-throughs) and the full suite:
+- 0.0 no dead ends · 1.0 the first minutes (Getting started, Add project at dev's functions) · 0.1 colour and the colour
+  gate · 0.2 one card language · 0.3 the task page reads as its card · 0.8 the phone composer.
+- 1.1 dev's New run functions as Rail rows (PR, watch, review rounds, tools, a schedule's rules, Save as preset).
+- 1.2 in part: a decision's reason on its card, Show its stages from the task itself, one name per action and task,
+  schedules in Pulse, one fill while a confirm asks.
+- 0.4 in part: newest first in a day, menus that show whole choices, no project chosen for you.
+
+Persona round (before the last fixes): new user 5.9, daily user 6.1. Next: a fresh round on this build, then 1.2's
+remaining cards (route, requirements step, form questions, workflow at parity), 0.4–0.7, and Phases 2–5.

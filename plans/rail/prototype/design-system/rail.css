@@ -1533,3 +1533,7 @@ canvas.dot-orb[data-orb]{border-radius:50%;outline:1px solid light-dark(var(--li
 
 /* narrow.stack: on a phone the sentence takes its own line, each word with its picker; + and send sit under it on the same edge */
 @media (max-width: 520px){ .composer-f{flex-wrap:wrap;row-gap:8px;} .composer-f > .composer-s{order:-1;flex:1 0 100%;} .composer-f > .composer-send{margin-left:auto;} }
+
+/* a picker's choice reads whole: its menu grows to its longest choice (up to the window), never cutting it with an ellipsis */
+.spick-menu{min-width:max-content;max-width:min(420px,calc(100vw - 16px));}
+.spick-menu .menu-item > .mi-l{overflow:visible;text-overflow:clip;white-space:normal;}
