@@ -307,3 +307,10 @@ Open:
 - The daily user wants a step's model and effort editable on the view (conflicts with: pages are views, defined in a chat).
 - The new user reads the view's wiring as an engineer's diagram: a plain view mode in the renderer (a step's name, model
   and one line, wires without port labels) is real work in view.mjs; the mock only hides words.
+
+Decided (Emil, 8 Nov):
+- A step's model and effort change in place on a workflow's page: a manual edit, no conflict with defining in a chat.
+  From Advanced (per-agent model and effort is Advanced, docs/ui-levels.md); Simple reads them.
+- Simple draws a workflow plainly (its steps left to right, the loop drawn back in words); Advanced and Expert show the
+  real graph by default and keep the plain drawing one pick away (Showing the graph / the steps), since raising the mode
+  never removes anything. Edit by hand is Expert.
