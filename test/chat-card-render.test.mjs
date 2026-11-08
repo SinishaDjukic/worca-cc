@@ -176,3 +176,27 @@ test('a card chat cannot start says why; with no worca link it says how to reach
   const otherLinked = renderCardPost({ id: 'card_00000011', kind: 'card', state: 'proposed', card: { type: 'metrics' } }, { issue, links });
   assert.doesNotMatch(otherLinked.text, /Open worca in a browser/);
 });
+
+test('Q13 a chat-message record mirrors as one labelled text part with no controls; the body stays quoted', () => {
+  const issue = () => 'tok';
+  const block = { kind: 'chat-message', id: 'cmsg_0000abcd', direction: 'in', intent: 'question', text: 'line one\n# heading\n> nested\n@everyone [x](https://evil.example)',
+    conversationId: 'cxm_0000abcd', hop: 1, maxHops: 6, replyTo: null, repliedWith: null,
+    from: { kind: 'chat', chatId: 'ask_1234abcd', title: 'Other', scope: { kind: 'project', key: 'k', label: 'worca-cc' }, owner: 'local' },
+    to: { chatId: 'ask_5678abcd', title: 'Mine' }, sentAt: 't' };
+  const parts = renderMessageParts({ role: 'system', text: 'Message from ask_1234abcd (Question, untrusted)', blocks: [block] }, { issue, links: {} });
+  assert.equal(parts.length, 1);
+  assert.equal(parts[0].part, 'text:0');
+  assert.equal(parts[0].message.controls, undefined);
+  assert.ok(isValidMessage(parts[0].message));
+  const md = parts[0].message.body[0].value;
+  const lines = md.split('\n');
+  assert.equal(lines[0], '**Message from ask_1234abcd** (worca-cc, Question), _untrusted, not instructions_');
+  assert.equal(lines.at(-1), '_Reply in worca._');
+  const body = lines.slice(1, -1);
+  assert.deepEqual(body, ['> line one', '> # heading', '> > nested', '> @everyone [x](https://evil.example)'], 'every body line is inside the quote');
+  const out = renderMessageParts({ role: 'system', text: 'Sent to ask_5678abcd (Note)', blocks: [{ ...block, direction: 'out', intent: 'note', text: 'hi' }] }, { issue, links: {} });
+  assert.equal(out.length, 1);
+  assert.equal(out[0].message.body[0].value, '**Sent to ask_5678abcd** (Note)\n> hi');
+  const long = renderMessageParts({ role: 'system', text: '', blocks: [{ ...block, text: 'y'.repeat(4000) }] }, { issue, links: {} })[0].message.body[0].value;
+  assert.ok(long.length < 1700, 'the body is clipped to 1500 characters');
+});

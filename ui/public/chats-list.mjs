@@ -272,6 +272,8 @@ export function chatRowMenuItems(r, { mac = false, on }) {
   return [
     { label: 'Select', key: 'toggle', hint: k('Space'), onSelect: () => on.select(r) },
     { label: 'Rename…', key: 'rename', hint: k('R'), onSelect: () => on.rename(r) },
+    // Cross-chat messaging D21: no key; the full id is what send_to_chat needs.
+    { label: 'Copy chat id', key: 'copy-id', onSelect: () => on.copyId(r) },
     { label: r.pinned ? 'Unpin' : 'Pin', key: 'pin', hint: k('P'), onSelect: () => on.pin(r) },
     // #948 s3: the Runs words and keys (app.js runs ⋯): Add to group… G, Remove from group ⇧G.
     { label: 'Add to group…', key: 'add-to-group', hint: k('G'), onSelect: () => on.addToGroup([r]) },

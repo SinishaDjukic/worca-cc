@@ -22,7 +22,7 @@ import { WORKSPACE_SCAN_DEFAULT_MODELS } from '../factory-models.mjs';
 export const SETTING_EXCLUSIONS = Object.freeze([
   { match: ['root', 'projectsRoot'], what: 'Worca and projects root folders', why: 'folders widen what can be browsed' },
   { match: ['actions'], what: 'Actions (editor, terminal, ports, checkouts)', why: 'they hold commands run as the server user — the actions card changes them' },
-  { match: ['askWeb', 'chat.scriptTools'], what: "Chat web access and the chat's script tools", why: "the chat's own powers are only the user's to grant" },
+  { match: ['askWeb', 'chat.scriptTools', 'chat.crossChat'], what: "Chat web access, the chat's script tools and messages between chats", why: "the chat's own powers are only the user's to grant" },
   { match: ['chat.channels'], what: 'Chat channels', why: 'they send messages to another service' },
   { match: ['nightMode', 'nightModeToggle'], what: 'Away mode settings', why: 'Away mode keeps its own card (propose_away_mode_change) and switch (set_away_now)' },
   { match: ['providers', 'models', 'speech', 'credentials', 'mcp', 'plugins', 'marketplaces'], what: 'Providers, model catalog entries, speech, credentials, MCP servers and plugins', why: 'they hold keys and tokens, or run outside code' },

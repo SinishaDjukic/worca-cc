@@ -1098,8 +1098,9 @@ const CHAT_NOTIFY_EVENTS = ['done', 'error', 'question', 'paused', 'away', 'prWa
  * chat's "Create and run scripts" switch and defaults ON, so only a stored false ever
  * takes save_script / test_script away. `suggestions` is Ask Worca's next-prompt ghost text after
  * each reply (one cheap model call per reply), default ON as well. `summariseCommands` (#911, flag
- * commandSummaries) shows chat commands as one-line rows, default ON too.
- * @returns {{notify: Record<string, boolean>, channels: Record<string, {enabled: boolean}>, scriptTools: boolean, suggestions: boolean, summariseCommands: boolean}}
+ * commandSummaries) shows chat commands as one-line rows, default ON too. `crossChat` (cross-chat messaging D1) lets a
+ * chat's assistant message another chat, default OFF: only a stored true turns it on.
+ * @returns {{notify: Record<string, boolean>, channels: Record<string, {enabled: boolean}>, scriptTools: boolean, suggestions: boolean, summariseCommands: boolean, crossChat: boolean}}
  */
 export function chatPrefs() {
   const raw = readSettings().chat;
@@ -1113,14 +1114,14 @@ export function chatPrefs() {
   // `suggestions`: Ask Worca's next-prompt ghost text after each reply — default ON, only a stored false stops it.
   // `summariseCommands` (#911, flag commandSummaries): chat commands as one-line rows — default ON.
   return { notify, channels, scriptTools: chat.scriptTools !== false, suggestions: chat.suggestions !== false,
-    summariseCommands: chat.summariseCommands !== false };
+    summariseCommands: chat.summariseCommands !== false, crossChat: chat.crossChat === true };
 }
 
 /**
  * Merge-patch the chat prefs: {notify?: {done?, error?, question?, paused?, away?},
  * channels?: {"<plugin>/<id>"?: {enabled: boolean}}, scriptTools?: boolean, suggestions?: boolean,
- * summariseCommands?: boolean}.
- * Unknown notify keys and a non-boolean scriptTools / suggestions / summariseCommands are rejected (400 at the API layer);
+ * summariseCommands?: boolean, crossChat?: boolean}.
+ * Unknown notify keys and a non-boolean scriptTools / suggestions / summariseCommands / crossChat are rejected (400 at the API layer);
  * channels merge per key.
  */
 export async function setChatPrefs(patch = {}) {
@@ -1134,6 +1135,8 @@ export async function setChatPrefs(patch = {}) {
   if (hasSuggestions && typeof patch.suggestions !== 'boolean') throw new Error('chat suggestions must be true or false');
   const hasSummaries = Object.prototype.hasOwnProperty.call(patch, 'summariseCommands');
   if (hasSummaries && typeof patch.summariseCommands !== 'boolean') throw new Error('chat summariseCommands must be true or false');
+  const hasCrossChat = Object.prototype.hasOwnProperty.call(patch, 'crossChat');
+  if (hasCrossChat && typeof patch.crossChat !== 'boolean') throw new Error('chat crossChat must be true or false');
   const settings = readSettings();
   const cur = settings.chat && typeof settings.chat === 'object' ? settings.chat : {};
   settings.chat = {
@@ -1148,6 +1151,7 @@ export async function setChatPrefs(patch = {}) {
     ...(hasScriptTools ? { scriptTools: patch.scriptTools } : {}),
     ...(hasSuggestions ? { suggestions: patch.suggestions } : {}),
     ...(hasSummaries ? { summariseCommands: patch.summariseCommands } : {}),
+    ...(hasCrossChat ? { crossChat: patch.crossChat } : {}),
   };
   await persistSettings(settings);
   return chatPrefs();

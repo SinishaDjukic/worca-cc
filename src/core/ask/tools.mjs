@@ -412,6 +412,13 @@ const DRAFT_SCRIPT_PROPS = { displayName: SCHEMA.s('display name'), key: SCHEMA.
     properties: { clean: { type: 'array', items: { type: 'integer' } }, blocking: { type: 'array', items: { type: 'integer' } } } },
   cases: { type: 'array', maxItems: 32, items: { type: 'object', additionalProperties: true } } };
 
+/** Cross-chat messaging D22: the only tools a turn woken by another chat's message may list or call — read tools plus
+ *  send_to_chat. No web_fetch (an exfiltration path), no propose_*, nothing that writes. */
+export const CHAT_MESSAGE_EVENT_TOOLS = Object.freeze(['list_projects', 'list_branches', 'list_workflows', 'list_runs', 'get_run',
+  'get_run_progress', 'get_run_diff', 'list_run_artifacts', 'read_run_artifact', 'read_attachment', 'list_memory', 'read_memory',
+  'list_schedules', 'get_schedule', 'list_scripts', 'get_script', 'get_workflow', 'get_agent', 'list_models', 'read_file', 'grep',
+  'glob', 'send_to_chat']);
+
 /**
  * @param {object} deps  see tool-deps.mjs#defaultToolDeps for the real bundle
  * @returns {{list: () => Array<{name:string, description:string, inputSchema:object}>, call: (name:string, input:any) => Promise<any>}}
@@ -463,6 +470,9 @@ export function createAskTools(deps) {
   const composerMode = deps.askMode === 'composer';
   const COMPOSER_ALLOW = new Set(['get_canvas', 'edit_canvas', 'build_workflow', 'draft_agent', 'draft_script', 'get_agent', 'get_workflow',
     'list_projects', 'list_workflows', 'list_scripts', 'get_script', 'test_script', 'list_models', 'read_attachment', 'web_fetch', 'web_search', 'read_file', 'grep', 'glob']);
+  // Cross-chat messaging D22: a turn woken by another chat's message (ui/server.mjs startAskTurn, toolset 'chat-message' →
+  // askMode) offers ONLY CHAT_MESSAGE_EVENT_TOOLS — read tools plus send_to_chat — and call() refuses everything else.
+  const eventMode = deps.askMode === 'chat-message';
   // The two canvas tools are the Workflows chat's alone: an Ask chat's composer bundle (composer-deps.mjs) has no canvas.
   const CANVAS_TOOLS = new Set(['get_canvas', 'edit_canvas']);
   const composerOf = (tool) => {
@@ -1054,6 +1064,16 @@ export function createAskTools(deps) {
       inputSchema: SCHEMA.obj({ answer: SCHEMA.s('"choice" | "text"'), question: SCHEMA.s('one line (≤ 300 chars)'),
         options: { type: 'array', maxItems: 25, items: { type: 'object', properties: { id: { type: 'string' }, label: { type: 'string' }, description: { type: 'string' } }, required: ['id', 'label'] }, description: 'choice only: 2–25 options' },
         placeholder: SCHEMA.s('text only: hint shown in the answer box') }, ['answer', 'question']) }] : []),
+    // Cross-chat messaging (slice 1): only when the person turned messages between chats on (the bridge or the relay
+    // brings deps.chatMessages). The server knows the calling chat; the input never names it.
+    ...(deps.chatMessages ? [{ name: 'send_to_chat',
+      description: 'Send a note, a question or a hand-off to another of the user\'s chats. Name it in full with chatId (ask_ + 8 hex, e.g. one the user copied with "Copy chat id"), or answer a message this chat received with replyTo (its cmsg_ id; at most one reply per message, and chatId may then be left out). Give exactly one of chatId or replyTo. The target shows it as untrusted data and answers later, if at all, through a "[worca event] chat message" event in THIS chat — never in this call; never claim it replied until that event arrives. Returns {ok:true, messageId, conversationId, hop, maxHops, to, delivery} (delivery started | queued | failed) or {ok:false, code, error}: CHAT_MESSAGES_OFF, CHAT_MESSAGE_BAD_INPUT, CHAT_MESSAGE_BAD_TARGET, CHAT_MESSAGE_NOT_FOUND, CHAT_MESSAGE_REPLY_UNKNOWN, CHAT_MESSAGE_SELF, CHAT_MESSAGE_ARCHIVED, CHAT_MESSAGE_ALREADY_REPLIED, CHAT_MESSAGE_HOP_LIMIT (a conversation ends after 6 messages), CHAT_MESSAGE_RATE_LIMIT (6 a minute), CHAT_MESSAGE_TARGET_BUSY. Tell the user the error in its own words.',
+      inputSchema: SCHEMA.obj({
+        chatId: { type: 'string', pattern: '^ask_[0-9a-f]{8}$', description: 'the target chat, in full: ask_ + 8 hex' },
+        text: { type: 'string', minLength: 1, maxLength: 4000, description: 'the message' },
+        intent: { type: 'string', enum: ['note', 'question', 'handoff'], description: 'note (default) | question | handoff' },
+        replyTo: { type: 'string', pattern: '^cmsg_[0-9a-f]{8}$', description: 'answer this incoming message (its cmsg_ id) instead of naming chatId' },
+      }, ['text']) }] : []),
   ];
 
   const EMPTY_DIFF = () => ({ available: false, files: [], text: '', truncated: false, totalBytes: 0, nextOffset: 0 });
@@ -2224,6 +2244,10 @@ export function createAskTools(deps) {
       }
     },
     async propose_scope_switch(input) { if (!deps.scopeSwitch || typeof deps.scopeSwitch.validate !== 'function') throw new AskToolError('propose_scope_switch: unavailable'); return deps.scopeSwitch.validate(input && typeof input === 'object' ? input : {}); },
+    async send_to_chat(input) {
+      if (!deps.chatMessages || typeof deps.chatMessages.send !== 'function') throw new AskToolError('send_to_chat: unavailable');
+      try { return await deps.chatMessages.send(input); } catch { throw new AskToolError('Could not reach worca to send the message.'); }
+    },
     async ask_question(input) { if (!deps.chatQuestions || typeof deps.chatQuestions.validate !== 'function') throw new AskToolError('ask_question: unavailable'); return deps.chatQuestions.validate(input && typeof input === 'object' ? input : {}); },
     async list_diff_comments(input) {
       const row = await resolveRow(input, 'list_diff_comments');
@@ -3175,10 +3199,11 @@ export function createAskTools(deps) {
   };
 
   return {
-    list: () => defs.filter((d) => (!composerMode || COMPOSER_ALLOW.has(d.name)) && !(gitOff() && GIT_ONLY_ASK_TOOLS.includes(d.name))).map((d) => ({ ...d })),
+    list: () => defs.filter((d) => (!composerMode || COMPOSER_ALLOW.has(d.name)) && (!eventMode || CHAT_MESSAGE_EVENT_TOOLS.includes(d.name)) && !(gitOff() && GIT_ONLY_ASK_TOOLS.includes(d.name))).map((d) => ({ ...d })),
     async call(name, input) {
       if (gitOff() && GIT_ONLY_ASK_TOOLS.includes(name)) throw new AskToolError(`${name}: git is not installed on this machine`);
       if (composerMode && !COMPOSER_ALLOW.has(name)) throw new AskToolError(`${name}: not available in the Workflows chat`);
+      if (eventMode && !CHAT_MESSAGE_EVENT_TOOLS.includes(name)) throw new AskToolError(`${name}: not available while answering a message from another chat`);
       if (!composerMode && CANVAS_TOOLS.has(name)) throw new AskToolError(`${name}: only the Workflows view's chat edits a canvas`);
       const fn = Object.prototype.hasOwnProperty.call(handlers, name) ? handlers[name] : null;
       if (!fn) throw new AskToolError(`unknown tool: ${name}`);

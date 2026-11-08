@@ -36,6 +36,7 @@ import { notify } from './feedback.mjs';
 import { currentLevel, levelShows } from './ui-level.mjs';
 import { chatCardBuilder, composerAddons } from './chat/extensions.mjs';
 import { keepFocus } from './chat/keep-focus.mjs';
+import { buildChatMessage } from './chat/chat-message.mjs';
 import { flagOn } from './flags.mjs';
 import { mountChatsColumn } from './chats-column.mjs';
 import { CHATS_PAGE } from './chats-list.mjs';
@@ -2153,6 +2154,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       onRename: (r) => { void renameThread(r); }, onDelete: (r) => { void deleteThread({ id: r.id, title: r.title }); },
       onHelp: (opener) => openChatKeys(opener),
       flagOn: (k) => flagOn(k, doc), confirm: (o) => confirm(o), requestRefresh: () => scheduleThreadsRefresh(),
+      canCopyId: () => st.host !== 'dock',          // D21: the Chat page only, not the side column
       // #948 s3: Delete group removed these chats; the open one goes home, as a deleted chat does (deleteThread).
       onChatsGone: (ids) => {
         for (const id of ids) { if (readStoredThread() === id) storeThread(null); st.askedIn.delete(id); st.queues.delete(id); }
@@ -3532,6 +3534,19 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const pill = make('span', 'extra-pill ask-attachment-pill');
     pill.appendChild(make('span', 'extra-pill-name', b.name || '(attachment)'));
     return pill;
+  }
+
+  /** Cross-chat messaging: one chat-message record. Its chat id goes to the ref chips as plain text, as an answer's
+   *  bare ask_ id does: a chat this person can open becomes its chip, an unknown (deleted) chat keeps the id. */
+  function buildChatRecord(b) {
+    const rec = buildChatMessage(doc, b);
+    const head = rec.querySelector('.ask-chat-msg-head');
+    const chip = head && head.querySelector('a.ask-chat-msg-chip');
+    if (chip && chip.textContent) {
+      chip.replaceWith(doc.createTextNode(chip.textContent));
+      refChips.decorate(head, { live: false });
+    }
+    return rec;
   }
 
   function buildNotice(b) {
@@ -6952,8 +6967,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       }
     } else if (row.role === 'system') {
       // Notices and dividers — and a card worca posted out of turn (a PR fix run's progress card, ui/server.mjs askPrFixRun).
-      const shown = (row.blocks || []).filter((b) => b && (b.kind === 'notice' || b.kind === 'divider' || b.kind === 'card'));
-      if (shown.length) for (const b of shown) wrap.appendChild(b.kind === 'card' ? buildCard(b) : b.kind === 'divider' ? buildDivider(b) : buildNotice(b));
+      // Cross-chat messaging: a message from or to another chat is its own record (never the row's body-free text).
+      const shown = (row.blocks || []).filter((b) => b && (b.kind === 'notice' || b.kind === 'divider' || b.kind === 'card' || b.kind === 'chat-message'));
+      if (shown.length) for (const b of shown) wrap.appendChild(b.kind === 'chat-message' ? buildChatRecord(b) : b.kind === 'card' ? buildCard(b) : b.kind === 'divider' ? buildDivider(b) : buildNotice(b));
       else wrap.appendChild(buildNotice({ text: row.text }));
     } else {
       const activity = buildActivity(row);

@@ -254,3 +254,40 @@ test('ask-panel: New chat clicked while a send is in flight neither throws nor t
     process.off('unhandledRejection', onRej);
   }
 });
+
+// ── cross-chat messaging slice 1 (Q22): a system row holding a chat-message block, in the real panel ─────────────────
+test('Q22 a chat-message system row renders through buildChatMessage; an unknown chat keeps its id; a patched block shows Replied live', async () => {
+  const TID = 'ask_00000001';
+  const BLOCK = { kind: 'chat-message', id: 'cmsg_0000abcd', direction: 'in', intent: 'question', text: 'please look', conversationId: 'cxm_0000abcd',
+    hop: 1, maxHops: 6, replyTo: null, repliedWith: null,
+    from: { kind: 'chat', chatId: 'ask_1234abcd', title: 'Other', scope: { kind: 'none', key: null, label: 'No project' }, owner: 'local' },
+    to: { chatId: TID, title: 'T' }, sentAt: 't' };
+  const row = (b) => ({ id: 'askm_s0000001', threadId: TID, seq: 1, role: 'system', text: 'Message from ask_1234abcd (Question, untrusted)', blocks: [b], status: null, createdAt: 't' });
+  const resolves = [];
+  const ctx = makePanel({ fetchHandler: (url, opts) => {
+    const method = ((opts || {}).method || 'GET').toUpperCase();
+    if (url === `/api/ask/threads/${TID}` && method === 'GET') {
+      return { ok: true, status: 200, json: async () => ({ thread: { id: TID, title: 'T', createdAt: 't', updatedAt: 't', model: null, effort: null, sessionId: null, context: null, totals: {} },
+        messages: [row(BLOCK)], attachments: [], runLinks: [], worktrees: [], inFlight: null }) };
+    }
+    if (url === '/api/ask/refs/resolve') { resolves.push(JSON.parse(opts.body)); return { ok: true, status: 200, json: async () => ({ refs: {} }) }; }
+    return { ok: true, status: 200, json: async () => ({}) };
+  } });
+  ctx.storage.setItem('worca-cc.ask.thread', TID);
+  ctx.panel.open();
+  for (let i = 0; i < 8; i++) await ctx.tick();
+  ctx.flush();
+  const rec = ctx.doc.querySelector('.ask-msg-system .ask-chat-msg.ask-chat-msg-in');
+  assert.ok(rec, 'the record is built by buildChatMessage');
+  assert.match(rec.querySelector('.ask-chat-msg-untrusted').textContent, /Untrusted/);
+  assert.equal(ctx.doc.querySelector('.ask-msg-system .ask-notice'), null, 'no notice fallback for that row');
+  assert.match(rec.querySelector('.ask-chat-msg-head').textContent, /ask_1234abcd/, 'an unresolved chat keeps its plain id');
+  assert.ok(resolves.some((b) => b.refs.includes('chat:ask_1234abcd')), 'the ref chips were asked to resolve the sender');
+  assert.ok(!rec.querySelector('.ask-chat-msg-foot').textContent.includes('Replied'));
+  ctx.panel.pushServerFrame({ type: 'ask-message', threadId: TID, message: row({ ...BLOCK, repliedWith: 'cmsg_0000ffff' }) });
+  ctx.flush();
+  await ctx.tick();
+  ctx.flush();
+  assert.match(ctx.doc.querySelector('.ask-msg-system .ask-chat-msg-foot').textContent, /Replied/, 'the patched row rebuilt with no reload');
+  ctx.panel.destroy();
+});

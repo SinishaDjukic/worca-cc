@@ -10,6 +10,7 @@ import { createListRove, paintBulkBar, navKey, bindPointerSelect, landOn, paintL
 import { mountRunsResize } from './runs-resize.mjs';
 import { openMenu } from './workflows/menu.mjs';
 import { notify } from './feedback.mjs';
+import { writeClipboard } from './copy-button.mjs';
 import { icon } from './icons.mjs';
 import { openGroupPicker } from './group-picker.mjs';
 import { openChatGroupDialog } from './chat-group-dialog.mjs';
@@ -25,7 +26,8 @@ const MAX_PAGE = 200;
 
 export function mountChatsColumn({ host, fetch: fetchImpl, storage, win, now = () => Date.now(), level = () => 'simple',
   scopeName = () => '', currentId = () => null, onOpen, onRename, onDelete, onHelp = () => {},
-  flagOn = () => false, confirm = async () => false, onChatsGone = () => {}, requestRefresh = null, onThreads = () => {} }) {
+  flagOn = () => false, confirm = async () => false, onChatsGone = () => {}, requestRefresh = null, onThreads = () => {},
+  canCopyId = () => true }) {
   const doc = host.ownerDocument;
   const el = (tag, cls, text) => { const n = doc.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
   // focusKey uses list-dom.mjs's navKey form (`row:chat:ID`, `sec:older`), as runsUi does.
@@ -329,6 +331,11 @@ export function mountChatsColumn({ host, fetch: fetchImpl, storage, win, now = (
     pin,
     archive,
     del: (r) => onDelete(r),
+    // Cross-chat messaging D21: the full ask_ id, for asking another chat's assistant to message this one.
+    copyId: async (r) => {
+      const ok = await writeClipboard(win, r.id);
+      notify(ok ? { tone: 'ok', title: 'Copied chat id', detail: r.id } : { tone: 'err', title: 'Could not copy the chat id', detail: r.id }, { doc });
+    },
     // ⋯ on a selected chat adds the whole selection, as the bar's Group N and G do.
     addToGroup: (rows) => addToGroup(rows.length === 1 && st.sel.has(rows[0].key) ? selectedRows() : rows, moreOf(rows[0])),
     leaveGroup: (r) => { void groupWrite(() => call('DELETE', `/api/ask/groups/${gid(r.groupId)}/threads/${gid(r.id)}`),
@@ -360,7 +367,9 @@ export function mountChatsColumn({ host, fetch: fetchImpl, storage, win, now = (
       rove.focus(rove.rove());
     },
   };
-  const menuItems = (r) => (r.kind === 'chat-group' ? chatGroupMenuItems(r, { mac: isMac(win), on }) : chatRowMenuItems(r, { mac: isMac(win), on }));
+  // Cross-chat messaging D21: the side column has no Copy chat id in this slice (`canCopyId` is false there).
+  const menuItems = (r) => (r.kind === 'chat-group' ? chatGroupMenuItems(r, { mac: isMac(win), on })
+    : chatRowMenuItems(r, { mac: isMac(win), on }).filter((i) => i.key !== 'copy-id' || canCopyId()));
   function toggleGroup(key, open = null) {
     const r = st.byKey.get(key);
     if (!r || r.kind !== 'chat-group') return;

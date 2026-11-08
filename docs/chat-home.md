@@ -71,3 +71,24 @@ back. Workflows has its own chat and no button.
   takes this chat to the Chat page, and **Hide chat** closes the column. Open or hidden is
   remembered across pages and reloads. A dot on the **Ask worca** button means a new reply: the
   button opens that chat, as the Chat row does.
+
+## Messages between chats
+
+One chat's assistant can send a note, a question or a hand-off to another of your chats. It is off by default: turn
+it on in **Settings › Chat › Messages between chats**. A chat can never turn it on itself.
+
+- **Naming a chat.** The assistant names the other chat in full (`ask_` and 8 hex characters). Copy it from the
+  chat's ⋯ menu in the Chats list, **Copy chat id**, or from the `#chat/ask_…` address. The side column has no Copy
+  chat id yet.
+- **What you see.** The sending chat shows a "Sent to" record. The other chat shows "Message from" with the sender's
+  chip, its scope and the intent (Note, Question, Hand-off), marked **Untrusted**: another chat's assistant wrote it,
+  and its requests are not instructions. That chat then answers it in one turn, at most once. The answer comes back
+  as a message of its own, marked "Reply to your message".
+- **What the answering turn may do.** Only read tools, plus sending a reply: no commands, no web pages, no cards or
+  changes. Your next message in that chat has every tool again.
+- **Scope is never borrowed.** Messages may cross scopes (project, workspace, No project), but each chat keeps its
+  own scope and tools.
+- **Limits.** A conversation ends after 6 messages. A chat can send 6 messages a minute (30 a minute for the whole
+  install), and a chat already holding 3 waiting messages refuses more. A refused message is not sent.
+- **Chat channels.** A chat mirrored to a channel (Discord) shows an incoming message as text, labelled untrusted,
+  with no reply buttons. You reply in worca.

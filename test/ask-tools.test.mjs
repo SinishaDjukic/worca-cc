@@ -1506,3 +1506,44 @@ test('read_attachment: a generic binary returns a path on Claude, and neither a 
   assert.equal(Object.keys(l).includes('content'), false);
   assert.match(l.note, /not an image or a PDF/);
 });
+
+// ---- cross-chat messaging slice 1 (Q19, Q36) ----------------------------------------------------------------------------
+test('Q19 send_to_chat: listed only with deps.chatMessages; text required; the deps answer comes back unchanged', async () => {
+  assert.ok(!tools.list().some((d) => d.name === 'send_to_chat'), 'absent without the bundle');
+  await assert.rejects(() => tools.call('send_to_chat', { chatId: 'ask_0000000b', text: 'x' }), /send_to_chat: unavailable/);
+  const sent = [];
+  const refusal = { ok: false, code: 'CHAT_MESSAGE_RATE_LIMIT', error: 'Too many chat messages; wait a minute.' };
+  const t = createAskTools({ ...fake, chatMessages: { send: async (input) => { sent.push(input); return refusal; } } });
+  const names = t.list().map((d) => d.name);
+  assert.equal(names.at(-1), 'send_to_chat', 'spread onto the end of the list');
+  const def = t.list().find((d) => d.name === 'send_to_chat');
+  assert.deepEqual(def.inputSchema.required, ['text']);
+  assert.equal(def.inputSchema.properties.chatId.pattern, '^ask_[0-9a-f]{8}$');
+  assert.equal(def.inputSchema.properties.replyTo.pattern, '^cmsg_[0-9a-f]{8}$');
+  assert.deepEqual(def.inputSchema.properties.intent.enum, ['note', 'question', 'handoff']);
+  assert.equal(def.inputSchema.properties.text.maxLength, 4000);
+  assert.match(def.description, /\[worca event\] chat message/);
+  assert.match(def.description, /CHAT_MESSAGE_HOP_LIMIT/);
+  const input = { chatId: 'ask_0000000b', text: 'hello', intent: 'question' };
+  assert.deepEqual(await t.call('send_to_chat', input), refusal);
+  assert.deepEqual(sent, [input]);
+  const broken = createAskTools({ ...fake, chatMessages: { send: async () => { throw new Error('ECONNREFUSED'); } } });
+  await assert.rejects(() => broken.call('send_to_chat', input), (e) => e instanceof AskToolError && e.message === 'Could not reach worca to send the message.');
+});
+
+test('Q36 a chat-message event turn lists only CHAT_MESSAGE_EVENT_TOOLS and refuses the rest', async () => {
+  const { CHAT_MESSAGE_EVENT_TOOLS } = await import('../src/core/ask/tools.mjs');
+  assert.ok(Object.isFrozen(CHAT_MESSAGE_EVENT_TOOLS));
+  const full = { ...fake, ...defaultToolDeps({ threadId: null }), commands: {}, web: { allowedDomains: [] }, files: {}, chatActions: {}, scripts: { enabled: true },
+    chatMessages: { send: async () => ({ ok: true }) } };
+  const normal = createAskTools(full).list().map((d) => d.name);
+  for (const n of ['run_command', 'remember', 'web_fetch', 'propose_run', 'change_setting', 'pause_schedule', 'send_to_chat']) assert.ok(normal.includes(n), `the full bundle lists ${n}`);
+  const ev = createAskTools({ ...full, askMode: 'chat-message' });
+  const names = ev.list().map((d) => d.name);
+  for (const n of names) assert.ok(CHAT_MESSAGE_EVENT_TOOLS.includes(n), `allowed: ${n}`);
+  assert.ok(names.includes('send_to_chat'));
+  assert.ok(names.includes('read_file') && names.includes('list_runs'));
+  for (const n of ['run_command', 'remember', 'web_fetch', 'propose_run', 'change_setting', 'pause_schedule']) assert.ok(!names.includes(n), `absent: ${n}`);
+  await assert.rejects(() => ev.call('remember', { scope: 'global', name: 'x', text: 'y' }),
+    (e) => e instanceof AskToolError && e.message === 'remember: not available while answering a message from another chat');
+});

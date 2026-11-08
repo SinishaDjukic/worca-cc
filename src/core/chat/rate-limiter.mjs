@@ -43,11 +43,21 @@ export class TokenBucket {
     this._now = now;
   }
 
-  tryConsume() {
+  _refill() {
     const t = this._now();
     const mins = (t - this._lastRefill) / 60000;
     this._tokens = Math.min(this._rate, this._tokens + mins * this._rate);
     this._lastRefill = t;
+  }
+
+  /** Whether a token is there right now (refills first); spends nothing, so two buckets can be checked before either is spent. */
+  canConsume() {
+    this._refill();
+    return this._tokens >= 1;
+  }
+
+  tryConsume() {
+    this._refill();
     if (this._tokens >= 1) {
       this._tokens -= 1;
       return true;

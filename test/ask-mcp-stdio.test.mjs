@@ -252,3 +252,22 @@ test('real child: show_files snapshots a $WORCA_ASK_OUT file into this thread\'s
   const file = attachmentPath(thread.id, att.id);
   assert.ok(file && realpathSync(file).startsWith(realpathSync(attachmentsDir(thread.id))), file);
 });
+
+test('Q37b WORCA_ASK_TOOLSET=chat-message makes the child list only the event allowlist; without it the full set', async () => {
+  const { createAskToolServer } = await import('../src/core/ask/mcp-stdio.mjs');
+  const t = createThread({ title: 'toolset' });
+  const env = { WORCA_HOME: process.env.WORCA_HOME, WORCA_ASK_COMMANDS: JSON.stringify({ url: 'http://127.0.0.1:1/api/ask/commands' }), ASK_COMMAND_TOKEN: 'ct',
+    WORCA_ASK_MESSAGES: JSON.stringify({ url: 'http://127.0.0.1:1/api/ask/chat-messages' }), ASK_MESSAGE_TOKEN: 'mt' };
+  const names = async (e) => {
+    const out = [];
+    const srv = createAskToolServer({ threadId: t.id, signal: new AbortController().signal, write: (s) => out.push(s), env: e });
+    srv.feed(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }));
+    await srv.idle();
+    return JSON.parse(out[0]).result.tools.map((d) => d.name);
+  };
+  const full = await names(env);
+  for (const n of ['run_command', 'remember', 'send_to_chat']) assert.ok(full.includes(n), n);
+  const ev = await names({ ...env, WORCA_ASK_TOOLSET: 'chat-message' });
+  assert.ok(!ev.includes('run_command') && !ev.includes('remember'));
+  assert.ok(ev.includes('send_to_chat') && ev.includes('list_runs'));
+});

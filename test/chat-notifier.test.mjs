@@ -145,7 +145,7 @@ test('chatPrefs/setChatPrefs: defaults ON, merge-patch, unknown keys rejected', 
   const home = mkdtempSync(join(tmpdir(), 'worca-cc-chatprefs-'));
   process.env.HOME = home;
   try {
-    assert.deepEqual(chatPrefs(), { notify: { done: true, error: true, question: true, paused: true, away: true, prWatch: true }, channels: {}, scriptTools: true, suggestions: true, summariseCommands: true });
+    assert.deepEqual(chatPrefs(), { notify: { done: true, error: true, question: true, paused: true, away: true, prWatch: true }, channels: {}, scriptTools: true, suggestions: true, summariseCommands: true, crossChat: false });
     await setChatPrefs({ notify: { done: false }, channels: { 'tg-chat/main': { enabled: false } } });
     const p = chatPrefs();
     assert.equal(p.notify.done, false);
@@ -172,6 +172,14 @@ test('chatPrefs/setChatPrefs: defaults ON, merge-patch, unknown keys rejected', 
     await assert.rejects(setChatPrefs({ suggestions: 'no' }), /chat suggestions must be true or false/);
     await setChatPrefs({ suggestions: true });
     assert.equal(chatPrefs().suggestions, true);
+    // Cross-chat messaging slice 1 (D1): off by default, a stored true reads true, only a boolean is accepted.
+    await setChatPrefs({ crossChat: true });
+    assert.equal(chatPrefs().crossChat, true);
+    await setChatPrefs({ notify: { done: true } });
+    assert.equal(chatPrefs().crossChat, true, 'a notify patch keeps the cross chat switch');
+    await assert.rejects(setChatPrefs({ crossChat: 'yes' }), /chat crossChat must be true or false/);
+    await setChatPrefs({ crossChat: false });
+    assert.equal(chatPrefs().crossChat, false);
     await assert.rejects(setChatPrefs('nope'), /must be an object/);
     // chat prefs: "away" is a notify event, on by default
     assert.equal(chatPrefs().notify.away, true);

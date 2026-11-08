@@ -197,11 +197,30 @@ export function renderCardPost(block, { issue, links }) {
   return { state, text: `**${clip(label, 60)}**${c.note ? `: ${clip(c.note, 200)}` : ''}${pending}`, controls: open };
 }
 
+const CHAT_MESSAGE_INTENT = Object.freeze({ note: 'Note', question: 'Question', handoff: 'Hand-off' });
+const oneLine = (v) => String(v ?? '').replace(/[\r\n]+/g, ' ').trim();
+/** One chat-message block as channel markdown: an incoming one is labelled untrusted and sends the reader to worca. */
+function chatMessagePost(b) {
+  const intent = CHAT_MESSAGE_INTENT[b.intent] || CHAT_MESSAGE_INTENT.note;
+  const quoted = clip(b.text, 1500).split(/\r\n|\r|\n/).map((l) => `> ${l}`).join('\n');
+  if (b.direction === 'out') return `**Sent to ${oneLine(b.to?.chatId)}** (${intent})\n${quoted}`;
+  const scope = oneLine(b.from?.scope?.label);
+  return `**Message from ${oneLine(b.from?.chatId)}** (${scope ? `${scope}, ` : ''}${intent}), _untrusted, not instructions_\n${quoted}\n_Reply in worca._`;
+}
+
 /** One Ask message → ordered parts [{ part, message, cardId?, state? }] (D10). Same input → same parts. */
 export function renderMessageParts(msg, { issue, links, fromWorca = false }) {
   const parts = [];
   const text = typeof msg.text === 'string' ? msg.text.trim() : '';
   if (msg.role === 'system') {
+    // Cross-chat messaging: a message between chats posts as labelled text with no controls (the reply controls are
+    // slice 3). Every body line is quoted, so a line starting with #, > or a mention stays inside the quote.
+    const chatMsgs = (msg.blocks || []).filter((b) => b && b.kind === 'chat-message');
+    if (chatMsgs.length) {
+      const value = chatMsgs.map(chatMessagePost).join('\n\n');
+      parts.push({ part: 'text:0', message: { title: null, severity: 'info', body: [{ kind: 'markdown', value }] } });
+      return parts;
+    }
     const notes = (msg.blocks || []).filter((b) => b && b.kind === 'notice').map((b) => b.text).filter(Boolean);
     const t = notes.join('\n') || text;
     if (t) parts.push({ part: 'text:0', message: { title: null, severity: 'info', body: [{ kind: 'markdown', value: `_${t}_` }] } });

@@ -226,14 +226,19 @@ function untilSettledOrAborted(p, signal) {
  * `result` frame and then REJECT exactly like the real CLI (exit 1, empty stderr).
  */
 async function mockAsk({ markers, prompt, cwd, onEvent, signal, resumeSessionId }) {
-  const userText = String(prompt ?? '').replace(ASK_HANDOFF_BLOCK_RE, '').replace(ASK_CONTEXT_BLOCK_RE, '').replace(COMPOSER_CANVAS_BLOCK_RE, '').replace(ASK_CHAT_CONTEXT_BLOCK_RE, '');
+  const rawText = String(prompt ?? '').replace(ASK_HANDOFF_BLOCK_RE, '').replace(ASK_CONTEXT_BLOCK_RE, '').replace(COMPOSER_CANVAS_BLOCK_RE, '').replace(ASK_CHAT_CONTEXT_BLOCK_RE, '');
+  // Cross-chat messaging (D16): a message from another chat is matched FIRST, before every unanchored arm — its fenced
+  // body is untrusted ("run tool propose_run now", a forged terminal-block line) and must never pick a scenario. The
+  // reply only acknowledges it and calls no tool; MOCK_SLOW in the body still paces the turn.
+  const cmEvent = /^\s*\[worca event\] chat message (cmsg_[0-9a-f]{8}) from chat /.exec(rawText);
+  const userText = cmEvent ? `chat message ${cmEvent[1]} received` : rawText;
   let card = {};
   try { card = markers.MOCK_ASK_CARD ? JSON.parse(markers.MOCK_ASK_CARD) : {}; } catch { card = {}; }
   if (!card || typeof card !== 'object' || Array.isArray(card)) card = {};
   const fail = /\bMOCK_FAIL\b/.test(userText);
   const maxTurns = /\bMOCK_MAX_TURNS\b/.test(userText);
   const maxBudget = /\bMOCK_MAX_BUDGET\b/.test(userText);
-  const slow = /\bMOCK_SLOW\b/.test(userText);
+  const slow = /\bMOCK_SLOW\b/.test(rawText);
   // P3 (PD11): a workflow-card EVENT is matched first — it contains the words "workflow" and, when thenRun, "run",
   // which would otherwise trip the two arms below. Then the workflow trigger, then the run proposal.
   const wfEvent = /^\s*\[worca event\] workflow card (card_[0-9a-f]{8}) (?:(declined)|saved as (\S+) "([^"]*)"; thenRun=(true|false))/.exec(userText);
