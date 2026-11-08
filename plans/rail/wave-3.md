@@ -286,3 +286,5 @@ the canvas; the chat's proposals draw with the same renderer. About 15,000 lines
 3. Hand-building is Expert (docs/ui-levels.md); Simple sees the view and Change it in a chat. A wide screen only; a
    narrow one reads What each step does.
 4. The view draws fitted on its auto layout; the wrapped flow layout crosses its wires (seen in graph-try).
+5. Auto-align (Emil, 8 Nov) stays: dev's Auto-layout tidies the canvas in one click; in Rail it is one quiet button
+   beside zoom, and the view always opens aligned.
