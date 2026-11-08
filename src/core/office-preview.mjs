@@ -15,10 +15,10 @@ import { findOnPath } from './actions/builtins.mjs';
 import { scrubbedEnv } from './plugin-shim.mjs';
 import { killTree } from './graph/script-runner.mjs';
 import { worcaHome } from './projects.mjs';
-import { isOfficePath } from '../shared/artifact-kinds.mjs';
+import { isOfficePath, OFFICE_MAX_BYTES } from '../shared/artifact-kinds.mjs';
 
 export const OFFICE_LIMITS = Object.freeze({
-  maxBytes: 50 * 1024 * 1024, maxPdfBytes: 200 * 1024 * 1024, timeoutMs: 60_000, cacheEntries: 200, probeTtlMs: 60_000,
+  maxBytes: OFFICE_MAX_BYTES, maxPdfBytes: 200 * 1024 * 1024, timeoutMs: 60_000, cacheEntries: 200, probeTtlMs: 60_000,
 });
 
 export class OfficePreviewError extends Error {

@@ -70,6 +70,21 @@ an optional dependency. Each is installed from npm under its own license (the te
 
 - MIT: `@xterm/xterm`, `@xterm/addon-fit`, `node-pty`, `node-addon-api`
 
+## Office preview fallback
+
+When the server has no LibreOffice, the file viewer shows a simplified Office preview in the browser
+(`ui/public/artifacts/office-lite.mjs`). It loads `docx-preview 0.4.1` (Apache-2.0, Copyright Volodymyr Baydalka) for
+`.docx` page layout, and `jszip 3.10.2` (Copyright (c) 2009-2016 Stuart Knightley; dual licensed "MIT OR
+GPL-3.0-or-later", used here under MIT) to read every Office package. Both are served from `node_modules`. The
+minified `jszip.min.js` bundles `pako` (MIT AND Zlib, Copyright (C) 2014-2017 by Vitaly Puzrin and Andrei Tuputcyn),
+`lie` and `immediate` (MIT), and `setimmediate` (MIT). Each is installed from npm under its own license (the text
+ships in the package):
+
+- Apache-2.0: `docx-preview`
+- MIT (of MIT OR GPL-3.0-or-later): `jszip`
+- MIT AND Zlib: `pako`
+- MIT: `lie`, `immediate`, `setimmediate`
+
 ## C4 viewer layout
 
 The C4 viewer (`ui/public/c4/c4-view.mjs`) lays out element views and dependency-ordered frames with

@@ -28,7 +28,7 @@ page's running shell, or starts one.
 The panel holds tabs of four kinds: **Terminal**, **Browser** (a web page, see below), **Files** (a read-only
 browser of the folder; a file opens in the same viewer as run artifacts: markdown rendered with a Preview / Source
 switch each tab remembers, highlighted code, tables, images, PDF, audio and video, HTML in a sandbox, LikeC4, and
-Office documents as PDF when LibreOffice is installed) and **Changes** (the uncommitted changes of a project or chat folder, `git diff HEAD` plus
+Office documents as PDF when LibreOffice is installed, else as a simplified in-browser preview with Download) and **Changes** (the uncommitted changes of a project or chat folder, `git diff HEAD` plus
 new files; a run shows its own diff). Several tabs of one kind can be open. Each shell is its own tab.
 
 - **Header icons.** Run and chat pages show the Overview icon, then four tool icons: Terminal, Browser, Files and

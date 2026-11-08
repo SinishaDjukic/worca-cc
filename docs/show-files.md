@@ -65,7 +65,7 @@ markdown, a table or HTML.
 | PDF | PDF | a row; the viewer's PDF view | 50 MiB |
 | Video | MP4, WebM | a row; the viewer's player | 100 MiB |
 | Audio | MP3, WAV, Ogg | a row; the viewer's player | 50 MiB |
-| Office | a zip body named `.docx` / `.pptx` / `.xlsx` / `.odt` / `.odp` / `.ods` | a row; the viewer's PDF view when LibreOffice is installed on the server, else Download | 50 MiB |
+| Office | a zip body named `.docx` / `.pptx` / `.xlsx` / `.odt` / `.odp` / `.ods` | a row; the viewer's PDF view when LibreOffice is installed on the server, else a simplified in-browser preview (with Download) | 50 MiB |
 | Markdown | text named `.md` / `.markdown` | a row; rendered Markdown | 1 MiB |
 | Table | text named `.csv` / `.tsv` | a row; a table | 1 MiB |
 | HTML | text named `.html` / `.htm` | a row; highlighted **source**, never a rendered page | 1 MiB |

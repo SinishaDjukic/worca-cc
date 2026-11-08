@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { checkRows } from './helpers/rows.mjs';
 import {
   viewerKindFor, mimeForPath, BINARY_KINDS, RAW_KINDS, classifyExtension, TEXT_EXTENSIONS, BINARY_EXTENSIONS,
-  isBrowsableKind, isOfficePath,
+  isBrowsableKind, isOfficePath, officeLiteFormatFor, OFFICE_LITE_LIMITS, OFFICE_MAX_BYTES,
 } from '../src/shared/artifact-kinds.mjs';
 
 test('viewerKindFor: one case per extension family, dotfiles and unknowns fall to text', () => {
@@ -100,4 +100,17 @@ test('office: OOXML and ODF documents are one viewer kind, served with their own
   assert.equal(mimeForPath('f.ods'), 'application/vnd.oasis.opendocument.spreadsheet');
   assert.ok(mimeForPath('a.docx').endsWith('wordprocessingml.document'));
   assert.ok(RAW_KINDS.has('office') && BINARY_KINDS.has('office'));
+});
+
+test('officeLiteFormatFor: which simplified renderer an Office path gets (case-insensitive), else null', () => {
+  const cases = { 'memo.docx': 'docx', 'a/B.DOCX': 'docx', 'q3.xlsx': 'sheet', 't.ODS': 'sheet', 'deck.pptx': 'slides', 'd.odp': 'slides',
+    'notes.odt': 'text', 'a.pdf': null, 'a.docx.txt': null, 'deck.key': null, '': null, '.docx': null };
+  for (const [f, want] of Object.entries(cases)) assert.equal(officeLiteFormatFor(f), want, f);
+  assert.equal(officeLiteFormatFor(undefined), null);
+});
+
+test('OFFICE_LITE_LIMITS: 50 MB compressed (the server cap), 200 MB inflated, 5,000 parts, 1,000 × 100 cells; frozen', () => {
+  assert.equal(OFFICE_MAX_BYTES, 50 * 1024 * 1024);
+  assert.deepEqual({ ...OFFICE_LITE_LIMITS }, { maxBytes: OFFICE_MAX_BYTES, maxTotal: 200 * 1024 * 1024, maxEntries: 5000, maxRows: 1000, maxCols: 100 });
+  assert.ok(Object.isFrozen(OFFICE_LITE_LIMITS));
 });

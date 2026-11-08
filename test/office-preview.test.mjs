@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { findSoffice, officePdf, OfficePreviewError, OFFICE_LIMITS } from '../src/core/office-preview.mjs';
 import { makeFakeSoffice } from './helpers/fake-soffice.mjs';
+import { OFFICE_MAX_BYTES } from '../src/shared/artifact-kinds.mjs';
 
 const posix = process.platform !== 'win32';
 const fake = posix ? makeFakeSoffice() : null;
@@ -35,6 +36,10 @@ test('findSoffice: soffice then libreoffice on PATH, then the standard install o
 test('no LibreOffice and nothing cached: NO_CONVERTER with the install text', async () => {
   await assert.rejects(officePdf(doc('none'), 'a.docx', { bin: null, cacheDir }), (e) => e instanceof OfficePreviewError && e.code === 'NO_CONVERTER'
     && e.message === 'Install LibreOffice to preview Office files.');
+});
+
+test('the 50 MB cap is the shared OFFICE_MAX_BYTES (the browser fallback reads the same constant)', () => {
+  assert.equal(OFFICE_LIMITS.maxBytes, OFFICE_MAX_BYTES);
 });
 
 test('refusals before any spawn: not Office, too large', async () => {

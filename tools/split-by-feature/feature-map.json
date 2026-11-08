@@ -1095,7 +1095,8 @@
       "css": [
         "^Saved\\-markdown viewer",
         "^typed artifact viewer",
-        "^per\\-step artifacts"
+        "^per\\-step artifacts",
+        "^simplified Office preview"
       ],
       "html": [
         "<!-- ===== Saved-markdown viewer"

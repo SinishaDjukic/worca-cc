@@ -23,8 +23,9 @@ export const fail = (status, body) => Promise.resolve({ ok: false, status, json:
 // `local`: localStorage items set before app.js loads (a remembered choice, e.g. the side column left open).
 // `innerWidth`: the window's width before app.js loads (jsdom's is 1024).
 // `hooks`: window.__worcaTestHooks before app.js loads (e.g. `askMarkdown`, the markdown loader the viewers use).
-export async function bootChat({ rows = [], detail = DETAIL, url = 'http://localhost:4317/', arms = null, matchMedia = null, local = null, session = null, innerWidth = null, hooks = null } = {}) {
-  const dom = trackDom(new JSDOM(readIndexHtml(), { url }));
+// `jsdom`: extra JSDOM options (e.g. `runScripts: 'outside-only'` for a test that evaluates vendor scripts); default none.
+export async function bootChat({ rows = [], detail = DETAIL, url = 'http://localhost:4317/', arms = null, matchMedia = null, local = null, session = null, innerWidth = null, hooks = null, jsdom = null } = {}) {
+  const dom = trackDom(new JSDOM(readIndexHtml(), { url, ...(jsdom || {}) }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
   if (matchMedia) window.matchMedia = matchMedia;

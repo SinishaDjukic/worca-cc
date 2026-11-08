@@ -44,6 +44,14 @@ const OFFICE_TYPES = Object.freeze({
   '.ods': 'application/vnd.oasis.opendocument.spreadsheet',
 });
 export const OFFICE_EXTENSIONS = Object.freeze(Object.keys(OFFICE_TYPES));
+/** The compressed-size cap for an Office file: the server's LibreOffice path (office-preview.mjs OFFICE_LIMITS) and the
+ *  browser's simplified fallback (ui/public/artifacts/office-lite.mjs) read this ONE constant. */
+export const OFFICE_MAX_BYTES = 50 * 1024 * 1024;
+/** The browser fallback's caps: compressed bytes, total inflated bytes and parts (all checked from the central directory
+ *  before anything inflates, then again while inflating), and the cells one sheet shows. */
+export const OFFICE_LITE_LIMITS = Object.freeze({ maxBytes: OFFICE_MAX_BYTES, maxTotal: 200 * 1024 * 1024,
+  maxEntries: 5000, maxRows: 1000, maxCols: 100 });
+const OFFICE_LITE_FORMATS = Object.freeze({ '.docx': 'docx', '.xlsx': 'sheet', '.ods': 'sheet', '.pptx': 'slides', '.odp': 'slides', '.odt': 'text' });
 /** What an HTML artifact loads relatively (kit scripts, styles, fonts, media).
  *  Streamed by the raw route so a deck's <script src="deck-stage.js"> resolves.
  *  Viewer kinds: js/css view as text, audio/video play inline (the artifact viewer's players), .avif is an image,
@@ -158,6 +166,12 @@ export function viewerKindFor(pathname) {
 /** Is this path an Office document LibreOffice may convert (by extension, case-insensitive)? */
 export function isOfficePath(pathname) {
   return has(OFFICE_TYPES, extOf(pathname));
+}
+
+/** Which simplified in-browser renderer an Office path gets: 'docx' | 'sheet' | 'slides' | 'text', or null (not Office). */
+export function officeLiteFormatFor(pathname) {
+  const e = extOf(pathname);
+  return has(OFFICE_LITE_FORMATS, e) ? OFFICE_LITE_FORMATS[e] : null;
 }
 
 /** Content-Type for the raw route, or null when the extension is unknown. */

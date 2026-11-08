@@ -11,11 +11,11 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const until = async (fn, tries = 200) => { for (let i = 0; i < tries; i++) { if (fn()) return true; await wait(5); } return false; };
 
 async function boot({ url = `http://localhost:4317/#chat/${TID}`, settings = () => ({}), settingsDelay = 0, frame = () => ({ framable: null }),
-  serverTabs = () => [], blocks = [], running = () => [], session = null, innerWidth = null, matchMedia = null, local = null, more = null } = {}) {
+  serverTabs = () => [], blocks = [], running = () => [], session = null, innerWidth = null, matchMedia = null, local = null, more = null, hooks = null, jsdom = null } = {}) {
   const { bootChat, ok } = await import('./helpers/chat-panel-boot.mjs');
   const rec = { resolve: [], frame: [], puts: [], file: [], minted: [], settingsPosts: [], att: [] };
   const msg = { id: 'askm_00000001', threadId: TID, seq: 1, role: 'assistant', text: ANSWER, blocks, status: 'done', createdAt: 't' };
-  const ctx = await bootChat({ url, session, innerWidth, matchMedia, local, hooks: { askMarkdown: realMarkdown }, arms: (u, opts) => {
+  const ctx = await bootChat({ url, session, innerWidth, matchMedia, local, jsdom, hooks: { askMarkdown: realMarkdown, ...(hooks || {}) }, arms: (u, opts) => {
     const extra = more ? more(u, opts) : null;
     if (extra) return extra;
     const path = u.split('?')[0];
@@ -404,4 +404,25 @@ test('tool panel per scope (c): opened in a new chat, the first message keeps it
   await a.settle(16);
   assert.ok(await until(() => (a.model().open || []).includes(`chat:${TID}`)), JSON.stringify(a.model().open));
   assert.equal(a.doc.querySelector('.tool-panel').hidden, false, 'still open: the same chat, now with an id');
+});
+
+test('T-R3 Quick look on a chat\'s .docx with no converter: the pop-up renders it through the simplified preview', async () => {
+  const { officeVendor } = await import('./helpers/office-vendor.mjs');
+  const { fixture, respond } = await import('./helpers/office-lite-fixtures.mjs');
+  const { fail } = await import('./helpers/chat-panel-boot.mjs');
+  const ATT = `/api/ask/threads/${TID}/attachments/att_00000001`;
+  let vendor = null;
+  const a = await boot({ blocks: [KIND_CARD], jsdom: { runScripts: 'outside-only', beforeParse: (w) => { vendor = officeVendor(w); } },
+    hooks: { officeImport: (u) => vendor.importer(u) },
+    more: (u, opts) => {
+      const m = opts.method || 'GET';
+      if (u === `${ATT}?as=pdf` && m === 'HEAD') return fail(501, {});
+      if (u === ATT && m === 'GET') return Promise.resolve(respond(fixture('memo.docx')));
+      return null;
+    } });
+  assert.ok(await until(() => a.doc.querySelector('[aria-label="Quick look at deck.docx"]')), 'the card is there');
+  a.doc.querySelector('[aria-label="Quick look at deck.docx"]').click();
+  assert.ok(await until(() => a.doc.querySelector('.apv .olp[data-office-path="docx"] .docx-wrapper'), 400), a.doc.querySelector('.apv')?.textContent.slice(0, 300));
+  assert.match(a.doc.querySelector('.apv .olp-docx').textContent, /Quarterly memo/);
+  assert.deepEqual(vendor.calls, ['/vendor/jszip/jszip.min.js', '/vendor/docx-preview/docx-preview.min.js']);
 });

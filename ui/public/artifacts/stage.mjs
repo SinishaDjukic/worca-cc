@@ -62,6 +62,18 @@ const STALE = Object.freeze({ state: 'stale' });
 const info = (reason) => ({ state: 'info', reason });
 const officeBad = (status) => (OFFICE_INFO[status] ? info(OFFICE_INFO[status]) : { state: 'error', message: errorText({ status }) });
 
+/** No converter on the server: the simplified in-browser preview, loaded on demand (a failed load is today's text). */
+async function officeLite({ rel, stage, urls, fetchFn, deps, live }) {
+  let mod;
+  try {
+    mod = await deps.loadOfficeLite();
+  } catch {
+    return live() ? info(OFFICE_NEEDS_LIBREOFFICE) : STALE;
+  }
+  if (!live()) return STALE;
+  return mod.renderOfficeLite({ name: rel, stage, url: urls.download(rel), downloadUrl: urls.download(rel), fetch: fetchFn, deps, live });
+}
+
 /**
  * Load one file and render it into `stage`.
  * @param {object} o
@@ -70,13 +82,16 @@ const officeBad = (status) => (OFFICE_INFO[status] ? info(OFFICE_INFO[status]) :
  * @param {{text(rel):string, raw(rel):string, download(rel):string, pdf?(rel):string}} o.urls  `pdf`: an Office document's
  *   PDF form (the raw route's `?as=pdf`); without it Office files have no preview
  * @param {(url:string, opts?:object) => Promise<Response>} o.fetch
- * @param {{loadMarkdown?:Function, hljsLoader?:object}} [o.deps]
+ * @param {{loadMarkdown?:Function, hljsLoader?:object, loadOfficeLite?:() => Promise<object>, officeImport?:(url:string) => Promise<unknown>}} [o.deps]
+ *   `loadOfficeLite`: loads the simplified Office preview module; with it an Office file whose PDF probe answers 501 (no converter on the
+ *   server) gets the simplified in-browser preview. `officeImport`: how that module imports its vendor scripts (tests)
  * @param {() => boolean} [o.live]   false once the caller moved on: every await re-checks it
  * @param {number|null} [o.size]     bytes, when the caller knows them
  * @param {(n:number) => void} [o.onSize]   a probe found the size the caller did not know
  * @param {{text:string, binary?:boolean}} [o.known]   the text the caller already holds (the Files tab's /api/tools/file)
- * @returns {Promise<{state:'shown', media?:HTMLMediaElement|null, text?:string} | {state:'info', reason:string}
- *   | {state:'error', message:string} | {state:'stale'}>}  `text` is set only for a decoded text preview (decorations)
+ * @returns {Promise<{state:'shown', media?:HTMLMediaElement|null, text?:string, preview?:'office-lite', format?:string}
+ *   | {state:'info', reason:string} | {state:'error', message:string} | {state:'stale'}>}  `text` is set only for a decoded
+ *   text preview (decorations); `preview`/`format` only for the simplified Office preview
  */
 export async function loadPreview({ artifact: a, stage, urls, fetch: fetchFn, deps = {}, live = () => true, size = null, onSize = null, known = null }) {
   const rel = relOf(a);
@@ -89,7 +104,11 @@ export async function loadPreview({ artifact: a, stage, urls, fetch: fetchFn, de
     const url = urls.pdf(rel);
     const probe = await headOf(fetchFn, url);       // converts on the server; the frame's GET reads its cache
     if (!live()) return STALE;
-    if (!probe.ok) return officeBad(probe.status);
+    if (!probe.ok) {
+      return probe.status === 501 && typeof deps.loadOfficeLite === 'function'
+        ? officeLite({ rel, stage, urls, fetchFn, deps, live })
+        : officeBad(probe.status);
+    }
     await renderPreview({ kind: null, relPath: shown, url, previewKind: 'pdf' }, stage, deps);
     return { state: 'shown', media: null };
   }

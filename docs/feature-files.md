@@ -171,6 +171,7 @@ and pinned routes). See [split-by-feature.md](split-by-feature.md).
 | File | Lines |
 |---|---|
 | `ui/public/artifacts/markdown-body.css` | 13 |
+| `ui/public/artifacts/office-lite.css` | 35 |
 | `ui/public/artifacts/per-step.css` | 66 |
 | `ui/public/artifacts/saved-markdown-viewer.html` | 18 |
 | `ui/public/artifacts/saved-markdown.css` | 20 |

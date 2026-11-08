@@ -32707,6 +32707,9 @@ function artifactViewerDeps() {
     loadMarkdown: window.__worcaTestHooks?.askMarkdown
       ?? (() => Promise.all([import('/vendor/marked/marked.esm.js'), import('/vendor/dompurify/purify.es.mjs')])
         .then(([m, d]) => ({ marked: m.marked, createDOMPurify: d.default }))),
+    // No LibreOffice on the server (the PDF probe answers 501): the simplified in-browser Office preview, loaded on demand.
+    loadOfficeLite: () => import('./artifacts/office-lite.mjs'),
+    officeImport: window.__worcaTestHooks?.officeImport,
   };
 }
 

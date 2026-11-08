@@ -8,16 +8,18 @@
 // text must round-trip byte-for-byte and only class-carrying SPANs may appear.
 import { SUPPORTED_LANGUAGE_IDS } from './syntax-highlight.mjs';
 
-const ALLOWED_TAGS = ['p', 'br', 'strong', 'em', 'del', 'code', 'pre', 'ul', 'ol', 'li', 'a',
-  'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'blockquote', 'hr', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'input'];
-const ALLOWED_ATTR = ['href', 'class', 'type', 'checked', 'disabled', 'align'];
+const ALLOWED_TAGS = Object.freeze(['p', 'br', 'strong', 'em', 'del', 'code', 'pre', 'ul', 'ol', 'li', 'a',
+  'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'blockquote', 'hr', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'input']);
+const ALLOWED_ATTR = Object.freeze(['href', 'class', 'type', 'checked', 'disabled', 'align']);
 const ALLOWED_URI_REGEXP = /^(?:https?:|mailto:|#)/i;
 // DOMPurify tests EVERY non-URI-safe attribute VALUE against ALLOWED_URI_REGEXP;
 // with the strict regexp above, type="checkbox" and align="right" would be
 // dropped (only `class` is URI-safe by default) — the post-pass would then
 // remove every checkbox. These two carry no URL, so marking them URI-safe
 // restores them without loosening the href guard.
-const ADD_URI_SAFE_ATTR = ['type', 'align'];
+const ADD_URI_SAFE_ATTR = Object.freeze(['type', 'align']);
+/** The sanitiser config Ask's markdown uses, shared with the simplified Office preview's docx purifier (which extends it). */
+export const PURIFY_BASE = Object.freeze({ ALLOWED_TAGS, ALLOWED_ATTR, ALLOWED_URI_REGEXP, ADD_URI_SAFE_ATTR });
 const CODE_CLASS_RE = /^language-[A-Za-z0-9_+-]{1,64}$/;
 // hljs primary tokens plus the secondary `word_` scope tokens it appends — a
 // per-token variant of the attribute-level regex at syntax-highlight.mjs:49
@@ -81,7 +83,7 @@ export function createMarkdownRenderer({ doc, load, hljsLoader }) {
     }
     let frag;
     try {
-      frag = mods.purifier.sanitize(html, { ALLOWED_TAGS, ALLOWED_ATTR, ALLOWED_URI_REGEXP, ADD_URI_SAFE_ATTR, RETURN_DOM_FRAGMENT: true });
+      frag = mods.purifier.sanitize(html, { ...PURIFY_BASE, RETURN_DOM_FRAGMENT: true });
     } catch {
       return { kind: 'plain' };
     }

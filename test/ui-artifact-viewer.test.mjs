@@ -157,7 +157,8 @@ function page(respond = () => null) {
     const method = opts.method || 'GET';
     calls.push(`${method} ${url}`);
     const r = (await respond(String(url), method)) || { status: 200, body: {} };
-    return { ok: r.status >= 200 && r.status < 300, status: r.status, json: async () => r.body };
+    return { ok: r.status >= 200 && r.status < 300, status: r.status, json: async () => r.body,
+      ...(r.bytes ? { headers: { get: () => null }, arrayBuffer: async () => r.bytes.slice().buffer } : {}) };
   };
   const open = (o) => openArtifactViewer({ doc, win, fetch, urls: URLS, ...o });
   return { win, doc, calls, open, opener: doc.getElementById('opener') };
@@ -776,7 +777,8 @@ function headFetch(p, head, get = () => ({ status: 200, body: { text: 'ok' } }))
       return { ok: h.ok, status: h.status, headers: { get: (k) => (k.toLowerCase() === 'content-length' && h.length != null ? String(h.length) : null) }, json: async () => ({}) };
     }
     const r = await get(String(url));
-    return { ok: r.status >= 200 && r.status < 300, status: r.status, json: async () => r.body };
+    return { ok: r.status >= 200 && r.status < 300, status: r.status, json: async () => r.body,
+      ...(r.bytes ? { headers: { get: () => null }, arrayBuffer: async () => r.bytes.slice().buffer } : {}) };
   };
 }
 
@@ -1400,6 +1402,25 @@ test('office in the popup: with a pdf URL it frames the converted PDF; 501 says 
       assert.equal(root.querySelector('.apv-info-note').textContent, 'No preview for this file type');
       assert.ok(root.querySelector('.apv-info-dl'));
       assert.deepEqual(p.calls, [], 'without fetching anything');
+    } },
+    { name: 'HEAD 501 with deps.loadOfficeLite: the pop-up shows the simplified preview inside .apv, and the header Download stays', run: async () => {
+      const { createRequire } = await import('node:module');
+      const JSZip = createRequire(import.meta.url)('jszip');
+      const { fixture } = await import('./helpers/office-lite-fixtures.mjs');
+      const XLSX = { kind: null, relPath: 'deck/q3.xlsx' };
+      const bytes = fixture('budget.xlsx');
+      const p = page((url, method) => (url === '/raw/deck/q3.xlsx?as=pdf' && method === 'HEAD' ? { status: 501, body: {} }
+        : url === '/raw/deck/q3.xlsx?download=1' && method === 'GET' ? { status: 200, bytes } : null));
+      const imports = [];
+      const officeImport = async (u) => { imports.push(u); p.win.JSZip = JSZip; };
+      await p.open({ urls, artifact: XLSX, deps: { loadOfficeLite: () => import('../ui/public/artifacts/office-lite.mjs'), officeImport } }).ready;
+      const root = p.doc.querySelector('.apv');
+      assert.equal(root.querySelector('.apv-stage .olp[data-office-path="sheet"] .olp-note').textContent, 'Simplified preview \u2014 install LibreOffice for full fidelity');
+      assert.equal(root.querySelector('.olp table.olp-table tbody td').textContent, 'Item');
+      assert.equal(root.querySelector('.apv-info-note'), null, 'not the info view');
+      assert.ok(root.querySelector('.apv-head .apv-dl'), 'the header Download stays');
+      assert.deepEqual(p.calls, ['HEAD /raw/deck/q3.xlsx?as=pdf', 'GET /raw/deck/q3.xlsx?download=1']);
+      assert.deepEqual(imports, ['/vendor/jszip/jszip.min.js']);
     } },
   ]);
 });

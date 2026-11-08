@@ -20,5 +20,7 @@
   { "file": "ui/server.mjs", "from": 10647, "to": 10695, "commit": "a1f208bc4",
     "why": "Browser preview ports and the file viewer (#1064): sendRawFile and rawOpts shared by the artifact-raw routes and the Files tab, the Office PDF preview and the preview port mode: 48 lines of central wiring outside the route regions; the routes it adds live in ui/routes/; measured with wc -l on this commit caught up onto dev" },
   { "file": "ui/server.mjs", "from": 10695, "to": 10766, "commit": "130b7a207",
-    "why": "Chat and tool panel links (#1064): the chat link roots and link resolver the cards route calls, the frame check and the chatLinksInPanel setting: 71 lines of central wiring outside the route regions; the routes it adds live in ui/routes/; measured with wc -l on this commit caught up onto dev" }
+    "why": "Chat and tool panel links (#1064): the chat link roots and link resolver the cards route calls, the frame check and the chatLinksInPanel setting: 71 lines of central wiring outside the route regions; the routes it adds live in ui/routes/; measured with wc -l on this commit caught up onto dev" },
+  { "file": "ui/server.mjs", "from": 10766, "to": 10772, "commit": "b6d987f54",
+    "why": "Office previews without LibreOffice (office-lite, on top of b6d987f54): the two vendor routes /vendor/jszip/jszip.min.js and /vendor/docx-preview/docx-preview.min.js and their OFFICE_VENDOR_ASSETS resolution next to the marked/dompurify vendor assets (6 lines of central wiring outside the route regions); measured with wc -l" }
 ]

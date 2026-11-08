@@ -693,6 +693,10 @@ const ASK_VENDOR_ASSETS = {
   marked: resolveEsmAsset('marked'),
   dompurify: resolveEsmAsset('dompurify'),
 };
+// The Office preview fallback's UMD builds (artifacts/office-lite.mjs), resolved through the package folders: docx-preview's
+// exports map hides dist/*.min.js from a subpath resolve. A missing package leaves its route unregistered (the 404 tail).
+const officeVendorFile = (spec, rel) => { const d = resolveVendorDir(spec, undefined, undefined, 'office preview'); return d ? path.join(d, rel) : null; };
+const OFFICE_VENDOR_ASSETS = { jszip: officeVendorFile('jszip', '../dist/jszip.min.js'), docx: officeVendorFile('docx-preview', 'docx-preview.min.js') };
 
 // Ask Worca voice mode (docs/speech.md): the Silero VAD (@ricky0123/vad-web) and
 // its onnxruntime-web wasm runtime, served from node_modules like marked above.
@@ -2078,6 +2082,8 @@ if (ASK_VENDOR_ASSETS.marked) {
 if (ASK_VENDOR_ASSETS.dompurify) {
   app.get('/vendor/dompurify/purify.es.mjs', sendEsmModule(ASK_VENDOR_ASSETS.dompurify));
 }
+if (OFFICE_VENDOR_ASSETS.jszip) app.get('/vendor/jszip/jszip.min.js', sendEsmModule(OFFICE_VENDOR_ASSETS.jszip));
+if (OFFICE_VENDOR_ASSETS.docx) app.get('/vendor/docx-preview/docx-preview.min.js', sendEsmModule(OFFICE_VENDOR_ASSETS.docx));
 for (const { prefix, dir, files } of VOICE_VENDOR) {
   if (!dir) continue;
   for (const [name, type] of Object.entries(files)) {

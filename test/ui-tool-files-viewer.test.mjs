@@ -163,12 +163,14 @@ test('office: the PDF when the server converts; "Install LibreOffice" + Download
 });
 
 // ── in the real app (app.js + index.html): the Files kind gets the app's preview deps ─────────────────────────────────
-async function bootFilesTab(file) {
+async function bootFilesTab(file, { arms: extraArms = null, hooks = null, jsdom = null } = {}) {
   const { bootChat, ok } = await import('./helpers/chat-panel-boot.mjs');
   const tools = { v: 1, tabs: [{ id: 'tab_f1', kind: 'files', scope: P, state: { file: file.path }, at: 1 }], active: { [`${P.id}|`]: 'tab_f1' }, prefs: { width: 460 }, open: [`project:${P.id}`] };
   const ctx = await bootChat({ url: `http://localhost:4317/#projects/${P.id}`, local: { 'worca-cc.tools': JSON.stringify(tools) },
-    hooks: { askMarkdown: realLoad, hljsLoader },
-    arms: (url) => {
+    hooks: { askMarkdown: realLoad, hljsLoader, ...(hooks || {}) }, jsdom,
+    arms: (url, opts) => {
+      const own = extraArms && extraArms(url, opts || {});
+      if (own) return own;
       const path = url.split('?')[0];
       if (path.endsWith('/api/projects')) return ok({ projects: [{ key: P.id, name: 'app', path: '/tmp/app' }] });
       if (path.endsWith('/api/tools/file')) return ok({ root: { scope: 'project', label: 'app' }, ...file });
@@ -190,6 +192,26 @@ test('in the real app: a Files tab renders markdown (not a <pre>) and highlights
   assert.equal(md.querySelector('.artifact-markdown h1')?.textContent, 'Title', 'rendered through the app\'s markdown loader');
   const code = await bootFilesTab(textFile('src/a.mjs', 'const x = 1;'));
   assert.ok(code.querySelector('.hljs-keyword'), 'highlighted through the app\'s hljs loader');
+});
+
+test('T-R5 in the real app: an .odt with no converter shows the simplified preview in the Files tab, with its own Download', async () => {
+  const { officeVendor } = await import('./helpers/office-vendor.mjs');
+  const { fixture, respond } = await import('./helpers/office-lite-fixtures.mjs');
+  const { fail } = await import('./helpers/chat-panel-boot.mjs');
+  const base = `/api/tools/raw/${SEG}/docs/notes.odt`;
+  let vendor = null;
+  const stage = await bootFilesTab({ path: 'docs/notes.odt', size: 1114, shown: 10, truncated: true, binary: true, text: '' }, {
+    jsdom: { runScripts: 'outside-only', beforeParse: (w) => { vendor = officeVendor(w); } },
+    hooks: { officeImport: (u) => vendor.importer(u) },
+    arms: (url, opts) => (url === `${base}?as=pdf` && opts.method === 'HEAD' ? fail(501, {})
+      : url === `${base}?download=1` && (opts.method || 'GET') === 'GET' ? Promise.resolve(respond(fixture('notes.odt'))) : null),
+  });
+  for (let i = 0; i < 300 && !stage.ownerDocument.querySelector('.tool-panel .tool-file-stage .olp'); i++) await tick(1);
+  const root = stage.ownerDocument.querySelector('.tool-panel .tool-file-stage .olp[data-office-path="text"]');
+  assert.ok(root, stage.ownerDocument.querySelector('.tool-panel .tool-file-stage')?.textContent.slice(0, 300));
+  assert.ok(root.querySelector('button.olp-dl'));
+  assert.equal(root.querySelector('.olp-text h1').textContent, 'Release notes');
+  assert.deepEqual(vendor.calls, ['/vendor/jszip/jszip.min.js']);
 });
 
 // ── chat links (issue 1064 final slice): lines, run roots, chat copies ───────────────────────────────────────────
