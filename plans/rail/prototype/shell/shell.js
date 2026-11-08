@@ -50,7 +50,7 @@
   // The sidebar draws again when the interface mode or a Labs flag changes; a group with no place left goes, with its head.
   function applyPrefs() {
     const nav = document.querySelector('#side-rail nav.nav');
-    for (const b of nav.querySelectorAll('[data-nav]')) { b.hidden = !!lockOf(b.dataset.nav); const w = b.closest('.place-row'); if (w) w.hidden = b.hidden; }
+    for (const b of nav.querySelectorAll('[data-nav]')) { b.hidden = !!lockOf(b.dataset.nav) || (!!SOON[b.dataset.nav] && !R.shows('expert')); const w = b.closest('.place-row'); if (w) w.hidden = b.hidden; }
     let sect = null, any = 0;
     const close = () => { if (sect) sect.hidden = any < 1; };   // a group keeps its head while it shows a place: Work over Chat alone still says where you are
     for (const x of nav.children) {
@@ -179,7 +179,7 @@
   const inViewMax = () => (innerWidth <= 760 ? 1 : 5);   // five at most, named like tabs above 1100px; one on a phone
   let inViewMenu = false, inViewCur = '';
   addEventListener('resize', () => drawInView());
-  let inViewList = [{ type: 'task', id: 't4', chat: 'c4', title: 'Fix the flaky login' }];
+  let inViewList = [{ type: 'task', id: 't4', chat: 'c4', title: 'Fix flaky login test' }];
   const allTasksOf = (c) => { const out = []; const walk = (t) => { out.push(t); (t.after || []).forEach(walk); }; (c?.tasks || []).forEach(walk); return out; };
   function inViewNow(x) {
     const chats = window.RailChats?.data().chats || [];

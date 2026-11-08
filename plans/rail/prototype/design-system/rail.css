@@ -1523,3 +1523,10 @@ canvas.dot-orb[data-orb]{border-radius:50%;outline:1px solid light-dark(var(--li
 
 /* a task Worca watches says so in its facts, in words (not only in the PR mark's tooltip) */
 .rc-watch{color:var(--ink-2);font-size:var(--fs-meta);}
+
+/* a task's own stages in its card (Show its stages): its stage lines on the rail, then the way to its full page */
+.own-stages{display:flex;flex-direction:column;gap:6px;margin:10px 0 0 32px;}
+.own-stages .stage-body p{margin:2px 0 0;}
+.own-stages > :last-child{align-self:flex-start;margin-top:4px;font-size:var(--fs-meta);}
+/* the task page, as its card: no frame of its own */
+#route-run #card .rc-card{border:0;background:none;padding-left:0;padding-right:0;}
