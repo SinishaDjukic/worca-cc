@@ -314,3 +314,5 @@ Decided (Emil, 8 Nov):
 - Simple draws a workflow plainly (its steps left to right, the loop drawn back in words); Advanced and Expert show the
   real graph by default and keep the plain drawing one pick away (Showing the graph / the steps), since raising the mode
   never removes anything. Edit by hand is Expert.
+- Every workflow reads first in plain words (Emil, 8 Nov): a small helper model (Haiku 5.5) writes a few sentences from
+  the workflow, once and again when it changes; shown above the drawing in every mode, said to be by Haiku.
