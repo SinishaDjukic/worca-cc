@@ -42,6 +42,7 @@
   const THOUGHT = ['Read the chat', 'Looked through the project', 'Searched the code', 'Wrote the answer'];   // the same steps, done
   const thinkNow = (x) => { const ms = Date.now() - (x.at || Date.now()), steps = x.steps || THINKING, n = Math.min(steps.length, 1 + Math.floor(ms / 600)); return { step: steps[n - 1], secs: `${Math.max(1, Math.round(ms / 1000))}s`, n, phase: n === steps.length ? 'write' : n === 3 ? 'tool' : 'think' }; };   // searching is a tool; the last step writes
   function mount(root, side = false, opts = {}) {
+    let sideNoPage = false;   // × on the page's chip: this question goes without the page
   const where = opts.where || (side ? '#ask-convo' : '#route-chat');
   let chatId = '', comp = fresh(opts.mode), menu = '', hover = null, opened = new Set(), timer = 0;
   const chat = () => data().chats.find((c) => c.id === chatId);
@@ -433,12 +434,20 @@
     const slot = root.querySelector('[data-run-slot]');
     if (slot) window.RailShell?.embedRun?.(slot, slot.dataset.runSlot, slot.dataset.runAsk);   // and comes back into the card that is open
   }
+  function sideHome() {
+    const ctx = window.RailShell?.pageContext?.() || { name: 'this page', kind: 'page', suggest: [] }, chip = !sideNoPage && ctx.kind !== 'page';
+    const recent = [...data().chats].filter((c) => !c.archived).slice(0, 3).map((c) => R.listRow({ title: c.title, meta: [c.project || 'No project', c.tasks?.length ? `${c.tasks.length} ${c.tasks.length === 1 ? 'task' : 'tasks'}` : '', c.cost ? `$${c.cost.toFixed(2)}` : ''].filter(Boolean).join(' · '), mark: R.kindMark({ kind: 'chat', tone: c.state === 'needs-you' ? 'ask' : 'idle' }), open: { 'data-side-chat': c.id, title: `Opens ${c.title} here` } }));
+    return `<div class="side-home"><h2 class="side-home-h">${esc(ctx.kind === 'page' ? 'Ask Worca' : `Ask about ${ctx.kind === 'task' ? 'this task' : ctx.name}`)}</h2>${ctx.kind === 'page' ? '' : `<p class="side-home-m">Worca sees ${esc(ctx.kind === 'project' ? 'its branch, its tasks and its settings' : ctx.kind === 'task' ? 'its stages, its log and its changes' : `this ${ctx.kind}`)}.</p>`}
+      <div class="side-home-sug">${ctx.suggest.map((q) => R.button({ label: q, kind: 'quiet', attrs: { 'data-side-sug': q, title: 'Puts it in the box; nothing is sent' } })).join('')}</div>
+      ${R.list({ groups: [{ title: 'Recent chats', rows: recent }] })}</div>
+      <div class="side-home-dock">${chip ? `<div class="side-home-chips">${R.chip({ text: `${ctx.kind.charAt(0).toUpperCase() + ctx.kind.slice(1)} · ${ctx.name}`, title: 'Worca reads this page with your question' })}${R.button({ label: `Leave ${ctx.name} out`, kind: 'quiet', iconOnly: true, icon: R.icon('x', 12), attrs: { 'data-side-nopage': '' } })}</div>` : ''}${composerHtml()}</div>`;
+  }
   function paintOnly(keepText = true) {
     const had = root.querySelector('[data-composer-t]'), caret = had && document.activeElement === had, y = root.querySelector('.convo-scroll')?.scrollTop;
     if (had && keepText) comp.text = had.value;
     const c = chat();
     if (!chatId || !c) {
-      root.innerHTML = side ? `<div class="chat-home"><div class="chat-home-in">${composerHtml()}</div></div>` : `<div class="chat-home" data-home><div class="chat-home-in"><h1>${esc(opts.title || 'What\'s next?')}</h1>${composerHtml()}${opts.mode ? '' : startersHtml() + newHere()}</div></div>`;
+      root.innerHTML = side ? sideHome() : `<div class="chat-home" data-home><div class="chat-home-in"><h1>${esc(opts.title || 'What\'s next?')}</h1>${composerHtml()}${opts.mode ? '' : startersHtml() + newHere()}</div></div>`;
     } else {
       const labels = (c.labels || []).map((l) => R.chip({ text: l })).join('');
       root.innerHTML = `<div class="convo"><div class="convo-scroll"><div class="convo-col"><div class="convo-head">${esc(c.project || 'No project')}${labels ? ` · ${labels}` : ''}${R.sentencePicker({ id: 'cl-label', text: '+ Label', tip: 'Adds or removes a label', body: R.listEditor({ label: 'Labels', inputId: 'cl-label-q', placeholder: 'Find or make a label', sections: [{ title: 'Labels', kind: 'label', many: true, rows: LABELS.filter((l) => l.includes(labelQ.toLowerCase())).map((l) => ({ text: l, n: '', on: (c.labels || []).includes(l) })) }], hint: labelQ && !LABELS.includes(labelQ.toLowerCase()) ? `Enter makes “${labelQ.toLowerCase()}”` : '' }), open: menu === 'cl-label', chevron: '' })}<span class="tl-list-btn rc-pop" data-anchor-menu>${R.button({ label: 'Move through this chat', kind: 'quiet', iconOnly: true, icon: R.icon('list', 15), attrs: { 'data-anchor-open': '', 'aria-haspopup': 'menu', 'aria-expanded': String(menu === 'anchors') } })}</span></div>${calmCards(turns())}</div></div><div data-timeline></div><div class="convo-dock">${R.button({ label: 'Latest', kind: 'quiet', icon: R.icon('chevron', 12), cls: 'jump-latest', attrs: { 'data-jump-latest': '', title: 'Back to the newest turn' } })}${composerHtml()}</div></div>`;
@@ -596,6 +605,9 @@
     if ((hit = on('[data-cmdg]'))) { const x = turns().find((y) => y.id === hit.dataset.cmdg); if (x) { x.open = !x.open; paint(); } return; }
     if ((hit = on('[data-cmdr]'))) { const [id, k] = hit.dataset.cmdr.split('|'), x = turns().find((y) => y.id === id); if (x) { x.rowOpen = x.rowOpen === +k ? -1 : +k; paint(); } return; }
     if ((hit = on('[data-cmdx]'))) { const x = turns()[+hit.dataset.cmdx]; if (x && x.done) { x.open = !x.open; paint(); } return; }
+    if ((hit = on('[data-side-sug]'))) { comp.text = hit.dataset.sideSug; paint(false); root.querySelector('[data-composer-t]')?.focus(); return; }   // a suggestion fills the box, never sends
+    if ((hit = on('[data-side-chat]'))) { chatId = hit.dataset.sideChat; paint(); return; }
+    if (on('[data-side-nopage]')) { sideNoPage = true; paint(); say('This question goes without the page'); return; }
     if ((hit = on('[data-fact]'))) { const [k, id] = hit.dataset.fact.split('|'), t = taskOf(id); if (k === 'cost') window.RailShell.go('insights/spend'); else if (t) window.RailShell.openTaskPage(t.case, chatId, t.title); return; }
     if ((hit = on('[data-open-task-page]'))) { const t = taskOf(hit.dataset.openTaskPage); if (t) window.RailShell.openTaskPage(t.case, chatId, t.title); return; }
     if ((hit = on('[data-sched-card]'))) { const [id] = hit.dataset.schedCard.split('|'), t = taskOf(id); say(`Started ${t?.title || 'it'}: it runs as a task now, and the schedule keeps its times`); return; }
@@ -775,6 +787,7 @@
   R.dismissOnOutside(document, { open: () => !!menu, inside: `${where} .spick, ${where} .rc-pop, ${where} [data-anchor-menu]`, back: () => null, close: () => { menu = ''; }, paint: () => paint() });
 
   const api = {
+    isSide: side,
     paint,
     // Everything leads to its card in its chat: scroll to the card of a task (by its case or id) or a schedule, and flash it once
     focus: ({ cs = '', id = '', title = '' }) => {
@@ -843,6 +856,7 @@
   window.RailConversation = {
     awayAnswer,
     show: main.show,
+    sideRefresh: () => mounted.forEach((m) => m.isSide && m.paint()),
     focus: main.focus,
     start: main.start,
     starter: (id) => { main.start('ask'); setTimeout(() => main.arm(id), 0); },   // Chat with a starter armed: a place's New that is a conversation (Add project)

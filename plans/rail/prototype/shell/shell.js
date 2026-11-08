@@ -110,6 +110,21 @@
     askW = clampAsk(px); document.documentElement.style.setProperty('--ask-side-w', askW + 'px'); store.set(KEY_ASK, askW);
     document.querySelector('#ask-side .ask-side-grip')?.setAttribute('aria-valuenow', askW);
   };
+  function pageContext() {
+    const v = routed.view, name = document.querySelector('#main-row main .place-title, #main-row main [data-title], #card .rc-title')?.textContent?.trim() || TITLES[v] || 'this page';
+    const SUG = {
+      run: ['Why did it stop?', 'What does it need from me?', 'What did it change?'],
+      projects: [`Why is ${name} behind, and is it safe to sync?`, 'What ran here this week, and what did it cost?', 'What needs me here?'],
+      schedule: ['What did it do last night?', 'Why did the last run fail?', 'Should it run less often?'],
+      schedules: ['What runs tonight?', 'Which schedule fails most?', 'What needs me?'],
+      insights: ['Why did spend jump this week?', 'Which project costs the most per task?', 'Where could we save?'],
+      settings: ['What changed in my settings this week?', 'What would you change here?', 'What does this setting do?'],
+      workflows: [`When should I use ${name}?`, 'How could this workflow cost less?', 'What does each step do?'],
+      marketplace: [`What would ${name} add for me?`, 'Which plugins fit how I work?', 'What does it ask for, and why?'],
+    };
+    const kind = v === 'run' ? 'task' : ({ projects: 'project', schedule: 'schedule', insights: 'question', workflows: 'workflow', marketplace: 'plugin', workspaces: 'workspace', requirements: 'feature' })[v] || 'page';
+    return { view: v, kind, name, project: v === 'projects' ? name : '', suggest: SUG[v] || ['What needs me?', 'What is ready to ship?', 'What happened while I was away?'] };
+  }
   function drawAsk(side) {
     side.innerHTML = R.sideColumn({ title: 'Ask worca', width: askW, close: R.icon('x', 14), body: '<div class="rail-ask-body side-col-convo" id="ask-convo"></div>', hooks: { close: { 'data-ask-close': '' } } });
     window.RailConversation?.mount(document.getElementById('ask-convo'));
@@ -122,7 +137,8 @@
     const side = document.getElementById('ask-side'), btn = document.getElementById('topnav-ask');
     // on Chat the page is the chat: Ask worca stays in its place, off, and says why (the top bar never shifts)
     const here = view === 'chat'; if (here) askOpen = false;
-    if (btn) { btn.hidden = false; btn.setAttribute('aria-expanded', String(askOpen)); btn.setAttribute('aria-disabled', String(here)); btn.title = here ? 'You are in Chat: the box below asks Worca' : 'Ask worca, beside any page'; }
+    if (btn) { btn.hidden = false; btn.setAttribute('aria-expanded', String(askOpen)); btn.setAttribute('aria-disabled', String(here)); btn.title = here ? 'You are in Chat: the box below asks Worca' : `Ask worca, beside any page (${R.keyHint(['mod', 'J'], R.isMac(window))})`; }
+    if (askOpen && !here) window.RailConversation?.sideRefresh?.();   /* a new page: its own questions */
     drawAskMark();
     const show = askOpen;
     if (show && side.hidden) { if (!side.firstChild) drawAsk(side); side.classList.add('is-in'); setTimeout(() => side.classList.remove('is-in'), 300); }
@@ -424,6 +440,7 @@
       return who === 'run' ? inRun : !inRun && !inShell;
     },
     runActive: () => !document.getElementById('route-run')?.hidden,
+    pageContext: () => pageContext(),
     go: (hash) => { if (location.hash.slice(1) === hash) route(); else location.hash = hash; },
     // a run opened from Pulse or the search carries its own title
     openRun: (hash, title, run) => window.RailShell.openTask(hash.split('/')[1], '', title, run),   // Pulse and search: its card in its chat
@@ -491,6 +508,7 @@
   // A change of mode or a Labs flag: the sidebar follows, and the page if that changes whether it is locked.
   R.prefs.onChange(() => { applyPrefs(); drawMini(); if (routed.view && (TITLES[routed.view] || routed.view === 'schedule') && !!lockOf(routed.view) !== routed.locked) route(); });
   addEventListener('hashchange', route);
+  document.addEventListener('keydown', (e) => { if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'j') { e.preventDefault(); if (routed.view === 'chat') { document.querySelector('#route-chat [data-composer-t]')?.focus(); return; } askOpen = !askOpen; syncAsk(routed.view); if (askOpen) setTimeout(() => document.querySelector('#ask-side [data-composer-t]')?.focus(), 50); } });   // ⌘J: Ask worca beside this page
   // another Pulse case: the run page in view takes its title from it
   window.RailWorld.onChange(() => { drawInView(); if (routed.view === 'run') { reopen = true; route(); } });
   window.RailShell.start = route;

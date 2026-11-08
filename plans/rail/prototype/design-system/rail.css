@@ -1612,3 +1612,10 @@ button.q-fact{cursor:pointer;text-decoration:underline;text-decoration-color:var
 .lvl-menu .menu-item .bg-sw{flex:none;width:22px;height:16px;margin-right:2px;border-radius:var(--r-sm);overflow:hidden;position:relative;box-shadow:0 0 0 1px var(--line);}
 .lvl-menu.pz-fly{min-width:220px;}
 .lvl-menu .bg-line .mi-val{color:var(--ink);}   /* the chosen background's ✓ */
+
+/* Ask worca beside a page: its home says what it knows of the page, offers questions that fit it, and its recent chats */
+.side-home{padding:8px 4px 12px;display:grid;gap:4px;align-content:start;}
+.side-home-h{margin:0;font:600 var(--fs-section)/1.3 var(--sans);}
+.side-home-m{margin:0 0 8px;font-size:var(--fs-meta);color:var(--ink-2);}
+.side-home-sug{display:grid;gap:2px;margin:0 0 14px;} .side-home-sug .btn{justify-content:flex-start;text-align:left;height:auto;white-space:normal;}
+.side-home-dock{margin-top:auto;padding:0 4px 4px;} .side-home-chips{display:flex;align-items:center;gap:4px;margin:0 0 6px;}
