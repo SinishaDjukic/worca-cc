@@ -11,7 +11,7 @@ const STAGES = 5;
 const R = 9, L = 2 * Math.PI * R;
 const CENTRE = { pause: 'pause', stop: 'sym-stop' };   // attention is colour and a breath, never a ? or ! (list.kind-mark); a pause or a stop is a state, so it keeps its sign
 const TYPED = new Set(['feature', 'workflow']), NEEDS_YOU = new Set(['ask', 'act', 'fail']);
-const KINDS = { chat: 'kind-chat', task: 'kind-task', schedule: 'kind-schedule', event: 'kind-event', feature: 'kind-feature', group: 'kind-group', workflow: 'kind-workflow', project: 'folder', workspace: 'nav-workspaces', requirement: 'list', agent: 'you', script: 'sliders', plugin: 'plug' };
+const KINDS = { chat: 'kind-chat', task: 'kind-task', schedule: 'kind-schedule', event: 'kind-event', feature: 'kind-feature', group: 'kind-group', workflow: 'kind-workflow', project: 'folder', workspace: 'nav-workspaces', requirement: 'list', agent: 'you', script: 'script', plugin: 'plug' };
 
 /**
  * The tone of a state, from what the library says about it (runState, chatState): never a page's own reading of a word.
@@ -297,7 +297,7 @@ export function taskProposal({ title, why = '', sentence, more = '', open = fals
 }
 
 // a change card's mark is its kind's, as in the bar (list.kind-mark): a schedule's clock, a project's folder
-const KIND_ICON = { Schedule: 'clock', Workflow: 'kind-workflow', 'Web access': 'plug', Away: 'away', Agent: 'you', Workspace: 'nav-workspaces', Project: 'folder', Clone: 'folder', Model: 'set-models', 'Sign-in': 'plug', Script: 'sliders', Changes: 'pr', Metrics: 'signal', Memory: 'set-memory', Guardrails: 'set-guardrails', Labels: 'tag', Requirements: 'list', Route: 'after' };
+const KIND_ICON = { Schedule: 'clock', Workflow: 'kind-workflow', 'Web access': 'plug', Away: 'away', Agent: 'you', Workspace: 'nav-workspaces', Project: 'folder', Clone: 'folder', Model: 'set-models', 'Sign-in': 'plug', Script: 'script', Changes: 'pr', Metrics: 'signal', Memory: 'set-memory', Guardrails: 'set-guardrails', Labels: 'tag', Requirements: 'list', Route: 'after' };
 
 /**
  * ChangeProposal: a change Worca proposes to something that is not a task (a setting, a workflow, a schedule): what it is,

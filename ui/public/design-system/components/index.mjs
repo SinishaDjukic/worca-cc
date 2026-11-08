@@ -41,6 +41,7 @@ export { artifactView } from './artifact-view.mjs';
 export { crafting } from './crafting.mjs';
 export { workflowStory } from './workflow-story.mjs';
 export { draftBar } from './draft-bar.mjs';
+export { workspaceBoxes, workspaceMap, workspaceOrder } from './workspace-map.mjs';
 export { USAGE_REFRESH_MS, usageWindow, connectedUsage, usageTip, usageRing } from './usage.mjs';
 export { tryStep } from './run-state.mjs';
 export { watchScrollbars, thumbBox, SCROLL_SHOW_MS } from './scrollbars.mjs';

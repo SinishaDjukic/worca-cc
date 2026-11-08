@@ -62,9 +62,11 @@
   const ENGINE_MODELS = [['Claude Code', ['Opus 5.5', 'Sonnet 5.5', 'Haiku 5.5']], ['Codex', ['Codex high', 'Codex medium']], ['Gemini CLI', ['Gemini Pro', 'Gemini Flash']]];
   const ENGINES = ENGINE_MODELS.flatMap(([, ms]) => ms);
   const ENGINE_ITEMS = ENGINE_MODELS.flatMap(([e, ms], i) => [...(i ? [{ sep: true }] : []), { header: e }, ...ms.map((m) => ({ id: m, text: m }))]);
+  // one picker for where it runs: each project's state at choice time; workspaces (organizational, and a run target as in dev) from Advanced
+  const scopes = () => [...PROJECTS.map((id) => ({ id, text: id, hint: window.RailProjects?.hint(id) || '' })), ...(R.shows('advanced') && window.RailSpaces?.list().length ? [{ sep: true }, { header: 'Workspaces · projects that work together' }, ...window.RailSpaces.list().map((w) => ({ id: w.title, text: w.title, hint: window.RailSpaces.hint(w) }))] : [])];
   function sentence() {
     const mode = comp.intent ? '' : pk('mode', comp.mode === 'ask' ? 'Ask' : comp.mode === 'task' ? 'Task' : 'Schedule', MODES, 'Ask, start a task, or schedule one');   // an armed starter's chip says what it is
-    const project = W('on') + pk('project', comp.project, PROJECTS, 'Which project');
+    const project = W('on') + pk('project', comp.project, scopes(), 'Where it runs: a project or, from Advanced, a workspace');
     const engine = pk('engine', comp.engine, ENGINE_ITEMS, 'Which engine, then its model') + pk('effort', comp.effort || 'high', ['low', 'medium', 'high'], 'How hard it thinks');
     if (comp.mode === 'ask') return mode + project + engine;
     if (comp.mode === 'schedule') return mode + project + pk('every', comp.every, R.REPEATS, 'When it repeats') + W('at') + pk('at', comp.at, R.TIMES_OF_DAY, 'What time');
@@ -91,7 +93,7 @@
   ];
   const MORE = [
     { id: 'explain', label: 'Explain a diff', icon: 'pr', ph: 'Which task’s changes?' },
-    { id: 'script', label: 'Write a script', icon: 'sliders', ph: 'What should the script do?' },
+    { id: 'script', label: 'Write a script', icon: 'script', ph: 'What should the script do?' },
     { id: 'project', label: 'Add project', icon: 'folder', ph: 'Which folder or repository?' },
     { id: 'away', label: 'Step away', icon: 'away', ph: 'I’m away now', text: 'I’m away now' },
     { id: 'metrics', label: 'Team metrics', icon: 'signal', ph: 'What do you want to know?' },
@@ -365,6 +367,7 @@
       const mark = x.mark === 'git' ? R.gitMark({ status: 'branch', title: 'Its branch' }) : R.kindMark({ kind: 'chat', tone: 'ask', size: 16 });
       return R.turnRow({ mark, text: x.text, end: x.actions.map(([label, kind], k) => R.button({ label, kind: kind === 'danger' ? 'quiet' : kind, cls: kind === 'danger' ? 'is-danger' : '', attrs: { 'data-act': `${x.id}|${k}` } })).join(''), attrs: { 'data-anchor': x.id } });
     }
+    if (x.t === 'change' && x.after && !turns().find((y) => y.id === x.after)?.done) return '';   // one thing at a time: it waits for the card before it
     if (x.t === 'change') {
       const STEPS = [['Plan', 'Plan the contract → Sign off'], ['Build', 'Slice 1: read → Slice 2: write → Slice 3: auth'], ['Review', 'Review each slice'], ['PR', 'One PR into dev']];
       // a workflow proposed at dev's depth: each step a row with its model and effort to change in place, its loop, what it adds in cost
@@ -711,6 +714,7 @@
       } l.splice(l.indexOf(px) + 1, 0, { t: 'change', id: `cg${Date.now().toString(36)}`, kind: 'Changes', title: px.title, why: `“${v}”`, rows: [{ name: 'Where it lands', before: '', after: 'a new round of the plan' }], actions: [['Start round 2', 'primary', 'Round 2 started'], ['Not now', 'quiet', 'Not now']], state: 'proposed' }); paint(); say('Asked for changes'); return; }
     if ((hit = on('[data-cmd-stop]'))) { const x = turns()[+hit.dataset.cmdStop]; if (x) { x.stopped = true; paint(); say('Stopped the command'); } return; }
     if ((hit = on('[data-cp-act]'))) { const [id, k] = hit.dataset.cpAct.split('|'), x = turns().find((y) => y.id === id);
+      if (x?.kind === 'Workspace' && +k === 0) window.RailSpaces?.add({ title: x.name, projects: x.holds });   // Worca's suggestion kept: it is a workspace now
       if (x?.kind === 'Requirements' && x.actions[+k][0] === 'Ask for changes') { x.asking = true; paint(); root.querySelector(`[data-ask-changes="${x.id}"]`)?.focus(); return; }
       if (x?.kind === 'Requirements' && +k === 0) { x.done = 'Requirements agreed'; const l = turns(); const qs = l.filter((y) => y.t === 'question' && y.shaper === x.from); l.splice(l.indexOf(x) + 1, 0, { t: 'words', html: 'Writing the plan from them.' }); afterClarify(); paint(); say('Requirements agreed: writing the plan'); return; }
       if (x) { x.done = x.actions[+k][2] + (x.choice ? ` · ${x.picked || x.choice.rec}` : ''); paint(); say(x.done); } return; }

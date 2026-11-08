@@ -529,6 +529,30 @@
       "example": "Activity's Logs"
     },
     {
+      "name": "WorkspaceBoxes",
+      "code": "ui/public/design-system/components/workspace-map.mjs#workspaceBoxes",
+      "kind": "showing",
+      "needs": [
+        "every workspace at a glance, one opening in place"
+      ],
+      "rules": [
+        "panel.workspace-map"
+      ],
+      "example": "The Projects home, from Advanced"
+    },
+    {
+      "name": "WorkspaceMap",
+      "code": "ui/public/design-system/components/workspace-map.mjs#workspaceMap",
+      "kind": "showing",
+      "needs": [
+        "a workspace's projects by who uses whom"
+      ],
+      "rules": [
+        "panel.workspace-map"
+      ],
+      "example": "A workspace, opened"
+    },
+    {
       "name": "DraftBar",
       "code": "ui/public/design-system/components/draft-bar.mjs#draftBar",
       "kind": "acting",
@@ -1381,6 +1405,14 @@
     }
   ],
   "logic": [
+    {
+      "name": "The order a change goes through a workspace",
+      "code": "ui/public/design-system/components/workspace-map.mjs#workspaceOrder",
+      "needs": [
+        "what is used before what uses it, across a workspace's projects"
+      ],
+      "example": "workspaceOrder(ids, links)"
+    },
     {
       "name": "What a toggle opens, moving",
       "code": "ui/public/design-system/components/motion.mjs#watchFolds",

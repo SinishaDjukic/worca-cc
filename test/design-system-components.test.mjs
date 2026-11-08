@@ -850,6 +850,17 @@ test('listController: every period but Today starts folded; the one holding your
   assert.deepEqual(shown(), ['a', 'b', 'c'], 'opened, it shows');
   root.remove();
 });
+test('workspace map: boxes say only what is wrong; one opens in place; arrows by who uses whom; the order of a change (panel.workspace-map)', () => {
+  const boxes = [{ id: 'a', title: 'Web shop', count: '5 projects', lines: [['web-app has moved apart', 'ask']], attrs: { 'data-b': 'a' } }, { id: 'b', title: 'IoT', count: '3 projects' }];
+  const home = dom(C.workspaceBoxes({ boxes })); assert.equal(home.querySelectorAll('.wb-box').length, 2); assert.ok(home.querySelector('.wb-l.is-ask')); assert.equal(home.querySelector('.wb-box').dataset.b, 'a');
+  const open = dom(C.workspaceBoxes({ boxes, openId: 'a', open: '<i class="x"></i>', openTitle: 'Web shop' }));
+  assert.ok(open.querySelector('.wb-open .x')); assert.equal(open.querySelectorAll('.wb-side .wb-box').length, 1, 'the others stay boxes');
+  const map = dom(C.workspaceMap({ label: 'M', nodes: [{ id: 'w', title: 'web' }, { id: 'p', title: 'pay', status: 'Behind 3', tone: 'ask' }, { id: 'e', title: 'mail' }], links: [{ from: 'w', to: 'p', word: 'calls' }, { from: 'p', to: 'e', unsure: true }, { from: 'x', to: 'w' }] }));
+  assert.equal(map.querySelectorAll('.wm-n').length, 3); assert.equal(map.querySelectorAll('.wm-w').length, 2, 'a link to nothing is not drawn'); assert.ok(map.querySelector('.wm-w.is-unsure'));
+  const [w, p, e] = [...map.querySelectorAll('.wm-n')].map((n) => parseInt(n.style.left, 10)); assert.ok(w < p && p < e, 'what uses sits left of what it uses');
+  assert.deepEqual(C.workspaceOrder(['w', 'p', 'e'], [{ from: 'w', to: 'p' }, { from: 'p', to: 'e' }]), ['e', 'p', 'w']);
+  assert.equal(C.workspaceOrder(['a', 'b'], [{ from: 'a', to: 'b' }, { from: 'b', to: 'a' }]).length, 2, 'a cycle still ends');
+});
 test('watchFolds: opening animates the new part; closing fades a copy that then goes (motion.fold)', () => {
   const w = new JSDOM('<body><div id="r"></div></body>', { pretendToBeVisual: true }).window, r = w.document.getElementById('r'); let open = false; const seen = [];
   w.Element.prototype.getBoundingClientRect = () => ({ height: 40 });

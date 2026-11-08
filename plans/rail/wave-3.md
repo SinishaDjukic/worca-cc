@@ -262,7 +262,7 @@ for depth. The three places measured against it:
 Questions to settle before mocks:
 1. Is a workspace a project made of projects, so one scope picker and one bar group ("on billing-api" or "on Billing")?
 2. Do Workflows, agents and scripts stay a place in the menu, or join a "Customise" home with the Marketplace?
-3. Do Projects and Workspaces keep menu entries, or are they reached from the bar's groups, the scope picker and search?
+3. (Decided below: one Projects entry.) Do Projects and Workspaces keep menu entries, or are they reached from the bar's groups, the scope picker and search?
 
 Direction (Emil, 8 Nov): everything is defined in a chat; the places are views.
 - Workflows, agents and scripts are browsed as the Marketplace is (ways in with counts, cards, yours first); opening one
@@ -272,7 +272,7 @@ Direction (Emil, 8 Nov): everything is defined in a chat; the places are views.
 - Mock: plans/rail/mocks/wave-3/workflows-2: explore as the Marketplace; one opened as a view with its graph and what each
   step does in plain words; Build it by hand is the classic way, on the graph (Emil: keep the graph, keep the explanation).
   Proposed for the library: WorkflowGraph's flow variant (left to right, arrows, the loop drawn back), on the page, not only in a dialog.
-- Open: do Projects' and Workspaces' settings follow the same rule (shown on the page, changed in a chat)?
+- Decided (rail.chat-first): Projects' and Workspaces' settings are shown and changed in place by hand, or in a chat.
 
 Graph editor (Emil, 8 Nov: a hard requirement; resistance welcome, it is very complex). Dev's is a free canvas: agents and
 scripts from the Library, Task, End, AND, OR, Combine, typed ports and wires with checks, the inspector (model, effort,
@@ -339,3 +339,5 @@ Two ideas mocked at Emil's yes (mocks/wave-3/scope-2): a workspace comes from us
 The concept (Emil, 8 Nov, in his words): all these features are embedded in the chat, and users keep the option to perform them manually, as is for the workflows. Chat first, manual second, for Workflows, agents, scripts, Projects, Workspaces and the like: a page ends with the composer, Change it in a chat leads, the manual way is there and quiet. Tasks and Schedules are different: their pages only reference what was dispatched, for legacy, and nothing can be created from them.
 
 Personas on the map (8 Nov; new user 8, 5, 5, 8; daily user 8, 5, 7, 8): overlapping outlines do not scale. The home is now each workspace one box (a count and only what is wrong or running, a line between boxes for a shared project); a box opens in place with arrows for who calls whom; a shared project says also in X; healthy says nothing. The bar from Advanced: Needs you, Workspaces, All projects folded.
+
+Built (8 Nov): Projects and Workspaces as one place. One Projects entry (old workspaces links land on projects/ws:<id>); Simple the list; from Advanced each workspace a box, one opened alone as its map (WorkspaceBoxes, WorkspaceMap, workspaceOrder; panel.workspace-map), questions first with their evidence, Scan again beside the map's age; by hand second and quiet (Add a project by hand, New workspace by hand, Edit by hand as a draft); one scope picker in the composer with each project's state; Worca raises git trouble and suggests keeping two projects together, one card at a time. Personas on the build: new user 5, 7, 6, 6; daily user 6, 6, 8 (home, workspace, chat); their fixes are in, the neighbouring boxes cut from an opened workspace. Differs from the mock: a shared project is said in words on its box, no drawn line between boxes. Not in the prototype: real drag into a workspace, type-ahead in a long picker, Sync's preview, a question on its map edge. rail.chat-first is the written rule. Scripts have their own icon (`script`, code), sliders mean settings.

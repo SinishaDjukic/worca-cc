@@ -3,7 +3,7 @@
 // run opens as a full page (the Rail run page); Settings opens from the profile menu (the Rail Settings).
 //   #runs              the Rail Runs list
 //   #chat[/<id>]       the Rail Chats column, beside today's Chat page
-//   #<view>            a place: schedules, stats, team-metrics, workflows, requirements, projects, workspaces,
+//   #<view>            a place: schedules, stats, team-metrics, workflows, requirements, projects (workspaces inside it: projects/ws:<id>),
 //                      marketplace (today's pages)
 //   #run/<case>        the Rail run or group page, on one of its cases
 //   #settings[/<id>]   the Rail Settings, on one of its sections
@@ -31,7 +31,7 @@
 
   // ---- the sidebar: places only (a setting or a place, docs/rail/settings.md) ----
   // The one bar: Settings' behaviour for every feature. The house opens the places; a place with a list holds its list.
-  const PLACES = [['Work', [['chat', 'Chat', 'simple'], ['runs', 'Tasks', 'simple'], ['schedules', 'Schedules', 'advanced']]], ['Build', [['workflows', 'Workflows', 'simple'], ['requirements', 'Requirements', 'simple', 'requirements'], ['marketplace', 'Marketplace', 'advanced']]], ['Manage', [['projects', 'Projects', 'simple'], ['workspaces', 'Workspaces', 'advanced']]], ['Insight', [['insights', 'Insights', 'advanced']]]];
+  const PLACES = [['Work', [['chat', 'Chat', 'simple'], ['runs', 'Tasks', 'simple'], ['schedules', 'Schedules', 'advanced']]], ['Build', [['workflows', 'Workflows', 'simple'], ['requirements', 'Requirements', 'simple', 'requirements'], ['marketplace', 'Marketplace', 'advanced']]], ['Manage', [['projects', 'Projects', 'simple']]], ['Insight', [['insights', 'Insights', 'advanced']]]];
   function sidebar() {
     const side = el(T.sidebar);
     const nav = side.querySelector('nav.nav');
@@ -269,6 +269,7 @@
   function route() {
     const OLD = { stats: 'insights/spend', 'team-metrics': 'insights/team' };   /* Statistics and Team metrics are Insights now: an old link lands there */
     if (OLD[location.hash.slice(1)]) { location.replace(`#${OLD[location.hash.slice(1)]}`); return; }
+    if (/^#workspaces(\/|$)/.test(location.hash)) { const w = location.hash.split('/')[1]; location.replace(w ? `#projects/ws:${w}` : '#projects'); return; }   // workspaces live in Projects now: an old link lands there
     const [kind, arg] = (location.hash.slice(1) || 'chat').split('/');
     const view = TITLES[kind] ? kind : kind === 'run' || kind === 'settings' || kind === 'schedule' ? kind : 'chat';
     drawer(false);

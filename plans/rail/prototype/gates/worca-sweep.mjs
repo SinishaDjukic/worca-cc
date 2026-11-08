@@ -22,7 +22,7 @@ const b = await chromium.launch({ channel: 'chrome' });
 const scout = await b.newPage(); await scout.addInitScript(() => { try { localStorage.setItem('worca-rail.mode', 'expert'); } catch { /* none */ } }); await scout.goto(URL_);
 const RUNS = await scout.evaluate(() => window.RunCardModel.cases.map((c) => c.id));
 const PLACES = await scout.evaluate(() => Object.entries(window.RailPlaces || {}).flatMap(([k, m]) => (m.sample ? [`${k}/${m.sample}`] : []))); await scout.close();   // each place built on Rail: one of its pages too
-const MOVED = new Set(['stats', 'team-metrics']);   // Insights now: an old link lands there (its own step below)
+const MOVED = new Set(['stats', 'team-metrics', 'workspaces']);   // Insights now: an old link lands there (its own step below)
 const ROUTES = ['runs', ...TODAY.filter((t) => !MOVED.has(t)), ...PLACES, ...RUNS.map((c) => 'run/' + c), ...SECTIONS.map((s) => 'settings/' + s)];
 let checks = 0;
 for (const scheme of ['light', 'dark']) for (const w of [1280, 900, 760, 375]) {
