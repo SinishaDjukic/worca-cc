@@ -291,3 +291,8 @@ workflow format for a chat, the canvas and Import/Export, every saved and built-
 and the engine and its tests are kept, with Rail as its skin.
 5. Auto-align (Emil, 8 Nov) stays: dev's Auto-layout tidies the canvas in one click; in Rail it is one quiet button
    beside zoom, and the view always opens aligned.
+
+Selling point (Emil, 8 Nov): workflows and the graph sell Worca. The graph is shown large to everyone (a workflow's page,
+a chat's proposal, a task card), drawn by dev's renderer in Rail's skin; only editing by hand is Expert. Mock workflows-2
+redone: frame 2 on dev's renderer (wider than the reading column, plain words), frame 3 the Expert canvas (Add as a menu
+in words, Auto-align beside zoom, the picked step as sentences on the right, Ask Worca as the one chat).

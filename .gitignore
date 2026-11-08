@@ -36,3 +36,6 @@ tools/demo/extension-video/out/
 .gstack/
 .test-timings/
 plans/rail/generated/
+
+# the Workflows mock bundles dev's graph renderer (rebuild: see plans/rail/mocks/wave-3/graph-mock.mjs)
+plans/rail/mocks/wave-3/graph-mock.js
