@@ -850,6 +850,12 @@ test('listController: every period but Today starts folded; the one holding your
   assert.deepEqual(shown(), ['a', 'b', 'c'], 'opened, it shows');
   root.remove();
 });
+test('artifactView: its name and where from, Previous and Next through the others, Open full and Download (panel.task-depth)', () => {
+  const v = dom(C.artifactView({ name: 'plan.md', meta: 'Plan', body: '<p>Hi</p>', at: 0, of: 3, hooks: { prev: { 'data-p': '' }, next: { 'data-n': '' }, full: { 'data-f': '' }, download: { 'data-d': '' } } }));
+  assert.equal(v.querySelector('.av-h b').textContent, 'plan.md'); assert.ok(v.querySelector('[data-p]').disabled, 'the first has no previous'); assert.ok(!v.querySelector('[data-n]').disabled);
+  assert.match(v.querySelector('.av-n').textContent, /1 of 3/); assert.ok(v.querySelector('[data-f]') && v.querySelector('[data-d]')); assert.equal(v.querySelector('.av-body p').textContent, 'Hi');
+  assert.equal(dom(C.artifactView({ name: 'a', body: '' })).querySelector('.av-n'), null, 'one alone: no stepping');
+});
 test('GitMark: its status in the tooltip, Watch as a ring', () => {
   assert.match(C.gitMark({ status: 'fail' }), /Checks failing/);
   assert.match(C.gitMark({ status: 'fail', watch: 'fix' }), /is-watch is-fix/);

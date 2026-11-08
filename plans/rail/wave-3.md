@@ -223,6 +223,13 @@ Wave 3, second run (8 Nov, "continue with the rest"):
 - Still to do: 1.2's rest, 1.3–1.5, Phase 2 (artifact viewers, the live graph), 4.3 Settings' leftovers, Phase 5's rest
   (Actions, scripts' editor, onboarding, edges), and a persona round on the new places.
 
+- Built from the approved mocks: the chat cards (question forms, a workflow at dev's depth, a setting, the facts line), Ask
+  beside any page (⌘J), and task depth on the card (panel.task-depth): each stage's time, cycles and cost, the one running
+  now; a stage's Log (LogLines, its filters a sentence: summaries or raw, cycle, agent; First error, Copy, Follow live) and
+  Artifacts (ArtifactView in place, Previous and Next, Open full, Download); findings to confirm with notes and Send to
+  Review; a task made on a copy of a folder ends in a change card: Apply, Show the diff, Discard. Phase 2's artifact
+  viewers and live graph are these.
+
 Next (Emil, 8 Nov), after the approved builds (chat cards, Ask beside a page, task depth, ⌘J): the second pass on
 Workflows, Projects and Workspaces, and a heavy one on **Insights**, through the loop (mock, both users, Emil, build).
 Insights is one feature in the places menu; its bar holds the sub-features in groups, lean and smooth, every metric dev
@@ -240,3 +247,26 @@ what it ran on (model, engine or provider, effort, cache read vs write, tokens i
 retries, fix rounds: rework; failed or stopped tasks: waste) · who and how (person, chat vs task vs scheduled vs
 requirements, Away vs at the desk) · how you organise (each cost tag key, labels) · when (hour, day, week, month, time of
 day). Each row leads to the tasks behind it.
+
+## Second pass: purpose first (Emil, 8 Nov: "understand the purpose … at some point fully integrated into chat … like tasks and schedules, more supporting")
+
+The pattern Tasks and Schedules already follow: born in a chat, a card there, a row under its chat in the bar, a page only
+for depth. The three places measured against it:
+
+| Place | What it is for (dev) | Where it already touches Chat | Adapted: supporting, not a destination |
+|---|---|---|---|
+| Projects | Where the work happens (a repository or a folder) and its defaults: branch, workflow, models, limits; its state (diverged, folder missing) | The composer's "on billing-api"; Add project is a chat card; a chat belongs to one | A scope above chats: the bar's "from" and "by project" group chats under it; its page shrinks to its settings; its state (diverged, missing) comes to the chat that runs on it as a card |
+| Workflows | How a task runs: steps, agents, models, effort, loops, and what that costs | The task sentence's "with Default"; a proposed workflow is a change card (built) | Recipes picked in the sentence and made or changed in a chat; the place stays a library to browse and compare, each workflow with its cost and outcomes from Insights; agents and scripts are its parts |
+| Workspaces | Several projects that work together, and the map of how they depend (APIs, messages, packages, tables) given to every agent as context; change order providers first | None yet beyond New workspace as a chat | A wider scope: "on Billing (3 projects)" in the same picker as a project; a task across them splits into slices per project (slices exist); the map's unconfirmed links come as questions in a chat; the page keeps the map |
+
+Questions to settle before mocks:
+1. Is a workspace a project made of projects, so one scope picker and one bar group ("on billing-api" or "on Billing")?
+2. Do Workflows, agents and scripts stay a place in the menu, or join a "Customise" home with the Marketplace?
+3. Do Projects and Workspaces keep menu entries, or are they reached from the bar's groups, the scope picker and search?
+
+Direction (Emil, 8 Nov): everything is defined in a chat; the places are views.
+- Workflows, agents and scripts are browsed as the Marketplace is (ways in with counts, cards, yours first); opening one
+  leads to Change it in a chat; Build it by hand is the one manual way in, quiet, never the lead.
+- Tasks and Schedules pages show what a chat defined; nothing is made or edited there. Proposed (to confirm): controls that
+  act on what exists (Pause, Run now, Stop, Approve) stay, since they define nothing.
+- Open: do Projects' and Workspaces' settings follow the same rule (shown on the page, changed in a chat)?

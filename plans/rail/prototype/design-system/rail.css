@@ -1619,3 +1619,16 @@ button.q-fact{cursor:pointer;text-decoration:underline;text-decoration-color:var
 .side-home-m{margin:0 0 8px;font-size:var(--fs-meta);color:var(--ink-2);}
 .side-home-sug{display:grid;gap:2px;margin:0 0 14px;} .side-home-sug .btn{justify-content:flex-start;text-align:left;height:auto;white-space:normal;}
 .side-home-dock{margin-top:auto;padding:0 4px 4px;} .side-home-chips{display:flex;align-items:center;gap:4px;margin:0 0 6px;}
+
+/* ArtifactView: one artifact open in place under its list (panel.task-depth) */
+.av{margin:4px 0 8px;}
+.av-h{display:flex;align-items:center;gap:6px;min-width:0;font-size:var(--fs-meta);color:var(--ink-2);} .av-h b{color:var(--ink);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;} .av-sp{flex:1;}
+.av-n{font-variant-numeric:tabular-nums;}
+.av-body{margin:4px 0 0;padding:10px 12px;border-radius:var(--r-sm);background:var(--field);font-size:var(--fs-body);line-height:var(--lh-body);overflow-wrap:anywhere;max-height:320px;overflow-y:auto;}
+.av-body h3{margin:0 0 4px;font:600 var(--fs-body)/1.3 var(--sans);} .av-body p{margin:0 0 6px;} .av-body table{border-collapse:collapse;font-size:var(--fs-meta);font-variant-numeric:tabular-nums;} .av-body td,.av-body th{padding:3px 12px 3px 0;text-align:left;border-top:1px solid var(--line);}
+/* a task's depth on its card: a stage's log head, findings to confirm */
+.td-body{margin:4px 0 8px 32px;display:grid;gap:6px;min-width:0;}
+.td-log-h{display:flex;flex-wrap:wrap;align-items:center;gap:4px 6px;font-size:var(--fs-meta);color:var(--ink-2);} .td-log-h .av-sp{flex:1;}
+.td-find{margin:4px 0 0 32px;display:grid;gap:6px;}
+.td-fx{display:flex;gap:6px;align-items:center;}
+.td-find textarea{min-height:0;height:56px;}

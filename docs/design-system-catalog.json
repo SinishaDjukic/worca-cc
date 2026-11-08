@@ -529,6 +529,18 @@
       "example": "Activity's Logs"
     },
     {
+      "name": "ArtifactView",
+      "code": "ui/public/design-system/components/artifact-view.mjs#artifactView",
+      "kind": "showing",
+      "needs": [
+        "one artifact a task wrote, read in place under its list"
+      ],
+      "rules": [
+        "panel.task-depth"
+      ],
+      "example": "A task card's Artifacts, one open"
+    },
+    {
       "name": "Table",
       "code": "ui/public/design-system/components/table.mjs#table",
       "kind": "showing",

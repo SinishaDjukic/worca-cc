@@ -37,6 +37,7 @@ export { offlineLine, sideColumn, awayScreen, awayShows, AWAY_IDLE_MS, navItem, 
 export { accountItem, navFlyout, themeChoice, cardTitleLink } from './account-menu.mjs';
 export { workflowGraph } from './workflow-graph.mjs';
 export { logLines } from './log-lines.mjs';
+export { artifactView } from './artifact-view.mjs';
 export { USAGE_REFRESH_MS, usageWindow, connectedUsage, usageTip, usageRing } from './usage.mjs';
 export { tryStep } from './run-state.mjs';
 export { watchScrollbars, thumbBox, SCROLL_SHOW_MS } from './scrollbars.mjs';
