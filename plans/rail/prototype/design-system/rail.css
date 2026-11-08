@@ -1530,3 +1530,6 @@ canvas.dot-orb[data-orb]{border-radius:50%;outline:1px solid light-dark(var(--li
 .own-stages > :last-child{align-self:flex-start;margin-top:4px;font-size:var(--fs-meta);}
 /* the task page, as its card: no frame of its own */
 #route-run #card .rc-card{border:0;background:none;padding-left:0;padding-right:0;}
+
+/* narrow.stack: on a phone the sentence takes its own line, each word with its picker; + and send sit under it on the same edge */
+@media (max-width: 520px){ .composer-f{flex-wrap:wrap;row-gap:8px;} .composer-f > .composer-s{order:-1;flex:1 0 100%;} .composer-f > .composer-send{margin-left:auto;} }
