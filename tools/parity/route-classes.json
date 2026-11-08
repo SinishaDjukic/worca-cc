@@ -312,6 +312,7 @@
   "POST /api/design/:id/builds/:bid/answer": {"class": "probe", "reason": "flag gate 404, else bad design or build id 404"},
   "POST /api/design/:id/builds/:bid/continue": {"class": "probe", "reason": "flag gate 404, else designFor 404 bad id, then sections 422"},
   "POST /api/design/:id/builds/:bid/stop": {"class": "probe", "reason": "flag gate 404, else bad design or build id 404"},
+  "POST /api/design/:id/preview-token": {"class": "probe", "reason": "flag-gated (404 off); bad id answers 404"},
   "POST /api/design/:id/versions/:n/restore": {"class": "probe", "reason": "flag gate 404, else designFor 404 bad id, then version 400"},
   "POST /api/drain": {"class": "skip", "reason": "drains the server (ui/server.mjs:12077)"},
   "POST /api/extension/pair": {"class": "probe", "reason": "403 extension-origin for non-extension callers"},

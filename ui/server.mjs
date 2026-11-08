@@ -358,6 +358,11 @@ import { recoverAttachmentReads, sweepReadFolders, sweepTempBodies, withStagedRu
 import { createDesignBuilds } from '../src/core/design/registry.mjs';
 import { registerDesignRoutes } from '../src/core/design/routes.mjs';
 import { recoverDesignBuilds } from '../src/core/design/recover.mjs';
+import { createPreviewGate, registerPreviewTokenRoute } from '../src/core/design/preview-gate.mjs';
+import { previewGrants } from '../src/core/design/preview-grants.mjs';
+import { renderPreviewDoc } from '../src/core/design/preview-doc.mjs';
+import { getDesign } from '../src/core/design/store.mjs';
+import { designWorkDir } from '../src/core/design/paths.mjs';
 import { drainTimeoutMs, autoResumeMode, autoResumeCandidates, DRAIN_ACTIVE_STATUSES } from '../src/core/drain.mjs';
 import { exportWorkflow, exportWorkflowPlugin, ON_CONFLICT_MODES, RESOLUTION_CHOICES } from '../src/core/workflow-export.mjs';
 import { exportWorkflowToMarketplace, listPublishTargets } from '../src/core/marketplace-publish.mjs';
@@ -1861,6 +1866,17 @@ app.use((req, res, next) => {
   req.worcaExtension = d.extension;   // null on a pairing route
   next();
 });
+
+// Design preview: the 256-bit token in the path is the credential, as server.mjs's "NO Access-Control-Allow-Origin"
+// comment requires, never an Origin: null exemption. Mounted after the peer check, before S1 and identity. The gate
+// answers every request under this prefix and never calls next(), so it exempts nothing else.
+app.use('/design-preview', createPreviewGate({
+  grants: previewGrants,
+  hostNameOk: (host) => hostGuard({ headers: { host } }),
+  designFor: (id) => { const d = getDesign(id); return d ? { workDir: designWorkDir(id), kind: d.kind } : null; },
+  renderDoc: renderPreviewDoc,
+  enabled: () => flagEnabled('design'),
+}));
 
 app.use((req, res, next) => {
   if (!req.worcaExtensionRoute && !isLocalRequest(req)) {   // S1 itself is unchanged for every other request
@@ -7284,7 +7300,8 @@ registerRequirementsRoutes(app, { broadcast, deps: {
   startRun: (body, opts) => invokeStartRun(body, null, opts),   // D6: through the run handler, as PR watch does
   runSummary: requirementsRunSummary,
 } });
-registerDesignRoutes(app, { broadcast, deps: { designBuilds, brokerStartRefusal } });
+registerDesignRoutes(app, { broadcast, deps: { designBuilds, brokerStartRefusal, dropGrants: (id) => previewGrants.revokeDesign(id) } });
+registerPreviewTokenRoute(app, { flagGate: requireFlag('design'), grants: previewGrants, getDesign, viewerOf: askViewer });
 /** These routes push notes off the machine or rewrite them: a browser page must be served by THIS Worca —
  *  isLocalRequest checks the hostname, never the port, and a body-less POST needs no CORS preflight (decision E8).
  *  A possible agent is refused too, as on the Update routes: seeding is the person's consent (E3). */

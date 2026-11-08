@@ -20,6 +20,7 @@
         "gsap": "3.15.0",
         "htmlparser2": "12.0.0",
         "marked": "18.1.2",
+        "morphdom": "2.7.8",
         "onnxruntime-web": "1.22.0",
         "playwright-core": "1.64.1",
         "smol-toml": "1.9.1",
@@ -5151,6 +5152,12 @@
       "engines": {
         "node": ">= 18"
       }
+    },
+    "node_modules/morphdom": {
+      "version": "2.7.8",
+      "resolved": "https://registry.npmjs.org/morphdom/-/morphdom-2.7.8.tgz",
+      "integrity": "sha512-D/fR4xgGUyVRbdMGU6Nejea1RFzYxYtyurG4Fbv2Fi/daKlWKuXGLOdXtl+3eIwL110cI2hz1ZojGICjjFLgTg==",
+      "license": "MIT"
     },
     "node_modules/ms": {
       "version": "2.1.3",

@@ -12,5 +12,7 @@
   { "file": "ui/server.mjs", "from": 10453, "to": 10457, "commit": "3ab23b1b8",
     "why": "dev's own growth: Shaper requirements first (#1139, dev 3ab23b1b8) added 4 lines to the residual ui/server.mjs (the featureShipping helper and the acceptance refusal before shipping, outside the route regions); measured with wc -l on this branch merged with that dev" },
   { "file": "ui/server.mjs", "from": 10457, "to": 10467, "commit": "ec7a86a76",
-    "why": "Design P2: build registry wiring (imports, singleton, subscribe, drain, boot, route registration) added 10 lines to the residual ui/server.mjs, outside the route regions; measured with grep -c. The commit is P1's checkpoint ec7a86a76: this run commits nothing itself, so HEAD was still the checkpoint when the cap was raised" }
+    "why": "Design P2: build registry wiring (imports, singleton, subscribe, drain, boot, route registration) added 10 lines to the residual ui/server.mjs, outside the route regions; measured with grep -c. The commit is P1's checkpoint ec7a86a76: this run commits nothing itself, so HEAD was still the checkpoint when the cap was raised" },
+  { "file": "ui/server.mjs", "from": 10467, "to": 10484, "commit": "10efe705d",
+    "why": "Design P3: preview gate mount and token route; measured with grep -c" }
 ]
