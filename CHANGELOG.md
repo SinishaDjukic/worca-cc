@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Run sharing over a git branch (like team memory)
+
+- Share my runs on the worca-runs branch: Role reviews: no blocking findings.
+- Teammates' runs in History: Role reviews: no blocking findings.
+- Keep the worca-runs branch small: Role reviews: no blocking findings.
+
 ### Agents left running by a killed server are stopped at the next start (#1144)
 
 - On Linux, macOS and WSL, a Claude, Codex or Copilot process (and anything it started) no longer keeps running after the Worca server or a CLI run is killed with SIGKILL, for example by the out-of-memory killer under WSL2. Each process records its agent process groups in `<worca home>/agent-groups/`, and the next server start stops the ones whose owner is gone, so they no longer hold memory and make the next kill more likely. A PID that another process has taken since (after a reboot or `wsl --shutdown`, or in a restarted container, whose PIDs start again from 1) is never touched: each group is recorded with its boot id and start time.
